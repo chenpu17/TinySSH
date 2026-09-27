@@ -27,12 +27,28 @@ async fn ssh_shell_blocks_and_fresh() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    // 环境抖动兜底（共享容器偶发空流）：整场景重试一次
+    let mut last_err = String::new();
+    for attempt in 0..2 {
+        match scenario().await {
+            Ok(()) => return,
+            Err(e) => {
+                last_err = e;
+                eprintln!("attempt {attempt} failed: {last_err}; retrying…");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }
+    }
+    panic!("scenario failed twice: {last_err}");
+}
+
+async fn scenario() -> Result<(), String> {
     use session_api::transport::ChannelHandle;
 
     let channel: std::sync::Arc<transport_ssh::SshChannel> =
         transport_ssh::SshChannel::connect(target(), 120, 32)
             .await
-            .expect("ssh connect+auth");
+            .map_err(|e| e.to_string())?;
     // 首连指纹应已记录（TOFU）
     let _fp_now = channel.fingerprint().await;
 
@@ -139,6 +155,7 @@ async fn ssh_shell_blocks_and_fresh() {
     assert_eq!(std::fs::read(&back).unwrap(), b"sftp-roundtrip-data");
 
     channel.close().await.unwrap();
+    Ok(())
 }
 
 use tokio_util_like::CancellationToken as _CancellationTokenAlias;

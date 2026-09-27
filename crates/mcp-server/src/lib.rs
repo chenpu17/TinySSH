@@ -1,7 +1,6 @@
 //! MCP 工具实现（L1 §4）：rmcp streamable HTTP + per-client Bearer Token。
 //! 身份仅来自 Token（协议参数不可指定）；错误映射为 isError 载荷（永不挂起协议层）。
 
-use core_session::SessionManager;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::common::Extension;
 use rmcp::handler::server::wrapper::Parameters;
@@ -24,22 +23,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Bearer Token 解析器（vault 单一事实源；内存缓存可选）。
-#[derive(Clone)]
-pub struct TokenResolver {
-    pub vault: Arc<tinyssh_vault::Vault>,
-}
-
-impl TokenResolver {
-    pub fn resolve(&self, bearer: &str) -> Option<String> {
-        self.vault.resolve_token(bearer)
-    }
-}
+/// Bearer Token 解析器（由装配层注入；mcp-server 只依赖 session-api 契约，L1 §1）。
+pub type TokenResolver = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct McpState {
-    pub api: Arc<SessionManager>,
+    /// 双前端对等：MCP 面向 SessionApi 门面（L1 §1 依赖规则）
+    pub api: Arc<dyn SessionApi>,
     pub resolver: TokenResolver,
+}
+
+impl McpState {
+    pub fn new(api: Arc<dyn SessionApi>, resolver: TokenResolver) -> Self {
+        Self { api, resolver }
+    }
 }
 
 /// 工具参数结构。
@@ -143,10 +140,7 @@ fn actor_from_parts(parts: &http::request::Parts, state: &McpState) -> Result<Ac
         .strip_prefix("Bearer ")
         .or_else(|| auth.strip_prefix("bearer "))
         .ok_or(Error::InvalidActor)?;
-    let client = state
-        .resolver
-        .resolve(token)
-        .ok_or(Error::InvalidActor)?;
+    let client = (state.resolver)(token).ok_or(Error::InvalidActor)?;
     Ok(Actor::Agent { client_id: client })
 }
 
@@ -422,7 +416,7 @@ impl McpServer {
 /// 工具调用的统一入口：身份解析 → SessionApi → 结果/错误序列化。
 async fn run<F, Fut, T>(state: &McpState, parts: &http::request::Parts, f: F) -> CallToolResult
 where
-    F: FnOnce(Arc<SessionManager>, Actor) -> Fut,
+    F: FnOnce(Arc<dyn SessionApi>, Actor) -> Fut,
     Fut: std::future::Future<Output = Result<T, Error>>,
     T: Serialize,
 {
@@ -484,9 +478,7 @@ async fn auth_middleware(
         .get(http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")));
-    let ok = bearer
-        .and_then(|t| state.resolver.resolve(t))
-        .is_some();
+    let ok = bearer.and_then(|t| (state.resolver)(t)).is_some();
     if !ok {
         return axum::response::Response::builder()
             .status(axum::http::StatusCode::UNAUTHORIZED)

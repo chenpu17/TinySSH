@@ -21,3 +21,4 @@ rand = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tinyssh-testbed = { workspace = true }
+anyhow = { workspace = true }

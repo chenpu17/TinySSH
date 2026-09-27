@@ -190,10 +190,11 @@ async fn serve(m: Arc<SessionManager>, port: u16) -> Result<()> {
     };
     println!("TinySSH MCP endpoint: http://127.0.0.1:{actual}/mcp");
     println!("shim: TINYSSH_TOKEN=<token> TINYSSH_MCP_URL=http://127.0.0.1:{actual}/mcp tinyssh-mcp");
-    let state = tinyssh_mcp_server::McpState {
-        api: m.clone(),
-        resolver: tinyssh_mcp_server::TokenResolver { vault: m.center.vault.clone() },
+    let resolver: tinyssh_mcp_server::TokenResolver = {
+        let vault = m.center.vault.clone();
+        std::sync::Arc::new(move |t: &str| vault.resolve_token(t))
     };
+    let state = tinyssh_mcp_server::McpState::new(m.clone(), resolver);
     let config = rmcp::transport::streamable_http_server::StreamableHttpServerConfig::default()
         .with_json_response(true);
     let router = tinyssh_mcp_server::build_router(state, config);

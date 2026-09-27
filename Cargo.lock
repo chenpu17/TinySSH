@@ -5870,17 +5870,14 @@ name = "tinyssh-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
  "chrono",
  "core-session",
  "futures-util",
- "rmcp",
  "serde",
  "serde_json",
  "session-api",
  "tauri",
  "tauri-build",
- "tinyssh-mcp-server",
  "tinyssh-vault",
  "tokio",
  "tokio-stream",
@@ -6337,6 +6334,7 @@ dependencies = [
 name = "transport-ssh"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "futures",

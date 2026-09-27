@@ -42,10 +42,11 @@ async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
     .await
     .unwrap();
 
-    let state = tinyssh_mcp_server::McpState {
-        api: m.clone(),
-        resolver: tinyssh_mcp_server::TokenResolver { vault: m.center.vault.clone() },
+    let resolver: tinyssh_mcp_server::TokenResolver = {
+        let vault = m.center.vault.clone();
+        std::sync::Arc::new(move |t: &str| vault.resolve_token(t))
     };
+    let state = tinyssh_mcp_server::McpState::new(m.clone(), resolver);
     let config = tinyssh_mcp_server::StreamableHttpServerConfig::default().with_json_response(true);
     let router = tinyssh_mcp_server::build_router(state, config);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

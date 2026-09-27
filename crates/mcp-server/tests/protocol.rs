@@ -20,10 +20,11 @@ async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, u16, Strin
     let token = m.center.vault.create_agent("claude-code", "Claude Code").unwrap();
     m.center.vault.add_allow_pattern("claude-code", "echo *", "echo 放行").unwrap();
 
-    let state = tinyssh_mcp_server::McpState {
-        api: m.clone(),
-        resolver: tinyssh_mcp_server::TokenResolver { vault: m.center.vault.clone() },
+    let resolver: tinyssh_mcp_server::TokenResolver = {
+        let vault = m.center.vault.clone();
+        std::sync::Arc::new(move |t: &str| vault.resolve_token(t))
     };
+    let state = tinyssh_mcp_server::McpState::new(m.clone(), resolver);
     let config = tinyssh_mcp_server::StreamableHttpServerConfig::default()
         .with_json_response(true);
     let router = tinyssh_mcp_server::build_router(state, config);

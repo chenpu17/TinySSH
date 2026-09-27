@@ -6,8 +6,6 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-core-session = { workspace = true }
-tinyssh-vault = { workspace = true }
 schemars = "1"
 tokio-util = "0.7"
 session-api = { workspace = true }
@@ -27,3 +25,4 @@ http = { workspace = true }
 tempfile = { workspace = true }
 tinyssh-testbed = { workspace = true }
 core-session = { workspace = true }
+tinyssh-vault = { workspace = true }
