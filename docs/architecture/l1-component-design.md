@@ -1,6 +1,6 @@
 # L1 模块设计 — TinySSH
 
-> 版本：v0.2 · 日期：2026-09-27 · 上游：[PRD](../prd.md) · [L0 总体设计](l0-system-design.md)
+> 版本：v0.5 · 日期：2026-09-27 · 上游：[PRD](../prd.md) · [L0 总体设计](l0-system-design.md)
 > 本文回答：每个模块的职责、对外接口、关键流程时序、数据模型与安全机制。接口签名是**设计约定**，实现期允许在不改变语义的前提下微调；标注 `v1` 的接口为 V0 末冻结范围，其余为草稿、随阶段经 ADR 增量冻结。
 
 ---
@@ -144,7 +144,7 @@ pub struct SessionBrief {                  // 现场简报：交接核心工件�
     pub cwd: Option<String>,               // Confirmed（SSH 重连后降级 NeedsRecheck，见 §3.1）
     pub env_summary: String,
     pub facts: Vec<BriefFact>,             // 命令块/操作归并的事实清单，逐条带认知状态
-    pub running: Vec<ExecId>,              // Confirmed
+    pub running: Vec<ExecId>,              // Confirmed（断线后置 Unobservable：状态未知，须核实）
     pub pending_approvals: Vec<ApprovalId>,
     pub screen_summary: String,
 }
@@ -156,7 +156,8 @@ pub struct SessionBrief {                  // 现场简报：交接核心工件�
 pub enum Error {
     ApprovalDenied { reason: DeniedReason },  // Denied | ApprovalTimeout | DangerousPattern
     ControlTakenByHuman,                      // 会话控制权在人类（send_keys/close 等）
-    VoidedByHandback { brief: Box<SessionBrief> }, // 排队请求因交还作废（不自动执行），附最新简报
+    VoidedByHandback { brief: Box<SessionBrief> }, // 交接前未开始的请求因接管作废（不自动执行），附最新简报
+    ReconfirmingPending,                      // 会话处于重确认态：仅允许内置只读核实命令
     SessionNotFound, SessionClosed,
     AuthFailed, ConnectFailed,
     ExecTimeout,                              // 执行超时（与 ApprovalTimeout 区分）
@@ -193,11 +194,15 @@ pub enum Error {
   2. **停止运行中任务**（显式选项 `ControlOpts.stop_running = BestEffort`）：对运行中 exec 按 SIGINT→SIGTERM→SIGKILL 升级，`StopOutcome` 逐条呈现真实结果（`Exited(code) | Escalated | Unresponsive`），**不谎报成功**；
   3. **不承诺回滚**：已发生的修改不自动恢复——由操作记录与现场简报支持人工判断（诚实标注的能力边界）；
   4. **交还契约**（PRD FR-6/旅程 0.1）：
-     - 核心规则：**交还后先更新上下文，再重新决定后续动作；旧队列不得仅因恢复控制权而自动执行**。被挂起的已批准请求一律**作废并留痕**（阻塞中的调用返回 `VoidedByHandback { brief }`），Agent 读取最新简报后重新提交——防「旧上传覆盖人工修复」类事故；
+     - 作废口径（**接管生效时即触发**）：交接前产生、**尚未开始执行**的全部请求——**待审批、已批准待执行、排队中的传输**——一律作废并留痕；待审批卡片作废后不可再生效；已开始运行的任务遵循第 2 条停止契约。阻塞中的调用返回 `VoidedByHandback { brief }`；
+     - 核心规则：**交还后先更新上下文，再重新决定后续动作；旧请求不得仅因恢复控制权而自动执行**。Agent 读取最新简报后重新提交——防「旧上传覆盖人工修复」「相对路径命令在已变化的现场执行」类事故；
      - Agent 获知路径：阻塞调用即时返回；空闲中的 Agent 由人类回到其对话窗口发送继续指令（V0 不做服务端推送，体验限制如实告知）；
      - 简报带三层认知状态（`Epistemic`）：Agent 对 `NeedsRecheck` 对象先重读核实再操作，`Unobservable` 明确留空——GUI 与 MCP 同源。
 - **人机同时输入**：每会话输入锁——人类输入始终优先透传；Agent `send_keys` 在人类 2s 内有输入活动时延迟排队，避免字符交错。
-- **重连状态机**：本地 shell 会话随进程存活天然保留；SSH 会话断线 → `Connected → Degraded → Disconnected`，UI 显式提示；重连成功后新通道接入同一 term-core（**只保留显示历史与操作记录，不等于现场延续**——原 shell 的 cwd/env/进程随连接消失，旧画面不是现场连续的证据）；重连后进入 `Reconfirming`：简报中 SSH 侧事实降级为 `NeedsRecheck`，Agent 在重确认完成前**暂停执行**（PRD FR-1 v0.4 收窄承诺）。真正的远程会话恢复（tmux 类）单独评估，不在 V0 范围。
+- **重连状态机与重确认流程**：本地 shell 会话随进程存活天然保留；SSH 会话断线 → `Connected → Degraded → Disconnected`，UI 显式提示；重连成功后新通道接入同一 term-core（**只保留显示历史与操作记录，不等于现场延续**——原 shell 的 cwd/env 随连接消失，旧画面不是现场连续的证据）。重连后进入 `Reconfirming`：
+  - 简报中 SSH 侧的 cwd/env 事实降级为 `NeedsRecheck`；**运行中任务事实置为 `Unobservable`（状态未知：nohup/systemd 任务可能仍在运行，不得当作已结束、不得自动重试）**；
+  - **重确认机制（选定方案）**：Agent 的普通动作被拒（`ReconfirmingPending`），仅开放**客户端内置的只读核实命令白名单**（固定清单：`pwd`/`printenv`/`which`/`ps`/`systemctl status` 等，Agent 不可自选、不走出库定义）；
+  - **完成判定由核心自动执行**：白名单核实结果回填简报（SSH 侧事实恢复 `Confirmed`）后自动退出 `Reconfirming`，UI 全程显示状态；真正的远程会话恢复（tmux 类）单独评估，不在 V0 范围。
 - **Agent 输入可视化标注**：SSH 远端回显无法从字节流归因按键来源，由 **UI 层**在 send_keys 生效的时间窗内对回显区域叠加标注（近似呈现，文档如实标注）。
 
 ### 3.2 term-core（屏幕网格 + 命令块双真源）
@@ -235,6 +240,7 @@ pub enum Decision { Approve, Deny, ApproveEdited(String) }
 - **会话级授权**（send_keys）：一次审批生成 `{agent, session, expires: 接管或会话结束}` 的授权态，逐次写入留痕
 - **TTL 授权窗口**：限时免审（默认 2h）、到期自动收回、GUI 一键撤销、全部留痕——为无人值守与 P2 Playbook 预留
 - 超时（默认 120s）→ `ApprovalDenied{ApprovalTimeout}`；SPIKE-3 验证真实客户端不先超时
+- **交接联动**：接管生效时，该会话全部 `pending` 审批条目转为 `voided`（不可再批准），已批准未执行请求的执行权同时失效——与交还契约同一作废口径（PRD FR-6 v0.5）；`Reconfirming` 期间新审批请求照常受理，但执行被重确认门槛拦截
 
 ### 3.4 vault（凭据 / 主机 / Agent 身份）
 
@@ -374,7 +380,7 @@ CREATE TABLE approvals (
   agent_id TEXT REFERENCES agents(id),
   command TEXT NOT NULL, edited_command TEXT,     -- ApproveEdited 的实际执行文
   target_summary TEXT,
-  status TEXT CHECK(status IN ('pending','approved','denied','timeout','approved_edited')),
+  status TEXT CHECK(status IN ('pending','approved','denied','timeout','approved_edited','voided')),
   decided_by TEXT, decided_at INTEGER, expires_at INTEGER
 );
 CREATE INDEX idx_approvals_status ON approvals(status, expires_at);
@@ -419,7 +425,7 @@ CREATE INDEX idx_audit_agent ON audit_events(agent_id);
 | 单测 | term-core 快照/命令块判定（对照已知 VT 序列与 OSC 133 录制集，AC≥98%）、审批逐段求值表（含复合命令绕过用例）、vault 加解密、resync 序列化 | cargo test |
 | 集成 | transport-ssh 对真实 sshd（testcontainers: openssh-server）：认证矩阵（key/password/keyboard-interactive）、通道、SFTP、断线重连状态机 | testcontainers |
 | 协议 | mcp-server 工具一致性（annotations、resources、错误语义表逐条断言：批准/拒绝/超时/编辑后批准/取消/排队/**交还作废**） | rmcp 测试工具 |
-| E2E | 旅程 1/2 脚本化：Agent 模拟器 + 审批 UI 自动化 + **强制失步 resync 断言** | tauri-driver |
+| E2E | **旅程 0/0.1（交接与交还契约：含旧待审批卡片不可再生效断言）、旅程 2（重连重确认：白名单外动作被拒、未知任务不自动重试断言）**、旅程 1 脚本化：Agent 模拟器 + 审批 UI 自动化 + **强制失步 resync 断言** | tauri-driver |
 | 性能 | SPIKE-1/3 指标固化为回归（吞吐 ≥10MB/s、exec P95 <300ms、审批 <200ms、10 万条审计过滤 <500ms） | criterion |
 
 ## 10. 里程碑映射
@@ -436,3 +442,4 @@ CREATE INDEX idx_audit_agent ON audit_events(agent_id);
 | v0.2 | 2026-09-27 | 评审修订：SessionApi 补齐 host/identity CRUD、resize、审批读取/订阅、审计查询导出、控制权、cancel、brief（P0-1）；exec 双通路语义对照表 + 镜像回放桥 + 本地 fresh 语义 + 串行队列（P0-2）；删除 UDS，shim 直连 HTTP + 固定端口 + per-client Token 生命周期（P0-3）；term-core 增命令块索引、MCP 无损环形缓冲、resync 协议；审批增解析器逐段求值、TTL 窗口、会话级授权、ApprovalMode 人类预配置；错误模型封闭化、Timeout 拆分；DDL 补索引/外键/agents/policies/edited_command/迁移策略；威胁模型口径修正（完整性检测）；接口冻结限定 v1 子集 |
 | v0.3 | 2026-09-27 | 专家评审修订（对应 PRD v0.3）：`set_control` 扩为接管契约（冻结/尽力停止/不承诺回滚/交还）+ `TakeoverReport`/`SessionBrief` 类型；exec Shell 模式升为验证版默认（试点主机 opt-in shell 集成，拒绝注入降级 Fresh）；现场简报定位为交接核心工件；里程碑改为 V0 原型+PV gate / V1 验证版 / V2 完整客户端 |
 | v0.4 | 2026-09-27 | 专家复核修订（对应 PRD v0.4）：ExecMode 默认值修正为 Shell（P2 同步）；SessionBrief 引入 `Epistemic` 三层认知状态与 `BriefFact`（简报承诺与可观察状态对齐）；Error 增 `VoidedByHandback`；接管契约第 4 条扩为**交还契约**（旧队列作废不自动执行、Agent 获知路径、V0 不做推送）；重连状态机明确「保留显示与记录 ≠ 现场延续」，新增 `Reconfirming` 态，重确认前 Agent 暂停 |
+| v0.5 | 2026-09-27 | 专家第三轮评审修订（对应 PRD v0.5）：作废口径统一为「接管生效时，交接前未开始的全部请求」（含待审批，卡片不可再生效）；重确认流程闭合——选定「内置只读核实命令白名单 + 核心自动判定」方案，Error 增 `ReconfirmingPending`；运行中任务断线后置 Unobservable（状态未知，不得当作已结束或自动重试）；approvals.status 增 `voided`；审批交接联动规则；E2E 补旅程 0/0.1/2 断言 |
