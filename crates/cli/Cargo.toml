@@ -1,0 +1,33 @@
+[package]
+name = "tinyssh-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tinyssh"
+path = "src/main.rs"
+
+[dependencies]
+session-api = { workspace = true }
+core-session = { workspace = true }
+tinyssh-vault = { workspace = true }
+tinyssh-audit = { workspace = true }
+tinyssh-approval = { workspace = true }
+tinyssh-mcp-server = { workspace = true }
+axum = { workspace = true }
+rmcp = { workspace = true }
+tinyssh-testbed = { workspace = true }
+term-core = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+dirs = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

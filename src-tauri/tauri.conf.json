@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TinySSH",
+  "version": "0.1.0",
+  "identifier": "com.tinyssh.app",
+  "build": {
+    "beforeDevCommand": "npm run dev --prefix ../ui",
+    "devUrl": "http://localhost:5183",
+    "beforeBuildCommand": "npm run build --prefix ../ui",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "TinySSH — 人机协同 SSH",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.png"]
+  }
+}

@@ -1,5 +1,7 @@
 # TinySSH
 
+> **状态（2026-09-27）**：V0 thin-slice MVP 已实现并通过工程验收——首个可运行验收场景（旧请求待审批→人接管→交还→旧请求失效→Agent 核实后重新提交）在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过；SPIKE-1/2/3 门限全过（IPC 1462MB/s、渲染与 OpenSSH 逐行一致、exec P95=1.8ms）。详见 [验收报告](docs/acceptance/v0-mvp-acceptance.md)。
+
 > 人机协同的 SSH 客户端：工程师与 AI Agent 在同一套终端会话上协作——Agent 操作，人类旁观、审批、随时接管。
 
 ## 文档

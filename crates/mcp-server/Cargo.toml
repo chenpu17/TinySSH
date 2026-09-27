@@ -1,0 +1,29 @@
+[package]
+name = "tinyssh-mcp-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+core-session = { workspace = true }
+tinyssh-vault = { workspace = true }
+schemars = "1"
+tokio-util = "0.7"
+session-api = { workspace = true }
+rmcp = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+http = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tinyssh-testbed = { workspace = true }
+core-session = { workspace = true }

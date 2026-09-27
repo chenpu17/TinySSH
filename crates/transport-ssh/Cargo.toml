@@ -1,0 +1,23 @@
+[package]
+name = "transport-ssh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+session-api = { workspace = true }
+async-trait = { workspace = true }
+term-core = { workspace = true }
+tokio = { workspace = true }
+russh = { workspace = true }
+russh-sftp = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tinyssh-testbed = { workspace = true }
