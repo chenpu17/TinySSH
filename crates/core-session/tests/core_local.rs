@@ -255,6 +255,40 @@ async fn takeover_voids_pending_approval_and_card_cannot_revive() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn send_keys_ctrl_c_interrupts_foreground_process() {
+    // 终端基础能力：Ctrl+C（0x03）必须原样直达 PTY，SIGINT 打断前台进程组。
+    // 若中断失效，sleep 仍占住 shell 集成的 open block，后续 exec 会以 ExecTimeout 失败。
+    let m = manager().await;
+    let sid = m
+        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+
+    // 等待 shell 集成注入完成、提示符就绪
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // 前台跑一个长任务（等价 top 占住终端）
+    m.send_keys(&human(), sid.clone(), "sleep 60\r").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Ctrl+C
+    m.send_keys(&human(), sid.clone(), "\u{3}").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // shell 存活且块已闭合：echo 立即执行并返回（中断失败则此处 ExecTimeout）
+    let r = m
+        .exec(
+            &human(),
+            sid.clone(),
+            "echo alive_after_interrupt",
+            ExecOpts { timeout: Some(Duration::from_secs(15)), ..Default::default() },
+        )
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("alive_after_interrupt"), "stdout={}", r.stdout);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn queue_busy_backpressure() {
     let m = manager().await;
     let sid = m

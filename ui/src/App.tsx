@@ -101,8 +101,6 @@ export default function App() {
   const xtermRef = useRef<Terminal | null>(null);
   const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
-  const [liveCount, setLiveCount] = useState(0);        // 探针：Channel 实时收包数
-  const liveCountRef = useRef(0);
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -146,8 +144,9 @@ export default function App() {
     return () => clearInterval(t);
   }, [refreshLists, refreshBrief]);
 
-  // 审批事件推送
+  // 审批事件推送（仅 Tauri 环境；纯浏览器 demo 模式无事件通道）
   useEffect(() => {
+    if (!inTauri) return;
     let un: (() => void) | undefined;
     listen("approval-event", () => refreshLists()).then((f) => (un = f));
     return () => un?.();
@@ -158,17 +157,51 @@ export default function App() {
     t.writeln("TinySSH — 人机协同 SSH 工作台");
     t.writeln("");
     t.writeln("  1. 左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接；");
-    t.writeln("  2. 连接成功后点击这块黑色终端区域，直接打字就是远端 shell；");
-    t.writeln("  3. 下方命令框逐条执行命令；右侧可查看审批、现场简报与操作时间线。");
+    t.writeln("  2. 连接后点击黑色终端区域直接打字：Ctrl+C 中断程序、↑↓ 翻历史、Tab 补全；");
+    t.writeln("  3. ⌘C/⌘V 复制粘贴；下方命令框可逐条执行，执行后焦点自动回到终端。");
     t.writeln("");
   }, []);
 
   // xterm 初始化：仅一次。onData 一律走 sidRef，杜绝 stale closure。
   useEffect(() => {
     if (!termRef.current || xtermRef.current) return;
-    const term = new Terminal({ fontSize: 13, cursorBlink: true, theme: { background: "#10141a" } });
+    const term = new Terminal({ fontSize: 13, cursorBlink: true, scrollback: 5000, theme: { background: "#10141a" } });
     term.open(termRef.current);
     writeWelcome(term);
+    // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
+    // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== "keydown") return true;
+      if (!ev.metaKey) return true;
+      const key = ev.key.toLowerCase();
+      if (key === "c") {
+        if (navigator.clipboard && term.hasSelection()) {
+          navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+          ev.preventDefault();
+          return false;
+        }
+        return true; // 无剪贴板 API 或无选中 → xterm 原生 copy 事件
+      }
+      if (key === "v") {
+        if (navigator.clipboard?.readText) {
+          navigator.clipboard.readText()
+            .then((t) => { if (t && sidRef.current) term.paste(t); })
+            .catch(() => {});
+          ev.preventDefault();
+          return false;
+        }
+        return true; // 走 WebKit 原生粘贴（paste 事件由 xterm 接管）
+      }
+      if (key === "a") {
+        term.selectAll();
+        ev.preventDefault();
+        return false;
+      }
+      // 其余 ⌘ 快捷键（⌘R 刷新等）不得进入终端
+      ev.preventDefault();
+      ev.stopPropagation();
+      return false;
+    });
     term.onData((d) => {
       const s = sidRef.current;
       if (!s) return;
@@ -176,6 +209,9 @@ export default function App() {
         term.write(`\r\n\x1b[31m✕ ${String(e)}\x1b[0m\r\n`);
       });
     });
+    // 终端区域（含内容下方空白）点击即聚焦，保证打字与控制键直达会话
+    const wrap = termRef.current.parentElement;
+    wrap?.addEventListener("click", () => term.focus());
     xtermRef.current = term;
   }, [writeWelcome]);
 
@@ -217,8 +253,6 @@ export default function App() {
       const decoder = new TextDecoder();
       const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
       channel.onmessage = (msg) => {
-        liveCountRef.current += 1;
-        setLiveCount(liveCountRef.current);
         if (msg instanceof ArrayBuffer || msg instanceof Uint8Array) {
           const u8 = msg instanceof Uint8Array ? msg : new Uint8Array(msg);
           term.write(decoder.decode(u8, { stream: true }));
@@ -255,6 +289,9 @@ export default function App() {
     setConnError(null);
     try {
       const newSid = await invoke<string>("create_session", { hostId: host.id });
+      // 以当前终端尺寸对齐 PTY（后端默认 120x32，避免首屏渲染再跳变）
+      const t = xtermRef.current;
+      if (t) await invoke("resize", { sid: newSid, cols: t.cols, rows: t.rows }).catch(() => {});
       await refreshLists();
       await attachSession(newSid);
     } catch (e) {
@@ -397,7 +434,6 @@ export default function App() {
               <span className="dim mono"> {current.host_name} · {sid!.slice(0, 12)} · </span>
             )}
             {current && <span className={stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>}
-            {sid && <span className="dim mono"> · 流:{liveCount}</span>}
           </span>
           <span style={{ flex: 1 }} />
           {sid && (
@@ -429,13 +465,25 @@ export default function App() {
           <input
             placeholder={
               current
-                ? `在 ${current.host_name} 上执行命令（人类身份，直接执行）——回车发送`
+                ? `在 ${current.host_name} 上执行命令——回车执行，Ctrl+C 中断终端里的前台程序`
                 : "先在左侧连接一台主机，这里才能执行命令"
             }
             disabled={!sid}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={async (e) => {
+              if (e.key.toLowerCase() === "c" && e.ctrlKey) {
+                e.preventDefault();
+                if (!input) {
+                  // 空输入的 Ctrl+C = 中断终端里的前台程序（top/vim…），并回到终端
+                  const s = sidRef.current;
+                  if (s) await invoke("send_keys", { sid: s, keys: "\u0003" }).catch(() => {});
+                  xtermRef.current?.focus();
+                } else {
+                  setInput("");
+                }
+                return;
+              }
               if (e.key === "Enter" && input.trim() && sid) {
                 const cmd = input;
                 setInput("");
@@ -445,6 +493,8 @@ export default function App() {
                 } catch (err) {
                   xtermRef.current?.write(`\r\n\x1b[31m✕ ${String(err)}\x1b[0m\r\n`);
                 }
+                // 执行后焦点回终端：Ctrl+C、↑↓ 等控制键直接可用
+                xtermRef.current?.focus();
               }
             }}
           />

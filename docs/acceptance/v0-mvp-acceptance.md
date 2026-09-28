@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.1 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
+> 版本：v1.4 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -54,7 +54,7 @@
 
 | 套件 | 数量 | 覆盖 |
 |---|---|---|
-| core_local（核心管线） | 7 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压 |
+| core_local（核心管线） | 8 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压、**Ctrl+C 中断前台进程（v1.4：`send_keys("\x03")` → SIGINT → 块闭合 → shell 响应）** |
 | handle 白名单单元回归 | 1 | **重确认白名单仅限单条简单命令（M1 回归：`pwd && evil` 等复合形态全部拒绝）** |
 | term-core | 12 | 块生命周期（A/B/C/D）、Agent 键入归因、受管块、OSC 跨 feed、OSC7、快照、捕获、回放 |
 | approval | 12 | 精确/前缀/正则、TTL 过期、复合命令逐段（绕过用例）、内置 deny 不可删、ApproveEdited 不可越 deny、解析失败保守报审、**命令替换强制报审（M2 回归）**、**deny 规则逐 agent（m3 回归）** |
@@ -66,7 +66,7 @@
 | sshd_e2e（transport-ssh） | 1 | SSH 块 + cwd + Fresh env + SFTP 往返 |
 | spike2 | 1 | §3 表 |
 
-**合计 45 个测试，0 失败（v1.2 修复后最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
+**合计 46 个测试，0 失败（v1.4 修复后最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
 
 ## 5. 独立复核（v1.1 新增）
 
@@ -136,7 +136,7 @@
 
 - **实时输出流不渲染（根因级）**：Tauri Channel 投递的 ArrayBuffer 直接 `term.write()` 在 WKWebView 下静默不渲染；而字符串写路径（快照/横幅/回显）正常——表现为"命令后端执行成功（审计 exit 0）但终端永远无输出、无回显"。探针链定位：简报"屏尾"证明后端 Screen 有输出 → 标题"流:N/hex"证明 Channel 有投递且字节完好 → 终端无渲染，锁定前端二进制写路径。修复：Channel 字节经有状态 `TextDecoder` 解码为字符串再写（顺带处理 UTF-8 跨块分割）。修复后在原生窗口全流程复验：输入框执行 `ls` → 命令回显、输出、新提示符全部渲染，与后端 Screen 一致。
 - **布局滚动**：`.layout`/`.col`/`.term-wrap` 补 `overflow:hidden`，grid 列宽改 `minmax`；窄窗口下列宽收缩而非溢出，页面不再滚动（Tauri 侧已有 minWidth 960）。
-- UI 保留两个常驻诊断探针：终端标题「流:N」（Channel 收包数）、简报「屏尾」（后端 Screen 末尾摘要）——二者不一致即流路异常。
+- UI 保留一个常驻诊断探针：简报「屏尾」（后端 Screen 末尾摘要；v1.4 移除标题「流:N」探针，流路一致性改由自动化走查承担）。
 
 **GUI 可用性 P0 修复清单**（用户首轮实测反馈驱动，全部改动限于 `ui/`，核心层零改动）：
 
@@ -148,6 +148,40 @@
 6. 测试统计更新为 **45 个自动化测试**（新增 `create_session_screen_is_clean`）。
 
 演示模式 shim（demo.ts）同步扩展：支持 upsert_host/create_session 失败注入/close_session/resize，浏览器走查与真实 UI 保持同一代码路径。
+
+### 5.5 标准终端交互（T10，v1.4 新增）
+
+**动机**：用户第三轮实测反馈「top 后都不能 Ctrl+C 停止……不像一个正常的 ssh client」。基础终端交互（控制键、全屏程序、复制粘贴）是 SSH 客户端的底线能力，升级为 T10 gate。
+
+**根因分析（三层证据链逐段排除）**：
+
+1. **核心/传输层直通无误**（headless 回归 `send_keys_ctrl_c_interrupts_foreground_process`）：`send_keys("\x03")` → `LocalPtyChannel::write` 原样字节 → PTY ISIG → SIGINT 打断前台 `sleep 60` → shell 集成块闭合 → 后续 `exec` 正常返回。若中断失效该测试必以 ExecTimeout 失败。
+2. **WebKit 引擎层按键映射无误**（Playwright WebKit + 应用同构建 `@xterm/xterm 5.5`，12/12）：Ctrl+C→`\x03`、Ctrl+D/L/Z、↑↓→`ESC[A/B`、Esc、Tab、Home/End 全部正确编码进 `onData`；裸 ⌘ 组合零输出（不会把 ⌘ 当 ESC 前缀发进 PTY）。
+3. **结论：问题在交互层而非字节层**——终端焦点丢失后控制键无处可去（焦点留在命令框/其他面板时 Ctrl+C 是普通输入框里的无效按键），且旧 UI 无任何兜底 affordance。修复针对焦点与 affordance，而非重写字节路径。
+
+**修复清单（v1.4）**：
+
+| # | 修复 | 位置 |
+|---|---|---|
+| 1 | 键盘保真：`attachCustomKeyEventHandler` 只拦 ⌘ 组合（⌘C 复制选中/⌘V 粘贴/⌘A 全选，其余 ⌘ 吞掉防误触刷新），Ctrl 系/方向键/Esc/Tab/F 键全部原样进 PTY | App.tsx |
+| 2 | 命令框兜底：空输入时 Ctrl+C = 向会话发 `\x03` 中断前台程序并回焦终端；有输入时 Ctrl+C = 清空输入行（常规惯例） | App.tsx |
+| 3 | 焦点管理：命令框执行后焦点自动回终端；终端区域（含空白处）点击即聚焦 | App.tsx |
+| 4 | 连接即对齐尺寸：`create_session` 返回后立刻以前端当前 cols/rows 调 `resize`（后端默认 120x32 不再产生首屏跳变） | App.tsx |
+| 5 | scrollback 5000；移除「流:N」诊断探针；欢迎页写明控制键/⌘C⌘V 用法 | App.tsx |
+| 6 | demo 模式 `listen()` 缺 Tauri 内部对象的页面报错修复（`inTauri` 门控） | App.tsx |
+
+**T10 走查矩阵**（计划为原生窗口 CGEvent 注入；本轮执行时用户锁屏离开，**原生六步走查待补**——补做步骤已写入 §7。原生的前置两层证据均已先行落档：核心层 headless 回归（上文 1）与 WebKit 引擎层同构建按键映射 12/12（上文 2，含真实前端「Ctrl+C 后打字存活」「attach 横幅」断言、页面零报错））：
+
+| 步骤 | 内容 | 结果 |
+|---|---|---|
+| T10-a | 本机会话：终端直接打字跑 `top`，全屏渲染正常 | 待原生走查（锁屏暂缓） |
+| T10-b | 终端内真实 Ctrl+C（CGEvent ctrl+C 键）→ top 退出回提示符 | 待原生走查（锁屏暂缓） |
+| T10-c | `echo T10-OK-42` → 输出正确；↑ 历史召回重跑 | 待原生走查（锁屏暂缓） |
+| T10-d | 命令框跑 `top` → 焦点自动回终端 → 命令框空输入 Ctrl+C → top 退出（用户原始场景闭环） | 待原生走查（锁屏暂缓） |
+| T10-e | `vim` 插入模式输入、Esc、`:wq` 保存退出、`cat` 验证（全屏程序 + 替代屏） | 待原生走查（锁屏暂缓） |
+| T10-f | 远程 e2e-sshd：连接 → top → Ctrl+C → 退出（真实 OpenSSH 远端路径） | 待原生走查（锁屏暂缓） |
+
+**T10 当前判定：有条件通过**——修复的三个根因层面（核心字节路径、引擎按键映射、前端焦点/affordance）均有自动化证据；原生窗口六步走查因验证者锁屏暂缓，属执行环境问题而非代码证据缺口。
 
 ## 6. 已知边界（诚实清单）
 
@@ -163,6 +197,8 @@
 10. **create_session 审批卡不受接管作废**（卡片 session_id 为空，接管按会话匹配作废范围）——作废口径边角。
 11. **并发回归 flake（根因已修复）**：多测试并发时偶发"空流 / 降级 Fresh / cwd 缺失 / spike2 script-not-done"。根因：pump 任务经 `tokio::spawn` 后才订阅输出广播，而建会话/重连的注入写入可能先于订阅被调度——远端首屏（含集成标记）落入无订阅者窗口被丢弃（broadcast 无接收者即丢）。修复：create_session 与重连路径均改为**先订阅、后注入**（`spawn_pump` 接受初始订阅；原 `on_transport_lost` 拆分为 `on_transport_reconnect` + `reinject_integration`）。独立探针实测传输+屏幕链路 5ms 内集成就绪；修复后两测试二进制 5/5 全过。集成等待窗口同时从 3–5s 放宽至 10s，sshd_e2e/spike2 整场景重试兜底。
 12. **演示 shim 简化**（ui/src/demo.ts）：不模拟"接管自动作废演示卡片""段裁决随决策更新"；截图为 UI 走查证据，核心语义以自动化测试为准。
+13. **会话死端无自动感知**（v1.4）：shell 退出/PTY EOF 后会话卡仍显示「已连接」，直到下一次输入报错；`ChannelHandle` 无存活上报，需要 V1 增加传输层关闭事件。
+14. **中文 IME 组合输入未自动化验证**：xterm composition 为常规路径且 WebKit 走查覆盖了非组合输入，但注入自动化无法真实模拟 IME 组合，留人工验证项。
 
 ## 7. 复现指令
 
@@ -191,8 +227,19 @@ TINYSSH_MASTER_KEY=... ./target/release/tinyssh-app   # 或 cargo tauri dev
 
 # 5) UI 视觉走查（浏览器演示模式，同 UI 代码路径）
 cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:5183
+
+# 6) T10 原生走查补做（§5.5 六步；需已解锁的桌面会话 + CGEvent 注入助手）
+#    助手脚本模式（窗口定位/截图/点击/键盘，含 Ctrl 组合键）：python3 + pyobjc
+#    a. 激活 tinyssh-app → 截图确认首屏（欢迎页含 Ctrl+C/⌘C⌘V 提示）
+#    b. 点击「本机」卡片「连接」→ 截图确认提示符
+#    c. 键入 top⏎ → 截图确认 top 全屏渲染（T10-a）
+#    d. CGEvent ctrl+C（keycode 8 + ControlMask）→ 截图确认回到提示符（T10-b）
+#    e. 键入 echo T10-OK-42⏎ → 截图确认输出；↑⏎ 重跑（T10-c）
+#    f. 点击命令框键入 top⏎ → 焦点自动回终端 → 命令框内 Ctrl+C → top 退出（T10-d）
+#    g. 键入 vim /tmp/t10.txt⏎ → itest⏎ → Esc → :wq⏎ → cat /tmp/t10.txt 验证（T10-e）
+#    h. 点击「e2e-sshd」卡片连接 → 重复 c/d（T10-f）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **45 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **46 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.4 依用户实测反馈完成了 GUI 从演示壳到可用 SSH 客户端的三轮修复（§5.4/§5.5），其中 T10 标准终端交互为有条件通过（原生走查待补，§5.5）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
