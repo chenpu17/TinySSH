@@ -197,6 +197,19 @@ export default function App() {
     const t = setInterval(() => {
       refreshLists();
       if (sidRef.current) refreshBrief(sidRef.current);
+      // 终端尺寸对账：docker ps 等按 PTY 宽度排版，PTY 与 xterm 失配时表格折行错乱。
+      // xterm（用户所见）为权威单向校正后端——任何一环丢掉的 resize 在 3s 内自动收敛。
+      const term = xtermRef.current;
+      const s = sidRef.current;
+      if (term && s) {
+        invoke<{ cols: number; rows: number }>("read_screen", { sid: s })
+          .then((snap) => {
+            if (snap.cols !== term.cols || snap.rows !== term.rows) {
+              void invoke("resize", { sid: s, cols: term.cols, rows: term.rows }).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
     }, 3000);
     return () => clearInterval(t);
   }, [refreshLists, refreshBrief]);
@@ -335,8 +348,16 @@ export default function App() {
     const box = termRef.current.parentElement;
     if (!box) return;
     const dims = (term as unknown as { dimensions?: { css?: { cell?: { width?: number; height?: number } } } }).dimensions;
-    const cw = dims?.css?.cell?.width ?? 9;
-    const ch = dims?.css?.cell?.height ?? 16;
+    const cw = dims?.css?.cell?.width;
+    const ch = dims?.css?.cell?.height;
+    if (!cw || !ch) {
+      // 渲染器首帧未就绪：9px 兜底会把列数算错（PTY 宽度随之错位，
+      // docker ps 等按宽度排版的输出会折行错乱）——等一帧重测，最多 5 次
+      const t = term as unknown as { __fitRetries?: number };
+      t.__fitRetries = (t.__fitRetries ?? 0) + 1;
+      if (t.__fitRetries <= 5) setTimeout(() => void fitTerminal(), 120);
+      return;
+    }
     const cols = Math.max(20, Math.min(400, Math.floor(box.clientWidth / cw)));
     const rows = Math.max(6, Math.min(200, Math.floor(box.clientHeight / ch)));
     if (term.cols !== cols || term.rows !== rows) {
@@ -399,6 +420,8 @@ export default function App() {
     entry.term.focus();
     void invoke("note_terminal", { sid: newSid, focused: true }).catch(() => {});
     fitTerminal();
+    // 布局与字体稳定后再校准一次（首次 fit 可能撞上渲染器尺寸未就绪）
+    setTimeout(() => void fitTerminal(), 350);
     refreshBrief(newSid);
   }, [makeTerm, fitTerminal, refreshBrief]);
 
