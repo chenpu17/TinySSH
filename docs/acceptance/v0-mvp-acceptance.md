@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.7 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
+> 版本：v1.8 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -54,7 +54,7 @@
 
 | 套件 | 数量 | 覆盖 |
 |---|---|---|
-| core_local（核心管线） | 9 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压、**Ctrl+C 中断前台进程（v1.4：`send_keys("\x03")` → SIGINT → 块闭合 → shell 响应）**、**本地会话一键重连全链路（v1.7：死端→重连→重确认→核实恢复 + 未断开防呆）** |
+| core_local（核心管线） | 10 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压、**Ctrl+C 中断前台进程（v1.4：`send_keys("\x03")` → SIGINT → 块闭合 → shell 响应）**、**本地会话一键重连全链路（v1.7：死端→重连→重确认→核实恢复 + 未断开防呆）**、**meta 序列不进命令文本（v1.8：`\x1b` 前缀键入块不登记，简报无 'b' 残留）** |
 | handle 白名单单元回归 | 1 | **重确认白名单仅限单条简单命令（M1 回归：`pwd && evil` 等复合形态全部拒绝）** |
 | term-core | 12 | 块生命周期（A/B/C/D）、Agent 键入归因、受管块、OSC 跨 feed、OSC7、快照、捕获、回放 |
 | approval | 12 | 精确/前缀/正则、TTL 过期、复合命令逐段（绕过用例）、内置 deny 不可删、ApproveEdited 不可越 deny、解析失败保守报审、**命令替换强制报审（M2 回归）**、**deny 规则逐 agent（m3 回归）** |
@@ -67,7 +67,7 @@
 | sshd_e2e（transport-ssh） | 1 | SSH 块 + cwd + Fresh env + SFTP 往返 |
 | spike2 | 1 | §3 表 |
 
-**合计 50 个测试，0 失败（v1.7 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
+**合计 51 个测试，0 失败（v1.8 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
 
 ## 5. 独立复核（v1.1 新增）
 
@@ -278,6 +278,30 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 
 **v1.7 补充（用户实测反馈：终端输出表格排版错乱）**：用户发现 `docker ps` 输出折行错乱（列名/数据在词中间断行）。探针定位（`stty size` + 170 字符单线测宽 + `$COLUMNS` 对照）：resize 链路（窗口 → ResizeObserver → fitTerminal → PTY）本身通畅，失配属**某些时序下丢一次 resize 且无对账**（attach 首测撞上渲染器尺寸未就绪时用 9px 兜底值算错列数等）。修复三件：① fitTerminal 渲染器尺寸未就绪时等一帧重测（上限 5 次）替换静默兜底；② attach 后 350ms 二次校准（布局/字体稳定后）；③ **3s 轮询终端尺寸对账**——以 xterm（用户所见）为权威单向校正后端，任何一环丢掉的 resize 在 3s 内自动收敛。实测两档窗口宽度（1280→99 列、1512→106 列）PTY 均跟随，`$COLUMNS` 与 stty 一致。
 
+### 5.9 Alt/Option 键支持（T14，v1.8 新增）
+
+**动机**：UX 路线图（§6-18）第②项。macOS 终端惯例 Option=Meta（readline 词跳转、tmux M-键绑定），但此前 ⌥字母 被 WKWebView 文本输入系统转成特殊字符（⌥b=∫）直插终端，⌥方向键 发送修饰参数形式（`\x1b[1;3D`）readline 不识别——词跳转/删词/tmux meta 键全部不可用。
+
+**实现**（UI 捕获层 + 一处后端过滤）：
+
+| 层 | 改动 | 说明 |
+|---|---|---|
+| `ui/src/App.tsx` | window 捕获层新增 Option 分支（与既有 Ctrl 接管同层同模式）+ `altMetaSequence` 键位解码 | 拦截层选择有实证：先实现于 xterm `attachCustomKeyEventHandler`，⌥← 生效但 **⌥b/⌥f 失效**（⌥字母 进 WKWebView 文本输入系统，xterm 层 keydown 收不到，实测插入 ∫）——Ctrl 接管当初选 window 捕获层正是为此；挪层后全部生效。解码按物理键位 `ev.code`（⌥字母 的 `ev.key` 是特殊字符不能当目标）：⌥←/⌥→ → `\x1bb`/`\x1bf`（readline 词跳转）、⌥⌫ → `\x17`（werase 删词）、⌥⌦ → `\x1bd`、⌥↑/⌥↓ → `\x1b[1;3A/B`（tmux）、⌥字母/数字/常用符号 → ESC 前缀通用 meta（M-b/M-f/M-1-9…）；⌘+⌥、Ctrl+⌥ 不接管归原分支 |
+| `core-session` | `send_keys` Human 分支：含 `\x1b` 的键入块只写 PTY、不做键入登记 | meta/导航序列不是命令文本——此前 `\x1bb` 裸 ESC 后的 'b' 残留进简报（实测 `$ echo … dddbZ`）；回归测试 `human_meta_sequence_not_registered_as_command_text` 固化 |
+
+**T14 走查矩阵**（原生窗口；本地 = zsh PTY，远程 = e2e-sshd 真实 OpenSSH bash；CGEvent 注入 alt 修饰位；判据 = 补字符落点，不依赖光标闪烁相位）：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T14-a | 本机：`echo aaa bbb ccc ddd` → ⌥← ⌥← → Z ⏎ | 执行行 `echo aaa bbb Zccc ddd`（Z 落 ccc 词首，两次各回一词） | [t14_local_wordjump.png](screenshots/t14_local_wordjump.png) |
+| T14-b | 本机：`echo kkk lll mmm` → ⌥b ⌥f → Z ⏎ | `kkk lll mmmZ`（回一词前进到词尾，通用 meta 生效） | [t14_local_meta_keys.png](screenshots/t14_local_meta_keys.png) |
+| T14-c | 本机：`echo eee fff ggg` → ⌥⌫ → Z ⏎ | `eee fff Z`（werase 删一词） | [t14_local_werase.png](screenshots/t14_local_werase.png) |
+| T14-d | Ctrl+C 回归：`sleep 30` ⏎ → Ctrl+C | `^C` 即回提示符（拦截层改动无回归） | [t14_local_ctrlc_regression.png](screenshots/t14_local_ctrlc_regression.png) |
+| T14-e | e2e-sshd：`echo mmm nnn ooo` → ⌥← ⌥← → W ⏎ | `mmm Wnnn ooo`（SSH bash 词跳转端到端） | [t14_remote_wordjump.png](screenshots/t14_remote_wordjump.png) |
+| T14-f | 简报命令文本：同款 ⌥← 操作 | `$ echo aaa bbb ccc dddZ · 成功`（'b' 杂讯消失；修复前同操作显示 `dddbZ`） | [t14_local_wordjump.png](screenshots/t14_local_wordjump.png) |
+
+**T14 判定：通过**（51/51 回归全绿 + 走查矩阵全过）。如实披露：① Option-as-Meta 生效后 macOS 特殊字符（é/∫ 等）无法再经 ⌥字母 键入——与 Terminal.app「Use Option as Meta key」同语义，属终端惯例取舍；② 中文 IME 激活时 ⌥字母 行为未测（注入不经过 IME 组合，同 §6-14 边界）；③ tmux M-键未实测（容器无 tmux），通用 meta 转发由 ⌥b/⌥f 证实；④ 走查工具层附带发现：长跑多轮 HMR 的 app 实例 CGEvent 点击会失灵（键盘注入不受影响）——冷启动实例正常，属环境问题非产品缺陷。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -297,7 +321,7 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **鼠标上报未实测**（v1.5）：htop/tmux/vim（mouse=a）的点击与滚轮依赖 xterm mouse-tracking 转义序列走 `onData`，链路设计上成立，但走查期合成鼠标事件对 WKWebView 几乎不送达（走查工具层限制），未能取得原生证据，列为待真人验证项。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.7 完成①）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② Alt/Option 键（readline/tmux 词跳转）③ 鼠标上报实测（§6-16）④ ⌘F 搜索 / OSC8 链接 / 窗口标题 ⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ② Alt/Option 键。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.8 完成①②）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ 鼠标上报实测（§6-16）④ ⌘F 搜索 / OSC8 链接 / 窗口标题 ⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ③ 鼠标上报实测（待真人）。
 
 ## 7. 复现指令
 
@@ -360,8 +384,17 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    e. docker start tinyssh-e2e → 点远程卡「重连」→ 「重确认（受限）」→
 #       echo T13-REMOTE-RECONNECT-OK && hostname ⏎ → 输出正常（T13-e）
 #    f. 右栏简报控制权行 = 最新变迁「重连成功，进入重确认」；操作记录两条「我 重连会话」（T13-f）
+
+# 10) T14 Option/Alt 键走查（§5.9 六步；已于 v1.8 执行通过）
+#    判据 = 补字符落点（词跳转后补一个字符再回车，看输出里字符落在哪个词）
+#    a. 本机：echo aaa bbb ccc ddd → ⌥← ⌥← → Z ⏎ → 输出 aaa bbb Zccc ddd（T14-a）
+#    b. 本机：echo kkk lll mmm → ⌥b ⌥f → Z ⏎ → 输出 kkk lll mmmZ（T14-b）
+#    c. 本机：echo eee fff ggg → ⌥⌫ → Z ⏎ → 输出 eee fff Z（T14-c）
+#    d. sleep 30 ⏎ → Ctrl+C → ^C 回提示符（T14-d 回归）
+#    e. 接入 e2e-sshd → echo mmm nnn ooo → ⌥← ⌥← → W ⏎ → 输出 mmm Wnnn ooo（T14-e）
+#    f. 右栏简报命令文本无 meta 残留（'b' 杂讯消失，T14-f）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **50 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.7 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭），并按使用体验重排 UX 路线图（§6-18，①已完成，下一项 ② Alt/Option 键）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **51 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复），并按使用体验重排 UX 路线图（§6-18，①②已完成，下一项 ③ 鼠标上报实测——待真人验证）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

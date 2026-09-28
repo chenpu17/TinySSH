@@ -288,6 +288,42 @@ async fn send_keys_ctrl_c_interrupts_foreground_process() {
     assert!(r.stdout.contains("alive_after_interrupt"), "stdout={}", r.stdout);
 }
 
+/// T14：⌥← 等 meta/导航序列（ESC 前缀）不是命令文本——登记的话裸 ESC 后的
+/// 字母会残留进简报命令行（"…ddd" + \x1bb + Z 显示成 "dddbZ"）。
+/// send_keys 对含 ESC 的键入块只写 PTY、不做键入登记。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn human_meta_sequence_not_registered_as_command_text() {
+    let m = manager().await;
+    let sid = m
+        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // 模拟 ⌥← 词跳转键序：键入命令 → \x1bb（backward-word）→ 补一个字符 → 回车
+    m.send_keys(&human(), sid.clone(), "echo T14META").await.unwrap();
+    m.send_keys(&human(), sid.clone(), "\u{1b}b").await.unwrap();
+    m.send_keys(&human(), sid.clone(), "Z").await.unwrap();
+    m.send_keys(&human(), sid.clone(), "\r").await.unwrap();
+
+    // 等命令块闭合进入简报（命令（human）事实）
+    let mut detail = String::new();
+    for _ in 0..100 {
+        let brief = m.get_session_brief(&human(), sid.clone()).await.unwrap();
+        if let Some(f) = brief
+            .facts
+            .iter()
+            .find(|f| f.subject.starts_with("命令") && f.detail.contains("T14META"))
+        {
+            detail = f.detail.clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(detail.contains("echo T14METAZ"), "键入文本应完整登记：{detail}");
+    assert!(!detail.contains("T14METAbZ"), "meta 序列被当成命令文本（b 残留）：{detail}");
+}
+
 async fn wait_state(m: &Arc<SessionManager>, sid: &str, want: SessionState, secs: u64) -> bool {
     for _ in 0..(secs * 20) {
         let ss = m.list_sessions(&human()).await.unwrap();

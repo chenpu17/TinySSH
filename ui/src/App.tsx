@@ -149,6 +149,37 @@ const ctrlCharOf = (key: string): string | null => {
   return map[key] ?? null;
 };
 
+// Option/Alt → Meta 序列（ESC 前缀）。返回 null 表示不接管（交给 xterm 原生处理）。
+// 方向键发 \x1bb/\x1bf 而非修饰参数形式（\x1b[1;3D）——readline/zsh 的词跳转直接可用。
+// 用物理键位 ev.code 解码：macOS 下 ⌥字母 的 ev.key 是特殊字符（⌥b=∫），不能当 meta 目标。
+const altMetaSequence = (code: string | undefined, shift: boolean): string | null => {
+  switch (code) {
+    case "ArrowLeft": return "\x1bb";    // backward-word（⌥← 词跳转）
+    case "ArrowRight": return "\x1bf";   // forward-word（⌥→ 词跳转）
+    case "ArrowUp": return "\x1b[1;3A";  // tmux M-Up
+    case "ArrowDown": return "\x1b[1;3B";
+    case "Backspace": return "\x17";     // werase = backward-kill-word
+    case "Delete": return "\x1bd";       // kill-word（前向删词）
+    case "Enter": return "\x1b\r";
+  }
+  let c: string | null = null;
+  if (code?.startsWith("Key")) c = code.slice(3).toLowerCase();
+  else if (code?.startsWith("Digit")) c = code.slice(5);
+  else if (code === "BracketLeft") c = "[";
+  else if (code === "BracketRight") c = "]";
+  else if (code === "Backslash") c = "\\";
+  else if (code === "Minus") c = "-";
+  else if (code === "Equal") c = "=";
+  else if (code === "Comma") c = ",";
+  else if (code === "Period") c = ".";
+  else if (code === "Slash") c = "/";
+  else if (code === "Semicolon") c = ";";
+  else if (code === "Quote") c = "'";
+  else if (code === "Space") c = " ";
+  if (c === null) return null;
+  return "\x1b" + (shift ? c.toUpperCase() : c);
+};
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -233,6 +264,8 @@ export default function App() {
     term.open(el);
     // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
     // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
+    // Option/Alt 的 Meta 转发在 window 捕获层做（见下方 onKey）——WKWebView 里
+    // ⌥字母 会进文本输入系统变特殊字符（⌥b=∫），xterm 层的 keydown 收不到。
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown") return true;
       if (!ev.metaKey) return true;
@@ -294,6 +327,21 @@ export default function App() {
     // 命令框等真实输入控件不劫持（保留其编辑语义）；方向键/F 键等长键值交给 xterm。
     useEffect(() => {
       const onKey = (ev: KeyboardEvent) => {
+        // Option/Alt → Meta 序列（ESC 前缀）：readline 词跳转（⌥←/⌥→/⌥⌫）、
+        // tmux M-键绑定。必须在捕获层拦截：⌥字母 在 WKWebView 会进文本输入系统
+        // 变特殊字符（⌥b=∫），xterm 的 keydown 收不到。⌘/Ctrl+⌥ 归各自分支。
+        if (ev.altKey && !ev.ctrlKey && !ev.metaKey) {
+          const t = ev.target as HTMLElement | null;
+          if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
+              !t.classList.contains("xterm-helper-textarea")) return;
+          const seq = altMetaSequence(ev.code, ev.shiftKey);
+          if (!seq) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          const s = sidRef.current;
+          if (s) void invoke("send_keys", { sid: s, keys: seq }).catch(() => {});
+          return;
+        }
         if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
         const t = ev.target as HTMLElement | null;
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&

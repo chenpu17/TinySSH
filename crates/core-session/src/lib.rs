@@ -436,8 +436,10 @@ impl SessionApi for SessionManager {
         match ctx {
             Actor::Human => {
                 *h.last_human_input.lock().await = Some(std::time::Instant::now());
-                // 人类键入同样要登记：否则 B→C 键入捕获缺失，命令块 command 为空（简报/交接失明）
-                {
+                // 人类键入同样要登记：否则 B→C 键入捕获缺失，命令块 command 为空（简报/交接失明）。
+                // ESC 开头的 meta/导航序列（⌥← 发 \x1bb、⌥⌫ 发 \x17 等）不是命令文本——
+                // 登记的话裸 ESC 后的字母会残留在简报里（"…ddd"+\x1bb+Z 显示成 "dddbZ"）。
+                if !keys.contains('\x1b') {
                     let mut s = h.screen.lock().await;
                     s.register_outgoing(keys.as_bytes(), term_core::BlockSource::Human);
                 }
