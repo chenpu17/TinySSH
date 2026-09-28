@@ -185,14 +185,15 @@ impl ApprovalEngine {
     }
 
     /// 整体危险模式检查（ApproveEdited 后的命令同样过这道）。
-    pub fn deny_reason(&self, command: &str) -> Option<String> {
+    /// 用户 deny 规则只作用于所属 agent；内置 deny 对所有人生效。
+    pub fn deny_reason(&self, agent_id: &str, command: &str) -> Option<String> {
         for (re, reason) in &self.builtin_denies {
             if re.is_match(command) {
                 return Some((*reason).to_string());
             }
         }
         let policies = self.policies.lock().unwrap();
-        for policy in policies.values() {
+        if let Some(policy) = policies.get(agent_id) {
             for rule in &policy.deny_rules {
                 if let Ok(re) = Regex::new(&rule.pattern) {
                     if re.is_match(command) {
@@ -205,16 +206,17 @@ impl ApprovalEngine {
     }
 
     /// 逐段求值（deny → allow/TTL → default）。deny 检查整条命令与每个段。
+    /// 命令替换或解析失败 → 内容不可预判，跳过 allow/TTL 直接报审（人能看到全文）。
     pub fn evaluate(&self, agent_id: &str, command: &str) -> Evaluation {
         let mut segments_report = Vec::new();
 
-        let segments = self.segments_of(command);
+        let (segments, unpredictable) = self.segments_of(command);
         let mut deny_hit: Option<(String, String)> = None;
-        if let Some(reason) = self.deny_reason(command) {
+        if let Some(reason) = self.deny_reason(agent_id, command) {
             deny_hit = Some((command.to_string(), reason));
         } else {
             for seg in &segments {
-                if let Some(reason) = self.deny_reason(seg) {
+                if let Some(reason) = self.deny_reason(agent_id, seg) {
                     deny_hit = Some((seg.clone(), reason));
                     break;
                 }
@@ -233,7 +235,7 @@ impl ApprovalEngine {
 
         let policy = self.policy_of(agent_id);
         if policy.default_mode == ApprovalMode::TrustClient {
-            for seg in self.segments_of(command) {
+            for seg in self.segments_of(command).0 {
                 segments_report.push(SegmentReport {
                     segment: seg,
                     verdict: "allow: trust_client".into(),
@@ -241,6 +243,20 @@ impl ApprovalEngine {
             }
             return Evaluation {
                 verdict: SegmentVerdict::AutoAllow,
+                segments: segments_report,
+            };
+        }
+
+        // 替换体/解析失败：deny 规则与 allow 规则都无法预判实际执行内容
+        if unpredictable {
+            for seg in &segments {
+                segments_report.push(SegmentReport {
+                    segment: seg.clone(),
+                    verdict: "pending: 命令替换/解析失败，内容不可预判".into(),
+                });
+            }
+            return Evaluation {
+                verdict: SegmentVerdict::NeedsApproval,
                 segments: segments_report,
             };
         }
@@ -288,17 +304,17 @@ impl ApprovalEngine {
     }
 
     /// 编辑后的命令是否可批准：不得命中危险模式（deny 不可被 ApproveEdited 绕过）。
-    pub fn is_editable_decision(&self, edited: &str) -> bool {
-        self.deny_reason(edited).is_none()
+    pub fn is_editable_decision(&self, agent_id: &str, edited: &str) -> bool {
+        self.deny_reason(agent_id, edited).is_none()
     }
 
-    fn segments_of(&self, command: &str) -> Vec<String> {
+    fn segments_of(&self, command: &str) -> (Vec<String>, bool) {
         match self.parser.parse(command) {
             Some(tree) => {
-                let (segments, unparseable, _sub) = extract_segments(&tree, command);
-                segments
+                let (segments, unparseable, sub) = extract_segments(&tree, command);
+                (segments, unparseable || sub)
             }
-            None => vec![command.trim().to_string()],
+            None => (vec![command.trim().to_string()], true),
         }
     }
 }
@@ -434,7 +450,42 @@ mod tests {
     #[test]
     fn edited_command_still_checked() {
         let e = engine();
-        assert!(!e.is_editable_decision("reboot"));
-        assert!(e.is_editable_decision("systemctl status nginx"));
+        assert!(!e.is_editable_decision("agent-a", "reboot"));
+        assert!(e.is_editable_decision("agent-a", "systemctl status nginx"));
+    }
+
+    #[test]
+    fn substitution_forces_approval() {
+        // M2 回归：替换体是 deny/allow 双盲区 → 内容不可预判必须报审，
+        // 不得借 `echo *` TTL/allow 规则免审执行。
+        let e = engine();
+        for cmd in ["echo $(reboot)", "echo `reboot`", "echo $(rm -rf /)"] {
+            assert_eq!(
+                e.evaluate("agent-a", cmd).verdict,
+                SegmentVerdict::NeedsApproval,
+                "cmd={cmd}"
+            );
+        }
+        // deny 仍优先：即便内容不可预判，整体文本命中内置 deny → Dangerous
+        assert_eq!(e.evaluate("agent-a", "reboot $(echo hi)").verdict, SegmentVerdict::Dangerous);
+    }
+
+    #[test]
+    fn deny_rules_are_per_agent() {
+        // m3 回归：A 的追加 deny 不得作用于 B（方向保守但语义应为逐 agent）
+        let e = ApprovalEngine::new().unwrap();
+        e.set_policy(
+            "agent-a",
+            Policy {
+                deny_rules: vec![session_api::DenyRule {
+                    pattern: "^curl".into(),
+                    reason: "A 禁 curl".into(),
+                    builtin: false,
+                }],
+                ..Default::default()
+            },
+        );
+        assert_eq!(e.evaluate("agent-a", "curl example.com").verdict, SegmentVerdict::Dangerous);
+        assert_eq!(e.evaluate("agent-b", "curl example.com").verdict, SegmentVerdict::NeedsApproval);
     }
 }

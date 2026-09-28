@@ -152,10 +152,9 @@ impl SessionManager {
     }
 }
 
-fn spawn_pump(h: Arc<SessionHandle>) {
+fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Vec<u8>>) {
     tokio::spawn(async move {
         loop {
-            let mut rx = h.channel.subscribe_output();
             let mut lost = false;
             loop {
                 match tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await {
@@ -187,11 +186,15 @@ fn spawn_pump(h: Arc<SessionHandle>) {
                 *h.state.lock().await = SessionState::Disconnected;
                 return;
             }
-            h.on_transport_lost().await;
+            h.on_transport_reconnect().await;
             if *h.state.lock().await == SessionState::Disconnected {
                 return;
             }
-            // 重连成功（Reconfirming）：以外层循环重建订阅继续泵
+            // 先订阅新通道、再注入集成：远端回显与首个标记提示符不得落入
+            // 无订阅者窗口（broadcast 无接收者即丢——并发回归中标记迟到 10s 的根因）
+            rx = h.channel.subscribe_output();
+            h.reinject_integration().await;
+            // 外层循环：以新订阅继续泵
         }
     });
 }
@@ -317,7 +320,10 @@ impl SessionApi for SessionManager {
 
         let screen = term_core::Screen::new(term_core::ScreenConfig::default());
         let handle = SessionHandle::new(sid.clone(), host.clone(), kind.clone(), channel, screen, self.center.clone());
-        spawn_pump(handle.clone());
+        // 先订阅再注入：远端回显/首个标记提示符不得落入无订阅者窗口
+        // （broadcast 无接收者即丢——并发回归中集成标记迟到 10s+ 的根因）
+        let pump_rx = handle.channel.subscribe_output();
+        spawn_pump(handle.clone(), pump_rx);
         self.sessions.lock().unwrap().insert(sid.clone(), handle.clone());
 
         // 远端注入 shell 集成（本地已在 PTY 启动时注入）
@@ -334,8 +340,9 @@ impl SessionApi for SessionManager {
                 ctx, "shell_integration_inject", Some(&sid), Some("OSC133+OSC7"), serde_json::json!({}), None);
         }
 
-        // 等待集成生效（最多 5s；失败不阻断——Shell 模式将自动降级 Fresh）
-        for _ in 0..100 {
+        // 等待集成生效（最多 10s；失败不阻断——Shell 模式将自动降级 Fresh）。
+        // 窗口须覆盖全量回归时编译与测试争抢 CPU 的首个提示符延迟（实测 5s 不够）。
+        for _ in 0..200 {
             if handle.screen.lock().await.shell_integration_present() {
                 break;
             }
@@ -432,6 +439,10 @@ impl SessionApi for SessionManager {
             Actor::Agent { client_id } => {
                 if *h.owner.lock().await == ControlOwner::Human {
                     return Err(Error::ControlTakenByHuman);
+                }
+                // 重确认期间 Agent 仅开放 exec 白名单核实（与 exec 同口径，L1 §3.1）
+                if *h.state.lock().await == SessionState::Reconfirming {
+                    return Err(Error::ReconfirmingPending);
                 }
                 // 会话级授权：一次审批，接管或会话结束失效
                 if !h.send_keys_auth.lock().unwrap().contains(client_id) {
@@ -629,6 +640,10 @@ impl SessionManager {
         let h = self.get(&sid)?;
         if !ctx.is_human() && *h.owner.lock().await == ControlOwner::Human {
             return Err(Error::ControlTakenByHuman);
+        }
+        // 重确认期间 Agent 动作被拒（L1 §3.1：普通动作不开放）
+        if !ctx.is_human() && *h.state.lock().await == SessionState::Reconfirming {
+            return Err(Error::ReconfirmingPending);
         }
         // Agent 传输必审（L1 §4）
         let mut edited: Option<String> = None;

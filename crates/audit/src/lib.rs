@@ -88,6 +88,7 @@ impl AuditStore {
         hash_input.push_str(session_id.unwrap_or(""));
         hash_input.push_str(command.unwrap_or(""));
         hash_input.push_str(&payload);
+        hash_input.push_str(approval_id.unwrap_or(""));
         let hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
 
         tx.execute(
@@ -203,7 +204,7 @@ impl AuditStore {
     pub fn verify_chain(&self) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT seq, ts, actor_kind, agent_id, action, session_id, command, payload_json, prev_hash, hash FROM audit_events ORDER BY seq ASC")
+            .prepare("SELECT seq, ts, actor_kind, agent_id, action, session_id, command, payload_json, approval_id, prev_hash, hash FROM audit_events ORDER BY seq ASC")
             .map_err(|e| Error::Storage(e.to_string()))?;
         let rows = stmt
             .query_map([], |r| {
@@ -218,12 +219,13 @@ impl AuditStore {
                     r.get::<_, String>(7)?,
                     r.get::<_, Option<String>>(8)?,
                     r.get::<_, Option<String>>(9)?,
+                    r.get::<_, Option<String>>(10)?,
                 ))
             })
             .map_err(|e| Error::Storage(e.to_string()))?;
         let mut prev: Option<String> = None;
         for row in rows {
-            let (seq, ts, kind, agent, action, sid, cmd, payload, prev_h, hash) =
+            let (seq, ts, kind, agent, action, sid, cmd, payload, apid, prev_h, hash) =
                 row.map_err(|e| Error::Storage(e.to_string()))?;
             if prev_h != prev {
                 return Ok(false); // 链断裂/被改
@@ -237,6 +239,7 @@ impl AuditStore {
             input.push_str(sid.as_deref().unwrap_or(""));
             input.push_str(cmd.as_deref().unwrap_or(""));
             input.push_str(&payload);
+            input.push_str(apid.as_deref().unwrap_or(""));
             let expect = hex::encode(Sha256::digest(input.as_bytes()));
             if Some(expect) != hash {
                 return Ok(false);

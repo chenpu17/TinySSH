@@ -20,6 +20,12 @@ fn sshd_enabled() -> bool {
 }
 
 async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
+    // RUST_LOG 设置时输出核心 trace（排查并发回归用）
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .without_time()
+        .try_init();
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("t.db");
     std::mem::forget(dir);
@@ -91,6 +97,7 @@ fn structured(r: &rmcp::model::CallToolResult) -> serde_json::Value {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acceptance_scenario_on_ssh() {
     let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
@@ -222,6 +229,7 @@ async fn acceptance_scenario_on_ssh() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn journey2_reconnect_reconfirm() {
     let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
@@ -265,6 +273,10 @@ async fn journey2_reconnect_reconfirm() {
     // 白名单外动作被拒
     let r = m.exec(&Actor::Agent { client_id: "opencode".into() }, sid.clone(), "touch /tmp/nope", ExecOpts::default()).await;
     assert!(matches!(r, Err(Error::ReconfirmingPending)), "得到 {r:?}");
+
+    // M1 回归：白名单命令携带复合段同样被拒（前缀匹配不得绕过重确认门槛）
+    let r = m.exec(&Actor::Agent { client_id: "opencode".into() }, sid.clone(), "pwd && touch /tmp/nope2", ExecOpts::default()).await;
+    assert!(matches!(r, Err(Error::ReconfirmingPending)), "复合白名单被放行？{r:?}");
 
     // 白名单核实（Agent 侧允许）
     let r = m

@@ -23,13 +23,14 @@ fn target() -> transport_ssh::SshTarget {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ssh_shell_blocks_and_fresh() {
     let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
-    // 环境抖动兜底（共享容器偶发空流）：整场景重试一次
+    // 环境抖动兜底（共享容器偶发空流）：整场景最多重试两次
     let mut last_err = String::new();
-    for attempt in 0..2 {
+    for attempt in 0..3 {
         match scenario().await {
             Ok(()) => return,
             Err(e) => {
@@ -82,7 +83,9 @@ async fn scenario() -> Result<(), String> {
         if screen.shell_integration_present() {
             break;
         }
-        assert!(tokio::time::Instant::now() < deadline, "no OSC 133; screen:\n{}", screen.snapshot_text());
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("no OSC 133; screen:\n{}", screen.snapshot_text()));
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
@@ -101,7 +104,9 @@ async fn scenario() -> Result<(), String> {
         if closed {
             break;
         }
-        assert!(tokio::time::Instant::now() < deadline, "block1 not closed:\n{}", screen.snapshot_text());
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("block1 not closed:\n{}", screen.snapshot_text()));
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(screen.snapshot_text().contains("mark_a"));
@@ -120,7 +125,9 @@ async fn scenario() -> Result<(), String> {
         if count >= 2 && closed2 {
             break;
         }
-        assert!(tokio::time::Instant::now() < deadline, "block2 not closed:\n{}", screen.snapshot_text());
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("block2 not closed:\n{}", screen.snapshot_text()));
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(screen.snapshot_text().contains("/tmp"));

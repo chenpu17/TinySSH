@@ -202,7 +202,9 @@ async fn takeover_voids_pending_approval_and_card_cannot_revive() {
         .await
         .unwrap();
     assert!(report.frozen);
-    assert!(!report.brief.pending_approvals.is_empty() || true);
+    // 被作废的待审批卡片应已移出 pending 队列（接管即作废）
+    let pending = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+    assert!(pending.iter().all(|it| it.id != approval_id), "作废卡片不得仍为 pending");
 
     // agent 阻塞调用返回 VoidedByHandback{brief}
     let r = jh.await.unwrap();
