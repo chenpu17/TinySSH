@@ -7,6 +7,17 @@ const demoState = {
   sid: "s-demo-0001",
   owner: "Agent" as "Human" | "Agent",
   outputHandlers: [] as Handler[],
+  hosts: [
+    { id: "local", name: "本机", address: "local", port: 0, username: "ops", auth_type: "Password" },
+    { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password" },
+    { id: "h-prod2", name: "prod-2（演示连接失败）", address: "10.0.0.12", port: 22, username: "ops", auth_type: "Password" },
+  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string }[],
+  sessions: [
+    {
+      id: "s-demo-0001", host_name: "prod-1", kind: "ssh",
+      state: "Connected", control_owner: "Agent",
+    },
+  ] as { id: string; host_name: string; kind: string; state: string; control_owner: string }[],
   approvals: [
     {
       id: "a-demo-1",
@@ -27,30 +38,46 @@ function pushOutput(text: string) {
   for (const h of demoState.outputHandlers) h(new TextEncoder().encode(text));
 }
 
+let demoSeq = 2;
+
 export async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
     case "mcp_status":
-      return { endpoint: "http://127.0.0.1:8722/mcp（演示模式）" };
+      return { endpoint: "http://127.0.0.1:8722/mcp（演示模式）", agents: [{ id: "opencode", label: "opencode（演示）" }] };
     case "bench_mode":
       return false;
     case "list_hosts":
-      return [
-        { id: "local", name: "本机", address: "local", port: 0, username: "ops" },
-        { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops" },
-        { id: "h-prod2", name: "prod-2", address: "10.0.0.12", port: 22, username: "ops" },
-      ];
+      return demoState.hosts;
     case "list_sessions":
-      return [
-        {
-          id: demoState.sid,
-          host_name: "prod-1",
-          kind: "ssh",
-          state: demoState.owner === "Human" ? "Connected" : "Connected",
-          control_owner: demoState.owner,
-        },
-      ];
-    case "create_session":
-      return "s-demo-0001";
+      return demoState.sessions;
+    case "upsert_host": {
+      const h = (args?.host ?? {}) as { name: string; address: string; port?: number; username: string };
+      const id = "h-demo-" + demoSeq++;
+      demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username, auth_type: "Password" });
+      return id;
+    }
+    case "create_identity":
+      return { id: "id-demo-" + demoSeq++, label: "demo", kind: "Ed25519", fingerprint: "SHA256:demofingerprint" };
+    case "list_identities":
+      return [];
+    case "create_session": {
+      const hid = args?.hostId as string;
+      const h = demoState.hosts.find((x) => x.id === hid);
+      if (h && h.address === "10.0.0.12") {
+        throw new Error("AuthFailed（演示：认证失败）");
+      }
+      const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
+      demoState.sessions.push({ id: sid, host_name: h?.name ?? "?", kind: "ssh", state: "Connected", control_owner: "Agent" });
+      return sid;
+    }
+    case "close_session": {
+      const sid = args?.sid as string;
+      demoState.sessions = demoState.sessions.filter((s) => s.id !== sid);
+      pushOutput("\r\n[会话已断开]\r\n");
+      return null;
+    }
+    case "resize":
+      return null;
     case "read_screen":
       return { text: demoState.screen, cols: 120, rows: 32, cursor_row: 3, cursor_col: 16, alt_screen: false };
     case "subscribe_output": {
@@ -100,15 +127,15 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "send_keys":
       pushOutput((args?.keys as string) ?? "");
       return null;
-    case "audit_query":
-      return {
-        events: [
-          { seq: 42, ts: "2026-09-27T14:02:11Z", actor_kind: "human", agent_id: null, action: "takeover", command: null },
-          { seq: 41, ts: "2026-09-27T14:01:58Z", actor_kind: "agent", agent_id: "opencode", action: "approval_requested", command: "rm -rf /tmp/old-build" },
-          { seq: 40, ts: "2026-09-27T14:01:30Z", actor_kind: "agent", agent_id: "opencode", action: "exec", command: "df -h" },
-          { seq: 39, ts: "2026-09-27T14:01:02Z", actor_kind: "human", agent_id: null, action: "session_created", command: null },
-        ],
-      };
+    case "audit_query": {
+      const events = [
+        { seq: 42, ts: "2026-09-27T14:02:11Z", actor_kind: "human", agent_id: null, action: "takeover", command: null },
+        { seq: 41, ts: "2026-09-27T14:01:58Z", actor_kind: "agent", agent_id: "opencode", action: "approval_requested", command: "rm -rf /tmp/old-build" },
+        { seq: 40, ts: "2026-09-27T14:01:30Z", actor_kind: "agent", agent_id: "opencode", action: "exec", command: "df -h" },
+        { seq: 39, ts: "2026-09-27T14:01:02Z", actor_kind: "human", agent_id: null, action: "session_created", command: null },
+      ];
+      return { events: events.slice(0, (args?.limit as number) ?? 30) };
+    }
     default:
       return null;
   }

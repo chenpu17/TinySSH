@@ -14,7 +14,10 @@ import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
-type Host = { id: string; name: string; address: string; port: number; username: string };
+type Host = {
+  id: string; name: string; address: string; port: number; username: string;
+  auth_type: "Key" | "Password" | "KeyboardInteractive";
+};
 type SessionInfo = {
   id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
@@ -32,9 +35,34 @@ type AuditEvent = {
   seq: number; ts: string; actor_kind: string; agent_id: string | null;
   action: string; command: string | null;
 };
+type IdentityMeta = { id: string; label: string; kind: string; fingerprint: string };
 
 const epistemicClass = (s: string) =>
   s === "Confirmed" ? "tag-confirmed" : s === "NeedsRecheck" ? "tag-needsrecheck" : "tag-unobservable";
+
+// 会话状态 → 中文标签 + 颜色类
+const stateLabel = (s: string): { text: string; cls: string } => {
+  switch (s) {
+    case "Connected": return { text: "已连接", cls: "ok" };
+    case "Degraded": return { text: "连接中断", cls: "err" };
+    case "Reconnecting": return { text: "重连中…", cls: "err" };
+    case "Reconfirming": return { text: "重确认（受限）", cls: "err" };
+    default: return { text: "已断开", cls: "dim" };
+  }
+};
+
+// 后端错误 → 用户能看懂的一句话（原始错误放次要行）
+const friendlyError = (raw: string): string => {
+  const r = raw.toLowerCase();
+  if (r.includes("authfailed") || r.includes("authentication")) return "认证失败：用户名或密码/密钥不正确";
+  if (r.includes("refused")) return "连接被拒绝：端口不对，或主机上的 SSH 服务没有运行";
+  if (r.includes("timeout") || r.includes("timed out") || r.includes("unreachable"))
+    return "连接超时：主机不可达（地址错误、网络不通或防火墙拦截）";
+  if (r.includes("dns") || r.includes("name or service") || r.includes("nodename"))
+    return "地址无法解析：请检查主机名/IP 是否写对";
+  if (r.includes("keychain") || r.includes("master")) return "凭据库解锁失败：" + raw;
+  return raw;
+};
 
 let benchStarted = false;
 async function runBench() {
@@ -71,6 +99,8 @@ export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
+  const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
+  const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -78,8 +108,12 @@ export default function App() {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [timeline, setTimeline] = useState<AuditEvent[]>([]);
   const [owner, setOwner] = useState<"Human" | "Agent">("Agent");
+  const [mcp, setMcp] = useState<{ endpoint: string; agents: { id: string; label: string }[] }>({ endpoint: "", agents: [] });
   const [input, setInput] = useState("");
-  const [mcp, setMcp] = useState<string>("");
+  // 连接状态机：null=空闲；连接中显示主机名；失败显示错误
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [connError, setConnError] = useState<{ title: string; detail: string } | null>(null);
+  const [showAddHost, setShowAddHost] = useState(false);
 
   const refreshLists = useCallback(async () => {
     setSessions(await invoke<SessionInfo[]>("list_sessions"));
@@ -89,13 +123,26 @@ export default function App() {
     setTimeline(page.events);
   }, []);
 
+  const refreshBrief = useCallback(async (s: string) => {
+    try { setBrief(await invoke<Brief>("session_brief", { sid: s })); } catch { /* 会话已关 */ }
+  }, []);
+
   useEffect(() => {
     refreshLists();
-    invoke<{ endpoint: string }>("mcp_status").then((s) => setMcp(s.endpoint));
+    invoke<{ endpoint: string; agents: { id: string; label: string }[] }>("mcp_status").then(setMcp);
     invoke<boolean>("bench_mode").then((b) => {
       if (b) runBench();
     });
   }, [refreshLists]);
+
+  // 列表轮询：会话状态（断线/重连/重确认）与审计时间线自动刷新
+  useEffect(() => {
+    const t = setInterval(() => {
+      refreshLists();
+      if (sidRef.current) refreshBrief(sidRef.current);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [refreshLists, refreshBrief]);
 
   // 审批事件推送
   useEffect(() => {
@@ -104,46 +151,123 @@ export default function App() {
     return () => un?.();
   }, [refreshLists]);
 
-  // xterm 初始化
-  useEffect(() => {
-    if (!termRef.current || xtermRef.current) return;
-    const term = new Terminal({ fontSize: 13, rows: 30, cursorBlink: true, theme: { background: "#10141a" } });
-    term.open(termRef.current);
-    term.writeln("TinySSH — 人机协同 SSH（V0 thin-slice）");
-    term.writeln("左侧选择主机建立会话；Agent 动作出现在审批面板；接管按钮随时冻结 Agent。");
-    term.onData((d) => {
-      if (sid) invoke("send_keys", { sid, keys: d }).catch(() => {});
-    });
-    xtermRef.current = term;
-  }, [sid]);
-
-  const attachSession = useCallback(async (newSid: string) => {
-    const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
-    channel.onmessage = (msg) => {
-      const t = xtermRef.current;
-      if (!t) return;
-      if (msg instanceof ArrayBuffer || msg instanceof Uint8Array) {
-        t.write(msg as Uint8Array);
-      } else if (typeof msg === "string" && msg.includes("resync")) {
-        invoke<{ text: string }>("read_screen", { sid: newSid }).then((snap) => {
-          t.reset();
-          t.write(snap.text);
-        });
-      }
-    };
-    await invoke("subscribe_output", { sid: newSid, onEvent: channel });
-    const snap = await invoke<{ text: string }>("read_screen", { sid: newSid });
-    xtermRef.current?.reset();
-    xtermRef.current?.write(snap.text);
-    setSid(newSid);
-    const b = await invoke<Brief>("session_brief", { sid: newSid });
-    setBrief(b);
+  const writeWelcome = useCallback((t: Terminal) => {
+    t.reset();
+    t.writeln("TinySSH — 人机协同 SSH 工作台");
+    t.writeln("");
+    t.writeln("  1. 左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接；");
+    t.writeln("  2. 连接成功后点击这块黑色终端区域，直接打字就是远端 shell；");
+    t.writeln("  3. 下方命令框逐条执行命令；右侧可查看审批、现场简报与操作时间线。");
+    t.writeln("");
   }, []);
 
-  const createSession = async (hostId: string) => {
-    const newSid = await invoke<string>("create_session", { hostId });
-    await refreshLists();
-    await attachSession(newSid);
+  // xterm 初始化：仅一次。onData 一律走 sidRef，杜绝 stale closure。
+  useEffect(() => {
+    if (!termRef.current || xtermRef.current) return;
+    const term = new Terminal({ fontSize: 13, cursorBlink: true, theme: { background: "#10141a" } });
+    term.open(termRef.current);
+    writeWelcome(term);
+    term.onData((d) => {
+      const s = sidRef.current;
+      if (!s) return;
+      invoke("send_keys", { sid: s, keys: d }).catch((e) => {
+        term.write(`\r\n\x1b[31m✕ ${String(e)}\x1b[0m\r\n`);
+      });
+    });
+    xtermRef.current = term;
+  }, [writeWelcome]);
+
+  // 终端尺寸自适应 + PTY 对齐（backend resize）
+  const fitTerminal = useCallback(async () => {
+    const term = xtermRef.current;
+    if (!term || !termRef.current) return;
+    const box = termRef.current.parentElement;
+    if (!box) return;
+    const dims = (term as unknown as { dimensions?: { css?: { cell?: { width?: number; height?: number } } } }).dimensions;
+    const cw = dims?.css?.cell?.width ?? 9;
+    const ch = dims?.css?.cell?.height ?? 16;
+    const cols = Math.max(20, Math.min(400, Math.floor(box.clientWidth / cw)));
+    const rows = Math.max(6, Math.min(200, Math.floor(box.clientHeight / ch)));
+    if (term.cols !== cols || term.rows !== rows) {
+      term.resize(cols, rows);
+      const s = sidRef.current;
+      if (s) invoke("resize", { sid: s, cols, rows }).catch(() => {});
+    }
+  }, []);
+  useEffect(() => {
+    const el = termRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const ro = new ResizeObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => fitTerminal(), 150);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fitTerminal]);
+
+  const attachSession = useCallback(async (newSid: string) => {
+    const term = xtermRef.current;
+    if (!term) return;
+    if (!subscribedRef.current.has(newSid)) {
+      const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
+      channel.onmessage = (msg) => {
+        if (msg instanceof ArrayBuffer || msg instanceof Uint8Array) {
+          term.write(msg as Uint8Array);
+        } else if (typeof msg === "string" && msg.includes("resync")) {
+          invoke<{ text: string }>("read_screen", { sid: newSid }).then((snap) => {
+            term.reset();
+            term.write(snap.text);
+          });
+        }
+      };
+      await invoke("subscribe_output", { sid: newSid, onEvent: channel });
+      subscribedRef.current.add(newSid);
+    }
+    const snap = await invoke<{ text: string }>("read_screen", { sid: newSid });
+    term.reset();
+    term.write(snap.text);
+    term.write("\r\n\x1b[90m── 会话已接管到终端：点击此区域直接打字，或用下方命令框 ──\x1b[0m\r\n");
+    setSid(newSid);
+    sidRef.current = newSid;
+    term.focus();
+    fitTerminal();
+    refreshBrief(newSid);
+  }, [fitTerminal, refreshBrief]);
+
+  const detach = useCallback(() => {
+    setSid(null);
+    sidRef.current = null;
+    setBrief(null);
+    if (xtermRef.current) writeWelcome(xtermRef.current);
+  }, [writeWelcome]);
+
+  const createSession = async (host: Host) => {
+    setConnecting(host.name);
+    setConnError(null);
+    try {
+      const newSid = await invoke<string>("create_session", { hostId: host.id });
+      await refreshLists();
+      await attachSession(newSid);
+    } catch (e) {
+      setConnError({
+        title: `连接 ${host.name}（${host.username}@${host.address}:${host.port}）失败`,
+        detail: friendlyError(String(e)),
+      });
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const disconnect = async (s: SessionInfo) => {
+    try {
+      await invoke("close_session", { sid: s.id });
+    } catch (e) {
+      setConnError({ title: `断开 ${s.host_name} 失败`, detail: String(e) });
+    }
+    subscribedRef.current.delete(s.id);
+    if (sidRef.current === s.id) detach();
+    refreshLists();
   };
 
   const takeover = async () => {
@@ -162,8 +286,11 @@ export default function App() {
     await refreshLists();
   };
 
-  const decide = async (id: string, decision: string) => {
-    await invoke("decide_approval", { id, decision, edited: null });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editedCmd, setEditedCmd] = useState("");
+  const decide = async (id: string, decision: string, edited: string | null) => {
+    await invoke("decide_approval", { id, decision, edited });
+    setEditingId(null);
     await refreshLists();
   };
 
@@ -173,42 +300,82 @@ export default function App() {
     if (s) setOwner(s.control_owner);
   }, [sessions, sid]);
 
+  const hasAgents = mcp.agents.length > 0;
+  const current = sessions.find((x) => x.id === sid);
+  const ownerBadge = owner === "Human" ? "人类控制" : hasAgents ? "Agent" : "手动";
+  const ownerCls = owner === "Human" ? "human" : hasAgents ? "agent" : "dim";
+  const pendingCount = approvals.filter((a) => a.status === "pending").length;
+
   return (
     <div className="layout">
       {/* 左：主机与会话 */}
       <div className="col">
-        <div className="panel-title">主机 / 会话</div>
+        <div className="panel-title row">
+          <span>主机 / 会话</span>
+          <span style={{ flex: 1 }} />
+          <button className="ghost" onClick={() => setShowAddHost(!showAddHost)}>
+            {showAddHost ? "收起" : "＋ 添加主机"}
+          </button>
+        </div>
         <div className="scroll">
+          {showAddHost && (
+            <AddHostForm
+              onAdded={async (hid) => {
+                setShowAddHost(false);
+                await refreshLists();
+                const h = hosts.find((x) => x.id === hid);
+                // list_hosts 刚刷新过，直接用返回值兜底
+                const target = h ?? (await invoke<Host[]>("list_hosts")).find((x) => x.id === hid);
+                if (target) createSession(target);
+              }}
+            />
+          )}
           <div className="section">
             <h4>主机</h4>
             {hosts.map((h) => (
               <div className="card row" key={h.id}>
-                <div style={{ flex: 1 }}>
-                  <div>{h.name}</div>
-                  <div className="dim">{h.username}@{h.address}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div>{h.name} <span className="dim">{h.auth_type === "Key" ? "· 密钥" : "· 密码"}</span></div>
+                  <div className="dim mono">{h.username}@{h.address}:{h.port}</div>
                 </div>
-                <button onClick={() => createSession(h.id)}>连接</button>
+                <button disabled={connecting !== null} onClick={() => createSession(h)}>
+                  {connecting === h.name ? "连接中…" : "连接"}
+                </button>
               </div>
             ))}
+            {hosts.length === 0 && (
+              <div className="dim">还没有主机。点上方「＋ 添加主机」填入地址和密码即可连接。</div>
+            )}
           </div>
           <div className="section">
             <h4>会话</h4>
-            {sessions.map((s) => (
-              <div className="card row" key={s.id}>
-                <div style={{ flex: 1, cursor: "pointer" }} onClick={() => attachSession(s.id)}>
-                  <div>{s.host_name}</div>
-                  <div className="dim mono">{s.id.slice(0, 12)}</div>
+            {sessions.map((s) => {
+              const st = stateLabel(s.state);
+              return (
+                <div className="card row" key={s.id}>
+                  <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} onClick={() => attachSession(s.id)}>
+                    <div>{s.host_name} <span className={"mono " + st.cls}>· {st.text}</span></div>
+                    <div className="dim mono">{s.id.slice(0, 12)}</div>
+                  </div>
+                  <button className="ghost" onClick={() => disconnect(s)}>断开</button>
                 </div>
-                <span className={"badge " + (s.control_owner === "Human" ? "human" : "agent")}>
-                  {s.control_owner === "Human" ? "人类控制" : "Agent"}
-                </span>
-              </div>
-            ))}
-            {sessions.length === 0 && <div className="dim">暂无会话</div>}
+              );
+            })}
+            {sessions.length === 0 && (
+              <div className="dim">暂无会话。点主机右侧的「连接」建立会话。</div>
+            )}
           </div>
           <div className="section">
-            <h4>MCP 端点</h4>
-            <div className="dim mono">{mcp}</div>
+            <h4>Agent 接入（MCP）</h4>
+            {hasAgents ? (
+              mcp.agents.map((a) => (
+                <div className="fact" key={a.id}>
+                  <span className="s">{a.label}</span> <span className="dim mono">{a.id}</span>
+                </div>
+              ))
+            ) : (
+              <div className="dim">暂无 Agent 接入。运行 <code>tinyssh serve</code> 并为 Agent 签发 Token 后，它的操作请求会出现在右侧审批队列。</div>
+            )}
           </div>
         </div>
       </div>
@@ -216,37 +383,58 @@ export default function App() {
       {/* 中：终端 */}
       <div className="col">
         <div className="panel-title row">
-          <span>终端 {sid && <span className="mono dim">{sid.slice(0, 12)}</span>}</span>
-          <span style={{ flex: 1 }} />
-          <span className={"badge " + (owner === "Human" ? "human" : "agent")}>
-            控制权：{owner === "Human" ? "人类" : "Agent"}
+          <span>
+            终端
+            {current && (
+              <span className="dim mono"> {current.host_name} · {sid!.slice(0, 12)} · </span>
+            )}
+            {current && <span className={stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>}
           </span>
-          {owner === "Agent" ? (
+          <span style={{ flex: 1 }} />
+          {sid && (
+            <span className={"badge " + ownerCls}>控制权：{ownerBadge}</span>
+          )}
+          {sid && hasAgents && owner === "Agent" && (
             <>
               <button className="warn" onClick={takeover}>接管</button>
               <button className="danger" onClick={takeoverStop}>接管并停止任务</button>
             </>
-          ) : (
+          )}
+          {sid && hasAgents && owner === "Human" && (
             <button onClick={handback}>交还 Agent</button>
           )}
         </div>
+        {connError && (
+          <div className="conn-error">
+            <div>
+              <b>✕ {connError.title}</b>
+              <div className="dim">{connError.detail}</div>
+            </div>
+            <button className="ghost" onClick={() => setConnError(null)}>关闭</button>
+          </div>
+        )}
         <div className="term-wrap">
           <div id="term" ref={termRef} />
         </div>
         <div className="panel-title row">
           <input
-            placeholder="本地命令（人类身份，短路审批）——回车执行"
+            placeholder={
+              current
+                ? `在 ${current.host_name} 上执行命令（人类身份，直接执行）——回车发送`
+                : "先在左侧连接一台主机，这里才能执行命令"
+            }
+            disabled={!sid}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={async (e) => {
               if (e.key === "Enter" && input.trim() && sid) {
                 const cmd = input;
                 setInput("");
+                xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd}\x1b[0m\r\n`);
                 try {
                   await invoke("exec_human", { sid, command: cmd });
-                  xtermRef.current?.write("\r\n");
                 } catch (err) {
-                  xtermRef.current?.write(`\r\n\x1b[31m${err}\x1b[0m\r\n`);
+                  xtermRef.current?.write(`\r\n\x1b[31m✕ ${String(err)}\x1b[0m\r\n`);
                 }
               }
             }}
@@ -256,13 +444,13 @@ export default function App() {
 
       {/* 右：审批 / 简报 / 时间线 */}
       <div className="col">
-        <div className="panel-title">审批队列（{approvals.filter((a) => a.status === "pending").length} 待处理）</div>
+        <div className="panel-title">审批队列（{pendingCount} 待处理）</div>
         <div className="scroll">
           {approvals.map((a) => (
             <div className="card" key={a.id}>
               <div className="row">
                 <span className="badge">{a.agent_id}</span>
-                <span className="badge">{a.status}</span>
+                <span className="badge">{a.status === "pending" ? "待审批" : a.status === "approved" ? "已批准" : "已拒绝"}</span>
               </div>
               <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
               {a.segment_report.map((s, i) => (
@@ -271,14 +459,28 @@ export default function App() {
                 </div>
               ))}
               {a.status === "pending" && (
-                <div className="row" style={{ marginTop: 8 }}>
-                  <button onClick={() => decide(a.id, "approve")}>批准</button>
-                  <button className="danger" onClick={() => decide(a.id, "deny")}>拒绝</button>
-                </div>
+                editingId === a.id ? (
+                  <div style={{ marginTop: 8 }}>
+                    <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
+                    <div className="row" style={{ marginTop: 6 }}>
+                      <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
+                      <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
+                    </div>
+                    <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
+                  </div>
+                ) : (
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <button onClick={() => decide(a.id, "approve", null)}>批准</button>
+                    <button className="ghost" onClick={() => { setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>
+                    <button className="danger" onClick={() => decide(a.id, "deny", null)}>拒绝</button>
+                  </div>
+                )
               )}
             </div>
           ))}
-          {approvals.length === 0 && <div className="dim">队列为空</div>}
+          {approvals.length === 0 && (
+            <div className="dim">队列为空。Agent 通过 MCP 发起操作时，需要你审批的请求会出现在这里。</div>
+          )}
 
           <div className="section">
             <h4>现场简报</h4>
@@ -296,7 +498,7 @@ export default function App() {
                 )}
               </div>
             ) : (
-              <div className="dim">无会话</div>
+              <div className="dim">无会话。连接主机后这里显示当前目录、核实过的事实与运行中的任务。</div>
             )}
           </div>
 
@@ -306,13 +508,100 @@ export default function App() {
               <div className="fact" key={ev.seq}>
                 <span className="dim mono">#{ev.seq} {ev.action}</span>{" "}
                 <span className={ev.actor_kind === "agent" ? "" : "ok"}>
-                  {ev.actor_kind}{ev.agent_id ? `:${ev.agent_id}` : ""}
+                  {ev.actor_kind === "human" ? "人类" : "Agent"}{ev.agent_id ? `:${ev.agent_id}` : ""}
                 </span>
                 {ev.command && <div className="mono dim">{ev.command}</div>}
               </div>
             ))}
+            {timeline.length === 0 && <div className="dim">暂无记录。所有连接与命令都会留痕在这里。</div>}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）
+function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [port, setPort] = useState("22");
+  const [username, setUsername] = useState("root");
+  const [authMode, setAuthMode] = useState<"password" | "key">("password");
+  const [password, setPassword] = useState("");
+  const [pem, setPem] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    setErr(null);
+    if (!name.trim() || !address.trim() || !username.trim()) {
+      setErr("名称、地址、用户名都不能为空");
+      return;
+    }
+    const p = parseInt(port, 10);
+    if (!Number.isInteger(p) || p <= 0 || p > 65535) {
+      setErr("端口必须是 1–65535 的数字");
+      return;
+    }
+    setBusy(true);
+    try {
+      let auth: Record<string, unknown>;
+      if (authMode === "password") {
+        if (!password) { setErr("请输入密码"); setBusy(false); return; }
+        auth = { Password: { password } };
+      } else {
+        if (!pem.includes("PRIVATE KEY")) { setErr("请粘贴 OpenSSH / PEM 格式的私钥内容"); setBusy(false); return; }
+        const meta = await invoke<IdentityMeta>("create_identity", {
+          req: { Import: { label: name.trim(), pem, passphrase: passphrase || null } },
+        });
+        auth = { Key: { identity_id: meta.id } };
+      }
+      const hid = await invoke<string>("upsert_host", {
+        host: {
+          id: null, name: name.trim(), address: address.trim(),
+          port: p, username: username.trim(), auth, tags: [],
+        },
+      });
+      setName(""); setAddress(""); setPort("22"); setPassword(""); setPem(""); setPassphrase("");
+      onAdded(hid);
+    } catch (e) {
+      setErr(friendlyError(String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card add-host">
+      <div className="row">
+        <input placeholder="名称（如：我的服务器）" value={name} onChange={(e) => setName(e.target.value)} />
+        <input placeholder="地址（IP 或域名）" value={address} onChange={(e) => setAddress(e.target.value)} style={{ flex: 2 }} />
+        <input placeholder="端口" value={port} onChange={(e) => setPort(e.target.value)} style={{ flex: 1, minWidth: 64 }} />
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <input placeholder="用户名" value={username} onChange={(e) => setUsername(e.target.value)} />
+        <select value={authMode} onChange={(e) => setAuthMode(e.target.value as "password" | "key")}>
+          <option value="password">密码登录</option>
+          <option value="key">私钥登录</option>
+        </select>
+      </div>
+      {authMode === "password" ? (
+        <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
+          style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      ) : (
+        <>
+          <textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n粘贴私钥内容…"} value={pem}
+            onChange={(e) => setPem(e.target.value)} rows={4} style={{ marginTop: 6, width: "100%" }} />
+          <input type="password" placeholder="私钥口令（无可留空）" value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)} style={{ marginTop: 6 }} />
+        </>
+      )}
+      {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
+      <div className="row" style={{ marginTop: 8 }}>
+        <button disabled={busy} onClick={submit}>{busy ? "保存中…" : "保存并连接"}</button>
+        <span className="dim">凭据加密存入本机凭据库，不会明文落盘。</span>
       </div>
     </div>
   );

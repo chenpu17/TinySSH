@@ -305,3 +305,33 @@ async fn journey2_reconnect_reconfirm() {
     // 正确断言：新 shell 的初始 cwd 生效即可（显示历史 ≠ 现场延续，PRD v0.5）
     m.exec(&human, sid.clone(), "echo after_reconfirm", ExecOpts::default()).await.unwrap();
 }
+
+/// 回归（T9 走查发现）：read_screen 语义是"当前屏幕"——
+/// (a) 不得包含 scrollback（清屏前旧内容如 MOTD/集成注入回显不得回魂）；
+/// (b) 集成注入 + 2J 清屏后，用户首屏应只有提示符，没有集成代码。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn create_session_screen_is_clean() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    let (m, _url, _token) = spawn_stack().await;
+    let human = Actor::Human;
+    let sid = m
+        .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
+        .await
+        .unwrap();
+    let snap = m.read_screen(&human, sid).await.unwrap();
+    assert!(
+        !snap.text.contains("__t_prompt") && !snap.text.contains("PROMPT_COMMAND"),
+        "read_screen 泄漏集成注入回显:\n{}",
+        snap.text
+    );
+    assert!(
+        !snap.text.contains("Welcome to Alpine"),
+        "read_screen 混入 scrollback（MOTD）:\n{}",
+        snap.text
+    );
+}

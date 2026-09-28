@@ -5,7 +5,7 @@ use crate::block::{BlockIndex, BlockSource};
 #[allow(unused_imports)]
 use crate::block::BlockPhase;
 use crate::osc::{OscEvent, OscScanner};
-use crate::render::{GridSize, cursor_pos, render_text};
+use crate::render::{GridSize, cursor_pos, render_screen_only, render_text};
 use crate::strip_ansi;
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::term::{Config, Term};
@@ -288,6 +288,12 @@ impl Screen {
 
     pub fn snapshot_text(&self) -> String {
         render_text(&self.term)
+    }
+
+    /// 仅可见屏（不含 scrollback）。read_screen 的语义是"当前屏幕"——
+    /// 含历史会把清屏前的旧内容（如集成注入回显）重新带回答户端。
+    pub fn screen_only_text(&self) -> String {
+        render_screen_only(&self.term)
     }
 
     pub fn cursor(&self) -> (u16, u16) {

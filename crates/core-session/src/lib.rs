@@ -214,7 +214,9 @@ fi"#;
   precmd_functions=(__t_precmd $precmd_functions)
   preexec_functions=(__t_preexec $preexec_functions)
 fi"#;
-    format!("{bash}\n{zsh}\n")
+    // 末尾清屏：抹掉上面几行在远端 PTY 的回显（否则用户首连看到满屏集成代码）；
+    // printf 是 shell 内建，不依赖外部 clear 二进制。
+    format!("{bash}\n{zsh}\nprintf '\\033[2J\\033[H'\n")
 }
 
 #[async_trait::async_trait]
@@ -422,7 +424,7 @@ impl SessionApi for SessionManager {
         Ok(ScreenSnapshot {
             cols: s.config().cols,
             rows: s.config().rows,
-            text: s.snapshot_text(),
+            text: s.screen_only_text(),
             cursor_row: row,
             cursor_col: col,
             alt_screen: s.alt_screen(),

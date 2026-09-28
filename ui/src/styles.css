@@ -51,6 +51,26 @@ input, select {
 }
 .badge.human { color: var(--warn); border-color: var(--warn); }
 .badge.agent { color: var(--accent); border-color: var(--accent); }
+.badge.dim { color: var(--dim); }
+
+/* 连接失败横幅 */
+.conn-error {
+  margin: 8px; padding: 10px 12px; border-radius: 8px;
+  background: rgba(208, 122, 122, 0.12); border: 1px solid var(--danger);
+  display: flex; gap: 8px; align-items: flex-start; justify-content: space-between;
+}
+.conn-error b { color: var(--danger); }
+
+/* 添加主机表单 */
+textarea {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  font-family: "SF Mono", Menlo, monospace; resize: vertical;
+}
+.add-host code {
+  font-family: "SF Mono", Menlo, monospace; font-size: 11px;
+  background: var(--panel); padding: 1px 5px; border-radius: 4px;
+}
 .term-wrap { flex: 1; min-height: 0; padding: 8px; display: flex; }
 #term { width: 100%; height: 100%; }
 .section { margin-bottom: 12px; }

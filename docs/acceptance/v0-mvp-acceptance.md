@@ -50,7 +50,7 @@
 | **SPIKE-2** russh×alacritty 保真 | 与 OpenSSH 参考流渲染一致；RSS 无泄漏 | `seq 1 50` 输出域与系统 OpenSSH+PTY 渲染逐行字节一致（50/50）；20MB 压力流量后 RSS 增长 704KB（门限 51200KB） | ✅ |
 | **SPIKE-3** MCP 合规 | 13 工具 + annotations；错误语义表；120s 审批挂起不被客户端切断；exec P95<300ms | 工具清单与 `readOnlyHint`/`destructiveHint` 合规；`dangerous_pattern`/`approval_denied`/`control_taken_by_human`/`approval_timeout` 逐条断言；**挂起 120.00s 未被切断**；**P95 = 1.8ms** | ✅ |
 
-## 4. 测试统计（全量 `cargo test --workspace`，v1.1 实测口径）
+## 4. 测试统计（全量 `cargo test --workspace`，v1.2 实测口径）
 
 | 套件 | 数量 | 覆盖 |
 |---|---|---|
@@ -60,13 +60,13 @@
 | approval | 12 | 精确/前缀/正则、TTL 过期、复合命令逐段（绕过用例）、内置 deny 不可删、ApproveEdited 不可越 deny、解析失败保守报审、**命令替换强制报审（M2 回归）**、**deny 规则逐 agent（m3 回归）** |
 | audit | 2 | 追加/查询/导出、**篡改检测** |
 | vault | 4 | 加解密往返+篡改、Token 生命周期、主机口令加密存储、ed25519 生成与解密 |
-| e2e_acceptance（真实 OpenSSH） | 2 | **首验收场景**、旅程 2（断线→重连→Reconfirming：白名单外被拒、**复合白名单形态被拒（M1 回归）**、核实后自动恢复、cwd 事实 NeedsRecheck→核实 Confirmed、重连后为新 shell 不谎报现场延续） |
+| e2e_acceptance（真实 OpenSSH） | 3 | **首屏干净回归（v1.2：read_screen 不得含注入回显/scrollback）**、**首验收场景**、旅程 2（断线→重连→Reconfirming：白名单外被拒、**复合白名单形态被拒（M1 回归）**、核实后自动恢复、cwd 事实 NeedsRecheck→核实 Confirmed、重连后为新 shell 不谎报现场延续） |
 | protocol（SPIKE-3） | 1 | §3 表 |
 | shell_integration（transport-pty） | 1 | 本地 zsh 集成 + 块 + OSC7 + Fresh 退出码 |
 | sshd_e2e（transport-ssh） | 1 | SSH 块 + cwd + Fresh env + SFTP 往返 |
 | spike2 | 1 | §3 表 |
 
-**合计 44 个测试，0 失败（修复后最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
+**合计 45 个测试，0 失败（v1.2 修复后最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
 
 ## 5. 独立复核（v1.1 新增）
 
@@ -113,10 +113,40 @@
 
 演示 shim 的简化见 §6.1-12；核心语义（作废/不可复活/重确认门槛）以自动化测试为准。SPIKE-1 基准随仓结果：[evidence/spike1-ipc-result.json](evidence/spike1-ipc-result.json)。
 
+### 5.4 真实 app 走查（T9）与 GUI 可用性修复（v1.2）
+
+**T9 是本轮新增的硬性 gate：必须在真实 Tauri app 里完成"真实 SSH 连接 → 真实 shell"，浏览器演示模式证据不再计入交互验收。**
+
+动机：v1.1 的 T1–T8 暴露了验收盲区——视觉走查全部跑在 demo 假数据上，"点连接 → 真实 SSH 终端 → 打字"从未在真实 app 里被走过一次。用户实测反馈证实了这一点（见下）。本轮修复后以 CGEvent 注入点击完成真实走查：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T9-a 重建首屏 | 重启 app：添加主机入口、主机卡带认证类型、空状态引导文案、终端三步使用说明 | 通过 | [t9_native_rebuild_home.png](screenshots/t9_native_rebuild_home.png) |
+| T9-b 真实 SSH | 原生窗口点击 e2e-sshd「连接」→ 真实 OpenSSH 容器会话建立：会话卡"已连接"、简报读到真实 cwd（/root）、审计 `#16 shell_integration_inject` / `#17 session_created`。该截图同时暴露了集成回显污染首屏（见下方修复清单） | 通过 | [t9_native_real_ssh_session.png](screenshots/t9_native_real_ssh_session.png) |
+
+修复后首屏以回归测试 `create_session_screen_is_clean` 为准（原生截图在修复复验时因系统屏幕会话状态变化暂不可用；截图能力恢复后可按 §7 重拍）。
+
+走查中发现并修复：
+
+- **read_screen 混入 scrollback（根因级）**：`read_screen` 用的是含 scrollback 的整缓冲渲染；前端 attach 时把整个快照重灌进 xterm，把清屏后的干净画面重新覆盖成"MOTD + 集成回显"。修复：`read_screen` 改为可见屏渲染（`screen_only_text`）；语义回归测试 `create_session_screen_is_clean` 断言首屏既无注入回显也无 scrollback 泄漏。简报的 `screen_tail_summary` 取尾部语义不变。
+- **集成注入回显污染首屏**：注入的 OSC133 集成命令被远端 PTY 回显。修复：注入行尾追加 `printf '\033[2J\033[H'` 清屏（shell 内建，不依赖外部 clear；Screen 与前端 xterm 均支持 2J）。
+- **终端打字完全无效**：`term.onData` 闭包捕获首渲染时的 `sid=null` 且初始化 effect 不会重跑——打字从未送达。修复：onData 改走 `sidRef`。
+
+**GUI 可用性 P0 修复清单**（用户实测反馈驱动，全部改动限于 `ui/`，核心层零改动）：
+
+1. 添加主机表单（密码 / 私钥粘贴，接 `upsert_host` + `create_identity`）——此前唯一入口是 CLI；
+2. 连接状态机：连接中禁用按钮、失败给出可读原因（认证失败/超时/拒绝对应中文提示+原始错误）、成功自动 attach 并聚焦；
+3. 会话状态徽标（已连接/中断/重连中/重确认）+ 3s 轮询 + 断开按钮（接 `close_session`）；
+4. 终端尺寸自适应 + PTY resize 对齐；
+5. 文案清理：控制权无 Agent 时显示"手动"、MCP 面板空状态改为接入指引、命令框 placeholder 标明执行位置、审批"编辑后批准"改为卡片内联编辑（原 `window.prompt` 在 WKWebView 不可用）。
+6. 测试统计更新为 **45 个自动化测试**（新增 `create_session_screen_is_clean`）。
+
+演示模式 shim（demo.ts）同步扩展：支持 upsert_host/create_session 失败注入/close_session/resize，浏览器走查与真实 UI 保持同一代码路径。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
-2. **GUI 视觉验收方式**：原生 WKWebView 窗口截图已补验（屏幕录制授权后，见 §5.3 T8：真实窗口 + 真实 vault 数据）；因无辅助访问权限无法向原生窗口注入点击，交互走查以同 UI 代码路径的浏览器演示模式完成（T1–T7）。桌面真机人工验收命令见 §7。
+2. **GUI 视觉验收方式**：v1.2 起 T9 为硬性 gate——真实 app 内以 CGEvent 注入点击完成"真实 SSH 连接"走查（§5.4）；浏览器演示模式仅覆盖原生窗口无法自动化的辅助路径。演示 shim 的简化项仍如实列于 §6.1-12。桌面真机人工验收命令见 §7。
 3. **Keychain 首次访问**：无头环境运行需 `TINYSSH_MASTER_KEY` 覆盖（桌面正常使用会弹钥匙串授权，属预期）。
 4. **Shell 模式输出流**：PTY 合并 stdout/stderr（ExecResult.stderr 为空，文档如实标注）；Fresh 模式有独立双流。
 5. **env_summary**：V0 不追踪 env 变更（简报如实标注"printenv 核实"）。
@@ -159,4 +189,4 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **44 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **45 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
