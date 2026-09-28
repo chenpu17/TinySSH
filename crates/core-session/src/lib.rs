@@ -23,6 +23,10 @@ pub struct ApprovalCenter {
     pub items: StdMutex<HashMap<ApprovalId, ApprovalItem>>,
     pub decisions: StdMutex<HashMap<ApprovalId, oneshot::Sender<DecisionMsg>>>,
     pub approvals_tx: broadcast::Sender<ApprovalEvent>,
+    /// 主机指纹待决（路线图⑤ TOFU）：pending 表 + 决策通道 + 事件推送。
+    pub hk_pending: StdMutex<HashMap<String, PendingHostKey>>,
+    pub hk_decisions: StdMutex<HashMap<String, oneshot::Sender<bool>>>,
+    pub hk_tx: broadcast::Sender<PendingHostKey>,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
 }
@@ -39,11 +43,15 @@ impl SessionManager {
         let vault = Arc::new(tinyssh_vault::Vault::open(db_path)?);
         let audit = Arc::new(tinyssh_audit::AuditStore::open(db_path)?);
         let (approvals_tx, _) = broadcast::channel(256);
+        let (hk_tx, _) = broadcast::channel(16);
         let center = Arc::new(ApprovalCenter {
             engine: ApprovalEngine::new()?,
             items: StdMutex::new(HashMap::new()),
             decisions: StdMutex::new(HashMap::new()),
             approvals_tx,
+            hk_pending: StdMutex::new(HashMap::new()),
+            hk_decisions: StdMutex::new(HashMap::new()),
+            hk_tx,
             vault,
             audit,
         });
@@ -148,6 +156,60 @@ impl SessionManager {
                 Err(Error::ApprovalDenied { reason: DeniedReason::Denied })
             }
             Err(_) => Err(Error::ApprovalDenied { reason: DeniedReason::ApprovalTimeout }),
+        }
+    }
+}
+
+/// TOFU 主机指纹门（路线图⑤）：vault 已信任且一致 → 静默放行；
+/// 首连 → 确认弹窗；不一致 → 变更红色告警。人类放行后指纹入库。
+/// 拒绝/超时返回 HostKeyRejected（经 russh 透传为 create_session 的错误）。
+async fn host_key_gate(
+    center: &Arc<ApprovalCenter>,
+    ctx: &Actor,
+    host: &Host,
+    fp: &str,
+) -> Result<bool> {
+    let stored = center.vault.host_fingerprint(&host.id)?;
+    if stored.as_deref() == Some(fp) {
+        return Ok(true);
+    }
+    let issue = if stored.is_some() {
+        HostKeyIssue::Changed
+    } else {
+        HostKeyIssue::FirstSeen
+    };
+    let item = PendingHostKey {
+        id: format!("hk-{}", uuid::Uuid::new_v4()),
+        host_id: host.id.clone(),
+        host_name: host.name.clone(),
+        address: host.address.clone(),
+        port: host.port,
+        issue,
+        fingerprint: fp.to_string(),
+        previous_fingerprint: stored,
+        created_at: chrono::Utc::now(),
+    };
+    let _ = center.audit.append(
+        ctx, "host_key_confirm_requested", None, Some(&host.name),
+        serde_json::json!({"id": item.id, "issue": format!("{issue:?}"), "fingerprint": fp}), None);
+    let (tx, rx) = oneshot::channel();
+    center.hk_decisions.lock().unwrap().insert(item.id.clone(), tx);
+    center.hk_pending.lock().unwrap().insert(item.id.clone(), item.clone());
+    let _ = center.hk_tx.send(item.clone());
+    match tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx).await {
+        Ok(Ok(true)) => {
+            center.vault.set_host_fingerprint(&host.id, fp)?;
+            let _ = center.audit.append(
+                ctx, "host_key_trusted", None, Some(&host.name),
+                serde_json::json!({"fingerprint": fp}), None);
+            Ok(true)
+        }
+        // 拒绝 / 待决项消失 / 超时：pending 表仅超时需自清（decide 已自清）
+        Ok(Ok(false)) => Err(Error::HostKeyRejected("用户拒绝连接".into())),
+        Ok(Err(_)) => Err(Error::HostKeyRejected("确认通道已关闭".into())),
+        Err(_) => {
+            center.hk_pending.lock().unwrap().remove(&item.id);
+            Err(Error::HostKeyRejected("确认超时".into()))
         }
     }
 }
@@ -309,13 +371,24 @@ impl SessionApi for SessionManager {
             ch
         } else {
             let (auth_type, secret) = self.center.vault.host_secret(&host)?;
+            // TOFU 指纹门（路线图⑤）：闭包只捕获 ApprovalCenter，避免回指 SessionManager
+            let center = self.center.clone();
+            let gate_host = host.clone();
+            let gate_ctx = ctx.clone();
+            let gate: transport_ssh::HostKeyCheck = Arc::new(move |fp| {
+                let center = center.clone();
+                let host = gate_host.clone();
+                let ctx = gate_ctx.clone();
+                let fp = fp.to_string(); // owned 后再装箱：future 不借入参（HRTB 约束）
+                Box::pin(async move { host_key_gate(&center, &ctx, &host, &fp).await })
+            });
             let target = transport_ssh::SshTarget {
                 address: host.address.clone(),
                 port: host.port,
                 username: host.username.clone(),
                 auth_type,
                 secret: secret.to_string(),
-                host_key_check: None, // TOFU 记录在 SshChannel 内（测试/试点默认首连信任）
+                host_key_check: Some(gate),
             };
             SshChannel::connect(target, cols, rows).await?
         };
@@ -603,6 +676,40 @@ impl SessionApi for SessionManager {
                     .map_err(|_| Error::Storage("decision receiver dropped".into()))
             }
             None => Err(Error::InvalidInput("no pending approval with this id".into())),
+        }
+    }
+
+    // ---- 主机指纹门（路线图⑤ TOFU）----
+    async fn pending_host_keys(&self, _ctx: &Actor) -> Result<Vec<PendingHostKey>> {
+        Ok(self
+            .center
+            .hk_pending
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    fn subscribe_host_keys(&self) -> broadcast::Receiver<PendingHostKey> {
+        self.center.hk_tx.subscribe()
+    }
+
+    async fn decide_host_key(&self, ctx: &Actor, id: &str, accept: bool) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let tx = self.center.hk_decisions.lock().unwrap().remove(id);
+        let item = self.center.hk_pending.lock().unwrap().remove(id);
+        match (tx, item) {
+            (Some(tx), Some(item)) => {
+                let _ = self.center.audit.append(
+                    ctx, "host_key_decision", None, Some(&item.host_name),
+                    serde_json::json!({"accept": accept, "issue": format!("{:?}", item.issue), "fingerprint": item.fingerprint}), None);
+                tx.send(accept)
+                    .map_err(|_| Error::Storage("host key gate receiver dropped".into()))
+            }
+            _ => Err(Error::InvalidInput("no pending host key with this id".into())),
         }
     }
 

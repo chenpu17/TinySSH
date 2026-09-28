@@ -30,6 +30,11 @@ type ApprovalItem = {
   id: string; session_id: string; agent_id: string; command: string;
   status: string; segment_report: { segment: string; verdict: string }[];
 };
+type PendingHostKey = {
+  id: string; host_id: string; host_name: string; address: string; port: number;
+  issue: "FirstSeen" | "Changed"; fingerprint: string; previous_fingerprint: string | null;
+  created_at: string;
+};
 type Brief = {
   cwd: string | null; env_summary: string;
   facts: { subject: string; detail: string; status: string }[];
@@ -224,6 +229,7 @@ export default function App() {
   // 连接状态机：null=空闲；连接中显示主机名；失败显示错误
   const [connecting, setConnecting] = useState<string | null>(null);
   const [connError, setConnError] = useState<{ title: string; detail: string } | null>(null);
+  const [hostKeyQueue, setHostKeyQueue] = useState<PendingHostKey[]>([]);
   const [showAddHost, setShowAddHost] = useState(false);
 
   const refreshLists = useCallback(async () => {
@@ -276,6 +282,20 @@ export default function App() {
     listen("approval-event", () => refreshLists()).then((f) => (un = f));
     return () => un?.();
   }, [refreshLists]);
+
+  // 主机指纹待决（T17）：初始拉取 + 事件推送；弹窗按到达顺序逐个出示
+  useEffect(() => {
+    if (!inTauri) return;
+    invoke<PendingHostKey[]>("pending_host_keys")
+      .then((list) => setHostKeyQueue((q) => (q.length ? q : list)))
+      .catch(() => {});
+    let un: (() => void) | undefined;
+    listen<PendingHostKey>("hostkey-event", (ev) => {
+      const item = ev.payload;
+      setHostKeyQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
+    }).then((f) => (un = f));
+    return () => un?.();
+  }, []);
 
   // 终端实例工厂：每个会话一个独立 xterm。
   const makeTerm = useCallback((sessionSid: string) => {
@@ -577,8 +597,17 @@ export default function App() {
     if (inTauri) void getCurrentWindow().setTitle(title).catch(() => {});
   }, [sid, sessions]);
 
-  const createSession = async (host: Host) => {
-    setConnecting(host.name);
+  // 指纹确认决定：本地先移除（后端决定即从待决表清掉）；挂起的 create_session 随决定继续或报错
+  const decideHostKey = async (item: PendingHostKey, accept: boolean) => {
+    setHostKeyQueue((q) => q.filter((x) => x.id !== item.id));
+    try {
+      await invoke("decide_host_key", { id: item.id, accept });
+    } catch {
+      /* 已超时/不存在，无需处理 */
+    }
+  };
+
+  const createSession = async (host: Host) => {    setConnecting(host.name);
     setConnError(null);
     try {
       const newSid = await invoke<string>("create_session", { hostId: host.id });
@@ -788,6 +817,43 @@ export default function App() {
             <button className="ghost" onClick={() => setConnError(null)}>关闭</button>
           </div>
         )}
+        {hostKeyQueue.length > 0 && (() => {
+          const hk = hostKeyQueue[0];
+          return (
+            <div className="hk-mask">
+              <div className={"hk-dialog" + (hk.issue === "Changed" ? " hk-danger" : "")}>
+                {hk.issue === "Changed" ? (
+                  <>
+                    <div className="hk-title hk-warn">⚠ 主机指纹已变更</div>
+                    <div>
+                      主机 <b>{hk.host_name}</b>（{hk.address}:{hk.port}）的指纹与此前信任的记录不一致。
+                      可能是服务器重装/换钥，也可能是<b className="hk-warn">中间人攻击</b>。请通过其他可信渠道核实后再继续。
+                    </div>
+                    <div className="hk-fp mono">原指纹　{hk.previous_fingerprint}</div>
+                    <div className="hk-fp mono">新指纹　{hk.fingerprint}</div>
+                    <div className="hk-actions">
+                      <button className="danger" onClick={() => decideHostKey(hk, true)}>我已核实，更新指纹并连接</button>
+                      <button className="ghost" onClick={() => decideHostKey(hk, false)}>拒绝连接</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="hk-title">首次连接确认</div>
+                    <div>
+                      首次连接主机 <b>{hk.host_name}</b>（{hk.address}:{hk.port}）。
+                      请核对服务器指纹（可向管理员确认）后决定是否信任：
+                    </div>
+                    <div className="hk-fp mono">{hk.fingerprint}</div>
+                    <div className="hk-actions">
+                      <button onClick={() => decideHostKey(hk, true)}>信任并连接</button>
+                      <button className="ghost" onClick={() => decideHostKey(hk, false)}>取消</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         <div className="term-wrap">
           {!sid && (
             <div className="welcome">

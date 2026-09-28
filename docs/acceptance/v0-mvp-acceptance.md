@@ -54,12 +54,12 @@
 
 | 套件 | 数量 | 覆盖 |
 |---|---|---|
-| core_local（核心管线） | 10 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压、**Ctrl+C 中断前台进程（v1.4：`send_keys("\x03")` → SIGINT → 块闭合 → shell 响应）**、**本地会话一键重连全链路（v1.7：死端→重连→重确认→核实恢复 + 未断开防呆）**、**meta 序列不进命令文本（v1.8：`\x1b` 前缀键入块不登记，简报无 'b' 残留）** |
+| core_local（核心管线） | 11 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压、**Ctrl+C 中断前台进程（v1.4：`send_keys("\x03")` → SIGINT → 块闭合 → shell 响应）**、**本地会话一键重连全链路（v1.7：死端→重连→重确认→核实恢复 + 未断开防呆）**、**meta 序列不进命令文本（v1.8：`\x1b` 前缀键入块不登记，简报无 'b' 残留）**、**主机指纹门三段式（v1.10：FirstSeen 信任入库 / 变更拒绝不改记录 / 变更放行更新，真实 sshd，e2e 守卫）** |
 | handle 白名单单元回归 | 1 | **重确认白名单仅限单条简单命令（M1 回归：`pwd && evil` 等复合形态全部拒绝）** |
 | term-core | 12 | 块生命周期（A/B/C/D）、Agent 键入归因、受管块、OSC 跨 feed、OSC7、快照、捕获、回放 |
 | approval | 12 | 精确/前缀/正则、TTL 过期、复合命令逐段（绕过用例）、内置 deny 不可删、ApproveEdited 不可越 deny、解析失败保守报审、**命令替换强制报审（M2 回归）**、**deny 规则逐 agent（m3 回归）** |
 | audit | 2 | 追加/查询/导出、**篡改检测** |
-| vault | 4 | 加解密往返+篡改、Token 生命周期、主机口令加密存储、ed25519 生成与解密 |
+| vault | 5 | 加解密往返+篡改、Token 生命周期、主机口令加密存储、ed25519 生成与解密、**主机指纹 TOFU 往返（v1.10：无记录/入库/更新/未知主机拒绝）** |
 | e2e_acceptance（真实 OpenSSH） | 5 | **首屏干净回归（v1.2：read_screen 不得含注入回显/scrollback）**、**首验收场景**、旅程 2（自动重连→Reconfirming：白名单外被拒、**复合白名单形态被拒（M1 回归）**、核实后自动恢复、cwd 事实 NeedsRecheck→核实 Confirmed、重连后为新 shell 不谎报现场延续）、**旅程 3（v1.7：docker stop 超自动重连窗口 → Disconnected 死端 → start → 手动重连 → 审计含 session_reconnect）**、**旅程 4（v1.7：键入一半脏状态断线重连——屏面无注入片段泄漏、残留块收尾、半截命令不执行，P1 §6-17 复现矩阵）** |
 | protocol（SPIKE-3） | 1 | §3 表 |
 | shell_integration（transport-pty） | 1 | 本地 zsh 集成 + 块 + OSC7 + Fresh 退出码 |
@@ -67,7 +67,7 @@
 | sshd_e2e（transport-ssh） | 1 | SSH 块 + cwd + Fresh env + SFTP 往返 |
 | spike2 | 1 | §3 表 |
 
-**合计 51 个测试，0 失败（v1.8 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
+**合计 53 个测试，0 失败（v1.10 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
 
 ## 5. 独立复核（v1.1 新增）
 
@@ -350,6 +350,38 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 
 **T16 判定：通过**（51/51 回归全绿 + 走查矩阵全过 + 每项视觉验证入档）。如实披露：① 链接安全依赖 scheme 白名单 + 浏览器侧常规防护，V0 不做域名警示（终端链接钓鱼属行业共性课题，V1 可加悬停域名预览）；② 搜索计数依赖 decorations——`onDidChangeResults` 仅在 decorations 启用时上报，不配则恒 0（会误显「无结果」），已在 `SEARCH_OPTS` 固化；③ 走查期间多次遇到「新实例 attach 后键盘暂死」环境级 flake（demo 模式同代码打字正常、DOM 输入活、后端 Ctrl 探针活，焦点探针显示 textarea 已聚焦——病灶疑在 WKWebView 键盘事件投递时序；T9–T15 真实人工使用未复现），以加长初始化等待规避，不阻塞验收。
 
+### 5.12 主机指纹首连确认 + 变更警告（T17，v1.10 新增）
+
+**动机**：UX 路线图（§6-18）第⑤项——TOFU（Trust On First Use）是 SSH 客户端的安全底线：旧实现仅进程内存 TOFU（重启即忘、无人工确认），首连静默信任任意指纹，指纹变更直接拒绝且无解释。
+
+**实现**：
+
+| 层 | 改动 | 说明 |
+|---|---|---|
+| vault 持久化 | `hosts.host_fingerprint` 列（**V2 迁移**，user_version 1→2）+ `host_fingerprint()` / `set_host_fingerprint()` | 信任记录跨进程/跨重启；仅在人类确认后写入 |
+| transport-ssh | `HostKeyCheck` 改 **async** 回调（人类确认可跨秒级等待）；指纹格式改 `SHA256:...`（OpenSSH 标准形）；指纹不符路径也走回调（变更告警流程）；`establish` 解包 Api 错误原样透传 | russh `check_server_key` 每连接一次；无回调（测试）保持全接受/不符拒绝语义 |
+| core-session | `host_key_gate`：vault 已信任且一致→静默放行；无记录→**FirstSeen 确认**；不一致→**Changed 红色告警**。待决表 + oneshot 决策通道 + 事件推送（仿审批中心）；放行后指纹入库 + 审计 `host_key_confirm_requested` / `host_key_decision` / `host_key_trusted` | 超时 120s（复用 DEFAULT_APPROVAL_TIMEOUT）；拒绝/超时 → `Error::HostKeyRejected`（经 russh 透传为 create_session 错误）；闭包只捕获 ApprovalCenter（避免回指 SessionManager 的循环引用） |
+| Tauri 壳 | 命令 `pending_host_keys` / `decide_host_key` + `hostkey-event` 推送 | 与审批事件同模式 |
+| UI | 固定遮罩弹窗：FirstSeen 显示指纹 + 「信任并连接/取消」；Changed 红边框 + 新旧指纹对照 + 中间人警示 + 「我已核实，更新指纹并连接（danger）/拒绝连接」 | 待决队列按到达顺序逐个出示；`pending_host_keys` 启动拉取 + 事件去重入队 |
+
+**自动化测试**（cargo，全绿）：
+- `tinyssh-vault`：`host_fingerprint_tofu_roundtrip`——新主机无记录、确认入库、可更新、未知主机拒绝。
+- `core-session`（e2e 守卫 `TINYSSH_E2E_SSHD=1` + 真实 sshd）：`host_key_gate_first_seen_change_and_reject` 三段式——① 首连 FirstSeen → 信任 → 连接成功 + 指纹入库；② 预置不一致旧指纹 → Changed + previous_fingerprint 正确 → **拒绝** → `HostKeyRejected` 且信任记录不被改动；③ 再次连接 → 接受 → 连接成功 + 指纹更新为服务器真实值。
+
+**T17 走查矩阵**（原生窗口 + CGEvent 注入；视觉验证 = 每步截图逐项检查后入档；执行于 v1.10 当日）：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T17-a | 首连确认弹窗视觉：FirstSeen 卡片居中遮罩、主机/地址、指纹 mono 块（与服务器实际指纹一致）、「信任并连接/取消」 | 通过 | [t17_fingerprint_first_seen.png](screenshots/t17_fingerprint_first_seen.png) |
+| T17-b | 信任后连接成功：新会话卡「已连接」、终端 prompt 可用、审计链 confirm→decision→trusted 完整、指纹入库（`SHA256:wD4pZq…`） | 通过 | [t17_fingerprint_trusted.png](screenshots/t17_fingerprint_trusted.png) |
+| T17-c | **跨进程持久化**：重启 app 后再连同一主机 → **无弹窗静默连接**，审计仅「连接主机」无 confirm_requested | 通过 | [t17_fingerprint_silent_reconnect.png](screenshots/t17_fingerprint_silent_reconnect.png) / [t17_fingerprint_restart_clean.png](screenshots/t17_fingerprint_restart_clean.png) |
+| T17-d | 变更告警视觉（预置不一致旧指纹触发）：红色边框 + 「⚠ 主机指纹已变更」+ 原指纹/新指纹对照 + 中间人警示加粗 + danger/ghost 双按钮 | 通过 | [t17_fingerprint_changed.png](screenshots/t17_fingerprint_changed.png) |
+| T17-e | 拒绝路径 ×2：首连「取消」与变更「拒绝连接」均 → 红色横幅「主机指纹验证失败（用户拒绝连接）」、审计 decision(deny) 落盘、**信任记录不被改动**（sqlite 核实）；另附带实证「确认超时」路径（弹窗无人应答 120s → 横幅「主机指纹验证失败（确认超时）」） | 通过 | [t17_fingerprint_rejected.png](screenshots/t17_fingerprint_rejected.png) / [t17_fingerprint_change_timeout.png](screenshots/t17_fingerprint_change_timeout.png) |
+| T17-f | 「我已核实，更新指纹并连接」→ 连接成功、sqlite 核实指纹恢复为服务器真实值、新会话可用 | 通过 | [t17_fingerprint_change_accepted.png](screenshots/t17_fingerprint_change_accepted.png) |
+| T17-g | 审计时间线：host_key_confirm_requested / host_key_decision / host_key_trusted 与「连接主机」交替出现，四轮确认（首连信任、首连拒绝、变更拒绝、变更放行）全部留痕 | 通过 | [t17_fingerprint_change_accepted.png](screenshots/t17_fingerprint_change_accepted.png)（右栏审计全景） |
+
+**T17 判定：通过**（53/53 回归全绿 + 走查矩阵 7/7 + 每步视觉验证入档）。如实披露：① 首轮走查（v1.10 前夜）的一次「信任」决定由当时在场的用户点击完成，次日以清库重演 + 全脚本化 CGEvent 注入完成可复现验证（07:36–07:39 四轮确认全部自动化）；② 走查期间桌面两次自动/手动锁屏导致中断，收尾脚本在解锁窗口内一次性完成，不影响结论；③ 变更告警的「拒绝」语义为**不改信任记录**（与 OpenSSH 已知主机行为一致），服务器合法换钥需人工核实后放行；④ 并发建连的多个指纹待决会排队逐个出示（V0 无合并视图）。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -369,7 +401,7 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **~~鼠标上报未实测~~（v1.8 已验证，路线图③关闭，§5.10）**：点击上报原生端到端实证（本机 vim mouse=a 点击指定单词 → 光标跳转 → `rZ` 替换命中字符落盘）；滚轮上报的 xterm.js SGR 编码经 WebKit 引擎层验证 4/4（与应用同一构建）。残留边界：真实滚轮手感未经真人确认（合成滚轮事件送不进 WKWebView，走查工具层限制已实证；真实输入投递由平台保证），tmux/htop 未实测（环境无此二者）——均为日常使用顺手确认项，不再阻塞路线图。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.9 完成①–④）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ⑤ 主机指纹首连确认 + 变更警告。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.10 完成①–⑤）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ⑥ 字号/主题设置。
 
 ## 7. 复现指令
 
@@ -460,8 +492,19 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    f. printf '\033]0;my-remote-title\007' → 头部「MY-REMOTE-TITLE」（T16-h）
 #    g. 引擎层（playwright + 应用同一构建）：linkHandler（OSC8）/linkProvider（裸 URL）双路径断言（T16-e）
 #    注：.setTitle 需 capabilities 含 core:window:allow-set-title（缺失时静默失效）
+
+# 13) T17 主机指纹门走查（§5.12 七步；已于 v1.10 执行通过，路线图⑤关闭）
+#    a. sqlite3 ~/.tinyssh/tinyssh.db "UPDATE hosts SET host_fingerprint=NULL WHERE id='h-556e…';"
+#       → 点击连接 → FirstSeen 确认弹窗（指纹 SHA256:… mono 块）
+#    b. 「取消」→ 红色横幅「主机指纹验证失败（用户拒绝连接）」、记录仍 NULL
+#    c. 再连 → 「信任并连接」→ 会话连接、host_fingerprint 入库、审计 trusted
+#    d. 预置假旧指纹 → 连接 → 红色变更告警（原/新指纹对照 + 中间人警示）
+#    e. 「拒绝连接」→ 横幅、记录不变；「我已核实，更新指纹并连接」→ 连接、记录恢复真实值
+#    f. 重启 app → 再连 → 无弹窗静默连接（跨进程 TOFU），审计无新 confirm_requested
+#    g. 无人应答 120s → 横幅「主机指纹验证失败（确认超时）」（超时路径附带实证）
+#    注：门未放行时 create_session 挂起等待，审计持续追加 host_key_confirm_requested
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **51 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复），并按使用体验重排 UX 路线图（§6-18，①–④已完成，下一项 ⑤ 主机指纹首连确认 + 变更警告）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **53 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕），并按使用体验重排 UX 路线图（§6-18，①–⑤已完成，下一项 ⑥ 字号/主题设置）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

@@ -203,6 +203,18 @@ async fn audit_query(state: ApiState<'_>, sid: Option<String>, limit: i64) -> Cm
         .map_err(|e| e.to_string())
 }
 
+/// 主机指纹待决列表（路线图⑤ TOFU：首连确认/变更告警）。
+#[tauri::command]
+async fn pending_host_keys(state: ApiState<'_>) -> CmdResult<Vec<PendingHostKey>> {
+    state.api.pending_host_keys(&human()).await.map_err(|e| e.to_string())
+}
+
+/// 人类对指纹确认作出决定；accept=true 时指纹入库并放行连接。
+#[tauri::command]
+async fn decide_host_key(state: ApiState<'_>, id: String, accept: bool) -> CmdResult<()> {
+    state.api.decide_host_key(&human(), &id, accept).await.map_err(|e| e.to_string())
+}
+
 /// SPIKE-1：是否处于基准模式。
 #[tauri::command]
 async fn bench_mode() -> CmdResult<bool> {
@@ -426,6 +438,18 @@ fn main() {
                     }
                 }
             });
+            // 主机指纹待决事件 → 前端（路线图⑤）
+            let handle_hk = app.handle().clone();
+            let mut hk_rx = api.subscribe_host_keys();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(hk_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_hk.emit("hostkey-event", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
             // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
             if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
                 let api2 = api.clone();
@@ -449,6 +473,7 @@ fn main() {
             open_url,
             read_screen, send_keys, exec_human, set_control, session_brief,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
+            pending_host_keys, decide_host_key,
             bench_start, bench_report, bench_mode, note_terminal,
         ])
         .run(tauri::generate_context!())

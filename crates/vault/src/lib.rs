@@ -41,6 +41,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         conn.pragma_update(None, "user_version", 1)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
+    // V2（路线图⑤）：主机指纹持久化（TOFU 跨进程记忆）
+    if version < 2 {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN host_fingerprint TEXT;")
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        conn.pragma_update(None, "user_version", 2)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
     Ok(())
 }
 
@@ -283,6 +290,36 @@ impl Vault {
             });
         }
         Ok(out)
+    }
+
+    /// 已信任的主机指纹（TOFU，路线图⑤）；None = 该主机尚无信任记录。
+    pub fn host_fingerprint(&self, host_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let fp: Option<String> = conn
+            .query_row(
+                "SELECT host_fingerprint FROM hosts WHERE id=?1 AND deleted_at IS NULL",
+                params![host_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        Ok(fp.filter(|s| !s.is_empty()))
+    }
+
+    /// 记录/更新主机指纹（仅在人类确认后调用）。
+    pub fn set_host_fingerprint(&self, host_id: &str, fp: &str) -> Result<()> {
+        let n = self
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE hosts SET host_fingerprint=?2, updated_at=?3 WHERE id=?1 AND deleted_at IS NULL",
+                params![host_id, fp, now_ms()],
+            )
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        if n == 0 {
+            return Err(Error::InvalidInput(format!("host {host_id} not found")));
+        }
+        Ok(())
     }
 
     /// 取主机连接凭据（内部用；SessionApi 无返回凭据的方法）。
@@ -776,4 +813,28 @@ mod tests {
         let pem = v.identity_pem(&meta.id).unwrap();
         assert!(pem.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"));
     }
+
+    #[test]
+    fn host_fingerprint_tofu_roundtrip() {
+        let (_dir, v) = vault();
+        let id = v
+            .upsert_host(&HostDraft {
+                name: "e2e".into(),
+                address: "127.0.0.1".into(),
+                username: "root".into(),
+                auth: AuthDraft::Password { password: "testpass".into() },
+                ..Default::default()
+            })
+            .unwrap();
+        // 新主机无信任记录
+        assert!(v.host_fingerprint(&id).unwrap().is_none());
+        // 确认后入库、可更新
+        v.set_host_fingerprint(&id, "SHA256:AAAA").unwrap();
+        assert_eq!(v.host_fingerprint(&id).unwrap().as_deref(), Some("SHA256:AAAA"));
+        v.set_host_fingerprint(&id, "SHA256:BBBB").unwrap();
+        assert_eq!(v.host_fingerprint(&id).unwrap().as_deref(), Some("SHA256:BBBB"));
+        // 未知主机拒绝
+        assert!(v.set_host_fingerprint("h-missing", "SHA256:X").is_err());
+    }
 }
+

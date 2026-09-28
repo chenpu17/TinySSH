@@ -433,3 +433,95 @@ async fn queue_busy_backpressure() {
     assert!(matches!(r, Err(Error::QueueBusy { position: _ })), "期望 QueueBusy，得到 {r:?}");
     blocker.abort();
 }
+
+// ---- 主机指纹门（T17 路线图⑤ TOFU）：需 e2e sshd（TINYSSH_E2E_SSHD=1 + docker tinyssh-e2e）----
+
+async fn wait_pending(m: &SessionManager, host_id: &str) -> PendingHostKey {
+    for _ in 0..75 {
+        let list = m.pending_host_keys(&human()).await.unwrap();
+        if let Some(it) = list.into_iter().find(|it| it.host_id == host_id) {
+            return it;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("host key pending did not appear for {host_id}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn host_key_gate_first_seen_change_and_reject() {
+    let lock = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
+    if !std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false) {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    let _lock = lock;
+    let m = manager().await;
+    let hid = m
+        .upsert_host(
+            &human(),
+            HostDraft {
+                name: "e2e-gate".into(),
+                address: "127.0.0.1".into(),
+                port: Some(2222),
+                username: "root".into(),
+                auth: AuthDraft::Password { password: "testpass".into() },
+                tags: vec![],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // ① 首连：FirstSeen 确认 → 信任后连接成功、指纹入库
+    let m2 = m.clone();
+    let hid_spawn = hid.clone();
+    let t1 = tokio::spawn(async move {
+        m2.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+    });
+    let it = wait_pending(&m, &hid).await;
+    assert_eq!(it.issue, HostKeyIssue::FirstSeen);
+    assert!(it.fingerprint.starts_with("SHA256:"));
+    assert!(it.previous_fingerprint.is_none());
+    m.decide_host_key(&human(), &it.id, true).await.unwrap();
+    let sid = t1.await.unwrap().expect("first-seen accept should connect");
+    assert_eq!(
+        m.center.vault.host_fingerprint(&hid).unwrap().as_deref(),
+        Some(it.fingerprint.as_str())
+    );
+    m.close_session(&human(), sid).await.unwrap();
+
+    // ② 变更告警：预置不一致旧指纹 → Changed；拒绝 → HostKeyRejected 且不改信任记录
+    m.center.vault.set_host_fingerprint(&hid, "SHA256:FAKE-OLD").unwrap();
+    let m3 = m.clone();
+    let hid_spawn = hid.clone();
+    let t2 = tokio::spawn(async move {
+        m3.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+    });
+    let it2 = wait_pending(&m, &hid).await;
+    assert_eq!(it2.issue, HostKeyIssue::Changed);
+    assert_eq!(it2.previous_fingerprint.as_deref(), Some("SHA256:FAKE-OLD"));
+    m.decide_host_key(&human(), &it2.id, false).await.unwrap();
+    let err = t2.await.unwrap().expect_err("deny must fail the connect");
+    assert!(matches!(err, Error::HostKeyRejected(_)), "got: {err:?}");
+    assert_eq!(
+        m.center.vault.host_fingerprint(&hid).unwrap().as_deref(),
+        Some("SHA256:FAKE-OLD")
+    );
+
+    // ③ 变更确认：接受 → 连接成功且指纹更新为服务器真实值
+    let m4 = m.clone();
+    let hid_spawn = hid.clone();
+    let t3 = tokio::spawn(async move {
+        m4.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+    });
+    let it3 = wait_pending(&m, &hid).await;
+    assert_eq!(it3.issue, HostKeyIssue::Changed);
+    m.decide_host_key(&human(), &it3.id, true).await.unwrap();
+    let sid3 = t3.await.unwrap().expect("change accept should connect");
+    assert_eq!(
+        m.center.vault.host_fingerprint(&hid).unwrap().as_deref(),
+        Some(it3.fingerprint.as_str())
+    );
+    m.close_session(&human(), sid3).await.unwrap();
+}

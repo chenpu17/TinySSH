@@ -172,6 +172,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::SessionClosed => "session_closed",
         Error::AuthFailed => "auth_failed",
         Error::ConnectFailed(_) => "connect_failed",
+        Error::HostKeyRejected(_) => "host_key_rejected",
         Error::ExecTimeout => "exec_timeout",
         Error::Cancelled => "cancelled",
         Error::QueueBusy { .. } => "queue_busy",

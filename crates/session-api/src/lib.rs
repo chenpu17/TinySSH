@@ -226,6 +226,30 @@ pub enum ApprovalStatus {
     Voided,
 }
 
+/// 主机指纹待决事项（路线图⑤ TOFU）：首连确认 / 变更告警。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostKeyIssue {
+    /// 首次连接该主机：指纹尚未被信任。
+    FirstSeen,
+    /// 与已信任指纹不一致：可能的中间人攻击或服务器换钥。
+    Changed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingHostKey {
+    pub id: String,
+    pub host_id: HostId,
+    pub host_name: String,
+    pub address: String,
+    pub port: u16,
+    pub issue: HostKeyIssue,
+    /// SHA256:... 形式的服务器公钥指纹。
+    pub fingerprint: String,
+    /// 变更告警时的原指纹。
+    pub previous_fingerprint: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentReport {
     pub segment: String,
@@ -520,6 +544,9 @@ pub enum Error {
     AuthFailed,
     #[error("连接失败: {0}")]
     ConnectFailed(String),
+    /// 主机指纹门未放行（用户拒绝或确认超时；路线图⑤ TOFU）。
+    #[error("主机指纹验证失败（{0}）")]
+    HostKeyRejected(String),
     /// 执行超时（与 ApprovalTimeout 区分）。
     #[error("执行超时")]
     ExecTimeout,
@@ -614,6 +641,11 @@ pub trait SessionApi: Send + Sync {
     async fn list_approvals(&self, ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>>;
     fn subscribe_approvals(&self) -> broadcast::Receiver<ApprovalEvent>;
     async fn decide_approval(&self, ctx: &Actor, id: ApprovalId, d: Decision) -> Result<()>;
+    // ---- 主机指纹门（路线图⑤ TOFU）----
+    async fn pending_host_keys(&self, ctx: &Actor) -> Result<Vec<PendingHostKey>>;
+    fn subscribe_host_keys(&self) -> broadcast::Receiver<PendingHostKey>;
+    /// 人类对首连确认/变更告警作出决定；accept=true 时指纹入库。
+    async fn decide_host_key(&self, ctx: &Actor, id: &str, accept: bool) -> Result<()>;
 
     // ---- 审计（v1；PRD FR-5）----
     async fn query_audit(&self, ctx: &Actor, f: AuditFilter) -> Result<AuditPage>;

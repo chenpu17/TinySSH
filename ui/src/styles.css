@@ -121,3 +121,24 @@ textarea {
 .tl-agent { flex: none; font-size: 11px; color: var(--accent); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-what { flex: none; font-size: 12px; }
 .tl-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+
+/* 主机指纹确认/变更告警弹窗（T17 TOFU） */
+.hk-mask {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(6, 9, 13, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.hk-dialog {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px 20px; width: min(540px, 86vw); line-height: 1.8;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.hk-dialog.hk-danger { border-color: var(--danger); }
+.hk-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+.hk-title.hk-warn, .hk-warn { color: var(--danger); }
+.hk-fp {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; margin: 8px 0 0; font-size: 11px;
+  word-break: break-all; user-select: text;
+}
+.hk-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }

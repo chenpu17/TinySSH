@@ -15,8 +15,12 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{broadcast, Mutex};
 
-/// TOFU 主机指纹回调：首次记录、变更拒绝。None = 全接受（测试专用）。
-pub type HostKeyCheck = Arc<dyn Fn(&str) -> Result<bool> + Send + Sync>;
+/// TOFU 主机指纹回调：异步（人类确认可能跨秒级等待）。None = 全接受（测试专用）。
+pub type HostKeyCheck = Arc<
+    dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// russh Handler 的错误类型：桥接 session_api::Error 与 russh::Error（孤儿规则）。
 #[derive(Debug, thiserror::Error)]
@@ -35,10 +39,9 @@ struct ClientHandler {
 impl ClientHandler {
     fn fingerprint_of(key: &russh::keys::PublicKeyOrCertificate) -> String {
         match key {
-            russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => {
-                use russh::keys::PublicKeyBase64;
-                format!("{} {}", key.algorithm(), key.public_key_base64())
-            }
+            russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => key
+                .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
+                .to_string(),
             russh::keys::PublicKeyOrCertificate::Certificate(_) => "certificate".to_string(),
         }
     }
@@ -55,8 +58,9 @@ impl client::Handler for ClientHandler {
         let mut seen = self.seen_fingerprint.lock().await;
         match seen.as_ref() {
             None => {
+                // 首连：交回调确认（TOFU 首连确认 / 变更告警在 core 层按 vault 记录分流）
                 if let Some(check) = &self.host_key_check {
-                    let ok = check(&fp)?;
+                    let ok = check(&fp).await?;
                     if ok {
                         *seen = Some(fp);
                     }
@@ -66,9 +70,19 @@ impl client::Handler for ClientHandler {
                     Ok(true)
                 }
             }
-            Some(previous) => {
-                // 变更告警：与首连指纹不一致即拒绝（TOFU）
-                Ok(*previous == fp)
+            Some(prev) if *prev == fp => Ok(true),
+            Some(_) => {
+                // 进程内已见过不同指纹：无回调一律拒绝（测试）；有回调走变更告警流程
+                match &self.host_key_check {
+                    Some(check) => {
+                        let ok = check(&fp).await?;
+                        if ok {
+                            *seen = Some(fp);
+                        }
+                        Ok(ok)
+                    }
+                    None => Ok(false),
+                }
             }
         }
     }
@@ -135,7 +149,11 @@ impl SshChannel {
             handler,
         )
         .await
-        .map_err(|e| Error::ConnectFailed(format!("{e}")))?;
+        .map_err(|e| match e {
+            // 指纹门拒绝等 Api 错误原样透传（UI 显示"主机指纹验证失败（…）"）
+            SshError::Api(e) => e,
+            other => Error::ConnectFailed(format!("{other}")),
+        })?;
 
         let mut handle = handle;
         let auth = match self.target.auth_type {
