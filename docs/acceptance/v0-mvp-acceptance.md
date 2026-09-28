@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.8 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
+> 版本：v1.9 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -318,6 +318,38 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 
 **走查工具层新知**：「合成鼠标几乎不送达」（T11）细化——**点击在冷启动实例可达，滚轮（CGEventCreateScrollWheelEvent）始终不可达**；此前 vim 滚轮无反应即此（与 vim 编码无关，事件根本没进 WebView）。
 
+### 5.11 ⌘F 搜索 / OSC8 链接 / 窗口标题（T16，v1.9 新增）
+
+**动机**：UX 路线图（§6-18）第④项——终端搜索、链接识别、窗口标题是「正常 SSH client」的标配三件。
+
+**实现**：
+
+| 特性 | 改动 | 说明 |
+|---|---|---|
+| ⌘F 终端内搜索 | @xterm/addon-search 0.14 + 右上角悬浮搜索框（`ui/src/App.tsx` + `styles.css`） | ⌘F 打开、输入增量高亮、⏎/⇧⏎ 下一个/上一个、Esc 关闭回焦点、N/M 计数；活动匹配琥珀色、其余蓝灰 + overview ruler |
+| OSC8/URL 链接 | @xterm/addon-web-links 0.11（裸 URL 正则）+ Terminal `linkHandler`（OSC 8 激活）+ 新 Tauri 命令 `open_url` | 链接虚线下划线渲染；点击经 `open <url>` 走系统默认浏览器；**scheme 白名单仅 http/https**（防 file:// 等被外部处理器利用） |
+| 窗口标题 | `getCurrentWindow().setTitle("<主机> — TinySSH")` + xterm `onTitleChange` 进终端头部 | macOS 标题栏随会话切换；远程 OSC 0/2 标题显示为头部「标题」标签 |
+
+**三处静默失效根因**（本轮流查逐一暴露并修复，均为集成层缺口）：
+1. **allowProposedApi 未开**：SearchAddon（registerDecoration）与 WebLinksAddon（registerLinkProvider）都是 proposed API——不开则 addon 装载即抛错、全部静默失效（Playwright harness 暴露 `You must set the allowProposedApi option`）。
+2. **OSC 8 激活缺 linkHandler**：xterm 5.5 核心自带 OSC 8 渲染（虚线下划线）与默认激活器，但不设 `linkHandler` 时点击走 `confirm()` 对话框；且 addon-web-links 0.11 是纯正则 URL 检测、**不处理 OSC 8**——两条路径须分别接线。
+3. **窗口 setTitle 缺 capability**：Tauri 2 权限模型需 `core:window:allow-set-title`，缺失时 setTitle 静默 reject（Promise 被吞，标题恒为配置值）。
+
+**T16 走查矩阵**（原生窗口 + Playwright WebKit 引擎层；视觉验证 = 每项特性截图逐项检查布局与样式后入档）：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T16-a | ⌘F 面板视觉：右上角悬浮、聚焦蓝框、↑↓✕ ghost 按钮、圆角阴影 | 通过（不遮内容主区，风格与设计语言一致） | [t16_search_panel.png](screenshots/t16_search_panel.png) |
+| T16-b | 搜索高亮 + 计数：搜 "MARKER item 017" → 琥珀活动高亮 + 视口自动滚动 + 计数 1/1 | 通过 | [t16_search_match.png](screenshots/t16_search_match.png) |
+| T16-c | 多匹配导航：搜 "MARKER"（31 处）→ ⏎ 19/31→20/31、⇧⏎ 回 19/31 | 通过 | [t16_search_panel.png](screenshots/t16_search_panel.png) |
+| T16-d | 链接渲染：OSC 8 输出 "Open Dev Server" → 虚线下划线样式 | 通过 | [t16_osc8_link.png](screenshots/t16_osc8_link.png) |
+| T16-e | 引擎层链接激活（Playwright + 应用同一构建 + 真实输入事件）：OSC 8 经 linkHandler、裸 URL 经 addon，handler 各收到正确 URL | 通过（2/2） | 走查记录 |
+| T16-f | 原生端到端：点击 "Open Dev Server" → 系统默认浏览器打开 127.0.0.1:5183 | 通过 | [t16_osc8_browser_open.png](screenshots/t16_osc8_browser_open.png) |
+| T16-g | 窗口标题随会话切换：attach e2e-sshd → "e2e-sshd — TinySSH"；⌘2 切本机 → "本机 — TinySSH" | 通过 | [t16_window_title_remote.png](screenshots/t16_window_title_remote.png) / [t16_window_title_local.png](screenshots/t16_window_title_local.png) |
+| T16-h | 远程 OSC 标题：`printf '\033]0;my-remote-title\007'` → 头部出现「MY-REMOTE-TITLE」（panel-title 大写风格） | 通过 | 走查记录 |
+
+**T16 判定：通过**（51/51 回归全绿 + 走查矩阵全过 + 每项视觉验证入档）。如实披露：① 链接安全依赖 scheme 白名单 + 浏览器侧常规防护，V0 不做域名警示（终端链接钓鱼属行业共性课题，V1 可加悬停域名预览）；② 搜索计数依赖 decorations——`onDidChangeResults` 仅在 decorations 启用时上报，不配则恒 0（会误显「无结果」），已在 `SEARCH_OPTS` 固化；③ 走查期间多次遇到「新实例 attach 后键盘暂死」环境级 flake（demo 模式同代码打字正常、DOM 输入活、后端 Ctrl 探针活，焦点探针显示 textarea 已聚焦——病灶疑在 WKWebView 键盘事件投递时序；T9–T15 真实人工使用未复现），以加长初始化等待规避，不阻塞验收。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -337,7 +369,7 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **~~鼠标上报未实测~~（v1.8 已验证，路线图③关闭，§5.10）**：点击上报原生端到端实证（本机 vim mouse=a 点击指定单词 → 光标跳转 → `rZ` 替换命中字符落盘）；滚轮上报的 xterm.js SGR 编码经 WebKit 引擎层验证 4/4（与应用同一构建）。残留边界：真实滚轮手感未经真人确认（合成滚轮事件送不进 WKWebView，走查工具层限制已实证；真实输入投递由平台保证），tmux/htop 未实测（环境无此二者）——均为日常使用顺手确认项，不再阻塞路线图。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.8 完成①②③）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**——点击原生端到端 + 滚轮编码层验证；滚轮真人手感为顺手确认项）④ ⌘F 搜索 / OSC8 链接 / 窗口标题 ⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ④ ⌘F 搜索 / OSC8 链接 / 窗口标题。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.9 完成①–④）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ⑤ 主机指纹首连确认 + 变更警告。
 
 ## 7. 复现指令
 
@@ -418,8 +450,18 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    e. WebKit 引擎层（playwright + 应用同一 xterm 构建）：DECSET 1002+1006
 #       → page.mouse 点击/滚轮 → onData 断言 SGR 4/4（按下/抬起/滚轮上/下）
 #    f. 真人顺手项：htop/tmux 真实滚轮手感（合成滚轮注入不达 WebView，工具层限制）
+
+# 12) T16 三特性走查（§5.11 八步；已于 v1.9 执行通过）
+#    a. 本机终端 ⌘F → 搜索框出现（视觉）→ 键入查询 → 琥珀高亮 + N/M 计数（T16-a/b）
+#    b. ⏎ / ⇧⏎ 上下一处导航、Esc 关闭回焦点（T16-c）
+#    c. printf '\e]8;;http://127.0.0.1:5183/\e\\Open Dev Server\e]8;;\e\\' → 虚线下划线（T16-d）
+#    d. 点击链接（合成注入需 hover 驻留 ≥0.8s）→ 默认浏览器打开 5183（T16-f）
+#    e. ⌘1/⌘2 切换 → 标题栏 "e2e-sshd — TinySSH" ↔ "本机 — TinySSH"（T16-g）
+#    f. printf '\033]0;my-remote-title\007' → 头部「MY-REMOTE-TITLE」（T16-h）
+#    g. 引擎层（playwright + 应用同一构建）：linkHandler（OSC8）/linkProvider（裸 URL）双路径断言（T16-e）
+#    注：.setTitle 需 capabilities 含 core:window:allow-set-title（缺失时静默失效）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **51 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证），并按使用体验重排 UX 路线图（§6-18，①②③已完成，下一项 ④ ⌘F 搜索 / OSC8 链接 / 窗口标题）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **51 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复），并按使用体验重排 UX 路线图（§6-18，①–④已完成，下一项 ⑤ 主机指纹首连确认 + 变更警告）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

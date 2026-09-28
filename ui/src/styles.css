@@ -83,6 +83,15 @@ textarea {
 .term-session.active { display: block; }
 .welcome { position: absolute; inset: 0; padding: 36px 40px; color: var(--dim); line-height: 2.1; }
 .welcome-title { color: var(--text); font-weight: 600; font-size: 15px; margin-bottom: 10px; }
+/* ⌘F 终端内搜索框（T16）：悬浮于终端右上角，不遮内容主区 */
+.term-search {
+  position: absolute; top: 8px; right: 16px; z-index: 10;
+  display: flex; gap: 6px; align-items: center;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+.term-search input { width: 180px; padding: 4px 8px; }
+.term-search button { padding: 2px 8px; font-size: 12px; line-height: 1.4; }
 .section { margin-bottom: 12px; }
 .section h4 { margin: 8px 0; color: var(--dim); font-size: 11px; text-transform: uppercase; }
 .mono { font-family: "SF Mono", Menlo, monospace; }

@@ -13,6 +13,9 @@ const MkChannel = () => (inTauri ? new tauri.Channel<unknown>() : new demo.Chann
 import { listen } from "@tauri-apps/api/event";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "@xterm/xterm/css/xterm.css";
 
 type Host = {
@@ -180,6 +183,20 @@ const altMetaSequence = (code: string | undefined, shift: boolean): string | nul
   return "\x1b" + (shift ? c.toUpperCase() : c);
 };
 
+// ⌘F 搜索配置（T16）：decorations 必须开启——onDidChangeResults 的计数仅在
+// decorations 启用时上报（不配则恒 0，UI 会误显「无结果」）
+const SEARCH_OPTS = {
+  caseSensitive: false,
+  decorations: {
+    matchBackground: "#3d4d63",
+    matchBorder: "#4a5a70",
+    matchOverviewRuler: "#55616e",
+    activeMatchBackground: "#8a6d2f",
+    activeMatchBorder: "#d0b07a",
+    activeMatchColorOverviewRuler: "#d0b07a",
+  },
+};
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -187,9 +204,16 @@ export default function App() {
   const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
   // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
-  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement }>>(new Map());
+  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon }>>(new Map());
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<{ resultCount: number; resultIndex: number | undefined } | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // 远程 OSC 0/2 标题（T16）：按会话记录，显示在终端头部
+  const [oscTitles, setOscTitles] = useState<Record<string, string>>({});
   const [hosts, setHosts] = useState<Host[]>([]);
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
@@ -260,8 +284,36 @@ export default function App() {
     const el = document.createElement("div");
     el.className = "term-session";
     mount.appendChild(el);
-    const term = new Terminal({ fontSize: 13, cursorBlink: true, scrollback: 5000, theme: { background: "#10141a" } });
+    // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
+    // WebLinksAddon（registerLinkProvider）与 linkHandler（OSC 8 激活）均为 proposed API
+    const term = new Terminal({
+      fontSize: 13, cursorBlink: true, scrollback: 5000, allowProposedApi: true,
+      theme: { background: "#10141a" },
+      // OSC 8 超链接激活（T16）：WebLinksAddon 只管裸 URL 正则检测，
+      // OSC 8 由核心 linkHandler 路由（不设则核心弹 confirm 对话框）
+      linkHandler: {
+        activate: (_ev, uri) => {
+          if (inTauri) void invoke("open_url", { url: uri }).catch(() => {});
+          else window.open(uri, "_blank");
+        },
+      },
+    });
     term.open(el);
+    // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
+    const searchAddon = new SearchAddon();
+    searchAddon.onDidChangeResults((r) => {
+      setSearchResults({ resultCount: r.resultCount, resultIndex: r.resultIndex });
+    });
+    term.loadAddon(searchAddon);
+    // 链接识别（T16）：OSC8 超链接 + URL 自动检测；点击经 open_url 打开（仅 http/https）
+    term.loadAddon(new WebLinksAddon((_ev, url) => {
+      if (inTauri) void invoke("open_url", { url }).catch(() => {});
+      else window.open(url, "_blank");
+    }));
+    // 远程设置的标题（OSC 0/2，T16）：按会话记录，显示在终端头部
+    term.onTitleChange((t) => {
+      if (t) setOscTitles((prev) => ({ ...prev, [sessionSid]: t }));
+    });
     // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
     // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
     // Option/Alt 的 Meta 转发在 window 捕获层做（见下方 onKey）——WKWebView 里
@@ -298,6 +350,14 @@ export default function App() {
         ev.preventDefault();
         return false;
       }
+      if (key === "f") {
+        // ⌘F 打开终端内搜索（T16）
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+        ev.preventDefault();
+        ev.stopPropagation();
+        return false;
+      }
       // 其余 ⌘ 快捷键（⌘R 刷新等）不得进入终端
       ev.preventDefault();
       ev.stopPropagation();
@@ -309,7 +369,7 @@ export default function App() {
         term.write(`\r\n\x1b[31m✕ ${String(e)}\x1b[0m\r\n`);
       });
     });
-    return { term, el };
+    return { term, el, search: searchAddon };
   }, []);
 
   // 终端区域（含内容下方空白）点击即聚焦当前会话终端
@@ -501,6 +561,22 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [attachSession, sessions]);
 
+  // 关闭搜索：清高亮、焦点回终端
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    const addon = termsRef.current.get(sidRef.current ?? "")?.search;
+    addon?.clearDecorations();
+    xtermRef.current?.focus();
+  }, []);
+
+  // macOS 窗口标题跟随当前会话主机（T16）；浏览器 demo 同步 document.title
+  useEffect(() => {
+    const cur = sessions.find((s) => s.id === sid);
+    const title = cur ? `${cur.host_name} — TinySSH` : "TinySSH — 人机协同 SSH 工作台";
+    document.title = title;
+    if (inTauri) void getCurrentWindow().setTitle(title).catch(() => {});
+  }, [sid, sessions]);
+
   const createSession = async (host: Host) => {
     setConnecting(host.name);
     setConnError(null);
@@ -684,6 +760,9 @@ export default function App() {
             {current && (
               <span className="dim mono"> {current.host_name} · {sid!.slice(0, 12)} · </span>
             )}
+            {current && oscTitles[sid!] && (
+              <span className="dim mono">「{oscTitles[sid!]}」 · </span>
+            )}
             {current && <span className={stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>}
           </span>
           <span style={{ flex: 1 }} />
@@ -721,6 +800,47 @@ export default function App() {
             </div>
           )}
           <div id="term" ref={termRef} />
+          {searchOpen && sid && (
+            <div className="term-search">
+              <input
+                ref={searchInputRef}
+                autoFocus
+                placeholder="搜索终端内容…"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  const addon = termsRef.current.get(sidRef.current ?? "")?.search;
+                  if (!addon) return;
+                  if (e.target.value) void addon.findNext(e.target.value, SEARCH_OPTS);
+                  else addon.clearDecorations();
+                }}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    closeSearch();
+                    return;
+                  }
+                  if (e.key !== "Enter" || !searchQuery) return;
+                  e.preventDefault();
+                  const addon = termsRef.current.get(sidRef.current ?? "")?.search;
+                  if (!addon) return;
+                  if (e.shiftKey) addon.findPrevious(searchQuery, SEARCH_OPTS);
+                  else addon.findNext(searchQuery, SEARCH_OPTS);
+                }}
+              />
+              <span className="dim mono" style={{ whiteSpace: "nowrap" }}>
+                {searchQuery && searchResults && searchResults.resultCount > 0
+                  ? `${(searchResults.resultIndex ?? 0) + 1}/${searchResults.resultCount}`
+                  : searchQuery
+                    ? "无结果"
+                    : ""}
+              </span>
+              <button className="ghost" title="上一个（⇧⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findPrevious(searchQuery, SEARCH_OPTS)}>↑</button>
+              <button className="ghost" title="下一个（⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findNext(searchQuery, SEARCH_OPTS)}>↓</button>
+              <button className="ghost" title="关闭（Esc）" onClick={closeSearch}>✕</button>
+            </div>
+          )}
         </div>
         <div className="panel-title row">
           <input

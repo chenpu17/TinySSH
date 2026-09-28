@@ -83,6 +83,20 @@ async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
     state.api.reconnect_session(&sid).await.map_err(|e| e.to_string())
 }
 
+/// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
+/// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
+#[tauri::command]
+async fn open_url(url: String) -> CmdResult<()> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("仅支持 http/https 链接".into());
+    }
+    tokio::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn resize(state: ApiState<'_>, sid: String, cols: u16, rows: u16) -> CmdResult<()> {
     state.api.resize(&human(), sid, cols, rows).await.map_err(|e| e.to_string())
@@ -432,6 +446,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities,
             list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
+            open_url,
             read_screen, send_keys, exec_human, set_control, session_brief,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             bench_start, bench_report, bench_mode, note_terminal,
