@@ -101,6 +101,8 @@ export default function App() {
   const xtermRef = useRef<Terminal | null>(null);
   const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
+  const [liveCount, setLiveCount] = useState(0);        // 探针：Channel 实时收包数
+  const liveCountRef = useRef(0);
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -210,10 +212,16 @@ export default function App() {
     const term = xtermRef.current;
     if (!term) return;
     if (!subscribedRef.current.has(newSid)) {
+      // 输出字节 → 字符串（有状态解码，处理 UTF-8 跨块分割）。
+      // 不走 term.write(Uint8Array)：实测该二进制写路径在 WKWebView 下静默不渲染。
+      const decoder = new TextDecoder();
       const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
       channel.onmessage = (msg) => {
+        liveCountRef.current += 1;
+        setLiveCount(liveCountRef.current);
         if (msg instanceof ArrayBuffer || msg instanceof Uint8Array) {
-          term.write(msg as Uint8Array);
+          const u8 = msg instanceof Uint8Array ? msg : new Uint8Array(msg);
+          term.write(decoder.decode(u8, { stream: true }));
         } else if (typeof msg === "string" && msg.includes("resync")) {
           invoke<{ text: string }>("read_screen", { sid: newSid }).then((snap) => {
             term.reset();
@@ -389,6 +397,7 @@ export default function App() {
               <span className="dim mono"> {current.host_name} · {sid!.slice(0, 12)} · </span>
             )}
             {current && <span className={stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>}
+            {sid && <span className="dim mono"> · 流:{liveCount}</span>}
           </span>
           <span style={{ flex: 1 }} />
           {sid && (
@@ -496,6 +505,7 @@ export default function App() {
                 {brief.running.length > 0 && (
                   <div className="err">运行中：{brief.running.join(", ")}</div>
                 )}
+                <div className="dim mono" style={{ fontSize: 10, marginTop: 4 }}>屏尾: {brief.screen_summary || "(空)"}</div>
               </div>
             ) : (
               <div className="dim">无会话。连接主机后这里显示当前目录、核实过的事实与运行中的任务。</div>
