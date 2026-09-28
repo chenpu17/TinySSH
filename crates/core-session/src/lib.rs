@@ -436,6 +436,11 @@ impl SessionApi for SessionManager {
         match ctx {
             Actor::Human => {
                 *h.last_human_input.lock().await = Some(std::time::Instant::now());
+                // 人类键入同样要登记：否则 B→C 键入捕获缺失，命令块 command 为空（简报/交接失明）
+                {
+                    let mut s = h.screen.lock().await;
+                    s.register_outgoing(keys.as_bytes(), term_core::BlockSource::Human);
+                }
                 h.channel.write(keys.as_bytes()).await
             }
             Actor::Agent { client_id } => {

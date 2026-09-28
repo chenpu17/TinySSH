@@ -41,6 +41,46 @@ type IdentityMeta = { id: string; label: string; kind: string; fingerprint: stri
 const epistemicClass = (s: string) =>
   s === "Confirmed" ? "tag-confirmed" : s === "NeedsRecheck" ? "tag-needsrecheck" : "tag-unobservable";
 
+// 认知状态 → 用户能看懂的标签
+const epistemicLabel = (s: string) =>
+  s === "Confirmed" ? "已核实" : s === "NeedsRecheck" ? "需复核" : "未观测";
+
+// 退出码 → 人话
+const exitText = (code: string): string =>
+  code === "0" ? "成功" : code === "130" ? "Ctrl+C 中断" : code === "未知" ? "已结束（退出码未知）" : `退出码 ${code}`;
+
+// 审计动作 → 中文描述（未知动作原样显示）
+const auditLabel = (a: string): string =>
+  ({
+    session_created: "连接主机",
+    session_closed: "断开会话",
+    host_upsert: "保存主机",
+    host_delete: "删除主机",
+    identity_create: "添加凭据",
+    identity_delete: "删除凭据",
+    exec: "执行命令",
+    exec_cancel: "中断命令",
+    exec_denied: "拦截危险命令",
+    send_keys: "发送按键",
+    approval_requested: "请求审批",
+    approval_decision: "审批决定",
+    approval_denied: "拒绝审批",
+    takeover: "接管会话",
+    handback: "交还会话",
+    transfer_done: "任务完成",
+    transfer_voided: "任务作废",
+    transfer_failed: "任务失败",
+  })[a] ?? a;
+
+// 内部管道事件不进用户时间线（集成注入是建会话的固定噪音）
+const HIDDEN_AUDIT_ACTIONS = new Set(["shell_integration_inject"]);
+
+// 审计时间戳 → HH:MM
+const hhmm = (ts: string): string => {
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+};
+
 // 会话状态 → 中文标签 + 颜色类
 const stateLabel = (s: string): { text: string; cls: string } => {
   switch (s) {
@@ -134,7 +174,8 @@ export default function App() {
     setSessions(await invoke<SessionInfo[]>("list_sessions"));
     setHosts(await invoke<Host[]>("list_hosts"));
     setApprovals(await invoke<ApprovalItem[]>("list_approvals", { pendingOnly: false }));
-    const page = await invoke<{ events: AuditEvent[] }>("audit_query", { sid: null, limit: 30 });
+    // 多取一些：集成注入等内部事件会被前端过滤，保证可见条数够看
+    const page = await invoke<{ events: AuditEvent[] }>("audit_query", { sid: null, limit: 60 });
     setTimeline(page.events);
   }, []);
 
@@ -457,7 +498,11 @@ export default function App() {
   const current = sessions.find((x) => x.id === sid);
   const ownerBadge = owner === "Human" ? "人类控制" : hasAgents ? "Agent" : "手动";
   const ownerCls = owner === "Human" ? "human" : hasAgents ? "agent" : "dim";
-  const pendingCount = approvals.filter((a) => a.status === "pending").length;
+  const pendingApprovals = approvals.filter((a) => a.status === "pending");
+  const pendingCount = pendingApprovals.length;
+  // 已处理的审批不再整卡展示，折叠为最近几条一行记录
+  const resolvedApprovals = approvals.filter((a) => a.status !== "pending").slice(-3).reverse();
+  const visibleTimeline = timeline.filter((ev) => !HIDDEN_AUDIT_ACTIONS.has(ev.action));
 
   return (
     <div className="layout">
@@ -636,15 +681,17 @@ export default function App() {
         </div>
       </div>
 
-      {/* 右：审批 / 简报 / 时间线 */}
+      {/* 右：审批 / 现场简报 / 操作记录 —— 给人看的协作面板，原始数据在 CLI/MCP 可查 */}
       <div className="col">
-        <div className="panel-title">审批队列（{pendingCount} 待处理）</div>
+        <div className="panel-title row">
+          <span>审批</span>
+          {pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
+        </div>
         <div className="scroll">
-          {approvals.map((a) => (
+          {pendingApprovals.map((a) => (
             <div className="card" key={a.id}>
               <div className="row">
-                <span className="badge">{a.agent_id}</span>
-                <span className="badge">{a.status === "pending" ? "待审批" : a.status === "approved" ? "已批准" : "已拒绝"}</span>
+                <span className="badge">Agent：{a.agent_id}</span>
               </div>
               <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
               {a.segment_report.map((s, i) => (
@@ -652,66 +699,111 @@ export default function App() {
                   · {s.segment} — {s.verdict}
                 </div>
               ))}
-              {a.status === "pending" && (
-                editingId === a.id ? (
-                  <div style={{ marginTop: 8 }}>
-                    <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
-                    <div className="row" style={{ marginTop: 6 }}>
-                      <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
-                      <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
-                    </div>
-                    <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
+              {editingId === a.id ? (
+                <div style={{ marginTop: 8 }}>
+                  <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
+                  <div className="row" style={{ marginTop: 6 }}>
+                    <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
+                    <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
                   </div>
-                ) : (
-                  <div className="row" style={{ marginTop: 8 }}>
-                    <button onClick={() => decide(a.id, "approve", null)}>批准</button>
-                    <button className="ghost" onClick={() => { setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>
-                    <button className="danger" onClick={() => decide(a.id, "deny", null)}>拒绝</button>
-                  </div>
-                )
+                  <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
+                </div>
+              ) : (
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button onClick={() => decide(a.id, "approve", null)}>批准</button>
+                  <button className="ghost" onClick={() => { setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>
+                  <button className="danger" onClick={() => decide(a.id, "deny", null)}>拒绝</button>
+                </div>
               )}
             </div>
           ))}
-          {approvals.length === 0 && (
-            <div className="dim">队列为空。Agent 通过 MCP 发起操作时，需要你审批的请求会出现在这里。</div>
+          {resolvedApprovals.length > 0 && (
+            <div className="side-quiet">
+              {pendingApprovals.length === 0 && <div className="side-sub">最近处理</div>}
+              {resolvedApprovals.map((a) => (
+                <div className="tl-row" key={a.id} title={a.command}>
+                  <span className={a.status === "approved" ? "ok" : "err"} style={{ flex: "none", fontSize: 11 }}>
+                    {a.status === "approved" ? "✓ 批准" : "✕ 拒绝"}
+                  </span>
+                  <span className="tl-cmd mono dim">{a.command}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {pendingApprovals.length === 0 && resolvedApprovals.length === 0 && (
+            <div className="side-quiet">暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
           )}
 
           <div className="section">
             <h4>现场简报</h4>
-            {brief ? (
-              <div className="card">
-                {brief.facts.map((f, i) => (
-                  <div className="fact" key={i}>
-                    <span className="s">{f.subject}</span>{" "}
-                    <span className={"tag " + epistemicClass(f.status)}>[{f.status}]</span>
-                    <div>{f.detail}</div>
-                  </div>
-                ))}
-                {brief.running.length > 0 && (
-                  <div className="err">运行中：{brief.running.join(", ")}</div>
-                )}
-                <div className="dim mono" style={{ fontSize: 10, marginTop: 4 }}>屏尾: {brief.screen_summary || "(空)"}</div>
-              </div>
-            ) : (
-              <div className="dim">无会话。连接主机后这里显示当前目录、核实过的事实与运行中的任务。</div>
+            {brief ? <BriefCard brief={brief} /> : (
+              <div className="side-quiet">未接入会话。连接主机后显示当前目录与最近命令。</div>
             )}
           </div>
 
           <div className="section">
-            <h4>操作时间线（审计）</h4>
-            {timeline.map((ev) => (
-              <div className="fact" key={ev.seq}>
-                <span className="dim mono">#{ev.seq} {ev.action}</span>{" "}
-                <span className={ev.actor_kind === "agent" ? "" : "ok"}>
-                  {ev.actor_kind === "human" ? "人类" : "Agent"}{ev.agent_id ? `:${ev.agent_id}` : ""}
+            <h4>操作记录</h4>
+            {visibleTimeline.length > 0 ? visibleTimeline.map((ev) => (
+              <div className="tl-row" key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
+                <span className="tl-time">{hhmm(ev.ts)}</span>
+                <span className={ev.actor_kind === "agent" ? "tl-agent" : "tl-human"}>
+                  {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? `·${ev.agent_id}` : ""}`}
                 </span>
-                {ev.command && <div className="mono dim">{ev.command}</div>}
+                <span className="tl-what">{auditLabel(ev.action)}</span>
+                {ev.command && <span className="tl-cmd mono dim">{ev.command}</span>}
               </div>
-            ))}
-            {timeline.length === 0 && <div className="dim">暂无记录。所有连接与命令都会留痕在这里。</div>}
+            )) : <div className="side-quiet">暂无记录。所有连接与命令都会留痕在这里。</div>}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// 现场简报（人话版）：当前目录 / 运行中 / 最近命令 / 提示。
+// 后端 facts 原样保留在 SessionBrief（MCP 侧），这里只做面向用户的重排：
+// 命令历史压到最近两条、认知标签翻成中文、屏尾调试 dump 不再上屏。
+function BriefCard({ brief }: { brief: Brief }) {
+  const cwd = brief.facts.find((f) => f.subject === "cwd");
+  const cmds = brief.facts.filter((f) => f.subject.startsWith("命令")).slice(0, 2);
+  const ctl = brief.facts.find((f) => f.subject === "控制权");
+  const notices = brief.facts.filter((f) => f.subject === "运行中任务" || f.subject === "SSH 现场");
+  // 命令 fact detail 为后端拼好的 "<cmd> → exit <n>"；cmd 是键入原始字节，
+  // ↑ 召回历史等场景会带转义序列，清理后再展示（清完为空说明无法还原命令，不显示该行）
+  const cleanCmd = (s: string): string =>
+    s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/[\x00-\x1f\x7f]/g, "").trim();
+  const parseCmd = (detail: string): { cmd: string; exit: string } => {
+    const i = detail.lastIndexOf(" → exit ");
+    if (i < 0) return { cmd: cleanCmd(detail), exit: "" };
+    return { cmd: cleanCmd(detail.slice(0, i)), exit: exitText(detail.slice(i + 8)) };
+  };
+  return (
+    <div className="card">
+      {cwd && (
+        <div className="brief-row">
+          当前目录 <span className="mono">{cwd.detail}</span>{" "}
+          <span className={"tag " + epistemicClass(cwd.status)}>{epistemicLabel(cwd.status)}</span>
+        </div>
+      )}
+      {brief.running.length > 0 && (
+        <div className="brief-row err">运行中：{brief.running.join("、")}</div>
+      )}
+      {cmds.map((f, i) => {
+        const { cmd, exit } = parseCmd(f.detail);
+        if (!cmd) return null;
+        return (
+          <div className="brief-row" key={i} title={cmd}>
+            <span className="mono cmd-inline">$ {cmd}</span>
+            {exit && <span className="dim"> · {exit}</span>}
+          </div>
+        );
+      })}
+      {notices.map((f, i) => (
+        <div className={"brief-row " + (f.status === "Unobservable" ? "err" : "warn-text")} key={`n${i}`}>
+          {f.detail}
+        </div>
+      ))}
+      {ctl && <div className="brief-row dim">控制权：{ctl.detail}</div>}
     </div>
   );
 }
