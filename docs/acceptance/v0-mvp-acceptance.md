@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.4 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
+> 版本：v1.5 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -186,6 +186,38 @@
 
 **T10 判定：通过**（46 个自动化测试全绿 + 原生六步走查全过；四层根因链——核心字节路径、引擎按键映射、焦点 affordance、IME 平台缺口——均有独立证据与对应修复）。
 
+### 5.6 多会话体验（T11，v1.5 新增）
+
+**动机**：用户明确「更加关心用户的使用体验」。UX 优先级重排后的第一项：**会话切换丢滚动历史**——旧架构全局只有一个 xterm 实例，每次 attach 都 `term.reset()` + 重灌当前屏快照，在两个会话间来回切换会把各自的滚动历史全部抹掉；vim 等全屏程序状态同样丢失。多会话是「工作台」的基本场景，升级为 T11 gate。
+
+**改造（仅前端，`ui/src/App.tsx` + `styles.css`，核心层零改动）**：
+
+| # | 改动 | 说明 |
+|---|---|---|
+| 1 | **每会话一个独立 xterm 实例**（`termsRef` Map）：切换 = 显示/隐藏（`.term-session.active`），不做任何 reset/快照重灌——滚动历史、vim 备用屏、选中状态原地保留；输出订阅按会话常驻（隐藏的会话也在实时累积输出） | 根因级修复 |
+| 2 | 首次接入才回填 `read_screen` 快照 + 接入横幅；此后切换不重灌 | 断点续接语义 |
+| 3 | 断开/关闭会话时 dispose 对应实例；其余会话终端保留 | 资源管理 |
+| 4 | 欢迎页由「写进终端」改为独立 HTML 层（无会话时显示，接入即隐藏），文案更新（多会话切换提示） | 渲染层 |
+| 5 | **⌘1–9 快速切换到第 N 个会话**（捕获阶段拦截，终端聚焦时也生效）——终端应用标配 | 新功能 |
+| 6 | 会话卡片键盘可达（`tabIndex` + Enter/Space 激活） | 无障碍 |
+| 7 | dev harness：`TINYSSH_AUTOCONNECT=host_id[,host_id]` 启动即建会话（env 门控，走查用；与 TINYSSH_BENCH 同模式） | src-tauri/main.rs |
+
+**T11 走查矩阵**（原生窗口，双会话 = 本机 PTY + 远程 e2e-sshd 真实 OpenSSH；接入经 ⌘1/⌘2 与键盘）：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T11-a | 欢迎页 HTML 化渲染 + 双会话列表（本机/e2e-sshd 均「已连接」） | 通过 | [t11_welcome.png](screenshots/t11_welcome.png) |
+| T11-b | ⌘1 接入本机：快照回填 + 横幅；⌘V 粘贴执行 `echo T11-A-history-1/2 && uname -a`，输出与审计（命令 human → exit 0）正常 | 通过 | [t11_a_local_hist.png](screenshots/t11_a_local_hist.png) |
+| T11-c | ⌘2 接入远程：busybox sh 提示符；粘贴执行 `echo T11-B-remote-1 && hostname`，输出正确 | 通过 | [t11_b_remote_hist.png](screenshots/t11_b_remote_hist.png) |
+| T11-d | **切回 ⌘1**：A 的完整历史原样保留（命令行、两行输出、uname、提示符位置），命令框/简报跟随切回 | 通过 | [t11_c_switch_back_local.png](screenshots/t11_c_switch_back_local.png) |
+| T11-e | **切回 ⌘2**：B 的历史同样保留（对称验证） | 通过 | [t11_d_switch_back_remote.png](screenshots/t11_d_switch_back_remote.png) |
+| T11-f | A 内开 vim 全屏 → ⌘2 → ⌘1 往返：vim 欢迎屏/备用屏**原样保留**（旧架构必然丢失） | 通过 | [t11_e_vim.png](screenshots/t11_e_vim.png) / [t11_f_vim_kept.png](screenshots/t11_f_vim_kept.png) |
+| T11-g | Esc + `:q!` 干净退出 vim，备用屏恢复、滚动历史无缺；`top` + 原生 Ctrl+C 中断回提示符（**T10 修复无回归**） | 通过 | [t11_g_ctrlc_regress.png](screenshots/t11_g_ctrlc_regress.png) |
+
+Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错误、会话卡点击 → xterm 实例创建正常。
+
+**T11 判定：通过**（46/46 回归全绿 + 原生走查矩阵全过）。走查期间的两个观察如实记录：合成鼠标事件对 WKWebView 几乎不送达（走查工具层限制，键盘注入正常；真实用户鼠标不受影响）→ 鼠标上报（htop/tmux 点击滚轮）列为待真人验证项（§6-16）；首轮走查曾观察到一次「静默重连重注入回显泄漏」（集成片段明文进屏，本轮复走未复现）→ 记 P1 待专项复现与修复（§6-17）。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -203,6 +235,9 @@
 13. **会话死端无自动感知**（v1.4）：shell 退出/PTY EOF 后会话卡仍显示「已连接」，直到下一次输入报错；`ChannelHandle` 无存活上报，需要 V1 增加传输层关闭事件。
 14. **CJK 输入法残余边界**（v1.4）：Ctrl 系控制键已由 native 层接管（§5.5 修复#1），不再受输入法影响；但**普通字母键入**在中文输入法激活时仍走系统级拼音组合（macOS 标准行为，与 Terminal.app 一致——组合提交后 ASCII 进壳）；CGEvent 注入自动化下观察到粘贴后瞬时组合态导致键入丢失（注入时序问题，真实键盘未复现）。中文 IME 组合输入（组合输入中文上屏）属真实人工验证项。
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
+16. **鼠标上报未实测**（v1.5）：htop/tmux/vim（mouse=a）的点击与滚轮依赖 xterm mouse-tracking 转义序列走 `onData`，链路设计上成立，但走查期合成鼠标事件对 WKWebView 几乎不送达（走查工具层限制），未能取得原生证据，列为待真人验证项。
+17. **重连重注入回显泄漏（P1，一次观察未复现）**（v1.5）：首轮走查中远程会话静默重连后，重注入的集成片段以明文回显进屏（含 `printf '\033[2J\033[H'` 与续行提示符），疑似 reinject 的 `register_outgoing` 压制在特定时序下失效；干净环境复走未复现，需专项复现与修复。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳）**：后续轮次优先级为 ① 断线一键重连闭环（Disconnected 死端，§6-13 的 UI 面）② Alt/Option 键（readline/tmux 词跳转）③ 鼠标上报实测（§6-16）④ ⌘F 搜索 / OSC8 链接 / 窗口标题 ⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。
 
 ## 7. 复现指令
 
@@ -242,8 +277,16 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    f. 点击命令框键入 top⏎ → 命令框内 Ctrl+C → top 退出（T10-d）
 #    g. 键入 vim /tmp/t10.txt⏎ → 插入文本 → Esc → :wq⏎ → cat /tmp/t10.txt 验证（T10-e）
 #    h. 点击「e2e-sshd」卡片连接 → 重复 c/d（T10-f）
+
+# 7) T11 原生走查（§5.6 七步；已于 v1.5 执行通过；会话建立用 dev harness）
+#    TINYSSH_MASTER_KEY=... TINYSSH_AUTOCONNECT=local,<e2e-sshd-host-id> ./target/debug/tinyssh-app &
+#    a. ⌘1 接入本机 → ⌘V 粘贴 echo T11-A-history-1 && echo T11-A-history-2 && uname -a ⏎（T11-b）
+#    b. ⌘2 接入 e2e-sshd → ⌘V 粘贴 echo T11-B-remote-1 && hostname ⏎（T11-c）
+#    c. ⌘1 / ⌘2 往返：双方滚动历史与提示符位置原样保留（T11-d/e）
+#    d. A 内 vim ⏎ → ⌘2 → ⌘1 往返：vim 全屏界面原样保留（T11-f）
+#    e. Esc → :q! 干净退出 → top ⏎ → Ctrl+C 中断回提示符（T10 修复无回归，T11-g）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **46 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.4 依用户实测反馈完成了 GUI 从演示壳到可用 SSH 客户端的三轮修复（§5.4/§5.5），其中 T10 标准终端交互已原生走查全过（含 native 层 IME 缺口根因修复）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **46 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.5 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9），并按使用体验重排 UX 路线图（§6-18）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

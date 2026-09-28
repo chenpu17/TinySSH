@@ -114,6 +114,8 @@ export default function App() {
   const xtermRef = useRef<Terminal | null>(null);
   const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
+  // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
+  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement }>>(new Map());
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -165,22 +167,15 @@ export default function App() {
     return () => un?.();
   }, [refreshLists]);
 
-  const writeWelcome = useCallback((t: Terminal) => {
-    t.reset();
-    t.writeln("TinySSH — 人机协同 SSH 工作台");
-    t.writeln("");
-    t.writeln("  1. 左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接；");
-    t.writeln("  2. 连接后点击黑色终端区域直接打字：Ctrl+C 中断程序、↑↓ 翻历史、Tab 补全；");
-    t.writeln("  3. ⌘C/⌘V 复制粘贴；下方命令框可逐条执行，执行后焦点自动回到终端。");
-    t.writeln("");
-  }, []);
-
-  // xterm 初始化：仅一次。onData 一律走 sidRef，杜绝 stale closure。
-  useEffect(() => {
-    if (!termRef.current || xtermRef.current) return;
+  // 终端实例工厂：每个会话一个独立 xterm。
+  const makeTerm = useCallback((sessionSid: string) => {
+    const mount = termRef.current;
+    if (!mount) return null;
+    const el = document.createElement("div");
+    el.className = "term-session";
+    mount.appendChild(el);
     const term = new Terminal({ fontSize: 13, cursorBlink: true, scrollback: 5000, theme: { background: "#10141a" } });
-    term.open(termRef.current);
-    writeWelcome(term);
+    term.open(el);
     // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
     // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
     term.attachCustomKeyEventHandler((ev) => {
@@ -201,10 +196,10 @@ export default function App() {
       if (key === "v") {
         (inTauri
           ? clipboard.readText().then((t) => {
-              if (t && sidRef.current) term.paste(t);
+              if (t) term.paste(t);
             })
           : navigator.clipboard?.readText().then((t) => {
-              if (t && sidRef.current) term.paste(t);
+              if (t) term.paste(t);
             })
         ).catch(() => {});
         ev.preventDefault();
@@ -220,18 +215,23 @@ export default function App() {
       ev.stopPropagation();
       return false;
     });
+    // onData 直接归属本会话：终端实例与会话一一对应，无 stale closure。
     term.onData((d) => {
-      const s = sidRef.current;
-      if (!s) return;
-      invoke("send_keys", { sid: s, keys: d }).catch((e) => {
+      invoke("send_keys", { sid: sessionSid, keys: d }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${String(e)}\x1b[0m\r\n`);
       });
     });
-    // 终端区域（含内容下方空白）点击即聚焦，保证打字与控制键直达会话
-    const wrap = termRef.current.parentElement;
-    wrap?.addEventListener("click", () => term.focus());
-    xtermRef.current = term;
-  }, [writeWelcome]);
+    return { term, el };
+  }, []);
+
+  // 终端区域（含内容下方空白）点击即聚焦当前会话终端
+  useEffect(() => {
+    const wrap = termRef.current?.parentElement;
+    if (!wrap) return;
+    const onFocus = () => xtermRef.current?.focus();
+    wrap.addEventListener("click", onFocus);
+    return () => wrap.removeEventListener("click", onFocus);
+  }, []);
 
     // 窗口级 Ctrl+字符 接管（捕获阶段）：中文输入法在 WKWebView 的 textarea 里
     // 会吞掉 Ctrl+字母（进入拼音组合，keydown 以 229 告终），xterm 收不到控制键——
@@ -316,11 +316,16 @@ export default function App() {
   }, [fitTerminal]);
 
   const attachSession = useCallback(async (newSid: string) => {
-    const term = xtermRef.current;
-    if (!term) return;
-    if (!subscribedRef.current.has(newSid)) {
-      // 输出字节 → 字符串（有状态解码，处理 UTF-8 跨块分割）。
+    if (!termRef.current) return;
+    let entry = termsRef.current.get(newSid);
+    if (!entry) {
+      const made = makeTerm(newSid);
+      if (!made) return;
+      entry = made;
+      termsRef.current.set(newSid, made);
+      // 输出订阅（每会话仅一次）：字节 → 字符串（有状态解码，处理 UTF-8 跨块分割）。
       // 不走 term.write(Uint8Array)：实测该二进制写路径在 WKWebView 下静默不渲染。
+      const term = made.term;
       const decoder = new TextDecoder();
       const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
       channel.onmessage = (msg) => {
@@ -336,26 +341,52 @@ export default function App() {
       };
       await invoke("subscribe_output", { sid: newSid, onEvent: channel });
       subscribedRef.current.add(newSid);
+      // 仅首次接入回填当前屏（会话可能建立已久）；此后切走再切回不再重置——历史保留
+      const snap = await invoke<{ text: string }>("read_screen", { sid: newSid });
+      term.write(snap.text);
+      term.write("\r\n\x1b[90m── 会话已接入终端：点击此区域直接打字，或用下方命令框 ──\x1b[0m\r\n");
+    } else if (sidRef.current === newSid) {
+      entry.term.focus();
+      return;
     }
-    const snap = await invoke<{ text: string }>("read_screen", { sid: newSid });
-    term.reset();
-    term.write(snap.text);
-    term.write("\r\n\x1b[90m── 会话已接管到终端：点击此区域直接打字，或用下方命令框 ──\x1b[0m\r\n");
+    // 切换显示：其他会话终端原地隐藏（各自状态保留），显示目标会话
+    for (const [s, e] of termsRef.current) e.el.classList.toggle("active", s === newSid);
     setSid(newSid);
     sidRef.current = newSid;
-    term.focus();
+    xtermRef.current = entry.term;
+    entry.term.focus();
     void invoke("note_terminal", { sid: newSid, focused: true }).catch(() => {});
     fitTerminal();
     refreshBrief(newSid);
-  }, [fitTerminal, refreshBrief]);
+  }, [makeTerm, fitTerminal, refreshBrief]);
 
+  // 无激活会话：隐藏所有会话终端（实例保留，点击左侧会话即恢复），显示欢迎页
   const detach = useCallback(() => {
     setSid(null);
     sidRef.current = null;
+    xtermRef.current = null;
     setBrief(null);
     void invoke("note_terminal", { sid: null, focused: false }).catch(() => {});
-    if (xtermRef.current) writeWelcome(xtermRef.current);
-  }, [writeWelcome]);
+    for (const [, e] of termsRef.current) e.el.classList.remove("active");
+  }, []);
+
+  // ⌘1–9 快速切换到第 N 个会话（终端应用标配）。捕获阶段拦截，终端聚焦时也生效。
+  useEffect(() => {
+    if (!inTauri) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      const n = parseInt(ev.key, 10);
+      if (!n || n < 1 || n > 9) return;
+      const target = sessions[n - 1];
+      if (target) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void attachSession(target.id);
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [attachSession, sessions]);
 
   const createSession = async (host: Host) => {
     setConnecting(host.name);
@@ -381,6 +412,13 @@ export default function App() {
       setConnError({ title: `断开 ${s.host_name} 失败`, detail: String(e) });
     }
     subscribedRef.current.delete(s.id);
+    // 销毁该会话的终端实例；其他会话终端保留
+    const entry = termsRef.current.get(s.id);
+    if (entry) {
+      entry.term.dispose();
+      entry.el.remove();
+      termsRef.current.delete(s.id);
+    }
     if (sidRef.current === s.id) detach();
     refreshLists();
   };
@@ -468,7 +506,11 @@ export default function App() {
               const st = stateLabel(s.state);
               return (
                 <div className="card row" key={s.id}>
-                  <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} onClick={() => attachSession(s.id)}>
+                  <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} tabIndex={0}
+                    onClick={() => attachSession(s.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); attachSession(s.id); }
+                    }}>
                     <div>{s.host_name} <span className={"mono " + st.cls}>· {st.text}</span></div>
                     <div className="dim mono">{s.id.slice(0, 12)}</div>
                   </div>
@@ -529,6 +571,16 @@ export default function App() {
           </div>
         )}
         <div className="term-wrap">
+          {!sid && (
+            <div className="welcome">
+              <div className="welcome-title">TinySSH — 人机协同 SSH 工作台</div>
+              <div>1. 左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接；</div>
+              <div>2. 连接后点击黑色终端区域直接打字：Ctrl+C 中断程序、↑↓ 翻历史、Tab 补全；</div>
+              <div>3. 多个会话来回切换，各自的滚动历史和 vim 界面都会保留；</div>
+              <div>4. ⌘C/⌘V 复制粘贴；下方命令框可逐条执行，执行后焦点自动回到终端。</div>
+              <div className="dim" style={{ marginTop: 12 }}>暂无接入的会话——从左侧连接主机，或点击已有会话继续。</div>
+            </div>
+          )}
           <div id="term" ref={termRef} />
         </div>
         <div className="panel-title row">

@@ -406,6 +406,21 @@ fn main() {
                     }
                 }
             });
+            // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
+            if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
+                let api2 = api.clone();
+                tauri::async_runtime::spawn(async move {
+                    for host_id in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                        match api2
+                            .create_session(&Actor::Human, CreateSessionReq { host_id: host_id.to_string() })
+                            .await
+                        {
+                            Ok(sid) => eprintln!("[app] autoconnect {host_id} -> {sid}"),
+                            Err(e) => eprintln!("[app] autoconnect {host_id} failed: {e}"),
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
