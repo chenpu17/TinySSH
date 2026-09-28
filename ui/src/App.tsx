@@ -11,6 +11,7 @@ const invoke: typeof tauri.invoke = (cmd, args?) =>
 // Channel：Tauri 环境用真实现；浏览器演示模式用 shim
 const MkChannel = () => (inTauri ? new tauri.Channel<unknown>() : new demo.ChannelShim());
 import { listen } from "@tauri-apps/api/event";
+import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
@@ -95,6 +96,18 @@ async function runBench() {
   await invoke("bench_start", { onChunk: channel });
 }
 
+// Ctrl+单字符 → 控制字符（C0 集合，与真实终端一致）
+const ctrlCharOf = (key: string): string | null => {
+  const c = key.toLowerCase().charCodeAt(0);
+  if (c >= 97 && c <= 122) return String.fromCharCode(c - 96); // a-z → \x01-\x1a
+  const map: Record<string, string> = {
+    "[": "\x1b", "]": "\x1d", "\\": "\x1c", " ": "\x00", "@": "\x00",
+    "?": "\x1f", "/": "\x1f", "2": "\x00", "3": "\x1b", "4": "\x1c",
+    "5": "\x1d", "6": "\x1e", "7": "\x1f", "8": "\x7f",
+  };
+  return map[key] ?? null;
+};
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -175,22 +188,27 @@ export default function App() {
       if (!ev.metaKey) return true;
       const key = ev.key.toLowerCase();
       if (key === "c") {
-        if (navigator.clipboard && term.hasSelection()) {
-          navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-          ev.preventDefault();
-          return false;
-        }
-        return true; // 无剪贴板 API 或无选中 → xterm 原生 copy 事件
-      }
-      if (key === "v") {
-        if (navigator.clipboard?.readText) {
-          navigator.clipboard.readText()
-            .then((t) => { if (t && sidRef.current) term.paste(t); })
+        if (term.hasSelection()) {
+          const sel = term.getSelection();
+          // Tauri 原生剪贴板（无 WKWebView 授权气泡）；浏览器 demo 走 navigator
+          (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel))
             .catch(() => {});
           ev.preventDefault();
           return false;
         }
-        return true; // 走 WebKit 原生粘贴（paste 事件由 xterm 接管）
+        return true; // 无选中 → xterm 原生 copy 事件
+      }
+      if (key === "v") {
+        (inTauri
+          ? clipboard.readText().then((t) => {
+              if (t && sidRef.current) term.paste(t);
+            })
+          : navigator.clipboard?.readText().then((t) => {
+              if (t && sidRef.current) term.paste(t);
+            })
+        ).catch(() => {});
+        ev.preventDefault();
+        return false;
       }
       if (key === "a") {
         term.selectAll();
@@ -214,6 +232,59 @@ export default function App() {
     wrap?.addEventListener("click", () => term.focus());
     xtermRef.current = term;
   }, [writeWelcome]);
+
+    // 窗口级 Ctrl+字符 接管（捕获阶段）：中文输入法在 WKWebView 的 textarea 里
+    // 会吞掉 Ctrl+字母（进入拼音组合，keydown 以 229 告终），xterm 收不到控制键——
+    // top/vim 因此停不下来。这里在捕获阶段自行编码控制字符直发后端，绕过 IME。
+    // 命令框等真实输入控件不劫持（保留其编辑语义）；方向键/F 键等长键值交给 xterm。
+    useEffect(() => {
+      const onKey = (ev: KeyboardEvent) => {
+        if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        const t = ev.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
+            !t.classList.contains("xterm-helper-textarea")) return;
+        const s = sidRef.current;
+        if (!s) return;
+        // IME 组合期间 key 可能是 "Process"/keyCode 229 —— 用物理键位 ev.code 解码
+        let key: string | null = null;
+        if (ev.key.length === 1) key = ev.key;
+        else if (ev.code?.startsWith("Key")) key = ev.code.slice(3).toLowerCase();
+        else if (ev.code === "BracketLeft") key = "[";
+        else if (ev.code === "BracketRight") key = "]";
+        else if (ev.code === "Backslash") key = "\\";
+        else if (ev.code === "Space") key = " ";
+        if (!key) return;
+        const cc = ctrlCharOf(key);
+        if (cc === null) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        void invoke("send_keys", { sid: s, keys: cc }).catch(() => {});
+      };
+      window.addEventListener("keydown", onKey, { capture: true });
+      return () => window.removeEventListener("keydown", onKey, { capture: true });
+    }, []);
+
+    // 终端聚焦状态上报 native 层：native Ctrl 键接管只在 xterm 聚焦时生效，
+    // 命令框等输入控件不受影响。
+    useEffect(() => {
+      const report = (focused: boolean) => {
+        void invoke("note_terminal", { sid: sidRef.current, focused }).catch(() => {});
+      };
+      const onFocusIn = (e: FocusEvent) => {
+        const t = e.target as HTMLElement | null;
+        if (t?.classList?.contains("xterm-helper-textarea")) report(true);
+      };
+      const onFocusOut = (e: FocusEvent) => {
+        const t = e.target as HTMLElement | null;
+        if (t?.classList?.contains("xterm-helper-textarea")) report(false);
+      };
+      document.addEventListener("focusin", onFocusIn);
+      document.addEventListener("focusout", onFocusOut);
+      return () => {
+        document.removeEventListener("focusin", onFocusIn);
+        document.removeEventListener("focusout", onFocusOut);
+      };
+    }, []);
 
   // 终端尺寸自适应 + PTY 对齐（backend resize）
   const fitTerminal = useCallback(async () => {
@@ -273,6 +344,7 @@ export default function App() {
     setSid(newSid);
     sidRef.current = newSid;
     term.focus();
+    void invoke("note_terminal", { sid: newSid, focused: true }).catch(() => {});
     fitTerminal();
     refreshBrief(newSid);
   }, [fitTerminal, refreshBrief]);
@@ -281,6 +353,7 @@ export default function App() {
     setSid(null);
     sidRef.current = null;
     setBrief(null);
+    void invoke("note_terminal", { sid: null, focused: false }).catch(() => {});
     if (xtermRef.current) writeWelcome(xtermRef.current);
   }, [writeWelcome]);
 
@@ -289,9 +362,6 @@ export default function App() {
     setConnError(null);
     try {
       const newSid = await invoke<string>("create_session", { hostId: host.id });
-      // 以当前终端尺寸对齐 PTY（后端默认 120x32，避免首屏渲染再跳变）
-      const t = xtermRef.current;
-      if (t) await invoke("resize", { sid: newSid, cols: t.cols, rows: t.rows }).catch(() => {});
       await refreshLists();
       await attachSession(newSid);
     } catch (e) {
@@ -488,16 +558,29 @@ export default function App() {
                 const cmd = input;
                 setInput("");
                 xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd}\x1b[0m\r\n`);
+                // 立即回焦终端（不等待执行完成：长驻命令 top/vim 也即时可中断）
+                xtermRef.current?.focus();
                 try {
                   await invoke("exec_human", { sid, command: cmd });
                 } catch (err) {
                   xtermRef.current?.write(`\r\n\x1b[31m✕ ${String(err)}\x1b[0m\r\n`);
                 }
-                // 执行后焦点回终端：Ctrl+C、↑↓ 等控制键直接可用
-                xtermRef.current?.focus();
               }
             }}
           />
+          {sid && (
+            <button
+              className="ghost"
+              title="向前台进程发送 SIGINT（等同 Ctrl+C），不依赖输入法状态"
+              onClick={() => {
+                const s = sidRef.current;
+                if (s) void invoke("send_keys", { sid: s, keys: "\u0003" }).catch(() => {});
+                xtermRef.current?.focus();
+              }}
+            >
+              ⏹ 中断
+            </button>
+          )}
         </div>
       </div>
 

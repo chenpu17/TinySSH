@@ -153,35 +153,38 @@
 
 **动机**：用户第三轮实测反馈「top 后都不能 Ctrl+C 停止……不像一个正常的 ssh client」。基础终端交互（控制键、全屏程序、复制粘贴）是 SSH 客户端的底线能力，升级为 T10 gate。
 
-**根因分析（三层证据链逐段排除）**：
+**根因分析（四层证据链逐段排除）**：
 
 1. **核心/传输层直通无误**（headless 回归 `send_keys_ctrl_c_interrupts_foreground_process`）：`send_keys("\x03")` → `LocalPtyChannel::write` 原样字节 → PTY ISIG → SIGINT 打断前台 `sleep 60` → shell 集成块闭合 → 后续 `exec` 正常返回。若中断失效该测试必以 ExecTimeout 失败。
 2. **WebKit 引擎层按键映射无误**（Playwright WebKit + 应用同构建 `@xterm/xterm 5.5`，12/12）：Ctrl+C→`\x03`、Ctrl+D/L/Z、↑↓→`ESC[A/B`、Esc、Tab、Home/End 全部正确编码进 `onData`；裸 ⌘ 组合零输出（不会把 ⌘ 当 ESC 前缀发进 PTY）。
-3. **结论：问题在交互层而非字节层**——终端焦点丢失后控制键无处可去（焦点留在命令框/其他面板时 Ctrl+C 是普通输入框里的无效按键），且旧 UI 无任何兜底 affordance。修复针对焦点与 affordance，而非重写字节路径。
+3. **第一层真因：焦点/affordance**——终端焦点丢失后控制键无处可去（焦点留在命令框时 Ctrl+C 是普通输入框里的无效按键），且旧 UI 无任何兜底 affordance。
+4. **第二层真因（用户原生窗口实测发现）：中文输入法吞掉 Ctrl 组合键**。终端内注入真实 Ctrl+C 后 `top` 不退、弹出拼音候选窗；临时探针把 keydown 事件写进终端画面，抓到决定性证据：**`key="c" code=KeyC kc=229 ctrl=0 meta=0 alt=0 comp=1` + compositionstart**——搜狗输入法在 WKWebView 的 textarea 里把 Ctrl+字母送进拼音组合，事件到达 DOM 时 **ctrl 修饰标志已被剥除**（keyCode 恒为 229），任何 JS 层修复都无法区分「Ctrl+C」和「拼音组合里的 c」（若把 229 事件按 Ctrl+C 处理会毁掉中文输入）。这是 WebKit+CJK IME 的平台级缺口（WebView 类终端在 Safari 系内核上的通病）。
 
 **修复清单（v1.4）**：
 
 | # | 修复 | 位置 |
 |---|---|---|
-| 1 | 键盘保真：`attachCustomKeyEventHandler` 只拦 ⌘ 组合（⌘C 复制选中/⌘V 粘贴/⌘A 全选，其余 ⌘ 吞掉防误触刷新），Ctrl 系/方向键/Esc/Tab/F 键全部原样进 PTY | App.tsx |
-| 2 | 命令框兜底：空输入时 Ctrl+C = 向会话发 `\x03` 中断前台程序并回焦终端；有输入时 Ctrl+C = 清空输入行（常规惯例） | App.tsx |
-| 3 | 焦点管理：命令框执行后焦点自动回终端；终端区域（含空白处）点击即聚焦 | App.tsx |
-| 4 | 连接即对齐尺寸：`create_session` 返回后立刻以前端当前 cols/rows 调 `resize`（后端默认 120x32 不再产生首屏跳变） | App.tsx |
-| 5 | scrollback 5000；移除「流:N」诊断探针；欢迎页写明控制键/⌘C⌘V 用法 | App.tsx |
-| 6 | demo 模式 `listen()` 缺 Tauri 内部对象的页面报错修复（`inTauri` 门控） | App.tsx |
+| 1 | **native 层 Ctrl 键接管（macOS，根因级）**：NSEvent local monitor 在 IME 之前看到原始事件（修饰键完整）；终端聚焦时按虚拟键码表编码 C0 控制字符（a-z/[]\/空格/2-8 等与真实终端同表）直发 `send_keys` 并**吞掉事件**（IME 与 WebKit 都不再看到）；⌘/⌥ 不劫持；block 体 catch_unwind 兜底（ObjC block 不能 unwind，panic 即放行事件绝不 abort） | src-tauri/main.rs |
+| 2 | **聚焦状态上报**：xterm textarea focusin/focusout + attach/detach 经 `note_terminal` 命令同步给 native 层，命令框等输入控件不受劫持（保留 Ctrl+A/C 编辑语义） | App.tsx + main.rs |
+| 3 | 键盘保真：`attachCustomKeyEventHandler` 只拦 ⌘ 组合（⌘C 复制选中/⌘V 粘贴/⌘A 全选，其余 ⌘ 吞掉防误触刷新），Ctrl 系/方向键/Esc/Tab/F 键原样进 PTY（非 macOS 平台兜底） | App.tsx |
+| 4 | 命令框兜底：空输入时 Ctrl+C = 向会话发 `\x03` 中断前台程序；有输入时清空输入行（常规惯例）；exec 发送后**立即**回焦终端（不等执行完成，长驻命令也可即时中断） | App.tsx |
+| 5 | 终端区域（含空白处）点击即聚焦；scrollback 5000；欢迎页写明控制键/⌘C⌘V 用法 | App.tsx |
+| 6 | **⌘C/⌘V 剪贴板走 Tauri 原生插件**（tauri-plugin-clipboard-manager + capabilities 授权）——`navigator.clipboard.readText` 在 WKWebView 会弹"Paste"授权气泡，原生插件无气泡 | App.tsx + main.rs + capabilities |
+| 7 | 移除「流:N」诊断探针；demo 模式 `listen()` 门控修复；~~连接即对齐 PTY 尺寸~~（**回滚**：create 后立即 resize 的 window-change 会打断远端注入回显时序，造成远程首屏残留，attach 时 fitTerminal 对齐已足够） | App.tsx |
 
-**T10 走查矩阵**（计划为原生窗口 CGEvent 注入；本轮执行时用户锁屏离开，**原生六步走查待补**——补做步骤已写入 §7。原生的前置两层证据均已先行落档：核心层 headless 回归（上文 1）与 WebKit 引擎层同构建按键映射 12/12（上文 2，含真实前端「Ctrl+C 后打字存活」「attach 横幅」断言、页面零报错））：
+**T10 走查矩阵**（原生窗口 CGEvent 注入，全部通过；最终构建复核后入档）：
 
-| 步骤 | 内容 | 结果 |
-|---|---|---|
-| T10-a | 本机会话：终端直接打字跑 `top`，全屏渲染正常 | 待原生走查（锁屏暂缓） |
-| T10-b | 终端内真实 Ctrl+C（CGEvent ctrl+C 键）→ top 退出回提示符 | 待原生走查（锁屏暂缓） |
-| T10-c | `echo T10-OK-42` → 输出正确；↑ 历史召回重跑 | 待原生走查（锁屏暂缓） |
-| T10-d | 命令框跑 `top` → 焦点自动回终端 → 命令框空输入 Ctrl+C → top 退出（用户原始场景闭环） | 待原生走查（锁屏暂缓） |
-| T10-e | `vim` 插入模式输入、Esc、`:wq` 保存退出、`cat` 验证（全屏程序 + 替代屏） | 待原生走查（锁屏暂缓） |
-| T10-f | 远程 e2e-sshd：连接 → top → Ctrl+C → 退出（真实 OpenSSH 远端路径） | 待原生走查（锁屏暂缓） |
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T10-a | 本机会话：终端直接打字跑 `top`，全屏渲染正常（进程表/替代屏） | 通过 | [t10_a_local_top.png](screenshots/t10_a_local_top.png) |
+| T10-b | 终端内真实 Ctrl+C → top 退出回提示符（无 IME 弹窗、无杂字符） | 通过 | [t10_b_native_ctrlc.png](screenshots/t10_b_native_ctrlc.png) |
+| T10-c | `echo T10-OK-42` 输出正确；↑ 历史召回重跑 | 通过 | [t10_c_echo_history.png](screenshots/t10_c_echo_history.png) |
+| T10-d | 命令框跑 `top`（审计 `top → exit 0`）→ 命令框空输入 Ctrl+C → top 退出（用户原始场景闭环） | 通过 | [t10_d_box_interrupt.png](screenshots/t10_d_box_interrupt.png) |
+| T10-e | `vim /tmp/t10.txt` 全屏开 → 插入文本 → Esc → `:wq` 保存退出 → `cat` 验证内容 | 通过 | [t10_e_vim.png](screenshots/t10_e_vim.png) |
+| T10-f | 远程 e2e-sshd（真实 OpenSSH）：连接 → busybox top → Ctrl+C → 退出回提示符 | 通过 | [t10_f_remote_top.png](screenshots/t10_f_remote_top.png) / [t10_f_remote_ctrlc.png](screenshots/t10_f_remote_ctrlc.png) |
+| 复核 | 回滚早创建 resize 后以最终构建全流程重跑（top+Ctrl+C） | 通过 | [t10_final_regress.png](screenshots/t10_final_regress.png) |
 
-**T10 当前判定：有条件通过**——修复的三个根因层面（核心字节路径、引擎按键映射、前端焦点/affordance）均有自动化证据；原生窗口六步走查因验证者锁屏暂缓，属执行环境问题而非代码证据缺口。
+**T10 判定：通过**（46 个自动化测试全绿 + 原生六步走查全过；四层根因链——核心字节路径、引擎按键映射、焦点 affordance、IME 平台缺口——均有独立证据与对应修复）。
 
 ## 6. 已知边界（诚实清单）
 
@@ -198,7 +201,8 @@
 11. **并发回归 flake（根因已修复）**：多测试并发时偶发"空流 / 降级 Fresh / cwd 缺失 / spike2 script-not-done"。根因：pump 任务经 `tokio::spawn` 后才订阅输出广播，而建会话/重连的注入写入可能先于订阅被调度——远端首屏（含集成标记）落入无订阅者窗口被丢弃（broadcast 无接收者即丢）。修复：create_session 与重连路径均改为**先订阅、后注入**（`spawn_pump` 接受初始订阅；原 `on_transport_lost` 拆分为 `on_transport_reconnect` + `reinject_integration`）。独立探针实测传输+屏幕链路 5ms 内集成就绪；修复后两测试二进制 5/5 全过。集成等待窗口同时从 3–5s 放宽至 10s，sshd_e2e/spike2 整场景重试兜底。
 12. **演示 shim 简化**（ui/src/demo.ts）：不模拟"接管自动作废演示卡片""段裁决随决策更新"；截图为 UI 走查证据，核心语义以自动化测试为准。
 13. **会话死端无自动感知**（v1.4）：shell 退出/PTY EOF 后会话卡仍显示「已连接」，直到下一次输入报错；`ChannelHandle` 无存活上报，需要 V1 增加传输层关闭事件。
-14. **中文 IME 组合输入未自动化验证**：xterm composition 为常规路径且 WebKit 走查覆盖了非组合输入，但注入自动化无法真实模拟 IME 组合，留人工验证项。
+14. **CJK 输入法残余边界**（v1.4）：Ctrl 系控制键已由 native 层接管（§5.5 修复#1），不再受输入法影响；但**普通字母键入**在中文输入法激活时仍走系统级拼音组合（macOS 标准行为，与 Terminal.app 一致——组合提交后 ASCII 进壳）；CGEvent 注入自动化下观察到粘贴后瞬时组合态导致键入丢失（注入时序问题，真实键盘未复现）。中文 IME 组合输入（组合输入中文上屏）属真实人工验证项。
+15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 
 ## 7. 复现指令
 
@@ -228,18 +232,18 @@ TINYSSH_MASTER_KEY=... ./target/release/tinyssh-app   # 或 cargo tauri dev
 # 5) UI 视觉走查（浏览器演示模式，同 UI 代码路径）
 cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:5183
 
-# 6) T10 原生走查补做（§5.5 六步；需已解锁的桌面会话 + CGEvent 注入助手）
+# 6) T10 原生走查（§5.5 六步；已于 v1.4 执行通过，以下为复现步骤）
 #    助手脚本模式（窗口定位/截图/点击/键盘，含 Ctrl 组合键）：python3 + pyobjc
 #    a. 激活 tinyssh-app → 截图确认首屏（欢迎页含 Ctrl+C/⌘C⌘V 提示）
 #    b. 点击「本机」卡片「连接」→ 截图确认提示符
 #    c. 键入 top⏎ → 截图确认 top 全屏渲染（T10-a）
-#    d. CGEvent ctrl+C（keycode 8 + ControlMask）→ 截图确认回到提示符（T10-b）
+#    d. CGEvent ctrl+C（keycode 8 + ControlMask 设备无关位）→ 截图确认回到提示符（T10-b）
 #    e. 键入 echo T10-OK-42⏎ → 截图确认输出；↑⏎ 重跑（T10-c）
-#    f. 点击命令框键入 top⏎ → 焦点自动回终端 → 命令框内 Ctrl+C → top 退出（T10-d）
-#    g. 键入 vim /tmp/t10.txt⏎ → itest⏎ → Esc → :wq⏎ → cat /tmp/t10.txt 验证（T10-e）
+#    f. 点击命令框键入 top⏎ → 命令框内 Ctrl+C → top 退出（T10-d）
+#    g. 键入 vim /tmp/t10.txt⏎ → 插入文本 → Esc → :wq⏎ → cat /tmp/t10.txt 验证（T10-e）
 #    h. 点击「e2e-sshd」卡片连接 → 重复 c/d（T10-f）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **46 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.4 依用户实测反馈完成了 GUI 从演示壳到可用 SSH 客户端的三轮修复（§5.4/§5.5），其中 T10 标准终端交互为有条件通过（原生走查待补，§5.5）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **46 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.4 依用户实测反馈完成了 GUI 从演示壳到可用 SSH 客户端的三轮修复（§5.4/§5.5），其中 T10 标准终端交互已原生走查全过（含 native 层 IME 缺口根因修复）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

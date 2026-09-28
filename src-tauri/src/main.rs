@@ -12,6 +12,20 @@ struct AppState {
     api: Arc<SessionManager>,
 }
 
+/// 终端聚焦状态（native Ctrl 键接管依据：只有 xterm textarea 聚焦时才劫持）。
+#[derive(Default)]
+struct TerminalInput {
+    sid: std::sync::Mutex<Option<String>>,
+    focused: std::sync::Mutex<bool>,
+}
+
+#[tauri::command]
+fn note_terminal(state: State<'_, Arc<TerminalInput>>, sid: Option<String>, focused: bool) -> CmdResult<()> {
+    *state.sid.lock().unwrap() = sid;
+    *state.focused.lock().unwrap() = focused;
+    Ok(())
+}
+
 fn human() -> Actor {
     Actor::Human
 }
@@ -244,6 +258,108 @@ async fn mcp_status(state: ApiState<'_>) -> CmdResult<serde_json::Value> {
     }))
 }
 
+/// macOS 虚拟键码 → Ctrl 组合的 C0 控制字符（与真实终端 / 前端 ctrlCharOf 同表）。
+#[cfg(target_os = "macos")]
+fn ctrl_char_of_keycode(code: u64) -> Option<&'static str> {
+    Some(match code {
+        0 => "\x01",   // a
+        11 => "\x02",  // b
+        8 => "\x03",   // c
+        2 => "\x04",   // d
+        14 => "\x05",  // e
+        3 => "\x06",   // f
+        5 => "\x07",   // g
+        4 => "\x08",   // h
+        34 => "\x09",  // i
+        38 => "\x0a",  // j
+        40 => "\x0b",  // k
+        37 => "\x0c",  // l
+        46 => "\x0d",  // m
+        45 => "\x0e",  // n
+        31 => "\x0f",  // o
+        35 => "\x10",  // p
+        12 => "\x11",  // q
+        15 => "\x12",  // r
+        1 => "\x13",   // s
+        17 => "\x14",  // t
+        32 => "\x15",  // u
+        9 => "\x16",   // v
+        13 => "\x17",  // w
+        7 => "\x18",   // x
+        16 => "\x19",  // y
+        6 => "\x1a",   // z
+        33 => "\x1b",  // [
+        42 => "\x1c",  // backslash
+        30 => "\x1d",  // ]
+        22 => "\x1e",  // 6
+        27 => "\x1f",  // -
+        44 => "\x1f",  // /
+        49 => "\x00",  // space
+        19 => "\x00",  // 2
+        20 => "\x1b",  // 3
+        21 => "\x1c",  // 4
+        23 => "\x1d",  // 5
+        26 => "\x1f",  // 7
+        28 => "\x7f",  // 8 (DEL)
+        _ => return None,
+    })
+}
+
+/// native 层 Ctrl+字符 接管（仅 macOS）：中文输入法在 WKWebView 里会把 Ctrl+字母
+/// 送进拼音组合（keydown 到达 DOM 时 ctrl 标志已被剥掉、keyCode=229），任何 JS 层
+/// 修复都无法区分「Ctrl+C」和「拼音里的 c」。NSEvent local monitor 在 IME 之前
+/// 看到原始事件（修饰键完整），终端聚焦时编码控制字符直发后端并吞掉事件。
+#[cfg(target_os = "macos")]
+fn install_native_ctrl_intercept(core: Arc<SessionManager>, input: Arc<TerminalInput>) {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType};
+    use std::ptr::NonNull;
+
+    let block = block2::RcBlock::new(move |ev: NonNull<NSEvent>| -> *mut NSEvent {
+        // ObjC block 边界不能 unwind：任何 panic 一律吞掉并放行事件，绝不 abort 应用。
+        let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let ev = unsafe { ev.as_ref() };
+            if ev.r#type() != NSEventType::KeyDown {
+                return None;
+            }
+            let flags = ev.modifierFlags();
+            // ⌘/⌥ 组合不劫持；⇧ 允许（ctrl+⇧+字母与 ctrl+字母同义）
+            if !flags.contains(NSEventModifierFlags::Control)
+                || flags.intersects(NSEventModifierFlags::Command.union(NSEventModifierFlags::Option))
+            {
+                return None;
+            }
+            if !*input.focused.lock().unwrap() {
+                return None; // 终端未聚焦（命令框等输入控件保留自身编辑语义）
+            }
+            let sid = input.sid.lock().unwrap().clone()?;
+            let keycode = ev.keyCode() as u64;
+            ctrl_char_of_keycode(keycode).map(|cc| (sid, cc))
+        }));
+        match handled {
+            Ok(Some((sid, cc))) => {
+                let core = core.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = core.send_keys(&Actor::Human, sid, cc).await;
+                });
+                std::ptr::null_mut() // 吞掉事件：IME 与 WebKit 都不再看到
+            }
+            _ => ev.as_ptr(),
+        }
+    });
+
+    let monitor: Option<Retained<AnyObject>> = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block)
+    };
+    // 监视器与应用同生命周期，故意常驻。
+    std::mem::forget(monitor);
+    eprintln!("[app] native ctrl-key intercept installed");
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_native_ctrl_intercept(_core: Arc<SessionManager>, _input: Arc<TerminalInput>) {}
+
 fn main() {
     eprintln!("[app] starting, bench={}", std::env::var("TINYSSH_BENCH").unwrap_or_default());
     tracing_subscriber::fmt()
@@ -257,15 +373,19 @@ fn main() {
         });
     std::fs::create_dir_all(db.parent().unwrap()).ok();
     let api = SessionManager::open(&db).expect("open storage");
+    let terminal_input: Arc<TerminalInput> = Arc::default();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState { api: api.clone() })
+        .manage(terminal_input.clone())
         .on_page_load(|webview, payload| {
             eprintln!("[app] page load event: {:?} {:?}", payload.event(), webview.label());
         })
         .setup(move |app| {
             use tauri::Manager as _;
             eprintln!("[app] setup: windows={:?}", app.webview_windows().keys().collect::<Vec<_>>());
+            install_native_ctrl_intercept(api.clone(), terminal_input.clone());
             if let Some(w) = app.get_webview_window("main") {
                 let r = w.eval("window.__TINYSSH_PROBE__ = 'set-by-rust'; 'ok';");
                 eprintln!("[app] eval probe: {r:?}");
@@ -293,7 +413,7 @@ fn main() {
             list_sessions, create_session, close_session, resize, subscribe_output,
             read_screen, send_keys, exec_human, set_control, session_brief,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
-            bench_start, bench_report, bench_mode,
+            bench_start, bench_report, bench_mode, note_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
