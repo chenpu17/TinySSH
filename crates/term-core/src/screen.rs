@@ -69,6 +69,8 @@ pub struct Screen {
     capture_tx: tokio::sync::broadcast::Sender<String>,
     /// 曾收到 OSC 133（判断主机是否注入 shell 集成）。
     saw_133: bool,
+    /// 重置型就绪信号：重连后等首个 B 标记（见 prompt_ready）。
+    saw_prompt: bool,
     last_output_ts: Option<DateTime<Utc>>,
 }
 
@@ -97,6 +99,7 @@ impl Screen {
             capture: None,
             capture_tx,
             saw_133: false,
+            saw_prompt: false,
             last_output_ts: None,
         }
     }
@@ -141,6 +144,7 @@ impl Screen {
                 }
                 OscEvent::PromptStart => {
                     self.saw_133 = true;
+                    self.saw_prompt = true;
                     self.blocks.on_osc(&ev, now, current_line);
                 }
                 OscEvent::CommandDone { exit } => {
@@ -333,6 +337,20 @@ impl Screen {
     /// 主机是否已注入 OSC 133 shell 集成。
     pub fn shell_integration_present(&self) -> bool {
         self.saw_133
+    }
+
+    /// 新 shell 的首个提示符（OSC 133 B）是否已出现。
+    /// 重注入的就绪信号：B 晚于清屏字节的执行与渲染，等到它 = 片段已跑完、屏已清、提示符已出。
+    /// （C 标记先于清屏执行，只等 C 会截到清屏前的回显尾巴。）
+    pub fn prompt_ready(&self) -> bool {
+        self.saw_prompt
+    }
+
+    /// 重连后重置集成标记：不重置则旧连接的 saw_133 粘滞——重注入的就绪等待
+    /// 立即放行（新 shell 未必就绪）、run_shell 也会误判可用。
+    pub fn reset_integration_tracking(&mut self) {
+        self.saw_133 = false;
+        self.saw_prompt = false;
     }
 
     pub fn last_output_ts(&self) -> Option<DateTime<Utc>> {

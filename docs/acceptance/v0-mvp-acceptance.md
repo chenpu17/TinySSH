@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.6 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
+> 版本：v1.7 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -50,23 +50,24 @@
 | **SPIKE-2** russh×alacritty 保真 | 与 OpenSSH 参考流渲染一致；RSS 无泄漏 | `seq 1 50` 输出域与系统 OpenSSH+PTY 渲染逐行字节一致（50/50）；20MB 压力流量后 RSS 增长 704KB（门限 51200KB） | ✅ |
 | **SPIKE-3** MCP 合规 | 13 工具 + annotations；错误语义表；120s 审批挂起不被客户端切断；exec P95<300ms | 工具清单与 `readOnlyHint`/`destructiveHint` 合规；`dangerous_pattern`/`approval_denied`/`control_taken_by_human`/`approval_timeout` 逐条断言；**挂起 120.00s 未被切断**；**P95 = 1.8ms** | ✅ |
 
-## 4. 测试统计（全量 `cargo test --workspace`，v1.2 实测口径）
+## 4. 测试统计（全量 `cargo test --workspace`，v1.7 实测口径）
 
 | 套件 | 数量 | 覆盖 |
 |---|---|---|
-| core_local（核心管线） | 8 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压、**Ctrl+C 中断前台进程（v1.4：`send_keys("\x03")` → SIGINT → 块闭合 → shell 响应）** |
+| core_local（核心管线） | 9 | Shell 现场延续（cd 跨 exec）、Fresh 真实退出码+镜像回放、审批批准/拒绝、allow 规则免审、危险模式不可批准、**接管作废全链路（含作废卡片不得仍 pending）**、队列背压、**Ctrl+C 中断前台进程（v1.4：`send_keys("\x03")` → SIGINT → 块闭合 → shell 响应）**、**本地会话一键重连全链路（v1.7：死端→重连→重确认→核实恢复 + 未断开防呆）** |
 | handle 白名单单元回归 | 1 | **重确认白名单仅限单条简单命令（M1 回归：`pwd && evil` 等复合形态全部拒绝）** |
 | term-core | 12 | 块生命周期（A/B/C/D）、Agent 键入归因、受管块、OSC 跨 feed、OSC7、快照、捕获、回放 |
 | approval | 12 | 精确/前缀/正则、TTL 过期、复合命令逐段（绕过用例）、内置 deny 不可删、ApproveEdited 不可越 deny、解析失败保守报审、**命令替换强制报审（M2 回归）**、**deny 规则逐 agent（m3 回归）** |
 | audit | 2 | 追加/查询/导出、**篡改检测** |
 | vault | 4 | 加解密往返+篡改、Token 生命周期、主机口令加密存储、ed25519 生成与解密 |
-| e2e_acceptance（真实 OpenSSH） | 3 | **首屏干净回归（v1.2：read_screen 不得含注入回显/scrollback）**、**首验收场景**、旅程 2（断线→重连→Reconfirming：白名单外被拒、**复合白名单形态被拒（M1 回归）**、核实后自动恢复、cwd 事实 NeedsRecheck→核实 Confirmed、重连后为新 shell 不谎报现场延续） |
+| e2e_acceptance（真实 OpenSSH） | 5 | **首屏干净回归（v1.2：read_screen 不得含注入回显/scrollback）**、**首验收场景**、旅程 2（自动重连→Reconfirming：白名单外被拒、**复合白名单形态被拒（M1 回归）**、核实后自动恢复、cwd 事实 NeedsRecheck→核实 Confirmed、重连后为新 shell 不谎报现场延续）、**旅程 3（v1.7：docker stop 超自动重连窗口 → Disconnected 死端 → start → 手动重连 → 审计含 session_reconnect）**、**旅程 4（v1.7：键入一半脏状态断线重连——屏面无注入片段泄漏、残留块收尾、半截命令不执行，P1 §6-17 复现矩阵）** |
 | protocol（SPIKE-3） | 1 | §3 表 |
 | shell_integration（transport-pty） | 1 | 本地 zsh 集成 + 块 + OSC7 + Fresh 退出码 |
+| **pty_reconnect（transport-pty，v1.7）** | 1 | **本地 PTY 重连：shell 退出死端 → reconnect 换新 shell、同一 broadcast 订阅不失效** |
 | sshd_e2e（transport-ssh） | 1 | SSH 块 + cwd + Fresh env + SFTP 往返 |
 | spike2 | 1 | §3 表 |
 
-**合计 46 个测试，0 失败（v1.4 修复后最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
+**合计 50 个测试，0 失败（v1.7 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。
 
 ## 5. 独立复核（v1.1 新增）
 
@@ -243,6 +244,38 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 
 **T12 判定：通过**（46/46 回归全绿 + 走查矩阵全过）。走查工具层附带发现并修复：CGEvent 组合键（⌘N）只发字符键 down/up、从不发修饰键抬起——系统 ⌘ 态残留导致后续注入字符全部带 ⌘（⌘1/⌘2 误触发会话切换、其余字符被 ⌘ 处理器吞掉）；这正是 v1.5 走查中「焦点考古反复失准」的真因。助手脚本已改为组合键前后显式抬修饰键；该问题属走查工具层，产品无此问题（真实键盘修饰键由系统管理）。
 
+### 5.8 断线一键重连闭环（T13，v1.7 新增）
+
+**动机**：UX 路线图（§6-18）第①项。会话一旦断开（本地 shell 退出 / SSH 断线且自动重连 3 次失败）即成死端——pump 循环退出后无任何恢复路径，用户只能删会话从主机卡重连，滚动历史与会话身份全部丢弃。§6-13 记录的死端问题在本轮闭环解决。
+
+**实现**（三层）：
+
+| 层 | 改动 | 说明 |
+|---|---|---|
+| `transport-pty` | `reconnect()` 从 no-op 改为真重启 shell（spawn 逻辑重构为 `respawn()`） | 本地「重连」= 新 PTY + 新 shell 进程；**输出并入同一 broadcast**——重连后泵与 UI 既有订阅无需更换（单测 `transport-pty/tests/reconnect.rs` 固化该契约） |
+| `term-core` | `reset_integration_tracking()`（saw_133 粘滞重置）+ `prompt_ready()`（B 标记就绪信号）+ 新增 `saw_prompt` 跟踪 | P1 §6-17 根因修复，见下 |
+| `core-session` | `SessionManager::reconnect_session(sid)`：仅 Disconnected 可触发（Reconnecting 中防重入）→ 先订阅 → `channel.reconnect()` ≤3 次 → 失败回 Disconnected 并报错（可再试）→ 成功则 `reset_scene_after_reconnect()`（**残留 open block 强制收尾** + 集成标记重置 + cwd 降级）→ 重启 pump → SSH 走 `reinject_integration`（等 `prompt_ready`）/ 本地直接进 Reconfirming → 审计 `session_reconnect` | 重连是人的基础设施动作，**不在 SessionApi/MCP 面**（GUI 人类专用；Agent 重连语义留 V1）；SSH 原地重连保留 TOFU 指纹 |
+| UI | Disconnected 会话卡「重连」按钮（重连中禁用防抖）→ 成功自动接入该会话；失败走友好错误横幅 | 操作记录新增「重连会话」中文标签；会话卡状态行 nowrap 防折行 |
+
+**P1 §6-17 重连重注入回显泄漏——根因确认并修复**：`saw_133` 一旦置位永不重置，导致 ① 重注入的就绪等待形同虚设（旧连接的标记让等待立即放行，新 shell 未必就绪）；② 就绪信号选错了标记——片段清屏行的 **C 标记先于清屏字节**执行，只等 C 会截到清屏前的注入回显尾巴（v1.5 观察到的「集成片段明文进屏」与此吻合）。修复：重连成功先 `reset_integration_tracking()`（顺带强制收尾残留 open block——旧 shell 已死永不闭合，不收尾则后续 shell exec 全部等块空闲超时）；重注入等待改为 `prompt_ready()`（**B 标记** = 片段跑完、屏已清、提示符已出）。journey4 在**键入一半（未闭合引号）的脏状态**下重启容器复现验证：重连后屏面无注入片段明文、shell exec 立即可用、半截命令未被执行。
+
+**附带修复**：bash 将 PS0/PS1 的 `\[`/`\]`（readline 忽略标记）展开为 `\x01`/`\x02` 随输出进入 exec 捕获——MCP/UI 消费者的输出头部带不可见噪音（既有问题，此前测试全用 contains 断言未暴露）；`run_shell` 输出清洗统一剥离。
+
+**T13 走查矩阵**（原生窗口；本地 = PTY shell，远程 = e2e-sshd 真实 OpenSSH；断线均为真实发生非模拟）：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T13-a | 本机终端键入 `exit` → shell 真实退出 → 卡片 3s 内转「已断开」+「重连」按钮；简报 cwd 降级「需复核」 | 通过 | [t13_local_dead.png](screenshots/t13_local_dead.png) |
+| T13-b | 点「重连」→ 卡片转「重确认（受限）」；新 shell 提示符出现且**滚动历史保留**；简报出现 `$ exit · 已结束（退出码未知）`（残留块诚实收尾）+「手动重连：重建连接」；操作记录「我 重连会话」 | 通过 | [t13_local_reconnected.png](screenshots/t13_local_reconnected.png) |
+| T13-c | 新 shell 键入 `echo T13-LOCAL-RECONNECT-OK` → 输出正常（重连后现场可用） | 通过 | [t13_local_reconnected.png](screenshots/t13_local_reconnected.png) |
+| T13-d | `docker stop tinyssh-e2e` → 自动重连 3 次失败 → 远程卡「已断开」+「重连」按钮（真死端） | 通过 | [t13_remote_dead.png](screenshots/t13_remote_dead.png) |
+| T13-e | `docker start` 后点「重连」→ 「重确认（受限）」→ `echo T13-REMOTE-RECONNECT-OK && hostname` → 输出正常（容器主机名） | 通过 | [t13_remote_reconnected.png](screenshots/t13_remote_reconnected.png) |
+| T13-f | 简报控制权行显示最新变迁「重连成功，进入重确认」（发现 UI 取最旧一条的显示缺陷并当场修复）；会话卡状态行 nowrap | 通过 | [t13_final_layout.png](screenshots/t13_final_layout.png) |
+
+**自动化新增 4 项**（全量 50/50 绿）：`transport-pty/tests/reconnect.rs`（PTY 重连同 broadcast 契约）、`core_local::local_session_manual_reconnect`（死端→重连→重确认→核实恢复全链路 + 防呆：未断开不可重连）、`e2e_acceptance::journey3_manual_reconnect_after_hard_down`（docker stop 超过自动重连窗口 → Disconnected → start → 手动重连 → 审计断言；Drop guard 保证任何退出路径容器被拉起）、`journey4_reconnect_with_dirty_typing_state`（P1 复现矩阵，见上）。
+
+**T13 判定：通过**（50/50 回归全绿 + 原生走查矩阵全过 + P1 §6-17 根因修复附复现实证）。如实披露：重连成功 ≠ 现场延续——本地/远程重连均为新 shell（显示历史 ≠ 现场），cwd/env 事实降级、进重确认门，与 PRD「显示历史 ≠ 现场延续」语义一致。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -257,12 +290,12 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 10. **create_session 审批卡不受接管作废**（卡片 session_id 为空，接管按会话匹配作废范围）——作废口径边角。
 11. **并发回归 flake（根因已修复）**：多测试并发时偶发"空流 / 降级 Fresh / cwd 缺失 / spike2 script-not-done"。根因：pump 任务经 `tokio::spawn` 后才订阅输出广播，而建会话/重连的注入写入可能先于订阅被调度——远端首屏（含集成标记）落入无订阅者窗口被丢弃（broadcast 无接收者即丢）。修复：create_session 与重连路径均改为**先订阅、后注入**（`spawn_pump` 接受初始订阅；原 `on_transport_lost` 拆分为 `on_transport_reconnect` + `reinject_integration`）。独立探针实测传输+屏幕链路 5ms 内集成就绪；修复后两测试二进制 5/5 全过。集成等待窗口同时从 3–5s 放宽至 10s，sshd_e2e/spike2 整场景重试兜底。
 12. **演示 shim 简化**（ui/src/demo.ts）：不模拟"接管自动作废演示卡片""段裁决随决策更新"；截图为 UI 走查证据，核心语义以自动化测试为准。
-13. **会话死端无自动感知**（v1.4）：shell 退出/PTY EOF 后会话卡仍显示「已连接」，直到下一次输入报错；`ChannelHandle` 无存活上报，需要 V1 增加传输层关闭事件。
+13. **~~会话死端无自动感知~~（v1.7 已解决）**：v1.4 记录的「shell 退出/PTY EOF 后会话卡仍显示已连接」已由 pump 存活检测 + Disconnected 状态 + 一键重连闭环解决（§5.8）。断线瞬间正在键入的半截命令随旧 shell 丢弃（诚实语义：从未执行）；重连 = 新 shell，现场不延续。
 14. **CJK 输入法残余边界**（v1.4）：Ctrl 系控制键已由 native 层接管（§5.5 修复#1），不再受输入法影响；但**普通字母键入**在中文输入法激活时仍走系统级拼音组合（macOS 标准行为，与 Terminal.app 一致——组合提交后 ASCII 进壳）；CGEvent 注入自动化下观察到粘贴后瞬时组合态导致键入丢失（注入时序问题，真实键盘未复现）。中文 IME 组合输入（组合输入中文上屏）属真实人工验证项。
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **鼠标上报未实测**（v1.5）：htop/tmux/vim（mouse=a）的点击与滚轮依赖 xterm mouse-tracking 转义序列走 `onData`，链路设计上成立，但走查期合成鼠标事件对 WKWebView 几乎不送达（走查工具层限制），未能取得原生证据，列为待真人验证项。
-17. **重连重注入回显泄漏（P1，一次观察未复现）**（v1.5）：首轮走查中远程会话静默重连后，重注入的集成片段以明文回显进屏（含 `printf '\033[2J\033[H'` 与续行提示符），疑似 reinject 的 `register_outgoing` 压制在特定时序下失效；干净环境复走未复现，需专项复现与修复。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳）**：后续轮次优先级为 ① 断线一键重连闭环（Disconnected 死端，§6-13 的 UI 面）② Alt/Option 键（readline/tmux 词跳转）③ 鼠标上报实测（§6-16）④ ⌘F 搜索 / OSC8 链接 / 窗口标题 ⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。
+17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.7 完成①）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② Alt/Option 键（readline/tmux 词跳转）③ 鼠标上报实测（§6-16）④ ⌘F 搜索 / OSC8 链接 / 窗口标题 ⑤ 主机指纹首连确认 + 变更警告（安全项不删，仅排序后移）⑥ 字号/主题设置 ⑦ 标签页/分屏 ⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ② Alt/Option 键。
 
 ## 7. 复现指令
 
@@ -316,8 +349,17 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    b. ⌘1 接入本机 → 终端打字 echo HI12 ⏎ → 右栏简报出现「$ echo HI12 · 成功」（T12-b）
 #    c. ⌘1 切 e2e-sshd（列表首位）→ 简报「当前目录 /root · 已核实」（T12-c）
 #    d. 浏览器开 127.0.0.1:5183（demo 模式）→ 接入演示会话 → 审批卡 + 徽标 + Agent 操作记录（T12-d）
+
+# 9) T13 断线一键重连走查（§5.8 六步；已于 v1.7 执行通过）
+#    a. ⌘2 接入本机 → 终端打字 exit ⏎ → 3s 内卡片「已断开」+「重连」按钮（T13-a）
+#    b. 点「重连」→ 卡片「重确认（受限）」、新提示符出现、滚动历史保留（T13-b）
+#    c. 键入 echo T13-LOCAL-RECONNECT-OK ⏎ → 输出正常（T13-c）
+#    d. docker stop tinyssh-e2e → 等待自动重连 3 次失败（~20s）→ 远程卡「已断开」（T13-d）
+#    e. docker start tinyssh-e2e → 点远程卡「重连」→ 「重确认（受限）」→
+#       echo T13-REMOTE-RECONNECT-OK && hostname ⏎ → 输出正常（T13-e）
+#    f. 右栏简报控制权行 = 最新变迁「重连成功，进入重确认」；操作记录两条「我 重连会话」（T13-f）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **46 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.6 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复），并按使用体验重排 UX 路线图（§6-18）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **50 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.7 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭），并按使用体验重排 UX 路线图（§6-18，①已完成，下一项 ② Alt/Option 键）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

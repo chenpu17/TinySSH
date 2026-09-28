@@ -114,7 +114,7 @@ impl SessionHandle {
         Box::new(crate::brief::compute(self).await)
     }
 
-    async fn note_transition(&self, what: &str) {
+    pub(crate) async fn note_transition(&self, what: &str) {
         self.transitions
             .lock()
             .await
@@ -217,7 +217,12 @@ impl SessionHandle {
         self.live_execs.lock().unwrap().remove(exec_id);
 
         let cap = opts.output_cap.unwrap_or(DEFAULT_OUTPUT_CAP);
-        let text = term_core::strip_ansi(&raw_out);
+        let mut text = term_core::strip_ansi(&raw_out);
+        // bash 将 PS0/PS1 的 \[ \]（readline 忽略标记）展开为 \x01/\x02 随输出发出，
+        // 对 MCP/UI 消费者是纯噪音（简报与命令框已各自清洗，此处统一收口）
+        if text.contains(['\x01', '\x02']) {
+            text = text.replace(['\x01', '\x02'], "");
+        }
         let truncated = text.len() > cap;
         let text = if truncated { text[..cap].to_string() } else { text };
         let (has_binary, text) = sanitize_utf8(&text);
@@ -741,10 +746,7 @@ impl SessionHandle {
             match self.channel.reconnect().await {
                 Ok(()) => {
                     // 重连成功 ≠ 现场延续：cwd/env 事实降级；新 shell 需重新注入集成
-                    {
-                        let mut s = self.screen.lock().await;
-                        s.invalidate_cwd();
-                    }
+                    self.reset_scene_after_reconnect().await;
                     return;
                 }
                 Err(e) => {
@@ -755,7 +757,20 @@ impl SessionHandle {
         }
     }
 
-    /// 重连成功后：注入集成（pump 已先订阅新通道）→ 等待生效 → 进入 Reconfirming。
+    /// 重连成功后的现场重置：残留 open block 强制收尾（旧 shell 已死，永不闭合——
+    /// 不收尾则后续 shell exec 全部等块空闲超时）；集成标记计数重置（旧连接的
+    /// saw_133 粘滞会让重注入就绪等待立即放行、run_shell 误判可用，§6-17）；
+    /// cwd 事实降级（新 shell 不延续现场）。
+    pub async fn reset_scene_after_reconnect(&self) {
+        let mut s = self.screen.lock().await;
+        s.reset_integration_tracking();
+        s.blocks.force_close_open(chrono::Utc::now());
+        s.invalidate_cwd();
+    }
+
+    /// 重连成功后：注入集成（pump 已先订阅新通道）→ 等待新 shell 首个提示符 → 进入 Reconfirming。
+    /// 就绪信号用 prompt_ready（B 标记）：B 晚于片段清屏的执行——等到它 = 屏已清、提示符已出；
+    /// 只等 saw_133（C 标记）会提前放行，读屏截到清屏前的注入回显（§6-17 疑似真因）。
     pub async fn reinject_integration(self: &Arc<Self>) {
         let snippet = crate::ssh_integration_snippet();
         let mut bytes = snippet.into_bytes();
@@ -767,7 +782,7 @@ impl SessionHandle {
         let _ = self.channel.write(&bytes).await;
         // 窗口 10s：冷容器 + 高负载下首个提示符可能很慢（实测 3s 不够）
         for _ in 0..200 {
-            if self.screen.lock().await.shell_integration_present() {
+            if self.screen.lock().await.prompt_ready() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;

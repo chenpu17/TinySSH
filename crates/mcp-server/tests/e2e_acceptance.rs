@@ -306,6 +306,203 @@ async fn journey2_reconnect_reconfirm() {
     m.exec(&human, sid.clone(), "echo after_reconfirm", ExecOpts::default()).await.unwrap();
 }
 
+/// 旅程 3（T13）：重连死端 → 一键重连闭环。
+/// 与旅程 2（自动重连：容器 <2s 内回来）互补：这里 sshd 真正下线超过自动重连窗口，
+/// 核心进入 Disconnected 死端；容器恢复后 reconnect_session 手动恢复。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn journey3_manual_reconnect_after_hard_down() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    struct ContainerStartGuard;
+    impl Drop for ContainerStartGuard {
+        fn drop(&mut self) {
+            // 任何退出路径（含断言失败 panic）都把容器拉起，不污染后续测试
+            let _ = std::process::Command::new("docker")
+                .args(["start", "tinyssh-e2e"])
+                .output();
+        }
+    }
+    let (m, _url, _token) = spawn_stack().await;
+    let human = Actor::Human;
+    let sid = m
+        .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
+        .await
+        .unwrap();
+    m.exec(&human, sid.clone(), "cd /tmp && echo up_before_down", ExecOpts::default())
+        .await
+        .unwrap();
+
+    // sshd 下线超过自动重连窗口（3 次尝试 + 2s 间隔）→ Disconnected 死端
+    let _ = std::process::Command::new("docker")
+        .args(["stop", "tinyssh-e2e"])
+        .output()
+        .expect("docker stop");
+    let _container_guard = ContainerStartGuard;
+    let mut dead = false;
+    for _ in 0..600 {
+        let sessions = m.list_sessions(&human).await.unwrap();
+        if let Some(s) = sessions.iter().find(|s| s.id == sid) {
+            if s.state == SessionState::Disconnected {
+                dead = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(dead, "sshd 下线后会话应进入 Disconnected 死端");
+
+    // 死端上 exec 明确失败
+    let r = m.exec(&human, sid.clone(), "echo should_fail", ExecOpts::default()).await;
+    assert!(r.is_err(), "死端 exec 应失败: {r:?}");
+
+    // 容器恢复 → 一键重连
+    let _ = std::process::Command::new("docker")
+        .args(["start", "tinyssh-e2e"])
+        .output()
+        .expect("docker start");
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+
+    m.reconnect_session(&sid).await.unwrap();
+    // 进入重确认；白名单核实（pwd）→ 自动退出重确认
+    let mut reconfirmed = false;
+    for _ in 0..300 {
+        let sessions = m.list_sessions(&human).await.unwrap();
+        if let Some(s) = sessions.iter().find(|s| s.id == sid) {
+            if s.state == SessionState::Reconfirming {
+                reconfirmed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(reconfirmed, "重连后应进入 Reconfirming");
+
+    let r = m
+        .exec(&human, sid.clone(), "pwd", ExecOpts::default())
+        .await
+        .unwrap();
+    assert!(r.stdout.trim().starts_with("/"), "重连后应在新 shell: {:?}", r.stdout);
+    let mut connected = false;
+    for _ in 0..100 {
+        let sessions = m.list_sessions(&human).await.unwrap();
+        if let Some(s) = sessions.iter().find(|s| s.id == sid) {
+            if s.state == SessionState::Connected {
+                connected = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(connected, "核实后应自动退出 Reconfirming");
+
+    // 恢复后普通动作可用（审计应含手动重连事件）
+    m.exec(&human, sid.clone(), "echo after_manual_reconnect", ExecOpts::default())
+        .await
+        .unwrap();
+    let page = m
+        .query_audit(&human, AuditFilter { session_id: Some(sid.clone()), limit: 100, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(
+        page.events.iter().any(|ev| ev.action == "session_reconnect"),
+        "审计应含 session_reconnect 事件"
+    );
+}
+
+/// 旅程 4（T13 / P1 §6-17）：脏状态断线 → 自动重连。
+/// 命令键入到一半（未回车、未闭合引号）时容器重启：
+/// ① 屏上不得残留注入片段明文（§6-17 回显泄漏检查；重注入就绪等 B 标记=清屏已执行）；
+/// ② 残留块被强制收尾，shell exec 立即可用（不收尾则永久等块空闲超时）；
+/// ③ 半截命令不得被执行（新 shell 不延续现场）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn journey4_reconnect_with_dirty_typing_state() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    struct ContainerStartGuard;
+    impl Drop for ContainerStartGuard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("docker")
+                .args(["start", "tinyssh-e2e"])
+                .output();
+        }
+    }
+    let (m, _url, _token) = spawn_stack().await;
+    let human = Actor::Human;
+    let sid = m
+        .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
+        .await
+        .unwrap();
+    m.exec(&human, sid.clone(), "cd /tmp && echo dirty_base", ExecOpts::default())
+        .await
+        .unwrap();
+
+    // 键入一半（无回车）→ 屏上留下 Typing 相残留
+    m.send_keys(&human, sid.clone(), "echo 'half_typed_command").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // 容器重启（2s 内回来）→ 自动重连路径
+    let _ = std::process::Command::new("docker")
+        .args(["restart", "tinyssh-e2e"])
+        .output()
+        .expect("docker restart");
+    let _container_guard = ContainerStartGuard;
+
+    let mut reconfirmed = false;
+    for _ in 0..600 {
+        let sessions = m.list_sessions(&human).await.unwrap();
+        if let Some(s) = sessions.iter().find(|s| s.id == sid) {
+            if s.state == SessionState::Reconfirming {
+                reconfirmed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(reconfirmed, "自动重连后未进入 Reconfirming");
+
+    // ① 屏上不得残留注入片段明文
+    let snap = m.read_screen(&human, sid.clone()).await.unwrap();
+    assert!(
+        !snap.text.contains("PROMPT_COMMAND")
+            && !snap.text.contains("__t_prompt")
+            && !snap.text.contains("printf '\\033[2J"),
+        "重连后注入片段明文泄漏进屏: {:?}", snap.text
+    );
+
+    // ②③ shell exec 立即可用；新 shell 起始 cwd 是 /root（半截命令未执行、现场不延续）
+    let r = m
+        .exec(
+            &human,
+            sid.clone(),
+            "pwd",
+            ExecOpts { timeout: Some(Duration::from_secs(15)), ..Default::default() },
+        )
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("/root"), "新 shell 应在 /root（半截命令不得执行）: {:?}", r.stdout);
+
+    let mut connected = false;
+    for _ in 0..100 {
+        let sessions = m.list_sessions(&human).await.unwrap();
+        if let Some(s) = sessions.iter().find(|s| s.id == sid) {
+            if s.state == SessionState::Connected {
+                connected = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(connected, "核实后应自动退出 Reconfirming");
+}
+
 /// 回归（T9 走查发现）：read_screen 语义是"当前屏幕"——
 /// (a) 不得包含 scrollback（清屏前旧内容如 MOTD/集成注入回显不得回魂）；
 /// (b) 集成注入 + 2J 清屏后，用户首屏应只有提示符，没有集成代码。

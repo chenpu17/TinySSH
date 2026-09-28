@@ -636,6 +636,69 @@ impl SessionManager {
             .ok_or(Error::SessionNotFound)
     }
 
+    /// 手动重连（GUI「重连」按钮；不在 SessionApi/MCP 面——断线恢复是人的基础设施动作）。
+    /// 前置：会话处于 Disconnected（pump 已退出，自动重连 3 次均已失败或本地 shell 已死）。
+    /// 与自动重连同构，但泵已不在：先订阅（broadcast 不因重连更换，UI 既有订阅继续有效）
+    /// → 重建传输（SSH 原地重连保留 TOFU 指纹；本地重启新 shell）→ 重启泵 → 现场重置 → 重注入。
+    pub async fn reconnect_session(&self, sid: &str) -> Result<()> {
+        let h = self.get(sid)?;
+        {
+            let st = *h.state.lock().await;
+            match st {
+                SessionState::Disconnected => {
+                    *h.state.lock().await = SessionState::Reconnecting;
+                }
+                SessionState::Reconnecting => {
+                    return Err(Error::InvalidInput("重连已在进行中".into()));
+                }
+                _ => return Err(Error::InvalidInput("会话未处于断开状态，无需重连".into())),
+            }
+        }
+        h.note_transition("手动重连：重建连接").await;
+        // 先订阅：新传输的输出不得落入无订阅者窗口（§6.1-11 同源根因）
+        let rx = h.channel.subscribe_output();
+        let mut last_err = None;
+        for attempt in 1..=3 {
+            match h.channel.reconnect().await {
+                Ok(()) => {
+                    last_err = None;
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(session = %sid, attempt, "manual reconnect: {e}");
+                    last_err = Some(e);
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+        if let Some(e) = last_err {
+            *h.state.lock().await = SessionState::Disconnected;
+            h.note_transition("手动重连失败（仍断开，可再试）").await;
+            return Err(e);
+        }
+        h.reset_scene_after_reconnect().await;
+        spawn_pump(h.clone(), rx);
+        if h.kind == "ssh" {
+            h.reinject_integration().await;
+        } else {
+            // 本地重连 = 新 shell（rcfile 已带集成，无需注入）；现场事实同样降级
+            h.verification_hits
+                .store(0, std::sync::atomic::Ordering::SeqCst);
+            *h.state.lock().await = SessionState::Reconfirming;
+            h.note_transition("重连成功，进入重确认（仅内置只读白名单可用）")
+                .await;
+        }
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "session_reconnect",
+            Some(sid),
+            None,
+            serde_json::json!({}),
+            None,
+        );
+        Ok(())
+    }
+
     async fn transfer(
         &self,
         ctx: &Actor,

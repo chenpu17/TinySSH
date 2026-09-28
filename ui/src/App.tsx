@@ -54,6 +54,7 @@ const auditLabel = (a: string): string =>
   ({
     session_created: "连接主机",
     session_closed: "断开会话",
+    session_reconnect: "重连会话",
     host_upsert: "保存主机",
     host_delete: "删除主机",
     identity_create: "添加凭据",
@@ -464,6 +465,21 @@ export default function App() {
     refreshLists();
   };
 
+  // 断线会话一键重连：核心重建传输 + 重启泵 + 重注入；UI 订阅不变，输出自动恢复
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  const reconnectSession = async (s: SessionInfo) => {
+    setReconnecting(s.id);
+    try {
+      await invoke("reconnect_session", { sid: s.id });
+      await refreshLists();
+      await attachSession(s.id);
+    } catch (e) {
+      setConnError({ title: `重连 ${s.host_name} 失败`, detail: friendlyError(String(e)) });
+    } finally {
+      setReconnecting(null);
+    }
+  };
+
   const takeover = async () => {
     if (!sid) return;
     await invoke("set_control", { sid, owner: "Human", stopRunning: false });
@@ -556,9 +572,16 @@ export default function App() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); attachSession(s.id); }
                     }}>
-                    <div>{s.host_name} <span className={"mono " + st.cls}>· {st.text}</span></div>
+                    <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {s.host_name} <span className={"mono " + st.cls}>· {st.text}</span>
+                    </div>
                     <div className="dim mono">{s.id.slice(0, 12)}</div>
                   </div>
+                  {s.state === "Disconnected" && (
+                    <button disabled={reconnecting !== null} onClick={() => reconnectSession(s)}>
+                      {reconnecting === s.id ? "重连中…" : "重连"}
+                    </button>
+                  )}
                   <button className="ghost" onClick={() => disconnect(s)}>断开</button>
                 </div>
               );
@@ -766,7 +789,8 @@ export default function App() {
 function BriefCard({ brief }: { brief: Brief }) {
   const cwd = brief.facts.find((f) => f.subject === "cwd");
   const cmds = brief.facts.filter((f) => f.subject.startsWith("命令")).slice(0, 2);
-  const ctl = brief.facts.find((f) => f.subject === "控制权");
+  // 控制权 fact 是最近 3 条变迁（旧→新）；这里展示最新一条
+  const ctl = [...brief.facts].reverse().find((f) => f.subject === "控制权");
   const notices = brief.facts.filter((f) => f.subject === "运行中任务" || f.subject === "SSH 现场");
   // 命令 fact detail 为后端拼好的 "<cmd> → exit <n>"；cmd 是键入原始字节，
   // ↑ 召回历史等场景会带转义序列，清理后再展示（清完为空说明无法还原命令，不显示该行）

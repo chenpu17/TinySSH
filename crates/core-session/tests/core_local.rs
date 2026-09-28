@@ -288,6 +288,79 @@ async fn send_keys_ctrl_c_interrupts_foreground_process() {
     assert!(r.stdout.contains("alive_after_interrupt"), "stdout={}", r.stdout);
 }
 
+async fn wait_state(m: &Arc<SessionManager>, sid: &str, want: SessionState, secs: u64) -> bool {
+    for _ in 0..(secs * 20) {
+        let ss = m.list_sessions(&human()).await.unwrap();
+        if ss.iter().any(|s| s.id == sid && s.state == want) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+/// T13：本地会话断线死端 → 一键重连闭环。
+/// shell 退出 → Disconnected；重连换新 shell（现场不延续）；白名单核实退出重确认。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_session_manual_reconnect() {
+    let m = manager().await;
+    let sid = m
+        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+    let r = m
+        .exec(&human(), sid.clone(), "cd /tmp && echo before_death", ExecOpts::default())
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("before_death"));
+
+    // shell 退出 → 死端（Disconnected）
+    m.send_keys(&human(), sid.clone(), "exit\r").await.unwrap();
+    assert!(
+        wait_state(&m, &sid, SessionState::Disconnected, 15).await,
+        "shell 退出后会话应进入 Disconnected"
+    );
+
+    // 死端上 exec 明确失败（不得假成功）
+    let r = m
+        .exec(&human(), sid.clone(), "echo should_fail", ExecOpts::default())
+        .await;
+    assert!(r.is_err(), "断线会话 exec 应失败: {r:?}");
+
+    // 未断开的会话不可重连（防呆）
+    let m2 = manager().await;
+    let sid2 = m2
+        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+    assert!(m2.reconnect_session(&sid2).await.is_err());
+
+    // 一键重连 → 新 shell；进入重确认（现场事实降级）
+    m.reconnect_session(&sid).await.unwrap();
+    assert!(
+        wait_state(&m, &sid, SessionState::Reconfirming, 15).await,
+        "重连后应进入 Reconfirming"
+    );
+
+    // 白名单核实（pwd）即执行成功，并触发自动退出重确认 → Connected
+    let r = m
+        .exec(&human(), sid.clone(), "pwd", ExecOpts::default())
+        .await
+        .unwrap();
+    assert!(r.stdout.trim().starts_with("/"), "重连后应在新 shell（现场不延续）: {}", r.stdout);
+    assert!(
+        wait_state(&m, &sid, SessionState::Connected, 10).await,
+        "核实后应自动退出 Reconfirming"
+    );
+
+    // 恢复后 shell 现场延续可用
+    let r = m
+        .exec(&human(), sid.clone(), "cd /tmp && echo revived", ExecOpts::default())
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("revived"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn queue_busy_backpressure() {
     let m = manager().await;

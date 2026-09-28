@@ -21,8 +21,10 @@ pub struct LocalPtyChannel {
     output_tx: broadcast::Sender<Vec<u8>>,
     alive: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
-    /// shell 集成是否注入成功（决定 Shell 模式可用性）。
-    pub integration: bool,
+    /// 集成注入临时目录（respawn 时更换；调用方可取用做延迟清理）。
+    tmp: Mutex<Option<std::path::PathBuf>>,
+    /// shell 集成是否注入成功（决定 Shell 模式可用性；respawn 时随新 shell 重估）。
+    pub integration: AtomicBool,
 }
 
 /// 选出用户 shell 并生成集成注入的启动方式。
@@ -118,96 +120,108 @@ pub async fn spawn_local_pty(
     cols: u16,
     rows: u16,
 ) -> Result<(Arc<LocalPtyChannel>, Option<std::path::PathBuf>)> {
-    let pty_system = NativePtySystem::default();
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let tmp = tempfile_dir();
-    let plan = plan_shell_spawn(&shell, &tmp);
-
-    let program = match &plan {
-        ShellSpawn::Bash { program, .. } => program.clone(),
-        ShellSpawn::Zsh { program, .. } => program.clone(),
-        ShellSpawn::Plain { program } => program.clone(),
-    };
-    let mut cmd = CommandBuilder::new(program.as_str());
-    match &plan {
-        ShellSpawn::Bash { rcfile, .. } => {
-            cmd.arg("--rcfile");
-            cmd.arg(rcfile);
-            cmd.arg("-i");
-        }
-        ShellSpawn::Zsh { zdotdir, .. } => {
-            cmd.env("ZDOTDIR", zdotdir);
-        }
-        ShellSpawn::Plain { .. } => {
-            cmd.arg("-i");
-        }
-    }
-    cmd.env("TERM", "xterm-256color");
-
-    let pair = pty_system
-        .openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| Error::Io(format!("openpty: {e}")))?;
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| Error::Io(format!("spawn shell: {e}")))?;
-
-    let reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| Error::Io(format!("clone reader: {e}")))?;
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| Error::Io(format!("take writer: {e}")))?;
-
     let (output_tx, _) = broadcast::channel(4096);
-    let alive = Arc::new(AtomicBool::new(true));
-
-    // 读循环：阻塞读 → broadcast
-    let tx = output_tx.clone();
-    let alive_r = alive.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut reader = reader;
-        let mut buf = [0u8; 8192];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx.send(buf[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        alive_r.store(false, Ordering::SeqCst);
-    });
-
-    let integration = !matches!(plan, ShellSpawn::Plain { .. });
     let channel = Arc::new(LocalPtyChannel {
-        writer: Mutex::new(Some(writer)),
-        master: Mutex::new(Some(pair.master)),
-        child: Mutex::new(Some(child)),
+        writer: Mutex::new(None),
+        master: Mutex::new(None),
+        child: Mutex::new(None),
         output_tx,
-        alive,
+        alive: Arc::new(AtomicBool::new(true)),
         size: Mutex::new((cols, rows)),
-        integration,
+        tmp: Mutex::new(None),
+        integration: AtomicBool::new(false),
     });
-    let cleanup = if matches!(plan, ShellSpawn::Plain { .. }) {
-        None
-    } else {
-        Some(tmp)
-    };
+    channel.respawn().await?;
+    let cleanup = channel.tmp.lock().await.clone();
     Ok((channel, cleanup))
 }
 
 impl LocalPtyChannel {
+    /// 启动（或重连时重启）持久 shell：新 PTY + 新 shell 进程 + 新读循环。
+    /// 输出并入同一 broadcast——重连后泵与 UI 的既有订阅无需更换。
+    /// 断线后旧 shell 已随 PTY 关闭退出，writer/master/child 全部换新。
+    async fn respawn(&self) -> Result<()> {
+        if let Some(mut old) = self.child.lock().await.take() {
+            let _ = old.kill();
+        }
+        let pty_system = NativePtySystem::default();
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let tmp = tempfile_dir();
+        let plan = plan_shell_spawn(&shell, &tmp);
+
+        let program = match &plan {
+            ShellSpawn::Bash { program, .. } => program.clone(),
+            ShellSpawn::Zsh { program, .. } => program.clone(),
+            ShellSpawn::Plain { program } => program.clone(),
+        };
+        let mut cmd = CommandBuilder::new(program.as_str());
+        match &plan {
+            ShellSpawn::Bash { rcfile, .. } => {
+                cmd.arg("--rcfile");
+                cmd.arg(rcfile);
+                cmd.arg("-i");
+            }
+            ShellSpawn::Zsh { zdotdir, .. } => {
+                cmd.env("ZDOTDIR", zdotdir);
+            }
+            ShellSpawn::Plain { .. } => {
+                cmd.arg("-i");
+            }
+        }
+        cmd.env("TERM", "xterm-256color");
+
+        let (cols, rows) = *self.size.lock().await;
+        let pair = pty_system
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| Error::Io(format!("openpty: {e}")))?;
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| Error::Io(format!("spawn shell: {e}")))?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| Error::Io(format!("clone reader: {e}")))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| Error::Io(format!("take writer: {e}")))?;
+
+        *self.writer.lock().await = Some(writer);
+        *self.master.lock().await = Some(pair.master);
+        *self.child.lock().await = Some(child);
+        *self.tmp.lock().await = Some(tmp);
+        self.integration
+            .store(!matches!(plan, ShellSpawn::Plain { .. }), Ordering::SeqCst);
+        self.alive.store(true, Ordering::SeqCst);
+
+        // 读循环：阻塞读 → 同一 broadcast
+        let tx = self.output_tx.clone();
+        let alive_r = self.alive.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut reader = reader;
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            alive_r.store(false, Ordering::SeqCst);
+        });
+        Ok(())
+    }
+
     async fn write_bytes(&self, data: &[u8]) -> Result<()> {
         let mut guard = self.writer.lock().await;
         let w = guard.as_mut().ok_or(Error::SessionClosed)?;
@@ -350,7 +364,8 @@ impl ChannelHandle for LocalPtyChannel {
     }
 
     async fn reconnect(&self) -> Result<()> {
-        Ok(()) // 本地会话随进程存活
+        // 本地会话的「重连」= 重启一个新 shell（旧 shell 进程已随 PTY 退出）
+        self.respawn().await
     }
 
     async fn close(&self) -> Result<()> {

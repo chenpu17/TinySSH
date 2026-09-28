@@ -17,6 +17,10 @@ const demoState = {
       id: "s-demo-0001", host_name: "prod-1", kind: "ssh",
       state: "Connected", control_owner: "Agent",
     },
+    {
+      id: "s-demo-0002", host_name: "staging-1", kind: "ssh",
+      state: "Disconnected", control_owner: "Agent",
+    },
   ] as { id: string; host_name: string; kind: string; state: string; control_owner: string }[],
   approvals: [
     {
@@ -74,6 +78,15 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sid = args?.sid as string;
       demoState.sessions = demoState.sessions.filter((s) => s.id !== sid);
       pushOutput("\r\n[会话已断开]\r\n");
+      return null;
+    }
+    case "reconnect_session": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw new Error("SessionNotFound（演示）");
+      if (s.state !== "Disconnected") throw new Error("会话未处于断开状态，无需重连（演示）");
+      s.state = "Reconfirming";
+      pushOutput("\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
       return null;
     }
     case "resize":

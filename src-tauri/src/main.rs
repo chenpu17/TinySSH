@@ -77,6 +77,12 @@ async fn close_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
     state.api.close_session(&human(), sid).await.map_err(|e| e.to_string())
 }
 
+/// 断线会话一键重连（T13）：仅 Disconnected 会话；成功后进入重确认。
+#[tauri::command]
+async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
+    state.api.reconnect_session(&sid).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn resize(state: ApiState<'_>, sid: String, cols: u16, rows: u16) -> CmdResult<()> {
     state.api.resize(&human(), sid, cols, rows).await.map_err(|e| e.to_string())
@@ -425,7 +431,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities,
-            list_sessions, create_session, close_session, resize, subscribe_output,
+            list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
             read_screen, send_keys, exec_human, set_control, session_brief,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             bench_start, bench_report, bench_mode, note_terminal,
