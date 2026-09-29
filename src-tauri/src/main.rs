@@ -85,9 +85,19 @@ async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
 
 /// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
 /// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
+/// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）
 #[tauri::command]
-async fn open_url(url: String) -> CmdResult<()> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+fn get_setting(state: ApiState<'_>, key: String) -> CmdResult<Option<String>> {
+    state.api.center.vault.get_setting(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_setting(state: ApiState<'_>, key: String, value: String) -> CmdResult<()> {
+    state.api.center.vault.set_setting(&key, &value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn open_url(url: String) -> CmdResult<()> {    if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("仅支持 http/https 链接".into());
     }
     tokio::process::Command::new("open")
@@ -471,6 +481,7 @@ fn main() {
             list_hosts, upsert_host, delete_host, create_identity, list_identities,
             list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
             open_url,
+            get_setting, set_setting,
             read_screen, send_keys, exec_human, set_control, session_brief,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             pending_host_keys, decide_host_key,

@@ -202,6 +202,64 @@ const SEARCH_OPTS = {
   },
 };
 
+// 显示设置（路线图⑥）：字号范围与终端配色预设。偏好存 vault（settings KV，跨进程记忆），
+// 浏览器演示模式退化为 localStorage。界面 chrome 维持深色不变——亮色 chrome 需全站变量
+// 适配，属 V1 范围；此处主题只作用于终端区域（与多数客户端「编辑器配色独立」一致）。
+const FONT_MIN = 9;
+const FONT_MAX = 28;
+const FONT_DEFAULT = 13;
+const SETTING_FONT = "ui.font_size";
+const SETTING_THEME = "ui.theme";
+
+type ThemePreset = { id: string; label: string; bg: string; fg: string; theme: Record<string, string> };
+const THEMES: ThemePreset[] = [
+  {
+    id: "dark", label: "深色（默认）", bg: "#10141a", fg: "#d7dee8",
+    theme: {
+      foreground: "#d7dee8", background: "#10141a",
+      cursor: "#d7dee8", cursorAccent: "#10141a", selectionBackground: "#4a5a70",
+      black: "#2a3442", red: "#d07a7a", green: "#7fbf8f", yellow: "#d0b07a",
+      blue: "#6da3d8", magenta: "#c08ac0", cyan: "#5fb3b5", white: "#c8d0da",
+      brightBlack: "#8a97a8", brightRed: "#e69595", brightGreen: "#9dd4aa", brightYellow: "#e3c795",
+      brightBlue: "#8fbde8", brightMagenta: "#d8a8d8", brightCyan: "#8ecfd1", brightWhite: "#f0f4f8",
+    },
+  },
+  {
+    id: "light", label: "浅色", bg: "#f7f7f2", fg: "#2a3138",
+    theme: {
+      foreground: "#2a3138", background: "#f7f7f2",
+      cursor: "#2a3138", cursorAccent: "#f7f7f2", selectionBackground: "#b9c6d4",
+      black: "#2a3138", red: "#c4392f", green: "#2e7d32", yellow: "#a67c00",
+      blue: "#1a5fb4", magenta: "#a1346b", cyan: "#1a7f8a", white: "#d0d0cc",
+      brightBlack: "#6b7681", brightRed: "#e05545", brightGreen: "#46a353", brightYellow: "#c29300",
+      brightBlue: "#3a7fd5", brightMagenta: "#c74d94", brightCyan: "#33a3b0", brightWhite: "#ffffff",
+    },
+  },
+  {
+    id: "solar-dark", label: "Solarized 深色", bg: "#002b36", fg: "#93a1a1",
+    theme: {
+      foreground: "#93a1a1", background: "#002b36",
+      cursor: "#839496", cursorAccent: "#002b36", selectionBackground: "#073642",
+      black: "#073642", red: "#dc322f", green: "#859900", yellow: "#b58900",
+      blue: "#268bd2", magenta: "#d33682", cyan: "#2aa198", white: "#eee8d5",
+      brightBlack: "#586e75", brightRed: "#cb4b16", brightGreen: "#586e75", brightYellow: "#657b83",
+      brightBlue: "#839496", brightMagenta: "#6c71c4", brightCyan: "#93a1a1", brightWhite: "#fdf6e3",
+    },
+  },
+  {
+    id: "solar-light", label: "Solarized 浅色", bg: "#fdf6e3", fg: "#657b83",
+    theme: {
+      foreground: "#657b83", background: "#fdf6e3",
+      cursor: "#586e75", cursorAccent: "#fdf6e3", selectionBackground: "#eee8d5",
+      black: "#073642", red: "#dc322f", green: "#859900", yellow: "#b58900",
+      blue: "#268bd2", magenta: "#d33682", cyan: "#2aa198", white: "#eee8d5",
+      brightBlack: "#586e75", brightRed: "#cb4b16", brightGreen: "#586e75", brightYellow: "#657b83",
+      brightBlue: "#839496", brightMagenta: "#6c71c4", brightCyan: "#93a1a1", brightWhite: "#fdf6e3",
+    },
+  },
+];
+const themeById = (id: string): ThemePreset => THEMES.find((t) => t.id === id) ?? THEMES[0];
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -307,8 +365,10 @@ export default function App() {
     // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
     // WebLinksAddon（registerLinkProvider）与 linkHandler（OSC 8 激活）均为 proposed API
     const term = new Terminal({
-      fontSize: 13, cursorBlink: true, scrollback: 5000, allowProposedApi: true,
-      theme: { background: "#10141a" },
+      // 字号/主题（路线图⑥）走 refs：makeTerm 早于偏好载入，载入后由 changeFontSize/changeTheme
+      // 对已有实例统一改 options 补齐
+      fontSize: fontRef.current, cursorBlink: true, scrollback: 5000, allowProposedApi: true,
+      theme: { ...themeById(themeRef.current).theme },
       // OSC 8 超链接激活（T16）：WebLinksAddon 只管裸 URL 正则检测，
       // OSC 8 由核心 linkHandler 路由（不设则核心弹 confirm 对话框）
       linkHandler: {
@@ -475,7 +535,11 @@ export default function App() {
     if (!term || !termRef.current) return;
     const box = termRef.current.parentElement;
     if (!box) return;
-    const dims = (term as unknown as { dimensions?: { css?: { cell?: { width?: number; height?: number } } } }).dimensions;
+    // xterm 5.5 无公开 dimensions 属性（fork API，恒 undefined → fit 静默失效、
+    // xterm 恒停在构造默认 80×24，13px 时恰好与正确值重合而长期未暴露）——
+    // cell 尺寸改经 _core 私有路径取（与官方 addon-fit 实现同源）
+    const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number; height?: number } } } } } })._core;
+    const dims = core?._renderService?.dimensions;
     const cw = dims?.css?.cell?.width;
     const ch = dims?.css?.cell?.height;
     if (!cw || !ch) {
@@ -505,6 +569,76 @@ export default function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [fitTerminal]);
+
+  // —— 显示设置（路线图⑥）：字号/主题，vault 持久化（跨进程记忆）——
+  // 状态供 UI 渲染；ref 供 makeTerm 闭包与快捷键读取（避开 stale closure）
+  const [fontSize, setFontSize] = useState(FONT_DEFAULT);
+  const [themeId, setThemeId] = useState("dark");
+  const [showSettings, setShowSettings] = useState(false);
+  const fontRef = useRef(FONT_DEFAULT);
+  const themeRef = useRef("dark");
+
+  const persistSetting = useCallback((key: string, value: string) => {
+    if (inTauri) void invoke("set_setting", { key, value }).catch(() => {});
+    else try { localStorage.setItem(key, value); } catch { /* demo 模式尽力而为 */ }
+  }, [inTauri]);
+
+  const changeFontSize = useCallback((n: number) => {
+    const next = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(n)));
+    if (next === fontRef.current) return;
+    fontRef.current = next;
+    setFontSize(next);
+    persistSetting(SETTING_FONT, String(next));
+    // 已有会话即时改 options；隐藏会话的 PTY 宽高在重新激活时校准（attachSession 内 fitTerminal）
+    for (const [, e] of termsRef.current) e.term.options.fontSize = next;
+    void fitTerminal();
+    // 渲染器 cell 尺寸在下一帧才反映新字号：立即 fit 拿到旧尺寸会算出相同列数、
+    // PTY 不跟随（走查实证 stty 恒 80 列）。延迟校准与 attachSession 的二次校准同理。
+    setTimeout(() => void fitTerminal(), 150);
+  }, [persistSetting, fitTerminal]);
+
+  const changeTheme = useCallback((id: string) => {
+    const preset = themeById(id);
+    if (preset.id !== id) return;
+    themeRef.current = id;
+    setThemeId(id);
+    persistSetting(SETTING_THEME, id);
+    for (const [, e] of termsRef.current) e.term.options.theme = { ...preset.theme };
+  }, [persistSetting]);
+
+  // 启动载入偏好（Tauri=vault，浏览器=localStorage）；早于载入创建的实例一并补齐
+  useEffect(() => {
+    const apply = (f: number | null, t: string | null) => {
+      if (f !== null && f >= FONT_MIN && f <= FONT_MAX) changeFontSize(f);
+      if (t) changeTheme(t);
+    };
+    if (!inTauri) {
+      const raw = Number(localStorage.getItem(SETTING_FONT));
+      apply(Number.isFinite(raw) && raw > 0 ? raw : null, localStorage.getItem(SETTING_THEME));
+      return;
+    }
+    invoke<string | null>("get_setting", { key: SETTING_FONT })
+      .then((f) => invoke<string | null>("get_setting", { key: SETTING_THEME }).then((t) => {
+        apply(f === null ? null : Number(f), t);
+      }))
+      .catch(() => {});
+  }, [inTauri, changeFontSize, changeTheme]);
+
+  // ⌘=/⌘− 字号步进、⌘0 重置。捕获层：终端聚焦时也生效，且先于 makeTerm 的
+  // 「其余 ⌘ 全拦截」分支——此后事件即被终止，不会落进终端。
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      const k = ev.key.toLowerCase();
+      if (k !== "=" && k !== "+" && k !== "-" && k !== "0") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (k === "0") changeFontSize(FONT_DEFAULT);
+      else changeFontSize(fontRef.current + (k === "-" ? -1 : 1));
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [changeFontSize]);
 
   const attachSession = useCallback(async (newSid: string) => {
     if (!termRef.current) return;
@@ -807,6 +941,11 @@ export default function App() {
           {sid && hasAgents && owner === "Human" && (
             <button onClick={handback}>交还 Agent</button>
           )}
+          <button
+            className={"ghost" + (showSettings ? " ts-open" : "")}
+            title="显示设置（字号 / 主题）"
+            onClick={() => setShowSettings(!showSettings)}
+          >Aa</button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -906,6 +1045,39 @@ export default function App() {
               <button className="ghost" title="下一个（⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findNext(searchQuery, SEARCH_OPTS)}>↓</button>
               <button className="ghost" title="关闭（Esc）" onClick={closeSearch}>✕</button>
             </div>
+          )}
+          {showSettings && (
+            <>
+              <div className="pop-mask" onClick={() => setShowSettings(false)} />
+              <div className="term-settings">
+                <div className="row" style={{ marginBottom: 10 }}>
+                  <b>显示设置</b>
+                  <span style={{ flex: 1 }} />
+                  <button className="ghost" title="关闭" onClick={() => setShowSettings(false)}>✕</button>
+                </div>
+                <div className="ts-label">字号</div>
+                <div className="row">
+                  <button className="ghost" title="减小（⌘−）" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}>−</button>
+                  <span className="ts-val mono">{fontSize}</span>
+                  <button className="ghost" title="增大（⌘=）" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}>＋</button>
+                  <button className="ghost" disabled={fontSize === FONT_DEFAULT} onClick={() => changeFontSize(FONT_DEFAULT)}>重置</button>
+                </div>
+                <div className="ts-label" style={{ marginTop: 10 }}>主题</div>
+                <div className="ts-themes">
+                  {THEMES.map((t) => (
+                    <button
+                      key={t.id}
+                      className={"ghost ts-opt" + (themeId === t.id ? " ts-active" : "")}
+                      onClick={() => changeTheme(t.id)}
+                    >
+                      <span className="ts-swatch" style={{ background: t.bg, borderColor: t.fg, color: t.fg }}>Aa</span>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="dim" style={{ marginTop: 10, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
+                              </div>
+            </>
           )}
         </div>
         <div className="panel-title row">

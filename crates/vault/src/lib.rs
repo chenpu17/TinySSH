@@ -48,6 +48,18 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         conn.pragma_update(None, "user_version", 2)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
+    // V3（路线图⑥）：UI 偏好 KV（字号/主题等），跨进程记忆
+    if version < 3 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        )
+        .map_err(|e| Error::Storage(e.to_string()))?;
+        conn.pragma_update(None, "user_version", 3)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
     Ok(())
 }
 
@@ -322,9 +334,35 @@ impl Vault {
         Ok(())
     }
 
+    /// 读 UI 偏好（路线图⑥：字号/主题等）；None = 从未设置。
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let v = conn.query_row("SELECT value FROM settings WHERE key=?1", params![key], |r| {
+            r.get::<_, String>(0)
+        });
+        match v {
+            Ok(s) => Ok(Some(s).filter(|s| !s.is_empty())),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Error::Storage(e.to_string())),
+        }
+    }
+
+    /// 写 UI 偏好（upsert）。
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO settings(key,value) VALUES(?1,?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, value],
+            )
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        Ok(())
+    }
+
     /// 取主机连接凭据（内部用；SessionApi 无返回凭据的方法）。
-    pub fn host_secret(&self, host: &Host) -> Result<(AuthType, Zeroizing<String>)> {
-        let iid = host
+    pub fn host_secret(&self, host: &Host) -> Result<(AuthType, Zeroizing<String>)> {        let iid = host
             .identity_id
             .as_ref()
             .ok_or_else(|| Error::InvalidInput("host has no identity".into()))?;
@@ -835,6 +873,28 @@ mod tests {
         assert_eq!(v.host_fingerprint(&id).unwrap().as_deref(), Some("SHA256:BBBB"));
         // 未知主机拒绝
         assert!(v.set_host_fingerprint("h-missing", "SHA256:X").is_err());
+    }
+
+    #[test]
+    fn settings_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
+        let mk = || Vault::open_shared(Connection::open(dir.path().join("v.db")).unwrap(), master_key().unwrap()).unwrap();
+        let v = mk();
+        // 未设置 → None
+        assert!(v.get_setting("ui.font_size").unwrap().is_none());
+        // 写入、覆盖（upsert）、按 key 隔离
+        v.set_setting("ui.font_size", "16").unwrap();
+        assert_eq!(v.get_setting("ui.font_size").unwrap().as_deref(), Some("16"));
+        v.set_setting("ui.font_size", "13").unwrap();
+        assert_eq!(v.get_setting("ui.font_size").unwrap().as_deref(), Some("13"));
+        v.set_setting("ui.theme", "light").unwrap();
+        assert_eq!(v.get_setting("ui.theme").unwrap().as_deref(), Some("light"));
+        // 重开同一库：迁移幂等 + 偏好仍在（跨进程记忆，同 T17 指纹语义）
+        drop(v);
+        let v2 = mk();
+        assert_eq!(v2.get_setting("ui.font_size").unwrap().as_deref(), Some("13"));
+        assert_eq!(v2.get_setting("ui.theme").unwrap().as_deref(), Some("light"));
     }
 }
 

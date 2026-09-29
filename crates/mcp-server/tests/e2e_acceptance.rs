@@ -19,6 +19,23 @@ fn sshd_enabled() -> bool {
     std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false)
 }
 
+/// T17 主机指纹门的测试侧人类应答器：轮询待决指纹并按人类身份接受。
+/// 与真实 UI 流程同构（FirstSeen → 决定 → 信任入库 → 放行）——门禁本身无测试旁路，
+/// MCP e2e 的会话创建必须有人应答才能继续。任务随各测试的 tokio runtime 结束回收。
+fn auto_accept_host_keys(m: Arc<core_session::SessionManager>) {
+    let human = Actor::Human;
+    tokio::spawn(async move {
+        loop {
+            if let Ok(items) = m.pending_host_keys(&human).await {
+                for it in items {
+                    let _ = m.decide_host_key(&human, &it.id, true).await;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+}
+
 async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
     // RUST_LOG 设置时输出核心 trace（排查并发回归用）
     let _ = tracing_subscriber::fmt()
@@ -103,6 +120,7 @@ async fn acceptance_scenario_on_ssh() {
         return;
     }
     let (m, url, token) = spawn_stack().await;
+    auto_accept_host_keys(m.clone());
     let human = Actor::Human;
     let mut client = connect(&url, &token).await;
 
@@ -235,6 +253,7 @@ async fn journey2_reconnect_reconfirm() {
         return;
     }
     let (m, url, token) = spawn_stack().await;
+    auto_accept_host_keys(m.clone());
     let human = Actor::Human;
 
     let sid = m
@@ -327,6 +346,7 @@ async fn journey3_manual_reconnect_after_hard_down() {
         }
     }
     let (m, _url, _token) = spawn_stack().await;
+    auto_accept_host_keys(m.clone());
     let human = Actor::Human;
     let sid = m
         .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
@@ -435,6 +455,7 @@ async fn journey4_reconnect_with_dirty_typing_state() {
         }
     }
     let (m, _url, _token) = spawn_stack().await;
+    auto_accept_host_keys(m.clone());
     let human = Actor::Human;
     let sid = m
         .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
@@ -515,6 +536,7 @@ async fn create_session_screen_is_clean() {
         return;
     }
     let (m, _url, _token) = spawn_stack().await;
+    auto_accept_host_keys(m.clone());
     let human = Actor::Human;
     let sid = m
         .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
