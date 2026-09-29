@@ -267,9 +267,16 @@ export default function App() {
   const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
   // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
-  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon }>>(new Map());
+  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement }>>(new Map());
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const sessionsRef = useRef<SessionInfo[]>([]);
+  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+  // 分屏（T19）：main=左主 pane，second=右副 pane；null=单 pane。布局（谁在左谁在右）
+  // 与焦点（sid）解耦——分屏时点右 pane 只挪焦点，终端内容不左右跳动。
+  // ref 与 state 并行：fitTerminal/看门狗等回调内读 ref，避开 stale closure。
+  const [splitPanes, setSplitPanes] = useState<{ main: string; second: string } | null>(null);
+  const splitRef = useRef<{ main: string; second: string } | null>(null);
   // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -318,13 +325,16 @@ export default function App() {
       if (sidRef.current) refreshBrief(sidRef.current);
       // 终端尺寸对账：docker ps 等按 PTY 宽度排版，PTY 与 xterm 失配时表格折行错乱。
       // xterm（用户所见）为权威单向校正后端——任何一环丢掉的 resize 在 3s 内自动收敛。
-      const term = xtermRef.current;
-      const s = sidRef.current;
-      if (term && s) {
-        invoke<{ cols: number; rows: number }>("read_screen", { sid: s })
+      // 分屏（T19）时左右两个 pane 各自对账。
+      const sp = splitRef.current;
+      const visiblePanes: string[] = sp ? [sp.main, sp.second] : sidRef.current ? [sidRef.current] : [];
+      for (const p of visiblePanes) {
+        const t = termsRef.current.get(p)?.term;
+        if (!t) continue;
+        invoke<{ cols: number; rows: number }>("read_screen", { sid: p })
           .then((snap) => {
-            if (snap.cols !== term.cols || snap.rows !== term.rows) {
-              void invoke("resize", { sid: s, cols: term.cols, rows: term.rows }).catch(() => {});
+            if (snap.cols !== t.cols || snap.rows !== t.rows) {
+              void invoke("resize", { sid: p, cols: t.cols, rows: t.rows }).catch(() => {});
             }
           })
           .catch(() => {});
@@ -361,7 +371,12 @@ export default function App() {
     if (!mount) return null;
     const el = document.createElement("div");
     el.className = "term-session";
+    el.dataset.sid = sessionSid;
     mount.appendChild(el);
+    // 分屏（T19）会话名牌：平时隐藏，进入分屏后由 applyPanes 填主机名并显示
+    const tag = document.createElement("div");
+    tag.className = "pane-tag";
+    el.appendChild(tag);
     // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
     // WebLinksAddon（registerLinkProvider）与 linkHandler（OSC 8 激活）均为 proposed API
     const term = new Terminal({
@@ -449,7 +464,7 @@ export default function App() {
         term.write(`\r\n\x1b[31m✕ ${String(e)}\x1b[0m\r\n`);
       });
     });
-    return { term, el, search: searchAddon };
+    return { term, el, search: searchAddon, tag };
   }, []);
 
   // 终端区域（含内容下方空白）点击即聚焦当前会话终端
@@ -460,6 +475,7 @@ export default function App() {
     wrap.addEventListener("click", onFocus);
     return () => wrap.removeEventListener("click", onFocus);
   }, []);
+
 
     // 窗口级 Ctrl+字符 接管（捕获阶段）：中文输入法在 WKWebView 的 textarea 里
     // 会吞掉 Ctrl+字母（进入拼音组合，keydown 以 229 告终），xterm 收不到控制键——
@@ -529,12 +545,15 @@ export default function App() {
       };
     }, []);
 
-  // 终端尺寸自适应 + PTY 对齐（backend resize）
-  const fitTerminal = useCallback(async () => {
-    const term = xtermRef.current;
-    if (!term || !termRef.current) return;
-    const box = termRef.current.parentElement;
-    if (!box) return;
+  // 终端尺寸自适应 + PTY 对齐（backend resize）。按「可见 pane」逐个校准：
+  // 单 pane = 活动会话全幅；分屏 = 左右各按自身元素盒子（半幅）计算——
+  // 每个 pane 的 xterm 尺寸与其 PTY 一一对应。
+  const fitOne = useCallback(async (target: string) => {
+    const entry = termsRef.current.get(target);
+    if (!entry) return;
+    const { term, el } = entry;
+    // 隐藏中的会话（display:none）clientWidth 为 0：不按 0 尺寸校准
+    if (el.clientWidth < 60 || el.clientHeight < 60) return;
     // xterm 5.5 无公开 dimensions 属性（fork API，恒 undefined → fit 静默失效、
     // xterm 恒停在构造默认 80×24，13px 时恰好与正确值重合而长期未暴露）——
     // cell 尺寸改经 _core 私有路径取（与官方 addon-fit 实现同源）
@@ -547,17 +566,21 @@ export default function App() {
       // docker ps 等按宽度排版的输出会折行错乱）——等一帧重测，最多 5 次
       const t = term as unknown as { __fitRetries?: number };
       t.__fitRetries = (t.__fitRetries ?? 0) + 1;
-      if (t.__fitRetries <= 5) setTimeout(() => void fitTerminal(), 120);
+      if (t.__fitRetries <= 5) setTimeout(() => void fitOne(target), 120);
       return;
     }
-    const cols = Math.max(20, Math.min(400, Math.floor(box.clientWidth / cw)));
-    const rows = Math.max(6, Math.min(200, Math.floor(box.clientHeight / ch)));
+    const cols = Math.max(20, Math.min(400, Math.floor(el.clientWidth / cw)));
+    const rows = Math.max(6, Math.min(200, Math.floor(el.clientHeight / ch)));
     if (term.cols !== cols || term.rows !== rows) {
       term.resize(cols, rows);
-      const s = sidRef.current;
-      if (s) invoke("resize", { sid: s, cols, rows }).catch(() => {});
+      invoke("resize", { sid: target, cols, rows }).catch(() => {});
     }
   }, []);
+  const fitTerminal = useCallback(() => {
+    const sp = splitRef.current;
+    const targets = sp ? [sp.main, sp.second] : sidRef.current ? [sidRef.current] : [];
+    for (const t of targets) void fitOne(t);
+  }, [fitOne]);
   useEffect(() => {
     const el = termRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -640,62 +663,203 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [changeFontSize]);
 
+  // 由 splitRef/sidRef 统一同步各终端层的显示类（display 归它管，React 不渲染这些层）：
+  // 单 pane：活动会话 .active；分屏：main=左半、second=右半，焦点 pane 加高亮与名牌
+  const applyPanes = useCallback(() => {
+    const sp = splitRef.current;
+    for (const [s, e] of termsRef.current) {
+      e.el.classList.remove("active", "pane-left", "pane-right", "pane-focused");
+      if (sp) {
+        if (s === sp.main || s === sp.second) {
+          e.el.classList.add(s === sp.main ? "pane-left" : "pane-right");
+          e.tag.textContent = sessionsRef.current.find((x) => x.id === s)?.host_name ?? s.slice(0, 12);
+          if (s === sidRef.current) e.el.classList.add("pane-focused");
+        }
+      } else if (s === sidRef.current) {
+        e.el.classList.add("active");
+      }
+    }
+  }, []);
+
+  // 聚焦某会话（点标签/点 pane/⌘1-9 共用）：只挪焦点不动布局——分屏时点右 pane
+  // 不会把终端内容左右对调
+  const focusSession = useCallback((target: string) => {
+    const entry = termsRef.current.get(target);
+    if (!entry) return;
+    if (sidRef.current !== target) {
+      setSid(target);
+      sidRef.current = target;
+      xtermRef.current = entry.term;
+      refreshBrief(target);
+      applyPanes();
+    }
+    entry.term.focus();
+    void invoke("note_terminal", { sid: target, focused: true }).catch(() => {});
+  }, [applyPanes, refreshBrief]);
+
+  // 点到哪个 pane 就聚焦哪个会话（事件委托挂在 #term 上，覆盖单 pane 与分屏）
+  useEffect(() => {
+    const mount = termRef.current;
+    if (!mount) return;
+    const onDown = (ev: MouseEvent) => {
+      const pane = (ev.target as HTMLElement).closest?.(".term-session") as HTMLElement | null;
+      const target = pane?.dataset.sid;
+      if (target) focusSession(target);
+    };
+    mount.addEventListener("mousedown", onDown);
+    return () => mount.removeEventListener("mousedown", onDown);
+  }, [focusSession]);
+
+  // 确保会话有终端实例并完成输出订阅（attachSession 与进入分屏共用；
+  // MCP 建的会话可能从未被人类 attach 过，进分屏前也要先建）
+  const ensureSessionTerm = useCallback(async (sessionSid: string) => {
+    if (!termRef.current || termsRef.current.has(sessionSid)) return;
+    const made = makeTerm(sessionSid);
+    if (!made) return;
+    termsRef.current.set(sessionSid, made);
+    // 输出订阅（每会话仅一次）：字节 → 字符串（有状态解码，处理 UTF-8 跨块分割）。
+    // 不走 term.write(Uint8Array)：实测该二进制写路径在 WKWebView 下静默不渲染。
+    const term = made.term;
+    const decoder = new TextDecoder();
+    const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
+    channel.onmessage = (msg) => {
+      if (msg instanceof ArrayBuffer || msg instanceof Uint8Array) {
+        const u8 = msg instanceof Uint8Array ? msg : new Uint8Array(msg);
+        term.write(decoder.decode(u8, { stream: true }));
+      } else if (typeof msg === "string" && msg.includes("resync")) {
+        invoke<{ text: string }>("read_screen", { sid: sessionSid }).then((snap) => {
+          term.reset();
+          term.write(snap.text);
+        });
+      }
+    };
+    await invoke("subscribe_output", { sid: sessionSid, onEvent: channel });
+    subscribedRef.current.add(sessionSid);
+    // 仅首次接入回填当前屏（会话可能建立已久）；此后切走再切回不再重置——历史保留
+    const snap = await invoke<{ text: string }>("read_screen", { sid: sessionSid });
+    term.write(snap.text);
+    term.write("\r\n\x1b[90m── 会话已接入终端：点击此区域直接打字，或用下方命令框 ──\x1b[0m\r\n");
+  }, [makeTerm]);
+
   const attachSession = useCallback(async (newSid: string) => {
     if (!termRef.current) return;
-    let entry = termsRef.current.get(newSid);
-    if (!entry) {
-      const made = makeTerm(newSid);
-      if (!made) return;
-      entry = made;
-      termsRef.current.set(newSid, made);
-      // 输出订阅（每会话仅一次）：字节 → 字符串（有状态解码，处理 UTF-8 跨块分割）。
-      // 不走 term.write(Uint8Array)：实测该二进制写路径在 WKWebView 下静默不渲染。
-      const term = made.term;
-      const decoder = new TextDecoder();
-      const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
-      channel.onmessage = (msg) => {
-        if (msg instanceof ArrayBuffer || msg instanceof Uint8Array) {
-          const u8 = msg instanceof Uint8Array ? msg : new Uint8Array(msg);
-          term.write(decoder.decode(u8, { stream: true }));
-        } else if (typeof msg === "string" && msg.includes("resync")) {
-          invoke<{ text: string }>("read_screen", { sid: newSid }).then((snap) => {
-            term.reset();
-            term.write(snap.text);
-          });
-        }
-      };
-      await invoke("subscribe_output", { sid: newSid, onEvent: channel });
-      subscribedRef.current.add(newSid);
-      // 仅首次接入回填当前屏（会话可能建立已久）；此后切走再切回不再重置——历史保留
-      const snap = await invoke<{ text: string }>("read_screen", { sid: newSid });
-      term.write(snap.text);
-      term.write("\r\n\x1b[90m── 会话已接入终端：点击此区域直接打字，或用下方命令框 ──\x1b[0m\r\n");
-    } else if (sidRef.current === newSid) {
-      entry.term.focus();
-      return;
+    await ensureSessionTerm(newSid);
+    // 分屏时 attach 未上屏的会话 = 替换左主 pane（副 pane 保留）
+    const sp = splitRef.current;
+    if (sp && newSid !== sp.main && newSid !== sp.second) {
+      splitRef.current = { ...sp, main: newSid };
+      setSplitPanes(splitRef.current);
     }
-    // 切换显示：其他会话终端原地隐藏（各自状态保留），显示目标会话
-    for (const [s, e] of termsRef.current) e.el.classList.toggle("active", s === newSid);
-    setSid(newSid);
-    sidRef.current = newSid;
-    xtermRef.current = entry.term;
-    entry.term.focus();
-    void invoke("note_terminal", { sid: newSid, focused: true }).catch(() => {});
+    focusSession(newSid);
     fitTerminal();
     // 布局与字体稳定后再校准一次（首次 fit 可能撞上渲染器尺寸未就绪）
     setTimeout(() => void fitTerminal(), 350);
-    refreshBrief(newSid);
-  }, [makeTerm, fitTerminal, refreshBrief]);
+  }, [ensureSessionTerm, focusSession, fitTerminal]);
 
   // 无激活会话：隐藏所有会话终端（实例保留，点击左侧会话即恢复），显示欢迎页
   const detach = useCallback(() => {
+    splitRef.current = null;
+    setSplitPanes(null);
     setSid(null);
     sidRef.current = null;
     xtermRef.current = null;
     setBrief(null);
     void invoke("note_terminal", { sid: null, focused: false }).catch(() => {});
-    for (const [, e] of termsRef.current) e.el.classList.remove("active");
+    for (const [, e] of termsRef.current) {
+      e.el.classList.remove("active", "pane-left", "pane-right", "pane-focused");
+    }
   }, []);
+
+  // 进入/调整分屏（T19）：把 target 放到右副 pane（已在分屏中则替换副 pane）。
+  // 主 pane 与焦点不动；50/50 固定比例（V0 不做拖拽分割条）。
+  const enterSplitWith = useCallback(async (target: string) => {
+    const sp = splitRef.current;
+    if (sp) {
+      if (target === sp.main || target === sp.second) return;
+      splitRef.current = { ...sp, second: target };
+    } else {
+      if (!sidRef.current || target === sidRef.current) return;
+      splitRef.current = { main: sidRef.current, second: target };
+    }
+    setSplitPanes(splitRef.current);
+    await ensureSessionTerm(target);
+    applyPanes();
+    fitTerminal();
+    setTimeout(() => void fitTerminal(), 150);
+    // 工具栏点击会把焦点留在按钮上——把焦点送回终端，打字不中断
+    if (sidRef.current) focusSession(sidRef.current);
+  }, [ensureSessionTerm, applyPanes, fitTerminal, focusSession]);
+
+  const exitSplit = useCallback(() => {
+    if (!splitRef.current) return;
+    splitRef.current = null;
+    setSplitPanes(null);
+    applyPanes();
+    fitTerminal();
+    setTimeout(() => void fitTerminal(), 150);
+    if (sidRef.current) focusSession(sidRef.current);
+  }, [applyPanes, fitTerminal, focusSession]);
+
+  // 关闭会话（左栏「断开」/标签 ×/⌘W 共用）：销毁终端实例；分屏期间副 pane 关 =
+  // 退出分屏（焦点不动），主 pane 关 = 副 pane 升为主
+  const disconnectSid = useCallback(async (id: string) => {
+    try {
+      await invoke("close_session", { sid: id });
+    } catch (e) {
+      setConnError({ title: "断开会话失败", detail: String(e) });
+    }
+    subscribedRef.current.delete(id);
+    const entry = termsRef.current.get(id);
+    if (entry) {
+      entry.term.dispose();
+      entry.el.remove();
+      termsRef.current.delete(id);
+    }
+    const sp = splitRef.current;
+    if (sp?.second === id) {
+      splitRef.current = null;
+      setSplitPanes(null);
+      // 关的正是焦点所在的副 pane：焦点回落主 pane（否则 sid 指向死会话、全屏黑）
+      if (sidRef.current === id) {
+        const next = termsRef.current.get(sp.main);
+        if (next) {
+          setSid(sp.main);
+          sidRef.current = sp.main;
+          xtermRef.current = next.term;
+          refreshBrief(sp.main);
+          void invoke("note_terminal", { sid: sp.main, focused: true }).catch(() => {});
+        } else {
+          detach();
+        }
+      }
+    } else if (sp?.main === id) {
+      splitRef.current = null;
+      setSplitPanes(null);
+      const next = termsRef.current.get(sp.second);
+      if (next) {
+        setSid(sp.second);
+        sidRef.current = sp.second;
+        xtermRef.current = next.term;
+        refreshBrief(sp.second);
+        void invoke("note_terminal", { sid: sp.second, focused: true }).catch(() => {});
+      }
+    } else if (sidRef.current === id) {
+      // 关的是焦点会话：自动落到下一个还开着的会话（标签页应用惯例），没有才回欢迎页
+      const next = sessionsRef.current.find((s) => s.id !== id && termsRef.current.has(s.id));
+      if (next) {
+        setSid(next.id);
+        sidRef.current = next.id;
+        xtermRef.current = termsRef.current.get(next.id)!.term;
+        refreshBrief(next.id);
+        void invoke("note_terminal", { sid: next.id, focused: true }).catch(() => {});
+      } else {
+        detach();
+      }
+    }
+    applyPanes();
+    fitTerminal();
+    refreshLists();
+  }, [detach, applyPanes, fitTerminal, refreshLists, refreshBrief]);
 
   // ⌘1–9 快速切换到第 N 个会话（终端应用标配）。捕获阶段拦截，终端聚焦时也生效。
   useEffect(() => {
@@ -714,6 +878,34 @@ export default function App() {
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [attachSession, sessions]);
+
+  // ⌘W 关闭当前会话标签、⌘⇧] / ⌘⇧[ 标签循环切换（T19）。捕获层：终端聚焦时也
+  // 生效，且先于 makeTerm 的「其余 ⌘ 全拦截」。⌘W 只在开着会话时拦截（无会话保留
+  // 系统默认关窗行为）；⇧] / ⇧[ 用物理键位 ev.code 判定（Shift 下 ev.key 是 }/{）。
+  useEffect(() => {
+    if (!inTauri) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (ev.shiftKey && (ev.code === "BracketRight" || ev.code === "BracketLeft")) {
+        if (!sessions.length) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const i0 = Math.max(0, sessions.findIndex((x) => x.id === sidRef.current));
+        const dir = ev.code === "BracketRight" ? 1 : -1;
+        const target = sessions[(i0 + dir + sessions.length) % sessions.length];
+        if (target) void attachSession(target.id);
+        return;
+      }
+      if (ev.shiftKey || ev.key.toLowerCase() !== "w") return;
+      const cur = sidRef.current;
+      if (!cur) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      void disconnectSid(cur);
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [attachSession, disconnectSid, sessions]);
 
   // 关闭搜索：清高亮、焦点回终端
   const closeSearch = useCallback(() => {
@@ -755,24 +947,6 @@ export default function App() {
     } finally {
       setConnecting(null);
     }
-  };
-
-  const disconnect = async (s: SessionInfo) => {
-    try {
-      await invoke("close_session", { sid: s.id });
-    } catch (e) {
-      setConnError({ title: `断开 ${s.host_name} 失败`, detail: String(e) });
-    }
-    subscribedRef.current.delete(s.id);
-    // 销毁该会话的终端实例；其他会话终端保留
-    const entry = termsRef.current.get(s.id);
-    if (entry) {
-      entry.term.dispose();
-      entry.el.remove();
-      termsRef.current.delete(s.id);
-    }
-    if (sidRef.current === s.id) detach();
-    refreshLists();
   };
 
   // 断线会话一键重连：核心重建传输 + 重启泵 + 重注入；UI 订阅不变，输出自动恢复
@@ -892,7 +1066,7 @@ export default function App() {
                       {reconnecting === s.id ? "重连中…" : "重连"}
                     </button>
                   )}
-                  <button className="ghost" onClick={() => disconnect(s)}>断开</button>
+                  <button className="ghost" onClick={() => void disconnectSid(s.id)}>断开</button>
                 </div>
               );
             })}
@@ -947,6 +1121,37 @@ export default function App() {
             onClick={() => setShowSettings(!showSettings)}
           >Aa</button>
         </div>
+        {/* 标签页（T19）：每个会话一签，状态点随连接状态变色；◫ 进/换分屏，✕ 关闭（⌘W） */}
+        <div className="tabbar">
+          {sessions.map((s, i) => {
+            const st = stateLabel(s.state);
+            const inSplit = splitPanes?.main === s.id || splitPanes?.second === s.id;
+            return (
+              <div
+                key={s.id}
+                className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")}
+                title={`${s.host_name} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
+                onClick={() => attachSession(s.id)}
+              >
+                <span className={"tab-dot " + st.cls} />
+                <span className="tab-label">{s.host_name}</span>
+                <span
+                  className="tab-split"
+                  title={splitPanes ? "放到右侧分屏" : s.id === sid ? "已在主视图" : "与当前会话分屏"}
+                  onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id); }}
+                >◫</span>
+                <span
+                  className="tab-x"
+                  title="断开会话（⌘W）"
+                  onClick={(e) => { e.stopPropagation(); void disconnectSid(s.id); }}
+                >✕</span>
+              </div>
+            );
+          })}
+          <span style={{ flex: 1 }} />
+          {splitPanes && <button className="ghost" onClick={exitSplit}>退出分屏</button>}
+          <button className="ghost" title="新建连接（打开左侧「添加主机」表单）" onClick={() => setShowAddHost(true)}>＋</button>
+        </div>
         {connError && (
           <div className="conn-error">
             <div>
@@ -999,7 +1204,7 @@ export default function App() {
               <div className="welcome-title">TinySSH — 人机协同 SSH 工作台</div>
               <div>1. 左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接；</div>
               <div>2. 连接后点击黑色终端区域直接打字：Ctrl+C 中断程序、↑↓ 翻历史、Tab 补全；</div>
-              <div>3. 多个会话来回切换，各自的滚动历史和 vim 界面都会保留；</div>
+              <div>3. 多会话一屏一签，点标签切换、◫ 分屏对照两个会话，各自的滚动历史和 vim 界面都会保留；</div>
               <div>4. ⌘C/⌘V 复制粘贴；下方命令框可逐条执行，执行后焦点自动回到终端。</div>
               <div className="dim" style={{ marginTop: 12 }}>暂无接入的会话——从左侧连接主机，或点击已有会话继续。</div>
             </div>
