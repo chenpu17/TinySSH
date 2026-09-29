@@ -83,6 +83,45 @@ async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
     state.api.reconnect_session(&sid).await.map_err(|e| e.to_string())
 }
 
+/// SFTP 上传（T20）：本地绝对路径 → 远端路径。人类直传（Agent 侧走 MCP 工具且必审），
+/// 结果经审计 transfer_done/transfer_failed 广播（payload 带 transfer id 供 UI 对账）。
+#[tauri::command]
+async fn upload_file(state: ApiState<'_>, sid: String, local: String, remote: String) -> CmdResult<TransferHandle> {
+    state
+        .api
+        .upload(&human(), sid, std::path::Path::new(&local), &remote)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// SFTP 下载（T20）：远端路径 → 本地。local 省略时存入 ~/Downloads/<远端文件名>。
+#[tauri::command]
+async fn download_file(
+    state: ApiState<'_>,
+    sid: String,
+    remote: String,
+    local: Option<String>,
+) -> CmdResult<TransferHandle> {
+    let dest = match local {
+        Some(p) => std::path::PathBuf::from(p),
+        None => {
+            let name = remote.rsplit('/').find(|s| !s.is_empty()).unwrap_or("download").to_string();
+            dirs_or_home().join("Downloads").join(name)
+        }
+    };
+    state
+        .api
+        .download(&human(), sid, &remote, &dest)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 取消进行中的传输（取消语义：传输任务收到 Cancelled，审计记 transfer_failed/已取消）。
+#[tauri::command]
+async fn cancel_transfer(state: ApiState<'_>, id: String) -> CmdResult<()> {
+    state.api.cancel_transfer(&human(), id).await.map_err(|e| e.to_string())
+}
+
 /// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
 /// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
 /// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）
@@ -475,12 +514,57 @@ fn main() {
                     }
                 });
             }
+            // T20 走查辅助（仅 dev 构建 + TINYSSH_TEST_DRAG=1 双重门禁）：OS 级拖拽投递
+            // （Finder→WKWebView 的 NSDraggingSession）在双屏+多 Space 环境无法脚本化驱动
+            // （§5.14 披露），此钩子监听 /tmp/t20_drag_{enter,over,drop,leave} 触发器文件，
+            // 发出与 WKWebView 拖拽回调载荷完全同构的事件；事件之后的整条链路（UI 处理器 →
+            // upload_file 命令 → core-session → russh-sftp → 远端落盘 → 审计）全部真实执行。
+            if cfg!(debug_assertions)
+                && std::env::var("TINYSSH_TEST_DRAG").map(|v| v == "1").unwrap_or(false)
+            {
+                let handle_td = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                        for (name, event) in [
+                            ("enter", "tauri://drag-enter"),
+                            ("over", "tauri://drag-over"),
+                            ("leave", "tauri://drag-leave"),
+                            ("drop", "tauri://drag-drop"),
+                        ] {
+                            let p = std::path::PathBuf::from(format!("/tmp/t20_drag_{name}"));
+                            if !p.exists() {
+                                continue;
+                            }
+                            let mut paths: Vec<String> = Vec::new();
+                            if name == "enter" || name == "drop" {
+                                paths = std::fs::read_to_string(&p)
+                                    .unwrap_or_default()
+                                    .lines()
+                                    .filter(|l| !l.trim().is_empty())
+                                    .map(str::to_string)
+                                    .collect();
+                            }
+                            let _ = std::fs::remove_file(&p);
+                            let payload = serde_json::json!({
+                                "paths": paths,
+                                "position": { "x": 0.0, "y": 0.0 },
+                            });
+                            if let Some(w) = handle_td.get_webview_window("main") {
+                                let _ = w.emit(event, payload);
+                                eprintln!("[app] test drag {name} paths={paths:?}");
+                            }
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities,
             list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
             open_url,
+            upload_file, download_file, cancel_transfer,
             get_setting, set_setting,
             read_screen, send_keys, exec_human, set_control, session_brief,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,

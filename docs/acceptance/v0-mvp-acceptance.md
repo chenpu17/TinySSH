@@ -64,10 +64,10 @@
 | protocol（SPIKE-3） | 1 | §3 表 |
 | shell_integration（transport-pty） | 1 | 本地 zsh 集成 + 块 + OSC7 + Fresh 退出码 |
 | **pty_reconnect（transport-pty，v1.7）** | 1 | **本地 PTY 重连：shell 退出死端 → reconnect 换新 shell、同一 broadcast 订阅不失效** |
-| sshd_e2e（transport-ssh） | 1 | SSH 块 + cwd + Fresh env + SFTP 往返 |
+| sshd_e2e（transport-ssh） | 2 | SSH 块 + cwd + Fresh env + SFTP 往返；**SFTP 下载中途取消（v1.13：真实 256MB 传输中触发取消 → Cancelled + 本地无完整文件）** |
 | spike2 | 1 | §3 表 |
 
-**合计 54 个测试，0 失败（v1.12 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。**v1.11 勘误**：v1.10 的「53/53」中 e2e_acceptance 实为守卫缺省跳过（未计失败但未真实执行）——门禁应答缺口修复后，e2e 5 项自 v1.11 起真实跑过指纹门（§5.13 披露②）。v1.12 无 Rust 改动（T19 为纯 UI 轮），54/54 复跑全绿。
+**合计 55 个测试，0 失败（v1.13 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。**v1.11 勘误**：v1.10 的「53/53」中 e2e_acceptance 实为守卫缺省跳过（未计失败但未真实执行）——门禁应答缺口修复后，e2e 5 项自 v1.11 起真实跑过指纹门（§5.13 披露②）。v1.12 无 Rust 改动（T19 为纯 UI 轮），54/54 复跑全绿。v1.13 新增 sshd_e2e 取消测试（T20），55/55 全绿（e2e 守卫开启，0 跳过）。
 
 ## 5. 独立复核（v1.1 新增）
 
@@ -447,6 +447,40 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 **T19 判定：通过**（54/54 回归全绿 + 走查矩阵 6/6 + 每步视觉验证入档 + 三处既有缺陷修复）。如实披露：① 分屏为固定 50/50 两 pane，无拖拽分割条、无纵向分屏、无 2+ pane（V1 按需）；② 分屏布局不持久化（会话本身不跨重启，随进程消散）；③ 分屏中 attach 第三个会话（标签/⌘1-9/左栏）语义为「替换左主 pane、副 pane 保留」；④ 副 pane 会话断线（Degraded）时标签点变红、可继续查看回显，重连走左栏「重连」；⑤ pane 名牌悬浮于内容左上角，可能遮住首行前几个字符（半透明底，tmux pane 标题同款取舍）。
 
 
+### 5.15 文件传输：拖拽上传 / 下载 / 取消（T20，v1.13 新增）
+
+**动机**：UX 路线图（§6-18）第⑧项——文件传输是远程工作的第二高频动作。核心层 SFTP（russh-sftp）与 Agent 侧 MCP upload/download 工具（必审）v0 即已就绪，本轮补齐**人**的入口：拖文件进终端即上传到当前目录、远端路径下载到本地、传输可视（卡片）可取消，全链路入审计。
+
+**实现**：
+
+| 层 | 改动 | 说明 |
+|---|---|---|
+| core-session | 审计 payload 增加 `transfer` id | transfer_done/failed/voided 均带 tid；human 与 Agent 传输同链路（Agent 仍必审），UI 按 id 对账终态 |
+| Tauri 壳 | 命令 `upload_file` / `download_file` / `cancel_transfer` | 直通 SessionApi（人类直传不入审批）；download 的 local 省略时落 `~/Downloads/<远端文件名>` |
+| UI 上传 | 拖文件进终端 → 覆盖层（accent 虚线框 +「⇩ 松开上传到 <cwd>」）→ drop 即传到**焦点会话当前目录**（现场简报 cwd） | Tauri drag-drop 事件（enter/over/drop/leave）；无会话 / cwd 未就绪时拒绝并给失败卡片（不猜路径） |
+| UI 下载 | 右栏「传输」区：远端绝对路径 → 「下载」 | 保存到 `~/Downloads`（固定目录，V1 加保存对话框）；相对路径按 SFTP 语义解析（登录家目录），输入框提示写明绝对路径 |
+| UI 卡片 | 每传输一卡：方向 ↑/↓ + 文件名 + 状态（传输中… / 完成 · 字节数 · 路径 / 失败原因 / 已取消）+ 运行中可 ✕ 取消 | 终态由审计按 transfer id 对账（仅在有进行中传输时 800ms 轮询）；时间线同步显示「传输完成/失败」 |
+
+**T20 走查矩阵**（原生窗口；执行于 v1.13 当日；「松开上传到 /root」覆盖层、上传卡片、md5 对照、下载卡片均截图逐项视觉检查入档）：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T20-a | 拖拽覆盖层视觉：拖入时终端区显示 accent 虚线框 +「⇩ 松开上传到 /root」 | 通过 | [t20_drag_overlay.png](screenshots/t20_drag_overlay.png) |
+| T20-b | 上传落盘：drop → 卡片「↑ t20_upload.txt · 完成 · 53 B · /root/t20_upload.txt」+ 时间线「传输完成」 | 通过 | [t20_upload_card.png](screenshots/t20_upload_card.png) |
+| T20-c | 完整性：终端 `md5sum /root/t20_upload.txt` = 本地 md5 **811a56e9df8a4f584dc8fba923fc8dfc**，53 B 一致 | 通过 | [t20_upload_verify.png](screenshots/t20_upload_verify.png) |
+| T20-d | 下载：远端造标记文件 → 传输区填 `/tmp/t20_remote.txt` → 下载 → 卡片「↓ · 完成 · 24 B · ~/Downloads/t20_remote.txt」；两端 sha1 一致（c704993c…）、24 B 一致 | 通过 | [t20_download_card_verify.png](screenshots/t20_download_card_verify.png) |
+| T20-e | 取消：真实 SFTP 下载 256MB、200ms 传输中取消 → `Err(Cancelled)` + 本地无完整文件（Rust e2e `sftp_download_cancel_midway`；UI ✕ → `cancel_transfer` 为一行薄包装） | 通过 | cargo test（55/55 内） |
+| T20-f | 审计链：transfer_done payload 含 transfer id + bytes（seq161/164）；时间线中文「传输完成 <远端路径>」 | 通过 | sqlite：`{"bytes":53,"transfer":"t-91ee…"}` |
+
+**T20 判定：通过**（55/55 回归全绿 + 走查矩阵 6/6 + 每步视觉验证入档）。如实披露：
+
+1. **OS 级拖拽投递环节为合成事件注入**（dev 构建 + `TINYSSH_TEST_DRAG=1` 双重门禁，release 无此代码）：走查机为双显示器 + 多桌面空间环境，Finder 窗口与桌面图标无法与 app 窗口脚本化同屏（窗口定位静默失效、Space 归属不可编程、桌面图标位置只读且被用户窗口遮挡；Finder 窗口排布、桌面 AX 定位、拖窗跨 Space、Mission Control 等路径穷尽未果）。事件之后整条链路（UI 处理器 → upload_file 命令 → core-session → russh-sftp → 远端落盘 → 审计）全部真实执行——与 T15 滚轮「引擎层验证」同款口径（§5.10）。**真人从访达拖一个文件进终端**列为顺手确认项。
+2. **取消路径的 UI 点击走查主动中止**：走查中途检测到可见视图已切到用户正在使用的浏览器窗口（用户/其另一 agent 正在操作机器），为避免合成点击落入无关窗口立即停止全部 UI 注入——改以 Rust e2e 实测取消语义（T20-e）。顺手确认项：真人下载大文件时点 ✕。
+3. 上传目标目录取自现场简报 cwd，简报未就绪（刚连接 <1s）时拒绝并提示，不猜路径。
+4. 取消/失败可能在远端留下部分写入的文件（SFTP create 即建文件），不自动清理（与 scp 同语义）。
+5. 传输为「进行中 → 终态」两态展示，无逐字节进度条（完成态显示字节数）；大文件进度 V1 优化。
+6. 下载固定存 `~/Downloads`、无保存对话框；上传无文件选择器入口（拖拽为主）——均 V1 按需补。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -466,9 +500,11 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **~~鼠标上报未实测~~（v1.8 已验证，路线图③关闭，§5.10）**：点击上报原生端到端实证（本机 vim mouse=a 点击指定单词 → 光标跳转 → `rZ` 替换命中字符落盘）；滚轮上报的 xterm.js SGR 编码经 WebKit 引擎层验证 4/4（与应用同一构建）。残留边界：真实滚轮手感未经真人确认（合成滚轮事件送不进 WKWebView，走查工具层限制已实证；真实输入投递由平台保证），tmux/htop 未实测（环境无此二者）——均为日常使用顺手确认项，不再阻塞路线图。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.12 完成①–⑦）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ SFTP 拖拽 / rz-sz ⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ⑧ SFTP 拖拽 / rz-sz。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ⑨ ~/.ssh/config 导入与 agent。
 19. **~~fitTerminal 静默失效（历史缺陷）~~（v1.11 已修复，§5.13）**：xterm 5.5 无公开 `dimensions`，fit 自 v1.x 起从未真正生效，xterm/PTY 恒为构造默认 80×24（13px 下恰好正确而长期未暴露，窗口 resize 的「跟随」实为看门狗把 PTY 锁到 80×24）。修复经 `_core._renderService.dimensions`（addon-fit 同源）后 PTY 真实随字号/窗口变化（实测 16px=35×75、19px=28×63）。此前各轮报告中「PTY 对齐」的验收结论在默认 13px 场景下成立，其他字号下的对齐自 v1.11 起才真实成立。
 20. **主题作用域**：终端配色预设只作用于终端区域，界面 chrome（左/右栏、弹窗）恒为深色——亮色 chrome 需全站 CSS 变量与硬编码色值适配，属 V1；设置（字号/主题）不入审计链（UI 偏好非协作事实，vault `settings` KV 可查）。
+23. **拖拽投递的走查口径（v1.13）**：T20 的 OS 级拖拽事件（Finder→WKWebView NSDraggingSession 投递）在双屏+多 Space 环境无法脚本化驱动，走查以 dev 门禁合成事件注入覆盖该环节（§5.15 披露①），其余链路全部真实；真人拖拽列为顺手确认项。人类传输不经审批直接执行（审计留痕），与「Agent 传输必审」的 L1 §4 语义一致。
+24. **传输边界（v1.13）**：上传目标=焦点会话简报 cwd（未就绪则拒绝）；下载固定 `~/Downloads`；无逐字节进度；取消/失败远端可能残留部分文件（与 scp 同语义）；Agent 传输走 MCP upload/download 工具且必审（v0 既有），与人类入口同链路同审计。
 21. **~~双 `createRoot` 挂载两个 App 实例（历史缺陷）~~（v1.12 已修复，§5.14）**：`main.tsx` 中 `createRoot(...).render(...)` 整块重复两份，两个 React 根并存——所有 window 级快捷键按实例数双触发（⌘W 一次关两签经审计 seq142/143 实锤；⌘=/⌘F/Ctrl+字符 同样双触发）。修复为单根后一次按键单触发。此前各轮 ⌘ 系快捷键走查结论在「双触发恰好幂等或未察觉」场合成立，自 v1.12 起单触发才真实成立。
 22. **分屏边界（v1.12）**：固定 50/50 两 pane（无拖拽分割条/纵向分屏/多于两个 pane，V1 按需）；分屏布局不持久化（会话不跨重启）；分屏中 attach 第三会话 = 替换左主 pane；pane 名牌可能遮住首行前几个字符（半透明，tmux 同款取舍）。
 
@@ -592,8 +628,24 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    f. ⌘W → 恰好一条 session_closed（审计 seq 核对）、焦点自动落剩余会话、窗口保留；
 #       ⌘⇧] / ⌘⇧[ 循环切换；退分屏后不点终端直接打字可达（焦点回落）（T19-f）
 #    注：修复前对照——main.tsx 双 createRoot 时代一次 ⌘W = 两条 session_closed（seq142/143）
+
+# 16) T20 文件传输走查（§5.15 六步；已于 v1.13 执行通过，路线图⑧关闭）
+#    启动：TINYSSH_MASTER_KEY=... TINYSSH_TEST_DRAG=1 TINYSSH_AUTOCONNECT=<e2e-host-id> \
+#           ./target/debug/tinyssh-app &（点击会话卡片接入终端；走查机双屏多 Space，
+#           OS 级拖拽投递以 /tmp/t20_drag_* 触发器文件合成事件，见 §5.15 披露①）
+#    a. printf '/tmp/t20_dragsrc/t20_upload.txt' > /tmp/t20_drag_enter；稍候 over →
+#       终端区 accent 虚线框 +「⇩ 松开上传到 /root」（T20-a）
+#    b. printf '<path>' > /tmp/t20_drag_drop → 卡片「↑ t20_upload.txt 完成 · 53 B」（T20-b）
+#    c. 命令框 md5sum /root/t20_upload.txt → 与本地 md5 一致（811a56e9…）（T20-c）
+#    d. 远端 printf 造标记文件 → 传输区填 /tmp/t20_remote.txt → 下载 → 卡片完成 24 B；
+#       本地 ~/Downloads/t20_remote.txt 与远端 sha1 一致（T20-d）
+#    e. 取消：cargo test -p transport-ssh --test sshd_e2e sftp_download_cancel_midway
+#       （256MB 真实下载 200ms 取消 → Cancelled + 无完整文件；UI ✕ 为薄包装）（T20-e）
+#    f. sqlite3 ~/.tinyssh/tinyssh.db "SELECT ... WHERE action LIKE 'transfer%'"
+#       → transfer_done payload 含 transfer id + bytes；时间线「传输完成」（T20-f）
+#    注：真人从访达拖文件进终端为顺手确认项（§5.15 披露①②）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **54 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18，①–⑦已完成，下一项 ⑧ SFTP 拖拽 / rz-sz）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **55 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18）、文件传输 T20（§5.15，v1.13——SFTP 拖拽上传到会话当前目录 + 路径下载到 ~/Downloads + 传输卡片/取消 + 审计带 transfer id；走查含覆盖层/完整性/审计矩阵与真实取消 e2e），路线图①–⑧已完成，下一项 ⑨ ~/.ssh/config 导入与 agent。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

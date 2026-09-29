@@ -201,3 +201,22 @@ textarea {
   word-break: break-all; user-select: text;
 }
 .hk-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+
+/* 拖拽上传覆盖层与传输卡片（T20 SFTP） */
+.drop-overlay {
+  position: absolute; inset: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 14, 18, 0.72);
+  border: 2px dashed var(--accent); border-radius: 8px;
+  pointer-events: none;
+}
+.drop-box { text-align: center; color: var(--text); font-size: 15px; }
+.drop-icon { font-size: 36px; color: var(--accent); margin-bottom: 6px; }
+.xfer-input { margin-bottom: 2px; }
+.xfer-input input { flex: 1; min-width: 0; }
+.xfer-row { margin-top: 6px; flex-wrap: nowrap; }
+.xfer-dir { flex: none; width: 18px; text-align: center; font-weight: 700; }
+.xfer-dir.up { color: #7fbf8f; }
+.xfer-dir.down { color: #6fa8dc; }
+.xfer-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xfer-sub { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

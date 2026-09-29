@@ -866,7 +866,7 @@ impl SessionManager {
             if h2.generation.load(std::sync::atomic::Ordering::SeqCst) != gen {
                 let _ = h2.center.audit.append(
                     &ctx2, "transfer_voided", Some(&sid2), Some(&remote2),
-                    serde_json::json!({"reason": "voided_by_handback"}), None);
+                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback"}), None);
                 h2.transfers.lock().unwrap().remove(&tid2);
                 return;
             }
@@ -879,12 +879,12 @@ impl SessionManager {
                 Ok(bytes) => {
                     let _ = h2.center.audit.append(
                         &ctx2, "transfer_done", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"bytes": bytes}), None);
+                        serde_json::json!({"transfer": tid2, "bytes": bytes}), None);
                 }
                 Err(e) => {
                     let _ = h2.center.audit.append(
                         &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"error": e.to_string()}), None);
+                        serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
                 }
             }
             h2.transfers.lock().unwrap().remove(&tid2);

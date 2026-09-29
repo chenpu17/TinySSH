@@ -169,3 +169,65 @@ use tokio_util_like::CancellationToken as _CancellationTokenAlias;
 mod tokio_util_like {
     pub use session_api::transport::tokio_util_sync::CancellationToken;
 }
+
+/// T20：下载中途取消——真实 SFTP 传输中触发 CancellationToken，
+/// 断言返回 Cancelled 且本地未落完整文件（上传回路对称，同一循环实现）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sftp_download_cancel_midway() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    use session_api::transport::ChannelHandle;
+    use session_api::transport::tokio_util_sync::CancellationToken;
+
+    let channel = transport_ssh::SshChannel::connect(target(), 80, 24)
+        .await
+        .unwrap();
+    // 远端造 256MB（alpine busybox dd；写 tmpfs/容器层均可）
+    channel
+        .exec_fresh(
+            "dd if=/dev/zero of=/tmp/t20_cancel.bin bs=1048576 count=256 2>/dev/null; ls -l /tmp/t20_cancel.bin",
+            &session_api::ExecOpts::default(),
+            std::time::Instant::now() + Duration::from_secs(30),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let cancel = CancellationToken::new();
+    let c2 = cancel.clone();
+    let ch2 = channel.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let dst = dir.path().join("partial.bin");
+    let dst_check = dst.clone();
+    let dl = tokio::spawn(async move {
+        ch2
+            .download("/tmp/t20_cancel.bin", &dst, &c2)
+            .await
+    });
+    // 传输进行中取消（256MB 回环传输 ≈ 0.5–3s，200ms 必然处于中途；
+    // 若取消先于 SFTP 初始化完成，同样返回 Cancelled，两条路径都被断言覆盖）
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    cancel.cancel();
+    let r = dl.await.unwrap();
+    match r {
+        Err(session_api::Error::Cancelled) => {}
+        other => panic!("expected Cancelled, got {other:?}"),
+    }
+    let sz = std::fs::metadata(&dst_check).map(|m| m.len()).unwrap_or(0);
+    assert!(sz < 256 * 1024 * 1024, "本地不应有完整文件：{sz}");
+
+    channel
+        .exec_fresh(
+            "rm -f /tmp/t20_cancel.bin",
+            &session_api::ExecOpts::default(),
+            std::time::Instant::now() + Duration::from_secs(10),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    channel.close().await.unwrap();
+}

@@ -16,6 +16,7 @@ import { Terminal } from "@xterm/xterm";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { DragDropEvent } from "@tauri-apps/api/webview";
 import "@xterm/xterm/css/xterm.css";
 
 type Host = {
@@ -45,6 +46,12 @@ type AuditEvent = {
   action: string; command: string | null;
 };
 type IdentityMeta = { id: string; label: string; kind: string; fingerprint: string };
+// 文件传输（T20）：核心返回的句柄 + UI 卡片状态（终态由审计事件按 id 对账）
+type TransferHandle = { id: string; session_id: string; kind: "Upload" | "Download"; local: string; remote: string };
+type TransferCard = {
+  id: string; kind: "Upload" | "Download"; name: string; remote: string; local: string;
+  status: "running" | "done" | "failed" | "cancelled"; bytes?: number; error?: string;
+};
 
 const epistemicClass = (s: string) =>
   s === "Confirmed" ? "tag-confirmed" : s === "NeedsRecheck" ? "tag-needsrecheck" : "tag-unobservable";
@@ -56,6 +63,13 @@ const epistemicLabel = (s: string) =>
 // 退出码 → 人话
 const exitText = (code: string): string =>
   code === "0" ? "成功" : code === "130" ? "Ctrl+C 中断" : code === "未知" ? "已结束（退出码未知）" : `退出码 ${code}`;
+
+// 字节数 → 人话
+const fmtBytes = (n: number): string =>
+  n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
+
+// 路径取文件名（本地与远端同用；末尾斜杠已过滤）
+const pathBasename = (p: string): string => p.split("/").filter(Boolean).pop() ?? "file";
 
 // 审计动作 → 中文描述（未知动作原样显示）
 const auditLabel = (a: string): string =>
@@ -76,9 +90,9 @@ const auditLabel = (a: string): string =>
     approval_denied: "拒绝审批",
     takeover: "接管会话",
     handback: "交还会话",
-    transfer_done: "任务完成",
-    transfer_voided: "任务作废",
-    transfer_failed: "任务失败",
+    transfer_done: "传输完成",
+    transfer_voided: "传输作废",
+    transfer_failed: "传输失败",
   })[a] ?? a;
 
 // 内部管道事件不进用户时间线（集成注入是建会话的固定噪音）
@@ -277,6 +291,11 @@ export default function App() {
   // ref 与 state 并行：fitTerminal/看门狗等回调内读 ref，避开 stale closure。
   const [splitPanes, setSplitPanes] = useState<{ main: string; second: string } | null>(null);
   const splitRef = useRef<{ main: string; second: string } | null>(null);
+  // 文件传输（T20）：卡片列表驱动 UI；核心完成即写审计（payload 带 transfer id），
+  // UI 轮询审计把 running 卡对账成 done/failed/cancelled
+  const [transfers, setTransfers] = useState<TransferCard[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [downloadPath, setDownloadPath] = useState("");
   // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -287,6 +306,9 @@ export default function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
+  // 简报 ref：拖拽上传回调里读当前 cwd（不进依赖数组，避免监听器随简报反复重订阅）
+  const briefRef = useRef<Brief | null>(null);
+  useEffect(() => { briefRef.current = brief; }, [brief]);
   const [timeline, setTimeline] = useState<AuditEvent[]>([]);
   const [owner, setOwner] = useState<"Human" | "Agent">("Agent");
   const [mcp, setMcp] = useState<{ endpoint: string; agents: { id: string; label: string }[] }>({ endpoint: "", agents: [] });
@@ -933,6 +955,105 @@ export default function App() {
     }
   };
 
+  // ---- 文件传输（T20）----
+  const upsertTransfer = useCallback((c: TransferCard) => {
+    setTransfers((cur) => {
+      const i = cur.findIndex((x) => x.id === c.id);
+      if (i < 0) return [c, ...cur];
+      const next = [...cur];
+      next[i] = c;
+      return next;
+    });
+  }, []);
+
+  // 拖拽上传：落到焦点会话的当前目录（现场简报 cwd）。先挂 pending 卡占位，
+  // 拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
+  const startUploads = useCallback(async (paths: string[]) => {
+    const s = sidRef.current;
+    const cwd = s ? briefRef.current?.cwd : undefined;
+    for (const p of paths) {
+      const name = pathBasename(p);
+      const tempId = `pending-${Date.now()}-${name}`;
+      if (!s) {
+        upsertTransfer({ id: tempId, kind: "Upload", name, remote: "—", local: p, status: "failed", error: "未接入会话——先连接并聚焦一台主机再拖入文件" });
+        continue;
+      }
+      if (!cwd) {
+        upsertTransfer({ id: tempId, kind: "Upload", name, remote: "—", local: p, status: "failed", error: "无法确定远程目录（现场简报未就绪），未上传" });
+        continue;
+      }
+      const remote = `${cwd.replace(/\/+$/, "")}/${name}`;
+      upsertTransfer({ id: tempId, kind: "Upload", name, remote, local: p, status: "running" });
+      try {
+        const h = await invoke<TransferHandle>("upload_file", { sid: s, local: p, remote });
+        setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
+      } catch (e) {
+        setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(String(e)) } : c)));
+      }
+    }
+  }, [upsertTransfer]);
+
+  // 下载：远端绝对路径 → 本地（local 省略时核心存 ~/Downloads/<文件名>）
+  const startDownload = async () => {
+    const s = sidRef.current;
+    const rp = downloadPath.trim();
+    if (!s || !rp) return;
+    const tempId = `pending-dl-${Date.now()}`;
+    upsertTransfer({ id: tempId, kind: "Download", name: pathBasename(rp), remote: rp, local: "…", status: "running" });
+    setDownloadPath("");
+    try {
+      const h = await invoke<TransferHandle>("download_file", { sid: s, remote: rp, local: null });
+      setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
+    } catch (e) {
+      setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(String(e)) } : c)));
+    }
+  };
+
+  // 传输终态对账：仅在有 running 卡时以 800ms 轮询审计；「已取消」= 核心 Cancelled 错误文案
+  useEffect(() => {
+    if (!transfers.some((t) => t.status === "running")) return;
+    const t = setInterval(async () => {
+      try {
+        const page = await invoke<{ events: (AuditEvent & { payload_json?: { transfer?: string; bytes?: number; error?: string } })[] }>("audit_query", { sid: null, limit: 30 });
+        setTransfers((cur) => cur.map((c) => {
+          if (c.status !== "running") return c;
+          const ev = page.events.find((e) => e.payload_json?.transfer === c.id && (e.action === "transfer_done" || e.action === "transfer_failed"));
+          if (!ev) return c;
+          if (ev.action === "transfer_done") return { ...c, status: "done" as const, bytes: ev.payload_json?.bytes };
+          const err = ev.payload_json?.error ?? "传输失败";
+          return { ...c, status: err.includes("取消") ? ("cancelled" as const) : ("failed" as const), error: err };
+        }));
+      } catch { /* 轮询失败忽略，下轮再试 */ }
+    }, 800);
+    return () => clearInterval(t);
+  }, [transfers]);
+
+  // 拖拽事件（Tauri drag-drop，浏览器演示模式无此通道）：enter/over 显示覆盖层，drop 上传
+  useEffect(() => {
+    if (!inTauri) return;
+    let un: (() => void) | undefined;
+    let dead = false;
+    getCurrentWindow()
+      .onDragDropEvent((ev: { payload: DragDropEvent }) => {
+        const p = ev.payload;
+        if (p.type === "enter" || p.type === "over") setDragOver(true);
+        else if (p.type === "leave") setDragOver(false);
+        else if (p.type === "drop") {
+          setDragOver(false);
+          const paths = (p as { paths?: string[] }).paths ?? [];
+          if (paths.length) void startUploads(paths);
+        }
+      })
+      .then((f: () => void) => {
+        if (dead) f();
+        else un = f;
+      });
+    return () => {
+      dead = true;
+      un?.();
+    };
+  }, [startUploads]);
+
   const createSession = async (host: Host) => {    setConnecting(host.name);
     setConnError(null);
     try {
@@ -1205,11 +1326,19 @@ export default function App() {
               <div>1. 左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接；</div>
               <div>2. 连接后点击黑色终端区域直接打字：Ctrl+C 中断程序、↑↓ 翻历史、Tab 补全；</div>
               <div>3. 多会话一屏一签，点标签切换、◫ 分屏对照两个会话，各自的滚动历史和 vim 界面都会保留；</div>
-              <div>4. ⌘C/⌘V 复制粘贴；下方命令框可逐条执行，执行后焦点自动回到终端。</div>
+              <div>4. ⌘C/⌘V 复制粘贴；拖文件进终端即上传到当前目录；下方命令框可逐条执行，执行后焦点自动回到终端。</div>
               <div className="dim" style={{ marginTop: 12 }}>暂无接入的会话——从左侧连接主机，或点击已有会话继续。</div>
             </div>
           )}
           <div id="term" ref={termRef} />
+          {dragOver && (
+            <div className="drop-overlay">
+              <div className="drop-box">
+                <div className="drop-icon">⇩</div>
+                <div>松开上传到 {brief?.cwd ?? "远程主机"}</div>
+              </div>
+            </div>
+          )}
           {searchOpen && sid && (
             <div className="term-search">
               <input
@@ -1390,6 +1519,45 @@ export default function App() {
           {pendingApprovals.length === 0 && resolvedApprovals.length === 0 && (
             <div className="side-quiet">暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
           )}
+
+          <div className="section">
+            <h4>传输</h4>
+            {inTauri && (
+              <div className="row xfer-input">
+                <input
+                  placeholder="下载远端文件（绝对路径，回车或点「下载」）"
+                  value={downloadPath}
+                  onChange={(e) => setDownloadPath(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void startDownload()}
+                />
+                <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>下载</button>
+              </div>
+            )}
+            {transfers.length === 0 && (
+              <div className="side-quiet">把文件从访达拖进终端即上传到当前目录；下载在上方填远端路径（存到「下载」文件夹）。</div>
+            )}
+            {transfers.map((t) => (
+              <div className="card row xfer-row" key={t.id}>
+                <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>{t.kind === "Upload" ? "↑" : "↓"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="xfer-name mono">{t.name}</div>
+                  <div className="dim mono xfer-sub">
+                    {t.status === "running" && "传输中…"}
+                    {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)} · ${t.kind === "Upload" ? t.remote : t.local}`}
+                    {t.status === "failed" && `失败：${t.error ?? "未知错误"}`}
+                    {t.status === "cancelled" && "已取消"}
+                  </div>
+                </div>
+                {t.status === "running" ? (
+                  <button className="ghost" title="取消传输" onClick={() => { invoke("cancel_transfer", { id: t.id }).catch(() => {}); }}>✕</button>
+                ) : (
+                  <span className={t.status === "done" ? "ok" : "err"} style={{ flex: "none" }}>
+                    {t.status === "done" ? "✓" : t.status === "cancelled" ? "⊘" : "✕"}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
 
           <div className="section">
             <h4>现场简报</h4>
