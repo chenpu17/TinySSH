@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.9 · 日期：2026-09-28 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
+> 版本：v1.14 · 日期：2026-09-30 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -59,15 +59,16 @@
 | term-core | 12 | 块生命周期（A/B/C/D）、Agent 键入归因、受管块、OSC 跨 feed、OSC7、快照、捕获、回放 |
 | approval | 12 | 精确/前缀/正则、TTL 过期、复合命令逐段（绕过用例）、内置 deny 不可删、ApproveEdited 不可越 deny、解析失败保守报审、**命令替换强制报审（M2 回归）**、**deny 规则逐 agent（m3 回归）** |
 | audit | 2 | 追加/查询/导出、**篡改检测** |
-| vault | 6 | 加解密往返+篡改、Token 生命周期、主机口令加密存储、ed25519 生成与解密、**主机指纹 TOFU 往返（v1.10：无记录/入库/更新/未知主机拒绝）**、**UI 偏好 KV 往返（v1.11：未设置→None / upsert 覆盖 / 按 key 隔离 / 重开同库仍在）** |
+| vault | 14 | 加解密往返+篡改、Token 生命周期、主机口令加密存储、ed25519 生成与解密、**主机指纹 TOFU 往返（v1.10：无记录/入库/更新/未知主机拒绝）**、**UI 偏好 KV 往返（v1.11：未设置→None / upsert 覆盖 / 按 key 隔离 / 重开同库仍在）**、**ssh-config 解析器（v1.14：基本块/缺省回落/多模式拆分/`=`分隔与大小写/首值优先/注释与未知键/Match 块跳过/多 IdentityFile 取首/坏端口忽略——8 例）** |
 | e2e_acceptance（真实 OpenSSH） | 5 | **首屏干净回归（v1.2：read_screen 不得含注入回显/scrollback）**、**首验收场景**、旅程 2（自动重连→Reconfirming：白名单外被拒、**复合白名单形态被拒（M1 回归）**、核实后自动恢复、cwd 事实 NeedsRecheck→核实 Confirmed、重连后为新 shell 不谎报现场延续）、**旅程 3（v1.7：docker stop 超自动重连窗口 → Disconnected 死端 → start → 手动重连 → 审计含 session_reconnect）**、**旅程 4（v1.7：键入一半脏状态断线重连——屏面无注入片段泄漏、残留块收尾、半截命令不执行，P1 §6-17 复现矩阵）** |
 | protocol（SPIKE-3） | 1 | §3 表 |
 | shell_integration（transport-pty） | 1 | 本地 zsh 集成 + 块 + OSC7 + Fresh 退出码 |
 | **pty_reconnect（transport-pty，v1.7）** | 1 | **本地 PTY 重连：shell 退出死端 → reconnect 换新 shell、同一 broadcast 订阅不失效** |
-| sshd_e2e（transport-ssh） | 2 | SSH 块 + cwd + Fresh env + SFTP 往返；**SFTP 下载中途取消（v1.13：真实 256MB 传输中触发取消 → Cancelled + 本地无完整文件）** |
+| sshd_e2e（transport-ssh） | 3 | SSH 块 + cwd + Fresh env + SFTP 往返；**SFTP 下载中途取消（v1.13：真实 256MB 传输中触发取消 → Cancelled + 本地无完整文件）**；**ssh-agent 认证（v1.14：一次性独立 ssh-agent + 容器临时公钥 → Agent 认证建连 → exec 实证，收尾自动清理）** |
+| **sshcfg_import（core-session，v1.14）** | 2 | **~/.ssh/config 导入内核链路：预览对账（通配符/Match 跳过、多模式拆分、身份有无标注、already_imported 对账）+ 勾选导入（IdentityFile→Key 身份落库、无凭据→Agent 零密钥、审计 host_upsert/identity_create）**；**导入的 Agent 主机经 SessionManager 全栈真实建连（一次性 ssh-agent + 容器公钥，指纹门应答器同构）** |
 | spike2 | 1 | §3 表 |
 
-**合计 55 个测试，0 失败（v1.13 最终回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。**v1.11 勘误**：v1.10 的「53/53」中 e2e_acceptance 实为守卫缺省跳过（未计失败但未真实执行）——门禁应答缺口修复后，e2e 5 项自 v1.11 起真实跑过指纹门（§5.13 披露②）。v1.12 无 Rust 改动（T19 为纯 UI 轮），54/54 复跑全绿。v1.13 新增 sshd_e2e 取消测试（T20），55/55 全绿（e2e 守卫开启，0 跳过）。
+**合计 66 个测试，0 失败（v1.14 本轮回归）。** 修复前基线由独立验证员复跑确认 41/41（见 §5.2）。共享 docker sshd 的测试以跨进程文件锁串行（`tinyssh_testbed::sshd_lock`），持锁后等待容器就绪（`await_sshd_ready`），消除重启时序 flake；全量回归须先编译后运行（见 §7），避免同机争抢 CPU 拉长会话首提示符延迟（§6.1-11）。**v1.11 勘误**：v1.10 的「53/53」中 e2e_acceptance 实为守卫缺省跳过（未计失败但未真实执行）——门禁应答缺口修复后，e2e 5 项自 v1.11 起真实跑过指纹门（§5.13 披露②）。v1.12 无 Rust 改动（T19 为纯 UI 轮），54/54 复跑全绿。v1.13 新增 sshd_e2e 取消测试（T20），55/55 全绿（e2e 守卫开启，0 跳过）。v1.14 新增 vault 解析器 8 例 + sshd_e2e agent 认证 + core-session 导入链路 2 例，66/66 全绿（e2e 守卫开启，0 跳过；T21 UI 视觉走查见 §5.16）。
 
 ## 5. 独立复核（v1.1 新增）
 
@@ -481,6 +482,42 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 5. 传输为「进行中 → 终态」两态展示，无逐字节进度条（完成态显示字节数）；大文件进度 V1 优化。
 6. 下载固定存 `~/Downloads`、无保存对话框；上传无文件选择器入口（拖拽为主）——均 V1 按需补。
 
+### 5.16 ~/.ssh/config 导入与 ssh-agent（T21，v1.14 新增）
+
+**动机**：UX 路线图（§6-18）第⑨项——已有 ~/.ssh/config 的用户不应手工重录主机；私钥已加载进本机 ssh-agent 的用户不应把私钥复制进任何应用。
+
+**实现**（`session-api` 类型 + `vault` 解析器与存取 + `transport-ssh` Agent 认证 + `core-session` 导入组合 + `cli`/Tauri/UI 入口）：
+
+| 特性 | 改动 | 说明 |
+|---|---|---|
+| ssh-agent 认证 | `AuthType::Agent` / `AuthDraft::Agent`；transport-ssh 新增认证分支：`AgentClient::connect_env()`（SSH_AUTH_SOCK）→ `request_identities()` → 逐 key `authenticate_publickey_with`（ssh 标准顺序尝试） | 私钥签名不出 agent，vault 对 Agent 主机**零密钥材料落库**（`host_secret` 对 Agent 直接短路）；agent 不可达 / 无已加载密钥 / 全部拒绝分别给出可读错误 |
+| config 解析器 | `vault::sshcfg`（纯函数）：Host/HostName/User/Port/IdentityFile；`=` 或空白分隔、`#` 注释、关键字大小写不敏感、块内首值优先（ssh 语义）、多模式 `Host a b` 拆条目、通配符（*/?/!前缀）与 **Match 块整体跳过**（条件导入有误伤风险）、`~/` 展开、同名 Host 块去重 | 8 个单测；CLI 原一次性解析器（只认空白分隔、后值覆盖前值）废弃换用共享实现 |
+| 导入组合 | `SessionManager::ssh_config_preview`（解析 + 与现有主机对账：同名或同 address+port+user 视为已导入）/ `ssh_config_import`（逐条出结果：有 IdentityFile 且可读 → 读私钥 `create_identity` 入 vault（Key）；无 → `AuthDraft::Agent`；单条失败不阻塞其余；加密私钥无口令解不开时明说，不静默降级） | 审计自动贯通（复用 `host_upsert` / `identity_create`）；导入主机带 `ssh-config` tag |
+| GUI | 左栏「导入 ~/.ssh/config」按钮 → 面板：逐条勾选（已导入条目禁选）、`user@addr:port · 密钥/Agent` 来源标注、逐条导入结果；添加主机表单认证方式新增「SSH Agent」；主机列表 Agent 徽标 | 导入面板读缺省 `~/.ssh/config`（命令层支持 path 覆盖，UI 不暴露） |
+| CLI | `host add --from-ssh-config` 换共享实现（预览→全量导入，逐条报错） | 与 GUI 同一内核路径 |
+
+**验证状态**（v1.14 当日）：
+
+- ✅ **自动化 66/66 全绿**（e2e 守卫开启 0 跳过）：vault 解析器 8 例、sshd_e2e agent 认证 1 例（一次性独立 ssh-agent + 容器临时公钥 → russh AgentClient 真实认证 → exec 实证 → 自动清理）、core-session 导入链路 2 例（预览对账 + 导入落库 + **导入的 Agent 主机经 SessionManager 全栈真实建连**）。
+- ✅ **既有缺陷修复（测试基建）**：`await_sshd_ready` 原 TCP-only 探测在 `docker start` 后失真——docker 端口代理在容器内 sshd 真正监听前就接受 TCP（随后 reset），致 journey3 `Connection reset by peer` **在 HEAD 上稳定复现**（与 T21 改动无关，stash 验证）。修复为 TCP + **SSH banner 探测**，journey3 恢复全绿。
+- ⛔→✅ **UI 视觉走查完成（跨两日，注入全程 HID 空闲 ≥75s 门禁）**：首轮启动 app 后发现**机器处于锁屏状态**，所有 UI 注入立即放弃（键盘注入有落入锁屏密码框的风险）；解锁后恢复执行，矩阵见下。
+
+**T21 走查矩阵**（原生窗口；隔离 `HOME=/tmp/t21home` + 专属一次性 ssh-agent（`SSH_AUTH_SOCK` 独立于用户会话）+ e2e 容器临时公钥；每步截图逐项视觉检查入档）：
+
+| 步骤 | 内容 | 结果 | 证据 |
+|---|---|---|---|
+| T21-a | 导入面板预览：左栏「导入 ~/.ssh/config」→ 面板恰列 2 个可导入条目（`e2e-agent · Agent` / `e2e-key · 密钥` 来源标注正确）；合成 config 中的通配符块与 Match 块条目**不可见**（解析器跳过的直观印证） | 通过 | [t21_a_import_preview.png](screenshots/t21_a_import_preview.png) |
+| T21-b | 勾选导入：两行「✓ 已导入」；主机列表新增 `e2e-agent`（· Agent 徽标）与 `e2e-key`（密钥徽标）；DB 落库 e2e-agent auth=agent 零密钥、e2e-key 绑定 identity | 通过 | [t21_b_import_done.png](screenshots/t21_b_import_done.png) |
+| T21-c | Agent 主机连接：点 `e2e-agent` 连接 → TOFU 首连确认弹窗 → 信任并连接 → 会话建立（容器提示符 `41600b72ba91` 上屏）；app 冷重启后再连 → 指纹已信任**直连无弹窗** | 通过 | [t21_c_agent_tofu_connect.png](screenshots/t21_c_agent_tofu_connect.png) / [t21_c_agent_reconnect.png](screenshots/t21_c_agent_reconnect.png) |
+| T21-d | Key 主机（e2e-key）UI 建连：**未注入执行（披露①）**；导入侧（IdentityFile → vault 身份绑定 + 密钥徽标）已由 T21-b 截图与集成测试断言覆盖 | 部分覆盖（披露①） | [t21_b_import_done.png](screenshots/t21_b_import_done.png) + cargo test（66/66 内） |
+| T21-e | 审计链：导入 `host_upsert`×2 + `identity_create`×1 → TOFU `host_key_confirm_requested` / `host_key_decision(FirstSeen,accept)` / `host_key_trusted` → 首连与重启直连的 `shell_integration_inject`+`session_created` 各一对（seq 1–13 连续无缺口） | 通过 | sqlite（$TINYSSH_DB） |
+
+**T21 判定：通过**（66/66 回归全绿 + 走查矩阵 4 通过 / 1 部分覆盖，每步视觉证据入档）。如实披露：
+
+1. **t21-c 连接后的 `whoami` 键入与 t21-d 的 UI 建连未注入完成**：恢复走查的注入窗口期用户回到电脑（另一 agent 会话在前台活跃），按「用户占用即中止一切 UI 注入」纪律放弃剩余键盘注入、不重试抢窗口。终端键入透传为 T10 起既有已验证功能（§5.5）；Agent 通道 `whoami=root` 已由 sshd_e2e agent 认证用例 exec 实证；密钥认证建连为 T9 起既有功能且 e2e-key 身份落库有集成测试断言。**真人点开 e2e-key 敲一条命令**列为顺手确认项。
+2. 走查对象仅本机 local 会话 + e2e-sshd 容器（127.0.0.1:2222），未触碰任何真实主机；容器公钥带 `t21-walk-` 标记、一次性 agent 与隔离 HOME 用后清理（§7#17）。
+3. 锁屏中止先例沉淀为流程规则：**锁屏 = 最硬中止条件**——注入前先截图确认屏幕非锁屏黑屏态，再过 HID 空闲门禁。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -500,11 +537,13 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **~~鼠标上报未实测~~（v1.8 已验证，路线图③关闭，§5.10）**：点击上报原生端到端实证（本机 vim mouse=a 点击指定单词 → 光标跳转 → `rZ` 替换命中字符落盘）；滚轮上报的 xterm.js SGR 编码经 WebKit 引擎层验证 4/4（与应用同一构建）。残留边界：真实滚轮手感未经真人确认（合成滚轮事件送不进 WKWebView，走查工具层限制已实证；真实输入投递由平台保证），tmux/htop 未实测（环境无此二者）——均为日常使用顺手确认项，不再阻塞路线图。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~/.ssh/config 导入与 agent ⑩ 键盘交互认证/2FA、GBK 编码。下一项 = ⑨ ~/.ssh/config 导入与 agent。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~~.ssh/config 导入与 agent~~（**v1.14 完成，§5.16**——导入面板/来源标注/徽标/Agent 主机 TOFU 建连与重启直连 UI 走查通过；t21-d Key 主机 UI 建连与连接后键入因用户占用中止注入，既有功能由自动化覆盖并披露）⑩ 键盘交互认证/2FA、GBK 编码。**①–⑨ 全部完成**，下一项 = ⑩（按需排期）。
 19. **~~fitTerminal 静默失效（历史缺陷）~~（v1.11 已修复，§5.13）**：xterm 5.5 无公开 `dimensions`，fit 自 v1.x 起从未真正生效，xterm/PTY 恒为构造默认 80×24（13px 下恰好正确而长期未暴露，窗口 resize 的「跟随」实为看门狗把 PTY 锁到 80×24）。修复经 `_core._renderService.dimensions`（addon-fit 同源）后 PTY 真实随字号/窗口变化（实测 16px=35×75、19px=28×63）。此前各轮报告中「PTY 对齐」的验收结论在默认 13px 场景下成立，其他字号下的对齐自 v1.11 起才真实成立。
 20. **主题作用域**：终端配色预设只作用于终端区域，界面 chrome（左/右栏、弹窗）恒为深色——亮色 chrome 需全站 CSS 变量与硬编码色值适配，属 V1；设置（字号/主题）不入审计链（UI 偏好非协作事实，vault `settings` KV 可查）。
 23. **拖拽投递的走查口径（v1.13）**：T20 的 OS 级拖拽事件（Finder→WKWebView NSDraggingSession 投递）在双屏+多 Space 环境无法脚本化驱动，走查以 dev 门禁合成事件注入覆盖该环节（§5.15 披露①），其余链路全部真实；真人拖拽列为顺手确认项。人类传输不经审批直接执行（审计留痕），与「Agent 传输必审」的 L1 §4 语义一致。
 24. **传输边界（v1.13）**：上传目标=焦点会话简报 cwd（未就绪则拒绝）；下载固定 `~/Downloads`；无逐字节进度；取消/失败远端可能残留部分文件（与 scp 同语义）；Agent 传输走 MCP upload/download 工具且必审（v0 既有），与人类入口同链路同审计。
+25. **sshd 就绪探测口径（v1.14 修复）**：`await_sshd_ready` 从 TCP-only 升级为 TCP + SSH banner 探测——docker 端口代理在容器内 sshd 监听前就接受 TCP（随后 reset），TCP-only 会让紧随 `docker start` 的测试稳定撞上 `Connection reset by peer`（journey3 在 HEAD 上复现，非 T21 引入，stash 验证）。
+26. **Agent 认证边界（v1.14）**：Agent 主机 vault 零密钥落库；agent 不可达/无密钥/全拒绝分别可读报错；按 agent 加载顺序逐 key 尝试（ssh 标准行为），无按主机筛选 agent 密钥（IdentityFile→agent 密钥匹配 V1 按需）；加密私钥（有口令）不走自动导入，明说后手工。
 21. **~~双 `createRoot` 挂载两个 App 实例（历史缺陷）~~（v1.12 已修复，§5.14）**：`main.tsx` 中 `createRoot(...).render(...)` 整块重复两份，两个 React 根并存——所有 window 级快捷键按实例数双触发（⌘W 一次关两签经审计 seq142/143 实锤；⌘=/⌘F/Ctrl+字符 同样双触发）。修复为单根后一次按键单触发。此前各轮 ⌘ 系快捷键走查结论在「双触发恰好幂等或未察觉」场合成立，自 v1.12 起单触发才真实成立。
 22. **分屏边界（v1.12）**：固定 50/50 两 pane（无拖拽分割条/纵向分屏/多于两个 pane，V1 按需）；分屏布局不持久化（会话不跨重启）；分屏中 attach 第三会话 = 替换左主 pane；pane 名牌可能遮住首行前几个字符（半透明，tmux 同款取舍）。
 
@@ -644,8 +683,26 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    f. sqlite3 ~/.tinyssh/tinyssh.db "SELECT ... WHERE action LIKE 'transfer%'"
 #       → transfer_done payload 含 transfer id + bytes；时间线「传输完成」（T20-f）
 #    注：真人从访达拖文件进终端为顺手确认项（§5.15 披露①②）
+
+# 17) T21 导入/agent 走查（§5.16 五步；**v1.14 已执行——4 通过 / 1 部分覆盖（披露①）**）
+#    环境：HOME=/tmp/t21home（合成 config 4 条目已留存）TINYSSH_DB=/tmp/t21home/tinyssh.db \
+#          TINYSSH_MASTER_KEY=... ./target/debug/tinyssh-app &
+#    专属 agent：ssh-agent -a /tmp/t21home/agent.sock；SSH_AUTH_SOCK=… ssh-add /tmp/t21home/.ssh/id_agent；
+#    容器公钥：cat /tmp/t21home/.ssh/id_{walk,agent}.pub | docker exec -i tinyssh-e2e 'sh -c …>>authorized_keys'
+#    a. 左栏「导入 ~/.ssh/config」→ 面板可导入条目恰 2（e2e-agent·Agent / e2e-key·密钥；
+#       通配符与 Match 块条目不可见）（T21-a ✓）
+#    b. 勾选导入 → 逐条「✓ 已导入」；主机列表 e2e-agent·Agent / e2e-key·密钥（T21-b ✓）
+#    c. 连接 e2e-agent → 指纹确认弹窗 → 信任并连接 → shell 提示符上屏；冷重启后再连直连无弹窗
+#       （whoami=root 由 sshd_e2e agent 用例 exec 实证——UI 键入未注入，披露①）（T21-c ✓）
+#    d. 连接 e2e-key → shell 可用（IdentityFile 私钥已入 vault）——**未注入执行**（披露①；
+#       身份落库与绑定由集成测试 + T21-b 截图覆盖）（T21-d △）
+#    e. sqlite3 $TINYSSH_DB 审计：host_upsert×2 + identity_create×1 + TOFU 决策 3 条 +
+#       session 事件×4，seq 1–13 连续（T21-e ✓）
+#    注：内核链路（预览对账/导入落库/Agent 全栈建连）已由 66 项回归中的 3 项新测试实证；
+#    走查补的是纯 UI 层（面板渲染/勾选交互/Agent 表单选项/徽标）。收尾清理：
+#    docker exec tinyssh-e2e sed -i '/t21-walk-/d' /root/.ssh/authorized_keys + kill agent + rm -rf /tmp/t21home
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **55 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18）、文件传输 T20（§5.15，v1.13——SFTP 拖拽上传到会话当前目录 + 路径下载到 ~/Downloads + 传输卡片/取消 + 审计带 transfer id；走查含覆盖层/完整性/审计矩阵与真实取消 e2e），路线图①–⑧已完成，下一项 ⑨ ~/.ssh/config 导入与 agent。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **55 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18）、文件传输 T20（§5.15，v1.13——SFTP 拖拽上传到会话当前目录 + 路径下载到 ~/Downloads + 传输卡片/取消 + 审计带 transfer id；走查含覆盖层/完整性/审计矩阵与真实取消 e2e），路线图①–⑧已完成。v1.14（T21，§5.16）：~/.ssh/config 导入（共享解析器 + 预览对账 + 勾选导入）与 ssh-agent 认证（AuthType::Agent，vault 零密钥落库，russh AgentClient 逐 key 签名）已实现并经 **66 项自动化测试全绿**（新增解析器 8 例、agent 认证 e2e、导入链路集成 2 例），顺带修复测试基建既有缺陷（await_sshd_ready TCP-only 探测在 docker 端口代理下失真，journey3 在 HEAD 稳定失败的根因）；UI 视觉走查跨两日完成（首轮锁屏中止，恢复后矩阵 4 通过/1 部分覆盖并如实披露，§5.16），**UX 路线图①–⑨全部关闭**。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

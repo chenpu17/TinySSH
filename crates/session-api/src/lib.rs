@@ -344,6 +344,8 @@ pub enum AuthType {
     Key,
     Password,
     KeyboardInteractive,
+    /// 连接时经本机 ssh-agent（SSH_AUTH_SOCK）签名，私钥不出 agent。
+    Agent,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -364,6 +366,8 @@ pub enum AuthDraft {
     None,
     Key { identity_id: IdentityId },
     Password { password: String },
+    /// 引用本机 ssh-agent（不落任何密钥材料）。
+    Agent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,6 +376,27 @@ pub struct IdentityMeta {
     pub label: String,
     pub kind: IdentityKind,
     pub fingerprint: String,
+}
+
+/// ~/.ssh/config 单条目预览（导入面板一行）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshConfigPreview {
+    pub name: String,
+    pub address: String,
+    pub port: u16,
+    pub username: String,
+    /// 条目带 IdentityFile（导入将读私钥建身份；false 则走 ssh-agent）
+    pub has_identity: bool,
+    /// 主机列表已有同名或同 address+port+user 条目
+    pub already_imported: bool,
+}
+
+/// 导入逐条结果（error 为 None 表示成功）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshImportOutcome {
+    pub name: String,
+    pub host_id: Option<HostId>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

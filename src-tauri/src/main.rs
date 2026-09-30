@@ -58,6 +58,32 @@ async fn list_identities(state: ApiState<'_>) -> CmdResult<Vec<IdentityMeta>> {
     state.api.list_identities(&human()).await.map_err(|e| e.to_string())
 }
 
+/// ~/.ssh/config 导入：解析预览（path 缺省 = ~/.ssh/config）
+#[tauri::command]
+async fn ssh_config_preview(
+    state: ApiState<'_>,
+    path: Option<String>,
+) -> CmdResult<Vec<SshConfigPreview>> {
+    state
+        .api
+        .ssh_config_preview(path.as_deref().map(std::path::Path::new))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// ~/.ssh/config 导入：按勾选条目落库
+#[tauri::command]
+async fn ssh_config_import(
+    state: ApiState<'_>,
+    path: Option<String>,
+    names: Vec<String>,
+) -> CmdResult<Vec<SshImportOutcome>> {
+    Ok(state
+        .api
+        .ssh_config_import(&human(), path.as_deref().map(std::path::Path::new), &names)
+        .await)
+}
+
 #[tauri::command]
 async fn list_sessions(state: ApiState<'_>) -> CmdResult<Vec<SessionInfo>> {
     state.api.list_sessions(&human()).await.map_err(|e| e.to_string())
@@ -562,6 +588,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities,
+            ssh_config_preview, ssh_config_import,
             list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
             open_url,
             upload_file, download_file, cancel_transfer,

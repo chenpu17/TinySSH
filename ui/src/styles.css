@@ -220,3 +220,11 @@ textarea {
 .xfer-dir.down { color: #6fa8dc; }
 .xfer-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .xfer-sub { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ~/.ssh/config 导入面板（T21） */
+.sshcfg-row {
+  gap: 8px; align-items: flex-start; cursor: pointer;
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+}
+.sshcfg-row:last-child { border-bottom: none; }
+.sshcfg-row input[type="checkbox"] { margin-top: 2px; }

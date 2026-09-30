@@ -17,6 +17,7 @@ use std::path::Path;
 use zeroize::Zeroizing;
 
 pub mod db;
+pub mod sshcfg;
 
 pub use db::SCHEMA_V1;
 
@@ -225,6 +226,7 @@ impl Vault {
                     )
                 }
                 AuthDraft::None => ("key".into(), None, None),
+                AuthDraft::Agent => ("agent".into(), None, None),
             };
         // 口令类凭据也存 identities（kind=password），统一加密管理
         let identity_id = if let Some(b64) = secret_json {
@@ -296,7 +298,11 @@ impl Vault {
                 address,
                 port: port as u16,
                 username,
-                auth_type: if auth_type == "password" { AuthType::Password } else { AuthType::Key },
+                auth_type: match auth_type.as_str() {
+                    "password" => AuthType::Password,
+                    "agent" => AuthType::Agent,
+                    _ => AuthType::Key,
+                },
                 identity_id,
                 tags: serde_json::from_str(&tags_json).unwrap_or_default(),
             });
@@ -362,7 +368,12 @@ impl Vault {
     }
 
     /// 取主机连接凭据（内部用；SessionApi 无返回凭据的方法）。
-    pub fn host_secret(&self, host: &Host) -> Result<(AuthType, Zeroizing<String>)> {        let iid = host
+    /// Agent 认证不经 vault（签名时私钥不出 ssh-agent），返回空串。
+    pub fn host_secret(&self, host: &Host) -> Result<(AuthType, Zeroizing<String>)> {
+        if host.auth_type == AuthType::Agent {
+            return Ok((AuthType::Agent, Zeroizing::new(String::new())));
+        }
+        let iid = host
             .identity_id
             .as_ref()
             .ok_or_else(|| Error::InvalidInput("host has no identity".into()))?;

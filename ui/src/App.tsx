@@ -21,8 +21,13 @@ import "@xterm/xterm/css/xterm.css";
 
 type Host = {
   id: string; name: string; address: string; port: number; username: string;
-  auth_type: "Key" | "Password" | "KeyboardInteractive";
+  auth_type: "Key" | "Password" | "KeyboardInteractive" | "Agent";
 };
+type SshConfigPreview = {
+  name: string; address: string; port: number; username: string;
+  has_identity: boolean; already_imported: boolean;
+};
+type SshImportOutcome = { name: string; host_id: string | null; error: string | null };
 type SessionInfo = {
   id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
@@ -318,6 +323,7 @@ export default function App() {
   const [connError, setConnError] = useState<{ title: string; detail: string } | null>(null);
   const [hostKeyQueue, setHostKeyQueue] = useState<PendingHostKey[]>([]);
   const [showAddHost, setShowAddHost] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const refreshLists = useCallback(async () => {
     setSessions(await invoke<SessionInfo[]>("list_sessions"));
@@ -1132,11 +1138,20 @@ export default function App() {
         <div className="panel-title row">
           <span>主机 / 会话</span>
           <span style={{ flex: 1 }} />
-          <button className="ghost" onClick={() => setShowAddHost(!showAddHost)}>
+          <button className="ghost" onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
+            {showImport ? "收起" : "导入 ~/.ssh/config"}
+          </button>
+          <button className="ghost" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); }}>
             {showAddHost ? "收起" : "＋ 添加主机"}
           </button>
         </div>
         <div className="scroll">
+          {showImport && (
+            <SshConfigImportPanel
+              onDone={refreshLists}
+              onClose={() => setShowImport(false)}
+            />
+          )}
           {showAddHost && (
             <AddHostForm
               onAdded={async (hid) => {
@@ -1154,7 +1169,7 @@ export default function App() {
             {hosts.map((h) => (
               <div className="card row" key={h.id}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div>{h.name} <span className="dim">{h.auth_type === "Key" ? "· 密钥" : "· 密码"}</span></div>
+                  <div>{h.name} <span className="dim">{h.auth_type === "Key" ? "· 密钥" : h.auth_type === "Agent" ? "· Agent" : "· 密码"}</span></div>
                   <div className="dim mono">{h.username}@{h.address}:{h.port}</div>
                 </div>
                 <button disabled={connecting !== null} onClick={() => createSession(h)}>
@@ -1634,13 +1649,13 @@ function BriefCard({ brief }: { brief: Brief }) {
   );
 }
 
-// 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）
+// 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）；Agent 只存引用
 function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [port, setPort] = useState("22");
   const [username, setUsername] = useState("root");
-  const [authMode, setAuthMode] = useState<"password" | "key">("password");
+  const [authMode, setAuthMode] = useState<"password" | "key" | "agent">("password");
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -1660,10 +1675,12 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
     }
     setBusy(true);
     try {
-      let auth: Record<string, unknown>;
+      let auth: Record<string, unknown> | string;
       if (authMode === "password") {
         if (!password) { setErr("请输入密码"); setBusy(false); return; }
         auth = { Password: { password } };
+      } else if (authMode === "agent") {
+        auth = "Agent";
       } else {
         if (!pem.includes("PRIVATE KEY")) { setErr("请粘贴 OpenSSH / PEM 格式的私钥内容"); setBusy(false); return; }
         const meta = await invoke<IdentityMeta>("create_identity", {
@@ -1695,14 +1712,17 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
       </div>
       <div className="row" style={{ marginTop: 6 }}>
         <input placeholder="用户名" value={username} onChange={(e) => setUsername(e.target.value)} />
-        <select value={authMode} onChange={(e) => setAuthMode(e.target.value as "password" | "key")}>
+        <select value={authMode} onChange={(e) => setAuthMode(e.target.value as "password" | "key" | "agent")}>
           <option value="password">密码登录</option>
           <option value="key">私钥登录</option>
+          <option value="agent">SSH Agent</option>
         </select>
       </div>
       {authMode === "password" ? (
         <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
           style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      ) : authMode === "agent" ? (
+        <div className="dim" style={{ marginTop: 6 }}>连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。</div>
       ) : (
         <>
           <textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n粘贴私钥内容…"} value={pem}
@@ -1715,6 +1735,91 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
       <div className="row" style={{ marginTop: 8 }}>
         <button disabled={busy} onClick={submit}>{busy ? "保存中…" : "保存并连接"}</button>
         <span className="dim">凭据加密存入本机凭据库，不会明文落盘。</span>
+      </div>
+    </div>
+  );
+}
+
+// ~/.ssh/config 导入面板：预览勾选 → 逐条导入（有 IdentityFile 建身份，否则走 ssh-agent）
+function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose: () => void }) {
+  const [entries, setEntries] = useState<SshConfigPreview[] | null>(null);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [outcomes, setOutcomes] = useState<SshImportOutcome[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<SshConfigPreview[]>("ssh_config_preview", { path: null })
+      .then((es) => {
+        setEntries(es);
+        setChecked(new Set(es.filter((e) => !e.already_imported).map((e) => e.name)));
+      })
+      .catch((e) => setErr(friendlyError(String(e))));
+  }, []);
+
+  const importChecked = async () => {
+    setErr(null);
+    if (checked.size === 0) { setErr("先勾选要导入的条目"); return; }
+    setBusy(true);
+    try {
+      const outs = await invoke<SshImportOutcome[]>("ssh_config_import", {
+        path: null, names: [...checked],
+      });
+      setOutcomes(outs);
+      const okCount = outs.filter((o) => !o.error).length;
+      if (okCount > 0) onDone();
+    } catch (e) {
+      setErr(friendlyError(String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card add-host">
+      <div className="row">
+        <strong>从 ~/.ssh/config 导入</strong>
+        <span style={{ flex: 1 }} />
+        <button className="ghost" onClick={onClose}>收起</button>
+      </div>
+      {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
+      {entries === null && !err && <div className="dim" style={{ marginTop: 6 }}>读取中…</div>}
+      {entries !== null && entries.length === 0 && (
+        <div className="dim" style={{ marginTop: 6 }}>~/.ssh/config 里没有可导入的条目（通配符与 Match 块会跳过）。</div>
+      )}
+      {entries !== null && entries.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          {entries.map((e) => {
+            const outcome = outcomes?.find((o) => o.name === e.name);
+            return (
+              <label key={e.name} className="row sshcfg-row">
+                <input
+                  type="checkbox"
+                  disabled={e.already_imported || (outcome !== undefined && !outcome.error)}
+                  checked={checked.has(e.name) || (e.already_imported ?? false) || (outcome !== undefined && !outcome.error)}
+                  onChange={(ev) => {
+                    const next = new Set(checked);
+                    if (ev.target.checked) next.add(e.name); else next.delete(e.name);
+                    setChecked(next);
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  {e.name} <span className="dim mono">{e.username}@{e.address}:{e.port}</span>
+                  {" "}<span className="dim">{e.has_identity ? "· 密钥" : "· Agent"}</span>
+                  {outcome && !outcome.error && <span className="ok"> ✓ 已导入</span>}
+                  {outcome && outcome.error && <div className="err">✕ {outcome.error}</div>}
+                </span>
+                {e.already_imported && <span className="dim">已在主机列表</span>}
+              </label>
+            );
+          })}
+        </div>
+      )}
+      <div className="row" style={{ marginTop: 8 }}>
+        <button disabled={busy || entries === null} onClick={importChecked}>
+          {busy ? "导入中…" : "导入选中"}
+        </button>
+        <span className="dim">带 IdentityFile 的条目会读私钥入凭据库；没有的走本机 ssh-agent。</span>
       </div>
     </div>
   );

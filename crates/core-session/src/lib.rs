@@ -892,3 +892,157 @@ impl SessionManager {
         Ok(handle)
     }
 }
+
+// ---------------------------------------------------------------------------
+// ~/.ssh/config 导入（路线图⑨）：CLI 与 GUI 共用的组合逻辑。
+// 解析在 vault::sshcfg（纯函数）；这里做路径解析、与现有主机对账、
+// 身份落库（IdentityFile → Key）或 ssh-agent 引用（无 IdentityFile → Agent）。
+// ---------------------------------------------------------------------------
+
+impl SessionManager {
+    fn ssh_config_path(explicit: Option<&Path>) -> PathBuf {
+        match explicit {
+            Some(p) => p.to_path_buf(),
+            None => std::env::var_os("HOME")
+                .map(|h| PathBuf::from(h).join(".ssh/config"))
+                .unwrap_or_else(|| PathBuf::from(".ssh/config")),
+        }
+    }
+
+    fn load_entries(explicit: Option<&Path>) -> Result<Vec<tinyssh_vault::sshcfg::SshConfigEntry>> {
+        let path = Self::ssh_config_path(explicit);
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            Error::InvalidInput(format!("读取 {} 失败: {e}", path.display()))
+        })?;
+        let mut entries = tinyssh_vault::sshcfg::parse_ssh_config(&content);
+        // 同名 Host 块会被 ssh 合并；去重避免重复导入
+        entries.dedup_by(|a, b| a.name == b.name);
+        Ok(entries)
+    }
+
+    fn default_username(entry: &tinyssh_vault::sshcfg::SshConfigEntry) -> String {
+        entry
+            .username
+            .clone()
+            .or_else(|| std::env::var("USER").ok())
+            .unwrap_or_else(|| "root".into())
+    }
+
+    /// 预览：解析 + 与现有主机对账（同名或同 address+port+user 视为已导入）。
+    pub async fn ssh_config_preview(
+        &self,
+        path: Option<&Path>,
+    ) -> Result<Vec<SshConfigPreview>> {
+        let entries = Self::load_entries(path)?;
+        let existing = self.list_hosts(&Actor::Human).await?;
+        Ok(entries
+            .into_iter()
+            .map(|e| {
+                let username = Self::default_username(&e);
+                let port = e.port.unwrap_or(22);
+                SshConfigPreview {
+                    already_imported: existing.iter().any(|h| {
+                        h.name == e.name
+                            || (h.address == e.address
+                                && h.port == port
+                                && h.username == username)
+                    }),
+                    has_identity: e.identity_path.is_some(),
+                    name: e.name,
+                    address: e.address,
+                    port,
+                    username,
+                }
+            })
+            .collect())
+    }
+
+    /// 勾选导入。逐条出结果，单条失败不阻塞其余（UI 逐行展示）。
+    /// 有 IdentityFile 且可读 → 私钥入 vault（Key）；否则走本机 ssh-agent（Agent）。
+    pub async fn ssh_config_import(
+        &self,
+        ctx: &Actor,
+        path: Option<&Path>,
+        names: &[String],
+    ) -> Vec<SshImportOutcome> {
+        let mut out = Vec::new();
+        let entries = match Self::load_entries(path) {
+            Ok(e) => e,
+            Err(e) => {
+                return names
+                    .iter()
+                    .map(|n| SshImportOutcome {
+                        name: n.clone(),
+                        host_id: None,
+                        error: Some(e.to_string()),
+                    })
+                    .collect();
+            }
+        };
+        for name in names {
+            let Some(entry) = entries.iter().find(|e| &e.name == name) else {
+                out.push(SshImportOutcome {
+                    name: name.clone(),
+                    host_id: None,
+                    error: Some("配置中找不到该条目".into()),
+                });
+                continue;
+            };
+            let r = async {
+                let auth = match &entry.identity_path {
+                    Some(p) => {
+                        let pem = tokio::fs::read_to_string(p).await.map_err(|e| {
+                            Error::InvalidInput(format!("读取私钥 {} 失败: {e}", p.display()))
+                        })?;
+                        let meta = self
+                            .create_identity(
+                                ctx,
+                                IdentityReq::Import {
+                                    label: name.clone(),
+                                    pem,
+                                    passphrase: None,
+                                },
+                            )
+                            .await
+                            .map_err(|e| match e {
+                                // 加密私钥无口令解不开：明说，不静默降级
+                                Error::InvalidInput(m) if m.contains("passphrase") => {
+                                    Error::InvalidInput("私钥有口令，请先在应用内手工导入".into())
+                                }
+                                other => other,
+                            })?;
+                        AuthDraft::Key { identity_id: meta.id }
+                    }
+                    None => AuthDraft::Agent,
+                };
+                self.upsert_host(
+                    ctx,
+                    HostDraft {
+                        id: None,
+                        name: name.clone(),
+                        address: entry.address.clone(),
+                        port: Some(entry.port.unwrap_or(22)),
+                        username: Self::default_username(entry),
+                        auth,
+                        tags: vec!["ssh-config".into()],
+                    },
+                )
+                .await
+            }
+            .await;
+            match r {
+                Ok(hid) => out.push(SshImportOutcome {
+                    name: name.clone(),
+                    host_id: Some(hid),
+                    error: None,
+                }),
+                Err(e) => out.push(SshImportOutcome {
+                    name: name.clone(),
+                    host_id: None,
+                    error: Some(e.to_string()),
+                }),
+            }
+        }
+        out
+    }
+}

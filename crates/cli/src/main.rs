@@ -270,54 +270,19 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
 }
 
 async fn import_ssh_config(m: &Arc<SessionManager>) -> Result<()> {
-    let path = dirs::home_dir().unwrap_or_default().join(".ssh/config");
-    let content = std::fs::read_to_string(&path).context("read ~/.ssh/config")?;
-    let mut current: Option<HostDraft> = None;
-    let mut count = 0;
-    for line in content.lines() {
-        let line = line.trim();
-        let (k, v) = match line.split_once(' ') {
-            Some((k, v)) if !v.is_empty() => (k.to_lowercase(), v.to_string()),
-            _ => match line.split_once('\t') {
-                Some((k, v)) => (k.to_lowercase(), v.trim().to_string()),
-                _ => continue,
-            },
-        };
-        match k.as_str() {
-            "host" => {
-                if let Some(d) = current.take() {
-                    if !d.name.contains('*') {
-                        m.upsert_host(&human(), d).await?;
-                        count += 1;
-                    }
-                }
-                current = Some(HostDraft { name: v, ..Default::default() });
-            }
-            "hostname" => {
-                if let Some(d) = current.as_mut() {
-                    d.address = v;
-                }
-            }
-            "user" => {
-                if let Some(d) = current.as_mut() {
-                    d.username = v;
-                }
-            }
-            "port" => {
-                if let Some(d) = current.as_mut() {
-                    d.port = v.parse().ok();
-                }
-            }
+    // 解析/对账/身份落库都在 core-session（与 GUI 导入面板同一实现）
+    let preview = m.ssh_config_preview(None).await?;
+    let names: Vec<String> = preview.iter().map(|p| p.name.clone()).collect();
+    let outcomes = m.ssh_config_import(&human(), None, &names).await;
+    let mut ok = 0;
+    for o in &outcomes {
+        match (&o.host_id, &o.error) {
+            (Some(_), _) => ok += 1,
+            (None, Some(e)) => println!("  ✕ {}: {e}", o.name),
             _ => {}
         }
     }
-    if let Some(d) = current.take() {
-        if !d.name.contains('*') {
-            m.upsert_host(&human(), d).await?;
-            count += 1;
-        }
-    }
-    println!("imported {count} hosts from {path:?}");
+    println!("imported {ok}/{} hosts from ~/.ssh/config", outcomes.len());
     Ok(())
 }
 

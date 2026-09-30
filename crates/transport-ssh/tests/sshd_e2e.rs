@@ -231,3 +231,119 @@ async fn sftp_download_cancel_midway() {
         .unwrap();
     channel.close().await.unwrap();
 }
+
+// T21（路线图⑨）：ssh-agent 认证——起一次性 agent（不碰用户真实 agent），
+// 容器 authorized_keys 临时加公钥，Agent 认证建连后跑命令，最后全部清理。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ssh_agent_auth_connects() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("tinyssh-agent-t21-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // 一次性 ed25519 key（无口令）
+    let key_path = dir.join("id_test");
+    let kg = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "tinyssh-agent-test", "-f"])
+        .arg(&key_path)
+        .output()
+        .expect("ssh-keygen exists");
+    assert!(kg.status.success(), "ssh-keygen: {}", String::from_utf8_lossy(&kg.stderr));
+
+    // 独立 ssh-agent：socket 固定在本测试目录，与用户真实 agent 隔离
+    let agent_out = std::process::Command::new("ssh-agent")
+        .arg("-a")
+        .arg(dir.join("agent.sock"))
+        .output()
+        .expect("ssh-agent exists");
+    assert!(agent_out.status.success(), "ssh-agent: {}", String::from_utf8_lossy(&agent_out.stderr));
+    let envs = String::from_utf8_lossy(&agent_out.stdout).to_string();
+    let sock = envs
+        .split("SSH_AUTH_SOCK=")
+        .nth(1)
+        .expect("SSH_AUTH_SOCK line")
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let agent_pid: String = envs
+        .split("SSH_AGENT_PID=")
+        .nth(1)
+        .expect("SSH_AGENT_PID line")
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+
+    // 收尾：杀 agent + 删临时目录 + 容器 authorized_keys 还原（无论断言成败）
+    struct Cleanup(String, String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("kill").arg(&self.0).output();
+            let _ = std::process::Command::new("docker")
+                .args(["exec", "tinyssh-e2e", "sed", "-i", "/tinyssh-agent-test$/d",
+                       "/root/.ssh/authorized_keys"])
+                .output();
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
+    let _cleanup = Cleanup(agent_pid, dir.to_string_lossy().into_owned());
+
+    let add = std::process::Command::new("ssh-add")
+        .env("SSH_AUTH_SOCK", &sock)
+        .arg(&key_path)
+        .output()
+        .expect("ssh-add exists");
+    assert!(add.status.success(), "ssh-add: {}", String::from_utf8_lossy(&add.stderr));
+
+    // 容器收公钥（StrictModes 要求目录/文件权限正确）
+    let pubkey = std::fs::read_to_string(key_path.with_extension("pub")).unwrap();
+    use std::io::Write as _;
+    let mut child = std::process::Command::new("docker")
+        .args(["exec", "-i", "tinyssh-e2e", "sh", "-c",
+               "mkdir -p /root/.ssh && chmod 700 /root/.ssh && touch /root/.ssh/authorized_keys && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("docker exec");
+    child.stdin.take().unwrap().write_all(pubkey.as_bytes()).unwrap();
+    let added = child.wait().unwrap();
+    assert!(added.success(), "docker exec authorized_keys");
+
+    // Agent 认证建连（connect_env 读进程 env 的 SSH_AUTH_SOCK）
+    let prev_sock = std::env::var("SSH_AUTH_SOCK").ok();
+    std::env::set_var("SSH_AUTH_SOCK", &sock);
+    let mut t = target();
+    t.auth_type = session_api::AuthType::Agent;
+    t.secret = String::new();
+    let channel = match transport_ssh::SshChannel::connect(t, 120, 32).await {
+        Ok(c) => c,
+        Err(e) => {
+            if let Some(s) = prev_sock {
+                std::env::set_var("SSH_AUTH_SOCK", s);
+            }
+            panic!("agent auth connect failed: {e}");
+        }
+    };
+    if let Some(s) = prev_sock {
+        std::env::set_var("SSH_AUTH_SOCK", s);
+    }
+
+    // shell 里跑命令证明认证+通道完整
+    use session_api::transport::ChannelHandle as _;
+    let out = channel
+        .exec_fresh(
+            "whoami",
+            &session_api::ExecOpts::default(),
+            std::time::Instant::now() + Duration::from_secs(10),
+            &session_api::transport::tokio_util_sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "root");
+    channel.close().await.unwrap();
+}

@@ -15,15 +15,18 @@ pub fn sshd_lock() -> SshdLock {
     SshdLock(f)
 }
 
-/// 持锁后等待共享 sshd 就绪（TCP 可连）。journey2 会 docker restart 容器，
+/// 持锁后等待共享 sshd 就绪。journey2 会 docker restart 容器，
 /// 紧随其后的持锁测试若立即连接会撞上重启窗口——这是并发回归中
 /// "empty screen / script not done / cwd=null" 一类 flake 的根因。
-/// 探测成功后再 settle 一小段，让 sshd 会话子系统完全可用。
+/// 只探 TCP 不够：docker start 会重跑容器 setup（apk 等需数秒），而 docker
+/// 端口代理在容器内 sshd 真正监听前就接受 TCP（随后 reset）——journey3
+/// "Connection reset by peer" 稳定失败的根因。因此探测必须读到 SSH banner。
 pub async fn await_sshd_ready(timeout: std::time::Duration) {
     let addr = std::env::var("TINYSSH_E2E_SSHD_ADDR").unwrap_or_else(|_| "127.0.0.1:2222".into());
     let start = std::time::Instant::now();
     loop {
-        if std::net::TcpStream::connect(&addr).is_ok() {
+        if probe_banner(&addr) {
+            // settle 一小段，让 sshd 会话子系统完全可用
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             return;
         }
@@ -32,5 +35,21 @@ pub async fn await_sshd_ready(timeout: std::time::Duration) {
             "共享 sshd {addr} 在 {timeout:?} 内未就绪"
         );
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+/// TCP 可连且 banner 以 "SSH-" 开头（读到 banner 即断开，sshd 仅记一条日志）。
+fn probe_banner(addr: &str) -> bool {
+    use std::io::Read;
+    let Ok(mut stream) = std::net::TcpStream::connect(addr) else {
+        return false;
+    };
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .ok();
+    let mut buf = [0u8; 8];
+    match stream.read(&mut buf) {
+        Ok(n) => n >= 4 && buf.starts_with(b"SSH-"),
+        Err(_) => false,
     }
 }
