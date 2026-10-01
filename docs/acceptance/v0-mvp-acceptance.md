@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.21 · 日期：2026-10-01 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
+> 版本：v1.22 · 日期：2026-10-02 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -672,6 +672,23 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 1. **真两轮提示（密码后追加 OTP）未对真实 2FA 服务器实测**——沙箱 PAM 只能造单轮密码提示；多轮循环路径与单轮完全同构（逐提示应答），人工门对话框已在 demo 层走查。GBK 编码（路线图⑩后半）未做，按需排期。
 2. **回归守卫勘误（T18 教训第三度重演）**：v1.15–v1.19 各轮的「66/67 全绿」回归命令漏带 `TINYSSH_E2E_SSHD=1`，e2e 测试守卫跳过被计成通过——本轮带守卫跑出真实问题并修复：①journey3（docker stop/start 时序敏感）在套件并发下 60s 超时、单跑 9s 秒过，补同款两次尝试兜底（§6-11 家族）；②spike2 参考密钥的公钥是建容器时手工塞过一次的**隐式环境依赖**，pv_env 重建容器后必挂——测试内自举（密钥缺失自动生成 + 公钥自动注入容器）；③kb e2e 的 sshd.pam 与容器杀旧实例三处实测坑（busybox `pgrep -x` 匹配 argv[0] 而 sshd 监听进程 re-exec 后是长标题——/proc 全扫描 + 排除自身）。
 3. `AuthType::KeyboardInteractive` 未在 UI 表单开放（CLI/导入路径可达）；对用户可见入口 = 密码主机遇到 2FA 服务器时自动回落 + 认证对话框。
+
+### 5.24 真机冒烟（T28，进行中）—— TOFU 门真机旁证（v1.22）
+
+**目标**：T22/T23 遗留实机复验（⌘F 搜索焦点、死会话 native Ctrl 层）+ 真机全链路冒烟（AUTOCONNECT 建连 → 指纹门确认 → 终端哨兵键入 → 死会话评估）。v1 轮 prod-1 误点事故与结构修复（TINYSSH_AUTOCONNECT dev 门禁零主机卡点击、位置点击仅限模态遮罩内与终端区、事后审计 DB 主机 id 断言）见 §5.23 披露与记忆档。
+
+**v2 残留真机旁证（2026-10-01 22:27，无截图但审计确凿）**：
+
+- AUTOCONNECT 目标经 DB 实查核验：`h-556e559b` = e2e-sshd（127.0.0.1:2222, root）；prod-1 = `h-53bf3bcb`（10.0.0.11）、腾讯广州 = `h-fc2edb62`（193.112.219.133），无混淆。
+- 容器重建后**指纹 Changed 门在真实 app 如期触发**：审计 `host_key_confirm_requested`（新指纹 `SHA256:+plkpp…` ≠ 库内 `SHA256:wD4pZqe…`）。
+- 脚本因显示器休眠找不到窗口提前退场后，**120s 超时路径干净走完**：报错「主机指纹验证失败（确认超时）」、app 存活不崩。
+
+结论：指纹门「会弹、超时语义正确、不崩」已在真机成立。**待验四步**：确认点击→建会话、终端哨兵键入落盘、⌘F 焦点旁证（容器 history grep = 0）、死会话 native Ctrl 后 app 存活。
+
+**执行安排与门禁**：watcher 仅在「未锁屏 + HIDIdleTime≥75s」触发（**锁屏永不触发**，最硬中止条件）；脚本每步注入前二次门禁（含自家合成注入的 idle 排除；v1.22 修复首步门禁洞——从未注入时不得以「自家注入解释」放行）；触发前探测容器 banner 就绪 + cargo 测试互斥锁；收尾与异常路径统一 pkill 清理。
+
+**T28 判定：未判定（进行中）**。触发跑通后结果补记本节。
+
 
 ## 6. 已知边界（诚实清单）
 
