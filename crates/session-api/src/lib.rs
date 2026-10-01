@@ -361,8 +361,10 @@ pub struct HostDraft {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum AuthDraft {
+    /// 编辑主机时保持现有凭据（UI 不持明文，不能回传重发）；新建主机回落为无凭据占位
+    /// （仅本机 PTY 的 local 主机使用，SSH 建连前必须改绑凭据）。
     #[default]
-    #[serde(skip)]
+    #[serde(rename = "Keep")]
     None,
     Key { identity_id: IdentityId },
     Password { password: String },

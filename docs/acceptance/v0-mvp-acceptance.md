@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.15 · 日期：2026-10-01 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
+> 版本：v1.16 · 日期：2026-10-01 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.3](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -538,6 +538,33 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 2. 走查对象为 vite demo 模式（headless，无系统级键鼠注入），不涉及真实主机；实机冒烟同样仅限 e2e 容器（127.0.0.1:2222）。
 3. 走查报告的 P1-2 根因推断（mousedown 委托）已在本节更正，报告 §2 同步勘误。
 
+### 5.18 UX 走查修复第二批（v1.16，T23）
+
+**动机**：UX 走查报告（§5.17 同源）第一批后的日用摩擦主干：P1-4/P1-5 + P2-1/3/5/6/7/8（[报告 §4 批次表](../ux/2026-09-30-simulated-ux-review.md)）。
+
+**后端改动（本轮唯一内核项）**：`AuthDraft::None`（serde rename `"Keep"`）重定义为**编辑主机保持现有凭据**——UI 不持明文、编辑不能要求重输密码；vault `upsert_host` 对 Keep 且行已存在 → 保留原 auth_type/identity_id（identities 表密码行随 identity_id 不变原样保留），新建回落原占位行为（local 主机，`ensure_local_host` 不受影响）。`delete_host` 后端 v0 即有（软删+审计 `host_delete`），本轮补 UI 入口。
+
+**验证方式**：同 §5.17（demo 渲染层 headless 断言 + 截图目验）；本轮 **20/20 断言**全过 + cargo **66/66 全绿**。
+
+| 项 | 修复 | 验证 | 证据 |
+|---|---|---|---|
+| P1-4 主机无编辑删除 | 主机卡 hover 出 ✎/✕；✎ 打开表单编辑模式（预填 + 认证区禁用 + 「凭据保持不变（密码/密钥/Agent）」+ 后端 Keep 语义 + tags 原样回传）；✕ 确认弹层（「凭据与指纹记录一并移除…已建立的会话不受影响」）→ 软删 | 编辑改名 prod-1→prod-1-renamed 原位生效、主机数不变、不自动建连；删除确认 → prod-2 卡消失 | [u2_edit_form.png](screenshots/u2_edit_form.png) |
+| P1-5 关已连接标签=静默断开 | 统一 `requestCloseSession`：活会话关标签（✕）/⌘W/会话卡「断开」均弹确认（「终端现场不可恢复——重连会是全新现场」）；死会话直接关 | ✕ → 弹层 → 取消仍已连接；✕ → 断开连接 → 卡变「· 已断开」 | [u2_close_confirm.png](screenshots/u2_close_confirm.png) |
+| P2-1 键盘可达 | 标签 tabIndex=0 + role=tab + Enter/Space 切换；Esc 统一关闭浮层（搜索框/设置面板/添加主机/导入/Agent 指引；**xterm textarea 除外**——终端 Esc 是 vim 功能键，输入控件也不劫持） | Esc 关设置面板/表单；focus 标签 + Enter → attach | [u2_tab_keyboard.png](screenshots/../screenshots/u2_tab_keyboard.png)（未归档，见断言记录） |
+| P2-3 表单三连 | 字段常驻标签（名称/地址/端口/用户名/认证方式）；地址格式校验（`^[a-zA-Z0-9._-]{1,253}$`，乱码不再一路存到「连接成功」）；切换认证方式清旧错误 | 乱码地址 → 红字「地址格式不对…」；切私钥登录 → 错误消失 | [u2_addr_invalid.png](screenshots/u2_addr_invalid.png) |
+| P2-5 停止结果零披露 | `takeoverStop` 渲染 TakeoverReport：逐任务停止结果（Exited/Escalated/Unresponsive→「升级后仍未停止」标红）、作废排队数、冻结状态、简报指引 | 「⏸ 已接管 prod-1 —— 停止结果：x-demo-1f → 已停止（exit 0）· 作废排队 1 条 · 新请求已冻结」 | [u2_stop_result.png](screenshots/u2_stop_result.png) |
+| P2-6 失败反馈断裂 | 主机卡新增失败态：连接中（按 host id）、失败后卡上红字「上次连接失败——检查地址与凭据后重试」（横幅保留并补指引） | 连 prod-2（演示失败）→ 卡红字出现 | [u2_edit_form.png](screenshots/u2_edit_form.png)（左栏同框） |
+| P2-7 死会话无标注/输入黑洞 | 终端区死会话遮罩（「⛔ 会话已断开——画面是断开前的最后状态；键入已拦截」+「重连恢复」按钮 + 重确认提示）；输入拦截四路：xterm onData（限一次提示行）/ Option-Meta 层 / Ctrl 控制字符层 / 命令框（含 placeholder 诚实化、「中断」按钮） | attach 死会话 → 遮罩；键入 `ls` → 终端出现「⚠ 会话已断开——键入未发送」、无 ls 回显 | [u2_dead_overlay.png](screenshots/u2_dead_overlay.png) / [u2_dead_intercept.png](screenshots/u2_dead_intercept.png) |
+| P2-8 死卡双按钮/状态词截断 | 会话卡 Disconnected 时只留「重连」（隐藏「断开」）；主机名 ellipsis 与状态词 flex:none 分离，「· 已断开」不再被吞 | 死卡 inner_text 含「· 已断开」且无「断开」按钮 | [u2_dead_card.png](screenshots/../screenshots/u2_dead_card.png)（见断言记录） |
+
+**配套**：demo shim 对齐真实语义（`close_session` 保留卡片置 Disconnected——之前直接移除是 shim 伪影、`upsert_host` 支持 id 更新、`delete_host`、`set_control` 返回演示停止结果）。
+
+**T23 判定：通过**（demo 渲染层 20/20 断言 + 截图目验；cargo 66/66 回归全绿）。如实披露：
+
+1. **实机原生冒烟未执行（第二次锁屏中止）**：启动前检查 LOCKED，按最硬中止条件放弃 UI 注入（不等待不重试）。本轮新增输入拦截路径覆盖 xterm onData / Option / Ctrl / 命令框四路，均为 DOM/JS 层，demo 证据已覆盖行为；**native NSEvent 层（T10 Ctrl 接管）死会话时仍会直发死通道**（按键被吞无副作用，但无提示）——已知边界，随 P2-7 实机复验一并评估是否在 native 层加会话状态检查。
+2. 编辑仅覆盖名称/地址/端口/用户名与删除；**认证凭据更换 = 删除后重添加**（明文不出 vault 的约束下，编辑改凭据需要「旧凭据验证」机制，V1 再议）。
+3. `rm -rf` 类高危**编辑后批准**仍走 §5.17 的内置 deny 复检（后端既有，ApproveEdited 不可绕过），本轮未改动。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪。
@@ -557,7 +584,7 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **~~鼠标上报未实测~~（v1.8 已验证，路线图③关闭，§5.10）**：点击上报原生端到端实证（本机 vim mouse=a 点击指定单词 → 光标跳转 → `rZ` 替换命中字符落盘）；滚轮上报的 xterm.js SGR 编码经 WebKit 引擎层验证 4/4（与应用同一构建）。残留边界：真实滚轮手感未经真人确认（合成滚轮事件送不进 WKWebView，走查工具层限制已实证；真实输入投递由平台保证），tmux/htop 未实测（环境无此二者）——均为日常使用顺手确认项，不再阻塞路线图。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~~.ssh/config 导入与 agent~~（**v1.14 完成，§5.16**——导入面板/来源标注/徽标/Agent 主机 TOFU 建连与重启直连 UI 走查通过；t21-d Key 主机 UI 建连与连接后键入因用户占用中止注入，既有功能由自动化覆盖并披露）**UX 走查修复第一批（v1.15 完成，§5.17）**——2026-09-30 模拟用户 UX 走查（[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)，26 条真实问题）第一批 5 项（审批卡目标上下文/搜索焦点抢占/危险批准摩擦/首屏矛盾文案/AGENT 接入区）已修复并走查；第二、三批按该报告 §4 批次表排期⑩ 键盘交互认证/2FA、GBK 编码。**①–⑨ 全部完成**，下一项 = 第一批余项复核 + ⑩（按需排期）。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~~.ssh/config 导入与 agent~~（**v1.14 完成，§5.16**——导入面板/来源标注/徽标/Agent 主机 TOFU 建连与重启直连 UI 走查通过；t21-d Key 主机 UI 建连与连接后键入因用户占用中止注入，既有功能由自动化覆盖并披露）**UX 走查修复第一批（v1.15 完成，§5.17）**——2026-09-30 模拟用户 UX 走查（[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)，26 条真实问题）第一批 5 项（审批卡目标上下文/搜索焦点抢占/危险批准摩擦/首屏矛盾文案/AGENT 接入区）已修复并走查；**第二批（v1.16 完成，§5.18）**——日用摩擦主干 8 项（主机编辑删除/关签确认/键盘可达/表单三连/停止披露/失败态/死会话遮罩拦截/死卡单按钮）已修复并走查；第三批（其余 P2 与全部 P3）按报告批次表排期⑩ 键盘交互认证/2FA、GBK 编码。**①–⑨ 全部完成**，下一项 = 第一批余项复核 + ⑩（按需排期）。
 19. **~~fitTerminal 静默失效（历史缺陷）~~（v1.11 已修复，§5.13）**：xterm 5.5 无公开 `dimensions`，fit 自 v1.x 起从未真正生效，xterm/PTY 恒为构造默认 80×24（13px 下恰好正确而长期未暴露，窗口 resize 的「跟随」实为看门狗把 PTY 锁到 80×24）。修复经 `_core._renderService.dimensions`（addon-fit 同源）后 PTY 真实随字号/窗口变化（实测 16px=35×75、19px=28×63）。此前各轮报告中「PTY 对齐」的验收结论在默认 13px 场景下成立，其他字号下的对齐自 v1.11 起才真实成立。
 20. **主题作用域**：终端配色预设只作用于终端区域，界面 chrome（左/右栏、弹窗）恒为深色——亮色 chrome 需全站 CSS 变量与硬编码色值适配，属 V1；设置（字号/主题）不入审计链（UI 偏好非协作事实，vault `settings` KV 可查）。
 23. **拖拽投递的走查口径（v1.13）**：T20 的 OS 级拖拽事件（Finder→WKWebView NSDraggingSession 投递）在双屏+多 Space 环境无法脚本化驱动，走查以 dev 门禁合成事件注入覆盖该环节（§5.15 披露①），其余链路全部真实；真人拖拽列为顺手确认项。人类传输不经审批直接执行（审计留痕），与「Agent 传输必审」的 L1 §4 语义一致。
@@ -728,8 +755,16 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    归档截图：docs/acceptance/screenshots/u1_*.png（5 张）
 #    回归：TINYSSH_MASTER_KEY=$(python3 -c "print('07'*32)") cargo test   # 66/66
 #    实机原生冒烟（真实 shell 复验 P1-2 + 审批卡实机渲染，需 agent MCP rig）：待下一走查窗口
+
+# 19) UX 修复第二批走查（§5.18；**v1.16 已执行——demo 渲染层 20/20 通过**）
+#    cd ui && npm run dev -- --port 5183 --host 127.0.0.1
+#    python3 /tmp/uxfix2_walk.py   # playwright channel="chrome" headless；20 项断言 + 截图 /tmp/u2shots/
+#    归档截图：docs/acceptance/screenshots/u2_*.png（8 张）
+#    回归：TINYSSH_MASTER_KEY=$(python3 -c "print('07'*32)") cargo test   # 66/66
+#    后端改动：AuthDraft::None→"Keep"（编辑保持凭据）+ vault upsert_host 保留分支
+#    实机原生冒烟（P2-7 native Ctrl 层评估 + T22 遗留两项）：待下一走查窗口
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **55 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18）、文件传输 T20（§5.15，v1.13——SFTP 拖拽上传到会话当前目录 + 路径下载到 ~/Downloads + 传输卡片/取消 + 审计带 transfer id；走查含覆盖层/完整性/审计矩阵与真实取消 e2e），路线图①–⑧已完成。v1.14（T21，§5.16）：~/.ssh/config 导入（共享解析器 + 预览对账 + 勾选导入）与 ssh-agent 认证（AuthType::Agent，vault 零密钥落库，russh AgentClient 逐 key 签名）已实现并经 **66 项自动化测试全绿**（新增解析器 8 例、agent 认证 e2e、导入链路集成 2 例），顺带修复测试基建既有缺陷（await_sshd_ready TCP-only 探测在 docker 端口代理下失真，journey3 在 HEAD 稳定失败的根因）；UI 视觉走查跨两日完成（首轮锁屏中止，恢复后矩阵 4 通过/1 部分覆盖并如实披露，§5.16），**UX 路线图①–⑨全部关闭**。v1.15（T22，§5.17）：模拟用户 UX 走查（4 人格并行黑盒 + demo shim 甄别，[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)）产出真实问题 26 条，第一批信任/安全 5 项已修复并经 demo 渲染层 11 项断言走查——P1-2 搜索焦点抢占根因实为 `.term-wrap` click 监听冒泡（非走查报告原推断的 mousedown 委托，两处已勘误），设置面板同根因一并修复；实机原生冒烟因锁屏中止，列为下一走查窗口顺手项。下一关为 validation-plan 的产品验证 gate（需真人参与者）。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **55 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18）、文件传输 T20（§5.15，v1.13——SFTP 拖拽上传到会话当前目录 + 路径下载到 ~/Downloads + 传输卡片/取消 + 审计带 transfer id；走查含覆盖层/完整性/审计矩阵与真实取消 e2e），路线图①–⑧已完成。v1.14（T21，§5.16）：~/.ssh/config 导入（共享解析器 + 预览对账 + 勾选导入）与 ssh-agent 认证（AuthType::Agent，vault 零密钥落库，russh AgentClient 逐 key 签名）已实现并经 **66 项自动化测试全绿**（新增解析器 8 例、agent 认证 e2e、导入链路集成 2 例），顺带修复测试基建既有缺陷（await_sshd_ready TCP-only 探测在 docker 端口代理下失真，journey3 在 HEAD 稳定失败的根因）；UI 视觉走查跨两日完成（首轮锁屏中止，恢复后矩阵 4 通过/1 部分覆盖并如实披露，§5.16），**UX 路线图①–⑨全部关闭**。v1.15（T22，§5.17）：模拟用户 UX 走查（4 人格并行黑盒 + demo shim 甄别，[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)）产出真实问题 26 条，第一批信任/安全 5 项已修复并经 demo 渲染层 11 项断言走查——P1-2 搜索焦点抢占根因实为 `.term-wrap` click 监听冒泡（非走查报告原推断的 mousedown 委托，两处已勘误），设置面板同根因一并修复；实机原生冒烟因锁屏中止，列为下一走查窗口顺手项。v1.16（T23，§5.18）：UX 走查修复第二批 8 项——主机编辑/删除（AuthDraft "Keep" 语义：编辑不回传明文、凭据原样保留；delete_host 补 UI 入口+确认）、关已连接标签二次确认（✕/⌘W/断开三口统一）、标签键盘可达 + Esc 统一关浮层（xterm textarea 除外）、表单常驻标签/地址校验/切换清错、接管停止结果逐条披露（Unresponsive 标红）、主机卡连接失败态、死会话终端遮罩 + 四路输入拦截、死卡单按钮与状态词完整——demo 渲染层 **20/20 断言**+cargo **66/66 全绿**；实机原生冒烟再次因锁屏中止（native Ctrl 层死会话行为记为已知边界）。下一关为 validation-plan 的产品验证 gate（需真人参与者）。

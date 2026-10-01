@@ -22,6 +22,7 @@ import "@xterm/xterm/css/xterm.css";
 type Host = {
   id: string; name: string; address: string; port: number; username: string;
   auth_type: "Key" | "Password" | "KeyboardInteractive" | "Agent";
+  tags: string[];
 };
 type SshConfigPreview = {
   name: string; address: string; port: number; username: string;
@@ -51,6 +52,18 @@ type AuditEvent = {
   action: string; command: string | null;
 };
 type IdentityMeta = { id: string; label: string; kind: string; fingerprint: string };
+// 接管返回（PRD FR-6：停止结果逐条显示，不谎报）。StopOutcome serde 为
+// externally tagged：{"Exited":3} / "Escalated" / "Unresponsive"。
+type TakeoverReport = {
+  frozen: boolean; paused_queue: string[]; stopped: [string, unknown][]; brief?: unknown;
+};
+function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
+  if (v && typeof v === "object" && "Exited" in (v as Record<string, unknown>))
+    return { text: `已停止（exit ${(v as { Exited: number }).Exited}）`, bad: false };
+  if (v === "Unresponsive") return { text: "升级后仍未停止", bad: true };
+  if (v === "Escalated") return { text: "升级后停止", bad: false };
+  return { text: String(v), bad: false };
+}
 // 文件传输（T20）：核心返回的句柄 + UI 卡片状态（终态由审计事件按 id 对账）
 type TransferHandle = { id: string; session_id: string; kind: "Upload" | "Download"; local: string; remote: string };
 type TransferCard = {
@@ -325,6 +338,8 @@ export default function App() {
   const [showAddHost, setShowAddHost] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showAgentHelp, setShowAgentHelp] = useState(false);
+  const [editingHost, setEditingHost] = useState<Host | null>(null);
+  const [lastFailed, setLastFailed] = useState<string | null>(null);
 
   const refreshLists = useCallback(async () => {
     setSessions(await invoke<SessionInfo[]>("list_sessions"));
@@ -488,7 +503,17 @@ export default function App() {
       return false;
     });
     // onData 直接归属本会话：终端实例与会话一一对应，无 stale closure。
+    let deadWarned = false;
     term.onData((d) => {
+      // 死会话输入拦截（P2-7）：PTY 已死，键入只会静默进黑洞——明说，不假装
+      if (sessionsRef.current.find((x) => x.id === sessionSid)?.state === "Disconnected") {
+        if (!deadWarned) {
+          deadWarned = true;
+          term.write("\r\n\x1b[33m⚠ 会话已断开——键入未发送。从左侧会话卡「重连」恢复。\x1b[0m\r\n");
+        }
+        return;
+      }
+      deadWarned = false;
       invoke("send_keys", { sid: sessionSid, keys: d }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${String(e)}\x1b[0m\r\n`);
       });
@@ -504,7 +529,7 @@ export default function App() {
     if (!wrap) return;
     const onFocus = (ev: MouseEvent) => {
       const t = ev.target as HTMLElement | null;
-      if (t?.closest?.(".term-search, .term-settings")) return;
+      if (t?.closest?.(".term-search, .term-settings, .dead-overlay")) return;
       xtermRef.current?.focus();
     };
     wrap.addEventListener("click", onFocus);
@@ -529,8 +554,9 @@ export default function App() {
           if (!seq) return;
           ev.preventDefault();
           ev.stopPropagation();
-          const s = sidRef.current;
-          if (s) void invoke("send_keys", { sid: s, keys: seq }).catch(() => {});
+          const s0 = sidRef.current;
+          if (!s0 || sessionsRef.current.find((x) => x.id === s0)?.state === "Disconnected") return;
+          void invoke("send_keys", { sid: s0, keys: seq }).catch(() => {});
           return;
         }
         if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
@@ -539,6 +565,12 @@ export default function App() {
             !t.classList.contains("xterm-helper-textarea")) return;
         const s = sidRef.current;
         if (!s) return;
+        // 死会话拦截：Ctrl 控制字符不进死通道（黑洞）
+        if (sessionsRef.current.find((x) => x.id === s)?.state === "Disconnected") {
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
         // IME 组合期间 key 可能是 "Process"/keyCode 229 —— 用物理键位 ev.code 解码
         let key: string | null = null;
         if (ev.key.length === 1) key = ev.key;
@@ -896,6 +928,29 @@ export default function App() {
     refreshLists();
   }, [detach, applyPanes, fitTerminal, refreshLists, refreshBrief]);
 
+  // 危险动作确认（P1-5/P1-4）：断开活会话、删除主机都先过弹层；死会话直接关（无需确认）
+  const [confirm, setConfirm] = useState<
+    { kind: "closeSession"; sid: string; hostName: string } | { kind: "deleteHost"; id: string; name: string } | null
+  >(null);
+  const requestCloseSession = useCallback((s: SessionInfo) => {
+    if (s.state === "Disconnected") { void disconnectSid(s.id); return; }
+    setConfirm({ kind: "closeSession", sid: s.id, hostName: s.host_name });
+  }, [disconnectSid]);
+  const deleteHost = async (id: string) => {
+    try {
+      await invoke("delete_host", { id });
+      await refreshLists();
+    } catch (e) {
+      setConnError({ title: "删除主机失败", detail: friendlyError(String(e)) });
+    }
+  };
+  const confirmAction = async () => {
+    if (!confirm) return;
+    if (confirm.kind === "closeSession") await disconnectSid(confirm.sid);
+    else await deleteHost(confirm.id);
+    setConfirm(null);
+  };
+
   // ⌘1–9 快速切换到第 N 个会话（终端应用标配）。捕获阶段拦截，终端聚焦时也生效。
   useEffect(() => {
     if (!inTauri) return;
@@ -936,11 +991,13 @@ export default function App() {
       if (!cur) return;
       ev.preventDefault();
       ev.stopPropagation();
-      void disconnectSid(cur);
+      const curSession = sessions.find((x) => x.id === cur);
+      if (curSession) requestCloseSession(curSession);
+      else void disconnectSid(cur);
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [attachSession, disconnectSid, sessions]);
+  }, [attachSession, disconnectSid, requestCloseSession, sessions]);
 
   // 关闭搜索：清高亮、焦点回终端
   const closeSearch = useCallback(() => {
@@ -949,6 +1006,25 @@ export default function App() {
     addon?.clearDecorations();
     xtermRef.current?.focus();
   }, []);
+
+  // Esc 统一关闭浮层（P2-1）：搜索框/设置面板/添加主机/导入/Agent 指引。
+  // 输入控件不劫持（命令框 Esc 有自己的语义；搜索框 input 自带 Esc 关闭）；
+  // xterm 的 textarea 除外——终端里 Esc 是 vim 等程序的功能键，绝不能全局拦截。
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape") return;
+      const t = ev.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
+          !t.classList.contains("xterm-helper-textarea")) return;
+      if (searchOpen) { closeSearch(); return; }
+      if (showSettings) { setShowSettings(false); return; }
+      if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); return; }
+      if (showImport) { setShowImport(false); return; }
+      if (showAgentHelp) { setShowAgentHelp(false); return; }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searchOpen, showSettings, showAddHost, showImport, showAgentHelp, editingHost, closeSearch]);
 
   // macOS 窗口标题跟随当前会话主机（T16）；浏览器 demo 同步 document.title
   useEffect(() => {
@@ -1067,16 +1143,18 @@ export default function App() {
     };
   }, [startUploads]);
 
-  const createSession = async (host: Host) => {    setConnecting(host.name);
+  const createSession = async (host: Host) => {    setConnecting(host.id);
     setConnError(null);
     try {
       const newSid = await invoke<string>("create_session", { hostId: host.id });
+      setLastFailed(null);
       await refreshLists();
       await attachSession(newSid);
     } catch (e) {
+      setLastFailed(host.id);
       setConnError({
         title: `连接 ${host.name}（${host.username}@${host.address}:${host.port}）失败`,
-        detail: friendlyError(String(e)),
+        detail: friendlyError(String(e)) + "——也可在主机卡上看到失败提示，修正后重试",
       });
     } finally {
       setConnecting(null);
@@ -1103,9 +1181,12 @@ export default function App() {
     await invoke("set_control", { sid, owner: "Human", stopRunning: false });
     await refreshLists();
   };
+  // 「接管并停止任务」逐条披露停止结果（PRD FR-6：不谎报——升级后仍未停止要标红）
+  const [stopResult, setStopResult] = useState<{ hostName: string; report: TakeoverReport } | null>(null);
   const takeoverStop = async () => {
     if (!sid) return;
-    await invoke("set_control", { sid, owner: "Human", stopRunning: true });
+    const r = await invoke<TakeoverReport>("set_control", { sid, owner: "Human", stopRunning: true });
+    setStopResult({ hostName: sessions.find((x) => x.id === sid)?.host_name ?? "", report: r });
     await refreshLists();
   };
   const handback = async () => {
@@ -1177,9 +1258,12 @@ export default function App() {
           )}
           {showAddHost && (
             <AddHostForm
-              onAdded={async (hid) => {
+              editHost={editingHost}
+              onSaved={async (hid, wasEdit) => {
                 setShowAddHost(false);
+                setEditingHost(null);
                 await refreshLists();
+                if (wasEdit) return; // 编辑只改配置，不自动建连
                 const h = hosts.find((x) => x.id === hid);
                 // list_hosts 刚刷新过，直接用返回值兜底
                 const target = h ?? (await invoke<Host[]>("list_hosts")).find((x) => x.id === hid);
@@ -1190,13 +1274,22 @@ export default function App() {
           <div className="section">
             <h4>主机</h4>
             {hosts.map((h) => (
-              <div className="card row" key={h.id}>
+              <div className="card row host-card" key={h.id}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div>{h.name} <span className="dim">{h.auth_type === "Key" ? "· 密钥" : h.auth_type === "Agent" ? "· Agent" : "· 密码"}</span></div>
                   <div className="dim mono">{h.username}@{h.address}:{h.port}</div>
+                  {lastFailed === h.id && connecting !== h.id && (
+                    <div className="err" style={{ fontSize: 11, marginTop: 2 }}>✕ 上次连接失败——检查地址与凭据后重试</div>
+                  )}
+                </div>
+                <div className="host-ops">
+                  <button className="ghost" title="编辑主机（名称/地址/端口/用户名，凭据保持不变）"
+                    onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}>✎</button>
+                  <button className="ghost host-del" title="删除主机"
+                    onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}>✕</button>
                 </div>
                 <button disabled={connecting !== null} onClick={() => createSession(h)}>
-                  {connecting === h.name ? "连接中…" : "连接"}
+                  {connecting === h.id ? "连接中…" : "连接"}
                 </button>
               </div>
             ))}
@@ -1215,8 +1308,9 @@ export default function App() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); attachSession(s.id); }
                     }}>
-                    <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {s.host_name} <span className={"mono " + st.cls}>· {st.text}</span>
+                    <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.host_name}</span>
+                      <span className={"mono " + st.cls} style={{ flex: "none" }}>· {st.text}</span>
                     </div>
                     <div className="dim mono">{s.id.slice(0, 12)}</div>
                   </div>
@@ -1225,7 +1319,9 @@ export default function App() {
                       {reconnecting === s.id ? "重连中…" : "重连"}
                     </button>
                   )}
-                  <button className="ghost" onClick={() => void disconnectSid(s.id)}>断开</button>
+                  {s.state !== "Disconnected" && (
+                    <button className="ghost" onClick={() => requestCloseSession(s)}>断开</button>
+                  )}
                 </div>
               );
             })}
@@ -1309,6 +1405,12 @@ Authorization: Bearer <TOKEN>`}
                 key={s.id}
                 className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")}
                 title={`${s.host_name} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
+                tabIndex={0}
+                role="tab"
+                aria-selected={sid === s.id}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id); }
+                }}
                 onClick={() => attachSession(s.id)}
               >
                 <span className={"tab-dot " + st.cls} />
@@ -1320,8 +1422,8 @@ Authorization: Bearer <TOKEN>`}
                 >◫</span>
                 <span
                   className="tab-x"
-                  title="断开会话（⌘W）"
-                  onClick={(e) => { e.stopPropagation(); void disconnectSid(s.id); }}
+                  title="断开会话（⌘W，连接中会先确认）"
+                  onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
                 >✕</span>
               </div>
             );
@@ -1337,6 +1439,48 @@ Authorization: Bearer <TOKEN>`}
               <div className="dim">{connError.detail}</div>
             </div>
             <button className="ghost" onClick={() => setConnError(null)}>关闭</button>
+          </div>
+        )}
+        {stopResult && (
+          <div className="conn-error">
+            <div>
+              <b>⏸ 已接管 {stopResult.hostName} —— 停止结果</b>
+              <div className="dim" style={{ marginTop: 4 }}>
+                {stopResult.report.stopped.length === 0 && <div>· 正在运行的任务：无</div>}
+                {stopResult.report.stopped.map(([id, out]) => {
+                  const o = stopOutcomeText(out);
+                  return <div key={id} className={o.bad ? "err" : ""}>· {id.slice(0, 12)} → {o.text}</div>;
+                })}
+                <div>· 作废的排队请求：{stopResult.report.paused_queue.length} 条</div>
+                <div className={stopResult.report.frozen ? "" : "err"}>· Agent 新请求{stopResult.report.frozen ? "已冻结" : "⚠ 未冻结"}</div>
+                <div className="dim">现场简报已更新（右栏）；交还 Agent 前它会保持暂停。</div>
+              </div>
+            </div>
+            <button className="ghost" onClick={() => setStopResult(null)}>知道了</button>
+          </div>
+        )}
+        {confirm?.kind === "closeSession" && (
+          <div className="confirm-mask" onClick={() => setConfirm(null)}>
+            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title">断开与 {confirm.hostName} 的连接？</div>
+              <div>终端现场不可恢复——重连会是全新现场（记录保留）。</div>
+              <div className="hk-actions">
+                <button className="danger" onClick={confirmAction}>断开连接</button>
+                <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {confirm?.kind === "deleteHost" && (
+          <div className="confirm-mask" onClick={() => setConfirm(null)}>
+            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title">删除主机 {confirm.name}？</div>
+              <div>凭据与指纹记录一并移除，之后无法再从它新建连接；已建立的会话不受影响。</div>
+              <div className="hk-actions">
+                <button className="danger" onClick={confirmAction}>删除</button>
+                <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
+              </div>
+            </div>
           </div>
         )}
         {hostKeyQueue.length > 0 && (() => {
@@ -1392,6 +1536,22 @@ Authorization: Bearer <TOKEN>`}
             </div>
           )}
           <div id="term" ref={termRef} />
+          {current?.state === "Disconnected" && (
+            <div className="dead-overlay">
+              <div className="dead-banner">
+                <div><b>⛔ 会话已断开</b></div>
+                <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
+                  画面是断开前的最后状态；键入已拦截，不会发送。
+                </div>
+                <div className="row" style={{ marginTop: 10 }}>
+                  <button disabled={reconnecting !== null} onClick={() => reconnectSession(current)}>
+                    {reconnecting === current.id ? "重连中…" : "重连恢复"}
+                  </button>
+                  <span className="dim" style={{ fontSize: 11 }}>重连后进入重确认（仅内置只读白名单可用）</span>
+                </div>
+              </div>
+            </div>
+          )}
           {dragOver && (
             <div className="drop-overlay">
               <div className="drop-box">
@@ -1479,7 +1639,9 @@ Authorization: Bearer <TOKEN>`}
           <input
             placeholder={
               current
-                ? `在 ${current.host_name} 上执行命令——回车执行，Ctrl+C 中断终端里的前台程序`
+                ? current.state === "Disconnected"
+                  ? "会话已断开——从左侧会话卡「重连」恢复后再执行命令"
+                  : `在 ${current.host_name} 上执行命令——回车执行，Ctrl+C 中断终端里的前台程序`
                 : "先在左侧连接一台主机，这里才能执行命令"
             }
             disabled={!sid}
@@ -1499,6 +1661,11 @@ Authorization: Bearer <TOKEN>`}
                 return;
               }
               if (e.key === "Enter" && input.trim() && sid) {
+                // 死会话拦截（P2-7）：命令不进死通道，明说去哪恢复
+                if (sessionsRef.current.find((x) => x.id === sid)?.state === "Disconnected") {
+                  setConnError({ title: "会话已断开", detail: "命令未发送。从左侧会话卡「重连」恢复后再执行。" });
+                  return;
+                }
                 const cmd = input;
                 setInput("");
                 xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd}\x1b[0m\r\n`);
@@ -1518,7 +1685,9 @@ Authorization: Bearer <TOKEN>`}
               title="向前台进程发送 SIGINT（等同 Ctrl+C），不依赖输入法状态"
               onClick={() => {
                 const s = sidRef.current;
-                if (s) void invoke("send_keys", { sid: s, keys: "\u0003" }).catch(() => {});
+                if (s && sessionsRef.current.find((x) => x.id === s)?.state !== "Disconnected") {
+                  void invoke("send_keys", { sid: s, keys: "\u0003" }).catch(() => {});
+                }
                 xtermRef.current?.focus();
               }}
             >
@@ -1718,11 +1887,12 @@ function BriefCard({ brief }: { brief: Brief }) {
 }
 
 // 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）；Agent 只存引用
-function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [port, setPort] = useState("22");
-  const [username, setUsername] = useState("root");
+function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit: boolean) => void; editHost?: Host | null }) {
+  const editing = !!editHost;
+  const [name, setName] = useState(editHost?.name ?? "");
+  const [address, setAddress] = useState(editHost?.address ?? "");
+  const [port, setPort] = useState(editHost ? String(editHost.port) : "22");
+  const [username, setUsername] = useState(editHost?.username ?? "root");
   const [authMode, setAuthMode] = useState<"password" | "key" | "agent">("password");
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
@@ -1736,6 +1906,11 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
       setErr("名称、地址、用户名都不能为空");
       return;
     }
+    // 地址格式校验（P2-3）：IP 或域名，不带协议/端口/路径——之前的乱码地址能一路存到「连接成功」
+    if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
+      setErr("地址格式不对——应为 IP 或域名（如 192.168.1.10 或 server.example.com），不带端口与协议");
+      return;
+    }
     const p = parseInt(port, 10);
     if (!Number.isInteger(p) || p <= 0 || p > 65535) {
       setErr("端口必须是 1–65535 的数字");
@@ -1744,7 +1919,10 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
     setBusy(true);
     try {
       let auth: Record<string, unknown> | string;
-      if (authMode === "password") {
+      if (editing) {
+        // 编辑不回传凭据（UI 不持明文）：后端 Keep 语义保持现有认证与密钥/密码
+        auth = "Keep";
+      } else if (authMode === "password") {
         if (!password) { setErr("请输入密码"); setBusy(false); return; }
         auth = { Password: { password } };
       } else if (authMode === "agent") {
@@ -1758,12 +1936,12 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
       }
       const hid = await invoke<string>("upsert_host", {
         host: {
-          id: null, name: name.trim(), address: address.trim(),
-          port: p, username: username.trim(), auth, tags: [],
+          id: editHost?.id ?? null, name: name.trim(), address: address.trim(),
+          port: p, username: username.trim(), auth, tags: editHost?.tags ?? [],
         },
       });
-      setName(""); setAddress(""); setPort("22"); setPassword(""); setPem(""); setPassphrase("");
-      onAdded(hid);
+      if (!editing) { setName(""); setAddress(""); setPort("22"); setPassword(""); setPem(""); setPassphrase(""); }
+      onSaved(hid, editing);
     } catch (e) {
       setErr(friendlyError(String(e)));
     } finally {
@@ -1771,22 +1949,41 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
     }
   };
 
+  const authLabel = editHost?.auth_type === "Key" ? "密钥" : editHost?.auth_type === "Agent" ? "SSH Agent" : "密码";
+
   return (
     <div className="card add-host">
-      <div className="row">
-        <input placeholder="名称（如：我的服务器）" value={name} onChange={(e) => setName(e.target.value)} />
-        <input placeholder="地址（IP 或域名）" value={address} onChange={(e) => setAddress(e.target.value)} style={{ flex: 2 }} />
-        <input placeholder="端口" value={port} onChange={(e) => setPort(e.target.value)} style={{ flex: 1, minWidth: 64 }} />
+      <div className="row" style={{ alignItems: "flex-end" }}>
+        <div className="ah-field" style={{ flex: 1 }}>
+          <label>名称</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：我的服务器" />
+        </div>
+        <div className="ah-field" style={{ flex: 2 }}>
+          <label>地址（IP 或域名）</label>
+          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="192.168.1.10 或 server.example.com" style={{ minWidth: 0 }} />
+        </div>
+        <div className="ah-field" style={{ width: 76 }}>
+          <label>端口</label>
+          <input value={port} onChange={(e) => setPort(e.target.value)} />
+        </div>
       </div>
-      <div className="row" style={{ marginTop: 6 }}>
-        <input placeholder="用户名" value={username} onChange={(e) => setUsername(e.target.value)} />
-        <select value={authMode} onChange={(e) => setAuthMode(e.target.value as "password" | "key" | "agent")}>
-          <option value="password">密码登录</option>
-          <option value="key">私钥登录</option>
-          <option value="agent">SSH Agent</option>
-        </select>
+      <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
+        <div className="ah-field" style={{ flex: 1 }}>
+          <label>用户名</label>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} />
+        </div>
+        <div className="ah-field" style={{ flex: 1 }}>
+          <label>认证方式</label>
+          <select value={authMode} disabled={editing} onChange={(e) => { setErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
+            <option value="password">密码登录</option>
+            <option value="key">私钥登录</option>
+            <option value="agent">SSH Agent</option>
+          </select>
+        </div>
       </div>
-      {authMode === "password" ? (
+      {editing ? (
+        <div className="dim" style={{ marginTop: 6 }}>认证凭据保持不变（{authLabel}）。如需更换凭据，删除该主机后重新添加。</div>
+      ) : authMode === "password" ? (
         <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
           style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
       ) : authMode === "agent" ? (
@@ -1801,7 +1998,7 @@ function AddHostForm({ onAdded }: { onAdded: (hostId: string) => void }) {
       )}
       {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
       <div className="row" style={{ marginTop: 8 }}>
-        <button disabled={busy} onClick={submit}>{busy ? "保存中…" : "保存并连接"}</button>
+        <button disabled={busy} onClick={submit}>{busy ? "保存中…" : editing ? "保存修改" : "保存并连接"}</button>
         <span className="dim">凭据加密存入本机凭据库，不会明文落盘。</span>
       </div>
     </div>

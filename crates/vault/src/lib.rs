@@ -225,7 +225,24 @@ impl Vault {
                         Some(base64::engine::general_purpose::STANDARD.encode(blob)),
                     )
                 }
-                AuthDraft::None => ("key".into(), None, None),
+                // Keep 语义：编辑主机不回传明文——已存在的行保留原凭据列
+                // （identities 表的密码行随 identity_id 不变而原样保留）。
+                AuthDraft::None => match host.id.as_ref() {
+                    Some(id) => {
+                        let existing: Option<(String, Option<String>)> = conn
+                            .query_row(
+                                "SELECT auth_type, identity_id FROM hosts WHERE id=?1 AND deleted_at IS NULL",
+                                params![id],
+                                |r| Ok((r.get(0)?, r.get(1)?)),
+                            )
+                            .ok();
+                        match existing {
+                            Some((t, iid)) => (t, iid, None),
+                            None => ("key".into(), None, None),
+                        }
+                    }
+                    None => ("key".into(), None, None),
+                },
                 AuthDraft::Agent => ("agent".into(), None, None),
             };
         // 口令类凭据也存 identities（kind=password），统一加密管理

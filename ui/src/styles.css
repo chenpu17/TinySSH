@@ -228,3 +228,16 @@ textarea {
 }
 .sshcfg-row:last-child { border-bottom: none; }
 .sshcfg-row input[type="checkbox"] { margin-top: 2px; }
+
+/* T23：主机卡 hover 操作（编辑/删除）；删除/断开确认弹层；表单常驻标签；死会话遮罩 */
+.host-ops { display: none; gap: 4px; }
+.host-card:hover .host-ops { display: flex; }
+.host-ops button { padding: 2px 7px; font-size: 12px; }
+.host-ops .host-del:hover { color: var(--danger); border-color: var(--danger); }
+.confirm-mask { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
+.confirm-dialog { width: 400px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; line-height: 1.7; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.ah-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ah-field label { font-size: 10px; color: var(--dim); letter-spacing: 0.3px; }
+.ah-field input, .ah-field select { width: 100%; }
+.dead-overlay { position: absolute; inset: 0; z-index: 20; background: rgba(8, 10, 12, 0.45); display: flex; align-items: flex-start; justify-content: center; }
+.dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }

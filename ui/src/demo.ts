@@ -55,10 +55,22 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "list_sessions":
       return demoState.sessions;
     case "upsert_host": {
-      const h = (args?.host ?? {}) as { name: string; address: string; port?: number; username: string };
-      const id = "h-demo-" + demoSeq++;
+      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown };
+      if (h.id) {
+        const ex = demoState.hosts.find((x) => x.id === h.id);
+        if (ex) {
+          ex.name = h.name; ex.address = h.address; ex.port = h.port ?? 22; ex.username = h.username;
+          return h.id;
+        }
+      }
+      const id = h.id ?? "h-demo-" + demoSeq++;
       demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username, auth_type: "Password" });
       return id;
+    }
+    case "delete_host": {
+      const id = args?.id as string;
+      demoState.hosts = demoState.hosts.filter((x) => x.id !== id);
+      return null;
     }
     case "create_identity":
       return { id: "id-demo-" + demoSeq++, label: "demo", kind: "Ed25519", fingerprint: "SHA256:demofingerprint" };
@@ -76,7 +88,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "close_session": {
       const sid = args?.sid as string;
-      demoState.sessions = demoState.sessions.filter((s) => s.id !== sid);
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (s) s.state = "Disconnected";
       pushOutput("\r\n[会话已断开]\r\n");
       return null;
     }
@@ -130,7 +143,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           ? "\r\n⏸ 控制权 → 人类（Agent 请求已冻结，旧请求作废）\r\n"
           : "\r\n▶ 控制权 → Agent（请先读取现场简报再决定后续动作）\r\n"
       );
-      return { frozen: demoState.owner === "Human", paused_queue: [], stopped: [], brief: {} };
+      const stopping = args?.stopRunning === true;
+      return {
+        frozen: demoState.owner === "Human",
+        paused_queue: stopping ? ["x-demo-9a"] : [],
+        stopped: stopping ? [["x-demo-1f", { Exited: 0 }]] : [],
+        brief: {},
+      };
     }
     case "exec_human": {
       const command = args?.command as string;
