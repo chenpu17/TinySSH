@@ -324,6 +324,7 @@ export default function App() {
   const [hostKeyQueue, setHostKeyQueue] = useState<PendingHostKey[]>([]);
   const [showAddHost, setShowAddHost] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showAgentHelp, setShowAgentHelp] = useState(false);
 
   const refreshLists = useCallback(async () => {
     setSessions(await invoke<SessionInfo[]>("list_sessions"));
@@ -495,11 +496,17 @@ export default function App() {
     return { term, el, search: searchAddon, tag };
   }, []);
 
-  // 终端区域（含内容下方空白）点击即聚焦当前会话终端
+  // 终端区域（含内容下方空白）点击即聚焦当前会话终端。
+  // 搜索框/显示设置必须排除：两个浮层都挂在本容器里，点它们会冒泡到这里把焦点
+  // 抢回终端——搜索词落进生产 shell（UX 走查实锤）、设置面板键盘连续操作失效。
   useEffect(() => {
     const wrap = termRef.current?.parentElement;
     if (!wrap) return;
-    const onFocus = () => xtermRef.current?.focus();
+    const onFocus = (ev: MouseEvent) => {
+      const t = ev.target as HTMLElement | null;
+      if (t?.closest?.(".term-search, .term-settings")) return;
+      xtermRef.current?.focus();
+    };
     wrap.addEventListener("click", onFocus);
     return () => wrap.removeEventListener("click", onFocus);
   }, []);
@@ -1109,10 +1116,26 @@ export default function App() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedCmd, setEditedCmd] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const decide = async (id: string, decision: string, edited: string | null) => {
     await invoke("decide_approval", { id, decision, edited });
     setEditingId(null);
+    setConfirmId(null);
     await refreshLists();
+  };
+
+  // 审批卡风险分级：deny 命中根本不会出卡（内置危险模式直接拦），出卡的都至少
+  // 有一段待审。需要人为减速带的两种形态——① 全段 pending：系统零正向信号，
+  // 完全不知道安不安全；② 命中高危命令形态（rm -rf/格式化/关机类，后端内置
+  // deny 只拦了其中最狠的子集，如 rm -rf /tmp 仍会出卡）。
+  const DANGER_SHAPE_RE =
+    /\brm\s+(?:-[a-zA-Z]+\s+)*-[a-z]*r[a-z]*f|\bmkfs\b|\bdd\b[^\n]*\bof=\/dev\/|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bwipefs\b|\bchmod\s+(?:-[a-zA-Z]+\s+)*777\s+\//;
+  const approvalRisk = (a: ApprovalItem): string | null => {
+    const segs = a.segment_report;
+    if (segs.length > 0 && segs.every((s) => s.verdict.startsWith("pending:")))
+      return "所有分段均未命中任何允许规则（系统无法判定安全性）";
+    if (DANGER_SHAPE_RE.test(a.command)) return "命令包含高危形态（删除/格式化/关机类）";
+    return null;
   };
 
   // 控制权徽标
@@ -1212,14 +1235,33 @@ export default function App() {
           </div>
           <div className="section">
             <h4>Agent 接入（MCP）</h4>
-            {hasAgents ? (
-              mcp.agents.map((a) => (
-                <div className="fact" key={a.id}>
-                  <span className="s">{a.label}</span> <span className="dim mono">{a.id}</span>
-                </div>
-              ))
-            ) : (
-              <div className="dim">暂无 Agent 接入。运行 <code>tinyssh serve</code> 并为 Agent 签发 Token 后，它的操作请求会出现在右侧审批队列。</div>
+            {mcp.agents.map((a) => (
+              <div className="fact" key={a.id}>
+                <span className="s">{a.label}</span>
+                {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
+              </div>
+            ))}
+            <div className="fact">
+              <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
+              <span className="mono" style={{ fontSize: 11 }}>{mcp.endpoint || "未启动"}</span>
+            </div>
+            <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
+              {showAgentHelp ? "收起接入说明" : "接入新 Agent"}
+            </button>
+            {showAgentHelp && (
+              <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
+                <div>1. 终端运行 <code>tinyssh serve</code>（默认端口 8722，被占自动递增）；</div>
+                <div>2. 为 Agent 签发 Token（仅展示一次）：<code>tinyssh agent create &lt;id&gt; &lt;名称&gt;</code>；</div>
+                <div>3. 在 Agent 的 MCP 配置里填入端点与 Token：</div>
+                <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
+{`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
+Authorization: Bearer <TOKEN>`}
+                </pre>
+                <div>接入后，Agent 的操作请求会出现在右侧审批队列逐段裁决。</div>
+              </div>
+            )}
+            {!hasAgents && (
+              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>暂无 Agent 接入——点上方「接入新 Agent」查看三步接入。</div>
             )}
           </div>
         </div>
@@ -1342,7 +1384,11 @@ export default function App() {
               <div>2. 连接后点击黑色终端区域直接打字：Ctrl+C 中断程序、↑↓ 翻历史、Tab 补全；</div>
               <div>3. 多会话一屏一签，点标签切换、◫ 分屏对照两个会话，各自的滚动历史和 vim 界面都会保留；</div>
               <div>4. ⌘C/⌘V 复制粘贴；拖文件进终端即上传到当前目录；下方命令框可逐条执行，执行后焦点自动回到终端。</div>
-              <div className="dim" style={{ marginTop: 12 }}>暂无接入的会话——从左侧连接主机，或点击已有会话继续。</div>
+              <div className="dim" style={{ marginTop: 12 }}>
+                {sessions.length > 0
+                  ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或左侧会话卡继续。`
+                  : "暂无会话——从左侧连接主机开始，或导入 ~/.ssh/config。"}
+              </div>
             </div>
           )}
           <div id="term" ref={termRef} />
@@ -1489,35 +1535,57 @@ export default function App() {
           {pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
         </div>
         <div className="scroll">
-          {pendingApprovals.map((a) => (
-            <div className="card" key={a.id}>
-              <div className="row">
-                <span className="badge">Agent：{a.agent_id}</span>
-              </div>
-              <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
-              {a.segment_report.map((s, i) => (
-                <div key={i} className="dim" style={{ fontSize: 11 }}>
-                  · {s.segment} — {s.verdict}
+          {pendingApprovals.map((a) => {
+            const sess = sessions.find((x) => x.id === a.session_id);
+            const risk = approvalRisk(a);
+            return (
+              <div className="card" key={a.id}>
+                <div className="row">
+                  <span className="badge">Agent：{a.agent_id}</span>
                 </div>
-              ))}
-              {editingId === a.id ? (
-                <div style={{ marginTop: 8 }}>
-                  <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
-                  <div className="row" style={{ marginTop: 6 }}>
-                    <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
-                    <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
+                {/* 目标上下文：多会话并存时 rm -rf 级裁决必须知道落在哪台机器 */}
+                <div className="dim" style={{ fontSize: 11, marginTop: 5 }} title={a.session_id}>
+                  目标：{sess ? <b style={{ color: "var(--text)" }}>{sess.host_name}</b> : "会话已不在列表"}
+                  <span className="mono"> · {a.session_id.slice(0, 12)}</span>
+                  {sess?.state === "Disconnected" && " · 会话已断开"}
+                </div>
+                <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
+                {a.segment_report.map((s, i) => (
+                  <div key={i} className="dim" style={{ fontSize: 11 }}>
+                    · {s.segment} — {s.verdict}
                   </div>
-                  <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
-                </div>
-              ) : (
-                <div className="row" style={{ marginTop: 8 }}>
-                  <button onClick={() => decide(a.id, "approve", null)}>批准</button>
-                  <button className="ghost" onClick={() => { setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>
-                  <button className="danger" onClick={() => decide(a.id, "deny", null)}>拒绝</button>
-                </div>
-              )}
-            </div>
-          ))}
+                ))}
+                {risk && confirmId !== a.id && (
+                  <div className="dim" style={{ fontSize: 11, marginTop: 6, color: "var(--warn)" }}>
+                    ⚠ {risk}——批准前请确认命令的全部效果。
+                  </div>
+                )}
+                {editingId === a.id ? (
+                  <div style={{ marginTop: 8 }}>
+                    <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
+                    <div className="row" style={{ marginTop: 6 }}>
+                      <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
+                      <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
+                    </div>
+                    <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
+                  </div>
+                ) : (
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <button
+                      className={confirmId === a.id ? "warn" : undefined}
+                      title={risk ? "高危/未知安全性的请求：需二次确认" : undefined}
+                      onClick={() => {
+                        if (risk && confirmId !== a.id) { setConfirmId(a.id); return; }
+                        void decide(a.id, "approve", null);
+                      }}
+                    >{confirmId === a.id ? "再次点击确认批准" : "批准"}</button>
+                    <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>
+                    <button className="danger" onClick={() => void decide(a.id, "deny", null)}>拒绝</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {resolvedApprovals.length > 0 && (
             <div className="side-quiet">
               {pendingApprovals.length === 0 && <div className="side-sub">最近处理</div>}
