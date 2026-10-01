@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.19 · 日期：2026-10-01 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
+> 版本：v1.20 · 日期：2026-10-01 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -629,6 +629,28 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 2. **本修复使 T22 的 P1-1/P1-3（审批卡目标行/两步批准）在真实 app 生效**——此前这些改动只被 demo 验证过（真实面板从不渲染）。真实 app 端到端审批面板复验（需 agent MCP rig）列入实机走查窗口顺手项。
 3. 全量盘点的其余结论：标点全半角无问题、省略号统一 `…`、中文句内无半角标点残留——P3-4 的「三套分隔符」实际收敛为上述四条规则，无第三处需要改动。
 
+### 5.22 demo shim 保真轮（v1.20，T27）
+
+**动机**：UX 走查报告 + T22–T26 三轮暴露的 demo shim 伪影已误导走查三次（第三次为契约级，§5.21）——浏览器走查要继续作为 UI 回归证据链，shim 必须先与真实后端语义对齐。原 7 项伪影全部修复：
+
+| 伪影（走查报告原述） | 修复 | 验证 |
+|---|---|---|
+| 全局单输出流 → 标签串台/分屏同播 | **按会话隔离**：每会话私有输出缓冲 + 订阅者（与真实 `subscribe_output { sid }` 同构）；`read_screen` 按会话回放 | exec 两个会话各自回显互不可见（④b/c） |
+| set_control 不更新会话 → 接管 chip 不翻转、无交还 | set_control 更新该会话 `control_owner` + **作废其全部待审批**（真实契约）+ 审计 takeover/handback | chip 翻转人类控制↔Agent、两张 pending 变 ⊘ 已作废（①b/c/d、③a） |
+| audit_query 固定种子 | 审计随操作动态追加（连接/断开/重连/审批/接管/交还/保存主机） | 操作记录实时出现新「接管会话/保存主机」行（②a、⑤c） |
+| demoSeq 撞种子 id | 自增起点 100 避开种子区段 | 新会话 s-demo-0100（截图可见） |
+| ssh_config_preview 未实现 → 导入面板裸 TypeError | preview（2 可导入 + 1 已导入对账）+ import（落主机列表 + 审计） | 面板 3 条、prod-1 禁选、导入后 web-1·密钥/db-1·Agent 落地（⑤a–d） |
+| TOFU 不模拟 | **create_session 在指纹门内挂起等决定**（与真实后端同构，拒绝走 HostKeyRejected 原路径抛出）；配套 App 侧 demo 分支 500ms 轮询 pending_host_keys；本机 local 会话无指纹门 | prod-2 首连弹窗 → 拒绝 → 无新会话+主机卡失败 → 再连仍弹窗 → 信任 → 认证失败（⑥a–e，两段门全走通） |
+| 未实现命令静默 null → 占位反馈缺失 | 未知命令显式 throw；传输类 throw（UI 卡片如实显示失败）；纯 native 类（note_terminal/open_url/get_setting/set_setting/bench_*）显式白名单 no-op | 代码审查（demo 模式无拖拽注入路径，披露①） |
+
+**附带根因修复（shim 伪影的机制层）**：shim 三个 `list_*` 原来返回**同一个可变数组引用**——React setState 对相同引用跳过更新，这就是「接管后 chip 不翻转」的机制根因（真实后端每次 invoke 都是全新反序列化对象）。现 list_sessions/list_hosts/list_approvals 均返回新副本。
+
+**T27 判定：通过**（本套件 **19/19 断言** + u4 套件回归 **9/9** + 截图目验 6 张；cargo **67/67** 全绿，本轮零 Rust 改动——App 侧仅 demo 分支轮询一处）。证据：[u5_takeover_flip](screenshots/u5_takeover_flip.png) / [u5_audit_dynamic](screenshots/u5_audit_dynamic.png) / [u5_session_isolation](screenshots/u5_session_isolation.png) / [u5_import](screenshots/u5_import.png) / [u5_tofu_firstseen](screenshots/u5_tofu_firstseen.png) / [u5_tofu_authfail](screenshots/u5_tofu_authfail.png)。如实披露：
+
+1. **传输类（upload/download）在 demo 中显式失败**（诚实占位）：无头浏览器无拖拽注入路径，失败卡片路径未走查，由真实 app T20 原生走查覆盖。
+2. **session_brief 仍为静态种子**（不随 demo 会话变化）——不在原 7 项清单内，简报三层结构由真实 app 原生走查（T12）覆盖；列为 shim 后续可选对齐项。
+3. TOFU 的 Changed（指纹变更）分支未模拟（仅 FirstSeen）——Changed 的红色告警 UI 由 T17 原生走查覆盖。
+
 ## 6. 已知边界（诚实清单）
 
 1. **PV 用户研究未执行**：validation-plan §6 的 6–8 人产品验证 gate 需要真人参与者，不属于本次工程验收；工程侧前置条件（thin-slice 可用 + 三 Spike 门限 + 首验收场景）已全部就绪，PV 备战三件套亦已备齐（§5.20）。
@@ -642,7 +664,7 @@ Playwright WebKit（同一 UI 代码路径，demo 模式）复核：无页面错
 9. **src-tauri 管理操作直连 vault**（host/identity 管理面绕过 SessionApi 门面）——L1 §1 字面规则的已知偏离；协作面（exec/审批/简报）严格走门面，管理面分层留 V1 收口。
 10. **create_session 审批卡不受接管作废**（卡片 session_id 为空，接管按会话匹配作废范围）——作废口径边角。
 11. **并发回归 flake（根因已修复）**：多测试并发时偶发"空流 / 降级 Fresh / cwd 缺失 / spike2 script-not-done"。根因：pump 任务经 `tokio::spawn` 后才订阅输出广播，而建会话/重连的注入写入可能先于订阅被调度——远端首屏（含集成标记）落入无订阅者窗口被丢弃（broadcast 无接收者即丢）。修复：create_session 与重连路径均改为**先订阅、后注入**（`spawn_pump` 接受初始订阅；原 `on_transport_lost` 拆分为 `on_transport_reconnect` + `reinject_integration`）。独立探针实测传输+屏幕链路 5ms 内集成就绪；修复后两测试二进制 5/5 全过。集成等待窗口同时从 3–5s 放宽至 10s，sshd_e2e/spike2 整场景重试兜底。
-12. **演示 shim 简化**（ui/src/demo.ts）：不模拟"接管自动作废演示卡片""段裁决随决策更新"；截图为 UI 走查证据，核心语义以自动化测试为准。
+12. **~~演示 shim 简化~~（v1.20 已对齐，§5.22）**：原 7 项伪影（输出串台/接管不翻 chip/审计静态/seq 撞号/导入未实现/TOFU 缺失/静默 null）全部修复并经 19 项断言走查；**浏览器走查证据自此计入交互证据链**（此前必须甄别 shim 伪影）。残余：session_brief 静态种子、传输类显式失败占位、TOFU 仅 FirstSeen（§5.22 披露①–③）。
 13. **~~会话死端无自动感知~~（v1.7 已解决）**：v1.4 记录的「shell 退出/PTY EOF 后会话卡仍显示已连接」已由 pump 存活检测 + Disconnected 状态 + 一键重连闭环解决（§5.8）。断线瞬间正在键入的半截命令随旧 shell 丢弃（诚实语义：从未执行）；重连 = 新 shell，现场不延续。
 14. **CJK 输入法残余边界**（v1.4）：Ctrl 系控制键已由 native 层接管（§5.5 修复#1），不再受输入法影响；但**普通字母键入**在中文输入法激活时仍走系统级拼音组合（macOS 标准行为，与 Terminal.app 一致——组合提交后 ASCII 进壳）；CGEvent 注入自动化下观察到粘贴后瞬时组合态导致键入丢失（注入时序问题，真实键盘未复现）。中文 IME 组合输入（组合输入中文上屏）属真实人工验证项。
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
@@ -848,8 +870,15 @@ cd ui && npx vite --port 5183 --host 127.0.0.1        # 打开 http://127.0.0.1:
 #    python3 /tmp/u4copy_walk.py   # playwright channel="chrome" headless；9 项断言 + 截图 /tmp/u4shots/
 #    归档截图：docs/acceptance/screenshots/u4_*.png（3 张）
 #    回归：TINYSSH_MASTER_KEY=$(python3 -c "print('07'*32)") cargo test   # 67/67（+1 wire 锁定测试）
+
+# 23) demo shim 保真走查（§5.22；**v1.20 已执行——本套件 19/19 + u4 回归 9/9 通过**）
+#    cd ui && npm run dev -- --port 5183 --host 127.0.0.1
+#    python3 /tmp/u5shim_walk.py   # 19 项断言（隔离/翻转/动态审计/导入/TOFU 两段门）+ 截图 /tmp/u5shots/
+#    python3 /tmp/u4copy_walk.py   # u4 套件回归（shim 重写不破坏 T26 断言）
+#    归档截图：docs/acceptance/screenshots/u5_*.png（6 张）
+#    回归：TINYSSH_MASTER_KEY=$(python3 -c "print('07'*32)") cargo test   # 67/67（零 Rust 改动）
 ```
 
 ## 8. 结论
 
-**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **55 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18）、文件传输 T20（§5.15，v1.13——SFTP 拖拽上传到会话当前目录 + 路径下载到 ~/Downloads + 传输卡片/取消 + 审计带 transfer id；走查含覆盖层/完整性/审计矩阵与真实取消 e2e），路线图①–⑧已完成。v1.14（T21，§5.16）：~/.ssh/config 导入（共享解析器 + 预览对账 + 勾选导入）与 ssh-agent 认证（AuthType::Agent，vault 零密钥落库，russh AgentClient 逐 key 签名）已实现并经 **66 项自动化测试全绿**（新增解析器 8 例、agent 认证 e2e、导入链路集成 2 例），顺带修复测试基建既有缺陷（await_sshd_ready TCP-only 探测在 docker 端口代理下失真，journey3 在 HEAD 稳定失败的根因）；UI 视觉走查跨两日完成（首轮锁屏中止，恢复后矩阵 4 通过/1 部分覆盖并如实披露，§5.16），**UX 路线图①–⑨全部关闭**。v1.15（T22，§5.17）：模拟用户 UX 走查（4 人格并行黑盒 + demo shim 甄别，[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)）产出真实问题 26 条，第一批信任/安全 5 项已修复并经 demo 渲染层 11 项断言走查——P1-2 搜索焦点抢占根因实为 `.term-wrap` click 监听冒泡（非走查报告原推断的 mousedown 委托，两处已勘误），设置面板同根因一并修复；实机原生冒烟因锁屏中止，列为下一走查窗口顺手项。v1.16（T23，§5.18）：UX 走查修复第二批 8 项——主机编辑/删除（AuthDraft "Keep" 语义：编辑不回传明文、凭据原样保留；delete_host 补 UI 入口+确认）、关已连接标签二次确认（✕/⌘W/断开三口统一）、标签键盘可达 + Esc 统一关浮层（xterm textarea 除外）、表单常驻标签/地址校验/切换清错、接管停止结果逐条披露（Unresponsive 标红）、主机卡连接失败态、死会话终端遮罩 + 四路输入拦截、死卡单按钮与状态词完整——demo 渲染层 **20/20 断言**+cargo **66/66 全绿**；实机原生冒烟再次因锁屏中止（native Ctrl 层死会话行为记为已知边界）。v1.17（T24，§5.19）：UX 走查修复第三批（简报三层认知徽标/传输指代/＋toggle/命令框 ↑ 历史/uppercase 用户数据/favicon/收起消歧/时间戳带秒/placeholder 对比度/终端圆角/用户名默认空）——demo 渲染层 **13/13 断言**+cargo **66/66 全绿**，**走查报告 26 条真实问题全部关闭**（P3-5 对比度实测证伪：--dim 实算 5.70:1 达标，真凶是 placeholder 浏览器默认灰；全量文案 sweep 除外）。v1.18（T25，§5.20）：PV 备战三件套——沙箱故障模板（A/A′/B/B′/C 五故障 + 参考解法全实测，容器指纹守卫）、分发构建（dist.sh 实测产出 dmg/app.zip 到 dist-pv/）、分析脚本（gate 判据矩阵随 N 计算 + 审计哈希链校验，合成数据三段自测全过）与主持手册（docs/pv/session-kit.md）——招募完成即可开测；下一关仍为 validation-plan 的产品验证 gate（需真人参与者）。v1.19（T26，§5.21）：全量文案 sweep——盘点 228 行用户可见文案后挖出**审批状态契约断点**（后端 ApprovalStatus 为 PascalCase、UI 按小写过滤，真实 app 审批面板从未渲染过真卡，demo shim 小写掩住）；修复 = UI 入库归一化 + 「最近处理」六态标签（原编辑后批准/超时/作废全误报「✕ 拒绝」）+ session-api wire 格式锁定测试；分隔符收敛四条规则（元数据 `·`、破折号 `——` 无空格、标签全角`：`、产品标题 ` — ` 惯例）。demo 9/9 断言 + cargo 67/67 全绿。
+**工程验收通过。** 文档（PRD/L0/L1 v0.5）定义的 V0 thin-slice——一个真实共享会话、Shell 模式现场延续、逐段审批、接管/交还契约（含旧请求与待审批卡片作废）、现场简报、可读操作记录、MCP 双前端对等——已实现并被 **55 个自动化测试**与 3 项 Spike 门限覆盖；**首个可运行验收场景在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过**。v1.1 补充的独立 subagent 审计（§5.1）发现的 2 个审批安全缺口（M1/M2）与 6 个次要缺口已全部修复并附回归测试，3 项如实披露为边界；独立复跑与浏览器视觉走查（§5.2/§5.3）补齐了第三方复现证据链。v1.2–v1.8 依用户实测反馈完成「正常 SSH client」改造：GUI 可用性三轮修复（§5.4）、标准终端交互 T10（§5.5，含 native 层 IME 缺口根因修复）、多会话切换体验 T11（§5.6，每会话独立终端 + ⌘1-9）、右栏协作面板人话化 T12（§5.7，含人类键入命令捕获缺失的后端根因修复）、断线一键重连闭环 T13（§5.8，含 P1 §6-17 重连回显泄漏的根因确认与修复、§6-13 死端问题关闭）、Alt/Option 键支持 T14（§5.9，window 捕获层 meta 转发 + 简报 meta 杂讯根因修复）、鼠标上报实测 T15（§5.10，路线图③关闭——点击原生端到端实锤 + 滚轮 WebKit 编码层验证）、终端搜索/链接/标题三件套 T16（§5.11，⌘F 搜索面板、OSC8+URL 双路径链接、窗口标题随会话与 OSC 跟随；三处集成层静默失效根因修复）、主机指纹首连确认 + 变更警告 T17（§5.12，vault 持久化 TOFU：FirstSeen 确认 / Changed 红色告警 / 拒绝与超时路径 / 跨进程静默放行，审计全程留痕）、字号/主题设置 T18（§5.13，vault settings KV 持久化 + 4 预设主题 + ⌘=/⌘−/⌘0；走查暴露并修复两处既有缺陷——fitTerminal 自实现以来从未生效（xterm 5.5 无公开 dimensions）与 T17 指纹门在 MCP e2e 中的应答缺口，§4 含勘误）、标签页/分屏 T19（§5.14，一屏一签 + ◫ 50/50 分屏 + ⌘W/⌘⇧[] 快捷键 + 布局与焦点解耦；走查暴露并修复三处既有缺陷——main.tsx 双 createRoot 致全部 window 级快捷键双触发（⌘W 一次关两签审计实锤）、工具栏点击吞焦点、关焦点副 pane 黑屏），并按使用体验重排 UX 路线图（§6-18）、文件传输 T20（§5.15，v1.13——SFTP 拖拽上传到会话当前目录 + 路径下载到 ~/Downloads + 传输卡片/取消 + 审计带 transfer id；走查含覆盖层/完整性/审计矩阵与真实取消 e2e），路线图①–⑧已完成。v1.14（T21，§5.16）：~/.ssh/config 导入（共享解析器 + 预览对账 + 勾选导入）与 ssh-agent 认证（AuthType::Agent，vault 零密钥落库，russh AgentClient 逐 key 签名）已实现并经 **66 项自动化测试全绿**（新增解析器 8 例、agent 认证 e2e、导入链路集成 2 例），顺带修复测试基建既有缺陷（await_sshd_ready TCP-only 探测在 docker 端口代理下失真，journey3 在 HEAD 稳定失败的根因）；UI 视觉走查跨两日完成（首轮锁屏中止，恢复后矩阵 4 通过/1 部分覆盖并如实披露，§5.16），**UX 路线图①–⑨全部关闭**。v1.15（T22，§5.17）：模拟用户 UX 走查（4 人格并行黑盒 + demo shim 甄别，[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)）产出真实问题 26 条，第一批信任/安全 5 项已修复并经 demo 渲染层 11 项断言走查——P1-2 搜索焦点抢占根因实为 `.term-wrap` click 监听冒泡（非走查报告原推断的 mousedown 委托，两处已勘误），设置面板同根因一并修复；实机原生冒烟因锁屏中止，列为下一走查窗口顺手项。v1.16（T23，§5.18）：UX 走查修复第二批 8 项——主机编辑/删除（AuthDraft "Keep" 语义：编辑不回传明文、凭据原样保留；delete_host 补 UI 入口+确认）、关已连接标签二次确认（✕/⌘W/断开三口统一）、标签键盘可达 + Esc 统一关浮层（xterm textarea 除外）、表单常驻标签/地址校验/切换清错、接管停止结果逐条披露（Unresponsive 标红）、主机卡连接失败态、死会话终端遮罩 + 四路输入拦截、死卡单按钮与状态词完整——demo 渲染层 **20/20 断言**+cargo **66/66 全绿**；实机原生冒烟再次因锁屏中止（native Ctrl 层死会话行为记为已知边界）。v1.17（T24，§5.19）：UX 走查修复第三批（简报三层认知徽标/传输指代/＋toggle/命令框 ↑ 历史/uppercase 用户数据/favicon/收起消歧/时间戳带秒/placeholder 对比度/终端圆角/用户名默认空）——demo 渲染层 **13/13 断言**+cargo **66/66 全绿**，**走查报告 26 条真实问题全部关闭**（P3-5 对比度实测证伪：--dim 实算 5.70:1 达标，真凶是 placeholder 浏览器默认灰；全量文案 sweep 除外）。v1.18（T25，§5.20）：PV 备战三件套——沙箱故障模板（A/A′/B/B′/C 五故障 + 参考解法全实测，容器指纹守卫）、分发构建（dist.sh 实测产出 dmg/app.zip 到 dist-pv/）、分析脚本（gate 判据矩阵随 N 计算 + 审计哈希链校验，合成数据三段自测全过）与主持手册（docs/pv/session-kit.md）——招募完成即可开测；下一关仍为 validation-plan 的产品验证 gate（需真人参与者）。v1.19（T26，§5.21）：全量文案 sweep——盘点 228 行用户可见文案后挖出**审批状态契约断点**（后端 ApprovalStatus 为 PascalCase、UI 按小写过滤，真实 app 审批面板从未渲染过真卡，demo shim 小写掩住）；修复 = UI 入库归一化 + 「最近处理」六态标签（原编辑后批准/超时/作废全误报「✕ 拒绝」）+ session-api wire 格式锁定测试；分隔符收敛四条规则（元数据 `·`、破折号 `——` 无空格、标签全角`：`、产品标题 ` — ` 惯例）。demo 9/9 断言 + cargo 67/67 全绿。v1.20（T27，§5.22）：demo shim 保真轮——原 7 项伪影全部修复（按会话隔离输出、接管翻 chip+作废、审计动态追加、config 导入、TOFU 挂起门、显式报错）并挖出机制根因（shim list_* 返回同一可变数组引用使 React setState 失效）；本套件 19/19 + u4 回归 9/9 + cargo 67/67 全绿，**浏览器走查证据自此计入交互证据链**。

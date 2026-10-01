@@ -413,9 +413,17 @@ export default function App() {
     return () => un?.();
   }, [refreshLists]);
 
-  // 主机指纹待决（T17）：初始拉取 + 事件推送；弹窗按到达顺序逐个出示
+  // 主机指纹待决（T17）：初始拉取 + 事件推送；弹窗按到达顺序逐个出示。
+  // 浏览器 demo 无事件通道，用同一命令轮询兜底（TOFU shim 的挂起建连靠它发现）。
   useEffect(() => {
-    if (!inTauri) return;
+    if (!inTauri) {
+      const t = setInterval(() => {
+        invoke<PendingHostKey[]>("pending_host_keys")
+          .then((list) => setHostKeyQueue((q) => (q.length ? q : list)))
+          .catch(() => {});
+      }, 500);
+      return () => clearInterval(t);
+    }
     invoke<PendingHostKey[]>("pending_host_keys")
       .then((list) => setHostKeyQueue((q) => (q.length ? q : list)))
       .catch(() => {});

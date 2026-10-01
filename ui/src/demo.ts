@@ -1,12 +1,34 @@
-// 浏览器演示模式：无 Tauri 环境时以演示数据驱动同一套 UI 代码（视觉验收/开发用）。
-// 生产路径不受影响：@tauri-apps/api 直连核心。
+// 浏览器演示模式的 invoke shim。**与真实后端语义对齐是硬要求**——本仓库三次
+// UI 走查被 shim 伪影误导（全局输出串台、接管不翻 chip、审批状态小写掩住
+// PascalCase 契约断点），浏览器走查发现的问题必须先对照本文件甄别。
+// T27 对齐项：按会话隔离输出与 screen（真实 subscribe_output 按 sid 订阅）、
+// set_control 翻转该会话控制权并作废其待审批、审计随操作动态追加、
+// ssh_config 预览/导入、TOFU 指纹门（create_session 内挂起等决定，与真实
+// 后端同构，拒绝走 HostKeyRejected）、未知命令显式报错（不再静默 null）。
 
-type Handler = (msg: unknown) => void;
+type Handler = (data: Uint8Array) => void;
+
+type DemoSession = {
+  id: string; host_name: string; kind: string;
+  state: string; control_owner: "Human" | "Agent";
+  out: string;             // 会话私有输出缓冲（read_screen 回放 + 订阅增量同源）
+  handlers: Handler[];
+};
+type DemoEvent = {
+  seq: number; ts: string; actor_kind: "human" | "agent";
+  agent_id: string | null; action: string; command: string | null;
+};
+type PendingKey = {
+  pk: {
+    id: string; host_id: string; host_name: string; address: string; port: number;
+    issue: "FirstSeen" | "Changed"; fingerprint: string; previous_fingerprint: string | null;
+    created_at: string;
+  };
+  resolve: (ok: boolean) => void;
+};
 
 const demoState = {
-  sid: "s-demo-0001",
   owner: "Agent" as "Human" | "Agent",
-  outputHandlers: [] as Handler[],
   hosts: [
     { id: "local", name: "本机", address: "local", port: 0, username: "ops", auth_type: "Password" },
     { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password" },
@@ -16,12 +38,16 @@ const demoState = {
     {
       id: "s-demo-0001", host_name: "prod-1", kind: "ssh",
       state: "Connected", control_owner: "Agent",
+      out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
+      handlers: [] as Handler[],
     },
     {
       id: "s-demo-0002", host_name: "staging-1", kind: "ssh",
       state: "Disconnected", control_owner: "Agent",
+      out: "ops@staging-1:~$ ",
+      handlers: [] as Handler[],
     },
-  ] as { id: string; host_name: string; kind: string; state: string; control_owner: string }[],
+  ] as DemoSession[],
   approvals: [
     {
       id: "a-demo-1",
@@ -54,14 +80,30 @@ const demoState = {
       segment_report: [],
     },
   ],
-  screen: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
+  events: [
+    { seq: 42, ts: "2026-09-27T14:02:11Z", actor_kind: "human", agent_id: null, action: "takeover", command: null },
+    { seq: 41, ts: "2026-09-27T14:01:58Z", actor_kind: "agent", agent_id: "opencode", action: "approval_requested", command: "rm -rf /tmp/old-build" },
+    { seq: 40, ts: "2026-09-27T14:01:30Z", actor_kind: "agent", agent_id: "opencode", action: "exec", command: "df -h" },
+    { seq: 39, ts: "2026-09-27T14:01:02Z", actor_kind: "human", agent_id: null, action: "session_created", command: null },
+  ] as DemoEvent[],
+  pendingKeys: [] as PendingKey[],
+  // TOFU 已信任主机地址（种子信任 prod-1：走查点「连接」不弹指纹窗，与真实一致）
+  trusted: new Set(["10.0.0.11"]),
 };
 
-function pushOutput(text: string) {
-  for (const h of demoState.outputHandlers) h(new TextEncoder().encode(text));
+const encoder = new TextEncoder();
+function pushTo(sid: string, text: string) {
+  const s = demoState.sessions.find((x) => x.id === sid);
+  if (!s) return;
+  s.out += text;
+  for (const h of s.handlers) h(encoder.encode(text));
 }
-
-let demoSeq = 2;
+// 自增起点避开全部种子 id（曾用 2 与种子区段相邻，易在对比时混淆）
+let demoSeq = 100;
+let eventSeq = 42;
+function audit(actor: "human" | "agent", action: string, command: string | null, agent_id: string | null = null) {
+  demoState.events.unshift({ seq: ++eventSeq, ts: new Date().toISOString(), actor_kind: actor, agent_id, action, command });
+}
 
 export async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
@@ -69,47 +111,110 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return { endpoint: "http://127.0.0.1:8722/mcp（演示模式）", agents: [{ id: "opencode", label: "opencode（演示）" }] };
     case "bench_mode":
       return false;
+    // 三个 list 必须返回新副本：真实后端每次 invoke 都是全新反序列化对象，
+    // React 靠引用变化感知更新——shim 返回同一可变数组会让 setSessions 失效
+    // （接管后 chip 不翻转的根因）。
     case "list_hosts":
-      return demoState.hosts;
+      return demoState.hosts.map((h) => ({ ...h }));
     case "list_sessions":
-      return demoState.sessions;
+      return demoState.sessions.map((s) => ({
+        id: s.id, host_name: s.host_name, kind: s.kind,
+        state: s.state, control_owner: s.control_owner,
+      }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown };
       if (h.id) {
         const ex = demoState.hosts.find((x) => x.id === h.id);
         if (ex) {
           ex.name = h.name; ex.address = h.address; ex.port = h.port ?? 22; ex.username = h.username;
+          audit("human", "host_upsert", h.name);
           return h.id;
         }
       }
       const id = h.id ?? "h-demo-" + demoSeq++;
       demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username, auth_type: "Password" });
+      audit("human", "host_upsert", h.name);
       return id;
     }
     case "delete_host": {
       const id = args?.id as string;
+      const h = demoState.hosts.find((x) => x.id === id);
       demoState.hosts = demoState.hosts.filter((x) => x.id !== id);
+      if (h) audit("human", "host_delete", h.name);
       return null;
     }
     case "create_identity":
+      audit("human", "identity_create", "demo");
       return { id: "id-demo-" + demoSeq++, label: "demo", kind: "Ed25519", fingerprint: "SHA256:demofingerprint" };
     case "list_identities":
       return [];
+    case "ssh_config_preview":
+      // 两可导入 + 一已导入（按主机名对账，与真实 already_imported 语义一致）
+      return ["web-1", "db-1"].map((name) => ({
+        name,
+        address: name === "web-1" ? "web1.example.com" : "db1.internal",
+        port: name === "web-1" ? 22 : 2222,
+        username: name === "web-1" ? "ops" : "deploy",
+        has_identity: name === "web-1",
+        already_imported: demoState.hosts.some((h) => h.name === name),
+      })).concat([{
+        name: "prod-1", address: "10.0.0.11", port: 22, username: "ops",
+        has_identity: false, already_imported: true,
+      }]);
+    case "ssh_config_import": {
+      const names = (args?.names as string[]) ?? [];
+      return names.map((name) => {
+        if (demoState.hosts.some((h) => h.name === name)) {
+          return { name, host_id: null, error: "已在主机列表" };
+        }
+        const isWeb = name === "web-1";
+        const id = "h-demo-" + demoSeq++;
+        demoState.hosts.push({
+          id, name,
+          address: isWeb ? "web1.example.com" : "db1.internal",
+          port: isWeb ? 22 : 2222,
+          username: isWeb ? "ops" : "deploy",
+          auth_type: isWeb ? "Key" : "Agent",
+        });
+        audit("human", "host_upsert", name);
+        return { name, host_id: id, error: null };
+      });
+    }
     case "create_session": {
       const hid = args?.hostId as string;
       const h = demoState.hosts.find((x) => x.id === hid);
-      if (h && h.address === "10.0.0.12") {
-        throw new Error("AuthFailed（演示：认证失败）");
+      if (!h) throw new Error("HostNotFound（演示）");
+      // TOFU 指纹门：未信任主机在门内挂起（弹窗决定），与真实后端同构——
+      // 拒绝时 HostKeyRejected 从原始 createSession 调用抛出，主机卡红色失败态。
+      // 本机（local）会话不经 SSH，无指纹门。
+      if (h.address !== "local" && !demoState.trusted.has(h.address)) {
+        const ok = await new Promise<boolean>((resolve) => {
+          demoState.pendingKeys.push({
+            pk: {
+              id: "hk-demo-" + demoSeq++,
+              host_id: h.id, host_name: h.name, address: h.address, port: h.port ?? 22,
+              issue: "FirstSeen",
+              fingerprint: "SHA256:DemoFingerprint-" + h.name,
+              previous_fingerprint: null,
+              created_at: new Date().toISOString(),
+            },
+            resolve,
+          });
+        });
+        if (!ok) throw new Error("HostKeyRejected（演示：已拒绝该主机指纹）");
       }
+      if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_name: h?.name ?? "?", kind: "ssh", state: "Connected", control_owner: "Agent" });
+      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", out: `ops@${h.name}:~$ `, handlers: [] });
+      audit("human", "session_created", null);
       return sid;
     }
     case "close_session": {
       const sid = args?.sid as string;
       const s = demoState.sessions.find((x) => x.id === sid);
       if (s) s.state = "Disconnected";
-      pushOutput("\r\n[会话已断开]\r\n");
+      pushTo(sid, "\r\n[会话已断开]\r\n");
+      audit("human", "session_closed", null);
       return null;
     }
     case "reconnect_session": {
@@ -118,21 +223,28 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (!s) throw new Error("SessionNotFound（演示）");
       if (s.state !== "Disconnected") throw new Error("会话未处于断开状态，无需重连（演示）");
       s.state = "Reconfirming";
-      pushOutput("\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
+      pushTo(sid, "\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
+      audit("human", "session_reconnect", null);
       return null;
     }
     case "resize":
       return null;
-    case "read_screen":
-      return { text: demoState.screen, cols: 120, rows: 32, cursor_row: 3, cursor_col: 16, alt_screen: false };
+    case "read_screen": {
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      return { text: s ? s.out.slice(-2048) : "", cols: 120, rows: 32, cursor_row: 3, cursor_col: 16, alt_screen: false };
+    }
     case "subscribe_output": {
+      const sid = args?.sid as string;
       const channel = args?.onEvent as { onmessage?: Handler };
-      demoState.outputHandlers.push((msg) => channel.onmessage?.(msg));
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (s && channel?.onmessage) s.handlers.push((m) => channel.onmessage!(m));
       return null;
     }
     case "session_brief":
       return {
         cwd: "/var/log/nginx",
+        running: [],
+        pending_approvals: demoState.approvals.filter((a) => a.status === "pending").map((a) => a.id),
         env_summary: "TERM=xterm-256color；env 变更未追踪（V0）——printenv 核实",
         facts: [
           { subject: "cwd", detail: "/var/log/nginx", status: "Confirmed" },
@@ -140,12 +252,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           { subject: "控制权", detail: "14:02:11 · 人类接管（交接前未开始的请求全部作废）", status: "Confirmed" },
           { subject: "SSH 现场", detail: "重连后进入重确认：仅内置只读白名单可用", status: "NeedsRecheck" },
         ],
-        running: [],
-        pending_approvals: ["a-demo-1"],
         screen_summary: "/dev/vda1 40G 37G 3.1G 93% / | ops@prod-1:~$",
       };
     case "list_approvals":
-      return demoState.approvals;
+      return demoState.approvals.map((a) => ({ ...a, segment_report: a.segment_report.map((s) => ({ ...s })) }));
     case "decide_approval": {
       const id = args?.id as string;
       const it = demoState.approvals.find((a) => a.id === id);
@@ -153,49 +263,84 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         it.status = (args?.decision === "deny" ? "denied"
           : args?.decision === "edit" ? "approved_edited" : "approved") as string;
         const label = it.status === "denied" ? "拒绝" : it.status === "approved_edited" ? "批准（编辑后）" : "批准";
-        pushOutput("\r\n[审批] " + it.command + " → " + label + "\r\n");
+        pushTo(it.session_id, "\r\n[审批] " + it.command + " → " + label + "\r\n");
+        audit("human", args?.decision === "deny" ? "approval_denied" : "approval_decision", it.command);
       }
       return null;
     }
     case "set_control": {
-      demoState.owner = args?.owner as "Human" | "Agent";
-      pushOutput(
-        demoState.owner === "Human"
-          ? "\r\n⏸ 控制权 → 人类（Agent 请求已冻结，旧请求作废）\r\n"
-          : "\r\n▶ 控制权 → Agent（请先读取现场简报再决定后续动作）\r\n"
-      );
+      const sid = args?.sid as string;
+      const owner = args?.owner as "Human" | "Agent";
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (s) s.control_owner = owner;   // 焦点会话的「控制权」chip 随之翻转
+      demoState.owner = owner;
       const stopping = args?.stopRunning === true;
+      // 接管作废该会话的全部待审批（真实契约：作废范围 = 该会话旧请求）
+      const voidedCount = owner === "Human"
+        ? demoState.approvals.filter((a) => a.status === "pending" && (!sid || a.session_id === sid)).length
+        : 0;
+      if (voidedCount > 0) {
+        for (const a of demoState.approvals) {
+          if (a.status === "pending" && (!sid || a.session_id === sid)) a.status = "voided";
+        }
+      }
+      pushTo(sid, owner === "Human"
+        ? "\r\n⏸ 控制权 → 人类（Agent 请求已冻结，旧请求作废）\r\n"
+        : "\r\n▶ 控制权 → Agent（请先读取现场简报再决定后续动作）\r\n");
+      audit("human", owner === "Human" ? "takeover" : "handback", null);
       return {
-        frozen: demoState.owner === "Human",
+        frozen: owner === "Human",
+        voided_approvals: voidedCount,
         paused_queue: stopping ? ["x-demo-9a"] : [],
         stopped: stopping ? [["x-demo-1f", { Exited: 0 }]] : [],
         brief: {},
       };
     }
     case "exec_human": {
+      const sid = args?.sid as string;
       const command = args?.command as string;
-      pushOutput("\r\n" + command + "\r\n（演示输出）total 48K\r\n");
+      pushTo(sid, "\r\n" + command + "\r\n（演示输出）total 48K\r\n");
+      audit("human", "exec", command);
       return { stdout: "", exit_code: 0 };
     }
     case "send_keys":
-      pushOutput((args?.keys as string) ?? "");
+      pushTo(args?.sid as string, (args?.keys as string) ?? "");
       return null;
-    case "audit_query": {
-      const events = [
-        { seq: 42, ts: "2026-09-27T14:02:11Z", actor_kind: "human", agent_id: null, action: "takeover", command: null },
-        { seq: 41, ts: "2026-09-27T14:01:58Z", actor_kind: "agent", agent_id: "opencode", action: "approval_requested", command: "rm -rf /tmp/old-build" },
-        { seq: 40, ts: "2026-09-27T14:01:30Z", actor_kind: "agent", agent_id: "opencode", action: "exec", command: "df -h" },
-        { seq: 39, ts: "2026-09-27T14:01:02Z", actor_kind: "human", agent_id: null, action: "session_created", command: null },
-      ];
-      return { events: events.slice(0, (args?.limit as number) ?? 30) };
+    case "pending_host_keys":
+      return demoState.pendingKeys.map((x) => x.pk);
+    case "decide_host_key": {
+      const id = args?.id as string;
+      const accept = args?.accept as boolean;
+      const i = demoState.pendingKeys.findIndex((x) => x.pk.id === id);
+      if (i < 0) return null;
+      const item = demoState.pendingKeys.splice(i, 1)[0];
+      if (accept) demoState.trusted.add(item.pk.address);
+      audit("human", accept ? "host_key_trusted" : "host_key_decision", item.pk.host_name);
+      item.resolve(accept);
+      return null;
     }
-    default:
+    case "audit_query":
+      return { events: demoState.events.slice(0, (args?.limit as number) ?? 30) };
+    // 浏览器演示无法真实承载的操作：要么显式报错（传输类，UI 卡片如实显示失败），
+    // 要么明确列为无操作（此前 default 静默 null 是「占位反馈」伪影的根源）。
+    case "upload_file":
+    case "download_file":
+      throw new Error("演示模式不提供真实 SFTP 传输");
+    case "cancel_transfer":
+    case "note_terminal":
+    case "open_url":
+    case "get_setting":
+    case "set_setting":
+    case "bench_start":
+    case "bench_report":
       return null;
+    default:
+      throw new Error("演示 shim 未实现该命令：" + cmd);
   }
 }
 
-export async function listen(_event: string, handler: Handler): Promise<() => void> {
-  demoState.outputHandlers.push(handler);
+export async function listen(_event: string, _handler: Handler): Promise<() => void> {
+  // 浏览器演示模式不投递 Tauri 事件（审批/指纹队列经 invoke 轮询兜底）
   return () => {};
 }
 
