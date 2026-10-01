@@ -12,6 +12,7 @@
 | [L0 总体设计](docs/architecture/l0-system-design.md) | 系统上下文、容器视图、技术选型、ADR、Spike 清单 | 动手写代码前 |
 | [L1 模块设计](docs/architecture/l1-component-design.md) | crate 划分、SessionApi 接口、审批/凭据/MCP 设计、数据模型、威胁模型 | 实现各模块前 |
 | [产品验证计划](docs/validation-plan.md) | PV 用户研究设计、观察指标、决策 gate | V0 阶段先于一切功能投入 |
+| [PV 执行工具包](docs/pv/session-kit.md) | 主持手册、任务卡、问卷与阈值预登记模板；配套 [pv_env.sh](scripts/pv_env.sh)（沙箱故障模板）/[dist.sh](scripts/dist.sh)（分发构建）/[pv_analyze.py](scripts/pv_analyze.py)（分析与 gate 计算） | 招募参与者与开测前后 |
 
 ## 治理约定
 
