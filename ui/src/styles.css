@@ -28,8 +28,9 @@ body {
 .col:last-child { border-right: none; }
 .panel-title {
   padding: 10px 12px; font-weight: 600; letter-spacing: 0.4px;
-  color: var(--dim); text-transform: uppercase; font-size: 11px;
+  color: var(--dim); font-size: 11px;
   border-bottom: 1px solid var(--border);
+  /* 不 uppercase：中栏标题内嵌用户数据（主机名/会话 id），PROD-1/S-DEMO-0001 是失真 */
 }
 .scroll { overflow-y: auto; flex: 1; padding: 8px; }
 .card {
@@ -241,3 +242,10 @@ textarea {
 .ah-field input, .ah-field select { width: 100%; }
 .dead-overlay { position: absolute; inset: 0; z-index: 20; background: rgba(8, 10, 12, 0.45); display: flex; align-items: flex-start; justify-content: center; }
 .dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+
+/* T24：命令框/输入框 placeholder 显式颜色（浏览器默认灰 ≈3:1 不达 AA；--dim 在
+   --panel 上实算 5.7:1）；浅色终端主题圆角+投影软化「白色孤岛」 */
+input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
+#term { border-radius: 8px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35); overflow: hidden; }
+/* 简报认知徽标行修正（P2-10） */
+.brief-row .tag { flex: none; }

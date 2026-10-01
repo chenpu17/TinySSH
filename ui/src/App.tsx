@@ -116,10 +116,10 @@ const auditLabel = (a: string): string =>
 // 内部管道事件不进用户时间线（集成注入是建会话的固定噪音）
 const HIDDEN_AUDIT_ACTIONS = new Set(["shell_integration_inject"]);
 
-// 审计时间戳 → HH:MM
+// 审计时间戳 → HH:MM:SS（与现场简报/后端审计口径一致——之前无秒，和简报对不上）
 const hhmm = (ts: string): string => {
   const d = new Date(ts);
-  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 };
 
 // 会话状态 → 中文标签 + 颜色类
@@ -331,6 +331,9 @@ export default function App() {
   const [owner, setOwner] = useState<"Human" | "Agent">("Agent");
   const [mcp, setMcp] = useState<{ endpoint: string; agents: { id: string; label: string }[] }>({ endpoint: "", agents: [] });
   const [input, setInput] = useState("");
+  // 命令框历史（P2-14）：↑ 召回上一条、↓ 后退；连续重复不重复入栈
+  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const cmdHistIdx = useRef<number>(-1);
   // 连接状态机：null=空闲；连接中显示主机名；失败显示错误
   const [connecting, setConnecting] = useState<string | null>(null);
   const [connError, setConnError] = useState<{ title: string; detail: string } | null>(null);
@@ -1243,10 +1246,10 @@ export default function App() {
           <span>主机 / 会话</span>
           <span style={{ flex: 1 }} />
           <button className="ghost" onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
-            {showImport ? "收起" : "导入 ~/.ssh/config"}
+            {showImport ? "收起导入" : "导入 ~/.ssh/config"}
           </button>
-          <button className="ghost" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); }}>
-            {showAddHost ? "收起" : "＋ 添加主机"}
+          <button className="ghost" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); }}>
+            {showAddHost ? "收起表单" : "＋ 添加主机"}
           </button>
         </div>
         <div className="scroll">
@@ -1430,7 +1433,7 @@ Authorization: Bearer <TOKEN>`}
           })}
           <span style={{ flex: 1 }} />
           {splitPanes && <button className="ghost" onClick={exitSplit}>退出分屏</button>}
-          <button className="ghost" title="新建连接（打开左侧「添加主机」表单）" onClick={() => setShowAddHost(true)}>＋</button>
+          <button className="ghost" title="新建连接（打开左侧「添加主机」表单，再点收起）" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); }}>＋</button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -1657,6 +1660,27 @@ Authorization: Bearer <TOKEN>`}
                   xtermRef.current?.focus();
                 } else {
                   setInput("");
+                  cmdHistIdx.current = -1;
+                }
+                return;
+              }
+              // ↑/↓ 历史召回（P2-14）；输入法组合期间不劫持
+              if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.altKey && !e.metaKey && !e.ctrlKey &&
+                  !(e.nativeEvent as KeyboardEvent).isComposing && cmdHistory.length > 0) {
+                e.preventDefault();
+                const last = cmdHistory.length - 1;
+                if (e.key === "ArrowUp") {
+                  const next = cmdHistIdx.current < 0 ? last : Math.max(0, cmdHistIdx.current - 1);
+                  cmdHistIdx.current = next;
+                  setInput(cmdHistory[next]);
+                } else {
+                  if (cmdHistIdx.current < 0 || cmdHistIdx.current >= last) {
+                    cmdHistIdx.current = -1;
+                    setInput("");
+                  } else {
+                    cmdHistIdx.current += 1;
+                    setInput(cmdHistory[cmdHistIdx.current]);
+                  }
                 }
                 return;
               }
@@ -1667,6 +1691,8 @@ Authorization: Bearer <TOKEN>`}
                   return;
                 }
                 const cmd = input;
+                setCmdHistory((h) => (h[h.length - 1] === cmd ? h : [...h, cmd]));
+                cmdHistIdx.current = -1;
                 setInput("");
                 xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd}\x1b[0m\r\n`);
                 // 立即回焦终端（不等待执行完成：长驻命令 top/vim 也即时可中断）
@@ -1786,7 +1812,7 @@ Authorization: Bearer <TOKEN>`}
               </div>
             )}
             {transfers.length === 0 && (
-              <div className="side-quiet">把文件从访达拖进终端即上传到当前目录；下载在上方填远端路径（存到「下载」文件夹）。</div>
+                <div className="side-quiet">把文件从访达拖进终端即上传到当前目录；下载在上方「下载远端文件」输入框填绝对路径（存到「下载」文件夹）。</div>
             )}
             {transfers.map((t) => (
               <div className="card row xfer-row" key={t.id}>
@@ -1873,15 +1899,23 @@ function BriefCard({ brief }: { brief: Brief }) {
           <div className="brief-row" key={i} title={cmd}>
             <span className="mono cmd-inline">$ {cmd}</span>
             {exit && <span className="dim"> · {exit}</span>}
+            <span className={"tag " + epistemicClass(f.status)}>{epistemicLabel(f.status)}</span>
           </div>
         );
       })}
       {notices.map((f, i) => (
-        <div className={"brief-row " + (f.status === "Unobservable" ? "err" : "warn-text")} key={`n${i}`}>
+        <div className={"brief-row " + (f.status === "Unobservable" ? "err" : "warn-text")} key={`n${i}`} title={f.detail}>
           {f.detail}
+          <span className={"tag " + epistemicClass(f.status)}>{epistemicLabel(f.status)}</span>
         </div>
       ))}
-      {ctl && <div className="brief-row dim">控制权：{ctl.detail}</div>}
+      {/* 控制权 fact 是系统核实事实；行会被截断，tooltip 给全文 */}
+      {ctl && (
+        <div className="brief-row dim" title={ctl.detail}>
+          控制权：{ctl.detail}
+          <span className={"tag " + epistemicClass(ctl.status)}>{epistemicLabel(ctl.status)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -1892,7 +1926,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
   const [name, setName] = useState(editHost?.name ?? "");
   const [address, setAddress] = useState(editHost?.address ?? "");
   const [port, setPort] = useState(editHost ? String(editHost.port) : "22");
-  const [username, setUsername] = useState(editHost?.username ?? "root");
+  const [username, setUsername] = useState(editHost?.username ?? "");
   const [authMode, setAuthMode] = useState<"password" | "key" | "agent">("password");
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
