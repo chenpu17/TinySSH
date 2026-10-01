@@ -64,6 +64,20 @@ function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
   if (v === "Escalated") return { text: "升级后停止", bad: false };
   return { text: String(v), bad: false };
 }
+// 审批状态契约：后端 ApprovalStatus 是 PascalCase（session-api v1 冻结契约，serde 无
+// rename_all——"Pending"/"ApprovedEdited"…）；UI 统一在入库时归一为 snake_case 再比较。
+// demo shim 直接给小写，归一后两者一致。（此前 UI 按小写过滤，真实 app 的审批面板
+// 从未匹配过任何状态——文案 sweep 实锤的契约断点。）
+const normApprovalStatus = (s: string): string =>
+  s.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+// 最近处理（已决审批）六态标签：编辑后批准/超时/作废此前都被误显示成「✕ 拒绝」。
+const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
+  approved: { text: "✓ 批准", cls: "ok" },
+  approved_edited: { text: "✓ 批准（编辑后）", cls: "ok" },
+  denied: { text: "✕ 拒绝", cls: "err" },
+  timeout: { text: "⏱ 超时未审", cls: "err" },
+  voided: { text: "⊘ 已作废（接管）", cls: "dim" },
+};
 // 文件传输（T20）：核心返回的句柄 + UI 卡片状态（终态由审计事件按 id 对账）
 type TransferHandle = { id: string; session_id: string; kind: "Upload" | "Download"; local: string; remote: string };
 type TransferCard = {
@@ -347,7 +361,8 @@ export default function App() {
   const refreshLists = useCallback(async () => {
     setSessions(await invoke<SessionInfo[]>("list_sessions"));
     setHosts(await invoke<Host[]>("list_hosts"));
-    setApprovals(await invoke<ApprovalItem[]>("list_approvals", { pendingOnly: false }));
+    setApprovals((await invoke<ApprovalItem[]>("list_approvals", { pendingOnly: false }))
+      .map((a) => ({ ...a, status: normApprovalStatus(a.status) })));
     // 多取一些：集成注入等内部事件会被前端过滤，保证可见条数够看
     const page = await invoke<{ events: AuditEvent[] }>("audit_query", { sid: null, limit: 60 });
     setTimeline(page.events);
@@ -1447,7 +1462,7 @@ Authorization: Bearer <TOKEN>`}
         {stopResult && (
           <div className="conn-error">
             <div>
-              <b>⏸ 已接管 {stopResult.hostName} —— 停止结果</b>
+              <b>⏸ 已接管 {stopResult.hostName}——停止结果</b>
               <div className="dim" style={{ marginTop: 4 }}>
                 {stopResult.report.stopped.length === 0 && <div>· 正在运行的任务：无</div>}
                 {stopResult.report.stopped.map(([id, out]) => {
@@ -1786,8 +1801,8 @@ Authorization: Bearer <TOKEN>`}
               {pendingApprovals.length === 0 && <div className="side-sub">最近处理</div>}
               {resolvedApprovals.map((a) => (
                 <div className="tl-row" key={a.id} title={a.command}>
-                  <span className={a.status === "approved" ? "ok" : "err"} style={{ flex: "none", fontSize: 11 }}>
-                    {a.status === "approved" ? "✓ 批准" : "✕ 拒绝"}
+                  <span className={(approvalResolvedLabel[a.status] ?? { cls: "err" }).cls} style={{ flex: "none", fontSize: 11 }}>
+                    {(approvalResolvedLabel[a.status] ?? { text: a.status }).text}
                   </span>
                   <span className="tl-cmd mono dim">{a.command}</span>
                 </div>
@@ -1850,7 +1865,7 @@ Authorization: Bearer <TOKEN>`}
               <div className="tl-row" key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
                 <span className="tl-time">{hhmm(ev.ts)}</span>
                 <span className={ev.actor_kind === "agent" ? "tl-agent" : "tl-human"}>
-                  {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? `·${ev.agent_id}` : ""}`}
+                  {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
                 </span>
                 <span className="tl-what">{auditLabel(ev.action)}</span>
                 {ev.command && <span className="tl-cmd mono dim">{ev.command}</span>}

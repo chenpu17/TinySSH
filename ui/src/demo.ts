@@ -34,6 +34,25 @@ const demoState = {
         { segment: "tar czf /tmp/build.tgz dist/", verdict: "pending: 未命中任何允许规则" },
       ],
     },
+    {
+      id: "a-demo-2",
+      session_id: "s-demo-0001",
+      agent_id: "opencode",
+      command: "docker system prune -f",
+      status: "pending",
+      segment_report: [
+        { segment: "docker system prune -f", verdict: "pending: 未命中任何允许规则" },
+      ],
+    },
+    {
+      // 已决样例：展示「最近处理」的作废态（接管作废旧请求）
+      id: "a-demo-0",
+      session_id: "s-demo-0002",
+      agent_id: "opencode",
+      command: "systemctl restart nginx",
+      status: "voided",
+      segment_report: [],
+    },
   ],
   screen: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
 };
@@ -131,8 +150,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const id = args?.id as string;
       const it = demoState.approvals.find((a) => a.id === id);
       if (it) {
-        it.status = (args?.decision === "deny" ? "denied" : "approved") as string;
-        pushOutput("\r\n[审批] " + it.command + " → " + it.status + "\r\n");
+        it.status = (args?.decision === "deny" ? "denied"
+          : args?.decision === "edit" ? "approved_edited" : "approved") as string;
+        const label = it.status === "denied" ? "拒绝" : it.status === "approved_edited" ? "批准（编辑后）" : "批准";
+        pushOutput("\r\n[审批] " + it.command + " → " + label + "\r\n");
       }
       return null;
     }

@@ -698,3 +698,21 @@ pub const DEFAULT_QUIET_MS: u64 = 1000;
 pub const MAX_EXEC_QUEUE: usize = 8;
 /// 人类输入优先窗口：人类 2s 内有输入时，agent send_keys 延迟。
 pub const HUMAN_INPUT_PRIORITY_WINDOW: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+mod wire_format_tests {
+    use super::*;
+
+    /// 锁定 ApprovalStatus 的线上格式：PascalCase（serde 无 rename_all）。
+    /// UI（ui/src/App.tsx normApprovalStatus）与 demo shim 都依赖这一形态：
+    /// 改动即 MCP/Tauri wire 契约变更，须走 L1 契约评审，不得顺手 rename。
+    #[test]
+    fn approval_status_wire_format_is_pascal_case() {
+        assert_eq!(serde_json::to_value(ApprovalStatus::Pending).unwrap(), "Pending");
+        assert_eq!(serde_json::to_value(ApprovalStatus::Approved).unwrap(), "Approved");
+        assert_eq!(serde_json::to_value(ApprovalStatus::ApprovedEdited).unwrap(), "ApprovedEdited");
+        assert_eq!(serde_json::to_value(ApprovalStatus::Denied).unwrap(), "Denied");
+        assert_eq!(serde_json::to_value(ApprovalStatus::Timeout).unwrap(), "Timeout");
+        assert_eq!(serde_json::to_value(ApprovalStatus::Voided).unwrap(), "Voided");
+    }
+}
