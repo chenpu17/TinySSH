@@ -328,6 +328,8 @@ async fn journey2_reconnect_reconfirm() {
 /// 旅程 3（T13）：重连死端 → 一键重连闭环。
 /// 与旅程 2（自动重连：容器 <2s 内回来）互补：这里 sshd 真正下线超过自动重连窗口，
 /// 核心进入 Disconnected 死端；容器恢复后 reconnect_session 手动恢复。
+/// 场景含 docker stop/start（慢且对时序敏感），与 sshd_e2e/spike2 同款两次尝试兜底
+///（§6-11 并发 flake 家族；v1.15–v1.19 回归漏带 e2e 守卫跳过未暴露）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn journey3_manual_reconnect_after_hard_down() {
     let _sshd_guard = tinyssh_testbed::sshd_lock();
@@ -336,6 +338,21 @@ async fn journey3_manual_reconnect_after_hard_down() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let mut last = String::new();
+    for attempt in 0..2 {
+        let r = std::panic::AssertUnwindSafe(journey3_scenario());
+        match futures_util::FutureExt::catch_unwind(r).await {
+            Ok(Ok(())) => return,
+            Ok(Err(e)) => last = e,
+            Err(p) => last = format!("panic: {p:?}"),
+        }
+        eprintln!("journey3 attempt {attempt} failed: {last}; retrying…");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    panic!("journey3 两次尝试均失败: {last}");
+}
+
+async fn journey3_scenario() -> std::result::Result<(), String> {
     struct ContainerStartGuard;
     impl Drop for ContainerStartGuard {
         fn drop(&mut self) {
@@ -431,6 +448,7 @@ async fn journey3_manual_reconnect_after_hard_down() {
         page.events.iter().any(|ev| ev.action == "session_reconnect"),
         "审计应含 session_reconnect 事件"
     );
+    Ok(())
 }
 
 /// 旅程 4（T13 / P1 §6-17）：脏状态断线 → 自动重连。

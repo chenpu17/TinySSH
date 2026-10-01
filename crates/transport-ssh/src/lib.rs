@@ -22,6 +22,14 @@ pub type HostKeyCheck = Arc<
         + Sync,
 >;
 
+/// 2FA 人工应答门（路线图⑩）：keyboard-interactive 非密码类提示交人类应答。
+/// Ok(None) = 人类取消/通道不可用（认证终止）。None 门 = 遇到非密码提示即失败。
+pub type KbPromptCheck = Arc<
+    dyn Fn(&str, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<String>>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// russh Handler 的错误类型：桥接 session_api::Error 与 russh::Error（孤儿规则）。
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
@@ -96,6 +104,8 @@ pub struct SshTarget {
     /// password 或解密后的私钥 PEM
     pub secret: String,
     pub host_key_check: Option<HostKeyCheck>,
+    /// keyboard-interactive 非密码类提示的人工应答门（2FA）。
+    pub kb_prompt_check: Option<KbPromptCheck>,
 }
 
 pub struct SshChannel {
@@ -142,8 +152,7 @@ impl SshChannel {
         let handler = ClientHandler {
             host_key_check: self.target.host_key_check.clone(),
             seen_fingerprint: self.seen_fingerprint.clone(),
-        };
-        let handle = russh::client::connect(
+        };        let handle = russh::client::connect(
             ssh_config(),
             (self.target.address.as_str(), self.target.port),
             handler,
@@ -157,10 +166,28 @@ impl SshChannel {
 
         let mut handle = handle;
         let auth = match self.target.auth_type {
-            AuthType::Password | AuthType::KeyboardInteractive => handle
-                .authenticate_password(&self.target.username, &self.target.secret)
-                .await
-                .map_err(|e| Error::AuthFailed)?,
+            AuthType::Password => {
+                let a = handle
+                    .authenticate_password(&self.target.username, &self.target.secret)
+                    .await
+                    .map_err(|e| Error::AuthFailed)?;
+                if a.success() {
+                    a
+                } else {
+                    // 2FA 服务器常见形态：拒绝 password 方法、只提供 keyboard-interactive
+                    //（第一轮往往就是密码提示）。回落 kb 循环重试。
+                    if !self.kb_loop(&mut handle).await? {
+                        return Err(Error::AuthFailed);
+                    }
+                    russh::client::AuthResult::Success
+                }
+            }
+            AuthType::KeyboardInteractive => {
+                if !self.kb_loop(&mut handle).await? {
+                    return Err(Error::AuthFailed);
+                }
+                russh::client::AuthResult::Success
+            }
             AuthType::Key => {
                 let key = decode_secret_key(&self.target.secret, None)
                     .map_err(|_| Error::AuthFailed)?;
@@ -211,6 +238,8 @@ impl SshChannel {
         if !auth.success() {
             return Err(Error::AuthFailed);
         }
+
+        // ---------- 认证完成，打开 PTY shell ----------
 
         let (cols, rows) = *self.size.lock().await;
         let mut channel = handle
@@ -271,6 +300,52 @@ impl SshChannel {
         // 保存 shell channel 引用（写入经 data_bytes；信号写控制字节同路径）
         *self.handle.lock().await = Some(handle);
         Ok(())
+    }
+
+    /// keyboard-interactive 认证循环（路线图⑩ 2FA）。
+    /// 应答策略：非回显且文本含 password/密码 的提示 → 自动用库内密码（省一次
+    /// 重复输入，服务器要求的正是表单里那个密码）；其余提示（OTP/验证码等）→
+    /// 人工门。无门且需要人工 → ConnectFailed 明说，不静默失败。
+    async fn kb_loop(&self, handle: &mut russh::client::Handle<ClientHandler>) -> Result<bool> {
+        use russh::client::KeyboardInteractiveAuthResponse as R;
+        let mut resp = handle
+            .authenticate_keyboard_interactive_start(&self.target.username, None)
+            .await
+            .map_err(|_| Error::AuthFailed)?;
+        loop {
+            match resp {
+                R::Success => return Ok(true),
+                R::Failure { .. } => return Ok(false),
+                R::InfoRequest { prompts, .. } => {
+                    let mut answers = Vec::with_capacity(prompts.len());
+                    for p in &prompts {
+                        let text = p.prompt.trim().to_lowercase();
+                        let is_pw = !p.echo && (text.contains("password") || p.prompt.contains("密码"));
+                        let ans = if is_pw {
+                            self.target.secret.clone()
+                        } else {
+                            match &self.target.kb_prompt_check {
+                                Some(gate) => gate(&p.prompt, p.echo)
+                                    .await?
+                                    .ok_or_else(|| {
+                                        Error::ConnectFailed(
+                                            "服务器要求额外交互认证（2FA），人工应答被取消".into(),
+                                        )
+                                    })?,
+                                None => return Err(Error::ConnectFailed(
+                                    "服务器要求额外交互认证（2FA），但本连接未启用人工应答通道".into(),
+                                )),
+                            }
+                        };
+                        answers.push(ans);
+                    }
+                    resp = handle
+                        .authenticate_keyboard_interactive_respond(answers)
+                        .await
+                        .map_err(|_| Error::AuthFailed)?;
+                }
+            }
+        }
     }
 
     async fn write_bytes(&self, data: &[u8]) -> Result<()> {

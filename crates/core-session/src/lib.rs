@@ -27,6 +27,9 @@ pub struct ApprovalCenter {
     pub hk_pending: StdMutex<HashMap<String, PendingHostKey>>,
     pub hk_decisions: StdMutex<HashMap<String, oneshot::Sender<bool>>>,
     pub hk_tx: broadcast::Sender<PendingHostKey>,
+    /// 2FA 人工应答待决（路线图⑩）：pending 表（含应答通道）+ 事件推送。
+    pub ap_pending: StdMutex<HashMap<String, (PendingAuthPrompt, oneshot::Sender<String>)>>,
+    pub ap_tx: broadcast::Sender<PendingAuthPrompt>,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
 }
@@ -44,6 +47,7 @@ impl SessionManager {
         let audit = Arc::new(tinyssh_audit::AuditStore::open(db_path)?);
         let (approvals_tx, _) = broadcast::channel(256);
         let (hk_tx, _) = broadcast::channel(16);
+        let (ap_tx, _) = broadcast::channel(16);
         let center = Arc::new(ApprovalCenter {
             engine: ApprovalEngine::new()?,
             items: StdMutex::new(HashMap::new()),
@@ -52,6 +56,8 @@ impl SessionManager {
             hk_pending: StdMutex::new(HashMap::new()),
             hk_decisions: StdMutex::new(HashMap::new()),
             hk_tx,
+            ap_pending: StdMutex::new(HashMap::new()),
+            ap_tx,
             vault,
             audit,
         });
@@ -210,6 +216,46 @@ async fn host_key_gate(
         Err(_) => {
             center.hk_pending.lock().unwrap().remove(&item.id);
             Err(Error::HostKeyRejected("确认超时".into()))
+        }
+    }
+}
+
+/// 2FA 人工应答门（路线图⑩）：keyboard-interactive 非密码类提示挂起等人类。
+/// 应答串经 oneshot 送回 transport；取消/超时返回 None（transport 侧终止认证）。
+async fn auth_prompt_gate(
+    center: &Arc<ApprovalCenter>,
+    ctx: &Actor,
+    host: &Host,
+    prompt: &str,
+    echo: bool,
+) -> Result<Option<String>> {
+    let item = PendingAuthPrompt {
+        id: format!("ap-{}", uuid::Uuid::new_v4()),
+        host_name: host.name.clone(),
+        name: String::new(),
+        instructions: String::new(),
+        prompt: prompt.to_string(),
+        echo,
+        created_at: chrono::Utc::now(),
+    };
+    let _ = center.audit.append(
+        ctx, "auth_prompt_requested", None, Some(&host.name),
+        serde_json::json!({"id": item.id, "prompt": prompt, "echo": echo}), None);
+    let (tx, rx) = oneshot::channel();
+    center.ap_pending.lock().unwrap().insert(item.id.clone(), (item.clone(), tx));
+    let _ = center.ap_tx.send(item.clone());
+    match tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx).await {
+        Ok(Ok(answer)) => {
+            let _ = center.audit.append(
+                ctx, "auth_prompt_answered", None, Some(&host.name),
+                serde_json::json!({"id": item.id, "answer_len": answer.chars().count()}), None);
+            if answer.is_empty() { Ok(None) } else { Ok(Some(answer)) }
+        }
+        // 取消（空应答通道关闭）/ 待决项消失 / 超时：pending 仅超时需自清
+        Ok(Err(_)) => Ok(None),
+        Err(_) => {
+            center.ap_pending.lock().unwrap().remove(&item.id);
+            Ok(None)
         }
     }
 }
@@ -382,6 +428,17 @@ impl SessionApi for SessionManager {
                 let fp = fp.to_string(); // owned 后再装箱：future 不借入参（HRTB 约束）
                 Box::pin(async move { host_key_gate(&center, &ctx, &host, &fp).await })
             });
+            // 2FA 人工应答门（路线图⑩）：kb 非密码提示 → 挂起等人类（同指纹门模式）
+            let kb_center = self.center.clone();
+            let kb_host = host.clone();
+            let kb_ctx = ctx.clone();
+            let kb_gate: transport_ssh::KbPromptCheck = Arc::new(move |prompt, echo| {
+                let center = kb_center.clone();
+                let host = kb_host.clone();
+                let ctx = kb_ctx.clone();
+                let prompt = prompt.to_string(); // owned 后再装箱（HRTB 约束，同上）
+                Box::pin(async move { auth_prompt_gate(&center, &ctx, &host, &prompt, echo).await })
+            });
             let target = transport_ssh::SshTarget {
                 address: host.address.clone(),
                 port: host.port,
@@ -389,6 +446,7 @@ impl SessionApi for SessionManager {
                 auth_type,
                 secret: secret.to_string(),
                 host_key_check: Some(gate),
+                kb_prompt_check: Some(kb_gate),
             };
             SshChannel::connect(target, cols, rows).await?
         };
@@ -710,6 +768,46 @@ impl SessionApi for SessionManager {
                     .map_err(|_| Error::Storage("host key gate receiver dropped".into()))
             }
             _ => Err(Error::InvalidInput("no pending host key with this id".into())),
+        }
+    }
+
+    // ---- 2FA 人工应答门（路线图⑩）----
+    async fn pending_auth_prompts(&self, _ctx: &Actor) -> Result<Vec<PendingAuthPrompt>> {
+        Ok(self
+            .center
+            .ap_pending
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(item, _)| item.clone())
+            .collect())
+    }
+
+    fn subscribe_auth_prompts(&self) -> broadcast::Receiver<PendingAuthPrompt> {
+        self.center.ap_tx.subscribe()
+    }
+
+    async fn answer_auth_prompt(&self, ctx: &Actor, id: &str, answer: &str) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let (item, tx) = self
+            .center
+            .ap_pending
+            .lock()
+            .unwrap()
+            .remove(id)
+            .ok_or_else(|| Error::InvalidInput("no pending auth prompt with this id".into()))?;
+        // 空串 = 取消：oneshot 关闭让 gate 返回 None；非空送应答
+        if answer.is_empty() {
+            let _ = self.center.audit.append(
+                ctx, "auth_prompt_answered", None, Some(&item.host_name),
+                serde_json::json!({"id": item.id, "cancelled": true}), None);
+            drop(tx);
+            Ok(())
+        } else {
+            tx.send(answer.to_string())
+                .map_err(|_| Error::Storage("auth prompt gate receiver dropped".into()))
         }
     }
 

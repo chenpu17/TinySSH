@@ -42,6 +42,10 @@ type PendingHostKey = {
   issue: "FirstSeen" | "Changed"; fingerprint: string; previous_fingerprint: string | null;
   created_at: string;
 };
+type PendingAuthPrompt = {
+  id: string; host_name: string; name: string; instructions: string;
+  prompt: string; echo: boolean; created_at: string;
+};
 type Brief = {
   cwd: string | null; env_summary: string;
   facts: { subject: string; detail: string; status: string }[];
@@ -415,11 +419,17 @@ export default function App() {
 
   // 主机指纹待决（T17）：初始拉取 + 事件推送；弹窗按到达顺序逐个出示。
   // 浏览器 demo 无事件通道，用同一命令轮询兜底（TOFU shim 的挂起建连靠它发现）。
+  // 2FA 认证提示（路线图⑩）同一套拉取/推送模式。
+  const [authPromptQueue, setAuthPromptQueue] = useState<PendingAuthPrompt[]>([]);
+  const [authAnswer, setAuthAnswer] = useState("");
   useEffect(() => {
     if (!inTauri) {
       const t = setInterval(() => {
         invoke<PendingHostKey[]>("pending_host_keys")
           .then((list) => setHostKeyQueue((q) => (q.length ? q : list)))
+          .catch(() => {});
+        invoke<PendingAuthPrompt[]>("pending_auth_prompts")
+          .then((list) => setAuthPromptQueue((q) => (q.length ? q : list)))
           .catch(() => {});
       }, 500);
       return () => clearInterval(t);
@@ -427,13 +437,26 @@ export default function App() {
     invoke<PendingHostKey[]>("pending_host_keys")
       .then((list) => setHostKeyQueue((q) => (q.length ? q : list)))
       .catch(() => {});
+    invoke<PendingAuthPrompt[]>("pending_auth_prompts")
+      .then((list) => setAuthPromptQueue((q) => (q.length ? q : list)))
+      .catch(() => {});
     let un: (() => void) | undefined;
+    let un2: (() => void) | undefined;
     listen<PendingHostKey>("hostkey-event", (ev) => {
       const item = ev.payload;
       setHostKeyQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
     }).then((f) => (un = f));
-    return () => un?.();
+    listen<PendingAuthPrompt>("authprompt-event", (ev) => {
+      const item = ev.payload;
+      setAuthPromptQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
+    }).then((f) => (un2 = f));
+    return () => { un?.(); un2?.(); };
   }, []);
+  const answerAuthPrompt = async (id: string, answer: string) => {
+    setAuthPromptQueue((q) => q.filter((x) => x.id !== id));
+    setAuthAnswer("");
+    try { await invoke("answer_auth_prompt", { id, answer }); } catch { /* 已超时/不存在 */ }
+  };
 
   // 终端实例工厂：每个会话一个独立 xterm。
   const makeTerm = useCallback((sessionSid: string) => {
@@ -1542,6 +1565,34 @@ Authorization: Bearer <TOKEN>`}
                     </div>
                   </>
                 )}
+              </div>
+            </div>
+          );
+        })()}
+        {authPromptQueue.length > 0 && (() => {
+          const ap = authPromptQueue[0];
+          return (
+            <div className="hk-mask">
+              <div className="hk-dialog">
+                <div className="hk-title">服务器请求认证输入（双因素）</div>
+                <div>
+                  主机 <b>{ap.host_name}</b> 要求完成额外交互认证。请输入服务器要求的验证信息：
+                </div>
+                <div className="dim mono" style={{ margin: "6px 0", fontSize: 11 }}>{ap.prompt || ap.name || "verification"}</div>
+                <input
+                  type={ap.echo ? "text" : "password"}
+                  value={authAnswer}
+                  onChange={(e) => setAuthAnswer(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && authAnswer.trim()) void answerAuthPrompt(ap.id, authAnswer); }}
+                  placeholder={ap.echo ? "输入验证码" : "输入验证码（输入不回显）"}
+                  autoFocus
+                  style={{ width: "100%" }}
+                />
+                <div className="hk-actions">
+                  <button disabled={!authAnswer.trim()} onClick={() => void answerAuthPrompt(ap.id, authAnswer)}>提交验证</button>
+                  <button className="ghost" onClick={() => void answerAuthPrompt(ap.id, "")}>取消认证</button>
+                </div>
+                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>取消将终止本次连接认证。密码本身已在连接时自动填入，无需重复输入。</div>
               </div>
             </div>
           );

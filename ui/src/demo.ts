@@ -33,6 +33,7 @@ const demoState = {
     { id: "local", name: "本机", address: "local", port: 0, username: "ops", auth_type: "Password" },
     { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-prod2", name: "prod-2（演示连接失败）", address: "10.0.0.12", port: 22, username: "ops", auth_type: "Password" },
+    { id: "h-otp1", name: "otp-1（演示 2FA）", address: "otp.demo", port: 22, username: "ops", auth_type: "Password" },
   ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string }[],
   sessions: [
     {
@@ -87,6 +88,8 @@ const demoState = {
     { seq: 39, ts: "2026-09-27T14:01:02Z", actor_kind: "human", agent_id: null, action: "session_created", command: null },
   ] as DemoEvent[],
   pendingKeys: [] as PendingKey[],
+  // 2FA 认证提示待决（路线图⑩演示）：挂起的 create_session 应答器按 id 索引
+  pendingPrompts: [] as { item: { id: string; host_name: string; name: string; instructions: string; prompt: string; echo: boolean; created_at: string }; resolve: (answer: string | null) => void }[],
   // TOFU 已信任主机地址（种子信任 prod-1：走查点「连接」不弹指纹窗，与真实一致）
   trusted: new Set(["10.0.0.11"]),
 };
@@ -184,6 +187,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const hid = args?.hostId as string;
       const h = demoState.hosts.find((x) => x.id === hid);
       if (!h) throw new Error("HostNotFound（演示）");
+      // 门序与真实 SSH 一致：先 TOFU 指纹门（密钥交换期），后 2FA 认证提示
       // TOFU 指纹门：未信任主机在门内挂起（弹窗决定），与真实后端同构——
       // 拒绝时 HostKeyRejected 从原始 createSession 调用抛出，主机卡红色失败态。
       // 本机（local）会话不经 SSH，无指纹门。
@@ -202,6 +206,24 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           });
         });
         if (!ok) throw new Error("HostKeyRejected（演示：已拒绝该主机指纹）");
+      }
+      if (h.address === "otp.demo") {
+        // 2FA 演示（路线图⑩）：认证提示挂起等人类应答（与真实挂起语义同构）
+        const answer = await new Promise<string | null>((resolve) => {
+          demoState.pendingPrompts.push({
+            item: {
+              id: "ap-demo-" + demoSeq++,
+              host_name: h.name,
+              name: "otp",
+              instructions: "",
+              prompt: "Verification code (OTP):",
+              echo: true,
+              created_at: new Date().toISOString(),
+            },
+            resolve,
+          });
+        });
+        if (!answer) throw new Error("AuthFailed（演示：2FA 应答被取消）");
       }
       if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
@@ -308,6 +330,17 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return null;
     case "pending_host_keys":
       return demoState.pendingKeys.map((x) => x.pk);
+    case "pending_auth_prompts":
+      return demoState.pendingPrompts.map((x) => x.item);
+    case "answer_auth_prompt": {
+      const id = args?.id as string;
+      const answer = (args?.answer as string) ?? "";
+      const i = demoState.pendingPrompts.findIndex((x) => x.item.id === id);
+      if (i < 0) return null;
+      const it = demoState.pendingPrompts.splice(i, 1)[0];
+      it.resolve(answer || null);
+      return null;
+    }
     case "decide_host_key": {
       const id = args?.id as string;
       const accept = args?.accept as boolean;

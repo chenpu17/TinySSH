@@ -17,6 +17,7 @@ fn target() -> transport_ssh::SshTarget {
         auth_type: session_api::AuthType::Password,
         secret: "testpass".into(),
         host_key_check: None, // 测试：全接受（生产走 TOFU 回调）
+        kb_prompt_check: None, // 2FA 门：测试直连不用
     }
 }
 
@@ -346,4 +347,84 @@ async fn ssh_agent_auth_connects() {
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "root");
     channel.close().await.unwrap();
+}
+
+/// 路线图⑩ 2FA：服务器拒绝 password 方法、强制 keyboard-interactive（PAM）时，
+/// Password 认证回落 kb 循环——首条密码类提示自动应答库内密码，认证成功。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ssh_keyboard_interactive_fallback() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    match kb_scenario().await {
+        Ok(()) => {}
+        Err(e) => panic!("kb fallback scenario failed: {e}"),
+    }
+}
+
+async fn kb_scenario() -> Result<(), String> {
+    use session_api::transport::ChannelHandle as _;
+
+    // 容器内起第二 sshd（2223）：alpine 的 PAM 版二进制是独立文件 /usr/sbin/sshd.pam
+    //（普通 /usr/sbin/sshd 会静默忽略 UsePAM、kb 无后端恒拒）。
+    // 杀旧实例走 /proc 全扫描：busybox pgrep/pkill 匹配 argv[0]，而 sshd 监听进程
+    // re-exec 后 argv[0] 是 "sshd: …[listener]" 长标题，-x/-f 都打不准；
+    // pkill -f 又会自匹配本 sh 命令行文本（T25 同型坑）。排除自身 PID 即可。
+    let setup = std::process::Command::new("docker")
+        .args([
+            "exec", "tinyssh-e2e", "sh", "-c",
+            "apk add --no-cache openssh-server-pam >/dev/null 2>&1; \
+             SS=sshd.pam; [ -x /usr/sbin/$SS ] || SS=sshd; \
+             [ -s /etc/pam.d/sshd ] || printf 'auth required pam_unix.so\\naccount required pam_unix.so\\npassword required pam_unix.so\\nsession required pam_unix.so\\n' > /etc/pam.d/sshd; \
+             mkdir -p /run/sshd; \
+             for p in /proc/[0-9]*; do i=${p#/proc/}; [ \"$i\" = \"$$\" ] && continue; c=$(tr \"\\0\" \" \" < $p/cmdline 2>/dev/null); case \"$c\" in *sshd*2223*) kill $i 2>/dev/null;; esac; done; sleep 0.4; \
+             /usr/sbin/$SS -p 2223 -o UsePAM=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=yes -o PermitRootLogin=yes",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !setup.status.success() {
+        return Err(format!("kb sshd 启动失败: {} {}", String::from_utf8_lossy(&setup.stderr), String::from_utf8_lossy(&setup.stdout)));
+    }
+    // banner 探测 2223（TCP 提前接受在 docker 端口代理下失真——banner 为准）
+    let mut up = false;
+    for _ in 0..20 {
+        let ok = std::process::Command::new("bash")
+            .args(["-c", "printf '' | nc -w 2 127.0.0.1 2223 2>/dev/null | head -c 4 | grep -q SSH-"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            up = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    if !up {
+        return Err("kb sshd 20s 未就绪".into());
+    }
+
+    let mut t = target();
+    t.port = 2223;
+    let channel = transport_ssh::SshChannel::connect(t, 120, 32)
+        .await
+        .map_err(|e| e.to_string())?;
+    let out = channel
+        .exec_fresh(
+            "echo kb-fallback-ok",
+            &session_api::ExecOpts::default(),
+            std::time::Instant::now() + Duration::from_secs(10),
+            &session_api::transport::tokio_util_sync::CancellationToken::new(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    channel.close().await.map_err(|e| e.to_string())?;
+    if text.contains("kb-fallback-ok") {
+        Ok(())
+    } else {
+        Err(format!("kb 会话输出异常: {text:?}"))
+    }
 }

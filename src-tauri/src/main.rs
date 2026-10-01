@@ -290,6 +290,18 @@ async fn decide_host_key(state: ApiState<'_>, id: String, accept: bool) -> CmdRe
     state.api.decide_host_key(&human(), &id, accept).await.map_err(|e| e.to_string())
 }
 
+/// 2FA 认证提示待决列表（路线图⑩：keyboard-interactive 非密码类提示）。
+#[tauri::command]
+async fn pending_auth_prompts(state: ApiState<'_>) -> CmdResult<Vec<PendingAuthPrompt>> {
+    state.api.pending_auth_prompts(&human()).await.map_err(|e| e.to_string())
+}
+
+/// 人类应答认证提示；answer 为空串视为取消（认证终止）。
+#[tauri::command]
+async fn answer_auth_prompt(state: ApiState<'_>, id: String, answer: String) -> CmdResult<()> {
+    state.api.answer_auth_prompt(&human(), &id, &answer).await.map_err(|e| e.to_string())
+}
+
 /// SPIKE-1：是否处于基准模式。
 #[tauri::command]
 async fn bench_mode() -> CmdResult<bool> {
@@ -525,6 +537,18 @@ fn main() {
                     }
                 }
             });
+            // 2FA 认证提示事件 → 前端（路线图⑩）
+            let handle_ap = app.handle().clone();
+            let mut ap_rx = api.subscribe_auth_prompts();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(ap_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_ap.emit("authprompt-event", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
             // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
             if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
                 let api2 = api.clone();
@@ -595,7 +619,7 @@ fn main() {
             get_setting, set_setting,
             read_screen, send_keys, exec_human, set_control, session_brief,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
-            pending_host_keys, decide_host_key,
+            pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,
         ])
         .run(tauri::generate_context!())

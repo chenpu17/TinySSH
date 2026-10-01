@@ -8,9 +8,9 @@ fi
 docker rm -f tinyssh-e2e 2>/dev/null || true
 # Docker Hub 不可达时使用 daocloud 镜像
 IMAGE=$(docker pull -q docker.m.daocloud.io/library/alpine:3.20 2>/dev/null || echo alpine:3.20)
-docker run -d --name tinyssh-e2e -p 127.0.0.1:2222:22 "$IMAGE" sh -c '
+docker run -d --name tinyssh-e2e -p 127.0.0.1:2222:22 -p 127.0.0.1:2223:2223 "$IMAGE" sh -c '
 sed -i "s|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g" /etc/apk/repositories 2>/dev/null || true
-apk add --no-cache openssh-server openssh-sftp-server bash
+apk add --no-cache openssh-server openssh-server-pam openssh-sftp-server bash
 ssh-keygen -A
 echo "root:testpass" | chpasswd
 sed -i "s/^root:\(.*\):\/bin\/sh$/root:\1:\/bin\/bash/" /etc/passwd

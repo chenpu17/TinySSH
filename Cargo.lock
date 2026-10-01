@@ -6198,6 +6198,7 @@ dependencies = [
  "axum",
  "chrono",
  "core-session",
+ "futures-util",
  "http",
  "rmcp",
  "schemars 1.2.2",

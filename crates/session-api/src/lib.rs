@@ -250,6 +250,21 @@ pub struct PendingHostKey {
     pub created_at: DateTime<Utc>,
 }
 
+/// 服务器 keyboard-interactive 认证提示（路线图⑩ 2FA）：密码类提示由
+/// transport 层用库内密码自动应答，其余（OTP/验证码等）挂起等人类应答。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingAuthPrompt {
+    pub id: String,
+    pub host_name: String,
+    /// 服务器给的请求名与说明（可为空）。
+    pub name: String,
+    pub instructions: String,
+    pub prompt: String,
+    /// false = 应答不应回显（服务器语义）。
+    pub echo: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentReport {
     pub segment: String,
@@ -673,6 +688,12 @@ pub trait SessionApi: Send + Sync {
     fn subscribe_host_keys(&self) -> broadcast::Receiver<PendingHostKey>;
     /// 人类对首连确认/变更告警作出决定；accept=true 时指纹入库。
     async fn decide_host_key(&self, ctx: &Actor, id: &str, accept: bool) -> Result<()>;
+
+    // ---- 2FA 人工应答门（路线图⑩：keyboard-interactive 非密码类提示）----
+    async fn pending_auth_prompts(&self, ctx: &Actor) -> Result<Vec<PendingAuthPrompt>>;
+    fn subscribe_auth_prompts(&self) -> broadcast::Receiver<PendingAuthPrompt>;
+    /// 人类应答服务器认证提示；answer 为空串视为取消（认证失败）。
+    async fn answer_auth_prompt(&self, ctx: &Actor, id: &str, answer: &str) -> Result<()>;
 
     // ---- 审计（v1；PRD FR-5）----
     async fn query_audit(&self, ctx: &Actor, f: AuditFilter) -> Result<AuditPage>;

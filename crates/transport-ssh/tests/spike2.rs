@@ -18,6 +18,7 @@ fn target() -> transport_ssh::SshTarget {
         auth_type: session_api::AuthType::Password,
         secret: "testpass".into(),
         host_key_check: None,
+        kb_prompt_check: None,
     }
 }
 
@@ -59,6 +60,31 @@ async fn spike2_body() {
     let script = "echo __B__; seq 1 50; echo __E__\r";
     let marker_b = "__B__";
     let marker_e = "__E__";
+
+    // 参考密钥自举：缺失则生成；公钥注入容器（容器重建后 authorized_keys 会丢——
+    // 此前公钥只在建容器时手工塞过一次，属隐式环境依赖，pv_env reset 后 spike2 必挂）
+    if !std::path::Path::new("/tmp/tinyssh_ref_key").exists()
+        || !std::path::Path::new("/tmp/tinyssh_ref_key.pub").exists()
+    {
+        let st = std::process::Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "", "-q", "-f", "/tmp/tinyssh_ref_key"])
+            .status()
+            .expect("spawn ssh-keygen");
+        assert!(st.success(), "ssh-keygen 失败");
+    }
+    let pubkey = std::fs::read_to_string("/tmp/tinyssh_ref_key.pub").unwrap();
+    let st = std::process::Command::new("docker")
+        .args([
+            "exec", "tinyssh-e2e", "sh", "-c",
+            &format!(
+                "mkdir -p /root/.ssh && grep -qF '{}' /root/.ssh/authorized_keys 2>/dev/null || echo '{}' >> /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys",
+                pubkey.trim(),
+                pubkey.trim()
+            ),
+        ])
+        .status()
+        .expect("spawn docker exec");
+    assert!(st.success(), "公钥注入失败");
 
     // ---- 我们：russh 通路 → alacritty 渲染 ----
     let channel: std::sync::Arc<transport_ssh::SshChannel> =
