@@ -26,7 +26,6 @@ from datetime import datetime
 from pathlib import Path
 
 AUDIT_ACTIONS_SESSION = {"session_created", "session_reconnect", "session_closed"}
-DECISION_PREFIXES = ("approved", "denied", "edited")
 
 CODING_HEADER = [
     "pid", "s1_start", "s1_end", "s2_start", "s2_end", "s3_start", "s3_end",
@@ -106,10 +105,17 @@ class PhaseWindows:
 
 
 def norm_decision(action: str, payload: dict) -> str | None:
+    # v1.18 的前缀表（approved/denied/edited）与 core 审计的 Debug 串（"Approve"/
+    # "ApproveEdited(\"…\")"/"Deny"）一个都对不上——真实沙箱数据 approved/edited
+    # 恒为 0。core 改为小写 {"decision": "approve"|"approve_edited"|"deny"} 后，
+    # 这里显式映射两种格式（新串精确、旧 Debug 串按前缀兼容，PV R1 配套）。
     d = str(payload.get("decision", "")).lower()
-    for p in DECISION_PREFIXES:
-        if d.startswith(p):
-            return p
+    if d.startswith("approve_edited") or d.startswith("approveedited"):
+        return "edited"
+    if d.startswith("approve"):
+        return "approved"
+    if d.startswith("deny"):
+        return "denied"
     if action == "approval_denied":
         return "denied"
     return None

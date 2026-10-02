@@ -181,6 +181,13 @@ textarea {
 .tl-agent { flex: none; font-size: 11px; color: var(--accent); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-what { flex: none; font-size: 12px; }
 .tl-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.tl-host { flex: none; font-size: 11px; color: var(--dim); max-width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 双接管按钮的常显语义说明（PV R3）：Agent 持有控制权时出现在顶栏与标签页之间 */
+.ctl-hint {
+  flex: none; padding: 3px 12px; font-size: 11px; color: var(--dim);
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
 
 /* 主机指纹确认/变更告警弹窗（T17 TOFU） */
 .hk-mask {

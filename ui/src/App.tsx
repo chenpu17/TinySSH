@@ -35,6 +35,7 @@ type SessionInfo = {
 };
 type ApprovalItem = {
   id: string; session_id: string; agent_id: string; command: string;
+  edited_command?: string | null;
   status: string; segment_report: { segment: string; verdict: string }[];
 };
 type PendingHostKey = {
@@ -54,6 +55,8 @@ type Brief = {
 type AuditEvent = {
   seq: number; ts: string; actor_kind: string; agent_id: string | null;
   action: string; command: string | null;
+  session_id?: string | null;
+  payload_json?: { decision?: string } | null;
 };
 type IdentityMeta = { id: string; label: string; kind: string; fingerprint: string };
 // 接管返回（PRD FR-6：停止结果逐条显示，不谎报）。StopOutcome serde 为
@@ -131,6 +134,17 @@ const auditLabel = (a: string): string =>
     transfer_failed: "传输失败",
   })[a] ?? a;
 
+// 审批决定行：payload.decision 区分批准/编辑后批准/拒绝（旧库存量是 Debug 串
+// "ApproveEdited(\"…\")"，按小写前缀兼容），命令本身由后端 audit 直接给实际放行文（PV R1）
+const decisionLabel = (ev: AuditEvent): string => {
+  if (ev.action !== "approval_decision") return auditLabel(ev.action);
+  const d = (ev.payload_json?.decision ?? "").toLowerCase();
+  if (d.startsWith("approve_edited") || d.startsWith("approveedited")) return "批准（编辑后）";
+  if (d.startsWith("deny")) return "拒绝";
+  if (d.startsWith("approve")) return "批准";
+  return auditLabel(ev.action);
+};
+
 // 内部管道事件不进用户时间线（集成注入是建会话的固定噪音）
 const HIDDEN_AUDIT_ACTIONS = new Set(["shell_integration_inject"]);
 
@@ -155,6 +169,9 @@ const stateLabel = (s: string): { text: string; cls: string } => {
 const friendlyError = (raw: string): string => {
   const r = raw.toLowerCase();
   if (r.includes("authfailed") || r.includes("authentication")) return "认证失败：用户名或密码/密钥不正确";
+  // 取消 2FA 走 ConnectFailed（含「人工应答被取消」），不是凭据错误——
+  // 顺序须在 authfailed 判定之后、兜底之前，避免把「取消认证」引向改密码（PV R4）
+  if (r.includes("人工应答被取消")) return "2FA 认证未完成：人工应答被取消或超时，连接已中止（凭据未被改动，可重新连接）";
   if (r.includes("refused")) return "连接被拒绝：端口不对，或主机上的 SSH 服务没有运行";
   if (r.includes("timeout") || r.includes("timed out") || r.includes("unreachable"))
     return "连接超时：主机不可达（地址错误、网络不通或防火墙拦截）";
@@ -1427,12 +1444,23 @@ Authorization: Bearer <TOKEN>`}
           </span>
           <span style={{ flex: 1 }} />
           {sid && (
-            <span className={"badge " + ownerCls}>控制权：{ownerBadge}</span>
+            <span
+              className={"badge " + ownerCls}
+              title="「Agent」= Agent 可发起命令、经你审批执行；「人类控制」= 终端归你，Agent 冻结"
+            >控制权：{ownerBadge}</span>
           )}
           {sid && hasAgents && owner === "Agent" && (
             <>
-              <button className="warn" onClick={takeover}>接管</button>
-              <button className="danger" onClick={takeoverStop}>接管并停止任务</button>
+              <button
+                className="warn"
+                title="接管会话：Agent 冻结、待审批请求作废，终端归你操作。Agent 正在跑的命令不会被中断"
+                onClick={takeover}
+              >接管</button>
+              <button
+                className="danger"
+                title="接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红"
+                onClick={takeoverStop}
+              >接管并停止任务</button>
             </>
           )}
           {sid && hasAgents && owner === "Human" && (
@@ -1444,6 +1472,12 @@ Authorization: Bearer <TOKEN>`}
             onClick={() => setShowSettings(!showSettings)}
           >Aa</button>
         </div>
+        {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释 */}
+        {sid && hasAgents && owner === "Agent" && (
+          <div className="ctl-hint">
+            接管＝冻结 Agent、待审批作废，正在跑的命令不中断 · 接管并停止任务＝再尝试停止跑着的命令（结果逐条显示）
+          </div>
+        )}
         {/* 标签页（T19）：每个会话一签，状态点随连接状态变色；◫ 进/换分屏，✕ 关闭（⌘W） */}
         <div className="tabbar">
           {sessions.map((s, i) => {
@@ -1859,11 +1893,12 @@ Authorization: Bearer <TOKEN>`}
             <div className="side-quiet">
               {pendingApprovals.length === 0 && <div className="side-sub">最近处理</div>}
               {resolvedApprovals.map((a) => (
-                <div className="tl-row" key={a.id} title={a.command}>
+                <div className="tl-row" key={a.id} title={a.edited_command || a.command}>
                   <span className={(approvalResolvedLabel[a.status] ?? { cls: "err" }).cls} style={{ flex: "none", fontSize: 11 }}>
                     {(approvalResolvedLabel[a.status] ?? { text: a.status }).text}
                   </span>
-                  <span className="tl-cmd mono dim">{a.command}</span>
+                  {/* 编辑后批准显示实际放行文，不是原始请求（PV R1） */}
+                  <span className="tl-cmd mono dim">{a.edited_command || a.command}</span>
                 </div>
               ))}
             </div>
@@ -1920,16 +1955,20 @@ Authorization: Bearer <TOKEN>`}
 
           <div className="section">
             <h4>操作记录</h4>
-            {visibleTimeline.length > 0 ? visibleTimeline.map((ev) => (
-              <div className="tl-row" key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
-                <span className="tl-time">{hhmm(ev.ts)}</span>
-                <span className={ev.actor_kind === "agent" ? "tl-agent" : "tl-human"}>
-                  {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
-                </span>
-                <span className="tl-what">{auditLabel(ev.action)}</span>
-                {ev.command && <span className="tl-cmd mono dim">{ev.command}</span>}
-              </div>
-            )) : <div className="side-quiet">暂无记录。所有连接与命令都会留痕在这里。</div>}
+            {visibleTimeline.length > 0 ? visibleTimeline.map((ev) => {
+              const host = ev.session_id ? sessions.find((x) => x.id === ev.session_id)?.host_name : undefined;
+              return (
+                <div className="tl-row" key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
+                  <span className="tl-time">{hhmm(ev.ts)}</span>
+                  <span className={ev.actor_kind === "agent" ? "tl-agent" : "tl-human"}>
+                    {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
+                  </span>
+                  {host && <span className="tl-host">{host}</span>}
+                  <span className="tl-what">{decisionLabel(ev)}</span>
+                  {ev.command && <span className="tl-cmd mono dim">{ev.command}</span>}
+                </div>
+              );
+            }) : <div className="side-quiet">暂无记录。所有连接与命令都会留痕在这里。</div>}
           </div>
         </div>
       </div>

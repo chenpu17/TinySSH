@@ -329,7 +329,9 @@ impl SshChannel {
                                     .await?
                                     .ok_or_else(|| {
                                         Error::ConnectFailed(
-                                            "服务器要求额外交互认证（2FA），人工应答被取消".into(),
+                                            // 取消与超时同走 None：文案不得只说「被取消」冤枉超时，
+                                            // 更不能落进 AuthFailed——把「取消认证」误报成凭据错误（PV R4）
+                                            "服务器要求额外交互认证（2FA），人工应答被取消或超时".into(),
                                         )
                                     })?,
                                 None => return Err(Error::ConnectFailed(

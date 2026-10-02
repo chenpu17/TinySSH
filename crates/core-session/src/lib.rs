@@ -728,8 +728,26 @@ impl SessionApi for SessionManager {
         let tx = self.center.decisions.lock().unwrap().remove(&id);
         match tx {
             Some(tx) => {
+                // 审计必须自证「实际放行了什么」：编辑后批准以 edited 文本为准，
+                // 否则时间线上只有「审批决定」四个字，追责时无从核对（PV R1）。
+                let item = self.center.items.lock().unwrap().get(&id).cloned();
+                let (sid, cmd, decision_key) = match &d {
+                    Decision::Approve => (
+                        item.as_ref().map(|i| i.session_id.clone()),
+                        item.as_ref().map(|i| i.command.clone()),
+                        "approve",
+                    ),
+                    Decision::ApproveEdited(c) => (
+                        item.as_ref().map(|i| i.session_id.clone()),
+                        Some(c.clone()),
+                        "approve_edited",
+                    ),
+                    Decision::Deny => (item.as_ref().map(|i| i.session_id.clone()), None, "deny"),
+                };
                 let _ = self.center.audit.append(
-                    ctx, "approval_decision", None, None, serde_json::json!({"decision": format!("{d:?}")}), Some(&id));
+                    ctx, "approval_decision",
+                    sid.as_deref(), cmd.as_deref(),
+                    serde_json::json!({"decision": decision_key}), Some(&id));
                 tx.send(DecisionMsg::Decide(d))
                     .map_err(|_| Error::Storage("decision receiver dropped".into()))
             }

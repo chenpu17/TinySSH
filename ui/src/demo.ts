@@ -17,6 +17,12 @@ type DemoSession = {
 type DemoEvent = {
   seq: number; ts: string; actor_kind: "human" | "agent";
   agent_id: string | null; action: string; command: string | null;
+  session_id?: string | null; payload_json?: Record<string, unknown>;
+};
+type DemoApproval = {
+  id: string; session_id: string; agent_id: string;
+  command: string; edited_command: string | null;
+  status: string; segment_report: { segment: string; verdict: string }[];
 };
 type PendingKey = {
   pk: {
@@ -55,6 +61,7 @@ const demoState = {
       session_id: "s-demo-0001",
       agent_id: "opencode",
       command: "rm -rf /tmp/old-build && tar czf /tmp/build.tgz dist/",
+      edited_command: null,
       status: "pending",
       segment_report: [
         { segment: "rm -rf /tmp/old-build", verdict: "pending: 未命中任何允许规则" },
@@ -66,6 +73,7 @@ const demoState = {
       session_id: "s-demo-0001",
       agent_id: "opencode",
       command: "docker system prune -f",
+      edited_command: null,
       status: "pending",
       segment_report: [
         { segment: "docker system prune -f", verdict: "pending: 未命中任何允许规则" },
@@ -77,15 +85,16 @@ const demoState = {
       session_id: "s-demo-0002",
       agent_id: "opencode",
       command: "systemctl restart nginx",
+      edited_command: null,
       status: "voided",
       segment_report: [],
     },
-  ],
+  ] as DemoApproval[],
   events: [
-    { seq: 42, ts: "2026-09-27T14:02:11Z", actor_kind: "human", agent_id: null, action: "takeover", command: null },
-    { seq: 41, ts: "2026-09-27T14:01:58Z", actor_kind: "agent", agent_id: "opencode", action: "approval_requested", command: "rm -rf /tmp/old-build" },
-    { seq: 40, ts: "2026-09-27T14:01:30Z", actor_kind: "agent", agent_id: "opencode", action: "exec", command: "df -h" },
-    { seq: 39, ts: "2026-09-27T14:01:02Z", actor_kind: "human", agent_id: null, action: "session_created", command: null },
+    { seq: 42, ts: "2026-09-27T14:02:11Z", actor_kind: "human", agent_id: null, action: "takeover", command: null, session_id: "s-demo-0001" },
+    { seq: 41, ts: "2026-09-27T14:01:58Z", actor_kind: "agent", agent_id: "opencode", action: "approval_requested", command: "rm -rf /tmp/old-build", session_id: "s-demo-0001" },
+    { seq: 40, ts: "2026-09-27T14:01:30Z", actor_kind: "agent", agent_id: "opencode", action: "exec", command: "df -h", session_id: "s-demo-0001" },
+    { seq: 39, ts: "2026-09-27T14:01:02Z", actor_kind: "human", agent_id: null, action: "session_created", command: null, session_id: "s-demo-0001" },
   ] as DemoEvent[],
   pendingKeys: [] as PendingKey[],
   // 2FA 认证提示待决（路线图⑩演示）：挂起的 create_session 应答器按 id 索引
@@ -104,8 +113,12 @@ function pushTo(sid: string, text: string) {
 // 自增起点避开全部种子 id（曾用 2 与种子区段相邻，易在对比时混淆）
 let demoSeq = 100;
 let eventSeq = 42;
-function audit(actor: "human" | "agent", action: string, command: string | null, agent_id: string | null = null) {
-  demoState.events.unshift({ seq: ++eventSeq, ts: new Date().toISOString(), actor_kind: actor, agent_id, action, command });
+function audit(
+  actor: "human" | "agent", action: string, command: string | null,
+  agent_id: string | null = null, session_id: string | null = null,
+  payload_json?: Record<string, unknown>,
+) {
+  demoState.events.unshift({ seq: ++eventSeq, ts: new Date().toISOString(), actor_kind: actor, agent_id, action, command, session_id, payload_json });
 }
 
 export async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
@@ -223,12 +236,14 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
             resolve,
           });
         });
-        if (!answer) throw new Error("AuthFailed（演示：2FA 应答被取消）");
+        // 与真实 transport 同串（ConnectFailed 族）：friendlyError 由此区分「取消认证」
+        // 与凭据错误——此前抛 AuthFailed 把取消误报成密码不对（PV R4 对齐）
+        if (!answer) throw new Error("连接失败: 服务器要求额外交互认证（2FA），人工应答被取消或超时");
       }
       if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
       demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", out: `ops@${h.name}:~$ `, handlers: [] });
-      audit("human", "session_created", null);
+      audit("human", "session_created", null, null, sid);
       return sid;
     }
     case "close_session": {
@@ -236,7 +251,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === sid);
       if (s) s.state = "Disconnected";
       pushTo(sid, "\r\n[会话已断开]\r\n");
-      audit("human", "session_closed", null);
+      audit("human", "session_closed", null, null, sid ?? null);
       return null;
     }
     case "reconnect_session": {
@@ -246,7 +261,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (s.state !== "Disconnected") throw new Error("会话未处于断开状态，无需重连（演示）");
       s.state = "Reconfirming";
       pushTo(sid, "\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
-      audit("human", "session_reconnect", null);
+      audit("human", "session_reconnect", null, null, sid ?? null);
       return null;
     }
     case "resize":
@@ -282,11 +297,18 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const id = args?.id as string;
       const it = demoState.approvals.find((a) => a.id === id);
       if (it) {
+        // 镜像真实 mark_edited：原始请求保留在 command，实际放行文入 edited_command（PV R1 对齐）
+        const edited = typeof args?.edited === "string" && args.edited ? args.edited : null;
         it.status = (args?.decision === "deny" ? "denied"
           : args?.decision === "edit" ? "approved_edited" : "approved") as string;
+        if (args?.decision === "edit" && edited) it.edited_command = edited;
+        const allowed = args?.decision === "edit" && edited ? edited : it.command;
         const label = it.status === "denied" ? "拒绝" : it.status === "approved_edited" ? "批准（编辑后）" : "批准";
-        pushTo(it.session_id, "\r\n[审批] " + it.command + " → " + label + "\r\n");
-        audit("human", args?.decision === "deny" ? "approval_denied" : "approval_decision", it.command);
+        pushTo(it.session_id, "\r\n[审批] " + allowed + " → " + label + "\r\n");
+        const deny = args?.decision === "deny";
+        audit("human", deny ? "approval_denied" : "approval_decision",
+          deny ? null : allowed, null, it.session_id,
+          deny ? undefined : { decision: args?.decision === "edit" ? "approve_edited" : "approve" });
       }
       return null;
     }
@@ -309,7 +331,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       pushTo(sid, owner === "Human"
         ? "\r\n⏸ 控制权 → 人类（Agent 请求已冻结，旧请求作废）\r\n"
         : "\r\n▶ 控制权 → Agent（请先读取现场简报再决定后续动作）\r\n");
-      audit("human", owner === "Human" ? "takeover" : "handback", null);
+      audit("human", owner === "Human" ? "takeover" : "handback", null, null, sid ?? null);
       return {
         frozen: owner === "Human",
         voided_approvals: voidedCount,
@@ -322,7 +344,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sid = args?.sid as string;
       const command = args?.command as string;
       pushTo(sid, "\r\n" + command + "\r\n（演示输出）total 48K\r\n");
-      audit("human", "exec", command);
+      audit("human", "exec", command, null, sid ?? null);
       return { stdout: "", exit_code: 0 };
     }
     case "send_keys":
