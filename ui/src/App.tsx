@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as tauri from "@tauri-apps/api/core";
 import * as demo from "./demo";
+import {
+  IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
+  IconChevronUp, IconChevronDown, IconTerminal, IconArrowDown, IconUpload, IconDownload,
+} from "./icons";
 
 // 无 Tauri 环境（纯浏览器）走演示模式；Tauri 环境走真实核心
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -1312,7 +1316,7 @@ export default function App() {
             {showImport ? "收起导入" : "导入 ~/.ssh/config"}
           </button>
           <button className="ghost" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); }}>
-            {showAddHost ? "收起表单" : "＋ 添加主机"}
+            {showAddHost ? "收起表单" : <><IconPlus size={13} /> 添加主机</>}
           </button>
         </div>
         <div className="scroll">
@@ -1350,9 +1354,9 @@ export default function App() {
                 </div>
                 <div className="host-ops">
                   <button className="ghost" title="编辑主机（名称/地址/端口/用户名，凭据保持不变）"
-                    onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}>✎</button>
+                    onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}><IconPencil size={13} /></button>
                   <button className="ghost host-del" title="删除主机"
-                    onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}>✕</button>
+                    onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
                 </div>
                 <button disabled={connecting !== null} onClick={() => createSession(h)}>
                   {connecting === h.id ? "连接中…" : "连接"}
@@ -1405,7 +1409,7 @@ export default function App() {
             ))}
             <div className="fact">
               <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
-              <span className="mono" style={{ fontSize: 11 }}>{mcp.endpoint || "未启动"}</span>
+              <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }}>{mcp.endpoint || "未启动"}</span>
             </div>
             <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
               {showAgentHelp ? "收起接入说明" : "接入新 Agent"}
@@ -1457,7 +1461,7 @@ Authorization: Bearer <TOKEN>`}
                 onClick={takeover}
               >接管</button>
               <button
-                className="danger"
+                className="ghost-danger"
                 title="接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红"
                 onClick={takeoverStop}
               >接管并停止任务</button>
@@ -1469,8 +1473,9 @@ Authorization: Bearer <TOKEN>`}
           <button
             className={"ghost" + (showSettings ? " ts-open" : "")}
             title="显示设置（字号 / 主题）"
+            aria-label="显示设置"
             onClick={() => setShowSettings(!showSettings)}
-          >Aa</button>
+          ><IconSliders size={15} /></button>
         </div>
         {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释 */}
         {sid && hasAgents && owner === "Agent" && (
@@ -1502,18 +1507,18 @@ Authorization: Bearer <TOKEN>`}
                   className="tab-split"
                   title={splitPanes ? "放到右侧分屏" : s.id === sid ? "已在主视图" : "与当前会话分屏"}
                   onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id); }}
-                >◫</span>
+                ><IconSplit size={12} /></span>
                 <span
                   className="tab-x"
                   title="断开会话（⌘W，连接中会先确认）"
                   onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
-                >✕</span>
+                ><IconX size={11} /></span>
               </div>
             );
           })}
           <span style={{ flex: 1 }} />
           {splitPanes && <button className="ghost" onClick={exitSplit}>退出分屏</button>}
-          <button className="ghost" title="新建连接（打开左侧「添加主机」表单，再点收起）" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); }}>＋</button>
+          <button className="ghost" title="新建连接（打开左侧「添加主机」表单，再点收起）" aria-label="新建连接" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); }}><IconPlus size={14} /></button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -1634,15 +1639,24 @@ Authorization: Bearer <TOKEN>`}
         <div className="term-wrap">
           {!sid && (
             <div className="welcome">
-              <div className="welcome-title">TinySSH — 人机协同 SSH 工作台</div>
-              <div>1. 左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接；</div>
-              <div>2. 连接后点击黑色终端区域直接打字：Ctrl+C 中断程序、↑↓ 翻历史、Tab 补全；</div>
-              <div>3. 多会话一屏一签，点标签切换、◫ 分屏对照两个会话，各自的滚动历史和 vim 界面都会保留；</div>
-              <div>4. ⌘C/⌘V 复制粘贴；拖文件进终端即上传到当前目录；下方命令框可逐条执行，执行后焦点自动回到终端。</div>
-              <div className="dim" style={{ marginTop: 12 }}>
-                {sessions.length > 0
-                  ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或左侧会话卡继续。`
-                  : "暂无会话——从左侧连接主机开始，或导入 ~/.ssh/config。"}
+              <div className="welcome-box">
+                <div className="welcome-mark"><IconTerminal size={26} /></div>
+                <div className="welcome-title">TinySSH<span className="welcome-sub">人机协同 SSH 工作台</span></div>
+                <div className="welcome-steps">
+                  <div><span className="ws-k">连接</span>左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接</div>
+                  <div><span className="ws-k">操作</span>点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴</div>
+                  <div><span className="ws-k">多会话</span>一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留</div>
+                  <div><span className="ws-k">传输</span>拖文件进终端即上传到当前目录；下方命令框可逐条执行，焦点自动回终端</div>
+                </div>
+                <div className="welcome-actions">
+                  <button onClick={() => { setShowAddHost(true); setShowImport(false); }}><IconPlus size={13} /> 添加主机</button>
+                  <button className="ghost" onClick={() => { setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
+                </div>
+                <div className="dim welcome-note">
+                  {sessions.length > 0
+                    ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或左侧会话卡继续。`
+                    : "暂无会话——从左侧连接主机开始，或导入 ~/.ssh/config。"}
+                </div>
               </div>
             </div>
           )}
@@ -1666,7 +1680,7 @@ Authorization: Bearer <TOKEN>`}
           {dragOver && (
             <div className="drop-overlay">
               <div className="drop-box">
-                <div className="drop-icon">⇩</div>
+                <div className="drop-icon"><IconDownload size={34} /></div>
                 <div>松开上传到 {brief?.cwd ?? "远程主机"}</div>
               </div>
             </div>
@@ -1707,9 +1721,9 @@ Authorization: Bearer <TOKEN>`}
                     ? "无结果"
                     : ""}
               </span>
-              <button className="ghost" title="上一个（⇧⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findPrevious(searchQuery, SEARCH_OPTS)}>↑</button>
-              <button className="ghost" title="下一个（⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findNext(searchQuery, SEARCH_OPTS)}>↓</button>
-              <button className="ghost" title="关闭（Esc）" onClick={closeSearch}>✕</button>
+              <button className="ghost" title="上一个（⇧⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findPrevious(searchQuery, SEARCH_OPTS)}><IconChevronUp size={13} /></button>
+              <button className="ghost" title="下一个（⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findNext(searchQuery, SEARCH_OPTS)}><IconChevronDown size={13} /></button>
+              <button className="ghost" title="关闭（Esc）" onClick={closeSearch}><IconX size={12} /></button>
             </div>
           )}
           {showSettings && (
@@ -1719,13 +1733,13 @@ Authorization: Bearer <TOKEN>`}
                 <div className="row" style={{ marginBottom: 10 }}>
                   <b>显示设置</b>
                   <span style={{ flex: 1 }} />
-                  <button className="ghost" title="关闭" onClick={() => setShowSettings(false)}>✕</button>
+                  <button className="ghost" title="关闭" aria-label="关闭显示设置" onClick={() => setShowSettings(false)}><IconX size={13} /></button>
                 </div>
                 <div className="ts-label">字号</div>
                 <div className="row">
-                  <button className="ghost" title="减小（⌘−）" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}>−</button>
+                  <button className="ghost" title="减小（⌘−）" aria-label="减小字号" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}><IconMinus size={13} /></button>
                   <span className="ts-val mono">{fontSize}</span>
-                  <button className="ghost" title="增大（⌘=）" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}>＋</button>
+                  <button className="ghost" title="增大（⌘=）" aria-label="增大字号" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}><IconPlus size={13} /></button>
                   <button className="ghost" disabled={fontSize === FONT_DEFAULT} onClick={() => changeFontSize(FONT_DEFAULT)}>重置</button>
                 </div>
                 <div className="ts-label" style={{ marginTop: 10 }}>主题</div>
@@ -1825,7 +1839,7 @@ Authorization: Bearer <TOKEN>`}
                 xtermRef.current?.focus();
               }}
             >
-              ⏹ 中断
+              <IconStop size={12} /> 中断
             </button>
           )}
         </div>
@@ -1925,7 +1939,9 @@ Authorization: Bearer <TOKEN>`}
             )}
             {transfers.map((t) => (
               <div className="card row xfer-row" key={t.id}>
-                <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>{t.kind === "Upload" ? "↑" : "↓"}</span>
+                <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>
+                  {t.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
+                </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="xfer-name mono">{t.name}</div>
                   <div className="dim mono xfer-sub">
@@ -2204,24 +2220,31 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
           {entries.map((e) => {
             const outcome = outcomes?.find((o) => o.name === e.name);
             return (
-              <label key={e.name} className="row sshcfg-row">
-                <input
-                  type="checkbox"
-                  disabled={e.already_imported || (outcome !== undefined && !outcome.error)}
-                  checked={checked.has(e.name) || (e.already_imported ?? false) || (outcome !== undefined && !outcome.error)}
-                  onChange={(ev) => {
-                    const next = new Set(checked);
-                    if (ev.target.checked) next.add(e.name); else next.delete(e.name);
-                    setChecked(next);
-                  }}
-                />
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  {e.name} <span className="dim mono">{e.username}@{e.address}:{e.port}</span>
-                  {" "}<span className="dim">{e.has_identity ? "· 密钥" : "· Agent"}</span>
-                  {outcome && !outcome.error && <span className="ok"> ✓ 已导入</span>}
-                  {outcome && outcome.error && <div className="err">✕ {outcome.error}</div>}
-                </span>
-                {e.already_imported && <span className="dim">已在主机列表</span>}
+              <label key={e.name} className="sshcfg-row">
+                <div className="row" style={{ alignItems: "flex-start", flexWrap: "nowrap" }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: "auto", marginTop: 2 }}
+                    disabled={e.already_imported || (outcome !== undefined && !outcome.error)}
+                    checked={checked.has(e.name) || (e.already_imported ?? false) || (outcome !== undefined && !outcome.error)}
+                    onChange={(ev) => {
+                      const next = new Set(checked);
+                      if (ev.target.checked) next.add(e.name); else next.delete(e.name);
+                      setChecked(next);
+                    }}
+                  />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <div>
+                      {e.name}
+                      {e.already_imported && <span className="dim"> · 已在主机列表</span>}
+                      {outcome && !outcome.error && <span className="ok"> ✓ 已导入</span>}
+                    </div>
+                    <div className="dim mono" style={{ fontSize: 11 }}>
+                      {e.username}@{e.address}:{e.port} · {e.has_identity ? "密钥" : "Agent"}
+                    </div>
+                    {outcome && outcome.error && <div className="err" style={{ fontSize: 11 }}>✕ {outcome.error}</div>}
+                  </span>
+                </div>
               </label>
             );
           })}

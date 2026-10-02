@@ -9,6 +9,11 @@
   --danger: #d07a7a;
   --ok: #7fbf8f;
   --warn: #d0b07a;
+  /* T32：hover 提亮层（与基色同族，步进约 +8% 亮度） */
+  --accent-hover: #5fb2b4;
+  --danger-hover: #db9090;
+  --warn-hover: #dbbf90;
+  --border-hover: #3a4a5e;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -39,14 +44,42 @@ body {
 }
 .card .cmd { font-family: "SF Mono", Menlo, monospace; font-size: 12px; word-break: break-all; }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* ---- T32 交互反馈层：所有可交互元素统一过渡/hover/focus ---- */
+button, input, select, textarea, .tab {
+  transition: background-color 0.12s ease, border-color 0.12s ease,
+    color 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  button, input, select, textarea, .tab { transition: none; }
+}
 button {
   background: var(--accent); color: #0b1516; border: none; border-radius: 6px;
   padding: 6px 12px; font-weight: 600; cursor: pointer; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
 }
 button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 button.danger { background: var(--danger); color: #2a1010; }
 button.warn { background: var(--warn); color: #2a2410; }
+button:not(:disabled):hover { background-color: var(--accent-hover); }
+button:not(:disabled):active { transform: translateY(0.5px); }
+button.ghost:not(:disabled):hover { background-color: rgba(79, 163, 165, 0.12); }
+button.danger:not(:disabled):hover { background-color: var(--danger-hover); }
+button.warn:not(:disabled):hover { background-color: var(--warn-hover); }
+/* 危险次级动作（接管并停止任务）：描边而非实心——与主接管拉开层级，按下才加底 */
+button.ghost-danger {
+  background: transparent; color: var(--danger);
+  border: 1px solid rgba(208, 122, 122, 0.55);
+}
+button.ghost-danger:not(:disabled):hover { background-color: rgba(208, 122, 122, 0.14); border-color: var(--danger); }
 button:disabled { opacity: 0.4; cursor: default; }
+:where(button, .tab):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 163, 165, 0.18);
+}
+input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus), textarea:hover:not(:disabled):not(:focus) { border-color: var(--border-hover); }
+.ico { flex: none; }
 input, select {
   background: var(--panel); border: 1px solid var(--border); color: var(--text);
   border-radius: 6px; padding: 6px 8px; font-size: 12px; width: 100%;
@@ -118,13 +151,34 @@ textarea {
 .tab-dot.err { background: var(--danger); }
 .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-split, .tab-x {
-  flex: none; width: 18px; height: 18px; line-height: 17px; text-align: center;
-  border-radius: 4px; color: var(--dim); font-size: 12px; cursor: pointer;
+  flex: none; width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: var(--dim); cursor: pointer;
 }
 .tab-split:hover { background: rgba(79, 163, 165, 0.18); color: var(--accent); }
 .tab-x:hover { background: rgba(208, 122, 122, 0.18); color: var(--danger); }
-.welcome { position: absolute; inset: 0; padding: 36px 40px; color: var(--dim); line-height: 2.1; }
-.welcome-title { color: var(--text); font-weight: 600; font-size: 15px; margin-bottom: 10px; }
+/* 欢迎页（T32 重设计）：居中卡片式空状态，品牌标记 + 分组引导 + 快捷动作 */
+.welcome { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; color: var(--dim); overflow: auto; }
+.welcome-box { max-width: 470px; padding: 24px; }
+.welcome-mark {
+  width: 52px; height: 52px; border-radius: 14px; margin-bottom: 14px;
+  background: linear-gradient(180deg, #202b39, #151d27);
+  border: 1px solid var(--border); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.welcome-title { color: var(--text); font-weight: 700; font-size: 19px; }
+.welcome-sub { font-weight: 500; font-size: 12px; color: var(--dim); margin-left: 10px; }
+.welcome-steps { margin: 16px 0 18px; display: flex; flex-direction: column; gap: 9px; font-size: 12px; line-height: 1.75; }
+.welcome-steps > div { display: flex; gap: 9px; }
+.ws-k {
+  flex: none; min-width: 44px; text-align: center;
+  font-size: 10px; letter-spacing: 2px; color: var(--accent);
+  border: 1px solid rgba(79, 163, 165, 0.45); border-radius: 4px;
+  padding: 0 5px; margin-top: 2px;
+}
+.welcome-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.welcome-note { font-size: 11px; }
 /* ⌘F 终端内搜索框（T16）：悬浮于终端右上角，不遮内容主区 */
 .term-search {
   position: absolute; top: 8px; right: 16px; z-index: 10;
@@ -219,11 +273,11 @@ textarea {
   pointer-events: none;
 }
 .drop-box { text-align: center; color: var(--text); font-size: 15px; }
-.drop-icon { font-size: 36px; color: var(--accent); margin-bottom: 6px; }
+.drop-icon { display: flex; justify-content: center; color: var(--accent); margin-bottom: 6px; }
 .xfer-input { margin-bottom: 2px; }
 .xfer-input input { flex: 1; min-width: 0; }
 .xfer-row { margin-top: 6px; flex-wrap: nowrap; }
-.xfer-dir { flex: none; width: 18px; text-align: center; font-weight: 700; }
+.xfer-dir { flex: none; width: 18px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
 .xfer-dir.up { color: #7fbf8f; }
 .xfer-dir.down { color: #6fa8dc; }
 .xfer-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -231,16 +285,15 @@ textarea {
 
 /* ~/.ssh/config 导入面板（T21） */
 .sshcfg-row {
-  gap: 8px; align-items: flex-start; cursor: pointer;
-  padding: 6px 0; border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
 }
 .sshcfg-row:last-child { border-bottom: none; }
-.sshcfg-row input[type="checkbox"] { margin-top: 2px; }
 
 /* T23：主机卡 hover 操作（编辑/删除）；删除/断开确认弹层；表单常驻标签；死会话遮罩 */
 .host-ops { display: none; gap: 4px; }
 .host-card:hover .host-ops { display: flex; }
-.host-ops button { padding: 2px 7px; font-size: 12px; }
+.host-ops button { padding: 3px 6px; }
 .host-ops .host-del:hover { color: var(--danger); border-color: var(--danger); }
 .confirm-mask { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
 .confirm-dialog { width: 400px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; line-height: 1.7; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
