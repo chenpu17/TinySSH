@@ -288,7 +288,7 @@ impl Vault {
     pub fn list_hosts(&self) -> Result<Vec<Host>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json FROM hosts WHERE deleted_at IS NULL")
+            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint FROM hosts WHERE deleted_at IS NULL")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |r| {
@@ -302,12 +302,14 @@ impl Vault {
                     r.get::<_, String>(5)?,
                     r.get::<_, Option<String>>(6)?,
                     tags_json,
+                    // 空串 = 信任未建立（set_host_fingerprint 只写非空，此处兜底）
+                    r.get::<_, Option<String>>(8)?.filter(|s| !s.is_empty()),
                 ))
             })
             .map_err(db_err)?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, name, address, port, username, auth_type, identity_id, tags_json) =
+            let (id, name, address, port, username, auth_type, identity_id, tags_json, fingerprint) =
                 row.map_err(db_err)?;
             out.push(Host {
                 id,
@@ -322,6 +324,7 @@ impl Vault {
                 },
                 identity_id,
                 tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+                fingerprint,
             });
         }
         Ok(out)

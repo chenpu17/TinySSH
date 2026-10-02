@@ -19,6 +19,7 @@ const invoke: typeof tauri.invoke = (cmd, args?) =>
 // Channel：Tauri 环境用真实现；浏览器演示模式用 shim
 const MkChannel = () => (inTauri ? new tauri.Channel<unknown>() : new demo.ChannelShim());
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
 import { SearchAddon } from "@xterm/addon-search";
@@ -31,6 +32,7 @@ type Host = {
   id: string; name: string; address: string; port: number; username: string;
   auth_type: "Key" | "Password" | "KeyboardInteractive" | "Agent";
   tags: string[];
+  fingerprint?: string | null; // 已信任指纹（TOFU）；缺省 = 信任未建立
 };
 type SshConfigPreview = {
   name: string; address: string; port: number; username: string;
@@ -739,6 +741,15 @@ export default function App() {
   const [fontSize, setFontSize] = useState(FONT_DEFAULT);
   const [themeId, setThemeId] = useState("dark");
   const [showSettings, setShowSettings] = useState(false);
+  // T34：原生菜单「设置…⌘,」→ 打开显示设置面板；应用版本号（关于面板同源）
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (!inTauri) return;
+    let un: (() => void) | undefined;
+    listen("menu-settings", () => setShowSettings(true)).then((f) => (un = f));
+    getVersion().then(setAppVersion).catch(() => {});
+    return () => un?.();
+  }, []);
   const fontRef = useRef(FONT_DEFAULT);
   const themeRef = useRef("dark");
 
@@ -1352,7 +1363,8 @@ export default function App() {
             <h4>主机</h4>
             {hosts.map((h) => (
               <div className="card row host-card" key={h.id}>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ flex: 1, minWidth: 0 }}
+                  title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}`}>
                   {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩 */}
                   <div className="host-line">
                     <span className="host-name">{h.name}</span>
@@ -1767,6 +1779,9 @@ Authorization: Bearer <TOKEN>`}
                   ))}
                 </div>
                 <div className="dim" style={{ marginTop: 10, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
+                <div className="dim" style={{ marginTop: 6, fontSize: 11, borderTop: "1px solid var(--border)", paddingTop: 6 }}>
+                  TinySSH {appVersion ? `v${appVersion}` : "· 浏览器演示模式"}
+                </div>
                               </div>
             </>
           )}
@@ -2156,7 +2171,18 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         </div>
       </div>
       {editing ? (
-        <div className="dim" style={{ marginTop: 6 }}>认证凭据保持不变（{authLabel}）。如需更换凭据，删除该主机后重新添加。</div>
+        <>
+          <div className="dim" style={{ marginTop: 6 }}>认证凭据保持不变（{authLabel}）。如需更换凭据，删除该主机后重新添加。</div>
+          {/* T34：信任可查证——编辑主机时出示 TOFU 信任状态与指纹原文 */}
+          {editHost?.fingerprint ? (
+            <div className="trust-row" style={{ marginTop: 6 }}>
+              <span className="ok">✓ 主机指纹已信任（首次连接时确认）</span>
+              <span className="mono fp">{editHost.fingerprint}</span>
+            </div>
+          ) : (
+            <div className="dim" style={{ marginTop: 4 }}>主机指纹尚未建立——首次连接时会出示并要求确认。</div>
+          )}
+        </>
       ) : authMode === "password" ? (
         <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
           style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />

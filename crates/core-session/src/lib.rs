@@ -108,6 +108,7 @@ impl SessionManager {
             auth_type: AuthType::Key,
             identity_id: None,
             tags: vec![],
+            fingerprint: None,
         })
     }
 

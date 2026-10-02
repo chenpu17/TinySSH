@@ -479,6 +479,65 @@ fn install_native_ctrl_intercept(core: Arc<SessionManager>, input: Arc<TerminalI
 #[cfg(not(target_os = "macos"))]
 fn install_native_ctrl_intercept(_core: Arc<SessionManager>, _input: Arc<TerminalInput>) {}
 
+/// T34：原生菜单栏定制（替换 Tauri 默认英文菜单）。预定义角色项显式传中文标签——
+/// 系统语言非中文时默认标签会是英文，与应用全中文 UI 混排（真机走查实修：本机系统
+/// 语言为英文，「About tinyssh-app」与「编辑」混排且 app 名取进程名）。随系统语言
+/// 动态本地化列为 V1。不设「关闭窗口 ⌘W」——该键已被应用内标签页语义占用；
+/// 「重新加载」不进菜单（会整页刷新杀死全部会话 UI 状态）。
+#[cfg(target_os = "macos")]
+fn install_native_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
+    let version = app.package_info().version.to_string();
+    let app_sub = SubmenuBuilder::new(app, "TinySSH")
+        .item(&PredefinedMenuItem::about(
+            app,
+            Some("关于 TinySSH"),
+            Some(AboutMetadata {
+                name: Some("TinySSH".into()),
+                version: Some(version.clone()),
+                credits: Some("主机凭据与 Agent 令牌经本机钥匙串加密存储，协作与审计链完整留存于本机。".into()),
+                ..Default::default()
+            }),
+        )?)
+        .separator()
+        .item(&MenuItem::with_id(app, "settings", "设置…", true, Some("CmdOrCtrl+,"))?)
+        .separator()
+        .item(&PredefinedMenuItem::hide(app, Some("隐藏 TinySSH"))?)
+        .item(&PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?)
+        .item(&PredefinedMenuItem::show_all(app, Some("全部显示"))?)
+        .separator()
+        .item(&PredefinedMenuItem::quit(app, Some("退出 TinySSH"))?)
+        .build()?;
+    let edit_sub = SubmenuBuilder::new(app, "编辑")
+        .item(&PredefinedMenuItem::undo(app, Some("撤销"))?)
+        .item(&PredefinedMenuItem::redo(app, Some("重做"))?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(app, Some("剪切"))?)
+        .item(&PredefinedMenuItem::copy(app, Some("拷贝"))?)
+        .item(&PredefinedMenuItem::paste(app, Some("粘贴"))?)
+        .item(&PredefinedMenuItem::select_all(app, Some("全选"))?)
+        .build()?;
+    let view_sub = SubmenuBuilder::new(app, "显示")
+        .item(&PredefinedMenuItem::fullscreen(app, Some("全屏"))?)
+        .build()?;
+    let window_sub = SubmenuBuilder::new(app, "窗口")
+        .item(&PredefinedMenuItem::minimize(app, Some("最小化"))?)
+        .item(&PredefinedMenuItem::maximize(app, Some("缩放"))?)
+        .separator()
+        .item(&PredefinedMenuItem::bring_all_to_front(app, Some("前置全部"))?)
+        .build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&app_sub, &edit_sub, &view_sub, &window_sub])
+        .build()?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_native_menu(_app: &tauri::AppHandle) -> tauri::Result<()> {
+    Ok(())
+}
+
 fn main() {
     eprintln!("[app] starting, bench={}", std::env::var("TINYSSH_BENCH").unwrap_or_default());
     tracing_subscriber::fmt()
@@ -505,6 +564,16 @@ fn main() {
             use tauri::Manager as _;
             eprintln!("[app] setup: windows={:?}", app.webview_windows().keys().collect::<Vec<_>>());
             install_native_ctrl_intercept(api.clone(), terminal_input.clone());
+            // T34：原生菜单栏 + 「设置…⌘,」→ 前端事件（打开显示设置面板）
+            if let Err(e) = install_native_menu(app.handle()) {
+                eprintln!("[app] native menu install failed: {e}");
+            }
+            app.on_menu_event(|app, event| {
+                if event.id() == "settings" {
+                    let _ = app.emit("menu-settings", ());
+                    eprintln!("[app] menu: settings requested");
+                }
+            });
             if let Some(w) = app.get_webview_window("main") {
                 let r = w.eval("window.__TINYSSH_PROBE__ = 'set-by-rust'; 'ok';");
                 eprintln!("[app] eval probe: {r:?}");

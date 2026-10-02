@@ -329,3 +329,8 @@ input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
 /* 空态统一（T33）：图标 + 一句话，右栏三处与品牌化欢迎页同一语言 */
 .empty { display: flex; gap: 8px; align-items: flex-start; color: var(--dim); font-size: 12px; line-height: 1.7; padding: 8px 2px; }
 .empty .ico { margin-top: 4px; color: var(--accent); opacity: 0.75; }
+
+/* ---- T34 专业外壳收尾与信任可查证 ---- */
+/* 主机编辑表单的信任状态行：确认标记 + 指纹原文（可复制核对） */
+.trust-row { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+.trust-row .fp { color: var(--dim); word-break: break-all; user-select: text; cursor: text; }

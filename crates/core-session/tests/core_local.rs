@@ -489,6 +489,15 @@ async fn host_key_gate_first_seen_change_and_reject() {
         m.center.vault.host_fingerprint(&hid).unwrap().as_deref(),
         Some(it.fingerprint.as_str())
     );
+    // T34：信任可查证——list_hosts 携带已信任指纹（GUI 卡片 tooltip / 编辑表单 / CLI 同源）
+    let trusted = m
+        .list_hosts(&human())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|h| h.id == hid)
+        .expect("host should be listed");
+    assert_eq!(trusted.fingerprint.as_deref(), Some(it.fingerprint.as_str()));
     m.close_session(&human(), sid).await.unwrap();
 
     // ② 变更告警：预置不一致旧指纹 → Changed；拒绝 → HostKeyRejected 且不改信任记录

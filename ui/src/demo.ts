@@ -37,10 +37,10 @@ const demoState = {
   owner: "Agent" as "Human" | "Agent",
   hosts: [
     { id: "local", name: "本机", address: "local", port: 0, username: "ops", auth_type: "Password" },
-    { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password" },
+    { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI" },
     { id: "h-prod2", name: "prod-2（演示连接失败）", address: "10.0.0.12", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-otp1", name: "otp-1（演示 2FA）", address: "otp.demo", port: 22, username: "ops", auth_type: "Password" },
-  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string }[],
+  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string }[],
   sessions: [
     {
       id: "s-demo-0001", host_name: "prod-1", kind: "ssh",

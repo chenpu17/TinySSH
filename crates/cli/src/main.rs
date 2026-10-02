@@ -262,7 +262,13 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
         }
         HostCmd::List => {
             for h in m.list_hosts(&human()).await? {
-                println!("{}\t{}\t{}@{}:{}\t{:?}", h.id, h.name, h.username, h.address, h.port, h.tags);
+                // T34：指纹列（"-" = 信任未建立）——信任可查证在 CLI 同样成立
+                println!(
+                    "{}\t{}\t{}@{}:{}\t{}\t{:?}",
+                    h.id, h.name, h.username, h.address, h.port,
+                    h.fingerprint.as_deref().unwrap_or("-"),
+                    h.tags
+                );
             }
             Ok(())
         }

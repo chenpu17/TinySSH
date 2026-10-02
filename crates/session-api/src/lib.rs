@@ -352,6 +352,8 @@ pub struct Host {
     pub auth_type: AuthType,
     pub identity_id: Option<IdentityId>,
     pub tags: Vec<String>,
+    /// 已信任的主机指纹（TOFU，路线图⑤）；None = 信任尚未建立（首连确认前）。
+    pub fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

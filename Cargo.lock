@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "core-session"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5239,7 +5239,7 @@ dependencies = [
 
 [[package]]
 name = "session-api"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5996,7 +5996,7 @@ dependencies = [
 
 [[package]]
 name = "term-core"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "alacritty_terminal",
  "chrono",
@@ -6105,7 +6105,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-app"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "block2",
@@ -6130,7 +6130,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-approval"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "regex",
@@ -6148,7 +6148,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-audit"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "hex",
@@ -6166,7 +6166,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-cli"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -6193,7 +6193,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-mcp-server"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "axum",
  "chrono",
@@ -6219,7 +6219,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-shim"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
@@ -6232,7 +6232,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-testbed"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "futures",
  "libc",
@@ -6248,7 +6248,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-vault"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -6559,7 +6559,7 @@ dependencies = [
 
 [[package]]
 name = "transport-pty"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
@@ -6576,7 +6576,7 @@ dependencies = [
 
 [[package]]
 name = "transport-ssh"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
