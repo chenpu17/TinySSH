@@ -192,18 +192,19 @@ textarea {
 .pop-mask { position: fixed; inset: 0; z-index: 29; }
 .term-settings {
   position: absolute; top: 10px; right: 14px; z-index: 30;
-  width: 250px; background: var(--panel2); border: 1px solid var(--border);
+  width: 280px; background: var(--panel2); border: 1px solid var(--border);
   border-radius: 10px; padding: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 .ts-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.4px; }
 .ts-val { font-size: 14px; min-width: 26px; text-align: center; }
-.ts-themes { display: flex; flex-direction: column; gap: 6px; }
-.ts-opt { display: flex; align-items: center; gap: 8px; justify-content: flex-start; text-align: left; padding: 6px 8px; }
+.ts-themes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* T33：2 列网格收紧高度；标签不折行（宽度按最长项「Solarized 浅色」留足，超出兜底截断） */
+.ts-opt { display: flex; align-items: center; gap: 6px; justify-content: flex-start; text-align: left; padding: 5px 7px; font-size: 11px; white-space: nowrap; overflow: hidden; }
 .ts-opt.ts-active { border-color: var(--accent); background: rgba(79, 163, 165, 0.12); }
 .ts-open { border-color: var(--accent); }
 .ts-swatch {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 20px; border-radius: 4px; border: 1px solid;
+  width: 26px; height: 18px; border-radius: 4px; border: 1px solid;
   font-size: 10px; flex: none;
 }
 .section { margin-bottom: 12px; }
@@ -309,3 +310,22 @@ input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
 #term { border-radius: 8px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35); overflow: hidden; }
 /* 简报认知徽标行修正（P2-10） */
 .brief-row .tag { flex: none; }
+
+/* ---- T33 标题栏融合与排版精致化 ---- */
+/* macOS Overlay 标题栏：红绿灯悬浮在左栏头上，预留其落位；浏览器 demo 无标题栏不加类 */
+.native-chrome .head-left { padding-left: 76px; }
+/* 顶栏三条头即拖拽区：文字不可选中、光标为箭头（标题栏语义）；按钮恢复手型 */
+.panel-title[data-tauri-drag-region] span { cursor: default; user-select: none; }
+.panel-title[data-tauri-drag-region] button { cursor: pointer; }
+/* 顶栏图标钮（导入/添加主机收图标后的方正小钮） */
+.icon-btn { padding: 5px 7px; }
+/* 主机卡/会话卡信息层级：名称主行带截断禁则（修复「密/码」CJK 逐字腰斩） */
+.host-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.host-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-tag {
+  flex: none; font-size: 10px; color: var(--dim); line-height: 15px;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 5px;
+}
+/* 空态统一（T33）：图标 + 一句话，右栏三处与品牌化欢迎页同一语言 */
+.empty { display: flex; gap: 8px; align-items: flex-start; color: var(--dim); font-size: 12px; line-height: 1.7; padding: 8px 2px; }
+.empty .ico { margin-top: 4px; color: var(--accent); opacity: 0.75; }

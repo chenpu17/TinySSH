@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.27 · 日期：2026-10-02 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
+> 版本：v1.28 · 日期：2026-10-02 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -758,6 +758,26 @@ T31 交付后对照专业 SSH 客户端（Termius/iTerm2/Warp）做了一轮视�
 
 **T32 判定：通过**——专业观感第一批（图标 / 图标体系 / 反馈层 / 按钮层级 / 空状态 / 细节）落地；评估中的 P1-4（原生标题栏集成）与 P2-7（浅色 chrome）单独排期，真机 Dock 图标观感列为顺手确认项。
 
+### 5.28 标题栏融合与排版精致化轮（T33，v1.28 判定：通过）
+
+T32 后复评确认「工程精致、产品精致还差一档」，粗陋感收敛到三个来源：①默认原生标题栏与自家顶栏双层皮（真机第一眼最大破绽，浏览器走查不可见）②主机卡 CJK 逐字腰斩、信息层级平 ③空态/主题选择器/间距标准不一。本轮全部处理：
+
+- **P1-4 原生标题栏融合**：`tauri.conf.json` 窗口配置 `titleBarStyle: "Overlay"` + `hiddenTitle: true`（内容顶到窗口顶端、红绿灯悬浮在自家顶栏上、标题文字隐藏——T16 的动态窗口标题仍供 Mission Control/⌘Tab 使用）+ `theme: "Dark"` + `backgroundColor: "#10141a"`（原生菜单/滚动条走深色外观、启动无白闪）。左栏头（`.head-left`）为红绿灯落位预留 76px，且**仅原生模式生效**（`inTauri` 探测挂 `native-chrome` 类，浏览器 demo 不留白）；「导入 ~/.ssh/config」「添加主机」两个全文字按钮收成图标钮（IconUpload/IconPlus，开合态切 chevron，title/aria-label 全保留）腾出落位空间；三条 `panel-title` 头挂 `data-tauri-drag-region`（共 8 处：三条头 + 标题/留白 span）成拖拽区——标题文字 `user-select:none` + 箭头光标（标题栏语义），按钮点击不受影响。
+- **主机卡信息层级与断行禁则**：主机名改 `host-name` 主行（粗体 + nowrap + ellipsis——修复 hover 出现操作钮时「prod-1 · 密/码」被挤压逐字腰斩）+ 认证方式降为 `auth-tag` 徽章（密钥/Agent/密码），行文「· 密码」退役；会话卡主机名复用同一规则。
+- **空态拉齐**：icons.tsx 增至 17 枚（新增 IconInbox/IconClock）；审批 / 现场简报 / 操作记录三处空态统一 `.empty`（图标 + 一句话），与 T32 品牌化欢迎页同一语言。
+- **主题选择器收紧**：四主题从竖排大按钮改 2×2 网格（面板 260→280px、色板 32×20→26×18、标签单行不折行），高度减半。
+- **间距刻度**：三栏 `panel-title` 头统一 min-height；全站间距维持 4/8/12 网格，未引入新刻度。
+
+**走查（demo 断言 12/12 + 截图 6 张 + 真机窗口被动验证）**：
+- **demo 断言**：`native-chrome` 类仅原生模式存在（浏览器无）；`.head-left` padding 12px→（手动加类模拟）76px→还原 12px；拖拽区属性 8 处；`host-name` nowrap/ellipsis/粗体计算样式全对；`auth-tag` 4 枚文本正确且无「· 密码」行文残留；`.empty` 图标态在简报空态实证；主题网格 2 列；图标钮 aria-label 正确。
+- **demo 截图**：整体欢迎页（[t33_welcome_full.png](screenshots/t33_welcome_full.png)）、红绿灯留白模拟（[t33_native_sim_topleft.png](screenshots/t33_native_sim_topleft.png)）、主题 2×2 单行（[t33_settings_themes.png](screenshots/t33_settings_themes.png)）、审批清空后「最近处理」态（[t33_approval_empty.png](screenshots/t33_approval_empty.png)——demo 种子含已处理历史，审批的字面空态在 demo 不可达，该空态以 CSSOM 规则 + 简报空态实证披露）、主机卡特写（[t33_host_cards.png](screenshots/t33_host_cards.png)——「prod-2（演示…」截断省略号即断行禁则生效）、会话态全景（[t33_session_view.png](screenshots/t33_session_view.png)）。
+- **真机窗口（本轮主角）**：debug 构建真机启动——**红绿灯嵌进左栏头、双层皮标题栏消失**（全窗 [t33_native_titlebar_fused.png](screenshots/t33_native_titlebar_fused.png) + 特写 [t33_native_traffic_lights.png](screenshots/t33_native_traffic_lights.png)）；审批/简报空态在真实数据下同样呈现；hiddenTitle 与深色外观生效。**过程披露**：①首次无 env 启动触发钥匙串授权弹窗（§6.3 既有行为）且进程阻塞于 keyring 读取——终止该实例并将其弹窗点「拒绝」清理（不输入密码、不落钥匙串），复用回归同款 `TINYSSH_MASTER_KEY` 环境变量启动成功；②CGWindowList 对该 app 的辅助窗口报告失真，窗口 frame 以 AX API 为准（主屏 221,71 · 1280×800）；③全程零键鼠注入（HIDIdleTime 门禁检查通过），仅进程启动 + 窗口激活 + 只读截屏，验证后进程退出。
+- **已知边界**：拖拽区的拖动/双击最大化是 Tauri 内建行为，未脚本验证（真机日常顺手确认）；窗口压到最小宽度 960 时左栏头 76px 留白会使图标钮换行（可用性优先的可接受降级）；浅色 chrome（P2-7）仍单独排期。
+
+**回归**：cargo **68/68 全绿**（带 `TINYSSH_E2E_SSHD=1` 守卫实跑）+ UI `tsc && vite build` 通过。
+
+**T33 判定：通过**——「精致化」最后一段（标题栏融合 + 排版细节）落地；真人 PV 前工程侧无已知观感负债。
+
 
 ## 6. 已知边界（诚实清单）
 
@@ -778,7 +798,7 @@ T31 交付后对照专业 SSH 客户端（Termius/iTerm2/Warp）做了一轮视�
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **~~鼠标上报未实测~~（v1.8 已验证，路线图③关闭，§5.10）**：点击上报原生端到端实证（本机 vim mouse=a 点击指定单词 → 光标跳转 → `rZ` 替换命中字符落盘）；滚轮上报的 xterm.js SGR 编码经 WebKit 引擎层验证 4/4（与应用同一构建）。残留边界：真实滚轮手感未经真人确认（合成滚轮事件送不进 WKWebView，走查工具层限制已实证；真实输入投递由平台保证），tmux/htop 未实测（环境无此二者）——均为日常使用顺手确认项，不再阻塞路线图。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~~.ssh/config 导入与 agent~~（**v1.14 完成，§5.16**——导入面板/来源标注/徽标/Agent 主机 TOFU 建连与重启直连 UI 走查通过；t21-d Key 主机 UI 建连与连接后键入因用户占用中止注入，既有功能由自动化覆盖并披露）**UX 走查修复第一批（v1.15 完成，§5.17）**——2026-09-30 模拟用户 UX 走查（[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)，26 条真实问题）第一批 5 项（审批卡目标上下文/搜索焦点抢占/危险批准摩擦/首屏矛盾文案/AGENT 接入区）已修复并走查；**第二批（v1.16 完成，§5.18）**——日用摩擦主干 8 项（主机编辑删除/关签确认/键盘可达/表单三连/停止披露/失败态/死会话遮罩拦截/死卡单按钮）已修复并走查；**第三批（v1.17 完成，§5.19）**——其余 P2 与全部 P3（简报认知徽标/传输指代/＋toggle/命令框历史/uppercase/favicon/收起消歧/时间戳口径/placeholder 对比度/终端圆角/用户名默认空），**走查报告 26 条真实问题全部关闭**（全量文案 sweep 除外，见 §5.19 披露①）⑩ 键盘交互认证/2FA、GBK 编码（**2FA 前半 v1.21 完成，§5.23**——Password 被拒自动回落 keyboard-interactive + OTP 提示人工应答门；GBK 后半按需排期）。**①–⑨ + ⑩前半完成**。**视觉 polish 第一批（v1.27 完成，§5.27）**——应用图标重绘 / 线性图标体系 / hover·focus·过渡反馈层 / 顶栏危险动作层级 / 欢迎页品牌化空状态；标题栏集成与浅色 chrome 单独排期。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~~.ssh/config 导入与 agent~~（**v1.14 完成，§5.16**——导入面板/来源标注/徽标/Agent 主机 TOFU 建连与重启直连 UI 走查通过；t21-d Key 主机 UI 建连与连接后键入因用户占用中止注入，既有功能由自动化覆盖并披露）**UX 走查修复第一批（v1.15 完成，§5.17）**——2026-09-30 模拟用户 UX 走查（[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)，26 条真实问题）第一批 5 项（审批卡目标上下文/搜索焦点抢占/危险批准摩擦/首屏矛盾文案/AGENT 接入区）已修复并走查；**第二批（v1.16 完成，§5.18）**——日用摩擦主干 8 项（主机编辑删除/关签确认/键盘可达/表单三连/停止披露/失败态/死会话遮罩拦截/死卡单按钮）已修复并走查；**第三批（v1.17 完成，§5.19）**——其余 P2 与全部 P3（简报认知徽标/传输指代/＋toggle/命令框历史/uppercase/favicon/收起消歧/时间戳口径/placeholder 对比度/终端圆角/用户名默认空），**走查报告 26 条真实问题全部关闭**（全量文案 sweep 除外，见 §5.19 披露①）⑩ 键盘交互认证/2FA、GBK 编码（**2FA 前半 v1.21 完成，§5.23**——Password 被拒自动回落 keyboard-interactive + OTP 提示人工应答门；GBK 后半按需排期）。**①–⑨ + ⑩前半完成**。**视觉 polish 第一批（v1.27 完成，§5.27）**——应用图标重绘 / 线性图标体系 / hover·focus·过渡反馈层 / 顶栏危险动作层级 / 欢迎页品牌化空状态；**标题栏融合与排版精致化（v1.28 完成，§5.28）**——Overlay 原生标题栏（红绿灯入左栏头 + 顶栏拖拽区 + 深色外观）、主机卡层级/断行禁则、空态拉齐、主题选择器收紧；浅色 chrome（P2-7）单独排期。
 19. **~~fitTerminal 静默失效（历史缺陷）~~（v1.11 已修复，§5.13）**：xterm 5.5 无公开 `dimensions`，fit 自 v1.x 起从未真正生效，xterm/PTY 恒为构造默认 80×24（13px 下恰好正确而长期未暴露，窗口 resize 的「跟随」实为看门狗把 PTY 锁到 80×24）。修复经 `_core._renderService.dimensions`（addon-fit 同源）后 PTY 真实随字号/窗口变化（实测 16px=35×75、19px=28×63）。此前各轮报告中「PTY 对齐」的验收结论在默认 13px 场景下成立，其他字号下的对齐自 v1.11 起才真实成立。
 20. **主题作用域**：终端配色预设只作用于终端区域，界面 chrome（左/右栏、弹窗）恒为深色——亮色 chrome 需全站 CSS 变量与硬编码色值适配，属 V1；设置（字号/主题）不入审计链（UI 偏好非协作事实，vault `settings` KV 可查）。
 23. **拖拽投递的走查口径（v1.13）**：T20 的 OS 级拖拽事件（Finder→WKWebView NSDraggingSession 投递）在双屏+多 Space 环境无法脚本化驱动，走查以 dev 门禁合成事件注入覆盖该环节（§5.15 披露①），其余链路全部真实；真人拖拽列为顺手确认项。人类传输不经审批直接执行（审计留痕），与「Agent 传输必审」的 L1 §4 语义一致。

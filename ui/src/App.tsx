@@ -4,10 +4,14 @@ import * as demo from "./demo";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
   IconChevronUp, IconChevronDown, IconTerminal, IconArrowDown, IconUpload, IconDownload,
+  IconInbox, IconClock,
 } from "./icons";
 
 // 无 Tauri 环境（纯浏览器）走演示模式；Tauri 环境走真实核心
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// macOS 标题栏融合（T33）：Overlay 红绿灯悬浮在内容上，左栏头给红绿灯留位。
+// 只在原生模式加类——浏览器 demo 没有标题栏，留白反而是错的（走查可手动加类模拟）。
+if (inTauri) document.documentElement.classList.add("native-chrome");
 const invoke: typeof tauri.invoke = (cmd, args?) =>
   inTauri
     ? tauri.invoke(cmd, args)
@@ -1309,14 +1313,17 @@ export default function App() {
     <div className="layout">
       {/* 左：主机与会话 */}
       <div className="col">
-        <div className="panel-title row">
-          <span>主机 / 会话</span>
-          <span style={{ flex: 1 }} />
-          <button className="ghost" onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
-            {showImport ? "收起导入" : "导入 ~/.ssh/config"}
+        {/* T33：此行即标题栏——红绿灯落位（.head-left 左留白）、整行可拖拽；两个动作收成图标钮腾出空间 */}
+        <div className="panel-title row head-left" data-tauri-drag-region>
+          <span data-tauri-drag-region>主机 / 会话</span>
+          <span style={{ flex: 1 }} data-tauri-drag-region />
+          <button className="ghost icon-btn" title={showImport ? "收起导入" : "导入 ~/.ssh/config"} aria-label={showImport ? "收起导入" : "导入 ~/.ssh/config"}
+            onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
+            {showImport ? <IconChevronUp size={14} /> : <IconUpload size={14} />}
           </button>
-          <button className="ghost" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); }}>
-            {showAddHost ? "收起表单" : <><IconPlus size={13} /> 添加主机</>}
+          <button className="ghost icon-btn" title={showAddHost ? "收起表单" : "添加主机"} aria-label={showAddHost ? "收起表单" : "添加主机"}
+            onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); }}>
+            {showAddHost ? <IconChevronUp size={14} /> : <IconPlus size={14} />}
           </button>
         </div>
         <div className="scroll">
@@ -1346,7 +1353,11 @@ export default function App() {
             {hosts.map((h) => (
               <div className="card row host-card" key={h.id}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div>{h.name} <span className="dim">{h.auth_type === "Key" ? "· 密钥" : h.auth_type === "Agent" ? "· Agent" : "· 密码"}</span></div>
+                  {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩 */}
+                  <div className="host-line">
+                    <span className="host-name">{h.name}</span>
+                    <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
+                  </div>
                   <div className="dim mono">{h.username}@{h.address}:{h.port}</div>
                   {lastFailed === h.id && connecting !== h.id && (
                     <div className="err" style={{ fontSize: 11, marginTop: 2 }}>✕ 上次连接失败——检查地址与凭据后重试</div>
@@ -1364,7 +1375,7 @@ export default function App() {
               </div>
             ))}
             {hosts.length === 0 && (
-              <div className="dim">还没有主机。点上方「＋ 添加主机」填入地址和密码即可连接。</div>
+              <div className="dim">还没有主机。点右上角「＋」填入地址和密码即可连接。</div>
             )}
           </div>
           <div className="section">
@@ -1379,7 +1390,7 @@ export default function App() {
                       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); attachSession(s.id); }
                     }}>
                     <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.host_name}</span>
+                      <span className="host-name">{s.host_name}</span>
                       <span className={"mono " + st.cls} style={{ flex: "none" }}>· {st.text}</span>
                     </div>
                     <div className="dim mono">{s.id.slice(0, 12)}</div>
@@ -1435,8 +1446,8 @@ Authorization: Bearer <TOKEN>`}
 
       {/* 中：终端 */}
       <div className="col">
-        <div className="panel-title row">
-          <span>
+        <div className="panel-title row" data-tauri-drag-region>
+          <span data-tauri-drag-region>
             终端
             {current && (
               <span className="dim mono"> {current.host_name} · {sid!.slice(0, 12)} · </span>
@@ -1446,7 +1457,7 @@ Authorization: Bearer <TOKEN>`}
             )}
             {current && <span className={stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>}
           </span>
-          <span style={{ flex: 1 }} />
+          <span style={{ flex: 1 }} data-tauri-drag-region />
           {sid && (
             <span
               className={"badge " + ownerCls}
@@ -1847,8 +1858,8 @@ Authorization: Bearer <TOKEN>`}
 
       {/* 右：审批 / 现场简报 / 操作记录 —— 给人看的协作面板，原始数据在 CLI/MCP 可查 */}
       <div className="col">
-        <div className="panel-title row">
-          <span>审批</span>
+        <div className="panel-title row" data-tauri-drag-region>
+          <span data-tauri-drag-region>审批</span>
           {pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
         </div>
         <div className="scroll">
@@ -1918,7 +1929,7 @@ Authorization: Bearer <TOKEN>`}
             </div>
           )}
           {pendingApprovals.length === 0 && resolvedApprovals.length === 0 && (
-            <div className="side-quiet">暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
+            <div className="empty"><IconInbox size={14} />暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
           )}
 
           <div className="section">
@@ -1965,7 +1976,7 @@ Authorization: Bearer <TOKEN>`}
           <div className="section">
             <h4>现场简报</h4>
             {brief ? <BriefCard brief={brief} /> : (
-              <div className="side-quiet">未接入会话。连接主机后显示当前目录与最近命令。</div>
+              <div className="empty"><IconTerminal size={14} />未接入会话。连接主机后显示当前目录与最近命令。</div>
             )}
           </div>
 
@@ -1984,7 +1995,7 @@ Authorization: Bearer <TOKEN>`}
                   {ev.command && <span className="tl-cmd mono dim">{ev.command}</span>}
                 </div>
               );
-            }) : <div className="side-quiet">暂无记录。所有连接与命令都会留痕在这里。</div>}
+            }) : <div className="empty"><IconClock size={14} />暂无记录。所有连接与命令都会留痕在这里。</div>}
           </div>
         </div>
       </div>
