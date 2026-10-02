@@ -24,7 +24,8 @@ guard() {
   port=$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{$p}}={{(index $b 0).HostIp}}:{{(index $b 0).HostPort}}{{end}}' "$C")
   case "$img" in *alpine*) ;; *) echo "拒绝操作：$C 镜像是 ${img}，不是 alpine 沙箱" >&2; exit 1;; esac
   # 注意：macOS 自带 bash 3.2 下 $var 后紧跟全角字符会把多字节首字节并进变量名，必须用 ${var} 定界
-  case "$port" in 22/tcp=127.0.0.1:2222) ;; *) echo "拒绝操作：$C 端口映射异常（${port}），期望 22/tcp=127.0.0.1:2222" >&2; exit 1;; esac
+  # T29 起 dev-sshd.sh 额外映射 2223（kb e2e 用）——守卫只要求 2222 绑定 127.0.0.1（子串匹配，不假设映射顺序）
+  case "$port" in *22/tcp=127.0.0.1:2222*) ;; *) echo "拒绝操作：$C 端口映射异常（${port}），期望 22/tcp=127.0.0.1:2222" >&2; exit 1;; esac
 }
 
 banner_ok() {
