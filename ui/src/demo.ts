@@ -11,6 +11,7 @@ type Handler = (data: Uint8Array) => void;
 type DemoSession = {
   id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
+  goal: string | null;   // R9 任务目标/交接留言（随会话存亡，与真实 SessionHandle.goal 对齐）
   out: string;             // 会话私有输出缓冲（read_screen 回放 + 订阅增量同源）
   handlers: Handler[];
 };
@@ -45,12 +46,14 @@ const demoState = {
     {
       id: "s-demo-0001", host_name: "prod-1", kind: "ssh",
       state: "Connected", control_owner: "Agent",
+      goal: "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
       handlers: [] as Handler[],
     },
     {
       id: "s-demo-0002", host_name: "staging-1", kind: "ssh",
       state: "Disconnected", control_owner: "Agent",
+      goal: null,
       out: "ops@staging-1:~$ ",
       handlers: [] as Handler[],
     },
@@ -242,7 +245,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", out: `ops@${h.name}:~$ `, handlers: [] });
+      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", goal: null, out: `ops@${h.name}:~$ `, handlers: [] });
       audit("human", "session_created", null, null, sid);
       return sid;
     }
@@ -277,7 +280,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (s && channel?.onmessage) s.handlers.push((m) => channel.onmessage!(m));
       return null;
     }
-    case "session_brief":
+    case "session_brief": {
+      const bs = demoState.sessions.find((x) => x.id === args?.sid);
       return {
         cwd: "/var/log/nginx",
         running: [],
@@ -290,7 +294,21 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           { subject: "SSH 现场", detail: "重连后进入重确认：仅内置只读白名单可用", status: "NeedsRecheck" },
         ],
         screen_summary: "/dev/vda1 40G 37G 3.1G 93% / | ops@prod-1:~$",
+        goal: bs ? bs.goal : null,
       };
+    }
+    // R9：人类→Agent 委托入口。镜像真实后端语义——trim 后空串归一为 null（清除）、
+    // 仅人类可设、goal_set 审计留痕（command 位记目标文本，payload 记 cleared）。
+    case "set_session_goal": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw new Error("SessionNotFound（演示）");
+      const raw = args?.goal as string | null | undefined;
+      const trimmed = raw == null ? null : raw.trim();
+      s.goal = trimmed ? trimmed : null;
+      audit("human", "goal_set", s.goal, null, sid ?? null, { cleared: s.goal === null });
+      return null;
+    }
     case "list_approvals":
       return demoState.approvals.map((a) => ({ ...a, segment_report: a.segment_report.map((s) => ({ ...s })) }));
     case "decide_approval": {

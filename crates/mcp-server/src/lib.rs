@@ -300,7 +300,7 @@ impl McpServer {
 
     #[tool(
         name = "get_session_brief",
-        description = "读取现场简报（cwd/最近命令/运行中任务/待审批；交接核心工件）",
+        description = "读取现场简报（cwd/最近命令/运行中任务/待审批/任务目标 goal；交接核心工件——接管后先读 goal 了解人类委托意图）",
         annotations(read_only_hint = true)
     )]
     pub async fn get_session_brief(

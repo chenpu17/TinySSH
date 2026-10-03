@@ -250,6 +250,11 @@ async fn session_brief(state: ApiState<'_>, sid: String) -> CmdResult<SessionBri
 }
 
 #[tauri::command]
+async fn set_session_goal(state: ApiState<'_>, sid: String, goal: Option<String>) -> CmdResult<()> {
+    state.api.set_session_goal(&human(), sid, goal).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn list_approvals(state: ApiState<'_>, pending_only: bool) -> CmdResult<Vec<ApprovalItem>> {
     state
         .api
@@ -686,7 +691,7 @@ fn main() {
             open_url,
             upload_file, download_file, cancel_transfer,
             get_setting, set_setting,
-            read_screen, send_keys, exec_human, set_control, session_brief,
+            read_screen, send_keys, exec_human, set_control, session_brief, set_session_goal,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,

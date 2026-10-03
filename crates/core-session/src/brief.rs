@@ -95,6 +95,7 @@ pub async fn compute(h: &SessionHandle) -> SessionBrief {
         running: running_ids,
         pending_approvals: pending,
         screen_summary: screen.screen_tail_summary(4),
+        goal: h.goal.lock().unwrap().clone(),
     }
 }
 

@@ -73,6 +73,9 @@ pub struct SessionHandle {
     /// send_keys 会话级授权（接管即失效）。
     pub send_keys_auth: StdMutex<HashSet<String>>,
 
+    /// 任务目标/交接留言（R9：人类写给 Agent；随会话存亡，经 SessionBrief.goal 暴露）。
+    pub goal: StdMutex<Option<String>>,
+
     pub center: Arc<ApprovalCenter>,
 }
 
@@ -106,6 +109,7 @@ impl SessionHandle {
             running: StdMutex::new(HashMap::new()),
             transfers: StdMutex::new(HashMap::new()),
             send_keys_auth: StdMutex::new(HashSet::new()),
+            goal: StdMutex::new(None),
             center,
         })
     }

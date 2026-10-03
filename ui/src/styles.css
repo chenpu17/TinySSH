@@ -263,6 +263,8 @@ textarea {
   border-radius: 6px; padding: 6px 8px; font-size: 12px;
   font-family: "SF Mono", Menlo, monospace; resize: vertical;
 }
+/* 任务目标（R9）：委托留言输入框，宽满栏、用正文字体（非等宽） */
+.goal-input { width: 100%; box-sizing: border-box; font-family: inherit; line-height: 1.5; }
 .add-host code {
   font-family: "SF Mono", Menlo, monospace; font-size: 11px;
   background: var(--panel); padding: 1px 5px; border-radius: 4px;
@@ -398,7 +400,8 @@ textarea {
 .brief-fact.confirmed    { background: rgba(127, 191, 143, 0.06); }
 .brief-fact.needsrecheck { background: rgba(208, 176, 122, 0.08); }
 .brief-fact.unobservable { background: rgba(208, 122, 122, 0.06); }
-.brief-fact .bf-body { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* R7：关键提示（重确认范围/控制权历史）整行换行完整可读，tooltip 仍保留 */
+.brief-fact .bf-body { flex: 1; min-width: 0; overflow-wrap: break-word; }
 .epistemic-badge {
   flex: none;
   font-size: 10px;

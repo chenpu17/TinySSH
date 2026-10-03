@@ -846,6 +846,34 @@ impl SessionApi for SessionManager {
         Ok(brief::compute(&h).await)
     }
 
+    // ---- 任务目标/交接留言（R9：人类→Agent 委托入口）----
+    async fn set_session_goal(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let h = self.get(&sid)?;
+        // 空串归一 None（清除语义）
+        let goal = goal.and_then(|g| {
+            let t = g.trim().to_string();
+            if t.is_empty() { None } else { Some(t) }
+        });
+        *h.goal.lock().unwrap() = goal.clone();
+        let _ = self.center.audit.append(
+            ctx,
+            "goal_set",
+            Some(&sid),
+            goal.as_deref(),
+            serde_json::json!({ "cleared": goal.is_none() }),
+            None,
+        );
+        h.note_transition(match &goal {
+            Some(_) => "人类更新任务目标（Agent 读简报可见）",
+            None => "人类清除任务目标",
+        })
+        .await;
+        Ok(())
+    }
+
     fn subscribe_output(&self, sid: SessionId) -> Result<broadcast::Receiver<OutputEvent>> {
         let h = self.get(&sid)?;
         Ok(h.output_tx.subscribe())

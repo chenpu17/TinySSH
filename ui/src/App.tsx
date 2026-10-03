@@ -61,6 +61,7 @@ type Brief = {
   cwd: string | null; env_summary: string;
   facts: { subject: string; detail: string; status: string }[];
   running: string[]; pending_approvals: string[]; screen_summary: string;
+  goal: string | null;
 };
 type AuditEvent = {
   seq: number; ts: string; actor_kind: string; agent_id: string | null;
@@ -136,6 +137,7 @@ const auditLabel = (a: string): string =>
     approval_denied: "拒绝审批",
     takeover: "接管会话",
     handback: "交还会话",
+    goal_set: "更新任务目标",
     transfer_done: "传输完成",
     transfer_voided: "传输作废",
     transfer_failed: "传输失败",
@@ -392,6 +394,10 @@ export default function App() {
   const [hostsLoaded, setHostsLoaded] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
+  // 任务目标（R9：人类→Agent 委托留言）：draft 编辑中不被简报轮询覆盖，
+  // 保存/清除后落盘（goalDirty 复位）再随简报同步
+  const [goalDraft, setGoalDraft] = useState("");
+  const goalDirty = useRef(false);
   // 简报 ref：拖拽上传回调里读当前 cwd（不进依赖数组，避免监听器随简报反复重订阅）
   const briefRef = useRef<Brief | null>(null);
   useEffect(() => { briefRef.current = brief; }, [brief]);
@@ -426,6 +432,26 @@ export default function App() {
   const refreshBrief = useCallback(async (s: string) => {
     try { setBrief(await invoke<Brief>("session_brief", { sid: s })); } catch { /* 会话已关 */ }
   }, []);
+
+  // 简报到达即同步目标输入框（编辑中不覆盖，切会话时复位脏标）
+  useEffect(() => { if (!goalDirty.current) setGoalDraft(brief?.goal ?? ""); }, [brief]);
+  useEffect(() => { goalDirty.current = false; }, [sid]);
+
+  const saveGoal = useCallback(async (clear = false) => {
+    const target = sidRef.current;
+    if (!target) return;
+    const t = clear ? "" : goalDraft.trim();
+    try {
+      await invoke("set_session_goal", { sid: target, goal: t ? t : null });
+      goalDirty.current = false;
+      if (clear) setGoalDraft("");
+      pushToast("ok", t ? "任务目标已更新，Agent 读简报可见" : "任务目标已清除");
+      void refreshBrief(target);
+      void refreshLists(); // goal_set 审计事件即时上时间线
+    } catch (e) {
+      pushToast("err", friendlyError(String(e)));
+    }
+  }, [goalDraft, refreshBrief, refreshLists, pushToast]);
 
   useEffect(() => {
     refreshLists();
@@ -1435,7 +1461,9 @@ export default function App() {
             {hosts.map((h) => (
               <div className="host-card" key={h.id}
                 title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}`}>
-                <div className="host-card-main">
+                {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
+                <div className="host-card-main" style={{ cursor: connecting ? "default" : "pointer" }}
+                  onClick={() => { if (!connecting) createSession(h); }}>
                   {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩 */}
                   <div className="host-line">
                     <span className="host-name">{h.name}</span>
@@ -2082,6 +2110,33 @@ Authorization: Bearer <TOKEN>`}
           </div>
 
           <div className="section">
+            <h4>任务目标</h4>
+            {sid ? (
+              <>
+                <textarea
+                  className="goal-input"
+                  rows={2}
+                  placeholder="写给 Agent 的委托留言，例：把日志打包放到 /tmp 后交还给我"
+                  value={goalDraft}
+                  onChange={(e) => { goalDirty.current = true; setGoalDraft(e.target.value); }}
+                />
+                <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                  <button
+                    disabled={goalDraft.trim() === (brief?.goal ?? "")}
+                    onClick={() => void saveGoal()}
+                  >保存</button>
+                  {(brief?.goal ?? "") !== "" && (
+                    <button className="ghost" onClick={() => void saveGoal(true)}>清除</button>
+                  )}
+                </div>
+                <div className="side-quiet">Agent 接管与读简报时会先看到这里；随会话结束自动消失。</div>
+              </>
+            ) : (
+              <div className="side-quiet">连接会话后可给 Agent 留言委托任务。</div>
+            )}
+          </div>
+
+          <div className="section">
             <h4>现场简报</h4>
             {brief ? <BriefCard brief={brief} /> : (
               <div className="empty"><IconTerminal size={14} />未接入会话。连接主机后显示当前目录与最近命令。</div>
@@ -2250,11 +2305,11 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>名称</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：我的服务器" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例：我的服务器" />
         </div>
         <div className="ah-field" style={{ flex: 2 }}>
           <label>地址（IP 或域名）</label>
-          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="192.168.1.10 或 server.example.com" style={{ minWidth: 0 }} />
+          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="例：192.168.1.10 或 server.example.com" style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label>端口</label>

@@ -192,6 +192,9 @@ pub struct SessionBrief {
     pub running: Vec<ExecId>,
     pub pending_approvals: Vec<ApprovalId>,
     pub screen_summary: String,
+    /// 人类给 Agent 的任务目标/交接留言（R9 委托入口；None=未设定）。
+    /// 随会话存亡（会话现场本就易失），Agent 在交还/操作前经本简报读取。
+    pub goal: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +706,10 @@ pub trait SessionApi: Send + Sync {
 
     // ---- 现场简报（v1；交接核心工件，PRD FR-3/FR-6）----
     async fn get_session_brief(&self, ctx: &Actor, sid: SessionId) -> Result<SessionBrief>;
+
+    /// 设定会话任务目标/交接留言（R9：人类→Agent 委托入口；None=清除，仅人类）。
+    /// Agent 经 get_session_brief 的 goal 字段读取；设定/清除全程审计留痕。
+    async fn set_session_goal(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()>;
 
     // ---- 人类专属：输出流订阅（IPC Bridge 用；MCP 不提供流，只提供快照/等待）----
     fn subscribe_output(&self, sid: SessionId) -> Result<broadcast::Receiver<OutputEvent>>;
