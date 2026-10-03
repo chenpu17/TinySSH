@@ -102,9 +102,6 @@ type TransferCard = {
   status: "running" | "done" | "failed" | "cancelled"; bytes?: number; error?: string;
 };
 
-const epistemicClass = (s: string) =>
-  s === "Confirmed" ? "tag-confirmed" : s === "NeedsRecheck" ? "tag-needsrecheck" : "tag-unobservable";
-
 // 认知状态 → 用户能看懂的标签
 const epistemicLabel = (s: string) =>
   s === "Confirmed" ? "已核实" : s === "NeedsRecheck" ? "需复核" : "未观测";
@@ -384,6 +381,7 @@ export default function App() {
   // 远程 OSC 0/2 标题（T16）：按会话记录，显示在终端头部
   const [oscTitles, setOscTitles] = useState<Record<string, string>>({});
   const [hosts, setHosts] = useState<Host[]>([]);
+  const [hostsLoaded, setHostsLoaded] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
   // 简报 ref：拖拽上传回调里读当前 cwd（不进依赖数组，避免监听器随简报反复重订阅）
@@ -409,6 +407,7 @@ export default function App() {
   const refreshLists = useCallback(async () => {
     setSessions(await invoke<SessionInfo[]>("list_sessions"));
     setHosts(await invoke<Host[]>("list_hosts"));
+    setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
     setApprovals((await invoke<ApprovalItem[]>("list_approvals", { pendingOnly: false }))
       .map((a) => ({ ...a, status: normApprovalStatus(a.status) })));
     // 多取一些：集成注入等内部事件会被前端过滤，保证可见条数够看
@@ -1403,32 +1402,40 @@ export default function App() {
           )}
           <div className="section">
             <h4>主机</h4>
+            {!hostsLoaded && (
+              <>
+                <div className="skeleton" />
+                <div className="skeleton" />
+              </>
+            )}
             {hosts.map((h) => (
-              <div className="card row host-card" key={h.id}>
-                <div style={{ flex: 1, minWidth: 0 }}
-                  title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}`}>
+              <div className="host-card" key={h.id}
+                title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}`}>
+                <div className="host-card-main">
                   {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩 */}
                   <div className="host-line">
                     <span className="host-name">{h.name}</span>
                     <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
                   </div>
-                  <div className="dim mono">{h.username}@{h.address}:{h.port}</div>
+                  <div className="host-addr mono">{h.username}@{h.address}:{h.port}</div>
                   {lastFailed === h.id && connecting !== h.id && (
-                    <div className="err" style={{ fontSize: 11, marginTop: 2 }}>✕ 上次连接失败——检查地址与凭据后重试</div>
+                    <div className="err host-fail">✕ 上次连接失败——检查地址与凭据后重试</div>
                   )}
                 </div>
-                <div className="host-ops">
-                  <button className="ghost" title="编辑主机（名称/地址/端口/用户名，凭据保持不变）"
-                    onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}><IconPencil size={13} /></button>
-                  <button className="ghost host-del" title="删除主机"
-                    onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
+                <div className="host-card-side">
+                  <div className="host-ops">
+                    <button className="ghost" title="编辑主机（名称/地址/端口/用户名，凭据保持不变）"
+                      onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}><IconPencil size={13} /></button>
+                    <button className="ghost host-del" title="删除主机"
+                      onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
+                  </div>
+                  <button className="host-connect-btn" disabled={connecting !== null} onClick={() => createSession(h)}>
+                    {connecting === h.id ? "连接中…" : "连接"}
+                  </button>
                 </div>
-                <button disabled={connecting !== null} onClick={() => createSession(h)}>
-                  {connecting === h.id ? "连接中…" : "连接"}
-                </button>
               </div>
             ))}
-            {hosts.length === 0 && (
+            {hostsLoaded && hosts.length === 0 && (
               <div className="dim">还没有主机。点右上角「＋」填入地址和密码即可连接。</div>
             )}
           </div>
@@ -1550,10 +1557,17 @@ Authorization: Bearer <TOKEN>`}
             onClick={() => setShowSettings(!showSettings)}
           ><IconSliders size={15} /></button>
         </div>
-        {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释 */}
+        {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释
+            精致化 §5.2：状态/说明类信息走 Notice Bar，不与面包屑混排 */}
         {sid && hasAgents && owner === "Agent" && (
-          <div className="ctl-hint">
+          <div className="notice-bar info">
             接管＝冻结 Agent、待审批作废，正在跑的命令不中断 · 接管并停止任务＝再尝试停止跑着的命令（结果逐条显示）
+          </div>
+        )}
+        {/* 重确认（受限）：安全限制状态独占一行警示（§5.2），核实完成后自动恢复 */}
+        {current?.state === "Reconfirming" && (
+          <div className="notice-bar warn">
+            ⚠ 重确认中（受限）— 普通操作暂停，仅允许只读核实命令。核实完成后自动恢复。
           </div>
         )}
         {/* 标签页（T19）：每个会话一签，状态点随连接状态变色；◫ 进/换分屏，✕ 关闭（⌘W） */}
@@ -1987,11 +2001,13 @@ Authorization: Bearer <TOKEN>`}
               {pendingApprovals.length === 0 && <div className="side-sub">最近处理</div>}
               {resolvedApprovals.map((a) => (
                 <div className="tl-row" key={a.id} title={a.edited_command || a.command}>
-                  <span className={(approvalResolvedLabel[a.status] ?? { cls: "err" }).cls} style={{ flex: "none", fontSize: 11 }}>
-                    {(approvalResolvedLabel[a.status] ?? { text: a.status }).text}
-                  </span>
-                  {/* 编辑后批准显示实际放行文，不是原始请求（PV R1） */}
-                  <span className="tl-cmd mono dim">{a.edited_command || a.command}</span>
+                  <div className="tl-action">
+                    <span className={(approvalResolvedLabel[a.status] ?? { cls: "err" }).cls} style={{ fontSize: 11 }}>
+                      {(approvalResolvedLabel[a.status] ?? { text: a.status }).text}
+                    </span>{" "}
+                    {/* 编辑后批准显示实际放行文，不是原始请求（PV R1） */}
+                    <span className="tl-cmd-text">{a.edited_command || a.command}</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -2053,14 +2069,15 @@ Authorization: Bearer <TOKEN>`}
             {visibleTimeline.length > 0 ? visibleTimeline.map((ev) => {
               const host = ev.session_id ? sessions.find((x) => x.id === ev.session_id)?.host_name : undefined;
               return (
-                <div className="tl-row" key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
-                  <span className="tl-time">{hhmm(ev.ts)}</span>
-                  <span className={ev.actor_kind === "agent" ? "tl-agent" : "tl-human"}>
-                    {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
-                  </span>
-                  {host && <span className="tl-host">{host}</span>}
-                  <span className="tl-what">{decisionLabel(ev)}</span>
-                  {ev.command && <span className="tl-cmd mono dim">{ev.command}</span>}
+                <div className={`tl-row actor-${ev.actor_kind}`} key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
+                  <div className="tl-meta">{hhmm(ev.ts)}{host ? ` · ${host}` : ""}</div>
+                  <div className="tl-action">
+                    <span style={{ color: ev.actor_kind === "agent" ? "var(--accent)" : "var(--warn)" }}>
+                      {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
+                    </span>{" "}
+                    {decisionLabel(ev)}
+                    {ev.command && <>{" "}<span className="tl-cmd-text">{ev.command}</span></>}
+                  </div>
                 </div>
               );
             }) : <div className="empty"><IconClock size={14} />暂无记录。所有连接与命令都会留痕在这里。</div>}
@@ -2089,39 +2106,42 @@ function BriefCard({ brief }: { brief: Brief }) {
     if (i < 0) return { cmd: cleanCmd(detail), exit: "" };
     return { cmd: cleanCmd(detail.slice(0, i)), exit: exitText(detail.slice(i + 8)) };
   };
+  const epi = (s: string) => s.toLowerCase(); // Confirmed/NeedsRecheck/Unobservable → CSS 修饰类
   return (
     <div className="card">
       {cwd && (
-        <div className="brief-row">
-          当前目录 <span className="mono">{cwd.detail}</span>{" "}
-          <span className={"tag " + epistemicClass(cwd.status)}>{epistemicLabel(cwd.status)}</span>
+        <div className={"brief-fact " + epi(cwd.status)}>
+          <span className={"epistemic-badge " + epi(cwd.status)}>{epistemicLabel(cwd.status)}</span>
+          <div className="bf-body">当前目录 <span className="mono">{cwd.detail}</span></div>
         </div>
       )}
       {brief.running.length > 0 && (
-        <div className="brief-row err">运行中：{brief.running.join("、")}</div>
+        <div className="brief-fact"><div className="bf-body err">运行中：{brief.running.join("、")}</div></div>
       )}
       {cmds.map((f, i) => {
         const { cmd, exit } = parseCmd(f.detail);
         if (!cmd) return null;
         return (
-          <div className="brief-row" key={i} title={cmd}>
-            <span className="mono cmd-inline">$ {cmd}</span>
-            {exit && <span className="dim"> · {exit}</span>}
-            <span className={"tag " + epistemicClass(f.status)}>{epistemicLabel(f.status)}</span>
+          <div className={"brief-fact " + epi(f.status)} key={i} title={cmd}>
+            <span className={"epistemic-badge " + epi(f.status)}>{epistemicLabel(f.status)}</span>
+            <div className="bf-body">
+              <span className="mono cmd-inline">$ {cmd}</span>
+              {exit && <span className="dim"> · {exit}</span>}
+            </div>
           </div>
         );
       })}
       {notices.map((f, i) => (
-        <div className={"brief-row " + (f.status === "Unobservable" ? "err" : "warn-text")} key={`n${i}`} title={f.detail}>
-          {f.detail}
-          <span className={"tag " + epistemicClass(f.status)}>{epistemicLabel(f.status)}</span>
+        <div className={"brief-fact " + epi(f.status)} key={`n${i}`} title={f.detail}>
+          <span className={"epistemic-badge " + epi(f.status)}>{epistemicLabel(f.status)}</span>
+          <div className={"bf-body" + (f.status === "Unobservable" ? " err" : "")}>{f.detail}</div>
         </div>
       ))}
       {/* 控制权 fact 是系统核实事实；行会被截断，tooltip 给全文 */}
       {ctl && (
-        <div className="brief-row dim" title={ctl.detail}>
-          控制权：{ctl.detail}
-          <span className={"tag " + epistemicClass(ctl.status)}>{epistemicLabel(ctl.status)}</span>
+        <div className={"brief-fact " + epi(ctl.status)} title={ctl.detail}>
+          <span className={"epistemic-badge " + epi(ctl.status)}>{epistemicLabel(ctl.status)}</span>
+          <div className="bf-body dim">控制权：{ctl.detail}</div>
         </div>
       )}
     </div>

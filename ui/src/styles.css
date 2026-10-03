@@ -1,16 +1,21 @@
 :root {
-  --bg: #10141a;
-  --panel: #171d26;
-  --panel2: #1d2530;
-  --border: #2a3442;
-  --text: #d7dee8;
-  --dim: #8a97a8;
-  --accent: #4fa3a5;
+  /* 精致化改造（docs/ui-redesign-spec.md §二）：Surface 层次拉开——bg 更深让面板浮起，
+     panel3 为 hover 提亮档；文字三级（text/text-sub/dim），dim 收深降噪 */
+  --bg: #0c1017;
+  --panel: #141922;
+  --panel2: #1c2433;
+  --panel3: #232d3d;
+  --border: #263040;
+  --text: #d4dbe6;
+  --text-sub: #9aaab8;
+  --dim: #5d6f82;
+  /* accent 降饱和约 10%，更沉稳（Termius 方向） */
+  --accent: #3d9da8;
   --danger: #d07a7a;
   --ok: #7fbf8f;
   --warn: #d0b07a;
   /* T32：hover 提亮层（与基色同族，步进约 +8% 亮度） */
-  --accent-hover: #5fb2b4;
+  --accent-hover: #4db0bb;
   --danger-hover: #db9090;
   --warn-hover: #dbbf90;
   --border-hover: #3a4a5e;
@@ -18,10 +23,10 @@
   --on-accent: #0b1516;
   --on-danger: #2a1010;
   --on-warn: #2a2410;
-  --accent-soft: rgba(79, 163, 165, 0.12);
-  --accent-ring: rgba(79, 163, 165, 0.18);
-  --accent-glow: rgba(79, 163, 165, 0.35);
-  --accent-line: rgba(79, 163, 165, 0.45);
+  --accent-soft: rgba(61, 157, 168, 0.10);
+  --accent-ring: rgba(61, 157, 168, 0.20);
+  --accent-glow: rgba(61, 157, 168, 0.35);
+  --accent-line: rgba(61, 157, 168, 0.45);
   --danger-soft: rgba(208, 122, 122, 0.12);
   --danger-soft-hover: rgba(208, 122, 122, 0.14);
   --danger-ring: rgba(208, 122, 122, 0.18);
@@ -45,8 +50,10 @@
   --bg: #eaeef2;
   --panel: #f4f6f8;
   --panel2: #ffffff;
+  --panel3: #e8edf2;
   --border: #d2dae2;
   --text: #242e38;
+  --text-sub: #4d5b68;
   --dim: #64707d;
   --accent: #1f767c;
   --accent-hover: #2a8a90;
@@ -82,8 +89,10 @@
   --bg: #eee8d5;
   --panel: #f5efdc;
   --panel2: #fdf6e3;
+  --panel3: #e9e0c7;
   --border: #d8cfb2;
   --text: #073642;
+  --text-sub: #46606c;
   --dim: #657b83;
   --accent: #1a726b;
   --accent-hover: #239088;
@@ -121,23 +130,38 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, "PingFang SC", "Segoe UI", sans-serif;
-  font-size: 13px;
+  /* 精致化（§三）：中文基准 13.5px + 松行高 + 微字距，Retina 上更透 */
+  font-size: 13.5px;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
 }
+/* 层级字号工具类（§三） */
+.label-xs   { font-size: 10px; letter-spacing: 0.04em; color: var(--dim); }
+.label-sm   { font-size: 11px; color: var(--text-sub); }
+.label-base { font-size: 13px; }
+.label-md   { font-size: 14px; font-weight: 600; color: var(--text); }
 .layout {
   display: grid;
-  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr) minmax(230px, 320px);
+  /* 精致化（§4.1）：左右栏定宽，中栏弹性——宽度确定性让布局更稳 */
+  grid-template-columns: 220px minmax(0, 1fr) 280px;
   height: 100vh;
   overflow: hidden;
 }
 .col { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .col:last-child { border-right: none; }
+/* 精致化（§二）：左右栏铺 panel 底色浮于 bg 之上，中栏保持 bg 让终端区显"沉" */
+.layout > .col:first-child, .layout > .col:last-child { background: var(--panel); }
 .panel-title {
-  padding: 10px 12px; font-weight: 600; letter-spacing: 0.4px;
+  padding: 6px 12px; min-height: 32px; align-items: center;
+  font-weight: 600; letter-spacing: 0.4px;
   color: var(--dim); font-size: 11px;
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
   /* 不 uppercase：中栏标题内嵌用户数据（主机名/会话 id），PROD-1/S-DEMO-0001 是失真 */
 }
-.scroll { overflow-y: auto; flex: 1; padding: 8px; }
+/* 中栏顶栏底色 panel 与中栏终端区 bg 区分，顶栏+标签栏视为连续 chrome 带 */
+.scroll { overflow-y: auto; flex: 1; padding: 6px 10px; }
 .card {
   background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px; margin-bottom: 8px;
@@ -181,7 +205,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus), textarea:hover:not(:disabled):not(:focus) { border-color: var(--border-hover); }
 .ico { flex: none; }
 input, select {
-  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  /* 面板底色上移后输入框用 panel2 浮起（§二 panel 层次） */
+  background: var(--panel2); border: 1px solid var(--border); color: var(--text);
   border-radius: 6px; padding: 6px 8px; font-size: 12px; width: 100%;
 }
 .badge {
@@ -202,7 +227,7 @@ input, select {
 
 /* 添加主机表单 */
 textarea {
-  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  background: var(--panel2); border: 1px solid var(--border); color: var(--text);
   border-radius: 6px; padding: 6px 8px; font-size: 12px;
   font-family: "SF Mono", Menlo, monospace; resize: vertical;
 }
@@ -231,22 +256,24 @@ textarea {
 .term-session.pane-left .pane-tag, .term-session.pane-right .pane-tag { display: block; }
 .term-session.pane-focused .pane-tag { color: var(--accent); }
 
-/* 标签页（T19）：中栏顶部一条，与会话一一对应 */
+/* 标签页（T19）：中栏顶部一条，与会话一一对应
+   精致化（§5.3）：浏览器式上圆角改全圆角 pill，去常显描边，active 用轻投影圈 */
 .tabbar {
-  display: flex; align-items: flex-end; gap: 4px; flex: none;
-  padding: 6px 8px 0; overflow-x: auto; overflow-y: hidden;
+  display: flex; align-items: center; gap: 3px; flex: none;
+  padding: 6px 10px; overflow-x: auto; overflow-y: hidden;
   border-bottom: 1px solid var(--border); min-height: 34px;
+  background: var(--panel);
 }
 .tab {
   display: flex; align-items: center; gap: 5px; flex: none; min-width: 0;
-  max-width: 170px; padding: 5px 7px 5px 10px; font-size: 12px; color: var(--dim);
-  border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0;
-  background: var(--panel); cursor: pointer; user-select: none;
+  max-width: 170px; padding: 4px 10px; font-size: 12px; color: var(--text-sub);
+  border: none; border-radius: 6px;
+  background: transparent; cursor: pointer; user-select: none;
 }
-.tab:hover { color: var(--text); }
-.tab-active { background: var(--panel2); color: var(--text); border-color: var(--accent); }
+.tab:hover { background: var(--panel2); color: var(--text); }
+.tab-active { background: var(--panel2); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
 .tab-pane { color: var(--text); }
-.tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
+.tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
 .tab-dot.ok { background: var(--ok); }
 .tab-dot.err { background: var(--danger); }
 .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -308,40 +335,121 @@ textarea {
   font-size: 10px; flex: none;
 }
 .section { margin-bottom: 12px; }
-.section h4 { margin: 8px 0; color: var(--dim); font-size: 11px; text-transform: uppercase; }
+/* 精致化（§4.3）：分组标题去 uppercase（中文全大写无意义），靠上方留白+字距分组 */
+.section h4 {
+  margin: 0; padding: 14px 2px 4px;
+  color: var(--dim); font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+}
 .mono { font-family: "SF Mono", Menlo, monospace; }
 .dim { color: var(--dim); }
 .ok { color: var(--ok); }
 .err { color: var(--danger); }
 .fact { padding: 4px 0; border-bottom: 1px dashed var(--border); }
 .fact .s { font-weight: 600; }
-.tag-confirmed { color: var(--ok); }
-.tag-needsrecheck { color: var(--warn); }
-.tag-unobservable { color: var(--danger); }
 
 /* 右栏协作面板：紧凑人话行 */
 .side-quiet { color: var(--dim); font-size: 12px; line-height: 1.8; padding: 2px 2px 6px; }
 .side-sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; margin: 2px 0 4px; }
-.brief-row {
-  padding: 4px 0; font-size: 12px; line-height: 1.5;
-  border-bottom: 1px dashed var(--border);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* 现场简报（精致化 §5.5）：dashed 分割改认知色轻底块 + 徽标 */
+.brief-fact {
+  padding: 5px 8px;
+  border-radius: 5px;
+  margin-bottom: 3px;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.5;
+  min-width: 0;
 }
-.brief-row:last-child { border-bottom: none; }
+.brief-fact:last-child { margin-bottom: 0; }
+.brief-fact.confirmed    { background: rgba(127, 191, 143, 0.06); }
+.brief-fact.needsrecheck { background: rgba(208, 176, 122, 0.08); }
+.brief-fact.unobservable { background: rgba(208, 122, 122, 0.06); }
+.brief-fact .bf-body { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.epistemic-badge {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  margin-top: 1px;
+}
+.epistemic-badge.confirmed    { color: var(--ok);     border: 1px solid rgba(127, 191, 143, 0.3); }
+.epistemic-badge.needsrecheck { color: var(--warn);   border: 1px solid rgba(208, 176, 122, 0.3); }
+.epistemic-badge.unobservable { color: var(--danger); border: 1px solid var(--danger-line); }
 .cmd-inline { font-size: 11px; }
-.warn-text { color: var(--warn); }
-.tl-row { display: flex; gap: 6px; align-items: baseline; padding: 3px 0; min-width: 0; }
-.tl-time { flex: none; font-size: 10px; color: var(--dim); font-family: "SF Mono", Menlo, monospace; }
-.tl-human { flex: none; font-size: 11px; color: var(--warn); }
-.tl-agent { flex: none; font-size: 11px; color: var(--accent); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tl-what { flex: none; font-size: 12px; }
-.tl-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.tl-host { flex: none; font-size: 11px; color: var(--dim); max-width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 操作记录 Timeline（精致化 §5.4）：左侧竖轨 + actor 圆点，时间戳与动作分行可扫读 */
+.tl-row {
+  position: relative;
+  padding: 4px 0 4px 20px;
+  min-width: 0;
+}
+.tl-row::before {
+  content: '';
+  position: absolute;
+  left: 7px; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+.tl-row::after {
+  content: '';
+  position: absolute;
+  left: 3px; top: 9px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--panel);
+  background: var(--dim);
+}
+.tl-row.actor-human::after { background: var(--warn); }
+.tl-row.actor-agent::after { background: var(--accent); }
+.tl-meta {
+  font-size: 10px;
+  color: var(--dim);
+  font-family: "SF Mono", Menlo, monospace;
+  line-height: 1.2;
+}
+.tl-action {
+  font-size: 12px;
+  color: var(--text-sub);
+  line-height: 1.4;
+}
+.tl-cmd-text {
+  font-size: 11px;
+  font-family: "SF Mono", Menlo, monospace;
+  color: var(--text);
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 
-/* 双接管按钮的常显语义说明（PV R3）：Agent 持有控制权时出现在顶栏与标签页之间 */
-.ctl-hint {
-  flex: none; padding: 3px 12px; font-size: 11px; color: var(--dim);
-  background: var(--panel); border-bottom: 1px solid var(--border);
+/* Notice Bar（精致化 §5.2）：状态类信息独占一行，不与导航/面包屑混排。
+   warn=受限/重确认等安全状态；info=语义说明（原 ctl-hint 双接管解释行）；danger=危险 */
+.notice-bar {
+  flex: none; padding: 4px 12px; font-size: 11.5px; line-height: 1.5;
+  display: flex; align-items: center; gap: 6px;
+  border-bottom: 1px solid;
+}
+.notice-bar.warn {
+  background: rgba(208, 176, 122, 0.08);
+  border-color: rgba(208, 176, 122, 0.25);
+  color: var(--warn);
+}
+.notice-bar.danger {
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+.notice-bar.info {
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+  color: var(--accent);
 }
 
 /* 主机指纹确认/变更告警弹窗（T17 TOFU） */
@@ -391,11 +499,7 @@ textarea {
 }
 .sshcfg-row:last-child { border-bottom: none; }
 
-/* T23：主机卡 hover 操作（编辑/删除）；删除/断开确认弹层；表单常驻标签；死会话遮罩 */
-.host-ops { display: none; gap: 4px; }
-.host-card:hover .host-ops { display: flex; }
-.host-ops button { padding: 3px 6px; }
-.host-ops .host-del:hover { color: var(--danger); border-color: var(--danger); }
+/* T23：删除/断开确认弹层；表单常驻标签；死会话遮罩（host-ops 已并入上方主机卡块） */
 .confirm-mask { position: fixed; inset: 0; z-index: 90; background: var(--mask-plain); display: flex; align-items: center; justify-content: center; }
 .confirm-dialog { width: 400px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; line-height: 1.7; box-shadow: 0 10px 30px var(--shadow-dialog); }
 .ah-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -404,12 +508,31 @@ textarea {
 .dead-overlay { position: absolute; inset: 0; z-index: 20; background: var(--dead-scrim); display: flex; align-items: flex-start; justify-content: center; }
 .dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 10px 30px var(--shadow-dialog); }
 
-/* T24：命令框/输入框 placeholder 显式颜色（浏览器默认灰 ≈3:1 不达 AA；--dim 在
-   --panel 上实算 5.7:1）；浅色终端主题圆角+投影软化「白色孤岛」 */
-input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
+/* T24：命令框/输入框 placeholder 显式颜色（浏览器默认灰 ≈3:1 不达 AA）。
+   精致化后 --dim 收深至 #5d6f82（≈3.4:1 低于 AA），placeholder 改用 --text-sub
+   （#9aaab8 在 panel2 上实算 ≈6:1）保住可读性；--dim 只用于真正的辅助装饰信息 */
+input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; }
 #term { border-radius: 8px; box-shadow: 0 2px 12px var(--shadow-soft); overflow: hidden; }
-/* 简报认知徽标行修正（P2-10） */
-.brief-row .tag { flex: none; }
+/* 加载占位（精致化 §5.6）：主机列表等首载 skeleton，避免无响应感 */
+.skeleton {
+  background: linear-gradient(90deg,
+    var(--panel2) 25%,
+    var(--panel3) 50%,
+    var(--panel2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: 8px;
+  height: 44px;
+  margin-bottom: 2px;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
 
 /* ---- T33 标题栏融合与排版精致化 ---- */
 /* macOS Overlay 标题栏：红绿灯悬浮在左栏头上，预留其落位；浏览器 demo 无标题栏不加类 */
@@ -419,13 +542,51 @@ input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
 .panel-title[data-tauri-drag-region] button { cursor: pointer; }
 /* 顶栏图标钮（导入/添加主机收图标后的方正小钮） */
 .icon-btn { padding: 5px 7px; }
-/* 主机卡/会话卡信息层级：名称主行带截断禁则（修复「密/码」CJK 逐字腰斩） */
+/* ---- 主机卡重设计（精致化 §5.1）：静止是信息列表，hover 才是可操作元素 ----
+   去掉常显卡片边框/底色（融入侧栏），hover 浮现 panel3 背景与操作按钮；
+   连接按钮用 opacity 而非 display 切换——键盘 Tab 聚焦时（focus-visible/within）同样可见 */
+.host-card {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; margin-bottom: 2px;
+  border-radius: 8px; border: none; background: transparent;
+  transition: background-color 0.12s ease;
+}
+.host-card:hover, .host-card:focus-within { background: var(--panel3); }
+.host-card-main { flex: 1; min-width: 0; }
+/* 操作组绝对定位覆盖在卡片右侧（衬 hover 底色防文字透出），不占布局宽度——
+   否则 220px 侧栏里主机名被隐没的按钮组挤成「pr…」 */
+.host-card-side {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: flex; gap: 4px; align-items: center;
+  padding-left: 8px; border-radius: 6px;
+  background: var(--panel3);
+  /* pointer-events:none 防隐没按钮截获点击；键盘 Tab 聚焦时 focus-within 同样显现 */
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.host-card:hover .host-card-side,
+.host-card:focus-within .host-card-side,
+.host-card-side:has(.host-connect-btn:disabled) { opacity: 1; pointer-events: auto; }
 .host-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.host-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-name { font-size: 13.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-addr { font-size: 11px; color: var(--text-sub); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-fail { font-size: 11px; margin-top: 2px; }
 .auth-tag {
   flex: none; font-size: 10px; color: var(--dim); line-height: 15px;
-  border: 1px solid var(--border); border-radius: 4px; padding: 0 5px;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px;
 }
+/* 连接按钮：常态随操作组一起隐没；连接中（disabled）时操作组整体常显 */
+.host-connect-btn {
+  padding: 3px 8px; font-size: 11px; font-weight: 500;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid var(--accent-ring); border-radius: 5px;
+}
+.host-connect-btn:not(:disabled):hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+/* hover 操作钮（编辑/删除）：随操作组一同浮现 */
+.host-ops { display: flex; gap: 4px; }
+.host-ops button { padding: 3px 6px; }
+.host-ops .host-del:hover { color: var(--danger); border-color: var(--danger); }
 /* 空态统一（T33）：图标 + 一句话，右栏三处与品牌化欢迎页同一语言 */
 .empty { display: flex; gap: 8px; align-items: flex-start; color: var(--dim); font-size: 12px; line-height: 1.7; padding: 8px 2px; }
 .empty .ico { margin-top: 4px; color: var(--accent); opacity: 0.75; }
