@@ -4,7 +4,7 @@ import * as demo from "./demo";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
   IconChevronUp, IconChevronDown, IconTerminal, IconArrowDown, IconUpload, IconDownload,
-  IconInbox, IconClock, IconSearch,
+  IconInbox, IconClock, IconSearch, IconLoader,
 } from "./icons";
 
 // 无 Tauri 环境（纯浏览器）走演示模式；Tauri 环境走真实核心
@@ -424,38 +424,54 @@ export default function App() {
   const [lastFailed, setLastFailed] = useState<string | null>(null);
 
   const refreshLists = useCallback(async () => {
-    setSessions(await invoke<SessionInfo[]>("list_sessions"));
-    setHosts(await invoke<Host[]>("list_hosts"));
-    setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
-    setApprovals((await invoke<ApprovalItem[]>("list_approvals", { pendingOnly: false }))
-      .map((a) => ({ ...a, status: normApprovalStatus(a.status) })));
-    // 多取一些：集成注入等内部事件会被前端过滤，保证可见条数够看
-    const page = await invoke<{ events: AuditEvent[] }>("audit_query", { sid: null, limit: 60 });
-    setTimeline(page.events);
+    try {
+      setSessions(await invoke<SessionInfo[]>("list_sessions"));
+      setHosts(await invoke<Host[]>("list_hosts"));
+      setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
+      setApprovals((await invoke<ApprovalItem[]>("list_approvals", { pendingOnly: false }))
+        .map((a) => ({ ...a, status: normApprovalStatus(a.status) })));
+      // 多取一些：集成注入等内部事件会被前端过滤，保证可见条数够看
+      const page = await invoke<{ events: AuditEvent[] }>("audit_query", { sid: null, limit: 60 });
+      setTimeline(page.events);
+    } catch {
+      // 审核低-5：首载失败也必须撤骨架给出空态出口（否则永久骨架 + 未处理 rejection）；
+      // 3s 轮询自愈，错误不逐条打扰（连接类失败另有常驻横幅）
+      setHostsLoaded(true);
+    }
   }, []);
 
   const refreshBrief = useCallback(async (s: string) => {
-    try { setBrief(await invoke<Brief>("session_brief", { sid: s })); } catch { /* 会话已关 */ }
+    try {
+      const b = await invoke<Brief>("session_brief", { sid: s });
+      if (sidRef.current !== s) return; // 审核H1：已切走会话的过期简报直接丢弃，防简报/任务目标跨会话串台
+      setBrief(b);
+    } catch { /* 会话已关 */ }
   }, []);
 
   // 简报到达即同步目标输入框（编辑中不覆盖）
   useEffect(() => { if (!goalDirty.current) setGoalDraft(brief?.goal ?? ""); }, [brief]);
   // 切会话：把上一会话的未保存草稿按 sid 暂存；目标会话有暂存草稿则恢复，
-  // 否则复位脏标（随后由简报回填已保存值）
+  // 否则清空待本会话简报回填——绝不显示上一会话的目标（审核H1：A 的委托
+  // 短暂出现在 B 的输入框里，被随手一存就把 A 的任务写进 B）
   useEffect(() => {
     const prev = prevSidRef.current;
     if (prev && prev !== sid && goalDirty.current) goalDrafts.current.set(prev, goalDraft);
     const stashed = sid ? goalDrafts.current.get(sid) : undefined;
     if (stashed !== undefined) { setGoalDraft(stashed); goalDirty.current = true; }
-    else goalDirty.current = false;
+    else { goalDirty.current = false; setGoalDraft(""); }
     prevSidRef.current = sid;
     // 仅在 sid 变化时执行：goalDraft 取的是切换前渲染帧的旧会话草稿，正是要暂存的值
   }, [sid]);
-  // 目标输入框随内容自动增高（上限 ~8 行，超出转内部滚动）
+  // 目标输入框随内容自动增高（上限 150px ≈ 7 行半，超出转内部滚动）
   useEffect(() => {
     const el = goalRef.current;
     if (el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 150) + "px"; }
   }, [goalDraft, sid]);
+  // 会话关闭即清其暂存草稿（审核低-1：防 goalDrafts 无界滞留）
+  useEffect(() => {
+    const live = new Set(sessions.map((s) => s.id));
+    for (const k of [...goalDrafts.current.keys()]) if (!live.has(k)) goalDrafts.current.delete(k);
+  }, [sessions]);
 
   const saveGoal = useCallback(async (clear = false) => {
     const target = sidRef.current;
@@ -1374,23 +1390,29 @@ export default function App() {
 
   const takeover = async () => {
     if (!sid) return;
-    await invoke("set_control", { sid, owner: "Human", stopRunning: false });
-    await refreshLists();
-    pushToast("info", "已接管——Agent 冻结，终端归你");
+    try {
+      await invoke("set_control", { sid, owner: "Human", stopRunning: false });
+      await refreshLists();
+      pushToast("info", "已接管——Agent 冻结，终端归你");
+    } catch (e) { pushToast("err", friendlyError(String(e))); } // 审核低-7：会话刚死等失败不再静默
   };
   // 「接管并停止任务」逐条披露停止结果（PRD FR-6：不谎报——升级后仍未停止要标红）
   const [stopResult, setStopResult] = useState<{ hostName: string; report: TakeoverReport } | null>(null);
   const takeoverStop = async () => {
     if (!sid) return;
-    const r = await invoke<TakeoverReport>("set_control", { sid, owner: "Human", stopRunning: true });
-    setStopResult({ hostName: sessions.find((x) => x.id === sid)?.host_name ?? "", report: r });
-    await refreshLists();
+    try {
+      const r = await invoke<TakeoverReport>("set_control", { sid, owner: "Human", stopRunning: true });
+      setStopResult({ hostName: sessions.find((x) => x.id === sid)?.host_name ?? "", report: r });
+      await refreshLists();
+    } catch (e) { pushToast("err", friendlyError(String(e))); }
   };
   const handback = async () => {
     if (!sid) return;
-    await invoke("set_control", { sid, owner: "Agent" });
-    await refreshLists();
-    pushToast("info", "已交还 Agent——后续操作请求走审批");
+    try {
+      await invoke("set_control", { sid, owner: "Agent" });
+      await refreshLists();
+      pushToast("info", "已交还 Agent——后续操作请求走审批");
+    } catch (e) { pushToast("err", friendlyError(String(e))); }
   };
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1485,12 +1507,13 @@ export default function App() {
                 {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
                 <div className="host-card-main" style={{ cursor: connecting ? "default" : "pointer" }}
                   onClick={() => { if (!connecting) createSession(h); }}>
-                  {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩 */}
+                  {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩。
+                      T38 审核：GBK 徽章置名前——行尾会落入 hover 操作组覆盖区，置尾恰在
+                      准备连接的交互时刻不可见；置左恒可见 */}
                   <div className="host-line">
+                    {h.charset === "gbk" && <span className="auth-tag" title="远端编码：GBK">GBK</span>}
                     <span className="host-name">{h.name}</span>
                     <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
-                    {/* T38-PV：GBK 主机在列表可辨——乱码排查第一问就是「这台是不是设过 GBK」 */}
-                    {h.charset === "gbk" && <span className="auth-tag" title="远端编码：GBK">GBK</span>}
                   </div>
                   <div className="host-addr mono">{h.username}@{h.address}:{h.port}</div>
                   {lastFailed === h.id && connecting !== h.id && (
@@ -1505,7 +1528,7 @@ export default function App() {
                       onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
                   </div>
                   <button className="host-connect-btn" disabled={connecting !== null} onClick={() => createSession(h)}>
-                    {connecting === h.id ? "连接中…" : "连接"}
+                    {connecting === h.id ? <><IconLoader size={11} className="spin" /> 连接中…</> : "连接"}
                   </button>
                 </div>
               </div>
@@ -2176,7 +2199,7 @@ Authorization: Bearer <TOKEN>`}
                 <div className={`tl-row actor-${ev.actor_kind}`} key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
                   <div className="tl-meta">{hhmm(ev.ts)}{host ? ` · ${host}` : ""}</div>
                   <div className="tl-action">
-                    <span style={{ color: ev.actor_kind === "agent" ? "var(--accent)" : "var(--warn)" }}>
+                    <span className="tl-actor">
                       {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
                     </span>{" "}
                     {decisionLabel(ev)}
@@ -2189,9 +2212,10 @@ Authorization: Bearer <TOKEN>`}
         </div>
       </div>
 
-      {/* Toast（§六/P3）：右下角轻通知，2.6s 自动消失，不挡交互（pointer-events 放行） */}
-      <div className="toast-stack" aria-live="polite">
-        {toasts.map((t) => <div className={"toast " + t.kind} key={t.id}>{t.text}</div>)}
+      {/* Toast（§六/P3）：右下角轻通知，2.6s 自动消失，不挡交互（pointer-events 放行）。
+          live 级别逐条给：err 用 assertive 立即播报，其余 polite（审核吹毛求疵-4） */}
+      <div className="toast-stack">
+        {toasts.map((t) => <div className={"toast " + t.kind} key={t.id} aria-live={t.kind === "err" ? "assertive" : "polite"}>{t.text}</div>)}
       </div>
     </div>
   );

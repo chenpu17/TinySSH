@@ -12,6 +12,8 @@ type DemoSession = {
   id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
   goal: string | null;   // R9 任务目标/交接留言（随会话存亡，与真实 SessionHandle.goal 对齐）
+  // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）
+  transitions: { ts: string; what: string }[];
   out: string;             // 会话私有输出缓冲（read_screen 回放 + 订阅增量同源）
   handlers: Handler[];
 };
@@ -47,6 +49,7 @@ const demoState = {
       id: "s-demo-0001", host_name: "prod-1", kind: "ssh",
       state: "Connected", control_owner: "Agent",
       goal: "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
+      transitions: [{ ts: "14:02:11", what: "人类接管（交接前未开始的请求全部作废）" }],
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
       handlers: [] as Handler[],
     },
@@ -54,6 +57,7 @@ const demoState = {
       id: "s-demo-0002", host_name: "staging-1", kind: "ssh",
       state: "Disconnected", control_owner: "Agent",
       goal: null,
+      transitions: [],
       out: "ops@staging-1:~$ ",
       handlers: [] as Handler[],
     },
@@ -246,7 +250,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", goal: null, out: `ops@${h.name}:~$ `, handlers: [] });
+      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [] });
       audit("human", "session_created", null, null, sid);
       return sid;
     }
@@ -291,7 +295,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         facts: [
           { subject: "cwd", detail: "/var/log/nginx", status: "Confirmed" },
           { subject: "命令（human）", detail: "df -h → exit 0", status: "Confirmed" },
-          { subject: "控制权", detail: "14:02:11 · 人类接管（交接前未开始的请求全部作废）", status: "Confirmed" },
+          // 与真实 brief::compute 对齐：控制权 fact = transitions 最近 3 条按序（无变迁则无此 fact）
+          ...(bs ? bs.transitions.slice(-3).map((t) => ({ subject: "控制权", detail: `${t.ts} · ${t.what}`, status: "Confirmed" })) : []),
           { subject: "SSH 现场", detail: "重连后进入重确认：仅内置只读白名单可用", status: "NeedsRecheck" },
         ],
         screen_summary: "/dev/vda1 40G 37G 3.1G 93% / | ops@prod-1:~$",
@@ -307,7 +312,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const raw = args?.goal as string | null | undefined;
       const trimmed = raw == null ? null : raw.trim();
       s.goal = trimmed ? trimmed : null;
-      audit("human", "goal_set", s.goal, null, sid ?? null, { cleared: s.goal === null });
+      // 与真实 set_session_goal 的 note_transition 对齐（文案逐字同 core-session）
+      s.transitions.push({
+        ts: new Date().toTimeString().slice(0, 8),
+        what: s.goal ? "人类更新任务目标（Agent 读简报可见）" : "人类清除任务目标",
+      });
+      audit("human", "goal_set", s.goal, null, sid, { cleared: s.goal === null });
       return null;
     }
     case "list_approvals":
@@ -338,6 +348,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (s) s.control_owner = owner;   // 焦点会话的「控制权」chip 随之翻转
       demoState.owner = owner;
       const stopping = args?.stopRunning === true;
+      // 与真实 set_control 的 note_transition 对齐（文案逐字同 core-session）
+      if (s) s.transitions.push({
+        ts: new Date().toTimeString().slice(0, 8),
+        what: owner === "Human"
+          ? "人类接管（交接前未开始的请求全部作废）"
+          : "人类交还（Agent 先读简报，再重新决定动作）",
+      });
       // 接管作废该会话的全部待审批（真实契约：作废范围 = 该会话旧请求）
       const voidedCount = owner === "Human"
         ? demoState.approvals.filter((a) => a.status === "pending" && (!sid || a.session_id === sid)).length

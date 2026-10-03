@@ -363,12 +363,15 @@ pub struct Host {
     pub charset: Charset,
 }
 
-/// 会话字节编码。serde 小写持久化（vault hosts.charset 列同口径）；缺省 Utf8。
+/// 会话字节编码。线格式 "utf-8"/"gbk"（显式逐变体 rename——serde kebab-case 对
+/// `Utf8` 数字边界分词有歧义风险；vault hosts.charset 列与 UI select 同口径）；
+/// 缺省 Utf8。UI（App.tsx）/demo shim/CLI 均按此三态字符串收发，改动即 wire 契约变更。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Charset {
     #[default]
+    #[serde(rename = "utf-8")]
     Utf8,
+    #[serde(rename = "gbk")]
     Gbk,
 }
 
@@ -775,5 +778,44 @@ mod wire_format_tests {
         assert_eq!(serde_json::to_value(ApprovalStatus::Denied).unwrap(), "Denied");
         assert_eq!(serde_json::to_value(ApprovalStatus::Timeout).unwrap(), "Timeout");
         assert_eq!(serde_json::to_value(ApprovalStatus::Voided).unwrap(), "Voided");
+    }
+
+    /// 锁定 Charset 的线上格式："utf-8"/"gbk"（与 vault hosts.charset 列、UI select、
+    /// demo shim 同口径）。T38 独立审核（B1）实锤：曾用 rename_all="lowercase" 产出
+    /// "utf8"，UI 发送 "utf-8" 即被 tauri serde 拒收——真实 app 保存任何主机必失败，
+    /// 而 demo shim 按错误口径放行掩住了它（demo.ts 头部警告的伪影类别）。
+    /// 本测试按 UI upsert_host 实际载荷形态断言，防再次漂移。
+    #[test]
+    fn charset_wire_format_matches_ui_and_vault() {
+        // 序列化：list_hosts → UI 的 Host
+        let host_value = serde_json::to_value(Charset::Utf8).unwrap();
+        assert_eq!(host_value, "utf-8");
+        assert_eq!(serde_json::to_value(Charset::Gbk).unwrap(), "gbk");
+        // 反序列化：UI upsert_host 的 HostDraft 载荷（tauri command serde 边界）
+        let draft: HostDraft = serde_json::from_value(serde_json::json!({
+            "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
+            "auth": { "Password": { "password": "p" } }, "tags": [],
+            "charset": "utf-8",
+        })).unwrap();
+        assert_eq!(draft.charset, Charset::Utf8);
+        let draft: HostDraft = serde_json::from_value(serde_json::json!({
+            "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
+            "auth": { "Password": { "password": "p" } }, "tags": [],
+            "charset": "gbk",
+        })).unwrap();
+        assert_eq!(draft.charset, Charset::Gbk);
+        // 缺省：老客户端不带 charset 字段
+        let draft: HostDraft = serde_json::from_value(serde_json::json!({
+            "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
+            "auth": { "Password": { "password": "p" } }, "tags": [],
+        })).unwrap();
+        assert_eq!(draft.charset, Charset::Utf8);
+        // 错误口径必须被拒绝（曾经的 bug 形态 "utf8" 不再是合法值）
+        let bad = serde_json::from_value::<HostDraft>(serde_json::json!({
+            "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
+            "auth": { "Password": { "password": "p" } }, "tags": [],
+            "charset": "utf8",
+        }));
+        assert!(bad.is_err());
     }
 }

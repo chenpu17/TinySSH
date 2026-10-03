@@ -31,6 +31,13 @@
   --danger-soft-hover: rgba(208, 122, 122, 0.14);
   --danger-ring: rgba(208, 122, 122, 0.18);
   --danger-line: rgba(208, 122, 122, 0.55);
+  /* T38 审核低-3：认知色淡底/描边收进 token——组件级 rgba 无法随主题，浅色下近乎不可见 */
+  --warn-soft: rgba(208, 176, 122, 0.08);
+  --warn-ring: rgba(208, 176, 122, 0.25);
+  --warn-line: rgba(208, 176, 122, 0.40);
+  --ok-soft: rgba(127, 191, 143, 0.06);
+  --ok-line: rgba(127, 191, 143, 0.30);
+  --danger-faint: rgba(208, 122, 122, 0.06);
   --blue: #6fa8dc;
   --glass: rgba(16, 20, 26, 0.72);
   --mask: rgba(6, 9, 13, 0.55);
@@ -54,7 +61,8 @@
   --border: #d2dae2;
   --text: #242e38;
   --text-sub: #4d5b68;
-  --dim: #64707d;
+  /* 视觉复验：旧值 #64707d 在 bg 上 4.33:1 差 AA 一线（辅助说明也是要读的字），加深一档到 4.88:1 */
+  --dim: #5c6875;
   --accent: #1f767c;
   --accent-hover: #2a8a90;
   --danger: #b3484d;
@@ -75,6 +83,12 @@
   --danger-soft-hover: rgba(179, 72, 77, 0.14);
   --danger-ring: rgba(179, 72, 77, 0.18);
   --danger-line: rgba(179, 72, 77, 0.45);
+  --warn-soft: rgba(150, 112, 10, 0.10);
+  --warn-ring: rgba(150, 112, 10, 0.28);
+  --warn-line: rgba(150, 112, 10, 0.45);
+  --ok-soft: rgba(46, 125, 50, 0.08);
+  --ok-line: rgba(46, 125, 50, 0.35);
+  --danger-faint: rgba(179, 72, 77, 0.07);
   --glass: rgba(255, 255, 255, 0.82);
   --mask: rgba(30, 42, 54, 0.38);
   --mask-plain: rgba(30, 42, 54, 0.38);
@@ -93,7 +107,8 @@
   --border: #d8cfb2;
   --text: #073642;
   --text-sub: #46606c;
-  --dim: #657b83;
+  /* 视觉复验：solar 基色 base00 (#657b83) 在 bg 上 3.64:1 不达 AA（solarized 观感 vs 可读性取可读），加深到 4.85:1 */
+  --dim: #53676f;
   --accent: #1a726b;
   --accent-hover: #239088;
   --danger: #c42b28;
@@ -114,6 +129,12 @@
   --danger-soft-hover: rgba(196, 43, 40, 0.14);
   --danger-ring: rgba(196, 43, 40, 0.18);
   --danger-line: rgba(196, 43, 40, 0.45);
+  --warn-soft: rgba(151, 112, 11, 0.10);
+  --warn-ring: rgba(151, 112, 11, 0.28);
+  --warn-line: rgba(151, 112, 11, 0.45);
+  --ok-soft: rgba(82, 119, 19, 0.08);
+  --ok-line: rgba(82, 119, 19, 0.35);
+  --danger-faint: rgba(196, 43, 40, 0.07);
   --glass: rgba(253, 246, 227, 0.85);
   --mask: rgba(7, 54, 66, 0.40);
   --mask-plain: rgba(7, 54, 66, 0.40);
@@ -136,11 +157,7 @@ body {
   letter-spacing: 0.01em;
   -webkit-font-smoothing: antialiased;
 }
-/* 层级字号工具类（§三） */
-.label-xs   { font-size: 10px; letter-spacing: 0.04em; color: var(--dim); }
-.label-sm   { font-size: 11px; color: var(--text-sub); }
-.label-base { font-size: 13px; }
-.label-md   { font-size: 14px; font-weight: 600; color: var(--text); }
+/* T38 审核：层级字号工具类 .label-xs/.label-sm/.label-base/.label-md 全库无引用，删除 */
 .layout {
   display: grid;
   /* 精致化（§4.1）：左右栏定宽，中栏弹性——宽度确定性让布局更稳 */
@@ -213,9 +230,8 @@ input, select {
   display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
   background: var(--panel); border: 1px solid var(--border); color: var(--dim);
 }
-.badge.human { color: var(--warn); border-color: var(--warn); }
+/* T38 审核：清理孤儿类 .badge.human/.badge.dim（控制权徽标已改 .ctl-badge，仅 .badge.agent 留用于待办计数） */
 .badge.agent { color: var(--accent); border-color: var(--accent); }
-.badge.dim { color: var(--dim); }
 
 /* 控制权徽标（精致化 §六）：Agent 持有=amber 需注意，我持有=accent 安定；圆点呼吸感 */
 .ctl-badge {
@@ -225,7 +241,7 @@ input, select {
   flex: none;
 }
 .ctl-badge .ctl-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
-.ctl-badge.agent { color: var(--warn); border-color: rgba(208, 176, 122, 0.4); background: rgba(208, 176, 122, 0.08); }
+.ctl-badge.agent { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
 .ctl-badge.agent .ctl-dot { background: var(--warn); }
 .ctl-badge.human { color: var(--accent); border-color: var(--accent-ring); background: var(--accent-soft); }
 .ctl-badge.human .ctl-dot { background: var(--accent); }
@@ -248,6 +264,7 @@ input, select {
 .toast.info { border-left: 3px solid var(--accent); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } } /* spinner 停转只留图形 */
 
 /* 连接失败横幅 */
 .conn-error {
@@ -397,9 +414,9 @@ textarea {
   min-width: 0;
 }
 .brief-fact:last-child { margin-bottom: 0; }
-.brief-fact.confirmed    { background: rgba(127, 191, 143, 0.06); }
-.brief-fact.needsrecheck { background: rgba(208, 176, 122, 0.08); }
-.brief-fact.unobservable { background: rgba(208, 122, 122, 0.06); }
+.brief-fact.confirmed    { background: var(--ok-soft); }
+.brief-fact.needsrecheck { background: var(--warn-soft); }
+.brief-fact.unobservable { background: var(--danger-faint); }
 /* R7：关键提示（重确认范围/控制权历史）整行换行完整可读，tooltip 仍保留 */
 .brief-fact .bf-body { flex: 1; min-width: 0; overflow-wrap: break-word; }
 .epistemic-badge {
@@ -410,8 +427,8 @@ textarea {
   font-weight: 600;
   margin-top: 1px;
 }
-.epistemic-badge.confirmed    { color: var(--ok);     border: 1px solid rgba(127, 191, 143, 0.3); }
-.epistemic-badge.needsrecheck { color: var(--warn);   border: 1px solid rgba(208, 176, 122, 0.3); }
+.epistemic-badge.confirmed    { color: var(--ok);     border: 1px solid var(--ok-line); }
+.epistemic-badge.needsrecheck { color: var(--warn);   border: 1px solid var(--warn-line); }
 .epistemic-badge.unobservable { color: var(--danger); border: 1px solid var(--danger-line); }
 .cmd-inline { font-size: 11px; }
 /* 操作记录 Timeline（精致化 §5.4）：左侧竖轨 + actor 圆点，时间戳与动作分行可扫读 */
@@ -449,6 +466,12 @@ textarea {
   color: var(--text-sub);
   line-height: 1.4;
 }
+/* actor 配色回类（T38 审核低-6：不再内联进标记）——人类 amber / Agent accent，与圆点同语义 */
+.tl-row.actor-human .tl-actor { color: var(--warn); }
+.tl-row.actor-agent .tl-actor { color: var(--accent); }
+/* 规格 §六「连接中」小 spinner */
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .tl-cmd-text {
   font-size: 11px;
   font-family: "SF Mono", Menlo, monospace;
@@ -472,15 +495,11 @@ textarea {
   border-bottom: 1px solid;
 }
 .notice-bar.warn {
-  background: rgba(208, 176, 122, 0.08);
-  border-color: rgba(208, 176, 122, 0.25);
+  background: var(--warn-soft);
+  border-color: var(--warn-ring);
   color: var(--warn);
 }
-.notice-bar.danger {
-  background: var(--danger-soft);
-  border-color: var(--danger-line);
-  color: var(--danger);
-}
+/* T38 审核：.notice-bar.danger 无使用点（危险态由 conn-error 横幅/hk-danger 承担），删除 */
 .notice-bar.info {
   background: var(--accent-soft);
   border-color: var(--accent-ring);
