@@ -357,6 +357,35 @@ pub struct Host {
     pub tags: Vec<String>,
     /// 已信任的主机指纹（TOFU，路线图⑤）；None = 信任尚未建立（首连确认前）。
     pub fingerprint: Option<String>,
+    /// 远端字节编码（路线图⑩后半）：默认 UTF-8；Gbk 用于中文 Windows/老旧设备。
+    /// 解码发生在传输出口（vt 解析之前）——GBK 尾字节与 ASCII 冲突，裸喂会腐蚀屏态。
+    #[serde(default)]
+    pub charset: Charset,
+}
+
+/// 会话字节编码。serde 小写持久化（vault hosts.charset 列同口径）；缺省 Utf8。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Charset {
+    #[default]
+    Utf8,
+    Gbk,
+}
+
+impl Charset {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Charset::Utf8 => "utf-8",
+            Charset::Gbk => "gbk",
+        }
+    }
+    /// 持久化/外部输入解析：未知值回落 Utf8（老库行/手改库不炸连接）。
+    pub fn parse(s: &str) -> Charset {
+        match s.to_ascii_lowercase().as_str() {
+            "gbk" | "gb2312" | "gb18030" => Charset::Gbk,
+            _ => Charset::Utf8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +406,8 @@ pub struct HostDraft {
     pub username: String,
     pub auth: AuthDraft,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub charset: Charset,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -41,7 +41,7 @@ const demoState = {
     { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI" },
     { id: "h-prod2", name: "prod-2（演示连接失败）", address: "10.0.0.12", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-otp1", name: "otp-1（演示 2FA）", address: "otp.demo", port: 22, username: "ops", auth_type: "Password" },
-  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string }[],
+  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk" }[],
   sessions: [
     {
       id: "s-demo-0001", host_name: "prod-1", kind: "ssh",
@@ -141,17 +141,18 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         state: s.state, control_owner: s.control_owner,
       }));
     case "upsert_host": {
-      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown };
+      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk" };
       if (h.id) {
         const ex = demoState.hosts.find((x) => x.id === h.id);
         if (ex) {
           ex.name = h.name; ex.address = h.address; ex.port = h.port ?? 22; ex.username = h.username;
+          ex.charset = h.charset ?? "utf-8";
           audit("human", "host_upsert", h.name);
           return h.id;
         }
       }
       const id = h.id ?? "h-demo-" + demoSeq++;
-      demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username, auth_type: "Password" });
+      demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username, auth_type: "Password", charset: h.charset ?? "utf-8" });
       audit("human", "host_upsert", h.name);
       return id;
     }

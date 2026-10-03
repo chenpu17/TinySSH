@@ -255,6 +255,7 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
                     username,
                     auth,
                     tags: vec![],
+                    charset: Default::default(),
                 })
                 .await?;
             println!("host {id} added");

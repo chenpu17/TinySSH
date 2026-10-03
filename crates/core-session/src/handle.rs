@@ -164,15 +164,16 @@ impl SessionHandle {
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
 
-        // 登记：键入归因 + 捕获 + 受管 exec_id
-        let mut bytes = cmd.trim_end().as_bytes().to_vec();
-        bytes.push(b'\r');
+        // 登记：键入归因 + 捕获 + 受管 exec_id。
+        // 登记用原 UTF-8（屏态吃的是泵侧解码后的回显），写线上的才是编码字节（GBK）。
+        let mut text = cmd.trim_end().to_string();
+        text.push('\r');
         {
             let mut s = self.screen.lock().await;
             s.arm_capture(exec_id);
-            s.register_outgoing(&bytes, source_of(actor));
+            s.register_outgoing(text.as_bytes(), source_of(actor));
         }
-        self.channel.write(&bytes).await?;
+        self.channel.write(&crate::charset::encode(self.host.charset, &text)).await?;
 
         self.running
             .lock()
@@ -777,13 +778,13 @@ impl SessionHandle {
     /// 只等 saw_133（C 标记）会提前放行，读屏截到清屏前的注入回显（§6-17 疑似真因）。
     pub async fn reinject_integration(self: &Arc<Self>) {
         let snippet = crate::ssh_integration_snippet();
-        let mut bytes = snippet.into_bytes();
-        bytes.push(b'\n');
+        let mut text = snippet.to_string();
+        text.push('\n');
         {
             let mut s = self.screen.lock().await;
-            s.register_outgoing(&bytes, term_core::BlockSource::Human);
+            s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
         }
-        let _ = self.channel.write(&bytes).await;
+        let _ = self.channel.write(&crate::charset::encode(self.host.charset, &text)).await;
         // 窗口 10s：冷容器 + 高负载下首个提示符可能很慢（实测 3s 不够）
         for _ in 0..200 {
             if self.screen.lock().await.prompt_ready() {

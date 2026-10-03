@@ -534,3 +534,68 @@ async fn host_key_gate_first_seen_change_and_reject() {
     );
     m.close_session(&human(), sid3).await.unwrap();
 }
+
+// ---- 远端字节编码（T38 路线图⑩后半 GBK）：需 e2e sshd（TINYSSH_E2E_SSHD=1 + docker tinyssh-e2e）----
+// 双向实证：远端吐 GBK 字节（printf 八进制）→ 屏/捕获见 UTF-8 中文；
+// 命令含中文 → 线上走 GBK 字节、远端原样回显 → 解码后命令文本完好。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gbk_charset_roundtrip_over_ssh() {
+    let lock = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
+    if !std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false) {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    let _lock = lock;
+    let m = manager().await;
+    let hid = m
+        .upsert_host(
+            &human(),
+            HostDraft {
+                name: "e2e-gbk".into(),
+                address: "127.0.0.1".into(),
+                port: Some(2222),
+                username: "root".into(),
+                auth: AuthDraft::Password { password: "testpass".into() },
+                tags: vec![],
+                charset: Charset::Gbk,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // TOFU 首连确认
+    let m2 = m.clone();
+    let hid_spawn = hid.clone();
+    let t = tokio::spawn(async move {
+        m2.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+    });
+    let it = wait_pending(&m, &hid).await;
+    m.decide_host_key(&human(), &it.id, true).await.unwrap();
+    let sid = t.await.unwrap().expect("gbk host should connect");
+
+    // ① 收方向：远端吐 GBK 字节「中文日志」（D6D0 CEC4 C8D5 D6BE），屏态须见 UTF-8 原文。
+    //    若解码缺位，GBK 尾字节（如 D0='0'）会裸进 vt 解析，屏上是乱码/错位。
+    let r = m
+        .exec(&human(), sid.clone(), r"printf '\326\320\316\304\310\325\326\276\n'", ExecOpts::default())
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, Some(0), "stdout={}", r.stdout);
+    assert!(r.stdout.contains("中文日志"), "GBK 解码缺位，stdout={:?}", r.stdout);
+
+    // ② 发方向：命令含中文，远端以字节级核验落线编码。
+    //    「现场笔记」GBK = CF D6 B3 A1 B1 CA BC C7（UTF-8 则是 E7 8E B0…——
+    //    od 见到 CF D6 开头即证明 GBK 编码上了链）。注意末两字节 BC C7 会被
+    //    远端 readline 丢弃：e2e 容器是 UTF-8 locale，BC C7 不是合法 UTF-8 序列，
+    //    行编辑按 locale 丢「非法」字节（真实 GBK 主机跑 GBK locale 无此问题，
+    //    这是容器环境语义而非本端缺陷）——故断言前 6 字节。
+    let r2 = m
+        .exec(&human(), sid.clone(), "echo 现场笔记 | od -An -tx1", ExecOpts::default())
+        .await
+        .unwrap();
+    assert_eq!(r2.exit_code, Some(0), "stdout={}", r2.stdout);
+    assert!(r2.stdout.contains("cf d6 b3 a1 b1 ca"),
+        "GBK 编码未上链（落线仍是 UTF-8?），stdout={:?}", r2.stdout);
+    m.close_session(&human(), sid).await.unwrap();
+}

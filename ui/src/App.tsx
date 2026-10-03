@@ -33,6 +33,7 @@ type Host = {
   auth_type: "Key" | "Password" | "KeyboardInteractive" | "Agent";
   tags: string[];
   fingerprint?: string | null; // 已信任指纹（TOFU）；缺省 = 信任未建立
+  charset?: "utf-8" | "gbk";  // 远端字节编码（路线图⑩后半）；缺省 utf-8
 };
 type SshConfigPreview = {
   name: string; address: string; port: number; username: string;
@@ -2240,6 +2241,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
   const [port, setPort] = useState(editHost ? String(editHost.port) : "22");
   const [username, setUsername] = useState(editHost?.username ?? "");
   const [authMode, setAuthMode] = useState<"password" | "key" | "agent">("password");
+  const [charset, setCharset] = useState<"utf-8" | "gbk">(editHost?.charset ?? "utf-8");
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -2286,6 +2288,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         host: {
           id: editHost?.id ?? null, name: name.trim(), address: address.trim(),
           port: p, username: username.trim(), auth, tags: editHost?.tags ?? [],
+          charset,
         },
       });
       if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); }
@@ -2327,6 +2330,13 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
             <option value="password">密码登录</option>
             <option value="key">私钥登录</option>
             <option value="agent">SSH Agent</option>
+          </select>
+        </div>
+        <div className="ah-field" style={{ flex: 1 }}>
+          <label>远端编码</label>
+          <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
+            <option value="utf-8">UTF-8（默认）</option>
+            <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
           </select>
         </div>
       </div>

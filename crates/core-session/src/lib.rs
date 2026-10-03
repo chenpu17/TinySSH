@@ -2,6 +2,7 @@
 //! 双前端（GUI/MCP）唯一核心；审批在门面之后强制挂接（L0 ADR-5）。
 
 mod brief;
+mod charset;
 mod handle;
 
 pub use handle::{is_whitelisted, DecisionMsg, SessionHandle};
@@ -97,6 +98,7 @@ impl SessionManager {
             username: std::env::var("USER").unwrap_or_else(|_| "user".into()),
             auth: AuthDraft::None,
             tags: vec![],
+            charset: Charset::Utf8,
         };
         self.center.vault.upsert_host(&draft)?;
         Ok(Host {
@@ -109,6 +111,7 @@ impl SessionManager {
             identity_id: None,
             tags: vec![],
             fingerprint: None,
+            charset: Charset::Utf8,
         })
     }
 
@@ -263,11 +266,15 @@ async fn auth_prompt_gate(
 
 fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Vec<u8>>) {
     tokio::spawn(async move {
+        // 会话级流式解码器（GBK）：多字节序列可跨 chunk 切开，须全程同一实例；
+        // 解码后屏态与订阅广播只见 UTF-8（GBK 尾字节撞 ASCII，裸喂会腐蚀屏态）
+        let mut decoder = charset::CharsetDecoder::new(h.host.charset);
         loop {
             let mut lost = false;
             loop {
                 match tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await {
                     Ok(Ok(data)) => {
+                        let data = decoder.feed(&data);
                         {
                             let mut s = h.screen.lock().await;
                             s.feed(&data);
@@ -278,6 +285,12 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                         let _ = h.output_tx.send(OutputEvent::Resync { sid: h.id.clone() });
                     }
                     Ok(Err(broadcast::error::RecvError::Closed)) => {
+                        // 通路关闭：冲刷悬空的半个多字节序列（尾字节永远不到 → U+FFFD 落屏）
+                        let tail = decoder.flush();
+                        if !tail.is_empty() {
+                            h.screen.lock().await.feed(&tail);
+                            let _ = h.output_tx.send(OutputEvent::Raw { sid: h.id.clone(), data: tail });
+                        }
                         lost = true;
                         break;
                     }
@@ -460,16 +473,17 @@ impl SessionApi for SessionManager {
         spawn_pump(handle.clone(), pump_rx);
         self.sessions.lock().unwrap().insert(sid.clone(), handle.clone());
 
-        // 远端注入 shell 集成（本地已在 PTY 启动时注入）
+        // 远端注入 shell 集成（本地已在 PTY 启动时注入）。
+        // 登记用原 UTF-8（屏态吃泵侧解码后的回显）；snippet 纯 ASCII，GBK 下编码恒等。
         if kind == "ssh" {
             let snippet = ssh_integration_snippet();
-            let mut bytes = snippet.into_bytes();
-            bytes.push(b'\n');
+            let mut text = snippet.to_string();
+            text.push('\n');
             {
                 let mut s = handle.screen.lock().await;
-                s.register_outgoing(&bytes, term_core::BlockSource::Human);
+                s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
             }
-            handle.channel.write(&bytes).await?;
+            handle.channel.write(&charset::encode(handle.host.charset, &text)).await?;
             let _ = self.center.audit.append(
                 ctx, "shell_integration_inject", Some(&sid), Some("OSC133+OSC7"), serde_json::json!({}), None);
         }
@@ -575,7 +589,7 @@ impl SessionApi for SessionManager {
                     let mut s = h.screen.lock().await;
                     s.register_outgoing(keys.as_bytes(), term_core::BlockSource::Human);
                 }
-                h.channel.write(keys.as_bytes()).await
+                h.channel.write(&charset::encode(h.host.charset, keys)).await
             }
             Actor::Agent { client_id } => {
                 if *h.owner.lock().await == ControlOwner::Human {
@@ -616,7 +630,7 @@ impl SessionApi for SessionManager {
                 }
                 let _ = self.center.audit.append(
                     ctx, "send_keys", Some(&sid), Some(keys), serde_json::json!({}), None);
-                h.channel.write(keys.as_bytes()).await
+                h.channel.write(&charset::encode(h.host.charset, keys)).await
             }
         }
     }
@@ -1170,6 +1184,7 @@ impl SessionManager {
                         username: Self::default_username(entry),
                         auth,
                         tags: vec!["ssh-config".into()],
+                        charset: Charset::Utf8,
                     },
                 )
                 .await

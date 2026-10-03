@@ -7,9 +7,9 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, Key as ChachaKey, XNonce};
 use rusqlite::{params, Connection};
 use session_api::{
-    Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Error,
-    Host, HostDraft, HostId, IdentityId, IdentityKind, IdentityMeta, IdentityReq, KeyKind, Policy,
-    Result, SessionId,
+    Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
+    Error, Host, HostDraft, HostId, IdentityId, IdentityKind, IdentityMeta, IdentityReq, KeyKind,
+    Policy, Result, SessionId,
 };
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
@@ -59,6 +59,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         )
         .map_err(|e| Error::Storage(e.to_string()))?;
         conn.pragma_update(None, "user_version", 3)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
+    // V4（路线图⑩后半）：主机字节编码（utf-8/gbk），老库行缺省 utf-8 零感知
+    if version < 4 {
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN charset TEXT NOT NULL DEFAULT 'utf-8';")
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        conn.pragma_update(None, "user_version", 4)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
     Ok(())
@@ -259,9 +266,9 @@ impl Vault {
             identity_id
         };
         conn.execute(
-            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)
-             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, updated_at=?9",
+            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, charset, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)
+             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, charset=?9, updated_at=?10",
             params![
                 id,
                 host.name,
@@ -271,6 +278,7 @@ impl Vault {
                 auth_type,
                 identity_id,
                 serde_json::to_string(&host.tags).unwrap(),
+                host.charset.as_str(),
                 now_ms()
             ],
         )
@@ -288,7 +296,7 @@ impl Vault {
     pub fn list_hosts(&self) -> Result<Vec<Host>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint FROM hosts WHERE deleted_at IS NULL")
+            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint, charset FROM hosts WHERE deleted_at IS NULL")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |r| {
@@ -304,12 +312,13 @@ impl Vault {
                     tags_json,
                     // 空串 = 信任未建立（set_host_fingerprint 只写非空，此处兜底）
                     r.get::<_, Option<String>>(8)?.filter(|s| !s.is_empty()),
+                    r.get::<_, String>(9)?,
                 ))
             })
             .map_err(db_err)?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, name, address, port, username, auth_type, identity_id, tags_json, fingerprint) =
+            let (id, name, address, port, username, auth_type, identity_id, tags_json, fingerprint, charset) =
                 row.map_err(db_err)?;
             out.push(Host {
                 id,
@@ -325,6 +334,7 @@ impl Vault {
                 identity_id,
                 tags: serde_json::from_str(&tags_json).unwrap_or_default(),
                 fingerprint,
+                charset: Charset::parse(&charset),
             });
         }
         Ok(out)
