@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.31 · 日期：2026-10-03 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
+> 版本：v1.32 · 日期：2026-10-03 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -820,7 +820,9 @@ T33 后继续向「专业、可信任」推进。评估定位三个残余信号�
 - **D2 首屏三提示符错位、输入位置在中下方（D-高）**：attach 回放快照逐行写把光标推到屏底 + 「会话已接入」提示语直接写进终端流（带偏 shell 光标视角，后续输出全接在提示语后）+ 订阅先于快照回写（竞争窗口字节插队）。**修复**：①快照回写后按 `ScreenSnapshot.cursor_row/col` 用 CSI H 归位（resync 路径同修）；②提示语改为不占终端行的悬浮胶囊 `.attach-hint`（底部居中、6s 自动淡出、pointer-events 放行）；③先回放快照后订阅实时流。
 - **D3 ⌘F 无响应（R6 现实版）**：搜索打开只挂终端焦点层，焦点在命令框等处时无响应且无可见入口。**修复**：⌘F 提升到全局捕获层（有活动会话即生效）+ 终端顶栏新增可见搜索钮（IconSearch，与显示设置钮同排）。
 
-**走查（demo 断言 4 组 + 截图 3 张）**：接入演示会话——`.attach-hint` 胶囊在场且**不在** `.xterm-rows` 终端文本内、6s 后自动消失、终端首屏从顶部提示符开始且光标紧跟其后（[t36_attach_hint.png](screenshots/t36_attach_hint.png)）；顶栏搜索钮 1 枚、点击即开 `.term-search` 且输入框获得焦点（[t36_search_button.png](screenshots/t36_search_button.png)）；prod-1（密码主机）编辑表单含「更换密码」栏 + 留空保持文案 + 信任行指纹三要素（[t36_edit_password_field.png](screenshots/t36_edit_password_field.png)）。**如实披露**：⌘F 全局键路径未做键盘注入验证（IAB 键盘通道不可用），真机复验由 Owner 进行；本轮 Rust 零改动（vault 本就支持 `AuthDraft::Password` 更新路径，纯 UI 补口）。
+**走查（demo 断言 4 组 + 截图 3 张）**：接入演示会话——`.attach-hint` 胶囊在场且**不在** `.xterm-rows` 终端文本内、6s 后自动消失、终端首屏从顶部提示符开始且光标紧跟其后（[t36_attach_hint.png](screenshots/t36_attach_hint.png)）；顶栏搜索钮 1 枚、点击即开 `.term-search` 且输入框获得焦点（[t36_search_button.png](screenshots/t36_search_button.png)）；prod-1（密码主机）编辑表单含「更换密码」栏 + 留空保持文案 + 信任行指纹三要素（[t36_edit_password_field.png](screenshots/t36_edit_password_field.png)）。
+
+**真机复验增记（v1.32，Owner 当日）**：①⌘F 全局键路径（焦点在命令框等任意处弹搜索）与②首屏光标归位（重连腾讯广州=一行提示符在顶部、光标紧跟其后）均复验通过；③**TOFU FirstSeen 真机链路顺带实证**——腾讯广州首连经真实 vault 走完整门链（host_key_confirm_requested → decision → trusted → 会话建立，审计全链可查），T28 披露的「FirstSeen 真机未测」销账。本轮 Rust 零改动（vault 本就支持 `AuthDraft::Password` 更新路径，纯 UI 补口）。
 
 **已知边界新增（§6.1-27）**：开发期（带 `TINYSSH_MASTER_KEY`）实例与正式启动（钥匙串）实例的主密钥不同，前者加密的凭据后者读不开——报 decrypt failed 并指引重输；PV 分发构建统一走钥匙串路径，不受影响。
 
