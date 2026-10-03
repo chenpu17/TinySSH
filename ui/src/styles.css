@@ -264,7 +264,7 @@ textarea {
   font-family: "SF Mono", Menlo, monospace; resize: vertical;
 }
 /* 任务目标（R9）：委托留言输入框，宽满栏、用正文字体（非等宽） */
-.goal-input { width: 100%; box-sizing: border-box; font-family: inherit; line-height: 1.5; }
+.goal-input { width: 100%; box-sizing: border-box; font-family: inherit; line-height: 1.5; resize: none; overflow-y: auto; }
 .add-host code {
   font-family: "SF Mono", Menlo, monospace; font-size: 11px;
   background: var(--panel); padding: 1px 5px; border-radius: 4px;
@@ -590,11 +590,13 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 .host-card:hover, .host-card:focus-within { background: var(--panel3); }
 .host-card-main { flex: 1; min-width: 0; }
 /* 操作组绝对定位覆盖在卡片右侧（衬 hover 底色防文字透出），不占布局宽度——
-   否则 220px 侧栏里主机名被隐没的按钮组挤成「pr…」 */
+   否则 220px 侧栏里主机名被隐没的按钮组挤成「pr…」。
+   T38-PV：按钮组整体收紧（gap/padding），覆盖宽度 ~102px → ~80px，
+   卡片几何中心（~110px）不再被按钮截获——居中点击始终落在可连接的主区上 */
 .host-card-side {
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-  display: flex; gap: 4px; align-items: center;
-  padding-left: 8px; border-radius: 6px;
+  display: flex; gap: 2px; align-items: center;
+  padding-left: 6px; border-radius: 6px;
   background: var(--panel3);
   /* pointer-events:none 防隐没按钮截获点击；键盘 Tab 聚焦时 focus-within 同样显现 */
   opacity: 0; pointer-events: none;
@@ -613,14 +615,14 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 }
 /* 连接按钮：常态随操作组一起隐没；连接中（disabled）时操作组整体常显 */
 .host-connect-btn {
-  padding: 3px 8px; font-size: 11px; font-weight: 500;
+  padding: 2px 6px; font-size: 11px; font-weight: 500;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--accent-ring); border-radius: 5px;
 }
 .host-connect-btn:not(:disabled):hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 /* hover 操作钮（编辑/删除）：随操作组一同浮现 */
-.host-ops { display: flex; gap: 4px; }
-.host-ops button { padding: 3px 6px; }
+.host-ops { display: flex; gap: 2px; }
+.host-ops button { padding: 2px 4px; }
 .host-ops .host-del:hover { color: var(--danger); border-color: var(--danger); }
 /* 空态统一（T33）：图标 + 一句话，右栏三处与品牌化欢迎页同一语言 */
 .empty { display: flex; gap: 8px; align-items: flex-start; color: var(--dim); font-size: 12px; line-height: 1.7; padding: 8px 2px; }

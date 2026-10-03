@@ -396,9 +396,13 @@ export default function App() {
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
   // 任务目标（R9：人类→Agent 委托留言）：draft 编辑中不被简报轮询覆盖，
-  // 保存/清除后落盘（goalDirty 复位）再随简报同步
+  // 保存/清除后落盘（goalDirty 复位）再随简报同步；
+  // T38-PV：未保存草稿按 sid 暂存（goalDrafts），切标签再切回不丢
   const [goalDraft, setGoalDraft] = useState("");
   const goalDirty = useRef(false);
+  const goalDrafts = useRef<Map<string, string>>(new Map());
+  const goalRef = useRef<HTMLTextAreaElement | null>(null);
+  const prevSidRef = useRef<string | null>(null);
   // 简报 ref：拖拽上传回调里读当前 cwd（不进依赖数组，避免监听器随简报反复重订阅）
   const briefRef = useRef<Brief | null>(null);
   useEffect(() => { briefRef.current = brief; }, [brief]);
@@ -434,9 +438,24 @@ export default function App() {
     try { setBrief(await invoke<Brief>("session_brief", { sid: s })); } catch { /* 会话已关 */ }
   }, []);
 
-  // 简报到达即同步目标输入框（编辑中不覆盖，切会话时复位脏标）
+  // 简报到达即同步目标输入框（编辑中不覆盖）
   useEffect(() => { if (!goalDirty.current) setGoalDraft(brief?.goal ?? ""); }, [brief]);
-  useEffect(() => { goalDirty.current = false; }, [sid]);
+  // 切会话：把上一会话的未保存草稿按 sid 暂存；目标会话有暂存草稿则恢复，
+  // 否则复位脏标（随后由简报回填已保存值）
+  useEffect(() => {
+    const prev = prevSidRef.current;
+    if (prev && prev !== sid && goalDirty.current) goalDrafts.current.set(prev, goalDraft);
+    const stashed = sid ? goalDrafts.current.get(sid) : undefined;
+    if (stashed !== undefined) { setGoalDraft(stashed); goalDirty.current = true; }
+    else goalDirty.current = false;
+    prevSidRef.current = sid;
+    // 仅在 sid 变化时执行：goalDraft 取的是切换前渲染帧的旧会话草稿，正是要暂存的值
+  }, [sid]);
+  // 目标输入框随内容自动增高（上限 ~8 行，超出转内部滚动）
+  useEffect(() => {
+    const el = goalRef.current;
+    if (el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 150) + "px"; }
+  }, [goalDraft, sid]);
 
   const saveGoal = useCallback(async (clear = false) => {
     const target = sidRef.current;
@@ -445,8 +464,9 @@ export default function App() {
     try {
       await invoke("set_session_goal", { sid: target, goal: t ? t : null });
       goalDirty.current = false;
+      goalDrafts.current.delete(target); // 已落盘，清掉该会话的暂存草稿
       if (clear) setGoalDraft("");
-      pushToast("ok", t ? "任务目标已更新，Agent 读简报可见" : "任务目标已清除");
+      pushToast("ok", t ? "任务目标已更新，Agent 读简报可见" : "任务目标已清除，Agent 简报同步移除");
       void refreshBrief(target);
       void refreshLists(); // goal_set 审计事件即时上时间线
     } catch (e) {
@@ -1461,7 +1481,7 @@ export default function App() {
             )}
             {hosts.map((h) => (
               <div className="host-card" key={h.id}
-                title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}`}>
+                title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
                 {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
                 <div className="host-card-main" style={{ cursor: connecting ? "default" : "pointer" }}
                   onClick={() => { if (!connecting) createSession(h); }}>
@@ -1469,6 +1489,8 @@ export default function App() {
                   <div className="host-line">
                     <span className="host-name">{h.name}</span>
                     <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
+                    {/* T38-PV：GBK 主机在列表可辨——乱码排查第一问就是「这台是不是设过 GBK」 */}
+                    {h.charset === "gbk" && <span className="auth-tag" title="远端编码：GBK">GBK</span>}
                   </div>
                   <div className="host-addr mono">{h.username}@{h.address}:{h.port}</div>
                   {lastFailed === h.id && connecting !== h.id && (
@@ -1477,7 +1499,7 @@ export default function App() {
                 </div>
                 <div className="host-card-side">
                   <div className="host-ops">
-                    <button className="ghost" title="编辑主机（名称/地址/端口/用户名，凭据保持不变）"
+                    <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码，凭据保持不变）"
                       onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}><IconPencil size={13} /></button>
                     <button className="ghost host-del" title="删除主机"
                       onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
@@ -1499,6 +1521,7 @@ export default function App() {
               return (
                 <div className="card row" key={s.id}>
                   <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} tabIndex={0}
+                    title={`${s.host_name} · ${st.text}`}
                     onClick={() => attachSession(s.id)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); attachSession(s.id); }
@@ -2115,6 +2138,7 @@ Authorization: Bearer <TOKEN>`}
             {sid ? (
               <>
                 <textarea
+                  ref={goalRef}
                   className="goal-input"
                   rows={2}
                   placeholder="写给 Agent 的委托留言，例：把日志打包放到 /tmp 后交还给我"
@@ -2322,7 +2346,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>用户名</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} />
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="例：ops 或 root" />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>认证方式</label>
@@ -2332,13 +2356,15 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
             <option value="agent">SSH Agent</option>
           </select>
         </div>
-        <div className="ah-field" style={{ flex: 1 }}>
-          <label>远端编码</label>
-          <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
-            <option value="utf-8">UTF-8（默认）</option>
-            <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
-          </select>
-        </div>
+      </div>
+      {/* T38-PV：220px 侧栏里三个字段挤一行会把下拉压到 55px（选中值只剩「密」「UT」），
+          编码独占一行让选项说明全文可读 */}
+      <div className="ah-field" style={{ marginTop: 6 }}>
+        <label>远端编码（老设备中文乱码时选 GBK）</label>
+        <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
+          <option value="utf-8">UTF-8（默认）</option>
+          <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
+        </select>
       </div>
       {editing ? (
         <>
