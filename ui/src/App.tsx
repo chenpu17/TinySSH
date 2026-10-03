@@ -280,18 +280,23 @@ const SEARCH_OPTS = {
 };
 
 // 显示设置（路线图⑥）：字号范围与终端配色预设。偏好存 vault（settings KV，跨进程记忆），
-// 浏览器演示模式退化为 localStorage。界面 chrome 维持深色不变——亮色 chrome 需全站变量
-// 适配，属 V1 范围；此处主题只作用于终端区域（与多数客户端「编辑器配色独立」一致）。
+// 浏览器演示模式退化为 localStorage。T35（P2-7）：界面 chrome 跟随终端主题——每个预设
+// 声明 chrome 色板（dark/light/solar-light），changeTheme 挂 documentElement dataset
+// 切换 CSS 变量层；Tauri 下原生窗口外观（Overlay 红绿灯深浅、原生面板）同步 setTheme。
 const FONT_MIN = 9;
 const FONT_MAX = 28;
 const FONT_DEFAULT = 13;
 const SETTING_FONT = "ui.font_size";
 const SETTING_THEME = "ui.theme";
 
-type ThemePreset = { id: string; label: string; bg: string; fg: string; theme: Record<string, string> };
+type ThemePreset = {
+  id: string; label: string;
+  chrome: "dark" | "light" | "solar-light";
+  bg: string; fg: string; theme: Record<string, string>;
+};
 const THEMES: ThemePreset[] = [
   {
-    id: "dark", label: "深色（默认）", bg: "#10141a", fg: "#d7dee8",
+    id: "dark", label: "深色（默认）", chrome: "dark", bg: "#10141a", fg: "#d7dee8",
     theme: {
       foreground: "#d7dee8", background: "#10141a",
       cursor: "#d7dee8", cursorAccent: "#10141a", selectionBackground: "#4a5a70",
@@ -302,7 +307,7 @@ const THEMES: ThemePreset[] = [
     },
   },
   {
-    id: "light", label: "浅色", bg: "#f7f7f2", fg: "#2a3138",
+    id: "light", label: "浅色", chrome: "light", bg: "#f7f7f2", fg: "#2a3138",
     theme: {
       foreground: "#2a3138", background: "#f7f7f2",
       cursor: "#2a3138", cursorAccent: "#f7f7f2", selectionBackground: "#b9c6d4",
@@ -313,7 +318,7 @@ const THEMES: ThemePreset[] = [
     },
   },
   {
-    id: "solar-dark", label: "Solarized 深色", bg: "#002b36", fg: "#93a1a1",
+    id: "solar-dark", label: "Solarized 深色", chrome: "dark", bg: "#002b36", fg: "#93a1a1",
     theme: {
       foreground: "#93a1a1", background: "#002b36",
       cursor: "#839496", cursorAccent: "#002b36", selectionBackground: "#073642",
@@ -324,7 +329,7 @@ const THEMES: ThemePreset[] = [
     },
   },
   {
-    id: "solar-light", label: "Solarized 浅色", bg: "#fdf6e3", fg: "#657b83",
+    id: "solar-light", label: "Solarized 浅色", chrome: "solar-light", bg: "#fdf6e3", fg: "#657b83",
     theme: {
       foreground: "#657b83", background: "#fdf6e3",
       cursor: "#586e75", cursorAccent: "#fdf6e3", selectionBackground: "#eee8d5",
@@ -779,6 +784,12 @@ export default function App() {
     setThemeId(id);
     persistSetting(SETTING_THEME, id);
     for (const [, e] of termsRef.current) e.term.options.theme = { ...preset.theme };
+    // T35（P2-7）：chrome 跟随终端主题——CSS 变量层挂 documentElement（深浅遮罩/
+    // 玻璃/阴影一起换）；Tauri 下原生窗口外观同步（Overlay 红绿灯深浅渲染）。
+    document.documentElement.dataset.chrome = preset.chrome;
+    if (inTauri) {
+      void getCurrentWindow().setTheme(preset.chrome === "dark" ? "dark" : "light").catch(() => {});
+    }
   }, [persistSetting]);
 
   // 启动载入偏好（Tauri=vault，浏览器=localStorage）；早于载入创建的实例一并补齐

@@ -1,6 +1,6 @@
 # V0 MVP 工程验收报告
 
-> 版本：v1.29 · 日期：2026-10-02 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
+> 版本：v1.30 · 日期：2026-10-03 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
 
 ---
@@ -795,6 +795,23 @@ T33 后继续向「专业、可信任」推进。评估定位三个残余信号�
 
 **T34 判定：通过**——「专业」外壳收尾（原生中文菜单 + 版本口径）与「可信任」实质（信任建立后可查证）同轮落地；菜单随系统语言本地化与 About 图标 bundle 化列 V1 顺手项。
 
+### 5.30 浅色 chrome 适配轮（T35，v1.30 判定：通过）—— P2-7 收口，主题选择器全量生效
+
+视觉 polish 系列唯一遗留的单独排期项（§5.27 评估 P2-7 / §6.20 主题作用域边界）：终端主题自 v1.11 起有「浅色 / Solarized 浅色」，但界面外壳（三栏、弹窗、遮罩、阴影）恒为深色——选浅色终端即「白终端嵌黑壳」。本轮把 chrome 跟随终端主题，**深色现值逐字节不变**：
+
+- **变量化收口**：styles.css 此前已高度变量化，剩余 20 处硬编码色全部收进变量——彩色底对比文字（`--on-accent/--on-danger/--on-warn`）、alpha 混合层（accent/danger 各 4 档 soft/ring/glow/line）、玻璃名牌（`--glass`）、遮罩（`--mask/--mask-plain/--scrim/--dead-scrim`）、阴影三档（`--shadow-soft/pop/dialog`）、欢迎页 mark 渐变（`--mark-grad`）、`--blue`。剩余裸色仅存在于三块调色板定义区（审计脚本复核）。
+- **两套浅色调色板**：`[data-chrome="light"]`（配浅色终端：冷灰底 + 白卡片 + 深化青 #1f767c——原 accent 在浅底对比不足）与 `[data-chrome="solar-light"]`（配 Solarized 浅色：base2/base3 米色系 + Solarized 色相深化版）；accent/danger/ok/warn 全部深化到浅底 4.5:1 上下，彩色按钮文字换白/米白，遮罩/玻璃/阴影换浅色系。
+- **联动**：`ThemePreset` 增 `chrome` 字段（dark/solar-dark→dark，light→light，solar-light→solar-light）；`changeTheme` 挂 `documentElement.dataset.chrome` 切 CSS 变量层，Tauri 下 `getCurrentWindow().setTheme()` 同步原生窗口外观（Overlay 红绿灯渲染、原生面板）——capabilities 补 `core:window:allow-set-theme`。偏好持久化沿用既有 `ui.theme` KV（跨重启恢复）。
+
+**走查（demo 断言 + 截图 2 张 + 真机门禁内验证）**：
+- **demo 断言**：深色基准（无 dataset 属性、body #10141a、accent #4fa3a5）→ 浅色（chrome=light、body #eaeef2、accent #1f767c、主机卡白底、主按钮白字、遮罩变量浅色系）→ Solarized 浅色（chrome=solar-light、body #eee8d5、accent #1a726b）→ **刷新后 localStorage 恢复 solar-light**（持久化路径）→ 切回深色**逐字节还原**（#10141a/#4fa3a5）。截图：[t35_light_chrome.png](screenshots/t35_light_chrome.png)、[t35_solar_light_chrome.png](screenshots/t35_solar_light_chrome.png)。
+- **真机（临时 DB 隔离用户数据，门禁内 1 次键盘 + 1 次面板内点击）**：空闲 318s 门禁通过后 ⌘, 打开设置面板（**顺带真机实证 T34 菜单加速器端到端**）→ CGEvent 点击「浅色」→ **全窗翻浅、设置面板白色、选中态可见**（[t35_native_light.png](screenshots/t35_native_light.png)，原生窗口外观同步无报错）；杀进程重启同 DB → **直接以浅色启动**（vault 偏好加载 + 原生主题启动即生效）。过程披露：①⌘, 合成注入重置 HIDIdleTime（自家注入重置，等待 62s 复查 idle=88s 确认无用户活动后再注入）；②System Events `click at` 挂错命名空间报 -25208 未生效，改 CGEvent 鼠标事件投递成功（点击目标在设置面板内，遮罩兜底=关面板无副作用）；③验证用 `TINYSSH_DB` 临时库，用户真实 vault 未触碰，验证后进程退出、临时库删除。
+- **已知边界**：`tauri.conf.json` 的 `backgroundColor "#10141a"` 与 `theme "Dark"` 仍是启动初值——浅色用户启动瞬间有一次深→浅闪烁（Tauri 不支持按偏好预置，V1 可在窗口创建前读 vault 解决）；chrome 跟随的是「终端主题」单一来源，无独立 chrome 主题选项（刻意简化，与编辑器配色一致的语义）。
+
+**回归**：cargo **68/68 全绿**（`TINYSSH_E2E_SSHD=1` 实跑；Rust 零逻辑改动，仅 capabilities 加权限）+ UI `tsc && vite build` 通过。
+
+**T35 判定：通过**——P2-7 收口，主题选择器四选一全部完整生效；视觉 polish 系列（T32/T33/T35）至此无遗留项。
+
 
 ## 6. 已知边界（诚实清单）
 
@@ -815,9 +832,9 @@ T33 后继续向「专业、可信任」推进。评估定位三个残余信号�
 15. **native Ctrl 接管的平台范围**：拦截器为 macOS 专属（NSEvent local monitor）；Windows/Linux WebView 的 Ctrl 组合不受此 IME 缺口影响（引擎层 12/12 已验证），JS 层 ⌘/Ctrl 处理保留为兜底。
 16. **~~鼠标上报未实测~~（v1.8 已验证，路线图③关闭，§5.10）**：点击上报原生端到端实证（本机 vim mouse=a 点击指定单词 → 光标跳转 → `rZ` 替换命中字符落盘）；滚轮上报的 xterm.js SGR 编码经 WebKit 引擎层验证 4/4（与应用同一构建）。残留边界：真实滚轮手感未经真人确认（合成滚轮事件送不进 WKWebView，走查工具层限制已实证；真实输入投递由平台保证），tmux/htop 未实测（环境无此二者）——均为日常使用顺手确认项，不再阻塞路线图。
 17. **~~重连重注入回显泄漏（P1）~~（v1.7 根因确认并修复）**：根因有二——`saw_133` 粘滞不重置（重注入就绪等待形同虚设）+ 就绪信号选错标记（C 先于清屏字节执行）。修复为重连后重置集成跟踪 + 等 B 标记（`prompt_ready`）+ 残留 open block 强制收尾；journey4 在键入一半的脏状态下容器重启复现验证通过（§5.8）。v1.5 观察到的一次性泄漏与该机制吻合，至此关闭。
-18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~~.ssh/config 导入与 agent~~（**v1.14 完成，§5.16**——导入面板/来源标注/徽标/Agent 主机 TOFU 建连与重启直连 UI 走查通过；t21-d Key 主机 UI 建连与连接后键入因用户占用中止注入，既有功能由自动化覆盖并披露）**UX 走查修复第一批（v1.15 完成，§5.17）**——2026-09-30 模拟用户 UX 走查（[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)，26 条真实问题）第一批 5 项（审批卡目标上下文/搜索焦点抢占/危险批准摩擦/首屏矛盾文案/AGENT 接入区）已修复并走查；**第二批（v1.16 完成，§5.18）**——日用摩擦主干 8 项（主机编辑删除/关签确认/键盘可达/表单三连/停止披露/失败态/死会话遮罩拦截/死卡单按钮）已修复并走查；**第三批（v1.17 完成，§5.19）**——其余 P2 与全部 P3（简报认知徽标/传输指代/＋toggle/命令框历史/uppercase/favicon/收起消歧/时间戳口径/placeholder 对比度/终端圆角/用户名默认空），**走查报告 26 条真实问题全部关闭**（全量文案 sweep 除外，见 §5.19 披露①）⑩ 键盘交互认证/2FA、GBK 编码（**2FA 前半 v1.21 完成，§5.23**——Password 被拒自动回落 keyboard-interactive + OTP 提示人工应答门；GBK 后半按需排期）。**①–⑨ + ⑩前半完成**。**视觉 polish 第一批（v1.27 完成，§5.27）**——应用图标重绘 / 线性图标体系 / hover·focus·过渡反馈层 / 顶栏危险动作层级 / 欢迎页品牌化空状态；**标题栏融合与排版精致化（v1.28 完成，§5.28）**——Overlay 原生标题栏（红绿灯入左栏头 + 顶栏拖拽区 + 深色外观）、主机卡层级/断行禁则、空态拉齐、主题选择器收紧；**专业外壳与信任可查证（v1.29 完成，§5.29）**——原生全中文菜单栏（设置…⌘, 事件联动 / 关于带版本与安全声明 / 不设⌘W 与重新加载）、版本号 0.9.0 三处统一与设置面板版本行、TOFU 指纹可查证（主机卡 tooltip / 编辑表单信任行 / CLI 指纹列 / 测试守卫）；菜单随系统语言本地化列 V1；浅色 chrome（P2-7）单独排期。
+18. **UX 路线图（v1.5 按使用体验重排，用户认可为准绳；v1.13 完成①–⑧）**：① ~~断线一键重连闭环~~（**v1.7 完成，§5.8**）② ~~Alt/Option 键（readline/tmux 词跳转）~~（**v1.8 完成，§5.9**）③ ~~鼠标上报实测~~（**v1.8 完成，§5.10**）④ ~~⌘F 搜索 / OSC8 链接 / 窗口标题~~（**v1.9 完成，§5.11**）⑤ ~~主机指纹首连确认 + 变更警告~~（**v1.10 完成，§5.12**）⑥ ~~字号/主题设置~~（**v1.11 完成，§5.13**）⑦ ~~标签页/分屏~~（**v1.12 完成，§5.14**）⑧ ~~SFTP 拖拽 / rz-sz~~（**v1.13 完成，§5.15**——SFTP 拖拽上传/下载/取消；rz-sz 不做：需远端装 lrzsz 且 ZMODEM 帧截获与终端流强耦合，SFTP 覆盖同场景且更稳）⑨ ~~.ssh/config 导入与 agent~~（**v1.14 完成，§5.16**——导入面板/来源标注/徽标/Agent 主机 TOFU 建连与重启直连 UI 走查通过；t21-d Key 主机 UI 建连与连接后键入因用户占用中止注入，既有功能由自动化覆盖并披露）**UX 走查修复第一批（v1.15 完成，§5.17）**——2026-09-30 模拟用户 UX 走查（[docs/ux/2026-09-30-simulated-ux-review.md](../ux/2026-09-30-simulated-ux-review.md)，26 条真实问题）第一批 5 项（审批卡目标上下文/搜索焦点抢占/危险批准摩擦/首屏矛盾文案/AGENT 接入区）已修复并走查；**第二批（v1.16 完成，§5.18）**——日用摩擦主干 8 项（主机编辑删除/关签确认/键盘可达/表单三连/停止披露/失败态/死会话遮罩拦截/死卡单按钮）已修复并走查；**第三批（v1.17 完成，§5.19）**——其余 P2 与全部 P3（简报认知徽标/传输指代/＋toggle/命令框历史/uppercase/favicon/收起消歧/时间戳口径/placeholder 对比度/终端圆角/用户名默认空），**走查报告 26 条真实问题全部关闭**（全量文案 sweep 除外，见 §5.19 披露①）⑩ 键盘交互认证/2FA、GBK 编码（**2FA 前半 v1.21 完成，§5.23**——Password 被拒自动回落 keyboard-interactive + OTP 提示人工应答门；GBK 后半按需排期）。**①–⑨ + ⑩前半完成**。**视觉 polish 第一批（v1.27 完成，§5.27）**——应用图标重绘 / 线性图标体系 / hover·focus·过渡反馈层 / 顶栏危险动作层级 / 欢迎页品牌化空状态；**标题栏融合与排版精致化（v1.28 完成，§5.28）**——Overlay 原生标题栏（红绿灯入左栏头 + 顶栏拖拽区 + 深色外观）、主机卡层级/断行禁则、空态拉齐、主题选择器收紧；**专业外壳与信任可查证（v1.29 完成，§5.29）**——原生全中文菜单栏（设置…⌘, 事件联动 / 关于带版本与安全声明 / 不设⌘W 与重新加载）、版本号 0.9.0 三处统一与设置面板版本行、TOFU 指纹可查证（主机卡 tooltip / 编辑表单信任行 / CLI 指纹列 / 测试守卫）；菜单随系统语言本地化列 V1；**浅色 chrome 适配（v1.30 完成，§5.30，P2-7 收口）**——chrome 跟随终端主题（浅色/Solarized 浅色调色板 + 原生窗口 setTheme 同步），视觉 polish 系列无遗留项。
 19. **~~fitTerminal 静默失效（历史缺陷）~~（v1.11 已修复，§5.13）**：xterm 5.5 无公开 `dimensions`，fit 自 v1.x 起从未真正生效，xterm/PTY 恒为构造默认 80×24（13px 下恰好正确而长期未暴露，窗口 resize 的「跟随」实为看门狗把 PTY 锁到 80×24）。修复经 `_core._renderService.dimensions`（addon-fit 同源）后 PTY 真实随字号/窗口变化（实测 16px=35×75、19px=28×63）。此前各轮报告中「PTY 对齐」的验收结论在默认 13px 场景下成立，其他字号下的对齐自 v1.11 起才真实成立。
-20. **主题作用域**：终端配色预设只作用于终端区域，界面 chrome（左/右栏、弹窗）恒为深色——亮色 chrome 需全站 CSS 变量与硬编码色值适配，属 V1；设置（字号/主题）不入审计链（UI 偏好非协作事实，vault `settings` KV 可查）。
+20. **~~主题作用域~~（v1.30 已解决，§5.30）**：原「终端配色预设只作用于终端区域，界面 chrome 恒为深色」——T35 起 chrome 跟随终端主题（浅色/Solarized 浅色各配一套 chrome 调色板，深色现值逐字节不变，原生窗口外观经 setTheme 同步）；残留：启动瞬间深→浅闪烁（backgroundColor 为静态初值）；设置（字号/主题）不入审计链（UI 偏好非协作事实，vault `settings` KV 可查）。
 23. **拖拽投递的走查口径（v1.13）**：T20 的 OS 级拖拽事件（Finder→WKWebView NSDraggingSession 投递）在双屏+多 Space 环境无法脚本化驱动，走查以 dev 门禁合成事件注入覆盖该环节（§5.15 披露①），其余链路全部真实；真人拖拽列为顺手确认项。人类传输不经审批直接执行（审计留痕），与「Agent 传输必审」的 L1 §4 语义一致。
 24. **传输边界（v1.13）**：上传目标=焦点会话简报 cwd（未就绪则拒绝）；下载固定 `~/Downloads`；无逐字节进度；取消/失败远端可能残留部分文件（与 scp 同语义）；Agent 传输走 MCP upload/download 工具且必审（v0 既有），与人类入口同链路同审计。
 25. **sshd 就绪探测口径（v1.14 修复）**：`await_sshd_ready` 从 TCP-only 升级为 TCP + SSH banner 探测——docker 端口代理在容器内 sshd 监听前就接受 TCP（随后 reset），TCP-only 会让紧随 `docker start` 的测试稳定撞上 `Connection reset by peer`（journey3 在 HEAD 上复现，非 T21 引入，stash 验证）。
