@@ -371,6 +371,14 @@ export default function App() {
   const [transfers, setTransfers] = useState<TransferCard[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [downloadPath, setDownloadPath] = useState("");
+  // Toast（精致化 §六/P3）：右下角轻通知，2.6s 自动消失；最多同屏 4 条
+  const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string }[]>([]);
+  const toastSeq = useRef(0);
+  const pushToast = useCallback((kind: "ok" | "err" | "info", text: string) => {
+    const id = ++toastSeq.current;
+    setToasts((cur) => [...cur.slice(-3), { id, kind, text }]);
+    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), 2600);
+  }, []);
   // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
   const [searchOpen, setSearchOpen] = useState(false);
   // 首次接入提示（悬浮条，不占终端行——写进流会带偏 shell 光标视角）
@@ -1243,6 +1251,18 @@ export default function App() {
     return () => clearInterval(t);
   }, [transfers]);
 
+  // 传输终态 toast（§六）：running → done/failed 迁移时通知；卡片本身仍常显，
+  // 即时失败（未接入会话等）有卡可见不重复 toast；取消是用户主动动作不打扰
+  const prevTransferStatus = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    for (const t of transfers) {
+      const prev = prevTransferStatus.current.get(t.id);
+      if (prev === "running" && t.status === "done") pushToast("ok", `传输完成：${t.name}`);
+      if (prev === "running" && t.status === "failed") pushToast("err", `传输失败：${t.name}——${t.error ?? "未知错误"}`);
+      prevTransferStatus.current.set(t.id, t.status);
+    }
+  }, [transfers, pushToast]);
+
   // 拖拽事件（Tauri drag-drop，浏览器演示模式无此通道）：enter/over 显示覆盖层，drop 上传
   useEffect(() => {
     if (!inTauri) return;
@@ -1276,7 +1296,9 @@ export default function App() {
       setLastFailed(null);
       await refreshLists();
       await attachSession(newSid);
+      pushToast("ok", `已连接 ${host.name}`);
     } catch (e) {
+      // 失败走 conn-error 常驻横幅（可行动文案），不重复 toast
       setLastFailed(host.id);
       setConnError({
         title: `连接 ${host.name}（${host.username}@${host.address}:${host.port}）失败`,
@@ -1295,6 +1317,7 @@ export default function App() {
       await invoke("reconnect_session", { sid: s.id });
       await refreshLists();
       await attachSession(s.id);
+      pushToast("ok", `已重连 ${s.host_name}`);
     } catch (e) {
       setConnError({ title: `重连 ${s.host_name} 失败`, detail: friendlyError(String(e)) });
     } finally {
@@ -1306,6 +1329,7 @@ export default function App() {
     if (!sid) return;
     await invoke("set_control", { sid, owner: "Human", stopRunning: false });
     await refreshLists();
+    pushToast("info", "已接管——Agent 冻结，终端归你");
   };
   // 「接管并停止任务」逐条披露停止结果（PRD FR-6：不谎报——升级后仍未停止要标红）
   const [stopResult, setStopResult] = useState<{ hostName: string; report: TakeoverReport } | null>(null);
@@ -1319,6 +1343,7 @@ export default function App() {
     if (!sid) return;
     await invoke("set_control", { sid, owner: "Agent" });
     await refreshLists();
+    pushToast("info", "已交还 Agent——后续操作请求走审批");
   };
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1353,7 +1378,6 @@ export default function App() {
 
   const hasAgents = mcp.agents.length > 0;
   const current = sessions.find((x) => x.id === sid);
-  const ownerBadge = owner === "Human" ? "人类控制" : hasAgents ? "Agent" : "手动";
   const ownerCls = owner === "Human" ? "human" : hasAgents ? "agent" : "dim";
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
   const pendingCount = pendingApprovals.length;
@@ -1521,9 +1545,9 @@ Authorization: Bearer <TOKEN>`}
           <span style={{ flex: 1 }} data-tauri-drag-region />
           {sid && (
             <span
-              className={"badge " + ownerCls}
-              title="「Agent」= Agent 可发起命令、经你审批执行；「人类控制」= 终端归你，Agent 冻结"
-            >控制权：{ownerBadge}</span>
+              className={"ctl-badge " + ownerCls}
+              title="「Agent 控制中」= Agent 可发起命令、经你审批执行；「我控制中」= 终端归你，Agent 冻结"
+            ><span className="ctl-dot" />{owner === "Human" ? "我控制中" : hasAgents ? "Agent 控制中" : "手动控制"}</span>
           )}
           {sid && hasAgents && owner === "Agent" && (
             <>
@@ -1540,7 +1564,7 @@ Authorization: Bearer <TOKEN>`}
             </>
           )}
           {sid && hasAgents && owner === "Human" && (
-            <button onClick={handback}>交还 Agent</button>
+            <button className="ghost" onClick={handback}>交还 Agent</button>
           )}
           {sid && (
             <button
@@ -2083,6 +2107,11 @@ Authorization: Bearer <TOKEN>`}
             }) : <div className="empty"><IconClock size={14} />暂无记录。所有连接与命令都会留痕在这里。</div>}
           </div>
         </div>
+      </div>
+
+      {/* Toast（§六/P3）：右下角轻通知，2.6s 自动消失，不挡交互（pointer-events 放行） */}
+      <div className="toast-stack" aria-live="polite">
+        {toasts.map((t) => <div className={"toast " + t.kind} key={t.id}>{t.text}</div>)}
       </div>
     </div>
   );

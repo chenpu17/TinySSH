@@ -217,6 +217,38 @@ input, select {
 .badge.agent { color: var(--accent); border-color: var(--accent); }
 .badge.dim { color: var(--dim); }
 
+/* 控制权徽标（精致化 §六）：Agent 持有=amber 需注意，我持有=accent 安定；圆点呼吸感 */
+.ctl-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 9px; border-radius: 999px; font-size: 11px;
+  border: 1px solid var(--border); color: var(--text-sub);
+  flex: none;
+}
+.ctl-badge .ctl-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
+.ctl-badge.agent { color: var(--warn); border-color: rgba(208, 176, 122, 0.4); background: rgba(208, 176, 122, 0.08); }
+.ctl-badge.agent .ctl-dot { background: var(--warn); }
+.ctl-badge.human { color: var(--accent); border-color: var(--accent-ring); background: var(--accent-soft); }
+.ctl-badge.human .ctl-dot { background: var(--accent); }
+
+/* Toast（精致化 §六/P3）：右下角轻通知，左侧色条分语义，自动消失由 JS 计时 */
+.toast-stack {
+  position: fixed; right: 16px; bottom: 16px; z-index: 120;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  padding: 8px 14px; border-radius: 8px; font-size: 12px; color: var(--text);
+  background: var(--panel2); border: 1px solid var(--border);
+  box-shadow: 0 8px 24px var(--shadow-pop);
+  max-width: 320px;
+  animation: toast-in 0.18s ease;
+}
+.toast.ok   { border-left: 3px solid var(--ok); }
+.toast.err  { border-left: 3px solid var(--danger); }
+.toast.info { border-left: 3px solid var(--accent); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
 /* 连接失败横幅 */
 .conn-error {
   margin: 8px; padding: 10px 12px; border-radius: 8px;
