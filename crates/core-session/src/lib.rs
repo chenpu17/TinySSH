@@ -714,6 +714,16 @@ impl SessionApi for SessionManager {
         Err(Error::InvalidInput("transfer not found".into()))
     }
 
+    // 人类浏览远端目录（FR-7）：只读、不经审批、不入审计（浏览非动作）；
+    // Agent 无此入口（MCP 无 list 工具——上传下载仍走 upload/download 必审口径）
+    async fn sftp_list(&self, ctx: &Actor, sid: SessionId, path: &str) -> Result<Vec<DirEntryS>> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("sftp_list 仅人类浏览入口".into()));
+        }
+        let h = self.get(&sid)?;
+        h.channel.list_dir(path).await
+    }
+
     // ---- 审批 ----
     async fn list_approvals(&self, _ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>> {
         let items = self.center.items.lock().unwrap();

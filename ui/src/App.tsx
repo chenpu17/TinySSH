@@ -4,7 +4,7 @@ import * as demo from "./demo";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
   IconChevronUp, IconChevronDown, IconTerminal, IconArrowDown, IconUpload, IconDownload,
-  IconInbox, IconClock, IconSearch, IconLoader,
+  IconInbox, IconClock, IconSearch, IconLoader, IconFolder, IconFile, IconRefresh,
 } from "./icons";
 
 // 无 Tauri 环境（纯浏览器）走演示模式；Tauri 环境走真实核心
@@ -99,6 +99,8 @@ const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
 };
 // 文件传输（T20）：核心返回的句柄 + UI 卡片状态（终态由审计事件按 id 对账）
 type TransferHandle = { id: string; session_id: string; kind: "Upload" | "Download"; local: string; remote: string };
+// 远程文件浏览器（T41）：sftp_list wire 契约（Rust DirEntryS/demo shim 同口径）
+type DirEntryS = { name: string; is_dir: boolean; size: number; mtime: number };
 type TransferCard = {
   id: string; kind: "Upload" | "Download"; name: string; remote: string; local: string;
   status: "running" | "done" | "failed" | "cancelled"; bytes?: number; error?: string;
@@ -374,6 +376,12 @@ export default function App() {
   const [transfers, setTransfers] = useState<TransferCard[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [downloadPath, setDownloadPath] = useState("");
+  // 远程文件浏览器（T41 FR-7）：路径/条目按 sid 归属，切会话重置（H1 同款纪律）
+  const [sftpPath, setSftpPath] = useState("");
+  const [sftpPathInput, setSftpPathInput] = useState("");
+  const [sftpEntries, setSftpEntries] = useState<DirEntryS[] | null>(null);
+  const [sftpLoading, setSftpLoading] = useState(false);
+  const [sftpErr, setSftpErr] = useState<string | null>(null);
   // Toast（精致化 §六/P3）：右下角轻通知，2.6s 自动消失；最多同屏 4 条
   const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string }[]>([]);
   const toastSeq = useRef(0);
@@ -1252,11 +1260,11 @@ export default function App() {
     });
   }, []);
 
-  // 拖拽上传：落到焦点会话的当前目录（现场简报 cwd）。先挂 pending 卡占位，
-  // 拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
-  const startUploads = useCallback(async (paths: string[]) => {
+  // 拖拽上传：目标目录优先取远程文件区正在浏览的目录（T41），否则现场简报 cwd。
+  // 先挂 pending 卡占位，拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
+  const startUploads = useCallback(async (paths: string[], destDir?: string) => {
     const s = sidRef.current;
-    const cwd = s ? briefRef.current?.cwd : undefined;
+    const cwd = destDir ?? (s ? briefRef.current?.cwd : undefined);
     for (const p of paths) {
       const name = pathBasename(p);
       const tempId = `pending-${Date.now()}-${name}`;
@@ -1280,20 +1288,57 @@ export default function App() {
   }, [upsertTransfer]);
 
   // 下载：远端绝对路径 → 本地（local 省略时核心存 ~/Downloads/<文件名>）
-  const startDownload = async () => {
+  const downloadRemote = useCallback(async (rp: string) => {
     const s = sidRef.current;
-    const rp = downloadPath.trim();
     if (!s || !rp) return;
     const tempId = `pending-dl-${Date.now()}`;
     upsertTransfer({ id: tempId, kind: "Download", name: pathBasename(rp), remote: rp, local: "…", status: "running" });
-    setDownloadPath("");
     try {
       const h = await invoke<TransferHandle>("download_file", { sid: s, remote: rp, local: null });
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
     } catch (e) {
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(String(e)) } : c)));
     }
+  }, [upsertTransfer]);
+
+  const startDownload = async () => {
+    const rp = downloadPath.trim();
+    if (!rp) return;
+    setDownloadPath("");
+    await downloadRemote(rp);
   };
+
+  // ---- 远程文件浏览器（T41 FR-7）----
+  const loadDir = useCallback(async (p: string) => {
+    const s = sidRef.current;
+    if (!s || !p.trim()) return;
+    setSftpLoading(true); setSftpErr(null);
+    try {
+      const es = await invoke<DirEntryS[]>("sftp_list", { sid: s, path: p.trim() });
+      if (sidRef.current !== s) return; // 已切会话的过期结果直接丢弃（H1 纪律）
+      setSftpEntries(es);
+      setSftpPath(p.trim());
+      setSftpPathInput(p.trim());
+    } catch (e) {
+      if (sidRef.current === s) setSftpErr(friendlyError(String(e)));
+    } finally {
+      setSftpLoading(false);
+    }
+  }, []);
+
+  // 切会话：浏览器清空待命；简报 cwd 到达且本会话尚未浏览过时自动首载
+  useEffect(() => {
+    setSftpEntries(null); setSftpErr(null);
+    if (!sid) { setSftpPath(""); setSftpPathInput(""); }
+    // 只随会话切换清空——简报 cwd 变化不重置用户正在浏览的位置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid]);
+  useEffect(() => {
+    const base = brief?.cwd;
+    if (sid && base && sftpEntries === null && !sftpLoading && sftpErr === null) {
+      void loadDir(base);
+    }
+  }, [sid, brief?.cwd, sftpEntries, sftpLoading, sftpErr, loadDir]);
 
   // 传输终态对账：仅在有 running 卡时以 800ms 轮询审计；「已取消」= 核心 Cancelled 错误文案
   useEffect(() => {
@@ -1339,7 +1384,9 @@ export default function App() {
         else if (p.type === "drop") {
           setDragOver(false);
           const paths = (p as { paths?: string[] }).paths ?? [];
-          if (paths.length) void startUploads(paths);
+          // 远程文件区正浏览着目录时，拖放目标 = 该目录（T41）；否则现场简报 cwd
+          const dest = sftpEntries !== null && sftpPath ? sftpPath : undefined;
+          if (paths.length) void startUploads(paths, dest);
         }
       })
       .then((f: () => void) => {
@@ -1350,7 +1397,7 @@ export default function App() {
       dead = true;
       un?.();
     };
-  }, [startUploads]);
+  }, [startUploads, sftpEntries, sftpPath]);
 
   const createSession = async (host: Host) => {    setConnecting(host.id);
     setConnError(null);
@@ -2114,6 +2161,78 @@ Authorization: Bearer <TOKEN>`}
           {pendingApprovals.length === 0 && resolvedApprovals.length === 0 && (
             <div className="empty"><IconInbox size={14} />暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
           )}
+
+          <div className="section">
+            <h4>远程文件</h4>
+            {!sid ? (
+              <div className="side-quiet">连接会话后可浏览远端目录；文件拖进窗口即上传到正在浏览的目录。</div>
+            ) : (
+              <>
+                <div className="row sftp-path">
+                  <input
+                    className="mono"
+                    placeholder="远端目录（绝对路径，回车进入）"
+                    value={sftpPathInput}
+                    onChange={(e) => setSftpPathInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void loadDir(sftpPathInput)}
+                  />
+                  <button
+                    className="ghost"
+                    title="上一级目录"
+                    disabled={!sftpPath || sftpPath === "/"}
+                    onClick={() => {
+                      const p = sftpPath.replace(/\/+$/, "").split("/");
+                      p.pop();
+                      void loadDir(p.length ? p.join("/") || "/" : "/");
+                    }}
+                  ><IconChevronUp size={13} /></button>
+                  <button
+                    className="ghost"
+                    title="刷新当前目录"
+                    disabled={!sftpPath || sftpLoading}
+                    onClick={() => void loadDir(sftpPath)}
+                  ><IconRefresh size={13} /></button>
+                </div>
+                {sftpErr && <div className="err" style={{ marginTop: 6 }}>✕ {sftpErr}</div>}
+                {sftpLoading && (
+                  <div className="sftp-list" aria-busy="true">
+                    {[0, 1, 2].map((i) => <div className="skeleton sftp-sk" key={i} style={{ width: `${90 - i * 18}%`, height: 18 }} />)}
+                  </div>
+                )}
+                {!sftpLoading && sftpEntries && sftpEntries.length === 0 && (
+                  <div className="side-quiet">空目录。</div>
+                )}
+                {!sftpLoading && sftpEntries && sftpEntries.length > 0 && (
+                  <div className="sftp-list">
+                    {sftpEntries.map((e) => (
+                      <div className={"sftp-row" + (e.is_dir ? " dir" : "")} key={e.name}>
+                        <span className="sftp-ico">{e.is_dir ? <IconFolder size={13} /> : <IconFile size={13} />}</span>
+                        {e.is_dir ? (
+                          <button
+                            className="sftp-name mono"
+                            title={`进入 ${e.name}`}
+                            onClick={() => void loadDir(`${sftpPath.replace(/\/+$/, "")}/${e.name}`)}
+                          >{e.name}</button>
+                        ) : (
+                          <span className="sftp-name mono" title={`${sftpPath.replace(/\/+$/, "")}/${e.name}`}>{e.name}</span>
+                        )}
+                        <span className="dim mono sftp-size">{e.is_dir ? "目录" : fmtBytes(e.size)}</span>
+                        <span className="dim mono sftp-time">{e.mtime ? new Date(e.mtime * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }) : "—"}</span>
+                        {!e.is_dir && (
+                          <button
+                            className="ghost sftp-dl"
+                            title="下载到「下载」文件夹"
+                            onClick={() => void downloadRemote(`${sftpPath.replace(/\/+$/, "")}/${e.name}`)}
+                          ><IconDownload size={12} />下载</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="side-quiet">下载存到「下载」文件夹；文件拖进窗口上传到正在浏览的目录；进度见下方「传输」。</div>
+              </>
+            )}
+          </div>
 
           <div className="section">
             <h4>传输</h4>

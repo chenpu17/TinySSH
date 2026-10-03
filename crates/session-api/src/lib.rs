@@ -563,6 +563,18 @@ pub enum TransferKind {
     Download,
 }
 
+/// SFTP 目录条目（T41 FR-7 浏览器）。wire 三端一致（Rust/UI/demo）：
+/// transport 按名称排序（目录在前）返回，UI 直接渲染。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirEntryS {
+    pub name: String,
+    pub is_dir: bool,
+    /// 字节数；目录为 0
+    pub size: u64,
+    /// Unix 秒；未知为 0
+    pub mtime: i64,
+}
+
 // ---------------------------------------------------------------------------
 // 审计
 // ---------------------------------------------------------------------------
@@ -718,6 +730,10 @@ pub trait SessionApi: Send + Sync {
     ) -> Result<TransferHandle>;
     async fn cancel_transfer(&self, ctx: &Actor, t: TransferId) -> Result<()>;
 
+    /// 人类浏览远端目录（FR-7 SFTP 浏览器，只读）。path 为绝对路径；
+    /// 条目按名称排序（目录在前）由 transport 层保证。
+    async fn sftp_list(&self, ctx: &Actor, sid: SessionId, path: &str) -> Result<Vec<DirEntryS>>;
+
     // ---- 审批（v1 读取路径；PRD FR-4）----
     async fn list_approvals(&self, ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>>;
     fn subscribe_approvals(&self) -> broadcast::Receiver<ApprovalEvent>;
@@ -855,5 +871,19 @@ mod wire_format_tests {
             "id": "i", "label": "l", "kind": "Ed25519", "fingerprint": "SHA256:x",
         })).unwrap();
         assert_eq!(meta.fingerprint, "SHA256:x");
+    }
+
+    /// 锁定 DirEntryS 的线上格式（T41 FR-7 SFTP 浏览器）：UI/demo shim 按
+    /// {name,is_dir,size,mtime} 渲染，字段名漂移即渲染断裂。
+    #[test]
+    fn dir_entry_wire_format_matches_ui() {
+        let e: DirEntryS = serde_json::from_value(serde_json::json!({
+            "name": "a.txt", "is_dir": false, "size": 6, "mtime": 1790956800,
+        })).unwrap();
+        assert_eq!((e.name.as_str(), e.is_dir, e.size, e.mtime), ("a.txt", false, 6, 1790956800));
+        assert_eq!(
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({ "name": "a.txt", "is_dir": false, "size": 6, "mtime": 1790956800 })
+        );
     }
 }

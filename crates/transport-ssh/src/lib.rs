@@ -9,7 +9,7 @@ use russh::{Channel, ChannelMsg, ChannelWriteHalf};
 use russh::{Disconnect, Sig};
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
-use session_api::{AuthType, Error, ExecOpts, Result};
+use session_api::{AuthType, DirEntryS, Error, ExecOpts, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -634,5 +634,47 @@ impl ChannelHandle for SshChannel {
         drop(dst);
         sftp.close().await.ok();
         Ok(total)
+    }
+
+    /// 列目录（T41 FR-7）：临时 SFTP 通道 readdir（与上传下载同模式，无持久会话生命周期负担）
+    async fn list_dir(&self, path: &str) -> Result<Vec<DirEntryS>> {
+        let handle_guard = self.handle.lock().await;
+        let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
+        let mut channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("sftp subsystem: {e}")))?;
+        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("sftp init: {e}")))?;
+
+        let rd = sftp
+            .read_dir(path)
+            .await
+            .map_err(|e| Error::Io(format!("sftp readdir {path}: {e}")))?;
+        let mut out: Vec<DirEntryS> = rd
+            .filter(|e| !matches!(e.file_name().as_str(), "." | ".."))
+            .map(|e| {
+                let m = e.metadata();
+                DirEntryS {
+                    name: e.file_name(),
+                    is_dir: m.is_dir(),
+                    size: m.size.unwrap_or(0),
+                    mtime: m.mtime.map(|v| v as i64).unwrap_or(0),
+                }
+            })
+            .collect();
+        // 目录在前、名称不区分大小写排序（浏览可预期性）
+        out.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        sftp.close().await.ok();
+        Ok(out)
     }
 }

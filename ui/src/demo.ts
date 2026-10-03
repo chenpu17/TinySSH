@@ -432,6 +432,44 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "audit_query":
       return { events: demoState.events.slice(0, (args?.limit as number) ?? 30) };
+    // T41 FR-7：目录浏览演示树（与真实 wire 契约同口径——目录在前、名称序、
+    // 过滤 . / ..；mtime 为演示固定时间戳）。传输类仍如实报错（见下）。
+    case "sftp_list": {
+      const p = ((args?.path as string) ?? "").replace(/\/+$/, "") || "/";
+      const tree: Record<string, { name: string; is_dir: boolean; size: number; mtime: number }[]> = {
+        // /var/log/nginx = demo 简报 cwd（session_brief），浏览器首载即有内容
+        "/var/log/nginx": [
+          { name: "archive", is_dir: true, size: 0, mtime: 1790870400 },
+          { name: "access.log", is_dir: false, size: 73400320, mtime: 1790956800 },
+          { name: "error.log", is_dir: false, size: 2097152, mtime: 1790956800 },
+        ],
+        "/var/log/nginx/archive": [
+          { name: "access-202609.log.gz", is_dir: false, size: 8912896, mtime: 1790611200 },
+        ],
+        "/root": [
+          { name: "deploy", is_dir: true, size: 0, mtime: 1790956800 },
+          { name: "logs", is_dir: true, size: 0, mtime: 1790870400 },
+          { name: ".ssh", is_dir: true, size: 0, mtime: 1790784000 },
+          { name: "nginx.conf", is_dir: false, size: 2048, mtime: 1790908800 },
+          { name: "backup-0930.tar.gz", is_dir: false, size: 48250470, mtime: 1790870400 },
+          { name: "readme.md", is_dir: false, size: 312, mtime: 1790611200 },
+        ],
+        "/root/deploy": [
+          { name: "scripts", is_dir: true, size: 0, mtime: 1790956800 },
+          { name: "release.sh", is_dir: false, size: 1841, mtime: 1790956800 },
+          { name: "app.yml", is_dir: false, size: 640, mtime: 1790908800 },
+        ],
+        "/root/logs": [
+          { name: "app.log", is_dir: false, size: 15204351, mtime: 1790956800 },
+          { name: "error.log", is_dir: false, size: 94208, mtime: 1790956800 },
+        ],
+        "/root/deploy/scripts": [
+          { name: "migrate.sh", is_dir: false, size: 733, mtime: 1790908800 },
+        ],
+      };
+      if (!(p in tree)) throw new Error(`演示模式：目录不存在或不可读（${p}）`);
+      return tree[p].slice().sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    }
     // 浏览器演示无法真实承载的操作：要么显式报错（传输类，UI 卡片如实显示失败），
     // 要么明确列为无操作（此前 default 静默 null 是「占位反馈」伪影的根源）。
     case "upload_file":

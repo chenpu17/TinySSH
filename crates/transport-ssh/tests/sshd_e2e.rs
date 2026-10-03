@@ -233,6 +233,58 @@ async fn sftp_download_cancel_midway() {
     channel.close().await.unwrap();
 }
 
+/// T41（FR-7）：sftp_list 目录浏览——远端造确定结构（目录 + 两个文件），
+/// 断言过滤 . / ..、目录在前、名称序、size/mtime 非零；不存在路径报错。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sftp_list_lists_dir_entries_sorted() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    use session_api::transport::ChannelHandle;
+    use session_api::transport::tokio_util_sync::CancellationToken;
+
+    let channel = transport_ssh::SshChannel::connect(target(), 80, 24)
+        .await
+        .unwrap();
+    channel
+        .exec_fresh(
+            "rm -rf /tmp/t41_dir && mkdir -p /tmp/t41_dir/sub && echo hello > /tmp/t41_dir/b.txt && echo world > /tmp/t41_dir/a.txt",
+            &session_api::ExecOpts::default(),
+            std::time::Instant::now() + Duration::from_secs(15),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let entries = channel.list_dir("/tmp/t41_dir").await.unwrap();
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["sub", "a.txt", "b.txt"], "目录在前、名称序：{names:?}");
+    assert!(entries.iter().all(|e| !matches!(e.name.as_str(), "." | "..")));
+    let sub = &entries[0];
+    assert!(sub.is_dir && sub.size == 0);
+    let a = &entries[1];
+    assert!(!a.is_dir && a.size == b"world\n".len() as u64);
+    assert!(a.mtime > 0, "mtime 应为服务器返回的真实时间");
+
+    // 不存在路径：可读错误（非 panic/空）
+    let miss = channel.list_dir("/tmp/t41_dir/definitely-missing").await;
+    assert!(miss.is_err(), "不存在目录必须报错");
+
+    channel
+        .exec_fresh(
+            "rm -rf /tmp/t41_dir",
+            &session_api::ExecOpts::default(),
+            std::time::Instant::now() + Duration::from_secs(10),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    channel.close().await.unwrap();
+}
+
 // T21（路线图⑨）：ssh-agent 认证——起一次性 agent（不碰用户真实 agent），
 // 容器 authorized_keys 临时加公钥，Agent 认证建连后跑命令，最后全部清理。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

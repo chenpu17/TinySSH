@@ -393,6 +393,42 @@ impl ChannelHandle for LocalPtyChannel {
     ) -> Result<u64> {
         copy_file(std::path::Path::new(remote), local, cancel).await
     }
+
+    /// 本机「远端」= 本地文件系统（T41 FR-7：本机会话的文件浏览器同样可用）
+    async fn list_dir(&self, path: &str) -> Result<Vec<session_api::DirEntryS>> {
+        let _ = &self; // 无 PTY 依赖，纯 fs
+        let mut rd = tokio::fs::read_dir(path)
+            .await
+            .map_err(|e| Error::Io(format!("readdir {path}: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(e) = rd
+            .next_entry()
+            .await
+            .map_err(|e| Error::Io(format!("readdir: {e}")))?
+        {
+            let md = e
+                .metadata()
+                .await
+                .map_err(|e| Error::Io(format!("stat: {e}")))?;
+            out.push(session_api::DirEntryS {
+                name: e.file_name().to_string_lossy().into_owned(),
+                is_dir: md.is_dir(),
+                size: md.len(),
+                mtime: md
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            });
+        }
+        out.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        Ok(out)
+    }
 }
 
 async fn copy_file(

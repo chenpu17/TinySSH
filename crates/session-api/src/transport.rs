@@ -80,6 +80,10 @@ pub trait ChannelHandle: Send + Sync {
         local: &std::path::Path,
         cancel: &tokio_util_sync::CancellationToken,
     ) -> Result<u64>;
+
+    /// 列目录（SFTP readdir / 本地 read_dir，T41 FR-7 浏览器）。
+    /// 过滤 `.`/`..`；按名称排序、目录在前；mtime 未知为 0。
+    async fn list_dir(&self, path: &str) -> Result<Vec<crate::DirEntryS>>;
 }
 
 /// tokio_util 的 CancellationToken 的最小本地别名层：避免 session-api 直接依赖

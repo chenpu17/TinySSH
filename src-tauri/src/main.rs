@@ -148,6 +148,12 @@ async fn cancel_transfer(state: ApiState<'_>, id: String) -> CmdResult<()> {
     state.api.cancel_transfer(&human(), id).await.map_err(|e| e.to_string())
 }
 
+/// SFTP 目录浏览（T41 FR-7）：只读 readdir，人类专属入口（不经审批）。
+#[tauri::command]
+async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<Vec<DirEntryS>> {
+    state.api.sftp_list(&human(), sid, &path).await.map_err(|e| e.to_string())
+}
+
 /// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
 /// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
 /// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）
@@ -648,13 +654,22 @@ fn main() {
       title('s7-tofu-dialog');
       trustBtn.click();
       const term = await waitFor(() => {{
-        const t = document.querySelector('.term .xterm-rows');
+        const t = document.querySelector('#term .xterm-rows');
         return t && (t.textContent || '').length > 5 ? t : null;
-      }}, 100);
+      }}, 150);
       if (!term) {{ title('FAIL-no-term'); return; }}
       title('s8-term-alive');
       const focus = document.querySelector('.xterm-helper-textarea');
       if (focus) focus.focus();
+      // T41：真实 app 的 SFTP 浏览器命令实证（直调 internals invoke，绕开 UI 交互）
+      const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+      const ses = await inv('list_sessions', {{}});
+      const cur = (ses && ses[0] && ses[0].id) || '';
+      if (cur) {{
+        const es = await inv('sftp_list', {{ sid: cur, path: '/root' }});
+        title('sftp|n=' + es.length + '|' + es.slice(0, 3).map((e) => (e.is_dir ? 'D:' : 'F:') + e.name).join(','));
+        return;
+      }}
       title('DONE');
     }} catch (e) {{
       title('FAIL|' + e);
@@ -791,7 +806,7 @@ fn main() {
             ssh_config_preview, ssh_config_import,
             list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
             open_url,
-            upload_file, download_file, cancel_transfer,
+            upload_file, download_file, cancel_transfer, sftp_list,
             get_setting, set_setting,
             read_screen, send_keys, exec_human, set_control, session_brief, set_session_goal,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
