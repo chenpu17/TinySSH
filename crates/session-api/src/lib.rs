@@ -818,4 +818,42 @@ mod wire_format_tests {
         }));
         assert!(bad.is_err());
     }
+
+    /// 锁定 IdentityReq / AuthDraft / IdentityMeta 的线上格式（T40 UI 生成 ed25519 与
+    /// Agent 登录依赖）：外部标签保持 PascalCase，KeyKind 无 rename（"Ed25519"/"Rsa"），
+    /// AuthDraft::None 线上名为 "Keep"。UI create_identity 载荷
+    /// `{ Generate: { label, kind: "Ed25519" } }` 与 upsert_host 的 `"Agent"` /
+    /// `{ Key: { identity_id } }` 均按此断言——防 B1 类 wire 漂移重演。
+    #[test]
+    fn identity_and_auth_draft_wire_format_matches_ui() {
+        assert_eq!(
+            serde_json::to_value(IdentityReq::Generate { label: "k".into(), kind: KeyKind::Ed25519 }).unwrap(),
+            serde_json::json!({ "Generate": { "label": "k", "kind": "Ed25519" } })
+        );
+        assert_eq!(
+            serde_json::to_value(IdentityReq::Import { label: "k".into(), pem: "PEM".into(), passphrase: None }).unwrap(),
+            serde_json::json!({ "Import": { "label": "k", "pem": "PEM", "passphrase": null } })
+        );
+        // UI upsert_host 的三种 auth 载荷形态
+        let draft: HostDraft = serde_json::from_value(serde_json::json!({
+            "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
+            "auth": "Agent", "tags": [],
+        })).unwrap();
+        assert!(matches!(draft.auth, AuthDraft::Agent));
+        let draft: HostDraft = serde_json::from_value(serde_json::json!({
+            "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
+            "auth": { "Key": { "identity_id": "id-1" } }, "tags": [],
+        })).unwrap();
+        assert!(matches!(draft.auth, AuthDraft::Key { .. }));
+        let draft: HostDraft = serde_json::from_value(serde_json::json!({
+            "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
+            "auth": "Keep", "tags": [],
+        })).unwrap();
+        assert!(matches!(draft.auth, AuthDraft::None));
+        // create_identity 回包形态（UI 指纹确认直接展示 fingerprint 字段）
+        let meta: IdentityMeta = serde_json::from_value(serde_json::json!({
+            "id": "i", "label": "l", "kind": "Ed25519", "fingerprint": "SHA256:x",
+        })).unwrap();
+        assert_eq!(meta.fingerprint, "SHA256:x");
+    }
 }

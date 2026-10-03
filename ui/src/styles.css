@@ -200,6 +200,11 @@ button {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
 }
 button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+/* T40 私钥「从文件导入…」：label 包隐藏 file input，外观与 button.ghost 同族 */
+label.file-btn { display: inline-flex; align-items: center; padding: 6px 12px; border: 1px solid var(--accent);
+  border-radius: 6px; background: transparent; color: var(--accent); font-size: 12px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; }
+label.file-btn:hover { background-color: var(--accent-soft); }
 button.danger { background: var(--danger); color: var(--on-danger); }
 button.warn { background: var(--warn); color: var(--on-warn); }
 button:not(:disabled):hover { background-color: var(--accent-hover); }

@@ -146,17 +146,27 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk" };
+      // 真实后端按 HostDraft.auth 推导 auth_type，demo 同口径（修复：此前新建一律
+      // 硬编码 Password——密钥/Agent 主机在浏览器走查里会顶错徽章，属头部警告的对账类别）
+      const a = h.auth;
+      const authType = typeof a === "string"
+        ? (a === "Agent" ? "Agent" : "Keep")
+        : a && typeof a === "object" && "Key" in (a as Record<string, unknown>)
+          ? "Key"
+          : "Password";
       if (h.id) {
         const ex = demoState.hosts.find((x) => x.id === h.id);
         if (ex) {
           ex.name = h.name; ex.address = h.address; ex.port = h.port ?? 22; ex.username = h.username;
           ex.charset = h.charset ?? "utf-8";
+          if (authType !== "Keep") ex.auth_type = authType;
           audit("human", "host_upsert", h.name);
           return h.id;
         }
       }
       const id = h.id ?? "h-demo-" + demoSeq++;
-      demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username, auth_type: "Password", charset: h.charset ?? "utf-8" });
+      demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username,
+        auth_type: authType === "Keep" ? "Password" : authType, charset: h.charset ?? "utf-8" });
       audit("human", "host_upsert", h.name);
       return id;
     }
@@ -167,9 +177,19 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (h) audit("human", "host_delete", h.name);
       return null;
     }
-    case "create_identity":
-      audit("human", "identity_create", "demo");
-      return { id: "id-demo-" + demoSeq++, label: "demo", kind: "Ed25519", fingerprint: "SHA256:demofingerprint" };
+    case "create_identity": {
+      // 与真实 vault 同语义：Generate 生成新钥（kind 随请求）、Import 存粘贴私钥、
+      // Password 存密码——均只回元数据（指纹 SHA256: 前缀），绝不回私钥/密码明文
+      const req = args?.req as
+        | { Generate?: { label: string; kind: string }; Import?: { label: string }; Password?: { label: string } }
+        | undefined;
+      const label = req?.Generate?.label ?? req?.Import?.label ?? req?.Password?.label ?? "demo";
+      audit("human", "identity_create", label);
+      const kind = req?.Generate
+        ? (req.Generate.kind === "Rsa" ? "Rsa" : "Ed25519")
+        : req?.Import ? "Ed25519" : "Password";
+      return { id: "id-demo-" + demoSeq++, label, kind, fingerprint: `SHA256:demoKey${demoSeq}qZ3tN7vBw9xQmFpL2sKd==` };
+    }
     case "list_identities":
       return [];
     case "ssh_config_preview":

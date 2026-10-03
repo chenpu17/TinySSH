@@ -2293,8 +2293,46 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  // 私钥先绑定后确认（FR-2 指纹确认）：粘贴/文件/生成 → create_identity 落库 →
+  // 出示指纹给用户核对，保存时只引用 identity_id——明文与私钥都不随表单走
+  const [identity, setIdentity] = useState<IdentityMeta | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const keyLabel = () => `${username.trim() || "key"}@${address.trim() || name.trim() || "host"}`;
+
+  // 粘贴/文件读入的私钥 → 凭据库身份；只回元数据，不出私钥明文
+  const importPem = async () => {
+    setErr(null);
+    if (!pem.includes("PRIVATE KEY")) { setErr("请先粘贴 OpenSSH / PEM 格式的私钥内容，或「从文件导入…」"); return; }
+    setBusy(true);
+    try {
+      const meta = await invoke<IdentityMeta>("create_identity", {
+        req: { Import: { label: keyLabel(), pem, passphrase: passphrase || null } },
+      });
+      setIdentity(meta);
+    } catch (e) {
+      setErr(friendlyError(String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // FR-2 生成 ed25519：vault 侧生成并加密落库，UI 只拿指纹
+  const genKey = async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const meta = await invoke<IdentityMeta>("create_identity", {
+        req: { Generate: { label: keyLabel(), kind: "Ed25519" } },
+      });
+      setIdentity(meta);
+    } catch (e) {
+      setErr(friendlyError(String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     setErr(null);
@@ -2326,11 +2364,8 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
       } else if (authMode === "agent") {
         auth = "Agent";
       } else {
-        if (!pem.includes("PRIVATE KEY")) { setErr("请粘贴 OpenSSH / PEM 格式的私钥内容"); setBusy(false); return; }
-        const meta = await invoke<IdentityMeta>("create_identity", {
-          req: { Import: { label: name.trim(), pem, passphrase: passphrase || null } },
-        });
-        auth = { Key: { identity_id: meta.id } };
+        if (!identity) { setErr("请先「导入并确认指纹」或「生成新密钥」"); setBusy(false); return; }
+        auth = { Key: { identity_id: identity.id } };
       }
       const hid = await invoke<string>("upsert_host", {
         host: {
@@ -2339,7 +2374,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
           charset,
         },
       });
-      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); }
+      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); }
       setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
       onSaved(hid, editing);
     } catch (e) {
@@ -2417,12 +2452,41 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
           style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
       ) : authMode === "agent" ? (
         <div className="dim" style={{ marginTop: 6 }}>连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。</div>
+      ) : identity ? (
+        <>
+          <div className="trust-row" style={{ marginTop: 6 }}>
+            <span className="ok">✓ 密钥已加密存入凭据库（{identity.label}）</span>
+            <span className="mono fp">指纹　{identity.fingerprint}</span>
+          </div>
+          <div className="dim" style={{ marginTop: 4 }}>保存后以此密钥登录；指纹用于核对凭据库里存的是哪把钥匙。</div>
+          <button className="ghost" style={{ marginTop: 6 }} disabled={busy} onClick={() => setIdentity(null)}>
+            更换密钥（重新粘贴 / 从文件导入 / 生成）
+          </button>
+        </>
       ) : (
         <>
-          <textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n粘贴私钥内容…"} value={pem}
+          <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
+            <label className="file-btn">
+              从文件导入…
+              <input type="file" style={{ display: "none" }} accept=".pem,.key,id_ed25519,id_rsa,id_ecdsa"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const r = new FileReader();
+                  r.onload = () => setPem(String(r.result ?? ""));
+                  r.readAsText(f);
+                  e.target.value = ""; // 允许同一文件二次选择仍触发 onChange
+                }} />
+            </label>
+            <button className="ghost" disabled={busy} onClick={genKey}>生成新密钥（ed25519）</button>
+          </div>
+          <textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n粘贴私钥内容，或点「从文件导入…」"} value={pem}
             onChange={(e) => setPem(e.target.value)} rows={4} style={{ marginTop: 6, width: "100%" }} />
-          <input type="password" placeholder="私钥口令（无可留空）" value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)} style={{ marginTop: 6 }} />
+          <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
+            <input type="password" placeholder="私钥口令（无可留空）" value={passphrase} style={{ flex: 1 }}
+              onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importPem()} />
+            <button disabled={busy} onClick={importPem}>{busy ? "处理中…" : "导入并确认指纹"}</button>
+          </div>
         </>
       )}
       {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
