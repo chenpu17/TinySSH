@@ -564,6 +564,108 @@ fn main() {
         .manage(terminal_input.clone())
         .on_page_load(|webview, payload| {
             eprintln!("[app] page load event: {:?} {:?}", payload.event(), webview.label());
+            // dev harness：TINYSSH_SMOKE=1 时页面就绪后注入驱动脚本，走完
+            // 「私钥导入→指纹确认→保存→TOFU 信任→建连」全流程（原生冒烟用；
+            // 进度写进 document.title，外部用 CGWindowList 轮询窗口标题对账）
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && std::env::var("TINYSSH_SMOKE").map(|v| v == "1").unwrap_or(false)
+                && webview.label() == "main"
+            {
+                let key = std::env::var("TINYSSH_SMOKE_KEY")
+                    .ok()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .unwrap_or_default();
+                // 私钥内容内联进脚本（base64/ASCII 行，无反引号；仍做转义兜底）
+                let key_js = key.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
+                let script = format!(
+                    r#"(function() {{
+  // sleep 原语走 beacon 服务端延时：等待期间页面事件循环自由运转（React 可渲染），
+  // 又不依赖 WKWebView 对注入脚本可能节流的 timer
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {{}});
+  const title = (s) => {{
+    document.title = 'SMOKE|' + s;
+    fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)).catch(() => {{}});
+  }};
+  const setVal = (el, v) => {{
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  }};
+  const setSel = (el, v) => {{
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  }};
+  const waitFor = async (fn, tries) => {{
+    for (let i = 0; i < tries; i++) {{ const v = fn(); if (v) return v; await sleep(100); }}
+    return null;
+  }};
+  (async () => {{
+    try {{
+      title('s1-opening');
+      // 等 React 挂载完成（page-load Finished 早于 bundle 执行完）再点
+      const openBtn = await waitFor(() => document.querySelector('button[aria-label="添加主机"]'), 60);
+      if (!openBtn) {{ title('FAIL-no-open-btn'); return; }}
+      openBtn.click();
+      await sleep(400);
+      const sel = await waitFor(() => document.querySelectorAll('.add-host select')[0], 20);
+      if (!sel) {{
+        title('FAIL-no-form|cards=' + document.querySelectorAll('.card').length
+          + '|ah=' + document.querySelectorAll('.add-host').length
+          + '|sel=' + document.querySelectorAll('select').length
+          + '|btns=' + [...document.querySelectorAll('button')].map(b => b.getAttribute('aria-label') || b.textContent.slice(0, 6)).join(',').slice(0, 120));
+        return;
+      }}
+      setSel(sel, 'key');
+      await sleep(300);
+      title('s2-key-mode');
+      const ta = await waitFor(() => document.querySelector('.add-host textarea'), 20);
+      if (!ta) {{ title('FAIL-no-textarea'); return; }}
+      setVal(ta, `{key_js}`);
+      title('s3-pasted');
+      const imp = await waitFor(() => [...document.querySelectorAll('.add-host button')]
+        .find(b => b.textContent.includes('导入并确认指纹')), 20);
+      if (!imp) {{ title('FAIL-no-import-btn'); return; }}
+      imp.click();
+      const trust = await waitFor(() => document.querySelector('.add-host .trust-row .fp'), 40);
+      if (!trust) {{ title('FAIL-import'); return; }}
+      title('s4-bound|' + (trust.textContent || '').trim().slice(0, 30));
+      // DOM 顺序：名称/地址/端口/用户名（口令类 input 排除）
+      const fields = [...document.querySelectorAll('.add-host input')].filter(i => i.type !== 'password');
+      if (fields.length < 4) {{ title('FAIL-fields'); return; }}
+      setVal(fields[0], 't40-真机密钥');
+      setVal(fields[1], '127.0.0.1');
+      setVal(fields[2], '2222');
+      setVal(fields[3], 'root');
+      title('s5-filled');
+      const save = await waitFor(() => [...document.querySelectorAll('.add-host button')]
+        .find(b => b.textContent.includes('保存并连接')), 20);
+      if (!save) {{ title('FAIL-no-save'); return; }}
+      save.click();
+      title('s6-saving');
+      const trustBtn = await waitFor(() => [...document.querySelectorAll('.hk-dialog button')]
+        .find(b => b.textContent.includes('信任并连接')), 80);
+      if (!trustBtn) {{ title('FAIL-no-tofu'); return; }}
+      title('s7-tofu-dialog');
+      trustBtn.click();
+      const term = await waitFor(() => {{
+        const t = document.querySelector('.term .xterm-rows');
+        return t && (t.textContent || '').length > 5 ? t : null;
+      }}, 100);
+      if (!term) {{ title('FAIL-no-term'); return; }}
+      title('s8-term-alive');
+      const focus = document.querySelector('.xterm-helper-textarea');
+      if (focus) focus.focus();
+      title('DONE');
+    }} catch (e) {{
+      title('FAIL|' + e);
+    }}
+  }})();
+}})();"#
+                );
+                std::fs::write("/tmp/t40_smoke/last_smoke_script.js", &script).ok();
+                let r = webview.eval(&script);
+                eprintln!("[app] smoke script injected: {r:?}");
+            }
         })
         .setup(move |app| {
             use tauri::Manager as _;
