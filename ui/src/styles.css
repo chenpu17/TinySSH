@@ -434,3 +434,15 @@ input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
 /* 主机编辑表单的信任状态行：确认标记 + 指纹原文（可复制核对） */
 .trust-row { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
 .trust-row .fp { color: var(--dim); word-break: break-all; user-select: text; cursor: text; }
+
+/* 首次接入提示（悬浮条，不占终端行）：此前直接写进终端流会把 shell 的光标视角带偏
+（用户走查实锤：提示语与后续输出全部落到屏中下方）。自动淡出，pointer-events 放行点击。 */
+.attach-hint {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  padding: 6px 14px; border-radius: 999px; font-size: 12px; color: var(--dim);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  pointer-events: none; z-index: 4; white-space: nowrap;
+  animation: attach-hint-fade 6s ease forwards;
+}
+@keyframes attach-hint-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }

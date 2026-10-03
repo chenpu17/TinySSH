@@ -49,6 +49,10 @@ export const IconSplit = (p: IconProps) => (
   <Svg {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></Svg>
 );
 
+export const IconSearch = (p: IconProps) => (
+  <Svg {...p}><circle cx="11" cy="11" r="7" /><line x1="20.5" y1="20.5" x2="16" y2="16" /></Svg>
+);
+
 export const IconStop = (p: IconProps) => (
   <Svg {...p}><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor" stroke="none" /></Svg>
 );

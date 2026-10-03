@@ -4,7 +4,7 @@ import * as demo from "./demo";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
   IconChevronUp, IconChevronDown, IconTerminal, IconArrowDown, IconUpload, IconDownload,
-  IconInbox, IconClock,
+  IconInbox, IconClock, IconSearch,
 } from "./icons";
 
 // 无 Tauri 环境（纯浏览器）走演示模式；Tauri 环境走真实核心
@@ -188,6 +188,10 @@ const friendlyError = (raw: string): string => {
   if (r.includes("dns") || r.includes("name or service") || r.includes("nodename"))
     return "地址无法解析：请检查主机名/IP 是否写对";
   if (r.includes("keychain") || r.includes("master")) return "凭据库解锁失败：" + raw;
+  // 凭据 blob 解不开 = 主密钥换了（用户走查实锤：密码主机全部由带 TINYSSH_MASTER_KEY 的
+  // 开发实例加密，正式启动（钥匙串路径）实例读不开，横幅直出 "存储错误: decrypt failed"）
+  if (r.includes("decrypt"))
+    return "凭据解密失败：本机主密钥与保存密码时不一致。编辑该主机重新输入密码并保存即可（会用当前密钥重新加密）；若多台主机同时如此，通常与应用启动方式变更有关";
   return raw;
 };
 
@@ -342,6 +346,12 @@ const THEMES: ThemePreset[] = [
 ];
 const themeById = (id: string): ThemePreset => THEMES.find((t) => t.id === id) ?? THEMES[0];
 
+// 快照回放的光标归位：ScreenSnapshot 的 cursor_row/col 是 shell 视角的屏幕位置（0 基），
+// 回放文本后用 CSI H 归位，xterm 光标才与远端一致（否则停在屏底）。
+type ScreenSnap = { text: string; cursor_row: number; cursor_col: number };
+const cursorRestore = (s: { cursor_row?: number; cursor_col?: number }) =>
+  `\x1b[${(s.cursor_row ?? 0) + 1};${(s.cursor_col ?? 0) + 1}H`;
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -366,6 +376,8 @@ export default function App() {
   const [downloadPath, setDownloadPath] = useState("");
   // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
   const [searchOpen, setSearchOpen] = useState(false);
+  // 首次接入提示（悬浮条，不占终端行——写进流会带偏 shell 光标视角）
+  const [attachHint, setAttachHint] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ resultCount: number; resultIndex: number | undefined } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -810,12 +822,22 @@ export default function App() {
       .catch(() => {});
   }, [inTauri, changeFontSize, changeTheme]);
 
-  // ⌘=/⌘− 字号步进、⌘0 重置。捕获层：终端聚焦时也生效，且先于 makeTerm 的
-  // 「其余 ⌘ 全拦截」分支——此后事件即被终止，不会落进终端。
+  // ⌘=/⌘− 字号步进、⌘0 重置；⌘F 全局打开终端搜索（用户走查实证：此前只挂终端焦点层，
+  // 焦点在命令框/主机列表时 ⌘F 无响应且无可见入口——R6 现实版）。
+  // 捕获层：终端聚焦时也生效，且先于 makeTerm 的「其余 ⌘ 全拦截」分支——
+  // 此后事件即被终止，不会落进终端。
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
       const k = ev.key.toLowerCase();
+      if (k === "f") {
+        if (!sidRef.current) return; // 无活动会话不劫持
+        ev.preventDefault();
+        ev.stopPropagation();
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+        return;
+      }
       if (k !== "=" && k !== "+" && k !== "-" && k !== "0") return;
       ev.preventDefault();
       ev.stopPropagation();
@@ -890,18 +912,27 @@ export default function App() {
         const u8 = msg instanceof Uint8Array ? msg : new Uint8Array(msg);
         term.write(decoder.decode(u8, { stream: true }));
       } else if (typeof msg === "string" && msg.includes("resync")) {
-        invoke<{ text: string }>("read_screen", { sid: sessionSid }).then((snap) => {
+        invoke<ScreenSnap>("read_screen", { sid: sessionSid }).then((snap) => {
           term.reset();
           term.write(snap.text);
+          term.write(cursorRestore(snap));
         });
       }
     };
+    // 先回放快照、后订阅实时流：反之竞争窗口内到达的字节会插在快照前渲染，错乱首屏。
+    // 仅首次接入回填当前屏（会话可能建立已久）；此后切走再切回不再重置——历史保留。
+    // 写完必须把光标归位到 Screen 的真实位置（cursor_row/col）：逐行写快照会把光标
+    // 推到屏底——「会话已接入」提示语与后续输出（含 attach 后 fit 触发的提示符重绘）
+    // 全部落到中下方，且 xterm 光标从此与 shell 视角错位（用户走查实锤的三提示符首屏）。
+    const snap = await invoke<ScreenSnap>("read_screen", { sid: sessionSid });
+    term.write(snap.text);
+    term.write(cursorRestore(snap));
     await invoke("subscribe_output", { sid: sessionSid, onEvent: channel });
     subscribedRef.current.add(sessionSid);
-    // 仅首次接入回填当前屏（会话可能建立已久）；此后切走再切回不再重置——历史保留
-    const snap = await invoke<{ text: string }>("read_screen", { sid: sessionSid });
-    term.write(snap.text);
-    term.write("\r\n\x1b[90m── 会话已接入终端：点击此区域直接打字，或用下方命令框 ──\x1b[0m\r\n");
+    // 首次接入提示改为不占终端行的悬浮条（自动淡出）：写进终端流会把 shell 的
+    // 光标视角带偏——后续远端输出全部接在提示语之后渲染。
+    setAttachHint(true);
+    window.setTimeout(() => setAttachHint(false), 6000);
   }, [makeTerm]);
 
   const attachSession = useCallback(async (newSid: string) => {
@@ -1504,6 +1535,14 @@ Authorization: Bearer <TOKEN>`}
           {sid && hasAgents && owner === "Human" && (
             <button onClick={handback}>交还 Agent</button>
           )}
+          {sid && (
+            <button
+              className={"ghost" + (searchOpen ? " ts-open" : "")}
+              title="搜索终端内容（⌘F）"
+              aria-label="搜索终端内容"
+              onClick={() => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 0); }}
+            ><IconSearch size={15} /></button>
+          )}
           <button
             className={"ghost" + (showSettings ? " ts-open" : "")}
             title="显示设置（字号 / 主题）"
@@ -1718,6 +1757,9 @@ Authorization: Bearer <TOKEN>`}
                 <div>松开上传到 {brief?.cwd ?? "远程主机"}</div>
               </div>
             </div>
+          )}
+          {attachHint && sid && (
+            <div className="attach-hint">会话已接入——点击终端区直接打字，或用下方命令框</div>
           )}
           {searchOpen && sid && (
             <div className="term-search">
@@ -2120,8 +2162,10 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
     try {
       let auth: Record<string, unknown> | string;
       if (editing) {
-        // 编辑不回传凭据（UI 不持明文）：后端 Keep 语义保持现有认证与密钥/密码
-        auth = "Keep";
+        // 编辑默认不回传凭据（UI 不持明文）：Keep 语义保持现有认证与密钥/密码；
+        // 密码主机填写了新密码 = 更换凭据（vault 侧新建加密 identity 替换——
+        // 主密钥不匹配/换密码场景的唯一入口，用户走查实锤需求）
+        auth = password ? { Password: { password } } : "Keep";
       } else if (authMode === "password") {
         if (!password) { setErr("请输入密码"); setBusy(false); return; }
         auth = { Password: { password } };
@@ -2140,7 +2184,8 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
           port: p, username: username.trim(), auth, tags: editHost?.tags ?? [],
         },
       });
-      if (!editing) { setName(""); setAddress(""); setPort("22"); setPassword(""); setPem(""); setPassphrase(""); }
+      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); }
+      setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
       onSaved(hid, editing);
     } catch (e) {
       setErr(friendlyError(String(e)));
@@ -2183,7 +2228,16 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
       </div>
       {editing ? (
         <>
-          <div className="dim" style={{ marginTop: 6 }}>认证凭据保持不变（{authLabel}）。如需更换凭据，删除该主机后重新添加。</div>
+          {editHost?.auth_type === "Password" ? (
+            <>
+              <input type="password" placeholder="更换密码——留空保持原密码" value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+              <div className="dim" style={{ marginTop: 4 }}>密码留空保持不变；填写即更换（用当前主密钥重新加密保存）。</div>
+            </>
+          ) : (
+            <div className="dim" style={{ marginTop: 6 }}>认证凭据保持不变（{authLabel}）。如需更换凭据，删除该主机后重新添加。</div>
+          )}
           {/* T34：信任可查证——编辑主机时出示 TOFU 信任状态与指纹原文 */}
           {editHost?.fingerprint ? (
             <div className="trust-row" style={{ marginTop: 6 }}>
