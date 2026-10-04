@@ -580,6 +580,33 @@ fn main() {
     let api = SessionManager::open(&db).expect("open storage");
     let terminal_input: Arc<TerminalInput> = Arc::default();
 
+    // T43（§6-7 进程模型收口）：MCP 端点装配进 GUI 进程——与 tauri 命令共享同一
+    // SessionManager 实例，Agent 的审批卡直接进本进程队列（GUI 即见即决），人类
+    // 决定即醒同一进程内的 Agent 等待。此前 GUI 只嵌核心不嵌端点，Agent 需另起
+    // `tinyssh serve`（跨进程审批不在 thin-slice 范围）。端口被占则递增（L1 §3.5）。
+    {
+        let resolver: tinyssh_mcp_server::TokenResolver = {
+            let vault = api.center.vault.clone();
+            Arc::new(move |t: &str| vault.resolve_token(t))
+        };
+        let api2 = api.clone();
+        // bind 失败降级不 panic（审核中-1）：打包后 stderr 无人接，全损的是
+        // 「应用打不开」；端点面板已有「未启动」兜底，如实降级可诊断
+        let bound = tauri::async_runtime::block_on(async move {
+            tinyssh_mcp_server::spawn_endpoint(api2, resolver, 8722).await
+        });
+        match bound {
+            Ok(port) => {
+                api.set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
+                eprintln!("[app] MCP endpoint in-process: http://127.0.0.1:{port}/mcp");
+            }
+            Err(e) => {
+                api.set_mcp_endpoint(String::new());
+                eprintln!("[app] MCP endpoint bind failed (8722..8753): {e} —— Agent 接入不可用，其余功能不受影响");
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState { api: api.clone() })
@@ -684,8 +711,13 @@ fn main() {
       if (cur) {{
         const es = await inv('sftp_list', {{ sid: cur, path: '/root' }});
         title('sftp|n=' + es.length + '|' + es.slice(0, 3).map((e) => (e.is_dir ? 'D:' : 'F:') + e.name).join(','));
-        return;
       }}
+      // T43：进程内 MCP 端点实证——mcp_status 应回真实绑定地址（含实际端口），
+      // 仍是占位文案（含「递增」字样）即 FAIL（审核低-3：占位回归要被门拦住）
+      const ms = await inv('mcp_status', {{}});
+      const ep = (ms && ms.endpoint) || '';
+      if (!ep || ep.includes('递增')) {{ title('FAIL-mcp-placeholder|' + ep); return; }}
+      title('mcp|' + ep);
       title('DONE');
     }} catch (e) {{
       title('FAIL|' + e);

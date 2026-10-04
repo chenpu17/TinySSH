@@ -1714,7 +1714,7 @@ export default function App() {
             </button>
             {showAgentHelp && (
               <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
-                <div>1. 终端运行 <code>tinyssh serve</code>（默认端口 8722，被占自动递增）；</div>
+                <div>1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；</div>
                 <div>2. 为 Agent 签发 Token（仅展示一次）：<code>tinyssh agent create &lt;id&gt; &lt;名称&gt;</code>；</div>
                 <div>3. 在 Agent 的 MCP 配置里填入端点与 Token：</div>
                 <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>

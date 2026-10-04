@@ -21,6 +21,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 session-api = { workspace = true }
 core-session = { workspace = true }
+tinyssh-mcp-server = { workspace = true }
 tinyssh-vault = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }

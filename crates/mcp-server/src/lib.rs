@@ -469,6 +469,44 @@ pub fn build_router(state: McpState, config: StreamableHttpServerConfig) -> axum
         ))
 }
 
+/// 端口占用递增绑定（L1 §3.5）：从 `port` 起逐 +1，最多试 32 个。
+/// `port = 0` 时由 OS 分配临时端口（测试用）。
+pub async fn bind_increment(port: u16) -> std::io::Result<(tokio::net::TcpListener, u16)> {
+    let mut actual = port;
+    loop {
+        match tokio::net::TcpListener::bind(("127.0.0.1", actual)).await {
+            Ok(l) => {
+                let bound = l.local_addr()?.port();
+                return Ok((l, bound));
+            }
+            Err(_) if port != 0 && actual < port.saturating_add(31) => {
+                // 占口提示（审核低-1：cli 重构后提示丢失，端口漂移无从排查）
+                eprintln!("[mcp] port {actual} occupied, trying next…");
+                actual += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// 进程内起 MCP HTTP 端点（T43 §6-7 收口：GUI 装配用——与 GUI 命令共享同一
+/// SessionApi 实例，Agent 卡片直接进本进程审批队列）。返回实际端口。
+/// 需在 tokio runtime 上下文中调用（内部 tokio::spawn 承载 axum::serve）。
+pub async fn spawn_endpoint(
+    api: Arc<dyn SessionApi>,
+    resolver: TokenResolver,
+    port: u16,
+) -> std::io::Result<u16> {
+    let state = McpState::new(api, resolver);
+    let config = StreamableHttpServerConfig::default().with_json_response(true);
+    let router = build_router(state, config);
+    let (listener, actual) = bind_increment(port).await?;
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    Ok(actual)
+}
+
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<McpState>,
     req: axum::http::Request<axum::body::Body>,

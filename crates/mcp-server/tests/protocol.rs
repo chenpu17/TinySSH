@@ -186,3 +186,51 @@ async fn spike3_protocol_compliance() {
 }
 
 use session_api::*;
+
+// T43（§6-7 收口）：GUI 进程内装配助手——bind_increment 递增语义 + spawn_endpoint
+// 全链（rmcp 客户端打到 spawn 起的端点，且与 GUI 共享同一 SessionManager 实例：
+// Agent 视角与人类视角同一内存态）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bind_increment_skips_occupied_ports() {
+    // 占住一个端口：bind_increment 从该端口起应递增（审核低-2：同测试二进制
+    // 并行 port-0 分配可能落在 occupied+1 上，精确断言属概率 flake——区间断言）
+    let l = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let occupied = l.local_addr().unwrap().port();
+    let (l2, got) = tinyssh_mcp_server::bind_increment(occupied).await.unwrap();
+    assert!(got > occupied && got <= occupied + 8, "被占端口应递增到附近端口：{occupied} → {got}");
+    drop(l2);
+    drop(l);
+
+    // 释放后的空闲端口应直接命中（不递增）
+    let (l3, got3) = tinyssh_mcp_server::bind_increment(occupied).await.unwrap();
+    assert_eq!(got3, occupied, "空闲起点应直接命中");
+    drop(l3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spawn_endpoint_serves_in_process_stack() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("t.db");
+    std::mem::forget(dir);
+    let m = core_session::SessionManager::open(&db).unwrap();
+    let token = m.center.vault.create_agent("gui-agent", "GUI 内嵌").unwrap();
+
+    let resolver: tinyssh_mcp_server::TokenResolver = {
+        let vault = m.center.vault.clone();
+        std::sync::Arc::new(move |t: &str| vault.resolve_token(t))
+    };
+    // GUI 同款装配：port=0（OS 分配）避免与并行测试抢 8722 段
+    let port = tinyssh_mcp_server::spawn_endpoint(m.clone(), resolver, 0)
+        .await
+        .unwrap();
+    let url = format!("http://127.0.0.1:{port}/mcp");
+
+    // rmcp 客户端打到端点：initialize + 一个无副作用工具（list_sessions）
+    let client = connect(&url, &token).await;
+    let r = client
+        .call_tool(call("list_sessions", serde_json::json!({})))
+        .await
+        .unwrap();
+    assert_ne!(r.is_error, Some(true), "list_sessions 经内嵌端点应成功");
+    client.cancel().await;
+}

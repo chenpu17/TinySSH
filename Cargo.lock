@@ -6153,6 +6153,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
+ "tinyssh-mcp-server",
  "tinyssh-vault",
  "tokio",
  "tokio-stream",

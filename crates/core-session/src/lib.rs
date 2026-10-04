@@ -40,6 +40,9 @@ pub struct SessionManager {
     pub center: Arc<ApprovalCenter>,
     approvals_rx_gen: StdMutex<()>,
     pub data_dir: PathBuf,
+    /// MCP 端点实际地址（T43 §6-7 收口）：由装配层在 bind 后写入（GUI 进程内嵌
+    /// 或 serve CLI）；未装配时为占位文案（L1 §3.5 端口递增，真实值以 bind 为准）。
+    mcp_endpoint: StdMutex<String>,
 }
 
 impl SessionManager {
@@ -67,6 +70,9 @@ impl SessionManager {
             center,
             approvals_rx_gen: StdMutex::new(()),
             data_dir: db_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            mcp_endpoint: StdMutex::new(
+                "http://127.0.0.1:8722/mcp（被占递增；以端点装配方输出为准）".into(),
+            ),
         }))
     }
 
@@ -74,9 +80,14 @@ impl SessionManager {
         &self.center.audit
     }
 
-    /// MCP 端点描述（serve 由 CLI/壳负责；此处提供提示文本）。
+    /// MCP 端点描述：装配层 bind 后写入实际地址（T43）；未装配时为占位提示。
     pub fn mcp_endpoint(&self) -> String {
-        "http://127.0.0.1:8722/mcp（被占递增；以 serve 输出为准）".into()
+        self.mcp_endpoint.lock().unwrap().clone()
+    }
+
+    /// 装配层写口（GUI 进程内嵌端点 / serve CLI 在 bind 成功后调用）。
+    pub fn set_mcp_endpoint(&self, url: impl Into<String>) {
+        *self.mcp_endpoint.lock().unwrap() = url.into();
     }
 
     /// 创建本地会话用的隐式主机记录。

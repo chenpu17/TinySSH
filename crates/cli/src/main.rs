@@ -142,6 +142,11 @@ fn db_path(cli: &Cli) -> Result<std::path::PathBuf> {
     match &cli.db {
         Some(p) => Ok(std::path::PathBuf::from(p)),
         None => {
+            // TINYSSH_DB 与 GUI 进程同语义（T43 复验 A2：自定义 DB 下 CLI 签发的
+            // token 要能被 GUI 内嵌端点解析到，两前端必须读同一个环境变量）
+            if let Ok(p) = std::env::var("TINYSSH_DB") {
+                return Ok(std::path::PathBuf::from(p));
+            }
             let dir = dirs::home_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join(".tinyssh");
@@ -176,18 +181,11 @@ async fn main() -> Result<()> {
 }
 
 async fn serve(m: Arc<SessionManager>, port: u16) -> Result<()> {
-    // 端口占用递增（L1 §3.5）
-    let mut actual = port;
-    let listener = loop {
-        match tokio::net::TcpListener::bind(("127.0.0.1", actual)).await {
-            Ok(l) => break l,
-            Err(_) if actual < port + 32 => {
-                eprintln!("port {actual} occupied, trying next…");
-                actual += 1;
-            }
-            Err(e) => return Err(e).context("bind"),
-        }
-    };
+    // 端口占用递增（L1 §3.5）——与 GUI 进程内装配（T43）共用同一助手
+    let (listener, actual) = tinyssh_mcp_server::bind_increment(port)
+        .await
+        .context("bind")?;
+    m.set_mcp_endpoint(format!("http://127.0.0.1:{actual}/mcp"));
     println!("TinySSH MCP endpoint: http://127.0.0.1:{actual}/mcp");
     println!("shim: TINYSSH_TOKEN=<token> TINYSSH_MCP_URL=http://127.0.0.1:{actual}/mcp tinyssh-mcp");
     let resolver: tinyssh_mcp_server::TokenResolver = {
