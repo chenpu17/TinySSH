@@ -1007,10 +1007,19 @@ async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (
         }
         Err(e) => {
             tracing::warn!(forward = fwd_id, error = %e, "direct_tcpip 通道开启失败");
-            // REP 精细化（复核中-3）：目标拒绝时 sshd 的 OPEN_FAILURE 常含 refused
-            // ——回 REP=5（connection refused）比笼统的 REP=1 更可诊断
+            // REP 精细化（复核中-3，复审①修正）：russh 丢弃服务器描述串、Display 恒为
+            // "Failed to open channel (枚举)"——字符串匹配 refused 永不命中（死代码）。
+            // 改 match 枚举：ConnectFailed（SSH reason 2 = 目标拒绝/不可达）→
+            // REP=5 connection refused，其余按 general failure REP=1
+            let rep: u8 = if matches!(
+                e,
+                russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)
+            ) {
+                5
+            } else {
+                1
+            };
             if socks5 {
-                let rep: u8 = if e.to_string().to_ascii_lowercase().contains("refused") { 5 } else { 1 };
                 let _ = tcp.write_all(&[5, rep, 0, 1, 0, 0, 0, 0, 0, 0]).await;
             }
             // 语义区分（复核中-3）：会话仍在而通道被拒 → 目标侧不可达（隧道本身

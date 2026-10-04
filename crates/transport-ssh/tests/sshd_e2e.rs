@@ -626,6 +626,20 @@ async fn forward_local_and_dynamic_roundtrip() {
         Ok(Ok(n)) => panic!("非 CONNECT 不应有应答数据（{} 字节）", n),
     }
 
+    // 目标拒绝 → REP=5 connection refused（复审①：字符串匹配是死代码，须枚举判定；
+    // 容器内 127.0.0.1:9 无服务，OpenSSH 对 direct-tcpip 连接失败回 reason 2）
+    let mut s3 = tokio::net::TcpStream::connect(("127.0.0.1", dp)).await.unwrap();
+    s3.write_all(&[5, 1, 0]).await.unwrap();
+    let mut m3 = [0u8; 2];
+    tokio::time::timeout(Duration::from_secs(5), s3.read_exact(&mut m3)).await.unwrap().unwrap();
+    let mut req3 = vec![5, 1, 0, 3, b"localhost".len() as u8];
+    req3.extend_from_slice(b"localhost");
+    req3.extend_from_slice(&9u16.to_be_bytes());
+    s3.write_all(&req3).await.unwrap();
+    let mut rep3 = [0u8; 10];
+    tokio::time::timeout(Duration::from_secs(5), s3.read_exact(&mut rep3)).await.unwrap().unwrap();
+    assert_eq!(rep3[1], 5, "目标拒绝应回 REP=5（connection refused）：{rep3:?}");
+
     channel.stop_forward(&fid2).await.unwrap();
     assert_port_closed(dp).await;
 

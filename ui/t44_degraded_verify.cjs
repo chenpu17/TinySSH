@@ -114,8 +114,8 @@ const normColor = (c) => {
   check("warn-icon-visible-in-row", layout.filter((l) => l.deg).every((l) => l.iconBox.w > 0 && l.iconBox.h > 0 && l.iconInRow),
     `icon=${JSON.stringify(layout.filter((l) => l.deg).map((l) => [l.iconBox.w.toFixed(0), l.iconBox.h.toFixed(0), l.iconInRow]))}`);
 
-  // 采集（非断言）：Degraded 行 hover title 口径
-  results.push(`INFO degraded-row-title（静态审发现：title 仍标「失败：」而非「降级：」）: ${JSON.stringify(degRows.map((r) => r.title.slice(0, 44)))}`);
+  // 采集（非断言）：Degraded 行 hover title 完整串（T44 修复后与行内同源，展示"· 降级："）
+  results.push(`INFO degraded-row-title: ${JSON.stringify(degRows.map((r) => r.title.slice(0, 44)))}`);
 
   // ── 4. 三套 chrome 截图 + 各自 color 复验 ──
   const switchTheme = async (label) => {

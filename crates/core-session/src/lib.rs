@@ -92,6 +92,21 @@ impl SessionManager {
         }
     }
 
+    /// 非 exec 类审批卡一律拒绝「编辑后批准」（T44 复审②扩展）：这类卡的参数
+    /// 无法从人类编辑后的文本回解，静默按原文执行会让审计「记 edited、实执行
+    /// 原文」失真——统一拦截并明确报错（调用方不执行任何动作）。exec 卡除外
+    /// （handle.rs 尊重 edited）。
+    pub fn reject_edited_approval(edited: &Option<String>, original: &str, what: &str) -> Result<()> {
+        if let Some(e) = edited {
+            if e != original {
+                return Err(Error::InvalidInput(format!(
+                    "{what}不支持编辑后批准——请直接批准或拒绝（参数无法从编辑文本回解）"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// MCP 端点描述：装配层 bind 后写入实际地址（T43）；未装配时为占位提示。
     pub fn mcp_endpoint(&self) -> String {
         self.mcp_endpoint.lock().unwrap().clone()
@@ -179,7 +194,16 @@ impl SessionManager {
                 }
                 Ok(())
             }
-            Ok(Ok(DecisionMsg::Decide(Decision::ApproveEdited(_)))) => Ok(()),
+            Ok(Ok(DecisionMsg::Decide(Decision::ApproveEdited(_)))) => {
+                // 主机参数无法从编辑文本回解（复审②）：拒绝执行。顺带补置卡状态
+                // ——原实现漏置，ApproveEdited 后卡在 UI 恒 Pending。
+                if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
+                    it.status = ApprovalStatus::ApprovedEdited;
+                }
+                Err(Error::InvalidInput(
+                    "create_session 审批不支持编辑后批准——请直接批准或拒绝（主机参数无法从编辑文本回解）".into(),
+                ))
+            }
             Ok(Ok(DecisionMsg::Decide(Decision::Deny))) => {
                 if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
                     it.status = ApprovalStatus::Denied;
@@ -656,9 +680,12 @@ impl SessionApi for SessionManager {
                             verdict: "pending: 会话级授权（一次审批，本次会话内有效）".into(),
                         }],
                     };
-                    let (trace, _) = h
+                    let (trace, edited) = h
                         .wait_approval(ctx, client_id, &"send_keys".to_string(), &format!("send_keys {keys:?}"), &eval, false, CancellationToken::new())
                         .await?;
+                    let _ = trace;
+                    // 键序列无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
+                    SessionManager::reject_edited_approval(&edited, &format!("send_keys {keys:?}"), "send_keys 审批")?;
                     let _ = trace;
                     h.send_keys_auth.lock().unwrap().insert(client_id.clone());
                     // 授权后本次按键照常执行（逐次写入留痕）
@@ -801,15 +828,10 @@ impl SessionApi for SessionManager {
             };
             let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_start".to_string(), &desc, &eval, false, CancellationToken::new()).await?;
             approval_id = trace.approval_id;
-            // 编辑后批准不支持（复核中-2/M2）：ForwardSpec 无法从人类编辑后的中文
-            // 描述回解——出现编辑即拒绝，审计不会出现「记了 edited、实建原始」的失真
-            if let Some(edited) = edited {
-                if edited != desc {
-                    return Err(Error::InvalidInput(
-                        "端口转发审批不支持编辑后批准——请直接批准或拒绝（转发参数无法从编辑文本回解）".into(),
-                    ));
-                }
-            }
+            // 编辑后批准不支持（复核中-2，复审②统一拦截）：ForwardSpec 无法从人类
+            // 编辑后的中文描述回解——出现编辑即拒绝，审计不会出现「记了 edited、
+            // 实建原始」的失真
+            SessionManager::reject_edited_approval(&edited, &desc, "端口转发审批")?;
             // 审批等待期间会话被关闭的极窄竞窗（复核中-1 双保险；主修在 close_session
             // 作废待决卡）：close 与 decide 并发时卡已生效、bind 仍会执行——此处复查
             if !self.sessions.lock().unwrap().contains_key(&sid) {
@@ -848,13 +870,7 @@ impl SessionApi for SessionManager {
             };
             let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_stop".to_string(), &desc, &eval, false, CancellationToken::new()).await?;
             approval_id = trace.approval_id;
-            if let Some(edited) = edited {
-                if edited != desc {
-                    return Err(Error::InvalidInput(
-                        "停止端口转发审批不支持编辑后批准——请直接批准或拒绝".into(),
-                    ));
-                }
-            }
+            SessionManager::reject_edited_approval(&edited, &desc, "停止端口转发审批")?;
         }
         h.channel.stop_forward(&fid).await?;
         let _ = h.center.audit.append(
@@ -1147,7 +1163,8 @@ impl SessionManager {
                 .wait_approval(ctx, client_id, &"transfer".to_string(), &format!("{op} {local:?} → {remote}"), &eval, false, CancellationToken::new())
                 .await?;
             let _ = trace;
-            let _ = e;
+            // 传输路径无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
+            SessionManager::reject_edited_approval(&e, &format!("{op} {local:?} → {remote}"), "传输审批")?;
         }
         let _ = edited.take();
 
@@ -1353,5 +1370,25 @@ impl SessionManager {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod t44_tests {
+    use super::*;
+
+    /// 编辑后批准统一拦截（复审②）：None（普通批准）/等文本编辑 → 放行；
+    /// 异文本编辑 → 拒。四类卡（转发/停转发/send_keys/传输）共用此口径。
+    #[test]
+    fn reject_edited_approval_gates_non_exec_cards() {
+        let orig = "端口转发 -L 127.0.0.1:8080 → 10.0.0.1:22";
+        assert!(SessionManager::reject_edited_approval(&None, orig, "端口转发审批").is_ok());
+        assert!(SessionManager::reject_edited_approval(&Some(orig.to_string()), orig, "端口转发审批").is_ok());
+        let err = SessionManager::reject_edited_approval(
+            &Some("端口转发 -L 127.0.0.1:9999 → 别处:22".to_string()), orig, "端口转发审批",
+        ).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("不支持编辑后批准"), "{msg}");
+        assert!(msg.contains("端口转发审批"), "报错应指明卡类：{msg}");
     }
 }

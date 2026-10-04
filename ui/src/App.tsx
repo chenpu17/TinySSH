@@ -97,7 +97,7 @@ const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
   approved_edited: { text: "✓ 批准（编辑后）", cls: "ok" },
   denied: { text: "✕ 拒绝", cls: "err" },
   timeout: { text: "⏱ 超时未审", cls: "err" },
-  voided: { text: "⊘ 已作废（接管）", cls: "dim" },
+  voided: { text: "⊘ 已作废（接管/会话关闭）", cls: "dim" },
 };
 // 文件传输（T20）：核心返回的句柄 + UI 卡片状态（终态由审计事件按 id 对账）
 type TransferHandle = { id: string; session_id: string; kind: "Upload" | "Download"; local: string; remote: string };

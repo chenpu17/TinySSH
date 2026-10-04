@@ -670,7 +670,7 @@ pub enum Error {
     #[error("控制权在人类（已接管）")]
     ControlTakenByHuman,
     /// 交接前未开始的请求因接管作废（不自动执行），附最新简报。
-    #[error("请求已因人工接管作废，请读取简报后重新决定")]
+    #[error("请求已作废（人工接管或会话关闭）——如需继续请重新发起")]
     VoidedByHandback { brief: Box<SessionBrief> },
     /// 会话处于重确认态：仅允许内置只读核实命令白名单。
     #[error("重连后需重确认：当前仅允许内置只读核实命令")]

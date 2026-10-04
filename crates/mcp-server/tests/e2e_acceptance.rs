@@ -729,6 +729,33 @@ async fn journey5_agent_forward_approval_flow() {
         .unwrap();
     assert_eq!(structured(&r)["forwards"].as_array().unwrap().len(), 0, "拒绝后不应有转发");
 
+    // ---- 编辑后批准被后端拦截（复审②）：转发参数无法从编辑文本回解，不得静默
+    // 按原文执行（UI 已按 editable 隐藏编辑钮，此处证后端防线对任何前端成立）----
+    let lp2 = t44_free_port();
+    let client_e = connect(&url, &token).await;
+    let sid_e = sid.clone();
+    let jh_e = tokio::spawn(async move {
+        client_e
+            .call_tool(call("forward_start", serde_json::json!({
+                "session_id": sid_e,
+                "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp2,
+                                      "target_host": "127.0.0.1", "target_port": 22 } }
+            })))
+            .await
+    });
+    let card = t44_wait_card(&m, &human, &format!("端口转发 -L 127.0.0.1:{lp2}")).await;
+    m.decide_approval(&human, card, Decision::ApproveEdited("端口转发 -L 127.0.0.1:9999 → 别的目标:22".into()))
+        .await
+        .unwrap();
+    let r = jh_e.await.unwrap().unwrap();
+    let kind = err_kind(&r).unwrap_or_default();
+    assert!(kind.contains("Invalid") || kind.contains("invalid"), "编辑后批准应被拒：{kind}");
+    let r = client
+        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+        .await
+        .unwrap();
+    assert_eq!(structured(&r)["forwards"].as_array().unwrap().len(), 0, "编辑拦截后不应有转发（原文也不建）");
+
     // ---- 会话关闭作废滞留卡（T44 复核中-1）：堵「批了已死会话的卡 → 僵尸监听」----
     // 此前 close_session 不作废 pending 卡，human 仍可批准 → transport 层 bind 不查
     // 会话状态 → 造出 forwards_list 查不到、无入口可停的监听（泄漏到进程退出）
