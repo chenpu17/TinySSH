@@ -965,6 +965,7 @@ T37/T38 的 UI 变更此前均为「作者自写自验」，本轮补上两个�
 - **代码审核（code-reviewer，实读 tauri 2.12.0 源码验证 block_on 语义）**：判定通过。修复——**中-1 GUI bind 失败即 panic 且打包后静默死**（改为降级：eprintln + 端点置空，UI 面板已有「未启动」兜底，其余功能不受影响；披露③随之关闭）、**低-1 CLI 占口提示丢失**（bind_increment 递增臂补 eprintln）、**低-2 bind 测试精确 +1 断言的概率 flake 窗口**（改区间断言 occupied<got≤occupied+8）、**低-3 冒烟 mcp 步骤无占位断言**（脚本补 `含「递增」即 FAIL-mcp-placeholder`，占位回归被自动化门拦住）。记录不修——低-4 protocol 测试 tempdir 残留（沿 spawn_stack 既有模式）。审核另实证为正常：block_on 惰性建全局多线程 runtime 无死锁无 task 回收（读 tauri-2.12.0 async_runtime.rs）、set_mcp_endpoint 写口严格先于任何 webview 存在（无竞态）、SessionManager 唯一构造点 open() 全覆盖、双实例同 DB 写经 WAL+busy_timeout 串行等待不炸、Bearer 门覆盖全部路由且仅绑回环。
 - **视觉复验（general-purpose）**：判定通过——文案/语义审 5/5（三步连贯、`agent create` 默认库与 GUI 同库实证比对、进程模型文案一致）、playwright 走查 15/15（含收起/展开往返与零溢出 DOM 检测）、t42 回归 17/17。提示级两条：**A2 已修**（CLI 补读 `TINYSSH_DB` 环境变量，与 GUI 同语义——自定义 DB 下签发的 token 才能被内嵌端点解析）；A5 保留（demo 端点串带「（演示模式）」后缀系防误导标记，复制无真实用途）。
 - **收口**：cargo 全量带守卫 **83 例** EXIT=0（protocol 3 + e2e 5 + 全部既有；一次中间统计 82 系管道输出交错丢行，复跑两轮均 83/0 失败、31 个结果行齐全）。
+- **真机补口（用户复核追问后增证）**：「Agent 持真实 token 经内嵌端点完成 MCP 握手」原为组合论证覆盖（rmcp 客户端测试走同一 `spawn_endpoint` 助手 + e2e_acceptance 同构拓扑 + 真机端点 401 鉴权）——补真机直接证据：smoke harness 增 `issue_agent` 步骤（token 经本机 beacon 交 shell，隔离 DB 跑完即弃），shell 侧带真实 Bearer token 向内嵌端点发 MCP initialize → **200 + mcp-session-id + serverInfo（tinyssh-mcp 0.9.0，tools 能力，中文 instructions）**。至此「GUI 进程 = Agent 可用的完整 MCP 服务端」在真实二进制上三证齐全（端点存活/鉴权正确/握手成功）。
 
 
 ## 6. 已知边界（诚实清单）

@@ -718,6 +718,11 @@ fn main() {
       const ep = (ms && ms.endpoint) || '';
       if (!ep || ep.includes('递增')) {{ title('FAIL-mcp-placeholder|' + ep); return; }}
       title('mcp|' + ep);
+      // 补口（T43 增记）：签发真实 token 经 beacon 交给 shell 侧，由外部带 token
+      // 发 MCP initialize——补齐「真 token 经内嵌端点握手成功」的真机直接证据
+      // （token 仅落隔离 DB /tmp/smoke + 本机 beacon，跑完即弃）
+      const tok = await inv('issue_agent', {{ id: 'smoke-agent', label: '真机冒烟 Agent' }});
+      title('agent-token|' + (tok || 'NONE'));
       title('DONE');
     }} catch (e) {{
       title('FAIL|' + e);
