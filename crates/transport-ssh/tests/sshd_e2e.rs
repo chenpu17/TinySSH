@@ -660,6 +660,19 @@ async fn forward_remote_roundtrip() {
     assert_eq!(got.trim_end(), "T42-REMOTE-MARKER", "远程转发回程应读到标记");
     marker_task.await.unwrap();
 
+    // UI 实际 wire 值 listen_addr=""（服务器默认绑定）也应被接受——锁住 UI↔transport 契约
+    let fid_empty = channel
+        .start_forward(session_api::ForwardSpec::Remote {
+            listen_addr: "".into(), listen_port: 2224,
+            target_host: "127.0.0.1".into(), target_port: mp,
+        })
+        .await
+        .unwrap();
+    let infos2 = channel.list_forwards().await.unwrap();
+    let e2 = infos2.iter().find(|f| f.id == fid_empty).expect("空地址远程转发应在列");
+    assert_eq!(e2.state, "Listening", "listen_addr=\"\" 应被服务器接受（否则：{:?}）", e2.error);
+    channel.stop_forward(&fid_empty).await.unwrap();
+
     // 停止：cancel_tcpip_forward 后容器监听关闭。注意 docker 端口代理在宿主侧
     // 恒监听 2223（connect 总成功）——「关」的判据是无数据（超时/EOF/重置），
     // 而非连接被拒。

@@ -496,7 +496,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === args?.sid);
       if (!s) throw new Error("SessionNotFound（演示）");
       const i = s.forwards.findIndex((f) => f.id === args?.id);
-      if (i < 0) throw new Error("ForwardNotFound（演示）");
+      if (i < 0) throw new Error("转发不存在或已停止（演示）");
       const [f] = s.forwards.splice(i, 1);
       audit("human", "forward_stop", null, null, s.id, { forward: f.id });
       return null;

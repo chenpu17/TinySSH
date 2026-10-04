@@ -28,6 +28,18 @@ const EXE = "/Users/chenpu/Library/Caches/ms-playwright/chromium_headless_shell-
   await fwdSec().locator("button:has-text(\"启动\")").waitFor({ timeout: 8000 });
   check("form-visible", true);
 
+  // ── 视觉复验 R1/R3 回归锁：-L 表单不挤压（启动按钮与下拉同 y、目标主机框 ≥80px）──
+  const geo = await fwdSec().evaluate((sec) => {
+    const sel = sec.querySelector("select");
+    const btn = [...sec.querySelectorAll("button")].find((b) => b.textContent === "启动");
+    const host = sec.querySelector('input[placeholder="目标主机"]');
+    const r = (el) => el.getBoundingClientRect();
+    return { selY: r(sel).y, btnY: r(btn).y, hostW: r(host).width, selH: r(sel).height, hostH: r(host).height };
+  });
+  check("form-layout-no-squeeze", Math.abs(geo.selY - geo.btnY) < 4 && geo.hostW >= 80,
+    `按钮y差${Math.abs(geo.selY - geo.btnY).toFixed(0)}px 主机框宽${geo.hostW.toFixed(0)}px`);
+  check("form-control-height-aligned", Math.abs(geo.selH - geo.hostH) < 1, `select${geo.selH.toFixed(1)} vs input${geo.hostH.toFixed(1)}`);
+
   // ── 2. 校验：非法端口 → toast，不加行 ──
   const portInput = fwdSec().locator("input").first();
   await portInput.fill("notaport");
@@ -45,6 +57,9 @@ const EXE = "/Users/chenpu/Library/Caches/ms-playwright/chromium_headless_shell-
   await page.waitForSelector(".fwd-row", { timeout: 8000 });
   const localRow = await page.$eval(".fwd-row", (el) => el.textContent ?? "");
   const localBadge = await page.$eval(".fwd-row .fwd-kind", (el) => el.textContent ?? "");
+  // 视觉复验 R2 回归锁：徽标描边真实渲染（--line 未定义曾使 border 整条失效）
+  const badgeBorder = await page.$eval(".fwd-row .fwd-kind", (el) => getComputedStyle(el).borderTopWidth);
+  check("badge-border-rendered", badgeBorder !== "0px", `borderTopWidth=${badgeBorder}`);
   check("local-row-text", localRow.includes("127.0.0.1:18080 → 10.0.0.5:80"), localRow.replace(/\s+/g, " ").slice(0, 60));
   check("local-row-state", localRow.includes("监听中") && localBadge.trim() === "-L", `${localBadge}/${localRow.includes("监听中")}`);
 

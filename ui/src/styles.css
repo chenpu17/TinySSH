@@ -572,10 +572,12 @@ textarea {
 
 /* T42 端口转发（FR-8）*/
 .fwd-form { gap: 4px; align-items: center; }
-.fwd-form select { flex: none; width: 88; }
+.fwd-form select { flex: none; width: 88px; }
 .fwd-form input { min-width: 0; }
+/* 原生 select 比 input 高 1px（视觉复验 R3）：统一盒高对齐 */
+.fwd-form select, .fwd-form input { height: 28px; box-sizing: border-box; }
 .fwd-row { margin-top: 6px; flex-wrap: nowrap; }
-.fwd-kind { flex: none; width: 26px; text-align: center; font-weight: 700; font-size: 11px; border: 1px solid var(--line); border-radius: 5px; padding: 1px 0; }
+.fwd-kind { flex: none; width: 26px; text-align: center; font-weight: 700; font-size: 11px; border: 1px solid var(--border); border-radius: 5px; padding: 1px 0; }
 .fwd-kind.local { color: var(--blue); border-color: var(--blue); }
 .fwd-kind.remote { color: var(--warn); border-color: var(--warn); }
 .fwd-kind.dynamic { color: var(--ok); border-color: var(--ok); }

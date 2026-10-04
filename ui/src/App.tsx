@@ -1354,13 +1354,14 @@ export default function App() {
   }, [sid, brief?.cwd, sftpEntries, sftpLoading, sftpErr, loadDir]);
 
   // ---- 端口转发（T42 FR-8）----
-  const refreshForwards = useCallback(async () => {
+  const refreshForwards = useCallback(async (): Promise<ForwardInfo[]> => {
     const s = sidRef.current;
-    if (!s) { setForwards([]); return; }
+    if (!s) { setForwards([]); return []; }
     try {
       const fs2 = await invoke<ForwardInfo[]>("list_forwards", { sid: s });
       if (sidRef.current === s) setForwards(fs2);
-    } catch { /* 会话已关 */ }
+      return fs2;
+    } catch { return []; /* 会话已关 */ }
   }, []);
 
   useEffect(() => {
@@ -1389,9 +1390,16 @@ export default function App() {
         : { Local: { listen_addr: "127.0.0.1", listen_port: p, target_host: fwdHost.trim(), target_port: tp } };
     setFwdBusy(true);
     try {
-      await invoke("start_forward", { sid: s, spec });
+      // 远程转发「请求被服务器拒绝」不抛错（条目保留为 Failed 可见可停）——
+      // 按 refresh 后的实际状态决定 toast（审核中-2：曾对 Failed 也绿「已启动」并清输入）
+      const fid = await invoke<string>("start_forward", { sid: s, spec });
+      const fs2 = await refreshForwards();
+      const st = fs2.find((f) => f.id === fid);
+      if (st && st.state !== "Listening") {
+        pushToast("err", `转发启动失败：${st.error ?? "未知错误"}`);
+        return; // 输入保留，用户改端口/主机即可重试（finally 里复位 busy）
+      }
       setFwdPort(""); setFwdHost(""); setFwdTPort("");
-      await refreshForwards();
       pushToast("ok", fwdKind === "Local" ? `本地转发已启动：127.0.0.1:${p}` : fwdKind === "Remote" ? `远程转发已启动：远端 :${p}` : `SOCKS5 已启动：127.0.0.1:${p}`);
     } catch (e) {
       pushToast("err", `转发启动失败：${friendlyError(String(e))}`);
@@ -2328,7 +2336,7 @@ Authorization: Bearer <TOKEN>`}
                   {t.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="xfer-name mono">{t.name}</div>
+                  <div className="xfer-name mono" title={t.name}>{t.name}</div>
                   <div className="dim mono xfer-sub">
                     {t.status === "running" && "传输中…"}
                     {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)} · ${t.kind === "Upload" ? t.remote : t.local}`}
@@ -2353,37 +2361,39 @@ Authorization: Bearer <TOKEN>`}
               <div className="side-quiet">连接 SSH 会话后可建本地 / 远程 / SOCKS5 转发，随会话断开自动失效、重连自动恢复。</div>
             ) : (
               <>
+                {/* 两行布局（视觉复验 R1）：右栏 280px 下 5 控件单行必挤压——
+                    A 行 = 类型 + 监听端口 + 启动；B 行 = 目标主机 + 端口（仅 -L/-R） */}
                 <div className="row fwd-form">
                   <select value={fwdKind} onChange={(e) => setFwdKind(e.target.value as "Local" | "Remote" | "Dynamic")} title="转发类型">
                     <option value="Local">本地 -L</option>
                     <option value="Remote">远程 -R</option>
                     <option value="Dynamic">SOCKS5 -D</option>
                   </select>
-                  <input className="mono" style={{ width: 74 }} placeholder={fwdKind === "Remote" ? "远端端口" : "本地端口"}
+                  <input className="mono" style={{ width: 74, flex: "none" }} placeholder={fwdKind === "Remote" ? "远端端口" : "本地端口"}
                     value={fwdPort} onChange={(e) => setFwdPort(e.target.value)} />
-                  {fwdKind !== "Dynamic" && (
-                    <>
-                      <input className="mono" style={{ flex: 1, minWidth: 0 }} placeholder={fwdKind === "Remote" ? "回到本机·主机" : "目标主机"}
-                        value={fwdHost} onChange={(e) => setFwdHost(e.target.value)} />
-                      <input className="mono" style={{ width: 64 }} placeholder="端口"
-                        value={fwdTPort} onChange={(e) => setFwdTPort(e.target.value)} />
-                    </>
-                  )}
                   <button disabled={fwdBusy} onClick={() => void addForward()}>启动</button>
                 </div>
+                {fwdKind !== "Dynamic" && (
+                  <div className="row fwd-form" style={{ marginTop: 4 }}>
+                    <input className="mono" style={{ flex: 1, minWidth: 0 }} placeholder={fwdKind === "Remote" ? "回到本机·主机" : "目标主机"}
+                      value={fwdHost} onChange={(e) => setFwdHost(e.target.value)} />
+                    <input className="mono" style={{ width: 64, flex: "none" }} placeholder="端口"
+                      value={fwdTPort} onChange={(e) => setFwdTPort(e.target.value)} />
+                  </div>
+                )}
                 {forwards.length === 0 && <div className="side-quiet">暂无转发。</div>}
                 {forwards.map((f) => {
                   const k = "Local" in f.spec ? "Local" : "Remote" in f.spec ? "Remote" : "Dynamic";
                   const v = (f.spec as Record<string, { listen_port: number; target_host?: string; target_port?: number }>)[k];
+                  // 窄栏下长目标串会省略号截断——title 携带完整串（视觉审发现）
+                  const fwdText = k === "Local" ? `127.0.0.1:${v.listen_port} → ${v.target_host}:${v.target_port}`
+                    : k === "Remote" ? `远端 :${v.listen_port} → 本地 ${v.target_host}:${v.target_port}`
+                    : `SOCKS5 127.0.0.1:${v.listen_port}`;
                   return (
-                    <div className="card row fwd-row" key={f.id}>
+                    <div className="card row fwd-row" key={f.id} title={`${fwdText} · ${f.state === "Listening" ? "监听中" : `失败：${f.error ?? "未知错误"}`}`}>
                       <span className={"fwd-kind " + k.toLowerCase()}>{k === "Local" ? "-L" : k === "Remote" ? "-R" : "-D"}</span>
                       <div style={{ flex: 1, minWidth: 0 }} className="mono">
-                        <div className="xfer-name">
-                          {k === "Local" && `127.0.0.1:${v.listen_port} → ${v.target_host}:${v.target_port}`}
-                          {k === "Remote" && `远端 :${v.listen_port} → 本地 ${v.target_host}:${v.target_port}`}
-                          {k === "Dynamic" && `SOCKS5 127.0.0.1:${v.listen_port}`}
-                        </div>
+                        <div className="xfer-name">{fwdText}</div>
                         <div className={"dim mono xfer-sub"}>
                           {f.state === "Listening" ? "监听中"
                             : `失败：${f.error ?? "未知错误"}`}

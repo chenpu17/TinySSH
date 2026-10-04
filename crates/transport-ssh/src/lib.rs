@@ -373,7 +373,8 @@ impl SshChannel {
                 .collect()
         };
         for (id, addr, port, thost, tport) in remotes {
-            let r = self.request_remote(&addr, port, &thost, tport).await;
+            // checked：快照后条目可能已被 stop 删除（审核中-5 幽灵监听防护）
+            let r = self.request_remote_checked(&id, &addr, port, &thost, tport).await;
             let mut m = self.forwards.lock().unwrap();
             if let Some(e) = m.get_mut(&id) {
                 match r {
@@ -392,6 +393,24 @@ impl SshChannel {
             .map_err(|e| format!("服务器拒绝监听 {addr}:{port}：{e}"))?;
         self.router.lock().unwrap().insert(port as u32, (thost.to_string(), tport));
         Ok(())
+    }
+
+    /// request_remote + 停止竞态防护（审核中-5）：重连恢复与 stop_forward 并发时，
+    /// 快照后条目可能已被 stop 删除——请求成功但条目不在 = 幽灵监听（服务器在听、
+    /// 回程路由挂着、列表为空无从停）。此时立即撤回监听，不上路由。
+    async fn request_remote_checked(
+        &self, id: &str, addr: &str, port: u16, thost: &str, tport: u16,
+    ) -> std::result::Result<(), String> {
+        let r = self.request_remote(addr, port, thost, tport).await;
+        if r.is_ok() && self.forwards.lock().unwrap().get(id).is_none() {
+            let guard = self.handle.lock().await;
+            if let Some(h) = guard.as_ref() {
+                let _ = h.cancel_tcpip_forward(addr.to_string(), port as u32).await;
+            }
+            self.router.lock().unwrap().remove(&(port as u32));
+            return Err("转发已被停止（请求成功后撤销）".into());
+        }
+        r
     }
 
     /// keyboard-interactive 认证循环（路线图⑩ 2FA）。
@@ -791,7 +810,9 @@ impl ChannelHandle for SshChannel {
                     .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
                 let cancel = CancellationToken::new();
                 let arc = self.self_arc()?;
-                tokio::spawn(run_local_forward(arc, listener, None, cancel.clone()));
+                // 目标在 spawn 时捕获（审核中-1）：条目 spec 从不变更，逐连接按端口反查
+                // HashMap 只会引入同端口多绑定（127.0.0.1 与 0.0.0.0 可并存）的串台
+                tokio::spawn(run_local_forward(arc, listener, Some((target_host, target_port)), cancel.clone()));
                 insert_entry(&self.forwards, &id, spec, cancel);
             }
             ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
@@ -813,7 +834,7 @@ impl ChannelHandle for SshChannel {
                     .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
                 let cancel = CancellationToken::new();
                 let arc = self.self_arc()?;
-                tokio::spawn(run_local_forward(arc, listener, Some(()), cancel.clone()));
+                tokio::spawn(run_local_forward(arc, listener, None, cancel.clone()));
                 insert_entry(&self.forwards, &id, spec, cancel);
             }
         }
@@ -871,13 +892,14 @@ impl SshChannel {
     }
 }
 
-/// 本地/Dynamic 转发监听任务：accept → （SOCKS5 时先握手取目标）→ 每连接开
-/// direct_tcpip 通道双向泵。逐连接取当前 handle——重连后自动用新连接，监听不中断。
-#[allow(clippy::too_many_arguments)]
+/// 本地/Dynamic 转发监听任务：accept → （SOCKS5 时先握手取目标，否则用 spawn 时
+/// 捕获的固定目标）→ 每连接开 direct_tcpip 通道双向泵。逐连接取当前 handle——
+/// 重连后自动用新连接，监听不中断。
 async fn run_local_forward(
     this: Arc<SshChannel>,
     listener: TcpListener,
-    dynamic: Option<()>,
+    // 固定目标（-L）。None = Dynamic（SOCKS5 按连接解析目标）
+    fixed: Option<(String, u16)>,
     cancel: CancellationToken,
 ) {
     loop {
@@ -892,33 +914,19 @@ async fn run_local_forward(
             },
         };
         let this2 = this.clone();
+        let fixed2 = fixed.clone();
         tokio::spawn(async move {
-            let (host, port) = if dynamic.is_some() {
+            let (host, port) = if let Some(t) = fixed2 {
+                t
+            } else {
                 match socks5_handshake(&mut tcp).await {
                     Some(x) => x,
                     None => return, // 握手失败：直接断开（SOCKS 客户端会报错）
                 }
-            } else {
-                fixed_target(&this2, &tcp).await
             };
             pump_direct(&this2, tcp, (host, port)).await;
         });
     }
-}
-
-/// local（非 dynamic）转发的固定目标——按监听端口反查条目（每连接查，条目可变）
-async fn fixed_target(this: &Arc<SshChannel>, _tcp: &TcpStream) -> (String, u16) {
-    // 监听 socket 的本地端口即 listen_port
-    let local_port = _tcp.local_addr().map(|a| a.port()).unwrap_or(0);
-    let m = this.forwards.lock().unwrap();
-    for e in m.values() {
-        if let ForwardSpec::Local { listen_port, target_host, target_port, .. } = &e.spec {
-            if *listen_port == local_port {
-                return (target_host.clone(), *target_port);
-            }
-        }
-    }
-    (String::new(), 0)
 }
 
 async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (String, u16)) {
