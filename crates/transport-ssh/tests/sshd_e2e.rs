@@ -559,6 +559,34 @@ async fn forward_local_and_dynamic_roundtrip() {
     assert!(channel.list_forwards().await.unwrap().is_empty(), "停止后列表应为空");
     assert_port_closed(lp).await;
 
+    // ---- 目标不可达 → Degraded 且文案指向目标侧（T44 复核中-3）：隧道健康、
+    // 目标端口关闭时不得误导为「隧道降级」（会话仍在 → 目标侧分支）----
+    let lp_bad = free_port();
+    let fid_bad = channel
+        .start_forward(session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: lp_bad,
+            target_host: "127.0.0.1".into(), target_port: 9, // 容器内无服务 → sshd 回 open failure
+        })
+        .await
+        .unwrap();
+    let mut tbad = tokio::net::TcpStream::connect(("127.0.0.1", lp_bad)).await.unwrap();
+    let mut bbuf = [0u8; 16];
+    let _ = tokio::time::timeout(Duration::from_secs(5), tbad.read(&mut bbuf)).await; // 失败即断开
+    let mut deg: Option<Option<String>> = None;
+    for _ in 0..30 {
+        let infos = channel.list_forwards().await.unwrap();
+        if let Some(e) = infos.iter().find(|f| f.id == fid_bad) {
+            if e.state == "Degraded" {
+                deg = Some(e.error.clone());
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let deg = deg.expect("目标拒绝后条目应转 Degraded");
+    assert!(deg.as_deref().unwrap_or("").contains("目标不可达"), "文案应指向目标侧而非隧道：{deg:?}");
+    channel.stop_forward(&fid_bad).await.unwrap();
+
     // ---- SOCKS5 -D：手动 RFC1928 握手（域名目标 localhost:22）读 banner ----
     let dp = free_port();
     let fid2 = channel

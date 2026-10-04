@@ -394,7 +394,7 @@ impl SessionHandle {
                     tinyssh_approval::SegmentVerdict::NeedsApproval => {
                         let (t, edited) = self
                             .wait_approval(
-                                actor, client_id, &exec_id, &effective_cmd, &eval, cancel.clone(),
+                                actor, client_id, &exec_id, &effective_cmd, &eval, true, cancel.clone(),
                             )
                             .await?;
                         edited_cmd = edited;
@@ -464,6 +464,8 @@ impl SessionHandle {
     }
 
     /// 创建并等待审批决策（120s 超时 → ApprovalTimeout；接管 → Voided）。
+    /// `editable`：该卡是否支持编辑后批准（exec true；转发/传输 false——
+    /// 参数无法从编辑文本回解，T44 复核中-2）。
     pub async fn wait_approval(
         &self,
         actor: &Actor,
@@ -471,6 +473,7 @@ impl SessionHandle {
         exec_id: &ExecId,
         cmd: &str,
         eval: &tinyssh_approval::Evaluation,
+        editable: bool,
         cancel: CancellationToken,
     ) -> Result<(ApprovalTrace, Option<String>)> {
         let item = ApprovalItem {
@@ -482,6 +485,7 @@ impl SessionHandle {
             target_summary: target_summary(cmd),
             segment_report: eval.segments.clone(),
             session_busy: self.screen.lock().await.blocks.has_open_block(),
+            editable,
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
         };

@@ -162,7 +162,7 @@ pub struct SshChannel {
 /// 转发条目：状态与取消令牌（local/dynamic 监听任务与 remote 的重注册都以 id 寻址）
 struct FwdEntry {
     spec: ForwardSpec,
-    /// ("Listening"|"Failed", 失败原因)
+    /// ("Listening"|"Degraded"|"Failed", 原因)——Degraded 为数据面暂不可用（可恢复）
     state: StdMutex<(String, Option<String>)>,
     cancel: CancellationToken,
 }
@@ -805,6 +805,7 @@ impl ChannelHandle for SshChannel {
                 if listen_port == 0 || target_host.trim().is_empty() || target_port == 0 {
                     return Err(Error::InvalidInput("端口须为 1–65535，目标主机不能为空".into()));
                 }
+                validate_local_listen_addr(&listen_addr)?;
                 let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
                     .await
                     .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
@@ -812,7 +813,7 @@ impl ChannelHandle for SshChannel {
                 let arc = self.self_arc()?;
                 // 目标在 spawn 时捕获（审核中-1）：条目 spec 从不变更，逐连接按端口反查
                 // HashMap 只会引入同端口多绑定（127.0.0.1 与 0.0.0.0 可并存）的串台
-                tokio::spawn(run_local_forward(arc, listener, Some((target_host, target_port)), cancel.clone()));
+                tokio::spawn(run_local_forward(arc, listener, Some((target_host, target_port)), id.clone(), cancel.clone()));
                 insert_entry(&self.forwards, &id, spec, cancel);
             }
             ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
@@ -829,12 +830,13 @@ impl ChannelHandle for SshChannel {
                 if listen_port == 0 {
                     return Err(Error::InvalidInput("端口须为 1–65535".into()));
                 }
+                validate_local_listen_addr(&listen_addr)?;
                 let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
                     .await
                     .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
                 let cancel = CancellationToken::new();
                 let arc = self.self_arc()?;
-                tokio::spawn(run_local_forward(arc, listener, None, cancel.clone()));
+                tokio::spawn(run_local_forward(arc, listener, None, id.clone(), cancel.clone()));
                 insert_entry(&self.forwards, &id, spec, cancel);
             }
         }
@@ -881,6 +883,44 @@ fn mark_failed(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str, msg: String
     }
 }
 
+/// 数据面降级（审核中-4）：监听仍在但隧道当前不可用（断线/通道开启失败）。
+/// 仅从 Listening 降级——不覆盖 Failed（配置性失败）与已是 Degraded 的旧原因。
+fn mark_degraded(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str, msg: &str) {
+    if let Some(e) = m.lock().unwrap().get(id) {
+        let mut st = e.state.lock().unwrap();
+        if st.0 == "Listening" {
+            *st = ("Degraded".into(), Some(msg.to_string()));
+        }
+    }
+}
+
+/// 下一连接成功即恢复（仅 Degraded → Listening；不动 Failed）
+fn mark_recovered(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str) {
+    if let Some(e) = m.lock().unwrap().get(id) {
+        let mut st = e.state.lock().unwrap();
+        if st.0 == "Degraded" {
+            *st = ("Listening".into(), None);
+        }
+    }
+}
+
+/// 本地/Dynamic 监听地址仅限回环（审核中-6）：空串与 0.0.0.0 会绑全网卡——
+/// Dynamic 即无认证 SOCKS5 暴露。对外共享场景走 -R（服务器侧，GatewayPorts 门）。
+fn validate_local_listen_addr(addr: &str) -> Result<()> {
+    // 大小写不敏感（复核低-7）：「LOCALHOST」与「localhost」同指回环，
+    // 拒大写形态属保守误伤非安全收益；尾点「localhost.」/「127.1」等
+    // 非标准形态仍拒（错误文案已列明合法形态）
+    let loopback = addr.eq_ignore_ascii_case("localhost")
+        || addr.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
+    if loopback {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(format!(
+            "监听地址仅限回环（127.0.0.1/::1/localhost），收到 {addr:?}——全网卡绑定有无认证暴露面，对外请用远程转发 -R"
+        )))
+    }
+}
+
 impl SshChannel {
     fn self_arc(&self) -> Result<Arc<Self>> {
         self.self_ref
@@ -900,6 +940,8 @@ async fn run_local_forward(
     listener: TcpListener,
     // 固定目标（-L）。None = Dynamic（SOCKS5 按连接解析目标）
     fixed: Option<(String, u16)>,
+    // 条目 id（Degraded 态回写，审核中-4）
+    fwd_id: ForwardId,
     cancel: CancellationToken,
 ) {
     loop {
@@ -915,37 +957,80 @@ async fn run_local_forward(
         };
         let this2 = this.clone();
         let fixed2 = fixed.clone();
+        let id2 = fwd_id.clone();
         tokio::spawn(async move {
-            let (host, port) = if let Some(t) = fixed2 {
-                t
+            // dynamic：先解析到目标（方法选择即时回）；CONNECT 应答延后到通道结果
+            let ((host, port), socks5) = if let Some(t) = fixed2 {
+                (t, false)
             } else {
-                match socks5_handshake(&mut tcp).await {
-                    Some(x) => x,
+                match socks5_parse(&mut tcp).await {
+                    Some(hp) => (hp, true),
                     None => return, // 握手失败：直接断开（SOCKS 客户端会报错）
                 }
             };
-            pump_direct(&this2, tcp, (host, port)).await;
+            pump_direct(&this2, tcp, (host, port), socks5, &id2).await;
         });
     }
 }
 
-async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (String, u16)) {
+async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (String, u16), socks5: bool, fwd_id: &str) {
     if host.is_empty() || port == 0 {
         return;
     }
+    // 数据面失败可见性（审核中-4）：此前两处静默 return——断线期间 accept 的连接
+    // 即断、通道开启失败无痕，UI 恒「监听中 ✓」。改为 Degraded 态 + tracing，
+    // 下一连接成功即恢复 Listening（重连后 handle 换新）。
     let chan = {
         let guard = this.handle.lock().await;
-        let Some(h) = guard.as_ref() else { return };
+        let Some(h) = guard.as_ref() else {
+            tracing::warn!(forward = fwd_id, "会话未连接，转发连接被吞（等待重连）");
+            // SOCKS5 失败应答一致性（复核低-1）：此路径也回 REP=1——
+            // 否则 SOCKS 客户端拿到的是裸重置而非代理错误
+            if socks5 {
+                let _ = tcp.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0]).await;
+            }
+            mark_degraded(&this.forwards, fwd_id, "会话未连接（重连后自动恢复）");
+            return;
+        };
         h.channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0).await
     };
-    let Ok(chan) = chan else { return };
-    let mut stream = chan.into_stream();
-    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
+    match chan {
+        Ok(chan) => {
+            // SOCKS5 应答时序（审核中-3）：通道确认后才回 REP=0；失败回 REP=1
+            // （general failure）——OpenSSH 同序，客户端能拿到代理错误而非裸重置
+            if socks5 {
+                let _ = tcp.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await;
+            }
+            mark_recovered(&this.forwards, fwd_id);
+            let mut stream = chan.into_stream();
+            let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
+        }
+        Err(e) => {
+            tracing::warn!(forward = fwd_id, error = %e, "direct_tcpip 通道开启失败");
+            // REP 精细化（复核中-3）：目标拒绝时 sshd 的 OPEN_FAILURE 常含 refused
+            // ——回 REP=5（connection refused）比笼统的 REP=1 更可诊断
+            if socks5 {
+                let rep: u8 = if e.to_string().to_ascii_lowercase().contains("refused") { 5 } else { 1 };
+                let _ = tcp.write_all(&[5, rep, 0, 1, 0, 0, 0, 0, 0, 0]).await;
+            }
+            // 语义区分（复核中-3）：会话仍在而通道被拒 → 目标侧不可达（隧道本身
+            // 正常），文案不再误导为「隧道降级」；会话已断才是隧道侧问题
+            let tunnel_down = this.handle.lock().await.is_none();
+            let msg = if tunnel_down {
+                "会话未连接（重连后自动恢复）".to_string()
+            } else {
+                format!("目标不可达或被拒绝：{e}")
+            };
+            mark_degraded(&this.forwards, fwd_id, &msg);
+        }
+    }
 }
 
-/// 最小 SOCKS5 服务端握手（RFC1928）：无认证 + CONNECT；IPv4/域名/IPv6 目标。
-/// 失败返回 None（连接断开，由调用方放弃）。
-async fn socks5_handshake(tcp: &mut TcpStream) -> Option<(String, u16)> {
+/// 最小 SOCKS5 服务端握手解析（RFC1928）：无认证 + CONNECT；IPv4/域名/IPv6 目标。
+/// 方法选择即时应答；CONNECT 结果应答**不在本函数**——延后到通道开启结果（见
+/// pump_direct，审核中-3）。失败返回 None（连接断开，由调用方放弃）。
+async fn socks5_parse(tcp: &mut TcpStream) -> Option<(String, u16)> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let mut hdr = [0u8; 2];
     tcp.read_exact(&mut hdr).await.ok()?;
     if hdr[0] != 5 {
@@ -982,8 +1067,63 @@ async fn socks5_handshake(tcp: &mut TcpStream) -> Option<(String, u16)> {
     };
     let mut p = [0u8; 2];
     tcp.read_exact(&mut p).await.ok()?;
-    let port = u16::from_be_bytes(p);
-    // 成功应答（绑定地址零填充）
-    tcp.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok()?;
-    Some((host, port))
+    Some((host, u16::from_be_bytes(p)))
+}
+
+#[cfg(test)]
+mod t44_tests {
+    use super::*;
+
+    fn entry_with(state: &str) -> StdMutex<HashMap<ForwardId, FwdEntry>> {
+        let mut m = HashMap::new();
+        m.insert(
+            "f-x".into(),
+            FwdEntry {
+                spec: ForwardSpec::Dynamic { listen_addr: "127.0.0.1".into(), listen_port: 11080 },
+                state: StdMutex::new((state.to_string(), None)),
+                cancel: CancellationToken::new(),
+            },
+        );
+        StdMutex::new(m)
+    }
+    fn state_of(m: &StdMutex<HashMap<ForwardId, FwdEntry>>) -> String {
+        m.lock().unwrap().get("f-x").unwrap().state.lock().unwrap().0.clone()
+    }
+
+    // Degraded 状态机（审核中-4）：Listening → Degraded → Listening 可逆；
+    // Failed 不被降级路径覆盖；Degraded 恢复不动 Failed
+    #[test]
+    fn degraded_state_transitions() {
+        let m = entry_with("Listening");
+        mark_degraded(&m, "f-x", "隧道暂不可用");
+        assert_eq!(state_of(&m), "Degraded");
+        // 重复降级不重复写（已是 Degraded）
+        mark_degraded(&m, "f-x", "另一原因");
+        assert_eq!(state_of(&m), "Degraded");
+        mark_recovered(&m, "f-x");
+        assert_eq!(state_of(&m), "Listening");
+
+        let f = entry_with("Failed");
+        mark_degraded(&f, "f-x", "不应覆盖");
+        assert_eq!(state_of(&f), "Failed");
+        mark_recovered(&f, "f-x");
+        assert_eq!(state_of(&f), "Failed");
+
+        // 条目不存在：不 panic
+        mark_degraded(&m, "f-none", "x");
+        mark_recovered(&m, "f-none");
+    }
+
+    // listen_addr 回环校验（审核中-6）：空串/0.0.0.0/公网地址拒绝，回环族放行
+    #[test]
+    fn local_listen_addr_loopback_only() {
+        // 「LOCALHOST」与「localhost」同指回环（复核低-7 放宽）；「localhost.」
+        // 尾点与「127.1」缩写仍拒（非标准形态，文案已列明合法写法）
+        for ok in ["127.0.0.1", "127.8.8.7", "::1", "localhost", "LOCALHOST"] {
+            assert!(validate_local_listen_addr(ok).is_ok(), "{ok} 应放行");
+        }
+        for bad in ["", "0.0.0.0", "::", "192.168.1.5", "8.8.8.8", "[::1]", "localhost.", "127.1", "LOCALHOST."] {
+            assert!(validate_local_listen_addr(bad).is_err(), "{bad:?} 应拒绝");
+        }
+    }
 }

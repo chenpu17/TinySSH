@@ -48,6 +48,8 @@ type ApprovalItem = {
   id: string; session_id: string; agent_id: string; command: string;
   edited_command?: string | null;
   status: string; segment_report: { segment: string; verdict: string }[];
+  // 后端声明的可编辑性（缺省 false：旧卡/演示种子兼容——转发/传输卡不出编辑钮）
+  editable?: boolean;
 };
 type PendingHostKey = {
   id: string; host_id: string; host_name: string; address: string; port: number;
@@ -2215,7 +2217,8 @@ Authorization: Bearer <TOKEN>`}
                         void decide(a.id, "approve", null);
                       }}
                     >{confirmId === a.id ? "再次点击确认批准" : "批准"}</button>
-                    <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>
+                    {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
+                    {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>}
                     <button className="danger" onClick={() => void decide(a.id, "deny", null)}>拒绝</button>
                   </div>
                 )}
@@ -2385,23 +2388,25 @@ Authorization: Bearer <TOKEN>`}
                 {forwards.map((f) => {
                   const k = "Local" in f.spec ? "Local" : "Remote" in f.spec ? "Remote" : "Dynamic";
                   const v = (f.spec as Record<string, { listen_port: number; target_host?: string; target_port?: number }>)[k];
-                  // 窄栏下长目标串会省略号截断——title 携带完整串（视觉审发现）
+                  // 窄栏下长目标串会省略号截断——title 携带完整串（视觉审发现）；状态文案与 title 同源（T44 视觉审：Degraded 下 title 误报"失败"）
                   const fwdText = k === "Local" ? `127.0.0.1:${v.listen_port} → ${v.target_host}:${v.target_port}`
                     : k === "Remote" ? `远端 :${v.listen_port} → 本地 ${v.target_host}:${v.target_port}`
                     : `SOCKS5 127.0.0.1:${v.listen_port}`;
+                  const stateText = f.state === "Listening" ? "监听中"
+                    : f.state === "Degraded" ? `降级：${f.error ?? "隧道暂不可用（重连/目标恢复后自动恢复）"}`
+                    : `失败：${f.error ?? "未知错误"}`;
                   return (
-                    <div className="card row fwd-row" key={f.id} title={`${fwdText} · ${f.state === "Listening" ? "监听中" : `失败：${f.error ?? "未知错误"}`}`}>
+                    <div className="card row fwd-row" key={f.id} title={`${fwdText} · ${stateText}`}>
                       <span className={"fwd-kind " + k.toLowerCase()}>{k === "Local" ? "-L" : k === "Remote" ? "-R" : "-D"}</span>
                       <div style={{ flex: 1, minWidth: 0 }} className="mono">
                         <div className="xfer-name">{fwdText}</div>
-                        <div className={"dim mono xfer-sub"}>
-                          {f.state === "Listening" ? "监听中"
-                            : `失败：${f.error ?? "未知错误"}`}
-                        </div>
+                        <div className={"dim mono xfer-sub"}>{stateText}</div>
                       </div>
                       {f.state === "Listening"
                         ? <span className="ok" style={{ flex: "none" }}>✓</span>
-                        : <span className="err" style={{ flex: "none" }}>✕</span>}
+                        : f.state === "Degraded"
+                          ? <span className="warn" style={{ flex: "none" }}>⚠</span>
+                          : <span className="err" style={{ flex: "none" }}>✕</span>}
                       <button className="ghost" title="停止转发" onClick={() => void stopForward(f.id)}>✕</button>
                     </div>
                   );

@@ -124,6 +124,49 @@ pub struct TransferReq {
     pub remote: String,
 }
 
+// ---- 端口转发（T44 V1 收口，FR-8）：McpForwardSpec 复刻 session-api 的
+// ForwardSpec 外部标签形态（session-api 无 schemars 依赖，按本 crate 既有
+// Req 结构复刻模式），转换即结构对结构。----
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub enum McpForwardSpec {
+    /// 本地转发 -L：本地 listen_addr:listen_port → target_host:target_port
+    Local { listen_addr: String, listen_port: u16, target_host: String, target_port: u16 },
+    /// 远程转发 -R：服务器 listen_addr:listen_port → 本机 target_host:target_port
+    Remote { listen_addr: String, listen_port: u16, target_host: String, target_port: u16 },
+    /// 动态转发 -D（SOCKS5）：本地 listen_addr:listen_port
+    Dynamic { listen_addr: String, listen_port: u16 },
+}
+
+impl From<McpForwardSpec> for session_api::ForwardSpec {
+    fn from(s: McpForwardSpec) -> Self {
+        match s {
+            McpForwardSpec::Local { listen_addr, listen_port, target_host, target_port } =>
+                session_api::ForwardSpec::Local { listen_addr, listen_port, target_host, target_port },
+            McpForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } =>
+                session_api::ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port },
+            McpForwardSpec::Dynamic { listen_addr, listen_port } =>
+                session_api::ForwardSpec::Dynamic { listen_addr, listen_port },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct ForwardStartReq {
+    pub session_id: String,
+    pub spec: McpForwardSpec,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct ForwardStopReq {
+    pub session_id: String,
+    pub forward_id: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct ForwardListReq {
+    pub session_id: String,
+}
+
 pub struct McpServer {
     state: McpState,
     tool_router: ToolRouter<Self>,
@@ -409,6 +452,47 @@ impl McpServer {
                 .download(&actor, p.0.session_id, &p.0.remote, PathBuf::from(&p.0.local).as_path())
                 .await?;
             Ok::<_, Error>(serde_json::json!({"transfer_id": handle.id}))
+        })
+        .await
+    }
+
+    // ---- 端口转发（T44 V1 收口）：Agent 建隧道/停隧道在 core 层走逐段审批 ----
+
+    #[tool(name = "forward_start", description = "建立端口转发（本地 -L / 远程 -R / SOCKS5 -D；需人工审批）", annotations(destructive_hint = true))]
+    pub async fn forward_start(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<ForwardStartReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let fid = api.start_forward(&actor, p.0.session_id, p.0.spec.into()).await?;
+            Ok::<_, Error>(serde_json::json!({ "forward_id": fid }))
+        })
+        .await
+    }
+
+    #[tool(name = "forward_stop", description = "停止端口转发（可能中断链路；需人工审批）", annotations(destructive_hint = true))]
+    pub async fn forward_stop(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<ForwardStopReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            api.stop_forward(&actor, p.0.session_id, p.0.forward_id).await?;
+            Ok::<_, Error>(serde_json::json!({ "stopped": true }))
+        })
+        .await
+    }
+
+    #[tool(name = "forwards_list", description = "列出会话的端口转发及状态（监听中/降级/失败）", annotations(read_only_hint = true))]
+    pub async fn forwards_list(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<ForwardListReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let list = api.list_forwards(&actor, p.0.session_id).await?;
+            Ok::<_, Error>(serde_json::json!({ "forwards": list }))
         })
         .await
     }

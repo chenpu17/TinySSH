@@ -29,6 +29,8 @@ type DemoApproval = {
   id: string; session_id: string; agent_id: string;
   command: string; edited_command: string | null;
   status: string; segment_report: { segment: string; verdict: string }[];
+  // 后端同款声明（T44 复核中-2）：exec 卡 true（可编辑后批准），转发/传输卡 false
+  editable: boolean;
 };
 type PendingKey = {
   pk: {
@@ -75,6 +77,7 @@ const demoState = {
       command: "rm -rf /tmp/old-build && tar czf /tmp/build.tgz dist/",
       edited_command: null,
       status: "pending",
+      editable: true,
       segment_report: [
         { segment: "rm -rf /tmp/old-build", verdict: "pending: 未命中任何允许规则" },
         { segment: "tar czf /tmp/build.tgz dist/", verdict: "pending: 未命中任何允许规则" },
@@ -87,6 +90,7 @@ const demoState = {
       command: "docker system prune -f",
       edited_command: null,
       status: "pending",
+      editable: true,
       segment_report: [
         { segment: "docker system prune -f", verdict: "pending: 未命中任何允许规则" },
       ],
@@ -99,6 +103,7 @@ const demoState = {
       command: "systemctl restart nginx",
       edited_command: null,
       status: "voided",
+      editable: true,
       segment_report: [],
     },
   ] as DemoApproval[],

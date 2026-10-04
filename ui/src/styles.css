@@ -399,6 +399,7 @@ textarea {
 .mono { font-family: "SF Mono", Menlo, monospace; }
 .dim { color: var(--dim); }
 .ok { color: var(--ok); }
+.warn { color: var(--warn); }
 .err { color: var(--danger); }
 .fact { padding: 4px 0; border-bottom: 1px dashed var(--border); }
 .fact .s { font-weight: 600; }

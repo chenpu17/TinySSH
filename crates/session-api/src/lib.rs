@@ -215,6 +215,12 @@ pub struct ApprovalItem {
     pub segment_report: Vec<SegmentReport>,
     /// 会话 busy 状态提示（该会话正在交互程序中）。
     pub session_busy: bool,
+    /// 该卡是否支持「编辑后批准」（T44 复核中-2）：仅 exec 类可编辑——
+    /// 转发/传输参数无法从人类编辑后的中文描述回解，ApproveEdited 会被
+    /// 后端拒绝。UI 依此隐藏编辑钮（卡片可编辑性由后端声明，UI 不猜）。
+    /// serde default：旧持久化行/旧前端缺省视为不可编辑（保守侧）。
+    #[serde(default)]
+    pub editable: bool,
     pub created_at: DateTime<Utc>,
     pub status: ApprovalStatus,
 }
@@ -609,7 +615,8 @@ pub enum ForwardSpec {
 pub struct ForwardInfo {
     pub id: ForwardId,
     pub spec: ForwardSpec,
-    /// 线格式 PascalCase："Listening" | "Failed"
+    /// 线格式 PascalCase："Listening" | "Degraded" | "Failed"
+    /// （T44 起 Degraded = 隧道/目标侧数据面暂不可用，可自动恢复）
     pub state: String,
     pub error: Option<String>,
 }
@@ -840,6 +847,31 @@ mod wire_format_tests {
         assert_eq!(serde_json::to_value(ApprovalStatus::Denied).unwrap(), "Denied");
         assert_eq!(serde_json::to_value(ApprovalStatus::Timeout).unwrap(), "Timeout");
         assert_eq!(serde_json::to_value(ApprovalStatus::Voided).unwrap(), "Voided");
+    }
+
+    /// 锁定 ApprovalItem.editable 的线上行为（T44 复核中-2）：字段随卡下发；
+    /// 旧持久化行/旧前端载荷缺失该字段时缺省 false（不可编辑，保守侧）。
+    /// UI 隐藏编辑钮依赖此字段——后端声明可编辑性，UI 不从 command 文本猜。
+    #[test]
+    fn approval_item_editable_field_wire_behavior() {
+        let item = ApprovalItem {
+            id: "a-1".into(), session_id: "s-1".into(), agent_id: "opencode".into(),
+            command: "ls".into(), edited_command: None, target_summary: String::new(),
+            segment_report: vec![], session_busy: false, editable: true,
+            created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
+            status: ApprovalStatus::Pending,
+        };
+        let v = serde_json::to_value(&item).unwrap();
+        assert_eq!(v["editable"], true);
+        // 旧载荷（vault 旧行/旧前端）无 editable 字段 → 反序列化为 false
+        let legacy = serde_json::json!({
+            "id": "a-1", "session_id": "s-1", "agent_id": "opencode",
+            "command": "ls", "edited_command": null, "target_summary": "",
+            "segment_report": [], "session_busy": false,
+            "created_at": "1970-01-01T00:00:00Z", "status": "Pending",
+        });
+        let item: ApprovalItem = serde_json::from_value(legacy).unwrap();
+        assert!(!item.editable);
     }
 
     /// 锁定 Charset 的线上格式："utf-8"/"gbk"（与 vault hosts.charset 列、UI select、

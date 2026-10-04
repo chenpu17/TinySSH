@@ -80,6 +80,18 @@ impl SessionManager {
         &self.center.audit
     }
 
+    /// 转发的人类可读描述（审批卡命令串与审计载荷同源；free fn 供 trait impl 与未来调用方共用）
+    pub fn forward_desc(spec: &ForwardSpec) -> String {
+        match spec {
+            ForwardSpec::Local { listen_addr, listen_port, target_host, target_port } =>
+                format!("端口转发 -L {listen_addr}:{listen_port} → {target_host}:{target_port}"),
+            ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } =>
+                format!("端口转发 -R 远端 {listen_addr}:{listen_port} → 本地 {target_host}:{target_port}"),
+            ForwardSpec::Dynamic { listen_addr, listen_port } =>
+                format!("端口转发 -D SOCKS5 {listen_addr}:{listen_port}"),
+        }
+    }
+
     /// MCP 端点描述：装配层 bind 后写入实际地址（T43）；未装配时为占位提示。
     pub fn mcp_endpoint(&self) -> String {
         self.mcp_endpoint.lock().unwrap().clone()
@@ -148,6 +160,7 @@ impl SessionManager {
             target_summary: "建立远程会话".into(),
             segment_report: eval.segments.clone(),
             session_busy: false,
+            editable: false, // 建会话参数无法从编辑文本回解（T44 复核中-2 同款口径）
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
         };
@@ -529,6 +542,30 @@ impl SessionApi for SessionManager {
         *h.state.lock().await = SessionState::Closed;
         h.channel.close().await?;
         self.sessions.lock().unwrap().remove(&sid);
+        // 会话关闭即作废其待决审批卡（T44 复核中-1）：否则 Agent 的 forward 卡在
+        // 会话关闭后仍可被批准，而 transport 层 Local/Dynamic 分支 bind 不查会话
+        // 状态——会造出 forwards_list 已查不到、也无入口可停的僵尸监听（泄漏到进程
+        // 退出）。与接管的作废口径一致，只是触发源是关闭。
+        let voided: Vec<ApprovalId> = {
+            let items = self.center.items.lock().unwrap();
+            items
+                .iter()
+                .filter(|(_, it)| it.session_id == sid && it.status == ApprovalStatus::Pending)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in voided {
+            let it = self.center.items.lock().unwrap().get(&id).cloned();
+            if let Some(mut it) = it {
+                it.status = ApprovalStatus::Voided;
+                let _ = self.center.vault.save_approval(&it);
+                let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+            }
+            // 唤醒等待方（wait_approval 的 Voided 臂即作废返回，Agent 不再空等 120s）
+            if let Some(tx) = self.center.decisions.lock().unwrap().remove(&id) {
+                let _ = tx.send(DecisionMsg::Voided);
+            }
+        }
         self.center.vault.close_session_row(&sid)?;
         let _ = self.center.audit.append(ctx, "session_closed", Some(&sid), None, serde_json::json!({}), None);
         Ok(())
@@ -620,7 +657,7 @@ impl SessionApi for SessionManager {
                         }],
                     };
                     let (trace, _) = h
-                        .wait_approval(ctx, client_id, &"send_keys".to_string(), &format!("send_keys {keys:?}"), &eval, CancellationToken::new())
+                        .wait_approval(ctx, client_id, &"send_keys".to_string(), &format!("send_keys {keys:?}"), &eval, false, CancellationToken::new())
                         .await?;
                     let _ = trace;
                     h.send_keys_auth.lock().unwrap().insert(client_id.clone());
@@ -735,7 +772,7 @@ impl SessionApi for SessionManager {
         h.channel.list_dir(path).await
     }
 
-    // ---- 端口转发（FR-8，T42）：创建仅人类（Agent 经 MCP 的创建走审批版，留 V1）；
+    // ---- 端口转发（FR-8，T42/T44）：人类直建；Agent 经逐段审批（V1 收口）；
     // 查询任何 Actor 可用（PRD「MCP 可查询状态」）。转发是持续存在的动作，审计留痕。----
     async fn list_forwards(&self, _ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>> {
         let h = self.get(&sid)?;
@@ -743,23 +780,86 @@ impl SessionApi for SessionManager {
     }
 
     async fn start_forward(&self, ctx: &Actor, sid: SessionId, spec: ForwardSpec) -> Result<ForwardId> {
-        if !ctx.is_human() {
-            return Err(Error::InvalidInput("端口转发创建仅人类入口（Agent 创建需审批，V1 接入）".into()));
-        }
         let h = self.get(&sid)?;
+        // 审计可核对性（复核低-5）：forward_start 事件挂 approval_id（与 exec 同款）；
+        // 人类直建时为 None
+        let mut approval_id: Option<String> = None;
+        if let Actor::Agent { client_id } = ctx {
+            // 接管期间 Agent 不得新开隧道（复核低-6，与 exec 的 ControlTakenByHuman 同语义）
+            if *h.owner.lock().await == ControlOwner::Human {
+                return Err(Error::ControlTakenByHuman);
+            }
+            // Agent 建隧道 = 网络暴露面（T44 V1 收口）：与 exec/传输同款逐段审批，
+            // 单段即转发描述本身；拒绝/超时/接管作废由 wait_approval 语义统一处理
+            let desc = SessionManager::forward_desc(&spec);
+            let eval = tinyssh_approval::Evaluation {
+                verdict: tinyssh_approval::SegmentVerdict::NeedsApproval,
+                segments: vec![SegmentReport {
+                    segment: desc.clone(),
+                    verdict: "pending: 端口转发（建立网络隧道）".into(),
+                }],
+            };
+            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_start".to_string(), &desc, &eval, false, CancellationToken::new()).await?;
+            approval_id = trace.approval_id;
+            // 编辑后批准不支持（复核中-2/M2）：ForwardSpec 无法从人类编辑后的中文
+            // 描述回解——出现编辑即拒绝，审计不会出现「记了 edited、实建原始」的失真
+            if let Some(edited) = edited {
+                if edited != desc {
+                    return Err(Error::InvalidInput(
+                        "端口转发审批不支持编辑后批准——请直接批准或拒绝（转发参数无法从编辑文本回解）".into(),
+                    ));
+                }
+            }
+            // 审批等待期间会话被关闭的极窄竞窗（复核中-1 双保险；主修在 close_session
+            // 作废待决卡）：close 与 decide 并发时卡已生效、bind 仍会执行——此处复查
+            if !self.sessions.lock().unwrap().contains_key(&sid) {
+                return Err(Error::SessionNotFound);
+            }
+        }
         let fid = h.channel.start_forward(spec.clone()).await?;
         let _ = h.center.audit.append(
             ctx, "forward_start", Some(&sid), None,
-            serde_json::json!({ "forward": fid, "spec": spec }), None);
+            serde_json::json!({ "forward": fid, "spec": spec }), approval_id.as_deref());
         Ok(fid)
     }
 
     async fn stop_forward(&self, ctx: &Actor, sid: SessionId, fid: ForwardId) -> Result<()> {
         let h = self.get(&sid)?;
+        let mut approval_id: Option<String> = None;
+        if let Actor::Agent { client_id } = ctx {
+            // 接管期间 Agent 不得停隧道（复核低-6；停隧道可能断生产链路，人类主权）
+            if *h.owner.lock().await == ControlOwner::Human {
+                return Err(Error::ControlTakenByHuman);
+            }
+            // 停隧道可能断生产链路：Agent 同样走审批（人类停转发放行，风险自担）。
+            // 卡面 command 加「停止」前缀（复核低-5）：与建卡的 desc 同源文本在
+            // 审批时间线上不可区分建/停
+            let current = h.channel.list_forwards().await?;
+            let desc = match current.iter().find(|f| f.id == fid) {
+                Some(f) => format!("停止 {}", SessionManager::forward_desc(&f.spec)),
+                None => format!("停止端口转发 {fid}"),
+            };
+            let eval = tinyssh_approval::Evaluation {
+                verdict: tinyssh_approval::SegmentVerdict::NeedsApproval,
+                segments: vec![SegmentReport {
+                    segment: desc.clone(),
+                    verdict: "pending: 停止端口转发（可能中断链路）".into(),
+                }],
+            };
+            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_stop".to_string(), &desc, &eval, false, CancellationToken::new()).await?;
+            approval_id = trace.approval_id;
+            if let Some(edited) = edited {
+                if edited != desc {
+                    return Err(Error::InvalidInput(
+                        "停止端口转发审批不支持编辑后批准——请直接批准或拒绝".into(),
+                    ));
+                }
+            }
+        }
         h.channel.stop_forward(&fid).await?;
         let _ = h.center.audit.append(
             ctx, "forward_stop", Some(&sid), None,
-            serde_json::json!({ "forward": fid }), None);
+            serde_json::json!({ "forward": fid }), approval_id.as_deref());
         Ok(())
     }
 
@@ -787,7 +887,7 @@ impl SessionApi for SessionManager {
         }
         let status = self.center.vault.approval_status(&id)?;
         if matches!(status, Some(ApprovalStatus::Voided)) {
-            return Err(Error::InvalidInput("审批已作废（接管），不可再生效".into()));
+            return Err(Error::InvalidInput("审批已作废（接管或会话关闭），不可再生效".into()));
         }
         let tx = self.center.decisions.lock().unwrap().remove(&id);
         match tx {
@@ -1044,7 +1144,7 @@ impl SessionManager {
                 }],
             };
             let (trace, e) = h
-                .wait_approval(ctx, client_id, &"transfer".to_string(), &format!("{op} {local:?} → {remote}"), &eval, CancellationToken::new())
+                .wait_approval(ctx, client_id, &"transfer".to_string(), &format!("{op} {local:?} → {remote}"), &eval, false, CancellationToken::new())
                 .await?;
             let _ = trace;
             let _ = e;

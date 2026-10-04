@@ -573,3 +573,188 @@ async fn create_session_screen_is_clean() {
         snap.text
     );
 }
+
+// T44（V1 收口）：Agent 建隧道/停隧道逐段审批——批准后隧道真实可用、停止必审、
+// 拒绝即不建；非回环监听地址被拒（审核中-6）。
+fn t44_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+async fn t44_wait_card(m: &Arc<core_session::SessionManager>, human: &Actor, needle: &str) -> String {
+    for _ in 0..300 {
+        let items = m
+            .list_approvals(human, ApprovalFilter { pending_only: true, ..Default::default() })
+            .await
+            .unwrap();
+        if let Some(it) = items.iter().find(|it| it.command.contains(needle)) {
+            return it.id.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("卡片未出现（{needle}）");
+}
+
+async fn t44_read_banner(tcp: &mut tokio::net::TcpStream) -> String {
+    use tokio::io::AsyncReadExt as _;
+    let mut buf = Vec::new();
+    let mut b = [0u8; 1];
+    let fut = async {
+        loop {
+            tcp.read_exact(&mut b).await.unwrap();
+            buf.push(b[0]);
+            if b[0] == b'\n' || buf.len() > 255 {
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), fut).await.expect("10s 未读到 banner");
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn journey5_agent_forward_approval_flow() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    let (m, url, token) = spawn_stack().await;
+    auto_accept_host_keys(m.clone());
+    let human = Actor::Human;
+    let client = connect(&url, &token).await;
+
+    // 建会话（远程默认必审，与既有旅程同款门）
+    let client_c = connect(&url, &token).await;
+    let jh = tokio::spawn(async move {
+        client_c.call_tool(call("create_session", serde_json::json!({"host_id": "e2e-linux"}))).await
+    });
+    let card = t44_wait_card(&m, &human, "create_session").await;
+    m.decide_approval(&human, card, Decision::Approve).await.unwrap();
+    let r = jh.await.unwrap().unwrap();
+    let sid = structured(&r)["session_id"].as_str().unwrap().to_string();
+
+    // ---- Agent 建本地转发：卡（人类可读 -L 描述）→ 批准 → fid ----
+    let lp = t44_free_port();
+    let client_f = connect(&url, &token).await;
+    let sid_f = sid.clone();
+    let jh_f = tokio::spawn(async move {
+        client_f
+            .call_tool(call("forward_start", serde_json::json!({
+                "session_id": sid_f,
+                "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp,
+                                      "target_host": "127.0.0.1", "target_port": 22 } }
+            })))
+            .await
+    });
+    let fwd_cmd = format!("端口转发 -L 127.0.0.1:{lp}");
+    let card = t44_wait_card(&m, &human, &fwd_cmd).await;
+    // 卡片段落报告人类可读（逐段审批语义）
+    {
+        let items = m.list_approvals(&human, ApprovalFilter::default()).await.unwrap();
+        let it = items.iter().find(|it| it.id == card).unwrap();
+        assert!(it.segment_report.iter().any(|s| s.segment.contains("-L") && s.verdict.contains("端口转发")), "{:?}", it.segment_report);
+    }
+    m.decide_approval(&human, card, Decision::Approve).await.unwrap();
+    let r = jh_f.await.unwrap().unwrap();
+    let fid = structured(&r)["forward_id"].as_str().unwrap().to_string();
+
+    // ---- Agent 可查状态：Listening；隧道真实可用（读容器 sshd banner）----
+    let r = client
+        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+        .await
+        .unwrap();
+    let fwd = structured(&r)["forwards"][0].clone();
+    assert_eq!(fwd["state"], "Listening", "{fwd:?}");
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.expect("本地监听应可连");
+    let banner = t44_read_banner(&mut tcp).await;
+    assert!(banner.starts_with("SSH-2.0"), "经审批建立的隧道应通：{banner:?}");
+
+    // ---- 非回环监听地址被拒（审核中-6；人类路径同样走 transport 校验）----
+    let bad = m
+        .start_forward(&human, sid.clone(), session_api::ForwardSpec::Local {
+            listen_addr: "0.0.0.0".into(), listen_port: t44_free_port(),
+            target_host: "127.0.0.1".into(), target_port: 22,
+        })
+        .await;
+    assert!(bad.is_err(), "0.0.0.0 监听应被拒");
+
+    // ---- Agent 停转发：同样必审 ----
+    let client_s = connect(&url, &token).await;
+    let sid_s = sid.clone();
+    let fid_s = fid.clone();
+    let jh_s = tokio::spawn(async move {
+        client_s
+            .call_tool(call("forward_stop", serde_json::json!({"session_id": sid_s, "forward_id": fid_s})))
+            .await
+    });
+    let card = t44_wait_card(&m, &human, &fwd_cmd).await; // 停卡命令串=「停止 +同描述」前缀，pending 队列再现
+    m.decide_approval(&human, card, Decision::Approve).await.unwrap();
+    let r = jh_s.await.unwrap().unwrap();
+    assert_eq!(structured(&r)["stopped"], true);
+
+    // 停止后：列表空、端口关闭
+    let r = client
+        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+        .await
+        .unwrap();
+    assert_eq!(structured(&r)["forwards"].as_array().unwrap().len(), 0);
+    for _ in 0..30 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.is_err(), "停止后监听应关闭");
+
+    // ---- 拒绝路径：建转发被拒 → Agent 收审批拒绝错误，转发未建 ----
+    let client_d = connect(&url, &token).await;
+    let sid_d = sid.clone();
+    let jh_d = tokio::spawn(async move {
+        client_d
+            .call_tool(call("forward_start", serde_json::json!({
+                "session_id": sid_d,
+                "spec": { "Dynamic": { "listen_addr": "127.0.0.1", "listen_port": t44_free_port() } }
+            })))
+            .await
+    });
+    let card = t44_wait_card(&m, &human, "端口转发 -D").await;
+    m.decide_approval(&human, card, Decision::Deny).await.unwrap();
+    let r = jh_d.await.unwrap().unwrap();
+    let kind = err_kind(&r).unwrap_or_default();
+    assert!(kind.contains("denied") || kind.contains("Deny"), "拒绝应回审批拒绝错误：{kind}");
+    let r = client
+        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+        .await
+        .unwrap();
+    assert_eq!(structured(&r)["forwards"].as_array().unwrap().len(), 0, "拒绝后不应有转发");
+
+    // ---- 会话关闭作废滞留卡（T44 复核中-1）：堵「批了已死会话的卡 → 僵尸监听」----
+    // 此前 close_session 不作废 pending 卡，human 仍可批准 → transport 层 bind 不查
+    // 会话状态 → 造出 forwards_list 查不到、无入口可停的监听（泄漏到进程退出）
+    let lp3 = t44_free_port();
+    let client_v = connect(&url, &token).await;
+    let sid_v = sid.clone();
+    let jh_v = tokio::spawn(async move {
+        client_v
+            .call_tool(call("forward_start", serde_json::json!({
+                "session_id": sid_v,
+                "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp3,
+                                      "target_host": "127.0.0.1", "target_port": 22 } }
+            })))
+            .await
+    });
+    let card = t44_wait_card(&m, &human, &format!("端口转发 -L 127.0.0.1:{lp3}")).await;
+    // 关闭会话：卡随之作废、Agent 等待即醒（不空等 120s）
+    m.close_session(&human, sid.clone()).await.unwrap();
+    {
+        let items = m.list_approvals(&human, ApprovalFilter::default()).await.unwrap();
+        let it = items.iter().find(|it| it.id == card).unwrap();
+        assert_eq!(it.status, ApprovalStatus::Voided, "会话关闭应作废其待决卡");
+    }
+    let r = jh_v.await.unwrap().unwrap();
+    let kind = err_kind(&r).unwrap_or_default();
+    assert!(kind.contains("voided"), "Agent 应收到作废错误而非僵尸成功：{kind}");
+    // 作废的卡不可再生效（事后补批被拦）
+    assert!(m.decide_approval(&human, card, Decision::Approve).await.is_err(), "作废卡不可再批");
+}
