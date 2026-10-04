@@ -122,12 +122,19 @@ pub mod tokio_util_sync {
             if self.is_cancelled() {
                 return;
             }
-            let notified = self.inner.notified();
-            // 防丢失：注册后复查
-            if self.is_cancelled() {
-                return;
+            // 先注册、后复查（审核低-11）：Notified 在首次 poll 前不注册，旧的
+            // 「创建 + 复查」序列在复查通过与首次 poll 之间留有窗口——跨线程
+            // cancel() 的 notify_waiters() 落在窗口内即无人可唤醒，本等待永挂
+            // （监听任务不退、端口不释放）。enable() 原子完成注册：true = 注册
+            // 前已收到通知直接完成；false = 注册已生效，复查 flag 后等待——此后
+            // 任何 cancel() 的 notify_waiters() 必命中已注册的本 waiter。
+            let mut notified = std::pin::pin!(self.inner.notified());
+            if !notified.as_mut().enable() {
+                if self.is_cancelled() {
+                    return;
+                }
+                notified.await;
             }
-            notified.await;
         }
     }
 }
