@@ -154,6 +154,22 @@ async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<
     state.api.sftp_list(&human(), sid, &path).await.map_err(|e| e.to_string())
 }
 
+/// 端口转发（T42 FR-8）：列/建/停（人类 GUI 入口；Agent 侧留 MCP 审批版）。
+#[tauri::command]
+async fn list_forwards(state: ApiState<'_>, sid: String) -> CmdResult<Vec<ForwardInfo>> {
+    state.api.list_forwards(&human(), sid).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn start_forward(state: ApiState<'_>, sid: String, spec: ForwardSpec) -> CmdResult<ForwardId> {
+    state.api.start_forward(&human(), sid, spec).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn stop_forward(state: ApiState<'_>, sid: String, id: String) -> CmdResult<()> {
+    state.api.stop_forward(&human(), sid, id).await.map_err(|e| e.to_string())
+}
+
 /// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
 /// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
 /// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）
@@ -807,6 +823,7 @@ fn main() {
             list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
             open_url,
             upload_file, download_file, cancel_transfer, sftp_list,
+            list_forwards, start_forward, stop_forward,
             get_setting, set_setting,
             read_screen, send_keys, exec_human, set_control, session_brief, set_session_goal,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,

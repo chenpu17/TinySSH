@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 启动 E2E 测试用 sshd 容器（127.0.0.1:2222，root/testpass，bash + sftp）。
+# 端口转发 e2e（T42）：AllowTcpForwarding yes（Alpine 默认 no，会拒绝 direct-tcpip
+# 与 tcpip-forward）；2223 映射给远程转发（-R）回程测试用。
 set -euo pipefail
 if docker ps --format '{{.Names}}' | grep -q '^tinyssh-e2e$'; then
   echo "tinyssh-e2e already running"
@@ -14,7 +16,7 @@ apk add --no-cache openssh-server openssh-server-pam openssh-sftp-server bash
 ssh-keygen -A
 echo "root:testpass" | chpasswd
 sed -i "s/^root:\(.*\):\/bin\/sh$/root:\1:\/bin\/bash/" /etc/passwd
-sed -i "s/#PermitRootLogin.*/PermitRootLogin yes/;s/#PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
+sed -i "s/^AllowTcpForwarding.*/AllowTcpForwarding yes/;s/^#\?GatewayPorts.*/GatewayPorts clientspecified/;s/#PermitRootLogin.*/PermitRootLogin yes/;s/#PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
 mkdir -p /run/sshd
 /usr/sbin/sshd -D'
 echo "waiting for sshd…"

@@ -16,6 +16,9 @@ type DemoSession = {
   transitions: { ts: string; what: string }[];
   out: string;             // 会话私有输出缓冲（read_screen 回放 + 订阅增量同源）
   handlers: Handler[];
+  // 端口转发（T42 FR-8）：spec 为外部标签枚举（Local/Remote/Dynamic），wire 同口径；
+  // demo 无法真实监听端口——仅做注册表状态演示，state 恒 "Listening"
+  forwards: { id: string; spec: Record<string, Record<string, unknown>>; state: string; error: string | null }[];
 };
 type DemoEvent = {
   seq: number; ts: string; actor_kind: "human" | "agent";
@@ -52,6 +55,7 @@ const demoState = {
       transitions: [{ ts: "14:02:11", what: "人类接管（交接前未开始的请求全部作废）" }],
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
       handlers: [] as Handler[],
+      forwards: [],
     },
     {
       id: "s-demo-0002", host_name: "staging-1", kind: "ssh",
@@ -60,6 +64,7 @@ const demoState = {
       transitions: [],
       out: "ops@staging-1:~$ ",
       handlers: [] as Handler[],
+      forwards: [],
     },
   ] as DemoSession[],
   approvals: [
@@ -270,7 +275,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [] });
+      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], forwards: [] });
       audit("human", "session_created", null, null, sid);
       return sid;
     }
@@ -469,6 +474,32 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       };
       if (!(p in tree)) throw new Error(`演示模式：目录不存在或不可读（${p}）`);
       return tree[p].slice().sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    }
+    // T42 FR-8：端口转发注册表演示。demo 无法真实监听端口/建隧道——仅按会话
+    // 维护转发条目（wire 契约同口径：外部标签 spec + state/error），审计随操作
+    // 追加，与真实 core-session 的 forward_start/forward_stop 事件对齐。
+    case "list_forwards": {
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      if (!s) throw new Error("SessionNotFound（演示）");
+      return s.forwards.map((f) => ({ ...f, spec: { ...f.spec } }));
+    }
+    case "start_forward": {
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      if (!s) throw new Error("SessionNotFound（演示）");
+      const spec = args?.spec as Record<string, Record<string, unknown>>;
+      const f = { id: "f-demo-" + demoSeq++, spec, state: "Listening", error: null };
+      s.forwards.push(f);
+      audit("human", "forward_start", null, null, s.id, { forward: f.id, spec });
+      return f.id;
+    }
+    case "stop_forward": {
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      if (!s) throw new Error("SessionNotFound（演示）");
+      const i = s.forwards.findIndex((f) => f.id === args?.id);
+      if (i < 0) throw new Error("ForwardNotFound（演示）");
+      const [f] = s.forwards.splice(i, 1);
+      audit("human", "forward_stop", null, null, s.id, { forward: f.id });
+      return null;
     }
     // 浏览器演示无法真实承载的操作：要么显式报错（传输类，UI 卡片如实显示失败），
     // 要么明确列为无操作（此前 default 静默 null 是「占位反馈」伪影的根源）。

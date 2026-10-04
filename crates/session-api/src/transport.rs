@@ -84,6 +84,17 @@ pub trait ChannelHandle: Send + Sync {
     /// 列目录（SFTP readdir / 本地 read_dir，T41 FR-7 浏览器）。
     /// 过滤 `.`/`..`；按名称排序、目录在前；mtime 未知为 0。
     async fn list_dir(&self, path: &str) -> Result<Vec<crate::DirEntryS>>;
+
+    // ---- 端口转发（T42 FR-8）。默认不支持（本地 PTY 无 SSH 连接可承载）----
+    async fn start_forward(&self, _spec: crate::ForwardSpec) -> Result<crate::ForwardId> {
+        Err(crate::Error::InvalidInput("该通路不支持端口转发（仅 SSH 会话）".into()))
+    }
+    async fn stop_forward(&self, _id: &crate::ForwardId) -> Result<()> {
+        Err(crate::Error::InvalidInput("该通路不支持端口转发（仅 SSH 会话）".into()))
+    }
+    async fn list_forwards(&self) -> Result<Vec<crate::ForwardInfo>> {
+        Ok(Vec::new())
+    }
 }
 
 /// tokio_util 的 CancellationToken 的最小本地别名层：避免 session-api 直接依赖

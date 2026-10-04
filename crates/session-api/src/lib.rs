@@ -576,6 +576,45 @@ pub struct DirEntryS {
 }
 
 // ---------------------------------------------------------------------------
+// 端口转发（T42 FR-8）
+// ---------------------------------------------------------------------------
+
+pub type ForwardId = String;
+
+/// 转发规格。wire 三端一致（Rust/UI/demo）。
+/// - Local：本地监听 listen_addr:listen_port，经 SSH 通道到远端 target_host:target_port（-L）
+/// - Remote：SSH 服务器监听 listen_addr:listen_port，回程到本地 target_host:target_port（-R）
+/// - Dynamic：本地 SOCKS5 代理 listen_addr:listen_port（-D；目标由每个连接的握手决定）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForwardSpec {
+    Local {
+        listen_addr: String,
+        listen_port: u16,
+        target_host: String,
+        target_port: u16,
+    },
+    Remote {
+        listen_addr: String,
+        listen_port: u16,
+        target_host: String,
+        target_port: u16,
+    },
+    Dynamic {
+        listen_addr: String,
+        listen_port: u16,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForwardInfo {
+    pub id: ForwardId,
+    pub spec: ForwardSpec,
+    /// 线格式 PascalCase："Listening" | "Failed"
+    pub state: String,
+    pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // 审计
 // ---------------------------------------------------------------------------
 
@@ -734,6 +773,13 @@ pub trait SessionApi: Send + Sync {
     /// 条目按名称排序（目录在前）由 transport 层保证。
     async fn sftp_list(&self, ctx: &Actor, sid: SessionId, path: &str) -> Result<Vec<DirEntryS>>;
 
+    // ---- 端口转发（FR-8，T42）----
+    /// 列出会话的转发（任何 Actor 可查——PRD「MCP 可查询状态」口径）。
+    async fn list_forwards(&self, ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>>;
+    /// 创建并启动转发。人类直建；Agent 创建需授权——审批版留 V1/MCP 侧（当前无 Agent 入口）。
+    async fn start_forward(&self, ctx: &Actor, sid: SessionId, spec: ForwardSpec) -> Result<ForwardId>;
+    async fn stop_forward(&self, ctx: &Actor, sid: SessionId, fid: ForwardId) -> Result<()>;
+
     // ---- 审批（v1 读取路径；PRD FR-4）----
     async fn list_approvals(&self, ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>>;
     fn subscribe_approvals(&self) -> broadcast::Receiver<ApprovalEvent>;
@@ -885,5 +931,49 @@ mod wire_format_tests {
             serde_json::to_value(&e).unwrap(),
             serde_json::json!({ "name": "a.txt", "is_dir": false, "size": 6, "mtime": 1790956800 })
         );
+    }
+
+    // T42 端口转发：ForwardSpec 外部标签三变体 + ForwardInfo 往返，锁 UI 的
+    // { Local: {...} } / { Remote: {...} } / { Dynamic: {...} } 构造形态
+    fn forward_wire_format_matches_ui() {
+        let local: ForwardSpec = serde_json::from_value(serde_json::json!({
+            "Local": { "listen_addr": "127.0.0.1", "listen_port": 18080, "target_host": "10.0.0.5", "target_port": 80 }
+        })).unwrap();
+        let remote: ForwardSpec = serde_json::from_value(serde_json::json!({
+            "Remote": { "listen_addr": "", "listen_port": 2223, "target_host": "127.0.0.1", "target_port": 9527 }
+        })).unwrap();
+        let dynamic: ForwardSpec = serde_json::from_value(serde_json::json!({
+            "Dynamic": { "listen_addr": "127.0.0.1", "listen_port": 11080 }
+        })).unwrap();
+        assert_eq!(
+            serde_json::to_value(&local).unwrap(),
+            serde_json::json!({ "Local": { "listen_addr": "127.0.0.1", "listen_port": 18080, "target_host": "10.0.0.5", "target_port": 80 } })
+        );
+        assert_eq!(
+            serde_json::to_value(&remote).unwrap(),
+            serde_json::json!({ "Remote": { "listen_addr": "", "listen_port": 2223, "target_host": "127.0.0.1", "target_port": 9527 } })
+        );
+        assert_eq!(
+            serde_json::to_value(&dynamic).unwrap(),
+            serde_json::json!({ "Dynamic": { "listen_addr": "127.0.0.1", "listen_port": 11080 } })
+        );
+        // ForwardInfo 往返（list_forwards 返回形态）：state/error 字段名与小写状态值锁定
+        let info: ForwardInfo = serde_json::from_value(serde_json::json!({
+            "id": "f-1", "spec": { "Dynamic": { "listen_addr": "127.0.0.1", "listen_port": 11080 } },
+            "state": "Listening", "error": null
+        })).unwrap();
+        assert_eq!(
+            serde_json::to_value(&info).unwrap(),
+            serde_json::json!({
+                "id": "f-1", "spec": { "Dynamic": { "listen_addr": "127.0.0.1", "listen_port": 11080 } },
+                "state": "Listening", "error": null
+            })
+        );
+        let info2: ForwardInfo = serde_json::from_value(serde_json::json!({
+            "id": "f-2", "spec": { "Remote": { "listen_addr": "", "listen_port": 2223, "target_host": "10.0.0.9", "target_port": 5432 } },
+            "state": "Failed", "error": "RequestDenied: 地址已在使用"
+        })).unwrap();
+        assert_eq!(info2.state, "Failed");
+        assert_eq!(info2.error.as_deref(), Some("RequestDenied: 地址已在使用"));
     }
 }

@@ -101,6 +101,12 @@ const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
 type TransferHandle = { id: string; session_id: string; kind: "Upload" | "Download"; local: string; remote: string };
 // 远程文件浏览器（T41）：sftp_list wire 契约（Rust DirEntryS/demo shim 同口径）
 type DirEntryS = { name: string; is_dir: boolean; size: number; mtime: number };
+// 端口转发（T42 FR-8）：wire 契约（外部标签枚举，Rust/demo 同口径）
+type ForwardSpec =
+  | { Local: { listen_addr: string; listen_port: number; target_host: string; target_port: number } }
+  | { Remote: { listen_addr: string; listen_port: number; target_host: string; target_port: number } }
+  | { Dynamic: { listen_addr: string; listen_port: number } };
+type ForwardInfo = { id: string; spec: ForwardSpec; state: string; error: string | null };
 type TransferCard = {
   id: string; kind: "Upload" | "Download"; name: string; remote: string; local: string;
   status: "running" | "done" | "failed" | "cancelled"; bytes?: number; error?: string;
@@ -382,6 +388,13 @@ export default function App() {
   const [sftpEntries, setSftpEntries] = useState<DirEntryS[] | null>(null);
   const [sftpLoading, setSftpLoading] = useState(false);
   const [sftpErr, setSftpErr] = useState<string | null>(null);
+  // 端口转发（T42 FR-8）：按 sid 归属；3s 轮询状态（断线→Failed 的变化要能看到）
+  const [forwards, setForwards] = useState<ForwardInfo[]>([]);
+  const [fwdKind, setFwdKind] = useState<"Local" | "Remote" | "Dynamic">("Local");
+  const [fwdPort, setFwdPort] = useState("");
+  const [fwdHost, setFwdHost] = useState("");
+  const [fwdTPort, setFwdTPort] = useState("");
+  const [fwdBusy, setFwdBusy] = useState(false);
   // Toast（精致化 §六/P3）：右下角轻通知，2.6s 自动消失；最多同屏 4 条
   const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string }[]>([]);
   const toastSeq = useRef(0);
@@ -1340,6 +1353,65 @@ export default function App() {
     }
   }, [sid, brief?.cwd, sftpEntries, sftpLoading, sftpErr, loadDir]);
 
+  // ---- 端口转发（T42 FR-8）----
+  const refreshForwards = useCallback(async () => {
+    const s = sidRef.current;
+    if (!s) { setForwards([]); return; }
+    try {
+      const fs2 = await invoke<ForwardInfo[]>("list_forwards", { sid: s });
+      if (sidRef.current === s) setForwards(fs2);
+    } catch { /* 会话已关 */ }
+  }, []);
+
+  useEffect(() => {
+    setForwards([]);
+    if (!sid) return;
+    void refreshForwards();
+    const t = setInterval(() => void refreshForwards(), 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid]);
+
+  const addForward = async () => {
+    const s = sidRef.current;
+    if (!s) return;
+    const p = parseInt(fwdPort, 10);
+    const tp = parseInt(fwdTPort, 10);
+    if (!Number.isInteger(p) || p <= 0 || p > 65535) { pushToast("err", "监听端口必须是 1–65535 的数字"); return; }
+    if (fwdKind !== "Dynamic" && (!fwdHost.trim() || !Number.isInteger(tp) || tp <= 0 || tp > 65535)) {
+      pushToast("err", "目标主机与端口（1–65535）都要填");
+      return;
+    }
+    const spec: ForwardSpec = fwdKind === "Dynamic"
+      ? { Dynamic: { listen_addr: "127.0.0.1", listen_port: p } }
+      : fwdKind === "Remote"
+        ? { Remote: { listen_addr: "", listen_port: p, target_host: fwdHost.trim(), target_port: tp } }
+        : { Local: { listen_addr: "127.0.0.1", listen_port: p, target_host: fwdHost.trim(), target_port: tp } };
+    setFwdBusy(true);
+    try {
+      await invoke("start_forward", { sid: s, spec });
+      setFwdPort(""); setFwdHost(""); setFwdTPort("");
+      await refreshForwards();
+      pushToast("ok", fwdKind === "Local" ? `本地转发已启动：127.0.0.1:${p}` : fwdKind === "Remote" ? `远程转发已启动：远端 :${p}` : `SOCKS5 已启动：127.0.0.1:${p}`);
+    } catch (e) {
+      pushToast("err", `转发启动失败：${friendlyError(String(e))}`);
+      await refreshForwards();
+    } finally {
+      setFwdBusy(false);
+    }
+  };
+
+  const stopForward = async (id: string) => {
+    const s = sidRef.current;
+    if (!s) return;
+    try {
+      await invoke("stop_forward", { sid: s, id });
+    } catch (e) {
+      pushToast("err", `停止失败：${friendlyError(String(e))}`);
+    }
+    await refreshForwards();
+  };
+
   // 传输终态对账：仅在有 running 卡时以 800ms 轮询审计；「已取消」= 核心 Cancelled 错误文案
   useEffect(() => {
     if (!transfers.some((t) => t.status === "running")) return;
@@ -2273,6 +2345,59 @@ Authorization: Bearer <TOKEN>`}
                 )}
               </div>
             ))}
+          </div>
+
+          <div className="section">
+            <h4>端口转发</h4>
+            {!sid ? (
+              <div className="side-quiet">连接 SSH 会话后可建本地 / 远程 / SOCKS5 转发，随会话断开自动失效、重连自动恢复。</div>
+            ) : (
+              <>
+                <div className="row fwd-form">
+                  <select value={fwdKind} onChange={(e) => setFwdKind(e.target.value as "Local" | "Remote" | "Dynamic")} title="转发类型">
+                    <option value="Local">本地 -L</option>
+                    <option value="Remote">远程 -R</option>
+                    <option value="Dynamic">SOCKS5 -D</option>
+                  </select>
+                  <input className="mono" style={{ width: 74 }} placeholder={fwdKind === "Remote" ? "远端端口" : "本地端口"}
+                    value={fwdPort} onChange={(e) => setFwdPort(e.target.value)} />
+                  {fwdKind !== "Dynamic" && (
+                    <>
+                      <input className="mono" style={{ flex: 1, minWidth: 0 }} placeholder={fwdKind === "Remote" ? "回到本机·主机" : "目标主机"}
+                        value={fwdHost} onChange={(e) => setFwdHost(e.target.value)} />
+                      <input className="mono" style={{ width: 64 }} placeholder="端口"
+                        value={fwdTPort} onChange={(e) => setFwdTPort(e.target.value)} />
+                    </>
+                  )}
+                  <button disabled={fwdBusy} onClick={() => void addForward()}>启动</button>
+                </div>
+                {forwards.length === 0 && <div className="side-quiet">暂无转发。</div>}
+                {forwards.map((f) => {
+                  const k = "Local" in f.spec ? "Local" : "Remote" in f.spec ? "Remote" : "Dynamic";
+                  const v = (f.spec as Record<string, { listen_port: number; target_host?: string; target_port?: number }>)[k];
+                  return (
+                    <div className="card row fwd-row" key={f.id}>
+                      <span className={"fwd-kind " + k.toLowerCase()}>{k === "Local" ? "-L" : k === "Remote" ? "-R" : "-D"}</span>
+                      <div style={{ flex: 1, minWidth: 0 }} className="mono">
+                        <div className="xfer-name">
+                          {k === "Local" && `127.0.0.1:${v.listen_port} → ${v.target_host}:${v.target_port}`}
+                          {k === "Remote" && `远端 :${v.listen_port} → 本地 ${v.target_host}:${v.target_port}`}
+                          {k === "Dynamic" && `SOCKS5 127.0.0.1:${v.listen_port}`}
+                        </div>
+                        <div className={"dim mono xfer-sub"}>
+                          {f.state === "Listening" ? "监听中"
+                            : `失败：${f.error ?? "未知错误"}`}
+                        </div>
+                      </div>
+                      {f.state === "Listening"
+                        ? <span className="ok" style={{ flex: "none" }}>✓</span>
+                        : <span className="err" style={{ flex: "none" }}>✕</span>}
+                      <button className="ghost" title="停止转发" onClick={() => void stopForward(f.id)}>✕</button>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </div>
 
           <div className="section">

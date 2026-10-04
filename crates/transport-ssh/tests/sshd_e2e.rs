@@ -480,3 +480,195 @@ async fn kb_scenario() -> Result<(), String> {
         Err(format!("kb 会话输出异常: {text:?}"))
     }
 }
+
+// T42（FR-8）端口转发：本地 -L / SOCKS5 -D / 远程 -R / 停止语义。
+// 容器要求：AllowTcpForwarding yes（Alpine 默认 no）+ GatewayPorts clientspecified
+//（远程转发 0.0.0.0 才能被 docker 端口代理够到）——dev-sshd.sh 已配置。
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+/// 读一行（到 \r\n 或 \n）带超时——sshd 连上即主动吐 banner，等不到就是转发没通
+async fn read_banner(tcp: &mut tokio::net::TcpStream) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut buf = Vec::new();
+    let mut b = [0u8; 1];
+    let fut = async {
+        loop {
+            tcp.read_exact(&mut b).await.unwrap();
+            buf.push(b[0]);
+            if b[0] == b'\n' || buf.len() > 255 {
+                break;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), fut).await.expect("10s 未读到 banner");
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// 停止后端口必须真的不可连（监听已关）：轮询到 refused，最多 3s
+async fn assert_port_closed(port: u16) {
+    for _ in 0..30 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("停止转发后 127.0.0.1:{port} 仍可连接（监听未关）");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forward_local_and_dynamic_roundtrip() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    use session_api::transport::ChannelHandle;
+
+    let channel = transport_ssh::SshChannel::connect(target(), 80, 24).await.unwrap();
+
+    // 非法 spec（端口 0）立即拒绝
+    assert!(channel
+        .start_forward(session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: 0,
+            target_host: "127.0.0.1".into(), target_port: 22,
+        })
+        .await
+        .is_err());
+
+    // ---- 本地 -L：127.0.0.1:lp → 容器 127.0.0.1:22，读 SSH banner ----
+    let lp = free_port();
+    let fid = channel
+        .start_forward(session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: lp,
+            target_host: "127.0.0.1".into(), target_port: 22,
+        })
+        .await
+        .unwrap();
+    let infos = channel.list_forwards().await.unwrap();
+    let e = infos.iter().find(|f| f.id == fid).expect("list_forwards 应含刚启动的转发");
+    assert_eq!(e.state, "Listening", "本地转发应即刻 Listening：{:?}", e.error);
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.expect("本地监听应可连");
+    let banner = read_banner(&mut tcp).await;
+    assert!(banner.starts_with("SSH-2.0"), "经 -L 读到的应是容器 sshd banner：{banner:?}");
+
+    // 停止：条目移除 + 监听关闭
+    channel.stop_forward(&fid).await.unwrap();
+    assert!(channel.list_forwards().await.unwrap().is_empty(), "停止后列表应为空");
+    assert_port_closed(lp).await;
+
+    // ---- SOCKS5 -D：手动 RFC1928 握手（域名目标 localhost:22）读 banner ----
+    let dp = free_port();
+    let fid2 = channel
+        .start_forward(session_api::ForwardSpec::Dynamic {
+            listen_addr: "127.0.0.1".into(), listen_port: dp,
+        })
+        .await
+        .unwrap();
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", dp)).await.expect("SOCKS5 监听应可连");
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    // 方法协商：[VER,NMETHODS][METHOD=无认证]
+    s.write_all(&[5, 1, 0]).await.unwrap();
+    let mut m = [0u8; 2];
+    tokio::time::timeout(Duration::from_secs(5), s.read_exact(&mut m)).await.unwrap().unwrap();
+    assert_eq!(&m, &[5, 0], "服务端应选定无认证");
+    // CONNECT localhost:22（ATYP=域名）
+    let mut req = vec![5, 1, 0, 3, b"localhost".len() as u8];
+    req.extend_from_slice(b"localhost");
+    req.extend_from_slice(&22u16.to_be_bytes());
+    s.write_all(&req).await.unwrap();
+    let mut rep = [0u8; 10];
+    tokio::time::timeout(Duration::from_secs(5), s.read_exact(&mut rep)).await.unwrap().unwrap();
+    assert_eq!(&rep[..3], &[5, 0, 0], "CONNECT 应答成功：{rep:?}");
+    let banner = read_banner(&mut s).await;
+    assert!(banner.starts_with("SSH-2.0"), "经 SOCKS5 读到的应是容器 sshd banner：{banner:?}");
+
+    // BIND/UDP 不支持：CONNECT 之外的 cmd 直接断开（重置/EOF/超时都算「已断开」）
+    let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", dp)).await.unwrap();
+    s2.write_all(&[5, 1, 0]).await.unwrap();
+    let mut m2 = [0u8; 2];
+    tokio::time::timeout(Duration::from_secs(5), s2.read_exact(&mut m2)).await.unwrap().unwrap();
+    s2.write_all(&[5, 2, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap(); // cmd=2 BIND
+    match tokio::time::timeout(Duration::from_secs(5), s2.read(&mut [0u8; 8])).await {
+        Err(_) => {}                    // 超时无应答
+        Ok(Err(_)) => {}                // 连接重置
+        Ok(Ok(0)) => {}                 // EOF
+        Ok(Ok(n)) => panic!("非 CONNECT 不应有应答数据（{} 字节）", n),
+    }
+
+    channel.stop_forward(&fid2).await.unwrap();
+    assert_port_closed(dp).await;
+    channel.close().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forward_remote_roundtrip() {
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    use session_api::transport::ChannelHandle;
+    use tokio::io::AsyncWriteExt;
+
+    // kb 测试会在容器 2223 起第二 sshd：先清（同 kb 的 /proc 扫描法，避免端口被占）
+    let _ = std::process::Command::new("docker")
+        .args(["exec", "tinyssh-e2e", "sh", "-c",
+            "for p in /proc/[0-9]*; do i=${p#/proc/}; [ \"$i\" = \"$$\" ] && continue; c=$(tr \"\\0\" \" \" < $p/cmdline 2>/dev/null); case \"$c\" in *sshd*2223*) kill $i 2>/dev/null;; esac; done; true"])
+        .output();
+
+    // 回程目标：宿主机标记服务器，连上即写 MARKER
+    let marker = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mp = marker.local_addr().unwrap().port();
+    let marker_task = tokio::spawn(async move {
+        let (mut s, _) = marker.accept().await.unwrap();
+        s.write_all(b"T42-REMOTE-MARKER\n").await.unwrap();
+    });
+
+    let channel = transport_ssh::SshChannel::connect(target(), 80, 24).await.unwrap();
+    // 远程 -R：容器 0.0.0.0:2223 →（回程）宿主机 127.0.0.1:mp。
+    // GatewayPorts clientspecified 下 0.0.0.0 才可被 docker 端口代理够到。
+    let fid = channel
+        .start_forward(session_api::ForwardSpec::Remote {
+            listen_addr: "0.0.0.0".into(), listen_port: 2223,
+            target_host: "127.0.0.1".into(), target_port: mp,
+        })
+        .await
+        .unwrap();
+    let infos = channel.list_forwards().await.unwrap();
+    let e = infos.iter().find(|f| f.id == fid).expect("远程转发应在列");
+    assert_eq!(e.state, "Listening", "tcpip_forward 应被接受（否则：{:?}）", e.error);
+
+    // 从宿主机连 2223：docker 代理 → 容器 sshd 转发监听 → 经 SSH 回程打到本地标记服务器
+    let mut c = tokio::net::TcpStream::connect(("127.0.0.1", 2223)).await.expect("2223 应可连");
+    let got = read_banner(&mut c).await;
+    assert_eq!(got.trim_end(), "T42-REMOTE-MARKER", "远程转发回程应读到标记");
+    marker_task.await.unwrap();
+
+    // 停止：cancel_tcpip_forward 后容器监听关闭。注意 docker 端口代理在宿主侧
+    // 恒监听 2223（connect 总成功）——「关」的判据是无数据（超时/EOF/重置），
+    // 而非连接被拒。
+    channel.stop_forward(&fid).await.unwrap();
+    let mut closed = false;
+    for _ in 0..30 {
+        if let Ok(mut s) = tokio::net::TcpStream::connect(("127.0.0.1", 2223)).await {
+            use tokio::io::AsyncReadExt;
+            let mut b = [0u8; 1];
+            match tokio::time::timeout(Duration::from_secs(1), s.read(&mut b)).await {
+                Err(_) => { closed = true; break; }      // 超时无数据
+                Ok(Err(_)) => { closed = true; break; }  // 代理重置
+                Ok(Ok(0)) => { closed = true; break; }   // 立即 EOF
+                Ok(Ok(_)) => {}                          // 仍有数据流过 = 未关
+            }
+        } else {
+            closed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(closed, "取消远程转发后 2223 不应再吐数据");
+    channel.close().await.unwrap();
+}

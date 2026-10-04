@@ -724,6 +724,34 @@ impl SessionApi for SessionManager {
         h.channel.list_dir(path).await
     }
 
+    // ---- 端口转发（FR-8，T42）：创建仅人类（Agent 经 MCP 的创建走审批版，留 V1）；
+    // 查询任何 Actor 可用（PRD「MCP 可查询状态」）。转发是持续存在的动作，审计留痕。----
+    async fn list_forwards(&self, _ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>> {
+        let h = self.get(&sid)?;
+        h.channel.list_forwards().await
+    }
+
+    async fn start_forward(&self, ctx: &Actor, sid: SessionId, spec: ForwardSpec) -> Result<ForwardId> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("端口转发创建仅人类入口（Agent 创建需审批，V1 接入）".into()));
+        }
+        let h = self.get(&sid)?;
+        let fid = h.channel.start_forward(spec.clone()).await?;
+        let _ = h.center.audit.append(
+            ctx, "forward_start", Some(&sid), None,
+            serde_json::json!({ "forward": fid, "spec": spec }), None);
+        Ok(fid)
+    }
+
+    async fn stop_forward(&self, ctx: &Actor, sid: SessionId, fid: ForwardId) -> Result<()> {
+        let h = self.get(&sid)?;
+        h.channel.stop_forward(&fid).await?;
+        let _ = h.center.audit.append(
+            ctx, "forward_stop", Some(&sid), None,
+            serde_json::json!({ "forward": fid }), None);
+        Ok(())
+    }
+
     // ---- 审批 ----
     async fn list_approvals(&self, _ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>> {
         let items = self.center.items.lock().unwrap();

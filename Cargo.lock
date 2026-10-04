@@ -6625,6 +6625,7 @@ dependencies = [
  "tinyssh-testbed",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

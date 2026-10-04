@@ -9,10 +9,12 @@ use russh::{Channel, ChannelMsg, ChannelWriteHalf};
 use russh::{Disconnect, Sig};
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
-use session_api::{AuthType, DirEntryS, Error, ExecOpts, Result};
+use session_api::{AuthType, DirEntryS, Error, ExecOpts, ForwardId, ForwardInfo, ForwardSpec, Result};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Mutex};
 
 /// TOFU 主机指纹回调：异步（人类确认可能跨秒级等待）。None = 全接受（测试专用）。
@@ -42,6 +44,8 @@ pub enum SshError {
 struct ClientHandler {
     host_key_check: Option<HostKeyCheck>,
     seen_fingerprint: Arc<Mutex<Option<String>>>,
+    /// 远程转发回程路由（T42）：服务器监听端口 → 本地目标。与 SshChannel.forwards 同源注册。
+    router: Arc<StdMutex<HashMap<u32, (String, u16)>>>,
 }
 
 impl ClientHandler {
@@ -94,6 +98,38 @@ impl client::Handler for ClientHandler {
             }
         }
     }
+
+    /// 远程转发的入站连接（T42 FR-8，-R）：按服务器监听端口查回程路由，
+    /// 接通本地目标后双向泵；无路由（已停止/未知端口）则拒绝（丢弃 reply 即拒绝）。
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: Channel<russh::client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let target = self.router.lock().unwrap().get(&connected_port).cloned();
+        match target {
+            Some((host, port)) => {
+                reply.accept().await;
+                let host2 = host.clone();
+                tokio::spawn(async move {
+                    let Ok(mut tcp) = TcpStream::connect((host2.as_str(), port)).await else {
+                        return;
+                    };
+                    let mut stream = channel.into_stream();
+                    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
+                });
+            }
+            None => {
+                // drop(reply) 自动拒绝
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct SshTarget {
@@ -116,6 +152,19 @@ pub struct SshChannel {
     alive: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
     seen_fingerprint: Arc<Mutex<Option<String>>>,
+    // 端口转发（T42 FR-8）：条目表 + 远程转发回程路由（与 ClientHandler 共享）；
+    // self_ref = 自身 Weak（监听任务需要 Arc 逐连接取 handle，sound 地从 &self 升回）
+    forwards: StdMutex<HashMap<ForwardId, FwdEntry>>,
+    router: Arc<StdMutex<HashMap<u32, (String, u16)>>>,
+    self_ref: StdMutex<Option<std::sync::Weak<SshChannel>>>,
+}
+
+/// 转发条目：状态与取消令牌（local/dynamic 监听任务与 remote 的重注册都以 id 寻址）
+struct FwdEntry {
+    spec: ForwardSpec,
+    /// ("Listening"|"Failed", 失败原因)
+    state: StdMutex<(String, Option<String>)>,
+    cancel: CancellationToken,
 }
 
 fn ssh_config() -> Arc<client::Config> {
@@ -133,6 +182,7 @@ impl SshChannel {
         let seen = Arc::new(Mutex::new(None::<String>));
         let (output_tx, _) = broadcast::channel(4096);
         let alive = Arc::new(AtomicBool::new(true));
+        let router = Arc::new(StdMutex::new(HashMap::new()));
 
         let chan = Arc::new(Self {
             handle: Mutex::new(None),
@@ -141,8 +191,12 @@ impl SshChannel {
             alive,
             size: Mutex::new((cols, rows)),
             seen_fingerprint: seen.clone(),
+            forwards: StdMutex::new(HashMap::new()),
+            router,
+            self_ref: StdMutex::new(None),
             target,
         });
+        *chan.self_ref.lock().unwrap() = Some(Arc::downgrade(&chan));
         chan.establish().await?;
         Ok(chan)
     }
@@ -152,6 +206,7 @@ impl SshChannel {
         let handler = ClientHandler {
             host_key_check: self.target.host_key_check.clone(),
             seen_fingerprint: self.seen_fingerprint.clone(),
+            router: self.router.clone(),
         };        let handle = russh::client::connect(
             ssh_config(),
             (self.target.address.as_str(), self.target.port),
@@ -299,6 +354,43 @@ impl SshChannel {
 
         // 保存 shell channel 引用（写入经 data_bytes；信号写控制字节同路径）
         *self.handle.lock().await = Some(handle);
+        // 重连恢复：远程转发随旧连接失效，本地/Dynamic 监听任务存活（逐连接取 handle）
+        self.restore_remote_forwards().await;
+        Ok(())
+    }
+
+    /// 对 forwards 表中所有 Remote 条目重新请求服务器监听 + 重挂回程路由（重连后调用）。
+    async fn restore_remote_forwards(&self) {
+        let remotes: Vec<(ForwardId, String, u16, String, u16)> = {
+            let m = self.forwards.lock().unwrap();
+            m.iter()
+                .filter_map(|(id, e)| match &e.spec {
+                    ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
+                        Some((id.clone(), listen_addr.clone(), *listen_port, target_host.clone(), *target_port))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        for (id, addr, port, thost, tport) in remotes {
+            let r = self.request_remote(&addr, port, &thost, tport).await;
+            let mut m = self.forwards.lock().unwrap();
+            if let Some(e) = m.get_mut(&id) {
+                match r {
+                    Ok(()) => *e.state.lock().unwrap() = ("Listening".into(), None),
+                    Err(msg) => *e.state.lock().unwrap() = ("Failed".into(), Some(msg)),
+                }
+            }
+        }
+    }
+
+    async fn request_remote(&self, addr: &str, port: u16, thost: &str, tport: u16) -> std::result::Result<(), String> {
+        let guard = self.handle.lock().await;
+        let h = guard.as_ref().ok_or("会话未连接")?;
+        h.tcpip_forward(addr.to_string(), port as u32)
+            .await
+            .map_err(|e| format!("服务器拒绝监听 {addr}:{port}：{e}"))?;
+        self.router.lock().unwrap().insert(port as u32, (thost.to_string(), tport));
         Ok(())
     }
 
@@ -677,4 +769,206 @@ impl ChannelHandle for SshChannel {
         sftp.close().await.ok();
         Ok(out)
     }
+
+    // ---- 端口转发（T42 FR-8）----
+
+    async fn start_forward(&self, spec: ForwardSpec) -> Result<ForwardId> {
+        let id = format!("f-{}", uuid::Uuid::new_v4());
+        match spec.clone() {
+            ForwardSpec::Local { listen_addr, listen_port, target_host, target_port } => {
+                if listen_port == 0 || target_host.trim().is_empty() || target_port == 0 {
+                    return Err(Error::InvalidInput("端口须为 1–65535，目标主机不能为空".into()));
+                }
+                let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
+                    .await
+                    .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
+                let cancel = CancellationToken::new();
+                let arc = self.self_arc()?;
+                tokio::spawn(run_local_forward(arc, listener, None, cancel.clone()));
+                insert_entry(&self.forwards, &id, spec, cancel);
+            }
+            ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
+                if listen_port == 0 || target_host.trim().is_empty() || target_port == 0 {
+                    return Err(Error::InvalidInput("端口须为 1–65535，目标主机不能为空".into()));
+                }
+                let cancel = CancellationToken::new();
+                insert_entry(&self.forwards, &id, spec, cancel);
+                if let Err(msg) = self.request_remote(&listen_addr, listen_port, &target_host, target_port).await {
+                    mark_failed(&self.forwards, &id, msg);
+                }
+            }
+            ForwardSpec::Dynamic { listen_addr, listen_port } => {
+                if listen_port == 0 {
+                    return Err(Error::InvalidInput("端口须为 1–65535".into()));
+                }
+                let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
+                    .await
+                    .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
+                let cancel = CancellationToken::new();
+                let arc = self.self_arc()?;
+                tokio::spawn(run_local_forward(arc, listener, Some(()), cancel.clone()));
+                insert_entry(&self.forwards, &id, spec, cancel);
+            }
+        }
+        Ok(id)
+    }
+
+    async fn stop_forward(&self, id: &ForwardId) -> Result<()> {
+        let entry = self.forwards.lock().unwrap().remove(id);
+        let Some(e) = entry else {
+            return Err(Error::InvalidInput("转发不存在或已停止".into()));
+        };
+        e.cancel.cancel();
+        if let ForwardSpec::Remote { listen_addr, listen_port, .. } = &e.spec {
+            self.router.lock().unwrap().remove(&(*listen_port as u32));
+            let guard = self.handle.lock().await;
+            if let Some(h) = guard.as_ref() {
+                let _ = h.cancel_tcpip_forward(listen_addr.clone(), *listen_port as u32).await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn list_forwards(&self) -> Result<Vec<ForwardInfo>> {
+        let m = self.forwards.lock().unwrap();
+        Ok(m.iter()
+            .map(|(id, e)| {
+                let (state, error) = e.state.lock().unwrap().clone();
+                ForwardInfo { id: id.clone(), spec: e.spec.clone(), state, error }
+            })
+            .collect())
+    }
+}
+
+fn insert_entry(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str, spec: ForwardSpec, cancel: CancellationToken) {
+    m.lock().unwrap().insert(
+        id.to_string(),
+        FwdEntry { spec, state: StdMutex::new(("Listening".into(), None)), cancel },
+    );
+}
+
+fn mark_failed(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str, msg: String) {
+    if let Some(e) = m.lock().unwrap().get_mut(id) {
+        *e.state.lock().unwrap() = ("Failed".into(), Some(msg));
+    }
+}
+
+impl SshChannel {
+    fn self_arc(&self) -> Result<Arc<Self>> {
+        self.self_ref
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or_else(|| Error::Io("通道已释放".into()))
+    }
+}
+
+/// 本地/Dynamic 转发监听任务：accept → （SOCKS5 时先握手取目标）→ 每连接开
+/// direct_tcpip 通道双向泵。逐连接取当前 handle——重连后自动用新连接，监听不中断。
+#[allow(clippy::too_many_arguments)]
+async fn run_local_forward(
+    this: Arc<SshChannel>,
+    listener: TcpListener,
+    dynamic: Option<()>,
+    cancel: CancellationToken,
+) {
+    loop {
+        let (mut tcp, _peer) = tokio::select! {
+            _ = cancel.cancelled() => break,
+            a = listener.accept() => match a {
+                Ok(x) => x,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+            },
+        };
+        let this2 = this.clone();
+        tokio::spawn(async move {
+            let (host, port) = if dynamic.is_some() {
+                match socks5_handshake(&mut tcp).await {
+                    Some(x) => x,
+                    None => return, // 握手失败：直接断开（SOCKS 客户端会报错）
+                }
+            } else {
+                fixed_target(&this2, &tcp).await
+            };
+            pump_direct(&this2, tcp, (host, port)).await;
+        });
+    }
+}
+
+/// local（非 dynamic）转发的固定目标——按监听端口反查条目（每连接查，条目可变）
+async fn fixed_target(this: &Arc<SshChannel>, _tcp: &TcpStream) -> (String, u16) {
+    // 监听 socket 的本地端口即 listen_port
+    let local_port = _tcp.local_addr().map(|a| a.port()).unwrap_or(0);
+    let m = this.forwards.lock().unwrap();
+    for e in m.values() {
+        if let ForwardSpec::Local { listen_port, target_host, target_port, .. } = &e.spec {
+            if *listen_port == local_port {
+                return (target_host.clone(), *target_port);
+            }
+        }
+    }
+    (String::new(), 0)
+}
+
+async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (String, u16)) {
+    if host.is_empty() || port == 0 {
+        return;
+    }
+    let chan = {
+        let guard = this.handle.lock().await;
+        let Some(h) = guard.as_ref() else { return };
+        h.channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0).await
+    };
+    let Ok(chan) = chan else { return };
+    let mut stream = chan.into_stream();
+    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
+}
+
+/// 最小 SOCKS5 服务端握手（RFC1928）：无认证 + CONNECT；IPv4/域名/IPv6 目标。
+/// 失败返回 None（连接断开，由调用方放弃）。
+async fn socks5_handshake(tcp: &mut TcpStream) -> Option<(String, u16)> {
+    let mut hdr = [0u8; 2];
+    tcp.read_exact(&mut hdr).await.ok()?;
+    if hdr[0] != 5 {
+        return None;
+    }
+    let mut methods = vec![0u8; hdr[1] as usize];
+    tcp.read_exact(&mut methods).await.ok()?;
+    tcp.write_all(&[5, 0]).await.ok()?; // 选定「无认证」
+    let mut req = [0u8; 4];
+    tcp.read_exact(&mut req).await.ok()?;
+    if req[0] != 5 || req[1] != 1 {
+        return None; // 仅支持 CONNECT
+    }
+    let host = match req[3] {
+        1 => {
+            let mut a = [0u8; 4];
+            tcp.read_exact(&mut a).await.ok()?;
+            format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3])
+        }
+        3 => {
+            let mut l = [0u8; 1];
+            tcp.read_exact(&mut l).await.ok()?;
+            let mut d = vec![0u8; l[0] as usize];
+            tcp.read_exact(&mut d).await.ok()?;
+            String::from_utf8(d).ok()?
+        }
+        4 => {
+            let mut a = [0u8; 16];
+            tcp.read_exact(&mut a).await.ok()?;
+            let parts: Vec<String> = a.chunks(2).map(|c| format!("{:02x}{:02x}", c[0], c[1])).collect();
+            parts.join(":")
+        }
+        _ => return None,
+    };
+    let mut p = [0u8; 2];
+    tcp.read_exact(&mut p).await.ok()?;
+    let port = u16::from_be_bytes(p);
+    // 成功应答（绑定地址零填充）
+    tcp.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok()?;
+    Some((host, port))
 }
