@@ -614,6 +614,13 @@ impl ChannelHandle for SshChannel {
 
     async fn close(&self) -> Result<()> {
         self.alive.store(false, Ordering::SeqCst);
+        // T42：关闭会话即停全部转发——本地/-D 监听任务持有 Arc<Self>，
+        // 不取消会连监听 socket 一起泄漏（端口被占到进程退出）
+        let entries: Vec<FwdEntry> = self.forwards.lock().unwrap().drain().map(|(_, e)| e).collect();
+        self.router.lock().unwrap().clear();
+        for e in entries {
+            e.cancel.cancel();
+        }
         if let Some(handle) = self.handle.lock().await.take() {
             let _ = handle
                 .disconnect(Disconnect::ByApplication, "session closed", "EN")

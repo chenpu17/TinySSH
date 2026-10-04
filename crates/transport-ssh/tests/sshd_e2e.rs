@@ -600,7 +600,19 @@ async fn forward_local_and_dynamic_roundtrip() {
 
     channel.stop_forward(&fid2).await.unwrap();
     assert_port_closed(dp).await;
+
+    // 关闭会话即停全部转发（审核发现：监听任务持 Arc<Self>，不取消则监听端口
+    // 泄漏到进程退出）——带活跃转发直接 close，端口必须随之释放
+    let lp3 = free_port();
+    channel
+        .start_forward(session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: lp3,
+            target_host: "127.0.0.1".into(), target_port: 22,
+        })
+        .await
+        .unwrap();
     channel.close().await.unwrap();
+    assert_port_closed(lp3).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
