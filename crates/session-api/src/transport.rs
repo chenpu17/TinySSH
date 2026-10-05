@@ -95,6 +95,10 @@ pub trait ChannelHandle: Send + Sync {
     async fn list_forwards(&self) -> Result<Vec<crate::ForwardInfo>> {
         Ok(Vec::new())
     }
+
+    /// 注入转发状态变化回调（T44 真机冒烟补口）：start/stop/Degraded/恢复/
+    /// Failed 状态写口触发。默认 no-op（本地 PTY 不支持转发，无需通知）。
+    fn set_forward_event_cb(&self, _cb: crate::ForwardStateCb) {}
 }
 
 /// tokio_util 的 CancellationToken 的最小本地别名层：避免 session-api 直接依赖

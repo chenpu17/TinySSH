@@ -89,6 +89,15 @@ impl SessionHandle {
         center: Arc<ApprovalCenter>,
     ) -> Arc<Self> {
         let (output_tx, _) = broadcast::channel(4096);
+        // 转发状态事件桥（T44 真机冒烟补口）：transport 写口回调 → Changed 广播。
+        // UI 事件驱动刷新转发面板；盲轮询兜底保留（timer 节流场景见 ForwardEvent 注释）
+        {
+            let tx = center.forwards_tx.clone();
+            let sid = id.clone();
+            channel.set_forward_event_cb(Arc::new(move |_fid| {
+                let _ = tx.send(session_api::ForwardEvent::Changed { session_id: sid.clone() });
+            }));
+        }
         Arc::new(Self {
             id,
             host,

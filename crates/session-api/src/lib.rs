@@ -296,6 +296,19 @@ pub enum ApprovalEvent {
     Updated(ApprovalItem),
 }
 
+/// 转发状态变化回调（T44 真机冒烟补口）：transport 层各状态写口触发，
+/// 参数为 forward id；由装配层注入（core-session 把它桥到 ForwardEvent 广播）。
+pub type ForwardStateCb = std::sync::Arc<dyn Fn(&ForwardId) + Send + Sync>;
+
+/// 转发事件（subscribe_forwards 订阅）：粗粒度 Changed——UI 收到后全量拉
+/// 该会话转发列表（与轮询兜底同语义，事件驱动）。动机：真机冒烟实测
+/// WKWebView 会节流 JS timer，3s 盲轮询挂起时 Agent 建的转发对人工不可见
+/// （Degraded 数据面可见性缺口）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ForwardEvent {
+    Changed { session_id: SessionId },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Decision {
     Approve,
@@ -786,6 +799,9 @@ pub trait SessionApi: Send + Sync {
     /// 创建并启动转发。人类直建；Agent 创建需授权——审批版留 V1/MCP 侧（当前无 Agent 入口）。
     async fn start_forward(&self, ctx: &Actor, sid: SessionId, spec: ForwardSpec) -> Result<ForwardId>;
     async fn stop_forward(&self, ctx: &Actor, sid: SessionId, fid: ForwardId) -> Result<()>;
+    /// 转发状态变化事件（T44 真机冒烟补口）：start/stop/Degraded/恢复/Failed
+    /// 状态写口广播——UI 事件驱动刷新转发面板，替代纯盲轮询。
+    fn subscribe_forwards(&self) -> broadcast::Receiver<ForwardEvent>;
 
     // ---- 审批（v1 读取路径；PRD FR-4）----
     async fn list_approvals(&self, ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>>;

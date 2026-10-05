@@ -10,6 +10,7 @@ use russh::{Disconnect, Sig};
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
 use session_api::{AuthType, DirEntryS, Error, ExecOpts, ForwardId, ForwardInfo, ForwardSpec, Result};
+use session_api::ForwardStateCb;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -157,6 +158,9 @@ pub struct SshChannel {
     forwards: StdMutex<HashMap<ForwardId, FwdEntry>>,
     router: Arc<StdMutex<HashMap<u32, (String, u16)>>>,
     self_ref: StdMutex<Option<std::sync::Weak<SshChannel>>>,
+    /// 转发状态变化回调（T44 真机冒烟补口）：装配层注入，写口触发——
+    /// 见 insert_entry/mark_* 的 cb 参数。
+    forward_cb: StdMutex<Option<ForwardStateCb>>,
 }
 
 /// 转发条目：状态与取消令牌（local/dynamic 监听任务与 remote 的重注册都以 id 寻址）
@@ -194,6 +198,7 @@ impl SshChannel {
             forwards: StdMutex::new(HashMap::new()),
             router,
             self_ref: StdMutex::new(None),
+            forward_cb: StdMutex::new(None),
             target,
         });
         *chan.self_ref.lock().unwrap() = Some(Arc::downgrade(&chan));
@@ -377,9 +382,17 @@ impl SshChannel {
             let r = self.request_remote_checked(&id, &addr, port, &thost, tport).await;
             let mut m = self.forwards.lock().unwrap();
             if let Some(e) = m.get_mut(&id) {
+                // 重连重注册：无条件写目标态（非 mark_* 条件翻转——Remote 条目
+                // 的状态由重注册结果直接决定）；写后经 forward_cb 通知（全写口
+                // 纪律，审核 Z1）。先 drop 再取 cb 锁：与 mark_* 的
+                // forward_cb→forwards 取向严格同向，不引入反向嵌套
                 match r {
                     Ok(()) => *e.state.lock().unwrap() = ("Listening".into(), None),
                     Err(msg) => *e.state.lock().unwrap() = ("Failed".into(), Some(msg)),
+                }
+                drop(m);
+                if let Some(cb) = self.forward_cb.lock().unwrap().as_ref() {
+                    cb(&id);
                 }
             }
         }
@@ -814,16 +827,16 @@ impl ChannelHandle for SshChannel {
                 // 目标在 spawn 时捕获（审核中-1）：条目 spec 从不变更，逐连接按端口反查
                 // HashMap 只会引入同端口多绑定（127.0.0.1 与 0.0.0.0 可并存）的串台
                 tokio::spawn(run_local_forward(arc, listener, Some((target_host, target_port)), id.clone(), cancel.clone()));
-                insert_entry(&self.forwards, &id, spec, cancel);
+                insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
             }
             ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
                 if listen_port == 0 || target_host.trim().is_empty() || target_port == 0 {
                     return Err(Error::InvalidInput("端口须为 1–65535，目标主机不能为空".into()));
                 }
                 let cancel = CancellationToken::new();
-                insert_entry(&self.forwards, &id, spec, cancel);
+                insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
                 if let Err(msg) = self.request_remote(&listen_addr, listen_port, &target_host, target_port).await {
-                    mark_failed(&self.forwards, &id, msg);
+                    mark_failed(&self.forwards, &self.forward_cb.lock().unwrap(), &id, msg);
                 }
             }
             ForwardSpec::Dynamic { listen_addr, listen_port } => {
@@ -837,7 +850,7 @@ impl ChannelHandle for SshChannel {
                 let cancel = CancellationToken::new();
                 let arc = self.self_arc()?;
                 tokio::spawn(run_local_forward(arc, listener, None, id.clone(), cancel.clone()));
-                insert_entry(&self.forwards, &id, spec, cancel);
+                insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
             }
         }
         Ok(id)
@@ -849,6 +862,9 @@ impl ChannelHandle for SshChannel {
             return Err(Error::InvalidInput("转发不存在或已停止".into()));
         };
         e.cancel.cancel();
+        if let Some(cb) = self.forward_cb.lock().unwrap().as_ref() {
+            cb(id);
+        }
         if let ForwardSpec::Remote { listen_addr, listen_port, .. } = &e.spec {
             self.router.lock().unwrap().remove(&(*listen_port as u32));
             let guard = self.handle.lock().await;
@@ -868,38 +884,72 @@ impl ChannelHandle for SshChannel {
             })
             .collect())
     }
+
+    fn set_forward_event_cb(&self, cb: ForwardStateCb) {
+        *self.forward_cb.lock().unwrap() = Some(cb);
+    }
 }
 
-fn insert_entry(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str, spec: ForwardSpec, cancel: CancellationToken) {
+fn insert_entry(
+    m: &StdMutex<HashMap<ForwardId, FwdEntry>>,
+    cb: &Option<ForwardStateCb>,
+    id: &str,
+    spec: ForwardSpec,
+    cancel: CancellationToken,
+) {
     m.lock().unwrap().insert(
         id.to_string(),
         FwdEntry { spec, state: StdMutex::new(("Listening".into(), None)), cancel },
     );
+    if let Some(cb) = cb.as_ref() {
+        cb(&id.to_string());
+    }
 }
 
-fn mark_failed(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str, msg: String) {
+fn mark_failed(
+    m: &StdMutex<HashMap<ForwardId, FwdEntry>>,
+    cb: &Option<ForwardStateCb>,
+    id: &str,
+    msg: String,
+) {
     if let Some(e) = m.lock().unwrap().get_mut(id) {
         *e.state.lock().unwrap() = ("Failed".into(), Some(msg));
+        if let Some(cb) = cb.as_ref() {
+            cb(&id.to_string());
+        }
     }
 }
 
 /// 数据面降级（审核中-4）：监听仍在但隧道当前不可用（断线/通道开启失败）。
 /// 仅从 Listening 降级——不覆盖 Failed（配置性失败）与已是 Degraded 的旧原因。
-fn mark_degraded(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str, msg: &str) {
+fn mark_degraded(
+    m: &StdMutex<HashMap<ForwardId, FwdEntry>>,
+    cb: &Option<ForwardStateCb>,
+    id: &str,
+    msg: &str,
+) {
     if let Some(e) = m.lock().unwrap().get(id) {
         let mut st = e.state.lock().unwrap();
         if st.0 == "Listening" {
             *st = ("Degraded".into(), Some(msg.to_string()));
+            drop(st);
+            if let Some(cb) = cb.as_ref() {
+                cb(&id.to_string());
+            }
         }
     }
 }
 
 /// 下一连接成功即恢复（仅 Degraded → Listening；不动 Failed）
-fn mark_recovered(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, id: &str) {
+fn mark_recovered(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, cb: &Option<ForwardStateCb>, id: &str) {
     if let Some(e) = m.lock().unwrap().get(id) {
         let mut st = e.state.lock().unwrap();
         if st.0 == "Degraded" {
             *st = ("Listening".into(), None);
+            drop(st);
+            if let Some(cb) = cb.as_ref() {
+                cb(&id.to_string());
+            }
         }
     }
 }
@@ -989,7 +1039,7 @@ async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (
             if socks5 {
                 let _ = tcp.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0]).await;
             }
-            mark_degraded(&this.forwards, fwd_id, "会话未连接（重连后自动恢复）");
+            mark_degraded(&this.forwards, &this.forward_cb.lock().unwrap(), fwd_id, "会话未连接（重连后自动恢复）");
             return;
         };
         h.channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0).await
@@ -1001,7 +1051,7 @@ async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (
             if socks5 {
                 let _ = tcp.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await;
             }
-            mark_recovered(&this.forwards, fwd_id);
+            mark_recovered(&this.forwards, &this.forward_cb.lock().unwrap(), fwd_id);
             let mut stream = chan.into_stream();
             let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
         }
@@ -1030,7 +1080,7 @@ async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (
             } else {
                 format!("目标不可达或被拒绝：{e}")
             };
-            mark_degraded(&this.forwards, fwd_id, &msg);
+            mark_degraded(&this.forwards, &this.forward_cb.lock().unwrap(), fwd_id, &msg);
         }
     }
 }
@@ -1104,23 +1154,47 @@ mod t44_tests {
     #[test]
     fn degraded_state_transitions() {
         let m = entry_with("Listening");
-        mark_degraded(&m, "f-x", "隧道暂不可用");
+        mark_degraded(&m, &None, "f-x", "隧道暂不可用");
         assert_eq!(state_of(&m), "Degraded");
         // 重复降级不重复写（已是 Degraded）
-        mark_degraded(&m, "f-x", "另一原因");
+        mark_degraded(&m, &None, "f-x", "另一原因");
         assert_eq!(state_of(&m), "Degraded");
-        mark_recovered(&m, "f-x");
+        mark_recovered(&m, &None, "f-x");
         assert_eq!(state_of(&m), "Listening");
 
         let f = entry_with("Failed");
-        mark_degraded(&f, "f-x", "不应覆盖");
+        mark_degraded(&f, &None, "f-x", "不应覆盖");
         assert_eq!(state_of(&f), "Failed");
-        mark_recovered(&f, "f-x");
+        mark_recovered(&f, &None, "f-x");
         assert_eq!(state_of(&f), "Failed");
 
         // 条目不存在：不 panic
-        mark_degraded(&m, "f-none", "x");
-        mark_recovered(&m, "f-none");
+        mark_degraded(&m, &None, "f-none", "x");
+        mark_recovered(&m, &None, "f-none");
+    }
+
+    // 状态写口触发回调（T44 真机冒烟补口）：insert/degraded/recovered 各通知
+    // 一次；条件写口状态未变（重复降级/重复恢复）与条目不存在时不通知
+    #[test]
+    fn forward_state_cb_fires_on_write_paths() {
+        let hits: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+        let h2 = hits.clone();
+        let cb: ForwardStateCb = Arc::new(move |id| h2.lock().unwrap().push(id.to_string()));
+        let cb = Some(cb);
+        let m: StdMutex<HashMap<ForwardId, FwdEntry>> = StdMutex::new(HashMap::new());
+        insert_entry(
+            &m,
+            &cb,
+            "f-x",
+            ForwardSpec::Dynamic { listen_addr: "127.0.0.1".into(), listen_port: 11080 },
+            CancellationToken::new(),
+        );
+        mark_degraded(&m, &cb, "f-x", "隧道暂不可用");
+        mark_degraded(&m, &cb, "f-x", "已降级不重复通知");
+        mark_recovered(&m, &cb, "f-x");
+        mark_recovered(&m, &cb, "f-x");
+        mark_failed(&m, &cb, "f-none", "条目不存在".into());
+        assert_eq!(*hits.lock().unwrap(), vec!["f-x", "f-x", "f-x"]);
     }
 
     // listen_addr 回环校验（审核中-6）：空串/0.0.0.0/公网地址拒绝，回环族放行

@@ -24,6 +24,9 @@ pub struct ApprovalCenter {
     pub items: StdMutex<HashMap<ApprovalId, ApprovalItem>>,
     pub decisions: StdMutex<HashMap<ApprovalId, oneshot::Sender<DecisionMsg>>>,
     pub approvals_tx: broadcast::Sender<ApprovalEvent>,
+    /// 转发状态事件（T44 真机冒烟补口）：SessionHandle 构造时把 transport 写口
+    /// 回调桥到本通道——UI 事件驱动刷新（WKWebView 节流 timer 时盲轮询会挂起）。
+    pub forwards_tx: broadcast::Sender<ForwardEvent>,
     /// 主机指纹待决（路线图⑤ TOFU）：pending 表 + 决策通道 + 事件推送。
     pub hk_pending: StdMutex<HashMap<String, PendingHostKey>>,
     pub hk_decisions: StdMutex<HashMap<String, oneshot::Sender<bool>>>,
@@ -50,6 +53,7 @@ impl SessionManager {
         let vault = Arc::new(tinyssh_vault::Vault::open(db_path)?);
         let audit = Arc::new(tinyssh_audit::AuditStore::open(db_path)?);
         let (approvals_tx, _) = broadcast::channel(256);
+        let (forwards_tx, _) = broadcast::channel(256);
         let (hk_tx, _) = broadcast::channel(16);
         let (ap_tx, _) = broadcast::channel(16);
         let center = Arc::new(ApprovalCenter {
@@ -57,6 +61,7 @@ impl SessionManager {
             items: StdMutex::new(HashMap::new()),
             decisions: StdMutex::new(HashMap::new()),
             approvals_tx,
+            forwards_tx,
             hk_pending: StdMutex::new(HashMap::new()),
             hk_decisions: StdMutex::new(HashMap::new()),
             hk_tx,
@@ -895,6 +900,10 @@ impl SessionApi for SessionManager {
 
     fn subscribe_approvals(&self) -> broadcast::Receiver<ApprovalEvent> {
         self.center.approvals_tx.subscribe()
+    }
+
+    fn subscribe_forwards(&self) -> broadcast::Receiver<session_api::ForwardEvent> {
+        self.center.forwards_tx.subscribe()
     }
 
     async fn decide_approval(&self, ctx: &Actor, id: ApprovalId, d: Decision) -> Result<()> {

@@ -723,6 +723,40 @@ fn main() {
       // （token 仅落隔离 DB /tmp/smoke + 本机 beacon，跑完即弃）
       const tok = await inv('issue_agent', {{ id: 'smoke-agent', label: '真机冒烟 Agent' }});
       title('agent-token|' + (tok || 'NONE'));
+      // T44（真机）：Agent 转发审批链——shell 侧 Agent 持真实 token 经内嵌
+      // MCP 端点发 forward_start/forward_stop（阻塞等人工），本脚本扮演人工：
+      // 轮询待批卡→批准，同时观测转发状态机（Listening→停止→Degraded）。
+      // 卡→批→banner→停卡→批→空→坏目标→Degraded 全部经 beacon 行对账；
+      // 转发/停止卡 editable=false 也是 T44 修复批的真机断言点。
+      title('session-id|' + cur);
+      const approvedIds = new Set();
+      let lastSig = '\u0000';
+      const t0 = Date.now();
+      while (Date.now() - t0 < 180000) {{
+        const cards = await inv('list_approvals', {{ pendingOnly: true }});
+        const c = cards && cards[0];
+        if (c && !approvedIds.has(c.id)) {{
+          approvedIds.add(c.id);
+          title('fwd-card|' + (c.command || '').slice(0, 48) + '|editable=' + (c.editable === true));
+          try {{
+            await inv('decide_approval', {{ id: c.id, decision: 'approve' }});
+            title('fwd-approved|' + String(c.id).slice(0, 8));
+          }} catch (e) {{
+            title('fwd-approve-err|' + e);
+          }}
+        }}
+        const fs = cur ? await inv('list_forwards', {{ sid: cur }}) : [];
+        const sig = (fs || []).map((f) => String(f.id).slice(0, 8) + ':' + f.state).join(',');
+        if (sig !== lastSig) {{
+          lastSig = sig;
+          const err0 = (fs && fs[0] && fs[0].error) || '';
+          title('fwd-state|' + sig + (err0 ? '|err=' + String(err0).slice(0, 48) : ''));
+        }}
+        const done = await fetch('http://127.0.0.1:15199/q/AGENT-DONE')
+          .then((r) => r.ok).catch(() => false);
+        if (done) break;
+        await sleep(400);
+      }}
       title('DONE');
     }} catch (e) {{
       title('FAIL|' + e);
@@ -766,6 +800,19 @@ fn main() {
                 while let Some(ev) = stream.next().await {
                     if let Ok(ev) = ev {
                         let _ = handle.emit("approval-event", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
+            // 转发状态事件 → 前端（T44 真机冒烟补口：WKWebView 节流 timer 时
+            // UI 的 3s 盲轮询挂起，Agent 建的转发对人工不可见——事件驱动补数据面可见性）
+            let handle_fwd = app.handle().clone();
+            let mut fwd_rx = api.subscribe_forwards();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(fwd_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_fwd.emit("forward-event", serde_json::to_value(ev).unwrap_or_default());
                     }
                 }
             });

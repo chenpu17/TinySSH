@@ -1371,7 +1371,17 @@ export default function App() {
     if (!sid) return;
     void refreshForwards();
     const t = setInterval(() => void refreshForwards(), 3000);
-    return () => clearInterval(t);
+    // T44 真机冒烟补口：转发状态事件驱动刷新（Agent 建的转发/Degraded 翻转即时
+    // 可见）；3s 盲轮询保留为兜底——真机实测 WKWebView 会节流 timer，纯轮询在
+    // 挂起场景丢数据面可见性。仅 Tauri 环境订阅（纯浏览器 demo 模式无事件通道，
+    // 轮询走 invoke shim——与 approval-event 同款守卫纪律，审核 D1）
+    let un: (() => void) | undefined;
+    if (inTauri) {
+      listen<{ session_id: string }>("forward-event", (e) => {
+        if (e.payload?.session_id === sidRef.current) void refreshForwards();
+      }).then((f) => (un = f));
+    }
+    return () => { clearInterval(t); un?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid]);
 

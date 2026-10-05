@@ -635,6 +635,9 @@ async fn journey5_agent_forward_approval_flow() {
     let sid = structured(&r)["session_id"].as_str().unwrap().to_string();
 
     // ---- Agent 建本地转发：卡（人类可读 -L 描述）→ 批准 → fid ----
+    // 转发状态事件（T44 真机冒烟补口）：建/停等写口广播 Changed——UI 事件驱动
+    // 刷新依赖此通道（真机实测 WKWebView 节流 timer 时 3s 盲轮询会挂起）
+    let mut fwd_ev = m.subscribe_forwards();
     let lp = t44_free_port();
     let client_f = connect(&url, &token).await;
     let sid_f = sid.clone();
@@ -706,6 +709,17 @@ async fn journey5_agent_forward_approval_flow() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.is_err(), "停止后监听应关闭");
+
+    // 事件收账：建 + 停至少各一条 Changed{session_id}（写口 → 广播全链）
+    let mut ev_n = 0u32;
+    while let Ok(ev) = fwd_ev.try_recv() {
+        assert!(
+            matches!(ev, session_api::ForwardEvent::Changed { ref session_id } if *session_id == sid),
+            "转发事件应带本会话 id：{ev:?}"
+        );
+        ev_n += 1;
+    }
+    assert!(ev_n >= 2, "建/停写口都应广播 Changed：{ev_n}");
 
     // ---- 拒绝路径：建转发被拒 → Agent 收审批拒绝错误，转发未建 ----
     let client_d = connect(&url, &token).await;
