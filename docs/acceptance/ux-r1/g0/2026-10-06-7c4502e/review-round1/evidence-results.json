@@ -1,0 +1,107 @@
+{
+  "cold": {
+    "stored_runs": {
+      "n": 10,
+      "median": 460.5,
+      "p95_inclusive": 1004.5
+    },
+    "s2_minus_700": {
+      "n": 10,
+      "median": 460.5,
+      "p95_inclusive": 1004.5
+    },
+    "summary": {
+      "n": 10,
+      "median_ms": 460,
+      "p95_ms": 1004,
+      "min_ms": 429,
+      "max_ms": 1414
+    }
+  },
+  "warm": {
+    "stored_runs": {
+      "n": 10,
+      "median": 488.0,
+      "p95_inclusive": 504.95
+    },
+    "s2_minus_700": {
+      "n": 10,
+      "median": 488.0,
+      "p95_inclusive": 504.95
+    },
+    "summary": {
+      "n": 10,
+      "median_ms": 488,
+      "p95_ms": 505,
+      "min_ms": 464,
+      "max_ms": 509
+    }
+  },
+  "cold_retry": {
+    "stored_runs": {
+      "n": 2,
+      "median": 769.0,
+      "p95_inclusive": 776.2
+    },
+    "s2_minus_700": {
+      "n": 2,
+      "median": 469.0,
+      "p95_inclusive": 476.2
+    },
+    "summary": {
+      "n": 2,
+      "median_ms": 469,
+      "p95_ms": 476,
+      "min_ms": 461,
+      "max_ms": 477
+    }
+  },
+  "p3_timing": {
+    "n": 30,
+    "median": 329.5,
+    "p95_inclusive": 348.65
+  },
+  "p3_run_keys": [
+    "idx",
+    "pid",
+    "total_ms"
+  ],
+  "p6": {
+    "n": 100,
+    "first10_median": 254.005,
+    "last10_median": 252.94,
+    "nonempty_residue": 0,
+    "distinct_pids_present": false
+  },
+  "p5": {
+    "B": 327.953125,
+    "E": 332.015625,
+    "growth_pct": 1.2387441040545046,
+    "tail_E": 334.4140625,
+    "tail_growth_pct": 1.9700795654866834
+  },
+  "failure_log_selector_probe": {
+    "line": "[app] autoconnect test-host failed: authentication failed",
+    "script_substring_matches": true
+  },
+  "helper_replacement_probe": {
+    "frozen_candidate_pids": [
+      202
+    ],
+    "during_helpers": {
+      "101": 1000,
+      "303": 6000
+    },
+    "counted_helper_rss": 0,
+    "new_helper_omitted": true,
+    "exit_check_reports_no_residue": true
+  },
+  "keyguard_wrong_instance_probe": {
+    "frontmost_name": "tinyssh-app",
+    "onscreen_same_name_1280x800": true,
+    "test_pid": 999,
+    "frontmost_pid": 888,
+    "current_guard_accepts": true,
+    "reason": "verify accepts name/window dimensions; does not consume the test pid"
+  }
+}

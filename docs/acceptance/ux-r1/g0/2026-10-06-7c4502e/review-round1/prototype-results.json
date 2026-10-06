@@ -1,0 +1,519 @@
+{
+  "scope": "Headless isolated browser and local HTML only. All keyboard input used Playwright page context; no system input injection.",
+  "results": [
+    {
+      "name": "U1 create connection",
+      "passwordFields": 0,
+      "mockConnected": true,
+      "simulatedCommandChangesScreen": false,
+      "state": {
+        "active": "x2",
+        "focus": "a",
+        "right": null,
+        "view": "session",
+        "fileMode": "side",
+        "fileOpen": false,
+        "sessions": [
+          {
+            "id": "x2",
+            "host": "x1",
+            "status": "connected"
+          }
+        ],
+        "toolbar": "review@192.0.2.10"
+      }
+    },
+    {
+      "name": "U2 terminal search",
+      "hitCounter": "1/3",
+      "nonexistentCounter": "1/3",
+      "renderedMatches": 0
+    },
+    {
+      "name": "U3 multi-session and focused pane target",
+      "staging": {
+        "active": "s3",
+        "focus": "a",
+        "right": null,
+        "view": "session",
+        "fileMode": "side",
+        "fileOpen": false,
+        "sessions": [
+          {
+            "id": "s1",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s2",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s3",
+            "host": "h2",
+            "status": "connected"
+          },
+          {
+            "id": "s4",
+            "host": "h6",
+            "status": "connected"
+          },
+          {
+            "id": "s5",
+            "host": "h3",
+            "status": "connected"
+          },
+          {
+            "id": "s6",
+            "host": "h4",
+            "status": "connecting"
+          },
+          {
+            "id": "s7",
+            "host": "h5",
+            "status": "disconnected"
+          },
+          {
+            "id": "s8",
+            "host": "h7",
+            "status": "connected"
+          }
+        ],
+        "toolbar": "deploy@10.0.0.21"
+      },
+      "returned": {
+        "active": "s1",
+        "focus": "a",
+        "right": null,
+        "view": "session",
+        "fileMode": "side",
+        "fileOpen": false,
+        "sessions": [
+          {
+            "id": "s1",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s2",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s3",
+            "host": "h2",
+            "status": "connected"
+          },
+          {
+            "id": "s4",
+            "host": "h6",
+            "status": "connected"
+          },
+          {
+            "id": "s5",
+            "host": "h3",
+            "status": "connected"
+          },
+          {
+            "id": "s6",
+            "host": "h4",
+            "status": "connecting"
+          },
+          {
+            "id": "s7",
+            "host": "h5",
+            "status": "disconnected"
+          },
+          {
+            "id": "s8",
+            "host": "h7",
+            "status": "connected"
+          }
+        ],
+        "toolbar": "deploy@10.0.0.11"
+      },
+      "focusedRight": {
+        "active": "s3",
+        "focus": "b",
+        "right": "s1",
+        "view": "session",
+        "fileMode": "side",
+        "fileOpen": false,
+        "sessions": [
+          {
+            "id": "s1",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s2",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s3",
+            "host": "h2",
+            "status": "connected"
+          },
+          {
+            "id": "s4",
+            "host": "h6",
+            "status": "connected"
+          },
+          {
+            "id": "s5",
+            "host": "h3",
+            "status": "connected"
+          },
+          {
+            "id": "s6",
+            "host": "h4",
+            "status": "connecting"
+          },
+          {
+            "id": "s7",
+            "host": "h5",
+            "status": "disconnected"
+          },
+          {
+            "id": "s8",
+            "host": "h7",
+            "status": "connected"
+          }
+        ],
+        "toolbar": "deploy@10.0.0.21"
+      },
+      "fileHost": "staging · 模拟",
+      "upload": {
+        "id": "x1",
+        "dir": "up",
+        "name": "assets-20261006.tar.gz",
+        "from": "本机 ~/Downloads/assets-20261006.tar.gz",
+        "to": "prod-api:/srv/app/logs/assets-20261006.tar.gz",
+        "status": "running",
+        "done": "2.1 / 12 MB",
+        "pct": 17
+      }
+    },
+    {
+      "name": "U4 files and conflict",
+      "download": {
+        "id": "x2",
+        "dir": "down",
+        "name": "access.log.1",
+        "from": "prod-api:/srv/app/logs/access.log.1",
+        "to": "本机 Downloads/access.log.1",
+        "status": "running",
+        "done": "0 / 8 MB",
+        "pct": 4
+      },
+      "upload": {
+        "id": "x3",
+        "dir": "up",
+        "name": "assets-20261006.tar.gz",
+        "from": "本机 ~/Downloads/assets-20261006.tar.gz",
+        "to": "prod-api:/srv/app/logs/assets-20261006.tar.gz",
+        "status": "running",
+        "done": "2.1 / 12 MB",
+        "pct": 17
+      },
+      "conflictResult": [
+        {
+          "id": "t1",
+          "dir": "down",
+          "name": "access.log",
+          "from": "prod-api:/srv/app/logs/access.log",
+          "to": "本机 Downloads/access.log",
+          "status": "running",
+          "done": "42 / 70 MB",
+          "pct": 60
+        },
+        {
+          "id": "t2",
+          "dir": "up",
+          "name": "config.tar.gz",
+          "from": "本机 ~/Downloads/config.tar.gz",
+          "to": "prod-api:/srv/app/config (1).tar.gz",
+          "status": "running",
+          "done": "1.4 / 18 MB",
+          "pct": 8
+        },
+        {
+          "id": "t3",
+          "dir": "up",
+          "name": "release.tar.gz",
+          "from": "本机 Downloads/release.tar.gz",
+          "to": "prod-api:/srv/app/release.tar.gz",
+          "status": "done",
+          "done": "86 MB",
+          "pct": 100
+        }
+      ]
+    },
+    {
+      "name": "U4 narrow return terminal",
+      "before": {
+        "active": "s1",
+        "focus": "a",
+        "right": null,
+        "view": "session",
+        "fileMode": "full",
+        "fileOpen": true,
+        "sessions": [
+          {
+            "id": "s1",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s2",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s3",
+            "host": "h2",
+            "status": "connected"
+          },
+          {
+            "id": "s4",
+            "host": "h6",
+            "status": "connected"
+          },
+          {
+            "id": "s5",
+            "host": "h3",
+            "status": "connected"
+          },
+          {
+            "id": "s6",
+            "host": "h4",
+            "status": "connecting"
+          },
+          {
+            "id": "s7",
+            "host": "h5",
+            "status": "disconnected"
+          },
+          {
+            "id": "s8",
+            "host": "h7",
+            "status": "connected"
+          }
+        ],
+        "toolbar": "deploy@10.0.0.11"
+      },
+      "after": {
+        "active": "s1",
+        "focus": "a",
+        "right": null,
+        "view": "session",
+        "fileMode": "full",
+        "fileOpen": true,
+        "sessions": [
+          {
+            "id": "s1",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s2",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s3",
+            "host": "h2",
+            "status": "connected"
+          },
+          {
+            "id": "s4",
+            "host": "h6",
+            "status": "connected"
+          },
+          {
+            "id": "s5",
+            "host": "h3",
+            "status": "connected"
+          },
+          {
+            "id": "s6",
+            "host": "h4",
+            "status": "connecting"
+          },
+          {
+            "id": "s7",
+            "host": "h5",
+            "status": "disconnected"
+          },
+          {
+            "id": "s8",
+            "host": "h7",
+            "status": "connected"
+          }
+        ],
+        "toolbar": "deploy@10.0.0.11"
+      },
+      "terminalVisible": false,
+      "returnButtonStillVisible": true
+    },
+    {
+      "name": "U5 reconnect and close",
+      "disconnected": {
+        "active": "s7",
+        "focus": "a",
+        "right": null,
+        "view": "session",
+        "fileMode": "side",
+        "fileOpen": false,
+        "sessions": [
+          {
+            "id": "s1",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s2",
+            "host": "h1",
+            "status": "connected"
+          },
+          {
+            "id": "s3",
+            "host": "h2",
+            "status": "connected"
+          },
+          {
+            "id": "s4",
+            "host": "h6",
+            "status": "connected"
+          },
+          {
+            "id": "s5",
+            "host": "h3",
+            "status": "connected"
+          },
+          {
+            "id": "s6",
+            "host": "h4",
+            "status": "connecting"
+          },
+          {
+            "id": "s7",
+            "host": "h5",
+            "status": "disconnected"
+          },
+          {
+            "id": "s8",
+            "host": "h7",
+            "status": "connected"
+          }
+        ],
+        "toolbar": "chen@203.0.113.8"
+      },
+      "reconnectedBanner": "已重连。这是新的连接边界。原工作目录、环境变量与远端进程不会自动恢复；不会自动重放历史命令。知道了",
+      "closeDialog": "关闭会话 · personal-vps关闭是主动结束连接；与网络断线不同。· 将中断 1 个进行中的传输任务· 该会话的 1 个端口转发将停止· 已保存的主机与凭据不受影响模拟确认：首版统一关闭确认。取消关闭会话",
+      "removed": true
+    },
+    {
+      "name": "keyboard modal containment",
+      "focus": [
+        {
+          "id": "hf-port",
+          "tag": "INPUT",
+          "inDialog": true
+        },
+        {
+          "id": "hf-addr",
+          "tag": "INPUT",
+          "inDialog": true
+        },
+        {
+          "id": "hf-user",
+          "tag": "INPUT",
+          "inDialog": true
+        },
+        {
+          "id": "hf-auth",
+          "tag": "SELECT",
+          "inDialog": true
+        },
+        {
+          "id": "",
+          "tag": "SUMMARY",
+          "inDialog": true
+        },
+        {
+          "id": "",
+          "tag": "BUTTON",
+          "inDialog": true
+        },
+        {
+          "id": "hf-save",
+          "tag": "BUTTON",
+          "inDialog": true
+        },
+        {
+          "id": "hf-go",
+          "tag": "BUTTON",
+          "inDialog": true
+        },
+        {
+          "id": "",
+          "tag": "BODY",
+          "inDialog": false
+        },
+        {
+          "id": "btn-sidebar-collapse",
+          "tag": "BUTTON",
+          "inDialog": false
+        },
+        {
+          "id": "btn-scenario",
+          "tag": "BUTTON",
+          "inDialog": false
+        },
+        {
+          "id": "btn-theme",
+          "tag": "BUTTON",
+          "inDialog": false
+        },
+        {
+          "id": "host-search",
+          "tag": "INPUT",
+          "inDialog": false
+        },
+        {
+          "id": "btn-add-host",
+          "tag": "BUTTON",
+          "inDialog": false
+        },
+        {
+          "id": "",
+          "tag": "DIV",
+          "inDialog": false
+        },
+        {
+          "id": "",
+          "tag": "BUTTON",
+          "inDialog": false
+        },
+        {
+          "id": "",
+          "tag": "BUTTON",
+          "inDialog": false
+        },
+        {
+          "id": "",
+          "tag": "DIV",
+          "inDialog": false
+        }
+      ],
+      "focusRestoredAfterClose": {
+        "id": "",
+        "tag": "DIV"
+      }
+    }
+  ],
+  "pageErrors": []
+}

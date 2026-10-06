@@ -1,0 +1,166 @@
+{
+  "scope": "Headless isolated Chrome, local HTML only. All input via Playwright page context; no system-level injection. Each scenario freshly reloaded.",
+  "results": [
+    {
+      "name": "F1-narrow-return",
+      "before": {
+        "cls": "content mode-full",
+        "termVisible": false
+      },
+      "after": {
+        "cls": "content",
+        "termVisible": true,
+        "fileOpen": false,
+        "w": 732
+      },
+      "reopen": "content mode-full",
+      "reback": true
+    },
+    {
+      "name": "F2-pane-target",
+      "FAIL": "page.click: Timeout 9000ms exceeded."
+    },
+    {
+      "name": "F3-search",
+      "hit": "1/4",
+      "marksA": 4,
+      "miss": "0/0",
+      "missMarks": 0,
+      "emptyShown": true,
+      "specials": {
+        "[": "0/0",
+        "&": "0/0",
+        "<": "0/0",
+        "(?P<lvl>": "0/0",
+        "GET /health": "1/2"
+      },
+      "escResidue": {
+        "barHidden": true,
+        "marksLeft": 4
+      },
+      "splitSearch": {
+        "count": "1/1",
+        "marksB": 1,
+        "marksA": 0
+      }
+    },
+    {
+      "name": "F4-password-whoami",
+      "pwVisible": true,
+      "pwErr": {
+        "errShown": true,
+        "modalStays": true,
+        "connected": 0
+      },
+      "r1": {
+        "sub": "rev-host · 第 1 次提问，共 2 次（模拟）",
+        "type": "password"
+      },
+      "r1err": true,
+      "r2": "rev-host · 第 2 次提问，共 2 次（模拟）",
+      "conn": {
+        "n": 1,
+        "st": "connected"
+      },
+      "echo": true,
+      "userOut": true
+    },
+    {
+      "name": "F5-modal-trap",
+      "escapedTabs": 0,
+      "restoredTo": "btn-welcome-add",
+      "reopenTrap": true,
+      "afterBodyClick": {
+        "el": "BODY",
+        "inDialog": false
+      },
+      "bodyTabs": [
+        {
+          "el": "BUTTON",
+          "inDialog": true
+        },
+        {
+          "el": "hf-name",
+          "inDialog": true
+        },
+        {
+          "el": "hf-port",
+          "inDialog": true
+        }
+      ]
+    },
+    {
+      "name": "F6a-agent",
+      "title": "Agent 请求执行命令",
+      "denyClosed": true,
+      "firstDelegationShown": true,
+      "agentEcho": true,
+      "agentOut": true
+    },
+    {
+      "name": "F6b-settings",
+      "theme": "light",
+      "termH3": "终端",
+      "fontToast": "外观已切换并持久化（模拟）终端字号 → 14 px（模拟持久化）",
+      "credRows": 3,
+      "warnToast": "终端字号 → 14 px（模拟持久化）无法删除：id_ed25519（默认密钥） 仍被主机引用（DF",
+      "rowsAfterBound": 3,
+      "rowsAfterFree": 2,
+      "agentPlaceholder": true
+    },
+    {
+      "name": "F6c-forwards",
+      "count0": "1",
+      "list1": "Listening",
+      "stopping": "Stopping",
+      "stopped": "Stopped",
+      "errShown": true,
+      "creating": "Stopped,Connecting",
+      "countCreating": "0",
+      "after": "Stopped,Listening",
+      "countAfter": "1"
+    },
+    {
+      "name": "F6d-committing",
+      "seq": [
+        "running",
+        "committing",
+        "done"
+      ],
+      "committingTextSeenNow": false
+    },
+    {
+      "name": "F6e-unknown",
+      "hasWarn": true,
+      "nRetry": 1,
+      "nDiscard": 1,
+      "discarded": "discarded",
+      "retryStart": "running",
+      "retryFinal": "done"
+    },
+    {
+      "name": "F7-components-copy",
+      "deleteHostOk": true,
+      "noDisconnectClaim": true,
+      "noResumeHint": true,
+      "resumeDisclaimer": true
+    },
+    {
+      "name": "P-narrow-split",
+      "mode1": "content mode-full",
+      "after": {
+        "cls": "content",
+        "split": true,
+        "termVisible": true,
+        "paneBHidden": false
+      }
+    },
+    {
+      "name": "U5-reconnect-close",
+      "boundaryBanner": false,
+      "dlgListsImpact": true,
+      "gone": true
+    }
+  ],
+  "pageErrors": []
+}

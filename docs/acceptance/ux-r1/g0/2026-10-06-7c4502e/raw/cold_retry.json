@@ -3,17 +3,15 @@
  "runs": [
   {
    "idx": 1,
-   "pid": 66264,
-   "s1_ms": 314,
-   "s2_ms": 1161,
-   "operable_ms": 761
+   "operable_ms": 461,
+   "operable_ms_v1_400offset": 761,
+   "s2_ms": 1161
   },
   {
    "idx": 2,
-   "pid": 66322,
-   "s1_ms": 336,
-   "s2_ms": 1177,
-   "operable_ms": 777
+   "operable_ms": 477,
+   "operable_ms_v1_400offset": 777,
+   "s2_ms": 1177
   }
  ],
  "operable": {
@@ -23,5 +21,6 @@
   "min_ms": 461,
   "max_ms": 477
  },
- "protocol": "RECOMPUTED 2026-10-06: these 2 rerun samples (P1 pollution incident, replacing cold.json idx 3/4) re-expressed at -700ms offset + inclusive p95; canonical values live in cold.json runs idx 3/4 (replaced-annotated)"
+ "protocol": "RECOMPUTED 2026-10-06: these 2 rerun samples (P1 pollution incident, replacing cold.json idx 3/4) re-expressed at -700ms offset + inclusive p95; canonical values live in cold.json runs idx 3/4 (replaced-annotated)",
+ "note": "重跑样本（替换 cold.json idx 3/4 污染值）；canonical 值在 cold.json idx 3/4（replaced 注记）。s2_ms 原始值未单独留存于本文件（重跑时仅记了减 400 后的 operable），现按 -300 差值回推补 s2_ms 字段。"
 }

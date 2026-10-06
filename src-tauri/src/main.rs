@@ -626,11 +626,17 @@ fn main() {
                     .unwrap_or_default();
                 // 私钥内容内联进脚本（base64/ASCII 行，无反引号；仍做转义兜底）
                 let key_js = key.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
+                // R04 Q-04：采样运行标识（仅注入脚本使用，产品行为无关）——
+                // 共享信标日志的每条打点可精确归因到本次运行，杜绝跨轮污染
+                let run_id = std::env::var("TINYSSH_RUN_ID").unwrap_or_else(|_| "norun".into());
                 let script = format!(
                     r#"(function() {{
   // sleep 原语走 beacon 服务端延时：等待期间页面事件循环自由运转（React 可渲染），
   // 又不依赖 WKWebView 对注入脚本可能节流的 timer
   const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {{}});
+  const RUN = '{run_id}';
+  // mark：仅写信标（不改窗口标题），带运行标识；用于采样打点（P1 列表就绪等）
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {{}});
   const title = (s) => {{
     document.title = 'SMOKE|' + s;
     fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)).catch(() => {{}});
@@ -651,6 +657,14 @@ fn main() {
   (async () => {{
     try {{
       title('s1-opening');
+      // R04 Q-04：主机列表就绪直打点——直接观测「种子主机卡片全部渲染」，
+      // 不再由表单阶段信标相减推断。20 = P1 基线种子主机数；主机行类为 .host-card。
+      mark('list-wait-begin');
+      const cardN = await waitFor(() => {{
+        const n = document.querySelectorAll('.host-card').length;
+        return n >= 20 ? n : 0;
+      }}, 100);
+      mark(cardN ? 's2-list-ready|cards=' + cardN : 'FAIL-no-list|cards=0');
       // 等 React 挂载完成（page-load Finished 早于 bundle 执行完）再点
       const openBtn = await waitFor(() => document.querySelector('button[aria-label="添加主机"]'), 60);
       if (!openBtn) {{ title('FAIL-no-open-btn'); return; }}

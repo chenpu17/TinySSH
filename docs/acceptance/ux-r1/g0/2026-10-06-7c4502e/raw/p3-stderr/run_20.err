@@ -1,0 +1,11 @@
+[app] starting, bench=
+[mcp] port 8722 occupied, trying next…
+[mcp] port 8723 occupied, trying next…
+[app] MCP endpoint in-process: http://127.0.0.1:8724/mcp
+[app] setup: windows=["main"]
+[app] native ctrl-key intercept installed
+[app] eval probe: Ok(())
+[app] window url: Ok(Url { scheme: "http", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: Some(5183), path: "/", query: None, fragment: None })
+[app] page load event: Started "main"
+[app] page load event: Finished "main"
+[app] autoconnect h-45f334a0-c589-48fb-afb5-47b39d7453ca -> s-a80f4bef-ab49-4a66-a39d-dfed717f794c

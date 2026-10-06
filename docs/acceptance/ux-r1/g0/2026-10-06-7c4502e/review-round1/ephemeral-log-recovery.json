@@ -1,0 +1,215 @@
+{
+  "scope": "Ephemeral logs, not yet bound to archived raw run PID/time; log shape alone does not prove UI ready.",
+  "runs": [
+    {
+      "run": 1,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 2,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 3,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 4,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 5,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 6,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 7,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 8,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 9,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 10,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 11,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 12,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 13,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 14,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 15,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 16,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 17,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 18,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 19,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 20,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 21,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 22,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 23,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 24,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 25,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 26,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 27,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 28,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 29,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    },
+    {
+      "run": 30,
+      "file_present": true,
+      "autoconnect_lines": 1,
+      "success_shape": 1,
+      "failure_shape": 0
+    }
+  ]
+}

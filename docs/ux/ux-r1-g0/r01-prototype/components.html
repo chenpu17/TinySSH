@@ -283,7 +283,7 @@
           <div class="modal-body">
             <div class="kv">
               <dt>地址</dt><dd class="mono">root@10.0.0.21:22</dd>
-              <dt>影响会话</dt><dd>1 个活动会话将被断开</dd>
+              <dt>活动会话</dt><dd>不受影响——删除仅移除配置；已打开的标签保留连接</dd>
               <dt>可恢复</dt><dd style="color:var(--status-danger)">不可撤销</dd>
             </div>
           </div>
@@ -306,7 +306,7 @@
     <p class="cg-spec">同时最多 2 条（第 3 条到达即移除最旧）· 约 3 秒自动淡出（0.18s opacity）· 右下角固定，避开居中对话框与表单输入 · role="status" aria-live="polite"</p>
     <div class="toast-demo">
       <div class="toast"><span class="i" data-icon="check"></span><span>已复制公钥指纹</span></div>
-      <div class="toast warn"><span class="i" data-icon="alert"></span><span>传输失败：连接中断（已保留断点）</span></div>
+      <div class="toast warn"><span class="i" data-icon="alert"></span><span>传输失败：连接中断。可从原位置重试（本版本不支持续传）</span></div>
     </div>
     <p class="cg-note" style="margin-top:16px">
       <button class="btn btn-secondary" id="btn-fire-toast">触发一条 Toast（约 3 秒后自动消失）</button>

@@ -1,0 +1,315 @@
+{
+ "binding_method": "by-construction: p3_connect.py redirects each spawn's stderr to run_{idx}.err in the same loop iteration that records pid in p3.json; cross-checked against independent review's ephemeral-log-recovery.json (30/30 present, success shape)",
+ "success_criterion": "[app] autoconnect <expected-host> -> s-<uuid36>; failure lines end with 'failed:'",
+ "expected_host_prefix": "h-45f334a0",
+ "runs": [
+  {
+   "idx": 1,
+   "pid_from_p3_json": 66542,
+   "stderr_file": "p3-stderr/run_1.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-92bdafba-370e-4b1a-a0fd-3e84deb133a2",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 2,
+   "pid_from_p3_json": 66547,
+   "stderr_file": "p3-stderr/run_2.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-29ebceca-53bd-4f43-bfc2-900802d798dd",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 3,
+   "pid_from_p3_json": 66564,
+   "stderr_file": "p3-stderr/run_3.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-f8178303-a125-43b7-9f7a-54947e25d5dd",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 4,
+   "pid_from_p3_json": 66569,
+   "stderr_file": "p3-stderr/run_4.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-e5e116d4-ba1b-4496-ad88-20ca2e0ef988",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 5,
+   "pid_from_p3_json": 66574,
+   "stderr_file": "p3-stderr/run_5.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-5eedf732-cab1-4614-b594-8cf453fd9334",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 6,
+   "pid_from_p3_json": 66579,
+   "stderr_file": "p3-stderr/run_6.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-d72a38a9-7d67-4ff6-b2f2-1e29ab3b8aa0",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 7,
+   "pid_from_p3_json": 66584,
+   "stderr_file": "p3-stderr/run_7.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-aeb2fa6a-0086-41b0-b84b-2683aeb3a24c",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 8,
+   "pid_from_p3_json": 66589,
+   "stderr_file": "p3-stderr/run_8.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-a6c2c409-9592-410a-a03d-159327f5f111",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 9,
+   "pid_from_p3_json": 66595,
+   "stderr_file": "p3-stderr/run_9.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-90e0c2b2-527f-48e1-854b-77821bad85af",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 10,
+   "pid_from_p3_json": 66600,
+   "stderr_file": "p3-stderr/run_10.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-928c6743-6140-42f3-8b76-fef484d38eae",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 11,
+   "pid_from_p3_json": 66605,
+   "stderr_file": "p3-stderr/run_11.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-58fa3aca-8082-4ca2-bafd-eda1abd90fa7",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 12,
+   "pid_from_p3_json": 66610,
+   "stderr_file": "p3-stderr/run_12.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-2b1218a0-6037-41dd-97f1-29904feb31b8",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 13,
+   "pid_from_p3_json": 66615,
+   "stderr_file": "p3-stderr/run_13.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-7f9083bf-faff-4058-8dc7-96f54d13749f",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 14,
+   "pid_from_p3_json": 66625,
+   "stderr_file": "p3-stderr/run_14.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-00865ea9-57d2-443e-98e3-f9a7947e004a",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 15,
+   "pid_from_p3_json": 66638,
+   "stderr_file": "p3-stderr/run_15.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-9c9b04a4-583d-4442-ade0-ae255b197cd0",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 16,
+   "pid_from_p3_json": 66643,
+   "stderr_file": "p3-stderr/run_16.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-b4df4984-9386-47e9-92d2-9049d04a11b9",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 17,
+   "pid_from_p3_json": 66648,
+   "stderr_file": "p3-stderr/run_17.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-200b0c88-0624-4b72-8906-8f628e9de580",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 18,
+   "pid_from_p3_json": 66654,
+   "stderr_file": "p3-stderr/run_18.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-95ec558e-1ce8-431e-8e15-f229fd852089",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 19,
+   "pid_from_p3_json": 66659,
+   "stderr_file": "p3-stderr/run_19.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-264a572e-5579-4059-aaca-9b06a647b7d7",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 20,
+   "pid_from_p3_json": 66664,
+   "stderr_file": "p3-stderr/run_20.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-a80f4bef-ab49-4a66-a39d-dfed717f794c",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 21,
+   "pid_from_p3_json": 66669,
+   "stderr_file": "p3-stderr/run_21.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-6cdea2c1-e96f-40e6-8a8a-f5c8cb8b8cc7",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 22,
+   "pid_from_p3_json": 66674,
+   "stderr_file": "p3-stderr/run_22.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-919161f8-669e-4092-ba12-e5b17d1b5bd4",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 23,
+   "pid_from_p3_json": 66679,
+   "stderr_file": "p3-stderr/run_23.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-e8472531-41c5-4f6c-bd7c-f75c467e1d5f",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 24,
+   "pid_from_p3_json": 66684,
+   "stderr_file": "p3-stderr/run_24.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-5119ae90-003d-484b-849a-dbca3c472d25",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 25,
+   "pid_from_p3_json": 66689,
+   "stderr_file": "p3-stderr/run_25.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-008dcf50-1b02-412b-a275-50e4d5cf10a9",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 26,
+   "pid_from_p3_json": 66694,
+   "stderr_file": "p3-stderr/run_26.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-5ec08c7a-c7f0-4fb9-8429-3ae93c132c02",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 27,
+   "pid_from_p3_json": 66700,
+   "stderr_file": "p3-stderr/run_27.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-55b61279-462d-499d-b92b-86ed0e9897f1",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 28,
+   "pid_from_p3_json": 66705,
+   "stderr_file": "p3-stderr/run_28.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-3169a151-5d87-4de4-aebd-36b7f257aa30",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 29,
+   "pid_from_p3_json": 66710,
+   "stderr_file": "p3-stderr/run_29.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-ba224e51-e4aa-4083-86c9-c602ce2f284f",
+   "failure_detail": null,
+   "host_matches_expected": true
+  },
+  {
+   "idx": 30,
+   "pid_from_p3_json": 66715,
+   "stderr_file": "p3-stderr/run_30.err",
+   "success": true,
+   "host": "h-45f334a0-c589-48fb-afb5-47b39d7453ca",
+   "sid": "s-8ef6b5ad-080a-4823-b7dc-28c144a536fe",
+   "failure_detail": null,
+   "host_matches_expected": true
+  }
+ ],
+ "summary": {
+  "n": 30,
+  "success_bound": 30,
+  "success_wrong_host": 0,
+  "failure": 0,
+  "no_line": 0
+ },
+ "note": "原 p3.json 的 matcher 只匹配 'autoconnect' 字样，成功/失败均含该词（main.rs:852-853），证据效力存疑；本绑定记录以精确成功形态逐份核对补证。用户主审已确认 30/30 均为成功形态。"
+}

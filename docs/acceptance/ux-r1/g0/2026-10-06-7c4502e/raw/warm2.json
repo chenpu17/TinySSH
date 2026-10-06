@@ -1,0 +1,83 @@
+{
+ "mode": "warm",
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 85146,
+   "run_id": "p1-warm-1-cb81d302",
+   "list_ready_ms": 438,
+   "operable_ms": 438
+  },
+  {
+   "idx": 2,
+   "pid": 85151,
+   "run_id": "p1-warm-2-dad6b513",
+   "list_ready_ms": 534,
+   "operable_ms": 534
+  },
+  {
+   "idx": 3,
+   "pid": 85156,
+   "run_id": "p1-warm-3-f11e2b18",
+   "list_ready_ms": 511,
+   "operable_ms": 511
+  },
+  {
+   "idx": 4,
+   "pid": 85161,
+   "run_id": "p1-warm-4-25446ae6",
+   "list_ready_ms": 510,
+   "operable_ms": 510
+  },
+  {
+   "idx": 5,
+   "pid": 85167,
+   "run_id": "p1-warm-5-e168a561",
+   "list_ready_ms": 549,
+   "operable_ms": 549
+  },
+  {
+   "idx": 6,
+   "pid": 85175,
+   "run_id": "p1-warm-6-79be97b0",
+   "list_ready_ms": 507,
+   "operable_ms": 507
+  },
+  {
+   "idx": 7,
+   "pid": 85182,
+   "run_id": "p1-warm-7-755ba266",
+   "list_ready_ms": 525,
+   "operable_ms": 525
+  },
+  {
+   "idx": 8,
+   "pid": 85187,
+   "run_id": "p1-warm-8-4cfc43e2",
+   "list_ready_ms": 513,
+   "operable_ms": 513
+  },
+  {
+   "idx": 9,
+   "pid": 85192,
+   "run_id": "p1-warm-9-7cfb1028",
+   "list_ready_ms": 517,
+   "operable_ms": 517
+  },
+  {
+   "idx": 10,
+   "pid": 85197,
+   "run_id": "p1-warm-10-d10fc910",
+   "list_ready_ms": 526,
+   "operable_ms": 526
+  }
+ ],
+ "operable": {
+  "n": 10,
+  "median_ms": 515,
+  "p95_ms": 542,
+  "min_ms": 438,
+  "max_ms": 549
+ },
+ "protocol": "Q-04 endpoint: operable = per-run beacon mark '<run_id>|s2-list-ready' arrival - t0 (direct observation: 20 seeded host cards rendered; no offset subtraction); run id isolates shared beacon log; cold=idle 60s process-cold"
+}

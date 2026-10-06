@@ -1,85 +1,373 @@
 {
- "B_median_mb": 328.0,
+ "B_median_mb": 345.83,
  "B_samples": [
-  327.953125,
-  327.9375,
-  327.96875,
-  327.96875,
-  327.953125,
-  327.90625,
-  327.96875,
-  327.953125,
-  327.921875,
-  327.921875,
-  327.921875,
-  328.15625
- ],
- "E_median_mb": 332.0,
- "E_samples": [
-  331.953125,
-  332.015625,
-  332.0,
-  331.984375,
-  331.984375,
-  332.015625,
-  332.015625,
-  332.046875,
-  334.4375,
-  334.453125,
-  334.390625,
-  334.359375
- ],
- "growth_pct": 1.2,
- "curve_30s": [
   {
    "t": 0,
-   "mb": 328.2
+   "total_mb": 342.67,
+   "per_candidate_kb": {
+    "86631": 45040,
+    "86632": 124128,
+    "86633": 21824
+   },
+   "broken": null
+  },
+  {
+   "t": 5,
+   "total_mb": 342.95,
+   "per_candidate_kb": {
+    "86631": 45024,
+    "86632": 124448,
+    "86633": 21808
+   },
+   "broken": null
+  },
+  {
+   "t": 10,
+   "total_mb": 343.8,
+   "per_candidate_kb": {
+    "86631": 45024,
+    "86632": 125312,
+    "86633": 21808
+   },
+   "broken": null
+  },
+  {
+   "t": 15,
+   "total_mb": 344.09,
+   "per_candidate_kb": {
+    "86631": 45024,
+    "86632": 125616,
+    "86633": 21808
+   },
+   "broken": null
+  },
+  {
+   "t": 20,
+   "total_mb": 344.48,
+   "per_candidate_kb": {
+    "86631": 45024,
+    "86632": 126016,
+    "86633": 21808
+   },
+   "broken": null
+  },
+  {
+   "t": 25,
+   "total_mb": 345.42,
+   "per_candidate_kb": {
+    "86631": 45024,
+    "86632": 126960,
+    "86633": 21824
+   },
+   "broken": null
   },
   {
    "t": 30,
-   "mb": 329.6
+   "total_mb": 346.23,
+   "per_candidate_kb": {
+    "86631": 45056,
+    "86632": 127680,
+    "86633": 21824
+   },
+   "broken": null
+  },
+  {
+   "t": 35,
+   "total_mb": 346.38,
+   "per_candidate_kb": {
+    "86631": 44992,
+    "86632": 127968,
+    "86633": 21760
+   },
+   "broken": null
+  },
+  {
+   "t": 40,
+   "total_mb": 346.86,
+   "per_candidate_kb": {
+    "86631": 44976,
+    "86632": 128592,
+    "86633": 21744
+   },
+   "broken": null
+  },
+  {
+   "t": 45,
+   "total_mb": 347.62,
+   "per_candidate_kb": {
+    "86631": 44960,
+    "86632": 129408,
+    "86633": 21728
+   },
+   "broken": null
+  },
+  {
+   "t": 50,
+   "total_mb": 348.69,
+   "per_candidate_kb": {
+    "86631": 44976,
+    "86632": 129808,
+    "86633": 21744
+   },
+   "broken": null
+  },
+  {
+   "t": 55,
+   "total_mb": 348.64,
+   "per_candidate_kb": {
+    "86631": 44960,
+    "86632": 129856,
+    "86633": 21744
+   },
+   "broken": null
+  }
+ ],
+ "E_median_mb": 117.05,
+ "E_samples": [
+  {
+   "t": 0,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 5,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 10,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 15,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 20,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 25,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 30,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 35,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 40,
+   "total_mb": 117.05,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 45,
+   "total_mb": 117.0,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 50,
+   "total_mb": 117.0,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  },
+  {
+   "t": 55,
+   "total_mb": 117.0,
+   "per_candidate_kb": {
+    "86631": 12944,
+    "86632": 13568,
+    "86633": 9392
+   },
+   "broken": null
+  }
+ ],
+ "growth_pct": -66.15,
+ "voided": false,
+ "void_reason": null,
+ "curve_30s": [
+  {
+   "t": 0,
+   "mb": 348.78,
+   "per_candidate_kb": {
+    "86631": 44960,
+    "86632": 129952,
+    "86633": 21744
+   },
+   "broken": null
+  },
+  {
+   "t": 30,
+   "mb": 240.34,
+   "per_candidate_kb": {
+    "86631": 32064,
+    "86632": 89584,
+    "86633": 14208
+   },
+   "broken": null
   },
   {
    "t": 60,
-   "mb": 329.9
+   "mb": 218.17,
+   "per_candidate_kb": {
+    "86631": 32000,
+    "86632": 70624,
+    "86633": 14176
+   },
+   "broken": null
   },
   {
    "t": 90,
-   "mb": 330.1
+   "mb": 227.55,
+   "per_candidate_kb": {
+    "86631": 32112,
+    "86632": 76448,
+    "86633": 14256
+   },
+   "broken": null
   },
   {
-   "t": 120,
-   "mb": 330.1
+   "t": 121,
+   "mb": 237.33,
+   "per_candidate_kb": {
+    "86631": 32112,
+    "86632": 86416,
+    "86633": 14272
+   },
+   "broken": null
   },
   {
    "t": 151,
-   "mb": 330.2
+   "mb": 166.33,
+   "per_candidate_kb": {
+    "86631": 14240,
+    "86632": 56000,
+    "86633": 11024
+   },
+   "broken": null
   },
   {
    "t": 181,
-   "mb": 331.4
+   "mb": 187.05,
+   "per_candidate_kb": {
+    "86631": 14352,
+    "86632": 76416,
+    "86633": 11184
+   },
+   "broken": null
   },
   {
    "t": 211,
-   "mb": 331.5
+   "mb": 189.38,
+   "per_candidate_kb": {
+    "86631": 14608,
+    "86632": 81488,
+    "86633": 11520
+   },
+   "broken": null
   },
   {
    "t": 241,
-   "mb": 331.6
+   "mb": 214.86,
+   "per_candidate_kb": {
+    "86631": 17904,
+    "86632": 103584,
+    "86633": 11632
+   },
+   "broken": null
   },
   {
    "t": 271,
-   "mb": 331.7
+   "mb": 215.62,
+   "per_candidate_kb": {
+    "86631": 17952,
+    "86632": 103584,
+    "86633": 11664
+   },
+   "broken": null
   }
  ],
  "attribution": {
-  "candidates": [
-   69352,
-   69354,
-   69355
-  ],
-  "residue_after_quit": []
+  "candidates": {
+   "86631": {
+    "rss_kb": 45024,
+    "lstart": "Oct 6 21:58:55 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU"
+   },
+   "86632": {
+    "rss_kb": 97200,
+    "lstart": "Oct 6 21:58:55 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent"
+   },
+   "86633": {
+    "rss_kb": 21936,
+    "lstart": "Oct 6 21:58:55 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking"
+   }
+  },
+  "residue_after_quit": [],
+  "identity_reuse": []
  },
- "protocol": "PILOT: 5min sustained (full 30min at R51); single session; B/E = 60s settle + 12x5s median; differential attribution",
- "verdict_note": "growth > 20% or residue non-empty → investigate; 末段持续上升另按 10 分钟窗口口径在 R51 判定"
+ "protocol": "PILOT (fail-closed attribution v2, Q-05): 5min sustained (full 30min at R51); single session; B/E = 60s settle + 12x5s median; per-candidate curves with lstart identity; disappearance/identity change voids sample",
+ "verdict_note": "voided=Any → 数据不作门证据; growth > 20% or residue/reuse → investigate; 末段持续上升另按 10 分钟窗口口径在 R51 判定"
 }

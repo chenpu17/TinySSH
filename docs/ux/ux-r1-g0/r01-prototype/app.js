@@ -227,6 +227,8 @@ const SCENARIOS = [
     { key: 'disconnected', label: '断线 · 重连横幅（可演示重连成功）' },
     { key: 'fingerprint', label: '指纹变化 · 确认模态（旧值 / 新值对照）' },
     { key: 'conflict', label: '传输同名冲突 · 对话框（跳过 / 替换 / 保留两份）' },
+    { key: 'unknown', label: '传输 · 提交结果未知 · 恢复决策（重试 / 丢弃）' },
+    { key: 'agent', label: 'S10 协作 · Agent 首次委托与审批' },
     { key: 'narrow', label: '窄窗 960 · 文件面板转完整视图' },
   ] },
 ];
@@ -243,6 +245,19 @@ const S = {
 
 function hostOf(s) { return S.hosts.find((h) => h.id === s.hostId) || { name: '未知主机', user: '', addr: '' }; }
 function activeSession() { return S.sessions.find((s) => s.id === S.active) || null; }
+function focusedSession() {
+  if (S.split && S.paneFocus === 'b') {
+    const s2 = S.sessions.find((x) => x.id === S.splitRight);
+    if (s2) return s2;
+  }
+  return activeSession();
+}
+function targetHostLabel() {
+  const s = focusedSession();
+  if (!s) return '';
+  if (s.kind === 'local') return '本机';
+  return hostOf(s).name;
+}
 function titleOf(s) {
   if (s.kind === 'local') return '本地终端';
   const same = S.sessions.filter((x) => x.hostId === s.hostId);
@@ -298,6 +313,20 @@ function applyScenario(key, silent) {
       initSessions(); S.active = 's1'; S.view = 'session';
       S.file.open = true; S.drawer.open = true;
       after(120, () => openConflict(S.drawer.tasks.find((t) => t.id === 't2'))); break;
+    case 'unknown': {
+      initSessions(); S.active = 's1'; S.view = 'session';
+      S.drawer.open = true;
+      const unknownTask = {
+        id: 'tu', dir: 'down', name: 'events-20261006.jsonl',
+        from: 'prod-api:/srv/app/logs/events-20261006.jsonl',
+        to: '本机 Downloads/events-20261006.jsonl', status: 'unknown', done: '', pct: 0,
+      };
+      S.drawer.tasks = [unknownTask, S.drawer.tasks.find((t) => t.id === 't3')].filter(Boolean);
+      break;
+    }
+    case 'agent':
+      initSessions(); S.active = 's1'; S.view = 'session';
+      after(300, () => openAgentApproval()); break;
     case 'narrow':
       initSessions(); S.active = 's1'; S.view = 'session';
       S.file.open = true; S.drawer.open = true; break;
@@ -349,15 +378,32 @@ function openMenu(anchor, items) {
   setTimeout(() => document.addEventListener('mousedown', menuCloser), 0);
 }
 
+let modalReturnFocus = null;
+function modalFocusables(m) {
+  return [...m.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')]
+    .filter((x) => !x.disabled && x.offsetParent !== null);
+}
+function modalTabTrap(e) {
+  if (e.key !== 'Tab') return;
+  const m = $('overlay-root').querySelector('.modal');
+  if (!m) return;
+  const f = modalFocusables(m);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
+  else if (!e.shiftKey && (document.activeElement === last || !m.contains(document.activeElement))) { first.focus(); e.preventDefault(); }
+}
 function openModal(html, opts) {
   opts = opts || {};
   const root = $('overlay-root');
+  modalReturnFocus = document.activeElement;
   root.hidden = false;
   root.innerHTML = '<div class="modal" role="dialog" aria-modal="true"' + (opts.width ? ' style="width:' + opts.width + 'px"' : '') + '>' + html + '</div>';
   hydrate(root);
   const m = root.querySelector('.modal');
   m.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => closeModal()));
   if (!opts.lock) root.addEventListener('mousedown', overlayBackdrop);
+  root.addEventListener('keydown', modalTabTrap);
   const f = m.querySelector('input, select, .btn-primary');
   if (f) f.focus();
   return m;
@@ -365,8 +411,13 @@ function openModal(html, opts) {
 function overlayBackdrop(e) { if (e.target === $('overlay-root')) closeModal(); }
 function closeModal() {
   const r = $('overlay-root');
+  r.removeEventListener('keydown', modalTabTrap);
   r.hidden = true; r.innerHTML = '';
   r.removeEventListener('mousedown', overlayBackdrop);
+  if (modalReturnFocus && document.contains(modalReturnFocus)) {
+    try { modalReturnFocus.focus(); } catch (_) { /* 元素已不可聚焦 */ }
+  }
+  modalReturnFocus = null;
 }
 
 function toast(msg, type) {
@@ -376,6 +427,79 @@ function toast(msg, type) {
   t.innerHTML = '<span class="i" data-icon="' + (type === 'warn' ? 'alert' : 'check') + '"></span><span>' + msg + '</span>';
   root.append(t); hydrate(t);
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 220); }, 3000);
+}
+
+/* ---------- 终端内搜索（真实匹配） ---------- */
+
+let SEARCH = { marks: [], idx: 0 };
+
+function searchPane() {
+  return (S.split && S.paneFocus === 'b') ? $('term-b') : $('term-a');
+}
+function clearSearchMarks() {
+  SEARCH.marks.forEach((m) => {
+    const p = m.parentNode;
+    if (!p) return;
+    p.replaceChild(document.createTextNode(m.textContent), m);
+    p.normalize();
+  });
+  SEARCH = { marks: [], idx: 0 };
+}
+function setSearchCount(i, n, empty) {
+  $('term-search-count').textContent = n ? (i + 1) + '/' + n : '0/0';
+  $('term-search-empty').hidden = !empty;
+}
+function runSearch() {
+  clearSearchMarks();
+  const q = $('term-search-input').value;
+  const pane = searchPane();
+  if (!q || !pane) { setSearchCount(0, 0, false); return; }
+  const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n);
+  const ql = q.toLowerCase();
+  const ranges = [];
+  nodes.forEach((node) => {
+    const text = node.textContent;
+    const lower = text.toLowerCase();
+    let i = 0;
+    while (ql && lower.indexOf(ql, i) >= 0) {
+      const pos = lower.indexOf(ql, i);
+      const r = document.createRange();
+      r.setStart(node, pos);
+      r.setEnd(node, pos + q.length);
+      ranges.push(r);
+      i = pos + q.length;
+    }
+  });
+  // 倒序应用，避免节点切割后使前面的 range 失效
+  for (let k = ranges.length - 1; k >= 0; k--) {
+    try {
+      const mark = document.createElement('mark');
+      mark.className = 'hl';
+      ranges[k].surroundContents(mark);
+      SEARCH.marks.unshift(mark);
+    } catch (_) { /* 跨节点匹配跳过 */ }
+  }
+  const n = SEARCH.marks.length;
+  if (n) {
+    SEARCH.idx = 0;
+    SEARCH.marks[0].classList.add('cur');
+    SEARCH.marks[0].scrollIntoView({ block: 'nearest' });
+    setSearchCount(0, n, false);
+  } else {
+    setSearchCount(0, 0, true);
+  }
+}
+function searchStep(dir) {
+  const n = SEARCH.marks.length;
+  if (!n) return;
+  SEARCH.marks[SEARCH.idx].classList.remove('cur');
+  SEARCH.idx = (SEARCH.idx + dir + n) % n;
+  const m = SEARCH.marks[SEARCH.idx];
+  m.classList.add('cur');
+  m.scrollIntoView({ block: 'nearest' });
+  setSearchCount(SEARCH.idx, n, false);
 }
 
 /* ---------- 渲染 ---------- */
@@ -485,7 +609,7 @@ function renderTabs() {
 }
 
 function renderToolbar() {
-  const s = activeSession();
+  const s = focusedSession();
   const stText = { connected: '已连接', connecting: '正在连接', disconnected: '已断开', failed: '连接失败' };
   if (!s) return;
   if (s.kind === 'local') {
@@ -534,6 +658,40 @@ function bannerOf(s) {
   return null;
 }
 
+function canType(s) {
+  if (!s || s.status !== 'connected' || s.screen === 'vim') return false;
+  return s.screen === 'fresh' || (SCREENS[s.screen] || '').includes(CURSOR);
+}
+
+function inputLineHtml(s) {
+  const h = s.kind === 'local' ? { user: 'chen', name: 'Mac' } : hostOf(s);
+  const prompt = s.kind === 'local'
+    ? '<span class="t-user">chen@Mac</span><span class="t-dim"> ~ %</span> '
+    : pr(esc(h.user), esc(h.name), '~');
+  return '<span class="term-line">' + prompt + esc(s.buf || '') + CURSOR + '</span>';
+}
+
+function runCommand(s) {
+  const cmd = (s.buf || '').trim();
+  s.buf = '';
+  const h = s.kind === 'local' ? { user: 'chen', name: 'Mac' } : hostOf(s);
+  const echoLine = s.kind === 'local'
+    ? '<span class="t-user">chen@Mac</span><span class="t-dim"> ~ %</span> ' + esc(cmd)
+    : pr(esc(h.user), esc(h.name), '~') + esc(cmd);
+  let out = '';
+  if (cmd === 'clear') { s.termHtml = ''; renderTerminal(); return; }
+  if (cmd === 'whoami') out = esc(h.user);
+  else if (cmd === 'hostname') out = esc(h.name);
+  else if (cmd === 'pwd') out = s.kind === 'local' ? '/Users/chen' : '/home/' + h.user;
+  else if (cmd.startsWith('echo ')) out = esc(cmd.slice(5));
+  else if (cmd === 'ls') out = '<span class="t-cyan">app</span>  logs  readme.md';
+  else if (cmd === 'date') out = esc(new Date().toString().slice(0, 24));
+  else if (cmd === 'help') out = '（原型）可用：whoami / hostname / pwd / ls / echo / date / clear';
+  else if (cmd) out = '<span class="t-warn">bash: ' + esc(cmd.split(' ')[0]) + ': command not found（原型仅模拟部分命令）</span>';
+  s.termHtml += echoLine + '\n' + (out ? out + '\n' : '');
+  renderTerminal();
+}
+
 function renderTerminal() {
   const s = activeSession();
   const area = $('term-area');
@@ -566,8 +724,16 @@ function renderTerminal() {
   }
 
   const stamp = s.reconnectStamp ? '<span class="t-dim">─── 于 14:36 重新连接（新连接边界；不重放历史命令）───</span>\n' : '';
-  const screen = s.screen === 'fresh' ? screenFresh(hostOf(s)) : (SCREENS[s.screen] || '');
-  $('term-a').innerHTML = stamp + screen;
+  if (s.termHtml === undefined || s.termHtml === null) {
+    let html = SCREENS[s.screen] || screenFresh(hostOf(s));
+    if (canType(s)) {
+      const idx = html.lastIndexOf('\n');
+      s.termHtml = idx >= 0 ? html.slice(0, idx + 1) : '';
+    } else {
+      s.termHtml = html;
+    }
+  }
+  $('term-a').innerHTML = stamp + s.termHtml + (canType(s) ? inputLineHtml(s) : '');
   $('pane-a').classList.toggle('focused', S.split && S.paneFocus === 'a');
   $('pane-tag-a').textContent = titleOf(s) + (S.split ? ' · 点击切换焦点' : '');
 
@@ -579,22 +745,32 @@ function renderTerminal() {
     }
     if (S.splitRight) {
       const s2 = S.sessions.find((x) => x.id === S.splitRight);
+      if (s2.termHtml === undefined || s2.termHtml === null) {
+        let html2 = SCREENS[s2.screen] || screenFresh(hostOf(s2));
+        if (canType(s2)) {
+          const idx2 = html2.lastIndexOf('\n');
+          s2.termHtml = idx2 >= 0 ? html2.slice(0, idx2 + 1) : '';
+        } else {
+          s2.termHtml = html2;
+        }
+      }
       pb.hidden = false;
-      $('term-b').innerHTML = SCREENS[s2.screen] || screenFresh(hostOf(s2));
+      $('term-b').innerHTML = s2.termHtml + (canType(s2) ? inputLineHtml(s2) : '');
       $('pane-b').classList.toggle('focused', S.paneFocus === 'b');
       $('pane-tag-b').textContent = titleOf(s2);
     } else { pb.hidden = true; S.split = false; }
   } else {
     pb.hidden = true;
   }
+  if (!$('term-search').hidden) runSearch();
 }
 
 function renderFilePanel() {
   const p = S.file, panel = $('file-panel');
   panel.hidden = !p.open;
   if (!p.open) return;
-  const s = activeSession();
-  const h = s && s.kind !== 'local' ? hostOf(s) : { name: 'prod-api' };
+  const s = focusedSession();
+  const h = s && s.kind !== 'local' ? hostOf(s) : { name: '本机' };
   $('file-host-chip').textContent = h.name + ' · 模拟';
   const parts = p.path.split('/').filter(Boolean);
   let bc = '<button class="crumb" data-nav="/">/</button>';
@@ -620,6 +796,21 @@ function renderFilePanel() {
   $('btn-download').disabled = !p.sel.size;
 }
 
+const ACTIVE_TASK = ['running', 'conflict', 'cancelling', 'committing', 'unknown'];
+
+function scheduleCompletion(t) {
+  after(3500, () => {
+    if (t.status !== 'running') return;
+    t.pct = 100; t.done = '完成'; t.status = 'committing';
+    renderAll();
+    after(1100, () => {
+      if (t.status !== 'committing') return;
+      t.status = 'done'; t.done = (t.dir === 'up' ? '已上传 ' : '已下载 ') + t.done.replace('完成 ', '');
+      renderAll();
+    });
+  });
+}
+
 function taskRowHtml(t) {
   const icon = t.dir === 'down' ? 'download' : 'upload';
   let right = '', line = '', cls = t.status;
@@ -627,6 +818,12 @@ function taskRowHtml(t) {
     right = '<span>' + esc(t.done) + '</span><span>' + t.pct + '%</span><button class="btn btn-ghost btn-sm" data-task="cancel" data-id="' + t.id + '">取消</button>';
   } else if (t.status === 'cancelling') {
     right = '<span class="st-dim">取消中…</span>';
+  } else if (t.status === 'committing') {
+    right = '<span class="st-dim">提交中…（不可取消）</span>';
+  } else if (t.status === 'unknown') {
+    right = '<button class="btn btn-secondary btn-sm" data-task="retry" data-id="' + t.id + '">重试</button>' +
+      '<button class="btn btn-ghost btn-sm" data-task="discard" data-id="' + t.id + '">丢弃</button>';
+    line = '<div class="task-path st-warn">结果未知：连接中断于提交阶段，远端可能已写入完整文件。请核对后选择重试或丢弃。</div>';
   } else if (t.status === 'conflict') {
     right = '<button class="btn btn-secondary btn-sm" data-task="resolve" data-id="' + t.id + '">选择处理方式</button>';
     line = '<div class="task-path st-warn">等待处理：目标存在同名文件（跳过 / 替换 / 保留两份）</div>';
@@ -634,10 +831,12 @@ function taskRowHtml(t) {
     right = '<span class="st-ok">已完成</span>';
   } else if (t.status === 'skipped') {
     right = '<span class="st-dim">已跳过</span>';
+  } else if (t.status === 'discarded') {
+    right = '<span class="st-dim">已丢弃（未确认远端状态，可重新发起）</span>';
   } else if (t.status === 'cancelled') {
     right = '<span class="st-dim">已取消</span>';
   }
-  const bar = (t.status === 'running' || t.status === 'conflict')
+  const bar = (t.status === 'running' || t.status === 'conflict' || t.status === 'committing')
     ? '<div class="prog"><i style="width:' + t.pct + '%"></i></div>' : '';
   return '<div class="task ' + cls + ' ' + t.dir + '">' +
     '<div class="task-icon"><span class="i" data-icon="' + icon + '"></span></div>' +
@@ -648,16 +847,16 @@ function taskRowHtml(t) {
 function renderDrawer() {
   const d = $('drawer');
   d.hidden = !S.drawer.open;
-  const n = S.drawer.tasks.filter((t) => t.status === 'running' || t.status === 'conflict' || t.status === 'cancelling').length;
+  const n = S.drawer.tasks.filter((t) => ACTIVE_TASK.includes(t.status)).length;
   $('drawer-count').textContent = S.drawer.tasks.length + ' 个任务 · ' + n + ' 个进行中';
   $('drawer-list').innerHTML = S.drawer.tasks.map(taskRowHtml).join('');
   hydrate($('drawer-list'));
 }
 
 function renderStatusbar() {
-  const s = activeSession();
+  const s = focusedSession();
   if (s) $('sb-left').textContent = s.kind === 'local' ? '本地 · zsh · 模拟数据' : 'SSH · UTF-8 · 模拟数据';
-  const trN = S.drawer.tasks.filter((t) => ['running', 'conflict', 'cancelling'].includes(t.status)).length;
+  const trN = S.drawer.tasks.filter((t) => ACTIVE_TASK.includes(t.status)).length;
   const fwN = S.forwards.filter((f) => f.status === 'Listening').length;
   $('sb-tr-count').textContent = trN;
   $('sb-fwd-count').textContent = fwN;
@@ -715,6 +914,10 @@ function connectHost(id, opts) {
       renderAll();
     });
   };
+  if (h.authKind === 'secret') {
+    after(700, () => { if (S.sessions.includes(s)) openChallenge(s, 1, proceed); });
+    return;
+  }
   if (h.fpChange) {
     after(900, () => { if (S.sessions.includes(s)) openFingerprint(s, proceed); });
     return;
@@ -743,10 +946,12 @@ function closeSession(id) {
   const s = S.sessions.find((x) => x.id === id);
   if (!s) return;
   if (s.status === 'connected') {
-    const running = S.drawer.tasks.filter((t) => t.status === 'running').length;
+    const running = S.drawer.tasks.filter((t) => ['running', 'committing', 'cancelling'].includes(t.status)).length;
+    const unknownN = S.drawer.tasks.filter((t) => t.status === 'unknown' || t.status === 'conflict').length;
     const fwN = S.forwards.filter((f) => f.status === 'Listening').length;
     const impacts = [];
     if (running) impacts.push('将中断 ' + running + ' 个进行中的传输任务');
+    if (unknownN) impacts.push(unknownN + ' 个待决策任务将保留在队列中');
     if (fwN) impacts.push('该会话的 ' + fwN + ' 个端口转发将停止');
     impacts.push('已保存的主机与凭据不受影响');
     const m = openModal(
@@ -852,6 +1057,91 @@ function openConflict(t) {
   });
 }
 
+/* ---------- keyboard-interactive 两轮挑战（模拟） ---------- */
+
+function openChallenge(session, round, done) {
+  const h = hostOf(session);
+  const questions = [
+    { q: '请输入 ' + esc(h.user) + '@' + esc(h.addr) + ' 的登录密码', ph: '密码', type: 'password' },
+    { q: '验证码（6 位，已发送到你绑定的设备 · 模拟）', ph: '000000', type: 'text' },
+  ];
+  const cur = questions[round - 1];
+  const m = openModal(
+    '<div class="modal-head"><div><div class="modal-title">SSH 认证 · keyboard-interactive</div>' +
+    '<div class="modal-sub">' + esc(h.name) + ' · 第 ' + round + ' 次提问，共 ' + questions.length + ' 次（模拟）</div></div>' +
+    '<button class="icon-btn modal-x" data-close aria-label="关闭"><span class="i" data-icon="x"></span></button></div>' +
+    '<div class="modal-body"><div class="field"><label for="ch-input">' + cur.q + '</label>' +
+    '<input id="ch-input" type="' + cur.type + '" placeholder="' + cur.ph + '" autocomplete="off"><div class="field-err" hidden>请输入内容后继续</div></div>' +
+    '<p class="wc-sub">服务器发起的多轮问答认证；回答仅用于本次连接（模拟）。</p></div>' +
+    '<div class="modal-foot"><span class="foot-note">取消将结束本次连接尝试。</span>' +
+    '<button class="btn btn-secondary" id="ch-cancel">取消连接</button>' +
+    '<button class="btn btn-primary" id="ch-go">继续</button></div>', { width: 520, lock: true });
+  const submit = () => {
+    const input = m.querySelector('#ch-input');
+    if (!input.value.trim()) {
+      input.closest('.field').classList.add('err');
+      input.closest('.field').querySelector('.field-err').hidden = false;
+      return;
+    }
+    closeModal();
+    if (round < questions.length) openChallenge(session, round + 1, done);
+    else { toast('认证通过（模拟 · ' + questions.length + ' 轮问答）'); done(); }
+  };
+  m.querySelector('#ch-go').addEventListener('click', submit);
+  m.querySelector('#ch-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  m.querySelector('#ch-cancel').addEventListener('click', () => {
+    closeModal();
+    removeSession(session.id); renderAll();
+    toast('已取消连接尝试（模拟）', 'warn');
+  });
+}
+
+/* ---------- S10 协作：Agent 首次委托与审批（模拟） ---------- */
+
+function openAgentApproval() {
+  const cmd = 'tail -n 200 /srv/app/logs/error.log | grep -c ERROR';
+  const m = openModal(
+    '<div class="modal-head"><div><div class="modal-title">Agent 请求执行命令</div>' +
+    '<div class="modal-sub">claude-code · 会话 prod-api #1（模拟）</div></div>' +
+    '<button class="icon-btn modal-x" data-close aria-label="关闭"><span class="i" data-icon="x"></span></button></div>' +
+    '<div class="modal-body">' +
+    '<div class="fp-warn"><span class="i" data-icon="terminal"></span><div>Agent 请求在你的会话中执行以下命令：</div></div>' +
+    '<div class="mono" style="background:var(--term-bg);color:var(--term-fg);border-radius:8px;padding:10px 12px;margin-top:10px">' + esc(cmd) + '</div>' +
+    '<p class="wc-sub" style="margin-top:10px">批准后命令经你的会话执行，输出回传给 Agent；你可随时撤销本次授权（模拟）。</p></div>' +
+    '<div class="modal-foot"><span class="foot-note">拒绝不会中断会话；Agent 将收到拒绝结果。</span>' +
+    '<button class="btn btn-secondary" id="ag-deny">拒绝</button>' +
+    '<button class="btn btn-primary" id="ag-approve">批准</button></div>', { width: 600, lock: true });
+  m.querySelector('#ag-deny').addEventListener('click', () => {
+    closeModal();
+    toast('已拒绝 Agent 请求（模拟）', 'warn');
+  });
+  m.querySelector('#ag-approve').addEventListener('click', () => {
+    closeModal();
+    openFirstDelegation(() => {
+      const s = S.sessions.find((x) => x.id === 's1') || activeSession();
+      if (s && canType(s)) {
+        s.termHtml += pr(esc(hostOf(s).user), esc(hostOf(s).name), '~') + '<span class="t-cyan"># agent</span> ' + esc(cmd) + '\n' +
+          '<span class="t-dim">3  （模拟输出：匹配行数）</span>\n';
+        renderTerminal();
+      }
+      toast('已批准并执行；结果已回传 Agent（模拟）');
+    });
+  });
+}
+
+function openFirstDelegation(done) {
+  const m = openModal(
+    '<div class="modal-head"><div><div class="modal-title">首次委托确认</div>' +
+    '<div class="modal-sub">Agent 将获得本会话的受控执行通道（模拟）</div></div></div>' +
+    '<div class="modal-body"><div class="tb-body" style="color:var(--text-primary);font-size:13px;line-height:22px">' +
+    '· 每条命令执行前都会请求你的批准<br>· 授权只针对当前会话，不影响其他主机<br>' +
+    '· 你在输入栏打字时 Agent 不会注入命令</div></div>' +
+    '<div class="modal-foot"><span class="foot-note">此为首次委托的一次性确认。</span>' +
+    '<button class="btn btn-secondary" data-close>取消</button>' +
+    '<button class="btn btn-primary" id="fd-ok">了解并允许</button></div>', { width: 520, lock: true });
+  m.querySelector('#fd-ok').addEventListener('click', () => { closeModal(); done(); });
+}
+
 /* ---------- 连接表单 / 导入 / 设置 / 连接工具 ---------- */
 
 function openHostForm(h) {
@@ -868,6 +1158,9 @@ function openHostForm(h) {
     '<div class="field"><label for="hf-addr">地址</label><input id="hf-addr" placeholder="主机名或 IP" value="' + (isEdit ? esc(h.addr) : '') + '"><div class="field-err" hidden>请填写地址</div></div>' +
     '<div class="field"><label for="hf-user">用户名</label><input id="hf-user" placeholder="deploy" value="' + (isEdit ? esc(h.user) : '') + '"><div class="field-err" hidden>请填写用户名</div></div>' +
     '<div class="field"><label for="hf-auth">认证方式</label><select id="hf-auth"><option>已有密钥 · id_ed25519（已保存）</option><option>密码</option><option>系统 SSH Agent</option><option>生成新密钥（ed25519）</option><option>粘贴 / 导入私钥</option></select></div>' +
+    '<div class="field" id="hf-secret-field" hidden><label for="hf-secret">密码</label><input id="hf-secret" type="password" placeholder="登录密码（保存在本机凭据库）" autocomplete="off"><div class="field-err" hidden>请填写密码</div></div>' +
+    '<div class="field" id="hf-keytext-field" hidden><label for="hf-keytext">私钥内容</label><textarea id="hf-keytext" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----（模拟粘贴，原型不校验格式）"></textarea><div class="field-err" hidden>请粘贴私钥内容</div></div>' +
+    '<div class="field" id="hf-pass-field" hidden><label for="hf-pass">密钥口令（可选）</label><input id="hf-pass" type="password" placeholder="私钥解密口令" autocomplete="off"></div>' +
     '<details class="more-settings"><summary>更多设置</summary>' +
     '<div class="field"><label for="hf-tags">标签（逗号分隔）</label><input id="hf-tags" placeholder="生产, 运维"></div>' +
     '<div class="field"><label for="hf-enc">编码</label><select id="hf-enc"><option>UTF-8</option><option>GBK</option></select></div>' +
@@ -876,6 +1169,17 @@ function openHostForm(h) {
     '<button class="btn btn-secondary" data-close>取消</button>' +
     '<button class="btn btn-secondary" id="hf-save">仅保存</button>' +
     '<button class="btn btn-primary" id="hf-go">保存并连接</button></div>', { width: 560 });
+  const AUTH_KINDS = ['key', 'secret', 'agent', 'gen', 'paste'];
+  const sel = m.querySelector('#hf-auth');
+  const authKind = () => AUTH_KINDS[sel.selectedIndex] || 'key';
+  const syncAuthFields = () => {
+    const k = authKind();
+    m.querySelector('#hf-secret-field').hidden = k !== 'secret';
+    m.querySelector('#hf-keytext-field').hidden = k !== 'paste';
+    m.querySelector('#hf-pass-field').hidden = k !== 'paste';
+  };
+  sel.addEventListener('change', syncAuthFields);
+  syncAuthFields();
   const validate = () => {
     let ok = true;
     [['hf-name'], ['hf-addr'], ['hf-user']].forEach(([idv]) => {
@@ -885,6 +1189,21 @@ function openHostForm(h) {
       input.closest('.field').querySelector('.field-err').hidden = !bad;
       if (bad) ok = false;
     });
+    const k = authKind();
+    if (k === 'secret') {
+      const input = m.querySelector('#hf-secret');
+      const bad = !input.value;
+      input.closest('.field').classList.toggle('err', bad);
+      input.closest('.field').querySelector('.field-err').hidden = !bad;
+      if (bad) ok = false;
+    }
+    if (k === 'paste') {
+      const input = m.querySelector('#hf-keytext');
+      const bad = !input.value.trim();
+      input.closest('.field').classList.toggle('err', bad);
+      input.closest('.field').querySelector('.field-err').hidden = !bad;
+      if (bad) ok = false;
+    }
     return ok;
   };
   const save = (connect) => {
@@ -894,6 +1213,7 @@ function openHostForm(h) {
       addr: m.querySelector('#hf-addr').value.trim(),
       user: m.querySelector('#hf-user').value.trim(),
       tags: m.querySelector('#hf-tags').value.split(/[，,]/).map((x) => x.trim()).filter(Boolean),
+      authKind: authKind(),
     };
     let host;
     if (isEdit) { Object.assign(h, vals); host = h; }
@@ -976,12 +1296,40 @@ function openSettings() {
     m.querySelectorAll('[data-set]').forEach((x) => x.classList.toggle('on', x === b));
     const pane = m.querySelector('#set-pane');
     if (b.dataset.set === 'look') { openSettings(); return; }
+    if (b.dataset.set === 'term') {
+      pane.innerHTML = '<h3>终端</h3>' +
+        '<div class="field"><label for="set-font">字号</label><select id="set-font"><option>12</option><option selected>13</option><option>14</option><option>16</option></select></div>' +
+        '<div class="field"><label for="set-scroll">回滚行数</label><select id="set-scroll"><option>1000</option><option selected>5000</option><option>10000</option><option>50000</option></select></div>' +
+        '<div class="set-note">即时预览（模拟持久化）；终端配色保持独立深色，不随应用主题。</div>';
+      pane.querySelector('#set-font').addEventListener('change', (e) => toast('终端字号 → ' + e.target.value + ' px（模拟持久化）'));
+      pane.querySelector('#set-scroll').addEventListener('change', (e) => toast('回滚行数 → ' + e.target.value + '（模拟持久化）'));
+      return;
+    }
+    if (b.dataset.set === 'cred') {
+      const creds = [
+        { name: 'id_ed25519（默认密钥）', bound: 'prod-api · staging 等 4 台主机' },
+        { name: 'deploy-password', bound: 'staging' },
+        { name: 'old-laptop-key', bound: null },
+      ];
+      pane.innerHTML = '<h3>凭据</h3>' + creds.map((c, i) =>
+        '<div class="set-opt cred-row"><span><span class="mono">' + esc(c.name) + '</span>' +
+        '<span class="set-note" style="display:block">' + (c.bound ? '被引用：' + esc(c.bound) : '<span class="st-warn">未绑定任何主机</span>') + '</span></span>' +
+        '<button class="btn btn-danger btn-sm" data-cred-del="' + i + '"' + (c.bound ? ' title="被引用的凭据不可删除"' : '') + '>删除</button></div>').join('') +
+        '<div class="set-note">删除前做引用检查；被引用的凭据须先解除主机绑定（DF8.4，模拟）。</div>';
+      pane.querySelectorAll('[data-cred-del]').forEach((btn) => btn.addEventListener('click', () => {
+        const c = creds[+btn.dataset.credDel];
+        if (c.bound) { toast('无法删除：' + c.name + ' 仍被主机引用（DF8.4）', 'warn'); return; }
+        toast('已删除凭据 ' + c.name + '（模拟）');
+        btn.closest('.set-opt').remove();
+      }));
+      return;
+    }
     pane.innerHTML = '<h3>' + esc(b.textContent) + '</h3><div class="set-note">该分类内容由后续任务（R27 / R41 / R43）提供；当前原型未包含。</div>';
   }));
 }
 
 function openConnDetails() {
-  const s = activeSession();
+  const s = focusedSession();
   if (!s || s.kind === 'local') { toast('本地终端无连接详情（模拟）'); return; }
   const h = hostOf(s);
   openModal(
@@ -1016,7 +1364,7 @@ function openForwards() {
     m.querySelector('#fwd-list').innerHTML = S.forwards.map((f) =>
       '<div class="fwd-row"><div class="fwd-route"><div class="fwd-type">' + esc(f.type) + ' · ' + esc(f.listen) + '</div>' +
       '<div class="fwd-listen mono">→ ' + esc(f.dest) + '</div></div>' +
-      '<span class="pill ' + (f.status === 'Listening' ? 'ok' : '') + '">' + (f.status === 'Stopping' ? '停止中…' : f.status === 'Listening' ? 'Listening' : '已停止') + '</span>' +
+      '<span class="pill ' + (f.status === 'Listening' ? 'ok' : '') + '">' + (f.status === 'Stopping' ? '停止中…' : f.status === 'Connecting' ? '连接中…' : f.status === 'Listening' ? 'Listening' : '已停止') + '</span>' +
       (f.status === 'Listening' ? '<button class="btn btn-secondary btn-sm" data-fstop="' + f.id + '">停止</button>' : '') +
       '</div>').join('');
     m.querySelectorAll('[data-fstop]').forEach((b) => b.addEventListener('click', () => {
@@ -1026,7 +1374,53 @@ function openForwards() {
     }));
   };
   render();
-  m.querySelector('#fwd-new').addEventListener('click', () => toast('新建转发表单在 R40 任务实现（模拟）'));
+  m.querySelector('#fwd-new').addEventListener('click', () => openForwardForm(() => { render(); renderStatusbar(); }));
+}
+
+function openForwardForm(onCreate) {
+  const m = openModal(
+    '<div class="modal-head"><div><div class="modal-title">新建端口转发</div>' +
+    '<div class="modal-sub">本会话 · prod-api（模拟）。默认只监听 127.0.0.1。</div></div>' +
+    '<button class="icon-btn modal-x" data-close aria-label="关闭"><span class="i" data-icon="x"></span></button></div>' +
+    '<div class="modal-body">' +
+    '<div class="field"><label for="fw-type">类型</label><select id="fw-type"><option>本地（-L）</option><option>远程（-R）</option><option>SOCKS5（-D）</option></select></div>' +
+    '<div class="field-row">' +
+    '<div class="field"><label for="fw-listen">监听地址</label><input id="fw-listen" placeholder="127.0.0.1:6379"><div class="field-err" hidden>格式：地址:端口</div></div>' +
+    '<div class="field"><label for="fw-dest">目标</label><input id="fw-dest" placeholder="10.0.0.31:6379"><div class="field-err" hidden>格式：地址:端口</div></div>' +
+    '</div>' +
+    '<p class="wc-sub">监听成功与目标可达分开显示；远程（-R）由服务器侧监听（模拟）。</p></div>' +
+    '<div class="modal-foot"><span class="foot-note">创建后立即尝试监听。</span>' +
+    '<button class="btn btn-secondary" data-close>取消</button>' +
+    '<button class="btn btn-primary" id="fw-go">创建转发</button></div>', { width: 560 });
+  const submit = () => {
+    const listen = m.querySelector('#fw-listen').value.trim();
+    const dest = m.querySelector('#fw-dest').value.trim();
+    const okListen = /^[^\s:]+:\d+$/.test(listen);
+    const okDest = /^[^\s:]+:\d+$/.test(dest);
+    [['#fw-listen', okListen], ['#fw-dest', okDest]].forEach(([selId, ok]) => {
+      const input = m.querySelector(selId);
+      input.closest('.field').classList.toggle('err', !ok);
+      input.closest('.field').querySelector('.field-err').hidden = ok;
+    });
+    if (!okListen || !okDest) return;
+    const f = {
+      id: uid(), type: m.querySelector('#fw-type').value,
+      listen, dest, status: 'Connecting',
+    };
+    S.forwards.push(f);
+    closeModal();
+    onCreate();
+    toast('转发创建中：正在监听 ' + listen + '（模拟）');
+    after(800, () => {
+      f.status = 'Listening';
+      renderStatusbar();
+      if (!$('overlay-root').hidden && $('overlay-root').querySelector('.modal')) onCreate();
+      toast('转发已监听：' + listen + ' → ' + dest + '（模拟）');
+    });
+  };
+  m.querySelector('#fw-go').addEventListener('click', submit);
+  m.querySelector('#fw-listen').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  m.querySelector('#fw-dest').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
 }
 
 /* ---------- 事件绑定 ---------- */
@@ -1149,9 +1543,22 @@ function wire() {
   $('btn-tsearch').addEventListener('click', () => {
     const bar = $('term-search');
     bar.hidden = !bar.hidden;
-    if (!bar.hidden) $('term-search-input').focus();
+    if (!bar.hidden) { $('term-search-input').focus(); runSearch(); }
+    else clearSearchMarks();
   });
-  $('btn-tsearch-close').addEventListener('click', () => { $('term-search').hidden = true; });
+  $('btn-tsearch-close').addEventListener('click', () => { $('term-search').hidden = true; clearSearchMarks(); });
+  $('term-search-input').addEventListener('input', runSearch);
+  $('btn-tsearch-prev').addEventListener('click', () => searchStep(-1));
+  $('btn-tsearch-next').addEventListener('click', () => searchStep(1));
+
+  $('panes').addEventListener('keydown', (e) => {
+    const s = focusedSession();
+    if (!s || !canType(s)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'Enter') { runCommand(s); e.preventDefault(); return; }
+    if (e.key === 'Backspace') { s.buf = (s.buf || '').slice(0, -1); renderTerminal(); e.preventDefault(); return; }
+    if (e.key.length === 1) { s.buf = (s.buf || '') + e.key; renderTerminal(); e.preventDefault(); }
+  });
 
   $('btn-split').addEventListener('click', () => {
     S.split = !S.split;
@@ -1162,12 +1569,12 @@ function wire() {
     }
     renderAll();
   });
-  $('pane-a').addEventListener('mousedown', () => { S.paneFocus = 'a'; renderTerminal(); });
-  $('pane-b').addEventListener('mousedown', () => { S.paneFocus = 'b'; renderTerminal(); });
+  $('pane-a').addEventListener('mousedown', () => { S.paneFocus = 'a'; renderAll(); });
+  $('pane-b').addEventListener('mousedown', () => { S.paneFocus = 'b'; renderAll(); });
 
   $('btn-files').addEventListener('click', toggleFiles);
   $('btn-file-close').addEventListener('click', toggleFiles);
-  $('btn-back-terminal').addEventListener('click', () => { S.file.forceFull = false; updateFileMode(); });
+  $('btn-back-terminal').addEventListener('click', () => { S.file.open = false; renderAll(); });
   $('btn-file-full').addEventListener('click', () => { S.file.forceFull = true; updateFileMode(); });
 
   $('file-breadcrumb').addEventListener('click', (e) => {
@@ -1210,22 +1617,25 @@ function wire() {
       const f = dir && dir.files.find((x) => x[0] === name);
       S.drawer.tasks.push({
         id: uid(), dir: 'down', name,
-        from: 'prod-api:' + p.path + '/' + name,
+        from: targetHostLabel() + ':' + p.path + '/' + name,
         to: '本机 Downloads/' + name,
         status: 'running', done: '0 / ' + (f ? f[1] : '—'), pct: 4,
       });
     });
+    S.drawer.tasks.filter((t) => t.status === 'running').forEach(scheduleCompletion);
     S.drawer.open = true;
     toast('已创建 ' + p.sel.size + ' 个下载任务（模拟）');
     renderAll();
   });
   $('btn-upload').addEventListener('click', () => {
-    S.drawer.tasks.push({
+    const t = {
       id: uid(), dir: 'up', name: 'assets-20261006.tar.gz',
       from: '本机 ~/Downloads/assets-20261006.tar.gz',
-      to: 'prod-api:' + S.file.path + '/assets-20261006.tar.gz',
+      to: targetHostLabel() + ':' + S.file.path + '/assets-20261006.tar.gz',
       status: 'running', done: '2.1 / 12 MB', pct: 17,
-    });
+    };
+    S.drawer.tasks.push(t);
+    scheduleCompletion(t);
     S.drawer.open = true;
     toast('原型：此处打开系统文件选择器（已模拟加入一个上传任务）');
     renderAll();
@@ -1245,7 +1655,7 @@ function wire() {
       { label: '端口转发', icon: 'arrow-right', act: openForwards },
       { label: '活动记录', icon: 'list', disabled: true, tip: 'R41 实现' },
       'sep',
-      { label: '关闭会话', icon: 'x', kbd: '⌘W', act: () => closeSession(S.active) },
+      { label: '关闭会话', icon: 'x', kbd: '⌘W', act: () => { const fs = focusedSession(); if (fs) closeSession(fs.id); } },
     ]);
   });
 
@@ -1260,6 +1670,17 @@ function wire() {
       renderAll();
     }
     if (b.dataset.task === 'resolve') openConflict(t);
+    if (b.dataset.task === 'retry') {
+      t.status = 'running'; t.pct = 4; t.done = '0 / 24 MB';
+      scheduleCompletion(t);
+      renderAll();
+      toast('已重新发起下载：将先核对远端文件状态（模拟）');
+    }
+    if (b.dataset.task === 'discard') {
+      t.status = 'discarded';
+      renderAll();
+      toast('已丢弃任务；未确认远端状态，可重新发起下载', 'warn');
+    }
   });
   $('sb-drawer-toggle').addEventListener('click', toggleDrawer);
   $('sb-transfers').addEventListener('click', toggleDrawer);

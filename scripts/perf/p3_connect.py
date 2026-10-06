@@ -9,6 +9,7 @@
 
 import argparse
 import json
+import re
 import statistics
 import subprocess
 import time
@@ -18,10 +19,16 @@ BASE_ENV = {"TINYSSH_MASTER_KEY": "07" * 32,
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 
 
-def wait_stderr_line(path, needle, deadline_s):
-    """轮询 stderr 文件（Popen stderr=FILE），自记录偏移起找 needle；返回单调秒。"""
+def wait_stderr_line(path, ok_re, fail_re, deadline_s):
+    """轮询 stderr 文件（Popen stderr=FILE），自记录偏移起逐行匹配。
+
+    返回 {"t": 单调秒, "sid": str, "raw": 原文行}（成功）或
+    {"fail": True, "raw": 原文行}（失败行）；超时返回 None。
+    成功与失败形态都显式识别（Q-01：两种形态都含 'autoconnect' 字样）。
+    """
     start = time.monotonic()
     pos = 0
+    tail = ""
     while time.monotonic() - start < deadline_s:
         try:
             with open(path, "rb") as f:
@@ -30,8 +37,15 @@ def wait_stderr_line(path, needle, deadline_s):
                 pos = f.tell()
         except FileNotFoundError:
             chunk = ""
-        if needle in chunk:
-            return time.monotonic()
+        tail += chunk
+        while "\n" in tail:
+            line, tail = tail.split("\n", 1)
+            m = ok_re.match(line.strip())
+            if m:
+                return {"t": time.monotonic(), "sid": m.group(2), "raw": line.strip()}
+            f = fail_re.match(line.strip())
+            if f:
+                return {"fail": True, "raw": line.strip()}
         time.sleep(0.005)
     return None
 
@@ -64,15 +78,22 @@ def run_once(host_id, idx):
     env = {**BASE_ENV, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
            "TINYSSH_AUTOCONNECT": host_id}
     err_path = f"/tmp/r4_p3/run_{idx}.err"
+    # 成功判定（Q-01）：必须是「目标主机 -> 有效 sid」形态；失败行单独识别并保存原文。
+    ok_re = re.compile(rf"^\[app\] autoconnect ({re.escape(host_id)}) -> (s-[0-9a-f-]{{36}})$")
+    fail_re = re.compile(r"^\[app\] autoconnect (\S+) failed: (.+)$")
     with open(err_path, "wb") as errf:
         t0 = time.monotonic()
         proc = subprocess.Popen([BIN], env=env, stdout=subprocess.DEVNULL, stderr=errf)
-        t_ready = wait_stderr_line(err_path, "autoconnect", 30)
+        line = wait_stderr_line(err_path, ok_re, fail_re, 30)
         result = {"idx": idx, "pid": proc.pid}
-        if t_ready is None:
-            result["fail"] = "autoconnect timeout/failed"
+        if line is None:
+            result["fail"] = "timeout: no success/failure line in 30s"
+        elif line.get("fail"):
+            result["fail"] = f"autoconnect failed: {line['raw']}"
         else:
-            result["total_ms"] = round((t_ready - t0) * 1000)
+            result["total_ms"] = round((line["t"] - t0) * 1000)
+            result["sid"] = line["sid"]
+            result["matched_line"] = line["raw"]
         proc.terminate()
         try:
             proc.wait(5)

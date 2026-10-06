@@ -43,9 +43,9 @@ styles.css 两个主题块 14 项 token 与 §7.2 逐项比对，28/28 一致，
 
 像素实测 light 下 x=228 处即转 #0D131A 深色终端底；截图视觉确认主题解耦。
 
-## 总评
+## 总评（范围：仅视觉专项）
 
-原型达到 G0「可交互原型」标准：几何与 token 忠实于规格，三主视图 + 五异常态完整，连接/标签/抽屉/主题/断线重连链路均可演示。合入前须修复：**FAIL-C（mode-full 布局，影响窄窗核心场景可用性）**、**FAIL-A（危险按钮对比度）**；建议一并处理 FAIL-B 与抽屉高度备注。修复后仅需对 mode-full@960 与 conflict 对话框两项复验。
+本文件结论仅覆盖视觉专项——几何对齐规格、token 一致性、对比度、双主题截图——不构成对 G0「可交互原型」整体标准（五任务闭环、状态覆盖矩阵）的判定；交互完整性由原型走查与联合评审单独评估。视觉专项内：几何与 token 忠实于规格，三主视图 + 五异常态截图完整，连接/标签/抽屉/主题/断线重连的视觉表现均可核对。合入前须修复：**FAIL-C（mode-full 布局，影响窄窗核心场景可用性）**、**FAIL-A（危险按钮对比度）**；建议一并处理 FAIL-B 与抽屉高度备注。修复后仅需对 mode-full@960 与 conflict 对话框两项复验。
 
 ## 截图清单（screenshots/）
 
@@ -75,7 +75,7 @@ styles.css:361 新增 `.content.mode-full .term-area { display: none }`。
 - 截图取色（drive-form-dark / drive-form-light，添加连接表单）：边界色与期望值逐像素一致；边界 vs 输入框底对比度 dark **3.94** / light **3.34**（≥3.0）；vs 弹窗 raised 底 3.12 / 3.65，全部达标。
 - focus 态不受影响：首输入框自动聚焦显示 focus-ring（dark #91BAFF / light #245DB4），边界替换未破坏焦点可见性。
 
-## 二轮结论
+## 二轮结论（范围：仅视觉专项）
 
-FAIL-A、FAIL-C 修复确认通过，border-input 达标且无回归。R01 视觉复验遗留清零，可提交 G0 联合评审。
+FAIL-A、FAIL-C 修复确认通过，border-input 达标且无回归。视觉专项遗留清零。「视觉复验通过」仅指本文件的几何 / token / 对比度 / 截图核对范围，不等于 G0 可交互原型标准整体通过；交互完整性由走查与联合评审单独判定。
 二轮新增截图：conflict-dark-1280-r2 / files-dark-960-r2 / drive-f960-r2 / drive-f1024-r2 / drive-form-dark / drive-form-light。

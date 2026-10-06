@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""UX-R1 P2 会话切换采样（旧版基线）。
+"""UX-R1 P2 会话切换采样（旧版基线，Q-03/Q-06 仪表重设计版——待受控窗口执行）。
 
-方法：AUTOCONNECT 建 2 个会话（SSH + 本机终端）→ ev.py 发 Cmd+1/Cmd+2 交替 →
-轮询 CGWindowList 窗口标题（标题跟随会话主机，B20）直至翻转 → 键事件到标题
-翻转的延迟即切换耗时，100 次。
-前置：P3 bootstrap 已完成（DB 含 127.0.0.1:2222 受信主机）。
+与 v1 的差异（联审 Q-03/Q-06）：
+- 投递：ev2.py PID 定向（CGEventPostToPid），落点结构性安全；投递前同进程守卫
+  （前台 PID + 目标窗口在屏），拒绝即 abort 不投递（负例已自测，ev2 --selftest）。
+- 计时起点 = ev2 stdout `T0=`（真实投递点毫秒时间戳），不再含 ev.py 子进程
+  spawn + 2×50ms sleep 的仪表开销（v1 至少 100ms+，无法检验 P95≤100ms 门）。
+- 完成端点 = **目标会话内容真实绘制**：终端区域像素证据（screencapture 区域
+  md5 脱离预采集基线集合），不再把窗口标题翻转等同渲染。标题翻转另记为状态
+  辅助信号。值为上限估计（截图周期为仪表下限，如实标注）。
+- 激活：AppleScript 按 unix id 定位本实例（不按进程名，避免同名实例误激活）。
+
+执行前提（Q-03 决议）：受控环境（独立测试登录会话/专用机）或经用户批准的本机
+受控窗口；本脚本不改用户桌面状态，除 guard 通过后的定向键事件。
 """
 
 import json
@@ -13,37 +21,65 @@ import subprocess
 import sys
 import time
 
-import Quartz
-
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
-import keyguard
 
 BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
-EV = "/Users/chenpu/workspace/claude-code/TinySSH/scripts/native-smoke/ev.py"
+EV2 = "/Users/chenpu/workspace/claude-code/TinySSH/scripts/perf/ev2.py"
 ENV = {"TINYSSH_MASTER_KEY": "07" * 32, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 K1, K2 = 18, 19  # keycode '1' '2'
-CMD = "cmd"
 
 
-def window_info():
-    wl = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, 0)
+def activate_by_pid(pid):
+    r = subprocess.run(["osascript", "-e",
+                        f'tell application "System Events" to set frontmost of '
+                        f'(first process whose unix id is {pid}) to true'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"activate failed: {r.stderr.strip()}")
+    time.sleep(0.5)
+
+
+def window_title(pid):
+    import Quartz
+    wl = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, 0)
     for w in wl:
-        if "tinyssh" in (w.get("kCGWindowOwnerName") or "").lower():
+        if w.get("kCGWindowOwnerPID") == pid:
             b = w.get("kCGWindowBounds")
             if b and int(b["Width"]) == 1280 and int(b["Height"]) == 800:
                 return int(w["kCGWindowNumber"]), w.get("kCGWindowName") or ""
     return None, None
 
 
-def wait_title(win, needle, deadline_s):
-    start = time.monotonic()
-    while time.monotonic() - start < deadline_s:
-        _, name = window_info()
-        if name and needle in name:
-            return time.monotonic()
-        time.sleep(0.005)
-    return None
+def window_rect(pid):
+    import Quartz
+    wl = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, 0)
+    for w in wl:
+        if w.get("kCGWindowOwnerPID") == pid:
+            b = w.get("kCGWindowBounds")
+            if b and int(b["Width"]) == 1280 and int(b["Height"]) == 800:
+                return int(b["X"]), int(b["Y"])
+    return None, None
+
+
+def snap_md5(x, y, w, h, path):
+    subprocess.run(["screencapture", "-x", "-R", f"{x},{y},{w},{h}", path],
+                   capture_output=True)
+    import hashlib
+    return hashlib.md5(open(path, "rb").read()).hexdigest()
+
+
+def send_key(pid, code, flags):
+    """经 ev2 定向投递；返回投递点 epoch_ms。守卫拒绝抛 SystemExit。"""
+    r = subprocess.run(["python3", EV2, "key", "--pid", str(pid),
+                        "--code", str(code)] + sum([["--flag", f] for f in flags], []),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"ev2 guard/failed: {r.stderr.strip()}")
+    for line in r.stdout.splitlines():
+        if line.startswith("T0="):
+            return int(line.split("=")[1])
+    raise SystemExit("ev2 produced no T0")
 
 
 def main():
@@ -56,49 +92,69 @@ def main():
     conn.close()
     proc = subprocess.Popen([BIN], env={**ENV, "TINYSSH_AUTOCONNECT": f"{host_id},local"},
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(8)  # 两个会话串行建连（每个 ≈1-3s）+ 终端渲染稳定；固定等待，不计入切换计时
-    # 前置 + 找窗口（护栏：前台 + 在屏双核验，失败即中止）
-    keyguard.activate_and_verify()
-    win, title0 = window_info()
+    time.sleep(8)  # 两会话串行建连 + 渲染稳定（固定等待，不计入切换计时）
+    pid = proc.pid
+    activate_by_pid(pid)
+    win, title0 = window_title(pid)
     if not win:
+        proc.kill()
         raise SystemExit("main window not found")
-    print(f"window {win} title0={title0!r}")
+    wx, wy = window_rect(pid)
+    region = (wx + 240, wy + 140, 500, 300)  # 终端区采样窗（复用 p2_echo 几何）
+    print(f"window {win} title0={title0!r} region={region}")
     t_ssh, t_local = "t40-真机密钥", "本机"
-    results = []
-    # 标题跟随活动会话：初始为后建者（local），先切到 ssh 再交替；按实测初始标题定向
     first = (K1, t_ssh) if t_local in (title0 or "") else (K2, t_local)
     cur_key, cur_target = first
+    results = []
     for i in range(runs):
-        keyguard.verify()  # 每次键事件前双核验（R04 §5.1 事故护栏）
-        ev_t = time.monotonic()
-        subprocess.run(["python3", EV, "key", str(cur_key), CMD], capture_output=True)
-        t = wait_title(win, cur_target, 10)
+        # 预采集基线集合（含光标闪烁相位）：6 帧 / ~0.6s
+        base = set()
+        for j in range(6):
+            base.add(snap_md5(*region, f"/tmp/r4_p3/sw_{i}_{j}.png"))
+            time.sleep(0.1)
+        t0_ms = send_key(pid, cur_key, ["cmd"])
+        t_pixel = None
+        deadline = time.time() + 10
+        k = 0
+        while time.time() < deadline:
+            md5 = snap_md5(*region, f"/tmp/r4_p3/sw_{i}_p.png")
+            if md5 not in base:
+                t_pixel = time.time()
+                break
+            k += 1
+            time.sleep(0.005)
+        _, title_now = window_title(pid)
         r = {"idx": i + 1, "to": cur_target}
-        if t is None:
-            r["fail"] = "title not flipped in 10s"
+        if t_pixel is None:
+            r["fail"] = "no pixel change in 10s (guard may have passed but render not observed)"
         else:
-            r["switch_ms"] = round((t - ev_t) * 1000)
+            r["render_ms_upper"] = round(time.time() * 1000 - t0_ms)  # 上限：含截图周期
+            r["title_followed"] = (cur_target in (title_now or ""))
         results.append(r)
-        time.sleep(0.15)
+        print(r, flush=True)
+        time.sleep(0.3)
         cur_key, cur_target = (K1, t_ssh) if cur_key == K2 else (K2, t_local)
     proc.terminate()
     try:
         proc.wait(5)
     except subprocess.TimeoutExpired:
         proc.kill()
-    ok = [r["switch_ms"] for r in results if "switch_ms" in r]
+    ok = [r["render_ms_upper"] for r in results if "render_ms_upper" in r]
     summary = {"window": win, "runs": results,
-               "switch": {"n": len(ok),
-                          "median_ms": round(statistics.median(ok)) if ok else None,
-                          "p95_ms": round(statistics.quantiles(ok, n=20, method="inclusive")[18]) if len(ok) >= 2 else None,
-                          "min_ms": min(ok) if ok else None, "max_ms": max(ok) if ok else None},
-               "protocol": "CGEvent Cmd+1/2 -> CGWindowList title flip, 5ms poll; "
-                           "keyguard (frontmost+on-screen) before every key event; "
-                           "includes ev.py subprocess spawn overhead (~15-30ms) - documented instrument floor"}
+               "switch_render_upper": {"n": len(ok),
+                                       "median_ms": round(statistics.median(ok)) if ok else None,
+                                       "p95_ms": round(statistics.quantiles(ok, n=20, method="inclusive")[18]) if len(ok) >= 2 else None,
+                                       "fails": runs - len(ok)},
+               "protocol": ("ev2 pid-targeted delivery (T0 = real post point, no subprocess "
+                            "overhead in measurement); completion = terminal-area pixel md5 "
+                            "leaves pre-captured baseline set (includes blink phases); title "
+                            "flip recorded as state aux signal only; values are UPPER BOUNDS "
+                            "(screencapture period floor ~40-90ms); run in controlled env only"),
+               "gate_note": "门 P95≤100ms 以本口径上限值对照，超门需以更细仪表复核"}
     with open(out, "w") as f:
         json.dump(summary, f, indent=1, ensure_ascii=False)
-    print(f"== P2 switch: n={len(ok)} median={summary['switch']['median_ms']}ms "
-          f"p95={summary['switch']['p95_ms']}ms -> {out}")
+    print(f"== P2 switch: n={len(ok)} median={summary['switch_render_upper']['median_ms']}ms "
+          f"p95={summary['switch_render_upper']['p95_ms']}ms -> {out}")
 
 
 if __name__ == "__main__":

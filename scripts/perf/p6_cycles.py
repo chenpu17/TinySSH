@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """UX-R1 P6 资源循环采样（旧版基线，替代口径）。
 
-旧版无订阅计数器（debug_subscriptions 是 C10 新契约）——P6 旧基线用替代口径：
-100 次 spawn→autoconnect→TERM 循环，每次在会话就绪时采 应用+差分归属辅助进程
-RSS；断言无随循环次数线性增长（每循环新进程，取各循环点序列做趋势对照）。
+P6 门的口径是**同进程**会话连接/断开循环；旧版无会话级断开控制，无法按门口径
+执行（联审 Q-02），故 P6 门撤回、冻结至 C10 检查点/退订契约实现后重立。
+本脚本只采集应用级 spawn→autoconnect→TERM 100 循环的**进程级证据**：
+每次循环后核验无 WebKit 残留进程 + 应用 RSS 序列趋势，不据此判定 P6 门。
 另记录每循环 total_ms（兼作 P1 大样本补充）。
 """
 
 import json
+import re
 import statistics
 import subprocess
 import time
 
 import Quartz
+
+FAIL_RAW = None
 
 BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
 ENV = {"TINYSSH_MASTER_KEY": "07" * 32, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
@@ -36,9 +40,17 @@ def app_rss(pid):
     return int(out) if out else 0
 
 
-def wait_line(path, needle, deadline_s, pos0=0):
+def wait_line(path, host_id, deadline_s, pos0=0):
+    """轮询 stderr 逐行精确匹配成功/失败形态（Q-01：两种形态都含 'autoconnect'）。
+
+    返回 (单调秒, pos, sid) 成功；(None, pos, None) 且 fail_raw 非空为失败行；超时 (None, pos, None)。
+    """
+    global FAIL_RAW
+    ok_re = re.compile(rf"^\[app\] autoconnect ({re.escape(host_id)}) -> (s-[0-9a-f-]{{36}})$")
+    fail_re = re.compile(r"^\[app\] autoconnect (\S+) failed: (.+)$")
     start = time.monotonic()
     pos = pos0
+    tail = ""
     while time.monotonic() - start < deadline_s:
         try:
             with open(path, "rb") as f:
@@ -47,10 +59,19 @@ def wait_line(path, needle, deadline_s, pos0=0):
                 pos = f.tell()
         except FileNotFoundError:
             chunk = ""
-        if needle in chunk:
-            return time.monotonic(), pos
+        tail += chunk
+        while "\n" in tail:
+            line, tail = tail.split("\n", 1)
+            line = line.strip()
+            m = ok_re.match(line)
+            if m:
+                return time.monotonic(), pos, m.group(2)
+            f = fail_re.match(line)
+            if f:
+                FAIL_RAW = line
+                return None, pos, None
         time.sleep(0.005)
-    return None, pos
+    return None, pos, None
 
 
 def main():
@@ -70,15 +91,19 @@ def main():
             proc = subprocess.Popen([BIN], env={**ENV, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
                                                 "TINYSSH_AUTOCONNECT": host_id},
                                     stdout=subprocess.DEVNULL, stderr=errf)
-            t_ready, _ = wait_line(err_path, "autoconnect", 20)
+            t_ready, _, sid = wait_line(err_path, host_id, 20)
         r = {"idx": i + 1}
         if t_ready:
             r["total_ms"] = round((t_ready - t0) * 1000)
+            r["sid"] = sid
             cand = [(pid, rss) for pid, rss in webkit_helpers() if pid not in s0]
             r["rss_mb"] = round((app_rss(proc.pid) + sum(h[1] for h in cand)) / 1024, 2)
             r["helper_n"] = len(cand)
+        elif FAIL_RAW:
+            r["fail"] = f"autoconnect failed: {FAIL_RAW}"
+            FAIL_RAW = None
         else:
-            r["fail"] = "timeout"
+            r["fail"] = "timeout: no success/failure line in 20s"
         proc.terminate()
         try:
             proc.wait(5)
