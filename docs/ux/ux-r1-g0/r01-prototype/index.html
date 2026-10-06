@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TinySSH · UX-R1 可交互原型（模拟数据）</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- 标题区域 44px；为 macOS 红绿灯留出安全区（§4.2） -->
+  <header class="titlebar">
+    <div class="titlebar-left">
+      <div class="traffic-lights" aria-hidden="true"><span></span><span></span><span></span></div>
+      <span class="app-title">TinySSH</span>
+      <button class="icon-btn" id="btn-sidebar-collapse" aria-label="收起主机栏" title="收起主机栏（⌘B）"><span class="i" data-icon="chevron-left"></span></button>
+      <span class="mock-badge">UX-R1 原型 · 全部为模拟数据</span>
+    </div>
+    <div class="titlebar-right">
+      <button class="btn btn-ghost" id="btn-scenario" aria-haspopup="menu" title="切换演示的状态场景"><span class="i" data-icon="list"></span>状态场景<span class="i i-xs" data-icon="chevron-down"></span></button>
+      <button class="icon-btn" id="btn-theme" aria-label="切换明暗主题" title="切换明暗主题（终端配色独立于应用主题）"><span class="i" data-icon="sun"></span></button>
+    </div>
+  </header>
+
+  <div class="workspace">
+
+    <!-- 主机栏 224px（可拖动 200–300，可收起） -->
+    <aside class="sidebar" id="sidebar" aria-label="主机栏">
+      <div class="side-top">
+        <div class="search-host">
+          <span class="i" data-icon="search"></span>
+          <input id="host-search" type="text" placeholder="搜索主机" aria-label="搜索主机（名称 / 地址 / 用户 / 标签）">
+          <kbd>⌘K</kbd>
+        </div>
+        <button class="icon-btn" id="btn-add-host" aria-label="添加连接" title="添加连接"><span class="i" data-icon="plus"></span></button>
+      </div>
+      <div class="side-scroll" id="side-scroll">
+        <div id="host-groups"></div>
+        <div class="side-label" id="tag-label">标签</div>
+        <div class="tag-chips" id="tag-chips"></div>
+      </div>
+      <div class="side-bottom">
+        <button class="side-settings-btn" id="btn-settings"><span class="i" data-icon="gear"></span>设置<kbd>⌘,</kbd></button>
+      </div>
+    </aside>
+    <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="拖动调整主机栏宽度（200–300 px）" title="拖动调整宽度（200–300 px）"></div>
+    <button class="side-expand" id="btn-sidebar-expand" aria-label="展开主机栏" title="展开主机栏（⌘B）" hidden><span class="i" data-icon="chevron-right"></span></button>
+
+    <main class="main" id="main">
+
+      <!-- S01 欢迎 / 最近连接 -->
+      <section class="view-welcome" id="view-welcome">
+        <div class="welcome-inner">
+          <h1 id="welcome-title">连接服务器，开始工作。</h1>
+          <p class="welcome-sub" id="welcome-sub">保存常用主机，在清晰的终端里完成开发、部署和排障。</p>
+
+          <div class="welcome-card" id="welcome-card">
+            <h2>你的第一个连接</h2>
+            <p class="wc-sub">添加服务器地址与认证信息，或导入已有 SSH 配置。</p>
+            <div class="welcome-actions">
+              <button class="btn btn-primary" id="btn-welcome-add"><span class="i" data-icon="plus"></span>添加连接</button>
+              <button class="btn btn-secondary" id="btn-welcome-import">导入 SSH 配置</button>
+            </div>
+            <p class="wc-note">连接信息与凭据保存在本机。</p>
+          </div>
+
+          <button class="welcome-local" id="btn-welcome-local">也可以先打开本地终端<span class="i i-xs" data-icon="chevron-right"></span></button>
+          <p class="welcome-note2" id="welcome-note2">有主机后，这里会显示最近连接（最多 5 个）。</p>
+
+          <div class="recent-block" id="recent-block" hidden>
+            <div class="recent-title">最近连接<span class="rt-note">最多 5 个 · 模拟数据</span></div>
+            <div class="recent-grid" id="recent-grid"></div>
+            <div class="welcome-actions recent-actions">
+              <button class="btn btn-secondary" id="btn-welcome-add2"><span class="i" data-icon="plus"></span>添加连接</button>
+              <button class="btn btn-secondary" id="btn-welcome-import2">导入 SSH 配置</button>
+            </div>
+          </div>
+
+          <p class="welcome-mock">本页面为 UX-R1 G0 可交互原型：不连接任何服务器，所有数据均为模拟数据。</p>
+        </div>
+      </section>
+
+      <!-- S05 / S07 会话工作区 -->
+      <section class="view-session" id="view-session" hidden>
+
+        <div class="tabbar" role="tablist" aria-label="终端标签">
+          <div class="tabstrip" id="tabstrip"></div>
+          <button class="icon-btn" id="btn-new-tab" aria-label="新会话" title="新会话（⌘T）：选择主机或本地终端"><span class="i" data-icon="plus"></span></button>
+          <button class="btn btn-ghost tab-all" id="btn-all-tabs" title="所有标签">标签列表</button>
+        </div>
+
+        <div class="toolbar">
+          <div class="tb-ident">
+            <span class="mono" id="tb-ident-text"></span>
+            <span class="status-chip"><i class="dot" id="tb-dot"></i><span id="tb-status-text"></span></span>
+          </div>
+          <div class="tb-actions">
+            <button class="icon-btn" id="btn-tsearch" aria-label="在终端中搜索" title="搜索（⌘F）"><span class="i" data-icon="search"></span></button>
+            <button class="icon-btn" id="btn-split" aria-label="左右分屏" title="在右侧显示已有会话（双窗格）" aria-pressed="false"><span class="i" data-icon="split"></span></button>
+            <button class="btn btn-file-toggle" id="btn-files" aria-pressed="false" title="文件（⌘⇧E）"><span class="i" data-icon="folder"></span>文件</button>
+            <button class="btn btn-ghost" id="btn-tools" aria-haspopup="menu">连接工具<span class="i i-xs" data-icon="chevron-down"></span></button>
+          </div>
+        </div>
+
+        <div class="content" id="content">
+          <div class="term-area" id="term-area">
+            <div class="term-banner" id="term-banner" hidden></div>
+            <div class="panes" id="panes">
+              <div class="pane pane-a" id="pane-a" tabindex="0" aria-label="终端窗格 1"><pre class="term" id="term-a"></pre><span class="pane-tag" id="pane-tag-a"></span></div>
+              <div class="pane pane-b" id="pane-b" tabindex="0" aria-label="终端窗格 2" hidden><pre class="term" id="term-b"></pre><span class="pane-tag" id="pane-tag-b"></span></div>
+            </div>
+            <div class="term-search" id="term-search" hidden>
+              <span class="i" data-icon="search"></span>
+              <input id="term-search-input" placeholder="在终端中查找" aria-label="在终端中查找">
+              <span class="term-search-count">1/3</span>
+              <button class="icon-btn" aria-label="上一个匹配" title="上一个匹配"><span class="i" data-icon="chevron-up"></span></button>
+              <button class="icon-btn" aria-label="下一个匹配" title="下一个匹配"><span class="i" data-icon="chevron-down"></span></button>
+              <button class="icon-btn" id="btn-tsearch-close" aria-label="关闭搜索" title="关闭（Esc）"><span class="i" data-icon="x"></span></button>
+            </div>
+          </div>
+
+          <!-- S07 文件面板：并排 384px / 窄窗时完整视图（同一节点切换形态） -->
+          <aside class="file-panel" id="file-panel" hidden aria-label="远程文件面板">
+            <div class="file-return">
+              <button class="btn btn-secondary btn-sm" id="btn-back-terminal"><span class="i" data-icon="chevron-left"></span>返回终端</button>
+              <span class="file-return-note">空间不足，文件以完整视图打开；终端继续在后台运行。</span>
+            </div>
+            <div class="file-head">
+              <div class="file-head-title">远程文件<span class="file-host-chip" id="file-host-chip"></span></div>
+              <div class="file-head-actions">
+                <button class="text-btn" id="btn-file-full" title="在中央工作区展开">展开</button>
+                <button class="icon-btn" id="btn-file-close" aria-label="关闭文件面板" title="关闭（⌘⇧E）"><span class="i" data-icon="x"></span></button>
+              </div>
+            </div>
+            <div class="file-path"><div class="breadcrumb mono" id="file-breadcrumb" aria-label="当前路径"></div></div>
+            <div class="file-nav">
+              <button class="icon-btn" id="btn-fback" aria-label="后退" title="后退"><span class="i" data-icon="chevron-left"></span></button>
+              <button class="icon-btn" id="btn-ffwd" aria-label="前进" title="前进"><span class="i" data-icon="chevron-right"></span></button>
+              <button class="icon-btn" id="btn-fup" aria-label="上一级" title="上一级"><span class="i" data-icon="arrow-up"></span></button>
+              <button class="icon-btn" id="btn-frefresh" aria-label="刷新" title="刷新"><span class="i" data-icon="refresh"></span></button>
+              <span class="flex-sp"></span>
+              <button class="btn btn-primary btn-sm" id="btn-upload"><span class="i" data-icon="upload"></span>上传</button>
+              <button class="icon-btn" id="btn-file-more" aria-label="更多文件操作" title="更多文件操作"><span class="i" data-icon="ellipsis"></span></button>
+            </div>
+            <div class="file-list-head"><span>名称</span><span class="flex-sp"></span><span class="col-size">大小</span><span class="col-time">修改</span></div>
+            <div class="file-list" id="file-list"></div>
+            <div class="file-foot">
+              <span class="sel-count" id="file-sel-count"></span>
+              <button class="btn btn-primary btn-sm" id="btn-download" disabled><span class="i" data-icon="download"></span>下载</button>
+            </div>
+            <div class="file-hint">浏览目录独立于终端，可定位到终端目录。列表为模拟数据。</div>
+          </aside>
+        </div>
+
+        <!-- 传输队列抽屉（工作区底部，240px，≤工作区 45%） -->
+        <div class="drawer" id="drawer" hidden>
+          <div class="drawer-head">
+            <span class="drawer-title">传输</span><span class="drawer-count" id="drawer-count"></span>
+            <span class="flex-sp"></span>
+            <button class="text-btn" id="btn-drawer-collapse">收起</button>
+            <button class="icon-btn" id="btn-drawer-x" aria-label="收起传输队列" title="收起"><span class="i" data-icon="chevron-down"></span></button>
+          </div>
+          <div class="drawer-list" id="drawer-list"></div>
+          <div class="drawer-foot"><span>任务由后端持有；关闭抽屉不影响传输。</span><span class="flex-sp">模拟数据</span></div>
+        </div>
+
+        <!-- 页脚状态条 24px -->
+        <footer class="statusbar">
+          <span class="mono" id="sb-left">SSH · UTF-8 · 模拟数据</span>
+          <span class="sb-right">
+            <button class="sb-btn" id="sb-forwards">转发 <b id="sb-fwd-count">1</b></button>
+            <button class="sb-btn" id="sb-transfers">传输 <b id="sb-tr-count">0</b></button>
+            <button class="sb-btn" id="sb-drawer-toggle" aria-label="展开或收起传输队列" title="传输队列"><span class="i i-xs" data-icon="chevron-up"></span></button>
+          </span>
+        </footer>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="menu-root" id="menu-root"></div>
+<div class="overlay-root" id="overlay-root" hidden></div>
+<div class="toast-root" id="toast-root" role="status" aria-live="polite"></div>
+<div class="drag-tip" id="drag-tip" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

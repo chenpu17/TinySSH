@@ -1,0 +1,201 @@
+/* TinySSH · UX-R1 R02 控件样例页样式。
+   基础 token 与既有控件样式复用 styles.css（<link> 引入，不复制改值）；
+   本文件只定义：样例页布局、规格标注，以及 styles.css 尚未覆盖的控件态
+   （loading / error / connected / disconnected / 冻结演示态等）。
+   「冻结态」类（demo-hover 等）用于把 :hover / :active / :focus-visible
+   的视觉效果固定下来并排展示，样式值与 styles.css 的交互规则一致。 */
+
+/* ---------- 样例页骨架 ---------- */
+
+.cg-top {
+  position: sticky; top: 0; z-index: 40; height: 44px;
+  display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  background: var(--surface-sidebar); border-bottom: 1px solid var(--border-subtle);
+}
+.cg-top .app-title { font-size: 14px; font-weight: 600; }
+.cg-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.cg-back { font-size: 12px; color: var(--text-secondary); padding: 4px 8px; border-radius: 4px; }
+.cg-back:hover { background: var(--surface-raised); color: var(--text-primary); }
+
+.cg-main { max-width: 1120px; margin: 0 auto; padding: 24px 24px 64px; }
+
+.cg-section { margin-top: 40px; }
+.cg-section:first-child { margin-top: 0; }
+.cg-h2 { font-size: 20px; line-height: 28px; font-weight: 600; }
+.cg-spec {
+  margin-top: 4px; font-size: 12px; line-height: 18px; color: var(--text-secondary);
+}
+.cg-note {
+  margin-top: 12px; font-size: 12px; line-height: 18px; color: var(--text-secondary);
+  border-left: 2px solid var(--border-subtle); padding-left: 10px;
+}
+
+.cg-grid { margin-top: 16px; display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+/* 按钮七态矩阵：固定 7 列，让三档变体的同名状态纵向对齐，便于评审对照 */
+.cg-grid.cols7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cg-grid.wide { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.cg-cell { min-width: 0; }
+.cell-label {
+  margin-top: 8px; font-size: 12px; line-height: 18px; color: var(--text-secondary);
+}
+.cell-err { margin-top: 2px; font-size: 12px; line-height: 18px; color: var(--status-danger); }
+
+/* ---------- 按钮：新增态 ---------- */
+
+.btn-lg { height: 36px; padding: 0 16px; }
+
+.btn.is-loading { cursor: progress; }
+.btn.is-loading::before {
+  content: ""; flex: none; width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid currentColor; border-right-color: transparent;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.btn.is-error { outline: 2px solid var(--status-danger); outline-offset: 1px; }
+.btn-secondary.is-error { border-color: var(--status-danger); }
+
+/* 冻结演示态：与 styles.css 中 :hover / :active / :focus-visible 一致 */
+.demo-hover.btn-primary { filter: brightness(1.07); }
+.demo-pressed.btn-primary { filter: brightness(.95); }
+.demo-hover.btn-secondary { border-color: var(--accent-text); color: var(--accent-text); }
+.demo-pressed.btn-secondary {
+  background: var(--surface-selected); border-color: var(--accent-text); color: var(--accent-text);
+}
+.demo-hover.btn-danger { filter: brightness(1.06); }
+.demo-pressed.btn-danger { filter: brightness(.95); }
+.demo-focus { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+/* ---------- 主机行：新增态 ---------- */
+
+.host-row.connected { position: relative; }
+.host-row.connected::before {
+  content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+  border-radius: 2px; background: var(--status-success); opacity: .75;
+}
+.host-row.disconnected .host-name,
+.host-row.disconnected .host-addr { opacity: .62; }
+.host-row.demo-hover { background: var(--surface-raised); }
+.host-row.demo-hover .host-acts { opacity: 1; pointer-events: auto; }
+.host-row.demo-focus-within {
+  background: var(--surface-raised);
+  outline: 2px solid var(--focus-ring); outline-offset: 1px;
+}
+.host-row.demo-focus-within .host-acts { opacity: 1; pointer-events: auto; }
+
+.side-demo {
+  background: var(--surface-sidebar); border: 1px solid var(--border-subtle);
+  border-radius: 8px; padding: 8px 12px;
+}
+
+/* ---------- 标签页：新增态 ---------- */
+
+.tab-demo {
+  background: var(--surface-sidebar); border: 1px solid var(--border-subtle);
+  border-radius: 8px; padding: 4px 8px;
+}
+.tab.disconnected .tab-title { opacity: .62; }
+.tab.demo-focus { background: var(--surface-raised); color: var(--text-primary); }
+.tab-strip-demo { display: flex; align-items: center; gap: 4px; }
+.tab-strip-demo.narrow { max-width: 480px; overflow: hidden; }
+.tab-more {
+  width: 28px; height: 28px; flex: none; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-secondary);
+}
+.tab-more:hover { background: var(--surface-raised); color: var(--text-primary); }
+
+/* ---------- 菜单：focus-within 展开 ---------- */
+
+.menu-pop { position: relative; display: inline-block; }
+.menu-pop .menu-pop-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; display: none;
+}
+.menu-pop:focus-within .menu-pop-panel,
+.menu-pop:hover .menu-pop-panel { display: block; }
+.menu-static .menu { position: static; max-height: none; box-shadow: var(--shadow-1); }
+.menu-item.demo-hover { background: var(--surface-selected); }
+
+/* ---------- 对话框：静态样例 + focus trap 示意 ---------- */
+
+.dlg-demo { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); margin-top: 16px; }
+.dlg-demo .modal { min-width: 0; box-shadow: var(--shadow-1); }
+.trap {
+  position: relative; outline: 1.5px dashed var(--focus-ring);
+  outline-offset: 8px; border-radius: 12px; padding-top: 22px;
+}
+.trap-tag {
+  position: absolute; top: -4px; left: 12px; transform: translateY(-100%);
+  font-size: 11px; line-height: 16px; color: var(--focus-ring);
+  background: var(--surface-canvas); padding: 0 6px; white-space: nowrap;
+}
+
+/* ---------- Toast：静态并排 ---------- */
+
+.toast-demo { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; margin-top: 16px; }
+.toast-demo .toast { animation: none; }
+
+/* ---------- 分隔拖动柄 ---------- */
+
+.grip-row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin-top: 16px; }
+.grip-cell {
+  position: relative;
+  height: 96px; display: flex; align-items: stretch;
+  background: var(--surface-sidebar); border: 1px solid var(--border-subtle); border-radius: 8px;
+}
+.grip-cell .pane-ghost { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-secondary); }
+.side-grip.demo-hover::after { background: var(--accent-text); opacity: .65; }
+
+.split-live {
+  margin-top: 20px; height: 160px; display: flex;
+  background: var(--surface-canvas); border: 1px solid var(--border-subtle); border-radius: 8px;
+}
+.split-live .sp-pane {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: var(--text-secondary); background: var(--surface-sidebar);
+  border-radius: 8px 0 0 8px; min-width: 0; overflow: hidden;
+}
+.split-live .sp-right { flex: 1; border-radius: 0 8px 8px 0; }
+
+/* ---------- 图标按钮：点击区标注 + tooltip 示意 ---------- */
+
+.hit-demo { position: relative; display: inline-flex; }
+.hit-demo::after {
+  content: "28×28"; position: absolute; inset: -1px; border: 1px dashed var(--focus-ring);
+  border-radius: 6px; font-size: 9px; line-height: 1; color: var(--focus-ring);
+  display: flex; align-items: flex-start; justify-content: flex-end;
+  padding: 2px 3px; pointer-events: none;
+}
+.tip-host { position: relative; display: inline-flex; }
+.tip-bubble {
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: var(--surface-raised); border: 1px solid var(--border-subtle);
+  border-radius: 6px; box-shadow: var(--shadow-1); padding: 5px 10px;
+  font-size: 12px; line-height: 18px; white-space: nowrap; color: var(--text-primary);
+  display: flex; align-items: center; gap: 8px;
+}
+.tip-bubble::after {
+  content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: var(--surface-raised);
+}
+
+/* 输入框冻结 focus：与 .field input:focus-visible 行为一致（边框换色，非外描边） */
+.field input.demo-focus, .field select.demo-focus { outline: none; border-color: var(--focus-ring); }
+
+.size-chip {
+  position: absolute; top: 8px; right: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle); border-radius: 6px; padding: 2px 8px;
+  font-size: 12px; color: var(--text-primary); box-shadow: var(--shadow-1); white-space: nowrap;
+}
+
+.field-lg input { height: 36px; }
+
+/* ---------- 焦点环样例 ---------- */
+
+.focus-demo-list { margin-top: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.focus-demo-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px;
+  background: var(--surface-sidebar); border: 1px solid var(--border-subtle); border-radius: 8px;
+}
+.focus-demo-item .cell-label { margin-top: 0; }

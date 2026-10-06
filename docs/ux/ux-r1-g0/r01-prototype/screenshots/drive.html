@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html><body>
+<script>
+const q = new URLSearchParams(location.search);
+const W = +(q.get('w') || 1280), H = +(q.get('h') || 800), S = q.get('s') || 'files';
+const TH = q.get('theme') || 'dark';
+document.write('<iframe id="f" src="../index.html#s=' + S + '&theme=' + TH + '" style="width:' + W + 'px;height:' + H + 'px;border:0"></iframe>');
+</script>
+<pre id="out" style="position:fixed;top:0;left:0;z-index:99;font:12px/17px Menlo,monospace;background:#fff;color:#000;padding:6px;margin:0;"></pre>
+<script>
+const f = document.getElementById('f');
+const timer = setInterval(() => {
+  let d = null, w = null;
+  try { d = f.contentDocument; w = f.contentWindow; } catch (e) { document.getElementById('out').textContent = 'ERR ' + e.message; return; }
+  if (!d || !d.getElementById('content') || d.readyState !== 'complete') return;
+  clearInterval(timer);
+  const act = q.get('act');
+  const results = [];
+  if (act === 'connect') {
+    const btns = d.querySelectorAll('.host-row .host-connect');
+    btns[btns.length - 1].dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    results.push('clicked last host-connect');
+  } else if (act === 'tab') {
+    const tabs = d.querySelectorAll('.tab');
+    tabs[2].dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    results.push('clicked tab[2]');
+  } else if (act === 'addhost') {
+    d.getElementById('btn-add-host').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    results.push('clicked btn-add-host');
+  } else if (act === 'drawer') {
+    d.getElementById('sb-drawer-toggle').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    results.push('clicked sb-drawer-toggle');
+  }
+  const r = (sel) => {
+    const el = d.querySelector(sel);
+    if (!el) return sel + ': null';
+    const b = el.getBoundingClientRect();
+    return sel + ': x=' + b.x.toFixed(1) + ' y=' + b.y.toFixed(1) + ' w=' + b.width.toFixed(1) + ' h=' + b.height.toFixed(1) + (el.hidden ? ' HIDDEN' : '');
+  };
+  const dump = () => {
+  const sb = d.getElementById('sidebar');
+  const dr = d.getElementById('drawer');
+  const rows = d.querySelectorAll('#file-list .filerow');
+  const row0 = rows[0] ? rows[0].getBoundingClientRect() : null;
+  const tabs = d.querySelectorAll('.tab');
+  const actTab = d.querySelector('.tab.active');
+  document.getElementById('out').textContent = [
+    r('.titlebar'), r('.sidebar'), r('.side-grip'), r('.tabbar'), r('.toolbar'),
+    r('#content'), r('.term-area'), r('.panes'), r('#file-panel'), r('#drawer'), r('.statusbar'), r('#file-list'),
+    'sidebar inline=' + sb.style.width + ' computed=' + w.getComputedStyle(sb).width,
+    'drawer inline=' + dr.style.height + ' computed=' + w.getComputedStyle(dr).height,
+    'contentClass=' + d.getElementById('content').className,
+    'innerW=' + w.innerWidth + ' innerH=' + w.innerHeight,
+    'fileRows=' + rows.length + (row0 ? ' row0 y=' + row0.y.toFixed(1) + ' h=' + row0.height.toFixed(1) : ''),
+    'tabCount=' + tabs.length + ' activeTab=' + (actTab ? Array.from(tabs).indexOf(actTab) : -1),
+    'tab0=' + r('.tab'),
+    'tbStatus=' + d.getElementById('tb-status-text').textContent,
+    'hostRow0=' + (d.querySelector('.host-row') ? d.querySelector('.host-row').className : 'none'),
+    'termA=' + r('#term-a') + ' termW=' + (d.getElementById('term-a') ? d.getElementById('term-a').getBoundingClientRect().width.toFixed(1) : ''),
+    'input=' + (() => { const i = d.querySelector('.field input'); if (!i) return 'no-field-visible'; const cs = w.getComputedStyle(i); return 'border=' + cs.borderColor + ' bg=' + cs.backgroundColor + ' rectW=' + i.getBoundingClientRect().width.toFixed(1); })(),
+    ...results
+  ].join('\n');
+  };
+  if (act === 'seq') {
+    const snap = (tag) => {
+      const rows = d.querySelectorAll('.host-row');
+      const h4 = Array.from(rows).find((r) => r.textContent.indexOf('生产环境日志') >= 0);
+      results.push(tag + ' h4row=' + (h4 ? h4.className.replace('host-row', '').trim() : 'n/a') +
+        ' h4dot=' + (h4 ? (h4.querySelector('.dot') || {}).className : 'n/a'));
+    };
+    snap('atLoad');
+    setTimeout(() => snap('at3500ms'), 3500);
+    setTimeout(dump, 4200);
+  } else if (act) { setTimeout(dump, 2500); } else { dump(); }
+}, 50);
+</script>
+</body></html>

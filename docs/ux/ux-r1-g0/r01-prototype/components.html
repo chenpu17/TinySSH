@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TinySSH · 控件样例 R02（模拟数据 / 非实现）</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="components.css">
+</head>
+<body>
+
+<header class="cg-top">
+  <span class="app-title">TinySSH · 控件样例</span>
+  <span class="mock-badge">R02 · 模拟数据 / 非实现</span>
+  <div class="cg-top-right">
+    <a class="cg-back" href="index.html">返回 R01 主原型</a>
+    <button class="icon-btn" id="btn-theme" aria-label="切换明暗主题" title="切换明暗主题（终端配色独立于应用主题）"><span class="i" data-icon="sun"></span></button>
+  </div>
+</header>
+
+<main class="cg-main">
+
+  <!-- ========== 1 按钮 ========== -->
+  <section class="cg-section" id="sec-btn" aria-label="按钮">
+    <h2 class="cg-h2">按钮</h2>
+    <p class="cg-spec">高 32（默认）/ 36（主表单）· 圆角 6 · 动效 140ms（规格区间 120–180ms，优先 opacity/filter）· 图标 16px 描边 1.7 · hover/pressed/focus 为冻结演示态，页面内按钮真实可交互</p>
+
+    <h3 style="font-size:13px;font-weight:600;margin-top:20px">主要 · 次要 · 危险 × 七态（高 32，按列对齐）</h3>
+    <div class="cg-grid cols7">
+      <div class="cg-cell"><button class="btn btn-primary">连接</button><div class="cell-label">default</div></div>
+      <div class="cg-cell"><button class="btn btn-primary demo-hover">连接</button><div class="cell-label">hover（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-primary demo-focus">连接</button><div class="cell-label">focus-visible（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-primary demo-pressed">连接</button><div class="cell-label">pressed（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-primary" disabled>连接</button><div class="cell-label">disabled</div></div>
+      <div class="cg-cell"><button class="btn btn-primary is-loading" aria-busy="true">连接中…</button><div class="cell-label">loading</div></div>
+      <div class="cg-cell"><button class="btn btn-primary is-error">保存</button><div class="cell-label">error（danger 焦点环）</div><div class="cell-err">保存失败：连接超时，请重试</div></div>
+
+      <div class="cg-cell"><button class="btn btn-secondary">取消</button><div class="cell-label">default</div></div>
+      <div class="cg-cell"><button class="btn btn-secondary demo-hover">取消</button><div class="cell-label">hover（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-secondary demo-focus">取消</button><div class="cell-label">focus-visible（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-secondary demo-pressed">取消</button><div class="cell-label">pressed（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-secondary" disabled>取消</button><div class="cell-label">disabled</div></div>
+      <div class="cg-cell"><button class="btn btn-secondary is-loading" aria-busy="true">导入中…</button><div class="cell-label">loading</div></div>
+      <div class="cg-cell"><button class="btn btn-secondary is-error">测试连接</button><div class="cell-label">error</div><div class="cell-err">无法解析主机名</div></div>
+
+      <div class="cg-cell"><button class="btn btn-danger">删除主机</button><div class="cell-label">default</div></div>
+      <div class="cg-cell"><button class="btn btn-danger demo-hover">删除主机</button><div class="cell-label">hover（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-danger demo-focus">删除主机</button><div class="cell-label">focus-visible（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-danger demo-pressed">删除主机</button><div class="cell-label">pressed（冻结）</div></div>
+      <div class="cg-cell"><button class="btn btn-danger" disabled>删除主机</button><div class="cell-label">disabled</div></div>
+      <div class="cg-cell"><button class="btn btn-danger is-loading" aria-busy="true">断开中…</button><div class="cell-label">loading</div></div>
+      <div class="cg-cell"><button class="btn btn-danger is-error">删除主机</button><div class="cell-label">error（删除失败反馈）</div><div class="cell-err">删除失败：文件被占用</div></div>
+    </div>
+
+    <h3 style="font-size:13px;font-weight:600;margin-top:24px">高 36（主要表单规格）</h3>
+    <div class="cg-grid">
+      <div class="cg-cell"><button class="btn btn-primary btn-lg"><span class="i" data-icon="plus"></span>添加连接</button><div class="cell-label">主要 · 36</div></div>
+      <div class="cg-cell"><button class="btn btn-secondary btn-lg">导入 SSH 配置</button><div class="cell-label">次要 · 36</div></div>
+      <div class="cg-cell"><button class="btn btn-danger btn-lg">删除并关闭</button><div class="cell-label">危险 · 36</div></div>
+      <div class="cg-cell"><button class="btn btn-primary btn-lg is-loading" aria-busy="true">连接中…</button><div class="cell-label">loading · 36</div></div>
+      <div class="cg-cell"><button class="btn btn-primary btn-lg demo-focus">连接</button><div class="cell-label">focus-visible · 36</div></div>
+    </div>
+    <p class="cg-note">危险按钮仅在需要时使用；loading 态指针为 progress 且不可再次触发；error 态按钮配合就地错误文字，不只依赖 Toast（§7.3）。</p>
+  </section>
+
+  <!-- ========== 2 输入框 / 字段 ========== -->
+  <section class="cg-section" id="sec-field" aria-label="输入框与字段">
+    <h2 class="cg-h2">输入框 / 字段</h2>
+    <p class="cg-spec">高 32（默认）/ 36（主表单）· 圆角 6 · focus 时边框换为 focus.ring · 错误信息就地显示于字段下方（danger 色，12px）</p>
+    <div class="cg-grid wide" style="margin-top:16px">
+      <div class="cg-cell">
+        <div class="field">
+          <label for="f-host">主机地址</label>
+          <input id="f-host" type="text" placeholder="例如：web-1.example.com">
+        </div>
+        <div class="cell-label">default（placeholder 仅作示例，说明靠 label）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="field">
+          <label for="f-port">端口</label>
+          <input id="f-port" type="text" value="22" class="demo-focus">
+        </div>
+        <div class="cell-label">focus（冻结：边框 focus.ring）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="field err">
+          <label for="f-user">用户名</label>
+          <input id="f-user" type="text" value="deploy user" aria-invalid="true" aria-describedby="f-user-err">
+          <p class="field-err" id="f-user-err">用户名不能包含空格</p>
+        </div>
+        <div class="cell-label">error（danger 边框 + 就地错误）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="field">
+          <label for="f-alias">别名（只读示例）</label>
+          <input id="f-alias" type="text" value="web-prod-01" disabled>
+        </div>
+        <div class="cell-label">disabled</div>
+      </div>
+      <div class="cg-cell">
+        <div class="field field-lg" style="margin-bottom:0">
+          <label for="f-host2">主机地址（主表单 36）</label>
+          <input id="f-host2" type="text" placeholder="例如：10.0.0.21">
+        </div>
+        <div class="cell-label" style="margin-top:8px">主表单规格 · 高 36</div>
+      </div>
+      <div class="cg-cell">
+        <div class="field" style="margin-bottom:0">
+          <label for="f-auth">认证方式</label>
+          <select id="f-auth">
+            <option>SSH 密钥（推荐）</option>
+            <option>密码</option>
+            <option>代理跳板</option>
+          </select>
+        </div>
+        <div class="cell-label" style="margin-top:8px">下拉选择 · 高 32 · 同字段样式</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 3 主机列表行 ========== -->
+  <section class="cg-section" id="sec-list" aria-label="主机列表行">
+    <h2 class="cg-h2">列表行（主机）</h2>
+    <p class="cg-spec">双行 52 高 · 圆角 6 · 操作按钮 hover / focus-within / 连接中时可见 · 四种语义状态视觉互斥：选中=底色，连接中=浮起+呼吸点，已连接=左侧成功色短轨+实心点，断开=文字降不透明度</p>
+    <div class="cg-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+      <div class="cg-cell">
+        <div class="side-demo"><div class="host-row">
+          <i class="dot dot-off"></i>
+          <div class="host-meta"><div class="host-name">build-02</div><div class="host-addr">ci@10.0.0.34:22</div></div>
+          <div class="host-acts"><button class="host-connect" tabindex="-1" aria-label="连接 build-02"><span class="i" data-icon="play"></span></button><button class="host-more" tabindex="-1" aria-label="更多操作"><span class="i" data-icon="ellipsis"></span></button></div>
+        </div></div>
+        <div class="cell-label">default（未连接）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="side-demo"><div class="host-row demo-hover">
+          <i class="dot dot-off"></i>
+          <div class="host-meta"><div class="host-name">build-02</div><div class="host-addr">ci@10.0.0.34:22</div></div>
+          <div class="host-acts"><button class="host-connect" tabindex="-1" aria-label="连接 build-02"><span class="i" data-icon="play"></span></button><button class="host-more" tabindex="-1" aria-label="更多操作"><span class="i" data-icon="ellipsis"></span></button></div>
+        </div></div>
+        <div class="cell-label">hover（冻结：浮起 + 操作可见）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="side-demo"><div class="host-row demo-focus-within">
+          <i class="dot dot-off"></i>
+          <div class="host-meta"><div class="host-name">build-02</div><div class="host-addr">ci@10.0.0.34:22</div></div>
+          <div class="host-acts"><button class="host-connect" tabindex="-1" aria-label="连接 build-02"><span class="i" data-icon="play"></span></button><button class="host-more" tabindex="-1" aria-label="更多操作"><span class="i" data-icon="ellipsis"></span></button></div>
+        </div></div>
+        <div class="cell-label">focus-within（冻结：键盘同款可见）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="side-demo"><div class="host-row selected">
+          <i class="dot dot-off"></i>
+          <div class="host-meta"><div class="host-name">web-prod-01</div><div class="host-addr">root@10.0.0.21:22</div></div>
+          <div class="host-acts"><button class="host-connect" tabindex="-1" aria-label="连接 web-prod-01"><span class="i" data-icon="play"></span></button><button class="host-more" tabindex="-1" aria-label="更多操作"><span class="i" data-icon="ellipsis"></span></button></div>
+        </div></div>
+        <div class="cell-label">selected（选中=当前操作对象）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="side-demo"><div class="host-row connecting">
+          <i class="dot dot-warn"></i>
+          <div class="host-meta"><div class="host-name">db-replica</div><div class="host-addr">正在连接…</div></div>
+          <div class="host-acts"><button class="host-more" tabindex="-1" aria-label="更多操作"><span class="i" data-icon="ellipsis"></span></button></div>
+        </div></div>
+        <div class="cell-label">connecting（呼吸点 + 浮起）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="side-demo"><div class="host-row connected">
+          <i class="dot dot-ok"></i>
+          <div class="host-meta"><div class="host-name">web-prod-01</div><div class="host-addr">已连接 · 14:32</div></div>
+          <div class="host-acts"><button class="host-more" tabindex="-1" aria-label="更多操作"><span class="i" data-icon="ellipsis"></span></button></div>
+        </div></div>
+        <div class="cell-label">connected（左侧短轨，不整行高亮）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="side-demo"><div class="host-row disconnected">
+          <i class="dot dot-off"></i>
+          <div class="host-meta"><div class="host-name">cache-03</div><div class="host-addr">已断开 · 昨天 18:04</div></div>
+          <div class="host-acts"><button class="host-connect" tabindex="-1" aria-label="连接 cache-03"><span class="i" data-icon="play"></span></button><button class="host-more" tabindex="-1" aria-label="更多操作"><span class="i" data-icon="ellipsis"></span></button></div>
+        </div></div>
+        <div class="cell-label">disconnected（文字降不透明度）</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 4 标签页 ========== -->
+  <section class="cg-section" id="sec-tab" aria-label="标签页">
+    <h2 class="cg-h2">标签页</h2>
+    <p class="cg-spec">标签高 30 / 标签栏 40 · 圆角 6 · 关闭按钮 22（hover 与活动标签显示）· 圆点表示会话状态 · 溢出时出现省略按钮</p>
+    <div class="cg-grid wide" style="margin-top:16px">
+      <div class="cg-cell">
+        <div class="tab-demo"><div class="tab-strip-demo">
+          <div class="tab active" role="tab" aria-selected="true" tabindex="0" title="web-prod-01 · 已连接"><i class="dot dot-ok"></i><span class="tab-title">web-prod-01</span><button class="tab-x" aria-label="关闭会话 web-prod-01" tabindex="-1"><span class="i i-xs" data-icon="x"></span></button></div>
+          <div class="tab" role="tab" aria-selected="false" tabindex="0" title="build-02 · 已断开"><i class="dot dot-off"></i><span class="tab-title">build-02</span><button class="tab-x" aria-label="关闭会话 build-02" tabindex="-1"><span class="i i-xs" data-icon="x"></span></button></div>
+          <div class="tab disconnected" role="tab" aria-selected="false" tabindex="0" title="cache-03 · 已断开"><i class="dot dot-off"></i><span class="tab-title">cache-03</span><button class="tab-x" aria-label="关闭会话 cache-03" tabindex="-1"><span class="i i-xs" data-icon="x"></span></button></div>
+          <div class="tab" role="tab" aria-selected="false" tabindex="0" title="db-replica · 正在连接"><i class="dot dot-warn"></i><span class="tab-title">db-replica</span><button class="tab-x" aria-label="关闭会话 db-replica" tabindex="-1"><span class="i i-xs" data-icon="x"></span></button></div>
+          <div class="tab demo-focus" role="tab" aria-selected="false" tabindex="0" title="日志上传 · 已断开"><i class="dot dot-off"></i><span class="tab-title">日志上传</span><button class="tab-x" aria-label="关闭会话 日志上传" tabindex="-1"><span class="i i-xs" data-icon="x"></span></button></div>
+        </div></div>
+        <div class="cell-label">活动（绿点）/ 非活动 / 断开（降透明度）/ 连接中（呼吸点）/ focus（冻结）</div>
+      </div>
+      <div class="cg-cell">
+        <div class="tab-demo"><div class="tab-strip-demo narrow">
+          <div class="tab active" role="tab" aria-selected="true" tabindex="0" title="web-prod-01 · 已连接"><i class="dot dot-ok"></i><span class="tab-title">web-prod-01</span><button class="tab-x" aria-label="关闭会话 web-prod-01" tabindex="-1"><span class="i i-xs" data-icon="x"></span></button></div>
+          <div class="tab" role="tab" aria-selected="false" tabindex="0" title="build-02"><i class="dot dot-off"></i><span class="tab-title">build-02</span></div>
+          <div class="tab" role="tab" aria-selected="false" tabindex="0" title="cache-03"><i class="dot dot-off"></i><span class="tab-title">cache-03</span></div>
+          <div class="tab" role="tab" aria-selected="false" tabindex="0" title="db-replica"><i class="dot dot-warn"></i><span class="tab-title">db-replica</span></div>
+          <span class="flex-sp"></span>
+          <button class="tab-more" aria-label="更多标签" title="更多标签（标签列表）"><span class="i" data-icon="ellipsis"></span></button>
+        </div></div>
+        <div class="cell-label">溢出：省略按钮展开完整标签列表（⌘1…9、⌘⇧[ / ] 切换）</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 5 菜单 ========== -->
+  <section class="cg-section" id="sec-menu" aria-label="菜单">
+    <h2 class="cg-h2">菜单（右键 / 省略号）</h2>
+    <p class="cg-spec">菜单项高 30 · 菜单圆角 8 · 键盘可达：触发按钮 focus-within 即展开（不仅 hover）· 快捷键右对齐 kbd · 危险项用 danger 色</p>
+    <div class="cg-grid wide" style="margin-top:16px">
+      <div class="cg-cell">
+        <div class="menu-pop" id="menu-pop-live">
+          <button class="icon-btn" aria-haspopup="menu" aria-label="主机更多操作" title="主机更多操作"><span class="i" data-icon="ellipsis"></span></button>
+          <div class="menu menu-pop-panel" role="menu">
+            <div class="menu-group">web-prod-01</div>
+            <button class="menu-item" role="menuitem">新会话连接<kbd>⌘T</kbd></button>
+            <button class="menu-item" role="menuitem">搜索主机<kbd>⌘K</kbd></button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" role="menuitem" disabled>复制连接命令</button>
+            <button class="menu-item" role="menuitem">重命名</button>
+            <button class="menu-item" role="menuitem">编辑主机…<kbd>⌘,</kbd></button>
+            <div class="menu-sep"></div>
+            <button class="menu-item danger" role="menuitem">删除主机…</button>
+          </div>
+        </div>
+        <div class="cell-label">悬停或键盘聚焦省略号按钮即展开（focus-within 可达；Esc 收起）</div>
+      </div>
+      <div class="cg-cell menu-static">
+        <div class="menu" role="menu" style="min-width:240px">
+          <button class="menu-item" role="menuitem">default 项</button>
+          <button class="menu-item demo-hover" role="menuitem">hover 项（冻结）</button>
+          <button class="menu-item demo-focus" role="menuitem">focus 项（冻结）</button>
+          <button class="menu-item" role="menuitem">已选项<kbd>⌘1</kbd><span class="mi-check i" data-icon="check"></span></button>
+          <button class="menu-item" role="menuitem" disabled>disabled 项</button>
+          <button class="menu-item danger" role="menuitem">危险项（删除）</button>
+        </div>
+        <div class="cell-label">状态对照：default / hover / focus / checked / disabled / danger</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 6 对话框 ========== -->
+  <section class="cg-section" id="sec-dialog" aria-label="对话框">
+    <h2 class="cg-h2">对话框</h2>
+    <p class="cg-spec">圆角 12 · 阴影 shadow-2 · 底部操作区固定（内容滚动、操作不随动）· focus trap：Tab 循环限于框内，关闭后焦点回到触发控件；Cmd+W 打开时先作用于对话框</p>
+    <div class="dlg-demo">
+      <div class="trap">
+        <span class="trap-tag">focus trap 视意：Tab 循环于此虚线内</span>
+        <div class="modal" role="dialog" aria-label="新建连接（标准对话框）">
+          <div class="modal-head">
+            <div><div class="modal-title">新建连接</div><div class="modal-sub">连接信息保存在本机</div></div>
+            <button class="icon-btn modal-x" aria-label="关闭" tabindex="-1"><span class="i" data-icon="x"></span></button>
+          </div>
+          <div class="modal-body">
+            <div class="field"><label for="d-host">主机地址</label><input id="d-host" type="text" placeholder="例如：web-1.example.com"></div>
+            <div class="field-row">
+              <div class="field"><label for="d-user">用户名</label><input id="d-user" type="text" placeholder="root"></div>
+              <div class="field narrow"><label for="d-port">端口</label><input id="d-port" type="text" value="22"></div>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <span class="foot-note">标准对话框：主操作在右</span>
+            <button class="btn btn-secondary" tabindex="-1">取消</button>
+            <button class="btn btn-primary" tabindex="-1">连接</button>
+          </div>
+        </div>
+      </div>
+      <div class="trap">
+        <span class="trap-tag">危险确认：主操作为 danger 色</span>
+        <div class="modal" role="dialog" aria-label="删除主机（危险确认）">
+          <div class="modal-head">
+            <div><div class="modal-title" style="color:var(--status-danger)">删除主机「web-prod-01」？</div><div class="modal-sub">将移除保存的地址、标签与凭据引用</div></div>
+            <button class="icon-btn modal-x" aria-label="关闭" tabindex="-1"><span class="i" data-icon="x"></span></button>
+          </div>
+          <div class="modal-body">
+            <div class="kv">
+              <dt>地址</dt><dd class="mono">root@10.0.0.21:22</dd>
+              <dt>影响会话</dt><dd>1 个活动会话将被断开</dd>
+              <dt>可恢复</dt><dd style="color:var(--status-danger)">不可撤销</dd>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <span class="foot-note">危险确认：默认聚焦取消， destructive 主操作在右</span>
+            <button class="btn btn-secondary" tabindex="-1">取消</button>
+            <button class="btn btn-danger" tabindex="-1">删除主机</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cg-note" style="margin-top:16px">
+      <button class="btn btn-secondary" id="btn-open-live-dialog"><span class="i" data-icon="alert"></span>打开可交互危险确认（真实 focus trap + Esc 关闭）</button>
+    </p>
+  </section>
+
+  <!-- ========== 7 Toast ========== -->
+  <section class="cg-section" id="sec-toast" aria-label="Toast">
+    <h2 class="cg-h2">Toast</h2>
+    <p class="cg-spec">同时最多 2 条（第 3 条到达即移除最旧）· 约 3 秒自动淡出（0.18s opacity）· 右下角固定，避开居中对话框与表单输入 · role="status" aria-live="polite"</p>
+    <div class="toast-demo">
+      <div class="toast"><span class="i" data-icon="check"></span><span>已复制公钥指纹</span></div>
+      <div class="toast warn"><span class="i" data-icon="alert"></span><span>传输失败：连接中断（已保留断点）</span></div>
+    </div>
+    <p class="cg-note" style="margin-top:16px">
+      <button class="btn btn-secondary" id="btn-fire-toast">触发一条 Toast（约 3 秒后自动消失）</button>
+    </p>
+  </section>
+
+  <!-- ========== 8 分隔拖动柄 ========== -->
+  <section class="cg-section" id="sec-split" aria-label="分隔拖动柄">
+    <h2 class="cg-h2">分隔拖动柄</h2>
+    <p class="cg-spec">柄宽 8（视觉轨道 2px）· hover / 拖动中显示 accent 轨道 · 拖动中显示实时尺寸提示（drag-tip）· 无缓慢弹性动画</p>
+    <div class="grip-row">
+      <div class="cg-cell"><div class="grip-cell">
+        <div class="pane-ghost">主机栏</div><div class="side-grip" aria-hidden="true"></div><div class="pane-ghost">终端</div>
+      </div><div class="cell-label">default（轨道不可见）</div></div>
+      <div class="cg-cell"><div class="grip-cell">
+        <div class="pane-ghost">主机栏</div><div class="side-grip demo-hover" aria-hidden="true"></div><div class="pane-ghost">终端</div>
+      </div><div class="cell-label">hover（冻结：accent 轨道浮现）</div></div>
+      <div class="cg-cell"><div class="grip-cell">
+        <div class="pane-ghost" style="flex:0 0 34%">主机栏</div><div class="side-grip dragging" aria-hidden="true"></div><div class="pane-ghost">终端</div><span class="size-chip" aria-hidden="true">224 px</span>
+      </div><div class="cell-label">拖动中（轨道常亮 + 实时尺寸提示）</div></div>
+    </div>
+    <div class="split-live" id="split-live">
+      <div class="sp-pane" id="sp-left" style="width:220px">左面板</div>
+      <div class="side-grip" id="live-grip" role="separator" aria-orientation="vertical" aria-label="拖动调整面板宽度（160–420 px）" title="拖动调整宽度（160–420 px）"></div>
+      <div class="sp-pane sp-right">终端区域（拖动中间的柄试试）</div>
+    </div>
+  </section>
+
+  <!-- ========== 9 图标按钮 ========== -->
+  <section class="cg-section" id="sec-icon" aria-label="图标按钮">
+    <h2 class="cg-h2">图标按钮</h2>
+    <p class="cg-spec">图标 16 / 18px、统一描边 1.7、不混用 emoji · 点击区 ≥28×28 · Tooltip = 全称 + 快捷键（不承担唯一说明）· aria-pressed 表示开关态</p>
+    <div class="focus-demo-item" style="margin-top:16px">
+      <button class="icon-btn" aria-label="在终端中搜索" title="在终端中搜索（⌘F）"><span class="i" data-icon="search"></span></button>
+      <button class="icon-btn" aria-label="左右分屏" title="在右侧显示已有会话（双窗格）" aria-pressed="true"><span class="i i-lg" data-icon="split"></span></button>
+      <button class="icon-btn" aria-label="刷新" title="刷新（⌘R）"><span class="i i-lg" data-icon="refresh"></span></button>
+      <button class="icon-btn" aria-label="远程文件" title="文件（⌘⇧E）"><span class="i" data-icon="folder"></span></button>
+      <button class="icon-btn" aria-label="复制会话 ID" title="复制会话 ID"><span class="i" data-icon="copy"></span></button>
+      <button class="icon-btn" disabled aria-label="上传（未连接）" title="上传（未连接）"><span class="i" data-icon="upload"></span></button>
+      <span class="cell-label" style="margin:0 0 0 8px">16px 与 18px · pressed 开关态 · disabled</span>
+    </div>
+    <div class="focus-demo-item" style="margin-top:12px">
+      <span class="hit-demo"><button class="icon-btn" aria-label="关闭文件面板" title="关闭文件面板（⌘⇧E）"><span class="i" data-icon="x"></span></button></span>
+      <span class="cell-label" style="flex:1">点击区标注：虚线框 = 28×28 最小命中区（图标 16px 居中）</span>
+      <span class="tip-host">
+        <button class="icon-btn" aria-label="在终端中搜索" title="在终端中搜索（⌘F）"><span class="i" data-icon="search"></span></button>
+        <span class="tip-bubble" aria-hidden="true">在终端中搜索<kbd>⌘F</kbd></span>
+      </span>
+      <span class="cell-label">Tooltip 示意（常显供检查）：全称 + 快捷键</span>
+    </div>
+  </section>
+
+  <!-- ========== 10 焦点环 ========== -->
+  <section class="cg-section" id="sec-focus" aria-label="焦点环">
+    <h2 class="cg-h2">焦点环</h2>
+    <p class="cg-spec">focus.ring 2px · 偏移 1 · 仅键盘 :focus-visible 时出现（本页全部控件真实可聚焦，可用 Tab 遍历验证）· 以下为冻结演示</p>
+    <div class="focus-demo-list">
+      <div class="focus-demo-item"><button class="btn btn-primary demo-focus">连接</button><span class="cell-label">主要按钮</span></div>
+      <div class="focus-demo-item"><button class="btn btn-secondary demo-focus">取消</button><span class="cell-label">次要按钮</span></div>
+      <div class="focus-demo-item"><div class="field" style="margin:0;width:200px"><input class="demo-focus" type="text" value="web-1.example.com" aria-label="主机地址"></div><span class="cell-label">输入框（边框换色）</span></div>
+      <div class="focus-demo-item"><div class="tab demo-focus"><i class="dot dot-ok"></i><span class="tab-title">web-prod-01</span></div><span class="cell-label">标签</span></div>
+      <div class="focus-demo-item"><button class="menu-item demo-focus" style="width:180px">菜单项</button><span class="cell-label">菜单项</span></div>
+      <div class="focus-demo-item"><button class="icon-btn demo-focus" aria-label="在终端中搜索"><span class="i" data-icon="search"></span></button><span class="cell-label">图标按钮</span></div>
+    </div>
+  </section>
+
+  <p class="cg-note" style="margin-top:48px">本页为 UX-R1 G0 / R02 控件样例：与 R01 主原型共用 styles.css 的 token 与基础控件样式；所有数据均为模拟数据，非实现。</p>
+</main>
+
+<!-- 可交互危险确认（focus trap 示意实现） -->
+<div class="overlay-root" id="live-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="删除主机（可交互示例）" style="width:420px">
+    <div class="modal-head">
+      <div><div class="modal-title" style="color:var(--status-danger)">删除主机「web-prod-01」？</div><div class="modal-sub">模拟数据 · 用于演示 focus trap 与底部固定操作</div></div>
+      <button class="icon-btn modal-x" id="live-dlg-x" aria-label="关闭"><span class="i" data-icon="x"></span></button>
+    </div>
+    <div class="modal-body"><div class="kv"><dt>地址</dt><dd class="mono">root@10.0.0.21:22</dd><dt>可恢复</dt><dd style="color:var(--status-danger)">不可撤销</dd></div></div>
+    <div class="modal-foot">
+      <span class="foot-note">Tab 在框内循环 · Esc 关闭</span>
+      <button class="btn btn-secondary" id="live-dlg-cancel">取消</button>
+      <button class="btn btn-danger" id="live-dlg-ok">删除主机</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-root" id="live-toast-root" role="status" aria-live="polite"></div>
+<div class="drag-tip" id="live-drag-tip" hidden></div>
+
+<script>
+'use strict';
+/* R02 样例页脚本：图标水合 / 主题切换 / 可交互对话框 / Toast / 拖动柄。模拟数据，非实现。 */
+(function () {
+  var ICONS = {
+    search: '<circle cx="11" cy="11" r="7"/><path d="M16.6 16.6 21 21"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    upload: '<path d="M12 16V4M6 10l6-6 6 6M4 20h16"/>',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7L20 8.5M20 3.5v5h-5"/>',
+    split: '<rect x="3" y="5" width="8" height="14" rx="1.5"/><rect x="13" y="5" width="8" height="14" rx="1.5"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/>',
+    moon: '<path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/>',
+    ellipsis: '<circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
+    check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    alert: '<path d="M12 3.5 21.5 20h-19zM12 10v4.5M12 17.2v.3"/>',
+    play: '<path d="M8.5 5.5 18 12l-9.5 6.5z" fill="currentColor" stroke="none"/>',
+    copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>'
+  };
+  function icon(name) {
+    return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || ICONS.x) + '</svg>';
+  }
+  document.querySelectorAll('.i[data-icon]').forEach(function (s) {
+    s.innerHTML = icon(s.dataset.icon);
+    s.removeAttribute('data-icon');
+  });
+
+  /* 主题切换：与 R01 同约定（深色显示太阳 = 切到浅色） */
+  var themeBtn = document.getElementById('btn-theme');
+  function applyTheme(t) {
+    document.documentElement.dataset.theme = t;
+    themeBtn.querySelector('.i').innerHTML = icon(t === 'dark' ? 'sun' : 'moon');
+    themeBtn.title = t === 'dark' ? '切换到浅色主题（终端配色独立）' : '切换到深色主题（终端配色独立）';
+  }
+  applyTheme('dark');
+  themeBtn.addEventListener('click', function () {
+    applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  });
+
+  /* 可交互危险确认：focus trap + Esc + 关闭恢复焦点 */
+  var overlay = document.getElementById('live-overlay');
+  var opener = null;
+  function focusables() {
+    return Array.prototype.filter.call(overlay.querySelectorAll('button'), function (b) { return !b.disabled; });
+  }
+  function openDialog() {
+    opener = document.activeElement;
+    overlay.hidden = false;
+    focusables()[0].focus();
+  }
+  function closeDialog() {
+    overlay.hidden = true;
+    if (opener) opener.focus();
+  }
+  document.getElementById('btn-open-live-dialog').addEventListener('click', openDialog);
+  document.getElementById('live-dlg-x').addEventListener('click', closeDialog);
+  document.getElementById('live-dlg-cancel').addEventListener('click', closeDialog);
+  document.getElementById('live-dlg-ok').addEventListener('click', closeDialog);
+  overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closeDialog(); });
+  document.addEventListener('keydown', function (e) {
+    if (overlay.hidden) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeDialog(); }
+    if (e.key === 'Tab') {
+      var f = focusables();
+      if (f.length < 2) { e.preventDefault(); return; }
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
+
+  /* Toast：上限 2 条，约 3 秒自动消失 */
+  var toastRoot = document.getElementById('live-toast-root');
+  document.getElementById('btn-fire-toast').addEventListener('click', function () {
+    while (toastRoot.children.length >= 2) toastRoot.firstChild.remove();
+    var t = document.createElement('div');
+    t.className = 'toast';
+    t.innerHTML = '<span class="i">' + icon('check') + '</span><span>已复制（约 3 秒后自动消失）</span>';
+    toastRoot.appendChild(t);
+    setTimeout(function () {
+      t.classList.add('out');
+      setTimeout(function () { t.remove(); }, 200);
+    }, 3000);
+  });
+
+  /* 拖动柄：160–420，拖动中显示尺寸提示 */
+  var grip = document.getElementById('live-grip');
+  var left = document.getElementById('sp-left');
+  var tip = document.getElementById('live-drag-tip');
+  function setW(w) {
+    left.style.width = w + 'px';
+    tip.textContent = w + ' px';
+  }
+  grip.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add('dragging');
+    tip.hidden = false;
+    var move = function (ev) {
+      var rect = document.getElementById('split-live').getBoundingClientRect();
+      setW(Math.round(Math.min(420, Math.max(160, ev.clientX - rect.left))));
+      tip.style.left = (ev.clientX + 12) + 'px';
+      tip.style.top = (ev.clientY - 30) + 'px';
+    };
+    var up = function () {
+      grip.classList.remove('dragging');
+      tip.hidden = true;
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+})();
+</script>
+</body>
+</html>

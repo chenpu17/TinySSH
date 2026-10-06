@@ -422,6 +422,7 @@ stateDiagram-v2
 | `text.primary` | `#E5EAF0` | `#1D2935` | 正文 |
 | `text.secondary` | `#ADB9C8` | `#526172` | 辅助说明，仍须可读 |
 | `border.subtle` | `#334152` | `#CCD5DE` | 分区线 |
+| `border.input` | `#64768C` | `#7A8798` | 输入框边界（≥3:1 于 canvas/raised；G0 复验新增） |
 | `accent.text` | `#70D1BE` | `#176B59` | 链接、状态、选中强调 |
 | `accent.fill` | `#70D1BE` | `#176B59` | 主按钮背景 |
 | `accent.onFill` | `#10151C` | `#FFFFFF` | 主按钮文字 |
@@ -445,7 +446,7 @@ stateDiagram-v2
 
 ### 7.3 组件状态
 
-按钮、输入框、列表项、标签、对话框必须覆盖 default/hover/focus/pressed/disabled/loading/error。危险动作只在需要时使用红色；连接成功不让整行高亮闪烁。主机选中、正在连接、已连接分别表示不同含义。
+按钮、输入框、列表项、标签、对话框必须覆盖 default/hover/focus/pressed/disabled/loading/error。危险动作只在需要时使用红色；连接成功不让整行高亮闪烁。主机选中、正在连接、已连接分别表示不同含义。危险填充按钮的文字两主题均用深色/白色高对比组合（深色主题取 `#10151C`，浅色取 `#FFFFFF`，即 `accent.onFill` 取值；实施可命名 `onDanger`），不使用低对比白字。
 
 关键操作不能仅 hover 可见；键盘 focus-within 同样显现，菜单具有可访问名称。输入框有真实 label；placeholder 只给示例。Tooltip 提供全称和快捷键，不承担唯一说明。
 
@@ -646,5 +647,6 @@ type WorkspaceState = {
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| UX-R1 v1.2 | 2026-10-06 | G0 原型复验修订：§7.2 新增 `border.input` token（深 `#64768C`/浅 `#7A8798`，输入框边界 ≥3:1）；§7.3 危险按钮文字高对比规则。来源 R01/R02 复验与对比度实测；本版变更使 ux-r1-review-manifest.json 绑定的 SHA 过期，须在 G0 联合评审一并覆盖 |
 | UX-R1 v1.1 | 2026-10-06 | 三路独立审核后修订：提交结果未知/取消边界、Shell 不可用执行前拒绝、协作停用先封请求、首次委托、前台焦点、关闭命名、协作窄窗与 G0 开工界限；仍为设计而非实施验收 |
 | UX-R1 v1.0 | 2026-10-06 | 建立 SSH 客户端优先的完整重构方案：定位、信息架构、布局、流程、视觉、技术增量、迁移、阶段与验收索引；仅文档交付 |
