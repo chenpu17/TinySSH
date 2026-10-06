@@ -29,7 +29,9 @@
 | `launchctl procinfo` | 需 root；R04 采样会话可用 sudo 尝试 |
 | 时间相关性 | **不采信**——系统常驻多个 WebKit 辅助进程（Safari 等），启动时间相近易误归 |
 
-**采样会话采用方法（两层验证）**：①受控环境——采样前退出全部 WebKit 宿主应用，基线断言 WebContent/GPU/Networking 辅助进程计数为 0；②启动目标应用后出现的全部 WebKit 辅助进程按计数（Tauri 预期 WebContent+GPU+Networking 各 1）+ 启动时间窗 + **退出应用后辅助进程随之消失** 三重核对后计入。核对失败 → 该项按交付文档 §4 记「未完成」，不得估算。
+**采样会话采用方法 v2（差分归属，2026-10-06 按用户约束修订：浏览器类应用保持运行）**：①启动前快照 WebKit 辅助进程全集 S0；②launch 目标应用 → 窗口加载完成 → 快照 S1，候选 = S1−S0（预期 WebContent/GPU/Networking 各 1）；③**采样期间只合计应用进程 + 候选 PID 的 RSS**（用户浏览器中途新增的辅助进程不在候选集，不影响合计）；④会话末退出应用 → 快照 S2，**候选中仍存活于 S2 的剔除且该会话作废重跑**。P1–P4/P6/P7 为计时/计数口径，不依赖进程归属，无需任何退出操作。已按用户要求放弃零基线方案。
+
+**v2 实证（2026-10-06 16:23，release 二进制 + 隔离 DB `/tmp/r4sample/`）**：启动后新增 WebContent/GPU/Networking 三候选；TERM 退出后 `grep` 全部消失；宿主系统既有 16 个 WebContent 辅助进程全程无扰。注意：裸二进制不响应 AppleScript `quit by name`，采样脚本统一用 `kill -TERM`（退出干净，辅助进程随之消失）。DB 隔离（TINYSSH_DB/TINYSSH_MASTER_KEY）在 release 二进制下生效。
 
 ## 3. 已完成
 
