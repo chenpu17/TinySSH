@@ -32,7 +32,7 @@
 | R00 范围冻结 | 待验收 | [盘点](ux-r1-g0/r00-feature-inventory.md) → [冻结单](ux-r1-g0/r00-scope-freeze.md) | 55 项功能全对应；8 GAP/2 STALE/8 悬空全部决议；独立审核中 |
 | R01 三页面可交互原型 | 待验收 | `ux-r1-g0/r01-prototype/` + [visual-recheck](ux-r1-g0/r01-prototype/visual-recheck.md) | 独立复验两轮：首轮 2 FAIL 已修，二轮 3 项全 PASS，遗留清零 |
 | R02 token 与控件样例 | 待验收 | components.html/css + [contrast-record](ux-r1-g0/r01-prototype/contrast-record.md) | 全核心组合 ≥4.5；3 项风险已处置并经二轮复验（含 border.input 像素核对） |
-| R03 C1–C10 契约冻结 | 待验收 | 两路缺口分析 + [冻结草案](ux-r1-g0/r03-contracts.md)（45 决议 + 8 可断言序列 + 错误 ADR） | 独立审核 4高/1中/3低已全部修复；待联合评审 |
+| R03 C1–C10 契约冻结 | 待验收 | 两路缺口分析 + [冻结草案](ux-r1-g0/r03-contracts.md)（45 决议 + 8 可断言序列 + 错误 ADR）+ [fixture 清单](ux-r1-g0/r03-fixtures.md)（M1-M5/P1-P10 预期冻结） | 独立审核 4高/1中/3低已全部修复；待联合评审 |
 | R04 原生基线 | 实施中 | [环境记录](../acceptance/ux-r1/g0/2026-10-06-7c4502e/r04-environment.md) | 工具链/容器已核验；采样脚本与旧版样本待做 |
 
 ### G1–G5
