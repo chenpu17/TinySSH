@@ -9,10 +9,12 @@
 type Handler = (data: Uint8Array) => void;
 
 type DemoSession = {
-  id: string; host_name: string; kind: string;
+  id: string; host_id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
+  created_at: string;
   goal: string | null;   // R9 任务目标/交接留言（随会话存亡，与真实 SessionHandle.goal 对齐）
-  // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）
+  // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）。
+  // ts 统一 ISO-UTC——简报侧转本地渲染（与真实 brief.rs 修复后口径一致，防时区伪影）
   transitions: { ts: string; what: string }[];
   out: string;             // 会话私有输出缓冲（read_screen 回放 + 订阅增量同源）
   handlers: Handler[];
@@ -48,20 +50,21 @@ const demoState = {
     { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI" },
     { id: "h-prod2", name: "prod-2（演示连接失败）", address: "10.0.0.12", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-otp1", name: "otp-1（演示 2FA）", address: "otp.demo", port: 22, username: "ops", auth_type: "Password" },
+    { id: "h-staging1", name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password" },
   ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk" }[],
   sessions: [
     {
-      id: "s-demo-0001", host_name: "prod-1", kind: "ssh",
-      state: "Connected", control_owner: "Agent",
+      id: "s-demo-0001", host_id: "h-prod1", host_name: "prod-1", kind: "ssh",
+      state: "Connected", control_owner: "Agent", created_at: "2026-09-27T13:50:00Z",
       goal: "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
-      transitions: [{ ts: "14:02:11", what: "人类接管（交接前未开始的请求全部作废）" }],
+      transitions: [{ ts: "2026-09-27T14:02:11Z", what: "人类接管（交接前未开始的请求全部作废）" }],
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
       handlers: [] as Handler[],
       forwards: [],
     },
     {
-      id: "s-demo-0002", host_name: "staging-1", kind: "ssh",
-      state: "Disconnected", control_owner: "Agent",
+      id: "s-demo-0002", host_id: "h-staging1", host_name: "staging-1", kind: "ssh",
+      state: "Disconnected", control_owner: "Agent", created_at: "2026-09-27T13:40:00Z",
       goal: null,
       transitions: [],
       out: "ops@staging-1:~$ ",
@@ -151,8 +154,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return demoState.hosts.map((h) => ({ ...h }));
     case "list_sessions":
       return demoState.sessions.map((s) => ({
-        id: s.id, host_name: s.host_name, kind: s.kind,
-        state: s.state, control_owner: s.control_owner,
+        id: s.id, host_id: s.host_id, host_name: s.host_name, kind: s.kind,
+        state: s.state, control_owner: s.control_owner, created_at: s.created_at,
       }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk" };
@@ -280,8 +283,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], forwards: [] });
+      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], forwards: [] });
       audit("human", "session_created", null, null, sid);
+      // 镜像真实：SSH 建连后注入 Shell 集成标记（OSC133+OSC7），时间线两条同现
+      audit("human", "shell_integration_inject", "OSC133+OSC7", null, sid);
       return sid;
     }
     case "close_session": {
@@ -289,6 +294,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === sid);
       if (s) s.state = "Disconnected";
       pushTo(sid, "\r\n[会话已断开]\r\n");
+      // 镜像真实 close_session：作废该会话待审批并逐条留痕（reason=session_closed）
+      for (const a of demoState.approvals) {
+        if (a.status === "pending" && a.session_id === sid) {
+          a.status = "voided";
+          audit("human", "approval_voided", a.command, a.agent_id, a.session_id, { reason: "session_closed", agent: a.agent_id });
+        }
+      }
       audit("human", "session_closed", null, null, sid ?? null);
       return null;
     }
@@ -325,8 +337,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         facts: [
           { subject: "cwd", detail: "/var/log/nginx", status: "Confirmed" },
           { subject: "命令（human）", detail: "df -h → exit 0", status: "Confirmed" },
-          // 与真实 brief::compute 对齐：控制权 fact = transitions 最近 3 条按序（无变迁则无此 fact）
-          ...(bs ? bs.transitions.slice(-3).map((t) => ({ subject: "控制权", detail: `${t.ts} · ${t.what}`, status: "Confirmed" })) : []),
+          // 与真实 brief::compute 对齐：控制权 fact = transitions 最近 3 条按序（无变迁则无此 fact）；
+          // ISO-UTC → 本地 HH:MM:SS（与真实修复后口径一致，和操作记录时间线同区）
+          ...(bs ? bs.transitions.slice(-3).map((t) => ({
+            subject: "控制权",
+            detail: `${new Date(t.ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · ${t.what}`,
+            status: "Confirmed",
+          })) : []),
           { subject: "SSH 现场", detail: "重连后进入重确认：仅内置只读白名单可用", status: "NeedsRecheck" },
         ],
         screen_summary: "/dev/vda1 40G 37G 3.1G 93% / | ops@prod-1:~$",
@@ -344,7 +361,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       s.goal = trimmed ? trimmed : null;
       // 与真实 set_session_goal 的 note_transition 对齐（文案逐字同 core-session）
       s.transitions.push({
-        ts: new Date().toTimeString().slice(0, 8),
+        ts: new Date().toISOString(),
         what: s.goal ? "人类更新任务目标（Agent 读简报可见）" : "人类清除任务目标",
       });
       audit("human", "goal_set", s.goal, null, sid, { cleared: s.goal === null });
@@ -365,9 +382,11 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         const label = it.status === "denied" ? "拒绝" : it.status === "approved_edited" ? "批准（编辑后）" : "批准";
         pushTo(it.session_id, "\r\n[审批] " + allowed + " → " + label + "\r\n");
         const deny = args?.decision === "deny";
-        audit("human", deny ? "approval_denied" : "approval_decision",
-          deny ? null : allowed, null, it.session_id,
-          deny ? undefined : { decision: args?.decision === "edit" ? "approve_edited" : "approve" });
+        // 镜像真实修复：拒绝同样留命令全文（审计对称，拒的是什么可核对）。
+        // 真机 deny 是两条：approval_decision{decision:"deny"} + approval_denied（都带命令）
+        audit("human", "approval_decision", allowed, null, it.session_id,
+          { decision: args?.decision === "deny" ? "deny" : args?.decision === "edit" ? "approve_edited" : "approve" });
+        if (deny) audit("human", "approval_denied", allowed, null, it.session_id);
       }
       return null;
     }
@@ -380,7 +399,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const stopping = args?.stopRunning === true;
       // 与真实 set_control 的 note_transition 对齐（文案逐字同 core-session）
       if (s) s.transitions.push({
-        ts: new Date().toTimeString().slice(0, 8),
+        ts: new Date().toISOString(),
         what: owner === "Human"
           ? "人类接管（交接前未开始的请求全部作废）"
           : "人类交还（Agent 先读简报，再重新决定动作）",
@@ -391,7 +410,11 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         : 0;
       if (voidedCount > 0) {
         for (const a of demoState.approvals) {
-          if (a.status === "pending" && (!sid || a.session_id === sid)) a.status = "voided";
+          if (a.status === "pending" && (!sid || a.session_id === sid)) {
+            a.status = "voided";
+            // 镜像真实修复：作废逐条留痕（reason=takeover）
+            audit("human", "approval_voided", a.command, a.agent_id, a.session_id, { reason: "takeover", agent: a.agent_id });
+          }
         }
       }
       pushTo(sid, owner === "Human"

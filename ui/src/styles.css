@@ -314,12 +314,27 @@ textarea {
 
 /* 标签页（T19）：中栏顶部一条，与会话一一对应
    精致化（§5.3）：浏览器式上圆角改全圆角 pill，去常显描边，active 用轻投影圈 */
-.tabbar {
+/* 标签栏（五人走查·林姐重排）：行容器钉住滚动钮与尾部控件；.tabbar 只做横向
+   滚动。溢出时 overlay 滚动条不动就不出现——显式 ‹ › 钮是被藏标签的唯一提示 */
+.tabbar-row {
   display: flex; align-items: center; gap: 3px; flex: none;
-  padding: 6px 10px; overflow-x: auto; overflow-y: hidden;
-  border-bottom: 1px solid var(--border); min-height: 34px;
+  padding: 6px 10px; border-bottom: 1px solid var(--border); min-height: 34px;
   background: var(--panel);
 }
+/* 行内按钮不折行：窄视口+分屏时「退出分屏」曾 4 字竖排把行撑到 95px（视觉核验员实测） */
+.tabbar-row .ghost, .tabbar-row .tab-scroll { white-space: nowrap; flex: none; }
+.tabbar {
+  display: flex; align-items: center; gap: 3px; flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+}
+.tab-scroll {
+  flex: none; width: 20px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; line-height: 1; color: var(--text-sub);
+  background: transparent; border: 1px solid var(--border); border-radius: 5px;
+  cursor: pointer;
+}
+.tab-scroll:hover { background: var(--panel2); color: var(--text); }
 .tab {
   display: flex; align-items: center; gap: 5px; flex: none; min-width: 0;
   max-width: 170px; padding: 4px 10px; font-size: 12px; color: var(--text-sub);
@@ -669,6 +684,9 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
   flex: none; font-size: 10px; color: var(--dim); line-height: 15px;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 4px;
 }
+/* 主机在线徽章（五人走查·林姐）：●N = 该主机现有会话数；绿色 = 有已连接会话 */
+.live-tag { color: var(--text-sub); }
+.live-tag.on { color: var(--ok); border-color: var(--ok); }
 /* 连接按钮：常态随操作组一起隐没；连接中（disabled）时操作组整体常显 */
 .host-connect-btn {
   padding: 2px 6px; font-size: 11px; font-weight: 500;

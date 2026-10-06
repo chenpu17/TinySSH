@@ -678,6 +678,13 @@ impl SessionHandle {
             if let Some(mut it) = it {
                 it.status = ApprovalStatus::Voided;
                 let _ = self.center.vault.save_approval(&it);
+                // 作废留痕（五人走查·老周，与 close_session 同口径）：接管作废的卡
+                // 也要能事后核对「作废了什么」。takeover 仅人类可入（set_control
+                // 前置校验），此处 actor 固定 Human。
+                let _ = self.center.audit.append(
+                    &Actor::Human, "approval_voided", Some(&self.id), Some(&it.command),
+                    serde_json::json!({"reason": "takeover", "agent": it.agent_id}),
+                    Some(id));
                 let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
             }
         }

@@ -207,7 +207,6 @@ async fn serve(m: Arc<SessionManager>, port: u16) -> Result<()> {
 async fn agent_cmd(m: Arc<SessionManager>, cmd: AgentCmd) -> Result<()> {
     match cmd {
         AgentCmd::Create { id, label } => {
-            m.center.vault.create_agent(&id, &label)?;
             let token = m.center.vault.create_agent(&id, &label)?;
             println!("agent {id} ({label}) created");
             println!("TOKEN（仅此一次展示）:\n{token}");

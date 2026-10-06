@@ -588,6 +588,12 @@ impl SessionApi for SessionManager {
             if let Some(mut it) = it {
                 it.status = ApprovalStatus::Voided;
                 let _ = self.center.vault.save_approval(&it);
+                // 作废必须留痕（五人走查·老周）：卡片凭空消失而审计无对应条目，
+                // 事后无法回答「这张卡为何没了」。与接管的作废口径一致。
+                let _ = self.center.audit.append(
+                    ctx, "approval_voided", Some(&sid), Some(&it.command),
+                    serde_json::json!({"reason": "session_closed", "agent": it.agent_id}),
+                    Some(&id));
                 let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
             }
             // 唤醒等待方（wait_approval 的 Voided 臂即作废返回，Agent 不再空等 120s）
@@ -931,7 +937,13 @@ impl SessionApi for SessionManager {
                         Some(c.clone()),
                         "approve_edited",
                     ),
-                    Decision::Deny => (item.as_ref().map(|i| i.session_id.clone()), None, "deny"),
+                    // 拒绝同样自证「拒的是什么」：审计留痕对称（五人走查·陈工）——
+                    // 只有批准带命令全文而拒绝不带，追责时无法核对被拒内容
+                    Decision::Deny => (
+                        item.as_ref().map(|i| i.session_id.clone()),
+                        item.as_ref().map(|i| i.command.clone()),
+                        "deny",
+                    ),
                 };
                 let _ = self.center.audit.append(
                     ctx, "approval_decision",

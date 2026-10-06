@@ -104,9 +104,19 @@ async fn approval_flow_deny_and_approve() {
     let approval_id = approval_id.expect("审批卡片未出现");
 
     // 拒绝 → ApprovalDenied{Denied}
-    m.decide_approval(&human(), approval_id, Decision::Deny).await.unwrap();
+    m.decide_approval(&human(), approval_id.clone(), Decision::Deny).await.unwrap();
     let r = jh.await.unwrap();
     assert!(matches!(r, Err(Error::ApprovalDenied { reason: DeniedReason::Denied })));
+
+    // 拒绝审计必须带命令全文（五人走查·陈工：批准带、拒绝不带 = 留痕不对称）
+    let page = m.center.audit.query(&AuditFilter {
+        action: Some("approval_decision".into()),
+        ..Default::default()
+    }).unwrap();
+    let deny_ev = page.events.iter().find(|e| e.approval_id.as_deref() == Some(approval_id.as_str()))
+        .expect("deny 未留 approval_decision 审计");
+    assert_eq!(deny_ev.command.as_deref(), Some("echo approved_cmd"), "拒绝审计缺命令全文");
+    assert_eq!(deny_ev.payload_json["decision"], "deny");
 
     // 再提交 → 批准 → 执行成功
     let m3 = m.clone();
@@ -252,6 +262,60 @@ async fn takeover_voids_pending_approval_and_card_cannot_revive() {
     m.decide_approval(&human(), new_card.expect("重新提交的审批卡片未出现"), Decision::Approve).await.unwrap();
     let r = jh3.await.unwrap().unwrap();
     assert!(r.stdout.contains("resubmitted"));
+
+    // 接管作废必须留痕（五人走查·老周）：reason=takeover、命令全文、approval_id 可核对
+    let page = m.center.audit.query(&AuditFilter {
+        action: Some("approval_voided".into()),
+        session_id: Some(sid.clone()),
+        ..Default::default()
+    }).unwrap();
+    let void_ev = page.events.iter().find(|e| e.approval_id.is_some())
+        .expect("接管作废未留 approval_voided 审计");
+    assert_eq!(void_ev.command.as_deref(), Some("echo old_request"));
+    assert_eq!(void_ev.payload_json["reason"], "takeover");
+    assert_eq!(void_ev.payload_json["agent"], "test-agent");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn close_session_voided_approval_leaves_audit_trail() {
+    // 会话关闭作废同款留痕（五人走查·老周）：卡片消失但审计要能回答「作废了什么、为何作废」
+    let m = manager().await;
+    let _ = m.center.vault.create_agent("test-agent", "Test");
+    let sid = m
+        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+
+    let m2 = m.clone();
+    let sid2 = sid.clone();
+    let jh = tokio::spawn(async move {
+        m2.exec(&agent_actor(), sid2, "echo pending_when_closed", ExecOpts::default()).await
+    });
+    let mut approval_id = None;
+    for _ in 0..200 {
+        let items = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        if let Some(it) = items.first() {
+            approval_id = Some(it.id.clone());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let approval_id = approval_id.expect("卡片未出现");
+
+    m.close_session(&human(), sid.clone()).await.unwrap();
+    // agent 阻塞调用被唤醒（不得空等 120s）
+    let r = jh.await.unwrap();
+    assert!(matches!(r, Err(Error::VoidedByHandback { .. }) | Err(Error::ApprovalDenied { .. })));
+
+    let page = m.center.audit.query(&AuditFilter {
+        action: Some("approval_voided".into()),
+        session_id: Some(sid.clone()),
+        ..Default::default()
+    }).unwrap();
+    let void_ev = page.events.iter().find(|e| e.approval_id.as_deref() == Some(approval_id.as_str()))
+        .expect("关闭作废未留 approval_voided 审计");
+    assert_eq!(void_ev.command.as_deref(), Some("echo pending_when_closed"));
+    assert_eq!(void_ev.payload_json["reason"], "session_closed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

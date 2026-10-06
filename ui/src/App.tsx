@@ -41,8 +41,8 @@ type SshConfigPreview = {
 };
 type SshImportOutcome = { name: string; host_id: string | null; error: string | null };
 type SessionInfo = {
-  id: string; host_name: string; kind: string;
-  state: string; control_owner: "Human" | "Agent";
+  id: string; host_id: string; host_name: string; kind: string;
+  state: string; control_owner: "Human" | "Agent"; created_at: string;
 };
 type ApprovalItem = {
   id: string; session_id: string; agent_id: string; command: string;
@@ -70,7 +70,7 @@ type AuditEvent = {
   seq: number; ts: string; actor_kind: string; agent_id: string | null;
   action: string; command: string | null;
   session_id?: string | null;
-  payload_json?: { decision?: string } | null;
+  payload_json?: { decision?: string; cleared?: boolean; reason?: string } | null;
 };
 type IdentityMeta = { id: string; label: string; kind: string; fingerprint: string };
 // 接管返回（PRD FR-6：停止结果逐条显示，不谎报）。StopOutcome serde 为
@@ -129,12 +129,14 @@ const fmtBytes = (n: number): string =>
 // 路径取文件名（本地与远端同用；末尾斜杠已过滤）
 const pathBasename = (p: string): string => p.split("/").filter(Boolean).pop() ?? "file";
 
-// 审计动作 → 中文描述（未知动作原样显示）
+// 审计动作 → 中文描述（未知动作原样显示）。全仓 29 个动作对齐清点过
+// （五人走查·阿紫：「我 forward_start」裸英文漏出）——新动作必须两边同步补。
 const auditLabel = (a: string): string =>
   ({
     session_created: "连接主机",
     session_closed: "断开会话",
     session_reconnect: "重连会话",
+    shell_integration_inject: "注入 Shell 集成",
     host_upsert: "保存主机",
     host_delete: "删除主机",
     identity_create: "添加凭据",
@@ -146,17 +148,30 @@ const auditLabel = (a: string): string =>
     approval_requested: "请求审批",
     approval_decision: "审批决定",
     approval_denied: "拒绝审批",
+    approval_voided: "作废审批",
     takeover: "接管会话",
     handback: "交还会话",
-    goal_set: "更新任务目标",
     transfer_done: "传输完成",
     transfer_voided: "传输作废",
     transfer_failed: "传输失败",
+    forward_start: "启动端口转发",
+    forward_stop: "停止端口转发",
+    auth_prompt_requested: "请求认证输入",
+    auth_prompt_answered: "应答认证输入",
+    host_key_confirm_requested: "请求指纹确认",
+    host_key_decision: "指纹确认决定",
+    host_key_trusted: "信任主机指纹",
   })[a] ?? a;
 
 // 审批决定行：payload.decision 区分批准/编辑后批准/拒绝（旧库存量是 Debug 串
-// "ApproveEdited(\"…\")"，按小写前缀兼容），命令本身由后端 audit 直接给实际放行文（PV R1）
+// "ApproveEdited(\"…\")"，按小写前缀兼容），命令本身由后端 audit 直接给实际放行文（PV R1）。
+// goal_set/approval_voided 同样读 payload 细分（五人走查：清除≠更新；作废要给原因）。
 const decisionLabel = (ev: AuditEvent): string => {
+  if (ev.action === "goal_set") return ev.payload_json?.cleared ? "清除任务目标" : "更新任务目标";
+  if (ev.action === "approval_voided") {
+    const r = ev.payload_json?.reason;
+    return r === "takeover" ? "作废审批（接管）" : r === "session_closed" ? "作废审批（会话关闭）" : "作废审批";
+  }
   if (ev.action !== "approval_decision") return auditLabel(ev.action);
   const d = (ev.payload_json?.decision ?? "").toLowerCase();
   if (d.startsWith("approve_edited") || d.startsWith("approveedited")) return "批准（编辑后）";
@@ -379,6 +394,47 @@ export default function App() {
   // ref 与 state 并行：fitTerminal/看门狗等回调内读 ref，避开 stale closure。
   const [splitPanes, setSplitPanes] = useState<{ main: string; second: string } | null>(null);
   const splitRef = useRef<{ main: string; second: string } | null>(null);
+  // 标签栏溢出指示（五人走查·林姐：16 会话时 10 个标签静默不可见，无任何溢出
+  // affordance——横向滚动条 overlay 不滚动不出现）。测左/右可滚 + 被裁标签数，
+  // 两侧出现 ‹ › 滚动钮；激活标签切换（含 ⌘⇧]/[ 循环）自动滚入视野
+  const tabbarRef = useRef<HTMLDivElement | null>(null);
+  const [tabScroll, setTabScroll] = useState<{ left: boolean; right: boolean; hiddenL: number; hiddenR: number }>({ left: false, right: false, hiddenL: 0, hiddenR: 0 });
+  const measureTabbar = useCallback(() => {
+    const el = tabbarRef.current;
+    if (!el) return;
+    // 左右分开数：右钮只报右侧被收起的数量（混合计数会把左滚过的也算进「右侧还有 N」）。
+    // 用 getBoundingClientRect 视觉真相法：.tabbar 是 position:static，tab 的 offsetLeft
+    // 相对的是外层 offsetParent（含 tabbar 页面偏移），与 scrollLeft 相对量基准错位——
+    // 首版据此计数系统性错（左恒少报/右恒多报），视觉核验员 6 状态实测全不符
+    const bar = el.getBoundingClientRect();
+    const cutR = (t: Element) => t.getBoundingClientRect().left > bar.right + 1;
+    const cutL = (t: Element) => t.getBoundingClientRect().right < bar.left - 1;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollWidth - el.clientWidth - el.scrollLeft > 1;
+    const tabs = Array.from(el.querySelectorAll(".tab"));
+    const hiddenL = tabs.filter(cutL).length;
+    const hiddenR = tabs.filter(cutR).length;
+    // 值不变则返回 prev 引用——平滑滚动期间每帧都触发 onScroll，不 bailout
+    // 会让整个 App 树（单文件 2800+ 行）按帧重渲染
+    setTabScroll((prev) =>
+      prev.left === left && prev.right === right && prev.hiddenL === hiddenL && prev.hiddenR === hiddenR ? prev : { left, right, hiddenL, hiddenR });
+  }, []);
+  useEffect(() => {
+    measureTabbar();
+    const el = tabbarRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measureTabbar);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureTabbar, sessions.length]);
+  useEffect(() => {
+    // 激活标签滚入视野（键盘循环切换时不再落到视野外）
+    tabbarRef.current?.querySelector(".tab-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [sid]);
+  const scrollTabs = (dir: 1 | -1) => {
+    const el = tabbarRef.current;
+    if (el) el.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: "smooth" });
+  };
   // 文件传输（T20）：卡片列表驱动 UI；核心完成即写审计（payload 带 transfer id），
   // UI 轮询审计把 running 卡对账成 done/failed/cancelled
   const [transfers, setTransfers] = useState<TransferCard[]>([]);
@@ -1620,11 +1676,11 @@ export default function App() {
           {showAddHost && (
             <AddHostForm
               editHost={editingHost}
-              onSaved={async (hid, wasEdit) => {
+              onSaved={async (hid, wasEdit, connect = true) => {
                 setShowAddHost(false);
                 setEditingHost(null);
                 await refreshLists();
-                if (wasEdit) return; // 编辑只改配置，不自动建连
+                if (wasEdit || !connect) return; // 编辑只改配置；仅保存不自动建连
                 const h = hosts.find((x) => x.id === hid);
                 // list_hosts 刚刷新过，直接用返回值兜底
                 const target = h ?? (await invoke<Host[]>("list_hosts")).find((x) => x.id === hid);
@@ -1640,17 +1696,37 @@ export default function App() {
                 <div className="skeleton" />
               </>
             )}
-            {hosts.map((h) => (
+            {hosts.map((h) => {
+              // 该主机的现有会话（五人走查·林姐：误点已连主机静默开重复会话）。
+              // 在线徽章 + 点击切到最近会话；显式另开走右侧「连接」钮
+              const mine = sessions.filter((s) => s.host_id === h.id);
+              const live = mine.filter((s) => s.state !== "Disconnected");
+              const anyOnline = mine.some((s) => s.state === "Connected");
+              // 最近会话按时间戳比较：chrono 秒级无小数、纳秒级带小数位，
+              // 字符串字典序在「同一秒内混合精度」时会错序（'Z' > '.'）
+              const latest = [...live].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+              return (
               <div className="host-card" key={h.id}
                 title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
                 {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
                 <div className="host-card-main" style={{ cursor: connecting ? "default" : "pointer" }}
-                  onClick={() => { if (!connecting) createSession(h); }}>
+                  title={latest
+                    ? `该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话\n${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老设备）" : "UTF-8"}`
+                    : undefined}
+                  onClick={() => {
+                    if (connecting) return;
+                    if (latest) { void attachSession(latest.id); return; }
+                    createSession(h);
+                  }}>
                   {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩。
                       T38 审核：GBK 徽章置名前——行尾会落入 hover 操作组覆盖区，置尾恰在
                       准备连接的交互时刻不可见；置左恒可见 */}
                   <div className="host-line">
                     {h.charset === "gbk" && <span className="auth-tag" title="远端编码：GBK">GBK</span>}
+                    {mine.length > 0 && (
+                      <span className={"auth-tag live-tag" + (anyOnline ? " on" : "")}
+                        title={`已有 ${mine.length} 个会话（存活 ${live.length}）——点击主行切换到最近会话`}>● {mine.length}</span>
+                    )}
                     <span className="host-name">{h.name}</span>
                     <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
                   </div>
@@ -1666,12 +1742,14 @@ export default function App() {
                     <button className="ghost host-del" title="删除主机"
                       onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
                   </div>
-                  <button className="host-connect-btn" disabled={connecting !== null} onClick={() => createSession(h)}>
+                  <button className="host-connect-btn" disabled={connecting !== null} title="连接（新建会话）"
+                    onClick={() => createSession(h)}>
                     {connecting === h.id ? <><IconLoader size={11} className="spin" /> 连接中…</> : "连接"}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {hostsLoaded && hosts.length === 0 && (
               <div className="dim">还没有主机。点右上角「＋」填入地址和密码即可连接。</div>
             )}
@@ -1778,7 +1856,11 @@ Authorization: Bearer <TOKEN>`}
             </>
           )}
           {sid && hasAgents && owner === "Human" && (
-            <button className="ghost" onClick={handback}>交还 Agent</button>
+            <button
+              className="ghost"
+              title="交还会话：Agent 恢复操作（后续请求重新走审批）。已作废的请求不会自动重发——Agent 会收到作废通知，由它决定是否重新提交"
+              onClick={handback}
+            >交还 Agent</button>
           )}
           {sid && (
             <button
@@ -1809,39 +1891,52 @@ Authorization: Bearer <TOKEN>`}
           </div>
         )}
         {/* 标签页（T19）：每个会话一签，状态点随连接状态变色；◫ 进/换分屏，✕ 关闭（⌘W） */}
-        <div className="tabbar">
-          {sessions.map((s, i) => {
-            const st = stateLabel(s.state);
-            const inSplit = splitPanes?.main === s.id || splitPanes?.second === s.id;
-            return (
-              <div
-                key={s.id}
-                className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")}
-                title={`${s.host_name} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
-                tabIndex={0}
-                role="tab"
-                aria-selected={sid === s.id}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id); }
-                }}
-                onClick={() => attachSession(s.id)}
-              >
-                <span className={"tab-dot " + st.cls} />
-                <span className="tab-label">{s.host_name}</span>
-                <span
-                  className="tab-split"
-                  title={splitPanes ? "放到右侧分屏" : s.id === sid ? "已在主视图" : "与当前会话分屏"}
-                  onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id); }}
-                ><IconSplit size={12} /></span>
-                <span
-                  className="tab-x"
-                  title="断开会话（⌘W，连接中会先确认）"
-                  onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
-                ><IconX size={11} /></span>
-              </div>
-            );
-          })}
-          <span style={{ flex: 1 }} />
+        {/* 溢出结构（五人走查·林姐）：滚动钮与尾部控件钉在行内，不随标签流滚走
+            ——此前「＋」在溢出时也一起消失 */}
+        <div className="tabbar-row">
+          {tabScroll.left && (
+            <button className="tab-scroll" aria-label="向左滚动标签"
+              title={`左侧还有 ${tabScroll.hiddenL} 个会话被收起——点击展开（⌘⇧[ 可循环切换）`}
+              onClick={() => scrollTabs(-1)}>‹</button>
+          )}
+          <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar}>
+            {sessions.map((s, i) => {
+              const st = stateLabel(s.state);
+              const inSplit = splitPanes?.main === s.id || splitPanes?.second === s.id;
+              return (
+                <div
+                  key={s.id}
+                  className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")}
+                  title={`${s.host_name} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
+                  tabIndex={0}
+                  role="tab"
+                  aria-selected={sid === s.id}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id); }
+                  }}
+                  onClick={() => attachSession(s.id)}
+                >
+                  <span className={"tab-dot " + st.cls} />
+                  <span className="tab-label">{s.host_name}</span>
+                  <span
+                    className="tab-split"
+                    title={splitPanes ? "放到右侧分屏" : s.id === sid ? "已在主视图" : "与当前会话分屏"}
+                    onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id); }}
+                  ><IconSplit size={12} /></span>
+                  <span
+                    className="tab-x"
+                    title="断开会话（⌘W，连接中会先确认）"
+                    onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
+                  ><IconX size={11} /></span>
+                </div>
+              );
+            })}
+          </div>
+          {tabScroll.right && (
+            <button className="tab-scroll" aria-label="向右滚动标签"
+              title={`右侧还有 ${tabScroll.hiddenR} 个会话被收起——点击展开（⌘⇧] 可循环切换）`}
+              onClick={() => scrollTabs(1)}>›</button>
+          )}
           {splitPanes && <button className="ghost" onClick={exitSplit}>退出分屏</button>}
           <button className="ghost" title="新建连接（打开左侧「添加主机」表单，再点收起）" aria-label="新建连接" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); }}><IconPlus size={14} /></button>
         </div>
@@ -2551,7 +2646,7 @@ function BriefCard({ brief }: { brief: Brief }) {
 }
 
 // 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）；Agent 只存引用
-function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit: boolean) => void; editHost?: Host | null }) {
+function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null }) {
   const editing = !!editHost;
   const [name, setName] = useState(editHost?.name ?? "");
   const [address, setAddress] = useState(editHost?.address ?? "");
@@ -2603,7 +2698,8 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
     }
   };
 
-  const submit = async () => {
+  // connect=false 走「仅保存」：批量录入场景不被逐台自动连接绑架（五人走查·林姐/小王）
+  const submit = async (connect = true) => {
     setErr(null);
     if (!name.trim() || !address.trim() || !username.trim()) {
       setErr("名称、地址、用户名都不能为空");
@@ -2645,7 +2741,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
       });
       if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); }
       setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
-      onSaved(hid, editing);
+      onSaved(hid, editing, connect);
     } catch (e) {
       setErr(friendlyError(String(e)));
     } finally {
@@ -2760,7 +2856,15 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
       )}
       {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
       <div className="row" style={{ marginTop: 8 }}>
-        <button disabled={busy} onClick={submit}>{busy ? "保存中…" : editing ? "保存修改" : "保存并连接"}</button>
+        {editing ? (
+          <button disabled={busy} onClick={() => submit()}>{busy ? "保存中…" : "保存修改"}</button>
+        ) : (
+          <>
+            <button disabled={busy} onClick={() => submit()}>{busy ? "保存中…" : "保存并连接"}</button>
+            <button className="ghost" disabled={busy} onClick={() => submit(false)}
+              title="只保存配置不连接——批量录入主机时用">仅保存</button>
+          </>
+        )}
         <span className="dim">凭据加密存入本机凭据库，不会明文落盘。</span>
       </div>
     </div>

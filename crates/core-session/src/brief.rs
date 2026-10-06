@@ -43,11 +43,12 @@ pub async fn compute(h: &SessionHandle) -> SessionBrief {
         });
     }
 
-    // 控制权变迁
+    // 控制权变迁（本地时区：操作记录 HH:MM:SS 用本地渲染，同一事件两个视图
+    // 不得差时区——五人走查·阿紫实锤的 8 小时裂缝）
     for (ts, what) in transitions.iter().rev().take(3).rev() {
         facts.push(BriefFact {
             subject: "控制权".into(),
-            detail: format!("{} · {}", ts.format("%H:%M:%S"), what),
+            detail: format!("{} · {}", ts.with_timezone(&chrono::Local).format("%H:%M:%S"), what),
             status: Epistemic::Confirmed,
         });
     }
