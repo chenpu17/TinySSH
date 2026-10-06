@@ -11,3 +11,4 @@ pv-data/
 
 # 冒烟工具字节码缓存
 scripts/native-smoke/__pycache__/
+scripts/perf/__pycache__/

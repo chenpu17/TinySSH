@@ -1,7 +1,7 @@
 # R04 原生基线 — 环境记录（进行中）
 
 > 日期：2026-10-06 · 代码基线：`7c4502e`（= 8491d06 + 设计文档，产品源码与 8491d06 一致）
-> 状态：环境与工具链已核验；采样脚本与旧版样本 **尚未采集**。本文件不构成任何性能门通过。
+> 状态：采样已出结果——P1/P3/P6 实测、P5 试点完成，P2/P4/P7 环境阻塞延期；数字与判定见 [r04-baseline.md](r04-baseline.md)。本文只记环境与方法。
 
 ## 1. 基准环境（冻结）
 
@@ -39,14 +39,15 @@
 - [x] 硬件/OS/容器/冒烟工具盘点
 - [x] 既有 e2e sshd 容器健康（Up 24h）
 - [x] PID 归属方法实证与采样会话方法冻结（§2.1）
-- [x] P5 采样器 `scripts/perf/memsample.py`（归属两层验证 fail-closed 实测：对 25 个系统常驻 WebKit 辅助进程正确拒采）
+- [x] P5 采样器 `scripts/perf/memsample.py`（**v2 差分法**：snapshot/candidates/record/verify；初版 v1 的零基线 --validate 与全系统合计口径经独立审核废弃重写）
 
 ## 4. 待完成（本阶段出口条件）
 
-- [ ] 受控采样会话（退出全部 WebKit 宿主 → 基线归零断言 → release 应用冷/热启动、切换/回显/建连/吞吐原始样本）
-- [ ] P1–P4/P6/P7 采样脚本（复用 beacon/ev.py 冒烟链）
-- [ ] 统计方法说明（P95 计算、样本数、异常值处理）
-- [ ] 环境限制登记（如 sudo 不可用对 launchctl procinfo 的影响已在 §2.1 记录）
+- [x] 采样会话——按 §2.1 差分归属执行（零基线方案因用户"浏览器保持运行"约束废弃）
+- [x] P1/P3/P6 采样脚本（scripts/perf/p1_launch.py、p3_connect.py、p6_cycles.py）+ P5 试点 p5_pilot.py
+- [x] 统计方法说明（P95 inclusive、样本数、异常值处理——见 r04-baseline.md §2）
+- [x] 环境限制登记（§2.1 sudo/launchctl；另见 r04-baseline.md §5 事故与 §6 替代口径）
+- [ ] P2/P4/P7 复测（键注入延期，复测条件已在 r04-baseline.md §5.4 冻结）
 
 ## 5. 已知注意项（继承 T40 实测）
 

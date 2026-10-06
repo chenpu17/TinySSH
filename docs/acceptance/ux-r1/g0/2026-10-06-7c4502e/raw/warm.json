@@ -1,0 +1,93 @@
+{
+ "mode": "warm",
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 66073,
+   "s1_ms": 338,
+   "s2_ms": 1164,
+   "operable_ms": 464,
+   "operable_ms_v1_400offset": 764
+  },
+  {
+   "idx": 2,
+   "pid": 66079,
+   "s1_ms": 363,
+   "s2_ms": 1199,
+   "operable_ms": 499,
+   "operable_ms_v1_400offset": 799
+  },
+  {
+   "idx": 3,
+   "pid": 66084,
+   "s1_ms": 359,
+   "s2_ms": 1187,
+   "operable_ms": 487,
+   "operable_ms_v1_400offset": 787
+  },
+  {
+   "idx": 4,
+   "pid": 66090,
+   "s1_ms": 368,
+   "s2_ms": 1200,
+   "operable_ms": 500,
+   "operable_ms_v1_400offset": 800
+  },
+  {
+   "idx": 5,
+   "pid": 66095,
+   "s1_ms": 349,
+   "s2_ms": 1174,
+   "operable_ms": 474,
+   "operable_ms_v1_400offset": 774
+  },
+  {
+   "idx": 6,
+   "pid": 66100,
+   "s1_ms": 369,
+   "s2_ms": 1197,
+   "operable_ms": 497,
+   "operable_ms_v1_400offset": 797
+  },
+  {
+   "idx": 7,
+   "pid": 66106,
+   "s1_ms": 357,
+   "s2_ms": 1188,
+   "operable_ms": 488,
+   "operable_ms_v1_400offset": 788
+  },
+  {
+   "idx": 8,
+   "pid": 66111,
+   "s1_ms": 357,
+   "s2_ms": 1188,
+   "operable_ms": 488,
+   "operable_ms_v1_400offset": 788
+  },
+  {
+   "idx": 9,
+   "pid": 66117,
+   "s1_ms": 381,
+   "s2_ms": 1209,
+   "operable_ms": 509,
+   "operable_ms_v1_400offset": 809
+  },
+  {
+   "idx": 10,
+   "pid": 66122,
+   "s1_ms": 357,
+   "s2_ms": 1188,
+   "operable_ms": 488,
+   "operable_ms_v1_400offset": 788
+  }
+ ],
+ "operable": {
+  "n": 10,
+  "median_ms": 488,
+  "p95_ms": 505,
+  "min_ms": 464,
+  "max_ms": 509
+ },
+ "protocol": "operable = s2 beacon - 700ms fixed offset (sleep400+sleep300 in SMOKE flow; s2=add-host form key-mode ready, conservative proxy for list-operable); RECOMPUTED 2026-10-06 from s2_ms after independent review (was -400); p95 inclusive; cold=idle 60s process-cold"
+}

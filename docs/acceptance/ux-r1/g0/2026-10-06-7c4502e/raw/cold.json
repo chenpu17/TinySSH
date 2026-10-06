@@ -1,0 +1,97 @@
+{
+ "mode": "cold",
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 65196,
+   "s1_ms": 376,
+   "s2_ms": 1204,
+   "operable_ms": 504,
+   "operable_ms_v1_400offset": 804
+  },
+  {
+   "idx": 2,
+   "pid": 65260,
+   "s1_ms": 337,
+   "s2_ms": 1160,
+   "operable_ms": 460,
+   "operable_ms_v1_400offset": 760
+  },
+  {
+   "idx": 3,
+   "pid": 66264,
+   "s1_ms": 314,
+   "s2_ms": 1161,
+   "operable_ms": 461,
+   "replaced": "pollution incident: orphan bootstrap app beacons (r4-p3 bootstrap collision); rerun 2026-10-06",
+   "operable_ms_v1_400offset": 761,
+   "polluted_original_operable_ms_v1": 2140
+  },
+  {
+   "idx": 4,
+   "pid": 66322,
+   "s1_ms": 336,
+   "s2_ms": 1177,
+   "operable_ms": 477,
+   "replaced": "pollution incident: orphan bootstrap app beacons (r4-p3 bootstrap collision); rerun 2026-10-06",
+   "operable_ms_v1_400offset": 777,
+   "polluted_original_operable_ms_v1": 1856
+  },
+  {
+   "idx": 5,
+   "pid": 65580,
+   "s1_ms": 490,
+   "s2_ms": 2114,
+   "operable_ms": 1414,
+   "operable_ms_v1_400offset": 1714
+  },
+  {
+   "idx": 6,
+   "pid": 65695,
+   "s1_ms": 333,
+   "s2_ms": 1158,
+   "operable_ms": 458,
+   "operable_ms_v1_400offset": 758
+  },
+  {
+   "idx": 7,
+   "pid": 65802,
+   "s1_ms": 329,
+   "s2_ms": 1155,
+   "operable_ms": 455,
+   "operable_ms_v1_400offset": 755
+  },
+  {
+   "idx": 8,
+   "pid": 65875,
+   "s1_ms": 307,
+   "s2_ms": 1129,
+   "operable_ms": 429,
+   "operable_ms_v1_400offset": 729
+  },
+  {
+   "idx": 9,
+   "pid": 65958,
+   "s1_ms": 329,
+   "s2_ms": 1159,
+   "operable_ms": 459,
+   "operable_ms_v1_400offset": 759
+  },
+  {
+   "idx": 10,
+   "pid": 66067,
+   "s1_ms": 332,
+   "s2_ms": 1161,
+   "operable_ms": 461,
+   "operable_ms_v1_400offset": 761
+  }
+ ],
+ "operable": {
+  "n": 10,
+  "median_ms": 460,
+  "p95_ms": 1004,
+  "min_ms": 429,
+  "max_ms": 1414
+ },
+ "protocol": "operable = s2 beacon - 700ms fixed offset (sleep400+sleep300 in SMOKE flow; s2=add-host form key-mode ready, conservative proxy for list-operable); RECOMPUTED 2026-10-06 from s2_ms after independent review (was -400); p95 inclusive; cold=idle 60s process-cold"
+}

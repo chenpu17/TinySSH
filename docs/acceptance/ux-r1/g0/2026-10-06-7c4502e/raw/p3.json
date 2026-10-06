@@ -1,0 +1,162 @@
+{
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 66542,
+   "total_ms": 320
+  },
+  {
+   "idx": 2,
+   "pid": 66547,
+   "total_ms": 351
+  },
+  {
+   "idx": 3,
+   "pid": 66564,
+   "total_ms": 330
+  },
+  {
+   "idx": 4,
+   "pid": 66569,
+   "total_ms": 326
+  },
+  {
+   "idx": 5,
+   "pid": 66574,
+   "total_ms": 334
+  },
+  {
+   "idx": 6,
+   "pid": 66579,
+   "total_ms": 323
+  },
+  {
+   "idx": 7,
+   "pid": 66584,
+   "total_ms": 326
+  },
+  {
+   "idx": 8,
+   "pid": 66589,
+   "total_ms": 329
+  },
+  {
+   "idx": 9,
+   "pid": 66595,
+   "total_ms": 334
+  },
+  {
+   "idx": 10,
+   "pid": 66600,
+   "total_ms": 329
+  },
+  {
+   "idx": 11,
+   "pid": 66605,
+   "total_ms": 333
+  },
+  {
+   "idx": 12,
+   "pid": 66610,
+   "total_ms": 322
+  },
+  {
+   "idx": 13,
+   "pid": 66615,
+   "total_ms": 339
+  },
+  {
+   "idx": 14,
+   "pid": 66625,
+   "total_ms": 347
+  },
+  {
+   "idx": 15,
+   "pid": 66638,
+   "total_ms": 328
+  },
+  {
+   "idx": 16,
+   "pid": 66643,
+   "total_ms": 336
+  },
+  {
+   "idx": 17,
+   "pid": 66648,
+   "total_ms": 336
+  },
+  {
+   "idx": 18,
+   "pid": 66654,
+   "total_ms": 322
+  },
+  {
+   "idx": 19,
+   "pid": 66659,
+   "total_ms": 331
+  },
+  {
+   "idx": 20,
+   "pid": 66664,
+   "total_ms": 326
+  },
+  {
+   "idx": 21,
+   "pid": 66669,
+   "total_ms": 322
+  },
+  {
+   "idx": 22,
+   "pid": 66674,
+   "total_ms": 333
+  },
+  {
+   "idx": 23,
+   "pid": 66679,
+   "total_ms": 325
+  },
+  {
+   "idx": 24,
+   "pid": 66684,
+   "total_ms": 312
+  },
+  {
+   "idx": 25,
+   "pid": 66689,
+   "total_ms": 337
+  },
+  {
+   "idx": 26,
+   "pid": 66694,
+   "total_ms": 330
+  },
+  {
+   "idx": 27,
+   "pid": 66700,
+   "total_ms": 336
+  },
+  {
+   "idx": 28,
+   "pid": 66705,
+   "total_ms": 323
+  },
+  {
+   "idx": 29,
+   "pid": 66710,
+   "total_ms": 350
+  },
+  {
+   "idx": 30,
+   "pid": 66715,
+   "total_ms": 322
+  }
+ ],
+ "total": {
+  "n": 30,
+  "median_ms": 330,
+  "p95_ms": 349,
+  "min_ms": 312,
+  "max_ms": 351
+ },
+ "protocol": "spawn -> stderr [app] autoconnect line; pre-trusted key host 127.0.0.1:2222; in-app phases not decomposable in unmodified baseline (registered)"
+}

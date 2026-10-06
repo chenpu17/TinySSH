@@ -1,0 +1,27 @@
+{
+ "mode": "cold",
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 66264,
+   "s1_ms": 314,
+   "s2_ms": 1161,
+   "operable_ms": 761
+  },
+  {
+   "idx": 2,
+   "pid": 66322,
+   "s1_ms": 336,
+   "s2_ms": 1177,
+   "operable_ms": 777
+  }
+ ],
+ "operable": {
+  "n": 2,
+  "median_ms": 469,
+  "p95_ms": 476,
+  "min_ms": 461,
+  "max_ms": 477
+ },
+ "protocol": "RECOMPUTED 2026-10-06: these 2 rerun samples (P1 pollution incident, replacing cold.json idx 3/4) re-expressed at -700ms offset + inclusive p95; canonical values live in cold.json runs idx 3/4 (replaced-annotated)"
+}
