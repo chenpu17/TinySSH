@@ -1,9 +1,11 @@
 # L0 总体设计 — TinySSH
 
-> 版本：v0.3 · 日期：2026-09-27 · 上游文档：[PRD](../prd.md)
+> 版本：v0.5 · 日期：2026-10-06 · 上游文档：[PRD](../prd.md) · [UX-R1](../ux/ssh-client-ux-refactor.md)
 > 本文回答：系统的边界是什么、由哪些部分组成、各部分如何协作、关键技术如何选。模块内部设计见 [L1](l1-component-design.md)。
 
 ---
+
+> **UX-R1 增量范围**：当前建设顺序转为 SSH 客户端优先。沿用 Tauri/React/xterm/Rust、核心真源、审批与凭据边界；新增 ADR-10/11 指向本轮 UI/生命周期设计。下文 V0/V1/V2 排序为历史协作路线，不能覆盖 UX-R1 当前范围。增量尚未实施或验证。
 
 ## 1. 系统上下文（C4 Level 1）
 
@@ -157,13 +159,23 @@ Agent --send_keys--> 会话级授权检查 → 通路写入 → 输出照 3.1 �
 |---|---|---|---|
 | ADR-1 | WebView UI（Tauri）而非纯 Rust GUI（egui/iced/gpui） | 终端渲染用 xterm.js 质量最高、成本最低；纯 Rust GUI 需自研终端渲染，周期不可控 | 依赖系统 WebView 差异；Linux webkitgtk 弱（回退渲染器） |
 | ADR-2 | 屏幕状态真源在 Rust（alacritty_terminal）；**xterm.js 定位为有状态的渲染缓存**——可丢弃、可被真源快照整体重置（resync），不得作为任何查询类接口的数据来源 | MCP read_screen/wait_output 与 GUI 必须共享同一状态；xterm.js 自带 grid/buffer，「无状态」是自欺，必须显式管理而非否认 | 需自研 grid→快照序列化（含 scrollback 上限重建）；resync 协议：broadcast Lagged/心跳失步检测 → 全量快照 → UI reset+重放；SPIKE-1/2 含失步重放用例 |
-| ADR-3 | exec 双通路：`shell` 持久会话（**验证版默认**，现场延续，边界由命令块判定）/ `fresh` 独立通道（可选，结果镜像回放屏幕） | 交接闭环（PRD 核心体验）要求现场延续；「一次性 ssh 无状态」是本产品批评的痛点，不能在自己主路径上复现；fresh 保留给纯结构化执行 | 验证版要求试点主机 opt-in shell 集成注入（落审计、可卸载）；拒绝注入主机降级 fresh 并明示限制；两通路语义对照表见 L1 §3.1 |
+| ADR-3 | exec 双通路：`shell` 持久会话（默认，现场延续）/ `fresh` 独立通道（显式可选） | 现场延续与独立命令有不同语义 | shell 集成须 opt-in；原自动降级条款由 ADR-13 取代：Shell 不可用先拒绝，调用方显式请求 Fresh；两通路见 L1 §3.1 |
 | ADR-4 | MCP 双传输：streamable HTTP（127.0.0.1 固定端口 + per-client Token）+ stdio shim；**shim 直接对 HTTP 端点转发，不设 UDS/named pipe 内部端点** | GUI 应用不适合直接做 stdio server（进程模型冲突）；shim 的存在已满足 stdio 需求，UDS 层是多余的传输栈且在 Windows 不成立（named pipe + DACL 成本） | shim 取 Token 经环境变量注入；Agent 配置文件含 Token 明文（残余风险，威胁模型登记） |
 | ADR-5 | 审批强制在核心层，不依赖 UI；审批模式由人类按 Agent 身份预配置 | 审批是安全边界不是 UI 特性；UI 缺位/被绕过时安全语义不变 | Agent 无 GUI 场景（无审批者在线）会挂起→超时拒绝语义 |
 | ADR-6 | 本地单用户，数据 SQLite 单文件 | MVP 明确不做云同步/多用户（PRD §6.2） | 未来上云同步需迁移层（表结构预留 updated_at/deleted_at） |
 | ADR-7 | 输出流允许丢弃中间字节；**UI 是可丢弃缓存，失步时以全量快照 resync（见 ADR-2），最终状态以真源为准** | 真源在仿真核心，UI 流只是视图加速；背压策略简化为「丢流 + resync 保态」 | 终端 scrollback 由仿真核心持有；MCP 的 wait_output 走独立的**无损有界环形缓冲**（与可丢流的 UI 通道隔离，见 L1 §3.2） |
 | ADR-8 | IPC 吞吐若不达标，降级路径为「WebView 经 localhost WebSocket 直连 Rust 流」 | 预设退出通道，避免 SPIKE-1 失败后架构停摆 | 平行维护一条通路（仅在降级时启用） |
 | ADR-9 | **终端语义层**：term-core 维护「屏幕网格 + 命令块索引」双真源（OSC 133 注入 + 启发式兜底） | 审计完整性（人类命令入审计）、块级审批上下文、`shell` 模式 exec 的退出码、会话交接简报都依赖结构化命令块；数据结构晚定必返工 | 远程主机注入 shell 集成是显式、落审计的 opt-in 动作；启发式检测有误判率（FR-10 AC 约束） |
+
+### UX-R1 增量 ADR（待实施）
+
+| # | 决策 | 背景 | 后果 / 代价 |
+|---|---|---|---|
+| ADR-10 | 保持既有技术栈；前端拆分 AppShell、领域 adapter、会话状态与 TerminalRegistry，终端优先、文件按需 | 固定三栏与单体 App.tsx 把任务布局和核心生命周期耦合 | 需要焦点/action 统一、订阅资源管理、原生 resize 与键盘回归；完整约定见 [UX-R1 §8](../ux/ssh-client-ux-refactor.md) |
+| ADR-11 | 人类创建会话在核心原子设置 Human；新普通主机 shell 集成默认关闭并与终端 ready 解耦；连接尝试/文件任务/协作启用由核心管理 | 普通 SSH 不应支付协作初始化成本；取消、进度、冲突、控制状态不能靠 UI 推测 | 存在跨 crate/存储契约增量；既有主机/Agent 配置保留兼容；须落实 [UX-R1 C1–C10 与迁移](../ux/ssh-client-ux-refactor.md) 和 L1 §0；不撤销 ADR-2/5/7 的核心边界 |
+| ADR-12 | 传输分离 Running/Committing；提交响应丢失进入 OutcomeUnknown | 服务器已提交但客户端未收响应时，失败/取消与原文件未变均无法证明 | 提交前持久化恢复资料；取消与提交统一仲裁；未知不自动重试/回滚；按 UX-R1 §6.5/C6 验收 |
+| ADR-13 | Shell 能力不足时执行前返回稳定错误，禁止自动转 Fresh | 默认不启用集成后，静默降级会在错误目录/环境产生副作用 | 有意收紧旧调用行为，不保留降级例外；CLI/MCP 描述、错误 wire、能力及旧客户端测试同步；取代 ADR-3 的自动降级部分 |
+| ADR-14 | 协作停用确认后，核心先原子进入 Disabling 并封 Agent admission | 逐会话接管期间仍可能插入新会话/旧批准请求，停监听不撤销在途调用 | generation 检查覆盖所有尚未开始请求；活动收敛后停应用端点，不以外部 shim 退出为条件；失败 gate 仍关，重新启用不复活旧动作；按 C9 验收 |
 
 ## 7. 部署形态与演进
 
@@ -187,6 +199,8 @@ Agent --send_keys--> 会话级授权检查 → 通路写入 → 输出照 3.1 �
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.5 | 2026-10-06 | 独立审核后新增 ADR-12–14：文件提交未知、禁止 Shell 静默降级、协作停用 admission；更新 ADR-3 被取代的分支，仍待实施 |
+| v0.4 | 2026-10-06 | 同步 PRD v0.6 / UX-R1：明确新阶段范围，新增 ADR-10 前端分层与 ADR-11 核心生命周期增量；保留真源、审批、凭据、协议边界；待实施 |
 | v0.1 | 2026-09-27 | 初稿：上下文/容器视图、数据流、选型、ADR-1~8、Spike 清单 |
 | v0.2 | 2026-09-27 | 评审修订：ADR-2 改写（xterm.js=可重置渲染缓存 + resync 协议）；ADR-4 删除 UDS 内部端点（shim 直连 HTTP，消除 Windows named pipe 问题）；ADR-7 与 ADR-2 对齐并隔离 MCP 无损缓冲；新增 ADR-9 终端语义层；选型表加 rmcp ≥2.0.0 / russh ≥0.61 版本门与 tree-sitter-bash；安全边界加 per-client Token；数据流补 exec 镜像回放；Spike 补平台矩阵、真实流载荷、量化标准与 SPIKE-4 |
 | v0.3 | 2026-09-27 | 专家评审修订（对应 PRD v0.3）：ADR-3 对调默认模式（Shell 升为验证版默认，交接闭环要求现场延续）；数据流同步；平台矩阵收窄为验证阶段仅 macOS、SPIKE-4 移至 V2 前；部署形态分阶段 |

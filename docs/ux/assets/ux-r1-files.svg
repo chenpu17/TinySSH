@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" role="img" aria-label="TinySSH UX-R1 静态设计参考">
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC",sans-serif}.mono{font-family:Menlo,"DejaVu Sans Mono",monospace}</style>
+<rect x="0" y="0" width="1280" height="800" rx="0" fill="#10151C"/>
+<rect x="0" y="0" width="1280" height="44" rx="0" fill="#171E27"/>
+<circle cx="20" cy="22" r="6" fill="#FF6058"/>
+<circle cx="40" cy="22" r="6" fill="#FFBD2E"/>
+<circle cx="60" cy="22" r="6" fill="#28C840"/>
+<text x="96" y="27" font-size="14" fill="#E5EAF0" font-weight="600">TinySSH</text>
+<rect x="182" y="8" width="28" height="28" rx="5" fill="#202A36"/>
+<text x="191" y="27" font-size="17" fill="#ADB9C8" font-weight="400">‹</text>
+<text x="1080" y="27" font-size="12" fill="#ADB9C8" font-weight="400">UX-R1 · 静态设计参考</text>
+<path d="M0 44 L1280 44" stroke="#334152" fill="none"/>
+<rect x="0" y="45" width="224" height="755" rx="0" fill="#171E27"/>
+<path d="M224 44 L224 800" stroke="#334152" fill="none"/>
+<rect x="12" y="60" width="160" height="32" rx="6" fill="#202A36"/>
+<text x="24" y="81" font-size="13" fill="#ADB9C8" font-weight="400">搜索主机</text>
+<text x="138" y="81" font-size="11" fill="#ADB9C8" font-weight="400">⌘K</text>
+<rect x="180" y="60" width="32" height="32" rx="6" fill="#202A36" stroke="#334152"/>
+<text x="192" y="81" font-size="13" fill="#E5EAF0" font-weight="500">＋</text>
+<text x="16" y="124" font-size="12" fill="#ADB9C8" font-weight="500">收藏</text>
+<rect x="8" y="136" width="208" height="52" rx="6" fill="#263A42"/>
+<circle cx="20" cy="153" r="3" fill="#8ED5A4"/>
+<text x="30" y="157" font-size="13" fill="#E5EAF0" font-weight="600">prod-api</text>
+<text x="30" y="177" font-size="11" fill="#ADB9C8" font-weight="400">deploy@10.0.0.11</text>
+<circle cx="20" cy="209" r="3" fill="#8ED5A4"/>
+<text x="30" y="213" font-size="13" fill="#E5EAF0" font-weight="400">staging</text>
+<text x="30" y="233" font-size="11" fill="#ADB9C8" font-weight="400">deploy@10.0.0.21</text>
+<text x="30" y="269" font-size="13" fill="#E5EAF0" font-weight="400">db-readonly</text>
+<text x="30" y="289" font-size="11" fill="#ADB9C8" font-weight="400">reader@10.0.0.31</text>
+<text x="16" y="336" font-size="12" fill="#ADB9C8" font-weight="500">其他主机</text>
+<text x="20" y="369" font-size="13" fill="#E5EAF0" font-weight="400">build-runner</text>
+<text x="20" y="389" font-size="11" fill="#ADB9C8" font-weight="400">ci@10.0.0.41</text>
+<text x="20" y="425" font-size="13" fill="#E5EAF0" font-weight="400">personal-vps</text>
+<text x="20" y="445" font-size="11" fill="#ADB9C8" font-weight="400">chen@203.0.113.8</text>
+<text x="16" y="498" font-size="12" fill="#ADB9C8" font-weight="500">标签</text>
+<rect x="16" y="514" width="72" height="27" rx="5" fill="#202A36"/>
+<text x="26" y="532" font-size="12" fill="#ADB9C8" font-weight="400">生产  2</text>
+<rect x="96" y="514" width="72" height="27" rx="5" fill="#202A36"/>
+<text x="106" y="532" font-size="12" fill="#ADB9C8" font-weight="400">开发  3</text>
+<path d="M12 752 L212 752" stroke="#334152" fill="none"/>
+<text x="20" y="780" font-size="13" fill="#ADB9C8" font-weight="400">设置</text>
+<text x="177" y="780" font-size="12" fill="#ADB9C8" font-weight="400">⌘,</text>
+<rect x="225" y="45" width="1055" height="39" rx="0" fill="#171E27"/>
+<rect x="236" y="50" width="184" height="30" rx="6" fill="#202A36"/>
+<circle cx="249" cy="65" r="3" fill="#8ED5A4"/>
+<text x="260" y="70" font-size="13" fill="#E5EAF0" font-weight="600">prod-api</text>
+<text x="397" y="70" font-size="15" fill="#ADB9C8" font-weight="400">×</text>
+<circle cx="442" cy="65" r="3" fill="#8ED5A4"/>
+<text x="453" y="70" font-size="13" fill="#ADB9C8" font-weight="400">staging</text>
+<text x="582" y="70" font-size="15" fill="#ADB9C8" font-weight="400">×</text>
+<text x="624" y="70" font-size="18" fill="#ADB9C8" font-weight="400">＋</text>
+<text x="1188" y="70" font-size="12" fill="#ADB9C8" font-weight="400">标签列表</text>
+<path d="M224 84 L1280 84" stroke="#334152" fill="none"/>
+<text x="240" y="109" font-size="12" fill="#ADB9C8" font-weight="400" class="mono">deploy@10.0.0.11</text>
+<circle cx="431" cy="104" r="3" fill="#8ED5A4"/>
+<text x="442" y="109" font-size="12" fill="#ADB9C8" font-weight="400">已连接</text>
+<text x="981" y="109" font-size="13" fill="#ADB9C8" font-weight="400">搜索</text>
+<text x="1032" y="109" font-size="13" fill="#ADB9C8" font-weight="400">分屏</text>
+<rect x="1080" y="90" width="60" height="28" rx="5" fill="#263A42"/>
+<text x="1095" y="109" font-size="13" fill="#70D1BE" font-weight="400">文件</text>
+<text x="1170" y="109" font-size="13" fill="#ADB9C8" font-weight="400">连接工具</text>
+<text x="1236" y="109" font-size="13" fill="#ADB9C8" font-weight="400">⌄</text>
+<path d="M224 124 L1280 124" stroke="#334152" fill="none"/>
+<text x="240" y="151" font-size="14" fill="#ADB9C8" font-weight="400" class="mono">Last login: Tue Oct 6 10:24:00 2026</text>
+<text x="240" y="173" font-size="14" fill="#E5EAF0" font-weight="400" class="mono">deploy@prod-api:~/app$ git status --short</text>
+<text x="240" y="195" font-size="14" fill="#E7BF78" font-weight="400" class="mono"> M config/app.toml</text>
+<text x="240" y="217" font-size="14" fill="#E5EAF0" font-weight="400" class="mono"></text>
+<text x="240" y="239" font-size="14" fill="#E5EAF0" font-weight="400" class="mono">deploy@prod-api:~/app$ systemctl status api --no-pager</text>
+<text x="240" y="261" font-size="14" fill="#8ED5A4" font-weight="400" class="mono">● api.service — Application API</text>
+<text x="240" y="283" font-size="14" fill="#ADB9C8" font-weight="400" class="mono">   Loaded: loaded (/etc/systemd/system/api.service)</text>
+<text x="240" y="305" font-size="14" fill="#8ED5A4" font-weight="400" class="mono">   Active: active (running)</text>
+<text x="240" y="327" font-size="14" fill="#ADB9C8" font-weight="400" class="mono"> Main PID: 1842 (api-server)</text>
+<text x="240" y="349" font-size="14" fill="#E5EAF0" font-weight="400" class="mono"></text>
+<text x="240" y="371" font-size="14" fill="#E5EAF0" font-weight="400" class="mono">deploy@prod-api:~/app$ tail -n 3 logs/access.log</text>
+<text x="240" y="393" font-size="14" fill="#ADB9C8" font-weight="400" class="mono">10:24:01  GET /health     200   2ms</text>
+<text x="240" y="415" font-size="14" fill="#ADB9C8" font-weight="400" class="mono">10:24:04  GET /api/items  200  12ms</text>
+<text x="240" y="437" font-size="14" fill="#ADB9C8" font-weight="400" class="mono">10:24:08  GET /health     200   1ms</text>
+<text x="240" y="459" font-size="14" fill="#E5EAF0" font-weight="400" class="mono"></text>
+<text x="240" y="481" font-size="14" fill="#E5EAF0" font-weight="400" class="mono">deploy@prod-api:~/app$ </text>
+<rect x="424" y="469" width="8" height="17" rx="0" fill="#E5EAF0"/>
+<rect x="225" y="777" width="1055" height="23" rx="0" fill="#171E27"/>
+<path d="M224 776 L1280 776" stroke="#334152" fill="none"/>
+<text x="240" y="792" font-size="11" fill="#ADB9C8" font-weight="400">SSH · UTF-8</text>
+<text x="1008" y="792" font-size="11" fill="#ADB9C8" font-weight="400">转发 1</text>
+<text x="1113" y="792" font-size="11" fill="#70D1BE" font-weight="400">传输 2</text>
+<text x="1195" y="792" font-size="12" fill="#ADB9C8" font-weight="400">⌃</text>
+<rect x="896" y="125" width="384" height="411" rx="0" fill="#171E27"/>
+<path d="M896 124 L896 536" stroke="#334152" fill="none"/>
+<text x="912" y="151" font-size="14" fill="#E5EAF0" font-weight="600">远程文件</text>
+<text x="1008" y="151" font-size="12" fill="#ADB9C8" font-weight="400">prod-api</text>
+<text x="1200" y="151" font-size="12" fill="#ADB9C8" font-weight="400">展开</text>
+<text x="1250" y="152" font-size="18" fill="#ADB9C8" font-weight="400">×</text>
+<rect x="912" y="166" width="352" height="32" rx="6" fill="#202A36"/>
+<text x="924" y="187" font-size="12" fill="#E5EAF0" font-weight="400" class="mono">/srv / app / logs</text>
+<text x="912" y="223" font-size="13" fill="#ADB9C8" font-weight="400">‹    ›    ↑    刷新</text>
+<text x="1164" y="223" font-size="13" fill="#70D1BE" font-weight="400">上传</text>
+<text x="1224" y="223" font-size="18" fill="#ADB9C8" font-weight="400">···</text>
+<path d="M912 237 L1264 237" stroke="#334152" fill="none"/>
+<text x="940" y="258" font-size="11" fill="#ADB9C8" font-weight="400">名称</text>
+<text x="1164" y="258" font-size="11" fill="#ADB9C8" font-weight="400">大小</text>
+<text x="1220" y="258" font-size="11" fill="#ADB9C8" font-weight="400">修改</text>
+<path d="M913 279 h5 l2 2 h8 v10 h-15 z" fill="none" stroke="#E7BF78" stroke-width="1.4" stroke-linejoin="round"/>
+<text x="940" y="291" font-size="12" fill="#E5EAF0" font-weight="400" class="mono">archive</text>
+<text x="1164" y="291" font-size="11" fill="#ADB9C8" font-weight="400">—</text>
+<text x="1220" y="291" font-size="11" fill="#ADB9C8" font-weight="400">10/05</text>
+<rect x="904" y="305" width="368" height="34" rx="5" fill="#263A42"/>
+<path d="M915 313 h8 l4 4 v12 h-12 z M923 313 v5 h4" fill="none" stroke="#ADB9C8" stroke-width="1.2"/>
+<text x="940" y="327" font-size="12" fill="#E5EAF0" font-weight="400" class="mono">access.log</text>
+<text x="1164" y="327" font-size="11" fill="#ADB9C8" font-weight="400">70 MB</text>
+<text x="1220" y="327" font-size="11" fill="#ADB9C8" font-weight="400">10/06</text>
+<path d="M915 349 h8 l4 4 v12 h-12 z M923 349 v5 h4" fill="none" stroke="#ADB9C8" stroke-width="1.2"/>
+<text x="940" y="363" font-size="12" fill="#E5EAF0" font-weight="400" class="mono">error.log</text>
+<text x="1164" y="363" font-size="11" fill="#ADB9C8" font-weight="400">2 MB</text>
+<text x="1220" y="363" font-size="11" fill="#ADB9C8" font-weight="400">10/06</text>
+<path d="M915 385 h8 l4 4 v12 h-12 z M923 385 v5 h4" fill="none" stroke="#ADB9C8" stroke-width="1.2"/>
+<text x="940" y="399" font-size="12" fill="#E5EAF0" font-weight="400" class="mono">startup.log</text>
+<text x="1164" y="399" font-size="11" fill="#ADB9C8" font-weight="400">128 KB</text>
+<text x="1220" y="399" font-size="11" fill="#ADB9C8" font-weight="400">10/05</text>
+<text x="912" y="451" font-size="12" fill="#ADB9C8" font-weight="400">已选 1 个文件</text>
+<rect x="1156" y="430" width="108" height="32" rx="6" fill="#70D1BE"/>
+<text x="1168" y="451" font-size="13" fill="#10151C" font-weight="500">下载</text>
+<text x="912" y="494" font-size="11" fill="#ADB9C8" font-weight="400">浏览目录独立于终端，可定位到终端目录。</text>
+<rect x="225" y="537" width="1055" height="239" rx="0" fill="#171E27"/>
+<path d="M224 536 L1280 536" stroke="#334152" fill="none"/>
+<text x="240" y="564" font-size="14" fill="#E5EAF0" font-weight="600">传输</text>
+<text x="288" y="564" font-size="12" fill="#ADB9C8" font-weight="400">2 个任务</text>
+<text x="1176" y="564" font-size="12" fill="#ADB9C8" font-weight="400">收起</text>
+<text x="1238" y="564" font-size="14" fill="#ADB9C8" font-weight="400">⌄</text>
+<path d="M240 580 L1264 580" stroke="#334152" fill="none"/>
+<text x="244" y="609" font-size="20" fill="#70D1BE" font-weight="400">↓</text>
+<text x="273" y="606" font-size="13" fill="#E5EAF0" font-weight="600">access.log</text>
+<text x="1008" y="606" font-size="12" fill="#ADB9C8" font-weight="400">42 / 70 MB</text>
+<text x="1140" y="606" font-size="12" fill="#ADB9C8" font-weight="400">60%</text>
+<text x="1218" y="606" font-size="12" fill="#ADB9C8" font-weight="400">取消</text>
+<text x="273" y="632" font-size="12" fill="#ADB9C8" font-weight="400">prod-api:/srv/app/logs/access.log  →  本机 Downloads/access.log</text>
+<rect x="273" y="647" width="913" height="4" rx="2" fill="#202A36"/>
+<rect x="273" y="647" width="548" height="4" rx="2" fill="#70D1BE"/>
+<path d="M240 670 L1264 670" stroke="#334152" fill="none"/>
+<text x="244" y="703" font-size="20" fill="#8ED5A4" font-weight="400">↑</text>
+<text x="273" y="701" font-size="13" fill="#E5EAF0" font-weight="600">release.tar.gz</text>
+<text x="1080" y="701" font-size="12" fill="#8ED5A4" font-weight="400">已完成</text>
+<text x="273" y="727" font-size="12" fill="#ADB9C8" font-weight="400">本机 Downloads/release.tar.gz  →  prod-api:/srv/app/release.tar.gz</text>
+</svg>

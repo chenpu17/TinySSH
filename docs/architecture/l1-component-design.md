@@ -1,9 +1,25 @@
 # L1 模块设计 — TinySSH
 
-> 版本：v0.5 · 日期：2026-09-27 · 上游：[PRD](../prd.md) · [L0 总体设计](l0-system-design.md)
+> 版本：v0.7 · 日期：2026-10-06 · 上游：[PRD](../prd.md) · [L0 总体设计](l0-system-design.md) · [UX-R1](../ux/ssh-client-ux-refactor.md)
 > 本文回答：每个模块的职责、对外接口、关键流程时序、数据模型与安全机制。接口签名是**设计约定**，实现期允许在不改变语义的前提下微调；标注 `v1` 的接口为 V0 末冻结范围，其余为草稿、随阶段经 ADR 增量冻结。
 
 ---
+
+## 0. UX-R1 实施增量与兼容边界
+
+本轮优先建设 SSH 客户端体验；原有模块设计与协作契约继续作为基础。下方 V0/V1/V2 阶段映射为历史，实施排序以 [UX-R1 任务与验收](../ux/ssh-client-ux-refactor-delivery.md) 为准。以下为待实现设计，现有接口不能被视为已经具备这些能力。
+
+| 模块 | 本轮增量 | 约束 |
+|---|---|---|
+| `session-api` / `core-session` | C1 建连尝试与取消、C2 初始 owner、C3 shell 能力/拒绝、C5/C6 传输任务、C9 admission | 原子人类控制；提交未知不得伪终态；C3 明确收紧静默降级，其余旧协议按兼容测试执行 |
+| `transport-ssh` | C4 SFTP 路径/元数据、C5 进度、C6 冲突与提交能力 | 未知字段明确；确认未提交时保护原目标；提交响应未知可恢复，不伪造原子支持 |
+| `vault` | C7 导入诊断、C8 版本化 UI 元数据与设置迁移 | 旧主机、凭据引用、指纹、Agent Token 保留；迁移原子、幂等 |
+| `src-tauri` / `ui` | adapter、TerminalRegistry、统一 action/focus、新工作区、C10 输出生命周期 | UI 持有视图状态，core 持有执行状态；真源与审计不能从 xterm 反推 |
+| `mcp-server` / `cli` | 兼容并回归既有入口 | UI 新开关不代替授权；旧配置不因迁移静默断开；新增协议有显式类型/错误测试 |
+
+C1–C10 详细行为与建议接口由 [UX-R1 §9](../ux/ssh-client-ux-refactor.md) 统一维护，避免在两处复制不同版本。G0 冻结 wire 类型时补充本文相应模块的正式签名与 schema；需要改变既有安全语义时另建 ADR，不得仅更改前端条件分支。
+
+本轮已登记 ADR-12–14：提交阶段和 OutcomeUnknown、Shell 不可用执行前拒绝、协作停用先封 Agent admission。以下 API 草案中的状态/字段不代表完整新 wire；R03 必须同步正式类型和契约 fixture。旧客户端不获得静默 Fresh 兼容例外，需确认返回稳定错误且命令零副作用。
 
 ## 1. Workspace 划分（Cargo crates）
 
@@ -158,6 +174,7 @@ pub enum Error {
     ControlTakenByHuman,                      // 会话控制权在人类（send_keys/close 等）
     VoidedByHandback { brief: Box<SessionBrief> }, // 交接前未开始的请求因接管作废（不自动执行），附最新简报
     ReconfirmingPending,                      // 会话处于重确认态：仅允许内置只读核实命令
+    ShellIntegrationUnavailable,              // UX-R1 ADR-13 拟新增：Shell 不可用，用户命令尚未执行，禁止自动 Fresh
     SessionNotFound, SessionClosed,
     AuthFailed, ConnectFailed,
     ExecTimeout,                              // 执行超时（与 ApprovalTimeout 区分）
@@ -186,7 +203,7 @@ pub enum Error {
 | 审计 | 记录命令+结果+审批留痕 | 同左，命令块同源 |
 | 并发 | 会话内**串行队列**（第二个 exec 排队，返回 QueueBusy 供提示） | 同左 |
 
-> **验证阶段默认 `Shell` 模式**（交接闭环依赖现场延续，PRD v0.3）：试点主机须 opt-in OSC 133 shell 集成注入（显式确认、落审计、可一键卸载）；拒绝注入的主机自动降级 `Fresh` 并在 UI 明示「cwd/env 不延续」。`Fresh` 保留为纯结构化执行的选项。
+> **默认 `Shell` 模式，能力不足先拒绝（UX-R1 ADR-13）**：shell 集成须 opt-in；未启用或检测未就绪时，在用户命令副作用前返回 `ShellIntegrationUnavailable`。调用方须另发显式 `Fresh` 请求并按原策略授权，或由人启用集成并确认能力后重试 Shell。禁止自动降级以及事后 UI 告知替代执行前决定；新旧调用方同规则。普通人类终端输入不依赖该 exec 能力。
 
 - **exec 镜像回放桥**：Fresh 结果组装为带标注的命令块写回 term-core（与 FR-10 块结构同构）——这是旅程 1「人类全程可见」的落地机制，不可省略。
 - **接管契约**（PRD FR-6，`set_control` 落地）：
@@ -255,6 +272,7 @@ pub enum Decision { Approve, Deny, ApproveEdited(String) }
 - **端点**：`127.0.0.1:<固定默认端口>`（被占递增，实际端口持久化并在 GUI 展示）；无 UDS/named pipe 内部端点（L0 ADR-4）
 - **per-client Token 生命周期**：CSPRNG 生成 32B、仅存哈希于库、原始 Token 仅签发时展示一次；请求校验用常数时间比较；轮换/吊销即时生效（内存态 Token 表）；shim 经环境变量（`TINYSSH_TOKEN`）取 Token——Agent 配置文件含 Token 明文为**已登记残余风险**（§7）
 - `tinyssh-mcp` shim：`stdio ↔ HTTP` 透明转发（对 Agent 说 stdio MCP，向应用端点说 streamable HTTP），单文件、无状态、体积 < 5MB
+- UX-R1 C9 停用只管理应用拥有的 MCP 端点、核心 admission 和已接纳请求；外部 Agent 启动的 shim 可继续存活，其调用在停用期间被拒绝/端点不可用。不以外部进程退出作为 Disabled 条件，也不忽略其已接纳的在途请求。
 - 输出编码：`ExecResult` 的 stdout/stderr 为 UTF-8 字符串，含无效序列时置 `has_binary` 并以替换符呈现（MCP JSON 无二进制通道；二进制文件走 upload/download 工具）
 
 ## 4. MCP 工具规格（v1）
@@ -264,7 +282,7 @@ pub enum Decision { Approve, Deny, ApproveEdited(String) }
 | `list_hosts` | — | `[{id,name,address,tags}]` | readOnly | 免 | — |
 | `list_sessions` | — | `[{id,host,state,control_owner}]` | readOnly | 免 | — |
 | `create_session` | `host_id`, `interactive?` | `{session_id}` | — | 远程默认**必审**（主机可配免审）；本地免 | AuthFailed / ApprovalDenied |
-| `exec` | `session_id`, `command`, `mode?=shell`（V1 默认，fresh 可选）, `timeout?` | `{exec_id,exit_code,stdout,stderr,truncated,duration}` | destructive | **必审**（allow/TTL 命中除外，逐段求值） | ApprovalDenied / ExecTimeout / QueueBusy |
+| `exec` | `session_id`, `command`, `mode?=shell`（fresh 必须显式请求）, `timeout?` | `{exec_id,exit_code,stdout,stderr,truncated,duration}` | destructive | **必审**（allow/TTL 命中除外，逐段求值） | ApprovalDenied / ExecTimeout / QueueBusy / ShellIntegrationUnavailable（UX-R1 拟增） |
 | `cancel_exec` | `session_id`, `exec_id` | `{}` | — | 免（落审计） | NotFound |
 | `upload` / `download` | `session_id`, 路径对 | `{transfer_id, bytes}` | destructive | **必审** | ApprovalDenied |
 | `close_session` | `session_id` | `{}` | — | 免；**控制权在人类时拒绝** | ControlTakenByHuman |
@@ -438,6 +456,8 @@ CREATE INDEX idx_audit_agent ON audit_events(agent_id);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.7 | 2026-10-06 | 同步 ADR-12–14 和 UX-R1 v1.1：清除自动降级旧规则，登记 ShellIntegrationUnavailable 语义、提交结果未知及 admission 停用；正式 wire/fixture 在 R03 冻结 |
+| v0.6 | 2026-10-06 | 同步 PRD v0.6 / L0 ADR-10/11：新增 §0 的模块增量与兼容边界，引用 UX-R1 C1–C10 和 G0–G5；未宣告接口已实现或运行验收通过 |
 | v0.1 | 2026-09-27 | 初稿：workspace 划分、SessionApi、审批/凭据/MCP 设计、时序、DDL、威胁模型 |
 | v0.2 | 2026-09-27 | 评审修订：SessionApi 补齐 host/identity CRUD、resize、审批读取/订阅、审计查询导出、控制权、cancel、brief（P0-1）；exec 双通路语义对照表 + 镜像回放桥 + 本地 fresh 语义 + 串行队列（P0-2）；删除 UDS，shim 直连 HTTP + 固定端口 + per-client Token 生命周期（P0-3）；term-core 增命令块索引、MCP 无损环形缓冲、resync 协议；审批增解析器逐段求值、TTL 窗口、会话级授权、ApprovalMode 人类预配置；错误模型封闭化、Timeout 拆分；DDL 补索引/外键/agents/policies/edited_command/迁移策略；威胁模型口径修正（完整性检测）；接口冻结限定 v1 子集 |
 | v0.3 | 2026-09-27 | 专家评审修订（对应 PRD v0.3）：`set_control` 扩为接管契约（冻结/尽力停止/不承诺回滚/交还）+ `TakeoverReport`/`SessionBrief` 类型；exec Shell 模式升为验证版默认（试点主机 opt-in shell 集成，拒绝注入降级 Fresh）；现场简报定位为交接核心工件；里程碑改为 V0 原型+PV gate / V1 验证版 / V2 完整客户端 |

@@ -1,0 +1,93 @@
+{
+  "review_date": "2026-10-06",
+  "code_baseline_head": "8491d06b5da42de246d7693af5ce55359601cebb",
+  "reviewed_design_version": "UX-R1 v1.1",
+  "scope": "Uncommitted documentation and static design assets; no runtime acceptance. Report and manifest are excluded from hashes.",
+  "decision": "Ready to start G0; G0 exit is not passed.",
+  "files": [
+    {
+      "path": "README.md",
+      "before_sha256": "b66153acadc477b3b572928e7c975a7d012a98eebca3abb0ef3e17d33757b7ff",
+      "reviewed_sha256": "1b114f80f1673c5171bb4428f4a41b053ceda5b86cf90c5af54c14412eb204ca",
+      "changed_since_initial_review": true
+    },
+    {
+      "path": "docs/architecture/l0-system-design.md",
+      "before_sha256": "5bf691eaf8cdfccc4225bad59a740a60195e1fb5685f92d98f77fe2c52739de8",
+      "reviewed_sha256": "92795c184ca9cdb90eac933f6e3bd3fe1a9d89a3e86e5decfd0845e133cb2ed2",
+      "changed_since_initial_review": true
+    },
+    {
+      "path": "docs/architecture/l1-component-design.md",
+      "before_sha256": "e5d1a38492df9380ef7a98ff4cf736b6af7946f40b5c67d76baf6f85a93fb30d",
+      "reviewed_sha256": "21c0281f7fe57f7dc24213f7cbb08a0c2aaac5c6897e3bc814ec246bf554c163",
+      "changed_since_initial_review": true
+    },
+    {
+      "path": "docs/prd.md",
+      "before_sha256": "7d9e2d95588e2457b5331338aaab35ea8af2be443028e7dc6a2142f09070649d",
+      "reviewed_sha256": "4e4e0e7eaa45f6c9ce4d88e7b8cb6dcf44b15946b04efbc0b22c97b6888f125e",
+      "changed_since_initial_review": true
+    },
+    {
+      "path": "docs/ui-redesign-spec.md",
+      "before_sha256": "352739fd3dd556a8f357a410bc3adebcbf05bb167693c35f2eb00debc1033087",
+      "reviewed_sha256": "352739fd3dd556a8f357a410bc3adebcbf05bb167693c35f2eb00debc1033087",
+      "changed_since_initial_review": false
+    },
+    {
+      "path": "docs/ux/assets/ux-r1-files.png",
+      "before_sha256": "43d3a8569c952c7619440da0377652e84b66c75b4dacfd590d0bbf311b78a49b",
+      "reviewed_sha256": "43d3a8569c952c7619440da0377652e84b66c75b4dacfd590d0bbf311b78a49b",
+      "changed_since_initial_review": false
+    },
+    {
+      "path": "docs/ux/assets/ux-r1-files.svg",
+      "before_sha256": "8b3c8b9c5f99abfac2d25987e389dd3dd80dbe81a45a60d99d3f87a57960b2ed",
+      "reviewed_sha256": "8b3c8b9c5f99abfac2d25987e389dd3dd80dbe81a45a60d99d3f87a57960b2ed",
+      "changed_since_initial_review": false
+    },
+    {
+      "path": "docs/ux/assets/ux-r1-terminal.png",
+      "before_sha256": "8ccccc1b4dc005ba7b7e6bba09457a4fa464d7e10ec196f4efdeca411d0d3021",
+      "reviewed_sha256": "8ccccc1b4dc005ba7b7e6bba09457a4fa464d7e10ec196f4efdeca411d0d3021",
+      "changed_since_initial_review": false
+    },
+    {
+      "path": "docs/ux/assets/ux-r1-terminal.svg",
+      "before_sha256": "3da9bc007ecf51a01083b42efca1b72941eacab0cbf377f8f9c5a731cee08848",
+      "reviewed_sha256": "3da9bc007ecf51a01083b42efca1b72941eacab0cbf377f8f9c5a731cee08848",
+      "changed_since_initial_review": false
+    },
+    {
+      "path": "docs/ux/assets/ux-r1-welcome.png",
+      "before_sha256": "7228921a1f88dc7dcbef074ce5fc8f8e68d46243a1aa1de2e1966c3df8adc22b",
+      "reviewed_sha256": "7228921a1f88dc7dcbef074ce5fc8f8e68d46243a1aa1de2e1966c3df8adc22b",
+      "changed_since_initial_review": false
+    },
+    {
+      "path": "docs/ux/assets/ux-r1-welcome.svg",
+      "before_sha256": "de1c2dab671839317a337435084fd1ea6cde4a0507a0c980e12347eaefaee470",
+      "reviewed_sha256": "de1c2dab671839317a337435084fd1ea6cde4a0507a0c980e12347eaefaee470",
+      "changed_since_initial_review": false
+    },
+    {
+      "path": "docs/ux/ssh-client-ux-refactor-delivery.md",
+      "before_sha256": "d05048b3d382074dd5ab2452b723250553a489662c7378b7f2bb371138a63b06",
+      "reviewed_sha256": "b3174ba4819fd61fef656edfc6842b3b847bf6e869fa12b69d08f2cf27dfb8b9",
+      "changed_since_initial_review": true
+    },
+    {
+      "path": "docs/ux/ssh-client-ux-refactor.md",
+      "before_sha256": "e64e95ea8c235ae51026d86c2821835f363bf08bb170941881253451cade54c2",
+      "reviewed_sha256": "812b8cfa10ae110ebaa35ff0b00220f10545a6aa434319bd421b1bacbe97d788",
+      "changed_since_initial_review": true
+    },
+    {
+      "path": "docs/validation-plan.md",
+      "before_sha256": "9579797d8a80c986ef63d38ff7827ac20fe6d47bf16159b42ba755b3e2675000",
+      "reviewed_sha256": "58256b22ffa7b83e307061db1eacb11b6beb6bf12377dd6e136fb34eb3fb6cde",
+      "changed_since_initial_review": true
+    }
+  ]
+}

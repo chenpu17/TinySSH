@@ -1,29 +1,32 @@
 # TinySSH
 
-> **状态（2026-09-27）**：V0 thin-slice MVP 已实现并通过工程验收——首个可运行验收场景（旧请求待审批→人接管→交还→旧请求失效→Agent 核实后重新提交）在真实 OpenSSH/Linux 环境以 MCP Agent + 人类双前端端到端通过；SPIKE-1/2/3 门限全过（IPC 1462MB/s、渲染与 OpenSSH 逐行一致、exec P95=1.8ms）。详见 [验收报告](docs/acceptance/v0-mvp-acceptance.md)。
+> **当前设计方向（2026-10-06）**：优先完善面向开发者的 SSH 客户端体验——终端为主、文件按需打开，MCP 协作后续优化。[UX-R1 重构设计](docs/ux/ssh-client-ux-refactor.md)及[实施与验收计划](docs/ux/ssh-client-ux-refactor-delivery.md)已形成文档基线，尚未实施或完成新一轮验收。既有工程结果见[历史验收报告](docs/acceptance/v0-mvp-acceptance.md)。
 
-> 人机协同的 SSH 客户端：工程师与 AI Agent 在同一套终端会话上协作——Agent 操作，人类旁观、审批、随时接管。
+> 面向经常连接几台到十几台服务器、进行开发、部署和排障的开发者：连接省心、终端顺手、文件操作方便，需要时接入 Agent 协作。
 
 ## 文档
 
 | 文档 | 内容 | 何时读 |
 |---|---|---|
+| [SSH 客户端体验重构设计（UX-R1）](docs/ux/ssh-client-ux-refactor.md) | 当前定位、功能去向、布局与流程、视觉参考、技术增量、迁移边界 | 本轮重构首先阅读 |
+| [UX-R1 实施任务与验收矩阵](docs/ux/ssh-client-ux-refactor-delivery.md) | G0–G5 拆票、依赖、功能/性能/真人验收、交接证据 | 排期、开发与验收 |
+| [UX-R1 独立审核与开工结论](docs/ux/2026-10-06-ux-r1-independent-review.md) | 三路独立审核、问题关闭记录、G0 开工与出口边界 | 开工交接与评审 |
 | [PRD](docs/prd.md) | 愿景、设计理念（决策过滤器）、需求与验收标准、里程碑 | 任何功能取舍前 |
 | [L0 总体设计](docs/architecture/l0-system-design.md) | 系统上下文、容器视图、技术选型、ADR、Spike 清单 | 动手写代码前 |
 | [L1 模块设计](docs/architecture/l1-component-design.md) | crate 划分、SessionApi 接口、审批/凭据/MCP 设计、数据模型、威胁模型 | 实现各模块前 |
-| [产品验证计划](docs/validation-plan.md) | PV 用户研究设计、观察指标、决策 gate | V0 阶段先于一切功能投入 |
+| [协作产品验证计划](docs/validation-plan.md) | Agent 交接的用户研究、观察指标、决策 gate | 评估协作价值；与客户端验收分开 |
 | [PV 执行工具包](docs/pv/session-kit.md) | 主持手册、任务卡、问卷与阈值预登记模板；配套 [pv_env.sh](scripts/pv_env.sh)（沙箱故障模板）/[dist.sh](scripts/dist.sh)（分发构建）/[pv_analyze.py](scripts/pv_analyze.py)（分析与 gate 计算） | 招募参与者与开测前后 |
 
 ## 治理约定
 
-1. **PRD §5 设计理念是决策过滤器**：实现争议用它裁决；违反任何一条的方案默认否决。
-2. **PRD §6.2 非目标**：未修订该节而引入范围内的能力视为偏离愿景。
+1. **当前产品顺序与 UX 范围以 UX-R1 为准**：文档权威见重构设计 §0.1；旧 PRD 的 Agent 优先和完整客户端后移不再约束本轮。
+2. **核心契约继续有效**：PRD/L0/L1 的终端真源、凭据、审批、接管与重确认语义继续遵守；UX-R1 明确列出的增量须完成契约与兼容验证。
 3. **文档修订**：PRD / L0 / L1 的变更须更新对应文档的「修订记录」；**PRD 变更后，L0/L1 须在合并前同步评审一致性**；新的关键技术决策在 L0 §6 追加 ADR（触发标准：换库、跨 crate 契约变更、安全边界变更）。
-4. **V0 双验证先于一切功能投入**：技术 Spike 达标 **且** 产品验证（PV）gate 通过（docs/validation-plan.md），才进入 V1。先证明「把远程现场交给 Agent，再拿回来」确实更好用，再扩大客户端功能。
+4. **客户端与协作分别验收**：客户端重构按 UX-R1 实施计划验收；协作价值仍按 validation-plan 的真人 PV 验证。任一通过均不代表另一项通过，旧协作 PV 不再阻止本轮客户端体验建设。
 
 ## 状态
 
-文档 v0.5（已吸收三路内部评审与外部专家三轮评审；专家结论：理念通过，可启动 V0）。定位：人机协作 SSH 工作台；核心体验：交接闭环。契约已闭合（作废含待审批、重确认白名单机制、PV gate 唯一权威归 validation-plan §6）。下一步：V0（技术 Spike + thin-slice 原型 + 三段式用户研究）。
+UX-R1 v1.1 为当前重构设计基线，PRD v0.7 登记方向与独立审核后的契约修订。三路独立静态审核及修订复核已完成，详见[审核报告](docs/ux/2026-10-06-ux-r1-independent-review.md)。现有客户端及协作能力作为迁移基础；可启动 G0，G0 退出需实际原型、wire/fixture 和基线证据，不能跳过直接全面进入 G1–G5。历史报告只证明其记录版本与条件下的结果，不作为本轮重构已完成的证据。
 
 ## 技术栈（概览）
 

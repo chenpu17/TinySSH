@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" role="img" aria-label="TinySSH UX-R1 静态设计参考">
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC",sans-serif}.mono{font-family:Menlo,"DejaVu Sans Mono",monospace}</style>
+<rect x="0" y="0" width="1280" height="800" rx="0" fill="#F3F5F7"/>
+<rect x="0" y="0" width="1280" height="44" rx="0" fill="#EBEFF3"/>
+<circle cx="20" cy="22" r="6" fill="#FF6058"/>
+<circle cx="40" cy="22" r="6" fill="#FFBD2E"/>
+<circle cx="60" cy="22" r="6" fill="#28C840"/>
+<text x="96" y="27" font-size="14" fill="#1D2935" font-weight="600">TinySSH</text>
+<rect x="182" y="8" width="28" height="28" rx="5" fill="#FFFFFF"/>
+<text x="191" y="27" font-size="17" fill="#526172" font-weight="400">‹</text>
+<text x="1080" y="27" font-size="12" fill="#526172" font-weight="400">UX-R1 · 静态设计参考</text>
+<path d="M0 44 L1280 44" stroke="#CCD5DE" fill="none"/>
+<rect x="0" y="45" width="224" height="755" rx="0" fill="#EBEFF3"/>
+<path d="M224 44 L224 800" stroke="#CCD5DE" fill="none"/>
+<rect x="12" y="60" width="160" height="32" rx="6" fill="#FFFFFF"/>
+<text x="24" y="81" font-size="13" fill="#526172" font-weight="400">搜索主机</text>
+<text x="138" y="81" font-size="11" fill="#526172" font-weight="400">⌘K</text>
+<rect x="180" y="60" width="32" height="32" rx="6" fill="#FFFFFF" stroke="#CCD5DE"/>
+<text x="192" y="81" font-size="13" fill="#1D2935" font-weight="500">＋</text>
+<text x="16" y="135" font-size="12" fill="#526172" font-weight="500">主机</text>
+<text x="16" y="171" font-size="13" fill="#526172" font-weight="400">尚未添加连接</text>
+<text x="16" y="195" font-size="12" fill="#526172" font-weight="400">添加或导入后显示在这里。</text>
+<path d="M12 752 L212 752" stroke="#CCD5DE" fill="none"/>
+<text x="20" y="780" font-size="13" fill="#526172" font-weight="400">设置</text>
+<text x="177" y="780" font-size="12" fill="#526172" font-weight="400">⌘,</text>
+<g transform="translate(-135,0)">
+<text x="630" y="228" font-size="28" fill="#1D2935" font-weight="600">连接服务器，开始工作。</text>
+<text x="630" y="264" font-size="13" fill="#526172" font-weight="400">保存常用主机，在清晰的终端里完成开发、部署和排障。</text>
+<rect x="620" y="303" width="470" height="184" rx="12" fill="#FFFFFF" stroke="#CCD5DE"/>
+<text x="644" y="336" font-size="16" fill="#1D2935" font-weight="600">你的第一个连接</text>
+<text x="644" y="364" font-size="13" fill="#526172" font-weight="400">添加服务器地址与认证信息，或导入已有 SSH 配置。</text>
+<rect x="644" y="393" width="116" height="32" rx="6" fill="#176B59"/>
+<text x="656" y="414" font-size="13" fill="#FFFFFF" font-weight="500">＋ 添加连接</text>
+<rect x="772" y="393" width="164" height="32" rx="6" fill="#FFFFFF" stroke="#CCD5DE"/>
+<text x="784" y="414" font-size="13" fill="#1D2935" font-weight="500">导入 SSH 配置</text>
+<text x="644" y="461" font-size="12" fill="#526172" font-weight="400">连接信息与凭据保存在本机。</text>
+<text x="644" y="530" font-size="13" fill="#176B59" font-weight="400">也可以先打开本地终端</text>
+<text x="644" y="570" font-size="12" fill="#526172" font-weight="400">有主机后，这里会显示最近连接。</text>
+</g>
+</svg>
