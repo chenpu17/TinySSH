@@ -1,0 +1,413 @@
+{
+ "A_afterConnects": {
+  "tabCount": 4,
+  "scrollLeft": 56,
+  "clientW": 511,
+  "scrollW": 567,
+  "btnL": true,
+  "btnR": false,
+  "active": {
+   "l": 585,
+   "r": 770
+  },
+  "bar": {
+   "l": 259,
+   "r": 770
+  },
+  "activeFullyVisible": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "l": 203,
+    "r": 323,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 326,
+    "r": 459,
+    "act": false
+   },
+   {
+    "label": "本机",
+    "l": 462,
+    "r": 582,
+    "act": false
+   },
+   {
+    "label": "otp-1（演示 2FA",
+    "l": 585,
+    "r": 770,
+    "act": true
+   }
+  ]
+ },
+ "A_afterClickCutTab": {
+  "tabCount": 4,
+  "scrollLeft": 56,
+  "clientW": 511,
+  "scrollW": 567,
+  "btnL": true,
+  "btnR": false,
+  "active": {
+   "l": 585,
+   "r": 770
+  },
+  "bar": {
+   "l": 259,
+   "r": 770
+  },
+  "activeFullyVisible": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "l": 203,
+    "r": 323,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 326,
+    "r": 459,
+    "act": false
+   },
+   {
+    "label": "本机",
+    "l": 462,
+    "r": 582,
+    "act": false
+   },
+   {
+    "label": "otp-1（演示 2FA",
+    "l": 585,
+    "r": 770,
+    "act": true
+   }
+  ]
+ },
+ "A_pass": true,
+ "A_stabilitySamples": [
+  56,
+  56,
+  56,
+  56,
+  56,
+  56,
+  56,
+  56
+ ],
+ "A_stable": true,
+ "A_xButtonVisible": {
+  "present": true,
+  "xRight": 760,
+  "insideBar": true,
+  "fullyInside": true
+ },
+ "B_tabCount1280": 5,
+ "B_beforeShrink": {
+  "tabCount": 5,
+  "scrollLeft": 0,
+  "clientW": 914,
+  "scrollW": 914,
+  "btnL": false,
+  "btnR": false,
+  "active": {
+   "l": 806,
+   "r": 940
+  },
+  "bar": {
+   "l": 236,
+   "r": 1150
+  },
+  "activeFullyVisible": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "l": 236,
+    "r": 356,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 359,
+    "r": 492,
+    "act": false
+   },
+   {
+    "label": "本机",
+    "l": 495,
+    "r": 615,
+    "act": false
+   },
+   {
+    "label": "otp-1（演示 2FA",
+    "l": 618,
+    "r": 803,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 806,
+    "r": 940,
+    "act": true
+   }
+  ]
+ },
+ "B_afterShrink900": {
+  "tabCount": 5,
+  "scrollLeft": 193,
+  "clientW": 511,
+  "scrollW": 704,
+  "btnL": true,
+  "btnR": false,
+  "active": {
+   "l": 636,
+   "r": 770
+  },
+  "bar": {
+   "l": 259,
+   "r": 770
+  },
+  "activeFullyVisible": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "l": 66,
+    "r": 186,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 189,
+    "r": 322,
+    "act": false
+   },
+   {
+    "label": "本机",
+    "l": 325,
+    "r": 445,
+    "act": false
+   },
+   {
+    "label": "otp-1（演示 2FA",
+    "l": 448,
+    "r": 633,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 636,
+    "r": 770,
+    "act": true
+   }
+  ]
+ },
+ "B_pass": true,
+ "C_hostbarCollapsed": {
+  "tabCount": 5,
+  "scrollLeft": 6,
+  "clientW": 698,
+  "scrollW": 704,
+  "btnL": true,
+  "btnR": false,
+  "active": {
+   "l": 636,
+   "r": 770
+  },
+  "bar": {
+   "l": 72,
+   "r": 770
+  },
+  "activeFullyVisible": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "l": 66,
+    "r": 186,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 189,
+    "r": 322,
+    "act": false
+   },
+   {
+    "label": "本机",
+    "l": 325,
+    "r": 445,
+    "act": false
+   },
+   {
+    "label": "otp-1（演示 2FA",
+    "l": 448,
+    "r": 633,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 636,
+    "r": 770,
+    "act": true
+   }
+  ]
+ },
+ "C_collapsed_pass": true,
+ "C_hostbarReexpanded": {
+  "tabCount": 5,
+  "scrollLeft": 193,
+  "clientW": 511,
+  "scrollW": 704,
+  "btnL": true,
+  "btnR": false,
+  "active": {
+   "l": 636,
+   "r": 770
+  },
+  "bar": {
+   "l": 259,
+   "r": 770
+  },
+  "activeFullyVisible": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "l": 66,
+    "r": 186,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 189,
+    "r": 322,
+    "act": false
+   },
+   {
+    "label": "本机",
+    "l": 325,
+    "r": 445,
+    "act": false
+   },
+   {
+    "label": "otp-1（演示 2FA",
+    "l": 448,
+    "r": 633,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 636,
+    "r": 770,
+    "act": true
+   }
+  ]
+ },
+ "C_reexpand_pass": true,
+ "D_panelOpen": {
+  "state": {
+   "tabCount": 5,
+   "scrollLeft": 0,
+   "clientW": 914,
+   "scrollW": 914,
+   "btnL": false,
+   "btnR": false,
+   "active": {
+    "l": 806,
+    "r": 940
+   },
+   "bar": {
+    "l": 236,
+    "r": 1150
+   },
+   "activeFullyVisible": true,
+   "tabs": [
+    {
+     "label": "prod-1",
+     "l": 236,
+     "r": 356,
+     "act": false
+    },
+    {
+     "label": "staging-1",
+     "l": 359,
+     "r": 492,
+     "act": false
+    },
+    {
+     "label": "本机",
+     "l": 495,
+     "r": 615,
+     "act": false
+    },
+    {
+     "label": "otp-1（演示 2FA",
+     "l": 618,
+     "r": 803,
+     "act": false
+    },
+    {
+     "label": "staging-1",
+     "l": 806,
+     "r": 940,
+     "act": true
+    }
+   ]
+  },
+  "panel": {
+   "w": 384,
+   "tpFull": false
+  }
+ },
+ "D_open_pass": true,
+ "D_panelClosed": {
+  "tabCount": 5,
+  "scrollLeft": 0,
+  "clientW": 914,
+  "scrollW": 914,
+  "btnL": false,
+  "btnR": false,
+  "active": {
+   "l": 806,
+   "r": 940
+  },
+  "bar": {
+   "l": 236,
+   "r": 1150
+  },
+  "activeFullyVisible": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "l": 236,
+    "r": 356,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 359,
+    "r": 492,
+    "act": false
+   },
+   {
+    "label": "本机",
+    "l": 495,
+    "r": 615,
+    "act": false
+   },
+   {
+    "label": "otp-1（演示 2FA",
+    "l": 618,
+    "r": 803,
+    "act": false
+   },
+   {
+    "label": "staging-1",
+    "l": 806,
+    "r": 940,
+    "act": true
+   }
+  ]
+ },
+ "D_close_pass": true,
+ "errors": []
+}

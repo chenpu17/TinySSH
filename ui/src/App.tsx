@@ -3,6 +3,8 @@ import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
 import { errMsg } from "./adapter/errors";
+import { resolveAction } from "./actions";
+import type { AppAction } from "./actions";
 import { createOutputFeed } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import type {
@@ -367,8 +369,27 @@ export default function App() {
     return () => ro.disconnect();
   }, [measureTabbar, sessions.length]);
   useEffect(() => {
-    // 激活标签滚入视野（键盘循环切换时不再落到视野外）
-    tabbarRef.current?.querySelector(".tab-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // 激活标签滚入视野（键盘循环切换时不再落到视野外）。两个补滚成因：
+    // ① 滚动钮显隐（tabScroll 状态）翻转会改行内布局并回钳 scrollLeft，首滚可能
+    //    被截——布局稳定后补滚一次（vis-r13：900 宽直点被截标签首滚 33/79）；
+    // ② 溢出可能不经 sid 变化出现（窗口缩放/主机栏开合/任务面板开合把活动标签
+    //    挤出视野）——ResizeObserver 跟随容器宽度变化补滚（scrollLeft 不影响
+    //    容器自身盒子，无回调环）。
+    const el = tabbarRef.current;
+    if (!el) return;
+    const scroll = () =>
+      el.querySelector(".tab-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    scroll();
+    const t = setTimeout(scroll, 220);
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(() => scroll());
+      ro.observe(el);
+    }
+    return () => {
+      clearTimeout(t);
+      ro?.disconnect();
+    };
   }, [sid]);
   const scrollTabs = (dir: 1 | -1) => {
     const el = tabbarRef.current;
@@ -456,6 +477,12 @@ export default function App() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [winW, setWinW] = useState(() => window.innerWidth);
+  // R13 统一分发：keymap 解析（actions.ts）与执行分离；ref 持有最新执行器，
+  // 捕获层 effect 与 xterm 键处理器都经它走同一条路。modal/主机栏开合同步 ref。
+  const dispatchRef = useRef<(a: AppAction) => boolean>(() => false);
+  const modalRef = useRef(false);
+  const hostbarOpenRef = useRef(hostbarOpen);
+  hostbarOpenRef.current = hostbarOpen;
 
   const refreshLists = useCallback(async () => {
     try {
@@ -705,12 +732,20 @@ export default function App() {
         return false;
       }
       if (key === "f") {
-        // ⌘F 打开终端内搜索（T16）
-        setSearchOpen(true);
-        setTimeout(() => searchInputRef.current?.focus(), 0);
-        ev.preventDefault();
-        ev.stopPropagation();
-        return false;
+        // ⌘F 走统一 keymap（R13 §7.2 同一分发源）——window 捕获层已处理绝大多数
+        // 场景，此处兜底同源解析。模态期 resolveAction 返回 null → 落到下方兜底吞掉。
+        const a = resolveAction(ev, {
+          modal: modalRef.current,
+          native: inTauri,
+          inForm: false, // 此处理器只在 xterm textarea 焦点下触达，不属表单焦点
+          hasSessions: sessionsRef.current.length > 0,
+          hasActiveTab: !!sidRef.current,
+        });
+        if (a && dispatchRef.current(a)) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          return false;
+        }
       }
       // 其余 ⌘ 快捷键（⌘R 刷新等）不得进入终端
       ev.preventDefault();
@@ -758,13 +793,17 @@ export default function App() {
     // 命令框等真实输入控件不劫持（保留其编辑语义）；方向键/F 键等长键值交给 xterm。
     useEffect(() => {
       const onKey = (ev: KeyboardEvent) => {
+        // §7.4/native 同口径：只在「终端确实拥有焦点且无模态层」时转发控制字符。
+        // 模态期（确认/指纹/双因素）一律放行——⌘W 开确认后焦点仍留终端，
+        // Ctrl+C 不得再杀远端前台进程（rev-r13 中-1）；焦点在别处（按钮/输入框）
+        // 也不转发，与 native 侧 note_terminal 门一致。
+        if (modalRef.current) return;
+        const ael = document.activeElement;
+        if (!(ael && ael.classList.contains("xterm-helper-textarea"))) return;
         // Option/Alt → Meta 序列（ESC 前缀）：readline 词跳转（⌥←/⌥→/⌥⌫）、
         // tmux M-键绑定。必须在捕获层拦截：⌥字母 在 WKWebView 会进文本输入系统
         // 变特殊字符（⌥b=∫），xterm 的 keydown 收不到。⌘/Ctrl+⌥ 归各自分支。
         if (ev.altKey && !ev.ctrlKey && !ev.metaKey) {
-          const t = ev.target as HTMLElement | null;
-          if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
-              !t.classList.contains("xterm-helper-textarea")) return;
           const seq = altMetaSequence(ev.code, ev.shiftKey);
           if (!seq) return;
           ev.preventDefault();
@@ -775,9 +814,6 @@ export default function App() {
           return;
         }
         if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
-        const t = ev.target as HTMLElement | null;
-        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
-            !t.classList.contains("xterm-helper-textarea")) return;
         const s = sidRef.current;
         if (!s) return;
         // 死会话拦截：Ctrl 控制字符不进死通道（黑洞）
@@ -819,9 +855,22 @@ export default function App() {
         const t = e.target as HTMLElement | null;
         if (t?.classList?.contains("xterm-helper-textarea")) report(false);
       };
+      // §7.4：WebView 整窗失焦/回焦对称同步——焦点不出 document 时 focusout 不触发，
+      // native 层会以失焦状态继续拦截 ⌃字母；⌘Tab 切回时 focusin 同样不触发，
+      // 需按当前 DOM 焦点补报（rev-r13 低-4）
+      const xtermFocused = () => {
+        const t = document.activeElement;
+        return !!(t instanceof HTMLElement && t.classList.contains("xterm-helper-textarea"));
+      };
+      const onWinBlur = () => report(false);
+      const onWinFocus = () => { if (xtermFocused()) report(true); };
+      window.addEventListener("blur", onWinBlur);
+      window.addEventListener("focus", onWinFocus);
       document.addEventListener("focusin", onFocusIn);
       document.addEventListener("focusout", onFocusOut);
       return () => {
+        window.removeEventListener("blur", onWinBlur);
+        window.removeEventListener("focus", onWinFocus);
         document.removeEventListener("focusin", onFocusIn);
         document.removeEventListener("focusout", onFocusOut);
       };
@@ -885,7 +934,8 @@ export default function App() {
   useEffect(() => {
     if (!inTauri) return;
     let un: (() => void) | undefined;
-    listen("menu-settings", () => setShowSettings(true)).then((f) => (un = f));
+    // 走统一分发（R13 §7.2）：原生菜单加速器与键盘快捷键同一 action 语义
+    listen("menu-settings", () => { dispatchRef.current({ id: "settings" }); }).then((f) => (un = f));
     getVersion().then(setAppVersion).catch(() => {});
     return () => un?.();
   }, []);
@@ -944,10 +994,6 @@ export default function App() {
       .catch(() => {});
   }, [inTauri, changeFontSize, changeTheme]);
 
-  // ⌘=/⌘− 字号步进、⌘0 重置；⌘F 全局打开终端搜索（用户走查实证：此前只挂终端焦点层，
-  // 焦点在命令框/主机列表时 ⌘F 无响应且无可见入口——R6 现实版）。
-  // 捕获层：终端聚焦时也生效，且先于 makeTerm 的「其余 ⌘ 全拦截」分支——
-  // 此后事件即被终止，不会落进终端。
   // 主机栏开合与拖宽（200–300，§4.2）；grip 用指针捕获，拖动即改宽、松手落盘
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
@@ -1006,33 +1052,107 @@ export default function App() {
     return () => window.removeEventListener("resize", on);
   }, []);
 
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      const k = ev.key.toLowerCase();
-      if (k === "b") {
-        ev.preventDefault();
-        ev.stopPropagation();
-        toggleHostbar(!hostbarOpen);
-        return;
+  // Esc 关浮层（R13）：三个模态（确认/指纹/双因素）最优先——它们视觉上也最上层；
+  // 其余非模态浮层按固定序（搜索→设置→菜单→表单），非严格开叠序（§7.3 未细化
+  // 非模态次序，固定序与 R12 行为一致——rev-r13 低-3 如实登记）。指纹 Esc=取消
+  // 连接、双因素 Esc=取消认证，与各自「取消」按钮同语义。ref 持有（闭包引用
+  // 后文定义的处理器，无求值顺序问题）。
+  // §7.4：关闭工具后恢复到其触发前的有效焦点——工具均从终端场景触发，恢复即
+  // 聚焦活动终端（focusin 链会自动恢复 native Ctrl 上报）。
+  const restoreTermFocus = () => {
+    const sid = sidRef.current;
+    if (!sid) return;
+    termsRef.current.get(sid)?.term.focus();
+  };
+  const closeTopOverlayRef = useRef<() => boolean>(() => false);
+  closeTopOverlayRef.current = (): boolean => {
+    const ap = authPromptQueue[0];
+    if (ap) { void answerAuthPrompt(ap.id, ""); return true; }
+    const hk = hostKeyQueue[0];
+    if (hk) { void decideHostKey(hk, false); return true; }
+    if (confirm) { setConfirm(null); return true; }
+    if (searchOpen) { closeSearch(); return true; }
+    if (showSettings) { setShowSettings(false); return true; }
+    if (toolsOpen) { setToolsOpen(false); return true; }
+    if (tabsMenuOpen) { setTabsMenuOpen(false); return true; }
+    if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); return true; }
+    if (showImport) { setShowImport(false); return true; }
+    if (showAgentHelp) { setShowAgentHelp(false); return true; }
+    return false;
+  };
+
+  dispatchRef.current = (a: AppAction): boolean => {
+    switch (a.id) {
+      case "esc": {
+        const handled = closeTopOverlayRef.current();
+        if (handled) restoreTermFocus();
+        return handled;
       }
-      if (k === "f") {
-        if (!sidRef.current) return; // 无活动会话不劫持
-        ev.preventDefault();
-        ev.stopPropagation();
+      case "search":
+        if (!sidRef.current) return false; // 无活动会话不劫持（保持既有语义）
         setSearchOpen(true);
         setTimeout(() => searchInputRef.current?.focus(), 0);
-        return;
+        return true;
+      case "font-up": changeFontSize(fontRef.current + 1); return true;
+      case "font-down": changeFontSize(fontRef.current - 1); return true;
+      case "font-reset": changeFontSize(FONT_DEFAULT); return true;
+      case "hostbar": toggleHostbar(!hostbarOpenRef.current); return true;
+      case "settings":
+        // 菜单加速器不经 resolveAction 的模态门（NSMenu 在 WebView 之前消费），
+        // 这里补同一条 §7.3 规则：模态层打开时不叠开面板
+        if (modalRef.current) return false;
+        setShowSettings(true);
+        return true;
+      case "tab-switch": {
+        const t = sessionsRef.current[a.index];
+        if (t) void attachSession(t.id);
+        return !!t;
       }
-      if (k !== "=" && k !== "+" && k !== "-" && k !== "0") return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (k === "0") changeFontSize(FONT_DEFAULT);
-      else changeFontSize(fontRef.current + (k === "-" ? -1 : 1));
+      case "tab-cycle": {
+        const ss = sessionsRef.current;
+        if (!ss.length) return false;
+        const i0 = Math.max(0, ss.findIndex((x) => x.id === sidRef.current));
+        const target = ss[(i0 + a.dir + ss.length) % ss.length];
+        if (target) void attachSession(target.id);
+        return true;
+      }
+      case "tab-close": {
+        const cur = sidRef.current;
+        if (!cur) return false;
+        const curSession = sessionsRef.current.find((x) => x.id === cur);
+        if (curSession) requestCloseSession(curSession);
+        else void disconnectSid(cur);
+        return true;
+      }
+      default: return false;
+    }
+  };
+
+  // 唯一的 ⌘ 组合捕获层（R13）：keymap 解析 + dispatchRef 执行。模态期解析器
+  // 直接返回 null（除 Esc 交浮层链）——模态层不串输入。
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      // §7.4：表单编辑焦点判定（终端 textarea 不算——终端里 ⌘ 组合照常响应）
+      const ae = document.activeElement;
+      const inForm = !!(ae instanceof HTMLElement &&
+        (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT" || ae.isContentEditable) &&
+        !ae.classList.contains("xterm-helper-textarea"));
+      const a = resolveAction(ev, {
+        modal: modalRef.current,
+        native: inTauri,
+        inForm,
+        hasSessions: sessionsRef.current.length > 0,
+        hasActiveTab: !!sidRef.current,
+      });
+      if (!a) return;
+      if (dispatchRef.current(a)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [changeFontSize, hostbarOpen, toggleHostbar]);
+  }, []);
 
   // 由 splitRef/sidRef 统一同步各终端层的显示类（display 归它管，React 不渲染这些层）：
   // 单 pane：活动会话 .active；分屏：main=左半、second=右半，焦点 pane 加高亮与名牌
@@ -1231,6 +1351,22 @@ export default function App() {
   const [confirm, setConfirm] = useState<
     { kind: "closeSession"; sid: string; hostName: string } | { kind: "deleteHost"; id: string; name: string } | null
   >(null);
+  // 模态层信号（R13 §7.3）：确认/指纹/双因素任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
+  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm);
+  modalRef.current = modal;
+  // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
+  // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
+  useEffect(() => {
+    if (!inTauri) return;
+    if (modal) {
+      void invoke("note_terminal", { sid: sidRef.current, focused: false }).catch(() => {});
+      return;
+    }
+    const t = document.activeElement;
+    if (t instanceof HTMLElement && t.classList.contains("xterm-helper-textarea")) {
+      void invoke("note_terminal", { sid: sidRef.current, focused: true }).catch(() => {});
+    }
+  }, [modal, inTauri]);
   const requestCloseSession = useCallback((s: SessionInfo) => {
     if (s.state === "Disconnected") { void disconnectSid(s.id); return; }
     setConfirm({ kind: "closeSession", sid: s.id, hostName: s.host_name });
@@ -1250,53 +1386,7 @@ export default function App() {
     setConfirm(null);
   };
 
-  // ⌘1–9 快速切换到第 N 个会话（终端应用标配）。捕获阶段拦截，终端聚焦时也生效。
-  useEffect(() => {
-    if (!inTauri) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      const n = parseInt(ev.key, 10);
-      if (!n || n < 1 || n > 9) return;
-      const target = sessions[n - 1];
-      if (target) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        void attachSession(target.id);
-      }
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [attachSession, sessions]);
-
-  // ⌘W 关闭当前会话标签、⌘⇧] / ⌘⇧[ 标签循环切换（T19）。捕获层：终端聚焦时也
-  // 生效，且先于 makeTerm 的「其余 ⌘ 全拦截」。⌘W 只在开着会话时拦截（无会话保留
-  // 系统默认关窗行为）；⇧] / ⇧[ 用物理键位 ev.code 判定（Shift 下 ev.key 是 }/{）。
-  useEffect(() => {
-    if (!inTauri) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      if (ev.shiftKey && (ev.code === "BracketRight" || ev.code === "BracketLeft")) {
-        if (!sessions.length) return;
-        ev.preventDefault();
-        ev.stopPropagation();
-        const i0 = Math.max(0, sessions.findIndex((x) => x.id === sidRef.current));
-        const dir = ev.code === "BracketRight" ? 1 : -1;
-        const target = sessions[(i0 + dir + sessions.length) % sessions.length];
-        if (target) void attachSession(target.id);
-        return;
-      }
-      if (ev.shiftKey || ev.key.toLowerCase() !== "w") return;
-      const cur = sidRef.current;
-      if (!cur) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      const curSession = sessions.find((x) => x.id === cur);
-      if (curSession) requestCloseSession(curSession);
-      else void disconnectSid(cur);
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [attachSession, disconnectSid, requestCloseSession, sessions]);
+  // ⌘1–9 / ⌘W / ⌘⇧[] / Esc 已并入上方统一 action 分发（R13）
 
   // 关闭搜索：清高亮、焦点回终端
   const closeSearch = useCallback(() => {
@@ -1306,26 +1396,10 @@ export default function App() {
     xtermRef.current?.focus();
   }, []);
 
-  // Esc 统一关闭浮层（P2-1）：搜索框/设置面板/添加主机/导入/Agent 指引。
-  // 输入控件不劫持（命令框 Esc 有自己的语义；搜索框 input 自带 Esc 关闭）；
-  // xterm 的 textarea 除外——终端里 Esc 是 vim 等程序的功能键，绝不能全局拦截。
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      const t = ev.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
-          !t.classList.contains("xterm-helper-textarea")) return;
-      if (searchOpen) { closeSearch(); return; }
-      if (showSettings) { setShowSettings(false); return; }
-      if (toolsOpen) { setToolsOpen(false); return; }
-      if (tabsMenuOpen) { setTabsMenuOpen(false); return; }
-      if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); return; }
-      if (showImport) { setShowImport(false); return; }
-      if (showAgentHelp) { setShowAgentHelp(false); return; }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [searchOpen, showSettings, showAddHost, showImport, showAgentHelp, editingHost, closeSearch, toolsOpen, tabsMenuOpen]);
+  // 旧 Esc 浮层链已并入统一 action 分发（closeTopOverlayRef，R13）。
+  // 输入控件语义：无浮层时 Esc 原样透传（命令框清空、搜索框自带关闭不变）；
+  // 有浮层时浮层优先消费（§7.3）——与旧「INPUT/TEXTAREA 一律不劫持」相比，
+  // 浮层开着时 Esc 不再被输入框吞掉。
 
   // macOS 窗口标题跟随当前会话主机（T16）；浏览器 demo 同步 document.title
   useEffect(() => {
@@ -1823,7 +1897,7 @@ export default function App() {
         </div>
         <div className="hb-bottom">
           <button className="hb-settings" title="显示设置（字号 / 主题）" aria-label="显示设置"
-            onClick={() => setShowSettings(true)}>
+            onClick={() => dispatchRef.current({ id: "settings" })}>
             <IconSliders size={14} />设置
           </button>
         </div>
@@ -2018,7 +2092,7 @@ export default function App() {
                 className={"ghost icon-btn" + (searchOpen ? " ts-open" : "")}
                 title="搜索终端内容（⌘F）"
                 aria-label="搜索终端内容"
-                onClick={() => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 0); }}
+                onClick={() => dispatchRef.current({ id: "search" })}
               ><IconSearch size={15} /></button>
             )}
             <button

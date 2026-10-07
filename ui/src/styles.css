@@ -431,8 +431,8 @@ textarea {
 }
 .tab-scroll:hover { background: var(--panel2); color: var(--text); }
 .tab {
-  display: flex; align-items: center; gap: 5px; flex: none; min-width: 0;
-  max-width: 170px; padding: 4px 10px; font-size: 12px; color: var(--text-sub);
+  display: flex; align-items: center; gap: 5px; flex: none; min-width: 120px;
+  max-width: 220px; padding: 4px 10px; font-size: 12px; color: var(--text-sub);
   border: none; border-radius: 6px;
   background: transparent; cursor: pointer; user-select: none;
 }

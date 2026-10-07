@@ -756,6 +756,8 @@ fn main() {
                     r11_smoke_script(&run_id)
                 } else if mode == "r12" {
                     r12_smoke_script(&run_id)
+                } else if mode == "r13" {
+                    r13_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -932,6 +934,28 @@ fn main() {
             if let Err(e) = install_native_menu(app.handle()) {
                 eprintln!("[app] native menu install failed: {e}");
             }
+            // R13 冒烟：menu-settings→统一分发的 FE 半链路实证。NSMenu 项命中与
+            // ⌘, 加速器最终都走 app.emit("menu-settings")（上一行 on_menu_event）。
+            // 冒烟模式轮询信标日志等脚本 armed 后补发同一事件（rev-r13 低-5：
+            // 定时 emit 与冷启动进度有竞态；信标日志每轮按规程清空，无误触）。
+            if std::env::var("TINYSSH_SMOKE").map(|v| v == "1").unwrap_or(false)
+                && std::env::var("TINYSSH_SMOKE_MODE").map(|v| v == "r13").unwrap_or(false)
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+                    loop {
+                        if std::time::Instant::now() > deadline { break; }
+                        if let Ok(s) = std::fs::read_to_string("/tmp/t40_smoke/beacon.log") {
+                            if s.contains("r13-armed-menu") {
+                                let _ = handle.emit("menu-settings", ());
+                                break;
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
+                });
+            }
             app.on_menu_event(|app, event| {
                 if event.id() == "settings" {
                     let _ = app.emit("menu-settings", ());
@@ -1072,6 +1096,169 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// R13 统一 action 分发探针注入脚本（TINYSSH_SMOKE_MODE=r13；dev 门控，产品路径无关）：
+/// 单一分发语义（⌘1/⌘2/⌘⇧[]/⌘W 各恰一次执行）→ Esc 链 + 焦点回终端 → 模态层吞 ⌘ →
+/// IME 组合期不触发 → 表单焦点 ⌘B 不劫持 → 标签 120–220 → 原生菜单事件（Rust 侧
+/// 轮询信标 armed 后 emit menu-settings）→ 统一分发开设置面板。合成键盘事件走
+/// window 捕获层，与 r12 同口径（真实 CGEvent 注入受 P2 键注入冻结协议约束，不在此列）。
+fn r13_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = (s) => {
+    document.title = 'SMOKE|' + s;
+    fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)).catch(() => {});
+  };
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const key = (init) => document.body.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ bubbles: true }, init)));
+  const activeIs = (i) => {
+    const els = document.querySelectorAll('.tabbar .tab');
+    return !!(els[i] && els[i].classList.contains('tab-active'));
+  };
+  const rowH = () => {
+    const r = document.querySelector('.xterm-rows > div');
+    return r ? Math.round(parseFloat(getComputedStyle(r).height)) : null;
+  };
+  const searchVisible = () => {
+    const s = document.querySelector('.term-search');
+    return !!(s && getComputedStyle(s).display !== 'none');
+  };
+  (async () => {
+    try {
+      // localStorage 归一（rev-r12 LOW-5 同款）
+      if (!localStorage.getItem('ui.r13fresh')) {
+        try {
+          localStorage.setItem('ui.hostbar', '1');
+          localStorage.setItem('ui.hostbar_w', '224');
+          localStorage.setItem('ui.r13fresh', '1');
+        } catch (e) {}
+        location.reload();
+        return;
+      }
+      try { localStorage.removeItem('ui.r13fresh'); } catch (e) {}
+      title('r13-opening');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      const tabN = await waitFor(() => document.querySelectorAll('.tabbar .tab').length || null, 100);
+      if (!tabN) return title('FAIL-no-tab');
+      document.querySelector('.tabbar .tab').click();
+      if (!(await waitFor(() => document.querySelector('.session-toolbar'), 100))) return title('FAIL-toolbar-missing');
+      // 第二会话（本机）：两个标签供 ⌘1/⌘2/⌘⇧[]/⌘W 测
+      const local = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes('本机'));
+      if (!local) return title('FAIL-no-local');
+      local.querySelector('.host-connect-btn').click();
+      if (!(await waitFor(() => document.querySelectorAll('.tabbar .tab').length === 2 || null, 100))) return title('FAIL-second-tab');
+      // §320 标签宽界
+      const ws = [...document.querySelectorAll('.tabbar .tab')].map((e) => Math.round(e.getBoundingClientRect().width));
+      if (!ws.every((w) => w >= 120 && w <= 220)) return title('FAIL-tabwidth:' + ws.join(','));
+      mark(RUN + '|r13-tabwidth|' + ws.join(','));
+      // ⌘1 / ⌘2 精确切签（单一分发：激活态唯一）
+      key({ key: '1', metaKey: true });
+      await sleep(350);
+      if (!activeIs(0)) return title('FAIL-cmd1');
+      key({ key: '2', metaKey: true });
+      await sleep(350);
+      if (!activeIs(1)) return title('FAIL-cmd2');
+      // ⌘⇧] 循环下一根（idx1 → 环绕 idx0）；⌘⇧[ 回 idx1
+      key({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true });
+      await sleep(350);
+      if (!activeIs(0)) return title('FAIL-cycle-r');
+      key({ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true });
+      await sleep(350);
+      if (!activeIs(1)) return title('FAIL-cycle-l');
+      mark(RUN + '|r13-tabs-ok');
+      // ⌘W → 危险确认弹窗；Esc 关确认保会话；再 ⌘W → 确认断开 → 单标签
+      key({ key: 'w', metaKey: true });
+      await sleep(350);
+      const dlg = document.querySelector('.confirm-dialog');
+      if (!dlg || dlg.textContent.indexOf('断开') < 0) return title('FAIL-cmdw-confirm');
+      key({ key: 'Escape' });
+      await sleep(350);
+      if (document.querySelector('.confirm-dialog')) return title('FAIL-esc-confirm');
+      if (document.querySelectorAll('.tabbar .tab').length !== 2) return title('FAIL-esc-kept-tabs');
+      key({ key: 'w', metaKey: true });
+      await sleep(350);
+      const dlg2 = document.querySelector('.confirm-dialog');
+      if (!dlg2) return title('FAIL-cmdw-confirm2');
+      [...dlg2.querySelectorAll('button')].find((b) => b.textContent.includes('断开连接')).click();
+      if (!(await waitFor(() => document.querySelectorAll('.tabbar .tab').length === 1 || null, 100))) return title('FAIL-cmdw-close');
+      mark(RUN + '|r13-cmdw-ok');
+      // ⌘= 步进恰好 +1（双执行即 +2）；⌘0 复位
+      const h0 = rowH();
+      key({ key: '=', metaKey: true });
+      await sleep(300);
+      const h1 = rowH();
+      if (h1 === null || h0 === null || h1 - h0 !== 1) return title('FAIL-fontstep:' + h0 + '->' + h1);
+      key({ key: '0', metaKey: true });
+      await sleep(300);
+      if (rowH() !== h0) return title('FAIL-fontreset');
+      // ⌘F → 搜索开 + 焦点入搜索框；Esc → 关 + 焦点回终端
+      key({ key: 'f', metaKey: true });
+      await sleep(300);
+      if (!searchVisible()) return title('FAIL-cmdf');
+      key({ key: 'Escape' });
+      await sleep(300);
+      if (searchVisible()) return title('FAIL-esc-search');
+      const ae = document.activeElement || {};
+      if (!ae.classList || !ae.classList.contains('xterm-helper-textarea')) return title('FAIL-focus-back');
+      mark(RUN + '|r13-cmdf-ok');
+      // 模态层：确认弹窗吞 ⌘F/⌘=，Esc 关确认
+      const toolsBtn = document.querySelector('.session-toolbar .st-tools > button');
+      if (!toolsBtn) return title('FAIL-no-toolsbtn');
+      toolsBtn.click();
+      await sleep(250);
+      const closeItem = [...document.querySelectorAll('.tools-menu [role="menuitem"]')].find((i) => i.textContent.includes('关闭会话'));
+      if (!closeItem) return title('FAIL-no-closeitem');
+      closeItem.click();
+      await sleep(350);
+      if (!document.querySelector('.confirm-dialog')) return title('FAIL-modal-open');
+      key({ key: 'f', metaKey: true });
+      await sleep(300);
+      if (searchVisible()) return title('FAIL-modal-cmdf');
+      key({ key: 'Escape' });
+      await sleep(350);
+      if (document.querySelector('.confirm-dialog')) return title('FAIL-modal-esc');
+      mark(RUN + '|r13-modal-ok');
+      // IME 组合期：isComposing / keyCode 229 都不触发
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, isComposing: true, bubbles: true }));
+      await sleep(300);
+      if (searchVisible()) return title('FAIL-ime-composing');
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, keyCode: 229, bubbles: true }));
+      await sleep(300);
+      if (searchVisible()) return title('FAIL-ime-229');
+      // 表单焦点 ⌘B 不劫持（§7.4）
+      const hbInput = document.querySelector('.hb-search input');
+      if (hbInput) {
+        hbInput.focus();
+        key({ key: 'b', metaKey: true });
+        await sleep(300);
+        if (!document.querySelector('.hostbar')) return title('FAIL-inform-cmdb');
+        hbInput.blur();
+      }
+      mark(RUN + '|r13-input-ok');
+      // 原生菜单事件（Rust 侧 T+15s emit menu-settings）→ 统一分发开设置面板
+      mark(RUN + '|r13-armed-menu');
+      const opened = await waitFor(() => document.querySelector('.term-settings'), 300);
+      if (!opened) return title('FAIL-menu-settings');
+      key({ key: 'Escape' });
+      await sleep(300);
+      if (document.querySelector('.term-settings')) return title('FAIL-settings-esc');
+      title('r13-DONE');
+    } catch (e) {
+      title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
 }
 
 /// R12 AppShell 探针注入脚本（TINYSSH_SMOKE_MODE=r12；dev 门控，产品路径无关）：

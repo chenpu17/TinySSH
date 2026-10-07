@@ -1,0 +1,269 @@
+{
+ "A_welcome": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 756
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  },
+  "welcome": true,
+  "tabbarRow": true,
+  "sessionToolbar": false,
+  "taskPanel": false,
+  "hostCards": 5,
+  "hostbarInlineWidth": "224px",
+  "sbLeft": "未连接",
+  "hScroll": false,
+  "chrome": "dark"
+ },
+ "styles_dark": {
+  "titlebar": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-bottom-color": "rgb(38, 48, 64)",
+   "border-bottom-width": "1px",
+   "height": "44px"
+  },
+  "hostbar": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-right-color": "rgb(38, 48, 64)"
+  },
+  "statusbar": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-top-color": "rgb(38, 48, 64)",
+   "font-size": "11px",
+   "color": "rgb(93, 111, 130)",
+   "height": "24px"
+  },
+  "appTitle": {
+   "font-size": "13px",
+   "font-weight": "700"
+  },
+  "tabbarRow": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-bottom-color": "rgb(38, 48, 64)",
+   "height": "40px"
+  },
+  "taskPanel": null
+ },
+ "tokens_dark": {
+  "panel": "#141922",
+  "border": "#263040",
+  "chrome": "dark"
+ },
+ "fontTiers_dark": {
+  "appTitle": "13px",
+  "tab": "12px",
+  "statusbar": "11px",
+  "sbBtn": "11px",
+  "hbSearchInput": "12px",
+  "hbSettings": "12px"
+ },
+ "B_vp1024": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1024,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 724
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 744,
+   "w": 798,
+   "h": 24
+  },
+  "main": {
+   "x": 226,
+   "y": 44,
+   "w": 798,
+   "h": 724
+  },
+  "welcome": true,
+  "hScroll": false,
+  "vOver": false,
+  "filesTpFull": true,
+  "panelBox": {
+   "x": 226,
+   "y": 84,
+   "w": 798,
+   "h": 660
+  }
+ },
+ "C_vp960": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 960,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 556
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 576,
+   "w": 734,
+   "h": 24
+  },
+  "main": {
+   "x": 226,
+   "y": 44,
+   "w": 734,
+   "h": 556
+  },
+  "welcome": true,
+  "hScroll": false,
+  "vOver": false
+ },
+ "D_session1": {
+  "welcomeGone": true,
+  "tabbarRow": {
+   "x": 226,
+   "y": 70,
+   "w": 1054,
+   "h": 40
+  },
+  "sessionToolbar": {
+   "x": 226,
+   "y": 110,
+   "w": 1054,
+   "h": 40
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  },
+  "tabs": [
+   "prod-1",
+   "staging-1",
+   "本机"
+  ],
+  "sbLeft": "本地 · UTF-8",
+  "xterm": true
+ },
+ "D_toastVsStatusbar": {
+  "toast": {
+   "top": 723,
+   "bottom": 760,
+   "right": 1264
+  },
+  "statusbar": {
+   "top": 776,
+   "bottom": 800
+  },
+  "verticalOverlapPx": -16
+ },
+ "I_files": {
+  "panel": {
+   "x": 896,
+   "y": 150,
+   "w": 384,
+   "h": 626
+  },
+  "head": "文件与传输",
+  "tpFull": false
+ },
+ "I_panels_closed": true,
+ "T_settingsOpen": true,
+ "T_themeOptions": [
+  "Aa深色（默认）",
+  "Aa浅色",
+  "AaSolarized 深色",
+  "AaSolarized 浅色"
+ ],
+ "T_light": {
+  "chrome": "light",
+  "tokens": {
+   "panel": "#f4f6f8",
+   "border": "#d2dae2"
+  },
+  "titlebarBg": "rgb(244, 246, 248)",
+  "statusbarColor": "rgb(92, 104, 117)",
+  "appTitleColor": "rgb(36, 46, 56)",
+  "hScroll": false
+ },
+ "T_darkRestore": {
+  "chrome": "dark",
+  "tokens": {
+   "panel": "#141922",
+   "border": "#263040"
+  }
+ },
+ "T_settingsClosedByEsc": true,
+ "F_session2": {
+  "tabCount": 4,
+  "tabs": [
+   "prod-1",
+   "staging-1",
+   "本机",
+   "prod-1"
+  ],
+  "tabbarRow": {
+   "x": 226,
+   "y": 70,
+   "w": 1054,
+   "h": 40
+  },
+  "sessionToolbar": {
+   "x": 226,
+   "y": 110,
+   "w": 1054,
+   "h": 40
+  },
+  "hkMaskResidue": false
+ },
+ "F_tabWidths": [
+  {
+   "label": "prod-1",
+   "w": 120,
+   "minW": "120px",
+   "maxW": "220px"
+  },
+  {
+   "label": "staging-1",
+   "w": 133.3,
+   "minW": "120px",
+   "maxW": "220px"
+  },
+  {
+   "label": "本机",
+   "w": 120,
+   "minW": "120px",
+   "maxW": "220px"
+  },
+  {
+   "label": "prod-1",
+   "w": 120,
+   "minW": "120px",
+   "maxW": "220px"
+  }
+ ],
+ "G_hostbar": {
+  "cmdBCollapsed": true,
+  "cmdBReopened": true,
+  "widthReopened": 224
+ },
+ "errors": []
+}

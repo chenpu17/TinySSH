@@ -1,0 +1,89 @@
+{
+ "S1_connectedSettled": {
+  "scrollLeft": 33,
+  "clientW": 488,
+  "scrollW": 567,
+  "btnL": true,
+  "btnR": true,
+  "active": {
+   "l": 608,
+   "r": 793
+  },
+  "bar": {
+   "l": 259,
+   "r": 747
+  },
+  "activeFullyVisible": false
+ },
+ "S2_counterfactual_R12width": {
+  "scrollW": 533,
+  "clientW": 488,
+  "overflowing": true
+ },
+ "S3_afterClickCutTab": {
+  "scrollLeft": 33,
+  "clientW": 488,
+  "scrollW": 567,
+  "btnL": true,
+  "btnR": true,
+  "active": {
+   "l": 608,
+   "r": 793
+  },
+  "bar": {
+   "l": 259,
+   "r": 747
+  },
+  "activeFullyVisible": false
+ },
+ "S4_afterScrollBtnR": {
+  "scrollLeft": 56,
+  "clientW": 511,
+  "scrollW": 567,
+  "btnL": true,
+  "btnR": false,
+  "active": {
+   "l": 585,
+   "r": 770
+  },
+  "bar": {
+   "l": 259,
+   "r": 770
+  },
+  "activeFullyVisible": true
+ },
+ "S5_afterScrollBtnL": {
+  "scrollLeft": 0,
+  "clientW": 511,
+  "scrollW": 567,
+  "btnL": false,
+  "btnR": true,
+  "active": {
+   "l": 618,
+   "r": 803
+  },
+  "bar": {
+   "l": 236,
+   "r": 747
+  },
+  "activeFullyVisible": false
+ },
+ "S6_menuClicked": "本机",
+ "S6_menuPathState": {
+  "scrollLeft": 0,
+  "clientW": 511,
+  "scrollW": 567,
+  "btnL": false,
+  "btnR": true,
+  "active": {
+   "l": 495,
+   "r": 615
+  },
+  "bar": {
+   "l": 236,
+   "r": 747
+  },
+  "activeFullyVisible": true
+ },
+ "errors": []
+}

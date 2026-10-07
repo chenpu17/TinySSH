@@ -1,0 +1,359 @@
+{
+ "after_c0": {
+  "tag": "after card0",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 236,
+     "r": 770,
+     "w": 534
+    },
+    "clientW": 534,
+    "scrollW": 534,
+    "scrollLeft": 0,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": false,
+    "btnR": false,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 236,
+      "r": 356,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 359,
+      "r": 492,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 495,
+      "r": 615,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "after_c2": {
+  "tag": "after card2",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 236,
+     "r": 770,
+     "w": 534
+    },
+    "clientW": 534,
+    "scrollW": 534,
+    "scrollLeft": 0,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": false,
+    "btnR": false,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 236,
+      "r": 356,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 359,
+      "r": 492,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 495,
+      "r": 615,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "after_c3": {
+  "tag": "after card3",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 259,
+     "r": 747,
+     "w": 488
+    },
+    "clientW": 488,
+    "scrollW": 567,
+    "scrollLeft": 33,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": true,
+    "btnR": true,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 226,
+      "r": 346,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 349,
+      "r": 482,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 485,
+      "r": 605,
+      "act": false
+     },
+     {
+      "label": "otp-1（演示 2",
+      "l": 608,
+      "r": 793,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "settled": {
+  "tag": "settled+800ms",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 259,
+     "r": 747,
+     "w": 488
+    },
+    "clientW": 488,
+    "scrollW": 567,
+    "scrollLeft": 33,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": true,
+    "btnR": true,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 226,
+      "r": 346,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 349,
+      "r": 482,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 485,
+      "r": 605,
+      "act": false
+     },
+     {
+      "label": "otp-1（演示 2",
+      "l": 608,
+      "r": 793,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "click_50ms": {
+  "tag": "t+50ms",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 259,
+     "r": 747,
+     "w": 488
+    },
+    "clientW": 488,
+    "scrollW": 567,
+    "scrollLeft": 33,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": true,
+    "btnR": true,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 226,
+      "r": 346,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 349,
+      "r": 482,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 485,
+      "r": 605,
+      "act": false
+     },
+     {
+      "label": "otp-1（演示 2",
+      "l": 608,
+      "r": 793,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "click_200ms": {
+  "tag": "t+200ms",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 259,
+     "r": 747,
+     "w": 488
+    },
+    "clientW": 488,
+    "scrollW": 567,
+    "scrollLeft": 33,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": true,
+    "btnR": true,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 226,
+      "r": 346,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 349,
+      "r": 482,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 485,
+      "r": 605,
+      "act": false
+     },
+     {
+      "label": "otp-1（演示 2",
+      "l": 608,
+      "r": 793,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "click_600ms": {
+  "tag": "t+600ms",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 259,
+     "r": 747,
+     "w": 488
+    },
+    "clientW": 488,
+    "scrollW": 567,
+    "scrollLeft": 33,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": true,
+    "btnR": true,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 226,
+      "r": 346,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 349,
+      "r": 482,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 485,
+      "r": 605,
+      "act": false
+     },
+     {
+      "label": "otp-1（演示 2",
+      "l": 608,
+      "r": 793,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "click_1200ms": {
+  "tag": "t+1200ms",
+  "barCount": 1,
+  "bars": [
+   {
+    "rect": {
+     "l": 259,
+     "r": 747,
+     "w": 488
+    },
+    "clientW": 488,
+    "scrollW": 567,
+    "scrollLeft": 33,
+    "rowL": 226,
+    "rowR": 900,
+    "btnL": true,
+    "btnR": true,
+    "tabs": [
+     {
+      "label": "prod-1",
+      "l": 226,
+      "r": 346,
+      "act": false
+     },
+     {
+      "label": "staging-1",
+      "l": 349,
+      "r": 482,
+      "act": false
+     },
+     {
+      "label": "本机",
+      "l": 485,
+      "r": 605,
+      "act": false
+     },
+     {
+      "label": "otp-1（演示 2",
+      "l": 608,
+      "r": 793,
+      "act": true
+     }
+    ]
+   }
+  ]
+ },
+ "errors": []
+}

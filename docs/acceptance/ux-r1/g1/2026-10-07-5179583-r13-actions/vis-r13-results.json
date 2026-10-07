@@ -1,0 +1,204 @@
+{
+  "meta": {
+    "task": "vis-r13 独立视觉复验（UX-R1 G1 R13 统一快捷键分发）",
+    "date": "2026-10-07",
+    "env": "headless Chromium (Google Chrome 140.x, Playwright), dev server http://localhost:5183, demo 模式",
+    "baseline": "docs/acceptance/ux-r1/g1/2026-10-07-b8775c8-r12-appshell/vis-shots/ (23 张) + vis-r12-results.json",
+    "localStorage_per_round": "ui.hostbar='1', ui.hostbar_w='224'（另 ui.theme='dark'、清 ui.font_size）后 reload",
+    "probes": [
+      "vis-r13-regress.js / vis-r13-regress-result.json",
+      "vis-r13-tabs.js / vis-r13-tabs-result.json",
+      "vis-r13-tabs2.js / vis-r13-tabs2-result.json（截断最右标签直点）",
+      "vis-r13-diag.js / vis-r13-diag-result.json（滚动真值多次采样）",
+      "vis-r13-diag2.js / vis-r13-diag2-result.json（根因+兜底+R12 宽度反证）"
+    ],
+    "screenshots": "vis-shots/ 26 张（01-05,07,08,11,20-22 对位 R12 基线；30-33e R13 专项）"
+  },
+  "zero_regression": {
+    "A_welcome_1280x800": {
+      "verdict": "PASS",
+      "measured": {
+        "titlebar": { "x": 0, "y": 0, "w": 1280, "h": 44 },
+        "hostbar": { "x": 0, "y": 44, "w": 224, "h": 756 },
+        "statusbar": { "x": 226, "y": 776, "w": 1054, "h": 24 },
+        "welcome": true, "tabbarRow": true, "sessionToolbar": false, "taskPanel": false,
+        "hostCards": 5, "hScroll": false
+      },
+      "vs_R12": "逐字段一致",
+      "shot": "01-welcome-1280x800.png"
+    },
+    "styles_dark": {
+      "verdict": "PASS",
+      "measured": {
+        "titlebar": { "bg": "rgb(20,25,34)", "borderBottom": "rgb(38,48,64) 1px", "height": "44px" },
+        "hostbar": { "bg": "rgb(20,25,34)", "borderRight": "rgb(38,48,64)" },
+        "statusbar": { "bg": "rgb(20,25,34)", "borderTop": "rgb(38,48,64)", "font": "11px", "color": "rgb(93,111,130)", "height": "24px" },
+        "tabbarRow": { "bg": "rgb(20,25,34)", "borderBottom": "rgb(38,48,64)", "height": "40px" }
+      },
+      "vs_R12": "一致",
+      "shot": "01-welcome-1280x800.png"
+    },
+    "tokens_dark": { "verdict": "PASS", "measured": { "--panel": "#141922", "--border": "#263040" }, "vs_R12": "一致" },
+    "fontTiers": {
+      "verdict": "PASS",
+      "measured": { "appTitle": "13px", "tab": "12px", "statusbar": "11px", "sbBtn": "11px", "hbSearchInput": "12px", "hbSettings": "12px" },
+      "vs_R12": "一致（13/12/11 档不变）"
+    },
+    "B_vp1024": {
+      "verdict": "PASS",
+      "measured": { "titlebar_h": 44, "hostbar_w": 224, "statusbar": { "y": 744, "h": 24 }, "main": { "w": 798 }, "hScroll": false, "vOver": false, "filesTpFull": true, "panelBox": { "x": 226, "w": 798 } },
+      "vs_R12": "一致",
+      "shot": "02-b_vp1024.png, 04-vp1024-files-tpfull.png"
+    },
+    "C_vp960": {
+      "verdict": "PASS",
+      "measured": { "titlebar_h": 44, "hostbar_w": 224, "statusbar": { "y": 576, "h": 24 }, "main": { "w": 734 }, "hScroll": false, "vOver": false },
+      "vs_R12": "一致",
+      "shot": "03-c_vp960.png"
+    },
+    "D_session1": {
+      "verdict": "PASS",
+      "measured": { "tabbarRow": { "h": 40 }, "sessionToolbar": { "y": 110, "h": 40 }, "statusbar": { "y": 776, "h": 24 }, "sbLeft": "本地 · UTF-8", "xterm": true, "toast_vs_statusbar": { "toastBottom": 760, "statusbarTop": 776, "verticalOverlapPx": -16 } },
+      "vs_R12": "几何一致；toast 对位为 R12 修复后终态（760<776）",
+      "shot": "05-session1-connect-toast.png"
+    },
+    "I_panel_files_384": {
+      "verdict": "PASS",
+      "measured": { "panel": { "x": 896, "y": 150, "w": 384, "h": 626 }, "head": "文件与传输", "tpFull": false },
+      "vs_R12": "一致",
+      "shot": "11-panel-files.png"
+    },
+    "themes": {
+      "verdict": "PASS",
+      "measured": {
+        "light": { "chrome": "light", "--panel": "#f4f6f8", "--border": "#d2dae2", "titlebarBg": "rgb(244,246,248)", "appTitleColor": "rgb(36,46,56)", "hScroll": false },
+        "darkRestore": { "chrome": "dark", "--panel": "#141922", "--border": "#263040" },
+        "settingsClosedByEsc": true
+      },
+      "path": ".hb-settings → 显示设置 → 主题四选项（深色/浅色/Solarized 深/浅）",
+      "shot": "20-theme-settings.png, 21-theme-light.png, 22-theme-dark-restore.png"
+    },
+    "G_hostbar_cmdB": { "verdict": "PASS", "measured": { "cmdBCollapsed": true, "cmdBReopened": true, "widthReopened": 224 }, "shot": "08-hostbar-collapsed.png" }
+  },
+  "r13_style_tab_widths": {
+    "css_computed": { "minWidth": "120px", "maxWidth": "220px" },
+    "real_tabs_4_sessions": {
+      "verdict": "PASS",
+      "measured": [
+        { "label": "prod-1", "w": 120, "note": "短名被 min-width 抬到 120（R12 时可为 0 宽下限，改动生效）" },
+        { "label": "staging-1", "w": 133.3 },
+        { "label": "本机", "w": 120 },
+        { "label": "otp-1（演示 2FA）", "w": 185.2 }
+      ],
+      "all_in_[120,220]": true,
+      "shot": "30-tabs-multi-widths.png"
+    },
+    "long_label_ellipsis": {
+      "verdict": "PASS",
+      "measured": { "injected": "30 个 CJK", "tabW": 220, "clampedAtMax": true, "labelClientW": 141, "labelScrollW": 364, "clipped": true, "textOverflow": "ellipsis", "whiteSpace": "nowrap", "rowH": 40 },
+      "shot": "31-tab-longlabel-ellipsis.png"
+    }
+  },
+  "r13_overflow_scroll": {
+    "overflow_at_900": {
+      "verdict": "PASS",
+      "measured": { "tabbarScrollW": 567, "clientW": 511, "overflowing": true, "btnR": true },
+      "shot": "32-tab-overflow-900.png"
+    },
+    "menu_path_activate_last_non_active": {
+      "verdict": "PASS",
+      "measured": { "clicked": "本机（最后一根非 tm-active 行）", "activeFullyVisible": true },
+      "shot": "33e-menu-path-activated.png"
+    },
+    "direct_click_cut_rightmost_tab": {
+      "verdict": "FAIL",
+      "measured": {
+        "state": "900 宽、4 标签、最右 otp-1 内容右缘 793 > 裁剪箱 747（截 46px）",
+        "after_click_settled": { "scrollLeft": 33, "requiredScrollLeft": 79, "activeRect": { "l": 608, "r": 793 }, "barRect": { "l": 259, "r": 747 }, "activeFullyVisible": false },
+        "visual": "活动标签分屏图标半截、× 关闭钮整体不可见（33c 放大裁片核实）；最左标签同时被 ‹ 钮裁 33px（'prod-1'→'od-1'）",
+        "stability": "≥1.2s 稳定不复位，3 次独立运行复现"
+      },
+      "root_cause": "App.tsx:373 sid 变更 scrollIntoView(inline:nearest) 一次性执行：滚动时左右滚动钮尚未渲染（clientW=534，算得 567-534=33），滚动落地后 ‹ › 两钮（各 20px+3px gap）插入使 clientW 变 488、需 79，无二次滚动入口",
+      "mitigation_works": "点 › 钮滚到 scrollLeft=56（clientW 回 511）后活动标签完全可见（33d）",
+      "attribution": "非 R13 diff 引入：反证实测同 4 标签在 R12 宽度（min-width:0/max-width:170 注入还原）下 900 宽同样溢出（scrollW 533 > clientW 488）→ R12 既有『scrollIntoView 与滚动钮布局竞态』，R13 min-width 120 使同态更易达且溢出量增大（567 vs 533）",
+      "minor_note": "› 钮 title 计数『右侧还有 0 个会话被收起』与可见截断不符——measureTabbar 只数完全移出者（App.tsx:349-353 判据 rect.left > bar.right+1），部分截断不计",
+      "shots": ["33b-tab-overflow-click-cut-rightmost.png", "33c-cut-tab-active-under-scrolled.png", "33d-scrollbtn-r-fixes-visibility.png"]
+    }
+  },
+  "r13_esc_chain_and_search": {
+    "esc_closes_topmost_overlay": {
+      "verdict": "PASS",
+      "measured": {
+        "toolsMenu": { "open": true, "closedByEsc": true },
+        "settingsPanel": { "open": true, "closedByEsc": true },
+        "confirmDialog": { "open": true, "title": "断开与 prod-1 的连接？", "closedByEsc": true, "sessionKept_tabCount": 4 },
+        "geometry_before_after_chain": "逐字段相等（tabbarRow/toolbar/statusbar）",
+        "modal_gate": "确认弹窗打开时 ⌘F 不开搜索（模态期 ⌘ 组合吞掉，无浮层叠开）"
+      },
+      "shots": ["34-tools-menu-open.png", "35-esc-tools-closed.png", "36-settings-open.png", "37-esc-settings-closed.png", "38-confirm-open.png", "39-esc-confirm-closed.png"]
+    },
+    "cmdF_search": {
+      "verdict": "PASS",
+      "measured": {
+        "opens": true,
+        "focus": { "activeElement_is_search_input": true, "focusRing": "box-shadow rgba(61,157,168,0.2) 0 0 0 3px + border rgb(61,157,168)" },
+        "closedByEsc": true,
+        "focusReturnsToTerminal": "xterm-helper-textarea"
+      },
+      "shots": ["40-cmdf-search-focus.png", "41-esc-search-closed.png"]
+    }
+  },
+  "fix_reverification": {
+    "fix_under_test": "App.tsx ~371 滚入视野 effect：首滚 + 220ms 布局稳定补滚 + ResizeObserver 跟随 .tabbar 宽度变化补滚（作者修复，vis-r13 独立复验）",
+    "A_direct_click_cut_tab": {
+      "verdict": "PASS（原 FAIL 已修复）",
+      "measured": {
+        "settled": { "scrollLeft": 56, "requiredBeforeFix": 79, "preFixScrollLeft": 33, "activeRect": { "l": 585, "r": 770 }, "barRect": { "l": 259, "r": 770 }, "activeFullyVisible": true },
+        "xButton": { "present": true, "xRight": 760, "fullyInsideBar": true, "note": "× 钮完整可见（修复前整体被截）" },
+        "stability_2s": "8×250ms 采样 scrollLeft 恒 56，无振荡/回调环",
+        "visual": "45-fix-cut-tab-click-settled.png 放大裁片核实：标签右缘完整、分屏图标与 × 钮全可见"
+      },
+      "shots": ["45-fix-cut-tab-click-settled.png"]
+    },
+    "B_resize_path": {
+      "verdict": "PASS",
+      "measured": { "1280_5tabs_active_rightmost": "全可见 sl=0", "shrink_900_no_clicks": { "scrollLeft": 193, "activeFullyVisible": true, "note": "不点任何标签，RO 补滚自动滚入" } },
+      "shot": "46-fix-resize-900-auto-scroll.png"
+    },
+    "C_hostbar_toggle": {
+      "verdict": "PASS",
+      "measured": { "collapse": { "tabbarClientW": 698, "scrollLeftReclamp": 6, "activeFullyVisible": true }, "reexpand": { "activeFullyVisible": true } },
+      "shots": ["47-fix-hostbar-collapsed.png", "48-fix-hostbar-reexpanded.png"]
+    },
+    "D_task_panel_toggle": {
+      "verdict": "PASS",
+      "measured": { "open": { "panelW": 384, "tpFull": false, "tabbarClientW": 914, "activeFullyVisible": true }, "close": { "activeFullyVisible": true } },
+      "shots": ["49-fix-panel-open.png"]
+    },
+    "E_grip_drag_jitter": {
+      "verdict": "PASS",
+      "measured": {
+        "visible_regime": "1280 宽 4 标签全程可见，拖把 224→300→100→224 逐步采样 scrollLeft 恒 0（无 RO 抖动），宽度回钳正常",
+        "overflow_regime": "900 宽溢出态拖把加宽，scrollLeft 随布局单调跟踪 92→72→56（无往返），全程活动标签可见，松手后稳定",
+        "probe": "vis-r13-fix-grip.js / vis-r13-fix-grip-result.json"
+      }
+    },
+    "zero_regression_after_fix": {
+      "verdict": "PASS",
+      "measured": {
+        "regress_probe_rerun": "与修复前结果逐字段 0 差异（几何/主题/token/字号/面板/⌘B/toast 对位），shots 01-22 已用修复后 bundle 重拍",
+        "tabs_esc_search_probe_rerun": "仅溢出态 10 字段差异且全为修复改进（连接激活即自动滚至 56、按钮显隐随之正确），标签宽界/长名省略/Esc 链几何/模态 ⌘F 门/搜索焦点逐字段不变，shots 30-41 已重拍",
+        "js_errors": "全部复验运行 console error / pageerror 均为 0"
+      }
+    },
+    "registered_minor_note": "› 钮 title 计数『右侧还有 N 个会话被收起』只数完全移出者（App.tsx measureTabbar 判据 rect.left > bar.right+1），部分截断不计——用户手动滚回最左且末标签部分截断时按钮可现『0 个被收起』文案；不影响几何，留作登记",
+    "fix_verdict": "视觉可签"
+  },
+  "js_errors": { "verdict": "PASS", "console_errors": 0, "pageerrors": 0, "across_runs": 8 },
+  "summary": {
+    "pass_items": 15,
+    "fail_items": 0,
+    "first_round_fail_and_disposition": "首轮 FAIL（900 宽直点被截最右标签滚入不足 33/79）已经作者修复（220ms 补滚 + ResizeObserver 跟随），vis-r13 复验通过：活动标签完全可见含 × 钮、2s 稳定无振荡；resize/主机栏开合/面板开合/拖把拖拽四条布局变化路径全过；修复后零回归 0 字段差异",
+    "verdict": "视觉可签"
+  }
+}

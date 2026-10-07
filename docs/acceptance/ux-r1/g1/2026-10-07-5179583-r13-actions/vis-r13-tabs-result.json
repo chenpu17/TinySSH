@@ -1,0 +1,219 @@
+{
+ "s1_tabCount": 3,
+ "X_tabWidths": [
+  {
+   "label": "prod-1",
+   "w": 120,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": false
+  },
+  {
+   "label": "staging-1",
+   "w": 133.3,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": false
+  },
+  {
+   "label": "本机",
+   "w": 120,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": false
+  },
+  {
+   "label": "otp-1（演示 2FA）",
+   "w": 185.2,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": true
+  }
+ ],
+ "X_tabbarRow": {
+  "x": 226,
+  "y": 70,
+  "w": 1054,
+  "h": 40
+ },
+ "X_allInBounds": true,
+ "E_long": {
+  "wBefore": 120,
+  "tabW": 220,
+  "tabMaxW": "220px",
+  "labelClientW": 141,
+  "labelScrollW": 364,
+  "clipped": true,
+  "textOverflow": "ellipsis",
+  "whiteSpace": "nowrap",
+  "overflow": "hidden",
+  "rowH": 40,
+  "labelH": 19
+ },
+ "O_tabCount1280": 4,
+ "O_overflow": {
+  "scrollW": 567,
+  "clientW": 511,
+  "overflowing": true,
+  "scrollBtnL": true,
+  "scrollBtnR": false,
+  "scrollBtnRTitle": null
+ },
+ "O_widths900": [
+  {
+   "label": "prod-1",
+   "w": 120,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": false
+  },
+  {
+   "label": "staging-1",
+   "w": 133.3,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": false
+  },
+  {
+   "label": "本机",
+   "w": 120,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": false
+  },
+  {
+   "label": "otp-1（演示 2FA）",
+   "w": 185.2,
+   "inBounds": true,
+   "clipped": false,
+   "ellipsis": "ellipsis",
+   "active": true
+  }
+ ],
+ "O_menuRows": [
+  {
+   "label": "prod-1",
+   "active": false
+  },
+  {
+   "label": "staging-1",
+   "active": false
+  },
+  {
+   "label": "本机",
+   "active": false
+  },
+  {
+   "label": "otp-1（演示 2FA）",
+   "active": true
+  }
+ ],
+ "O_clickedLabel": "本机",
+ "O_activeInView": {
+  "activeTab": true,
+  "bar": {
+   "left": 259,
+   "right": 770
+  },
+  "active": {
+   "left": 462,
+   "right": 582
+  },
+  "fullyVisible": true,
+  "scrollLeft": 56,
+  "scrollBtnL": true,
+  "scrollBtnR": false
+ },
+ "G_before": {
+  "tabbarRow": {
+   "x": 226,
+   "y": 70,
+   "w": 1054,
+   "h": 40
+  },
+  "sessionToolbar": {
+   "x": 226,
+   "y": 110,
+   "w": 1054,
+   "h": 40
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  }
+ },
+ "G_toolsOpen": true,
+ "G_toolsClosedByEsc": true,
+ "G_afterTools": {
+  "tabbarRow": {
+   "x": 226,
+   "y": 70,
+   "w": 1054,
+   "h": 40
+  },
+  "sessionToolbar": {
+   "x": 226,
+   "y": 110,
+   "w": 1054,
+   "h": 40
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  }
+ },
+ "G_settingsOpen": true,
+ "G_settingsClosedByEsc": true,
+ "G_confirmOpen": true,
+ "G_confirmTitle": "断开与 prod-1 的连接？",
+ "G_cmdFWhileModal_noSearch": true,
+ "G_confirmClosedByEsc": true,
+ "G_tabCountAfterConfirmEsc": 4,
+ "G_searchOpen": true,
+ "G_searchFocus": {
+  "isInput": true,
+  "placeholder": "搜索终端内容…",
+  "caretVisible": true,
+  "outline": "none",
+  "boxShadow": "rgba(61, 157, 168, 0.2) 0px 0px 0px 3px",
+  "borderColor": "rgb(61, 157, 168)"
+ },
+ "G_searchClosedByEsc": true,
+ "G_focusBackToTerm": {
+  "cls": "xterm-helper-textarea",
+  "isXterm": true
+ },
+ "G_afterSearch": {
+  "tabbarRow": {
+   "x": 226,
+   "y": 70,
+   "w": 1054,
+   "h": 40
+  },
+  "sessionToolbar": {
+   "x": 226,
+   "y": 110,
+   "w": 1054,
+   "h": 40
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  }
+ },
+ "G_geomUnchanged": true,
+ "errors": []
+}

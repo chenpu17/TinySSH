@@ -1,0 +1,222 @@
+{
+ "E1_widen300": [
+  {
+   "sl": 0,
+   "hbW": 232,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 242,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 251,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 261,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 271,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 281,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 290,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 300,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 300,
+   "vis": true
+  }
+ ],
+ "E1_narrow100": [
+  {
+   "sl": 0,
+   "hbW": 273,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 249,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 224,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 200,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 200,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 200,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 200,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 200,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 200,
+   "vis": true
+  }
+ ],
+ "E1_back224": [
+  {
+   "sl": 0,
+   "hbW": 202,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 205,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 209,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 212,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 216,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 219,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 223,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 226,
+   "vis": true
+  },
+  {
+   "sl": 0,
+   "hbW": 226,
+   "vis": true
+  }
+ ],
+ "E1_final": {
+  "sl": 0,
+  "hbW": 226,
+  "vis": true
+ },
+ "E1_slValues": {
+  "widen": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "narrow": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "back": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "E1_allVisible": true,
+ "E1_noOscillation": true,
+ "E1_widthRestored": true,
+ "E2_initial": {
+  "sl": 58,
+  "hbW": 226,
+  "vis": true
+ },
+ "E2_during": [
+  {
+   "sl": 92,
+   "hbW": 260,
+   "vis": true
+  },
+  {
+   "sl": 72,
+   "hbW": 240,
+   "vis": true
+  },
+  {
+   "sl": 56,
+   "hbW": 224,
+   "vis": true
+  }
+ ],
+ "E2_after": {
+  "sl": 56,
+  "hbW": 224,
+  "vis": true
+ },
+ "E2_convergedVisible": true,
+ "E2_slSeries": [
+  92,
+  72,
+  56,
+  56
+ ],
+ "E2_noMultiOscillation": true,
+ "errors": []
+}

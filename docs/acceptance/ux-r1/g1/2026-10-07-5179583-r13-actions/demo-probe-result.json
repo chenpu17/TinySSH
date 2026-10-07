@@ -1,0 +1,58 @@
+{
+ "tabConnected": {
+  "w": 1054,
+  "h": 40
+ },
+ "toolbar": {
+  "w": 1054,
+  "h": 40
+ },
+ "searchOpens": true,
+ "searchInputFocused": true,
+ "searchEscClosed": "gone",
+ "searchEscFocusBack": true,
+ "fontUpDelta": 1,
+ "fontDownDelta": -1,
+ "fontReset": true,
+ "cmdBCollapsed": true,
+ "cmdBReopened": true,
+ "toolsEscClosed": true,
+ "toolsEscFocusBack": true,
+ "settingsOpens": true,
+ "settingsEscClosed": true,
+ "escInInputKeepsHostbar": true,
+ "confirmOpens": true,
+ "modalSwallowsCmdF": true,
+ "modalFontFrozen": true,
+ "modalEscClosesConfirm": true,
+ "confirmKeepSession": true,
+ "modalEscFocusBack": true,
+ "imeComposingSwallowed": true,
+ "keyCode229Swallowed": true,
+ "inFormCmdBNoHijack": true,
+ "inFormCmdFStillOpens": true,
+ "tabWidths": [
+  120,
+  133,
+  120
+ ],
+ "tabWidthInRange": true,
+ "tofuModalSwallowsCmdF": true,
+ "tofuModalEscDismissed": true,
+ "extraSessions": 5,
+ "tofuProbed": true,
+ "tabbarOverflow": true,
+ "activeTabScrolledIntoView": true,
+ "scrollLeftAfterSwitch": 439,
+ "tabWidthsAll": [
+  120,
+  133,
+  120,
+  120,
+  120,
+  185,
+  133
+ ],
+ "allInRange": true,
+ "jsErrors": []
+}

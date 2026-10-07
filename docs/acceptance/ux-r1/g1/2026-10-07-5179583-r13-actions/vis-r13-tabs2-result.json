@@ -1,0 +1,56 @@
+{
+ "tabCount": 4,
+ "before": {
+  "scrollLeft": 33,
+  "overflowing": true,
+  "tabs": [
+   {
+    "label": "prod-1",
+    "left": 226,
+    "right": 346,
+    "active": false,
+    "w": 120
+   },
+   {
+    "label": "staging-1",
+    "left": 349,
+    "right": 482,
+    "active": false,
+    "w": 133.3
+   },
+   {
+    "label": "本机",
+    "left": 485,
+    "right": 605,
+    "active": false,
+    "w": 120
+   },
+   {
+    "label": "otp-1（演示 2FA）",
+    "left": 608,
+    "right": 793,
+    "active": true,
+    "w": 185.2
+   }
+  ],
+  "barRight": 747,
+  "barLeft": 259
+ },
+ "after": {
+  "activeLabel": "otp-1（演示 2FA）",
+  "scrollLeft": 33,
+  "active": {
+   "left": 608,
+   "right": 793
+  },
+  "bar": {
+   "left": 259,
+   "right": 747
+  },
+  "fullyVisible": false,
+  "scrollBtnL": true,
+  "scrollBtnR": true
+ },
+ "pass": false,
+ "errors": []
+}
