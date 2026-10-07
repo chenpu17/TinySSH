@@ -1,0 +1,19 @@
+== 源码规模摘要（文件数 / 行数）==
+ui/src: 5 files, 4379 lines
+crates/approval: 1 files, 491 lines
+crates/audit: 1 files, 336 lines
+crates/cli: 1 files, 438 lines
+crates/core-session: 6 files, 3402 lines
+crates/mcp-server: 3 files, 1650 lines
+crates/session-api: 2 files, 1171 lines
+crates/shim: 1 files, 76 lines
+crates/term-core: 6 files, 1135 lines
+crates/testbed: 1 files, 55 lines
+crates/transport-pty: 3 files, 625 lines
+crates/transport-ssh: 3 files, 2157 lines
+crates/vault: 3 files, 1245 lines
+src-tauri/src: 1 files, 938 lines
+
+== git ==
+ea0b9148cfa30fa384d7dac344cdce8cc4b5cbf4
+       1
