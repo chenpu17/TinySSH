@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-06",
+  "reviewed_head": "e2ebdc4401e6828bb00eb1dc75826a6707262146",
+  "scope": "G0 delegated signoff, document errata and supplementary probes; no product implementation or native performance rerun",
+  "input_sha256_at_reviewed_head": {
+    "docs/ux/ux-r1-g0/g0-review-closure.md": "ddc44b032cdd9318b37e6f2393d17da7e085c9cfc82a7fa29aac4ec874de7bf6",
+    "docs/ux/ux-r1-g0/r03-contracts.md": "376be0a15a2a649299b3711a84fa170fb0e09235b00b30b07d26dfb81b0566e4",
+    "docs/ux/ux-r1-g0/r03-fixtures.md": "f95aaa1c62fa614aede4847b7d3651a6b83c349dcc642d21c5d0a6c15ad0bdf0",
+    "docs/ux/ux-r1-g0/r01-prototype/app.js": "4f110907c128876078f2d7fa6f50cd7605394a946a8ee9c90749450cf347bbb1",
+    "docs/ux/ssh-client-ux-refactor-delivery.md": "b3174ba4819fd61fef656edfc6842b3b847bf6e869fa12b69d08f2cf27dfb8b9",
+    "docs/acceptance/ux-r1/g0/2026-10-06-7c4502e/r04-baseline.md": "0519341c15455aeca96f71b6676a7866bb8343d03e6e31fa9b1abcc03f40af70",
+    "docs/acceptance/ux-r1/g0/2026-10-06-7c4502e/raw/cold2.json": "8c7394546ffc975aab5b2368f809c6fbabbaed628d961f012a7fda9ceee9f75a",
+    "docs/acceptance/ux-r1/g0/2026-10-06-7c4502e/raw/warm2.json": "8f2782d759ab1f27541066700e04fafa59197b63bc88a2ae9b9617b057f0c0a9",
+    "docs/acceptance/ux-r1/g0/2026-10-06-7c4502e/raw/p3-log-binding.json": "ed4352861fb124aa928397df91662d939e863cf5ab89b6b77d3cd6dabf1748a8",
+    "docs/acceptance/ux-r1/g0/2026-10-06-7c4502e/proto-recheck/results.json": "cfe06b25a87730971c59c8945db19c98b27bf3c197dd67a116de0df995caa099",
+    "scripts/perf/memsample.py": "566b1d5d2e9cc9fea1f96c2d95ea82b491c384eecda80bd3643eab0e7a2d63fe",
+    "scripts/perf/ev2.py": "1309b21db0c1d09c8249db34613e8fdd8e5a7a87dd1ac0deb49d42238f52fbc4",
+    "crates/term-core/src/screen.rs": "ba8a0b3d3cebb64715dfd25ae2af339f5d07537e0430307a96ed42e2938f7f5e",
+    "crates/term-core/src/render.rs": "bb623806c5f5bf34aa06b084b3b751d5b4ccc3bdc99ea4cfa3ab514768b68f2c"
+  },
+  "signed_worktree_sha256": {
+    "docs/acceptance/ux-r1/g0/2026-10-06-7c4502e/r04-baseline.md": "7d409082d8743ca7e71a941af6a1941f65a49b3cafaddb5f8b9642b9a266d3cd",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/README.md": "c5599286b1d208b9ba1750b1f109ca5bd0fe5ed1a45c716fb12d566a33937f59",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/document-checks.json": "1299a1c38f52eef73336cc2376d6b62431c8f4541eeb2892d993626d6b1d06a8",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/memsample-probe.json": "28464050ebc7db1065aa3deef4fb3a875b7e10944a9175605f5fa5156de360f9",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/memsample_probe.py": "601a121aeee15a2641e0e417b9555c8e6929c120838b1c0c252c9c2a389872c1",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/prototype-probe.json": "49acb18c8f3aad516ace0ca0328cc44fccb80e44ce187b8fc02e9b182f8e2a71",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/prototype_probe.cjs": "717a73c52925289ccf3a992c59c2f2de90f1d5cc94f14f95e604b3ccdba3e8cc",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/terminal-search.png": "a83ecb15a63f4578856a7e3f307a06e0b0268719a599cbeeeed3aa68e4975418",
+    "docs/ux/ssh-client-ux-refactor-delivery.md": "543002d39a0a55fb455d155ccc4f33c97b9b5ce2a88c6b53636fab5f96946bc2",
+    "docs/ux/ux-r1-execution-status.md": "f99cc0938ea5acad2c49b194666b479e9ab33efd32e174036473c58b99765fc3",
+    "docs/ux/ux-r1-g0/g0-review-closure.md": "4b4d3f55f5aa3addcabc22caff9c951e11131ef3673d787057142240d5a53b3e",
+    "docs/ux/ux-r1-g0/g0-signoff.md": "9ba8da178f90aa30a9eec6dd74faed340b368e4fa5efce8555aa9292d4159fab",
+    "docs/ux/ux-r1-g0/r00-scope-freeze.md": "08a23bb210776c278e1711a6a1d362a830ac866aca48fcb25471f605082c104e",
+    "docs/ux/ux-r1-g0/r01-prototype/README.md": "7fcbd51b885613674d06f130973fdccd0be1ede883f219ff00eb34c18fc5e3ae",
+    "docs/ux/ux-r1-g0/r03-contracts.md": "da415fd22e3498e0b535d9aa847427e279557e19ef37433c3fc2328be5aaa515",
+    "docs/ux/ux-r1-g0/r03-fixtures.md": "bf0b0dab9400a89fb556c5e32f95ee9da8a3f257b9188888e22c5031fdc7f34f"
+  },
+  "self_hash_excluded": true
+}

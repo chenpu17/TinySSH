@@ -1,10 +1,11 @@
-# R03 契约冻结草案（C1–C10）
+# R03 分阶段契约基线（C1–C10）
 
-> 日期：2026-10-06 · 基线：`7c4502e` · 状态：**R03 草案（G0 联审 C-01~C-04 修订版）**，待 G0 复审签署后生效；签署前禁止按本文件实施。
-> 联审修订记录（2026-10-06，用户三路复审 C-01~C-04 + 五项产品裁决）：**C1** 重写——取消/Ready 交付线性化点（已提交未投递窗口才自动关闭）、关闭失败终态 `CancelCloseFailed`（会话保留+恢复入口，不误示已取消）、Ready 投递后迟到取消无副作用、合并键改 `(host_id, actor)` 身份绑定。**C6** 重写——唯一发布决策表（无双重命名降级/回滚，用户裁决删除；无 posix-rename 阻止替换 `ReplaceUnsupported`；新文件/keep-both 要求 CREATE_NEW+原子 rename 可靠 no-clobber；复检 stat 变化显式 overwrite 亦按新冲突）。**C5** 补——`submit_collision_decision`/`reject_expired_decision` 命令、decision_prompt.reason 字段、StaleDecision/InvalidTransferState。**C9** 补——enable/disable/disable_resolve 启停 wire、DisablingPlan 活动清单、disable_failure 原因字段、Disabled 后 MCP status 端点不可达属预期。**C10** 重写——恢复载体改 `ScreenCheckpoint`（双缓冲带属性网格，可重建 vim/top），live 帧 pending 暂存+去重水位，显式 `unsubscribe_output` 主清理路径（静默会话不依赖 send 失败）。
+> 日期：2026-10-06 · 审查基线：`e2ebdc4` · 状态：**G0 阶段基线通过，G1 已授权**，见[签署决定](g0-signoff.md)。C10 本次勘误立即生效；C6 仅安全目标冻结，发布原语与结果证据须在 G3 开始前完成专项冻结。本文件不是运行验收结果。
+> 以下两条独立审核记录保留为历史；本次签署发现的 C6/C9/C10 修正与阶段责任以正文及 §13 为准，历史“全部已修”不代表当前无遗留。
+> 历史联审修订记录（2026-10-06，用户三路复审 C-01~C-04 + 五项产品裁决）：**C1** 重写——取消/Ready 交付线性化点（已提交未投递窗口才自动关闭）、关闭失败终态 `CancelCloseFailed`（会话保留+恢复入口，不误示已取消）、Ready 投递后迟到取消无副作用、合并键改 `(host_id, actor)` 身份绑定。**C6** 重写——唯一发布决策表（无双重命名降级/回滚，用户裁决删除；无 posix-rename 阻止替换 `ReplaceUnsupported`；新文件/keep-both 要求 CREATE_NEW+原子 rename 可靠 no-clobber；复检 stat 变化显式 overwrite 亦按新冲突）。**C5** 补——`submit_collision_decision`/`reject_expired_decision` 命令、decision_prompt.reason 字段、StaleDecision/InvalidTransferState。**C9** 补——enable/disable/disable_resolve 启停 wire、DisablingPlan 活动清单、disable_failure 原因字段、Disabled 后 MCP status 端点不可达属预期。**C10** 重写——恢复载体改 `ScreenCheckpoint`（双缓冲带属性网格，可重建 vim/top），live 帧 pending 暂存+去重水位，显式 `unsubscribe_output` 主清理路径（静默会话不依赖 send 失败）。
 > 独立审核记录（rev-r03，2026-10-06）：阻塞 0 / 高 4 / 中 1 / 低 3，全部已修（详见 git 历史版本头）。抽查 11 处 file:line 断言全部属实。
-> 独立复审记录（rev-r03b，2026-10-06，联审修订后二轮）：高 2 / 中 3 / 低 4，**全部已修**——H1 TransferState 补 `Skipped`；H2 发布应答丢失复核路径冻结（stat+temp 三分支：Succeeded{verified}/Failed/OutcomeUnknown），FIX-P3 扩为六变体；M1 sftp_resolve_path 三错误变体入 §11 ADR；M2 no-clobber 分支显式依赖 posix-rename（无扩展服务器新文件一并阻止）；M3 `DisablingResolveResult`+`StopOutcome` 类型与 Wait 超时/DisableFailed 语义、StalePlan 断言入 §12/FIX-P8；L1 `CancelOutcome::CancelCloseFailed` 命名统一；L2 审计事件清单补 `connection_cancelled_closed` 与各触发点；L3 复检约束收窄至发布路径（skip 不受影响）；L4 合并幂等断言入 §12-10。裁决 6 条对照：5 落实 + 决议 3「启用不转移控制权」补显式成文（§C9）。russh-sftp 能力断言经 rev-r03b 按 Cargo.lock 实际解析版本（3.0.0）源码逐条核实。
-> 输入：[连接/协作缺口分析](r03-gap-connection-collab.md) · [文件/传输缺口分析](r03-gap-files-transfer.md) · 设计主文 §6/§9/§10 · 联审报告 [副本](../acceptance/ux-r1/g0/2026-10-06-7c4502e/review-round1/decision.md)（§2 裁决/§3 修正项；原件 /tmp/tinyssh-g0-decision-review/）。
+> 历史独立复审记录（rev-r03b，2026-10-06，联审修订后二轮）：高 2 / 中 3 / 低 4，**全部已修**——H1 TransferState 补 `Skipped`；H2 发布应答丢失复核路径冻结（stat+temp 三分支：Succeeded{verified}/Failed/OutcomeUnknown），FIX-P3 扩为六变体；M1 sftp_resolve_path 三错误变体入 §11 ADR；M2 no-clobber 分支显式依赖 posix-rename（无扩展服务器新文件一并阻止）；M3 `DisablingResolveResult`+`StopOutcome` 类型与 Wait 超时/DisableFailed 语义、StalePlan 断言入 §12/FIX-P8；L1 `CancelOutcome::CancelCloseFailed` 命名统一；L2 审计事件清单补 `connection_cancelled_closed` 与各触发点；L3 复检约束收窄至发布路径（skip 不受影响）；L4 合并幂等断言入 §12-10。裁决 6 条对照：5 落实 + 决议 3「启用不转移控制权」补显式成文（§C9）。russh-sftp 能力断言经 rev-r03b 按 Cargo.lock 实际解析版本（3.0.0）源码逐条核实。
+> 输入：[连接/协作缺口分析](r03-gap-connection-collab.md) · [文件/传输缺口分析](r03-gap-files-transfer.md) · 设计主文 §6/§9/§10 · 联审报告 [副本](../../acceptance/ux-r1/g0/2026-10-06-7c4502e/review-round1/decision.md)（§2 裁决/§3 修正项；原件 /tmp/tinyssh-g0-decision-review/）。
 > wire 命名约定：与现有一致——类型/枚举 PascalCase、字段 snake_case（Tauri serde 默认），事件名 kebab-case。所有 `#[serde(default)]` 标注处为旧载荷兼容点。
 
 ## 0. 跨契约总则
@@ -185,13 +186,15 @@ CollisionDecision = Skip | Overwrite | KeepBoth
 
 ## C6 冲突与提交（实现 R34；消费 R35）
 
-### 冻结序列与唯一发布决策表（C-02 修订版；用户裁决：无可靠原语一律阻止，不做双 rename 回滚）
+### 安全目标与发布决策表（G3 前冻结实现；无可靠原语一律阻止，不做双 rename 回滚）
+
+**本次勘误**：撤回“CREATE_NEW 占位 + 覆盖 rename = no-clobber”的保证。外部进程可在两步之间替换占位，随后 rename 会覆盖他方文件；posix-rename 本身不提供条件替换。也撤回“同大小目标 + temp 消失 = 已发布”的推断。R30/R34 的 Core/QA 在 G3 开始前提交原语、竞争模型和对抗探针，冻结可满足下表的方案；能力不足时阻止发布，不以本表视为已有实现证明。
 
 ```text
 写入：同目录临时文件  .tinyssh-part-<task_id>-<name>
   → 全量写 + flush + close → stat 临时文件核对长度
   → 发布（唯一决策表，见下；探测机制 DF6.1）
-  → 任何「阻止发布」路径不得截断/移动原目标；temp 删除并留审计
+  → 任何「阻止发布」路径不得截断/移动原目标；仅确认未提交后可清理本任务 temp，并留审计
 提交前：journal 落库（C5）→ 提交 → 终态
 冲突询问：AwaitingDecision（**仅人类 UI 路径**；Agent 路径永不进入此状态）
   skip / overwrite / keep-both（默认 skip；keep-both 命名 name.tinyssh-1.<ext> 递增）
@@ -201,23 +204,22 @@ CollisionDecision = Skip | Overwrite | KeepBoth
 
 | 预检/复检 target 状态 | 决定 | 发布动作 | 能力不足时 |
 |---|---|---|---|
-| 不存在（新文件） | 任意（无需询问） | no-clobber 发布：`open(target, CREATE_NEW)` 声明占位（失败=他方已在窗口内创建 → 按冲突重新裁决）→ `rename(temp→target)` 覆盖自家占位完成发布。**能力依赖（复审 M2）：覆盖自家占位同样要求可覆盖已存在目标的原子 rename（= posix-rename 扩展）——未宣告该扩展的服务器，新文件/keep-both 一并阻止**（符合"否则阻止"裁决） | 无可靠 no-clobber 原语（CREATE_NEW 或原子 rename 不可用）→ **阻止发布** |
-| 存在，决定 overwrite | 显式（人类裁决或 MCP 显式参数） | 仅当服务器宣告 `posix-rename@openssh.com`（RawSftpSession::init 版本扩展表）→ `rename(temp→target)` 原子替换 | 未宣告 → **阻止替换**：结构化 `ReplaceUnsupported{capability}`，原目标与 temp 均不动。**无双重命名降级、无 bak、无回滚方案**（用户裁决删除） |
+| 不存在（新文件） | 任意（无需询问） | 经验证的原子 no-clobber 发布；目标被他方抢建时失败并按冲突处理。具体原语在 G3 前冻结；禁止占位后覆盖 rename 方案 | 无经验证的可靠 no-clobber 能力 → **阻止发布**，返回 `ReplaceUnsupported{capability}` 并说明缺失能力 |
+| 存在，决定 overwrite | 显式（人类裁决或 MCP 显式参数） | 仅在原子替换能力已验证且目标仍是授权所指版本时发布。posix-rename 是原子替换能力条件，不能单独证明目标版本未变；版本约束方案在 G3 前冻结 | 无原子替换能力或无法满足目标版本约束 → **阻止替换**：`ReplaceUnsupported{capability}`，不改动原目标。**无双重命名降级、无 bak、无回滚方案** |
 | 存在，决定 keep-both | 人类裁决 | 换名 `name.tinyssh-N.ext` 后按「新文件」行发布（同样要求 no-clobber 原语） | 同「新文件」行 |
 | 存在，决定 skip | 人类裁决/Agent 缺省 | 不发布，temp 删除，任务终态 Skipped | — |
 | **提交时 stat 复检与预检不一致**（存在性+size+mtime 任一变化） | — | **一律按新冲突处理**（复审 L3 收窄：仅约束「将执行发布」的路径——overwrite / 新文件 / keep-both 最终名；**skip 不发布、无覆盖风险，不受复检影响**，Agent collision=skip 遇 stat 变化仍按 skip 终态 Skipped）：人类路径重回 AwaitingDecision；Agent 路径返回 `ConflictDetected`（**即使显式 overwrite**——显式请求只针对预检时所见那份，不得覆盖竞争中变化/新出现的文件） | — |
 
-- **发布应答丢失复核路径（复审 H2 补冻结）**：rename 发布应答丢失（注入缝/网络故障）后核心必须复核，不臆断：
-  1. `stat(target)` 且查 temp 是否仍在——target 在且 size 与提交前 temp stat 一致且 temp 已消失 → **已发布 → Succeeded**（journal 标 `verified`）；
-  2. target 不在且 temp 在 → 未发布 → 任务 `Failed{reason: publish_unverified_target_absent}`（不自动重试发布；用户可新建重试，retry_of 关联）；
-  3. target 不在且 temp 不在 / stat 失败或超时 → **OutcomeUnknown**（temp 保留规则仅适用于 temp 仍存的分支）。
-- 同目标锁键：canonical path（远端经 resolve；本地绝对路径）（DF6.4）。UI 文案口径：「客户端内同目标串行；其他程序不受限制，替换可能覆盖其变更」。
+- **发布应答丢失复核路径**：进入 OutcomeUnknown，复核本任务身份、源摘要、journal 与服务器可提供的发布证据。只有证据能绑定本次发布并排除竞争解释，才可写 `Succeeded{verified}`；只有明确证据证明本次未提交，才可转 Failed。具体证据方案在 G3 前冻结。
+  - 仅 target 同大小且 temp 消失、仅摘要相同、target 不在但 temp 在、双不在、stat 失败/超时，都不足以单独判定本次发布结果；没有进一步证据时保持 OutcomeUnknown。
+  - 不自动重发、覆盖、回滚或清理恢复资料；UI 只提供「重新核实」「查看记录」。未决任务保留 journal，阻止同目标覆盖；后续允许新建重试的前提及释放条件随证据方案冻结。
+- 同目标锁键：canonical path（远端经 resolve；本地绝对路径）（DF6.4）。客户端锁只串行本客户端任务，不能排除外部写入；UI 不得用风险文案替代版本约束。发现目标变化则重新裁决，无法保障则阻止。
 - 部分文件：确认未提交的失败/取消 → 删除本任务 temp；OutcomeUnknown → temp 保留（无 bak 方案，不再有 bak 恢复资料；OutcomeUnknown 恢复仅依 journal 与 temp）；浏览器不过滤 `.tinyssh-*`（可见即可识别）（DF6.5）。
 - **MCP/Agent 传输**（DF6.2）：`upload`/`download` MCP 工具（crates/mcp-server/src/lib.rs:429/:444，**非 upload_file/download_file**）新增可选参数 `collision: "skip"|"overwrite"|"fail"`，**缺省 fail**（结构化 `ConflictDetected` 错误返回目标 stat）；`overwrite` 在审批卡明示「将覆盖已存在目标」。Agent 路径永不进入 AwaitingDecision；冲突一律结构化错误返回。
 
 | # | 决定 |
 |---|---|
-| DF6.1 | **探测机制**：crate 高层 `SftpSession` 不支持 posix-rename（无对应 API；`Features` 为 pub(crate)），探测经 `RawSftpSession::init()` 取 SSH_FXP_VERSION 扩展表判定。**发布能力分级**：原子替换能力 = 扩展表含 `posix-rename@openssh.com`；no-clobber 能力 = CREATE_NEW 语义 + 原子 rename。**唯一决策表如上——无双重命名降级路径**（用户裁决 2026-10-06：本轮不做双 rename + 失败回滚；无已验证原子替换能力即阻止 overwrite；新文件/keep-both 仅在可靠 no-clobber 可用时执行） |
+| DF6.1 | **探测机制**：crate 高层 `SftpSession` 不支持 posix-rename，扩展声明经 `RawSftpSession::init()` 读取。扩展声明需行为验证；no-clobber、原子替换、目标版本约束是不同能力，不能互相替代。R30/R34 在 G3 前冻结支持矩阵与可靠证据，不能满足安全目标则阻止该发布路径 |
 | DF6.2 | MCP `collision` 参数，缺省 fail；工具名 `upload`/`download` |
 | DF6.3 | 存在性+size+mtime 三比对；**复检不一致一律按新冲突处理，显式 overwrite 也不例外** |
 | DF6.4 | 锁键 canonical path；外部进程边界写进 UI 文案 |
@@ -288,7 +290,8 @@ Disabled → (显式重新启用，确认旧停用已收敛) → Enabled
 ```text
 命令（Tauri，均要求 Human Actor）：
   collaboration_enable() -> CollabStateInfo
-    // Disabled|DisableFailed → Enabled（重新启用前 UI 须确认旧停用已收敛，核心不重复校验作废记录）
+    // 核心确认旧停用代次的活动、owner 转换、监听器均已收敛后，才可重新开放 gate。
+    // DisableFailed 未收敛时拒绝启用（collaboration_disabled，附原因）；UI 确认不能替代核心检查。
   collaboration_disable() -> DisablingPlan
     // Enabled → Disabling：gate 立即生效（collab_generation += 1），返回重新枚举的真实活动清单
   collaboration_disable_resolve(generation: u64,
@@ -312,7 +315,7 @@ DisablingPlan { generation: u64,
 ```
 
 - MCP `status` 工具**豁免 gate**（只读，返回 Disabled 说明，便于 Agent 理解拒绝原因）——**仅监听器存活期间有效**；Disabled 完成三层确认（DF9.5）后 axum 已 graceful shutdown，**MCP status 端点不可达属于预期行为，不承诺停用后仍可查询**。Agent 判断协作状态以写动作的 `collaboration_disabled` 错误为准（Tauri 进程内的 `collaboration_status` 恒可用，但那是 Human 通道）。
-- **启用不转移会话控制权（联审决议 3 显式化）**：`collaboration_enable` 仅改变 admission gate 与监听器状态；既有会话的 `control_owner` 不因启用/停用改变（C2 语义独立）；Agent 获得控制权只能经显式 `delegate_session`（另行确认+审计）。
+- **启用不转移会话控制权**：`collaboration_enable` 不改变既有 owner；停用按步骤 3 将 Agent-owned 转为 Human。重新启用不恢复旧 owner、不复活作废请求；Agent 重新获得控制权须显式 `delegate_session`（确认+审计）。
 - DisableFailed（DF9.4）：**原因可查落字段**——`CollabStateInfo.disable_failure.reason/detail`（C-04；「同 command 返回」指 resolve/status 调用同步携带）；admission 关闭期间错误 kind 与 Disabled 相同。
 - 外部 shim：不等待/不杀死；其调用被 gate 拒或端点不可用。重新启用不作废前停用期的作废记录（不复活）。
 
@@ -331,13 +334,15 @@ DisablingPlan { generation: u64,
 ```text
 命令（现行实签名 subscribe_output(sid, on_event: Channel)，main.rs:204-208——保留通道参数）：
 subscribe_output(sid, on_event: Channel) -> AttachOutput   // 返回值结构变更（原地升级）
-  AttachOutput { checkpoint: ScreenCheckpoint, start_seq: u64 }
-unsubscribe_output(sid) -> ()                              // 显式退订（C-04：静默会话清理主路径）
+  AttachOutput { subscription_id, checkpoint: ScreenCheckpoint, start_seq: u64 }
+unsubscribe_output(sid, subscription_id) -> ()             // 幂等；只清理该次订阅
 Raw 输出帧：<u64 LE seq（8 字节头）><payload 原始字节>    // UI 剥头取 seq
 事件（window.emit）：resync { session_id, from_seq: Option<u64>, subscription_id }
-  UI 收到后调 resync_output(sid, from_seq)：
-    lossless 可重放 → { events: 重放字节, end_seq }（scrollback 连续）
-    不可重放（淘汰/alt_screen 活跃/检查点更近）→ { checkpoint, end_seq } 检查点分支
+  UI 收到后调 resync_output(sid, subscription_id, from_seq)：
+    from_seq 为 UI 最后已应用序号；None 请求检查点
+    lossless 可重放 → { subscription_id, events: 带 seq 的原始字节事件, end_seq }
+    不可重放（淘汰/alt_screen 活跃/检查点更近）→ { subscription_id, checkpoint, end_seq }
+    过期 subscription_id 不得回落到同 session 新订阅；拒绝且不改其状态
 调试：debug_subscriptions() -> { active_count, per_session: [...] }   // P6 测量口
 ScreenSnapshot（纯文本）保留为调试/审计只读接口（read_screen），**不作为终端恢复载体**；
   其 text 含 scrollback 的对齐决议保留（文档与实现一致），但恢复路径一律走 ScreenCheckpoint。
@@ -353,23 +358,26 @@ ScreenCheckpoint {                        // 可重建渲染状态（C-03 核心
 BufferCheckpoint { lines: Vec<CellRun> }  // 逐行「字符 + SGR 属性 run」串行化，可重建 vim/top 单元格属性
 ```
 
-**checkpoint 生成**：核心侧屏幕模型（现 read_screen 的 ANSI 解析模型）升级为**带属性网格模型**（vte 语义：字符+前景/背景/粗斜体等 SGR run），checkpoint 由该模型序列化生成——不依赖前端 xterm，重启后无订阅者时亦可服务。模型升级范围与 P 门影响在 R11 实现时核对；若属性网格超预算，降级方案（SGR run 粒度加粗）须回本文件修订，不得静默退回纯文本。
+**checkpoint 生成**：复用现有 `Screen` 内的 alacritty `Term` 与 VTE 解析器（`crates/term-core/src/screen.rs`），从已有状态导出检查点并实现前端恢复；`render.rs` 的纯文本输出只是投影，不表示核心缺少属性网格。R11 不新建并行终端解析器。R11 完成前核定模式、双缓冲、滚动区、宽字符及分片 ANSI 状态等恢复所需字段/边界，并实测导出与恢复成本；超预算回本文件修订，不得静默退回纯文本恢复。
 
 **attach / resync 水位顺序（可断言）**：
-1. `subscribe_output`：①注册 receiver（入订阅表，登记 subscription_id）→ ②**同锁内**生成 checkpoint + 截取当前 seq=S → ③自注册时刻起 live 帧进入有界 pending 暂存（seq < S 丢弃）→ ④返回 `{checkpoint, start_seq=S}` → ⑤返回后 pending 按 seq 单调去重投递，随后 live 直通。pending 溢出 → 订阅者置 Lagged，走 resync。
-2. resync 重放/检查点分支同样返回 `end_seq`；UI 丢弃 `seq < end_seq` 的后续 live 帧（重复 seq 幂等丢弃）。
-3. 断言用例补齐：attach 返回前已产生输出（pending 暂存不丢字）；alt_screen 活跃时 resync → checkpoint 分支重建备用缓冲与模式；重复 seq 不产生重复渲染。
+
+1. `start_seq/end_seq` 均表示检查点或重放**最后已包含的事件序号**（包含该序号），无输出为 0。屏幕变更、seq 推进、检查点与水位捕获在同一临界区或等价线性化机制中保持一致；不能截到“已推进 seq、尚未应用到屏幕”的状态。
+2. attach：注册带唯一 `subscription_id` 的 receiver 与有界 pending → 原子捕获 checkpoint、S → 返回 `{subscription_id, checkpoint, start_seq:S}`。注册起缓存 live；前端在应用 checkpoint 之前也缓存所有提前到达的通道事件。应用后丢弃 `seq <= S`，仅按序应用 `seq > S`；再进入正常 live。pending 溢出标 Lagged，触发恢复，不静默丢字。
+3. resync：每订阅仅一个有效恢复请求在途，先缓存 live；重放应用 `(from_seq, end_seq]` 内连续事件，或原子应用 checkpoint。随后丢弃缓存中 `seq <= end_seq`，只应用更大的连续序号；再次缺口则重新恢复，不跨缺口推进。过期请求响应不覆盖当前状态。
+4. 每条通道回调、resync 事件/响应、清理操作均核对订阅身份（Raw 帧由其 Channel 闭包绑定身份）。旧组件的晚到事件/退订不影响同 session 的新订阅。
+5. 断言：seq 恰等于水位不重放；attach 返回前输出不丢字；alt_screen 重建；旧订阅晚到事件/退订不影响新订阅；静默会话清理后计数归零。
 
 **订阅清理断言（DF10.5 修订）**：
-- 主路径：`unsubscribe_output(sid)` 显式退订（UI 关闭终端实例时必须调用）；`close_session` 自动清理全部该会话订阅。
+- 主路径：`unsubscribe_output(sid, subscription_id)` 显式退订（UI 关闭终端实例时必须调用），重复或旧身份为 no-op；`close_session` 自动清理全部该会话订阅。
 - 兜底：桥 task send 失败（订阅端通道已关闭）→ 退出并清理——**仅覆盖有输出的会话**；静默会话不得依赖 send 失败路径，唯显式退订/会话关闭可清理（C-03）。
 - P6 以 `debug_subscriptions` 计数为测量口径（每存活会话 ≤1；退订后归零）。
 
 | # | 决定 |
 |---|---|
 | DF10.1 | Raw 帧头 8 字节 seq（吞吐优先，SPIKE-1 结论） |
-| DF10.2 | subscribe 单步返回 `{checkpoint, start_seq}`；live 帧 pending 暂存 + 去重投递 |
-| DF10.3 | resync 先 lossless 重放、不可则 checkpoint 分支；end_seq 水位去重 |
+| DF10.2 | subscribe 返回 `{subscription_id, checkpoint, start_seq}`；前后端均守护初始化期间 pending，应用检查点后仅消费 `seq > start_seq` |
+| DF10.3 | resync 绑定订阅身份，先原始字节重放、不可则 checkpoint；水位包含末事件，丢弃缓存 `seq <= end_seq` |
 | DF10.4 | 终端恢复载体 = ScreenCheckpoint（双缓冲带属性网格）；纯文本 ScreenSnapshot 降级为调试/审计接口 |
 | DF10.5 | 显式 unsubscribe_output 为主清理路径，send 失败为兜底；debug_subscriptions 计数器为 P6 测量口径 |
 
@@ -400,16 +408,18 @@ BufferCheckpoint { lines: Vec<CellRun> }  // 逐行「字符 + SGR 属性 run」
 1. C1 取消竞态 6 序列（§C1：认证中取消、竞态关闭成功、**关闭失败保留会话**、Ready 后迟到取消无副作用、跨 Actor 拒绝、重复取消）。
 2. C3 模式拒绝：无集成主机 → `exec(mode=Shell)` 副作用前错误 + 哨兵证明未执行 Fresh；显式 Fresh 按原授权执行（D09）。
 3. C5/C6 提交未知：提交响应丢失注入 → 按复核路径分派（可证实已发布 → Succeeded{verified}；未发布 → Failed；不可判定 → OutcomeUnknown）+ journal 完整 + temp 保留规则 + 拒绝同目标覆盖任务。**注入缝（C13）**：进程内 mock SFTP server（russh-sftp server 侧 API 起内存服务端），吞掉/延迟 rename 发布应答；不依赖真实网络故障。
-4. C6 冲突与发布决策表：①无 posix-rename 服务器 + overwrite → `ReplaceUnsupported` 且原目标字节不变（负例断言：目标 stat 前后一致）；②新文件 no-clobber：CREATE_NEW 声明失败（他方窗口内创建）→ 不覆盖、按冲突处理；③复检 stat 变化 → 显式 overwrite 亦返回 ConflictDetected。
+4. C6 冲突与发布决策表：①无可靠替换能力 → `ReplaceUnsupported` 且原目标字节不变；②他方抢建/替换占位时不得覆盖；③复检 stat 变化 → 显式 overwrite 亦按新冲突处理；④最终复检之后的竞争亦须验证目标版本约束，不能用客户端锁证明无外部竞争。原语与证据在 G3 前冻结。
 5. C9 停用：Disabling 期间并发 create_session / 已批准未执行 / shim 在途调用 → 全部被拒且留痕；Disabled 三层确认顺序；**Disable 后 MCP status 端点不可达（预期断言）**；`disable_resolve` 过期 generation → `StalePlan`；Wait 项 120s 超时 → 该项 `StopFailed{wait_timeout}` 且整体 DisableFailed（admission 保持关闭）。
-6. C10 attach：checkpoint+seq 同锁原子；pending 暂存不丢字；Lagged 后 resync 重放连续（带 seq 校验）；**alt_screen 活跃 → checkpoint 分支重建备用缓冲与终端模式；重复 seq 幂等**。
+6. C10 attach：屏幕变更+seq+checkpoint 原子一致；pending 暂存不丢字；等于水位的帧不重复应用；Lagged 重放连续；alt_screen 重建；旧 subscription_id 的事件/退订不影响新订阅，静默关闭计数归零。
 7. C2：人类 create_session → `SessionInfo.control_owner == Human`（原子性：无 Agent 窗口断言）。
 8. C7：ProxyJump 条目 → blocking + directly_importable=false；重复导入默认 skip。
 9. C5 决定提交：`submit_collision_decision` 正确路径生效；过期 revision → `StaleDecision`；Agent 任务提交决定 → `InvalidTransferState`；`reject_expired_decision` 幂等。
 10. C1 合并幂等（复审 L4）：同 Actor 同主机重复 begin（无 new_session）→ 同一 attempt_id；Human/Agent 各自 begin 同主机 → 两个独立 attempt；`new_session=true` → 新 attempt。
 
-## 13. 遗留到 G1 前必须闭合的事项
+## 13. 分阶段实施前置与出口义务
 
 - C5 事件对 UI 渲染频率的影响评估（10 任务并发 × 5/s）在 R32 实现时验证，超限则降级为粗粒度+强制对账（设计允许）。
-- C10 `ScreenSnapshot.text` 含 scrollback 的性能实测（R11），超 P 门即触发分档参数回归本文件修订。
+- C10：R11 按本次水位/身份勘误实施，复用既有终端模型；恢复字段、真实终端一致性与性能在 R11/B11/P6 验证，G1 退出前关闭。`ScreenSnapshot.text` 含 scrollback 的性能一并核对。
+- C6：Core/QA（R30/R34 负责人）在 G3 开始前冻结 no-clobber、目标版本约束、应答丢失证据方案及对抗探针；未知结果原型改为「重新核实/查看记录」。随后 R34/C07/C09 做真实运行验收；未关不进入 G3，不阻塞 G1/G2。
+- C9：R43/D08 验证核心收敛检查、停用转 Human、重新启用不恢复旧 owner/请求；G4 退出前关闭。
 - DF9.1 的 Agent 写动作全集清单在 R43 实施时以 MCP 工具注册表为权威重新枚举并比对本清单。

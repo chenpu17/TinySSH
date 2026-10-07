@@ -1,0 +1,28 @@
+{
+  "source_commit": "e2ebdc4401e6828bb00eb1dc75826a6707262146",
+  "scope": "mocked data only; findings, not acceptance PASS",
+  "candidate_set": {
+    "actual": [
+      "101",
+      "202"
+    ],
+    "expected": [
+      "202"
+    ]
+  },
+  "valid_candidate": {
+    "return_code": 2,
+    "voided": true,
+    "reason": "candidate pid 202 disappeared mid-sample",
+    "expected_voided": false
+  },
+  "reused_pid_at_exit": {
+    "return_code": 0,
+    "expected_return_code": 2
+  },
+  "rss_sum_after_key_normalization_in_harness": {
+    "actual_mb": 3.0,
+    "expected_mb": 2.0,
+    "note": "app 1 MiB + helper 1 MiB; app counted twice"
+  }
+}

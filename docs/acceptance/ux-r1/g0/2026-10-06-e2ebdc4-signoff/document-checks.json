@@ -1,0 +1,18 @@
+{
+  "scope": "modified and new Markdown local file links and fences; git diff whitespace",
+  "documents": [
+    "docs/acceptance/ux-r1/g0/2026-10-06-7c4502e/r04-baseline.md",
+    "docs/acceptance/ux-r1/g0/2026-10-06-e2ebdc4-signoff/README.md",
+    "docs/ux/ssh-client-ux-refactor-delivery.md",
+    "docs/ux/ux-r1-execution-status.md",
+    "docs/ux/ux-r1-g0/g0-review-closure.md",
+    "docs/ux/ux-r1-g0/g0-signoff.md",
+    "docs/ux/ux-r1-g0/r00-scope-freeze.md",
+    "docs/ux/ux-r1-g0/r01-prototype/README.md",
+    "docs/ux/ux-r1-g0/r03-contracts.md",
+    "docs/ux/ux-r1-g0/r03-fixtures.md"
+  ],
+  "local_links_checked": 40,
+  "errors": [],
+  "diff_check_exit_code": 0
+}

@@ -1,0 +1,14 @@
+{
+  "scope": "G1-focused spot checks only; no runtime SSH acceptance",
+  "checks": [
+    "960px: return from files restores visible terminal",
+    "focused right pane: toolbar, files and transfer target agree",
+    "search: real matches and zero-match state"
+  ],
+  "unresolved": {
+    "retryButtons": 1,
+    "discardButtons": 1,
+    "disposition": "G3 prerequisite: replace with recheck/records; current behavior is not approved"
+  },
+  "pageErrors": []
+}
