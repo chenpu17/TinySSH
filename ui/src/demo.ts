@@ -7,6 +7,7 @@
 // 后端同构，拒绝走 HostKeyRejected）、未知命令显式报错（不再静默 null）。
 
 import { apiError } from "./adapter/errors";
+import type { AttachOutput, DebugSubscriptions, ResyncOutput, ScreenCheckpoint } from "./adapter/wire";
 type Handler = (data: Uint8Array) => void;
 
 type DemoSession = {
@@ -19,6 +20,10 @@ type DemoSession = {
   transitions: { ts: string; what: string }[];
   out: string;             // 会话私有输出缓冲（read_screen 回放 + 订阅增量同源）
   handlers: Handler[];
+  // C10 订阅恢复（R11）：seq 单调计数 + 原始字节重放环 + 活跃订阅身份
+  seq: number;
+  ring: { seq: number; data: Uint8Array }[];
+  subs: Set<string>;
   // 端口转发（T42 FR-8）：spec 为外部标签枚举（Local/Remote/Dynamic），wire 同口径；
   // demo 无法真实监听端口——仅做注册表状态演示，state 恒 "Listening"
   forwards: { id: string; spec: Record<string, Record<string, unknown>>; state: string; error: string | null }[];
@@ -61,6 +66,7 @@ const demoState = {
       transitions: [{ ts: "2026-09-27T14:02:11Z", what: "人类接管（交接前未开始的请求全部作废）" }],
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
       handlers: [] as Handler[],
+      seq: 0, ring: [], subs: new Set<string>(),
       forwards: [],
     },
     {
@@ -70,6 +76,7 @@ const demoState = {
       transitions: [],
       out: "ops@staging-1:~$ ",
       handlers: [] as Handler[],
+      seq: 0, ring: [], subs: new Set<string>(),
       forwards: [],
     },
   ] as DemoSession[],
@@ -125,14 +132,59 @@ const demoState = {
 };
 
 const encoder = new TextEncoder();
+
+// C10：live 帧格式 = <u64 LE seq（8 字节头）><原始字节>（与桥层一致，UI 剥头取 seq）
+function frameBytes(seq: number, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(8 + data.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, seq >>> 0, true);
+  dv.setUint32(4, Math.floor(seq / 4294967296) >>> 0, true);
+  out.set(data, 8);
+  return out;
+}
+
 function pushTo(sid: string, text: string) {
   const s = demoState.sessions.find((x) => x.id === sid);
   if (!s) return;
   s.out += text;
-  for (const h of s.handlers) h(encoder.encode(text));
+  s.seq += 1;
+  const raw = encoder.encode(text);
+  s.ring.push({ seq: s.seq, data: raw });
+  if (s.ring.length > 8192) s.ring.shift();
+  const framed = frameBytes(s.seq, raw);
+  for (const h of s.handlers) h(framed);
+}
+
+// demo 检查点合成：会话输出缓冲 → 单缓冲属性网格（demo 无颜色/备用屏状态）。
+// 光标合成在最后非空行行尾（vis-r11 R2：rows-1 会让光标悬浮空白行、键入落点错位）
+function demoCheckpoint(s: DemoSession): ScreenCheckpoint {
+  const rows = 32;
+  const lines = s.out.split(/\r?\n/);
+  const grid = lines.slice(-rows).map((l) => (l ? [{ text: l, fg: null, bg: null, flags: 0 }] : []));
+  while (grid.length < rows) grid.push([]);
+  let curY = 0;
+  let curX = 0;
+  for (let i = grid.length - 1; i >= 0; i--) {
+    const text = grid[i].map((r) => r.text).join("");
+    if (text) {
+      curY = i;
+      curX = Math.min(text.length, 120);
+      break;
+    }
+  }
+  return {
+    cols: 120,
+    rows,
+    buffers: [{ lines: grid }, { lines: Array.from({ length: rows }, () => []) }],
+    active_buffer: 0,
+    cursor: { x: curX, y: curY, visible: true, style: "block" },
+    modes: { autowrap: true, application_cursor: false, bracketed_paste: false, origin_mode: false },
+    title: null,
+  };
 }
 // 自增起点避开全部种子 id（曾用 2 与种子区段相邻，易在对比时混淆）
 let demoSeq = 100;
+let demoSubCounter = 0;
 let eventSeq = 42;
 function audit(
   actor: "human" | "agent", action: string, command: string | null,
@@ -284,7 +336,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], forwards: [] });
+      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
       audit("human", "session_created", null, null, sid);
       // 镜像真实：SSH 建连后注入 Shell 集成标记（OSC133+OSC7），时间线两条同现
       audit("human", "shell_integration_inject", "OSC133+OSC7", null, sid);
@@ -293,7 +345,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "close_session": {
       const sid = args?.sid as string;
       const s = demoState.sessions.find((x) => x.id === sid);
-      if (s) s.state = "Disconnected";
+      if (s) {
+        s.state = "Disconnected";
+        s.subs.clear(); // 会话关闭自动清理全部订阅（C10 主路径兜底）
+      }
       pushTo(sid, "\r\n[会话已断开]\r\n");
       // 镜像真实 close_session：作废该会话待审批并逐条留痕（reason=session_closed）
       for (const a of demoState.approvals) {
@@ -325,8 +380,46 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sid = args?.sid as string;
       const channel = args?.onEvent as { onmessage?: Handler };
       const s = demoState.sessions.find((x) => x.id === sid);
-      if (s && channel?.onmessage) s.handlers.push((m) => channel.onmessage!(m));
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      demoSubCounter += 1;
+      const sub = `sub-demo-${demoSubCounter}`;
+      if (channel?.onmessage) {
+        s.handlers.push((m) => channel.onmessage!(m));
+        s.subs.add(sub);
+      }
+      const attach: AttachOutput = { subscription_id: sub, checkpoint: demoCheckpoint(s), start_seq: s.seq };
+      return attach;
+    }
+    case "unsubscribe_output": {
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      s?.subs.delete(args?.subscriptionId as string);
       return null;
+    }
+    case "resync_output": {
+      const sid = args?.sid as string;
+      const sub = args?.subscriptionId as string;
+      const fromSeq = (args?.fromSeq ?? null) as number | null;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (!s.subs.has(sub)) throw apiError("invalid_input", `subscription 已过期或不存在：${sub}（演示）`);
+      // 与真实口径一致：淘汰（环首已越过 from+1）→ checkpoint 路径
+      if (fromSeq === null || s.ring.length === 0 || s.ring[0].seq > fromSeq + 1) {
+        const r: ResyncOutput = { kind: "checkpointed", subscription_id: sub, checkpoint: demoCheckpoint(s), end_seq: s.seq };
+        return r;
+      }
+      const events = s.ring.filter((r) => r.seq > (fromSeq ?? 0) && r.seq <= s.seq).map((r) => ({ seq: r.seq, data: r.data }));
+      const r2: ResyncOutput = { kind: "replayed", subscription_id: sub, events, end_seq: s.seq };
+      return r2;
+    }
+    case "debug_subscriptions": {
+      const per = demoState.sessions
+        .filter((s) => s.subs.size > 0)
+        .map((s) => ({ session_id: s.id, subscription_ids: [...s.subs] }));
+      const d: DebugSubscriptions = {
+        active_count: per.reduce((a, p) => a + p.subscription_ids.length, 0),
+        per_session: per,
+      };
+      return d;
     }
     case "session_brief": {
       const bs = demoState.sessions.find((x) => x.id === args?.sid);

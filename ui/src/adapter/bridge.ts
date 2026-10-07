@@ -42,6 +42,9 @@ interface CmdArgs {
   reconnect_session: { sid: string };
   resize: { sid: string; cols: number; rows: number };
   subscribe_output: { sid: string; onEvent: WireChannel };
+  unsubscribe_output: { sid: string; subscriptionId: string };
+  resync_output: { sid: string; subscriptionId: string; fromSeq: number | null };
+  debug_subscriptions: undefined;
   open_url: { url: string };
   upload_file: { sid: string; local: string; remote: string };
   download_file: { sid: string; remote: string; local?: string | null };
@@ -86,7 +89,10 @@ interface CmdRet {
   close_session: void;
   reconnect_session: void;
   resize: void;
-  subscribe_output: void;
+  subscribe_output: wire.AttachOutput;
+  unsubscribe_output: void;
+  resync_output: wire.ResyncOutput;
+  debug_subscriptions: wire.DebugSubscriptions;
   open_url: void;
   upload_file: wire.TransferHandle;
   download_file: wire.TransferHandle;

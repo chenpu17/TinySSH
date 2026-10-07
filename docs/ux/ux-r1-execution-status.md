@@ -43,8 +43,8 @@ G1 已获开工授权，R10–R15 仍记 `待开始`，由团队实际启动后�
 
 | ID | 状态 | 备注 |
 |---|---|---|
-| R10 adapter/DTO/错误映射 | **通过**（commit `6c8d4b3`） | 开工准备归档 `../acceptance/ux-r1/g1/2026-10-07-ea0b914-r10prep/`（旧版 tag old-ui-baseline-g0 + 构建/产物摘要 + DB fixture + release 补测清单）；实施证据 `../acceptance/ux-r1/g1/2026-10-07-7d70887-r10-adapter/` | WireError 结构化错误（15 变体 kind + ADR-15 前向）+ adapter 三件套（wire/errors/bridge，42 命令 CmdMap）+ App 全量改道 + demo 错误契约化；e2e：种子库 list-ready cards=21 + 真实库 autoconnect + 零 JS 错误；rev-r10/vis-r10 复核中 |
-| R11 TerminalRegistry/订阅 | 待开始 | 按 C10 勘误实现；B11/P6 与 P2、P5 有效归属试点在 G1 退出前关闭 |
+| R10 adapter/DTO/错误映射 | **通过**（commit `6c8d4b3`） | 开工准备归档 `../acceptance/ux-r1/g1/2026-10-07-ea0b914-r10prep/`（旧版 tag old-ui-baseline-g0 + 构建/产物摘要 + DB fixture + release 补测清单）；实施证据 `../acceptance/ux-r1/g1/2026-10-07-7d70887-r10-adapter/` | WireError 结构化错误（15 变体 kind + ADR-15 前向）+ adapter 三件套（wire/errors/bridge，42 命令 CmdMap）+ App 全量改道 + demo 错误契约化；e2e：种子库 list-ready cards=21 + 真实库 autoconnect + 零 JS 错误；rev-r10 对抗审核通过 + vis-r10 视觉无回归（双通过，注记 4 项已收口） |
+| R11 TerminalRegistry/订阅 | **通过**（证据 `../acceptance/ux-r1/g1/2026-10-07-2cdf635-r11-subscriptions/`） | C10 全链路：term-core ScreenCheckpoint 导出（复用 alacritty Term）+ core-session seq/重放环/订阅注册表/线性化点 + 桥 8B LE seq 帧/resync window 事件（补挂 FE 监听，修复基线断链）/三新命令 + FE createOutputFeed 水位状态机/applyCheckpoint 重建 + demo 同契约。e2e（交付态二进制，local 会话真环境）：3000 行洪泛全缓冲对账 missing=0/dup=0/resync=0、alt 屏检查点、过期订阅拒绝、显式退订归零幂等、退出零残留；term-core 17/17、core-session c10 7/7。独立复核：rev-r11（1 严重 3 中 5 低全部处置：replay_fresh 并入线性化点/parseSeqFrame 纯算术/applyCheckpoint 尺寸对齐/resize 漂移登记）+ vis-r11（vs R10 基线逐像素 0 差异；光标停闪/落错位 2 回归修复并探针复验）。登记：非活动缓冲空形（alacritty 0.26 无公开访问器）、title 恒 None、跨 resize 重放漂移、测试套件钥匙串护栏（SessionManager::open 各测试点未导出 TINYSSH_MASTER_KEY 时自设，cargo test 零钥匙串依赖——修复本轮 workspace 测试被授权弹窗阻塞） |
 | R12 AppShell/主机栏/标签 | 待开始 | 依赖 R01/R02/R11 |
 | R13 action/快捷键/焦点 | 待开始 | |
 | R14 基础垂直流程 | 待开始 | 真实本地+SSH 会话 |
@@ -88,6 +88,7 @@ G1 已获开工授权，R10–R15 仍记 `待开始`，由团队实际启动后�
 | 2026-10-06 | **G0 修订轮**（联审未通过响应）：三路并行修正后全部独立复审通过——A 原型九项修复 rev-ux 九项全 PASS+对抗探针无绕过；B 契约 C-01~C-04 rev-r03b 二轮全部处置；C 测量 Q-01~Q-06 rev-r04 两轮三验终裁决可签关闭（复审新增 2 项：memsample --s0 str/int 键类型失效、p2_echo 门限/分辨力声明，同轮修复并正/缺/无三路径独立复跑）。五项产品决议写入冻结单 §6.1 与契约条款。关闭映射：docs/ux/ux-r1-g0/g0-review-closure.md，待用户重审 G0 |
 | 2026-10-07 | **G0 受托签署生效**：G0 阶段基线通过、G1 授权启动（签署单 g0-signoff.md，commit `bbd2341`）。随即执行签署指派项——Q-05 采样器修复（memsample v3→v4：键类型装载归一/应用 RSS 单计/同 PID 换身份复用检测，对应签署探针四项发现），纯数据正负探针 9/9 PASS（scripts/perf/memsample_selftest.py，证据 2026-10-07-e2ebdc4-q05fix）+ 独立复核通过（rev-q05fix 对抗复核裁决可签关闭：四缺陷实读验证 + 自写对抗探针 10/10 PASS；两条低危 fail-closed 注记随下次修订收口）。下一步按签署 §2：R10 开工准备 + G1 实施（第一重点：新工作区真实 SSH 垂直流程） |
 | 2026-10-07 | **G1 启动**：R10 开工准备交付（旧版源码 tag `old-ui-baseline-g0`、构建/产物 SHA256、隔离 DB fixture、release 打包基线补测清单——签署 §2 期限项，commit `7d70887`）；R10 adapter 实施完成待验收：后端 WireError 结构化错误（36 处字符串拍平替换 + kind 契约测试）、FE adapter 三件套（42 命令 CmdMap 类型化）、App 全量改道、demo 错误同形；e2e 合成证据（种子库 21 卡渲染 + 真实容器 autoconnect + 零 JS 错误 + 退出零残留 + demo 浏览器走查零错误）；独立复核双通过：rev-r10 对抗审核通过（三标准 PASS + 4 低危注记全部收口）+ vis-r10 视觉无回归（逐像素零差异、双主题实测）。已提交 `6c8d4b3`，下一任务 R11 |
+| 2026-10-07 | **R11 实施完成**：C10 全链路（term-core ScreenCheckpoint 导出 + core-session 线性化点/重放环/订阅注册表 + 桥 8B LE seq 帧/resync 事件/三新命令 + FE createOutputFeed 水位状态机/applyCheckpoint + demo 同契约）；e2e 真环境 3000 行洪泛对账 missing=0/dup=0/resync=0、alt 屏检查点、过期订阅拒绝、退订归零幂等、退出零残留；独立复核双通过：rev-r11（1 严重 3 中 5 低全部处置，replay_fresh 并入线性化点为关键修复）+ vis-r11（逐像素 0 差异，2 光标回归修复探针复验）。附带发现并修复测试套件钥匙串阻塞（测试点 env 自设主密钥，`cargo test` 零钥匙串依赖）；t40 容器同路径留待受控复测，遗留 SecurityAgent 弹窗待用户处置。下一任务 R12 |
 
 ## 4. 决议与偏差记录
 

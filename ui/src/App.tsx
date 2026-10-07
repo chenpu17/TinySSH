@@ -3,6 +3,8 @@ import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
 import { errMsg } from "./adapter/errors";
+import { createOutputFeed } from "./terminal/checkpoint";
+import type { OutputFeed } from "./terminal/checkpoint";
 import type {
   Host, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
@@ -313,12 +315,6 @@ const THEMES: ThemePreset[] = [
 ];
 const themeById = (id: string): ThemePreset => THEMES.find((t) => t.id === id) ?? THEMES[0];
 
-// 快照回放的光标归位：ScreenSnapshot 的 cursor_row/col 是 shell 视角的屏幕位置（0 基），
-// 回放文本后用 CSI H 归位，xterm 光标才与远端一致（否则停在屏底）。
-type ScreenSnap = { text: string; cursor_row: number; cursor_col: number };
-const cursorRestore = (s: { cursor_row?: number; cursor_col?: number }) =>
-  `\x1b[${(s.cursor_row ?? 0) + 1};${(s.cursor_col ?? 0) + 1}H`;
-
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -326,7 +322,7 @@ export default function App() {
   const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
   // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
-  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement }>>(new Map());
+  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement; feed: OutputFeed | null }>>(new Map());
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const sessionsRef = useRef<SessionInfo[]>([]);
@@ -552,6 +548,17 @@ export default function App() {
     return () => un?.();
   }, [refreshLists]);
 
+  // C10 resync 事件（R11，修复基线断链）：核心 Lagged/Resync → window 推送，
+  // 按 (session_id, subscription_id) 路由到对应终端的订阅水位状态机。
+  useEffect(() => {
+    if (!inTauri) return;
+    let un: (() => void) | undefined;
+    listen<{ session_id: string; from_seq: number | null; subscription_id: string }>("resync", (e) => {
+      termsRef.current.get(e.payload.session_id)?.feed?.onResyncEvent(e.payload.subscription_id);
+    }).then((f) => (un = f));
+    return () => un?.();
+  }, []);
+
   // 主机指纹待决（T17）：初始拉取 + 事件推送；弹窗按到达顺序逐个出示。
   // 浏览器 demo 无事件通道，用同一命令轮询兜底（TOFU shim 的挂起建连靠它发现）。
   // 2FA 认证提示（路线图⑩）同一套拉取/推送模式。
@@ -637,6 +644,13 @@ export default function App() {
     term.onTitleChange((t) => {
       if (t) setOscTitles((prev) => ({ ...prev, [sessionSid]: t }));
     });
+    // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
+    // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）
+    if (import.meta.env.DEV) {
+      const w = window as unknown as { __t_terms?: Map<string, Terminal> };
+      w.__t_terms ??= new Map();
+      w.__t_terms.set(sessionSid, term);
+    }
     // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
     // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
     // Option/Alt 的 Meta 转发在 window 捕获层做（见下方 onKey）——WKWebView 里
@@ -702,7 +716,7 @@ export default function App() {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
     });
-    return { term, el, search: searchAddon, tag };
+    return { term, el, search: searchAddon, tag, feed: null as OutputFeed | null };
   }, []);
 
   // 终端区域（含内容下方空白）点击即聚焦当前会话终端。
@@ -993,32 +1007,16 @@ export default function App() {
     const made = makeTerm(sessionSid);
     if (!made) return;
     termsRef.current.set(sessionSid, made);
-    // 输出订阅（每会话仅一次）：字节 → 字符串（有状态解码，处理 UTF-8 跨块分割）。
-    // 不走 term.write(Uint8Array)：实测该二进制写路径在 WKWebView 下静默不渲染。
+    // 输出订阅（每会话仅一次，C10）：subscribe 返回 {subscription_id, checkpoint,
+    // start_seq}；检查点应用前的早到帧由 feed 暂存，应用后按序消费 seq > start_seq。
     const term = made.term;
-    const decoder = new TextDecoder();
+    const feed = createOutputFeed({ term, sid: sessionSid });
+    made.feed = feed;
     const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
-    channel.onmessage = (msg) => {
-      if (msg instanceof ArrayBuffer || msg instanceof Uint8Array) {
-        const u8 = msg instanceof Uint8Array ? msg : new Uint8Array(msg);
-        term.write(decoder.decode(u8, { stream: true }));
-      } else if (typeof msg === "string" && msg.includes("resync")) {
-        invoke("read_screen", { sid: sessionSid }).then((snap) => {
-          term.reset();
-          term.write(snap.text);
-          term.write(cursorRestore(snap));
-        });
-      }
-    };
-    // 先回放快照、后订阅实时流：反之竞争窗口内到达的字节会插在快照前渲染，错乱首屏。
-    // 仅首次接入回填当前屏（会话可能建立已久）；此后切走再切回不再重置——历史保留。
-    // 写完必须把光标归位到 Screen 的真实位置（cursor_row/col）：逐行写快照会把光标
-    // 推到屏底——「会话已接入」提示语与后续输出（含 attach 后 fit 触发的提示符重绘）
-    // 全部落到中下方，且 xterm 光标从此与 shell 视角错位（用户走查实锤的三提示符首屏）。
-    const snap = await invoke("read_screen", { sid: sessionSid });
-    term.write(snap.text);
-    term.write(cursorRestore(snap));
-    await invoke("subscribe_output", { sid: sessionSid, onEvent: channel });
+    channel.onmessage = (msg) => feed.onMessage(msg);
+    // 先注册通道、后调 subscribe：注册起核心即缓存 live，检查点前的早到帧不丢
+    const attach = await invoke("subscribe_output", { sid: sessionSid, onEvent: channel });
+    feed.begin(attach);
     subscribedRef.current.add(sessionSid);
     // 首次接入提示改为不占终端行的悬浮条（自动淡出）：写进终端流会把 shell 的
     // 光标视角带偏——后续远端输出全部接在提示语之后渲染。
@@ -1096,6 +1094,8 @@ export default function App() {
     subscribedRef.current.delete(id);
     const entry = termsRef.current.get(id);
     if (entry) {
+      // 显式退订（C10 主清理路径；close_session 兜底自动清理）
+      entry.feed?.dispose();
       entry.term.dispose();
       entry.el.remove();
       termsRef.current.delete(id);

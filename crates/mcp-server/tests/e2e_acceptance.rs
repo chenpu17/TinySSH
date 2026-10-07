@@ -37,6 +37,11 @@ fn auto_accept_host_keys(m: Arc<core_session::SessionManager>) {
 }
 
 async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
+    // 主密钥走 env（vault 解析序 env > OS 钥匙串）：避免测试二进制重编译后
+    // 签名变化触发 macOS 钥匙串授权弹窗并阻塞测试进程。
+    if std::env::var("TINYSSH_MASTER_KEY").is_err() {
+        std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
+    }
     // RUST_LOG 设置时输出核心 trace（排查并发回归用）
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

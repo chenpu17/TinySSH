@@ -261,35 +261,95 @@ async fn resize(state: ApiState<'_>, sid: String, cols: u16, rows: u16) -> CmdRe
     state.api.resize(&human(), sid, cols, rows).await.map_err(WireError::from)
 }
 
-/// 输出流订阅：Channel 桥（可丢 broadcast + 失步 resync，L0 ADR-2/7）。
+/// 输出流订阅：Channel 桥（可丢 broadcast + 失步 resync，L0 ADR-2/7；C10 R11）。
+/// 返回订阅身份 + 检查点 + 水位；Raw 帧加 8 字节 LE seq 帧头（UI 剥头取 seq）。
+/// 桥 task 绑定订阅身份：send 失败（订阅端通道已关）或 broadcast 关闭即兜底退订。
 #[tauri::command]
 async fn subscribe_output(
     state: ApiState<'_>,
     sid: String,
     on_event: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
     window: tauri::Window<tauri::Wry>,
-) -> CmdResult<()> {
-    let mut rx = state.api.subscribe_output(sid.clone()).map_err(WireError::from)?;
+) -> CmdResult<AttachOutput> {
+    let (attach, mut rx, mut cancel) = state
+        .api
+        .subscribe_output_channel(sid.clone())
+        .await
+        .map_err(WireError::from)?;
+    let sub = attach.subscription_id.clone();
+    let api = state.api.clone();
+    let emit_sid = sid.clone();
     tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(OutputEvent::Raw { sid: _, data }) => {
-                    // L0 SPIKE-1 结论：原始字节直通（JSON 数字数组会使吞吐降一个量级）
-                    if on_event.send(tauri::ipc::InvokeResponseBody::Raw(data)).is_err() {
-                        break;
+            tokio::select! {
+                _ = cancel.changed() => break, // 显式退订：转发终结
+                ev = rx.recv() => {
+                    match ev {
+                        Ok(OutputEvent::Raw { seq, data, .. }) => {
+                            // L0 SPIKE-1 结论：原始字节直通（JSON 数字数组会使吞吐降一个量级）
+                            let mut frame = Vec::with_capacity(8 + data.len());
+                            frame.extend_from_slice(&seq.to_le_bytes());
+                            frame.extend_from_slice(&data);
+                            if on_event.send(tauri::ipc::InvokeResponseBody::Raw(frame)).is_err() {
+                                break;
+                            }
+                        }
+                        Ok(OutputEvent::Resync { .. }) => {
+                            let _ = window.emit(
+                                "resync",
+                                serde_json::json!({
+                                    "session_id": emit_sid, "from_seq": null, "subscription_id": sub,
+                                }),
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            let _ = window.emit(
+                                "resync",
+                                serde_json::json!({
+                                    "session_id": emit_sid, "from_seq": null, "subscription_id": sub,
+                                }),
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                Ok(OutputEvent::Resync { .. }) => {
-                    let _ = window.emit("resync", sid.clone());
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    let _ = window.emit("resync", sid.clone());
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
+        // 兜底清理（DF10.5）：桥 task 退出即退订；幂等，会话已关亦 Ok
+        let _ = api.unsubscribe_output(emit_sid, &sub).await;
     });
-    Ok(())
+    Ok(attach)
+}
+
+/// 显式退订（主清理路径）：UI 关闭终端实例时必须调用；幂等 no-op。
+#[tauri::command]
+async fn unsubscribe_output(state: ApiState<'_>, sid: String, subscription_id: String) -> CmdResult<()> {
+    state
+        .api
+        .unsubscribe_output(sid, &subscription_id)
+        .await
+        .map_err(WireError::from)
+}
+
+/// resync（DF10.3）：from_seq=UI 最后已应用序号，None 请求检查点。
+#[tauri::command]
+async fn resync_output(
+    state: ApiState<'_>,
+    sid: String,
+    subscription_id: String,
+    from_seq: Option<u64>,
+) -> CmdResult<ResyncOutput> {
+    state
+        .api
+        .resync_output(sid, &subscription_id, from_seq)
+        .await
+        .map_err(WireError::from)
+}
+
+/// P6 测量口径：活跃订阅计数。
+#[tauri::command]
+fn debug_subscriptions(state: ApiState<'_>) -> DebugSubscriptions {
+    state.api.debug_subscriptions()
 }
 
 #[tauri::command]
@@ -691,7 +751,11 @@ fn main() {
                 // R04 Q-04：采样运行标识（仅注入脚本使用，产品行为无关）——
                 // 共享信标日志的每条打点可精确归因到本次运行，杜绝跨轮污染
                 let run_id = std::env::var("TINYSSH_RUN_ID").unwrap_or_else(|_| "norun".into());
-                let script = format!(
+                let mode = std::env::var("TINYSSH_SMOKE_MODE").unwrap_or_default();
+                let script: String = if mode == "r11" {
+                    r11_smoke_script(&run_id)
+                } else {
+                    format!(
                     r#"(function() {{
   // sleep 原语走 beacon 服务端延时：等待期间页面事件循环自由运转（React 可渲染），
   // 又不依赖 WKWebView 对注入脚本可能节流的 timer
@@ -842,7 +906,8 @@ fn main() {
     }}
   }})();
 }})();"#
-                );
+                )
+                };
                 std::fs::write("/tmp/t40_smoke/last_smoke_script.js", &script).ok();
                 let r = webview.eval(&script);
                 eprintln!("[app] smoke script injected: {r:?}");
@@ -984,6 +1049,7 @@ fn main() {
             list_hosts, upsert_host, delete_host, create_identity, list_identities,
             ssh_config_preview, ssh_config_import,
             list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
+            unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
             upload_file, download_file, cancel_transfer, sftp_list,
             list_forwards, start_forward, stop_forward,
@@ -995,6 +1061,114 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// R11 B11 探针注入脚本（TINYSSH_SMOKE_MODE=r11；dev 门控，产品路径无关）：
+/// 会话 attach → 订阅计数 → 3000 行高频输出全缓冲对账（无丢字/重复/零 resync）→
+/// resync 接口形状 + 过期订阅拒绝 → alt_screen 检查点导出 → 显式退订归零 + 幂等。
+fn r11_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const title = (s) => {
+    document.title = 'SMOKE|' + s;
+    fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)).catch(() => {});
+  };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { try { const v = await fn(); if (v) return v; } catch (e) {} await sleep(100); }
+    return null;
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  (async () => {
+    try {
+      title('r11-opening');
+      const ses = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        return (ss || []).find((s) => s.state === 'Connected');
+      }, 150);
+      if (!ses) { title('FAIL-no-session'); return; }
+      const sid = ses.id;
+      title('r11-session|' + sid);
+      const row = await waitFor(async () => document.querySelector('.card.row div[title]'), 50);
+      if (!row) { title('FAIL-no-row'); return; }
+      row.click();
+      const term = await waitFor(async () => (window.__t_terms && window.__t_terms.get(sid)) || null, 100);
+      if (!term) { title('FAIL-no-term'); return; }
+      await sleep(800);
+      title('r11-attached');
+      const dbg = await inv('debug_subscriptions', {});
+      const mine = (dbg.per_session || []).find((p) => p.session_id === sid);
+      mark('r11-subs|active=' + dbg.active_count + '|mine=' + (mine ? mine.subscription_ids.length : 0));
+      if (!mine || mine.subscription_ids.length !== 1) { title('FAIL-subs|' + JSON.stringify(dbg).slice(0, 160)); return; }
+      const sub = mine.subscription_ids[0];
+      let resyncCount = 0;
+      window.addEventListener('resync', () => { resyncCount += 1; });
+      mark('r11-flood-begin');
+      await inv('send_keys', { sid, keys: "printf 'B11-BEGIN\\n'; seq 1 3000; printf 'B11-END\\n'\r" });
+      const bufText = () => {
+        const b = term.buffer.active;
+        let out = '';
+        for (let i = 0; i < b.length; i++) { out += (b.getLine(i) ? b.getLine(i).translateToString(true) : '') + '\n'; }
+        return out;
+      };
+      let ok = false;
+      for (let i = 0; i < 100; i++) { if (bufText().includes('B11-END')) { ok = true; break; } await sleep(100); }
+      if (!ok) { title('FAIL-flood-timeout'); return; }
+      await sleep(500);
+      const bt = bufText();
+      // 整行匹配：PTY 会回显命令行本身（内含标记子串），substring 计数会双计
+      const standalone = (s) => bt.split('\n').filter((l) => l.trim() === s).length;
+      const beginN = standalone('B11-BEGIN');
+      const endN = standalone('B11-END');
+      const numLines = bt.split('\n').filter((l) => /^\s*(\d+)\s*$/.test(l)).map((l) => parseInt(l, 10));
+      const uniq = new Set(numLines);
+      let missing = 0;
+      for (let i = 1; i <= 3000; i++) { if (!uniq.has(i)) missing++; }
+      const dup = numLines.length - uniq.size;
+      mark('r11-flood|begin=' + beginN + '|end=' + endN + '|missing=' + missing + '|dup=' + dup + '|resync=' + resyncCount);
+      if (beginN !== 1 || endN !== 1 || missing !== 0 || dup !== 0 || resyncCount !== 0) {
+        title('FAIL-flood|' + beginN + ',' + endN + ',' + missing + ',' + dup + ',' + resyncCount);
+        return;
+      }
+      title('r11-flood-ok');
+      let expiredRejected = false;
+      try { await inv('resync_output', { sid, subscriptionId: 'sub-bogus', fromSeq: 1 }); } catch (e) { expiredRejected = true; }
+      if (!expiredRejected) { title('FAIL-expired-accepted'); return; }
+      const rs = await inv('resync_output', { sid, subscriptionId: sub, fromSeq: null });
+      if (!rs || !rs.kind || (rs.kind !== 'checkpointed' && rs.kind !== 'replayed')) {
+        title('FAIL-resync-shape|' + JSON.stringify(rs).slice(0, 120));
+        return;
+      }
+      mark('r11-resync|kind=' + rs.kind + '|end=' + rs.end_seq);
+      title('r11-resync-ok');
+      await inv('send_keys', { sid, keys: "printf '\\033[?1049h\\033[HALT-MARK-7Q'\r" });
+      await sleep(700);
+      const rs2 = await inv('resync_output', { sid, subscriptionId: sub, fromSeq: null });
+      const ab = rs2 && rs2.checkpoint ? rs2.checkpoint.active_buffer : -1;
+      const altText = rs2 && rs2.checkpoint ? JSON.stringify(rs2.checkpoint.buffers[1]) : '';
+      mark('r11-alt|buffer=' + ab + '|has=' + altText.includes('ALT-MARK-7Q'));
+      if (ab !== 1 || !altText.includes('ALT-MARK-7Q')) { title('FAIL-alt|' + ab); return; }
+      await inv('send_keys', { sid, keys: "printf '\\033[?1049l'\r" });
+      await sleep(300);
+      title('r11-alt-ok');
+      await inv('unsubscribe_output', { sid, subscriptionId: sub });
+      const dbg2 = await inv('debug_subscriptions', {});
+      const mine2 = (dbg2.per_session || []).find((p) => p.session_id === sid);
+      const left = mine2 ? mine2.subscription_ids.length : 0;
+      mark('r11-unsub|left=' + left + '|active=' + dbg2.active_count);
+      if (left !== 0) { title('FAIL-unsub|' + left); return; }
+      await inv('unsubscribe_output', { sid, subscriptionId: sub });
+      title('r11-DONE');
+    } catch (e) {
+      title('FAIL|' + e);
+    }
+  })();
+})();"#
+    .replace("__RUN__", run_id);
+    base
 }
 
 fn dirs_or_home() -> std::path::PathBuf {

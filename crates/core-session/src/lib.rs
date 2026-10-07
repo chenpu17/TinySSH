@@ -328,11 +328,8 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                 match tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await {
                     Ok(Ok(data)) => {
                         let data = decoder.feed(&data);
-                        {
-                            let mut s = h.screen.lock().await;
-                            s.feed(&data);
-                        }
-                        let _ = h.output_tx.send(OutputEvent::Raw { sid: h.id.clone(), data });
+                        // 线性化点内部完成 seq/重放环/订阅广播（C10）
+                        h.feed_output(&data).await;
                     }
                     Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
                         let _ = h.output_tx.send(OutputEvent::Resync { sid: h.id.clone() });
@@ -341,8 +338,7 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                         // 通路关闭：冲刷悬空的半个多字节序列（尾字节永远不到 → U+FFFD 落屏）
                         let tail = decoder.flush();
                         if !tail.is_empty() {
-                            h.screen.lock().await.feed(&tail);
-                            let _ = h.output_tx.send(OutputEvent::Raw { sid: h.id.clone(), data: tail });
+                            h.feed_output(&tail).await;
                         }
                         lost = true;
                         break;
@@ -1074,9 +1070,128 @@ impl SessionApi for SessionManager {
         Ok(())
     }
 
-    fn subscribe_output(&self, sid: SessionId) -> Result<broadcast::Receiver<OutputEvent>> {
+}
+
+impl SessionManager {
+    // ---- C10 输出订阅恢复（R11；桥层专用，不在 SessionApi trait 面）----
+
+    /// 订阅会话输出：注册订阅身份 + 原子捕获检查点与水位（DF10.2）。
+    /// 返回 (AttachOutput, broadcast receiver, 取消信号 receiver)；receiver 由桥层
+    /// 转发为带 seq 帧头的 Raw 通道帧，取消信号触发桥 task 退出（显式退订即终结转发）。
+    /// 注册起 broadcast 缓存 live——检查点应用前的早到帧由前端暂存。
+    pub async fn subscribe_output_channel(
+        &self,
+        sid: SessionId,
+    ) -> Result<(
+        AttachOutput,
+        broadcast::Receiver<OutputEvent>,
+        tokio::sync::watch::Receiver<bool>,
+    )> {
         let h = self.get(&sid)?;
-        Ok(h.output_tx.subscribe())
+        let rx = h.output_tx.subscribe();
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let (subscription_id, checkpoint, start_seq) = {
+            // 锁序：screen → replay（与 pump 一致，防死锁）
+            let s = h.screen.lock().await;
+            let checkpoint = s.checkpoint();
+            let start_seq = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
+            h.last_ckpt_seq.store(start_seq, std::sync::atomic::Ordering::Release);
+            let sub = format!("sub-{}", uuid::Uuid::new_v4());
+            h.subs.lock().unwrap().insert(sub.clone(), cancel_tx);
+            (sub, checkpoint, start_seq)
+        };
+        Ok((
+            AttachOutput { subscription_id, checkpoint, start_seq },
+            rx,
+            cancel_rx,
+        ))
+    }
+
+    /// 显式退订（主清理路径，DF10.5）：幂等；重复或旧身份为 no-op。
+    /// 会话不存在同样 Ok——UI 收尾顺序可能晚于会话关闭（close_session 已自动清理）。
+    pub async fn unsubscribe_output(&self, sid: SessionId, subscription_id: &str) -> Result<()> {
+        if let Some(h) = self.sessions.lock().unwrap().get(&sid).cloned() {
+            let removed = h.subs.lock().unwrap().remove(subscription_id);
+            if let Some(cancel_tx) = removed {
+                let _ = cancel_tx.send(true); // 桥 task 退出（转发终结）
+            } else {
+                tracing::debug!(session = %sid, sub = %subscription_id, "unsubscribe: no such subscription (no-op)");
+            }
+        }
+        Ok(())
+    }
+
+    /// resync（DF10.3）：绑定订阅身份；from_seq=None 请求检查点。
+    /// Some(f)：优先 (f, cur] 连续原始字节重放（水位包含末事件）；
+    /// 不可重放（淘汰/alt_screen 活跃/检查点更近）退检查点。
+    /// 过期/未知 subscription_id 拒绝且不改任何状态。
+    pub async fn resync_output(
+        &self,
+        sid: SessionId,
+        subscription_id: &str,
+        from_seq: Option<u64>,
+    ) -> Result<ResyncOutput> {
+        let h = self.get(&sid)?;
+        if !h.subs.lock().unwrap().contains_key(subscription_id) {
+            return Err(Error::InvalidInput(format!(
+                "subscription 已过期或不存在：{subscription_id}"
+            )));
+        }
+        // 锁序：screen → replay
+        let s = h.screen.lock().await;
+        let checkpoint_mode = match from_seq {
+            None => true,
+            Some(f) => {
+                let cur = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
+                // seq 恰等于水位：已追平，空重放（不重放断言）
+                if f >= cur {
+                    return Ok(ResyncOutput::Replayed {
+                        subscription_id: subscription_id.to_string(),
+                        events: Vec::new(),
+                        end_seq: cur,
+                    });
+                }
+                let replayable = h.replay.lock().unwrap().covers_from(f);
+                let ckpt_nearer =
+                    h.last_ckpt_seq.load(std::sync::atomic::Ordering::Acquire) >= f + 1;
+                !replayable || s.alt_screen() || ckpt_nearer
+            }
+        };
+        if checkpoint_mode {
+            let checkpoint = s.checkpoint();
+            let end_seq = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
+            h.last_ckpt_seq.store(end_seq, std::sync::atomic::Ordering::Release);
+            return Ok(ResyncOutput::Checkpointed {
+                subscription_id: subscription_id.to_string(),
+                checkpoint,
+                end_seq,
+            });
+        }
+        let f = from_seq.expect("checked above");
+        let cur = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
+        let ring = h.replay.lock().unwrap();
+        let events: Vec<SeqFrame> = ring
+            .q
+            .iter()
+            .filter(|(seq, _)| *seq > f && *seq <= cur)
+            .map(|(seq, data)| SeqFrame { seq: *seq, data: data.clone() })
+            .collect();
+        // 环内连续到 cur（covers_from 已验首帧；seq 逐帧连续推进，末帧即 cur）
+        let end_seq = events.last().map(|e| e.seq).unwrap_or(cur);
+        Ok(ResyncOutput::Replayed { subscription_id: subscription_id.to_string(), events, end_seq })
+    }
+
+    /// P6 测量口径（DF10.5）：活跃订阅计数。
+    pub fn debug_subscriptions(&self) -> DebugSubscriptions {
+        let sessions = self.sessions.lock().unwrap();
+        let mut per_session = Vec::with_capacity(sessions.len());
+        let mut active_count = 0usize;
+        for (sid, h) in sessions.iter() {
+            let ids: Vec<String> = h.subs.lock().unwrap().keys().cloned().collect();
+            active_count += ids.len();
+            per_session.push(SessionSubs { session_id: sid.clone(), subscription_ids: ids });
+        }
+        DebugSubscriptions { active_count, per_session }
     }
 }
 
@@ -1411,5 +1526,233 @@ mod t44_tests {
         let msg = err.to_string();
         assert!(msg.contains("不支持编辑后批准"), "{msg}");
         assert!(msg.contains("端口转发审批"), "报错应指明卡类：{msg}");
+    }
+}
+
+#[cfg(test)]
+mod c10_tests {
+    //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle
+    //! （屏幕/环/注册表全 pub 字段），以 handle::feed_output 走唯一线性化点。
+
+    use super::*;
+    use crate::handle::{REPLAY_CAP_BYTES, ReplayRing};
+    use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
+    use std::sync::atomic::Ordering;
+
+    struct StubChannel;
+    #[async_trait::async_trait]
+    impl ChannelHandle for StubChannel {
+        async fn write(&self, _data: &[u8]) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
+        async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> { Ok(()) }
+        async fn exec_fresh(&self, _cmd: &str, _opts: &ExecOpts, _deadline: std::time::Instant, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<FreshOutcome> { Err(Error::InvalidInput("stub".into())) }
+        async fn signal(&self, _sig: TransportSignal) -> Result<()> { Ok(()) }
+        async fn force_close(&self) -> Result<()> { Ok(()) }
+        fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> { broadcast::channel(1).1 }
+        async fn is_alive(&self) -> bool { false }
+        async fn reconnect(&self) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
+        async fn close(&self) -> Result<()> { Ok(()) }
+        async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
+        async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
+        async fn list_dir(&self, _path: &str) -> Result<Vec<DirEntryS>> { Err(Error::InvalidInput("stub".into())) }
+    }
+
+    fn mgr() -> Arc<SessionManager> {
+        // 主密钥走 env（vault 解析序 env > OS 钥匙串）：测试二进制重编译后签名
+        // 变化会使钥匙串 ACL 失效，触发授权弹窗阻塞整个测试进程。
+        if std::env::var("TINYSSH_MASTER_KEY").is_err() {
+            std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
+        }
+        let dir = std::env::temp_dir().join(format!("c10-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        SessionManager::open(&dir.join("t.db")).unwrap()
+    }
+
+    fn mk_handle(center: Arc<ApprovalCenter>) -> Arc<SessionHandle> {
+        let host = Host {
+            id: "local".into(),
+            name: "c10".into(),
+            address: "local".into(),
+            port: 0,
+            username: "t".into(),
+            auth_type: AuthType::Key,
+            identity_id: None,
+            tags: vec![],
+            fingerprint: None,
+            charset: Charset::Utf8,
+        };
+        let screen = term_core::Screen::new(term_core::ScreenConfig {
+            cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20,
+        });
+        SessionHandle::new("s-c10".into(), host, "local".into(), Arc::new(StubChannel), screen, center)
+    }
+
+    /// 注册一个手装会话（绕过 create_session 的真实传输）。
+    fn register(m: &SessionManager, h: Arc<SessionHandle>) {
+        m.sessions.lock().unwrap().insert(h.id.clone(), h.clone());
+    }
+
+    #[tokio::test]
+    async fn attach_watermark_includes_last_event() {
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        let s1 = h.feed_output(b"one").await;
+        let s2 = h.feed_output(b"two").await;
+        assert_eq!((s1, s2), (1, 2));
+        let (attach, _rx, _cancel) = m.subscribe_output_channel("s-c10".into()).await.unwrap();
+        // 水位 = 最后已包含事件的序号（包含）
+        assert_eq!(attach.start_seq, 2);
+        // 检查点包含末事件内容（不能截到已推进 seq、尚未应用到屏幕）
+        let joined: String = attach.checkpoint.buffers[0].lines.iter().flatten().map(|r| r.text.as_str()).collect();
+        assert!(joined.contains("one") && joined.contains("two"), "{joined:?}");
+        assert_eq!(m.debug_subscriptions().active_count, 1);
+    }
+
+    #[tokio::test]
+    async fn resync_replay_and_exactly_at_watermark() {
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        for i in 1..=3 {
+            h.feed_output(format!("c{i}").as_bytes()).await;
+        }
+        let (attach, _, _) = m.subscribe_output_channel("s-c10".into()).await.unwrap();
+        let sub = attach.subscription_id;
+        // attach 已在 seq3 捕获检查点：from=1 早于检查点 →「检查点更近」走 checkpoint（契约字面）
+        assert!(matches!(
+            m.resync_output("s-c10".into(), &sub, Some(1)).await.unwrap(),
+            ResyncOutput::Checkpointed { .. }
+        ));
+        // attach 后新事件 seq4：from=3（恰为水位）→ 重放 [4]；水位包含末事件
+        h.feed_output(b"c4").await;
+        match m.resync_output("s-c10".into(), &sub, Some(3)).await.unwrap() {
+            ResyncOutput::Replayed { events, end_seq, .. } => {
+                assert_eq!(events.len(), 1);
+                assert_eq!(events[0].seq, 4);
+                assert_eq!(end_seq, 4);
+            }
+            other => panic!("expected replay, got {other:?}"),
+        }
+        // seq 恰等于水位（4=cur）：不重放（空 events）
+        match m.resync_output("s-c10".into(), &sub, Some(4)).await.unwrap() {
+            ResyncOutput::Replayed { events, end_seq, .. } => {
+                assert!(events.is_empty());
+                assert_eq!(end_seq, 4);
+            }
+            other => panic!("expected empty replay, got {other:?}"),
+        }
+        // UI 领先核心（不可能态）：同样空重放
+        match m.resync_output("s-c10".into(), &sub, Some(9)).await.unwrap() {
+            ResyncOutput::Replayed { events, .. } => assert!(events.is_empty()),
+            other => panic!("expected empty replay, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_subscription_rejected_without_fallback() {
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        h.feed_output(b"x").await;
+        let old = m.subscribe_output_channel("s-c10".into()).await.unwrap().0.subscription_id;
+        m.unsubscribe_output("s-c10".into(), &old).await.unwrap();
+        // 过期订阅：拒绝（不改任何状态），且不得回落到同 session 新订阅
+        assert!(m.resync_output("s-c10".into(), &old, Some(1)).await.is_err());
+        let new = m.subscribe_output_channel("s-c10".into()).await.unwrap().0.subscription_id;
+        assert_ne!(old, new);
+        assert!(m.resync_output("s-c10".into(), &old, Some(1)).await.is_err());
+        // 新订阅正常
+        assert!(m.resync_output("s-c10".into(), &new, Some(1)).await.is_ok());
+        // 退订幂等：重复/旧身份 no-op
+        m.unsubscribe_output("s-c10".into(), &old).await.unwrap();
+        m.unsubscribe_output("s-c10".into(), &new).await.unwrap();
+        assert_eq!(m.debug_subscriptions().active_count, 0);
+        // 会话不存在同样 no-op（UI 收尾可能晚于 close_session）
+        m.unsubscribe_output("s-gone".into(), &old).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn eviction_and_alt_screen_fall_back_to_checkpoint() {
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        for i in 1..=3 {
+            h.feed_output(format!("c{i}").as_bytes()).await;
+        }
+        let sub = m.subscribe_output_channel("s-c10".into()).await.unwrap().0.subscription_id;
+        h.feed_output(b"post-attach").await;
+        // 淘汰：清空重放环（模拟窗口滑出）→ checkpoint 路径
+        h.replay.lock().unwrap().q.clear();
+        match m.resync_output("s-c10".into(), &sub, Some(1)).await.unwrap() {
+            ResyncOutput::Checkpointed { end_seq, checkpoint, .. } => {
+                assert_eq!(end_seq, 4);
+                let joined: String = checkpoint.buffers[0].lines.iter().flatten().map(|r| r.text.as_str()).collect();
+                assert!(joined.contains("post-attach"));
+            }
+            other => panic!("expected checkpoint, got {other:?}"),
+        }
+        // alt_screen 活跃 → checkpoint 路径（C-03）
+        h.replay.lock().unwrap().q.clear();
+        h.feed_output(b"\x1b[?1049h\x1b[2J\x1b[Halt-on").await;
+        match m.resync_output("s-c10".into(), &sub, Some(2)).await.unwrap() {
+            ResyncOutput::Checkpointed { checkpoint, .. } => {
+                assert_eq!(checkpoint.active_buffer, 1);
+            }
+            other => panic!("expected checkpoint for alt screen, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_nearer_beats_replay() {
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        h.feed_output(b"a").await; // seq 1
+        let (attach, _, _) = m.subscribe_output_channel("s-c10".into()).await.unwrap();
+        assert_eq!(attach.start_seq, 1); // attach 已捕获检查点 @1
+        h.feed_output(b"b").await; // seq 2
+        // from=0：检查点(@1) 比 from 更近 → checkpoint 路径（契约字面）
+        match m.resync_output("s-c10".into(), &attach.subscription_id, Some(0)).await.unwrap() {
+            ResyncOutput::Checkpointed { end_seq, .. } => assert_eq!(end_seq, 2),
+            other => panic!("expected checkpoint, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn silent_session_sub_persists_until_explicit_unsubscribe() {
+        // C-03：静默会话不得依赖 send 失败清理——stub 通道恒死，
+        // 订阅仍须存活直至显式退订/会话关闭。
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        let _ = m.subscribe_output_channel("s-c10".into()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(m.debug_subscriptions().active_count, 1);
+        // 会话关闭即自动清理
+        m.sessions.lock().unwrap().remove("s-c10");
+        assert_eq!(m.debug_subscriptions().active_count, 0);
+    }
+
+    #[test]
+    fn replay_ring_eviction_semantics() {
+        let mut ring = ReplayRing::default();
+        for i in 1..=5u64 {
+            ring.push(i, vec![i as u8]);
+        }
+        assert!(ring.covers_from(4)); // 首帧1 <= 5 → (4,∞) 可重放
+        assert!(ring.covers_from(0));
+        // 淘汰 1、2 → (1,∞) 不可重放，(2,∞) 可
+        ring.q.pop_front();
+        assert!(!ring.covers_from(0));
+        assert!(ring.covers_from(1));
+        ring.q.pop_front();
+        assert!(!ring.covers_from(1));
+        assert!(ring.covers_from(2));
+        // 字节数上限淘汰
+        let mut big = ReplayRing::default();
+        big.push(1, vec![0u8; REPLAY_CAP_BYTES + 1]);
+        big.push(2, vec![1u8]);
+        assert_eq!(big.q.len(), 1); // 帧1被挤出
+        assert_eq!(big.bytes, 1);
     }
 }

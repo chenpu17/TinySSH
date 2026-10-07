@@ -1,0 +1,38 @@
+R11 e2e 信标轨迹（/tmp/t40_smoke/beacon.log 节选，URL 解码后）
+== 运行 A（r11-1791346718，探针 v1：标记计数含 PTY 回显致 FAIL-flood，属探针缺陷非产品缺陷——该 run 的订阅计数与洪泛对账 missing=0/dup=0/resync=0 仍为有效证据）==
+/t/r11-opening
+/t/r11-session|s-92f06560-767a-407d-b7be-ebb24aba7484
+/t/r11-attached
+/t/r11-1791346718|r11-subs|active=1|mine=1
+/t/r11-1791346718|r11-flood-begin
+/t/r11-1791346718|r11-flood|begin=2|end=2|missing=0|dup=0|resync=0   ← begin/end 双计=PTY 回显命令行含标记子串
+/t/FAIL-flood|2,2,0,0,0
+
+== 运行 B（r11-1791346799，探针 v2 整行匹配，全链路 PASS）==
+/t/r11-opening
+/t/r11-session|<fresh-local-sid>
+/t/r11-attached
+/t/r11-1791346799|r11-subs|active=1|mine=1
+/t/r11-1791346799|r11-flood-begin
+/t/r11-1791346799|r11-flood|begin=1|end=1|missing=0|dup=0|resync=0
+/t/r11-flood-ok
+/t/r11-1791346799|r11-resync|kind=checkpointed|end=1381
+/t/r11-resync-ok
+/t/r11-1791346799|r11-alt|buffer=1|has=true
+/t/r11-alt-ok
+/t/r11-1791346799|r11-unsub|left=0|active=0
+/t/r11-DONE
+
+JS-ERROR/JS-REJECT（该 run）：0 条；TERM 退出后进程数归零（零残留）。
+
+== 运行 C（r11fix-1791348434，rev/vis 复核修复后的交付态二进制，全链路复跑）==
+/t/r11fix-1791348434|r11-subs|active=1|mine=1
+/t/r11fix-1791348434|r11-flood-begin
+/t/r11fix-1791348434|r11-flood|begin=1|end=1|missing=0|dup=0|resync=0
+/t/r11fix-1791348434|r11-resync|kind=checkpointed|end=1445
+/t/r11fix-1791348434|r11-alt|buffer=1|has=true
+/t/r11fix-1791348434|r11-unsub|left=0|active=0
+/t/r11-DONE
+JS-ERROR/JS-REJECT：0 条；TERM 退出后进程归零。
+该轮含修复：replay_fresh 并入线性化点（feed_output_fn）、parseSeqFrame 纯算术、
+applyCheckpoint 尺寸对齐、DECSCUSR blink 变体。

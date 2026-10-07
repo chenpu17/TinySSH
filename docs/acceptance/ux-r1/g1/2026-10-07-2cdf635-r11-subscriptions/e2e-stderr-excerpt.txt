@@ -1,0 +1,5 @@
+[app] page load event: Started "main"
+[app] page load event: Finished "main"
+[app] smoke script injected: Ok(())
+[app] autoconnect local -> s-84dfaedf-4912-4479-bd98-19ecb2d9ceed
+[full stderr 留存 /tmp/r11_e2e_stderr.log（运行 B）；local autoconnect -> autoconnect local -> s-84dfaedf-4912-4479-bd98-19ecb2d9ceed]

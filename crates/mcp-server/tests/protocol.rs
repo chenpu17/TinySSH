@@ -12,7 +12,16 @@ use rmcp::transport::streamable_http_client::{
 };
 use rmcp::{ServiceExt, ClientServiceExt};
 
+// 主密钥走 env（vault 解析序 env > OS 钥匙串）：避免测试二进制重编译后
+// 签名变化触发 macOS 钥匙串授权弹窗并阻塞测试进程。
+fn test_master_key() {
+    if std::env::var("TINYSSH_MASTER_KEY").is_err() {
+        std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
+    }
+}
+
 async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, u16, String) {
+    test_master_key();
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("t.db");
     std::mem::forget(dir);
@@ -209,6 +218,7 @@ async fn bind_increment_skips_occupied_ports() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn spawn_endpoint_serves_in_process_stack() {
+    test_master_key();
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("t.db");
     std::mem::forget(dir);

@@ -8,8 +8,16 @@ use crate::osc::{OscEvent, OscScanner};
 use crate::render::{GridSize, cursor_pos, render_screen_only, render_text};
 use crate::strip_ansi;
 use alacritty_terminal::event::EventListener;
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::Line;
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte;
+use alacritty_terminal::vte::ansi::{Color as VteColor, NamedColor};
+use session_api::{
+    BufferCheckpoint, CellRun, ColorSpec, CursorState, ScreenCheckpoint, ScreenModes,
+    cell_flags,
+};
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
@@ -116,7 +124,7 @@ impl Screen {
 
         let events = self.scanner.feed(data);
         let mut cap_active = self.capture.as_ref().map(|c| c.active).unwrap_or(false);
-        let mut cap_armed = self.capture.as_ref().map(|c| c.armed).unwrap_or(false);
+        let cap_armed = self.capture.as_ref().map(|c| c.armed).unwrap_or(false);
         let mut last_off = 0usize;
 
         for (ev, end_off) in events.iter().map(|(e, o)| (e.clone(), *o)) {
@@ -252,6 +260,8 @@ impl Screen {
     }
 
     /// Fresh 镜像回放：把结构化结果组装为带 Agent 标注的块写入屏幕（L1 §3.1 不可省略）。
+    /// 返回实际 feed 的原始字节——调用方（core-session）据此推进 seq/重放环/订阅广播，
+    /// 保证回放与传输字节同一线性化机制（C10 断言 1）。
     pub fn replay_fresh(
         &mut self,
         command: &str,
@@ -260,7 +270,7 @@ impl Screen {
         stderr: &str,
         exit_code: i32,
         exec_id: &str,
-    ) {
+    ) -> Vec<u8> {
         let who = match client_id {
             Some(c) => format!("agent:{c}"),
             None => "agent".to_string(),
@@ -288,6 +298,7 @@ impl Screen {
         let tail = format!("\x1b]133;D;{exit_code}\x07");
         bytes.extend_from_slice(tail.as_bytes());
         self.feed(&bytes);
+        bytes
     }
 
     pub fn snapshot_text(&self) -> String {
@@ -307,6 +318,79 @@ impl Screen {
     pub fn alt_screen(&self) -> bool {
         use alacritty_terminal::term::TermMode;
         self.term.mode().contains(TermMode::ALT_SCREEN)
+    }
+
+    /// 屏幕检查点导出（C10）：从既有 alacritty Term 状态导出带属性网格的恢复载体。
+    /// 调用方须持有 screen 锁——与 seq 推进同临界区，水位才与屏幕状态一致。
+    ///
+    /// 边界（如实登记）：alacritty 0.26 对非活动缓冲无公开只读访问器（swap_alt
+    /// 双向均有破坏性副作用），故只导出**活动缓冲**的属性网格；非活动缓冲按行数
+    /// 导出空形。基线 read_screen 投影同只覆盖活动缓冲，无回归；vim/top 重建走
+    /// 的正是活动（备用）缓冲。
+    pub fn checkpoint(&self) -> ScreenCheckpoint {
+        use alacritty_terminal::term::TermMode;
+
+        let cols = self.config.cols;
+        let rows = self.config.rows;
+        let alt = self.alt_screen();
+        let mode = |m: alacritty_terminal::term::TermMode| self.term.mode().contains(m);
+
+        let grid = self.term.grid();
+        let screen_lines = grid.screen_lines();
+        let history = grid.history_size();
+        // Line 坐标：0 = 屏底，正数向上到屏顶，负数进历史。自顶向下导出全网格。
+        let top = -(history as i32);
+        let mut lines: Vec<Vec<CellRun>> = Vec::with_capacity(history + screen_lines);
+        for l in top..=(screen_lines as i32 - 1) {
+            let row = &grid[Line(l)];
+            lines.push(row_runs(&row[..], cols as usize));
+        }
+        let active = if alt { 1u8 } else { 0 };
+        let inactive = BufferCheckpoint { lines: vec![Vec::new(); rows as usize] };
+        let active_buf = BufferCheckpoint { lines };
+        let buffers = if alt {
+            [inactive, active_buf]
+        } else {
+            [active_buf, inactive]
+        };
+
+        // 光标：renderable cursor 源自 grid cursor（Line 0 = 网格屏底，写光标恒在屏区），
+        // 换算为 viewport 自顶向下 y；Hidden 形状 = 不显示。
+        let rc = self.term.renderable_content().cursor;
+        let (visible, style) = match rc.shape {
+            alacritty_terminal::vte::ansi::CursorShape::Hidden => (false, "block".to_string()),
+            alacritty_terminal::vte::ansi::CursorShape::Underline => (true, "underline".to_string()),
+            alacritty_terminal::vte::ansi::CursorShape::Beam => (true, "beam".to_string()),
+            _ => (true, "block".to_string()),
+        };
+        let y = if rc.point.line.0 < 0 {
+            0
+        } else {
+            (screen_lines as u32 - 1).min(rc.point.line.0 as u32)
+        };
+        let cursor = CursorState {
+            x: rc.point.column.0 as u32,
+            y,
+            visible,
+            style,
+        };
+
+        let modes = ScreenModes {
+            autowrap: mode(TermMode::LINE_WRAP),
+            application_cursor: mode(TermMode::APP_CURSOR),
+            bracketed_paste: mode(TermMode::BRACKETED_PASTE),
+            origin_mode: mode(TermMode::ORIGIN),
+        };
+
+        ScreenCheckpoint {
+            cols,
+            rows,
+            buffers,
+            active_buffer: active,
+            cursor,
+            modes,
+            title: None,
+        }
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
@@ -402,6 +486,114 @@ pub fn quiet_dur(quiet_ms: u64) -> std::time::Duration {
     std::time::Duration::from_millis(quiet_ms)
 }
 
+/// 命名色 → wire 颜色规格：默认前景/背景归 None；标准 16 色归 Indexed(0-15)；
+/// Dim 系变体降级为默认色（DIM 属性位仍保留）。
+fn map_color(c: VteColor, _is_fg: bool) -> Option<ColorSpec> {
+    match c {
+        VteColor::Named(n) => match n {
+            // 默认前景/背景（含反向场景的非常规引用）统一归默认色
+            NamedColor::Foreground | NamedColor::Background => None,
+            NamedColor::Black => Some(ColorSpec::Indexed(0)),
+            NamedColor::Red => Some(ColorSpec::Indexed(1)),
+            NamedColor::Green => Some(ColorSpec::Indexed(2)),
+            NamedColor::Yellow => Some(ColorSpec::Indexed(3)),
+            NamedColor::Blue => Some(ColorSpec::Indexed(4)),
+            NamedColor::Magenta => Some(ColorSpec::Indexed(5)),
+            NamedColor::Cyan => Some(ColorSpec::Indexed(6)),
+            NamedColor::White => Some(ColorSpec::Indexed(7)),
+            NamedColor::BrightBlack => Some(ColorSpec::Indexed(8)),
+            NamedColor::BrightRed => Some(ColorSpec::Indexed(9)),
+            NamedColor::BrightGreen => Some(ColorSpec::Indexed(10)),
+            NamedColor::BrightYellow => Some(ColorSpec::Indexed(11)),
+            NamedColor::BrightBlue => Some(ColorSpec::Indexed(12)),
+            NamedColor::BrightMagenta => Some(ColorSpec::Indexed(13)),
+            NamedColor::BrightCyan => Some(ColorSpec::Indexed(14)),
+            NamedColor::BrightWhite => Some(ColorSpec::Indexed(15)),
+            _ => None,
+        },
+        VteColor::Indexed(i) => Some(ColorSpec::Indexed(i)),
+        VteColor::Spec(rgb) => Some(ColorSpec::Rgb(rgb.r, rgb.g, rgb.b)),
+    }
+}
+
+fn map_flags(f: Flags) -> u32 {
+    let mut out = 0u32;
+    if f.contains(Flags::BOLD) { out |= cell_flags::BOLD; }
+    if f.contains(Flags::DIM) { out |= cell_flags::DIM; }
+    if f.contains(Flags::ITALIC) { out |= cell_flags::ITALIC; }
+    if f.intersects(Flags::ALL_UNDERLINES) { out |= cell_flags::UNDERLINE; }
+    if f.contains(Flags::DOUBLE_UNDERLINE) { out |= cell_flags::DOUBLE_UNDERLINE; }
+    if f.contains(Flags::STRIKEOUT) { out |= cell_flags::STRIKEOUT; }
+    if f.contains(Flags::INVERSE) { out |= cell_flags::INVERSE; }
+    if f.contains(Flags::HIDDEN) { out |= cell_flags::HIDDEN; }
+    out
+}
+
+/// 单行网格 → 属性 run 序列。宽字符 spacer 单元格跳过（宽字符本体自带占两格语义）；
+/// 行尾默认属性空格裁剪。
+fn row_runs(row: &[alacritty_terminal::term::cell::Cell], cols: usize) -> Vec<CellRun> {
+    let mut runs: Vec<CellRun> = Vec::new();
+    let mut cur_text = String::new();
+    let mut cur_fg: Option<Option<ColorSpec>> = None;
+    let mut cur_bg: Option<Option<ColorSpec>> = None;
+    let mut cur_flags: Option<u32> = None;
+    macro_rules! flush {
+        () => {
+            if let (Some(fg), Some(bg), Some(fl)) = (cur_fg, cur_bg, cur_flags) {
+                if !cur_text.is_empty() {
+                    runs.push(CellRun { text: std::mem::take(&mut cur_text), fg, bg, flags: fl });
+                }
+            }
+            cur_fg = None;
+            cur_bg = None;
+            cur_flags = None;
+        };
+    }
+    for c in 0..cols {
+        let cell = &row[c];
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+            || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+        {
+            continue;
+        }
+        let fg = map_color(cell.fg, true);
+        let bg = map_color(cell.bg, false);
+        let fl = map_flags(cell.flags);
+        if cur_flags.is_some()
+            && (cur_fg.as_ref() != Some(&fg) || cur_bg.as_ref() != Some(&bg) || cur_flags != Some(fl))
+        {
+            flush!();
+        }
+        if cur_flags.is_none() {
+            cur_fg = Some(fg);
+            cur_bg = Some(bg);
+            cur_flags = Some(fl);
+        }
+        cur_text.push(cell.c);
+        if let Some(zw) = cell.zerowidth() {
+            for ch in zw {
+                cur_text.push(*ch);
+            }
+        }
+    }
+    flush!();
+    // 行尾裁剪：默认属性的全空格 run 弹掉；末 run 的默认属性空格尾修剪
+    while let Some(last) = runs.last() {
+        if last.fg.is_none() && last.bg.is_none() && last.flags == 0 && last.text.chars().all(|c| c == ' ') {
+            runs.pop();
+        } else {
+            break;
+        }
+    }
+    if let Some(last) = runs.last_mut() {
+        if last.fg.is_none() && last.bg.is_none() && last.flags == 0 {
+            let t = last.text.trim_end_matches(' ').to_string();
+            if t.is_empty() { runs.pop(); } else { last.text = t; }
+        }
+    }
+    runs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +645,103 @@ mod tests {
         assert_eq!(blocks[0].source, BlockSource::Replay { client_id: Some("cc".into()) });
         assert_eq!(blocks[0].exit_code, Some(0));
         assert!(s.snapshot_text().contains("[agent:cc] $ docker ps"));
+    }
+
+    // ---- C10 检查点导出 ----
+
+    #[test]
+    fn checkpoint_basic_text_and_cursor() {
+        let mut s = screen();
+        s.feed(b"hello\r\nworld");
+        let ck = s.checkpoint();
+        assert_eq!(ck.cols, 80);
+        assert_eq!(ck.rows, 24);
+        assert_eq!(ck.active_buffer, 0);
+        assert!(ck.title.is_none());
+        let lines = &ck.buffers[0].lines;
+        // 历史 + 可视：至少可视区两行有内容，网格总行数 = 24
+        assert_eq!(lines.len(), 24);
+        let joined: String = lines.iter().flatten().map(|r| r.text.as_str()).collect();
+        assert!(joined.contains("hello"), "checkpoint must contain hello: {joined:?}");
+        assert!(joined.contains("world"));
+        // 光标在 "world" 行尾（第 2 行 0 基 y=1, x=5）
+        assert_eq!(ck.cursor.y, 1);
+        assert_eq!(ck.cursor.x, 5);
+        assert!(ck.cursor.visible);
+    }
+
+    #[test]
+    fn checkpoint_colors_and_attrs() {
+        let mut s = screen();
+        // 红色粗体 + 256 色背景 + 下划线 + 真彩
+        s.feed(b"\x1b[1;31mRED\x1b[0m\x1b[48;5;21mB\x1b[0m\x1b[4mU\x1b[0m\x1b[38;2;10;20;30mT\x1b[0m");
+        let ck = s.checkpoint();
+        let row0 = &ck.buffers[0].lines[0];
+        let red = row0.iter().find(|r| r.text == "RED").expect("RED run");
+        assert_eq!(red.fg, Some(ColorSpec::Indexed(1)));
+        assert_ne!(red.flags & cell_flags::BOLD, 0);
+        let b = row0.iter().find(|r| r.text == "B").expect("B run");
+        assert_eq!(b.bg, Some(ColorSpec::Indexed(21)));
+        let u = row0.iter().find(|r| r.text == "U").expect("U run");
+        assert_ne!(u.flags & cell_flags::UNDERLINE, 0);
+        let t = row0.iter().find(|r| r.text == "T").expect("T run");
+        assert_eq!(t.fg, Some(ColorSpec::Rgb(10, 20, 30)));
+    }
+
+    #[test]
+    fn checkpoint_alt_screen_and_modes() {
+        let mut s = screen();
+        s.feed(b"main content\r\n");
+        // 进备用屏 + 应用光标 + 括号粘贴 + 原点模式，写 top 行
+        s.feed(b"\x1b[?1049h\x1b[?1h\x1b[?2004h\x1b[?6h\x1b[?7l");
+        s.feed(b"\x1b[2J\x1b[Halt-full-view");
+        let ck = s.checkpoint();
+        assert_eq!(ck.active_buffer, 1);
+        // 活动缓冲（备用）含 alt 内容；主缓冲为空形（行数仍 = rows）
+        let alt_lines = &ck.buffers[1].lines;
+        assert_eq!(alt_lines.len(), 24);
+        let joined: String = alt_lines.iter().flatten().map(|r| r.text.as_str()).collect();
+        assert!(joined.contains("alt-full-view"));
+        assert!(!joined.contains("main content"));
+        assert_eq!(ck.buffers[0].lines.len(), 24);
+        assert!(ck.buffers[0].lines.iter().all(|l| l.is_empty()));
+        assert!(ck.modes.application_cursor);
+        assert!(ck.modes.bracketed_paste);
+        assert!(ck.modes.origin_mode);
+        assert!(!ck.modes.autowrap);
+        // 光标停在 "alt-full-view" 行尾（y=0, x=13）
+        assert_eq!((ck.cursor.x, ck.cursor.y), (13, 0));
+        // 无损往返：切回主屏后内容仍在
+        s.feed(b"\x1b[?1049l");
+        assert!(s.snapshot_text().contains("main content"));
+    }
+
+    #[test]
+    fn checkpoint_history_included_and_watermark_shape() {
+        let mut s = screen();
+        // 滚出可视区 30 行（rows=24）
+        for i in 0..30 {
+            s.feed(format!("line-{i}\r\n").as_bytes());
+        }
+        let ck = s.checkpoint();
+        let joined: String = ck.buffers[0].lines.iter().flatten().map(|r| r.text.as_str()).collect();
+        assert!(joined.contains("line-0"), "history line-0 must be in checkpoint");
+        assert!(joined.contains("line-29"));
+        assert!(ck.buffers[0].lines.len() >= 24);
+    }
+
+    #[test]
+    fn checkpoint_wide_char() {
+        let mut s = screen();
+        s.feed("\x1b[31m中\x1b[0m文".as_bytes());
+        let ck = s.checkpoint();
+        let row0 = &ck.buffers[0].lines[0];
+        let joined: String = row0.iter().map(|r| r.text.as_str()).collect();
+        assert!(joined.contains("中文"));
+        // 宽字符 spacer 省略：码点数 = 字符数（2），不因占位格重复
+        let total: usize = row0.iter().map(|r| r.text.chars().count()).sum();
+        assert_eq!(total, 2);
+        // 红「中」与默认「文」分属两个 run（属性不同不合并）
+        assert_eq!(row0.len(), 2);
     }
 }

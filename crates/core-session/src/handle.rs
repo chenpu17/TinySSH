@@ -76,7 +76,49 @@ pub struct SessionHandle {
     /// 任务目标/交接留言（R9：人类写给 Agent；随会话存亡，经 SessionBrief.goal 暴露）。
     pub goal: StdMutex<Option<String>>,
 
+    // ---- C10 输出订阅（R11）----
+    /// 字节事件序号（每 session 单调递增；仅在 pump 持 screen 锁的临界区内推进，
+    /// 与屏幕状态线性化一致）。
+    pub output_seq: AtomicU64,
+    /// 最近一次检查点捕获时的 seq（resync「检查点更近」判定用）。
+    pub last_ckpt_seq: AtomicU64,
+    /// 原始字节重放环（(seq, bytes)，淘汰制；resync 无损重放窗口）。
+    pub replay: StdMutex<ReplayRing>,
+    /// 活跃订阅身份 → 取消信号（subscribe 注册 / unsubscribe 移除并触发桥 task 退出）。
+    pub subs: StdMutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
+
     pub center: Arc<ApprovalCenter>,
+}
+
+/// 重放环容量：8 MiB 或 8192 帧，先到先淘汰（前端 pending 溢出会走 resync）。
+pub const REPLAY_CAP_BYTES: usize = 8 * 1024 * 1024;
+pub const REPLAY_CAP_FRAMES: usize = 8192;
+
+#[derive(Default)]
+pub struct ReplayRing {
+    pub q: std::collections::VecDeque<(u64, Vec<u8>)>,
+    pub bytes: usize,
+}
+
+impl ReplayRing {
+    pub fn push(&mut self, seq: u64, data: Vec<u8>) {
+        self.bytes += data.len();
+        self.q.push_back((seq, data));
+        while self.bytes > REPLAY_CAP_BYTES || self.q.len() > REPLAY_CAP_FRAMES {
+            match self.q.pop_front() {
+                Some((_, d)) => self.bytes -= d.len(),
+                None => break,
+            }
+        }
+    }
+
+    /// (from, ∞) 区间内连续重放的起点是否仍被覆盖（首帧 seq <= from+1）。
+    pub fn covers_from(&self, from: u64) -> bool {
+        match self.q.front() {
+            Some(&(s, _)) => s <= from + 1,
+            None => false,
+        }
+    }
 }
 
 impl SessionHandle {
@@ -119,6 +161,10 @@ impl SessionHandle {
             transfers: StdMutex::new(HashMap::new()),
             send_keys_auth: StdMutex::new(HashSet::new()),
             goal: StdMutex::new(None),
+            output_seq: AtomicU64::new(0),
+            last_ckpt_seq: AtomicU64::new(0),
+            replay: StdMutex::new(ReplayRing::default()),
+            subs: StdMutex::new(HashMap::new()),
             center,
         })
     }
@@ -132,6 +178,32 @@ impl SessionHandle {
             .lock()
             .await
             .push((chrono::Utc::now(), what.to_string()));
+    }
+
+    /// C10 线性化点：屏幕 feed、seq 推进、重放入环在同一临界区——
+    /// 检查点/重放水位与屏幕状态一致（「不能截到已推进 seq、尚未应用到屏幕」）。
+    /// pump 与测试共用，保证只有一条写入路径。
+    pub async fn feed_output(&self, data: &[u8]) -> u64 {
+        self.feed_output_fn(|s| {
+            s.feed(data);
+            data.to_vec()
+        })
+        .await
+    }
+
+    /// 线性化点的闭包变体：闭包在持 screen 锁时产出实际写入屏幕的字节
+    /// （如 replay_fresh 的组装+应用），返回值作为该 seq 的事件入环并广播。
+    /// 除测试外，一切屏幕写入都应经此或 feed_output。
+    pub async fn feed_output_fn(&self, produce: impl FnOnce(&mut Screen) -> Vec<u8>) -> u64 {
+        let mut s = self.screen.lock().await;
+        let data = produce(&mut s);
+        let seq = self.output_seq.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+        self.replay.lock().unwrap().push(seq, data.clone());
+        drop(s);
+        let _ = self
+            .output_tx
+            .send(OutputEvent::Raw { sid: self.id.clone(), seq, data });
+        seq
     }
 
     /// Shell 模式执行（现场延续；边界 = OSC 133 命令块）。
@@ -278,7 +350,8 @@ impl SessionHandle {
         self.live_execs.lock().unwrap().remove(exec_id);
         let outcome = outcome?;
 
-        // 镜像回放桥：Fresh 结果写回屏幕，带 Agent 标注（L1 §3.1 不可省略）
+        // 镜像回放桥：Fresh 结果写回屏幕，带 Agent 标注（L1 §3.1 不可省略）。
+        // 经线性化点：回放字节与传输字节同一 seq/重放环/订阅广播机制（rev-r11 发现 1 修复）
         {
             let client = match actor {
                 Actor::Agent { client_id } => Some(client_id.clone()),
@@ -287,8 +360,10 @@ impl SessionHandle {
             let stdout = String::from_utf8_lossy(&outcome.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&outcome.stderr).into_owned();
             let exit = outcome.exit_code.unwrap_or(-1);
-            let mut s = self.screen.lock().await;
-            s.replay_fresh(cmd, client.as_deref(), &stdout, &stderr, exit, exec_id);
+            self.feed_output_fn(|s| {
+                s.replay_fresh(cmd, client.as_deref(), &stdout, &stderr, exit, exec_id)
+            })
+            .await;
         }
 
         if cancel.is_cancelled() {

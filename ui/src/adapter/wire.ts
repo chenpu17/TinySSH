@@ -242,7 +242,87 @@ export interface McpStatus {
   agents: { id: string; label: string }[];
 }
 
-/** subscribe_output/bench_start 通道实况（rev-r10 注记 2 修正）：通道只送未包装的
- *  原始字节（Uint8Array，serde OutputEvent::Raw 的 data 字段内容）；Resync 提示不经
- *  通道，走 window "resync" 事件（App 现未监听——基线即如此，登记归 R11/R26）。 */
+/** 输出通道实况（R11 起带 seq 帧头）：通道送 <u64 LE seq（8 字节头）><原始字节>；
+ *  Resync 提示走 window "resync" 事件 {session_id, from_seq, subscription_id}。 */
 export type OutputChannelMessage = Uint8Array;
+
+// ---------------------------------------------------------------------------
+// C10 输出订阅恢复（R11）
+// ---------------------------------------------------------------------------
+
+/** 颜色规格。None（默认色）= null；Indexed = 256 色；Rgb = 真彩色。 */
+export type ColorSpec = { Indexed: number } | { Rgb: [number, number, number] };
+
+/** 单元格属性位集（与 session_api::cell_flags 一一对应）。 */
+export const CELL_FLAGS = {
+  BOLD: 1 << 0,
+  DIM: 1 << 1,
+  ITALIC: 1 << 2,
+  UNDERLINE: 1 << 3,
+  DOUBLE_UNDERLINE: 1 << 4,
+  STRIKEOUT: 1 << 5,
+  INVERSE: 1 << 6,
+  HIDDEN: 1 << 7,
+} as const;
+
+/** 同属性连续单元格 run。宽字符只出现一次（spacer 省略）；行尾默认属性空格已裁。 */
+export interface CellRun {
+  text: string;
+  fg: ColorSpec | null;
+  bg: ColorSpec | null;
+  flags: number;
+}
+
+export interface BufferCheckpoint {
+  lines: CellRun[][];
+}
+
+export interface CursorState {
+  x: number;
+  y: number;
+  visible: boolean;
+  /** "block" | "underline" | "beam" */
+  style: string;
+}
+
+export interface ScreenModes {
+  autowrap: boolean;
+  application_cursor: boolean;
+  bracketed_paste: boolean;
+  origin_mode: boolean;
+}
+
+/** 恢复载体（DF10.4）。buffers 恒 [主, 备]；active_buffer ∈ {0,1}。
+ *  边界：非活动缓冲当前为核心侧空形（alacritty 0.26 无公开访问器，登记偏差）。 */
+export interface ScreenCheckpoint {
+  cols: number;
+  rows: number;
+  buffers: [BufferCheckpoint, BufferCheckpoint];
+  active_buffer: 0 | 1;
+  cursor: CursorState;
+  modes: ScreenModes;
+  title: string | null;
+}
+
+/** subscribe_output 返回（DF10.2）：订阅身份 + 原子捕获的检查点与水位。 */
+export interface AttachOutput {
+  subscription_id: string;
+  checkpoint: ScreenCheckpoint;
+  start_seq: number;
+}
+
+export interface SeqFrame {
+  seq: number;
+  data: Uint8Array;
+}
+
+/** resync_output 响应（DF10.3）：serde tag="kind" snake_case。 */
+export type ResyncOutput =
+  | { kind: "replayed"; subscription_id: string; events: SeqFrame[]; end_seq: number }
+  | { kind: "checkpointed"; subscription_id: string; checkpoint: ScreenCheckpoint; end_seq: number };
+
+/** debug_subscriptions 返回（P6 测量口径）。 */
+export interface DebugSubscriptions {
+  active_count: number;
+  per_session: { session_id: SessionId; subscription_ids: string[] }[];
+}

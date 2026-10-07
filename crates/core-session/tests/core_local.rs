@@ -6,6 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 async fn manager() -> Arc<SessionManager> {
+    // 主密钥走 env（vault 解析序 env > OS 钥匙串）：避免测试二进制重编译后
+    // 签名变化触发 macOS 钥匙串授权弹窗并阻塞测试进程。
+    if std::env::var("TINYSSH_MASTER_KEY").is_err() {
+        std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
+    }
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("t.db");
     // dir 泄漏以覆盖测试生命周期（含 tokio 任务）

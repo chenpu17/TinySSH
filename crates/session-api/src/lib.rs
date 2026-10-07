@@ -556,11 +556,135 @@ pub struct OutputChunk {
 }
 
 /// UI 输出流事件（broadcast，可丢块；慢消费者走 resync，L0 ADR-2/7）。
+/// Raw.seq 为会话内单调递增字节事件序号（C10）；桥层打包为 8 字节 LE 帧头 + 原始字节。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OutputEvent {
-    Raw { sid: SessionId, data: Vec<u8> },
+    Raw { sid: SessionId, seq: u64, data: Vec<u8> },
     /// 屏幕状态大幅变化（resync 提示）。
     Resync { sid: SessionId },
+}
+
+// ---------------------------------------------------------------------------
+// 输出订阅恢复（C10：检查点 + 重放；实现 R11）
+// ---------------------------------------------------------------------------
+
+/// 颜色规格（CellRun 属性）。None = 终端默认色；Indexed = 256 色；
+/// Rgb = 真彩色。命名色由核心归一为 Indexed(0-15) 或 None。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ColorSpec {
+    Indexed(u8),
+    Rgb(u8, u8, u8),
+}
+
+/// 单元格属性位集（CellRun.flags）。位定义前后端契约固定：
+/// bit0=粗体 1=暗淡 2=斜体 3=下划线 4=双下划线 5=删除线 6=反显 7=隐藏。
+pub mod cell_flags {
+    pub const BOLD: u32 = 1 << 0;
+    pub const DIM: u32 = 1 << 1;
+    pub const ITALIC: u32 = 1 << 2;
+    pub const UNDERLINE: u32 = 1 << 3;
+    pub const DOUBLE_UNDERLINE: u32 = 1 << 4;
+    pub const STRIKEOUT: u32 = 1 << 5;
+    pub const INVERSE: u32 = 1 << 6;
+    pub const HIDDEN: u32 = 1 << 7;
+}
+
+/// 同属性连续单元格 run（C10 BufferCheckpoint 的序列化单元）。
+/// text 内宽字符只出现一次（占位 spacer 省略，终端恢复时自动占两格）；
+/// 行尾默认属性空格裁剪。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellRun {
+    pub text: String,
+    pub fg: Option<ColorSpec>,
+    pub bg: Option<ColorSpec>,
+    pub flags: u32,
+}
+
+/// 单个缓冲的检查点：全网格行（历史 + 可视）自顶向下的属性 run 串行化。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BufferCheckpoint {
+    pub lines: Vec<Vec<CellRun>>,
+}
+
+/// 光标状态（可视区坐标，0 基；y 自顶向下）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorState {
+    pub x: u32,
+    pub y: u32,
+    pub visible: bool,
+    /// "block" | "underline" | "beam"；隐藏时仍有值（恢复后由 visible 决定显示）。
+    pub style: String,
+}
+
+/// 恢复所需的终端模式（C10 按实现支持面枚举）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenModes {
+    pub autowrap: bool,
+    pub application_cursor: bool,
+    pub bracketed_paste: bool,
+    pub origin_mode: bool,
+}
+
+/// 屏幕检查点（C10 恢复载体；DF10.4）。
+/// buffers 恒两元素 [主缓冲, 备用缓冲]；active_buffer ∈ {0,1}。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenCheckpoint {
+    pub cols: u16,
+    pub rows: u16,
+    pub buffers: [BufferCheckpoint; 2],
+    pub active_buffer: u8,
+    pub cursor: CursorState,
+    pub modes: ScreenModes,
+    /// 终端标题（OSC 0/2）。核心侧暂不追踪（alacritty 0.26 Term 不持有标题），
+    /// 恒 None；字段为 wire 前向兼容保留。
+    pub title: Option<String>,
+}
+
+/// subscribe_output 返回（DF10.2）：订阅身份 + 原子捕获的检查点与水位。
+/// start_seq = 检查点最后已包含的事件序号（包含该序号；无输出为 0）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachOutput {
+    pub subscription_id: String,
+    pub checkpoint: ScreenCheckpoint,
+    pub start_seq: u64,
+}
+
+/// 重放单元：带 seq 的原始字节事件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeqFrame {
+    pub seq: u64,
+    pub data: Vec<u8>,
+}
+
+/// resync_output 响应（DF10.3）：优先无损原始字节重放，
+/// 不可重放（淘汰/alt_screen 活跃/检查点更近）退检查点。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResyncOutput {
+    Replayed {
+        subscription_id: String,
+        events: Vec<SeqFrame>,
+        /// 重放最后已包含的事件序号（包含）；应用后丢弃缓存 seq <= end_seq。
+        end_seq: u64,
+    },
+    Checkpointed {
+        subscription_id: String,
+        checkpoint: ScreenCheckpoint,
+        end_seq: u64,
+    },
+}
+
+/// debug_subscriptions 返回（P6 测量口径：每存活会话 ≤1；退订后归零）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSubs {
+    pub session_id: SessionId,
+    pub subscription_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugSubscriptions {
+    pub active_count: usize,
+    pub per_session: Vec<SessionSubs>,
 }
 
 // ---------------------------------------------------------------------------
@@ -831,7 +955,9 @@ pub trait SessionApi: Send + Sync {
     async fn set_session_goal(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()>;
 
     // ---- 人类专属：输出流订阅（IPC Bridge 用；MCP 不提供流，只提供快照/等待）----
-    fn subscribe_output(&self, sid: SessionId) -> Result<broadcast::Receiver<OutputEvent>>;
+    // C10 起订阅带检查点与订阅身份（AttachOutput），桥层另需 broadcast receiver——
+    // 签名含非 trait 载体，收口为 SessionManager 固有方法 subscribe_output_channel；
+    // wire 类型（AttachOutput/ResyncOutput/ScreenCheckpoint）仍冻结在本 crate。
 }
 
 // ---------------------------------------------------------------------------

@@ -1,13 +1,22 @@
 //! T21（路线图⑨）~/.ssh/config 导入与 ssh-agent 集成测试。
 //! 覆盖 GUI 导入面板背后的完整内核链路：解析预览（跳过通配符/Match）
 //! → 勾选导入（IdentityFile→Key 身份、无凭据→Agent）→ Agent 认证真实建连。
-//! 需 TINYSSH_MASTER_KEY；agent 连接段另需 TINYSSH_E2E_SSHD=1 + docker 容器。
+//! 主密钥缺省走 env（未导出时测试内自设，不触 OS 钥匙串）；
+//! agent 连接段另需 TINYSSH_E2E_SSHD=1 + docker 容器。
 
 use core_session::SessionManager;
 use session_api::*;
 use std::io::Write as _;
 use std::process::Stdio;
 use std::time::Duration;
+
+// 主密钥走 env（vault 解析序 env > OS 钥匙串）：避免测试二进制重编译后
+// 签名变化触发 macOS 钥匙串授权弹窗并阻塞测试进程。
+fn test_master_key() {
+    if std::env::var("TINYSSH_MASTER_KEY").is_err() {
+        std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
+    }
+}
 
 fn write_config(dir: &std::path::Path, key_path: &std::path::Path) -> std::path::PathBuf {
     let cfg = dir.join("config");
@@ -39,6 +48,7 @@ fn write_config(dir: &std::path::Path, key_path: &std::path::Path) -> std::path:
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preview_and_import_local_parts() {
+    test_master_key();
     let dir = tempfile::tempdir().unwrap();
     let key = dir.path().join("id_test");
     let kg = std::process::Command::new("ssh-keygen")
@@ -106,6 +116,7 @@ async fn imported_agent_host_connects_via_ssh_agent() {
     }
     let _guard = tinyssh_testbed::sshd_lock();
     tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
+    test_master_key();
 
     let dir = tempfile::tempdir().unwrap();
     let keep = dir.into_path(); // agent/容器清理前不能删
