@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""UX-R1 P5 内存采样器 v3（差分归属法，见 r04-environment.md §2.1）。
+"""UX-R1 P5 内存采样器 v4（差分归属法，见 r04-environment.md §2.1）。
 
 v1 的零基线 --validate 要求退出全部浏览器应用，与用户约束冲突；且 sample_total
-误将全系统 WebKit 辅助进程计入——2026-10-06 独立审核后整体重写为差分法：
+误将全系统 WebKit 辅助进程计入——2026-10-06 独立审核后整体重写为差分法。
+v3→v4（受托签署 Q-05 重开）：JSON pid 键在装载边界统一转 int（json 往返会把
+int 键写成字符串，导致 candidates 混入 S0、record 对活候选误判消失、verify
+残留检测恒空）；record 的 total 不再把应用 RSS 计两次；verify 增加「同 PID
+换启动身份」复用检测。修复依据：2026-10-06-e2ebdc4-signoff/memsample-probe.json。
 
   ① snapshot：启动目标应用前记录系统 WebKit 辅助进程全集 S0
      python3 scripts/perf/memsample.py snapshot --out /tmp/p5_s0.json
@@ -53,6 +57,16 @@ def rss_kb(pid):
     return int(v) if v else None
 
 
+def load_pid_map(path):
+    """装载 {pid: …} JSON 并把 pid 键统一转 int。
+
+    json.dump 会把 int 键序列化为字符串；不归一化则与 ps 采集的 int 键集合
+    永不相交——candidates 混入 S0、record 对活候选误判消失、verify 残留检测
+    恒空（签署探针实证的三处缺陷根源）。
+    """
+    return {int(k): v for k, v in json.load(open(path)).items()}
+
+
 def cmd_snapshot(args):
     s0 = {pid: {"lstart": h["lstart"], "comm": h["comm"]} for pid, h in webkit_helpers().items()}
     json.dump(s0, open(args.out, "w"), indent=1)
@@ -60,7 +74,7 @@ def cmd_snapshot(args):
 
 
 def cmd_candidates(args):
-    s0 = json.load(open(args.s0))
+    s0 = load_pid_map(args.s0)
     cur = webkit_helpers()
     cand = {pid: {"lstart": h["lstart"], "comm": h["comm"]}
             for pid, h in cur.items() if pid not in s0}
@@ -76,8 +90,8 @@ def cmd_candidates(args):
 def cmd_record(args):
     """逐样本记录**每个候选的独立曲线**；候选消失/换身份 → 采样作废（fail-closed，
     不再静默记 0 或漏计——Q-05）。返回码 2 = 归属失效，数据不得作为门证据。"""
-    cand = json.load(open(args.cands))  # {pid: {lstart, comm}}
-    s0 = set(int(k) for k in json.load(open(args.s0))) if getattr(args, "s0", None) else set()
+    cand = load_pid_map(args.cands)  # {pid: {lstart, comm}}，pid 键已归一 int
+    s0 = set(load_pid_map(args.s0)) if getattr(args, "s0", None) else set()
     known = set(int(k) for k in cand) | s0
     samples, void_reason = [], None
     t0 = time.monotonic()
@@ -101,27 +115,27 @@ def cmd_record(args):
                 per[str(pid)] = None
             else:
                 per[str(pid)] = h["rss_kb"]
-        if app_kb is None:
-            per["app"] = None
-            total_mb = sum(v for v in per.values() if isinstance(v, int)) / 1024.0
-        else:
-            per["app"] = app_kb
-            total_mb = (app_kb + sum(v for v in per.values() if isinstance(v, int))) / 1024.0
-        samples.append({"t": round(time.monotonic() - t0, 1), "total_mb": round(total_mb, 2),
-                        "per_candidate_kb": per, "helper_total_mb": round(
-                            sum(v for k, v in per.items() if k != "app" and isinstance(v, int)) / 1024.0, 2)})
+        per["app"] = app_kb  # 曲线含应用自身；helper 合计与 total 均只计一次（v4 修双计）
+        helper_kb = sum(v for k2, v in per.items() if k2 != "app" and isinstance(v, int))
+        app_total = app_kb if app_kb is not None else 0
+        samples.append({"t": round(time.monotonic() - t0, 1),
+                        "total_mb": round((helper_kb + app_total) / 1024.0, 2),
+                        "per_candidate_kb": per,
+                        "helper_total_mb": round(helper_kb / 1024.0, 2)})
         if broken and not void_reason:
             void_reason = broken
         time.sleep(args.interval)
     med = statistics.median(s["total_mb"] for s in samples)
-    result = {"phase": args.phase, "app_pid": args.app_pid,
-              "candidates": cand, "voided": bool(void_reason),
+    result = {"phase": args.phase, "app_pid": args.app_pid, "sampler_version": "v4",
+              "candidates": {str(k): v for k, v in cand.items()},
+              "voided": bool(void_reason),
               "void_reason": void_reason,
               "median_mb": round(med, 2) if not void_reason else None,
               "samples": samples,
-              "protocol": "differential attribution v3 (fail-closed): app + frozen candidates "
-                          "with lstart identity; per-candidate curves recorded; candidate "
-                          "disappearance/identity change/unknown new webkit helper voids "
+              "protocol": "differential attribution v4 (fail-closed): app + frozen candidates "
+                          "with lstart identity; JSON pid keys normalized to int at load "
+                          "boundary; app RSS counted once; candidate disappearance/identity "
+                          "change/unknown new webkit helper voids "
                           f"the sample. {args.duration}s/"
                           f"{args.interval}s interval"}
     with open(args.out, "w") as f:
@@ -134,15 +148,18 @@ def cmd_record(args):
 
 
 def cmd_verify(args):
-    cand = json.load(open(args.cands))
+    """退出后核验：候选 pid 不应存在于当前进程表；若存在且 lstart 变化即 PID 复用
+    （v4：键类型归一 + 复用判定从「任意进程同 lstart」改为「同 pid 换身份」——
+    旧实现 alive 检测因键错配恒空，复用检查恒 PASS）。"""
+    cand = load_pid_map(args.cands)
     cur = webkit_helpers()
-    alive = [p for p in cand if p in cur]
-    reused = [p for p, ident in cand.items()
-              for pid, h in cur.items() if h["lstart"] == ident["lstart"]]
+    alive = sorted(p for p in cand if p in cur)
+    reused = sorted(p for p, ident in cand.items()
+                    if p in cur and cur[p]["lstart"] != ident["lstart"])
     if alive or reused:
-        print(f"FAIL: 候选残留 {alive} / 身份复用 {reused}——本次采样作废重跑", file=sys.stderr)
+        print(f"FAIL: 候选残留 {alive} / 同 PID 换身份复用 {reused}——本次采样作废重跑", file=sys.stderr)
         return 2
-    print(f"PASS: 候选 {len(cand)} 个全部随应用退出消失（含 lstart 身份核验，无 PID 复用）")
+    print(f"PASS: 候选 {len(cand)} 个全部随应用退出消失（无残留、无同 PID 身份复用）")
     return 0
 
 

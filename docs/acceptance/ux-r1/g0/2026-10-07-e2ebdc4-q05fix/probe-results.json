@@ -1,0 +1,52 @@
+{
+  "sampler": "memsample v4",
+  "scope": "mocked data only; instrument validity evidence",
+  "checks": [
+    {
+      "name": "P1 candidates excludes S0",
+      "pass": true,
+      "detail": "got [202], expect [202]"
+    },
+    {
+      "name": "P2a record keeps live candidate",
+      "pass": true,
+      "detail": "exit=0 voided=False reason=None"
+    },
+    {
+      "name": "P2b app counted once",
+      "pass": true,
+      "detail": "total_mb=2.0 expect 2.0 (app 1MiB + helper 1MiB)"
+    },
+    {
+      "name": "P3 record voids disappeared candidate",
+      "pass": true,
+      "detail": "exit=2 reason=candidate pid 202 disappeared mid-sample"
+    },
+    {
+      "name": "P4 record voids identity change",
+      "pass": true,
+      "detail": "exit=2 reason=candidate pid 202 lstart changed (PID reuse?)"
+    },
+    {
+      "name": "P5 record voids unknown new helper",
+      "pass": true,
+      "detail": "exit=2 reason=new webkit helper(s) appeared mid-sample: [999]（Q-05 漏计封口）"
+    },
+    {
+      "name": "P6 verify passes after clean exit",
+      "pass": true,
+      "detail": "exit=0 expect 0"
+    },
+    {
+      "name": "P7 verify fails on live residue",
+      "pass": true,
+      "detail": "exit=2 expect 2"
+    },
+    {
+      "name": "P8 verify fails on pid reuse",
+      "pass": true,
+      "detail": "exit=2 expect 2"
+    }
+  ],
+  "all_pass": true
+}

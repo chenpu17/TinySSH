@@ -27,6 +27,8 @@
 
 零基线方案废弃（用户约束：浏览器不退出）→ v2 差分归属 → **联审 Q-05 指出 v2 非 fail-closed**（启动时冻结 PID；中途消失记 0/漏计；退出核验无 PID 复用检测）→ **v3**：候选带 `lstart` 启动身份、逐候选独立曲线落盘、采样中候选消失、身份变化或出现未知新 WebKit 进程（提供 --s0 即全封闭）→ 采样作废（exit 2 / voided 字段）；退出核验含残留 + lstart 复用双向检查。实现：memsample.py（CLI 四步）、p5_pilot.py（内置）。首轮 P5 试点数据（v2 归属）降级为参考，v3 重跑后归属出口再评。
 
+**v3→v4（受托签署 Q-05 重开，2026-10-07）**：签署纯数据探针实证三处 JSON 装载键类型缺陷（candidates 混入 S0、record 对活候选误判消失、verify 残留检测恒空）与应用 RSS 双计——v4 以 `load_pid_map()` 在全部装载边界统一 int 归一、total 只计应用一次、复用判定改为「同 pid 换 lstart 身份」；输出绑定 `sampler_version: v4`。正负探针 `scripts/perf/memsample_selftest.py` 9/9 PASS，证据 [2026-10-07-e2ebdc4-q05fix](../../acceptance/ux-r1/g0/2026-10-07-e2ebdc4-q05fix/)。p5_pilot.py 进程内全程 int 键、无 JSON 往返，经审计不受此类缺陷影响。
+
 ## 3. 已完成
 
 - [x] 工具链构建验证（上表）
