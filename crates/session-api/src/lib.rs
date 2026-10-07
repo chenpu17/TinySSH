@@ -836,6 +836,9 @@ pub enum Error {
     InvalidActor,
     #[error("无效输入: {0}")]
     InvalidInput(String),
+    /// 凭据仍被主机引用，不可删除（DF8.4）：附引用主机名列表。
+    #[error("凭据正在被主机引用（{host_names:?}），无法删除")]
+    IdentityInUse { host_names: Vec<String> },
     #[error("存储错误: {0}")]
     Storage(String),
     #[error("IO 错误: {0}")]
@@ -855,6 +858,57 @@ pub enum DeniedReason {
 pub type Result<T> = std::result::Result<T, Error>;
 
 // ---------------------------------------------------------------------------
+// C8 偏好与主机元数据（实现 R15；消费 R20/R27/R44）
+// ---------------------------------------------------------------------------
+
+/// 应用工作区偏好（DF8.1）：`ui.v2.workspace` 单键 JSON blob，整取整存原子写。
+/// 不含秘密/终端输出/会话目标；schemaVersion 前向演进（R44 升级演练据此定路径）。
+/// 终端配色四预设仍在 `ui.theme` 键（值不变）；chrome 是 DF8.3 映射的镜像字段。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Workspace {
+    pub schema_version: u32,
+    /// 应用外观：dark | light（DF8.3 由终端主题映射；R27 消费）
+    #[serde(default = "default_chrome")]
+    pub chrome: String,
+    /// 主机栏开合与宽度（§4.2；R12 的浏览器 localStorage 暂存迁入；None = 尚未写入）
+    #[serde(default)]
+    pub hostbar: Option<HostbarPrefs>,
+}
+
+fn default_chrome() -> String {
+    "dark".into()
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
+        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostbarPrefs {
+    pub open: bool,
+    pub width: u32,
+}
+
+/// 主机元数据（DF8.2：V5 `host_metadata` 表，一行一主机）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostMeta {
+    pub host_id: HostId,
+    pub favorite: bool,
+    /// 最近一次成功建连时间；None = 从未连接。
+    pub last_connected_at: Option<DateTime<Utc>>,
+}
+
+/// 最近连接（DF8.5）：sessions 表派生——排除 local、每主机取最近一次、时间倒序、上限 5。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecentHost {
+    pub host_id: HostId,
+    pub host_name: String,
+    pub connected_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // 核心门面 trait（v1 标注 = V0 末冻结范围）
 // ---------------------------------------------------------------------------
 
@@ -867,6 +921,18 @@ pub trait SessionApi: Send + Sync {
     async fn list_identities(&self, ctx: &Actor) -> Result<Vec<IdentityMeta>>;
     async fn create_identity(&self, ctx: &Actor, req: IdentityReq) -> Result<IdentityMeta>;
     async fn delete_identity(&self, ctx: &Actor, id: IdentityId) -> Result<()>;
+
+    // ---- 偏好与主机元数据（C8/R15；消费 R20/R27/R44）----
+    /// 工作区偏好整取（ui.v2.workspace blob）；从未写入 → Default。
+    async fn get_workspace(&self, ctx: &Actor) -> Result<Workspace>;
+    /// 工作区偏好整存（原子覆盖；schemaVersion 由核心归一为当前版本）。
+    async fn set_workspace(&self, ctx: &Actor, ws: Workspace) -> Result<()>;
+    /// 收藏/取消收藏主机（host_metadata upsert；未知主机 InvalidInput）。
+    async fn set_host_favorite(&self, ctx: &Actor, host_id: HostId, favorite: bool) -> Result<()>;
+    /// 主机元数据列表（收藏 + 最近连接时间；无行 = 未收藏且从未连接，不虚构）。
+    async fn list_host_metadata(&self, ctx: &Actor) -> Result<Vec<HostMeta>>;
+    /// 最近连接（DF8.5：sessions 派生、排除 local、每主机最近一次、倒序上限 5）。
+    async fn list_recent_hosts(&self, ctx: &Actor) -> Result<Vec<RecentHost>>;
 
     // ---- 会话（v1；PRD FR-1/FR-4）----
     async fn list_sessions(&self, ctx: &Actor) -> Result<Vec<SessionInfo>>;

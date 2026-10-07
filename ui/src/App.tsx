@@ -262,7 +262,10 @@ const SEARCH_OPTS = {
 const FONT_MIN = 9;
 const FONT_MAX = 28;
 const FONT_DEFAULT = 13;
-const SETTING_FONT = "ui.font_size";
+// C8（R15）：字号迁到命名空间键；旧键 ui.font_size 由核心 V5 迁移写入新键后
+// 保留不删（回退兼容），浏览器 demo 读新键缺失时回落旧键
+const SETTING_FONT = "ui.v2.terminal.font_size";
+const SETTING_FONT_LEGACY = "ui.font_size";
 const SETTING_THEME = "ui.theme";
 
 type ThemePreset = {
@@ -461,7 +464,8 @@ export default function App() {
   const [showAgentHelp, setShowAgentHelp] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
   const [lastFailed, setLastFailed] = useState<string | null>(null);
-  // AppShell（R12）：主机栏开关/宽度（localStorage 暂存；C8 版本化偏好归 R15）
+  // AppShell（R12→R15）：主机栏开关/宽度。初值仍读 localStorage（首帧同步），
+  // blob（ui.v2.workspace）加载后覆盖为事实源——见下方 C8 工作区 effect
   const [hostbarOpen, setHostbarOpen] = useState(() => {
     try { return localStorage.getItem("ui.hostbar") !== "0"; } catch { return true; }
   });
@@ -483,6 +487,8 @@ export default function App() {
   const modalRef = useRef(false);
   const hostbarOpenRef = useRef(hostbarOpen);
   hostbarOpenRef.current = hostbarOpen;
+  const hostbarWidthRef = useRef(hostbarWidth);
+  hostbarWidthRef.current = hostbarWidth;
 
   const refreshLists = useCallback(async () => {
     try {
@@ -983,22 +989,59 @@ export default function App() {
       if (t) changeTheme(t);
     };
     if (!inTauri) {
-      const raw = Number(localStorage.getItem(SETTING_FONT));
+      const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
       apply(Number.isFinite(raw) && raw > 0 ? raw : null, localStorage.getItem(SETTING_THEME));
       return;
     }
     invoke("get_setting", { key: SETTING_FONT })
+      .then((f) => (f === null ? invoke("get_setting", { key: SETTING_FONT_LEGACY }) : Promise.resolve(f)))
       .then((f) => invoke("get_setting", { key: SETTING_THEME }).then((t) => {
         apply(f === null ? null : Number(f), t);
       }))
       .catch(() => {});
   }, [inTauri, changeFontSize, changeTheme]);
 
+  // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
+  // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
+  // 链式串行化（rev-r15 L2）——⌘B 与拖宽连发时按序落库，避免两次读改写交错以陈宽覆盖。
+  const wsWriteChain = useRef<Promise<unknown>>(Promise.resolve());
+  const persistHostbarPrefs = useCallback((open: boolean, width: number) => {
+    wsWriteChain.current = wsWriteChain.current
+      .then(() => invoke("get_workspace"))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, hostbar: { open, width } } }))
+      .catch(() => {});
+  }, []);
+  // 首载：blob 有值 → 覆盖 localStorage 初值；blob 无值（首次）→ 一次性迁入 R12
+  // 的 localStorage 暂存（旧键保留不删，回退兼容）
+  useEffect(() => {
+    invoke("get_workspace")
+      .then((ws) => {
+        if (ws.hostbar) {
+          setHostbarOpen(ws.hostbar.open);
+          setHostbarWidth(Math.min(300, Math.max(200, ws.hostbar.width)));
+          return;
+        }
+        let open = true;
+        let width = 224;
+        try {
+          open = localStorage.getItem("ui.hostbar") !== "0";
+          const v = Number.parseInt(localStorage.getItem("ui.hostbar_w") ?? "", 10);
+          if (Number.isFinite(v)) width = Math.min(300, Math.max(200, v));
+        } catch { /* 隐私模式忽略 */ }
+        wsWriteChain.current = wsWriteChain.current
+          .then(() => invoke("set_workspace", { ws: { ...ws, hostbar: { open, width } } }))
+          .catch(() => {});
+      })
+      .catch(() => {});
+  }, []);
+
   // 主机栏开合与拖宽（200–300，§4.2）；grip 用指针捕获，拖动即改宽、松手落盘
+  //（落盘三处：localStorage 兼容留写 + C8 blob 事实源）
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
-  }, []);
+    persistHostbarPrefs(open, hostbarWidthRef.current);
+  }, [persistHostbarPrefs]);
   const gripDrag = useRef(false);
   const gripDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1016,6 +1059,7 @@ export default function App() {
     const w = Math.min(300, Math.max(200, Math.round(e.clientX)));
     setHostbarWidth(w);
     try { localStorage.setItem("ui.hostbar_w", String(w)); } catch { /* 隐私模式忽略 */ }
+    persistHostbarPrefs(hostbarOpenRef.current, w);
   };
   const hostQueryN = hostQuery.trim().toLowerCase();
   const filteredHosts = hostQueryN

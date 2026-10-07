@@ -37,6 +37,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: HostCmd,
     },
+    /// 凭据管理
+    Identity {
+        #[command(subcommand)]
+        cmd: IdentityCmd,
+    },
     /// 本地会话快速操作（人类身份）
     Session {
         #[command(subcommand)]
@@ -96,6 +101,13 @@ enum HostCmd {
         from_ssh_config: bool,
     },
     List,
+}
+
+#[derive(Subcommand)]
+enum IdentityCmd {
+    List,
+    /// 删除凭据（被存活主机引用时拒绝并列出主机名，DF8.4）
+    Delete { id: String },
 }
 
 #[derive(Subcommand)]
@@ -174,6 +186,7 @@ async fn main() -> Result<()> {
         Cmd::Serve { port } => serve(m, port).await,
         Cmd::Agent { cmd } => agent_cmd(m, cmd).await,
         Cmd::Host { cmd } => host_cmd(m, cmd).await,
+        Cmd::Identity { cmd } => identity_cmd(m, cmd).await,
         Cmd::Session { cmd } => session_cmd(m, cmd).await,
         Cmd::Approval { cmd } => approval_cmd(m, cmd).await,
         Cmd::Audit { cmd } => audit_cmd(m, cmd).await,
@@ -269,6 +282,32 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
                 );
             }
             Ok(())
+        }
+    }
+}
+
+async fn identity_cmd(m: Arc<SessionManager>, cmd: IdentityCmd) -> Result<()> {
+    match cmd {
+        IdentityCmd::List => {
+            for i in m.list_identities(&human()).await? {
+                println!("{}\t{}\t{:?}\t{}", i.id, i.label, i.kind, i.fingerprint);
+            }
+            Ok(())
+        }
+        IdentityCmd::Delete { id } => {
+            // DF8.4：引用检查在核心（delete_identity 返回 IdentityInUse），
+            // CLI 与 GUI 同行为——不绕过、不提示强删
+            match m.delete_identity(&human(), id.clone()).await {
+                Ok(()) => {
+                    println!("identity {id} deleted");
+                    Ok(())
+                }
+                Err(Error::IdentityInUse { host_names }) => bail!(
+                    "identity {id} 正在被主机引用: {}——先编辑或删除相关主机再删除",
+                    host_names.join(", ")
+                ),
+                Err(e) => Err(e.into()),
+            }
         }
     }
 }

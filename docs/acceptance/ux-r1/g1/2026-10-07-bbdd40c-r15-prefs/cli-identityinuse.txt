@@ -1,0 +1,12 @@
+== DF8.4 CLI e2e（隔离库 /tmp/smoke/id.db，V5 迁移经 CLI 首跑落地）==
+
+== phase1: 被存活主机引用的删除（期望拒绝并列出主机名，exit=1）==
+Error: identity id-e2e 正在被主机引用: e2e-prod——先编辑或删除相关主机再删除
+exit=1
+
+== phase2: 解除引用（主机软删）后删除（期望成功，exit=0）==
+identity id-e2e deleted
+exit=0
+
+== phase3: 复核列表为空 ==
+exit=0

@@ -326,3 +326,36 @@ export interface DebugSubscriptions {
   active_count: number;
   per_session: { session_id: SessionId; subscription_ids: string[] }[];
 }
+
+// ---------------------------------------------------------------------------
+// C8 偏好与主机元数据（R15；与 session-api 同名类型逐字段对齐）
+// ---------------------------------------------------------------------------
+
+/** 工作区偏好（ui.v2.workspace blob，DF8.1）：整取整存原子写；不含秘密。 */
+export interface Workspace {
+  schema_version: number;
+  /** 应用外观 dark | light（DF8.3 由终端主题映射的镜像字段） */
+  chrome: string;
+  /** 主机栏开合与宽度；null = 尚未写入（R12 localStorage 暂存迁入） */
+  hostbar: HostbarPrefs | null;
+}
+
+export interface HostbarPrefs {
+  open: boolean;
+  width: number;
+}
+
+/** 主机元数据（DF8.2 host_metadata 表行）。 */
+export interface HostMeta {
+  host_id: HostId;
+  favorite: boolean;
+  /** RFC3339；null = 从未连接 */
+  last_connected_at: string | null;
+}
+
+/** 最近连接（DF8.5）：sessions 派生、排除 local、每主机最近一次、倒序上限 5。 */
+export interface RecentHost {
+  host_id: HostId;
+  host_name: string;
+  connected_at: string;
+}

@@ -51,6 +51,8 @@ type PendingKey = {
 
 const demoState = {
   owner: "Agent" as "Human" | "Agent",
+  // C8 主机元数据（DF8.2）：收藏/最近连接，演示态内存域（真实核心在 host_metadata 表）
+  hostMeta: new Map<string, { favorite: boolean; last_connected_at: string | null }>(),
   hosts: [
     { id: "local", name: "本机", address: "local", port: 0, username: "ops", auth_type: "Password" },
     { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI" },
@@ -338,6 +340,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
       demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
       audit("human", "session_created", null, null, sid);
+      // C8 镜像：成功建连打点（真实核心 touch_host_connection 同语义）
+      {
+        const m = demoState.hostMeta.get(h.id) ?? { favorite: false, last_connected_at: null };
+        m.last_connected_at = new Date().toISOString();
+        demoState.hostMeta.set(h.id, m);
+      }
       // 镜像真实：SSH 建连后注入 Shell 集成标记（OSC133+OSC7），时间线两条同现
       audit("human", "shell_integration_inject", "OSC133+OSC7", null, sid);
       return sid;
@@ -636,6 +644,52 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "bench_start":
     case "bench_report":
       return null;
+    // ---- C8 偏好与主机元数据（R15 同契约）----
+    case "get_workspace": {
+      // 浏览器域：localStorage 同键承载（与真实核心的 settings 表同为整取整存）
+      try {
+        const raw = localStorage.getItem("ui.v2.workspace");
+        if (raw) return JSON.parse(raw);
+      } catch { /* 损坏自愈回落默认 */ }
+      return { schema_version: 1, chrome: "dark", hostbar: null };
+    }
+    case "set_workspace": {
+      const ws = { ...(args?.ws as Record<string, unknown>), schema_version: 1 };
+      localStorage.setItem("ui.v2.workspace", JSON.stringify(ws));
+      return ws;
+    }
+    case "set_host_favorite": {
+      const hid = args?.hostId as string;
+      const h = demoState.hosts.find((x) => x.id === hid);
+      if (!h) throw apiError("invalid_input", "HostNotFound（演示）");
+      const m = demoState.hostMeta.get(hid) ?? { favorite: false, last_connected_at: null };
+      m.favorite = args?.favorite as boolean;
+      demoState.hostMeta.set(hid, m);
+      audit("human", "host_favorite", null, null, null, { host: h.name, favorite: m.favorite });
+      return null;
+    }
+    case "list_host_metadata":
+      return [...demoState.hostMeta.entries()].map(([host_id, m]) => ({
+        host_id,
+        favorite: m.favorite,
+        last_connected_at: m.last_connected_at,
+      }));
+    case "list_recent_hosts": {
+      // DF8.5：sessions 派生、排除 local、每主机最近一次、倒序上限 5
+      const lastByHost = new Map<string, string>();
+      for (const s of demoState.sessions) {
+        if (s.kind === "local" || !s.host_id) continue;
+        const prev = lastByHost.get(s.host_id);
+        if (!prev || s.created_at > prev) lastByHost.set(s.host_id, s.created_at);
+      }
+      return [...lastByHost.entries()]
+        .map(([host_id, at]) => {
+          const h = demoState.hosts.find((x) => x.id === host_id);
+          return { host_id, host_name: h?.name ?? host_id, connected_at: at };
+        })
+        .sort((a, b) => (a.connected_at < b.connected_at ? 1 : -1))
+        .slice(0, 5);
+    }
     default:
       throw apiError("invalid_input", "演示 shim 未实现该命令：" + cmd);
   }

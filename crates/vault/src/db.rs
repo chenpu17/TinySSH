@@ -1,7 +1,6 @@
 //! SQLite DDL（L1 §6 v1）：user_version 顺序迁移。
 
-pub const SCHEMA_V1: &str = r#"
-CREATE TABLE IF NOT EXISTS hosts (
+pub const SCHEMA_V1: &str = r#"CREATE TABLE IF NOT EXISTS hosts (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, group_id TEXT,
   address TEXT NOT NULL, port INTEGER DEFAULT 22, username TEXT NOT NULL,
   auth_type TEXT CHECK(auth_type IN ('key','password','agent','keyboard-interactive')),
@@ -54,4 +53,35 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_by TEXT, decided_at INTEGER, expires_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, expires_at);
+"#;
+
+/// V5（C8/C5 同批，R15 落表）：主机元数据（收藏/最近连接）+ 传输日志（C5 任务
+/// 创建即落行；R32 消费，此处先建表避免 R32 再动 user_version）。旧键迁移在
+/// vault::migrate 的 V5 步内做（需读 settings 内容拼 blob，非纯 DDL）。
+pub const SCHEMA_V5: &str = r#"
+CREATE TABLE IF NOT EXISTS host_metadata (
+  host_id TEXT PRIMARY KEY REFERENCES hosts(id),
+  favorite INTEGER NOT NULL DEFAULT 0,
+  last_connected_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS transfer_journal (
+  task_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  kind TEXT CHECK(kind IN ('upload','download')),
+  identity_label TEXT,
+  src_path TEXT NOT NULL,
+  dst_path TEXT NOT NULL,
+  state TEXT NOT NULL,
+  bytes_transferred INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER,
+  revision INTEGER NOT NULL DEFAULT 0,
+  collision_decision TEXT,
+  verified INTEGER,
+  error TEXT,
+  retry_of TEXT,
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tjournal_session ON transfer_journal(session_id);
 "#;

@@ -1,0 +1,22 @@
+.. A 迁移
+PASS A1 迁移写 blob open=false  [{"schema_version":1,"chrome":"dark","hostbar":{"open":false,"width":260}}]
+PASS A2 迁移 width=260 且 schema=1  [{"schema_version":1,"chrome":"dark","hostbar":{"open":false,"width":260}}]
+PASS A3 旧键保留
+PASS A4 hostbar 收起（UI 跟随迁移值）
+PASS A5 可发现展开钮在位
+.. B blob 驱动
+PASS B1 blob 宽度驱动 250  [250]
+.. C 契约
+PASS C1 schema 99→1 归一  [1]
+PASS C2 收藏落位 h-prod1
+PASS C3 未知主机拒绝 invalid_input  [invalid_input]
+PASS C4 recents 初始序 [prod-1, staging-1]  [["prod-1","staging-1"]]
+.. D UI 连接
+PASS D0 staging 卡片在位
+PASS D1 再连 staging-1 升首（最近性序）  [["staging-1","prod-1"]]
+PASS D2 上限≤5 / 排除 local / 形状齐  [{"cap":true,"noLocal":true,"shape":true}]
+PASS D3 建连打点 last_connected_at
+PASS D4 模块同一性（直调会话数=UI 标签数）  [tabs=3 direct=3]
+PASS Z 零 JS 错误
+[{"name":"A1 迁移写 blob open=false","pass":true,"detail":"{\"schema_version\":1,\"chrome\":\"dark\",\"hostbar\":{\"open\":false,\"width\":260}}"},{"name":"A2 迁移 width=260 且 schema=1","pass":true,"detail":"{\"schema_version\":1,\"chrome\":\"dark\",\"hostbar\":{\"open\":false,\"width\":260}}"},{"name":"A3 旧键保留","pass":true,"detail":""},{"name":"A4 hostbar 收起（UI 跟随迁移值）","pass":true,"detail":""},{"name":"A5 可发现展开钮在位","pass":true,"detail":""},{"name":"B1 blob 宽度驱动 250","pass":true,"detail":"250"},{"name":"C1 schema 99→1 归一","pass":true,"detail":"1"},{"name":"C2 收藏落位 h-prod1","pass":true,"detail":""},{"name":"C3 未知主机拒绝 invalid_input","pass":true,"detail":"invalid_input"},{"name":"C4 recents 初始序 [prod-1, staging-1]","pass":true,"detail":"[\"prod-1\",\"staging-1\"]"},{"name":"D0 staging 卡片在位","pass":true,"detail":""},{"name":"D1 再连 staging-1 升首（最近性序）","pass":true,"detail":"[\"staging-1\",\"prod-1\"]"},{"name":"D2 上限≤5 / 排除 local / 形状齐","pass":true,"detail":"{\"cap\":true,\"noLocal\":true,\"shape\":true}"},{"name":"D3 建连打点 last_connected_at","pass":true,"detail":""},{"name":"D4 模块同一性（直调会话数=UI 标签数）","pass":true,"detail":"tabs=3 direct=3"},{"name":"Z 零 JS 错误","pass":true,"detail":""}]
+PROBE-ALL-PASS 16

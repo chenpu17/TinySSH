@@ -86,6 +86,10 @@ impl From<session_api::Error> for WireError {
             }
             E::InvalidActor => ("invalid_actor", None),
             E::InvalidInput(_) => ("invalid_input", None),
+            E::IdentityInUse { host_names } => (
+                "identity_in_use",
+                Some(serde_json::json!({ "host_names": host_names })),
+            ),
             E::Storage(_) => ("storage", None),
             E::Io(_) => ("io", None),
         };
@@ -243,6 +247,41 @@ fn get_setting(state: ApiState<'_>, key: String) -> CmdResult<Option<String>> {
 #[tauri::command]
 fn set_setting(state: ApiState<'_>, key: String, value: String) -> CmdResult<()> {
     state.api.center.vault.set_setting(&key, &value).map_err(WireError::from)
+}
+
+// ---- C8 偏好与主机元数据（R15；经 SessionApi 走 Human 通道与审计）----
+#[tauri::command]
+async fn get_workspace(state: ApiState<'_>) -> CmdResult<Workspace> {
+    state.api.get_workspace(&human()).await.map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn set_workspace(state: ApiState<'_>, ws: Workspace) -> CmdResult<Workspace> {
+    state
+        .api
+        .set_workspace(&human(), ws)
+        .await
+        .map_err(WireError::from)?;
+    state.api.get_workspace(&human()).await.map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn set_host_favorite(state: ApiState<'_>, host_id: String, favorite: bool) -> CmdResult<()> {
+    state
+        .api
+        .set_host_favorite(&human(), host_id, favorite)
+        .await
+        .map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn list_host_metadata(state: ApiState<'_>) -> CmdResult<Vec<HostMeta>> {
+    state.api.list_host_metadata(&human()).await.map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn list_recent_hosts(state: ApiState<'_>) -> CmdResult<Vec<RecentHost>> {
+    state.api.list_recent_hosts(&human()).await.map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -758,6 +797,8 @@ fn main() {
                     r12_smoke_script(&run_id)
                 } else if mode == "r13" {
                     r13_smoke_script(&run_id)
+                } else if mode == "r15" {
+                    r15_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1088,7 +1129,8 @@ fn main() {
             open_url,
             upload_file, download_file, cancel_transfer, sftp_list,
             list_forwards, start_forward, stop_forward,
-            get_setting, set_setting,
+            get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
+            list_host_metadata, list_recent_hosts,
             read_screen, send_keys, exec_human, set_control, session_brief, set_session_goal,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
@@ -1096,6 +1138,150 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// R15 C8 偏好/元数据探针注入脚本（TINYSSH_SMOKE_MODE=r15；dev 门控，产品路径无关）：
+/// 三段 reload 驱动 blob 真实持久化（归一→260 收起断言→224 展开断言）→ 收藏/建连
+/// 打点（AUTOCONNECT 真实会话）→ 最近连接 local 排除与上限 → 字号命名空间键 →
+/// schemaVersion 核心归一。inv 直调 wire 命令与 UI 同一条 Human 通道。
+fn r15_smoke_script(run_id: &str) -> String {
+    // epoch 必须进程内稳定：本函数每次注入都会调用，SystemTime 直取会逐载漂移，
+    // 导致脚本每次都判「新 run」清掉阶段标记、无限 reload（r15b 实证）
+    static EPOCH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let epoch = EPOCH.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+            .to_string()
+    });
+    let base = r#"(function() {
+  if (window.__R15_INJECTED__) return; // WKWebView Finished 双触发防护：每页至多一个执行体
+  window.__R15_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch { /* 信标瞬断不阻断断言链 */ }
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const WS = (open, width) => ({ schema_version: 1, chrome: 'dark', hostbar: { open, width } });
+  (async () => {
+    try {
+      // 单调步进：step 只增不清——存在性标记会被后段移除、令前段重新获准
+      // （r15g 实证：seg2 移除 s2 后 seg1 于第 4 载重跑、260 收起复写）；
+      // epoch 失配（换 run / 陈旧残留）时归零重走
+      let step = Number.parseInt(localStorage.getItem('ui.r15step') ?? '', 10) || 0;
+      if (localStorage.getItem('ui.r15epoch') !== '__EPOCH__') {
+        step = 0;
+        localStorage.setItem('ui.r15epoch', '__EPOCH__');
+      }
+      const setStep = (n) => localStorage.setItem('ui.r15step', String(n));
+      // 段 0：blob 归一（事实源经 wire 写入 vault）
+      if (step === 0) {
+        await title('r15-normalize');
+        await inv('set_workspace', { ws: WS(true, 224) });
+        setStep(1);
+        location.reload();
+        return;
+      }
+      // 段 1：blob 持久化生效（224 展开）→ 写 260 收起，reload 进段 2
+      if (step === 1) {
+        await title('r15-s1');
+        const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+        if (!cards) return title('FAIL-no-cards');
+        const ws = await inv('get_workspace', {});
+        if (!ws || ws.schema_version !== 1) return title('FAIL-ws-version:' + JSON.stringify(ws));
+        if (!ws.hostbar || ws.hostbar.open !== true || ws.hostbar.width !== 224)
+          return title('FAIL-ws-normalize:' + JSON.stringify(ws.hostbar));
+        if (!document.querySelector('.hostbar')) return title('FAIL-hostbar-open');
+        const markSync = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+        await markSync(RUN + '|r15-pre|' + JSON.stringify(WS(false, 260)));
+        try {
+          const back = await inv('set_workspace', { ws: WS(false, 260) });
+          await markSync(RUN + '|r15-post|' + JSON.stringify(back && back.hostbar));
+        } catch (e) {
+          await markSync(RUN + '|r15-inverr|' + String(e).slice(0, 200));
+          return title('FAIL-invoke');
+        }
+        setStep(2);
+        location.reload();
+        return;
+      }
+      // 段 2：收起态持久化生效 → 写回 224 展开，reload 进段 3
+      if (step === 2) {
+        await title('r15-s2');
+        if (document.querySelector('.hostbar')) return title('FAIL-hostbar-collapsed');
+        const ws = await inv('get_workspace', {});
+        await mark(RUN + '|r15-seg2read|' + JSON.stringify(ws && ws.hostbar));
+        if (!ws.hostbar || ws.hostbar.open !== false || ws.hostbar.width !== 260)
+          return title('FAIL-ws-260:' + JSON.stringify(ws.hostbar));
+        await inv('set_workspace', { ws: WS(true, 224) });
+        setStep(3);
+        location.reload();
+        return;
+      }
+      await title('r15-s3');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards2');
+      const tabN = await waitFor(() => document.querySelectorAll('.tabbar .tab').length || null, 100);
+      if (!tabN) return title('FAIL-no-tab');
+      document.querySelector('.tabbar .tab').click();
+      if (!(await waitFor(() => document.querySelector('.session-toolbar'), 100))) return title('FAIL-toolbar-missing');
+      if (!document.querySelector('.hostbar')) return title('FAIL-hostbar-reopen');
+      await mark(RUN + '|r15-blob-ok');
+      // 收藏 + 建连打点（AUTOCONNECT 已真实 create_session → last_connected_at）
+      const hosts = await inv('list_hosts', {});
+      const localHost = (hosts || []).find((h) => h.id === 'local');
+      if (!localHost) return title('FAIL-no-local-host');
+      await inv('set_host_favorite', { hostId: 'local', favorite: true });
+      const meta = await inv('list_host_metadata', {});
+      const localMeta = (meta || []).find((m) => m.host_id === 'local');
+      if (!localMeta || localMeta.favorite !== true) return title('FAIL-favorite:' + JSON.stringify(localMeta));
+      // AUTOCONNECT（dev 钩子）在第 4 次加载后晚至，打点轮询等待而非硬断言（r15h 实证竞态）
+      const touched = await waitFor(async () => {
+        const m = (await inv('list_host_metadata', {})).find((x) => x.host_id === 'local');
+        return m && m.last_connected_at ? m : null;
+      }, 50);
+      if (!touched) return title('FAIL-touch:' + JSON.stringify(localMeta));
+      // 未知主机收藏 → invalid_input（Tauri v2 拒约载荷为结构化 {kind,message,detail}）
+      let unknownRejected = false;
+      try { await inv('set_host_favorite', { hostId: 'h-none', favorite: true }); }
+      catch (e) {
+        const k = e && e.kind ? String(e.kind) : String(e);
+        unknownRejected = k.includes('invalid_input') || k.includes('not found');
+      }
+      if (!unknownRejected) return title('FAIL-fav-unknown');
+      await mark(RUN + '|r15-fav-ok');
+      // 最近连接（DF8.5）：local 恒排除、上限 5、主机名非空
+      const recents = await inv('list_recent_hosts', {});
+      if (!Array.isArray(recents)) return title('FAIL-recents-type');
+      if (recents.length > 5) return title('FAIL-recents-cap:' + recents.length);
+      if (recents.some((r) => r.host_id === 'local')) return title('FAIL-recents-local:' + JSON.stringify(recents));
+      if (recents.some((r) => !r.host_name || !r.connected_at)) return title('FAIL-recents-shape');
+      await mark(RUN + '|r15-recents-ok|n=' + recents.length);
+      // 字号命名空间键（V5 迁移目标）
+      await inv('set_setting', { key: 'ui.v2.terminal.font_size', value: '14' });
+      const f = await inv('get_setting', { key: 'ui.v2.terminal.font_size' });
+      if (f !== '14') return title('FAIL-font-key:' + f);
+      // schemaVersion 归一（客户端伪造 99 → 核心落 1）
+      const wsBad = await inv('set_workspace', { ws: { schema_version: 99, chrome: 'dark', hostbar: { open: true, width: 224 } } });
+      if (!wsBad || wsBad.schema_version !== 1) return title('FAIL-ws-normalize99:' + JSON.stringify(wsBad));
+      title('r15-DONE');
+    } catch (e) {
+      title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id).replace("__EPOCH__", &epoch.to_string())
 }
 
 /// R13 统一 action 分发探针注入脚本（TINYSSH_SMOKE_MODE=r13；dev 门控，产品路径无关）：

@@ -55,6 +55,11 @@ interface CmdArgs {
   stop_forward: { sid: string; id: string };
   get_setting: { key: string };
   set_setting: { key: string; value: string };
+  get_workspace: undefined;
+  set_workspace: { ws: wire.Workspace };
+  set_host_favorite: { hostId: string; favorite: boolean };
+  list_host_metadata: undefined;
+  list_recent_hosts: undefined;
   read_screen: { sid: string };
   send_keys: { sid: string; keys: string };
   exec_human: { sid: string; command: string };
@@ -103,6 +108,11 @@ interface CmdRet {
   stop_forward: void;
   get_setting: string | null;
   set_setting: void;
+  get_workspace: wire.Workspace;
+  set_workspace: wire.Workspace;
+  set_host_favorite: void;
+  list_host_metadata: wire.HostMeta[];
+  list_recent_hosts: wire.RecentHost[];
   read_screen: wire.ScreenSnapshot;
   send_keys: void;
   exec_human: wire.ExecResult;

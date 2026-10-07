@@ -423,9 +423,42 @@ impl SessionApi for SessionManager {
     }
 
     async fn delete_identity(&self, ctx: &Actor, id: IdentityId) -> Result<()> {
+        // DF8.4：凭据被存活主机引用时拒绝（附主机名），不落删除
+        let refs = self.center.vault.identity_host_refs(&id)?;
+        if !refs.is_empty() {
+            return Err(Error::IdentityInUse { host_names: refs });
+        }
         self.center.vault.delete_identity(&id)?;
         let _ = self.center.audit.append(ctx, "identity_delete", None, None, serde_json::json!({"id": id}), None);
         Ok(())
+    }
+
+    // ---- 偏好与主机元数据（C8/R15）----
+    async fn get_workspace(&self, _ctx: &Actor) -> Result<Workspace> {
+        self.center.vault.workspace()
+    }
+
+    async fn set_workspace(&self, ctx: &Actor, ws: Workspace) -> Result<()> {
+        self.center.vault.set_workspace(&ws)?;
+        let _ = self.center.audit.append(ctx, "workspace_set", None, None,
+            serde_json::json!({"chrome": ws.chrome, "schema_version": ws.schema_version, "hostbar": ws.hostbar}), None);
+        Ok(())
+    }
+
+    async fn set_host_favorite(&self, ctx: &Actor, host_id: HostId, favorite: bool) -> Result<()> {
+        self.center.vault.set_host_favorite(&host_id, favorite)?;
+        let _ = self.center.audit.append(ctx, "host_favorite", None, None,
+            serde_json::json!({"host": host_id, "favorite": favorite}), None);
+        Ok(())
+    }
+
+    async fn list_host_metadata(&self, _ctx: &Actor) -> Result<Vec<HostMeta>> {
+        self.center.vault.list_host_metadata()
+    }
+
+    async fn list_recent_hosts(&self, _ctx: &Actor) -> Result<Vec<RecentHost>> {
+        // 上限 5（DF8.5）
+        self.center.vault.list_recent_hosts(5)
     }
 
     // ---- 会话 ----
@@ -547,6 +580,9 @@ impl SessionApi for SessionManager {
         }
 
         self.center.vault.record_session(&sid, &host.id, &kind)?;
+        // C8：成功建连打点（host_metadata.last_connected_at；最近连接由 sessions
+        // 表派生，此处只供元数据展示）
+        let _ = self.center.vault.touch_host_connection(&host.id);
         let _ = self.center.audit.append(
             ctx, "session_created", Some(&sid), None,
             serde_json::json!({"host": host.id, "kind": kind}), None);

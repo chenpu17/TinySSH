@@ -221,6 +221,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::QueueBusy { .. } => "queue_busy",
         Error::InvalidActor => "invalid_actor",
         Error::InvalidInput(_) => "invalid_input",
+        Error::IdentityInUse { .. } => "identity_in_use",
         Error::Storage(_) => "storage",
         Error::Io(_) => "io",
     }
@@ -229,6 +230,7 @@ fn error_kind(e: &Error) -> &'static str {
 fn error_detail(e: &Error) -> serde_json::Value {
     match e {
         Error::VoidedByHandback { brief } => serde_json::json!({ "brief": brief }),
+        Error::IdentityInUse { host_names } => serde_json::json!({ "host_names": host_names }),
         _ => serde_json::Value::Null,
     }
 }

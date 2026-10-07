@@ -8,8 +8,8 @@ use chacha20poly1305::{XChaCha20Poly1305, Key as ChachaKey, XNonce};
 use rusqlite::{params, Connection};
 use session_api::{
     Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
-    Error, Host, HostDraft, HostId, IdentityId, IdentityKind, IdentityMeta, IdentityReq, KeyKind,
-    Policy, Result, SessionId,
+    Error, Host, HostDraft, HostId, HostMeta, IdentityId, IdentityKind, IdentityMeta, IdentityReq,
+    KeyKind, Policy, RecentHost, Result, SessionId, Workspace,
 };
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 pub mod db;
 pub mod sshcfg;
 
-pub use db::SCHEMA_V1;
+pub use db::{SCHEMA_V1, SCHEMA_V5};
 
 /// 打开/创建库并执行迁移。
 pub fn open(path: &Path) -> Result<Connection> {
@@ -66,6 +66,77 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE hosts ADD COLUMN charset TEXT NOT NULL DEFAULT 'utf-8';")
             .map_err(|e| Error::Storage(e.to_string()))?;
         conn.pragma_update(None, "user_version", 4)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
+    // V5（C8/C5，R15）：host_metadata + transfer_journal 建表 + 旧 UI 偏好键一次性
+    // 迁移（DF8.3）：ui.theme 映射出应用外观写进 ui.v2.workspace blob、
+    // ui.font_size → ui.v2.terminal.font_size；旧键保留不删（回退兼容）。
+    // 幂等：blob 已存在（标记即键本身）则不再迁移。事务保证原子。
+    if version < 5 {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        tx.execute_batch(SCHEMA_V5)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        let has_blob: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key='ui.v2.workspace'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(db_err)?;
+        if has_blob == 0 {
+            let theme: Option<String> = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key='ui.theme'",
+                    [],
+                    |r| r.get(0),
+                )
+                .map(Some)
+                .or_else(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(other),
+                })
+                .map_err(db_err)?;
+            // DF8.3：dark→dark、solar-dark→dark、light→light、solar-light→light；
+            // 未知/未设置回落 dark
+            let chrome = match theme.as_deref() {
+                Some("light") | Some("solar-light") => "light",
+                _ => "dark",
+            };
+            let blob = serde_json::json!({
+                "schema_version": 1,
+                "chrome": chrome,
+                "hostbar": null,
+            });
+            tx.execute(
+                "INSERT INTO settings(key,value) VALUES('ui.v2.workspace',?1)",
+                params![blob.to_string()],
+            )
+            .map_err(db_err)?;
+            // 字号迁到命名空间键（值原样；已有新键不覆盖）
+            let font: Option<String> = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key='ui.font_size'",
+                    [],
+                    |r| r.get(0),
+                )
+                .map(Some)
+                .or_else(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(other),
+                })
+                .map_err(db_err)?;
+            if let Some(f) = font {
+                tx.execute(
+                    "INSERT OR IGNORE INTO settings(key,value) VALUES('ui.v2.terminal.font_size',?1)",
+                    params![f],
+                )
+                .map_err(db_err)?;
+            }
+        }
+        tx.commit().map_err(|e| Error::Storage(e.to_string()))?;
+        conn.pragma_update(None, "user_version", 5)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
     Ok(())
@@ -287,8 +358,12 @@ impl Vault {
     }
 
     pub fn delete_host(&self, id: &str) -> Result<()> {
-        self.conn.lock().unwrap()
-            .execute("UPDATE hosts SET deleted_at=?2 WHERE id=?1", params![id, now_ms()])
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE hosts SET deleted_at=?2 WHERE id=?1", params![id, now_ms()])
+            .map_err(db_err)?;
+        // C8 联动：主机元数据行随删（收藏/最近连接时间不留幽灵）；凭据不删、
+        // 会话不隐式关闭（§5 已定）
+        conn.execute("DELETE FROM host_metadata WHERE host_id=?1", params![id])
             .map_err(db_err)?;
         Ok(())
     }
@@ -395,6 +470,150 @@ impl Vault {
             )
             .map_err(|e| Error::Storage(e.to_string()))?;
         Ok(())
+    }
+
+    // ---- C8 偏好与主机元数据（R15）----
+    /// 工作区偏好整取（ui.v2.workspace blob）：缺失/损坏回落 Default（不炸启动，
+    /// 下次整存即自愈）。V5 迁移保证键存在；此处兜底手删/旧库直开场景。
+    pub fn workspace(&self) -> Result<Workspace> {
+        match self.get_setting("ui.v2.workspace")? {
+            None => Ok(Workspace::default()),
+            Some(raw) => Ok(serde_json::from_str(&raw).unwrap_or_default()),
+        }
+    }
+
+    /// 工作区偏好整存（原子覆盖单行 = 原子；schemaVersion 由核心归一为当前版本）。
+    pub fn set_workspace(&self, ws: &Workspace) -> Result<()> {
+        let mut normalized = ws.clone();
+        normalized.schema_version = 1;
+        self.set_setting(
+            "ui.v2.workspace",
+            &serde_json::to_string(&normalized).map_err(|e| Error::Storage(e.to_string()))?,
+        )
+    }
+
+    /// 收藏/取消收藏（host_metadata upsert；未知主机 InvalidInput）。
+    pub fn set_host_favorite(&self, host_id: &str, favorite: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let alive: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM hosts WHERE id=?1 AND deleted_at IS NULL",
+                params![host_id],
+                |r| r.get(0),
+            )
+            .map_err(db_err)?;
+        if alive == 0 {
+            return Err(Error::InvalidInput(format!("host {host_id} not found")));
+        }
+        conn.execute(
+            "INSERT INTO host_metadata(host_id, favorite) VALUES(?1,?2)
+             ON CONFLICT(host_id) DO UPDATE SET favorite=excluded.favorite",
+            params![host_id, favorite as i64],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// 主机元数据列表（只含有行的主机；无行 = 未收藏且从未连接，不虚构）。
+    pub fn list_host_metadata(&self) -> Result<Vec<HostMeta>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT host_id, favorite, last_connected_at FROM host_metadata")
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (host_id, favorite, last) = row.map_err(db_err)?;
+            out.push(HostMeta {
+                host_id,
+                favorite: favorite != 0,
+                last_connected_at: last
+                    .and_then(chrono::DateTime::from_timestamp_millis)
+                    .map(|t| t.into()),
+            });
+        }
+        Ok(out)
+    }
+
+    /// 最近连接（DF8.5）：sessions 派生——排除 local、每主机取最近一次、倒序上限
+    /// `limit`；只含仍存活主机（删除主机不留幽灵项），无记录返回空。
+    pub fn list_recent_hosts(&self, limit: i64) -> Result<Vec<RecentHost>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.host_id, h.name, MAX(s.created_at) AS last_at
+                 FROM sessions s JOIN hosts h ON h.id = s.host_id AND h.deleted_at IS NULL
+                 WHERE s.kind != 'local' AND s.host_id IS NOT NULL
+                 GROUP BY s.host_id
+                 ORDER BY last_at DESC
+                 LIMIT ?1",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map(params![limit], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (host_id, host_name, last_at) = row.map_err(db_err)?;
+            out.push(RecentHost {
+                host_id,
+                host_name,
+                connected_at: chrono::DateTime::from_timestamp_millis(last_at)
+                    .unwrap_or_default()
+                    .into(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// 记录主机成功建连（host_metadata.last_connected_at upsert；未知主机忽略——
+    /// local 兜底主机/并发删除窗口不致命。WHERE EXISTS 防并发删除后幽灵行复活，
+    /// 全库未开 PRAGMA foreign_keys，FK 不拦——rev-r15 M1）。
+    pub fn touch_host_connection(&self, host_id: &str) -> Result<()> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO host_metadata(host_id, favorite, last_connected_at)
+                 SELECT ?1, 0, ?2
+                 WHERE EXISTS(SELECT 1 FROM hosts WHERE id=?1 AND deleted_at IS NULL)
+                 ON CONFLICT(host_id) DO UPDATE SET last_connected_at=excluded.last_connected_at",
+                params![host_id, now_ms()],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// 凭据引用检查（DF8.4）：返回仍引用该 identity 的存活主机名列表。
+    pub fn identity_host_refs(&self, id: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM hosts WHERE identity_id=?1 AND deleted_at IS NULL ORDER BY name",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map(params![id], |r| r.get::<_, String>(0))
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(db_err)?);
+        }
+        Ok(out)
     }
 
     /// 取主机连接凭据（内部用；SessionApi 无返回凭据的方法）。
@@ -936,6 +1155,128 @@ mod tests {
         let v2 = mk();
         assert_eq!(v2.get_setting("ui.font_size").unwrap().as_deref(), Some("13"));
         assert_eq!(v2.get_setting("ui.theme").unwrap().as_deref(), Some("light"));
+    }
+
+    #[test]
+    fn c8_v5_migration_one_shot_and_idempotent() {
+        // V4 老库（含旧键）→ 开库升 V5：blob 派生（DF8.3 映射）、字号迁移、
+        // 旧键保留、重开不重跑迁移（幂等标记 = blob 键本身）
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+            conn.execute("INSERT INTO settings VALUES('ui.theme','solar-light')", []).unwrap();
+            conn.execute("INSERT INTO settings VALUES('ui.font_size','15')", []).unwrap();
+            conn.pragma_update(None, "user_version", 4).unwrap();
+        }
+        std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
+        let v = Vault::open(&path).unwrap();
+        let ver: u32 = {
+            let conn = v.conn.lock().unwrap();
+            conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(ver, 5);
+        let ws = v.workspace().unwrap();
+        assert_eq!(ws.schema_version, 1);
+        assert_eq!(ws.chrome, "light"); // solar-light → light（DF8.3）
+        assert!(ws.hostbar.is_none()); // 主机栏是 FE localStorage 域，核心不虚构
+        assert_eq!(
+            v.get_setting("ui.v2.terminal.font_size").unwrap().as_deref(),
+            Some("15")
+        );
+        // 旧键保留不删（回退兼容）
+        assert_eq!(v.get_setting("ui.theme").unwrap().as_deref(), Some("solar-light"));
+        assert_eq!(v.get_setting("ui.font_size").unwrap().as_deref(), Some("15"));
+        // 迁移幂等：重开 + 用户改写 blob 后再重开，保持用户值不被旧键重置
+        let mut ws2 = v.workspace().unwrap();
+        ws2.chrome = "dark".into();
+        ws2.hostbar = Some(session_api::HostbarPrefs { open: false, width: 260 });
+        v.set_workspace(&ws2).unwrap();
+        drop(v);
+        let v2 = Vault::open(&path).unwrap();
+        let ws3 = v2.workspace().unwrap();
+        assert_eq!(ws3.chrome, "dark");
+        assert_eq!(ws3.hostbar, Some(session_api::HostbarPrefs { open: false, width: 260 }));
+        assert_eq!(ws3.schema_version, 1);
+        // 损坏 blob 自愈回落 Default（不炸启动）
+        v2.set_setting("ui.v2.workspace", "not-json{").unwrap();
+        assert_eq!(v2.workspace().unwrap(), Workspace::default());
+    }
+
+    #[test]
+    fn c8_favorites_recents_identity_refs_and_cascade() {
+        let (_dir, v) = vault();
+        let key_id = v
+            .create_identity(&IdentityReq::Generate { label: "k1".into(), kind: KeyKind::Ed25519 })
+            .unwrap()
+            .id;
+        let hid = v
+            .upsert_host(&HostDraft {
+                name: "prod-1".into(),
+                address: "10.0.0.9".into(),
+                username: "ops".into(),
+                auth: AuthDraft::Key { identity_id: key_id.clone() },
+                ..Default::default()
+            })
+            .unwrap();
+        let hid2 = v
+            .upsert_host(&HostDraft {
+                name: "staging".into(),
+                address: "10.0.0.10".into(),
+                username: "ops".into(),
+                auth: AuthDraft::Key { identity_id: key_id.clone() },
+                ..Default::default()
+            })
+            .unwrap();
+        // 收藏：未知主机拒绝；正常 upsert
+        assert!(v.set_host_favorite("h-none", true).is_err());
+        v.set_host_favorite(&hid, true).unwrap();
+        v.set_host_favorite(&hid, false).unwrap();
+        let meta = v.list_host_metadata().unwrap();
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta[0].host_id, hid);
+        assert!(!meta[0].favorite);
+        assert!(meta[0].last_connected_at.is_none());
+        // 建连打点 → last_connected_at
+        v.touch_host_connection(&hid).unwrap();
+        assert!(v.list_host_metadata().unwrap()[0].last_connected_at.is_some());
+        // 最近连接（DF8.5）：sessions 派生、排除 local、每主机最近一次、删除主机无幽灵
+        v.record_session(&"s-1".to_string(), &hid, "ssh").unwrap();
+        v.record_session(&"s-2".to_string(), &hid, "ssh").unwrap();
+        v.record_session(&"s-3".to_string(), &hid, "local").unwrap(); // 排除
+        v.record_session(&"s-4".to_string(), &hid2, "ssh").unwrap();
+        let recents = v.list_recent_hosts(5).unwrap();
+        assert_eq!(recents.len(), 2); // local 不算；每主机一行
+        assert_eq!(recents[0].host_id, hid2); // s-4 晚于 s-2
+        assert_eq!(recents[0].host_name, "staging");
+        // 引用检查（DF8.4）：两个主机引用同一凭据
+        let mut refs = v.identity_host_refs(&key_id).unwrap();
+        refs.sort();
+        assert_eq!(refs, vec!["prod-1".to_string(), "staging".to_string()]);
+        assert!(v.identity_host_refs("i-none").unwrap().is_empty());
+        // delete_host 联动：元数据行随删、recents 不再出现
+        v.delete_host(&hid).unwrap();
+        let meta = v.list_host_metadata().unwrap();
+        assert!(meta.iter().all(|m| m.host_id != hid));
+        let recents = v.list_recent_hosts(5).unwrap();
+        assert_eq!(recents.len(), 1);
+        assert_eq!(recents[0].host_id, hid2);
+        // transfer_journal 表已建（C5/R32 消费，V5 同批）：可插可查
+        let n = {
+            let conn = v.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO transfer_journal(task_id, session_id, kind, src_path, dst_path, state, created_at)
+                 VALUES('t-1','s-4','upload','/a','/b','Queued',1)",
+                [],
+            )
+            .unwrap();
+            conn.query_row("SELECT COUNT(*) FROM transfer_journal", [], |r| r.get::<_, i64>(0))
+                .unwrap()
+        };
+        assert_eq!(n, 1);
     }
 }
 

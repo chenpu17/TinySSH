@@ -1,0 +1,184 @@
+{
+ "welcome1280": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 756
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  },
+  "tabbarRow": {
+   "x": 226,
+   "y": 44,
+   "w": 1054,
+   "h": 40
+  },
+  "welcome": true,
+  "hostCards": 5,
+  "hScroll": false,
+  "tokens": {
+   "panel": "#141922",
+   "border": "#263040"
+  }
+ },
+ "vp1024": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1024,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 724
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 744,
+   "w": 798,
+   "h": 24
+  },
+  "main": {
+   "x": 226,
+   "y": 44,
+   "w": 798,
+   "h": 724
+  },
+  "welcome": true,
+  "hScroll": false,
+  "filesTpFull": true,
+  "panelBox": {
+   "x": 226,
+   "y": 84,
+   "w": 798,
+   "h": 660
+  },
+  "panelClosed": true
+ },
+ "vp960": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 960,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 556
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 576,
+   "w": 734,
+   "h": 24
+  },
+  "main": {
+   "x": 226,
+   "y": 44,
+   "w": 734,
+   "h": 556
+  },
+  "welcome": true,
+  "hScroll": false
+ },
+ "settingsOpen": true,
+ "light": {
+  "tokens": {
+   "panel": "#f4f6f8",
+   "border": "#d2dae2",
+   "chrome": "light"
+  },
+  "titlebarBg": "rgb(244, 246, 248)",
+  "statusbar": {
+   "color": "rgb(92, 104, 117)"
+  },
+  "hostbar": {
+   "background-color": "rgb(244, 246, 248)"
+  },
+  "hScroll": false
+ },
+ "darkRestore": {
+  "tokens": {
+   "panel": "#141922",
+   "border": "#263040",
+   "chrome": "dark"
+  }
+ },
+ "settingsClosedByEsc": true,
+ "blobCollapsed": {
+  "hostbar": false,
+  "hbExpand": {
+   "x": 4,
+   "y": 50,
+   "w": 31,
+   "h": 27
+  },
+  "main": {
+   "x": 39,
+   "y": 44,
+   "w": 1241,
+   "h": 756
+  },
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 44
+  },
+  "statusbar": {
+   "x": 39,
+   "y": 776,
+   "w": 1241,
+   "h": 24
+  },
+  "tokens": {
+   "panel": "#141922",
+   "border": "#263040",
+   "chrome": "dark"
+  },
+  "hScroll": false
+ },
+ "blob250": {
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 250,
+   "h": 756
+  },
+  "hostCards": 5,
+  "main": {
+   "x": 252,
+   "y": 44,
+   "w": 1028,
+   "h": 756
+  },
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 44
+  },
+  "cardRight": {
+   "hbRight": 250,
+   "cardRight": 241,
+   "cardFits": true
+  },
+  "hScroll": false
+ },
+ "consoleErrors": []
+}
