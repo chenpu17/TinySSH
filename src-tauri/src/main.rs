@@ -31,31 +31,93 @@ fn human() -> Actor {
 }
 
 type ApiState<'a> = State<'a, AppState>;
-type CmdResult<T> = std::result::Result<T, String>;
+
+/// wire 错误信封（R10 统一错误映射）：不再把 session-api::Error 拍平成中文字符串，
+/// 而是结构化 `{ kind, message, detail }` 过桥。kind 为稳定 snake_case 契约值——
+/// 现有 16 变体逐一映射 + 前向预留 r03-contracts §11 ADR-15 的 11 个新 kind
+/// （后端未实现前不会出现，FE parser 按开放集合接收）。message 保留 thiserror
+/// 人话文案，UI 现有 friendlyError 行为不变。
+#[derive(Debug, Clone, serde::Serialize)]
+struct WireError {
+    kind: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<serde_json::Value>,
+}
+
+impl WireError {
+    fn simple(kind: &str, message: impl Into<String>) -> Self {
+        Self { kind: kind.to_string(), message: message.into(), detail: None }
+    }
+}
+
+impl From<String> for WireError {
+    fn from(s: String) -> Self {
+        Self::simple("invalid_input", s)
+    }
+}
+
+impl From<std::io::Error> for WireError {
+    fn from(e: std::io::Error) -> Self {
+        Self::simple("io", e.to_string())
+    }
+}
+
+impl From<session_api::Error> for WireError {
+    fn from(e: session_api::Error) -> Self {
+        use session_api::Error as E;
+        let (kind, detail): (&str, Option<serde_json::Value>) = match &e {
+            E::ApprovalDenied { reason } => (
+                "approval_denied",
+                Some(serde_json::json!({ "reason": reason })),
+            ),
+            E::ControlTakenByHuman => ("control_taken_by_human", None),
+            E::VoidedByHandback { .. } => ("voided_by_handback", None),
+            E::ReconfirmingPending => ("reconfirming_pending", None),
+            E::SessionNotFound => ("session_not_found", None),
+            E::SessionClosed => ("session_closed", None),
+            E::AuthFailed => ("auth_failed", None),
+            E::ConnectFailed(r) => ("connect_failed", Some(serde_json::json!({ "reason": r }))),
+            E::HostKeyRejected(_) => ("host_key_rejected", None),
+            E::ExecTimeout => ("exec_timeout", None),
+            E::Cancelled => ("cancelled", None),
+            E::QueueBusy { position } => {
+                ("queue_busy", Some(serde_json::json!({ "position": position })))
+            }
+            E::InvalidActor => ("invalid_actor", None),
+            E::InvalidInput(_) => ("invalid_input", None),
+            E::Storage(_) => ("storage", None),
+            E::Io(_) => ("io", None),
+        };
+        Self { kind: kind.to_string(), message: e.to_string(), detail }
+    }
+}
+
+type CmdResult<T> = std::result::Result<T, WireError>;
 
 #[tauri::command]
 async fn list_hosts(state: ApiState<'_>) -> CmdResult<Vec<Host>> {
-    state.api.list_hosts(&human()).await.map_err(|e| e.to_string())
+    state.api.list_hosts(&human()).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn upsert_host(state: ApiState<'_>, host: HostDraft) -> CmdResult<HostId> {
-    state.api.upsert_host(&human(), host).await.map_err(|e| e.to_string())
+    state.api.upsert_host(&human(), host).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn delete_host(state: ApiState<'_>, id: String) -> CmdResult<()> {
-    state.api.delete_host(&human(), id).await.map_err(|e| e.to_string())
+    state.api.delete_host(&human(), id).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn create_identity(state: ApiState<'_>, req: IdentityReq) -> CmdResult<IdentityMeta> {
-    state.api.create_identity(&human(), req).await.map_err(|e| e.to_string())
+    state.api.create_identity(&human(), req).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn list_identities(state: ApiState<'_>) -> CmdResult<Vec<IdentityMeta>> {
-    state.api.list_identities(&human()).await.map_err(|e| e.to_string())
+    state.api.list_identities(&human()).await.map_err(WireError::from)
 }
 
 /// ~/.ssh/config 导入：解析预览（path 缺省 = ~/.ssh/config）
@@ -68,7 +130,7 @@ async fn ssh_config_preview(
         .api
         .ssh_config_preview(path.as_deref().map(std::path::Path::new))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 /// ~/.ssh/config 导入：按勾选条目落库
@@ -86,7 +148,7 @@ async fn ssh_config_import(
 
 #[tauri::command]
 async fn list_sessions(state: ApiState<'_>) -> CmdResult<Vec<SessionInfo>> {
-    state.api.list_sessions(&human()).await.map_err(|e| e.to_string())
+    state.api.list_sessions(&human()).await.map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -95,18 +157,18 @@ async fn create_session(state: ApiState<'_>, host_id: String) -> CmdResult<Sessi
         .api
         .create_session(&human(), CreateSessionReq { host_id })
         .await
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn close_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
-    state.api.close_session(&human(), sid).await.map_err(|e| e.to_string())
+    state.api.close_session(&human(), sid).await.map_err(WireError::from)
 }
 
 /// 断线会话一键重连（T13）：仅 Disconnected 会话；成功后进入重确认。
 #[tauri::command]
 async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
-    state.api.reconnect_session(&sid).await.map_err(|e| e.to_string())
+    state.api.reconnect_session(&sid).await.map_err(WireError::from)
 }
 
 /// SFTP 上传（T20）：本地绝对路径 → 远端路径。人类直传（Agent 侧走 MCP 工具且必审），
@@ -117,7 +179,7 @@ async fn upload_file(state: ApiState<'_>, sid: String, local: String, remote: St
         .api
         .upload(&human(), sid, std::path::Path::new(&local), &remote)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 /// SFTP 下载（T20）：远端路径 → 本地。local 省略时存入 ~/Downloads/<远端文件名>。
@@ -139,35 +201,35 @@ async fn download_file(
         .api
         .download(&human(), sid, &remote, &dest)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 /// 取消进行中的传输（取消语义：传输任务收到 Cancelled，审计记 transfer_failed/已取消）。
 #[tauri::command]
 async fn cancel_transfer(state: ApiState<'_>, id: String) -> CmdResult<()> {
-    state.api.cancel_transfer(&human(), id).await.map_err(|e| e.to_string())
+    state.api.cancel_transfer(&human(), id).await.map_err(WireError::from)
 }
 
 /// SFTP 目录浏览（T41 FR-7）：只读 readdir，人类专属入口（不经审批）。
 #[tauri::command]
 async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<Vec<DirEntryS>> {
-    state.api.sftp_list(&human(), sid, &path).await.map_err(|e| e.to_string())
+    state.api.sftp_list(&human(), sid, &path).await.map_err(WireError::from)
 }
 
 /// 端口转发（T42 FR-8）：列/建/停（人类 GUI 入口；Agent 侧留 MCP 审批版）。
 #[tauri::command]
 async fn list_forwards(state: ApiState<'_>, sid: String) -> CmdResult<Vec<ForwardInfo>> {
-    state.api.list_forwards(&human(), sid).await.map_err(|e| e.to_string())
+    state.api.list_forwards(&human(), sid).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn start_forward(state: ApiState<'_>, sid: String, spec: ForwardSpec) -> CmdResult<ForwardId> {
-    state.api.start_forward(&human(), sid, spec).await.map_err(|e| e.to_string())
+    state.api.start_forward(&human(), sid, spec).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn stop_forward(state: ApiState<'_>, sid: String, id: String) -> CmdResult<()> {
-    state.api.stop_forward(&human(), sid, id).await.map_err(|e| e.to_string())
+    state.api.stop_forward(&human(), sid, id).await.map_err(WireError::from)
 }
 
 /// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
@@ -175,28 +237,28 @@ async fn stop_forward(state: ApiState<'_>, sid: String, id: String) -> CmdResult
 /// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）
 #[tauri::command]
 fn get_setting(state: ApiState<'_>, key: String) -> CmdResult<Option<String>> {
-    state.api.center.vault.get_setting(&key).map_err(|e| e.to_string())
+    state.api.center.vault.get_setting(&key).map_err(WireError::from)
 }
 
 #[tauri::command]
 fn set_setting(state: ApiState<'_>, key: String, value: String) -> CmdResult<()> {
-    state.api.center.vault.set_setting(&key, &value).map_err(|e| e.to_string())
+    state.api.center.vault.set_setting(&key, &value).map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn open_url(url: String) -> CmdResult<()> {    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("仅支持 http/https 链接".into());
+        return Err(WireError::simple("invalid_input", "仅支持 http/https 链接"));
     }
     tokio::process::Command::new("open")
         .arg(&url)
         .spawn()
-        .map_err(|e| e.to_string())?;
+        .map_err(WireError::from)?;
     Ok(())
 }
 
 #[tauri::command]
 async fn resize(state: ApiState<'_>, sid: String, cols: u16, rows: u16) -> CmdResult<()> {
-    state.api.resize(&human(), sid, cols, rows).await.map_err(|e| e.to_string())
+    state.api.resize(&human(), sid, cols, rows).await.map_err(WireError::from)
 }
 
 /// 输出流订阅：Channel 桥（可丢 broadcast + 失步 resync，L0 ADR-2/7）。
@@ -207,7 +269,7 @@ async fn subscribe_output(
     on_event: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
     window: tauri::Window<tauri::Wry>,
 ) -> CmdResult<()> {
-    let mut rx = state.api.subscribe_output(sid.clone()).map_err(|e| e.to_string())?;
+    let mut rx = state.api.subscribe_output(sid.clone()).map_err(WireError::from)?;
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
@@ -232,12 +294,12 @@ async fn subscribe_output(
 
 #[tauri::command]
 async fn read_screen(state: ApiState<'_>, sid: String) -> CmdResult<ScreenSnapshot> {
-    state.api.read_screen(&human(), sid).await.map_err(|e| e.to_string())
+    state.api.read_screen(&human(), sid).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn send_keys(state: ApiState<'_>, sid: String, keys: String) -> CmdResult<()> {
-    state.api.send_keys(&human(), sid, &keys).await.map_err(|e| e.to_string())
+    state.api.send_keys(&human(), sid, &keys).await.map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -246,7 +308,7 @@ async fn exec_human(state: ApiState<'_>, sid: String, command: String) -> CmdRes
         .api
         .exec(&human(), sid, &command, ExecOpts::default())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -263,17 +325,17 @@ async fn set_control(
             StopPolicy::None
         },
     };
-    state.api.set_control(&human(), sid, owner, opts).await.map_err(|e| e.to_string())
+    state.api.set_control(&human(), sid, owner, opts).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn session_brief(state: ApiState<'_>, sid: String) -> CmdResult<SessionBrief> {
-    state.api.get_session_brief(&human(), sid).await.map_err(|e| e.to_string())
+    state.api.get_session_brief(&human(), sid).await.map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn set_session_goal(state: ApiState<'_>, sid: String, goal: Option<String>) -> CmdResult<()> {
-    state.api.set_session_goal(&human(), sid, goal).await.map_err(|e| e.to_string())
+    state.api.set_session_goal(&human(), sid, goal).await.map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -282,7 +344,7 @@ async fn list_approvals(state: ApiState<'_>, pending_only: bool) -> CmdResult<Ve
         .api
         .list_approvals(&human(), ApprovalFilter { pending_only, ..Default::default() })
         .await
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -291,9 +353,9 @@ async fn decide_approval(state: ApiState<'_>, id: String, decision: String, edit
         "approve" => Decision::Approve,
         "deny" => Decision::Deny,
         "edit" => Decision::ApproveEdited(edited.unwrap_or_default()),
-        _ => return Err("bad decision".into()),
+        _ => return Err(WireError::simple("invalid_input", "bad decision")),
     };
-    state.api.decide_approval(&human(), id, d).await.map_err(|e| e.to_string())
+    state.api.decide_approval(&human(), id, d).await.map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -302,31 +364,31 @@ async fn audit_query(state: ApiState<'_>, sid: Option<String>, limit: i64) -> Cm
         .api
         .query_audit(&human(), AuditFilter { session_id: sid, limit, ..Default::default() })
         .await
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 /// 主机指纹待决列表（路线图⑤ TOFU：首连确认/变更告警）。
 #[tauri::command]
 async fn pending_host_keys(state: ApiState<'_>) -> CmdResult<Vec<PendingHostKey>> {
-    state.api.pending_host_keys(&human()).await.map_err(|e| e.to_string())
+    state.api.pending_host_keys(&human()).await.map_err(WireError::from)
 }
 
 /// 人类对指纹确认作出决定；accept=true 时指纹入库并放行连接。
 #[tauri::command]
 async fn decide_host_key(state: ApiState<'_>, id: String, accept: bool) -> CmdResult<()> {
-    state.api.decide_host_key(&human(), &id, accept).await.map_err(|e| e.to_string())
+    state.api.decide_host_key(&human(), &id, accept).await.map_err(WireError::from)
 }
 
 /// 2FA 认证提示待决列表（路线图⑩：keyboard-interactive 非密码类提示）。
 #[tauri::command]
 async fn pending_auth_prompts(state: ApiState<'_>) -> CmdResult<Vec<PendingAuthPrompt>> {
-    state.api.pending_auth_prompts(&human()).await.map_err(|e| e.to_string())
+    state.api.pending_auth_prompts(&human()).await.map_err(WireError::from)
 }
 
 /// 人类应答认证提示；answer 为空串视为取消（认证终止）。
 #[tauri::command]
 async fn answer_auth_prompt(state: ApiState<'_>, id: String, answer: String) -> CmdResult<()> {
-    state.api.answer_auth_prompt(&human(), &id, &answer).await.map_err(|e| e.to_string())
+    state.api.answer_auth_prompt(&human(), &id, &answer).await.map_err(WireError::from)
 }
 
 /// SPIKE-1：是否处于基准模式。
@@ -391,7 +453,7 @@ async fn issue_agent(state: ApiState<'_>, id: String, label: String) -> CmdResul
         .center
         .vault
         .create_agent(&id, &label)
-        .map_err(|e| e.to_string())
+        .map_err(WireError::from)
 }
 
 /// MCP 端点状态（端口展示，L1 §3.5）。
@@ -637,6 +699,9 @@ fn main() {
   const RUN = '{run_id}';
   // mark：仅写信标（不改窗口标题），带运行标识；用于采样打点（P1 列表就绪等）
   const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {{}});
+  // R10 调试：启动链未捕获错误/渲染失败直写信标（FAIL-* 归因用，产品路径无关）
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
   const title = (s) => {{
     document.title = 'SMOKE|' + s;
     fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)).catch(() => {{}});
@@ -936,3 +1001,54 @@ fn dirs_or_home() -> std::path::PathBuf {
     std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
+
+#[cfg(test)]
+mod wire_error_tests {
+    use super::WireError;
+    use session_api::Error as E;
+
+    /// R10 验收「wire 枚举一致」：session-api::Error 全变体 → kind 稳定映射。
+    /// 新增变体漏配时 match 非穷尽即编译失败；本测试钉住 kind 字符串契约值。
+    #[test]
+    fn every_variant_maps_to_stable_kind() {
+        let e = E::Io("x".into());
+        assert_eq!(WireError::from(e).kind, "io");
+        assert_eq!(WireError::from(E::Storage("s".into())).kind, "storage");
+        assert_eq!(WireError::from(E::InvalidInput("i".into())).kind, "invalid_input");
+        assert_eq!(WireError::from(E::InvalidActor).kind, "invalid_actor");
+        let qb = WireError::from(E::QueueBusy { position: 3 });
+        assert_eq!(qb.kind, "queue_busy");
+        assert_eq!(qb.detail.as_ref().unwrap()["position"], 3);
+        assert_eq!(WireError::from(E::Cancelled).kind, "cancelled");
+        assert_eq!(WireError::from(E::ExecTimeout).kind, "exec_timeout");
+        assert_eq!(WireError::from(E::HostKeyRejected("fp".into())).kind, "host_key_rejected");
+        let cf = WireError::from(E::ConnectFailed("refused".into()));
+        assert_eq!(cf.kind, "connect_failed");
+        assert_eq!(cf.detail.as_ref().unwrap()["reason"], "refused");
+        assert_eq!(WireError::from(E::AuthFailed).kind, "auth_failed");
+        assert_eq!(WireError::from(E::SessionClosed).kind, "session_closed");
+        assert_eq!(WireError::from(E::SessionNotFound).kind, "session_not_found");
+        assert_eq!(WireError::from(E::ReconfirmingPending).kind, "reconfirming_pending");
+        assert_eq!(WireError::from(E::ControlTakenByHuman).kind, "control_taken_by_human");
+        assert_eq!(WireError::from(E::VoidedByHandback {
+            brief: Box::new(session_api::SessionBrief {
+                cwd: None, env_summary: String::new(), facts: Vec::new(),
+                running: Vec::new(), pending_approvals: Vec::new(),
+                screen_summary: String::new(), goal: None,
+            }),
+        }).kind, "voided_by_handback");
+        assert_eq!(WireError::from(E::ApprovalDenied {
+            reason: session_api::DeniedReason::Denied,
+        }).kind, "approval_denied");
+        // 人话文案保留（friendlyError 依赖 message）
+        let m = WireError::from(E::AuthFailed).message;
+        assert!(!m.is_empty());
+        // 壳层直造错误走 invalid_input / io
+        assert_eq!(WireError::from("bad".to_string()).kind, "invalid_input");
+        assert_eq!(WireError::from(std::io::Error::other("no")).kind, "io");
+        // serde 序列化形态：{kind, message[, detail]}
+        let v = serde_json::to_value(WireError::from(E::AuthFailed)).unwrap();
+        assert_eq!(v["kind"], "auth_failed");
+        assert!(v.get("detail").is_none());
+    }
+}

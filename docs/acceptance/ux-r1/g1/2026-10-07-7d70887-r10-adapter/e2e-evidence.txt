@@ -1,0 +1,16 @@
+R10 adapter 改造 e2e 证据（2026-10-07，工作区未提交状态，基线 7d70887）
+== 运行 1：种子库 /tmp/r4_p1/tinyssh.db（20 主机）==
+beacon: /t/r10-1791342197|list-wait-begin
+beacon: /t/r10-1791342197|s2-list-ready|cards=21
+含义：启动 invoke 链（list_sessions/list_hosts/list_approvals/audit_query/mcp_status/bench_mode）
+全部经新 adapter 成功往返；20 张种子主机卡渲染（21=20 种子+1）。零 JS-ERROR/JS-REJECT。
+== 运行 2：会话库 /tmp/r4_p3/tinyssh.db（2 主机，真实容器主机）==
+stderr: [app] autoconnect h-45f334a0-c589-48fb-afb5-47b39d7453ca -> s-888ee27b-59dc-4a3a-9017-313b54ba051d
+beacons: list-wait-begin（该库仅 2 主机，<20 阈值不触发 list-ready，系打点设计非故障）
+JS-ERROR/JS-REJECT: 无；退出零残留。
+注：运行 2 的 autoconnect 在更早的 r10 系列运行中亦三次成功（s-d11f3c55/s-8f2819f9/s-6e71eaee）。
+== 浏览器 demo 模式（同一桥的 demo 分支）==
+Playwright headless Chrome @ localhost:5183：host-card ×5、console/pageerror 零条。
+== 仪表注记 ==
+SMOKE 注入脚本本轮增补：window error/unhandledrejection → 信标直写（dev 门控，
+产品路径无关）；FAIL-no-list|cards=0 为「<20 阈值未达」的固定失败格式，非实际卡数。

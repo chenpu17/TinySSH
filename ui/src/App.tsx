@@ -1,24 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as tauri from "@tauri-apps/api/core";
-import * as demo from "./demo";
+import {
+  invoke, MkChannel, inTauri, listen,
+} from "./adapter/bridge";
+import { errMsg } from "./adapter/errors";
+import type {
+  Host, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
+  PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
+  IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
+} from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
   IconChevronUp, IconChevronDown, IconTerminal, IconArrowDown, IconUpload, IconDownload,
   IconInbox, IconClock, IconSearch, IconLoader, IconFolder, IconFile, IconRefresh,
 } from "./icons";
 
-// 无 Tauri 环境（纯浏览器）走演示模式；Tauri 环境走真实核心
-const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 // macOS 标题栏融合（T33）：Overlay 红绿灯悬浮在内容上，左栏头给红绿灯留位。
 // 只在原生模式加类——浏览器 demo 没有标题栏，留白反而是错的（走查可手动加类模拟）。
 if (inTauri) document.documentElement.classList.add("native-chrome");
-const invoke: typeof tauri.invoke = (cmd, args?) =>
-  inTauri
-    ? tauri.invoke(cmd, args)
-    : (demo.invoke(cmd, args as Record<string, unknown> | undefined) as never);
-// Channel：Tauri 环境用真实现；浏览器演示模式用 shim
-const MkChannel = () => (inTauri ? new tauri.Channel<unknown>() : new demo.ChannelShim());
-import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
@@ -28,55 +26,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import "@xterm/xterm/css/xterm.css";
 
-type Host = {
-  id: string; name: string; address: string; port: number; username: string;
-  auth_type: "Key" | "Password" | "KeyboardInteractive" | "Agent";
-  tags: string[];
-  fingerprint?: string | null; // 已信任指纹（TOFU）；缺省 = 信任未建立
-  charset?: "utf-8" | "gbk";  // 远端字节编码（路线图⑩后半）；缺省 utf-8
-};
-type SshConfigPreview = {
-  name: string; address: string; port: number; username: string;
-  has_identity: boolean; already_imported: boolean;
-};
-type SshImportOutcome = { name: string; host_id: string | null; error: string | null };
-type SessionInfo = {
-  id: string; host_id: string; host_name: string; kind: string;
-  state: string; control_owner: "Human" | "Agent"; created_at: string;
-};
-type ApprovalItem = {
-  id: string; session_id: string; agent_id: string; command: string;
-  edited_command?: string | null;
-  status: string; segment_report: { segment: string; verdict: string }[];
-  // 后端声明的可编辑性（缺省 false：旧卡/演示种子兼容——转发/传输卡不出编辑钮）
-  editable?: boolean;
-};
-type PendingHostKey = {
-  id: string; host_id: string; host_name: string; address: string; port: number;
-  issue: "FirstSeen" | "Changed"; fingerprint: string; previous_fingerprint: string | null;
-  created_at: string;
-};
-type PendingAuthPrompt = {
-  id: string; host_name: string; name: string; instructions: string;
-  prompt: string; echo: boolean; created_at: string;
-};
-type Brief = {
-  cwd: string | null; env_summary: string;
-  facts: { subject: string; detail: string; status: string }[];
-  running: string[]; pending_approvals: string[]; screen_summary: string;
-  goal: string | null;
-};
-type AuditEvent = {
-  seq: number; ts: string; actor_kind: string; agent_id: string | null;
-  action: string; command: string | null;
-  session_id?: string | null;
-  payload_json?: { decision?: string; cleared?: boolean; reason?: string } | null;
-};
-type IdentityMeta = { id: string; label: string; kind: string; fingerprint: string };
-// 接管返回（PRD FR-6：停止结果逐条显示，不谎报）。StopOutcome serde 为
-// externally tagged：{"Exited":3} / "Escalated" / "Unresponsive"。
-type TakeoverReport = {
-  frozen: boolean; paused_queue: string[]; stopped: [string, unknown][]; brief?: unknown;
+// 传输卡片是 UI 呈现态（终态由审计事件对账），非 wire 类型
+type TransferCard = {
+  id: string; kind: "Upload" | "Download"; name: string; remote: string; local: string;
+  status: "running" | "done" | "failed" | "cancelled"; bytes?: number; error?: string;
 };
 function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
   if (v && typeof v === "object" && "Exited" in (v as Record<string, unknown>))
@@ -91,6 +44,8 @@ function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
 // 从未匹配过任何状态——文案 sweep 实锤的契约断点。）
 const normApprovalStatus = (s: string): string =>
   s.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+// 审批行入库后 status 已归一为小写——状态集合用 string（wire 的 ApprovalStatus 仅在桥边界）
+type ApprovalRow = Omit<ApprovalItem, "status"> & { status: string };
 // 最近处理（已决审批）六态标签：编辑后批准/超时/作废此前都被误显示成「✕ 拒绝」。
 const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
   approved: { text: "✓ 批准", cls: "ok" },
@@ -98,20 +53,6 @@ const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
   denied: { text: "✕ 拒绝", cls: "err" },
   timeout: { text: "⏱ 超时未审", cls: "err" },
   voided: { text: "⊘ 已作废（接管/会话关闭）", cls: "dim" },
-};
-// 文件传输（T20）：核心返回的句柄 + UI 卡片状态（终态由审计事件按 id 对账）
-type TransferHandle = { id: string; session_id: string; kind: "Upload" | "Download"; local: string; remote: string };
-// 远程文件浏览器（T41）：sftp_list wire 契约（Rust DirEntryS/demo shim 同口径）
-type DirEntryS = { name: string; is_dir: boolean; size: number; mtime: number };
-// 端口转发（T42 FR-8）：wire 契约（外部标签枚举，Rust/demo 同口径）
-type ForwardSpec =
-  | { Local: { listen_addr: string; listen_port: number; target_host: string; target_port: number } }
-  | { Remote: { listen_addr: string; listen_port: number; target_host: string; target_port: number } }
-  | { Dynamic: { listen_addr: string; listen_port: number } };
-type ForwardInfo = { id: string; spec: ForwardSpec; state: string; error: string | null };
-type TransferCard = {
-  id: string; kind: "Upload" | "Download"; name: string; remote: string; local: string;
-  status: "running" | "done" | "failed" | "cancelled"; bytes?: number; error?: string;
 };
 
 // 认知状态 → 用户能看懂的标签
@@ -201,7 +142,8 @@ const stateLabel = (s: string): { text: string; cls: string } => {
 };
 
 // 后端错误 → 用户能看懂的一句话（原始错误放次要行）
-const friendlyError = (raw: string): string => {
+const friendlyError = (e: unknown): string => {
+  const raw = errMsg(e);
   const r = raw.toLowerCase();
   if (r.includes("authfailed") || r.includes("authentication")) return "认证失败：用户名或密码/密钥不正确";
   // 取消 2FA 走 ConnectFailed（含「人工应答被取消」），不是凭据错误——
@@ -472,7 +414,7 @@ export default function App() {
   const [oscTitles, setOscTitles] = useState<Record<string, string>>({});
   const [hosts, setHosts] = useState<Host[]>([]);
   const [hostsLoaded, setHostsLoaded] = useState(false);
-  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
   // 任务目标（R9：人类→Agent 委托留言）：draft 编辑中不被简报轮询覆盖，
   // 保存/清除后落盘（goalDirty 复位）再随简报同步；
@@ -504,13 +446,13 @@ export default function App() {
 
   const refreshLists = useCallback(async () => {
     try {
-      setSessions(await invoke<SessionInfo[]>("list_sessions"));
-      setHosts(await invoke<Host[]>("list_hosts"));
+      setSessions(await invoke("list_sessions"));
+      setHosts(await invoke("list_hosts"));
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
-      setApprovals((await invoke<ApprovalItem[]>("list_approvals", { pendingOnly: false }))
-        .map((a) => ({ ...a, status: normApprovalStatus(a.status) })));
+      setApprovals((await invoke("list_approvals", { pendingOnly: false }))
+        .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) })));
       // 多取一些：集成注入等内部事件会被前端过滤，保证可见条数够看
-      const page = await invoke<{ events: AuditEvent[] }>("audit_query", { sid: null, limit: 60 });
+      const page = await invoke("audit_query", { sid: null, limit: 60 });
       setTimeline(page.events);
     } catch {
       // 审核低-5：首载失败也必须撤骨架给出空态出口（否则永久骨架 + 未处理 rejection）；
@@ -521,7 +463,7 @@ export default function App() {
 
   const refreshBrief = useCallback(async (s: string) => {
     try {
-      const b = await invoke<Brief>("session_brief", { sid: s });
+      const b = await invoke("session_brief", { sid: s });
       if (sidRef.current !== s) return; // 审核H1：已切走会话的过期简报直接丢弃，防简报/任务目标跨会话串台
       setBrief(b);
     } catch { /* 会话已关 */ }
@@ -565,14 +507,14 @@ export default function App() {
       void refreshBrief(target);
       void refreshLists(); // goal_set 审计事件即时上时间线
     } catch (e) {
-      pushToast("err", friendlyError(String(e)));
+      pushToast("err", friendlyError(e));
     }
   }, [goalDraft, refreshBrief, refreshLists, pushToast]);
 
   useEffect(() => {
     refreshLists();
-    invoke<{ endpoint: string; agents: { id: string; label: string }[] }>("mcp_status").then(setMcp);
-    invoke<boolean>("bench_mode").then((b) => {
+    invoke("mcp_status").then(setMcp);
+    invoke("bench_mode").then((b) => {
       if (b) runBench();
     });
   }, [refreshLists]);
@@ -590,7 +532,7 @@ export default function App() {
       for (const p of visiblePanes) {
         const t = termsRef.current.get(p)?.term;
         if (!t) continue;
-        invoke<{ cols: number; rows: number }>("read_screen", { sid: p })
+        invoke("read_screen", { sid: p })
           .then((snap) => {
             if (snap.cols !== t.cols || snap.rows !== t.rows) {
               void invoke("resize", { sid: p, cols: t.cols, rows: t.rows }).catch(() => {});
@@ -618,19 +560,19 @@ export default function App() {
   useEffect(() => {
     if (!inTauri) {
       const t = setInterval(() => {
-        invoke<PendingHostKey[]>("pending_host_keys")
+        invoke("pending_host_keys")
           .then((list) => setHostKeyQueue((q) => (q.length ? q : list)))
           .catch(() => {});
-        invoke<PendingAuthPrompt[]>("pending_auth_prompts")
+        invoke("pending_auth_prompts")
           .then((list) => setAuthPromptQueue((q) => (q.length ? q : list)))
           .catch(() => {});
       }, 500);
       return () => clearInterval(t);
     }
-    invoke<PendingHostKey[]>("pending_host_keys")
+    invoke("pending_host_keys")
       .then((list) => setHostKeyQueue((q) => (q.length ? q : list)))
       .catch(() => {});
-    invoke<PendingAuthPrompt[]>("pending_auth_prompts")
+    invoke("pending_auth_prompts")
       .then((list) => setAuthPromptQueue((q) => (q.length ? q : list)))
       .catch(() => {});
     let un: (() => void) | undefined;
@@ -757,7 +699,7 @@ export default function App() {
       }
       deadWarned = false;
       invoke("send_keys", { sid: sessionSid, keys: d }).catch((e) => {
-        term.write(`\r\n\x1b[31m✕ ${String(e)}\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
     });
     return { term, el, search: searchAddon, tag };
@@ -964,8 +906,8 @@ export default function App() {
       apply(Number.isFinite(raw) && raw > 0 ? raw : null, localStorage.getItem(SETTING_THEME));
       return;
     }
-    invoke<string | null>("get_setting", { key: SETTING_FONT })
-      .then((f) => invoke<string | null>("get_setting", { key: SETTING_THEME }).then((t) => {
+    invoke("get_setting", { key: SETTING_FONT })
+      .then((f) => invoke("get_setting", { key: SETTING_THEME }).then((t) => {
         apply(f === null ? null : Number(f), t);
       }))
       .catch(() => {});
@@ -1061,7 +1003,7 @@ export default function App() {
         const u8 = msg instanceof Uint8Array ? msg : new Uint8Array(msg);
         term.write(decoder.decode(u8, { stream: true }));
       } else if (typeof msg === "string" && msg.includes("resync")) {
-        invoke<ScreenSnap>("read_screen", { sid: sessionSid }).then((snap) => {
+        invoke("read_screen", { sid: sessionSid }).then((snap) => {
           term.reset();
           term.write(snap.text);
           term.write(cursorRestore(snap));
@@ -1073,7 +1015,7 @@ export default function App() {
     // 写完必须把光标归位到 Screen 的真实位置（cursor_row/col）：逐行写快照会把光标
     // 推到屏底——「会话已接入」提示语与后续输出（含 attach 后 fit 触发的提示符重绘）
     // 全部落到中下方，且 xterm 光标从此与 shell 视角错位（用户走查实锤的三提示符首屏）。
-    const snap = await invoke<ScreenSnap>("read_screen", { sid: sessionSid });
+    const snap = await invoke("read_screen", { sid: sessionSid });
     term.write(snap.text);
     term.write(cursorRestore(snap));
     await invoke("subscribe_output", { sid: sessionSid, onEvent: channel });
@@ -1149,7 +1091,7 @@ export default function App() {
     try {
       await invoke("close_session", { sid: id });
     } catch (e) {
-      setConnError({ title: "断开会话失败", detail: String(e) });
+      setConnError({ title: "断开会话失败", detail: errMsg(e) });
     }
     subscribedRef.current.delete(id);
     const entry = termsRef.current.get(id);
@@ -1217,7 +1159,7 @@ export default function App() {
       await invoke("delete_host", { id });
       await refreshLists();
     } catch (e) {
-      setConnError({ title: "删除主机失败", detail: friendlyError(String(e)) });
+      setConnError({ title: "删除主机失败", detail: friendlyError(e) });
     }
   };
   const confirmAction = async () => {
@@ -1350,10 +1292,10 @@ export default function App() {
       const remote = `${cwd.replace(/\/+$/, "")}/${name}`;
       upsertTransfer({ id: tempId, kind: "Upload", name, remote, local: p, status: "running" });
       try {
-        const h = await invoke<TransferHandle>("upload_file", { sid: s, local: p, remote });
+        const h = await invoke("upload_file", { sid: s, local: p, remote });
         setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
       } catch (e) {
-        setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(String(e)) } : c)));
+        setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(e) } : c)));
       }
     }
   }, [upsertTransfer]);
@@ -1365,10 +1307,10 @@ export default function App() {
     const tempId = `pending-dl-${Date.now()}`;
     upsertTransfer({ id: tempId, kind: "Download", name: pathBasename(rp), remote: rp, local: "…", status: "running" });
     try {
-      const h = await invoke<TransferHandle>("download_file", { sid: s, remote: rp, local: null });
+      const h = await invoke("download_file", { sid: s, remote: rp, local: null });
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
     } catch (e) {
-      setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(String(e)) } : c)));
+      setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(e) } : c)));
     }
   }, [upsertTransfer]);
 
@@ -1385,13 +1327,13 @@ export default function App() {
     if (!s || !p.trim()) return;
     setSftpLoading(true); setSftpErr(null);
     try {
-      const es = await invoke<DirEntryS[]>("sftp_list", { sid: s, path: p.trim() });
+      const es = await invoke("sftp_list", { sid: s, path: p.trim() });
       if (sidRef.current !== s) return; // 已切会话的过期结果直接丢弃（H1 纪律）
       setSftpEntries(es);
       setSftpPath(p.trim());
       setSftpPathInput(p.trim());
     } catch (e) {
-      if (sidRef.current === s) setSftpErr(friendlyError(String(e)));
+      if (sidRef.current === s) setSftpErr(friendlyError(e));
     } finally {
       setSftpLoading(false);
     }
@@ -1416,7 +1358,7 @@ export default function App() {
     const s = sidRef.current;
     if (!s) { setForwards([]); return []; }
     try {
-      const fs2 = await invoke<ForwardInfo[]>("list_forwards", { sid: s });
+      const fs2 = await invoke("list_forwards", { sid: s });
       if (sidRef.current === s) setForwards(fs2);
       return fs2;
     } catch { return []; /* 会话已关 */ }
@@ -1460,7 +1402,7 @@ export default function App() {
     try {
       // 远程转发「请求被服务器拒绝」不抛错（条目保留为 Failed 可见可停）——
       // 按 refresh 后的实际状态决定 toast（审核中-2：曾对 Failed 也绿「已启动」并清输入）
-      const fid = await invoke<string>("start_forward", { sid: s, spec });
+      const fid = await invoke("start_forward", { sid: s, spec });
       const fs2 = await refreshForwards();
       const st = fs2.find((f) => f.id === fid);
       if (st && st.state !== "Listening") {
@@ -1470,7 +1412,7 @@ export default function App() {
       setFwdPort(""); setFwdHost(""); setFwdTPort("");
       pushToast("ok", fwdKind === "Local" ? `本地转发已启动：127.0.0.1:${p}` : fwdKind === "Remote" ? `远程转发已启动：远端 :${p}` : `SOCKS5 已启动：127.0.0.1:${p}`);
     } catch (e) {
-      pushToast("err", `转发启动失败：${friendlyError(String(e))}`);
+      pushToast("err", `转发启动失败：${friendlyError(e)}`);
       await refreshForwards();
     } finally {
       setFwdBusy(false);
@@ -1483,7 +1425,7 @@ export default function App() {
     try {
       await invoke("stop_forward", { sid: s, id });
     } catch (e) {
-      pushToast("err", `停止失败：${friendlyError(String(e))}`);
+      pushToast("err", `停止失败：${friendlyError(e)}`);
     }
     await refreshForwards();
   };
@@ -1493,7 +1435,7 @@ export default function App() {
     if (!transfers.some((t) => t.status === "running")) return;
     const t = setInterval(async () => {
       try {
-        const page = await invoke<{ events: (AuditEvent & { payload_json?: { transfer?: string; bytes?: number; error?: string } })[] }>("audit_query", { sid: null, limit: 30 });
+        const page = await invoke("audit_query", { sid: null, limit: 30 });
         setTransfers((cur) => cur.map((c) => {
           if (c.status !== "running") return c;
           const ev = page.events.find((e) => e.payload_json?.transfer === c.id && (e.action === "transfer_done" || e.action === "transfer_failed"));
@@ -1550,7 +1492,7 @@ export default function App() {
   const createSession = async (host: Host) => {    setConnecting(host.id);
     setConnError(null);
     try {
-      const newSid = await invoke<string>("create_session", { hostId: host.id });
+      const newSid = await invoke("create_session", { hostId: host.id });
       setLastFailed(null);
       await refreshLists();
       await attachSession(newSid);
@@ -1560,7 +1502,7 @@ export default function App() {
       setLastFailed(host.id);
       setConnError({
         title: `连接 ${host.name}（${host.username}@${host.address}:${host.port}）失败`,
-        detail: friendlyError(String(e)) + "——也可在主机卡上看到失败提示，修正后重试",
+        detail: friendlyError(e) + "——也可在主机卡上看到失败提示，修正后重试",
       });
     } finally {
       setConnecting(null);
@@ -1577,7 +1519,7 @@ export default function App() {
       await attachSession(s.id);
       pushToast("ok", `已重连 ${s.host_name}`);
     } catch (e) {
-      setConnError({ title: `重连 ${s.host_name} 失败`, detail: friendlyError(String(e)) });
+      setConnError({ title: `重连 ${s.host_name} 失败`, detail: friendlyError(e) });
     } finally {
       setReconnecting(null);
     }
@@ -1589,17 +1531,17 @@ export default function App() {
       await invoke("set_control", { sid, owner: "Human", stopRunning: false });
       await refreshLists();
       pushToast("info", "已接管——Agent 冻结，终端归你");
-    } catch (e) { pushToast("err", friendlyError(String(e))); } // 审核低-7：会话刚死等失败不再静默
+    } catch (e) { pushToast("err", friendlyError(e)); } // 审核低-7：会话刚死等失败不再静默
   };
   // 「接管并停止任务」逐条披露停止结果（PRD FR-6：不谎报——升级后仍未停止要标红）
   const [stopResult, setStopResult] = useState<{ hostName: string; report: TakeoverReport } | null>(null);
   const takeoverStop = async () => {
     if (!sid) return;
     try {
-      const r = await invoke<TakeoverReport>("set_control", { sid, owner: "Human", stopRunning: true });
+      const r = await invoke("set_control", { sid, owner: "Human", stopRunning: true });
       setStopResult({ hostName: sessions.find((x) => x.id === sid)?.host_name ?? "", report: r });
       await refreshLists();
-    } catch (e) { pushToast("err", friendlyError(String(e))); }
+    } catch (e) { pushToast("err", friendlyError(e)); }
   };
   const handback = async () => {
     if (!sid) return;
@@ -1607,13 +1549,13 @@ export default function App() {
       await invoke("set_control", { sid, owner: "Agent" });
       await refreshLists();
       pushToast("info", "已交还 Agent——后续操作请求走审批");
-    } catch (e) { pushToast("err", friendlyError(String(e))); }
+    } catch (e) { pushToast("err", friendlyError(e)); }
   };
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedCmd, setEditedCmd] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const decide = async (id: string, decision: string, edited: string | null) => {
+  const decide = async (id: string, decision: "approve" | "deny" | "edit", edited: string | null) => {
     await invoke("decide_approval", { id, decision, edited });
     setEditingId(null);
     setConfirmId(null);
@@ -1626,7 +1568,7 @@ export default function App() {
   // deny 只拦了其中最狠的子集，如 rm -rf /tmp 仍会出卡）。
   const DANGER_SHAPE_RE =
     /\brm\s+(?:-[a-zA-Z]+\s+)*-[a-z]*r[a-z]*f|\bmkfs\b|\bdd\b[^\n]*\bof=\/dev\/|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bwipefs\b|\bchmod\s+(?:-[a-zA-Z]+\s+)*777\s+\//;
-  const approvalRisk = (a: ApprovalItem): string | null => {
+  const approvalRisk = (a: ApprovalRow): string | null => {
     const segs = a.segment_report;
     if (segs.length > 0 && segs.every((s) => s.verdict.startsWith("pending:")))
       return "所有分段均未命中任何允许规则（系统无法判定安全性）";
@@ -1683,7 +1625,7 @@ export default function App() {
                 if (wasEdit || !connect) return; // 编辑只改配置；仅保存不自动建连
                 const h = hosts.find((x) => x.id === hid);
                 // list_hosts 刚刷新过，直接用返回值兜底
-                const target = h ?? (await invoke<Host[]>("list_hosts")).find((x) => x.id === hid);
+                const target = h ?? (await invoke("list_hosts")).find((x) => x.id === hid);
                 if (target) createSession(target);
               }}
             />
@@ -2248,7 +2190,7 @@ Authorization: Bearer <TOKEN>`}
                 try {
                   await invoke("exec_human", { sid, command: cmd });
                 } catch (err) {
-                  xtermRef.current?.write(`\r\n\x1b[31m✕ ${String(err)}\x1b[0m\r\n`);
+                  xtermRef.current?.write(`\r\n\x1b[31m✕ ${errMsg(err)}\x1b[0m\r\n`);
                 }
               }
             }}
@@ -2671,12 +2613,12 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
     if (!pem.includes("PRIVATE KEY")) { setErr("请先粘贴 OpenSSH / PEM 格式的私钥内容，或「从文件导入…」"); return; }
     setBusy(true);
     try {
-      const meta = await invoke<IdentityMeta>("create_identity", {
+      const meta = await invoke("create_identity", {
         req: { Import: { label: keyLabel(), pem, passphrase: passphrase || null } },
       });
       setIdentity(meta);
     } catch (e) {
-      setErr(friendlyError(String(e)));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -2687,12 +2629,12 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
     setErr(null);
     setBusy(true);
     try {
-      const meta = await invoke<IdentityMeta>("create_identity", {
+      const meta = await invoke("create_identity", {
         req: { Generate: { label: keyLabel(), kind: "Ed25519" } },
       });
       setIdentity(meta);
     } catch (e) {
-      setErr(friendlyError(String(e)));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -2717,7 +2659,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
     }
     setBusy(true);
     try {
-      let auth: Record<string, unknown> | string;
+      let auth: AuthDraft;
       if (editing) {
         // 编辑默认不回传凭据（UI 不持明文）：Keep 语义保持现有认证与密钥/密码；
         // 密码主机填写了新密码 = 更换凭据（vault 侧新建加密 identity 替换——
@@ -2732,7 +2674,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         if (!identity) { setErr("请先「导入并确认指纹」或「生成新密钥」"); setBusy(false); return; }
         auth = { Key: { identity_id: identity.id } };
       }
-      const hid = await invoke<string>("upsert_host", {
+      const hid = await invoke("upsert_host", {
         host: {
           id: editHost?.id ?? null, name: name.trim(), address: address.trim(),
           port: p, username: username.trim(), auth, tags: editHost?.tags ?? [],
@@ -2743,7 +2685,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
       setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
       onSaved(hid, editing, connect);
     } catch (e) {
-      setErr(friendlyError(String(e)));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -2880,12 +2822,12 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<SshConfigPreview[]>("ssh_config_preview", { path: null })
+    invoke("ssh_config_preview", { path: null })
       .then((es) => {
         setEntries(es);
         setChecked(new Set(es.filter((e) => !e.already_imported).map((e) => e.name)));
       })
-      .catch((e) => setErr(friendlyError(String(e))));
+      .catch((e) => setErr(friendlyError(e)));
   }, []);
 
   const importChecked = async () => {
@@ -2893,14 +2835,14 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
     if (checked.size === 0) { setErr("先勾选要导入的条目"); return; }
     setBusy(true);
     try {
-      const outs = await invoke<SshImportOutcome[]>("ssh_config_import", {
+      const outs = await invoke("ssh_config_import", {
         path: null, names: [...checked],
       });
       setOutcomes(outs);
       const okCount = outs.filter((o) => !o.error).length;
       if (okCount > 0) onDone();
     } catch (e) {
-      setErr(friendlyError(String(e)));
+      setErr(friendlyError(e));
     } finally {
       setBusy(false);
     }

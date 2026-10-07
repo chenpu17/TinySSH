@@ -43,7 +43,7 @@ G1 已获开工授权，R10–R15 仍记 `待开始`，由团队实际启动后�
 
 | ID | 状态 | 备注 |
 |---|---|---|
-| R10 adapter/DTO/错误映射 | 待开始 | 依赖 R03 |
+| R10 adapter/DTO/错误映射 | **待验收**（开工准备已交付） | 开工准备归档 `../acceptance/ux-r1/g1/2026-10-07-ea0b914-r10prep/`（旧版 tag old-ui-baseline-g0 + 构建/产物摘要 + DB fixture + release 补测清单）；实施证据 `../acceptance/ux-r1/g1/2026-10-07-7d70887-r10-adapter/` | WireError 结构化错误（15 变体 kind + ADR-15 前向）+ adapter 三件套（wire/errors/bridge，42 命令 CmdMap）+ App 全量改道 + demo 错误契约化；e2e：种子库 list-ready cards=21 + 真实库 autoconnect + 零 JS 错误；rev-r10/vis-r10 复核中 |
 | R11 TerminalRegistry/订阅 | 待开始 | 按 C10 勘误实现；B11/P6 与 P2、P5 有效归属试点在 G1 退出前关闭 |
 | R12 AppShell/主机栏/标签 | 待开始 | 依赖 R01/R02/R11 |
 | R13 action/快捷键/焦点 | 待开始 | |
@@ -87,6 +87,7 @@ G1 已获开工授权，R10–R15 仍记 `待开始`，由团队实际启动后�
 | 2026-10-06 | R04 采样：P1 冷 760/P95 1304、热 788/P95 805；P3 30/30 中位 330/P95 349；P6 100 循环 ΔRSS 0.0MB（替代口径登记）；P5 试点 B 328.0→E 332.0MB 增长 1.2%（缩时登记，全量归 R51；E 段停止后 +2.4MB 阶跃已披露，按末段值 2.0%）。**独立对抗审核 9 项发现（1高5中3低）全部处置**：键注入护栏落地 keyguard.py（三延期脚本每次事件前前台+在屏双核验）；P1 口径 400→700ms 修正并从 s2_ms 全量重算（冷 460/P95 1004、热 488/P95 505）；P6 带退出核验重跑（Δ−1.06MB、残留 0/100）；memsample.py 重写差分 v2；cold_retry inclusive 重算并纳入引用；污染原值 2140/1856 回填注记；P5 冻结偏差登记。R04 文档+raw 归档提交。**P2 键注入事故**（frontmost 静默失败，CGEvent 可能落入用户应用约 6 分钟）：已披露用户、数据作废、全部键注入采样（P2/P4/P7）延期并冻结复测协议（每次键事件前前台+在屏双核验护栏）。P1 冷 #3/#4 孤儿信标污染已重跑替换并保留 replaced 注记。归属方法改差分法（浏览器保持运行约束） |
 | 2026-10-06 | **G0 修订轮**（联审未通过响应）：三路并行修正后全部独立复审通过——A 原型九项修复 rev-ux 九项全 PASS+对抗探针无绕过；B 契约 C-01~C-04 rev-r03b 二轮全部处置；C 测量 Q-01~Q-06 rev-r04 两轮三验终裁决可签关闭（复审新增 2 项：memsample --s0 str/int 键类型失效、p2_echo 门限/分辨力声明，同轮修复并正/缺/无三路径独立复跑）。五项产品决议写入冻结单 §6.1 与契约条款。关闭映射：docs/ux/ux-r1-g0/g0-review-closure.md，待用户重审 G0 |
 | 2026-10-07 | **G0 受托签署生效**：G0 阶段基线通过、G1 授权启动（签署单 g0-signoff.md，commit `bbd2341`）。随即执行签署指派项——Q-05 采样器修复（memsample v3→v4：键类型装载归一/应用 RSS 单计/同 PID 换身份复用检测，对应签署探针四项发现），纯数据正负探针 9/9 PASS（scripts/perf/memsample_selftest.py，证据 2026-10-07-e2ebdc4-q05fix）+ 独立复核通过（rev-q05fix 对抗复核裁决可签关闭：四缺陷实读验证 + 自写对抗探针 10/10 PASS；两条低危 fail-closed 注记随下次修订收口）。下一步按签署 §2：R10 开工准备 + G1 实施（第一重点：新工作区真实 SSH 垂直流程） |
+| 2026-10-07 | **G1 启动**：R10 开工准备交付（旧版源码 tag `old-ui-baseline-g0`、构建/产物 SHA256、隔离 DB fixture、release 打包基线补测清单——签署 §2 期限项，commit `7d70887`）；R10 adapter 实施完成待验收：后端 WireError 结构化错误（36 处字符串拍平替换 + kind 契约测试）、FE adapter 三件套（42 命令 CmdMap 类型化）、App 全量改道、demo 错误同形；e2e 合成证据（种子库 21 卡渲染 + 真实容器 autoconnect + 零 JS 错误 + 退出零残留 + demo 浏览器走查零错误）；独立复核双通过：rev-r10 对抗审核通过（三标准 PASS + 4 低危注记全部收口：demo 认证文案恢复/OutputEvent 实况化/dev server 重启/VoidedByHandback 断言补齐）+ vis-r10 视觉无回归（逐像素零差异、双主题实测）。待提交 |
 
 ## 4. 决议与偏差记录
 

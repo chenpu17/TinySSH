@@ -6,6 +6,7 @@
 // ssh_config 预览/导入、TOFU 指纹门（create_session 内挂起等决定，与真实
 // 后端同构，拒绝走 HostKeyRejected）、未知命令显式报错（不再静默 null）。
 
+import { apiError } from "./adapter/errors";
 type Handler = (data: Uint8Array) => void;
 
 type DemoSession = {
@@ -240,7 +241,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "create_session": {
       const hid = args?.hostId as string;
       const h = demoState.hosts.find((x) => x.id === hid);
-      if (!h) throw new Error("HostNotFound（演示）");
+      if (!h) throw apiError("invalid_input", "HostNotFound（演示）");
       // 门序与真实 SSH 一致：先 TOFU 指纹门（密钥交换期），后 2FA 认证提示
       // TOFU 指纹门：未信任主机在门内挂起（弹窗决定），与真实后端同构——
       // 拒绝时 HostKeyRejected 从原始 createSession 调用抛出，主机卡红色失败态。
@@ -259,7 +260,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
             resolve,
           });
         });
-        if (!ok) throw new Error("HostKeyRejected（演示：已拒绝该主机指纹）");
+        if (!ok) throw apiError("host_key_rejected", "主机指纹验证失败（演示：已拒绝该主机指纹）");
       }
       if (h.address === "otp.demo") {
         // 2FA 演示（路线图⑩）：认证提示挂起等人类应答（与真实挂起语义同构）
@@ -279,9 +280,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         });
         // 与真实 transport 同串（ConnectFailed 族）：friendlyError 由此区分「取消认证」
         // 与凭据错误——此前抛 AuthFailed 把取消误报成密码不对（PV R4 对齐）
-        if (!answer) throw new Error("连接失败: 服务器要求额外交互认证（2FA），人工应答被取消或超时");
+        if (!answer) throw apiError("connect_failed", "连接失败: 服务器要求额外交互认证（2FA），人工应答被取消或超时");
       }
-      if (h.address === "10.0.0.12") throw new Error("AuthFailed（演示：认证失败）");
+      if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
       demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], forwards: [] });
       audit("human", "session_created", null, null, sid);
@@ -307,8 +308,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "reconnect_session": {
       const sid = args?.sid as string;
       const s = demoState.sessions.find((x) => x.id === sid);
-      if (!s) throw new Error("SessionNotFound（演示）");
-      if (s.state !== "Disconnected") throw new Error("会话未处于断开状态，无需重连（演示）");
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.state !== "Disconnected") throw apiError("invalid_input", "会话未处于断开状态，无需重连（演示）");
       s.state = "Reconfirming";
       pushTo(sid, "\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
       audit("human", "session_reconnect", null, null, sid ?? null);
@@ -355,7 +356,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "set_session_goal": {
       const sid = args?.sid as string;
       const s = demoState.sessions.find((x) => x.id === sid);
-      if (!s) throw new Error("SessionNotFound（演示）");
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       const raw = args?.goal as string | null | undefined;
       const trimmed = raw == null ? null : raw.trim();
       s.goal = trimmed ? trimmed : null;
@@ -500,7 +501,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           { name: "migrate.sh", is_dir: false, size: 733, mtime: 1790908800 },
         ],
       };
-      if (!(p in tree)) throw new Error(`演示模式：目录不存在或不可读（${p}）`);
+      if (!(p in tree)) throw apiError("path_not_found", `演示模式：目录不存在或不可读（${p}）`);
       return tree[p].slice().sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
     }
     // T42 FR-8：端口转发注册表演示。demo 无法真实监听端口/建隧道——仅按会话
@@ -508,12 +509,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     // 追加，与真实 core-session 的 forward_start/forward_stop 事件对齐。
     case "list_forwards": {
       const s = demoState.sessions.find((x) => x.id === args?.sid);
-      if (!s) throw new Error("SessionNotFound（演示）");
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       return s.forwards.map((f) => ({ ...f, spec: { ...f.spec } }));
     }
     case "start_forward": {
       const s = demoState.sessions.find((x) => x.id === args?.sid);
-      if (!s) throw new Error("SessionNotFound（演示）");
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       const spec = args?.spec as Record<string, Record<string, unknown>>;
       const f = { id: "f-demo-" + demoSeq++, spec, state: "Listening", error: null };
       s.forwards.push(f);
@@ -522,9 +523,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "stop_forward": {
       const s = demoState.sessions.find((x) => x.id === args?.sid);
-      if (!s) throw new Error("SessionNotFound（演示）");
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       const i = s.forwards.findIndex((f) => f.id === args?.id);
-      if (i < 0) throw new Error("转发不存在或已停止（演示）");
+      if (i < 0) throw apiError("invalid_input", "转发不存在或已停止（演示）");
       const [f] = s.forwards.splice(i, 1);
       audit("human", "forward_stop", null, null, s.id, { forward: f.id });
       return null;
@@ -533,7 +534,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     // 要么明确列为无操作（此前 default 静默 null 是「占位反馈」伪影的根源）。
     case "upload_file":
     case "download_file":
-      throw new Error("演示模式不提供真实 SFTP 传输");
+      throw apiError("invalid_input", "演示模式不提供真实 SFTP 传输");
     case "cancel_transfer":
     case "note_terminal":
     case "open_url":
@@ -543,7 +544,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "bench_report":
       return null;
     default:
-      throw new Error("演示 shim 未实现该命令：" + cmd);
+      throw apiError("invalid_input", "演示 shim 未实现该命令：" + cmd);
   }
 }
 
