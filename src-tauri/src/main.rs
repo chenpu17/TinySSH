@@ -799,6 +799,10 @@ fn main() {
                     r13_smoke_script(&run_id)
                 } else if mode == "r14" {
                     r14_smoke_script(&run_id)
+                } else if mode == "p2" {
+                    p2_smoke_script(&run_id)
+                } else if mode == "p6" {
+                    p6_smoke_script(&run_id)
                 } else if mode == "r15" {
                     r15_smoke_script(&run_id)
                 } else {
@@ -1140,6 +1144,242 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// P2 探针注入脚本（TINYSSH_SMOKE_MODE=p2；dev 门控）：同一 release 会话切换 100 次
+/// （click→tab-active，rAF 粒度）+ 本地可见回显 100 次（合成 keydown→xterm onData→
+/// core 本地 PTY 回显→输出→term.write→DOM，MutationObserver 计时）。P95 门槛
+/// 切换 ≤100ms / 回显 ≤50ms（远端 RTT 单列，不混入本地口径）。
+fn p2_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__P2_INJECTED__) return;
+  window.__P2_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => { document.title = 'SMOKE|' + s; try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {} };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => { for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); } return null; };
+  // 非活动终端 display:none（styles.css .term-session）——「可见回显」口径按 offsetParent 定位活动终端
+  const visTerm = () => [...document.querySelectorAll('.xterm-helper-textarea')].filter((t) => t.offsetParent !== null)[0] || null;
+  const visRows = () => [...document.querySelectorAll('.xterm-rows')].filter((r) => r.offsetParent !== null)[0] || null;
+  const p95 = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.ceil(s.length * 0.95) - 1]; };
+  // 回显 N 次：活动终端 textarea 合成 keydown+keypress → PTY 回显 → 该终端 .xterm-rows 任意行变化
+  const echoN = async (n) => {
+    const ta = visTerm();
+    const rows = visRows();
+    if (!ta || !rows) return null;
+    ta.focus();
+    const chars = 'abcdefghijklmnopqrstuvwxyz';
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const ch = chars[i % 26];
+      // 观测=该终端 .xterm-rows 内任意行内容变化（p2i 诊断实证：回显落在光标行，光标行不必然是
+      // 视口末行——末行增长假设会全部误判 -1）；keydown+keypress 双发（真实键序列语义，
+      // p2i 实证进 PTY 回显核心屏；InputEvent 路径在原生 WKWebView 实测不通 p2d/p2f）。
+      const dt = await new Promise((res) => {
+        let done = false;
+        const mo = new MutationObserver(() => {
+          if (!done) { done = true; mo.disconnect(); res(performance.now() - t0); }
+        });
+        const t0 = performance.now();
+        mo.observe(rows, { childList: true, subtree: true, characterData: true });
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: ch, keyCode: ch.charCodeAt(0), which: ch.charCodeAt(0), bubbles: true, cancelable: true }));
+        ta.dispatchEvent(new KeyboardEvent('keypress', { key: ch, charCode: ch.charCodeAt(0), keyCode: ch.charCodeAt(0), which: ch.charCodeAt(0), bubbles: true, cancelable: true }));
+        setTimeout(() => { if (!done) { done = true; mo.disconnect(); res(-1); } }, 800);
+      });
+      out.push(Math.round(dt * 10) / 10);
+    }
+    return out;
+  };
+  (async () => {
+    try {
+      await title('p2-open');
+      await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!(await waitFor(() => document.querySelectorAll('.tabbar .tab').length >= 1 || null, 100))) return title('FAIL-no-tab');
+      // 第二个本地会话（另开连接钮）→ 双标签
+      const conn = document.querySelector('.host-card .host-connect-btn');
+      if (!conn) return title('FAIL-no-connect');
+      conn.click();
+      if (!(await waitFor(() => document.querySelectorAll('.tabbar .tab').length >= 2 || null, 50))) return title('FAIL-second-tab');
+      const tabs = () => [...document.querySelectorAll('.tabbar .tab')];
+      // ---- 会话切换 ×100（P95 ≤ 100ms 门）----
+      const sw = [];
+      for (let i = 0; i < 100; i++) {
+        const target = tabs()[i % 2];
+        const t0 = performance.now();
+        target.click();
+        const dt = await new Promise((res) => {
+          const tick = () => (target.classList.contains('tab-active') ? res(performance.now() - t0) : requestAnimationFrame(tick));
+          requestAnimationFrame(tick);
+          setTimeout(() => res(-1), 2000);
+        });
+        sw.push(Math.round(dt * 10) / 10);
+      }
+      const swOk = sw.filter((x) => x >= 0);
+      if (swOk.length < 100) return title('FAIL-sw-n:' + swOk.length);
+      if (p95(swOk) > 100) return title('FAIL-sw-gate:' + p95(swOk));
+      await markSync('p2-sw-p95|' + p95(swOk) + '|n=' + swOk.length + '|max=' + Math.max(...swOk));
+      await markSync('p2-sw-raw|' + sw.join(','));
+      // ---- 输入→本地可见回显 ×100（P95 ≤ 50ms 门，活动终端口径）----
+      tabs()[0].click();
+      if (!(await waitFor(() => tabs()[0].classList.contains('tab-active') ? true : null, 20))) return title('FAIL-refocus');
+      const ec = await echoN(100);
+      if (!ec) return title('FAIL-no-vis-term');
+      const ecOk = ec.filter((x) => x >= 0);
+      if (ecOk.length < 100) return title('FAIL-ec-n:' + ecOk.length);
+      if (p95(ecOk) > 50) return title('FAIL-ec-gate:' + p95(ecOk));
+      await markSync('p2-ec-p95|' + p95(ecOk) + '|n=' + ecOk.length + '|max=' + Math.max(...ecOk));
+      await markSync('p2-ec-raw|' + ec.join(','));
+      // ---- 远端 RTT 单列（真实 SSH 会话回显 ×100；信息列不设门，网络 RTT 另计）----
+      let hid;
+      try {
+        hid = await inv('upsert_host', { host: { id: null, name: 'p2-sshd', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      } catch (e) { return title('FAIL-upsert:' + String(e).slice(0, 120)); }
+      if (!hid) return title('FAIL-upsert-empty');
+      const card = await waitFor(() => [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes('p2-sshd')) || null, 50);
+      if (!card) return title('FAIL-no-card');
+      card.querySelector('.host-card-main').click();
+      let trusted = false;
+      for (let i = 0; i < 40 && !trusted; i++) {
+        await sleep(300);
+        const tbtn = [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接'));
+        if (tbtn) { tbtn.click(); trusted = true; }
+      }
+      const connS = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        return ss.find((x) => x.host_id === hid && x.state === 'Connected') ? true : null;
+      }, 150);
+      if (!connS) return title('FAIL-ssh-connected');
+      const sshTab = await waitFor(() => tabs().find((t) => t.textContent.includes('p2-sshd')) || null, 50);
+      if (!sshTab) return title('FAIL-ssh-tab');
+      sshTab.click();
+      if (!(await waitFor(() => sshTab.classList.contains('tab-active') ? true : null, 20))) return title('FAIL-ssh-focus');
+      const rt = await echoN(100);
+      if (!rt) return title('FAIL-no-vis-term-rt');
+      const rtOk = rt.filter((x) => x >= 0);
+      if (rtOk.length < 100) return title('FAIL-rt-n:' + rtOk.length);
+      await markSync('p2-rt-ec-p95|' + p95(rtOk) + '|n=' + rtOk.length + '|max=' + Math.max(...rtOk) + '|gate=none(informational)');
+      await markSync('p2-rt-ec-raw|' + rt.join(','));
+      await title('p2-DONE');
+    } catch (e) { await title('FAIL-exception:' + String(e).slice(0, 140)); }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// P6 探针注入脚本（TINYSSH_SMOKE_MODE=p6；dev 门控）：100 次会话创建/关闭（UI 连接钮
+/// → 标签+终端实例出现 → 标签 ×关闭 → 回收）、200 次标签切换、50 次面板变化；
+/// 不变量=每存活会话 ≤1 输出订阅（debug_subscriptions）+ 终端实例数回收 + 零 JS 错误。
+/// 进程级 RSS 曲线由外部采样器采集（进程级证据口径，与 G0 修订轮 P6 降级决议同构）。
+fn p6_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__P6_INJECTED__) return;
+  window.__P6_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason).slice(0, 200)));
+  const title = async (s) => { document.title = 'SMOKE|' + s; try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {} };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => { for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); } return null; };
+  const jsErrors = [];
+  window.addEventListener('error', (ev) => jsErrors.push(String(ev.message)));
+  window.addEventListener('unhandledrejection', (ev) => jsErrors.push('reject:' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 80)));
+  (async () => {
+    try {
+      await title('p6-open');
+      await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!(await waitFor(() => document.querySelectorAll('.tabbar .tab').length >= 1 || null, 100))) return title('FAIL-no-tab');
+      // 激活首个标签：AUTOCONNECT 会话在欢迎态（sid=null）不挂载终端（p6c 实证基线永不成）——
+      // 点击标签驱动 makeTerm，再等「tab 数===xterm 数且 ≥1」取稳定基线（p6b 实证 xterm0=0 假基线）
+      document.querySelector('.tabbar .tab').click();
+      if (!(await waitFor(() => {
+        const t = document.querySelectorAll('.tabbar .tab').length;
+        const x = document.querySelectorAll('.xterm').length;
+        return t >= 1 && x === t ? true : null;
+      }, 100))) return title('FAIL-baseline');
+      const tabs0 = document.querySelectorAll('.tabbar .tab').length;
+      const xterm0 = document.querySelectorAll('.xterm').length;
+      // ---- 100 创建/关闭 ----
+      let cycMax = 0, subsViol = 0;
+      for (let i = 0; i < 100; i++) {
+        const t0 = performance.now();
+        document.querySelector('.host-card .host-connect-btn').click();
+        const created = await waitFor(() => document.querySelectorAll('.tabbar .tab').length === tabs0 + 1 ? document.querySelectorAll('.xterm').length === xterm0 + 1 : null, 50);
+        if (!created) return title('FAIL-cycle-open:' + i);
+        const subs = await inv('debug_subscriptions', {});
+        const live = (await inv('list_sessions', {})).length;
+        const perOk = (subs.per_session || []).every((x) => x.subscription_ids.length <= 1);
+        if (subs.active_count > live || !perOk) subsViol++;
+        document.querySelector('.tabbar .tab:last-child .tab-x').click();
+        // 连接中会话 close 先确认（requestCloseSession）——弹窗则点「断开连接」，无弹窗（秒关）直接继续
+        const cf = await waitFor(() => {
+          const c = document.querySelector('.confirm-mask button.danger');
+          if (c) return c;
+          return document.querySelectorAll('.tabbar .tab').length === tabs0 ? 'closed' : null;
+        }, 50);
+        if (cf && cf !== 'closed') cf.click();
+        const closed = await waitFor(() => document.querySelectorAll('.tabbar .tab').length === tabs0 && document.querySelectorAll('.xterm').length === xterm0 ? true : null, 50);
+        if (!closed) {
+          const dg = { tabs: document.querySelectorAll('.tabbar .tab').length, xt: document.querySelectorAll('.xterm').length, mask: !!document.querySelector('.confirm-mask'), t0: tabs0, x0: xterm0 };
+          return title('FAIL-cycle-close:' + i + ':' + JSON.stringify(dg));
+        }
+        cycMax = Math.max(cycMax, performance.now() - t0);
+        if ((i + 1) % 25 === 0) await markSync('p6-cyc|' + (i + 1) + '|subsViol=' + subsViol);
+      }
+      if (subsViol > 0) return title('FAIL-subs:' + subsViol);
+      await markSync('p6-cycles-ok|100|subsViol=' + subsViol + '|cycMaxMs=' + Math.round(cycMax));
+      // ---- 200 标签切换 ----
+      const tabs = () => [...document.querySelectorAll('.tabbar .tab')];
+      if (tabs().length < 2) { await (async () => { document.querySelector('.host-card .host-connect-btn').click(); await waitFor(() => tabs().length >= 2 || null, 50); })(); }
+      if (tabs().length < 2) return title('FAIL-need2tabs');
+      let swBad = 0, retried = 0;
+      for (let i = 0; i < 200; i++) {
+        const target = tabs()[i % 2];
+        target.click();
+        let okNow = await waitFor(() => target.classList.contains('tab-active') ? true : null, 20);
+        if (!okNow) {
+          // 单次重试（p6d 实证偶发 >2s 慢拍一次，GC/渲染排队量级；真实用户语义=再点一次）
+          retried++;
+          target.click();
+          okNow = await waitFor(() => target.classList.contains('tab-active') ? true : null, 20);
+        }
+        if (!okNow) swBad++;
+      }
+      if (swBad > 0) return title('FAIL-switch:' + swBad);
+      await markSync('p6-switch-ok|200|retried=' + retried);
+      // ---- 50 面板变化 ----
+      let panelBad = 0;
+      for (let i = 0; i < 50; i++) {
+        const btn = document.querySelector('.session-toolbar .st-file');
+        if (!btn) { panelBad++; continue; }
+        btn.click();
+        const want = btn.getAttribute('aria-pressed') !== 'true';
+        const okNow = await waitFor(() => (btn.getAttribute('aria-pressed') === 'true') === want ? true : null, 20);
+        if (!okNow) panelBad++;
+      }
+      if (panelBad > 0) return title('FAIL-panel:' + panelBad);
+      await markSync('p6-panel-ok|50');
+      const subsFin = await inv('debug_subscriptions', {});
+      const liveFin = (await inv('list_sessions', {})).length;
+      const perOkFin = (subsFin.per_session || []).every((x) => x.subscription_ids.length <= 1);
+      if (subsFin.active_count > liveFin || !perOkFin)
+        return title('FAIL-subs-final:' + JSON.stringify(subsFin).slice(0, 160));
+      if (document.querySelectorAll('.xterm').length !== xterm0 + 1) return title('FAIL-xterm-leak');
+      if (jsErrors.length > 0) return title('FAIL-jserr:' + jsErrors[0].slice(0, 80));
+      await title('p6-DONE');
+    } catch (e) { await title('FAIL-exception:' + String(e).slice(0, 140)); }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
 }
 
 /// R14 基础真实垂直流程探针注入脚本（TINYSSH_SMOKE_MODE=r14；dev 门控，产品路径无关）：

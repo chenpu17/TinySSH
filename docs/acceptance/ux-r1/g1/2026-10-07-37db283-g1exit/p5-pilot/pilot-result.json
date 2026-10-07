@@ -1,0 +1,42 @@
+{
+  "sampler": "memsample v4 (differential attribution, fail-closed)",
+  "pilot": "UX-R1 new-framework P5 attribution pilot (reduced protocol: 5min load, 1 session; full protocol deferred to R51)",
+  "app_pid": "20877",
+  "candidates": {
+    "20878": {
+      "lstart": "Oct 7 20:21:37 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU",
+      "comm": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU"
+    },
+    "20879": {
+      "lstart": "Oct 7 20:21:37 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent",
+      "comm": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent"
+    },
+    "20880": {
+      "lstart": "Oct 7 20:21:37 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking",
+      "comm": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking"
+    }
+  },
+  "B_median_mb": 329.19,
+  "E_median_mb": 330.12,
+  "growth_ratio": 0.0028,
+  "B_voided": false,
+  "E_voided": false,
+  "verify_exit": 0,
+  "verify_output": "PASS: 候选 3 个全部随应用退出消失（无残留、无同 PID 身份复用）",
+  "attribution_valid": true,
+  "protocol_log": [
+    "[0] .spew 关闭确认: off",
+    "[1] snapshot rc=0 S0 = 20 个系统 WebKit 辅助进程（含 lstart 身份）→ /tmp/p5ux1/s0.json ",
+    "[2] 应用 pid=20877",
+    "[3] 会话 Connected（真实 sshd，指纹已信任直连）",
+    "[4] candidates rc=0 候选 = 3 个（S0 20 之外新增，含 lstart 身份）: [20878, 20879, 20880] → /tmp/p5ux1/cands.json ",
+    "[5] 预热输出 150s",
+    "[6] 停止预热输出，静置 60s",
+    "[7] B rc=0 B 相位中位数 = 329.19 MB（归属完好，逐候选曲线已存）→ /tmp/p5ux1/B.json ",
+    "[8] 正式负载 300s",
+    "[9] 停止负载，静置 60s",
+    "[10] E rc=0 E 相位中位数 = 330.12 MB（归属完好，逐候选曲线已存）→ /tmp/p5ux1/E.json ",
+    "[11] verify rc=0 PASS: 候选 3 个全部随应用退出消失（无残留、无同 PID 身份复用） "
+  ],
+  "note": "试点主张=归属有效性（候选全生命周期存活/身份一致/退出消失/无未知进程）；growth 为观测量非门限判定（≤20% 与末段趋势归 R51 全量协议）"
+}

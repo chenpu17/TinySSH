@@ -1,0 +1,157 @@
+{
+ "phase": "B",
+ "app_pid": 20877,
+ "sampler_version": "v4",
+ "candidates": {
+  "20878": {
+   "lstart": "Oct 7 20:21:37 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU",
+   "comm": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU"
+  },
+  "20879": {
+   "lstart": "Oct 7 20:21:37 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent",
+   "comm": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent"
+  },
+  "20880": {
+   "lstart": "Oct 7 20:21:37 2026     /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking",
+   "comm": "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking"
+  }
+ },
+ "voided": false,
+ "void_reason": null,
+ "median_mb": 329.19,
+ "samples": [
+  {
+   "t": 0.1,
+   "total_mb": 328.52,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 121600,
+    "20880": 21664,
+    "app": 151712
+   },
+   "helper_total_mb": 180.36
+  },
+  {
+   "t": 5.2,
+   "total_mb": 328.52,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 121600,
+    "20880": 21664,
+    "app": 151712
+   },
+   "helper_total_mb": 180.36
+  },
+  {
+   "t": 10.3,
+   "total_mb": 328.52,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 121616,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 180.36
+  },
+  {
+   "t": 15.4,
+   "total_mb": 328.55,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 121648,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 180.39
+  },
+  {
+   "t": 20.5,
+   "total_mb": 329.17,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 122288,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 181.02
+  },
+  {
+   "t": 25.6,
+   "total_mb": 329.19,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 122304,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 181.03
+  },
+  {
+   "t": 30.7,
+   "total_mb": 329.19,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 122288,
+    "20880": 21664,
+    "app": 151712
+   },
+   "helper_total_mb": 181.03
+  },
+  {
+   "t": 35.8,
+   "total_mb": 331.77,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 124928,
+    "20880": 21664,
+    "app": 151712
+   },
+   "helper_total_mb": 183.61
+  },
+  {
+   "t": 40.9,
+   "total_mb": 331.73,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 124912,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 183.58
+  },
+  {
+   "t": 46.0,
+   "total_mb": 331.75,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 124928,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 183.59
+  },
+  {
+   "t": 51.1,
+   "total_mb": 332.02,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 125200,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 183.86
+  },
+  {
+   "t": 56.2,
+   "total_mb": 333.03,
+   "per_candidate_kb": {
+    "20878": 41424,
+    "20879": 126240,
+    "20880": 21648,
+    "app": 151712
+   },
+   "helper_total_mb": 184.88
+  }
+ ],
+ "protocol": "differential attribution v4 (fail-closed): app + frozen candidates with lstart identity; JSON pid keys normalized to int at load boundary; app RSS counted once; candidate disappearance/identity change/unknown new webkit helper voids the sample. 60s/5s interval"
+}
