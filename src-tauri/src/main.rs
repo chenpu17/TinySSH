@@ -797,6 +797,8 @@ fn main() {
                     r12_smoke_script(&run_id)
                 } else if mode == "r13" {
                     r13_smoke_script(&run_id)
+                } else if mode == "r14" {
+                    r14_smoke_script(&run_id)
                 } else if mode == "r15" {
                     r15_smoke_script(&run_id)
                 } else {
@@ -1138,6 +1140,143 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// R14 基础真实垂直流程探针注入脚本（TINYSSH_SMOKE_MODE=r14；dev 门控，产品路径无关）：
+/// 新工作区对共享 docker sshd（root@127.0.0.1:2222，凭据 upsert_host 真路径加密落库）
+/// 建立真实 SSH 会话：UI 点卡 → TOFU 信任门 → Connected → send_keys/read_screen
+/// 输入输出闭环 → local↔ssh 双标签切换 → 工具菜单关闭会话确认流 → 订阅存在性先证。
+/// 键盘注入走 send_keys invoke 级（CGEvent 注入受 P2 冻结协议约束，与 r13 同口径）。
+fn r14_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R14_INJECTED__) return; // WKWebView Finished 双触发防护
+  window.__R14_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  (async () => {
+    try {
+      await title('r14-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      // tabs0 等首个标签出现后再取（AUTOCONNECT 标签可能晚于主机卡渲染——rev-r14 低-1）
+      const tabs0 = (await waitFor(() => document.querySelectorAll('.tabbar .tab').length || null, 100)) ?? 0;
+      // 1) 真实 SSH 主机经 wire 真路径创建（密码凭据核心加密落库）
+      let hid;
+      try {
+        hid = await inv('upsert_host', { host: { id: null, name: 'r14-sshd', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      } catch (e) { return title('FAIL-upsert:' + String(e).slice(0, 120)); }
+      if (!hid) return title('FAIL-upsert-empty');
+      await markSync('r14-host-ok');
+      // 2) UI 点卡建连（Human 真路径）→ TOFU 门 → 信任
+      const card = await waitFor(() => [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes('r14-sshd')) || null, 50);
+      if (!card) return title('FAIL-no-card');
+      const main = card.querySelector('.host-card-main');
+      if (!main) return title('FAIL-card-main');
+      main.click();
+      let maskHandled = false;
+      for (let i = 0; i < 40; i++) {
+        await sleep(300);
+        const tbtn = [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接'));
+        if (tbtn) { tbtn.click(); maskHandled = true; continue; }
+        const authInput = document.querySelector('.hk-mask input');
+        if (authInput) {
+          const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          set.call(authInput, 'testpass');
+          authInput.dispatchEvent(new Event('input', { bubbles: true }));
+          const sub = [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('提交验证'));
+          if (sub) { sub.click(); maskHandled = true; continue; }
+        }
+        if (!document.querySelector('.hk-mask') && maskHandled) break;
+      }
+      // 3) 等真实 SSH 会话 Connected（共享 sshd 需 banner/认证时间）
+      const sess = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        return ss.find((s) => s.host_id === hid && s.state === 'Connected') || null;
+      }, 80);
+      if (!sess) {
+        const ss = await inv('list_sessions', {});
+        return title('FAIL-not-connected:' + JSON.stringify(ss.map((s) => [s.host_name, s.state])));
+      }
+      await markSync('r14-ssh-connected');
+      // 4) 输入/输出闭环（send_keys invoke 级）
+      const MK = 'R14MARK' + RUN;
+      await inv('send_keys', { sid: sess.id, keys: 'echo ' + MK + '\r' });
+      const seen = await waitFor(async () => {
+        const snap = await inv('read_screen', { sid: sess.id });
+        return snap && snap.text && snap.text.includes(MK) ? snap : null;
+      }, 60);
+      if (!seen) {
+        const snap = await inv('read_screen', { sid: sess.id });
+        return title('FAIL-no-echo:' + String(snap && snap.text).slice(-140));
+      }
+      await markSync('r14-io-ok');
+      // 5) 双标签切换（local AUTOCONNECT + ssh）
+      // 按主机名定位标签（AUTOCONNECT 晚至时会话列表序不稳定，索引法曾误关 local——r14b 实证）
+      if (document.querySelectorAll('.tabbar .tab').length < 2) return title('FAIL-tabs');
+      const tabByHost = (name) => [...document.querySelectorAll('.tabbar .tab')].find((t) => t.textContent.includes(name));
+      const sshTab = tabByHost('r14-sshd');
+      if (!sshTab) return title('FAIL-ssh-tab');
+      sshTab.click();
+      if (!(await waitFor(() => tabByHost('r14-sshd')?.classList.contains('tab-active') || null, 30))) return title('FAIL-tab-ssh');
+      const otherTab = [...document.querySelectorAll('.tabbar .tab')].find((t) => !t.textContent.includes('r14-sshd'));
+      if (!otherTab) return title('FAIL-other-tab');
+      otherTab.click();
+      if (!(await waitFor(() => otherTab.classList.contains('tab-active') || null, 30))) return title('FAIL-tab-other');
+      sshTab.click();
+      if (!(await waitFor(() => tabByHost('r14-sshd')?.classList.contains('tab-active') || null, 30))) return title('FAIL-tab-ssh2');
+      await markSync('r14-tabs-ok');
+      // 6) 订阅存在性先证：close 后 debug_subscriptions 只遍历存活会话表，已移除会话
+      // 恒不出现——事后断言结构性恒真（rev-r14 中-1），故订阅存在必须在 close 前断言
+      const subsPre = JSON.stringify(await inv('debug_subscriptions', {}));
+      if (!subsPre.includes(sess.id)) return title('FAIL-sub-missing:' + subsPre.slice(0, 200));
+      await markSync('r14-sub-live');
+      const toolsBtn = document.querySelector('.session-toolbar button[aria-haspopup="menu"]');
+      if (!toolsBtn) return title('FAIL-tools-btn');
+      toolsBtn.click();
+      await sleep(300);
+      const closeItem = [...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.includes('关闭会话'));
+      if (!closeItem) return title('FAIL-close-item');
+      closeItem.click();
+      await sleep(300);
+      const danger = document.querySelector('.confirm-mask button.danger');
+      if (!danger) return title('FAIL-confirm');
+      danger.click();
+      const closed = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        const s = ss.find((x) => x.id === sess.id);
+        const gone = !s || s.state === 'Disconnected';
+        const tabN = document.querySelectorAll('.tabbar .tab').length;
+        return gone && tabN === tabs0 ? true : null;
+      }, 40);
+      if (!closed) {
+        const ss = await inv('list_sessions', {});
+        return title('FAIL-close:' + JSON.stringify(ss.map((s) => [s.host_name, s.state])) + '|tabs=' + document.querySelectorAll('.tabbar .tab').length);
+      }
+      await markSync('r14-close-ok');
+      // 订阅生命周期证据分工（rev-r14 中-1）：close 前 r14-sub-live 证订阅存在；FE 显式
+      // 退订归零由 R11 e2e 覆盖；close 后 debug_subscriptions 只遍历存活会话表（结构性
+      // 不含已移除 sid），不在此重复断言
+      await title('r14-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
 }
 
 /// R15 C8 偏好/元数据探针注入脚本（TINYSSH_SMOKE_MODE=r15；dev 门控，产品路径无关）：

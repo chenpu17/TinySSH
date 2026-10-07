@@ -1,0 +1,13 @@
+PASS D1 staging 卡片在位
+PASS D2 TOFU 门出现
+PASS D3 staging Connected + xterm 渲染  [{"sid":"s-demo-0101","hasTerm":true}]
+PASS D4 输入输出闭环（echo 标记回显）  [{"hit":true,"sid":"s-demo-0101"}]
+PASS D5 双标签切换激活态  [{"a0":true,"a1":true}]
+PASS D6 关闭菜单项在位
+PASS D7 关闭确认弹窗
+PASS D8 会话关闭（Disconnected/移除）  [{"state":"Disconnected","tabs":3}]
+PASS D9 标签状态点派生一致（dim===Disconnected 数）  [{"dim":2,"dead":2}]
+PASS D10 模块同一性（直调会话数≥UI 标签数，死会话不入标签）  [direct=3 tabs=3]
+PASS Z 零 JS 错误
+[{"name":"D1 staging 卡片在位","pass":true,"detail":""},{"name":"D2 TOFU 门出现","pass":true,"detail":""},{"name":"D3 staging Connected + xterm 渲染","pass":true,"detail":"{\"sid\":\"s-demo-0101\",\"hasTerm\":true}"},{"name":"D4 输入输出闭环（echo 标记回显）","pass":true,"detail":"{\"hit\":true,\"sid\":\"s-demo-0101\"}"},{"name":"D5 双标签切换激活态","pass":true,"detail":"{\"a0\":true,\"a1\":true}"},{"name":"D6 关闭菜单项在位","pass":true,"detail":""},{"name":"D7 关闭确认弹窗","pass":true,"detail":""},{"name":"D8 会话关闭（Disconnected/移除）","pass":true,"detail":"{\"state\":\"Disconnected\",\"tabs\":3}"},{"name":"D9 标签状态点派生一致（dim===Disconnected 数）","pass":true,"detail":"{\"dim\":2,\"dead\":2}"},{"name":"D10 模块同一性（直调会话数≥UI 标签数，死会话不入标签）","pass":true,"detail":"direct=3 tabs=3"},{"name":"Z 零 JS 错误","pass":true,"detail":""}]
+PROBE-ALL-PASS 11

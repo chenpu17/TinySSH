@@ -1,0 +1,178 @@
+{
+ "geo1280": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 756
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  },
+  "welcome": true,
+  "hostCards": 5,
+  "hScroll": false,
+  "tokens": {
+   "panel": "#141922",
+   "border": "#263040"
+  }
+ },
+ "geo1024": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1024,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 724
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 744,
+   "w": 798,
+   "h": 24
+  },
+  "welcome": true,
+  "hScroll": false
+ },
+ "geo960": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 960,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 556
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 576,
+   "w": 734,
+   "h": 24
+  },
+  "welcome": true,
+  "hScroll": false
+ },
+ "cmp1280": {
+  "ae": -1,
+  "raw": "Command failed: compare -metric AE -fuzz 3% /Users/chenpu/workspace/claude-code/TinySSH/docs/acceptance/ux-r1/g1/2026-10"
+ },
+ "cmp1024": {
+  "ae": 0,
+  "pct": 0,
+  "kb": 88
+ },
+ "cmp960": {
+  "ae": 0,
+  "pct": 0,
+  "kb": 86
+ },
+ "light": {
+  "tokens": {
+   "panel": "#f4f6f8",
+   "border": "#d2dae2",
+   "chrome": "light"
+  },
+  "hScroll": false
+ },
+ "cmpLight": {
+  "ae": -1,
+  "raw": "Command failed: compare -metric AE -fuzz 3% /Users/chenpu/workspace/claude-code/TinySSH/docs/acceptance/ux-r1/g1/2026-10"
+ },
+ "darkRestore": {
+  "tokens": {
+   "panel": "#141922",
+   "border": "#263040",
+   "chrome": "dark"
+  }
+ },
+ "darkClosed": true,
+ "tofu": {
+  "mask": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 800
+  },
+  "viewport": {
+   "w": 1280,
+   "h": 800
+  },
+  "centered": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 800
+  },
+  "btns": [
+   "信任并连接",
+   "取消"
+  ],
+  "hScroll": false,
+  "visual": true
+ },
+ "tabConn": {
+  "n": 3,
+  "activeText": "staging-1",
+  "dotOk": true,
+  "dotClass": "tab-dot ok",
+  "dotColor": "rgb(127, 191, 143)",
+  "dotMatchesOkVar": true,
+  "okVar": "#7fbf8f",
+  "toolbar": true,
+  "xterm": true
+ },
+ "menu": {
+  "items": [
+   "审批与记录",
+   "端口转发",
+   "关闭会话…"
+  ],
+  "menuBox": {
+   "x": 1098,
+   "y": 149,
+   "w": 172,
+   "h": 103
+  },
+  "hScroll": false
+ },
+ "confirm": {
+  "mask": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 800
+  },
+  "dangerText": "断开连接",
+  "hScroll": false,
+  "visual": true
+ },
+ "dead": {
+  "n": 3,
+  "stText": "staging-1",
+  "dotDim": true,
+  "dotClass": "tab-dot dim",
+  "dotColor": "rgb(93, 111, 130)",
+  "toolbarGone": true,
+  "hScroll": false
+ },
+ "dimVar": "#5d6f82",
+ "errors": []
+}
