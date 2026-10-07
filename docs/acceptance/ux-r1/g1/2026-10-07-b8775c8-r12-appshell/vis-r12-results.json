@@ -1,0 +1,341 @@
+{
+ "A_welcome": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 756
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  },
+  "welcome": true,
+  "tabbarRow": true,
+  "sessionToolbar": false,
+  "taskPanel": false,
+  "hostCards": 5,
+  "hostbarInlineWidth": "224px",
+  "sbLeft": "未连接",
+  "hScroll": false
+ },
+ "styles": {
+  "titlebar": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-bottom-color": "rgb(38, 48, 64)",
+   "border-bottom-width": "1px",
+   "height": "44px"
+  },
+  "hostbar": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-right-color": "rgb(38, 48, 64)"
+  },
+  "statusbar": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-top-color": "rgb(38, 48, 64)",
+   "font-size": "11px",
+   "color": "rgb(93, 111, 130)",
+   "height": "24px"
+  },
+  "appTitle": {
+   "font-size": "13px",
+   "font-weight": "700"
+  },
+  "tabbarRow": {
+   "background-color": "rgb(20, 25, 34)",
+   "border-bottom-color": "rgb(38, 48, 64)",
+   "height": "40px"
+  },
+  "sessionToolbar": null,
+  "taskPanel": null
+ },
+ "tokens": {
+  "panel": "#141922",
+  "border": "#263040",
+  "docClass": "",
+  "bodyClass": ""
+ },
+ "fontTiers": {
+  "appTitle": "13px",
+  "tab": "12px",
+  "stTitle": null,
+  "stState": null,
+  "statusbar": "11px",
+  "sbBtn": "11px",
+  "hbSearchInput": "12px",
+  "hbSettings": "12px"
+ },
+ "B_vp1024": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 1024,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 724
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 744,
+   "w": 798,
+   "h": 24
+  },
+  "main": {
+   "x": 226,
+   "y": 44,
+   "w": 798,
+   "h": 724
+  },
+  "welcome": true,
+  "hScroll": false,
+  "vOver": false,
+  "filesTpFull": true,
+  "panelBox": {
+   "x": 226,
+   "y": 84,
+   "w": 798,
+   "h": 660
+  }
+ },
+ "C_vp960": {
+  "titlebar": {
+   "x": 0,
+   "y": 0,
+   "w": 960,
+   "h": 44
+  },
+  "hostbar": {
+   "x": 0,
+   "y": 44,
+   "w": 224,
+   "h": 556
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 576,
+   "w": 734,
+   "h": 24
+  },
+  "main": {
+   "x": 226,
+   "y": 44,
+   "w": 734,
+   "h": 556
+  },
+  "welcome": true,
+  "hScroll": false,
+  "vOver": false
+ },
+ "D_session1": {
+  "welcomeGone": true,
+  "tabbarRow": {
+   "x": 226,
+   "y": 70,
+   "w": 1054,
+   "h": 40
+  },
+  "sessionToolbar": {
+   "x": 226,
+   "y": 110,
+   "w": 1054,
+   "h": 40
+  },
+  "statusbar": {
+   "x": 226,
+   "y": 776,
+   "w": 1054,
+   "h": 24
+  },
+  "tabs": [
+   "prod-1",
+   "staging-1",
+   "本机"
+  ],
+  "sbLeft": "本地 · UTF-8"
+ },
+ "D_toastVsStatusbar": {
+  "toast": {
+   "top": 747,
+   "bottom": 784,
+   "right": 1264
+  },
+  "statusbar": {
+   "top": 776,
+   "bottom": 800
+  },
+  "verticalOverlapPx": 8
+ },
+ "D_xterm": {
+  "fontSize": "13.5px",
+  "rowsLineHeight": "normal",
+  "rowH": 15,
+  "firstRow": "ops@本机:~$ ",
+  "rowCount": 35
+ },
+ "D_cmdBox": {
+  "present": true,
+  "echoShown": true
+ },
+ "E_long": {
+  "tab": {
+   "tabW": 170,
+   "tabMaxW": "170px",
+   "labelClientW": 91,
+   "labelScrollW": 364,
+   "clipped": true,
+   "labelH": 18.59375,
+   "hBefore": 18.59375,
+   "rowH": 40,
+   "overflow": "hidden",
+   "textOverflow": "ellipsis",
+   "whiteSpace": "nowrap"
+  },
+  "toolbar": {
+   "rowH": 40,
+   "rowBefore": 40,
+   "stClientW": 364,
+   "stScrollW": 364,
+   "clipped": false,
+   "textOverflow": "ellipsis",
+   "whiteSpace": "nowrap"
+  },
+  "statusbar": {
+   "barH": 24,
+   "sbClientW": 499,
+   "sbScrollW": 499,
+   "clipped": false,
+   "overflow": "visible",
+   "barScrollW": 1054,
+   "barClientW": 1054,
+   "rightVisible": true
+  },
+  "hostCard": {
+   "cardW": 207,
+   "cardH": 55,
+   "hBefore": 55,
+   "nameClientW": 117,
+   "nameScrollW": 409,
+   "clipped": true,
+   "overflow": "hidden",
+   "textOverflow": "ellipsis",
+   "whiteSpace": "nowrap"
+  }
+ },
+ "F_session2": {
+  "tabCount": 4,
+  "tabs": [
+   "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十",
+   "staging-1",
+   "本机",
+   "prod-1"
+  ],
+  "tabbarRow": {
+   "x": 226,
+   "y": 70,
+   "w": 1054,
+   "h": 40
+  }
+ },
+ "G_hostbar": {
+  "collapsed": true,
+  "expandBtn": true,
+  "reopened": true,
+  "widthReopened": 224,
+  "dragTo420": 300,
+  "dragTo100": 200,
+  "dragTo226": 226,
+  "cmdBCollapsed": true,
+  "cmdBReopened": true
+ },
+ "H_tabsMenu": {
+  "open": true,
+  "rows": 4,
+  "reconnectBtns": [
+   "重连"
+  ]
+ },
+ "H_toolsMenu": [
+  "审批与记录",
+  "端口转发",
+  "关闭会话…"
+ ],
+ "I_files": {
+  "panel": {
+   "x": 896,
+   "y": 150,
+   "w": 384,
+   "h": 626
+  },
+  "head": "文件与传输",
+  "tpFull": false
+ },
+ "I_collab": {
+  "panel": {
+   "x": 896,
+   "y": 150,
+   "w": 384,
+   "h": 626
+  },
+  "head": "协作"
+ },
+ "I_forwards": {
+  "panel": {
+   "x": 896,
+   "y": 150,
+   "w": 384,
+   "h": 626
+  },
+  "head": "端口转发",
+  "toast": "监听端口必须是 1–65535 的数字"
+ },
+ "I_toastVsStatusbar2": {
+  "toast": {
+   "top": 747,
+   "bottom": 784,
+   "right": 1264
+  },
+  "statusbar": {
+   "top": 776,
+   "bottom": 800
+  },
+  "verticalOverlapPx": 8
+ },
+ "I_panels_closed": true,
+ "J_tpfull": {
+  "isFull": true,
+  "panel": {
+   "x": 228,
+   "y": 150,
+   "w": 732,
+   "h": 426
+  }
+ },
+ "J_backSide": true,
+ "K_confirm": {
+  "present": false,
+  "title": null
+ },
+ "ERR_K_disconnect": "TimeoutError: page.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.confirm-dialog .danger')\u001b[22m\n",
+ "L_native": {
+  "rule": {
+   "css": "padding-left: 84px;"
+  },
+  "dragRegionOnTitlebar": true,
+  "buttonsInTitlebar": 2,
+  "buttonsWithDragAttr": 0,
+  "computedPaddingLeft": "10px"
+ },
+ "errors": []
+}

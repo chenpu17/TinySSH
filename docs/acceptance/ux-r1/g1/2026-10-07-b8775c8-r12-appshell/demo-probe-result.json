@@ -1,0 +1,64 @@
+{
+ "titlebar": {
+  "w": 1280,
+  "h": 44
+ },
+ "hostbar": {
+  "w": 224,
+  "h": 756
+ },
+ "statusbar": {
+  "w": 1054,
+  "h": 24
+ },
+ "dragRegion": true,
+ "sbLeft": "未连接",
+ "welcome": true,
+ "noMatch": true,
+ "hostCards": 5,
+ "collapsed": true,
+ "expandBtn": true,
+ "reopened": true,
+ "widthAfterDragTo420": 300,
+ "widthAfterDragTo100": 200,
+ "widthAfterDragTo226": 226,
+ "tab": {
+  "w": 1052,
+  "h": 40
+ },
+ "toolbar": {
+  "w": 1052,
+  "h": 40
+ },
+ "tabbarH": 40,
+ "toolbarH": 40,
+ "sbLeft2": "本地 · UTF-8",
+ "tabsMenuBtn": true,
+ "tabsMenu": true,
+ "tabsMenuEscClosed": true,
+ "toolsMenu": [
+  "审批与记录",
+  "端口转发",
+  "关闭会话…"
+ ],
+ "toolsMenuEscClosed": true,
+ "taskPanel": {
+  "w": 384,
+  "h": 626
+ },
+ "tpHead": "协作",
+ "panelClosed": true,
+ "cmdBCollapsed": true,
+ "cmdBReopened": true,
+ "narrowFullView": true,
+ "backToSide": true,
+ "toast": {
+  "bottom": 760,
+  "h": 0
+ },
+ "statusbarTop": 776,
+ "toastOverlapsStatusbar": false,
+ "at1130FullView": true,
+ "termWidthAt1130": 886,
+ "jsErrors": []
+}

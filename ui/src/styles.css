@@ -158,17 +158,113 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 /* T38 审核：层级字号工具类 .label-xs/.label-sm/.label-base/.label-md 全库无引用，删除 */
-.layout {
-  display: grid;
-  /* 精致化（§4.1）：左右栏定宽，中栏弹性——宽度确定性让布局更稳 */
-  grid-template-columns: 220px minmax(0, 1fr) 280px;
-  height: 100vh;
-  overflow: hidden;
+/* ===== AppShell（R12 §4.1/§4.2）：标题区 44 / 主机栏 224(200–300 可拖可收) /
+   标签 40 / 会话工具栏 40 / 页脚状态条 24；布局优先级：可操作 > 当前任务 > 终端空间 ===== */
+.app-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.titlebar {
+  height: 44px; flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border);
 }
-.col { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.col:last-child { border-right: none; }
-/* 精致化（§二）：左右栏铺 panel 底色浮于 bg 之上，中栏保持 bg 让终端区显"沉" */
-.layout > .col:first-child, .layout > .col:last-child { background: var(--panel); }
+.titlebar .app-title { font-weight: 700; font-size: 13px; letter-spacing: 0.3px; color: var(--text); }
+.tb-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tb-right { display: flex; align-items: center; gap: 6px; }
+/* 全局协作提醒（§3）：有待审批/Agent 活动必须显示，即使入口被收起——点击开协作面板 */
+.collab-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; font-size: 11px; font-weight: 600; border-radius: 999px;
+  color: var(--warn); background: transparent; border: 1px solid var(--warn); cursor: pointer;
+}
+.collab-badge:hover { background: rgba(255, 170, 0, 0.08); }
+.workspace { flex: 1; display: flex; min-height: 0; }
+.hostbar {
+  flex: none; display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border-right: 1px solid var(--border);
+}
+.hb-top { flex: none; display: flex; gap: 5px; padding: 8px; align-items: center; }
+.hb-search {
+  flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+  background: var(--bg); color: var(--dim);
+}
+.hb-search:focus-within { border-color: var(--accent); }
+.hb-search input {
+  border: none; background: transparent; outline: none; width: 100%; min-width: 0;
+  font-size: 12px; color: var(--text); padding: 0;
+}
+.hb-scroll { flex: 1; overflow-y: auto; padding: 2px 8px 8px; min-height: 0; }
+.hb-bottom { flex: none; border-top: 1px solid var(--border); padding: 5px 6px; }
+.hb-settings {
+  display: flex; width: 100%; gap: 7px; align-items: center;
+  background: none; border: none; color: var(--text-sub); cursor: pointer;
+  padding: 6px 8px; border-radius: 6px; font-size: 12px;
+}
+.hb-settings:hover { background: var(--panel2); color: var(--text); }
+/* 拖宽把手：叠在主机栏右缘，命中区 7px；悬停给可见反馈 */
+.hb-grip {
+  flex: none; width: 7px; margin-left: -5px; cursor: col-resize; z-index: 5; touch-action: none;
+}
+.hb-grip:hover, .hb-grip:active { background: var(--accent); opacity: 0.45; }
+.hb-expand { flex: none; align-self: flex-start; margin: 6px 4px; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* 会话工具栏 40：单行不换行（§4.2），ident 溢出省略 */
+.session-toolbar {
+  height: 40px; flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--panel);
+  white-space: nowrap;
+}
+.st-ident { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+.st-title { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.st-state { font-size: 11px; flex: none; }
+.content { flex: 1; display: flex; min-height: 0; position: relative; }
+.term-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* 右侧任务面板 384（§4.2 并排 320–560）；窄窗 tp-full 覆盖内容区（完整视图，终端持续运行） */
+.task-panel {
+  flex: none; width: 384px; display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border-left: 1px solid var(--border);
+}
+.task-panel.tp-full { position: absolute; inset: 0; width: auto; border-left: none; z-index: 40; }
+.tp-head {
+  min-height: 40px; flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.tp-scroll { flex: 1; overflow-y: auto; padding: 8px 10px; min-height: 0; }
+/* 页脚状态条 24：短状态 + 任务入口，不堆表单（§4.2） */
+.statusbar {
+  height: 24px; flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; border-top: 1px solid var(--border); background: var(--panel);
+  font-size: 11px; color: var(--dim);
+}
+.sb-left { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sb-btn {
+  background: none; border: none; color: var(--dim); cursor: pointer;
+  font-size: 11px; display: inline-flex; gap: 4px; align-items: center;
+  padding: 2px 6px; border-radius: 4px;
+}
+.sb-btn:hover { background: var(--panel2); color: var(--text); }
+.sb-btn b { color: var(--text); font-weight: 600; }
+/* 工具/标签列表 下拉菜单 */
+.st-tools { position: relative; display: flex; flex: none; }
+.tools-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 70; min-width: 172px; max-width: 300px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex; flex-direction: column;
+}
+.tools-menu .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tools-menu .tm-row { display: flex; align-items: center; gap: 2px; }
+.tools-menu button {
+  text-align: left; background: none; border: none; color: var(--text);
+  cursor: pointer; border-radius: 6px; font-size: 12px; padding: 7px 10px;
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+}
+.tools-menu button:hover { background: var(--panel2); }
+.tools-menu .tm-main { flex: 1; }
+.tools-menu .tm-act {
+  flex: none; font-size: 11px; padding: 4px 8px; color: var(--accent);
+}
+.tools-menu .tm-danger { color: var(--danger, #e5534b); }
+.tools-menu .tm-active { background: var(--panel2); }
+
 .panel-title {
   padding: 6px 12px; min-height: 32px; align-items: center;
   font-weight: 600; letter-spacing: 0.4px;
@@ -178,7 +274,6 @@ body {
   /* 不 uppercase：中栏标题内嵌用户数据（主机名/会话 id），PROD-1/S-DEMO-0001 是失真 */
 }
 /* 中栏顶栏底色 panel 与中栏终端区 bg 区分，顶栏+标签栏视为连续 chrome 带 */
-.scroll { overflow-y: auto; flex: 1; padding: 6px 10px; }
 .card {
   background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px; margin-bottom: 8px;
@@ -253,7 +348,7 @@ input, select {
 
 /* Toast（精致化 §六/P3）：右下角轻通知，左侧色条分语义，自动消失由 JS 计时 */
 .toast-stack {
-  position: fixed; right: 16px; bottom: 16px; z-index: 120;
+  position: fixed; right: 16px; bottom: 40px; z-index: 120;
   display: flex; flex-direction: column; gap: 8px;
   pointer-events: none;
 }
@@ -318,7 +413,7 @@ textarea {
    滚动。溢出时 overlay 滚动条不动就不出现——显式 ‹ › 钮是被藏标签的唯一提示 */
 .tabbar-row {
   display: flex; align-items: center; gap: 3px; flex: none;
-  padding: 6px 10px; border-bottom: 1px solid var(--border); min-height: 34px;
+  padding: 4px 10px; border-bottom: 1px solid var(--border); height: 40px;
   background: var(--panel);
 }
 /* 行内按钮不折行：窄视口+分屏时「退出分屏」曾 4 字竖排把行撑到 95px（视觉核验员实测） */
@@ -640,12 +735,12 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
   .skeleton { animation: none; }
 }
 
-/* ---- T33 标题栏融合与排版精致化 ---- */
-/* macOS Overlay 标题栏：红绿灯悬浮在左栏头上，预留其落位；浏览器 demo 无标题栏不加类 */
-.native-chrome .head-left { padding-left: 76px; }
-/* 顶栏三条头即拖拽区：文字不可选中、光标为箭头（标题栏语义）；按钮恢复手型 */
-.panel-title[data-tauri-drag-region] span { cursor: default; user-select: none; }
-.panel-title[data-tauri-drag-region] button { cursor: pointer; }
+/* ---- T33/R12 标题栏融合与排版精致化 ---- */
+/* macOS Overlay 标题栏：红绿灯悬浮在 44px 标题区左端，预留落位；浏览器 demo 无标题栏不加类 */
+.native-chrome .titlebar { padding-left: 84px; }
+/* 标题区整行即拖拽区：文字不可选中、光标为箭头（标题栏语义）；按钮恢复手型 */
+.titlebar[data-tauri-drag-region] span { cursor: default; user-select: none; }
+.titlebar[data-tauri-drag-region] button { cursor: pointer; }
 /* 顶栏图标钮（导入/添加主机收图标后的方正小钮） */
 .icon-btn { padding: 5px 7px; }
 /* ---- 主机卡重设计（精致化 §5.1）：静止是信息列表，hover 才是可操作元素 ----

@@ -754,6 +754,8 @@ fn main() {
                 let mode = std::env::var("TINYSSH_SMOKE_MODE").unwrap_or_default();
                 let script: String = if mode == "r11" {
                     r11_smoke_script(&run_id)
+                } else if mode == "r12" {
+                    r12_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -916,6 +918,15 @@ fn main() {
         .setup(move |app| {
             use tauri::Manager as _;
             eprintln!("[app] setup: windows={:?}", app.webview_windows().keys().collect::<Vec<_>>());
+            // SMOKE 冒烟专用：窗口置顶聚焦。WKWebView 会冻结不可见窗口的页面 JS
+            //（信标停摆的根因），冒烟运行约 20s 即被外部终止，产品路径不受影响。
+            if std::env::var("TINYSSH_SMOKE").map(|v| v == "1").unwrap_or(false) {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                    let _ = w.set_always_on_top(true);
+                }
+            }
             install_native_ctrl_intercept(api.clone(), terminal_input.clone());
             // T34：原生菜单栏 + 「设置…⌘,」→ 前端事件（打开显示设置面板）
             if let Err(e) = install_native_menu(app.handle()) {
@@ -1061,6 +1072,152 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// R12 AppShell 探针注入脚本（TINYSSH_SMOKE_MODE=r12；dev 门控，产品路径无关）：
+/// 几何断言（标题区 44/主机栏 224/标签 40/会话工具栏 40/状态条 24/拖拽区/红绿灯安全区）→
+/// ⌘B 收起展开 → 第二会话与标签切换 → 标签列表菜单 → 文件面板开合 → 工具菜单关闭会话（确认流）。
+fn r12_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = (s) => {
+    document.title = 'SMOKE|' + s;
+    fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)).catch(() => {});
+  };
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const geo = (sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  (async () => {
+    try {
+      // WKWebView localStorage 跨启动持久：上轮收起/改宽的残留会污染本轮几何断言
+      //（rev-r12 LOW-5）——先归一默认值再重载一次，第二轮才跑正式断言。
+      if (!localStorage.getItem('ui.r12fresh')) {
+        try {
+          localStorage.setItem('ui.hostbar', '1');
+          localStorage.setItem('ui.hostbar_w', '224');
+          localStorage.setItem('ui.r12fresh', '1');
+        } catch (e) {}
+        location.reload();
+        return;
+      }
+      try { localStorage.removeItem('ui.r12fresh'); } catch (e) {}
+      title('r12-opening');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      const tabN = await waitFor(() => document.querySelectorAll('.tabbar .tab').length || null, 100);
+      if (!tabN) return title('FAIL-no-tab');
+      // 几何断言（§4.2）：44 / 224 / 40 / 40 / 24。AUTOCONNECT 只建会话不 attach，
+      // 工具栏随 sid 附着渲染——先点第一个标签 attach 再等工具栏。
+      document.querySelector('.tabbar .tab').click();
+      const stEl = await waitFor(() => document.querySelector('.session-toolbar'), 100);
+      if (!stEl) return title('FAIL-toolbar-missing');
+      const tb = geo('.titlebar'); const hb = geo('.hostbar'); const sb = geo('.statusbar');
+      const tbr = geo('.tabbar-row'); const st = geo('.session-toolbar');
+      mark(RUN + '|r12-geo|tb=' + JSON.stringify(tb) + ',hb=' + JSON.stringify(hb) + ',sb=' + JSON.stringify(sb)
+        + ',tbr=' + JSON.stringify(tbr) + ',st=' + JSON.stringify(st));
+      if (!tb || Math.abs(tb.h - 44) > 1) return title('FAIL-titlebar:' + JSON.stringify(tb));
+      if (!hb || Math.abs(hb.w - 224) > 2) return title('FAIL-hostbar:' + JSON.stringify(hb));
+      if (!tbr || Math.abs(tbr.h - 40) > 1) return title('FAIL-tabbar:' + JSON.stringify(tbr));
+      if (!st || Math.abs(st.h - 40) > 1) return title('FAIL-toolbar:' + JSON.stringify(st));
+      if (!sb || Math.abs(sb.h - 24) > 1) return title('FAIL-statusbar:' + JSON.stringify(sb));
+      if (!document.querySelector('.titlebar[data-tauri-drag-region]')) return title('FAIL-drag');
+      if (!document.querySelector('.hb-grip')) return title('FAIL-grip');
+      // 红绿灯安全区（macOS Overlay）：native-chrome 类 + 标题区左内边距 84
+      if (!document.documentElement.classList.contains('native-chrome')) return title('FAIL-chrome');
+      const pl = getComputedStyle(document.querySelector('.titlebar')).paddingLeft;
+      if (pl !== '84px') return title('FAIL-safezone:' + pl);
+      title('r12-geo-ok');
+      // 状态条短状态：本地 · UTF-8
+      const sbt = (document.querySelector('.sb-left') || {}).textContent || '';
+      if (sbt.indexOf('本地') < 0 || sbt.indexOf('UTF-8') < 0) return title('FAIL-sbtext:' + sbt.trim());
+      title('r12-sb-ok');
+      // ⌘B 收起 / 展开主机栏
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', metaKey: true, bubbles: true }));
+      await sleep(350);
+      if (document.querySelector('.hostbar')) return title('FAIL-collapse');
+      if (!document.querySelector('.hb-expand')) return title('FAIL-expandbtn');
+      title('r12-collapse-ok');
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', metaKey: true, bubbles: true }));
+      await sleep(350);
+      if (!document.querySelector('.hostbar')) return title('FAIL-reopen');
+      title('r12-reopen-ok');
+      // 第二个会话：主机卡「连接」钮强制新建
+      const local = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes('本机'));
+      if (!local) return title('FAIL-no-local');
+      const conn = local.querySelector('.host-connect-btn');
+      if (!conn) return title('FAIL-no-connbtn');
+      conn.click();
+      const two = await waitFor(() => document.querySelectorAll('.tabbar .tab').length === 2 || null, 100);
+      if (!two) return title('FAIL-second-tab');
+      title('r12-second-tab-ok');
+      // 标签切换：激活态跟随
+      const activeIs = async (i) => {
+        const els = document.querySelectorAll('.tabbar .tab');
+        return els[i] && els[i].classList.contains('tab-active');
+      };
+      document.querySelectorAll('.tabbar .tab')[0].click();
+      await sleep(300);
+      if (!(await activeIs(0))) return title('FAIL-switch-0');
+      document.querySelectorAll('.tabbar .tab')[1].click();
+      await sleep(300);
+      if (!(await activeIs(1))) return title('FAIL-switch-1');
+      title('r12-tabswitch-ok');
+      // 标签列表菜单：两行会话
+      const allBtn = document.querySelector('.tab-all');
+      if (!allBtn) return title('FAIL-no-allbtn');
+      allBtn.click();
+      await sleep(250);
+      const rows = document.querySelectorAll('.tools-menu .tm-row').length;
+      if (rows !== 2) return title('FAIL-tabsmenu:' + rows);
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await sleep(200);
+      title('r12-tabsmenu-ok');
+      // 会话工具栏「文件」：面板开 → 关
+      const fileBtn = [...document.querySelectorAll('.session-toolbar button')].find((b) => b.textContent.includes('文件'));
+      if (!fileBtn) return title('FAIL-no-filebtn');
+      fileBtn.click();
+      await sleep(600);
+      const tp = document.querySelector('.task-panel');
+      if (!tp || !(await waitFor(() => tp.querySelector('.sftp-list, .side-quiet'), 50))) return title('FAIL-filespanel');
+      title('r12-files-ok');
+      tp.querySelector('.tp-head button[aria-label="关闭任务面板"]').click();
+      await sleep(250);
+      if (document.querySelector('.task-panel')) return title('FAIL-panelclose');
+      // 工具菜单：三项 → 关闭会话… → 确认断开 → 回到单标签
+      const toolsBtn = document.querySelector('.session-toolbar .st-tools > button');
+      if (!toolsBtn) return title('FAIL-no-toolsbtn');
+      toolsBtn.click();
+      await sleep(250);
+      const items = [...document.querySelectorAll('.tools-menu [role="menuitem"]')];
+      if (items.length !== 3) return title('FAIL-toolsmenu:' + items.length);
+      const closeItem = items.find((i) => i.textContent.includes('关闭会话'));
+      if (!closeItem) return title('FAIL-no-closeitem');
+      closeItem.click();
+      await sleep(350);
+      const dlg = document.querySelector('.confirm-dialog');
+      if (!dlg || dlg.textContent.indexOf('断开') < 0) return title('FAIL-confirm');
+      [...dlg.querySelectorAll('button')].find((b) => b.textContent.includes('断开连接')).click();
+      const back = await waitFor(() => document.querySelectorAll('.tabbar .tab').length === 1 || null, 100);
+      if (!back) return title('FAIL-close-tab');
+      title('r12-DONE');
+    } catch (e) {
+      title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
 }
 
 /// R11 B11 探针注入脚本（TINYSSH_SMOKE_MODE=r11；dev 门控，产品路径无关）：

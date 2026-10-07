@@ -12,11 +12,12 @@ import type {
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
-  IconChevronUp, IconChevronDown, IconTerminal, IconArrowDown, IconUpload, IconDownload,
-  IconInbox, IconClock, IconSearch, IconLoader, IconFolder, IconFile, IconRefresh,
+  IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
+  IconArrowDown, IconUpload, IconDownload, IconInbox, IconClock, IconSearch, IconLoader,
+  IconFolder, IconFile, IconRefresh,
 } from "./icons";
 
-// macOS 标题栏融合（T33）：Overlay 红绿灯悬浮在内容上，左栏头给红绿灯留位。
+// macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
 // 只在原生模式加类——浏览器 demo 没有标题栏，留白反而是错的（走查可手动加类模拟）。
 if (inTauri) document.documentElement.classList.add("native-chrome");
 import { getVersion } from "@tauri-apps/api/app";
@@ -439,6 +440,22 @@ export default function App() {
   const [showAgentHelp, setShowAgentHelp] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
   const [lastFailed, setLastFailed] = useState<string | null>(null);
+  // AppShell（R12）：主机栏开关/宽度（localStorage 暂存；C8 版本化偏好归 R15）
+  const [hostbarOpen, setHostbarOpen] = useState(() => {
+    try { return localStorage.getItem("ui.hostbar") !== "0"; } catch { return true; }
+  });
+  const [hostbarWidth, setHostbarWidth] = useState(() => {
+    try {
+      const v = Number.parseInt(localStorage.getItem("ui.hostbar_w") ?? "", 10);
+      return Number.isFinite(v) ? Math.min(300, Math.max(200, v)) : 224;
+    } catch { return 224; }
+  });
+  const [hostQuery, setHostQuery] = useState("");
+  // 右侧任务面板：一次只呈现文件 / 协作 / 转发之一（§4.3），缺省关闭
+  const [rightPanel, setRightPanel] = useState<null | "files" | "collab" | "forwards">(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
+  const [winW, setWinW] = useState(() => window.innerWidth);
 
   const refreshLists = useCallback(async () => {
     try {
@@ -707,7 +724,7 @@ export default function App() {
       if (sessionsRef.current.find((x) => x.id === sessionSid)?.state === "Disconnected") {
         if (!deadWarned) {
           deadWarned = true;
-          term.write("\r\n\x1b[33m⚠ 会话已断开——键入未发送。从左侧会话卡「重连」恢复。\x1b[0m\r\n");
+          term.write("\r\n\x1b[33m⚠ 会话已断开——键入未发送。用「标签列表 → 重连」恢复。\x1b[0m\r\n");
         }
         return;
       }
@@ -931,10 +948,74 @@ export default function App() {
   // 焦点在命令框/主机列表时 ⌘F 无响应且无可见入口——R6 现实版）。
   // 捕获层：终端聚焦时也生效，且先于 makeTerm 的「其余 ⌘ 全拦截」分支——
   // 此后事件即被终止，不会落进终端。
+  // 主机栏开合与拖宽（200–300，§4.2）；grip 用指针捕获，拖动即改宽、松手落盘
+  const toggleHostbar = useCallback((open: boolean) => {
+    setHostbarOpen(open);
+    try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+  }, []);
+  const gripDrag = useRef(false);
+  const gripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    gripDrag.current = true;
+  };
+  const gripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    // e.buttons 兜底 pointercancel/失焦后残留的拖拽态（rev-r12 LOW-4）
+    if (gripDrag.current && e.buttons !== 0) setHostbarWidth(Math.min(300, Math.max(200, Math.round(e.clientX))));
+  };
+  const gripUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!gripDrag.current) return;
+    gripDrag.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    // 落盘用事件坐标重算而非渲染帧闭包值（分离事件序列下前者才是最新）
+    const w = Math.min(300, Math.max(200, Math.round(e.clientX)));
+    setHostbarWidth(w);
+    try { localStorage.setItem("ui.hostbar_w", String(w)); } catch { /* 隐私模式忽略 */ }
+  };
+  const hostQueryN = hostQuery.trim().toLowerCase();
+  const filteredHosts = hostQueryN
+    ? hosts.filter((h) =>
+        [h.name, h.address, h.username, ...(h.tags ?? [])].some((v) => v.toLowerCase().includes(hostQueryN)))
+    : hosts;
+  // 窄窗完整视图断点（§4.2）：可用宽度 < 主机栏 + 560 + 面板宽 → 面板改中央完整视图。
+  // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
+  // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
+  const panelNeed = rightPanel === "collab" || rightPanel === "forwards" ? 400 : 384;
+  const availW = winW - (hostbarOpen ? hostbarWidth : 0);
+  const [tpFull, setTpFull] = useState(false);
+  useEffect(() => {
+    if (rightPanel === null) { setTpFull(false); return; }
+    const th = 560 + panelNeed;
+    if (availW < th - 16) setTpFull(true);
+    else if (availW > th + 16) setTpFull(false);
+  }, [availW, panelNeed, rightPanel]);
+  const toolsRef = useRef<HTMLDivElement | null>(null);
+  const tabsMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!toolsOpen && !tabsMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (toolsOpen && !toolsRef.current?.contains(t)) setToolsOpen(false);
+      if (tabsMenuOpen && !tabsMenuRef.current?.contains(t)) setTabsMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown, true);
+    return () => window.removeEventListener("mousedown", onDown, true);
+  }, [toolsOpen, tabsMenuOpen]);
+  useEffect(() => {
+    const on = () => setWinW(window.innerWidth);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
       const k = ev.key.toLowerCase();
+      if (k === "b") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        toggleHostbar(!hostbarOpen);
+        return;
+      }
       if (k === "f") {
         if (!sidRef.current) return; // 无活动会话不劫持
         ev.preventDefault();
@@ -951,7 +1032,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [changeFontSize]);
+  }, [changeFontSize, hostbarOpen, toggleHostbar]);
 
   // 由 splitRef/sidRef 统一同步各终端层的显示类（display 归它管，React 不渲染这些层）：
   // 单 pane：活动会话 .active；分屏：main=左半、second=右半，焦点 pane 加高亮与名牌
@@ -1236,13 +1317,15 @@ export default function App() {
           !t.classList.contains("xterm-helper-textarea")) return;
       if (searchOpen) { closeSearch(); return; }
       if (showSettings) { setShowSettings(false); return; }
+      if (toolsOpen) { setToolsOpen(false); return; }
+      if (tabsMenuOpen) { setTabsMenuOpen(false); return; }
       if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); return; }
       if (showImport) { setShowImport(false); return; }
       if (showAgentHelp) { setShowAgentHelp(false); return; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [searchOpen, showSettings, showAddHost, showImport, showAgentHelp, editingHost, closeSearch]);
+  }, [searchOpen, showSettings, showAddHost, showImport, showAgentHelp, editingHost, closeSearch, toolsOpen, tabsMenuOpen]);
 
   // macOS 窗口标题跟随当前会话主机（T16）；浏览器 demo 同步 document.title
   useEffect(() => {
@@ -1591,24 +1674,62 @@ export default function App() {
   const resolvedApprovals = approvals.filter((a) => a.status !== "pending").slice(-3).reverse();
   const visibleTimeline = timeline.filter((ev) => !HIDDEN_AUDIT_ACTIONS.has(ev.action));
 
+  const currentHost = current ? hosts.find((h) => h.id === current.host_id) : undefined;
+  const sbLeft = current
+    ? `${currentHost?.address === "local" ? "本地" : "SSH"} · ${currentHost?.charset === "gbk" ? "GBK" : "UTF-8"}`
+    : "未连接";
+  const runningTransfers = transfers.filter((t) => t.status === "running").length;
+
   return (
-    <div className="layout">
-      {/* 左：主机与会话 */}
-      <div className="col">
-        {/* T33：此行即标题栏——红绿灯落位（.head-left 左留白）、整行可拖拽；两个动作收成图标钮腾出空间 */}
-        <div className="panel-title row head-left" data-tauri-drag-region>
-          <span data-tauri-drag-region>主机 / 会话</span>
-          <span style={{ flex: 1 }} data-tauri-drag-region />
-          <button className="ghost icon-btn" title={showImport ? "收起导入" : "导入 ~/.ssh/config"} aria-label={showImport ? "收起导入" : "导入 ~/.ssh/config"}
-            onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
-            {showImport ? <IconChevronUp size={14} /> : <IconUpload size={14} />}
-          </button>
-          <button className="ghost icon-btn" title={showAddHost ? "收起表单" : "添加主机"} aria-label={showAddHost ? "收起表单" : "添加主机"}
-            onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); }}>
-            {showAddHost ? <IconChevronUp size={14} /> : <IconPlus size={14} />}
-          </button>
+    <div className="app-shell">
+      {/* 标题区 44（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
+      <header className="titlebar" data-tauri-drag-region>
+        <div className="tb-left">
+          <span className="app-title" data-tauri-drag-region>TinySSH</span>
+          {hostbarOpen && (
+            <button className="ghost icon-btn" title="收起主机栏（⌘B）" aria-label="收起主机栏"
+              onClick={() => toggleHostbar(false)}>
+              <IconChevronLeft size={15} />
+            </button>
+          )}
+          {pendingCount > 0 && (
+            <button className={"collab-badge" + (rightPanel === "collab" ? " ts-open" : "")}
+              title={`有 ${pendingCount} 个待审批请求——跨会话操作请逐条核对目标主机`}
+              onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
+              协作 · {pendingCount} 待审批
+            </button>
+          )}
         </div>
-        <div className="scroll">
+        <span style={{ flex: 1 }} data-tauri-drag-region />
+        <div className="tb-right">
+          {sid && (
+            <span className={"ctl-badge " + ownerCls}
+              title="「Agent 控制中」= Agent 可发起命令、经你审批执行；「我控制中」= 终端归你，Agent 冻结"
+            ><span className="ctl-dot" />{owner === "Human" ? "我控制中" : hasAgents ? "Agent 控制中" : "手动控制"}</span>
+          )}
+        </div>
+      </header>
+      <div className="workspace">
+        {hostbarOpen && (
+          <>
+            {/* 主机栏 224（可拖 200–300）：主机负责连接资源；会话只看标签（§3 信息结构） */}
+            <aside className="hostbar" style={{ width: hostbarWidth }} aria-label="主机栏">
+              <div className="hb-top">
+                <div className="hb-search">
+                  <IconSearch size={13} />
+                  <input placeholder="搜索主机" aria-label="搜索主机（名称 / 地址 / 用户 / 标签）"
+                    value={hostQuery} onChange={(e) => setHostQuery(e.target.value)} />
+                </div>
+                <button className="ghost icon-btn" title={showImport ? "收起导入" : "导入 ~/.ssh/config"} aria-label={showImport ? "收起导入" : "导入 ~/.ssh/config"}
+                  onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
+                  {showImport ? <IconChevronUp size={14} /> : <IconUpload size={14} />}
+                </button>
+                <button className="ghost icon-btn" title={showAddHost ? "收起表单" : "添加主机"} aria-label={showAddHost ? "收起表单" : "添加主机"}
+                  onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); }}>
+                  {showAddHost ? <IconChevronUp size={14} /> : <IconPlus size={14} />}
+                </button>
+              </div>
+              <div className="hb-scroll">
           {showImport && (
             <SshConfigImportPanel
               onDone={refreshLists}
@@ -1638,7 +1759,7 @@ export default function App() {
                 <div className="skeleton" />
               </>
             )}
-            {hosts.map((h) => {
+            {filteredHosts.map((h) => {
               // 该主机的现有会话（五人走查·林姐：误点已连主机静默开重复会话）。
               // 在线徽章 + 点击切到最近会话；显式另开走右侧「连接」钮
               const mine = sessions.filter((s) => s.host_id === h.id);
@@ -1693,132 +1814,33 @@ export default function App() {
               );
             })}
             {hostsLoaded && hosts.length === 0 && (
-              <div className="dim">还没有主机。点右上角「＋」填入地址和密码即可连接。</div>
+              <div className="dim">还没有主机。点上方「＋」填入地址和密码即可连接。</div>
             )}
-          </div>
-          <div className="section">
-            <h4>会话</h4>
-            {sessions.map((s) => {
-              const st = stateLabel(s.state);
-              return (
-                <div className="card row" key={s.id}>
-                  <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} tabIndex={0}
-                    title={`${s.host_name} · ${st.text}`}
-                    onClick={() => attachSession(s.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); attachSession(s.id); }
-                    }}>
-                    <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
-                      <span className="host-name">{s.host_name}</span>
-                      <span className={"mono " + st.cls} style={{ flex: "none" }}>· {st.text}</span>
-                    </div>
-                    <div className="dim mono">{s.id.slice(0, 12)}</div>
-                  </div>
-                  {s.state === "Disconnected" && (
-                    <button disabled={reconnecting !== null} onClick={() => reconnectSession(s)}>
-                      {reconnecting === s.id ? "重连中…" : "重连"}
-                    </button>
-                  )}
-                  {s.state !== "Disconnected" && (
-                    <button className="ghost" onClick={() => requestCloseSession(s)}>断开</button>
-                  )}
-                </div>
-              );
-            })}
-            {sessions.length === 0 && (
-              <div className="dim">暂无会话。点主机右侧的「连接」建立会话。</div>
-            )}
-          </div>
-          <div className="section">
-            <h4>Agent 接入（MCP）</h4>
-            {mcp.agents.map((a) => (
-              <div className="fact" key={a.id}>
-                <span className="s">{a.label}</span>
-                {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
-              </div>
-            ))}
-            <div className="fact">
-              <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
-              <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }}>{mcp.endpoint || "未启动"}</span>
-            </div>
-            <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
-              {showAgentHelp ? "收起接入说明" : "接入新 Agent"}
-            </button>
-            {showAgentHelp && (
-              <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
-                <div>1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；</div>
-                <div>2. 为 Agent 签发 Token（仅展示一次）：<code>tinyssh agent create &lt;id&gt; &lt;名称&gt;</code>；</div>
-                <div>3. 在 Agent 的 MCP 配置里填入端点与 Token：</div>
-                <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
-{`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
-Authorization: Bearer <TOKEN>`}
-                </pre>
-                <div>接入后，Agent 的操作请求会出现在右侧审批队列逐段裁决。</div>
-              </div>
-            )}
-            {!hasAgents && (
-              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>暂无 Agent 接入——点上方「接入新 Agent」查看三步接入。</div>
+            {hostsLoaded && hosts.length > 0 && filteredHosts.length === 0 && (
+              <div className="dim">无匹配主机——清除搜索条件再试。</div>
             )}
           </div>
         </div>
-      </div>
-
-      {/* 中：终端 */}
-      <div className="col">
-        <div className="panel-title row" data-tauri-drag-region>
-          <span data-tauri-drag-region>
-            终端
-            {current && (
-              <span className="dim mono"> {current.host_name} · {sid!.slice(0, 12)} · </span>
-            )}
-            {current && oscTitles[sid!] && (
-              <span className="dim mono">「{oscTitles[sid!]}」 · </span>
-            )}
-            {current && <span className={stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>}
-          </span>
-          <span style={{ flex: 1 }} data-tauri-drag-region />
-          {sid && (
-            <span
-              className={"ctl-badge " + ownerCls}
-              title="「Agent 控制中」= Agent 可发起命令、经你审批执行；「我控制中」= 终端归你，Agent 冻结"
-            ><span className="ctl-dot" />{owner === "Human" ? "我控制中" : hasAgents ? "Agent 控制中" : "手动控制"}</span>
-          )}
-          {sid && hasAgents && owner === "Agent" && (
-            <>
-              <button
-                className="warn"
-                title="接管会话：Agent 冻结、待审批请求作废，终端归你操作。Agent 正在跑的命令不会被中断"
-                onClick={takeover}
-              >接管</button>
-              <button
-                className="ghost-danger"
-                title="接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红"
-                onClick={takeoverStop}
-              >接管并停止任务</button>
-            </>
-          )}
-          {sid && hasAgents && owner === "Human" && (
-            <button
-              className="ghost"
-              title="交还会话：Agent 恢复操作（后续请求重新走审批）。已作废的请求不会自动重发——Agent 会收到作废通知，由它决定是否重新提交"
-              onClick={handback}
-            >交还 Agent</button>
-          )}
-          {sid && (
-            <button
-              className={"ghost" + (searchOpen ? " ts-open" : "")}
-              title="搜索终端内容（⌘F）"
-              aria-label="搜索终端内容"
-              onClick={() => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 0); }}
-            ><IconSearch size={15} /></button>
-          )}
-          <button
-            className={"ghost" + (showSettings ? " ts-open" : "")}
-            title="显示设置（字号 / 主题）"
-            aria-label="显示设置"
-            onClick={() => setShowSettings(!showSettings)}
-          ><IconSliders size={15} /></button>
+        <div className="hb-bottom">
+          <button className="hb-settings" title="显示设置（字号 / 主题）" aria-label="显示设置"
+            onClick={() => setShowSettings(true)}>
+            <IconSliders size={14} />设置
+          </button>
         </div>
+            </aside>
+            <div className="hb-grip" role="separator" aria-orientation="vertical"
+              aria-label="拖动调整主机栏宽度（200–300 px）" title="拖动调整宽度（200–300 px）"
+              onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp}
+              onPointerCancel={() => { gripDrag.current = false; }} />
+          </>
+        )}
+        {!hostbarOpen && (
+          <button className="ghost icon-btn hb-expand" title="展开主机栏（⌘B）" aria-label="展开主机栏"
+            onClick={() => toggleHostbar(true)}>
+            <IconChevronRight size={15} />
+          </button>
+        )}
+        <main className="main">
         {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释
             精致化 §5.2：状态/说明类信息走 Notice Bar，不与面包屑混排 */}
         {sid && hasAgents && owner === "Agent" && (
@@ -1880,7 +1902,33 @@ Authorization: Bearer <TOKEN>`}
               onClick={() => scrollTabs(1)}>›</button>
           )}
           {splitPanes && <button className="ghost" onClick={exitSplit}>退出分屏</button>}
-          <button className="ghost" title="新建连接（打开左侧「添加主机」表单，再点收起）" aria-label="新建连接" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); }}><IconPlus size={14} /></button>
+          <div className="st-tools" ref={tabsMenuRef}>
+            <button className="ghost tab-all" title="所有标签" aria-haspopup="menu" aria-expanded={tabsMenuOpen}
+              onClick={() => setTabsMenuOpen(!tabsMenuOpen)}>标签列表</button>
+            {tabsMenuOpen && (
+              <div className="tools-menu tm-right" role="menu">
+                {sessions.length === 0 && <div className="dim" style={{ padding: "6px 10px" }}>暂无会话</div>}
+                {sessions.map((s) => {
+                  const st = stateLabel(s.state);
+                  return (
+                    <div className={"tm-row" + (sid === s.id ? " tm-active" : "")} key={s.id}>
+                      <button className="tm-main" role="menuitem"
+                        onClick={() => { setTabsMenuOpen(false); void attachSession(s.id); }}>
+                        <span className={"tab-dot " + st.cls} />
+                        <span className="tab-label">{s.host_name}</span>
+                        <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
+                      </button>
+                      {s.state === "Disconnected" && (
+                        <button className="tm-act" title="重连该会话" disabled={reconnecting !== null}
+                          onClick={() => { reconnectSession(s); }}>重连</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <button className="ghost" title="新建连接（打开主机栏「添加主机」表单，再点收起）" aria-label="新建连接" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(!showAddHost); setShowImport(false); }}><IconPlus size={14} /></button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -1930,6 +1978,79 @@ Authorization: Bearer <TOKEN>`}
                 <button className="danger" onClick={confirmAction}>删除</button>
                 <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
               </div>
+            </div>
+          </div>
+        )}
+        {/* 会话工具栏 40（§4.1）：活动会话才出现——欢迎页不放失效的终端工具 */}
+        {current && (
+          <div className="session-toolbar">
+            <div className="st-ident">
+              <span className="st-title mono" title={`${current.host_name} · ${sid!.slice(0, 12)}`}>
+                {current.host_name}
+                {oscTitles[sid!] ? ` · 「${oscTitles[sid!]}」` : ""}
+              </span>
+              <span className={"mono st-state " + stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>
+            </div>
+            <span style={{ flex: 1 }} />
+            {sid && hasAgents && owner === "Agent" && (
+              <>
+                <button
+                  className="warn"
+                  title="接管会话：Agent 冻结、待审批请求作废，终端归你操作。Agent 正在跑的命令不会被中断"
+                  onClick={takeover}
+                >接管</button>
+                <button
+                  className="ghost-danger"
+                  title="接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红"
+                  onClick={takeoverStop}
+                >接管并停止任务</button>
+              </>
+            )}
+            {sid && hasAgents && owner === "Human" && (
+              <button
+                className="ghost"
+                title="交还会话：Agent 恢复操作（后续请求重新走审批）。已作废的请求不会自动重发——Agent 会收到作废通知，由它决定是否重新提交"
+                onClick={handback}
+              >交还 Agent</button>
+            )}
+            {sid && (
+              <button
+                className={"ghost icon-btn" + (searchOpen ? " ts-open" : "")}
+                title="搜索终端内容（⌘F）"
+                aria-label="搜索终端内容"
+                onClick={() => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 0); }}
+              ><IconSearch size={15} /></button>
+            )}
+            <button
+              className="ghost icon-btn"
+              disabled={sessions.filter((s) => s.id !== sid).length === 0}
+              title={splitPanes ? "退出分屏" : sessions.filter((s) => s.id !== sid).length === 0
+                ? "分屏需要第二个会话——先连接另一台主机或再开一个会话"
+                : "分屏：把最近的另一个会话放到右侧"}
+              aria-pressed={!!splitPanes}
+              onClick={() => {
+                if (splitPanes) { void exitSplit(); return; }
+                const other = [...sessions].filter((s) => s.id !== sid)
+                  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+                if (other) void enterSplitWith(other.id);
+              }}
+            ><IconSplit size={15} /></button>
+            <button
+              className={"st-file" + (rightPanel === "files" ? " ts-open" : "")}
+              aria-pressed={rightPanel === "files"}
+              title="文件：远程目录浏览与传输"
+              onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}
+            ><IconFolder size={14} />文件</button>
+            <div className="st-tools" ref={toolsRef}>
+              <button className="ghost" aria-haspopup="menu" aria-expanded={toolsOpen}
+                onClick={() => setToolsOpen(!toolsOpen)}>工具<IconChevronDown size={12} /></button>
+              {toolsOpen && (
+                <div className="tools-menu" role="menu">
+                  <button role="menuitem" onClick={() => { setRightPanel("collab"); setToolsOpen(false); }}>审批与记录</button>
+                  <button role="menuitem" onClick={() => { setRightPanel("forwards"); setToolsOpen(false); }}>端口转发</button>
+                  <button role="menuitem" className="tm-danger" onClick={() => { setToolsOpen(false); requestCloseSession(current); }}>关闭会话…</button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1998,6 +2119,8 @@ Authorization: Bearer <TOKEN>`}
             </div>
           );
         })()}
+        <div className="content">
+        <div className="term-col">
         <div className="term-wrap">
           {!sid && (
             <div className="welcome">
@@ -2005,19 +2128,19 @@ Authorization: Bearer <TOKEN>`}
                 <div className="welcome-mark"><IconTerminal size={26} /></div>
                 <div className="welcome-title">TinySSH<span className="welcome-sub">人机协同 SSH 工作台</span></div>
                 <div className="welcome-steps">
-                  <div><span className="ws-k">连接</span>左侧「添加主机」填入地址和密码（或粘贴私钥），保存后自动连接</div>
+                  <div><span className="ws-k">连接</span>主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接</div>
                   <div><span className="ws-k">操作</span>点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴</div>
                   <div><span className="ws-k">多会话</span>一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留</div>
                   <div><span className="ws-k">传输</span>拖文件进终端即上传到当前目录；下方命令框可逐条执行，焦点自动回终端</div>
                 </div>
                 <div className="welcome-actions">
-                  <button onClick={() => { setShowAddHost(true); setShowImport(false); }}><IconPlus size={13} /> 添加主机</button>
-                  <button className="ghost" onClick={() => { setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
+                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); }}><IconPlus size={13} /> 添加主机</button>
+                  <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
                 </div>
                 <div className="dim welcome-note">
                   {sessions.length > 0
-                    ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或左侧会话卡继续。`
-                    : "暂无会话——从左侧连接主机开始，或导入 ~/.ssh/config。"}
+                    ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或「标签列表」继续。`
+                    : "暂无会话——从主机栏连接主机开始，或导入 ~/.ssh/config。"}
                 </div>
               </div>
             </div>
@@ -2133,9 +2256,9 @@ Authorization: Bearer <TOKEN>`}
             placeholder={
               current
                 ? current.state === "Disconnected"
-                  ? "会话已断开——从左侧会话卡「重连」恢复后再执行命令"
+                  ? "会话已断开——用「标签列表 → 重连」恢复后再执行命令"
                   : `在 ${current.host_name} 上执行命令——回车执行，Ctrl+C 中断终端里的前台程序`
-                : "先在左侧连接一台主机，这里才能执行命令"
+                : "先在主机栏连接一台主机，这里才能执行命令"
             }
             disabled={!sid}
             value={input}
@@ -2177,7 +2300,7 @@ Authorization: Bearer <TOKEN>`}
               if (e.key === "Enter" && input.trim() && sid) {
                 // 死会话拦截（P2-7）：命令不进死通道，明说去哪恢复
                 if (sessionsRef.current.find((x) => x.id === sid)?.state === "Disconnected") {
-                  setConnError({ title: "会话已断开", detail: "命令未发送。从左侧会话卡「重连」恢复后再执行。" });
+                  setConnError({ title: "会话已断开", detail: "命令未发送。用「标签列表 → 重连」恢复后再执行。" });
                   return;
                 }
                 const cmd = input;
@@ -2211,15 +2334,25 @@ Authorization: Bearer <TOKEN>`}
             </button>
           )}
         </div>
-      </div>
+        </div>{/* /term-col */}
 
-      {/* 右：审批 / 现场简报 / 操作记录 —— 给人看的协作面板，原始数据在 CLI/MCP 可查 */}
-      <div className="col">
-        <div className="panel-title row" data-tauri-drag-region>
-          <span data-tauri-drag-region>审批</span>
-          {pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
-        </div>
-        <div className="scroll">
+        {/* 右侧任务面板（§4.3）：一次只呈现文件 / 转发 / 协作之一；窄窗改中央完整视图 */}
+        {rightPanel && (
+          <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label="任务面板">
+            <div className="tp-head">
+              <b>{rightPanel === "files" ? "文件与传输" : rightPanel === "forwards" ? "端口转发" : "协作"}</b>
+              {tpFull && <span className="dim" style={{ fontSize: 11 }}>空间不足——完整视图，终端仍在运行</span>}
+              {rightPanel === "collab" && pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
+              <span style={{ flex: 1 }} />
+              <button className="ghost icon-btn" title="关闭面板（再次点「文件」/「工具」项亦可）" aria-label="关闭任务面板"
+                onClick={() => setRightPanel(null)}><IconX size={14} /></button>
+            </div>
+            <div className="tp-scroll">
+          {rightPanel === "collab" && (
+            <>
+          <div className="section">
+            <h4>审批</h4>
+          </div>
           {pendingApprovals.map((a) => {
             const sess = sessions.find((x) => x.id === a.session_id);
             const risk = approvalRisk(a);
@@ -2292,6 +2425,10 @@ Authorization: Bearer <TOKEN>`}
             <div className="empty"><IconInbox size={14} />暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
           )}
 
+            </>
+          )}
+          {rightPanel === "files" && (
+            <>
           <div className="section">
             <h4>远程文件</h4>
             {!sid ? (
@@ -2405,6 +2542,10 @@ Authorization: Bearer <TOKEN>`}
             ))}
           </div>
 
+            </>
+          )}
+          {rightPanel === "forwards" && (
+            <>
           <div className="section">
             <h4>端口转发</h4>
             {!sid ? (
@@ -2462,6 +2603,10 @@ Authorization: Bearer <TOKEN>`}
             )}
           </div>
 
+            </>
+          )}
+          {rightPanel === "collab" && (
+            <>
           <div className="section">
             <h4>任务目标</h4>
             {sid ? (
@@ -2515,8 +2660,56 @@ Authorization: Bearer <TOKEN>`}
               );
             }) : <div className="empty"><IconClock size={14} />暂无记录。所有连接与命令都会留痕在这里。</div>}
           </div>
-        </div>
-      </div>
+
+          <div className="section">
+            <h4>Agent 接入（MCP）</h4>
+            {mcp.agents.map((a) => (
+              <div className="fact" key={a.id}>
+                <span className="s">{a.label}</span>
+                {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
+              </div>
+            ))}
+            <div className="fact">
+              <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
+              <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }}>{mcp.endpoint || "未启动"}</span>
+            </div>
+            <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
+              {showAgentHelp ? "收起接入说明" : "接入新 Agent"}
+            </button>
+            {showAgentHelp && (
+              <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
+                <div>1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；</div>
+                <div>2. 为 Agent 签发 Token（仅展示一次）：<code>tinyssh agent create &lt;id&gt; &lt;名称&gt;</code>；</div>
+                <div>3. 在 Agent 的 MCP 配置里填入端点与 Token：</div>
+                <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
+{`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
+Authorization: Bearer <TOKEN>`}
+                </pre>
+                <div>接入后，Agent 的操作请求会出现在右侧审批队列逐段裁决。</div>
+              </div>
+            )}
+            {!hasAgents && (
+              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>暂无 Agent 接入——点上方「接入新 Agent」查看三步接入。</div>
+            )}
+          </div>
+            </>
+          )}
+            </div>
+          </aside>
+        )}
+        </div>{/* /content */}
+
+        {/* 页脚状态条 24（§4.2）：只放短状态与任务入口 */}
+        <footer className="statusbar">
+          <span className="mono sb-left">{sbLeft}</span>
+          <span style={{ flex: 1 }} />
+          <span className="sb-right">
+            <button className="sb-btn" title="端口转发" onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>转发 <b>{forwards.length}</b></button>
+            <button className="sb-btn" title="文件与传输" onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}>传输 <b>{runningTransfers}</b></button>
+          </span>
+        </footer>
+        </main>
+      </div>{/* /workspace */}
 
       {/* Toast（§六/P3）：右下角轻通知，2.6s 自动消失，不挡交互（pointer-events 放行）。
           live 级别逐条给：err 用 assertive 立即播报，其余 polite（审核吹毛求疵-4） */}

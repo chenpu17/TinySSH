@@ -1,0 +1,106 @@
+{
+ "preTabs": [
+  "prod-1",
+  "staging-1"
+ ],
+ "tabs": [
+  {
+   "label": "prod-1",
+   "active": false,
+   "dot": "tab-dot ok"
+  },
+  {
+   "label": "staging-1",
+   "active": false,
+   "dot": "tab-dot dim"
+  },
+  {
+   "label": "本机",
+   "active": true,
+   "dot": "tab-dot ok"
+  }
+ ],
+ "bandAtY57": {
+  "at": [
+   "notice-bar info",
+   "main",
+   "workspace",
+   "app-shell"
+  ],
+  "mainChildren": [
+   "notice-bar info@44h26",
+   "tabbar-row@70h40",
+   "session-toolbar@110h40",
+   "content@150h626",
+   "statusbar@776h24"
+  ]
+ },
+ "xtermFont": {
+  "rowsFontSize": "13px",
+  "rowsFontFamily": "courier-new, courier, monospace",
+  "helperFontSize": "12px",
+  "screenRect": {
+   "w": 1038,
+   "h": 525
+  }
+ },
+ "tabCount": 3,
+ "targetIdx": 0,
+ "confirm": {
+  "present": true,
+  "title": "断开与 prod-1 的连接？",
+  "body": "断开与 prod-1 的连接？终端现场不可恢复——重连会是全新现场（记录保留）。断开连接取消"
+ },
+ "afterClose": {
+  "tabs": [
+   {
+    "label": "prod-1",
+    "dot": "tab-dot dim",
+    "dotColor": "rgb(93, 111, 130)"
+   },
+   {
+    "label": "staging-1",
+    "dot": "tab-dot dim",
+    "dotColor": "rgb(93, 111, 130)"
+   },
+   {
+    "label": "本机",
+    "dot": "tab-dot ok",
+    "dotColor": "rgb(127, 191, 143)"
+   }
+  ],
+  "sbLeft": "本地 · UTF-8"
+ },
+ "deadMenu": [
+  {
+   "text": "prod-1已断开重连",
+   "hasReconnect": true,
+   "reconnectDisabled": false,
+   "dotCls": "tab-dot dim"
+  },
+  {
+   "text": "staging-1已断开重连",
+   "hasReconnect": true,
+   "reconnectDisabled": false,
+   "dotCls": "tab-dot dim"
+  },
+  {
+   "text": "本机已连接",
+   "hasReconnect": false,
+   "reconnectDisabled": null,
+   "dotCls": "tab-dot ok"
+  }
+ ],
+ "sbOverflow": {
+  "barH": 24,
+  "sbW": 936,
+  "sbScrollW": 936,
+  "rightRight": 1270,
+  "vw": 1280,
+  "rightVisible": true,
+  "barOverflow": "visible",
+  "sbOverflow": "visible",
+  "sbFlexShrink": "1"
+ },
+ "errors": []
+}
