@@ -58,6 +58,8 @@ pub struct SessionHandle {
     pub last_human_input: AsyncMutex<Option<Instant>>,
     pub verification_hits: AtomicU64,
 
+    // C3（R24）：shell 集成态（Disabled/Pending/Ready/Unavailable；SessionInfo 派生源）
+    pub integration: StdMutex<session_api::IntegrationState>,
     // exec 串行队列
     pub exec_slot: AsyncMutex<()>,
     pub queue_waiters: AtomicUsize,
@@ -129,6 +131,7 @@ impl SessionHandle {
         channel: Arc<dyn ChannelHandle>,
         screen: Screen,
         center: Arc<ApprovalCenter>,
+        owner: ControlOwner,
     ) -> Arc<Self> {
         let (output_tx, _) = broadcast::channel(4096);
         // 转发状态事件桥（T44 真机冒烟补口）：transport 写口回调 → Changed 广播。
@@ -147,7 +150,8 @@ impl SessionHandle {
             channel,
             screen: AsyncMutex::new(screen),
             output_tx,
-            owner: AsyncMutex::new(ControlOwner::Agent),
+            // C2（B01）：构造期定 owner——无「建完再接管」窗口
+            owner: AsyncMutex::new(owner),
             state: AsyncMutex::new(SessionState::Connected),
             generation: AtomicU64::new(0),
             transitions: AsyncMutex::new(Vec::new()),
@@ -165,6 +169,7 @@ impl SessionHandle {
             last_ckpt_seq: AtomicU64::new(0),
             replay: StdMutex::new(ReplayRing::default()),
             subs: StdMutex::new(HashMap::new()),
+            integration: StdMutex::new(session_api::IntegrationState::Disabled),
             center,
         })
     }
@@ -218,13 +223,48 @@ impl SessionHandle {
         trace: ApprovalTrace,
         started: Instant,
     ) -> Result<ExecResult> {
-        // 主机无 shell 集成 → 自动降级 Fresh（L1 §3.1）
-        let integrated = self.screen.lock().await.shell_integration_present();
+        // C3（R24）：无集成 → 副作用前拒绝 Shell 模式（禁止自动 Fresh 降级——DC3.1/契约
+        // 「语义（执行前拒绝，替代静默降级）」；显式 Fresh 由调用方另行授权）。
+        // DC3.3：入口重查能力，不信任缓存。
+        let (integrated, prompt_ready) = {
+            let s = self.screen.lock().await;
+            (s.shell_integration_present(), s.prompt_ready())
+        };
         if !integrated {
-            tracing::info!(session = %self.id, "no shell integration; degrade to Fresh");
-            return self
-                .run_fresh(actor, exec_id, cmd, opts, deadline, cancel, trace, started)
-                .await;
+            // local 会话：PTY 启动时无条件注入（transport-pty rcfile/ZDOTDIR），集成由
+            // 构造保证——此处是 shell 启动竞态而非「不可用」，有界等待 OSC133（与注入
+            // 后台化一致，不回退 Fresh）。超时仍无 = 环境异常，如实拒绝。
+            if self.kind != "local" {
+                return Err(Error::ShellIntegrationUnavailable {
+                    available: session_api::ShellCapability {
+                        integration_present: false,
+                        prompt_ready,
+                        host_setting: self.host.shell_integration == Some(true),
+                    },
+                });
+            }
+            let wait_deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                {
+                    let s = self.screen.lock().await;
+                    if s.shell_integration_present() {
+                        break;
+                    }
+                }
+                if Instant::now() >= wait_deadline {
+                    return Err(Error::ShellIntegrationUnavailable {
+                        available: session_api::ShellCapability {
+                            integration_present: false,
+                            prompt_ready,
+                            host_setting: false,
+                        },
+                    });
+                }
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         }
 
         // 等待块空闲（人类正在交互程序中时不得写入）
@@ -478,7 +518,8 @@ impl SessionHandle {
                     tinyssh_approval::SegmentVerdict::NeedsApproval => {
                         let (t, edited) = self
                             .wait_approval(
-                                actor, client_id, &exec_id, &effective_cmd, &eval, true, cancel.clone(),
+                                actor, client_id, &exec_id, &effective_cmd, &eval, true,
+                                opts.mode == ExecMode::Fresh, cancel.clone(),
                             )
                             .await?;
                         edited_cmd = edited;
@@ -549,7 +590,8 @@ impl SessionHandle {
 
     /// 创建并等待审批决策（120s 超时 → ApprovalTimeout；接管 → Voided）。
     /// `editable`：该卡是否支持编辑后批准（exec true；转发/传输 false——
-    /// 参数无法从编辑文本回解，T44 复核中-2）。
+    /// 参数无法从编辑文本回解，T44 复核中-2）。`fresh`：Fresh 模式卡标注
+    /// 「不继承当前终端目录/环境」（C3 契约）。
     pub async fn wait_approval(
         &self,
         actor: &Actor,
@@ -558,15 +600,20 @@ impl SessionHandle {
         cmd: &str,
         eval: &tinyssh_approval::Evaluation,
         editable: bool,
+        fresh: bool,
         cancel: CancellationToken,
     ) -> Result<(ApprovalTrace, Option<String>)> {
+        let mut summary = target_summary(cmd);
+        if fresh {
+            summary.push_str("【Fresh：不继承当前终端目录/环境】");
+        }
         let item = ApprovalItem {
             id: format!("a-{}", uuid::Uuid::new_v4()),
             session_id: self.id.clone(),
             agent_id: client_id.clone(),
             command: cmd.to_string(),
             edited_command: None,
-            target_summary: target_summary(cmd),
+            target_summary: summary,
             segment_report: eval.segments.clone(),
             session_busy: self.screen.lock().await.blocks.has_open_block(),
             editable,
@@ -869,10 +916,13 @@ impl SessionHandle {
         s.invalidate_cwd();
     }
 
-    /// 重连成功后：注入集成（pump 已先订阅新通道）→ 等待新 shell 首个提示符 → 进入 Reconfirming。
-    /// 就绪信号用 prompt_ready（B 标记）：B 晚于片段清屏的执行——等到它 = 屏已清、提示符已出；
-    /// 只等 saw_133（C 标记）会提前放行，读屏截到清屏前的注入回显（§6-17 疑似真因）。
-    pub async fn reinject_integration(self: &Arc<Self>) {
+    /// C3（R24）三注入点收敛：按 host_setting 注入集成片段。返回是否注入
+    /// （host_setting=false → Disabled 不注入不等 OSC——DC3/P3；B12 重连同口径）。
+    pub async fn inject_integration(&self) -> bool {
+        if self.host.shell_integration != Some(true) || self.kind != "ssh" {
+            *self.integration.lock().unwrap() = session_api::IntegrationState::Disabled;
+            return false;
+        }
         let snippet = crate::ssh_integration_snippet();
         let mut text = snippet.to_string();
         text.push('\n');
@@ -881,12 +931,49 @@ impl SessionHandle {
             s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
         }
         let _ = self.channel.write(&crate::charset::encode(self.host.charset, &text)).await;
-        // 窗口 10s：冷容器 + 高负载下首个提示符可能很慢（实测 3s 不够）
-        for _ in 0..200 {
-            if self.screen.lock().await.prompt_ready() {
-                break;
+        *self.integration.lock().unwrap() = session_api::IntegrationState::Pending;
+        true
+    }
+
+    /// C3：后台等集成标记（≤10s）→ Ready/Unavailable + 事件（DC3.5 就绪独立表达，
+    /// create_session 不等集成——Ready 判据=通道建立）。
+    pub fn spawn_integration_watcher(self: &Arc<Self>, center: Arc<ApprovalCenter>) {
+        let h = self.clone();
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if h.screen.lock().await.shell_integration_present() {
+                    *h.integration.lock().unwrap() = session_api::IntegrationState::Ready;
+                    let _ = center.shell_tx.send(session_api::ShellIntegrationEvent {
+                        session_id: h.id.clone(),
+                        state: session_api::IntegrationState::Ready,
+                    });
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            *h.integration.lock().unwrap() = session_api::IntegrationState::Unavailable;
+            let _ = center.shell_tx.send(session_api::ShellIntegrationEvent {
+                session_id: h.id.clone(),
+                state: session_api::IntegrationState::Unavailable,
+            });
+        });
+    }
+
+    /// 重连成功后：注入集成（pump 已先订阅新通道）→ 等待新 shell 首个提示符 → 进入 Reconfirming。
+    /// 就绪信号用 prompt_ready（B 标记）：B 晚于片段清屏的执行——等到它 = 屏已清、提示符已出；
+    /// 只等 saw_133（C 标记）会提前放行，读屏截到清屏前的注入回显（§6-17 疑似真因）。
+    /// C3（B12）：未启用集成的重连不注入/不等标记。
+    pub async fn reinject_integration(self: &Arc<Self>) {
+        let center = self.center.clone();
+        if self.inject_integration().await {
+            // 窗口 10s：冷容器 + 高负载下首个提示符可能很慢（实测 3s 不够）
+            for _ in 0..200 {
+                if self.screen.lock().await.prompt_ready() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            self.spawn_integration_watcher(center);
         }
         self.verification_hits.store(0, Ordering::SeqCst);
         *self.state.lock().await = SessionState::Reconfirming;

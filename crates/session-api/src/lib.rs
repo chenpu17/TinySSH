@@ -385,6 +385,10 @@ pub struct Host {
     pub tags: Vec<String>,
     /// 已信任的主机指纹（TOFU，路线图⑤）；None = 信任尚未建立（首连确认前）。
     pub fingerprint: Option<String>,
+    /// C3（R24）：shell 集成显式开关。None=历史行/未设置（迁移前）；Some(v)=显式。
+    /// 语义：false 不注入不等 OSC（DC3.2）；V6 迁移为存量 SSH 主机写 Some(true)。
+    #[serde(default)]
+    pub shell_integration: Option<bool>,
     /// 远端字节编码（路线图⑩后半）：默认 UTF-8；Gbk 用于中文 Windows/老旧设备。
     /// 解码发生在传输出口（vt 解析之前）——GBK 尾字节与 ASCII 冲突，裸喂会腐蚀屏态。
     #[serde(default)]
@@ -439,6 +443,9 @@ pub struct HostDraft {
     pub tags: Vec<String>,
     #[serde(default)]
     pub charset: Charset,
+    /// C3：None=编辑保原值/新建 false；Some(v)=显式设置（DC3.2，serde default 防旧客户端缺字段）。
+    #[serde(default)]
+    pub shell_integration: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -515,6 +522,36 @@ pub struct SessionInfo {
     pub state: SessionState,
     pub control_owner: ControlOwner,
     pub created_at: DateTime<Utc>,
+    /// C3（R24）：shell 集成态（serde default 防旧消费方——DC3.5 Ready≠集成就绪，此为独立字段）。
+    #[serde(default)]
+    pub integration: IntegrationState,
+}
+
+/// C3：shell 集成态机（R24）。Disabled=host_setting 关（不注入）；Pending=已注入等标记；
+/// Ready=集成标记在屏；Unavailable=注入后超时未见标记。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum IntegrationState {
+    #[default]
+    Disabled,
+    Pending,
+    Ready,
+    Unavailable,
+}
+
+/// C3：shell 能力快照（DC3.3 只读查询；执行时入口重查不信任缓存）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ShellCapability {
+    pub integration_present: bool,
+    pub prompt_ready: bool,
+    pub host_setting: bool,
+}
+
+/// C3 事件：shell-integration-event { session_id, state }（DC3.5 就绪独立事件）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellIntegrationEvent {
+    pub session_id: SessionId,
+    pub state: IntegrationState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -919,6 +956,9 @@ pub enum Error {
     /// 执行超时（与 ApprovalTimeout 区分）。
     #[error("执行超时")]
     ExecTimeout,
+    /// C3（R24）：无 shell 集成主机拒绝 Shell 模式执行（副作用前；禁止自动 Fresh 降级）。
+    #[error("该主机未启用 shell 集成，Shell 模式不可用——可显式指定 Fresh 模式执行（不继承终端现场）")]
+    ShellIntegrationUnavailable { available: ShellCapability },
     /// cancel_exec / cancel_transfer。
     #[error("已取消")]
     Cancelled,
@@ -969,6 +1009,10 @@ impl Error {
             E::ConnectFailed(r) => ("connect_failed", Some(serde_json::json!({ "reason": r }))),
             E::HostKeyRejected(_) => ("host_key_rejected", None),
             E::ExecTimeout => ("exec_timeout", None),
+            E::ShellIntegrationUnavailable { available } => (
+                "shell_integration_unavailable",
+                Some(serde_json::json!({ "available": available })),
+            ),
             E::Cancelled => ("cancelled", None),
             E::QueueBusy { position } => {
                 ("queue_busy", Some(serde_json::json!({ "position": position })))
@@ -1095,6 +1139,9 @@ pub trait SessionApi: Send + Sync {
     /// connection-event 广播（沿 approval-event 桥模式）。
     fn subscribe_connections(&self) -> broadcast::Receiver<ConnectionEvent>;
 
+    /// C3（R24）：shell 集成态事件（Ready/Unavailable 流转；DC3.5 独立事件）。
+    fn subscribe_shell_integration(&self) -> broadcast::Receiver<ShellIntegrationEvent>;
+
     // ---- exec（v1；PRD FR-3/FR-4）----
     async fn exec(
         &self,
@@ -1116,6 +1163,13 @@ pub trait SessionApi: Send + Sync {
         owner: ControlOwner,
         opts: ControlOpts,
     ) -> Result<TakeoverReport>;
+
+    /// C2（R24）：首次委托——人类把会话交 Agent 执行并附目标（DC2.2 独立于裸 set_control，
+    /// 承载确认语义与 session_delegated 审计）。仅 Human 可调。
+    async fn delegate_session(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()>;
+
+    /// C3（R24）：shell 能力只读查询（DC3.3 任何 Actor 可查；执行时入口另重查）。
+    async fn shell_capability(&self, ctx: &Actor, sid: SessionId) -> Result<ShellCapability>;
 
     // ---- 传输（v1；PRD FR-7）----
     async fn upload(

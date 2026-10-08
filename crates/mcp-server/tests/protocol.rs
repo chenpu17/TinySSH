@@ -102,6 +102,8 @@ async fn spike3_protocol_compliance() {
         .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // C2（B01/R24）：人建会话初始 Human-owned；MCP 面是 Agent 域，先委托
+    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
     let human = Actor::Human;
 
     let r = client

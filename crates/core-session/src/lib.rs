@@ -37,6 +37,8 @@ pub struct ApprovalCenter {
     pub ap_tx: broadcast::Sender<PendingAuthPrompt>,
     /// C1 建连尝试事件（connection-event，沿 approval-event 桥模式）。
     pub conn_tx: broadcast::Sender<ConnectionEvent>,
+    /// C3（R24）：shell 集成态事件（Ready/Unavailable；DC3.5）
+    pub shell_tx: broadcast::Sender<ShellIntegrationEvent>,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
 }
@@ -69,6 +71,7 @@ impl SessionManager {
         let (hk_tx, _) = broadcast::channel(16);
         let (ap_tx, _) = broadcast::channel(16);
         let (conn_tx, _) = broadcast::channel(64);
+        let (shell_tx, _) = broadcast::channel(64);
         let center = Arc::new(ApprovalCenter {
             engine: ApprovalEngine::new()?,
             items: StdMutex::new(HashMap::new()),
@@ -81,6 +84,7 @@ impl SessionManager {
             ap_pending: StdMutex::new(HashMap::new()),
             ap_tx,
             conn_tx,
+            shell_tx,
             vault,
             audit,
         });
@@ -190,7 +194,12 @@ impl SessionManager {
         };
 
         let screen = term_core::Screen::new(term_core::ScreenConfig::default());
-        let handle = SessionHandle::new(sid.clone(), host.clone(), kind.clone(), channel, screen, self.center.clone());
+        // C2（B01）：owner 构造期确定——Human 默认 Human、Agent 沿原规则（含必审）
+        let owner = match ctx {
+            Actor::Agent { .. } => ControlOwner::Agent,
+            _ => ControlOwner::Human,
+        };
+        let handle = SessionHandle::new(sid.clone(), host.clone(), kind.clone(), channel, screen, self.center.clone(), owner);
         // 先订阅再注入：远端回显/首个标记提示符不得落入无订阅者窗口
         // （broadcast 无接收者即丢——并发回归中集成标记迟到 10s+ 的根因）
         let pump_rx = handle.channel.subscribe_output();
@@ -203,28 +212,37 @@ impl SessionManager {
         }
         self.sessions.lock().unwrap().insert(sid.clone(), handle.clone());
 
-        // 远端注入 shell 集成（本地已在 PTY 启动时注入）。
-        // 登记用原 UTF-8（屏态吃泵侧解码后的回显）；snippet 纯 ASCII，GBK 下编码恒等。
+        // C3（R24）注入收敛单一入口（host_setting=false 不注入不等 OSC——P3/DC3.2）；
+        // 注入后台化：create_session 不等集成（Ready 判据=通道建立），就绪经
+        // shell-integration-event 表达（DC3.5）。注入失败（write Err）经 H2 幽灵清扫回收。
+        // local 会话：PTY 启动时已注入，直接 Ready（不经片段注入路径）。
         if kind == "ssh" {
-            let snippet = ssh_integration_snippet();
-            let mut text = snippet.to_string();
-            text.push('\n');
-            {
-                let mut s = handle.screen.lock().await;
-                s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+            if handle.inject_integration().await {
+                let _ = self.center.audit.append(
+                    ctx, "shell_integration_inject", Some(&sid), Some("OSC133+OSC7"), serde_json::json!({}), None);
+                handle.spawn_integration_watcher(self.center.clone());
             }
-            handle.channel.write(&charset::encode(handle.host.charset, &text)).await?;
-            let _ = self.center.audit.append(
-                ctx, "shell_integration_inject", Some(&sid), Some("OSC133+OSC7"), serde_json::json!({}), None);
-        }
-
-        // 等待集成生效（最多 10s；失败不阻断——Shell 模式将自动降级 Fresh）。
-        // 窗口须覆盖全量回归时编译与测试争抢 CPU 的首个提示符延迟（实测 5s 不够）。
-        for _ in 0..200 {
-            if handle.screen.lock().await.shell_integration_present() {
-                break;
+        } else {
+            // local：注入在 PTY 启动时同步完成（rcfile/ZDOTDIR），此处等的是 shell
+            // 启动耗时——建连返回即可键入的既有不变量（旧 10s 窗，全量回归下首个
+            // 提示符实测 5s+，50ms×200 保同口径）。失败不阻断（事件照发，run_shell
+            // 门内有界重查兜底）。SSH 侧维持契约：不等 OSC，就绪走事件（DC3.5）。
+            for _ in 0..200 {
+                if handle.screen.lock().await.shell_integration_present() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let state = if handle.screen.lock().await.shell_integration_present() {
+                IntegrationState::Ready
+            } else {
+                IntegrationState::Unavailable
+            };
+            *handle.integration.lock().unwrap() = state;
+            let _ = self.center.shell_tx.send(ShellIntegrationEvent {
+                session_id: sid.clone(),
+                state,
+            });
         }
 
         self.center.vault.record_session(&sid, &host.id, &kind)?;
@@ -233,7 +251,7 @@ impl SessionManager {
         let _ = self.center.vault.touch_host_connection(&host.id);
         let _ = self.center.audit.append(
             ctx, "session_created", Some(&sid), None,
-            serde_json::json!({"host": host.id, "kind": kind}), None);
+            serde_json::json!({"host": host.id, "kind": kind, "owner": match owner { ControlOwner::Agent => "Agent", ControlOwner::Human => "Human" }}), None);
         Ok(sid)
     }
 
@@ -704,6 +722,7 @@ impl SessionManager {
             auth: AuthDraft::None,
             tags: vec![],
             charset: Charset::Utf8,
+            shell_integration: None,
         };
         self.center.vault.upsert_host(&draft)?;
         Ok(Host {
@@ -716,6 +735,7 @@ impl SessionManager {
             identity_id: None,
             tags: vec![],
             fingerprint: None,
+            shell_integration: None,
             charset: Charset::Utf8,
         })
     }
@@ -1227,6 +1247,7 @@ impl SessionApi for SessionManager {
                 state: *h.state.lock().await,
                 control_owner: *h.owner.lock().await,
                 created_at: chrono::Utc::now(),
+                integration: *h.integration.lock().unwrap(),
             });
         }
         out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -1273,6 +1294,10 @@ impl SessionApi for SessionManager {
 
     fn subscribe_connections(&self) -> broadcast::Receiver<ConnectionEvent> {
         self.center.conn_tx.subscribe()
+    }
+
+    fn subscribe_shell_integration(&self) -> broadcast::Receiver<ShellIntegrationEvent> {
+        self.center.shell_tx.subscribe()
     }
 
     async fn close_session(&self, ctx: &Actor, sid: SessionId) -> Result<()> {
@@ -1414,7 +1439,7 @@ impl SessionApi for SessionManager {
                         }],
                     };
                     let (trace, edited) = h
-                        .wait_approval(ctx, client_id, &"send_keys".to_string(), &format!("send_keys {keys:?}"), &eval, false, CancellationToken::new())
+                        .wait_approval(ctx, client_id, &"send_keys".to_string(), &format!("send_keys {keys:?}"), &eval, false, false, CancellationToken::new())
                         .await?;
                     let _ = trace;
                     // 键序列无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
@@ -1502,6 +1527,35 @@ impl SessionApi for SessionManager {
         }
     }
 
+    /// C2（DC2.2）：首次委托——人类把会话交 Agent 并附目标。内部走既有 handback
+    /// 受控转换（接管/作废语义不变）+ 独立审计 session_delegated；取消对话框不产生
+    /// 任何调用（无 cancel 路径依赖）。仅 Human 可调。
+    async fn delegate_session(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let h = self.get(&sid)?;
+        h.handback().await?;
+        if let Some(g) = &goal {
+            *h.goal.lock().unwrap() = Some(g.clone());
+        }
+        let _ = self.center.audit.append(
+            ctx, "session_delegated", Some(&sid), None,
+            serde_json::json!({"goal_present": goal.is_some()}), None);
+        Ok(())
+    }
+
+    /// C3（DC3.3）：能力只读快照，任何 Actor 可查。
+    async fn shell_capability(&self, _ctx: &Actor, sid: SessionId) -> Result<ShellCapability> {
+        let h = self.get(&sid)?;
+        let s = h.screen.lock().await;
+        Ok(ShellCapability {
+            integration_present: s.shell_integration_present(),
+            prompt_ready: s.prompt_ready(),
+            host_setting: h.host.shell_integration == Some(true),
+        })
+    }
+
     // ---- 传输 ----
     async fn upload(&self, ctx: &Actor, sid: SessionId, local: &Path, remote: &str) -> Result<TransferHandle> {
         self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), true).await
@@ -1559,7 +1613,7 @@ impl SessionApi for SessionManager {
                     verdict: "pending: 端口转发（建立网络隧道）".into(),
                 }],
             };
-            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_start".to_string(), &desc, &eval, false, CancellationToken::new()).await?;
+            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_start".to_string(), &desc, &eval, false, false, CancellationToken::new()).await?;
             approval_id = trace.approval_id;
             // 编辑后批准不支持（复核中-2，复审②统一拦截）：ForwardSpec 无法从人类
             // 编辑后的中文描述回解——出现编辑即拒绝，审计不会出现「记了 edited、
@@ -1601,7 +1655,7 @@ impl SessionApi for SessionManager {
                     verdict: "pending: 停止端口转发（可能中断链路）".into(),
                 }],
             };
-            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_stop".to_string(), &desc, &eval, false, CancellationToken::new()).await?;
+            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_stop".to_string(), &desc, &eval, false, false, CancellationToken::new()).await?;
             approval_id = trace.approval_id;
             SessionManager::reject_edited_approval(&edited, &desc, "停止端口转发审批")?;
         }
@@ -2022,7 +2076,7 @@ impl SessionManager {
                 }],
             };
             let (trace, e) = h
-                .wait_approval(ctx, client_id, &"transfer".to_string(), &format!("{op} {local:?} → {remote}"), &eval, false, CancellationToken::new())
+                .wait_approval(ctx, client_id, &"transfer".to_string(), &format!("{op} {local:?} → {remote}"), &eval, false, false, CancellationToken::new())
                 .await?;
             let _ = trace;
             // 传输路径无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
@@ -2213,6 +2267,7 @@ impl SessionManager {
                         auth,
                         tags: vec!["ssh-config".into()],
                         charset: Charset::Utf8,
+                        shell_integration: Some(true), // ssh-config 导入=存量 SSH 主机同口径（DC3.2）
                     },
                 )
                 .await
@@ -2258,6 +2313,10 @@ mod t44_tests {
 #[cfg(test)]
 #[path = "c1_tests.rs"]
 mod c1_tests;
+
+#[cfg(test)]
+#[path = "r24_tests.rs"]
+mod r24_tests;
 
 #[cfg(test)]
 mod c10_tests {
@@ -2309,11 +2368,12 @@ mod c10_tests {
             tags: vec![],
             fingerprint: None,
             charset: Charset::Utf8,
+            shell_integration: None,
         };
         let screen = term_core::Screen::new(term_core::ScreenConfig {
             cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20,
         });
-        SessionHandle::new("s-c10".into(), host, "local".into(), Arc::new(StubChannel), screen, center)
+        SessionHandle::new("s-c10".into(), host, "local".into(), Arc::new(StubChannel), screen, center, ControlOwner::Agent)
     }
 
     /// 注册一个手装会话（绕过 create_session 的真实传输）。

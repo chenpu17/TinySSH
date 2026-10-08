@@ -78,6 +78,7 @@ async fn identity_in_use_reference_check() {
             auth: AuthDraft::Key { identity_id: meta.id.clone() },
             tags: vec![],
             charset: Default::default(),
+            shell_integration: None,
         })
         .await
         .unwrap();

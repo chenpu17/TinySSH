@@ -139,6 +139,18 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         conn.pragma_update(None, "user_version", 5)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
+    // V6（C3，R24）：主机 shell_integration 列 + 存量 SSH 主机一次性显式写 true
+    // （与旧行为「无条件注入」一致，杜绝灰度期旧 UI/CLI upsert 缺字段静默关闭已迁移
+    // 主机——DC3.2）；local 主机与软删行不动（None=未设置）。
+    if version < 6 {
+        conn.execute_batch(
+            "ALTER TABLE hosts ADD COLUMN shell_integration INTEGER;
+             UPDATE hosts SET shell_integration=1 WHERE deleted_at IS NULL AND address != 'local';",
+        )
+        .map_err(|e| Error::Storage(e.to_string()))?;
+        conn.pragma_update(None, "user_version", 6)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
     Ok(())
 }
 
@@ -336,10 +348,33 @@ impl Vault {
         } else {
             identity_id
         };
+        // C3（DC3.2）：None=编辑保原值（旧行列原样）/新建 false；Some(v)=显式覆盖
+        let shell_integration: i64 = match host.shell_integration {
+            Some(v) => {
+                if v {
+                    1
+                } else {
+                    0
+                }
+            }
+            None => {
+                let existing: Option<Option<i64>> = conn
+                    .query_row(
+                        "SELECT shell_integration FROM hosts WHERE id=?1 AND deleted_at IS NULL",
+                        params![id],
+                        |r| r.get(0),
+                    )
+                    .ok();
+                match existing {
+                    Some(Some(v)) => v,
+                    _ => 0, // 新建或列空（未设置）→ false
+                }
+            }
+        };
         conn.execute(
-            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, charset, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)
-             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, charset=?9, updated_at=?10",
+            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, charset, shell_integration, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?11,?10,?10)
+             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, charset=?9, shell_integration=?11, updated_at=?10",
             params![
                 id,
                 host.name,
@@ -350,7 +385,8 @@ impl Vault {
                 identity_id,
                 serde_json::to_string(&host.tags).unwrap(),
                 host.charset.as_str(),
-                now_ms()
+                now_ms(),
+                shell_integration,
             ],
         )
         .map_err(db_err)?;
@@ -371,7 +407,7 @@ impl Vault {
     pub fn list_hosts(&self) -> Result<Vec<Host>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint, charset FROM hosts WHERE deleted_at IS NULL")
+            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint, charset, shell_integration FROM hosts WHERE deleted_at IS NULL")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |r| {
@@ -388,12 +424,13 @@ impl Vault {
                     // 空串 = 信任未建立（set_host_fingerprint 只写非空，此处兜底）
                     r.get::<_, Option<String>>(8)?.filter(|s| !s.is_empty()),
                     r.get::<_, String>(9)?,
+                    r.get::<_, Option<i64>>(10)?.map(|v| v != 0),
                 ))
             })
             .map_err(db_err)?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, name, address, port, username, auth_type, identity_id, tags_json, fingerprint, charset) =
+            let (id, name, address, port, username, auth_type, identity_id, tags_json, fingerprint, charset, shell_integration) =
                 row.map_err(db_err)?;
             out.push(Host {
                 id,
@@ -409,6 +446,7 @@ impl Vault {
                 identity_id,
                 tags: serde_json::from_str(&tags_json).unwrap_or_default(),
                 fingerprint,
+                shell_integration,
                 charset: Charset::parse(&charset),
             });
         }
@@ -1178,7 +1216,8 @@ mod tests {
             let conn = v.conn.lock().unwrap();
             conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
         };
-        assert_eq!(ver, 5);
+        // 开库升到当前链尾（R24 后=6）；V5 专属断言在下方逐项验证
+        assert_eq!(ver, 6);
         let ws = v.workspace().unwrap();
         assert_eq!(ws.schema_version, 1);
         assert_eq!(ws.chrome, "light"); // solar-light → light（DF8.3）
@@ -1204,6 +1243,86 @@ mod tests {
         // 损坏 blob 自愈回落 Default（不炸启动）
         v2.set_setting("ui.v2.workspace", "not-json{").unwrap();
         assert_eq!(v2.workspace().unwrap(), Workspace::default());
+    }
+
+    #[test]
+    fn c3_v6_migration_shell_integration_one_shot() {
+        // V5 老库（含 ssh/local/软删 host 行）→ 开库升 V6：存量 SSH 主机一次性
+        // 显式写 1（与旧行为「无条件注入」一致——DC3.2 灰度期防静默关闭）；local
+        // 与软删行不动；升级后 upsert 缺省保原值；重开幂等。
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m6.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute_batch("ALTER TABLE hosts ADD COLUMN host_fingerprint TEXT;").unwrap();
+            conn.execute_batch("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
+            conn.execute_batch("ALTER TABLE hosts ADD COLUMN charset TEXT NOT NULL DEFAULT 'utf-8';").unwrap();
+            conn.execute_batch(SCHEMA_V5).unwrap();
+            conn.execute(
+                "INSERT INTO hosts(id,name,address,username,auth_type,created_at,updated_at)
+                 VALUES('h-ssh','prod','10.0.0.1','ops','password',1,1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO hosts(id,name,address,username,auth_type,created_at,updated_at)
+                 VALUES('h-local','local','local','me','password',1,1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO hosts(id,name,address,username,auth_type,created_at,updated_at,deleted_at)
+                 VALUES('h-del','gone','10.0.0.2','ops','password',1,1,9)",
+                [],
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 5).unwrap();
+        }
+        std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
+        let v = Vault::open(&path).unwrap();
+        let by = |id: &str| v.list_hosts().unwrap().into_iter().find(|h| h.id == id).unwrap();
+        assert_eq!(by("h-ssh").shell_integration, Some(true), "存量 SSH 主机一次性置启用（DC3.2）");
+        assert_eq!(by("h-local").shell_integration, None, "local 主机不动");
+        assert!(v.list_hosts().unwrap().iter().all(|h| h.id != "h-del"), "软删行不在活列表");
+        // 升级后 upsert 缺省（None）保原值——不静默关闭已迁移主机
+        let h = by("h-ssh");
+        v.upsert_host(&HostDraft {
+            id: Some(h.id.clone()),
+            name: h.name.clone(),
+            address: h.address.clone(),
+            port: Some(h.port),
+            username: h.username.clone(),
+            auth: AuthDraft::Password { password: "x".into() },
+            tags: h.tags.clone(),
+            charset: h.charset,
+            shell_integration: None,
+        })
+        .unwrap();
+        assert_eq!(by("h-ssh").shell_integration, Some(true), "缺省 upsert 保原值");
+        // 显式 Some(false) 生效（用户可关闭）
+        let h = by("h-ssh");
+        v.upsert_host(&HostDraft {
+            id: Some(h.id.clone()),
+            name: h.name.clone(),
+            address: h.address.clone(),
+            port: Some(h.port),
+            username: h.username.clone(),
+            auth: AuthDraft::Password { password: "x".into() },
+            tags: h.tags.clone(),
+            charset: h.charset,
+            shell_integration: Some(false),
+        })
+        .unwrap();
+        assert_eq!(by("h-ssh").shell_integration, Some(false), "显式关闭生效");
+        // 重开幂等：显式 false 不被迁移重写
+        drop(v);
+        let v2 = Vault::open(&path).unwrap();
+        assert_eq!(
+            v2.list_hosts().unwrap().into_iter().find(|h| h.id == "h-ssh").unwrap().shell_integration,
+            Some(false),
+            "重开不得重写用户显式值"
+        );
     }
 
     #[test]

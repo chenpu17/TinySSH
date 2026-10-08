@@ -87,6 +87,8 @@ async fn approval_flow_deny_and_approve() {
         .create_session(&human(), CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
+    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
     let agent = Actor::Agent { client_id: "test-agent".into() };
 
     // agent exec → 待审批（本地会话不经 create 审批；exec 每条必审）
@@ -157,6 +159,8 @@ async fn allow_rule_skips_approval() {
         .create_session(&human(), CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
+    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
     let r = m
         .exec(&agent_actor(), sid, "echo direct", ExecOpts::default())
         .await
@@ -179,6 +183,8 @@ async fn dangerous_pattern_never_approved() {
         .create_session(&human(), CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
+    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
     let r = m
         .exec(&agent_actor(), sid, "reboot", ExecOpts::default())
         .await;
@@ -192,6 +198,8 @@ async fn takeover_voids_pending_approval_and_card_cannot_revive() {
         .create_session(&human(), CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
+    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
 
     // agent 提交 exec → 卡片待审批；agent 阻塞中
     let m2 = m.clone();
@@ -290,6 +298,8 @@ async fn close_session_voided_approval_leaves_audit_trail() {
         .create_session(&human(), CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
+    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
 
     let m2 = m.clone();
     let sid2 = sid.clone();
@@ -473,6 +483,8 @@ async fn queue_busy_backpressure() {
         .create_session(&human(), CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
+    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
     // 占住队列：一条长命令 + 8 条排队 → 第 9 条 QueueBusy
     let m2 = m.clone();
     let sid2 = sid.clone();
@@ -621,6 +633,7 @@ async fn gbk_charset_roundtrip_over_ssh() {
         .upsert_host(
             &human(),
             HostDraft {
+                id: None,
                 name: "e2e-gbk".into(),
                 address: "127.0.0.1".into(),
                 port: Some(2222),
@@ -628,7 +641,7 @@ async fn gbk_charset_roundtrip_over_ssh() {
                 auth: AuthDraft::Password { password: "testpass".into() },
                 tags: vec![],
                 charset: Charset::Gbk,
-                ..Default::default()
+                shell_integration: Some(true),
             },
         )
         .await

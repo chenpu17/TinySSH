@@ -66,6 +66,7 @@ async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
             auth: AuthDraft::Password { password: "testpass".into() },
             tags: vec![],
             charset: Default::default(),
+            shell_integration: Some(true),
         },
     )
     .await

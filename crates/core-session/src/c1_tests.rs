@@ -33,6 +33,7 @@ fn seed_unreachable(mgr: &SessionManager) -> HostId {
             auth: AuthDraft::Password { password: "testpass".into() },
             tags: vec![],
             charset: Charset::Utf8,
+            shell_integration: None,
         })
         .expect("seed host")
 }
@@ -423,6 +424,7 @@ async fn cancel_events_carry_terminal_phase_only() {
             auth: AuthDraft::Password { password: "x".into() },
             tags: vec![],
             charset: Charset::Utf8,
+            shell_integration: None,
         }).expect("seed refused host");
         let info = m.begin_connection(&Actor::Human, hid, BeginConnectionOpts::default()).await.unwrap();
         let fin = wait_phase(&m, &info.attempt_id, |p| *p == AttemptPhase::Failed, 200).await;

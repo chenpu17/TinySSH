@@ -436,6 +436,20 @@ async fn set_control(
 }
 
 #[tauri::command]
+async fn delegate_session(
+    state: ApiState<'_>,
+    sid: String,
+    goal: Option<String>,
+) -> CmdResult<()> {
+    state.api.delegate_session(&human(), sid, goal).await.map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn shell_capability(state: ApiState<'_>, sid: String) -> CmdResult<ShellCapability> {
+    state.api.shell_capability(&human(), sid).await.map_err(WireError::from)
+}
+
+#[tauri::command]
 async fn session_brief(state: ApiState<'_>, sid: String) -> CmdResult<SessionBrief> {
     state.api.get_session_brief(&human(), sid).await.map_err(WireError::from)
 }
@@ -815,6 +829,8 @@ fn main() {
                     r15_smoke_script(&run_id)
                 } else if mode == "r19" {
                     r19_smoke_script(&run_id)
+                } else if mode == "r24" {
+                    r24_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1088,6 +1104,18 @@ fn main() {
                     }
                 }
             });
+            // C3 shell 集成状态事件 → 前端（R24，同桥模式）
+            let handle_shell = app.handle().clone();
+            let mut shell_rx = api.subscribe_shell_integration();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(shell_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_shell.emit("shell-integration-event", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
             // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
             if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
                 let api2 = api.clone();
@@ -1160,7 +1188,8 @@ fn main() {
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             list_host_metadata, list_recent_hosts,
-            read_screen, send_keys, exec_human, set_control, session_brief, set_session_goal,
+            read_screen, send_keys, exec_human, set_control, delegate_session, session_brief, set_session_goal,
+            shell_capability,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,
@@ -1533,6 +1562,166 @@ fn r14_smoke_script(run_id: &str) -> String {
       // 退订归零由 R11 e2e 覆盖；close 后 debug_subscriptions 只遍历存活会话表（结构性
       // 不含已移除 sid），不在此重复断言
       await title('r14-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R24 C2/C3 探针注入脚本（TINYSSH_SMOKE_MODE=r24；dev 门控，产品路径无关）：
+/// 对共享 docker sshd 双主机验证 shell 集成治理与委托：
+/// A) r24-on（shell_integration 显式 true）——UI 点卡真路径建连 → TOFU/密码 →
+///    integration Ready（事件+list_sessions 双证）→ shell_capability 全真 →
+///    exec_human（Shell 模式）成功；
+/// B) r24-off（显式 false，DC3.2 新建默认关的显式变体）——建连 → integration
+///    Disabled、无注入 → shell_capability host_setting=false → exec_human 拒绝
+///    shell_integration_unavailable（available 载荷对账）；
+/// C) delegate_session（Human）→ control_owner 翻 Agent + 审计 session_delegated；
+/// D) B01：AUTOCONNECT local 会话 owner=Human + 审计 session_created.owner。
+/// Fresh 模式放行路径无 tauri 面（exec_human 恒 Shell 模式）——由 core r24_tests
+/// B12 覆盖，此处不主张。事件监听同 r19（transformCallback 内部通道，失败降级）。
+fn r24_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R24_INJECTED__) return; // WKWebView Finished 双触发防护
+  window.__R24_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const upsert = (name, si) => inv('upsert_host', { host: { id: null, name, address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8', shell_integration: si } });
+  const connectViaCard = async (name) => {
+    const card = await waitFor(() => [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name)) || null, 50);
+    if (!card) return 'FAIL-no-card:' + name;
+    card.querySelector('.host-card-main').click();
+    let handled = false;
+    for (let i = 0; i < 40; i++) {
+      await sleep(300);
+      const tbtn = [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接'));
+      if (tbtn) { tbtn.click(); handled = true; continue; }
+      const inp = document.querySelector('.hk-mask input');
+      if (inp) {
+        const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        set.call(inp, 'testpass');
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        const sub = [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('提交验证'));
+        if (sub) { sub.click(); handled = true; continue; }
+      }
+      if (!document.querySelector('.hk-mask') && handled) break;
+    }
+    const sess = await waitFor(async () => {
+      const ss = await inv('list_sessions', {});
+      return ss.find((x) => x.host_name === name && x.state === 'Connected') || null;
+    }, 80);
+    return sess || ('FAIL-not-connected:' + name);
+  };
+  (async () => {
+    try {
+      await title('r24-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      // 事件监听（内部通道 best-effort）
+      const evs = [];
+      let evOn = false;
+      try {
+        if (typeof window.__TAURI_INTERNALS__.transformCallback === 'function') {
+          const cb = window.__TAURI_INTERNALS__.transformCallback((e) => { if (e && e.payload) evs.push(e.payload); });
+          await inv('plugin:event|listen', { event: 'shell-integration-event', target: { kind: 'Any' }, handler: cb });
+          evOn = true;
+          await markSync('r24-events-on');
+        } else { await markSync('r24-events-na'); }
+      } catch (e) { await markSync('r24-events-na:' + String(e).slice(0, 80)); }
+      // 主机建档（显式 true/false 双变体）
+      let hidOn, hidOff;
+      try { hidOn = await upsert('r24-on', true); hidOff = await upsert('r24-off', false); }
+      catch (e) { return title('FAIL-upsert:' + String(e).slice(0, 120)); }
+      if (!hidOn || !hidOff) return title('FAIL-upsert-empty');
+      await markSync('r24-hosts-ok');
+      // A) r24-on 建连（UI 真路径：TOFU → 密码）
+      const sOn = await connectViaCard('r24-on');
+      if (typeof sOn === 'string' && sOn.startsWith('FAIL')) return title(sOn);
+      // integration Ready（list_sessions 拉取面）
+      const rOn = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        const row = ss.find((x) => x.id === sOn.id);
+        return row && row.integration === 'Ready' ? row : null;
+      }, 100);
+      if (!rOn) {
+        const ss = await inv('list_sessions', {});
+        return title('FAIL-on-integration:' + JSON.stringify(ss.filter((x) => x.id === sOn.id)));
+      }
+      await markSync('r24-on-ready');
+      // shell_capability（DC3.3）
+      const capOn = await inv('shell_capability', { sid: sOn.id });
+      if (!capOn.integration_present || !capOn.host_setting) return title('FAIL-on-cap:' + JSON.stringify(capOn));
+      await markSync('r24-on-cap-ok');
+      // exec_human（Shell 模式默认）在集成主机上成功
+      try { await inv('exec_human', { sid: sOn.id, command: 'echo ok' }); }
+      catch (e) { return title('FAIL-on-exec:' + String(e).slice(0, 140)); }
+      await markSync('r24-on-exec-ok');
+      // B) r24-off 建连（同 sshd 新主机行：TOFU 再走一次）
+      const sOff = await connectViaCard('r24-off');
+      if (typeof sOff === 'string' && sOff.startsWith('FAIL')) return title(sOff);
+      const rOff = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        const row = ss.find((x) => x.id === sOff.id);
+        return row && row.integration === 'Disabled' ? row : null;
+      }, 60);
+      if (!rOff) return title('FAIL-off-integration');
+      const capOff = await inv('shell_capability', { sid: sOff.id });
+      if (capOff.host_setting !== false) return title('FAIL-off-cap:' + JSON.stringify(capOff));
+      await markSync('r24-off-disabled');
+      // exec_human（Shell 模式）被拒：shell_integration_unavailable + available 载荷
+      let denied = null;
+      try { await inv('exec_human', { sid: sOff.id, command: 'echo nope' }); }
+      catch (e) { denied = e; }
+      if (!denied) return title('FAIL-off-exec-allowed');
+      const dkind = (denied && denied.kind) || String(denied);
+      if (dkind !== 'shell_integration_unavailable') return title('FAIL-off-exec-kind:' + dkind);
+      const avail = (denied && denied.detail && denied.detail.available) || {};
+      if (avail.host_setting !== false || avail.integration_present !== false) return title('FAIL-off-exec-payload:' + JSON.stringify(denied.detail));
+      await markSync('r24-off-rejected');
+      // C) 委派（DC2.2）：Human → Agent + 审计
+      await inv('delegate_session', { sid: sOff.id, goal: 'r24-smoke-goal' });
+      const dl = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        const row = ss.find((x) => x.id === sOff.id);
+        return row && row.control_owner === 'Agent' ? row : null;
+      }, 30);
+      if (!dl) return title('FAIL-delegate-owner');
+      const aud = await inv('audit_query', { sid: null, limit: 100 });
+      const ev = (aud.events || []).find((x) => x.action === 'session_delegated');
+      if (!ev) return title('FAIL-delegate-audit');
+      await markSync('r24-delegate-ok');
+      // D) B01：AUTOCONNECT local 会话 owner=Human（审计 session_created.owner）
+      const cr = (aud.events || []).filter((x) => x.action === 'session_created');
+      if (!cr.length || !cr.every((x) => x.payload_json && x.payload_json.owner === 'Human'))
+        return title('FAIL-b01-owner:' + JSON.stringify(cr.map((x) => x.payload_json)));
+      await markSync('r24-b01-ok');
+      // 事件面：r24-on 收到 Ready（监听成功才断言）
+      if (evOn) {
+        const onEvs = evs.filter((x) => x.session_id === sOn.id).map((x) => x.state);
+        await markSync('r24-events:' + onEvs.join(','));
+        if (!onEvs.includes('Ready')) return title('FAIL-events:' + onEvs.join(','));
+      }
+      // 回收（invoke 级）
+      await inv('close_session', { sid: sOn.id });
+      await inv('close_session', { sid: sOff.id });
+      await markSync('r24-DONE');
+      await title('r24-DONE');
     } catch (e) {
       await title('FAIL-exception:' + String(e).slice(0, 140));
     }

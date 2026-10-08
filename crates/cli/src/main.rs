@@ -122,6 +122,13 @@ enum SessionCmd {
     Takeover { session_id: String },
     /// 交还
     Handback { session_id: String },
+    /// 移交控制权给 Agent（内部走 handback 受控转换 + 审计 session_delegated）
+    Delegate {
+        session_id: String,
+        /// 交给 Agent 的任务说明（可选）
+        #[arg(long)]
+        goal: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -266,6 +273,7 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
                     auth,
                     tags: vec![],
                     charset: Default::default(),
+                    shell_integration: None,
                 })
                 .await?;
             println!("host {id} added");
@@ -414,6 +422,11 @@ async fn session_cmd(m: Arc<SessionManager>, cmd: SessionCmd) -> Result<()> {
         SessionCmd::Handback { session_id } => {
             let r = m.set_control(&human(), session_id, ControlOwner::Agent, ControlOpts::default()).await?;
             println!("{}", serde_json::to_string_pretty(&r)?);
+            Ok(())
+        }
+        SessionCmd::Delegate { session_id, goal } => {
+            m.delegate_session(&human(), session_id, goal).await?;
+            println!("已移交：会话控制权转给 Agent。");
             Ok(())
         }
     }

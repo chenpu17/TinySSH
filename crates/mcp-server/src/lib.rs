@@ -217,6 +217,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::ConnectFailed(_) => "connect_failed",
         Error::HostKeyRejected(_) => "host_key_rejected",
         Error::ExecTimeout => "exec_timeout",
+        Error::ShellIntegrationUnavailable { .. } => "shell_integration_unavailable",
         Error::Cancelled => "cancelled",
         Error::QueueBusy { .. } => "queue_busy",
         Error::InvalidActor => "invalid_actor",
@@ -231,6 +232,9 @@ fn error_detail(e: &Error) -> serde_json::Value {
     match e {
         Error::VoidedByHandback { brief } => serde_json::json!({ "brief": brief }),
         Error::IdentityInUse { host_names } => serde_json::json!({ "host_names": host_names }),
+        Error::ShellIntegrationUnavailable { available } => {
+            serde_json::json!({ "available": available })
+        }
         _ => serde_json::Value::Null,
     }
 }
