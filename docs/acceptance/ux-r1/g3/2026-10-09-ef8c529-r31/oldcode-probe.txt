@@ -1,0 +1,11 @@
+RED   D1 breadcrumb absent
+RED   D2 back/fwd/locate buttons absent  [["上一级目录","刷新当前目录"]]
+RED   D3 filter/sort tools absent
+RED   D4 click does not select  [selRows=0]
+RED   D5 dblclick no actions menu
+RED   D6 no transfer created by dblclick  [{"__err":"演示 shim 未实现该命令：list_transfers"}]
+RED   D7 list not keyboard-focusable
+RED   D8 split does not force full view
+RED   D9 no per-session restore surface (implied by D4)
+SUMMARY 9/9 red (expect all red)
+JS-ERRORS 0

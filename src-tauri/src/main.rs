@@ -908,6 +908,8 @@ fn main() {
                     r30_smoke_script(&run_id)
                 } else if mode.starts_with("r32") {
                     r32_smoke_script(&run_id, &mode)
+                } else if mode.starts_with("r31") {
+                    r31_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -2856,8 +2858,252 @@ fn r32_smoke_script(run_id: &str, mode: &str) -> String {
     base.replace("__RUN__", run_id)
 }
 
-fn r26_smoke_script(run_id: &str) -> String {
+/// R31（文件面板/完整视图/导航与选择）原生冒烟 r31a：真机 sshd 上走 §348/§350 全链——
+/// 面包屑/编辑路径框切换、返回/前进/上一级、隐藏项、名称筛选、排序（目录在前）、
+/// 键盘 Enter 进目录、多选下载（真传输落盘）、目录明确信息、双击动作菜单、
+/// 选择/路径跨标签恢复（按会话保存）、分屏×面板退完整视图（§186）。
+fn r31_smoke_script(run_id: &str) -> String {
     let base = r#"(function() {
+  if (window.__R31_INJECTED__) return;
+  window.__R31_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const setInput = (el, v) => { el.focus(); document.execCommand('selectAll', false); document.execCommand('insertText', false, v); };
+  const rowNames = () => [...document.querySelectorAll('[data-testid="sftp-list"] .sftp-row')].map((r) => r.dataset.name);
+  const selRow = (name, meta) => {
+    const row = [...document.querySelectorAll('[data-testid="sftp-list"] .sftp-row')].find((r) => r.dataset.name === name);
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: !!meta }));
+    return true;
+  };
+  const crumbsPath = () => document.querySelector('[data-testid="sftp-crumbs"]')?.title || null;
+  const clickNav = async (label) => {
+    const b = [...document.querySelectorAll('.sftp-nav button')].find((x) => x.getAttribute('aria-label') === label);
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const navTo = async (p) => {
+    [...document.querySelectorAll('.sftp-nav button')].find((x) => x.getAttribute('aria-label') === '切换路径输入')?.click();
+    const inp = await waitFor(() => document.querySelector('[data-testid="sftp-path-input"]') || null, 40);
+    if (!inp) return false;
+    setInput(inp, p);
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    const okNav = await waitFor(() => (crumbsPath() === p ? true : null), 60);
+    return !!okNav;
+  };
+  (async () => {
+    try {
+      await title('r31-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r31-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await inv('upsert_host', { host: { id: null, name: 'r31-b', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r31-a', '.host-connect-btn') ? true : null), 40);
+      if (!connect('r31-a')) return title('FAIL-connect-a');
+      await trust();
+      if (!await waitFor(async () => (await activeSess('r31-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+      await sleep(300);
+      if (!connect('r31-b')) return title('FAIL-connect-b');
+      await trust();
+      if (!await waitFor(async () => (await activeSess('r31-b'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-b');
+      await sleep(400);
+      // 附到 r31-a（第一个标签）
+      const tabA = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent.includes('r31-a'));
+      if (!tabA) return title('FAIL-no-tab-a');
+      tabA.click();
+      await sleep(400);
+      // 打开文件面板：R31 新面 = 面包屑 + 导航行 + 工具行
+      const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
+      if (!stBtn) return title('FAIL-no-files-btn');
+      stBtn.click();
+      if (!await waitFor(() => document.querySelector('[data-testid="sftp-crumbs"]') || null, 60)) return title('FAIL-no-crumbs');
+      await sleep(700); // 首载链落地
+      const initPath = crumbsPath();
+      if (!initPath || !initPath.startsWith('/')) return title('FAIL-init-path:' + initPath);
+      await markSync('r31a-init=' + initPath);
+      // 编辑路径框 → /tmp/r31dir
+      if (!await navTo('/tmp/r31dir')) return title('FAIL-nav-edit:' + crumbsPath());
+      if (!await waitFor(() => rowNames().includes('a.txt') ? true : null, 60)) return title('FAIL-no-rows:' + rowNames().join(','));
+      if (rowNames().includes('.hidden')) return title('FAIL-hidden-default-on');
+      await markSync('r31a-nav-edit-ok');
+      // 面包屑点击前缀段（tmp）→ /tmp
+      const crumbTmp = [...document.querySelectorAll('[data-testid="sftp-crumbs"] .sftp-crumb')].find((b) => b.textContent === 'tmp');
+      if (!crumbTmp) return title('FAIL-no-crumb-tmp');
+      crumbTmp.click();
+      if (!await waitFor(() => (crumbsPath() === '/tmp' ? true : null), 60)) return title('FAIL-crumb-nav:' + crumbsPath());
+      // 返回 → /tmp/r31dir；前进 → /tmp；上一级 → /
+      if (!await clickNav('返回')) return title('FAIL-back-btn');
+      if (!await waitFor(() => (crumbsPath() === '/tmp/r31dir' ? true : null), 60)) return title('FAIL-back:' + crumbsPath());
+      if (!await clickNav('前进')) return title('FAIL-fwd-btn');
+      if (!await waitFor(() => (crumbsPath() === '/tmp' ? true : null), 60)) return title('FAIL-fwd:' + crumbsPath());
+      if (!await clickNav('返回')) return title('FAIL-back2');
+      if (!await waitFor(() => (crumbsPath() === '/tmp/r31dir' ? true : null), 60)) return title('FAIL-back2-path');
+      if (!await clickNav('上一级')) return title('FAIL-up-btn');
+      if (!await waitFor(() => (crumbsPath() === '/tmp' ? true : null), 60)) return title('FAIL-up:' + crumbsPath());
+      if (!await navTo('/tmp/r31dir')) return title('FAIL-renav');
+      await markSync('r31a-nav-history-ok');
+      // 隐藏项开/关
+      const hidBtn = [...document.querySelectorAll('.sftp-tools button')].find((b) => (b.title || '').includes('隐藏项'));
+      if (!hidBtn) return title('FAIL-no-hidden-btn');
+      hidBtn.click();
+      if (!await waitFor(() => (rowNames().includes('.hidden') ? true : null), 40)) return title('FAIL-hidden-show');
+      hidBtn.click();
+      if (!await waitFor(() => (!rowNames().includes('.hidden') ? true : null), 40)) return title('FAIL-hidden-hide');
+      await markSync('r31a-hidden-ok');
+      // 名称筛选
+      const filter = document.querySelector('.sftp-filter');
+      if (!filter) return title('FAIL-no-filter');
+      setInput(filter, 'big');
+      if (!await waitFor(() => (rowNames().length === 1 && rowNames()[0] === 'big.txt' ? true : null), 40)) return title('FAIL-filter:' + rowNames().join(','));
+      setInput(filter, '');
+      await sleep(200);
+      await markSync('r31a-filter-ok');
+      // 排序：大小升序（目录在前，文件 6B<2K<100K）；再点降序翻转发
+      const sizeBtn = [...document.querySelectorAll('.sftp-tools button')].find((b) => b.textContent.startsWith('大小'));
+      if (!sizeBtn) return title('FAIL-no-size-btn');
+      sizeBtn.click();
+      const filesAsc = await waitFor(() => {
+        const n = rowNames();
+        const files = n.filter((x) => !['sub'].includes(x));
+        return (files.join(',') === '.hidden,a.txt,b.txt,big.txt' || files.join(',') === 'a.txt,b.txt,big.txt') ? files : null;
+      }, 40);
+      if (!filesAsc) return title('FAIL-sort-asc:' + rowNames().join(','));
+      sizeBtn.click();
+      const filesDesc = await waitFor(() => {
+        const n = rowNames();
+        const files = n.filter((x) => !['sub'].includes(x));
+        return (files.join(',') === 'big.txt,b.txt,a.txt,.hidden' || files.join(',') === 'big.txt,b.txt,a.txt') ? files : null;
+      }, 40);
+      if (!filesDesc) return title('FAIL-sort-desc:' + rowNames().join(','));
+      [...document.querySelectorAll('.sftp-tools button')].find((b) => b.textContent.startsWith('名称'))?.click();
+      await sleep(200);
+      await markSync('r31a-sort-ok');
+      // 键盘：聚焦列表 → Home 到首行（sub 目录）→ Enter 进入
+      const list = document.querySelector('[data-testid="sftp-list"]');
+      if (!list || list.getAttribute('tabindex') === null) return title('FAIL-list-not-focusable');
+      list.focus();
+      list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+      list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      if (!await waitFor(() => (crumbsPath() === '/tmp/r31dir/sub' ? true : null), 60)) return title('FAIL-kbd-enter:' + crumbsPath());
+      if (!await clickNav('返回')) return title('FAIL-back3');
+      if (!await waitFor(() => (crumbsPath() === '/tmp/r31dir' ? true : null), 60)) return title('FAIL-back3-path');
+      await markSync('r31a-kbd-ok');
+      // 多选下载：a.txt + ⌘b.txt → 下载所选 → 两张卡都到完成（真传输）
+      if (!selRow('a.txt')) return title('FAIL-no-a-row');
+      selRow('b.txt', true);
+      const selbar = await waitFor(() => document.querySelector('[data-testid="sftp-selbar"]'), 40);
+      if (!selbar || !selbar.textContent.includes('已选 2 项')) return title('FAIL-selbar:' + (selbar?.textContent ?? 'null'));
+      [...selbar.querySelectorAll('button')].find((b) => b.textContent.includes('下载所选'))?.click();
+      const doneTxt = await waitFor(() => {
+        const t = [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ');
+        return (t.includes('完成') && (t.match(/完成/g) || []).length >= 2) ? t : null;
+      }, 150);
+      if (!doneTxt) return title('FAIL-multidl:' + [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ').slice(0, 200));
+      await markSync('r31a-multidl-ok');
+      // 目录进选择 → 明确信息（不静默跳过）
+      selRow('sub', true);
+      await sleep(200);
+      [...document.querySelectorAll('[data-testid="sftp-selbar"] button')].find((b) => b.textContent.includes('下载所选'))?.click();
+      const toast = await waitFor(() => {
+        const t = [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('|');
+        return t.includes('目录') && t.includes('不支持直接下载') ? t : null;
+      }, 40);
+      if (!toast) return title('FAIL-dir-info:' + [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('|'));
+      await markSync('r31a-dir-info-ok');
+      // 双击文件 → 动作菜单（不直接执行）→ 菜单下载
+      const fRow = [...document.querySelectorAll('[data-testid="sftp-list"] .sftp-row')].find((r) => r.dataset.name === 'big.txt');
+      fRow.querySelector('.sftp-name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 600, clientY: 300 }));
+      const menu = await waitFor(() => document.querySelector('[data-testid="sftp-menu"]') || null, 40);
+      if (!menu) return title('FAIL-no-menu');
+      const cardsBefore = document.querySelectorAll('.xfer-row').length;
+      [...menu.querySelectorAll('button')].find((b) => b.textContent.includes('下载'))?.click();
+      if (!await waitFor(() => document.querySelectorAll('.xfer-row').length > cardsBefore ? true : null, 60)) return title('FAIL-menu-dl');
+      await markSync('r31a-menu-ok');
+      // 定位到终端目录：cwd 可达则点按可达（shell 集成未启用时按钮禁用=登记为 skip）
+      if (!await navTo('/tmp')) return title('FAIL-nav-tmp');
+      const locBtn = [...document.querySelectorAll('.sftp-nav button')].find((b) => b.getAttribute('aria-label') === '定位到终端目录');
+      if (!locBtn) return title('FAIL-no-locate');
+      if (locBtn.disabled) {
+        await markSync('r31a-locate-skip（无集成主机无可信 cwd，显式定位按钮按设计禁用；demo 域已判别）');
+      } else {
+        locBtn.click();
+        const dest = await waitFor(() => (crumbsPath() && crumbsPath() !== '/tmp' ? crumbsPath() : null), 60);
+        if (!dest) return title('FAIL-locate-noop');
+        await markSync('r31a-locate=' + dest);
+      }
+      if (!await navTo('/tmp/r31dir')) return title('FAIL-nav-back');
+      // 跨标签恢复（按会话保存）：选中 a.txt → 切 r31-b → 切回：路径+选择俱在
+      selRow('a.txt');
+      await sleep(200);
+      const tabB = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent.includes('r31-b'));
+      tabB.click();
+      await sleep(600);
+      const bCrumbs = crumbsPath();
+      if (!bCrumbs || !bCrumbs.startsWith('/')) return title('FAIL-tab-b-crumbs:' + bCrumbs);
+      if (bCrumbs === '/tmp/r31dir') return title('FAIL-cross-tab-leak');
+      const tabA2 = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent.includes('r31-a'));
+      tabA2.click();
+      const restored = await waitFor(() => {
+        const row = [...document.querySelectorAll('[data-testid="sftp-list"] .sftp-row')].find((r) => r.dataset.name === 'a.txt');
+        return (crumbsPath() === '/tmp/r31dir' && row?.classList.contains('sel')) ? true : null;
+      }, 60);
+      if (!restored) return title('FAIL-restore:' + crumbsPath() + '|' + rowNames().join(','));
+      await markSync('r31a-restore-ok');
+      // 分屏 × 面板 → 完整视图（§186）；关面板恢复分屏
+      [...document.querySelectorAll('button')].find((b) => (b.title || '').includes('分屏：在右侧显示已有会话'))?.click();
+      const smItem = await waitFor(() => [...document.querySelectorAll('.split-menu .sm-item')].find((b) => b.textContent.includes('r31-b')) || null, 40);
+      if (!smItem) return title('FAIL-no-sm-item');
+      smItem.click();
+      const full = await waitFor(() => (document.querySelector('.task-panel')?.classList.contains('tp-full') ? true : null), 40);
+      if (!full) return title('FAIL-split-not-full');
+      await markSync('r31a-split-full-ok');
+      document.querySelector('.tp-head button[aria-label="关闭任务面板"]')?.click();
+      await sleep(400);
+      const panes = document.querySelectorAll('.term-session.pane-left, .term-session.pane-right').length;
+      if (panes !== 2) return title('FAIL-split-restored:' + panes);
+      await markSync('r31a-split-restore-ok');
+      await markSync('r31a-DONE');
+      await title('r31-DONE');
+      await sleep(120000);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 120) : String(e).slice(0, 140)));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+fn r26_smoke_script(run_id: &str) -> String {    let base = r#"(function() {
   if (window.__R26_INJECTED__) return;
   window.__R26_INJECTED__ = true;
   const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});

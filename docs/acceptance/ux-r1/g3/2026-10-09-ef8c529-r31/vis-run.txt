@@ -1,0 +1,14 @@
+PASS V1 welcome diff within noise floor  [diff_px=0 noise=3]
+PASS V2a nav buttons all visible & unclipped  [[29,29,29,29,29,29]]
+PASS V2b breadcrumb box renders  [{"w":361,"sw":361,"h":29}]
+PASS V2c tools row unclipped  [[{"t":"隐藏项","clipped":false},{"t":"名称↑","clipped":false},{"t":"大小","clipped":false},{"t":"时间","clipped":false}]]
+PASS V2d panel no horizontal overflow  [0]
+PASS V3a two rows highlighted  [2]
+PASS V3b selbar box sane  [{"w":361,"h":32}]
+PASS V3c actions menu in viewport  [{"x":1019,"y":462,"w":132,"h":62.046875,"inVp":true}]
+PASS V4a split forces full view
+PASS V4b full view no overflow  [0]
+PASS V4c split restored after close  [2]
+PASS V5a 360: time hidden, name readable
+PASS V6 zero JS errors
+SUMMARY 13/13

@@ -898,6 +898,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         f("error.log", 2097152, 1790956800),
         // 未知字段呈现面：socket 无大小无时间（§352 显「—」不伪造零值）
         { name: "php-fpm.sock", is_dir: false, kind: "other", size: null, mtime: null },
+        // 隐藏项（R31 显示隐藏项判别：默认不显示，开启后可见）
+        f(".rotate.state", 128, 1790784000),
         // 符号链接：latest → archive（目录，点击 stat 探明后进入）
         l("latest", 1790956800),
       ];
@@ -934,6 +936,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           d("scripts"),
           f("release.sh", 1841, 1790956800),
           f("app.yml", 640, 1790908800),
+          f(".env", 220, 1790784000),
         ],
         "/root/deploy/scripts": [
           f("migrate.sh", 733, 1790908800),

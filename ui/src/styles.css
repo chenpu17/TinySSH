@@ -659,14 +659,62 @@ textarea {
 .sftp-row .sftp-ico { flex: none; display: inline-flex; color: var(--dim); }
 .sftp-row.dir .sftp-ico { color: var(--warn); }
 .sftp-row .sftp-name { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; border: none; padding: 0; color: var(--text); font-size: 12px; cursor: text; }
-.sftp-row.dir .sftp-name { cursor: pointer; }
-.sftp-row.dir .sftp-name:hover { color: var(--accent); text-decoration: underline; }
+/* R31：行=选择域（单击选中/双击激活）——目录名不再自带进入指针，激活提示交给行 hover/标题 */
+.sftp-row.dir .sftp-name { cursor: default; }
+.sftp-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.sftp-row.sel:hover, .sftp-row.cursor:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .sftp-row .sftp-size, .sftp-row .sftp-time { flex: none; font-size: 11px; }
 .sftp-row .sftp-size { width: 52px; text-align: right; }
 .sftp-row .sftp-time { width: 34px; text-align: right; }
 .sftp-row .sftp-dl { flex: none; padding: 2px 6px; font-size: 11px; opacity: 0; transition: opacity 0.12s; }
 .sftp-row:hover .sftp-dl, .sftp-row .sftp-dl:focus-visible { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .sftp-row .sftp-dl { transition: none; } }
+/* R31 §350：导航行 / 面包屑 / 筛选排序工具行 / 选择条 / 键盘光标与选中 */
+.sftp-nav { gap: 4px; }
+.sftp-nav button { flex: none; padding: 4px 7px; }
+.sftp-crumbs {
+  margin-top: 6px; display: flex; align-items: center; white-space: nowrap;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 12px; min-height: 26px; background: var(--bg, transparent);
+}
+.sftp-crumb-seg { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.sftp-crumb {
+  background: none; border: none; padding: 1px 2px; color: var(--accent);
+  font-size: 12px; cursor: pointer; border-radius: 4px;
+}
+.sftp-crumb:hover { text-decoration: underline; }
+.sftp-crumb.cur { color: var(--text); font-weight: 600; cursor: default; }
+.sftp-tools { margin-top: 6px; gap: 4px; }
+.sftp-tools .sftp-filter { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; }
+.sftp-tools button { flex: none; padding: 4px 6px; font-size: 11px; }
+/* rev-r31 低-4：紧凑钮命中区 ≥28×28（R27 ::after 透明扩展工艺，无布局位移） */
+.sftp-nav button, .sftp-tools button, .sftp-selbar button { position: relative; }
+.sftp-nav button::after, .sftp-tools button::after, .sftp-selbar button::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 8px;
+}
+.sftp-selbar {
+  margin-top: 6px; gap: 6px; padding: 4px 6px; font-size: 12px;
+  border: 1px solid var(--accent); border-radius: 6px; align-items: center;
+}
+.sftp-selbar button { flex: none; padding: 2px 6px; font-size: 11px; }
+.sftp-list:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 4px; }
+.sftp-row { user-select: none; cursor: default; }
+.sftp-row.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.sftp-row.cursor { outline: 1px solid var(--focus); outline-offset: -1px; }
+.sftp-list.cols-no-time .sftp-time { display: none; }
+.sftp-list.cols-name-only .sftp-time, .sftp-list.cols-name-only .sftp-size { display: none; }
+.sftp-menu {
+  position: fixed; z-index: 200; min-width: 132px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column;
+}
+.sftp-menu-title { font-size: 11px; color: var(--dim); padding: 4px 8px 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sftp-menu button {
+  display: flex; align-items: center; gap: 6px; background: none; border: none;
+  color: var(--text); font-size: 12px; padding: 6px 8px; cursor: pointer; text-align: left; border-radius: 6px;
+}
+.sftp-menu button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 /* T42 端口转发（FR-8）*/
 .fwd-form { gap: 4px; align-items: center; }

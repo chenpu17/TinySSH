@@ -1,0 +1,49 @@
+PASS A0 session A connected  [s-demo-0001]
+PASS A1 first-load via brief cwd + hidden off  [["archive","access.log","error.log","latest","php-fpm.sock"]]
+PASS A2 breadcrumb segments  [/var/log/nginx]
+PASS A3 dblclick dir enters  [["access-202609.log.gz"]]
+PASS A4a back to /var/log/nginx  [/var/log/nginx]
+PASS A4b forward to archive  [["access-202609.log.gz"]]
+PASS A4c up to /var/log/nginx  [/var/log/nginx]
+PASS A5a edit toggle shows input
+PASS A5b enter navigates + back to crumbs  [/root/deploy]
+PASS A6 crumb prefix click → /root  [/root]
+PASS A7a locate enabled when away from cwd
+PASS A7b locate → brief cwd  [/var/log/nginx]
+PASS A7c locate disabled at cwd
+PASS A8 refresh keeps path
+PASS B1 hidden toggle shows dotfiles
+PASS B1b toggle off hides again
+PASS B2 filter narrows  [["access.log","error.log"]]
+PASS B3 filter no-match message
+PASS B4 size asc: dirs first, files by size, nulls last  [["deploy","logs","releases","readme.md","nginx.conf","backup-0930.tar.gz","current","gone-link"]]
+PASS B5 size desc: dirs still first, files reversed  [["deploy","logs","releases","backup-0930.tar.gz","nginx.conf","readme.md","current","gone-link"]]
+PASS B6 mtime asc: dirs by mtime then files asc  [["deploy","logs","releases","readme.md","gone-link","backup-0930.tar.gz","nginx.conf","current"]]
+PASS B7 name sort restores  [["deploy","logs","releases","backup-0930.tar.gz","current","gone-link","nginx.conf","readme.md"]]
+PASS C1 click selects one
+PASS C2 cmd-click adds  [已选 2 项 下载所选✕]
+PASS C3 multi-download creates 2 transfers  [0→2]
+PASS C4 dir download gives explicit info  [2 个目录不支持直接下载——请进入目录选择其中的文件]
+PASS C5 clear selection
+PASS C6a arrows move cursor  [[false,true,false,false,false,false,false,false]]
+PASS C6b Enter enters dir  [/root/logs]
+PASS C6c Space toggles selection
+PASS C7a dblclick file shows actions menu
+PASS C7b dblclick does not execute directly
+PASS C7c menu download creates transfer
+PASS C7d menu closed after action
+PASS C7e Esc closes menu
+PASS D0 seeded session attached + fresh chain  [["archive","access.log","error.log","latest","php-fpm.sock"]]
+PASS D1 staging session has own browser state  [["archive","access.log","error.log","latest","php-fpm.sock"]]
+PASS D2 switch back restores path+selection  [["scripts","app.yml","release.sh*"]]
+PASS D3 panel close/reopen keeps state  [["scripts","app.yml","release.sh"]]
+PASS E1 narrow window → full view
+PASS E2 selection survives resize
+PASS E3 widen restores side panel
+PASS E4 split × panel → full view
+PASS E5 split panes intact behind full view  [2]
+PASS E6 close panel restores split  [2]
+PASS E7 narrow collapses time column first  [sftp-list cols-name-only]
+PASS E8 narrower collapses size too
+PASS Z zero page errors
+SUMMARY 48/48

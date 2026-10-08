@@ -499,12 +499,29 @@ export default function App() {
   const [transfers, setTransfers] = useState<TransferCard[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [downloadPath, setDownloadPath] = useState("");
-  // 远程文件浏览器（T41 FR-7）：路径/条目按 sid 归属，切会话重置（H1 同款纪律）
+  // 远程文件浏览器（T41 FR-7；C4 R30 路径/元数据；R31 §348/§350 导航/选择/持久化）：
+  // 浏览状态按 session ID 保存（切走快照、切回恢复——路径/选择/历史）；筛选/隐藏/排序为
+  // 全局视图偏好不随会话走
   const [sftpPath, setSftpPath] = useState("");
   const [sftpPathInput, setSftpPathInput] = useState("");
   const [sftpEntries, setSftpEntries] = useState<DirEntryS[] | null>(null);
   const [sftpLoading, setSftpLoading] = useState(false);
   const [sftpErr, setSftpErr] = useState<string | null>(null);
+  const [sftpSel, setSftpSel] = useState<Set<string>>(new Set());
+  const [sftpHist, setSftpHist] = useState<string[]>([]);
+  const [sftpFwd, setSftpFwd] = useState<string[]>([]);
+  const [sftpCursor, setSftpCursor] = useState(-1);
+  const sftpSavedRef = useRef<Map<string, { path: string; entries: DirEntryS[] | null; err: string | null; sel: string[]; hist: string[]; fwd: string[]; anchor: string | null }>>(new Map());
+  const sftpPrevSidRef = useRef<string | null>(null);
+  const sftpAnchorRef = useRef<string | null>(null);
+  const sftpPathRef = useRef("");
+  // 视图偏好（全局）：面包屑↔编辑路径框、名称筛选、显示隐藏项、排序键/方向
+  const [sftpEditPath, setSftpEditPath] = useState(false);
+  const [sftpFilter, setSftpFilter] = useState("");
+  const [sftpShowHidden, setShowHidden] = useState(false);
+  const [sftpSort, setSftpSort] = useState<{ key: "name" | "size" | "mtime"; dir: 1 | -1 }>({ key: "name", dir: 1 });
+  const [sftpMenu, setSftpMenu] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [sftpListW, setSftpListW] = useState(9999);
   // 端口转发（T42 FR-8）：按 sid 归属；3s 轮询状态（断线→Failed 的变化要能看到）
   const [forwards, setForwards] = useState<ForwardInfo[]>([]);
   const [fwdKind, setFwdKind] = useState<"Local" | "Remote" | "Dynamic">("Local");
@@ -1443,10 +1460,13 @@ export default function App() {
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
     if (rightPanel === null) { setTpFull(false); return; }
+    // §186/§187（R12 登记归本轮）：双分屏时面板一律走中央完整视图——
+    // 避免终端×2 + 面板形成三个窄工作区；关闭面板即恢复原分屏（分屏不拆）
+    if (splitPanes) { setTpFull(true); return; }
     const th = 560 + panelNeed;
     if (availW < th - 16) setTpFull(true);
     else if (availW > th + 16) setTpFull(false);
-  }, [availW, panelNeed, rightPanel]);
+  }, [availW, panelNeed, rightPanel, splitPanes]);
   const toolsRef = useRef<HTMLDivElement | null>(null);
   const tabsMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -2011,12 +2031,14 @@ export default function App() {
 
   // 拖拽上传：目标目录优先取远程文件区正在浏览的目录（T41），否则现场简报 cwd。
   // 先挂 pending 卡占位，拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
+  // pending 卡 id 序号（R31）：同毫秒批量发起多张卡时防 id 碰撞
+  const pendingSeqRef = useRef(0);
   const startUploads = useCallback(async (paths: string[], destDir?: string) => {
     const s = sidRef.current;
     const cwd = destDir ?? (s ? briefRef.current?.cwd : undefined);
     for (const p of paths) {
       const name = pathBasename(p);
-      const tempId = `pending-${Date.now()}-${name}`;
+      const tempId = `pending-${Date.now()}-${++pendingSeqRef.current}-${name}`;
       if (!s) {
         upsertTransfer({ id: tempId, kind: "Upload", name, remote: "—", local: p, status: "failed", error: "未接入会话——先连接并聚焦一台主机再拖入文件" });
         continue;
@@ -2040,7 +2062,7 @@ export default function App() {
   const downloadRemote = useCallback(async (rp: string) => {
     const s = sidRef.current;
     if (!s || !rp) return;
-    const tempId = `pending-dl-${Date.now()}`;
+    const tempId = `pending-dl-${Date.now()}-${++pendingSeqRef.current}`;
     upsertTransfer({ id: tempId, kind: "Download", name: pathBasename(rp), remote: rp, local: "…", status: "running" });
     try {
       const h = await invoke("download_file", { sid: s, remote: rp, local: null });
@@ -2061,6 +2083,7 @@ export default function App() {
   // C02 请求代际：同会话内快速连续导航（输入连击回车/父目录+刷新竞速）时，
   // 晚到的旧响应不得覆盖新路径——仅按 sid 判别不够（同会话内无 sid 变化），补代际
   const sftpGenRef = useRef(0);
+  useEffect(() => { sftpPathRef.current = sftpPath; }, [sftpPath]);
   const loadDir = useCallback(async (p: string): Promise<boolean> => {
     const s = sidRef.current;
     if (!s || !p.trim()) return false;
@@ -2070,6 +2093,10 @@ export default function App() {
       const es = await invoke("sftp_list", { sid: s, path: p.trim() });
       if (sidRef.current !== s || sftpGenRef.current !== gen) return false; // 过期结果丢弃（H1/C02）
       setSftpEntries(es);
+      if (sftpPathRef.current !== p.trim()) {
+        // 换目录 = 换选择域：选择/光标随目录走，不跨目录保留（恢复面按会话快照承担）
+        setSftpSel(new Set()); sftpAnchorRef.current = null; setSftpCursor(-1);
+      }
       setSftpPath(p.trim());
       setSftpPathInput(p.trim());
       return true;
@@ -2082,22 +2109,60 @@ export default function App() {
   }, []);
 
   // C4（§352）：手动路径导航先规范化（canonical path）再列目录——前端不猜路径，
-  // 不存在/权限不足按后端可区别错误如实呈现
-  const navigateTo = useCallback(async (p: string) => {
+  // 不存在/权限不足按后端可区别错误如实呈现。
+  // R31：成功换路径记入「返回」栈并清「前进」栈（刷新/首载不走这里，不入栈）
+  const navigateTo = useCallback(async (p: string): Promise<boolean> => {
     const s = sidRef.current;
-    if (!s || !p.trim()) return;
+    if (!s || !p.trim()) return false;
+    const from = sftpPathRef.current;
+    const genAtStart = sftpGenRef.current;
     try {
       const r = await invoke("sftp_resolve_path", { sid: s, path: p.trim() });
-      if (sidRef.current !== s) return;
-      await loadDir(r.canonical);
+      if (sidRef.current !== s) return false;
+      const ok = await loadDir(r.canonical);
+      if (ok && r.canonical !== from && sidRef.current === s) {
+        setSftpHist((h) => from ? [...h.slice(-49), from] : h);
+        setSftpFwd([]);
+      }
+      return ok;
     } catch (e) {
-      // rev-r30 中-1：迟到失败响应不得写入已切换会话的浏览器（与 loadDir 同纪律）
-      if (sidRef.current === s) setSftpErr(friendlyError(e));
+      // rev-r30 中-1：迟到失败响应不得写入已切换会话的浏览器（与 loadDir 同纪律）；
+      // rev-r31 低-6：补代际守卫——重叠导航下晚到的 resolve 错误不得挂到新路径横幅
+      if (sidRef.current === s && sftpGenRef.current === genAtStart) setSftpErr(friendlyError(e));
+      return false;
     }
   }, [loadDir]);
 
+  // R31 §350 返回/前进：栈内存的是已访问 canonical 路径，直接 loadDir（不再入栈）。
+  // rev-r31 低-3：目标已失效（被删/无权限）时栈不消耗、对侧不残留——回滚本次弹出
+  const sftpGoBack = useCallback(async () => {
+    if (!sftpHist.length) return;
+    const s = sidRef.current;
+    const target = sftpHist[sftpHist.length - 1];
+    setSftpHist((h) => h.slice(0, -1));
+    if (sftpPathRef.current) setSftpFwd((f) => [...f.slice(-49), sftpPathRef.current]);
+    const okNav = await loadDir(target);
+    if (!okNav && sidRef.current === s) {
+      setSftpHist((h) => [...h, target]);
+      setSftpFwd((f) => f.slice(0, -1));
+    }
+  }, [sftpHist, loadDir]);
+  const sftpGoFwd = useCallback(async () => {
+    if (!sftpFwd.length) return;
+    const s = sidRef.current;
+    const target = sftpFwd[sftpFwd.length - 1];
+    setSftpFwd((f) => f.slice(0, -1));
+    if (sftpPathRef.current) setSftpHist((h) => [...h.slice(-49), sftpPathRef.current]);
+    const okNav = await loadDir(target);
+    if (!okNav && sidRef.current === s) {
+      setSftpFwd((f) => [...f, target]);
+      setSftpHist((h) => h.slice(0, -1));
+    }
+  }, [sftpFwd, loadDir]);
+
   // C4：符号链接点击——stat 探明目标（is_dir 为跟随语义）再决定进入/下载；
-  // 悬空链接 stat 的 canonical 为 null 但 is_dir 仍可得，失败如实报错不猜
+  // 悬空链接 stat 的 canonical 为 null 但 is_dir 仍可得，失败如实报错不猜。
+  // 双击/Enter 同语义（activate）；进目录走 navigateTo（入返回栈）
   const openSymlink = useCallback(async (e: DirEntryS) => {
     const s = sidRef.current;
     if (!s || !sftpPath) return;
@@ -2105,24 +2170,56 @@ export default function App() {
     try {
       const st = await invoke("sftp_stat", { sid: s, path: full });
       if (sidRef.current !== s) return;
-      if (st.is_dir) await loadDir(full);
+      if (st.is_dir) await navigateTo(full);
       else await downloadRemote(full);
     } catch (err) {
       if (sidRef.current === s) setSftpErr(friendlyError(err));
     }
-  }, [sftpPath, loadDir, downloadRemote]);
+  }, [sftpPath, navigateTo, downloadRemote]);
 
-  // 切会话：浏览器清空待命
+  // R31 §348 按会话保存浏览状态：切走存快照、切回恢复（路径/条目/错误/选择/历史）；
+  // 无快照的新会话清空待命，§348 首载链照常。会话关闭由下方 prune 清快照。
   const sftpFirstSidRef = useRef<string | null>(null);
   useEffect(() => {
-    sftpFirstSidRef.current = null;
-    setSftpEntries(null); setSftpErr(null);
-    if (!sid) { setSftpPath(""); setSftpPathInput(""); }
-    // 只随会话切换清空——简报 cwd 变化不重置用户正在浏览的位置
+    const prev = sftpPrevSidRef.current;
+    if (prev && prev !== sid) {
+      sftpSavedRef.current.set(prev, {
+        path: sftpPath, entries: sftpEntries, err: sftpErr,
+        sel: [...sftpSel], hist: sftpHist, fwd: sftpFwd, anchor: sftpAnchorRef.current,
+      });
+    }
+    sftpPrevSidRef.current = sid;
+    // 作废在途响应：恢复快照后，旧会话晚到的 loadDir 不得覆盖恢复态
+    //（gen 全局递增即可使 sid+gen 双守卫拒绝一切在途结果）
+    sftpGenRef.current++;
+    setSftpMenu(null);
+    // 在途响应被作废时其 finally 不再清 loading——切会话统一复位，防骨架卡死
+    setSftpLoading(false);
+    const saved = sid ? sftpSavedRef.current.get(sid) : undefined;
+    if (saved) {
+      setSftpPath(saved.path); setSftpPathInput(saved.path); setSftpEntries(saved.entries);
+      setSftpErr(saved.err); setSftpSel(new Set(saved.sel)); setSftpHist(saved.hist); setSftpFwd(saved.fwd);
+      sftpAnchorRef.current = saved.anchor;
+    } else {
+      setSftpEntries(null); setSftpErr(null); setSftpSel(new Set()); setSftpHist([]); setSftpFwd([]);
+      sftpAnchorRef.current = null;
+      // rev-r31 低-5：无快照的新会话同样清路径——面包屑短暂显示上一会话路径是残留
+      setSftpPath(""); setSftpPathInput("");
+    }
+    setSftpCursor(-1);
+    sftpFirstSidRef.current = saved ? sid : null;
+    // 快照读取只在切会话时刻发生——依赖刻意收窄（同既有 H1 纪律）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid]);
+  // 会话关闭：清该会话快照（不残留死会话浏览态）
+  const sftpAliveKey = sessions.map((x) => x.id).join("\u0001");
+  useEffect(() => {
+    const alive = new Set(sftpAliveKey ? sftpAliveKey.split("\u0001") : []);
+    for (const k of [...sftpSavedRef.current.keys()]) if (!alive.has(k)) sftpSavedRef.current.delete(k);
+  }, [sftpAliveKey]);
   // §348 首次打开链：本次连接可信 cwd → SFTP 初始目录（resolve null）→ 手动输入。
-  // brief 到达（cwd 可用性已知）才起链；每会话一次，后续浏览位置不回跳。
+  // brief 到达（cwd 可用性已知）才起链；每会话一次（有快照恢复的会话不再首载——
+  // 恢复的位置优先），后续浏览位置不回跳。
   useEffect(() => {
     if (!sid || sftpFirstSidRef.current === sid || brief === null) return;
     sftpFirstSidRef.current = sid;
@@ -2140,6 +2237,138 @@ export default function App() {
       }
     })();
   }, [sid, brief, loadDir]);
+
+  // R31 §350 显示列表：隐藏项过滤 + 名称筛选 + 排序（目录恒在前；
+  // 未知大小/时间恒排后且不参与方向翻转——不以 0 冒充，§352）
+  const sftpShown = useMemo(() => {
+    if (!sftpEntries) return [] as DirEntryS[];
+    const q = sftpFilter.trim().toLowerCase();
+    const rows = sftpEntries.filter((e) => (sftpShowHidden || !e.name.startsWith(".")) && (!q || e.name.toLowerCase().includes(q)));
+    const nameCmp = (a: DirEntryS, b: DirEntryS) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    const dir = sftpSort.dir;
+    const cmp = (a: DirEntryS, b: DirEntryS): number => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      if (sftpSort.key === "name") return dir * nameCmp(a, b);
+      const av = sftpSort.key === "size" ? a.size : a.mtime;
+      const bv = sftpSort.key === "size" ? b.size : b.mtime;
+      if (av == null && bv == null) return nameCmp(a, b);
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return dir * (av - bv) || nameCmp(a, b);
+    };
+    return rows.slice().sort(cmp);
+  }, [sftpEntries, sftpFilter, sftpShowHidden, sftpSort]);
+  useEffect(() => {
+    setSftpCursor((c) => (sftpShown.length ? Math.min(c, sftpShown.length - 1) : -1));
+  }, [sftpShown.length]);
+  // R31 §350 选择：单击选中、⌘/Ctrl 切换、Shift 范围（锚点行）；多选下载只取文件，
+  // 目录/特殊文件给明确信息（§350「目录下载给明确信息」——不静默跳过）
+  const sftpRowClick = useCallback((e: DirEntryS, idx: number, ev: React.MouseEvent) => {
+    if (ev.shiftKey && sftpAnchorRef.current) {
+      const ai = sftpShown.findIndex((x) => x.name === sftpAnchorRef.current);
+      const lo = ai < 0 ? idx : Math.min(ai, idx);
+      const hi = ai < 0 ? idx : Math.max(ai, idx);
+      setSftpSel(new Set(sftpShown.slice(lo, hi + 1).map((x) => x.name)));
+    } else if (ev.metaKey || ev.ctrlKey) {
+      setSftpSel((prev) => { const n = new Set(prev); if (n.has(e.name)) n.delete(e.name); else n.add(e.name); return n; });
+      sftpAnchorRef.current = e.name;
+    } else {
+      setSftpSel(new Set([e.name]));
+      sftpAnchorRef.current = e.name;
+    }
+    setSftpCursor(idx);
+  }, [sftpShown]);
+  const sftpActivate = useCallback((e: DirEntryS, at?: { x: number; y: number }) => {
+    // Enter/双击激活：目录进入、链接探明（R30 语义）、文件弹可用动作（不直接执行 §350）
+    if (e.is_dir) void navigateTo(`${sftpPathRef.current.replace(/\/+$/, "")}/${e.name}`);
+    else if (e.kind === "symlink") void openSymlink(e);
+    else if (at) setSftpMenu({ name: e.name, x: at.x, y: at.y });
+  }, [navigateTo, openSymlink]);
+  const sftpDownloadSelected = useCallback(async () => {
+    const s = sidRef.current;
+    if (!s || !sftpEntries || sftpSel.size === 0) return;
+    const byName = new Map(sftpEntries.map((e) => [e.name, e]));
+    const base = sftpPathRef.current.replace(/\/+$/, "");
+    let skippedDirs = 0, skippedOther = 0;
+    const targets: string[] = [];
+    for (const n of sftpSel) {
+      const e = byName.get(n);
+      if (!e) continue;
+      if (e.is_dir) skippedDirs++;
+      else if (e.kind === "other") skippedOther++;
+      else targets.push(`${base}/${n}`);
+    }
+    for (const t of targets) await downloadRemote(t);
+    if (skippedDirs > 0 || skippedOther > 0) {
+      const parts: string[] = [];
+      if (skippedDirs > 0) parts.push(`${skippedDirs} 个目录`);
+      if (skippedOther > 0) parts.push(`${skippedOther} 个特殊文件`);
+      pushToast("info", targets.length > 0
+        ? `已开始下载 ${targets.length} 个文件；${parts.join("、")}不支持直接下载`
+        : `${parts.join("、")}不支持直接下载——请进入目录选择其中的文件`);
+    }
+  }, [sftpEntries, sftpSel, downloadRemote, pushToast]);
+
+  // R31 §350 键盘导航：列表容器获焦后方向键移动光标、Home/End 跳端、Enter 激活
+  //（目录进入/文件动作菜单）、Space 切换选中；不与筛选输入抢键（各自 onKeyDown 独立）
+  const sftpListRef = useRef<HTMLDivElement | null>(null);
+  const sftpListKey = (ev: React.KeyboardEvent) => {
+    const n = sftpShown.length;
+    if (!n) return;
+    const cur = sftpCursor;
+    if (ev.key === "ArrowDown") { ev.preventDefault(); setSftpCursor(Math.min(n - 1, cur + 1)); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); setSftpCursor(Math.max(0, cur - 1)); }
+    else if (ev.key === "Home") { ev.preventDefault(); setSftpCursor(0); }
+    else if (ev.key === "End") { ev.preventDefault(); setSftpCursor(n - 1); }
+    else if (ev.key === "Enter") {
+      if (cur < 0 || cur >= n) return;
+      ev.preventDefault();
+      const el = sftpListRef.current?.querySelector<HTMLElement>(`[data-idx="${cur}"]`);
+      const r = el?.getBoundingClientRect();
+      sftpActivate(sftpShown[cur], r ? { x: r.left + 60, y: r.bottom + 2 } : undefined);
+    } else if (ev.key === " ") {
+      if (cur < 0 || cur >= n) return;
+      ev.preventDefault();
+      const name = sftpShown[cur].name;
+      setSftpSel((prev) => { const x = new Set(prev); if (x.has(name)) x.delete(name); else x.add(name); return x; });
+      sftpAnchorRef.current = name;
+    }
+  };
+  useEffect(() => {
+    if (sftpCursor < 0) return;
+    sftpListRef.current?.querySelector(`[data-idx="${sftpCursor}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [sftpCursor]);
+  // 面包屑溢出时滚到末端（当前目录可见）。vis-r31 低发现：窄窗载入时滚末端与面板
+  // 宽度落定有一帧竞态（effect 跑在收窄前 no-op，此后无人重滚、当前段被裁）——
+  // 滚动同时挂到宽度观察器，宽度落定/变化即重滚
+  const sftpCrumbsRef = useRef<HTMLDivElement | null>(null);
+  const sftpScrollCrumbs = useCallback(() => {
+    const el = sftpCrumbsRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, []);
+  useEffect(() => { sftpScrollCrumbs(); }, [sftpPath, sftpEditPath, sftpScrollCrumbs]);
+  // 面板宽度跟随（§350 窄面板依次收起）：≤300 只留名称，≤340 收时间，其余全列
+  const sftpWrapRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sftpWrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => { setSftpListW(el.clientWidth); sftpScrollCrumbs(); });
+    ro.observe(el);
+    setSftpListW(el.clientWidth);
+    return () => ro.disconnect();
+  }, [rightPanel, sftpScrollCrumbs]);
+  // 文件动作菜单（双击/Enter 文件→可用动作，不直接执行 §350）：点外/Esc 关；
+  // rev-r31 低-7：打开即移焦入菜单（键盘 Enter 激活路径可达；Esc 即关）
+  const sftpMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!sftpMenu) return;
+    sftpMenuRef.current?.querySelector("button")?.focus();
+    const onDown = (e: MouseEvent) => { if (!sftpMenuRef.current?.contains(e.target as Node)) setSftpMenu(null); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSftpMenu(null); };
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("mousedown", onDown, true); window.removeEventListener("keydown", onKey); };
+  }, [sftpMenu]);
 
   // ---- 端口转发（T42 FR-8）----
   const refreshForwards = useCallback(async (): Promise<ForwardInfo[]> => {
@@ -3548,36 +3777,82 @@ export default function App() {
           )}
           {rightPanel === "files" && (
             <>
-          <div className="section">
+          <div className="section" ref={sftpWrapRef}>
             <h4>远程文件</h4>
             {!sid ? (
               <div className="side-quiet">连接会话后可浏览远端目录；文件拖进窗口即上传到正在浏览的目录。</div>
             ) : (
               <>
-                <div className="row sftp-path">
-                  <input
-                    className="mono"
-                    placeholder="远端目录（绝对路径，回车进入）"
-                    value={sftpPathInput}
-                    onChange={(e) => setSftpPathInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && void navigateTo(sftpPathInput)}
-                  />
-                  <button
-                    className="ghost"
-                    title="上一级目录"
+                <div className="row sftp-nav">
+                  <button className="ghost" title="返回上一位置" aria-label="返回" disabled={!sftpHist.length || sftpLoading}
+                    onClick={() => void sftpGoBack()}><IconChevronLeft size={13} /></button>
+                  <button className="ghost" title="前进" aria-label="前进" disabled={!sftpFwd.length || sftpLoading}
+                    onClick={() => void sftpGoFwd()}><IconChevronRight size={13} /></button>
+                  <button className="ghost" title="上一级目录" aria-label="上一级"
                     disabled={!sftpPath || sftpPath === "/"}
                     onClick={() => {
                       const p = sftpPath.replace(/\/+$/, "").split("/");
                       p.pop();
-                      void loadDir(p.length ? p.join("/") || "/" : "/");
+                      void navigateTo(p.length ? p.join("/") || "/" : "/");
                     }}
                   ><IconChevronUp size={13} /></button>
-                  <button
-                    className="ghost"
-                    title="刷新当前目录"
-                    disabled={!sftpPath || sftpLoading}
-                    onClick={() => void loadDir(sftpPath)}
+                  <button className="ghost" title="刷新当前目录" aria-label="刷新"
+                    disabled={!sftpPath || sftpLoading} onClick={() => void loadDir(sftpPath)}
                   ><IconRefresh size={13} /></button>
+                  <button className="ghost" title="定位到终端目录（显式定位；不执行 cd，不自动跟随 shell）" aria-label="定位到终端目录"
+                    disabled={!brief?.cwd || sftpPath === brief.cwd}
+                    onClick={() => brief?.cwd && void navigateTo(brief.cwd)}
+                  ><IconTerminal size={13} /></button>
+                  <span style={{ flex: 1 }} />
+                  <button className={"ghost" + (sftpEditPath ? " ts-open" : "")} title={sftpEditPath ? "切换为面包屑" : "编辑路径框"}
+                    aria-label="切换路径输入" aria-pressed={sftpEditPath}
+                    onClick={() => { if (sftpEditPath) setSftpEditPath(false); else { setSftpPathInput(sftpPath); setSftpEditPath(true); } }}
+                  ><IconPencil size={13} /></button>
+                </div>
+                {sftpEditPath ? (
+                  <div className="row sftp-path">
+                    <input
+                      className="mono" autoFocus data-testid="sftp-path-input"
+                      placeholder="远端目录（绝对路径，回车进入）"
+                      value={sftpPathInput}
+                      onChange={(e) => setSftpPathInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void navigateTo(sftpPathInput).then((ok) => { if (ok) setSftpEditPath(false); });
+                        else if (e.key === "Escape") { setSftpEditPath(false); setSftpPathInput(sftpPath); }
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="sftp-crumbs" data-testid="sftp-crumbs" ref={sftpCrumbsRef} title={sftpPath || undefined}>
+                    {sftpPath ? (() => {
+                      const parts = sftpPath.replace(/\/+$/, "").split("/").filter(Boolean);
+                      const segs: { label: string; path: string }[] = [{ label: "/", path: "/" }];
+                      let acc = "";
+                      for (const p of parts) { acc += "/" + p; segs.push({ label: p, path: acc }); }
+                      return segs.map((s, i) => (
+                        <span key={s.path} className="sftp-crumb-seg">
+                          {i > 0 && <span className="dim">/</span>}
+                          {i < segs.length - 1 ? (
+                            <button className="sftp-crumb" title={`进入 ${s.path}`} onClick={() => void navigateTo(s.path)}>{s.label}</button>
+                          ) : (
+                            <span className="sftp-crumb cur" aria-current="location">{s.label}</span>
+                          )}
+                        </span>
+                      ));
+                    })() : <span className="dim">未浏览——点「定位到终端目录」或 ✎ 输入绝对路径</span>}
+                  </div>
+                )}
+                <div className="row sftp-tools">
+                  <input className="sftp-filter" placeholder="筛选名称" aria-label="按名称筛选"
+                    value={sftpFilter} onChange={(e) => setSftpFilter(e.target.value)} />
+                  <button className={"ghost" + (sftpShowHidden ? " ts-open" : "")} aria-pressed={sftpShowHidden}
+                    title="显示隐藏项（. 开头）" onClick={() => setShowHidden((v) => !v)}>隐藏项</button>
+                  {([["name", "名称"], ["size", "大小"], ["mtime", "时间"]] as const).map(([k, label]) => (
+                    <button key={k} className={"ghost" + (sftpSort.key === k ? " ts-open" : "")} aria-pressed={sftpSort.key === k}
+                      title={`按${label}排序${sftpSort.key === k ? (sftpSort.dir === 1 ? "（当前升序，点击改降序）" : "（当前降序，点击改升序）") : ""}`}
+                      onClick={() => setSftpSort((s) => (s.key === k ? { key: k, dir: s.dir === 1 ? -1 : 1 } : { key: k, dir: 1 }))}
+                    >{label}{sftpSort.key === k ? (sftpSort.dir === 1 ? "↑" : "↓") : ""}</button>
+                  ))}
                 </div>
                 {sftpErr && <div className="err" style={{ marginTop: 6 }}>✕ {sftpErr}</div>}
                 {sftpLoading && (
@@ -3588,46 +3863,57 @@ export default function App() {
                 {!sftpLoading && sftpEntries && sftpEntries.length === 0 && (
                   <div className="side-quiet">空目录。</div>
                 )}
-                {!sftpLoading && sftpEntries && sftpEntries.length > 0 && (
-                  <div className="sftp-list">
-                    {sftpEntries.map((e) => (
-                      <div className={"sftp-row" + (e.is_dir ? " dir" : "")} key={e.name}>
+                {!sftpLoading && sftpEntries && sftpEntries.length > 0 && sftpShown.length === 0 && (
+                  <div className="side-quiet">无匹配项（名称筛选或隐藏项过滤）。</div>
+                )}
+                {!sftpLoading && sftpShown.length > 0 && (
+                  <div
+                    className={"sftp-list" + (sftpListW <= 300 ? " cols-name-only" : sftpListW <= 340 ? " cols-no-time" : "")}
+                    data-testid="sftp-list" ref={sftpListRef} tabIndex={0}
+                    aria-label="文件列表（方向键移动，Enter 进入目录，Space 选中）"
+                    onKeyDown={sftpListKey}
+                  >
+                    {sftpShown.map((e, i) => (
+                      <div
+                        key={e.name} data-idx={i} data-name={e.name}
+                        className={"sftp-row" + (e.is_dir ? " dir" : "") + (sftpSel.has(e.name) ? " sel" : "") + (i === sftpCursor ? " cursor" : "")}
+                        onClick={(ev) => sftpRowClick(e, i, ev)}
+                        onDoubleClick={(ev) => sftpActivate(e, { x: ev.clientX, y: ev.clientY })}
+                        title={e.is_dir ? "双击进入" : e.kind === "symlink" ? "双击按目标处理" : "双击查看可用动作"}
+                      >
                         <span className="sftp-ico" title={e.kind === "symlink" ? "符号链接" : undefined}>
                           {e.kind === "symlink" ? "→" : e.is_dir ? <IconFolder size={13} /> : <IconFile size={13} />}
                         </span>
-                        {e.is_dir ? (
-                          <button
-                            className="sftp-name mono"
-                            title={`进入 ${e.name}`}
-                            onClick={() => void loadDir(`${sftpPath.replace(/\/+$/, "")}/${e.name}`)}
-                          >{e.name}</button>
-                        ) : e.kind === "symlink" ? (
-                          <button
-                            className="sftp-name mono"
-                            title="符号链接：按目标处理（目录进入 / 文件下载）"
-                            onClick={() => void openSymlink(e)}
-                          >{e.name}</button>
-                        ) : (
-                          <span className="sftp-name mono" title={`${sftpPath.replace(/\/+$/, "")}/${e.name}`}>{e.name}</span>
-                        )}
-                        <span className="dim mono sftp-size">
+                        <span className="sftp-name mono" title={`${sftpPath.replace(/\/+$/, "")}/${e.name}`}>{e.name}</span>
+                        <span className="dim mono sftp-size" title={e.size == null ? "大小未知" : `${e.size} 字节`}>
                           {e.is_dir ? "目录" : e.kind === "symlink" ? "链接" : e.size == null ? "—" : fmtBytes(e.size)}
                         </span>
-                        <span className="dim mono sftp-time">
+                        <span className="dim mono sftp-time" title={e.mtime == null ? "修改时间未知" : new Date(e.mtime * 1000).toLocaleString("zh-CN")}>
                           {e.mtime == null ? "—" : new Date(e.mtime * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}
                         </span>
                         {!e.is_dir && (
                           <button
                             className="ghost sftp-dl"
                             title="下载到「下载」文件夹"
-                            onClick={() => void downloadRemote(`${sftpPath.replace(/\/+$/, "")}/${e.name}`)}
+                            onClick={(ev) => { ev.stopPropagation(); void downloadRemote(`${sftpPath.replace(/\/+$/, "")}/${e.name}`); }}
                           ><IconDownload size={12} />下载</button>
                         )}
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="side-quiet">下载存到「下载」文件夹；文件拖进窗口上传到正在浏览的目录；进度见下方「传输」。</div>
+                {/* 选择条在列表下方（R31）：上方插入会使列表下移、双击第二击落空 */}
+                {sftpSel.size > 0 && (
+                  <div className="row sftp-selbar" data-testid="sftp-selbar">
+                    <span className="dim">已选 {sftpSel.size} 项</span>
+                    <button className="ghost" data-testid="sftp-sel-download" disabled={sftpLoading}
+                      onClick={() => void sftpDownloadSelected()}
+                    ><IconDownload size={12} /> 下载所选</button>
+                    <button className="ghost" title="清除选择" aria-label="清除选择"
+                      onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
+                  </div>
+                )}
+                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存到「下载」文件夹；进度见下方「传输」。</div>
               </>
             )}
           </div>
@@ -3849,6 +4135,20 @@ Authorization: Bearer <TOKEN>`}
       <div className="toast-stack">
         {toasts.map((t) => <div className={"toast " + t.kind} key={t.id} aria-live={t.kind === "err" ? "assertive" : "polite"}>{t.text}</div>)}
       </div>
+
+      {/* R31 §350 文件动作菜单：双击/Enter 文件弹出可用动作（不直接执行）；点外/Esc 关 */}
+      {sftpMenu && (
+        <div
+          className="sftp-menu" ref={sftpMenuRef} role="menu" data-testid="sftp-menu"
+          aria-label={`${sftpMenu.name} 可用动作`}
+          style={{ left: Math.max(6, Math.min(sftpMenu.x, winW - 160)), top: Math.min(sftpMenu.y, window.innerHeight - 84) }}
+        >
+          <div className="sftp-menu-title mono">{sftpMenu.name}</div>
+          <button role="menuitem" data-testid="sftp-menu-download"
+            onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`); }}
+          ><IconDownload size={12} /> 下载</button>
+        </div>
+      )}
     </div>
   );
 }

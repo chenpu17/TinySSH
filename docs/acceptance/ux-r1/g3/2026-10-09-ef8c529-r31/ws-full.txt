@@ -1,0 +1,877 @@
+warning: unused variable: `path`
+  --> crates/session-api/src/transport.rs:97:34
+   |
+97 |     async fn resolve_path(&self, path: Option<&str>) -> Result<crate::PathResolved> {
+   |                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `path`
+   --> crates/session-api/src/transport.rs:103:32
+    |
+103 |     async fn stat_entry(&self, path: &str) -> Result<crate::EntryStat> {
+    |                                ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: `session-api` (lib) generated 2 warnings (run `cargo fix --lib -p session-api` to apply 2 suggestions)
+warning: value assigned to `cur_fg` is never read
+   --> crates/term-core/src/screen.rs:547:13
+    |
+547 |             cur_fg = None;
+    |             ^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: value assigned to `cur_bg` is never read
+   --> crates/term-core/src/screen.rs:548:13
+    |
+548 |             cur_bg = None;
+    |             ^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: value assigned to `cur_flags` is never read
+   --> crates/term-core/src/screen.rs:549:13
+    |
+549 |             cur_flags = None;
+    |             ^^^^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `quiet_dur` is never used
+   --> crates/term-core/src/screen.rs:485:8
+    |
+485 | pub fn quiet_dur(quiet_ms: u64) -> std::time::Duration {
+    |        ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `term-core` (lib) generated 4 warnings
+warning: variable does not need to be mutable
+   --> crates/transport-pty/src/lib.rs:275:13
+    |
+275 |         let mut out = child
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/transport-pty/src/lib.rs:279:13
+    |
+279 |         let mut err = child
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused import: `Sig`
+ --> crates/transport-ssh/src/lib.rs:9:25
+  |
+9 | use russh::{Disconnect, Sig};
+  |                         ^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:231:13
+    |
+231 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `connected_address`
+   --> crates/transport-ssh/src/lib.rs:109:9
+    |
+109 |         connected_address: &str,
+    |         ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connected_address`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:318:31
+    |
+318 |                     .map_err(|e| Error::AuthFailed)?
+    |                               ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:293:31
+    |
+293 |                     .map_err(|e| Error::AuthFailed)?;
+    |                               ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:733:13
+    |
+733 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:790:13
+    |
+790 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:844:13
+    |
+844 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: field `0` is never read
+ --> crates/testbed/src/lib.rs:5:21
+  |
+5 | pub struct SshdLock(std::fs::File);
+  |            -------- ^^^^^^^^^^^^^
+  |            |
+  |            field in this struct
+  |
+  = help: consider removing this field
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `transport-pty` (lib) generated 2 warnings (run `cargo fix --lib -p transport-pty` to apply 2 suggestions)
+warning: `transport-ssh` (lib) generated 8 warnings (run `cargo fix --lib -p transport-ssh` to apply 8 suggestions)
+warning: `tinyssh-testbed` (lib) generated 1 warning
+warning: unused imports: `Actor` and `IdentityId`
+  --> crates/vault/src/lib.rs:10:5
+   |
+10 |     Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
+   |     ^^^^^
+11 |     Error, Host, HostDraft, HostId, HostMeta, IdentityId, IdentityKind, IdentityMeta, IdentityReq,
+   |                                               ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:230:52
+    |
+230 |     let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(master));
+    |                                                    ^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:233:25
+    |
+233 |     let nonce = XNonce::from_slice(&nonce_bytes);
+    |                         ^^^^^^^^^^
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:247:52
+    |
+247 |     let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(master));
+    |                                                    ^^^^^^^^^^
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:248:25
+    |
+248 |     let nonce = XNonce::from_slice(&blob[..24]);
+    |                         ^^^^^^^^^^
+
+warning: unused import: `DateTime`
+ --> crates/approval/src/lib.rs:4:14
+  |
+4 | use chrono::{DateTime, Utc};
+  |              ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `DateTime`
+ --> crates/audit/src/lib.rs:3:14
+  |
+3 | use chrono::{DateTime, TimeZone, Utc};
+  |              ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tinyssh-vault` (lib) generated 5 warnings (run `cargo fix --lib -p tinyssh-vault` to apply 1 suggestion)
+warning: `tinyssh-approval` (lib) generated 1 warning (run `cargo fix --lib -p tinyssh-approval` to apply 1 suggestion)
+warning: `tinyssh-audit` (lib) generated 1 warning (run `cargo fix --lib -p tinyssh-audit` to apply 1 suggestion)
+warning: unused import: `std::sync::Arc`
+ --> crates/core-session/src/brief.rs:5:5
+  |
+5 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `transport_pty::LocalPtyChannel`
+  --> crates/core-session/src/lib.rs:19:5
+   |
+19 | use transport_pty::LocalPtyChannel;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `exec_id`
+   --> crates/core-session/src/handle.rs:603:9
+    |
+603 |         exec_id: &ExecId,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_exec_id`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `lost` is never read
+    --> crates/core-session/src/lib.rs:1171:28
+     |
+1171 |             let mut lost = false;
+     |                            ^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `approvals_rx_gen` is never read
+  --> crates/core-session/src/lib.rs:60:5
+   |
+57 | pub struct SessionManager {
+   |            -------------- field in this struct
+...
+60 |     approvals_rx_gen: StdMutex<()>,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `AttemptTestHooks` is never constructed
+   --> crates/core-session/src/lib.rs:948:8
+    |
+948 | struct AttemptTestHooks {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: field `1` is never read
+    --> crates/core-session/src/handle.rs:1024:33
+     |
+1024 | struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+     |        ------------             ^^^^^^^^^^^^^^^^^
+     |        |
+     |        field in this struct
+     |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+     |
+1024 - struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+1024 + struct CancelOnDrop<'a>(ExecId, (), &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+     |
+
+warning: `core-session` (lib) generated 7 warnings (run `cargo fix --lib -p core-session` to apply 3 suggestions)
+warning: unused import: `ContentBlock`
+ --> crates/mcp-server/src/lib.rs:8:21
+  |
+8 |     CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
+  |                     ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `session_api::transport::tokio_util_sync::CancellationToken`
+  --> crates/mcp-server/src/lib.rs:16:5
+   |
+16 | use session_api::transport::tokio_util_sync::CancellationToken;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ApprovalFilter`, `ControlOpts`, `ControlOwner`, `Decision`, `Epistemic`, and `StopPolicy`
+  --> crates/mcp-server/src/lib.rs:18:12
+   |
+18 |     Actor, ApprovalFilter, AuditFilter, ControlOpts, ControlOwner, CreateSessionReq, Decision,
+   |            ^^^^^^^^^^^^^^               ^^^^^^^^^^^  ^^^^^^^^^^^^                    ^^^^^^^^
+19 |     DeniedReason, Epistemic, Error, ExecMode, ExecOpts, SessionApi, StopPolicy, WaitOpts,
+   |                   ^^^^^^^^^                                         ^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> crates/mcp-server/src/lib.rs:21:5
+   |
+21 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `tinyssh-mcp-server` (lib) generated 4 warnings (run `cargo fix --lib -p tinyssh-mcp-server` to apply 4 suggestions)
+warning: unused import: `ServiceExt`
+  --> crates/mcp-server/tests/protocol.rs:13:12
+   |
+13 | use rmcp::{ServiceExt, ClientServiceExt};
+   |            ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused `Result` that must be used
+   --> crates/mcp-server/tests/protocol.rs:247:5
+    |
+247 |     client.cancel().await;
+    |     ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+247 |     let _ = client.cancel().await;
+    |     +++++++
+
+warning: unused import: `ServiceExt as _`
+  --> crates/mcp-server/tests/e2e_acceptance.rs:13:49
+   |
+13 | use rmcp::service::{RunningService, RoleClient, ServiceExt as _, ClientServiceExt as _};
+   |                                                 ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `url`
+   --> crates/mcp-server/tests/e2e_acceptance.rs:262:13
+    |
+262 |     let (m, url, token) = spawn_stack().await;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_url`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `token`
+   --> crates/mcp-server/tests/e2e_acceptance.rs:262:18
+    |
+262 |     let (m, url, token) = spawn_stack().await;
+    |                  ^^^^^ help: if this is intentional, prefix it with an underscore: `_token`
+
+warning: unused variable: `i`
+   --> crates/mcp-server/tests/e2e_acceptance.rs:280:9
+    |
+280 |     for i in 0..450 {
+    |         ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: `tinyssh-mcp-server` (test "protocol") generated 2 warnings (run `cargo fix --test "protocol" -p tinyssh-mcp-server` to apply 1 suggestion)
+warning: `tinyssh-mcp-server` (test "e2e_acceptance") generated 4 warnings (run `cargo fix --test "e2e_acceptance" -p tinyssh-mcp-server` to apply 4 suggestions)
+warning: `tinyssh-mcp-server` (lib test) generated 4 warnings (4 duplicates)
+warning: use of deprecated method `tempfile::TempDir::into_path`: use TempDir::keep()
+   --> crates/core-session/tests/sshcfg_import.rs:254:20
+    |
+254 |     let keep = dir.into_path(); // agent/容器清理前不能删
+    |                    ^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: unused variable: `agent`
+  --> crates/core-session/tests/core_local.rs:92:9
+   |
+92 |     let agent = Actor::Agent { client_id: "test-agent".into() };
+   |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_agent`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Actor`
+ --> crates/core-session/src/r26_tests.rs:7:5
+  |
+7 |     Actor, AuditFilter, AuthType, Charset, ControlOwner, Error, Host, SessionState,
+  |     ^^^^^
+
+warning: unused import: `AtomicU64`
+ --> crates/core-session/src/r32_tests.rs:8:37
+  |
+8 | use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrd};
+  |                                     ^^^^^^^^^
+
+warning: unused import: `std::sync::atomic::Ordering`
+    --> crates/core-session/src/lib.rs:2688:9
+     |
+2688 |     use std::sync::atomic::Ordering;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `other`
+  --> crates/core-session/src/r30_tests.rs:32:13
+   |
+32 |             other => Ok(EntryStat {
+   |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_other`
+
+warning: `core-session` (test "sshcfg_import") generated 1 warning
+warning: `core-session` (test "core_local") generated 1 warning (run `cargo fix --test "core_local" -p core-session` to apply 1 suggestion)
+warning: `core-session` (lib test) generated 10 warnings (6 duplicates) (run `cargo fix --lib -p core-session --tests` to apply 4 suggestions)
+   Compiling tinyssh-app v0.9.0 (/Users/chenpu/workspace/claude-code/TinySSH/src-tauri)
+warning: variable does not need to be mutable
+   --> crates/cli/src/main.rs:364:22
+    |
+364 |             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    |                      ----^^
+    |                      |
+    |                      help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `rx`
+   --> crates/cli/src/main.rs:364:22
+    |
+364 |             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    |                      ^^^^^^ help: if this is intentional, prefix it with an underscore: `_rx`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `tokio_util_like::CancellationToken as _CancellationTokenAlias`
+   --> crates/transport-ssh/tests/sshd_e2e.rs:169:5
+    |
+169 | use tokio_util_like::CancellationToken as _CancellationTokenAlias;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> crates/transport-ssh/tests/sshd_e2e.rs:71:9
+   |
+71 |     let mut drain = |screen: &mut Screen, rx_feed: &std::sync::mpsc::Receiver<Vec<u8>>| {
+   |         ----^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tinyssh-cli` (bin "tinyssh" test) generated 2 warnings (run `cargo fix --bin "tinyssh" -p tinyssh-cli --tests` to apply 2 suggestions)
+warning: `transport-ssh` (test "sshd_e2e") generated 2 warnings (run `cargo fix --test "sshd_e2e" -p transport-ssh` to apply 2 suggestions)
+warning: `tinyssh-approval` (lib test) generated 1 warning (1 duplicate)
+warning: `tinyssh-vault` (lib test) generated 5 warnings (5 duplicates)
+warning: `transport-ssh` (lib test) generated 8 warnings (8 duplicates)
+warning: `transport-pty` (lib test) generated 2 warnings (2 duplicates)
+warning: `tinyssh-audit` (lib test) generated 1 warning (1 duplicate)
+warning: `term-core` (lib test) generated 4 warnings (4 duplicates)
+warning: `tinyssh-testbed` (lib test) generated 1 warning (1 duplicate)
+warning: function `forward_wire_format_matches_ui` is never used
+    --> crates/session-api/src/lib.rs:1631:8
+     |
+1631 |     fn forward_wire_format_matches_ui() {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `session-api` (lib test) generated 3 warnings (2 duplicates)
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1127:17
+     |
+1127 |             let mut rx = api.subscribe_approvals();
+     |                 ----^^
+     |                 |
+     |                 help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1140:17
+     |
+1140 |             let mut fwd_rx = api.subscribe_forwards();
+     |                 ----^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1152:17
+     |
+1152 |             let mut hk_rx = api.subscribe_host_keys();
+     |                 ----^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1164:17
+     |
+1164 |             let mut ap_rx = api.subscribe_auth_prompts();
+     |                 ----^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1176:17
+     |
+1176 |             let mut conn_rx = api.subscribe_connections();
+     |                 ----^^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1188:17
+     |
+1188 |             let mut shell_rx = api.subscribe_shell_integration();
+     |                 ----^^^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1201:17
+     |
+1201 |             let mut state_rx = api.center.state_tx.subscribe();
+     |                 ----^^^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/main.rs:1214:17
+     |
+1214 |             let mut xfer_rx = api.transfer_tx.subscribe();
+     |                 ----^^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: `tinyssh-app` (bin "tinyssh-app" test) generated 8 warnings (run `cargo fix --bin "tinyssh-app" -p tinyssh-app --tests` to apply 8 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 1.74s
+     Running unittests src/lib.rs (target/debug/deps/core_session-f68c851e88a97476)
+
+running 51 tests
+test c10_tests::replay_ring_eviction_semantics ... ok
+test c10_tests::expired_subscription_rejected_without_fallback ... ok
+test c1_tests::cancel_voids_pending_approval_card ... ok
+test c10_tests::checkpoint_nearer_beats_replay ... ok
+test c10_tests::attach_watermark_includes_last_event ... ok
+test c10_tests::resync_replay_and_exactly_at_watermark ... ok
+test c10_tests::eviction_and_alt_screen_fall_back_to_checkpoint ... ok
+test c1_tests::cancel_while_gate_pending_clears_cards ... ok
+test c1_tests::cancel_while_connecting_leaves_no_session_and_second_cancel_is_not_found ... ok
+test c10_tests::silent_session_sub_persists_until_explicit_unsubscribe ... ok
+test c1_tests::cancel_events_carry_terminal_phase_only ... ok
+test c1_tests::concurrent_begin_merges_to_one_attempt ... ok
+test c1_tests::failed_attempt_carries_error_and_audit ... ok
+test c1_tests::concurrent_cancel_never_reports_cancel_close_failed ... ok
+test c1_tests::cross_actor_cancel_denied ... ok
+test c1_tests::merge_index_idempotent_and_new_session_bypass ... ok
+test charset::tests::gbk_decode_basic ... ok
+test charset::tests::gbk_encode_roundtrip ... ok
+test charset::tests::gbk_flush_dangling_lead ... ok
+test charset::tests::gbk_mixed_ascii ... ok
+test charset::tests::gbk_split_multibyte_across_chunks ... ok
+test charset::tests::utf8_passthrough ... ok
+test handle::tests::whitelist_only_single_simple_commands ... ok
+test c1_tests::mid_connect_cancel_end_to_end_chain ... ok
+test c1_tests::cancel_ghost_sweep_closes_never_delivered_session ... ok
+test c1_tests::create_session_compat_path_untouched ... ok
+test r24_tests::run_shell_gate_rejects_without_integration ... ok
+test c1_tests::window_cancel_already_ready_closes_session ... ok
+test c1_tests::window_double_cancel_second_is_not_found_single_close ... ok
+test c1_tests::ready_then_cancel_is_not_found_and_session_survives ... ok
+test c1_tests::window_concurrent_double_cancel_single_settlement ... ok
+test c1_tests::window_cancel_close_failed_keeps_session ... ok
+test r26_tests::local_reconnect_enters_reconfirming_without_injection ... ok
+test r30_tests::r30_human_forwarding_and_errors ... ok
+test r30_tests::r30_session_not_found ... ok
+test r30_tests::r30_sftp_entrypoints_human_only ... ok
+test r24_tests::delegate_flips_owner_and_audits ... ok
+test r32_tests::r32_failed_with_real_error ... ok
+test r32_tests::r32_lifecycle_events_revision_journal ... ok
+test r32_tests::r32_restart_recovery_marks_interrupted ... ok
+test r32_tests::r32_cancel_mid_flight ... ok
+test t44_tests::reject_edited_approval_gates_non_exec_cards ... ok
+test r26_tests::stop_auto_reconnect_prevents_further_attempts ... ok
+test r32_tests::r32_voided_on_generation_bump ... ok
+test c1_tests::v1_record_failure_sweeps_half_session ... ok
+test r24_tests::local_session_integration_ready_and_event ... ok
+test r24_tests::b01_owner_at_construction ... ok
+test r32_tests::r32_running_progress_frames ... ok
+test r26_tests::manual_reconnect_failure_keeps_disconnected ... ok
+test r26_tests::auto_reconnect_emits_full_sequence_then_disconnected ... ok
+test r26_tests::manual_reconnect_success_enters_reconfirming_with_event ... ok
+
+test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.54s
+
+     Running tests/c8_prefs.rs (target/debug/deps/c8_prefs-d3a6ac6966942eb9)
+
+running 4 tests
+test workspace_roundtrip_and_version_normalization ... ok
+test identity_in_use_reference_check ... ok
+test recents_empty_when_only_local ... ok
+test favorites_metadata_and_local_touch ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+
+     Running tests/core_local.rs (target/debug/deps/core_local-7eec342962c79b74)
+
+running 13 tests
+test host_key_gate_first_seen_change_and_reject ... ok
+test gbk_charset_roundtrip_over_ssh ... ok
+test local_exec_and_shell_persistence ... ok
+test dangerous_pattern_never_approved ... ok
+test allow_rule_skips_approval ... ok
+test fresh_mode_real_exit_and_replay ... ok
+test close_session_voided_approval_leaves_audit_trail ... ok
+test approval_flow_deny_and_approve ... ok
+test queue_busy_backpressure ... ok
+test takeover_voids_pending_approval_and_card_cannot_revive ... ok
+test human_meta_sequence_not_registered_as_command_text ... ok
+test send_keys_ctrl_c_interrupts_foreground_process ... ok
+test local_session_manual_reconnect ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.68s
+
+     Running tests/sshcfg_import.rs (target/debug/deps/sshcfg_import-88cf5c2a46c82feb)
+
+running 4 tests
+test imported_agent_host_connects_via_ssh_agent ... ok
+test c7_batch_internal_duplicate_skipped ... ok
+test c7_classification_skip_and_overwrite ... ok
+test preview_and_import_local_parts ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/debug/deps/session_api-57073b699ecfab7f)
+
+running 7 tests
+test wire_format_tests::approval_status_wire_format_is_pascal_case ... ok
+test wire_format_tests::c4_path_stat_wire_format ... ok
+test wire_format_tests::dir_entry_wire_format_matches_ui ... ok
+test wire_format_tests::c5_transfer_task_wire_format ... ok
+test wire_format_tests::identity_and_auth_draft_wire_format_matches_ui ... ok
+test wire_format_tests::approval_item_editable_field_wire_behavior ... ok
+test wire_format_tests::charset_wire_format_matches_ui_and_vault ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/term_core-60cfb35c47fb6077)
+
+running 17 tests
+test block::tests::managed_block ... ok
+test osc::tests::parses_st_terminated ... ok
+test osc::tests::parses_133_sequence ... ok
+test block::tests::full_block_lifecycle ... ok
+test block::tests::agent_attribution ... ok
+test osc::tests::split_across_feeds ... ok
+test osc::tests::parses_cwd ... ok
+test tests::strips_basic_sequences ... ok
+test screen::tests::checkpoint_basic_text_and_cursor ... ok
+test screen::tests::checkpoint_colors_and_attrs ... ok
+test screen::tests::osc7_cwd_recorded ... ok
+test screen::tests::shell_mode_capture ... ok
+test screen::tests::checkpoint_alt_screen_and_modes ... ok
+test screen::tests::replay_fresh_block ... ok
+test screen::tests::checkpoint_wide_char ... ok
+test screen::tests::snapshot_renders_text ... ok
+test screen::tests::checkpoint_history_included_and_watermark_shape ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/tinyssh_app-f0676db635e341df)
+
+running 1 test
+test wire_error_tests::every_variant_maps_to_stable_kind ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tinyssh_approval-3bb252b3fa286470)
+
+running 12 tests
+test tests::substitution_forces_approval ... ok
+test tests::builtin_dangerous_patterns ... ok
+test tests::compound_command_requires_all_segments ... ok
+test tests::safe_commands_not_flagged ... ok
+test tests::builtin_denies_not_deletable ... ok
+test tests::regex_allow ... ok
+test tests::deny_rules_are_per_agent ... ok
+test tests::single_allow ... ok
+test tests::edited_command_still_checked ... ok
+test tests::ttl_allow_and_expiry ... ok
+test tests::unparseable_goes_to_approval ... ok
+test tests::prefix_allow ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src/lib.rs (target/debug/deps/tinyssh_audit-4a461bc6d5ae014f)
+
+running 2 tests
+test tests::chain_detects_tamper ... ok
+test tests::append_query_verify_chain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (target/debug/deps/tinyssh-658da9ecc8ea8815)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tinyssh_mcp_server-852b737972baf290)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/e2e_acceptance.rs (target/debug/deps/e2e_acceptance-07746ce4224c460a)
+
+running 6 tests
+test journey3_manual_reconnect_after_hard_down ... ok
+test create_session_screen_is_clean ... ok
+test journey2_reconnect_reconfirm ... ok
+test acceptance_scenario_on_ssh ... ok
+test journey5_agent_forward_approval_flow ... ok
+test journey4_reconnect_with_dirty_typing_state ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.91s
+
+     Running tests/protocol.rs (target/debug/deps/protocol-cd0172c249a1783e)
+
+running 3 tests
+test bind_increment_skips_occupied_ports ... ok
+test spawn_endpoint_serves_in_process_stack ... ok
+test spike3_protocol_compliance has been running for over 60 seconds
+test spike3_protocol_compliance ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 120.82s
+
+     Running unittests src/main.rs (target/debug/deps/tinyssh_mcp-1a207a3390fa0ec3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tinyssh_testbed-db9f35238752c741)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tinyssh_vault-71d70d2183c7ef6e)
+
+running 31 tests
+test sshcfg::tests::comments_and_unknown_keys_ignored ... ok
+test sshcfg::tests::bad_port_ignored ... ok
+test sshcfg::tests::first_value_wins ... ok
+test sshcfg::tests::equals_separator_and_case_insensitive ... ok
+test sshcfg::tests::include_in_block_is_blocking ... ok
+test sshcfg::tests::defaults_and_multi_pattern ... ok
+test sshcfg::tests::basic_block ... ok
+test sshcfg::tests::identity_only_first_per_block ... ok
+test sshcfg::tests::match_shadow_blocks_later_entry_proxyjump ... ok
+test sshcfg::tests::match_block_skipped ... ok
+test sshcfg::tests::match_shadow_blocks_later_entry_user ... ok
+test sshcfg::tests::match_warning_keys_do_not_shadow ... ok
+test sshcfg::tests::mixed_pattern_block_is_shadowing ... ok
+test sshcfg::tests::no_user_preserved_as_none ... ok
+test sshcfg::tests::proxyjump_is_blocking ... ok
+test sshcfg::tests::shadow_push_dedups ... ok
+test sshcfg::tests::toplevel_include_shadows_all ... ok
+test sshcfg::tests::wildcard_block_after_entry_does_not_shadow ... ok
+test sshcfg::tests::wildcard_block_irrelevant_keys_do_not_shadow ... ok
+test sshcfg::tests::wildcard_block_shadows_later_entries ... ok
+test tests::seal_roundtrip ... ok
+test tests::c8_v5_migration_fresh_install_follows_system ... ok
+test tests::identity_generate_and_decrypt ... ok
+test tests::host_fingerprint_tofu_roundtrip ... ok
+test tests::c8_v5_migration_one_shot_and_idempotent ... ok
+test tests::host_password_encrypted_at_rest ... ok
+test tests::agent_token_lifecycle ... ok
+test tests::c5_transfer_journal_roundtrip ... ok
+test tests::settings_roundtrip ... ok
+test tests::c3_v6_migration_shell_integration_one_shot ... ok
+test tests::c8_favorites_recents_identity_refs_and_cascade ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src/lib.rs (target/debug/deps/transport_pty-6f0e9d93002a0392)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/reconnect.rs (target/debug/deps/reconnect-29b8cc803c46461c)
+
+running 1 test
+test pty_reconnect_revives_shell_on_same_broadcast ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+
+     Running tests/shell_integration.rs (target/debug/deps/shell_integration-bc475d386647c22f)
+
+running 1 test
+test local_shell_produces_blocks_and_cwd ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running unittests src/lib.rs (target/debug/deps/transport_ssh-940a6bb0e1b50f28)
+
+running 3 tests
+test t44_tests::local_listen_addr_loopback_only ... ok
+test t44_tests::degraded_state_transitions ... ok
+test t44_tests::forward_state_cb_fires_on_write_paths ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/spike2.rs (target/debug/deps/spike2-fe3b589b4ef267b5)
+
+running 1 test
+test spike2_render_fidelity_and_rss ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/sshd_e2e.rs (target/debug/deps/sshd_e2e-218ce0263566f69c)
+
+running 7 tests
+test ssh_agent_auth_connects ... ok
+test ssh_shell_blocks_and_fresh ... ok
+test ssh_keyboard_interactive_fallback ... ok
+test forward_local_and_dynamic_roundtrip ... ok
+test sftp_list_lists_dir_entries_sorted ... ok
+test forward_remote_roundtrip ... ok
+test sftp_download_cancel_midway ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+
+   Doc-tests core_session
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests session_api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests term_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tinyssh_approval
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tinyssh_audit
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tinyssh_mcp_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tinyssh_testbed
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tinyssh_vault
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests transport_pty
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests transport_ssh
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
