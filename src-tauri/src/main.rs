@@ -849,6 +849,8 @@ fn main() {
                     r22_smoke_script(&run_id)
                 } else if mode == "r23" {
                     r23_smoke_script(&run_id)
+                } else if mode == "r25" {
+                    r25_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -2112,7 +2114,146 @@ fn r23_smoke_script(run_id: &str) -> String {
     base.replace("__RUN__", run_id)
 }
 
-/// R24 C2/C3 探针注入脚本（TINYSSH_SMOKE_MODE=r24；dev 门控，产品路径无关）：
+/// R25 搜索/复制粘贴/分屏 探针注入脚本（TINYSSH_SMOKE_MODE=r25；dev 门控，产品路径无关）：
+/// A) r25-a/r25-b 双真机会话 → 菜单复用建立分屏（左主/右副名牌）→ pane mousedown 换焦
+///    → 退出分屏两会话存活（§322/§324）；
+/// —— alt-screen 搜索作用域不在本脚本：原生面 checkpoint/重放与 alt 交换互作使
+///    normal buffer 读数不可靠（R11 已原生实证 alt 屏检查点），demo 探针 F 段直控覆盖；
+/// C) 原生粘贴：剪贴板由驱动 pbcopy 预置（单行 + 多行）——单行直发回显；多行在远端
+///    bracketed paste 开启时直发无确认框（无 bracketed 确认路径由 demo 探针 B1/B2 覆盖）；
+/// D) §6.4 退出链（驱动协同：真实窗口关闭 ×2 → 摘要取消 → 确认退出 → 零残留）。
+fn r25_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R25_INJECTED__) return;
+  window.__R25_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const activeTab = () => document.querySelector('.tabbar .tab.tab-active')?.textContent.trim() ?? '';
+  const tabCount = (name) => [...document.querySelectorAll('.tabbar .tab')].filter((t) => t.textContent.includes(name)).length;
+  const paneInfo = () => ({
+    left: document.querySelector('.pane-left .pane-tag')?.textContent ?? null,
+    right: document.querySelector('.pane-right .pane-tag')?.textContent ?? null,
+  });
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const activeTextarea = () => document.querySelector('.term-session.active textarea');
+  const rowsText = () => [...document.querySelectorAll('.term-session.active .xterm-rows')].map((r) => r.textContent).join('');
+  const sendKey = (key, meta) => activeTextarea()?.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: !!meta, bubbles: true, cancelable: true }));
+  const typeIntoSearch = async (text) => {
+    const inp = document.querySelector('.term-search input');
+    inp.focus();
+    document.execCommand('insertText', false, text);
+  };
+  (async () => {
+    try {
+      await title('r25-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r25-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await inv('upsert_host', { host: { id: null, name: 'r25-b', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r25-a', '.host-connect-btn') ? true : null), 40);
+      // ---- A: 双机连接 → 菜单复用建立分屏 ----
+      if (!connect('r25-a')) return title('FAIL-connect-a');
+      await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+      [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+      const s1 = await waitFor(async () => (await activeSess('r25-a'))?.state === 'Connected' ? true : null, 150);
+      if (!s1) return title('FAIL-conn-a');
+      await sleep(400);
+      if (!connect('r25-b')) return title('FAIL-connect-b');
+      await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+      [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+      const s2 = await waitFor(async () => (await activeSess('r25-b'))?.state === 'Connected' ? true : null, 150);
+      if (!s2) return title('FAIL-conn-b');
+      await sleep(400);
+      await markSync('r25a-conns-ok');
+      // 分屏菜单：复用 r25-b 入右副 pane
+      const splitBtn = [...document.querySelectorAll('.session-toolbar button')].find((x) => (x.title ?? '').startsWith('分屏：'));
+      if (!splitBtn) return title('FAIL-no-split-btn:tb=' + !!document.querySelector('.session-toolbar') + '|tab=' + activeTab() + '|focus=' + document.hasFocus());
+      splitBtn.click();
+      const menu = await waitFor(() => document.querySelector('.split-menu') || null, 30);
+      if (!menu) return title('FAIL-no-split-menu');
+      const reuseItem = [...document.querySelectorAll('.split-menu .sm-item')].find((b) => b.textContent.includes('r25-a'));
+      if (!reuseItem) return title('FAIL-no-reuse-item:' + menu.textContent.slice(0, 80));
+      reuseItem.click();
+      const panes = await waitFor(() => (document.querySelector('.pane-left') && document.querySelector('.pane-right') ? paneInfo() : null), 50);
+      if (!panes || panes.left !== 'r25-b' || panes.right !== 'r25-a') return title('FAIL-split-panes:' + JSON.stringify(panes));
+      await markSync('r25a-split-ok');
+      // pane mousedown 换焦（点击只切焦点不交换——§322）
+      document.querySelector('.pane-right')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await sleep(300);
+      if (!document.querySelector('.pane-right.pane-focused')) return title('FAIL-pane-focus');
+      await markSync('r25a-panefocus-ok');
+      // 退出分屏：两会话仍 Connected（§324 退出分屏不断开）
+      const exitBtn = [...document.querySelectorAll('.session-toolbar button')].find((x) => x.title === '退出分屏（会话保留不断开）');
+      if (!exitBtn) return title('FAIL-no-exit-btn');
+      exitBtn.click();
+      await sleep(400);
+      const after = await inv('list_sessions', {});
+      const alive = after.filter((x) => (x.host_name === 'r25-a' || x.host_name === 'r25-b') && x.state === 'Connected').length;
+      if (document.querySelector('.pane-left') || alive !== 2 || tabCount('r25-') < 2) return title('FAIL-exit-split:' + alive + '|' + tabCount('r25-'));
+      await markSync('r25a-exitsplit-ok');
+      // ---- C: 原生粘贴（驱动分段 pbcopy：单行 → 多行，wait 标记对齐换料）----
+      await markSync('r25a-paste1-wait');
+      await sleep(3000);
+      sendKey('v', true);
+      const p1 = await waitFor(() => (rowsText().includes('r25pastemark') ? true : null), 60);
+      if (!p1) return title('FAIL-paste-single:' + rowsText().slice(0, 60));
+      await markSync('r25a-paste-single-ok');
+      await markSync('r25a-paste2-wait');
+      await sleep(3000);
+      sendKey('v', true);
+      const dlg = document.querySelector('.paste-dialog');
+      const p2 = await waitFor(() => (rowsText().includes('r25ml-one') && rowsText().includes('r25ml-two') ? true : null), 80);
+      if (!p2 || dlg) return title('FAIL-paste-multi:dlg=' + !!dlg);
+      await markSync('r25a-paste-multi-ok');
+      // ---- D: §6.4 退出链（驱动协同）----
+      await markSync('r25a-quit-wait');
+      await sleep(15000);
+      const qdlg = await waitFor(() => (document.querySelector('.confirm-dialog')?.textContent ?? null), 30);
+      if (!qdlg || !qdlg.includes('退出 TinySSH')) return title('FAIL-quit-dlg:' + (qdlg ?? 'null').slice(0, 120));
+      if (!qdlg.includes('活动会话') || !qdlg.includes('转发') || !qdlg.includes('结束会话并退出')) return title('FAIL-quit-summary:' + qdlg.slice(0, 150));
+      [...document.querySelectorAll('.confirm-dialog button')].find((b) => b.textContent.trim() === '取消').click();
+      await sleep(500);
+      if (document.querySelector('.confirm-dialog')) return title('FAIL-quit-cancel');
+      await markSync('r25a-quit-cancel-ok');
+      await markSync('r25a-quit-wait2');
+      await sleep(15000);
+      const qdlg2 = await waitFor(() => (document.querySelector('.confirm-dialog')?.textContent ?? null), 30);
+      if (!qdlg2 || !qdlg2.includes('退出 TinySSH')) return title('FAIL-quit-dlg2');
+      await markSync('r25a-quit-confirming');
+      [...document.querySelectorAll('.confirm-dialog button')].find((b) => b.textContent.includes('结束会话并退出')).click();
+      await markSync('r25a-DONE');
+      await title('r25-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
 /// 对共享 docker sshd 双主机验证 shell 集成治理与委托：
 /// A) r24-on（shell_integration 显式 true）——UI 点卡真路径建连 → TOFU/密码 →
 ///    integration Ready（事件+list_sessions 双证）→ shell_capability 全真 →

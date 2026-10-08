@@ -1,0 +1,16 @@
+r25-open
+r25b|r25a-conns-ok
+r25b|r25a-split-ok
+r25b|r25a-panefocus-ok
+r25b|r25a-exitsplit-ok
+r25b|r25a-paste1-wait
+r25b|r25a-paste-single-ok
+r25b|r25a-paste2-wait
+r25b|r25a-paste-multi-ok
+r25b|r25a-quit-wait
+r25b|r25a-quit-cancel-ok
+r25b|r25a-quit-wait2
+r25b|r25a-quit-confirming
+r25b|r25a-DONE
+r25-DONE
+r25b-DRIVER|app-exited-clean

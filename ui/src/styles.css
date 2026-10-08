@@ -717,8 +717,34 @@ textarea {
 .ah-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ah-field label { font-size: 10px; color: var(--dim); letter-spacing: 0.3px; }
 .ah-field input, .ah-field select { width: 100%; }
-.dead-overlay { position: absolute; inset: 0; z-index: 20; background: var(--dead-scrim); display: flex; align-items: flex-start; justify-content: center; }
-.dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 10px 30px var(--shadow-dialog); }
+.dead-overlay { position: absolute; inset: 0; z-index: 20; background: var(--dead-scrim); display: flex; align-items: flex-start; justify-content: center; pointer-events: none; }
+.dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 10px 30px var(--shadow-dialog); pointer-events: auto; }
+
+/* R25 §322 分屏菜单：复用已有会话 / 在右侧新建会话（§185 同源的浮层工艺） */
+.split-menu {
+  position: absolute; top: 10px; right: 14px; z-index: 30;
+  width: 260px; background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px; box-shadow: 0 10px 30px var(--shadow-pop);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.split-menu .sm-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
+.split-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* §185 退化提示条：一次性可关闭，不占终端行 */
+.split-hint {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 25;
+  display: flex; align-items: center; gap: 10px; width: min(86%, 480px);
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 10px; font-size: 12px; box-shadow: 0 6px 20px var(--shadow-pop);
+}
+.split-hint span { overflow: hidden; flex: 1; min-width: 0; /* 两行封顶防撑破（vis-r25 L1：640px 单行 ellipsis 截断恢复指引） */ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* §318 多行粘贴确认：等宽预览块，超长内容内部滚动不撑破对话框 */
+.paste-dialog { width: min(560px, calc(100vw - 80px)); }
+.paste-preview {
+  margin: 10px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  text-align: left; color: var(--text);
+}
 
 /* T24：命令框/输入框 placeholder 显式颜色（浏览器默认灰 ≈3:1 不达 AA）。
    精致化后 --dim 收深至 #5d6f82（≈3.4:1 低于 AA），placeholder 改用 --text-sub

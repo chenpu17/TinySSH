@@ -264,6 +264,11 @@ const SEARCH_OPTS = {
   },
 };
 
+// §185 分屏窗格宽界：双窗格各不足 360 宽即退化单窗格；恢复带 6px 迟滞防抖
+const SPLIT_PANE_MIN = 360;
+const SPLIT_DEGRADE_BELOW = SPLIT_PANE_MIN * 2;
+const SPLIT_RECOVER_AT = SPLIT_PANE_MIN * 2 + 6;
+
 // 显示设置（路线图⑥）：字号范围与终端配色预设。偏好存 vault（settings KV，跨进程记忆），
 // 浏览器演示模式退化为 localStorage。T35（P2-7）：界面 chrome 跟随终端主题——每个预设
 // 声明 chrome 色板（dark/light/solar-light），changeTheme 挂 documentElement dataset
@@ -341,7 +346,7 @@ export default function App() {
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const sessionsRef = useRef<SessionInfo[]>([]);
-  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+  useEffect(() => { sessionsRef.current = sessions; applyPanesRef.current(); }, [sessions]);
   // 分屏（T19）：main=左主 pane，second=右副 pane；null=单 pane。布局（谁在左谁在右）
   // 与焦点（sid）解耦——分屏时点右 pane 只挪焦点，终端内容不左右跳动。
   // ref 与 state 并行：fitTerminal/看门狗等回调内读 ref，避开 stale closure。
@@ -440,6 +445,22 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ resultCount: number; resultIndex: number | undefined } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // R25 §318 粘贴保护：多行内容 + 远端未开 bracketed paste → 预览确认后才发送；
+  // 开关持久化在 workspace blob（ui.v2.terminal.paste_guard，默认开）
+  const [pasteGuard, setPasteGuard] = useState(true);
+  const pasteGuardRef = useRef(true);
+  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string } | null>(null);
+  // R25 §322 分屏建立双语义：复用已有会话（菜单直选）/ 新建会话（武装标记，下一次
+  // 新建会话自动落右侧副 pane）
+  const [splitMenu, setSplitMenu] = useState(false);
+  const splitNewPendingRef = useRef(false);
+  // R25 §185 宽度退化：每窗格至少 360 宽——空间不足时只呈现焦点窗格（另一个仍在
+  // 标签中），加宽自动恢复；退化时显示一次可关闭的布局提示
+  const [splitDegraded, setSplitDegraded] = useState(false);
+  const splitDegradedRef = useRef(false);
+  const [splitHintOpen, setSplitHintOpen] = useState(false);
+  // §185「显示一次」：关闭后本会话内不再重现（rev-r25 M1：与 README 主张对齐）
+  const splitHintDismissedRef = useRef(false);
   // 远程 OSC 0/2 标题（T16）：按会话记录，显示在终端头部
   const [oscTitles, setOscTitles] = useState<Record<string, string>>({});
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -883,13 +904,20 @@ export default function App() {
         return true; // 无选中 → xterm 原生 copy 事件
       }
       if (key === "v") {
+        // R25 §318：bracketed paste 语义由 xterm 按远端 DECSET 2004 自适配（不补换行
+        // 不代执行）；但远端未开启时多行内容 = 换行立即执行——预览确认后才发
+        const putPaste = (t: string) => {
+          if (!t) return;
+          if (pasteGuardRef.current && /[\n\r]/.test(t) && !term.modes.bracketedPasteMode) {
+            const h = sessionsRef.current.find((x) => x.id === sessionSid);
+            setPasteConfirm({ sid: sessionSid, hostName: h?.host_name ?? sessionSid.slice(0, 8), text: t });
+          } else {
+            term.paste(t);
+          }
+        };
         (inTauri
-          ? clipboard.readText().then((t) => {
-              if (t) term.paste(t);
-            })
-          : navigator.clipboard?.readText().then((t) => {
-              if (t) term.paste(t);
-            })
+          ? clipboard.readText().then(putPaste)
+          : navigator.clipboard?.readText().then(putPaste)
         ).catch(() => {});
         ev.preventDefault();
         return false;
@@ -1086,11 +1114,13 @@ export default function App() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver(() => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => fitTerminal(), 150);
+      timer = setTimeout(() => { checkSplitWidthRef.current(); fitTerminal(); }, 150);
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, [fitTerminal]);
+  // 分屏建立/退出/换副窗格时也重估宽度退化态
+  useEffect(() => { checkSplitWidthRef.current(); }, [splitPanes]);
 
   // —— 显示设置（路线图⑥）：字号/主题，vault 持久化（跨进程记忆）——
   // 状态供 UI 渲染；ref 供 makeTerm 闭包与快捷键读取（避开 stale closure）
@@ -1178,6 +1208,11 @@ export default function App() {
   useEffect(() => {
     invoke("get_workspace")
       .then((ws) => {
+        // R25 §318：终端偏好域（paste_guard 缺省/未写入 = 开）
+        if (ws.terminal) {
+          pasteGuardRef.current = ws.terminal.paste_guard;
+          setPasteGuard(ws.terminal.paste_guard);
+        }
         if (ws.hostbar) {
           setHostbarOpen(ws.hostbar.open);
           setHostbarWidth(Math.min(300, Math.max(200, ws.hostbar.width)));
@@ -1199,6 +1234,15 @@ export default function App() {
 
   // 主机栏开合与拖宽（200–300，§4.2）；grip 用指针捕获，拖动即改宽、松手落盘
   //（落盘三处：localStorage 兼容留写 + C8 blob 事实源）
+  // R25 §318：粘贴保护开关——同链式串行化写 terminal 域（默认开）
+  const changePasteGuard = useCallback((pg: boolean) => {
+    setPasteGuard(pg);
+    pasteGuardRef.current = pg;
+    wsWriteChain.current = wsWriteChain.current
+      .then(() => invoke("get_workspace"))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: { paste_guard: pg } } }))
+      .catch(() => {});
+  }, []);
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
@@ -1297,6 +1341,8 @@ export default function App() {
     const hk = hostKeyQueue[0];
     if (hk) { void decideHostKey(hk, false); return true; }
     if (confirm) { setConfirm(null); return true; }
+    if (pasteConfirm) { setPasteConfirm(null); return true; }
+    if (splitMenu) { setSplitMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
     if (showSettings) { setShowSettings(false); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
@@ -1382,11 +1428,13 @@ export default function App() {
 
   // 由 splitRef/sidRef 统一同步各终端层的显示类（display 归它管，React 不渲染这些层）：
   // 单 pane：活动会话 .active；分屏：main=左半、second=右半，焦点 pane 加高亮与名牌
+  // §185 退化态：只呈现焦点窗格全幅（另一个仍在标签中），类同单 pane
   const applyPanes = useCallback(() => {
     const sp = splitRef.current;
+    const degraded = !!sp && splitDegradedRef.current;
     for (const [s, e] of termsRef.current) {
       e.el.classList.remove("active", "pane-left", "pane-right", "pane-focused");
-      if (sp) {
+      if (sp && !degraded) {
         if (s === sp.main || s === sp.second) {
           e.el.classList.add(s === sp.main ? "pane-left" : "pane-right");
           e.tag.textContent = sessionsRef.current.find((x) => x.id === s)?.host_name ?? s.slice(0, 12);
@@ -1397,6 +1445,28 @@ export default function App() {
       }
     }
   }, []);
+
+  // 分屏名牌跟随主机名：会话列表变化（新建/改名）后重刷，防新建会话名牌暂显 sid
+  const applyPanesRef = useRef<() => void>(() => {});
+  applyPanesRef.current = applyPanes;
+
+  // §185 宽度退化：双窗格各 <360 宽即退化单窗格（恢复带 6px 迟滞防阈值抖动）
+  const checkSplitWidth = useCallback(() => {
+    const el = termRef.current;
+    if (!el) return;
+    const w = el.clientWidth;
+    const sp = splitRef.current;
+    const next = !!sp && (splitDegradedRef.current ? w < SPLIT_RECOVER_AT : w < SPLIT_DEGRADE_BELOW);
+    if (next !== splitDegradedRef.current) {
+      splitDegradedRef.current = next;
+      setSplitDegraded(next);
+      if (next && !splitHintDismissedRef.current) setSplitHintOpen(true);
+      applyPanes();
+      fitTerminal();
+    }
+  }, [applyPanes, fitTerminal]);
+  const checkSplitWidthRef = useRef<() => void>(() => {});
+  checkSplitWidthRef.current = checkSplitWidth;
 
   // 聚焦某会话（点标签/点 pane/⌘1-9 共用）：只挪焦点不动布局——分屏时点右 pane
   // 不会把终端内容左右对调。rev-r21 M1：应用内导航推进焦点代际（§6.3——慢建连
@@ -1460,10 +1530,13 @@ export default function App() {
     focusGenRef.current++;
     if (!termRef.current) return;
     await ensureSessionTerm(newSid);
-    // 分屏时 attach 未上屏的会话 = 替换左主 pane（副 pane 保留）
+    // 分屏时 attach 未上屏的会话 = 替换焦点窗格（§322：标签选择替换焦点窗格，
+    // 不动另一侧；焦点在副 pane 时替换副，否则替换主）
     const sp = splitRef.current;
     if (sp && newSid !== sp.main && newSid !== sp.second) {
-      splitRef.current = { ...sp, main: newSid };
+      splitRef.current = sidRef.current === sp.second
+        ? { main: sp.main, second: newSid }
+        : { main: newSid, second: sp.second };
       setSplitPanes(splitRef.current);
     }
     focusSession(newSid);
@@ -1501,6 +1574,7 @@ export default function App() {
     await ensureSessionTerm(target);
     applyPanes();
     fitTerminal();
+    checkSplitWidthRef.current();
     setTimeout(() => void fitTerminal(), 150);
     // 工具栏点击会把焦点留在按钮上——把焦点送回终端，打字不中断
     if (sidRef.current) focusSession(sidRef.current);
@@ -1512,6 +1586,7 @@ export default function App() {
     setSplitPanes(null);
     applyPanes();
     fitTerminal();
+    checkSplitWidthRef.current();
     setTimeout(() => void fitTerminal(), 150);
     if (sidRef.current) focusSession(sidRef.current);
   }, [applyPanes, fitTerminal, focusSession]);
@@ -1624,7 +1699,7 @@ export default function App() {
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary);
+  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu);
   modalRef.current = modal;
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
@@ -1972,6 +2047,21 @@ export default function App() {
       if (final.phase === "Ready" && final.session_id) {
         setLastFailed(null);
         await refreshLists();
+        // §322「在右侧新建会话」：武装标记下新建会话自动落右侧副 pane（当前会话留
+        // 左主）。用户显式要求分屏 = 主动导航——不走 gen/焦点四条件（同切标签语义）。
+        // rev-r25 L1：无当前会话（prevSid null）时武装承诺无法兑现——消费掉标记，
+        // 不留到更晚的连接意外触发分屏
+        const prevSid = sidRef.current;
+        const armSplit = splitNewPendingRef.current && !!prevSid && prevSid !== final.session_id;
+        if (splitNewPendingRef.current) {
+          splitNewPendingRef.current = false;
+          if (armSplit) {
+            await enterSplitWith(final.session_id);
+            await attachSession(final.session_id);
+            pushToast("ok", `已连接 ${host.name}（右侧分屏）`);
+            return;
+          }
+        }
         // rev-r21 M2：他主机门挂起中（用户注意力在其输入框，遮罩不持 DOM 焦）完成
         // 不抢焦——否则后续验证码 keystroke 误落已完成会话的远端 shell。本主机门在
         // attempt 终态前必已闭（应答先同步 splice 队列再 invoke），不受扰。
@@ -2602,17 +2692,14 @@ export default function App() {
               ><IconSearch size={15} /></button>
             )}
             <button
-              className="ghost icon-btn"
-              disabled={sessions.filter((s) => s.id !== sid).length === 0}
-              title={splitPanes ? "退出分屏" : sessions.filter((s) => s.id !== sid).length === 0
-                ? "分屏需要第二个会话——先连接另一台主机或再开一个会话"
-                : "分屏：把最近的另一个会话放到右侧"}
+              className={"ghost icon-btn" + (splitMenu ? " ts-open" : "")}
+              title={splitPanes ? "退出分屏（会话保留不断开）" : "分屏：在右侧显示已有会话，或在右侧新建会话"}
+              aria-haspopup={splitPanes ? undefined : "menu"}
+              aria-expanded={splitPanes ? undefined : splitMenu}
               aria-pressed={!!splitPanes}
               onClick={() => {
                 if (splitPanes) { void exitSplit(); return; }
-                const other = [...sessions].filter((s) => s.id !== sid)
-                  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
-                if (other) void enterSplitWith(other.id);
+                setSplitMenu((v) => !v);
               }}
             ><IconSplit size={15} /></button>
             <button
@@ -2825,6 +2912,63 @@ export default function App() {
               <button className="ghost" title="关闭（Esc）" onClick={closeSearch}><IconX size={12} /></button>
             </div>
           )}
+          {splitMenu && (
+            <>
+              <div className="pop-mask" onClick={() => setSplitMenu(false)} />
+              <div className="split-menu" role="menu" aria-label="分屏">
+                <div className="ts-label">在右侧显示已有会话<span className="dim">（复用现有连接，不新建）</span></div>
+                {[...sessions].filter((s) => s.id !== sid).length === 0 && (
+                  <div className="dim" style={{ fontSize: 12, padding: "2px 0 4px" }}>暂无其他会话</div>
+                )}
+                {[...sessions].filter((s) => s.id !== sid).map((s) => {
+                  const st = stateLabel(s.state);
+                  return (
+                    <button key={s.id} className="ghost sm-item" role="menuitem"
+                      onClick={() => { setSplitMenu(false); void enterSplitWith(s.id); }}>
+                      <span className="sm-name">{s.host_name}</span>
+                      <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
+                    </button>
+                  );
+                })}
+                <div className="ts-label" style={{ marginTop: 8 }}>或</div>
+                <button className="ghost sm-item" role="menuitem"
+                  title="下一次新建的会话自动进入右侧分屏（当前会话留在左侧）"
+                  onClick={() => {
+                    splitNewPendingRef.current = true;
+                    setSplitMenu(false);
+                    pushToast("info", "已就绪：下一次新建的会话将进入右侧分屏——连接一台主机或打开本地终端即可");
+                  }}
+                >在右侧新建会话…</button>
+              </div>
+            </>
+          )}
+          {splitDegraded && splitHintOpen && (
+            <div className="split-hint" role="status">
+              <span>窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。</span>
+              <button className="ghost" aria-label="关闭提示" onClick={() => { splitHintDismissedRef.current = true; setSplitHintOpen(false); }}><IconX size={12} /></button>
+            </div>
+          )}
+          {pasteConfirm && (
+            // rev-r25 H1：对话框必须是 confirm-mask 的子元素（flex 居中+同层叠上下文）——
+            // 兄弟写法下 dialog 仍是 term-wrap 流内静态项且被 mask 盖住，鼠标点不中
+            <div className="confirm-mask" onClick={() => setPasteConfirm(null)}>
+              <div className="confirm-dialog paste-dialog" onClick={(e) => e.stopPropagation()}>
+                <div className="hk-title">粘贴多行内容到 {pasteConfirm.hostName}？</div>
+                <div>目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。</div>
+                <pre className="paste-preview mono">{pasteConfirm.text.length > 2000
+                  ? pasteConfirm.text.slice(0, 2000) + `\n……（预览截断，共 ${pasteConfirm.text.length} 字符）`
+                  : pasteConfirm.text}</pre>
+                <div className="hk-actions">
+                  <button className="danger" onClick={() => {
+                    termsRef.current.get(pasteConfirm.sid)?.term.paste(pasteConfirm.text);
+                    setPasteConfirm(null);
+                    restoreTermFocus();
+                  }}>发送</button>
+                  <button className="ghost" onClick={() => setPasteConfirm(null)}>取消</button>
+                </div>
+              </div>
+            </div>
+          )}
           {showSettings && (
             <>
               <div className="pop-mask" onClick={() => setShowSettings(false)} />
@@ -2855,6 +2999,17 @@ export default function App() {
                   ))}
                 </div>
                 <div className="dim" style={{ marginTop: 10, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
+                {/* R25 §318：多行粘贴保护开关——阈值（内容含换行）与行为在设置明确说明 */}
+                <div className="ts-label" style={{ marginTop: 12 }}>粘贴</div>
+                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
+                  <input type="checkbox" checked={pasteGuard} onChange={(e) => changePasteGuard(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                    多行粘贴保护
+                    <span className="dim" style={{ display: "block" }}>
+                      粘贴内容含换行且远端未开启 bracketed paste 时，先预览确认再发送；关闭后立即发送。
+                    </span>
+                  </span>
+                </label>
                 {/* R21 凭据基础管理（§238/§267）：生成/导入在连接表单完成；此处列表 +
                     未绑定标记 + 引用检查删除——已保存凭据独立存在，取消表单不默默删除 */}
                 <div className="ts-label" style={{ marginTop: 12 }}>凭据库</div>

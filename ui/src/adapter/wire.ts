@@ -411,11 +411,18 @@ export interface Workspace {
   chrome: string;
   /** 主机栏开合与宽度；null = 尚未写入（R12 localStorage 暂存迁入） */
   hostbar: HostbarPrefs | null;
+  /** 终端偏好（R25 §318）；null = 尚未写入，消费方按全默认解释 */
+  terminal?: TerminalPrefs | null;
 }
 
 export interface HostbarPrefs {
   open: boolean;
   width: number;
+}
+
+/** 终端偏好（R25 §318）：粘贴保护开关，默认开 */
+export interface TerminalPrefs {
+  paste_guard: boolean;
 }
 
 /** 主机元数据（DF8.2 host_metadata 表行）。 */

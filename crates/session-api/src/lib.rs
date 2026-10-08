@@ -1100,6 +1100,17 @@ pub struct Workspace {
     /// 主机栏开合与宽度（§4.2；R12 的浏览器 localStorage 暂存迁入；None = 尚未写入）
     #[serde(default)]
     pub hostbar: Option<HostbarPrefs>,
+    /// 终端偏好（R25 §318；None = 尚未写入，消费方按全默认解释）
+    #[serde(default)]
+    pub terminal: Option<TerminalPrefs>,
+}
+
+/// 终端偏好（§318）：粘贴保护开关，默认开
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalPrefs {
+    /// 多行粘贴保护：内容含换行且远端未开 bracketed paste 时预览确认后才发送
+    #[serde(default = "serde_true")]
+    pub paste_guard: bool,
 }
 
 fn default_chrome() -> String {
@@ -1113,7 +1124,7 @@ pub fn serde_true() -> bool {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None }
+        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None, terminal: None }
     }
 }
 
