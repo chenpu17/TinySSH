@@ -1,0 +1,4 @@
+T4 palette-couples-chrome old=light (old code flips to light; new code stays dark)
+T3 esc-restore old-active=
+T1 tab-x-keyboard-reachable old=false (old code span not focusable → false)
+T2 hit-area-28 old=false at-point=tab

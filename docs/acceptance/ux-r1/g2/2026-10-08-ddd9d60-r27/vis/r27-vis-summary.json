@@ -1,0 +1,170 @@
+{
+ "meta": {
+  "date": "2026-10-08",
+  "baseline": "ddd9d60(R26) worktree /tmp/vis-r27-base :5184",
+  "current": "R27 uncommitted tree :5183",
+  "viewport": "1280x800 headless Chrome; 640x800 narrow",
+  "noise_floor": "both-tree burst selfDiff on welcome"
+ },
+ "regression": {
+  "welcome": {
+   "diffPx": 3,
+   "bbox": [
+    99,
+    31,
+    1157,
+    78
+   ],
+   "selfDiff": 0
+  },
+  "addform": {
+   "diffPx": 2,
+   "bbox": [
+    99,
+    31,
+    101,
+    33
+   ]
+  }
+ },
+ "boxes": {
+  "addBtnFound": {
+   "base": true,
+   "cur": true
+  },
+  "settingsDark": {
+   "panel": [
+    280,
+    558
+   ],
+   "overflowX": false,
+   "fontVal": "14",
+   "groups": [
+    {
+     "label": "应用外观",
+     "rel": [
+      13,
+      125,
+      254,
+      31
+     ],
+     "btns": [
+      [
+       13,
+       125,
+       74,
+       31
+      ],
+      [
+       93,
+       125,
+       50,
+       31
+      ],
+      [
+       149,
+       125,
+       50,
+       31
+      ]
+     ],
+     "overlap": false
+    },
+    {
+     "label": "终端配色",
+     "rel": [
+      13,
+      183,
+      254,
+      66
+     ],
+     "btns": [
+      [
+       13,
+       183,
+       124,
+       30
+      ],
+      [
+       143,
+       183,
+       124,
+       30
+      ],
+      [
+       13,
+       219,
+       124,
+       30
+      ],
+      [
+       143,
+       219,
+       124,
+       30
+      ]
+     ],
+     "overlap": false
+    }
+   ],
+   "palette": [
+    [
+     13,
+     183,
+     124,
+     30
+    ],
+    [
+     143,
+     183,
+     124,
+     30
+    ],
+    [
+     13,
+     219,
+     124,
+     30
+    ],
+    [
+     143,
+     219,
+     124,
+     30
+    ]
+   ]
+  },
+  "settingsLightOverflow": false,
+  "systemLightChrome": "light",
+  "tabControls": {
+   "tab": [
+    120,
+    27
+   ],
+   "tabX": [
+    18,
+    18
+   ],
+   "tabSplit": [
+    18,
+    18
+   ]
+  },
+  "palettePairwiseDiffPx": {
+   "dark|light": 547466,
+   "dark|solar-dark": 547437,
+   "dark|solar-light": 548044,
+   "light|solar-dark": 547466,
+   "light|solar-light": 548044,
+   "solar-dark|solar-light": 548044
+  },
+  "settings640": {
+   "w": 280,
+   "overflowX": false,
+   "inViewport": true
+  }
+ },
+ "notes": [
+  "cur forceDark 面经一次性 evaluate 预置 blob chrome=dark + reload（方法学登记：base 无外观概念、默认 dark；等效状态对齐；后续 system/light 镜头前已清存储，不受预置影响）"
+ ]
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
@@ -153,6 +153,41 @@ const stateLabel = (s: string): { text: string; cls: string } => {
 const inputBlockedState = (st: string): boolean =>
   st === "Disconnected" || st === "Degraded" || st === "Reconnecting";
 
+// §7.4：弹窗 focus trap——打开时焦点入框、Tab/Shift+Tab 循环不出框、关闭时焦点
+// 还原到触发控件（VoiceOver/纯键盘用户的回位锚点）。只用于带遮罩的模态弹窗。
+function useDialogFocus(active: boolean, boxRef: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!active) return;
+    const box = boxRef.current;
+    if (!box) return;
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusables = () =>
+      Array.from(
+        box.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"),
+      ).filter((n) => !(n instanceof HTMLButtonElement && n.disabled) && n.offsetParent !== null);
+    if (!box.contains(document.activeElement)) {
+      // rev-r27 中-1：确认类模态的 danger 钮在 DOM 首位——初始焦点 [data-autofocus]
+      // 优先（取消钮打标），不给破坏动作预武装；无标记回落首位
+      (box.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0])?.focus();
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const list = focusables();
+      if (list.length === 0) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      const inside = document.activeElement instanceof Node && box.contains(document.activeElement);
+      if (e.shiftKey && (!inside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+    };
+    box.addEventListener("keydown", onKey);
+    return () => {
+      box.removeEventListener("keydown", onKey);
+      if (prev?.isConnected) prev.focus();
+    };
+  }, [active, boxRef]);
+}
+
 // 后端错误 → 用户能看懂的一句话（原始错误放次要行）
 const friendlyError = (e: unknown): string => {
   const pe = parseWireError(e);
@@ -276,26 +311,33 @@ const SPLIT_DEGRADE_BELOW = SPLIT_PANE_MIN * 2;
 const SPLIT_RECOVER_AT = SPLIT_PANE_MIN * 2 + 6;
 
 // 显示设置（路线图⑥）：字号范围与终端配色预设。偏好存 vault（settings KV，跨进程记忆），
-// 浏览器演示模式退化为 localStorage。T35（P2-7）：界面 chrome 跟随终端主题——每个预设
-// 声明 chrome 色板（dark/light/solar-light），changeTheme 挂 documentElement dataset
-// 切换 CSS 变量层；Tauri 下原生窗口外观（Overlay 红绿灯深浅、原生面板）同步 setTheme。
+// 浏览器演示模式退化为 localStorage。R27（§7.1/§244）：应用外观与终端配色解耦——
+// 外观三态（跟随系统/深色/浅色，新装默认跟随系统）走 ui.v2.workspace blob 的 chrome 域，
+// 终端配色四预设独立存 ui.theme；Tauri 下原生窗口外观（Overlay 红绿灯、原生面板）随外观同步。
 const FONT_MIN = 9;
 const FONT_MAX = 28;
-const FONT_DEFAULT = 13;
+// §7.2：终端默认字号 14px（用户可调，范围 9–28 保留；已存偏好优先于默认）
+const FONT_DEFAULT = 14;
 // C8（R15）：字号迁到命名空间键；旧键 ui.font_size 由核心 V5 迁移写入新键后
 // 保留不删（回退兼容），浏览器 demo 读新键缺失时回落旧键
 const SETTING_FONT = "ui.v2.terminal.font_size";
 const SETTING_FONT_LEGACY = "ui.font_size";
 const SETTING_THEME = "ui.theme";
 
+type Appearance = "system" | "dark" | "light";
+const APPEARANCES: { id: Appearance; label: string }[] = [
+  { id: "system", label: "跟随系统" },
+  { id: "dark", label: "深色" },
+  { id: "light", label: "浅色" },
+];
+
 type ThemePreset = {
   id: string; label: string;
-  chrome: "dark" | "light" | "solar-light";
   bg: string; fg: string; theme: Record<string, string>;
 };
 const THEMES: ThemePreset[] = [
   {
-    id: "dark", label: "深色（默认）", chrome: "dark", bg: "#10141a", fg: "#d7dee8",
+    id: "dark", label: "深色（默认）", bg: "#10141a", fg: "#d7dee8",
     theme: {
       foreground: "#d7dee8", background: "#10141a",
       cursor: "#d7dee8", cursorAccent: "#10141a", selectionBackground: "#4a5a70",
@@ -306,7 +348,7 @@ const THEMES: ThemePreset[] = [
     },
   },
   {
-    id: "light", label: "浅色", chrome: "light", bg: "#f7f7f2", fg: "#2a3138",
+    id: "light", label: "浅色", bg: "#f7f7f2", fg: "#2a3138",
     theme: {
       foreground: "#2a3138", background: "#f7f7f2",
       cursor: "#2a3138", cursorAccent: "#f7f7f2", selectionBackground: "#b9c6d4",
@@ -317,7 +359,7 @@ const THEMES: ThemePreset[] = [
     },
   },
   {
-    id: "solar-dark", label: "Solarized 深色", chrome: "dark", bg: "#002b36", fg: "#93a1a1",
+    id: "solar-dark", label: "Solarized 深色", bg: "#002b36", fg: "#93a1a1",
     theme: {
       foreground: "#93a1a1", background: "#002b36",
       cursor: "#839496", cursorAccent: "#002b36", selectionBackground: "#073642",
@@ -328,7 +370,7 @@ const THEMES: ThemePreset[] = [
     },
   },
   {
-    id: "solar-light", label: "Solarized 浅色", chrome: "solar-light", bg: "#fdf6e3", fg: "#657b83",
+    id: "solar-light", label: "Solarized 浅色", bg: "#fdf6e3", fg: "#657b83",
     theme: {
       foreground: "#657b83", background: "#fdf6e3",
       cursor: "#586e75", cursorAccent: "#fdf6e3", selectionBackground: "#eee8d5",
@@ -487,6 +529,13 @@ export default function App() {
   const [pasteGuard, setPasteGuard] = useState(true);
   const pasteGuardRef = useRef(true);
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string } | null>(null);
+  // §7.4 弹窗 focus trap：带遮罩模态的容器 refs（hook 挂在组件顶层，active 随开合）
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+  const closeConfirmRef = useRef<HTMLDivElement | null>(null);
+  const quitConfirmRef = useRef<HTMLDivElement | null>(null);
+  const delHostRef = useRef<HTMLDivElement | null>(null);
+  const delIdentRef = useRef<HTMLDivElement | null>(null);
+  const pasteConfirmRef = useRef<HTMLDivElement | null>(null);
   // R25 §322 分屏建立双语义：复用已有会话（菜单直选）/ 新建会话（武装标记，下一次
   // 新建会话自动落右侧副 pane）
   const [splitMenu, setSplitMenu] = useState(false);
@@ -1188,6 +1237,21 @@ export default function App() {
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
   const themeRef = useRef("dark");
+  // R27：应用外观三态（跟随系统/深色/浅色）——与终端配色解耦（§7.1/§244），
+  // 事实源 = ui.v2.workspace blob 的 chrome 域（V5 迁移已为老用户写入映射值）
+  const [appearance, setAppearance] = useState<Appearance>("system");
+  const appearanceRef = useRef<Appearance>("system");
+  // C8 工作区偏好串行化链（hostbar/外观共用；声明提前供 changeAppearance 使用）
+  const wsWriteChain = useRef<Promise<unknown>>(Promise.resolve());
+
+  const applyChrome = useCallback((resolved: "dark" | "light") => {
+    // CSS 变量层挂 documentElement（深浅遮罩/玻璃/阴影一起换）；Tauri 下原生窗口
+    // 外观同步（Overlay 红绿灯深浅渲染）
+    document.documentElement.dataset.chrome = resolved;
+    if (inTauri) {
+      void getCurrentWindow().setTheme(resolved === "dark" ? "dark" : "light").catch(() => {});
+    }
+  }, [inTauri]);
 
   const persistSetting = useCallback((key: string, value: string) => {
     if (inTauri) void invoke("set_setting", { key, value }).catch(() => {});
@@ -1214,14 +1278,36 @@ export default function App() {
     themeRef.current = id;
     setThemeId(id);
     persistSetting(SETTING_THEME, id);
+    // R27 解耦：终端配色只改终端实例色板，不再触碰应用 chrome（data-chrome/setTheme）
     for (const [, e] of termsRef.current) e.term.options.theme = { ...preset.theme };
-    // T35（P2-7）：chrome 跟随终端主题——CSS 变量层挂 documentElement（深浅遮罩/
-    // 玻璃/阴影一起换）；Tauri 下原生窗口外观同步（Overlay 红绿灯深浅渲染）。
-    document.documentElement.dataset.chrome = preset.chrome;
-    if (inTauri) {
-      void getCurrentWindow().setTheme(preset.chrome === "dark" ? "dark" : "light").catch(() => {});
-    }
   }, [persistSetting]);
+
+  // 外观应用（不落库）：system 按 prefers-color-scheme 现场解析；Tauri 原生窗口
+  // system 态 setTheme(null) 归还系统跟随
+  const applyAppearance = useCallback((a: Appearance) => {
+    appearanceRef.current = a;
+    setAppearance(a);
+    applyChrome(a === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : a);
+    if (inTauri) void getCurrentWindow().setTheme(a === "system" ? null : a).catch(() => {});
+  }, [applyChrome, inTauri]);
+
+  // 外观落库（blob chrome 域，走串行化链防与 hostbar 写交错丢更新）
+  const changeAppearance = useCallback((a: Appearance) => {
+    applyAppearance(a);
+    wsWriteChain.current = wsWriteChain.current
+      .then(() => invoke("get_workspace"))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, chrome: a } }))
+      .catch(() => {});
+  }, [applyAppearance]);
+
+  // 跟随系统：系统外观变化实时跟随（仅 system 态挂监听）
+  useEffect(() => {
+    if (appearance !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyChrome(mq.matches ? "dark" : "light");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [appearance, applyChrome]);
 
   // 启动载入偏好（Tauri=vault，浏览器=localStorage）；早于载入创建的实例一并补齐
   useEffect(() => {
@@ -1229,9 +1315,15 @@ export default function App() {
       if (f !== null && f >= FONT_MIN && f <= FONT_MAX) changeFontSize(f);
       if (t) changeTheme(t);
     };
+    // R20 登记「chrome blob 消费归 R27」：外观事实源 = blob chrome 域（demo 同契约）
+    const applyChromeBlob = (ws: { chrome?: string } | null) => {
+      const c = ws?.chrome;
+      if (c === "system" || c === "dark" || c === "light") applyAppearance(c);
+    };
     if (!inTauri) {
       const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
       apply(Number.isFinite(raw) && raw > 0 ? raw : null, localStorage.getItem(SETTING_THEME));
+      invoke("get_workspace").then(applyChromeBlob).catch(() => {});
       return;
     }
     invoke("get_setting", { key: SETTING_FONT })
@@ -1240,12 +1332,12 @@ export default function App() {
         apply(f === null ? null : Number(f), t);
       }))
       .catch(() => {});
-  }, [inTauri, changeFontSize, changeTheme]);
+    invoke("get_workspace").then(applyChromeBlob).catch(() => {});
+  }, [inTauri, changeFontSize, changeTheme, applyAppearance]);
 
   // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
   // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
   // 链式串行化（rev-r15 L2）——⌘B 与拖宽连发时按序落库，避免两次读改写交错以陈宽覆盖。
-  const wsWriteChain = useRef<Promise<unknown>>(Promise.resolve());
   const persistHostbarPrefs = useCallback((open: boolean, width: number) => {
     wsWriteChain.current = wsWriteChain.current
       .then(() => invoke("get_workspace"))
@@ -1720,6 +1812,13 @@ export default function App() {
   }, [confirm]);
   // R23（§6.4 退出应用）：主窗口关闭=请求退出 → 汇总确认；「结束会话并退出」关全部会话后退出
   const [quitSummary, setQuitSummary] = useState<{ sessions: SessionInfo[]; forwards: number } | null>(null);
+  // §7.4 弹窗 focus trap（调用须在全部相关 state 声明之后；hook 序恒定）
+  useDialogFocus(showSettings, settingsPanelRef);
+  useDialogFocus(confirm?.kind === "closeSession", closeConfirmRef);
+  useDialogFocus(!!quitSummary, quitConfirmRef);
+  useDialogFocus(confirm?.kind === "deleteHost", delHostRef);
+  useDialogFocus(confirm?.kind === "deleteIdentity", delIdentRef);
+  useDialogFocus(!!pasteConfirm, pasteConfirmRef);
   useEffect(() => {
     if (!inTauri) return;
     let un: (() => void) | undefined;
@@ -2581,7 +2680,7 @@ export default function App() {
               title={`左侧还有 ${tabScroll.hiddenL} 个会话被收起——点击展开（⌘⇧[ 可循环切换）`}
               onClick={() => scrollTabs(-1)}>‹</button>
           )}
-          <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar}>
+          <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar} role="tablist" aria-label="会话标签">
             {sessions.map((s, i) => {
               const st = stateLabel(s.state);
               const inSplit = splitPanes?.main === s.id || splitPanes?.second === s.id;
@@ -2590,26 +2689,37 @@ export default function App() {
                   key={s.id}
                   className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")}
                   title={`${s.host_name} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
+                  aria-label={`${s.host_name}，${st.text}${inSplit ? "，在分屏中" : ""}${i < 9 ? `，⌘${i + 1}` : ""}`}
                   tabIndex={0}
                   role="tab"
                   aria-selected={sid === s.id}
                   onKeyDown={(e) => {
+                    // R20-H1 同款守卫（R27 tab-x/tab-split 键盘化后必须）：子按钮上的
+                    // Enter/Space 冒泡到标签处理器会 preventDefault 吞掉按钮默认点击、
+                    // 误触 attachSession——只有标签本体直接按键才激活
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id); }
                   }}
                   onClick={() => attachSession(s.id)}
                 >
-                  <span className={"tab-dot " + st.cls} />
+                  <span className={"tab-dot " + st.cls} aria-hidden="true" />
                   <span className="tab-label">{s.host_name}</span>
-                  <span
+                  {/* R27（§7.4）：关闭/分屏改真按钮——键盘 Tab 可达、focus-visible 可见、
+                      可访问名称不依赖 hover；命中区 ≥28 由 CSS ::after 透明扩展 */}
+                  <button
+                    type="button"
                     className="tab-split"
                     title={splitPanes ? "放到右侧分屏" : s.id === sid ? "已在主视图" : "与当前会话分屏"}
+                    aria-label={splitPanes ? `把 ${s.host_name} 放到右侧分屏` : s.id === sid ? `${s.host_name} 已在主视图` : `与 ${s.host_name} 分屏`}
                     onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id); }}
-                  ><IconSplit size={12} /></span>
-                  <span
+                  ><IconSplit size={12} /></button>
+                  <button
+                    type="button"
                     className="tab-x"
                     title="关闭会话（⌘W，活动会话先确认影响）"
+                    aria-label={`关闭会话 ${s.host_name}`}
                     onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
-                  ><IconX size={11} /></span>
+                  ><IconX size={11} /></button>
                 </div>
               );
             })}
@@ -2677,10 +2787,10 @@ export default function App() {
         )}
         {confirm?.kind === "closeSession" && (
           <div className="confirm-mask" onClick={() => setConfirm(null)}>
-            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog" ref={closeConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-close-title" onClick={(e) => e.stopPropagation()}>
               {/* R23 §6.4/§342：入口统一命名「关闭会话」；影响行只说可查证的
                   （转发数），任务/传输状态未知时明确未知，不声称空闲 */}
-              <div className="hk-title">关闭与 {confirm.hostName} 的会话？</div>
+              <div className="hk-title" id="dlg-close-title">关闭与 {confirm.hostName} 的会话？</div>
               <div>终端现场不可恢复——重连会是全新现场（记录保留）。</div>
               <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
                 · 将受影响的转发：{confirmImpact ? (confirmImpact.forwards > 0 ? `${confirmImpact.forwards} 条（随会话关闭）` : "无") : "状态未知（查询失败）"}
@@ -2688,15 +2798,15 @@ export default function App() {
               </div>
               <div className="hk-actions">
                 <button className="danger" onClick={confirmAction}>关闭会话</button>
-                <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
+                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>取消</button>
               </div>
             </div>
           </div>
         )}
         {quitSummary && (
           <div className="confirm-mask">
-            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title">退出 TinySSH？</div>
+            <div className="confirm-dialog" ref={quitConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-quit-title" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title" id="dlg-quit-title">退出 TinySSH？</div>
               <div>
                 活动会话 {quitSummary.sessions.length} 个
                 {quitSummary.sessions.length > 0 && (
@@ -2710,31 +2820,31 @@ export default function App() {
               </div>
               <div className="hk-actions">
                 <button className="danger" onClick={() => void confirmQuit()}>结束会话并退出</button>
-                <button className="ghost" onClick={() => setQuitSummary(null)}>取消</button>
+                <button className="ghost" data-autofocus onClick={() => setQuitSummary(null)}>取消</button>
               </div>
             </div>
           </div>
         )}
         {confirm?.kind === "deleteHost" && (
           <div className="confirm-mask" onClick={() => setConfirm(null)}>
-            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title">删除主机 {confirm.name}？</div>
+            <div className="confirm-dialog" ref={delHostRef} role="dialog" aria-modal="true" aria-labelledby="dlg-delhost-title" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title" id="dlg-delhost-title">删除主机 {confirm.name}？</div>
               <div>凭据与指纹记录一并移除，之后无法再从它新建连接；已建立的会话不受影响。</div>
               <div className="hk-actions">
                 <button className="danger" onClick={confirmAction}>删除</button>
-                <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
+                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>取消</button>
               </div>
             </div>
           </div>
         )}
         {confirm?.kind === "deleteIdentity" && (
           <div className="confirm-mask" onClick={() => setConfirm(null)}>
-            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title">删除凭据 {confirm.label}？</div>
+            <div className="confirm-dialog" ref={delIdentRef} role="dialog" aria-modal="true" aria-labelledby="dlg-delident-title" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title" id="dlg-delident-title">删除凭据 {confirm.label}？</div>
               <div>仍被主机引用的凭据会被拒绝并列出主机；已保存的凭据独立存在，删除前请确认没有主机依赖它。</div>
               <div className="hk-actions">
                 <button className="danger" onClick={confirmAction}>删除凭据</button>
-                <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
+                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>取消</button>
               </div>
             </div>
           </div>
@@ -2995,9 +3105,9 @@ export default function App() {
                     ? "无结果"
                     : ""}
               </span>
-              <button className="ghost" title="上一个（⇧⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findPrevious(searchQuery, SEARCH_OPTS)}><IconChevronUp size={13} /></button>
-              <button className="ghost" title="下一个（⏎）" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findNext(searchQuery, SEARCH_OPTS)}><IconChevronDown size={13} /></button>
-              <button className="ghost" title="关闭（Esc）" onClick={closeSearch}><IconX size={12} /></button>
+              <button className="ghost" title="上一个（⇧⏎）" aria-label="上一个搜索结果" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findPrevious(searchQuery, SEARCH_OPTS)}><IconChevronUp size={13} /></button>
+              <button className="ghost" title="下一个（⏎）" aria-label="下一个搜索结果" onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findNext(searchQuery, SEARCH_OPTS)}><IconChevronDown size={13} /></button>
+              <button className="ghost" title="关闭（Esc）" aria-label="关闭搜索" onClick={closeSearch}><IconX size={12} /></button>
             </div>
           )}
           {splitMenu && (
@@ -3040,8 +3150,8 @@ export default function App() {
             // rev-r25 H1：对话框必须是 confirm-mask 的子元素（flex 居中+同层叠上下文）——
             // 兄弟写法下 dialog 仍是 term-wrap 流内静态项且被 mask 盖住，鼠标点不中
             <div className="confirm-mask" onClick={() => setPasteConfirm(null)}>
-              <div className="confirm-dialog paste-dialog" onClick={(e) => e.stopPropagation()}>
-                <div className="hk-title">粘贴多行内容到 {pasteConfirm.hostName}？</div>
+              <div className="confirm-dialog paste-dialog" ref={pasteConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-paste-title" onClick={(e) => e.stopPropagation()}>
+                <div className="hk-title" id="dlg-paste-title">粘贴多行内容到 {pasteConfirm.hostName}？</div>
                 <div>目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。</div>
                 <pre className="paste-preview mono">{pasteConfirm.text.length > 2000
                   ? pasteConfirm.text.slice(0, 2000) + `\n……（预览截断，共 ${pasteConfirm.text.length} 字符）`
@@ -3052,7 +3162,7 @@ export default function App() {
                     setPasteConfirm(null);
                     restoreTermFocus();
                   }}>发送</button>
-                  <button className="ghost" onClick={() => setPasteConfirm(null)}>取消</button>
+                  <button className="ghost" data-autofocus onClick={() => setPasteConfirm(null)}>取消</button>
                 </div>
               </div>
             </div>
@@ -3060,7 +3170,7 @@ export default function App() {
           {showSettings && (
             <>
               <div className="pop-mask" onClick={() => setShowSettings(false)} />
-              <div className="term-settings">
+              <div className="term-settings" ref={settingsPanelRef} role="dialog" aria-modal="true" aria-label="显示设置">
                 <div className="row" style={{ marginBottom: 10 }}>
                   <b>显示设置</b>
                   <span style={{ flex: 1 }} />
@@ -3073,12 +3183,23 @@ export default function App() {
                   <button className="ghost" title="增大（⌘=）" aria-label="增大字号" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}><IconPlus size={13} /></button>
                   <button className="ghost" disabled={fontSize === FONT_DEFAULT} onClick={() => changeFontSize(FONT_DEFAULT)}>重置</button>
                 </div>
-                <div className="ts-label" style={{ marginTop: 10 }}>主题</div>
-                <div className="ts-themes">
+                {/* R27（§7.1/§244）：应用外观与终端配色解耦——外观三态独立持久化
+                    （blob chrome 域，新装默认跟随系统），终端配色只改终端 */}
+                <div className="ts-label" style={{ marginTop: 10 }}>外观（应用）</div>
+                <div className="row ts-appearance" role="group" aria-label="应用外观">
+                  {APPEARANCES.map((a) => (
+                    <button key={a.id} className={"ghost" + (appearance === a.id ? " ts-active" : "")}
+                      aria-pressed={appearance === a.id}
+                      onClick={() => changeAppearance(a.id)}>{a.label}</button>
+                  ))}
+                </div>
+                <div className="ts-label" style={{ marginTop: 10 }}>终端配色</div>
+                <div className="ts-themes" role="group" aria-label="终端配色">
                   {THEMES.map((t) => (
                     <button
                       key={t.id}
                       className={"ghost ts-opt" + (themeId === t.id ? " ts-active" : "")}
+                      aria-pressed={themeId === t.id}
                       onClick={() => changeTheme(t.id)}
                     >
                       <span className="ts-swatch" style={{ background: t.bg, borderColor: t.fg, color: t.fg }}>Aa</span>
@@ -3086,7 +3207,8 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <div className="dim" style={{ marginTop: 10, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
+                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>应用外观与终端配色相互独立；「跟随系统」随系统深浅实时切换。</div>
+                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
                 {/* R25 §318：多行粘贴保护开关——阈值（内容含换行）与行为在设置明确说明 */}
                 <div className="ts-label" style={{ marginTop: 12 }}>粘贴</div>
                 <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>

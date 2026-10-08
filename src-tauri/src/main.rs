@@ -876,6 +876,8 @@ fn main() {
                     r25_smoke_script(&run_id)
                 } else if mode == "r26" {
                     r26_smoke_script(&run_id)
+                } else if mode == "r27" {
+                    r27_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -2298,6 +2300,137 @@ fn r25_smoke_script(run_id: &str) -> String {
 /// 驱动启容器 → 手动重连 → Reconfirming 横幅（已重连；旧现场待核实）+ 人类键入恢复；
 /// r26-b 集成关主机命令框 → Shell 拒绝 + Fresh 指引两行（R24-L5）；周期4 断开标签
 /// 直接关不询问（§6.4）。事件面 session-state 真实通道驱动横幅。
+/// R27 原生冒烟（外观/终端设置/可访问性；无 sshd 依赖——纯 UI/偏好面）：
+/// 阶段1（新库）：真实 macOS 深浅切换（驱动 osascript）→ WKWebView prefers-color-scheme
+/// 实时跟随（新装默认 system）；设置面板三态+终端配色解耦（原生面）+ blob chrome 落库
+/// （get_workspace 对账）+ ⌘= 字号键；阶段2（驱动杀进程→DB 回卷 user_version=4+删 blob
+/// +写旧键 ui.theme=solar-light→重启）：V5 迁移映射消费——chrome=light + 终端 Solarized
+/// 浅色在位，随后「跟随系统」归位（self-consistent 断言 matchMedia 解析）。
+fn r27_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R27_INJECTED__) return;
+  window.__R27_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const chromeAttr = () => document.documentElement.dataset.chrome ?? null;
+  const pressedAppearance = () => {
+    const g = document.querySelector('[role="group"][aria-label="应用外观"]');
+    if (!g) return null;
+    const on = [...g.querySelectorAll('button')].find((b) => b.getAttribute('aria-pressed') === 'true');
+    return on ? on.textContent : null;
+  };
+  const clickAppearance = async (label) => {
+    const ok = await waitFor(() => {
+      const g = document.querySelector('[role="group"][aria-label="应用外观"]');
+      if (!g) return null;
+      const b = [...g.querySelectorAll('button')].find((x) => x.textContent === label);
+      if (!b) return null;
+      b.click();
+      return true;
+    }, 30);
+    return ok;
+  };
+  (async () => {
+    try {
+      // 二阶段（驱动以 RUN_ID=<run>-p2 重启 + 已回卷 DB + 写旧键 ui.theme=solar-light）：
+      // 验 V5 迁移映射消费——chrome=light + 终端 Solarized 浅色在位
+      const PHASE2 = /-p2$/.test(RUN);
+      if (PHASE2) {
+        await title('r27-p2-open');
+        const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+        if (!cards) return title('FAIL-p2-no-cards');
+        await sleep(600); // 偏好载入链（get_workspace/get_setting）落地
+        const ch = await waitFor(() => (chromeAttr() === 'light' ? true : null), 40);
+        if (!ch) return title('FAIL-p2-chrome:' + chromeAttr() + ' (solar-light 应映射 light)');
+        const pal = await waitFor(() => {
+          document.querySelector('.hb-settings')?.click();
+          return document.querySelector('.term-settings') ? true : null;
+        }, 40);
+        if (!pal) return title('FAIL-p2-no-settings');
+        const solar = [...document.querySelectorAll('.ts-opt')].find((b) => b.textContent.includes('Solarized 浅色'));
+        if (!solar || !solar.classList.contains('ts-active')) return title('FAIL-p2-palette:' + (solar ? 'not-active' : 'missing'));
+        await markSync('r27a-migr-ok');
+        // 「跟随系统」归位：chrome 应实时解析为当前系统外观（与 in-page matchMedia 自洽）
+        if (!await clickAppearance('跟随系统')) return title('FAIL-p2-no-system-btn');
+        await sleep(300);
+        const sysRes = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        if (chromeAttr() !== sysRes) return title('FAIL-p2-system:' + chromeAttr() + '!=' + sysRes);
+        await markSync('r27a-system-restore-ok');
+        await markSync('r27a-DONE');
+        return title('r27-DONE');
+      }
+      await title('r27-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await sleep(600);
+      // ---- 新装默认跟随系统：chrome = 当前系统外观 ----
+      const chrome0 = chromeAttr();
+      if (chrome0 !== 'dark' && chrome0 !== 'light') return title('FAIL-chrome0:' + String(chrome0));
+      const sysRes0 = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      if (chrome0 !== sysRes0) return title('FAIL-chrome0-mismatch:' + chrome0 + '!=' + sysRes0);
+      await markSync('r27a-chrome0=' + chrome0);
+      // ---- 驱动 osascript 切系统深浅 → 实时跟随（原生面证据；demo 只能 emulate）----
+      await markSync('r27a-sys-wait');
+      const flipped = await waitFor(() => (chromeAttr() && chromeAttr() !== chrome0 ? true : null), 300);
+      if (!flipped) return title('FAIL-no-sys-follow:' + chromeAttr() + ' vs ' + chrome0);
+      if (chromeAttr() !== (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) return title('FAIL-sys-follow-mismatch');
+      await markSync('r27a-sysfollow-ok');
+      // ---- 设置面板：三态 + 解耦 + 落库 + ⌘= 字号 ----
+      const opened = await waitFor(() => (document.querySelector('.hb-settings')?.click(), document.querySelector('.term-settings') ? true : null), 40);
+      if (!opened) return title('FAIL-no-settings');
+      if (pressedAppearance() !== '跟随系统') return title('FAIL-p1-pressed:' + pressedAppearance());
+      const tablist = document.querySelector('.tabbar')?.getAttribute('role') === 'tablist';
+      if (!tablist) return title('FAIL-no-tablist');
+      if (!await clickAppearance('深色')) return title('FAIL-no-dark-btn');
+      await sleep(250);
+      if (chromeAttr() !== 'dark') return title('FAIL-dark-noapply:' + chromeAttr());
+      // 解耦：切终端配色 Solarized 深色 → 应用 chrome 不动
+      const solarDark = [...document.querySelectorAll('.ts-opt')].find((b) => b.textContent.includes('Solarized 深色'));
+      if (!solarDark) return title('FAIL-no-solardark');
+      solarDark.click();
+      await sleep(250);
+      if (chromeAttr() !== 'dark') return title('FAIL-palette-couples-chrome:' + chromeAttr());
+      if (!solarDark.classList.contains('ts-active')) return title('FAIL-palette-not-active');
+      await markSync('r27a-decouple-ok');
+      // 显式浅色 → chrome=light；blob chrome 落库对账
+      if (!await clickAppearance('浅色')) return title('FAIL-no-light-btn');
+      await sleep(250);
+      if (chromeAttr() !== 'light') return title('FAIL-light-noapply:' + chromeAttr());
+      const ws = await inv('get_workspace', {});
+      if (!ws || ws.chrome !== 'light') return title('FAIL-blob-chrome:' + String(ws && ws.chrome));
+      await markSync('r27a-appear-ok');
+      // ⌘= 字号键（应用级 keydown 同一 action 语义）
+      const val0 = Number(document.querySelector('.ts-val')?.textContent?.trim() ?? '0');
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '=', metaKey: true, bubbles: true, cancelable: true }));
+      await sleep(300);
+      const val1 = Number(document.querySelector('.ts-val')?.textContent?.trim() ?? '0');
+      if (val1 !== val0 + 1) return title('FAIL-font-key:' + val0 + '->' + val1);
+      await markSync('r27a-font-ok(14->' + val1 + ')');
+      // ---- 交给驱动：杀进程 → DB 回卷 V4+旧键 ui.theme=solar-light → 重启 ----
+      await markSync('r27a-relaunch-wait');
+      await sleep(120000); // 驱动在此窗口内完成回卷与重启；本进程随后被杀
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
 fn r26_smoke_script(run_id: &str) -> String {
     let base = r#"(function() {
   if (window.__R26_INJECTED__) return;

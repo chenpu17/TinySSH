@@ -1,0 +1,17 @@
+FAIL A0 fresh: system resolves to light chrome  [chrome=null]
+FAIL A0b fresh: blob chrome is system (no dark fallback)  [blob=dark]
+FAIL A1 appearance group: system active  [pressed=null]
+FAIL A1b both groups present
+FAIL A6 default font 14  [val=13]
+FAIL A2 system follows emulated dark  [chrome=null]
+node:internal/process/promises:394
+    triggerUncaughtException(err, true /* fromPromise */);
+    ^
+
+page.evaluate: TypeError: Cannot read properties of null (reading 'querySelectorAll')
+    at eval (eval at evaluate (:290:30), <anonymous>:3:11)
+    at UtilityScript.evaluate (<anonymous>:292:16)
+    at UtilityScript.<anonymous> (<anonymous>:1:44)
+    at /private/tmp/r27-probe-old.js:133:14
+
+Node.js v24.18.0

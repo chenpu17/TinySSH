@@ -1,0 +1,14 @@
+r27-open
+r27a|r27a-chrome0=dark
+r27a|r27a-sys-wait
+r27a|r27a-sysfollow-ok
+r27a|r27a-decouple-ok
+r27a|r27a-appear-ok
+r27a|r27a-font-ok(14->15)
+r27a|r27a-relaunch-wait
+r27-p2-open
+r27a-p2|r27a-migr-ok
+r27a-p2|r27a-system-restore-ok
+r27a-p2|r27a-DONE
+r27-DONE
+r27a-DRIVER|DONE

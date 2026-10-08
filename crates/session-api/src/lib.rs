@@ -1105,11 +1105,12 @@ impl Error {
 
 /// 应用工作区偏好（DF8.1）：`ui.v2.workspace` 单键 JSON blob，整取整存原子写。
 /// 不含秘密/终端输出/会话目标；schemaVersion 前向演进（R44 升级演练据此定路径）。
-/// 终端配色四预设仍在 `ui.theme` 键（值不变）；chrome 是 DF8.3 映射的镜像字段。
+/// 终端配色四预设仍在 `ui.theme` 键（值不变）；chrome 是应用外观（R27 起
+/// system|dark|light 三态，与终端配色解耦；V5 迁移写 dark|light 映射值）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Workspace {
     pub schema_version: u32,
-    /// 应用外观：dark | light（DF8.3 由终端主题映射；R27 消费）
+    /// 应用外观：system | dark | light（§7.1 新装默认跟随系统；旧值 dark|light 兼容）
     #[serde(default = "default_chrome")]
     pub chrome: String,
     /// 主机栏开合与宽度（§4.2；R12 的浏览器 localStorage 暂存迁入；None = 尚未写入）
@@ -1129,7 +1130,7 @@ pub struct TerminalPrefs {
 }
 
 fn default_chrome() -> String {
-    "dark".into()
+    "system".into()
 }
 
 /// C7 增量字段的兼容默认（旧消费方反序列化旧载荷 = 可导入）

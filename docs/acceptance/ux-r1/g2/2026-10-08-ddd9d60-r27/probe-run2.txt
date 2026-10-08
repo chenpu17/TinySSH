@@ -1,0 +1,40 @@
+PASS A0 fresh: system resolves to light chrome  [chrome=light]
+PASS A0b fresh: blob chrome is system (no dark fallback)  [blob=system]
+PASS A1 appearance group: system active  [pressed=跟随系统]
+PASS A1b both groups present
+PASS A6 default font 14  [val=14]
+PASS A2 system follows emulated dark  [chrome=dark]
+PASS A3 explicit light overrides system-dark  [chrome=light]
+PASS A3b blob chrome=light persisted  [blob=light]
+PASS A4 palette switch does not touch app chrome  [chrome=dark]
+PASS A4b terminal palette applied
+PASS B1 settings trap: Tab cycles inside
+PASS B2a dialog semantics (settings)
+PASS B2 settings Esc restores opener focus  [hb-settings]
+PASS A5 appearance restored dark after reload  [pressed=深色 chrome=dark]
+PASS A5b terminal palette restored light
+PASS A6b font +1 → 15 persisted  [val=15 key=15]
+PASS C0a connect prod-1  [Connected]
+PASS C0b connect noint-1  [Connected]
+PASS E1 tablist role
+PASS E1b tab aria-label host+state  [[{"label":"prod-1，已连接，⌘1","selected":"false"},{"label":"staging-1，已断开，⌘2","selected":"false"},{"label":"prod-1，已连接，⌘3","selected":"true"}]]
+PASS E1c exactly one aria-selected
+PASS C1a tab-x keyboard reachable  [active=tab-x]
+PASS C1b connected session → close confirm
+PASS C1b2 initial focus on cancel (no danger prearm)  [active=取消]
+PASS B3a dialog semantics (confirm)
+PASS B3b confirm trap: Tab cycles inside
+PASS B3c confirm Esc restores tab-x focus  [active=tab-x]
+PASS D0 prod-1 disconnected
+PASS D1 dead tab keyboard close: no confirm, removed  [confirm=false prodTabs=1(seed+ours=2) reach=true]
+PASS D1b session removed by sid
+PASS D2 hit area extends beyond visual box  [at-point=tab-x]
+PASS B4-pre terminal textarea focused
+PASS B4a paste confirm via ⌘V multi-line
+PASS B4a2 paste initial focus on cancel  [active=取消]
+PASS B4b dialog semantics (paste)
+PASS B4c paste trap: Tab cycles inside
+PASS B4d paste Esc restores terminal focus  [active=xterm-helper-textarea]
+PASS E2 search buttons have aria-labels  [["上一个搜索结果","下一个搜索结果","关闭搜索"]]
+PASS Z0 zero js errors
+SUMMARY 39/39

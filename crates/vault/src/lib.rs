@@ -98,11 +98,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
                     other => Err(other),
                 })
                 .map_err(db_err)?;
-            // DF8.3：dark→dark、solar-dark→dark、light→light、solar-light→light；
-            // 未知/未设置回落 dark
+            // DF8.3（R27 修订 §10.1.1）：有旧键则映射外观避免升级突变——
+            // light/solar-light→light、dark/solar-dark/未知值→dark；
+            // 无旧键 = 新装 → 跟随系统（chrome="system"，FE 按 prefers-color-scheme 解析）
             let chrome = match theme.as_deref() {
                 Some("light") | Some("solar-light") => "light",
-                _ => "dark",
+                Some(_) => "dark",
+                None => "system",
             };
             let blob = serde_json::json!({
                 "schema_version": 1,
@@ -1243,6 +1245,27 @@ mod tests {
         // 损坏 blob 自愈回落 Default（不炸启动）
         v2.set_setting("ui.v2.workspace", "not-json{").unwrap();
         assert_eq!(v2.workspace().unwrap(), Workspace::default());
+    }
+
+    #[test]
+    fn c8_v5_migration_fresh_install_follows_system() {
+        // §10.1.1（R27）：全新库（无 ui.theme 旧键）→ blob chrome="system"，
+        // 只有新装才默认跟随系统；老键用户保持映射值不突变
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fresh.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+            conn.pragma_update(None, "user_version", 4).unwrap();
+        }
+        std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
+        let v = Vault::open(&path).unwrap();
+        let ws = v.workspace().unwrap();
+        assert_eq!(ws.chrome, "system");
+        // 字号无旧键 → 不写新键（FE 按规格默认 14）
+        assert!(v.get_setting("ui.v2.terminal.font_size").unwrap().is_none());
     }
 
     #[test]
