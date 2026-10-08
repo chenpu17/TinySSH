@@ -1,0 +1,12 @@
+ crates/cli/src/main.rs                     |  23 +-
+ crates/core-session/src/lib.rs             | 115 ++++++++--
+ crates/core-session/tests/sshcfg_import.rs | 152 +++++++++++-
+ crates/session-api/src/lib.rs              |  48 +++-
+ crates/vault/src/sshcfg.rs                 | 356 ++++++++++++++++++++++++-----
+ docs/ux/ux-r1-execution-status.md          |   3 +-
+ src-tauri/src/main.rs                      | 125 +++++++++-
+ ui/src/App.tsx                             |  94 ++++++--
+ ui/src/adapter/bridge.ts                   |   2 +-
+ ui/src/adapter/wire.ts                     |  20 ++
+ ui/src/demo.ts                             |  83 +++++--
+ 11 files changed, 879 insertions(+), 142 deletions(-)

@@ -1,0 +1,7 @@
+r22-open
+r22b|r22-preview-ok
+r22b|r22-skip-ok
+r22b|r22-overwrite-ok
+r22b|r22-panel-ok|rows=2
+r22b|r22-DONE
+r22-DONE

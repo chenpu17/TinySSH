@@ -71,6 +71,16 @@ export interface IdentityMeta {
   fingerprint: string;
 }
 
+export type SshUnsupportedLevel = "Blocking" | "Warning";
+
+export interface SshUnsupportedDirective {
+  directive: string;
+  level: SshUnsupportedLevel;
+  line: number;
+}
+
+export type SshSkipReason = "Duplicate" | "Blocked";
+
 export interface SshConfigPreview {
   name: string;
   address: string;
@@ -78,12 +88,22 @@ export interface SshConfigPreview {
   username: string;
   has_identity: boolean;
   already_imported: boolean;
+  /** 溯源：来自哪个 config 文件哪一行 */
+  source_file: string;
+  source_line: number;
+  /** 未支持指令分级（阻断=不可直接导入；警告=连通性无关仅提示） */
+  unsupported: SshUnsupportedDirective[];
+  /** 无阻断项且 User 已指定才可直接导入（DF7.5 不静默 root） */
+  directly_importable: boolean;
+  user_specified: boolean;
 }
 
 export interface SshImportOutcome {
   name: string;
   host_id: HostId | null;
   error: string | null;
+  /** 跳过原因：Duplicate=同名或同地址+端口+用户；Blocked=含阻断级指令 */
+  skipped_reason: SshSkipReason | null;
 }
 
 export interface SessionInfo {

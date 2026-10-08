@@ -1,0 +1,16 @@
+PASS A1 五条目渲染  [["web-1~/.ssh/","db-1~/.ssh/c","bastion-jump","nouser~/.ssh","prod-1 · 已在主"]]
+PASS A2 web-1 警告级未同步标注  [web-1~/.ssh/config:3 · ops@web1.example.com:22 · 密钥· 未同步：serveraliveinterval（第 4 行，不影响连通）]
+PASS A3 web-1 溯源 ~/.ssh/config:3  [web-1~/.ssh/config:3 · ops@web1.example.com:22 · 密钥· 未同步：serveraliveinterval（第 4]
+PASS B1 bastion-jump 阻断级标注+勾选禁用+转手工表单钮  [{"checked":false,"disabled":true,"text":"bastion-jump~/.ssh/config:12 · ops@10.9.8.7:22 · Agent✕ 阻断：proxyjump（第 13 行）——不支持代理/证书，需手工处理转手工表单","manual":true}]
+PASS B2 nouser 未指定用户标注+勾选禁用  [{"checked":false,"disabled":true,"text":"nouser~/.ssh/config:16 · @10.9.8.8:22 · Agent✕ 未指定登录用户——补全后再导入转手工表单","manual":true}]
+PASS B3 db-1 默认勾选（可直接导入且未导入）  [{"checked":true,"disabled":false,"text":"db-1~/.ssh/config:8 · deploy@db1.internal:2222 · Agent","manual":false}]
+PASS B4 prod-1 已在列表不默认勾选（勾选即覆盖文案）  [{"checked":false,"disabled":false,"text":"prod-1 · 已在主机列表（勾选即覆盖）~/.ssh/config:20 · ops@10.0.0.11:22 · Agent","manual":false}]
+PASS C1 两条导入成功  [2]
+PASS C2 web-1 主机卡刷出
+PASS D1 重开后 web-1 已在列表且不默认勾选  [{"checked":false,"disabled":false,"text":"web-1 · 已在主机列表（勾选即覆盖）~/.ssh/config:3 · ops@web1.example.com:22 · 密钥· 未同步：serveraliveinterval（第 4 行，不影响连通）","manual":false}]
+PASS D2 勾选已导入条目=显式覆盖成功（无 Duplicate 兜底文案）  [{"checked":true,"disabled":true,"text":"prod-1 ✓ 已导入~/.ssh/config:20 · ops@10.0.0.11:22 · Agent","manual":false}]
+PASS E1 blocked 预填全字段+面板关闭  [{"hint":true,"name":"bastion-jump","address":"10.9.8.7","port":"22","user":"ops","auth":"agent","tags":"ssh-config","panelGone":true}]
+PASS E2 blocked 预填提示含不兼容指令+authMode=agent+标签 ssh-config  [{"hint":true,"name":"bastion-jump","address":"10.9.8.7","port":"22","user":"ops","auth":"agent","tags":"ssh-config","panelGone":true}]
+PASS E3 nouser 预填提示未指定用户+用户名留空  [{"hint":true,"name":"nouser","user":""}]
+PASS Z1 零 JS 错误
+SUMMARY 15/15

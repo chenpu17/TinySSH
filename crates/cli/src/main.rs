@@ -323,17 +323,28 @@ async fn identity_cmd(m: Arc<SessionManager>, cmd: IdentityCmd) -> Result<()> {
 async fn import_ssh_config(m: &Arc<SessionManager>) -> Result<()> {
     // 解析/对账/身份落库都在 core-session（与 GUI 导入面板同一实现）
     let preview = m.ssh_config_preview(None).await?;
-    let names: Vec<String> = preview.iter().map(|p| p.name.clone()).collect();
-    let outcomes = m.ssh_config_import(&human(), None, &names).await;
+    // C7：默认只导可直接导入且不重复的条目；重复/阻断跳过并明示原因
+    let names: Vec<String> = preview
+        .iter()
+        .filter(|p| p.directly_importable && !p.already_imported)
+        .map(|p| p.name.clone())
+        .collect();
+    let blocked = preview.iter().filter(|p| !p.directly_importable).count();
+    let dup = preview.iter().filter(|p| p.already_imported).count();
+    let outcomes = m.ssh_config_import(&human(), None, &names, false).await;
     let mut ok = 0;
     for o in &outcomes {
-        match (&o.host_id, &o.error) {
-            (Some(_), _) => ok += 1,
-            (None, Some(e)) => println!("  ✕ {}: {e}", o.name),
+        match (&o.host_id, &o.error, &o.skipped_reason) {
+            (Some(_), _, _) => ok += 1,
+            (None, Some(e), _) => println!("  ✕ {}: {e}", o.name),
+            (None, None, Some(r)) => println!("  ↷ {}: 跳过（{r:?}）", o.name),
             _ => {}
         }
     }
-    println!("imported {ok}/{} hosts from ~/.ssh/config", outcomes.len());
+    println!(
+        "imported {ok}/{} hosts from ~/.ssh/config（阻断 {blocked} 条、重复 {dup} 条未导入——GUI 导入面板可转手工表单/显式覆盖）",
+        preview.len()
+    );
     Ok(())
 }
 

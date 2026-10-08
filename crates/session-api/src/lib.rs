@@ -470,6 +470,27 @@ pub struct IdentityMeta {
 }
 
 /// ~/.ssh/config 单条目预览（导入面板一行）。
+/// C7（R22）：DF7.1 分级指令记录。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshUnsupportedDirective {
+    pub directive: String,
+    pub level: SshUnsupportedLevel,
+    pub line: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SshUnsupportedLevel {
+    Blocking,
+    Warning,
+}
+
+/// C7（R22）：导入跳过原因（DF7.3 默认跳过重复 / 阻断条目不可导入）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SshSkipReason {
+    Duplicate,
+    Blocked,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshConfigPreview {
     pub name: String,
@@ -480,14 +501,34 @@ pub struct SshConfigPreview {
     pub has_identity: bool,
     /// 主机列表已有同名或同 address+port+user 条目
     pub already_imported: bool,
+    // ---- C7（R22）增量，serde default 全量对旧消费方兼容 ----
+    /// 来源文件（path 原文）
+    #[serde(default)]
+    pub source_file: String,
+    /// Host 行行号（1 起）
+    #[serde(default)]
+    pub source_line: u32,
+    /// DF7.1 分级：阻断 + 警告（忽略级不列）
+    #[serde(default)]
+    pub unsupported: Vec<SshUnsupportedDirective>,
+    /// = 无阻断指令且已指定用户（DF7.5：无 User → false）
+    #[serde(default = "crate::serde_true")]
+    pub directly_importable: bool,
+    /// DF7.5：false = 配置未写 User（username 为 $USER 兜底猜测，UI 显示「未指定
+    /// 用户」并以空值进手工表单，不静默 root）
+    #[serde(default = "crate::serde_true")]
+    pub user_specified: bool,
 }
 
-/// 导入逐条结果（error 为 None 表示成功）。
+/// 导入逐条结果（error 为 None 表示成功或跳过）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshImportOutcome {
     pub name: String,
     pub host_id: Option<HostId>,
     pub error: Option<String>,
+    /// C7（R22）：跳过原因（host_id 为 None 且 error 为 None 时必有）
+    #[serde(default)]
+    pub skipped_reason: Option<SshSkipReason>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1059,6 +1100,11 @@ pub struct Workspace {
 
 fn default_chrome() -> String {
     "dark".into()
+}
+
+/// C7 增量字段的兼容默认（旧消费方反序列化旧载荷 = 可导入）
+pub fn serde_true() -> bool {
+    true
 }
 
 impl Default for Workspace {

@@ -483,6 +483,8 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [showAgentHelp, setShowAgentHelp] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
+  // C7（DF7.4 转手工表单）：导入面板把不可直接导入的条目预填进连接表单（upsert_host，零新命令）
+  const [prefillEntry, setPrefillEntry] = useState<SshConfigPreview | null>(null);
   const [lastFailed, setLastFailed] = useState<string | null>(null);
   // AppShell（R12→R15）：主机栏开关/宽度。初值仍读 localStorage（首帧同步），
   // blob（ui.v2.workspace）加载后覆盖为事实源——见下方 C8 工作区 effect
@@ -1974,7 +1976,7 @@ export default function App() {
                   {showImport ? <IconChevronUp size={14} /> : <IconUpload size={14} />}
                 </button>
                 <button className="ghost icon-btn" title={showAddHost ? "收起表单" : "添加主机"} aria-label={showAddHost ? "收起表单" : "添加主机"}
-                  onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); }}>
+                  onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); setPrefillEntry(null); }}>
                   {showAddHost ? <IconChevronUp size={14} /> : <IconPlus size={14} />}
                 </button>
               </div>
@@ -1992,14 +1994,17 @@ export default function App() {
             <SshConfigImportPanel
               onDone={refreshLists}
               onClose={() => setShowImport(false)}
+              onManual={(e) => { setPrefillEntry(e); setEditingHost(null); setShowImport(false); setShowAddHost(true); }}
             />
           )}
           {showAddHost && (
             <AddHostForm
               editHost={editingHost}
+              prefill={prefillEntry}
               onSaved={async (hid, wasEdit, connect = true) => {
                 setShowAddHost(false);
                 setEditingHost(null);
+                setPrefillEntry(null);
                 await refreshLists();
                 if (wasEdit || !connect) return; // 编辑只改配置；仅保存不自动建连
                 const h = hosts.find((x) => x.id === hid);
@@ -2074,7 +2079,7 @@ export default function App() {
                       title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
                       onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
                     <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
-                      onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}><IconPencil size={13} /></button>
+                      onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
                     <button className="ghost host-del" title="删除主机"
                       onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
                   </div>
@@ -2095,7 +2100,7 @@ export default function App() {
               <>
                 <div className="dim">无匹配主机——可清除搜索/标签筛选，或直接添加：</div>
                 <button className="ghost" style={{ marginTop: 6 }}
-                  onClick={() => { setShowImport(false); setEditingHost(null); setShowAddHost(true); }}>
+                  onClick={() => { setShowImport(false); setEditingHost(null); setPrefillEntry(null); setShowAddHost(true); }}>
                   <IconPlus size={12} /> 添加主机
                 </button>
               </>
@@ -2452,7 +2457,7 @@ export default function App() {
                   <div><span className="ws-k">传输</span>拖文件进终端即上传到当前目录；下方命令框可逐条执行，焦点自动回终端</div>
                 </div>
                 <div className="welcome-actions">
-                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); }}><IconPlus size={13} /> 添加主机</button>
+                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
                   <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
                   {hosts.some((h) => h.id === "local") && (
                     <button className="ghost" onClick={() => {
@@ -3166,15 +3171,17 @@ function BriefCard({ brief }: { brief: Brief }) {
 }
 
 // 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）；Agent 只存引用
-function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null }) {
+// prefill（C7/DF7.4）：导入面板「转手工表单」用预览载荷预填——upsert_host，零新命令
+function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null; prefill?: SshConfigPreview | null }) {
   const editing = !!editHost;
-  const [name, setName] = useState(editHost?.name ?? "");
-  const [address, setAddress] = useState(editHost?.address ?? "");
-  const [port, setPort] = useState(editHost ? String(editHost.port) : "22");
-  const [username, setUsername] = useState(editHost?.username ?? "");
-  const [authMode, setAuthMode] = useState<"password" | "key" | "agent">("password");
+  const [name, setName] = useState(editHost?.name ?? prefill?.name ?? "");
+  const [address, setAddress] = useState(editHost?.address ?? prefill?.address ?? "");
+  const [port, setPort] = useState(editHost ? String(editHost.port) : String(prefill?.port ?? 22));
+  const [username, setUsername] = useState(editHost?.username ?? (prefill && !prefill.user_specified ? "" : prefill?.username ?? ""));
+  const [authMode, setAuthMode] = useState<"password" | "key" | "agent">(
+    editHost ? "password" : prefill ? (prefill.has_identity ? "key" : "agent") : "password");
   const [charset, setCharset] = useState<"utf-8" | "gbk">(editHost?.charset ?? "utf-8");
-  const [tagsInput, setTagsInput] = useState((editHost?.tags ?? []).join(","));
+  const [tagsInput, setTagsInput] = useState((editHost?.tags ?? (prefill ? ["ssh-config"] : [])).join(","));
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -3290,6 +3297,13 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
 
   return (
     <div className="card add-host">
+      {prefill && !editing && (
+        <div className="dim" style={{ fontSize: 11, marginBottom: 6 }}>
+          预填自 ~/.ssh/config:{prefill.source_line}
+          {prefill.unsupported.some((u) => u.level === "Blocking") && "（含不兼容指令，请核对后保存）"}
+          {!prefill.user_specified && "（config 未指定用户，请补全）"}
+        </div>
+      )}
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>名称</label>
@@ -3433,8 +3447,11 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
   );
 }
 
-// ~/.ssh/config 导入面板：预览勾选 → 逐条导入（有 IdentityFile 建身份，否则走 ssh-agent）
-function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose: () => void }) {
+// ~/.ssh/config 导入面板（C7/R22）：分级诊断列（阻断/警告）+ 默认只勾可直接导入
+// （DF7.5 无 User 不勾）+ 已导入条目显式覆盖 + 不可直接导入条目转手工表单（DF7.4）。
+function SshConfigImportPanel({ onDone, onClose, onManual }: {
+  onDone: () => void; onClose: () => void; onManual: (e: SshConfigPreview) => void;
+}) {
   const [entries, setEntries] = useState<SshConfigPreview[] | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [outcomes, setOutcomes] = useState<SshImportOutcome[] | null>(null);
@@ -3445,7 +3462,8 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
     invoke("ssh_config_preview", { path: null })
       .then((es) => {
         setEntries(es);
-        setChecked(new Set(es.filter((e) => !e.already_imported).map((e) => e.name)));
+        // 默认勾选 = 可直接导入且未导入过（阻断项与重复项不进默认集）
+        setChecked(new Set(es.filter((e) => e.directly_importable && !e.already_imported).map((e) => e.name)));
       })
       .catch((e) => setErr(friendlyError(e)));
   }, []);
@@ -3455,11 +3473,13 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
     if (checked.size === 0) { setErr("先勾选要导入的条目"); return; }
     setBusy(true);
     try {
+      // 显式覆盖（DF7.3）：勾中了已在主机列表的条目 → 整批 overwrite，重复者以既有 id 覆盖
+      const overwrite = entries?.some((e) => e.already_imported && checked.has(e.name)) ?? false;
       const outs = await invoke("ssh_config_import", {
-        path: null, names: [...checked],
+        path: null, names: [...checked], overwrite,
       });
       setOutcomes(outs);
-      const okCount = outs.filter((o) => !o.error).length;
+      const okCount = outs.filter((o) => o.host_id).length;
       if (okCount > 0) onDone();
     } catch (e) {
       setErr(friendlyError(e));
@@ -3467,6 +3487,24 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
       setBusy(false);
     }
   };
+
+  const unsupportedNote = (e: SshConfigPreview) => (
+    <>
+      {e.unsupported.filter((u) => u.level === "Blocking").map((u) => (
+        <div key={u.directive} className="err" style={{ fontSize: 11 }}>
+          ✕ 阻断：{u.directive}（第 {u.line} 行）——不支持代理/证书，需手工处理
+        </div>
+      ))}
+      {e.unsupported.filter((u) => u.level === "Warning").map((u) => (
+        <div key={u.directive} className="dim" style={{ fontSize: 11 }}>
+          · 未同步：{u.directive}（第 {u.line} 行，不影响连通）
+        </div>
+      ))}
+      {!e.user_specified && (
+        <div className="err" style={{ fontSize: 11 }}>✕ 未指定登录用户——补全后再导入</div>
+      )}
+    </>
+  );
 
   return (
     <div className="card add-host">
@@ -3484,14 +3522,17 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
         <div style={{ marginTop: 6 }}>
           {entries.map((e) => {
             const outcome = outcomes?.find((o) => o.name === e.name);
+            const imported = outcome?.host_id != null;
+            const blocked = !e.directly_importable;
+            const skip = outcome?.skipped_reason ?? null;
             return (
               <label key={e.name} className="sshcfg-row">
                 <div className="row" style={{ alignItems: "flex-start", flexWrap: "nowrap" }}>
                   <input
                     type="checkbox"
                     style={{ width: "auto", marginTop: 2 }}
-                    disabled={e.already_imported || (outcome !== undefined && !outcome.error)}
-                    checked={checked.has(e.name) || (e.already_imported ?? false) || (outcome !== undefined && !outcome.error)}
+                    disabled={blocked || imported}
+                    checked={checked.has(e.name) || imported}
                     onChange={(ev) => {
                       const next = new Set(checked);
                       if (ev.target.checked) next.add(e.name); else next.delete(e.name);
@@ -3501,14 +3542,23 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <div>
                       {e.name}
-                      {e.already_imported && <span className="dim"> · 已在主机列表</span>}
-                      {outcome && !outcome.error && <span className="ok"> ✓ 已导入</span>}
+                      {e.already_imported && !imported && <span className="dim"> · 已在主机列表（勾选即覆盖）</span>}
+                      {imported && <span className="ok"> ✓ 已导入</span>}
                     </div>
                     <div className="dim mono" style={{ fontSize: 11 }}>
-                      {e.username}@{e.address}:{e.port} · {e.has_identity ? "密钥" : "Agent"}
+                      ~/.ssh/config:{e.source_line} · {e.user_specified ? `${e.username}@${e.address}:${e.port}` : `@${e.address}:${e.port}`} · {e.has_identity ? "密钥" : "Agent"}
                     </div>
+                    {!imported && unsupportedNote(e)}
+                    {skip === "Duplicate" && <div className="dim" style={{ fontSize: 11 }}>↷ 跳过：重复（同名或同地址+端口+用户）。收起面板重新打开后勾选可覆盖</div>}
+                    {skip === "Blocked" && <div className="err" style={{ fontSize: 11 }}>↷ 跳过：含阻断指令</div>}
                     {outcome && outcome.error && <div className="err" style={{ fontSize: 11 }}>✕ {outcome.error}</div>}
                   </span>
+                  {blocked && !imported && (
+                    <button className="ghost" style={{ width: "auto", fontSize: 11, flexShrink: 0 }}
+                      onClick={(ev) => { ev.preventDefault(); onManual(e); }}>
+                      转手工表单
+                    </button>
+                  )}
                 </div>
               </label>
             );
@@ -3519,7 +3569,7 @@ function SshConfigImportPanel({ onDone, onClose }: { onDone: () => void; onClose
         <button disabled={busy || entries === null} onClick={importChecked}>
           {busy ? "导入中…" : "导入选中"}
         </button>
-        <span className="dim">带 IdentityFile 的条目会读私钥入凭据库；没有的走本机 ssh-agent。</span>
+        <span className="dim">带 IdentityFile 的条目会读私钥入凭据库；没有的走本机 ssh-agent。勾选「已在主机列表」条目=显式覆盖（对该批内命中的重复项一并生效）。</span>
       </div>
     </div>
   );

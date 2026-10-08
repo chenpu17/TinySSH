@@ -36,7 +36,7 @@ interface CmdArgs {
   list_identities: undefined;
   delete_identity: { id: string };
   ssh_config_preview: { path?: string | null };
-  ssh_config_import: { path?: string | null; names: string[] };
+  ssh_config_import: { path?: string | null; names: string[]; overwrite?: boolean };
   list_sessions: undefined;
   create_session: { hostId: string };  // tauri v2 JS 侧实参为 camelCase，自动映射 rust host_id
   begin_connection: { hostId: string; opts?: wire.BeginConnectionOpts };

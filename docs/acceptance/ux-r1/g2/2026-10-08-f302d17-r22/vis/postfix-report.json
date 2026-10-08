@@ -1,0 +1,40 @@
+{
+  "footer-280": {
+    "found": true,
+    "text": "带 IdentityFile 的条目会读私钥入凭据库；没有的走本机 ssh-agent。勾选「已在主机列表」条目=显式覆盖（对该批内命中的重复项一并生效）。",
+    "boxW": 241,
+    "lines": 6,
+    "overflowCard": false
+  },
+  "footer-224": {
+    "found": true,
+    "text": "带 IdentityFile 的条目会读私钥入凭据库；没有的走本机 ssh-agent。勾选「已在主机列表」条目=显式覆盖（对该批内命中的重复项一并生效）。",
+    "boxW": 185,
+    "lines": 7,
+    "overflowCard": false
+  },
+  "prod1Outcome": {
+    "hasImported": true,
+    "hasDuplicate": false
+  },
+  "dupProbe": {
+    "boxW": 215,
+    "boxH": 34.1,
+    "right": 260,
+    "clearOfCb": true,
+    "belowPrev": true,
+    "withinViewport": true
+  },
+  "nouserRow": {
+    "leaksMock": false,
+    "showsAt": true
+  },
+  "nouserForm": {
+    "usernameValue": "",
+    "usernamePlaceholder": "例：ops 或 root",
+    "hintW": 241,
+    "hintNotOverlapNext": true,
+    "hintTop": 99
+  },
+  "jsErrors": []
+}

@@ -124,10 +124,16 @@ async fn ssh_config_import(
     state: ApiState<'_>,
     path: Option<String>,
     names: Vec<String>,
+    overwrite: Option<bool>,
 ) -> CmdResult<Vec<SshImportOutcome>> {
     Ok(state
         .api
-        .ssh_config_import(&human(), path.as_deref().map(std::path::Path::new), &names)
+        .ssh_config_import(
+            &human(),
+            path.as_deref().map(std::path::Path::new),
+            &names,
+            overwrite.unwrap_or(false),
+        )
         .await)
 }
 
@@ -839,6 +845,8 @@ fn main() {
                     r24_smoke_script(&run_id)
                 } else if mode == "r21" {
                     r21_smoke_script(&run_id)
+                } else if mode == "r22" {
+                    r22_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1784,6 +1792,121 @@ fn r21_smoke_script(run_id: &str) -> String {
       await inv('close_session', { sid: s2.id });
       await markSync('r21-DONE');
       await title('r21-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R22 C7 SSH config 导入诊断探针注入脚本（TINYSSH_SMOKE_MODE=r22；dev 门控，产品路径无关）：
+/// 语义链（真实 vault + 真实解析器，合成 config 显式 path——UI 面板 path:null 指向
+/// 用户真实 config，数据不可控，其默认勾选/分级徽章/转手工表单渲染归 demo 探针）：
+/// A) 预览：通配符/Match 跳过；ok1 警告级 unsupported + 可直接导入；blocked
+///    ProxyJump 阻断级 + directly_importable=false；nouser user_specified=false；
+///    溯源 source_line 非零；
+/// B) 导入（overwrite=false）：ok1 落库；blocked/nouser skipped=Blocked；
+///    预置同名主机 dupx（username=old）→ skipped=Duplicate；
+/// C) 显式覆盖（overwrite=true）：dupx 以既有 id 覆盖，username 来自 config；
+/// D) 面板冒烟：打开/收起真实 ~/.ssh/config 预览不抛错（弱断言）。
+/// 合成 config 由冒烟驱动脚本预先写入 /tmp/smoke-r22/config。
+fn r22_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R22_INJECTED__) return; // WKWebView Finished 双触发防护
+  window.__R22_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const CFG = '/tmp/smoke-r22/config';
+  const byName = (xs, n) => xs.find((x) => x.name === n) || null;
+  (async () => {
+    try {
+      await title('r22-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      // 预置重复主机（username=old——覆盖后应以 config 的 root 为准）
+      await inv('upsert_host', { host: { id: null, name: 'r22-dupx', address: '10.9.0.9', port: 22, username: 'old', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => ((await inv('list_hosts', {})).some((x) => x.name === 'r22-dupx') ? true : null), 40);
+      // ---- A) 预览分级 + 溯源（真实解析器，合成 config） ----
+      const pv = await inv('ssh_config_preview', { path: CFG });
+      if (!Array.isArray(pv)) return title('FAIL-preview-type');
+      const names = pv.map((x) => x.name);
+      // 通配符与 Match 块自身不出现；条目按文件序；末尾 Match 影子阻断条目在列
+      if (JSON.stringify(names) !== JSON.stringify(['r22-ok1', 'r22-blocked', 'r22-nouser', 'r22-dupx', 'r22-mblocked'])) return title('FAIL-names:' + names.join(','));
+      const mb = byName(pv, 'r22-mblocked');
+      // rev-r22 H1 原生实证：前置 Match 段的 User 遮蔽后续条目 → 阻断不可直接导入
+      if (!mb || mb.directly_importable || !(mb.unsupported || []).some((u) => u.directive === 'user' && u.level === 'Blocking')) return title('FAIL-match-shadow:' + JSON.stringify(mb));
+      const ok1 = byName(pv, 'r22-ok1');
+      if (!ok1 || !ok1.directly_importable || !ok1.user_specified) return title('FAIL-ok1:' + JSON.stringify(ok1));
+      const w = (ok1.unsupported || []).find((u) => u.directive === 'serveraliveinterval');
+      if (!w || w.level !== 'Warning' || !(w.line > 0)) return title('FAIL-warn:' + JSON.stringify(ok1.unsupported));
+      if (!ok1.source_file || !(ok1.source_line > 0)) return title('FAIL-src:' + ok1.source_file + ':' + ok1.source_line);
+      const blocked = byName(pv, 'r22-blocked');
+      const bj = (blocked.unsupported || []).find((u) => u.directive === 'proxyjump');
+      if (!blocked || blocked.directly_importable || !bj || bj.level !== 'Blocking') return title('FAIL-blocked:' + JSON.stringify(blocked));
+      const nouser = byName(pv, 'r22-nouser');
+      if (!nouser || nouser.user_specified || nouser.directly_importable) return title('FAIL-nouser:' + JSON.stringify(nouser));
+      // rev-r22 M2 核心形状：无 User 条目 username 兜底当前用户（非空），
+      // UI 预填须按 user_specified 置空而非透传兜底值
+      if (!nouser.username) return title('FAIL-nouser-usernameshape:' + JSON.stringify(nouser));
+      const dupx = byName(pv, 'r22-dupx');
+      if (!dupx || !dupx.already_imported) return title('FAIL-dupx-pv:' + JSON.stringify(dupx));
+      await markSync('r22-preview-ok');
+      // ---- B) 导入跳过语义（overwrite=false） ----
+      const outs = await inv('ssh_config_import', { path: CFG, names: ['r22-ok1', 'r22-blocked', 'r22-nouser', 'r22-dupx'], overwrite: false });
+      const byo = (n) => outs.find((o) => o.name === n) || null;
+      if (!byo('r22-ok1') || !byo('r22-ok1').host_id) return title('FAIL-ok1-imp:' + JSON.stringify(outs));
+      if (byo('r22-blocked').skipped_reason !== 'Blocked') return title('FAIL-blocked-skip:' + JSON.stringify(byo('r22-blocked')));
+      if (byo('r22-nouser').skipped_reason !== 'Blocked') return title('FAIL-nouser-skip:' + JSON.stringify(byo('r22-nouser')));
+      if (byo('r22-dupx').skipped_reason !== 'Duplicate' || byo('r22-dupx').host_id) return title('FAIL-dup-skip:' + JSON.stringify(byo('r22-dupx')));
+      await markSync('r22-skip-ok');
+      // ---- C) 显式覆盖（overwrite=true）：既有 id + config 值写入 ----
+      const hosts1 = await inv('list_hosts', {});
+      const pre = hosts1.find((x) => x.name === 'r22-dupx');
+      const outs2 = await inv('ssh_config_import', { path: CFG, names: ['r22-dupx'], overwrite: true });
+      if (!outs2[0] || outs2[0].host_id !== pre.id) return title('FAIL-ow-id:' + JSON.stringify(outs2));
+      const hosts2 = await inv('list_hosts', {});
+      const after = hosts2.filter((x) => x.name === 'r22-dupx');
+      if (after.length !== 1 || after[0].username !== 'root') return title('FAIL-ow-val:' + JSON.stringify(after));
+      await markSync('r22-overwrite-ok');
+      // ---- D) 面板冒烟（真实 ~/.ssh/config，弱断言：开/关无错） ----
+      const impBtn = document.querySelector('button[aria-label="导入 ~/.ssh/config"]');
+      if (!impBtn) return title('FAIL-no-impbtn');
+      impBtn.click();
+      const panel = await waitFor(() => ([...document.querySelectorAll('.card')].find((c) => c.textContent.includes('从 ~/.ssh/config 导入')) || null), 30);
+      if (!panel) return title('FAIL-no-panel');
+      await sleep(400); // 预览拉取
+      const rows = panel.querySelectorAll('.sshcfg-row').length;
+      const empty = panel.textContent.includes('没有可导入的条目');
+      if (rows === 0 && !empty) return title('FAIL-panel-empty');
+      await markSync('r22-panel-ok|rows=' + rows);
+      const closeBtn = [...panel.querySelectorAll('button')].find((b) => b.textContent.trim() === '收起');
+      if (closeBtn) closeBtn.click();
+      await sleep(200);
+      // ---- 回收：删除导入/预置主机与身份 ----
+      for (const n of ['r22-ok1', 'r22-dupx']) {
+        const h = (await inv('list_hosts', {})).find((x) => x.name === n);
+        if (h) await inv('delete_host', { id: h.id });
+      }
+      for (const i of (await inv('list_identities', {}))) {
+        try { await inv('delete_identity', { id: i.id }); } catch {}
+      }
+      await markSync('r22-DONE');
+      await title('r22-DONE');
     } catch (e) {
       await title('FAIL-exception:' + String(e).slice(0, 140));
     }

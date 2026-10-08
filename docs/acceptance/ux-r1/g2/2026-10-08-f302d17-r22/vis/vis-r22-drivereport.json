@@ -1,0 +1,415 @@
+{
+  "noise": {},
+  "cross": {
+    "base/A1-welcome": {
+      "errors": []
+    },
+    "base/A2-addform-plain": {
+      "errors": []
+    },
+    "base/A3-import-224": {
+      "errors": []
+    },
+    "base/A4-settings": {
+      "errors": []
+    },
+    "base/A5-import-280": {
+      "errors": []
+    },
+    "base/A6-light-welcome": {
+      "errors": []
+    },
+    "r22/A1-welcome": {
+      "errors": []
+    },
+    "r22/A2-addform-plain": {
+      "errors": []
+    },
+    "r22/A3-import-224": {
+      "errors": []
+    },
+    "r22/A4-settings": {
+      "errors": []
+    },
+    "r22/A5-import-280": {
+      "errors": []
+    },
+    "r22/A6-light-welcome": {
+      "errors": []
+    }
+  },
+  "r22only": {
+    "M1-manual-bastion-280": {
+      "errors": []
+    },
+    "M2-manual-nouser-280": {
+      "errors": []
+    },
+    "M3-import-280-light": {
+      "errors": []
+    },
+    "_measure_errors": {
+      "errors": []
+    }
+  },
+  "boxes": {
+    "import-280": {
+      "rows": [
+        {
+          "name": "web-1",
+          "cb": {
+            "l": 23,
+            "t": 138,
+            "r": 36,
+            "b": 151,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 136,
+            "r": 260,
+            "b": 225.1,
+            "w": 215,
+            "h": 89.1
+          },
+          "btn": null,
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "db-1",
+          "cb": {
+            "l": 23,
+            "t": 227.1,
+            "r": 36,
+            "b": 240.1,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 225.1,
+            "r": 260,
+            "b": 297.2,
+            "w": 215,
+            "h": 72.1
+          },
+          "btn": null,
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "bastion-jump",
+          "cb": {
+            "l": 23,
+            "t": 299.2,
+            "r": 36,
+            "b": 312.2,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 297.2,
+            "r": 173,
+            "b": 420.4,
+            "w": 128,
+            "h": 123.2
+          },
+          "btn": {
+            "l": 179,
+            "t": 297.2,
+            "r": 260,
+            "b": 327.2,
+            "w": 81,
+            "h": 30
+          },
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            },
+            {
+              "pair": "button×text",
+              "intersect": true
+            },
+            {
+              "pair": "checkbox×button",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "nouser",
+          "cb": {
+            "l": 23,
+            "t": 422.4,
+            "r": 36,
+            "b": 435.4,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 420.4,
+            "r": 173,
+            "b": 526.5,
+            "w": 128,
+            "h": 106.2
+          },
+          "btn": {
+            "l": 179,
+            "t": 420.4,
+            "r": 260,
+            "b": 450.4,
+            "w": 81,
+            "h": 30
+          },
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            },
+            {
+              "pair": "button×text",
+              "intersect": true
+            },
+            {
+              "pair": "checkbox×button",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "prod-1",
+          "cb": {
+            "l": 23,
+            "t": 528.5,
+            "r": 36,
+            "b": 541.5,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 526.5,
+            "r": 260,
+            "b": 602.5,
+            "w": 215,
+            "h": 75.9
+          },
+          "btn": null,
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            }
+          ]
+        }
+      ],
+      "prefill": null
+    },
+    "import-224": {
+      "rows": [
+        {
+          "name": "web-1",
+          "cb": {
+            "l": 23,
+            "t": 164.9,
+            "r": 36,
+            "b": 177.9,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 162.9,
+            "r": 204,
+            "b": 269.1,
+            "w": 159,
+            "h": 106.2
+          },
+          "btn": null,
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "db-1",
+          "cb": {
+            "l": 23,
+            "t": 271.1,
+            "r": 36,
+            "b": 284.1,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 269.1,
+            "r": 204,
+            "b": 341.1,
+            "w": 159,
+            "h": 72.1
+          },
+          "btn": null,
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "bastion-jump",
+          "cb": {
+            "l": 23,
+            "t": 343.1,
+            "r": 36,
+            "b": 356.1,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 341.1,
+            "r": 117,
+            "b": 553.5,
+            "w": 72,
+            "h": 212.3
+          },
+          "btn": {
+            "l": 123,
+            "t": 341.1,
+            "r": 204,
+            "b": 371.1,
+            "w": 81,
+            "h": 30
+          },
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            },
+            {
+              "pair": "button×text",
+              "intersect": true
+            },
+            {
+              "pair": "checkbox×button",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "nouser",
+          "cb": {
+            "l": 23,
+            "t": 555.5,
+            "r": 36,
+            "b": 568.5,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 553.5,
+            "r": 117,
+            "b": 693.7,
+            "w": 72,
+            "h": 140.3
+          },
+          "btn": {
+            "l": 123,
+            "t": 553.5,
+            "r": 204,
+            "b": 583.5,
+            "w": 81,
+            "h": 30
+          },
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            },
+            {
+              "pair": "button×text",
+              "intersect": true
+            },
+            {
+              "pair": "checkbox×button",
+              "intersect": true
+            }
+          ]
+        },
+        {
+          "name": "prod-1",
+          "cb": {
+            "l": 23,
+            "t": 695.7,
+            "r": 36,
+            "b": 708.7,
+            "w": 13,
+            "h": 13
+          },
+          "span": {
+            "l": 45,
+            "t": 693.7,
+            "r": 204,
+            "b": 786.7,
+            "w": 159,
+            "h": 93
+          },
+          "btn": null,
+          "checks": [
+            {
+              "pair": "checkbox×text",
+              "intersect": true
+            }
+          ]
+        }
+      ],
+      "prefill": null
+    },
+    "manual-bastion": {
+      "rows": [],
+      "prefill": {
+        "text": "预填自 ~/.ssh/config:12（含不兼容指令，请核对后保存）",
+        "box": {
+          "l": 19,
+          "t": 99,
+          "w": 241,
+          "h": 34.1
+        },
+        "nextTop": 139.1,
+        "overlapsNext": false
+      }
+    },
+    "manual-nouser": {
+      "rows": [],
+      "prefill": {
+        "text": "预填自 ~/.ssh/config:16（config 未指定用户，请补全）",
+        "box": {
+          "l": 19,
+          "t": 99,
+          "w": 241,
+          "h": 34.1
+        },
+        "nextTop": 139.1,
+        "overlapsNext": false
+      }
+    }
+  }
+}

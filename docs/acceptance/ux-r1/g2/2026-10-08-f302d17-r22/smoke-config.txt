@@ -1,0 +1,29 @@
+Host r22-ok1
+  HostName 10.9.0.1
+  User root
+  ServerAliveInterval 30
+
+Host r22-blocked
+  HostName 10.9.0.2
+  User root
+  ProxyJump bastion
+
+Host r22-nouser
+  HostName 10.9.0.3
+
+Host r22-dupx
+  HostName 10.9.0.9
+  User root
+
+Host *.r22-wild.example
+  User nobody
+
+Match host r22-badhost
+  User should_not_appear
+
+Match host r22-mshadow
+  User corpuser
+
+Host r22-mblocked
+  HostName 10.9.0.5
+  User ci

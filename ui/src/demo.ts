@@ -293,35 +293,78 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return null;
     }
     case "ssh_config_preview":
-      // 两可导入 + 一已导入（按主机名对账，与真实 already_imported 语义一致）
-      return ["web-1", "db-1"].map((name) => ({
-        name,
-        address: name === "web-1" ? "web1.example.com" : "db1.internal",
-        port: name === "web-1" ? 22 : 2222,
-        username: name === "web-1" ? "ops" : "deploy",
-        has_identity: name === "web-1",
-        already_imported: demoState.hosts.some((h) => h.name === name),
-      })).concat([{
-        name: "prod-1", address: "10.0.0.11", port: 22, username: "ops",
-        has_identity: false, already_imported: true,
-      }]);
+      // C7 分级演示：ok（警告级）/ blocked（ProxyJump 阻断）/ nouser（DF7.5）
+      // / prod-1（已导入对账）。blocked/nouser 直接导入钮不可勾，可转手工表单。
+      return [
+        {
+          name: "web-1", address: "web1.example.com", port: 22, username: "ops",
+          has_identity: true, already_imported: demoState.hosts.some((h) => h.name === "web-1"),
+          source_file: "~/.ssh/config", source_line: 3,
+          unsupported: [{ directive: "serveraliveinterval", level: "Warning" as const, line: 4 }],
+          directly_importable: true, user_specified: true,
+        },
+        {
+          name: "db-1", address: "db1.internal", port: 2222, username: "deploy",
+          has_identity: false, already_imported: demoState.hosts.some((h) => h.name === "db-1"),
+          source_file: "~/.ssh/config", source_line: 8,
+          unsupported: [], directly_importable: true, user_specified: true,
+        },
+        {
+          name: "bastion-jump", address: "10.9.8.7", port: 22, username: "ops",
+          has_identity: false, already_imported: false,
+          source_file: "~/.ssh/config", source_line: 12,
+          unsupported: [{ directive: "proxyjump", level: "Blocking" as const, line: 13 }],
+          directly_importable: false, user_specified: true,
+        },
+        {
+          name: "nouser", address: "10.9.8.8", port: 22, username: "currentuser",
+          has_identity: false, already_imported: false,
+          source_file: "~/.ssh/config", source_line: 16,
+          unsupported: [], directly_importable: false, user_specified: false,
+        },
+        {
+          name: "prod-1", address: "10.0.0.11", port: 22, username: "ops",
+          has_identity: false, already_imported: true,
+          source_file: "~/.ssh/config", source_line: 20,
+          unsupported: [], directly_importable: true, user_specified: true,
+        },
+      ];
     case "ssh_config_import": {
       const names = (args?.names as string[]) ?? [];
+      const overwrite = Boolean(args?.overwrite);
       return names.map((name) => {
-        if (demoState.hosts.some((h) => h.name === name)) {
-          return { name, host_id: null, error: "已在主机列表" };
+        const spec = (["web-1", "db-1", "bastion-jump", "nouser", "prod-1"] as const)
+          .map((n) => ({ n, imp: n === "web-1" || n === "db-1" || n === "prod-1" }))
+          .find((x) => x.n === name);
+        if (!spec || !spec.imp) {
+          // 阻断/未指定用户：与真实核心同语义，不可直接导入即跳过
+          return { name, host_id: null, error: null, skipped_reason: "Blocked" as const };
         }
-        const isWeb = name === "web-1";
+        const existing = demoState.hosts.find((h) => h.name === name);
+        if (existing && !overwrite) {
+          return { name, host_id: null, error: null, skipped_reason: "Duplicate" as const };
+        }
+        const spec2: Record<string, { address: string; port: number; username: string; auth: string }> = {
+          "web-1": { address: "web1.example.com", port: 22, username: "ops", auth: "Key" },
+          "db-1": { address: "db1.internal", port: 2222, username: "deploy", auth: "Agent" },
+          "prod-1": { address: "10.0.0.11", port: 22, username: "ops", auth: "Agent" },
+        };
+        const s = spec2[name];
+        if (existing && overwrite) {
+          existing.username = s.username;
+          audit("human", "host_upsert", name);
+          return { name, host_id: existing.id, error: null, skipped_reason: null };
+        }
         const id = "h-demo-" + demoSeq++;
         demoState.hosts.push({
           id, name,
-          address: isWeb ? "web1.example.com" : "db1.internal",
-          port: isWeb ? 22 : 2222,
-          username: isWeb ? "ops" : "deploy",
-          auth_type: isWeb ? "Key" : "Agent",
+          address: s.address,
+          port: s.port,
+          username: s.username,
+          auth_type: s.auth,
         });
         audit("human", "host_upsert", name);
-        return { name, host_id: id, error: null };
+        return { name, host_id: id, error: null, skipped_reason: null };
       });
     }
     case "create_session": {

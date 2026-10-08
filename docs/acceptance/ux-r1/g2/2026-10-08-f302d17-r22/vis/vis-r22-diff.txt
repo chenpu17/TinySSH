@@ -1,0 +1,43 @@
+vis-r22 像素 diff 数字（PIL ImageChops.difference，1280x800 viewport，dsf=1）
+方法：双树同操作（base=worktree f302d17 vite:5184，r22=工作树 vite:5183），
+每态 localStorage.clear() 后 reload 同初态，rAFx2+300ms 稳定后截图。
+
+[噪声底] r22 侧 A1 态连拍 x3 两两：diff_px=0 / 0 / 0（headless 渲染确定性，噪声底=0）
+
+[跨树应零差异态]
+A1-welcome        diff_px=6 bbox 全图离散（逐像素定位 6 点）
+  5 点差值 1-2（(1157,78)/(1264..1267,741..744) 右下角滚动角与图标边 AA）
+  1 点 (72,10) 差 34：收起按钮青色圆角边框边缘单像素 AA 抖动，
+  周围 8 邻域像素两树全同、无几何位移、无文字重排 → AA 噪声归因
+A2-addform-plain  diff_px=0
+A4-settings       diff_px=0（r21 已签凭据面不受扰）
+A6-light-welcome  diff_px=0
+
+[跨树面板态（差异仅允许在导入面板内）]
+A3-import-224  diff_px=76125  bbox=(8,53,215,760)   右缘 215 < hostbar 224 ✓
+A5-import-280  diff_px=100595 bbox=(8,159,271,760)  右缘 271 < hostbar 280 ✓
+  差异=两树 demo ssh_config_preview seed 不同（3 行 vs 5 行+分级诊断），预期内
+
+[盒测量（getBoundingClientRect，手动修正判读——测量脚本字段名 bug 致 intersect 全误报，
+ 按原始盒数字手算）]
+import-280  5 行：checkbox 右缘 36 vs 文本左缘 45（分离 9px）；
+  blocked 行按钮 [179,260]×30h vs 文本右缘 173（分离 6px=flex gap）；无零宽盒
+import-224  同构分离 6px；bastion 文本 span 收缩至 72px 宽（逐词换行，挤但无叠印）
+prefill 提示行（bastion/nouser 两变体）：盒宽 241px>0，bottom 133.1 ≤ 下行 top 139.1（留 6px 不叠）
+
+[可达性] A3b-import-224-scrolled：.hb-scroll(overflow-y:auto) 滚到底（scrollTop 545/1219），
+「导入选中」钮与说明完整可见——224 态 5 行面板超高属既有滚动行为，非截断缺陷
+
+[JS 错误] 全态（6 跨树 + 3 r22only + 4 盒测量）pageerror/unhandledrejection = 0
+
+工件：base/*.png r22/*.png N1-noise-*.png vis-r22-drivereport.json
+
+[postfix 定向复验（rev 处置后三处，2026-10-08）]
+P1 footer 追加文案：280 态盒宽 241px/6 行、224 态 185px/7 行，均 overflowCard=false（postfix-P1-footer-280/224.png）
+P2 Duplicate 兜底文案：实证勾已在列表行（prod-1）→ overwrite=true → 行显示「✓ 已导入」非 Duplicate
+  （team-lead 所述触发方式不可达，与 README §3-2「预览过期竞态兜底」登记一致）；
+  同容器同 class 注入 3552 行确切文案探针：盒 215×34px（2 行换行）、clearOfCb=true、belowPrev=true、
+  视口内（postfix-P2a-prod1-overwrite.png / postfix-P2b-duplicate-probe.png）
+P3 nouser 预填：面板行不泄漏 mock 值 currentuser、正确显示 @10.9.8.8:22；表单 username value=""（恒空，
+  负向探针成立）、占位符「例：ops 或 root」渲染、提示行宽 241px 与下行不叠（postfix-P3-nouser-prefill.png）
+全程零 pageerror/unhandledrejection。数据：postfix-report.json
