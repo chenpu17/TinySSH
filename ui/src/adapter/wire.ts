@@ -97,6 +97,56 @@ export interface SessionInfo {
   created_at: string;
 }
 
+// ---- C1 建连尝试（R19）----
+
+export type AttemptId = string;
+
+export type AttemptPhase =
+  | "Connecting"
+  | "TrustRequired"
+  | "Authenticating"
+  | "ChallengeRequired"
+  | "Ready"
+  | "Failed"
+  | "Cancelled"
+  | "CancelCloseFailed";
+
+/** wire 错误载荷（kind 与 WireError.kind 同表）。 */
+export interface ErrorPayload {
+  kind: string;
+  message: string;
+  detail?: unknown;
+}
+
+export interface AttemptInfo {
+  attempt_id: AttemptId;
+  host_id: HostId;
+  /** "human" | "agent:<client_id>" */
+  actor: string;
+  phase: AttemptPhase;
+  session_id: SessionId | null;
+  created_at: string;
+  error: ErrorPayload | null;
+}
+
+export interface BeginConnectionOpts {
+  /** 显式绕过 (host_id, actor) 幂等合并（DC1.5）。 */
+  new_session?: boolean;
+}
+
+export type CancelOutcome =
+  | { outcome: "cancelled" }
+  | { outcome: "already_ready"; session_id: SessionId }
+  | { outcome: "cancel_close_failed"; session_id: SessionId }
+  | { outcome: "not_found" };
+
+export interface ConnectionEvent {
+  attempt_id: AttemptId;
+  phase: AttemptPhase;
+  session_id: SessionId | null;
+  error: ErrorPayload | null;
+}
+
 export interface ExecResult {
   exec_id: ExecId;
   exit_code: number | null;
@@ -157,6 +207,7 @@ export interface PendingHostKey {
   fingerprint: string;
   previous_fingerprint: string | null;
   created_at: string;
+  attempt_id?: AttemptId | null;
 }
 
 export interface PendingAuthPrompt {

@@ -38,6 +38,9 @@ interface CmdArgs {
   ssh_config_import: { path?: string | null; names: string[] };
   list_sessions: undefined;
   create_session: { hostId: string };  // tauri v2 JS 侧实参为 camelCase，自动映射 rust host_id
+  begin_connection: { hostId: string; opts?: wire.BeginConnectionOpts };
+  connection_status: { attemptId: string };
+  cancel_connection: { attemptId: string };
   close_session: { sid: string };
   reconnect_session: { sid: string };
   resize: { sid: string; cols: number; rows: number };
@@ -91,6 +94,9 @@ interface CmdRet {
   ssh_config_import: wire.SshImportOutcome[];
   list_sessions: wire.SessionInfo[];
   create_session: wire.SessionId;
+  begin_connection: wire.AttemptInfo;
+  connection_status: wire.AttemptInfo;
+  cancel_connection: wire.CancelOutcome;
   close_session: void;
   reconnect_session: void;
   resize: void;

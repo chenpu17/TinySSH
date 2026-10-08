@@ -12,6 +12,7 @@ use session_api::transport::ChannelHandle;
 use session_api::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tinyssh_approval::ApprovalEngine;
 use tokio::sync::{broadcast, oneshot};
@@ -34,6 +35,8 @@ pub struct ApprovalCenter {
     /// 2FA 人工应答待决（路线图⑩）：pending 表（含应答通道）+ 事件推送。
     pub ap_pending: StdMutex<HashMap<String, (PendingAuthPrompt, oneshot::Sender<String>)>>,
     pub ap_tx: broadcast::Sender<PendingAuthPrompt>,
+    /// C1 建连尝试事件（connection-event，沿 approval-event 桥模式）。
+    pub conn_tx: broadcast::Sender<ConnectionEvent>,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
 }
@@ -42,6 +45,15 @@ pub struct SessionManager {
     sessions: StdMutex<HashMap<SessionId, Arc<SessionHandle>>>,
     pub center: Arc<ApprovalCenter>,
     approvals_rx_gen: StdMutex<()>,
+    /// C1 活跃 attempt 表（终态后保留至进程结束——connection_status 恒返回终态）。
+    attempts: StdMutex<HashMap<AttemptId, Arc<AttemptEntry>>>,
+    /// C1 幂等合并索引：(host_id, actor 域) → 活跃 attempt（DC1.5）。
+    merge_index: StdMutex<HashMap<(HostId, String), AttemptId>>,
+    /// 自引用（spawn attempt 任务需 'static Arc<Self>；open 装配时回填）。
+    self_weak: StdMutex<Option<std::sync::Weak<SessionManager>>>,
+    /// C1 契约测试钩子（仅测试构建存在；驱动「已提交未投递」窗口时序）。
+    #[cfg(test)]
+    test_hooks: StdMutex<AttemptTestHooks>,
     pub data_dir: PathBuf,
     /// MCP 端点实际地址（T43 §6-7 收口）：由装配层在 bind 后写入（GUI 进程内嵌
     /// 或 serve CLI）；未装配时为占位文案（L1 §3.5 端口递增，真实值以 bind 为准）。
@@ -56,6 +68,7 @@ impl SessionManager {
         let (forwards_tx, _) = broadcast::channel(256);
         let (hk_tx, _) = broadcast::channel(16);
         let (ap_tx, _) = broadcast::channel(16);
+        let (conn_tx, _) = broadcast::channel(64);
         let center = Arc::new(ApprovalCenter {
             engine: ApprovalEngine::new()?,
             items: StdMutex::new(HashMap::new()),
@@ -67,23 +80,572 @@ impl SessionManager {
             hk_tx,
             ap_pending: StdMutex::new(HashMap::new()),
             ap_tx,
+            conn_tx,
             vault,
             audit,
         });
-        Ok(Arc::new(Self {
+        let arc = Arc::new(Self {
             sessions: StdMutex::new(HashMap::new()),
             center,
             approvals_rx_gen: StdMutex::new(()),
+            attempts: StdMutex::new(HashMap::new()),
+            merge_index: StdMutex::new(HashMap::new()),
+            self_weak: StdMutex::new(None),
+            #[cfg(test)]
+            test_hooks: StdMutex::new(AttemptTestHooks::default()),
             data_dir: db_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
             mcp_endpoint: StdMutex::new(
                 "http://127.0.0.1:8722/mcp（被占递增；以端点装配方输出为准）".into(),
             ),
-        }))
+        });
+        *arc.self_weak.lock().unwrap() = Some(Arc::downgrade(&arc));
+        Ok(arc)
     }
 
     pub fn audit(&self) -> &tinyssh_audit::AuditStore {
         &self.center.audit
     }
+
+    /// create_session 主体（C1 抽取）：`attempt=None` 即 v1 同步兼容路径，
+    /// 行为与抽 取前逐字节等价；`attempt=Some` 时相位经事件表达、门感知取消。
+    async fn create_session_inner(
+        &self,
+        ctx: &Actor,
+        req: CreateSessionReq,
+        attempt: Option<&Arc<AttemptEntry>>,
+    ) -> Result<SessionId> {
+        let (host, kind) = if req.host_id == "local" {
+            (self.ensure_local_host()?, "local".to_string())
+        } else {
+            let host = self
+                .center
+                .vault
+                .list_hosts()?
+                .into_iter()
+                .find(|h| h.id == req.host_id)
+                .ok_or(Error::SessionNotFound)?;
+            (host, "ssh".to_string())
+        };
+
+        // Agent 建远程会话：默认必审（L1 §4）。审批期 attempt 保持笼统 Connecting（DC1.4）；
+        // 批准后进入 Authenticating。审批中取消由 cancel_connection 作废卡（Voided 路径）。
+        if let Actor::Agent { client_id } = ctx {
+            if kind == "ssh" {
+                self.wait_create_session_approval(ctx, client_id, &host, attempt).await?;
+                if let Some(a) = attempt {
+                    let mut st = a.st.lock().await;
+                    if !st.terminal() {
+                        st.phase = AttemptPhase::Authenticating;
+                        emit_conn(&self.center, &a.info.attempt_id, AttemptPhase::Authenticating, None, None);
+                    }
+                }
+            }
+        }
+
+        let sid = format!("s-{}", uuid::Uuid::new_v4());
+        let cols = 120u16;
+        let rows = 32u16;
+
+        let channel: Arc<dyn ChannelHandle> = if kind == "local" {
+            let (ch, _cleanup) = transport_pty::spawn_local_pty(cols, rows).await?;
+            ch
+        } else {
+            let (auth_type, secret) = self.center.vault.host_secret(&host)?;
+            // TOFU 指纹门（路线图⑤）：闭包只捕获 ApprovalCenter，避免回指 SessionManager
+            let center = self.center.clone();
+            let gate_host = host.clone();
+            let gate_ctx = ctx.clone();
+            let gate_attempt = attempt.cloned();
+            let gate: transport_ssh::HostKeyCheck = Arc::new(move |fp| {
+                let center = center.clone();
+                let host = gate_host.clone();
+                let ctx = gate_ctx.clone();
+                let attempt = gate_attempt.clone();
+                let fp = fp.to_string(); // owned 后再装箱：future 不借入参（HRTB 约束）
+                Box::pin(async move { host_key_gate(&center, &ctx, &host, &fp, attempt.as_ref()).await })
+            });
+            // 2FA 人工应答门（路线图⑩）：kb 非密码提示 → 挂起等人类（同指纹门模式）
+            let kb_center = self.center.clone();
+            let kb_host = host.clone();
+            let kb_ctx = ctx.clone();
+            let kb_attempt = attempt.cloned();
+            let kb_gate: transport_ssh::KbPromptCheck = Arc::new(move |prompt, echo| {
+                let center = kb_center.clone();
+                let host = kb_host.clone();
+                let ctx = kb_ctx.clone();
+                let attempt = kb_attempt.clone();
+                let prompt = prompt.to_string(); // owned 后再装箱（HRTB 约束，同上）
+                Box::pin(async move { auth_prompt_gate(&center, &ctx, &host, &prompt, echo, attempt.as_ref()).await })
+            });
+            let target = transport_ssh::SshTarget {
+                address: host.address.clone(),
+                port: host.port,
+                username: host.username.clone(),
+                auth_type,
+                secret: secret.to_string(),
+                host_key_check: Some(gate),
+                kb_prompt_check: Some(kb_gate),
+            };
+            SshChannel::connect(target, cols, rows).await?
+        };
+
+        let screen = term_core::Screen::new(term_core::ScreenConfig::default());
+        let handle = SessionHandle::new(sid.clone(), host.clone(), kind.clone(), channel, screen, self.center.clone());
+        // 先订阅再注入：远端回显/首个标记提示符不得落入无订阅者窗口
+        // （broadcast 无接收者即丢——并发回归中集成标记迟到 10s+ 的根因）
+        let pump_rx = handle.channel.subscribe_output();
+        spawn_pump(handle.clone(), pump_rx);
+        // H2/N1：pending_sid 写入在 insert 之前（写入与 insert 间无 await 点）——
+        // 取消 drop inner 只可能发生在写入完成前（insert 未发生=无幽灵可残留）
+        // 或写入完成后（清扫必能拿到 sid），微窗完全关闭
+        if let Some(a) = attempt {
+            a.st.lock().await.pending_sid = Some(sid.clone());
+        }
+        self.sessions.lock().unwrap().insert(sid.clone(), handle.clone());
+
+        // 远端注入 shell 集成（本地已在 PTY 启动时注入）。
+        // 登记用原 UTF-8（屏态吃泵侧解码后的回显）；snippet 纯 ASCII，GBK 下编码恒等。
+        if kind == "ssh" {
+            let snippet = ssh_integration_snippet();
+            let mut text = snippet.to_string();
+            text.push('\n');
+            {
+                let mut s = handle.screen.lock().await;
+                s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+            }
+            handle.channel.write(&charset::encode(handle.host.charset, &text)).await?;
+            let _ = self.center.audit.append(
+                ctx, "shell_integration_inject", Some(&sid), Some("OSC133+OSC7"), serde_json::json!({}), None);
+        }
+
+        // 等待集成生效（最多 10s；失败不阻断——Shell 模式将自动降级 Fresh）。
+        // 窗口须覆盖全量回归时编译与测试争抢 CPU 的首个提示符延迟（实测 5s 不够）。
+        for _ in 0..200 {
+            if handle.screen.lock().await.shell_integration_present() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        self.center.vault.record_session(&sid, &host.id, &kind)?;
+        // C8：成功建连打点（host_metadata.last_connected_at；最近连接由 sessions
+        // 表派生，此处只供元数据展示）
+        let _ = self.center.vault.touch_host_connection(&host.id);
+        let _ = self.center.audit.append(
+            ctx, "session_created", Some(&sid), None,
+            serde_json::json!({"host": host.id, "kind": kind}), None);
+        Ok(sid)
+    }
+
+    /// C1：发起建连 attempt（立即返回，连接后台推进；相位经 connection-event）。
+    async fn begin_connection_on(
+        &self,
+        ctx: &Actor,
+        host_id: HostId,
+        opts: BeginConnectionOpts,
+    ) -> Result<AttemptInfo> {
+        // 主机存在性前置校验（无效主机不产生 attempt；kind 与 v1 create_session 同口径）
+        let known = host_id == "local"
+            || self.center.vault.list_hosts()?.iter().any(|h| h.id == host_id);
+        if !known {
+            return Err(Error::SessionNotFound);
+        }
+        let domain = actor_domain(ctx);
+        let key = (host_id.clone(), domain.clone());
+        // 合并查询与登记同临界区（M3：并发 begin 幂等；term 原子位免 Std 锁跨 await）。
+        // 命中后 snapshot 需 await，锁先落——命中条目此刻活跃（term 判定），快照相位即真相。
+        let path: (bool, Arc<AttemptEntry>) = {
+            // (merged?, entry)
+            let mut mi = self.merge_index.lock().unwrap();
+            let mut at = self.attempts.lock().unwrap();
+            let merged = if !opts.new_session {
+                mi.get(&key)
+                    .and_then(|aid| at.get(aid))
+                    .filter(|e| !e.term.load(AtomicOrdering::Acquire))
+                    .cloned()
+            } else {
+                None
+            };
+            match merged {
+                Some(e) => (true, e),
+                None => {
+                    let attempt_id = format!("at-{}", uuid::Uuid::new_v4());
+                    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                    let entry = Arc::new(AttemptEntry {
+                        info: AttemptInfo {
+                            attempt_id: attempt_id.clone(),
+                            host_id: host_id.clone(),
+                            actor: domain.clone(),
+                            phase: AttemptPhase::Connecting,
+                            session_id: None,
+                            created_at: chrono::Utc::now(),
+                            error: None,
+                        },
+                        st: tokio::sync::Mutex::new(AttemptState {
+                            phase: AttemptPhase::Connecting,
+                            session_id: None,
+                            pending_sid: None,
+                            error: None,
+                            submitted: false,
+                            delivered: false,
+                            cancel_requested: false,
+                        }),
+                        cancel_tx,
+                        cancel_rx,
+                        term: AtomicBool::new(false),
+                    });
+                    at.insert(attempt_id.clone(), entry.clone());
+                    mi.insert(key.clone(), attempt_id);
+                    (false, entry)
+                }
+            }
+        };
+        if path.0 {
+            // merged：命中活跃 attempt——快照返回，不重复 spawn
+            let e = &path.1;
+            let st = e.st.lock().await;
+            return Ok(e.snapshot(&st));
+        }
+        let entry = path.1.clone();
+        // created：spawn 尝试任务（merged 不 spawn——任务已在跑）
+        let snap = entry.info.clone();
+        let weak = self.self_weak.lock().unwrap().clone();
+        let this = weak
+            .and_then(|w| w.upgrade())
+            .ok_or_else(|| Error::Storage("SessionManager 未装配 Arc".into()))?;
+        let ctx2 = ctx.clone();
+        tokio::spawn(async move {
+            this.run_attempt(entry, ctx2).await;
+        });
+        Ok(snap)
+    }
+
+    /// 取消落点结算：inner 被 drop 时若已过 sessions.insert 点（pending_sid 在案），
+    /// 关闭幽灵会话再结算 Cancelled（H2——否则 handle/channel/pump 全泄漏，内存表出
+    /// Connected 幽灵，违背契约序列 1「无 session 遗留」）。关闭失败 → CancelCloseFailed
+    /// （会话保留=恢复入口）。返回 true=终态已在此结算（调用方跳过常规结算）。
+    async fn settle_cancel_with_ghost(
+        self: &Arc<Self>,
+        entry: &Arc<AttemptEntry>,
+        ctx: &Actor,
+        attempt_id: &str,
+    ) -> bool {
+        let ghost = entry.st.lock().await.pending_sid.take();
+        let Some(gsid) = ghost else {
+            return false;
+        };
+        match self.close_session(ctx, gsid.clone()).await {
+            Ok(()) => {
+                let _ = self.center.audit.append(
+                    ctx, "connection_cancelled_closed", None, None,
+                    serde_json::json!({"attempt_id": attempt_id, "session_id": gsid}), None);
+            }
+            Err(e) => {
+                let payload = e.payload();
+                let mut st = entry.st.lock().await;
+                st.session_id = Some(gsid.clone());
+                st.error = Some(payload.clone());
+                entry.settle(&mut st, AttemptPhase::CancelCloseFailed);
+                drop(st);
+                let _ = self.center.audit.append(
+                    ctx, "connection_cancel_close_failed", None, None,
+                    serde_json::json!({"attempt_id": attempt_id, "session_id": gsid, "error": e.to_string()}), None);
+                emit_conn(&self.center, attempt_id, AttemptPhase::CancelCloseFailed, Some(&gsid), Some(&payload));
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 合并索引按键比较移除（M3：终态清理不得误删指向其他 attempt 的条目——
+    /// 并发下 merge_index 可能已被更新的 attempt 覆盖）。
+    fn merge_remove(&self, host_id: &HostId, domain: &str, attempt_id: &str) {
+        let mut mi = self.merge_index.lock().unwrap();
+        if mi.get(&(host_id.clone(), domain.to_string())).map(String::as_str) == Some(attempt_id) {
+            mi.remove(&(host_id.clone(), domain.to_string()));
+        }
+    }
+
+    /// C1 取消受理与竞态结算（DC1.2/DC1.5；调用方必须持 Arc<Self>——见 begin_connection_on）。
+    async fn cancel_connection_on(
+        self: &Arc<Self>,
+        ctx: &Actor,
+        attempt_id: AttemptId,
+    ) -> Result<CancelOutcome> {
+        let entry = self
+            .attempts
+            .lock()
+            .unwrap()
+            .get(&attempt_id)
+            .cloned()
+            .ok_or(Error::SessionNotFound)?;
+        // 跨 Actor 身份域：NotFound 不泄露存在性 + 审计留痕（契约序列 5）
+        if entry.info.actor != actor_domain(ctx) {
+            let _ = self.center.audit.append(
+                ctx, "cross_actor_cancel_denied", None, None,
+                serde_json::json!({"attempt_id": attempt_id, "caller_actor": actor_domain(ctx)}), None);
+            return Ok(CancelOutcome::NotFound);
+        }
+        let mut st = entry.st.lock().await;
+        if st.terminal() || st.delivered {
+            // 已投递（Ready 后迟到取消，无副作用）或已终态（含 CancelCloseFailed 后重复取消）
+            return Ok(CancelOutcome::NotFound);
+        }
+        if st.cancel_requested {
+            // 并发取消：首个受理者拥有结算权（M4——二次 close 会把「已关闭」误报成
+            // CancelCloseFailed 的「会话保留」）；后续取消按 NotFound 处理，终态以事件为准
+            return Ok(CancelOutcome::NotFound);
+        }
+        if st.submitted {
+            // 已提交未投递窗口：核心立即关闭该刚创建且从未投递的会话（DC1.2）
+            let sid = st.session_id.clone().ok_or(Error::SessionNotFound)?;
+            st.cancel_requested = true;
+            drop(st);
+            entry.cancel_notify();
+            #[cfg(test)]
+            let close_result = if self.test_hooks.lock().unwrap().force_close_fail {
+                Err(Error::Io("test-injected close failure".into()))
+            } else {
+                self.close_session(ctx, sid.clone()).await
+            };
+            #[cfg(not(test))]
+            let close_result = self.close_session(ctx, sid.clone()).await;
+            match close_result {
+                Ok(()) => {
+                    let mut st = entry.st.lock().await;
+                    st.session_id = None;
+                    st.error = None;
+                    entry.settle(&mut st, AttemptPhase::Cancelled);
+                    drop(st);
+                    let _ = self.center.audit.append(
+                        ctx, "connection_cancelled_closed", None, None,
+                        serde_json::json!({"attempt_id": attempt_id, "session_id": sid}), None);
+                    emit_conn(&self.center, &attempt_id, AttemptPhase::Cancelled, None, None);
+                    Ok(CancelOutcome::AlreadyReady { session_id: sid })
+                }
+                Err(e) => {
+                    let payload = e.payload();
+                    let mut st = entry.st.lock().await;
+                    st.error = Some(payload.clone());
+                    entry.settle(&mut st, AttemptPhase::CancelCloseFailed);
+                    drop(st);
+                    let _ = self.center.audit.append(
+                        ctx, "connection_cancel_close_failed", None, None,
+                        serde_json::json!({"attempt_id": attempt_id, "session_id": sid, "error": e.to_string()}), None);
+                    emit_conn(&self.center, &attempt_id, AttemptPhase::CancelCloseFailed, Some(&sid), Some(&payload));
+                    Ok(CancelOutcome::CancelCloseFailed { session_id: sid })
+                }
+            }
+        } else {
+            // 提交前受理：置标志 + 作废门/审批卡（终态由 attempt 任务结算）
+            st.cancel_requested = true;
+            drop(st);
+            entry.cancel_notify();
+            // 作废该 attempt 的 TOFU/2FA 待决卡：移除待决表（UI 查询面不再返回死卡，
+            // M1——hk_pending 不清会残留幽灵卡，decide 得 InvalidInput）+ 以拒绝结算门
+            // （gate 收到 false/发送端丢弃走取消臂，attempt 终态由任务统一结算）
+            let hk_ids: Vec<String> = {
+                self.center
+                    .hk_pending
+                    .lock().unwrap()
+                    .values()
+                    .filter(|p| p.attempt_id.as_deref() == Some(&attempt_id))
+                    .map(|p| p.id.clone())
+                    .collect()
+            };
+            for id in hk_ids {
+                self.center.hk_pending.lock().unwrap().remove(&id);
+                if let Some(tx) = self.center.hk_decisions.lock().unwrap().remove(&id) {
+                    let _ = tx.send(false);
+                }
+            }
+            let ap_ids: Vec<String> = {
+                self.center
+                    .ap_pending
+                    .lock().unwrap()
+                    .values()
+                    .filter(|(p, _)| p.attempt_id.as_deref() == Some(&attempt_id))
+                    .map(|(p, _)| p.id.clone())
+                    .collect()
+            };
+            for id in ap_ids {
+                if let Some((_, tx)) = self.center.ap_pending.lock().unwrap().remove(&id) {
+                    let _ = tx.send(String::new());
+                }
+            }
+            // 作废该 attempt 的建连审批卡（复用 T44 voided 留痕先例）
+            let appr_ids: Vec<ApprovalId> = {
+                self.center
+                    .items
+                    .lock().unwrap()
+                    .iter()
+                    .filter(|(_, it)| {
+                        it.attempt_id.as_deref() == Some(&attempt_id)
+                            && it.status == ApprovalStatus::Pending
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect()
+            };
+            for id in appr_ids {
+                // 注意：快照先落 let——if let 守卫的 MutexGuard 临时活到块尾（2021 edition），
+                // 块内再锁同锁会自死锁
+                let snap = self.center.items.lock().unwrap().get(&id).cloned();
+                if let Some(mut it) = snap {
+                    it.status = ApprovalStatus::Voided;
+                    let _ = self.center.vault.save_approval(&it);
+                    // 内存表同步写回（mark_status 同口径）——只改快照不写回会让
+                    // UI 列表与后续过滤器读到过期 Pending
+                    if let Some(slot) = self.center.items.lock().unwrap().get_mut(&id) {
+                        slot.status = ApprovalStatus::Voided;
+                    }
+                    let _ = self.center.audit.append(
+                        ctx, "approval_voided", None, Some(&it.command),
+                        serde_json::json!({"reason": "connection_cancelled", "agent": it.agent_id}),
+                        Some(&id));
+                    let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+                }
+                if let Some(tx) = self.center.decisions.lock().unwrap().remove(&id) {
+                    let _ = tx.send(DecisionMsg::Voided);
+                }
+            }
+            Ok(CancelOutcome::Cancelled)
+        }
+    }
+
+    /// C1 attempt 任务体：跑建连、结算提交点竞态窗口与终态（契约序列 1-6）。
+    async fn run_attempt(self: Arc<Self>, entry: Arc<AttemptEntry>, ctx: Actor) {
+        let attempt_id = entry.info.attempt_id.clone();
+        let host_id = entry.info.host_id.clone();
+        let domain = entry.info.actor.clone();
+        let req = CreateSessionReq { host_id: host_id.clone() };
+        // 取消兜底：非门 await 阶段（TCP/认证中）受理的取消经 select 即时结算——
+        // drop inner 前门卡已由受理路径作废（hk/ap/审批结算），无表残留
+        let r = tokio::select! {
+            r = self.create_session_inner(&ctx, req, Some(&entry)) => r,
+            _ = wait_cancelled(entry.cancel_rx.clone()) => Err(Error::Cancelled),
+        };
+        let mut st = entry.st.lock().await;
+        if st.terminal() {
+            // 取消受理路径已在窗口内结算终态（cancel_connection_on 持锁先到）
+            drop(st);
+            self.merge_remove(&host_id, &domain, &attempt_id);
+            return;
+        }
+        match r {
+            Ok(sid) => {
+                // 提交点：create_session_inner 返回 Ok 即「已提交」——会话行已存在，
+                // 状态从此刻携带 session_id（窗口取消依赖它定位待关闭会话）。
+                st.pending_sid = None; // 提交点后幽灵清扫让位于 session_id 口径
+                st.session_id = Some(sid.clone());
+                st.submitted = true;
+                if st.cancel_requested {
+                    // 已提交未投递窗口：核心立即关闭刚创建且从未投递的会话
+                    drop(st);
+                    if let Err(e) = self.close_session(&ctx, sid.clone()).await {
+                        // 关闭失败：CancelCloseFailed（会话保留=恢复入口），终态事件为准
+                        let payload = e.payload();
+                        let mut st = entry.st.lock().await;
+                        st.session_id = Some(sid.clone());
+                        st.error = Some(payload.clone());
+                        entry.settle(&mut st, AttemptPhase::CancelCloseFailed);
+                        drop(st);
+                        let _ = self.center.audit.append(
+                            &ctx, "connection_cancel_close_failed", None, None,
+                            serde_json::json!({"attempt_id": attempt_id, "session_id": sid, "error": e.to_string()}), None);
+                        emit_conn(&self.center, &attempt_id, AttemptPhase::CancelCloseFailed, Some(&sid), Some(&payload));
+                        self.merge_remove(&host_id, &domain, &attempt_id);
+                        return;
+                    }
+                    let mut st = entry.st.lock().await;
+                    st.session_id = None;
+                    entry.settle(&mut st, AttemptPhase::Cancelled);
+                    drop(st);
+                    let _ = self.center.audit.append(
+                        &ctx, "connection_cancelled_closed", None, None,
+                        serde_json::json!({"attempt_id": attempt_id, "session_id": sid}), None);
+                    emit_conn(&self.center, &attempt_id, AttemptPhase::Cancelled, None, None);
+                } else {
+                    drop(st);
+                    // 测试钩子：停在「已提交未投递」窗口，供 cancel_connection 驱动
+                    // AlreadyReady/CancelCloseFailed 竞态（契约序列 2/3）
+                    #[cfg(test)]
+                    {
+                        let (arrived, pause) = {
+                            let h = self.test_hooks.lock().unwrap();
+                            (h.arrived_after_submit.clone(), h.pause_after_submit.clone())
+                        };
+                        if let (Some(a), Some(p)) = (arrived, pause) {
+                            a.notify_one();
+                            p.notified().await;
+                        }
+                    }
+                    let mut st = entry.st.lock().await;
+                    if st.terminal() || st.cancel_requested {
+                        // H1：取消已受理（窗口 close 进行中或已结算）——投递权让渡，
+                        // 此处发出 Ready 会把已投递会话再被取消路径关闭、终态遭改写
+                        drop(st);
+                        self.merge_remove(&host_id, &domain, &attempt_id);
+                        return;
+                    }
+                    // 投递点：Ready 事件广播即「已投递」；此后取消一律 NotFound
+                    st.delivered = true;
+                    st.session_id = Some(sid.clone());
+                    entry.settle(&mut st, AttemptPhase::Ready);
+                    drop(st);
+                    emit_conn(&self.center, &attempt_id, AttemptPhase::Ready, Some(&sid), None);
+                }
+            }
+            Err(e) => {
+                let cancelled = st.cancel_requested || matches!(e, Error::Cancelled);
+                drop(st);
+                if cancelled {
+                    // H2：inner 被 drop 时若已过 insert 点，先关幽灵会话（可能改判 CCF）
+                    if self.settle_cancel_with_ghost(&entry, &ctx, &attempt_id).await {
+                        self.merge_remove(&host_id, &domain, &attempt_id);
+                        return;
+                    }
+                    let mut st = entry.st.lock().await;
+                    if st.terminal() {
+                        drop(st);
+                        self.merge_remove(&host_id, &domain, &attempt_id);
+                        return;
+                    }
+                    st.session_id = None;
+                    st.error = None;
+                    entry.settle(&mut st, AttemptPhase::Cancelled);
+                    drop(st);
+                    let _ = self.center.audit.append(
+                        &ctx, "connection_cancelled", None, None,
+                        serde_json::json!({"attempt_id": attempt_id}), None);
+                    emit_conn(&self.center, &attempt_id, AttemptPhase::Cancelled, None, None);
+                } else {
+                    // N2：inner 失败（write/record_session Err）时若已过 insert 点，
+                    // 半会话同样不留（attempt 路径；v1 直调同面缺陷另行登记）
+                    let half = entry.st.lock().await.pending_sid.take();
+                    if let Some(hsid) = half {
+                        let _ = self.close_session(&ctx, hsid).await;
+                    }
+                    let payload = e.payload();
+                    let mut st = entry.st.lock().await;
+                    if st.terminal() {
+                        drop(st);
+                        self.merge_remove(&host_id, &domain, &attempt_id);
+                        return;
+                    }
+                    st.session_id = None;
+                    st.error = Some(payload.clone());
+                    entry.settle(&mut st, AttemptPhase::Failed);
+                    drop(st);
+                    let _ = self.center.audit.append(
+                        &ctx, "connection_failed", None, None,
+                        serde_json::json!({"attempt_id": attempt_id, "error": payload.kind}), None);
+                    emit_conn(&self.center, &attempt_id, AttemptPhase::Failed, None, Some(&payload));
+                }
+            }
+        }
+        self.merge_remove(&host_id, &domain, &attempt_id);
+    }
+
 
     /// 转发的人类可读描述（审批卡命令串与审计载荷同源；free fn 供 trait impl 与未来调用方共用）
     pub fn forward_desc(spec: &ForwardSpec) -> String {
@@ -163,6 +725,7 @@ impl SessionManager {
         actor: &Actor,
         client: &AgentClientId,
         host: &Host,
+        attempt: Option<&Arc<AttemptEntry>>,
     ) -> Result<()> {
         let eval = tinyssh_approval::Evaluation {
             verdict: tinyssh_approval::SegmentVerdict::NeedsApproval,
@@ -183,6 +746,7 @@ impl SessionManager {
             editable: false, // 建会话参数无法从编辑文本回解（T44 复核中-2 同款口径）
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
+            attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
         };
         let (tx, rx) = oneshot::channel();
         self.center.decisions.lock().unwrap().insert(item.id.clone(), tx);
@@ -223,15 +787,129 @@ impl SessionManager {
     }
 }
 
+// ---------------------------------------------------------------------------
+// C1 建连尝试（R19）：attempt 状态机
+// 状态转移仅核心可写；终态（Ready/Failed/Cancelled/CancelCloseFailed）后不再变化。
+// 「已提交」= create_session_inner 返回 Ok；「已投递」= Ready 事件已广播（DC1.2
+// 交付线性化点：取消与建连的竞态只在已提交未投递窗口内产生自动关闭）。
+// ---------------------------------------------------------------------------
+
+/// attempt 可变状态机（单把 tokio 锁内互斥；窗口/清扫的 close 一律先落锁再 await，
+/// 锁上不做任何跨 await 操作——结算点重入只经重新 lock）。
+#[derive(Debug)]
+struct AttemptState {
+    phase: AttemptPhase,
+    session_id: Option<SessionId>,
+    error: Option<ErrorPayload>,
+    /// create_session_inner 已返回 Ok（会话已建立、已落库）。
+    submitted: bool,
+    /// inner 已过 sessions.insert 点但尚未返回（取消 drop inner 时的幽灵清扫依据，H2）。
+    pending_sid: Option<SessionId>,
+    /// Ready 事件已广播（投递点）。
+    delivered: bool,
+    /// cancel_connection 已受理（提交前受理路径）。
+    cancel_requested: bool,
+}
+
+impl AttemptState {
+    fn terminal(&self) -> bool {
+        self.phase.is_terminal()
+    }
+}
+
+#[derive(Debug)]
+struct AttemptEntry {
+    info: AttemptInfo,
+    st: tokio::sync::Mutex<AttemptState>,
+    /// 取消信号（watch 有记忆：门挂起前发生的取消在挂起后仍可观察到）。
+    cancel_tx: tokio::sync::watch::Sender<bool>,
+    cancel_rx: tokio::sync::watch::Receiver<bool>,
+    /// 终态原子镜像（settle 置位，Release/Acquire 配对）：合并查询在 Std 锁临界区内
+    /// 判活不跨 await（M3——tokio Mutex 的 phase 不可在 Std 锁内读）。
+    term: AtomicBool,
+}
+
+impl AttemptEntry {
+    fn cancel_notify(&self) {
+        let _ = self.cancel_tx.send(true);
+    }
+    /// 终态结算唯一入口：phase 与 term 原子镜像同锁内写（M3 查询侧判活依据）。
+    fn settle(&self, st: &mut AttemptState, phase: AttemptPhase) {
+        st.phase = phase;
+        self.term.store(phase.is_terminal(), AtomicOrdering::Release);
+    }
+    fn snapshot(&self, st: &AttemptState) -> AttemptInfo {
+        AttemptInfo {
+            attempt_id: self.info.attempt_id.clone(),
+            host_id: self.info.host_id.clone(),
+            actor: self.info.actor.clone(),
+            phase: st.phase,
+            session_id: st.session_id.clone(),
+            created_at: self.info.created_at,
+            error: st.error.clone(),
+        }
+    }
+}
+
+/// C1 契约测试钩子：暂停/到达信号与强制关闭失败（驱动竞态序列 2/3）。
+#[derive(Default)]
+struct AttemptTestHooks {
+    /// run_attempt 到达「已提交未投递」暂停点后 notify_one。
+    arrived_after_submit: Option<Arc<tokio::sync::Notify>>,
+    /// run_attempt 在暂停点 await（测试调 cancel 后 notify 放行）。
+    pause_after_submit: Option<Arc<tokio::sync::Notify>>,
+    /// 窗口关闭强制失败（驱动 CancelCloseFailed 路径）。
+    force_close_fail: bool,
+}
+
+/// C1 合并与取消权限的身份域（DC1.5）：Human 单域；Agent 按 client_id。
+fn actor_domain(ctx: &Actor) -> String {
+    match ctx {
+        Actor::Human => "human".to_string(),
+        Actor::Agent { client_id } => format!("agent:{}", client_id),
+    }
+}
+
+fn emit_conn(
+    center: &ApprovalCenter,
+    attempt_id: &str,
+    phase: AttemptPhase,
+    session_id: Option<&str>,
+    error: Option<&ErrorPayload>,
+) {
+    let _ = center.conn_tx.send(ConnectionEvent {
+        attempt_id: attempt_id.to_string(),
+        phase,
+        session_id: session_id.map(|s| s.to_string()),
+        error: error.cloned(),
+    });
+}
+
 /// TOFU 主机指纹门（路线图⑤）：vault 已信任且一致 → 静默放行；
 /// 首连 → 确认弹窗；不一致 → 变更红色告警。人类放行后指纹入库。
 /// 拒绝/超时返回 HostKeyRejected（经 russh 透传为 create_session 的错误）。
+/// 取消等待臂：watch 有记忆，门挂起前受理的取消在挂起后仍被观察到（C1）。
+async fn wait_cancelled(mut rx: tokio::sync::watch::Receiver<bool>) {
+    while !*rx.borrow_and_update() {
+        if rx.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
 async fn host_key_gate(
     center: &Arc<ApprovalCenter>,
     ctx: &Actor,
     host: &Host,
     fp: &str,
+    attempt: Option<&Arc<AttemptEntry>>,
 ) -> Result<bool> {
+    // C1：门挂起前已受理取消 → 直接以取消结束（不新挂 pending 卡）
+    if let Some(a) = attempt {
+        if *a.cancel_rx.borrow() {
+            return Err(Error::Cancelled);
+        }
+    }
     let stored = center.vault.host_fingerprint(&host.id)?;
     if stored.as_deref() == Some(fp) {
         return Ok(true);
@@ -251,6 +929,7 @@ async fn host_key_gate(
         fingerprint: fp.to_string(),
         previous_fingerprint: stored,
         created_at: chrono::Utc::now(),
+        attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
     };
     let _ = center.audit.append(
         ctx, "host_key_confirm_requested", None, Some(&host.name),
@@ -259,19 +938,51 @@ async fn host_key_gate(
     center.hk_decisions.lock().unwrap().insert(item.id.clone(), tx);
     center.hk_pending.lock().unwrap().insert(item.id.clone(), item.clone());
     let _ = center.hk_tx.send(item.clone());
-    match tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx).await {
-        Ok(Ok(true)) => {
+    if let Some(a) = attempt {
+        let mut st = a.st.lock().await;
+        if !st.terminal() {
+            st.phase = AttemptPhase::TrustRequired;
+            emit_conn(center, &a.info.attempt_id, AttemptPhase::TrustRequired, None, None);
+        }
+    }
+    let wait = tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx);
+    tokio::pin!(wait);
+    let decided = tokio::select! {
+        r = &mut wait => match r {
+            Ok(Ok(true)) => Some(true),
+            Ok(Ok(false)) => Some(false),
+            Ok(Err(_)) => Some(false),
+            Err(_) => None, // 超时
+        },
+        _ = async { match attempt { Some(a) => wait_cancelled(a.cancel_rx.clone()).await, None => std::future::pending().await } } => {
+            // 取消受理：以「拒绝」结算决策通道（decide 路径自清 pending 表；
+            // 任务侧按 cancel_requested 识别为取消而非失败）
+            Some(false)
+        }
+    };
+    match decided {
+        Some(true) => {
             center.vault.set_host_fingerprint(&host.id, fp)?;
             let _ = center.audit.append(
                 ctx, "host_key_trusted", None, Some(&host.name),
                 serde_json::json!({"fingerprint": fp}), None);
+            if let Some(a) = attempt {
+                let mut st = a.st.lock().await;
+                if !st.terminal() {
+                    st.phase = AttemptPhase::Authenticating;
+                    emit_conn(center, &a.info.attempt_id, AttemptPhase::Authenticating, None, None);
+                }
+            }
             Ok(true)
         }
-        // 拒绝 / 待决项消失 / 超时：pending 表仅超时需自清（decide 已自清）
-        Ok(Ok(false)) => Err(Error::HostKeyRejected("用户拒绝连接".into())),
-        Ok(Err(_)) => Err(Error::HostKeyRejected("确认通道已关闭".into())),
-        Err(_) => {
+        Some(false) => Err(Error::HostKeyRejected("用户拒绝连接".into())),
+        None => {
             center.hk_pending.lock().unwrap().remove(&item.id);
+            if let Some(a) = attempt {
+                let _ = center.audit.append(
+                    ctx, "approval_voided", None, Some(&host.name),
+                    serde_json::json!({"attempt_id": a.info.attempt_id, "reason": "gate_timeout", "gate": "host_key"}), None);
+            }
             Err(Error::HostKeyRejected("确认超时".into()))
         }
     }
@@ -285,7 +996,13 @@ async fn auth_prompt_gate(
     host: &Host,
     prompt: &str,
     echo: bool,
+    attempt: Option<&Arc<AttemptEntry>>,
 ) -> Result<Option<String>> {
+    if let Some(a) = attempt {
+        if *a.cancel_rx.borrow() {
+            return Err(Error::Cancelled);
+        }
+    }
     let item = PendingAuthPrompt {
         id: format!("ap-{}", uuid::Uuid::new_v4()),
         host_name: host.name.clone(),
@@ -294,6 +1011,7 @@ async fn auth_prompt_gate(
         prompt: prompt.to_string(),
         echo,
         created_at: chrono::Utc::now(),
+        attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
     };
     let _ = center.audit.append(
         ctx, "auth_prompt_requested", None, Some(&host.name),
@@ -301,17 +1019,49 @@ async fn auth_prompt_gate(
     let (tx, rx) = oneshot::channel();
     center.ap_pending.lock().unwrap().insert(item.id.clone(), (item.clone(), tx));
     let _ = center.ap_tx.send(item.clone());
-    match tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx).await {
-        Ok(Ok(answer)) => {
+    if let Some(a) = attempt {
+        let mut st = a.st.lock().await;
+        if !st.terminal() {
+            st.phase = AttemptPhase::ChallengeRequired;
+            emit_conn(center, &a.info.attempt_id, AttemptPhase::ChallengeRequired, None, None);
+        }
+    }
+    let wait = tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx);
+    tokio::pin!(wait);
+    let answered = tokio::select! {
+        r = &mut wait => match r {
+            Ok(Ok(answer)) => Some(Some(answer)),
+            // 取消（空应答通道关闭）/ 待决项消失
+            Ok(Err(_)) => Some(None),
+            Err(_) => None, // 超时
+        },
+        _ = async { match attempt { Some(a) => wait_cancelled(a.cancel_rx.clone()).await, None => std::future::pending().await } } => {
+            // 取消受理：空应答结算（transport 侧终止认证）
+            Some(None)
+        }
+    };
+    match answered {
+        Some(Some(answer)) => {
             let _ = center.audit.append(
                 ctx, "auth_prompt_answered", None, Some(&host.name),
                 serde_json::json!({"id": item.id, "answer_len": answer.chars().count()}), None);
             if answer.is_empty() { Ok(None) } else { Ok(Some(answer)) }
         }
-        // 取消（空应答通道关闭）/ 待决项消失 / 超时：pending 仅超时需自清
-        Ok(Err(_)) => Ok(None),
-        Err(_) => {
+        Some(None) => {
+            if let Some(a) = attempt {
+                if *a.cancel_rx.borrow() {
+                    return Err(Error::Cancelled);
+                }
+            }
+            Ok(None)
+        }
+        None => {
             center.ap_pending.lock().unwrap().remove(&item.id);
+            if let Some(a) = attempt {
+                let _ = center.audit.append(
+                    ctx, "approval_voided", None, Some(&host.name),
+                    serde_json::json!({"attempt_id": a.info.attempt_id, "reason": "gate_timeout", "gate": "auth_prompt"}), None);
+            }
             Ok(None)
         }
     }
@@ -484,109 +1234,45 @@ impl SessionApi for SessionManager {
     }
 
     async fn create_session(&self, ctx: &Actor, req: CreateSessionReq) -> Result<SessionId> {
-        let (host, kind) = if req.host_id == "local" {
-            (self.ensure_local_host()?, "local".to_string())
-        } else {
-            let host = self
-                .center
-                .vault
-                .list_hosts()?
-                .into_iter()
-                .find(|h| h.id == req.host_id)
-                .ok_or(Error::SessionNotFound)?;
-            (host, "ssh".to_string())
-        };
+        // v1 兼容路径（C1）：同步语义不变，不经 attempt 注册表。
+        self.create_session_inner(ctx, req, None).await
+    }
 
-        // Agent 建远程会话：默认必审（L1 §4）
-        if let Actor::Agent { client_id } = ctx {
-            if kind == "ssh" {
-                self.wait_create_session_approval(ctx, client_id, &host).await?;
-            }
+    async fn begin_connection(
+        &self,
+        ctx: &Actor,
+        host_id: HostId,
+        opts: BeginConnectionOpts,
+    ) -> Result<AttemptInfo> {
+        self.begin_connection_on(ctx, host_id, opts).await
+    }
+
+    async fn connection_status(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<AttemptInfo> {
+        let entry = self
+            .attempts
+            .lock()
+            .unwrap()
+            .get(&attempt_id)
+            .cloned()
+            .ok_or(Error::SessionNotFound)?;
+        // 跨 Actor 域不可见（DC1.5 互不可见；与 cancel 同口径 NotFound 不泄露存在性）
+        if entry.info.actor != actor_domain(ctx) {
+            return Err(Error::SessionNotFound);
         }
+        let st = entry.st.lock().await;
+        Ok(entry.snapshot(&st))
+    }
 
-        let sid = format!("s-{}", uuid::Uuid::new_v4());
-        let cols = 120u16;
-        let rows = 32u16;
+    async fn cancel_connection(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<CancelOutcome> {
+        let weak = self.self_weak.lock().unwrap().clone();
+        let this = weak
+            .and_then(|w| w.upgrade())
+            .ok_or_else(|| Error::Storage("SessionManager 未装配 Arc".into()))?;
+        this.cancel_connection_on(ctx, attempt_id).await
+    }
 
-        let channel: Arc<dyn ChannelHandle> = if kind == "local" {
-            let (ch, _cleanup) = transport_pty::spawn_local_pty(cols, rows).await?;
-            ch
-        } else {
-            let (auth_type, secret) = self.center.vault.host_secret(&host)?;
-            // TOFU 指纹门（路线图⑤）：闭包只捕获 ApprovalCenter，避免回指 SessionManager
-            let center = self.center.clone();
-            let gate_host = host.clone();
-            let gate_ctx = ctx.clone();
-            let gate: transport_ssh::HostKeyCheck = Arc::new(move |fp| {
-                let center = center.clone();
-                let host = gate_host.clone();
-                let ctx = gate_ctx.clone();
-                let fp = fp.to_string(); // owned 后再装箱：future 不借入参（HRTB 约束）
-                Box::pin(async move { host_key_gate(&center, &ctx, &host, &fp).await })
-            });
-            // 2FA 人工应答门（路线图⑩）：kb 非密码提示 → 挂起等人类（同指纹门模式）
-            let kb_center = self.center.clone();
-            let kb_host = host.clone();
-            let kb_ctx = ctx.clone();
-            let kb_gate: transport_ssh::KbPromptCheck = Arc::new(move |prompt, echo| {
-                let center = kb_center.clone();
-                let host = kb_host.clone();
-                let ctx = kb_ctx.clone();
-                let prompt = prompt.to_string(); // owned 后再装箱（HRTB 约束，同上）
-                Box::pin(async move { auth_prompt_gate(&center, &ctx, &host, &prompt, echo).await })
-            });
-            let target = transport_ssh::SshTarget {
-                address: host.address.clone(),
-                port: host.port,
-                username: host.username.clone(),
-                auth_type,
-                secret: secret.to_string(),
-                host_key_check: Some(gate),
-                kb_prompt_check: Some(kb_gate),
-            };
-            SshChannel::connect(target, cols, rows).await?
-        };
-
-        let screen = term_core::Screen::new(term_core::ScreenConfig::default());
-        let handle = SessionHandle::new(sid.clone(), host.clone(), kind.clone(), channel, screen, self.center.clone());
-        // 先订阅再注入：远端回显/首个标记提示符不得落入无订阅者窗口
-        // （broadcast 无接收者即丢——并发回归中集成标记迟到 10s+ 的根因）
-        let pump_rx = handle.channel.subscribe_output();
-        spawn_pump(handle.clone(), pump_rx);
-        self.sessions.lock().unwrap().insert(sid.clone(), handle.clone());
-
-        // 远端注入 shell 集成（本地已在 PTY 启动时注入）。
-        // 登记用原 UTF-8（屏态吃泵侧解码后的回显）；snippet 纯 ASCII，GBK 下编码恒等。
-        if kind == "ssh" {
-            let snippet = ssh_integration_snippet();
-            let mut text = snippet.to_string();
-            text.push('\n');
-            {
-                let mut s = handle.screen.lock().await;
-                s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
-            }
-            handle.channel.write(&charset::encode(handle.host.charset, &text)).await?;
-            let _ = self.center.audit.append(
-                ctx, "shell_integration_inject", Some(&sid), Some("OSC133+OSC7"), serde_json::json!({}), None);
-        }
-
-        // 等待集成生效（最多 10s；失败不阻断——Shell 模式将自动降级 Fresh）。
-        // 窗口须覆盖全量回归时编译与测试争抢 CPU 的首个提示符延迟（实测 5s 不够）。
-        for _ in 0..200 {
-            if handle.screen.lock().await.shell_integration_present() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-
-        self.center.vault.record_session(&sid, &host.id, &kind)?;
-        // C8：成功建连打点（host_metadata.last_connected_at；最近连接由 sessions
-        // 表派生，此处只供元数据展示）
-        let _ = self.center.vault.touch_host_connection(&host.id);
-        let _ = self.center.audit.append(
-            ctx, "session_created", Some(&sid), None,
-            serde_json::json!({"host": host.id, "kind": kind}), None);
-        Ok(sid)
+    fn subscribe_connections(&self) -> broadcast::Receiver<ConnectionEvent> {
+        self.center.conn_tx.subscribe()
     }
 
     async fn close_session(&self, ctx: &Actor, sid: SessionId) -> Result<()> {
@@ -620,6 +1306,10 @@ impl SessionApi for SessionManager {
             if let Some(mut it) = it {
                 it.status = ApprovalStatus::Voided;
                 let _ = self.center.vault.save_approval(&it);
+                // 内存表同步写回（mark_status 同口径）——同 get().cloned() 只改副本的坑
+                if let Some(slot) = self.center.items.lock().unwrap().get_mut(&id) {
+                    slot.status = ApprovalStatus::Voided;
+                }
                 // 作废必须留痕（五人走查·老周）：卡片凭空消失而审计无对应条目，
                 // 事后无法回答「这张卡为何没了」。与接管的作废口径一致。
                 let _ = self.center.audit.append(
@@ -1564,6 +2254,10 @@ mod t44_tests {
         assert!(msg.contains("端口转发审批"), "报错应指明卡类：{msg}");
     }
 }
+
+#[cfg(test)]
+#[path = "c1_tests.rs"]
+mod c1_tests;
 
 #[cfg(test)]
 mod c10_tests {

@@ -223,6 +223,9 @@ pub struct ApprovalItem {
     pub editable: bool,
     pub created_at: DateTime<Utc>,
     pub status: ApprovalStatus,
+    /// C1：该卡所属建连 attempt（serde default——旧卡/非建连审批恒 None）。
+    #[serde(default)]
+    pub attempt_id: Option<AttemptId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +260,9 @@ pub struct PendingHostKey {
     /// 变更告警时的原指纹。
     pub previous_fingerprint: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// C1：门所属 attempt（serde default——旧事件消费方兼容）。
+    #[serde(default)]
+    pub attempt_id: Option<AttemptId>,
 }
 
 /// 服务器 keyboard-interactive 认证提示（路线图⑩ 2FA）：密码类提示由
@@ -272,6 +278,9 @@ pub struct PendingAuthPrompt {
     /// false = 应答不应回显（服务器语义）。
     pub echo: bool,
     pub created_at: DateTime<Utc>,
+    /// C1：门所属 attempt（serde default——旧事件消费方兼容）。
+    #[serde(default)]
+    pub attempt_id: Option<AttemptId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,6 +530,90 @@ pub enum SessionState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionReq {
     pub host_id: HostId,
+}
+
+// ---------------------------------------------------------------------------
+// C1 建连尝试（R19）：attempt 状态机、取消与查询
+// ---------------------------------------------------------------------------
+
+pub type AttemptId = String;
+
+/// wire 错误载荷（C1 attempt/事件内嵌；kind 与桥层 WireError.kind 同表——
+/// `Error::wire_parts` 单点映射）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorPayload {
+    pub kind: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<serde_json::Value>,
+}
+
+/// attempt 相位。终态（Ready/Failed/Cancelled/CancelCloseFailed）后不再变化，
+/// `connection_status` 恒返回终态快照。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum AttemptPhase {
+    Connecting,
+    TrustRequired,
+    Authenticating,
+    ChallengeRequired,
+    Ready,
+    Failed,
+    Cancelled,
+    CancelCloseFailed,
+}
+
+impl AttemptPhase {
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            AttemptPhase::Ready
+                | AttemptPhase::Failed
+                | AttemptPhase::Cancelled
+                | AttemptPhase::CancelCloseFailed
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttemptInfo {
+    pub attempt_id: AttemptId,
+    pub host_id: HostId,
+    /// "human" | "agent:<client_id>"——合并与取消权限的身份域（DC1.5）。
+    pub actor: String,
+    pub phase: AttemptPhase,
+    pub session_id: Option<SessionId>,
+    pub created_at: DateTime<Utc>,
+    pub error: Option<crate::ErrorPayload>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BeginConnectionOpts {
+    /// 显式绕过 (host_id, actor) 幂等合并（DC1.5）。
+    #[serde(default)]
+    pub new_session: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CancelOutcome {
+    /// 取消受理（终态以 connection-event 为准——DC1.2）。
+    Cancelled,
+    /// 取消落在「已提交未投递」窗口：刚创建且从未投递的会话被核心立即关闭后返回。
+    AlreadyReady { session_id: SessionId },
+    /// 竞态窗口自动关闭失败：attempt 终态 CancelCloseFailed，会话保留（恢复入口）。
+    CancelCloseFailed { session_id: SessionId },
+    /// 已投递（Ready 后迟到取消）、已终态、不存在或跨 Actor 身份域。
+    NotFound,
+}
+
+/// connection-event 广播载荷（沿 approval-event 桥模式：核心 broadcast → 桥 emit）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionEvent {
+    pub attempt_id: AttemptId,
+    pub phase: AttemptPhase,
+    pub session_id: Option<SessionId>,
+    pub error: Option<crate::ErrorPayload>,
 }
 
 // ---------------------------------------------------------------------------
@@ -857,6 +950,51 @@ pub enum DeniedReason {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+impl Error {
+    /// wire kind 与 detail 的单点映射（tauri WireError::from 与 C1 attempt
+    /// 错误载荷共用此表，防止两份映射漂移）。
+    pub fn wire_parts(&self) -> (&'static str, Option<serde_json::Value>) {
+        use Error as E;
+        match self {
+            E::ApprovalDenied { reason } => (
+                "approval_denied",
+                Some(serde_json::json!({ "reason": reason })),
+            ),
+            E::ControlTakenByHuman => ("control_taken_by_human", None),
+            E::VoidedByHandback { .. } => ("voided_by_handback", None),
+            E::ReconfirmingPending => ("reconfirming_pending", None),
+            E::SessionNotFound => ("session_not_found", None),
+            E::SessionClosed => ("session_closed", None),
+            E::AuthFailed => ("auth_failed", None),
+            E::ConnectFailed(r) => ("connect_failed", Some(serde_json::json!({ "reason": r }))),
+            E::HostKeyRejected(_) => ("host_key_rejected", None),
+            E::ExecTimeout => ("exec_timeout", None),
+            E::Cancelled => ("cancelled", None),
+            E::QueueBusy { position } => {
+                ("queue_busy", Some(serde_json::json!({ "position": position })))
+            }
+            E::InvalidActor => ("invalid_actor", None),
+            E::InvalidInput(_) => ("invalid_input", None),
+            E::IdentityInUse { host_names } => (
+                "identity_in_use",
+                Some(serde_json::json!({ "host_names": host_names })),
+            ),
+            E::Storage(_) => ("storage", None),
+            E::Io(_) => ("io", None),
+        }
+    }
+
+    /// C1 attempt/事件内嵌错误载荷（kind 与桥层 WireError.kind 同表）。
+    pub fn payload(&self) -> ErrorPayload {
+        let (kind, detail) = self.wire_parts();
+        ErrorPayload {
+            kind: kind.to_string(),
+            message: self.to_string(),
+            detail,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // C8 偏好与主机元数据（实现 R15；消费 R20/R27/R44）
 // ---------------------------------------------------------------------------
@@ -939,6 +1077,23 @@ pub trait SessionApi: Send + Sync {
     async fn create_session(&self, ctx: &Actor, req: CreateSessionReq) -> Result<SessionId>;
     async fn close_session(&self, ctx: &Actor, sid: SessionId) -> Result<()>;
     async fn resize(&self, ctx: &Actor, sid: SessionId, cols: u16, rows: u16) -> Result<()>;
+
+    // ---- C1 建连尝试（实现 R19；消费 R21/R23/R26）----
+    /// 发起建连 attempt：(host_id, actor) 幂等合并（`new_session` 显式绕过）。
+    /// 立即返回 AttemptInfo（连接在核心后台推进），相位经 connection-event 表达。
+    async fn begin_connection(
+        &self,
+        ctx: &Actor,
+        host_id: HostId,
+        opts: BeginConnectionOpts,
+    ) -> Result<AttemptInfo>;
+    /// attempt 快照查询；终态后恒返回终态（不设历史查询——DC1）。
+    async fn connection_status(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<AttemptInfo>;
+    /// 取消建连。Cancelled=受理（终态以事件为准）；AlreadyReady/CancelCloseFailed=
+    /// 竞态窗口结算；NotFound=已投递/已终态/不存在/跨 Actor 身份域。
+    async fn cancel_connection(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<CancelOutcome>;
+    /// connection-event 广播（沿 approval-event 桥模式）。
+    fn subscribe_connections(&self) -> broadcast::Receiver<ConnectionEvent>;
 
     // ---- exec（v1；PRD FR-3/FR-4）----
     async fn exec(
@@ -1068,6 +1223,7 @@ mod wire_format_tests {
             segment_report: vec![], session_busy: false, editable: true,
             created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
             status: ApprovalStatus::Pending,
+            attempt_id: None,
         };
         let v = serde_json::to_value(&item).unwrap();
         assert_eq!(v["editable"], true);

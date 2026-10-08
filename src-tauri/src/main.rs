@@ -65,34 +65,9 @@ impl From<std::io::Error> for WireError {
 
 impl From<session_api::Error> for WireError {
     fn from(e: session_api::Error) -> Self {
-        use session_api::Error as E;
-        let (kind, detail): (&str, Option<serde_json::Value>) = match &e {
-            E::ApprovalDenied { reason } => (
-                "approval_denied",
-                Some(serde_json::json!({ "reason": reason })),
-            ),
-            E::ControlTakenByHuman => ("control_taken_by_human", None),
-            E::VoidedByHandback { .. } => ("voided_by_handback", None),
-            E::ReconfirmingPending => ("reconfirming_pending", None),
-            E::SessionNotFound => ("session_not_found", None),
-            E::SessionClosed => ("session_closed", None),
-            E::AuthFailed => ("auth_failed", None),
-            E::ConnectFailed(r) => ("connect_failed", Some(serde_json::json!({ "reason": r }))),
-            E::HostKeyRejected(_) => ("host_key_rejected", None),
-            E::ExecTimeout => ("exec_timeout", None),
-            E::Cancelled => ("cancelled", None),
-            E::QueueBusy { position } => {
-                ("queue_busy", Some(serde_json::json!({ "position": position })))
-            }
-            E::InvalidActor => ("invalid_actor", None),
-            E::InvalidInput(_) => ("invalid_input", None),
-            E::IdentityInUse { host_names } => (
-                "identity_in_use",
-                Some(serde_json::json!({ "host_names": host_names })),
-            ),
-            E::Storage(_) => ("storage", None),
-            E::Io(_) => ("io", None),
-        };
+        // kind/detail 单点映射归核心 Error::wire_parts（C1 三端一致，R19 起）；
+        // 这里只补 message
+        let (kind, detail) = e.wire_parts();
         Self { kind: kind.to_string(), message: e.to_string(), detail }
     }
 }
@@ -160,6 +135,39 @@ async fn create_session(state: ApiState<'_>, host_id: String) -> CmdResult<Sessi
     state
         .api
         .create_session(&human(), CreateSessionReq { host_id })
+        .await
+        .map_err(WireError::from)
+}
+
+// ---- C1 建连尝试（R19；camelCase 入参 / snake_case 出参同 v1 命令口径）----
+
+#[tauri::command]
+async fn begin_connection(
+    state: ApiState<'_>,
+    host_id: String,
+    opts: Option<BeginConnectionOpts>,
+) -> CmdResult<AttemptInfo> {
+    state
+        .api
+        .begin_connection(&human(), host_id, opts.unwrap_or_default())
+        .await
+        .map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn connection_status(state: ApiState<'_>, attempt_id: String) -> CmdResult<AttemptInfo> {
+    state
+        .api
+        .connection_status(&human(), attempt_id)
+        .await
+        .map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn cancel_connection(state: ApiState<'_>, attempt_id: String) -> CmdResult<CancelOutcome> {
+    state
+        .api
+        .cancel_connection(&human(), attempt_id)
         .await
         .map_err(WireError::from)
 }
@@ -805,6 +813,8 @@ fn main() {
                     p6_smoke_script(&run_id)
                 } else if mode == "r15" {
                     r15_smoke_script(&run_id)
+                } else if mode == "r19" {
+                    r19_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1066,6 +1076,18 @@ fn main() {
                     }
                 }
             });
+            // C1 建连尝试事件 → 前端（R19，沿 approval-event 桥模式）
+            let handle_conn = app.handle().clone();
+            let mut conn_rx = api.subscribe_connections();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(conn_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_conn.emit("connection-event", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
             // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
             if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
                 let api2 = api.clone();
@@ -1130,7 +1152,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities,
             ssh_config_preview, ssh_config_import,
-            list_sessions, create_session, close_session, reconnect_session, resize, subscribe_output,
+            list_sessions, create_session, begin_connection, connection_status, cancel_connection,
+            close_session, reconnect_session, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
             upload_file, download_file, cancel_transfer, sftp_list,
@@ -1510,6 +1533,197 @@ fn r14_smoke_script(run_id: &str) -> String {
       // 退订归零由 R11 e2e 覆盖；close 后 debug_subscriptions 只遍历存活会话表（结构性
       // 不含已移除 sid），不在此重复断言
       await title('r14-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R19 C1 建连尝试探针注入脚本（TINYSSH_SMOKE_MODE=r19；dev 门控，产品路径无关）：
+/// 对共享 docker sshd 走 begin_connection 尝试路径（invoke 级，UI 点卡仍是 v1
+/// create_session——FE 接线归 R23/R26）：合并幂等（DC1.5）→ TOFU TrustRequired →
+/// 信任（UI 真路径）→ Authenticating/ChallengeRequired → Ready 投递 → 迟到取消
+/// NotFound（序列 4）→ local 快路径 → 不可达主机受理取消（序列 1/6：Cancelled 无
+/// 遗留 + 二次 NotFound）。窗口竞态序列 2/3 依赖 create_session Ok→Ready 微窗，
+/// 由 core-session c1_tests 钩子驱动覆盖，此处不主张。
+/// 事件交付：经 __TAURI_INTERNALS__ 监听 connection-event（transformCallback 内部
+/// 通道，与 @tauri-apps/api listen 同构）——注册失败如实降级 r19-events-na，
+/// 不虚标 FAIL（推送面由 demo 探针覆盖，此为信息性增强证据）。
+fn r19_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R19_INJECTED__) return; // WKWebView Finished 双触发防护
+  window.__R19_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  (async () => {
+    try {
+      await title('r19-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      // 主机（真路径建档）
+      let hid;
+      try {
+        hid = await inv('upsert_host', { host: { id: null, name: 'r19-sshd', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      } catch (e) { return title('FAIL-upsert:' + String(e).slice(0, 120)); }
+      if (!hid) return title('FAIL-upsert-empty');
+      await markSync('r19-host-ok');
+      // 事件监听（内部通道 best-effort；失败降级不 FAIL——推送面 demo 覆盖）
+      const evs = [];
+      let evOn = false;
+      try {
+        if (typeof window.__TAURI_INTERNALS__.transformCallback === 'function') {
+          const cb = window.__TAURI_INTERNALS__.transformCallback((e) => { if (e && e.payload) evs.push(e.payload); });
+          await inv('plugin:event|listen', { event: 'connection-event', target: { kind: 'Any' }, handler: cb });
+          evOn = true;
+          await markSync('r19-events-on');
+        } else { await markSync('r19-events-na'); }
+      } catch (e) { await markSync('r19-events-na:' + String(e).slice(0, 80)); }
+      const evPhases = (aid) => evs.filter((e) => e.attempt_id === aid).map((e) => e.phase);
+      // A) 合并幂等（DC1.5）：同 (host, actor) 活跃 attempt 二次 begin 同 id
+      const tabs0 = document.querySelectorAll('.tabbar .tab').length;
+      let a1, a2;
+      try {
+        a1 = await inv('begin_connection', { hostId: hid, opts: {} });
+        a2 = await inv('begin_connection', { hostId: hid, opts: {} });
+      } catch (e) { return title('FAIL-begin:' + String(e).slice(0, 140)); }
+      if (!a1 || !a1.attempt_id) return title('FAIL-begin-empty:' + JSON.stringify(a1).slice(0, 120));
+      if (a2.attempt_id !== a1.attempt_id) return title('FAIL-merge:' + a1.attempt_id + '!=' + a2.attempt_id);
+      await markSync('r19-merge-ok');
+      // B) TOFU 门：尝试停在 TrustRequired（首连无指纹）
+      const stTo = await waitFor(async () => {
+        const st = await inv('connection_status', { attemptId: a1.attempt_id });
+        return st.phase === 'TrustRequired' ? st : null;
+      }, 60);
+      if (!stTo) {
+        const st = await inv('connection_status', { attemptId: a1.attempt_id });
+        return title('FAIL-no-tofu:' + st.phase);
+      }
+      await markSync('r19-tofu-phase');
+      // 信任（UI 真路径：TOFU 卡 → 信任并连接）
+      const tbtn = await waitFor(() => [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')) || null, 60);
+      if (!tbtn) return title('FAIL-no-tofu-card');
+      tbtn.click();
+      await markSync('r19-trust-ok');
+      // 认证：Authenticating → ChallengeRequired（密码卡）→ 提交
+      const stAu = await waitFor(async () => {
+        const st = await inv('connection_status', { attemptId: a1.attempt_id });
+        return st.phase === 'Authenticating' || st.phase === 'ChallengeRequired' ? st : null;
+      }, 60);
+      if (!stAu) {
+        const st = await inv('connection_status', { attemptId: a1.attempt_id });
+        return title('FAIL-no-auth:' + st.phase);
+      }
+      await markSync('r19-auth-phase:' + stAu.phase);
+      const pwInput = await waitFor(() => document.querySelector('.hk-mask input') || null, 60);
+      if (pwInput) {
+        const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        set.call(pwInput, 'testpass');
+        pwInput.dispatchEvent(new Event('input', { bubbles: true }));
+        const sub = [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('提交验证'));
+        if (sub) sub.click();
+      }
+      // Ready 投递：终态携带 session_id；会话 Connected
+      const fin = await waitFor(async () => {
+        const st = await inv('connection_status', { attemptId: a1.attempt_id });
+        return st.phase === 'Ready' ? st : (st.phase === 'Failed' || st.phase === 'Cancelled' ? st : null);
+      }, 100);
+      if (!fin || fin.phase !== 'Ready') {
+        const st = await inv('connection_status', { attemptId: a1.attempt_id });
+        return title('FAIL-no-ready:' + JSON.stringify(st).slice(0, 200));
+      }
+      const sid1 = fin.session_id;
+      if (!sid1) return title('FAIL-ready-no-sid');
+      const sess1 = await inv('list_sessions', {});
+      const row1 = sess1.find((x) => x.id === sid1);
+      if (!row1 || row1.state !== 'Connected') return title('FAIL-sess-state:' + JSON.stringify(row1 && row1.state));
+      await markSync('r19-ready-ok');
+      // 序列 4：Ready 后迟到取消 → NotFound 无副作用
+      let late;
+      try { late = await inv('cancel_connection', { attemptId: a1.attempt_id }); }
+      catch (e) { return title('FAIL-late-exc:' + String(e).slice(0, 120)); }
+      if (!late || late.outcome !== 'not_found') return title('FAIL-late:' + JSON.stringify(late));
+      const sessLate = await inv('list_sessions', {});
+      if (!sessLate.find((x) => x.id === sid1)) return title('FAIL-late-side-effect');
+      await markSync('r19-late-cancel-ok');
+      // 事件交付（注册成功才断言；相位集含门相位）
+      if (evOn) {
+        const ph = evPhases(a1.attempt_id);
+        await markSync('r19-events:' + ph.join(','));
+        if (!ph.includes('TrustRequired') || !ph.includes('Ready')) return title('FAIL-events:' + ph.join(','));
+      }
+      // C) local 快路径（无门）：begin → Ready；迟到取消 NotFound；回收
+      let al;
+      try { al = await inv('begin_connection', { hostId: 'local', opts: {} }); }
+      catch (e) { return title('FAIL-local-begin:' + String(e).slice(0, 120)); }
+      const fl = await waitFor(async () => {
+        const st = await inv('connection_status', { attemptId: al.attempt_id });
+        return st.phase === 'Ready' ? st : null;
+      }, 60);
+      if (!fl || !fl.session_id) return title('FAIL-local-ready:' + JSON.stringify(al).slice(0, 120) + '/' + JSON.stringify(fl && fl.phase));
+      let latel;
+      try { latel = await inv('cancel_connection', { attemptId: al.attempt_id }); }
+      catch (e) { return title('FAIL-local-late-exc:' + String(e).slice(0, 120)); }
+      if (!latel || latel.outcome !== 'not_found') return title('FAIL-local-late:' + JSON.stringify(latel));
+      await inv('close_session', { sid: fl.session_id });
+      await markSync('r19-local-ok');
+      // D) 序列 1/6：不可达主机受理取消 → Cancelled 无会话遗留；二次 NotFound
+      let hidH;
+      try {
+        hidH = await inv('upsert_host', { host: { id: null, name: 'r19-hang', address: '10.255.255.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      } catch (e) { return title('FAIL-hang-upsert:' + String(e).slice(0, 120)); }
+      let ah;
+      try { ah = await inv('begin_connection', { hostId: hidH, opts: {} }); }
+      catch (e) { return title('FAIL-hang-begin:' + String(e).slice(0, 120)); }
+      const stC = await waitFor(async () => {
+        const st = await inv('connection_status', { attemptId: ah.attempt_id });
+        return st.phase === 'Connecting' ? st : null;
+      }, 30);
+      if (!stC) {
+        const st = await inv('connection_status', { attemptId: ah.attempt_id });
+        return title('FAIL-hang-phase:' + st.phase);
+      }
+      let ch;
+      try { ch = await inv('cancel_connection', { attemptId: ah.attempt_id }); }
+      catch (e) { return title('FAIL-hang-cancel-exc:' + String(e).slice(0, 120)); }
+      if (!ch || ch.outcome !== 'cancelled') return title('FAIL-hang-cancel:' + JSON.stringify(ch));
+      const finC = await waitFor(async () => {
+        const st = await inv('connection_status', { attemptId: ah.attempt_id });
+        return st.phase === 'Cancelled' ? st : null;
+      }, 100);
+      if (!finC) return title('FAIL-hang-term');
+      if (finC.session_id) return title('FAIL-hang-sid-left:' + finC.session_id);
+      const sessH = await inv('list_sessions', {});
+      if (sessH.find((x) => x.host_id === hidH)) return title('FAIL-hang-sess-left');
+      let ch2;
+      try { ch2 = await inv('cancel_connection', { attemptId: ah.attempt_id }); }
+      catch (e) { return title('FAIL-hang-cancel2-exc:' + String(e).slice(0, 120)); }
+      if (!ch2 || ch2.outcome !== 'not_found') return title('FAIL-hang-cancel2:' + JSON.stringify(ch2));
+      await markSync('r19-cancel-connecting-ok');
+      // 回收 B 会话（invoke 级；UI 确认流归 r14 既有证据）
+      await inv('close_session', { sid: sid1 });
+      const gone = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        return !ss.find((x) => x.id === sid1) ? true : null;
+      }, 40);
+      if (!gone) return title('FAIL-close-r19-sshd');
+      await markSync('r19-DONE');
+      await title('r19-DONE');
     } catch (e) {
       await title('FAIL-exception:' + String(e).slice(0, 140));
     }

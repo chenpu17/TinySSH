@@ -44,7 +44,7 @@ type PendingKey = {
   pk: {
     id: string; host_id: string; host_name: string; address: string; port: number;
     issue: "FirstSeen" | "Changed"; fingerprint: string; previous_fingerprint: string | null;
-    created_at: string;
+    created_at: string; attempt_id?: string | null;
   };
   resolve: (ok: boolean) => void;
 };
@@ -128,9 +128,12 @@ const demoState = {
   ] as DemoEvent[],
   pendingKeys: [] as PendingKey[],
   // 2FA 认证提示待决（路线图⑩演示）：挂起的 create_session 应答器按 id 索引
-  pendingPrompts: [] as { item: { id: string; host_name: string; name: string; instructions: string; prompt: string; echo: boolean; created_at: string }; resolve: (answer: string | null) => void }[],
+  pendingPrompts: [] as { item: { id: string; host_name: string; name: string; instructions: string; prompt: string; echo: boolean; created_at: string; attempt_id?: string | null }; resolve: (answer: string | null) => void }[],
   // TOFU 已信任主机地址（种子信任 prod-1：走查点「连接」不弹指纹窗，与真实一致）
   trusted: new Set(["10.0.0.11"]),
+  // C1 建连尝试（R19 demo 同契约）：attempt 表 + 已受理取消集合
+  attempts: new Map<string, { info: import("./adapter/wire").AttemptInfo; hostId: string; actor: string }>(),
+  cancelledAttempts: new Set<string>(),
 };
 
 const encoder = new TextEncoder();
@@ -541,6 +544,127 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "send_keys":
       pushTo(args?.sid as string, (args?.keys as string) ?? "");
       return null;
+    // ---- C1 建连尝试（R19；demo 同契约，无事件机制——探针经 connection_status 轮询）----
+    case "begin_connection": {
+      const hid = args?.hostId as string;
+      const opts = (args?.opts ?? {}) as { new_session?: boolean };
+      const TERMINAL = ["Ready", "Failed", "Cancelled", "CancelCloseFailed"];
+      if (!opts.new_session) {
+        for (const a of demoState.attempts.values()) {
+          if (a.hostId === hid && a.actor === "human" && !TERMINAL.includes(a.info.phase)) return a.info;
+        }
+      }
+      const aid = "at-demo-" + String(demoSeq++).padStart(4, "0");
+      const entry = { info: { attempt_id: aid, host_id: hid, actor: "human", phase: "Connecting", session_id: null, created_at: new Date().toISOString(), error: null } as import("./adapter/wire").AttemptInfo, hostId: hid, actor: "human" };
+      demoState.attempts.set(aid, entry);
+      const setPhase = (phase: import("./adapter/wire").AttemptPhase) => { entry.info.phase = phase; };
+      void (async () => {
+        try {
+          const h = demoState.hosts.find((x) => x.id === hid);
+          if (!h) throw apiError("invalid_input", "HostNotFound（演示）");
+          if (h.address !== "local" && !demoState.trusted.has(h.address)) {
+            setPhase("TrustRequired");
+            const ok = await new Promise<boolean>((resolve) => {
+              demoState.pendingKeys.push({
+                pk: {
+                  id: "hk-demo-" + demoSeq++, host_id: h.id, host_name: h.name, address: h.address,
+                  port: h.port ?? 22, issue: "FirstSeen", fingerprint: "SHA256:DemoFingerprint-" + h.name,
+                  previous_fingerprint: null, created_at: new Date().toISOString(), attempt_id: aid,
+                },
+                resolve,
+              });
+            });
+            if (demoState.cancelledAttempts.has(aid)) throw apiError("cancelled", "已取消");
+            if (!ok) throw apiError("host_key_rejected", "主机指纹验证失败（演示：已拒绝该主机指纹）");
+            setPhase("Authenticating");
+          }
+          if (h.address === "otp.demo") {
+            setPhase("ChallengeRequired");
+            const answer = await new Promise<string | null>((resolve) => {
+              demoState.pendingPrompts.push({
+                item: { id: "ap-demo-" + demoSeq++, host_name: h.name, name: "otp", instructions: "", prompt: "Verification code (OTP):", echo: true, created_at: new Date().toISOString(), attempt_id: aid },
+                resolve,
+              });
+            });
+            if (demoState.cancelledAttempts.has(aid)) throw apiError("cancelled", "已取消");
+            if (!answer) throw apiError("connect_failed", "连接失败: 服务器要求额外交互认证（2FA），人工应答被取消或超时");
+            setPhase("Authenticating");
+          }
+          if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
+          // 与 create_session 同构建会话（同步快路径）
+          const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
+          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+          {
+            const m = demoState.hostMeta.get(h.id) ?? { favorite: false, last_connected_at: null };
+            m.last_connected_at = new Date().toISOString();
+            demoState.hostMeta.set(h.id, m);
+          }
+          audit("human", "session_created", null, null, sid);
+          if (demoState.cancelledAttempts.has(aid)) {
+            // 已提交未投递窗口取消：核心立即关闭刚创建会话（DC1.2）
+            const si = demoState.sessions.findIndex((x) => x.id === sid);
+            if (si >= 0) demoState.sessions.splice(si, 1);
+            entry.info.session_id = null;
+            setPhase("Cancelled");
+            audit("human", "connection_cancelled_closed", null, null, null);
+            return;
+          }
+          entry.info.session_id = sid;
+          setPhase("Ready");
+        } catch (e) {
+          const err = e as { kind?: string; message?: string };
+          if (demoState.cancelledAttempts.has(aid) || err?.kind === "cancelled") {
+            entry.info.session_id = null;
+            entry.info.error = null;
+            setPhase("Cancelled");
+            audit("human", "connection_cancelled", null, null, null);
+          } else {
+            entry.info.error = { kind: err?.kind ?? "connect_failed", message: err?.message ?? "建连失败" };
+            setPhase("Failed");
+            audit("human", "connection_failed", err?.kind ?? "connect_failed", null, null);
+          }
+        }
+      })();
+      return entry.info;
+    }
+    case "connection_status": {
+      const aid = args?.attemptId as string;
+      const a = demoState.attempts.get(aid);
+      if (!a) throw apiError("session_not_found", "AttemptNotFound（演示）");
+      return a.info;
+    }
+    case "cancel_connection": {
+      const aid = args?.attemptId as string;
+      const a = demoState.attempts.get(aid);
+      if (!a) return { outcome: "not_found" };
+      const TERMINAL = ["Ready", "Failed", "Cancelled", "CancelCloseFailed"];
+      if (TERMINAL.includes(a.info.phase) || (a.info.phase === "Ready" && a.info.session_id)) return { outcome: "not_found" };
+      if (a.info.session_id && a.info.phase !== "Ready") {
+        // 已提交未投递窗口：立即关闭刚创建会话
+        const sid = a.info.session_id;
+        const si = demoState.sessions.findIndex((x) => x.id === sid);
+        if (si >= 0) demoState.sessions.splice(si, 1);
+        a.info.session_id = null;
+        a.info.phase = "Cancelled";
+        demoState.cancelledAttempts.add(aid);
+        audit("human", "connection_cancelled_closed", null, null, null);
+        return { outcome: "already_ready", session_id: sid };
+      }
+      demoState.cancelledAttempts.add(aid);
+      // 作废该 attempt 挂起的门（以拒绝/空应答结算并移除待决卡——与核心一致：
+      // 受理即从 hk_pending/ap_pending 移除，查询面不返回死卡）
+      for (let i = demoState.pendingKeys.length - 1; i >= 0; i--) {
+        if (demoState.pendingKeys[i].pk.attempt_id === aid) {
+          demoState.pendingKeys.splice(i, 1)[0].resolve(false);
+        }
+      }
+      for (let i = demoState.pendingPrompts.length - 1; i >= 0; i--) {
+        if (demoState.pendingPrompts[i].item.attempt_id === aid) {
+          demoState.pendingPrompts.splice(i, 1)[0].resolve(null);
+        }
+      }
+      return { outcome: "cancelled" };
+    }
     case "pending_host_keys":
       return demoState.pendingKeys.map((x) => x.pk);
     case "pending_auth_prompts":

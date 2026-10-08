@@ -572,6 +572,7 @@ impl SessionHandle {
             editable,
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
+            attempt_id: None,
         };
         let gen_at_entry = self.generation.load(Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
