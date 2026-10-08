@@ -847,6 +847,8 @@ fn main() {
                     r21_smoke_script(&run_id)
                 } else if mode == "r22" {
                     r22_smoke_script(&run_id)
+                } else if mode == "r23" {
+                    r23_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1209,9 +1211,24 @@ fn main() {
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,
+            quit_app,
         ])
+        .on_window_event(|window, event| {
+            // R23 §6.4 退出契约：主窗口关闭=请求退出，交 FE 汇总确认（活动会话/转发/
+            // 未知传输），不引入「窗口已关但后台仍跑」的新模式
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.emit("app-close-requested", ());
+                api.prevent_close();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// R23：FE 汇总确认「结束会话并退出」后的受控退出（不用 destroy 绕过窗口事件）
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 /// P2 探针注入脚本（TINYSSH_SMOKE_MODE=p2；dev 门控）：同一 release 会话切换 100 次
@@ -1907,6 +1924,185 @@ fn r22_smoke_script(run_id: &str) -> String {
       }
       await markSync('r22-DONE');
       await title('r22-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R23 C1 消费/关闭/退出契约探针注入脚本（TINYSSH_SMOKE_MODE=r23；dev 门控，产品路径
+/// 无关）。共享 docker sshd 真路径：
+/// A) begin_connection 相位 UI 呈示（等待指纹确认）+ §302 取消入口；
+/// B) TOFU 挂起期卡上取消 → 终态 Cancelled：卡复位+已取消 toast+门消散+无隐藏会话；
+/// C) rev-r21 L3 真实 blur 投递实证：TOFU 门挂起 + osascript 激活他应用（驱动侧）→
+///    document.hasFocus()=false 实证 → 信任完成不抢视图（toast 点标签进入）；
+///    同时 §280/gatesBusy host_id：他主机门挂起中 r23-a 连接完成不切视图；
+/// D) §6.4 关闭契约：确认框统一「关闭会话」+ 影响行（转发可查/任务未知如实）→
+///    关闭成功标签移除、无死会话；
+/// E) R20 前置闭环：.welcome-recents 原生呈现（真会话历史）；
+/// F) §6.4 退出契约：真实窗口关闭（驱动 osascript）→ 汇总确认 → 取消存活；
+///    再次关闭 → 结束会话并退出 → quit_app 退出进程（驱动核验零残留）。
+fn r23_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R23_INJECTED__) return;
+  window.__R23_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const btnText = (name) => cardBtn(name, '.host-connect-btn')?.textContent.trim() ?? null;
+  const maskText = () => document.querySelector('.hk-mask')?.textContent ?? '';
+  const cancelCard = (name) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    const b = [...(card?.querySelectorAll('button') ?? [])].find((x) => x.textContent.trim() === '取消');
+    if (!b) return false;
+    b.click();
+    return true;
+  };
+  const activeTab = () => document.querySelector('.tabbar .tab.tab-active')?.textContent.trim() ?? '';
+  const tabCount = (name) => [...document.querySelectorAll('.tabbar .tab')].filter((t) => t.textContent.includes(name)).length;
+  const toasts = () => [...document.querySelectorAll('.toast')].map((t) => t.textContent).join('|');
+  (async () => {
+    try {
+      await title('r23-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      // connection-event 订阅（内部通道 best-effort）
+      const evs = [];
+      try {
+        if (typeof window.__TAURI_INTERNALS__.transformCallback === 'function') {
+          const cb = window.__TAURI_INTERNALS__.transformCallback((e) => { if (e && e.payload) evs.push(e.payload); });
+          await inv('plugin:event|listen', { event: 'connection-event', target: { kind: 'Any' }, handler: cb });
+        }
+      } catch {}
+      await inv('upsert_host', { host: { id: null, name: 'r23-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await inv('upsert_host', { host: { id: null, name: 'r23-b', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r23-a', '.host-connect-btn') ? true : null), 40);
+      // ---- A: 相位呈示 + 取消入口 ----
+      if (!connect('r23-a')) return title('FAIL-connect-a');
+      const tofu = await waitFor(() => (maskText().includes('首次连接确认') ? true : null), 60);
+      if (!tofu) return title('FAIL-no-tofu');
+      const phaseTxt = btnText('r23-a');
+      const cancelBtn = (() => {
+        const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes('r23-a'));
+        return !!([...(card?.querySelectorAll('button') ?? [])].find((x) => x.textContent.trim() === '取消'));
+      })();
+      if (phaseTxt !== '等待指纹确认' || !cancelBtn) return title('FAIL-phase:' + phaseTxt + '|cancel=' + cancelBtn);
+      await markSync('r23a-phase-ok');
+      // ---- A2: 信任 → Connected（前台 attach）+ 事件相位 ----
+      [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+      const s1 = await waitFor(async () => ((await inv('list_sessions', {})).find((x) => x.host_name === 'r23-a' && x.state === 'Connected') || null), 100);
+      if (!s1) return title('FAIL-conn-a');
+      await sleep(400);
+      if (!activeTab().includes('r23-a')) return title('FAIL-attach-a:' + activeTab());
+      const phases = evs.map((e) => e.phase);
+      if (!phases.includes('Ready')) return title('FAIL-ev-ready:' + JSON.stringify(phases));
+      await markSync('r23a-conn-ok');
+      // ---- B: TOFU 挂起期卡上取消（§302）→ 无隐藏会话 ----
+      if (!connect('r23-b')) return title('FAIL-connect-b');
+      await waitFor(() => (maskText().includes('首次连接确认') ? true : null), 60);
+      if (!cancelCard('r23-b')) return title('FAIL-no-cancel-btn');
+      const cancelled = await waitFor(() => (!document.querySelector('.hk-mask') && btnText('r23-b') === '连接' ? true : null), 60);
+      if (!cancelled) return title('FAIL-cancel-settle:' + btnText('r23-b'));
+      if (!toasts().includes('已取消连接')) return title('FAIL-cancel-toast:' + toasts().slice(-80));
+      const sessB = (await inv('list_sessions', {})).filter((x) => x.host_name === 'r23-b');
+      if (sessB.length !== 0) return title('FAIL-hidden-session:' + sessB.length);
+      await markSync('r23a-cancel-ok');
+      // ---- C: 真实 blur（驱动侧 osascript 激活他应用）+ gatesBusy host_id ----
+      if (!connect('r23-b')) return title('FAIL-connect-b2');
+      await waitFor(() => (maskText().includes('首次连接确认') ? true : null), 60);
+      await markSync('r23a-blur-wait');
+      await sleep(6000); // 驱动在此窗口执行 osascript 激活 Finder（真实失焦）
+      if (document.hasFocus()) return title('FAIL-blur-not-delivered');
+      await markSync('r23a-blur-delivered');
+      // 门挂起中他主机（r23-a 已信任）连接：§280 可点 + gatesBusy（host_id 不同）不切视图
+      if (!connect('r23-a')) return title('FAIL-280-disabled');
+      const s2 = await waitFor(async () => ((await inv('list_sessions', {})).filter((x) => x.host_name === 'r23-a' && x.state === 'Connected').length >= 2 ? true : null), 100);
+      if (!s2) return title('FAIL-conn-a2');
+      await sleep(500);
+      // 判别器是 toast（压制分支标记）：视图可能本来就停在 r23-a（A2 attach 过），不算抢
+      if (!toasts().includes('r23-a') || !toasts().includes('点击标签进入')) return title('FAIL-gatesbusy-toast:' + toasts().slice(-100));
+      await markSync('r23a-gatesbusy-ok');
+      // 信任 r23-b → 完成；blur 已推进代际 → 不抢视图，点标签进入
+      [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+      const s3 = await waitFor(async () => ((await inv('list_sessions', {})).find((x) => x.host_name === 'r23-b' && x.state === 'Connected') || null), 100);
+      if (!s3) return title('FAIL-conn-b');
+      await sleep(500);
+      if (activeTab().includes('r23-b')) return title('FAIL-bg-attach:' + activeTab());
+      const tabB = [...document.querySelectorAll('.tabbar .tab')].find((t) => t.textContent.includes('r23-b'));
+      tabB.click();
+      await sleep(400);
+      if (!activeTab().includes('r23-b')) return title('FAIL-tab-entry:' + activeTab());
+      await markSync('r23a-blur-noattach-ok');
+      // ---- D: §6.4 关闭契约 ----
+      const xb = [...document.querySelectorAll('.tabbar .tab')].filter((t) => t.textContent.includes('r23-b'))[0].querySelector('.tab-x');
+      xb.click();
+      const dlg = await waitFor(() => (document.querySelector('.confirm-dialog')?.textContent ?? null), 30);
+      if (!dlg || !dlg.includes('关闭与 r23-b') || !dlg.includes('将受影响的转发') || !dlg.includes('状态未知')) return title('FAIL-close-dlg:' + (dlg ?? 'null').slice(0, 120));
+      [...document.querySelectorAll('.confirm-dialog button')].find((b) => b.textContent.trim() === '关闭会话').click();
+      const goneB = await waitFor(async () => (tabCount('r23-b') === 0 ? true : null), 60);
+      if (!goneB) return title('FAIL-close-tab:' + tabCount('r23-b'));
+      await markSync('r23a-close-ok');
+      // ---- E: .welcome-recents 原生呈现（R20 前置闭环）----
+      // gatesbusy 段压制的后台会话（r23-a #2）也渲染标签——循环全关才见欢迎页
+      for (let i = 0; i < 5; i++) {
+        const x = document.querySelector('.tabbar .tab .tab-x');
+        if (!x) break;
+        x.click();
+        const d2 = await waitFor(() => (document.querySelector('.confirm-dialog')?.textContent ?? null), 30);
+        if (!d2) return title('FAIL-close-dlg2-' + i);
+        [...document.querySelectorAll('.confirm-dialog button')].find((b) => b.textContent.trim() === '关闭会话').click();
+        await sleep(300);
+      }
+      await waitFor(() => (document.querySelector('.welcome-actions') ? true : null), 60);
+      const recents = await waitFor(() => {
+        const r = document.querySelector('.welcome-recents');
+        return r && r.textContent.includes('r23-a') && r.textContent.includes('r23-b') ? r.textContent : null;
+      }, 60);
+      if (!recents) return title('FAIL-recents:' + (document.querySelector('.welcome-recents')?.textContent.slice(0, 80) ?? 'null'));
+      await markSync('r23a-recents-ok');
+      // ---- F: §6.4 退出契约（驱动协同：真实窗口关闭 ×2）----
+      await markSync('r23a-quit-wait');
+      await sleep(15000);
+      const qdlg = await waitFor(() => (document.querySelector('.confirm-dialog')?.textContent ?? null), 30);
+      if (!qdlg || !qdlg.includes('退出 TinySSH')) return title('FAIL-quit-dlg:' + (qdlg ?? 'null').slice(0, 120));
+      if (!qdlg.includes('活动会话') || !qdlg.includes('转发') || !qdlg.includes('结束会话并退出')) return title('FAIL-quit-summary:' + qdlg.slice(0, 150));
+      [...document.querySelectorAll('.confirm-dialog button')].find((b) => b.textContent.trim() === '取消').click();
+      await sleep(500);
+      if (document.querySelector('.confirm-dialog')) return title('FAIL-quit-cancel');
+      await markSync('r23a-quit-cancel-ok');
+      await markSync('r23a-quit-wait2');
+      await sleep(15000);
+      const qdlg2 = await waitFor(() => (document.querySelector('.confirm-dialog')?.textContent ?? null), 30);
+      if (!qdlg2 || !qdlg2.includes('退出 TinySSH')) return title('FAIL-quit-dlg2');
+      await markSync('r23a-quit-confirming');
+      [...document.querySelectorAll('.confirm-dialog button')].find((b) => b.textContent.includes('结束会话并退出')).click();
+      await markSync('r23a-DONE');
+      await title('r23-DONE'); // quit_app 随后退出进程；驱动核验零残留
     } catch (e) {
       await title('FAIL-exception:' + String(e).slice(0, 140));
     }

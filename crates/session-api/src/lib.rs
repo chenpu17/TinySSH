@@ -270,6 +270,10 @@ pub struct PendingHostKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingAuthPrompt {
     pub id: String,
+    /// R23（R21-L6 勘误闭环）：门挂起期间按主机精确判他机门（gatesBusy），
+    /// 不再借 host_name 字符串匹配。serde default——旧事件消费方兼容。
+    #[serde(default)]
+    pub host_id: String,
     pub host_name: String,
     /// 服务器给的请求名与说明（可为空）。
     pub name: String,

@@ -82,6 +82,7 @@ interface CmdArgs {
   bench_mode: undefined;
   bench_start: { onChunk: WireChannel };
   bench_report: { bytes: number; resyncs: number; seconds: number };
+  quit_app: undefined;
 }
 
 interface CmdRet {
@@ -139,6 +140,7 @@ interface CmdRet {
   bench_mode: boolean;
   bench_start: void;
   bench_report: void;
+  quit_app: void;
 }
 
 export type CmdName = keyof CmdArgs & keyof CmdRet;

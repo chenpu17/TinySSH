@@ -1,0 +1,16 @@
+r23-open
+r23a|r23a-phase-ok
+r23a|r23a-conn-ok
+r23a|r23a-cancel-ok
+r23a|r23a-blur-wait
+r23a|r23a-blur-delivered
+r23a|r23a-gatesbusy-ok
+r23a|r23a-blur-noattach-ok
+r23a|r23a-close-ok
+r23a|r23a-recents-ok
+r23a|r23a-quit-wait
+r23a|r23a-quit-cancel-ok
+r23a|r23a-quit-wait2
+r23a|r23a-quit-confirming
+r23a|r23a-DONE
+r23a-DRIVER|app-exited-clean

@@ -1,0 +1,28 @@
+vis-r23 像素 diff（PIL ImageChops.difference，1280x800 viewport，dsf=1）
+方法：双树同操作（base=worktree ad652a2 vite:5184，cur=工作树 vite:5183），每态 localStorage.clear() 后 reload 同初态，rAFx2+300ms 稳定后截图
+
+[噪声底] N1-noise-1.png×N1-noise-2.png diff_px=0 bbox=None
+[噪声底] N1-noise-2.png×N1-noise-3.png diff_px=0 bbox=None
+[噪声底] N1-noise-1.png×N1-noise-3.png diff_px=0 bbox=None
+[跨树] A1-welcome diff_px=0 bbox=None
+[跨树] A2-addform diff_px=50 bbox=(1230, 50, 1270, 78)
+   max_delta=1 pts=8 示例[(1249, 59), (1250, 59), (1245, 63), (1254, 63), (1245, 64), (1254, 64), (1249, 68), (1250, 68)]
+   max_delta=4 pts=4 示例[(1249, 63), (1250, 63), (1249, 64), (1250, 64)]
+   max_delta=5 pts=24 示例[(1249, 60), (1250, 60), (1249, 61), (1250, 61), (1249, 62), (1250, 62), (1246, 63), (1247, 63), (1248, 63), (1251, 63)]
+   max_delta=10 pts=6 示例[(1233, 50), (1266, 50), (1269, 53), (1230, 74), (1233, 77), (1266, 77)]
+   max_delta=11 pts=6 示例[(1232, 51), (1267, 51), (1268, 52), (1231, 75), (1232, 76), (1267, 76)]
+   max_delta=41 pts=1 示例[(1230, 53)]
+   max_delta=45 pts=1 示例[(1231, 52)]
+[跨树] A3-settings diff_px=0 bbox=None
+
+[A2-addform 50px 甄别结论 —— AA 噪声归因，非回归]
+diff 区 bbox=(1230,50,1270,78) 恰为右上「新建连接」ghost 钮 [1230,49.5,40x28]（IconPlus SVG+圆角边框 AA 边缘）。
+判定链：
+1. 基线重拍x2（新浏览器进程）自差=0、与原拍=0 → 基线侧确定性；
+2. 双树该钮 full outerHTML 逐字符全同、getBoundingClientRect 全同（含 49.5 半像素位）、
+   computed style 全同（color/border/bg/radius）、hover/focus 伪类全同；
+3. git diff ad652a2 -- ui/src/ 不含该钮、不含 icons/styles.css；
+4. 决定性反证：双树改用 JS click（无 hover）重现 A2 态 → 跨树 diff_px=0。
+→ 差异全源于 hover 态下 GPU 栅格化在两树 React 组件树（App.tsx +357 行）下的合成层差异
+  引起的边框/图标 AA 覆盖率微差（max_delta≤45 单像素边缘混合），无几何位移、无文字重排、
+  无内容差。附 4x 并排目检图 A2-btn-4x-side-by-side.png。判 AA 噪声，非回归。

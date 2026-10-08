@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
@@ -11,6 +11,7 @@ import type {
   Host, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
+  AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -468,8 +469,54 @@ export default function App() {
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const cmdHistIdx = useRef<number>(-1);
   // 连接状态机：null=空闲；连接中显示主机名；失败显示错误
-  // R21（§280）：连接中按主机隔离——一个主机建连不禁用其他主机的连接按钮
-  const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
+  // R23（C1 消费）：attempt 真值表——begin_connection 返回 attempt_id，
+  // 相位经 connection-event（真实）/connection_status 轮询（demo）推进；
+  // §280 语义不变：connectingIds 由 attempt 派生（按主机隔离）
+  const [attempts, setAttempts] = useState<Record<string, { attemptId: string; hostId: string; phase: AttemptPhase; error: ErrorPayload | null }>>({});
+  const attemptsRef = useRef(attempts);
+  attemptsRef.current = attempts;
+  // attempt_id → host_id（ConnectionEvent 不带 host_id，begin_connection 应答补齐）
+  const attemptHostRef = useRef<Map<string, string>>(new Map());
+  // 终态事件先于 waiter 到达的缓冲 + 等待者登记（waitForAttempt）
+  const attemptFinalRef = useRef<Map<string, AttemptInfo>>(new Map());
+  const attemptWaitersRef = useRef<Map<string, (i: AttemptInfo) => void>>(new Map());
+  const TERMINAL_PHASES: AttemptPhase[] = ["Ready", "Failed", "Cancelled", "CancelCloseFailed"];
+  const settleAttempt = useCallback((info: AttemptInfo) => {
+    attemptHostRef.current.set(info.attempt_id, info.host_id);
+    if (TERMINAL_PHASES.includes(info.phase)) {
+      attemptFinalRef.current.set(info.attempt_id, info);
+      setAttempts((s) => {
+        if (!(info.attempt_id in s)) return s;
+        const n = { ...s };
+        delete n[info.attempt_id];
+        return n;
+      });
+      const w = attemptWaitersRef.current.get(info.attempt_id);
+      if (w) {
+        attemptWaitersRef.current.delete(info.attempt_id);
+        attemptFinalRef.current.delete(info.attempt_id);
+        w(info);
+      }
+    } else {
+      setAttempts((s) => ({ ...s, [info.attempt_id]: { attemptId: info.attempt_id, hostId: info.host_id, phase: info.phase, error: info.error } }));
+    }
+  }, []);
+  // §280：连接中按主机隔离（派生自 attempt，真实相位驱动）
+  const connectingIds = useMemo(() => new Set(Object.values(attempts).map((a) => a.hostId)), [attempts]);
+  const hostAttempt = (hostId: string) => Object.values(attempts).find((a) => a.hostId === hostId) ?? null;
+  // 等待 attempt 终态：事件先行则吃缓冲，否则由事件/轮询路径唤醒
+  const waitForAttempt = useCallback((attemptId: string) => new Promise<AttemptInfo>((resolve) => {
+    const b = attemptFinalRef.current.get(attemptId);
+    if (b) {
+      attemptFinalRef.current.delete(attemptId);
+      resolve(b);
+      return;
+    }
+    attemptWaitersRef.current.set(attemptId, resolve);
+  }), []);
+  // 相位中文（§6.2：不得猜测——只呈示核心给出的阶段）
+  const phaseText = (p: AttemptPhase) =>
+    p === "Connecting" ? "连接中…" : p === "TrustRequired" ? "等待指纹确认" : p === "Authenticating" ? "认证中…" : "等待验证码";
   // R21（§6.3）：焦点代际——用户导航（attach/开浮层）或离开窗口都会推进；
   // 连接完成时仅当代际未变且窗口前台才落终端焦点，后台完成只更新标签态不抢焦点。
   // R23 消费 C1 事件后在此基础上深化（attempt 级 current-selection 判定）
@@ -639,6 +686,41 @@ export default function App() {
     return () => un?.();
   }, [refreshLists]);
 
+  // R23（C1 消费）：connection-event 相位推进。真实环境走事件；demo 环境无事件
+  // 通道，由下方轮询兜底（同一 settleAttempt 出口，语义一致）
+  useEffect(() => {
+    if (!inTauri) return;
+    let un: (() => void) | undefined;
+    listen<ConnectionEvent>("connection-event", (e) => {
+      const ev = e.payload;
+      settleAttempt({
+        attempt_id: ev.attempt_id,
+        host_id: attemptHostRef.current.get(ev.attempt_id) ?? "",
+        actor: "human",
+        phase: ev.phase,
+        session_id: ev.session_id,
+        created_at: "",
+        error: ev.error,
+      });
+    }).then((f) => (un = f));
+    return () => un?.();
+  }, [settleAttempt]);
+  // demo 轮询：对每个在途 attempt 拉 connection_status 至终态（300ms）
+  useEffect(() => {
+    if (inTauri) return;
+    const t = setInterval(async () => {
+      for (const a of Object.values(attemptsRef.current)) {
+        try {
+          const info = (await invoke("connection_status", { attemptId: a.attemptId })) as AttemptInfo;
+          settleAttempt(info);
+        } catch {
+          /* attempt 未知（已被结算）：下轮自然消失 */
+        }
+      }
+    }, 300);
+    return () => clearInterval(t);
+  }, [inTauri, settleAttempt]);
+
   // C10 resync 事件（R11，修复基线断链）：核心 Lagged/Resync → window 推送，
   // 按 (session_id, subscription_id) 路由到对应终端的订阅水位状态机。
   useEffect(() => {
@@ -682,15 +764,49 @@ export default function App() {
     let un2: (() => void) | undefined;
     listen<PendingHostKey>("hostkey-event", (ev) => {
       const item = ev.payload;
+      if (gateDecidedRef.current.has(item.id)) return; // 近期已决，不回弹
       setHostKeyQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
     }).then((f) => (un = f));
     listen<PendingAuthPrompt>("authprompt-event", (ev) => {
       const item = ev.payload;
+      if (gateDecidedRef.current.has(item.id)) return;
       setAuthPromptQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
     }).then((f) => (un2 = f));
     return () => { un?.(); un2?.(); };
   }, []);
+  // R23（对账式门队列）：核心侧作废（取消/超时→hk_pending/ap_pending 移除）后 FE
+  // 必须消散遮罩——权威列表驱动增删双向对账；近期已决 id 短窗内不回弹（answer
+  // invoke 在途窗口的竞态）。真实环境事件管快增、本对账管删；demo 环境全靠对账。
+  const gateDecidedRef = useRef<Map<string, number>>(new Map());
+  const reconcileQueues = useCallback(async () => {
+    try {
+      const [hk, ap] = await Promise.all([
+        invoke("pending_host_keys") as Promise<PendingHostKey[]>,
+        invoke("pending_auth_prompts") as Promise<PendingAuthPrompt[]>,
+      ]);
+      const now = Date.now();
+      for (const [id, ts] of gateDecidedRef.current) if (now - ts > 5000) gateDecidedRef.current.delete(id);
+      setHostKeyQueue((q) => {
+        const ids = new Set(hk.map((x) => x.id));
+        const kept = q.filter((x) => ids.has(x.id));
+        const added = hk.filter((x) => !q.some((y) => y.id === x.id) && !gateDecidedRef.current.has(x.id));
+        return kept.length === q.length && added.length === 0 ? q : [...kept, ...added];
+      });
+      setAuthPromptQueue((q) => {
+        const ids = new Set(ap.map((x) => x.id));
+        const kept = q.filter((x) => ids.has(x.id));
+        const added = ap.filter((x) => !q.some((y) => y.id === x.id) && !gateDecidedRef.current.has(x.id));
+        return kept.length === q.length && added.length === 0 ? q : [...kept, ...added];
+      });
+    } catch { /* 后端不可达：下轮再对账 */ }
+  }, []);
+  useEffect(() => {
+    const t = setInterval(() => void reconcileQueues(), inTauri ? 1000 : 400);
+    void reconcileQueues();
+    return () => clearInterval(t);
+  }, [inTauri, reconcileQueues]);
   const answerAuthPrompt = async (id: string, answer: string) => {
+    gateDecidedRef.current.set(id, Date.now());
     setAuthPromptQueue((q) => q.filter((x) => x.id !== id));
     setAuthAnswer("");
     try { await invoke("answer_auth_prompt", { id, answer }); } catch { /* 已超时/不存在 */ }
@@ -1175,6 +1291,7 @@ export default function App() {
   };
   const closeTopOverlayRef = useRef<() => boolean>(() => false);
   closeTopOverlayRef.current = (): boolean => {
+    if (quitSummary) { setQuitSummary(null); return true; }
     const ap = authPromptQueue[0];
     if (ap) { void answerAuthPrompt(ap.id, ""); return true; }
     const hk = hostKeyQueue[0];
@@ -1399,13 +1516,14 @@ export default function App() {
     if (sidRef.current) focusSession(sidRef.current);
   }, [applyPanes, fitTerminal, focusSession]);
 
-  // 关闭会话（左栏「断开」/标签 ×/⌘W 共用）：销毁终端实例；分屏期间副 pane 关 =
-  // 退出分屏（焦点不动），主 pane 关 = 副 pane 升为主
+  // 关闭会话（标签 ×/⌘W/工具菜单共用，§6.4 统一「关闭会话」语义）：核心确认关闭
+  // 后才 dispose；失败保留标签、画面与重试入口（§337）
   const disconnectSid = useCallback(async (id: string) => {
     try {
       await invoke("close_session", { sid: id });
     } catch (e) {
-      setConnError({ title: "断开会话失败", detail: errMsg(e) });
+      setConnError({ title: "关闭会话失败", detail: errMsg(e) + "——标签与画面保留，可再次关闭重试" });
+      return; // §6.4 关闭失败：不 dispose、不动标签
     }
     subscribedRef.current.delete(id);
     const entry = termsRef.current.get(id);
@@ -1466,8 +1584,47 @@ export default function App() {
   const [confirm, setConfirm] = useState<
     { kind: "closeSession"; sid: string; hostName: string } | { kind: "deleteHost"; id: string; name: string } | { kind: "deleteIdentity"; id: string; label: string } | null
   >(null);
-  // 模态层信号（R13 §7.3）：确认/指纹/双因素任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm);
+  // R23（§6.4 关闭活动会话）：确认框展示可查证影响（转发数可查；任务/传输未知如实标注）
+  const [confirmImpact, setConfirmImpact] = useState<{ forwards: number } | null>(null);
+  useEffect(() => {
+    if (confirm?.kind !== "closeSession") { setConfirmImpact(null); return; }
+    let alive = true;
+    invoke("list_forwards", { sid: confirm.sid })
+      .then((fs) => { if (alive) setConfirmImpact({ forwards: (fs as ForwardInfo[]).length }); })
+      .catch(() => { if (alive) setConfirmImpact(null); });
+    return () => { alive = false; };
+  }, [confirm]);
+  // R23（§6.4 退出应用）：主窗口关闭=请求退出 → 汇总确认；「结束会话并退出」关全部会话后退出
+  const [quitSummary, setQuitSummary] = useState<{ sessions: SessionInfo[]; forwards: number } | null>(null);
+  useEffect(() => {
+    if (!inTauri) return;
+    let un: (() => void) | undefined;
+    let alive = true;
+    listen("app-close-requested", () => {
+      (async () => {
+        try {
+          const ss = (await invoke("list_sessions")) as SessionInfo[];
+          let fw = 0;
+          for (const s of ss) {
+            try { fw += ((await invoke("list_forwards", { sid: s.id })) as ForwardInfo[]).length; } catch { /* 单会话失败不阻塞汇总 */ }
+          }
+          if (alive) setQuitSummary({ sessions: ss, forwards: fw });
+        } catch {
+          if (alive) setQuitSummary({ sessions: [], forwards: 0 });
+        }
+      })();
+    }).then((f) => (un = f));
+    return () => { alive = false; un?.(); };
+  }, [inTauri]);
+  const confirmQuit = async () => {
+    if (!quitSummary) return;
+    for (const s of quitSummary.sessions) {
+      try { await invoke("close_session", { sid: s.id }); } catch { /* 尽力关闭；退出路径不受阻 */ }
+    }
+    try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
+  };
+  // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
+  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary);
   modalRef.current = modal;
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
@@ -1548,6 +1705,7 @@ export default function App() {
 
   // 指纹确认决定：本地先移除（后端决定即从待决表清掉）；挂起的 create_session 随决定继续或报错
   const decideHostKey = async (item: PendingHostKey, accept: boolean) => {
+    gateDecidedRef.current.set(item.id, Date.now());
     setHostKeyQueue((q) => q.filter((x) => x.id !== item.id));
     try {
       await invoke("decide_host_key", { id: item.id, accept });
@@ -1802,37 +1960,94 @@ export default function App() {
   const createSession = async (host: Host) => {
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
     const gen0 = focusGenRef.current;
-    setConnectingIds((s) => new Set(s).add(host.id));
     setConnError(null);
+    let attemptId: string | null = null;
     try {
-      const newSid = await invoke("create_session", { hostId: host.id });
-      setLastFailed(null);
-      await refreshLists();
-      // rev-r21 M2：他主机门挂起中（用户注意力在其输入框，遮罩不持 DOM 焦）完成
-      // 不抢焦——否则后续验证码 keystroke 误落已完成会话的远端 shell。本主机门在
-      // create_session resolve 前必已闭（应答先同步 splice 队列再 invoke），不受扰
-      const gatesBusy = hostKeyQueueRef.current.some((x) => x.host_name !== host.name)
-        || authPromptQueueRef.current.some((x) => x.host_name !== host.name);
-      if (focusGenRef.current === gen0 && !document.hidden && !gatesBusy) {
-        await attachSession(newSid);
-        pushToast("ok", `已连接 ${host.name}`);
+      // R23（C1 消费）：begin_connection → attempt_id，终态经事件/轮询回回；
+      // 门挂起期间主机卡可取消（§302 等待中可取消）
+      const a = await invoke("begin_connection", { hostId: host.id }) as AttemptInfo;
+      attemptId = a.attempt_id;
+      settleAttempt(a);
+      const final = await waitForAttempt(a.attempt_id);
+      if (final.phase === "Ready" && final.session_id) {
+        setLastFailed(null);
+        await refreshLists();
+        // rev-r21 M2：他主机门挂起中（用户注意力在其输入框，遮罩不持 DOM 焦）完成
+        // 不抢焦——否则后续验证码 keystroke 误落已完成会话的远端 shell。本主机门在
+        // attempt 终态前必已闭（应答先同步 splice 队列再 invoke），不受扰。
+        // R21-L6 勘误闭环：gatesBusy 改按 host_id 精确匹配（wire 已补 host_id）
+        // §6.3「窗口在前台」：真实失焦（他应用激活）期间完成不切视图不抢焦，
+        // 只查 document.hidden 挡不住窗口级失焦（r23a 原生实证）
+        const gatesBusy = hostKeyQueueRef.current.some((x) => x.host_id !== host.id)
+          || authPromptQueueRef.current.some((x) => x.host_id !== host.id);
+        if (focusGenRef.current === gen0 && !document.hidden && document.hasFocus() && !gatesBusy) {
+          await attachSession(final.session_id);
+          pushToast("ok", `已连接 ${host.name}`);
+        } else {
+          // 后台完成：只更新标签态，不切视图不抢焦点（点击标签进入）
+          pushToast("ok", `已连接 ${host.name}——点击标签进入`);
+        }
+      } else if (final.phase === "Cancelled") {
+        pushToast("info", `已取消连接 ${host.name}`);
+      } else if (final.phase === "CancelCloseFailed") {
+        // 取消时已 Ready 且关闭失败：会话真实存在（无隐藏连接），如实告之从标签关闭
+        await refreshLists();
+        setConnError({
+          title: `取消 ${host.name} 时会话已建立且关闭失败`,
+          detail: "会话保留在标签栏——不再需要时请从标签 × 或 ⌘W 关闭",
+        });
       } else {
-        // 后台完成：只更新标签态，不切视图不抢焦点（点击标签进入）
-        pushToast("ok", `已连接 ${host.name}——点击标签进入`);
+        // Failed：失败走 conn-error 常驻横幅（可行动文案），标签不建（attempt 未过门）
+        setLastFailed(host.id);
+        const reason = final.error ? friendlyError({ kind: final.error.kind, message: final.error.message }) : "未知原因";
+        setConnError({
+          title: `连接 ${host.name}（${host.username}@${host.address}:${host.port}）失败`,
+          detail: reason + "——也可在主机卡上看到失败提示，修正后重试",
+        });
       }
     } catch (e) {
-      // 失败走 conn-error 常驻横幅（可行动文案），不重复 toast
       setLastFailed(host.id);
       setConnError({
         title: `连接 ${host.name}（${host.username}@${host.address}:${host.port}）失败`,
         detail: friendlyError(e) + "——也可在主机卡上看到失败提示，修正后重试",
       });
     } finally {
-      setConnectingIds((s) => {
-        const n = new Set(s);
-        n.delete(host.id);
-        return n;
-      });
+      if (attemptId) {
+        attemptWaitersRef.current.delete(attemptId);
+        attemptFinalRef.current.delete(attemptId);
+        attemptHostRef.current.delete(attemptId);
+        setAttempts((s) => {
+          if (!(attemptId !== null && attemptId in s)) return s;
+          const n = { ...s };
+          delete n[attemptId];
+          return n;
+        });
+      }
+    }
+  };
+
+  // §302/§6.2：等待中可取消——终态经核心串行裁决，已取消只在核心确认后呈示
+  const cancelConnect = async (hostId: string) => {
+    const a = hostAttempt(hostId);
+    if (!a) return;
+    try {
+      const r = await invoke("cancel_connection", { attemptId: a.attemptId }) as CancelOutcome;
+      if (r.outcome === "already_ready") {
+        // 成功已提交：核心已将刚建立的会话一并关闭（契约序列 1 无 session 遗留）——
+        // 对账刷新标签；不存在隐藏连接
+        await refreshLists();
+        pushToast("info", "取消时连接已完成——该会话已随之关闭");
+      } else if (r.outcome === "cancel_close_failed") {
+        // 会话保留（关闭失败=恢复入口）：如实告之从标签关闭
+        await refreshLists();
+        setConnError({
+          title: "取消时会话已建立且关闭失败",
+          detail: "会话保留在标签栏——不再需要时请从标签 × 或 ⌘W 再次关闭",
+        });
+      }
+      // cancelled / not_found：终态事件（或 demo 轮询）负责结算卡片与门
+    } catch (e) {
+      pushToast("err", friendlyError(e));
     }
   };
 
@@ -1844,9 +2059,9 @@ export default function App() {
     try {
       await invoke("reconnect_session", { sid: s.id });
       await refreshLists();
-      const gatesBusy = hostKeyQueueRef.current.some((x) => x.host_name !== s.host_name)
-        || authPromptQueueRef.current.some((x) => x.host_name !== s.host_name);
-      if (focusGenRef.current === gen0 && !document.hidden && !gatesBusy) {
+      const gatesBusy = hostKeyQueueRef.current.some((x) => x.host_id !== s.host_id)
+        || authPromptQueueRef.current.some((x) => x.host_id !== s.host_id);
+      if (focusGenRef.current === gen0 && !document.hidden && document.hasFocus() && !gatesBusy) {
         await attachSession(s.id);
         pushToast("ok", `已重连 ${s.host_name}`);
       } else {
@@ -2073,22 +2288,36 @@ export default function App() {
                     <div className="err host-fail">✕ 上次连接失败——检查地址与凭据后重试</div>
                   )}
                 </div>
-                <div className="host-card-side">
-                  <div className="host-ops">
-                    <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
-                      title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
-                      onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
-                    <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
-                      onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
-                    <button className="ghost host-del" title="删除主机"
-                      onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
+                  <div className="host-card-side">
+                    <div className="host-ops">
+                      <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
+                        title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
+                        onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
+                      <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
+                        onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
+                      <button className="ghost host-del" title="删除主机"
+                        onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
+                    </div>
+                    {/* R23（§302 等待中可取消）：attempt 在途显示核心相位 + 取消入口；
+                        取消终态由核心串行裁决后呈示（cancelConnect 不自行改状态） */}
+                    <div className="row" style={{ flexWrap: "nowrap", gap: 4 }}>
+                      <button className="host-connect-btn" disabled={connectingIds.has(h.id)}
+                        title="连接（新建会话）——其他主机的连接不受影响"
+                        onClick={() => createSession(h)}>
+                        {(() => {
+                          const a = hostAttempt(h.id);
+                          return a
+                            ? <><IconLoader size={11} className="spin" /> {phaseText(a.phase)}</>
+                            : "连接";
+                        })()}
+                      </button>
+                      {hostAttempt(h.id) && (
+                        <button className="ghost" style={{ width: "auto", flexShrink: 0 }}
+                          title="取消本次连接（终态由核心裁决：已取消/已完成可见）"
+                          onClick={(e) => { e.stopPropagation(); void cancelConnect(h.id); }}>取消</button>
+                      )}
+                    </div>
                   </div>
-                  <button className="host-connect-btn" disabled={connectingIds.has(h.id)}
-                    title="连接（新建会话）——其他主机的连接不受影响"
-                    onClick={() => createSession(h)}>
-                    {connectingIds.has(h.id) ? <><IconLoader size={11} className="spin" /> 连接中…</> : "连接"}
-                  </button>
-                </div>
               </div>
               );
             };
@@ -2200,7 +2429,7 @@ export default function App() {
                   ><IconSplit size={12} /></span>
                   <span
                     className="tab-x"
-                    title="断开会话（⌘W，连接中会先确认）"
+                    title="关闭会话（⌘W，活动会话先确认影响）"
                     onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
                   ><IconX size={11} /></span>
                 </div>
@@ -2271,11 +2500,39 @@ export default function App() {
         {confirm?.kind === "closeSession" && (
           <div className="confirm-mask" onClick={() => setConfirm(null)}>
             <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title">断开与 {confirm.hostName} 的连接？</div>
+              {/* R23 §6.4/§342：入口统一命名「关闭会话」；影响行只说可查证的
+                  （转发数），任务/传输状态未知时明确未知，不声称空闲 */}
+              <div className="hk-title">关闭与 {confirm.hostName} 的会话？</div>
               <div>终端现场不可恢复——重连会是全新现场（记录保留）。</div>
+              <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
+                · 将受影响的转发：{confirmImpact ? (confirmImpact.forwards > 0 ? `${confirmImpact.forwards} 条（随会话关闭）` : "无") : "状态未知（查询失败）"}
+                <br />· 正在运行的任务/传输：状态未知——如有重要作业请先确认
+              </div>
               <div className="hk-actions">
-                <button className="danger" onClick={confirmAction}>断开连接</button>
+                <button className="danger" onClick={confirmAction}>关闭会话</button>
                 <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {quitSummary && (
+          <div className="confirm-mask">
+            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title">退出 TinySSH？</div>
+              <div>
+                活动会话 {quitSummary.sessions.length} 个
+                {quitSummary.sessions.length > 0 && (
+                  <>（{quitSummary.sessions.map((s) => s.host_name).join("、")}）</>
+                )}
+                ，转发 {quitSummary.forwards} 条。
+              </div>
+              <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
+                正在运行的命令与传输会被终止；传输处于提交中/结果待核实时不代表已全部取消。
+                下次启动不恢复会话，需手动重连。
+              </div>
+              <div className="hk-actions">
+                <button className="danger" onClick={() => void confirmQuit()}>结束会话并退出</button>
+                <button className="ghost" onClick={() => setQuitSummary(null)}>取消</button>
               </div>
             </div>
           </div>
@@ -2457,7 +2714,7 @@ export default function App() {
                   <div><span className="ws-k">传输</span>拖文件进终端即上传到当前目录；下方命令框可逐条执行，焦点自动回终端</div>
                 </div>
                 <div className="welcome-actions">
-                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
+                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
                   <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
                   {hosts.some((h) => h.id === "local") && (
                     <button className="ghost" onClick={() => {

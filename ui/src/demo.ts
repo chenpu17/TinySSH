@@ -133,7 +133,7 @@ const demoState = {
   ] as DemoEvent[],
   pendingKeys: [] as PendingKey[],
   // 2FA 认证提示待决（路线图⑩演示）：挂起的 create_session 应答器按 id 索引
-  pendingPrompts: [] as { item: { id: string; host_name: string; name: string; instructions: string; prompt: string; echo: boolean; created_at: string; attempt_id?: string | null }; resolve: (answer: string | null) => void }[],
+  pendingPrompts: [] as { item: { id: string; host_id?: string; host_name: string; name: string; instructions: string; prompt: string; echo: boolean; created_at: string; attempt_id?: string | null }; resolve: (answer: string | null) => void }[],
   // TOFU 已信任主机地址（种子信任 prod-1：走查点「连接」不弹指纹窗，与真实一致）
   trusted: new Set(["10.0.0.11"]),
   // C1 建连尝试（R19 demo 同契约）：attempt 表 + 已受理取消集合
@@ -398,6 +398,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           demoState.pendingPrompts.push({
             item: {
               id: "ap-demo-" + demoSeq++,
+              host_id: h.id,
               host_name: h.name,
               name: "otp",
               instructions: "",
@@ -430,10 +431,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sid = args?.sid as string;
       const s = demoState.sessions.find((x) => x.id === sid);
       if (s) {
-        s.state = "Disconnected";
+        // R23（§342 对齐真实核心）：关闭成功=会话移除（Closed 语义）——标签随之消失，
+        // 不留「已断开」死标签（断线保留是 R26 网络中断语义，非用户关闭）
+        pushTo(sid, "\r\n[会话已关闭]\r\n");
+        const si = demoState.sessions.findIndex((x) => x.id === sid);
+        if (si >= 0) demoState.sessions.splice(si, 1);
         s.subs.clear(); // 会话关闭自动清理全部订阅（C10 主路径兜底）
       }
-      pushTo(sid, "\r\n[会话已断开]\r\n");
       // 镜像真实 close_session：作废该会话待审批并逐条留痕（reason=session_closed）
       for (const a of demoState.approvals) {
         if (a.status === "pending" && a.session_id === sid) {
@@ -651,11 +655,11 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
             if (!ok) throw apiError("host_key_rejected", "主机指纹验证失败（演示：已拒绝该主机指纹）");
             setPhase("Authenticating");
           }
-          if (h.address === "otp.demo") {
+          if (h.address === "otp.demo" || h.address === "otp2.demo") {
             setPhase("ChallengeRequired");
             const answer = await new Promise<string | null>((resolve) => {
               demoState.pendingPrompts.push({
-                item: { id: "ap-demo-" + demoSeq++, host_name: h.name, name: "otp", instructions: "", prompt: "Verification code (OTP):", echo: true, created_at: new Date().toISOString(), attempt_id: aid },
+                item: { id: "ap-demo-" + demoSeq++, host_id: h.id, host_name: h.name, name: "otp", instructions: "", prompt: "Verification code (OTP):", echo: h.address !== "otp2.demo", created_at: new Date().toISOString(), attempt_id: aid },
                 resolve,
               });
             });
@@ -740,6 +744,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "pending_host_keys":
       return demoState.pendingKeys.map((x) => x.pk);
+    case "quit_app":
+      // demo（浏览器）无窗口生命周期：no-op（真实环境由 tauri quit_app 退出进程）
+      return null;
     case "pending_auth_prompts":
       return demoState.pendingPrompts.map((x) => x.item);
     case "answer_auth_prompt": {

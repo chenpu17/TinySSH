@@ -245,7 +245,20 @@ impl SessionManager {
             });
         }
 
-        self.center.vault.record_session(&sid, &host.id, &kind)?;
+        // record_session 失败（vault Err）：v1 直调路径同样不留半会话（R23 前置清单
+        // 「v1 create_session 幽灵面」闭环——与 attempt 路径 N2 清扫同语义）
+        let recorded = {
+            #[cfg(test)]
+            if self.test_hooks.lock().unwrap().force_record_fail {
+                let _ = self.close_session(ctx, sid.clone()).await;
+                return Err(Error::Io("test-injected record failure".into()));
+            }
+            self.center.vault.record_session(&sid, &host.id, &kind).map_err(Error::from)
+        };
+        if let Err(e) = recorded {
+            let _ = self.close_session(ctx, sid.clone()).await;
+            return Err(e);
+        }
         // C8：成功建连打点（host_metadata.last_connected_at；最近连接由 sessions
         // 表派生，此处只供元数据展示）
         let _ = self.center.vault.touch_host_connection(&host.id);
@@ -880,6 +893,8 @@ struct AttemptTestHooks {
     pause_after_submit: Option<Arc<tokio::sync::Notify>>,
     /// 窗口关闭强制失败（驱动 CancelCloseFailed 路径）。
     force_close_fail: bool,
+    /// v1 幽灵面回归网（R23）：强制 record_session 失败，驱动半会话清扫。
+    force_record_fail: bool,
 }
 
 /// C1 合并与取消权限的身份域（DC1.5）：Human 单域；Agent 按 client_id。
@@ -1025,6 +1040,7 @@ async fn auth_prompt_gate(
     }
     let item = PendingAuthPrompt {
         id: format!("ap-{}", uuid::Uuid::new_v4()),
+        host_id: host.id.clone(),
         host_name: host.name.clone(),
         name: String::new(),
         instructions: String::new(),

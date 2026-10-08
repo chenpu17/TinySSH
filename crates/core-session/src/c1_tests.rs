@@ -433,3 +433,126 @@ async fn cancel_events_carry_terminal_phase_only() {
         let evs = m.center.audit.query(&AuditFilter { limit: 50, ..Default::default() }).map(|p| p.events).unwrap_or_default();
         assert!(evs.iter().any(|e| e.action == "connection_failed"), "失败须审计");
     }
+
+// ---- R23 前置清单（rev-r19 登记四条回归网缺口）----
+
+/// H1 让渡分支变体：窗口取消后第二次 cancel → NotFound，不重复关闭、事件序列无
+/// 双终态（首次已结算 Cancelled；重复取消走终态 NotFound 口径）。
+#[tokio::test(flavor = "multi_thread")]
+async fn window_double_cancel_second_is_not_found_single_close() {
+    let m = mgr();
+    let arrived = Arc::new(tokio::sync::Notify::new());
+    let pause = Arc::new(tokio::sync::Notify::new());
+    {
+        let mut h = m.test_hooks.lock().unwrap();
+        h.arrived_after_submit = Some(arrived.clone());
+        h.pause_after_submit = Some(pause.clone());
+    }
+    let mut rx = m.subscribe_connections();
+    let info = m.begin_connection(&Actor::Human, "local".into(), BeginConnectionOpts::default()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), arrived.notified()).await.expect("未到达提交点");
+    let out1 = m.cancel_connection(&Actor::Human, info.attempt_id.clone()).await.unwrap();
+    assert!(matches!(out1, CancelOutcome::AlreadyReady { .. }), "首次窗口取消 AlreadyReady，得 {out1:?}");
+    // 暂停期内二次取消：任务尚未结算终态（Cancelled）——按「提交后已受理」走
+    // Cancelled/NotFound 之一，但绝不产生 CancelCloseFailed 或第二次关闭
+    let out2 = m.cancel_connection(&Actor::Human, info.attempt_id.clone()).await.unwrap();
+    assert!(
+        matches!(out2, CancelOutcome::NotFound | CancelOutcome::Cancelled),
+        "二次取消不得报 CancelCloseFailed/AlreadyReady，得 {out2:?}"
+    );
+    pause.notify_one();
+    let fin = wait_phase(&m, &info.attempt_id, |p| *p == AttemptPhase::Cancelled, 200).await;
+    assert!(fin.session_id.is_none());
+    let sess = m.list_sessions(&Actor::Human).await.unwrap();
+    assert!(sess.is_empty(), "会话恰好关闭一次，无遗留");
+    let mut phases = vec![];
+    while let Ok(ev) = rx.try_recv() {
+        if ev.attempt_id == info.attempt_id {
+            phases.push(ev.phase);
+        }
+    }
+    assert_eq!(phases.iter().filter(|p| **p == AttemptPhase::Cancelled).count(), 1, "终态事件恰一次 {phases:?}");
+}
+
+/// H2 端到端（inner 中段取消全链）：建连中受理取消 → 事件序 Connecting…Cancelled
+/// 无 Ready + 合并索引清理（后续 begin 全新 id）+ 审计 connection_cancelled。
+#[tokio::test(flavor = "multi_thread")]
+async fn mid_connect_cancel_end_to_end_chain() {
+    let m = mgr();
+    let hid = seed_unreachable(&m);
+    let mut rx = m.subscribe_connections();
+    let info = m.begin_connection(&Actor::Human, hid.clone(), BeginConnectionOpts::default()).await.unwrap();
+    wait_phase(&m, &info.attempt_id, |p| *p == AttemptPhase::Connecting, 100).await;
+    assert!(matches!(m.cancel_connection(&Actor::Human, info.attempt_id.clone()).await.unwrap(), CancelOutcome::Cancelled));
+    let fin = wait_phase(&m, &info.attempt_id, |p| *p == AttemptPhase::Cancelled, 200).await;
+    assert!(fin.session_id.is_none() && fin.error.is_none(), "Cancelled 无会话无错误载荷");
+    let mut phases = vec![];
+    while let Ok(ev) = rx.try_recv() {
+        if ev.attempt_id == info.attempt_id {
+            phases.push(ev.phase);
+        }
+    }
+    // 事件契约（R19）：起步相位随 begin 应答携带、事件只载转换/终态——取消链
+    // 事件序恰为 [Cancelled]，不得出现 Ready
+    assert!(phases.contains(&AttemptPhase::Cancelled), "事件序应含终态 {phases:?}");
+    assert!(!phases.contains(&AttemptPhase::Ready), "取消链不得出现 Ready {phases:?}");
+    // 合并索引已清：后续 begin 是全新 attempt（终态条目保留但合并不复用）
+    let again = m.begin_connection(&Actor::Human, hid, BeginConnectionOpts::default()).await.unwrap();
+    assert_ne!(again.attempt_id, info.attempt_id);
+    assert!(matches!(m.cancel_connection(&Actor::Human, again.attempt_id.clone()).await.unwrap(), CancelOutcome::Cancelled));
+    wait_phase(&m, &again.attempt_id, |p| *p == AttemptPhase::Cancelled, 200).await;
+    let evs = m.center.audit.query(&AuditFilter { limit: 80, ..Default::default() }).map(|p| p.events).unwrap_or_default();
+    assert!(evs.iter().any(|e| e.action == "connection_cancelled"), "取消须审计");
+}
+
+/// 窗口态并发双 cancel：两路 cancel 同时打向暂停中的 attempt——恰一次 AlreadyReady、
+/// 恰一次会话关闭、无 CancelCloseFailed、终态唯一。
+#[tokio::test(flavor = "multi_thread")]
+async fn window_concurrent_double_cancel_single_settlement() {
+    let m = mgr();
+    let arrived = Arc::new(tokio::sync::Notify::new());
+    let pause = Arc::new(tokio::sync::Notify::new());
+    {
+        let mut h = m.test_hooks.lock().unwrap();
+        h.arrived_after_submit = Some(arrived.clone());
+        h.pause_after_submit = Some(pause.clone());
+    }
+    let info = m.begin_connection(&Actor::Human, "local".into(), BeginConnectionOpts::default()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), arrived.notified()).await.expect("未到达提交点");
+    let aid1 = info.attempt_id.clone();
+    let aid2 = info.attempt_id.clone();
+    let (r1, r2) = tokio::join!(
+        m.cancel_connection(&Actor::Human, aid1),
+        m.cancel_connection(&Actor::Human, aid2),
+    );
+    let outs = [r1.unwrap(), r2.unwrap()];
+    let already = outs.iter().filter(|o| matches!(o, CancelOutcome::AlreadyReady { .. })).count();
+    let not_found = outs.iter().filter(|o| matches!(o, CancelOutcome::NotFound)).count();
+    assert!(
+        already + not_found == 2 && already >= 1,
+        "并发双取消应一次 AlreadyReady + 一次 NotFound（或受理序差异），得 {outs:?}"
+    );
+    assert!(!outs.iter().any(|o| matches!(o, CancelOutcome::CancelCloseFailed { .. })), "不得报关闭失败 {outs:?}");
+    pause.notify_one();
+    let fin = wait_phase(&m, &info.attempt_id, |p| *p == AttemptPhase::Cancelled, 200).await;
+    assert!(fin.session_id.is_none(), "终态会话清空");
+    let sess = m.list_sessions(&Actor::Human).await.unwrap();
+    assert!(sess.is_empty(), "恰好一次关闭，无遗留");
+}
+
+/// v1 create_session 幽灵面（R23 闭环）：record_session 失败 → Err 上抛且半会话被
+/// 清扫（sessions 表无遗留——旧代码此处插入后直接 return Err，幽灵留存）。
+#[tokio::test(flavor = "multi_thread")]
+async fn v1_record_failure_sweeps_half_session() {
+    let m = mgr();
+    m.test_hooks.lock().unwrap().force_record_fail = true;
+    let r = m.create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() }).await;
+    assert!(r.is_err(), "注入失败必须上抛");
+    let sess = m.list_sessions(&Actor::Human).await.unwrap();
+    assert!(sess.is_empty(), "半会话必须被清扫，实得 {}", sess.len());
+    m.test_hooks.lock().unwrap().force_record_fail = false;
+    // 恢复后 v1 路径照常工作
+    let sid = m.create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() }).await.unwrap();
+    assert!(sid.starts_with("s-"));
+    let _ = m.close_session(&Actor::Human, sid).await;
+}

@@ -232,6 +232,8 @@ export interface PendingHostKey {
 
 export interface PendingAuthPrompt {
   id: string;
+  /** R23（R21-L6 勘误闭环）：gatesBusy 按主机精确判他机门；旧载荷无此字段 */
+  host_id?: string;
   host_name: string;
   name: string;
   instructions: string;
