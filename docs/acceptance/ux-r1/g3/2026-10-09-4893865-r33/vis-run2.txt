@@ -1,0 +1,15 @@
+PASS V1 welcome dual-tree diff = intended copy line only  [diff=4223 self=0]
+PASS V1b new transfer copy rendered on welcome
+PASS V2a nav row 7 buttons  [{"n":7,"sizes":[23,23,23,23,23,23,23],"overlap":0,"clipped":0}]
+PASS V2b nav buttons uniform height & unclipped  [[23,23,23,23,23,23,23]]
+PASS V2c no button overlap
+PASS V3a confirm card in viewport  [{"w":400,"h":161.1875}]
+PASS V3b input rendered  [{"w":366,"h":28}]
+PASS V3c two buttons visible (cancel/confirm)  [[{"t":"取消","w":50,"h":31,"vis":true},{"t":"上传到此处","w":84,"h":31,"vis":true}]]
+PASS V3d confirm enabled with prefilled dir
+PASS V3e Esc closes card
+PASS V4a menu has 2 items (下载/另存为…)  [[{"t":"下载","w":122,"h":29},{"t":"另存为…","w":122,"h":29}]]
+PASS V4b menu in viewport  [{"w":132,"h":91.046875}]
+PASS V5a panel no horizontal overflow  [0]
+PASS V5b zero JS errors  [[]]
+SUMMARY 14/14

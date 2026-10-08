@@ -54,6 +54,8 @@ interface CmdArgs {
   open_url: { url: string };
   upload_file: { sid: string; local: string; remote: string };
   download_file: { sid: string; remote: string; local?: string | null };
+  pick_upload_files: undefined;
+  pick_save_file: { defaultName: string; defaultDir?: string | null };
   cancel_transfer: { id: string };
   list_transfers: undefined;
   sftp_list: { sid: string; path: string };
@@ -117,6 +119,8 @@ interface CmdRet {
   open_url: void;
   upload_file: wire.TransferHandle;
   download_file: wire.TransferHandle;
+  pick_upload_files: string[];
+  pick_save_file: string | null;
   cancel_transfer: void;
   list_transfers: wire.TransferTask[];
   sftp_list: wire.DirEntryS[];

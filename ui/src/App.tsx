@@ -522,6 +522,16 @@ export default function App() {
   const [sftpSort, setSftpSort] = useState<{ key: "name" | "size" | "mtime"; dir: 1 | -1 }>({ key: "name", dir: 1 });
   const [sftpMenu, setSftpMenu] = useState<{ name: string; x: number; y: number } | null>(null);
   const [sftpListW, setSftpListW] = useState(9999);
+  // R33（§354/§356）上传下载入口：拖入终端的确认卡——目标会话在拖放开始时固定（§354
+  // 「不随切标签转移」），目录输入预填可信 cwd（brief.cwd → 可见面板浏览目录；都无=
+  // 空输入必填，不从不可见面板借用旧路径）
+  const [pendingDrop, setPendingDrop] = useState<{ paths: string[]; sid: string } | null>(null);
+  const [pendingDropDir, setPendingDropDir] = useState("");
+  const [pendingDropErr, setPendingDropErr] = useState<string | null>(null);
+  const dropConfirmBusyRef = useRef(false);
+  const dropConfirmRef = useRef<HTMLDivElement | null>(null);
+  // 上次下载目录（§356；blob transfers 域持久化，首次=null=核心落系统 Downloads）
+  const downloadDirRef = useRef<string | null>(null);
   // 端口转发（T42 FR-8）：按 sid 归属；3s 轮询状态（断线→Failed 的变化要能看到）
   const [forwards, setForwards] = useState<ForwardInfo[]>([]);
   const [fwdKind, setFwdKind] = useState<"Local" | "Remote" | "Dynamic">("Local");
@@ -556,6 +566,7 @@ export default function App() {
   const delHostRef = useRef<HTMLDivElement | null>(null);
   const delIdentRef = useRef<HTMLDivElement | null>(null);
   const pasteConfirmRef = useRef<HTMLDivElement | null>(null);
+  const dropCardRef = useRef<HTMLDivElement | null>(null);
   // R25 §322 分屏建立双语义：复用已有会话（菜单直选）/ 新建会话（武装标记，下一次
   // 新建会话自动落右侧副 pane）
   const [splitMenu, setSplitMenu] = useState(false);
@@ -1374,6 +1385,8 @@ export default function App() {
           pasteGuardRef.current = ws.terminal.paste_guard;
           setPasteGuard(ws.terminal.paste_guard);
         }
+        // R33 §356：上次下载目录（缺省/null = 落系统 Downloads）
+        if (ws.transfers?.download_dir) downloadDirRef.current = ws.transfers.download_dir;
         if (ws.hostbar) {
           setHostbarOpen(ws.hostbar.open);
           setHostbarWidth(Math.min(300, Math.max(200, ws.hostbar.width)));
@@ -1842,6 +1855,7 @@ export default function App() {
   useDialogFocus(confirm?.kind === "deleteHost", delHostRef);
   useDialogFocus(confirm?.kind === "deleteIdentity", delIdentRef);
   useDialogFocus(!!pasteConfirm, pasteConfirmRef);
+  useDialogFocus(!!pendingDrop, dropCardRef);
   useEffect(() => {
     if (!inTauri) return;
     let un: (() => void) | undefined;
@@ -2032,9 +2046,10 @@ export default function App() {
   // 拖拽上传：目标目录优先取远程文件区正在浏览的目录（T41），否则现场简报 cwd。
   // 先挂 pending 卡占位，拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
   // pending 卡 id 序号（R31）：同毫秒批量发起多张卡时防 id 碰撞
+  // R33 §354：sid 可显式指定——确认卡路径下目标会话在拖放开始时固定，不取聚焦 sid
   const pendingSeqRef = useRef(0);
-  const startUploads = useCallback(async (paths: string[], destDir?: string) => {
-    const s = sidRef.current;
+  const startUploads = useCallback(async (paths: string[], destDir?: string, sid?: string) => {
+    const s = sid ?? sidRef.current;
     const cwd = destDir ?? (s ? briefRef.current?.cwd : undefined);
     for (const p of paths) {
       const name = pathBasename(p);
@@ -2058,19 +2073,47 @@ export default function App() {
     }
   }, [upsertTransfer]);
 
-  // 下载：远端绝对路径 → 本地（local 省略时核心存 ~/Downloads/<文件名>）
-  const downloadRemote = useCallback(async (rp: string) => {
+  // R33 §356：下载目录落库（blob transfers 域，串行化链防交错丢更新；同值不重写）
+  const persistDownloadDir = useCallback((dir: string) => {
+    if (downloadDirRef.current === dir) return;
+    downloadDirRef.current = dir;
+    wsWriteChain.current = wsWriteChain.current
+      .then(() => invoke("get_workspace"))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, transfers: { download_dir: dir } } }))
+      .catch(() => {});
+  }, []);
+
+  // 下载：远端绝对路径 → 本地。§356 目标=上次下载目录/同名文件（首次=null→核心落
+  // 系统 Downloads）；另存为走原生保存对话框（取消=不建卡不传输），确认后记忆其目录。
+  // 卡片显示完整本地目标（handle 回填的 h.local），不以文件名相同推断成功。
+  const downloadRemote = useCallback(async (rp: string, opts?: { saveAs?: boolean }) => {
     const s = sidRef.current;
     if (!s || !rp) return;
+    const name = pathBasename(rp);
+    let local: string | null = null;
+    if (opts?.saveAs) {
+      try {
+        const picked = await invoke("pick_save_file", { defaultName: name, defaultDir: downloadDirRef.current });
+        if (!picked) return; // 用户取消——不发起传输
+        local = picked;
+        const dir = local.replace(/\/+$/, "").replace(/\/[^/]*$/, "");
+        if (dir) persistDownloadDir(dir);
+      } catch (e) {
+        pushToast("err", `另存为失败：${friendlyError(e)}`);
+        return;
+      }
+    } else if (downloadDirRef.current) {
+      local = `${downloadDirRef.current.replace(/\/+$/, "")}/${name}`;
+    }
     const tempId = `pending-dl-${Date.now()}-${++pendingSeqRef.current}`;
-    upsertTransfer({ id: tempId, kind: "Download", name: pathBasename(rp), remote: rp, local: "…", status: "running" });
+    upsertTransfer({ id: tempId, kind: "Download", name, remote: rp, local: local ?? "…", status: "running" });
     try {
-      const h = await invoke("download_file", { sid: s, remote: rp, local: null });
+      const h = await invoke("download_file", { sid: s, remote: rp, local });
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
     } catch (e) {
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(e) } : c)));
     }
-  }, [upsertTransfer]);
+  }, [upsertTransfer, persistDownloadDir, pushToast]);
 
   const startDownload = async () => {
     const rp = downloadPath.trim();
@@ -2475,7 +2518,35 @@ export default function App() {
     }
   }, [transfers, pushToast]);
 
-  // 拖拽事件（Tauri drag-drop，浏览器演示模式无此通道）：enter/over 显示覆盖层，drop 上传
+  // R33 §354 拖放落点分区：文件面板落点=直接上传到正在浏览的目录（不确认）；
+  // 其余落点（终端等）=目标确认卡。物理像素→逻辑像素后与面板实测矩形求交，
+  // 面板分区仅在面板开着且显示文件页时存在。demo 域经 window.__demoDrop 走同一逻辑。
+  // 面板开合/浏览路径经 ref 读取（探针实证 300ms 窗内 hook 重注册竞态——闭包捕获
+  // 旧 rightPanel 会借到已关闭面板的路径，违 §354）——同源判别用 ref 不用闭包
+  const taskPanelRef = useRef<HTMLElement | null>(null);
+  const rightPanelRef = useRef<null | "files" | "collab" | "forwards">(null);
+  useEffect(() => { rightPanelRef.current = rightPanel; }, [rightPanel]);
+  const beginDropUploads = useCallback((paths: string[], pos?: { x: number; y: number }) => {
+    if (!paths.length) return;
+    const s = sidRef.current;
+    if (!s) { void startUploads(paths, undefined); return; } // 无会话保留既有失败卡语义
+    const rp = rightPanelRef.current;
+    let zone: "panel" | "term" = "term";
+    if (pos && rp === "files") {
+      const r = taskPanelRef.current?.getBoundingClientRect();
+      if (r && pos.x >= r.left && pos.x <= r.right && pos.y >= r.top && pos.y <= r.bottom) zone = "panel";
+    }
+    if (zone === "panel") { void startUploads(paths, sftpPathRef.current || undefined, s); return; }
+    // 可信目标=该会话 brief.cwd（shell 集成上报，与定位钮同源）；不可信而面板可见
+    // 且正在浏览 → 以浏览目录预填；不可见面板旧路径一律不借用（§354）——面板关闭时
+    // 即使曾浏览过也不预填，留空必填
+    const prefill = briefRef.current?.cwd || (rp === "files" ? sftpPathRef.current : "") || "";
+    setPendingDropDir(prefill);
+    setPendingDropErr(null);
+    setPendingDrop({ paths, sid: s });
+  }, [startUploads]);
+
+  // 拖拽事件（Tauri drag-drop，浏览器演示模式无此通道）：enter/over 显示覆盖层，drop 分区
   useEffect(() => {
     if (!inTauri) return;
     let un: (() => void) | undefined;
@@ -2487,10 +2558,9 @@ export default function App() {
         else if (p.type === "leave") setDragOver(false);
         else if (p.type === "drop") {
           setDragOver(false);
-          const paths = (p as { paths?: string[] }).paths ?? [];
-          // 远程文件区正浏览着目录时，拖放目标 = 该目录（T41）；否则现场简报 cwd
-          const dest = sftpEntries !== null && sftpPath ? sftpPath : undefined;
-          if (paths.length) void startUploads(paths, dest);
+          // position 是物理像素（相对 webview 左上），CSS 矩形是逻辑像素——除以 dpr 再比
+          const dpr = window.devicePixelRatio || 1;
+          beginDropUploads(p.paths, { x: p.position.x / dpr, y: p.position.y / dpr });
         }
       })
       .then((f: () => void) => {
@@ -2501,7 +2571,59 @@ export default function App() {
       dead = true;
       un?.();
     };
-  }, [startUploads, sftpEntries, sftpPath]);
+  }, [beginDropUploads]);
+
+  // demo 域拖放判别钩子：demo 无 OS 拖放通道，探针经 demo_drag_drop 预置路径+逻辑
+  // 坐标，走与原生相同的分区/确认逻辑（坐标口径=逻辑像素，与 CSS 矩形同域）
+  useEffect(() => {
+    if (inTauri) return;
+    (window as unknown as { __demoDrop?: (paths: string[], x?: number, y?: number) => void }).__demoDrop =
+      (paths, x, y) => beginDropUploads(paths, x !== undefined && y !== undefined ? { x, y } : undefined);
+    return () => { delete (window as unknown as { __demoDrop?: unknown }).__demoDrop; };
+  }, [inTauri, beginDropUploads]);
+
+  // §354 切标签使未确认的目标选择失效——不静默改投另一主机；目标会话关闭同理
+  useEffect(() => {
+    if (!pendingDrop) return;
+    if (pendingDrop.sid === sid) return;
+    setPendingDrop(null);
+    pushToast("err", "上传已取消：目标会话已切换");
+  }, [sid, pendingDrop, pushToast]);
+
+  // 确认卡提交：目录必填（无可信 cwd 时不预填），确认时刻仍按拖放开始固定的会话上传。
+  // 输入目录先 sftp_resolve_path 归一（相对路径/.. 按服务端语义解析，与 navigateTo
+  // 同工艺）；解析失败=目录不可用——卡保持打开如实报错，不猜不投（rev-r33 低-2）
+  const confirmDropUpload = useCallback(async () => {
+    const pd = pendingDrop;
+    if (!pd || dropConfirmBusyRef.current) return;
+    const dir = pendingDropDir.trim();
+    if (!dir) return;
+    dropConfirmBusyRef.current = true;
+    setPendingDropErr(null);
+    try {
+      const r = await invoke("sftp_resolve_path", { sid: pd.sid, path: dir });
+      setPendingDrop(null);
+      void startUploads(pd.paths, r.canonical, pd.sid);
+    } catch (e) {
+      setPendingDropErr(friendlyError(e));
+    } finally {
+      dropConfirmBusyRef.current = false;
+    }
+  }, [pendingDrop, pendingDropDir, startUploads]);
+
+  // R33 §353 文件面板「上传」：原生文件选择器（多选）；目标=正在浏览的目录；
+  // 取消=不发起。浏览器 demo 域由 pick_upload_files mock 承接同一命令面。
+  const pickAndUpload = useCallback(async () => {
+    const s = sidRef.current;
+    if (!s || !sftpPath) { pushToast("err", "先连接主机并进入一个目录再上传"); return; }
+    try {
+      const paths = await invoke("pick_upload_files");
+      if (!paths.length) return;
+      void startUploads(paths, sftpPath, s);
+    } catch (e) {
+      pushToast("err", `打开文件选择器失败：${friendlyError(e)}`);
+    }
+  }, [sftpPath, startUploads, pushToast]);
 
   const createSession = async (host: Host) => {
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
@@ -3319,7 +3441,7 @@ export default function App() {
                   <div><span className="ws-k">连接</span>主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接</div>
                   <div><span className="ws-k">操作</span>点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴</div>
                   <div><span className="ws-k">多会话</span>一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留</div>
-                  <div><span className="ws-k">传输</span>拖文件进终端即上传到当前目录；下方命令框可逐条执行，焦点自动回终端</div>
+                  <div><span className="ws-k">传输</span>拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标；下方命令框可逐条执行，焦点自动回终端</div>
                 </div>
                 <div className="welcome-actions">
                   <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
@@ -3486,6 +3608,45 @@ export default function App() {
                     restoreTermFocus();
                   }}>发送</button>
                   <button className="ghost" data-autofocus onClick={() => setPasteConfirm(null)}>取消</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {pendingDrop && (
+            // R33 §354 终端拖入确认：目标会话在拖放开始时固定（切标签即失效，见 effect）；
+            // 目录输入预填可信 cwd（无可信不借用不可见面板路径）；确认=按固定会话上传
+            <div className="confirm-mask" onClick={() => setPendingDrop(null)}>
+              <div className="confirm-dialog" ref={dropCardRef} role="dialog" aria-modal="true" aria-labelledby="dlg-drop-title"
+                onKeyDown={(e) => { if (e.key === "Escape") setPendingDrop(null); }}
+                onClick={(e) => e.stopPropagation()}>
+                <div className="hk-title" id="dlg-drop-title">
+                  上传到 {sessionsRef.current.find((x) => x.id === pendingDrop.sid)?.host_name ?? "该会话"}：
+                </div>
+                <div className="row" style={{ gap: 6 }}>
+                  <input
+                    className="mono" data-testid="drop-dir-input" data-autofocus
+                    style={{ flex: 1 }} aria-label="远端目标目录"
+                    placeholder={pendingDropDir ? "" : "远端目录（绝对路径，必填）"}
+                    value={pendingDropDir}
+                    onChange={(e) => setPendingDropDir(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && pendingDropDir.trim()) confirmDropUpload(); }}
+                  />
+                </div>
+                <div className="dim" style={{ marginTop: 6, fontSize: 12 }} data-testid="drop-files-line">
+                  {pendingDrop.paths.length} 个文件：{pendingDrop.paths.slice(0, 3).map((p) => pathBasename(p)).join("、")}
+                  {pendingDrop.paths.length > 3 ? ` 等 ${pendingDrop.paths.length} 个` : ""}
+                </div>
+                {!briefRef.current?.cwd && (
+                  <div className="dim" style={{ marginTop: 4, fontSize: 12 }} data-testid="drop-no-cwd-hint">
+                    该会话无可信工作目录（shell 集成未上报 cwd）——请填写远端目录。
+                  </div>
+                )}
+                {pendingDropErr && (
+                  <div className="err" style={{ marginTop: 4, fontSize: 12 }} data-testid="drop-err">{pendingDropErr}</div>
+                )}
+                <div className="hk-actions">
+                  <button className="ghost" onClick={() => setPendingDrop(null)}>取消</button>
+                  <button data-testid="drop-confirm" disabled={!pendingDropDir.trim()} onClick={confirmDropUpload}>上传到此处</button>
                 </div>
               </div>
             </div>
@@ -3686,7 +3847,7 @@ export default function App() {
 
         {/* 右侧任务面板（§4.3）：一次只呈现文件 / 转发 / 协作之一；窄窗改中央完整视图 */}
         {rightPanel && (
-          <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label="任务面板">
+          <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label="任务面板" ref={taskPanelRef}>
             <div className="tp-head">
               <b>{rightPanel === "files" ? "文件与传输" : rightPanel === "forwards" ? "端口转发" : "协作"}</b>
               {tpFull && <span className="dim" style={{ fontSize: 11 }}>空间不足——完整视图，终端仍在运行</span>}
@@ -3803,6 +3964,11 @@ export default function App() {
                     disabled={!brief?.cwd || sftpPath === brief.cwd}
                     onClick={() => brief?.cwd && void navigateTo(brief.cwd)}
                   ><IconTerminal size={13} /></button>
+                  <button className="ghost" title="上传本地文件到当前目录（原生文件选择器，可多选）" aria-label="上传"
+                    data-testid="sftp-upload-btn"
+                    disabled={!sftpPath || sftpLoading}
+                    onClick={() => void pickAndUpload()}
+                  ><IconUpload size={13} /></button>
                   <span style={{ flex: 1 }} />
                   <button className={"ghost" + (sftpEditPath ? " ts-open" : "")} title={sftpEditPath ? "切换为面包屑" : "编辑路径框"}
                     aria-label="切换路径输入" aria-pressed={sftpEditPath}
@@ -3894,7 +4060,7 @@ export default function App() {
                         {!e.is_dir && (
                           <button
                             className="ghost sftp-dl"
-                            title="下载到「下载」文件夹"
+                            title="下载（存上次下载目录，首次为「下载」文件夹；菜单「另存为…」可选位置）"
                             onClick={(ev) => { ev.stopPropagation(); void downloadRemote(`${sftpPath.replace(/\/+$/, "")}/${e.name}`); }}
                           ><IconDownload size={12} />下载</button>
                         )}
@@ -3913,7 +4079,7 @@ export default function App() {
                       onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
                   </div>
                 )}
-                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存到「下载」文件夹；进度见下方「传输」。</div>
+                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），菜单「另存为…」可选位置；进度见下方「传输」。</div>
               </>
             )}
           </div>
@@ -3932,7 +4098,7 @@ export default function App() {
               </div>
             )}
             {transfers.length === 0 && (
-                <div className="side-quiet">把文件从访达拖进终端即上传到当前目录；下载在上方「下载远端文件」输入框填绝对路径（存到「下载」文件夹）。</div>
+                <div className="side-quiet">把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。下载默认存到上次下载目录（首次为「下载」文件夹），也可「另存为」。</div>
             )}
             {transfers.map((t) => (
               <div className="card row xfer-row" key={t.id}>
@@ -4147,6 +4313,9 @@ Authorization: Bearer <TOKEN>`}
           <button role="menuitem" data-testid="sftp-menu-download"
             onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`); }}
           ><IconDownload size={12} /> 下载</button>
+          <button role="menuitem" data-testid="sftp-menu-saveas"
+            onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`, { saveAs: true }); }}
+          ><IconInbox size={12} /> 另存为…</button>
         </div>
       )}
     </div>

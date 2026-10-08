@@ -482,6 +482,8 @@ export interface Workspace {
   hostbar: HostbarPrefs | null;
   /** 终端偏好（R25 §318）；null = 尚未写入，消费方按全默认解释 */
   terminal?: TerminalPrefs | null;
+  /** 传输偏好（R33 §355）；null = 尚未写入，下载落系统默认目录 */
+  transfers?: TransferPrefs | null;
 }
 
 export interface HostbarPrefs {
@@ -492,6 +494,12 @@ export interface HostbarPrefs {
 /** 终端偏好（R25 §318）：粘贴保护开关，默认开 */
 export interface TerminalPrefs {
   paste_guard: boolean;
+}
+
+/** 传输偏好（R33 §355）：下载默认目录记忆（首次=系统 Downloads；另存为后更新） */
+export interface TransferPrefs {
+  /** 上次下载目录（本地绝对路径；null = 未记忆，落系统默认） */
+  download_dir: string | null;
 }
 
 /** 主机元数据（DF8.2 host_metadata 表行）。 */

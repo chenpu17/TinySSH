@@ -1,0 +1,9 @@
+PASS O1 old code: no upload button
+PASS O2 old code: pick_upload_files unimplemented  [{"kind":"invalid_input","message":"演示 shim 未实现该命令：pick_upload_files"}]
+PASS O3 old code: pick_save_file unimplemented  [{"kind":"invalid_input","message":"演示 shim 未实现该命令：pick_save_file"}]
+PASS O4 old code: no save-as menu item
+PASS O5 old code: no __demoDrop hook
+PASS O6 old code: demo_drag_drop unimplemented (no drop path at all)  [{"kind":"invalid_input","message":"演示 shim 未实现该命令：demo_drag_drop"}]
+PASS O7 old code: download dest = system Downloads (no last-dir memory)  [~/Downloads/access.log]
+PASS O7b old code: no transfers blob domain  [absent]
+SUMMARY 8/8

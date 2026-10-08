@@ -853,6 +853,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState { api: api.clone() })
         .manage(terminal_input.clone())
         .on_page_load(|webview, payload| {
@@ -908,6 +909,8 @@ fn main() {
                     r30_smoke_script(&run_id)
                 } else if mode.starts_with("r32") {
                     r32_smoke_script(&run_id, &mode)
+                } else if mode.starts_with("r33") {
+                    r33_smoke_script(&run_id)
                 } else if mode.starts_with("r31") {
                     r31_smoke_script(&run_id)
                 } else {
@@ -1290,6 +1293,7 @@ fn main() {
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
             upload_file, download_file, cancel_transfer, list_transfers, sftp_list, sftp_resolve_path, sftp_stat,
+            pick_upload_files, pick_save_file,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             list_host_metadata, list_recent_hosts,
@@ -1316,6 +1320,44 @@ fn main() {
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+/// R33 §353 上传入口：原生文件选择器（多选）。对话框必须在非主线程跑——
+/// blocking_* 变体放 spawn_blocking；取消返回空数组（FE 据此静默收场）。
+#[tauri::command]
+async fn pick_upload_files(app: tauri::AppHandle) -> std::result::Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let picked = tauri_plugin_dialog::DialogExt::dialog(&app)
+            .file()
+            .add_filter("所有文件", &["*"])
+            .blocking_pick_files();
+        Ok(picked
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.to_string())
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// R33 §354 下载「另存为」：原生保存对话框（默认文件名/目录可给）；取消返回 None。
+#[tauri::command]
+async fn pick_save_file(
+    app: tauri::AppHandle,
+    default_name: String,
+    default_dir: Option<String>,
+) -> std::result::Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut b = tauri_plugin_dialog::DialogExt::dialog(&app).file();
+        b = b.set_file_name(&default_name);
+        if let Some(d) = default_dir {
+            b = b.set_directory(d);
+        }
+        Ok(b.blocking_pick_file().map(|p| p.to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// P2 探针注入脚本（TINYSSH_SMOKE_MODE=p2；dev 门控）：同一 release 会话切换 100 次
@@ -3093,6 +3135,147 @@ fn r31_smoke_script(run_id: &str) -> String {
       await markSync('r31a-split-restore-ok');
       await markSync('r31a-DONE');
       await title('r31-DONE');
+      await sleep(120000);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 120) : String(e).slice(0, 140)));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R33 原生冒烟注入脚本（TINYSSH_SMOKE_MODE=r33a；dev 门控，产品路径无关）：
+/// 上传下载入口真实对话框链路——面板「上传」→ NSOpenPanel（驱动 GoTo+⌘A+Return）
+/// → 多选上传真传输落容器；动作菜单「另存为…」→ NSSavePanel（驱动 GoTo+Return）
+/// → 真落盘 /tmp/r33save + blob transfers.download_dir 记忆；普通下载 → 落上次目录。
+/// 原生拖拽通道无法诚实合成（Finder 拖入）——分区/确认卡判别归 demo 域（登记）。
+fn r33_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R33_INJECTED__) return;
+  window.__R33_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const crumbsPath = () => document.querySelector('[data-testid="sftp-crumbs"]')?.title || null;
+  const rowNames = () => [...document.querySelectorAll('[data-testid="sftp-list"] .sftp-row')].map((r) => r.dataset.name);
+  const navTo = async (p) => {
+    [...document.querySelectorAll('.sftp-nav button')].find((x) => x.getAttribute('aria-label') === '切换路径输入')?.click();
+    const inp = await waitFor(() => document.querySelector('[data-testid="sftp-path-input"]') || null, 40);
+    if (!inp) return false;
+    inp.focus();
+    document.execCommand('selectAll', false);
+    document.execCommand('insertText', false, p);
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    const okNav = await waitFor(() => (crumbsPath() === p ? true : null), 60);
+    return !!okNav;
+  };
+  const tasksTerminal = async () => {
+    const l = await inv('list_transfers', {});
+    return l.length > 0 && l.every((t) => ['Succeeded', 'Failed', 'Cancelled'].includes(t.status)) ? l : null;
+  };
+  (async () => {
+    try {
+      await title('r33-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r33-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r33-a', '.host-connect-btn') ? true : null), 40);
+      if (!connect('r33-a')) return title('FAIL-connect-a');
+      await trust();
+      if (!await waitFor(async () => (await activeSess('r33-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+      await sleep(400);
+      // 打开文件面板 → 导航到 /tmp/r33dir（远端容器树）
+      const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
+      if (!stBtn) return title('FAIL-no-files-btn');
+      stBtn.click();
+      if (!await waitFor(() => document.querySelector('[data-testid="sftp-crumbs"]') || null, 60)) return title('FAIL-no-crumbs');
+      await sleep(700);
+      if (!await navTo('/tmp/r33dir')) return title('FAIL-nav:' + crumbsPath());
+      if (!await waitFor(() => rowNames().includes('app.txt') ? true : null, 60)) return title('FAIL-no-rows:' + rowNames().join(','));
+      // R33 新钮：上传（真实 NSOpenPanel 由驱动键序确认）
+      const upBtn = await waitFor(() => document.querySelector('[data-testid="sftp-upload-btn"]') || null, 40);
+      if (!upBtn || upBtn.disabled) return title('FAIL-no-upload-btn');
+      upBtn.click();
+      await markSync('r33a-pick-open');
+      const picked = await waitFor(async () => {
+        const l = await inv('list_transfers', {});
+        return l.filter((t) => t.kind === 'Upload').length >= 3 ? l.filter((t) => t.kind === 'Upload') : null;
+      }, 80);
+      if (!picked) return title('FAIL-pick-no-upload（NSOpenPanel 未确认或未返回文件）');
+      if (!picked.every((t) => t.dest.startsWith('/tmp/r33dir/'))) return title('FAIL-pick-dest:' + picked.map((t) => t.dest).join(','));
+      const upDone = await waitFor(async () => (picked.every((t) => t.status === 'Succeeded') ? true : null), 100);
+      if (!upDone) return title('FAIL-pick-upload-terminal:' + picked.map((t) => t.status).join(','));
+      await markSync('r33a-pick-ok（原生选择器多选上传 ' + picked.length + ' 文件全部 Succeeded）');
+      // 另存为：动作菜单 → NSSavePanel（驱动 GoTo /tmp/r33save + Return 确认）
+      const row = [...document.querySelectorAll('[data-testid="sftp-list"] .sftp-row')].find((r) => r.dataset.name === 'app.txt');
+      if (!row) return title('FAIL-no-app-row');
+      row.querySelector('.sftp-name')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const saveItem = await waitFor(() => document.querySelector('[data-testid="sftp-menu-saveas"]') || null, 40);
+      if (!saveItem) return title('FAIL-no-saveas-item');
+      saveItem.click();
+      await markSync('r33a-save-open');
+      const saveTask = await waitFor(async () => {
+        const l = await inv('list_transfers', {});
+        const t = l.find((x) => x.kind === 'Download' && x.source === '/tmp/r33dir/app.txt');
+        return t && t.dest.startsWith('/tmp/r33save/') ? t : null;
+      }, 80);
+      if (!saveTask) return title('FAIL-saveas-no-card');
+      const saveDone = await waitFor(async () => {
+        const l = await inv('list_transfers', {});
+        return l.find((x) => x.id === saveTask.id)?.status === 'Succeeded' ? true : null;
+      }, 100);
+      if (!saveDone) return title('FAIL-saveas-terminal:' + saveTask.status);
+      // §356 目录记忆：blob transfers.download_dir = /tmp/r33save
+      const ws = await inv('get_workspace', {});
+      if (ws?.transfers?.download_dir !== '/tmp/r33save') return title('FAIL-dir-memory:' + JSON.stringify(ws?.transfers ?? null));
+      await markSync('r33a-saveas-ok（另存为真落盘 ' + saveTask.dest + ' + 目录记忆）');
+      // 普通下载 → 落上次下载目录（不再询问）
+      const rowB = [...document.querySelectorAll('[data-testid="sftp-list"] .sftp-row')].find((r) => r.dataset.name === 'b.txt');
+      if (!rowB) return title('FAIL-no-b-row');
+      rowB.querySelector('.sftp-dl')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const dlTask = await waitFor(async () => {
+        const l = await inv('list_transfers', {});
+        const t = l.find((x) => x.kind === 'Download' && x.source === '/tmp/r33dir/b.txt');
+        return t && t.dest.startsWith('/tmp/r33save/') ? t : null;
+      }, 80);
+      if (!dlTask) return title('FAIL-lastdir:' + JSON.stringify((await inv('list_transfers', {})).find((x) => x.kind === 'Download' && x.source === '/tmp/r33dir/b.txt')?.dest ?? null));
+      const dlDone = await waitFor(async () => {
+        const l = await inv('list_transfers', {});
+        return l.find((x) => x.id === dlTask.id)?.status === 'Succeeded' ? true : null;
+      }, 100);
+      if (!dlDone) return title('FAIL-lastdir-terminal');
+      await tasksTerminal();
+      await markSync('r33a-lastdir-ok（普通下载落上次目录 ' + dlTask.dest + '）');
+      await markSync('r33a-DONE');
+      await title('r33-DONE');
       await sleep(120000);
     } catch (e) {
       await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 120) : String(e).slice(0, 140)));

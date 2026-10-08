@@ -58,6 +58,13 @@ const demoState = {
   sftpSlow: null as { path: string; ms: number } | null,
   // C5（R32）演示传输注册表（创建倒序；真实核心同契约）
   transfers: [] as DemoTransfer[],
+  // C6/R33（§353-355）原生选择器模拟：demo 域无真实对话框，由探针经 demo_pick_result
+  // 预置返回值（null=走默认桩，模拟用户取消/直接确认）
+  pickResult: null as string[] | null,
+  saveResult: null as string | null,
+  // R33 判别钩子：session_brief cwd 覆写（undefined=未覆写走默认；null=模拟 shell
+  // 集成未上报无可信 cwd——§354「没有可信 cwd」分支在 demo 域的可达面）
+  briefCwdOverride: undefined as string | null | undefined,
   // C8 主机元数据（DF8.2）：收藏/最近连接，演示态内存域（真实核心在 host_metadata 表）
   hostMeta: new Map<string, { favorite: boolean; last_connected_at: string | null }>(),
   // R21 凭据基础管理：演示态凭据域（真实核心在 vault identities 表）+ 主机→凭据绑定
@@ -611,13 +618,14 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "session_brief": {
       const bs = demoState.sessions.find((x) => x.id === args?.sid);
+      const cwd = demoState.briefCwdOverride === undefined ? "/var/log/nginx" : demoState.briefCwdOverride;
       return {
-        cwd: "/var/log/nginx",
+        cwd,
         running: [],
         pending_approvals: demoState.approvals.filter((a) => a.status === "pending").map((a) => a.id),
         env_summary: "TERM=xterm-256color；env 变更未追踪（V0）——printenv 核实",
         facts: [
-          { subject: "cwd", detail: "/var/log/nginx", status: "Confirmed" },
+          ...(cwd !== null ? [{ subject: "cwd", detail: cwd, status: "Confirmed" }] : []),
           { subject: "命令（human）", detail: "df -h → exit 0", status: "Confirmed" },
           // 与真实 brief::compute 对齐：控制权 fact = transitions 最近 3 条按序（无变迁则无此 fact）；
           // ISO-UTC → 本地 HH:MM:SS（与真实修复后口径一致，和操作记录时间线同区）
@@ -1003,6 +1011,36 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "demo_sftp_slow": {
       demoState.sftpSlow = { path: String(args?.path ?? ""), ms: Number(args?.ms ?? 0) };
       return null;
+    }
+    // R33（§353-355）选择器与拖放判别钩子：demo 无真实原生对话框/无 OS 拖放事件，
+    // 探针预置返回值 / 直接触发 App 注册的 window.__demoDrop(paths) 回调
+    case "demo_pick_result": {
+      // "paths"/"path" 键存在才覆写（缺键=恢复默认桩）；path 空串=模拟用户取消
+      demoState.pickResult = args && "paths" in args ? [...((args.paths as string[] | undefined) ?? [])] : null;
+      demoState.saveResult = args && "path" in args ? String(args.path ?? "") : null;
+      return null;
+    }
+    case "demo_brief_cwd": {
+      // {cwd: string|null} 覆写 brief cwd；无 cwd 键=恢复默认（/var/log/nginx）
+      demoState.briefCwdOverride = args && "cwd" in args ? (args.cwd == null ? null : String(args.cwd)) : undefined;
+      return null;
+    }
+    case "demo_drag_drop": {
+      const paths = (args?.paths as string[]) ?? [];
+      const cb = (window as unknown as { __demoDrop?: (paths: string[], x?: number, y?: number) => void }).__demoDrop;
+      if (!cb) throw apiError("invalid_input", "演示拖放回调未注册（面板未挂载？）");
+      cb(paths, args?.x as number | undefined, args?.y as number | undefined);
+      return null;
+    }
+    case "pick_upload_files": {
+      // 默认桩模拟一次普通选择；demo_pick_result 预置 [] 可判别取消路径
+      return demoState.pickResult ?? ["/Users/demo/Desktop/deploy.tar.gz", "/Users/demo/Desktop/app.yml"];
+    }
+    case "pick_save_file": {
+      if (demoState.saveResult !== null) return demoState.saveResult;
+      const name = String(args?.defaultName ?? "file");
+      const dir = String(args?.defaultDir ?? "/Users/demo/Downloads");
+      return `${dir}/${name}`;
     }
     // T42 FR-8：端口转发注册表演示。demo 无法真实监听端口/建隧道——仅按会话
     // 维护转发条目（wire 契约同口径：外部标签 spec + state/error），审计随操作

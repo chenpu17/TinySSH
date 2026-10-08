@@ -1,0 +1,75 @@
+{
+  "report": [
+    {
+      "name": "rc-selfnoise",
+      "pass": true,
+      "detail": "当前树自噪声 strict=0"
+    },
+    {
+      "name": "rc-welcome-bounded",
+      "pass": true,
+      "detail": "双树 strict=5146px maxCh=106 bbox=x[595,958] y[475,508] (364x34) 有界于 welcome 步骤区=true"
+    },
+    {
+      "name": "rc-welcome-copy",
+      "pass": true,
+      "detail": "新文案=\"传输拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标；下方命令框可逐条执行，焦点自动回终端...\""
+    },
+    {
+      "name": "rc-footer-copy",
+      "pass": true,
+      "detail": "尾部提示=\"单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），菜单...\""
+    },
+    {
+      "name": "rc-hint-absent-default",
+      "pass": true,
+      "detail": "默认（有 cwd）提示行不在"
+    },
+    {
+      "name": "rc-errline-dark",
+      "pass": true,
+      "detail": "深色错误行=\"演示模式：路径不存在（/no/such/dir）\" rect=1 截断=0 卡高=186 底=493≤800"
+    },
+    {
+      "name": "rc-err-contrast-dark",
+      "pass": true,
+      "detail": "深色 err/卡底对比度=15.07"
+    },
+    {
+      "name": "rc-esc-close-dark",
+      "pass": true,
+      "detail": "Esc 关卡干净"
+    },
+    {
+      "name": "rc-hint-line",
+      "pass": true,
+      "detail": "提示行=\"该会话无可信工作目录（shell 集成未上报 cwd）——请...\" rect=2 截断=0 焦点=drop-dir-input 预填=\"/var/log/nginx\"（设计：无可信 cwd 时以可见面板浏览目录预填，非借不可见状态；「都无留空」分支 demo 不可达=登记面）"
+    },
+    {
+      "name": "rc-esc-close-hint",
+      "pass": true,
+      "detail": "提示行卡 Esc 后残留=0"
+    },
+    {
+      "name": "rc-err-contrast-light",
+      "pass": true,
+      "detail": "浅色 err 行在=true err/卡底对比度=21"
+    },
+    {
+      "name": "rc-esc-close-light",
+      "pass": true,
+      "detail": "浅色错误卡关闭残留=0"
+    },
+    {
+      "name": "rc-hint-contrast-light",
+      "pass": true,
+      "detail": "浅色提示行在=true 对比度=21（dim 次要文本，数字如实报）"
+    },
+    {
+      "name": "rc-esc-close-light2",
+      "pass": true,
+      "detail": "浅色提示卡关闭残留=0"
+    }
+  ],
+  "errors": []
+}

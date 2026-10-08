@@ -1240,6 +1240,9 @@ pub struct Workspace {
     /// 终端偏好（R25 §318；None = 尚未写入，消费方按全默认解释）
     #[serde(default)]
     pub terminal: Option<TerminalPrefs>,
+    /// 传输偏好（R33 §355；None = 尚未写入，下载落系统默认目录）
+    #[serde(default)]
+    pub transfers: Option<TransferPrefs>,
 }
 
 /// 终端偏好（§318）：粘贴保护开关，默认开
@@ -1254,6 +1257,14 @@ fn default_chrome() -> String {
     "system".into()
 }
 
+/// 传输偏好（R33 §355）：下载默认目录记忆（首次=系统 Downloads；另存为后更新）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferPrefs {
+    /// 上次下载目录（本地绝对路径；None = 未记忆，落系统默认）
+    #[serde(default)]
+    pub download_dir: Option<String>,
+}
+
 /// C7 增量字段的兼容默认（旧消费方反序列化旧载荷 = 可导入）
 pub fn serde_true() -> bool {
     true
@@ -1261,7 +1272,7 @@ pub fn serde_true() -> bool {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None, terminal: None }
+        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None, terminal: None, transfers: None }
     }
 }
 
@@ -1501,6 +1512,34 @@ mod wire_format_tests {
         });
         let item: ApprovalItem = serde_json::from_value(legacy).unwrap();
         assert!(!item.editable);
+    }
+
+    /// 锁定 Workspace.transfers 域的兼容行为（R33 §355）：旧 blob（R25/R27/R31
+    /// 写入，无 transfers 字段）反序列化 = None（下载落系统默认目录）；新载荷
+    /// round-trip 保形——download_dir 缺失时 TransferPrefs 本身也要能反序列化
+    ///（write-through 域：set_workspace 整取整存，部分域写入不虚构其他域默认值）。
+    #[test]
+    fn workspace_transfers_field_wire_compat() {
+        // 旧载荷：chrome+hostbar 时代 / terminal 时代 blob 均无 transfers
+        let legacy: Workspace = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "chrome": "dark", "hostbar": { "open": true, "width": 224 }
+        })).unwrap();
+        assert!(legacy.transfers.is_none());
+        // 新载荷 round-trip
+        let ws = Workspace {
+            schema_version: 1, chrome: "system".into(),
+            hostbar: None, terminal: None,
+            transfers: Some(TransferPrefs { download_dir: Some("/Users/demo/Downloads".into()) }),
+        };
+        let v = serde_json::to_value(&ws).unwrap();
+        assert_eq!(v["transfers"]["download_dir"], "/Users/demo/Downloads");
+        let back: Workspace = serde_json::from_value(v).unwrap();
+        assert_eq!(back, ws);
+        // transfers 域对象存在但 download_dir 未写入 → None（不虚构默认值）
+        let partial: Workspace = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "chrome": "system", "transfers": {}
+        })).unwrap();
+        assert_eq!(partial.transfers.as_ref().and_then(|t| t.download_dir.clone()), None);
     }
 
     /// 锁定 Charset 的线上格式："utf-8"/"gbk"（与 vault hosts.charset 列、UI select、
