@@ -34,6 +34,7 @@ interface CmdArgs {
   delete_host: { id: string };
   create_identity: { req: wire.IdentityReq };
   list_identities: undefined;
+  delete_identity: { id: string };
   ssh_config_preview: { path?: string | null };
   ssh_config_import: { path?: string | null; names: string[] };
   list_sessions: undefined;
@@ -90,6 +91,7 @@ interface CmdRet {
   delete_host: void;
   create_identity: wire.IdentityMeta;
   list_identities: wire.IdentityMeta[];
+  delete_identity: void;
   ssh_config_preview: wire.SshConfigPreview[];
   ssh_config_import: wire.SshImportOutcome[];
   list_sessions: wire.SessionInfo[];

@@ -53,13 +53,18 @@ const demoState = {
   owner: "Agent" as "Human" | "Agent",
   // C8 主机元数据（DF8.2）：收藏/最近连接，演示态内存域（真实核心在 host_metadata 表）
   hostMeta: new Map<string, { favorite: boolean; last_connected_at: string | null }>(),
+  // R21 凭据基础管理：演示态凭据域（真实核心在 vault identities 表）+ 主机→凭据绑定
+  //（真实 HostDraft.auth Key 携带 identity_id，demo 同语义存 ident_id）
+  identities: [] as { id: string; label: string; kind: string; fingerprint: string }[],
   hosts: [
     { id: "local", name: "本机", address: "local", port: 0, username: "ops", auth_type: "Password" },
     { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI" },
     { id: "h-prod2", name: "prod-2（演示连接失败）", address: "10.0.0.12", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-otp1", name: "otp-1（演示 2FA）", address: "otp.demo", port: 22, username: "ops", auth_type: "Password" },
+    // R21（§306）：echo=false 演示主机——验证码输入不回显（遮蔽断言面）
+    { id: "h-otp2", name: "otp-2（演示 2FA 隐）", address: "otp2.demo", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-staging1", name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password" },
-  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk"; tags?: string[] }[],
+  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk"; tags?: string[]; ident_id?: string | null }[],
   sessions: [
     {
       id: "s-demo-0001", host_id: "h-prod1", host_name: "prod-1", kind: "ssh",
@@ -209,7 +214,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     // React 靠引用变化感知更新——shim 返回同一可变数组会让 setSessions 失效
     // （接管后 chip 不翻转的根因）。
     case "list_hosts":
-      return demoState.hosts.map((h) => ({ ...h }));
+      // identity_id 为 wire Host 契约字段（凭据绑定，R21 凭据库「使用中」标记的消费面）
+      return demoState.hosts.map((h) => ({ ...h, identity_id: h.ident_id ?? null }));
     case "list_sessions":
       return demoState.sessions.map((s) => ({
         id: s.id, host_id: s.host_id, host_name: s.host_name, kind: s.kind,
@@ -225,6 +231,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         : a && typeof a === "object" && "Key" in (a as Record<string, unknown>)
           ? "Key"
           : "Password";
+      // R21：Key 凭据绑定（真实 HostDraft.auth.Key.identity_id 的 demo 同语义）
+      const identId = a && typeof a === "object" && "Key" in (a as Record<string, unknown>)
+        ? ((a as Record<string, unknown>).Key as { identity_id?: string } | undefined)?.identity_id ?? null
+        : null;
       if (h.id) {
         const ex = demoState.hosts.find((x) => x.id === h.id);
         if (ex) {
@@ -232,6 +242,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           ex.charset = h.charset ?? "utf-8";
           if (h.tags) ex.tags = h.tags.filter((t) => t.trim()).map((t) => t.trim());
           if (authType !== "Keep") ex.auth_type = authType;
+          ex.ident_id = authType === "Key" ? identId : null;
           audit("human", "host_upsert", h.name);
           return h.id;
         }
@@ -239,7 +250,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const id = h.id ?? "h-demo-" + demoSeq++;
       demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username,
         auth_type: authType === "Keep" ? "Password" : authType, charset: h.charset ?? "utf-8",
-        tags: (h.tags ?? []).filter((t: string) => typeof t === "string" && t.trim()).map((t: string) => t.trim()) });
+        tags: (h.tags ?? []).filter((t: string) => typeof t === "string" && t.trim()).map((t: string) => t.trim()),
+        ident_id: authType === "Key" ? identId : null });
       audit("human", "host_upsert", h.name);
       return id;
     }
@@ -261,10 +273,25 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const kind = req?.Generate
         ? (req.Generate.kind === "Rsa" ? "Rsa" : "Ed25519")
         : req?.Import ? "Ed25519" : "Password";
-      return { id: "id-demo-" + demoSeq++, label, kind, fingerprint: `SHA256:demoKey${demoSeq}qZ3tN7vBw9xQmFpL2sKd==` };
+      const meta = { id: "id-demo-" + demoSeq++, label, kind, fingerprint: `SHA256:demoKey${demoSeq}qZ3tN7vBw9xQmFpL2sKd==` };
+      demoState.identities.push(meta);
+      return meta;
     }
     case "list_identities":
-      return [];
+      return [...demoState.identities];
+    case "delete_identity": {
+      // R21 凭据基础管理：与真实 vault 同语义——被主机引用拒删并列出主机名
+      const id = args?.id as string;
+      const used = demoState.hosts.filter((x) => x.ident_id === id);
+      if (used.length > 0) {
+        throw apiError("identity_in_use", "凭据仍被主机引用", { host_names: used.map((x) => x.name) });
+      }
+      const before = demoState.identities.length;
+      demoState.identities = demoState.identities.filter((x) => x.id !== id);
+      if (demoState.identities.length === before) throw apiError("invalid_input", "凭据不存在（演示）");
+      audit("human", "identity_delete", id);
+      return null;
+    }
     case "ssh_config_preview":
       // 两可导入 + 一已导入（按主机名对账，与真实 already_imported 语义一致）
       return ["web-1", "db-1"].map((name) => ({
@@ -321,8 +348,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         });
         if (!ok) throw apiError("host_key_rejected", "主机指纹验证失败（演示：已拒绝该主机指纹）");
       }
-      if (h.address === "otp.demo") {
-        // 2FA 演示（路线图⑩）：认证提示挂起等人类应答（与真实挂起语义同构）
+      if (h.address === "otp.demo" || h.address === "otp2.demo") {
+        // 2FA 演示（路线图⑩）：认证提示挂起等人类应答（与真实挂起语义同构）；
+        // R21：otp2.demo 走 echo=false（服务器语义不回显），覆盖输入遮蔽分支
         const answer = await new Promise<string | null>((resolve) => {
           demoState.pendingPrompts.push({
             item: {
@@ -331,7 +359,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
               name: "otp",
               instructions: "",
               prompt: "Verification code (OTP):",
-              echo: true,
+              echo: h.address !== "otp2.demo",
               created_at: new Date().toISOString(),
             },
             resolve,

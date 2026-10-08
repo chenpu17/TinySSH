@@ -1,0 +1,19 @@
+PASS F1 名称自地址生成且可编辑  [r21.autofill.test]
+PASS A1 本主机连接中显示 连接中… 且按钮禁用  [{"disabled":true,"text":"连接中…"}]
+PASS A2 其他主机连接钮不受扰（§280）  [{"disabled":false,"text":"连接"}]
+PASS A3 2FA 门挂起期间其他主机仍可连接  [{"disabled":false,"text":"连接"}]
+PASS B1 前台完成后原会话标签激活  [otp-1（演示 2FA）]
+PASS B2 终端持焦（§6.3）
+PASS D1 echo=false 验证码输入遮蔽（§306）  [{"type":"password","ph":"输入验证码（输入不回显）"}]
+PASS C1 后台完成不切视图（§6.3）  [{"before":"otp-1（演示 2FA）","after":"otp-1（演示 2FA）"}]
+PASS C2 后台完成有可寻 toast  [已连接 otp-1（演示 2FA）|已连接 otp-2（演示 2FA 隐）——点击标签进入]
+PASS C3 点击标签进入后台完成的会话  [otp-2（演示 2FA 隐）]
+PASS E1 生成凭据出示指纹确认（FR-2）
+PASS E2 取消表单后凭据在库且标未绑定（§267）  [[{"label":"key@host","badge":"未绑定"}]]
+PASS E3 已有密钥选择器含未绑定凭据（§265）
+PASS E4 绑定保存后凭据标使用中  [使用中]
+PASS E5 引用检查拒删并列出主机名  [✕ 凭据仍被 1 台主机使用（r21-keyhost）——请先为这些主机改绑凭据或删除主机]
+PASS E6 删主机后凭据回到未绑定  [未绑定]
+PASS E7 未绑定凭据删除成功  [0]
+PASS Z1 零 JS 错误
+r21-demo-ALL-PASS 18

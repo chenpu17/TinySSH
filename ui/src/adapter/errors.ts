@@ -64,6 +64,6 @@ export function errMsg(raw: unknown): string {
 }
 
 /** demo 后端构造与 wire 同形的错误（demo 不绕过错误契约）。 */
-export function apiError(kind: WireErrorKind, message: string): ApiError {
-  return { kind, message };
+export function apiError(kind: WireErrorKind, message: string, detail?: unknown): ApiError {
+  return detail === undefined ? { kind, message } : { kind, message, detail };
 }

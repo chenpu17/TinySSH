@@ -1,0 +1,13 @@
+r21-open
+r21b|r21-gen-ok
+r21b|r21-unbound-ok
+r21b|r21-bound-ok
+r21b|r21-inuse-ok
+r21b|r21-inuse-reject-ok
+r21b|r21-deleted-ok
+r21b|r21-concurrent-ok
+r21b|r21-conn1-ok
+r21b|r21-bg-noattach-ok
+r21b|r21-bg-entry-ok
+r21b|r21-DONE
+r21-DONE

@@ -99,6 +99,12 @@ async fn list_identities(state: ApiState<'_>) -> CmdResult<Vec<IdentityMeta>> {
     state.api.list_identities(&human()).await.map_err(WireError::from)
 }
 
+/// R21 凭据基础管理：删除前核心侧引用检查（被主机引用 → IdentityInUse{host_names}）
+#[tauri::command]
+async fn delete_identity(state: ApiState<'_>, id: String) -> CmdResult<()> {
+    state.api.delete_identity(&human(), id).await.map_err(WireError::from)
+}
+
 /// ~/.ssh/config 导入：解析预览（path 缺省 = ~/.ssh/config）
 #[tauri::command]
 async fn ssh_config_preview(
@@ -831,6 +837,8 @@ fn main() {
                     r19_smoke_script(&run_id)
                 } else if mode == "r24" {
                     r24_smoke_script(&run_id)
+                } else if mode == "r21" {
+                    r21_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1178,7 +1186,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_hosts, upsert_host, delete_host, create_identity, list_identities,
+            list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
             list_sessions, create_session, begin_connection, connection_status, cancel_connection,
             close_session, reconnect_session, resize, subscribe_output,
@@ -1562,6 +1570,220 @@ fn r14_smoke_script(run_id: &str) -> String {
       // 退订归零由 R11 e2e 覆盖；close 后 debug_subscriptions 只遍历存活会话表（结构性
       // 不含已移除 sid），不在此重复断言
       await title('r14-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R21 连接表单与认证探针注入脚本（TINYSSH_SMOKE_MODE=r21；dev 门控，产品路径无关）：
+/// E) 凭据基础管理全链（真实 vault）：表单生成 ed25519（create_identity 真路径）→
+///    取消表单 → 设置凭据库「未绑定」（§267 不默默删除）→ 已有密钥选择器绑定保存
+///    （真实 Key 身份绑定）→「使用中」→ 删除拒删（真实 IdentityInUse 列主机名）→
+///    UI 删主机解绑 → 未绑定复得 → 删除成功（真实 delete_identity 命令）；
+/// A) §280：真 TOFU 门挂起期间其他主机连接钮不禁用；
+/// F) §6.3 焦点代际：门挂起期间 window blur（合成事件）→ 门应答完成后会话
+///    Connected 但视图不切换不抢焦（toast 可寻），点标签进入。
+fn r21_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R21_INJECTED__) return; // WKWebView Finished 双触发防护
+  window.__R21_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const setInput = (el, v) => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const q = (sel) => document.querySelector(sel);
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connectBtnState = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    return b ? { disabled: b.disabled, text: b.textContent.trim() } : null;
+  };
+  const openSettings = async () => {
+    // r21a 插曲：删主机确认框关闭（invoke+refreshLists 后才 setConfirm(null)）可能晚于
+    // 本点击——先等遮罩消失，点击带重试
+    await waitFor(() => (!q('.confirm-mask') ? true : null), 40);
+    for (let i = 0; i < 5 && !q('.term-settings'); i++) {
+      const btn = q('.hb-settings');
+      if (btn) btn.click();
+      await sleep(400);
+    }
+    if (!q('.term-settings')) return false;
+    await sleep(300); // identities 拉取
+    return true;
+  };
+  const closeSettings = async () => { q('.term-settings button[aria-label="关闭显示设置"]').click(); await sleep(200); };
+  const credBadge = () => {
+    const r = q('.cred-row');
+    return r ? (r.querySelector('.cred-bound, .cred-unbound') || {}).textContent || '' : null;
+  };
+  const upsert = (name) => inv('upsert_host', { host: { id: null, name, address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+  (async () => {
+    try {
+      await title('r21-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      // ---- E) 凭据基础管理全链（真实 vault） ----
+      // E1 表单生成 ed25519（真实 create_identity）
+      q('button[aria-label="添加主机"]').click();
+      await waitFor(() => q('.add-host'), 30);
+      // 认证方式 select = 表单内第一个 select
+      const authSel = q('.add-host select');
+      authSel.value = 'key';
+      authSel.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(150);
+      const genBtn = [...q('.add-host').querySelectorAll('button')].find((b) => b.textContent.includes('生成新密钥'));
+      if (!genBtn) return title('FAIL-no-genbtn');
+      genBtn.click();
+      const trustRow = await waitFor(() => q('.add-host .trust-row'), 60);
+      if (!trustRow) return title('FAIL-gen-fp');
+      await markSync('r21-gen-ok');
+      // E2 取消表单 → 设置凭据库未绑定（§267 不默默删除）
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(400);
+      if (q('.add-host')) return title('FAIL-form-not-closed');
+      if (!(await openSettings())) return title('FAIL-open-settings');
+      const badge1 = credBadge();
+      if (badge1 !== '未绑定') return title('FAIL-unbound:' + badge1);
+      const fp1 = q('.cred-row .cred-fp');
+      if (!fp1) return title('FAIL-no-fp');
+      await markSync('r21-unbound-ok');
+      await closeSettings();
+      // E3 已有密钥选择器绑定保存（真实 Key 身份绑定）
+      q('button[aria-label="添加主机"]').click();
+      await waitFor(() => q('.add-host'), 30);
+      const sel1 = q('.add-host select');
+      sel1.value = 'key';
+      sel1.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(250); // list_identities 拉取
+      // 已有密钥选择器 = 选项值非枚举（password/key/agent/utf-8/gbk）的 select——
+      // r21a 插曲：误以「存在非空值选项」判定，命中了认证方式 select 本身
+      const ENUM = ['password', 'key', 'agent', 'utf-8', 'gbk', ''];
+      const pickSel = [...document.querySelectorAll('.add-host select')].find((s) => [...s.options].some((o) => !ENUM.includes(o.value)));
+      if (!pickSel) return title('FAIL-no-picker');
+      const opt = [...pickSel.options].find((o) => o.value !== '');
+      pickSel.value = opt.value;
+      pickSel.dispatchEvent(new Event('change', { bubbles: true }));
+      const nameIn = q('.add-host input[placeholder*="我的服务器"]');
+      const addrIn = q('.add-host input[placeholder*="192.168"]');
+      const userIn = q('.add-host input[placeholder*="ops 或 root"]');
+      setInput(nameIn, 'r21-k1'); setInput(addrIn, '127.0.0.1'); setInput(userIn, 'root');
+      const portIn = q('.add-host input');
+      // 端口是第一行第三个输入——按表单内全部 input 顺序找值恰为 '22' 的那个
+      for (const el of q('.add-host').querySelectorAll('input')) { if (el.value === '22') { setInput(el, '2222'); break; } }
+      const saveOnly = [...q('.add-host').querySelectorAll('button')].find((b) => b.textContent.includes('仅保存'));
+      if (!saveOnly) return title('FAIL-no-saveonly');
+      saveOnly.click();
+      const gone = await waitFor(() => (!q('.add-host') ? true : null), 60);
+      if (!gone) return title('FAIL-form-still-open');
+      const sess0 = await inv('list_sessions', {});
+      if ((sess0 || []).some((x) => x.host_name === 'r21-k1')) return title('FAIL-saveonly-connected');
+      await markSync('r21-bound-ok');
+      if (!(await openSettings())) return title('FAIL-open-settings');
+      const badge2 = credBadge();
+      if (badge2 !== '使用中') return title('FAIL-inuse:' + badge2);
+      await markSync('r21-inuse-ok');
+      // E4 引用检查拒删（真实 IdentityInUse）
+      q('.cred-row button[aria-label^="删除凭据"]').click();
+      await waitFor(() => q('.confirm-dialog'), 30);
+      [...q('.confirm-dialog').querySelectorAll('button')].find((b) => b.textContent.includes('删除凭据')).click();
+      const errEl = await waitFor(() => q('.term-settings .err'), 30);
+      if (!errEl || !errEl.textContent.includes('r21-k1')) return title('FAIL-reject:' + (errEl ? errEl.textContent : 'none'));
+      await markSync('r21-inuse-reject-ok');
+      await closeSettings();
+      // E5 UI 删主机解绑
+      const delBtn = cardBtn('r21-k1', '.host-del');
+      if (!delBtn) return title('FAIL-no-k1card');
+      delBtn.click();
+      await waitFor(() => q('.confirm-dialog'), 30);
+      [...q('.confirm-dialog').querySelectorAll('button')].find((b) => b.textContent.trim() === '删除').click();
+      await waitFor(async () => ((await inv('list_hosts', {})).find((x) => x.name === 'r21-k1') ? null : true), 60);
+      if (!(await openSettings())) return title('FAIL-open-settings');
+      const badge3 = credBadge();
+      if (badge3 !== '未绑定') return title('FAIL-unbound-again:' + badge3);
+      // E6 未绑定删除成功（真实 delete_identity）
+      q('.cred-row button[aria-label^="删除凭据"]').click();
+      await waitFor(() => q('.confirm-dialog'), 30);
+      [...q('.confirm-dialog').querySelectorAll('button')].find((b) => b.textContent.includes('删除凭据')).click();
+      const noCred = await waitFor(() => (!q('.cred-row') ? true : null), 40);
+      if (!noCred) return title('FAIL-del-failed');
+      await markSync('r21-deleted-ok');
+      await closeSettings();
+      // ---- A) §280：真 TOFU 门挂起期间其他主机连接钮不禁用 ----
+      await upsert('r21-ssh');
+      await upsert('r21-ssh2');
+      // 卡片经 3s 轮询刷出——waitFor 而非固定 sleep（r21a 插曲：400ms 固定等待落空）
+      const c1 = await waitFor(() => cardBtn('r21-ssh', '.host-connect-btn'), 40);
+      if (!c1) return title('FAIL-no-r21ssh');
+      c1.click();
+      const mask = await waitFor(() => q('.hk-mask'), 60);
+      if (!mask) return title('FAIL-no-tofu');
+      const other = connectBtnState('r21-ssh2');
+      if (!other || other.disabled) return title('FAIL-concurrent-disabled:' + JSON.stringify(other));
+      await markSync('r21-concurrent-ok');
+      // 信任 → 真实 Connected
+      const tbtn = [...q('.hk-mask').querySelectorAll('button')].find((b) => b.textContent.includes('信任并连接'));
+      tbtn.click();
+      const s1 = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        return ss.find((x) => x.host_name === 'r21-ssh' && x.state === 'Connected') || null;
+      }, 100);
+      if (!s1) return title('FAIL-conn1');
+      await markSync('r21-conn1-ok');
+      // ---- F) §6.3 焦点代际：blur 后完成不切视图不抢焦 ----
+      const c2 = await waitFor(() => cardBtn('r21-ssh2', '.host-connect-btn'), 40);
+      if (!c2) return title('FAIL-no-r21ssh2');
+      c2.click();
+      const mask2 = await waitFor(() => q('.hk-mask'), 60);
+      if (!mask2) return title('FAIL-no-tofu2');
+      window.dispatchEvent(new Event('blur')); // 用户离开窗口 → 焦点代际推进
+      await sleep(150);
+      const tbtn2 = [...q('.hk-mask').querySelectorAll('button')].find((b) => b.textContent.includes('信任并连接'));
+      tbtn2.click();
+      const s2 = await waitFor(async () => {
+        const ss = await inv('list_sessions', {});
+        return ss.find((x) => x.host_name === 'r21-ssh2' && x.state === 'Connected') || null;
+      }, 100);
+      if (!s2) return title('FAIL-conn2');
+      await sleep(600); // 完成路径（attach 或后台 toast）落定
+      const activeTxt = (q('.tabbar .tab.tab-active') || {}).textContent || '';
+      if (activeTxt.includes('r21-ssh2')) return title('FAIL-bg-stole-focus:' + activeTxt);
+      const toasts = [...document.querySelectorAll('.toast')].map((t) => t.textContent).join('|');
+      if (!toasts.includes('r21-ssh2') || !toasts.includes('点击标签进入')) return title('FAIL-bg-toast:' + toasts.slice(-120));
+      await markSync('r21-bg-noattach-ok');
+      // 点标签进入
+      const tab2 = [...document.querySelectorAll('.tabbar .tab')].find((x) => x.textContent.includes('r21-ssh2'));
+      tab2.click();
+      await sleep(400);
+      const activeTxt2 = (q('.tabbar .tab.tab-active') || {}).textContent || '';
+      if (!activeTxt2.includes('r21-ssh2')) return title('FAIL-bg-entry:' + activeTxt2);
+      await markSync('r21-bg-entry-ok');
+      // 回收
+      await inv('close_session', { sid: s1.id });
+      await inv('close_session', { sid: s2.id });
+      await markSync('r21-DONE');
+      await title('r21-DONE');
     } catch (e) {
       await title('FAIL-exception:' + String(e).slice(0, 140));
     }

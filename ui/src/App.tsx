@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
-import { errMsg } from "./adapter/errors";
+import { errMsg, parseWireError } from "./adapter/errors";
 import { resolveAction } from "./actions";
 import type { AppAction } from "./actions";
 import { createOutputFeed } from "./terminal/checkpoint";
@@ -148,6 +148,14 @@ const stateLabel = (s: string): { text: string; cls: string } => {
 
 // 后端错误 → 用户能看懂的一句话（原始错误放次要行）
 const friendlyError = (e: unknown): string => {
+  const pe = parseWireError(e);
+  // R21 凭据基础管理：引用检查拒删列出占用主机（§267 删除前检查引用）
+  if (pe.kind === "identity_in_use") {
+    const names = (pe.detail as { host_names?: string[] } | undefined)?.host_names ?? [];
+    return names.length
+      ? `凭据仍被 ${names.length} 台主机使用（${names.join("、")}）——请先为这些主机改绑凭据或删除主机`
+      : "凭据仍被主机使用——请先解除引用后再删除";
+  }
   const raw = errMsg(e);
   const r = raw.toLowerCase();
   if (r.includes("authfailed") || r.includes("authentication")) return "认证失败：用户名或密码/密钥不正确";
@@ -460,7 +468,15 @@ export default function App() {
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const cmdHistIdx = useRef<number>(-1);
   // 连接状态机：null=空闲；连接中显示主机名；失败显示错误
-  const [connecting, setConnecting] = useState<string | null>(null);
+  // R21（§280）：连接中按主机隔离——一个主机建连不禁用其他主机的连接按钮
+  const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
+  // R21（§6.3）：焦点代际——用户导航（attach/开浮层）或离开窗口都会推进；
+  // 连接完成时仅当代际未变且窗口前台才落终端焦点，后台完成只更新标签态不抢焦点。
+  // R23 消费 C1 事件后在此基础上深化（attempt 级 current-selection 判定）
+  const focusGenRef = useRef(0);
+  // R21 设置 → 凭据基础管理：凭据列表 + 引用检查删除
+  const [identities, setIdentities] = useState<IdentityMeta[]>([]);
+  const [credErr, setCredErr] = useState<string | null>(null);
   const [connError, setConnError] = useState<{ title: string; detail: string } | null>(null);
   const [hostKeyQueue, setHostKeyQueue] = useState<PendingHostKey[]>([]);
   const [showAddHost, setShowAddHost] = useState(false);
@@ -637,6 +653,11 @@ export default function App() {
   // 2FA 认证提示（路线图⑩）同一套拉取/推送模式。
   const [authPromptQueue, setAuthPromptQueue] = useState<PendingAuthPrompt[]>([]);
   const [authAnswer, setAuthAnswer] = useState("");
+  // rev-r21 M2：完成检查读队列实时镜像（createSession 闭包捕获的是点击帧旧值）
+  const hostKeyQueueRef = useRef<PendingHostKey[]>([]);
+  const authPromptQueueRef = useRef<PendingAuthPrompt[]>([]);
+  useEffect(() => { hostKeyQueueRef.current = hostKeyQueue; }, [hostKeyQueue]);
+  useEffect(() => { authPromptQueueRef.current = authPromptQueue; }, [authPromptQueue]);
   useEffect(() => {
     if (!inTauri) {
       const t = setInterval(() => {
@@ -1103,6 +1124,11 @@ export default function App() {
   )].sort(byName);
   const favHosts = filteredHosts.filter(isFav);
   const otherHosts = filteredHosts.filter((h) => !isFav(h));
+  // R21 凭据基础管理：被引用凭据集（设置面板「使用中/未绑定」标记的 UI 对账面——
+  // 核心删除侧仍有引用检查兜底，两侧口径同源 identity_id）
+  const referencedIdentityIds = new Set(
+    hosts.flatMap((h) => (h.identity_id ? [h.identity_id] : [])),
+  );
   // 窄窗完整视图断点（§4.2）：可用宽度 < 主机栏 + 560 + 面板宽 → 面板改中央完整视图。
   // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
@@ -1254,8 +1280,10 @@ export default function App() {
   }, []);
 
   // 聚焦某会话（点标签/点 pane/⌘1-9 共用）：只挪焦点不动布局——分屏时点右 pane
-  // 不会把终端内容左右对调
+  // 不会把终端内容左右对调。rev-r21 M1：应用内导航推进焦点代际（§6.3——慢建连
+  // 期间切到别的会话，完成时不得抢回视图）
   const focusSession = useCallback((target: string) => {
+    focusGenRef.current++;
     const entry = termsRef.current.get(target);
     if (!entry) return;
     if (sidRef.current !== target) {
@@ -1307,6 +1335,10 @@ export default function App() {
   }, [makeTerm]);
 
   const attachSession = useCallback(async (newSid: string) => {
+    // rev-r21 M1：attach 亦属用户导航（标签点击/完成落定共用入口）——推进焦点代际。
+    // createSession 完成检查先于调用本函数，此处推进只影响后续完成者（并发双完成
+    // 第二个自动转后台 toast，更合 §6.3）
+    focusGenRef.current++;
     if (!termRef.current) return;
     await ensureSessionTerm(newSid);
     // 分屏时 attach 未上屏的会话 = 替换左主 pane（副 pane 保留）
@@ -1430,7 +1462,7 @@ export default function App() {
 
   // 危险动作确认（P1-5/P1-4）：断开活会话、删除主机都先过弹层；死会话直接关（无需确认）
   const [confirm, setConfirm] = useState<
-    { kind: "closeSession"; sid: string; hostName: string } | { kind: "deleteHost"; id: string; name: string } | null
+    { kind: "closeSession"; sid: string; hostName: string } | { kind: "deleteHost"; id: string; name: string } | { kind: "deleteIdentity"; id: string; label: string } | null
   >(null);
   // 模态层信号（R13 §7.3）：确认/指纹/双因素任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
   const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm);
@@ -1463,9 +1495,31 @@ export default function App() {
   const confirmAction = async () => {
     if (!confirm) return;
     if (confirm.kind === "closeSession") await disconnectSid(confirm.sid);
-    else await deleteHost(confirm.id);
+    else if (confirm.kind === "deleteHost") await deleteHost(confirm.id);
+    else {
+      // R21 凭据删除：核心引用检查兜底（IdentityInUse 列占用主机），前端不自行判定
+      try {
+        await invoke("delete_identity", { id: confirm.id });
+        setCredErr(null);
+      } catch (e) {
+        setCredErr(friendlyError(e));
+      }
+      await refreshIdentities();
+    }
     setConfirm(null);
   };
+
+  // R21 设置 → 凭据基础管理：列表加载（面板打开时）与删除后刷新共用
+  const refreshIdentities = useCallback(async () => {
+    try {
+      setIdentities(await invoke("list_identities"));
+    } catch {
+      /* 面板内展示面，失败下次打开重取 */
+    }
+  }, []);
+  useEffect(() => {
+    if (showSettings) { setCredErr(null); void refreshIdentities(); } // rev-r21 L1：开沿清残留错误
+  }, [showSettings, refreshIdentities]);
 
   // ⌘1–9 / ⌘W / ⌘⇧[] / Esc 已并入上方统一 action 分发（R13）
 
@@ -1499,6 +1553,22 @@ export default function App() {
       /* 已超时/不存在，无需处理 */
     }
   };
+
+  // R21（§6.3）：焦点代际推进——浮层「打开沿」推进（关闭不推进：用户刚回到当前
+  // 会话属已知意图，此后完成的连接仍不得从当前会话抢焦点，代际已含开浮层那跳）。
+  // 门卡（TOFU/2FA）不入列——它们属于连接自身流程，置位会误伤前台「信任后落终端」
+  const overlayOpen = searchOpen || showSettings || showAddHost || showImport
+    || toolsOpen || tabsMenuOpen || rightPanel !== null || !!confirm;
+  const overlayPrevRef = useRef(overlayOpen);
+  useEffect(() => {
+    if (overlayOpen && !overlayPrevRef.current) focusGenRef.current++;
+    overlayPrevRef.current = overlayOpen;
+  }, [overlayOpen]);
+  useEffect(() => {
+    const onBlur = () => { focusGenRef.current++; };
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, []);
 
   // ---- 文件传输（T20）----
   const upsertTransfer = useCallback((c: TransferCard) => {
@@ -1727,14 +1797,27 @@ export default function App() {
     };
   }, [startUploads, sftpEntries, sftpPath]);
 
-  const createSession = async (host: Host) => {    setConnecting(host.id);
+  const createSession = async (host: Host) => {
+    // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
+    const gen0 = focusGenRef.current;
+    setConnectingIds((s) => new Set(s).add(host.id));
     setConnError(null);
     try {
       const newSid = await invoke("create_session", { hostId: host.id });
       setLastFailed(null);
       await refreshLists();
-      await attachSession(newSid);
-      pushToast("ok", `已连接 ${host.name}`);
+      // rev-r21 M2：他主机门挂起中（用户注意力在其输入框，遮罩不持 DOM 焦）完成
+      // 不抢焦——否则后续验证码 keystroke 误落已完成会话的远端 shell。本主机门在
+      // create_session resolve 前必已闭（应答先同步 splice 队列再 invoke），不受扰
+      const gatesBusy = hostKeyQueueRef.current.some((x) => x.host_name !== host.name)
+        || authPromptQueueRef.current.some((x) => x.host_name !== host.name);
+      if (focusGenRef.current === gen0 && !document.hidden && !gatesBusy) {
+        await attachSession(newSid);
+        pushToast("ok", `已连接 ${host.name}`);
+      } else {
+        // 后台完成：只更新标签态，不切视图不抢焦点（点击标签进入）
+        pushToast("ok", `已连接 ${host.name}——点击标签进入`);
+      }
     } catch (e) {
       // 失败走 conn-error 常驻横幅（可行动文案），不重复 toast
       setLastFailed(host.id);
@@ -1743,19 +1826,30 @@ export default function App() {
         detail: friendlyError(e) + "——也可在主机卡上看到失败提示，修正后重试",
       });
     } finally {
-      setConnecting(null);
+      setConnectingIds((s) => {
+        const n = new Set(s);
+        n.delete(host.id);
+        return n;
+      });
     }
   };
 
   // 断线会话一键重连：核心重建传输 + 重启泵 + 重注入；UI 订阅不变，输出自动恢复
   const [reconnecting, setReconnecting] = useState<string | null>(null);
   const reconnectSession = async (s: SessionInfo) => {
+    const gen0 = focusGenRef.current; // §6.3：重连完成不抢走用户期间转移的焦点
     setReconnecting(s.id);
     try {
       await invoke("reconnect_session", { sid: s.id });
       await refreshLists();
-      await attachSession(s.id);
-      pushToast("ok", `已重连 ${s.host_name}`);
+      const gatesBusy = hostKeyQueueRef.current.some((x) => x.host_name !== s.host_name)
+        || authPromptQueueRef.current.some((x) => x.host_name !== s.host_name);
+      if (focusGenRef.current === gen0 && !document.hidden && !gatesBusy) {
+        await attachSession(s.id);
+        pushToast("ok", `已重连 ${s.host_name}`);
+      } else {
+        pushToast("ok", `已重连 ${s.host_name}——点击标签进入`);
+      }
     } catch (e) {
       setConnError({ title: `重连 ${s.host_name} 失败`, detail: friendlyError(e) });
     } finally {
@@ -1929,7 +2023,7 @@ export default function App() {
               const latest = [...live].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
               const fav = metaById.get(h.id)?.favorite === true;
               const activate = () => {
-                if (connecting) return;
+                if (connectingIds.has(h.id)) return; // §280：仅本主机连接中忽略，其他主机不受扰
                 if (latest) { void attachSession(latest.id); return; }
                 createSession(h);
               };
@@ -1946,7 +2040,7 @@ export default function App() {
                 }}
                 title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
                 {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
-                <div className="host-card-main" style={{ cursor: connecting ? "default" : "pointer" }}
+                <div className="host-card-main" style={{ cursor: connectingIds.has(h.id) ? "default" : "pointer" }}
                   title={latest
                     ? `该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话\n${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老设备）" : "UTF-8"}`
                     : undefined}
@@ -1970,7 +2064,7 @@ export default function App() {
                       {(h.tags ?? []).length > 2 && <span className="host-tag more">+{(h.tags ?? []).length - 2}</span>}
                     </div>
                   )}
-                  {lastFailed === h.id && connecting !== h.id && (
+                  {lastFailed === h.id && !connectingIds.has(h.id) && (
                     <div className="err host-fail">✕ 上次连接失败——检查地址与凭据后重试</div>
                   )}
                 </div>
@@ -1984,9 +2078,10 @@ export default function App() {
                     <button className="ghost host-del" title="删除主机"
                       onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
                   </div>
-                  <button className="host-connect-btn" disabled={connecting !== null} title="连接（新建会话）"
+                  <button className="host-connect-btn" disabled={connectingIds.has(h.id)}
+                    title="连接（新建会话）——其他主机的连接不受影响"
                     onClick={() => createSession(h)}>
-                    {connecting === h.id ? <><IconLoader size={11} className="spin" /> 连接中…</> : "连接"}
+                    {connectingIds.has(h.id) ? <><IconLoader size={11} className="spin" /> 连接中…</> : "连接"}
                   </button>
                 </div>
               </div>
@@ -2187,6 +2282,18 @@ export default function App() {
               <div>凭据与指纹记录一并移除，之后无法再从它新建连接；已建立的会话不受影响。</div>
               <div className="hk-actions">
                 <button className="danger" onClick={confirmAction}>删除</button>
+                <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {confirm?.kind === "deleteIdentity" && (
+          <div className="confirm-mask" onClick={() => setConfirm(null)}>
+            <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title">删除凭据 {confirm.label}？</div>
+              <div>仍被主机引用的凭据会被拒绝并列出主机；已保存的凭据独立存在，删除前请确认没有主机依赖它。</div>
+              <div className="hk-actions">
+                <button className="danger" onClick={confirmAction}>删除凭据</button>
                 <button className="ghost" onClick={() => setConfirm(null)}>取消</button>
               </div>
             </div>
@@ -2486,6 +2593,42 @@ export default function App() {
                   ))}
                 </div>
                 <div className="dim" style={{ marginTop: 10, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
+                {/* R21 凭据基础管理（§238/§267）：生成/导入在连接表单完成；此处列表 +
+                    未绑定标记 + 引用检查删除——已保存凭据独立存在，取消表单不默默删除 */}
+                <div className="ts-label" style={{ marginTop: 12 }}>凭据库</div>
+                {credErr && <div className="err" style={{ marginTop: 4, fontSize: 12 }}>✕ {credErr}</div>}
+                {identities.length === 0 ? (
+                  <div className="dim" style={{ marginTop: 4, fontSize: 12 }}>
+                    还没有凭据——私钥（生成/粘贴/文件导入）与密码都在连接表单里保存后进入这里。
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 4 }}>
+                    {identities.map((it) => (
+                      <div key={it.id} className="cred-row">
+                        {/* vis-r21：280px 面板单行排不下（label 被挤零宽、kind 与指纹
+                            叠印 37.7px）——改两行：首行 label+徽章+删除，次行 kind+指纹 */}
+                        <div className="cred-top">
+                          <span className="cred-label" title={it.label}>{it.label}</span>
+                          {referencedIdentityIds.has(it.id)
+                            ? <span className="cred-bound">使用中</span>
+                            : <span className="cred-unbound" title="未被任何主机引用——保留在库中，可在表单里绑定">未绑定</span>}
+                          <button className="ghost host-del" title="删除凭据（被引用会被拒绝并列出主机）"
+                            aria-label={`删除凭据 ${it.label}`}
+                            onClick={() => { setCredErr(null); setConfirm({ kind: "deleteIdentity", id: it.id, label: it.label }); }}>
+                            <IconTrash size={12} />
+                          </button>
+                        </div>
+                        <div className="cred-sub">
+                          <span className="cred-kind">{it.kind === "Password" ? "密码" : it.kind === "Rsa" ? "RSA 密钥" : "Ed25519 密钥"}</span>
+                          <span className="mono cred-fp" title={it.fingerprint}>{it.fingerprint}</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="dim" style={{ marginTop: 4, fontSize: 11 }}>
+                      删除前自动检查引用；指纹用于核对库里存的是哪把钥匙，不会出现在日志里。
+                    </div>
+                  </div>
+                )}
                 <div className="dim" style={{ marginTop: 6, fontSize: 11, borderTop: "1px solid var(--border)", paddingTop: 6 }}>
                   TinySSH {appVersion ? `v${appVersion}` : "· 浏览器演示模式"}
                 </div>
@@ -3038,8 +3181,17 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
   // 私钥先绑定后确认（FR-2 指纹确认）：粘贴/文件/生成 → create_identity 落库 →
   // 出示指纹给用户核对，保存时只引用 identity_id——明文与私钥都不随表单走
   const [identity, setIdentity] = useState<IdentityMeta | null>(null);
+  // R21（§265「认证支持已有密钥」）：绑定凭据库里已有的（含取消表单后未绑定的）凭据
+  const [pickedIdentity, setPickedIdentity] = useState<string>("");
+  const [knownIdentities, setKnownIdentities] = useState<IdentityMeta[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke("list_identities")
+      .then((xs) => setKnownIdentities(xs.filter((x) => x.kind !== "Password")))
+      .catch(() => { /* 选择器降级为空，仍可生成/导入 */ });
+  }, []);
 
   const keyLabel = () => `${username.trim() || "key"}@${address.trim() || name.trim() || "host"}`;
 
@@ -3053,6 +3205,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         req: { Import: { label: keyLabel(), pem, passphrase: passphrase || null } },
       });
       setIdentity(meta);
+      setPickedIdentity(""); // 新导入的密钥接管当前表单（覆盖已有密钥选择）
     } catch (e) {
       setErr(friendlyError(e));
     } finally {
@@ -3069,6 +3222,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         req: { Generate: { label: keyLabel(), kind: "Ed25519" } },
       });
       setIdentity(meta);
+      setPickedIdentity(""); // 新生成的密钥接管当前表单（覆盖已有密钥选择）
     } catch (e) {
       setErr(friendlyError(e));
     } finally {
@@ -3106,8 +3260,11 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         auth = { Password: { password } };
       } else if (authMode === "agent") {
         auth = "Agent";
+      } else if (pickedIdentity) {
+        // R21：绑定凭据库已有密钥（含取消表单后未绑定的凭据——§267 不默默删除的消费面）
+        auth = { Key: { identity_id: pickedIdentity } };
       } else {
-        if (!identity) { setErr("请先「导入并确认指纹」或「生成新密钥」"); setBusy(false); return; }
+        if (!identity) { setErr("请先「导入并确认指纹」「生成新密钥」或选择已有密钥"); setBusy(false); return; }
         auth = { Key: { identity_id: identity.id } };
       }
       // 标签（R20）：逗号分隔（中英文逗号皆可）→ 去重去空
@@ -3119,7 +3276,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
           charset,
         },
       });
-      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); setTagsInput(""); }
+      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); setPickedIdentity(""); setTagsInput(""); }
       setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
       onSaved(hid, editing, connect);
     } catch (e) {
@@ -3140,7 +3297,9 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         </div>
         <div className="ah-field" style={{ flex: 2 }}>
           <label>地址（IP 或域名）</label>
-          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="例：192.168.1.10 或 server.example.com" style={{ minWidth: 0 }} />
+          <input value={address} onChange={(e) => setAddress(e.target.value)}
+            onBlur={() => { if (!name.trim() && address.trim()) setName(address.trim()); }}
+            placeholder="例：192.168.1.10 或 server.example.com" style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label>端口</label>
@@ -3203,41 +3362,58 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
           style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
       ) : authMode === "agent" ? (
         <div className="dim" style={{ marginTop: 6 }}>连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。</div>
-      ) : identity ? (
-        <>
-          <div className="trust-row" style={{ marginTop: 6 }}>
-            <span className="ok">✓ 密钥已加密存入凭据库（{identity.label}）</span>
-            <span className="mono fp">指纹　{identity.fingerprint}</span>
-          </div>
-          <div className="dim" style={{ marginTop: 4 }}>保存后以此密钥登录；指纹用于核对凭据库里存的是哪把钥匙。</div>
-          <button className="ghost" style={{ marginTop: 6 }} disabled={busy} onClick={() => setIdentity(null)}>
-            更换密钥（重新粘贴 / 从文件导入 / 生成）
-          </button>
-        </>
       ) : (
         <>
-          <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
-            <label className="file-btn">
-              从文件导入…
-              <input type="file" style={{ display: "none" }} accept=".pem,.key,id_ed25519,id_rsa,id_ecdsa"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  const r = new FileReader();
-                  r.onload = () => setPem(String(r.result ?? ""));
-                  r.readAsText(f);
-                  e.target.value = ""; // 允许同一文件二次选择仍触发 onChange
-                }} />
-            </label>
-            <button className="ghost" disabled={busy} onClick={genKey}>生成新密钥（ed25519）</button>
-          </div>
-          <textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n粘贴私钥内容，或点「从文件导入…」"} value={pem}
-            onChange={(e) => setPem(e.target.value)} rows={4} style={{ marginTop: 6, width: "100%" }} />
-          <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
-            <input type="password" placeholder="私钥口令（无可留空）" value={passphrase} style={{ flex: 1 }}
-              onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importPem()} />
-            <button disabled={busy} onClick={importPem}>{busy ? "处理中…" : "导入并确认指纹"}</button>
-          </div>
+          {/* R21（§265 已有密钥）：绑定凭据库既有凭据——取消表单后未绑定的凭据在此回收 */}
+          {knownIdentities.length > 0 && !identity && (
+            <div className="ah-field" style={{ marginTop: 6 }}>
+              <label>已有密钥（凭据库）</label>
+              <select value={pickedIdentity}
+                onChange={(e) => { setErr(null); setPickedIdentity(e.target.value); }}>
+                <option value="">新密钥（下方生成 / 导入）</option>
+                {knownIdentities.map((k) => (
+                  <option key={k.id} value={k.id}>{k.label} · {k.fingerprint.slice(0, 19)}…</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {!pickedIdentity && (identity ? (
+            <>
+              <div className="trust-row" style={{ marginTop: 6 }}>
+                <span className="ok">✓ 密钥已加密存入凭据库（{identity.label}）</span>
+                <span className="mono fp">指纹　{identity.fingerprint}</span>
+              </div>
+              <div className="dim" style={{ marginTop: 4 }}>保存后以此密钥登录；指纹用于核对凭据库里存的是哪把钥匙。</div>
+              <button className="ghost" style={{ marginTop: 6 }} disabled={busy} onClick={() => setIdentity(null)}>
+                更换密钥（重新粘贴 / 从文件导入 / 生成）
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
+                <label className="file-btn">
+                  从文件导入…
+                  <input type="file" style={{ display: "none" }} accept=".pem,.key,id_ed25519,id_rsa,id_ecdsa"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      const r = new FileReader();
+                      r.onload = () => setPem(String(r.result ?? ""));
+                      r.readAsText(f);
+                      e.target.value = ""; // 允许同一文件二次选择仍触发 onChange
+                    }} />
+                </label>
+                <button className="ghost" disabled={busy} onClick={genKey}>生成新密钥（ed25519）</button>
+              </div>
+              <textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n粘贴私钥内容，或点「从文件导入…」"} value={pem}
+                onChange={(e) => setPem(e.target.value)} rows={4} style={{ marginTop: 6, width: "100%" }} />
+              <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
+                <input type="password" placeholder="私钥口令（无可留空）" value={passphrase} style={{ flex: 1 }}
+                  onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importPem()} />
+                <button disabled={busy} onClick={importPem}>{busy ? "处理中…" : "导入并确认指纹"}</button>
+              </div>
+            </>
+          ))}
         </>
       )}
       {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}

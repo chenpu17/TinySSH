@@ -495,6 +495,17 @@ textarea {
 .ts-opt { display: flex; align-items: center; gap: 6px; justify-content: flex-start; text-align: left; padding: 5px 7px; font-size: 11px; white-space: nowrap; overflow: hidden; }
 .ts-opt.ts-active { border-color: var(--accent); background: var(--accent-soft); }
 .ts-open { border-color: var(--accent); }
+/* R21 凭据基础管理行：设置面板凭据库列表（全部走既有 token）。
+   vis-r21：280px 面板单行排不下——两行布局，label/指纹各自弹性截断 */
+.cred-row { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.cred-row:last-of-type { border-bottom: none; }
+.cred-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cred-label { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.cred-sub { display: flex; align-items: center; gap: 6px; margin-top: 1px; }
+.cred-kind { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.cred-fp { color: var(--dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.cred-bound { font-size: 10px; color: var(--ok, var(--accent)); border: 1px solid var(--border); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
+.cred-unbound { font-size: 10px; color: var(--dim); border: 1px dashed var(--border); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
 .ts-swatch {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 18px; border-radius: 4px; border: 1px solid;

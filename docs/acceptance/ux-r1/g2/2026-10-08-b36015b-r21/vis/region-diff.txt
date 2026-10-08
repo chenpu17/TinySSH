@@ -1,0 +1,54 @@
+vis-r21 region diff — 5183(new, R21 worktree) vs 5184(base, b36015b worktree)
+viewport 1280x800, real Chrome headless, demo backend, dark theme, fresh localStorage
+
+== 噪声底（同端连拍自差，px_diff / px_total）==
+new welcome: px_diff=0/1024000 maxΔ=0
+new terminal: px_diff=0/1024000 maxΔ=0
+new addhost(element): px_diff=0/79074 maxΔ=0
+new settings(element): px_diff=0/92960 maxΔ=0
+base welcome: px_diff=0/1024000 maxΔ=0
+base terminal: px_diff=0/1024000 maxΔ=0
+base addhost(element): px_diff=0/79074 maxΔ=0
+base settings(element): px_diff=0/73360 maxΔ=0
+
+== 跨端 settings 弹窗 ==
+element size: new=(280, 332) base=(280, 262)（高差 70px = 新增凭据库空态区，宽同 True）
+TOP 区域(0,0,280,262) 字号/主题区: px_diff=2665/73360 maxΔ=114
+BOTTOM 区域(0,262,280,332) 新增凭据库空态: px_diff=19600/19600（预期非零=新面，不计回归）
+
+== 跨端 addhost 表单元素 ==
+px_diff=0/79074 maxΔ=0 size=same
+
+== 跨端 welcome ==
+MAIN 区域 (226, 0, 1280, 800): px_diff=0/843200 maxΔ=0
+HOSTBAR 区域 (0, 0, 226, 800): px_diff=6331/180800（已知差异=R21 demo.ts 新增 otp-2 演示卡）
+HOSTBAR 差异行范围: y∈[31,449] 共 110 行
+
+== 跨端 terminal ==
+MAIN 区域 (226, 0, 1280, 800): px_diff=3/843200 maxΔ=12
+
+
+========================================================================
+五、修复后复核（vis-r21 二轮，两行布局 .cred-top/.cred-sub；本文件上半部为修复前记录，
+    修复前截图以 prefix-* 保留、同目录 region-diff-prefix.txt 为修复前 diff 全文）
+========================================================================
+原缺陷面复测（vis-r21-measure-fix.js，四态：暗/亮 × 未绑定/使用中）21/21 PASS：
+  label 宽度 0 → 159.6（四态同，「vis-test」可见，截断由 flex 吸收）；
+  kind 盒 [999,1070.3] 与 fp 盒 [1076.3,1253] 不相交（间隙 6px = flex gap），无叠印；
+  两行布局成立（label 行 y≈352.9，kind/fp 行 y≈376.2-377）；
+  徽章（未绑定 x=1164.6 w=44.4 / 使用中）与删除钮四态在位。
+  目检：fix-cred-dark-unbound.png / fix-cred-dark-bound.png / fix-cred-light-unbound.png /
+  fix-cred-light-bound.png——label 加粗可见、次行 kind+指纹干净、暗/亮均正常。
+结构探针（vis-r21-probe-a.js）复跑 31/31（归档副本可直接复现）。
+零回归复跑（probe B + region diff）：全部数字与修复前一致——
+  settings 空态弹窗 pre/post-fix 逐位比对 bytes_diff = 0（280x332 同尺寸，修复未触及空态面）；
+  TOP y0-223 经三段归因后字号/主题区仍为 0（2665px 差全部落在基线 footer 带 vs 新凭据库空态带，
+  见上半部第三节）；addhost 0/79074；welcome MAIN 0/843200；HOSTBAR 6331（otp-2 插卡位移，
+  纯位移对账 12/141024）；terminal 3px AA。双端零 JS 错误。
+四态截图 DOM 数据说明：四态 label/kind/fp 坐标相同属预期（行内内容同、仅徽章文本/配色随态变）。
+
+========================================================================
+六、终裁
+========================================================================
+视觉可签（vis-r21 二轮复核）。原缺陷（凭据行叠印+label 零宽）已在两行布局下消除，
+四态 DOM 测量+目检双证；结构 31/31；零回归面与修复前逐数字一致。
