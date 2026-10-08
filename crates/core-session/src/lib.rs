@@ -39,6 +39,9 @@ pub struct ApprovalCenter {
     pub conn_tx: broadcast::Sender<ConnectionEvent>,
     /// C3（R24）：shell 集成态事件（Ready/Unavailable；DC3.5）
     pub shell_tx: broadcast::Sender<ShellIntegrationEvent>,
+    /// R26（§6.4）：会话状态事件（断线/自动重连次数/重确认）——UI 即时推送，
+    /// 免 3s 列表轮询盲窗。
+    pub state_tx: broadcast::Sender<SessionStateEvent>,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
 }
@@ -72,6 +75,7 @@ impl SessionManager {
         let (ap_tx, _) = broadcast::channel(16);
         let (conn_tx, _) = broadcast::channel(64);
         let (shell_tx, _) = broadcast::channel(64);
+        let (state_tx, _) = broadcast::channel(64);
         let center = Arc::new(ApprovalCenter {
             engine: ApprovalEngine::new()?,
             items: StdMutex::new(HashMap::new()),
@@ -85,6 +89,7 @@ impl SessionManager {
             ap_tx,
             conn_tx,
             shell_tx,
+            state_tx,
             vault,
             audit,
         });
@@ -1141,6 +1146,9 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
             // 通路关闭：本地 = 进程退出；SSH = 断线 → 重连 + 重确认
             if h.kind != "ssh" {
                 *h.state.lock().await = SessionState::Disconnected;
+                h.note_transition("本地 shell 退出（Disconnected）").await;
+                h.emit_state(SessionState::Disconnected, None, None,
+                    Some("本地 shell 已退出".into())).await;
                 return;
             }
             h.on_transport_reconnect().await;
@@ -2020,10 +2028,12 @@ impl SessionManager {
             }
         }
         h.note_transition("手动重连：重建连接").await;
+        h.retry_stop.store(false, std::sync::atomic::Ordering::SeqCst);
         // 先订阅：新传输的输出不得落入无订阅者窗口（§6.1-11 同源根因）
         let rx = h.channel.subscribe_output();
         let mut last_err = None;
         for attempt in 1..=3 {
+            h.emit_state(SessionState::Reconnecting, Some(attempt), Some(3), None).await;
             match h.channel.reconnect().await {
                 Ok(()) => {
                     last_err = None;
@@ -2039,6 +2049,8 @@ impl SessionManager {
         if let Some(e) = last_err {
             *h.state.lock().await = SessionState::Disconnected;
             h.note_transition("手动重连失败（仍断开，可再试）").await;
+            h.emit_state(SessionState::Disconnected, None, None,
+                Some(format!("手动重连失败：{e}"))).await;
             return Err(e);
         }
         h.reset_scene_after_reconnect().await;
@@ -2052,10 +2064,28 @@ impl SessionManager {
             *h.state.lock().await = SessionState::Reconfirming;
             h.note_transition("重连成功，进入重确认（仅内置只读白名单可用）")
                 .await;
+            h.emit_state(SessionState::Reconfirming, None, None, None).await;
         }
         let _ = self.center.audit.append(
             &Actor::Human,
             "session_reconnect",
+            Some(sid),
+            None,
+            serde_json::json!({}),
+            None,
+        );
+        Ok(())
+    }
+
+    /// R26（§6.4「可停止重试」）：置停止旗标，自动重连循环在下一检查点（≤250ms）
+    /// 落 Disconnected。幂等：不在重连期调用是合法 no-op（旗标复位由新断线周期
+    /// 与手动重连入口负责，此处不复位）。UI 的停止动作，不进 SessionApi/MCP 面。
+    pub async fn stop_auto_reconnect(&self, sid: &str) -> Result<()> {
+        let h = self.get(sid)?;
+        h.retry_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "session_reconnect_stop",
             Some(sid),
             None,
             serde_json::json!({}),
@@ -2414,6 +2444,10 @@ mod c1_tests;
 #[cfg(test)]
 #[path = "r24_tests.rs"]
 mod r24_tests;
+
+#[cfg(test)]
+#[path = "r26_tests.rs"]
+mod r26_tests;
 
 #[cfg(test)]
 mod c10_tests {

@@ -7,7 +7,7 @@
 // 后端同构，拒绝走 HostKeyRejected）、未知命令显式报错（不再静默 null）。
 
 import { apiError } from "./adapter/errors";
-import type { AttachOutput, DebugSubscriptions, ResyncOutput, ScreenCheckpoint } from "./adapter/wire";
+import type { AttachOutput, DebugSubscriptions, ResyncOutput, ScreenCheckpoint, SessionStateEvent } from "./adapter/wire";
 type Handler = (data: Uint8Array) => void;
 
 type DemoSession = {
@@ -51,6 +51,9 @@ type PendingKey = {
 
 const demoState = {
   owner: "Agent" as "Human" | "Agent",
+  // R26（§6.4）：每会话最近一条状态事件（session_state_feed 轮询面；真实核心走
+  // session-state 事件通道——C1 connection-event/demo 轮询双路的同款镜像）
+  stateEvents: new Map<string, SessionStateEvent>(),
   // C8 主机元数据（DF8.2）：收藏/最近连接，演示态内存域（真实核心在 host_metadata 表）
   hostMeta: new Map<string, { favorite: boolean; last_connected_at: string | null }>(),
   // R21 凭据基础管理：演示态凭据域（真实核心在 vault identities 表）+ 主机→凭据绑定
@@ -63,6 +66,8 @@ const demoState = {
     { id: "h-otp1", name: "otp-1（演示 2FA）", address: "otp.demo", port: 22, username: "ops", auth_type: "Password" },
     // R21（§306）：echo=false 演示主机——验证码输入不回显（遮蔽断言面）
     { id: "h-otp2", name: "otp-2（演示 2FA 隐）", address: "otp2.demo", port: 22, username: "ops", auth_type: "Password" },
+    // R26（R24-L5 指引面）：集成显式关的演示主机——命令框 Shell 模式拒绝 + Fresh 指引
+    { id: "h-noint", name: "noint-1（无集成）", address: "noint.demo", port: 22, username: "ops", auth_type: "Password", shell_integration: false },
     { id: "h-staging1", name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password" },
   ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk"; tags?: string[]; ident_id?: string | null }[],
   sessions: [
@@ -194,6 +199,15 @@ function demoCheckpoint(s: DemoSession): ScreenCheckpoint {
 }
 // 自增起点避开全部种子 id（曾用 2 与种子区段相邻，易在对比时混淆）
 let demoSeq = 100;
+// R26：自动重连模拟链（demo_drop_session 建链，stop_auto_reconnect 断链）
+const dropChains = new Map<string, { stop: boolean; timers: number[] }>();
+function demoEmitState(sid: string, state: string,
+  attempt: number | null, max: number | null, detail: string | null) {
+  demoState.stateEvents.set(sid, {
+    session_id: sid, state: state as SessionStateEvent["state"],
+    attempt, max_attempts: max, detail,
+  });
+}
 let demoSubCounter = 0;
 let eventSeq = 42;
 function audit(
@@ -423,8 +437,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         m.last_connected_at = new Date().toISOString();
         demoState.hostMeta.set(h.id, m);
       }
-      // 镜像真实：SSH 建连后注入 Shell 集成标记（OSC133+OSC7），时间线两条同现
-      audit("human", "shell_integration_inject", "OSC133+OSC7", null, sid);
+      // 镜像真实（C3/R24）：host shell_integration=false → Disabled 不注入（DC3.2）
+      if ((h as { shell_integration?: boolean }).shell_integration !== false) {
+        audit("human", "shell_integration_inject", "OSC133+OSC7", null, sid);
+      }
       return sid;
     }
     case "close_session": {
@@ -453,11 +469,80 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       if (s.state !== "Disconnected") throw apiError("invalid_input", "会话未处于断开状态，无需重连（演示）");
+      // 镜像真实：手动重连异步完成——Reconnecting{1/3} 事件 + 800ms 完成窗
+      //（核心手动循环 3 次尝试期间同样发 Reconnecting；invoke 完成后才算成功）
+      demoEmitState(sid, "Reconnecting", 1, 3, null);
+      s.state = "Reconnecting";
+      await new Promise((r) => setTimeout(r, 800));
       s.state = "Reconfirming";
+      demoEmitState(sid, "Reconfirming", null, null, null);
       pushTo(sid, "\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
       audit("human", "session_reconnect", null, null, sid ?? null);
       return null;
     }
+    // R26（§6.4）：模拟网络断线 + 自动重连（探针驱动；recoverOnAttempt=N 第 N 次
+    // 重连成功，0=永不）。节奏：Degraded 即刻 → 每 700ms 一次 attempt（每次状态
+    // 驻留 ≥350ms，300ms 轮询不漏采）→ 3 次耗尽 Disconnected。
+    case "demo_drop_session": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.state === "Disconnected") throw apiError("invalid_input", "会话已断开（演示）");
+      const old = dropChains.get(sid);
+      if (old) { old.stop = true; for (const t of old.timers) clearTimeout(t); dropChains.delete(sid); }
+      const recover = Number(args?.recoverOnAttempt ?? 0);
+      const chain = { stop: false, timers: [] as number[] };
+      dropChains.set(sid, chain);
+      s.state = "Degraded";
+      demoEmitState(sid, "Degraded", null, null, null);
+      s.transitions.push({ ts: new Date().toISOString(), what: "连接退化，尝试重连" });
+      let a = 0;
+      const step = () => {
+        const c = dropChains.get(sid);
+        if (!c || c.stop) return;
+        a += 1;
+        if (a > 3) {
+          s.state = "Disconnected";
+          demoEmitState(sid, "Disconnected", null, null, "自动重连 3 次均失败");
+          s.transitions.push({ ts: new Date().toISOString(), what: "重连失败（Disconnected）" });
+          dropChains.delete(sid);
+          return;
+        }
+        s.state = "Reconnecting";
+        demoEmitState(sid, "Reconnecting", a, 3, null);
+        if (recover === a) {
+          chain.timers.push(window.setTimeout(() => {
+            const c2 = dropChains.get(sid);
+            if (!c2 || c2.stop) return;
+            s.state = "Reconfirming";
+            demoEmitState(sid, "Reconfirming", null, null, null);
+            s.transitions.push({ ts: new Date().toISOString(), what: "重连成功，进入重确认（仅内置只读白名单可用）" });
+            pushTo(sid, "\r\n[演示] 自动重连成功，进入重确认\r\n");
+            dropChains.delete(sid);
+          }, 350));
+          return;
+        }
+        chain.timers.push(window.setTimeout(step, 700));
+      };
+      chain.timers.push(window.setTimeout(step, 400));
+      return null;
+    }
+    // R26（§6.4「可停止重试」）：断链 + 立即 Disconnected（真实核心 ≤250ms 分片睡眠）
+    case "stop_auto_reconnect": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      const chain = dropChains.get(sid);
+      if (chain) { chain.stop = true; for (const t of chain.timers) clearTimeout(t); dropChains.delete(sid); }
+      s.state = "Disconnected";
+      demoEmitState(sid, "Disconnected", null, null, "已停止自动重连");
+      s.transitions.push({ ts: new Date().toISOString(), what: "用户停止自动重连（Disconnected）" });
+      audit("human", "session_reconnect_stop", null, null, sid ?? null);
+      return null;
+    }
+    // R26：状态事件轮询面（demo 无事件通道——C1 connection_status 同款兜底）
+    case "session_state_feed":
+      return [...demoState.stateEvents.values()];
     case "resize":
       return null;
     case "read_screen": {
@@ -614,6 +699,14 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "exec_human": {
       const sid = args?.sid as string;
       const command = args?.command as string;
+      // 镜像真实（C3/B12）：集成关闭主机的命令框（Shell 模式）执行前拒绝——
+      // available 载荷与核心同形状（FE 据此呈示 Fresh 指引）
+      const s0 = demoState.sessions.find((x) => x.id === sid);
+      const h0 = s0 ? demoState.hosts.find((x) => x.id === s0.host_id) : null;
+      if (h0 && (h0 as { shell_integration?: boolean }).shell_integration === false) {
+        throw apiError("shell_integration_unavailable",
+          "Shell 模式不可用：该主机未启用 shell 集成", { available: { integration_present: false, prompt_ready: false, host_setting: false } });
+      }
       pushTo(sid, "\r\n" + command + "\r\n（演示输出）total 48K\r\n");
       audit("human", "exec", command, null, sid ?? null);
       return { stdout: "", exit_code: 0 };

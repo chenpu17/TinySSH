@@ -1,0 +1,189 @@
+{
+ "upsert": "h-demo-100",
+ "G_card": true,
+ "G_mask": true,
+ "G_sid2": "s-demo-0103",
+ "G_connected": true,
+ "ph_long_1280": "先在主机栏连接一台主机，这里才能执行命令",
+ "tabs_long_1280": [
+  {
+   "title": "prod-1 · 已连接 · ⌘1",
+   "tabScrollW": 120,
+   "tabClientW": 120,
+   "dot": "tab-dot ok"
+  },
+  {
+   "title": "staging-1 · 已断开 · ⌘2",
+   "tabScrollW": 133,
+   "tabClientW": 133,
+   "dot": "tab-dot dim"
+  }
+ ],
+ "G_640": {
+  "errBar": {
+   "x": 226,
+   "y": 87.5,
+   "w": 414,
+   "h": 38,
+   "scrollW": 414,
+   "clientW": 414
+  },
+  "span": {
+   "x": 238,
+   "y": 97.4,
+   "w": 312,
+   "h": 17.3,
+   "scrollW": 312,
+   "clientW": 312,
+   "trunc": false
+  },
+  "btn": {
+   "x": 556,
+   "y": 91.5,
+   "w": 72,
+   "h": 29,
+   "scrollW": 72,
+   "clientW": 72
+  },
+  "spanBtnInter": {
+   "w": -6,
+   "h": 17.3,
+   "hit": false
+  },
+  "barText": "⛔ 网络中断——自动重连中（第 1/3 次）停止重试",
+  "btnHit": true,
+  "deadBanner": null,
+  "barOverlayInter": null
+ },
+ "G_640_tabs": [
+  {
+   "title": "prod-1 · 已连接 · ⌘1",
+   "tabScrollW": 120,
+   "tabClientW": 120,
+   "dot": "tab-dot ok"
+  },
+  {
+   "title": "staging-1 · 已断开 · ⌘2",
+   "tabScrollW": 133,
+   "tabClientW": 133,
+   "dot": "tab-dot dim"
+  },
+  {
+   "title": "web-prod-cluster-ansible-runner-01.example.corp.tinyssh · 重连中… · ⌘3",
+   "tabScrollW": 220,
+   "tabClientW": 220,
+   "dot": "tab-dot err"
+  }
+ ],
+ "G_640_ph": "网络中断，自动重连中——命令暂不发送",
+ "G_disc": true,
+ "G_640_disc": {
+  "errBar": {
+   "x": 226,
+   "y": 87.5,
+   "w": 414,
+   "h": 38,
+   "scrollW": 414,
+   "clientW": 414
+  },
+  "span": {
+   "x": 238,
+   "y": 97.4,
+   "w": 312,
+   "h": 17.3,
+   "scrollW": 312,
+   "clientW": 312,
+   "trunc": false
+  },
+  "btn": {
+   "x": 556,
+   "y": 91.5,
+   "w": 72,
+   "h": 29,
+   "scrollW": 72,
+   "clientW": 72
+  },
+  "spanBtnInter": {
+   "w": -6,
+   "h": 17.3,
+   "hit": false
+  },
+  "barText": "⛔ 会话已断开——画面为断开前状态，键入已拦截重连恢复",
+  "btnHit": true,
+  "deadBanner": {
+   "x": 254.5,
+   "y": 253.5,
+   "w": 357,
+   "h": 112.3,
+   "scrollW": 355,
+   "clientW": 355
+  },
+  "barOverlayInter": {
+   "w": 357,
+   "h": -128,
+   "hit": false
+  }
+ },
+ "G_1280_disc": {
+  "errBar": {
+   "x": 226,
+   "y": 70.3,
+   "w": 1054,
+   "h": 38,
+   "scrollW": 1054,
+   "clientW": 1054
+  },
+  "span": {
+   "x": 238,
+   "y": 80.1,
+   "w": 952,
+   "h": 17.3,
+   "scrollW": 952,
+   "clientW": 952,
+   "trunc": false
+  },
+  "btn": {
+   "x": 1196,
+   "y": 74.3,
+   "w": 72,
+   "h": 29,
+   "scrollW": 72,
+   "clientW": 72
+  },
+  "spanBtnInter": {
+   "w": -6,
+   "h": 17.3,
+   "hit": false
+  },
+  "barText": "⛔ 会话已断开——画面为断开前状态，键入已拦截重连恢复",
+  "btnHit": true,
+  "deadBanner": {
+   "x": 574.5,
+   "y": 236.3,
+   "w": 357,
+   "h": 112.3,
+   "scrollW": 355,
+   "clientW": 355
+  },
+  "barOverlayInter": {
+   "w": 357,
+   "h": -128,
+   "hit": false
+  }
+ },
+ "F_tokens": {
+  "barPresent": true,
+  "bgMatch": true,
+  "colorMatch": true,
+  "borderMatch": true,
+  "values": {
+   "barBg": "rgba(208, 122, 122, 0.12)",
+   "probeBg": "rgba(208, 122, 122, 0.12)",
+   "barColor": "rgb(208, 122, 122)",
+   "probeColor": "rgb(208, 122, 122)",
+   "barBorder": "rgba(208, 122, 122, 0.18)",
+   "probeRing": "rgba(208, 122, 122, 0.18)"
+  }
+ },
+ "jsErrors": []
+}

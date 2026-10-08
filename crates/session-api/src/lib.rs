@@ -599,6 +599,21 @@ pub struct ShellIntegrationEvent {
     pub state: IntegrationState,
 }
 
+/// R26（§6.4）会话状态事件：断线/自动重连/重确认对 UI 的即时推送
+/// （state 序列化串与 SessionInfo.state 同源；attempt/max_attempts 仅
+/// Reconnecting 携带——「显示实际重试次数」的数据面）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStateEvent {
+    pub session_id: SessionId,
+    pub state: SessionState,
+    #[serde(default)]
+    pub attempt: Option<u32>,
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionState {
     Connected,

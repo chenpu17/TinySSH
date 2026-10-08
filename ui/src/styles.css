@@ -632,6 +632,15 @@ textarea {
   border-color: var(--accent-ring);
   color: var(--accent);
 }
+/* R26（§6.4）：断线/自动重连状态条（err=传输中断语义，与 warn 安全受限分立） */
+.notice-bar.err {
+  background: var(--danger-soft);
+  border-color: var(--danger-ring);
+  color: var(--danger);
+}
+.notice-bar.err button {
+  flex: none;
+}
 
 /* 主机指纹确认/变更告警弹窗（T17 TOFU） */
 .hk-mask {

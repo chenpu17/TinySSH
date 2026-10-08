@@ -1,0 +1,19 @@
+r26-open
+r26c|r26a-conns-ok
+r26c|r26a-drop-wait1
+r26c|r26a-tick|0|Reconnecting|-|⛔ 网络中断——自动重连中（第 2/3 次）停止重试
+r26c|r26a-tick|10|Reconnecting|-|⛔ 网络中断——自动重连中（第 3/3 次）停止重试
+r26c|r26a-tick|20|Reconnecting|-|⛔ 网络中断——自动重连中（第 3/3 次）停止重试
+r26c|r26a-auto-reconn-max3
+r26c|r26a-exhaust-ok
+r26c|r26a-inputblock-ok
+r26c|r26a-start-wait
+r26c|r26a-reconfirm-ok
+r26c|r26a-input-ok
+r26c|r26a-cmdbar-ok
+r26c|r26a-drop-wait2
+r26c|r26a-stop-ok
+r26c|r26a-closedisc-ok
+r26c|r26a-DONE
+r26-DONE
+r26c-DRIVER|DONE

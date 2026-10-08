@@ -44,6 +44,8 @@ interface CmdArgs {
   cancel_connection: { attemptId: string };
   close_session: { sid: string };
   reconnect_session: { sid: string };
+  stop_auto_reconnect: { sid: string };
+  session_state_feed: undefined;
   resize: { sid: string; cols: number; rows: number };
   subscribe_output: { sid: string; onEvent: WireChannel };
   unsubscribe_output: { sid: string; subscriptionId: string };
@@ -102,6 +104,8 @@ interface CmdRet {
   cancel_connection: wire.CancelOutcome;
   close_session: void;
   reconnect_session: void;
+  stop_auto_reconnect: void;
+  session_state_feed: wire.SessionStateEvent[];
   resize: void;
   subscribe_output: wire.AttachOutput;
   unsubscribe_output: void;

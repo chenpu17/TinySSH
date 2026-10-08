@@ -1,0 +1,144 @@
+{
+ "meta": {
+  "date": "2026-10-08",
+  "baseline": "739ee3c(R25) worktree /tmp/vis-r26-base :5184",
+  "current": "R26 uncommitted tree :5183",
+  "viewport": "1280x800 headless Chrome, 640x800 narrow case",
+  "noise_floor": "both-tree burst selfDiff=0 on all 3 regression faces"
+ },
+ "regression_pixel_diff": {
+  "welcome+hostlist": {
+   "diffPx": 8745,
+   "bbox": [
+    18,
+    188,
+    204,
+    506
+   ],
+   "attribution": "demo seed host noint-1（无集成）card inserted (R24-L5 guidance face, intent-in); DOM order verified base[本机,otp-1,otp-2,prod-1,prod-2,staging-1] vs cur[+noint-1@1]; outside hostbar x>204 diff=0"
+  },
+  "addform": {
+   "diffPx": 5795,
+   "bbox": [
+    18,
+    578,
+    204,
+    759
+   ],
+   "attribution": "same hostbar region (form itself x>226 diff=0)"
+  },
+  "settings": {
+   "diffPx": 8745,
+   "bbox": [
+    18,
+    188,
+    204,
+    506
+   ],
+   "attribution": "identical bbox to welcome face = hostbar visible under modal dim; dialog region itself diff=0"
+  }
+ },
+ "box_measurements": {
+  "reconnecting_bar_1280": {
+   "bar": [
+    1054,
+    38
+   ],
+   "span": [
+    952,
+    17.3
+   ],
+   "spanTrunc": false,
+   "btn 停止重试": [
+    72,
+    29
+   ],
+   "spanBtnGapX": -6,
+   "btnHit": true,
+   "counterText": "⛔ 网络中断——自动重连中（第 1/3 次）停止重试"
+  },
+  "disconnected_bar_1280": {
+   "bar": [
+    1054,
+    38
+   ],
+   "spanTrunc": false,
+   "btn 重连恢复": [
+    72,
+    29
+   ],
+   "btnHit": true,
+   "deadBanner": [
+    357,
+    112.3
+   ],
+   "barVsBannerIntersectH": -128,
+   "bannerText_has_旧现场待核实": true
+  },
+  "reconfirming_warnbar_1280": {
+   "bar": [
+    1054,
+    26.3
+   ],
+   "warnTrunc": false,
+   "text": "ⓘ 已重连；旧现场待核实——你可以继续操作；Agent 已暂停（普通变更仍受限）。"
+  },
+  "longname_640_reconnecting": {
+   "bar": [
+    414,
+    38
+   ],
+   "span": [
+    312,
+    17.3
+   ],
+   "spanTrunc": false,
+   "btn": [
+    72,
+    29
+   ],
+   "spanBtnGapX": -6,
+   "btnHit": true
+  },
+  "longname_640_disconnected": {
+   "bar": [
+    414,
+    38
+   ],
+   "spanTrunc": false,
+   "btnHit": true,
+   "barVsBannerIntersectH": -128,
+   "tab_longname": "220px ellipsis 无溢出 dot=err"
+  },
+  "stop_retry": {
+   "realMouseClick": true,
+   "earlyDisconnected": true,
+   "toast": "已停止 prod-1 的自动重连"
+  },
+  "placeholders": {
+   "connected": "在 prod-1 上执行命令——…",
+   "reconnecting": "网络中断，自动重连中——命令暂不发送",
+   "disconnected": "会话已断开——重连恢复后再执行命令",
+   "reconfirming": "在 prod-1 上执行命令——…",
+   "longname_connected": "在 web-prod-cluster-ansible-runner-01.example.corp.tinyssh 上执行命令——…"
+  },
+  "tab_dots": {
+   "ok": "tab-dot ok",
+   "dim(Disconnected)": "tab-dot dim",
+   "err(Reconnecting/Reconfirming)": "tab-dot err",
+   "reconfirmingTabText": "重确认"
+  }
+ },
+ "token_reconciliation": {
+  "errBar bg=--danger-soft": true,
+  "errBar color=--danger": true,
+  "errBar border=--danger-ring": true,
+  "values": {
+   "bg": "rgba(208, 122, 122, 0.12)",
+   "color": "rgb(208, 122, 122)",
+   "border": "rgba(208, 122, 122, 0.18)"
+  }
+ },
+ "jsErrors": 0,
+ "verdict": "可签"
+}

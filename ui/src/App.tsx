@@ -11,7 +11,7 @@ import type {
   Host, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
-  AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome,
+  AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -142,10 +142,16 @@ const stateLabel = (s: string): { text: string; cls: string } => {
     case "Connected": return { text: "已连接", cls: "ok" };
     case "Degraded": return { text: "连接中断", cls: "err" };
     case "Reconnecting": return { text: "重连中…", cls: "err" };
-    case "Reconfirming": return { text: "重确认（受限）", cls: "err" };
+    // §6.4：重确认期人类可继续操作（受限的是 Agent 变更）——标签不再写「受限」误导人
+    case "Reconfirming": return { text: "重确认", cls: "err" };
     default: return { text: "已断开", cls: "dim" };
   }
 };
+
+// R26（§6.4「不缓冲输入」）：传输已断/重建中的会话一律拦截键入——
+// Disconnected=核心拒绝；Degraded/Reconnecting=通道死亡（写必错），不排队给未来连接
+const inputBlockedState = (st: string): boolean =>
+  st === "Disconnected" || st === "Degraded" || st === "Reconnecting";
 
 // 后端错误 → 用户能看懂的一句话（原始错误放次要行）
 const friendlyError = (e: unknown): string => {
@@ -347,6 +353,37 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const sessionsRef = useRef<SessionInfo[]>([]);
   useEffect(() => { sessionsRef.current = sessions; applyPanesRef.current(); }, [sessions]);
+  // R26（§6.4）：自动重连进行计数（session-state 事件驱动；null=无自动重连在途）
+  const [autoReconn, setAutoReconn] = useState<{ sid: string; attempt: number; max: number } | null>(null);
+  // 事件应用：会话状态即时更新（免 3s 轮询盲窗）+ 重连计数推进；
+  // 终态（Reconfirming/Disconnected/Connected/Closed）清除本会话在途计数
+  const applyStateEvent = useCallback((ev: SessionStateEvent) => {
+    setSessions((cur) => cur.map((s) => (s.id === ev.session_id ? { ...s, state: ev.state } : s)));
+    setAutoReconn((cur) => {
+      if (ev.state === "Reconnecting") {
+        return { sid: ev.session_id, attempt: ev.attempt ?? 0, max: ev.max_attempts ?? 3 };
+      }
+      return cur?.sid === ev.session_id ? null : cur;
+    });
+  }, []);
+  // 真实环境：session-state 事件（连接事件同款 transformCallback 通道）
+  useEffect(() => {
+    if (!inTauri) return;
+    let un: (() => void) | undefined;
+    listen<SessionStateEvent>("session-state", (e) => applyStateEvent(e.payload)).then((f) => (un = f));
+    return () => un?.();
+  }, [applyStateEvent]);
+  // demo 环境：300ms 轮询 session_state_feed（无事件通道的兜底，C1 同款双路镜像）
+  useEffect(() => {
+    if (inTauri) return;
+    const t = setInterval(async () => {
+      try {
+        const evs = await invoke("session_state_feed") as SessionStateEvent[];
+        for (const ev of evs) applyStateEvent(ev);
+      } catch { /* 下轮再试 */ }
+    }, 300);
+    return () => clearInterval(t);
+  }, [inTauri, applyStateEvent]);
   // 分屏（T19）：main=左主 pane，second=右副 pane；null=单 pane。布局（谁在左谁在右）
   // 与焦点（sid）解耦——分屏时点右 pane 只挪焦点，终端内容不左右跳动。
   // ref 与 state 并行：fitTerminal/看门狗等回调内读 ref，避开 stale closure。
@@ -908,6 +945,14 @@ export default function App() {
         // 不代执行）；但远端未开启时多行内容 = 换行立即执行——预览确认后才发
         const putPaste = (t: string) => {
           if (!t) return;
+          // rev-r26 低-5：断线/重连期粘贴与键入同口径拦截（确认框照弹会误导——
+          // 确认后字节仍被 onData 拦下）；⚠ 与 onData 告示同文
+          const pst = sessionsRef.current.find((x) => x.id === sessionSid)?.state;
+          if (pst && inputBlockedState(pst)) {
+            const why = pst === "Disconnected" ? "会话已断开" : "网络中断（自动重连中）";
+            term.write(`\r\n\x1b[33m⚠ ${why}——粘贴未发送。\x1b[0m\r\n`);
+            return;
+          }
           if (pasteGuardRef.current && /[\n\r]/.test(t) && !term.modes.bracketedPasteMode) {
             const h = sessionsRef.current.find((x) => x.id === sessionSid);
             setPasteConfirm({ sid: sessionSid, hostName: h?.host_name ?? sessionSid.slice(0, 8), text: t });
@@ -951,11 +996,14 @@ export default function App() {
     // onData 直接归属本会话：终端实例与会话一一对应，无 stale closure。
     let deadWarned = false;
     term.onData((d) => {
-      // 死会话输入拦截（P2-7）：PTY 已死，键入只会静默进黑洞——明说，不假装
-      if (sessionsRef.current.find((x) => x.id === sessionSid)?.state === "Disconnected") {
+      // 死会话/断线输入拦截（P2-7 + R26 §6.4）：PTY 已死（含自动重连中——通道
+      // 不存在），键入只会静默进黑洞或排队给未来连接——明说，不假装
+      const st = sessionsRef.current.find((x) => x.id === sessionSid)?.state;
+      if (st && inputBlockedState(st)) {
         if (!deadWarned) {
           deadWarned = true;
-          term.write("\r\n\x1b[33m⚠ 会话已断开——键入未发送。用「标签列表 → 重连」恢复。\x1b[0m\r\n");
+          const why = st === "Disconnected" ? "会话已断开" : "网络中断（自动重连中）";
+          term.write(`\r\n\x1b[33m⚠ ${why}——键入未发送。\x1b[0m\r\n`);
         }
         return;
       }
@@ -1005,15 +1053,16 @@ export default function App() {
           ev.preventDefault();
           ev.stopPropagation();
           const s0 = sidRef.current;
-          if (!s0 || sessionsRef.current.find((x) => x.id === s0)?.state === "Disconnected") return;
+          if (!s0 || (() => { const st = sessionsRef.current.find((x) => x.id === s0)?.state; return !st || inputBlockedState(st); })()) return;
           void invoke("send_keys", { sid: s0, keys: seq }).catch(() => {});
           return;
         }
         if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
         const s = sidRef.current;
         if (!s) return;
-        // 死会话拦截：Ctrl 控制字符不进死通道（黑洞）
-        if (sessionsRef.current.find((x) => x.id === s)?.state === "Disconnected") {
+        // 死会话/断线拦截：Ctrl 控制字符不进死通道（黑洞/排队）
+        const scur = sessionsRef.current.find((x) => x.id === s)?.state;
+        if (!scur || inputBlockedState(scur)) {
           ev.preventDefault();
           ev.stopPropagation();
           return;
@@ -2143,6 +2192,13 @@ export default function App() {
 
   // 断线会话一键重连：核心重建传输 + 重启泵 + 重注入；UI 订阅不变，输出自动恢复
   const [reconnecting, setReconnecting] = useState<string | null>(null);
+  // R26（§6.4「可停止重试」）：核心旗标 ≤250ms 生效落 Disconnected；失败如实提示
+  const stopRetry = async (s: SessionInfo) => {
+    try {
+      await invoke("stop_auto_reconnect", { sid: s.id });
+      pushToast("info", `已停止 ${s.host_name} 的自动重连`);
+    } catch (e) { pushToast("err", friendlyError(e)); }
+  };
   const reconnectSession = async (s: SessionInfo) => {
     const gen0 = focusGenRef.current; // §6.3：重连完成不抢走用户期间转移的焦点
     setReconnecting(s.id);
@@ -2478,10 +2534,42 @@ export default function App() {
             接管＝冻结 Agent、待审批作废，正在跑的命令不中断 · 接管并停止任务＝再尝试停止跑着的命令（结果逐条显示）
           </div>
         )}
-        {/* 重确认（受限）：安全限制状态独占一行警示（§5.2），核实完成后自动恢复 */}
+        {/* 重确认：§6.4 原文「已重连；旧现场待核实」——人类可继续操作，受限的是
+            Agent 变更（有协作在场时点名「Agent 暂停」）；核实完成自动恢复 */}
         {current?.state === "Reconfirming" && (
           <div className="notice-bar warn">
-            ⚠ 重确认中（受限）— 普通操作暂停，仅允许只读核实命令。核实完成后自动恢复。
+            ⓘ 已重连；旧现场待核实——你可以继续操作{owner === "Agent" ? "；Agent 已暂停（普通变更仍受限）" : ""}。
+          </div>
+        )}
+        {/* R26（§6.4）：网络断线自动重连——显示实际重试次数 + 可停止；
+            Disconnected=顶部短状态条提供重连（dead-overlay 同动作双入口）。
+            rev-r26 中-1：手动重连（reconnecting）期核心发同形 Reconnecting 事件，
+            但手动循环不读停止旗标——此时横幅独立呈示「手动重连中」且无停止钮，
+            不冒用自动语义（停止钮只对真自动重连在位） */}
+        {current && (current.state === "Degraded" || current.state === "Reconnecting") && (
+          reconnecting === current.id ? (
+            <div className="notice-bar err">
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                ⏳ 手动重连中——{current.host_name}（最多 3 次尝试）
+              </span>
+            </div>
+          ) : (
+            <div className="notice-bar err">
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                ⛔ 网络中断——自动重连中{autoReconn?.sid === current.id && autoReconn.attempt > 0 ? `（第 ${autoReconn.attempt}/${autoReconn.max} 次）` : "…"}
+              </span>
+              <button className="danger" onClick={() => void stopRetry(current)}>停止重试</button>
+            </div>
+          )
+        )}
+        {current?.state === "Disconnected" && (
+          <div className="notice-bar err">
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              ⛔ 会话已断开——画面为断开前状态，键入已拦截
+            </span>
+            <button disabled={reconnecting !== null} onClick={() => void reconnectSession(current)}>
+              {reconnecting === current.id ? "重连中…" : "重连恢复"}
+            </button>
           </div>
         )}
         {/* 标签页（T19）：每个会话一签，状态点随连接状态变色；◫ 进/换分屏，✕ 关闭（⌘W） */}
@@ -2855,7 +2943,7 @@ export default function App() {
                   <button disabled={reconnecting !== null} onClick={() => reconnectSession(current)}>
                     {reconnecting === current.id ? "重连中…" : "重连恢复"}
                   </button>
-                  <span className="dim" style={{ fontSize: 11 }}>重连后进入重确认（仅内置只读白名单可用）</span>
+                  <span className="dim" style={{ fontSize: 11 }}>重连后进入重确认——旧现场待核实，可继续操作</span>
                 </div>
               </div>
             </div>
@@ -3057,8 +3145,10 @@ export default function App() {
           <input
             placeholder={
               current
-                ? current.state === "Disconnected"
-                  ? "会话已断开——用「标签列表 → 重连」恢复后再执行命令"
+                ? inputBlockedState(current.state)
+                  ? current.state === "Disconnected"
+                    ? "会话已断开——重连恢复后再执行命令"
+                    : "网络中断，自动重连中——命令暂不发送"
                   : `在 ${current.host_name} 上执行命令——回车执行，Ctrl+C 中断终端里的前台程序`
                 : "先在主机栏连接一台主机，这里才能执行命令"
             }
@@ -3100,9 +3190,13 @@ export default function App() {
                 return;
               }
               if (e.key === "Enter" && input.trim() && sid) {
-                // 死会话拦截（P2-7）：命令不进死通道，明说去哪恢复
-                if (sessionsRef.current.find((x) => x.id === sid)?.state === "Disconnected") {
-                  setConnError({ title: "会话已断开", detail: "命令未发送。用「标签列表 → 重连」恢复后再执行。" });
+                // 死会话/断线拦截（P2-7 + R26 §6.4）：命令不进死通道、不排队给未来连接
+                const cst = sessionsRef.current.find((x) => x.id === sid)?.state;
+                if (cst && inputBlockedState(cst)) {
+                  setConnError({
+                    title: cst === "Disconnected" ? "会话已断开" : "网络中断（自动重连中）",
+                    detail: "命令未发送。重连恢复后再执行。",
+                  });
                   return;
                 }
                 const cmd = input;
@@ -3116,6 +3210,12 @@ export default function App() {
                   await invoke("exec_human", { sid, command: cmd });
                 } catch (err) {
                   xtermRef.current?.write(`\r\n\x1b[31m✕ ${errMsg(err)}\x1b[0m\r\n`);
+                  // R24-L5（DC3.4）：命令框恒 Shell 模式——集成关闭主机的拒绝要给下一步：
+                  // 开集成，或 CLI/MCP 显式 Fresh（UI 无 Fresh 入口，不假装有）
+                  const pe = parseWireError(err);
+                  if (pe.kind === "shell_integration_unavailable") {
+                    xtermRef.current?.write("\x1b[33m  该主机未启用 shell 集成——命令框按 Shell 模式执行被拒。\x1b[0m\r\n\x1b[33m  可在设置开启该主机集成；或在 CLI/MCP 显式以 Fresh 模式执行（无现场，退出码可靠）。\x1b[0m\r\n");
+                  }
                 }
               }
             }}
@@ -3126,7 +3226,8 @@ export default function App() {
               title="向前台进程发送 SIGINT（等同 Ctrl+C），不依赖输入法状态"
               onClick={() => {
                 const s = sidRef.current;
-                if (s && sessionsRef.current.find((x) => x.id === s)?.state !== "Disconnected") {
+                const st = s ? sessionsRef.current.find((x) => x.id === s)?.state : undefined;
+                if (s && st && !inputBlockedState(st)) {
                   void invoke("send_keys", { sid: s, keys: "\u0003" }).catch(() => {});
                 }
                 xtermRef.current?.focus();

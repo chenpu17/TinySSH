@@ -117,6 +117,16 @@ export interface SessionInfo {
   created_at: string;
 }
 
+// ---- R26（§6.4）会话状态事件：断线/自动重连次数/重确认即时推送 ----
+
+export interface SessionStateEvent {
+  session_id: SessionId;
+  state: SessionState;
+  attempt?: number | null;
+  max_attempts?: number | null;
+  detail?: string | null;
+}
+
 // ---- C1 建连尝试（R19）----
 
 export type AttemptId = string;

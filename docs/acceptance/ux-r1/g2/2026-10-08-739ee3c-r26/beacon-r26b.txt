@@ -1,0 +1,29 @@
+r26-open
+r26b|r26a-conns-ok
+r26b|r26a-drop-wait1
+r26b|r26a-tick|0|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|10|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|20|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|30|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|40|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|50|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|60|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|70|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|80|Reconnecting|-|⛔ 网络中断——自动重连中（第 1/3 次）停止重试
+r26b|r26a-tick|90|Reconnecting|-|⛔ 网络中断——自动重连中（第 2/3 次）停止重试
+r26b|r26a-tick|100|Reconnecting|-|⛔ 网络中断——自动重连中（第 2/3 次）停止重试
+r26b|r26a-tick|110|Reconnecting|-|⛔ 网络中断——自动重连中（第 3/3 次）停止重试
+r26b|r26a-tick|120|Disconnected|ovl|⛔ 会话已断开——画面为断开前状态，键入已拦截重连恢复
+r26b|r26a-auto-reconn-max3
+r26b|r26a-exhaust-ok
+r26b|r26a-inputblock-ok
+r26b|r26a-start-wait
+r26b|r26a-reconfirm-ok
+r26b|r26a-input-ok
+r26b|r26a-cmdbar-ok
+r26b|r26a-drop-wait2
+r26b|r26a-stop-ok
+r26b|r26a-closedisc-ok
+r26b|r26a-DONE
+r26-DONE
+r26b-DRIVER|DONE

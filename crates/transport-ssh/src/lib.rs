@@ -181,6 +181,12 @@ fn ssh_config() -> Arc<client::Config> {
     })
 }
 
+/// connect（TCP+banner 交换）阶段的有界窗。docker 等端口代理在容器死后仍接受
+/// TCP（无 RST）——无超时则 banner 等待可挂任意久，「有限重试」退化为单次悬挂
+/// （R26 §6.4：重试计数与停止重试都依赖 attempt 有界）。认证阶段不在此窗
+/// （2FA 交互等待人的应答，不能限时）。
+const CONNECT_PHASE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl SshChannel {
     pub async fn connect(target: SshTarget, cols: u16, rows: u16) -> Result<Arc<Self>> {
         let seen = Arc::new(Mutex::new(None::<String>));
@@ -212,12 +218,12 @@ impl SshChannel {
             host_key_check: self.target.host_key_check.clone(),
             seen_fingerprint: self.seen_fingerprint.clone(),
             router: self.router.clone(),
-        };        let handle = russh::client::connect(
-            ssh_config(),
-            (self.target.address.as_str(), self.target.port),
-            handler,
+        };        let handle = tokio::time::timeout(
+            CONNECT_PHASE_TIMEOUT,
+            russh::client::connect(ssh_config(), (self.target.address.as_str(), self.target.port), handler),
         )
         .await
+        .map_err(|_| Error::ConnectFailed("connect timeout（10s 内未完成 TCP/banner 交换）".into()))?
         .map_err(|e| match e {
             // 指纹门拒绝等 Api 错误原样透传（UI 显示"主机指纹验证失败（…）"）
             SshError::Api(e) => e,

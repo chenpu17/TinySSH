@@ -7,7 +7,7 @@ use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, TransportSignal};
 use session_api::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use term_core::Screen;
@@ -60,6 +60,9 @@ pub struct SessionHandle {
 
     // C3（R24）：shell 集成态（Disabled/Pending/Ready/Unavailable；SessionInfo 派生源）
     pub integration: StdMutex<session_api::IntegrationState>,
+    /// R26（§6.4）：自动重连停止旗标——stop_auto_reconnect 置位后重试循环在
+    /// 下一检查点（≤250ms）落 Disconnected；新断线周期/手动重连入口复位。
+    pub retry_stop: AtomicBool,
     // exec 串行队列
     pub exec_slot: AsyncMutex<()>,
     pub queue_waiters: AtomicUsize,
@@ -170,6 +173,7 @@ impl SessionHandle {
             replay: StdMutex::new(ReplayRing::default()),
             subs: StdMutex::new(HashMap::new()),
             integration: StdMutex::new(session_api::IntegrationState::Disabled),
+            retry_stop: AtomicBool::new(false),
             center,
         })
     }
@@ -873,6 +877,8 @@ impl SessionHandle {
     }
 
     /// 断线 → 尽力重连（不含注入；注入由 pump 在"先订阅"之后调用 reinject_integration）。
+    /// R26（§6.4）：全程发射 session-state 事件（Degraded → Reconnecting{attempt≤3}
+    /// → Reconfirming | Disconnected）；retry_stop 置位后下一检查点（≤250ms）停止重试。
     pub async fn on_transport_reconnect(self: &Arc<Self>) {
         {
             let mut st = self.state.lock().await;
@@ -881,16 +887,28 @@ impl SessionHandle {
             }
             *st = SessionState::Degraded;
         }
+        self.retry_stop.store(false, Ordering::SeqCst);
         self.note_transition("连接退化，尝试重连").await;
+        self.emit_state(SessionState::Degraded, None, None, None).await;
         let mut attempt = 0;
         loop {
             attempt += 1;
             if attempt > 3 {
                 *self.state.lock().await = SessionState::Disconnected;
                 self.note_transition("重连失败（Disconnected）").await;
+                self.emit_state(SessionState::Disconnected, None, None,
+                    Some("自动重连 3 次均失败".into())).await;
+                return;
+            }
+            if self.retry_stop.load(Ordering::SeqCst) {
+                *self.state.lock().await = SessionState::Disconnected;
+                self.note_transition("用户停止自动重连（Disconnected）").await;
+                self.emit_state(SessionState::Disconnected, None, None,
+                    Some("已停止自动重连".into())).await;
                 return;
             }
             *self.state.lock().await = SessionState::Reconnecting;
+            self.emit_state(SessionState::Reconnecting, Some(attempt as u32), Some(3), None).await;
             match self.channel.reconnect().await {
                 Ok(()) => {
                     // 重连成功 ≠ 现场延续：cwd/env 事实降级；新 shell 需重新注入集成
@@ -899,10 +917,28 @@ impl SessionHandle {
                 }
                 Err(e) => {
                     tracing::warn!(session = %self.id, attempt, "reconnect failed: {e}");
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    // 分片睡眠：停止重试的等待延迟 ≤250ms（整段 2s sleep 会吞停止请求）
+                    for _ in 0..8 {
+                        if self.retry_stop.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
                 }
             }
         }
+    }
+
+    /// R26：会话状态事件广播（尽力发送；无订阅者时静默——UI 兜底 3s 列表轮询）。
+    pub async fn emit_state(&self, state: SessionState, attempt: Option<u32>,
+        max_attempts: Option<u32>, detail: Option<String>) {
+        let _ = self.center.state_tx.send(SessionStateEvent {
+            session_id: self.id.clone(),
+            state,
+            attempt,
+            max_attempts,
+            detail,
+        });
     }
 
     /// 重连成功后的现场重置：残留 open block 强制收尾（旧 shell 已死，永不闭合——
@@ -978,6 +1014,7 @@ impl SessionHandle {
         self.verification_hits.store(0, Ordering::SeqCst);
         *self.state.lock().await = SessionState::Reconfirming;
         self.note_transition("重连成功，进入重确认（仅内置只读白名单可用）").await;
+        self.emit_state(SessionState::Reconfirming, None, None, None).await;
     }
 }
 

@@ -195,6 +195,29 @@ async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
     state.api.reconnect_session(&sid).await.map_err(WireError::from)
 }
 
+/// R26（§6.4「可停止重试」）：停止自动重连（≤250ms 内落 Disconnected）。
+/// 幂等：非重连期为合法 no-op。
+#[tauri::command]
+async fn stop_auto_reconnect(state: ApiState<'_>, sid: String) -> CmdResult<()> {
+    state.api.stop_auto_reconnect(&sid).await.map_err(WireError::from)
+}
+
+/// R26：会话状态快照（demo/兜底轮询面；真实 UI 走 session-state 事件）。
+#[tauri::command]
+async fn session_state_feed(state: ApiState<'_>) -> CmdResult<Vec<SessionStateEvent>> {
+    let list = state.api.list_sessions(&Actor::Human).await.map_err(WireError::from)?;
+    Ok(list
+        .into_iter()
+        .map(|s| SessionStateEvent {
+            session_id: s.id,
+            state: s.state,
+            attempt: None,
+            max_attempts: None,
+            detail: None,
+        })
+        .collect())
+}
+
 /// SFTP 上传（T20）：本地绝对路径 → 远端路径。人类直传（Agent 侧走 MCP 工具且必审），
 /// 结果经审计 transfer_done/transfer_failed 广播（payload 带 transfer id 供 UI 对账）。
 #[tauri::command]
@@ -851,6 +874,8 @@ fn main() {
                     r23_smoke_script(&run_id)
                 } else if mode == "r25" {
                     r25_smoke_script(&run_id)
+                } else if mode == "r26" {
+                    r26_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1136,6 +1161,19 @@ fn main() {
                     }
                 }
             });
+            // R26（§6.4）：会话状态事件（断线/自动重连次数/重确认）即时推送——
+            // 3s 列表轮询只做兜底对账，横幅与重试计数不进盲窗。
+            let handle_state = app.handle().clone();
+            let mut state_rx = api.center.state_tx.subscribe();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(state_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_state.emit("session-state", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
             // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
             if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
                 let api2 = api.clone();
@@ -1201,7 +1239,7 @@ fn main() {
             list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
             list_sessions, create_session, begin_connection, connection_status, cancel_connection,
-            close_session, reconnect_session, resize, subscribe_output,
+            close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
             upload_file, download_file, cancel_transfer, sftp_list,
@@ -2246,6 +2284,165 @@ fn r25_smoke_script(run_id: &str) -> String {
       [...document.querySelectorAll('.confirm-dialog button')].find((b) => b.textContent.includes('结束会话并退出')).click();
       await markSync('r25a-DONE');
       await title('r25-DONE');
+    } catch (e) {
+      await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+/// R26（§6.4 断线/重试/重确认/重连）原生冒烟：真 sshd 容器由驱动 docker stop/start
+/// 协同——周期1 停容器 → 自动重连计数横幅（第 N/3 次）→ 3 次耗尽 Disconnected +
+/// dead-overlay + 键入拦截；周期2 再断 →「停止重试」提前落 Disconnected；周期3
+/// 驱动启容器 → 手动重连 → Reconfirming 横幅（已重连；旧现场待核实）+ 人类键入恢复；
+/// r26-b 集成关主机命令框 → Shell 拒绝 + Fresh 指引两行（R24-L5）；周期4 断开标签
+/// 直接关不询问（§6.4）。事件面 session-state 真实通道驱动横幅。
+fn r26_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R26_INJECTED__) return;
+  window.__R26_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const rowsText = () => [...document.querySelectorAll('.term-session.active .xterm-rows')].map((r) => r.textContent).join('');
+  const errBar = () => [...document.querySelectorAll('.notice-bar.err')].map((x) => x.textContent).join(' || ');
+  const maxAttemptSeen = () => {
+    const m = errBar().match(/第 (\d+)\/(\d+) 次/);
+    return m ? Number(m[1]) : 0;
+  };
+  const typeChar = (ch) => document.querySelector('.term-session.active textarea')?.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true, cancelable: true }));
+  (async () => {
+    try {
+      await title('r26-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r26-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      // r26-b：集成显式关（DC3.2 显式变体）——命令框 Fresh 指引面（R24-L5）
+      await inv('upsert_host', { host: { id: null, name: 'r26-b', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8', shell_integration: false } });
+      await waitFor(async () => (cardBtn('r26-a', '.host-connect-btn') ? true : null), 40);
+      // ---- 建连 r26-a ----
+      if (!connect('r26-a')) return title('FAIL-connect-a');
+      await trust();
+      const c1 = await waitFor(async () => (await activeSess('r26-a'))?.state === 'Connected' ? true : null, 150);
+      if (!c1) return title('FAIL-conn-a');
+      await sleep(400);
+      await markSync('r26a-conns-ok');
+      // ---- 周期1：容器停（驱动）→ 自动重连计数横幅 → 3 次耗尽 Disconnected ----
+      await markSync('r26a-drop-wait1');
+      await sleep(4000);
+      const banner = await waitFor(() => (errBar().includes('自动重连中') ? errBar() : null), 80);
+      if (!banner) return title('FAIL-no-auto-banner:' + errBar().slice(0, 120));
+      let maxAtt = 0;
+      for (let i = 0; i < 600; i++) {
+        maxAtt = Math.max(maxAtt, maxAttemptSeen());
+        if (i % 10 === 0) {
+          const st = (await inv('list_sessions', {})).find((x) => x.host_name === 'r26-a')?.state ?? 'none';
+          mark('r26a-tick|' + i + '|' + st + '|' + (document.querySelector('.dead-overlay') ? 'ovl' : '-') + '|' + errBar().slice(0, 60));
+        }
+        if (document.querySelector('.dead-overlay')) break;
+        await sleep(100);
+      }
+      if (maxAtt < 1) return title('FAIL-no-attempt-count:' + errBar().slice(0, 120));
+      if (!document.querySelector('.dead-overlay')) return title('FAIL-no-dead-overlay:' + maxAtt + '|' + errBar().slice(0, 100));
+      const sess = await activeSess('r26-a');
+      if (!sess || sess.state !== 'Disconnected') return title('FAIL-not-disc:' + (sess?.state ?? 'null'));
+      await markSync('r26a-auto-reconn-max' + maxAtt);
+      await markSync('r26a-exhaust-ok');
+      // 键入拦截（命令框面——合成 keydown 可达应用级 handler；终端 onData 的
+      // 拦截证据由 demo 探针真键盘承担）：命令不进死通道，connError 如实
+      const cmdIn0 = document.querySelector('.panel-title input');
+      cmdIn0.focus();
+      document.execCommand('insertText', false, 'echo shouldnotrun');
+      cmdIn0.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const ce = await waitFor(() => (document.querySelector('.conn-error')?.textContent ?? null), 30);
+      if (!ce || !ce.includes('会话已断开') || !ce.includes('未发送')) return title('FAIL-input-not-intercepted:' + (ce ?? 'null').slice(0, 80));
+      await markSync('r26a-inputblock-ok');
+      // ---- 周期2：容器启（驱动）→ 手动重连 → Reconfirming 横幅 + 人类可键入 ----
+      await markSync('r26a-start-wait');
+      await sleep(4000);
+      const reconnBtn = [...document.querySelectorAll('.dead-overlay button')].find((b) => b.textContent.includes('重连恢复'));
+      if (!reconnBtn) return title('FAIL-no-reconn-btn');
+      reconnBtn.click();
+      const rc = await waitFor(() => ([...document.querySelectorAll('.notice-bar.warn')].map((x) => x.textContent).join('').includes('已重连；旧现场待核实') ? true : null), 200);
+      if (!rc) return title('FAIL-no-reconfirm-banner');
+      await markSync('r26a-reconfirm-ok');
+      // 人类可继续操作（合成事件可达命令框；终端 onData 真键入证据由 demo 探针承担）
+      const cmdIn1 = document.querySelector('.panel-title input');
+      cmdIn1.focus();
+      document.execCommand('insertText', false, 'echo post26ok');
+      cmdIn1.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const echoed = await waitFor(() => (rowsText().includes('post26ok') ? true : null), 60);
+      if (!echoed) return title('FAIL-input-after-reconfirm:' + rowsText().slice(-80));
+      await markSync('r26a-input-ok');
+      // ---- r26-b 集成关主机：命令框 Shell 拒绝 + Fresh 指引（R24-L5）----
+      if (!connect('r26-b')) return title('FAIL-connect-b');
+      await trust();
+      const c2 = await waitFor(async () => (await activeSess('r26-b'))?.state === 'Connected' ? true : null, 150);
+      if (!c2) return title('FAIL-conn-b');
+      await sleep(600);
+      const cmdInput = document.querySelector('.panel-title input');
+      if (!cmdInput) return title('FAIL-no-cmd-input');
+      cmdInput.focus();
+      document.execCommand('insertText', false, 'echo cmdbar26');
+      cmdInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const guide = await waitFor(() => (rowsText().includes('shell 集成') && rowsText().includes('Fresh') ? true : null), 60);
+      if (!guide) return title('FAIL-no-fresh-guide:' + rowsText().slice(-120));
+      await markSync('r26a-cmdbar-ok');
+      // ---- 周期3：容器再停（驱动）→ 首个计数出现即「停止重试」→ 提前 Disconnected ----
+      await markSync('r26a-drop-wait2');
+      await sleep(4000);
+      const banner2 = await waitFor(() => (errBar().includes('自动重连中') ? true : null), 80);
+      if (!banner2) return title('FAIL-no-auto-banner2:' + errBar().slice(0, 120));
+      const stopBtn = [...document.querySelectorAll('.notice-bar.err button')].find((b) => b.textContent.includes('停止重试'));
+      if (!stopBtn) return title('FAIL-no-stop-btn:' + errBar().slice(0, 120));
+      stopBtn.click();
+      const disc2 = await waitFor(async () => {
+        const s = await activeSess('r26-a');
+        return s && s.state === 'Disconnected' && document.querySelector('.dead-overlay') ? true : null;
+      }, 130);
+      if (!disc2) return title('FAIL-stop-no-disc');
+      const attAtStop = maxAttemptSeen();
+      if (attAtStop > 1) return title('FAIL-stop-late:' + attAtStop);
+      await markSync('r26a-stop-ok');
+      // ---- 周期4：断开标签直接关（§6.4 不询问无意义的断开确认）----
+      const closeX = [...document.querySelectorAll('.tabbar .tab')].find((t) => t.textContent.includes('r26-a'))?.querySelector('.tab-x');
+      if (!closeX) return title('FAIL-no-tab-close');
+      closeX.click();
+      await sleep(800);
+      if (document.querySelector('.confirm-dialog')) return title('FAIL-asked-confirm-on-dead');
+      const gone = await waitFor(async () => ((await activeSess('r26-a')) ? null : true), 30);
+      if (!gone) return title('FAIL-tab-still-there');
+      await markSync('r26a-closedisc-ok');
+      await markSync('r26a-DONE');
+      await title('r26-DONE');
     } catch (e) {
       await title('FAIL-exception:' + String(e).slice(0, 140));
     }
