@@ -56,6 +56,8 @@ const demoState = {
   stateEvents: new Map<string, SessionStateEvent>(),
   // C4（R30）C02 判别钩子：预置 sftp_list 慢响应（path 命中即延迟 ms）
   sftpSlow: null as { path: string; ms: number } | null,
+  // C5（R32）演示传输注册表（创建倒序；真实核心同契约）
+  transfers: [] as DemoTransfer[],
   // C8 主机元数据（DF8.2）：收藏/最近连接，演示态内存域（真实核心在 host_metadata 表）
   hostMeta: new Map<string, { favorite: boolean; last_connected_at: string | null }>(),
   // R21 凭据基础管理：演示态凭据域（真实核心在 vault identities 表）+ 主机→凭据绑定
@@ -203,6 +205,17 @@ function demoCheckpoint(s: DemoSession): ScreenCheckpoint {
 let demoSeq = 100;
 // R26：自动重连模拟链（demo_drop_session 建链，stop_auto_reconnect 断链）
 const dropChains = new Map<string, { stop: boolean; timers: number[] }>();
+
+// C5（R32）演示传输注册表：与真实核心同契约（任务创建即注册 Queued → Running
+// 分片推进 → Succeeded/Failed/Cancelled；事件面 = 800ms 轮询 list_transfers 双路
+// 镜像）。文件名含 fail-demo 注入失败。内存域（真实核心落 transfer_journal）。
+type DemoTransfer = {
+  id: string; session_id: string; kind: "Upload" | "Download";
+  source: string; dest: string; status: string; bytes_done: number; total: number | null;
+  revision: number; created_at: number; finished_at: number | null;
+  error: string | null; retry_of: string | null;
+};
+const TRANSFER_TERMINAL = ["Succeeded", "Failed", "Cancelled", "OutcomeUnknown"];
 function demoEmitState(sid: string, state: string,
   attempt: number | null, max: number | null, detail: string | null) {
   demoState.stateEvents.set(sid, {
@@ -1014,12 +1027,70 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       audit("human", "forward_stop", null, null, s.id, { forward: f.id });
       return null;
     }
-    // 浏览器演示无法真实承载的操作：要么显式报错（传输类，UI 卡片如实显示失败），
-    // 要么明确列为无操作（此前 default 静默 null 是「占位反馈」伪影的根源）。
+    // ---- C5（R32）传输注册表模拟：真实核心同契约（创建先注册返回任务 ID 再开始
+    // 读写；进度分片推进 ~6.7 片/秒，前端 200ms 合并幂等吸收；取消 → Cancelling →
+    // 下一片 Cancelled）。fail-demo 文件名注入失败；demo 模拟不走审批。 ----
     case "upload_file":
-    case "download_file":
-      throw apiError("invalid_input", "演示模式不提供真实 SFTP 传输");
-    case "cancel_transfer":
+    case "download_file": {
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      const kind = cmd === "upload_file" ? "Upload" : "Download";
+      const source = kind === "Upload" ? String(args?.local) : String(args?.remote);
+      const dest = kind === "Upload"
+        ? String(args?.remote)
+        : String(args?.local ?? `~/Downloads/${String(args?.remote).split("/").pop() ?? "file"}`);
+      const t: DemoTransfer = {
+        id: "t-demo-" + demoSeq++,
+        session_id: s.id, kind, source, dest,
+        status: "Queued", bytes_done: 0,
+        total: 3 * 1024 * 1024 + (demoSeq % 5) * 131072,
+        revision: 1,
+        created_at: Math.floor(Date.now() / 1000),
+        finished_at: null, error: null, retry_of: null,
+      };
+      demoState.transfers.unshift(t);
+      audit("human", "transfer_start", null, null, s.id, { transfer: t.id, kind: kind.toLowerCase(), source, dest });
+      const step = () => {
+        const cur = demoState.transfers.find((x) => x.id === t.id);
+        if (!cur) return;
+        const now = Math.floor(Date.now() / 1000);
+        if (cur.status === "Cancelling") {
+          cur.status = "Cancelled"; cur.error = "已取消"; cur.finished_at = now; cur.revision += 1;
+          return;
+        }
+        if (cur.status !== "Running" && cur.status !== "Queued") return;
+        cur.status = "Running";
+        cur.bytes_done = Math.min(cur.total ?? Infinity, cur.bytes_done + 196608);
+        cur.revision += 1;
+        if (cur.source.includes("fail-demo") && cur.bytes_done >= 393216) {
+          cur.status = "Failed"; cur.error = "演示注入：远端写入失败"; cur.finished_at = now; cur.revision += 1;
+          return;
+        }
+        if (cur.total != null && cur.bytes_done >= cur.total) {
+          cur.status = "Succeeded"; cur.finished_at = now; cur.revision += 1;
+          return;
+        }
+        window.setTimeout(step, 150);
+      };
+      window.setTimeout(step, 250);
+      return {
+        id: t.id, session_id: s.id, kind,
+        local: kind === "Upload" ? source : dest,
+        remote: kind === "Upload" ? dest : source,
+      };
+    }
+    case "list_transfers":
+      // 与核心全量快照一致（rev-r32 低-4：截断会让演示域对账面失真）
+      return [...demoState.transfers];
+    case "cancel_transfer": {
+      const t = demoState.transfers.find((x) => x.id === args?.id);
+      if (!t) throw apiError("invalid_input", "transfer not found（演示）");
+      if (!TRANSFER_TERMINAL.includes(t.status)) {
+        t.status = "Cancelling"; t.revision += 1;
+        audit("human", "transfer_cancel", null, null, t.session_id, { transfer: t.id });
+      }
+      return null;
+    }
     case "note_terminal":
     case "open_url":
     case "get_setting":

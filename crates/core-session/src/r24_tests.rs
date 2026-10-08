@@ -41,8 +41,8 @@ impl ChannelHandle for DeadChannel {
     async fn is_alive(&self) -> bool { false }
     async fn reconnect(&self) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
     async fn close(&self) -> Result<()> { Ok(()) }
-    async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
-    async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
+    async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
+    async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
     async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> { Err(Error::InvalidInput("stub".into())) }
 }
 

@@ -726,6 +726,7 @@ impl ChannelHandle for SshChannel {
         local: &std::path::Path,
         remote: &str,
         cancel: &CancellationToken,
+        progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64> {
         let handle_guard = self.handle.lock().await;
         let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
@@ -748,6 +749,10 @@ impl ChannelHandle for SshChannel {
         let mut src = tokio::fs::File::open(local)
             .await
             .map_err(|e| Error::Io(format!("open {}: {e}", local.display())))?;
+        let total_len = tokio::fs::metadata(local)
+            .await
+            .ok()
+            .map(|m| m.len());
         let mut total = 0u64;
         let mut buf = [0u8; 65536];
         loop {
@@ -765,6 +770,7 @@ impl ChannelHandle for SshChannel {
                 .await
                 .map_err(|e| Error::Io(format!("sftp write: {e}")))?;
             total += n as u64;
+            progress(total, total_len);
         }
         file.flush().await.ok();
         drop(file);
@@ -777,6 +783,7 @@ impl ChannelHandle for SshChannel {
         remote: &str,
         local: &std::path::Path,
         cancel: &CancellationToken,
+        progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64> {
         let handle_guard = self.handle.lock().await;
         let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
@@ -796,6 +803,7 @@ impl ChannelHandle for SshChannel {
             .open(remote)
             .await
             .map_err(|e| Error::Io(format!("sftp open {remote}: {e}")))?;
+        let total_len = sftp.metadata(remote).await.ok().and_then(|a| a.size);
         if let Some(parent) = local.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -821,6 +829,7 @@ impl ChannelHandle for SshChannel {
                 .await
                 .map_err(|e| Error::Io(format!("write: {e}")))?;
             total += n as u64;
+            progress(total, total_len);
         }
         drop(dst);
         sftp.close().await.ok();

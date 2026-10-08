@@ -381,8 +381,9 @@ impl ChannelHandle for LocalPtyChannel {
         local: &std::path::Path,
         remote: &str,
         cancel: &CancellationToken,
+        progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64> {
-        copy_file(local, std::path::Path::new(remote), cancel).await
+        copy_file(local, std::path::Path::new(remote), cancel, progress).await
     }
 
     async fn download(
@@ -390,8 +391,9 @@ impl ChannelHandle for LocalPtyChannel {
         remote: &str,
         local: &std::path::Path,
         cancel: &CancellationToken,
+        progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64> {
-        copy_file(std::path::Path::new(remote), local, cancel).await
+        copy_file(std::path::Path::new(remote), local, cancel, progress).await
     }
 
     /// 本机「远端」= 本地文件系统（T41 FR-7：本机会话的文件浏览器同样可用）。
@@ -516,10 +518,12 @@ async fn copy_file(
     from: &std::path::Path,
     to: &std::path::Path,
     cancel: &CancellationToken,
+    progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
 ) -> Result<u64> {
     let mut src = tokio::fs::File::open(from)
         .await
         .map_err(|e| Error::Io(format!("open {}: {e}", from.display())))?;
+    let total_len = tokio::fs::metadata(from).await.ok().map(|m| m.len());
     if let Some(parent) = to.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -545,6 +549,7 @@ async fn copy_file(
             .await
             .map_err(|e| Error::Io(format!("write: {e}")))?;
         total += n as u64;
+        progress(total, total_len);
     }
     Ok(total)
 }

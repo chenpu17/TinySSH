@@ -19,6 +19,14 @@ use tokio::sync::{broadcast, oneshot};
 use transport_pty::LocalPtyChannel;
 use transport_ssh::SshChannel;
 
+/// C5（R32）：Unix 秒（TransferTask.created_at/finished_at 口径）。
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// 审批中心：跨会话共享的引擎、条目表、决策通道、持久化。
 pub struct ApprovalCenter {
     pub engine: ApprovalEngine,
@@ -63,6 +71,22 @@ pub struct SessionManager {
     /// MCP 端点实际地址（T43 §6-7 收口）：由装配层在 bind 后写入（GUI 进程内嵌
     /// 或 serve CLI）；未装配时为占位文案（L1 §3.5 端口递增，真实值以 bind 为准）。
     mcp_endpoint: StdMutex<String>,
+    /// C5（R32）传输任务注册表：查询（list_transfers）/事件（transfer_tx）/
+    /// journal 落库推进的唯一视图层。cancel 句柄索引仍挂 SessionHandle.transfers
+    /// （接管/关闭的会话级取消路径沿用），此处只挂同一 token 的观察面。
+    transfers: StdMutex<HashMap<TransferId, TransferRegEntry>>,
+    /// C5 事件通道（可丢 broadcast；漏收由 list_transfers 查询对账兜底——§547
+    /// 「重挂 UI 后可对账」）。
+    pub transfer_tx: broadcast::Sender<TransferTask>,
+}
+
+/// 注册表条目：任务快照 + cancel 句柄（与会话级 SessionHandle.transfers 同一
+/// token 的第二索引）+ 节流水位（事件合并 ~5 次/秒/任务、journal ≥1s/行）。
+struct TransferRegEntry {
+    task: TransferTask,
+    cancel: CancellationToken,
+    last_emit: std::time::Instant,
+    last_journal: std::time::Instant,
 }
 
 impl SessionManager {
@@ -76,6 +100,7 @@ impl SessionManager {
         let (conn_tx, _) = broadcast::channel(64);
         let (shell_tx, _) = broadcast::channel(64);
         let (state_tx, _) = broadcast::channel(64);
+        let (transfer_tx, _) = broadcast::channel(128);
         let center = Arc::new(ApprovalCenter {
             engine: ApprovalEngine::new()?,
             items: StdMutex::new(HashMap::new()),
@@ -106,8 +131,37 @@ impl SessionManager {
             mcp_endpoint: StdMutex::new(
                 "http://127.0.0.1:8722/mcp（被占递增；以端点装配方输出为准）".into(),
             ),
+            transfers: StdMutex::new(HashMap::new()),
+            transfer_tx,
         });
         *arc.self_weak.lock().unwrap() = Some(Arc::downgrade(&arc));
+        // C5（§560）重启恢复：journal 活动行 = 上次进程退出时仍在途的传输。
+        // R32 只有提交前阶段（Committing/OutcomeUnknown 随 R33/R34 启用），
+        // 统一落 Failed +「应用重启时传输中断」——不虚构成功，不静默当失败消失；
+        // 行进注册表使 list_transfers 可见（UI 重挂对账含重启前残留）。
+        match arc.center.vault.transfer_journal_load_active() {
+            Ok(rows) => {
+                let now = now_unix();
+                let mut reg = arc.transfers.lock().unwrap();
+                for mut t in rows {
+                    t.status = TransferStatus::Failed;
+                    t.error = Some("应用重启时传输中断".into());
+                    t.finished_at = Some(now);
+                    t.revision += 1;
+                    let _ = arc.center.vault.transfer_journal_update(&t);
+                    reg.insert(
+                        t.id.clone(),
+                        TransferRegEntry {
+                            task: t,
+                            cancel: CancellationToken::new(),
+                            last_emit: std::time::Instant::now(),
+                            last_journal: std::time::Instant::now(),
+                        },
+                    );
+                }
+            }
+            Err(_) => {} // journal 不可读不炸启动（传输查询退化为空表）
+        }
         Ok(arc)
     }
 
@@ -1590,14 +1644,44 @@ impl SessionApi for SessionManager {
     }
 
     async fn cancel_transfer(&self, _ctx: &Actor, t: TransferId) -> Result<()> {
-        let sessions = self.sessions.lock().unwrap();
-        for h in sessions.values() {
-            if let Some(c) = h.transfers.lock().unwrap().get(&t) {
-                c.cancel();
+        // 取句柄：终态幂等返回（重复点取消/晚到取消无害）；进行中 → Cancelling 可见
+        // 再置位 token（传输循环尽快返回 Cancelled，终态由任务收尾统一落账）。
+        let (cancel, sid) = {
+            let reg = self.transfers.lock().unwrap();
+            let e = reg.get(&t).ok_or(Error::InvalidInput("transfer not found".into()))?;
+            if e.task.status.is_terminal() {
                 return Ok(());
             }
-        }
-        Err(Error::InvalidInput("transfer not found".into()))
+            (e.cancel.clone(), e.task.session_id.clone())
+        };
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "transfer_cancel",
+            Some(&sid),
+            None,
+            serde_json::json!({ "transfer": t }),
+            None,
+        );
+        self.transfer_apply(&t, |task| {
+            if !task.status.is_terminal() {
+                task.status = TransferStatus::Cancelling;
+            }
+        });
+        cancel.cancel();
+        Ok(())
+    }
+
+    // C5（§547）：注册表全量快照（创建倒序）。事件可丢，查询是权威对账面。
+    async fn list_transfers(&self, _ctx: &Actor) -> Result<Vec<TransferTask>> {
+        let mut v: Vec<TransferTask> = self
+            .transfers
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| e.task.clone())
+            .collect();
+        v.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
+        Ok(v)
     }
 
     // 人类浏览远端目录（FR-7）：只读、不经审批、不入审计（浏览非动作）；
@@ -1900,6 +1984,67 @@ impl SessionApi for SessionManager {
 }
 
 impl SessionManager {
+    // ---- C5（R32）注册表辅助：节流合并 + journal 落库 ----
+
+    /// 注册新任务（Queued）并立即对外发一帧（revision 从 1 起）。
+    fn transfer_register(&self, task: TransferTask, cancel: CancellationToken) {
+        let tid = task.id.clone();
+        let now = std::time::Instant::now();
+        let _ = self.transfer_tx.send(task.clone());
+        self.transfers.lock().unwrap().insert(
+            tid,
+            TransferRegEntry { task, cancel, last_emit: now, last_journal: now },
+        );
+    }
+
+    /// 变更任务并按节奏对外发帧/落 journal：状态变化即时发；进度合并 ≥200ms
+    ///（§560 ~5 次/秒/任务）；journal 状态变化必写、纯进度 ≥1s 一写。
+    fn transfer_apply(&self, tid: &TransferId, mutate: impl FnOnce(&mut TransferTask)) {
+        let now = std::time::Instant::now();
+        let (emit_task, journal_task) = {
+            let mut reg = self.transfers.lock().unwrap();
+            let Some(e) = reg.get_mut(tid) else { return };
+            let before = e.task.status;
+            mutate(&mut e.task);
+            e.task.revision += 1;
+            let changed = e.task.status != before;
+            let mut emit = None;
+            let mut journal = None;
+            if changed || now.duration_since(e.last_emit).as_millis() >= 200 {
+                e.last_emit = now;
+                emit = Some(e.task.clone());
+            }
+            if changed || now.duration_since(e.last_journal).as_millis() >= 1000 {
+                e.last_journal = now;
+                journal = Some(e.task.clone());
+            }
+            (emit, journal)
+        };
+        if let Some(t) = emit_task {
+            let _ = self.transfer_tx.send(t);
+        }
+        if let Some(t) = journal_task {
+            let _ = self.center.vault.transfer_journal_update(&t);
+        }
+    }
+
+    /// 终态收尾：即时发帧 + journal 必写（审计由调用方按既有键追加）。
+    /// rev-r32 中-1：仅 Succeeded 覆写字节数——取消/失败保留在途进度（「恢复不抹账、
+    /// 运行时同样不抹账」；终态字节 = MCP 对账权威面数据，0 会冒充「没传过」）。
+    fn transfer_finish(&self, tid: &TransferId, status: TransferStatus, bytes: u64, error: Option<String>) {
+        let now = now_unix();
+        self.transfer_apply(tid, |t| {
+            t.status = status;
+            if status == TransferStatus::Succeeded {
+                t.bytes_done = bytes;
+            }
+            t.error = error;
+            if t.finished_at.is_none() {
+                t.finished_at = Some(now);
+            }
+        });
+    }
+
     // ---- C10 输出订阅恢复（R11；桥层专用，不在 SessionApi trait 面）----
 
     /// 订阅会话输出：注册订阅身份 + 原子捕获检查点与水位（DF10.2）。
@@ -2164,6 +2309,25 @@ impl SessionManager {
         let cancel = CancellationToken::new();
         h.transfers.lock().unwrap().insert(tid.clone(), cancel.clone());
 
+        // C5（§560）：创建先注册返回任务 ID 再开始读写——Queued 即注册表/journal/事件可见
+        let task = TransferTask {
+            id: tid.clone(),
+            session_id: sid.clone(),
+            kind: handle.kind,
+            source: if is_upload { local.display().to_string() } else { remote.clone() },
+            dest: if is_upload { remote.clone() } else { local.display().to_string() },
+            status: TransferStatus::Queued,
+            bytes_done: 0,
+            total: None,
+            revision: 1,
+            created_at: now_unix(),
+            finished_at: None,
+            error: None,
+            retry_of: None,
+        };
+        let _ = self.center.vault.transfer_journal_insert(&task);
+        self.transfer_register(task, cancel.clone());
+
         // 执行任务（串行化并入 exec 队列之外的独立通道；MVP 直接执行）
         let h2 = h.clone();
         let sid2 = sid.clone();
@@ -2172,26 +2336,59 @@ impl SessionManager {
         let gen = h.generation.load(std::sync::atomic::Ordering::SeqCst);
         let remote2 = remote.clone();
         let local2 = local.clone();
+        let mgr = self
+            .self_weak
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|w| w.upgrade())
+            .ok_or(Error::SessionClosed)?;
         tokio::spawn(async move {
             if h2.generation.load(std::sync::atomic::Ordering::SeqCst) != gen {
+                // 交接作废：任务从未开始读写——按 Cancelled 落账（§6.5 人类主权）
+                mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("接管作废".into()));
                 let _ = h2.center.audit.append(
                     &ctx2, "transfer_voided", Some(&sid2), Some(&remote2),
                     serde_json::json!({"transfer": tid2, "reason": "voided_by_handback"}), None);
                 h2.transfers.lock().unwrap().remove(&tid2);
                 return;
             }
+            // rev-r32 低-2：仅 Queued→Running（取消竞窗已置 Cancelling 时不回跳——
+            // 终态正确但呈现毛刺）
+            mgr.transfer_apply(&tid2, |t| {
+                if t.status == TransferStatus::Queued {
+                    t.status = TransferStatus::Running;
+                }
+            });
+            let p_tid = tid2.clone();
+            let p_mgr = mgr.clone();
+            let progress = move |done: u64, total: Option<u64>| {
+                p_mgr.transfer_apply(&p_tid, |t| {
+                    t.bytes_done = done;
+                    t.total = total;
+                });
+            };
             let r = if is_upload {
-                h2.channel.upload(&local2, &remote2, &cancel).await
+                h2.channel.upload(&local2, &remote2, &cancel, &progress).await
             } else {
-                h2.channel.download(&remote2, &local2, &cancel).await
+                h2.channel.download(&remote2, &local2, &cancel, &progress).await
             };
             match r {
                 Ok(bytes) => {
+                    // R32 无提交阶段（Committing 随 R33/R34）：数据传完即 Succeeded
+                    mgr.transfer_finish(&tid2, TransferStatus::Succeeded, bytes, None);
                     let _ = h2.center.audit.append(
                         &ctx2, "transfer_done", Some(&sid2), Some(&remote2),
                         serde_json::json!({"transfer": tid2, "bytes": bytes}), None);
                 }
+                Err(Error::Cancelled) => {
+                    mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消".into()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                }
                 Err(e) => {
+                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
                     let _ = h2.center.audit.append(
                         &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
                         serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
@@ -2477,6 +2674,10 @@ mod r26_tests;
 mod r30_tests;
 
 #[cfg(test)]
+#[path = "r32_tests.rs"]
+mod r32_tests;
+
+#[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle
     //! （屏幕/环/注册表全 pub 字段），以 handle::feed_output 走唯一线性化点。
@@ -2498,8 +2699,8 @@ mod c10_tests {
         async fn is_alive(&self) -> bool { false }
         async fn reconnect(&self) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
         async fn close(&self) -> Result<()> { Ok(()) }
-        async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
-        async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
+        async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
+        async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
         async fn list_dir(&self, _path: &str) -> Result<Vec<DirEntryS>> { Err(Error::InvalidInput("stub".into())) }
     }
 

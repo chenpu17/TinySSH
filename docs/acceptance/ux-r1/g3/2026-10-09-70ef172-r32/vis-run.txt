@@ -1,0 +1,9 @@
+PASS V1 welcome diff within noise floor (untouched face)  [diff_px=0 noise_floor=0]
+PASS V2 session connected  [s-demo-0001]
+PASS V3 running card visible mid-flight (live state rendered)  [已取消 || 失败：演示注入：远端写入失败 || 传输中… 576.0 KB / 3.5 MB || 传输中… 576.0 KB / 3.4 MB]
+PASS V4 live card no clipping + cancel button really hit  [{"w":363,"h":60,"subClipped":false,"nameClipped":false,"btnW":35,"btnH":28,"hit":true}]
+PASS V5 terminal cards no clipping (4 states)  [[{"text":"已取消","subClipped":false,"nameClipped":false,"h":60},{"text":"失败：演示注入：远端写入失败","subClipped":false,"nameClipped":false,"h":60},{"text":"完成 · 3.5 MB · /var/log/vis-done.tar.gz","subClipped":false,"nameClipped":false,"h":60},{"text":"完成 · 3.4 MB · /tmp/vis-live.bin","subClipped":false,"nameClipped":false,"h":60}]]
+PASS V6 no horizontal overflow in panel  [overflow=0px]
+PASS V7 640px narrow: cards render, no overflow  [{"cards":2,"overflow":0}]
+PASS V8 zero js errors (cur)
+SUMMARY 8/8

@@ -9,7 +9,8 @@ use rusqlite::{params, Connection};
 use session_api::{
     Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
     Error, Host, HostDraft, HostId, HostMeta, IdentityId, IdentityKind, IdentityMeta, IdentityReq,
-    KeyKind, Policy, RecentHost, Result, SessionId, Workspace,
+    KeyKind, Policy, RecentHost, Result, SessionId, TransferKind, TransferStatus, TransferTask,
+    Workspace,
 };
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
@@ -636,6 +637,150 @@ impl Vault {
             )
             .map_err(db_err)?;
         Ok(())
+    }
+
+    // ---- C5 传输 journal（R32 §560：任务创建即落行；重启按提交前中断恢复）----
+    // state 列存 TransferStatus 的 wire 字符串（PascalCase），kind 列存小写
+    //（schema CHECK 约束），与 TransferTask 序列化格式单点映射。
+
+    fn journal_kind_str(k: TransferKind) -> &'static str {
+        match k {
+            TransferKind::Upload => "upload",
+            TransferKind::Download => "download",
+        }
+    }
+
+    fn journal_status_str(s: &TransferStatus) -> String {
+        serde_json::to_value(s)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "Running".into())
+    }
+
+    fn journal_row_to_task(r: &rusqlite::Row<'_>) -> rusqlite::Result<TransferTask> {
+        let kind: String = r.get(2)?;
+        let state: String = r.get(5)?;
+        Ok(TransferTask {
+            id: r.get(0)?,
+            session_id: r.get(1)?,
+            kind: if kind == "download" {
+                TransferKind::Download
+            } else {
+                TransferKind::Upload
+            },
+            source: r.get(3)?,
+            dest: r.get(4)?,
+            status: serde_json::from_str::<TransferStatus>(&format!("\"{state}\""))
+                .unwrap_or(TransferStatus::Failed),
+            bytes_done: r.get::<_, Option<i64>>(6)?.unwrap_or(0).max(0) as u64,
+            total: r.get::<_, Option<i64>>(7)?.map(|v| v.max(0) as u64),
+            revision: r.get::<_, i64>(8)?.max(0) as u64,
+            created_at: r.get(13)?,
+            finished_at: r.get(14)?,
+            error: r.get(11)?,
+            retry_of: r.get(12)?,
+        })
+    }
+
+    const JOURNAL_COLS: &str = "task_id, session_id, kind, src_path, dst_path, state, \
+         bytes_transferred, total_bytes, revision, collision_decision, verified, \
+         error, retry_of, created_at, finished_at";
+
+    /// 任务创建即落行（Queued，§560）。
+    pub fn transfer_journal_insert(&self, t: &TransferTask) -> Result<()> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO transfer_journal(task_id, session_id, kind, src_path, dst_path, \
+                 state, bytes_transferred, total_bytes, revision, error, retry_of, created_at, finished_at)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                params![
+                    t.id,
+                    t.session_id,
+                    Self::journal_kind_str(t.kind),
+                    t.source,
+                    t.dest,
+                    Self::journal_status_str(&t.status),
+                    t.bytes_done as i64,
+                    t.total.map(|v| v as i64),
+                    t.revision as i64,
+                    t.error,
+                    t.retry_of,
+                    t.created_at,
+                    t.finished_at,
+                ],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// 进度/状态推进（节流落库节奏由调用方定；按主键整行可变字段覆盖）。
+    pub fn transfer_journal_update(&self, t: &TransferTask) -> Result<()> {
+        let n = self
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE transfer_journal SET state=?2, bytes_transferred=?3, total_bytes=?4, \
+                 revision=?5, error=?6, finished_at=?7 WHERE task_id=?1",
+                params![
+                    t.id,
+                    Self::journal_status_str(&t.status),
+                    t.bytes_done as i64,
+                    t.total.map(|v| v as i64),
+                    t.revision as i64,
+                    t.error,
+                    t.finished_at,
+                ],
+            )
+            .map_err(db_err)?;
+        if n == 0 {
+            return Err(Error::InvalidInput(format!("transfer journal row {} missing", t.id)));
+        }
+        Ok(())
+    }
+
+    /// 启动恢复：活动阶段行（§560 绝不仅凭异常退出宣告成功/失败——由调用方
+    /// 按提交语义处置；R32 全部为提交前，统一按「应用重启时传输中断」落 Failed）。
+    pub fn transfer_journal_load_active(&self) -> Result<Vec<TransferTask>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {} FROM transfer_journal \
+                 WHERE state IN ('Queued','Running','Committing','Cancelling','AwaitingDecision') \
+                 ORDER BY created_at ASC",
+                Self::JOURNAL_COLS,
+            ))
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([], Self::journal_row_to_task)
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(db_err)?);
+        }
+        Ok(out)
+    }
+
+    /// 查询最近 N 行（创建倒序；UI 重挂对账与历史呈现）。
+    pub fn transfer_journal_list(&self, limit: u32) -> Result<Vec<TransferTask>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {} FROM transfer_journal \
+                 ORDER BY created_at DESC, task_id DESC LIMIT ?1",
+                Self::JOURNAL_COLS,
+            ))
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map(params![limit], Self::journal_row_to_task)
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(db_err)?);
+        }
+        Ok(out)
     }
 
     /// 凭据引用检查（DF8.4）：返回仍引用该 identity 的存活主机名列表。
@@ -1419,6 +1564,80 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(n, 1);
+    }
+
+    /// C5（R32）：transfer_journal 存取面回环——insert/update/load_active/list 的
+    /// 列映射与状态字符串单点转换（lib::journal_row_to_task 与 wire PascalCase）。
+    #[test]
+    fn c5_transfer_journal_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
+        let v = Vault::open_shared(Connection::open(dir.path().join("v.db")).unwrap(), master_key().unwrap()).unwrap();
+        let t = TransferTask {
+            id: "t-x1".into(),
+            session_id: "s-1".into(),
+            kind: TransferKind::Upload,
+            source: "/tmp/a.tar".into(),
+            dest: "/root/a.tar".into(),
+            status: TransferStatus::Queued,
+            bytes_done: 0,
+            total: None,
+            revision: 1,
+            created_at: 1790956800,
+            finished_at: None,
+            error: None,
+            retry_of: None,
+        };
+        v.transfer_journal_insert(&t).unwrap();
+        // 活动阶段行进恢复面
+        let active = v.transfer_journal_load_active().unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].status, TransferStatus::Queued);
+        // 推进到终态：状态/字节/revision/finished_at 落账
+        let mut done = t.clone();
+        done.status = TransferStatus::Succeeded;
+        done.bytes_done = 4096;
+        done.total = Some(4096);
+        done.revision = 9;
+        done.finished_at = Some(1790956801);
+        v.transfer_journal_update(&done).unwrap();
+        let active = v.transfer_journal_load_active().unwrap();
+        assert!(active.is_empty(), "终态行退出恢复面");
+        let list = v.transfer_journal_list(10).unwrap();
+        let row = list.iter().find(|r| r.id == "t-x1").unwrap();
+        assert_eq!(row.status, TransferStatus::Succeeded);
+        assert_eq!(row.bytes_done, 4096);
+        assert_eq!(row.total, Some(4096));
+        assert_eq!(row.revision, 9);
+        assert_eq!(row.finished_at, Some(1790956801));
+        // 更新不存在的行报错（不静默丢账）
+        let mut ghost = done.clone();
+        ghost.id = "t-ghost".into();
+        assert!(v.transfer_journal_update(&ghost).is_err());
+        // download kind 列（CHECK 约束小写）与 Failed 状态回读
+        let d = TransferTask {
+            id: "t-x2".into(),
+            session_id: "s-1".into(),
+            kind: TransferKind::Download,
+            source: "/var/log/x".into(),
+            dest: "/tmp/x".into(),
+            status: TransferStatus::Failed,
+            bytes_done: 0,
+            total: None,
+            revision: 3,
+            created_at: 1790956802,
+            finished_at: Some(1790956803),
+            error: Some("boom".into()),
+            retry_of: None,
+        };
+        v.transfer_journal_insert(&d).unwrap();
+        let list = v.transfer_journal_list(10).unwrap();
+        let row = list.iter().find(|r| r.id == "t-x2").unwrap();
+        assert_eq!(row.kind, TransferKind::Download);
+        assert_eq!(row.status, TransferStatus::Failed);
+        assert_eq!(row.error.as_deref(), Some("boom"));
+        // 排序：创建倒序（新在前）
+        assert_eq!(list[0].id, "t-x2");
     }
 }
 

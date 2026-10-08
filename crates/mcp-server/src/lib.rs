@@ -507,6 +507,21 @@ impl McpServer {
         })
         .await
     }
+
+    // ---- C5（R32）：任务注册表查询——进度/终态不靠猜（upload/download 返回
+    // transfer_id 后，用本工具对账状态与字节数）----
+
+    #[tool(name = "transfer_list", description = "列出文件传输任务（状态/进度/字节数；含近期已完成任务）", annotations(read_only_hint = true))]
+    pub async fn transfer_list(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let list = api.list_transfers(&actor).await?;
+            Ok::<_, Error>(serde_json::json!({ "transfers": list }))
+        })
+        .await
+    }
 }
 
 /// 工具调用的统一入口：身份解析 → SessionApi → 结果/错误序列化。

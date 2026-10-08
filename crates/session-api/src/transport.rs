@@ -66,19 +66,23 @@ pub trait ChannelHandle: Send + Sync {
     async fn close(&self) -> Result<()>;
 
     /// 上传（SFTP / 本地拷贝），返回传输字节数。cancel_token 置位后尽快中止。
+    /// progress（C5 R32）：数据阶段周期回调（done=累计字节、total=总字节可未知），
+    /// 由传输注册表节流合并；实现不得依赖回调时序（纯观察面）。
     async fn upload(
         &self,
         local: &std::path::Path,
         remote: &str,
         cancel: &tokio_util_sync::CancellationToken,
+        progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64>;
 
-    /// 下载（SFTP / 本地拷贝），返回传输字节数。
+    /// 下载（SFTP / 本地拷贝），返回传输字节数。progress 语义同 upload。
     async fn download(
         &self,
         remote: &str,
         local: &std::path::Path,
         cancel: &tokio_util_sync::CancellationToken,
+        progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64>;
 
     /// 列目录（SFTP readdir / 本地 read_dir，T41 FR-7 浏览器）。

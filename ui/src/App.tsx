@@ -12,6 +12,7 @@ import type {
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
+  TransferTask,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -32,10 +33,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import "@xterm/xterm/css/xterm.css";
 
-// 传输卡片是 UI 呈现态（终态由审计事件对账），非 wire 类型
+// 传输卡片是 UI 呈现态；C5（R32）起终态/进度来自任务注册表（list_transfers 查询
+// + transfer-event 事件，revision 单调幂等），pending- 前缀占位卡在拿到真实
+// TransferHandle 前保持本地 optimistic 呈现
 type TransferCard = {
   id: string; kind: "Upload" | "Download"; name: string; remote: string; local: string;
-  status: "running" | "done" | "failed" | "cancelled"; bytes?: number; error?: string;
+  status: "queued" | "running" | "cancelling" | "done" | "failed" | "cancelled"; bytes?: number; total?: number | null; error?: string;
 };
 function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
   if (v && typeof v === "object" && "Exited" in (v as Record<string, unknown>))
@@ -1953,7 +1956,7 @@ export default function App() {
     return () => window.removeEventListener("blur", onBlur);
   }, []);
 
-  // ---- 文件传输（T20）----
+  // ---- 文件传输（T20；C5 R32 注册表对账）----
   const upsertTransfer = useCallback((c: TransferCard) => {
     setTransfers((cur) => {
       const i = cur.findIndex((x) => x.id === c.id);
@@ -1963,6 +1966,48 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // 注册表 → 卡片（呈现态映射；Committing/AwaitingDecision/OutcomeUnknown 未知前向
+  // 状态按进行中同待——不猜测终态）
+  const taskToCard = useCallback((t: TransferTask): TransferCard => ({
+    id: t.id,
+    kind: t.kind,
+    name: pathBasename(t.kind === "Upload" ? t.source : t.dest),
+    remote: t.kind === "Upload" ? t.dest : t.source,
+    local: t.kind === "Upload" ? t.source : t.dest,
+    status: t.status === "Succeeded" ? "done"
+      : t.status === "Failed" ? "failed"
+      : t.status === "Cancelled" ? "cancelled"
+      : t.status === "Queued" ? "queued"
+      : t.status === "Cancelling" ? "cancelling"
+      : "running",
+    bytes: t.bytes_done,
+    total: t.total ?? null,
+    error: t.error ?? undefined,
+  }), []);
+
+  // 事件帧应用（id+revision 幂等；真实 id 之外的 pending- 占位不受影响）
+  const applyTransferTask = useCallback((t: TransferTask) => {
+    setTransfers((cur) => {
+      const i = cur.findIndex((x) => x.id === t.id);
+      const card = taskToCard(t);
+      if (i < 0) return [card, ...cur];
+      const next = [...cur];
+      next[i] = card;
+      return next;
+    });
+  }, [taskToCard]);
+
+  // 注册表全量对账（UI 重挂/事件漏收兜底）：pending- 占位卡保留（尚未拿到真实 id）
+  const refreshTransfers = useCallback(async () => {
+    try {
+      const list = await invoke("list_transfers") as TransferTask[];
+      setTransfers((cur) => [
+        ...cur.filter((c) => c.id.startsWith("pending-")),
+        ...list.map(taskToCard),
+      ]);
+    } catch { /* 下轮再试 */ }
+  }, [taskToCard]);
 
   // 拖拽上传：目标目录优先取远程文件区正在浏览的目录（T41），否则现场简报 cwd。
   // 先挂 pending 卡占位，拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
@@ -2173,24 +2218,21 @@ export default function App() {
     await refreshForwards();
   };
 
-  // 传输终态对账：仅在有 running 卡时以 800ms 轮询审计；「已取消」= 核心 Cancelled 错误文案
+  // C5（R32）传输对账（替代旧 800ms 审计猜测轮询——「完成/取消不靠审计猜测」）：
+  // 真实环境 = transfer-event 即时推送 + 挂载时 list_transfers 全量对账；
+  // demo = 800ms 轮询 list_transfers（模拟事件通道的双路镜像，session-state 同工艺）
   useEffect(() => {
-    if (!transfers.some((t) => t.status === "running")) return;
-    const t = setInterval(async () => {
-      try {
-        const page = await invoke("audit_query", { sid: null, limit: 30 });
-        setTransfers((cur) => cur.map((c) => {
-          if (c.status !== "running") return c;
-          const ev = page.events.find((e) => e.payload_json?.transfer === c.id && (e.action === "transfer_done" || e.action === "transfer_failed"));
-          if (!ev) return c;
-          if (ev.action === "transfer_done") return { ...c, status: "done" as const, bytes: ev.payload_json?.bytes };
-          const err = ev.payload_json?.error ?? "传输失败";
-          return { ...c, status: err.includes("取消") ? ("cancelled" as const) : ("failed" as const), error: err };
-        }));
-      } catch { /* 轮询失败忽略，下轮再试 */ }
-    }, 800);
+    if (!inTauri) return;
+    let un: (() => void) | undefined;
+    listen<TransferTask>("transfer-event", (e) => applyTransferTask(e.payload)).then((f) => (un = f));
+    void refreshTransfers();
+    return () => un?.();
+  }, [inTauri, applyTransferTask, refreshTransfers]);
+  useEffect(() => {
+    if (inTauri) return;
+    const t = setInterval(() => void refreshTransfers(), 800);
     return () => clearInterval(t);
-  }, [transfers]);
+  }, [inTauri, refreshTransfers]);
 
   // 传输终态 toast（§六）：running → done/failed 迁移时通知；卡片本身仍常显，
   // 即时失败（未接入会话等）有卡可见不重复 toast；取消是用户主动动作不打扰
@@ -3614,13 +3656,15 @@ export default function App() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="xfer-name mono" title={t.name}>{t.name}</div>
                   <div className="dim mono xfer-sub">
-                    {t.status === "running" && "传输中…"}
+                    {t.status === "queued" && "排队中…"}
+                    {t.status === "running" && `传输中…${t.bytes ? ` ${fmtBytes(t.bytes)}${t.total ? ` / ${fmtBytes(t.total)}` : ""}` : ""}`}
+                    {t.status === "cancelling" && "取消中…"}
                     {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)} · ${t.kind === "Upload" ? t.remote : t.local}`}
                     {t.status === "failed" && `失败：${t.error ?? "未知错误"}`}
                     {t.status === "cancelled" && "已取消"}
                   </div>
                 </div>
-                {t.status === "running" ? (
+                {t.status === "running" || t.status === "queued" || t.status === "cancelling" ? (
                   <button className="ghost" title="取消传输" onClick={() => { invoke("cancel_transfer", { id: t.id }).catch(() => {}); }}>✕</button>
                 ) : (
                   <span className={t.status === "done" ? "ok" : "err"} style={{ flex: "none" }}>

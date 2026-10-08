@@ -1,0 +1,7 @@
+PASS A0 session connected (baseline sanity)  [s-demo-0001]
+PASS D1 list_transfers absent on baseline  [invalid_input|演示 shim 未实现该命令：list_transfers]
+PASS D2 upload_file rejected on baseline  [invalid_input|演示模式不提供真实 SFTP 传输]
+PASS D3 download_file rejected on baseline  [invalid_input|演示模式不提供真实 SFTP 传输]
+PASS D4 cancel_transfer silent no-op on baseline (no registry error)  [{"ok":true,"v":null}]
+PASS D5 no transfer cards on baseline (nothing can run)  [n=0]
+SUMMARY 6/6

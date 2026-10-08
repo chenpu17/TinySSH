@@ -270,6 +270,43 @@ export interface TransferHandle {
   remote: string;
 }
 
+// ---- C5（R32）任务注册表：查询/事件统一载荷 ----
+
+/** §6.5 生命周期；Committing/AwaitingDecision/OutcomeUnknown 为前向占位
+ * （R33/R34 启用——旧 UI 收到未知状态按「进行中」同待） */
+export type TransferStatus =
+  | "Queued"
+  | "Running"
+  | "Committing"
+  | "Succeeded"
+  | "Failed"
+  | "Cancelled"
+  | "Cancelling"
+  | "AwaitingDecision"
+  | "OutcomeUnknown";
+
+/** revision 单调递增（事件可合并可丢，按 id+revision 幂等对账；漏收由
+ * list_transfers 查询兜底——UI 重挂后对账的权威面） */
+export interface TransferTask {
+  id: TransferId;
+  session_id: SessionId;
+  kind: TransferKind;
+  source: string;
+  dest: string;
+  status: TransferStatus;
+  bytes_done: number;
+  total?: number | null;
+  revision: number;
+  created_at: number;
+  finished_at?: number | null;
+  error?: string | null;
+  retry_of?: TransferId | null;
+}
+
+export function transferTerminal(s: TransferStatus): boolean {
+  return s === "Succeeded" || s === "Failed" || s === "Cancelled" || s === "OutcomeUnknown";
+}
+
 /** 条目种类（C4 R30）：null = 旧载荷/服务端未报（升级兼容） */
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 

@@ -257,6 +257,12 @@ async fn cancel_transfer(state: ApiState<'_>, id: String) -> CmdResult<()> {
     state.api.cancel_transfer(&human(), id).await.map_err(WireError::from)
 }
 
+/// C5（R32）：任务注册表查询——UI 重挂对账与事件漏收兜底（创建倒序全量）。
+#[tauri::command]
+async fn list_transfers(state: ApiState<'_>) -> CmdResult<Vec<TransferTask>> {
+    state.api.list_transfers(&human()).await.map_err(WireError::from)
+}
+
 /// SFTP 目录浏览（T41 FR-7）：只读 readdir，人类专属入口（不经审批）。
 #[tauri::command]
 async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<Vec<DirEntryS>> {
@@ -900,6 +906,8 @@ fn main() {
                     r27_smoke_script(&run_id)
                 } else if mode == "r30" {
                     r30_smoke_script(&run_id)
+                } else if mode.starts_with("r32") {
+                    r32_smoke_script(&run_id, &mode)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1198,6 +1206,19 @@ fn main() {
                     }
                 }
             });
+            // C5（R32）：传输任务事件（进度/状态，revision 单调）即时推送——
+            // 任务卡不进轮询盲窗；漏收由 list_transfers 查询对账兜底。
+            let handle_xfer = app.handle().clone();
+            let mut xfer_rx = api.transfer_tx.subscribe();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(xfer_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_xfer.emit("transfer-event", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
             // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
             if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
                 let api2 = api.clone();
@@ -1266,7 +1287,7 @@ fn main() {
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
-            upload_file, download_file, cancel_transfer, sftp_list, sftp_resolve_path, sftp_stat,
+            upload_file, download_file, cancel_transfer, list_transfers, sftp_list, sftp_resolve_path, sftp_stat,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             list_host_metadata, list_recent_hosts,
@@ -2580,6 +2601,258 @@ fn r30_smoke_script(run_id: &str) -> String {
   })();
 })();
 "#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R32（C5 传输注册表）三阶段原生冒烟：r32a=主链（上传进度/终态/真机写穿/下载/
+/// 失败注入/取消/未知取消/UI 卡片）；r32b=大文件上传在途（驱动杀进程制造
+/// 「重启时中断」）；r32c=重启恢复对账（journal 活动行 → Failed + 说明 → UI 可见）。
+fn r32_smoke_script(run_id: &str, mode: &str) -> String {
+    let phase_a = r#"(function() {
+  if (window.__R32_INJECTED__) return;
+  window.__R32_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  // 轮询注册表直至指定任务终态（C5：查询是权威对账面）
+  const waitTerminal = async (tid, tries) => {
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      const list = await inv('list_transfers', {});
+      last = list.find((t) => t.id === tid) || null;
+      if (last && ['Succeeded', 'Failed', 'Cancelled', 'OutcomeUnknown'].includes(last.status)) return last;
+      await sleep(200);
+    }
+    return last;
+  };
+  (async () => {
+    try {
+      await title('r32a-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r32-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r32-a', '.host-connect-btn') ? true : null), 40);
+      if (!connect('r32-a')) return title('FAIL-connect');
+      await trust();
+      const c1 = await waitFor(async () => (await activeSess('r32-a'))?.state === 'Connected' ? true : null, 150);
+      if (!c1) return title('FAIL-conn');
+      await sleep(400);
+      const sid = (await activeSess('r32-a')).id;
+      // ---- A. 注册表契约面 ----
+      const list0 = await inv('list_transfers', {});
+      if (!Array.isArray(list0)) return title('FAIL-list-shape:' + JSON.stringify(list0));
+      await markSync('r32a-list-empty-ok');
+      // 上传 2MB：创建先注册（handle 返回即 Queued/Running 可查）
+      const h = await inv('upload_file', { sid, local: '/tmp/r32up.bin', remote: '/tmp/r32dir/up.bin' });
+      if (!h || !h.id) return title('FAIL-upload-handle:' + JSON.stringify(h));
+      const row0 = (await inv('list_transfers', {})).find((t) => t.id === h.id);
+      if (!row0) return title('FAIL-not-registered:' + JSON.stringify(row0));
+      if (row0.kind !== 'Upload' || row0.source !== '/tmp/r32up.bin' || row0.dest !== '/tmp/r32dir/up.bin') return title('FAIL-row-fields:' + JSON.stringify(row0));
+      await markSync('r32a-registered-ok');
+      const done1 = await waitTerminal(h.id, 150);
+      if (!done1 || done1.status !== 'Succeeded') return title('FAIL-upload-terminal:' + JSON.stringify(done1));
+      if (done1.bytes_done !== 2097152 || done1.total !== 2097152) return title('FAIL-upload-bytes:' + JSON.stringify(done1));
+      if (!done1.finished_at || done1.revision < 2) return title('FAIL-upload-meta:' + JSON.stringify(done1));
+      await markSync('r32a-upload-ok');
+      // 真机写穿：SFTP stat 远端文件字节数一致
+      const st = await inv('sftp_stat', { sid, path: '/tmp/r32dir/up.bin' });
+      if (!st || st.size !== 2097152) return title('FAIL-remote-size:' + JSON.stringify(st));
+      await markSync('r32a-remote-write-ok');
+      // 下载（默认落 ~/Downloads）：终态 + 字节数
+      const hd = await inv('download_file', { sid, remote: '/tmp/r32dir/up.bin', local: null });
+      const doneD = await waitTerminal(hd.id, 150);
+      if (!doneD || doneD.status !== 'Succeeded' || doneD.bytes_done !== 2097152) return title('FAIL-download:' + JSON.stringify(doneD));
+      if (doneD.kind !== 'Download' || doneD.source !== '/tmp/r32dir/up.bin') return title('FAIL-download-fields:' + JSON.stringify(doneD));
+      await markSync('r32a-download-ok');
+      // 失败注入：本地不存在 → Failed + 真实错误文本（不吞不猜）
+      const hf = await inv('upload_file', { sid, local: '/tmp/r32-missing.bin', remote: '/tmp/r32dir/never.bin' });
+      const doneF = await waitTerminal(hf.id, 100);
+      if (!doneF || doneF.status !== 'Failed' || !(doneF.error || '').includes('open')) return title('FAIL-failed-inject:' + JSON.stringify(doneF));
+      await markSync('r32a-failed-ok');
+      // 取消：400MB 上传在途（bytes≥1MB）→ cancel → Cancelling|Cancelled 即现 → 终态 Cancelled/已取消/部分字节
+      const hb = await inv('upload_file', { sid, local: '/tmp/r32big.bin', remote: '/tmp/r32dir/big.bin' });
+      let saw = null;
+      for (let i = 0; i < 100; i++) {
+        const list = await inv('list_transfers', {});
+        saw = list.find((t) => t.id === hb.id);
+        if (saw && saw.bytes_done >= 1048576) break;
+        await sleep(100);
+      }
+      if (!saw || saw.bytes_done < 1048576) return title('FAIL-big-no-progress:' + JSON.stringify(saw));
+      await markSync('r32a-progress-seen=' + saw.bytes_done);
+      await inv('cancel_transfer', { id: hb.id });
+      const soon = (await inv('list_transfers', {})).find((t) => t.id === hb.id);
+      if (!soon || !['Cancelling', 'Cancelled'].includes(soon.status)) return title('FAIL-cancel-visible:' + JSON.stringify(soon));
+      const doneC = await waitTerminal(hb.id, 100);
+      if (!doneC || doneC.status !== 'Cancelled' || doneC.error !== '已取消') return title('FAIL-cancel-terminal:' + JSON.stringify(doneC));
+      // rev-r32 中-1 处置后：取消不抹账——终态保留在途字节（取消前已见 ≥1MB）
+      if (doneC.bytes_done < 1048576 || doneC.bytes_done >= doneC.total) return title('FAIL-cancel-bytes:' + JSON.stringify(doneC));
+      await markSync('r32a-cancel-ok');
+      // 未知取消 → 可区别错误
+      let caught = null;
+      try { await inv('cancel_transfer', { id: 't-nope' }); } catch (e) { caught = e; }
+      if (!caught || caught.kind !== 'invalid_input') return title('FAIL-cancel-unknown:' + JSON.stringify(caught));
+      await markSync('r32a-cancel-unknown-ok');
+      // ---- B. UI 卡片面（事件/轮询驱动 + 面板重开对账）----
+      const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
+      if (!stBtn) return title('FAIL-no-files-btn');
+      stBtn.click();
+      const rows = await waitFor(() => (document.querySelectorAll('.xfer-row').length >= 3 ? true : null), 60);
+      if (!rows) return title('FAIL-no-xfer-cards:' + document.querySelectorAll('.xfer-row').length);
+      const txt = [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ');
+      if (!txt.includes('完成') || !txt.includes('2.0 MB')) return title('FAIL-done-card:' + txt.slice(0, 200));
+      if (!txt.includes('失败')) return title('FAIL-failed-card:' + txt.slice(0, 200));
+      if (!txt.includes('已取消')) return title('FAIL-cancelled-card:' + txt.slice(0, 200));
+      await markSync('r32a-ui-ok');
+      await markSync('r32a-DONE');
+      await title('r32-DONE');
+      await sleep(120000);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 120) : String(e).slice(0, 140)));
+    }
+  })();
+})();
+"#;
+    let phase_b = r#"(function() {
+  if (window.__R32_INJECTED__) return;
+  window.__R32_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  (async () => {
+    try {
+      await title('r32b-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await waitFor(async () => (cardBtn('r32-a', '.host-connect-btn') ? true : null), 40);
+      const b = cardBtn('r32-a', '.host-connect-btn');
+      if (!b) return title('FAIL-connect');
+      b.click();
+      await waitFor(async () => (await activeSess('r32-a'))?.state === 'Connected' ? true : null, 150);
+      await sleep(600);
+      const sid = (await activeSess('r32-a'))?.id;
+      if (!sid) return title('FAIL-conn');
+      const hb = await inv('upload_file', { sid, local: '/tmp/r32big.bin', remote: '/tmp/r32dir/recovering.bin' });
+      if (!hb || !hb.id) return title('FAIL-upload-handle:' + JSON.stringify(hb));
+      let saw = null;
+      for (let i = 0; i < 100; i++) {
+        const list = await inv('list_transfers', {});
+        saw = list.find((t) => t.id === hb.id);
+        if (saw && saw.bytes_done >= 4194304) break;
+        await sleep(100);
+      }
+      if (!saw || saw.bytes_done < 4194304) return title('FAIL-no-progress:' + JSON.stringify(saw));
+      await mark('r32b-TRANSFERRING=' + saw.bytes_done);
+      // 在途保持：驱动看到标记后杀进程（journal 应停留 Running/Queued）
+      await sleep(60000);
+      await title('r32b-still-alive-BAD');
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 120) : String(e).slice(0, 140)));
+    }
+  })();
+})();
+"#;
+    let phase_c = r#"(function() {
+  if (window.__R32_INJECTED__) return;
+  window.__R32_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  (async () => {
+    try {
+      await title('r32c-open');
+      await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      // 重启恢复：上一进程在途任务按「提交前中断」落 Failed（不经任何会话连接）
+      const row = await waitFor(async () => {
+        const list = await inv('list_transfers', {});
+        return list.find((t) => t.dest === '/tmp/r32dir/recovering.bin') || null;
+      }, 50);
+      if (!row) return title('FAIL-recovery-row-missing');
+      if (row.status !== 'Failed') return title('FAIL-recovery-status:' + JSON.stringify(row));
+      if (row.error !== '应用重启时传输中断') return title('FAIL-recovery-error:' + JSON.stringify(row));
+      if (!row.finished_at) return title('FAIL-recovery-finished:' + JSON.stringify(row));
+      await markSync('r32c-recovery-ok');
+      // UI 对账：重挂后注册表面在文件面板可见
+      const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
+      if (!stBtn) return title('FAIL-no-files-btn');
+      stBtn.click();
+      const txt = await waitFor(() => {
+        const t = [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ');
+        return t.includes('应用重启时传输中断') ? t : null;
+      }, 60);
+      if (!txt) return title('FAIL-recovery-card-missing:' + [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ').slice(0, 200));
+      await markSync('r32c-ui-ok');
+      await markSync('r32c-DONE');
+      await title('r32c-DONE');
+      await sleep(120000);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 120) : String(e).slice(0, 140)));
+    }
+  })();
+})();
+"#;
+    let base = if mode == "r32b" {
+        phase_b
+    } else if mode == "r32c" {
+        phase_c
+    } else {
+        phase_a
+    };
     base.replace("__RUN__", run_id)
 }
 

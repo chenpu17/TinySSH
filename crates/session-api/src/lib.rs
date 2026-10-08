@@ -896,6 +896,61 @@ pub enum TransferKind {
     Download,
 }
 
+/// C5（§6.5）传输生命周期。wire 形状与既有 UI 卡状态（PascalCase）一致。
+/// R32 产生子集：Queued/Running/Cancelling/Succeeded/Failed/Cancelled；
+/// Committing/AwaitingDecision/OutcomeUnknown 为 R33/R34 提交语义与冲突决策的前向
+/// 占位（§560：100% 字节只代表数据传完，不能代替提交完成——枚举现在定全量，
+/// 载荷消费方对未知状态按「进行中」同待）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransferStatus {
+    Queued,
+    Running,
+    Committing,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Cancelling,
+    AwaitingDecision,
+    OutcomeUnknown,
+}
+
+impl TransferStatus {
+    /// 终态：不再变化，可安全从注册表归档（R32 不清_registry_，仅 journal 归档）。
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            TransferStatus::Succeeded
+                | TransferStatus::Failed
+                | TransferStatus::Cancelled
+                | TransferStatus::OutcomeUnknown
+        )
+    }
+}
+
+/// C5（§547/§560）任务注册表行——查询与事件的统一载荷。
+/// revision 单调递增（事件可合并，UI 按 id+revision 幂等对账；重挂后 list_transfers
+/// 拿到的每行 revision 与事件流连续）。source/dest 与方向绑定：upload 为
+/// source=本地 dest=远端；download 反之（与 TransferHandle.local/remote 语义一致）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferTask {
+    pub id: TransferId,
+    pub session_id: SessionId,
+    pub kind: TransferKind,
+    pub source: String,
+    pub dest: String,
+    pub status: TransferStatus,
+    pub bytes_done: u64,
+    /// 总字节数未知为 None（§352 不伪造；目录递归上传常未知）
+    pub total: Option<u64>,
+    pub revision: u64,
+    /// Unix 秒
+    pub created_at: i64,
+    pub finished_at: Option<i64>,
+    pub error: Option<String>,
+    /// §6.5 重试链：本任务重试自哪个任务
+    pub retry_of: Option<TransferId>,
+}
+
 /// SFTP 条目类型（C4 §352）：符号链接/其他与普通文件/目录可区别；
 /// None = 旧载荷或服务端未报类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1331,6 +1386,10 @@ pub trait SessionApi: Send + Sync {
     ) -> Result<TransferHandle>;
     async fn cancel_transfer(&self, ctx: &Actor, t: TransferId) -> Result<()>;
 
+    /// C5（§547）：任务注册表查询——全量快照（新建时间倒序），UI 重挂后对账与
+    /// 事件漏收兜底（事件可合并可丢失，查询是权威）。任何 Actor 可查（只读）。
+    async fn list_transfers(&self, ctx: &Actor) -> Result<Vec<TransferTask>>;
+
     /// 人类浏览远端目录（FR-7 SFTP 浏览器，只读）。path 为绝对路径；
     /// 条目按名称排序（目录在前）由 transport 层保证。
     async fn sftp_list(&self, ctx: &Actor, sid: SessionId, path: &str) -> Result<Vec<DirEntryS>>;
@@ -1609,5 +1668,47 @@ mod wire_format_tests {
         })).unwrap();
         assert_eq!(info2.state, "Failed");
         assert_eq!(info2.error.as_deref(), Some("RequestDenied: 地址已在使用"));
+    }
+
+    /// C5（R32 §547/§560）：TransferTask 线上格式锁定——status PascalCase 与既有
+    /// UI 卡状态字符串一致；total/finished_at/error/retry_of 可空；revision 单调。
+    #[test]
+    fn c5_transfer_task_wire_format() {
+        let running: TransferTask = serde_json::from_value(serde_json::json!({
+            "id": "t-1", "session_id": "s-1", "kind": "Upload",
+            "source": "/tmp/a.tar.gz", "dest": "/root/a.tar.gz",
+            "status": "Running", "bytes_done": 512, "total": 1024,
+            "revision": 7, "created_at": 1790956800,
+            "finished_at": null, "error": null, "retry_of": null,
+        })).unwrap();
+        assert_eq!(running.status, TransferStatus::Running);
+        let v = serde_json::to_value(&running).unwrap();
+        assert_eq!(v["status"], serde_json::json!("Running"));
+        assert_eq!(v["kind"], serde_json::json!("Upload"));
+        // 终态判定（归档/清 cancel 句柄依据）
+        assert!(!running.status.is_terminal());
+        assert!(serde_json::from_value::<TransferTask>(serde_json::json!({
+            "id": "t-2", "session_id": "s-1", "kind": "Download",
+            "source": "/var/log/x", "dest": "/tmp/x",
+            "status": "Succeeded", "bytes_done": 9, "total": null,
+            "revision": 9, "created_at": 1, "finished_at": 2,
+            "error": null, "retry_of": null,
+        })).unwrap().status.is_terminal());
+        // 前向状态可反序列化（旧 UI 收到未知状态按「进行中」同待——R33/R34 载荷兼容面）；
+        // OutcomeUnknown 例外=终态（无后续自动迁移，但恢复面按「提交结果未知」处置）
+        for s in ["Committing", "AwaitingDecision"] {
+            let t: TransferTask = serde_json::from_value(serde_json::json!({
+                "id": "t", "session_id": "s", "kind": "Upload",
+                "source": "a", "dest": "b", "status": s, "bytes_done": 0,
+                "total": null, "revision": 1, "created_at": 0,
+                "finished_at": null, "error": null, "retry_of": null,
+            })).unwrap();
+            assert!(!t.status.is_terminal());
+        }
+        let ou: TransferStatus = serde_json::from_value(serde_json::json!("OutcomeUnknown")).unwrap();
+        assert!(ou.is_terminal());
+        // Cancelled 终态
+        let c: TransferStatus = serde_json::from_value(serde_json::json!("Cancelled")).unwrap();
+        assert!(c.is_terminal());
     }
 }

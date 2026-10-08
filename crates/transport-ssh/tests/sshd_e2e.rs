@@ -156,10 +156,10 @@ async fn scenario() -> Result<(), String> {
     let local = dir.path().join("u.txt");
     std::fs::write(&local, b"sftp-roundtrip-data").unwrap();
     let remote = format!("/tmp/{}.txt", std::process::id());
-    let n = channel.upload(&local, &remote, &Default::default()).await.unwrap();
+    let n = channel.upload(&local, &remote, &Default::default(), &|_,_|{}).await.unwrap();
     assert_eq!(n, b"sftp-roundtrip-data".len() as u64);
     let back = dir.path().join("d.txt");
-    channel.download(&remote, &back, &Default::default()).await.unwrap();
+    channel.download(&remote, &back, &Default::default(), &|_,_|{}).await.unwrap();
     assert_eq!(std::fs::read(&back).unwrap(), b"sftp-roundtrip-data");
 
     channel.close().await.unwrap();
@@ -206,7 +206,7 @@ async fn sftp_download_cancel_midway() {
     let dst_check = dst.clone();
     let dl = tokio::spawn(async move {
         ch2
-            .download("/tmp/t20_cancel.bin", &dst, &c2)
+            .download("/tmp/t20_cancel.bin", &dst, &c2, &|_,_|{})
             .await
     });
     // 传输进行中取消（256MB 回环传输 ≈ 0.5–3s，200ms 必然处于中途；
