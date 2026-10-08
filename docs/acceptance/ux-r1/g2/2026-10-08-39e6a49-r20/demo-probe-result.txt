@@ -1,0 +1,32 @@
+PASS A1 地址命中 10.0.0.11 → prod-1  [["prod-1"]]
+PASS A2 名称片段命中 otp-1  [["otp-1（演示 2FA）"]]
+PASS A3 无结果保留查询且有添加入口  [no-match empty state]
+PASS B1 upsert tags 主机卡出现
+PASS B2 卡片标签徽章 生产/成都  [["生产","成都"]]
+PASS B3 标签筛选 chip 出现  [["成都","生产"]]
+PASS B4 chip 过滤只留 r20-web  [["r20-web"]]
+PASS B5 再点 chip 取消过滤  [6]
+PASS C0 prod-2 卡在位
+PASS C1 收藏分组出现（收藏+其他主机）  [["收藏","其他主机"]]
+PASS C2 收藏组含 prod-2  [["prod-2（演示连接失败）"]]
+PASS C3 星标 aria-pressed=true  [["true"]]
+PASS C4 取消收藏回落全部主机  [["全部主机"]]
+PASS E1 欢迎页在位（未激活会话即显示）
+PASS E2 添加主机入口  [["添加主机","导入 ~/.ssh/config","打开本地终端"]]
+PASS E3 导入入口
+PASS E4 本地终端入口（local 主机在册时）  [["添加主机","导入 ~/.ssh/config","打开本地终端"]]
+PASS E5 无 MCP 空卡/假数据
+PASS F1 26 主机全渲染（5 种子+1 web+20 批量）  [26]
+PASS F2 过滤响应 <50ms 且命中 20  [{"ms":25.299999952316284,"n":20}]
+PASS F3 长中文名/IPv6 卡不破版
+PASS G1 recents 排除 local 且 ≤5  [[{"host_id":"h-prod1","host_name":"prod-1","connected_at":"2026-09-27T13:50:00Z"},{"host_id":"h-staging1","host_name":"staging-1","connected_at":"2026-09-27T13:40:00Z"}]]
+PASS D1 Tab 可达主机卡
+PASS D2 焦点可见（:focus-visible 外圈）  [{"style":"solid","width":"2px","matches":true}]
+PASS D3 Enter 触发连接（TOFU 门或建会话，二者之一）  [{"mask":false,"tabs0":2,"tabs1":3}]
+PASS D4 rev-H1 星标钮 Enter 翻转收藏（按钮默认激活未被吞）  [{"focused":true,"before":"false","after":"true"}]
+PASS D5 rev-H1 星标钮 Enter 不建会话不开门  [{"tabs0":3,"tabs1":3,"mask":false}]
+PASS D6 rev-H1 编辑钮 Enter 开表单不建会话  [{"focused":true,"form":true,"tabs":3,"mask":false}]
+PASS D7a 生产 chip 过滤生效（前置）  [["r20-web"]]
+PASS D7 rev-M1 标签消失后列表自动恢复（无死态）  [{"cards":27,"chips":["批量"],"noMatch":false}]
+PASS Z1 零 JS 错误
+r20-demo-ALL-PASS 31

@@ -779,6 +779,41 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
   flex: none; font-size: 10px; color: var(--dim); line-height: 15px;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 4px;
 }
+/* ---- R20：标签（主机栏筛选 chip / 主机卡徽章）/ 收藏星标 / 键盘焦点（A02） ---- */
+.hb-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px 0; }
+.hb-tag {
+  font-size: 10px; line-height: 16px; padding: 0 6px; cursor: pointer;
+  color: var(--dim); border: 1px solid var(--border); border-radius: 8px;
+  background: transparent;
+}
+.hb-tag:hover { color: var(--text); border-color: var(--accent-line); }
+.hb-tag.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.host-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.host-tag {
+  flex: none; font-size: 10px; color: var(--dim); line-height: 15px;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px;
+}
+.host-tag.more { border-style: dashed; }
+.fav-btn svg { fill: none; }
+.fav-btn.on { color: var(--accent); }
+.fav-btn.on svg { fill: currentColor; }
+/* A02：Tab 可达的可见焦点（键盘用户可辨；鼠标点击不出现外圈） */
+.host-card:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+  background: var(--panel3);
+}
+/* 欢迎页最近连接（§259：仅欢迎页呈现，最多 5 条；侧栏不因连接重排） */
+.welcome-recents { margin: 4px 0 12px; display: flex; flex-direction: column; gap: 4px; }
+.wr-title { font-size: 11px; color: var(--dim); margin-bottom: 2px; }
+.wr-row {
+  display: flex; align-items: center; gap: 8px; text-align: left;
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel2); cursor: pointer; font-size: 12px;
+}
+.wr-row:hover { border-color: var(--accent-line); background: var(--panel3); }
+.wr-name { font-weight: 500; }
+.wr-addr { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 11px; }
+.wr-go { flex: none; color: var(--accent); font-size: 11px; }
 /* 主机在线徽章（五人走查·林姐）：●N = 该主机现有会话数；绿色 = 有已连接会话 */
 .live-tag { color: var(--text-sub); }
 .live-tag.on { color: var(--ok); border-color: var(--ok); }

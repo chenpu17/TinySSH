@@ -8,12 +8,12 @@ import type { AppAction } from "./actions";
 import { createOutputFeed } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import type {
-  Host, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
+  Host, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
 } from "./adapter/wire";
 import {
-  IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash,
+  IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
   IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
   IconArrowDown, IconUpload, IconDownload, IconInbox, IconClock, IconSearch, IconLoader,
   IconFolder, IconFile, IconRefresh,
@@ -435,6 +435,10 @@ export default function App() {
   const [oscTitles, setOscTitles] = useState<Record<string, string>>({});
   const [hosts, setHosts] = useState<Host[]>([]);
   const [hostsLoaded, setHostsLoaded] = useState(false);
+  // R20（C8 消费）：收藏/最近元数据 + 标签筛选 chip
+  const [hostMeta, setHostMeta] = useState<HostMeta[]>([]);
+  const [recents, setRecents] = useState<RecentHost[]>([]);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
   // 任务目标（R9：人类→Agent 委托留言）：draft 编辑中不被简报轮询覆盖，
@@ -494,6 +498,9 @@ export default function App() {
     try {
       setSessions(await invoke("list_sessions"));
       setHosts(await invoke("list_hosts"));
+      // R20：收藏/最近元数据（失败不阻断列表——空 meta 即全部视为未收藏）
+      try { setHostMeta(await invoke("list_host_metadata")); } catch { /* 容忍 */ }
+      try { setRecents(await invoke("list_recent_hosts")); } catch { /* 容忍 */ }
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
       setApprovals((await invoke("list_approvals", { pendingOnly: false }))
         .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) })));
@@ -514,6 +521,22 @@ export default function App() {
       setBrief(b);
     } catch { /* 会话已关 */ }
   }, []);
+
+  // R20：收藏切换——本地先翻（无闪烁），后端确认；失败回读真实状态
+  const toggleFavorite = useCallback(async (hostId: string, next: boolean) => {
+    setHostMeta((prev) => {
+      const i = prev.findIndex((m) => m.host_id === hostId);
+      if (i < 0) return [...prev, { host_id: hostId, favorite: next, last_connected_at: null }];
+      const cp = [...prev];
+      cp[i] = { ...cp[i], favorite: next };
+      return cp;
+    });
+    try {
+      await invoke("set_host_favorite", { hostId, favorite: next });
+    } catch {
+      void refreshLists(); // 持久化失败：回读，UI 不停留在假状态
+    }
+  }, [refreshLists]);
 
   // 简报到达即同步目标输入框（编辑中不覆盖）
   useEffect(() => { if (!goalDirty.current) setGoalDraft(brief?.goal ?? ""); }, [brief]);
@@ -1062,10 +1085,24 @@ export default function App() {
     persistHostbarPrefs(hostbarOpenRef.current, w);
   };
   const hostQueryN = hostQuery.trim().toLowerCase();
-  const filteredHosts = hostQueryN
-    ? hosts.filter((h) =>
+  // R20（§4.2 主机栏）：收藏置顶分组（有收藏→「收藏/其他主机」两组；无收藏→「全部主机」）、
+  // 组内名称排序（排序稳定：查询/收藏变化不抖动——sort 在过滤后一次性应用）、标签 chip 筛选
+  const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
+  const isFav = (h: Host) => metaById.get(h.id)?.favorite === true;
+  const byName = (a: Host, b: Host) => a.name.localeCompare(b.name, "zh", { numeric: true });
+  const allTags = [...new Set(hosts.flatMap((h) => h.tags ?? []))].sort((a, b) => a.localeCompare(b, "zh"));
+  // rev-r20 M1：活跃标签经编辑/删除在全部主机上消失后 chip 不再渲染，tagFilter 残留会
+  // 让列表恒空且无清除入口——失效筛选自动失效
+  const activeTag = tagFilter !== null && allTags.includes(tagFilter) ? tagFilter : null;
+  const tagFiltered = activeTag ? hosts.filter((h) => (h.tags ?? []).includes(activeTag)) : hosts;
+  // rev-r20 L1：无查询时 tagFiltered===hosts，原地 sort 会在渲染期改 state 数组——拷贝后排序
+  const filteredHosts = [...(hostQueryN
+    ? tagFiltered.filter((h) =>
         [h.name, h.address, h.username, ...(h.tags ?? [])].some((v) => v.toLowerCase().includes(hostQueryN)))
-    : hosts;
+    : tagFiltered
+  )].sort(byName);
+  const favHosts = filteredHosts.filter(isFav);
+  const otherHosts = filteredHosts.filter((h) => !isFav(h));
   // 窄窗完整视图断点（§4.2）：可用宽度 < 主机栏 + 560 + 面板宽 → 面板改中央完整视图。
   // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
@@ -1847,6 +1884,15 @@ export default function App() {
                   {showAddHost ? <IconChevronUp size={14} /> : <IconPlus size={14} />}
                 </button>
               </div>
+              {allTags.length > 0 && (
+                <div className="hb-tags" role="group" aria-label="按标签筛选">
+                  {allTags.map((t) => (
+                    <button key={t} className={"hb-tag" + (activeTag === t ? " on" : "")} aria-pressed={activeTag === t}
+                      title={activeTag === t ? `取消筛选「${t}」` : `只看带「${t}」标签的主机`}
+                      onClick={() => setTagFilter(activeTag === t ? null : t)}>{t}</button>
+                  ))}
+                </div>
+              )}
               <div className="hb-scroll">
           {showImport && (
             <SshConfigImportPanel
@@ -1869,15 +1915,10 @@ export default function App() {
               }}
             />
           )}
-          <div className="section">
-            <h4>主机</h4>
-            {!hostsLoaded && (
-              <>
-                <div className="skeleton" />
-                <div className="skeleton" />
-              </>
-            )}
-            {filteredHosts.map((h) => {
+          {(() => {
+            // R20（§4.2）：卡片渲染收敛为局部函数——收藏分组（收藏/其他主机/全部主机）
+            // 复用同一卡片形态；组内名称序已在 filteredHosts 派生时排序
+            const renderHostCard = (h: Host) => {
               // 该主机的现有会话（五人走查·林姐：误点已连主机静默开重复会话）。
               // 在线徽章 + 点击切到最近会话；显式另开走右侧「连接」钮
               const mine = sessions.filter((s) => s.host_id === h.id);
@@ -1886,19 +1927,30 @@ export default function App() {
               // 最近会话按时间戳比较：chrono 秒级无小数、纳秒级带小数位，
               // 字符串字典序在「同一秒内混合精度」时会错序（'Z' > '.'）
               const latest = [...live].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+              const fav = metaById.get(h.id)?.favorite === true;
+              const activate = () => {
+                if (connecting) return;
+                if (latest) { void attachSession(latest.id); return; }
+                createSession(h);
+              };
               return (
               <div className="host-card" key={h.id}
+                tabIndex={0}
+                role="button"
+                aria-label={`主机 ${h.name}（${h.username}@${h.address}:${h.port}）${latest ? "——Enter 切换到最近会话" : "——Enter 连接"}`}
+                onKeyDown={(e) => {
+                  // rev-r20 H1：冒泡自内层按钮（星标/编辑/删除）的 Enter/Space 不劫持——
+                  // 否则 preventDefault 吞掉按钮自身激活再误触 activate()
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+                }}
                 title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
                 {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
                 <div className="host-card-main" style={{ cursor: connecting ? "default" : "pointer" }}
                   title={latest
                     ? `该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话\n${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老设备）" : "UTF-8"}`
                     : undefined}
-                  onClick={() => {
-                    if (connecting) return;
-                    if (latest) { void attachSession(latest.id); return; }
-                    createSession(h);
-                  }}>
+                  onClick={activate}>
                   {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩。
                       T38 审核：GBK 徽章置名前——行尾会落入 hover 操作组覆盖区，置尾恰在
                       准备连接的交互时刻不可见；置左恒可见 */}
@@ -1912,13 +1964,22 @@ export default function App() {
                     <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
                   </div>
                   <div className="host-addr mono">{h.username}@{h.address}:{h.port}</div>
+                  {(h.tags ?? []).length > 0 && (
+                    <div className="host-tags">
+                      {(h.tags ?? []).slice(0, 2).map((t) => <span key={t} className="host-tag">{t}</span>)}
+                      {(h.tags ?? []).length > 2 && <span className="host-tag more">+{(h.tags ?? []).length - 2}</span>}
+                    </div>
+                  )}
                   {lastFailed === h.id && connecting !== h.id && (
                     <div className="err host-fail">✕ 上次连接失败——检查地址与凭据后重试</div>
                   )}
                 </div>
                 <div className="host-card-side">
                   <div className="host-ops">
-                    <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码，凭据保持不变）"
+                    <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
+                      title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
+                      onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
+                    <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
                       onClick={() => { setEditingHost(h); setShowImport(false); setShowAddHost(true); }}><IconPencil size={13} /></button>
                     <button className="ghost host-del" title="删除主机"
                       onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
@@ -1930,14 +1991,46 @@ export default function App() {
                 </div>
               </div>
               );
-            })}
-            {hostsLoaded && hosts.length === 0 && (
+            };
+            const skeletons = !hostsLoaded ? (<><div className="skeleton" /><div className="skeleton" /></>) : null;
+            const emptyAll = hostsLoaded && hosts.length === 0 && (
               <div className="dim">还没有主机。点上方「＋」填入地址和密码即可连接。</div>
-            )}
-            {hostsLoaded && hosts.length > 0 && filteredHosts.length === 0 && (
-              <div className="dim">无匹配主机——清除搜索条件再试。</div>
-            )}
-          </div>
+            );
+            const noMatch = hostsLoaded && hosts.length > 0 && filteredHosts.length === 0 && (
+              <>
+                <div className="dim">无匹配主机——可清除搜索/标签筛选，或直接添加：</div>
+                <button className="ghost" style={{ marginTop: 6 }}
+                  onClick={() => { setShowImport(false); setEditingHost(null); setShowAddHost(true); }}>
+                  <IconPlus size={12} /> 添加主机
+                </button>
+              </>
+            );
+            const firstSection = (title: string, cards: Host[]) => (
+              <div className="section">
+                <h4>{title}</h4>
+                {skeletons}
+                {cards.map(renderHostCard)}
+                {emptyAll}
+                {noMatch}
+              </div>
+            );
+            // 契约 §4.2：有收藏 → 「收藏」+「其他主机」两组；无收藏 → 「全部主机」单组。
+            // 骨架/空态只随首组渲染一次；rev-r20 L2：全部可见主机均收藏时不渲染空「其他主机」节头
+            if (favHosts.length > 0) {
+              return (
+                <>
+                  {firstSection("收藏", favHosts)}
+                  {otherHosts.length > 0 && (
+                    <div className="section">
+                      <h4>其他主机</h4>
+                      {otherHosts.map(renderHostCard)}
+                    </div>
+                  )}
+                </>
+              );
+            }
+            return firstSection("全部主机", otherHosts);
+          })()}
         </div>
         <div className="hb-bottom">
           <button className="hb-settings" title="显示设置（字号 / 主题）" aria-label="显示设置"
@@ -2254,7 +2347,38 @@ export default function App() {
                 <div className="welcome-actions">
                   <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); }}><IconPlus size={13} /> 添加主机</button>
                   <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
+                  {hosts.some((h) => h.id === "local") && (
+                    <button className="ghost" onClick={() => {
+                      const lh = hosts.find((h) => h.id === "local");
+                      if (lh) void createSession(lh);
+                    }}><IconTerminal size={13} /> 打开本地终端</button>
+                  )}
                 </div>
+                {/* R20（§259）：已有主机但无会话 → 最近连接（后端派生、排除 local、上限 5）。
+                    仅在欢迎页呈现（§261：避免每次连接使侧栏重排）；点击即建连。
+                    rev-r20 L5：行全部失效（主机刚删的毫秒窗）时不渲染空标题块 */}
+                {!sid && sessions.length === 0 && recents.length > 0 && (() => {
+                  const rows = recents.slice(0, 5).map((r) => {
+                    const rh = hosts.find((x) => x.id === r.host_id);
+                    if (!rh) return null;
+                    return (
+                      <button key={r.host_id} className="wr-row"
+                        title={`连接 ${r.host_name}（${rh.username}@${rh.address}）`}
+                        onClick={() => void createSession(rh)}>
+                        <span className="wr-name">{r.host_name}</span>
+                        <span className="wr-addr mono">{rh.username}@{rh.address}</span>
+                        <span className="wr-go">连接</span>
+                      </button>
+                    );
+                  }).filter(Boolean);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div className="welcome-recents" aria-label="最近连接">
+                      <div className="wr-title">最近连接</div>
+                      {rows}
+                    </div>
+                  );
+                })()}
                 <div className="dim welcome-note">
                   {sessions.length > 0
                     ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或「标签列表」继续。`
@@ -2907,6 +3031,7 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
   const [username, setUsername] = useState(editHost?.username ?? "");
   const [authMode, setAuthMode] = useState<"password" | "key" | "agent">("password");
   const [charset, setCharset] = useState<"utf-8" | "gbk">(editHost?.charset ?? "utf-8");
+  const [tagsInput, setTagsInput] = useState((editHost?.tags ?? []).join(","));
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -2985,14 +3110,16 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
         if (!identity) { setErr("请先「导入并确认指纹」或「生成新密钥」"); setBusy(false); return; }
         auth = { Key: { identity_id: identity.id } };
       }
+      // 标签（R20）：逗号分隔（中英文逗号皆可）→ 去重去空
+      const tags = [...new Set(tagsInput.split(/[,，]/).map((x) => x.trim()).filter(Boolean))];
       const hid = await invoke("upsert_host", {
         host: {
           id: editHost?.id ?? null, name: name.trim(), address: address.trim(),
-          port: p, username: username.trim(), auth, tags: editHost?.tags ?? [],
+          port: p, username: username.trim(), auth, tags,
           charset,
         },
       });
-      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); }
+      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); setTagsInput(""); }
       setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
       onSaved(hid, editing, connect);
     } catch (e) {
@@ -3042,6 +3169,12 @@ function AddHostForm({ onSaved, editHost }: { onSaved: (hostId: string, wasEdit:
           <option value="utf-8">UTF-8（默认）</option>
           <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
         </select>
+      </div>
+      {/* R20：标签（逗号分隔）——主机卡徽章显示，搜索与标签 chip 筛选可命中 */}
+      <div className="ah-field" style={{ marginTop: 6 }}>
+        <label>标签（可选，逗号分隔，如：生产, 成都）</label>
+        <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
+          placeholder="例：生产, 数据库" onKeyDown={(e) => e.key === "Enter" && submit()} />
       </div>
       {editing ? (
         <>

@@ -1,0 +1,20 @@
+vis-r20 分区逐像素 diff（1280×800，PIL ImageChops，区域裁剪）
+对比：new(5183 工作树) vs base(5184 基线 HEAD=39e6a49)
+
+【零回归面（MUST-BE-0）】
+会话激活态：
+  title(y0-44)        diffpx=0
+  statusbar(H-24..H)  diffpx=0
+  tabbar(y44-84)      diffpx=3  bbox=(189,30,1157,34)   [裁剪系坐标，绝对 y≈74-78]
+  center(x226-,y84-776) diffpx=6 bbox=(834,6,1026,59)  [绝对 (1060,90)-(1252,143)]
+欢迎态：
+  title/statusbar     diffpx=0
+  tabbar              diffpx=1  bbox=(1157,34,1158,35)  [绝对 (1157,78)]
+【允许差异面（R20 目标区）】hostbar diffpx=5825/5824（新元素：chips/星标/分组/最近连接）
+
+【时间对照（同端连拍 1.3s 间隔，blink/AA 噪声底测定）】
+  5183 self-diff px=3  bbox=(932,76,1155,142)   含样本 (1154,76) 即 tabbar 底缘像素
+  5184 self-diff px=8  bbox=(932,90,1252,143)   工具栏/xterm 顶部区域
+跨端三处 violation（3/6/1px）≤ 同端自差（3/8px），同区域同类像素单端内即抖动
+→ 分类：瞬态渲染伪影（xterm 光标闪烁相位/次像素 AA），非跨版本回归。零回归面判定 PASS。
+（注：欢迎态 tabbar 单像素 (1157,78) 抽查 new/base 值逐字节相同属复拍样本，原帧差异同为 AA 级。）

@@ -59,7 +59,7 @@ const demoState = {
     { id: "h-prod2", name: "prod-2（演示连接失败）", address: "10.0.0.12", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-otp1", name: "otp-1（演示 2FA）", address: "otp.demo", port: 22, username: "ops", auth_type: "Password" },
     { id: "h-staging1", name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password" },
-  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk" }[],
+  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk"; tags?: string[] }[],
   sessions: [
     {
       id: "s-demo-0001", host_id: "h-prod1", host_name: "prod-1", kind: "ssh",
@@ -216,7 +216,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         state: s.state, control_owner: s.control_owner, created_at: s.created_at,
       }));
     case "upsert_host": {
-      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk" };
+      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[] };
       // 真实后端按 HostDraft.auth 推导 auth_type，demo 同口径（修复：此前新建一律
       // 硬编码 Password——密钥/Agent 主机在浏览器走查里会顶错徽章，属头部警告的对账类别）
       const a = h.auth;
@@ -230,6 +230,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         if (ex) {
           ex.name = h.name; ex.address = h.address; ex.port = h.port ?? 22; ex.username = h.username;
           ex.charset = h.charset ?? "utf-8";
+          if (h.tags) ex.tags = h.tags.filter((t) => t.trim()).map((t) => t.trim());
           if (authType !== "Keep") ex.auth_type = authType;
           audit("human", "host_upsert", h.name);
           return h.id;
@@ -237,7 +238,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       const id = h.id ?? "h-demo-" + demoSeq++;
       demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username,
-        auth_type: authType === "Keep" ? "Password" : authType, charset: h.charset ?? "utf-8" });
+        auth_type: authType === "Keep" ? "Password" : authType, charset: h.charset ?? "utf-8",
+        tags: (h.tags ?? []).filter((t: string) => typeof t === "string" && t.trim()).map((t: string) => t.trim()) });
       audit("human", "host_upsert", h.name);
       return id;
     }
