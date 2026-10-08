@@ -56,6 +56,8 @@ interface CmdArgs {
   download_file: { sid: string; remote: string; local?: string | null };
   cancel_transfer: { id: string };
   sftp_list: { sid: string; path: string };
+  sftp_resolve_path: { sid: string; path?: string | null };
+  sftp_stat: { sid: string; path: string };
   list_forwards: { sid: string };
   start_forward: { sid: string; spec: wire.ForwardSpec };
   stop_forward: { sid: string; id: string };
@@ -116,6 +118,8 @@ interface CmdRet {
   download_file: wire.TransferHandle;
   cancel_transfer: void;
   sftp_list: wire.DirEntryS[];
+  sftp_resolve_path: wire.PathResolved;
+  sftp_stat: wire.EntryStat;
   list_forwards: wire.ForwardInfo[];
   start_forward: wire.ForwardId;
   stop_forward: void;

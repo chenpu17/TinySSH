@@ -896,16 +896,56 @@ pub enum TransferKind {
     Download,
 }
 
-/// SFTP 目录条目（T41 FR-7 浏览器）。wire 三端一致（Rust/UI/demo）：
+/// SFTP 条目类型（C4 §352）：符号链接/其他与普通文件/目录可区别；
+/// None = 旧载荷或服务端未报类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryKind {
+    Dir,
+    File,
+    Symlink,
+    Other,
+}
+
+/// SFTP 目录条目（T41 FR-7 浏览器；C4 §352 R30 扩充）。wire 三端一致（Rust/UI/demo）：
 /// transport 按名称排序（目录在前）返回，UI 直接渲染。
+/// §352「未知大小/时间显示 —，不伪造零值」：size/mtime 为 Option——None=服务端未报，
+/// UI 呈示「—」；is_dir 保留（消费方广，= kind==Dir；symlink 条目为 false，kind 区分）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirEntryS {
     pub name: String,
     pub is_dir: bool,
-    /// 字节数；目录为 0
-    pub size: u64,
-    /// Unix 秒；未知为 0
-    pub mtime: i64,
+    /// 条目类型；None = 旧载荷（升级兼容）或服务端未报
+    #[serde(default)]
+    pub kind: Option<EntryKind>,
+    /// 字节数；None = 未知（目录/服务端未报——不以 0 冒充）
+    pub size: Option<u64>,
+    /// Unix 秒；None = 未知
+    pub mtime: Option<i64>,
+}
+
+/// C4（§546/§352）：路径解析结果——canonical path 由服务端 SFTP realpath 返回，
+/// 前端不得字符串拼接猜测。path 省略时 = SFTP 会话初始目录（不靠 shell cwd）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathResolved {
+    pub canonical: String,
+}
+
+/// C4（§546/§352）：单条目元数据。kind 取 lstat 语义（符号链接本身→Symlink）；
+/// canonical 为 realpath 跟随结果——canonicalize 失败（如严格实现上的悬空链接）
+/// 时为 None（可解释，不猜路径；OpenSSH 宽容 realpath 则返回归一化目标路径——
+/// 服务端依赖，前端两态同待）；symlink_target 仅 lstat 为 Symlink 时尝试 read_link，
+/// 非链接或读取失败为 None。size/mtime 跟随 stat（follow）；follow 失败（悬空）
+/// 回落 lstat 值。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryStat {
+    pub canonical: Option<String>,
+    pub kind: Option<EntryKind>,
+    /// stat（follow）语义：是否目录
+    pub is_dir: bool,
+    pub size: Option<u64>,
+    pub mtime: Option<i64>,
+    pub symlink_target: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,6 +1076,12 @@ pub enum Error {
     Storage(String),
     #[error("IO 错误: {0}")]
     Io(String),
+    /// C4（R30）：远端路径不存在（SFTP NO_SUCH_FILE——与权限拒绝可区别）。
+    #[error("远端路径不存在: {path}")]
+    SftpPathNotFound { path: String },
+    /// C4（R30）：远端路径权限不足（SFTP PERMISSION_DENIED）。
+    #[error("权限不足: {path}")]
+    SftpPermissionDenied { path: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1085,6 +1131,14 @@ impl Error {
             ),
             E::Storage(_) => ("storage", None),
             E::Io(_) => ("io", None),
+            E::SftpPathNotFound { path } => (
+                "sftp_path_not_found",
+                Some(serde_json::json!({ "path": path })),
+            ),
+            E::SftpPermissionDenied { path } => (
+                "sftp_permission_denied",
+                Some(serde_json::json!({ "path": path })),
+            ),
         }
     }
 
@@ -1095,6 +1149,18 @@ impl Error {
             kind: kind.to_string(),
             message: self.to_string(),
             detail,
+        }
+    }
+
+    /// C4（R30）：fs 层错误 → 可区别错误（不存在/权限不足 → 专用变体，前端按
+    /// kind 呈现可解释信息而非猜路径）。SFTP 与本地 fs 两个 transport 共用。
+    pub fn from_fs_err(path: &str, e: &std::io::Error) -> Error {
+        match e.kind() {
+            std::io::ErrorKind::NotFound => Error::SftpPathNotFound { path: path.into() },
+            std::io::ErrorKind::PermissionDenied => {
+                Error::SftpPermissionDenied { path: path.into() }
+            }
+            _ => Error::Io(format!("{path}: {e}")),
         }
     }
 }
@@ -1268,6 +1334,15 @@ pub trait SessionApi: Send + Sync {
     /// 人类浏览远端目录（FR-7 SFTP 浏览器，只读）。path 为绝对路径；
     /// 条目按名称排序（目录在前）由 transport 层保证。
     async fn sftp_list(&self, ctx: &Actor, sid: SessionId, path: &str) -> Result<Vec<DirEntryS>>;
+
+    /// C4（R30）：路径解析——canonical path 经 SFTP realpath（§352 不靠 shell 拼
+    /// 命令、前端不猜）。path=None 时返回 SFTP 会话初始目录。不存在/权限可区别
+    /// （SftpPathNotFound/SftpPermissionDenied）。只读、Human 浏览口径（同 sftp_list）。
+    async fn sftp_resolve_path(&self, ctx: &Actor, sid: SessionId, path: Option<String>) -> Result<PathResolved>;
+
+    /// C4（R30）：单条目元数据（类型/大小/时间/符号链接目标，未知字段为 None）。
+    /// 只读、Human 浏览口径（同 sftp_list）。
+    async fn sftp_stat(&self, ctx: &Actor, sid: SessionId, path: String) -> Result<EntryStat>;
 
     // ---- 端口转发（FR-8，T42）----
     /// 列出会话的转发（任何 Actor 可查——PRD「MCP 可查询状态」口径）。
@@ -1446,18 +1521,50 @@ mod wire_format_tests {
         assert_eq!(meta.fingerprint, "SHA256:x");
     }
 
-    /// 锁定 DirEntryS 的线上格式（T41 FR-7 SFTP 浏览器）：UI/demo shim 按
-    /// {name,is_dir,size,mtime} 渲染，字段名漂移即渲染断裂。
+    /// 锁定 DirEntryS 的线上格式（T41 FR-7 SFTP 浏览器；C4 R30 扩充）：UI/demo shim
+    /// 按 {name,is_dir,kind,size,mtime} 渲染，字段名漂移即渲染断裂。
+    /// 兼容：旧载荷（无 kind、size/mtime 必有数值）反序列化 kind=None。
     #[test]
     fn dir_entry_wire_format_matches_ui() {
         let e: DirEntryS = serde_json::from_value(serde_json::json!({
             "name": "a.txt", "is_dir": false, "size": 6, "mtime": 1790956800,
         })).unwrap();
-        assert_eq!((e.name.as_str(), e.is_dir, e.size, e.mtime), ("a.txt", false, 6, 1790956800));
+        assert_eq!((e.name.as_str(), e.is_dir, e.size, e.mtime), ("a.txt", false, Some(6), Some(1790956800)));
+        assert_eq!(e.kind, None); // 旧载荷升级兼容
+        // 新载荷：symlink + 未知字段（§352 不伪造零值）
+        let s: DirEntryS = serde_json::from_value(serde_json::json!({
+            "name": "link", "is_dir": false, "kind": "symlink", "size": null, "mtime": null,
+        })).unwrap();
+        assert_eq!(s.kind, Some(EntryKind::Symlink));
+        assert_eq!((s.size, s.mtime), (None, None));
         assert_eq!(
-            serde_json::to_value(&e).unwrap(),
-            serde_json::json!({ "name": "a.txt", "is_dir": false, "size": 6, "mtime": 1790956800 })
+            serde_json::to_value(&s).unwrap(),
+            serde_json::json!({ "name": "link", "is_dir": false, "kind": "symlink", "size": null, "mtime": null })
         );
+        let d: DirEntryS = serde_json::from_value(serde_json::json!({
+            "name": "d", "is_dir": true, "kind": "dir", "size": null, "mtime": 1790956800,
+        })).unwrap();
+        assert_eq!(d.kind, Some(EntryKind::Dir));
+    }
+
+    /// C4（R30）：PathResolved / EntryStat 线上格式锁定。
+    #[test]
+    fn c4_path_stat_wire_format() {
+        let r: PathResolved = serde_json::from_value(serde_json::json!({ "canonical": "/root" })).unwrap();
+        assert_eq!(r.canonical, "/root");
+        let st: EntryStat = serde_json::from_value(serde_json::json!({
+            "canonical": "/root/link-target", "kind": "symlink", "is_dir": false,
+            "size": 12, "mtime": 1790956800, "symlink_target": "/root/link-target",
+        })).unwrap();
+        assert_eq!(st.kind, Some(EntryKind::Symlink));
+        assert_eq!(st.symlink_target.as_deref(), Some("/root/link-target"));
+        // 悬空链接：canonical 不可知为 null（§352 可解释，不猜路径）
+        let st2: EntryStat = serde_json::from_value(serde_json::json!({
+            "canonical": null, "kind": "symlink", "is_dir": false,
+            "size": null, "mtime": null, "symlink_target": "/gone",
+        })).unwrap();
+        assert_eq!(st2.canonical, None);
+        assert_eq!(serde_json::to_value(&st2).unwrap()["canonical"], serde_json::json!(null));
     }
 
     // T42 端口转发：ForwardSpec 外部标签三变体 + ForwardInfo 往返，锁 UI 的

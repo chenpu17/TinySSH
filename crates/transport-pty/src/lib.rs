@@ -394,32 +394,54 @@ impl ChannelHandle for LocalPtyChannel {
         copy_file(std::path::Path::new(remote), local, cancel).await
     }
 
-    /// 本机「远端」= 本地文件系统（T41 FR-7：本机会话的文件浏览器同样可用）
+    /// 本机「远端」= 本地文件系统（T41 FR-7：本机会话的文件浏览器同样可用）。
+    /// kind=条目自身类型（symlink_metadata 语义）；size/mtime 未知为 None（§352）。
     async fn list_dir(&self, path: &str) -> Result<Vec<session_api::DirEntryS>> {
         let _ = &self; // 无 PTY 依赖，纯 fs
         let mut rd = tokio::fs::read_dir(path)
             .await
-            .map_err(|e| Error::Io(format!("readdir {path}: {e}")))?;
+            .map_err(|e| Error::from_fs_err(path, &e))?;
         let mut out = Vec::new();
         while let Some(e) = rd
             .next_entry()
             .await
-            .map_err(|e| Error::Io(format!("readdir: {e}")))?
+            .map_err(|e| Error::from_fs_err(path, &e))?
         {
-            let md = e
-                .metadata()
-                .await
-                .map_err(|e| Error::Io(format!("stat: {e}")))?;
+            // 单条目 stat 失败不炸整表（§352：未知字段如实缺省），
+            // kind/size/mtime 全 None，名称与类型兜底 is_dir=false
+            let md = match e.metadata().await {
+                Ok(m) => Some(m),
+                Err(_) => None,
+            };
+            let (kind, is_dir, size, mtime) = match &md {
+                Some(m) => {
+                    let ft = m.file_type();
+                    (
+                        Some(if ft.is_dir() {
+                            session_api::EntryKind::Dir
+                        } else if ft.is_file() {
+                            session_api::EntryKind::File
+                        } else if ft.is_symlink() {
+                            session_api::EntryKind::Symlink
+                        } else {
+                            session_api::EntryKind::Other
+                        }),
+                        m.is_dir(),
+                        Some(m.len()),
+                        m.modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64),
+                    )
+                }
+                None => (None, false, None, None),
+            };
             out.push(session_api::DirEntryS {
                 name: e.file_name().to_string_lossy().into_owned(),
-                is_dir: md.is_dir(),
-                size: md.len(),
-                mtime: md
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0),
+                is_dir,
+                kind,
+                size,
+                mtime,
             });
         }
         out.sort_by(|a, b| {
@@ -428,6 +450,65 @@ impl ChannelHandle for LocalPtyChannel {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         Ok(out)
+    }
+
+    /// C4（R30）：本地 canonicalize。path=None → 当前工作目录。
+    async fn resolve_path(&self, path: Option<&str>) -> Result<session_api::PathResolved> {
+        let _ = &self;
+        let target = path.unwrap_or(".");
+        let canon = tokio::fs::canonicalize(target)
+            .await
+            .map_err(|e| Error::from_fs_err(target, &e))?;
+        Ok(session_api::PathResolved {
+            canonical: canon.to_string_lossy().into_owned(),
+        })
+    }
+
+    /// C4（R30）：本地元数据。kind/symlink_target=lstat；is_dir/size/mtime=跟随。
+    async fn stat_entry(&self, path: &str) -> Result<session_api::EntryStat> {
+        let _ = &self;
+        let lst = tokio::fs::symlink_metadata(path)
+            .await
+            .map_err(|e| Error::from_fs_err(path, &e))?;
+        let ft = lst.file_type();
+        let kind = Some(if ft.is_dir() {
+            session_api::EntryKind::Dir
+        } else if ft.is_file() {
+            session_api::EntryKind::File
+        } else if ft.is_symlink() {
+            session_api::EntryKind::Symlink
+        } else {
+            session_api::EntryKind::Other
+        });
+        let symlink_target = if ft.is_symlink() {
+            tokio::fs::read_link(path)
+                .await
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        } else {
+            None
+        };
+        let md = if ft.is_symlink() {
+            tokio::fs::metadata(path).await.unwrap_or(lst)
+        } else {
+            lst
+        };
+        let canonical = tokio::fs::canonicalize(path)
+            .await
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned());
+        Ok(session_api::EntryStat {
+            canonical,
+            kind,
+            is_dir: md.is_dir(),
+            size: Some(md.len()),
+            mtime: md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64),
+            symlink_target,
+        })
     }
 }
 

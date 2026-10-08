@@ -1,0 +1,10 @@
+PASS V1 welcome diff within noise floor (untouched face)  [diff_px=0 noise_floor=0]
+PASS V2 sock row em-dash cells  [{"name":"php-fpm.sock","size":"—","time":"—","h":30,"w":363,"nameClipped":false}]
+PASS V3 symlink row glyph + label  [{"name":"latest","size":"链接","time":"10/3","h":31,"w":363,"nameClipped":false}]
+PASS V5 no name clipping in rows  [[]]
+PASS V6 no horizontal overflow in list  [overflow=0px]
+PASS V7 denied error visible + unclipped  [{"text":"✕ 演示模式：权限不足（/var/private）","clipped":false,"w":363,"h":21}]
+PASS V8 shared-row heights match baseline (layout unchanged)  [pairs=3 archive:26vs26,access.log:31vs31,error.log:30vs31]
+PASS V9 640px narrow: rows render, no overflow  [ok=true overflow=0px]
+PASS V10 zero js errors (cur)
+SUMMARY 9/9

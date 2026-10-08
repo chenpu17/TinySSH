@@ -270,11 +270,33 @@ export interface TransferHandle {
   remote: string;
 }
 
+/** 条目种类（C4 R30）：null = 旧载荷/服务端未报（升级兼容） */
+export type EntryKind = "dir" | "file" | "symlink" | "other";
+
 export interface DirEntryS {
   name: string;
   is_dir: boolean;
-  size: number;
-  mtime: number;
+  kind?: EntryKind | null;
+  /** 未知为 null/缺省（§352 不伪造零值，UI 显「—」） */
+  size?: number | null;
+  mtime?: number | null;
+}
+
+// ---- C4（R30）路径规范化与条目元数据 ----
+
+export interface PathResolved {
+  canonical: string;
+}
+
+export interface EntryStat {
+  /** realpath 不可得为 null（严格实现的悬空链接等；OpenSSH 宽容实现返回归一化目标——服务端依赖，前端两态同待） */
+  canonical: string | null;
+  kind?: EntryKind | null;
+  is_dir: boolean;
+  size?: number | null;
+  mtime?: number | null;
+  /** 仅 kind=symlink 时可能存在 */
+  symlink_target?: string | null;
 }
 
 export type ForwardSpec =

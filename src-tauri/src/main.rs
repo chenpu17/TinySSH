@@ -263,6 +263,26 @@ async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<
     state.api.sftp_list(&human(), sid, &path).await.map_err(WireError::from)
 }
 
+/// C4（R30）：路径规范化。path=None → 连接初始目录（SFTP "."）。
+#[tauri::command]
+async fn sftp_resolve_path(
+    state: ApiState<'_>,
+    sid: String,
+    path: Option<String>,
+) -> CmdResult<PathResolved> {
+    state
+        .api
+        .sftp_resolve_path(&human(), sid, path)
+        .await
+        .map_err(WireError::from)
+}
+
+/// C4（R30）：条目元数据（kind/symlink/未知字段语义见 EntryStat）。
+#[tauri::command]
+async fn sftp_stat(state: ApiState<'_>, sid: String, path: String) -> CmdResult<EntryStat> {
+    state.api.sftp_stat(&human(), sid, path).await.map_err(WireError::from)
+}
+
 /// 端口转发（T42 FR-8）：列/建/停（人类 GUI 入口；Agent 侧留 MCP 审批版）。
 #[tauri::command]
 async fn list_forwards(state: ApiState<'_>, sid: String) -> CmdResult<Vec<ForwardInfo>> {
@@ -878,6 +898,8 @@ fn main() {
                     r26_smoke_script(&run_id)
                 } else if mode == "r27" {
                     r27_smoke_script(&run_id)
+                } else if mode == "r30" {
+                    r30_smoke_script(&run_id)
                 } else {
                     format!(
                     r#"(function() {{
@@ -1244,7 +1266,7 @@ fn main() {
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
-            upload_file, download_file, cancel_transfer, sftp_list,
+            upload_file, download_file, cancel_transfer, sftp_list, sftp_resolve_path, sftp_stat,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             list_host_metadata, list_recent_hosts,
@@ -2424,6 +2446,136 @@ fn r27_smoke_script(run_id: &str) -> String {
       await sleep(120000); // 驱动在此窗口内完成回卷与重启；本进程随后被杀
     } catch (e) {
       await title('FAIL-exception:' + String(e).slice(0, 140));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id)
+}
+
+/// R30（C4 路径/元数据/过期保护）原生冒烟：真机 sshd。驱动预置 /tmp/r30dir
+/// （sub/ a.txt b.txt alink→a.txt slink→sub dangling→missing），脚本：
+/// A invoke 契约面（resolve 初始目录+归一+不存在可区别 / list kind / stat 三态）；
+/// B UI 面（canonical 导航、行渲染 kind、符号链接点击进入目录、不存在路径可读错误）。
+fn r30_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R30_INJECTED__) return;
+  window.__R30_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  // React 受控输入：execCommand 走真实编辑路径（直赋 el.value 被 React tracker 去重丢 onChange）
+  const setInput = (el, v) => { el.focus(); document.execCommand('selectAll', false); document.execCommand('insertText', false, v); };
+  (async () => {
+    try {
+      await title('r30-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r30-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r30-a', '.host-connect-btn') ? true : null), 40);
+      if (!connect('r30-a')) return title('FAIL-connect');
+      await trust();
+      const c1 = await waitFor(async () => (await activeSess('r30-a'))?.state === 'Connected' ? true : null, 150);
+      if (!c1) return title('FAIL-conn');
+      await sleep(400);
+      const sid = (await activeSess('r30-a')).id;
+      // ---- A. invoke 契约面（C4）----
+      const r0 = await inv('sftp_resolve_path', { sid, path: null });
+      if (!r0 || typeof r0.canonical !== 'string' || !r0.canonical.startsWith('/')) return title('FAIL-resolve-null:' + JSON.stringify(r0));
+      await markSync('r30a-resolve-init=' + r0.canonical);
+      const r1 = await inv('sftp_resolve_path', { sid, path: '/tmp/../tmp/r30dir' });
+      if (r1.canonical !== '/tmp/r30dir') return title('FAIL-resolve-norm:' + JSON.stringify(r1));
+      // 「不存在」判别面在 list（read_dir）/stat（lstat）——二者必查存在；
+      // resolve 的 realpath 实现服务端依赖（OpenSSH 宽容：词法归一即成功）
+      let caught = null;
+      try { await inv('sftp_list', { sid, path: '/tmp/r30-missing' }); } catch (e) { caught = e; }
+      if (!caught || caught.kind !== 'sftp_path_not_found') return title('FAIL-list-miss-kind:' + JSON.stringify(caught));
+      caught = null;
+      try { await inv('sftp_stat', { sid, path: '/tmp/r30-missing' }); } catch (e) { caught = e; }
+      if (!caught || caught.kind !== 'sftp_path_not_found') return title('FAIL-stat-miss-kind:' + JSON.stringify(caught));
+      const es = await inv('sftp_list', { sid, path: '/tmp/r30dir' });
+      const byName = (n) => es.find((x) => x.name === n);
+      if (!byName('sub') || byName('sub').kind !== 'dir') return title('FAIL-list-sub:' + JSON.stringify(es));
+      if (!byName('alink') || byName('alink').kind !== 'symlink') return title('FAIL-list-link:' + JSON.stringify(es));
+      if (!byName('a.txt') || byName('a.txt').kind !== 'file' || byName('a.txt').size !== 6) return title('FAIL-list-file:' + JSON.stringify(byName('a.txt')));
+      const st1 = await inv('sftp_stat', { sid, path: '/tmp/r30dir/a.txt' });
+      if (st1.kind !== 'file' || st1.size !== 6 || st1.canonical !== '/tmp/r30dir/a.txt' || st1.symlink_target !== null) return title('FAIL-stat-file:' + JSON.stringify(st1));
+      const st2 = await inv('sftp_stat', { sid, path: '/tmp/r30dir/alink' });
+      if (st2.kind !== 'symlink' || st2.symlink_target !== 'a.txt' || st2.size !== 6 || st2.canonical !== '/tmp/r30dir/a.txt') return title('FAIL-stat-link:' + JSON.stringify(st2));
+      const st3 = await inv('sftp_stat', { sid, path: '/tmp/r30dir/dangling' });
+      if (st3.kind !== 'symlink' || st3.symlink_target !== 'missing') return title('FAIL-stat-dangling:' + JSON.stringify(st3));
+      if (st3.canonical !== null && st3.canonical !== '/tmp/r30dir/missing') return title('FAIL-stat-dangling-canon:' + JSON.stringify(st3));
+      await markSync('r30a-contract-ok');
+      // ---- B. UI 浏览器面 ----
+      const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
+      if (!stBtn) return title('FAIL-no-files-btn:tabs=' + document.querySelectorAll('.tabbar .tab').length + ',cards=' + document.querySelectorAll('.host-card').length + ',view=' + (document.querySelector('.term-session') ? 'term' : 'welcome'));
+      stBtn.click();
+      const inp = await waitFor(() => document.querySelector('.sftp-path input') || null, 40);
+      if (!inp) return title('FAIL-no-sftp-input');
+      await sleep(700); // 首载链（cwd）落地，避免与手动导航竞速误判
+      // canonical 导航：../ 输入归一后才列目录
+      setInput(inp, '/tmp/../tmp/r30dir');
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const atDir = await waitFor(() => (document.querySelector('.sftp-path input')?.value === '/tmp/r30dir' ? true : null), 60);
+      if (!atDir) return title('FAIL-canonical-nav:' + (document.querySelector('.sftp-path input')?.value ?? 'null'));
+      const rowsSel = '.sftp-list .sftp-row';
+      const rowsTxt = () => [...document.querySelectorAll(rowsSel)].map((r) => r.textContent).join(' || ');
+      const rows = await waitFor(() => (rowsTxt().includes('a.txt') ? rowsTxt() : null), 60);
+      if (!rows) return title('FAIL-no-rows:' + rowsTxt().slice(0, 80));
+      if (!rows.includes('目录') || !rows.includes('链接')) return title('FAIL-row-kinds:' + rows.slice(0, 160));
+      const aRow = [...document.querySelectorAll(rowsSel)].find((r) => r.textContent.includes('a.txt'));
+      if (!aRow || !aRow.textContent.includes('6 B')) return title('FAIL-size-6B:' + (aRow ? aRow.textContent : 'null'));
+      await markSync('r30a-ui-ok');
+      // 符号链接点击进入目录（slink → sub；stat 探明 is_dir 后导航）
+      const slRow = [...document.querySelectorAll(rowsSel + ' .sftp-name')].find((b) => b.textContent === 'slink');
+      if (!slRow || slRow.tagName !== 'BUTTON') return title('FAIL-no-slink-btn:' + (slRow ? slRow.tagName : 'null'));
+      slRow.click();
+      // FE 保留请求路径（列的是跟随后的内容；demo B8 同语义 '/root/current'）
+      const atSub = await waitFor(() => (document.querySelector('.sftp-path input')?.value === '/tmp/r30dir/slink' ? true : null), 60);
+      if (!atSub) return title('FAIL-slink-nav:' + (document.querySelector('.sftp-path input')?.value ?? 'null'));
+      if (document.querySelector('.section .err')) return title('FAIL-slink-err:' + document.querySelector('.section .err').textContent.slice(0, 80));
+      await markSync('r30a-symlink-nav-ok');
+      // 不存在路径 → 可读错误（不猜路径不假跳转）
+      setInput(inp, '/tmp/r30-missing');
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const err = await waitFor(() => {
+        const el = document.querySelector('.section .err');
+        return el && el.textContent.includes('不存在') ? el.textContent : null;
+      }, 60);
+      if (!err) return title('FAIL-no-missing-err:' + (document.querySelector('.section .err')?.textContent ?? 'null').slice(0, 100));
+      await markSync('r30a-missing-err-ok');
+      await markSync('r30a-DONE');
+      await title('r30-DONE');
+      await sleep(120000); // 驱动收尾窗口；本进程随后被杀
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 120) : String(e).slice(0, 140)));
     }
   })();
 })();

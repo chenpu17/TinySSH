@@ -9,14 +9,15 @@ use russh::{Channel, ChannelMsg, ChannelWriteHalf};
 use russh::{Disconnect, Sig};
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
-use session_api::{AuthType, DirEntryS, Error, ExecOpts, ForwardId, ForwardInfo, ForwardSpec, Result};
+use russh_sftp::protocol::StatusCode;
+use session_api::{AuthType, DirEntryS, EntryKind, EntryStat, Error, ExecOpts, ForwardId, ForwardInfo, ForwardSpec, PathResolved, Result};
 use session_api::ForwardStateCb;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, MutexGuard};
 
 /// TOFU 主机指纹回调：异步（人类确认可能跨秒级等待）。None = 全接受（测试专用）。
 pub type HostKeyCheck = Arc<
@@ -181,6 +182,37 @@ fn ssh_config() -> Arc<client::Config> {
     })
 }
 
+/// SFTP 临时通道（upload/download/list_dir/resolve/stat 同模式）：
+/// handle guard 与 session 成对返回（guard 保活期间连接不可被并发 close）。
+type SftpBorne<'a> = (
+    MutexGuard<'a, Option<Handle<ClientHandler>>>,
+    russh_sftp::client::SftpSession,
+);
+
+/// C4（R30）：SFTP 状态码 → 可区别错误（不存在/权限不足 → 专用变体），其余归 Io。
+fn map_sftp_err(op: &str, path: &str, e: russh_sftp::client::error::Error) -> Error {
+    if let russh_sftp::client::error::Error::Status(st) = &e {
+        match st.status_code {
+            StatusCode::NoSuchFile => return Error::SftpPathNotFound { path: path.into() },
+            StatusCode::PermissionDenied => {
+                return Error::SftpPermissionDenied { path: path.into() }
+            }
+            _ => {}
+        }
+    }
+    Error::Io(format!("sftp {op} {path}: {e}"))
+}
+
+/// readdir 属性 / lstat 类型 → 条目种类（C4 R30）
+fn kind_of(ft: russh_sftp::protocol::FileType) -> EntryKind {
+    match ft {
+        russh_sftp::protocol::FileType::Dir => EntryKind::Dir,
+        russh_sftp::protocol::FileType::File => EntryKind::File,
+        russh_sftp::protocol::FileType::Symlink => EntryKind::Symlink,
+        russh_sftp::protocol::FileType::Other => EntryKind::Other,
+    }
+}
+
 /// connect（TCP+banner 交换）阶段的有界窗。docker 等端口代理在容器死后仍接受
 /// TCP（无 RST）——无超时则 banner 等待可挂任意久，「有限重试」退化为单次悬挂
 /// （R26 §6.4：重试计数与停止重试都依赖 attempt 有界）。认证阶段不在此窗
@@ -188,6 +220,28 @@ fn ssh_config() -> Arc<client::Config> {
 const CONNECT_PHASE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl SshChannel {
+    /// SFTP 临时通道开启（subsystem + init）。guard 与 session 成对——调用方
+    /// 在使用期间持有 guard，防并发 close 拆掉连接。
+    async fn sftp_channel(&self) -> Result<SftpBorne<'_>> {
+        let guard = self.handle.lock().await;
+        if guard.is_none() {
+            return Err(Error::SessionClosed);
+        }
+        let handle = guard.as_ref().expect("checked above");
+        let mut channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("sftp subsystem: {e}")))?;
+        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("sftp init: {e}")))?;
+        Ok((guard, sftp))
+    }
+
     pub async fn connect(target: SshTarget, cols: u16, rows: u16) -> Result<Arc<Self>> {
         let seen = Arc::new(Mutex::new(None::<String>));
         let (output_tx, _) = broadcast::channel(4096);
@@ -773,7 +827,8 @@ impl ChannelHandle for SshChannel {
         Ok(total)
     }
 
-    /// 列目录（T41 FR-7）：临时 SFTP 通道 readdir（与上传下载同模式，无持久会话生命周期负担）
+    /// 列目录（T41 FR-7）：临时 SFTP 通道 readdir（与上传下载同模式，无持久会话生命周期负担）。
+    /// kind=条目自身类型（readdir 属性 lstat 语义）；size/mtime 未知为 None（§352 不伪造零值）。
     async fn list_dir(&self, path: &str) -> Result<Vec<DirEntryS>> {
         let handle_guard = self.handle.lock().await;
         let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
@@ -792,7 +847,7 @@ impl ChannelHandle for SshChannel {
         let rd = sftp
             .read_dir(path)
             .await
-            .map_err(|e| Error::Io(format!("sftp readdir {path}: {e}")))?;
+            .map_err(|e| map_sftp_err("readdir", path, e))?;
         let mut out: Vec<DirEntryS> = rd
             .filter(|e| !matches!(e.file_name().as_str(), "." | ".."))
             .map(|e| {
@@ -800,8 +855,9 @@ impl ChannelHandle for SshChannel {
                 DirEntryS {
                     name: e.file_name(),
                     is_dir: m.is_dir(),
-                    size: m.size.unwrap_or(0),
-                    mtime: m.mtime.map(|v| v as i64).unwrap_or(0),
+                    kind: Some(kind_of(m.file_type())),
+                    size: m.size,
+                    mtime: m.mtime.map(|v| v as i64),
                 }
             })
             .collect();
@@ -813,6 +869,53 @@ impl ChannelHandle for SshChannel {
         });
         sftp.close().await.ok();
         Ok(out)
+    }
+
+    /// C4（R30）：路径规范化。path=None → SFTP 初始目录（canonicalize "."）。
+    async fn resolve_path(&self, path: Option<&str>) -> Result<PathResolved> {
+        let target = path.unwrap_or(".");
+        let (_guard, sftp) = self.sftp_channel().await?;
+        let canon = sftp
+            .canonicalize(target)
+            .await
+            .map_err(|e| map_sftp_err("realpath", target, e))?;
+        sftp.close().await.ok();
+        Ok(PathResolved { canonical: canon })
+    }
+
+    /// C4（R30）：条目元数据。kind/symlink_target=lstat 语义；is_dir/size/mtime=
+    /// 跟随语义（链接取目标，失败回落链接本体）；canonical 悬空链接为 None（§352 不猜路径）。
+    async fn stat_entry(&self, path: &str) -> Result<EntryStat> {
+        let (_guard, sftp) = self.sftp_channel().await?;
+        let lst = sftp
+            .symlink_metadata(path)
+            .await
+            .map_err(|e| map_sftp_err("lstat", path, e))?;
+        let ft = lst.file_type();
+        let kind = Some(kind_of(ft));
+        let symlink_target = if ft.is_symlink() {
+            sftp.read_link(path).await.ok()
+        } else {
+            None
+        };
+        let md = if ft.is_symlink() {
+            match sftp.metadata(path).await {
+                Ok(m) => m,
+                Err(_) => lst, // 悬空链接等：回落链接本体，size/mtime 照服务器所报
+            }
+        } else {
+            lst
+        };
+        let canonical = sftp.canonicalize(path).await.ok();
+        sftp.close().await.ok();
+        Ok(EntryStat {
+            canonical,
+            kind,
+            is_dir: md.is_dir(),
+            size: md.size,
+            mtime: md.mtime.map(|v| v as i64),
+            symlink_target,
+        })
     }
 
     // ---- 端口转发（T42 FR-8）----

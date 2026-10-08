@@ -1,0 +1,26 @@
+FAIL A1 resolve null → initial dir canonical  [null]
+FAIL A2 resolve normalizes dotdot  [null]
+FAIL A3 resolve missing → sftp_path_not_found kind  [invalid_input]
+FAIL A4 resolve denied → sftp_permission_denied kind  [invalid_input]
+FAIL A5 stat symlink-to-dir: kind/target/is_dir/canonical  [null]
+FAIL A6 stat dangling: canonical null, target kept  [null]
+FAIL A7 stat socket: kind other, size/mtime null  [null]
+FAIL A8 list carries kind + null fields  [{}]
+PASS B0 connect prod-1
+PASS B1 files panel opens with path input
+PASS B2 first-load chain uses brief cwd  [/var/log/nginx]
+PASS B3 path shows canonical cwd  [/var/log/nginx]
+FAIL B4 unknown size/mtime render em-dash  [null]
+FAIL B5 symlink row: arrow glyph + 链接 + button  [null]
+FAIL B6 click symlink navigates (follow list)  [/var/log/nginx]
+PASS B6b followed list has targets, not the link itself  [archive目录10/2 || access.log70.0 MB10/3下载 || error.log2.0 MB10/3下载]
+FAIL B7 input canonicalizes dotdot before listing  [/root/../root/deploy]
+FAIL B7b deploy rows present
+FAIL B8 /root/current symlink navigates to v3 content  [/root]
+PASS B9 missing path input → readable not-found error  [✕ 演示模式：目录不存在或不可读（/nope-r30）]
+FAIL B10 denied path input → readable denied error  [✕ 演示模式：目录不存在或不可读（/var/private）]
+PASS C1 fast navigation lands first
+PASS C2 late stale response does NOT overwrite (C02)  [path=/root/deploy rows=scripts目录10/3 || app.yml640 B10/2下载 || release.sh1.8 KB10/3下载]
+PASS C3 loading state cleared (no stuck skeleton)
+PASS Z0 zero js errors
+SUMMARY 10/25

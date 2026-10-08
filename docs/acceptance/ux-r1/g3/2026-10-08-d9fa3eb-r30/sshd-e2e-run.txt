@@ -1,0 +1,2 @@
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.88s
+TINYSSH_E2E_SSHD=1 cargo test -p transport-ssh --test sshd_e2e (真实容器)

@@ -225,6 +225,8 @@ fn error_kind(e: &Error) -> &'static str {
         Error::IdentityInUse { .. } => "identity_in_use",
         Error::Storage(_) => "storage",
         Error::Io(_) => "io",
+        Error::SftpPathNotFound { .. } => "sftp_path_not_found",
+        Error::SftpPermissionDenied { .. } => "sftp_permission_denied",
     }
 }
 
@@ -234,6 +236,9 @@ fn error_detail(e: &Error) -> serde_json::Value {
         Error::IdentityInUse { host_names } => serde_json::json!({ "host_names": host_names }),
         Error::ShellIntegrationUnavailable { available } => {
             serde_json::json!({ "available": available })
+        }
+        Error::SftpPathNotFound { path } | Error::SftpPermissionDenied { path } => {
+            serde_json::json!({ "path": path })
         }
         _ => serde_json::Value::Null,
     }

@@ -1,0 +1,26 @@
+PASS A1 resolve null → initial dir canonical  [{"canonical":"/var/log/nginx"}]
+PASS A2 resolve normalizes dotdot  [{"canonical":"/root"}]
+PASS A3 resolve missing → sftp_path_not_found kind  [sftp_path_not_found]
+PASS A4 resolve denied → sftp_permission_denied kind  [sftp_permission_denied]
+PASS A5 stat symlink-to-dir: kind/target/is_dir/canonical  [{"canonical":"/root/releases/v3","kind":"symlink","is_dir":true,"size":null,"mtime":1790956800,"symlink_target":"/root/releases/v3"}]
+PASS A6 stat dangling: canonical null, target kept  [{"canonical":null,"kind":"symlink","is_dir":false,"size":null,"mtime":1790956800,"symlink_target":"/var/gone"}]
+PASS A7 stat socket: kind other, size/mtime null  [{"canonical":"/var/log/nginx/php-fpm.sock","kind":"other","is_dir":false,"size":null,"mtime":null,"symlink_target":null}]
+PASS A8 list carries kind + null fields  [{"sock":{"name":"php-fpm.sock","is_dir":false,"kind":"other","size":null,"mtime":null},"link":{"name":"latest","is_dir":false,"kind":"symlink","size":null,"mtime":1790956800}}]
+PASS B0 connect prod-1
+PASS B1 files panel opens with path input
+PASS B2 first-load chain uses brief cwd  [/var/log/nginx]
+PASS B3 path shows canonical cwd  [/var/log/nginx]
+PASS B4 unknown size/mtime render em-dash  [{"size":"—","time":"—"}]
+PASS B5 symlink row: arrow glyph + 链接 + button  [{"ico":"→","size":"链接","btn":"BUTTON"}]
+PASS B6 click symlink navigates (follow list)  [/var/log/nginx/latest]
+PASS B6b followed list has targets, not the link itself  [archive目录10/2 || access.log70.0 MB10/3下载 || error.log2.0 MB10/3下载 || php-fpm.sock——下载]
+PASS B7 input canonicalizes dotdot before listing  [/root/deploy]
+PASS B7b deploy rows present
+PASS B8 /root/current symlink navigates to v3 content  [/root/current]
+PASS B9 missing path input → readable not-found error  [✕ 演示模式：路径不存在（/nope-r30）]
+PASS B10 denied path input → readable denied error  [✕ 演示模式：权限不足（/var/private）]
+PASS C1 fast navigation lands first
+PASS C2 late stale response does NOT overwrite (C02)  [path=/root/deploy rows=scripts目录10/2 || app.yml640 B10/2下载 || release.sh1.8 KB10/3下载]
+PASS C3 loading state cleared (no stuck skeleton)
+PASS Z0 zero js errors
+SUMMARY 25/25

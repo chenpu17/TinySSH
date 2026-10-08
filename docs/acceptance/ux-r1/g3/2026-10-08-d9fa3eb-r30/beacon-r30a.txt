@@ -1,0 +1,8 @@
+r30-open
+r30a|r30a-resolve-init=/root
+r30a|r30a-contract-ok
+r30a|r30a-ui-ok
+r30a|r30a-symlink-nav-ok
+r30a|r30a-missing-err-ok
+r30a|r30a-DONE
+r30-DONE

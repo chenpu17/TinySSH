@@ -251,7 +251,8 @@ async fn sftp_list_lists_dir_entries_sorted() {
         .unwrap();
     channel
         .exec_fresh(
-            "rm -rf /tmp/t41_dir && mkdir -p /tmp/t41_dir/sub && echo hello > /tmp/t41_dir/b.txt && echo world > /tmp/t41_dir/a.txt",
+            // R30 C4：附符号链接（可达 + 悬空）供 resolve/stat 断言
+            "rm -rf /tmp/t41_dir && mkdir -p /tmp/t41_dir/sub && echo hello > /tmp/t41_dir/b.txt && echo world > /tmp/t41_dir/a.txt && ln -s a.txt /tmp/t41_dir/link && ln -s missing /tmp/t41_dir/dangling",
             &session_api::ExecOpts::default(),
             std::time::Instant::now() + Duration::from_secs(15),
             &CancellationToken::new(),
@@ -261,17 +262,60 @@ async fn sftp_list_lists_dir_entries_sorted() {
 
     let entries = channel.list_dir("/tmp/t41_dir").await.unwrap();
     let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(names, vec!["sub", "a.txt", "b.txt"], "目录在前、名称序：{names:?}");
+    assert_eq!(names, vec!["sub", "a.txt", "b.txt", "dangling", "link"], "目录在前、名称序（链接与文件同序）：{names:?}");
     assert!(entries.iter().all(|e| !matches!(e.name.as_str(), "." | "..")));
-    let sub = &entries[0];
-    assert!(sub.is_dir && sub.size == 0);
-    let a = &entries[1];
-    assert!(!a.is_dir && a.size == b"world\n".len() as u64);
-    assert!(a.mtime > 0, "mtime 应为服务器返回的真实时间");
+    // C4（R30）：kind 如实（readdir 属性 lstat 语义——链接条目报 Symlink 不冒充实体）
+    let by_name = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+    assert_eq!(by_name("sub").kind, Some(session_api::EntryKind::Dir));
+    assert!(by_name("sub").is_dir);
+    let a = by_name("a.txt");
+    assert_eq!(a.kind, Some(session_api::EntryKind::File));
+    assert!(!a.is_dir && a.size == Some(b"world\n".len() as u64));
+    assert!(a.mtime.is_some_and(|v| v > 0), "mtime 应为服务器返回的真实时间");
+    assert_eq!(by_name("link").kind, Some(session_api::EntryKind::Symlink));
+    assert_eq!(by_name("dangling").kind, Some(session_api::EntryKind::Symlink));
 
-    // 不存在路径：可读错误（非 panic/空）
+    // 不存在路径：可区别错误（SftpPathNotFound，非笼统 Io）
     let miss = channel.list_dir("/tmp/t41_dir/definitely-missing").await;
-    assert!(miss.is_err(), "不存在目录必须报错");
+    assert!(matches!(miss, Err(session_api::Error::SftpPathNotFound { .. })), "{miss:?}");
+
+    // ---- C4（R30）：resolve_path / stat_entry 真机契约 ----
+    // resolve：相对与 .. 归一为 canonical；None → SFTP 初始目录（绝对路径）。
+    // 注：OpenSSH realpath 对不存在的末段宽容（词法归一即返回，不查存在性）——
+    // 「不存在」的可区别错误由 list（read_dir）/stat（lstat）承担，二者必查存在。
+    let r = channel.resolve_path(Some("/tmp/t41_dir/../t41_dir")).await.unwrap();
+    assert_eq!(r.canonical, "/tmp/t41_dir");
+    let init = channel.resolve_path(None).await.unwrap();
+    assert!(init.canonical.starts_with('/') && init.canonical.len() > 1, "初始目录应绝对路径：{init:?}");
+    let rmiss = channel.resolve_path(Some("/tmp/t41_dir/definitely-missing")).await;
+    match rmiss {
+        Ok(p) => assert!(p.canonical.starts_with('/') , "宽容 realpath 返回归一绝对路径：{p:?}"),
+        Err(session_api::Error::SftpPathNotFound { .. }) => {} // 严格实现（服务端依赖）同样合法
+        other => panic!("resolve missing 只应成功归一或 SftpPathNotFound：{other:?}"),
+    }
+
+    // stat：文件本体 + 可达链接（跟随语义 size）+ 悬空链接（canonical=None 不猜路径）
+    let st = channel.stat_entry("/tmp/t41_dir/a.txt").await.unwrap();
+    assert_eq!(st.kind, Some(session_api::EntryKind::File));
+    assert_eq!(st.size, Some(b"world\n".len() as u64));
+    assert_eq!(st.canonical.as_deref(), Some("/tmp/t41_dir/a.txt"));
+    assert_eq!(st.symlink_target, None);
+    let stl = channel.stat_entry("/tmp/t41_dir/link").await.unwrap();
+    assert_eq!(stl.kind, Some(session_api::EntryKind::Symlink));
+    assert_eq!(stl.symlink_target.as_deref(), Some("a.txt"));
+    assert_eq!(stl.is_dir, false);
+    assert_eq!(stl.size, Some(b"world\n".len() as u64), "可达链接 size 跟随目标");
+    assert_eq!(stl.canonical.as_deref(), Some("/tmp/t41_dir/a.txt"));
+    let std_ = channel.stat_entry("/tmp/t41_dir/dangling").await.unwrap();
+    assert_eq!(std_.kind, Some(session_api::EntryKind::Symlink));
+    assert_eq!(std_.symlink_target.as_deref(), Some("missing"));
+    // canonical 服务端依赖：OpenSSH 宽容 realpath 返回归一化目标路径；严格实现报错 → None
+    match &std_.canonical {
+        Some(c) => assert_eq!(c, "/tmp/t41_dir/missing", "宽容 realpath：悬空链接 canonical=归一化目标"),
+        None => {} // 严格实现（realpath 失败）→ None（§352 不猜路径）
+    }
+    let stmiss = channel.stat_entry("/tmp/t41_dir/definitely-missing").await;
+    assert!(matches!(stmiss, Err(session_api::Error::SftpPathNotFound { .. })), "{stmiss:?}");
 
     channel
         .exec_fresh(

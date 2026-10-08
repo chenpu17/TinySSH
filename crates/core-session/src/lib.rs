@@ -1610,6 +1610,29 @@ impl SessionApi for SessionManager {
         h.channel.list_dir(path).await
     }
 
+    // C4（R30）：路径规范化（canonical path / 初始目录）。Human 浏览口径同 sftp_list。
+    async fn sftp_resolve_path(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        path: Option<String>,
+    ) -> Result<PathResolved> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("sftp_resolve_path 仅人类浏览入口".into()));
+        }
+        let h = self.get(&sid)?;
+        h.channel.resolve_path(path.as_deref()).await
+    }
+
+    // C4（R30）：条目元数据（kind/symlink/未知字段）。Human 浏览口径同 sftp_list。
+    async fn sftp_stat(&self, ctx: &Actor, sid: SessionId, path: String) -> Result<EntryStat> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("sftp_stat 仅人类浏览入口".into()));
+        }
+        let h = self.get(&sid)?;
+        h.channel.stat_entry(&path).await
+    }
+
     // ---- 端口转发（FR-8，T42/T44）：人类直建；Agent 经逐段审批（V1 收口）；
     // 查询任何 Actor 可用（PRD「MCP 可查询状态」）。转发是持续存在的动作，审计留痕。----
     async fn list_forwards(&self, _ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>> {
@@ -2448,6 +2471,10 @@ mod r24_tests;
 #[cfg(test)]
 #[path = "r26_tests.rs"]
 mod r26_tests;
+
+#[cfg(test)]
+#[path = "r30_tests.rs"]
+mod r30_tests;
 
 #[cfg(test)]
 mod c10_tests {

@@ -35,6 +35,10 @@ export const WIRE_ERROR_KINDS = [
   "path_not_found",
   "permission_denied",
   "symlink_loop",
+  // C4（R30）后端真实变体（session-api::Error 增量；前向预留 path_not_found/
+  // permission_denied 属 R03 契约轮的命名，实际落地为 sftp_ 前缀）
+  "sftp_path_not_found",
+  "sftp_permission_denied",
 ] as const;
 
 export type WireErrorKind = (typeof WIRE_ERROR_KINDS)[number] | (string & {});

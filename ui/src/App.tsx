@@ -2012,37 +2012,89 @@ export default function App() {
     await downloadRemote(rp);
   };
 
-  // ---- 远程文件浏览器（T41 FR-7）----
-  const loadDir = useCallback(async (p: string) => {
+  // ---- 远程文件浏览器（T41 FR-7；C4 R30 路径/元数据/过期响应保护）----
+  // C02 请求代际：同会话内快速连续导航（输入连击回车/父目录+刷新竞速）时，
+  // 晚到的旧响应不得覆盖新路径——仅按 sid 判别不够（同会话内无 sid 变化），补代际
+  const sftpGenRef = useRef(0);
+  const loadDir = useCallback(async (p: string): Promise<boolean> => {
     const s = sidRef.current;
-    if (!s || !p.trim()) return;
+    if (!s || !p.trim()) return false;
+    const gen = ++sftpGenRef.current;
     setSftpLoading(true); setSftpErr(null);
     try {
       const es = await invoke("sftp_list", { sid: s, path: p.trim() });
-      if (sidRef.current !== s) return; // 已切会话的过期结果直接丢弃（H1 纪律）
+      if (sidRef.current !== s || sftpGenRef.current !== gen) return false; // 过期结果丢弃（H1/C02）
       setSftpEntries(es);
       setSftpPath(p.trim());
       setSftpPathInput(p.trim());
+      return true;
     } catch (e) {
-      if (sidRef.current === s) setSftpErr(friendlyError(e));
+      if (sidRef.current === s && sftpGenRef.current === gen) setSftpErr(friendlyError(e));
+      return false;
     } finally {
-      setSftpLoading(false);
+      if (sidRef.current === s && sftpGenRef.current === gen) setSftpLoading(false);
     }
   }, []);
 
-  // 切会话：浏览器清空待命；简报 cwd 到达且本会话尚未浏览过时自动首载
+  // C4（§352）：手动路径导航先规范化（canonical path）再列目录——前端不猜路径，
+  // 不存在/权限不足按后端可区别错误如实呈现
+  const navigateTo = useCallback(async (p: string) => {
+    const s = sidRef.current;
+    if (!s || !p.trim()) return;
+    try {
+      const r = await invoke("sftp_resolve_path", { sid: s, path: p.trim() });
+      if (sidRef.current !== s) return;
+      await loadDir(r.canonical);
+    } catch (e) {
+      // rev-r30 中-1：迟到失败响应不得写入已切换会话的浏览器（与 loadDir 同纪律）
+      if (sidRef.current === s) setSftpErr(friendlyError(e));
+    }
+  }, [loadDir]);
+
+  // C4：符号链接点击——stat 探明目标（is_dir 为跟随语义）再决定进入/下载；
+  // 悬空链接 stat 的 canonical 为 null 但 is_dir 仍可得，失败如实报错不猜
+  const openSymlink = useCallback(async (e: DirEntryS) => {
+    const s = sidRef.current;
+    if (!s || !sftpPath) return;
+    const full = `${sftpPath.replace(/\/+$/, "")}/${e.name}`;
+    try {
+      const st = await invoke("sftp_stat", { sid: s, path: full });
+      if (sidRef.current !== s) return;
+      if (st.is_dir) await loadDir(full);
+      else await downloadRemote(full);
+    } catch (err) {
+      if (sidRef.current === s) setSftpErr(friendlyError(err));
+    }
+  }, [sftpPath, loadDir, downloadRemote]);
+
+  // 切会话：浏览器清空待命
+  const sftpFirstSidRef = useRef<string | null>(null);
   useEffect(() => {
+    sftpFirstSidRef.current = null;
     setSftpEntries(null); setSftpErr(null);
     if (!sid) { setSftpPath(""); setSftpPathInput(""); }
     // 只随会话切换清空——简报 cwd 变化不重置用户正在浏览的位置
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid]);
+  // §348 首次打开链：本次连接可信 cwd → SFTP 初始目录（resolve null）→ 手动输入。
+  // brief 到达（cwd 可用性已知）才起链；每会话一次，后续浏览位置不回跳。
   useEffect(() => {
-    const base = brief?.cwd;
-    if (sid && base && sftpEntries === null && !sftpLoading && sftpErr === null) {
-      void loadDir(base);
-    }
-  }, [sid, brief?.cwd, sftpEntries, sftpLoading, sftpErr, loadDir]);
+    if (!sid || sftpFirstSidRef.current === sid || brief === null) return;
+    sftpFirstSidRef.current = sid;
+    void (async () => {
+      if (brief.cwd) {
+        const ok = await loadDir(brief.cwd);
+        if (ok || sidRef.current !== sid) return;
+      }
+      try {
+        const r = await invoke("sftp_resolve_path", { sid, path: null });
+        if (sidRef.current !== sid) return;
+        await loadDir(r.canonical);
+      } catch (e) {
+        if (sidRef.current === sid) setSftpErr(friendlyError(e));
+      }
+    })();
+  }, [sid, brief, loadDir]);
 
   // ---- 端口转发（T42 FR-8）----
   const refreshForwards = useCallback(async (): Promise<ForwardInfo[]> => {
@@ -3466,7 +3518,7 @@ export default function App() {
                     placeholder="远端目录（绝对路径，回车进入）"
                     value={sftpPathInput}
                     onChange={(e) => setSftpPathInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && void loadDir(sftpPathInput)}
+                    onKeyDown={(e) => e.key === "Enter" && void navigateTo(sftpPathInput)}
                   />
                   <button
                     className="ghost"
@@ -3498,18 +3550,30 @@ export default function App() {
                   <div className="sftp-list">
                     {sftpEntries.map((e) => (
                       <div className={"sftp-row" + (e.is_dir ? " dir" : "")} key={e.name}>
-                        <span className="sftp-ico">{e.is_dir ? <IconFolder size={13} /> : <IconFile size={13} />}</span>
+                        <span className="sftp-ico" title={e.kind === "symlink" ? "符号链接" : undefined}>
+                          {e.kind === "symlink" ? "→" : e.is_dir ? <IconFolder size={13} /> : <IconFile size={13} />}
+                        </span>
                         {e.is_dir ? (
                           <button
                             className="sftp-name mono"
                             title={`进入 ${e.name}`}
                             onClick={() => void loadDir(`${sftpPath.replace(/\/+$/, "")}/${e.name}`)}
                           >{e.name}</button>
+                        ) : e.kind === "symlink" ? (
+                          <button
+                            className="sftp-name mono"
+                            title="符号链接：按目标处理（目录进入 / 文件下载）"
+                            onClick={() => void openSymlink(e)}
+                          >{e.name}</button>
                         ) : (
                           <span className="sftp-name mono" title={`${sftpPath.replace(/\/+$/, "")}/${e.name}`}>{e.name}</span>
                         )}
-                        <span className="dim mono sftp-size">{e.is_dir ? "目录" : fmtBytes(e.size)}</span>
-                        <span className="dim mono sftp-time">{e.mtime ? new Date(e.mtime * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }) : "—"}</span>
+                        <span className="dim mono sftp-size">
+                          {e.is_dir ? "目录" : e.kind === "symlink" ? "链接" : e.size == null ? "—" : fmtBytes(e.size)}
+                        </span>
+                        <span className="dim mono sftp-time">
+                          {e.mtime == null ? "—" : new Date(e.mtime * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}
+                        </span>
                         {!e.is_dir && (
                           <button
                             className="ghost sftp-dl"

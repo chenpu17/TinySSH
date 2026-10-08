@@ -82,8 +82,23 @@ pub trait ChannelHandle: Send + Sync {
     ) -> Result<u64>;
 
     /// 列目录（SFTP readdir / 本地 read_dir，T41 FR-7 浏览器）。
-    /// 过滤 `.`/`..`；按名称排序、目录在前；mtime 未知为 0。
+    /// 过滤 `.`/`..`；目录在前、按名称排序；kind=条目自身类型（readdir 属性为
+    /// lstat 语义，符号链接照实报 Symlink）；size/mtime 未知为 None（§352 不伪造零值）。
     async fn list_dir(&self, path: &str) -> Result<Vec<crate::DirEntryS>>;
+
+    /// C4（R30）：路径规范化（SFTP realpath / 本地 canonicalize）。
+    /// path=None → 连接初始目录（SFTP "."，即服务端登录起始目录）。
+    /// 不存在/权限不足返回可区别错误；悬空符号链接 canonical 不可得 → 错误呈现，
+    /// 前端不猜路径（§352）。
+    async fn resolve_path(&self, path: Option<&str>) -> Result<crate::PathResolved> {
+        Err(crate::Error::InvalidInput("该通路不支持路径解析（仅 SSH 会话）".into()))
+    }
+
+    /// C4（R30）：条目元数据。kind/symlink_target 为 lstat 语义（链接本身）；
+    /// is_dir/size/mtime 为跟随语义（符号链接取目标，取不到回落链接本体）。
+    async fn stat_entry(&self, path: &str) -> Result<crate::EntryStat> {
+        Err(crate::Error::InvalidInput("该通路不支持元数据查询（仅 SSH 会话）".into()))
+    }
 
     // ---- 端口转发（T42 FR-8）。默认不支持（本地 PTY 无 SSH 连接可承载）----
     async fn start_forward(&self, _spec: crate::ForwardSpec) -> Result<crate::ForwardId> {

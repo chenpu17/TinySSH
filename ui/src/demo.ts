@@ -54,6 +54,8 @@ const demoState = {
   // R26（§6.4）：每会话最近一条状态事件（session_state_feed 轮询面；真实核心走
   // session-state 事件通道——C1 connection-event/demo 轮询双路的同款镜像）
   stateEvents: new Map<string, SessionStateEvent>(),
+  // C4（R30）C02 判别钩子：预置 sftp_list 慢响应（path 命中即延迟 ms）
+  sftpSlow: null as { path: string; ms: number } | null,
   // C8 主机元数据（DF8.2）：收藏/最近连接，演示态内存域（真实核心在 host_metadata 表）
   hostMeta: new Map<string, { favorite: boolean; last_connected_at: string | null }>(),
   // R21 凭据基础管理：演示态凭据域（真实核心在 vault identities 表）+ 主机→凭据绑定
@@ -864,43 +866,127 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "audit_query":
       return { events: demoState.events.slice(0, (args?.limit as number) ?? 30) };
-    // T41 FR-7：目录浏览演示树（与真实 wire 契约同口径——目录在前、名称序、
-    // 过滤 . / ..；mtime 为演示固定时间戳）。传输类仍如实报错（见下）。
+    // T41 FR-7 + C4（R30）：目录浏览演示树（与真实 wire 契约同口径——目录在前、
+    // 名称序、过滤 . / ..；kind/symlink 与未知字段 size/mtime=null 同 §352 语义；
+    // mtime 为演示固定时间戳）。传输类仍如实报错（见下）。
     case "sftp_list": {
       const p = ((args?.path as string) ?? "").replace(/\/+$/, "") || "/";
-      const tree: Record<string, { name: string; is_dir: boolean; size: number; mtime: number }[]> = {
+      // C02 判别钩子（R30）：demo_sftp_slow 预置慢目录——命中即延迟再返回，
+      // 供「晚到旧响应不得覆盖新路径」的代际守卫判别（旧码必红）
+      const sl = demoState.sftpSlow;
+      if (sl && sl.path === p && sl.ms > 0) await new Promise((r) => setTimeout(r, sl.ms));
+      type Ent = { name: string; is_dir: boolean; kind: "dir" | "file" | "symlink" | "other"; size: number | null; mtime: number | null };
+      const d = (name: string, mtime = 1790870400): Ent => ({ name, is_dir: true, kind: "dir", size: null, mtime });
+      const f = (name: string, size: number, mtime = 1790870400): Ent => ({ name, is_dir: false, kind: "file", size, mtime });
+      const l = (name: string, mtime = 1790870400): Ent => ({ name, is_dir: false, kind: "symlink", size: null, mtime });
+      const nginx: Ent[] = [
+        d("archive"),
+        f("access.log", 73400320, 1790956800),
+        f("error.log", 2097152, 1790956800),
+        // 未知字段呈现面：socket 无大小无时间（§352 显「—」不伪造零值）
+        { name: "php-fpm.sock", is_dir: false, kind: "other", size: null, mtime: null },
+        // 符号链接：latest → archive（目录，点击 stat 探明后进入）
+        l("latest", 1790956800),
+      ];
+      const releases: Ent[] = [
+        d("v2", 1790611200),
+        d("v3", 1790956800),
+        f("CHANGELOG.md", 2048, 1790908800),
+      ];
+      const v3: Ent[] = [
+        f("app.tar.gz", 48250470, 1790956800),
+        f("app.yml", 640, 1790908800),
+      ];
+      const tree: Record<string, Ent[]> = {
         // /var/log/nginx = demo 简报 cwd（session_brief），浏览器首载即有内容
-        "/var/log/nginx": [
-          { name: "archive", is_dir: true, size: 0, mtime: 1790870400 },
-          { name: "access.log", is_dir: false, size: 73400320, mtime: 1790956800 },
-          { name: "error.log", is_dir: false, size: 2097152, mtime: 1790956800 },
-        ],
+        "/var/log/nginx": nginx,
         "/var/log/nginx/archive": [
-          { name: "access-202609.log.gz", is_dir: false, size: 8912896, mtime: 1790611200 },
+          f("access-202609.log.gz", 8912896, 1790611200),
         ],
+        // latest → archive（跟随语义：list 符号链接路径 = 列目标）
+        "/var/log/nginx/latest": nginx.filter((e) => e.name !== "latest"),
         "/root": [
-          { name: "deploy", is_dir: true, size: 0, mtime: 1790956800 },
-          { name: "logs", is_dir: true, size: 0, mtime: 1790870400 },
-          { name: ".ssh", is_dir: true, size: 0, mtime: 1790784000 },
-          { name: "nginx.conf", is_dir: false, size: 2048, mtime: 1790908800 },
-          { name: "backup-0930.tar.gz", is_dir: false, size: 48250470, mtime: 1790870400 },
-          { name: "readme.md", is_dir: false, size: 312, mtime: 1790611200 },
+          d("deploy"),
+          d("logs"),
+          d("releases", 1790956800),
+          d(".ssh", 1790784000),
+          f("nginx.conf", 2048, 1790908800),
+          f("backup-0930.tar.gz", 48250470, 1790870400),
+          f("readme.md", 312, 1790611200),
+          // current → /root/releases/v3（可进入）；gone-link → 悬空（stat canonical=null）
+          l("current", 1790956800),
+          l("gone-link", 1790784000),
         ],
         "/root/deploy": [
-          { name: "scripts", is_dir: true, size: 0, mtime: 1790956800 },
-          { name: "release.sh", is_dir: false, size: 1841, mtime: 1790956800 },
-          { name: "app.yml", is_dir: false, size: 640, mtime: 1790908800 },
-        ],
-        "/root/logs": [
-          { name: "app.log", is_dir: false, size: 15204351, mtime: 1790956800 },
-          { name: "error.log", is_dir: false, size: 94208, mtime: 1790956800 },
+          d("scripts"),
+          f("release.sh", 1841, 1790956800),
+          f("app.yml", 640, 1790908800),
         ],
         "/root/deploy/scripts": [
-          { name: "migrate.sh", is_dir: false, size: 733, mtime: 1790908800 },
+          f("migrate.sh", 733, 1790908800),
         ],
+        "/root/logs": [
+          f("app.log", 15204351, 1790956800),
+          f("error.log", 94208, 1790956800),
+        ],
+        "/root/releases": releases,
+        "/root/releases/v2": [f("app.tar.gz", 42198123, 1790611200)],
+        "/root/releases/v3": v3,
+        // current → v3（跟随语义）
+        "/root/current": v3,
+        // 拒绝路径演示（C4：权限不足可区别错误，非笼统 io）
+        "/var/private": [],
       };
-      if (!(p in tree)) throw apiError("path_not_found", `演示模式：目录不存在或不可读（${p}）`);
+      if (p === "/var/private") throw apiError("sftp_permission_denied", "演示模式：权限不足（/var/private）", { path: p });
+      if (!(p in tree)) throw apiError("sftp_path_not_found", `演示模式：目录不存在（${p}）`, { path: p });
       return tree[p].slice().sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    }
+    // C4（R30）：路径规范化。null → SFTP 初始目录（演示固定 /var/log/nginx）；
+    // 已知路径 → 解析 . / .. 与尾斜杠；未知 → sftp_path_not_found（前端不猜路径）。
+    case "sftp_resolve_path": {
+      const raw = args?.path;
+      const know = new Set(["/", "/var", "/var/log", "/var/log/nginx", "/var/log/nginx/archive", "/var/log/nginx/latest", "/root", "/root/deploy", "/root/deploy/scripts", "/root/logs", "/root/releases", "/root/releases/v2", "/root/releases/v3", "/root/current", "/var/private"]);
+      if (raw == null) return { canonical: "/var/log/nginx" };
+      const p = String(raw);
+      if (p === "/var/private") throw apiError("sftp_permission_denied", "演示模式：权限不足（/var/private）", { path: p });
+      const parts: string[] = [];
+      for (const seg of p.split("/")) {
+        if (!seg || seg === ".") continue;
+        if (seg === "..") parts.pop();
+        else parts.push(seg);
+      }
+      const norm = "/" + parts.join("/");
+      if (!know.has(norm)) throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+      return { canonical: norm };
+    }
+    // C4（R30）：条目元数据。lstat 语义 kind/symlink_target；is_dir/size/mtime 跟随；
+    // 悬空链接 canonical=null（§352 可解释不猜路径）。
+    case "sftp_stat": {
+      const p = String(args?.path ?? "").replace(/\/+$/, "") || "/";
+      const symlinks: Record<string, { target: string; is_dir: boolean; canonical: string | null }> = {
+        "/var/log/nginx/latest": { target: "archive", is_dir: true, canonical: "/var/log/nginx/archive" },
+        "/root/current": { target: "/root/releases/v3", is_dir: true, canonical: "/root/releases/v3" },
+        "/root/gone-link": { target: "/var/gone", is_dir: false, canonical: null },
+      };
+      if (p in symlinks) {
+        const s = symlinks[p];
+        return { canonical: s.canonical, kind: "symlink", is_dir: s.is_dir, size: null, mtime: 1790956800, symlink_target: s.target };
+      }
+      const dirs = new Set(["/", "/var", "/var/log", "/var/log/nginx", "/var/log/nginx/archive", "/root", "/root/deploy", "/root/deploy/scripts", "/root/logs", "/root/releases", "/root/releases/v2", "/root/releases/v3"]);
+      if (p === "/var/private") throw apiError("sftp_permission_denied", "演示模式：权限不足（/var/private）", { path: p });
+      if (!dirs.has(p)) {
+        // 已知文件（列目录树里出现过的非目录项）
+        const files = new Set(["/var/log/nginx/access.log", "/var/log/nginx/error.log", "/var/log/nginx/php-fpm.sock", "/root/nginx.conf", "/root/readme.md", "/root/backup-0930.tar.gz", "/root/deploy/release.sh", "/root/deploy/app.yml", "/root/deploy/scripts/migrate.sh", "/root/logs/app.log", "/root/logs/error.log", "/root/releases/CHANGELOG.md", "/root/releases/v2/app.tar.gz", "/root/releases/v3/app.tar.gz", "/root/releases/v3/app.yml"]);
+        if (!files.has(p)) throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+        if (p.endsWith(".sock")) return { canonical: p, kind: "other", is_dir: false, size: null, mtime: null, symlink_target: null };
+        return { canonical: p, kind: "file", is_dir: false, size: 1024, mtime: 1790956800, symlink_target: null };
+      }
+      return { canonical: p, kind: "dir", is_dir: true, size: null, mtime: 1790870400, symlink_target: null };
+    }
+    // C02 判别钩子注册（R30）：{ path, ms } 预置后 sftp_list 命中该路径即延迟
+    case "demo_sftp_slow": {
+      demoState.sftpSlow = { path: String(args?.path ?? ""), ms: Number(args?.ms ?? 0) };
+      return null;
     }
     // T42 FR-8：端口转发注册表演示。demo 无法真实监听端口/建隧道——仅按会话
     // 维护转发条目（wire 契约同口径：外部标签 spec + state/error），审计随操作
