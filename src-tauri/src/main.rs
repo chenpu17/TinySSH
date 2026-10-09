@@ -304,6 +304,32 @@ async fn list_transfers(state: ApiState<'_>) -> CmdResult<Vec<TransferTask>> {
     state.api.list_transfers(&human()).await.map_err(WireError::from)
 }
 
+/// C5/R35：失败重试——以原参数创建新任务（retry_of=旧任务），重新校验连接/
+/// 源文件/冲突。仅 Failed/Cancelled/Skipped/Interrupted；OutcomeUnknown 结构化
+/// 拒绝（UI 只提供「重新核实」）。
+#[tauri::command]
+async fn retry_transfer(state: ApiState<'_>, id: String) -> CmdResult<TransferHandle> {
+    state.api.retry_transfer(&human(), id).await.map_err(WireError::from)
+}
+
+/// C5/R35「定位」（S08）：下载任务在访达中显示本地目标（open -R）。
+/// 仅接受已存在的本地路径；上传任务的定位走文件面板导航（FE 域），不经此命令。
+#[tauri::command]
+async fn reveal_path(path: String) -> CmdResult<()> {
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err(WireError::from(Error::SftpPathNotFound { path }));
+    }
+    // `--` 终止选项解析：以「-」开头的文件名不会被 open 当作选项（R35 审核 低-6）。
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg("--")
+        .arg(&p)
+        .spawn()
+        .map_err(|e| WireError::from(Error::Io(format!("reveal: {e}"))))?;
+    Ok(())
+}
+
 /// SFTP 目录浏览（T41 FR-7）：只读 readdir，人类专属入口（不经审批）。
 #[tauri::command]
 async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<Vec<DirEntryS>> {
@@ -1335,7 +1361,7 @@ fn main() {
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
-            upload_file, download_file, cancel_transfer, list_transfers, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,
+            upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,
             pick_upload_files, pick_save_file,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,

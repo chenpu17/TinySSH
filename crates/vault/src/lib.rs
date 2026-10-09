@@ -1587,6 +1587,15 @@ mod tests {
         v.record_session(&"s-2".to_string(), &hid, "ssh").unwrap();
         v.record_session(&"s-3".to_string(), &hid, "local").unwrap(); // 排除
         v.record_session(&"s-4".to_string(), &hid2, "ssh").unwrap();
+        // 钉死时间戳：record_session 用 now_ms()，连续四写常落同一毫秒，而
+        // list_recent_hosts 的 `ORDER BY last_at DESC` 对并列无确定序——本用例曾
+        // 2/12 偶发红（h-8f9b… vs h-a61f…）。此处显式赋值使「s-4 晚于 s-2」恒真。
+        {
+            let conn = v.conn.lock().unwrap();
+            for (sid, ts) in [("s-1", 1000i64), ("s-2", 2000), ("s-3", 3000), ("s-4", 4000)] {
+                conn.execute("UPDATE sessions SET created_at=?2 WHERE id=?1", params![sid, ts]).unwrap();
+            }
+        }
         let recents = v.list_recent_hosts(5).unwrap();
         assert_eq!(recents.len(), 2); // local 不算；每主机一行
         assert_eq!(recents[0].host_id, hid2); // s-4 晚于 s-2

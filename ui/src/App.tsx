@@ -43,6 +43,8 @@ type TransferCard = {
   // C6/R34：待决卡载荷（expect_revision=rev；提示目标与原因）
   rev?: number;
   prompt?: { target_path: string; reason: string; size: number | null; mtime: number | null } | null;
+  // R35：所属会话（上传「定位」只在目标会话=当前会话时可导航）
+  sid?: string;
 };
 function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
   if (v && typeof v === "object" && "Exited" in (v as Record<string, unknown>))
@@ -501,6 +503,10 @@ export default function App() {
   // 文件传输（T20）：卡片列表驱动 UI；核心完成即写审计（payload 带 transfer id），
   // UI 轮询审计把 running 卡对账成 done/failed/cancelled
   const [transfers, setTransfers] = useState<TransferCard[]>([]);
+  // R35 §194：传输队列在工作区底部抽屉；后台事件只更新状态条计数，不自动展开
+  const [queueOpen, setQueueOpen] = useState(false);
+  // R33 §246：按路径下载入口移入文件面板（默认收起）
+  const [byPathOpen, setByPathOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [downloadPath, setDownloadPath] = useState("");
   // 远程文件浏览器（T41 FR-7；C4 R30 路径/元数据；R31 §348/§350 导航/选择/持久化）：
@@ -2012,6 +2018,7 @@ export default function App() {
     name: pathBasename(t.kind === "Upload" ? t.source : t.dest),
     remote: t.kind === "Upload" ? t.dest : t.source,
     local: t.kind === "Upload" ? t.source : t.dest,
+    sid: t.session_id,
     status: t.status === "Succeeded" ? "done"
       : t.status === "Failed" ? "failed"
       : t.status === "Cancelled" ? "cancelled"
@@ -2090,6 +2097,40 @@ export default function App() {
       pushToast("err", `核实失败：${friendlyError(e)}`);
     }
   }, [pushToast, refreshTransfers]);
+
+  // C5/R35 §364：失败重试——创建新任务重新校验连接/源/冲突（不携带覆盖授权）；
+  // OutcomeUnknown 结构化拒绝——通用重试绝不作为核实替代（§374）
+  const retryTransfer = useCallback(async (id: string) => {
+    try {
+      await invoke("retry_transfer", { id });
+      void refreshTransfers();
+    } catch (e) {
+      const kind = (e as { kind?: string })?.kind;
+      pushToast("err", kind === "invalid_transfer_state"
+        ? "该任务不可重试：结果未知请先「重新核实」"
+        : `重试失败：${friendlyError(e)}`);
+    }
+  }, [pushToast, refreshTransfers]);
+
+  // R35 S08「定位」：下载=访达显示本地目标；上传=文件面板导航到目标目录
+  //（仅目标会话=当前会话时；跨会话定位不静默改道）
+  const locateTransfer = useCallback(async (t: TransferCard) => {
+    if (t.kind === "Download") {
+      try {
+        await invoke("reveal_path", { path: t.local });
+      } catch (e) {
+        pushToast("err", `定位失败：${friendlyError(e)}`);
+      }
+      return;
+    }
+    if (t.sid && t.sid === sidRef.current) {
+      setRightPanel("files");
+      const dir = t.remote.replace(/\/[^/]*$/, "") || "/";
+      void navigateTo(dir);
+    } else {
+      pushToast("err", "目标在其他会话——切换到对应会话后可定位");
+    }
+  }, [pushToast]);
 
   // 拖拽上传：目标目录优先取远程文件区正在浏览的目录（T41），否则现场简报 cwd。
   // 先挂 pending 卡占位，拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
@@ -2882,7 +2923,18 @@ export default function App() {
   const sbLeft = current
     ? `${currentHost?.address === "local" ? "本地" : "SSH"} · ${currentHost?.charset === "gbk" ? "GBK" : "UTF-8"}`
     : "未连接";
-  const runningTransfers = transfers.filter((t) => t.status === "running").length;
+  // R35 状态条计数=进行中任务（排队/传输/提交/取消中/待决——§194 后台事件只更新计数）
+  const runningTransfers = transfers.filter((t) => t.status === "running" || t.status === "queued" || t.status === "committing" || t.status === "cancelling" || t.status === "awaiting").length;
+  // §358 队列行须展示「主机/会话」——抽屉是窗口级（list_transfers 全量、跨会话），
+  // 会话不再由所在面板隐含，故按 sid 回查主机名；会话已不在时回退短 id（如实不虚构）。
+  const hostLabel = (sid?: string): string =>
+    !sid ? "—" : sessions.find((s) => s.id === sid)?.host_name ?? sid.slice(0, 8);
+  // R35 rev 中-1：重试必须在**在场会话**内重跑（核心 retry_transfer 按旧 session_id
+  // 取会话；会话不持久化，重启恢复的 Interrupted 其会话必然已不在 → SessionNotFound）。
+  // 故仅当原会话仍在时给「重试」钮，否则如实告知（不渲染必死的钮）；pending- 占位卡
+  // 无真实 id 同理（rev 低-1）。
+  const canRetry = (t: TransferCard): boolean =>
+    !t.id.startsWith("pending-") && !!t.sid && sessions.some((s) => s.id === t.sid);
 
   return (
     <div className="app-shell">
@@ -3897,7 +3949,7 @@ export default function App() {
         {rightPanel && (
           <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label="任务面板" ref={taskPanelRef}>
             <div className="tp-head">
-              <b>{rightPanel === "files" ? "文件与传输" : rightPanel === "forwards" ? "端口转发" : "协作"}</b>
+              <b>{rightPanel === "files" ? "文件" : rightPanel === "forwards" ? "端口转发" : "协作"}</b>
               {tpFull && <span className="dim" style={{ fontSize: 11 }}>空间不足——完整视图，终端仍在运行</span>}
               {rightPanel === "collab" && pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
               <span style={{ flex: 1 }} />
@@ -4017,6 +4069,10 @@ export default function App() {
                     disabled={!sftpPath || sftpLoading}
                     onClick={() => void pickAndUpload()}
                   ><IconUpload size={13} /></button>
+                  <button className={"ghost" + (byPathOpen ? " ts-open" : "")} title="按远端路径下载（保留 §246 入口）" aria-label="按路径下载"
+                    data-testid="sftp-by-path-btn" aria-pressed={byPathOpen}
+                    onClick={() => setByPathOpen(!byPathOpen)}
+                  ><IconDownload size={13} /></button>
                   <span style={{ flex: 1 }} />
                   <button className={"ghost" + (sftpEditPath ? " ts-open" : "")} title={sftpEditPath ? "切换为面包屑" : "编辑路径框"}
                     aria-label="切换路径输入" aria-pressed={sftpEditPath}
@@ -4068,6 +4124,17 @@ export default function App() {
                     >{label}{sftpSort.key === k ? (sftpSort.dir === 1 ? "↑" : "↓") : ""}</button>
                   ))}
                 </div>
+                {byPathOpen && (
+                  <div className="row xfer-input">
+                    <input
+                      placeholder="下载远端文件（绝对路径，回车或点「下载」）"
+                      value={downloadPath}
+                      onChange={(e) => setDownloadPath(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && void startDownload()}
+                    />
+                    <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>下载</button>
+                  </div>
+                )}
                 {sftpErr && <div className="err" style={{ marginTop: 6 }}>✕ {sftpErr}</div>}
                 {sftpLoading && (
                   <div className="sftp-list" aria-busy="true">
@@ -4127,77 +4194,9 @@ export default function App() {
                       onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
                   </div>
                 )}
-                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），菜单「另存为…」可选位置；进度见下方「传输」。</div>
+                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），菜单「另存为…」可选位置；传输进度见底部队列（状态条「传输 N」展开）。</div>
               </>
             )}
-          </div>
-
-          <div className="section">
-            <h4>传输</h4>
-            {inTauri && (
-              <div className="row xfer-input">
-                <input
-                  placeholder="下载远端文件（绝对路径，回车或点「下载」）"
-                  value={downloadPath}
-                  onChange={(e) => setDownloadPath(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void startDownload()}
-                />
-                <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>下载</button>
-              </div>
-            )}
-            {transfers.length === 0 && (
-                <div className="side-quiet">把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。下载默认存到上次下载目录（首次为「下载」文件夹），也可「另存为」。</div>
-            )}
-            {transfers.map((t) => (
-              <div className="card row xfer-row" key={t.id}>
-                <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>
-                  {t.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="xfer-name mono" title={t.name}>{t.name}</div>
-                  <div className="dim mono xfer-sub">
-                    {t.status === "queued" && "排队中…"}
-                    {t.status === "running" && `传输中…${t.bytes ? ` ${fmtBytes(t.bytes)}${t.total ? ` / ${fmtBytes(t.total)}` : ""}` : ""}`}
-                    {t.status === "committing" && "提交中…"}
-                    {t.status === "cancelling" && "取消中…"}
-                    {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)} · ${t.kind === "Upload" ? t.remote : t.local}`}
-                    {t.status === "failed" && `失败：${t.error ?? "未知错误"}`}
-                    {t.status === "cancelled" && "已取消"}
-                    {t.status === "skipped" && "已跳过：同名目标未改动"}
-                    {t.status === "interrupted" && `已中断：${t.error ?? "应用重启时传输中断"}`}
-                    {t.status === "unknown" && `结果未知：${t.error ?? "发布应答丢失"}`}
-                  </div>
-                  {t.status === "awaiting" && t.prompt && (
-                    <div className="xfer-conflict">
-                      <div className="dim mono xfer-sub">
-                        {t.prompt.reason === "stat_changed_since_preflight" ? "目标在提交前已变化，需重新裁决：" : "目标已存在："}
-                        <span className="mono" title={t.prompt.target_path}>{t.prompt.target_path}</span>
-                        {t.prompt.size != null && ` · ${fmtBytes(t.prompt.size)}`}
-                        {t.prompt.mtime != null && ` · ${new Date(t.prompt.mtime * 1000).toLocaleString()}`}
-                      </div>
-                      <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                        <button className="ghost" data-testid="cf-skip" onClick={() => { void decideCollision(t, "skip"); }}>跳过</button>
-                        <button className="ghost" data-testid="cf-overwrite" title="外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动" onClick={() => { void decideCollision(t, "overwrite"); }}>覆盖</button>
-                        <button className="ghost" data-testid="cf-keepboth" onClick={() => { void decideCollision(t, "keepboth"); }}>两个都要</button>
-                      </div>
-                    </div>
-                  )}
-                  {t.status === "unknown" && (
-                    <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                      <button className="ghost" data-testid="uo-reverify" onClick={() => { void verifyOutcome(t.id); }}>重新核实</button>
-                      <span className="mono xfer-note">temp 与恢复资料保留；不自动重发</span>
-                    </div>
-                  )}
-                </div>
-                {t.status === "running" || t.status === "queued" || t.status === "cancelling" || t.status === "committing" || t.status === "awaiting" ? (
-                  <button className="ghost" title="取消传输" onClick={() => { invoke("cancel_transfer", { id: t.id }).catch(() => {}); }}>✕</button>
-                ) : (
-                  <span className={t.status === "done" ? "ok" : t.status === "cancelled" || t.status === "skipped" ? "dim" : "err"} style={{ flex: "none" }}>
-                    {t.status === "done" ? "✓" : t.status === "cancelled" || t.status === "skipped" ? "⊘" : "✕"}
-                  </span>
-                )}
-              </div>
-            ))}
           </div>
 
             </>
@@ -4246,7 +4245,7 @@ export default function App() {
                       <span className={"fwd-kind " + k.toLowerCase()}>{k === "Local" ? "-L" : k === "Remote" ? "-R" : "-D"}</span>
                       <div style={{ flex: 1, minWidth: 0 }} className="mono">
                         <div className="xfer-name">{fwdText}</div>
-                        <div className={"dim mono xfer-sub"}>{stateText}</div>
+                        <div className={"mono xfer-sub"}>{stateText}</div>
                       </div>
                       {f.state === "Listening"
                         ? <span className="ok" style={{ flex: "none" }}>✓</span>
@@ -4357,13 +4356,112 @@ Authorization: Bearer <TOKEN>`}
         )}
         </div>{/* /content */}
 
+        {/* R35 S08 §194：传输队列=工作区底部抽屉，默认收起；后台事件只更新
+            状态条计数不自动展开；抽屉关闭不影响任务（纯展示层）。展开不销毁
+            终端实例（兄弟节点，无重挂）。 */}
+        {queueOpen && (
+          <div className="queue-drawer" data-testid="queue-drawer" role="region" aria-label="传输队列">
+            <div className="queue-head">
+              <span className="queue-title">传输</span>
+              <span className="queue-count">{transfers.length} 个任务</span>
+              <span style={{ flex: 1 }} />
+              <button className="ghost" data-testid="queue-collapse" aria-label="收起传输队列" onClick={() => setQueueOpen(false)}>收起 ⌄</button>
+            </div>
+            <div className="queue-body">
+              {transfers.length === 0 && (
+                <div className="side-quiet">暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。</div>
+              )}
+              {transfers.map((t) => (
+                <div className="card row xfer-row" key={t.id} data-testid={"xfer-" + t.status}>
+                  <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>
+                    {t.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="row" style={{ gap: 8 }}>
+                      <div className="xfer-name mono" title={t.name}>{t.name}</div>
+                      <span className="xfer-host mono" title={`会话：${hostLabel(t.sid)}`}>{hostLabel(t.sid)}</span>
+                      <span className="mono xfer-sub">
+                        {t.status === "queued" && "排队中…"}
+                        {t.status === "running" && (t.total != null && t.total > 0
+                          ? `传输中… ${fmtBytes(t.bytes ?? 0)} / ${fmtBytes(t.total)}`
+                          : `传输中… ${fmtBytes(t.bytes ?? 0)}${t.total == null ? "（总量未知）" : ""}`)}
+                        {t.status === "committing" && "提交中…（字节传完不代表提交完成）"}
+                        {t.status === "cancelling" && "取消中…"}
+                        {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)}`}
+                        {t.status === "failed" && `失败：${t.error ?? "未知错误"}`}
+                        {t.status === "cancelled" && "已取消"}
+                        {t.status === "skipped" && "已跳过：同名目标未改动"}
+                        {t.status === "interrupted" && `已中断：${t.error ?? "应用重启时传输中断"}`}
+                        {t.status === "unknown" && `结果未知：${t.error ?? "发布应答丢失"}`}
+                      </span>
+                    </div>
+                    {/* S08：完整 源 → 目标（方向语义：上传 本地→远端，下载 远端→本地） */}
+                    <div className="mono xfer-sub" title={t.kind === "Upload" ? `${t.local} → ${t.remote}` : `${t.remote} → ${t.local}`}>
+                      {t.kind === "Upload" ? `${t.local} → ${t.remote}` : `${t.remote} → ${t.local}`}
+                    </div>
+                    {t.status === "awaiting" && t.prompt && (
+                      <div className="xfer-conflict">
+                        <div className="mono xfer-sub">
+                          {t.prompt.reason === "stat_changed_since_preflight" ? "目标在提交前已变化，需重新裁决：" : "目标已存在："}
+                          <span className="mono" title={t.prompt.target_path}>{t.prompt.target_path}</span>
+                          {t.prompt.size != null && ` · ${fmtBytes(t.prompt.size)}`}
+                          {t.prompt.mtime != null && ` · ${new Date(t.prompt.mtime * 1000).toLocaleString()}`}
+                        </div>
+                        <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                          <button className="ghost" data-testid="cf-skip" onClick={() => { void decideCollision(t, "skip"); }}>跳过</button>
+                          <button className="ghost" data-testid="cf-overwrite" title="外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动" onClick={() => { void decideCollision(t, "overwrite"); }}>覆盖</button>
+                          <button className="ghost" data-testid="cf-keepboth" onClick={() => { void decideCollision(t, "keepboth"); }}>两个都要</button>
+                        </div>
+                      </div>
+                    )}
+                    {t.status === "unknown" && (
+                      <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                        <button className="ghost" data-testid="uo-reverify" onClick={() => { void verifyOutcome(t.id); }}>重新核实</button>
+                        <span className="mono xfer-note">temp 与恢复资料保留；不自动重发</span>
+                      </div>
+                    )}
+                  </div>
+                  {/* S08 该状态允许的操作：进行中=取消；失败/取消/跳过/中断=重试（新任务
+                      重新校验）；unknown 只有重新核实 + 查看目标（§374 界面须提供
+                      「重新核实」「查看目标/记录」，通用重试绝不作为默认动作）；
+                      完成=定位（下载访达显示本地目标 / 上传文件面板开目标目录） */}
+                  <div className="row" style={{ gap: 2, flex: "none" }}>
+                    {t.kind === "Download" && t.status === "done" && !t.local.startsWith("pending") && (
+                      <button className="ghost" data-testid="xfer-locate" title="在访达中显示本地目标" onClick={() => void locateTransfer(t)}>定位</button>
+                    )}
+                    {t.kind === "Upload" && t.status === "done" && t.sid && t.sid === sidRef.current && (
+                      <button className="ghost" data-testid="xfer-locate" title="在文件面板打开目标目录" onClick={() => void locateTransfer(t)}>定位</button>
+                    )}
+                    {t.status === "unknown" && (
+                      <button className="ghost" data-testid="xfer-view-target" title="查看目标：核对目标当前状态（下载在访达显示本地目标 / 上传打开文件面板目标目录）——仅目标存在不能证明本任务成功，结果仍待核实" onClick={() => void locateTransfer(t)}>查看目标</button>
+                    )}
+                    {(t.status === "failed" || t.status === "cancelled" || t.status === "skipped" || t.status === "interrupted") && (
+                      canRetry(t)
+                        ? <button className="ghost" data-testid="xfer-retry" title="重试：创建新任务，重新校验连接、源文件与冲突" onClick={() => { void retryTransfer(t.id); }}>重试</button>
+                        : <span className="xfer-note" data-testid="xfer-retry-unavailable" title="重试须在原会话内重跑（重新校验连接/源/冲突）；原会话已不在——请重连该主机后在文件面板重新发起">会话已不在</span>
+                    )}
+                    {t.status === "running" || t.status === "queued" || t.status === "cancelling" || t.status === "committing" || t.status === "awaiting" ? (
+                      <button className="ghost" title="取消传输" onClick={() => { invoke("cancel_transfer", { id: t.id }).catch(() => {}); }}>✕</button>
+                    ) : (
+                      <span className={t.status === "done" ? "ok" : t.status === "cancelled" || t.status === "skipped" ? "dim" : "err"} style={{ flex: "none", width: 18, textAlign: "center" }}>
+                        {t.status === "done" ? "✓" : t.status === "cancelled" || t.status === "skipped" ? "⊘" : "✕"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 页脚状态条 24（§4.2）：只放短状态与任务入口 */}
         <footer className="statusbar">
           <span className="mono sb-left">{sbLeft}</span>
           <span style={{ flex: 1 }} />
           <span className="sb-right">
             <button className="sb-btn" title="端口转发" onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>转发 <b>{forwards.length}</b></button>
-            <button className="sb-btn" title="文件与传输" onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}>传输 <b>{runningTransfers}</b></button>
+            <button className={"sb-btn" + (queueOpen ? " ts-open" : "")} data-testid="sb-transfer" title="传输队列（底部抽屉；后台事件只更新计数不自动展开）" aria-pressed={queueOpen}
+              onClick={() => setQueueOpen(!queueOpen)}>传输 <b>{runningTransfers}</b> {queueOpen ? "⌃" : "⌄"}</button>
           </span>
         </footer>
         </main>

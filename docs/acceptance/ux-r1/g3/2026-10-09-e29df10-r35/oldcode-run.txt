@@ -1,0 +1,38 @@
+旧码判别：基线 e29df10 worktree（/private/tmp/r35-old，dev :5184），同一探针 r35-demo-probe.js。
+PROBE_URL=http://localhost:5184/ node r35-demo-probe.js
+
+本轮两次连跑均 15/34（19 项 R35 专属断言红）：
+
+FAIL A2 background transfer updates status-bar count
+FAIL A4 user click opens drawer
+FAIL A5 drawer has collapse control
+FAIL B2 failed card shows 重试 (with revalidate note)
+FAIL B3 retry creates NEW task with retry_of=old
+FAIL B3c transfer count grew by retry
+FAIL B4 row shows host/session (§358)
+FAIL C2b unknown card offers 查看目标 (§374)
+FAIL C3 retry_transfer on unknown → invalid_transfer_state
+FAIL D2 done download card shows 定位
+FAIL E1 files toolbar has 按路径下载 toggle
+FAIL E2 toggle reveals path-download input
+FAIL F1 dir-demo → Failed with 目录传输不支持
+FAIL F1b zero bytes (source-side, no staging)
+FAIL G1 per-session parallel ≤ 2
+FAIL G2 overflow stays Queued
+FAIL G3 queued card shows 排队中…
+FAIL H1 前置：会话在时失败卡有重试钮
+FAIL H3 会话不在 → 不渲染重试钮，改给「会话已不在」说明
+
+保持绿（R32/R34 基线行为，非 R35 引入）：A1 抽屉初始收起、A3 后台事件不自动展开、
+A6 收起可关、B1 fail-demo→Failed、C1 unknown-demo→OutcomeUnknown、C2 unknown 卡无通用重试、
+D1 下载成功、D3 点定位无 JS 错、E3 再点隐藏、G4 排队最终全部完成、H2 关闭会话生效、
+Z 零 pageerror。
+
+注：G3「排队中…」在旧码上非确定——旧码无并发闸，5 个不同目标并发全部立即 Running，
+「排队中」态只在时序巧合下出现。本轮两次均红（另一次历史运行 15/31 中 G3 绿）。
+判别力成立：新码由并发闸保证 G3 必现（34/34 多轮稳定）。
+
+注：H1/H3 在旧码红是因为旧码根本没有重试钮（连失败卡的操作面都无）。
+H3 的**门判别力**另由红侧摘行单独实证（本轮）：把 `canRetry` 的
+`sessions.some((s) => s.id === t.sid)` 条件摘掉 → 仅 H3 独红（33/34），
+还原后 34/34（Edit 摘行 + `cmp` 还原对账，App.tsx md5 与摘行前一致）。

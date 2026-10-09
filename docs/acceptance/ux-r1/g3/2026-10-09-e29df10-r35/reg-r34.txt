@@ -1,0 +1,37 @@
+PASS A0 session connected  [s-demo-0101]
+PASS A1 conflict-demo → AwaitingDecision (wire)  [{"s":"AwaitingDecision","rev":2}]
+PASS A2 prompt structured (target_exists, stat 2048@1790000000)  [{"target_path":"/var/log/nginx/site.conflict-demo","target_stat":{"size":2048,"mtime":1790000000},"reason":"target_exists"}]
+PASS A3 zero bytes transferred (preflight before data phase)  [0]
+PASS A4 UI conflict card: 目标已存在 + path + size  [目标已存在：/var/log/nginx/site.conflict-demo · 2.0 KB · 2026/9/21 22:13:20跳过覆盖两个都要]
+PASS A5 three decision buttons present
+PASS A6 overwrite button carries capability note  [外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动]
+PASS A7 awaiting card shows cancel ✕ (non-terminal)
+PASS B1 skip → Skipped terminal  [{"s":"Skipped","rev":3}]
+PASS B1b decision retained + prompt cleared  [{"d":"skip","p":null}]
+PASS B1c card 已跳过文案 + ⊘ dim  [已跳过：同名目标未改动]
+PASS B2 overwrite → Failed (capability block)  [{"s":"Failed","e":"发布能力不足，已阻止（原目标未改动）: target_version_constraint"}]
+PASS B2b message = core ReplaceUnsupported wording  [发布能力不足，已阻止（原目标未改动）: target_version_constraint]
+PASS B3 keepboth → Succeeded under new name  [{"s":"Succeeded","d":"/var/log/nginx/run.tinyssh-1.conflict-demo"}]
+PASS B3b dest renamed stem.tinyssh-1.ext (rsplit_once 语义同核心)  [/var/log/nginx/run.tinyssh-1.conflict-demo]
+PASS C1 stale expect_revision → stale_decision w/ current_revision  [{"kind":"stale_decision","message":"决策基于的版本已过期（任务已变化）","detail":{"current_revision":2}}]
+PASS C1b task stays AwaitingDecision after stale
+PASS C2 submit on terminal → invalid_transfer_state  [{"kind":"invalid_transfer_state","message":"任务不在待决状态（当前 Skipped）","detail":{"task_id":"t-demo-102","state":"Skipped"}}]
+PASS C2b invalid decision value → invalid_input  [{"kind":"invalid_input","message":"decision 取值非法（演示）","detail":null}]
+PASS C4 cancel-on-awaiting → immediate Cancelled  [{"s":"Cancelled","e":"已取消（冲突待决中）","rev":3}]
+PASS C5 verify on non-unknown → invalid_transfer_state  [{"kind":"invalid_transfer_state","message":"仅结果未知任务可重新核实（当前 Skipped）","detail":{"task_id":"t-demo-102","state":"Skipped"}}]
+PASS C6 reject → Cancelled 决策卡已作废  [{"s":"Cancelled","e":"决策卡已作废"}]
+PASS C6b second reject idempotent no-op  [rev 3→3]
+PASS D1 keepboth round1 → re-await (stat_changed_since_preflight)  [{"target_path":"/var/log/nginx/recheck.recheck-demo","target_stat":{"size":777,"mtime":1791520650},"reason":"stat_changed_since_preflight"}]
+PASS D1b card 重新裁决文案 + 更新后大小  [目标在提交前已变化，需重新裁决：/var/log/nginx/recheck.recheck-demo · 777 B · 2026/10/9 12:37:30跳过覆盖两个都要]
+PASS D2 keepboth round2 → published new name  [/var/log/nginx/recheck.tinyssh-1.recheck-demo]
+PASS E1 unknown-demo → OutcomeUnknown terminal  [{"s":"OutcomeUnknown","e":"提交结果未知（temp 与恢复资料保留；可在卡片「重新核实」）"}]
+PASS E1b message retains temp/资料  [提交结果未知（temp 与恢复资料保留；可在卡片「重新核实」）]
+PASS E2 UI unknown card: 结果未知 + 重新核实 + 保留说明  [结果未知：提交结果未知（temp 与恢复资料保留；可在卡片「重新核实」）]
+PASS E3 reverify keeps OutcomeUnknown + rev bump + refreshed note  [{"rev":"21→22","e":"重新核实完成：演示域无法确证提交结果，任务保持未知（temp 与恢复资料保留）"}]
+PASS E4 cancel on OutcomeUnknown no-op  [rev 22→22]
+PASS F1 interrupt-demo → Interrupted terminal  [{"s":"Interrupted","e":"应用重启时传输中断"}]
+PASS F2 card 已中断文案  [已中断：应用重启时传输中断]
+PASS G1 plain upload still Succeeded  [{"b":3276800,"t":3276800}]
+PASS Z zero page errors
+
+35/35 passed

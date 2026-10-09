@@ -1,0 +1,391 @@
+warning: unused variable: `path`
+  --> crates/session-api/src/transport.rs:97:34
+   |
+97 |     async fn resolve_path(&self, path: Option<&str>) -> Result<crate::PathResolved> {
+   |                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `path`
+   --> crates/session-api/src/transport.rs:103:32
+    |
+103 |     async fn stat_entry(&self, path: &str) -> Result<crate::EntryStat> {
+    |                                ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: `session-api` (lib) generated 2 warnings (run `cargo fix --lib -p session-api` to apply 2 suggestions)
+warning: value assigned to `cur_fg` is never read
+   --> crates/term-core/src/screen.rs:547:13
+    |
+547 |             cur_fg = None;
+    |             ^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: value assigned to `cur_bg` is never read
+   --> crates/term-core/src/screen.rs:548:13
+    |
+548 |             cur_bg = None;
+    |             ^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: value assigned to `cur_flags` is never read
+   --> crates/term-core/src/screen.rs:549:13
+    |
+549 |             cur_flags = None;
+    |             ^^^^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `quiet_dur` is never used
+   --> crates/term-core/src/screen.rs:485:8
+    |
+485 | pub fn quiet_dur(quiet_ms: u64) -> std::time::Duration {
+    |        ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `term-core` (lib) generated 4 warnings
+warning: unused import: `DateTime`
+ --> crates/approval/src/lib.rs:4:14
+  |
+4 | use chrono::{DateTime, Utc};
+  |              ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Actor` and `IdentityId`
+  --> crates/vault/src/lib.rs:10:5
+   |
+10 |     Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
+   |     ^^^^^
+11 |     Error, Host, HostDraft, HostId, HostMeta, IdentityId, IdentityKind, IdentityMeta, IdentityReq,
+   |                                               ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:230:52
+    |
+230 |     let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(master));
+    |                                                    ^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:233:25
+    |
+233 |     let nonce = XNonce::from_slice(&nonce_bytes);
+    |                         ^^^^^^^^^^
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:247:52
+    |
+247 |     let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(master));
+    |                                                    ^^^^^^^^^^
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:248:25
+    |
+248 |     let nonce = XNonce::from_slice(&blob[..24]);
+    |                         ^^^^^^^^^^
+
+warning: unused import: `Sig`
+ --> crates/transport-ssh/src/lib.rs:9:25
+  |
+9 | use russh::{Disconnect, Sig};
+  |                         ^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:231:13
+    |
+231 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `connected_address`
+   --> crates/transport-ssh/src/lib.rs:109:9
+    |
+109 |         connected_address: &str,
+    |         ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connected_address`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:318:31
+    |
+318 |                     .map_err(|e| Error::AuthFailed)?
+    |                               ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:293:31
+    |
+293 |                     .map_err(|e| Error::AuthFailed)?;
+    |                               ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:733:13
+    |
+733 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:790:13
+    |
+790 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:844:13
+    |
+844 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:944:17
+    |
+944 |             Err(e) => Ok(PublishOutcome::Ambiguous),
+    |                 ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: variable does not need to be mutable
+   --> crates/transport-pty/src/lib.rs:275:13
+    |
+275 |         let mut out = child
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/transport-pty/src/lib.rs:279:13
+    |
+279 |         let mut err = child
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: field `0` is never read
+ --> crates/testbed/src/lib.rs:5:21
+  |
+5 | pub struct SshdLock(std::fs::File);
+  |            -------- ^^^^^^^^^^^^^
+  |            |
+  |            field in this struct
+  |
+  = help: consider removing this field
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `DateTime`
+ --> crates/audit/src/lib.rs:3:14
+  |
+3 | use chrono::{DateTime, TimeZone, Utc};
+  |              ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tinyssh-approval` (lib) generated 1 warning (run `cargo fix --lib -p tinyssh-approval` to apply 1 suggestion)
+warning: `tinyssh-vault` (lib) generated 5 warnings (run `cargo fix --lib -p tinyssh-vault` to apply 1 suggestion)
+warning: `transport-ssh` (lib) generated 9 warnings (run `cargo fix --lib -p transport-ssh` to apply 9 suggestions)
+warning: `transport-pty` (lib) generated 2 warnings (run `cargo fix --lib -p transport-pty` to apply 2 suggestions)
+warning: `tinyssh-testbed` (lib) generated 1 warning
+warning: `tinyssh-audit` (lib) generated 1 warning (run `cargo fix --lib -p tinyssh-audit` to apply 1 suggestion)
+warning: unused import: `std::sync::Arc`
+ --> crates/core-session/src/brief.rs:5:5
+  |
+5 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `transport_pty::LocalPtyChannel`
+  --> crates/core-session/src/lib.rs:20:5
+   |
+20 | use transport_pty::LocalPtyChannel;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Actor`
+ --> crates/core-session/src/r26_tests.rs:7:5
+  |
+7 |     Actor, AuditFilter, AuthType, Charset, ControlOwner, Error, Host, SessionState,
+  |     ^^^^^
+
+warning: unused import: `AtomicU64`
+ --> crates/core-session/src/r32_tests.rs:8:37
+  |
+8 | use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrd};
+  |                                     ^^^^^^^^^
+
+warning: unused import: `std::sync::atomic::Ordering`
+    --> crates/core-session/src/lib.rs:3701:9
+     |
+3701 |     use std::sync::atomic::Ordering;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `exec_id`
+   --> crates/core-session/src/handle.rs:610:9
+    |
+610 |         exec_id: &ExecId,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_exec_id`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `lost` is never read
+    --> crates/core-session/src/lib.rs:1229:28
+     |
+1229 |             let mut lost = false;
+     |                            ^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `other`
+  --> crates/core-session/src/r30_tests.rs:32:13
+   |
+32 |             other => Ok(EntryStat {
+   |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_other`
+
+warning: field `approvals_rx_gen` is never read
+  --> crates/core-session/src/lib.rs:61:5
+   |
+58 | pub struct SessionManager {
+   |            -------------- field in this struct
+...
+61 |     approvals_rx_gen: StdMutex<()>,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `1` is never read
+    --> crates/core-session/src/handle.rs:1031:33
+     |
+1031 | struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+     |        ------------             ^^^^^^^^^^^^^^^^^
+     |        |
+     |        field in this struct
+     |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+     |
+1031 - struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+1031 + struct CancelOnDrop<'a>(ExecId, (), &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+     |
+
+warning: variant `Unsupported` is never constructed
+  --> crates/core-session/src/r34_tests.rs:22:5
+   |
+20 | enum LinkPlan {
+   |      -------- variant in this enum
+21 |     Committed,
+22 |     Unsupported,
+   |     ^^^^^^^^^^^
+
+warning: `core-session` (lib test) generated 11 warnings (run `cargo fix --lib -p core-session --tests` to apply 7 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/core_session-08d3fb1b0c683d75)
+
+running 78 tests
+test c10_tests::replay_ring_eviction_semantics ... ok
+test c1_tests::cancel_voids_pending_approval_card ... ok
+test c10_tests::attach_watermark_includes_last_event ... ok
+test c10_tests::expired_subscription_rejected_without_fallback ... ok
+test c10_tests::resync_replay_and_exactly_at_watermark ... ok
+test c10_tests::eviction_and_alt_screen_fall_back_to_checkpoint ... ok
+test c10_tests::checkpoint_nearer_beats_replay ... ok
+test c1_tests::cancel_while_gate_pending_clears_cards ... ok
+test c1_tests::cancel_events_carry_terminal_phase_only ... ok
+test c10_tests::silent_session_sub_persists_until_explicit_unsubscribe ... ok
+test c1_tests::cancel_while_connecting_leaves_no_session_and_second_cancel_is_not_found ... ok
+test c1_tests::concurrent_begin_merges_to_one_attempt ... ok
+test c1_tests::concurrent_cancel_never_reports_cancel_close_failed ... ok
+test c1_tests::failed_attempt_carries_error_and_audit ... ok
+test c1_tests::cross_actor_cancel_denied ... ok
+test c1_tests::merge_index_idempotent_and_new_session_bypass ... ok
+test charset::tests::gbk_decode_basic ... ok
+test charset::tests::gbk_encode_roundtrip ... ok
+test charset::tests::gbk_flush_dangling_lead ... ok
+test charset::tests::gbk_mixed_ascii ... ok
+test charset::tests::gbk_split_multibyte_across_chunks ... ok
+test charset::tests::utf8_passthrough ... ok
+test handle::tests::whitelist_only_single_simple_commands ... ok
+test c1_tests::mid_connect_cancel_end_to_end_chain ... ok
+test c1_tests::create_session_compat_path_untouched ... ok
+test c1_tests::cancel_ghost_sweep_closes_never_delivered_session ... ok
+test r24_tests::run_shell_gate_rejects_without_integration ... ok
+test c1_tests::window_cancel_close_failed_keeps_session ... ok
+test c1_tests::window_double_cancel_second_is_not_found_single_close ... ok
+test c1_tests::ready_then_cancel_is_not_found_and_session_survives ... ok
+test r26_tests::local_reconnect_enters_reconfirming_without_injection ... ok
+test c1_tests::window_concurrent_double_cancel_single_settlement ... ok
+test c1_tests::window_cancel_already_ready_closes_session ... ok
+test r30_tests::r30_session_not_found ... ok
+test r30_tests::r30_human_forwarding_and_errors ... ok
+test r30_tests::r30_sftp_entrypoints_human_only ... ok
+test r24_tests::delegate_flips_owner_and_audits ... ok
+test r32_tests::r32_failed_with_real_error ... ok
+test r32_tests::r32_lifecycle_events_revision_journal ... ok
+test r32_tests::r32_cancel_mid_flight ... ok
+test r32_tests::r32_restart_recovery_marks_interrupted ... ok
+test r26_tests::stop_auto_reconnect_prevents_further_attempts ... ok
+test r32_tests::r32_voided_on_generation_bump ... ok
+test r34_tests::r34_ambiguous_outcome_unknown_and_reverify ... ok
+test r34_tests::r34_agent_collision_paths ... ok
+test r34_tests::r34_cancel_before_publish_wins ... ok
+test r34_tests::r34_cancel_during_awaiting ... ok
+test r34_tests::r34_conflict_card_skip ... ok
+test r34_tests::r34_data_phase_fail_cleans_temp ... ok
+test r34_tests::r34_decision_guards ... ok
+test r34_tests::r34_keepboth_publishes_new_name ... ok
+test r34_tests::r34_new_file_commit_happy ... ok
+test r34_tests::r34_download_local_fs_namespace ... ok
+test r34_tests::r34_overwrite_blocked ... ok
+test r34_tests::r34_publish_raced_rejected_then_conflict ... ok
+test r34_tests::r34_publish_rejected_absent_fails ... ok
+test r34_tests::r34_recheck_race_new_conflict ... ok
+test r34_tests::r34_restart_recovery_classification ... ok
+test r34_tests::r34_reject_expired_decision ... ok
+test r35_tests::r35_directory_download_rejected ... ok
+test r35_tests::r35_directory_upload_rejected ... ok
+test r35_tests::r35_global_parallel_limit ... ok
+test r35_tests::r35_queued_task_does_not_starve_global ... ok
+test r24_tests::local_session_integration_ready_and_event ... ok
+test c1_tests::v1_record_failure_sweeps_half_session ... ok
+test r35_tests::r35_retry_creates_new_task ... ok
+test r35_tests::r35_retry_refuses_outcome_unknown ... ok
+test r35_tests::r35_retry_rechecks_collision ... ok
+test t44_tests::reject_edited_approval_gates_non_exec_cards ... ok
+test r35_tests::r35_retry_refuses_running ... ok
+test r35_tests::r35_retry_revalidates_source ... ok
+test r35_tests::r35_session_parallel_limit_and_queue ... ok
+test r24_tests::b01_owner_at_construction ... ok
+test r34_tests::r34_same_target_serialized ... ok
+test r32_tests::r32_running_progress_frames ... ok
+test r26_tests::manual_reconnect_failure_keeps_disconnected ... ok
+test r26_tests::auto_reconnect_emits_full_sequence_then_disconnected ... ok
+test r26_tests::manual_reconnect_success_enters_reconfirming_with_event ... ok
+
+test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.41s
+

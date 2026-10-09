@@ -138,7 +138,15 @@ fn mk_handle(center: Arc<ApprovalCenter>, up: TxPlan, down: TxPlan) -> Arc<Sessi
     let screen = term_core::Screen::new(term_core::ScreenConfig {
         cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20,
     });
-    SessionHandle::new("s-r32".into(), host, "local".into(), Arc::new(R32Channel { up, down, fs: Arc::new(StdMutex::new(HashMap::new())) }), screen, center, ControlOwner::Agent)
+    // R35 源侧判别（生产契约：上传源必须存在且非目录）：本套件固定源路径落真实文件
+    for p in ["/tmp/src.tar.gz", "/tmp/a.bin", "/tmp/big.bin", "/tmp/v.bin"] {
+        std::fs::write(p, b"r32-src").ok();
+    }
+    // 下载源=远端语义（ns_stat→channel.stat_entry），故在 mock 文件表登记下载源
+    // （R35 源侧判别同样适用；不登记则下载恒「源文件不存在」，遮蔽数据阶段注入）
+    let mut fsmap = HashMap::new();
+    fsmap.insert("/root/gone.bin".to_string(), 4096u64);
+    SessionHandle::new("s-r32".into(), host, "local".into(), Arc::new(R32Channel { up, down, fs: Arc::new(StdMutex::new(fsmap)) }), screen, center, ControlOwner::Agent)
 }
 
 fn register(m: &SessionManager, h: Arc<SessionHandle>) {

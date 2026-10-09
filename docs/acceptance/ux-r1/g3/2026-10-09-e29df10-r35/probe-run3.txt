@@ -1,0 +1,36 @@
+PASS A0 session connected  [s-demo-0101]
+PASS A1 drawer closed initially
+PASS A2 background transfer updates status-bar count  [1]
+PASS A3 background event does NOT auto-expand drawer
+PASS A4 user click opens drawer
+PASS A5 drawer has collapse control
+PASS A6 collapse closes drawer
+PASS B1 fail-demo → Failed  [{"s":"Failed","e":"演示注入：远端写入失败"}]
+PASS B2 failed card shows 重试 (with revalidate note)  [重试：创建新任务，重新校验连接、源文件与冲突]
+PASS B3 retry creates NEW task with retry_of=old  [{"id":"t-demo-104","retry_of":"t-demo-103"}]
+PASS B3b old task status unchanged (not revived)
+PASS B3c transfer count grew by retry
+PASS B4 row shows host/session (§358)  [prod-1]
+PASS C1 unknown-demo → OutcomeUnknown  [{"s":"OutcomeUnknown"}]
+PASS C2 unknown card has 重新核实 but NO generic 重试  [{"rv":true,"rt":false}]
+PASS C2b unknown card offers 查看目标 (§374)  [{"vt":true}]
+PASS C3 retry_transfer on unknown → invalid_transfer_state  [{"kind":"invalid_transfer_state","message":"结果未知：请先「重新核实」（重试不能代替核实）","detail":{"task_id":"t-demo-105","state":"OutcomeUnknown"}}]
+PASS C3b no new task created by refused retry
+PASS D1 download → Succeeded  [{"s":"Succeeded"}]
+PASS D2 done download card shows 定位  [{"loc":true,"sub":"完成 · 3.3 MB"}]
+PASS D3 clicking 定位 produces no JS error
+PASS E1 files toolbar has 按路径下载 toggle
+PASS E2 toggle reveals path-download input  [before=false after=true]
+PASS E3 toggle again hides input
+PASS F1 dir-demo → Failed with 目录传输不支持  [目录传输不支持：仅支持单文件（目录请先打包）]
+PASS F1b zero bytes (source-side, no staging)  [0]
+PASS G1 per-session parallel ≤ 2  [running=2]
+PASS G2 overflow stays Queued  [queued=3]
+PASS G3 queued card shows 排队中…
+PASS G4 all queued eventually complete  [["Succeeded","Succeeded","Succeeded","Succeeded","Succeeded"]]
+PASS H1 前置：会话在时失败卡有重试钮  [{"rt":true,"ru":false}]
+PASS H2 会话已关闭（sessions 内不再有该 sid）
+PASS H3 会话不在 → 不渲染重试钮，改给「会话已不在」说明  [{"rt":false,"ru":true,"sub":"失败：演示注入：远端写入失败"}]
+PASS Z zero page errors
+
+34/34 passed

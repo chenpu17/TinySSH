@@ -79,6 +79,8 @@ pub struct SessionManager {
     /// C6/R34 DF6.4 同目标锁：canonical path（r:远端/l:本地前缀区分命名空间）→
     /// 任务级互斥。只串行本客户端任务（外部写入由预检/复检/发布原语防线兜底）。
     target_locks: StdMutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+    /// R35 §366 窗口全局并行传输闸（跨会话 4；每会话闸挂 SessionHandle.xfer_gate_session）。
+    xfer_gate_global: std::sync::Arc<tokio::sync::Semaphore>,
     /// C5 事件通道（可丢 broadcast；漏收由 list_transfers 查询对账兜底——§547
     /// 「重挂 UI 后可对账」）。
     pub transfer_tx: broadcast::Sender<TransferTask>,
@@ -156,6 +158,7 @@ impl SessionManager {
             ),
             transfers: StdMutex::new(HashMap::new()),
             target_locks: StdMutex::new(HashMap::new()),
+            xfer_gate_global: Arc::new(tokio::sync::Semaphore::new(handle::TRANSFER_GLOBAL)),
             transfer_tx,
         });
         *arc.self_weak.lock().unwrap() = Some(Arc::downgrade(&arc));
@@ -1698,7 +1701,7 @@ impl SessionApi for SessionManager {
         remote: &str,
         collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle> {
-        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), true, collision)
+        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), true, collision, None)
             .await
     }
 
@@ -1710,7 +1713,7 @@ impl SessionApi for SessionManager {
         local: &Path,
         collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle> {
-        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), false, collision)
+        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), false, collision, None)
             .await
     }
 
@@ -1916,6 +1919,11 @@ impl SessionApi for SessionManager {
             .collect();
         v.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
         Ok(v)
+    }
+
+    /// C5/R35：失败重试（编排面同 transfer；见 retry_transfer 文档）。
+    async fn retry_transfer(&self, ctx: &Actor, task_id: TransferId) -> Result<TransferHandle> {
+        SessionManager::retry_transfer(self, ctx, &task_id).await
     }
 
     // 人类浏览远端目录（FR-7）：只读、不经审批、不入审计（浏览非动作）；
@@ -2625,6 +2633,7 @@ impl SessionManager {
         remote: String,
         is_upload: bool,
         collision: Option<CollisionDecision>,
+        retry_of: Option<TransferId>,
     ) -> Result<TransferHandle> {
         let h = self.get(&sid)?;
         if !ctx.is_human() && *h.owner.lock().await == ControlOwner::Human {
@@ -2691,7 +2700,7 @@ impl SessionManager {
             created_at: now_unix(),
             finished_at: None,
             error: None,
-            retry_of: None,
+            retry_of: retry_of.clone(),
             collision_decision: None,
             decision_prompt: None,
         };
@@ -2722,6 +2731,66 @@ impl SessionManager {
                     serde_json::json!({"transfer": tid2, "reason": "voided_by_handback"}), None);
                 h2.transfers.lock().unwrap().remove(&tid2);
                 return;
+            }
+            // R35 §366 并发闸：窗口全局 4、每会话 2，其余保持 Queued 排队。
+            // 闸先于同目标锁（排队不占锁）；排队中取消/交接即时响应。
+            // 先会话后全局：全局许可只发给已持会话槽、即将开跑的任务——避免「全局
+            // 许可被卡在会话槽上的任务白占」的队首阻塞（否则单会话多排队会饿死他会话）。
+            let gate_s = tokio::select! {
+                s = h2.xfer_gate_session.clone().acquire_owned() => s,
+                _ = cancel.cancelled() => {
+                    mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消（排队中）".into()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                    h2.transfers.lock().unwrap().remove(&tid2);
+                    return;
+                }
+            };
+            let gate_g = tokio::select! {
+                g = mgr.xfer_gate_global.clone().acquire_owned() => g,
+                _ = cancel.cancelled() => {
+                    mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消（排队中）".into()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                    h2.transfers.lock().unwrap().remove(&tid2);
+                    return;
+                }
+            };
+            // 闸后复查交接（排队期间接管=从未开始，按作废落账）
+            if h2.generation.load(std::sync::atomic::Ordering::SeqCst) != gen {
+                drop((gate_g, gate_s));
+                mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("接管作废".into()));
+                let _ = h2.center.audit.append(
+                    &ctx2, "transfer_voided", Some(&sid2), Some(&remote2),
+                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback_gated"}), None);
+                h2.transfers.lock().unwrap().remove(&tid2);
+                return;
+            }
+            // R35：目录明确不支持（源侧判别；上传源=本地、下载源=远端）。
+            // NotFound 同样在此如实失败（优于后续 File::open 的含糊 IO 文案）。
+            let src_path = if is_upload { local2.display().to_string() } else { remote2.clone() };
+            match SessionManager::ns_stat(&h2, !is_upload, &src_path).await {
+                Ok(st) if st.is_dir => {
+                    let msg = "目录传输不支持：仅支持单文件（目录请先打包）".to_string();
+                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(msg.clone()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": msg}), None);
+                    h2.transfers.lock().unwrap().remove(&tid2);
+                    return;
+                }
+                Err(Error::SftpPathNotFound { .. }) => {
+                    let msg = format!("源文件不存在：{src_path}");
+                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(msg.clone()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": msg}), None);
+                    h2.transfers.lock().unwrap().remove(&tid2);
+                    return;
+                }
+                _ => {} // 其余 stat 错误不拦截——数据阶段以真实读写错误落账
             }
             let human_path = ctx2.is_human();
             // C6/R34：canonical 目标规划（预检前置）。失败=确未提交，直接失败。
@@ -3051,6 +3120,60 @@ impl SessionManager {
                 }
             }
         });
+        Ok(handle)
+    }
+
+    /// C5/R35 失败重试（§364）：以原参数创建**新任务**（retry_of=旧任务），
+    /// 重新走完整 transfer 编排——连接、源文件与冲突全部重校验；不承诺断点
+    /// 续传；重试不带 collision（不自动重试已授权覆盖，冲突重新裁决）。
+    /// 仅终态 Failed/Cancelled/Skipped/Interrupted 可重试：OutcomeUnknown
+    /// 只能「重新核实」（§374 通用重试绝不作为默认动作）；Succeeded 无重试
+    /// 语义；Queued/Running/Cancelling/Committing/AwaitingDecision 未终态。
+    /// keepboth 已发布成功会改写 dest——但 Succeeded 不可重试，可重试状态的
+    /// dest 均为原始请求目标（skip/failed/cancelled 不改写），无需额外记录。
+    async fn retry_transfer(&self, ctx: &Actor, task_id: &TransferId) -> Result<TransferHandle> {
+        let old = {
+            let reg = self.transfers.lock().unwrap();
+            let e = reg.get(task_id).ok_or_else(|| {
+                Error::InvalidInput(format!("transfer not found: {task_id}"))
+            })?;
+            e.task.clone()
+        };
+        match old.status {
+            TransferStatus::Failed
+            | TransferStatus::Cancelled
+            | TransferStatus::Skipped
+            | TransferStatus::Interrupted => {}
+            TransferStatus::OutcomeUnknown => {
+                // §374：通用重试绝不作为 unknown 的默认动作——只能「重新核实」
+                return Err(Error::InvalidTransferState {
+                    task_id: task_id.clone(),
+                    state: old.status,
+                });
+            }
+            other => {
+                return Err(Error::InvalidTransferState {
+                    task_id: task_id.clone(),
+                    state: other,
+                });
+            }
+        }
+        let sid = old.session_id.clone();
+        let (local, remote, is_upload) = if old.kind == TransferKind::Upload {
+            (std::path::PathBuf::from(&old.source), old.dest.clone(), true)
+        } else {
+            (std::path::PathBuf::from(&old.dest), old.source.clone(), false)
+        };
+        let h = self.get(&sid)?;
+        if !ctx.is_human() && *h.owner.lock().await == ControlOwner::Human {
+            return Err(Error::ControlTakenByHuman);
+        }
+        let handle = self
+            .transfer(ctx, sid, local, remote, is_upload, None, Some(task_id.clone()))
+            .await?;
+        let _ = self.center.audit.append(
+            ctx, "transfer_retry", Some(&old.session_id), Some(&old.dest),
+            serde_json::json!({"retry_of": task_id, "new": handle.id}), None);
         Ok(handle)
     }
 
@@ -3564,6 +3687,9 @@ mod r32_tests;
 #[cfg(test)]
 #[path = "r34_tests.rs"]
 mod r34_tests;
+#[cfg(test)]
+#[path = "r35_tests.rs"]
+mod r35_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle

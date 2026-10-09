@@ -1582,6 +1582,12 @@ pub trait SessionApi: Send + Sync {
     /// 事件漏收兜底（事件可合并可丢失，查询是权威）。任何 Actor 可查（只读）。
     async fn list_transfers(&self, ctx: &Actor) -> Result<Vec<TransferTask>>;
 
+    /// C5/R35 失败重试（§364）：以原参数创建新任务（retry_of=旧任务），重新
+    /// 校验连接、源文件与冲突；不承诺断点续传，不自动重试已授权覆盖（重试
+    /// 不携带 collision）。仅 Failed/Cancelled/Skipped/Interrupted 可重试；
+    /// OutcomeUnknown 只能 verify_transfer_outcome 重新核实（§374）。
+    async fn retry_transfer(&self, ctx: &Actor, task_id: TransferId) -> Result<TransferHandle>;
+
     /// 人类浏览远端目录（FR-7 SFTP 浏览器，只读）。path 为绝对路径；
     /// 条目按名称排序（目录在前）由 transport 层保证。
     async fn sftp_list(&self, ctx: &Actor, sid: SessionId, path: &str) -> Result<Vec<DirEntryS>>;

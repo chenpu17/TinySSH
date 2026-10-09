@@ -230,6 +230,68 @@ type DemoTransfer = {
   } | null;
 };
 const TRANSFER_TERMINAL = ["Succeeded", "Failed", "Cancelled", "OutcomeUnknown", "Skipped", "Interrupted"];
+
+// R35 §366 演示域同款并发闸：窗口全局 4、每会话 2，其余保持 Queued 排队。
+// 持闸态=非 Queued 非终态（核心同语义：闸在预检/决策等待之前获取，AwaitingDecision
+// 占位；排队中取消即时落 Cancelled 不等闸）。
+function demoTransferSlotHolders(): DemoTransfer[] {
+  return demoState.transfers.filter((x) => x.status !== "Queued" && !TRANSFER_TERMINAL.includes(x.status));
+}
+function demoLaunchTransferSteps(t: DemoTransfer) {
+  const step = () => {
+    const cur = demoState.transfers.find((x) => x.id === t.id);
+    if (!cur) return;
+    const now = Math.floor(Date.now() / 1000);
+    if (cur.status === "Cancelling") {
+      cur.status = "Cancelled"; cur.error = "已取消"; cur.finished_at = now; cur.revision += 1;
+      return;
+    }
+    if (cur.status !== "Running" && cur.status !== "Queued") return;
+    cur.status = "Running";
+    cur.bytes_done = Math.min(cur.total ?? Infinity, cur.bytes_done + 196608);
+    cur.revision += 1;
+    if (cur.source.includes("fail-demo") && cur.bytes_done >= 393216) {
+      cur.status = "Failed"; cur.error = "演示注入：远端写入失败"; cur.finished_at = now; cur.revision += 1;
+      return;
+    }
+    if (cur.source.includes("unknown-demo") && cur.total != null && cur.bytes_done >= cur.total) {
+      // C13 提交响应丢失：temp 与恢复资料保留，不自动重发/回滚
+      cur.status = "OutcomeUnknown";
+      cur.error = "提交结果未知（temp 与恢复资料保留；可在卡片「重新核实」）";
+      cur.finished_at = now; cur.revision += 1;
+      return;
+    }
+    if (cur.source.includes("interrupt-demo") && cur.bytes_done >= 196608) {
+      // 提交前中断（应用退出）：恢复面统一 Interrupted
+      cur.status = "Interrupted"; cur.error = "应用重启时传输中断";
+      cur.finished_at = now; cur.revision += 1;
+      return;
+    }
+    if (cur.total != null && cur.bytes_done >= cur.total) {
+      cur.status = "Succeeded"; cur.finished_at = now; cur.revision += 1;
+      return;
+    }
+    window.setTimeout(step, 150);
+  };
+  const tryStart = () => {
+    const cur = demoState.transfers.find((x) => x.id === t.id);
+    if (!cur || TRANSFER_TERMINAL.includes(cur.status)) return;
+    if (cur.status === "Cancelling") {
+      cur.status = "Cancelled"; cur.error = "已取消（排队中）";
+      cur.finished_at = Math.floor(Date.now() / 1000); cur.revision += 1;
+      return;
+    }
+    const holders = demoTransferSlotHolders();
+    if (holders.length >= 4 || holders.filter((x) => x.session_id === t.session_id).length >= 2) {
+      window.setTimeout(tryStart, 120);
+      return;
+    }
+    step();
+  };
+  // 同步首次尝试：有槽即刻 Running（与 R32 基线同序——发起即 Running，取消窗口
+  // 落在在途态）；无槽则退避重试保 Queued。
+  tryStart();
+}
 function demoEmitState(sid: string, state: string,
   attempt: number | null, max: number | null, detail: string | null) {
   demoState.stateEvents.set(sid, {
@@ -1099,6 +1161,17 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       };
       demoState.transfers.unshift(t);
       audit("human", "transfer_start", null, null, s.id, { transfer: t.id, kind: kind.toLowerCase(), source, dest });
+      // R35 源侧目录判别（生产契约：目录明确不支持，源侧先行，零 staging）：
+      // dir-demo 标记即如实失败（真实面=core ns_stat is_dir 拒绝）
+      if (source.includes("dir-demo")) {
+        t.status = "Failed"; t.error = "目录传输不支持：仅支持单文件（目录请先打包）";
+        t.finished_at = Math.floor(Date.now() / 1000); t.revision += 1;
+        return {
+          id: t.id, session_id: s.id, kind,
+          local: kind === "Upload" ? source : dest,
+          remote: kind === "Upload" ? dest : source,
+        };
+      }
       // C6/R34 冲突判别面：目标名注入标记即触发预检冲突（预检在数据阶段之前——
       // 与真实核心同序，冲突不发生字节传输，故不走 step 链）。recheck-demo 首轮
       // 裁决后再触发一次「预检后已变化」冲突（stat_changed_since_preflight）。
@@ -1116,42 +1189,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           remote: kind === "Upload" ? dest : source,
         };
       }
-      const step = () => {
-        const cur = demoState.transfers.find((x) => x.id === t.id);
-        if (!cur) return;
-        const now = Math.floor(Date.now() / 1000);
-        if (cur.status === "Cancelling") {
-          cur.status = "Cancelled"; cur.error = "已取消"; cur.finished_at = now; cur.revision += 1;
-          return;
-        }
-        if (cur.status !== "Running" && cur.status !== "Queued") return;
-        cur.status = "Running";
-        cur.bytes_done = Math.min(cur.total ?? Infinity, cur.bytes_done + 196608);
-        cur.revision += 1;
-        if (cur.source.includes("fail-demo") && cur.bytes_done >= 393216) {
-          cur.status = "Failed"; cur.error = "演示注入：远端写入失败"; cur.finished_at = now; cur.revision += 1;
-          return;
-        }
-        if (cur.source.includes("unknown-demo") && cur.total != null && cur.bytes_done >= cur.total) {
-          // C13 提交响应丢失：temp 与恢复资料保留，不自动重发/回滚
-          cur.status = "OutcomeUnknown";
-          cur.error = "提交结果未知（temp 与恢复资料保留；可在卡片「重新核实」）";
-          cur.finished_at = now; cur.revision += 1;
-          return;
-        }
-        if (cur.source.includes("interrupt-demo") && cur.bytes_done >= 196608) {
-          // 提交前中断（应用退出）：恢复面统一 Interrupted
-          cur.status = "Interrupted"; cur.error = "应用重启时传输中断";
-          cur.finished_at = now; cur.revision += 1;
-          return;
-        }
-        if (cur.total != null && cur.bytes_done >= cur.total) {
-          cur.status = "Succeeded"; cur.finished_at = now; cur.revision += 1;
-          return;
-        }
-        window.setTimeout(step, 150);
-      };
-      window.setTimeout(step, 250);
+      // R35 §366：经演示域并发闸启动（全局 4/每会话 2，排队保持 Queued）
+      demoLaunchTransferSteps(t);
       return {
         id: t.id, session_id: s.id, kind,
         local: kind === "Upload" ? source : dest,
@@ -1270,6 +1309,43 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       return null;
     }
+    // ---- C5/R35 失败重试：以原参数创建新任务（retry_of=旧任务）重新走编排
+    //（演示域=重新过闸+注入标记仍在，fail-demo 重试会再次失败=「重新校验」语义）。
+    // 仅 Failed/Cancelled/Skipped/Interrupted；unknown 结构化拒绝（§374）。 ----
+    case "retry_transfer": {
+      const old = demoState.transfers.find((x) => x.id === args?.id);
+      if (!old) throw apiError("invalid_input", "transfer not found（演示）");
+      if (old.status === "OutcomeUnknown") {
+        throw apiError("invalid_transfer_state", "结果未知：请先「重新核实」（重试不能代替核实）",
+          { task_id: old.id, state: old.status });
+      }
+      if (!["Failed", "Cancelled", "Skipped", "Interrupted"].includes(old.status)) {
+        throw apiError("invalid_transfer_state", `仅失败/已取消/已跳过/中断的任务可重试（当前 ${old.status}）`,
+          { task_id: old.id, state: old.status });
+      }
+      const s = demoState.sessions.find((x) => x.id === old.session_id);
+      if (!s) throw apiError("session_not_found", "原会话不存在——重试需重新校验连接（演示）");
+      const t: DemoTransfer = {
+        id: "t-demo-" + demoSeq++,
+        session_id: s.id, kind: old.kind, source: old.source, dest: old.dest,
+        status: "Queued", bytes_done: 0, total: old.total, revision: 1,
+        created_at: Math.floor(Date.now() / 1000),
+        finished_at: null, error: null, retry_of: old.id,
+        collision_decision: null, decision_prompt: null,
+      };
+      demoState.transfers.unshift(t);
+      audit("human", "transfer_retry", null, null, s.id, { retry_of: old.id, new: t.id });
+      demoLaunchTransferSteps(t);
+      return {
+        id: t.id, session_id: s.id, kind: t.kind,
+        local: t.kind === "Upload" ? t.source : t.dest,
+        remote: t.kind === "Upload" ? t.dest : t.source,
+      };
+    }
+    // R35 S08「定位」下载分支（访达显示本地目标）：演示域无真实 Finder——no-op，
+    // 真实面=原生 reveal_path（open -R）
+    case "reveal_path":
+      return null;
     case "note_terminal":
     case "open_url":
     case "get_setting":

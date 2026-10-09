@@ -193,11 +193,13 @@ body {
 }
 .sb-left { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sb-btn {
-  background: none; border: none; color: var(--dim); cursor: pointer;
+  background: none; border: none; color: var(--text-sub); cursor: pointer;
   font-size: 11px; display: inline-flex; gap: 4px; align-items: center;
   padding: 2px 6px; border-radius: 4px;
 }
-.sb-btn:hover { background: var(--panel2); color: var(--text); }
+/* 特异度须胜过通用 button:not(:disabled):hover(--accent-hover)——否则悬停文字落 accent 底
+   近乎不可读（vis-r35 低-2：深 1.83:1 / 浅 3.37:1） */
+button.sb-btn:not(:disabled):hover { background: var(--panel2); color: var(--text); }
 .sb-btn b { color: var(--text); font-weight: 600; }
 /* 工具/标签列表 下拉菜单 */
 .st-tools { position: relative; display: flex; flex: none; }
@@ -493,7 +495,9 @@ textarea {
 .fact .s { font-weight: 600; }
 
 /* 右栏协作面板：紧凑人话行 */
-.side-quiet { color: var(--dim); font-size: 12px; line-height: 1.8; padding: 2px 2px 6px; }
+/* 空态/静默提示是信息性正文（非装饰），用次级文字色保 AA——
+   vis-r35：--dim 深档 #5d6f82 于 --panel #141922 实算 3.41:1 低于 AA */
+.side-quiet { color: var(--text-sub); font-size: 12px; line-height: 1.8; padding: 2px 2px 6px; }
 .side-sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; margin: 2px 0 4px; }
 /* 现场简报（精致化 §5.5）：dashed 分割改认知色轻底块 + 徽标 */
 .brief-fact {
@@ -647,13 +651,27 @@ textarea {
 .xfer-dir.up { color: var(--ok); }
 .xfer-dir.down { color: var(--blue); }
 .xfer-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.xfer-sub { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* §358 队列行「主机/会话」标识：抽屉为窗口级（跨会话），会话不再由所在面板隐含 */
+.xfer-host { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-sub); font-size: 11px; border: 1px solid var(--border); border-radius: 6px; padding: 0 5px; }
+/* 传输/转发行次级文字（状态行、源→目标行）是信息性正文，用次级文字色保 AA——
+   vis-r35：dim 深档于 .card(--panel2) 实算 3.01:1 低于 AA（同 R34 .xfer-note/.xfer-conflict 处置） */
+.xfer-sub { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-sub); }
 /* R34 冲突决策卡：左竖线分节 + 按钮行 */
 .xfer-conflict { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--warn); min-width: 0; }
 /* 冲突询问是待决信息（路径/大小/原因），用次级文字色保 AA——dim 深档不够对比 */
 .xfer-conflict .xfer-sub { white-space: normal; color: var(--text-sub); }
 /* unknown 卡说明行同理（vis-r34：dim 深档 3.01 不达 AA） */
 .xfer-note { font-size: 11px; white-space: normal; color: var(--text-sub); }
+
+/* R35 S08 §194 传输队列抽屉：工作区底部、默认收起、关闭不影响任务 */
+/* §176：活动抽屉默认 240 高，上限=工作区高度 45%（.main 为 flex:1 定高容器，百分比可解析）。 */
+.queue-drawer { border-top: 1px solid var(--border); background: var(--panel); height: 240px; max-height: 45%; display: flex; flex-direction: column; }
+.queue-head { display: flex; align-items: center; gap: 10px; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.queue-title { font-size: 12px; font-weight: 600; }
+/* 头计数是信息性正文（非装饰），用次级文字色保 AA——vis-r35：dim 于 --panel 3.41:1 */
+.queue-count { color: var(--text-sub); }
+.queue-body { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px; display: flex; flex-direction: column; gap: 6px; }
 
 /* T41 远程文件浏览器（FR-7）*/
 .sftp-path { gap: 4px; }

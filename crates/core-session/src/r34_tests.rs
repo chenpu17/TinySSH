@@ -193,6 +193,13 @@ fn mk(center: Arc<ApprovalCenter>, up: TxPlan, down: TxPlan, link: LinkPlan) -> 
         fs: Arc::new(StdMutex::new(BTreeMap::new())),
         race_path: StdMutex::new(None), race_at_hit: AtomicU32::new(2), stat_hits: AtomicU32::new(0),
     });
+    // R35 源侧判别（生产契约：上传源必须存在且非目录；下载远端源须可 stat）：
+    // 本套件固定源路径——本地源真实落盘、远端源进 mock stat map
+    std::fs::write("/tmp/src.bin", b"r34-src").ok();
+    for p in ["/tmp/a.bin", "/tmp/b.bin", "/tmp/c.bin"] {
+        std::fs::write(p, b"r34-src").ok();
+    }
+    c.seed("/remote/src.bin", 64);
     let h = SessionHandle::new("s-r34".into(), host, "local".into(), c.clone(), screen, center, ControlOwner::Agent);
     (h, c)
 }
@@ -628,14 +635,15 @@ async fn r34_same_target_serialized() {
     let t1 = m.upload(&Actor::Human, "s-r34".into(), std::path::Path::new("/tmp/a.bin"), "/root/x.bin", None).await.unwrap();
     let t2 = m.upload(&Actor::Human, "s-r34".into(), std::path::Path::new("/tmp/b.bin"), "/root/x.bin", None).await.unwrap();
     let t3 = m.upload(&Actor::Human, "s-r34".into(), std::path::Path::new("/tmp/c.bin"), "/root/y.bin", None).await.unwrap();
-    // t1 在途时：t2 同目标必须仍 Queued；t3 不同目标可独立 Running
+    // t1 在途时：t2 同目标必须仍 Queued；t3 = 每会话并发闸第 3 位（R35 §366
+    // 默认 2/会话）同样 Queued——同目标串行与并发闸语义在此叠加自洽
     tokio::time::sleep(Duration::from_millis(120)).await;
     let s1 = m.list_transfers(&Actor::Human).await.unwrap().into_iter().find(|x| x.id == t1.id).unwrap();
     let s2 = m.list_transfers(&Actor::Human).await.unwrap().into_iter().find(|x| x.id == t2.id).unwrap();
     let s3 = m.list_transfers(&Actor::Human).await.unwrap().into_iter().find(|x| x.id == t3.id).unwrap();
     assert_eq!(s1.status, TransferStatus::Running, "t1 应在途");
     assert_eq!(s2.status, TransferStatus::Queued, "同目标第二任务排队");
-    assert_eq!(s3.status, TransferStatus::Running, "不同目标不受牵连");
+    assert_eq!(s3.status, TransferStatus::Queued, "每会话第 3 个并行任务排队（R35 闸）");
     let d1 = wait_terminal(&m, &t1.id).await;
     assert_eq!(d1.status, TransferStatus::Succeeded);
     // t2 拿到锁时目标已被 t1 发布 → 预检冲突=决策卡（串行化与冲突语义自洽）

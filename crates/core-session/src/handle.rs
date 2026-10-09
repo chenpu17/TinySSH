@@ -16,6 +16,10 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex, oneshot};
 /// 重确认白名单（L1 §3.1：内置只读核实命令，Agent 不可自选）。
 pub const RECONFIRM_WHITELIST: &[&str] = &["pwd", "printenv", "which", "ps", "systemctl status"];
 
+/// R35 §366 并行传输上限：每会话默认 2、窗口全局 4（其余排队保持 Queued）。
+pub const TRANSFER_PER_SESSION: usize = 2;
+pub const TRANSFER_GLOBAL: usize = 4;
+
 pub fn is_whitelisted(cmd: &str) -> bool {
     let t = cmd.trim();
     // 仅限单条简单命令：复合（; && || | &）、替换（$(` )、重定向（><）、换行
@@ -75,6 +79,8 @@ pub struct SessionHandle {
     pub running: StdMutex<HashMap<ExecId, RunningExec>>,
     /// 排队传输。
     pub transfers: StdMutex<HashMap<TransferId, CancellationToken>>,
+    /// R35 §366 每会话并行传输闸（默认 2；排队者保持 Queued，先于同目标锁获取）。
+    pub xfer_gate_session: Arc<tokio::sync::Semaphore>,
     /// send_keys 会话级授权（接管即失效）。
     pub send_keys_auth: StdMutex<HashSet<String>>,
 
@@ -166,6 +172,7 @@ impl SessionHandle {
             live_execs: StdMutex::new(HashMap::new()),
             running: StdMutex::new(HashMap::new()),
             transfers: StdMutex::new(HashMap::new()),
+            xfer_gate_session: Arc::new(tokio::sync::Semaphore::new(TRANSFER_PER_SESSION)),
             send_keys_auth: StdMutex::new(HashSet::new()),
             goal: StdMutex::new(None),
             output_seq: AtomicU64::new(0),
