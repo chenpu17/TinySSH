@@ -1,0 +1,5 @@
+test bind_increment_skips_occupied_ports ... ok
+test spawn_endpoint_serves_in_process_stack ... ok
+test spike3_protocol_compliance has been running for over 60 seconds
+test spike3_protocol_compliance ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 121.01s

@@ -1,0 +1,14 @@
+# R44 迁移矩阵（cargo test -p tinyssh-vault --test migration_matrix）
+# 2026-10-10 00:11
+
+test r44_migrate_on_latest_is_noop ... ok
+test r44_v6_shell_integration_backfill_on_old_library ... ok
+test r44_upgrade_without_theme_key_follows_system_but_keeps_collab_on ... ok
+test r44_favorites_and_recents_start_empty ... ok
+test r44_settings_survive_migration ... ok
+test r44_repeated_open_is_idempotent ... ok
+test r44_upgrade_keeps_existing_agent_usable ... ok
+test r44_fresh_vs_upgrade_collab_default ... ok
+test r44_legacy_theme_maps_and_keeps_old_keys ... ok
+test r44_migration_matrix_every_version_is_lossless_and_idempotent ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s

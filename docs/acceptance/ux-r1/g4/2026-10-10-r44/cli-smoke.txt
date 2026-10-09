@@ -1,0 +1,92 @@
+# R44 CLI 契约回归（真实 target/debug/tinyssh，全新 DB；命令与参数分开传）
+# 2026-10-10 00:39:01
+
+## A. 既有子命令族仍可用（真调用；每族各打一发）
+$ tinyssh --db DB host list
+    local	本机	chenpu@local:0	-	[]
+    exit=0
+$ tinyssh --db DB identity list
+    
+    exit=0
+$ tinyssh --db DB agent create a-1 OpenCode
+    agent a-1 (OpenCode) created
+    TOKEN（仅此一次展示）:
+    d103f26763c78c064a76b7f0936ffcb0cae3e1560e9fb174956082de60fef917
+    exit=0
+$ tinyssh --db DB agent allow a-1 echo-* 免审
+    allow rule added: a-1 echo-*
+    exit=0
+$ tinyssh --db DB session brief s-1
+    Error: 会话不存在
+    exit=1
+$ tinyssh --db DB approval list
+    
+    exit=0
+$ tinyssh --db DB audit query --limit 3
+    total: 0
+    exit=0
+
+## B. 新 vault 子命令
+$ tinyssh --db DB vault version
+    库 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/t.db：schema 版本 7（本程序支持 7）
+    exit=0
+$ tinyssh --db DB vault backup /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/b.db
+    已导出备份：/var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/b.db（schema 版本 7）
+    exit=0
+-- 重复备份须拒绝覆盖 --
+$ tinyssh --db DB vault backup /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/b.db
+    Error: 存储错误: 备份目标已存在，拒绝覆盖：/var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/b.db
+    exit=1
+-- 恢复既有库：须打印安全副本路径 --
+$ tinyssh --db DB vault restore /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/b.db
+    已从 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/b.db 恢复到 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/t.db
+    恢复前的库已留安全副本：/var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/t.db.pre-restore.bak
+    exit=0
+    安全副本存在？ yes
+-- 恢复一个仅一张 hosts 表的垃圾文件：须拒绝且目标库存活 --
+$ tinyssh --db DB vault restore /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/junk.db
+    Error: 存储错误: 备份 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/junk.db 不是 TinySSH 库（缺少核心表 identities）；为避免误毁现有数据库，已拒绝恢复。
+    exit=1
+$ tinyssh --db DB vault version
+    库 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/t.db：schema 版本 7（本程序支持 7）
+    exit=0
+-- 备份一个不存在的库：须拒绝、不得产出空库备份 --
+$ tinyssh --db nope.db vault backup /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/nope-bak.db
+    Error: 存储错误: 库不存在，无可备份：/var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/nope.db
+    exit=1
+    nope.db 被创建？ no   nope-bak.db 被创建？ no
+-- 恢复自身：须拒绝 --
+$ tinyssh --db DB vault restore /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/t.db
+    Error: 存储错误: 备份与目标库是同一个文件（/var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/t.db），拒绝恢复
+    exit=1
+
+## C. 恢复一个**未来版本**的备份：须拒绝 --
+$ tinyssh --db DB vault restore /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmp.1DV3OctRuP/fut.db
+    Error: 存储错误: 备份的 schema 版本 99 高于本程序支持的 7：该备份由更新版本的 TinySSH 创建，本程序无法安全恢复。请升级应用后再恢复。
+    exit=1
+
+## D. N-1 CLI 半边（二轮复核补测；来源为干净 WAL 库）
+# 恢复前目录只有 src.db + src.db.lock；审核员实证：改前 restore 会在来源旁留下
+# src.db-shm/src.db-wal，且来源在只读目录时恢复直接失败（都发生在 CLI 预探测
+# `read_schema_version(&from)` 那一步，根本走不到已修好的 restore_from）。
+-- 前置：造一份干净 WAL 来源 --
+$ tinyssh --db src.db host list        # 建库（open() 设 WAL）
+$ ls src.db*
+    src.db
+    src.db.lock
+-- D1. restore 后来源旁不得多出 -shm/-wal --
+$ tinyssh --db tgt.db vault restore src.db
+    已从 src.db 恢复到 tgt.db
+    exit=0
+$ ls src.db*
+    src.db
+    src.db.lock
+    NO LEAK：来源旁无 -wal/-shm
+-- D2. 备份放在只读目录（chmod 555）：恢复须成功 --
+$ tinyssh --db tgt2.db vault restore ro/backup.db
+    已从 ro/backup.db 恢复到 tgt2.db
+    exit=0
+$ ls ro/
+    backup.db
+# 红侧：把 CLI 的预探测加回去（RED-M12）→ 重新构建后 D1 复现 LEAK、D2 报
+# "attempt to write a readonly database"，证明本修复有判别力（已 Edit 反向还原）。

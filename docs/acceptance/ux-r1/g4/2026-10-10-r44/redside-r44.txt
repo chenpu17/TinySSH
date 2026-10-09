@@ -1,0 +1,107 @@
+# R44 红侧变异记录（判别力实证）
+
+原则：每条护栏先证「失败可识别」再计数字。全部变异**用 Edit 反向还原**（绝不 `cp` 整文件
+写回——见登记：cp 还原会吞掉并行修复）。还原后复跑确认无 `MUTANT`/`RED-` 残留。
+
+| 编号 | 变异对象 | 变异 | 结果（预期 vs 实得） |
+|---|---|---|---|
+| RED-M1 | `vault/src/lib.rs` V7 默认 | `if version == 0 {"0"} else {"1"}` → 恒 `"1"` | ✅ 预期：`migration_matrix::r44_fresh_vs_upgrade_collab_default` 独红；实得：**该用例红**，其余 8 绿 |
+| RED-M2 | `vault/src/lib.rs` V6 回填 | 去掉 `AND address != 'local'` | ✅ 预期：`migration_matrix::r44_v6_shell_integration_backfill_on_old_library` 红；实得：**该用例红**，其余 8 绿 |
+| RED-M3 | `vault/src/lib.rs` 版本护栏 | `if version > SCHEMA_VERSION` → `if false` | ✅ 预期：`r44_newer_schema_is_refused_without_writing` 红；实得：**红** |
+| RED-M4 | `vault/src/lib.rs` 写锁 | `libc::flock(...)` → `let rc = 0`（永不失败） | ✅ 预期：写锁相关两用例红；实得：**`r44_single_instance_write_lock` + `r44_backup_and_restore_refused_while_locked` 红** |
+| RED-M5 | `scripts/check-old-ui-contract.py` | 从 `generate_handler!` 移除 `close_session` | ✅ 预期：报「核心缺少命令」且 exit 1；实得：**exit 1，列出 `close_session`** |
+| RED-M6 | 同上 | 把 `set_session_goal` 的 `sid` 参数改名为 `session_id` | ✅ 预期：报参数名对不上；实得：**exit 1，`set_session_goal: 旧 UI 传 sid，核心参数为 [...]`** |
+| RED-M7 | `vault/src/lib.rs` `open()` | 把 `journal_mode=WAL` 移回护栏**之前**（复现审核 F1） | ✅ 预期：新非 WAL 字节用例独红、原「零写」用例仍绿；实得：**`r44_refusal_writes_no_bytes_even_on_non_wal_db` 独红（9 passed; 1 failed），`r44_newer_schema_is_refused_without_writing` 仍 ok**——证原用例判别力不足 |
+| RED-M8 | `vault/src/lib.rs` `restore_from` | 核心表校验置空（`if n == 0 && false`，复现审核 F2） | ✅ 预期：校验类用例红；实得：**`r44_restore_refuses_partial_vault_and_keeps_target` + `r44_restore_refuses_non_vault_backup` 红（2 passed; 2 failed）** |
+| RED-M9 | `vault/src/lib.rs` `restore_from` | 自我恢复守卫置空（`if a == b && false`，复现审核 F7） | ✅ 预期：`r44_restore_refuses_same_file` 红；实得：**该用例红**（11 passed; 2 failed，另一红为 RED-M10 同批） |
+| RED-M10 | `vault/src/lib.rs` `backup_to` | 库存在性守卫置空（`if !db_path.exists() && false`，复现审核 F8） | ✅ 预期：`r44_backup_refuses_missing_db` 红；实得：**该用例红** |
+| RED-M11 | `vault/src/lib.rs` `restore_from_snapshot` | 改为直接从**来源** `from` 读（不拷到私有副本，复现二轮 N-1） | ✅ 预期：`r44_restore_does_not_touch_source_sidecars` 红；实得：**该用例红（13 passed; 1 failed，报文「不得在来源旁留下 -wal 侧车」）** |
+| RED-M12 | `crates/cli/src/main.rs` `VaultCmd::Restore` | 把预探测 `read_schema_version(&from)` 加回（复现**三轮** N-1 CLI 半边） | ✅ 预期：真二进制 `vault restore` 在来源旁复现 `-shm`/`-wal`、只读目录恢复失败；实得：**`ls src.db*` 出现 `src.db-shm`/`src.db-wal`（LEAK 复现）**，只读目录恢复亦失败——证 CLI 层修复有判别力（Edit 反向还原） |
+
+RED-M3/M4 实跑输出（同批变异，`cargo test -p tinyssh-vault --lib r44`）：
+
+```
+test tests::r44_single_instance_write_lock ... FAILED
+test tests::r44_newer_schema_is_refused_without_writing ... FAILED
+test tests::r44_backup_and_restore_refused_while_locked ... FAILED
+test result: FAILED. 4 passed; 3 failed; 0 ignored; 0 measured; 32 filtered out
+```
+
+还原后：`grep -n MUTANT crates/vault/src/lib.rs` → 无命中；`cargo test -p tinyssh-vault`
+→ **46 lib + 10 matrix 全绿**；`cargo test --workspace --no-fail-fast` → **34 target 全绿 exit 0
+（255 passed）**。
+
+## 独立审核发现（rev-r44 首轮不可签 → 已处置）
+
+审核员以**真二进制**复现两条高阻断（非读码推断）：
+
+- **F1**：`open()` 先 `PRAGMA journal_mode=WAL` 再进护栏。`journal_mode=WAL` 会改写库文件头
+  并把库永久切到 WAL——审核员对一个非 WAL 的未来版本库实测 sha256 变化、`journal_mode`
+  由 `delete` 翻成 `wal`。**主张被证伪**：注释与 README 的「任何写操作之前」「一个字节都不写」
+  当时不成立。**处置**：只读 `ensure_schema_supported()` 前置到设 WAL 之前；补非 WAL 库
+  逐字节断言用例（RED-M7 实证判别力）。
+- **F2**：`restore_from` 只查 `hosts` 表。审核员以真二进制复现：指向「恰好有 `hosts` 表的
+  垃圾文件」→ 真库 **11 张表 → 只剩 `hosts`**、应用再也打不开、无任何回退。**处置**：校验
+  升为 **V1 核心表全套**；**先在临时副本上试迁移到链尾再动目标库**（原为「先覆盖、后验证」）；
+  覆盖前自动留 `<db>.pre-restore.bak` 安全副本（`VACUUM INTO`）；CLI 打印副本路径
+  （RED-M8 实证）。
+- **F3（中，证据缺陷）**：`cli-smoke.txt` 是坏 harness——整条命令行当单个 argv 传（zsh 不按
+  空格分词），7 条命令实际全报 `unrecognized subcommand`，而 README 宣称「全在且可用」。
+  **主张为真、引用证据相反**。**处置**：命令与参数分开传、逐族真调用重跑（已重生成）。
+- **F4（中）**：「MCP 端点可用」是据 `collab_enabled()` 的推断非实跑。**处置**：README 措辞
+  降级并标注为推断。
+- **F5/F6（低）**：锁粒度=每个 `Vault` 对象（同进程两个也互斥）；护栏拒绝后残留空 `.lock`。
+  **处置**：均**有意为之**并在 `VaultLock` 文档注释写明理由（锁文件**不可** unlink——A 持锁时
+  B unlink → C 建同名新文件拿到独立锁 → 互斥破坏）。审核员另确认 `drop(m2)` 是**正当修正**、
+  非掩盖缺陷（对照 HEAD 原文核过）。
+- **F7/F8（低）**：`restore_from(from==db_path)` 未测；`backup_to` 对不存在的库会先建空库。
+  **处置**：各自加显式拒绝 + 用例（RED-M9/M10 实证）。
+- **N-1（低，二轮发现 / 三轮补刀）**：`restore_from` 以**只读**打开**来源**校验，而只读打开
+  WAL 库仍会写 wal-index（`-shm`/`-wal` 侧车），会在来源旁留文件、只读介质上失败。
+  **二轮处置（库层）**：`restore_from` 改为把来源（连同侧车）拷到私有临时文件
+  `<db>.restore.src` 再读，绝不在来源旁写；新增 `r44_restore_does_not_touch_source_sidecars`
+  （RED-M11 实证）。**三轮复核发现只修了一半**：CLI 在 `restore_from` **之前**仍调
+  `read_schema_version(&from)`（`crates/cli/src/main.rs`），同样只读打开原始来源 → 真二进制
+  `vault restore` 仍会漏侧车、只读介质上仍失败。**三轮处置（CLI 层）**：`restore_from` 改为
+  返回在副本上读出的来源版本，CLI 删掉预探测、直接用返回值（RED-M12 实证；`cli-smoke.txt`
+  D 节为真二进制证据）。两处均已 Edit 反向还原。
+
+审核员**独立复跑**背书（其两轮报告原文）：vault 39/0（首轮，修复前）→ 45/0（二轮）；
+workspace **34 target / 0 FAILED / exit 0**（两轮一致）；契约脚本 20⊆74 / 22 键（二轮重跑）；
+视觉复验判定 **N/A**（`git diff --name-only HEAD -- ui/` 为空，本轮未触前端）。**workspace
+的 `passed` 计数不列入审核员背书**——审核员明确只背书「34 target / 0 FAILED / exit 0」，
+`passed` 属作者侧对账：首轮树 248、二轮树 254、**N-1 修复后作者复跑 255**。（审核员二轮
+报告称其从未产出 248，与其**首轮**报告 §5 原文「34 target、248 passed、0 FAILED、exit 0」
+不一致——此处如实并列两说，以 target 数 / 0 FAILED / exit 0 为共同背书口径。）审核员**未跑**：
+原生 GUI 冒烟、任何 tauri/vite 构建
+（故 `ui-switch-embed.txt` 的哈希数字未独立复现）、`ui-switch.sh`、`cargo build --release`、
+`tsc`、sshd e2e——这些仍属**未主张/待人工确认**。
+
+## 附带发现（非变异，属实现缺陷）
+
+RED-M4 的写锁在**既有测试** `r32_tests::r32_restart_recovery_marks_interrupted` 上暴露了
+一处真实冲突：该用例模拟「进程重启」，但未 drop 上一个 manager（`m2` 存活到函数结束），
+在新写锁下会挡住后续 `open`。**这不是锁的错误**——「同一 vault 两个活着的 manager」正是
+§10.2 写锁要禁止的状态。修法是让用例先 `drop(m2)`（恢复其「顺序重启」本意），已在
+`crates/core-session/src/r32_tests.rs` 就地修正并注明。修后该用例绿。
+
+## 「可签」的适用范围（逐轮登记）
+
+- **二轮**：审核员**可签**只覆盖其复核时的树（未提交 diff 哈希 `704e0a8…`，当时 vault
+  45/13、workspace passed 254）。
+- **三轮**：审核员对**冻结树 `79b2447`** 做定向复核 → 判 **N-1 未闭合、就 N-1 而言不可签**
+  （库层已修、**CLI 层仍泄漏**：真二进制 `vault restore` 仍往来源旁写 `-shm`/`-wal`，且只读
+  目录恢复实测仍失败）；F1–F8 维持二轮可签；workspace 复跑 **34 target / 0 FAILED / exit 0 /
+  255 passed** 与作者逐项一致；F2/F7 未回归（真二进制：拒绝残缺库后真库 11 表原样存活、
+  拒绝自我恢复、覆盖前 `.pre-restore.bak` 生成）。
+- **三轮处置**：CLI 层预探测已删（见上），RED-M12 实证判别力。
+- **四轮**：审核员对**冻结树 `fec3a1b`** 做定向复核 → **可签（0 阻断），N-1 两半均已闭合**。
+  独立实证：D1/D2 真二进制通过；**双向变异**（CLI 预探测加回 → D1/D2 双复现；库层 `open(from)`
+  → `r44_restore_does_not_touch_source_sidecars` 独红）证判别力；F2/F7 未回归；workspace
+  **34 target / 0 FAILED / exit 0 / 255 passed** 与作者逐项一致。
+- **「可签」最终范围 = 代码面 `fec3a1b`**（`crates/cli/src/main.rs` sha256 `b07dbeb6…`、
+  `crates/vault/src/lib.rs` sha256 `18f90764…`）；本提交在其上**仅追加文档**，`crates/`
+  逐字节不变，故可签对最终提交成立。作者侧数字（vault 46/14、workspace 255）不计入审核员背书。
+- 审核员登记**信息项（非缺陷）**：`read_schema_version` 其余 CLI 调用点
+  （`crates/cli/src/main.rs` 的 backup 后回读、恢复后读目标、`vault version`）都作用于
+  **用户自己的活动库**，那里侧车本就该存在，属有意为之，与新增的文档警告一致。

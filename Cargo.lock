@@ -6358,6 +6358,7 @@ dependencies = [
  "chrono",
  "hex",
  "keyring",
+ "libc",
  "rand 0.9.5",
  "rand_core 0.10.1",
  "rusqlite",

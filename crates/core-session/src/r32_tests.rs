@@ -390,6 +390,10 @@ async fn r32_restart_recovery_marks_interrupted() {
         decision_prompt: None,
     })
     .unwrap();
+    // R44（§10.2 单实例写锁）：模拟「进程重启」须先让上一个进程退出——否则同一 vault
+    // 上会同时存在两个活着的 manager，而写锁按设计禁止这种状态。此前 m2 一直存活到函数
+    // 结束（未 drop），在新锁下会挡住后续 open；此处显式 drop，恢复本用例「顺序重启」语义。
+    drop(m2);
     {
         drop(SessionManager::open(&db).unwrap());
     }

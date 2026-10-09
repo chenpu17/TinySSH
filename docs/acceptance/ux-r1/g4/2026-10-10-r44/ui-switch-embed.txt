@@ -1,0 +1,47 @@
+# R44 `TINYSSH_UI_V2` 开关 —— 构建内嵌判别证据
+
+**主张**：`TINYSSH_UI_V2` 切换**窗口加载/内嵌的前端**，而**核心不变**（同一份 Rust
+代码、同一个二进制路径、同一个进程；写锁保证同一 vault 只有一个实例，故新旧 UI 不会
+各自起一套 MCP 端点）。以下是「同一 `CARGO_TARGET_DIR`，仅切 `TINYSSH_UI_V2`」两次
+`--no-bundle` 构建的内嵌资源判别——若开关无效，两次会内嵌同一套资源。
+
+命令（隔离 target，避免污染主 target 的产物/缓存）：
+
+```
+CARGO_TARGET_DIR=/tmp/r44-oldui-target TINYSSH_UI_V2=0 scripts/ui-switch.sh build --no-bundle
+CARGO_TARGET_DIR=/tmp/r44-oldui-target TINYSSH_UI_V2=1 scripts/ui-switch.sh build --no-bundle
+```
+
+判别：`grep -ac <资源键> <binary>`（Tauri 把前端资源以相对路径为键内嵌，键名不压缩）。
+
+## 第一次：`TINYSSH_UI_V2=0`（旧 UI）
+
+- `SCRIPT_EXIT=0`；`Finished release profile ... Built application at: .../tinyssh-app`（36246032 字节）
+- 旧 UI 资源键命中：
+  - `index-yP7p5Ktu.js` → **1**
+  - `index-CaT58Wfd.css` → **1**
+- 新 UI 资源键命中（对照，应 0）：
+  - `index-7vi38ZWV.js` → **0**
+  - `index-O54pqTGs.css` → **0**
+
+（旧 UI 资源键来自 `npm run build --prefix .worktrees/old-ui/ui`，即 tag `old-ui-baseline-g0` 的前端产物。）
+
+## 第二次：`TINYSSH_UI_V2=1`（新 UI，同一 target）
+
+- `SCRIPT_EXIT=0`；增量 `Finished release profile ... in 21.60s`
+- 新 UI 资源键命中：
+  - `index-DfV-LLQa.js` → **1**
+  - `index-O54pqTGs.css` → **1**
+- 旧 UI 资源键命中（对照，应 0）：
+  - `index-yP7p5Ktu.js` → **0**
+  - `index-CaT58Wfd.css` → **0**
+
+（第二次的新 UI 资源名与第一次对照用的旧名不同，因 `beforeBuildCommand` 重跑了新 UI 的
+`vite build`，哈希随之变化——不影响判别：两次内嵌的是**互斥**的两套资源。）
+
+## 未主张
+
+- 只证了**构建期内嵌**随开关切换；`scripts/ui-switch.sh dev`（`tauri dev` 指向 5184 的
+  旧 UI vite）**未实跑**——它要拉起原生窗口，受屏幕锁定闸限制（见 README「未主张」）。
+- 只证了「旧 UI 资源被内嵌」。旧 UI 是否**运行正确**属原生域，另见
+  `contract-check.txt`（命令/参数名契约）与 README 的待人工确认项。

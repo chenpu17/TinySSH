@@ -57,6 +57,21 @@ enum Cmd {
         #[command(subcommand)]
         cmd: AuditCmd,
     },
+    /// 库备份 / 恢复 / 版本（§10.2 回退演练；需独占写锁，故不与其他子命令并发）
+    Vault {
+        #[command(subcommand)]
+        cmd: VaultCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum VaultCmd {
+    /// 导出库快照（升级后要回退到旧版本前，务必先备份）
+    Backup { out: String },
+    /// 从备份恢复（目标库须无其他实例占用；来源版本不得高于本程序）
+    Restore { from: String },
+    /// 打印库 schema 版本与本程序支持版本（只读探测，不迁移）
+    Version,
 }
 
 #[derive(Subcommand)]
@@ -179,6 +194,60 @@ fn human() -> Actor {
     Actor::Human
 }
 
+/// R44（§10.2 回退演练）：库的备份 / 恢复 / 版本查询。
+/// 全部走 `tinyssh_vault` 的写锁路径——同一库若有实例在跑则拒绝，避免与运行中进程抢写。
+fn vault_cmd(db: &std::path::Path, cmd: VaultCmd) -> Result<()> {
+    match cmd {
+        VaultCmd::Backup { out } => {
+            let out = std::path::PathBuf::from(out);
+            tinyssh_vault::backup_to(db, &out)?;
+            let v = tinyssh_vault::read_schema_version(db)?;
+            println!(
+                "已导出备份：{}（schema 版本 {}）",
+                out.display(),
+                v.map(|x| x.to_string()).unwrap_or_else(|| "?".into())
+            );
+            Ok(())
+        }
+        VaultCmd::Restore { from } => {
+            let from = std::path::PathBuf::from(from);
+            let had_db = db.exists();
+            // R44 审核 N-1（CLI 半边）：**不要**在此预探测原始 `from`——`read_schema_version`
+            // 只读打开 WAL 库也会在来源旁建 `-shm`/`-wal`（往用户备份旁塞文件；来源在只读
+            // 介质上还会直接失败）。来源版本改由 `restore_from` 在私有副本上读出并返回。
+            let src_v = tinyssh_vault::restore_from(db, &from)?;
+            // 迁移已在 `restore_from` 内于替换目标库**之前**完成（在快照上试迁移到链尾）。
+            // 此处再打开一次是**冗余校验**：确认恢复结果确实能被本程序正常打开。
+            drop(SessionManager::open(db)?);
+            let now = tinyssh_vault::read_schema_version(db)?;
+            println!("已从 {} 恢复到 {}", from.display(), db.display());
+            if had_db {
+                println!(
+                    "恢复前的库已留安全副本：{}",
+                    tinyssh_vault::pre_restore_backup_path(db).display()
+                );
+            }
+            if let Some(a) = now {
+                if a != src_v {
+                    println!("schema 版本：{src_v} → {a}（已迁移到本程序支持的版本）");
+                }
+            }
+            Ok(())
+        }
+        VaultCmd::Version => {
+            match tinyssh_vault::read_schema_version(db)? {
+                Some(v) => println!(
+                    "库 {}：schema 版本 {v}（本程序支持 {}）",
+                    db.display(),
+                    tinyssh_vault::SCHEMA_VERSION
+                ),
+                None => println!("库 {}：不存在（尚未创建）", db.display()),
+            }
+            Ok(())
+        }
+    }
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -187,6 +256,13 @@ async fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
     let db = db_path(&cli)?;
+
+    // R44（§10.2）：vault 子命令需**独占写锁**，而 `SessionManager::open` 会先取锁
+    // （同进程对同一库再取 flock 会失败）。故必须在打开 manager **之前**分派。
+    if let Cmd::Vault { cmd } = cli.cmd {
+        return vault_cmd(&db, cmd);
+    }
+
     let m = SessionManager::open(&db)?;
 
     match cli.cmd {
@@ -197,6 +273,8 @@ async fn main() -> Result<()> {
         Cmd::Session { cmd } => session_cmd(m, cmd).await,
         Cmd::Approval { cmd } => approval_cmd(m, cmd).await,
         Cmd::Audit { cmd } => audit_cmd(m, cmd).await,
+        // 已在上面提前分派（需在取写锁前执行）
+        Cmd::Vault { .. } => unreachable!("vault 子命令应在打开 SessionManager 之前返回"),
     }
 }
 

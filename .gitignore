@@ -12,3 +12,6 @@ pv-data/
 # 冒烟工具字节码缓存
 scripts/native-smoke/__pycache__/
 scripts/perf/__pycache__/
+
+# 旧 UI 基线工作树（R44 §10.2 回退演练用；随 G5 发布候选一并移除）
+/.worktrees/
