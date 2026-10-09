@@ -1,0 +1,1140 @@
+[
+  {
+    "k": "L 主题",
+    "v": "light"
+  },
+  {
+    "k": "L 会话",
+    "v": "s-demo-0001"
+  },
+  {
+    "k": "L-1 停用态协作面板",
+    "v": {
+      "disabled": 1,
+      "disabledText": "协作已停用。新 Agent 请求已被拒绝。打开设置 → Agent 接入",
+      "apGroup": 0,
+      "approvalsC": 0,
+      "goalInput": 0,
+      "delegateOpen": 0,
+      "collabEntry": 0,
+      "panelBox": {
+        "x": 896,
+        "y": 124,
+        "w": 384,
+        "h": 652
+      },
+      "emptyBox": {
+        "x": 907,
+        "y": 172,
+        "w": 363,
+        "h": 73.4
+      },
+      "openSettingsBtn": 1,
+      "openSettingsBox": {
+        "x": 931,
+        "y": 206.4,
+        "w": 154,
+        "h": 31
+      },
+      "openSettingsHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "ghost",
+        "hitTestid": "collab-open-settings"
+      },
+      "panelMinContrast": {
+        "ratio": 4.03,
+        "text": "需复核"
+      },
+      "panelOverlaps": [],
+      "panelClip": {
+        "sw": 383,
+        "cw": 383,
+        "sh": 652,
+        "ch": 652,
+        "hClip": false,
+        "vClip": false
+      },
+      "panelSections": [
+        {
+          "h": "委托",
+          "text": "委托协作已停用，暂不能委托。先到「设置 → Agent 接入」启用。打开设置 → Agent 接入",
+          "h_": 94.1,
+          "textarea": 0,
+          "btn": 1
+        },
+        {
+          "h": "任务目标",
+          "text": "任务目标协作未启用。任务目标用于向 Agent 说明委托意图。",
+          "h_": 63.1,
+          "textarea": 0,
+          "btn": 0
+        },
+        {
+          "h": "现场简报",
+          "text": "现场简报已核实当前目录 /var/log/nginx已核实$ df -h · 成功需复核重连后进入重确认：仅内置只读白名单可用",
+          "h_": 151.5,
+          "textarea": 0,
+          "btn": 0
+        }
+      ],
+      "panelDupBtns": {
+        "total": 2,
+        "dups": {
+          "打开设置 → Agent 接入": [
+            {
+              "testid": "collab-open-settings",
+              "y": 206.4,
+              "x": 931
+            },
+            {
+              "testid": "collab-open-settings-delegate",
+              "y": 308.5,
+              "x": 907
+            }
+          ]
+        }
+      },
+      "goalTextarea": 0,
+      "emptyTextW": {
+        "textW": 233.5,
+        "textH": 57.4,
+        "scrollW": 363,
+        "clientW": 363,
+        "ws": "normal",
+        "to": "clip",
+        "overflow": "visible"
+      }
+    }
+  },
+  {
+    "k": "L-2 停用态设置",
+    "v": {
+      "pane": 1,
+      "catOn": {
+        "sel": "true",
+        "cls": "on"
+      },
+      "disabledNote": 1,
+      "noteText": "协作已停用——MCP 端点未运行，Agent 请求一律被拒绝。要使用协作请显式启用。",
+      "endpoint": 0,
+      "disableBtn": 0,
+      "enableBtn": 1,
+      "enableBtnText": "启用协作",
+      "keptAgents": 0,
+      "agentList": 0,
+      "agentEmpty": 0,
+      "stateChip": "协作已停用",
+      "stateChipStyle": {
+        "color": "rgb(179, 72, 77)",
+        "bg": "rgb(244, 246, 248)",
+        "fontSize": "11px",
+        "zIndex": "auto",
+        "display": "inline-block",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "static"
+      },
+      "stateChipContrast": 4.91,
+      "configured": "已配置 0",
+      "active": "有活动请求 0",
+      "panelBox": {
+        "x": 330,
+        "y": 283.5,
+        "w": 620,
+        "h": 233
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "enableHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "",
+        "hitTestid": "collab-enable-btn"
+      },
+      "paneMinContrast": {
+        "ratio": 4.91,
+        "text": "协作已停用"
+      },
+      "paneOverlaps": [],
+      "paneDupBtns": {
+        "total": 1,
+        "dups": {}
+      },
+      "inVp": {
+        "fully": true,
+        "l": 330,
+        "t": 283.5,
+        "r": 950,
+        "b": 516.5,
+        "vw": 1280,
+        "vh": 800
+      }
+    }
+  },
+  {
+    "k": "L-3 启用后设置",
+    "v": {
+      "stateChip": "协作已启用",
+      "stateChipStyle": {
+        "color": "rgb(46, 125, 50)",
+        "bg": "rgb(244, 246, 248)",
+        "fontSize": "11px",
+        "zIndex": "auto",
+        "display": "inline-block",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "static"
+      },
+      "stateChipContrast": 4.73,
+      "endpoint": 1,
+      "endpointText": "http://127.0.0.1:8722/mcp（演示模式）",
+      "endpointBox": {
+        "x": 465.9,
+        "y": 408.4,
+        "w": 240.2,
+        "h": 13
+      },
+      "endpointTextW": {
+        "textW": 240.2,
+        "textH": 13,
+        "scrollW": 0,
+        "clientW": 0,
+        "ws": "normal",
+        "to": "clip",
+        "overflow": "visible"
+      },
+      "configured": "已配置 0",
+      "configuredBox": {
+        "x": 512.7,
+        "y": 301.6,
+        "w": 44,
+        "h": 16
+      },
+      "active": "有活动请求 0",
+      "activeBox": {
+        "x": 556.6,
+        "y": 301.6,
+        "w": 66.2,
+        "h": 16
+      },
+      "cfgVsActOverlap": {
+        "w": 0,
+        "h": 16,
+        "area": 0
+      },
+      "disableBtn": 1,
+      "disableBtnText": "停用协作…",
+      "disableBtnBox": {
+        "x": 439,
+        "y": 534.5,
+        "w": 86,
+        "h": 31
+      },
+      "disableBtnHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "ghost",
+        "hitTestid": "collab-disable-btn"
+      },
+      "enableBtn": 0,
+      "agentEmpty": 1,
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 294,
+        "ch": 294,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 3.91,
+        "text": "停用协作…"
+      },
+      "paneOverlaps": []
+    }
+  },
+  {
+    "k": "L-4 前置计数",
+    "v": {
+      "cfg": "已配置 1",
+      "act": "有活动请求 2"
+    }
+  },
+  {
+    "k": "L-4 停用预览对话框",
+    "v": {
+      "dlg": true,
+      "title": "停用协作？",
+      "facts": [
+        "受影响的 Agent 会话 1 （转为你的控制，不自动终止已开始的任务）",
+        "待审批请求 1 （作废）",
+        "已配置 Agent 1 （身份与 Token 保留）"
+      ],
+      "btns": [
+        {
+          "t": "确认停用",
+          "testid": "collab-disable-confirm",
+          "box": {
+            "x": 693,
+            "y": 540.7,
+            "w": 72,
+            "h": 31
+          },
+          "hit": true
+        },
+        {
+          "t": "取消",
+          "testid": "collab-disable-cancel",
+          "box": {
+            "x": 773,
+            "y": 540.7,
+            "w": 50,
+            "h": 31
+          },
+          "hit": true
+        }
+      ],
+      "dlgText": "停用协作？确认后立即封闭入口——新 Agent 请求一律被拒绝，不等待你逐个接管；已有请求在执行开始前核对停用代际，作废留痕，不会因旧审批决定继续执行。受影响的 Agent 会话 1 （转为你的控制，不自动终止已开始的任务）待审批请求 1 （作废）已配置 Agent 1 （身份与 Token 保留）运行中的 Agent 任务不会被自动终止；应用拥有的 MCP 端点随之停止（外部 shim 是独立进程，不受影响）。重新启用须显式操作，先前作废的请求不会复活。确认停用取消",
+      "hasTokenKeep": true,
+      "impactSessions": "1",
+      "impactApprovals": "1",
+      "impactAgents": "1",
+      "dlgBox": {
+        "x": 440,
+        "y": 213.3,
+        "w": 400,
+        "h": 373.3
+      },
+      "dlgInVp": {
+        "fully": true,
+        "l": 440,
+        "t": 213.3,
+        "r": 840,
+        "b": 586.7,
+        "vw": 1280,
+        "vh": 800
+      },
+      "dlgClip": {
+        "sw": 398,
+        "cw": 398,
+        "sh": 371,
+        "ch": 371,
+        "hClip": false,
+        "vClip": false
+      },
+      "dlgMinContrast": {
+        "ratio": 5.25,
+        "text": "受影响的 Agent 会话"
+      },
+      "dlgOverlaps": [],
+      "maskZ": {
+        "color": "rgb(36, 46, 56)",
+        "bg": "rgba(30, 42, 54, 0.38)",
+        "fontSize": "13.5px",
+        "zIndex": "90",
+        "display": "flex",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "fixed"
+      },
+      "settingsZ": {
+        "color": "rgb(36, 46, 56)",
+        "bg": "rgb(255, 255, 255)",
+        "fontSize": "13.5px",
+        "zIndex": "42",
+        "display": "flex",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "fixed"
+      },
+      "centerHit": {
+        "tag": "DIV",
+        "testid": null
+      }
+    }
+  },
+  {
+    "k": "L-5 停用后设置",
+    "v": {
+      "stateChip": "协作已停用",
+      "stateChipStyle": {
+        "color": "rgb(179, 72, 77)",
+        "bg": "rgb(244, 246, 248)",
+        "fontSize": "11px",
+        "zIndex": "auto",
+        "display": "inline-block",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "static"
+      },
+      "stateChipContrast": 4.91,
+      "endpoint": 0,
+      "keptAgents": 1,
+      "keptText": "已配置的 Agent（Token 保留，重新启用后继续可用）：R43 视觉复验 Agent",
+      "keptBox": {
+        "x": 439,
+        "y": 416.2,
+        "w": 498,
+        "h": 17
+      },
+      "keptInVp": {
+        "fully": true,
+        "l": 439,
+        "t": 416.2,
+        "r": 937,
+        "b": 433.2,
+        "vw": 1280,
+        "vh": 800
+      },
+      "keptMinContrast": {
+        "ratio": 5.69,
+        "text": "已配置的 Agent（Token 保留，重新启用后继续可用）："
+      },
+      "noteText": "协作已停用——MCP 端点未运行，Agent 请求一律被拒绝。要使用协作请显式启用。",
+      "disableBtn": 0,
+      "enableBtn": 1,
+      "configured": "已配置 1",
+      "active": "有活动请求 0",
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 4.91,
+        "text": "协作已停用"
+      },
+      "paneOverlaps": [],
+      "collabState": null
+    }
+  },
+  {
+    "k": "L JS 异常",
+    "v": []
+  },
+  {
+    "k": "D 主题",
+    "v": "dark"
+  },
+  {
+    "k": "D 会话",
+    "v": "s-demo-0001"
+  },
+  {
+    "k": "D-1 停用态协作面板",
+    "v": {
+      "disabled": 1,
+      "disabledText": "协作已停用。新 Agent 请求已被拒绝。打开设置 → Agent 接入",
+      "apGroup": 0,
+      "approvalsC": 0,
+      "goalInput": 0,
+      "delegateOpen": 0,
+      "collabEntry": 0,
+      "panelBox": {
+        "x": 896,
+        "y": 124,
+        "w": 384,
+        "h": 652
+      },
+      "emptyBox": {
+        "x": 907,
+        "y": 172,
+        "w": 363,
+        "h": 73.4
+      },
+      "openSettingsBtn": 1,
+      "openSettingsBox": {
+        "x": 931,
+        "y": 206.4,
+        "w": 154,
+        "h": 31
+      },
+      "openSettingsHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "ghost",
+        "hitTestid": "collab-open-settings"
+      },
+      "panelMinContrast": {
+        "ratio": 2.7,
+        "text": "成功"
+      },
+      "panelOverlaps": [],
+      "panelClip": {
+        "sw": 383,
+        "cw": 383,
+        "sh": 652,
+        "ch": 652,
+        "hClip": false,
+        "vClip": false
+      },
+      "panelSections": [
+        {
+          "h": "委托",
+          "text": "委托协作已停用，暂不能委托。先到「设置 → Agent 接入」启用。打开设置 → Agent 接入",
+          "h_": 94.1,
+          "textarea": 0,
+          "btn": 1
+        },
+        {
+          "h": "任务目标",
+          "text": "任务目标协作未启用。任务目标用于向 Agent 说明委托意图。",
+          "h_": 63.1,
+          "textarea": 0,
+          "btn": 0
+        },
+        {
+          "h": "现场简报",
+          "text": "现场简报已核实当前目录 /var/log/nginx已核实$ df -h · 成功需复核重连后进入重确认：仅内置只读白名单可用",
+          "h_": 151.5,
+          "textarea": 0,
+          "btn": 0
+        }
+      ],
+      "panelDupBtns": {
+        "total": 2,
+        "dups": {
+          "打开设置 → Agent 接入": [
+            {
+              "testid": "collab-open-settings",
+              "y": 206.4,
+              "x": 931
+            },
+            {
+              "testid": "collab-open-settings-delegate",
+              "y": 308.5,
+              "x": 907
+            }
+          ]
+        }
+      },
+      "goalTextarea": 0,
+      "emptyTextW": {
+        "textW": 233.5,
+        "textH": 57.4,
+        "scrollW": 363,
+        "clientW": 363,
+        "ws": "normal",
+        "to": "clip",
+        "overflow": "visible"
+      }
+    }
+  },
+  {
+    "k": "D-2 停用态设置",
+    "v": {
+      "pane": 1,
+      "catOn": {
+        "sel": "true",
+        "cls": "on"
+      },
+      "disabledNote": 1,
+      "noteText": "协作已停用——MCP 端点未运行，Agent 请求一律被拒绝。要使用协作请显式启用。",
+      "endpoint": 0,
+      "disableBtn": 0,
+      "enableBtn": 1,
+      "enableBtnText": "启用协作",
+      "keptAgents": 0,
+      "agentList": 0,
+      "agentEmpty": 0,
+      "stateChip": "协作已停用",
+      "stateChipStyle": {
+        "color": "rgb(208, 122, 122)",
+        "bg": "rgb(20, 25, 34)",
+        "fontSize": "11px",
+        "zIndex": "auto",
+        "display": "inline-block",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "static"
+      },
+      "stateChipContrast": 5.66,
+      "configured": "已配置 0",
+      "active": "有活动请求 0",
+      "panelBox": {
+        "x": 330,
+        "y": 283.5,
+        "w": 620,
+        "h": 233
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "enableHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "",
+        "hitTestid": "collab-enable-btn"
+      },
+      "paneMinContrast": {
+        "ratio": 3.01,
+        "text": "Agent 接入（MCP）"
+      },
+      "paneOverlaps": [],
+      "paneDupBtns": {
+        "total": 1,
+        "dups": {}
+      },
+      "inVp": {
+        "fully": true,
+        "l": 330,
+        "t": 283.5,
+        "r": 950,
+        "b": 516.5,
+        "vw": 1280,
+        "vh": 800
+      }
+    }
+  },
+  {
+    "k": "D-3 启用后设置",
+    "v": {
+      "stateChip": "协作已启用",
+      "stateChipStyle": {
+        "color": "rgb(127, 191, 143)",
+        "bg": "rgb(20, 25, 34)",
+        "fontSize": "11px",
+        "zIndex": "auto",
+        "display": "inline-block",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "static"
+      },
+      "stateChipContrast": 8.18,
+      "endpoint": 1,
+      "endpointText": "http://127.0.0.1:8722/mcp（演示模式）",
+      "endpointBox": {
+        "x": 465.9,
+        "y": 408.4,
+        "w": 240.2,
+        "h": 13
+      },
+      "endpointTextW": {
+        "textW": 240.2,
+        "textH": 13,
+        "scrollW": 0,
+        "clientW": 0,
+        "ws": "normal",
+        "to": "clip",
+        "overflow": "visible"
+      },
+      "configured": "已配置 0",
+      "configuredBox": {
+        "x": 512.7,
+        "y": 301.6,
+        "w": 44,
+        "h": 16
+      },
+      "active": "有活动请求 0",
+      "activeBox": {
+        "x": 556.6,
+        "y": 301.6,
+        "w": 66.2,
+        "h": 16
+      },
+      "cfgVsActOverlap": {
+        "w": 0,
+        "h": 16,
+        "area": 0
+      },
+      "disableBtn": 1,
+      "disableBtnText": "停用协作…",
+      "disableBtnBox": {
+        "x": 439,
+        "y": 534.5,
+        "w": 86,
+        "h": 31
+      },
+      "disableBtnHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "ghost",
+        "hitTestid": "collab-disable-btn"
+      },
+      "enableBtn": 0,
+      "agentEmpty": 1,
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 294,
+        "ch": 294,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 3.01,
+        "text": "Agent 接入（MCP）"
+      },
+      "paneOverlaps": []
+    }
+  },
+  {
+    "k": "D-4 前置计数",
+    "v": {
+      "cfg": "已配置 1",
+      "act": "有活动请求 2"
+    }
+  },
+  {
+    "k": "D-4 停用预览对话框",
+    "v": {
+      "dlg": true,
+      "title": "停用协作？",
+      "facts": [
+        "受影响的 Agent 会话 1 （转为你的控制，不自动终止已开始的任务）",
+        "待审批请求 1 （作废）",
+        "已配置 Agent 1 （身份与 Token 保留）"
+      ],
+      "btns": [
+        {
+          "t": "确认停用",
+          "testid": "collab-disable-confirm",
+          "box": {
+            "x": 693,
+            "y": 540.7,
+            "w": 72,
+            "h": 31
+          },
+          "hit": true
+        },
+        {
+          "t": "取消",
+          "testid": "collab-disable-cancel",
+          "box": {
+            "x": 773,
+            "y": 540.7,
+            "w": 50,
+            "h": 31
+          },
+          "hit": true
+        }
+      ],
+      "dlgText": "停用协作？确认后立即封闭入口——新 Agent 请求一律被拒绝，不等待你逐个接管；已有请求在执行开始前核对停用代际，作废留痕，不会因旧审批决定继续执行。受影响的 Agent 会话 1 （转为你的控制，不自动终止已开始的任务）待审批请求 1 （作废）已配置 Agent 1 （身份与 Token 保留）运行中的 Agent 任务不会被自动终止；应用拥有的 MCP 端点随之停止（外部 shim 是独立进程，不受影响）。重新启用须显式操作，先前作废的请求不会复活。确认停用取消",
+      "hasTokenKeep": true,
+      "impactSessions": "1",
+      "impactApprovals": "1",
+      "impactAgents": "1",
+      "dlgBox": {
+        "x": 440,
+        "y": 213.3,
+        "w": 400,
+        "h": 373.3
+      },
+      "dlgInVp": {
+        "fully": true,
+        "l": 440,
+        "t": 213.3,
+        "r": 840,
+        "b": 586.7,
+        "vw": 1280,
+        "vh": 800
+      },
+      "dlgClip": {
+        "sw": 398,
+        "cw": 398,
+        "sh": 371,
+        "ch": 371,
+        "hClip": false,
+        "vClip": false
+      },
+      "dlgMinContrast": {
+        "ratio": 3.01,
+        "text": "确认后立即封闭入口——新 Agent 请求一律被拒绝，不等待你逐个接管；已有请求"
+      },
+      "dlgOverlaps": [],
+      "maskZ": {
+        "color": "rgb(212, 219, 230)",
+        "bg": "rgba(0, 0, 0, 0.45)",
+        "fontSize": "13.5px",
+        "zIndex": "90",
+        "display": "flex",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "fixed"
+      },
+      "settingsZ": {
+        "color": "rgb(212, 219, 230)",
+        "bg": "rgb(28, 36, 51)",
+        "fontSize": "13.5px",
+        "zIndex": "42",
+        "display": "flex",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "fixed"
+      },
+      "centerHit": {
+        "tag": "DIV",
+        "testid": null
+      }
+    }
+  },
+  {
+    "k": "D-5 停用后设置",
+    "v": {
+      "stateChip": "协作已停用",
+      "stateChipStyle": {
+        "color": "rgb(208, 122, 122)",
+        "bg": "rgb(20, 25, 34)",
+        "fontSize": "11px",
+        "zIndex": "auto",
+        "display": "inline-block",
+        "overflow": "visible",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "static"
+      },
+      "stateChipContrast": 5.66,
+      "endpoint": 0,
+      "keptAgents": 1,
+      "keptText": "已配置的 Agent（Token 保留，重新启用后继续可用）：R43 视觉复验 Agent",
+      "keptBox": {
+        "x": 439,
+        "y": 416.2,
+        "w": 498,
+        "h": 17
+      },
+      "keptInVp": {
+        "fully": true,
+        "l": 439,
+        "t": 416.2,
+        "r": 937,
+        "b": 433.2,
+        "vw": 1280,
+        "vh": 800
+      },
+      "keptMinContrast": {
+        "ratio": 3.01,
+        "text": "已配置的 Agent（Token 保留，重新启用后继续可用）："
+      },
+      "noteText": "协作已停用——MCP 端点未运行，Agent 请求一律被拒绝。要使用协作请显式启用。",
+      "disableBtn": 0,
+      "enableBtn": 1,
+      "configured": "已配置 1",
+      "active": "有活动请求 0",
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 3.01,
+        "text": "Agent 接入（MCP）"
+      },
+      "paneOverlaps": [],
+      "collabState": null
+    }
+  },
+  {
+    "k": "D JS 异常",
+    "v": []
+  },
+  {
+    "k": "N1024-2 停用态设置",
+    "v": {
+      "cat": 1,
+      "paneBox": {
+        "x": 311,
+        "y": 317.5,
+        "w": 498,
+        "h": 170
+      },
+      "panelBox": {
+        "x": 202,
+        "y": 267.5,
+        "w": 620,
+        "h": 233
+      },
+      "panelInVp": {
+        "fully": true,
+        "l": 202,
+        "t": 267.5,
+        "r": 822,
+        "b": 500.5,
+        "vw": 1024,
+        "vh": 768
+      },
+      "noteClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 22,
+        "ch": 22,
+        "hClip": false,
+        "vClip": false
+      },
+      "noteBox": {
+        "x": 311,
+        "y": 372.6,
+        "w": 498,
+        "h": 21.6
+      },
+      "enableBox": {
+        "x": 311,
+        "y": 402.2,
+        "w": 72,
+        "h": 29
+      },
+      "enableHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "",
+        "hitTestid": "collab-enable-btn"
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 4.91,
+        "text": "协作已停用"
+      },
+      "paneOverlaps": [],
+      "navBox": {
+        "x": 215,
+        "y": 317.5,
+        "w": 84,
+        "h": 170
+      },
+      "navVsPane": {
+        "w": -12,
+        "h": 170,
+        "area": 0
+      }
+    }
+  },
+  {
+    "k": "N1024-4 停用预览对话框",
+    "v": {
+      "dlg": true,
+      "facts": [
+        "受影响的 Agent 会话 1 （转为你的控制，不自动终止已开始的任务）",
+        "待审批请求 1 （作废）",
+        "已配置 Agent 1 （身份与 Token 保留）"
+      ],
+      "btns": [
+        {
+          "t": "确认停用",
+          "testid": "collab-disable-confirm",
+          "x": 565,
+          "y": 524.7,
+          "w": 72,
+          "h": 31,
+          "hit": true
+        },
+        {
+          "t": "取消",
+          "testid": "collab-disable-cancel",
+          "x": 645,
+          "y": 524.7,
+          "w": 50,
+          "h": 31,
+          "hit": true
+        }
+      ],
+      "hasTokenKeep": true,
+      "dlgBox": {
+        "x": 312,
+        "y": 197.3,
+        "w": 400,
+        "h": 373.3
+      },
+      "dlgInVp": {
+        "fully": true,
+        "l": 312,
+        "t": 197.3,
+        "r": 712,
+        "b": 570.7,
+        "vw": 1024,
+        "vh": 768
+      },
+      "dlgClip": {
+        "sw": 398,
+        "cw": 398,
+        "sh": 371,
+        "ch": 371,
+        "hClip": false,
+        "vClip": false
+      },
+      "dlgMinContrast": {
+        "ratio": 5.25,
+        "text": "受影响的 Agent 会话"
+      },
+      "dlgOverlaps": []
+    }
+  },
+  {
+    "k": "N1024 JS 异常",
+    "v": []
+  },
+  {
+    "k": "N960-2 停用态设置",
+    "v": {
+      "cat": 1,
+      "paneBox": {
+        "x": 279,
+        "y": 233.5,
+        "w": 498,
+        "h": 170
+      },
+      "panelBox": {
+        "x": 170,
+        "y": 183.5,
+        "w": 620,
+        "h": 233
+      },
+      "panelInVp": {
+        "fully": true,
+        "l": 170,
+        "t": 183.5,
+        "r": 790,
+        "b": 416.5,
+        "vw": 960,
+        "vh": 600
+      },
+      "noteClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 22,
+        "ch": 22,
+        "hClip": false,
+        "vClip": false
+      },
+      "noteBox": {
+        "x": 279,
+        "y": 288.6,
+        "w": 498,
+        "h": 21.6
+      },
+      "enableBox": {
+        "x": 279,
+        "y": 318.2,
+        "w": 72,
+        "h": 29
+      },
+      "enableHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitCls": "",
+        "hitTestid": "collab-enable-btn"
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 4.91,
+        "text": "协作已停用"
+      },
+      "paneOverlaps": [],
+      "navBox": {
+        "x": 183,
+        "y": 233.5,
+        "w": 84,
+        "h": 170
+      },
+      "navVsPane": {
+        "w": -12,
+        "h": 170,
+        "area": 0
+      }
+    }
+  },
+  {
+    "k": "N960-4 停用预览对话框",
+    "v": {
+      "dlg": true,
+      "facts": [
+        "受影响的 Agent 会话 1 （转为你的控制，不自动终止已开始的任务）",
+        "待审批请求 1 （作废）",
+        "已配置 Agent 1 （身份与 Token 保留）"
+      ],
+      "btns": [
+        {
+          "t": "确认停用",
+          "testid": "collab-disable-confirm",
+          "x": 533,
+          "y": 440.7,
+          "w": 72,
+          "h": 31,
+          "hit": true
+        },
+        {
+          "t": "取消",
+          "testid": "collab-disable-cancel",
+          "x": 613,
+          "y": 440.7,
+          "w": 50,
+          "h": 31,
+          "hit": true
+        }
+      ],
+      "hasTokenKeep": true,
+      "dlgBox": {
+        "x": 280,
+        "y": 113.3,
+        "w": 400,
+        "h": 373.3
+      },
+      "dlgInVp": {
+        "fully": true,
+        "l": 280,
+        "t": 113.3,
+        "r": 680,
+        "b": 486.7,
+        "vw": 960,
+        "vh": 600
+      },
+      "dlgClip": {
+        "sw": 398,
+        "cw": 398,
+        "sh": 371,
+        "ch": 371,
+        "hClip": false,
+        "vClip": false
+      },
+      "dlgMinContrast": {
+        "ratio": 5.25,
+        "text": "受影响的 Agent 会话"
+      },
+      "dlgOverlaps": []
+    }
+  },
+  {
+    "k": "N960 JS 异常",
+    "v": []
+  }
+]

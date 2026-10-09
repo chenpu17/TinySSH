@@ -1,0 +1,5 @@
+旧构建 collab_status: ERR → 演示 shim 未实现该命令：collab_status
+旧构建 collab_enable: ERR → 演示 shim 未实现该命令：collab_enable
+旧构建 collab_disable_preview: ERR → 演示 shim 未实现该命令：collab_disable_preview
+旧构建 collab_disable: ERR → 演示 shim 未实现该命令：collab_disable
+旧构建 ?fresh：collab-disabled 指引=0，collab-enable-btn=0，mcp 端点="http://127.0.0.1:8722/mcp（演示模式）"

@@ -1,0 +1,65 @@
+[
+  {
+    "k": "O5-1 DisableFailed [?disablefailed]",
+    "v": {
+      "present": true,
+      "text": "停用失败（保持封闭）。新 Agent 请求已被拒绝。打开设置 → Agent 接入",
+      "bodySentence": "停用失败（保持封闭）",
+      "keepClosedCount": 1,
+      "lineCount": 1,
+      "textW": 126.5,
+      "textH": 17,
+      "box": {
+        "x": 907,
+        "y": 172,
+        "w": 363,
+        "h": 73.4
+      },
+      "hClip": false,
+      "vClip": false,
+      "panelScroll": {
+        "sw": 383,
+        "cw": 383,
+        "sh": 612,
+        "ch": 612
+      }
+    }
+  },
+  {
+    "k": "O5-2 Disabled [?fresh]",
+    "v": {
+      "present": true,
+      "text": "协作已停用。新 Agent 请求已被拒绝。打开设置 → Agent 接入",
+      "bodySentence": "协作已停用",
+      "keepClosedCount": 0,
+      "lineCount": 1,
+      "textW": 126.5,
+      "textH": 17,
+      "box": {
+        "x": 907,
+        "y": 172,
+        "w": 363,
+        "h": 73.4
+      },
+      "hClip": false,
+      "vClip": false,
+      "panelScroll": {
+        "sw": 383,
+        "cw": 383,
+        "sh": 612,
+        "ch": 612
+      }
+    }
+  },
+  {
+    "k": "O5-3 Disabling 复现性",
+    "v": {
+      "demo_collab_status_now": "Disabled",
+      "note": "demo.ts 无 Disabling 字样 → 该态在 demo 域不可达"
+    }
+  },
+  {
+    "k": "O5 JS 异常",
+    "v": []
+  }
+]

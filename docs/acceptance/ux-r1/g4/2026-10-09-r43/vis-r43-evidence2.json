@@ -1,0 +1,520 @@
+[
+  {
+    "k": "F-浅色 主题",
+    "v": "light"
+  },
+  {
+    "k": "F1 浅色 ?disablefailed 设置",
+    "v": {
+      "stateChip": "停用失败（保持封闭）",
+      "stateChipStyle": {
+        "color": "rgb(179, 72, 77)",
+        "bg": "rgb(244, 246, 248)",
+        "fontSize": "11px",
+        "fontWeight": "400",
+        "display": "inline-block"
+      },
+      "stateChipContrast": 4.91,
+      "note": "上次停用未完全收敛（协作保持封闭，新 Agent 请求仍被拒绝）——请先「重试停用收敛」，收敛后才可重新启用。",
+      "noteBox": {
+        "x": 439,
+        "y": 388.6,
+        "w": 498,
+        "h": 43.2
+      },
+      "noteTextW": {
+        "textW": 496.7,
+        "textH": 38.6,
+        "scrollW": 498,
+        "clientW": 498,
+        "ws": "normal",
+        "overflow": "visible"
+      },
+      "noteClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 43,
+        "ch": 43,
+        "hClip": false,
+        "vClip": false
+      },
+      "retryBtn": 1,
+      "retryBtnText": "重试停用收敛",
+      "retryBtnBox": {
+        "x": 439,
+        "y": 462.8,
+        "w": 96,
+        "h": 29
+      },
+      "retryBtnHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitTestid": "collab-retry-disable-btn"
+      },
+      "retryBtnStyle": {
+        "color": "rgb(255, 255, 255)",
+        "bg": "rgb(31, 118, 124)",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "display": "inline-flex"
+      },
+      "retryBtnContrast": 5.33,
+      "enableBtn": 0,
+      "disableBtn": 0,
+      "endpoint": 0,
+      "keptAgents": 1,
+      "keptText": "已配置的 Agent（Token 保留，重新启用后继续可用）：opencode（演示）",
+      "paneBox": {
+        "x": 439,
+        "y": 333.5,
+        "w": 498,
+        "h": 170
+      },
+      "panelBox": {
+        "x": 330,
+        "y": 283.5,
+        "w": 620,
+        "h": 233
+      },
+      "panelInVp": {
+        "fully": true,
+        "l": 330,
+        "t": 283.5,
+        "r": 950,
+        "b": 516.5,
+        "vw": 1280,
+        "vh": 800
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 4.91,
+        "text": "停用失败（保持封闭）"
+      },
+      "paneOverlaps": [],
+      "paneButtons": [
+        {
+          "t": "重试停用收敛",
+          "testid": "collab-retry-disable-btn",
+          "x": 439,
+          "y": 462.8,
+          "w": 96,
+          "h": 29,
+          "hit": true
+        }
+      ],
+      "navVsPane": {
+        "w": -12,
+        "h": 170,
+        "area": 0
+      },
+      "panelSections": null
+    }
+  },
+  {
+    "k": "F1b 浅色 停用态协作面板",
+    "v": {
+      "disabledText": "停用失败（保持封闭）。新 Agent 请求已被拒绝（保持封闭）。打开设置 → Agent 接入",
+      "apGroup": 0,
+      "approvalsC": 0,
+      "goalTextarea": 0
+    }
+  },
+  {
+    "k": "F3 收敛前",
+    "v": {
+      "chip": "停用失败（保持封闭）",
+      "retry": 1,
+      "enable": 0,
+      "disable": 0
+    }
+  },
+  {
+    "k": "F3 收敛后（点「重试停用收敛」）",
+    "v": {
+      "stateChip": "协作已停用",
+      "retryBtn": 0,
+      "enableBtn": 1,
+      "enableBtnText": "启用协作",
+      "enableBtnHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitTestid": "collab-enable-btn"
+      },
+      "disableBtn": 0,
+      "endpoint": 0,
+      "note": "协作已停用——MCP 端点未运行，Agent 请求一律被拒绝。要使用协作请显式启用。",
+      "keptAgents": 1,
+      "keptText": "已配置的 Agent（Token 保留，重新启用后继续可用）：opencode（演示）",
+      "toast": "停用已收敛——作废 2 个待审批、2 个 Agent 会话转回你控制"
+    }
+  },
+  {
+    "k": "F 浅色 JS 异常",
+    "v": []
+  },
+  {
+    "k": "F-深色 主题",
+    "v": "dark"
+  },
+  {
+    "k": "F2 深色 ?disablefailed 设置",
+    "v": {
+      "stateChip": "停用失败（保持封闭）",
+      "stateChipStyle": {
+        "color": "rgb(208, 122, 122)",
+        "bg": "rgb(20, 25, 34)",
+        "fontSize": "11px",
+        "fontWeight": "400",
+        "display": "inline-block"
+      },
+      "stateChipContrast": 5.66,
+      "note": "上次停用未完全收敛（协作保持封闭，新 Agent 请求仍被拒绝）——请先「重试停用收敛」，收敛后才可重新启用。",
+      "noteBox": {
+        "x": 439,
+        "y": 388.6,
+        "w": 498,
+        "h": 43.2
+      },
+      "noteTextW": {
+        "textW": 496.7,
+        "textH": 38.6,
+        "scrollW": 498,
+        "clientW": 498,
+        "ws": "normal",
+        "overflow": "visible"
+      },
+      "noteClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 43,
+        "ch": 43,
+        "hClip": false,
+        "vClip": false
+      },
+      "retryBtn": 1,
+      "retryBtnText": "重试停用收敛",
+      "retryBtnBox": {
+        "x": 439,
+        "y": 462.8,
+        "w": 96,
+        "h": 29
+      },
+      "retryBtnHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitTestid": "collab-retry-disable-btn"
+      },
+      "retryBtnStyle": {
+        "color": "rgb(11, 21, 22)",
+        "bg": "rgb(61, 157, 168)",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "display": "inline-flex"
+      },
+      "retryBtnContrast": 5.81,
+      "enableBtn": 0,
+      "disableBtn": 0,
+      "endpoint": 0,
+      "keptAgents": 1,
+      "keptText": "已配置的 Agent（Token 保留，重新启用后继续可用）：opencode（演示）",
+      "paneBox": {
+        "x": 439,
+        "y": 333.5,
+        "w": 498,
+        "h": 170
+      },
+      "panelBox": {
+        "x": 330,
+        "y": 283.5,
+        "w": 620,
+        "h": 233
+      },
+      "panelInVp": {
+        "fully": true,
+        "l": 330,
+        "t": 283.5,
+        "r": 950,
+        "b": 516.5,
+        "vw": 1280,
+        "vh": 800
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 3.01,
+        "text": "Agent 接入（MCP）"
+      },
+      "paneOverlaps": [],
+      "paneButtons": [
+        {
+          "t": "重试停用收敛",
+          "testid": "collab-retry-disable-btn",
+          "x": 439,
+          "y": 462.8,
+          "w": 96,
+          "h": 29,
+          "hit": true
+        }
+      ],
+      "navVsPane": {
+        "w": -12,
+        "h": 170,
+        "area": 0
+      },
+      "panelSections": null
+    }
+  },
+  {
+    "k": "F 深色 JS 异常",
+    "v": []
+  },
+  {
+    "k": "F1024 窄窗 ?disablefailed 设置",
+    "v": {
+      "stateChip": "停用失败（保持封闭）",
+      "stateChipStyle": {
+        "color": "rgb(179, 72, 77)",
+        "bg": "rgb(244, 246, 248)",
+        "fontSize": "11px",
+        "fontWeight": "400",
+        "display": "inline-block"
+      },
+      "stateChipContrast": 4.91,
+      "note": "上次停用未完全收敛（协作保持封闭，新 Agent 请求仍被拒绝）——请先「重试停用收敛」，收敛后才可重新启用。",
+      "noteBox": {
+        "x": 311,
+        "y": 372.6,
+        "w": 498,
+        "h": 43.2
+      },
+      "noteTextW": {
+        "textW": 496.7,
+        "textH": 38.6,
+        "scrollW": 498,
+        "clientW": 498,
+        "ws": "normal",
+        "overflow": "visible"
+      },
+      "noteClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 43,
+        "ch": 43,
+        "hClip": false,
+        "vClip": false
+      },
+      "retryBtn": 1,
+      "retryBtnText": "重试停用收敛",
+      "retryBtnBox": {
+        "x": 311,
+        "y": 446.8,
+        "w": 96,
+        "h": 29
+      },
+      "retryBtnHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitTestid": "collab-retry-disable-btn"
+      },
+      "retryBtnStyle": {
+        "color": "rgb(255, 255, 255)",
+        "bg": "rgb(31, 118, 124)",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "display": "inline-flex"
+      },
+      "retryBtnContrast": 5.33,
+      "enableBtn": 0,
+      "disableBtn": 0,
+      "endpoint": 0,
+      "keptAgents": 1,
+      "keptText": "已配置的 Agent（Token 保留，重新启用后继续可用）：opencode（演示）",
+      "paneBox": {
+        "x": 311,
+        "y": 317.5,
+        "w": 498,
+        "h": 170
+      },
+      "panelBox": {
+        "x": 202,
+        "y": 267.5,
+        "w": 620,
+        "h": 233
+      },
+      "panelInVp": {
+        "fully": true,
+        "l": 202,
+        "t": 267.5,
+        "r": 822,
+        "b": 500.5,
+        "vw": 1024,
+        "vh": 768
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 4.91,
+        "text": "停用失败（保持封闭）"
+      },
+      "paneOverlaps": [],
+      "paneButtons": [
+        {
+          "t": "重试停用收敛",
+          "testid": "collab-retry-disable-btn",
+          "x": 311,
+          "y": 446.8,
+          "w": 96,
+          "h": 29,
+          "hit": true
+        }
+      ],
+      "navVsPane": {
+        "w": -12,
+        "h": 170,
+        "area": 0
+      },
+      "panelSections": null
+    }
+  },
+  {
+    "k": "F1024 JS 异常",
+    "v": []
+  },
+  {
+    "k": "F960 窄窗 ?disablefailed 设置",
+    "v": {
+      "stateChip": "停用失败（保持封闭）",
+      "stateChipStyle": {
+        "color": "rgb(179, 72, 77)",
+        "bg": "rgb(244, 246, 248)",
+        "fontSize": "11px",
+        "fontWeight": "400",
+        "display": "inline-block"
+      },
+      "stateChipContrast": 4.91,
+      "note": "上次停用未完全收敛（协作保持封闭，新 Agent 请求仍被拒绝）——请先「重试停用收敛」，收敛后才可重新启用。",
+      "noteBox": {
+        "x": 279,
+        "y": 288.6,
+        "w": 498,
+        "h": 43.2
+      },
+      "noteTextW": {
+        "textW": 496.7,
+        "textH": 38.6,
+        "scrollW": 498,
+        "clientW": 498,
+        "ws": "normal",
+        "overflow": "visible"
+      },
+      "noteClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 43,
+        "ch": 43,
+        "hClip": false,
+        "vClip": false
+      },
+      "retryBtn": 1,
+      "retryBtnText": "重试停用收敛",
+      "retryBtnBox": {
+        "x": 279,
+        "y": 362.8,
+        "w": 96,
+        "h": 29
+      },
+      "retryBtnHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitTestid": "collab-retry-disable-btn"
+      },
+      "retryBtnStyle": {
+        "color": "rgb(255, 255, 255)",
+        "bg": "rgb(31, 118, 124)",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "display": "inline-flex"
+      },
+      "retryBtnContrast": 5.33,
+      "enableBtn": 0,
+      "disableBtn": 0,
+      "endpoint": 0,
+      "keptAgents": 1,
+      "keptText": "已配置的 Agent（Token 保留，重新启用后继续可用）：opencode（演示）",
+      "paneBox": {
+        "x": 279,
+        "y": 233.5,
+        "w": 498,
+        "h": 170
+      },
+      "panelBox": {
+        "x": 170,
+        "y": 183.5,
+        "w": 620,
+        "h": 233
+      },
+      "panelInVp": {
+        "fully": true,
+        "l": 170,
+        "t": 183.5,
+        "r": 790,
+        "b": 416.5,
+        "vw": 960,
+        "vh": 600
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 170,
+        "ch": 170,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneMinContrast": {
+        "ratio": 4.91,
+        "text": "停用失败（保持封闭）"
+      },
+      "paneOverlaps": [],
+      "paneButtons": [
+        {
+          "t": "重试停用收敛",
+          "testid": "collab-retry-disable-btn",
+          "x": 279,
+          "y": 362.8,
+          "w": 96,
+          "h": 29,
+          "hit": true
+        }
+      ],
+      "navVsPane": {
+        "w": -12,
+        "h": 170,
+        "area": 0
+      },
+      "panelSections": null
+    }
+  },
+  {
+    "k": "F960 JS 异常",
+    "v": []
+  }
+]

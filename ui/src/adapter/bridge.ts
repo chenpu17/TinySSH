@@ -85,6 +85,11 @@ interface CmdArgs {
   // 核心保留既有目标（与 set_session_goal 的 None=清除不同），故不得省略该参数语义。
   delegate_session: { sid: string; goal?: string | null };
   shell_capability: { sid: string };
+  // C9（R43）：协作启用生命周期（人类专属）。
+  collab_status: undefined;
+  collab_disable_preview: undefined;
+  collab_disable: undefined;
+  collab_enable: undefined;
   session_brief: { sid: string };
   set_session_goal: { sid: string; goal: string | null };
   list_approvals: { pendingOnly: boolean };
@@ -166,6 +171,10 @@ interface CmdRet {
   set_control: wire.TakeoverReport;
   delegate_session: void;
   shell_capability: wire.ShellCapability;
+  collab_status: wire.CollabStatus;
+  collab_disable_preview: wire.DisableImpact;
+  collab_disable: wire.DisableReport;
+  collab_enable: wire.CollabStatus;
   session_brief: wire.SessionBrief;
   set_session_goal: void;
   list_approvals: wire.ApprovalItem[];

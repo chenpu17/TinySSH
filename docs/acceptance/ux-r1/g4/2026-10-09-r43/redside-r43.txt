@@ -1,0 +1,37 @@
+# R43 红侧变异（判别力）记录
+
+目的：证明 R43 的验证不是恒绿——对每个关键机制做临时「改错」，确认探针/测试转红，再 Edit 反向还原
+（**不使用 cp 整文件写回**，避免吞掉并行修复）。每项流程：Edit 改错 → 跑验证 → 确认目标断言 FAIL →
+Edit 反向还原 → 复跑确认回到全绿。
+
+## demo 域（`r43-demo-probe.js` 对 :5183 实跑，基线 51/51）
+
+| 编号 | 变异点 | 文件 | 变异 | 结果 | 被捕获的断言 |
+|---|---|---|---|---|---|
+| RED-K8 | 新装默认仍启用协作（不置停用） | `ui/src/demo.ts` `?fresh` 块 | `demoState.collabEnabled = false` → `true` | 43/51 | A1（state=Enabled）、A2（collab 端点非空）、A4（mcp 端点非空）、A11（无停用指引）、A14/A15/A16/A17（停用态设置） |
+| RED-K9 | 停用不封 admission（不落停用态） | `ui/src/demo.ts` `collab_disable` | `demoState.collabEnabled = false` → `true` | 45/51 | D6（状态未转 Disabled）、D7/D8（端点未清）、D10（chip 仍「已启用」）、D10b、D13（徽标未消失） |
+| RED-K10 | 停用不把 Agent 会话转回 Human | `ui/src/demo.ts` `collab_disable` 转换循环 | `if (s.control_owner === "Agent")` → `if (false && …)` | 49/51 | D11（会话仍 Agent）、E3（重启用后仍 Agent） |
+| RED-K11 | 停用即隐藏/撤销 Agent 身份（违反「Token 保留」） | `ui/src/demo.ts` `mcp_status` | `agents: demoState.agents` → `agents: demoState.collabEnabled ? demoState.agents : []` | 49/51 | D9（Token 未保留）、D10b（保留列表缺失） |
+
+备注：RED-K8 未击穿 A3（configured_agents 仍 0，因 `?fresh` 另置空 agents）——单点变异不必然击穿同族断言，属预期。
+
+## 核心层（`crates/core-session/src/r43_tests.rs`，基线 6/6 绿）
+
+| 编号 | 变异点 | 文件 | 变异 | 结果 | 被捕获的断言 |
+|---|---|---|---|---|---|
+| RED-K12 | admission 门放宽（Disabling/DisableFailed 也放行） | `crates/core-session/src/lib.rs` `ApprovalCenter::admit_agent` | `state == CollabState::Enabled` → `state != CollabState::Disabled` | r43 3/6 红（其余 98 仍绿） | `r43_disable_seals_admission_voids_and_converts`（「停用后 admission 关闭」）、`r43_approved_request_after_disable_is_voided_not_executed`（已批准未执行仍被执行）、`r43_disable_failed_keeps_gate_closed_and_can_retry`（停用失败回退为可用） |
+
+还原核对：五项变异（RED-K8/9/10/11/12）均已 Edit 反向改回；`grep -rn "RED-K" ui/src crates src-tauri/src` 无残留；
+`r43-demo-probe.js` 复跑 51/51；`cargo test -p core-session --lib r43` 复跑 6/6。
+
+## 独立审核 rev-r43 处置后的红侧（F1/F2/F3 回归护栏）
+
+| 编号 | 变异点 | 文件 | 变异 | 结果 | 被捕获的断言 |
+|---|---|---|---|---|---|
+| RED-K13 | 停用不推进会话代际 | `crates/core-session/src/lib.rs` `convert_agent_sessions_to_human` | `h.generation.fetch_add(1, …)` → `let _ = &h;` | r43 1/10 红 | `r43_disable_advances_session_generation`（代际未推进）。注：`r43_queued_auto_allow_exec_voided_by_disable` 仍绿——执行前 admission 复核（F1 之二）独立兜住，双保险 |
+| RED-K14 | 批准后复核只留直接批准臂（漏 ApproveEdited） | `crates/core-session/src/handle.rs` | `matches!(…, Approve \| ApproveEdited(_))` → `matches!(…, Approve)` | r43 1/10 红 | `r43_approve_edited_after_disable_is_voided_not_executed`（编辑后批准绕过停用复核） |
+| RED-K15 | 重新启用放宽为「仅挡 Disabling」 | `crates/core-session/src/lib.rs` `collab_enable` | `g.state != CollabState::Disabled` → `g.state == CollabState::Disabling` | r43 1/10 红 | `r43_enable_rejected_until_disable_converged`（DisableFailed 未收敛即重开） |
+| RED-K16 | DisableFailed 仍渲染「启用协作」钮（不区分重试/启用） | `ui/src/App.tsx` 停用态按钮分支 | `collab.state === "DisableFailed" ? (` → `false && …` | 56/60 | F5（无「重试停用收敛」钮）、F6（出现「启用协作」钮）、F7/F9（重试未生效） |
+
+还原核对：RED-K13/14/15/16 均已 Edit 反向改回；`grep -rn "RED-K" ui/src crates src-tauri/src` 无残留；
+`cargo test -p core-session --lib r43` 复跑 **10/10**；`r43-demo-probe.js` 复跑 **60/60**；`cargo test --workspace` 全绿。

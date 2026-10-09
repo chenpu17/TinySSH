@@ -28,12 +28,31 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// C9（R43）：协作 admission 门——状态 + 停用代次。所有 Agent 请求在**执行开始前**
+/// 核对本门；人类请求不受影响。
+pub struct CollabGate {
+    pub state: CollabState,
+    /// 停用代次：每次确认停用 / 显式重启用递增。旧代次请求不得继续（不因旧审批复活）。
+    pub generation: u64,
+}
+
+impl CollabGate {
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            state: if enabled { CollabState::Enabled } else { CollabState::Disabled },
+            generation: 0,
+        }
+    }
+}
+
 /// 审批中心：跨会话共享的引擎、条目表、决策通道、持久化。
 pub struct ApprovalCenter {
     pub engine: ApprovalEngine,
     pub items: StdMutex<HashMap<ApprovalId, ApprovalItem>>,
     pub decisions: StdMutex<HashMap<ApprovalId, oneshot::Sender<DecisionMsg>>>,
     pub approvals_tx: broadcast::Sender<ApprovalEvent>,
+    /// C9（R43）：协作启用/停用 admission 门（跨会话共享，单点封禁 Agent 入口）。
+    pub collab: StdMutex<CollabGate>,
     /// 转发状态事件（T44 真机冒烟补口）：SessionHandle 构造时把 transport 写口
     /// 回调桥到本通道——UI 事件驱动刷新（WKWebView 节流 timer 时盲轮询会挂起）。
     pub forwards_tx: broadcast::Sender<ForwardEvent>,
@@ -126,11 +145,15 @@ impl SessionManager {
         let (shell_tx, _) = broadcast::channel(64);
         let (state_tx, _) = broadcast::channel(64);
         let (transfer_tx, _) = broadcast::channel(128);
+        // C9（R43）：启动时的协作状态取自持久化期望态（V7 迁移保证键存在：
+        // 新装 "0"=Disabled / 升级 "1"=Enabled）。读取失败按关闭处理（保守侧）。
+        let collab_enabled = vault.collab_enabled().unwrap_or(false);
         let center = Arc::new(ApprovalCenter {
             engine: ApprovalEngine::new()?,
             items: StdMutex::new(HashMap::new()),
             decisions: StdMutex::new(HashMap::new()),
             approvals_tx,
+            collab: StdMutex::new(CollabGate::new(collab_enabled)),
             forwards_tx,
             hk_pending: StdMutex::new(HashMap::new()),
             hk_decisions: StdMutex::new(HashMap::new()),
@@ -235,6 +258,11 @@ impl SessionManager {
         req: CreateSessionReq,
         attempt: Option<&Arc<AttemptEntry>>,
     ) -> Result<SessionId> {
+        // C9（R43）：协作 admission——停用期间拒绝 Agent 建会话（覆盖「无 session 的
+        // create_session」这一无既有会话可依附的入口）。人类不受影响。
+        if matches!(ctx, Actor::Agent { .. }) {
+            self.center.admit_agent()?;
+        }
         let (host, kind) = if req.host_id == "local" {
             (self.ensure_local_host()?, "local".to_string())
         } else {
@@ -910,6 +938,19 @@ impl SessionManager {
 
         match tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx).await {
             Ok(Ok(DecisionMsg::Decide(Decision::Approve))) => {
+                // C9（R43）：批准后、执行前复核 admission——停用期间已批准未执行的
+                // 建会话请求作废（不因旧审批决定继续执行）。
+                if let Err(e) = self.center.admit_agent() {
+                    if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
+                        it.status = ApprovalStatus::Voided;
+                    }
+                    let snap = self.center.items.lock().unwrap().get(&item.id).cloned();
+                    if let Some(it) = snap {
+                        let _ = self.center.vault.save_approval(&it);
+                        let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+                    }
+                    return Err(e);
+                }
                 if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
                     it.status = ApprovalStatus::Approved;
                 }
@@ -1298,6 +1339,105 @@ fi"#;
     format!("{bash}\n{zsh}\nprintf '\\033[2J\\033[H'\n")
 }
 
+// ---------------------------------------------------------------------------
+// C9（R43）：协作启用生命周期的 admission 门与状态机
+// ---------------------------------------------------------------------------
+
+impl ApprovalCenter {
+    /// C9：Agent admission——**仅** `Enabled` 开放；其余三态（含 `Disabling`/`DisableFailed`）
+    /// 一律拒绝新的 Agent 请求。人类请求不经此门。这是「封 admission」的单点判定。
+    pub fn admit_agent(&self) -> Result<()> {
+        if self.collab.lock().unwrap().state == CollabState::Enabled {
+            Ok(())
+        } else {
+            Err(Error::CollabDisabled)
+        }
+    }
+
+    pub fn collab_state(&self) -> CollabState {
+        self.collab.lock().unwrap().state
+    }
+
+    pub fn collab_generation(&self) -> u64 {
+        self.collab.lock().unwrap().generation
+    }
+}
+
+impl SessionManager {
+    /// 作废**全部**待审批卡（留痕 + 唤醒等待方），返回作废数。停用协作时调用：
+    /// 覆盖无 session 的 create_session、已批准未执行、排队传输/转发等「尚未开始」的请求。
+    fn void_all_pending(&self, reason: &str) -> usize {
+        let ids: Vec<ApprovalId> = {
+            let items = self.center.items.lock().unwrap();
+            items
+                .iter()
+                .filter(|(_, it)| it.status == ApprovalStatus::Pending)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in &ids {
+            // 快照先落 let——守卫 MutexGuard 临时活到块尾，块内再锁同锁会自死锁
+            let snap = self.center.items.lock().unwrap().get(id).cloned();
+            if let Some(mut it) = snap {
+                it.status = ApprovalStatus::Voided;
+                let _ = self.center.vault.save_approval(&it);
+                if let Some(slot) = self.center.items.lock().unwrap().get_mut(id) {
+                    slot.status = ApprovalStatus::Voided;
+                }
+                let _ = self.center.audit.append(
+                    &Actor::Human,
+                    "approval_voided",
+                    Some(&it.session_id),
+                    Some(&it.command),
+                    serde_json::json!({"reason": reason, "agent": it.agent_id}),
+                    Some(id),
+                );
+                let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+            }
+            // 唤醒等待方（wait_approval 的 Voided 臂即作废返回，Agent 不再空等 120s）
+            if let Some(tx) = self.center.decisions.lock().unwrap().remove(id) {
+                let _ = tx.send(DecisionMsg::Voided);
+            }
+        }
+        ids.len()
+    }
+
+    /// 把所有 Agent 持有控制权的会话转回 Human（**不**停止运行中任务；保留
+    /// `ever_agent_owned` 历史）。返回转换数。
+    ///
+    /// C9（R43）：转换时同时推进每个会话的**代际**——与接管同口径（`takeover`
+    /// 亦 `generation += 1`）。这是「停用前已排队/未开始」动作的作废点：排队 exec
+    /// 与排队传输都在开始读写前复核会话代际（`handle.rs` exec 步骤 2/4、
+    /// `lib.rs` transfer 闸前/闸后），代际一变即作废（§9「覆盖排队传输及待启动动作」）。
+    async fn convert_agent_sessions_to_human(&self) -> usize {
+        let handles: Vec<Arc<SessionHandle>> =
+            self.sessions.lock().unwrap().values().cloned().collect();
+        let mut n = 0usize;
+        for h in handles {
+            let mut owner = h.owner.lock().await;
+            if *owner == ControlOwner::Agent {
+                *owner = ControlOwner::Human;
+                h.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// 当前由 Agent 持有控制权的会话数（预览/状态共用）。
+    async fn count_agent_owned(&self) -> usize {
+        let handles: Vec<Arc<SessionHandle>> =
+            self.sessions.lock().unwrap().values().cloned().collect();
+        let mut n = 0usize;
+        for h in handles {
+            if *h.owner.lock().await == ControlOwner::Agent {
+                n += 1;
+            }
+        }
+        n
+    }
+}
+
 #[async_trait::async_trait]
 impl SessionApi for SessionManager {
     // ---- 主机与凭据 ----
@@ -1542,6 +1682,8 @@ impl SessionApi for SessionManager {
         let h = self.get(&sid)?;
         // Agent 策略刷新（vault → 引擎）
         if let Actor::Agent { client_id } = ctx {
+            // C9（R43）：协作 admission——停用期间拒绝 Agent 执行（副作用前）。
+            self.center.admit_agent()?;
             let policy = self.center.vault.load_policy(client_id);
             self.center.engine.set_policy(client_id, policy);
         }
@@ -1591,6 +1733,8 @@ impl SessionApi for SessionManager {
                 h.channel.write(&charset::encode(h.host.charset, keys)).await
             }
             Actor::Agent { client_id } => {
+                // C9（R43）：协作 admission——停用期间拒绝 Agent 键入（副作用前）。
+                self.center.admit_agent()?;
                 if *h.owner.lock().await == ControlOwner::Human {
                     return Err(Error::ControlTakenByHuman);
                 }
@@ -2011,6 +2155,8 @@ impl SessionApi for SessionManager {
         // 人类直建时为 None
         let mut approval_id: Option<String> = None;
         if let Actor::Agent { client_id } = ctx {
+            // C9（R43）：协作 admission——停用期间拒绝 Agent 新开隧道（副作用前）。
+            self.center.admit_agent()?;
             // 接管期间 Agent 不得新开隧道（复核低-6，与 exec 的 ControlTakenByHuman 同语义）
             if *h.owner.lock().await == ControlOwner::Human {
                 return Err(Error::ControlTakenByHuman);
@@ -2048,6 +2194,8 @@ impl SessionApi for SessionManager {
         let h = self.get(&sid)?;
         let mut approval_id: Option<String> = None;
         if let Actor::Agent { client_id } = ctx {
+            // C9（R43）：协作 admission——停用期间拒绝 Agent 转发调用（含停止）。
+            self.center.admit_agent()?;
             // 接管期间 Agent 不得停隧道（复核低-6；停隧道可能断生产链路，人类主权）
             if *h.owner.lock().await == ControlOwner::Human {
                 return Err(Error::ControlTakenByHuman);
@@ -2274,6 +2422,159 @@ impl SessionApi for SessionManager {
             None => "人类清除任务目标",
         })
         .await;
+        Ok(())
+    }
+
+    // ---- C9（R43）协作启用生命周期 ----
+    async fn collab_status(&self, ctx: &Actor) -> Result<CollabStatus> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let (state, generation) = {
+            let g = self.center.collab.lock().unwrap();
+            (g.state, g.generation)
+        };
+        let configured_agents = self
+            .center
+            .vault
+            .list_agents()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, _, revoked)| revoked.is_none())
+            .count();
+        let pending = {
+            let items = self.center.items.lock().unwrap();
+            items
+                .values()
+                .filter(|it| it.status == ApprovalStatus::Pending)
+                .count()
+        };
+        let agent_owned = self.count_agent_owned().await;
+        Ok(CollabStatus {
+            state,
+            generation,
+            configured_agents,
+            active_requests: pending + agent_owned,
+            // 仅 Enabled 才对外播报端点地址；停用/停用中/停用失败一律空串
+            //（不让「未启动」被误读为可用监听）。
+            endpoint: if state == CollabState::Enabled { self.mcp_endpoint() } else { String::new() },
+        })
+    }
+
+    async fn collab_disable_preview(&self, ctx: &Actor) -> Result<DisableImpact> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let pending = {
+            let items = self.center.items.lock().unwrap();
+            items
+                .values()
+                .filter(|it| it.status == ApprovalStatus::Pending)
+                .count()
+        };
+        let configured_agents = self
+            .center
+            .vault
+            .list_agents()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, _, revoked)| revoked.is_none())
+            .count();
+        Ok(DisableImpact {
+            agent_owned_sessions: self.count_agent_owned().await,
+            pending_approvals: pending,
+            configured_agents,
+        })
+    }
+
+    async fn collab_disable(&self, ctx: &Actor) -> Result<DisableReport> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        // 1. 原子封 admission + 递增代次（先封新请求，再收敛存量——不等待逐个接管）
+        let gen = {
+            let mut g = self.center.collab.lock().unwrap();
+            if g.state == CollabState::Disabled {
+                return Ok(DisableReport::default());
+            }
+            g.state = CollabState::Disabling;
+            g.generation += 1;
+            g.generation
+        };
+        // 2. 作废全部尚未开始的请求（含无 session 的 create_session、已批准未执行、
+        //    排队传输/转发），留痕且不可复活
+        let voided = self.void_all_pending("collab_disabled");
+        // 3. 所有 Agent 持有会话转回 Human（不停止运行中任务）
+        let converted = self.convert_agent_sessions_to_human().await;
+        // 4. 持久化期望态=关闭（重启后仍停用）
+        let _ = self.center.vault.set_collab_enabled(false);
+        let _ = self.center.audit.append(
+            ctx,
+            "collab_disabled",
+            None,
+            None,
+            serde_json::json!({"generation": gen, "voided": voided, "converted": converted}),
+            None,
+        );
+        Ok(DisableReport { voided_approvals: voided, converted_sessions: converted })
+    }
+
+    async fn collab_mark_endpoint_stopped(&self, ctx: &Actor) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let mut g = self.center.collab.lock().unwrap();
+        if g.state == CollabState::Disabling {
+            g.state = CollabState::Disabled;
+        }
+        Ok(())
+    }
+
+    async fn collab_mark_disable_failed(&self, ctx: &Actor, reason: String) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        {
+            let mut g = self.center.collab.lock().unwrap();
+            if g.state == CollabState::Disabling {
+                g.state = CollabState::DisableFailed;
+            }
+        }
+        let _ = self.center.audit.append(
+            ctx,
+            "collab_disable_failed",
+            None,
+            None,
+            serde_json::json!({"reason": reason}),
+            None,
+        );
+        Ok(())
+    }
+
+    async fn collab_enable(&self, ctx: &Actor) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        {
+            let mut g = self.center.collab.lock().unwrap();
+            if g.state == CollabState::Enabled {
+                return Ok(());
+            }
+            // 仅当旧停用处理已收敛（Disabled）方可重开；Disabling（收敛中）与
+            // DisableFailed（收敛失败）都**未收敛**，不得重开——§9「由核心确认旧
+            // 停用处理已收敛再重新开启 gate」。DisableFailed 请先「重试停用收敛」
+            // （再次 collab_disable），收敛为 Disabled 后再启用。
+            if g.state != CollabState::Disabled {
+                return Err(Error::InvalidInput("停用处理尚未收敛，无法重新启用".into()));
+            }
+            g.state = CollabState::Enabled;
+            g.generation += 1;
+        }
+        let _ = self.center.vault.set_collab_enabled(true);
+        let _ = self
+            .center
+            .audit
+            .append(ctx, "collab_enabled", None, None, serde_json::json!({}), None);
         Ok(())
     }
 
@@ -2684,6 +2985,10 @@ impl SessionManager {
         retry_of: Option<TransferId>,
     ) -> Result<TransferHandle> {
         let h = self.get(&sid)?;
+        // C9（R43）：协作 admission——停用期间拒绝 Agent 传输（排队动作在开始前即被拒）。
+        if matches!(ctx, Actor::Agent { .. }) {
+            self.center.admit_agent()?;
+        }
         if !ctx.is_human() && *h.owner.lock().await == ControlOwner::Human {
             return Err(Error::ControlTakenByHuman);
         }
@@ -3748,6 +4053,10 @@ mod r41_tests;
 #[cfg(test)]
 #[path = "r42_tests.rs"]
 mod r42_tests;
+
+#[cfg(test)]
+#[path = "r43_tests.rs"]
+mod r43_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle

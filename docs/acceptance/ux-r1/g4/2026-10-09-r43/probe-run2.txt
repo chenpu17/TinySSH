@@ -1,0 +1,62 @@
+PASS A1 新装 collab_status=Disabled  [Disabled]
+PASS A2 新装 collab 端点为空（无自动 MCP 监听）
+PASS A3 新装 configured_agents=0  [0]
+PASS A4 新装 mcp 端点为空
+PASS A5 新装无已登记 Agent  [[]]
+PASS A6 新装无协作徽标
+PASS A7 新装无委托入口
+PASS A8 连上真会话（面板入口可达）  [s-demo-0001]
+PASS A9 连接后仍无协作徽标（未配置且无活动）
+PASS A10 连接后仍无委托入口
+PASS A11 停用态协作面板 = 停用指引
+PASS A12 停用态无空审批区（无分组）
+PASS A13 停用态无审批列表容器
+PASS A14 停用态设置显示停用说明
+PASS A15 停用态不出现 MCP 端点
+PASS A16 停用态不出现停用钮
+PASS A17 停用态出现启用钮
+PASS A18 停用态无已配置 Agent 时不渲染 kept-agents 空壳
+PASS B1 启用后出现 MCP 端点（真绑定形态）  [http://127.0.0.1:8722/mcp（演示模式）]
+PASS B2 启用后状态 chip=已启用  [协作已启用]
+PASS B3 启用后出现停用钮
+PASS B4 已配置 0（未签发 Agent 时 configured 与 active 分别显示）  [已配置 0]
+PASS B5 有活动请求 0  [有活动请求 0]
+PASS B6 未配置 Agent 时仍无徽标
+PASS B7 真命令签发 Agent 返回 Token  [demo-token-r]
+PASS B8 已配置 1（签发后）  [已配置 1]
+PASS B9 有活动请求仍 0（configured≠online）  [有活动请求 0]
+PASS B10 有 Agent 配置后徽标出现
+PASS C1 关协作面板不改变控制权（D08 首句）  [Human→Human]
+PASS C2 委托后 owner=Agent  [Agent]
+PASS C3 委托后「有活动请求 1」  [有活动请求 1]
+PASS D1 停用预览对话框出现
+PASS D2 预览事实齐全（主机/会话/待审批/已配置）
+PASS D3 受影响 Agent 会话=1  [1]
+PASS D4 已配置 Agent=1（并注明 Token 保留）  [1]
+PASS D4b 待审批计数为数字
+PASS D5 取消停用不改状态
+PASS D6 确认后状态=Disabled  [Disabled]
+PASS D7 停用后 collab 端点清空
+PASS D8 停用后 mcp 端点清空（端点停止）
+PASS D9 停用后 Token/身份保留（Agent 未撤销）  [[{"id":"r43-agent","label":"R43 探针 Agent"}]]
+PASS D10 停用后状态 chip=已停用  [协作已停用]
+PASS D10b 停用后列出保留的 Agent（Token 保留说明）  [已配置的 Agent（Token 保留，重新启用后继续可用）：R43 探针 Agent]
+PASS D11 Agent 会话转 Human  [Human]
+PASS D12 转 Human 后保留「曾被 Agent 持有」印记  [true]
+PASS D13 停用后无协作徽标
+PASS E1 重新启用后状态=Enabled  [Enabled]
+PASS E2 重新启用后端点回来  [http://127.0.0.1:8722/mcp（演示模式）]
+PASS E3 旧会话不复活为 Agent  [Human]
+PASS E4 重新启用后徽标恢复（仍有已配置 Agent）
+PASS F1 ?disablefailed → 状态 DisableFailed  [DisableFailed]
+PASS F2 DisableFailed 端点为空（未运行）
+PASS F3 DisableFailed 面板 = 停用指引
+PASS F4 提示文案指明先「重试停用收敛」  [上次停用未完全收敛（协作保持封闭，新 Agent 请求仍被拒绝）——请先「重试停用收敛」，收敛后才可重新启用。]
+PASS F5 出现「重试停用收敛」钮
+PASS F6 未收敛时**不**出现「启用协作」钮
+PASS F7 重试后收敛为已停用  [协作已停用]
+PASS F8 收敛后出现「启用协作」钮
+PASS F9 收敛后可重新启用  [协作已启用]
+PASS Z 主场景零 JS 异常
+
+== R43 demo 探针 60/60 ==

@@ -26,6 +26,9 @@ async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, u16, Strin
     let db = dir.path().join("t.db");
     std::mem::forget(dir);
     let m = core_session::SessionManager::open(&db).unwrap();
+    // C9（R43）：新装默认关闭协作；本协议测试模拟「已启用协作的既有安装」，
+    // 走真实 API 显式启用（开 admission 门），以便驱动 Agent exec 路径。
+    m.collab_enable(&Actor::Human).await.unwrap();
     let token = m.center.vault.create_agent("claude-code", "Claude Code").unwrap();
     m.center.vault.add_allow_pattern("claude-code", "echo *", "echo 放行").unwrap();
 

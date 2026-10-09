@@ -10,6 +10,9 @@ use tauri::{Emitter, State};
 
 struct AppState {
     api: Arc<SessionManager>,
+    /// C9（R43）：应用拥有的 MCP 端点关闭句柄。停用协作时据以停止监听器；
+    /// 重新启用时重新起端点并回填。None = 端点未运行。
+    mcp_endpoint: std::sync::Mutex<Option<tinyssh_mcp_server::EndpointHandle>>,
 }
 
 /// 终端聚焦状态（native Ctrl 键接管依据：只有 xterm textarea 聚焦时才劫持）。
@@ -740,6 +743,108 @@ async fn mcp_status(state: ApiState<'_>) -> CmdResult<serde_json::Value> {
     }))
 }
 
+// ---------------------------------------------------------------------------
+// C9（R43）：协作启用生命周期命令
+// ---------------------------------------------------------------------------
+
+/// 协作服务状态（状态机 + 已配置 Agent 数 + 有活动请求数 + 端点地址）。
+#[tauri::command]
+async fn collab_status(state: ApiState<'_>) -> CmdResult<CollabStatus> {
+    state.api.collab_status(&human()).await.map_err(WireError::from)
+}
+
+/// 停用影响预览（确认前展示）。
+#[tauri::command]
+async fn collab_disable_preview(state: ApiState<'_>) -> CmdResult<DisableImpact> {
+    state.api.collab_disable_preview(&human()).await.map_err(WireError::from)
+}
+
+/// 确认停用：核心**原子**封 admission（拒绝新 Agent 请求）+ 作废未开始请求 +
+/// Agent 会话转回 Human；随后停止应用拥有的 MCP 端点。两层均确认后才 Disabled。
+#[tauri::command]
+async fn collab_disable(state: ApiState<'_>) -> CmdResult<DisableReport> {
+    let report = state.api.collab_disable(&human()).await.map_err(WireError::from)?;
+    // 停止应用拥有的端点（若在运行）。**确认**监听器确已释放后才置 Disabled——
+    // 发信号不等于已停（§9「监听器关闭不等于核心 gate 已生效，两层均需确认」）。
+    let handle = state.mcp_endpoint.lock().unwrap().take();
+    match handle {
+        Some(mut h) => {
+            h.stop();
+            let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), h.wait_stopped())
+                .await
+                .is_ok();
+            if !stopped {
+                // 未在时限内确认停机 → 保持封闭（DisableFailed），句柄放回以便重试
+                *state.mcp_endpoint.lock().unwrap() = Some(h);
+                let _ = state
+                    .api
+                    .collab_mark_disable_failed(&human(), "MCP 端点未在时限内确认停止".into())
+                    .await;
+                return Err(WireError::from(session_api::Error::InvalidInput(
+                    "停用未收敛：MCP 端点未在时限内确认停止（协作保持封闭，可重试）".into(),
+                )));
+            }
+            state.api.set_mcp_endpoint(String::new());
+        }
+        None => {
+            // 本就没起端点（如新装未启用）→ 视为已停止
+            state.api.set_mcp_endpoint(String::new());
+        }
+    }
+    state.api.collab_mark_endpoint_stopped(&human()).await.map_err(WireError::from)?;
+    Ok(report)
+}
+
+/// 显式重新启用：核心确认旧停用已收敛后重开 gate，随后确保应用端点运行。
+///
+/// 顺序：**先起端点再开 gate**——端点起不来就直接失败返回（核心保持停用），
+/// 避免出现「已启用但端点未运行」的自相矛盾态（§9：监听器关闭 ≠ gate 生效，
+/// 反之亦然；两端不得各自为政）。起端点失败时其句柄被 drop → 触发优雅停机。
+#[tauri::command]
+async fn collab_enable(state: ApiState<'_>) -> CmdResult<CollabStatus> {
+    let need_start = state.mcp_endpoint.lock().unwrap().is_none();
+    let mut new_handle: Option<tinyssh_mcp_server::EndpointHandle> = None;
+    if need_start {
+        let resolver: tinyssh_mcp_server::TokenResolver = {
+            let vault = state.api.center.vault.clone();
+            Arc::new(move |t: &str| vault.resolve_token(t))
+        };
+        let api2 = state.api.clone();
+        match tinyssh_mcp_server::spawn_endpoint_with_shutdown(api2, resolver, 8722).await {
+            Ok((port, handle)) => {
+                state.api.set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
+                new_handle = Some(handle);
+            }
+            Err(e) => {
+                state.api.set_mcp_endpoint(String::new());
+                eprintln!("[app] collab enable: MCP endpoint bind failed: {e}");
+                return Err(WireError::from(session_api::Error::InvalidInput(format!(
+                    "MCP 端点启动失败（端口被占？）：{e}"
+                ))));
+            }
+        }
+    }
+    // 核心开门；未收敛（Disabling/DisableFailed）则回滚端点。
+    // C9（R43 / rev-r43 F8）：回滚须保证「core 未启用 ⇒ 无应用端点运行」——**无论**端点
+    // 是否本次新起。`need_start == false`（既有句柄来自一次超时未收敛的停用）时此前只清
+    // 地址、未停既有端点，会留下「端点仍活、地址已清、core 未启用」的潜在不一致（经当前
+    // UI 不可达，但语义上不该存在）。此处一律 take 既有句柄并停掉（drop 最后一个 sender
+    // 亦触发优雅停机，与 `stop()` 同效）。
+    if let Err(e) = state.api.collab_enable(&human()).await {
+        state.api.set_mcp_endpoint(String::new());
+        drop(new_handle);
+        if let Some(h) = state.mcp_endpoint.lock().unwrap().take() {
+            h.stop();
+            drop(h);
+        }
+        return Err(WireError::from(e));
+    }
+    if let Some(h) = new_handle {
+        *state.mcp_endpoint.lock().unwrap() = Some(h);
+    }
+    state.api.collab_status(&human()).await.map_err(WireError::from)
+}
+
 /// macOS 虚拟键码 → Ctrl 组合的 C0 控制字符（与真实终端 / 前端 ctrlCharOf 同表）。
 #[cfg(target_os = "macos")]
 fn ctrl_char_of_keycode(code: u64) -> Option<&'static str> {
@@ -920,33 +1025,43 @@ fn main() {
     // SessionManager 实例，Agent 的审批卡直接进本进程队列（GUI 即见即决），人类
     // 决定即醒同一进程内的 Agent 等待。此前 GUI 只嵌核心不嵌端点，Agent 需另起
     // `tinyssh serve`（跨进程审批不在 thin-slice 范围）。端口被占则递增（L1 §3.5）。
-    {
-        let resolver: tinyssh_mcp_server::TokenResolver = {
-            let vault = api.center.vault.clone();
-            Arc::new(move |t: &str| vault.resolve_token(t))
-        };
-        let api2 = api.clone();
-        // bind 失败降级不 panic（审核中-1）：打包后 stderr 无人接，全损的是
-        // 「应用打不开」；端点面板已有「未启动」兜底，如实降级可诊断
-        let bound = tauri::async_runtime::block_on(async move {
-            tinyssh_mcp_server::spawn_endpoint(api2, resolver, 8722).await
-        });
-        match bound {
-            Ok(port) => {
-                api.set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
-                eprintln!("[app] MCP endpoint in-process: http://127.0.0.1:{port}/mcp");
-            }
-            Err(e) => {
-                api.set_mcp_endpoint(String::new());
-                eprintln!("[app] MCP endpoint bind failed (8722..8753): {e} —— Agent 接入不可用，其余功能不受影响");
+    // C9（R43）：**仅当协作已启用**（持久化期望态；新装默认关闭 → 无自动 MCP 监听）。
+    let mcp_endpoint_handle: std::sync::Mutex<Option<tinyssh_mcp_server::EndpointHandle>> = {
+        let enabled = api.center.vault.collab_enabled().unwrap_or(false);
+        if !enabled {
+            api.set_mcp_endpoint(String::new());
+            eprintln!("[app] collab disabled (fresh install or user-disabled) —— MCP endpoint not started");
+            std::sync::Mutex::new(None)
+        } else {
+            let resolver: tinyssh_mcp_server::TokenResolver = {
+                let vault = api.center.vault.clone();
+                Arc::new(move |t: &str| vault.resolve_token(t))
+            };
+            let api2 = api.clone();
+            // bind 失败降级不 panic（审核中-1）：打包后 stderr 无人接，全损的是
+            // 「应用打不开」；端点面板已有「未启动」兜底，如实降级可诊断
+            let bound = tauri::async_runtime::block_on(async move {
+                tinyssh_mcp_server::spawn_endpoint_with_shutdown(api2, resolver, 8722).await
+            });
+            match bound {
+                Ok((port, handle)) => {
+                    api.set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
+                    eprintln!("[app] MCP endpoint in-process: http://127.0.0.1:{port}/mcp");
+                    std::sync::Mutex::new(Some(handle))
+                }
+                Err(e) => {
+                    api.set_mcp_endpoint(String::new());
+                    eprintln!("[app] MCP endpoint bind failed (8722..8753): {e} —— Agent 接入不可用，其余功能不受影响");
+                    std::sync::Mutex::new(None)
+                }
             }
         }
-    }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { api: api.clone() })
+        .manage(AppState { api: api.clone(), mcp_endpoint: mcp_endpoint_handle })
         .manage(terminal_input.clone())
         .on_page_load(|webview, payload| {
             eprintln!("[app] page load event: {:?} {:?}", payload.event(), webview.label());
@@ -1011,6 +1126,8 @@ fn main() {
                     r41_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r42") {
                     r42_smoke_script(&run_id, &mode)
+                } else if mode.starts_with("r43") {
+                    r43_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r31") {
                     r31_smoke_script(&run_id)
                 } else {
@@ -1400,6 +1517,7 @@ fn main() {
             read_screen, send_keys, exec_human, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
+            collab_status, collab_disable_preview, collab_disable, collab_enable,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,
             quit_app,
@@ -4260,10 +4378,16 @@ fn r42_smoke_script(run_id: &str, mode: &str) -> String {
       await sleep(500);
 
       if (MODE === 'r42a') {
-        // ---- 新装未启用协作（§6.7 首条 / §3.2 / §5 迁移表）----
+        // ---- 新装未启用协作（§6.7 首条 / §3.2 / §5 迁移表；C9 D03 新装态）----
         const ms0 = await inv('mcp_status', {});
         if (!ms0 || (ms0.agents || []).length !== 0) return title('FAIL-precondition-agents:' + JSON.stringify(ms0 && ms0.agents));
         await markSync('r42a-precondition-ok（真 vault 无 Agent）');
+        // C9（R43/D03）：新装默认**停用**协作——无自动 MCP 端点（mcp_status.endpoint 为空）
+        const cs0 = await inv('collab_status', {});
+        if (!cs0 || cs0.state !== 'Disabled') return title('FAIL-fresh-collab-state:' + JSON.stringify(cs0));
+        if (cs0.endpoint !== '') return title('FAIL-fresh-collab-endpoint:' + cs0.endpoint);
+        if (ms0.endpoint !== '') return title('FAIL-fresh-mcp-endpoint:' + ms0.endpoint);
+        await markSync('r42a-fresh-disabled-ok（新装停用协作，无自动 MCP 监听/端点）');
         if (cnt('[data-testid="collab-entry"]') !== 0) return title('FAIL-badge-shown-unconfigured');
         await markSync('r42a-no-badge（未配置不显示协作徽标）');
         if (cnt('[data-testid="delegate-open"]') !== 0) return title('FAIL-delegate-shown-unconfigured');
@@ -4284,20 +4408,29 @@ fn r42_smoke_script(run_id: &str, mode: &str) -> String {
           return title('FAIL-menu-enum:' + JSON.stringify(items));
         toolsToggle().click();
         await markSync('r42a-menu-ok（工具菜单=连接详情/端口转发/活动记录/关闭会话）');
-        // 协作面板改一次性引导（不渲染空审批区/空白委托表单）
+        // 协作面板改停用态一次性指引（不渲染空审批区/空白委托表单）
         if (!await openCollab()) return title('FAIL-open-collab');
-        if (cnt('[data-testid="collab-unconfigured"]') !== 1) return title('FAIL-no-guidance');
+        if (cnt('[data-testid="collab-disabled"]') !== 1) return title('FAIL-no-disabled-guidance');
         if (cnt('[data-testid="ap-group"]') !== 0 || cnt('.collab-approvals') !== 0) return title('FAIL-empty-approval-area');
         if (cnt('.goal-input') !== 0) return title('FAIL-blank-goal-form');
-        await markSync('r42a-guidance-ok（协作面板一次性引导，无空审批区/空白表单）');
-        // 引导到「设置 → Agent 接入」：空列表 + 真 MCP 端点
+        await markSync('r42a-guidance-ok（停用态一次性指引，无空审批区/空白表单）');
+        // 引导到「设置 → Agent 接入」：停用态不出现 MCP 配置/端点
         click('[data-testid="collab-open-settings"]');
         if (!await waitFor(() => (document.querySelector('[data-testid="settings-cat-agent"]') ? true : null), 60)) return title('FAIL-open-settings');
+        await waitFor(() => (document.querySelector('[data-testid="collab-disabled-note"]') ? true : null), 40);
+        if (cnt('[data-testid="collab-disabled-note"]') !== 1) return title('FAIL-no-disabled-note');
+        if (cnt('[data-testid="agent-endpoint"]') !== 0) return title('FAIL-endpoint-shown-when-disabled');
+        await markSync('r42a-settings-disabled-ok（停用态不出现 MCP 配置/端点）');
+        // C9（R43）：显式启用协作 → 端点运行，出现接入配置（空列表 + 真绑定地址）
+        click('[data-testid="collab-enable-btn"]');
+        const ep = await waitFor(() => {
+          const e = txt('[data-testid="agent-endpoint"]');
+          return e && /^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(e) ? e : null;
+        }, 80);
+        if (!ep) return title('FAIL-enable-endpoint:' + txt('[data-testid="agent-endpoint"]'));
         await waitFor(() => (document.querySelector('[data-testid="agent-empty"]') ? true : null), 40);
         if (cnt('[data-testid="agent-empty"]') !== 1 || cnt('[data-testid="agent-list"]') !== 0) return title('FAIL-agent-pane-not-empty');
-        const ep = txt('[data-testid="agent-endpoint"]');
-        if (!ep || ep.includes('递增') || !/^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(ep)) return title('FAIL-endpoint:' + ep);
-        await markSync('r42a-settings-ok（设置→Agent 接入为空，MCP 端点为真绑定地址 ' + ep + '）');
+        await markSync('r42a-enable-ok（显式启用后 MCP 端点运行 ' + ep + '，接入配置出现）');
         click('[data-testid="settings-close"]');
         // 真命令签发 Agent（真 vault 落库，供 r42b 复用；本进程 UI 挂载时已读过 mcp，故不在本轮断言徽标）
         const tok = await inv('issue_agent', { id: 'r42-agent', label: 'R42 冒烟 Agent' });
@@ -4369,6 +4502,208 @@ fn r42_smoke_script(run_id: &str, mode: &str) -> String {
         await markSync('r42b-handback-label（接管后入口措辞转「交还 Agent」）');
         await inv('close_session', { sid: sess.id });
         return title('r42b-DONE');
+      }
+
+      return title('FAIL-unknown-mode:' + MODE);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 140) : String(e).slice(0, 160)));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id).replace("__MODE__", mode)
+}
+
+/// R43 原生冒烟注入脚本（TINYSSH_SMOKE_MODE=r43a|r43b；dev 门控，产品路径无关）：
+///   r43a 新装启用 → 停用生命周期（§6.7 / §9 C9 / §10.1-6 / D03 / D08；真核心 + 真 vault + 真 sshd 容器）：
+///     新装默认停用协作（无自动 MCP 端点）；显式启用后端点运行；签发 Agent；真核心委托会话；
+///     停用预览→取消不改状态→确认后原子封 admission、Agent 会话转 Human、端点停止（collab/mcp 端点均空）。
+///   r43b 升级路径（驱动把库改回 user_version=6 并删 collab.enabled，模拟旧版安装）：
+///     开库迁移保留旧版「默认开启」→ 端点自启；已配置 Agent/Token 跨升级保留；徽标出现。
+fn r43_smoke_script(run_id: &str, mode: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R43_INJECTED__) return;
+  window.__R43_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const MODE = '__MODE__';
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => markSync('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => markSync('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const txt = (sel) => document.querySelector(sel)?.textContent ?? null;
+  const cnt = (sel) => document.querySelectorAll(sel).length;
+  const click = (sel) => { const el = document.querySelector(sel); if (!el) return false; el.click(); return true; };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const sessById = async (id) => (await inv('list_sessions', {})).find((x) => x.id === id);
+  const toolbarBtn = (needle) => [...document.querySelectorAll('.session-toolbar button')].find((b) => b.textContent.trim() === needle) || null;
+  const openCollab = async () => {
+    if (txt('[data-testid="tp-title"]') === '协作') return true;
+    click('[data-testid="tools-collab"]');
+    return !!(await waitFor(() => (txt('[data-testid="tp-title"]') === '协作' ? true : null), 60));
+  };
+  const openAgentSettings = async () => {
+    if (document.querySelector('[data-testid="settings-cat-agent"]')) return true;
+    click('[data-testid="collab-open-settings"]');
+    return !!(await waitFor(() => (document.querySelector('[data-testid="settings-cat-agent"]') ? true : null), 60));
+  };
+  const EP_RE = /^http:\/\/127\.0\.0\.1:\d+\/mcp$/;
+  (async () => {
+    try {
+      await title(MODE + '-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      if (!cardBtn('r43-a', '.host-connect-btn')) {
+        await inv('upsert_host', { host: { id: null, name: 'r43-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+        await waitFor(async () => (cardBtn('r43-a', '.host-connect-btn') ? true : null), 40);
+      }
+
+      if (MODE === 'r43a') {
+        // ---- C9（R43）：新装默认停用协作（D03）----
+        const cs0 = await inv('collab_status', {});
+        if (!cs0 || cs0.state !== 'Disabled') return title('FAIL-fresh-state:' + JSON.stringify(cs0));
+        if (cs0.endpoint !== '') return title('FAIL-fresh-collab-endpoint:' + cs0.endpoint);
+        const ms0 = await inv('mcp_status', {});
+        if (!ms0 || ms0.endpoint !== '') return title('FAIL-fresh-mcp-endpoint:' + (ms0 && ms0.endpoint));
+        if ((ms0.agents || []).length !== 0) return title('FAIL-fresh-agents:' + JSON.stringify(ms0.agents));
+        await markSync('r43a-fresh-ok（新装停用协作，无自动 MCP 端点）');
+        if (cnt('[data-testid="collab-entry"]') !== 0) return title('FAIL-badge-shown');
+        if (cnt('[data-testid="delegate-open"]') !== 0) return title('FAIL-delegate-shown');
+        // 停用态协作面板 = 一次性指引（无空审批区）
+        if (!await openCollab()) return title('FAIL-open-collab');
+        if (cnt('[data-testid="collab-disabled"]') !== 1) return title('FAIL-no-disabled-guidance');
+        if (cnt('[data-testid="ap-group"]') !== 0 || cnt('.collab-approvals') !== 0) return title('FAIL-empty-approval-area');
+        await markSync('r43a-disabled-guidance-ok（停用态指引，无空审批区）');
+        // 设置：停用态不出现 MCP 配置/端点，只有启用钮
+        if (!await openAgentSettings()) return title('FAIL-open-settings');
+        await waitFor(() => (document.querySelector('[data-testid="collab-disabled-note"]') ? true : null), 40);
+        if (cnt('[data-testid="collab-disabled-note"]') !== 1) return title('FAIL-no-disabled-note');
+        if (cnt('[data-testid="agent-endpoint"]') !== 0) return title('FAIL-endpoint-shown-when-disabled');
+        if (cnt('[data-testid="collab-enable-btn"]') !== 1) return title('FAIL-no-enable-btn');
+        await markSync('r43a-settings-disabled-ok（停用态无 MCP 配置/端点，仅启用钮）');
+        // 显式启用 → 端点运行（真绑定地址），状态转「已启用」
+        click('[data-testid="collab-enable-btn"]');
+        const ep = await waitFor(() => {
+          const e = txt('[data-testid="agent-endpoint"]');
+          return e && EP_RE.test(e) ? e : null;
+        }, 80);
+        if (!ep) return title('FAIL-enable-endpoint:' + txt('[data-testid="agent-endpoint"]'));
+        const cs1 = await waitFor(async () => { const s = await inv('collab_status', {}); return s && s.state === 'Enabled' ? s : null; }, 40);
+        if (!cs1) return title('FAIL-enable-state');
+        if (!/已启用/.test(txt('[data-testid="collab-state"]') || '')) return title('FAIL-state-chip:' + txt('[data-testid="collab-state"]'));
+        await markSync('r43a-enable-ok（显式启用后 MCP 端点运行 ' + ep + '）');
+        // 签发 Agent（真命令落库）
+        const tok = await inv('issue_agent', { id: 'r43-agent', label: 'R43 冒烟 Agent' });
+        if (!tok || typeof tok !== 'string' || tok.length < 8) return title('FAIL-issue-agent:' + tok);
+        const ms1 = await inv('mcp_status', {});
+        if (!(ms1.agents || []).some((a) => a.id === 'r43-agent')) return title('FAIL-agent-not-persisted');
+        await markSync('r43a-issue-ok（真命令签发 Agent 并落库）');
+        click('[data-testid="settings-close"]');
+        // 连接真容器，真核心委托会话给 Agent（把控制权从 Human 转 Agent）
+        if (!connect('r43-a')) return title('FAIL-connect-a');
+        await trust();
+        if (!await waitFor(async () => (await activeSess('r43-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+        const sess = await activeSess('r43-a');
+        await sleep(400);
+        // D08：关协作面板不改变控制权
+        if (!await openCollab()) return title('FAIL-open-collab2');
+        click('[data-testid="tp-close"]');
+        await waitFor(() => (cnt('[data-testid="tp-title"]') === 0 ? true : null), 40);
+        let s0 = await sessById(sess.id);
+        if (!s0 || s0.control_owner !== 'Human') return title('FAIL-panel-close-moved-owner:' + (s0 && s0.control_owner));
+        await markSync('r43a-panel-close-ok（关协作面板不改变控制权）');
+        await inv('delegate_session', { sid: sess.id, goal: '停用冒烟：把日志打包到 /tmp' });
+        const gotAgent = await waitFor(async () => { const x = await sessById(sess.id); return x && x.control_owner === 'Agent' ? x : null; }, 60);
+        if (!gotAgent) return title('FAIL-not-delegated');
+        await markSync('r43a-delegate-ok（真核心委托，owner=Agent）');
+        // 设置里「已配置」「有活动请求」分别显示
+        if (!await openAgentSettings()) return title('FAIL-open-settings2');
+        const cfg = await waitFor(() => (/已配置 1/.test(txt('[data-testid="collab-configured"]') || '') ? true : null), 40);
+        const act = await waitFor(() => (/有活动请求 1/.test(txt('[data-testid="collab-active"]') || '') ? true : null), 40);
+        if (!cfg) return title('FAIL-configured-indicator:' + txt('[data-testid="collab-configured"]'));
+        if (!act) return title('FAIL-active-indicator:' + txt('[data-testid="collab-active"]'));
+        await markSync('r43a-indicators-ok（已配置与有活动请求分别显示）');
+        // 停用预览：取消不改状态
+        click('[data-testid="collab-disable-btn"]');
+        if (!await waitFor(() => (document.querySelector('[data-testid="collab-disable-dlg"]') ? true : null), 40)) return title('FAIL-no-disable-dlg');
+        const dlg = txt('[data-testid="collab-disable-dlg"]') || '';
+        if (!(/主机|会话|待审批|已配置|受影响的 Agent 会话/.test(dlg))) return title('FAIL-dlg-facts');
+        if (txt('[data-testid="collab-impact-sessions"]') !== '1') return title('FAIL-impact-sessions:' + txt('[data-testid="collab-impact-sessions"]'));
+        if (txt('[data-testid="collab-impact-agents"]') !== '1') return title('FAIL-impact-agents:' + txt('[data-testid="collab-impact-agents"]'));
+        await markSync('r43a-preview-ok（停用预览：受影响会话/待审批/已配置齐备）');
+        click('[data-testid="collab-disable-cancel"]');
+        await waitFor(() => (cnt('[data-testid="collab-disable-dlg"]') === 0 ? true : null), 40);
+        const cs2 = await inv('collab_status', {});
+        if (!cs2 || cs2.state !== 'Enabled') return title('FAIL-cancel-changed-state:' + (cs2 && cs2.state));
+        await markSync('r43a-cancel-ok（取消停用不改状态）');
+        // 确认停用：原子封 admission + Agent 会话转 Human + 端点停止
+        click('[data-testid="collab-disable-btn"]');
+        await waitFor(() => (document.querySelector('[data-testid="collab-disable-dlg"]') ? true : null), 40);
+        click('[data-testid="collab-disable-confirm"]');
+        const cs3 = await waitFor(async () => { const s = await inv('collab_status', {}); return s && s.state === 'Disabled' ? s : null; }, 80);
+        if (!cs3) return title('FAIL-disable-state:' + JSON.stringify(await inv('collab_status', {})));
+        if (cs3.endpoint !== '') return title('FAIL-disable-collab-endpoint:' + cs3.endpoint);
+        const ms2 = await inv('mcp_status', {});
+        if (!ms2 || ms2.endpoint !== '') return title('FAIL-disable-mcp-endpoint:' + (ms2 && ms2.endpoint));
+        if (!(ms2.agents || []).some((a) => a.id === 'r43-agent')) return title('FAIL-agent-token-lost');
+        if (!/已停用/.test(txt('[data-testid="collab-state"]') || '')) return title('FAIL-disabled-chip:' + txt('[data-testid="collab-state"]'));
+        const conv = await waitFor(async () => { const x = await sessById(sess.id); return x && x.control_owner === 'Human' ? x : null; }, 60);
+        if (!conv) return title('FAIL-session-not-converted');
+        if (conv.ever_agent_owned !== true) return title('FAIL-converted-lost-flag');
+        await markSync('r43a-disable-ok（原子封 admission + 会话转 Human + 端点停止；Token 保留）');
+        // 重新启用：端点回来，旧会话不复活为 Agent
+        click('[data-testid="collab-enable-btn"]');
+        const ep2 = await waitFor(async () => { const s = await inv('collab_status', {}); return s && s.state === 'Enabled' && s.endpoint && EP_RE.test(s.endpoint) ? s : null; }, 80);
+        if (!ep2) return title('FAIL-reenable:' + JSON.stringify(await inv('collab_status', {})));
+        const stillHuman = await sessById(sess.id);
+        if (!stillHuman || stillHuman.control_owner !== 'Human') return title('FAIL-reenable-revived-owner:' + (stillHuman && stillHuman.control_owner));
+        await markSync('r43a-reenable-ok（重新启用端点回来，旧会话不复活）');
+        await inv('close_session', { sid: sess.id });
+        return title('r43a-DONE');
+      }
+
+      if (MODE === 'r43b') {
+        // ---- 升级路径：驱动把库改回 V6 并删 collab.enabled（模拟旧版安装）----
+        const cs = await inv('collab_status', {});
+        if (!cs || cs.state !== 'Enabled') return title('FAIL-upgrade-state:' + JSON.stringify(cs));
+        if (!cs.endpoint || !EP_RE.test(cs.endpoint)) return title('FAIL-upgrade-endpoint:' + (cs && cs.endpoint));
+        await markSync('r43b-upgrade-enabled-ok（旧版库升级保留「MCP 默认开启」，端点自启 ' + cs.endpoint + '）');
+        const ms = await inv('mcp_status', {});
+        if (!(ms.agents || []).some((a) => a.id === 'r43-agent')) return title('FAIL-upgrade-agent-lost:' + JSON.stringify(ms && ms.agents));
+        await markSync('r43b-agent-preserved-ok（已配置 Agent/Token 跨升级保留）');
+        if (!await waitFor(() => (cnt('[data-testid="collab-entry"]') === 1 ? true : null), 60)) return title('FAIL-upgrade-no-badge');
+        await markSync('r43b-badge-ok（升级后已配置 → 协作徽标出现）');
+        if (!connect('r43-a')) return title('FAIL-connect-a');
+        await trust();
+        if (!await waitFor(async () => (await activeSess('r43-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+        const sess = await activeSess('r43-a');
+        await sleep(300);
+        if (!await waitFor(() => (document.querySelector('[data-testid="delegate-open"]') ? true : null), 60)) return title('FAIL-upgrade-no-delegate');
+        await markSync('r43b-delegate-entry-ok（升级后协作可用，委托入口出现）');
+        await inv('close_session', { sid: sess.id });
+        return title('r43b-DONE');
       }
 
       return title('FAIL-unknown-mode:' + MODE);

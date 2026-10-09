@@ -1,0 +1,40 @@
+PASS A1 有 Agent 配置/活动时 titlebar 显示协作提醒
+PASS A2 协作提醒含待审批计数  [协作 · 2 待审批]
+PASS A3 会话工具栏有协作入口
+PASS A4 工具菜单按 §3.2 精确枚举（连接详情/端口转发/活动记录/关闭会话，无「审批与记录」）  [连接详情… | 端口转发 | 活动记录 | 关闭会话…]
+PASS B1 协作面板已开
+PASS B2 跨会话审批按主机+会话分组（≥2 组，不只当前主机）  [组数=2]
+PASS B3 分组头含主机名与会话 id  [prod-1 · s-demo-0001已连接2 待处理 || staging-1 · s-demo-0002已断开1 待处理]
+PASS B4 每张卡都有「可用目的」行
+PASS B5 prod-1 卡的目的=会话当前目标（投影可见）  [目的 把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz]
+PASS B6 staging-1（无目标）卡的目的**明确缺失**（不留白误读为无风险）  [目的 未提供（Agent 未收到委托说明）]
+PASS B7 卡片展示核心自算的破坏性提示（target_summary）
+PASS C0 人类新建会话初始为 Human 持有
+PASS C1 首次委托入口措辞为「交给 Agent…」  [交给 Agent…]
+PASS C2 打开首次委托对话框
+PASS C3 对话框展示主机/会话/能力/现有授权范围四项事实
+PASS C4 能力如实告知：无持久 Shell（demo 未注入集成）  [无持久 Shell——委托后 Agent 只能走 exec 模式（不继承当前目录/环境）现有授权范围 已接入 opencode（演示）；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）任务目标（可选）留空也可以转交；留空不会清除会话上已有的目标。交给 Agent取消]
+PASS C5 取消对话框不改动控制权
+PASS C6 明确提交后才切 Agent 持有（核心成功返回为准）
+PASS C7 委托时写的任务目标落库（Agent 读简报可见）  [打包日志到 /tmp 后交还]
+PASS C8 委托后工具栏转为「接管」入口（控制权已在 Agent）
+PASS D1 注入的待审批进入该会话队列  [待审批=1]
+PASS D2 接管把控制权收回人类
+PASS D3 接管不抹掉「曾被 Agent 持有」印记（措辞仍为交还）
+PASS D4 接管作废交接前未开始的请求（待审批清零）  [剩余=0]
+PASS D5 作废留痕（卡片转 voided，不可复活）  [作废=1]
+PASS D6 接管后入口仍为「交还 Agent」（历史不因接管抹掉）  [交还 Agent]
+PASS E1 窄窗下协作面板进入完整视图（tp-full）
+PASS E2 完整视图下长命令不被省略号截断（可横向/纵向查看完整内容）  [{"ws":"normal","overflow":true,"clipped":"clip"}]
+PASS E2b 待审批卡的超长原动作在完整视图下完整可见（§4.2 规范对象，非代理元素）  [{"ws":"normal","wb":"break-all","fits":true,"clipped":"clip","len":301}]
+PASS Z 主场景零 JS 异常
+PASS G1 新装未启用协作时无协作提醒徽标
+PASS G2 协作面板改为停用指引（不渲染空壳）
+PASS G3 不出现空审批区（无分组、无待审批列表）
+PASS G4 不出现空白委托表单（无任务目标输入框）
+PASS G5 不出现首次委托入口（未配置不显示「交给 Agent」）
+PASS G6 引导到「设置 → Agent 接入」且无已登记 Agent
+PASS G7 新装默认停用：设置里无 MCP 端点（D03 无自动监听）
+PASS Z2 新装场景零 JS 异常
+
+== R42 demo 探针 38/38 ==

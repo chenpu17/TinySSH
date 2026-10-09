@@ -457,6 +457,16 @@ impl SessionHandle {
         })
     }
 
+    /// C9（R43）：协作 admission 的会话侧包装——**仅** Agent 受此门（人类是主权者，
+    /// 不经协作 gate）。停用/停用中/停用失败一律 `CollabDisabled`。
+    fn admit_agent_actor(&self, actor: &Actor) -> Result<()> {
+        if actor.is_human() {
+            Ok(())
+        } else {
+            self.center.admit_agent()
+        }
+    }
+
     /// exec 管线（SessionApi::exec 的实现体）。
     pub async fn exec(
         self: &Arc<Self>,
@@ -502,6 +512,11 @@ impl SessionHandle {
         if self.generation.load(Ordering::SeqCst) != gen_at_entry {
             self.live_execs.lock().unwrap().remove(&exec_id);
             return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
+        }
+        // C9（R43）：排队等槽期间协作被停用 → 本动作作废（连审批卡都不生成）。
+        if let Err(e) = self.admit_agent_actor(actor) {
+            self.live_execs.lock().unwrap().remove(&exec_id);
+            return Err(e);
         }
         let _cancel_guard = CancelOnDrop(exec_id.clone(), cancel.clone(), &self.live_execs);
 
@@ -558,6 +573,9 @@ impl SessionHandle {
         if self.generation.load(Ordering::SeqCst) != gen_at_entry {
             return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
         }
+        // C9（R43）：执行开始前复核协作 admission——停用期间（含排队/审批期间被停用）
+        // 的 Agent 动作在此作废，不因排队或旧批准继续执行（§9 line 562-568）。
+        self.admit_agent_actor(actor)?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
@@ -700,6 +718,24 @@ impl SessionHandle {
             }
         };
 
+        // C9（R43）：批准（**含编辑后批准**）后、执行前复核 admission——停用期间
+        // 已批准未执行的请求作废（不因旧审批决定继续执行）。两臂对称：只挡直接
+        // 批准会漏掉「保存并批准」（ApproveEdited）这条 UI 可达路径。
+        if matches!(
+            decision,
+            DecisionMsg::Decide(Decision::Approve) | DecisionMsg::Decide(Decision::ApproveEdited(_))
+        ) {
+            if let Err(e) = self.center.admit_agent() {
+                self.mark_status(&item.id, ApprovalStatus::Voided);
+                let snap = self.center.items.lock().unwrap().get(&item.id).cloned();
+                if let Some(mut it) = snap {
+                    it.status = ApprovalStatus::Voided;
+                    let _ = self.center.vault.save_approval(&it);
+                    let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+                }
+                return Err(e);
+            }
+        }
         match decision {
             DecisionMsg::Decide(Decision::Approve) => {
                 self.mark_status(&item.id, ApprovalStatus::Approved);

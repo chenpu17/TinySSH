@@ -1322,6 +1322,10 @@ pub enum Error {
     /// 供 FE 就地高亮对应输入而非只弹通用提示。
     #[error("转发监听失败（{field}）：{reason}")]
     ForwardListenFailed { field: String, reason: String },
+    /// C9/R43：协作服务已停用（admission 关闭）——拒绝新的 Agent 请求。
+    /// 与 `ControlTakenByHuman` 区分：这是**服务级**封禁，非某会话控制权变更。
+    #[error("协作服务已停用，拒绝新的 Agent 请求——请在「设置 → Agent 接入」显式重新启用")]
+    CollabDisabled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1405,6 +1409,7 @@ impl Error {
                 "forward_listen_failed",
                 Some(serde_json::json!({ "field": field, "reason": reason })),
             ),
+            E::CollabDisabled => ("collab_disabled", None),
         }
     }
 
@@ -1508,6 +1513,59 @@ pub struct RecentHost {
     pub host_id: HostId,
     pub host_name: String,
     pub connected_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// C9 协作启用生命周期（实现 R43；消费 R42/R44）
+// ---------------------------------------------------------------------------
+
+/// C9：协作服务状态机。**admission 门**只在 `Enabled` 开放——其余三态（含
+/// `Disabling`/`DisableFailed`）一律拒绝新的 Agent 请求（人类不受影响）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CollabState {
+    /// 已启用：admission 开放，Agent 请求可进入原有审批/控制权流程。
+    Enabled,
+    /// 停用中：已封 admission，正在收敛存量（作废未开始请求、转回会话控制权、停端点）。
+    Disabling,
+    /// 已停用：admission 已关闭 **且** 应用拥有的 MCP 端点已停止（两层均确认）。
+    Disabled,
+    /// 停用失败：收敛未完成（如端点停止失败）。admission 继续关闭，允许重试。
+    DisableFailed,
+}
+
+/// C9：协作服务状态快照。区分「已配置」（登记了 Agent 身份）与「有活动请求」
+/// （待审批或 Agent 持有会话）——仅有登记身份不等于 Agent 在线。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CollabStatus {
+    pub state: CollabState,
+    /// 停用代次：每次停用递增。执行开始前核对代次，旧代次请求作废（不因旧审批继续）。
+    pub generation: u64,
+    /// 已配置 Agent 数（vault 中未撤销的登记身份）。
+    pub configured_agents: usize,
+    /// 有活动请求数（待审批 + Agent 持有控制权的会话）。
+    pub active_requests: usize,
+    /// 应用拥有的 MCP 端点地址；空串 = 未启动。
+    pub endpoint: String,
+}
+
+/// C9：停用影响预览（用户确认前展示）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisableImpact {
+    /// 当前由 Agent 持有控制权的会话数（停用将转回 Human）。
+    pub agent_owned_sessions: usize,
+    /// 待审批请求数（停用将作废）。
+    pub pending_approvals: usize,
+    /// 已配置 Agent 数。
+    pub configured_agents: usize,
+}
+
+/// C9：停用确认后的收敛报告。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DisableReport {
+    /// 作废的待审批请求数（留痕，不可复活）。
+    pub voided_approvals: usize,
+    /// 转回 Human 的会话数（不自动终止已开始任务）。
+    pub converted_sessions: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -1696,6 +1754,23 @@ pub trait SessionApi: Send + Sync {
     /// 设定会话任务目标/交接留言（R9：人类→Agent 委托入口；None=清除，仅人类）。
     /// Agent 经 get_session_brief 的 goal 字段读取；设定/清除全程审计留痕。
     async fn set_session_goal(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()>;
+
+    // ---- C9 协作启用生命周期（R43；人类专属）----
+    /// 协作服务状态（状态机 + 已配置 Agent 数 + 有活动请求数 + 端点地址）。
+    async fn collab_status(&self, ctx: &Actor) -> Result<CollabStatus>;
+    /// 停用影响预览（确认前展示：Agent 持有会话数 / 待审批数 / 已配置 Agent 数）。
+    async fn collab_disable_preview(&self, ctx: &Actor) -> Result<DisableImpact>;
+    /// 确认停用：**原子**进入 Disabling 并立即封 admission（拒绝所有新 Agent 请求），
+    /// 作废交接前未开始的请求（留痕、不可复活），把所有 Agent 持有会话转回 Human
+    /// （**不**自动终止已开始任务）。返回收敛报告；端点停止由外层完成后再转 Disabled。
+    async fn collab_disable(&self, ctx: &Actor) -> Result<DisableReport>;
+    /// 端点已停止确认 → Disabled（admission 已关闭 + 端点已停止两条件齐备才显示已停用）。
+    async fn collab_mark_endpoint_stopped(&self, ctx: &Actor) -> Result<()>;
+    /// 端点停止失败 → DisableFailed（admission 继续关闭，允许重试）。
+    async fn collab_mark_disable_failed(&self, ctx: &Actor, reason: String) -> Result<()>;
+    /// 显式重新启用：仅当旧停用处理已收敛（Disabled/DisableFailed）方可重开 gate，
+    /// 递增代次（先前作废请求不复活）。
+    async fn collab_enable(&self, ctx: &Actor) -> Result<()>;
 
     // ---- 人类专属：输出流订阅（IPC Bridge 用；MCP 不提供流，只提供快照/等待）----
     // C10 起订阅带检查点与订阅身份（AttachOutput），桥层另需 broadcast receiver——

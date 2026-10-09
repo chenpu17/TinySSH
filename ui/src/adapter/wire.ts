@@ -277,6 +277,34 @@ export interface ShellCapability {
   host_setting: boolean;
 }
 
+/** C9（R43）：协作服务状态机。admission 门只在 `Enabled` 开放。 */
+export type CollabState = "Enabled" | "Disabling" | "Disabled" | "DisableFailed";
+
+/** C9（R43）：协作服务状态快照（区分「已配置」与「有活动请求」）。 */
+export interface CollabStatus {
+  state: CollabState;
+  generation: number;
+  /** 已配置 Agent 数（登记身份；不等于在线/有活动）。 */
+  configured_agents: number;
+  /** 有活动请求数（待审批 + Agent 持有会话）。 */
+  active_requests: number;
+  /** 应用拥有的 MCP 端点地址；空串 = 未启动。 */
+  endpoint: string;
+}
+
+/** C9（R43）：停用影响预览。 */
+export interface DisableImpact {
+  agent_owned_sessions: number;
+  pending_approvals: number;
+  configured_agents: number;
+}
+
+/** C9（R43）：停用确认后的收敛报告。 */
+export interface DisableReport {
+  voided_approvals: number;
+  converted_sessions: number;
+}
+
 export interface PendingHostKey {
   id: string;
   host_id: HostId;

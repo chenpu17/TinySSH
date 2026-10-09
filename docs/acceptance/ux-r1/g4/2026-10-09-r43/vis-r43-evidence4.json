@@ -1,0 +1,177 @@
+[
+  {
+    "k": "D1 启用前（?fresh 停用态）",
+    "v": {
+      "enable": 1,
+      "disable": 0
+    }
+  },
+  {
+    "k": "D1-浅色 1280×800（启用后）",
+    "v": {
+      "theme": "light",
+      "tokDanger": "#b3484d",
+      "tokErr": "",
+      "enableBtn": 0,
+      "disableBtn": 1,
+      "stateChip": "协作已启用",
+      "endpoint": 1,
+      "disableStyle": {
+        "cls": "ghost",
+        "color": "rgb(179, 72, 77)",
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgb(31, 118, 124)",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "display": "inline-flex",
+        "cursor": "pointer",
+        "padding": "6px 12px",
+        "borderRadius": "6px"
+      },
+      "disableContrast": {
+        "ratio": 5.32,
+        "fg": "rgb(179,72,77)",
+        "bg": "rgb(255,255,255)",
+        "aa": 1
+      },
+      "disableBox": {
+        "x": 439,
+        "y": 534.5,
+        "w": 86,
+        "h": 31
+      },
+      "disableTextW": {
+        "textW": 60,
+        "textH": 14,
+        "scrollW": 84,
+        "clientW": 84,
+        "ws": "normal",
+        "overflow": "visible"
+      },
+      "disableClip": {
+        "sw": 84,
+        "cw": 84,
+        "sh": 29,
+        "ch": 29,
+        "hClip": false,
+        "vClip": false
+      },
+      "disableHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitTestid": "collab-disable-btn"
+      },
+      "disableInVp": {
+        "fully": true,
+        "l": 439,
+        "t": 534.5,
+        "r": 525,
+        "b": 565.5,
+        "vw": 1280,
+        "vh": 800
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 294,
+        "ch": 294,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneBox": {
+        "x": 439,
+        "y": 271.5,
+        "w": 498,
+        "h": 294
+      }
+    }
+  },
+  {
+    "k": "D1 浅色 JS 异常",
+    "v": []
+  },
+  {
+    "k": "D1-深色 1280×800（启用后）",
+    "v": {
+      "theme": "dark",
+      "tokDanger": "#d07a7a",
+      "tokErr": "",
+      "enableBtn": 0,
+      "disableBtn": 1,
+      "stateChip": "协作已启用",
+      "endpoint": 1,
+      "disableStyle": {
+        "cls": "ghost",
+        "color": "rgb(208, 122, 122)",
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgb(61, 157, 168)",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "display": "inline-flex",
+        "cursor": "pointer",
+        "padding": "6px 12px",
+        "borderRadius": "6px"
+      },
+      "disableContrast": {
+        "ratio": 5,
+        "fg": "rgb(208,122,122)",
+        "bg": "rgb(28,36,51)",
+        "aa": 1
+      },
+      "disableBox": {
+        "x": 439,
+        "y": 534.5,
+        "w": 86,
+        "h": 31
+      },
+      "disableTextW": {
+        "textW": 60,
+        "textH": 14,
+        "scrollW": 84,
+        "clientW": 84,
+        "ws": "normal",
+        "overflow": "visible"
+      },
+      "disableClip": {
+        "sw": 84,
+        "cw": 84,
+        "sh": 29,
+        "ch": 29,
+        "hClip": false,
+        "vClip": false
+      },
+      "disableHit": {
+        "ok": true,
+        "hitTag": "BUTTON",
+        "hitTestid": "collab-disable-btn"
+      },
+      "disableInVp": {
+        "fully": true,
+        "l": 439,
+        "t": 534.5,
+        "r": 525,
+        "b": 565.5,
+        "vw": 1280,
+        "vh": 800
+      },
+      "paneClip": {
+        "sw": 498,
+        "cw": 498,
+        "sh": 294,
+        "ch": 294,
+        "hClip": false,
+        "vClip": false
+      },
+      "paneBox": {
+        "x": 439,
+        "y": 271.5,
+        "w": 498,
+        "h": 294
+      }
+    }
+  },
+  {
+    "k": "D1 深色 JS 异常",
+    "v": []
+  }
+]

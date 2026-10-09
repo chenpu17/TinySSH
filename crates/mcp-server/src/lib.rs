@@ -295,6 +295,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::StaleDecision { .. } => "stale_decision",
         Error::InvalidTransferState { .. } => "invalid_transfer_state",
         Error::ForwardListenFailed { .. } => "forward_listen_failed",
+        Error::CollabDisabled => "collab_disabled",
     }
 }
 
@@ -717,19 +718,84 @@ pub async fn bind_increment(port: u16) -> std::io::Result<(tokio::net::TcpListen
 /// 进程内起 MCP HTTP 端点（T43 §6-7 收口：GUI 装配用——与 GUI 命令共享同一
 /// SessionApi 实例，Agent 卡片直接进本进程审批队列）。返回实际端口。
 /// 需在 tokio runtime 上下文中调用（内部 tokio::spawn 承载 axum::serve）。
+///
+/// **legacy / 测试专用**：无停机语义（句柄被 `mem::forget`，端点长驻、不可停）。
+/// C9（R43）起应用侧一律改用 [`spawn_endpoint_with_shutdown`]（停用协作需可停）。
 pub async fn spawn_endpoint(
     api: Arc<dyn SessionApi>,
     resolver: TokenResolver,
     port: u16,
 ) -> std::io::Result<u16> {
+    let (actual, handle) = spawn_endpoint_with_shutdown(api, resolver, port).await?;
+    // 旧 API 无停机语义：泄漏句柄保持 watch 发送端存活，端点进程内长驻（否则句柄一
+    // 落地即触发优雅停机）。需要可停端点请用 spawn_endpoint_with_shutdown。
+    std::mem::forget(handle);
+    Ok(actual)
+}
+
+/// C9（R43）：可停端点句柄。`stop()` 触发 axum **优雅停机**——监听器随即释放
+/// （新连接被拒），已接纳连接按各自语义收敛（长流会话不阻塞监听器释放）。
+#[derive(Clone)]
+pub struct EndpointHandle {
+    shutdown: tokio::sync::watch::Sender<bool>,
+    /// C9（R43）：停机**完成**信号——`axum::serve` 返回（监听器确已释放）后置真。
+    /// 供应用侧「确认端点已停止」而非「发信号即当已停」（§9 两层均需确认）。
+    stopped: tokio::sync::watch::Receiver<bool>,
+    port: u16,
+}
+
+impl EndpointHandle {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// 触发优雅停机（幂等）。
+    pub fn stop(&self) {
+        let _ = self.shutdown.send(true);
+    }
+
+    /// 是否已收到停机信号。
+    pub fn is_stopping(&self) -> bool {
+        *self.shutdown.borrow()
+    }
+
+    /// 是否已确认停机完成（监听器已释放）。
+    pub fn is_stopped(&self) -> bool {
+        *self.stopped.borrow()
+    }
+
+    /// 等待监听器**确实**释放（`axum::serve` 返回）。调用方自行加超时。
+    pub async fn wait_stopped(&mut self) {
+        if *self.stopped.borrow() {
+            return;
+        }
+        let _ = self.stopped.changed().await;
+    }
+}
+
+/// C9（R43）：起端点并返回关闭句柄（停用协作时据以停止应用拥有的监听器）。
+pub async fn spawn_endpoint_with_shutdown(
+    api: Arc<dyn SessionApi>,
+    resolver: TokenResolver,
+    port: u16,
+) -> std::io::Result<(u16, EndpointHandle)> {
     let state = McpState::new(api, resolver);
     let config = StreamableHttpServerConfig::default().with_json_response(true);
     let router = build_router(state, config);
     let (listener, actual) = bind_increment(port).await?;
+    let (tx, mut rx) = tokio::sync::watch::channel(false);
+    let (stopped_tx, stopped_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        let _ = axum::serve(listener, router).await;
+        let _ = axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                // 初始值为 false；收到 true（或发送端 drop）即触发停机。
+                let _ = rx.changed().await;
+            })
+            .await;
+        // serve 返回 = 监听器已释放（新连接被拒）
+        let _ = stopped_tx.send(true);
     });
-    Ok(actual)
+    Ok((actual, EndpointHandle { shutdown: tx, stopped: stopped_rx, port: actual }))
 }
 
 async fn auth_middleware(

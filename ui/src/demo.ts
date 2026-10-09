@@ -68,6 +68,14 @@ const demoState = {
   // R42（§6.7/D11）：已登记 Agent（真实核心 vault.list_agents）。mcp_status 由此投影，
   // issue_agent 追加——登记**不**转移任何会话控制权。`?fresh` 置空以复现「新装未启用」态。
   agents: [{ id: "opencode", label: "opencode（演示）" }] as { id: string; label: string }[],
+  // C9（R43）：协作启用态（真实核心 vault.settings['collab.enabled']）。新装默认关闭
+  // （无自动 MCP 监听），旧版升级保留开启。generation 随每次启用/停用 +1（停用封口
+  // 后旧请求按代际核对）。`?fresh` 置 false 复现「新装未启用」。
+  collabEnabled: true,
+  collabGeneration: 1,
+  // C9（R43）：`?disablefailed` 复现「停用未收敛」态（真实核心：端点未在时限内确认
+  // 停止 → DisableFailed，admission 仍封闭）。此态下核心拒绝重新启用，须先重试收敛。
+  collabFailed: false,
   // R26（§6.4）：每会话最近一条状态事件（session_state_feed 轮询面；真实核心走
   // session-state 事件通道——C1 connection-event/demo 轮询双路的同款镜像）
   stateEvents: new Map<string, SessionStateEvent>(),
@@ -193,7 +201,15 @@ if (typeof location !== "undefined" && location.search.includes("fresh")) {
   demoState.agents = [];
   demoState.approvals = [];
   demoState.owner = "Human";
+  // C9（R43）：新装默认关闭协作（无自动 MCP 监听；须显式启用）
+  demoState.collabEnabled = false;
   for (const s of demoState.sessions) { s.control_owner = "Human"; s.ever_agent_owned = false; s.goal = null; }
+}
+// C9（R43）：`?disablefailed` 复现「停用未收敛」（DisableFailed）——核心 admission
+// 仍封闭、端点未运行、须先「重试停用收敛」；此态下重新启用被核心拒绝。
+if (typeof location !== "undefined" && location.search.includes("disablefailed")) {
+  demoState.collabEnabled = false;
+  demoState.collabFailed = true;
 }
 
 // C10：live 帧格式 = <u64 LE seq（8 字节头）><原始字节>（与桥层一致，UI 剥头取 seq）
@@ -354,7 +370,11 @@ function audit(
 export async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
     case "mcp_status":
-      return { endpoint: "http://127.0.0.1:8722/mcp（演示模式）", agents: demoState.agents };
+      // C9（R43）：端点仅在启用时存在（新装默认关闭 → 无自动 MCP 监听）。
+      return {
+        endpoint: demoState.collabEnabled ? "http://127.0.0.1:8722/mcp（演示模式）" : "",
+        agents: demoState.agents,
+      };
     // R42（§6.7）：签发 Token（仅展示一次）。登记 Agent 是「启用协作」的既有动作，
     // 但**不转移**任何会话的控制权（D11）——owner/ever_agent_owned 都不变。
     case "issue_agent": {
@@ -363,6 +383,51 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (!demoState.agents.some((a) => a.id === id)) demoState.agents.push({ id, label });
       return "demo-token-" + id;
     }
+    // C9（R43）：协作启用生命周期（人类专属）。内部审批状态用 demo 惯例小写
+    //（App 经 normApprovalStatus 归一，与真实 PascalCase 线格式在 UI 侧一致）。
+    case "collab_status":
+      return {
+        state: demoState.collabFailed ? "DisableFailed" : demoState.collabEnabled ? "Enabled" : "Disabled",
+        generation: demoState.collabGeneration,
+        configured_agents: demoState.agents.length,
+        active_requests:
+          demoState.approvals.filter((a) => a.status === "pending").length +
+          demoState.sessions.filter((s) => s.control_owner === "Agent").length,
+        endpoint: demoState.collabEnabled ? "http://127.0.0.1:8722/mcp（演示模式）" : "",
+      };
+    case "collab_disable_preview":
+      return {
+        agent_owned_sessions: demoState.sessions.filter((s) => s.control_owner === "Agent").length,
+        pending_approvals: demoState.approvals.filter((a) => a.status === "pending").length,
+        configured_agents: demoState.agents.length,
+      };
+    case "collab_disable": {
+      // 原子封 admission + 作废待审批 + Agent 会话转 Human（不停止运行中任务）
+      const pending = demoState.approvals.filter((a) => a.status === "pending");
+      for (const a of pending) a.status = "voided";
+      let converted = 0;
+      for (const s of demoState.sessions) {
+        if (s.control_owner === "Agent") { s.control_owner = "Human"; converted++; }
+      }
+      demoState.collabEnabled = false;
+      demoState.collabFailed = false;
+      demoState.collabGeneration += 1;
+      return { voided_approvals: pending.length, converted_sessions: converted };
+    }
+    case "collab_enable":
+      // C9（R43）：DisableFailed（未收敛）不得直接重开——与真实核心同判
+      if (demoState.collabFailed) {
+        throw apiError("invalid_input", "停用处理尚未收敛，无法重新启用（演示）");
+      }
+      demoState.collabEnabled = true;
+      demoState.collabGeneration += 1;
+      return {
+        state: "Enabled",
+        generation: demoState.collabGeneration,
+        configured_agents: demoState.agents.length,
+        active_requests: 0,
+        endpoint: "http://127.0.0.1:8722/mcp（演示模式）",
+      };
     case "bench_mode":
       return false;
     // 三个 list 必须返回新副本：真实后端每次 invoke 都是全新反序列化对象，

@@ -12,7 +12,7 @@ import type {
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
-  TransferTask, CollisionDecision, SessionDetail, ShellCapability,
+  TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -683,6 +683,12 @@ export default function App() {
   useEffect(() => { briefRef.current = brief; }, [brief]);
   const [owner, setOwner] = useState<"Human" | "Agent">("Agent");
   const [mcp, setMcp] = useState<{ endpoint: string; agents: { id: string; label: string }[] }>({ endpoint: "", agents: [] });
+  // C9（R43）：协作启用生命周期（人类专属）。state=Enabled 才开放 Agent admission；
+  // 新装默认 Disabled（无自动 MCP 监听），旧版升级保留 Enabled。generation 供停用封口对账。
+  const [collab, setCollab] = useState<CollabStatus>({ state: "Disabled", generation: 0, configured_agents: 0, active_requests: 0, endpoint: "" });
+  // 停用影响预览对话框（非空 = 已拉取影响并等待用户确认）
+  const [disableImpact, setDisableImpact] = useState<DisableImpact | null>(null);
+  const [collabBusy, setCollabBusy] = useState(false);
   const [input, setInput] = useState("");
   // 命令框历史（P2-14）：↑ 召回上一条、↓ 后退；连续重复不重复入栈
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
@@ -993,6 +999,7 @@ export default function App() {
   useEffect(() => {
     refreshLists();
     invoke("mcp_status").then(setMcp);
+    invoke("collab_status").then(setCollab).catch(() => {});
     invoke("bench_mode").then((b) => {
       if (b) runBench();
     });
@@ -1003,6 +1010,9 @@ export default function App() {
     const t = setInterval(() => {
       refreshLists();
       if (sidRef.current) refreshBrief(sidRef.current);
+      // C9（R43）：协作状态与活动请求数随轮询对账（停用封口/重新启用由核心推进，
+      // 多窗口或外部触发时 UI 须收敛）
+      invoke("collab_status").then(setCollab).catch(() => {});
       // 终端尺寸对账：docker ps 等按 PTY 宽度排版，PTY 与 xterm 失配时表格折行错乱。
       // xterm（用户所见）为权威单向校正后端——任何一环丢掉的 resize 在 3s 内自动收敛。
       // 分屏（T19）时左右两个 pane 各自对账。
@@ -3149,6 +3159,57 @@ export default function App() {
     }
   };
 
+  // C9（R43）协作启用生命周期（人类专属）。停用：先预览影响 → 用户确认 → 核心**原子**
+  // 封 admission（立即拒绝新 Agent 请求，不等待逐个接管）并作废存量；重新启用须**显式**
+  // 且核心确认旧停用已收敛（先前作废请求不复活）。失败保持封闭，UI 提供重试/查询。
+  const openDisableDialog = async () => {
+    if (collabBusy) return;
+    setCollabBusy(true);
+    try {
+      setDisableImpact(await invoke("collab_disable_preview"));
+    } catch (e) { pushToast("err", friendlyError(e)); }
+    finally { setCollabBusy(false); }
+  };
+  const confirmDisable = async () => {
+    if (collabBusy) return;
+    setCollabBusy(true);
+    try {
+      const r = await invoke("collab_disable");
+      setDisableImpact(null);
+      setCollab(await invoke("collab_status"));
+      setMcp(await invoke("mcp_status"));
+      await refreshLists();
+      pushToast("info", `协作已停用——作废 ${r.voided_approvals} 个待审批、${r.converted_sessions} 个 Agent 会话转回你控制`);
+    } catch (e) { pushToast("err", friendlyError(e)); }
+    finally { setCollabBusy(false); }
+  };
+  const enableCollab = async () => {
+    if (collabBusy) return;
+    setCollabBusy(true);
+    try {
+      const st = await invoke("collab_enable");
+      setCollab(st);
+      setMcp(await invoke("mcp_status"));
+      if (st && st.endpoint) pushToast("ok", "协作已启用——MCP 端点运行中，可签发 Token 接入 Agent");
+      else pushToast("err", "协作已启用，但 MCP 端点未运行——Agent 无法接入（请检查端口占用）");
+    } catch (e) { pushToast("err", friendlyError(e)); }
+    finally { setCollabBusy(false); }
+  };
+  // C9（R43）：DisableFailed = 停用未收敛（admission 仍封闭）。重试 = 再跑一次停用收敛
+  // （核心 collab_disable 从 DisableFailed 重新封口并收敛），收敛为 Disabled 后再启用。
+  const retryDisableConvergence = async () => {
+    if (collabBusy) return;
+    setCollabBusy(true);
+    try {
+      const r = await invoke("collab_disable");
+      setCollab(await invoke("collab_status"));
+      setMcp(await invoke("mcp_status"));
+      await refreshLists();
+      pushToast("info", `停用已收敛——作废 ${r.voided_approvals} 个待审批、${r.converted_sessions} 个 Agent 会话转回你控制`);
+    } catch (e) { pushToast("err", friendlyError(e)); }
+    finally { setCollabBusy(false); }
+  };
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedCmd, setEditedCmd] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -3179,7 +3240,14 @@ export default function App() {
     if (s) setOwner(s.control_owner);
   }, [sessions, sid]);
 
-  const hasAgents = mcp.agents.length > 0;
+  // C9（R43）：admission 门只在 Enabled 开放——停用/停用中/停用失败一律按「未启用」对待
+  //（失败保持封闭，不得回退为可用）。Disabling/DisableFailed 时主界面不出现空审批区。
+  const collabEnabled = collab.state === "Enabled";
+  const collabStateText = collab.state === "Enabled" ? "协作已启用"
+    : collab.state === "Disabling" ? "停用中"
+    : collab.state === "DisableFailed" ? "停用失败（保持封闭）"
+    : "协作已停用";
+  const hasAgents = collabEnabled && mcp.agents.length > 0;
   const current = sessions.find((x) => x.id === sid);
   const ownerCls = owner === "Human" ? "human" : hasAgents ? "agent" : "dim";
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
@@ -3188,8 +3256,9 @@ export default function App() {
   const resolvedApprovals = approvals.filter((a) => a.status !== "pending").slice(-3).reverse();
   // R42（§3.2/§6.7）：协作入口的两种触发——「有协作配置」常显入口；
   // 「有实际待审批或 Agent 控制活动」必须显示提醒（不因面板开关/入口偏好而隐藏）。
-  const collabConfigured = hasAgents;
-  const collabActive = pendingCount > 0 || sessions.some((s) => s.control_owner === "Agent");
+  // C9（R43）：停用后不再显示协作入口——重新启用走「设置 → Agent 接入」。
+  const collabConfigured = collabEnabled && mcp.agents.length > 0;
+  const collabActive = collabEnabled && (pendingCount > 0 || sessions.some((s) => s.control_owner === "Agent"));
   // §3.2：跨会话审批按「主机 + 会话」明确分组——绝不只展示「当前主机」而误批其他会话。
   const approvalGroups = (() => {
     const bySid = new Map<string, { sess?: SessionInfo; items: ApprovalRow[] }>();
@@ -3670,6 +3739,34 @@ export default function App() {
                   {delegateBusy ? "提交中…" : current.ever_agent_owned ? "交还 Agent" : "交给 Agent"}
                 </button>
                 <button className="ghost" data-autofocus onClick={closeDelegate}>取消</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* C9（R43）停用影响预览对话框：先预览 → 确认后核心原子封 admission。
+            明确披露「运行中任务不自动终止」「重新启用不复活旧请求」，不承诺全清。 */}
+        {disableImpact && (
+          <div className="confirm-mask" onClick={() => setDisableImpact(null)}>
+            <div className="confirm-dialog" role="dialog" aria-modal="true"
+              aria-labelledby="dlg-disable-collab-title" data-testid="collab-disable-dlg" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title" id="dlg-disable-collab-title">停用协作？</div>
+              <div className="dim" style={{ fontSize: 12 }}>
+                确认后立即封闭入口——新 Agent 请求一律被拒绝，不等待你逐个接管；已有请求在执行开始前核对停用代际，作废留痕，不会因旧审批决定继续执行。
+              </div>
+              <div className="dlg-facts">
+                <div className="fact"><span className="dim">受影响的 Agent 会话</span> <b data-testid="collab-impact-sessions">{disableImpact.agent_owned_sessions}</b>{" "}
+                  <span className="dim">（转为你的控制，不自动终止已开始的任务）</span></div>
+                <div className="fact"><span className="dim">待审批请求</span> <b data-testid="collab-impact-approvals">{disableImpact.pending_approvals}</b> <span className="dim">（作废）</span></div>
+                <div className="fact"><span className="dim">已配置 Agent</span> <b data-testid="collab-impact-agents">{disableImpact.configured_agents}</b> <span className="dim">（身份与 Token 保留）</span></div>
+              </div>
+              <div className="side-quiet">
+                运行中的 Agent 任务不会被自动终止；应用拥有的 MCP 端点随之停止（外部 shim 是独立进程，不受影响）。重新启用须显式操作，先前作废的请求不会复活。
+              </div>
+              <div className="hk-actions">
+                <button data-testid="collab-disable-confirm" disabled={collabBusy} onClick={() => void confirmDisable()}>
+                  {collabBusy ? "停用中…" : "确认停用"}
+                </button>
+                <button className="ghost" data-autofocus data-testid="collab-disable-cancel" onClick={() => setDisableImpact(null)}>取消</button>
               </div>
             </div>
           </div>
@@ -4342,8 +4439,16 @@ export default function App() {
 
                 {settingsCat === "agent" && (<>
                 {/* R42（§5 迁移表/§6.7）：Agent 接入、端点、Token 从协作面板移入
-                    「设置 → Agent 接入」——新装未启用协作时主界面不再出现 MCP 配置。 */}
+                    「设置 → Agent 接入」——新装未启用协作时主界面不再出现 MCP 配置。
+                    C9（R43）：本面板是协作**启用生命周期**的人类专属入口（启用/停用）。 */}
                 <div className="ts-label" style={{ marginTop: 0 }}>Agent 接入（MCP）</div>
+                {/* §9：仅有登记身份 ≠ Agent 在线——「已配置」与「有活动请求」分别显示 */}
+                <div className="fact" style={{ marginTop: 6 }} data-testid="collab-state-row">
+                  <span className={"badge " + (collabEnabled ? "ok" : "err")} data-testid="collab-state">{collabStateText}</span>
+                  <span className="dim" style={{ fontSize: 11 }} data-testid="collab-configured">已配置 {collab.configured_agents}</span>
+                  <span className="dim" style={{ fontSize: 11 }} data-testid="collab-active">有活动请求 {collab.active_requests}</span>
+                </div>
+                {collabEnabled ? (<>
                 <div style={{ fontSize: 12, lineHeight: 1.8 }}>
                   MCP 端点随本应用自动运行。为 Agent 签发 Token 后，它的操作请求会进入协作面板逐条审批。
                 </div>
@@ -4383,6 +4488,35 @@ Authorization: Bearer <TOKEN>`}
                 <div className="side-quiet" style={{ marginTop: 8 }}>
                   登记 Agent **不会**转移任何会话的控制权。要把某个会话交给 Agent，在会话工具栏或协作面板点「交给 Agent…」并明确确认。
                 </div>
+                {/* C9：停用先预览影响→确认后核心原子封 admission；此入口只对 Enabled 开放 */}
+                <button className="ghost" style={{ marginTop: 8, color: "var(--danger)" }}
+                  data-testid="collab-disable-btn" disabled={collabBusy}
+                  onClick={() => void openDisableDialog()}>停用协作…</button>
+                </>) : (<>
+                {/* 停用/停用中/停用失败：MCP 端点未运行，不渲染接入配置（§6.7）。 */}
+                <div style={{ fontSize: 12, lineHeight: 1.8 }} data-testid="collab-disabled-note">
+                  {collab.state === "Disabling" ? "协作正在停用——新 Agent 请求已被拒绝，正在收敛存量。"
+                    : collab.state === "DisableFailed" ? "上次停用未完全收敛（协作保持封闭，新 Agent 请求仍被拒绝）——请先「重试停用收敛」，收敛后才可重新启用。"
+                    : "协作已停用——MCP 端点未运行，Agent 请求一律被拒绝。要使用协作请显式启用。"}
+                </div>
+                {mcp.agents.length > 0 && (
+                  <div className="dim" style={{ fontSize: 11, marginTop: 6 }} data-testid="collab-kept-agents">
+                    已配置的 Agent（Token 保留，重新启用后继续可用）：{mcp.agents.map((a) => a.label).join("、")}
+                  </div>
+                )}
+                {collab.state === "DisableFailed" ? (
+                  // 未收敛：只能重试停用（不得直接重新启用——核心会拒绝）
+                  <button data-testid="collab-retry-disable-btn" style={{ marginTop: 8 }} disabled={collabBusy}
+                    onClick={() => void retryDisableConvergence()}>
+                    重试停用收敛
+                  </button>
+                ) : collab.state === "Disabling" ? null : (
+                  <button data-testid="collab-enable-btn" style={{ marginTop: 8 }} disabled={collabBusy}
+                    onClick={() => void enableCollab()}>
+                    启用协作
+                  </button>
+                )}
+                </>)}
                 </>)}
 
                 {settingsCat === "about" && (<>
@@ -4506,16 +4640,30 @@ Authorization: Bearer <TOKEN>`}
               {rightPanel === "collab" && pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
               <span style={{ flex: 1 }} />
               <button className="ghost icon-btn" title="关闭面板（再次点「文件」/「工具」项亦可）" aria-label="关闭任务面板"
+                data-testid="tp-close"
                 onClick={() => setRightPanel(null)}><IconX size={14} /></button>
             </div>
             <div className="tp-scroll">
           {rightPanel === "collab" && (
-            !collabConfigured && !collabActive ? (
+            !collabEnabled ? (
+              // C9（R43）：协作停用/停用中/停用失败时不出现空审批区——改为停用态指引。
+              <div className="empty" data-testid="collab-disabled">
+                <IconInbox size={14} />
+                <div>
+                  {collabStateText}。{collab.state === "Enabled" ? "" : "新 Agent 请求已被拒绝"}
+                  {collab.state === "Disabling" ? "，正在收敛存量。" : "。"}
+                  <div style={{ marginTop: 6 }}>
+                    <button className="ghost" data-testid="collab-open-settings"
+                      onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
+                  </div>
+                </div>
+              </div>
+            ) : !collabConfigured && !collabActive ? (
               // §6.7：新装未启用协作时不出现空审批区——改为一次性引导（不渲染空壳表单）
               <div className="empty" data-testid="collab-unconfigured">
                 <IconInbox size={14} />
                 <div>
-                  协作未启用。到「设置 → Agent 接入」登记 Agent 后，这里会显示审批、任务目标与现场简报。
+                  协作未接入 Agent。到「设置 → Agent 接入」签发 Token 登记 Agent 后，这里会显示审批、任务目标与现场简报。
                   <div style={{ marginTop: 6 }}>
                     <button className="ghost" data-testid="collab-open-settings"
                       onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
@@ -4986,7 +5134,7 @@ Authorization: Bearer <TOKEN>`}
               <div className="side-quiet">连接会话后可委托给 Agent。</div>
             ) : !collabConfigured ? (
               <>
-                <div className="side-quiet">协作未启用，暂不能委托。先登记 Agent 接入。</div>
+                <div className="side-quiet">{collabEnabled ? "协作未接入 Agent，暂不能委托。先登记 Agent 接入。" : "协作已停用，暂不能委托。先到「设置 → Agent 接入」启用。"}</div>
                 <button className="ghost" data-testid="collab-open-settings-delegate"
                   onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
               </>

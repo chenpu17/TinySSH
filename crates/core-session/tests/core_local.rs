@@ -15,7 +15,11 @@ async fn manager() -> Arc<SessionManager> {
     let db = dir.path().join("t.db");
     // dir 泄漏以覆盖测试生命周期（含 tokio 任务）
     std::mem::forget(dir);
-    SessionManager::open(&db).unwrap()
+    let m = SessionManager::open(&db).unwrap();
+    // C9（R43）：新装默认关闭协作；本组集成测试模拟「已启用协作的既有安装」，
+    // 走真实 API 显式启用（开 admission 门），以便驱动 Agent 审批路径。
+    m.collab_enable(&Actor::Human).await.unwrap();
+    m
 }
 
 fn human() -> Actor {

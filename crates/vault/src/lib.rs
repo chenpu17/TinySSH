@@ -154,6 +154,20 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         conn.pragma_update(None, "user_version", 6)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
+    // V7（C9，R43）：协作启用状态默认（§10.1-6）。以**既有 schema 标记**区分升级与新装
+    // （不以「当前没有 Agent 在线」判定）：全新库（自 user_version=0 建起）默认**关闭**
+    // （新装无自动 MCP 监听）；已有库（升级）缺少新键时**保留旧版本「MCP 默认开启」**的
+    // 行为，已有明确偏好不覆盖（INSERT OR IGNORE）。
+    if version < 7 {
+        let default_enabled = if version == 0 { "0" } else { "1" };
+        conn.execute(
+            "INSERT OR IGNORE INTO settings(key,value) VALUES('collab.enabled',?1)",
+            params![default_enabled],
+        )
+        .map_err(|e| Error::Storage(e.to_string()))?;
+        conn.pragma_update(None, "user_version", 7)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
     Ok(())
 }
 
@@ -511,6 +525,18 @@ impl Vault {
             )
             .map_err(|e| Error::Storage(e.to_string()))?;
         Ok(())
+    }
+
+    // ---- C9 协作启用状态（R43）----
+    /// 协作服务是否启用（settings `collab.enabled`；缺省按 false=关闭，保守侧）。
+    /// V7 迁移保证键存在（新装 "0" / 升级 "1"）；此处兜底手删场景。
+    pub fn collab_enabled(&self) -> Result<bool> {
+        Ok(self.get_setting("collab.enabled")?.as_deref() == Some("1"))
+    }
+
+    /// 写协作启用状态（用户显式启用/停用时持久化期望态）。
+    pub fn set_collab_enabled(&self, on: bool) -> Result<()> {
+        self.set_setting("collab.enabled", if on { "1" } else { "0" })
     }
 
     // ---- C8 偏好与主机元数据（R15）----
@@ -1415,8 +1441,8 @@ mod tests {
             let conn = v.conn.lock().unwrap();
             conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
         };
-        // 开库升到当前链尾（R24 后=6）；V5 专属断言在下方逐项验证
-        assert_eq!(ver, 6);
+        // 开库升到当前链尾（R43 后=7）；V5 专属断言在下方逐项验证
+        assert_eq!(ver, 7);
         let ws = v.workspace().unwrap();
         assert_eq!(ws.schema_version, 1);
         assert_eq!(ws.chrome, "light"); // solar-light → light（DF8.3）
@@ -1727,6 +1753,53 @@ mod tests {
         assert!(!got2.1);
         // 未知 id → None（不虚构）
         assert!(v.transfer_journal_get("t-nope").unwrap().is_none());
+    }
+
+    /// C9（R43 §10.1-6）：协作启用状态迁移——以既有 vault/schema 标记区分升级与新装
+    /// （不以「当前没有 Agent 在线」判定）。新装默认关闭（无自动 MCP 监听）；升级保留
+    /// 旧版「默认开启」；已有明确偏好不被覆盖；重复启动幂等。
+    #[test]
+    fn c9_collab_enabled_migration_fresh_vs_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
+
+        // 新装：全新库（自 user_version=0 建起）默认关闭
+        let fresh = dir.path().join("fresh.db");
+        let v = Vault::open_shared(Connection::open(&fresh).unwrap(), master_key().unwrap()).unwrap();
+        assert!(!v.collab_enabled().unwrap(), "全新库默认关闭协作（新装无自动 MCP 监听）");
+        drop(v);
+
+        // 升级：造一个「既有 V6 库」（schema 已到 V7，但删去新键并把版本退到 6）
+        let up = dir.path().join("up.db");
+        drop(Vault::open_shared(Connection::open(&up).unwrap(), master_key().unwrap()).unwrap());
+        {
+            let conn = Connection::open(&up).unwrap();
+            conn.execute("DELETE FROM settings WHERE key='collab.enabled'", []).unwrap();
+            conn.pragma_update(None, "user_version", 6).unwrap();
+        }
+        let v = Vault::open_shared(Connection::open(&up).unwrap(), master_key().unwrap()).unwrap();
+        assert!(v.collab_enabled().unwrap(), "升级库缺新键时保留旧版「MCP 默认开启」行为");
+        drop(v);
+
+        // 幂等：重开不翻转
+        let v = Vault::open_shared(Connection::open(&up).unwrap(), master_key().unwrap()).unwrap();
+        assert!(v.collab_enabled().unwrap(), "重复启动幂等，迁移不重写");
+        drop(v);
+
+        // 已有明确偏好优先：用户已显式关闭 → 迁移不覆盖
+        {
+            let conn = Connection::open(&up).unwrap();
+            conn.execute("UPDATE settings SET value='0' WHERE key='collab.enabled'", []).unwrap();
+            conn.pragma_update(None, "user_version", 6).unwrap();
+        }
+        let v = Vault::open_shared(Connection::open(&up).unwrap(), master_key().unwrap()).unwrap();
+        assert!(!v.collab_enabled().unwrap(), "已有明确偏好优先，迁移不覆盖");
+
+        // 人类可显式切换（set_collab_enabled 落库并回读）
+        v.set_collab_enabled(true).unwrap();
+        assert!(v.collab_enabled().unwrap());
+        v.set_collab_enabled(false).unwrap();
+        assert!(!v.collab_enabled().unwrap());
     }
 }
 

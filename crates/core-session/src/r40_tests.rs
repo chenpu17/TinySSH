@@ -82,7 +82,10 @@ fn mgr() -> Arc<SessionManager> {
     }
     let dir = std::env::temp_dir().join(format!("r40-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    SessionManager::open(&dir.join("t.db")).unwrap()
+    let m = SessionManager::open(&dir.join("t.db")).unwrap();
+    // C9（R43）：新装默认关闭协作；本组用例模拟「已启用协作的既有安装」，显式开 admission 门。
+    *m.center.collab.lock().unwrap() = CollabGate::new(true);
+    m
 }
 
 fn mk_handle(center: Arc<ApprovalCenter>, owner: ControlOwner, ch: Arc<R40Channel>) -> Arc<SessionHandle> {
