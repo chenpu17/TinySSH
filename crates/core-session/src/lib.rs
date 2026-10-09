@@ -3691,6 +3691,9 @@ mod r34_tests;
 #[path = "r35_tests.rs"]
 mod r35_tests;
 #[cfg(test)]
+#[path = "r40_tests.rs"]
+mod r40_tests;
+#[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle
     //! （屏幕/环/注册表全 pub 字段），以 handle::feed_output 走唯一线性化点。

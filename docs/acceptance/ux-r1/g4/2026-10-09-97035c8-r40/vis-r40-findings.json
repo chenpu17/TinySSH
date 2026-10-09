@@ -1,0 +1,88 @@
+{
+  "reviewer": "vis-r40 (independent visual recheck)",
+  "round": "R40 / G4 — 端口转发表单、列表与生命周期 (§6.6)",
+  "commit": "97035c8",
+  "domain": "demo (browser, Playwright+Chromium, no Tauri)",
+  "artifacts": {
+    "probe": "vis-r40-demo-probe.js",
+    "probe2": "vis-r40-probe2.js",
+    "remeasure": "vis-r40-remeasure.js",
+    "geometry": "vis-r40-expose-geometry.js",
+    "logs": ["vis-r40-run1.txt", "vis-r40-remeasure.txt", "vis-r40-probe2.txt", "vis-r40-expose-geometry.txt"],
+    "screenshots": "vis-r40-{dark,light}-{a..f,reg-files}.png (18 张)"
+  },
+  "verdict": "不可签 (blocking: F1)",
+  "functional_checks": { "dark": "28/28", "light": "28/28", "probe2": "13/19", "jsErrors": 0 },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "high (blocking)",
+      "title": "非回环暴露确认行的警告正文完全不可见（被推出面板右界）——两个主题、三个出货视口全中",
+      "selector": "[data-testid=\"fwd-expose\"] span",
+      "file_line": "ui/src/styles.css:758 (.fwd-expose input) + ui/src/styles.css:283-287 (全局 input,select{width:100%})；JSX ui/src/App.tsx:4272-4278",
+      "root_cause": "全局规则 `input, select { width: 100% }`(styles.css:283) 未被 `.fwd-expose input { flex:none; margin-top:2px }`(styles.css:758) 重置 width；勾选框因此被拉成整行宽(363px)，把同 flex 行的 <span> 警告文本挤出面板右界。",
+      "repro": "连接主机 → 工具 → 端口转发 → 监听地址填 0.0.0.0",
+      "expected": "勾选框在左、右侧显示「我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有设备可见…」正文",
+      "actual": "只见一个水平居中、无任何文字的孤立勾选框；警告文本渲染在面板外(不可见)",
+      "evidence": {
+        "geometry_1280x800": { "inputW": 363, "spanX": 1283, "spanW": 36, "panelRight": 1280, "spanInsidePanel": false },
+        "geometry_1440x900": { "inputW": 363, "spanX": 1443, "spanW": 36, "panelRight": 1440, "spanInsidePanel": false },
+        "geometry_1024x768": { "inputW": 778, "spanX": 1027, "spanW": 36, "panelRight": 1024, "spanInsidePanel": false },
+        "overflow": "tp-scroll scrollWidth=422 > clientWidth=383（由 span 溢出所致；仅当暴露行在场时出现）",
+        "screenshots": ["vis-r40-dark-c-expose-unchecked.png", "vis-r40-light-c-expose-unchecked.png", "vis-r40-light-c2-expose-checked.png"]
+      },
+      "impact": "§6.6 要求非回环监听「必须主动勾选确认暴露范围」——用户看不到自己在确认什么，安全确认被架空。作者 demo 探针只断言元素存在与 textContent，未验可见性，故漏检。"
+    },
+    {
+      "id": "F2",
+      "severity": "medium",
+      "title": "深色主题下 R40 表单字段标签与面板小标题对比度 3.41:1，低于 WCAG AA(4.5)",
+      "selector": ".task-panel .ah-field label（监听地址（在本机）/本地端口/目标（远端侧解析）/端口）与 .task-panel .section h4（「端口转发」）",
+      "file_line": "ui/src/styles.css:777 (.ah-field label{color:var(--dim)}) ；ui/src/styles.css:485-488 (.section h4{color:var(--dim)})",
+      "repro": "深色主题打开端口转发面板，量取标签/小标题 computed color 与背景",
+      "expected": "正文小字 ≥4.5:1",
+      "actual": "dark: --dim #5d6f82 on --panel #141922 = 3.41:1（浅色主题 5.25:1 达标）",
+      "evidence": { "dark": { "ah_field_label": 3.41, "section_h4": 3.41 }, "light": { "ah_field_label": 5.25, "section_h4": 5.25 } },
+      "impact": "与 R34/R35 已修的 --dim 深档缺陷同源（.xfer-sub/.side-quiet/.queue-count/.sb-btn 已由 --dim 改 --text-sub 达 AA），此处两处遗留。属共享样式，非 R40 新引入，但 R40 面板正是其新暴露面。"
+    },
+    {
+      "id": "F3",
+      "severity": "low (latent)",
+      "title": "浅色主题下暴露确认行正文 --warn 于 --panel 仅 4.2:1，低于 AA（F1 修复后将显现）",
+      "selector": "[data-testid=\"fwd-expose\"] span",
+      "file_line": "ui/src/styles.css:757 (.fwd-expose{color:var(--warn)})；浅色 --warn #96700a (styles.css:74) on --panel #f4f6f8",
+      "repro": "浅色主题、监听地址 0.0.0.0",
+      "expected": "≥4.5:1",
+      "actual": "4.2:1（同一文本在 --panel2/白底为 4.55，恰在阈上；实际背景是 --panel 故跌破）",
+      "evidence": { "light_fwd_expose_span_on_panel": 4.2, "harness_on_panel2": 4.55, "dark_fwd_expose_span": 8.54 },
+      "impact": "因 F1 该文本当前不可见，故为潜在项；修 F1 时宜一并把浅色 --warn 抬一档。"
+    }
+  ],
+  "passed_contrast": {
+    "note": "以下均双主题实测达标",
+    "items": {
+      "fwd-err (real, listen/target)": "dark 5.66 / light 4.91",
+      "fwd-state.listen/warn/err (harness, --panel2)": "dark 6.53/7.54/5.00 ; light 6.97/4.55/5.32",
+      "xfer-sub / .warn / .err (harness)": "dark 6.53/7.54/5.00 ; light 6.97/4.55/5.32",
+      "fwd-kind -L/-R/-D (harness)": "dark 6.16/7.54/7.23 ; light 5.27/4.55/5.13",
+      "side-quiet": "dark 7.40 / light 6.44",
+      "启动转发 button": "dark 5.81 / light 5.33",
+      "行停止 ghost button": "dark 4.88 / light 5.33",
+      "select/input 正文": "dark 11.17 / light 13.79"
+    }
+  },
+  "other_checks": {
+    "layout": "1440×900 / 1280×800 / 1024×768：表单行无重叠；控件不越面板右界；长路线(687px)在行内被 ellipsis 截断(contained)；唯一横向溢出由 F1 暴露行引起",
+    "keyboard": "Tab 可达 select/监听地址/端口/暴露勾选框/目标主机/目标端口/启动转发/行内停止钮；均 focus-visible 有焦点环；Enter 激活启动转发、Space 切换勾选框均生效",
+    "states_captured": ["默认表单", "空端口字段错误", "空目标字段错误", "非回环暴露行(勾选前/后)", "-L 行(路线/监听中/健康行分离)", "-D 行(无目标)", "端口冲突字段错误", "文件面板回归"],
+    "regression": "文件面板、协作面板、传输抽屉均正常渲染；全程 0 JS 报错（pageerror+console.error）"
+  },
+  "not_tested": [
+    "原生 Tauri 专属面（真实监听、真实 Degraded/Failed 行状态）——demo 域仅产生 Listening 行；warn/err 变体经注入桩在真实主题/背景上下文测量，非真实状态迁移",
+    "真实端口占用（仅 demo_forward_conflict 钩子模拟）",
+    "1024×768 下 tp-full 完整视图模式的进一步细节（仅测无溢出/无重叠）"
+  ],
+  "observations_not_defects": [
+    "面板内 .section h4「端口转发」与 .tp-head 标题「端口转发」重复出现（设计如此，非缺陷）"
+  ]
+}

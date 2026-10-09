@@ -14,6 +14,9 @@
   --danger: #d07a7a;
   --ok: #7fbf8f;
   --warn: #d0b07a;
+  /* R40 视觉复验 F3：--warn 在浅色 --panel(#f4f6f8) 上仅 4.20:1（原按 --panel2 白底调）；
+     --warn-text 是「面板底上的警告正文」专用档，深色同 --warn（8.54:1）。 */
+  --warn-text: #d0b07a;
   /* T32：hover 提亮层（与基色同族，步进约 +8% 亮度） */
   --accent-hover: #4db0bb;
   --danger-hover: #db9090;
@@ -72,6 +75,8 @@
   --danger-hover: #c25f64;
   --ok: #2e7d32;
   --warn: #96700a;
+  /* 面板底专用档：#96700a 在 --panel 上 4.20:1（差 AA）→ #8a6409 为 4.96:1（--panel2 上 5.37:1） */
+  --warn-text: #8a6409;
   --warn-hover: #ab8524;
   --blue: #2f6fab;
   --border-hover: #b6c1cc;
@@ -484,7 +489,8 @@ textarea {
 /* 精致化（§4.3）：分组标题去 uppercase（中文全大写无意义），靠上方留白+字距分组 */
 .section h4 {
   margin: 0; padding: 14px 2px 4px;
-  color: var(--dim); font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  /* 视觉复验 R40 F2：--dim 深色 3.41:1 低于 AA（分组标题也是要读的字）→ --text-sub 深 7.40/浅 6.44 */
+  color: var(--text-sub); font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
 }
 .mono { font-family: "SF Mono", Menlo, monospace; }
 .dim { color: var(--dim); }
@@ -742,15 +748,28 @@ textarea {
 
 /* T42 端口转发（FR-8）*/
 .fwd-form { gap: 4px; align-items: center; }
-.fwd-form select { flex: none; width: 88px; }
+.fwd-form select { flex: 1; width: auto; min-width: 0; }
 .fwd-form input { min-width: 0; }
 /* 原生 select 比 input 高 1px（视觉复验 R3）：统一盒高对齐 */
 .fwd-form select, .fwd-form input { height: 28px; box-sizing: border-box; }
-.fwd-row { margin-top: 6px; flex-wrap: nowrap; }
+.fwd-row { margin-top: 6px; }
 .fwd-kind { flex: none; width: 26px; text-align: center; font-weight: 700; font-size: 11px; border: 1px solid var(--border); border-radius: 5px; padding: 1px 0; }
 .fwd-kind.local { color: var(--blue); border-color: var(--blue); }
-.fwd-kind.remote { color: var(--warn); border-color: var(--warn); }
+.fwd-kind.remote { color: var(--warn-text); border-color: var(--warn); }
 .fwd-kind.dynamic { color: var(--ok); border-color: var(--ok); }
+/* R40（§6.6）：字段级错误（就地高亮监听/目标字段）；暴露范围确认；监听态标签
+   （与「目标可达」分开显示——「监听中」不再用绿色 ✓ 冒充健康） */
+.fwd-err { color: var(--danger, #e5534b); font-size: 11px; margin-top: 4px; line-height: 1.5; }
+.fwd-expose { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; font-size: 11px; color: var(--warn-text); line-height: 1.5; }
+/* 勾选框必须抵掉全局 `input, select { width:100% }`（styles.css:283）——否则被拉成整行宽，
+   同 flex 行的警告正文被挤出面板右界（R40 视觉复验 F1：用户看不到自己在确认什么）。 */
+.fwd-expose input { flex: none; width: auto; margin: 2px 0 0; padding: 0; }
+.fwd-state { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); }
+.fwd-state.listen { color: var(--text-sub); border-color: var(--border); }
+.fwd-state.warn { color: var(--warn-text); border-color: var(--warn); }
+.fwd-state.err { color: var(--danger, #e5534b); border-color: var(--danger, #e5534b); }
+.xfer-sub.warn { color: var(--warn); }
+.xfer-sub.err { color: var(--danger, #e5534b); }
 
 /* ~/.ssh/config 导入面板（T21） */
 .sshcfg-row {
@@ -763,7 +782,7 @@ textarea {
 .confirm-mask { position: fixed; inset: 0; z-index: 90; background: var(--mask-plain); display: flex; align-items: center; justify-content: center; }
 .confirm-dialog { width: 400px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; line-height: 1.7; box-shadow: 0 10px 30px var(--shadow-dialog); }
 .ah-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.ah-field label { font-size: 10px; color: var(--dim); letter-spacing: 0.3px; }
+.ah-field label { font-size: 10px; color: var(--text-sub); letter-spacing: 0.3px; }
 .ah-field input, .ah-field select { width: 100%; }
 .dead-overlay { position: absolute; inset: 0; z-index: 20; background: var(--dead-scrim); display: flex; align-items: flex-start; justify-content: center; pointer-events: none; }
 .dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 10px 30px var(--shadow-dialog); pointer-events: auto; }

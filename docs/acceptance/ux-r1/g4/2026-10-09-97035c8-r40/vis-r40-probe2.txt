@@ -1,0 +1,21 @@
+PASS kbd Enter activates 启动转发 (creates row)  [rows=1]
+PASS kbd Tab reaches row 停止 button  [{"tag":"BUTTON","text":"停止","cls":"ghost","focusVisible":true,"outlineW":"2px","boxShadow":"none"}]
+PASS row 停止 button has visible focus ring  [{"tag":"BUTTON","text":"停止","cls":"ghost","focusVisible":true,"outlineW":"2px","boxShadow":"none"}]
+PASS kbd Space toggles exposure checkbox  [false->true]
+PASS layout 1440x900: no form row overlap  [{"panelRight":1440,"scrollW":422,"clientW":383,"hOverflow":true,"overlap":false,"ctrlOut":false,"rowCount":3}]
+PASS layout 1440x900: no control past panel right  [panelRight=1440]
+FAIL layout 1440x900: no horizontal overflow  [scrollW=422 clientW=383]
+PASS layout 1280x800: no form row overlap  [{"panelRight":1280,"scrollW":422,"clientW":383,"hOverflow":true,"overlap":false,"ctrlOut":false,"rowCount":3}]
+PASS layout 1280x800: no control past panel right  [panelRight=1280]
+FAIL layout 1280x800: no horizontal overflow  [scrollW=422 clientW=383]
+PASS layout 1024x768: no form row overlap  [{"panelRight":1024,"scrollW":837,"clientW":798,"hOverflow":true,"overlap":false,"ctrlOut":false,"rowCount":3}]
+PASS layout 1024x768: no control past panel right  [panelRight=1024]
+FAIL layout 1024x768: no horizontal overflow  [scrollW=837 clientW=798]
+FAIL expose warning text visible 1440x900  [{"inputW":363,"spanX":1443,"spanW":36,"panelRight":1440,"spanInsidePanel":false}]
+FAIL expose warning text visible 1280x800  [{"inputW":363,"spanX":1283,"spanW":36,"panelRight":1280,"spanInsidePanel":false}]
+FAIL expose warning text visible 1024x768  [{"inputW":778,"spanX":1027,"spanW":36,"panelRight":1024,"spanInsidePanel":false}]
+PASS regression: collab panel renders
+PASS regression: transfer drawer toggles  [clicked=true]
+PASS zero JS errors (probe2)
+
+13/19

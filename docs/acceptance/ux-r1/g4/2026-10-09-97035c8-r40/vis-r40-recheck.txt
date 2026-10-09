@@ -1,0 +1,66 @@
+
+================ THEME: dark ================
+PASS F1 1440x900: checkbox native width (~13px, not full row)  [inputW=13]
+PASS F1 1440x900: warning span inside panel & wide  [spanX=1086 spanW=344 panelRight=1440]
+PASS F1 1440x900: no horizontal overflow  [scrollW=383 clientW=383]
+PASS F1 1280x800: checkbox native width (~13px, not full row)  [inputW=13]
+PASS F1 1280x800: warning span inside panel & wide  [spanX=926 spanW=344 panelRight=1280]
+PASS F1 1280x800: no horizontal overflow  [scrollW=383 clientW=383]
+PASS F1 1024x768: checkbox native width (~13px, not full row)  [inputW=13]
+PASS F1 1024x768: warning span inside panel & wide  [spanX=255 spanW=534 panelRight=1024]
+PASS F1 1024x768: no horizontal overflow  [scrollW=798 clientW=798]
+PASS F1: clicking warning text toggles checkbox (label works)  [{"before":false,"after":true}]
+PASS F3 [dark]: .fwd-expose span ≥4.5  [ratio=8.54 fg=rgb(208, 176, 122) bg=rgb(20, 25, 34)]
+PASS F2 [dark]: .section h4 ≥4.5  [ratio=7.4 fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)]
+PASS F2 [dark]: .ah-field label ≥4.5  [ratio=7.4 fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)]
+PASS 同族 [dark]: .fwd-kind.remote ≥4.5  [ratio=7.54]
+PASS 同族 [dark]: .fwd-state.warn ≥4.5  [ratio=7.54]
+PASS 节外 [dark]: file panel renders
+PASS 节外 [dark]: collab panel renders
+PASS 节外 [dark]: transfer drawer toggles  [clicked=true]
+PASS 零 JS 报错 [dark]
+
+================ THEME: light ================
+PASS F1 1440x900: checkbox native width (~13px, not full row)  [inputW=13]
+PASS F1 1440x900: warning span inside panel & wide  [spanX=1086 spanW=344 panelRight=1440]
+PASS F1 1440x900: no horizontal overflow  [scrollW=383 clientW=383]
+PASS F1 1280x800: checkbox native width (~13px, not full row)  [inputW=13]
+PASS F1 1280x800: warning span inside panel & wide  [spanX=926 spanW=344 panelRight=1280]
+PASS F1 1280x800: no horizontal overflow  [scrollW=383 clientW=383]
+PASS F1 1024x768: checkbox native width (~13px, not full row)  [inputW=13]
+PASS F1 1024x768: warning span inside panel & wide  [spanX=255 spanW=534 panelRight=1024]
+PASS F1 1024x768: no horizontal overflow  [scrollW=798 clientW=798]
+PASS F1: clicking warning text toggles checkbox (label works)  [{"before":false,"after":true}]
+PASS F3 [light]: .fwd-expose span ≥4.5  [ratio=4.96 fg=rgb(138, 100, 9) bg=rgb(244, 246, 248)]
+PASS F2 [light]: .section h4 ≥4.5  [ratio=6.44 fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)]
+PASS F2 [light]: .ah-field label ≥4.5  [ratio=6.44 fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)]
+PASS 同族 [light]: .fwd-kind.remote ≥4.5  [ratio=5.37]
+PASS 同族 [light]: .fwd-state.warn ≥4.5  [ratio=5.37]
+PASS 节外 [light]: file panel renders
+PASS 节外 [light]: collab panel renders
+PASS 节外 [light]: transfer drawer toggles  [clicked=true]
+PASS 零 JS 报错 [light]
+
+================ 对比度明细（复验） ================
+ok   [dark] fwd-expose span  ratio=8.54 (thr 4.5) fg=rgb(208, 176, 122) bg=rgb(20, 25, 34)
+ok   [dark] section h4  ratio=7.4 (thr 4.5) fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)
+ok   [dark] ah-field label  ratio=7.4 (thr 4.5) fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)
+ok   [dark] .fwd-kind.remote  ratio=7.54 (thr 4.5) fg=rgb(208, 176, 122) bg=rgb(28, 36, 51)
+ok   [dark] .fwd-state.warn  ratio=7.54 (thr 4.5) fg=rgb(208, 176, 122) bg=rgb(28, 36, 51)
+ok   [dark] .fwd-kind.local  ratio=6.16 (thr 4.5) fg=rgb(111, 168, 220) bg=rgb(28, 36, 51)
+ok   [dark] .fwd-kind.dynamic  ratio=7.23 (thr 4.5) fg=rgb(127, 191, 143) bg=rgb(28, 36, 51)
+ok   [dark] .fwd-state.err  ratio=5 (thr 4.5) fg=rgb(208, 122, 122) bg=rgb(28, 36, 51)
+ok   [dark] .xfer-sub.warn  ratio=7.54 (thr 4.5) fg=rgb(208, 176, 122) bg=rgb(28, 36, 51)
+ok   [light] fwd-expose span  ratio=4.96 (thr 4.5) fg=rgb(138, 100, 9) bg=rgb(244, 246, 248)
+ok   [light] section h4  ratio=6.44 (thr 4.5) fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)
+ok   [light] ah-field label  ratio=6.44 (thr 4.5) fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)
+ok   [light] .fwd-kind.remote  ratio=5.37 (thr 4.5) fg=rgb(138, 100, 9) bg=rgb(255, 255, 255)
+ok   [light] .fwd-state.warn  ratio=5.37 (thr 4.5) fg=rgb(138, 100, 9) bg=rgb(255, 255, 255)
+ok   [light] .fwd-kind.local  ratio=5.27 (thr 4.5) fg=rgb(47, 111, 171) bg=rgb(255, 255, 255)
+ok   [light] .fwd-kind.dynamic  ratio=5.13 (thr 4.5) fg=rgb(46, 125, 50) bg=rgb(255, 255, 255)
+ok   [light] .fwd-state.err  ratio=5.32 (thr 4.5) fg=rgb(179, 72, 77) bg=rgb(255, 255, 255)
+ok   [light] .xfer-sub.warn  ratio=4.55 (thr 4.5) fg=rgb(150, 112, 10) bg=rgb(255, 255, 255)
+
+contrast: 18/18 pass
+
+38/38 checks

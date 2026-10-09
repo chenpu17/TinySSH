@@ -1,0 +1,4 @@
+PASS E7 narrow collapses time column first  [sftp-list cols-name-only]
+PASS E8 narrower collapses size too
+PASS Z zero page errors
+SUMMARY 48/48

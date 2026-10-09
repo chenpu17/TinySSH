@@ -1,0 +1,49 @@
+{
+  "reviewer": "vis-r40 (independent visual recheck — targeted)",
+  "round": "R40 / G4 — F1/F2/F3 处置后定向复验",
+  "tree_fingerprint": {
+    "styles_css_md5": "7da2c33460c5f7712c1792fea3239bae",
+    "git_diff_md5": "236b8532670a496f3eb0086500251eb7",
+    "matches_reported": true
+  },
+  "verdict": "可签",
+  "checks": "38/38 pass; contrast 18/18 pass; JS errors 0 (both themes)",
+  "closures": {
+    "F1": {
+      "status": "closed",
+      "evidence": {
+        "checkbox_width": "13px (native) at 1440×900/1280×800/1024×768 × 双主题",
+        "span": "在面板右界内可见：1280×800 spanX=926 w=344 panelRight=1280；1440×900 spanX=1086 w=344；1024×768 spanX=255 w=534",
+        "overflow": "tp-scroll scrollWidth == clientWidth（383=383 / 798=798），0 横向溢出",
+        "label_click": "点击警告文本可切换勾选框（false→true）",
+        "screenshots": ["vis-r40-recheck-dark-expose.png", "vis-r40-recheck-light-expose.png"]
+      }
+    },
+    "F2": {
+      "status": "closed",
+      "evidence": { "dark": { "section_h4": 7.40, "ah_field_label": 7.40 }, "light": { "section_h4": 6.44, "ah_field_label": 6.44 }, "threshold": 4.5 }
+    },
+    "F3": {
+      "status": "closed",
+      "evidence": { "light_fwd_expose_span": 4.96, "dark_fwd_expose_span": 8.54, "threshold": 4.5, "dark_no_regression": true }
+    }
+  },
+  "same_family_recheck": {
+    ".fwd-kind.remote": { "dark": 7.54, "light": 5.37, "note": "浅色 4.20→5.37" },
+    ".fwd-state.warn": { "dark": 7.54, "light": 5.37 },
+    ".fwd-state.listen": { "dark": 6.53, "light": 6.97 },
+    ".fwd-state.err": { "dark": 5.00, "light": 5.32 },
+    ".xfer-sub.warn": { "dark": 7.54, "light": 4.55, "note": "未改（仍用 --warn），浅色 4.55 恰在阈上，非本轮项" }
+  },
+  "regression": {
+    "file_panel": "ok（双主题）",
+    "collab_panel": "ok（双主题）",
+    "transfer_drawer": "ok（双主题）",
+    "heading_hierarchy": "浅色 .section h4 由 --dim 转 --text-sub 后更暗，但 10px/字距/加粗仍明显小于卡片正文（--text），层级不冲突——截图核对 审批/任务目标/远程文件 均正常"
+  },
+  "not_tested": [
+    "原生 Tauri 专属面（真实监听、真实 Degraded/Failed 行状态）——仍为 demo 域；warn/err 变体经注入桩在真实主题/背景上下文测量，非真实状态迁移",
+    "真实端口占用（仅 demo_forward_conflict 钩子模拟）",
+    "add-host 表单等其它消费 .ah-field label/.section h4 的全局改色面未逐一截图（仅抽查 文件/协作/转发 三面板）"
+  ]
+}

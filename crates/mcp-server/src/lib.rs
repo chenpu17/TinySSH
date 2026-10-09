@@ -285,6 +285,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::ReplaceUnsupported { .. } => "replace_unsupported",
         Error::StaleDecision { .. } => "stale_decision",
         Error::InvalidTransferState { .. } => "invalid_transfer_state",
+        Error::ForwardListenFailed { .. } => "forward_listen_failed",
     }
 }
 
@@ -310,6 +311,9 @@ fn error_detail(e: &Error) -> serde_json::Value {
         }
         Error::InvalidTransferState { task_id, state } => {
             serde_json::json!({ "task_id": task_id, "state": state })
+        }
+        Error::ForwardListenFailed { field, reason } => {
+            serde_json::json!({ "field": field, "reason": reason })
         }
         _ => serde_json::Value::Null,
     }

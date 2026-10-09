@@ -1,0 +1,4 @@
+PASS S3b entries still snapshot content (not /root)  [archive,access.log,error.log,latest,php-fpm.sock]
+PASS S4 no error banner leaked from stale response
+PASS S5 zero JS errors
+SUMMARY 6/6

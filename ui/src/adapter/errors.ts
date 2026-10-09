@@ -39,6 +39,8 @@ export const WIRE_ERROR_KINDS = [
   // permission_denied 属 R03 契约轮的命名，实际落地为 sftp_ 前缀）
   "sftp_path_not_found",
   "sftp_permission_denied",
+  // R40（§6.6/D02）转发监听失败——field 定位到表单字段（"listen"/"target"）
+  "forward_listen_failed",
 ] as const;
 
 export type WireErrorKind = (typeof WIRE_ERROR_KINDS)[number] | (string & {});

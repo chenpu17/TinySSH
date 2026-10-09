@@ -1,0 +1,21 @@
+================ 定向重测（限定 .task-panel） ================
+FAIL [dark] .task-panel .section h4  ratio=3.41 (thr 4.5) fg=rgb(93, 111, 130) bg=rgb(20, 25, 34) fs=10  "端口转发"
+ok   [dark] .task-panel .fwd-form select  ratio=11.17 (thr 4.5) fg=rgb(212, 219, 230) bg=rgb(28, 36, 51) fs=12  "本地端口访问远端服务（-L）远端端口访问本机服务（-R）SO"
+ok   [dark] .task-panel .fwd-form input.mono  ratio=11.17 (thr 4.5) fg=rgb(212, 219, 230) bg=rgb(28, 36, 51) fs=12  ""
+FAIL [dark] .task-panel .ah-field label  ratio=3.41 (thr 4.5) fg=rgb(93, 111, 130) bg=rgb(20, 25, 34) fs=10  "监听地址（在本机）"
+ok   [dark] .task-panel [data-vis="start"]  ratio=5.81 (thr 4.5) fg=rgb(11, 21, 22) bg=rgb(61, 157, 168) fs=12  "启动转发"
+ok   [dark] .task-panel .side-quiet  ratio=7.4 (thr 4.5) fg=rgb(154, 170, 184) bg=rgb(20, 25, 34) fs=12  "本地端口访问远端服务：本机监听，流量经 SSH 到远端目标。"
+MISS  [dark] .task-panel [data-testid="fwd-err-listen"]
+ok   [dark] .task-panel [data-testid="fwd-expose"] span  ratio=8.54 (thr 4.5) fg=rgb(208, 176, 122) bg=rgb(20, 25, 34) fs=11  "我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有"
+ok   [dark] .task-panel [data-testid="fwd-expose"] input  ratio=11.17 (thr 4.5) fg=rgb(212, 219, 230) bg=rgb(28, 36, 51) fs=12  ""
+ok   [light] .task-panel .section h4  ratio=5.25 (thr 4.5) fg=rgb(92, 104, 117) bg=rgb(244, 246, 248) fs=10  "端口转发"
+ok   [light] .task-panel .fwd-form select  ratio=13.79 (thr 4.5) fg=rgb(36, 46, 56) bg=rgb(255, 255, 255) fs=12  "本地端口访问远端服务（-L）远端端口访问本机服务（-R）SO"
+ok   [light] .task-panel .fwd-form input.mono  ratio=13.79 (thr 4.5) fg=rgb(36, 46, 56) bg=rgb(255, 255, 255) fs=12  ""
+ok   [light] .task-panel .ah-field label  ratio=5.25 (thr 4.5) fg=rgb(92, 104, 117) bg=rgb(244, 246, 248) fs=10  "监听地址（在本机）"
+ok   [light] .task-panel [data-vis="start"]  ratio=5.33 (thr 4.5) fg=rgb(255, 255, 255) bg=rgb(31, 118, 124) fs=12  "启动转发"
+ok   [light] .task-panel .side-quiet  ratio=6.44 (thr 4.5) fg=rgb(77, 91, 104) bg=rgb(244, 246, 248) fs=12  "本地端口访问远端服务：本机监听，流量经 SSH 到远端目标。"
+MISS  [light] .task-panel [data-testid="fwd-err-listen"]
+FAIL [light] .task-panel [data-testid="fwd-expose"] span  ratio=4.2 (thr 4.5) fg=rgb(150, 112, 10) bg=rgb(244, 246, 248) fs=11  "我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有"
+ok   [light] .task-panel [data-testid="fwd-expose"] input  ratio=13.79 (thr 4.5) fg=rgb(36, 46, 56) bg=rgb(255, 255, 255) fs=12  ""
+
+FAIL count: 3

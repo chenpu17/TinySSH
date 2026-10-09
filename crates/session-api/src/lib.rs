@@ -1269,6 +1269,11 @@ pub enum Error {
     /// C5/R34：非法状态下的决定提交（非 AwaitingDecision / Agent 任务）。
     #[error("传输状态不允许该决定（task={task_id}, state={state:?}）")]
     InvalidTransferState { task_id: TransferId, state: TransferStatus },
+    /// R40（§6.6/D02）：转发监听建立失败——`field` 把错误定位到表单字段
+    /// （"listen"=监听地址/端口，含端口占用与非法地址；"target"=目标侧），
+    /// 供 FE 就地高亮对应输入而非只弹通用提示。
+    #[error("转发监听失败（{field}）：{reason}")]
+    ForwardListenFailed { field: String, reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1347,6 +1352,10 @@ impl Error {
             E::InvalidTransferState { task_id, state } => (
                 "invalid_transfer_state",
                 Some(serde_json::json!({ "task_id": task_id, "state": state })),
+            ),
+            E::ForwardListenFailed { field, reason } => (
+                "forward_listen_failed",
+                Some(serde_json::json!({ "field": field, "reason": reason })),
             ),
         }
     }
@@ -1854,6 +1863,7 @@ mod wire_format_tests {
 
     // T42 端口转发：ForwardSpec 外部标签三变体 + ForwardInfo 往返，锁 UI 的
     // { Local: {...} } / { Remote: {...} } / { Dynamic: {...} } 构造形态
+    #[test]
     fn forward_wire_format_matches_ui() {
         let local: ForwardSpec = serde_json::from_value(serde_json::json!({
             "Local": { "listen_addr": "127.0.0.1", "listen_port": 18080, "target_host": "10.0.0.5", "target_port": 80 }
@@ -1990,5 +2000,9 @@ mod wire_format_tests {
         assert_eq!(Error::ReplaceUnsupported { capability: "target_version_constraint".into() }.wire_parts().0, "replace_unsupported");
         assert_eq!(Error::StaleDecision { expect_revision: 4 }.wire_parts().0, "stale_decision");
         assert_eq!(Error::InvalidTransferState { task_id: "t".into(), state: TransferStatus::Running }.wire_parts().0, "invalid_transfer_state");
+        // R40：转发监听失败字段定位（§6.6/D02）
+        let (k, d) = Error::ForwardListenFailed { field: "listen".into(), reason: "端口占用".into() }.wire_parts();
+        assert_eq!(k, "forward_listen_failed");
+        assert_eq!(d.unwrap()["field"], "listen");
     }
 }

@@ -980,6 +980,8 @@ fn main() {
                     r33_smoke_script(&run_id)
                 } else if mode.starts_with("r34") {
                     r34_smoke_script(&run_id, &mode)
+                } else if mode.starts_with("r40") {
+                    r40_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r31") {
                     r31_smoke_script(&run_id)
                 } else {
@@ -3644,6 +3646,210 @@ fn r34_smoke_script(run_id: &str, mode: &str) -> String {
       }
     } catch (e) {
       await title('FAIL-exception:' + errText(e));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id).replace("__MODE__", mode)
+}
+
+/// R40 原生冒烟注入脚本（TINYSSH_SMOKE_MODE=r40a|r40b|r40c；dev 门控，产品路径无关）：
+/// 端口转发表单/列表/生命周期 + **真流量**。UI 建转发（真监听、真隧道），外部驱动经
+/// 127.0.0.1:<port> 打真流量（容器 sshd banner）对账；应用↔驱动经 beacon 共享日志同步
+/// （应用 /q 轮询驱动写入的标记，同 T44 双角色工艺）。
+///   r40a：-L 127.0.0.1:18080 → 127.0.0.1:22（容器侧解析）→ 驱动读 SSH banner → 驱动写
+///         DRV-TRAFFIC-OK → 应用停止转发 → 驱动断言端口关闭。
+///   r40b：-D 127.0.0.1:18081（SOCKS5）→ 驱动走 SOCKS5 CONNECT 127.0.0.1:22 → banner → 停止。
+///   r40c：非回环 0.0.0.0:18082 真监听 + 端口冲突字段错误（forward_listen_failed/listen）
+///         + 人类可读路线/「监听中」与「目标可达」分离 + 停止移除（全应用内，无外部流量）。
+fn r40_smoke_script(run_id: &str, mode: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R40_INJECTED__) return;
+  window.__R40_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const MODE = '__MODE__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  // 驱动信号：驱动写 DRV-* 标记到共享日志，应用 /q 轮询（200=已写）
+  const drvSignal = async (tag) => { try { const r = await fetch('http://127.0.0.1:15199/q/' + tag); return r.status === 200; } catch { return false; } };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  // 原生受控输入：原生 setter + input 事件（React 受控）
+  const setInput = (idx, v) => {
+    const ins = [...document.querySelectorAll('.fwd-form input.mono')];
+    if (!ins[idx]) return false;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(ins[idx], v);
+    ins[idx].dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  const setSel = (v) => {
+    const el = document.querySelector('.fwd-form select');
+    if (!el) return false;
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  };
+  const startBtn = () => {
+    const b = [...document.querySelectorAll('.section button')].find((x) => x.textContent.trim() === '启动转发');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const openForwards = async () => {
+    const toolsBtn = await waitFor(() => [...document.querySelectorAll('.st-tools button')].find((b) => b.textContent.includes('工具')) || null, 100);
+    if (!toolsBtn) return 'no-tools';
+    toolsBtn.click();
+    const item = await waitFor(() => [...document.querySelectorAll('.tools-menu button')].find((b) => b.textContent.includes('端口转发')) || null, 40);
+    if (!item) return 'no-item';
+    item.click();
+    const got = await waitFor(() => (document.querySelector('.fwd-form') ? true : null), 60);
+    return got ? 'ok' : 'no-form';
+  };
+  const fwdRows = () => [...document.querySelectorAll('.fwd-row')].map((r) => ({
+    kind: r.querySelector('.fwd-kind')?.textContent || '',
+    route: r.querySelector('.xfer-name')?.textContent || '',
+    state: r.querySelector('.fwd-state')?.textContent || '',
+    sub: r.querySelector('.xfer-sub')?.textContent || '',
+  }));
+  const fieldErr = (which) => document.querySelector('[data-testid="fwd-err-' + which + '"]')?.textContent || null;
+  const stopRow = (idx) => {
+    const rows = [...document.querySelectorAll('.fwd-row')];
+    const r = rows[idx];
+    if (!r) return false;
+    const b = [...r.querySelectorAll('button')].find((x) => x.textContent.trim() === '停止');
+    if (!b) return false;
+    b.click();
+    return true;
+  };
+  (async () => {
+    try {
+      await title(MODE + '-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r40-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r40-a', '.host-connect-btn') ? true : null), 40);
+      if (!connect('r40-a')) return title('FAIL-connect-a');
+      await trust();
+      if (!await waitFor(async () => (await activeSess('r40-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+      await sleep(400);
+      const op = await openForwards();
+      await markSync('r40-panel:' + op);
+      if (op !== 'ok') return title('FAIL-open-forwards:' + op);
+
+      if (MODE === 'r40a') {
+        // -L 127.0.0.1:18080 → 127.0.0.1:22（远端/容器侧解析）
+        setSel('Local'); await sleep(200);
+        setInput(0, '127.0.0.1'); setInput(1, '18080'); setInput(2, '127.0.0.1'); setInput(3, '22');
+        if (!startBtn()) return title('FAIL-no-start-btn');
+        const row = await waitFor(() => {
+          const r = fwdRows().find((x) => x.kind === '-L' && x.route.includes('18080'));
+          return r || null;
+        }, 60);
+        if (!row) return title('FAIL-no-row:' + JSON.stringify(fwdRows()));
+        if (row.state !== '监听中') return title('FAIL-state:' + row.state);
+        if (!row.sub.includes('目标可达性未验证')) return title('FAIL-health-sep:' + row.sub);
+        if (!row.route.includes('127.0.0.1:18080 → 127.0.0.1:22')) return title('FAIL-route:' + row.route);
+        await markSync('r40a-listening（真监听 127.0.0.1:18080，状态分离显示）');
+        // 等驱动真流量对账（读容器 sshd banner）后写 DRV-TRAFFIC-OK
+        const sig = await waitFor(async () => ((await drvSignal('DRV-TRAFFIC-OK')) ? true : null), 900);
+        if (!sig) return title('FAIL-no-drv-signal');
+        await markSync('r40a-traffic-confirmed（驱动经隧道读到容器 banner）');
+        // 停止等待核心结果 → 行移除
+        if (!stopRow(0)) return title('FAIL-no-stop-btn');
+        if (!await waitFor(() => (fwdRows().length === 0 ? true : null), 60)) return title('FAIL-stop-no-remove:' + JSON.stringify(fwdRows()));
+        await markSync('r40a-stopped（停止后行移除，端口应交还）');
+        return title('r40a-DONE');
+      }
+
+      if (MODE === 'r40b') {
+        // -D 127.0.0.1:18081（SOCKS5）
+        setSel('Dynamic'); await sleep(200);
+        setInput(0, '127.0.0.1'); setInput(1, '18081');
+        if (!startBtn()) return title('FAIL-no-start-btn');
+        const row = await waitFor(() => {
+          const r = fwdRows().find((x) => x.kind === '-D' && x.route.includes('18081'));
+          return r || null;
+        }, 60);
+        if (!row) return title('FAIL-no-row:' + JSON.stringify(fwdRows()));
+        if (row.state !== '监听中') return title('FAIL-state:' + row.state);
+        if (row.route !== 'SOCKS5 127.0.0.1:18081') return title('FAIL-route:' + row.route);
+        await markSync('r40b-listening（SOCKS5 127.0.0.1:18081 真监听）');
+        const sig = await waitFor(async () => ((await drvSignal('DRV-SOCKS-OK')) ? true : null), 900);
+        if (!sig) return title('FAIL-no-drv-signal');
+        await markSync('r40b-socks-confirmed（驱动经 SOCKS5 CONNECT 读到容器 banner）');
+        if (!stopRow(0)) return title('FAIL-no-stop-btn');
+        if (!await waitFor(() => (fwdRows().length === 0 ? true : null), 60)) return title('FAIL-stop-no-remove:' + JSON.stringify(fwdRows()));
+        await markSync('r40b-stopped');
+        return title('r40b-DONE');
+      }
+
+      if (MODE === 'r40c') {
+        // 1 基线：回环 -L 127.0.0.1:18082（供端口冲突对账用同一地址:端口）
+        setSel('Local'); await sleep(200);
+        setInput(0, '127.0.0.1'); setInput(1, '18082'); setInput(2, '127.0.0.1'); setInput(3, '22');
+        startBtn();
+        if (!await waitFor(() => fwdRows().find((x) => x.route.includes('18082')) || null, 60)) return title('FAIL-base-row:' + JSON.stringify(fwdRows()));
+        // 2 非回环真监听 0.0.0.0:18083（§6.6：地址是显式字段，核心放行）
+        setInput(0, '0.0.0.0'); setInput(1, '18083'); setInput(2, '127.0.0.1'); setInput(3, '22');
+        const expose = await waitFor(() => (document.querySelector('[data-testid="fwd-expose"]') ? true : null), 40);
+        if (!expose) return title('FAIL-no-expose-notice');
+        await markSync('r40c-expose-notice（非回环暴露范围确认行出现）');
+        // 未勾选 → FE 拦下（字段错误含「暴露范围」）
+        startBtn(); await sleep(300);
+        const e1 = fieldErr('listen');
+        if (!e1 || !e1.includes('暴露范围')) return title('FAIL-expose-gate:' + e1);
+        // 勾选确认 → 启动
+        document.querySelector('[data-testid="fwd-expose"] input')?.click();
+        await sleep(200);
+        startBtn();
+        const row = await waitFor(() => fwdRows().find((x) => x.kind === '-L' && x.route.includes('18083')) || null, 60);
+        if (!row) return title('FAIL-nonloopback-row:' + JSON.stringify(fwdRows()));
+        if (row.state !== '监听中') return title('FAIL-nonloopback-state:' + row.state);
+        await markSync('r40c-nonloopback-ok（0.0.0.0:18083 真监听，勾选后可启动）');
+        // 3 端口冲突：同地址:端口再建 → 字段可定位错误 forward_listen_failed{field:listen}
+        setInput(0, '127.0.0.1'); setInput(1, '18082'); setInput(2, '127.0.0.1'); setInput(3, '22');
+        await sleep(150); startBtn(); await sleep(600);
+        const e2 = fieldErr('listen');
+        if (!e2 || !(e2.includes('占用') || e2.includes('Address already in use') || e2.includes('失败'))) return title('FAIL-conflict-field:' + e2);
+        if (fwdRows().length !== 2) return title('FAIL-conflict-created-row:' + fwdRows().length);
+        await markSync('r40c-conflict-field（端口冲突就地高亮监听字段，未新增转发）');
+        // 4 停止两条 → 行移除（停止等待核心结果）
+        stopRow(0);
+        if (!await waitFor(() => (fwdRows().length === 1 ? true : null), 60)) return title('FAIL-stop1:' + JSON.stringify(fwdRows()));
+        stopRow(0);
+        if (!await waitFor(() => (fwdRows().length === 0 ? true : null), 60)) return title('FAIL-stop2:' + JSON.stringify(fwdRows()));
+        await markSync('r40c-stop-ok');
+        return title('r40c-DONE');
+      }
+
+      return title('FAIL-unknown-mode:' + MODE);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 140) : String(e).slice(0, 160)));
     }
   })();
 })();

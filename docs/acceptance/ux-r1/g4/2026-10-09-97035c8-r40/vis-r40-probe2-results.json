@@ -1,0 +1,97 @@
+[
+  {
+    "n": "kbd Enter activates 启动转发 (creates row)",
+    "pass": true,
+    "d": "rows=1"
+  },
+  {
+    "n": "kbd Tab reaches row 停止 button",
+    "pass": true,
+    "d": "{\"tag\":\"BUTTON\",\"text\":\"停止\",\"cls\":\"ghost\",\"focusVisible\":true,\"outlineW\":\"2px\",\"boxShadow\":\"none\"}"
+  },
+  {
+    "n": "row 停止 button has visible focus ring",
+    "pass": true,
+    "d": "{\"tag\":\"BUTTON\",\"text\":\"停止\",\"cls\":\"ghost\",\"focusVisible\":true,\"outlineW\":\"2px\",\"boxShadow\":\"none\"}"
+  },
+  {
+    "n": "kbd Space toggles exposure checkbox",
+    "pass": true,
+    "d": "false->true"
+  },
+  {
+    "n": "layout 1440x900: no form row overlap",
+    "pass": true,
+    "d": "{\"panelRight\":1440,\"scrollW\":422,\"clientW\":383,\"hOverflow\":true,\"overlap\":false,\"ctrlOut\":false,\"rowCount\":3}"
+  },
+  {
+    "n": "layout 1440x900: no control past panel right",
+    "pass": true,
+    "d": "panelRight=1440"
+  },
+  {
+    "n": "layout 1440x900: no horizontal overflow",
+    "pass": false,
+    "d": "scrollW=422 clientW=383"
+  },
+  {
+    "n": "layout 1280x800: no form row overlap",
+    "pass": true,
+    "d": "{\"panelRight\":1280,\"scrollW\":422,\"clientW\":383,\"hOverflow\":true,\"overlap\":false,\"ctrlOut\":false,\"rowCount\":3}"
+  },
+  {
+    "n": "layout 1280x800: no control past panel right",
+    "pass": true,
+    "d": "panelRight=1280"
+  },
+  {
+    "n": "layout 1280x800: no horizontal overflow",
+    "pass": false,
+    "d": "scrollW=422 clientW=383"
+  },
+  {
+    "n": "layout 1024x768: no form row overlap",
+    "pass": true,
+    "d": "{\"panelRight\":1024,\"scrollW\":837,\"clientW\":798,\"hOverflow\":true,\"overlap\":false,\"ctrlOut\":false,\"rowCount\":3}"
+  },
+  {
+    "n": "layout 1024x768: no control past panel right",
+    "pass": true,
+    "d": "panelRight=1024"
+  },
+  {
+    "n": "layout 1024x768: no horizontal overflow",
+    "pass": false,
+    "d": "scrollW=837 clientW=798"
+  },
+  {
+    "n": "expose warning text visible 1440x900",
+    "pass": false,
+    "d": "{\"inputW\":363,\"spanX\":1443,\"spanW\":36,\"panelRight\":1440,\"spanInsidePanel\":false}"
+  },
+  {
+    "n": "expose warning text visible 1280x800",
+    "pass": false,
+    "d": "{\"inputW\":363,\"spanX\":1283,\"spanW\":36,\"panelRight\":1280,\"spanInsidePanel\":false}"
+  },
+  {
+    "n": "expose warning text visible 1024x768",
+    "pass": false,
+    "d": "{\"inputW\":778,\"spanX\":1027,\"spanW\":36,\"panelRight\":1024,\"spanInsidePanel\":false}"
+  },
+  {
+    "n": "regression: collab panel renders",
+    "pass": true,
+    "d": ""
+  },
+  {
+    "n": "regression: transfer drawer toggles",
+    "pass": true,
+    "d": "clicked=true"
+  },
+  {
+    "n": "zero JS errors (probe2)",
+    "pass": true,
+    "d": ""
+  }
+]

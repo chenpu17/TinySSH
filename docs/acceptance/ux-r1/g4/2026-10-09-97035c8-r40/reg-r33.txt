@@ -1,0 +1,4 @@
+PASS D2 invisible panel path NOT borrowed  [{"prefill":"","hintVisible":true,"confirmDis2":true}]
+PASS D3 trusted cwd prefilled (panel closed)  [/var/log]
+PASS Z zero JS errors  [[]]
+SUMMARY 36/36

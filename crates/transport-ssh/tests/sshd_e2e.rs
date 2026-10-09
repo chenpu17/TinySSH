@@ -582,6 +582,70 @@ async fn forward_local_and_dynamic_roundtrip() {
         .await
         .is_err());
 
+    // R40（审核中-1）：目标侧非法 → 字段可定位错误（field=target）——**走生产 start_forward**，
+    // 不是 r40_tests 的 stub 镜像（否则把生产 field 写错也三层全绿）
+    for bad in [
+        session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: free_port(),
+            target_host: "  ".into(), target_port: 22,
+        },
+        session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: free_port(),
+            target_host: "127.0.0.1".into(), target_port: 0,
+        },
+        session_api::ForwardSpec::Remote {
+            listen_addr: "127.0.0.1".into(), listen_port: free_port(),
+            target_host: "".into(), target_port: 0,
+        },
+    ] {
+        let e = channel.start_forward(bad.clone()).await.unwrap_err();
+        assert!(
+            matches!(e, session_api::Error::ForwardListenFailed { ref field, .. } if field == "target"),
+            "目标非法应回 ForwardListenFailed{{field:target}}：{bad:?} → {e:?}"
+        );
+    }
+
+
+    // R40（§6.6/D02）：端口冲突 → 字段可定位错误（field=listen）——不是含糊 Io
+    let dup = free_port();
+    let f_dup = channel
+        .start_forward(session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: dup,
+            target_host: "127.0.0.1".into(), target_port: 22,
+        })
+        .await
+        .unwrap();
+    let e_dup = channel
+        .start_forward(session_api::ForwardSpec::Local {
+            listen_addr: "127.0.0.1".into(), listen_port: dup,
+            target_host: "127.0.0.1".into(), target_port: 22,
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(e_dup, session_api::Error::ForwardListenFailed { ref field, .. } if field == "listen"),
+        "端口冲突应回 ForwardListenFailed{{field:listen}}：{e_dup:?}"
+    );
+    channel.stop_forward(&f_dup).await.unwrap();
+
+    // R40（§6.6）：非回环监听放行（0.0.0.0 绑定）——「主动选择」由 FE 把关，核心不拒
+    let np = free_port();
+    let f_nl = channel
+        .start_forward(session_api::ForwardSpec::Local {
+            listen_addr: "0.0.0.0".into(), listen_port: np,
+            target_host: "127.0.0.1".into(), target_port: 22,
+        })
+        .await
+        .unwrap();
+    let infos_nl = channel.list_forwards().await.unwrap();
+    let e_nl = infos_nl.iter().find(|f| f.id == f_nl).expect("非回环转发应在列");
+    assert_eq!(e_nl.state, "Listening", "0.0.0.0 绑定应成功：{:?}", e_nl.error);
+    let mut t_nl = tokio::net::TcpStream::connect(("127.0.0.1", np)).await.expect("0.0.0.0 监听经回环应可连");
+    let banner_nl = read_banner(&mut t_nl).await;
+    assert!(banner_nl.starts_with("SSH-2.0"), "非回环转发真流量应读到 sshd banner：{banner_nl:?}");
+    channel.stop_forward(&f_nl).await.unwrap();
+    assert_port_closed(np).await;
+
     // ---- 本地 -L：127.0.0.1:lp → 容器 127.0.0.1:22，读 SSH banner ----
     let lp = free_port();
     let fid = channel

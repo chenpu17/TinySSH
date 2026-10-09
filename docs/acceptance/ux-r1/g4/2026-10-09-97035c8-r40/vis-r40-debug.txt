@@ -1,0 +1,28 @@
+=== dark ===
+first .section button: <button class="ghost fav-btn" aria-pressed="false" title="收藏（置顶「收藏」分组）"><svg width="13" height="13" viewBox="0 0 24 24" 
+  bg: rgba(0, 0, 0, 0)
+  ancestor chain: [
+ "BUTTON.ghost.fav-btn bg=rgba(0, 0, 0, 0)",
+ "DIV.host-ops bg=rgba(0, 0, 0, 0)",
+ "DIV.host-card-side bg=rgb(35, 45, 61)",
+ "DIV.host-card bg=rgba(0, 0, 0, 0)",
+ "DIV.section bg=rgba(0, 0, 0, 0)",
+ "DIV.hb-scroll bg=rgba(0, 0, 0, 0)",
+ "ASIDE.hostbar bg=rgb(20, 25, 34)",
+ "DIV.workspace bg=rgba(0, 0, 0, 0)"
+]
+  .section h4 texts: ["全部主机","端口转发"]
+=== light ===
+first .section button: <button class="ghost fav-btn" aria-pressed="false" title="收藏（置顶「收藏」分组）"><svg width="13" height="13" viewBox="0 0 24 24" 
+  bg: rgba(0, 0, 0, 0)
+  ancestor chain: [
+ "BUTTON.ghost.fav-btn bg=rgba(0, 0, 0, 0)",
+ "DIV.host-ops bg=rgba(0, 0, 0, 0)",
+ "DIV.host-card-side bg=rgb(232, 237, 242)",
+ "DIV.host-card bg=rgba(0, 0, 0, 0)",
+ "DIV.section bg=rgba(0, 0, 0, 0)",
+ "DIV.hb-scroll bg=rgba(0, 0, 0, 0)",
+ "ASIDE.hostbar bg=rgb(244, 246, 248)",
+ "DIV.workspace bg=rgba(0, 0, 0, 0)"
+]
+  .section h4 texts: ["全部主机","端口转发"]

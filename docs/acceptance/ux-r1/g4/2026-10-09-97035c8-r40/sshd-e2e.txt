@@ -1,0 +1,13 @@
+# sshd_e2e（真机容器 tinyssh-e2e，127.0.0.1:2222）
+# 本轮处置后：7/7（含新增的生产路径目标字段断言）
+test forward_remote_roundtrip ... ok
+test ssh_shell_blocks_and_fresh ... ok
+test sftp_download_cancel_midway ... ok
+test ssh_agent_auth_connects ... ok
+test forward_local_and_dynamic_roundtrip ... ok
+test ssh_keyboard_interactive_fallback ... ok
+test sftp_list_lists_dir_entries_sorted ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.80s
+
+# 既有偶发：ssh_shell_blocks_and_fresh 独占运行 10 次失败 3 次（与转发无关；该用例源码自带
+#   「环境抖动兜底（共享容器偶发空流）」注释）；对照组 git stash 本轮改动后 6 次全绿。

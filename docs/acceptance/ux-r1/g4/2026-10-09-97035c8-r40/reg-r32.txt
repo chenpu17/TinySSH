@@ -1,0 +1,4 @@
+PASS B6 running card has cancel button
+PASS B7 panel settles to terminal-only cards  [完成 · 3.3 MB || /tmp/demo-live.bin → /tmp/demo-live.bin || 已取消 || /tmp/demo-big.bin → /tmp/demo-big.bin || 完成 · 3.0 MB || /var/log/app.log → ~/Downloads/app.log || 失败：演示注入：远端写入失败 || /tmp/fail-demo.bin → /tmp/fail-demo.bin]
+PASS Z zero js errors
+SUMMARY 22/22

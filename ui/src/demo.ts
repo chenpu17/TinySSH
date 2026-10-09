@@ -65,6 +65,9 @@ const demoState = {
   // R33 判别钩子：session_brief cwd 覆写（undefined=未覆写走默认；null=模拟 shell
   // 集成未上报无可信 cwd——§354「没有可信 cwd」分支在 demo 域的可达面）
   briefCwdOverride: undefined as string | null | undefined,
+  // R40（§6.6/D02）判别钩子：预置「端口占用」集合——start_forward 命中即回
+  // forward_listen_failed{field:"listen"}（demo 无真实监听，故以钩子模拟冲突）
+  forwardConflictPorts: new Set<number>(),
   // C8 主机元数据（DF8.2）：收藏/最近连接，演示态内存域（真实核心在 host_metadata 表）
   hostMeta: new Map<string, { favorite: boolean; last_connected_at: string | null }>(),
   // R21 凭据基础管理：演示态凭据域（真实核心在 vault identities 表）+ 主机→凭据绑定
@@ -1094,6 +1097,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       demoState.briefCwdOverride = args && "cwd" in args ? (args.cwd == null ? null : String(args.cwd)) : undefined;
       return null;
     }
+    case "demo_forward_conflict": {
+      // R40 判别钩子：{ports: number[]} 预置占用端口集合（缺键=清空）；start_forward 命中回
+      // forward_listen_failed{field:"listen"}——§6.6「端口冲突关联到对应字段」的 demo 可达面
+      demoState.forwardConflictPorts = new Set(((args?.ports as number[] | undefined) ?? []).map((x) => Number(x)));
+      return null;
+    }
     case "demo_drag_drop": {
       const paths = (args?.paths as string[]) ?? [];
       const cb = (window as unknown as { __demoDrop?: (paths: string[], x?: number, y?: number) => void }).__demoDrop;
@@ -1123,6 +1132,22 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === args?.sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       const spec = args?.spec as Record<string, Record<string, unknown>>;
+      const k = "Local" in spec ? "Local" : "Remote" in spec ? "Remote" : "Dynamic";
+      const v = spec[k];
+      // R40（§6.6）：契约同口径校验——字段可定位错误（field 定位到表单字段）
+      const lport = Number(v.listen_port);
+      if (!Number.isInteger(lport) || lport <= 0 || lport > 65535) {
+        throw apiError("forward_listen_failed", `转发监听失败（listen）：监听端口须为 1–65535`, { field: "listen", reason: "监听端口须为 1–65535" });
+      }
+      if (String(v.listen_addr ?? "").trim() === "") {
+        throw apiError("forward_listen_failed", `转发监听失败（listen）：监听地址不能为空（默认 127.0.0.1）`, { field: "listen", reason: "监听地址不能为空" });
+      }
+      if (k !== "Dynamic" && (String(v.target_host ?? "").trim() === "" || !(Number(v.target_port) > 0 && Number(v.target_port) <= 65535))) {
+        throw apiError("forward_listen_failed", `转发监听失败（target）：目标主机与端口（1–65535）都要填`, { field: "target", reason: "目标主机与端口（1–65535）都要填" });
+      }
+      if (demoState.forwardConflictPorts.has(lport)) {
+        throw apiError("forward_listen_failed", `转发监听失败（listen）：本地监听 ${v.listen_addr}:${lport} 失败：Address already in use（演示：端口占用）`, { field: "listen", reason: `本地监听 ${v.listen_addr}:${lport} 失败：端口已被占用（演示）` });
+      }
       const f = { id: "f-demo-" + demoSeq++, spec, state: "Listening", error: null };
       s.forwards.push(f);
       audit("human", "forward_start", null, null, s.id, { forward: f.id, spec });

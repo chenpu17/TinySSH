@@ -1,0 +1,430 @@
+{
+  "results": [
+    {
+      "n": "F1 1440x900: checkbox native width (~13px, not full row)",
+      "pass": true,
+      "d": "inputW=13"
+    },
+    {
+      "n": "F1 1440x900: warning span inside panel & wide",
+      "pass": true,
+      "d": "spanX=1086 spanW=344 panelRight=1440"
+    },
+    {
+      "n": "F1 1440x900: no horizontal overflow",
+      "pass": true,
+      "d": "scrollW=383 clientW=383"
+    },
+    {
+      "n": "F1 1280x800: checkbox native width (~13px, not full row)",
+      "pass": true,
+      "d": "inputW=13"
+    },
+    {
+      "n": "F1 1280x800: warning span inside panel & wide",
+      "pass": true,
+      "d": "spanX=926 spanW=344 panelRight=1280"
+    },
+    {
+      "n": "F1 1280x800: no horizontal overflow",
+      "pass": true,
+      "d": "scrollW=383 clientW=383"
+    },
+    {
+      "n": "F1 1024x768: checkbox native width (~13px, not full row)",
+      "pass": true,
+      "d": "inputW=13"
+    },
+    {
+      "n": "F1 1024x768: warning span inside panel & wide",
+      "pass": true,
+      "d": "spanX=255 spanW=534 panelRight=1024"
+    },
+    {
+      "n": "F1 1024x768: no horizontal overflow",
+      "pass": true,
+      "d": "scrollW=798 clientW=798"
+    },
+    {
+      "n": "F1: clicking warning text toggles checkbox (label works)",
+      "pass": true,
+      "d": "{\"before\":false,\"after\":true}"
+    },
+    {
+      "n": "F3 [dark]: .fwd-expose span ≥4.5",
+      "pass": true,
+      "d": "ratio=8.54 fg=rgb(208, 176, 122) bg=rgb(20, 25, 34)"
+    },
+    {
+      "n": "F2 [dark]: .section h4 ≥4.5",
+      "pass": true,
+      "d": "ratio=7.4 fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)"
+    },
+    {
+      "n": "F2 [dark]: .ah-field label ≥4.5",
+      "pass": true,
+      "d": "ratio=7.4 fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)"
+    },
+    {
+      "n": "同族 [dark]: .fwd-kind.remote ≥4.5",
+      "pass": true,
+      "d": "ratio=7.54"
+    },
+    {
+      "n": "同族 [dark]: .fwd-state.warn ≥4.5",
+      "pass": true,
+      "d": "ratio=7.54"
+    },
+    {
+      "n": "节外 [dark]: file panel renders",
+      "pass": true,
+      "d": ""
+    },
+    {
+      "n": "节外 [dark]: collab panel renders",
+      "pass": true,
+      "d": ""
+    },
+    {
+      "n": "节外 [dark]: transfer drawer toggles",
+      "pass": true,
+      "d": "clicked=true"
+    },
+    {
+      "n": "零 JS 报错 [dark]",
+      "pass": true,
+      "d": ""
+    },
+    {
+      "n": "F1 1440x900: checkbox native width (~13px, not full row)",
+      "pass": true,
+      "d": "inputW=13"
+    },
+    {
+      "n": "F1 1440x900: warning span inside panel & wide",
+      "pass": true,
+      "d": "spanX=1086 spanW=344 panelRight=1440"
+    },
+    {
+      "n": "F1 1440x900: no horizontal overflow",
+      "pass": true,
+      "d": "scrollW=383 clientW=383"
+    },
+    {
+      "n": "F1 1280x800: checkbox native width (~13px, not full row)",
+      "pass": true,
+      "d": "inputW=13"
+    },
+    {
+      "n": "F1 1280x800: warning span inside panel & wide",
+      "pass": true,
+      "d": "spanX=926 spanW=344 panelRight=1280"
+    },
+    {
+      "n": "F1 1280x800: no horizontal overflow",
+      "pass": true,
+      "d": "scrollW=383 clientW=383"
+    },
+    {
+      "n": "F1 1024x768: checkbox native width (~13px, not full row)",
+      "pass": true,
+      "d": "inputW=13"
+    },
+    {
+      "n": "F1 1024x768: warning span inside panel & wide",
+      "pass": true,
+      "d": "spanX=255 spanW=534 panelRight=1024"
+    },
+    {
+      "n": "F1 1024x768: no horizontal overflow",
+      "pass": true,
+      "d": "scrollW=798 clientW=798"
+    },
+    {
+      "n": "F1: clicking warning text toggles checkbox (label works)",
+      "pass": true,
+      "d": "{\"before\":false,\"after\":true}"
+    },
+    {
+      "n": "F3 [light]: .fwd-expose span ≥4.5",
+      "pass": true,
+      "d": "ratio=4.96 fg=rgb(138, 100, 9) bg=rgb(244, 246, 248)"
+    },
+    {
+      "n": "F2 [light]: .section h4 ≥4.5",
+      "pass": true,
+      "d": "ratio=6.44 fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)"
+    },
+    {
+      "n": "F2 [light]: .ah-field label ≥4.5",
+      "pass": true,
+      "d": "ratio=6.44 fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)"
+    },
+    {
+      "n": "同族 [light]: .fwd-kind.remote ≥4.5",
+      "pass": true,
+      "d": "ratio=5.37"
+    },
+    {
+      "n": "同族 [light]: .fwd-state.warn ≥4.5",
+      "pass": true,
+      "d": "ratio=5.37"
+    },
+    {
+      "n": "节外 [light]: file panel renders",
+      "pass": true,
+      "d": ""
+    },
+    {
+      "n": "节外 [light]: collab panel renders",
+      "pass": true,
+      "d": ""
+    },
+    {
+      "n": "节外 [light]: transfer drawer toggles",
+      "pass": true,
+      "d": "clicked=true"
+    },
+    {
+      "n": "零 JS 报错 [light]",
+      "pass": true,
+      "d": ""
+    }
+  ],
+  "contrasts": [
+    {
+      "theme": "dark",
+      "item": "fwd-expose span",
+      "sel": "[data-testid=\"fwd-expose\"] span",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 8.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "我确认暴露范围：监听 0.0.0.0 将对本机所"
+    },
+    {
+      "theme": "dark",
+      "item": "section h4",
+      "sel": ".task-panel .section h4",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 10,
+      "large": false,
+      "ratio": 7.4,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "端口转发"
+    },
+    {
+      "theme": "dark",
+      "item": "ah-field label",
+      "sel": ".task-panel .ah-field label",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 10,
+      "large": false,
+      "ratio": 7.4,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "监听地址（在本机）"
+    },
+    {
+      "theme": "dark",
+      "item": ".fwd-kind.remote",
+      "sel": "#__vis_probe .fwd-kind.remote",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 7.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-R"
+    },
+    {
+      "theme": "dark",
+      "item": ".fwd-state.warn",
+      "sel": "#__vis_probe .fwd-state.warn",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 7.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "降级"
+    },
+    {
+      "theme": "dark",
+      "item": ".fwd-kind.local",
+      "sel": "#__vis_probe .fwd-kind.local",
+      "color": "rgb(111, 168, 220)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 6.16,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-L"
+    },
+    {
+      "theme": "dark",
+      "item": ".fwd-kind.dynamic",
+      "sel": "#__vis_probe .fwd-kind.dynamic",
+      "color": "rgb(127, 191, 143)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 7.23,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-D"
+    },
+    {
+      "theme": "dark",
+      "item": ".fwd-state.err",
+      "sel": "#__vis_probe .fwd-state.err",
+      "color": "rgb(208, 122, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 5,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "失败"
+    },
+    {
+      "theme": "dark",
+      "item": ".xfer-sub.warn",
+      "sel": "#__vis_probe .xfer-sub.warn",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 7.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行warn"
+    },
+    {
+      "theme": "light",
+      "item": "fwd-expose span",
+      "sel": "[data-testid=\"fwd-expose\"] span",
+      "color": "rgb(138, 100, 9)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 4.96,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "我确认暴露范围：监听 0.0.0.0 将对本机所"
+    },
+    {
+      "theme": "light",
+      "item": "section h4",
+      "sel": ".task-panel .section h4",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 10,
+      "large": false,
+      "ratio": 6.44,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "端口转发"
+    },
+    {
+      "theme": "light",
+      "item": "ah-field label",
+      "sel": ".task-panel .ah-field label",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 10,
+      "large": false,
+      "ratio": 6.44,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "监听地址（在本机）"
+    },
+    {
+      "theme": "light",
+      "item": ".fwd-kind.remote",
+      "sel": "#__vis_probe .fwd-kind.remote",
+      "color": "rgb(138, 100, 9)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 5.37,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-R"
+    },
+    {
+      "theme": "light",
+      "item": ".fwd-state.warn",
+      "sel": "#__vis_probe .fwd-state.warn",
+      "color": "rgb(138, 100, 9)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 5.37,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "降级"
+    },
+    {
+      "theme": "light",
+      "item": ".fwd-kind.local",
+      "sel": "#__vis_probe .fwd-kind.local",
+      "color": "rgb(47, 111, 171)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 5.27,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-L"
+    },
+    {
+      "theme": "light",
+      "item": ".fwd-kind.dynamic",
+      "sel": "#__vis_probe .fwd-kind.dynamic",
+      "color": "rgb(46, 125, 50)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 5.13,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-D"
+    },
+    {
+      "theme": "light",
+      "item": ".fwd-state.err",
+      "sel": "#__vis_probe .fwd-state.err",
+      "color": "rgb(179, 72, 77)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 5.32,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "失败"
+    },
+    {
+      "theme": "light",
+      "item": ".xfer-sub.warn",
+      "sel": "#__vis_probe .xfer-sub.warn",
+      "color": "rgb(150, 112, 10)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 4.55,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行warn"
+    }
+  ]
+}

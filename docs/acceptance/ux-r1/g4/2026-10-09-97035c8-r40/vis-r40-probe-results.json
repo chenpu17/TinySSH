@@ -1,0 +1,1090 @@
+{
+  "results": [
+    {
+      "name": "[dark] data-chrome resolves to dark",
+      "pass": true,
+      "detail": "got=dark"
+    },
+    {
+      "name": "[dark] session connected",
+      "pass": true,
+      "detail": "s-demo-0101"
+    },
+    {
+      "name": "[dark] forwards panel opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] default form labels present",
+      "pass": true,
+      "detail": "[\"监听地址（在本机）\",\"本地端口\",\"目标（远端侧解析）\",\"端口\"]"
+    },
+    {
+      "name": "[dark] default listen addr = 127.0.0.1",
+      "pass": true,
+      "detail": "127.0.0.1"
+    },
+    {
+      "name": "[dark] (b) empty listen port → field error",
+      "pass": true,
+      "detail": "⚠ 监听端口必须是 1–65535 的数字"
+    },
+    {
+      "name": "[dark] (b2) empty target → field error",
+      "pass": true,
+      "detail": "⚠ 目标主机与端口（1–65535）都要填"
+    },
+    {
+      "name": "[dark] (c) non-loopback shows exposure notice",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] (c2) exposure text mentions 暴露范围",
+      "pass": true,
+      "detail": "我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有设备可见，任何能访问该地址的设备都可经此转发。"
+    },
+    {
+      "name": "[dark] (c3) start blocked until exposure ack",
+      "pass": true,
+      "detail": "⚠ 非回环监听 0.0.0.0 将对本机所在网络可见——请勾选「我确认暴露范围」后再启动"
+    },
+    {
+      "name": "[dark] (c4) exposure ack toggles checked",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "name": "[dark] kbd reaches select",
+      "pass": true,
+      "detail": "SELECT:select-one > INPUT:text.mono > INPUT:text.mono > INPUT:checkbox > INPUT:text.mono > INPUT:text.mono > BUTTON:submit > BUTTON:submit.sb-btn > BUTTON:submit.sb-btn"
+    },
+    {
+      "name": "[dark] kbd reaches exposure checkbox",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] kbd reaches 启动转发 button",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] every tab stop has visible focus indicator",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "[dark] (d) -L forward row created",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] (d2) route human-readable",
+      "pass": true,
+      "detail": "127.0.0.1:8080 → 10.0.0.31:5432"
+    },
+    {
+      "name": "[dark] (d3) listening vs reachable separated",
+      "pass": true,
+      "detail": "监听中 | 目标可达性未验证（首次连接时确认）"
+    },
+    {
+      "name": "[dark] (f) port conflict → field error on listen",
+      "pass": true,
+      "detail": "⚠ 转发监听失败（listen）：本地监听 127.0.0.1:9090 失败：Address already in use（演示：端口占用）"
+    },
+    {
+      "name": "[dark] (e) -D hides target row",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] (e2) -D row created",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] (e3) SOCKS5 route has no target",
+      "pass": true,
+      "detail": "SOCKS5 127.0.0.1:1080"
+    },
+    {
+      "name": "[dark] layout: no fwd-form row overlap",
+      "pass": true,
+      "detail": "[{\"top\":232,\"bottom\":260,\"h\":28},{\"top\":264,\"bottom\":310,\"h\":47}]"
+    },
+    {
+      "name": "[dark] layout: task panel no horizontal overflow",
+      "pass": true,
+      "detail": "scroll=383 client=383"
+    },
+    {
+      "name": "[dark] layout: route text truncatable",
+      "pass": true,
+      "detail": "[{\"textOverflow\":\"ellipsis\",\"overflow\":\"hidden\",\"whiteSpace\":\"nowrap\"},{\"textOverflow\":\"ellipsis\",\"overflow\":\"hidden\",\"whiteSpace\":\"nowrap\"}]"
+    },
+    {
+      "name": "[dark] long route contained in row",
+      "pass": true,
+      "detail": "{\"rowW\":363,\"nameScroll\":687,\"nameClient\":200,\"contained\":true}"
+    },
+    {
+      "name": "[dark] regression: file panel renders",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] zero JS errors",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] data-chrome resolves to light",
+      "pass": true,
+      "detail": "got=light"
+    },
+    {
+      "name": "[light] session connected",
+      "pass": true,
+      "detail": "s-demo-0101"
+    },
+    {
+      "name": "[light] forwards panel opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] default form labels present",
+      "pass": true,
+      "detail": "[\"监听地址（在本机）\",\"本地端口\",\"目标（远端侧解析）\",\"端口\"]"
+    },
+    {
+      "name": "[light] default listen addr = 127.0.0.1",
+      "pass": true,
+      "detail": "127.0.0.1"
+    },
+    {
+      "name": "[light] (b) empty listen port → field error",
+      "pass": true,
+      "detail": "⚠ 监听端口必须是 1–65535 的数字"
+    },
+    {
+      "name": "[light] (b2) empty target → field error",
+      "pass": true,
+      "detail": "⚠ 目标主机与端口（1–65535）都要填"
+    },
+    {
+      "name": "[light] (c) non-loopback shows exposure notice",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] (c2) exposure text mentions 暴露范围",
+      "pass": true,
+      "detail": "我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有设备可见，任何能访问该地址的设备都可经此转发。"
+    },
+    {
+      "name": "[light] (c3) start blocked until exposure ack",
+      "pass": true,
+      "detail": "⚠ 非回环监听 0.0.0.0 将对本机所在网络可见——请勾选「我确认暴露范围」后再启动"
+    },
+    {
+      "name": "[light] (c4) exposure ack toggles checked",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "name": "[light] kbd reaches select",
+      "pass": true,
+      "detail": "SELECT:select-one > INPUT:text.mono > INPUT:text.mono > INPUT:checkbox > INPUT:text.mono > INPUT:text.mono > BUTTON:submit > BUTTON:submit.sb-btn > BUTTON:submit.sb-btn"
+    },
+    {
+      "name": "[light] kbd reaches exposure checkbox",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] kbd reaches 启动转发 button",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] every tab stop has visible focus indicator",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "[light] (d) -L forward row created",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] (d2) route human-readable",
+      "pass": true,
+      "detail": "127.0.0.1:8080 → 10.0.0.31:5432"
+    },
+    {
+      "name": "[light] (d3) listening vs reachable separated",
+      "pass": true,
+      "detail": "监听中 | 目标可达性未验证（首次连接时确认）"
+    },
+    {
+      "name": "[light] (f) port conflict → field error on listen",
+      "pass": true,
+      "detail": "⚠ 转发监听失败（listen）：本地监听 127.0.0.1:9090 失败：Address already in use（演示：端口占用）"
+    },
+    {
+      "name": "[light] (e) -D hides target row",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] (e2) -D row created",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] (e3) SOCKS5 route has no target",
+      "pass": true,
+      "detail": "SOCKS5 127.0.0.1:1080"
+    },
+    {
+      "name": "[light] layout: no fwd-form row overlap",
+      "pass": true,
+      "detail": "[{\"top\":232,\"bottom\":260,\"h\":28},{\"top\":264,\"bottom\":310,\"h\":47}]"
+    },
+    {
+      "name": "[light] layout: task panel no horizontal overflow",
+      "pass": true,
+      "detail": "scroll=383 client=383"
+    },
+    {
+      "name": "[light] layout: route text truncatable",
+      "pass": true,
+      "detail": "[{\"textOverflow\":\"ellipsis\",\"overflow\":\"hidden\",\"whiteSpace\":\"nowrap\"},{\"textOverflow\":\"ellipsis\",\"overflow\":\"hidden\",\"whiteSpace\":\"nowrap\"}]"
+    },
+    {
+      "name": "[light] long route contained in row",
+      "pass": true,
+      "detail": "{\"rowW\":363,\"nameScroll\":687,\"nameClient\":200,\"contained\":true}"
+    },
+    {
+      "name": "[light] regression: file panel renders",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] zero JS errors",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "contrasts": [
+    {
+      "theme": "dark",
+      "state": "default",
+      "sel": ".section h4",
+      "color": "rgb(93, 111, 130)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 10,
+      "weight": "600",
+      "large": false,
+      "ratio": 3.41,
+      "threshold": 4.5,
+      "pass": false,
+      "text": "全部主机"
+    },
+    {
+      "theme": "dark",
+      "state": "default",
+      "sel": ".fwd-form select",
+      "color": "rgb(212, 219, 230)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 11.17,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本地端口访问远端服务（-L）远端端口访问本机服务（-R）SO"
+    },
+    {
+      "theme": "dark",
+      "state": "default",
+      "sel": ".fwd-form input.mono",
+      "color": "rgb(212, 219, 230)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 11.17,
+      "threshold": 4.5,
+      "pass": true,
+      "text": ""
+    },
+    {
+      "theme": "dark",
+      "state": "default",
+      "sel": ".ah-field label",
+      "color": "rgb(93, 111, 130)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 10,
+      "weight": "400",
+      "large": false,
+      "ratio": 3.41,
+      "threshold": 4.5,
+      "pass": false,
+      "text": "监听地址（在本机）"
+    },
+    {
+      "theme": "dark",
+      "state": "default",
+      "sel": ".side-quiet",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 7.4,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本地端口访问远端服务：本机监听，流量经 SSH 到远端目标。"
+    },
+    {
+      "theme": "dark",
+      "state": "default",
+      "sel": ".section button",
+      "color": "rgb(61, 157, 168)",
+      "bg": "rgb(35, 45, 61)",
+      "fontSize": 12,
+      "weight": "600",
+      "large": false,
+      "ratio": 4.35,
+      "threshold": 4.5,
+      "pass": false,
+      "text": ""
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-kind.local",
+      "color": "rgb(111, 168, 220)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 6.16,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-L"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-kind.remote",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 7.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-R"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-kind.dynamic",
+      "color": "rgb(127, 191, 143)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 7.23,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-D"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-state.listen",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "监听中"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-state.warn",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 7.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "降级"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-state.err",
+      "color": "rgb(208, 122, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "失败"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .xfer-sub",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .xfer-sub.warn",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 7.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行warn"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .xfer-sub.err",
+      "color": "rgb(208, 122, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行err"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-err",
+      "color": "rgb(208, 122, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "⚠ 错误行"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-expose span",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 7.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "我确认暴露范围"
+    },
+    {
+      "theme": "dark",
+      "state": "harness",
+      "sel": "#__vis_probe .side-quiet",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "说明行"
+    },
+    {
+      "theme": "dark",
+      "state": "err-listen",
+      "sel": "[data-testid=\"fwd-err-listen\"]",
+      "color": "rgb(208, 122, 122)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5.66,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "⚠ 监听端口必须是 1–65535 的数字"
+    },
+    {
+      "theme": "dark",
+      "state": "err-target",
+      "sel": "[data-testid=\"fwd-err-target\"]",
+      "color": "rgb(208, 122, 122)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5.66,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "⚠ 目标主机与端口（1–65535）都要填"
+    },
+    {
+      "theme": "dark",
+      "state": "expose",
+      "sel": "[data-testid=\"fwd-expose\"] span",
+      "color": "rgb(208, 176, 122)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 8.54,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有"
+    },
+    {
+      "theme": "dark",
+      "state": "row-listen-state",
+      "sel": ".fwd-row .fwd-state",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "监听中"
+    },
+    {
+      "theme": "dark",
+      "state": "row-health",
+      "sel": ".fwd-row .xfer-sub",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "目标可达性未验证（首次连接时确认）"
+    },
+    {
+      "theme": "dark",
+      "state": "row-kind",
+      "sel": ".fwd-row .fwd-kind",
+      "color": "rgb(111, 168, 220)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 6.16,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-L"
+    },
+    {
+      "theme": "dark",
+      "state": "row-route",
+      "sel": ".fwd-row .xfer-name",
+      "color": "rgb(212, 219, 230)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 13.5,
+      "weight": "400",
+      "large": false,
+      "ratio": 11.17,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "127.0.0.1:8080 → 10.0.0.31:543"
+    },
+    {
+      "theme": "dark",
+      "state": "row-stop-btn",
+      "sel": ".fwd-row button",
+      "color": "rgb(61, 157, 168)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 12,
+      "weight": "600",
+      "large": false,
+      "ratio": 4.88,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "停止"
+    },
+    {
+      "theme": "light",
+      "state": "default",
+      "sel": ".section h4",
+      "color": "rgb(92, 104, 117)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 10,
+      "weight": "600",
+      "large": false,
+      "ratio": 5.25,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "全部主机"
+    },
+    {
+      "theme": "light",
+      "state": "default",
+      "sel": ".fwd-form select",
+      "color": "rgb(36, 46, 56)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 13.79,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本地端口访问远端服务（-L）远端端口访问本机服务（-R）SO"
+    },
+    {
+      "theme": "light",
+      "state": "default",
+      "sel": ".fwd-form input.mono",
+      "color": "rgb(36, 46, 56)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 13.79,
+      "threshold": 4.5,
+      "pass": true,
+      "text": ""
+    },
+    {
+      "theme": "light",
+      "state": "default",
+      "sel": ".ah-field label",
+      "color": "rgb(92, 104, 117)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 10,
+      "weight": "400",
+      "large": false,
+      "ratio": 5.25,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "监听地址（在本机）"
+    },
+    {
+      "theme": "light",
+      "state": "default",
+      "sel": ".side-quiet",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.44,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本地端口访问远端服务：本机监听，流量经 SSH 到远端目标。"
+    },
+    {
+      "theme": "light",
+      "state": "default",
+      "sel": ".section button",
+      "color": "rgb(31, 118, 124)",
+      "bg": "rgb(232, 237, 242)",
+      "fontSize": 12,
+      "weight": "600",
+      "large": false,
+      "ratio": 4.52,
+      "threshold": 4.5,
+      "pass": true,
+      "text": ""
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-kind.local",
+      "color": "rgb(47, 111, 171)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 5.27,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-L"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-kind.remote",
+      "color": "rgb(150, 112, 10)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 4.55,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-R"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-kind.dynamic",
+      "color": "rgb(46, 125, 50)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 5.13,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-D"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-state.listen",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "监听中"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-state.warn",
+      "color": "rgb(150, 112, 10)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 4.55,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "降级"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-state.err",
+      "color": "rgb(179, 72, 77)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5.32,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "失败"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .xfer-sub",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .xfer-sub.warn",
+      "color": "rgb(150, 112, 10)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 4.55,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行warn"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .xfer-sub.err",
+      "color": "rgb(179, 72, 77)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5.32,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "健康行err"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-err",
+      "color": "rgb(179, 72, 77)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 5.32,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "⚠ 错误行"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .fwd-expose span",
+      "color": "rgb(150, 112, 10)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 4.55,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "我确认暴露范围"
+    },
+    {
+      "theme": "light",
+      "state": "harness",
+      "sel": "#__vis_probe .side-quiet",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 12,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "说明行"
+    },
+    {
+      "theme": "light",
+      "state": "err-listen",
+      "sel": "[data-testid=\"fwd-err-listen\"]",
+      "color": "rgb(179, 72, 77)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 4.91,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "⚠ 监听端口必须是 1–65535 的数字"
+    },
+    {
+      "theme": "light",
+      "state": "err-target",
+      "sel": "[data-testid=\"fwd-err-target\"]",
+      "color": "rgb(179, 72, 77)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 4.91,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "⚠ 目标主机与端口（1–65535）都要填"
+    },
+    {
+      "theme": "light",
+      "state": "expose",
+      "sel": "[data-testid=\"fwd-expose\"] span",
+      "color": "rgb(150, 112, 10)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 4.2,
+      "threshold": 4.5,
+      "pass": false,
+      "text": "我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有"
+    },
+    {
+      "theme": "light",
+      "state": "row-listen-state",
+      "sel": ".fwd-row .fwd-state",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "监听中"
+    },
+    {
+      "theme": "light",
+      "state": "row-health",
+      "sel": ".fwd-row .xfer-sub",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "400",
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "目标可达性未验证（首次连接时确认）"
+    },
+    {
+      "theme": "light",
+      "state": "row-kind",
+      "sel": ".fwd-row .fwd-kind",
+      "color": "rgb(47, 111, 171)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "weight": "700",
+      "large": false,
+      "ratio": 5.27,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "-L"
+    },
+    {
+      "theme": "light",
+      "state": "row-route",
+      "sel": ".fwd-row .xfer-name",
+      "color": "rgb(36, 46, 56)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 13.5,
+      "weight": "400",
+      "large": false,
+      "ratio": 13.79,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "127.0.0.1:8080 → 10.0.0.31:543"
+    },
+    {
+      "theme": "light",
+      "state": "row-stop-btn",
+      "sel": ".fwd-row button",
+      "color": "rgb(31, 118, 124)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 12,
+      "weight": "600",
+      "large": false,
+      "ratio": 5.33,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "停止"
+    }
+  ],
+  "boxes": [
+    {
+      "theme": "dark",
+      "viewport": "1280x800",
+      "tpScrollW": 383,
+      "tpClientW": 383,
+      "rows": [
+        {
+          "top": 232,
+          "bottom": 260,
+          "h": 28
+        },
+        {
+          "top": 264,
+          "bottom": 310,
+          "h": 47
+        }
+      ],
+      "overlap": false,
+      "names": [
+        {
+          "textOverflow": "ellipsis",
+          "overflow": "hidden",
+          "whiteSpace": "nowrap"
+        },
+        {
+          "textOverflow": "ellipsis",
+          "overflow": "hidden",
+          "whiteSpace": "nowrap"
+        }
+      ]
+    },
+    {
+      "theme": "light",
+      "viewport": "1280x800",
+      "tpScrollW": 383,
+      "tpClientW": 383,
+      "rows": [
+        {
+          "top": 232,
+          "bottom": 260,
+          "h": 28
+        },
+        {
+          "top": 264,
+          "bottom": 310,
+          "h": 47
+        }
+      ],
+      "overlap": false,
+      "names": [
+        {
+          "textOverflow": "ellipsis",
+          "overflow": "hidden",
+          "whiteSpace": "nowrap"
+        },
+        {
+          "textOverflow": "ellipsis",
+          "overflow": "hidden",
+          "whiteSpace": "nowrap"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "dark": {
+      "passed": 28,
+      "total": 28,
+      "jsErrors": 0
+    },
+    "light": {
+      "passed": 56,
+      "total": 56,
+      "jsErrors": 0
+    }
+  }
+}

@@ -1,0 +1,25 @@
+PASS A0 session connected  [s-demo-0101]
+PASS A1 forwards panel opens
+PASS A2 type options explain semantics  [["本地端口访问远端服务（-L）","远端端口访问本机服务（-R）","SOCKS5 代理（-D）"]]
+PASS A3 listen address explicit, default loopback  [127.0.0.1]
+PASS A4a -L target labelled "远端侧解析"  [["监听地址（在本机）","本地端口","目标（远端侧解析）","端口"]]
+PASS A4b -R target labelled "本机侧解析"  [["监听地址（在远端服务器）","远端端口","目标（本机侧解析）","端口"]]
+PASS A5 empty listen port → field error on listen  [⚠ 监听端口必须是 1–65535 的数字]
+PASS A5b no forward created
+PASS A6 empty target → field error on target  [⚠ 目标主机与端口（1–65535）都要填]
+PASS A7a non-loopback shows exposure notice
+PASS A7b start blocked until exposure confirmed  [⚠ 非回环监听 0.0.0.0 将对本机所在网络可见——请勾选「我确认暴露范围」后再启动]
+PASS B1 forward created in list  [[{"kind":"-L","route":"127.0.0.1:8080 → 10.0.0.31:5432","state":"监听中","sub":"目标可达性未验证（首次连接时确认）","hasCheck":false}]]
+PASS B2 route human-readable  [127.0.0.1:8080 → 10.0.0.31:5432]
+PASS B3 listening vs reachable separated  [监听中 | 目标可达性未验证（首次连接时确认）]
+PASS B4 no health-implying checkmark  [false]
+PASS B5 kind badge -L  [-L]
+PASS C1 port conflict → field error on listen  [⚠ 转发监听失败（listen）：本地监听 127.0.0.1:9090 失败：Address already in use（演示：端口占用）]
+PASS C2 conflict creates no forward
+PASS D1 SOCKS5 row created
+PASS D2 SOCKS5 route has no target  [SOCKS5 127.0.0.1:1080]
+PASS D3 stop removes row (waits core result)  [[{"kind":"-D","route":"SOCKS5 127.0.0.1:1080","state":"监听中","sub":"目标可达性未验证（首次连接时确认）","hasCheck":false}]]
+PASS E1 close-session shows affected forwards count  [关闭与 prod-1 的会话？终端现场不可恢复——重连会是全新现场（记录保留）。· 将受影响的转发：1 条（随会话关闭）· 正在运行的任务/传输：状态未知——如有重要作业请先确认关闭会话取消]
+PASS Z zero JS errors
+
+23/23

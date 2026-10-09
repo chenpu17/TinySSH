@@ -1,0 +1,4 @@
+PASS G1 plain upload still Succeeded  [{"b":3276800,"t":3276800}]
+PASS Z zero page errors
+
+35/35 passed

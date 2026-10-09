@@ -967,13 +967,19 @@ impl ChannelHandle for SshChannel {
         let id = format!("f-{}", uuid::Uuid::new_v4());
         match spec.clone() {
             ForwardSpec::Local { listen_addr, listen_port, target_host, target_port } => {
-                if listen_port == 0 || target_host.trim().is_empty() || target_port == 0 {
-                    return Err(Error::InvalidInput("端口须为 1–65535，目标主机不能为空".into()));
+                if listen_port == 0 {
+                    return Err(Error::ForwardListenFailed { field: "listen".into(), reason: "监听端口须为 1–65535".into() });
+                }
+                if target_host.trim().is_empty() || target_port == 0 {
+                    return Err(Error::ForwardListenFailed { field: "target".into(), reason: "目标主机与端口（1–65535）不能为空".into() });
                 }
                 validate_local_listen_addr(&listen_addr)?;
                 let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
                     .await
-                    .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
+                    .map_err(|e| Error::ForwardListenFailed {
+                        field: "listen".into(),
+                        reason: format!("本地监听 {listen_addr}:{listen_port} 失败：{e}"),
+                    })?;
                 let cancel = CancellationToken::new();
                 let arc = self.self_arc()?;
                 // 目标在 spawn 时捕获（审核中-1）：条目 spec 从不变更，逐连接按端口反查
@@ -982,8 +988,11 @@ impl ChannelHandle for SshChannel {
                 insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
             }
             ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
-                if listen_port == 0 || target_host.trim().is_empty() || target_port == 0 {
-                    return Err(Error::InvalidInput("端口须为 1–65535，目标主机不能为空".into()));
+                if listen_port == 0 {
+                    return Err(Error::ForwardListenFailed { field: "listen".into(), reason: "监听端口须为 1–65535".into() });
+                }
+                if target_host.trim().is_empty() || target_port == 0 {
+                    return Err(Error::ForwardListenFailed { field: "target".into(), reason: "目标主机与端口（1–65535）不能为空".into() });
                 }
                 let cancel = CancellationToken::new();
                 insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
@@ -993,12 +1002,15 @@ impl ChannelHandle for SshChannel {
             }
             ForwardSpec::Dynamic { listen_addr, listen_port } => {
                 if listen_port == 0 {
-                    return Err(Error::InvalidInput("端口须为 1–65535".into()));
+                    return Err(Error::ForwardListenFailed { field: "listen".into(), reason: "监听端口须为 1–65535".into() });
                 }
                 validate_local_listen_addr(&listen_addr)?;
                 let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
                     .await
-                    .map_err(|e| Error::Io(format!("本地监听 {listen_addr}:{listen_port} 失败：{e}")))?;
+                    .map_err(|e| Error::ForwardListenFailed {
+                        field: "listen".into(),
+                        reason: format!("本地监听 {listen_addr}:{listen_port} 失败：{e}"),
+                    })?;
                 let cancel = CancellationToken::new();
                 let arc = self.self_arc()?;
                 tokio::spawn(run_local_forward(arc, listener, None, id.clone(), cancel.clone()));
@@ -1106,21 +1118,16 @@ fn mark_recovered(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, cb: &Option<Forwar
     }
 }
 
-/// 本地/Dynamic 监听地址仅限回环（审核中-6）：空串与 0.0.0.0 会绑全网卡——
-/// Dynamic 即无认证 SOCKS5 暴露。对外共享场景走 -R（服务器侧，GatewayPorts 门）。
+/// 本地/Dynamic 监听地址校验（R40 §6.6）：地址是显式字段，默认回环。
+/// 非回环（0.0.0.0/::/具体网卡 IP/主机名）**允许**——设计 §6.6 要求「非回环监听
+/// 显示暴露范围，必须主动选择」，故「主动选择」由 FE 把关（默认 127.0.0.1 +
+/// 暴露范围提示 + 显式确认），核心只拒绝空串/纯空白（bind 会因无效地址自然报错，
+/// 由 start_forward 映射为 ForwardListenFailed{field:"listen"}）。
 fn validate_local_listen_addr(addr: &str) -> Result<()> {
-    // 大小写不敏感（复核低-7）：「LOCALHOST」与「localhost」同指回环，
-    // 拒大写形态属保守误伤非安全收益；尾点「localhost.」/「127.1」等
-    // 非标准形态仍拒（错误文案已列明合法形态）
-    let loopback = addr.eq_ignore_ascii_case("localhost")
-        || addr.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
-    if loopback {
-        Ok(())
-    } else {
-        Err(Error::InvalidInput(format!(
-            "监听地址仅限回环（127.0.0.1/::1/localhost），收到 {addr:?}——全网卡绑定有无认证暴露面，对外请用远程转发 -R"
-        )))
+    if addr.trim().is_empty() {
+        return Err(Error::InvalidInput("监听地址不能为空（默认 127.0.0.1）".into()));
     }
+    Ok(())
 }
 
 impl SshChannel {
@@ -1349,15 +1356,17 @@ mod t44_tests {
         assert_eq!(*hits.lock().unwrap(), vec!["f-x", "f-x", "f-x"]);
     }
 
-    // listen_addr 回环校验（审核中-6）：空串/0.0.0.0/公网地址拒绝，回环族放行
+    // R40（§6.6）：监听地址是**显式字段**、默认回环；非回环（0.0.0.0/::/网卡 IP/
+    // 主机名）**放行**——「主动选择 + 暴露范围告知」由 FE 把关（默认 127.0.0.1 +
+    // 非回环警告 + 显式勾选），核心只拒空串/纯空白。此前的 T44「回环 only」约束
+    // 随 §6.6 放宽（D01：地址是显式字段，用户可显式选择对外监听）。
     #[test]
-    fn local_listen_addr_loopback_only() {
-        // 「LOCALHOST」与「localhost」同指回环（复核低-7 放宽）；「localhost.」
-        // 尾点与「127.1」缩写仍拒（非标准形态，文案已列明合法写法）
-        for ok in ["127.0.0.1", "127.8.8.7", "::1", "localhost", "LOCALHOST"] {
+    fn local_listen_addr_only_rejects_empty() {
+        for ok in ["127.0.0.1", "127.8.8.7", "::1", "localhost", "LOCALHOST",
+                   "0.0.0.0", "::", "192.168.1.5", "8.8.8.8", "localhost."] {
             assert!(validate_local_listen_addr(ok).is_ok(), "{ok} 应放行");
         }
-        for bad in ["", "0.0.0.0", "::", "192.168.1.5", "8.8.8.8", "[::1]", "localhost.", "127.1", "LOCALHOST."] {
+        for bad in ["", "   ", "\t"] {
             assert!(validate_local_listen_addr(bad).is_err(), "{bad:?} 应拒绝");
         }
     }

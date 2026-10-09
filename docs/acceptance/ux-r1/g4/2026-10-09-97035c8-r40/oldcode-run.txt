@@ -1,0 +1,26 @@
+旧码判别：基线 97035c8 worktree（/tmp/r40-old，dev :5184），同一探针 r40-demo-probe.js。
+PROBE_URL=http://localhost:5184/ node r40-demo-probe.js
+
+本轮两次连跑均 4/18（14 项 R40 专属断言红；新码 23/23——计数差异来自条件子断言：
+旧码 B/D 段从未建出转发行，故 B2-B5、D2 等 5 项被 if 跳过，『跑不出来』本身即红侧证据）。
+
+PASS A0 session connected  [s-demo-0101]
+PASS A1 forwards panel opens
+FAIL A2 type options explain semantics  [["本地 -L","远程 -R","SOCKS5 -D"]]
+FAIL A3 listen address explicit, default loopback
+FAIL A4a -L target labelled "远端侧解析"  [[]]
+FAIL A4b -R target labelled "本机侧解析"  [[]]
+FAIL A5 empty listen port → field error on listen  [null]
+PASS A5b no forward created
+FAIL A6 empty target → field error on target  [null]
+FAIL A7a non-loopback shows exposure notice
+FAIL A7b start blocked until exposure confirmed  [null]
+FAIL B1 forward created in list  [null]
+FAIL C1 port conflict → field error on listen  [null]
+FAIL C2 conflict creates no forward
+FAIL D1 SOCKS5 row created
+FAIL D3 stop removes row (waits core result)  [null]
+FAIL E1 close-session shows affected forwards count  [关闭与 prod-1 的会话？终端现场不可恢复——重连会是全新现场（记录保留）。· 将受影响的转发：无· 正在运行的任务/传输：状态未知——如有重要作业请先确认关闭会话取消]
+PASS Z zero JS errors
+
+4/18

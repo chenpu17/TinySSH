@@ -1,0 +1,4 @@
+PASS H3 会话不在 → 不渲染重试钮，改给「会话已不在」说明  [{"rt":false,"ru":true,"sub":"失败：演示注入：远端写入失败"}]
+PASS Z zero page errors
+
+34/34 passed

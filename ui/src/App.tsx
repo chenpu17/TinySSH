@@ -546,9 +546,18 @@ export default function App() {
   const [forwards, setForwards] = useState<ForwardInfo[]>([]);
   const [fwdKind, setFwdKind] = useState<"Local" | "Remote" | "Dynamic">("Local");
   const [fwdPort, setFwdPort] = useState("");
+  // R40（§6.6）：监听地址是显式字段，默认回环 127.0.0.1
+  const [fwdLAddr, setFwdLAddr] = useState("127.0.0.1");
   const [fwdHost, setFwdHost] = useState("");
   const [fwdTPort, setFwdTPort] = useState("");
   const [fwdBusy, setFwdBusy] = useState(false);
+  // R40：非回环监听「必须主动选择」——勾选后才放行启动（暴露范围提示见表单）
+  const [fwdExposeAck, setFwdExposeAck] = useState(false);
+  // R40：字段级错误（§6.6「端口冲突关联到对应字段」）——就地高亮而非只弹通用提示
+  const [fwdFieldErr, setFwdFieldErr] = useState<{ listen?: string; target?: string } | null>(null);
+  // R40：停止等待核心结果——停止中集合 + 失败可重试（记最后错误供行内提示）
+  const [fwdStopping, setFwdStopping] = useState<Set<string>>(new Set());
+  const [fwdStopErr, setFwdStopErr] = useState<Record<string, string>>({});
   // Toast（精致化 §六/P3）：右下角轻通知，2.6s 自动消失；最多同屏 4 条
   const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string }[]>([]);
   const toastSeq = useRef(0);
@@ -2532,36 +2541,58 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid]);
 
+  // 回环判定（§6.6）：非回环监听显示暴露范围 + 必须主动勾选确认
+  const isLoopbackAddr = (a: string): boolean => {
+    const t = a.trim().toLowerCase();
+    return t === "localhost" || t === "::1" || t === "0:0:0:0:0:0:0:1" || /^127(\.\d{1,3}){3}$/.test(t);
+  };
   const addForward = async () => {
     const s = sidRef.current;
     if (!s) return;
     const p = parseInt(fwdPort, 10);
     const tp = parseInt(fwdTPort, 10);
-    if (!Number.isInteger(p) || p <= 0 || p > 65535) { pushToast("err", "监听端口必须是 1–65535 的数字"); return; }
-    if (fwdKind !== "Dynamic" && (!fwdHost.trim() || !Number.isInteger(tp) || tp <= 0 || tp > 65535)) {
-      pushToast("err", "目标主机与端口（1–65535）都要填");
-      return;
+    const laddr = fwdLAddr.trim();
+    const next: { listen?: string; target?: string } = {};
+    // 字段级校验（§6.6「端口冲突关联到对应字段」——就地高亮对应输入）
+    if (!laddr) next.listen = "监听地址不能为空（默认 127.0.0.1）";
+    else if (!Number.isInteger(p) || p <= 0 || p > 65535) next.listen = "监听端口必须是 1–65535 的数字";
+    // 非回环「必须主动选择」：未勾选确认时阻止启动并说明暴露范围
+    if (!next.listen && !isLoopbackAddr(laddr) && !fwdExposeAck) {
+      next.listen = `非回环监听 ${laddr} 将对本机所在网络可见——请勾选「我确认暴露范围」后再启动`;
     }
+    if (fwdKind !== "Dynamic" && (!fwdHost.trim() || !Number.isInteger(tp) || tp <= 0 || tp > 65535)) {
+      next.target = "目标主机与端口（1–65535）都要填";
+    }
+    if (next.listen || next.target) { setFwdFieldErr(next); return; }
+    setFwdFieldErr(null);
     const spec: ForwardSpec = fwdKind === "Dynamic"
-      ? { Dynamic: { listen_addr: "127.0.0.1", listen_port: p } }
+      ? { Dynamic: { listen_addr: laddr, listen_port: p } }
       : fwdKind === "Remote"
-        ? { Remote: { listen_addr: "", listen_port: p, target_host: fwdHost.trim(), target_port: tp } }
-        : { Local: { listen_addr: "127.0.0.1", listen_port: p, target_host: fwdHost.trim(), target_port: tp } };
+        ? { Remote: { listen_addr: laddr, listen_port: p, target_host: fwdHost.trim(), target_port: tp } }
+        : { Local: { listen_addr: laddr, listen_port: p, target_host: fwdHost.trim(), target_port: tp } };
     setFwdBusy(true);
     try {
       // 远程转发「请求被服务器拒绝」不抛错（条目保留为 Failed 可见可停）——
-      // 按 refresh 后的实际状态决定 toast（审核中-2：曾对 Failed 也绿「已启动」并清输入）
+      // 按 refresh 后的实际状态决定提示（审核中-2：曾对 Failed 也绿「已启动」并清输入）
       const fid = await invoke("start_forward", { sid: s, spec });
       const fs2 = await refreshForwards();
       const st = fs2.find((f) => f.id === fid);
       if (st && st.state !== "Listening") {
-        pushToast("err", `转发启动失败：${st.error ?? "未知错误"}`);
+        // 远端服务器拒绝（监听侧）——定位到监听字段，如实报出服务器原因
+        setFwdFieldErr({ listen: `远端拒绝监听 ${laddr}:${p}：${st.error ?? "未知错误"}` });
         return; // 输入保留，用户改端口/主机即可重试（finally 里复位 busy）
       }
       setFwdPort(""); setFwdHost(""); setFwdTPort("");
-      pushToast("ok", fwdKind === "Local" ? `本地转发已启动：127.0.0.1:${p}` : fwdKind === "Remote" ? `远程转发已启动：远端 :${p}` : `SOCKS5 已启动：127.0.0.1:${p}`);
+      pushToast("ok", fwdKind === "Local" ? `本地转发已启动：${laddr}:${p}` : fwdKind === "Remote" ? `远程转发已启动：远端 ${laddr}:${p}` : `SOCKS5 已启动：${laddr}:${p}`);
     } catch (e) {
-      pushToast("err", `转发启动失败：${friendlyError(e)}`);
+      // 结构化字段定位：核心 ForwardListenFailed{field} → 就地高亮；其余走通用提示
+      const pe = parseWireError(e);
+      if (pe.kind === "forward_listen_failed") {
+        const field = (pe.detail as { field?: string } | undefined)?.field === "target" ? "target" : "listen";
+        setFwdFieldErr({ [field]: friendlyError(e) } as { listen?: string; target?: string });
+      } else {
+        pushToast("err", `转发启动失败：${friendlyError(e)}`);
+      }
       await refreshForwards();
     } finally {
       setFwdBusy(false);
@@ -2571,12 +2602,17 @@ export default function App() {
   const stopForward = async (id: string) => {
     const s = sidRef.current;
     if (!s) return;
+    setFwdStopping((prev) => new Set(prev).add(id));
+    setFwdStopErr((prev) => { const n = { ...prev }; delete n[id]; return n; });
     try {
+      // 停止等待核心结果（§6.6）：核心确认后行才消失；失败保留行 + 可重试
       await invoke("stop_forward", { sid: s, id });
+      await refreshForwards();
     } catch (e) {
-      pushToast("err", `停止失败：${friendlyError(e)}`);
+      setFwdStopErr((prev) => ({ ...prev, [id]: friendlyError(e) }));
+    } finally {
+      setFwdStopping((prev) => { const n = new Set(prev); n.delete(id); return n; });
     }
-    await refreshForwards();
   };
 
   // C5（R32）传输对账（替代旧 800ms 审计猜测轮询——「完成/取消不靠审计猜测」）：
@@ -4209,50 +4245,90 @@ export default function App() {
               <div className="side-quiet">连接 SSH 会话后可建本地 / 远程 / SOCKS5 转发，随会话断开自动失效、重连自动恢复。</div>
             ) : (
               <>
-                {/* 两行布局（视觉复验 R1）：右栏 280px 下 5 控件单行必挤压——
-                    A 行 = 类型 + 监听端口 + 启动；B 行 = 目标主机 + 端口（仅 -L/-R） */}
+                {/* 表单（§6.6）：类型解释为人类语义、-L/-R/-D 作辅助；监听地址是显式
+                    字段（默认 127.0.0.1）；目标标注从哪一端解析；字段级错误就地高亮。 */}
                 <div className="row fwd-form">
-                  <select value={fwdKind} onChange={(e) => setFwdKind(e.target.value as "Local" | "Remote" | "Dynamic")} title="转发类型">
-                    <option value="Local">本地 -L</option>
-                    <option value="Remote">远程 -R</option>
-                    <option value="Dynamic">SOCKS5 -D</option>
+                  <select value={fwdKind} onChange={(e) => { setFwdKind(e.target.value as "Local" | "Remote" | "Dynamic"); setFwdFieldErr(null); setFwdExposeAck(false); }} title="转发类型">
+                    <option value="Local">本地端口访问远端服务（-L）</option>
+                    <option value="Remote">远端端口访问本机服务（-R）</option>
+                    <option value="Dynamic">SOCKS5 代理（-D）</option>
                   </select>
-                  <input className="mono" style={{ width: 74, flex: "none" }} placeholder={fwdKind === "Remote" ? "远端端口" : "本地端口"}
-                    value={fwdPort} onChange={(e) => setFwdPort(e.target.value)} />
-                  <button disabled={fwdBusy} onClick={() => void addForward()}>启动</button>
                 </div>
+                {/* A 行：监听地址（显式字段）+ 监听端口 */}
+                <div className="row fwd-form" style={{ marginTop: 4, alignItems: "flex-end" }}>
+                  <div className="ah-field" style={{ flex: 1 }}>
+                    <label>监听地址{fwdKind === "Remote" ? "（在远端服务器）" : "（在本机）"}</label>
+                    <input className="mono" value={fwdLAddr} placeholder="127.0.0.1"
+                      onChange={(e) => { setFwdLAddr(e.target.value); setFwdExposeAck(false); setFwdFieldErr(null); }} />
+                  </div>
+                  <div className="ah-field" style={{ width: 88 }}>
+                    <label>{fwdKind === "Remote" ? "远端端口" : "本地端口"}</label>
+                    <input className="mono" value={fwdPort} placeholder="端口"
+                      onChange={(e) => { setFwdPort(e.target.value); setFwdFieldErr(null); }} />
+                  </div>
+                </div>
+                {fwdFieldErr?.listen && <div className="fwd-err" data-testid="fwd-err-listen">⚠ {fwdFieldErr.listen}</div>}
+                {/* 非回环监听：显示暴露范围 + 必须主动勾选（§6.6） */}
+                {!isLoopbackAddr(fwdLAddr) && (
+                  <label className="fwd-expose" data-testid="fwd-expose">
+                    <input type="checkbox" checked={fwdExposeAck} onChange={(e) => { setFwdExposeAck(e.target.checked); setFwdFieldErr(null); }} />
+                    <span>我确认暴露范围：监听 <b>{fwdLAddr}</b> 将对本机所在网络的所有设备可见，任何能访问该地址的设备都可经此转发
+                      {fwdKind === "Dynamic" ? "（SOCKS5 无认证，等同开放代理）" : ""}。</span>
+                  </label>
+                )}
+                {/* B 行：目标（仅 -L/-R），标注解析端 */}
                 {fwdKind !== "Dynamic" && (
-                  <div className="row fwd-form" style={{ marginTop: 4 }}>
-                    <input className="mono" style={{ flex: 1, minWidth: 0 }} placeholder={fwdKind === "Remote" ? "回到本机·主机" : "目标主机"}
-                      value={fwdHost} onChange={(e) => setFwdHost(e.target.value)} />
-                    <input className="mono" style={{ width: 64, flex: "none" }} placeholder="端口"
-                      value={fwdTPort} onChange={(e) => setFwdTPort(e.target.value)} />
+                  <div className="row fwd-form" style={{ marginTop: 4, alignItems: "flex-end" }}>
+                    <div className="ah-field" style={{ flex: 1 }}>
+                      <label>{fwdKind === "Remote" ? "目标（本机侧解析）" : "目标（远端侧解析）"}</label>
+                      <input className="mono" value={fwdHost} placeholder={fwdKind === "Remote" ? "回到本机·主机" : "目标主机"}
+                        onChange={(e) => { setFwdHost(e.target.value); setFwdFieldErr(null); }} />
+                    </div>
+                    <div className="ah-field" style={{ width: 76 }}>
+                      <label>端口</label>
+                      <input className="mono" value={fwdTPort} placeholder="端口"
+                        onChange={(e) => { setFwdTPort(e.target.value); setFwdFieldErr(null); }} />
+                    </div>
                   </div>
                 )}
+                {fwdFieldErr?.target && <div className="fwd-err" data-testid="fwd-err-target">⚠ {fwdFieldErr.target}</div>}
+                <div className="row" style={{ marginTop: 6 }}>
+                  <button disabled={fwdBusy} onClick={() => void addForward()}>启动转发</button>
+                  <span className="side-quiet" style={{ flex: 1 }}>
+                    {fwdKind === "Local" ? "本地端口访问远端服务：本机监听，流量经 SSH 到远端目标。"
+                      : fwdKind === "Remote" ? "远端端口访问本机服务：远端服务器监听，流量回程到本机目标。"
+                      : "SOCKS5 代理：本机监听无认证代理，目标由每次连接决定。"}
+                  </span>
+                </div>
                 {forwards.length === 0 && <div className="side-quiet">暂无转发。</div>}
                 {forwards.map((f) => {
                   const k = "Local" in f.spec ? "Local" : "Remote" in f.spec ? "Remote" : "Dynamic";
-                  const v = (f.spec as Record<string, { listen_port: number; target_host?: string; target_port?: number }>)[k];
-                  // 窄栏下长目标串会省略号截断——title 携带完整串（视觉审发现）；状态文案与 title 同源（T44 视觉审：Degraded 下 title 误报"失败"）
-                  const fwdText = k === "Local" ? `127.0.0.1:${v.listen_port} → ${v.target_host}:${v.target_port}`
-                    : k === "Remote" ? `远端 :${v.listen_port} → 本地 ${v.target_host}:${v.target_port}`
-                    : `SOCKS5 127.0.0.1:${v.listen_port}`;
-                  const stateText = f.state === "Listening" ? "监听中"
-                    : f.state === "Degraded" ? `降级：${f.error ?? "隧道暂不可用（重连/目标恢复后自动恢复）"}`
-                    : `失败：${f.error ?? "未知错误"}`;
+                  const v = (f.spec as Record<string, { listen_addr?: string; listen_port: number; target_host?: string; target_port?: number }>)[k];
+                  const laddr = v.listen_addr || "127.0.0.1";
+                  // 人类可读路线（§6.6）；目标解析端在串内标注（Local 远端解析 / Remote 本机解析）
+                  const fwdText = k === "Local" ? `${laddr}:${v.listen_port} → ${v.target_host}:${v.target_port}`
+                    : k === "Remote" ? `远端 ${laddr}:${v.listen_port} → 本机 ${v.target_host}:${v.target_port}`
+                    : `SOCKS5 ${laddr}:${v.listen_port}`;
+                  // §6.6：监听成功与目标可达**分开显示**——不把「正在监听」表述为服务健康
+                  const listenText = f.state === "Failed" ? "监听失败" : "监听中";
+                  const healthText = f.state === "Listening" ? "目标可达性未验证（首次连接时确认）"
+                    : f.state === "Degraded" ? `目标不可达：${f.error ?? "隧道/目标暂不可用（恢复后自动重连）"}`
+                    : `${f.error ?? "未知错误"}`;
+                  const stopping = fwdStopping.has(f.id);
+                  const stopErr = fwdStopErr[f.id];
                   return (
-                    <div className="card row fwd-row" key={f.id} title={`${fwdText} · ${stateText}`}>
-                      <span className={"fwd-kind " + k.toLowerCase()}>{k === "Local" ? "-L" : k === "Remote" ? "-R" : "-D"}</span>
-                      <div style={{ flex: 1, minWidth: 0 }} className="mono">
-                        <div className="xfer-name">{fwdText}</div>
-                        <div className={"mono xfer-sub"}>{stateText}</div>
+                    <div className="card fwd-row" key={f.id} title={`${fwdText} · ${listenText} · ${healthText}`}>
+                      <div className="row" style={{ alignItems: "center" }}>
+                        <span className={"fwd-kind " + k.toLowerCase()}>{k === "Local" ? "-L" : k === "Remote" ? "-R" : "-D"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }} className="mono">
+                          <div className="xfer-name">{fwdText}</div>
+                        </div>
+                        <span className={"fwd-state " + (f.state === "Listening" ? "listen" : f.state === "Degraded" ? "warn" : "err")}>{listenText}</span>
+                        <button className="ghost" disabled={stopping}
+                          title={stopErr ? `上次停止失败：${stopErr}——点击重试` : "停止转发（等待核心确认）"}
+                          onClick={() => void stopForward(f.id)}>{stopping ? "停止中…" : stopErr ? "重试停止" : "停止"}</button>
                       </div>
-                      {f.state === "Listening"
-                        ? <span className="ok" style={{ flex: "none" }}>✓</span>
-                        : f.state === "Degraded"
-                          ? <span className="warn" style={{ flex: "none" }}>⚠</span>
-                          : <span className="err" style={{ flex: "none" }}>✕</span>}
-                      <button className="ghost" title="停止转发" onClick={() => void stopForward(f.id)}>✕</button>
+                      <div className={"mono xfer-sub" + (f.state === "Failed" ? " err" : f.state === "Degraded" ? " warn" : "")}>{healthText}</div>
                     </div>
                   );
                 })}

@@ -1,0 +1,125 @@
+
+================ THEME: dark ================
+PASS [dark] data-chrome resolves to dark  [got=dark]
+PASS [dark] session connected  [s-demo-0101]
+PASS [dark] forwards panel opens
+PASS [dark] default form labels present  [["监听地址（在本机）","本地端口","目标（远端侧解析）","端口"]]
+PASS [dark] default listen addr = 127.0.0.1  [127.0.0.1]
+PASS [dark] (b) empty listen port → field error  [⚠ 监听端口必须是 1–65535 的数字]
+PASS [dark] (b2) empty target → field error  [⚠ 目标主机与端口（1–65535）都要填]
+PASS [dark] (c) non-loopback shows exposure notice
+PASS [dark] (c2) exposure text mentions 暴露范围  [我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有设备可见，任何能访问该地址的设备都可经此转发。]
+PASS [dark] (c3) start blocked until exposure ack  [⚠ 非回环监听 0.0.0.0 将对本机所在网络可见——请勾选「我确认暴露范围」后再启动]
+PASS [dark] (c4) exposure ack toggles checked  [true]
+PASS [dark] kbd reaches select  [SELECT:select-one > INPUT:text.mono > INPUT:text.mono > INPUT:checkbox > INPUT:text.mono > INPUT:text.mono > BUTTON:submit > BUTTON:submit.sb-btn > BUTTON:submit.sb-btn]
+PASS [dark] kbd reaches exposure checkbox
+PASS [dark] kbd reaches 启动转发 button
+PASS [dark] every tab stop has visible focus indicator  [[]]
+PASS [dark] (d) -L forward row created
+PASS [dark] (d2) route human-readable  [127.0.0.1:8080 → 10.0.0.31:5432]
+PASS [dark] (d3) listening vs reachable separated  [监听中 | 目标可达性未验证（首次连接时确认）]
+PASS [dark] (f) port conflict → field error on listen  [⚠ 转发监听失败（listen）：本地监听 127.0.0.1:9090 失败：Address already in use（演示：端口占用）]
+PASS [dark] (e) -D hides target row
+PASS [dark] (e2) -D row created
+PASS [dark] (e3) SOCKS5 route has no target  [SOCKS5 127.0.0.1:1080]
+PASS [dark] layout: no fwd-form row overlap  [[{"top":232,"bottom":260,"h":28},{"top":264,"bottom":310,"h":47}]]
+PASS [dark] layout: task panel no horizontal overflow  [scroll=383 client=383]
+PASS [dark] layout: route text truncatable  [[{"textOverflow":"ellipsis","overflow":"hidden","whiteSpace":"nowrap"},{"textOverflow":"ellipsis","overflow":"hidden","whiteSpace":"nowrap"}]]
+PASS [dark] long route contained in row  [{"rowW":363,"nameScroll":687,"nameClient":200,"contained":true}]
+PASS [dark] regression: file panel renders
+PASS [dark] zero JS errors
+
+================ THEME: light ================
+PASS [light] data-chrome resolves to light  [got=light]
+PASS [light] session connected  [s-demo-0101]
+PASS [light] forwards panel opens
+PASS [light] default form labels present  [["监听地址（在本机）","本地端口","目标（远端侧解析）","端口"]]
+PASS [light] default listen addr = 127.0.0.1  [127.0.0.1]
+PASS [light] (b) empty listen port → field error  [⚠ 监听端口必须是 1–65535 的数字]
+PASS [light] (b2) empty target → field error  [⚠ 目标主机与端口（1–65535）都要填]
+PASS [light] (c) non-loopback shows exposure notice
+PASS [light] (c2) exposure text mentions 暴露范围  [我确认暴露范围：监听 0.0.0.0 将对本机所在网络的所有设备可见，任何能访问该地址的设备都可经此转发。]
+PASS [light] (c3) start blocked until exposure ack  [⚠ 非回环监听 0.0.0.0 将对本机所在网络可见——请勾选「我确认暴露范围」后再启动]
+PASS [light] (c4) exposure ack toggles checked  [true]
+PASS [light] kbd reaches select  [SELECT:select-one > INPUT:text.mono > INPUT:text.mono > INPUT:checkbox > INPUT:text.mono > INPUT:text.mono > BUTTON:submit > BUTTON:submit.sb-btn > BUTTON:submit.sb-btn]
+PASS [light] kbd reaches exposure checkbox
+PASS [light] kbd reaches 启动转发 button
+PASS [light] every tab stop has visible focus indicator  [[]]
+PASS [light] (d) -L forward row created
+PASS [light] (d2) route human-readable  [127.0.0.1:8080 → 10.0.0.31:5432]
+PASS [light] (d3) listening vs reachable separated  [监听中 | 目标可达性未验证（首次连接时确认）]
+PASS [light] (f) port conflict → field error on listen  [⚠ 转发监听失败（listen）：本地监听 127.0.0.1:9090 失败：Address already in use（演示：端口占用）]
+PASS [light] (e) -D hides target row
+PASS [light] (e2) -D row created
+PASS [light] (e3) SOCKS5 route has no target  [SOCKS5 127.0.0.1:1080]
+PASS [light] layout: no fwd-form row overlap  [[{"top":232,"bottom":260,"h":28},{"top":264,"bottom":310,"h":47}]]
+PASS [light] layout: task panel no horizontal overflow  [scroll=383 client=383]
+PASS [light] layout: route text truncatable  [[{"textOverflow":"ellipsis","overflow":"hidden","whiteSpace":"nowrap"},{"textOverflow":"ellipsis","overflow":"hidden","whiteSpace":"nowrap"}]]
+PASS [light] long route contained in row  [{"rowW":363,"nameScroll":687,"nameClient":200,"contained":true}]
+PASS [light] regression: file panel renders
+PASS [light] zero JS errors
+
+================ CONTRAST (WCAG AA) ================
+FAIL [dark/default] .section h4  ratio=3.41 (thr 4.5)  fg=rgb(93, 111, 130) bg=rgb(20, 25, 34) fs=10
+ok   [dark/default] .fwd-form select  ratio=11.17 (thr 4.5)  fg=rgb(212, 219, 230) bg=rgb(28, 36, 51) fs=12
+ok   [dark/default] .fwd-form input.mono  ratio=11.17 (thr 4.5)  fg=rgb(212, 219, 230) bg=rgb(28, 36, 51) fs=12
+FAIL [dark/default] .ah-field label  ratio=3.41 (thr 4.5)  fg=rgb(93, 111, 130) bg=rgb(20, 25, 34) fs=10
+ok   [dark/default] .side-quiet  ratio=7.4 (thr 4.5)  fg=rgb(154, 170, 184) bg=rgb(20, 25, 34) fs=12
+FAIL [dark/default] .section button  ratio=4.35 (thr 4.5)  fg=rgb(61, 157, 168) bg=rgb(35, 45, 61) fs=12
+ok   [dark/harness] #__vis_probe .fwd-kind.local  ratio=6.16 (thr 4.5)  fg=rgb(111, 168, 220) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .fwd-kind.remote  ratio=7.54 (thr 4.5)  fg=rgb(208, 176, 122) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .fwd-kind.dynamic  ratio=7.23 (thr 4.5)  fg=rgb(127, 191, 143) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .fwd-state.listen  ratio=6.53 (thr 4.5)  fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .fwd-state.warn  ratio=7.54 (thr 4.5)  fg=rgb(208, 176, 122) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .fwd-state.err  ratio=5 (thr 4.5)  fg=rgb(208, 122, 122) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .xfer-sub  ratio=6.53 (thr 4.5)  fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .xfer-sub.warn  ratio=7.54 (thr 4.5)  fg=rgb(208, 176, 122) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .xfer-sub.err  ratio=5 (thr 4.5)  fg=rgb(208, 122, 122) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .fwd-err  ratio=5 (thr 4.5)  fg=rgb(208, 122, 122) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .fwd-expose span  ratio=7.54 (thr 4.5)  fg=rgb(208, 176, 122) bg=rgb(28, 36, 51) fs=11
+ok   [dark/harness] #__vis_probe .side-quiet  ratio=6.53 (thr 4.5)  fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=12
+ok   [dark/err-listen] [data-testid="fwd-err-listen"]  ratio=5.66 (thr 4.5)  fg=rgb(208, 122, 122) bg=rgb(20, 25, 34) fs=11
+ok   [dark/err-target] [data-testid="fwd-err-target"]  ratio=5.66 (thr 4.5)  fg=rgb(208, 122, 122) bg=rgb(20, 25, 34) fs=11
+ok   [dark/expose] [data-testid="fwd-expose"] span  ratio=8.54 (thr 4.5)  fg=rgb(208, 176, 122) bg=rgb(20, 25, 34) fs=11
+ok   [dark/row-listen-state] .fwd-row .fwd-state  ratio=6.53 (thr 4.5)  fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=11
+ok   [dark/row-health] .fwd-row .xfer-sub  ratio=6.53 (thr 4.5)  fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=11
+ok   [dark/row-kind] .fwd-row .fwd-kind  ratio=6.16 (thr 4.5)  fg=rgb(111, 168, 220) bg=rgb(28, 36, 51) fs=11
+ok   [dark/row-route] .fwd-row .xfer-name  ratio=11.17 (thr 4.5)  fg=rgb(212, 219, 230) bg=rgb(28, 36, 51) fs=13.5
+ok   [dark/row-stop-btn] .fwd-row button  ratio=4.88 (thr 4.5)  fg=rgb(61, 157, 168) bg=rgb(28, 36, 51) fs=12
+ok   [light/default] .section h4  ratio=5.25 (thr 4.5)  fg=rgb(92, 104, 117) bg=rgb(244, 246, 248) fs=10
+ok   [light/default] .fwd-form select  ratio=13.79 (thr 4.5)  fg=rgb(36, 46, 56) bg=rgb(255, 255, 255) fs=12
+ok   [light/default] .fwd-form input.mono  ratio=13.79 (thr 4.5)  fg=rgb(36, 46, 56) bg=rgb(255, 255, 255) fs=12
+ok   [light/default] .ah-field label  ratio=5.25 (thr 4.5)  fg=rgb(92, 104, 117) bg=rgb(244, 246, 248) fs=10
+ok   [light/default] .side-quiet  ratio=6.44 (thr 4.5)  fg=rgb(77, 91, 104) bg=rgb(244, 246, 248) fs=12
+ok   [light/default] .section button  ratio=4.52 (thr 4.5)  fg=rgb(31, 118, 124) bg=rgb(232, 237, 242) fs=12
+ok   [light/harness] #__vis_probe .fwd-kind.local  ratio=5.27 (thr 4.5)  fg=rgb(47, 111, 171) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .fwd-kind.remote  ratio=4.55 (thr 4.5)  fg=rgb(150, 112, 10) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .fwd-kind.dynamic  ratio=5.13 (thr 4.5)  fg=rgb(46, 125, 50) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .fwd-state.listen  ratio=6.97 (thr 4.5)  fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .fwd-state.warn  ratio=4.55 (thr 4.5)  fg=rgb(150, 112, 10) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .fwd-state.err  ratio=5.32 (thr 4.5)  fg=rgb(179, 72, 77) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .xfer-sub  ratio=6.97 (thr 4.5)  fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .xfer-sub.warn  ratio=4.55 (thr 4.5)  fg=rgb(150, 112, 10) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .xfer-sub.err  ratio=5.32 (thr 4.5)  fg=rgb(179, 72, 77) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .fwd-err  ratio=5.32 (thr 4.5)  fg=rgb(179, 72, 77) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .fwd-expose span  ratio=4.55 (thr 4.5)  fg=rgb(150, 112, 10) bg=rgb(255, 255, 255) fs=11
+ok   [light/harness] #__vis_probe .side-quiet  ratio=6.97 (thr 4.5)  fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=12
+ok   [light/err-listen] [data-testid="fwd-err-listen"]  ratio=4.91 (thr 4.5)  fg=rgb(179, 72, 77) bg=rgb(244, 246, 248) fs=11
+ok   [light/err-target] [data-testid="fwd-err-target"]  ratio=4.91 (thr 4.5)  fg=rgb(179, 72, 77) bg=rgb(244, 246, 248) fs=11
+FAIL [light/expose] [data-testid="fwd-expose"] span  ratio=4.2 (thr 4.5)  fg=rgb(150, 112, 10) bg=rgb(244, 246, 248) fs=11
+ok   [light/row-listen-state] .fwd-row .fwd-state  ratio=6.97 (thr 4.5)  fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=11
+ok   [light/row-health] .fwd-row .xfer-sub  ratio=6.97 (thr 4.5)  fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=11
+ok   [light/row-kind] .fwd-row .fwd-kind  ratio=5.27 (thr 4.5)  fg=rgb(47, 111, 171) bg=rgb(255, 255, 255) fs=11
+ok   [light/row-route] .fwd-row .xfer-name  ratio=13.79 (thr 4.5)  fg=rgb(36, 46, 56) bg=rgb(255, 255, 255) fs=13.5
+ok   [light/row-stop-btn] .fwd-row button  ratio=5.33 (thr 4.5)  fg=rgb(31, 118, 124) bg=rgb(255, 255, 255) fs=12
+
+contrast: 48/52 pass; 4 FAIL
+  FAIL [dark/default] .section h4 ratio=3.41 < 4.5 (fg=rgb(93, 111, 130) bg=rgb(20, 25, 34) fs=10)
+  FAIL [dark/default] .ah-field label ratio=3.41 < 4.5 (fg=rgb(93, 111, 130) bg=rgb(20, 25, 34) fs=10)
+  FAIL [dark/default] .section button ratio=4.35 < 4.5 (fg=rgb(61, 157, 168) bg=rgb(35, 45, 61) fs=12)
+  FAIL [light/expose] [data-testid="fwd-expose"] span ratio=4.2 < 4.5 (fg=rgb(150, 112, 10) bg=rgb(244, 246, 248) fs=11)
+
+================ SUMMARY ================
+dark: 28/28 checks, jsErrors=0
+light: 56/56 checks, jsErrors=0
+total checks: 56/56
