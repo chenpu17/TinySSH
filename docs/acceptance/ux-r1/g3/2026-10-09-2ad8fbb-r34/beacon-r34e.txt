@@ -1,0 +1,5 @@
+r34e-open
+r34e-r1|r34a-panel0:ok
+r34e-r1|r34e-paused
+r34e-r1|r34e-DONE（暂停窗内取消线性化在 publish 前）
+r34-DONE

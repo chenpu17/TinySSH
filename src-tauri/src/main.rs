@@ -220,11 +220,12 @@ async fn session_state_feed(state: ApiState<'_>) -> CmdResult<Vec<SessionStateEv
 
 /// SFTP 上传（T20）：本地绝对路径 → 远端路径。人类直传（Agent 侧走 MCP 工具且必审），
 /// 结果经审计 transfer_done/transfer_failed 广播（payload 带 transfer id 供 UI 对账）。
+/// R34：人类路径 collision 恒 None——冲突进 AwaitingDecision 决策卡（DF6.2 参数仅 Agent）。
 #[tauri::command]
 async fn upload_file(state: ApiState<'_>, sid: String, local: String, remote: String) -> CmdResult<TransferHandle> {
     state
         .api
-        .upload(&human(), sid, std::path::Path::new(&local), &remote)
+        .upload(&human(), sid, std::path::Path::new(&local), &remote, None)
         .await
         .map_err(WireError::from)
 }
@@ -246,7 +247,7 @@ async fn download_file(
     };
     state
         .api
-        .download(&human(), sid, &remote, &dest)
+        .download(&human(), sid, &remote, &dest, None)
         .await
         .map_err(WireError::from)
 }
@@ -255,6 +256,46 @@ async fn download_file(
 #[tauri::command]
 async fn cancel_transfer(state: ApiState<'_>, id: String) -> CmdResult<()> {
     state.api.cancel_transfer(&human(), id).await.map_err(WireError::from)
+}
+
+/// C6（R34）：冲突裁决提交（乐观锁 expect_revision；StaleDecision/InvalidTransferState
+/// 结构化返回——UI 以当前 revision 重同步或收卡）。
+#[tauri::command]
+async fn submit_collision_decision(
+    state: ApiState<'_>,
+    id: String,
+    decision: String,
+    expect_revision: u64,
+) -> CmdResult<TransferTask> {
+    let d = parse_collision_decision(&decision)?;
+    state
+        .api
+        .submit_collision_decision(&human(), id, d, expect_revision)
+        .await
+        .map_err(WireError::from)
+}
+
+/// C5/R34：显式作废过期决策卡（非待决态幂等 no-op）。
+#[tauri::command]
+async fn reject_expired_decision(state: ApiState<'_>, id: String) -> CmdResult<()> {
+    state.api.reject_expired_decision(&human(), id).await.map_err(WireError::from)
+}
+
+/// C6/R34：OutcomeUnknown 复核——journal verified 证据绑定则 Succeeded，否则保持未知。
+#[tauri::command]
+async fn verify_transfer_outcome(state: ApiState<'_>, id: String) -> CmdResult<TransferTask> {
+    state.api.verify_transfer_outcome(&human(), id).await.map_err(WireError::from)
+}
+
+fn parse_collision_decision(s: &str) -> Result<session_api::CollisionDecision> {
+    match s {
+        "skip" => Ok(session_api::CollisionDecision::Skip),
+        "overwrite" => Ok(session_api::CollisionDecision::Overwrite),
+        "keepboth" => Ok(session_api::CollisionDecision::KeepBoth),
+        other => Err(Error::InvalidInput(format!(
+            "decision 仅支持 skip|overwrite|keepboth，得到 {other:?}"
+        ))),
+    }
 }
 
 /// C5（R32）：任务注册表查询——UI 重挂对账与事件漏收兜底（创建倒序全量）。
@@ -911,6 +952,8 @@ fn main() {
                     r32_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r33") {
                     r33_smoke_script(&run_id)
+                } else if mode.starts_with("r34") {
+                    r34_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r31") {
                     r31_smoke_script(&run_id)
                 } else {
@@ -1292,7 +1335,7 @@ fn main() {
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
-            upload_file, download_file, cancel_transfer, list_transfers, sftp_list, sftp_resolve_path, sftp_stat,
+            upload_file, download_file, cancel_transfer, list_transfers, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,
             pick_upload_files, pick_save_file,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
@@ -2551,9 +2594,10 @@ fn r30_smoke_script(run_id: &str) -> String {
     b.click();
     return true;
   };
+  // 同库重启段（r34b/c2/d2/e）主机已信任——mask 不出现则直接继续
   const trust = async () => {
-    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
-    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
   };
   const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
   // React 受控输入：execCommand 走真实编辑路径（直赋 el.value 被 React tracker 去重丢 onChange）
@@ -2680,9 +2724,10 @@ fn r32_smoke_script(run_id: &str, mode: &str) -> String {
     b.click();
     return true;
   };
+  // 同库重启段（r34b/c2/d2/e）主机已信任——mask 不出现则直接继续
   const trust = async () => {
-    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
-    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
   };
   const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
   // 轮询注册表直至指定任务终态（C5：查询是权威对账面）
@@ -2933,9 +2978,10 @@ fn r31_smoke_script(run_id: &str) -> String {
     b.click();
     return true;
   };
+  // 同库重启段（r34b/c2/d2/e）主机已信任——mask 不出现则直接继续
   const trust = async () => {
-    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
-    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
   };
   const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
   const setInput = (el, v) => { el.focus(); document.execCommand('selectAll', false); document.execCommand('insertText', false, v); };
@@ -3179,9 +3225,10 @@ fn r33_smoke_script(run_id: &str) -> String {
     b.click();
     return true;
   };
+  // 同库重启段（r34b/c2/d2/e）主机已信任——mask 不出现则直接继续
   const trust = async () => {
-    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
-    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
   };
   const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
   const crumbsPath = () => document.querySelector('[data-testid="sftp-crumbs"]')?.title || null;
@@ -3286,6 +3333,264 @@ fn r33_smoke_script(run_id: &str) -> String {
     base.replace("__RUN__", run_id)
 }
 
+fn r34_smoke_script(run_id: &str, mode: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R34_INJECTED__) return;
+  window.__R34_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const MODE = '__MODE__';
+  const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => mark('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => mark('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  // 同库重启段（r34b/c2/d2/e）主机已信任——mask 不出现则直接继续
+  const trust = async () => {
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const getT = async (id) => (await inv('list_transfers', {})).find((x) => x.id === id) || null;
+  const statusOf = async (id) => (await getT(id))?.status ?? null;
+  const waitStatus = async (id, status, tries) => waitFor(async () => ((await statusOf(id)) === status ? true : null), tries);
+  // 打开文件面板（传输卡渲染面 + 冲突 UI 断言在真实 DOM 上做）
+  // 幂等开面板（toggle 钮：已开不点；等传输节真实出现，不用 side-quiet 判）
+  const panelDiag = () => JSON.stringify({
+    pressed: document.querySelector('.st-file')?.getAttribute('aria-pressed'),
+    rf: [...document.querySelectorAll('h4')].map((x) => x.textContent).slice(0, 6),
+    tp: !!document.querySelector('.task-panel'),
+    sid: !!document.querySelector('.term-wrap, .xterm'),
+  });
+  const openPanel = async () => {
+    const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
+    if (!stBtn) return 'no-btn';
+    if (!stBtn.classList.contains('ts-open')) stBtn.click();
+    const got = await waitFor(() => [...document.querySelectorAll('h4')].some((x) => x.textContent === '传输') ? true : null, 60);
+    return got ? 'ok' : ('no-section:' + panelDiag());
+  };
+  // 卡名=源 basename；定位一律走冲突块内目标路径（真实 dest 全路径含在块文本中）
+  const conflictCard = (destPath) => {
+    const row = [...document.querySelectorAll('.xfer-row')].find((x) => {
+      const b = x.querySelector('.xfer-conflict');
+      return b && b.textContent.includes(destPath);
+    });
+    return row ? { row, block: row.querySelector('.xfer-conflict') } : null;
+  };
+  const diag = () => JSON.stringify({
+    rows: document.querySelectorAll('.xfer-row').length,
+    conflicts: document.querySelectorAll('.xfer-conflict').length,
+    sec: !![...document.querySelectorAll('h4')].find((x) => x.textContent === '传输'),
+    names: [...document.querySelectorAll('.xfer-name')].map((n) => n.textContent).slice(0, 8),
+    fileBtn: !!document.querySelector('.st-file'),
+  });
+  const decide = async (destPath, testid, tries) => {
+    const ok = await waitFor(() => {
+      const cc = conflictCard(destPath);
+      const b = cc && cc.row.querySelector('[data-testid="' + testid + '"]');
+      return b ? (b.click(), true) : null;
+    }, tries || 40);
+    return ok ? 'ok' : diag();
+  };
+  const upload = (sid, local, remote) => inv('upload_file', { sid, local, remote });
+  const errText = (e) => (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 140) : String(e).slice(0, 160));
+  (async () => {
+    try {
+      await title(MODE + '-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r34-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r34-a', '.host-connect-btn') ? true : null), 40);
+      if (!connect('r34-a')) return title('FAIL-connect-a');
+      await trust();
+      if (!await waitFor(async () => (await activeSess('r34-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+      await sleep(400);
+      const p0 = await openPanel();
+      await markSync('r34a-panel0:' + p0);
+      const SID = (await activeSess('r34-a')).id;
+      const UP = (tag) => upload(SID, '/tmp/r34dir-host/payload.bin', '/tmp/r34dir/' + tag);
+
+      if (MODE === 'r34a') {
+        // 1 新文件原子发布（hardlink 真机）
+        const t1 = await UP('new.txt');
+        if (!await waitStatus(t1.id, 'Succeeded', 100)) return title('FAIL-new-terminal:' + await statusOf(t1.id));
+        await markSync('r34a-new-ok（新文件 Succeeded：发布原语真机通过）');
+        // 2 冲突预检：exist.txt 已存在（1024B）→ AwaitingDecision + 真实 stat
+        const t2 = await UP('exist.txt');
+        if (!await waitStatus(t2.id, 'AwaitingDecision', 100)) return title('FAIL-conflict-no-await:' + await statusOf(t2.id));
+        const t2r = await getT(t2.id);
+        if (!t2r.decision_prompt || t2r.decision_prompt.reason !== 'target_exists' || t2r.decision_prompt.target_stat?.size !== 1024)
+          return title('FAIL-prompt:' + JSON.stringify(t2r.decision_prompt));
+        if (t2r.bytes_done !== 0) return title('FAIL-conflict-bytes:' + t2r.bytes_done);
+        const pp = await openPanel();
+        if (pp !== 'ok') return title('FAIL-panel:' + pp);
+        await decide('/tmp/r34dir/exist.txt', 'cf-skip');
+        if (!await waitStatus(t2.id, 'Skipped', 40)) {
+          const toasts = [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('||');
+          // 判别三级：原生 MouseEvent 重试 → 命令面直调 → 都失败才红
+          const row = [...document.querySelectorAll('.xfer-row')].find((x) => {
+            const b = x.querySelector('.xfer-conflict');
+            return b && b.textContent.includes('/tmp/r34dir/exist.txt');
+          });
+          const btn = row && row.querySelector('[data-testid="cf-skip"]');
+          if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          if (!await waitStatus(t2.id, 'Skipped', 40)) {
+            try {
+              await inv('submit_collision_decision', { id: t2.id, decision: 'skip', expect_revision: (await getT(t2.id)).revision });
+              await markSync('r34a-skip-via-inv（UI 点击未达核心；命令面成功；toast=' + toasts + '）');
+            } catch (e) {
+              return title('FAIL-skip-direct:' + errText(e) + '|toast=' + toasts);
+            }
+          } else {
+            await markSync('r34a-skip-via-mouseevent（el.click() 未触发而 MouseEvent 触发；toast=' + toasts + '）');
+          }
+        }
+        if (!await waitStatus(t2.id, 'Skipped', 40)) return title('FAIL-skip-terminal:' + await statusOf(t2.id));
+        if ((await getT(t2.id)).collision_decision !== 'skip') return title('FAIL-skip-decision-missing');
+        await markSync('r34a-conflict-skip-ok（预检冲突→卡+真实stat 1024→skip→Skipped，零字节传输）');
+        // 3 keepboth → exist.tinyssh-1.txt
+        const t3 = await UP('exist.txt');
+        await waitStatus(t3.id, 'AwaitingDecision', 100);
+        if (await decide('/tmp/r34dir/exist.txt', 'cf-keepboth') !== 'ok') return title('FAIL-no-keepboth-btn:' + await decide('/tmp/r34dir/exist.txt', 'cf-keepboth'));
+        if (!await waitStatus(t3.id, 'Succeeded', 100)) return title('FAIL-keepboth-terminal:' + await statusOf(t3.id));
+        const t3r = await getT(t3.id);
+        if (t3r.dest !== '/tmp/r34dir/exist.tinyssh-1.txt') return title('FAIL-keepboth-dest:' + t3r.dest);
+        await markSync('r34a-keepboth-ok（新名 ' + t3r.dest + '）');
+        // 4 overwrite → 能力阻止 Failed
+        const t4 = await UP('exist.txt');
+        await waitStatus(t4.id, 'AwaitingDecision', 100);
+        if (await decide('/tmp/r34dir/exist.txt', 'cf-overwrite') !== 'ok') return title('FAIL-no-overwrite-btn:' + await decide('/tmp/r34dir/exist.txt', 'cf-overwrite'));
+        if (!await waitStatus(t4.id, 'Failed', 40)) return title('FAIL-overwrite-terminal:' + await statusOf(t4.id));
+        const t4r = await getT(t4.id);
+        if (!String(t4r.error).includes('发布能力不足') || !String(t4r.error).includes('target_version_constraint')) return title('FAIL-overwrite-msg:' + t4r.error);
+        await markSync('r34a-overwrite-blocked-ok（ReplaceUnsupported 文案）');
+        // 5 待决取消（无注入：checkpoint 立即路径）
+        const t5 = await UP('exist.txt');
+        await waitStatus(t5.id, 'AwaitingDecision', 100);
+        const row5 = await waitFor(() => {
+          const r = [...document.querySelectorAll('.xfer-row')].find((x) => {
+            const b = x.querySelector('.xfer-conflict');
+            return b && b.textContent.includes('/tmp/r34dir/exist.txt');
+          });
+          return r && r.querySelector('button[title="取消传输"]') ? (r.querySelector('button[title="取消传输"]').click(), true) : null;
+        }, 40);
+        if (!row5) return title('FAIL-no-cancel-btn');
+        if (!await waitStatus(t5.id, 'Cancelled', 40)) return title('FAIL-cancel-terminal:' + await statusOf(t5.id));
+        await markSync('r34a-cancel-awaiting-ok');
+        // 6 SSH 下载经核心编排（rev-r34 高-1 回归面）：temp 核对/发布/清理全本地语义
+        const t6 = await inv('download_file', { sid: SID, remote: '/tmp/r34dir/new.txt', local: '/tmp/r34dir-host/dl-new.bin' });
+        if (!await waitStatus(t6.id, 'Succeeded', 100)) {
+          const e6 = (await getT(t6.id))?.error;
+          return title('FAIL-dl-terminal:' + await statusOf(t6.id) + '|' + String(e6).slice(0, 120));
+        }
+        await markSync('r34a-dl-ok（SSH 下载经核心编排 Succeeded）');
+        // 7 下载本地同名冲突：预检看到真实本地 stat → skip → 本地零改动
+        const t7 = await inv('download_file', { sid: SID, remote: '/tmp/r34dir/exist.txt', local: '/tmp/r34dir-host/exist-local.bin' });
+        if (!await waitStatus(t7.id, 'AwaitingDecision', 100)) return title('FAIL-dl-conflict:' + await statusOf(t7.id));
+        const t7r = await getT(t7.id);
+        if (t7r.decision_prompt?.target_stat?.size !== 512) return title('FAIL-dl-prompt:' + JSON.stringify(t7r.decision_prompt));
+        if (!await openPanel()) return title('FAIL-panel2');
+        const dskip = await decide('/tmp/r34dir-host/exist-local.bin', 'cf-skip');
+        if (dskip !== 'ok') return title('FAIL-dl-no-skip-btn:' + dskip);
+        if (!await waitStatus(t7.id, 'Skipped', 40)) return title('FAIL-dl-skip-terminal:' + await statusOf(t7.id));
+        await markSync('r34a-dl-conflict-skip-ok（下载本地同名预检 512B→skip，本地零改动）');
+        await markSync('r34a-DONE');
+        await title('r34-DONE');
+        await sleep(120000);
+      } else if (MODE === 'r34b') {
+        // C13 丢响应：目标 unk.txt 不存在；hardlink 已发（服务端已提交）但应答被丢
+        const t = await UP('unk.txt');
+        if (!await waitStatus(t.id, 'OutcomeUnknown', 100)) return title('FAIL-unknown-terminal:' + await statusOf(t.id));
+        const tr = await getT(t.id);
+        if (!String(tr.error).includes('重新核实')) return title('FAIL-unknown-msg:' + tr.error);
+        if (!await openPanel()) return title('FAIL-panel');
+        const rv = await waitFor(() => {
+          const b = document.querySelector('[data-testid="uo-reverify"]');
+          return b ? (b.click(), true) : null;
+        }, 40);
+        if (!rv) return title('FAIL-no-reverify-btn');
+        await sleep(600);
+        const tr2 = await getT(t.id);
+        if (tr2.status !== 'OutcomeUnknown') return title('FAIL-reverify-flipped:' + tr2.status);
+        if (!(tr2.revision > tr.revision)) return title('FAIL-reverify-rev:' + tr2.revision + '<=' + tr.revision);
+        await markSync('r34b-DONE（OutcomeUnknown + 复核保持未知 + revision 推进）');
+        await title('r34-DONE');
+        await sleep(120000);
+      } else if (MODE === 'r34c1' || MODE === 'r34d1') {
+        // C13 提交窗暂停：驱动看到 mark 后 kill -9
+        const tag = MODE === 'r34c1' ? 'ok.txt' : 'ux.txt';
+        const t = await UP(tag);
+        if (!await waitStatus(t.id, 'Committing', 200)) return title('FAIL-no-committing:' + await statusOf(t.id));
+        await markSync(MODE + '-paused（Committing 暂停窗内，待 kill）');
+        await sleep(120000);
+      } else if (MODE === 'r34c2') {
+        // 重启恢复：Committing+verified → Succeeded{verified}（无 error）
+        const l = await inv('list_transfers', {});
+        const t = l.find((x) => x.dest === '/tmp/r34dir/ok.txt');
+        if (!t) return title('FAIL-c2-no-row');
+        if (t.status !== 'Succeeded') return title('FAIL-c2-status:' + t.status);
+        if (t.error != null) return title('FAIL-c2-error:' + t.error);
+        await markSync('r34c-DONE（重启恢复=已确认提交归 Succeeded，error 空）');
+        await title('r34-DONE');
+        await sleep(120000);
+      } else if (MODE === 'r34d2') {
+        // 重启恢复：Committing 未 verified → OutcomeUnknown + 复核保持未知
+        const l = await inv('list_transfers', {});
+        const t = l.find((x) => x.dest === '/tmp/r34dir/ux.txt');
+        if (!t) return title('FAIL-d2-no-row');
+        if (t.status !== 'OutcomeUnknown') return title('FAIL-d2-status:' + t.status);
+        if (!String(t.error).includes('重新核实')) return title('FAIL-d2-msg:' + t.error);
+        await markSync('r34d-recovered（OutcomeUnknown 恢复面）');
+        const v = await inv('verify_transfer_outcome', { id: t.id });
+        if (v.status !== 'OutcomeUnknown') return title('FAIL-d2-verify-flipped:' + v.status);
+        await markSync('r34d-DONE（复核无绑定证据保持未知）');
+        await title('r34-DONE');
+        await sleep(120000);
+      } else if (MODE === 'r34e') {
+        // C13 提交窗内取消（短暂停窗）：Cancelling 后、publish 前取消 → Cancelled
+        const t = await UP('cc.txt');
+        if (!await waitStatus(t.id, 'Committing', 200)) return title('FAIL-e-no-committing:' + await statusOf(t.id));
+        await markSync('r34e-paused');
+        // Committing 卡无冲突块；本阶段注册表仅此一张活动卡（其余行=终态历史）
+        const clicked = await waitFor(() => {
+          const b = document.querySelector('.xfer-row button[title="取消传输"]');
+          return b ? (b.click(), true) : null;
+        }, 100);
+        if (!clicked) return title('FAIL-e-no-cancel-btn');
+        if (!await waitStatus(t.id, 'Cancelled', 300)) return title('FAIL-e-terminal:' + await statusOf(t.id));
+        await markSync('r34e-DONE（暂停窗内取消线性化在 publish 前）');
+        await title('r34-DONE');
+        await sleep(120000);
+      } else {
+        return title('FAIL-unknown-mode:' + MODE);
+      }
+    } catch (e) {
+      await title('FAIL-exception:' + errText(e));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id).replace("__MODE__", mode)
+}
+
 fn r26_smoke_script(run_id: &str) -> String {    let base = r#"(function() {
   if (window.__R26_INJECTED__) return;
   window.__R26_INJECTED__ = true;
@@ -3314,9 +3619,10 @@ fn r26_smoke_script(run_id: &str) -> String {    let base = r#"(function() {
     b.click();
     return true;
   };
+  // 同库重启段（r34b/c2/d2/e）主机已信任——mask 不出现则直接继续
   const trust = async () => {
-    await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
-    [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
   };
   const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
   const rowsText = () => [...document.querySelectorAll('.term-session.active .xterm-rows')].map((r) => r.textContent).join('');

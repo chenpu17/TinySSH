@@ -898,9 +898,10 @@ pub enum TransferKind {
 
 /// C5（§6.5）传输生命周期。wire 形状与既有 UI 卡状态（PascalCase）一致。
 /// R32 产生子集：Queued/Running/Cancelling/Succeeded/Failed/Cancelled；
-/// Committing/AwaitingDecision/OutcomeUnknown 为 R33/R34 提交语义与冲突决策的前向
-/// 占位（§560：100% 字节只代表数据传完，不能代替提交完成——枚举现在定全量，
-/// 载荷消费方对未知状态按「进行中」同待）。
+/// R34（C6）起提交语义全量启用：Committing=提交窗口（journal 先行+发布原语）、
+/// AwaitingDecision=冲突待人类裁决（仅人类路径）、OutcomeUnknown=发布应答丢失
+/// 待证据复核、Skipped=冲突决定 skip 的终态（复审 H1）、Interrupted=重启恢复
+/// 对提交前活动行的分类（§560 绝不虚构成败）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransferStatus {
     Queued,
@@ -912,10 +913,14 @@ pub enum TransferStatus {
     Cancelling,
     AwaitingDecision,
     OutcomeUnknown,
+    Skipped,
+    Interrupted,
 }
 
 impl TransferStatus {
     /// 终态：不再变化，可安全从注册表归档（R32 不清_registry_，仅 journal 归档）。
+    /// OutcomeUnknown 终态性=任务本身停止推进（复核只在其上出 Succeeded/保持未知，
+    /// 无自动重发/覆盖/清理——C6）；Interrupted 终态性=重启恢复面定格，重试=新任务。
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -923,7 +928,111 @@ impl TransferStatus {
                 | TransferStatus::Failed
                 | TransferStatus::Cancelled
                 | TransferStatus::OutcomeUnknown
+                | TransferStatus::Skipped
+                | TransferStatus::Interrupted
         )
+    }
+}
+
+/// C6（R34）冲突裁决。skip=不发布 temp 删除；overwrite=显式覆盖（受发布能力
+/// 约束——能力不足 ReplaceUnsupported 阻止，不改动原目标）；keep-both=换名
+/// name.tinyssh-N.ext 后按新文件发布（仅人类路径）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CollisionDecision {
+    Skip,
+    Overwrite,
+    KeepBoth,
+}
+
+/// C6/R34：冲突询问载荷（仅 AwaitingDecision 态非空）。target_stat 为进入
+/// 冲突时所见（复检不一致重回询问时刷新）；reason ∈ {"target_exists",
+/// "stat_changed_since_preflight"}（C-04 原因可查落字段）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionPrompt {
+    pub target_path: String,
+    pub target_stat: Option<TargetStat>,
+    pub reason: String,
+}
+
+/// C6/R34：冲突目标快照（存在性+size+mtime 三比对 DF6.3 的载体）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetStat {
+    pub size: Option<u64>,
+    pub mtime: Option<i64>,
+}
+
+/// C6/R34 DF6.1：发布原语四值结果（见 transport::ChannelHandle::publish_hardlink）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublishOutcome {
+    /// 链接已原子建立——本次发布确定提交。
+    Committed,
+    /// 能力未声明——按 ReplaceUnsupported 阻止发布。
+    Unsupported,
+    /// 确定未提交（含目标竞态已存在；链接失败绝不改动目标）。
+    Rejected(String),
+    /// 请求已发出、应答丢失——提交与否不可知，必须落 OutcomeUnknown。
+    Ambiguous,
+}
+
+/// 本地文件系统命名空间的 stat/publish/remove 语义（rev-r34 高-1）：
+/// 下载任务的预检/temp 核对/复检/发布/清理全部落在**本地**路径上——不得经
+/// ChannelHandle（SSH 通路=远端 SFTP 语义）路由。这里提供唯一语义源，
+/// transport-pty 的同名 trait 实现委托至此；core-session 下载分支直调。
+pub fn local_stat_entry(path: &str) -> Result<EntryStat> {
+    let lst = std::fs::symlink_metadata(path).map_err(|e| Error::from_fs_err(path, &e))?;
+    let ft = lst.file_type();
+    let kind = Some(
+        if ft.is_dir() {
+            EntryKind::Dir
+        } else if ft.is_file() {
+            EntryKind::File
+        } else if ft.is_symlink() {
+            EntryKind::Symlink
+        } else {
+            EntryKind::Other
+        },
+    );
+    let symlink_target = if ft.is_symlink() {
+        std::fs::read_link(path).ok().map(|p| p.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+    // 尺寸/目录位对 symlink 跟随目标（与 R30 sftp_stat 语义对齐）
+    let md = if ft.is_symlink() {
+        std::fs::metadata(path).unwrap_or(lst)
+    } else {
+        lst
+    };
+    Ok(EntryStat {
+        canonical: std::fs::canonicalize(path).ok().map(|p| p.to_string_lossy().into_owned()),
+        kind,
+        is_dir: md.is_dir(),
+        size: Some(md.len()),
+        mtime: md
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64),
+        symlink_target,
+    })
+}
+
+/// 本地 hardlink 原子发布：链接要么建立要么失败，绝不改动目标（无 Ambiguous——
+/// 本地 syscall 无「应答丢失」形态）。
+pub fn local_publish_hardlink(existing: &str, new: &str) -> PublishOutcome {
+    match std::fs::hard_link(existing, new) {
+        Ok(()) => PublishOutcome::Committed,
+        Err(e) => PublishOutcome::Rejected(format!("{e}")),
+    }
+}
+
+/// 本地文件删除（temp 清理；不存在=幂等 Ok）。
+pub fn local_remove_file(path: &str) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::from_fs_err(path, &e)),
     }
 }
 
@@ -949,6 +1058,12 @@ pub struct TransferTask {
     pub error: Option<String>,
     /// §6.5 重试链：本任务重试自哪个任务
     pub retry_of: Option<TransferId>,
+    /// C6/R34：冲突裁决（决定提交后随任务留存）
+    #[serde(default)]
+    pub collision_decision: Option<CollisionDecision>,
+    /// C6/R34：冲突询问（仅 AwaitingDecision 态非空）；serde default 兼容旧载荷
+    #[serde(default)]
+    pub decision_prompt: Option<DecisionPrompt>,
 }
 
 /// SFTP 条目类型（C4 §352）：符号链接/其他与普通文件/目录可区别；
@@ -1137,6 +1252,23 @@ pub enum Error {
     /// C4（R30）：远端路径权限不足（SFTP PERMISSION_DENIED）。
     #[error("权限不足: {path}")]
     SftpPermissionDenied { path: String },
+    /// C6/R34：预检发现同名目标（Agent 路径缺省 fail；含目标 stat 供结构化对账）。
+    #[error("目标已存在（冲突未裁决）: {target_path}")]
+    ConflictDetected {
+        target_path: String,
+        target_stat: Option<TargetStat>,
+    },
+    /// C6/R34 DF6.1：发布能力不足阻止发布（不改动原目标、无降级/回滚）。
+    /// capability ∈ {"hardlink@openssh.com", "target_version_constraint"}。
+    #[error("发布能力不足，已阻止（原目标未改动）: {capability}")]
+    ReplaceUnsupported { capability: String },
+    /// C5/R34：决定提交乐观锁失配——expect_revision=注册表当前 revision
+    ///（调用方以此重同步；任务未因本次提交推进）。
+    #[error("决定已过期（任务 revision 已推进至 {expect_revision}）")]
+    StaleDecision { expect_revision: u64 },
+    /// C5/R34：非法状态下的决定提交（非 AwaitingDecision / Agent 任务）。
+    #[error("传输状态不允许该决定（task={task_id}, state={state:?}）")]
+    InvalidTransferState { task_id: TransferId, state: TransferStatus },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1193,6 +1325,28 @@ impl Error {
             E::SftpPermissionDenied { path } => (
                 "sftp_permission_denied",
                 Some(serde_json::json!({ "path": path })),
+            ),
+            E::ConflictDetected {
+                target_path,
+                target_stat,
+            } => (
+                "conflict_detected",
+                Some(serde_json::json!({
+                    "target_path": target_path,
+                    "target_stat": target_stat,
+                })),
+            ),
+            E::ReplaceUnsupported { capability } => (
+                "replace_unsupported",
+                Some(serde_json::json!({ "capability": capability })),
+            ),
+            E::StaleDecision { expect_revision } => (
+                "stale_decision",
+                Some(serde_json::json!({ "expect_revision": expect_revision })),
+            ),
+            E::InvalidTransferState { task_id, state } => (
+                "invalid_transfer_state",
+                Some(serde_json::json!({ "task_id": task_id, "state": state })),
             ),
         }
     }
@@ -1381,12 +1535,17 @@ pub trait SessionApi: Send + Sync {
     async fn shell_capability(&self, ctx: &Actor, sid: SessionId) -> Result<ShellCapability>;
 
     // ---- 传输（v1；PRD FR-7）----
+    /// collision（C6/R34 DF6.2）：Agent 预冲突处置——None=人类路径（冲突进
+    /// AwaitingDecision）；Some(skip/overwrite/fail 等价 None 之外的显式处置)
+    /// 仅 Agent 传（fail 缺省在 MCP 侧落地为 None→按 fail 结构化报错；此处
+    /// Some(Skip)/Some(Overwrite) 为显式裁决）。人类 UI 一律传 None。
     async fn upload(
         &self,
         ctx: &Actor,
         sid: SessionId,
         local: &std::path::Path,
         remote: &str,
+        collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle>;
     async fn download(
         &self,
@@ -1394,8 +1553,30 @@ pub trait SessionApi: Send + Sync {
         sid: SessionId,
         remote: &str,
         local: &std::path::Path,
+        collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle>;
     async fn cancel_transfer(&self, ctx: &Actor, t: TransferId) -> Result<()>;
+
+    /// C6/R34：冲突裁决提交（仅人类 UI；仅 AwaitingDecision 可调）。
+    /// expect_revision 乐观锁：不匹配 → StaleDecision{当前 revision}；
+    /// 非法状态 → InvalidTransferState。生效 = 冲突通道投递决定，任务按
+    /// 唯一发布决策表推进（revision +1，事件帧随之）。
+    async fn submit_collision_decision(
+        &self,
+        ctx: &Actor,
+        task_id: TransferId,
+        decision: CollisionDecision,
+        expect_revision: u64,
+    ) -> Result<TransferTask>;
+
+    /// C5/R34：人类 UI 显式作废过期决策卡。任务在 AwaitingDecision → 作废为
+    /// Cancelled（temp 清理+审计 transfer_decision_rejected）；否则幂等 no-op。
+    async fn reject_expired_decision(&self, ctx: &Actor, task_id: TransferId) -> Result<()>;
+
+    /// C6/R34：OutcomeUnknown 复核（仅人类 UI）。只有 journal 证据（verified
+    /// 标记）能绑定本次发布 → Succeeded{verified}；无绑定证据保持 OutcomeUnknown
+    ///（同大小/temp 消失/摘要等单独不足——契约明文）。不自动重发/覆盖/清理。
+    async fn verify_transfer_outcome(&self, ctx: &Actor, task_id: TransferId) -> Result<TransferTask>;
 
     /// C5（§547）：任务注册表查询——全量快照（新建时间倒序），UI 重挂后对账与
     /// 事件漏收兜底（事件可合并可丢失，查询是权威）。任何 Actor 可查（只读）。
@@ -1749,5 +1930,59 @@ mod wire_format_tests {
         // Cancelled 终态
         let c: TransferStatus = serde_json::from_value(serde_json::json!("Cancelled")).unwrap();
         assert!(c.is_terminal());
+    }
+
+    /// C6（R34）：冲突域 wire 锁定——CollisionDecision 小写三值、DecisionPrompt/
+    /// TargetStat 载荷、TransferTask 新字段 serde default（旧载荷无
+    /// collision_decision/decision_prompt 不炸）、Skipped/Interrupted 状态。
+    #[test]
+    fn c6_collision_wire_format() {
+        use serde_json::json;
+        // 决定值小写（MCP collision 参数同形；KeepBoth=无分隔小写，在此锁定）
+        assert_eq!(serde_json::from_value::<CollisionDecision>(serde_json::json!("skip")).unwrap(), CollisionDecision::Skip);
+        assert_eq!(serde_json::from_value::<CollisionDecision>(serde_json::json!("overwrite")).unwrap(), CollisionDecision::Overwrite);
+        let kv = serde_json::to_value(&CollisionDecision::KeepBoth).unwrap();
+        assert_eq!(kv, serde_json::json!("keepboth"), "KeepBoth wire 值锁定（UI/MCP 三端一致）");
+        assert_eq!(serde_json::from_value::<CollisionDecision>(kv).unwrap(), CollisionDecision::KeepBoth);
+        // 决定提示载荷
+        let dp: DecisionPrompt = serde_json::from_value(json!({
+            "target_path": "/root/a.conf", "target_stat": {"size": 12, "mtime": 1790000000},
+            "reason": "target_exists"
+        })).unwrap();
+        assert_eq!(dp.reason, "target_exists");
+        assert_eq!(dp.target_stat.as_ref().unwrap().size, Some(12));
+        // target_stat 可缺（预检 stat 失败如实 None，不虚构）
+        let dp2: DecisionPrompt = serde_json::from_value(json!({
+            "target_path": "/root/a.conf", "target_stat": null, "reason": "stat_changed_since_preflight"
+        })).unwrap();
+        assert!(dp2.target_stat.is_none());
+        // 旧载荷（R32 形状，无新字段）反序列化不炸且新字段为 None
+        let legacy: TransferTask = serde_json::from_value(json!({
+            "id": "t", "session_id": "s", "kind": "Upload", "source": "a", "dest": "b",
+            "status": "Running", "bytes_done": 0, "total": null, "revision": 1,
+            "created_at": 0, "finished_at": null, "error": null, "retry_of": null,
+        })).unwrap();
+        assert!(legacy.collision_decision.is_none() && legacy.decision_prompt.is_none());
+        // 新载荷 round-trip 保形
+        let full: TransferTask = serde_json::from_value(json!({
+            "id": "t2", "session_id": "s", "kind": "Upload", "source": "a", "dest": "b",
+            "status": "AwaitingDecision", "bytes_done": 0, "total": null, "revision": 3,
+            "created_at": 0, "finished_at": null, "error": null, "retry_of": null,
+            "collision_decision": "skip",
+            "decision_prompt": {"target_path": "/b", "target_stat": {"size": null, "mtime": null}, "reason": "target_exists"},
+        })).unwrap();
+        assert_eq!(full.collision_decision, Some(CollisionDecision::Skip));
+        assert_eq!(full.decision_prompt.as_ref().unwrap().reason, "target_exists");
+        let rt: TransferTask = serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
+        assert_eq!(rt.collision_decision, full.collision_decision);
+        assert_eq!(rt.decision_prompt, full.decision_prompt);
+        // 新终态：Skipped / Interrupted（复审 H1 + §560 重启分类）
+        assert!(serde_json::from_value::<TransferStatus>(json!("Skipped")).unwrap().is_terminal());
+        assert!(serde_json::from_value::<TransferStatus>(json!("Interrupted")).unwrap().is_terminal());
+        // 错误 wire kind（结构化冲突/能力阻止/决定锁）
+        assert_eq!(Error::ConflictDetected { target_path: "/b".into(), target_stat: None }.wire_parts().0, "conflict_detected");
+        assert_eq!(Error::ReplaceUnsupported { capability: "target_version_constraint".into() }.wire_parts().0, "replace_unsupported");
+        assert_eq!(Error::StaleDecision { expect_revision: 4 }.wire_parts().0, "stale_decision");
+        assert_eq!(Error::InvalidTransferState { task_id: "t".into(), state: TransferStatus::Running }.wire_parts().0, "invalid_transfer_state");
     }
 }

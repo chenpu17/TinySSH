@@ -3,6 +3,7 @@
 
 mod brief;
 mod charset;
+mod fault;
 mod handle;
 
 pub use handle::{is_whitelisted, DecisionMsg, SessionHandle};
@@ -75,6 +76,9 @@ pub struct SessionManager {
     /// journal 落库推进的唯一视图层。cancel 句柄索引仍挂 SessionHandle.transfers
     /// （接管/关闭的会话级取消路径沿用），此处只挂同一 token 的观察面。
     transfers: StdMutex<HashMap<TransferId, TransferRegEntry>>,
+    /// C6/R34 DF6.4 同目标锁：canonical path（r:远端/l:本地前缀区分命名空间）→
+    /// 任务级互斥。只串行本客户端任务（外部写入由预检/复检/发布原语防线兜底）。
+    target_locks: StdMutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     /// C5 事件通道（可丢 broadcast；漏收由 list_transfers 查询对账兜底——§547
     /// 「重挂 UI 后可对账」）。
     pub transfer_tx: broadcast::Sender<TransferTask>,
@@ -82,11 +86,30 @@ pub struct SessionManager {
 
 /// 注册表条目：任务快照 + cancel 句柄（与会话级 SessionHandle.transfers 同一
 /// token 的第二索引）+ 节流水位（事件合并 ~5 次/秒/任务、journal ≥1s/行）。
+/// R34：decision_tx=AwaitingDecision 决策通道（Some=等待人类裁决；决定/取消/
+/// 拒绝即取走）；verified=提交窗口发布原语成功标记（journal 同步写，重启恢复
+/// 与 OutcomeUnknown 复核的唯一绑定证据——DF5.2）。
 struct TransferRegEntry {
     task: TransferTask,
     cancel: CancellationToken,
     last_emit: std::time::Instant,
     last_journal: std::time::Instant,
+    decision_tx: Option<tokio::sync::oneshot::Sender<CollisionDecision>>,
+    verified: bool,
+}
+
+/// C6/R34：staging 规划（canonical 目标 + 同目录 temp + 同目标锁键）。
+struct StagePlan {
+    /// canonical 目标目录（无尾 /）
+    dir: String,
+    /// 原始目标名
+    name: String,
+    /// canonical 完整目标路径（锁键与预检/复检/发布一律用它）
+    target: String,
+    /// 分片 temp（.tinyssh-part-<task_id>-<name>，与目标同目录同文件系统）
+    temp: String,
+    /// 同目标锁键（r:=远端命名空间 / l:=本地命名空间）
+    lock_key: String,
 }
 
 impl SessionManager {
@@ -132,23 +155,53 @@ impl SessionManager {
                 "http://127.0.0.1:8722/mcp（被占递增；以端点装配方输出为准）".into(),
             ),
             transfers: StdMutex::new(HashMap::new()),
+            target_locks: StdMutex::new(HashMap::new()),
             transfer_tx,
         });
         *arc.self_weak.lock().unwrap() = Some(Arc::downgrade(&arc));
-        // C5（§560）重启恢复：journal 活动行 = 上次进程退出时仍在途的传输。
-        // R32 只有提交前阶段（Committing/OutcomeUnknown 随 R33/R34 启用），
-        // 统一落 Failed +「应用重启时传输中断」——不虚构成功，不静默当失败消失；
-        // 行进注册表使 list_transfers 可见（UI 重挂对账含重启前残留）。
+        // C5（§560）+ C6（R34）重启恢复：journal 活动行按提交语义分类——
+        // Committing+verified=true → Succeeded{verified}（发布原语成功已落账，
+        // 「已确认提交归成功」）；Committing → OutcomeUnknown（提交与否不可知，
+        // temp 保留、不自动重试/覆盖/清理）；Queued/Running/AwaitingDecision/
+        // Cancelling → Interrupted（提交前确未提交；可新建重试，retry_of 归 R35）。
+        // 本地 temp（下载侧）确未提交即删；远端 temp 清理需通道，登记延后。
         match arc.center.vault.transfer_journal_load_active() {
             Ok(rows) => {
                 let now = now_unix();
                 let mut reg = arc.transfers.lock().unwrap();
-                for mut t in rows {
-                    t.status = TransferStatus::Failed;
-                    t.error = Some("应用重启时传输中断".into());
-                    t.finished_at = Some(now);
+                for (mut t, verified) in rows {
+                    match t.status {
+                        TransferStatus::Committing if verified => {
+                            t.status = TransferStatus::Succeeded;
+                            t.error = None;
+                            t.finished_at = Some(now);
+                            // 已确认提交：本地 temp 残留可清（链接已建立，temp 冗余）
+                            Self::cleanup_local_temp(&t);
+                            let _ = arc.center.audit.append(
+                                &Actor::Human, "transfer_recovered_succeeded", Some(&t.session_id), Some(&t.dest),
+                                serde_json::json!({"transfer": t.id, "verified": true}), None);
+                        }
+                        TransferStatus::Committing => {
+                            t.status = TransferStatus::OutcomeUnknown;
+                            t.error = Some("应用重启时提交结果未知（temp 保留；可在卡片「重新核实」）".into());
+                            t.finished_at = Some(now);
+                            let _ = arc.center.audit.append(
+                                &Actor::Human, "transfer_outcome_unknown", Some(&t.session_id), Some(&t.dest),
+                                serde_json::json!({"transfer": t.id, "phase": "restart"}), None);
+                        }
+                        _ => {
+                            t.status = TransferStatus::Interrupted;
+                            t.error = Some("应用重启时传输中断".into());
+                            t.finished_at = Some(now);
+                            // 提交前中断=确未提交：本地 temp 清理（远端 temp 登记延后）
+                            Self::cleanup_local_temp(&t);
+                            let _ = arc.center.audit.append(
+                                &Actor::Human, "transfer_interrupted", Some(&t.session_id), Some(&t.dest),
+                                serde_json::json!({"transfer": t.id}), None);
+                        }
+                    }
                     t.revision += 1;
-                    let _ = arc.center.vault.transfer_journal_update(&t);
+                    let _ = arc.center.vault.transfer_journal_update(&t, None);
                     reg.insert(
                         t.id.clone(),
                         TransferRegEntry {
@@ -156,6 +209,8 @@ impl SessionManager {
                             cancel: CancellationToken::new(),
                             last_emit: std::time::Instant::now(),
                             last_journal: std::time::Instant::now(),
+                            decision_tx: None,
+                            verified: false,
                         },
                     );
                 }
@@ -1635,12 +1690,28 @@ impl SessionApi for SessionManager {
     }
 
     // ---- 传输 ----
-    async fn upload(&self, ctx: &Actor, sid: SessionId, local: &Path, remote: &str) -> Result<TransferHandle> {
-        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), true).await
+    async fn upload(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        local: &Path,
+        remote: &str,
+        collision: Option<CollisionDecision>,
+    ) -> Result<TransferHandle> {
+        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), true, collision)
+            .await
     }
 
-    async fn download(&self, ctx: &Actor, sid: SessionId, remote: &str, local: &Path) -> Result<TransferHandle> {
-        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), false).await
+    async fn download(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        remote: &str,
+        local: &Path,
+        collision: Option<CollisionDecision>,
+    ) -> Result<TransferHandle> {
+        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), false, collision)
+            .await
     }
 
     async fn cancel_transfer(&self, _ctx: &Actor, t: TransferId) -> Result<()> {
@@ -1669,6 +1740,169 @@ impl SessionApi for SessionManager {
         });
         cancel.cancel();
         Ok(())
+    }
+
+    /// C6/R34：冲突裁决提交（仅人类 UI；仅 AwaitingDecision 可调）。
+    /// 乐观锁：revision 不匹配 → StaleDecision{当前 revision}（任务不因本次
+    /// 提交推进）；重复提交/非待决态 → InvalidTransferState。生效 = 冲突通道
+    /// 投递决定 + collision_decision 落账（revision+1 事件帧出），任务按唯一
+    /// 发布决策表推进。
+    async fn submit_collision_decision(
+        &self,
+        ctx: &Actor,
+        t: TransferId,
+        decision: CollisionDecision,
+        expect_revision: u64,
+    ) -> Result<TransferTask> {
+        if !ctx.is_human() {
+            // Agent 任务/调用方均不在此裁决（DF6.2：Agent 冲突走结构化错误）
+            let state = self
+                .transfers
+                .lock()
+                .unwrap()
+                .get(&t)
+                .map(|e| e.task.status)
+                .ok_or(Error::InvalidInput("transfer not found".into()))?;
+            return Err(Error::InvalidTransferState { task_id: t, state });
+        }
+        let (snapshot, tx) = {
+            let mut reg = self.transfers.lock().unwrap();
+            let e = reg
+                .get_mut(&t)
+                .ok_or(Error::InvalidInput("transfer not found".into()))?;
+            if e.task.status != TransferStatus::AwaitingDecision {
+                return Err(Error::InvalidTransferState { task_id: t, state: e.task.status });
+            }
+            if e.task.revision != expect_revision {
+                return Err(Error::StaleDecision { expect_revision: e.task.revision });
+            }
+            let Some(tx) = e.decision_tx.take() else {
+                return Err(Error::InvalidTransferState { task_id: t, state: e.task.status });
+            };
+            e.task.collision_decision = Some(decision);
+            e.task.revision += 1;
+            let _ = self.transfer_tx.send(e.task.clone());
+            (e.task.clone(), tx)
+        };
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "transfer_decision",
+            Some(&snapshot.session_id),
+            Some(&snapshot.dest),
+            serde_json::json!({ "transfer": t, "decision": decision }),
+            None,
+        );
+        // 投递失败=等待端已消失（取消竞窗）：任务终态已落，本次提交按过期处置
+        if tx.send(decision).is_err() {
+            return Err(Error::StaleDecision { expect_revision: snapshot.revision });
+        }
+        Ok(snapshot)
+    }
+
+    /// C5/R34：人类 UI 显式作废过期决策卡。AwaitingDecision → 作废为 Cancelled
+    ///（temp 确未提交即清，审计 transfer_decision_rejected）；否则幂等 no-op。
+    async fn reject_expired_decision(&self, ctx: &Actor, t: TransferId) -> Result<()> {
+        if !ctx.is_human() {
+            let state = self
+                .transfers
+                .lock()
+                .unwrap()
+                .get(&t)
+                .map(|e| e.task.status)
+                .ok_or(Error::InvalidInput("transfer not found".into()))?;
+            return Err(Error::InvalidTransferState { task_id: t, state });
+        }
+        let sid = {
+            let mut reg = self.transfers.lock().unwrap();
+            let e = reg.get_mut(&t).ok_or(Error::InvalidInput("transfer not found".into()))?;
+            if e.task.status != TransferStatus::AwaitingDecision {
+                return Ok(()); // 幂等：不在待决态即无卡可作废
+            }
+            e.decision_tx.take(); // 等待端收到通道关闭 → 作废收尾
+            e.task.session_id.clone()
+        };
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "transfer_decision_rejected",
+            Some(&sid),
+            None,
+            serde_json::json!({ "transfer": t }),
+            None,
+        );
+        Ok(())
+    }
+
+    /// C6/R34：OutcomeUnknown 复核（仅人类 UI）。唯一绑定证据=journal verified
+    /// 标记：true → Succeeded{verified}；false → 保持 OutcomeUnknown（同大小/
+    /// temp 消失/摘要等单独不足以判定——契约明文；不自动重发/覆盖/清理）。
+    async fn verify_transfer_outcome(&self, ctx: &Actor, t: TransferId) -> Result<TransferTask> {
+        if !ctx.is_human() {
+            let state = self
+                .transfers
+                .lock()
+                .unwrap()
+                .get(&t)
+                .map(|e| e.task.status)
+                .ok_or(Error::InvalidInput("transfer not found".into()))?;
+            return Err(Error::InvalidTransferState { task_id: t, state });
+        }
+        let (sid, now_verified) = {
+            let reg = self.transfers.lock().unwrap();
+            let e = reg.get(&t).ok_or(Error::InvalidInput("transfer not found".into()))?;
+            if e.task.status != TransferStatus::OutcomeUnknown {
+                return Err(Error::InvalidTransferState { task_id: t, state: e.task.status });
+            }
+            (e.task.session_id.clone(), e.verified)
+        };
+        let journal = self.center.vault.transfer_journal_get(&t)?;
+        let verified = now_verified || journal.map(|(_, v)| v).unwrap_or(false);
+        let now = now_unix();
+        if verified {
+            // 「已确认提交归成功」——journal 证据绑定本次发布（发布原语成功后落账）
+            {
+                let mut reg = self.transfers.lock().unwrap();
+                if let Some(e) = reg.get_mut(&t) {
+                    e.verified = true; // 与 journal 同步（restart 场景 journal 已为 true）
+                }
+            }
+            self.transfer_apply(&t, |task| {
+                task.status = TransferStatus::Succeeded;
+                task.error = None;
+                if task.finished_at.is_none() {
+                    task.finished_at = Some(now);
+                }
+            });
+            let _ = self.center.audit.append(
+                &Actor::Human,
+                "transfer_outcome_verified",
+                Some(&sid),
+                None,
+                serde_json::json!({ "transfer": t, "verified": true }),
+                None,
+            );
+        } else {
+            // 无绑定证据：保持未知（journal 行保持 Committing/verified=false 编码，
+            // 重启恢复面继续可见；本次仅刷新复核说明，revision+1 事件帧出）
+            {
+                let mut reg = self.transfers.lock().unwrap();
+                if let Some(e) = reg.get_mut(&t) {
+                    e.task.error = Some("重新核实：无绑定证据（verified=false），保持结果未知——temp 与恢复资料保留".into());
+                    e.task.revision += 1;
+                    let snapshot = e.task.clone();
+                    let _ = self.transfer_tx.send(snapshot.clone());
+                }
+            }
+            let _ = self.center.audit.append(
+                &Actor::Human,
+                "transfer_outcome_reverify",
+                Some(&sid),
+                None,
+                serde_json::json!({ "transfer": t, "verified": false }),
+                None,
+            );
+        }
+        let reg = self.transfers.lock().unwrap();
+        reg.get(&t).map(|e| e.task.clone()).ok_or(Error::InvalidInput("transfer not found".into()))
     }
 
     // C5（§547）：注册表全量快照（创建倒序）。事件可丢，查询是权威对账面。
@@ -1710,11 +1944,17 @@ impl SessionApi for SessionManager {
 
     // C4（R30）：条目元数据（kind/symlink/未知字段）。Human 浏览口径同 sftp_list。
     async fn sftp_stat(&self, ctx: &Actor, sid: SessionId, path: String) -> Result<EntryStat> {
-        if !ctx.is_human() {
-            return Err(Error::InvalidInput("sftp_stat 仅人类浏览入口".into()));
-        }
+        // R34：Agent 放行（只读元数据）——DF6.2 MCP collision=fail 预检结构化
+        // ConflictDetected 需目标 stat；浏览面（sftp_list）仍仅人类（R30 语义不变）
         let h = self.get(&sid)?;
-        h.channel.stat_entry(&path).await
+        let st = h.channel.stat_entry(&path).await?;
+        if !ctx.is_human() {
+            let _ = self
+                .center
+                .audit
+                .append(ctx, "sftp_stat", Some(&sid), Some(&path), serde_json::json!({ "remote": path }), None);
+        }
+        Ok(st)
     }
 
     // ---- 端口转发（FR-8，T42/T44）：人类直建；Agent 经逐段审批（V1 收口）；
@@ -1993,12 +2233,31 @@ impl SessionManager {
         let _ = self.transfer_tx.send(task.clone());
         self.transfers.lock().unwrap().insert(
             tid,
-            TransferRegEntry { task, cancel, last_emit: now, last_journal: now },
+            TransferRegEntry {
+                task,
+                cancel,
+                last_emit: now,
+                last_journal: now,
+                decision_tx: None,
+                verified: false,
+            },
         );
+    }
+
+    /// C6/R34 DF6.4：同目标锁（canonical path 键；持有至任务终态——本客户端
+    /// 内同目标任务串行；外部写入由预检/复检/发布原语防线兜底）。
+    fn target_lock(&self, key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        self.target_locks
+            .lock()
+            .unwrap()
+            .entry(key.to_string())
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     /// 变更任务并按节奏对外发帧/落 journal：状态变化即时发；进度合并 ≥200ms
     ///（§560 ~5 次/秒/任务）；journal 状态变化必写、纯进度 ≥1s 一写。
+    /// R34：journal 行随写 verified 证据位（提交窗口同步）。
     fn transfer_apply(&self, tid: &TransferId, mutate: impl FnOnce(&mut TransferTask)) {
         let now = std::time::Instant::now();
         let (emit_task, journal_task) = {
@@ -2016,25 +2275,41 @@ impl SessionManager {
             }
             if changed || now.duration_since(e.last_journal).as_millis() >= 1000 {
                 e.last_journal = now;
-                journal = Some(e.task.clone());
+                // journal 编码：OutcomeUnknown 行保持 Committing（活动集成员——
+                // 重启恢复分类与「未决任务保留 journal」依据；注册表面呈现真实状态）
+                let mut snap = e.task.clone();
+                let mut verified = e.verified;
+                if snap.status == TransferStatus::OutcomeUnknown {
+                    snap.status = TransferStatus::Committing;
+                    verified = false;
+                }
+                journal = Some((snap, verified));
             }
             (emit, journal)
         };
         if let Some(t) = emit_task {
             let _ = self.transfer_tx.send(t);
         }
-        if let Some(t) = journal_task {
-            let _ = self.center.vault.transfer_journal_update(&t);
+        if let Some((t, verified)) = journal_task {
+            let _ = self.center.vault.transfer_journal_update(&t, Some(verified));
         }
     }
 
     /// 终态收尾：即时发帧 + journal 必写（审计由调用方按既有键追加）。
     /// rev-r32 中-1：仅 Succeeded 覆写字节数——取消/失败保留在途进度（「恢复不抹账、
     /// 运行时同样不抹账」；终态字节 = MCP 对账权威面数据，0 会冒充「没传过」）。
+    /// R34：离开 AwaitingDecision 即清提示载荷（wire：仅待决态非空）与决策通道。
     fn transfer_finish(&self, tid: &TransferId, status: TransferStatus, bytes: u64, error: Option<String>) {
         let now = now_unix();
+        {
+            let mut reg = self.transfers.lock().unwrap();
+            if let Some(e) = reg.get_mut(tid) {
+                e.decision_tx = None;
+            }
+        }
         self.transfer_apply(tid, |t| {
             t.status = status;
+            t.decision_prompt = None;
             if status == TransferStatus::Succeeded {
                 t.bytes_done = bytes;
             }
@@ -2043,6 +2318,68 @@ impl SessionManager {
                 t.finished_at = Some(now);
             }
         });
+    }
+
+    /// C6/R34 DF5.2：发布原语成功 → verified 证据即时落 journal（先于收尾帧与
+    /// temp 清理——「提交时退出重启」窗口内崩溃，重启恢复据此判 Succeeded{verified}）。
+    fn transfer_mark_verified(&self, tid: &TransferId) {
+        let t = {
+            let mut reg = self.transfers.lock().unwrap();
+            let Some(e) = reg.get_mut(tid) else { return };
+            e.verified = true;
+            e.last_journal = std::time::Instant::now(); // 状态未变也强制落账
+            e.task.clone()
+        };
+        let _ = self.center.vault.transfer_journal_update(&t, Some(true));
+    }
+
+    /// C6/R34：进入 AwaitingDecision 并等待人类裁决（数据阶段前预检冲突——
+    /// 不白传字节）。返回 Some(决定)=继续发布编排；None=取消/作废收尾已落终态。
+    async fn transfer_await_decision(
+        &self,
+        tid: &TransferId,
+        target_path: &str,
+        target_stat: Option<TargetStat>,
+        reason: &str,
+        cancel: &CancellationToken,
+    ) -> Option<CollisionDecision> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.transfer_apply(tid, |t| {
+            t.status = TransferStatus::AwaitingDecision;
+            t.decision_prompt = Some(DecisionPrompt {
+                target_path: target_path.to_string(),
+                target_stat: target_stat.clone(),
+                reason: reason.to_string(),
+            });
+        });
+        if let Some(e) = self.transfers.lock().unwrap().get_mut(tid) {
+            e.decision_tx = Some(tx);
+        }
+        tokio::select! {
+            r = rx => match r {
+                Ok(d) => Some(d),
+                // 通道被取走即关闭=提交决定/取消/作废。关闭而非投递（含取消竞窗
+                // 抢先关闭）→ 确未提交，统一 Cancelled 收尾（取消=「已取消」、
+                // 作废=「决策卡已作废」，错误文本区分留痕）
+                Err(_) => {
+                    let msg = if cancel.is_cancelled() {
+                        "已取消（冲突待决中）".to_string()
+                    } else {
+                        "决策卡已作废（过期决定显式收卡）".to_string()
+                    };
+                    self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some(msg));
+                    None
+                }
+            },
+            _ = cancel.cancelled() => {
+                // 取消竞窗：通道取走防悬挂写；确未提交 → Cancelled
+                if let Some(e) = self.transfers.lock().unwrap().get_mut(tid) {
+                    e.decision_tx = None;
+                }
+                self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some("已取消（冲突待决中）".into()));
+                None
+            }
+        }
     }
 
     // ---- C10 输出订阅恢复（R11；桥层专用，不在 SessionApi trait 面）----
@@ -2262,6 +2599,24 @@ impl SessionManager {
         Ok(())
     }
 
+    /// C5/C6 传输编排（R34：staging + 唯一发布决策表 + 取消线性化）。
+    ///
+    /// 流程（上传/下载对称）：canonical 目标规划 → 同目标锁（DF6.4，排队保持
+    /// Queued）→ 预检（数据阶段前——冲突先裁决，不白传字节）→ temp 分片写
+    ///（.tinyssh-part-<tid>-<name>，同目录）→ temp 长度核对 → Committing →
+    /// 复检（存在性+size+mtime，不一致一律按新冲突 DF6.3）→ 原子 no-clobber
+    /// 发布（hardlink temp→目标；竞态失败=目标被抢建按冲突重裁决）→ journal
+    /// verified 证据 → temp 清理 → Succeeded。
+    ///
+    /// DF6.1 冻结矩阵（G3）：no-clobber=hardlink（远端 hardlink@openssh.com
+    /// 扩展声明 + 发布尝试即行为验证——链接要么原子建立要么失败且绝不改动
+    /// 目标；本地 std::fs::hard_link 同语义）；覆盖发布所需「目标版本约束」
+    ///（CAS）在 SFTP v3+OpenSSH 扩展集与本地 syscall 均无原语 → overwrite
+    /// 一律 ReplaceUnsupported 阻止（原目标零改动、无双重命名降级/bak/回滚）。
+    /// 发布应答丢失/通路失稳 → Ambiguous → OutcomeUnknown（temp 保留；journal
+    /// 行保持 Committing 编码供重启恢复分类；不自动重发/覆盖/清理）。
+    /// 取消线性化：publish 前检查点生效（确未提交，temp 清理+Cancelled）；
+    /// publish 之后提交不可逆，收尾 Succeeded 对晚到取消幂等（取消不回滚）。
     async fn transfer(
         &self,
         ctx: &Actor,
@@ -2269,6 +2624,7 @@ impl SessionManager {
         local: PathBuf,
         remote: String,
         is_upload: bool,
+        collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle> {
         let h = self.get(&sid)?;
         if !ctx.is_human() && *h.owner.lock().await == ControlOwner::Human {
@@ -2278,14 +2634,26 @@ impl SessionManager {
         if !ctx.is_human() && *h.state.lock().await == SessionState::Reconfirming {
             return Err(Error::ReconfirmingPending);
         }
-        // Agent 传输必审（L1 §4）
+        // C6/R34：collision 仅 Agent 路径（DF6.2；人类冲突一律 AwaitingDecision 决策卡）
+        if ctx.is_human() && collision.is_some() {
+            return Err(Error::InvalidInput(
+                "collision 仅 Agent 传输参数（人类冲突经决策卡裁决）".into(),
+            ));
+        }
+        // Agent 传输必审（L1 §4）；collision=overwrite 审批卡明示（DF6.2）
         let mut edited: Option<String> = None;
         if let Actor::Agent { client_id } = ctx {
             let op = if is_upload { "upload" } else { "download" };
+            let mut segment = format!("{op} → {remote}");
+            if collision == Some(CollisionDecision::Overwrite) {
+                // rev-r34 低-2：DF6.1 冻结后覆盖发布必被能力阻止——审批卡如实告知，
+                // 不误导审批人放行一个注定失败的写请求
+                segment.push_str("（覆盖已存在目标——将被能力阻止：传输不提供目标版本约束，原文件零改动）");
+            }
             let eval = tinyssh_approval::Evaluation {
                 verdict: tinyssh_approval::SegmentVerdict::NeedsApproval,
                 segments: vec![SegmentReport {
-                    segment: format!("{op} → {remote}"),
+                    segment,
                     verdict: "pending: 传输必审".into(),
                 }],
             };
@@ -2324,6 +2692,8 @@ impl SessionManager {
             finished_at: None,
             error: None,
             retry_of: None,
+            collision_decision: None,
+            decision_prompt: None,
         };
         let _ = self.center.vault.transfer_journal_insert(&task);
         self.transfer_register(task, cancel.clone());
@@ -2353,10 +2723,80 @@ impl SessionManager {
                 h2.transfers.lock().unwrap().remove(&tid2);
                 return;
             }
-            // rev-r32 低-2：仅 Queued→Running（取消竞窗已置 Cancelling 时不回跳——
-            // 终态正确但呈现毛刺）
+            let human_path = ctx2.is_human();
+            // C6/R34：canonical 目标规划（预检前置）。失败=确未提交，直接失败。
+            let plan = match SessionManager::stage_plan(&h2, is_upload, &local2, &remote2, &tid2).await {
+                Ok(p) => p,
+                Err(e) => {
+                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                    h2.transfers.lock().unwrap().remove(&tid2);
+                    return;
+                }
+            };
+            // 同目标串行（DF6.4）：排队保持 Queued，持锁至终态（统一收尾释放）。
+            // 锁内复查交接（排队期间接管=从未开始，按作废落账）。
+            let lock = mgr.target_lock(&plan.lock_key);
+            let _guard = lock.lock().await;
+            if h2.generation.load(std::sync::atomic::Ordering::SeqCst) != gen {
+                mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("接管作废".into()));
+                let _ = h2.center.audit.append(
+                    &ctx2, "transfer_voided", Some(&sid2), Some(&remote2),
+                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback_locked"}), None);
+                h2.transfers.lock().unwrap().remove(&tid2);
+                return;
+            }
+            let cancel2 = cancel.clone();
+            // 统一收尾（锁释放 + 会话级句柄清理）；显式调用保证每条路径只走一次
+            struct Guard {
+                h: Arc<SessionHandle>,
+                tid: String,
+            }
+            impl Guard {
+                fn done(self) {} // 消费即放弃显式清理（drop 仍兜底）
+            }
+            impl Drop for Guard {
+                fn drop(&mut self) {
+                    self.h.transfers.lock().unwrap().remove(&self.tid);
+                }
+            }
+            let g = Guard { h: h2.clone(), tid: tid2.clone() };
+
+            // ---- 预检（数据阶段前；冲突先裁决不白传字节）----
+            let mut intent: Option<String> = None; // None=原目标名（新文件）；Some=keep-both 候选名
+            match SessionManager::ns_stat(&h2, is_upload, &plan.target).await {
+                Ok(st) => {
+                    let tstat = Some(TargetStat { size: st.size, mtime: st.mtime });
+                    match SessionManager::conflict_resolve(
+                        &mgr, &h2, &tid2, &cancel2, human_path, collision, is_upload, &plan.target, tstat,
+                        "target_exists", &plan.dir, &plan.name, &plan.temp, "preflight",
+                    )
+                    .await
+                    {
+                        Some(cand) => intent = Some(cand),
+                        None => { g.done(); return; } // 终态已落（跳过/阻止/结构化失败）
+                    }
+                }
+                Err(Error::SftpPathNotFound { .. }) => {} // 新文件路径
+                Err(e) => {
+                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                    g.done();
+                    return;
+                }
+            }
+
+            // ---- 数据阶段（temp staging）----
+            // rev-r32 低-2 沿袭：仅 Queued→Running（取消竞窗不回跳）；
+            // R34：预检决策完成回 Running（决策卡关闭，提示载荷留待 finish 清）
             mgr.transfer_apply(&tid2, |t| {
                 if t.status == TransferStatus::Queued {
+                    t.status = TransferStatus::Running;
+                } else if t.status == TransferStatus::AwaitingDecision {
                     t.status = TransferStatus::Running;
                 }
             });
@@ -2368,35 +2808,480 @@ impl SessionManager {
                     t.total = total;
                 });
             };
+            let temp_path = std::path::PathBuf::from(&plan.temp);
             let r = if is_upload {
-                h2.channel.upload(&local2, &remote2, &cancel, &progress).await
+                h2.channel.upload(&local2, &plan.temp, &cancel2, &progress).await
             } else {
-                h2.channel.download(&remote2, &local2, &cancel, &progress).await
+                h2.channel.download(&remote2, &temp_path, &cancel2, &progress).await
             };
-            match r {
-                Ok(bytes) => {
-                    // R32 无提交阶段（Committing 随 R33/R34）：数据传完即 Succeeded
-                    mgr.transfer_finish(&tid2, TransferStatus::Succeeded, bytes, None);
-                    let _ = h2.center.audit.append(
-                        &ctx2, "transfer_done", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "bytes": bytes}), None);
-                }
+            let staged_bytes = match r {
+                Ok(b) => b,
                 Err(Error::Cancelled) => {
+                    // 确未提交：temp 清理（尽力；失败审计留痕不阻塞终态）
+                    SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
                     mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消".into()));
                     let _ = h2.center.audit.append(
                         &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
                         serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                    g.done();
+                    return;
                 }
                 Err(e) => {
+                    SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
                     mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
                     let _ = h2.center.audit.append(
                         &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
                         serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                    g.done();
+                    return;
+                }
+            };
+            // temp 长度核对（契约：stat 临时文件核对长度；不符=staging 不完整）
+            match SessionManager::ns_stat(&h2, is_upload, &plan.temp).await {
+                Ok(st) if st.size == Some(staged_bytes) => {}
+                other => {
+                    SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                    let msg = format!(
+                        "temp 长度核对不符（写 {staged_bytes}，stat {:?}）——未提交",
+                        other.ok().and_then(|s| s.size)
+                    );
+                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(msg.clone()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": msg}), None);
+                    g.done();
+                    return;
                 }
             }
-            h2.transfers.lock().unwrap().remove(&tid2);
+
+            // ---- 提交窗口（Committing）：复检 → 发布 → 证据 → 清理 ----
+            mgr.transfer_apply(&tid2, |t| {
+                if !t.status.is_terminal() {
+                    t.status = TransferStatus::Committing;
+                }
+            });
+            let mut rounds = 0u32;
+            loop {
+                rounds += 1;
+                if rounds > 16 {
+                    // 病态竞态回环防线：每轮复检不一致都真实重裁决，16 轮远超正常
+                    SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some("发布复检竞态回环超限，已阻止提交".into()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "recheck loop bound"}), None);
+                    g.done();
+                    return;
+                }
+                let final_name = intent.clone().unwrap_or_else(|| plan.name.clone());
+                let final_path = format!("{}/{}", plan.dir, final_name);
+                // 复检（DF6.3 存在性+size+mtime）：发布路径一律复检；不一致一律按
+                // 新冲突（L3：显式 overwrite 只针对预检所见那份）
+                match SessionManager::ns_stat(&h2, is_upload, &final_path).await {
+                    Ok(st) => {
+                        let tstat = Some(TargetStat { size: st.size, mtime: st.mtime });
+                        match SessionManager::conflict_resolve(
+                            &mgr, &h2, &tid2, &cancel2, human_path, collision, is_upload, &final_path, tstat,
+                            "stat_changed_since_preflight", &plan.dir, &plan.name, &plan.temp, "recheck",
+                        )
+                        .await
+                        {
+                            Some(cand) => { intent = Some(cand); continue; }
+                            None => { g.done(); return; }
+                        }
+                    }
+                    Err(Error::SftpPathNotFound { .. }) => {} // 复检一致：目标不存在
+                    Err(e) => {
+                        // 复检通路失败=无法判定（提交未开始，确未提交）
+                        SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                        mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(format!("复检失败（未提交）：{e}")));
+                        let _ = h2.center.audit.append(
+                            &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                        g.done();
+                        return;
+                    }
+                }
+                // 取消检查点（线性化点=下方 publish）：publish 前 → 确未提交
+                if cancel2.is_cancelled() {
+                    SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                    mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消（提交窗口内）".into()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                    g.done();
+                    return;
+                }
+                if fault::active("pre_publish") {
+                    let _ = h2.center.audit.append(
+                        &ctx2, "fault_inject", Some(&sid2), None,
+                        serde_json::json!({"transfer": tid2, "point": "pre_publish"}), None);
+                }
+                fault::pause("pre_publish").await;
+                // 暂停窗内到达的取消仍线性化在 publish 前（线性化点=publish 本身，
+                // 不是暂停起点——否则「取消」后目标仍被写入）
+                if cancel2.is_cancelled() {
+                    SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                    mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消（提交窗口内）".into()));
+                    let _ = h2.center.audit.append(
+                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                    g.done();
+                    return;
+                }
+                let publish_res = if fault::active("drop_link_response") && is_upload {
+                    let _ = h2.center.audit.append(
+                        &ctx2, "fault_inject", Some(&sid2), None,
+                        serde_json::json!({"transfer": tid2, "point": "drop_link_response"}), None);
+                    // C13 注入（分离续跑）：请求照发——服务端真实提交；应答弃收，
+                    // 本侧按 Ambiguous 归一（提交与否不可知）。仅远端通路可注入
+                    // （本地 syscall 无「应答丢失」形态）。
+                    let h3 = h2.clone();
+                    let t3 = plan.temp.clone();
+                    let f3 = final_path.clone();
+                    tokio::spawn(async move {
+                        let _ = h3.channel.publish_hardlink(&t3, &f3).await;
+                    });
+                    Ok(PublishOutcome::Ambiguous)
+                } else {
+                    SessionManager::ns_publish(&h2, is_upload, &plan.temp, &final_path).await
+                };
+                match publish_res {
+                    Ok(PublishOutcome::Committed) => {
+                        // 证据先行（DF5.2/C13）：verified 落 journal——此点之后崩溃
+                        // 重启可判「已确认提交归成功」
+                        mgr.transfer_mark_verified(&tid2);
+                        if fault::active("post_verified") {
+                            let _ = h2.center.audit.append(
+                                &ctx2, "fault_inject", Some(&sid2), None,
+                                serde_json::json!({"transfer": tid2, "point": "post_verified"}), None);
+                        }
+                        fault::pause("post_verified").await;
+                        // temp 已提交为冗余：清理（失败非致命，审计留痕）
+                        if let Err(e) = SessionManager::ns_remove(&h2, is_upload, &plan.temp).await {
+                            let _ = h2.center.audit.append(
+                                &ctx2, "transfer_temp_clean_failed", Some(&sid2), None,
+                                serde_json::json!({"transfer": tid2, "temp": plan.temp, "error": e.to_string()}), None);
+                        }
+                        // keepboth 发布名与请求目标不同：任务 dest 回写实际发布路径
+                        // （账实相符——卡面/对账面不显示旧目标）
+                        if final_name != plan.name {
+                            let fp = final_path.clone();
+                            mgr.transfer_apply(&tid2, |t| {
+                                if !t.status.is_terminal() {
+                                    t.dest = fp;
+                                }
+                            });
+                        }
+                        mgr.transfer_finish(&tid2, TransferStatus::Succeeded, staged_bytes, None);
+                        let _ = h2.center.audit.append(
+                            &ctx2, "transfer_done", Some(&sid2), Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "bytes": staged_bytes, "verified": true}), None);
+                        g.done();
+                        return;
+                    }
+                    Ok(PublishOutcome::Unsupported) => {
+                        // DF6.1：无经验证 no-clobber 能力 → 阻止发布（确未提交）
+                        SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                        let msg = Error::ReplaceUnsupported { capability: "hardlink".into() }.to_string();
+                        mgr.transfer_finish(&tid2, TransferStatus::Failed, staged_bytes, Some(msg.clone()));
+                        let _ = h2.center.audit.append(
+                            &ctx2, "transfer_publish_blocked", Some(&sid2), Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "capability": "hardlink"}), None);
+                        g.done();
+                        return;
+                    }
+                    Ok(PublishOutcome::Rejected(reason)) => {
+                        // 链接失败绝不改动目标（原子 create-or-fail）→ 确定未提交；
+                        // 目标此刻存在=竞态抢建 → 按冲突重裁决，否则真实错误
+                        match SessionManager::ns_stat(&h2, is_upload, &final_path).await {
+                            Ok(st) => {
+                                let tstat = Some(TargetStat { size: st.size, mtime: st.mtime });
+                                match SessionManager::conflict_resolve(
+                                    &mgr, &h2, &tid2, &cancel2, human_path, collision, is_upload, &final_path,
+                                    tstat, "stat_changed_since_preflight", &plan.dir, &plan.name,
+                                    &plan.temp, "publish_raced",
+                                )
+                                .await
+                                {
+                                    Some(cand) => { intent = Some(cand); continue; }
+                                    None => { g.done(); return; }
+                                }
+                            }
+                            Err(_) => {
+                                SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                                mgr.transfer_finish(&tid2, TransferStatus::Failed, staged_bytes, Some(format!("发布被拒（未提交）：{reason}")));
+                                let _ = h2.center.audit.append(
+                                    &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                                    serde_json::json!({"transfer": tid2, "error": reason}), None);
+                                g.done();
+                                return;
+                            }
+                        }
+                    }
+                    Ok(PublishOutcome::Ambiguous) => {
+                        // C13：请求已发出、应答丢失——提交与否不可知。OutcomeUnknown
+                        // 终态；temp 保留（唯一恢复资料）；journal 行保持 Committing
+                        // 编码（重启恢复分类继续可见）；不自动重发/覆盖/清理。
+                        mgr.transfer_apply(&tid2, |t| {
+                            if !t.status.is_terminal() {
+                                t.status = TransferStatus::OutcomeUnknown;
+                                t.error = Some("发布应答丢失，提交结果未知（temp 保留；可在卡片「重新核实」）".into());
+                                if t.finished_at.is_none() {
+                                    t.finished_at = Some(now_unix());
+                                }
+                            }
+                        });
+                        let _ = h2.center.audit.append(
+                            &ctx2, "transfer_outcome_unknown", Some(&sid2), Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "phase": "live"}), None);
+                        g.done();
+                        return;
+                    }
+                    Err(e) => {
+                        // 发布调用未发出（通路失败）→ 确定未提交
+                        SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
+                        mgr.transfer_finish(&tid2, TransferStatus::Failed, staged_bytes, Some(e.to_string()));
+                        let _ = h2.center.audit.append(
+                            &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                        g.done();
+                        return;
+                    }
+                }
+            }
         });
         Ok(handle)
+    }
+
+    /// C6/R34：staging 规划——canonical 目标、temp（同目录 .tinyssh-part-<tid>-<name>）、
+    /// 同目标锁键。上传=远端父目录 realpath+基名（基名不解析，服务端语义归一归父目录
+    /// 层）；下载=本地父目录 canonicalize+基名。
+    // ---- rev-r34 高-1：提交窗口文件系统操作的命名空间分流 ----
+    // 下载任务的预检/temp 核对/复检/发布/清理全落在**本地**路径上（stage_plan
+    // 下载分支产本地 canonical），绝不经 ChannelHandle 路由——SSH 通路的这些
+    // 方法是远端 SFTP 语义，本地路径会恒 NotFound（temp 核对必失败、下载冲突
+    // 面失效）。本地语义唯一源=session_api::local_*（transport-pty 同源委托）。
+    async fn ns_stat(
+        h: &Arc<SessionHandle>,
+        is_upload: bool,
+        path: &str,
+    ) -> Result<EntryStat> {
+        if is_upload {
+            h.channel.stat_entry(path).await
+        } else {
+            session_api::local_stat_entry(path)
+        }
+    }
+
+    async fn ns_publish(
+        h: &Arc<SessionHandle>,
+        is_upload: bool,
+        temp: &str,
+        target: &str,
+    ) -> Result<PublishOutcome> {
+        if is_upload {
+            h.channel.publish_hardlink(temp, target).await
+        } else {
+            Ok(session_api::local_publish_hardlink(temp, target))
+        }
+    }
+
+    async fn ns_remove(h: &Arc<SessionHandle>, is_upload: bool, path: &str) -> Result<()> {
+        if is_upload {
+            h.channel.remove_file(path).await
+        } else {
+            session_api::local_remove_file(path)
+        }
+    }
+
+    async fn stage_plan(
+        h: &Arc<SessionHandle>,
+        is_upload: bool,
+        local: &Path,
+        remote: &str,
+        tid: &str,
+    ) -> Result<StagePlan> {
+        if is_upload {
+            let trimmed = remote.trim_end_matches('/');
+            if trimmed.is_empty() {
+                return Err(Error::InvalidInput(format!("上传目标无效：{remote}")));
+            }
+            let (dir, name) = match trimmed.rsplit_once('/') {
+                Some((d, n)) if !n.is_empty() => (
+                    if d.is_empty() { "/".to_string() } else { d.to_string() },
+                    n.to_string(),
+                ),
+                Some(_) => return Err(Error::InvalidInput(format!("上传目标以 / 结尾：{remote}"))),
+                None => (".".to_string(), trimmed.to_string()),
+            };
+            let canon = h.channel.resolve_path(Some(&dir)).await?.canonical;
+            let dir_c = canon.trim_end_matches('/').to_string();
+            let target = format!("{dir_c}/{name}");
+            Ok(StagePlan {
+                dir: dir_c.clone(),
+                name: name.clone(),
+                target: target.clone(),
+                temp: format!("{dir_c}/.tinyssh-part-{tid}-{name}"),
+                lock_key: format!("r:{target}"),
+            })
+        } else {
+            let path = std::path::Path::new(local);
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| Error::InvalidInput(format!("下载目标缺文件名：{remote}")))?
+                .to_string();
+            let dir = path
+                .parent()
+                .ok_or_else(|| Error::InvalidInput(format!("下载目标缺目录：{remote}")))?;
+            tokio::fs::create_dir_all(dir)
+                .await
+                .map_err(|e| Error::Io(format!("mkdir {}: {e}", dir.display())))?;
+            let canon = tokio::fs::canonicalize(dir)
+                .await
+                .map_err(|e| Error::Io(format!("canonicalize {}: {e}", dir.display())))?
+                .to_string_lossy()
+                .into_owned();
+            let dir_c = canon.trim_end_matches('/').to_string();
+            let target = format!("{dir_c}/{name}");
+            Ok(StagePlan {
+                dir: dir_c.clone(),
+                name: name.clone(),
+                target: target.clone(),
+                temp: format!("{dir_c}/.tinyssh-part-{tid}-{name}"),
+                lock_key: format!("l:{target}"),
+            })
+        }
+    }
+
+    /// C6/R34：temp 清理（确未提交路径专用；尽力而为，失败由调用方审计留痕）。
+    async fn cleanup_temp(h: &Arc<SessionHandle>, is_upload: bool, temp: &str) {
+        if !is_upload {
+            // 本地 temp 直接删（不占通路；不存在=幂等）
+            let _ = tokio::fs::remove_file(temp).await;
+            return;
+        }
+        let _ = h.channel.remove_file(temp).await;
+    }
+
+    /// C6/R34：重启恢复的本地 temp 清理（下载任务确未提交/已确认提交——远端
+    /// temp 需通道，登记延后）。temp 名与提交路径同源，不存在=幂等。
+    fn cleanup_local_temp(t: &TransferTask) {
+        if t.kind != TransferKind::Download {
+            return;
+        }
+        let dest = std::path::Path::new(&t.dest);
+        let Some(dir) = dest.parent() else { return };
+        let Some(name) = dest.file_name().and_then(|n| n.to_str()) else { return };
+        let tmp = dir.join(format!(".tinyssh-part-{}-{}", t.id, name));
+        if tmp.exists() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+
+    /// C6/R34：keep-both 候选名探位——name.tinyssh-N.ext（无扩展名则 name.tinyssh-N），
+    /// N 递增至首个不存在位（上限 9999）；候选位竞态由发布原语 no-clobber 兜底
+    ///（链接失败 → 冲突重裁决自然进位）。
+    async fn keep_both_candidate(
+        h: &Arc<SessionHandle>,
+        is_upload: bool,
+        dir: &str,
+        name: &str,
+    ) -> Result<String> {
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((s, e)) if !s.is_empty() && !e.is_empty() => (s, Some(e)),
+            _ => (name, None),
+        };
+        for n in 1..=9999u32 {
+            let cand = match ext {
+                Some(e) => format!("{stem}.tinyssh-{n}.{e}"),
+                None => format!("{name}.tinyssh-{n}"),
+            };
+            let p = format!("{}/{}", dir.trim_end_matches('/'), cand);
+            match SessionManager::ns_stat(h, is_upload, &p).await {
+                Err(Error::SftpPathNotFound { .. }) => return Ok(cand),
+                Ok(_) => continue, // 已占用 → 下一位
+                Err(e) => return Err(e),
+            }
+        }
+        Err(Error::InvalidInput(format!("keep-both 候选名耗尽（{name}）")))
+    }
+
+    /// C6/R34：冲突共径（预检/复检/发布竞态三入口）。人类 → AwaitingDecision
+    /// 决策卡；Agent → collision 处置（skip=Skipped / overwrite=ReplaceUnsupported
+    /// 阻止 / fail（None）=ConflictDetected 结构化失败——永不进入待决态）。
+    /// 返回 Some(候选名)=KeepBoth 探位成功继续发布；None=已终态收尾。
+    #[allow(clippy::too_many_arguments)]
+    async fn conflict_resolve(
+        mgr: &Arc<SessionManager>,
+        h: &Arc<SessionHandle>,
+        tid: &TransferId,
+        cancel: &CancellationToken,
+        human: bool,
+        agent_collision: Option<CollisionDecision>,
+        is_upload: bool,
+        target_path: &str,
+        target_stat: Option<TargetStat>,
+        reason: &str,
+        dir: &str,
+        orig_name: &str,
+        temp: &str,
+        _phase: &str,
+    ) -> Option<String> {
+        if human {
+            match mgr.transfer_await_decision(tid, target_path, target_stat, reason, cancel).await {
+                None => None, // 取消/作废：终态已落
+                Some(CollisionDecision::Skip) => {
+                    SessionManager::cleanup_temp(h, is_upload, temp).await;
+                    mgr.transfer_finish(tid, TransferStatus::Skipped, 0, None);
+                    None
+                }
+                Some(CollisionDecision::Overwrite) => {
+                    // DF6.1 冻结：目标版本约束（CAS）原语不可得 → 覆盖发布一律阻止，
+                    // 原目标零改动；确未提交 → temp 清理
+                    SessionManager::cleanup_temp(h, is_upload, temp).await;
+                    let msg = Error::ReplaceUnsupported { capability: "target_version_constraint".into() }.to_string();
+                    mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
+                    None
+                }
+                Some(CollisionDecision::KeepBoth) => {
+                    match SessionManager::keep_both_candidate(h, is_upload, dir, orig_name).await {
+                        Ok(c) => Some(c),
+                        Err(e) => {
+                            SessionManager::cleanup_temp(h, is_upload, temp).await;
+                            mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(e.to_string()));
+                            None
+                        }
+                    }
+                }
+            }
+        } else {
+            match agent_collision {
+                Some(CollisionDecision::Skip) => {
+                    SessionManager::cleanup_temp(h, is_upload, temp).await;
+                    mgr.transfer_finish(tid, TransferStatus::Skipped, 0, None);
+                    None
+                }
+                Some(CollisionDecision::Overwrite) => {
+                    SessionManager::cleanup_temp(h, is_upload, temp).await;
+                    let msg = Error::ReplaceUnsupported { capability: "target_version_constraint".into() }.to_string();
+                    mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
+                    None
+                }
+                _ => {
+                    // fail（MCP 缺省）：结构化冲突——预检所见那份的 stat 随错误返回
+                    SessionManager::cleanup_temp(h, is_upload, temp).await;
+                    let msg = Error::ConflictDetected {
+                        target_path: target_path.to_string(),
+                        target_stat: target_stat.clone(),
+                    }
+                    .to_string();
+                    mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
+                    None
+                }
+            }
+        }
     }
 }
 
@@ -2676,7 +3561,9 @@ mod r30_tests;
 #[cfg(test)]
 #[path = "r32_tests.rs"]
 mod r32_tests;
-
+#[cfg(test)]
+#[path = "r34_tests.rs"]
+mod r34_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle

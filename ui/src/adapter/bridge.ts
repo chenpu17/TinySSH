@@ -58,6 +58,9 @@ interface CmdArgs {
   pick_save_file: { defaultName: string; defaultDir?: string | null };
   cancel_transfer: { id: string };
   list_transfers: undefined;
+  submit_collision_decision: { id: string; decision: wire.CollisionDecision; expectRevision: number };
+  reject_expired_decision: { id: string };
+  verify_transfer_outcome: { id: string };
   sftp_list: { sid: string; path: string };
   sftp_resolve_path: { sid: string; path?: string | null };
   sftp_stat: { sid: string; path: string };
@@ -123,6 +126,9 @@ interface CmdRet {
   pick_save_file: string | null;
   cancel_transfer: void;
   list_transfers: wire.TransferTask[];
+  submit_collision_decision: wire.TransferTask;
+  reject_expired_decision: void;
+  verify_transfer_outcome: wire.TransferTask;
   sftp_list: wire.DirEntryS[];
   sftp_resolve_path: wire.PathResolved;
   sftp_stat: wire.EntryStat;

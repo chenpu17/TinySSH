@@ -1,0 +1,37 @@
+PASS A0 session connected  [s-demo-0101]
+PASS A1 upload button present & enabled  [false]
+PASS A2 cancel pick → no cards
+PASS A3 picker default stub uploads 2 files  [["/Users/demo/Desktop/app.yml","/Users/demo/Desktop/deploy.tar.gz"]]
+PASS A3b upload dest = browsed dir + pinned sid  [["/var/log/nginx/app.yml","/var/log/nginx/deploy.tar.gz"]]
+PASS B0 navigated to /root/deploy  [/root/deploy]
+PASS B1 actions menu has 另存为
+PASS B2 saveAs default → Downloads full path  [/Users/demo/Downloads/app.yml]
+PASS B2b blob transfers.download_dir persisted  [/Users/demo/Downloads]
+PASS B3 saveAs picked path honored  [/Users/demo/Desktop/keep-app.yml]
+PASS B3b dir memory updated  [/Users/demo/Desktop]
+PASS B4 plain download lands in last dir  [/Users/demo/Desktop/release.sh]
+PASS B5 saveAs cancel → zero side effects  [{"nDl":3,"nDlAfter":3,"blobDir3":"/Users/demo/Desktop"}]
+PASS B6 memory intact after cancel  [/Users/demo/Desktop/app.yml]
+PASS C1 terminal drop → confirm card
+PASS C1b prefill = trusted cwd  [/var/log/nginx]
+PASS C1c files line names the file  [1 个文件：deploy.tar.gz]
+PASS C2 confirmed upload to prefilled dir  [{"dest":"/var/log/nginx/deploy.tar.gz","sid":"s-demo-0101"}]
+PASS C3 cancel → no upload
+PASS C4 empty dir → confirm disabled
+PASS C4b Esc closes card
+PASS C5 panel drop → direct upload to browsed dir  [{"dest":"/root/deploy/app.yml"}]
+PASS C5b no confirm card on panel drop
+PASS C6 closed panel → same coords hit confirm card
+PASS C7 card open before switch
+PASS C7b switch dismisses card + explicit toast  [["传输完成：app.yml","上传已取消：目标会话已切换"]]
+PASS C7c no silent retarget upload  [["/Users/demo/Desktop/app.yml","/Users/demo/Desktop/deploy.tar.gz","/root/deploy/app.yml","/root/deploy/release.sh","/root/deploy/app.yml","/root/deploy/app.yml","/Users/demo/Desktop/app.yml","/Users/demo/Desktop/deploy.tar.gz"]]
+PASS C8 bad dir → card stays + explicit error  [演示模式：路径不存在（/nope/missing）]
+PASS C8b no upload on failed resolve
+PASS C8c dotdot path canonicalized  [/root/deploy/c8.bin]
+PASS D0 panel browsing /root/deploy  [/root/deploy]
+PASS D0b locate enabled (cwd=/var/log/nginx ≠ browsing)  [false]
+PASS D1 visible panel path prefilled  [/root/deploy]
+PASS D2 invisible panel path NOT borrowed  [{"prefill":"","hintVisible":true,"confirmDis2":true}]
+PASS D3 trusted cwd prefilled (panel closed)  [/var/log]
+PASS Z zero JS errors  [[]]
+SUMMARY 36/36

@@ -1,0 +1,11 @@
+PASS V1 welcome double-tree pixel diff = 0  [0]
+PASS V2 conflict block inside card row & viewport  [{"blockInRow":true,"inVp":true,"hit":true,"overlapBtns":false,"btnCount":3,"docOvf":false,"secOvf":false,"text":"目标已存在：/var/log/nginx/vis.conflict-demo · 2.0 KB · 2026/9/21 22:13:20跳过覆盖两个都要"}]
+PASS V2b three buttons, no overlap, hit ≥24px  [{"n":3,"ov":false}]
+PASS V2c no doc/section horizontal overflow
+PASS V3 unknown card: button in viewport/row + note + label  [{"inVp":true,"inRow":true,"w":74,"h":31,"note":true,"unknownText":true}]
+PASS V4 terminal rows: skipped ⊘dim / interrupted ✕err / failed ✕err, no overflow  [{"skippedDim":true,"interruptedErr":true,"failedErr":true,"secOvf":false,"docOvf":false}]
+PASS V5 conflict text contrast dark ≥4.5  [6.53]
+PASS V5b conflict text contrast light ≥4.5  [6.97]
+PASS V6 zero page errors
+
+9/9 passed

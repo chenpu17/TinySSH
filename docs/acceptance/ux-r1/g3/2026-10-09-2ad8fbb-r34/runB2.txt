@@ -1,0 +1,28 @@
+FAIL B1f 1280/dark 盒测量(滚动后)  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"subOverflowX":false,"btnSizes":["50x31","50x31","74x31"]}]
+PASS B1f 1280/dark tp-full 断言  [tpFull=false expect=false]
+FAIL B1f 1280/light 盒测量(滚动后)  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"subOverflowX":false,"btnSizes":["50x31","50x31","74x31"]}]
+PASS B1f 1280/light tp-full 断言  [tpFull=false expect=false]
+FAIL B1f 640/dark 盒测量(滚动后)  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"subOverflowX":false,"btnSizes":["50x31","50x31","74x31"]}]
+PASS B1f 640/dark tp-full 断言  [tpFull=true expect=true]
+FAIL B1f 640/light 盒测量(滚动后)  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"subOverflowX":false,"btnSizes":["50x31","50x31","74x31"]}]
+PASS B1f 640/light tp-full 断言  [tpFull=true expect=true]
+FAIL B1f 360/dark 既有挤压容器内 R34 面(零溢出+换行+不叠)  [{"btnOv":false,"docOvf":false,"secOvf":false,"subWraps":true,"subClip":false,"blockVisible":false,"panelW":134}]
+FAIL B1f 360/light 既有挤压容器内 R34 面(零溢出+换行+不叠)  [{"btnOv":false,"docOvf":false,"secOvf":false,"subWraps":true,"subClip":false,"blockVisible":false,"panelW":134}]
+PASS B2f.1 cf-overwrite title 能力注记  [外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动]
+PASS B2f.2 Tab(面板起点)可达三决策钮且顺序 skip→overwrite→keepboth  [{"found":{"skip":5,"over":6,"keep":7,"uo":4,"cancel":8},"seq":["下载（存上次下载目录，首次为「下载」文件夹；菜单「另存为…」可选位置）","下载（存上次下载目录，首次为「下载」文件夹；菜单「另存为…」可选位置）","下载（存上次下载目录，首次为「下载」文件夹；菜单「另存为…」可选位置）","下载（存上次下载目录，首次为「下载」文件夹；菜单「另存为…」可选位置）","uo-reverify","cf-skip","cf-overwrite","cf-keepboth","取消传输"]}]
+PASS B2f.3 uo-reverify Tab 可达  [idx=4]
+PASS B2f.4 ✕ 取消钮 Tab 可达  [idx=8]
+PASS B2f.5 cf-skip 焦点环可见  [{"focused":true,"outlineW":"2px","oc":"rgb(145, 186, 255)"}]
+PASS B2f.6 Enter 触发跳过
+FAIL B2f.7 Shift+Tab 反向回溯到 cf-overwrite  [prev=uo-reverify]
+FAIL B3f zoom=1.25 盒测量  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"subOverflowX":false,"btnSizes":["62x38","62x38","92x38"]}]
+FAIL B3f zoom=1.5 盒测量  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"subOverflowX":false,"btnSizes":["74x45","74x45","110x45"]}]
+   B4f dark 明细: conflict-sub=MISS(需?) | conflict-path-span=MISS(需?) | conflict-btn=MISS(需?) | conflict-btn-border=MISS(需?) | conflict-warn-bar=MISS(需?) | uo-reverify=4.88(需4.5) | uo-note-dim=3.01(需4.5) | xfer-name=11.17(需4.5) | sub-skipped-dim=3.01(需4.5) | sub-interrupted-dim=3.01(需4.5) | sub-failed-dim=3.01(需4.5) | sub-done-dim=3.01(需4.5) | cancel-x-btn=MISS(需?) | icon-skipped-⊘=3.01(需3) | icon-interrupted-✕=5.00(需3) | icon-done-✓=7.23(需3) | icon-dir-up=7.23(需3)
+FAIL B4f dark 无缺测元素  [[{"label":"conflict-sub","missing":true},{"label":"conflict-path-span","missing":true},{"label":"conflict-btn","missing":true},{"label":"conflict-btn-border","missing":true},{"label":"conflict-warn-bar","missing":true},{"label":"cancel-x-btn","missing":true}]]
+PASS B4f dark 低于门槛元素(如实登记)  [["uo-note-dim=3.01/4.5","sub-skipped-dim=3.01/4.5","sub-interrupted-dim=3.01/4.5","sub-failed-dim=3.01/4.5","sub-done-dim=3.01/4.5"]]
+   B4f light 明细: conflict-sub=MISS(需?) | conflict-path-span=MISS(需?) | conflict-btn=MISS(需?) | conflict-btn-border=MISS(需?) | conflict-warn-bar=MISS(需?) | uo-reverify=5.33(需4.5) | uo-note-dim=5.69(需4.5) | xfer-name=13.79(需4.5) | sub-skipped-dim=5.69(需4.5) | sub-interrupted-dim=5.69(需4.5) | sub-failed-dim=5.69(需4.5) | sub-done-dim=5.69(需4.5) | cancel-x-btn=MISS(需?) | icon-skipped-⊘=5.69(需3) | icon-interrupted-✕=5.32(需3) | icon-done-✓=5.13(需3) | icon-dir-up=5.13(需3)
+FAIL B4f light 无缺测元素  [[{"label":"conflict-sub","missing":true},{"label":"conflict-path-span","missing":true},{"label":"conflict-btn","missing":true},{"label":"conflict-btn-border","missing":true},{"label":"conflict-warn-bar","missing":true},{"label":"cancel-x-btn","missing":true}]]
+PASS B4f light 低于门槛元素(如实登记)  [[]]
+PASS B6 全程零 pageerror/console error
+
+13/24 passed

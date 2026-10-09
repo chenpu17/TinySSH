@@ -1,0 +1,358 @@
+warning: unused variable: `path`
+  --> crates/session-api/src/transport.rs:97:34
+   |
+97 |     async fn resolve_path(&self, path: Option<&str>) -> Result<crate::PathResolved> {
+   |                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `path`
+   --> crates/session-api/src/transport.rs:103:32
+    |
+103 |     async fn stat_entry(&self, path: &str) -> Result<crate::EntryStat> {
+    |                                ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: `session-api` (lib) generated 2 warnings (run `cargo fix --lib -p session-api` to apply 2 suggestions)
+warning: value assigned to `cur_fg` is never read
+   --> crates/term-core/src/screen.rs:547:13
+    |
+547 |             cur_fg = None;
+    |             ^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: value assigned to `cur_bg` is never read
+   --> crates/term-core/src/screen.rs:548:13
+    |
+548 |             cur_bg = None;
+    |             ^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: value assigned to `cur_flags` is never read
+   --> crates/term-core/src/screen.rs:549:13
+    |
+549 |             cur_flags = None;
+    |             ^^^^^^^^^^^^^^^^
+...
+579 |     flush!();
+    |     -------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `quiet_dur` is never used
+   --> crates/term-core/src/screen.rs:485:8
+    |
+485 | pub fn quiet_dur(quiet_ms: u64) -> std::time::Duration {
+    |        ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `term-core` (lib) generated 4 warnings
+warning: unused import: `DateTime`
+ --> crates/approval/src/lib.rs:4:14
+  |
+4 | use chrono::{DateTime, Utc};
+  |              ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Sig`
+ --> crates/transport-ssh/src/lib.rs:9:25
+  |
+9 | use russh::{Disconnect, Sig};
+  |                         ^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:231:13
+    |
+231 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `connected_address`
+   --> crates/transport-ssh/src/lib.rs:109:9
+    |
+109 |         connected_address: &str,
+    |         ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connected_address`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:318:31
+    |
+318 |                     .map_err(|e| Error::AuthFailed)?
+    |                               ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:293:31
+    |
+293 |                     .map_err(|e| Error::AuthFailed)?;
+    |                               ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:733:13
+    |
+733 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:790:13
+    |
+790 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> crates/transport-ssh/src/lib.rs:844:13
+    |
+844 |         let mut channel = handle
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `e`
+   --> crates/transport-ssh/src/lib.rs:944:17
+    |
+944 |             Err(e) => Ok(PublishOutcome::Ambiguous),
+    |                 ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: `tinyssh-approval` (lib) generated 1 warning (run `cargo fix --lib -p tinyssh-approval` to apply 1 suggestion)
+warning: `transport-ssh` (lib) generated 9 warnings (run `cargo fix --lib -p transport-ssh` to apply 9 suggestions)
+warning: unused imports: `Actor` and `IdentityId`
+  --> crates/vault/src/lib.rs:10:5
+   |
+10 |     Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
+   |     ^^^^^
+11 |     Error, Host, HostDraft, HostId, HostMeta, IdentityId, IdentityKind, IdentityMeta, IdentityReq,
+   |                                               ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:230:52
+    |
+230 |     let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(master));
+    |                                                    ^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:233:25
+    |
+233 |     let nonce = XNonce::from_slice(&nonce_bytes);
+    |                         ^^^^^^^^^^
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:247:52
+    |
+247 |     let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(master));
+    |                                                    ^^^^^^^^^^
+
+warning: use of deprecated associated function `chacha20poly1305::aead::hybrid_array::Array::<T, U>::from_slice`: use `TryFrom` instead
+   --> crates/vault/src/lib.rs:248:25
+    |
+248 |     let nonce = XNonce::from_slice(&blob[..24]);
+    |                         ^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> crates/transport-pty/src/lib.rs:275:13
+    |
+275 |         let mut out = child
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/transport-pty/src/lib.rs:279:13
+    |
+279 |         let mut err = child
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused import: `DateTime`
+ --> crates/audit/src/lib.rs:3:14
+  |
+3 | use chrono::{DateTime, TimeZone, Utc};
+  |              ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tinyssh-vault` (lib) generated 5 warnings (run `cargo fix --lib -p tinyssh-vault` to apply 1 suggestion)
+warning: `transport-pty` (lib) generated 2 warnings (run `cargo fix --lib -p transport-pty` to apply 2 suggestions)
+warning: `tinyssh-audit` (lib) generated 1 warning (run `cargo fix --lib -p tinyssh-audit` to apply 1 suggestion)
+warning: unused import: `ContentBlock`
+ --> crates/mcp-server/src/lib.rs:8:21
+  |
+8 |     CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
+  |                     ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `session_api::transport::tokio_util_sync::CancellationToken`
+  --> crates/mcp-server/src/lib.rs:16:5
+   |
+16 | use session_api::transport::tokio_util_sync::CancellationToken;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ApprovalFilter`, `ControlOpts`, `ControlOwner`, `Decision`, `Epistemic`, and `StopPolicy`
+  --> crates/mcp-server/src/lib.rs:18:12
+   |
+18 |     Actor, ApprovalFilter, AuditFilter, CollisionDecision, ControlOpts, ControlOwner, CreateSessionReq,
+   |            ^^^^^^^^^^^^^^                                  ^^^^^^^^^^^  ^^^^^^^^^^^^
+19 |     Decision, DeniedReason, Epistemic, Error, ExecMode, ExecOpts, SessionApi, StopPolicy,
+   |     ^^^^^^^^                ^^^^^^^^^                                         ^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> crates/mcp-server/src/lib.rs:22:5
+   |
+22 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates/core-session/src/brief.rs:5:5
+  |
+5 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `transport_pty::LocalPtyChannel`
+  --> crates/core-session/src/lib.rs:20:5
+   |
+20 | use transport_pty::LocalPtyChannel;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `exec_id`
+   --> crates/core-session/src/handle.rs:603:9
+    |
+603 |         exec_id: &ExecId,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_exec_id`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `lost` is never read
+    --> crates/core-session/src/lib.rs:1226:28
+     |
+1226 |             let mut lost = false;
+     |                            ^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `approvals_rx_gen` is never read
+  --> crates/core-session/src/lib.rs:61:5
+   |
+58 | pub struct SessionManager {
+   |            -------------- field in this struct
+...
+61 |     approvals_rx_gen: StdMutex<()>,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `AttemptTestHooks` is never constructed
+    --> crates/core-session/src/lib.rs:1003:8
+     |
+1003 | struct AttemptTestHooks {
+     |        ^^^^^^^^^^^^^^^^
+
+warning: field `1` is never read
+    --> crates/core-session/src/handle.rs:1024:33
+     |
+1024 | struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+     |        ------------             ^^^^^^^^^^^^^^^^^
+     |        |
+     |        field in this struct
+     |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+     |
+1024 - struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+1024 + struct CancelOnDrop<'a>(ExecId, (), &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+     |
+
+warning: field `0` is never read
+ --> crates/testbed/src/lib.rs:5:21
+  |
+5 | pub struct SshdLock(std::fs::File);
+  |            -------- ^^^^^^^^^^^^^
+  |            |
+  |            field in this struct
+  |
+  = help: consider removing this field
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tinyssh-mcp-server` (lib) generated 4 warnings (run `cargo fix --lib -p tinyssh-mcp-server` to apply 4 suggestions)
+warning: `core-session` (lib) generated 7 warnings (run `cargo fix --lib -p core-session` to apply 3 suggestions)
+warning: `tinyssh-testbed` (lib) generated 1 warning
+warning: unused import: `ServiceExt as _`
+  --> crates/mcp-server/tests/e2e_acceptance.rs:13:49
+   |
+13 | use rmcp::service::{RunningService, RoleClient, ServiceExt as _, ClientServiceExt as _};
+   |                                                 ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `url`
+   --> crates/mcp-server/tests/e2e_acceptance.rs:262:13
+    |
+262 |     let (m, url, token) = spawn_stack().await;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_url`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `token`
+   --> crates/mcp-server/tests/e2e_acceptance.rs:262:18
+    |
+262 |     let (m, url, token) = spawn_stack().await;
+    |                  ^^^^^ help: if this is intentional, prefix it with an underscore: `_token`
+
+warning: unused variable: `i`
+   --> crates/mcp-server/tests/e2e_acceptance.rs:280:9
+    |
+280 |     for i in 0..450 {
+    |         ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: `tinyssh-mcp-server` (test "e2e_acceptance") generated 4 warnings (run `cargo fix --test "e2e_acceptance" -p tinyssh-mcp-server` to apply 4 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 0.18s
+     Running tests/e2e_acceptance.rs (target/debug/deps/e2e_acceptance-ff7ebced806c8e7e)
+
+running 1 test
+test journey2_reconnect_reconfirm ... FAILED
+
+failures:
+
+---- journey2_reconnect_reconfirm stdout ----
+
+thread 'journey2_reconnect_reconfirm' (24123873) panicked at crates/mcp-server/tests/e2e_acceptance.rs:270:85:
+called `Result::unwrap()` on an `Err` value: ShellIntegrationUnavailable { available: ShellCapability { integration_present: false, prompt_ready: false, host_setting: true } }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    journey2_reconnect_reconfirm
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.48s
+
+error: test failed, to rerun pass `-p tinyssh-mcp-server --test e2e_acceptance`

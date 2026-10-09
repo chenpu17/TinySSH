@@ -648,6 +648,12 @@ textarea {
 .xfer-dir.down { color: var(--blue); }
 .xfer-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .xfer-sub { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* R34 冲突决策卡：左竖线分节 + 按钮行 */
+.xfer-conflict { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--warn); min-width: 0; }
+/* 冲突询问是待决信息（路径/大小/原因），用次级文字色保 AA——dim 深档不够对比 */
+.xfer-conflict .xfer-sub { white-space: normal; color: var(--text-sub); }
+/* unknown 卡说明行同理（vis-r34：dim 深档 3.01 不达 AA） */
+.xfer-note { font-size: 11px; white-space: normal; color: var(--text-sub); }
 
 /* T41 远程文件浏览器（FR-7）*/
 .sftp-path { gap: 4px; }

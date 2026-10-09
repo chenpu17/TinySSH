@@ -221,8 +221,15 @@ type DemoTransfer = {
   source: string; dest: string; status: string; bytes_done: number; total: number | null;
   revision: number; created_at: number; finished_at: number | null;
   error: string | null; retry_of: string | null;
+  // C6/R34：冲突域（wire 同形）
+  collision_decision: string | null;
+  decision_prompt: {
+    target_path: string;
+    target_stat: { size: number | null; mtime: number | null } | null;
+    reason: string;
+  } | null;
 };
-const TRANSFER_TERMINAL = ["Succeeded", "Failed", "Cancelled", "OutcomeUnknown"];
+const TRANSFER_TERMINAL = ["Succeeded", "Failed", "Cancelled", "OutcomeUnknown", "Skipped", "Interrupted"];
 function demoEmitState(sid: string, state: string,
   attempt: number | null, max: number | null, detail: string | null) {
   demoState.stateEvents.set(sid, {
@@ -1088,9 +1095,27 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         revision: 1,
         created_at: Math.floor(Date.now() / 1000),
         finished_at: null, error: null, retry_of: null,
+        collision_decision: null, decision_prompt: null,
       };
       demoState.transfers.unshift(t);
       audit("human", "transfer_start", null, null, s.id, { transfer: t.id, kind: kind.toLowerCase(), source, dest });
+      // C6/R34 冲突判别面：目标名注入标记即触发预检冲突（预检在数据阶段之前——
+      // 与真实核心同序，冲突不发生字节传输，故不走 step 链）。recheck-demo 首轮
+      // 裁决后再触发一次「预检后已变化」冲突（stat_changed_since_preflight）。
+      const base = dest.split("/").pop() ?? "";
+      if (base.includes("conflict-demo") || base.includes("recheck-demo")) {
+        t.status = "AwaitingDecision"; t.revision += 1;
+        t.decision_prompt = {
+          target_path: dest,
+          target_stat: { size: 2048, mtime: 1790000000 },
+          reason: "target_exists",
+        };
+        return {
+          id: t.id, session_id: s.id, kind,
+          local: kind === "Upload" ? source : dest,
+          remote: kind === "Upload" ? dest : source,
+        };
+      }
       const step = () => {
         const cur = demoState.transfers.find((x) => x.id === t.id);
         if (!cur) return;
@@ -1105,6 +1130,19 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         cur.revision += 1;
         if (cur.source.includes("fail-demo") && cur.bytes_done >= 393216) {
           cur.status = "Failed"; cur.error = "演示注入：远端写入失败"; cur.finished_at = now; cur.revision += 1;
+          return;
+        }
+        if (cur.source.includes("unknown-demo") && cur.total != null && cur.bytes_done >= cur.total) {
+          // C13 提交响应丢失：temp 与恢复资料保留，不自动重发/回滚
+          cur.status = "OutcomeUnknown";
+          cur.error = "提交结果未知（temp 与恢复资料保留；可在卡片「重新核实」）";
+          cur.finished_at = now; cur.revision += 1;
+          return;
+        }
+        if (cur.source.includes("interrupt-demo") && cur.bytes_done >= 196608) {
+          // 提交前中断（应用退出）：恢复面统一 Interrupted
+          cur.status = "Interrupted"; cur.error = "应用重启时传输中断";
+          cur.finished_at = now; cur.revision += 1;
           return;
         }
         if (cur.total != null && cur.bytes_done >= cur.total) {
@@ -1123,10 +1161,110 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "list_transfers":
       // 与核心全量快照一致（rev-r32 低-4：截断会让演示域对账面失真）
       return [...demoState.transfers];
+    // ---- C6（R34）冲突裁决命令（人类域）。守卫同核心：仅 AwaitingDecision 可决
+    // （invalid_transfer_state）；expect_revision 陈旧 → stale_decision 带当前
+    // revision（UI 判别后按「已过期」处置：toast+作废留痕）。 ----
+    case "submit_collision_decision": {
+      const t = demoState.transfers.find((x) => x.id === args?.id);
+      if (!t) throw apiError("invalid_input", "transfer not found（演示）");
+      if (t.status !== "AwaitingDecision") {
+        throw apiError("invalid_transfer_state", `任务不在待决状态（当前 ${t.status}）`, { task_id: t.id, state: t.status });
+      }
+      const expect = args?.expectRevision as number | undefined;
+      if (expect !== t.revision) {
+        throw apiError("stale_decision", "决策基于的版本已过期（任务已变化）", { current_revision: t.revision });
+      }
+      const d = args?.decision as string;
+      if (d !== "skip" && d !== "overwrite" && d !== "keepboth") {
+        throw apiError("invalid_input", "decision 取值非法（演示）");
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const base = t.dest.split("/").pop() ?? "";
+      t.collision_decision = d;
+      if (d === "skip") {
+        t.status = "Skipped"; t.decision_prompt = null;
+        t.error = "已跳过：同名目标未改动"; t.finished_at = now; t.revision += 1;
+      } else if (d === "overwrite") {
+        // DF6.1 能力矩阵冻结：覆盖发布需目标版本约束——SFTP v3+OpenSSH 扩展不
+        // 提供，一律阻止（不双改名/bak/回滚；文案与核心 ReplaceUnsupported 一致）
+        t.status = "Failed"; t.decision_prompt = null;
+        t.error = "发布能力不足，已阻止（原目标未改动）: target_version_constraint";
+        t.finished_at = now; t.revision += 1;
+      } else {
+        // keepboth：recheck-demo 首轮 → 复检发现目标已变化（原因可查落字段），
+        // 二次裁决后才发布；其余直接以新名发布 name.tinyssh-1.ext
+        if (base.includes("recheck-demo") && t.decision_prompt?.reason === "target_exists") {
+          t.status = "AwaitingDecision"; t.revision += 1;
+          t.decision_prompt = {
+            target_path: t.dest,
+            target_stat: { size: 777, mtime: Math.floor(Date.now() / 1000) },
+            reason: "stat_changed_since_preflight",
+          };
+        } else {
+          const dot = base.lastIndexOf(".");
+          const candidate = dot > 0
+            ? `${base.slice(0, dot)}.tinyssh-1${base.slice(dot)}`
+            : `${base}.tinyssh-1`;
+          t.dest = t.dest.slice(0, t.dest.length - base.length) + candidate;
+          t.status = "Running"; t.decision_prompt = null; t.revision += 1;
+          const step2 = () => {
+            const cur = demoState.transfers.find((x) => x.id === t.id);
+            if (!cur) return;
+            const now2 = Math.floor(Date.now() / 1000);
+            if (cur.status === "Cancelling") {
+              cur.status = "Cancelled"; cur.error = "已取消"; cur.finished_at = now2; cur.revision += 1;
+              return;
+            }
+            if (cur.status !== "Running") return;
+            cur.bytes_done = Math.min(cur.total ?? Infinity, cur.bytes_done + 393216);
+            cur.revision += 1;
+            if (cur.total != null && cur.bytes_done >= cur.total) {
+              cur.status = "Succeeded"; cur.finished_at = now2; cur.revision += 1;
+              return;
+            }
+            window.setTimeout(step2, 150);
+          };
+          window.setTimeout(step2, 150);
+        }
+      }
+      audit("human", "transfer_decision", null, null, t.session_id, { transfer: t.id, decision: d });
+      return { ...t };
+    }
+    case "reject_expired_decision": {
+      // 决策卡作废：仅待决态落终态（Cancelled），否则幂等 no-op
+      const t = demoState.transfers.find((x) => x.id === args?.id);
+      if (!t) return null;
+      if (t.status === "AwaitingDecision") {
+        const now = Math.floor(Date.now() / 1000);
+        t.status = "Cancelled"; t.error = "决策卡已作废";
+        t.decision_prompt = null; t.finished_at = now; t.revision += 1;
+        audit("human", "transfer_decision_rejected", null, null, t.session_id, { transfer: t.id });
+      }
+      return null;
+    }
+    case "verify_transfer_outcome": {
+      // 重新核实（仅 OutcomeUnknown）：演示域无绑定证据（temp 不可达、恢复面
+      // journal 不可达）——重核仅刷新提示与 revision，状态保持未知（不虚构已核实）
+      const t = demoState.transfers.find((x) => x.id === args?.id);
+      if (!t) throw apiError("invalid_input", "transfer not found（演示）");
+      if (t.status !== "OutcomeUnknown") {
+        throw apiError("invalid_transfer_state", `仅结果未知任务可重新核实（当前 ${t.status}）`, { task_id: t.id, state: t.status });
+      }
+      t.error = "重新核实完成：演示域无法确证提交结果，任务保持未知（temp 与恢复资料保留）";
+      t.revision += 1;
+      audit("human", "transfer_outcome_reverify", null, null, t.session_id, { transfer: t.id });
+      return { ...t };
+    }
     case "cancel_transfer": {
       const t = demoState.transfers.find((x) => x.id === args?.id);
       if (!t) throw apiError("invalid_input", "transfer not found（演示）");
-      if (!TRANSFER_TERMINAL.includes(t.status)) {
+      if (t.status === "AwaitingDecision") {
+        // 待决中无 step 链可走：直接落终态（提交尚未开始，取消线性化在前）
+        const now = Math.floor(Date.now() / 1000);
+        t.status = "Cancelled"; t.error = "已取消（冲突待决中）";
+        t.decision_prompt = null; t.finished_at = now; t.revision += 1;
+        audit("human", "transfer_cancel", null, null, t.session_id, { transfer: t.id });
+      } else if (!TRANSFER_TERMINAL.includes(t.status)) {
         t.status = "Cancelling"; t.revision += 1;
         audit("human", "transfer_cancel", null, null, t.session_id, { transfer: t.id });
       }

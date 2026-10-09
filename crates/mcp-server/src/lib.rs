@@ -15,8 +15,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::{
-    Actor, ApprovalFilter, AuditFilter, ControlOpts, ControlOwner, CreateSessionReq, Decision,
-    DeniedReason, Epistemic, Error, ExecMode, ExecOpts, SessionApi, StopPolicy, WaitOpts,
+    Actor, ApprovalFilter, AuditFilter, CollisionDecision, ControlOpts, ControlOwner, CreateSessionReq,
+    Decision, DeniedReason, Epistemic, Error, ExecMode, ExecOpts, SessionApi, StopPolicy,
+    TargetStat, TransferHandle, TransferStatus, WaitOpts,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -122,6 +123,59 @@ pub struct TransferReq {
     pub session_id: String,
     pub local: String,
     pub remote: String,
+    /// C6/R34 DF6.2：预冲突处置——缺省 fail（目标已存在 → 结构化 ConflictDetected，
+    /// 不建任务）；"skip"=同名即跳过（Skipped 终态）；"overwrite"=显式覆盖（审批卡
+    /// 明示「将覆盖已存在目标」；能力不足按 ReplaceUnsupported 结构化失败）。
+    #[serde(default)]
+    pub collision: Option<String>,
+}
+
+/// DF6.2：collision 参数解析（缺省 fail=None 语义）。
+fn parse_collision(raw: Option<&str>) -> session_api::Result<Option<CollisionDecision>> {
+    match raw {
+        None | Some("") => Ok(None),
+        Some("skip") => Ok(Some(CollisionDecision::Skip)),
+        Some("overwrite") => Ok(Some(CollisionDecision::Overwrite)),
+        Some(other) => Err(Error::InvalidInput(format!(
+            "collision 仅支持 skip|overwrite|fail（缺省 fail），得到 {other:?}"
+        ))),
+    }
+}
+
+/// DF6.2：预检窗口等待——任务离开 Queued/Running 早期阶段（冲突/跳过在数据
+/// 阶段前落定）即结构化返回；长传输即时交还 transfer_id（对账走 transfer_list）。
+async fn wait_transfer_preflight(
+    api: &Arc<dyn SessionApi>,
+    actor: &Actor,
+    handle: &TransferHandle,
+) -> serde_json::Value {
+    for _ in 0..30 {
+        if let Ok(list) = api.list_transfers(actor).await {
+            if let Some(t) = list.iter().find(|t| t.id == handle.id) {
+                match t.status {
+                    TransferStatus::Queued | TransferStatus::Running => {}
+                    TransferStatus::Committing => {
+                        return serde_json::json!({
+                            "transfer_id": handle.id, "status": t.status,
+                            "note": "传输进行中（提交窗口）；对账走 transfer_list",
+                        });
+                    }
+                    _ => {
+                        return serde_json::json!({
+                            "transfer_id": handle.id, "status": t.status,
+                            "error": t.error,
+                            "collision_decision": t.collision_decision,
+                        });
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    serde_json::json!({
+        "transfer_id": handle.id, "status": "Queued",
+        "note": "预检未在窗口内完成（排队/慢链路）；对账走 transfer_list",
+    })
 }
 
 // ---- 端口转发（T44 V1 收口，FR-8）：McpForwardSpec 复刻 session-api 的
@@ -227,6 +281,10 @@ fn error_kind(e: &Error) -> &'static str {
         Error::Io(_) => "io",
         Error::SftpPathNotFound { .. } => "sftp_path_not_found",
         Error::SftpPermissionDenied { .. } => "sftp_permission_denied",
+        Error::ConflictDetected { .. } => "conflict_detected",
+        Error::ReplaceUnsupported { .. } => "replace_unsupported",
+        Error::StaleDecision { .. } => "stale_decision",
+        Error::InvalidTransferState { .. } => "invalid_transfer_state",
     }
 }
 
@@ -239,6 +297,19 @@ fn error_detail(e: &Error) -> serde_json::Value {
         }
         Error::SftpPathNotFound { path } | Error::SftpPermissionDenied { path } => {
             serde_json::json!({ "path": path })
+        }
+        Error::ConflictDetected {
+            target_path,
+            target_stat,
+        } => serde_json::json!({ "target_path": target_path, "target_stat": target_stat }),
+        Error::ReplaceUnsupported { capability } => {
+            serde_json::json!({ "capability": capability })
+        }
+        Error::StaleDecision { expect_revision } => {
+            serde_json::json!({ "expect_revision": expect_revision })
+        }
+        Error::InvalidTransferState { task_id, state } => {
+            serde_json::json!({ "task_id": task_id, "state": state })
         }
         _ => serde_json::Value::Null,
     }
@@ -444,10 +515,25 @@ impl McpServer {
         p: Parameters<TransferReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
+            let collision = parse_collision(p.0.collision.as_deref())?;
+            // DF6.2 fail（缺省）：目标已存在 → 不建任务，结构化 ConflictDetected
+            //（含目标 stat）；skip/overwrite 交任务预检裁决
+            if collision.is_none() {
+                match api.sftp_stat(&actor, p.0.session_id.clone(), p.0.remote.clone()).await {
+                    Ok(st) => {
+                        return Err(Error::ConflictDetected {
+                            target_path: p.0.remote.clone(),
+                            target_stat: Some(TargetStat { size: st.size, mtime: st.mtime }),
+                        });
+                    }
+                    Err(Error::SftpPathNotFound { .. }) => {}
+                    Err(e) => return Err(e),
+                }
+            }
             let handle = api
-                .upload(&actor, p.0.session_id, PathBuf::from(&p.0.local).as_path(), &p.0.remote)
+                .upload(&actor, p.0.session_id, PathBuf::from(&p.0.local).as_path(), &p.0.remote, collision)
                 .await?;
-            Ok::<_, Error>(serde_json::json!({"transfer_id": handle.id}))
+            Ok::<_, Error>(wait_transfer_preflight(&api, &actor, &handle).await)
         })
         .await
     }
@@ -459,10 +545,23 @@ impl McpServer {
         p: Parameters<TransferReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
+            let collision = parse_collision(p.0.collision.as_deref())?;
+            if collision.is_none() {
+                match api.sftp_stat(&actor, p.0.session_id.clone(), p.0.local.clone()).await {
+                    Ok(st) => {
+                        return Err(Error::ConflictDetected {
+                            target_path: p.0.local.clone(),
+                            target_stat: Some(TargetStat { size: st.size, mtime: st.mtime }),
+                        });
+                    }
+                    Err(Error::SftpPathNotFound { .. }) => {}
+                    Err(e) => return Err(e),
+                }
+            }
             let handle = api
-                .download(&actor, p.0.session_id, &p.0.remote, PathBuf::from(&p.0.local).as_path())
+                .download(&actor, p.0.session_id, &p.0.remote, PathBuf::from(&p.0.local).as_path(), collision)
                 .await?;
-            Ok::<_, Error>(serde_json::json!({"transfer_id": handle.id}))
+            Ok::<_, Error>(wait_transfer_preflight(&api, &actor, &handle).await)
         })
         .await
     }

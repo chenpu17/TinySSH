@@ -20,6 +20,10 @@ enum TxPlan {
 struct R32Channel {
     up: TxPlan,
     down: TxPlan,
+    /// R34：mock 文件表（路径→字节）——staging/预检/发布/清理全链路建模：
+    /// upload/download 成功即把 temp 长度入表；publish_hardlink 把 temp 复制到
+    /// final 名；remove_file 删表项。缺席=PathNotFound。
+    fs: Arc<StdMutex<HashMap<String, u64>>>,
 }
 
 async fn run_plan(plan: &TxPlan, cancel: &CancellationToken, progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> {
@@ -68,13 +72,43 @@ impl ChannelHandle for R32Channel {
     async fn is_alive(&self) -> bool { false }
     async fn reconnect(&self) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
     async fn close(&self) -> Result<()> { Ok(()) }
-    async fn upload(&self, _local: &std::path::Path, _remote: &str, cancel: &session_api::transport::tokio_util_sync::CancellationToken, progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> {
-        run_plan(&self.up, cancel, progress).await
+    async fn upload(&self, _local: &std::path::Path, remote: &str, cancel: &session_api::transport::tokio_util_sync::CancellationToken, progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> {
+        let n = run_plan(&self.up, cancel, progress).await?;
+        self.fs.lock().unwrap().insert(remote.to_string(), n);
+        Ok(n)
     }
-    async fn download(&self, _remote: &str, _local: &std::path::Path, cancel: &session_api::transport::tokio_util_sync::CancellationToken, progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> {
-        run_plan(&self.down, cancel, progress).await
+    async fn download(&self, _remote: &str, local: &std::path::Path, cancel: &session_api::transport::tokio_util_sync::CancellationToken, progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> {
+        let n = run_plan(&self.down, cancel, progress).await?;
+        self.fs.lock().unwrap().insert(local.display().to_string(), n);
+        Ok(n)
     }
     async fn list_dir(&self, _path: &str) -> Result<Vec<DirEntryS>> { Err(Error::InvalidInput("stub".into())) }
+    async fn resolve_path(&self, path: Option<&str>) -> Result<PathResolved> {
+        Ok(PathResolved { canonical: path.unwrap_or("/root").to_string() })
+    }
+    async fn stat_entry(&self, path: &str) -> Result<EntryStat> {
+        match self.fs.lock().unwrap().get(path) {
+            Some(sz) => Ok(EntryStat {
+                canonical: Some(path.to_string()), kind: Some(EntryKind::File),
+                is_dir: false, size: Some(*sz), mtime: Some(1790000000), symlink_target: None,
+            }),
+            None => Err(Error::SftpPathNotFound { path: path.to_string() }),
+        }
+    }
+    async fn publish_hardlink(&self, existing: &str, new: &str) -> Result<PublishOutcome> {
+        let sz = self.fs.lock().unwrap().get(existing).copied();
+        match sz {
+            Some(n) => {
+                self.fs.lock().unwrap().insert(new.to_string(), n);
+                Ok(PublishOutcome::Committed)
+            }
+            None => Ok(PublishOutcome::Rejected("temp missing".into())),
+        }
+    }
+    async fn remove_file(&self, path: &str) -> Result<()> {
+        self.fs.lock().unwrap().remove(path);
+        Ok(())
+    }
 }
 
 fn mgr() -> Arc<SessionManager> {
@@ -104,7 +138,7 @@ fn mk_handle(center: Arc<ApprovalCenter>, up: TxPlan, down: TxPlan) -> Arc<Sessi
     let screen = term_core::Screen::new(term_core::ScreenConfig {
         cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20,
     });
-    SessionHandle::new("s-r32".into(), host, "local".into(), Arc::new(R32Channel { up, down }), screen, center, ControlOwner::Agent)
+    SessionHandle::new("s-r32".into(), host, "local".into(), Arc::new(R32Channel { up, down, fs: Arc::new(StdMutex::new(HashMap::new())) }), screen, center, ControlOwner::Agent)
 }
 
 fn register(m: &SessionManager, h: Arc<SessionHandle>) {
@@ -133,7 +167,7 @@ async fn r32_lifecycle_events_revision_journal() {
     register(&m, mk_handle(m.center.clone(), TxPlan::HoldGate { total: 1_048_576, gate: gate.clone() }, TxPlan::Fail { total: 1 }));
     let mut events = m.transfer_tx.subscribe();
     let human = Actor::Human;
-    let h = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/src.tar.gz"), "/root/src.tar.gz").await.unwrap();
+    let h = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/src.tar.gz"), "/root/src.tar.gz", None).await.unwrap();
     // 创建先注册：handle 返回即 Queued 可查（不等任何 I/O）
     let row = m.list_transfers(&human).await.unwrap().into_iter().find(|t| t.id == h.id).expect("注册表应有任务");
     assert_eq!(row.status, TransferStatus::Queued, "注册即 Queued");
@@ -181,7 +215,7 @@ async fn r32_running_progress_frames() {
     register(&m, mk_handle(m.center.clone(), TxPlan::Succeed { total: 1_048_576, chunk: 262_144, pause_ms: 250 }, TxPlan::Fail { total: 1 }));
     let mut events = m.transfer_tx.subscribe();
     let human = Actor::Human;
-    let h = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/a.bin"), "/root/a.bin").await.unwrap();
+    let h = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/a.bin"), "/root/a.bin", None).await.unwrap();
     // 收帧直至终态（或超时），断言出现过 0 < bytes < total 的中间帧
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let mut saw_partial = false;
@@ -209,7 +243,7 @@ async fn r32_cancel_mid_flight() {
     let m = mgr();
     register(&m, mk_handle(m.center.clone(), TxPlan::Succeed { total: 1_048_576, chunk: 4096, pause_ms: 40 }, TxPlan::Fail { total: 1 }));
     let human = Actor::Human;
-    let h = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/big.bin"), "/root/big.bin").await.unwrap();
+    let h = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/big.bin"), "/root/big.bin", None).await.unwrap();
     // 等在途进度落地（bytes>0）再取消——保证「取消保留在途字节」断言可判别
     //（取消先于任何 progress 则字节本就 0，不构成抹账）
     for _ in 0..100 {
@@ -247,7 +281,7 @@ async fn r32_voided_on_generation_bump() {
     register(&m, mk_handle(m.center.clone(), TxPlan::Succeed { total: 1024, chunk: 1024, pause_ms: 1 }, TxPlan::Fail { total: 1 }));
     let h = register_session_get(m.clone()).await;
     let human = Actor::Human;
-    let th = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/v.bin"), "/root/v.bin").await.unwrap();
+    let th = m.upload(&human, "s-r32".into(), std::path::Path::new("/tmp/v.bin"), "/root/v.bin", None).await.unwrap();
     // spawn 尚未运行（current_thread 单线程）——此刻 bump generation 即作废
     h.generation.store(99, AtomicOrd::SeqCst);
     tokio::time::sleep(Duration::from_millis(150)).await;
@@ -270,7 +304,7 @@ async fn r32_failed_with_real_error() {
     let m = mgr();
     register(&m, mk_handle(m.center.clone(), TxPlan::Fail { total: 4096 }, TxPlan::Fail { total: 4096 }));
     let human = Actor::Human;
-    let h = m.download(&human, "s-r32".into(), "/root/gone.bin", std::path::Path::new("/tmp/gone.bin")).await.unwrap();
+    let h = m.download(&human, "s-r32".into(), "/root/gone.bin", std::path::Path::new("/tmp/gone.bin"), None).await.unwrap();
     let done = wait_terminal(&m, &h.id).await;
     assert_eq!(done.status, TransferStatus::Failed);
     assert!(done.error.as_deref().unwrap_or_default().contains("注入失败"), "{:?}", done.error);
@@ -311,6 +345,8 @@ async fn r32_restart_recovery_marks_interrupted() {
             finished_at: None,
             error: None,
             retry_of: None,
+            collision_decision: None,
+            decision_prompt: None,
         })
         .unwrap();
         // manager drop 模拟进程退出（行仍处于活动阶段）
@@ -318,7 +354,7 @@ async fn r32_restart_recovery_marks_interrupted() {
     let m2 = SessionManager::open(&db).unwrap();
     let list = m2.list_transfers(&Actor::Human).await.unwrap();
     let row = list.iter().find(|t| t.id == "t-orph").expect("恢复行应进注册表");
-    assert_eq!(row.status, TransferStatus::Failed);
+    assert_eq!(row.status, TransferStatus::Interrupted);
     assert_eq!(row.error.as_deref(), Some("应用重启时传输中断"));
     assert!(row.finished_at.is_some());
     assert_eq!(row.bytes_done, 4096, "恢复不抹账（已传字节如实保留）");
@@ -326,7 +362,7 @@ async fn r32_restart_recovery_marks_interrupted() {
     // journal 同步落终态（下次重启不再重复恢复）
     let jr = m2.center.vault.transfer_journal_list(10).unwrap();
     let jrow = jr.iter().find(|r| r.id == "t-orph").unwrap();
-    assert_eq!(jrow.status, TransferStatus::Failed);
+    assert_eq!(jrow.status, TransferStatus::Interrupted);
     // 已是终态的行不进恢复面（Succeeded 历史保留原状）
     m2.center.vault.transfer_journal_insert(&TransferTask {
         id: "t-past".into(),
@@ -342,6 +378,8 @@ async fn r32_restart_recovery_marks_interrupted() {
         finished_at: Some(1790956802),
         error: None,
         retry_of: None,
+        collision_decision: None,
+        decision_prompt: None,
     })
     .unwrap();
     {

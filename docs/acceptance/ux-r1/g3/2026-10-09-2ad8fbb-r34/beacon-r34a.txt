@@ -1,0 +1,11 @@
+r34a-open
+r34a-r1|r34a-panel0:ok
+r34a-r1|r34a-new-ok（新文件 Succeeded：发布原语真机通过）
+r34a-r1|r34a-conflict-skip-ok（预检冲突→卡+真实stat 1024→skip→Skipped，零字节传输）
+r34a-r1|r34a-keepboth-ok（新名 /tmp/r34dir/exist.tinyssh-1.txt）
+r34a-r1|r34a-overwrite-blocked-ok（ReplaceUnsupported 文案）
+r34a-r1|r34a-cancel-awaiting-ok
+r34a-r1|r34a-dl-ok（SSH 下载经核心编排 Succeeded）
+r34a-r1|r34a-dl-conflict-skip-ok（下载本地同名预检 512B→skip，本地零改动）
+r34a-r1|r34a-DONE
+r34-DONE

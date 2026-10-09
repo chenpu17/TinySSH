@@ -283,7 +283,20 @@ export type TransferStatus =
   | "Cancelled"
   | "Cancelling"
   | "AwaitingDecision"
-  | "OutcomeUnknown";
+  | "OutcomeUnknown"
+  | "Skipped"
+  | "Interrupted";
+
+/** C6/R34：冲突裁决（MCP collision 参数同形小写） */
+export type CollisionDecision = "skip" | "overwrite" | "keepboth";
+
+/** C6/R34：冲突询问载荷（仅 AwaitingDecision 态非空；reason=target_exists |
+ * stat_changed_since_preflight——原因可查落字段 C-04） */
+export interface DecisionPrompt {
+  target_path: string;
+  target_stat?: { size?: number | null; mtime?: number | null } | null;
+  reason: string;
+}
 
 /** revision 单调递增（事件可合并可丢，按 id+revision 幂等对账；漏收由
  * list_transfers 查询兜底——UI 重挂后对账的权威面） */
@@ -301,10 +314,15 @@ export interface TransferTask {
   finished_at?: number | null;
   error?: string | null;
   retry_of?: TransferId | null;
+  /** C6/R34：冲突裁决（决定提交后随任务留存；serde default 兼容旧载荷） */
+  collision_decision?: CollisionDecision | null;
+  /** C6/R34：冲突询问（仅待决态非空） */
+  decision_prompt?: DecisionPrompt | null;
 }
 
 export function transferTerminal(s: TransferStatus): boolean {
-  return s === "Succeeded" || s === "Failed" || s === "Cancelled" || s === "OutcomeUnknown";
+  return s === "Succeeded" || s === "Failed" || s === "Cancelled" || s === "OutcomeUnknown"
+    || s === "Skipped" || s === "Interrupted";
 }
 
 /** 条目种类（C4 R30）：null = 旧载荷/服务端未报（升级兼容） */

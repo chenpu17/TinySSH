@@ -1,0 +1,7 @@
+r34c1-open
+r34c1-r1|r34a-panel0:ok
+r34c1-r1|r34c1-paused（Committing 暂停窗内，待 kill）
+r34c2-open
+r34c2-r1|r34a-panel0:ok
+r34c2-r1|r34c-DONE（重启恢复=已确认提交归 Succeeded，error 空）
+r34-DONE

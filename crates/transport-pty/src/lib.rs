@@ -469,48 +469,26 @@ impl ChannelHandle for LocalPtyChannel {
     /// C4（R30）：本地元数据。kind/symlink_target=lstat；is_dir/size/mtime=跟随。
     async fn stat_entry(&self, path: &str) -> Result<session_api::EntryStat> {
         let _ = &self;
-        let lst = tokio::fs::symlink_metadata(path)
-            .await
-            .map_err(|e| Error::from_fs_err(path, &e))?;
-        let ft = lst.file_type();
-        let kind = Some(if ft.is_dir() {
-            session_api::EntryKind::Dir
-        } else if ft.is_file() {
-            session_api::EntryKind::File
-        } else if ft.is_symlink() {
-            session_api::EntryKind::Symlink
-        } else {
-            session_api::EntryKind::Other
-        });
-        let symlink_target = if ft.is_symlink() {
-            tokio::fs::read_link(path)
-                .await
-                .ok()
-                .map(|p| p.to_string_lossy().into_owned())
-        } else {
-            None
-        };
-        let md = if ft.is_symlink() {
-            tokio::fs::metadata(path).await.unwrap_or(lst)
-        } else {
-            lst
-        };
-        let canonical = tokio::fs::canonicalize(path)
-            .await
-            .ok()
-            .map(|p| p.to_string_lossy().into_owned());
-        Ok(session_api::EntryStat {
-            canonical,
-            kind,
-            is_dir: md.is_dir(),
-            size: Some(md.len()),
-            mtime: md
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64),
-            symlink_target,
-        })
+        // 本地语义唯一源（rev-r34 高-1）：与 core-session 下载分支同一实现
+        session_api::local_stat_entry(path)
+    }
+
+    /// C6/R34 DF6.1：本地原子 no-clobber 发布（std::fs::hard_link）。
+    /// 本地 syscall 完成即有确定结果——错误一律 Rejected（含 AlreadyExists
+    /// 竞态；链接失败绝不改动目标），无 Ambiguous 形态。
+    async fn publish_hardlink(
+        &self,
+        existing: &str,
+        new: &str,
+    ) -> Result<session_api::PublishOutcome> {
+        let _ = &self;
+        Ok(session_api::local_publish_hardlink(existing, new))
+    }
+
+    /// C6/R34：本地文件删除（temp 清理；不存在=幂等 Ok）。
+    async fn remove_file(&self, path: &str) -> Result<()> {
+        let _ = &self;
+        session_api::local_remove_file(path)
     }
 }
 

@@ -660,6 +660,7 @@ impl Vault {
     fn journal_row_to_task(r: &rusqlite::Row<'_>) -> rusqlite::Result<TransferTask> {
         let kind: String = r.get(2)?;
         let state: String = r.get(5)?;
+        let collision: Option<String> = r.get(9)?;
         Ok(TransferTask {
             id: r.get(0)?,
             session_id: r.get(1)?,
@@ -679,22 +680,38 @@ impl Vault {
             finished_at: r.get(14)?,
             error: r.get(11)?,
             retry_of: r.get(12)?,
+            collision_decision: collision
+                .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok()),
+            decision_prompt: None,
         })
+    }
+
+    /// 提交窗口证据读取（C6/R34 DF5.2）：verified 标记=发布应答丢失复核路径
+    /// 的唯一绑定证据（true=发布原语成功后落库，可判 Succeeded{verified}；
+    /// false=不可判定，保持 OutcomeUnknown）。
+    fn journal_row_to_task_verified(
+        r: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<(TransferTask, bool)> {
+        let t = Self::journal_row_to_task(r)?;
+        let verified: Option<i64> = r.get(10)?;
+        Ok((t, verified.unwrap_or(0) != 0))
     }
 
     const JOURNAL_COLS: &str = "task_id, session_id, kind, src_path, dst_path, state, \
          bytes_transferred, total_bytes, revision, collision_decision, verified, \
          error, retry_of, created_at, finished_at";
 
-    /// 任务创建即落行（Queued，§560）。
+    /// 任务创建即落行（Queued，§560）。collision_decision/verified 随 C6/R34
+    /// 启用（列 V5 已建；verified=提交窗口发布原语成功标记，0 起步）。
     pub fn transfer_journal_insert(&self, t: &TransferTask) -> Result<()> {
         self.conn
             .lock()
             .unwrap()
             .execute(
                 "INSERT INTO transfer_journal(task_id, session_id, kind, src_path, dst_path, \
-                 state, bytes_transferred, total_bytes, revision, error, retry_of, created_at, finished_at)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                 state, bytes_transferred, total_bytes, revision, collision_decision, verified, \
+                 error, retry_of, created_at, finished_at)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
                 params![
                     t.id,
                     t.session_id,
@@ -705,6 +722,9 @@ impl Vault {
                     t.bytes_done as i64,
                     t.total.map(|v| v as i64),
                     t.revision as i64,
+                    t.collision_decision
+                        .map(|d| Self::journal_collision_str(d)),
+                    0i64,
                     t.error,
                     t.retry_of,
                     t.created_at,
@@ -716,20 +736,25 @@ impl Vault {
     }
 
     /// 进度/状态推进（节流落库节奏由调用方定；按主键整行可变字段覆盖）。
-    pub fn transfer_journal_update(&self, t: &TransferTask) -> Result<()> {
+    /// verified：发布原语成功后由提交窗口写入（仅 Committing 态行，C6/R34）。
+    pub fn transfer_journal_update(&self, t: &TransferTask, verified: Option<bool>) -> Result<()> {
         let n = self
             .conn
             .lock()
             .unwrap()
             .execute(
                 "UPDATE transfer_journal SET state=?2, bytes_transferred=?3, total_bytes=?4, \
-                 revision=?5, error=?6, finished_at=?7 WHERE task_id=?1",
+                 revision=?5, collision_decision=?6, verified=COALESCE(?7, verified), \
+                 error=?8, finished_at=?9 WHERE task_id=?1",
                 params![
                     t.id,
                     Self::journal_status_str(&t.status),
                     t.bytes_done as i64,
                     t.total.map(|v| v as i64),
                     t.revision as i64,
+                    t.collision_decision
+                        .map(|d| Self::journal_collision_str(d)),
+                    verified.map(|v| if v { 1i64 } else { 0i64 }),
                     t.error,
                     t.finished_at,
                 ],
@@ -741,9 +766,18 @@ impl Vault {
         Ok(())
     }
 
+    fn journal_collision_str(d: session_api::CollisionDecision) -> &'static str {
+        match d {
+            session_api::CollisionDecision::Skip => "skip",
+            session_api::CollisionDecision::Overwrite => "overwrite",
+            session_api::CollisionDecision::KeepBoth => "keepboth",
+        }
+    }
+
     /// 启动恢复：活动阶段行（§560 绝不仅凭异常退出宣告成功/失败——由调用方
-    /// 按提交语义处置；R32 全部为提交前，统一按「应用重启时传输中断」落 Failed）。
-    pub fn transfer_journal_load_active(&self) -> Result<Vec<TransferTask>> {
+    /// 按提交语义处置；R34 分类：Committing+verified→Succeeded{verified}、
+    /// Committing→OutcomeUnknown、其余→Interrupted）。
+    pub fn transfer_journal_load_active(&self) -> Result<Vec<(TransferTask, bool)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(&format!(
@@ -754,13 +788,31 @@ impl Vault {
             ))
             .map_err(db_err)?;
         let rows = stmt
-            .query_map([], Self::journal_row_to_task)
+            .query_map([], Self::journal_row_to_task_verified)
             .map_err(db_err)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row.map_err(db_err)?);
         }
         Ok(out)
+    }
+
+    /// C6/R34：按 id 取行（OutcomeUnknown 复核路径的 journal 证据读取）。
+    pub fn transfer_journal_get(&self, task_id: &str) -> Result<Option<(TransferTask, bool)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {} FROM transfer_journal WHERE task_id = ?1",
+                Self::JOURNAL_COLS,
+            ))
+            .map_err(db_err)?;
+        let mut rows = stmt
+            .query_map(params![task_id], Self::journal_row_to_task_verified)
+            .map_err(db_err)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r.map_err(db_err)?)),
+            None => Ok(None),
+        }
     }
 
     /// 查询最近 N 行（创建倒序；UI 重挂对账与历史呈现）。
@@ -1566,8 +1618,9 @@ mod tests {
         assert_eq!(n, 1);
     }
 
-    /// C5（R32）：transfer_journal 存取面回环——insert/update/load_active/list 的
-    /// 列映射与状态字符串单点转换（lib::journal_row_to_task 与 wire PascalCase）。
+    /// C5（R32）+ C6（R34）：transfer_journal 存取面回环——insert/update/load_active/
+    /// list 的列映射与状态字符串单点转换（lib::journal_row_to_task 与 wire
+    /// PascalCase）；collision_decision/verified 列读写（R34 提交窗口证据）。
     #[test]
     fn c5_transfer_journal_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
@@ -1587,12 +1640,15 @@ mod tests {
             finished_at: None,
             error: None,
             retry_of: None,
+            collision_decision: None,
+            decision_prompt: None,
         };
         v.transfer_journal_insert(&t).unwrap();
-        // 活动阶段行进恢复面
+        // 活动阶段行进恢复面（带 verified 证据位）
         let active = v.transfer_journal_load_active().unwrap();
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].status, TransferStatus::Queued);
+        assert_eq!(active[0].0.status, TransferStatus::Queued);
+        assert!(!active[0].1, "未进提交窗 verified=false");
         // 推进到终态：状态/字节/revision/finished_at 落账
         let mut done = t.clone();
         done.status = TransferStatus::Succeeded;
@@ -1600,7 +1656,7 @@ mod tests {
         done.total = Some(4096);
         done.revision = 9;
         done.finished_at = Some(1790956801);
-        v.transfer_journal_update(&done).unwrap();
+        v.transfer_journal_update(&done, None).unwrap();
         let active = v.transfer_journal_load_active().unwrap();
         assert!(active.is_empty(), "终态行退出恢复面");
         let list = v.transfer_journal_list(10).unwrap();
@@ -1613,7 +1669,7 @@ mod tests {
         // 更新不存在的行报错（不静默丢账）
         let mut ghost = done.clone();
         ghost.id = "t-ghost".into();
-        assert!(v.transfer_journal_update(&ghost).is_err());
+        assert!(v.transfer_journal_update(&ghost, None).is_err());
         // download kind 列（CHECK 约束小写）与 Failed 状态回读
         let d = TransferTask {
             id: "t-x2".into(),
@@ -1629,6 +1685,8 @@ mod tests {
             finished_at: Some(1790956803),
             error: Some("boom".into()),
             retry_of: None,
+            collision_decision: None,
+            decision_prompt: None,
         };
         v.transfer_journal_insert(&d).unwrap();
         let list = v.transfer_journal_list(10).unwrap();
@@ -1638,6 +1696,28 @@ mod tests {
         assert_eq!(row.error.as_deref(), Some("boom"));
         // 排序：创建倒序（新在前）
         assert_eq!(list[0].id, "t-x2");
+        // C6/R34：collision_decision 落列回读 + verified 标记（提交窗口证据）
+        let mut c = t.clone();
+        c.id = "t-x3".into();
+        c.status = TransferStatus::Committing;
+        c.revision = 5;
+        c.collision_decision = Some(session_api::CollisionDecision::Overwrite);
+        v.transfer_journal_insert(&c).unwrap();
+        v.transfer_journal_update(&c, Some(true)).unwrap();
+        let got = v.transfer_journal_get("t-x3").unwrap().unwrap();
+        assert_eq!(got.0.status, TransferStatus::Committing);
+        assert_eq!(got.0.collision_decision, Some(session_api::CollisionDecision::Overwrite));
+        assert!(got.1, "发布原语成功后 verified=true 可读");
+        let mut k = t.clone();
+        k.id = "t-x4".into();
+        k.status = TransferStatus::AwaitingDecision;
+        k.collision_decision = Some(session_api::CollisionDecision::KeepBoth);
+        v.transfer_journal_insert(&k).unwrap();
+        let got2 = v.transfer_journal_get("t-x4").unwrap().unwrap();
+        assert_eq!(got2.0.collision_decision, Some(session_api::CollisionDecision::KeepBoth));
+        assert!(!got2.1);
+        // 未知 id → None（不虚构）
+        assert!(v.transfer_journal_get("t-nope").unwrap().is_none());
     }
 }
 

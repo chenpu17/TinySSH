@@ -1,0 +1,11 @@
+FAIL OC1 conflict-demo stays AwaitingDecision (new-only)  [{"s":"Running"}]
+PASS OC1b old-code completes conflict-demo without decision  [Succeeded]
+FAIL OC2 submit_collision_decision reachable (new-only)  [{"kind":"invalid_input","message":"演示 shim 未实现该命令：submit_collision_decision"}]
+FAIL OC3 reject_expired_decision reachable (new-only)  [{"kind":"invalid_input","message":"演示 shim 未实现该命令：reject_expired_decision"}]
+FAIL OC4 verify_transfer_outcome reachable (new-only)  [{"kind":"invalid_input","message":"演示 shim 未实现该命令：verify_transfer_outcome"}]
+FAIL OC5 unknown-demo → OutcomeUnknown (new-only)  [Succeeded]
+FAIL OC6 interrupt-demo → Interrupted (new-only)  [Succeeded]
+FAIL OC7 UI conflict card present (new-only)  [{"conflict":false,"skipBtn":false,"reverifyBtn":false,"skippedText":false,"interruptedText":false}]
+FAIL OC7b UI Skipped/Interrupted labels (new-only)
+
+旧码判别：1/9 PASS（期望全部 FAIL = 判别力成立；全部 PASS = 判别失败）

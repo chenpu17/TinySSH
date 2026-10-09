@@ -12,7 +12,7 @@ import type {
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
-  TransferTask,
+  TransferTask, CollisionDecision,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -38,7 +38,11 @@ import "@xterm/xterm/css/xterm.css";
 // TransferHandle 前保持本地 optimistic 呈现
 type TransferCard = {
   id: string; kind: "Upload" | "Download"; name: string; remote: string; local: string;
-  status: "queued" | "running" | "cancelling" | "done" | "failed" | "cancelled"; bytes?: number; total?: number | null; error?: string;
+  status: "queued" | "running" | "committing" | "awaiting" | "unknown" | "cancelling" | "done" | "failed" | "cancelled" | "skipped" | "interrupted";
+  bytes?: number; total?: number | null; error?: string;
+  // C6/R34：待决卡载荷（expect_revision=rev；提示目标与原因）
+  rev?: number;
+  prompt?: { target_path: string; reason: string; size: number | null; mtime: number | null } | null;
 };
 function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
   if (v && typeof v === "object" && "Exited" in (v as Record<string, unknown>))
@@ -2001,8 +2005,7 @@ export default function App() {
     });
   }, []);
 
-  // 注册表 → 卡片（呈现态映射；Committing/AwaitingDecision/OutcomeUnknown 未知前向
-  // 状态按进行中同待——不猜测终态）
+  // 注册表 → 卡片（呈现态映射；R34 全量状态：提交窗口/待决/未知/跳过/中断各归其位）
   const taskToCard = useCallback((t: TransferTask): TransferCard => ({
     id: t.id,
     kind: t.kind,
@@ -2014,10 +2017,24 @@ export default function App() {
       : t.status === "Cancelled" ? "cancelled"
       : t.status === "Queued" ? "queued"
       : t.status === "Cancelling" ? "cancelling"
+      : t.status === "Committing" ? "committing"
+      : t.status === "AwaitingDecision" ? "awaiting"
+      : t.status === "OutcomeUnknown" ? "unknown"
+      : t.status === "Skipped" ? "skipped"
+      : t.status === "Interrupted" ? "interrupted"
       : "running",
     bytes: t.bytes_done,
     total: t.total ?? null,
     error: t.error ?? undefined,
+    rev: t.revision,
+    prompt: t.decision_prompt
+      ? {
+          target_path: t.decision_prompt.target_path,
+          reason: t.decision_prompt.reason,
+          size: t.decision_prompt.target_stat?.size ?? null,
+          mtime: t.decision_prompt.target_stat?.mtime ?? null,
+        }
+      : null,
   }), []);
 
   // 事件帧应用（id+revision 幂等；真实 id 之外的 pending- 占位不受影响）
@@ -2042,6 +2059,37 @@ export default function App() {
       ]);
     } catch { /* 下轮再试 */ }
   }, [taskToCard]);
+
+  // C6/R34：冲突决定提交（乐观锁 expect_revision=卡片所见 revision）。
+  // StaleDecision/InvalidTransferState = 卡片已过期——刷新对账 + reject 留痕
+  //（任务已推进时 reject 幂等 no-op，不会误伤在途待决卡）
+  const decideCollision = useCallback(async (t: TransferCard, decision: CollisionDecision) => {
+    if (!t.rev) return;
+    try {
+      await invoke("submit_collision_decision", { id: t.id, decision, expectRevision: t.rev });
+      void refreshTransfers();
+    } catch (e) {
+      const kind = (e as { kind?: string })?.kind;
+      if (kind === "stale_decision" || kind === "invalid_transfer_state") {
+        pushToast("err", kind === "stale_decision" ? "决定已过期（任务已推进），卡片已刷新" : "任务状态已变化，卡片已刷新");
+        try { await invoke("reject_expired_decision", { id: t.id }); } catch { /* 幂等收尾 */ }
+        void refreshTransfers();
+      } else {
+        pushToast("err", `决定提交失败：${friendlyError(e)}`);
+      }
+    }
+  }, [pushToast, refreshTransfers]);
+
+  // C6/R34：OutcomeUnknown 重新核实——只有 journal verified 证据能翻成功，
+  // 否则保持未知（不自动重发/覆盖/清理）
+  const verifyOutcome = useCallback(async (id: string) => {
+    try {
+      await invoke("verify_transfer_outcome", { id });
+      void refreshTransfers();
+    } catch (e) {
+      pushToast("err", `核实失败：${friendlyError(e)}`);
+    }
+  }, [pushToast, refreshTransfers]);
 
   // 拖拽上传：目标目录优先取远程文件区正在浏览的目录（T41），否则现场简报 cwd。
   // 先挂 pending 卡占位，拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
@@ -4110,17 +4158,42 @@ export default function App() {
                   <div className="dim mono xfer-sub">
                     {t.status === "queued" && "排队中…"}
                     {t.status === "running" && `传输中…${t.bytes ? ` ${fmtBytes(t.bytes)}${t.total ? ` / ${fmtBytes(t.total)}` : ""}` : ""}`}
+                    {t.status === "committing" && "提交中…"}
                     {t.status === "cancelling" && "取消中…"}
                     {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)} · ${t.kind === "Upload" ? t.remote : t.local}`}
                     {t.status === "failed" && `失败：${t.error ?? "未知错误"}`}
                     {t.status === "cancelled" && "已取消"}
+                    {t.status === "skipped" && "已跳过：同名目标未改动"}
+                    {t.status === "interrupted" && `已中断：${t.error ?? "应用重启时传输中断"}`}
+                    {t.status === "unknown" && `结果未知：${t.error ?? "发布应答丢失"}`}
                   </div>
+                  {t.status === "awaiting" && t.prompt && (
+                    <div className="xfer-conflict">
+                      <div className="dim mono xfer-sub">
+                        {t.prompt.reason === "stat_changed_since_preflight" ? "目标在提交前已变化，需重新裁决：" : "目标已存在："}
+                        <span className="mono" title={t.prompt.target_path}>{t.prompt.target_path}</span>
+                        {t.prompt.size != null && ` · ${fmtBytes(t.prompt.size)}`}
+                        {t.prompt.mtime != null && ` · ${new Date(t.prompt.mtime * 1000).toLocaleString()}`}
+                      </div>
+                      <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                        <button className="ghost" data-testid="cf-skip" onClick={() => { void decideCollision(t, "skip"); }}>跳过</button>
+                        <button className="ghost" data-testid="cf-overwrite" title="外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动" onClick={() => { void decideCollision(t, "overwrite"); }}>覆盖</button>
+                        <button className="ghost" data-testid="cf-keepboth" onClick={() => { void decideCollision(t, "keepboth"); }}>两个都要</button>
+                      </div>
+                    </div>
+                  )}
+                  {t.status === "unknown" && (
+                    <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                      <button className="ghost" data-testid="uo-reverify" onClick={() => { void verifyOutcome(t.id); }}>重新核实</button>
+                      <span className="mono xfer-note">temp 与恢复资料保留；不自动重发</span>
+                    </div>
+                  )}
                 </div>
-                {t.status === "running" || t.status === "queued" || t.status === "cancelling" ? (
+                {t.status === "running" || t.status === "queued" || t.status === "cancelling" || t.status === "committing" || t.status === "awaiting" ? (
                   <button className="ghost" title="取消传输" onClick={() => { invoke("cancel_transfer", { id: t.id }).catch(() => {}); }}>✕</button>
                 ) : (
-                  <span className={t.status === "done" ? "ok" : "err"} style={{ flex: "none" }}>
-                    {t.status === "done" ? "✓" : t.status === "cancelled" ? "⊘" : "✕"}
+                  <span className={t.status === "done" ? "ok" : t.status === "cancelled" || t.status === "skipped" ? "dim" : "err"} style={{ flex: "none" }}>
+                    {t.status === "done" ? "✓" : t.status === "cancelled" || t.status === "skipped" ? "⊘" : "✕"}
                   </span>
                 )}
               </div>

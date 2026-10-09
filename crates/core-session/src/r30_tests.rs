@@ -75,16 +75,18 @@ fn register(m: &SessionManager, h: Arc<SessionHandle>) {
     m.sessions.lock().unwrap().insert(h.id.clone(), h.clone());
 }
 
-/// C4：两个入口均为 Human 浏览口径——Agent（MCP）拒绝（同 sftp_list 口径）。
+/// C4：resolve 仍为 Human 浏览口径（Agent 拒绝）；stat 自 R34 起放行 Agent
+///（DF6.2 MCP collision=fail 预检结构化冲突需目标 stat；只读+审计留痕）。
 #[tokio::test]
 async fn r30_sftp_entrypoints_human_only() {
     let m = mgr();
     register(&m, mk_handle(m.center.clone()));
     let agent = Actor::Agent { client_id: "mcp-1".into() };
     let e1 = m.sftp_resolve_path(&agent, "s-r30".into(), None).await.unwrap_err();
-    let e2 = m.sftp_stat(&agent, "s-r30".into(), "/x".into()).await.unwrap_err();
     assert!(matches!(e1, Error::InvalidInput(ref s) if s.contains("仅人类浏览入口")), "{e1:?}");
-    assert!(matches!(e2, Error::InvalidInput(ref s) if s.contains("仅人类浏览入口")), "{e2:?}");
+    // Agent stat 走通道（R30 桩有 stat 实现——返回条目形状而非门禁错误）
+    let st = m.sftp_stat(&agent, "s-r30".into(), "/x".into()).await.unwrap();
+    assert_eq!(st.symlink_target.as_deref(), Some("/target"));
 }
 
 /// C4：Human 走通道——resolve(None) 转发、stat 透传可区别错误与悬空链接形状。

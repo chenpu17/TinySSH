@@ -10,7 +10,7 @@ use russh::{Disconnect, Sig};
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
 use russh_sftp::protocol::StatusCode;
-use session_api::{AuthType, DirEntryS, EntryKind, EntryStat, Error, ExecOpts, ForwardId, ForwardInfo, ForwardSpec, PathResolved, Result};
+use session_api::{AuthType, DirEntryS, EntryKind, EntryStat, Error, ExecOpts, ForwardId, ForwardInfo, ForwardSpec, PathResolved, PublishOutcome, Result};
 use session_api::ForwardStateCb;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -925,6 +925,40 @@ impl ChannelHandle for SshChannel {
             mtime: md.mtime.map(|v| v as i64),
             symlink_target,
         })
+    }
+
+    /// C6/R34 DF6.1：hardlink@openssh.com 原子 no-clobber 发布。
+    /// Ok(false)=扩展未声明（init 探明）→ Unsupported；Status 应答=确定未提交
+    /// （服务端已裁决失败，含目标已存在竞态）→ Rejected；IO/Timeout 等=请求已
+    /// 发出、应答丢失/失稳 → Ambiguous（提交与否不可知，调用方落 OutcomeUnknown）。
+    async fn publish_hardlink(&self, existing: &str, new: &str) -> Result<PublishOutcome> {
+        let (_guard, sftp) = self.sftp_channel().await?;
+        let r = sftp.hardlink(existing, new).await;
+        sftp.close().await.ok();
+        match r {
+            Ok(true) => Ok(PublishOutcome::Committed),
+            Ok(false) => Ok(PublishOutcome::Unsupported),
+            Err(russh_sftp::client::error::Error::Status(st)) => {
+                Ok(PublishOutcome::Rejected(format!("{} {}", st.status_code, st.error_message)))
+            }
+            Err(e) => Ok(PublishOutcome::Ambiguous),
+        }
+    }
+
+    /// C6/R34：远端文件删除（temp 清理；不存在=幂等 Ok）。
+    async fn remove_file(&self, path: &str) -> Result<()> {
+        let (_guard, sftp) = self.sftp_channel().await?;
+        let r = sftp.remove_file(path).await;
+        sftp.close().await.ok();
+        match r {
+            Ok(()) => Ok(()),
+            Err(russh_sftp::client::error::Error::Status(st))
+                if st.status_code == StatusCode::NoSuchFile =>
+            {
+                Ok(())
+            }
+            Err(e) => Err(map_sftp_err("remove", path, e)),
+        }
     }
 
     // ---- 端口转发（T42 FR-8）----

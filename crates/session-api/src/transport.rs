@@ -118,6 +118,25 @@ pub trait ChannelHandle: Send + Sync {
     /// 注入转发状态变化回调（T44 真机冒烟补口）：start/stop/Degraded/恢复/
     /// Failed 状态写口触发。默认 no-op（本地 PTY 不支持转发，无需通知）。
     fn set_forward_event_cb(&self, _cb: crate::ForwardStateCb) {}
+
+    /// C6/R34 DF6.1 唯一发布原语：原子 no-clobber 硬链接发布（existing=本任务
+    /// temp，new=最终目标，须同目录同文件系统）。语义：
+    /// Committed=链接已原子建立（new 此前不存在，现在内容=existing）；
+    /// Unsupported=通路/服务端无硬链接能力（扩展未声明）——调用方按
+    /// ReplaceUnsupported 阻止发布；Rejected(reason)=确定未提交（含目标已存在
+    /// 的竞态失败——链接失败绝不改动 new）；Ambiguous=请求已发出但应答丢失/
+    /// 传输层失稳——提交与否不可知，调用方必须落 OutcomeUnknown（C13）。
+    /// 本地实现走 std::fs::hard_link（本地路径传绝对路径字符串）。
+    async fn publish_hardlink(&self, existing: &str, new: &str) -> Result<crate::PublishOutcome> {
+        let _ = (existing, new);
+        Err(crate::Error::InvalidInput("该通路不支持原子发布".into()))
+    }
+
+    /// C6/R34：删除远端/本地文件（temp 清理专用；不递归、不存在=Ok 幂等）。
+    async fn remove_file(&self, path: &str) -> Result<()> {
+        let _ = path;
+        Err(crate::Error::InvalidInput("该通路不支持文件删除".into()))
+    }
 }
 
 /// tokio_util 的 CancellationToken 的最小本地别名层：避免 session-api 直接依赖

@@ -1,0 +1,15 @@
+FAIL B1F 1280/dark 盒测量全绿  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"rowsIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"btnSizes":["50x31","50x31","74x31"]}]
+FAIL B1F 1280/light 盒测量全绿  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"rowsIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"btnSizes":["50x31","50x31","74x31"]}]
+FAIL B1F 640/dark 盒测量全绿  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"rowsIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"btnSizes":["50x31","50x31","74x31"]}]
+FAIL B1F 640/light 盒测量全绿  [{"blockIn":false,"btnsN":3,"btnsIn":false,"btnsHit":true,"btnOv":false,"uoIn":false,"uoHit":true,"blockUoOv":false,"uoNoteIn":false,"rowsIn":false,"secOvf":false,"docOvf":false,"conflictSubClip":false,"btnSizes":["50x31","50x31","74x31"]}]
+PASS B2F.1 Shift+Tab 从 keepboth 回溯到 cf-overwrite  [prev=cf-overwrite]
+PASS B2F.2 再 Shift+Tab 回溯到 cf-skip  [prev2=cf-skip]
+   B4F dark: conflict-sub=6.53/4.5 | conflict-path-span=6.53/4.5 | conflict-btn=4.88/4.5 | conflict-btn-border=4.88/3 | conflict-warn-bar=7.54/3 | uo-reverify=4.88/4.5 | uo-note-dim=3.01/4.5 | xfer-name=11.17/4.5 | sub-skipped-dim=3.01/4.5 | sub-interrupted-dim=3.01/4.5 | sub-failed-dim=3.01/4.5 | sub-done-dim=3.01/4.5 | cancel-x-btn=4.88/4.5 | icon-skipped-⊘=3.01/3 | icon-interrupted-✕=5.00/3 | icon-done-✓=7.23/3 | icon-dir-up=7.23/3
+PASS B4F dark 无缺测元素  [[]]
+PASS B4F dark 低于门槛登记  [["uo-note-dim=3.01/4.5","sub-skipped-dim=3.01/4.5","sub-interrupted-dim=3.01/4.5","sub-failed-dim=3.01/4.5","sub-done-dim=3.01/4.5"]]
+   B4F light: conflict-sub=6.97/4.5 | conflict-path-span=6.97/4.5 | conflict-btn=5.33/4.5 | conflict-btn-border=5.33/3 | conflict-warn-bar=4.55/3 | uo-reverify=5.33/4.5 | uo-note-dim=5.69/4.5 | xfer-name=13.79/4.5 | sub-skipped-dim=5.69/4.5 | sub-interrupted-dim=5.69/4.5 | sub-failed-dim=5.69/4.5 | sub-done-dim=5.69/4.5 | cancel-x-btn=5.33/4.5 | icon-skipped-⊘=5.69/3 | icon-interrupted-✕=5.32/3 | icon-done-✓=5.13/3 | icon-dir-up=5.13/3
+PASS B4F light 无缺测元素  [[]]
+PASS B4F light 低于门槛登记  [[]]
+PASS B7 全程零 pageerror/console error
+
+7/11 passed

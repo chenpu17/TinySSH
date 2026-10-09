@@ -1,0 +1,4 @@
+r34b-open
+r34b-r1|r34a-panel0:ok
+r34b-r1|r34b-DONE（OutcomeUnknown + 复核保持未知 + revision 推进）
+r34-DONE
