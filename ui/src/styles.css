@@ -142,6 +142,19 @@ body {
   color: var(--warn); background: transparent; border: 1px solid var(--warn); cursor: pointer;
 }
 .collab-badge:hover { background: rgba(255, 170, 0, 0.08); }
+/* 有实际待审批/Agent 活动时加重（§3：此时必须醒目） */
+.collab-badge.hot {
+  /* 正文色用 --on-warn（浅色 #fff / 深色 #2a2410）——vis-r42 F1：原 --bg 在浅色
+     warn 底上仅 3.90:1 < AA 4.5，改后 4.56:1。 */
+  color: var(--on-warn); background: var(--warn); border-color: var(--warn);
+  animation: collab-pulse 2.4s ease-in-out infinite;
+}
+.collab-badge.hot:hover { background: var(--warn); filter: brightness(1.08); }
+@keyframes collab-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 170, 0, 0.55); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 170, 0, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .collab-badge.hot { animation: none; } }
 .workspace { flex: 1; display: flex; min-height: 0; }
 .hostbar {
   flex: none; display: flex; flex-direction: column; min-height: 0;
@@ -1050,3 +1063,39 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
   animation: attach-hint-fade 6s ease forwards;
 }
 @keyframes attach-hint-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ---- R42（§3.2 / §6.7）：协作面板——按主机+会话分组、审批目的、完整视图 ---- */
+.collab-approvals { display: flex; flex-direction: column; gap: 10px; }
+.ap-group { display: flex; flex-direction: column; gap: 8px; }
+/* 分组头：明确「哪台主机 · 哪个会话」——跨会话审批绝不只展示当前主机而误批他机 */
+.ap-group-head {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 4px 6px; border-radius: 4px;
+  background: var(--panel); border: 1px solid var(--border);
+  font-size: 12px; position: sticky; top: 0; z-index: 1;
+}
+.ap-group-head .badge.agent { margin-left: auto; font-size: 10px; }
+/* vis-r42 F2：新增文本提档 --text-sub——.dim 深色 3.01:1 < AA（沿 R35 判据，仅收窄到本轮新增元素） */
+.ap-group-head .dim, .purpose-line .dim { color: var(--text-sub); }
+/* 「可用目的」行：无法获知时**明确缺失**（缺失态用 warn 提示，不留白）。
+   vis-r42 F3：缺失态内层 .dim 原会覆盖行级 warn → 整行回落灰、与有目的卡无区分；此处
+   以更具体选择器把缺失行（含内层）统一提回 warn，令「缺失」醒目如设计意图。 */
+.purpose-line { font-size: 11.5px; margin-top: 6px; line-height: 1.6; }
+.purpose-line.missing, .purpose-line.missing .dim { color: var(--warn); }
+/* 核心算出的破坏性提示小标签 */
+.tsum-chip {
+  display: inline-block; font-size: 10.5px; padding: 1px 6px; border-radius: 999px;
+  color: var(--warn); border: 1px solid var(--warn-ring); background: var(--warn-soft);
+}
+/* §4.2 空间退化：完整视图下长命令**完整可见**（横向/纵向），不仅省略号 */
+.task-panel.tp-full .collab-approvals .tl-cmd-text {
+  white-space: normal; overflow-wrap: anywhere; text-overflow: clip;
+}
+/* 委托对话框事实区（主机/会话/能力/现有授权范围） */
+.dlg-facts {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 12px; line-height: 1.7;
+  padding: 8px 10px; border-radius: 5px;
+  background: var(--panel); border: 1px solid var(--border);
+}
+.dlg-facts .k { color: var(--text-sub); margin-right: 6px; }

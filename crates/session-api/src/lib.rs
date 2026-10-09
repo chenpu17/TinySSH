@@ -226,6 +226,11 @@ pub struct ApprovalItem {
     /// C1：该卡所属建连 attempt（serde default——旧卡/非建连审批恒 None）。
     #[serde(default)]
     pub attempt_id: Option<AttemptId>,
+    /// R42（§6.7）**可用目的**：该会话当前的委托目标（人类写给 Agent 的任务留言），
+    /// 作为审批时的意图上下文。None = 无法获知目的，UI 须明确显示缺失而不是留白
+    /// （不得把未知解释成「无风险」）。读取时按会话**当前**目标投影，故目标后补也可见。
+    #[serde(default)]
+    pub purpose: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -570,6 +575,12 @@ pub struct SessionInfo {
     /// C3（R24）：shell 集成态（serde default 防旧消费方——DC3.5 Ready≠集成就绪，此为独立字段）。
     #[serde(default)]
     pub integration: IntegrationState,
+    /// R42（§6.7）该会话是否**曾被 Agent 持有**过控制权：人类新建的会话恒 false，
+    /// 由 Agent 建立、或人类委托/交还过之后为 true。UI 依此区分「首次委托（交给
+    /// Agent）」与「曾被接管后交还（交还 Agent）」——两者是同一受控转换，仅入口措辞
+    /// 不同。serde default：旧消费方缺省 false（保守侧，按首次委托处理）。
+    #[serde(default)]
+    pub ever_agent_owned: bool,
 }
 
 /// R41（§6.6/S09）连接详情：**连接当时**的完整身份快照 + 会话运行时态。
@@ -1735,6 +1746,7 @@ mod wire_format_tests {
             created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
             status: ApprovalStatus::Pending,
             attempt_id: None,
+            purpose: None,
         };
         let v = serde_json::to_value(&item).unwrap();
         assert_eq!(v["editable"], true);
@@ -1747,6 +1759,42 @@ mod wire_format_tests {
         });
         let item: ApprovalItem = serde_json::from_value(legacy).unwrap();
         assert!(!item.editable);
+    }
+
+    /// 锁定 R42（§6.7）新增字段的线上行为：
+    /// - `ApprovalItem.purpose`：随卡下发；旧载荷缺失 → None（「无法获知目的」，UI 明示缺失）。
+    /// - `SessionInfo.ever_agent_owned`：随会话下发；旧载荷缺失 → false（按首次委托处理）。
+    #[test]
+    fn r42_purpose_and_ever_agent_owned_wire_compat() {
+        let item = ApprovalItem {
+            id: "a-1".into(), session_id: "s-1".into(), agent_id: "opencode".into(),
+            command: "ls".into(), edited_command: None, target_summary: "读取目录".into(),
+            segment_report: vec![], session_busy: false, editable: false,
+            created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
+            status: ApprovalStatus::Pending, attempt_id: None,
+            purpose: Some("把日志打包放到 /tmp".into()),
+        };
+        let v = serde_json::to_value(&item).unwrap();
+        assert_eq!(v["purpose"], "把日志打包放到 /tmp");
+        // 旧载荷无 purpose → None（不得反序列化失败，也不得编造目的）
+        let legacy = serde_json::json!({
+            "id": "a-1", "session_id": "s-1", "agent_id": "opencode",
+            "command": "ls", "edited_command": null, "target_summary": "",
+            "segment_report": [], "session_busy": false,
+            "created_at": "1970-01-01T00:00:00Z", "status": "Pending",
+        });
+        let old: ApprovalItem = serde_json::from_value(legacy).unwrap();
+        assert!(old.purpose.is_none());
+
+        // SessionInfo：缺省 false（旧消费方按「首次委托」措辞）
+        let s: SessionInfo = serde_json::from_value(serde_json::json!({
+            "id": "s-1", "host_id": "h-1", "host_name": "prod-1", "kind": "ssh",
+            "state": "Connected", "control_owner": "Human",
+            "created_at": "1970-01-01T00:00:00Z",
+        })).unwrap();
+        assert!(!s.ever_agent_owned);
+        let v = serde_json::to_value(SessionInfo { ever_agent_owned: true, ..s }).unwrap();
+        assert_eq!(v["ever_agent_owned"], true);
     }
 
     /// 锁定 Workspace.transfers 域的兼容行为（R33 §355）：旧 blob（R25/R27/R31

@@ -24,6 +24,9 @@ type DemoSession = {
   // 连接详情（真实侧即 SessionHandle 持有的构造期 Host 副本，非按 host_id 回查现配置）。
   host_snapshot: DemoHostSnap;
   goal: string | null;   // R9 任务目标/交接留言（随会话存亡，与真实 SessionHandle.goal 对齐）
+  // R42（§6.7）：是否曾被 Agent 持有控制权（人类建会话恒 false；委托/交还后 true，
+  // 接管不抹掉历史）——UI 据此区分「交给 Agent」与「交还 Agent」入口措辞。
+  ever_agent_owned: boolean;
   // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）。
   // ts 统一 ISO-UTC——简报侧转本地渲染（与真实 brief.rs 修复后口径一致，防时区伪影）
   transitions: { ts: string; what: string }[];
@@ -48,6 +51,8 @@ type DemoApproval = {
   status: string; segment_report: { segment: string; verdict: string }[];
   // 后端同款声明（T44 复核中-2）：exec 卡 true（可编辑后批准），转发/传输卡 false
   editable: boolean;
+  // R42（§6.7）：核心自算的破坏性提示（target_summary(cmd) 同款口径），随卡下发
+  target_summary: string;
 };
 type PendingKey = {
   pk: {
@@ -60,6 +65,9 @@ type PendingKey = {
 
 const demoState = {
   owner: "Agent" as "Human" | "Agent",
+  // R42（§6.7/D11）：已登记 Agent（真实核心 vault.list_agents）。mcp_status 由此投影，
+  // issue_agent 追加——登记**不**转移任何会话控制权。`?fresh` 置空以复现「新装未启用」态。
+  agents: [{ id: "opencode", label: "opencode（演示）" }] as { id: string; label: string }[],
   // R26（§6.4）：每会话最近一条状态事件（session_state_feed 轮询面；真实核心走
   // session-state 事件通道——C1 connection-event/demo 轮询双路的同款镜像）
   stateEvents: new Map<string, SessionStateEvent>(),
@@ -99,6 +107,7 @@ const demoState = {
       state: "Connected", control_owner: "Agent", created_at: "2026-09-27T13:50:00Z",
       host_snapshot: { name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI", charset: "utf-8" },
       goal: "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
+      ever_agent_owned: true,
       transitions: [{ ts: "2026-09-27T14:02:11Z", what: "人类接管（交接前未开始的请求全部作废）" }],
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
       handlers: [] as Handler[],
@@ -110,6 +119,7 @@ const demoState = {
       state: "Disconnected", control_owner: "Agent", created_at: "2026-09-27T13:40:00Z",
       host_snapshot: { name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password", fingerprint: null, charset: "utf-8" },
       goal: null,
+      ever_agent_owned: true,
       transitions: [],
       out: "ops@staging-1:~$ ",
       handlers: [] as Handler[],
@@ -126,6 +136,7 @@ const demoState = {
       edited_command: null,
       status: "pending",
       editable: true,
+      target_summary: "删除文件/目录",
       segment_report: [
         { segment: "rm -rf /tmp/old-build", verdict: "pending: 未命中任何允许规则" },
         { segment: "tar czf /tmp/build.tgz dist/", verdict: "pending: 未命中任何允许规则" },
@@ -139,6 +150,7 @@ const demoState = {
       edited_command: null,
       status: "pending",
       editable: true,
+      target_summary: "容器操作",
       segment_report: [
         { segment: "docker system prune -f", verdict: "pending: 未命中任何允许规则" },
       ],
@@ -152,6 +164,7 @@ const demoState = {
       edited_command: null,
       status: "voided",
       editable: true,
+      target_summary: "服务管理",
       segment_report: [],
     },
   ] as DemoApproval[],
@@ -172,6 +185,16 @@ const demoState = {
 };
 
 const encoder = new TextEncoder();
+
+// R42（§6.7 首条）：`?fresh` 复现「新装未启用协作」——无已登记 Agent、无待审批；预置
+// 会话改为人类持有（否则 demo 预置的 Agent 会话让「有实际活动」恒真，新装态不可达）。
+// 仅浏览器演示域：真实新装态由原生冒烟覆盖（零 Agent 的 vault + 人类建会话）。
+if (typeof location !== "undefined" && location.search.includes("fresh")) {
+  demoState.agents = [];
+  demoState.approvals = [];
+  demoState.owner = "Human";
+  for (const s of demoState.sessions) { s.control_owner = "Human"; s.ever_agent_owned = false; s.goal = null; }
+}
 
 // C10：live 帧格式 = <u64 LE seq（8 字节头）><原始字节>（与桥层一致，UI 剥头取 seq）
 function frameBytes(seq: number, data: Uint8Array): Uint8Array {
@@ -331,7 +354,15 @@ function audit(
 export async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
     case "mcp_status":
-      return { endpoint: "http://127.0.0.1:8722/mcp（演示模式）", agents: [{ id: "opencode", label: "opencode（演示）" }] };
+      return { endpoint: "http://127.0.0.1:8722/mcp（演示模式）", agents: demoState.agents };
+    // R42（§6.7）：签发 Token（仅展示一次）。登记 Agent 是「启用协作」的既有动作，
+    // 但**不转移**任何会话的控制权（D11）——owner/ever_agent_owned 都不变。
+    case "issue_agent": {
+      const id = args?.id as string;
+      const label = args?.label as string;
+      if (!demoState.agents.some((a) => a.id === id)) demoState.agents.push({ id, label });
+      return "demo-token-" + id;
+    }
     case "bench_mode":
       return false;
     // 三个 list 必须返回新副本：真实后端每次 invoke 都是全新反序列化对象，
@@ -346,6 +377,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         state: s.state, control_owner: s.control_owner, created_at: s.created_at,
         // C3（R24）：demo 不做 shell 集成注入，恒 Disabled（真实侧 Ready≠集成就绪）
         integration: "Disabled",
+        // R42（§6.7）：曾被 Agent 持有——与真实 SessionHandle.ever_agent_owned 对齐
+        ever_agent_owned: s.ever_agent_owned,
       }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[] };
@@ -541,7 +574,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+      // C2（B01/R24）：人类新建会话**默认由 Human 控制**（构造期定 owner）。demo 此前
+      // 一律 Agent-owned——那会让「首次委托」在演示域永不出现（R42 对齐真实核心修正）。
+      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
       audit("human", "session_created", null, null, sid);
       // C8 镜像：成功建连打点（真实核心 touch_host_connection 同语义）
       {
@@ -748,7 +783,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return null;
     }
     case "list_approvals":
-      return demoState.approvals.map((a) => ({ ...a, segment_report: a.segment_report.map((s) => ({ ...s })) }));
+      // R42（§6.7）「可用目的」按会话**当前**目标投影（真实 list_approvals 同款）：
+      // 请求之后补写的目标，复核时也看得到；无目标即缺失。
+      return demoState.approvals.map((a) => ({
+        ...a,
+        segment_report: a.segment_report.map((s) => ({ ...s })),
+        purpose: demoState.sessions.find((x) => x.id === a.session_id)?.goal ?? null,
+      }));
     case "decide_approval": {
       const id = args?.id as string;
       const it = demoState.approvals.find((a) => a.id === id);
@@ -775,6 +816,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const owner = args?.owner as "Human" | "Agent";
       const s = demoState.sessions.find((x) => x.id === sid);
       if (s) s.control_owner = owner;   // 焦点会话的「控制权」chip 随之翻转
+      // R42（§6.7）：控制权到过 Agent 即永久留下「曾被持有」印记（接管不抹历史）
+      if (s && owner === "Agent") s.ever_agent_owned = true;
       demoState.owner = owner;
       const stopping = args?.stopRunning === true;
       // 与真实 set_control 的 note_transition 对齐（文案逐字同 core-session）
@@ -808,6 +851,34 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         stopped: stopping ? [["x-demo-1f", { Exited: 0 }]] : [],
         brief: {},
       };
+    }
+    // R42（§6.7）：首次委托/交还的**受控转换**（Human-only）——镜像真实
+    // delegate_session：内部走 handback（owner 翻 Agent），goal 可选且 **None 时
+    // 保留既有目标**（与 set_session_goal 的 None=清除不同），审计 session_delegated
+    // 只记 goal_present（目标文本不进审计载荷）。
+    case "delegate_session": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.control_owner === "Agent") throw apiError("invalid_input", "已移交会话不得二次移交（演示）");
+      s.control_owner = "Agent";
+      demoState.owner = "Agent";
+      s.ever_agent_owned = true;
+      const raw = args?.goal as string | null | undefined;
+      const g = typeof raw === "string" ? raw.trim() : "";
+      if (g) s.goal = g;
+      s.transitions.push({ ts: new Date().toISOString(), what: "人类交还（Agent 先读简报，再重新决定动作）" });
+      audit("human", "session_delegated", null, null, sid, { goal_present: !!g });
+      pushTo(sid, "\r\n▶ 控制权 → Agent（请先读取现场简报再决定后续动作）\r\n");
+      return null;
+    }
+    case "shell_capability": {
+      // 真实侧只读查询会话的 shell 集成态；demo 不做注入 → 恒「未就绪」，
+      // 首次委托对话框据此如实告知「委托后 Agent 只能走 exec 模式」。
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      const h = s ? demoState.hosts.find((x) => x.id === s.host_id) : null;
+      const hostSetting = (h as { shell_integration?: boolean } | null | undefined)?.shell_integration !== false;
+      return { integration_present: false, prompt_ready: false, host_setting: hostSetting };
     }
     case "exec_human": {
       const sid = args?.sid as string;
@@ -876,7 +947,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
           // 与 create_session 同构建会话（同步快路径）
           const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
           {
             const m = demoState.hostMeta.get(h.id) ?? { favorite: false, last_connected_at: null };
             m.last_connected_at = new Date().toISOString();
@@ -1149,6 +1220,21 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       // forward_listen_failed{field:"listen"}——§6.6「端口冲突关联到对应字段」的 demo 可达面
       demoState.forwardConflictPorts = new Set(((args?.ports as number[] | undefined) ?? []).map((x) => Number(x)));
       return null;
+    }
+    case "demo_inject_approval": {
+      // R42 判别钩子：为指定会话注入一张**待审批**卡（真实面由 Agent 经 MCP 发起；demo 无
+      // 真实 Agent 通道）。用于验证「跨会话按主机+会话分组」——多会话并存时不得只展示当前主机。
+      const sid = String(args?.sid ?? "");
+      if (!demoState.sessions.some((x) => x.id === sid)) throw apiError("session_not_found", "会话不存在（演示注入）");
+      const id = "a-demo-inj-" + Math.random().toString(36).slice(2, 8);
+      demoState.approvals.unshift({
+        id, session_id: sid, agent_id: String(args?.agent_id ?? "opencode"),
+        command: String(args?.command ?? "systemctl restart nginx"),
+        edited_command: null, status: "pending", editable: args?.editable !== false,
+        target_summary: String(args?.target_summary ?? "服务管理"),
+        segment_report: [{ segment: String(args?.command ?? "systemctl restart nginx"), verdict: "pending: 未命中任何允许规则" }],
+      });
+      return id;
     }
     case "demo_drag_drop": {
       const paths = (args?.paths as string[]) ?? [];

@@ -91,6 +91,10 @@ pub struct SessionHandle {
     /// 任务目标/交接留言（R9：人类写给 Agent；随会话存亡，经 SessionBrief.goal 暴露）。
     pub goal: StdMutex<Option<String>>,
 
+    /// R42（§6.7）：该会话是否曾被 Agent 持有控制权。构造期按 owner 定初值，
+    /// `handback` 置真。UI 据此把「首次委托」与「曾被接管后交还」的入口措辞分开。
+    pub ever_agent_owned: AtomicBool,
+
     // ---- C10 输出订阅（R11）----
     /// 字节事件序号（每 session 单调递增；仅在 pump 持 screen 锁的临界区内推进，
     /// 与屏幕状态线性化一致）。
@@ -180,6 +184,7 @@ impl SessionHandle {
             xfer_gate_session: Arc::new(tokio::sync::Semaphore::new(TRANSFER_PER_SESSION)),
             send_keys_auth: StdMutex::new(HashSet::new()),
             goal: StdMutex::new(None),
+            ever_agent_owned: AtomicBool::new(matches!(owner, ControlOwner::Agent)),
             output_seq: AtomicU64::new(0),
             last_ckpt_seq: AtomicU64::new(0),
             replay: StdMutex::new(ReplayRing::default()),
@@ -636,6 +641,8 @@ impl SessionHandle {
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
             attempt_id: None,
+            // R42（§6.7）：请求发起时的「可用目的」快照（读取路径会再按当前目标投影刷新）。
+            purpose: self.goal.lock().unwrap().clone(),
         };
         let gen_at_entry = self.generation.load(Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
@@ -882,6 +889,8 @@ impl SessionHandle {
             }
             *owner = ControlOwner::Agent;
         }
+        // R42（§6.7）：控制权一旦到过 Agent，此后 Human-owned 的入口措辞即「交还 Agent」。
+        self.ever_agent_owned.store(true, Ordering::SeqCst);
         self.note_transition("人类交还（Agent 先读简报，再重新决定动作）").await;
         let brief = self.gen_brief().await;
         let _ = self.center.audit.append(&Actor::Human, "handback", Some(&self.id), None, serde_json::json!({}), None);

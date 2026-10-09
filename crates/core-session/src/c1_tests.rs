@@ -399,6 +399,7 @@ async fn cancel_events_carry_terminal_phase_only() {
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
             attempt_id: Some(aid.clone()),
+            purpose: None,
         };
         m.center.items.lock().unwrap().insert("ap-t1".into(), item);
         m.center.decisions.lock().unwrap().insert("ap-t1".into(), tx);

@@ -1,0 +1,28 @@
+# R42 红侧变异（判别力）记录
+
+目的：证明 `r42-demo-probe.js` 不是恒绿——对每个关键机制做临时「改错」，确认探针转红，再 Edit 反向还原（**不使用 cp 整文件写回**，避免吞掉并行修复）。
+
+每项流程：Edit 改错 → 跑探针 → 确认目标断言 FAIL → Edit 反向还原 → 复跑确认回到 38/38。
+
+| 编号 | 变异点 | 文件 | 变异 | 探针结果 | 被捕获的断言 |
+|---|---|---|---|---|---|
+| RED-K1 | 审批分组退化为单组（只按常量键分组） | `ui/src/App.tsx` `approvalGroups` | `bySid.get/set(a.session_id)` → `"ALL"` | 35/37 | B2（组数=1）、B3（分组头只剩一组） |
+| RED-K2 | 「可用目的」缺失时留白（不显示缺失文案） | `ui/src/App.tsx` 目的行 | 缺失分支 `<span>未提供…</span>` → `null` | 36/37 | B6（无缺失态） |
+| RED-K4 | 接管不作废旧请求 | `ui/src/demo.ts` `set_control` | 作废块 `if (voidedCount>0)` → `if (false && …)` | 35/37 | D4（待审批未清零）、D5（无作废留痕） |
+| RED-K5 | 新装仍渲染空审批区（去掉一次性引导门） | `ui/src/App.tsx` 协作面板门 | `!collabConfigured && !collabActive` → `false` | 35/37 | G2（无引导）、G3（出现空审批区） |
+| RED-K6 | 完整视图下长命令仍省略号 | `ui/src/styles.css` tp-full 覆盖 | `white-space:normal/…clip` → `nowrap/…ellipsis` | 36/37 | E2（nowrap + ellipsis） |
+
+备注：RED-K5 下 G4/G5 仍绿——任务目标栏与委托入口另按 `collabConfigured` 独立设门（纵深防御），故单点变异不必然同时击穿，属预期。
+
+还原核对：五项变异均已 Edit 反向改回，复跑探针 38/38（见 `r42-demo-probe.js` 对 :5183 的实跑）。
+
+## 核心层红侧（`crates/core-session/src/r42_tests.rs`）
+
+目的：证明新增 `r42_purpose_is_none_when_session_gone` 不是恒绿——对「目的投影」读取路径做临时「改回创建期快照」，确认该测试转红，再 Edit 反向还原（**不使用 cp 整文件写回**）。
+
+| 编号 | 变异点 | 文件 | 变异 | 结果 | 被捕获的断言 |
+|---|---|---|---|---|---|
+| RED-K7 | 「可用目的」读取退化为创建期快照（会话消失仍拿旧快照冒充当前意图） | `crates/core-session/src/lib.rs` `list_approvals` | `out.purpose = goals.get(&it.session_id).cloned().flatten();` → `if let Some(g) = goals.get(&it.session_id) { out.purpose = g.clone(); }` | 仅 `r42_purpose_is_none_when_session_gone` FAIL（其余 r42 测试仍绿） | 该测试末段「会话已不在列表时不得保留旧快照冒充当前意图」 |
+
+还原核对：RED-K7 已 Edit 反向改回，`cargo test -p core-session` 复跑全绿（98 + 4 + 13 + 4）。
+

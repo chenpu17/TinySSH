@@ -120,6 +120,12 @@ export interface SessionInfo {
   created_at: string;
   /** C3（R24）：shell 集成态——Ready≠集成就绪，独立字段。 */
   integration: IntegrationState;
+  /**
+   * R42（§6.7）该会话是否**曾被 Agent 持有**过控制权（人类建会话恒 false）。
+   * UI 据此把入口措辞分开：「首次委托」用「交给 Agent」，曾被接管后用「交还 Agent」。
+   * 缺省（旧后端）按 false 处理——保守侧，即当作首次委托。
+   */
+  ever_agent_owned?: boolean;
 }
 
 /**
@@ -256,6 +262,19 @@ export interface ApprovalItem {
   editable: boolean;
   created_at: string;
   status: ApprovalStatus;
+  /**
+   * R42（§6.7）**可用目的**：该会话当前的委托目标（人类写给 Agent 的任务留言），
+   * 作为审批时的意图上下文。`null`/缺省 = 无法获知目的——UI 必须**明确显示缺失**，
+   * 不得留白让人误读为「无风险」。
+   */
+  purpose?: string | null;
+}
+
+/** C3（R24）：shell 能力只读查询（R42 首次委托对话框在转交前如实告知限制）。 */
+export interface ShellCapability {
+  integration_present: boolean;
+  prompt_ready: boolean;
+  host_setting: boolean;
 }
 
 export interface PendingHostKey {

@@ -81,6 +81,10 @@ interface CmdArgs {
   send_keys: { sid: string; keys: string };
   exec_human: { sid: string; command: string };
   set_control: { sid: string; owner: wire.ControlOwner; stopRunning?: boolean };
+  // R42（§6.7）：首次委托/交还的**受控转换**（Human-only）。goal 可选——None 时
+  // 核心保留既有目标（与 set_session_goal 的 None=清除不同），故不得省略该参数语义。
+  delegate_session: { sid: string; goal?: string | null };
+  shell_capability: { sid: string };
   session_brief: { sid: string };
   set_session_goal: { sid: string; goal: string | null };
   list_approvals: { pendingOnly: boolean };
@@ -160,6 +164,8 @@ interface CmdRet {
   send_keys: void;
   exec_human: wire.ExecResult;
   set_control: wire.TakeoverReport;
+  delegate_session: void;
+  shell_capability: wire.ShellCapability;
   session_brief: wire.SessionBrief;
   set_session_goal: void;
   list_approvals: wire.ApprovalItem[];

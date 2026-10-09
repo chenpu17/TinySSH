@@ -12,7 +12,7 @@ import type {
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
-  TransferTask, CollisionDecision, SessionDetail,
+  TransferTask, CollisionDecision, SessionDetail, ShellCapability,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -61,6 +61,13 @@ const normApprovalStatus = (s: string): string =>
   s.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
 // 审批行入库后 status 已归一为小写——状态集合用 string（wire 的 ApprovalStatus 仅在桥边界）
 type ApprovalRow = Omit<ApprovalItem, "status"> & { status: string };
+// R42（§6.6/S11）：设置对话框的分类（单实例，左分类 + 右内容）
+type SettingsCat = "appearance" | "terminal" | "credentials" | "agent" | "about";
+const SETTINGS_CATS: [SettingsCat, string][] = [
+  ["appearance", "外观"], ["terminal", "终端"], ["credentials", "凭据"],
+  ["agent", "Agent 接入"], ["about", "关于"],
+];
+const settingsCatLabel = (c: SettingsCat): string => SETTINGS_CATS.find(([id]) => id === c)?.[1] ?? c;
 // 最近处理（已决审批）六态标签：编辑后批准/超时/作废此前都被误显示成「✕ 拒绝」。
 const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
   approved: { text: "✓ 批准", cls: "ok" },
@@ -601,7 +608,7 @@ export default function App() {
   // 它**连接时**的身份——故累积 sid→主机名 的留痕表，只增不删；查不到时如实显示短 id。
   const [sessionIdent, setSessionIdent] = useState<Map<string, string>>(() => new Map());
   // R41（§6.6/S11）设置：左侧分类 + 右侧内容单对话框；凭据类目下的新建/删除**显式提交**
-  const [settingsCat, setSettingsCat] = useState<"appearance" | "terminal" | "credentials" | "about">("appearance");
+  const [settingsCat, setSettingsCat] = useState<SettingsCat>("appearance");
   const [credNewOpen, setCredNewOpen] = useState(false);
   const [credLabel, setCredLabel] = useState("");
   const [credPem, setCredPem] = useState("");
@@ -610,7 +617,7 @@ export default function App() {
   const [credNewErr, setCredNewErr] = useState<string | null>(null);
   const [credNewOk, setCredNewOk] = useState<IdentityMeta | null>(null);
   // §231「切分类遇未提交敏感表单时先处理草稿」：待切换的目标分类（非空即弹草稿确认）
-  const [credDraftTo, setCredDraftTo] = useState<null | "appearance" | "terminal" | "about">(null);
+  const [credDraftTo, setCredDraftTo] = useState<SettingsCat | null>(null);
   // Toast（精致化 §六/P3）：右下角轻通知，2.6s 自动消失；最多同屏 4 条
   const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string }[]>([]);
   const toastSeq = useRef(0);
@@ -636,6 +643,7 @@ export default function App() {
   // R41（§6.6/S09）：连接详情对话框（独立可关闭，焦点陷阱同其它对话框）
   const detailPanelRef = useRef<HTMLDivElement | null>(null);
   const closeConfirmRef = useRef<HTMLDivElement | null>(null);
+  const delegateDlgRef = useRef<HTMLDivElement | null>(null);
   const quitConfirmRef = useRef<HTMLDivElement | null>(null);
   const delHostRef = useRef<HTMLDivElement | null>(null);
   const delIdentRef = useRef<HTMLDivElement | null>(null);
@@ -882,12 +890,20 @@ export default function App() {
   }, []);
 
   // §231：凭据类目下若有未提交的敏感草稿，切分类前先让用户处置（丢弃 / 留下）
-  const switchSettingsCat = useCallback((next: "appearance" | "terminal" | "credentials" | "about") => {
+  const switchSettingsCat = useCallback((next: SettingsCat) => {
     if (next === "credentials") { setCredDraftTo(null); setSettingsCat(next); return; }
     const dirty = credPem.trim() !== "" || credPass.trim() !== "";
     if (settingsCat === "credentials" && dirty) { setCredDraftTo(next); return; }
     setCredDraftTo(null); setSettingsCat(next);
   }, [settingsCat, credPem, credPass]);
+
+  // R42（§6.7）：从协作视图/首次委托对话框引导到「设置 → Agent 接入」——复用同一设置
+  // 实例（§231「不叠加多个窗口」），并在返回后由用户**单独确认**转交。
+  const openSettingsAt = useCallback((cat: SettingsCat) => {
+    setCredDraftTo(null);
+    setSettingsCat(cat);
+    setShowSettings(true);
+  }, []);
 
   const discardCredDraft = useCallback(() => {
     // 丢弃草稿 = 清空前端敏感字段（凭据库里没有半成品，取消不落库）
@@ -1704,6 +1720,7 @@ export default function App() {
   const closeTopOverlayRef = useRef<() => boolean>(() => false);
   closeTopOverlayRef.current = (): boolean => {
     if (quitSummary) { setQuitSummary(null); return true; }
+    if (delegateDlg) { closeDelegate(); return true; }
     const ap = authPromptQueue[0];
     if (ap) { void answerAuthPrompt(ap.id, ""); return true; }
     const hk = hostKeyQueue[0];
@@ -2040,6 +2057,9 @@ export default function App() {
   }, [confirm]);
   // R23（§6.4 退出应用）：主窗口关闭=请求退出 → 汇总确认；「结束会话并退出」关全部会话后退出
   const [quitSummary, setQuitSummary] = useState<{ sessions: SessionInfo[]; forwards: number } | null>(null);
+  // R42（§6.7）首次委托/交还对话框的开合（其余状态与处理函数见委托段；此处仅为
+  // 让下方 useDialogFocus 的 hook 序先于其处理函数声明而恒定）
+  const [delegateDlg, setDelegateDlg] = useState(false);
   // §7.4 弹窗 focus trap（调用须在全部相关 state 声明之后；hook 序恒定）
   useDialogFocus(showSettings, settingsPanelRef);
   // R41 视觉复验 M2：草稿确认框消解时（「留下继续编辑」/「丢弃草稿并切换」）被点的按钮
@@ -2056,6 +2076,7 @@ export default function App() {
   }, [credDraftTo, showSettings]);
   useDialogFocus(!!detail || !!detailErr, detailPanelRef);
   useDialogFocus(confirm?.kind === "closeSession", closeConfirmRef);
+  useDialogFocus(delegateDlg, delegateDlgRef);
   useDialogFocus(!!quitSummary, quitConfirmRef);
   useDialogFocus(confirm?.kind === "deleteHost", delHostRef);
   useDialogFocus(confirm?.kind === "deleteIdentity", delIdentRef);
@@ -3093,13 +3114,39 @@ export default function App() {
       await refreshLists();
     } catch (e) { pushToast("err", friendlyError(e)); }
   };
-  const handback = async () => {
-    if (!sid) return;
+  // R42（§6.7）首次委托 / 交还：**显式提交**的同一个受控转换（核心 delegate_session）。
+  // 取消对话框不改动控制权；核心成功返回才切 Agent-owned；任务目标可选（留空**不清除**
+  // 既有目标——与「任务目标」栏的清除语义不同）。服务未启用时先引导设置接入，返回后
+  // 仍须在此单独确认转交（不自动提交）。
+  const [delegateGoal, setDelegateGoal] = useState("");
+  const [delegateCap, setDelegateCap] = useState<ShellCapability | null>(null);
+  const [delegateBusy, setDelegateBusy] = useState(false);
+  const [delegateErr, setDelegateErr] = useState<string | null>(null);
+  const openDelegate = () => {
+    setDelegateGoal(brief?.goal ?? "");
+    setDelegateErr(null);
+    setDelegateCap(null);
+    setDelegateDlg(true);
+    if (sid) invoke("shell_capability", { sid }).then(setDelegateCap).catch(() => setDelegateCap(null));
+  };
+  const closeDelegate = () => {
+    setDelegateDlg(false); setDelegateGoal(""); setDelegateErr(null); setDelegateBusy(false);
+  };
+  const submitDelegate = async () => {
+    if (!sid || delegateBusy || !collabConfigured) return;
+    setDelegateBusy(true); setDelegateErr(null);
     try {
-      await invoke("set_control", { sid, owner: "Agent" });
+      const g = delegateGoal.trim();
+      await invoke("delegate_session", { sid, goal: g ? g : null });
+      const wasAgent = !!current?.ever_agent_owned;
+      closeDelegate();
       await refreshLists();
-      pushToast("info", "已交还 Agent——后续操作请求走审批");
-    } catch (e) { pushToast("err", friendlyError(e)); }
+      void refreshBrief(sid);
+      pushToast("info", wasAgent ? "已交还 Agent——后续操作请求走审批" : "已交给 Agent——后续操作请求走审批");
+    } catch (e) {
+      setDelegateErr(friendlyError(e));
+      setDelegateBusy(false);
+    }
   };
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -3139,6 +3186,22 @@ export default function App() {
   const pendingCount = pendingApprovals.length;
   // 已处理的审批不再整卡展示，折叠为最近几条一行记录
   const resolvedApprovals = approvals.filter((a) => a.status !== "pending").slice(-3).reverse();
+  // R42（§3.2/§6.7）：协作入口的两种触发——「有协作配置」常显入口；
+  // 「有实际待审批或 Agent 控制活动」必须显示提醒（不因面板开关/入口偏好而隐藏）。
+  const collabConfigured = hasAgents;
+  const collabActive = pendingCount > 0 || sessions.some((s) => s.control_owner === "Agent");
+  // §3.2：跨会话审批按「主机 + 会话」明确分组——绝不只展示「当前主机」而误批其他会话。
+  const approvalGroups = (() => {
+    const bySid = new Map<string, { sess?: SessionInfo; items: ApprovalRow[] }>();
+    for (const a of pendingApprovals) {
+      let g = bySid.get(a.session_id);
+      if (!g) { g = { sess: sessions.find((x) => x.id === a.session_id), items: [] }; bySid.set(a.session_id, g); }
+      g.items.push(a);
+    }
+    return [...bySid.entries()]
+      .map(([sidKey, g]) => ({ sid: sidKey, sess: g.sess, items: g.items }))
+      .sort((x, y) => (x.sess?.host_name ?? "￿").localeCompare(y.sess?.host_name ?? "￿", "zh") || x.sid.localeCompare(y.sid));
+  })();
 
   const currentHost = current ? hosts.find((h) => h.id === current.host_id) : undefined;
   const sbLeft = current
@@ -3169,11 +3232,14 @@ export default function App() {
               <IconChevronLeft size={15} />
             </button>
           )}
-          {pendingCount > 0 && (
-            <button className={"collab-badge" + (rightPanel === "collab" ? " ts-open" : "")}
-              title={`有 ${pendingCount} 个待审批请求——跨会话操作请逐条核对目标主机`}
+          {(collabConfigured || collabActive) && (
+            <button className={"collab-badge" + (rightPanel === "collab" ? " ts-open" : "") + (collabActive ? " hot" : "")}
+              data-testid="collab-entry"
+              title={collabActive
+                ? `${pendingCount > 0 ? `有 ${pendingCount} 个待审批请求` : "Agent 正在控制会话"}——跨会话操作请逐条核对目标主机`
+                : "协作：审批、任务目标与现场简报"}
               onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
-              协作 · {pendingCount} 待审批
+              协作{pendingCount > 0 ? ` · ${pendingCount} 待审批` : collabActive ? " · Agent 活动中" : ""}
             </button>
           )}
         </div>
@@ -3551,6 +3617,63 @@ export default function App() {
             <button className="ghost" onClick={() => setStopResult(null)}>知道了</button>
           </div>
         )}
+        {/* R42（§6.7）首次委托 / 交还对话框：主机、会话、能力、现有授权范围 → 明确提交。
+            「现有授权范围」只陈述核心能保证的（逐条审批 + 控制权是角色），不承诺某一
+            Agent 独占。服务未启用时提交钮禁用并引导设置接入，返回后仍须单独确认。 */}
+        {delegateDlg && current && (
+          <div className="confirm-mask" onClick={closeDelegate}>
+            <div className="confirm-dialog delegate-dlg" role="dialog" aria-modal="true"
+              ref={delegateDlgRef}
+              aria-labelledby="dlg-delegate-title" data-testid="delegate-dlg" onClick={(e) => e.stopPropagation()}>
+              <div className="hk-title" id="dlg-delegate-title">
+                {current.ever_agent_owned ? `交还 ${current.host_name} 给 Agent？` : `把 ${current.host_name} 交给 Agent？`}
+              </div>
+              <div className="dim" style={{ fontSize: 12 }}>
+                Agent 持有控制权期间，它的每个操作仍逐条经你审批；你随时可以接管（接管会作废尚未开始的请求）。
+              </div>
+              <div className="dlg-facts">
+                <div className="fact"><span className="dim">主机</span> <b>{current.host_name}</b>{" "}
+                  <span className="mono dim">{currentHost?.address && currentHost.address !== "local" ? `${currentHost.address}:${currentHost.port}` : "本机"}</span></div>
+                <div className="fact"><span className="dim">会话</span> <span className="mono">{current.id.slice(0, 12)}</span>{" "}
+                  <span className={"mono " + stateLabel(current.state).cls} style={{ fontSize: 11 }}>{stateLabel(current.state).text}</span></div>
+                <div className="fact"><span className="dim">能力</span>{" "}
+                  {delegateCap === null ? <span className="dim">查询中…</span>
+                    : delegateCap.integration_present && delegateCap.prompt_ready
+                      ? <span>持久 Shell 可用——Agent 可在当前目录与环境执行</span>
+                      : <span className="warn">无持久 Shell——委托后 Agent 只能走 exec 模式（不继承当前目录/环境）</span>}</div>
+                <div className="fact"><span className="dim">现有授权范围</span>{" "}
+                  {collabConfigured
+                    ? <span>已接入 {mcp.agents.map((a) => a.label).join("、")}；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）</span>
+                    : <span className="warn">尚未登记任何 Agent</span>}</div>
+              </div>
+              <div className="ts-label" style={{ marginTop: 10 }}>任务目标（可选）</div>
+              <textarea className="goal-input" rows={2} value={delegateGoal}
+                aria-label="任务目标（可选）"
+                placeholder="写给 Agent 的委托留言，例：把日志打包放到 /tmp 后交还给我"
+                onChange={(e) => setDelegateGoal(e.target.value)} />
+              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                留空也可以转交；留空不会清除会话上已有的目标。
+              </div>
+              {delegateErr && <div className="err" style={{ marginTop: 6, fontSize: 12 }} data-testid="delegate-err">✕ {delegateErr}</div>}
+              {!collabConfigured && (
+                <div className="side-quiet" data-testid="delegate-unconfigured">
+                  协作服务未启用——先到「设置 → Agent 接入」登记 Agent。返回后仍需在此单独确认转交。
+                  <div style={{ marginTop: 6 }}>
+                    <button className="ghost" data-testid="delegate-open-settings"
+                      onClick={() => { closeDelegate(); openSettingsAt("agent"); }}>打开设置 → Agent 接入</button>
+                  </div>
+                </div>
+              )}
+              <div className="hk-actions">
+                <button data-testid="delegate-submit" disabled={!collabConfigured || delegateBusy}
+                  onClick={() => void submitDelegate()}>
+                  {delegateBusy ? "提交中…" : current.ever_agent_owned ? "交还 Agent" : "交给 Agent"}
+                </button>
+                <button className="ghost" data-autofocus onClick={closeDelegate}>取消</button>
+              </div>
+            </div>
+          </div>
+        )}
         {confirm?.kind === "closeSession" && (
           <div className="confirm-mask" onClick={() => setConfirm(null)}>
             <div className="confirm-dialog" ref={closeConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-close-title" onClick={(e) => e.stopPropagation()}>
@@ -3640,12 +3763,15 @@ export default function App() {
                 >接管并停止任务</button>
               </>
             )}
-            {sid && hasAgents && owner === "Human" && (
+            {sid && collabConfigured && owner === "Human" && (
               <button
                 className="ghost"
-                title="交还会话：Agent 恢复操作（后续请求重新走审批）。已作废的请求不会自动重发——Agent 会收到作废通知，由它决定是否重新提交"
-                onClick={handback}
-              >交还 Agent</button>
+                data-testid="delegate-open"
+                title={current?.ever_agent_owned
+                  ? "交还会话：Agent 恢复操作（后续请求重新走审批）。已作废的请求不会自动重发——Agent 会收到作废通知，由它决定是否重新提交"
+                  : "首次委托：把会话交给 Agent 执行。需在对话框中查看主机/会话/能力与现有授权范围后明确提交；取消不改动控制权"}
+                onClick={() => openDelegate()}
+              >{current?.ever_agent_owned ? "交还 Agent" : "交给 Agent…"}</button>
             )}
             {sid && (
               <button
@@ -3667,6 +3793,13 @@ export default function App() {
               }}
             ><IconSplit size={15} /></button>
             <button
+              className={"ghost st-collab" + (rightPanel === "collab" ? " ts-open" : "")}
+              data-testid="tools-collab"
+              aria-pressed={rightPanel === "collab"}
+              title="协作：审批、任务目标与现场简报（有 Agent 活动时必须可达）"
+              onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}
+            ><IconInbox size={14} />协作</button>
+            <button
               className={"st-file" + (rightPanel === "files" ? " ts-open" : "")}
               aria-pressed={rightPanel === "files"}
               title="文件：远程目录浏览与传输"
@@ -3677,7 +3810,8 @@ export default function App() {
                 onClick={() => setToolsOpen(!toolsOpen)}>工具<IconChevronDown size={12} /></button>
               {toolsOpen && (
                 <div className="tools-menu" role="menu">
-                  <button role="menuitem" onClick={() => { setRightPanel("collab"); setToolsOpen(false); }}>审批与记录</button>
+                  {/* §3.2：「连接工具」菜单只放连接详情、端口转发、活动记录、关闭会话；
+                      协作是会话工作区下的**同级**入口（见工具栏「协作」钮），不塞进本菜单 */}
                   <button role="menuitem" data-testid="tools-conn-detail" onClick={() => { setToolsOpen(false); openSessionDetail(current); }}>连接详情…</button>
                   <button role="menuitem" onClick={() => { setRightPanel("forwards"); setToolsOpen(false); }}>端口转发</button>
                   <button role="menuitem" data-testid="tools-activity" onClick={() => { setRightPanel("log"); setToolsOpen(false); }}>活动记录</button>
@@ -4048,7 +4182,7 @@ export default function App() {
                 {/* §231：单个对话框，左分类 + 右内容；外观/终端偏好即时预览，凭据显式提交 */}
                 <div className="settings-body">
                   <nav className="settings-nav" role="tablist" aria-label="设置分类">
-                    {([["appearance", "外观"], ["terminal", "终端"], ["credentials", "凭据"], ["about", "关于"]] as const).map(([id, label]) => (
+                    {SETTINGS_CATS.map(([id, label]) => (
                       <button key={id} role="tab" data-testid={`settings-cat-${id}`}
                         aria-selected={settingsCat === id} className={settingsCat === id ? "on" : ""}
                         onClick={() => switchSettingsCat(id)}>{label}</button>
@@ -4158,7 +4292,7 @@ export default function App() {
                 )}
                 {credDraftTo && (
                   <div className="cred-draft" data-testid="cred-draft">
-                    <div>凭据表单里还有未提交的私钥内容——切到「{credDraftTo === "appearance" ? "外观" : credDraftTo === "terminal" ? "终端" : "关于"}」会丢弃它。</div>
+                    <div>凭据表单里还有未提交的私钥内容——切到「{settingsCatLabel(credDraftTo)}」会丢弃它。</div>
                     <div className="row" style={{ marginTop: 6, gap: 6 }}>
                       <button data-testid="cred-draft-discard" onClick={discardCredDraft}>丢弃草稿并切换</button>
                       <button className="ghost" data-testid="cred-draft-keep" onClick={() => setCredDraftTo(null)}>留下继续编辑</button>
@@ -4204,6 +4338,51 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                </>)}
+
+                {settingsCat === "agent" && (<>
+                {/* R42（§5 迁移表/§6.7）：Agent 接入、端点、Token 从协作面板移入
+                    「设置 → Agent 接入」——新装未启用协作时主界面不再出现 MCP 配置。 */}
+                <div className="ts-label" style={{ marginTop: 0 }}>Agent 接入（MCP）</div>
+                <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                  MCP 端点随本应用自动运行。为 Agent 签发 Token 后，它的操作请求会进入协作面板逐条审批。
+                </div>
+                {mcp.agents.length > 0 ? (
+                  <div style={{ marginTop: 6 }} data-testid="agent-list">
+                    {mcp.agents.map((a) => (
+                      <div className="fact" key={a.id} data-testid="agent-row">
+                        <span className="s">{a.label}</span>
+                        {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="dim" style={{ fontSize: 12, marginTop: 6 }} data-testid="agent-empty">
+                    暂无 Agent 接入——按下方三步接入。
+                  </div>
+                )}
+                <div className="fact" style={{ marginTop: 6 }}>
+                  <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
+                  <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }} data-testid="agent-endpoint">{mcp.endpoint || "未启动"}</span>
+                </div>
+                <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
+                  {showAgentHelp ? "收起接入说明" : "接入新 Agent"}
+                </button>
+                {showAgentHelp && (
+                  <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
+                    <div>1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；</div>
+                    <div>2. 为 Agent 签发 Token（仅展示一次）：<code>tinyssh agent create &lt;id&gt; &lt;名称&gt;</code>；</div>
+                    <div>3. 在 Agent 的 MCP 配置里填入端点与 Token：</div>
+                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
+{`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
+Authorization: Bearer <TOKEN>`}
+                    </pre>
+                    <div>接入后，Agent 的操作请求会出现在协作面板的审批队列逐段裁决。</div>
+                  </div>
+                )}
+                <div className="side-quiet" style={{ marginTop: 8 }}>
+                  登记 Agent **不会**转移任何会话的控制权。要把某个会话交给 Agent，在会话工具栏或协作面板点「交给 Agent…」并明确确认。
+                </div>
                 </>)}
 
                 {settingsCat === "about" && (<>
@@ -4331,65 +4510,102 @@ export default function App() {
             </div>
             <div className="tp-scroll">
           {rightPanel === "collab" && (
+            !collabConfigured && !collabActive ? (
+              // §6.7：新装未启用协作时不出现空审批区——改为一次性引导（不渲染空壳表单）
+              <div className="empty" data-testid="collab-unconfigured">
+                <IconInbox size={14} />
+                <div>
+                  协作未启用。到「设置 → Agent 接入」登记 Agent 后，这里会显示审批、任务目标与现场简报。
+                  <div style={{ marginTop: 6 }}>
+                    <button className="ghost" data-testid="collab-open-settings"
+                      onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
+                  </div>
+                </div>
+              </div>
+            ) : (
             <>
           <div className="section">
-            <h4>审批</h4>
+            <h4>审批{pendingCount > 0 ? `（${pendingCount}）` : ""}</h4>
+            {/* §3.2：跨会话待办按主机与会话分组——绝不只展示「当前主机」而误批其他会话 */}
+            <div className="side-quiet">按目标主机与会话分组；跨会话操作请逐条核对来源。</div>
           </div>
-          {pendingApprovals.map((a) => {
-            const sess = sessions.find((x) => x.id === a.session_id);
-            const risk = approvalRisk(a);
-            return (
-              <div className="card" key={a.id}>
-                <div className="row">
-                  <span className="badge">Agent：{a.agent_id}</span>
-                </div>
-                {/* 目标上下文：多会话并存时 rm -rf 级裁决必须知道落在哪台机器 */}
-                <div className="dim" style={{ fontSize: 11, marginTop: 5 }} title={a.session_id}>
-                  目标：{sess ? <b style={{ color: "var(--text)" }}>{sess.host_name}</b> : "会话已不在列表"}
-                  <span className="mono"> · {a.session_id.slice(0, 12)}</span>
-                  {sess?.state === "Disconnected" && " · 会话已断开"}
-                </div>
-                <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
-                {a.segment_report.map((s, i) => (
-                  <div key={i} className="dim" style={{ fontSize: 11 }}>
-                    · {s.segment} — {s.verdict}
-                  </div>
-                ))}
-                {risk && confirmId !== a.id && (
-                  <div className="dim" style={{ fontSize: 11, marginTop: 6, color: "var(--warn)" }}>
-                    ⚠ {risk}——批准前请确认命令的全部效果。
-                  </div>
-                )}
-                {editingId === a.id ? (
-                  <div style={{ marginTop: 8 }}>
-                    <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
-                    <div className="row" style={{ marginTop: 6 }}>
-                      <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
-                      <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
-                    </div>
-                    <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
-                  </div>
-                ) : (
-                  <div className="row" style={{ marginTop: 8 }}>
-                    <button
-                      className={confirmId === a.id ? "warn" : undefined}
-                      title={risk ? "高危/未知安全性的请求：需二次确认" : undefined}
-                      onClick={() => {
-                        if (risk && confirmId !== a.id) { setConfirmId(a.id); return; }
-                        void decide(a.id, "approve", null);
-                      }}
-                    >{confirmId === a.id ? "再次点击确认批准" : "批准"}</button>
-                    {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
-                    {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>}
-                    <button className="danger" onClick={() => void decide(a.id, "deny", null)}>拒绝</button>
-                  </div>
-                )}
+          <div className="collab-approvals">
+          {approvalGroups.map((g) => (
+            <div className="ap-group" key={g.sid} data-testid="ap-group">
+              <div className="ap-group-head">
+                <b>{g.sess ? g.sess.host_name : "会话已不在列表"}</b>
+                <span className="mono dim" title={g.sid}> · {g.sid.slice(0, 12)}</span>
+                {g.sess && <span className={"mono " + stateLabel(g.sess.state).cls} style={{ fontSize: 10 }}>{stateLabel(g.sess.state).text}</span>}
+                <span className="badge agent">{g.items.length} 待处理</span>
               </div>
-            );
-          })}
+              {g.items.map((a) => {
+                const risk = approvalRisk(a);
+                return (
+                  <div className="card" key={a.id}>
+                    <div className="row">
+                      <span className="badge">Agent：{a.agent_id}</span>
+                      {/* 破坏性提示由核心算出（target_summary），UI 不自猜 */}
+                      {a.target_summary && <span className="tsum-chip" title="命令本身的破坏性提示（核心判定）">{a.target_summary}</span>}
+                    </div>
+                    {/* §6.7「可用目的」：会话当前委托目标的投影；无法获知时**明确缺失**，
+                        不得留白让人误读为「无风险」 */}
+                    <div className={"purpose-line" + (a.purpose ? "" : " missing")} data-testid="ap-purpose">
+                      <span className="dim">目的</span>{" "}
+                      {a.purpose ? <span>{a.purpose}</span> : <span className="dim">未提供（Agent 未收到委托说明）</span>}
+                    </div>
+                    {/* 目标上下文：多会话并存时 rm -rf 级裁决必须知道落在哪台机器 */}
+                    <div className="dim" style={{ fontSize: 11, marginTop: 5 }} title={a.session_id}>
+                      目标：{g.sess ? <b style={{ color: "var(--text)" }}>{g.sess.host_name}</b> : "会话已不在列表"}
+                      <span className="mono"> · {a.session_id.slice(0, 12)}</span>
+                      {g.sess?.state === "Disconnected" && " · 会话已断开"}
+                      {a.session_busy && " · 会话正在交互程序中"}
+                    </div>
+                    <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
+                    {a.segment_report.map((s, i) => (
+                      <div key={i} className="dim" style={{ fontSize: 11 }}>
+                        · {s.segment} — {s.verdict}
+                      </div>
+                    ))}
+                    {risk && confirmId !== a.id && (
+                      <div className="dim" style={{ fontSize: 11, marginTop: 6, color: "var(--warn)" }}>
+                        ⚠ {risk}——批准前请确认命令的全部效果。
+                      </div>
+                    )}
+                    {editingId === a.id ? (
+                      <div style={{ marginTop: 8 }}>
+                        <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
+                        <div className="row" style={{ marginTop: 6 }}>
+                          <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
+                          <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
+                        </div>
+                        <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
+                      </div>
+                    ) : (
+                      <div className="row" style={{ marginTop: 8 }}>
+                        <button
+                          className={confirmId === a.id ? "warn" : undefined}
+                          title={risk ? "高危/未知安全性的请求：需二次确认" : undefined}
+                          onClick={() => {
+                            if (risk && confirmId !== a.id) { setConfirmId(a.id); return; }
+                            void decide(a.id, "approve", null);
+                          }}
+                        >{confirmId === a.id ? "再次点击确认批准" : "批准"}</button>
+                        {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
+                        {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>}
+                        <button className="danger" onClick={() => void decide(a.id, "deny", null)}>拒绝</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          {pendingApprovals.length === 0 && (
+            <div className="empty"><IconInbox size={14} />暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
+          )}
           {resolvedApprovals.length > 0 && (
             <div className="side-quiet">
-              {pendingApprovals.length === 0 && <div className="side-sub">最近处理</div>}
+              <div className="side-sub">最近处理</div>
               {resolvedApprovals.map((a) => (
                 <div className="tl-row" key={a.id} title={a.edited_command || a.command}>
                   <div className="tl-action">
@@ -4403,11 +4619,10 @@ export default function App() {
               ))}
             </div>
           )}
-          {pendingApprovals.length === 0 && resolvedApprovals.length === 0 && (
-            <div className="empty"><IconInbox size={14} />暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
-          )}
+          </div>
 
             </>
+            )
           )}
           {rightPanel === "files" && (
             <>
@@ -4763,9 +4978,42 @@ export default function App() {
           )}
           {rightPanel === "collab" && (
             <>
+          {/* §6.7：委托是显式动作（首次委托对话框）。此处给入口与当前控制权事实；
+              MCP 配置已迁至「设置 → Agent 接入」（§5 迁移表），面板不再重复。 */}
+          <div className="section">
+            <h4>委托</h4>
+            {!sid ? (
+              <div className="side-quiet">连接会话后可委托给 Agent。</div>
+            ) : !collabConfigured ? (
+              <>
+                <div className="side-quiet">协作未启用，暂不能委托。先登记 Agent 接入。</div>
+                <button className="ghost" data-testid="collab-open-settings-delegate"
+                  onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
+              </>
+            ) : current?.control_owner === "Agent" ? (
+              <>
+                <div className="side-quiet">本会话控制权在 Agent。要收回请用会话工具栏的「接管」——接管会立即冻结并作废未开始的请求。</div>
+                {owner === "Human" && (
+                  <button className="ghost" data-testid="takeover-from-panel"
+                    onClick={() => void takeover()}>接管（仅冻结）</button>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="side-quiet">把控制权显式交给 Agent 后，它的操作请求才会进入上方审批队列。</div>
+                <button data-testid="delegate-open-panel" onClick={openDelegate}>
+                  {current?.ever_agent_owned ? "交还 Agent…" : "交给 Agent…"}
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* §6.7：任务目标仅在协作已启用且处于受控会话时呈现——人类普通 SSH 不展示空白委托表单 */}
           <div className="section">
             <h4>任务目标</h4>
-            {sid ? (
+            {!collabConfigured ? (
+              <div className="side-quiet">协作未启用。任务目标用于向 Agent 说明委托意图。</div>
+            ) : sid ? (
               <>
                 <textarea
                   ref={goalRef}
@@ -4795,38 +5043,6 @@ export default function App() {
             <h4>现场简报</h4>
             {brief ? <BriefCard brief={brief} /> : (
               <div className="empty"><IconTerminal size={14} />未接入会话。连接主机后显示当前目录与最近命令。</div>
-            )}
-          </div>
-
-          <div className="section">
-            <h4>Agent 接入（MCP）</h4>
-            {mcp.agents.map((a) => (
-              <div className="fact" key={a.id}>
-                <span className="s">{a.label}</span>
-                {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
-              </div>
-            ))}
-            <div className="fact">
-              <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
-              <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }}>{mcp.endpoint || "未启动"}</span>
-            </div>
-            <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
-              {showAgentHelp ? "收起接入说明" : "接入新 Agent"}
-            </button>
-            {showAgentHelp && (
-              <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
-                <div>1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；</div>
-                <div>2. 为 Agent 签发 Token（仅展示一次）：<code>tinyssh agent create &lt;id&gt; &lt;名称&gt;</code>；</div>
-                <div>3. 在 Agent 的 MCP 配置里填入端点与 Token：</div>
-                <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
-{`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
-Authorization: Bearer <TOKEN>`}
-                </pre>
-                <div>接入后，Agent 的操作请求会出现在右侧审批队列逐段裁决。</div>
-              </div>
-            )}
-            {!hasAgents && (
-              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>暂无 Agent 接入——点上方「接入新 Agent」查看三步接入。</div>
             )}
           </div>
             </>

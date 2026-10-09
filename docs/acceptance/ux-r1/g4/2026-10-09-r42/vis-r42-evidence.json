@@ -1,0 +1,310 @@
+[
+  {
+    "k": "A1 collab-entry 徽标",
+    "v": "true | text=协作 · 2 待审批 | cls=collab-badge hot | bg=rgb(150, 112, 10) color=rgb(234, 238, 242)"
+  },
+  {
+    "k": "A2 tools-collab 工具栏入口",
+    "v": true
+  },
+  {
+    "k": "A3 会话工具栏按钮",
+    "v": [
+      "接管",
+      "接管并停止任务",
+      "",
+      "",
+      "协作",
+      "文件",
+      "工具"
+    ]
+  },
+  {
+    "k": "B1 ap-group 组数",
+    "v": 2
+  },
+  {
+    "k": "B2 分组头",
+    "v": [
+      "prod-1 · s-demo-0001已连接2 待处理",
+      "staging-1 · s-demo-0002已断开1 待处理"
+    ]
+  },
+  {
+    "k": "B3 可用目的行",
+    "v": [
+      {
+        "text": "目的 把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
+        "cls": "purpose-line",
+        "color": "rgb(36, 46, 56)",
+        "missingSpanColor": "rgb(92, 104, 117)",
+        "w": 341
+      },
+      {
+        "text": "目的 把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
+        "cls": "purpose-line",
+        "color": "rgb(36, 46, 56)",
+        "missingSpanColor": "rgb(92, 104, 117)",
+        "w": 341
+      },
+      {
+        "text": "目的 未提供（Agent 未收到委托说明）",
+        "cls": "purpose-line missing",
+        "color": "rgb(150, 112, 10)",
+        "missingSpanColor": "rgb(92, 104, 117)",
+        "w": 341
+      }
+    ]
+  },
+  {
+    "k": "B4 破坏性提示 chip",
+    "v": [
+      "删除文件/目录",
+      "容器操作",
+      "服务管理"
+    ]
+  },
+  {
+    "k": "B5 缺失态「未提供」文本渲染盒",
+    "v": {
+      "textW": 23.28125,
+      "textH": 16,
+      "spanW": 23.28125,
+      "color": "rgb(92, 104, 117)",
+      "bg": "rgba(0, 0, 0, 0)"
+    }
+  },
+  {
+    "k": "C0 人类新建会话",
+    "v": "s-demo-0101"
+  },
+  {
+    "k": "C1 首次委托入口措辞",
+    "v": "交给 Agent…"
+  },
+  {
+    "k": "C2 对话框事实四项",
+    "v": [
+      "主机 本机 本机",
+      "会话 s-demo-0101 已连接",
+      "能力 无持久 Shell——委托后 Agent 只能走 exec 模式（不继承当前目录/环境）",
+      "现有授权范围 已接入 opencode（演示）；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）"
+    ]
+  },
+  {
+    "k": "C3 任务目标输入 + 按钮",
+    "v": {
+      "ta": true,
+      "btns": [
+        {
+          "t": "交给 Agent",
+          "testid": "delegate-submit",
+          "disabled": false
+        },
+        {
+          "t": "取消",
+          "testid": null,
+          "disabled": false
+        }
+      ]
+    }
+  },
+  {
+    "k": "C4 对话框中心 elementFromPoint",
+    "v": {
+      "tag": "SPAN",
+      "cls": "",
+      "testid": null,
+      "inDlg": true,
+      "inPanel": false,
+      "text": "已接入 opencode（演示）；所有操作逐条审批（控制权是角色，不承诺某一 A"
+    }
+  },
+  {
+    "k": "C5 面板右上区 elementFromPoint",
+    "v": {
+      "tag": "DIV",
+      "cls": "confirm-mask",
+      "testid": null,
+      "inDlg": false,
+      "inPanel": false,
+      "text": "把 本机 交给 Agent？Agent 持有控制权期间，它的每个操作仍逐条经你审"
+    }
+  },
+  {
+    "k": "D1 1024×768 tp-full",
+    "v": "true | panelW=798"
+  },
+  {
+    "k": "D1b 待审批卡 .cmd 长命令",
+    "v": [
+      {
+        "text": "rm -rf /tmp/old-build && tar czf /tmp/build.tgz dist/",
+        "ws": "normal",
+        "to": "clip",
+        "wb": "break-all",
+        "sw": 756,
+        "cw": 756,
+        "full": true
+      },
+      {
+        "text": "docker system prune -f",
+        "ws": "normal",
+        "to": "clip",
+        "wb": "break-all",
+        "sw": 756,
+        "cw": 756,
+        "full": true
+      },
+      {
+        "text": "systemctl restart nginx --now --no-block --preserve-env",
+        "ws": "normal",
+        "to": "clip",
+        "wb": "break-all",
+        "sw": 756,
+        "cw": 756,
+        "full": true
+      }
+    ]
+  },
+  {
+    "k": "D1c 最近处理 .tl-cmd-text",
+    "v": [
+      {
+        "text": "systemctl restart nginx",
+        "ws": "normal",
+        "to": "clip",
+        "sw": 170,
+        "cw": 170,
+        "full": true
+      }
+    ]
+  },
+  {
+    "k": "D2 960×600 tp-full",
+    "v": "true | panelW=734"
+  },
+  {
+    "k": "D2b .cmd 长命令完整可见",
+    "v": [
+      {
+        "text": "rm -rf /tmp/old-build && tar czf /tmp/build.tgz dist/",
+        "ws": "normal",
+        "full": true
+      },
+      {
+        "text": "docker system prune -f",
+        "ws": "normal",
+        "full": true
+      },
+      {
+        "text": "systemctl restart nginx --now --no-block --preserve-env",
+        "ws": "normal",
+        "full": true
+      }
+    ]
+  },
+  {
+    "k": "D3 tp-full 下对话框",
+    "v": {
+      "dlg": true,
+      "tpFull": true,
+      "dlgZ": "90",
+      "panelZ": "40",
+      "cx": 480,
+      "cy": 98.734375
+    }
+  },
+  {
+    "k": "D3b 对话框顶条 elementFromPoint",
+    "v": {
+      "tag": "DIV",
+      "cls": "hk-title",
+      "testid": null,
+      "inDlg": true,
+      "inPanel": false,
+      "text": "把 本机 交给 Agent？"
+    }
+  },
+  {
+    "k": "D3c 面板区命中（应为 mask）",
+    "v": {
+      "tag": "DIV",
+      "cls": "confirm-mask",
+      "testid": null,
+      "inDlg": false,
+      "inPanel": false,
+      "text": "把 本机 交给 Agent？Agent 持有控制权期间，它的每个操作仍逐条经你审"
+    }
+  },
+  {
+    "k": "E0 切深色",
+    "v": {
+      "chrome": "dark",
+      "bodyBg": "rgb(12, 16, 23)",
+      "appearanceBtns": [
+        "跟随系统",
+        "深色*",
+        "浅色"
+      ]
+    }
+  },
+  {
+    "k": "E1 深色徽标/缺失态配色",
+    "v": {
+      "badgeBg": "rgb(208, 176, 122)",
+      "badgeColor": "rgb(12, 16, 23)",
+      "missingColor": null
+    }
+  },
+  {
+    "k": "Z 主场景 JS 异常",
+    "v": []
+  },
+  {
+    "k": "G1 fresh 无协作徽标",
+    "v": {
+      "collabEntry": 0,
+      "badgeText": null
+    }
+  },
+  {
+    "k": "G1b fresh 工具栏",
+    "v": {
+      "toolsCollab": 1,
+      "delegateOpen": 0
+    }
+  },
+  {
+    "k": "G2 fresh 协作面板",
+    "v": {
+      "unconfigured": 1,
+      "apGroup": 0,
+      "collabApprovals": 0,
+      "goalInput": 0,
+      "delegateOpen": 0,
+      "title": "协作"
+    }
+  },
+  {
+    "k": "G3 fresh 设置→Agent 接入",
+    "v": {
+      "agentEmpty": 1,
+      "agentList": 0,
+      "agentEndpoint": 1,
+      "cat": [
+        "prod-1",
+        "staging-1",
+        "外观",
+        "终端",
+        "凭据",
+        "Agent 接入",
+        "关于"
+      ]
+    }
+  },
+  {
+    "k": "Z2 fresh JS 异常",
+    "v": []
+  }
+]

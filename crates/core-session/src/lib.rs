@@ -897,6 +897,8 @@ impl SessionManager {
             created_at: chrono::Utc::now(),
             status: ApprovalStatus::Pending,
             attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
+            // R42（§6.7）：建会话审批尚无会话，也就无从取得委托目标 → 明确缺失。
+            purpose: None,
         };
         let (tx, rx) = oneshot::channel();
         self.center.decisions.lock().unwrap().insert(item.id.clone(), tx);
@@ -1384,6 +1386,7 @@ impl SessionApi for SessionManager {
                 control_owner: *h.owner.lock().await,
                 created_at: h.created_at,
                 integration: *h.integration.lock().unwrap(),
+                ever_agent_owned: h.ever_agent_owned.load(std::sync::atomic::Ordering::SeqCst),
             });
         }
         out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -2077,6 +2080,15 @@ impl SessionApi for SessionManager {
 
     // ---- 审批 ----
     async fn list_approvals(&self, _ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>> {
+        // R42（§6.7）「可用目的」按会话**当前**目标投影：人类在请求之后补写任务目标，
+        // 复核时也应看得到（目的缺失就是缺失，不拿旧快照冒充当前意图）。
+        let goals: HashMap<SessionId, Option<String>> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(sid, h)| (sid.clone(), h.goal.lock().unwrap().clone()))
+            .collect();
         let items = self.center.items.lock().unwrap();
         Ok(items
             .values()
@@ -2085,7 +2097,13 @@ impl SessionApi for SessionManager {
                     && f.agent_id.as_ref().map(|a| &it.agent_id == a).unwrap_or(true)
                     && (!f.pending_only || it.status == ApprovalStatus::Pending)
             })
-            .cloned()
+            .map(|it| {
+                let mut out = it.clone();
+                // 严格按会话**当前**目标投影：会话已不在列表（已关闭）则无当前目标 → 明确缺失，
+                // 不拿创建期快照冒充当前意图。
+                out.purpose = goals.get(&it.session_id).cloned().flatten();
+                out
+            })
             .collect())
     }
 
@@ -3726,6 +3744,10 @@ mod r40_tests;
 #[cfg(test)]
 #[path = "r41_tests.rs"]
 mod r41_tests;
+
+#[cfg(test)]
+#[path = "r42_tests.rs"]
+mod r42_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle

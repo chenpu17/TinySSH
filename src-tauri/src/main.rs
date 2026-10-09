@@ -719,12 +719,24 @@ async fn issue_agent(state: ApiState<'_>, id: String, label: String) -> CmdResul
 }
 
 /// MCP 端点状态（端口展示，L1 §3.5）。
+/// R42：`agents` 投影为 `{id,label}`（与 wire/demo 契约一致；vault 内部为三元组，且含已吊销行，
+/// 已吊销不算「已接入」）。协作入口/Agent 面板据此判定「有协作配置」。
 #[tauri::command]
 async fn mcp_status(state: ApiState<'_>) -> CmdResult<serde_json::Value> {
     eprintln!("[app] mcp_status invoked (frontend alive)");
+    let agents: Vec<serde_json::Value> = state
+        .api
+        .center
+        .vault
+        .list_agents()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, _, revoked)| revoked.is_none())
+        .map(|(id, label, _)| serde_json::json!({ "id": id, "label": label }))
+        .collect();
     Ok(serde_json::json!({
         "endpoint": state.api.mcp_endpoint(),
-        "agents": state.api.center.vault.list_agents().unwrap_or_default(),
+        "agents": agents,
     }))
 }
 
@@ -997,6 +1009,8 @@ fn main() {
                     r40_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r41") {
                     r41_smoke_script(&run_id, &mode)
+                } else if mode.starts_with("r42") {
+                    r42_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r31") {
                     r31_smoke_script(&run_id)
                 } else {
@@ -4157,6 +4171,204 @@ fn r41_smoke_script(run_id: &str, mode: &str) -> String {
         await markSync('r41c-ref-block（被引用凭据删除被拒并列出占用主机，凭据仍在）');
         click('[data-testid="settings-close"]');
         return title('r41c-DONE');
+      }
+
+      return title('FAIL-unknown-mode:' + MODE);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 140) : String(e).slice(0, 160)));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id).replace("__MODE__", mode)
+}
+
+/// R42 原生冒烟（协作入口、首次委托、审批、接管/交还；§3.2 / §4.2 / §5 迁移表 / §6.7）：
+///   r42a 新装未启用：真 vault 无 Agent → 无协作徽标、不显示委托入口；工具菜单按 §3.2 精确枚举
+///        （无「审批与记录」）；协作面板改一次性引导（不渲染空审批区/空白委托表单）；「设置 → Agent
+///        接入」为空且 MCP 端点为真绑定地址；末尾用真命令签发 Agent 并落库（供 r42b 复用同库）。
+///   r42b 已登记 Agent（复用 r42a 的库）：挂载即读真 vault → 协作徽标出现；连接真容器；
+///        首次委托对话框事实齐全（主机/会话/能力/现有授权范围）；取消不改控制权；明确提交才切
+///        Agent 持有（真核心 delegate_session 且落 goal）；工具栏转「接管」；接管收回 Human 且保留
+///        「曾被 Agent 持有」印记（入口措辞转「交还 Agent」）。
+fn r42_smoke_script(run_id: &str, mode: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R42_INJECTED__) return;
+  window.__R42_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const MODE = '__MODE__';
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => markSync('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => markSync('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const txt = (sel) => document.querySelector(sel)?.textContent ?? null;
+  const cnt = (sel) => document.querySelectorAll(sel).length;
+  const click = (sel) => { const el = document.querySelector(sel); if (!el) return false; el.click(); return true; };
+  const setNative = (sel, v) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const sessById = async (id) => (await inv('list_sessions', {})).find((x) => x.id === id);
+  const toolbarBtn = (needle) => [...document.querySelectorAll('.session-toolbar button')].find((b) => b.textContent.trim() === needle) || null;
+  const openCollab = async () => {
+    if (txt('[data-testid="tp-title"]') === '协作') return true;
+    click('[data-testid="tools-collab"]');
+    return !!(await waitFor(() => (txt('[data-testid="tp-title"]') === '协作' ? true : null), 60));
+  };
+  (async () => {
+    try {
+      await title(MODE + '-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      // r42b 复用 r42a 的库（主机已在库）——仅在缺卡片时才登记，避免重复主机行
+      if (!cardBtn('r42-a', '.host-connect-btn')) {
+        await inv('upsert_host', { host: { id: null, name: 'r42-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+        await waitFor(async () => (cardBtn('r42-a', '.host-connect-btn') ? true : null), 40);
+      }
+      if (!connect('r42-a')) return title('FAIL-connect-a');
+      await trust();
+      if (!await waitFor(async () => (await activeSess('r42-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+      const sess = await activeSess('r42-a');
+      await sleep(500);
+
+      if (MODE === 'r42a') {
+        // ---- 新装未启用协作（§6.7 首条 / §3.2 / §5 迁移表）----
+        const ms0 = await inv('mcp_status', {});
+        if (!ms0 || (ms0.agents || []).length !== 0) return title('FAIL-precondition-agents:' + JSON.stringify(ms0 && ms0.agents));
+        await markSync('r42a-precondition-ok（真 vault 无 Agent）');
+        if (cnt('[data-testid="collab-entry"]') !== 0) return title('FAIL-badge-shown-unconfigured');
+        await markSync('r42a-no-badge（未配置不显示协作徽标）');
+        if (cnt('[data-testid="delegate-open"]') !== 0) return title('FAIL-delegate-shown-unconfigured');
+        await markSync('r42a-no-delegate（未配置不显示委托入口）');
+        // 工具菜单按 §3.2 精确枚举（无「审批与记录」）
+        // 注意：`.st-tools` 在 DOM 中有两处（会话标签溢出菜单在前、会话工具栏「工具」在后），
+        // 必须按按钮文案定位「工具」，不能用 `.st-tools button` 取首个（会命中标签菜单）。
+        const toolsToggle = () => [...document.querySelectorAll('.st-tools button')].find((x) => x.textContent.includes('工具')) || null;
+        if (!toolsToggle()) return title('FAIL-no-tools-btn');
+        toolsToggle().click();
+        const items = await waitFor(() => {
+          const b = [...document.querySelectorAll('.tools-menu button')];
+          return b.length ? b.map((x) => x.textContent.trim()) : null;
+        }, 40);
+        if (!items || items.length !== 4) return title('FAIL-menu-count:' + JSON.stringify(items));
+        const need = ['连接详情', '端口转发', '活动记录', '关闭会话'];
+        if (!need.every((n) => items.some((t) => t.includes(n))) || items.some((t) => t.includes('审批与记录')))
+          return title('FAIL-menu-enum:' + JSON.stringify(items));
+        toolsToggle().click();
+        await markSync('r42a-menu-ok（工具菜单=连接详情/端口转发/活动记录/关闭会话）');
+        // 协作面板改一次性引导（不渲染空审批区/空白委托表单）
+        if (!await openCollab()) return title('FAIL-open-collab');
+        if (cnt('[data-testid="collab-unconfigured"]') !== 1) return title('FAIL-no-guidance');
+        if (cnt('[data-testid="ap-group"]') !== 0 || cnt('.collab-approvals') !== 0) return title('FAIL-empty-approval-area');
+        if (cnt('.goal-input') !== 0) return title('FAIL-blank-goal-form');
+        await markSync('r42a-guidance-ok（协作面板一次性引导，无空审批区/空白表单）');
+        // 引导到「设置 → Agent 接入」：空列表 + 真 MCP 端点
+        click('[data-testid="collab-open-settings"]');
+        if (!await waitFor(() => (document.querySelector('[data-testid="settings-cat-agent"]') ? true : null), 60)) return title('FAIL-open-settings');
+        await waitFor(() => (document.querySelector('[data-testid="agent-empty"]') ? true : null), 40);
+        if (cnt('[data-testid="agent-empty"]') !== 1 || cnt('[data-testid="agent-list"]') !== 0) return title('FAIL-agent-pane-not-empty');
+        const ep = txt('[data-testid="agent-endpoint"]');
+        if (!ep || ep.includes('递增') || !/^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(ep)) return title('FAIL-endpoint:' + ep);
+        await markSync('r42a-settings-ok（设置→Agent 接入为空，MCP 端点为真绑定地址 ' + ep + '）');
+        click('[data-testid="settings-close"]');
+        // 真命令签发 Agent（真 vault 落库，供 r42b 复用；本进程 UI 挂载时已读过 mcp，故不在本轮断言徽标）
+        const tok = await inv('issue_agent', { id: 'r42-agent', label: 'R42 冒烟 Agent' });
+        if (!tok || typeof tok !== 'string' || tok.length < 8) return title('FAIL-issue-agent:' + tok);
+        const ms1 = await inv('mcp_status', {});
+        if (!ms1 || !(ms1.agents || []).some((a) => a.id === 'r42-agent')) return title('FAIL-agent-not-persisted:' + JSON.stringify(ms1 && ms1.agents));
+        await markSync('r42a-issue-ok（真命令签发 Agent 并落库，Token 仅展示一次）');
+        await inv('close_session', { sid: sess.id });
+        return title('r42a-DONE');
+      }
+
+      if (MODE === 'r42b') {
+        // ---- 已登记 Agent（复用 r42a 的库）----
+        const ms = await inv('mcp_status', {});
+        if (!ms || !(ms.agents || []).some((a) => a.id === 'r42-agent')) return title('FAIL-agent-missing:' + JSON.stringify(ms && ms.agents));
+        if (!await waitFor(() => (cnt('[data-testid="collab-entry"]') === 1 ? true : null), 60)) return title('FAIL-no-badge');
+        await markSync('r42b-badge-ok（已登记 Agent → 协作徽标出现）');
+        // 首次委托入口措辞
+        const b0 = txt('[data-testid="delegate-open"]');
+        if (!/交给 Agent/.test(b0 || '')) return title('FAIL-first-label:' + b0);
+        // 打开首次委托对话框：事实齐全（能力为异步查询，等其落定）
+        click('[data-testid="delegate-open"]');
+        if (!await waitFor(() => (document.querySelector('[data-testid="delegate-dlg"]') ? true : null), 40)) return title('FAIL-no-dlg');
+        const capOk = await waitFor(() => (/无持久 Shell|持久 Shell 可用/.test(txt('[data-testid="delegate-dlg"]') || '') ? true : null), 40);
+        if (!capOk) return title('FAIL-cap-not-settled');
+        const dt = txt('[data-testid="delegate-dlg"]');
+        if (!(/主机/.test(dt) && /会话/.test(dt) && /能力/.test(dt) && /现有授权范围/.test(dt))) return title('FAIL-dlg-facts');
+        if (!/无持久 Shell/.test(dt)) return title('FAIL-dlg-capability:' + dt);
+        await markSync('r42b-dialog-ok（主机/会话/能力/现有授权范围齐全；无持久 Shell 如实告知）');
+        // 取消不改控制权
+        [...document.querySelectorAll('[data-testid="delegate-dlg"] button')].find((b) => b.textContent.includes('取消'))?.click();
+        await waitFor(() => (cnt('[data-testid="delegate-dlg"]') === 0 ? true : null), 40);
+        let s = await sessById(sess.id);
+        if (!s || s.control_owner !== 'Human') return title('FAIL-cancel-moved-owner:' + (s && s.control_owner));
+        await markSync('r42b-cancel-ok（取消不改动控制权）');
+        // 明确提交 → 真核心 delegate_session → owner=Agent（真核心成功返回为准）
+        click('[data-testid="delegate-open"]');
+        if (!await waitFor(() => (document.querySelector('[data-testid="delegate-dlg"]') ? true : null), 40)) return title('FAIL-no-dlg2');
+        setNative('[data-testid="delegate-dlg"] .goal-input', '把日志打包到 /tmp 后交还');
+        await sleep(300);
+        click('[data-testid="delegate-submit"]');
+        const gotAgent = await waitFor(async () => {
+          const x = await sessById(sess.id);
+          return x && x.control_owner === 'Agent' ? x : null;
+        }, 60);
+        if (!gotAgent) return title('FAIL-not-delegated:' + JSON.stringify(await sessById(sess.id)));
+        if (gotAgent.ever_agent_owned !== true) return title('FAIL-ever-agent-flag');
+        const brief = await inv('session_brief', { sid: sess.id });
+        if (brief.goal !== '把日志打包到 /tmp 后交还') return title('FAIL-goal-not-stored:' + brief.goal);
+        await markSync('r42b-delegate-ok（明确提交才切 Agent 持有，真核心落 goal）');
+        // 工具栏转「接管」
+        if (!await waitFor(() => (toolbarBtn('接管') ? true : null), 60)) return title('FAIL-no-takeover-btn');
+        if (cnt('[data-testid="delegate-open"]') !== 0) return title('FAIL-delegate-still-shown');
+        await markSync('r42b-takeover-entry（委托后工具栏转为「接管」入口）');
+        // 接管：收回 Human，保留曾被 Agent 持有印记（措辞转「交还」）
+        toolbarBtn('接管').click();
+        const backHuman = await waitFor(async () => {
+          const x = await sessById(sess.id);
+          return x && x.control_owner === 'Human' ? x : null;
+        }, 60);
+        if (!backHuman) return title('FAIL-takeover-failed');
+        if (backHuman.ever_agent_owned !== true) return title('FAIL-takeover-lost-flag');
+        await markSync('r42b-takeover-ok（接管收回 Human，保留曾被 Agent 持有印记）');
+        const b1 = await waitFor(() => {
+          const t = txt('[data-testid="delegate-open"]');
+          return t && /交还 Agent/.test(t) ? t : null;
+        }, 60);
+        if (!b1) return title('FAIL-handback-label:' + txt('[data-testid="delegate-open"]'));
+        await markSync('r42b-handback-label（接管后入口措辞转「交还 Agent」）');
+        await inv('close_session', { sid: sess.id });
+        return title('r42b-DONE');
       }
 
       return title('FAIL-unknown-mode:' + MODE);
