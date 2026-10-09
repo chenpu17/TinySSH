@@ -1,0 +1,1135 @@
+{
+  "results": [
+    {
+      "name": "[1440x900] 入口A 活动记录面板在场",
+      "pass": true,
+      "detail": "task-panel"
+    },
+    {
+      "name": "[1440x900] 入口A conn-detail 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/11 dlgZ=42 panelZ=auto []"
+    },
+    {
+      "name": "[1440x900] 入口A conn-detail 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1440x900] 入口A settings 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/16 dlgZ=42 panelZ=auto []"
+    },
+    {
+      "name": "[1440x900] 入口A settings 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1440x900] 入口A settings(凭据表单展开) 无裁切无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 blocked=0/16"
+    },
+    {
+      "name": "[1440x900] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[1440x900] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":363,\"clientW\":363}"
+    },
+    {
+      "name": "[1440x900] 入口A 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1440x900] 入口B 面板后开时 conn-detail 仍无遮挡",
+      "pass": true,
+      "detail": "blocked=0/11 panelCls=task-panel dlgZ=42 panelZ=auto"
+    },
+    {
+      "name": "[1440x900] 入口B 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1280x800] 入口A 活动记录面板在场",
+      "pass": true,
+      "detail": "task-panel"
+    },
+    {
+      "name": "[1280x800] 入口A conn-detail 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/11 dlgZ=42 panelZ=auto []"
+    },
+    {
+      "name": "[1280x800] 入口A conn-detail 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1280x800] 入口A settings 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/16 dlgZ=42 panelZ=auto []"
+    },
+    {
+      "name": "[1280x800] 入口A settings 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1280x800] 入口A settings(凭据表单展开) 无裁切无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 blocked=0/16"
+    },
+    {
+      "name": "[1280x800] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[1280x800] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":363,\"clientW\":363}"
+    },
+    {
+      "name": "[1280x800] 入口A 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1280x800] 入口B 面板后开时 conn-detail 仍无遮挡",
+      "pass": true,
+      "detail": "blocked=0/11 panelCls=task-panel dlgZ=42 panelZ=auto"
+    },
+    {
+      "name": "[1280x800] 入口B 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1024x768] 入口A 活动记录面板在场",
+      "pass": true,
+      "detail": "task-panel tp-full"
+    },
+    {
+      "name": "[1024x768] 入口A conn-detail 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/11 dlgZ=42 panelZ=40 []"
+    },
+    {
+      "name": "[1024x768] 入口A conn-detail 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1024x768] 入口A settings 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/16 dlgZ=42 panelZ=40 []"
+    },
+    {
+      "name": "[1024x768] 入口A settings 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1024x768] 入口A settings(凭据表单展开) 无裁切无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 blocked=0/16"
+    },
+    {
+      "name": "[1024x768] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[1024x768] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":778,\"clientW\":778}"
+    },
+    {
+      "name": "[1024x768] 入口A 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1024x768] 入口B 面板后开时 conn-detail 仍无遮挡",
+      "pass": true,
+      "detail": "blocked=0/11 panelCls=task-panel tp-full dlgZ=42 panelZ=40"
+    },
+    {
+      "name": "[1024x768] 入口B 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[960x600] 入口A 活动记录面板在场",
+      "pass": true,
+      "detail": "task-panel tp-full"
+    },
+    {
+      "name": "[960x600] 入口A conn-detail 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/11 dlgZ=42 panelZ=40 []"
+    },
+    {
+      "name": "[960x600] 入口A conn-detail 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[960x600] 入口A settings 无遮挡（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/16 dlgZ=42 panelZ=40 []"
+    },
+    {
+      "name": "[960x600] 入口A settings 居中 dx/dy=0",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[960x600] 入口A settings(凭据表单展开) 无裁切无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 blocked=0/16"
+    },
+    {
+      "name": "[960x600] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[960x600] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":714,\"clientW\":714}"
+    },
+    {
+      "name": "[960x600] 入口A 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[960x600] 入口B 面板后开时 conn-detail 仍无遮挡",
+      "pass": true,
+      "detail": "blocked=0/11 panelCls=task-panel tp-full dlgZ=42 panelZ=40"
+    },
+    {
+      "name": "[960x600] 入口B 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[960x600] tp-full 态下工具菜单项可达",
+      "pass": true,
+      "detail": "panel=task-panel tp-full top= z=auto self=true"
+    },
+    {
+      "name": "[960x600] toast 仍渲染且 z 序未被对话框越过（stackZ > dlgZ）",
+      "pass": true,
+      "detail": "count=3 stackZ=120 dlgZ=42 pointer-events=none"
+    },
+    {
+      "name": "[960x600] toast 与对话框同处一根层叠上下文（z 序比较有效）",
+      "pass": true,
+      "detail": "{\"toastRoot\":\"HTML\",\"dlgRoot\":\"HTML\",\"same\":true}"
+    },
+    {
+      "name": "[960x600] 确认框（删除被引用凭据）仍压在设置对话框之上",
+      "pass": true,
+      "detail": "btn=\"删除凭据\" selfHit=true confirmMaskZ=90 settingsZ=42 popMaskZ=41 top=danger"
+    },
+    {
+      "name": "[960x600] 层叠轮零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] B2 .cd-hint ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.53 fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=11"
+    },
+    {
+      "name": "[dark] B4 Esc 关详情（计数 0）且不误关会话",
+      "pass": true,
+      "detail": "count=0 sid=s-demo-0001 state=Connected"
+    },
+    {
+      "name": "[dark] B1 .seg 未选中钮悬停 ≥ AA",
+      "pass": true,
+      "detail": "ratio=9.96 fg=rgb(212, 219, 230) bg=rgb(35, 45, 61)"
+    },
+    {
+      "name": "[dark] B1 悬停选中钮不顶掉选中态",
+      "pass": true,
+      "detail": "before=rgb(24, 38, 47) hover=rgb(24, 38, 47) cls=\"on\""
+    },
+    {
+      "name": "[dark] .log-note 对比度未变（≥AA）",
+      "pass": true,
+      "detail": "ratio=7.4 fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)"
+    },
+    {
+      "name": "[dark] B3 cred-empty ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.53 fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=12"
+    },
+    {
+      "name": "[dark] L2 cred-new ghost ≥ AA",
+      "pass": true,
+      "detail": "ratio=5.07 fg=rgb(70, 170, 181) bg=rgb(35, 45, 61) fs=12"
+    },
+    {
+      "name": "[dark] M2 草稿拦截出现（路1）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] M2 路1「留下继续编辑」Tab 不逃逸",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"cred-new\"]"
+    },
+    {
+      "name": "[dark] M2 路2「丢弃草稿并切换」Tab 不逃逸",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"ghost\"]"
+    },
+    {
+      "name": "[dark] 回归：外观分类内容未被裁",
+      "pass": true,
+      "detail": "false"
+    },
+    {
+      "name": "[dark] .log-note 无会话文案与作者声明一致",
+      "pass": true,
+      "detail": "本机时间（UTC+08:00）· 未接入会话，无可显示记录"
+    },
+    {
+      "name": "[dark] .log-note 无会话态对比度 ≥ AA",
+      "pass": true,
+      "detail": "ratio=7.4 fg=rgb(154, 170, 184) bg=rgb(20, 25, 34)"
+    },
+    {
+      "name": "[dark] 回归轮零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] B2 .cd-hint ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.97 fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=11"
+    },
+    {
+      "name": "[light] B4 Esc 关详情（计数 0）且不误关会话",
+      "pass": true,
+      "detail": "count=0 sid=s-demo-0001 state=Connected"
+    },
+    {
+      "name": "[light] B1 .seg 未选中钮悬停 ≥ AA",
+      "pass": true,
+      "detail": "ratio=11.71 fg=rgb(36, 46, 56) bg=rgb(232, 237, 242)"
+    },
+    {
+      "name": "[light] B1 悬停选中钮不顶掉选中态",
+      "pass": true,
+      "detail": "before=rgb(223, 233, 236) hover=rgb(223, 233, 236) cls=\"on\""
+    },
+    {
+      "name": "[light] .log-note 对比度未变（≥AA）",
+      "pass": true,
+      "detail": "ratio=6.44 fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)"
+    },
+    {
+      "name": "[light] B3 cred-empty ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.97 fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=12"
+    },
+    {
+      "name": "[light] L2 cred-new ghost ≥ AA",
+      "pass": true,
+      "detail": "ratio=4.52 fg=rgb(31, 118, 124) bg=rgb(232, 237, 242) fs=12"
+    },
+    {
+      "name": "[light] M2 草稿拦截出现（路1）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] M2 路1「留下继续编辑」Tab 不逃逸",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"cred-new\"]"
+    },
+    {
+      "name": "[light] M2 路2「丢弃草稿并切换」Tab 不逃逸",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"ghost\"]"
+    },
+    {
+      "name": "[light] 回归：外观分类内容未被裁",
+      "pass": true,
+      "detail": "false"
+    },
+    {
+      "name": "[light] .log-note 无会话文案与作者声明一致",
+      "pass": true,
+      "detail": "本机时间（UTC+08:00）· 未接入会话，无可显示记录"
+    },
+    {
+      "name": "[light] .log-note 无会话态对比度 ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.44 fg=rgb(77, 91, 104) bg=rgb(244, 246, 248)"
+    },
+    {
+      "name": "[light] 回归轮零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1440x900] M3 conn-detail/settings 对视口中心 dx/dy=0",
+      "pass": true,
+      "detail": "conn-detail dx=0 dy=0 | settings dx=0 dy=0"
+    },
+    {
+      "name": "[1440x900] 无祖先建立 fixed 包含块",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "[1280x800] M3 conn-detail/settings 对视口中心 dx/dy=0",
+      "pass": true,
+      "detail": "conn-detail dx=0 dy=0 | settings dx=0 dy=0"
+    },
+    {
+      "name": "[1280x800] 无祖先建立 fixed 包含块",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "[1024x768] M3 conn-detail/settings 对视口中心 dx/dy=0",
+      "pass": true,
+      "detail": "conn-detail dx=0 dy=0 | settings dx=0 dy=0"
+    },
+    {
+      "name": "[1024x768] 无祖先建立 fixed 包含块",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "[960x600] M3 conn-detail/settings 对视口中心 dx/dy=0",
+      "pass": true,
+      "detail": "conn-detail dx=0 dy=0 | settings dx=0 dy=0"
+    },
+    {
+      "name": "[960x600] 无祖先建立 fixed 包含块",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "⑥ 重叠区采样点采到 toast 左边框绿条（toast 绘制在对话框之上）",
+      "pass": true,
+      "detail": "重叠=4x37px 采样=rgb(127,191,143) 期望≈rgb(127, 191, 143)"
+    },
+    {
+      "name": "⑥ 对照点（对话框中部同一 y）非绿（排除整屏染绿的假阳性）",
+      "pass": true,
+      "detail": "对照=rgb(28,36,51)"
+    },
+    {
+      "name": "⑥ 判别性反证：toast 消失后同一点回落为非绿（对话框底色）",
+      "pass": true,
+      "detail": "消失后=rgb(28,36,51)"
+    },
+    {
+      "name": "⑦ .split-menu 与其遮罩同父（层叠关系需显式声明）",
+      "pass": true,
+      "detail": "sameParent=true sameStackRoot=true"
+    },
+    {
+      "name": "⑦ .split-menu z 序高于自己的遮罩",
+      "pass": true,
+      "detail": "menuZ=43 maskZ=41"
+    },
+    {
+      "name": "⑦ 分屏菜单项逐项可达（blocked=0）",
+      "pass": true,
+      "detail": "blocked=0/2"
+    },
+    {
+      "name": "⑦ 真实鼠标点击菜单项可进入分屏（非程序化 click）",
+      "pass": true,
+      "detail": "click=true pressed=true menuOpen=0"
+    },
+    {
+      "name": "⑦ 判别性前置：注入后确为修复前组合（menuZ < maskZ）",
+      "pass": true,
+      "detail": "menuZ=30 maskZ=41"
+    },
+    {
+      "name": "⑦ 判别性：z-index 压回 30 后菜单项被遮罩挡住（hit-test 口径）",
+      "pass": true,
+      "detail": "blocked=2/2"
+    },
+    {
+      "name": "⑦ 判别性：z-index 压回 30 后真实鼠标点击进不去分屏（功能级判别）",
+      "pass": true,
+      "detail": "click=false err=page.click: Timeout 2500ms exceeded. pressed=false"
+    },
+    {
+      "name": "⑦ 分屏轮零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "⑧ [1024x768] 修复态下真实鼠标点击对话框关闭钮有效",
+      "pass": true,
+      "detail": "ok=true gone=0 err="
+    },
+    {
+      "name": "⑧ [1024x768] 判别性前置：注入生效（dlgZ=30 且 panelZ=40）",
+      "pass": true,
+      "detail": "dlgZ=30 panelZ=40（若不符多为作者并行保存触发 HMR 重载冲掉注入）"
+    },
+    {
+      "name": "⑧ [1024x768] 判别性：注入 29/30 后对话框被面板压住（blocked>0 且真实点击被挡元素失败）",
+      "pass": true,
+      "detail": "blocked=11/11 clickOk=false tid=cd-close"
+    },
+    {
+      "name": "⑧ [960x600] 修复态下真实鼠标点击对话框关闭钮有效",
+      "pass": true,
+      "detail": "ok=true gone=0 err="
+    },
+    {
+      "name": "⑧ [960x600] 判别性前置：注入生效（dlgZ=30 且 panelZ=40）",
+      "pass": true,
+      "detail": "dlgZ=30 panelZ=40（若不符多为作者并行保存触发 HMR 重载冲掉注入）"
+    },
+    {
+      "name": "⑧ [960x600] 判别性：注入 29/30 后对话框被面板压住（blocked>0 且真实点击被挡元素失败）",
+      "pass": true,
+      "detail": "blocked=10/11 clickOk=false tid=cd-host"
+    }
+  ],
+  "contrasts": [
+    {
+      "theme": "dark",
+      "item": "B2 .cd-hint",
+      "sel": ".cd-hint",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "以上为连接时的身份快照——主机配置此后被修改或删除，都不影响这里显示的信息。",
+      "hovered": false
+    },
+    {
+      "theme": "dark",
+      "item": "B1 .seg 未选中钮 hover",
+      "sel": "[data-testid=\"log-scope-all\"]",
+      "color": "rgb(212, 219, 230)",
+      "bg": "rgb(35, 45, 61)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 9.96,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "全部会话",
+      "hovered": true
+    },
+    {
+      "theme": "dark",
+      "item": "B1 .seg 选中钮 hover",
+      "sel": "[data-testid=\"log-scope-current\"]",
+      "color": "rgb(212, 219, 230)",
+      "bg": "rgb(24, 38, 47)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 11.08,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "当前会话",
+      "hovered": true
+    },
+    {
+      "theme": "dark",
+      "item": ".log-note",
+      "sel": "[data-testid=\"log-note\"]",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 7.4,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本机时间（UTC+08:00）· 共 4 条（当前会话）",
+      "hovered": false
+    },
+    {
+      "theme": "dark",
+      "item": "B3 cred-empty",
+      "sel": "[data-testid=\"cred-empty\"]",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "还没有凭据——用上面的「新建凭据…」生成或导入私钥，也可以在连接表单里保存。",
+      "hovered": false
+    },
+    {
+      "theme": "dark",
+      "item": "L2 .cred-new button.ghost",
+      "sel": ".cred-new button.ghost",
+      "color": "rgb(70, 170, 181)",
+      "bg": "rgb(35, 45, 61)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 5.07,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "生成 Ed25519",
+      "hovered": false
+    },
+    {
+      "theme": "dark",
+      "item": ".log-note(无会话)",
+      "sel": "[data-testid=\"log-note\"]",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(20, 25, 34)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 7.4,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本机时间（UTC+08:00）· 未接入会话，无可显示记录",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": "B2 .cd-hint",
+      "sel": ".cd-hint",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "以上为连接时的身份快照——主机配置此后被修改或删除，都不影响这里显示的信息。",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": "B1 .seg 未选中钮 hover",
+      "sel": "[data-testid=\"log-scope-all\"]",
+      "color": "rgb(36, 46, 56)",
+      "bg": "rgb(232, 237, 242)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 11.71,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "全部会话",
+      "hovered": true
+    },
+    {
+      "theme": "light",
+      "item": "B1 .seg 选中钮 hover",
+      "sel": "[data-testid=\"log-scope-current\"]",
+      "color": "rgb(36, 46, 56)",
+      "bg": "rgb(223, 233, 236)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 11.17,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "当前会话",
+      "hovered": true
+    },
+    {
+      "theme": "light",
+      "item": ".log-note",
+      "sel": "[data-testid=\"log-note\"]",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 6.44,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本机时间（UTC+08:00）· 共 4 条（当前会话）",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": "B3 cred-empty",
+      "sel": "[data-testid=\"cred-empty\"]",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "还没有凭据——用上面的「新建凭据…」生成或导入私钥，也可以在连接表单里保存。",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": "L2 .cred-new button.ghost",
+      "sel": ".cred-new button.ghost",
+      "color": "rgb(31, 118, 124)",
+      "bg": "rgb(232, 237, 242)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 4.52,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "生成 Ed25519",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": ".log-note(无会话)",
+      "sel": "[data-testid=\"log-note\"]",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(244, 246, 248)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 6.44,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "本机时间（UTC+08:00）· 未接入会话，无可显示记录",
+      "hovered": false
+    }
+  ],
+  "occlRows": [
+    {
+      "vp": "1440x900",
+      "entry": "panel→dialog",
+      "what": "conn-detail",
+      "panelCls": "task-panel",
+      "dialog": {
+        "x": 505,
+        "y": 259,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 1056,
+        "w": 384,
+        "z": "auto"
+      },
+      "overlapW": 0,
+      "total": 11,
+      "blockedN": 0,
+      "sample": [],
+      "sel": "[data-testid=\"conn-detail\"]",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1440x900",
+      "entry": "panel→dialog",
+      "what": "settings",
+      "panelCls": "task-panel",
+      "dialog": {
+        "x": 410,
+        "y": 296,
+        "w": 620,
+        "h": 308,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 1056,
+        "w": 384,
+        "z": "auto"
+      },
+      "overlapW": 0,
+      "total": 16,
+      "blockedN": 0,
+      "sample": [],
+      "sel": ".term-settings.settings-wide",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1440x900",
+      "entry": "dialog→panel",
+      "what": "conn-detail",
+      "panelCls": "task-panel",
+      "dialog": {
+        "x": 505,
+        "y": 259,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 1056,
+        "w": 384,
+        "z": "auto"
+      },
+      "overlapW": 0,
+      "total": 11,
+      "blockedN": 0,
+      "sample": []
+    },
+    {
+      "vp": "1280x800",
+      "entry": "panel→dialog",
+      "what": "conn-detail",
+      "panelCls": "task-panel",
+      "dialog": {
+        "x": 425,
+        "y": 209,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 896,
+        "w": 384,
+        "z": "auto"
+      },
+      "overlapW": 0,
+      "total": 11,
+      "blockedN": 0,
+      "sample": [],
+      "sel": "[data-testid=\"conn-detail\"]",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1280x800",
+      "entry": "panel→dialog",
+      "what": "settings",
+      "panelCls": "task-panel",
+      "dialog": {
+        "x": 330,
+        "y": 246,
+        "w": 620,
+        "h": 308,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 896,
+        "w": 384,
+        "z": "auto"
+      },
+      "overlapW": 54,
+      "total": 16,
+      "blockedN": 0,
+      "sample": [],
+      "sel": ".term-settings.settings-wide",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1280x800",
+      "entry": "dialog→panel",
+      "what": "conn-detail",
+      "panelCls": "task-panel",
+      "dialog": {
+        "x": 425,
+        "y": 209,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 896,
+        "w": 384,
+        "z": "auto"
+      },
+      "overlapW": 0,
+      "total": 11,
+      "blockedN": 0,
+      "sample": []
+    },
+    {
+      "vp": "1024x768",
+      "entry": "panel→dialog",
+      "what": "conn-detail",
+      "panelCls": "task-panel tp-full",
+      "dialog": {
+        "x": 297,
+        "y": 193,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 798,
+        "z": "40"
+      },
+      "overlapW": 430,
+      "total": 11,
+      "blockedN": 0,
+      "sample": [],
+      "sel": "[data-testid=\"conn-detail\"]",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1024x768",
+      "entry": "panel→dialog",
+      "what": "settings",
+      "panelCls": "task-panel tp-full",
+      "dialog": {
+        "x": 202,
+        "y": 230,
+        "w": 620,
+        "h": 308,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 798,
+        "z": "40"
+      },
+      "overlapW": 596,
+      "total": 16,
+      "blockedN": 0,
+      "sample": [],
+      "sel": ".term-settings.settings-wide",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1024x768",
+      "entry": "dialog→panel",
+      "what": "conn-detail",
+      "panelCls": "task-panel tp-full",
+      "dialog": {
+        "x": 297,
+        "y": 193,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 798,
+        "z": "40"
+      },
+      "overlapW": 430,
+      "total": 11,
+      "blockedN": 0,
+      "sample": []
+    },
+    {
+      "vp": "960x600",
+      "entry": "panel→dialog",
+      "what": "conn-detail",
+      "panelCls": "task-panel tp-full",
+      "dialog": {
+        "x": 265,
+        "y": 109,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 734,
+        "z": "40"
+      },
+      "overlapW": 430,
+      "total": 11,
+      "blockedN": 0,
+      "sample": [],
+      "sel": "[data-testid=\"conn-detail\"]",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "960x600",
+      "entry": "panel→dialog",
+      "what": "settings",
+      "panelCls": "task-panel tp-full",
+      "dialog": {
+        "x": 170,
+        "y": 146,
+        "w": 620,
+        "h": 308,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 734,
+        "z": "40"
+      },
+      "overlapW": 564,
+      "total": 16,
+      "blockedN": 0,
+      "sample": [],
+      "sel": ".term-settings.settings-wide",
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "960x600",
+      "entry": "dialog→panel",
+      "what": "conn-detail",
+      "panelCls": "task-panel tp-full",
+      "dialog": {
+        "x": 265,
+        "y": 109,
+        "w": 430,
+        "h": 382,
+        "z": "42"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 734,
+        "z": "40"
+      },
+      "overlapW": 430,
+      "total": 11,
+      "blockedN": 0,
+      "sample": []
+    }
+  ],
+  "layering": [
+    {
+      "what": "tools-menu",
+      "panelCls": "task-panel tp-full",
+      "sel": "[data-testid=\"tools-conn-detail\"]",
+      "self": true,
+      "topTag": "BUTTON",
+      "topCls": "",
+      "topTid": "tools-conn-detail",
+      "topZ": "auto",
+      "rect": {
+        "x": 783,
+        "y": 185,
+        "w": 162,
+        "h": 31
+      }
+    },
+    {
+      "what": "toast-stack",
+      "count": 3,
+      "texts": [
+        "会话 ID 已复制",
+        "会话 ID 已复制",
+        "会话 ID 已复制"
+      ],
+      "stackZ": "120",
+      "dlgZ": "42",
+      "stackPointerEvents": "none",
+      "toastBorderLeft": "rgb(127, 191, 143)",
+      "toastBg": "rgb(28, 36, 51)",
+      "rects": [
+        {
+          "text": "会话 ID 已复制",
+          "x": 831,
+          "y": 434,
+          "w": 113,
+          "h": 37
+        },
+        {
+          "text": "会话 ID 已复制",
+          "x": 831,
+          "y": 479,
+          "w": 113,
+          "h": 37
+        },
+        {
+          "text": "会话 ID 已复制",
+          "x": 831,
+          "y": 523,
+          "w": 113,
+          "h": 37
+        }
+      ],
+      "dlgRect": {
+        "x": 265,
+        "y": 109,
+        "w": 430,
+        "h": 382
+      },
+      "overlapArea": 0,
+      "sameStackRoot": {
+        "toastRoot": "HTML",
+        "dlgRoot": "HTML",
+        "same": true
+      }
+    },
+    {
+      "what": "confirm-over-settings",
+      "confirmCount": 1,
+      "btnText": "删除凭据",
+      "selfHit": true,
+      "topCls": "danger",
+      "topZ": "auto",
+      "confirmMaskZ": "90",
+      "settingsZ": "42",
+      "popMaskZ": "41"
+    },
+    {
+      "what": "toast-pixel-proof",
+      "n": 3,
+      "toast": {
+        "x": 551,
+        "y": 394,
+        "w": 113,
+        "h": 37
+      },
+      "dlg": {
+        "x": 125,
+        "y": 89,
+        "w": 430,
+        "h": 382
+      },
+      "borderLeftColor": "rgb(127, 191, 143)",
+      "overlap": "4x37",
+      "sample": "(552,412)",
+      "withToast": "rgb(127,191,143)",
+      "control": "rgb(28,36,51)",
+      "afterToastGone": "rgb(28,36,51)"
+    },
+    {
+      "what": "split-menu",
+      "missing": false,
+      "menuZ": "43",
+      "maskZ": "41",
+      "sameParent": true,
+      "sameStackRoot": true,
+      "items": [
+        "prod-1已连接",
+        "在右侧新建会话…"
+      ],
+      "blocked": "0/2"
+    }
+  ]
+}

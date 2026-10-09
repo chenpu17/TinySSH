@@ -142,6 +142,12 @@ async fn list_sessions(state: ApiState<'_>) -> CmdResult<Vec<SessionInfo>> {
     state.api.list_sessions(&human()).await.map_err(WireError::from)
 }
 
+/// R41（§6.6/S09）连接详情：连接时身份快照（地址/端口/用户/认证/指纹/编码）+ 真实创建时刻。
+#[tauri::command]
+async fn session_detail(state: ApiState<'_>, sid: String) -> CmdResult<session_api::SessionDetail> {
+    state.api.session_detail(&human(), sid).await.map_err(WireError::from)
+}
+
 #[tauri::command]
 async fn create_session(state: ApiState<'_>, host_id: String) -> CmdResult<SessionId> {
     state
@@ -607,13 +613,20 @@ async fn decide_approval(state: ApiState<'_>, id: String, decision: String, edit
     state.api.decide_approval(&human(), id, d).await.map_err(WireError::from)
 }
 
+/// R41（§6.6「默认当前会话，可切全部；可筛人类/Agent 与事件类型」）：过滤面全量过桥。
+/// `sid=None` = 全部会话；`actor_kind` ∈ {human, agent}（未知值不匹配任何行）；
+/// `action` 精确匹配动作名；`before_seq` 供「加载更早」按 seq 游标翻页（连续，不重不漏）。
 #[tauri::command]
-async fn audit_query(state: ApiState<'_>, sid: Option<String>, limit: i64) -> CmdResult<AuditPage> {
-    state
-        .api
-        .query_audit(&human(), AuditFilter { session_id: sid, limit, ..Default::default() })
-        .await
-        .map_err(WireError::from)
+async fn audit_query(
+    state: ApiState<'_>,
+    sid: Option<String>,
+    limit: i64,
+    actor_kind: Option<String>,
+    action: Option<String>,
+    before_seq: Option<i64>,
+) -> CmdResult<AuditPage> {
+    let f = AuditFilter { session_id: sid, limit, actor_kind, action, before_seq, ..Default::default() };
+    state.api.query_audit(&human(), f).await.map_err(WireError::from)
 }
 
 /// 主机指纹待决列表（路线图⑤ TOFU：首连确认/变更告警）。
@@ -982,6 +995,8 @@ fn main() {
                     r34_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r40") {
                     r40_smoke_script(&run_id, &mode)
+                } else if mode.starts_with("r41") {
+                    r41_smoke_script(&run_id, &mode)
                 } else if mode.starts_with("r31") {
                     r31_smoke_script(&run_id)
                 } else {
@@ -1359,7 +1374,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
-            list_sessions, create_session, begin_connection, connection_status, cancel_connection,
+            list_sessions, session_detail, create_session, begin_connection, connection_status, cancel_connection,
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
@@ -3845,6 +3860,303 @@ fn r40_smoke_script(run_id: &str, mode: &str) -> String {
         if (!await waitFor(() => (fwdRows().length === 0 ? true : null), 60)) return title('FAIL-stop2:' + JSON.stringify(fwdRows()));
         await markSync('r40c-stop-ok');
         return title('r40c-DONE');
+      }
+
+      return title('FAIL-unknown-mode:' + MODE);
+    } catch (e) {
+      await title('FAIL-exception:' + (e && e.kind ? e.kind + '|' + String(e.message).slice(0, 140) : String(e).slice(0, 160)));
+    }
+  })();
+})();
+"#;
+    base.replace("__RUN__", run_id).replace("__MODE__", mode)
+}
+
+fn r41_smoke_script(run_id: &str, mode: &str) -> String {
+    let base = r#"(function() {
+  if (window.__R41_INJECTED__) return;
+  window.__R41_INJECTED__ = true;
+  const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
+  const RUN = '__RUN__';
+  const MODE = '__MODE__';
+  const markSync = async (s) => { try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)); } catch {} };
+  window.addEventListener('error', (ev) => markSync('JS-ERROR|' + String(ev.message).slice(0, 300)));
+  window.addEventListener('unhandledrejection', (ev) => markSync('JS-REJECT|' + String(ev.reason && ev.reason.message ? ev.reason.message : ev.reason).slice(0, 300)));
+  const title = async (s) => {
+    document.title = 'SMOKE|' + s;
+    try { await fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(s)); } catch {}
+  };
+  const inv = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a);
+  const waitFor = async (fn, tries) => {
+    for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); }
+    return null;
+  };
+  const txt = (sel) => document.querySelector(sel)?.textContent ?? null;
+  const cnt = (sel) => document.querySelectorAll(sel).length;
+  const click = (sel) => { const el = document.querySelector(sel); if (!el) return false; el.click(); return true; };
+  const clickByText = (sel, needle) => {
+    const el = [...document.querySelectorAll(sel)].find((x) => x.textContent.includes(needle));
+    if (!el) return false; el.click(); return true;
+  };
+  const setNative = (sel, v) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  const setSelect = (sel, v) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  };
+  const cardBtn = (name, sel) => {
+    const card = [...document.querySelectorAll('.host-card')].find((c) => c.textContent.includes(name));
+    return card ? card.querySelector(sel) : null;
+  };
+  const connect = (name) => {
+    const b = cardBtn(name, '.host-connect-btn');
+    if (!b || b.disabled) return false;
+    b.click();
+    return true;
+  };
+  const trust = async () => {
+    const mask = await waitFor(() => (document.querySelector('.hk-mask')?.textContent.includes('首次连接确认') ? true : null), 60);
+    if (mask) [...document.querySelectorAll('.hk-mask button')].find((b) => b.textContent.includes('信任并连接')).click();
+  };
+  const activeSess = async (name) => (await inv('list_sessions', {})).find((x) => x.host_name === name);
+  const openTools = async (needle) => {
+    const b = await waitFor(() => [...document.querySelectorAll('.st-tools button')].find((x) => x.textContent.includes('工具')) || null, 100);
+    if (!b) return 'no-tools';
+    b.click();
+    const item = await waitFor(() => [...document.querySelectorAll('.tools-menu button')].find((x) => x.textContent.includes(needle)) || null, 40);
+    if (!item) return 'no-item';
+    item.click();
+    return 'ok';
+  };
+  const logRows = () => [...document.querySelectorAll('[data-testid="log-row"]')];
+  const logMetas = () => [...document.querySelectorAll('[data-testid="log-row"] .tl-meta')].map((m) => m.textContent || '');
+  const openSettingsCreds = async () => {
+    click('.hb-settings');
+    if (!await waitFor(() => (document.querySelector('[data-testid="settings-cat-credentials"]') ? true : null), 60)) return false;
+    click('[data-testid="settings-cat-credentials"]');
+    return !!(await waitFor(() => (document.querySelector('[data-testid="cred-new"]') ? true : null), 40));
+  };
+  const identCount = async () => (await inv('list_identities', {})).length;
+  const stampOk = (s) => /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s || '');
+  (async () => {
+    try {
+      await title(MODE + '-open');
+      const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
+      if (!cards) return title('FAIL-no-cards');
+      await inv('upsert_host', { host: { id: null, name: 'r41-a', address: '127.0.0.1', port: 2222, username: 'root', auth: { Password: { password: 'testpass' } }, tags: [], charset: 'utf-8' } });
+      await waitFor(async () => (cardBtn('r41-a', '.host-connect-btn') ? true : null), 40);
+      if (!connect('r41-a')) return title('FAIL-connect-a');
+      await trust();
+      if (!await waitFor(async () => (await activeSess('r41-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+      const sess = await activeSess('r41-a');
+      await sleep(400);
+
+      if (MODE === 'r41a') {
+        // 1 连接详情：完整身份（真连接参数）+ 日期/时区 + 会话 ID
+        const op = await openTools('连接详情');
+        if (op !== 'ok') return title('FAIL-open-detail:' + op);
+        if (!await waitFor(() => (document.querySelector('[data-testid="cd-host"]') ? true : null), 60)) return title('FAIL-no-detail');
+        const d1 = {
+          host: txt('[data-testid="cd-host"]'), user: txt('[data-testid="cd-user"]'), addr: txt('[data-testid="cd-addr"]'),
+          port: txt('[data-testid="cd-port"]'), auth: txt('[data-testid="cd-auth"]'), cs: txt('[data-testid="cd-charset"]'),
+          created: txt('[data-testid="cd-created"]'), sid: txt('[data-testid="cd-sid"]'),
+        };
+        if (d1.host !== 'r41-a' || d1.user !== 'root' || d1.addr !== '127.0.0.1' || d1.port !== '2222' || d1.auth !== '密码' || d1.cs !== 'UTF-8')
+          return title('FAIL-detail-fields:' + JSON.stringify(d1));
+        if (!stampOk(d1.created) || !/UTC[+-]\d{2}:\d{2}/.test(d1.created || '')) return title('FAIL-created-stamp:' + d1.created);
+        if (d1.sid !== sess.id) return title('FAIL-sid-mismatch:' + d1.sid + '|' + sess.id);
+        if (/PRIVATE KEY|passphrase|口令/.test(JSON.stringify(d1))) return title('FAIL-secret-leak');
+        await markSync('r41a-detail-ok（完整身份 + 日期/时区 + 会话 ID）');
+        // 复制会话 ID → 应用给出成功反馈
+        click('[data-testid="cd-copy"]');
+        if (!await waitFor(() => (document.querySelector('.toast.ok') ? true : null), 40)) return title('FAIL-copy-toast');
+        await markSync('r41a-copy-ok（复制会话 ID 有成功反馈）');
+        // 2 独立关闭：对话框消失，会话不受影响
+        click('[data-testid="cd-close"]');
+        if (!await waitFor(() => (cnt('[data-testid="conn-detail"]') === 0 ? true : null), 40)) return title('FAIL-close');
+        const still = await activeSess('r41-a');
+        if (!still || still.state !== 'Connected') return title('FAIL-session-lost');
+        await markSync('r41a-close-ok（独立关闭，不影响会话）');
+        // 3 快照不漂：把主机改名改址（真落库），重开详情仍应是连接当时的身份
+        const h = (await inv('list_hosts', {})).find((x) => x.name === 'r41-a');
+        await inv('upsert_host', { host: { id: h.id, name: 'r41-a-改名', address: '10.99.99.99', port: 2200, username: 'root', auth: 'Keep', tags: [], charset: 'utf-8' } });
+        await sleep(400);
+        const op2 = await openTools('连接详情');
+        if (op2 !== 'ok') return title('FAIL-reopen:' + op2);
+        if (!await waitFor(() => (document.querySelector('[data-testid="cd-addr"]') ? true : null), 60)) return title('FAIL-no-detail2');
+        const d2 = { host: txt('[data-testid="cd-host"]'), addr: txt('[data-testid="cd-addr"]'), port: txt('[data-testid="cd-port"]') };
+        if (d2.addr !== '127.0.0.1' || d2.port !== '2222' || d2.host !== 'r41-a') return title('FAIL-snapshot-drift:' + JSON.stringify(d2));
+        await markSync('r41a-snapshot-hold（主机改名改址后，详情仍是连接当时身份）');
+        click('[data-testid="cd-close"]');
+        return title('r41a-DONE');
+      }
+
+      if (MODE === 'r41b') {
+        // 真审计库决定有哪些动作——不预设「必有 exec」（本容器无 shell 集成，Shell 模式执行会被拒，
+        // 硬编码 exec 会把「筛选坏了」和「这类事件不存在」混为一谈）。取真实存在的动作来验筛选。
+        const probe = await inv('audit_query', { sid: sess.id, limit: 100 });
+        if (!probe.events.length) return title('FAIL-no-audit-events');
+        const pick = probe.events[0].action;
+        await sleep(300);
+        const op = await openTools('活动记录');
+        if (op !== 'ok') return title('FAIL-open-log:' + op);
+        if (!await waitFor(() => (document.querySelector('[data-testid="log-note"]') ? true : null), 60)) return title('FAIL-no-log');
+        if (txt('[data-testid="tp-title"]') !== '活动记录') return title('FAIL-not-workspace-view:' + txt('[data-testid="tp-title"]'));
+        await markSync('r41b-panel-ok（活动记录=右侧工作区视图）');
+        // 默认当前会话 + 真实身份（主机名/会话 id 来自真审计库）
+        if (document.querySelector('[data-testid="log-scope-current"]')?.getAttribute('aria-pressed') !== 'true') return title('FAIL-default-scope');
+        const nCur = logRows().length ? logRows().length : (await waitFor(() => (logRows().length ? logRows().length : null), 80)) || 0;
+        if (nCur === 0) return title('FAIL-no-current-rows|note=' + txt('[data-testid="log-note"]') + '|empty=' + (txt('[data-testid="log-empty"]') || txt('[data-testid="log-empty-nosession"]') || txt('[data-testid="log-err"]') || '?'));
+        const metas = logMetas();
+        if (!metas.every((m) => m.includes('r41-a') && m.includes(sess.id.slice(0, 8)))) return title('FAIL-identity:' + metas[0]);
+        if (!metas.every((m) => stampOk(m))) return title('FAIL-time-date:' + metas[0]);
+        if (!/UTC[+-]\d{2}:\d{2}/.test(txt('[data-testid="log-note"]') || '')) return title('FAIL-tz-note');
+        await markSync('r41b-identity-ok（默认当前会话；行含主机名/会话 id/日期/时区）');
+        // 全部会话 ⊇ 当前
+        click('[data-testid="log-scope-all"]');
+        await waitFor(() => (logRows().length !== nCur ? true : null), 60);
+        await sleep(300);
+        const nAll = logRows().length;
+        if (nAll < nCur) return title('FAIL-scope-subset:' + nCur + '->' + nAll);
+        await markSync('r41b-scope-ok（可切全部会话且为超集）');
+        // 事件类型筛选：选一个真存在的动作，结果应全为该动作
+        const opt = [...document.querySelectorAll('[data-testid="log-action"] option')].find((o) => o.value === pick);
+        if (!opt) return title('FAIL-action-not-selectable:' + pick);
+        setSelect('[data-testid="log-action"]', pick);
+        await sleep(700);
+        const acts = logRows().map((r) => r.dataset.action);
+        if (acts.length === 0 || !acts.every((a) => a === pick)) return title('FAIL-filter-action:' + pick + '|' + acts.join(','));
+        await markSync('r41b-filter-action-ok（事件类型筛选：全为 ' + pick + '）');
+        setSelect('[data-testid="log-action"]', '');
+        await sleep(600);
+        // 人类/Agent 筛选
+        setSelect('[data-testid="log-actor"]', 'human');
+        await sleep(700);
+        const hs = logRows().map((r) => r.dataset.actor);
+        if (hs.length === 0 || !hs.every((a) => a === 'human')) return title('FAIL-filter-human:' + hs.join(','));
+        setSelect('[data-testid="log-actor"]', 'agent');
+        await sleep(700);
+        const ags = logRows().map((r) => r.dataset.actor);
+        if (!ags.every((a) => a === 'agent')) return title('FAIL-filter-agent:' + ags.join(','));
+        // 真审计库侧交叉对账：人类/Agent 两类各自纯净，且两类之和 = 全量（筛选不丢行）
+        const qh = await inv('audit_query', { sid: null, limit: 500, actorKind: 'human' });
+        const qa = await inv('audit_query', { sid: null, limit: 500, actorKind: 'agent' });
+        const qAll = await inv('audit_query', { sid: null, limit: 500 });
+        if (!qh.events.length || !qh.events.every((e) => e.actor_kind === 'human')) return title('FAIL-store-human');
+        if (!qa.events.every((e) => e.actor_kind === 'agent')) return title('FAIL-store-agent');
+        if (qh.total + qa.total !== qAll.total) return title('FAIL-actor-partition:' + qh.total + '+' + qa.total + '!=' + qAll.total);
+        await markSync('r41b-filter-actor-ok（人类/Agent 筛选各自成立，两类之和=全量）');
+        setSelect('[data-testid="log-actor"]', '');
+        await sleep(600);
+        // seq 游标翻页：真审计库口径，不重不漏、total 稳定
+        const p1 = await inv('audit_query', { sid: null, limit: 2 });
+        const p2 = await inv('audit_query', { sid: null, limit: 2, beforeSeq: p1.events[p1.events.length - 1].seq });
+        const s1 = p1.events.map((e) => e.seq), s2 = p2.events.map((e) => e.seq);
+        if (!(s2.length > 0 && s2.every((s) => s < s1[s1.length - 1]))) return title('FAIL-cursor-order:' + s1 + '|' + s2);
+        if (!s1.every((s) => !s2.includes(s))) return title('FAIL-cursor-overlap:' + s1 + '|' + s2);
+        if (p1.total !== p2.total || p1.total <= 0) return title('FAIL-cursor-total:' + p1.total + '|' + p2.total);
+        await markSync('r41b-cursor-ok（seq 游标翻页不重不漏、total 不缩水）');
+        // 会话关闭后记录仍在，且仍带主机身份（§6.1 快照）
+        const before = logRows().length;
+        await inv('close_session', { sid: sess.id });
+        await sleep(900);
+        click('[data-testid="log-refresh"]');
+        await sleep(900);
+        const metas2 = logMetas();
+        if (metas2.length < before) return title('FAIL-rows-lost:' + before + '->' + metas2.length);
+        const mine = metas2.filter((m) => m.includes(sess.id.slice(0, 8)));
+        if (mine.length === 0 || !mine.every((m) => m.includes('r41-a'))) return title('FAIL-identity-after-close:' + (mine[0] || '（无）'));
+        await markSync('r41b-after-close-ok（会话关闭后记录仍在并保留主机身份）');
+        return title('r41b-DONE');
+      }
+
+      if (MODE === 'r41c') {
+        // 1 设置：左分类 + 凭据显式提交（真 vault）
+        const n0 = await identCount();
+        if (!await openSettingsCreds()) return title('FAIL-open-settings');
+        if (cnt('.settings-nav button') !== 4) return title('FAIL-nav-count:' + cnt('.settings-nav button'));
+        await markSync('r41c-settings-ok（设置=左分类单对话框，凭据为独立分类）');
+        click('[data-testid="cred-new"]');
+        if (!await waitFor(() => (document.querySelector('[data-testid="cred-new-form"]') ? true : null), 40)) return title('FAIL-no-cred-form');
+        setNative('[data-testid="cred-new-label"]', 'r41-key');
+        await sleep(400);
+        if (await identCount() !== n0) return title('FAIL-eager-save（填表即落库）');
+        await markSync('r41c-explicit-submit（填表本身不落库）');
+        click('[data-testid="cred-new-gen-ed"]');
+        // 等 DOM 上的成功行（后端计数先于 React 提交渲染，只等后端会抢跑）
+        const okLine = await waitFor(() => {
+          const t = txt('[data-testid="cred-new-ok"]');
+          return t && t.includes('r41-key') ? t : null;
+        }, 80);
+        if (!okLine) return title('FAIL-no-ok-line:' + txt('[data-testid="cred-new-ok"]'));
+        if (await identCount() !== n0 + 1) return title('FAIL-not-created:' + n0);
+        const rowTxt = await waitFor(() => {
+          const r = [...document.querySelectorAll('.cred-row')].find((x) => x.textContent.includes('r41-key'));
+          return r ? r.textContent : null;
+        }, 40);
+        if (!rowTxt || !rowTxt.includes('未绑定')) return title('FAIL-unbound-state:' + rowTxt);
+        await markSync('r41c-created（显式提交后落库，显示未绑定）');
+        // 2 草稿保护：有未提交私钥时切分类先处置
+        setNative('[data-testid="cred-new-pem"]', '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----');
+        await sleep(300);
+        click('[data-testid="settings-cat-appearance"]');
+        await sleep(400);
+        if (cnt('[data-testid="cred-draft"]') !== 1) return title('FAIL-no-draft-guard');
+        if (document.querySelector('[data-testid="settings-cat-credentials"]')?.getAttribute('aria-selected') !== 'true') return title('FAIL-cat-switched');
+        click('[data-testid="cred-draft-keep"]');
+        await sleep(300);
+        if (cnt('[data-testid="cred-draft"]') !== 0) return title('FAIL-keep-did-not-close');
+        if (!(document.querySelector('[data-testid="cred-new-pem"]')?.value || '').includes('PRIVATE KEY')) return title('FAIL-keep-lost-draft');
+        await markSync('r41c-draft-guard（未提交敏感表单时切分类先拦下，可留下继续编辑）');
+        click('[data-testid="settings-cat-appearance"]');
+        await sleep(300);
+        click('[data-testid="cred-draft-discard"]');
+        await sleep(400);
+        if (cnt('[data-testid="settings-pane-appearance"]') !== 1) return title('FAIL-discard-no-switch');
+        click('[data-testid="settings-cat-credentials"]');
+        await sleep(400);
+        if ((document.querySelector('[data-testid="cred-new-pem"]')?.value || '') !== '') return title('FAIL-draft-left-behind');
+        if (await identCount() !== n0 + 1) return title('FAIL-half-baked-cred');
+        await markSync('r41c-draft-discard（丢弃草稿切走，敏感字段清空、不留半成品）');
+        // 3 引用检查：被主机引用的凭据不可删（真 vault 拒绝）
+        const target = (await inv('list_identities', {})).find((x) => x.label === 'r41-key');
+        await inv('upsert_host', { host: { id: null, name: 'r41-bound', address: '10.9.9.9', port: 22, username: 'root', auth: { Key: { identity_id: target.id } }, tags: [], charset: 'utf-8' } });
+        await sleep(500);
+        click('[data-testid="settings-close"]');
+        await sleep(300);
+        if (!await openSettingsCreds()) return title('FAIL-reopen-settings');
+        const bound = await waitFor(() => {
+          const r = [...document.querySelectorAll('.cred-row')].find((x) => x.textContent.includes('r41-key'));
+          return r && r.textContent.includes('使用中') ? r.textContent : null;
+        }, 60);
+        if (!bound || !bound.includes('r41-bound')) return title('FAIL-ref-not-shown:' + bound);
+        clickByText('.cred-row', 'r41-key');
+        const del = await waitFor(() => {
+          const r = [...document.querySelectorAll('.cred-row')].find((x) => x.textContent.includes('r41-key'));
+          if (!r) return null;
+          const b = r.querySelector('.host-del');
+          if (!b) return null;
+          b.click();
+          return true;
+        }, 40);
+        if (!del) return title('FAIL-no-del-btn');
+        if (!await waitFor(() => (document.querySelector('.confirm-dialog') ? true : null), 40)) return title('FAIL-no-confirm');
+        clickByText('.confirm-dialog button', '删除凭据');
+        const errTxt = await waitFor(() => (txt('[data-testid="cred-err"]') || null), 60);
+        if (!errTxt || !errTxt.includes('r41-bound')) return title('FAIL-ref-not-blocked:' + errTxt);
+        if (!(await inv('list_identities', {})).some((x) => x.id === target.id)) return title('FAIL-half-deleted');
+        await markSync('r41c-ref-block（被引用凭据删除被拒并列出占用主机，凭据仍在）');
+        click('[data-testid="settings-close"]');
+        return title('r41c-DONE');
       }
 
       return title('FAIL-unknown-mode:' + MODE);

@@ -1382,12 +1382,42 @@ impl SessionApi for SessionManager {
                 kind: h.kind.clone(),
                 state: *h.state.lock().await,
                 control_owner: *h.owner.lock().await,
-                created_at: chrono::Utc::now(),
+                created_at: h.created_at,
                 integration: *h.integration.lock().unwrap(),
             });
         }
         out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
+    }
+
+    /// R41（§6.6/S09）连接详情：连接时 Host 快照（handle 持有构造期副本，主机配置此后
+    /// 被编辑/删除都不影响）+ 真实创建时刻 + 运行时态。
+    async fn session_detail(&self, _ctx: &Actor, sid: SessionId) -> Result<session_api::SessionDetail> {
+        let h = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.get(&sid).cloned()
+        }
+        .ok_or(Error::SessionNotFound)?;
+        // 先取运行时态再组装：async 锁守卫不能跨到返回表达式末尾
+        let state = *h.state.lock().await;
+        let owner = *h.owner.lock().await;
+        let integration = *h.integration.lock().unwrap();
+        Ok(session_api::SessionDetail {
+            id: h.id.clone(),
+            host_id: h.host.id.clone(),
+            host_name: h.host.name.clone(),
+            kind: h.kind.clone(),
+            state,
+            control_owner: owner,
+            created_at: h.created_at,
+            integration,
+            address: h.host.address.clone(),
+            port: h.host.port,
+            username: h.host.username.clone(),
+            auth_type: h.host.auth_type,
+            fingerprint: h.host.fingerprint.clone(),
+            charset: h.host.charset,
+        })
     }
 
     async fn create_session(&self, ctx: &Actor, req: CreateSessionReq) -> Result<SessionId> {
@@ -3693,6 +3723,9 @@ mod r35_tests;
 #[cfg(test)]
 #[path = "r40_tests.rs"]
 mod r40_tests;
+#[cfg(test)]
+#[path = "r41_tests.rs"]
+mod r41_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle

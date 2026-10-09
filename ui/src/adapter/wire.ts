@@ -16,6 +16,8 @@ export type AuthType = "Key" | "Password" | "KeyboardInteractive" | "Agent";
 /** 线格式显式 rename："utf-8" / "gbk"（session-api Charset） */
 export type Charset = "utf-8" | "gbk";
 export type ControlOwner = "Human" | "Agent";
+/** C3（R24）：shell 集成态——Ready≠集成就绪，独立于 SessionState。 */
+export type IntegrationState = "Disabled" | "Pending" | "Ready" | "Unavailable";
 export type SessionState =
   | "Connected" | "Degraded" | "Reconnecting" | "Disconnected" | "Reconfirming" | "Closed";
 export type ApprovalStatus = "Pending" | "Approved" | "ApprovedEdited" | "Denied" | "Timeout" | "Voided";
@@ -114,7 +116,36 @@ export interface SessionInfo {
   kind: string;
   state: SessionState;
   control_owner: ControlOwner;
+  /** 会话**真实创建时刻**（非查询时刻）。 */
   created_at: string;
+  /** C3（R24）：shell 集成态——Ready≠集成就绪，独立字段。 */
+  integration: IntegrationState;
+}
+
+/**
+ * R41（§6.6/S09）连接详情：**连接当时**的身份快照 + 运行时态。
+ *
+ * 与 `SessionInfo` 分开：地址/端口/用户/认证类型/指纹/编码取自建会话时对 Host 的
+ * 快照（§6.1「删除配置不停止已存在会话，在活动标签保留连接时的主机信息」），
+ * 主机配置此后被编辑/删除都不影响本值。
+ */
+export interface SessionDetail {
+  id: SessionId;
+  host_id: HostId;
+  host_name: string;
+  /** "local" | "ssh" */
+  kind: string;
+  state: SessionState;
+  control_owner: ControlOwner;
+  created_at: string;
+  integration: IntegrationState;
+  address: string;
+  port: number;
+  username: string;
+  auth_type: AuthType;
+  /** 连接时已信任的主机指纹；null = 首连确认前/未记录（不虚构）。 */
+  fingerprint: string | null;
+  charset: Charset;
 }
 
 // ---- R26（§6.4）会话状态事件：断线/自动重连次数/重确认即时推送 ----

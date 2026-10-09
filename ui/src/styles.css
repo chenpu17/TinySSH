@@ -17,6 +17,9 @@
   /* R40 视觉复验 F3：--warn 在浅色 --panel(#f4f6f8) 上仅 4.20:1（原按 --panel2 白底调）；
      --warn-text 是「面板底上的警告正文」专用档，深色同 --warn（8.54:1）。 */
   --warn-text: #d0b07a;
+  /* R41 视觉复验 L2：--accent 在 --panel3(#232d3d) 上仅 4.35:1（--panel2 上是 4.88:1）；
+     --accent-text 是「panel3 提亮底上的 accent 正文」专用档（深色 5.07:1；浅色同 --accent 4.52:1）。 */
+  --accent-text: #46aab5;
   /* T32：hover 提亮层（与基色同族，步进约 +8% 亮度） */
   --accent-hover: #4db0bb;
   --danger-hover: #db9090;
@@ -77,6 +80,8 @@
   --warn: #96700a;
   /* 面板底专用档：#96700a 在 --panel 上 4.20:1（差 AA）→ #8a6409 为 4.96:1（--panel2 上 5.37:1） */
   --warn-text: #8a6409;
+  /* R41 L2：浅色 --accent 在 --panel3(#e8edf2) 上 4.52:1 已达标，故与 --accent 同值 */
+  --accent-text: #1f767c;
   --warn-hover: #ab8524;
   --blue: #2f6fab;
   --border-hover: #b6c1cc;
@@ -447,10 +452,18 @@ textarea {
 }
 .term-search input { width: 180px; padding: 4px 8px; }
 .term-search button { padding: 2px 8px; font-size: 12px; line-height: 1.4; }
-/* 显示设置弹出面板（T18）：悬浮于终端右上角；透明遮罩点击面板外即关 */
-.pop-mask { position: fixed; inset: 0; z-index: 29; }
+/* 显示设置弹出面板（T18）：悬浮于终端右上角；透明遮罩点击面板外即关。
+   R41 视觉复验 B5：右栏面板进入**完整视图**态时 `.task-panel.tp-full` 是 z-index 40，
+   而遮罩/对话框原为 29/30——窄窗（≲1104px）下「工具→活动记录」把面板转成 tp-full 后，
+   再开「连接详情」会被整块盖住（1024×768 实测 11/11 元素不可达，屏幕上只剩活动记录）。
+   模态必须高于常驻面板：遮罩 41、对话框 42。
+   R41 代码复验 C-2：**凡与 `.pop-mask` 配对的浮层都必须高于遮罩**——`.split-menu` 原是
+   与遮罩同级的 30，遮罩一抬到 41 就把自己的菜单盖死（真鼠标点击实测：菜单项中心命中
+   `pop-mask`，分屏从未进入）。故同族浮层一并抬到遮罩之上（`.split-menu` 43）。
+   全部仍低于 `.confirm-mask`(90)/toast(120)/`.tools-menu`(70)/右键菜单(200)。 */
+.pop-mask { position: fixed; inset: 0; z-index: 41; }
 .term-settings {
-  position: absolute; top: 10px; right: 14px; z-index: 30;
+  position: absolute; top: 10px; right: 14px; z-index: 42;
   width: 280px; background: var(--panel2); border: 1px solid var(--border);
   border-radius: 10px; padding: 12px; box-shadow: 0 10px 30px var(--shadow-pop);
 }
@@ -480,6 +493,89 @@ textarea {
 .cred-fp { color: var(--dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .cred-bound { font-size: 10px; color: var(--ok, var(--accent)); border: 1px solid var(--border); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
 .cred-unbound { font-size: 10px; color: var(--dim); border: 1px dashed var(--border); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
+
+/* ---- R41（§6.6/S09）连接详情对话框：独立可关闭、居中；逐项身份快照 ---- */
+/* 居中必须相对**视口**：`.term-settings` 基线是 absolute，包含块是 `.term-wrap`（终端窗格），
+   会与全视口的 `.pop-mask` 不同心（右栏关闭时偏右 ~113px），且 `100vh` 上限算的是视口高而
+   实际可用高度是窗格高——960×600 下标题行与 ✕ 被裁到窗格上界之外（vis-r41 M1/M3/L1）。
+   故新对话框一律 fixed（祖先无 transform/filter/contain，fixed 不受 .term-wrap 的 overflow 裁剪）。 */
+.term-settings.conn-detail {
+  position: fixed;
+  width: min(430px, calc(100vw - 32px));
+  top: 50%; right: auto; left: 50%; transform: translate(-50%, -50%);
+  max-height: calc(100vh - 80px); overflow: auto;
+}
+.cd-head { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.cd-grid { display: grid; grid-template-columns: 68px 1fr; gap: 5px 10px; font-size: 12px; align-items: baseline; }
+.cd-k { color: var(--text-sub); }
+.cd-v { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.cd-fp { font-family: "SF Mono", Menlo, monospace; font-size: 11px; }
+.cd-sec { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.cd-sec h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-sub); font-weight: 600; }
+.cd-sidrow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cd-sidrow code {
+  font-size: 11px; background: var(--panel3); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 6px; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cd-hint { font-size: 11px; line-height: 1.6; margin-top: 8px; }
+/* 说明文字也是要读的字：`.dim`（深色 3.01:1）不合格，与本轮 `.log-row .tl-meta` 同口径
+   （vis-r41 B2）。JSX 上是 `className="dim cd-hint"`，故用两段选择器压过 `.dim`。 */
+.term-settings .cd-hint { color: var(--text-sub); }
+
+/* ---- R41（§6.6）活动记录工作区视图：范围段钮 + 筛选 + 逐条留痕 ---- */
+.log-bar { display: flex; align-items: center; gap: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: none; border-radius: 0; background: transparent; color: var(--text-sub); font-size: 12px; padding: 3px 10px; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent-soft); color: var(--text); }
+/* R41 视觉复验 B1：悬停须胜过通用 `button:not(:disabled):hover`(--accent-hover)，否则
+   --text-sub 文字落亮 accent 底（深 1.07:1 / 浅 1.71:1，字几乎不可见）。排除选中态
+   `.on`，别让悬停把选中态顶掉。 */
+.seg button:not(.on):not(:disabled):hover { background: var(--panel3); color: var(--text); }
+.log-filters { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.log-filters label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-sub); white-space: nowrap; }
+.log-note { margin-top: 8px; font-size: 11px; color: var(--text-sub); }
+/* 日期/主机/会话身份是记录的必要内容，用 --text-sub 而非 --dim（AA） */
+.log-row .tl-meta { color: var(--text-sub); }
+.log-sid { color: var(--text-sub); }
+.log-more { margin-top: 8px; width: 100%; font-size: 12px; }
+
+/* ---- R41（§6.6/S11）设置：单对话框，左分类 + 右内容 ---- */
+.term-settings.settings-wide {
+  position: fixed;
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  top: 50%; right: auto; left: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column;
+}
+.settings-body { display: flex; gap: 12px; min-height: 0; flex: 1; }
+.settings-nav {
+  display: flex; flex-direction: column; gap: 2px; width: 84px; flex: none;
+  border-right: 1px solid var(--border); padding-right: 8px;
+}
+.settings-nav button {
+  text-align: left; border: none; background: transparent; color: var(--text-sub);
+  font-size: 12px; padding: 6px 8px; border-radius: 6px;
+}
+.settings-nav button:hover { background: var(--panel3); }
+.settings-nav button.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.settings-pane { flex: 1; min-width: 0; overflow: auto; max-height: calc(100vh - 170px); }
+
+/* R41 凭据类目：新建表单（显式提交）+ 占用者 + 未提交草稿确认 */
+.cred-new { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--panel3); }
+.cred-field { display: block; font-size: 11px; color: var(--text-sub); }
+.cred-field input, .cred-field textarea { display: block; width: 100%; margin-top: 3px; font-size: 12px; }
+.cred-field textarea { font-family: "SF Mono", Menlo, monospace; resize: vertical; }
+.cred-uses { font-size: 11px; color: var(--text-sub); margin-top: 2px; }
+/* 空态提示是正文（`.dim` 深色 3.01:1 不合格，vis-r41 B3），同 `.cd-hint` 口径 */
+.term-settings .cred-empty { color: var(--text-sub); }
+/* L2：`.cred-new` 底是 --panel3（比对话框底更亮一档），--accent 在其上深色仅 4.35:1 */
+.cred-new button.ghost { color: var(--accent-text); }
+.cred-draft {
+  margin-top: 8px; border: 1px solid var(--warn-line); background: var(--warn-soft);
+  border-radius: 8px; padding: 8px; font-size: 12px; color: var(--text);
+}
 .ts-swatch {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 18px; border-radius: 4px; border: 1px solid;
@@ -787,9 +883,11 @@ textarea {
 .dead-overlay { position: absolute; inset: 0; z-index: 20; background: var(--dead-scrim); display: flex; align-items: flex-start; justify-content: center; pointer-events: none; }
 .dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 10px 30px var(--shadow-dialog); pointer-events: auto; }
 
-/* R25 §322 分屏菜单：复用已有会话 / 在右侧新建会话（§185 同源的浮层工艺） */
+/* R25 §322 分屏菜单：复用已有会话 / 在右侧新建会话（§185 同源的浮层工艺）。
+   R41 代码复验 C-2：本菜单与 `.pop-mask` 是同父兄弟——遮罩抬到 41（B5）后必须同步高于它，
+   否则自己的遮罩吃掉自己的点击（分屏永久进不去）。故 30 → 43。 */
 .split-menu {
-  position: absolute; top: 10px; right: 14px; z-index: 30;
+  position: absolute; top: 10px; right: 14px; z-index: 43;
   width: 260px; background: var(--panel2); border: 1px solid var(--border);
   border-radius: 10px; padding: 10px; box-shadow: 0 10px 30px var(--shadow-pop);
   display: flex; flex-direction: column; gap: 2px;

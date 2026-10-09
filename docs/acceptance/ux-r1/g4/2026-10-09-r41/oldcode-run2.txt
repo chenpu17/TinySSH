@@ -1,0 +1,47 @@
+FAIL A1 连接详情是独立对话框（工具菜单里有入口）
+FAIL A2 详情展示用户/地址/端口/认证类型/指纹/编码/创建时间  [{"host":null,"user":null,"addr":null,"port":null,"auth":null,"fp":null,"cs":null,"created":null,"sid":null}]
+FAIL A3 创建时间含日期与时区说明
+FAIL A4 技术详情里 session ID 可复制（显示完整 id + 复制钮）
+FAIL A5 复制到剪贴板的是会话 ID
+PASS A6 详情里不出现私钥/口令明文
+FAIL A7 关闭按钮可独立关闭详情（不影响会话）
+FAIL A8 Esc 可关闭详情（与设置对话框行为一致）
+FAIL B1 主机改名/改址后，详情仍显示**连接时**的身份（§6.1）  [{"host":null,"addr":null,"port":null}]
+FAIL C1 活动记录是右侧工作区视图（非对话框）
+FAIL C2 默认当前会话（段钮选中态）
+FAIL C3 可切全部会话且是超集（记录不因切范围丢失）  [当前=0 全部=0]
+FAIL D1 可筛 Agent（结果全为 agent）
+FAIL D2 可筛人类（结果全为 human）
+FAIL D3 可筛事件类型（结果全为 exec）
+FAIL D4 事件类型下拉里 goal_set 有中文名（与列表口径一致）
+FAIL E1 面板标注本机时区
+FAIL E2 每条时间含日期（YYYY-MM-DD）
+FAIL E3 每条保留主机与会话身份  [0 条 · （无行）]
+FAIL F1 游标翻页：第二页 seq 全部小于第一页末条  [43,42 | 43,42]
+FAIL F2 游标翻页：两页无重复  [43,42 | 43,42]
+FAIL F3 total 是过滤后总数，不随翻页缩水  [undefined vs undefined]
+FAIL G1 会话关闭后其记录仍可查（记录连续）  [前=0 后=0]
+FAIL G2 关闭后记录仍保留主机身份（不因会话消失而失名）  [（无该会话的行）]
+FAIL H1 协作面板里不再有「操作记录」长滚动段  [title=null]
+FAIL M1 右栏完整视图态下连接详情仍可达（未被面板盖住）  [{"fullView":true,"hitTop":null}]
+FAIL M2 遮罩压住完整视图面板（模态期间面板不可点）  [null]
+FAIL N1 分屏菜单项可被命中（未被自身遮罩盖住）  [{"open":true,"hitSelf":false,"hitCls":"side-sub","zMask":"29","zMenu":"30","zPanel":"40"}]
+FAIL N2 层叠序：遮罩 > 完整视图面板(40)；分屏菜单 > 遮罩  [{"mask":"29","menu":"30","panel":"40"}]
+FAIL L1 无会话时标题不宣称条数（与空态一致）  [{"note":null,"rows":0,"nosess":0}]
+FAIL I1 设置是左分类 + 右内容的单对话框
+FAIL I2 凭据是独立分类
+FAIL I3 填表本身不落库（不即时保存）  [form=0 0 -> 0]
+FAIL I4 点「生成」才显式提交落库  [0 -> 0]
+FAIL I5 提交后给出凭据名与指纹供确认
+FAIL I6 新凭据显示为「未绑定」
+FAIL J1 有未提交私钥草稿时切分类先拦下（未直接切走）
+FAIL J2 「留下继续编辑」保持草稿（仍可看到粘贴的私钥）
+FAIL J3 「丢弃草稿并切换」切到目标分类
+FAIL J4 丢弃后草稿被清空（敏感字段不留存）
+FAIL J5 丢弃草稿不会留下半成品凭据  [0 -> 0]
+FAIL K1 被引用凭据标为「使用中」并列出占用主机  [（无该凭据行）]
+FAIL K2 删除被引用凭据被拒并说明占用主机
+FAIL K3 拒绝后凭据仍在库里（不半删）
+PASS Z 全程零 JS 错误
+
+== R41 demo 探针 2/45 ==

@@ -1,0 +1,47 @@
+PASS A1 连接详情是独立对话框（工具菜单里有入口）
+PASS A2 详情展示用户/地址/端口/认证类型/指纹/编码/创建时间  [{"host":"prod-1","user":"ops","addr":"10.0.0.11","port":"22","auth":"密码","fp":"SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI","cs":"UTF-8","created":"2026-09-27 21:50:00（UTC+08:00）","sid":"s-demo-0001"}]
+PASS A3 创建时间含日期与时区说明  [2026-09-27 21:50:00（UTC+08:00）]
+PASS A4 技术详情里 session ID 可复制（显示完整 id + 复制钮）  [s-demo-0001]
+PASS A5 复制到剪贴板的是会话 ID  [s-demo-0001]
+PASS A6 详情里不出现私钥/口令明文
+PASS A7 关闭按钮可独立关闭详情（不影响会话）
+PASS A8 Esc 可关闭详情（与设置对话框行为一致）
+PASS B1 主机改名/改址后，详情仍显示**连接时**的身份（§6.1）  [{"host":"prod-1","addr":"10.0.0.11","port":"22"}]
+PASS C1 活动记录是右侧工作区视图（非对话框）
+PASS C2 默认当前会话（段钮选中态）
+PASS C3 可切全部会话且是超集（记录不因切范围丢失）  [当前=4 全部=5]
+PASS D1 可筛 Agent（结果全为 agent）  [agent,agent]
+PASS D2 可筛人类（结果全为 human）  [human,human]
+PASS D3 可筛事件类型（结果全为 exec）  [exec]
+PASS D4 事件类型下拉里 goal_set 有中文名（与列表口径一致）  [{"v":"goal_set","t":"更新/清除任务目标"}]
+PASS E1 面板标注本机时区  [本机时间（UTC+08:00）· 共 4 条（当前会话）]
+PASS E2 每条时间含日期（YYYY-MM-DD）  [2026-09-27 22:02:11 · prod-1（s-demo-0001）]
+PASS E3 每条保留主机与会话身份  [4 条 · 2026-09-27 22:02:11 · prod-1（s-demo-0001）]
+PASS F1 游标翻页：第二页 seq 全部小于第一页末条  [43,42 | 41,40]
+PASS F2 游标翻页：两页无重复  [43,42 | 41,40]
+PASS F3 total 是过滤后总数，不随翻页缩水  [5 vs 5]
+PASS G1 会话关闭后其记录仍可查（记录连续）  [前=5 后=8]
+PASS G2 关闭后记录仍保留主机身份（不因会话消失而失名）  [2026-10-09 20:32:27 · prod-1（s-demo-0001）]
+PASS H1 协作面板里不再有「操作记录」长滚动段  [title=协作]
+PASS M1 右栏完整视图态下连接详情仍可达（未被面板盖住）  [{"fullView":true,"hitTop":{"inDetail":true,"top":201,"w":430}}]
+PASS M2 遮罩压住完整视图面板（模态期间面板不可点）  [{"x":238,"y":732,"cls":"pop-mask","isMask":true}]
+PASS N1 分屏菜单项可被命中（未被自身遮罩盖住）  [{"open":true,"hitSelf":true,"hitCls":"ghost sm-item","zMask":"41","zMenu":"43","zPanel":"40"}]
+PASS N2 层叠序：遮罩 > 完整视图面板(40)；分屏菜单 > 遮罩  [{"mask":"41","menu":"43","panel":"40"}]
+PASS L1 无会话时标题不宣称条数（与空态一致）  [{"note":"本机时间（UTC+08:00）· 未接入会话，无可显示记录","rows":0,"nosess":1}]
+PASS I1 设置是左分类 + 右内容的单对话框
+PASS I2 凭据是独立分类
+PASS I3 填表本身不落库（不即时保存）  [form=1 0 -> 0]
+PASS I4 点「生成」才显式提交落库  [0 -> 1]
+PASS I5 提交后给出凭据名与指纹供确认  [已保存「r41-key」· 指纹 SHA256:demoKey101qZ3tN7vBw9xQmFpL2sKd==]
+PASS I6 新凭据显示为「未绑定」
+PASS J1 有未提交私钥草稿时切分类先拦下（未直接切走）
+PASS J2 「留下继续编辑」保持草稿（仍可看到粘贴的私钥）
+PASS J3 「丢弃草稿并切换」切到目标分类
+PASS J4 丢弃后草稿被清空（敏感字段不留存）
+PASS J5 丢弃草稿不会留下半成品凭据  [1 -> 1]
+PASS K1 被引用凭据标为「使用中」并列出占用主机  [r41-key使用中Ed25519 密钥SHA256:demoKey101qZ3tN7vBw9xQmFpL2sKd==用于：r41-bound（换绑请到对应主机的编辑表单）]
+PASS K2 删除被引用凭据被拒并说明占用主机  [✕ 凭据仍被 1 台主机使用（r41-bound）——请先为这些主机改绑凭据或删除主机]
+PASS K3 拒绝后凭据仍在库里（不半删）
+PASS Z 全程零 JS 错误
+
+== R41 demo 探针 45/45 ==

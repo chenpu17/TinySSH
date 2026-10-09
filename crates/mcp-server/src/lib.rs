@@ -114,6 +114,15 @@ pub struct QueryAuditReq {
     pub session_id: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// R41（§6.6）：按 actor_kind 过滤（"human" | "agent"）；与 agent_id 正交。
+    #[serde(default)]
+    pub actor_kind: Option<String>,
+    /// R41：按动作名精确过滤（如 "exec" / "forward_start"）。
+    #[serde(default)]
+    pub action: Option<String>,
+    /// R41（「记录连续」）：seq 游标——只取 seq 更早的记录，供翻页。
+    #[serde(default)]
+    pub before_seq: Option<i64>,
     #[serde(default)]
     pub limit: Option<i64>,
 }
@@ -456,6 +465,9 @@ impl McpServer {
                     AuditFilter {
                         session_id: p.0.session_id,
                         agent_id: p.0.agent_id,
+                        actor_kind: p.0.actor_kind,
+                        action: p.0.action,
+                        before_seq: p.0.before_seq,
                         limit: p.0.limit.unwrap_or(50),
                         ..Default::default()
                     },

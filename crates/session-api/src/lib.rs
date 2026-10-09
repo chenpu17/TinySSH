@@ -572,6 +572,36 @@ pub struct SessionInfo {
     pub integration: IntegrationState,
 }
 
+/// R41（§6.6/S09）连接详情：**连接当时**的完整身份快照 + 会话运行时态。
+///
+/// 与 `SessionInfo` 分开的理由：详情要展示地址/端口/用户/认证类型/指纹/编码，这些字段
+/// 都在 `Host` 上；而主机配置在会话存续期内可被编辑或删除（§6.1「删除配置不停止已存在
+/// 会话，在活动标签保留连接时的主机信息」）。故建会话时对 Host 取快照，**不能**在查看时
+/// 按 host_id 回查当前配置——那会把「连接时的身份」换成「现在的配置」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetail {
+    pub id: SessionId,
+    pub host_id: HostId,
+    pub host_name: String,
+    /// local | ssh
+    pub kind: String,
+    pub state: SessionState,
+    pub control_owner: ControlOwner,
+    /// 会话**真实创建时刻**（非查询时刻；R41 修 SessionInfo.created_at 的同源缺陷）。
+    pub created_at: DateTime<Utc>,
+    /// C3（R24）：shell 集成态（独立字段，Ready≠集成就绪）。
+    #[serde(default)]
+    pub integration: IntegrationState,
+    // ---- 连接时身份快照 ----
+    pub address: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_type: AuthType,
+    /// 连接时已信任的主机指纹；None = 首连确认前/未记录（不虚构）。
+    pub fingerprint: Option<String>,
+    pub charset: Charset,
+}
+
 /// C3：shell 集成态机（R24）。Disabled=host_setting 关（不注入）；Pending=已注入等标记；
 /// Ready=集成标记在屏；Unavailable=注入后超时未见标记。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1182,7 +1212,14 @@ pub struct AuditEvent {
 pub struct AuditFilter {
     pub session_id: Option<SessionId>,
     pub agent_id: Option<AgentClientId>,
+    /// R41（§6.6「可筛人类/Agent」）：按 `actor_kind` 过滤（"human" | "agent"）。
+    /// 与 `agent_id` 正交：后者定位**某个** Agent，前者只分「人类 / Agent」两类；
+    /// 未知值不匹配任何行（如实返回空，不静默降级为「不过滤」）。
+    pub actor_kind: Option<String>,
     pub action: Option<String>,
+    /// R41（「记录连续」）：按 seq 游标翻页——只取 `seq < before_seq` 的记录。
+    /// 用 offset 分页会在新事件入链后错位/重复，seq 是主键自增，游标才连续。
+    pub before_seq: Option<i64>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
     pub offset: i64,
@@ -1490,6 +1527,8 @@ pub trait SessionApi: Send + Sync {
 
     // ---- 会话（v1；PRD FR-1/FR-4）----
     async fn list_sessions(&self, ctx: &Actor) -> Result<Vec<SessionInfo>>;
+    /// R41（§6.6/S09）：连接详情——连接时身份快照 + 运行时态。未注册会话 → SessionNotFound。
+    async fn session_detail(&self, ctx: &Actor, sid: SessionId) -> Result<SessionDetail>;
     async fn create_session(&self, ctx: &Actor, req: CreateSessionReq) -> Result<SessionId>;
     async fn close_session(&self, ctx: &Actor, sid: SessionId) -> Result<()>;
     async fn resize(&self, ctx: &Actor, sid: SessionId, cols: u16, rows: u16) -> Result<()>;
@@ -2004,5 +2043,44 @@ mod wire_format_tests {
         let (k, d) = Error::ForwardListenFailed { field: "listen".into(), reason: "端口占用".into() }.wire_parts();
         assert_eq!(k, "forward_listen_failed");
         assert_eq!(d.unwrap()["field"], "listen");
+    }
+
+    /// R41（§6.6/S09）锁定连接详情的线上形态：字段名、枚举串、时间格式与「旧载荷兼容」。
+    /// UI（ui/src/adapter/wire.ts SessionDetail）与 demo shim 按此形态收发——改动即 wire 变更。
+    #[test]
+    fn r41_session_detail_wire_format() {
+        use serde_json::json;
+        let d = SessionDetail {
+            id: "s-1".into(), host_id: "h-1".into(), host_name: "生产机".into(),
+            kind: "ssh".into(), state: SessionState::Connected, control_owner: ControlOwner::Human,
+            created_at: DateTime::parse_from_rfc3339("2026-10-09T01:02:03Z").unwrap().with_timezone(&Utc),
+            integration: IntegrationState::Ready,
+            address: "10.0.0.5".into(), port: 2222, username: "root".into(),
+            auth_type: AuthType::Key, fingerprint: Some("SHA256:abc".into()), charset: Charset::Gbk,
+        };
+        let v = serde_json::to_value(&d).unwrap();
+        // 枚举/编码/时间格式三处都是既有 wire 口径，不得顺手改
+        assert_eq!(v["state"], "Connected");
+        assert_eq!(v["control_owner"], "Human");
+        assert_eq!(v["auth_type"], "Key");
+        assert_eq!(v["charset"], "gbk");
+        assert_eq!(v["integration"], "Ready");
+        assert_eq!(v["created_at"], "2026-10-09T01:02:03Z");
+        assert_eq!(v["fingerprint"], "SHA256:abc");
+        // 未建立信任的主机：fingerprint 如实 null（不虚构占位）
+        let mut d2 = d.clone();
+        d2.fingerprint = None;
+        assert!(serde_json::to_value(&d2).unwrap()["fingerprint"].is_null());
+        // 旧载荷（R41 前无 integration 字段）反序列化不炸，回落 Disabled
+        let legacy = serde_json::from_value::<SessionDetail>(json!({
+            "id": "s-1", "host_id": "h-1", "host_name": "h", "kind": "ssh",
+            "state": "Connected", "control_owner": "Human",
+            "created_at": "2026-10-09T01:02:03Z",
+            "address": "a", "port": 22, "username": "u",
+            "auth_type": "Password", "fingerprint": null, "charset": "utf-8"
+        })).unwrap();
+        assert_eq!(legacy.integration, IntegrationState::Disabled);
+        // R41：审计过滤新增 actor_kind（人类/Agent 两类过滤；缺省不过滤）
+        assert!(AuditFilter::default().actor_kind.is_none());
     }
 }

@@ -1,0 +1,23 @@
+PASS A0 session connected  [s-demo-0001]
+PASS A1 list_transfers returns array (initially empty)  [[]]
+PASS A2 upload returns TransferHandle shape  [{"id":"t-demo-102","session_id":"s-demo-0001","kind":"Upload","local":"/tmp/demo-a.tar.gz","remote":"/var/log/demo-a.tar.gz"}]
+PASS A3 registered immediately (before I/O finishes)  [{"id":"t-demo-102","session_id":"s-demo-0001","kind":"Upload","source":"/tmp/demo-a.tar.gz","dest":"/var/log/demo-a.tar.gz","status":"Running","bytes_done":196608,"total":3538944,"revision":2,"created_at":1791549728,"finished_at":null,"error":null,"retry_of":null,"collision_decision":null,"decision_prompt":null}]
+PASS A4a terminal Succeeded with full bytes  [{"id":"t-demo-102","session_id":"s-demo-0001","kind":"Upload","source":"/tmp/demo-a.tar.gz","dest":"/var/log/demo-a.tar.gz","status":"Succeeded","bytes_done":3538944,"total":3538944,"revision":20,"created_at":1791549728,"finished_at":1791549730,"error":null,"retry_of":null,"collision_decision":null,"decision_prompt":null}]
+PASS A4b finished_at set + revision monotonic  [rev 2→20]
+PASS A5 failure injection → Failed + real error  [{"id":"t-demo-103","session_id":"s-demo-0001","kind":"Upload","source":"/tmp/fail-demo.bin","dest":"/tmp/fail-demo.bin","status":"Failed","bytes_done":393216,"total":3670016,"revision":4,"created_at":1791549730,"finished_at":1791549731,"error":"演示注入：远端写入失败","retry_of":null,"collision_decision":null,"decision_prompt":null}]
+PASS A6 download kind/fields  [{"id":"t-demo-104","session_id":"s-demo-0001","kind":"Download","source":"/var/log/app.log","dest":"~/Downloads/app.log","status":"Succeeded","bytes_done":3145728,"total":3145728,"revision":18,"created_at":1791549731,"finished_at":1791549733,"error":null,"retry_of":null,"collision_decision":null,"decision_prompt":null}]
+PASS A7a cancel → Cancelling|Cancelled immediately  [{"id":"t-demo-105","session_id":"s-demo-0001","kind":"Upload","source":"/tmp/demo-big.bin","dest":"/tmp/demo-big.bin","status":"Cancelling","bytes_done":196608,"total":3276800,"revision":3,"created_at":1791549733,"finished_at":null,"error":null,"retry_of":null,"collision_decision":null,"decision_prompt":null}]
+PASS A7b cancel terminal → Cancelled/已取消  [{"id":"t-demo-105","session_id":"s-demo-0001","kind":"Upload","source":"/tmp/demo-big.bin","dest":"/tmp/demo-big.bin","status":"Cancelled","bytes_done":196608,"total":3276800,"revision":4,"created_at":1791549733,"finished_at":1791549733,"error":"已取消","retry_of":null,"collision_decision":null,"decision_prompt":null}]
+PASS A7c terminal cancel idempotent (no error)  [null]
+PASS A8 cancel unknown → invalid_input  [{"kind":"invalid_input","message":"transfer not found（演示）"}]
+PASS A9 registry holds all tasks (query is authority)  [n=4]
+PASS A10 revision monotonic across samples  [["-105:4","-104:18","-103:4","-102:20","-105:4","-104:18","-103:4","-102:20"]]
+PASS B1 transfer cards visible after opening queue drawer  [n=4]
+PASS B2 done card text (完成 · N.N MB)  [demo-big.binprod-1已取消/tmp/demo-big.bin → /tmp/demo-big.bin重试⊘ || app.logprod-1完成 · 3.0 MB/var/log/app.log → ~/Downloads/app.log定位✓ || fail-demo.binprod-1失败：演示注入：远端写入失败/tmp/fail-demo.bin → /tmp/fail-demo.bin重试✕ || demo-a.]
+PASS B3 failed card text (失败：演示注入)  [demo-big.binprod-1已取消/tmp/demo-big.bin → /tmp/demo-big.bin重试⊘ || app.logprod-1完成 · 3.0 MB/var/log/app.log → ~/Downloads/app.log定位✓ || fail-demo.binprod-1失败：演示注入：远端写入失败/tmp/fail-demo.bin → /tmp/fail-demo.bin重试✕ || demo-a.]
+PASS B4 cancelled card text (已取消)  [demo-big.binprod-1已取消/tmp/demo-big.bin → /tmp/demo-big.bin重试⊘ || app.logprod-1完成 · 3.0 MB/var/log/app.log → ~/Downloads/app.log定位✓ || fail-demo.binprod-1失败：演示注入：远端写入失败/tmp/fail-demo.bin → /tmp/fail-demo.bin重试✕ || demo-a.]
+PASS B5 running card shows 传输中/排队中  [传输中… 576.0 KB / 3.3 MB || /tmp/demo-live.bin → /tmp/demo-live.bin || 已取消 || /tmp/demo-big.bin → /tmp/demo-big.bin || 完成 · 3.0 MB || /var/log/app.log → ~/Downloads/app.log || 失败：演示注入：远端写入失败 || /tmp/fail-demo.bin → /tmp/fa]
+PASS B6 running card has cancel button
+PASS B7 panel settles to terminal-only cards  [完成 · 3.3 MB || /tmp/demo-live.bin → /tmp/demo-live.bin || 已取消 || /tmp/demo-big.bin → /tmp/demo-big.bin || 完成 · 3.0 MB || /var/log/app.log → ~/Downloads/app.log || 失败：演示注入：远端写入失败 || /tmp/fail-demo.bin → /tmp/fail-demo.bin]
+PASS Z zero js errors
+SUMMARY 22/22

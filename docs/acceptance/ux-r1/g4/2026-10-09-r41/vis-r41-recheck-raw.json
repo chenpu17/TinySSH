@@ -1,0 +1,1073 @@
+{
+  "results": [
+    {
+      "name": "[dark] B2 .cd-hint ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.53 thr=4.5 fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=11"
+    },
+    {
+      "name": "[dark] B4 Esc 后 conn-detail 计数为 0",
+      "pass": true,
+      "detail": "still-open=0"
+    },
+    {
+      "name": "[dark] B4 Esc 关详情不误关会话（list_sessions 仍含该会话）",
+      "pass": true,
+      "detail": "sid=s-demo-0001 state=Connected"
+    },
+    {
+      "name": "[dark] 活动记录面板已开",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] B1 .seg 未选中钮悬停 ≥ AA",
+      "pass": true,
+      "detail": "ratio=9.96 thr=4.5 fg=rgb(212, 219, 230) bg=rgb(35, 45, 61) hovered=true"
+    },
+    {
+      "name": "[dark] B1 悬停选中钮不顶掉选中态（bg 不变且仍带 .on）",
+      "pass": true,
+      "detail": "before=rgb(24, 38, 47) hover=rgb(24, 38, 47) cls=\"on\""
+    },
+    {
+      "name": "[dark] B1 选中钮悬停仍 ≥ AA",
+      "pass": true,
+      "detail": "ratio=11.08 fg=rgb(212, 219, 230) bg=rgb(24, 38, 47)"
+    },
+    {
+      "name": "[dark] B3 cred-empty ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.53 thr=4.5 fg=rgb(154, 170, 184) bg=rgb(28, 36, 51) fs=12"
+    },
+    {
+      "name": "[dark] L2 cred-new ghost 按钮 ≥ AA",
+      "pass": true,
+      "detail": "ratio=5.07 thr=4.5 fg=rgb(70, 170, 181) bg=rgb(35, 45, 61) fs=12"
+    },
+    {
+      "name": "[dark] M2 草稿拦截出现（路1）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] M2 路1「留下继续编辑」连续 Tab 焦点始终在对话框内",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"cred-new\"]"
+    },
+    {
+      "name": "[dark] M2 草稿拦截出现（路2）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[dark] M2 路2「丢弃草稿并切换」连续 Tab 焦点始终在对话框内",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"ghost\"]"
+    },
+    {
+      "name": "[dark] 回归：外观分类内容未被裁",
+      "pass": true,
+      "detail": "false"
+    },
+    {
+      "name": "[dark] 全程零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] B2 .cd-hint ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.97 thr=4.5 fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=11"
+    },
+    {
+      "name": "[light] B4 Esc 后 conn-detail 计数为 0",
+      "pass": true,
+      "detail": "still-open=0"
+    },
+    {
+      "name": "[light] B4 Esc 关详情不误关会话（list_sessions 仍含该会话）",
+      "pass": true,
+      "detail": "sid=s-demo-0001 state=Connected"
+    },
+    {
+      "name": "[light] 活动记录面板已开",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] B1 .seg 未选中钮悬停 ≥ AA",
+      "pass": true,
+      "detail": "ratio=11.71 thr=4.5 fg=rgb(36, 46, 56) bg=rgb(232, 237, 242) hovered=true"
+    },
+    {
+      "name": "[light] B1 悬停选中钮不顶掉选中态（bg 不变且仍带 .on）",
+      "pass": true,
+      "detail": "before=rgb(223, 233, 236) hover=rgb(223, 233, 236) cls=\"on\""
+    },
+    {
+      "name": "[light] B1 选中钮悬停仍 ≥ AA",
+      "pass": true,
+      "detail": "ratio=11.17 fg=rgb(36, 46, 56) bg=rgb(223, 233, 236)"
+    },
+    {
+      "name": "[light] B3 cred-empty ≥ AA",
+      "pass": true,
+      "detail": "ratio=6.97 thr=4.5 fg=rgb(77, 91, 104) bg=rgb(255, 255, 255) fs=12"
+    },
+    {
+      "name": "[light] L2 cred-new ghost 按钮 ≥ AA",
+      "pass": true,
+      "detail": "ratio=4.52 thr=4.5 fg=rgb(31, 118, 124) bg=rgb(232, 237, 242) fs=12"
+    },
+    {
+      "name": "[light] M2 草稿拦截出现（路1）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] M2 路1「留下继续编辑」连续 Tab 焦点始终在对话框内",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"cred-new\"]"
+    },
+    {
+      "name": "[light] M2 草稿拦截出现（路2）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[light] M2 路2「丢弃草稿并切换」连续 Tab 焦点始终在对话框内",
+      "pass": true,
+      "detail": "[\"settings-close\",\"settings-cat-appearance\",\"settings-cat-terminal\",\"settings-cat-credentials\",\"settings-cat-about\",\"ghost\"]"
+    },
+    {
+      "name": "[light] 回归：外观分类内容未被裁",
+      "pass": true,
+      "detail": "false"
+    },
+    {
+      "name": "[light] 全程零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1440x900] M3 conn-detail 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1440x900] conn-detail 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/11"
+    },
+    {
+      "name": "[1440x900] M3 settings 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1440x900] settings 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/16"
+    },
+    {
+      "name": "[1440x900] M1 设置标题行在视口内且可见（凭据表单展开）",
+      "pass": true,
+      "detail": "{\"top\":247,\"bottom\":274} inVp=true"
+    },
+    {
+      "name": "[1440x900] M1 settings-close(✕) 在视口内且可见",
+      "pass": true,
+      "detail": "{\"top\":247,\"bottom\":274,\"x\":978} inVp=true"
+    },
+    {
+      "name": "[1440x900] M1 凭据表单展开态 clippedH=0 且无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 blocked=0/16"
+    },
+    {
+      "name": "[1440x900] M3 conn-detail 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1440x900] 右栏开时 conn-detail 全部交互元素可达（无层叠遮挡）",
+      "pass": true,
+      "detail": "blocked=0/11 panelZ=auto dlgZ=30 []"
+    },
+    {
+      "name": "[1440x900] M3 settings 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1440x900] 右栏开时 settings 全部交互元素可达（无层叠遮挡）",
+      "pass": true,
+      "detail": "blocked=0/8 panelZ=auto dlgZ=30 []"
+    },
+    {
+      "name": "[1440x900] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[1440x900] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":363,\"clientW\":363}"
+    },
+    {
+      "name": "[1440x900] 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1280x800] M3 conn-detail 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1280x800] conn-detail 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/11"
+    },
+    {
+      "name": "[1280x800] M3 settings 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1280x800] settings 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/16"
+    },
+    {
+      "name": "[1280x800] M1 设置标题行在视口内且可见（凭据表单展开）",
+      "pass": true,
+      "detail": "{\"top\":197,\"bottom\":224} inVp=true"
+    },
+    {
+      "name": "[1280x800] M1 settings-close(✕) 在视口内且可见",
+      "pass": true,
+      "detail": "{\"top\":197,\"bottom\":224,\"x\":898} inVp=true"
+    },
+    {
+      "name": "[1280x800] M1 凭据表单展开态 clippedH=0 且无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 blocked=0/16"
+    },
+    {
+      "name": "[1280x800] M3 conn-detail 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1280x800] 右栏开时 conn-detail 全部交互元素可达（无层叠遮挡）",
+      "pass": true,
+      "detail": "blocked=0/11 panelZ=auto dlgZ=30 []"
+    },
+    {
+      "name": "[1280x800] M3 settings 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1280x800] 右栏开时 settings 全部交互元素可达（无层叠遮挡）",
+      "pass": true,
+      "detail": "blocked=0/8 panelZ=auto dlgZ=30 []"
+    },
+    {
+      "name": "[1280x800] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[1280x800] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":363,\"clientW\":363}"
+    },
+    {
+      "name": "[1280x800] 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[1024x768] M3 conn-detail 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1024x768] conn-detail 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/11"
+    },
+    {
+      "name": "[1024x768] M3 settings 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1024x768] settings 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/16"
+    },
+    {
+      "name": "[1024x768] M1 设置标题行在视口内且可见（凭据表单展开）",
+      "pass": true,
+      "detail": "{\"top\":181,\"bottom\":208} inVp=true"
+    },
+    {
+      "name": "[1024x768] M1 settings-close(✕) 在视口内且可见",
+      "pass": true,
+      "detail": "{\"top\":181,\"bottom\":208,\"x\":770} inVp=true"
+    },
+    {
+      "name": "[1024x768] M1 凭据表单展开态 clippedH=0 且无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 blocked=0/16"
+    },
+    {
+      "name": "[1024x768] M3 conn-detail 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1024x768] 右栏开时 conn-detail 全部交互元素可达（无层叠遮挡）",
+      "pass": false,
+      "detail": "blocked=11/11 panelZ=40 dlgZ=30 [{\"tid\":\"cd-close\",\"by\":\"log-bar\"},{\"tid\":\"cd-host\",\"by\":\"log-filters\"},{\"tid\":\"cd-user\",\"by\":\"log-note\"},{\"tid\":\"cd-addr\",\"by\":\"tl-row log-row actor-human\"},{\"tid\":\"cd-port\",\"by\":\"tl-action\"},{\"tid\":\"cd-auth\",\"by\":\"tl-meta\"}]"
+    },
+    {
+      "name": "[1024x768] M3 settings 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[1024x768] 右栏开时 settings 全部交互元素可达（无层叠遮挡）",
+      "pass": false,
+      "detail": "blocked=8/8 panelZ=40 dlgZ=30 [{\"tid\":\"settings-close\",\"by\":\"tl-action\"},{\"tid\":\"settings-cat-appearance\",\"by\":\"tl-row log-row actor-agent\"},{\"tid\":\"settings-cat-terminal\",\"by\":\"tl-row log-row actor-agent\"},{\"tid\":\"settings-cat-credentials\",\"by\":\"tl-row log-row actor-human\"},{\"tid\":\"settings-cat-about\",\"by\":\"tp-scroll\"},{\"tid\":\"settings-pane-credentials\",\"by\":\"tl-action\"}]"
+    },
+    {
+      "name": "[1024x768] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[1024x768] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":778,\"clientW\":778}"
+    },
+    {
+      "name": "[1024x768] 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "[960x600] M3 conn-detail 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[960x600] conn-detail 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/11"
+    },
+    {
+      "name": "[960x600] M3 settings 中心对**视口**中心 dx/dy=0（右栏关）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[960x600] settings 不被裁且无遮挡（右栏关）",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 hitCenter=true blocked=0/16"
+    },
+    {
+      "name": "[960x600] M1 设置标题行在视口内且可见（凭据表单展开）",
+      "pass": true,
+      "detail": "{\"top\":97,\"bottom\":124} inVp=true"
+    },
+    {
+      "name": "[960x600] M1 settings-close(✕) 在视口内且可见",
+      "pass": true,
+      "detail": "{\"top\":97,\"bottom\":124,\"x\":738} inVp=true"
+    },
+    {
+      "name": "[960x600] M1 凭据表单展开态 clippedH=0 且无遮挡",
+      "pass": true,
+      "detail": "clippedH=0 clippedW=0 blocked=0/16"
+    },
+    {
+      "name": "[960x600] M3 conn-detail 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[960x600] 右栏开时 conn-detail 全部交互元素可达（无层叠遮挡）",
+      "pass": false,
+      "detail": "blocked=10/11 panelZ=40 dlgZ=30 [{\"tid\":\"cd-host\",\"by\":\"tp-head\"},{\"tid\":\"cd-user\",\"by\":\"tp-scroll\"},{\"tid\":\"cd-addr\",\"by\":\"log-bar\"},{\"tid\":\"cd-port\",\"by\":\"log-filters\"},{\"tid\":\"cd-auth\",\"by\":\"log-filters\"},{\"tid\":\"cd-fp\",\"by\":\"tp-scroll\"}]"
+    },
+    {
+      "name": "[960x600] M3 settings 中心对视口中心 dx/dy=0（右栏开）",
+      "pass": true,
+      "detail": "dx=0 dy=0"
+    },
+    {
+      "name": "[960x600] 右栏开时 settings 全部交互元素可达（无层叠遮挡）",
+      "pass": false,
+      "detail": "blocked=4/8 panelZ=40 dlgZ=30 [{\"tid\":\"settings-close\",\"by\":\"log-filters\"},{\"tid\":\"settings-pane-credentials\",\"by\":\"tl-action\"},{\"tid\":\"cred-new\",\"by\":\"log-note\"},{\"tid\":\"cred-empty\",\"by\":\"tl-row log-row actor-human\"}]"
+    },
+    {
+      "name": "[960x600] 回归 log-bar 无横向溢出",
+      "pass": true,
+      "detail": "clippedW=0"
+    },
+    {
+      "name": "[960x600] 回归 log-filters 无溢出/不折行",
+      "pass": true,
+      "detail": "clippedW=0 {\"rows\":1,\"scrollW\":714,\"clientW\":714}"
+    },
+    {
+      "name": "[960x600] 零 JS 错误",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "无祖先建立 fixed 包含块（fixed 确为视口相对）",
+      "pass": true,
+      "detail": "[]"
+    }
+  ],
+  "contrasts": [
+    {
+      "theme": "dark",
+      "item": "B2 .cd-hint",
+      "sel": ".cd-hint",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "以上为连接时的身份快照——主机配置此后被修改或删除，",
+      "hovered": false
+    },
+    {
+      "theme": "dark",
+      "item": "B1 .seg 未选中钮 hover",
+      "sel": "[data-testid=\"log-scope-all\"]",
+      "color": "rgb(212, 219, 230)",
+      "bg": "rgb(35, 45, 61)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 9.96,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "全部会话",
+      "hovered": true
+    },
+    {
+      "theme": "dark",
+      "item": "B1 .seg 选中钮 hover",
+      "sel": "[data-testid=\"log-scope-current\"]",
+      "color": "rgb(212, 219, 230)",
+      "bg": "rgb(24, 38, 47)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 11.08,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "当前会话",
+      "hovered": true
+    },
+    {
+      "theme": "dark",
+      "item": "B3 cred-empty",
+      "sel": "[data-testid=\"cred-empty\"]",
+      "color": "rgb(154, 170, 184)",
+      "bg": "rgb(28, 36, 51)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 6.53,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "还没有凭据——用上面的「新建凭据…」生成或导入私钥，",
+      "hovered": false
+    },
+    {
+      "theme": "dark",
+      "item": "L2 .cred-new button.ghost",
+      "sel": ".cred-new button.ghost",
+      "color": "rgb(70, 170, 181)",
+      "bg": "rgb(35, 45, 61)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 5.07,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "生成 Ed25519",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": "B2 .cd-hint",
+      "sel": ".cd-hint",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 11,
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "以上为连接时的身份快照——主机配置此后被修改或删除，",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": "B1 .seg 未选中钮 hover",
+      "sel": "[data-testid=\"log-scope-all\"]",
+      "color": "rgb(36, 46, 56)",
+      "bg": "rgb(232, 237, 242)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 11.71,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "全部会话",
+      "hovered": true
+    },
+    {
+      "theme": "light",
+      "item": "B1 .seg 选中钮 hover",
+      "sel": "[data-testid=\"log-scope-current\"]",
+      "color": "rgb(36, 46, 56)",
+      "bg": "rgb(223, 233, 236)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 11.17,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "当前会话",
+      "hovered": true
+    },
+    {
+      "theme": "light",
+      "item": "B3 cred-empty",
+      "sel": "[data-testid=\"cred-empty\"]",
+      "color": "rgb(77, 91, 104)",
+      "bg": "rgb(255, 255, 255)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 6.97,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "还没有凭据——用上面的「新建凭据…」生成或导入私钥，",
+      "hovered": false
+    },
+    {
+      "theme": "light",
+      "item": "L2 .cred-new button.ghost",
+      "sel": ".cred-new button.ghost",
+      "color": "rgb(31, 118, 124)",
+      "bg": "rgb(232, 237, 242)",
+      "fontSize": 12,
+      "large": false,
+      "ratio": 4.52,
+      "threshold": 4.5,
+      "pass": true,
+      "text": "生成 Ed25519",
+      "hovered": false
+    }
+  ],
+  "boxes": [
+    {
+      "vp": "1440x900",
+      "panel": "closed",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "rect": {
+        "x": 505,
+        "y": 259,
+        "w": 430,
+        "h": 382
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 1440,
+      "vh": 900,
+      "hitCenter": true,
+      "cx": 720,
+      "cy": 450,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "1440x900",
+      "panel": "closed",
+      "what": "settings",
+      "sel": ".term-settings.settings-wide",
+      "rect": {
+        "x": 410,
+        "y": 296,
+        "w": 620,
+        "h": 308
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 1440,
+      "vh": 900,
+      "hitCenter": true,
+      "cx": 720,
+      "cy": 450,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "1440x900",
+      "panel": "open",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "cx": 720,
+      "cy": 450,
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1280x800",
+      "panel": "closed",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "rect": {
+        "x": 425,
+        "y": 209,
+        "w": 430,
+        "h": 382
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 1280,
+      "vh": 800,
+      "hitCenter": true,
+      "cx": 640,
+      "cy": 400,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "1280x800",
+      "panel": "closed",
+      "what": "settings",
+      "sel": ".term-settings.settings-wide",
+      "rect": {
+        "x": 330,
+        "y": 246,
+        "w": 620,
+        "h": 308
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 1280,
+      "vh": 800,
+      "hitCenter": true,
+      "cx": 640,
+      "cy": 400,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "1280x800",
+      "panel": "open",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "cx": 640,
+      "cy": 400,
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "1024x768",
+      "panel": "closed",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "rect": {
+        "x": 297,
+        "y": 193,
+        "w": 430,
+        "h": 382
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 1024,
+      "vh": 768,
+      "hitCenter": true,
+      "cx": 512,
+      "cy": 384,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "1024x768",
+      "panel": "closed",
+      "what": "settings",
+      "sel": ".term-settings.settings-wide",
+      "rect": {
+        "x": 202,
+        "y": 230,
+        "w": 620,
+        "h": 308
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 1024,
+      "vh": 768,
+      "hitCenter": true,
+      "cx": 512,
+      "cy": 384,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "1024x768",
+      "panel": "open",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "cx": 512,
+      "cy": 384,
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    },
+    {
+      "vp": "960x600",
+      "panel": "closed",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "rect": {
+        "x": 265,
+        "y": 109,
+        "w": 430,
+        "h": 382
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 960,
+      "vh": 600,
+      "hitCenter": true,
+      "cx": 480,
+      "cy": 300,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "960x600",
+      "panel": "closed",
+      "what": "settings",
+      "sel": ".term-settings.settings-wide",
+      "rect": {
+        "x": 170,
+        "y": 146,
+        "w": 620,
+        "h": 308
+      },
+      "clippedW": 0,
+      "clippedH": 0,
+      "pos": "fixed",
+      "vw": 960,
+      "vh": 600,
+      "hitCenter": true,
+      "cx": 480,
+      "cy": 300,
+      "dxViewport": 0,
+      "dyViewport": 0
+    },
+    {
+      "vp": "960x600",
+      "panel": "open",
+      "what": "conn-detail",
+      "sel": "[data-testid=\"conn-detail\"]",
+      "cx": 480,
+      "cy": 300,
+      "dxViewport": 0,
+      "dyViewport": 0,
+      "pos": "fixed"
+    }
+  ],
+  "occlusion": [
+    {
+      "vp": "1440x900",
+      "what": "conn-detail",
+      "dialog": {
+        "x": 505,
+        "y": 259,
+        "w": 430,
+        "h": 382,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 1056,
+        "w": 384,
+        "z": "auto",
+        "pos": "static"
+      },
+      "overlapW": 0,
+      "total": 11,
+      "blockedN": 0,
+      "sample": []
+    },
+    {
+      "vp": "1440x900",
+      "what": "settings",
+      "dialog": {
+        "x": 410,
+        "y": 358,
+        "w": 620,
+        "h": 185,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 1056,
+        "w": 384,
+        "z": "auto",
+        "pos": "static"
+      },
+      "overlapW": 0,
+      "total": 8,
+      "blockedN": 0,
+      "sample": []
+    },
+    {
+      "vp": "1280x800",
+      "what": "conn-detail",
+      "dialog": {
+        "x": 425,
+        "y": 209,
+        "w": 430,
+        "h": 382,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 896,
+        "w": 384,
+        "z": "auto",
+        "pos": "static"
+      },
+      "overlapW": 0,
+      "total": 11,
+      "blockedN": 0,
+      "sample": []
+    },
+    {
+      "vp": "1280x800",
+      "what": "settings",
+      "dialog": {
+        "x": 330,
+        "y": 308,
+        "w": 620,
+        "h": 185,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel",
+        "x": 896,
+        "w": 384,
+        "z": "auto",
+        "pos": "static"
+      },
+      "overlapW": 54,
+      "total": 8,
+      "blockedN": 0,
+      "sample": []
+    },
+    {
+      "vp": "1024x768",
+      "what": "conn-detail",
+      "dialog": {
+        "x": 297,
+        "y": 193,
+        "w": 430,
+        "h": 382,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 798,
+        "z": "40",
+        "pos": "absolute"
+      },
+      "overlapW": 430,
+      "total": 11,
+      "blockedN": 11,
+      "sample": [
+        {
+          "tid": "cd-close",
+          "by": "log-bar"
+        },
+        {
+          "tid": "cd-host",
+          "by": "log-filters"
+        },
+        {
+          "tid": "cd-user",
+          "by": "log-note"
+        },
+        {
+          "tid": "cd-addr",
+          "by": "tl-row log-row actor-human"
+        },
+        {
+          "tid": "cd-port",
+          "by": "tl-action"
+        },
+        {
+          "tid": "cd-auth",
+          "by": "tl-meta"
+        }
+      ]
+    },
+    {
+      "vp": "1024x768",
+      "what": "settings",
+      "dialog": {
+        "x": 202,
+        "y": 292,
+        "w": 620,
+        "h": 185,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 798,
+        "z": "40",
+        "pos": "absolute"
+      },
+      "overlapW": 596,
+      "total": 8,
+      "blockedN": 8,
+      "sample": [
+        {
+          "tid": "settings-close",
+          "by": "tl-action"
+        },
+        {
+          "tid": "settings-cat-appearance",
+          "by": "tl-row log-row actor-agent"
+        },
+        {
+          "tid": "settings-cat-terminal",
+          "by": "tl-row log-row actor-agent"
+        },
+        {
+          "tid": "settings-cat-credentials",
+          "by": "tl-row log-row actor-human"
+        },
+        {
+          "tid": "settings-cat-about",
+          "by": "tp-scroll"
+        },
+        {
+          "tid": "settings-pane-credentials",
+          "by": "tl-action"
+        }
+      ]
+    },
+    {
+      "vp": "960x600",
+      "what": "conn-detail",
+      "dialog": {
+        "x": 265,
+        "y": 109,
+        "w": 430,
+        "h": 382,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 734,
+        "z": "40",
+        "pos": "absolute"
+      },
+      "overlapW": 430,
+      "total": 11,
+      "blockedN": 10,
+      "sample": [
+        {
+          "tid": "cd-host",
+          "by": "tp-head"
+        },
+        {
+          "tid": "cd-user",
+          "by": "tp-scroll"
+        },
+        {
+          "tid": "cd-addr",
+          "by": "log-bar"
+        },
+        {
+          "tid": "cd-port",
+          "by": "log-filters"
+        },
+        {
+          "tid": "cd-auth",
+          "by": "log-filters"
+        },
+        {
+          "tid": "cd-fp",
+          "by": "tp-scroll"
+        }
+      ]
+    },
+    {
+      "vp": "960x600",
+      "what": "settings",
+      "dialog": {
+        "x": 170,
+        "y": 208,
+        "w": 620,
+        "h": 185,
+        "z": "30"
+      },
+      "panel": {
+        "cls": "task-panel tp-full",
+        "x": 226,
+        "w": 734,
+        "z": "40",
+        "pos": "absolute"
+      },
+      "overlapW": 564,
+      "total": 8,
+      "blockedN": 4,
+      "sample": [
+        {
+          "tid": "settings-close",
+          "by": "log-filters"
+        },
+        {
+          "tid": "settings-pane-credentials",
+          "by": "tl-action"
+        },
+        {
+          "tid": "cred-new",
+          "by": "log-note"
+        },
+        {
+          "tid": "cred-empty",
+          "by": "tl-row log-row actor-human"
+        }
+      ]
+    }
+  ]
+}

@@ -10,10 +10,19 @@ import { apiError } from "./adapter/errors";
 import type { AttachOutput, DebugSubscriptions, ResyncOutput, ScreenCheckpoint, SessionStateEvent } from "./adapter/wire";
 type Handler = (data: Uint8Array) => void;
 
+/** R41（§6.1/§6.6）连接详情要展示的连接时身份——地址/端口/用户/认证/指纹/编码。 */
+type DemoHostSnap = {
+  name: string; address: string; port: number; username: string;
+  auth_type: string; fingerprint: string | null; charset: "utf-8" | "gbk";
+};
+
 type DemoSession = {
   id: string; host_id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
   created_at: string;
+  // R41（§6.1/§6.6）：连接**当时**的主机身份快照——主机配置此后被编辑/删除都不影响
+  // 连接详情（真实侧即 SessionHandle 持有的构造期 Host 副本，非按 host_id 回查现配置）。
+  host_snapshot: DemoHostSnap;
   goal: string | null;   // R9 任务目标/交接留言（随会话存亡，与真实 SessionHandle.goal 对齐）
   // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）。
   // ts 统一 ISO-UTC——简报侧转本地渲染（与真实 brief.rs 修复后口径一致，防时区伪影）
@@ -88,6 +97,7 @@ const demoState = {
     {
       id: "s-demo-0001", host_id: "h-prod1", host_name: "prod-1", kind: "ssh",
       state: "Connected", control_owner: "Agent", created_at: "2026-09-27T13:50:00Z",
+      host_snapshot: { name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI", charset: "utf-8" },
       goal: "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
       transitions: [{ ts: "2026-09-27T14:02:11Z", what: "人类接管（交接前未开始的请求全部作废）" }],
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
@@ -98,6 +108,7 @@ const demoState = {
     {
       id: "s-demo-0002", host_id: "h-staging1", host_name: "staging-1", kind: "ssh",
       state: "Disconnected", control_owner: "Agent", created_at: "2026-09-27T13:40:00Z",
+      host_snapshot: { name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password", fingerprint: null, charset: "utf-8" },
       goal: null,
       transitions: [],
       out: "ops@staging-1:~$ ",
@@ -186,6 +197,11 @@ function pushTo(sid: string, text: string) {
 
 // demo 检查点合成：会话输出缓冲 → 单缓冲属性网格（demo 无颜色/备用屏状态）。
 // 光标合成在最后非空行行尾（vis-r11 R2：rows-1 会让光标悬浮空白行、键入落点错位）
+/** R41：建会话时对主机取快照（真实侧 = SessionHandle 构造期持有的 Host 副本）。 */
+function hostSnapOf(h: { name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk" }): DemoHostSnap {
+  return { name: h.name, address: h.address, port: h.port, username: h.username, auth_type: h.auth_type, fingerprint: h.fingerprint ?? null, charset: h.charset ?? "utf-8" };
+}
+
 function demoCheckpoint(s: DemoSession): ScreenCheckpoint {
   const rows = 32;
   const lines = s.out.split(/\r?\n/);
@@ -328,6 +344,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return demoState.sessions.map((s) => ({
         id: s.id, host_id: s.host_id, host_name: s.host_name, kind: s.kind,
         state: s.state, control_owner: s.control_owner, created_at: s.created_at,
+        // C3（R24）：demo 不做 shell 集成注入，恒 Disabled（真实侧 Ready≠集成就绪）
+        integration: "Disabled",
       }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[] };
@@ -523,7 +541,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
       audit("human", "session_created", null, null, sid);
       // C8 镜像：成功建连打点（真实核心 touch_host_connection 同语义）
       {
@@ -858,7 +876,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
           // 与 create_session 同构建会话（同步快路径）
           const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Agent", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
           {
             const m = demoState.hostMeta.get(h.id) ?? { favorite: false, last_connected_at: null };
             m.last_connected_at = new Date().toISOString();
@@ -957,8 +975,37 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       item.resolve(accept);
       return null;
     }
-    case "audit_query":
-      return { events: demoState.events.slice(0, (args?.limit as number) ?? 30) };
+    case "session_detail": {
+      // R41（§6.6/S09）：身份取自**连接时快照**（host_snapshot），不按 host_id 回查现配置
+      // ——主机被改名/改址/删除后，详情仍显示连接当时的值（§6.1 语义，与真实侧同）。
+      const sid = String(args?.sid ?? "");
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在或已关闭");
+      const snap = s.host_snapshot;
+      return {
+        id: s.id, host_id: s.host_id, host_name: s.host_name, kind: s.kind,
+        state: s.state, control_owner: s.control_owner, created_at: s.created_at,
+        integration: "Disabled",
+        address: snap.address, port: snap.port, username: snap.username,
+        auth_type: snap.auth_type, fingerprint: snap.fingerprint, charset: snap.charset,
+      };
+    }
+    case "audit_query": {
+      // R41（§6.6）：过滤面与真实 AuditFilter 同口径（sid / actor_kind / action）；
+      // beforeSeq 是**翻页游标**而非过滤条件——total 报过滤后总数，不随翻页缩水（同后端）。
+      const sid = (args?.sid as string | null | undefined) ?? null;
+      const actorKind = (args?.actorKind as string | null | undefined) ?? null;
+      const action = (args?.action as string | null | undefined) ?? null;
+      const beforeSeq = (args?.beforeSeq as number | null | undefined) ?? null;
+      const limit = (args?.limit as number) || 100;
+      const filtered = demoState.events
+        .filter((e) => (sid === null ? true : e.session_id === sid))
+        .filter((e) => (actorKind === null ? true : e.actor_kind === actorKind))
+        .filter((e) => (action === null ? true : e.action === action))
+        .sort((a, b) => b.seq - a.seq);
+      const page = beforeSeq === null ? filtered : filtered.filter((e) => e.seq < beforeSeq);
+      return { total: filtered.length, events: page.slice(0, limit) };
+    }
     // T41 FR-7 + C4（R30）：目录浏览演示树（与真实 wire 契约同口径——目录在前、
     // 名称序、过滤 . / ..；kind/symlink 与未知字段 size/mtime=null 同 §352 语义；
     // mtime 为演示固定时间戳）。传输类仍如实报错（见下）。

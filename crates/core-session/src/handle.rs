@@ -50,6 +50,10 @@ pub struct SessionHandle {
     pub id: SessionId,
     pub host: Host,
     pub kind: String, // "local" | "ssh"
+    /// R41（§6.6/S09）会话**真实创建时刻**（构造期一次写入，之后不变）。
+    /// 此前 `list_sessions` 填的是查询时刻（每次轮询都变）——详情里的「创建时间」
+    /// 因此是假值；R41 改为构造期快照。
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub channel: Arc<dyn ChannelHandle>,
     pub screen: AsyncMutex<Screen>,
     pub output_tx: broadcast::Sender<OutputEvent>,
@@ -156,6 +160,7 @@ impl SessionHandle {
             id,
             host,
             kind,
+            created_at: chrono::Utc::now(),
             channel,
             screen: AsyncMutex::new(screen),
             output_tx,

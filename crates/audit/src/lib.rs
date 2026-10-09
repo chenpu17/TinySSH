@@ -138,6 +138,11 @@ impl AuditStore {
             params.push(Box::new(a.clone()));
             where_clauses.push(format!("agent_id = ?{}", params.len()));
         }
+        // R41（§6.6「可筛人类/Agent」）：actor_kind 精确匹配；未知值不匹配任何行
+        if let Some(k) = &f.actor_kind {
+            params.push(Box::new(k.clone()));
+            where_clauses.push(format!("actor_kind = ?{}", params.len()));
+        }
         if let Some(a) = &f.action {
             params.push(Box::new(a.clone()));
             where_clauses.push(format!("action = ?{}", params.len()));
@@ -159,6 +164,8 @@ impl AuditStore {
         let offset = f.offset.max(0);
 
         let psql: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        // R41：`before_seq` 是翻页游标而非过滤条件——`total` 报**过滤后**的总数，不随翻页缩水
+        // （否则界面上的「共 N 条」会一页页变小）。故先按过滤条件计数，再加游标取当页。
         let total: i64 = conn
             .query_row(
                 &format!("SELECT COUNT(*) FROM audit_events {where_sql}"),
@@ -167,9 +174,21 @@ impl AuditStore {
             )
             .map_err(|e| Error::Storage(e.to_string()))?;
 
+        // R41（「记录连续」）：seq 游标翻页（offset 会在新事件入链后错位/重复）
+        if let Some(s) = f.before_seq {
+            params.push(Box::new(s));
+            where_clauses.push(format!("seq < ?{}", params.len()));
+        }
+        let page_where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+        let psql: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
         let sql = format!(
             "SELECT seq, ts, actor_kind, agent_id, action, session_id, command, payload_json, approval_id, prev_hash, hash
-             FROM audit_events {where_sql} ORDER BY seq DESC LIMIT {limit} OFFSET {offset}"
+             FROM audit_events {page_where_sql} ORDER BY seq DESC LIMIT {limit} OFFSET {offset}"
         );
         let mut stmt = conn.prepare(&sql).map_err(|e| Error::Storage(e.to_string()))?;
         let rows = stmt
@@ -315,6 +334,57 @@ mod tests {
         assert_eq!(content.lines().count(), 6);
 
         assert!(store.verify_chain().unwrap());
+    }
+
+    /// R41（§6.6「记录连续」）：`before_seq` 是**翻页游标**，不是过滤条件——
+    /// `total` 必须报过滤后的总数（不随翻页缩水），且相邻两页不重不漏。
+    #[test]
+    fn seq_cursor_paging_is_continuous_and_total_is_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AuditStore::open(&dir.path().join("a.db")).unwrap();
+        for i in 0..5 {
+            store
+                .append(&Actor::Human, "exec", Some("s1"), Some(&format!("c{i}")), serde_json::json!({}), None)
+                .unwrap();
+        }
+        store
+            .append(&Actor::Agent { client_id: "cc".into() }, "exec", Some("s2"), None, serde_json::json!({}), None)
+            .unwrap();
+
+        // 全量：按 seq 倒序取前 2 条
+        let p1 = store.query(&AuditFilter { limit: 2, ..Default::default() }).unwrap();
+        assert_eq!(p1.total, 6, "total 是过滤后总数");
+        assert_eq!(p1.events.len(), 2);
+        assert_eq!(p1.events[0].seq, 6);
+
+        // 游标翻页：第二页严格早于第一页末条，且 total 不变
+        let p2 = store
+            .query(&AuditFilter { limit: 2, before_seq: Some(p1.events[1].seq), ..Default::default() })
+            .unwrap();
+        assert_eq!(p2.total, 6, "翻页不改变 total");
+        assert_eq!(p2.events.len(), 2);
+        let s1: Vec<i64> = p1.events.iter().map(|e| e.seq).collect();
+        let s2: Vec<i64> = p2.events.iter().map(|e| e.seq).collect();
+        assert!(s2.iter().all(|s| *s < s1[1]), "第二页全部早于第一页末条：{s1:?} / {s2:?}");
+        assert!(s1.iter().all(|s| !s2.contains(s)), "两页无重复");
+
+        // 新事件入链后按游标继续翻页，仍不重复、不漏掉旧记录
+        store
+            .append(&Actor::Human, "exec", Some("s3"), None, serde_json::json!({}), None)
+            .unwrap();
+        let p3 = store
+            .query(&AuditFilter { limit: 2, before_seq: Some(p2.events[1].seq), ..Default::default() })
+            .unwrap();
+        let s3: Vec<i64> = p3.events.iter().map(|e| e.seq).collect();
+        assert!(s3.iter().all(|s| !s1.contains(s) && !s2.contains(s)), "第三页与前两页无重复：{s3:?}");
+        assert_eq!(p3.total, 7, "新事件入链后 total 跟上");
+
+        // 过滤器 + 游标组合：total 只反映过滤条件，不含游标
+        let pf = store
+            .query(&AuditFilter { session_id: Some("s1".into()), limit: 2, before_seq: Some(5), ..Default::default() })
+            .unwrap();
+        assert_eq!(pf.total, 5, "过滤后 total=5（s1 的行），游标不参与计数");
+        assert!(pf.events.iter().all(|e| e.session_id.as_deref() == Some("s1") && e.seq < 5));
     }
 
     #[test]

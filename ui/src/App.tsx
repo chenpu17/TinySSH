@@ -12,7 +12,7 @@ import type {
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
-  TransferTask, CollisionDecision,
+  TransferTask, CollisionDecision, SessionDetail,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconMinus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -87,8 +87,8 @@ const pathBasename = (p: string): string => p.split("/").filter(Boolean).pop() ?
 
 // 审计动作 → 中文描述（未知动作原样显示）。全仓 29 个动作对齐清点过
 // （五人走查·阿紫：「我 forward_start」裸英文漏出）——新动作必须两边同步补。
-const auditLabel = (a: string): string =>
-  ({
+// 单独导出成常量：活动记录的「事件类型」筛选项要枚举它（函数体的字面量取不到 keys）。
+const AUDIT_LABELS: Record<string, string> = {
     session_created: "连接主机",
     session_closed: "断开会话",
     session_reconnect: "重连会话",
@@ -117,7 +117,8 @@ const auditLabel = (a: string): string =>
     host_key_confirm_requested: "请求指纹确认",
     host_key_decision: "指纹确认决定",
     host_key_trusted: "信任主机指纹",
-  })[a] ?? a;
+};
+const auditLabel = (a: string): string => AUDIT_LABELS[a] ?? a;
 
 // 审批决定行：payload.decision 区分批准/编辑后批准/拒绝（旧库存量是 Debug 串
 // "ApproveEdited(\"…\")"，按小写前缀兼容），命令本身由后端 audit 直接给实际放行文（PV R1）。
@@ -136,14 +137,40 @@ const decisionLabel = (ev: AuditEvent): string => {
   return auditLabel(ev.action);
 };
 
-// 内部管道事件不进用户时间线（集成注入是建会话的固定噪音）
-const HIDDEN_AUDIT_ACTIONS = new Set(["shell_integration_inject"]);
+// （原 `HIDDEN_AUDIT_ACTIONS` 客户端隐藏 `shell_integration_inject` 的常量随 R41 的
+//  `timeline` 一并删除——活动记录是完整留痕视图，隐藏与后端分页 total 口径不可调和。
+//  见本目录 README「取向登记」。）
 
 // 审计时间戳 → HH:MM:SS（与现场简报/后端审计口径一致——之前无秒，和简报对不上）
 const hhmm = (ts: string): string => {
   const d = new Date(ts);
   return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 };
+
+// R41（§6.6）活动记录时间戳：含**日期**，与 hhmm 的纯时刻分开（详情/记录要能跨天定位）
+const stampLocal = (ts: string): string => {
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+
+// 本机时区偏移说明（§6.6「时间含日期/时区说明」）——只算一次，随标题展示
+const TZ_NOTE = (() => {
+  const off = -new Date().getTimezoneOffset();
+  const sign = off >= 0 ? "+" : "-";
+  const a = Math.abs(off);
+  return `UTC${sign}${String(Math.floor(a / 60)).padStart(2, "0")}:${String(a % 60).padStart(2, "0")}`;
+})();
+
+// R41（§6.6）「可筛…事件类型」：固定候选（auditLabel 全集 + goal_set），按中文名排序。
+// 不从结果集反推——否则一加动作过滤，候选就跟着塌缩。
+// `goal_set` 不在 AUDIT_LABELS 里（它的中文名按 payload 细分，见 decisionLabel），
+// 不能走 auditLabel 回落成原始键名——否则下拉显示 `goal_set` 而列表显示「更新任务目标」，
+// 用户对不上自己筛的是哪一项（rev-r41 低-1）。此处给覆盖两种细分的合并名。
+const LOG_ACTION_OPTIONS: { v: string; label: string }[] = [...Object.keys(AUDIT_LABELS), "goal_set"]
+  .map((v) => ({ v, label: v === "goal_set" ? "更新/清除任务目标" : auditLabel(v) }))
+  .sort((x, y) => x.label.localeCompare(y.label, "zh-CN"));
 
 // 会话状态 → 中文标签 + 颜色类
 const stateLabel = (s: string): { text: string; cls: string } => {
@@ -558,6 +585,32 @@ export default function App() {
   // R40：停止等待核心结果——停止中集合 + 失败可重试（记最后错误供行内提示）
   const [fwdStopping, setFwdStopping] = useState<Set<string>>(new Set());
   const [fwdStopErr, setFwdStopErr] = useState<Record<string, string>>({});
+  // R41（§6.6/S09）连接详情：独立可关闭对话框（不放右栏，避免与审批共用长滚动页）
+  const [detail, setDetail] = useState<SessionDetail | null>(null);
+  const [detailErr, setDetailErr] = useState<string | null>(null);
+  const [detailSid, setDetailSid] = useState<string | null>(null);
+  // R41（§6.6）活动记录：独立工作区视图，**自带**过滤/翻页状态（不再寄生协作面板）
+  const [logScope, setLogScope] = useState<"current" | "all">("current");
+  const [logActor, setLogActor] = useState<"" | "human" | "agent">("");
+  const [logAction, setLogAction] = useState<string>("");
+  const [logEvents, setLogEvents] = useState<AuditEvent[]>([]);
+  const [logTotal, setLogTotal] = useState(0);
+  const [logBusy, setLogBusy] = useState(false);
+  const [logErr, setLogErr] = useState<string | null>(null);
+  // R41（§6.6「保留主机/会话身份」）：会话关闭后即从 sessions 消失，但记录里仍要显示
+  // 它**连接时**的身份——故累积 sid→主机名 的留痕表，只增不删；查不到时如实显示短 id。
+  const [sessionIdent, setSessionIdent] = useState<Map<string, string>>(() => new Map());
+  // R41（§6.6/S11）设置：左侧分类 + 右侧内容单对话框；凭据类目下的新建/删除**显式提交**
+  const [settingsCat, setSettingsCat] = useState<"appearance" | "terminal" | "credentials" | "about">("appearance");
+  const [credNewOpen, setCredNewOpen] = useState(false);
+  const [credLabel, setCredLabel] = useState("");
+  const [credPem, setCredPem] = useState("");
+  const [credPass, setCredPass] = useState("");
+  const [credBusy, setCredBusy] = useState(false);
+  const [credNewErr, setCredNewErr] = useState<string | null>(null);
+  const [credNewOk, setCredNewOk] = useState<IdentityMeta | null>(null);
+  // §231「切分类遇未提交敏感表单时先处理草稿」：待切换的目标分类（非空即弹草稿确认）
+  const [credDraftTo, setCredDraftTo] = useState<null | "appearance" | "terminal" | "about">(null);
   // Toast（精致化 §六/P3）：右下角轻通知，2.6s 自动消失；最多同屏 4 条
   const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string }[]>([]);
   const toastSeq = useRef(0);
@@ -580,6 +633,8 @@ export default function App() {
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string } | null>(null);
   // §7.4 弹窗 focus trap：带遮罩模态的容器 refs（hook 挂在组件顶层，active 随开合）
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+  // R41（§6.6/S09）：连接详情对话框（独立可关闭，焦点陷阱同其它对话框）
+  const detailPanelRef = useRef<HTMLDivElement | null>(null);
   const closeConfirmRef = useRef<HTMLDivElement | null>(null);
   const quitConfirmRef = useRef<HTMLDivElement | null>(null);
   const delHostRef = useRef<HTMLDivElement | null>(null);
@@ -618,7 +673,6 @@ export default function App() {
   // 简报 ref：拖拽上传回调里读当前 cwd（不进依赖数组，避免监听器随简报反复重订阅）
   const briefRef = useRef<Brief | null>(null);
   useEffect(() => { briefRef.current = brief; }, [brief]);
-  const [timeline, setTimeline] = useState<AuditEvent[]>([]);
   const [owner, setOwner] = useState<"Human" | "Agent">("Agent");
   const [mcp, setMcp] = useState<{ endpoint: string; agents: { id: string; label: string }[] }>({ endpoint: "", agents: [] });
   const [input, setInput] = useState("");
@@ -702,8 +756,8 @@ export default function App() {
     } catch { return 224; }
   });
   const [hostQuery, setHostQuery] = useState("");
-  // 右侧任务面板：一次只呈现文件 / 协作 / 转发之一（§4.3），缺省关闭
-  const [rightPanel, setRightPanel] = useState<null | "files" | "collab" | "forwards">(null);
+  // 右侧任务面板：一次只呈现文件 / 协作 / 转发 / 活动记录之一（§4.3/§6.6），缺省关闭
+  const [rightPanel, setRightPanel] = useState<null | "files" | "collab" | "forwards" | "log">(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [winW, setWinW] = useState(() => window.innerWidth);
@@ -726,9 +780,6 @@ export default function App() {
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
       setApprovals((await invoke("list_approvals", { pendingOnly: false }))
         .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) })));
-      // 多取一些：集成注入等内部事件会被前端过滤，保证可见条数够看
-      const page = await invoke("audit_query", { sid: null, limit: 60 });
-      setTimeline(page.events);
     } catch {
       // 审核低-5：首载失败也必须撤骨架给出空态出口（否则永久骨架 + 未处理 rejection）；
       // 3s 轮询自愈，错误不逐条打扰（连接类失败另有常驻横幅）
@@ -736,10 +787,131 @@ export default function App() {
     }
   }, []);
 
+  // R41（§6.6「保留主机/会话身份」）：累积 sid→主机名。会话关闭后从 sessions 消失，
+  // 但它的记录还要能标出「当时是哪台主机」——故只增不删，查不到时如实显示短 id。
+  useEffect(() => {
+    setSessionIdent((prev) => {
+      let next: Map<string, string> | null = null;
+      for (const s of sessions) {
+        if (!prev.has(s.id)) {
+          if (!next) next = new Map(prev);
+          next.set(s.id, s.host_name);
+        }
+      }
+      return next ?? prev;
+    });
+  }, [sessions]);
+
+  // R41（§6.6/S09）连接详情：**独立可关闭对话框**。取的是后端连接时身份快照，
+  // 不按 host_id 回查现配置——主机改过名/改过址，详情仍显示连接当时的值（§6.1）。
+  const openSessionDetail = useCallback(async (s: SessionInfo | null | undefined) => {
+    const sid = s?.id ?? null;
+    if (!sid) { setDetailErr("未接入会话——连接主机后可在「工具 → 连接详情」查看"); setDetail(null); setDetailSid(null); return; }
+    setDetailSid(sid); setDetail(null); setDetailErr(null);
+    try {
+      const d = await invoke("session_detail", { sid });
+      if (sidRef.current !== sid) return; // 过期响应丢弃，防跨会话串台
+      setDetail(d);
+    } catch (e) {
+      if (sidRef.current !== sid) return;
+      setDetailErr(friendlyError(e));
+    }
+  }, []);
+
+  // R41（§6.6）活动记录：本视图**自带**查询（不寄生协作面板）。默认当前会话，
+  // 可切全部；可筛人类/Agent 与事件类型；翻页走 seq 游标（连续，不重不漏）。
+  const LOG_PAGE = 40;
+  // 请求代次：切范围/筛选/会话会连发多条查询，响应可能乱序到达（原生 IPC 并发执行命令）。
+  // 只认最后一次发出的那一代——否则先发后到的旧筛选结果会盖掉新筛选结果（rev-r41 低-4）。
+  const logGenRef = useRef(0);
+  const loadLog = useCallback(async (more: boolean) => {
+    const gen = ++logGenRef.current;
+    setLogBusy(true); setLogErr(null);
+    try {
+      const beforeSeq = more && logEvents.length > 0 ? logEvents[logEvents.length - 1].seq : null;
+      const page = await invoke("audit_query", {
+        sid: logScope === "current" ? (sidRef.current || null) : null,
+        limit: LOG_PAGE,
+        actorKind: logActor || null,
+        action: logAction || null,
+        beforeSeq,
+      });
+      if (gen !== logGenRef.current) return; // 过期响应丢弃（不 setState）
+      setLogTotal(page.total);
+      setLogEvents((prev) => (more ? [...prev, ...page.events] : page.events));
+    } catch (e) {
+      if (gen !== logGenRef.current) return;
+      setLogErr(friendlyError(e));
+      if (!more) { setLogEvents([]); setLogTotal(0); }
+    } finally {
+      if (gen === logGenRef.current) setLogBusy(false);
+    }
+  }, [logScope, logActor, logAction, logEvents]);
+
+  // 面板打开 / 范围 / 筛选 / 当前会话变化 → 重取首页（切范围不叠加旧页，避免串台）。
+  // 「当前会话」但无会话时不查：`sidRef.current` 为 null 时照常下发会**退化成全局查询**，
+  // 而正文已渲染「未接入会话」空态——标题却按全局总数宣称「共 N 条」，两处自相矛盾
+  // （rev-r41 低-2）。此处直接落空态并作废在途响应。
+  useEffect(() => {
+    if (rightPanel !== "log") return;
+    if (logScope === "current" && !sid) {
+      logGenRef.current++;
+      setLogEvents([]); setLogTotal(0); setLogErr(null); setLogBusy(false);
+      return;
+    }
+    void loadLog(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rightPanel, logScope, logActor, logAction, sid]);
+
+  // R41（§6.6/S11）设置 → 凭据：新建走**显式提交**（生成 / 粘贴私钥），与连接表单同后端。
+  // 列表刷新复用既有 refreshIdentities（R21：面板打开与删除后共用）。
+  const submitNewIdentity = useCallback(async (req: import("./adapter/wire").IdentityReq) => {
+    setCredNewErr(null); setCredNewOk(null); setCredBusy(true);
+    try {
+      const meta = await invoke("create_identity", { req });
+      setCredNewOk(meta);
+      // 提交成功后销毁前端敏感字段（§269：明文不留在通用状态里）
+      setCredPem(""); setCredPass("");
+      // 落库成功才刷新列表（未提交/失败都不动列表，保持「显式提交」语义）
+      try { setIdentities(await invoke("list_identities")); } catch { /* 列表降级保留旧值 */ }
+    } catch (e) {
+      setCredNewErr(friendlyError(e));
+    } finally {
+      setCredBusy(false);
+    }
+  }, []);
+
+  // §231：凭据类目下若有未提交的敏感草稿，切分类前先让用户处置（丢弃 / 留下）
+  const switchSettingsCat = useCallback((next: "appearance" | "terminal" | "credentials" | "about") => {
+    if (next === "credentials") { setCredDraftTo(null); setSettingsCat(next); return; }
+    const dirty = credPem.trim() !== "" || credPass.trim() !== "";
+    if (settingsCat === "credentials" && dirty) { setCredDraftTo(next); return; }
+    setCredDraftTo(null); setSettingsCat(next);
+  }, [settingsCat, credPem, credPass]);
+
+  const discardCredDraft = useCallback(() => {
+    // 丢弃草稿 = 清空前端敏感字段（凭据库里没有半成品，取消不落库）
+    setCredPem(""); setCredPass(""); setCredLabel(""); setCredNewErr(null);
+    setSettingsCat(credDraftTo ?? "appearance");
+    setCredDraftTo(null);
+  }, [credDraftTo]);
+
+  // R41（§6.6/S09）：连接详情是**独立可关闭对话框**——遮罩点击、✕、Esc 三条路都关它
+  // （vis-r41 B4：此前只挂了遮罩与 ✕，Esc 链漏了这一层，与同轮新增的设置对话框行为不一致）。
+  const closeDetail = useCallback(() => {
+    setDetail(null); setDetailErr(null); setDetailSid(null);
+  }, []);
+
+  // R41（§231/§269）：关闭设置即销毁前端敏感草稿——凭据库里没有半成品
+  const closeSettings = useCallback(() => {
+    setCredPem(""); setCredPass(""); setCredLabel("");
+    setCredNewErr(null); setCredNewOk(null); setCredNewOpen(false); setCredDraftTo(null);
+    setShowSettings(false);
+  }, []);
+
   const refreshBrief = useCallback(async (s: string) => {
     try {
-      const b = await invoke("session_brief", { sid: s });
-      if (sidRef.current !== s) return; // 审核H1：已切走会话的过期简报直接丢弃，防简报/任务目标跨会话串台
+      const b = await invoke("session_brief", { sid: s });      if (sidRef.current !== s) return; // 审核H1：已切走会话的过期简报直接丢弃，防简报/任务目标跨会话串台
       setBrief(b);
     } catch { /* 会话已关 */ }
   }, []);
@@ -796,7 +968,7 @@ export default function App() {
       if (clear) setGoalDraft("");
       pushToast("ok", t ? "任务目标已更新，Agent 读简报可见" : "任务目标已清除，Agent 简报同步移除");
       void refreshBrief(target);
-      void refreshLists(); // goal_set 审计事件即时上时间线
+      void refreshLists(); // goal_set 审计事件即时反映到列表/简报（活动记录面板自带刷新）
     } catch (e) {
       pushToast("err", friendlyError(e));
     }
@@ -1487,7 +1659,7 @@ export default function App() {
   // 窄窗完整视图断点（§4.2）：可用宽度 < 主机栏 + 560 + 面板宽 → 面板改中央完整视图。
   // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
-  const panelNeed = rightPanel === "collab" || rightPanel === "forwards" ? 400 : 384;
+  const panelNeed = rightPanel === "collab" || rightPanel === "forwards" || rightPanel === "log" ? 400 : 384;
   const availW = winW - (hostbarOpen ? hostbarWidth : 0);
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
@@ -1538,9 +1710,10 @@ export default function App() {
     if (hk) { void decideHostKey(hk, false); return true; }
     if (confirm) { setConfirm(null); return true; }
     if (pasteConfirm) { setPasteConfirm(null); return true; }
+    if (detail || detailErr) { closeDetail(); return true; }
     if (splitMenu) { setSplitMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
-    if (showSettings) { setShowSettings(false); return true; }
+    if (showSettings) { closeSettings(); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
     if (tabsMenuOpen) { setTabsMenuOpen(false); return true; }
     if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); return true; }
@@ -1869,6 +2042,19 @@ export default function App() {
   const [quitSummary, setQuitSummary] = useState<{ sessions: SessionInfo[]; forwards: number } | null>(null);
   // §7.4 弹窗 focus trap（调用须在全部相关 state 声明之后；hook 序恒定）
   useDialogFocus(showSettings, settingsPanelRef);
+  // R41 视觉复验 M2：草稿确认框消解时（「留下继续编辑」/「丢弃草稿并切换」）被点的按钮
+  // 随之从 DOM 移除，焦点落回 body——`useDialogFocus` 的 keydown 挂在对话框上，此后 Tab
+  // 不再冒泡到框内，陷阱失效、可 Tab 逃到背景。消解后把焦点收回框内（同干净打开的落点）。
+  useEffect(() => {
+    if (credDraftTo !== null) return;
+    const box = settingsPanelRef.current;
+    if (!showSettings || !box || box.contains(document.activeElement)) return;
+    const first = Array.from(
+      box.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"),
+    ).filter((n) => !(n instanceof HTMLButtonElement && n.disabled) && n.offsetParent !== null)[0];
+    first?.focus();
+  }, [credDraftTo, showSettings]);
+  useDialogFocus(!!detail || !!detailErr, detailPanelRef);
   useDialogFocus(confirm?.kind === "closeSession", closeConfirmRef);
   useDialogFocus(!!quitSummary, quitConfirmRef);
   useDialogFocus(confirm?.kind === "deleteHost", delHostRef);
@@ -2649,7 +2835,7 @@ export default function App() {
   // 面板开合/浏览路径经 ref 读取（探针实证 300ms 窗内 hook 重注册竞态——闭包捕获
   // 旧 rightPanel 会借到已关闭面板的路径，违 §354）——同源判别用 ref 不用闭包
   const taskPanelRef = useRef<HTMLElement | null>(null);
-  const rightPanelRef = useRef<null | "files" | "collab" | "forwards">(null);
+  const rightPanelRef = useRef<null | "files" | "collab" | "forwards" | "log">(null);
   useEffect(() => { rightPanelRef.current = rightPanel; }, [rightPanel]);
   const beginDropUploads = useCallback((paths: string[], pos?: { x: number; y: number }) => {
     if (!paths.length) return;
@@ -2953,7 +3139,6 @@ export default function App() {
   const pendingCount = pendingApprovals.length;
   // 已处理的审批不再整卡展示，折叠为最近几条一行记录
   const resolvedApprovals = approvals.filter((a) => a.status !== "pending").slice(-3).reverse();
-  const visibleTimeline = timeline.filter((ev) => !HIDDEN_AUDIT_ACTIONS.has(ev.action));
 
   const currentHost = current ? hosts.find((h) => h.id === current.host_id) : undefined;
   const sbLeft = current
@@ -3188,7 +3373,7 @@ export default function App() {
           })()}
         </div>
         <div className="hb-bottom">
-          <button className="hb-settings" title="显示设置（字号 / 主题）" aria-label="显示设置"
+          <button className="hb-settings" title="设置（外观 / 终端 / 凭据）" aria-label="设置"
             onClick={() => dispatchRef.current({ id: "settings" })}>
             <IconSliders size={14} />设置
           </button>
@@ -3493,7 +3678,9 @@ export default function App() {
               {toolsOpen && (
                 <div className="tools-menu" role="menu">
                   <button role="menuitem" onClick={() => { setRightPanel("collab"); setToolsOpen(false); }}>审批与记录</button>
+                  <button role="menuitem" data-testid="tools-conn-detail" onClick={() => { setToolsOpen(false); openSessionDetail(current); }}>连接详情…</button>
                   <button role="menuitem" onClick={() => { setRightPanel("forwards"); setToolsOpen(false); }}>端口转发</button>
+                  <button role="menuitem" data-testid="tools-activity" onClick={() => { setRightPanel("log"); setToolsOpen(false); }}>活动记录</button>
                   <button role="menuitem" className="tm-danger" onClick={() => { setToolsOpen(false); requestCloseSession(current); }}>关闭会话…</button>
                 </div>
               )}
@@ -3787,15 +3974,88 @@ export default function App() {
               </div>
             </div>
           )}
+          {/* R41（§6.6/S09）连接详情：**独立可关闭对话框**（§193——不与审批共用长滚动页）。
+              展示连接**当时**的身份快照（§6.1：主机配置此后被改/删都不影响），
+              session ID 收在「技术详情」里可复制。 */}
+          {(detail || detailErr) && (() => {
+            return (
+              <>
+                <div className="pop-mask" onClick={closeDetail} />
+                <div className="term-settings conn-detail" ref={detailPanelRef} role="dialog" aria-modal="true"
+                  aria-label="连接详情" data-testid="conn-detail">
+                  <div className="cd-head">
+                    <b>连接详情</b>
+                    {detail && <span className={"chip " + stateLabel(detail.state).cls}>{stateLabel(detail.state).text}</span>}
+                    {detail?.control_owner === "Agent" && <span className="badge agent">Agent 控制</span>}
+                    <span style={{ flex: 1 }} />
+                    <button className="ghost icon-btn" aria-label="关闭连接详情" data-testid="cd-close"
+                      onClick={closeDetail}><IconX size={14} /></button>
+                  </div>
+                  {detailErr ? (
+                    <div className="empty" data-testid="cd-err">{detailErr}</div>
+                  ) : detail && (
+                    <>
+                      <div className="cd-grid">
+                        <div className="cd-k">主机</div><div className="cd-v" data-testid="cd-host">{detail.host_name}</div>
+                        <div className="cd-k">用户</div><div className="cd-v" data-testid="cd-user">{detail.username}</div>
+                        <div className="cd-k">地址</div><div className="cd-v" data-testid="cd-addr">{detail.address}</div>
+                        <div className="cd-k">端口</div><div className="cd-v" data-testid="cd-port">{detail.port}</div>
+                        <div className="cd-k">认证类型</div><div className="cd-v" data-testid="cd-auth">
+                          {detail.auth_type === "Key" ? "密钥" : detail.auth_type === "Agent" ? "SSH Agent"
+                            : detail.auth_type === "KeyboardInteractive" ? "键盘交互" : "密码"}
+                        </div>
+                        <div className="cd-k">指纹</div><div className="cd-v cd-fp" data-testid="cd-fp">
+                          {detail.fingerprint ?? <span className="dim">未记录（首次连接确认前）</span>}
+                        </div>
+                        <div className="cd-k">编码</div><div className="cd-v" data-testid="cd-charset">
+                          {detail.charset === "gbk" ? "GBK" : "UTF-8"}
+                        </div>
+                        <div className="cd-k">创建时间</div><div className="cd-v" data-testid="cd-created">
+                          {stampLocal(detail.created_at)}（{TZ_NOTE}）
+                        </div>
+                      </div>
+                      <div className="cd-sec">
+                        <h4>技术详情</h4>
+                        <div className="cd-sidrow">
+                          <span className="cd-k">会话 ID</span>
+                          <code data-testid="cd-sid">{detail.id}</code>
+                          <button className="ghost" data-testid="cd-copy"
+                            onClick={() => {
+                              (inTauri ? clipboard.writeText(detail.id) : navigator.clipboard?.writeText(detail.id))
+                                .then(() => pushToast("ok", "会话 ID 已复制"))
+                                .catch(() => pushToast("err", "复制失败——请手动选中复制"));
+                            }}>复制</button>
+                        </div>
+                      </div>
+                      <div className="dim cd-hint">
+                        以上为连接时的身份快照——主机配置此后被修改或删除，都不影响这里显示的信息。
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            );
+          })()}
           {showSettings && (
             <>
-              <div className="pop-mask" onClick={() => setShowSettings(false)} />
-              <div className="term-settings" ref={settingsPanelRef} role="dialog" aria-modal="true" aria-label="显示设置">
+              <div className="pop-mask" onClick={closeSettings} />
+              <div className="term-settings settings-wide" ref={settingsPanelRef} role="dialog" aria-modal="true" aria-label="设置">
                 <div className="row" style={{ marginBottom: 10 }}>
-                  <b>显示设置</b>
+                  <b>设置</b>
                   <span style={{ flex: 1 }} />
-                  <button className="ghost" title="关闭" aria-label="关闭显示设置" onClick={() => setShowSettings(false)}><IconX size={13} /></button>
+                  <button className="ghost" title="关闭" aria-label="关闭设置" data-testid="settings-close" onClick={closeSettings}><IconX size={13} /></button>
                 </div>
+                {/* §231：单个对话框，左分类 + 右内容；外观/终端偏好即时预览，凭据显式提交 */}
+                <div className="settings-body">
+                  <nav className="settings-nav" role="tablist" aria-label="设置分类">
+                    {([["appearance", "外观"], ["terminal", "终端"], ["credentials", "凭据"], ["about", "关于"]] as const).map(([id, label]) => (
+                      <button key={id} role="tab" data-testid={`settings-cat-${id}`}
+                        aria-selected={settingsCat === id} className={settingsCat === id ? "on" : ""}
+                        onClick={() => switchSettingsCat(id)}>{label}</button>
+                    ))}
+                  </nav>
+                  <div className="settings-pane" role="tabpanel" data-testid={`settings-pane-${settingsCat}`}>
+                {settingsCat === "appearance" && (<>
                 <div className="ts-label">字号</div>
                 <div className="row">
                   <button className="ghost" title="减小（⌘−）" aria-label="减小字号" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}><IconMinus size={13} /></button>
@@ -3829,8 +4089,11 @@ export default function App() {
                 </div>
                 <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>应用外观与终端配色相互独立；「跟随系统」随系统深浅实时切换。</div>
                 <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
+                </>)}
+
+                {settingsCat === "terminal" && (<>
                 {/* R25 §318：多行粘贴保护开关——阈值（内容含换行）与行为在设置明确说明 */}
-                <div className="ts-label" style={{ marginTop: 12 }}>粘贴</div>
+                <div className="ts-label">粘贴</div>
                 <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
                   <input type="checkbox" checked={pasteGuard} onChange={(e) => changePasteGuard(e.target.checked)} style={{ marginTop: 3 }} />
                   <span style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -3840,17 +4103,77 @@ export default function App() {
                     </span>
                   </span>
                 </label>
-                {/* R21 凭据基础管理（§238/§267）：生成/导入在连接表单完成；此处列表 +
-                    未绑定标记 + 引用检查删除——已保存凭据独立存在，取消表单不默默删除 */}
-                <div className="ts-label" style={{ marginTop: 12 }}>凭据库</div>
-                {credErr && <div className="err" style={{ marginTop: 4, fontSize: 12 }}>✕ {credErr}</div>}
+                </>)}
+
+                {settingsCat === "credentials" && (<>
+                {/* R41（§231/§238/§267）设置 → 凭据：创建/删除/授权使用**显式提交**
+                    （不即时保存）；未绑定态明确；删除前检查引用，不破坏其他主机认证。 */}
+                <div className="row" style={{ alignItems: "center" }}>
+                  <div className="ts-label" style={{ marginTop: 0 }}>凭据库</div>
+                  <span style={{ flex: 1 }} />
+                  <button className="ghost" data-testid="cred-new"
+                    onClick={() => { setCredNewOpen(!credNewOpen); setCredNewErr(null); setCredNewOk(null); }}>
+                    {credNewOpen ? "收起" : "新建凭据…"}
+                  </button>
+                </div>
+                {credErr && <div className="err" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-err">✕ {credErr}</div>}
+                {credNewOpen && (
+                  <div className="cred-new" data-testid="cred-new-form">
+                    <label className="cred-field">名称
+                      <input value={credLabel} data-testid="cred-new-label" placeholder="例如 prod-key"
+                        onChange={(e) => setCredLabel(e.target.value)} />
+                    </label>
+                    <div className="row" style={{ marginTop: 6, gap: 6 }}>
+                      <button className="ghost" disabled={credBusy} data-testid="cred-new-gen-ed"
+                        onClick={() => void submitNewIdentity({ Generate: { label: credLabel.trim() || "新密钥", kind: "Ed25519" } })}>生成 Ed25519</button>
+                      <button className="ghost" disabled={credBusy} data-testid="cred-new-gen-rsa"
+                        onClick={() => void submitNewIdentity({ Generate: { label: credLabel.trim() || "新密钥", kind: "Rsa" } })}>生成 RSA</button>
+                    </div>
+                    <label className="cred-field" style={{ marginTop: 8 }}>粘贴私钥（OpenSSH / PEM）
+                      <textarea value={credPem} data-testid="cred-new-pem" rows={4}
+                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" onChange={(e) => setCredPem(e.target.value)} />
+                    </label>
+                    <label className="cred-field">私钥口令（没有可留空）
+                      <input type="password" value={credPass} data-testid="cred-new-pass" autoComplete="off"
+                        onChange={(e) => setCredPass(e.target.value)} />
+                    </label>
+                    <div className="row" style={{ marginTop: 6, gap: 6 }}>
+                      <button disabled={credBusy} data-testid="cred-new-import"
+                        onClick={() => void submitNewIdentity({ Import: { label: credLabel.trim() || "导入密钥", pem: credPem, passphrase: credPass || null } })}>
+                        {credBusy ? "处理中…" : "导入并保存"}
+                      </button>
+                      <button className="ghost" disabled={credBusy} data-testid="cred-new-cancel"
+                        onClick={() => { setCredPem(""); setCredPass(""); setCredNewErr(null); setCredNewOpen(false); }}>取消</button>
+                    </div>
+                    <div className="dim" style={{ marginTop: 4, fontSize: 11 }}>
+                      只有点「生成」或「导入并保存」才落库；取消或关闭对话框都不会留下半成品。
+                    </div>
+                    {credNewErr && <div className="err" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-new-err">✕ {credNewErr}</div>}
+                    {credNewOk && (
+                      <div className="ok" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-new-ok">
+                        已保存「{credNewOk.label}」· 指纹 <span className="mono">{credNewOk.fingerprint}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {credDraftTo && (
+                  <div className="cred-draft" data-testid="cred-draft">
+                    <div>凭据表单里还有未提交的私钥内容——切到「{credDraftTo === "appearance" ? "外观" : credDraftTo === "terminal" ? "终端" : "关于"}」会丢弃它。</div>
+                    <div className="row" style={{ marginTop: 6, gap: 6 }}>
+                      <button data-testid="cred-draft-discard" onClick={discardCredDraft}>丢弃草稿并切换</button>
+                      <button className="ghost" data-testid="cred-draft-keep" onClick={() => setCredDraftTo(null)}>留下继续编辑</button>
+                    </div>
+                  </div>
+                )}
                 {identities.length === 0 ? (
-                  <div className="dim" style={{ marginTop: 4, fontSize: 12 }}>
-                    还没有凭据——私钥（生成/粘贴/文件导入）与密码都在连接表单里保存后进入这里。
+                  <div className="dim cred-empty" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-empty">
+                    还没有凭据——用上面的「新建凭据…」生成或导入私钥，也可以在连接表单里保存。
                   </div>
                 ) : (
                   <div style={{ marginTop: 4 }}>
-                    {identities.map((it) => (
+                    {identities.map((it) => {
+                      const boundTo = hosts.filter((h) => h.identity_id === it.id).map((h) => h.name);
+                      return (
                       <div key={it.id} className="cred-row">
                         {/* vis-r21：280px 面板单行排不下（label 被挤零宽、kind 与指纹
                             叠印 37.7px）——改两行：首行 label+徽章+删除，次行 kind+指纹 */}
@@ -3869,17 +4192,31 @@ export default function App() {
                           <span className="cred-kind">{it.kind === "Password" ? "密码" : it.kind === "Rsa" ? "RSA 密钥" : "Ed25519 密钥"}</span>
                           <span className="mono cred-fp" title={it.fingerprint}>{it.fingerprint}</span>
                         </div>
+                        {/* §267「授权使用」：绑定在主机表单里显式选择，这里如实列出占用者 */}
+                        {boundTo.length > 0 && (
+                          <div className="cred-uses" data-testid="cred-uses">用于：{boundTo.join("、")}（换绑请到对应主机的编辑表单）</div>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                     <div className="dim" style={{ marginTop: 4, fontSize: 11 }}>
                       删除前自动检查引用；指纹用于核对库里存的是哪把钥匙，不会出现在日志里。
                     </div>
                   </div>
                 )}
-                <div className="dim" style={{ marginTop: 6, fontSize: 11, borderTop: "1px solid var(--border)", paddingTop: 6 }}>
-                  TinySSH {appVersion ? `v${appVersion}` : "· 浏览器演示模式"}
+                </>)}
+
+                {settingsCat === "about" && (<>
+                <div className="ts-label" style={{ marginTop: 0 }}>关于</div>
+                <div style={{ fontSize: 12, lineHeight: 1.9 }}>
+                  <div>TinySSH {appVersion ? `v${appVersion}` : "（浏览器演示模式）"}</div>
+                  <div className="dim">本地优先的 SSH 客户端：终端、主机库与凭据都留在本机。</div>
+                  <div className="dim">凭据以加密形式存于本机凭据库，界面与日志只显示指纹。</div>
                 </div>
-                              </div>
+                </>)}
+                  </div>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -3981,11 +4318,11 @@ export default function App() {
         </div>
         </div>{/* /term-col */}
 
-        {/* 右侧任务面板（§4.3）：一次只呈现文件 / 转发 / 协作之一；窄窗改中央完整视图 */}
+        {/* 右侧任务面板（§4.3/§6.6）：一次只呈现文件 / 转发 / 协作 / 活动记录之一；窄窗改中央完整视图 */}
         {rightPanel && (
           <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label="任务面板" ref={taskPanelRef}>
             <div className="tp-head">
-              <b>{rightPanel === "files" ? "文件" : rightPanel === "forwards" ? "端口转发" : "协作"}</b>
+              <b data-testid="tp-title">{rightPanel === "files" ? "文件" : rightPanel === "forwards" ? "端口转发" : rightPanel === "log" ? "活动记录" : "协作"}</b>
               {tpFull && <span className="dim" style={{ fontSize: 11 }}>空间不足——完整视图，终端仍在运行</span>}
               {rightPanel === "collab" && pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
               <span style={{ flex: 1 }} />
@@ -4338,6 +4675,92 @@ export default function App() {
 
             </>
           )}
+          {rightPanel === "log" && (
+            <>
+              <div className="section">
+                <div className="log-bar">
+                  <div className="seg" role="group" aria-label="记录范围">
+                    <button className={logScope === "current" ? "on" : ""} data-testid="log-scope-current"
+                      aria-pressed={logScope === "current"} disabled={!sid}
+                      title={sid ? "只看当前会话" : "未接入会话"}
+                      onClick={() => setLogScope("current")}>当前会话</button>
+                    <button className={logScope === "all" ? "on" : ""} data-testid="log-scope-all"
+                      aria-pressed={logScope === "all"}
+                      onClick={() => setLogScope("all")}>全部会话</button>
+                  </div>
+                  <span style={{ flex: 1 }} />
+                  <button className="ghost icon-btn" title="刷新" aria-label="刷新活动记录"
+                    data-testid="log-refresh" disabled={logBusy}
+                    onClick={() => void loadLog(false)}><IconRefresh size={14} /></button>
+                </div>
+                <div className="log-filters">
+                  <label>主体
+                    <select value={logActor} data-testid="log-actor"
+                      onChange={(e) => setLogActor(e.target.value as "" | "human" | "agent")}>
+                      <option value="">全部</option>
+                      <option value="human">人类</option>
+                      <option value="agent">Agent</option>
+                    </select>
+                  </label>
+                  <label>事件类型
+                    <select value={logAction} data-testid="log-action"
+                      onChange={(e) => setLogAction(e.target.value)}>
+                      <option value="">全部</option>
+                      {LOG_ACTION_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <div className="log-note" data-testid="log-note">
+                  本机时间（{TZ_NOTE}）· {logScope === "current" && !sid
+                    ? "未接入会话，无可显示记录"
+                    : `共 ${logTotal} 条${logScope === "current" ? "（当前会话）" : ""}`}
+                </div>
+              </div>
+              <div className="section">
+                {logErr ? (
+                  <div className="empty" data-testid="log-err">{logErr}</div>
+                ) : logScope === "current" && !sid ? (
+                  <div className="empty" data-testid="log-empty-nosession"><IconTerminal size={14} />未接入会话——切到「全部会话」可查看历史记录。</div>
+                ) : logEvents.length === 0 ? (
+                  <div className="empty" data-testid="log-empty">
+                    <IconClock size={14} />{logBusy ? "载入中…" : "暂无记录。所有连接与命令都会留痕在这里。"}
+                  </div>
+                ) : (
+                  <>
+                    {logEvents.map((ev) => {
+                      const ident = ev.session_id ? sessionIdent.get(ev.session_id) : undefined;
+                      // 短 id 只用于辨认（完整 id 在 title 里）——太短的 id 直接全显，别截成无信息量的前缀
+                      const shortSid = ev.session_id ? (ev.session_id.length <= 12 ? ev.session_id : ev.session_id.slice(0, 8)) : "";
+                      return (
+                        <div className={`tl-row log-row actor-${ev.actor_kind}`} key={ev.seq} data-testid="log-row"
+                          data-action={ev.action} data-actor={ev.actor_kind}
+                          title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
+                          <div className="tl-meta">
+                            {stampLocal(ev.ts)}
+                            {ev.session_id && <> · {ident ?? <span className="log-sid">{shortSid}</span>}</>}
+                            {ev.session_id && <span className="log-sid" title={ev.session_id}>（{shortSid}）</span>}
+                          </div>
+                          <div className="tl-action">
+                            <span className="tl-actor">
+                              {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
+                            </span>{" "}
+                            {decisionLabel(ev)}
+                            {ev.command && <>{" "}<span className="tl-cmd-text">{ev.command}</span></>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {logEvents.length < logTotal && (
+                      <button className="ghost log-more" data-testid="log-more" disabled={logBusy}
+                        onClick={() => void loadLog(true)}>
+                        {logBusy ? "载入中…" : `加载更早（已显示 ${logEvents.length}/${logTotal}）`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
+          )}
           {rightPanel === "collab" && (
             <>
           <div className="section">
@@ -4373,25 +4796,6 @@ export default function App() {
             {brief ? <BriefCard brief={brief} /> : (
               <div className="empty"><IconTerminal size={14} />未接入会话。连接主机后显示当前目录与最近命令。</div>
             )}
-          </div>
-
-          <div className="section">
-            <h4>操作记录</h4>
-            {visibleTimeline.length > 0 ? visibleTimeline.map((ev) => {
-              const host = ev.session_id ? sessions.find((x) => x.id === ev.session_id)?.host_name : undefined;
-              return (
-                <div className={`tl-row actor-${ev.actor_kind}`} key={ev.seq} title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
-                  <div className="tl-meta">{hhmm(ev.ts)}{host ? ` · ${host}` : ""}</div>
-                  <div className="tl-action">
-                    <span className="tl-actor">
-                      {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
-                    </span>{" "}
-                    {decisionLabel(ev)}
-                    {ev.command && <>{" "}<span className="tl-cmd-text">{ev.command}</span></>}
-                  </div>
-                </div>
-              );
-            }) : <div className="empty"><IconClock size={14} />暂无记录。所有连接与命令都会留痕在这里。</div>}
           </div>
 
           <div className="section">

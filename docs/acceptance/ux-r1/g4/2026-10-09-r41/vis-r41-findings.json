@@ -1,0 +1,609 @@
+{
+  "meta": {
+    "reviewer": "vis-r41 (independent visual verification subagent)",
+    "task": "R41 新增/改动界面独立视觉复验：连接详情对话框 / 活动记录面板 / 设置对话框改版",
+    "repo": "/Users/chenpu/workspace/claude-code/TinySSH",
+    "domain": "demo (http://localhost:5183/, 当前工作树) + 基线对照 (http://localhost:5184/, f6ea990)",
+    "date": "2026-10-09",
+    "probe": "docs/acceptance/ux-r1/g4/2026-10-09-r41/vis-r41-demo-probe.js (自写，独立于作者 r41-demo-probe.js)",
+    "raw": "docs/acceptance/ux-r1/g4/2026-10-09-r41/vis-r41-probe-raw.json",
+    "checks_total": 98,
+    "checks_pass": 92,
+    "contrast_samples": 60,
+    "contrast_fail": 8,
+    "themes": [
+      "dark",
+      "light"
+    ],
+    "viewports": [
+      "1440x900",
+      "1280x800",
+      "1024x768",
+      "960x600"
+    ],
+    "verdict": "不可签（唯一阻断=处置后新发现 B5 层叠遮挡；7 项处置本身全部通过）",
+    "首轮判定": "不可签",
+    "recheck": {
+      "检查点": "83/87",
+      "对比度样本": "10/10",
+      "截图": 24,
+      "探针": "vis-r41-recheck-probe.js",
+      "原始数据": "vis-r41-recheck-raw.json"
+    },
+    "recheck2": {
+      "判定": "可签",
+      "判定指纹": {
+        "styles_css": "c22384e21cdda239212c33e9230e9c34",
+        "App_tsx": "a53150588f3f6accd579636b015a5a40",
+        "产品码面diff_md5": "bb3fa4ce193f59080b2630ba0e5e5e1d",
+        "diffstat": "11 files +1176/-76"
+      },
+      "组长给的指纹": "36f149dd68ce2243fa3dd5afa76d90f9 / styles 52d2b42698616438fd08dc67cec642a0 —— 已过期（作者复验期间新增 .split-menu 30→43）",
+      "检查点": "102/102",
+      "对比度样本": "14/14",
+      "探针": "vis-r41-recheck2-probe.js",
+      "原始数据": "vis-r41-recheck2-raw.json",
+      "树稳定性": "运行前后 md5 逐字节一致；期间两次运行被作者并行保存触发 HMR 重载污染，已废弃重跑"
+    }
+  },
+  "findings": [
+    {
+      "id": "B1",
+      "类别": "对比度(WCAG AA)",
+      "严重度": "高",
+      "描述": "活动记录范围段钮（.seg 未选中态，如「全部会话」）悬停时背景被全局 button:not(:disabled):hover 规则改成 --accent-hover，而文字仍是 --text-sub，悬停即不可读。R41 新增 .seg 组件，只给了 .seg button.on 选中态与 .settings-nav button:hover，漏给 .seg button 的 hover 覆盖（.settings-nav 作者补了，.seg 没补，不一致）。",
+      "实测值": "dark: fg=rgb(154,170,184) bg=rgb(77,176,187) ratio=1.07 (thr 4.5)；light: fg=rgb(77,91,104) bg=rgb(42,138,144) ratio=1.71 (thr 4.5)。静态态均达标(dark 7.40 / light 6.44)。",
+      "截图": "vis-r41-dark-log-hover-seg.png (另 /tmp/hover-seg-dark.png、/tmp/hover-seg-light.png)",
+      "是否阻断": true
+    },
+    {
+      "id": "B2",
+      "类别": "对比度(WCAG AA)",
+      "严重度": "中-高",
+      "描述": "连接详情底部说明 .cd-hint（R41 新元素，<div className=\"dim cd-hint\">）在深色主题用 --dim 前景，低于 AA。作者在 styles.css 里对 .log-row .tl-meta 专门写了「用 --text-sub 而非 --dim（AA）」的注释，但同类新元素 .cd-hint 未遵循同一口径。",
+      "实测值": "dark: fg=rgb(93,111,130)=--dim bg=rgb(28,36,51)=--panel2 fs=11 ratio=3.01 (thr 4.5)；light: 5.69 通过。",
+      "截图": "vis-r41-dark-a-conn-detail.png",
+      "是否阻断": true
+    },
+    {
+      "id": "B3",
+      "类别": "对比度(WCAG AA)",
+      "严重度": "中-高",
+      "描述": "设置→凭据 空态 cred-empty（R41 新元素，<div className=\"dim\" data-testid=\"cred-empty\">）深色主题用 --dim 前景，低于 AA。",
+      "实测值": "dark: fg=rgb(93,111,130) bg=rgb(28,36,51) fs=12 ratio=3.01 (thr 4.5)；light: 5.69 通过。",
+      "截图": "vis-r41-dark-f-cred-form.png",
+      "是否阻断": true
+    },
+    {
+      "id": "B4",
+      "类别": "键盘可达性",
+      "严重度": "中",
+      "描述": "连接详情对话框不响应 Esc。App.tsx 的 closeTopOverlayRef（Esc 浮层链，行 1685-1701）没有 detail 分支，而 modalRef 也不含 detail，因此 Esc 落空。同轮新增的设置对话框 Esc 可关（showSettings 在链中），两者不一致。仅遮罩点击与 ✕ 可关。",
+      "实测值": "dark 与 light 双主题复现：按 Esc 后 [data-testid=\"conn-detail\"] 仍存在（still-open=1）；设置对话框 Esc 后为 0。",
+      "截图": "vis-r41-dark-a-conn-detail.png",
+      "是否阻断": true
+    },
+    {
+      "id": "M1",
+      "类别": "布局/裁切",
+      "严重度": "中",
+      "描述": "设置对话框（.term-settings.settings-wide）在 960x600（tauri.conf.json minWidth=960/minHeight=600，即出货最小窗）且「凭据」分类的新建表单展开时，被包含块 .term-wrap（overflow:hidden）上下裁切：标题行（「设置」+ ✕ 关闭钮）整体落在裁切区之上完全不可见，底部提示行被切。默认「外观」分类下不裁。根因：对话框 position:absolute 且 top/left 50% 相对 .term-wrap 居中，内容高于 .term-wrap 时溢出被裁；max-height 用 100vh 而非包含块高度。",
+      "实测值": "960x600 cred-form: rect y=108 h=432，clippedH=84（term-wrap 可视区 150..498）；裁切节点含 {\"row\",text:\"设置\",top:121,bottom:148}(整行在裁切线上方)、settings-body/settings-nav/settings-pane(158..527)、cred-new(197..504)、底部 dim 提示(508..527)。1440x900/1280x800/1024x768 均不裁(clippedH=0)。",
+      "截图": "vis-r41-dark-geo-960x600-settings.png",
+      "是否阻断": false
+    },
+    {
+      "id": "M2",
+      "类别": "焦点管理",
+      "严重度": "中",
+      "描述": "设置对话框的焦点陷阱在「草稿保护」确认框消解后失效。useDialogFocus 只在 active 变化（挂载沿）把焦点收进对话框，并在 box 上监听 keydown；点「留下继续编辑」后该按钮被移除，焦点落回 body，此后 Tab 的 keydown 不再冒泡到 box，陷阱不再拦截——焦点逃逸到背景。干净打开时（未做交互）陷阱正常。",
+      "实测值": "干净打开：初始焦点 settings-close(inside=true)，连续 8 次 Tab 全 inside。草稿消解后：连续 6 次 Tab 记录 tag 序列 BODY → INPUT → BUTTON → BUTTON → log-scope-current → log-scope-all（全部 inside=false，逃到背景活动记录面板）。dark 与 light 同。",
+      "截图": "vis-r41-dark-g-cred-draft.png",
+      "是否阻断": false
+    },
+    {
+      "id": "M3",
+      "类别": "布局/居中",
+      "严重度": "中-低",
+      "描述": "两个新对话框（.conn-detail / .settings-wide）水平/垂直居中于包含块 .term-wrap（终端窗格，左起 x=226 的主机栏之后），而非视口。但遮罩 .pop-mask 是 position:fixed;inset:0 全视口，视觉上对话框偏右、与全屏遮罩不同心。作者用 left/top:50% + translate(-50%,-50%)，但未把 position 从 absolute 改成 fixed（.term-settings 基线是 absolute）。",
+      "实测值": "conn-detail 相对视口中心 dx=+113px（1440/1280/1024，右栏关闭时；dy=+24）；settings dx=+113。相对包含块中心 dx=dy=0（完全居中）。右栏（活动记录/文件）打开时 .term-wrap 变窄，偏移方向随之改变（1280 右栏开时 settings dxViewport=-79）。",
+      "截图": "vis-r41-dark-geo-1440x900-condetail.png / vis-r41-dark-geo-1440x900-settings.png",
+      "是否阻断": false
+    },
+    {
+      "id": "L1",
+      "类别": "布局/裁切",
+      "严重度": "低",
+      "描述": "连接详情对话框在 960x600 上下各被裁 4px：cd-head（标题「连接详情」+ 状态 chip + ✕）顶部 4px、cd-hint 末行底部 4px 落在 .term-wrap(overflow:hidden) 裁切线外。1440/1280/1024 均不裁。",
+      "实测值": "960x600: dialog rect y=133 h=382，clippedH=34；逐子：cd-head top=146 cutTop=4；cd-hint bottom=502 cutBottom=4。",
+      "截图": "vis-r41-dark-geo-960x600-condetail.png",
+      "是否阻断": false
+    },
+    {
+      "id": "L2",
+      "类别": "对比度(WCAG AA)",
+      "严重度": "低",
+      "描述": "凭据新建表单内的 ghost 钮（accent 文字于 --panel3 底，如「生成 Ed25519」「生成 RSA」「取消」）深色主题差 AA 一线。",
+      "实测值": "dark: fg=rgb(61,157,168)=--accent bg=rgb(35,45,61)=--panel3 fs=12 ratio=4.35 (thr 4.5)；light: 4.52 通过（贴线）。",
+      "截图": "vis-r41-dark-f-cred-form.png",
+      "是否阻断": false
+    },
+    {
+      "id": "L3",
+      "类别": "对比度(WCAG AA)（既有类，本轮新增使用点）",
+      "严重度": "低",
+      "描述": "活动记录空态 log-empty / log-empty-nosession 用全局 .empty 类（color:var(--dim)），深色 3.41 低于 AA；设置里 .ts-label 深色 3.01。两者均为基线既有样式，非 R41 引入，但本轮为它们新增了使用点（新面板/新对话框），故一并登记。",
+      "实测值": "dark log-empty fg=rgb(93,111,130) bg=rgb(20,25,34) fs=12 ratio=3.41；dark log-empty-nosession 同 3.41；dark .ts-label fg=rgb(93,111,130) bg=rgb(28,36,51) fs=11 ratio=3.01。light 侧三者均通过(5.25/5.69)。",
+      "截图": "vis-r41-dark-c-log-empty.png / vis-r41-dark-j-log-nosession.png",
+      "是否阻断": false
+    }
+  ],
+  "passes_notable": [
+    "活动记录面板：log-bar / log-filters 在 960/1024/1280/1440 四视口均无横向溢出（clippedW=0），log-filters 两 label 始终同一行（rows=1），white-space:nowrap 未撑破面板。",
+    "活动记录状态：空态（筛选到无结果 log-empty）、未接入会话（UI 关闭会话后 log-empty-nosession + 段钮 disabled=true）、切「全部会话」恢复记录 均实捕通过。",
+    "活动记录翻页：生成 79 条记录后 log-more 出现（rows=40/79），点击后 40→79，末页 more 消失。",
+    "对比度达标项：.cd-k 6.53/6.97、.cd-v 11.17/13.79、.cd-sec h4 6.53/6.97、.cd-sidrow code 9.96/11.71、.cd-copy 4.88/5.33、.log-row .tl-meta 7.40/6.44、.log-note 7.40/6.44、.log-sid、.log-filters label、.seg .on 11.08/11.17、.log-refresh 5.53/4.92、.log-more 5.53、.settings-nav 静止 6.53/6.97 · 悬停 5.82/5.92 · 选中 9.70/12.05、.cred-field 5.82/5.92、.cred-draft 9.61/12.19。",
+    "焦点陷阱：连接详情干净打开初始焦点入框(cd-close)、连续 Tab 不逃逸；设置干净打开同理(settings-close)。",
+    "设置 Esc 可关（双主题）；连接详情 ✕ 可关。",
+    "外观/终端分类内容在 620px 新对话框内完整可见未裁（对照 :5184 基线 280px 右上角面板，回归确认分类内容未丢）。",
+    "叠印：连接详情与 toast 不交叠；队列抽屉打开时遮罩(.pop-mask)在抽屉之上，模态不被抽屉反压。",
+    "全程零 JS 错误（dark/light 各一轮）。"
+  ],
+  "unverified": [
+    "连接详情「未接入会话」空态 cd-err：demo 中不可达——工具菜单在无 current 会话时不渲染（会话头 {current && ...} 条件渲染），而会话存在时 openSessionDetail 不会置 detailErr。未验证。",
+    "原生 Tauri 窗口内的实际渲染：本轮仅在 demo（浏览器）域复验，未跑原生冒烟；CSS 同源但原生域未实证。",
+    "Solarized 深色/浅色等其它终端配色主题未测（只测 dark/light chrome 两套）。",
+    "≥1440 的大窗/多显示器、以及右栏打开时的多组合几何只抽测（1280 右栏开时 settings dxViewport=-79）。",
+    "toast 与设置对话框、活动记录面板的叠印未单独测（只测了 conn-detail vs toast）。",
+    "队列抽屉在有真实传输任务时的形态未测（demo 无传输，抽屉为空态；仅验证了模态压抽屉）。"
+  ],
+  "处置后定向复验": {
+    "触发": "作者按 vis-r41 首轮 4 阻断 + 3 中危 处置后，组长的定向复验要求。代码冻结（md5 styles.css=2793e94ad4dc15f6340d3116d6f24c17 / App.tsx=11fa631b1b9e351b9fbeaa7e86372f5a，与处置声明一致，复验前后未变）。",
+    "方法": "独立新写 vis-r41-recheck-probe.js（不沿用作者探针）。探针 v2 修正 v1 两处探针缺陷：(a) clip() 对 position:fixed 误用祖先 overflow——fixed 包含块是视口，祖先 overflow 不裁它（已由 fixedContainingBlock() 实证 .term-wrap 祖先无 transform/filter/contain/perspective/contain/willChange）；(b) 关对话框改用 Esc。可见性改用「每个交互元素中心点 elementFromPoint 是否由自身/后代接住」审计（四角因 border-radius 落圆角外，不作口径）。",
+    "探针修正留痕": "首轮 recheck 探针曾对 .settings-wide 报 clippedW=54（1280x800 右栏开）——经 hit-test 证伪：该 54px 为 .term-wrap(overflow:hidden) 与 fixed 对话框的矩形相交，fixed 元素不受祖先 overflow 裁切，对话框右缘 948,400 命中自身。首轮 vis-r41 的 L1「960x600 被裁」结论建立在当时 dialog 为 position:absolute（含块=.term-wrap）之上，该结论在当时成立；处置后改为 fixed，裁切不再适用，本轮以 fixed 感知口径重测。",
+    "逐项实测": {
+      "B1": {
+        "结论": "通过",
+        "未选中钮悬停": {
+          "dark": {
+            "fg": "rgb(212, 219, 230)",
+            "bg": "rgb(35, 45, 61)",
+            "ratio": 9.96,
+            "threshold": 4.5,
+            "fs": 12
+          },
+          "light": {
+            "fg": "rgb(36, 46, 56)",
+            "bg": "rgb(232, 237, 242)",
+            "ratio": 11.71,
+            "threshold": 4.5,
+            "fs": 12
+          }
+        },
+        "悬停选中钮不顶掉选中态": {
+          "dark": {
+            "bg_before": "rgb(24, 38, 47)",
+            "bg_hover": "rgb(24, 38, 47)",
+            "class": "on",
+            "ratio": 11.08
+          },
+          "light": {
+            "bg_before": "rgb(223, 233, 236)",
+            "bg_hover": "rgb(223, 233, 236)",
+            "class": "on",
+            "ratio": 11.17
+          }
+        },
+        "对照首轮": "首轮悬停态 1.07(dark)/1.71(light)（全局 button:not(:disabled):hover 以 --accent-hover 压过 --text-sub）。处置后 .seg button:not(.on):not(:disabled):hover(0,4,1) 以 --panel3+--text 覆盖。"
+      },
+      "B2": {
+        "结论": "通过",
+        "dark": {
+          "sel": ".cd-hint",
+          "fg": "rgb(154, 170, 184)",
+          "bg": "rgb(28, 36, 51)",
+          "ratio": 6.53,
+          "threshold": 4.5,
+          "fs": 11
+        },
+        "light": {
+          "sel": ".cd-hint",
+          "fg": "rgb(77, 91, 104)",
+          "bg": "rgb(255, 255, 255)",
+          "ratio": 6.97,
+          "threshold": 4.5,
+          "fs": 11
+        }
+      },
+      "B3": {
+        "结论": "通过",
+        "dark": {
+          "sel": "[data-testid=cred-empty]",
+          "class": "dim cred-empty",
+          "fg": "rgb(154, 170, 184)",
+          "bg": "rgb(28, 36, 51)",
+          "ratio": 6.53,
+          "threshold": 4.5,
+          "fs": 12
+        },
+        "light": {
+          "sel": "[data-testid=cred-empty]",
+          "class": "dim cred-empty",
+          "fg": "rgb(77, 91, 104)",
+          "bg": "rgb(255, 255, 255)",
+          "ratio": 6.97,
+          "threshold": 4.5,
+          "fs": 12
+        }
+      },
+      "L2": {
+        "结论": "通过（浅色余量极薄，见观察）",
+        "dark": {
+          "sel": ".cred-new button.ghost",
+          "fg": "rgb(70, 170, 181)",
+          "bg": "rgb(35, 45, 61)",
+          "ratio": 5.07,
+          "threshold": 4.5,
+          "fs": 12
+        },
+        "light": {
+          "sel": ".cred-new button.ghost",
+          "fg": "rgb(31, 118, 124)",
+          "bg": "rgb(232, 237, 242)",
+          "ratio": 4.52,
+          "threshold": 4.5,
+          "fs": 12
+        },
+        "观察": "浅色 4.52:1 仅高出 AA 阈值 0.02（作者注释自述同值）。任何 --panel3/--accent 微调都可能翻红；建议后续若动 --accent-text 浅色档需重测。"
+      },
+      "B4": {
+        "结论": "通过",
+        "dark": {
+          "esc_后_conn_detail_计数": 0,
+          "list_sessions_仍含会话": true,
+          "sid": "s-demo-0001",
+          "state": "Connected"
+        },
+        "light": {
+          "esc_后_conn_detail_计数": 0,
+          "list_sessions_仍含会话": true,
+          "sid": "s-demo-0001",
+          "state": "Connected"
+        },
+        "说明": "Esc 关闭详情（closeTopOverlayRef 链在 pasteConfirm 之后、splitMenu 之前加了 detail 分支），且会话未被误关（Esc 只消费详情层，不落到关闭会话）。"
+      },
+      "M1": {
+        "结论": "通过（四视口全绿）",
+        "960x600_凭据表单展开态": {
+          "dialog_rect": {
+            "x": 170,
+            "y": 84,
+            "w": 620,
+            "h": 432
+          },
+          "clippedH": 0,
+          "clippedW": 0,
+          "遮挡": "0/16",
+          "标题行_设置": {
+            "top": 97,
+            "bottom": 124,
+            "inViewport": true,
+            "visible": true
+          },
+          "settings_close_✕": {
+            "top": 97,
+            "bottom": 124,
+            "x": 738,
+            "inViewport": true,
+            "visible": true
+          },
+          "pane_scroll": {
+            "scrollHeight": 369,
+            "clientHeight": 369
+          }
+        },
+        "其余视口": {
+          "1440x900": {
+            "rect": {
+              "x": 410,
+              "y": 234,
+              "w": 620,
+              "h": 432
+            },
+            "clippedH": 0,
+            "clippedW": 0,
+            "blocked": "0/16",
+            "head": {
+              "top": 247,
+              "bottom": 274
+            },
+            "close": {
+              "top": 247,
+              "bottom": 274,
+              "x": 978
+            }
+          },
+          "1280x800": {
+            "rect": {
+              "x": 330,
+              "y": 184,
+              "w": 620,
+              "h": 432
+            },
+            "clippedH": 0,
+            "clippedW": 0,
+            "blocked": "0/16",
+            "head": {
+              "top": 197,
+              "bottom": 224
+            },
+            "close": {
+              "top": 197,
+              "bottom": 224,
+              "x": 898
+            }
+          },
+          "1024x768": {
+            "rect": {
+              "x": 202,
+              "y": 168,
+              "w": 620,
+              "h": 432
+            },
+            "clippedH": 0,
+            "clippedW": 0,
+            "blocked": "0/16",
+            "head": {
+              "top": 181,
+              "bottom": 208
+            },
+            "close": {
+              "top": 181,
+              "bottom": 208,
+              "x": 770
+            }
+          }
+        },
+        "对照首轮": "首轮 960x600 报 clippedH=84 且整条「设置」标题行 + ✕ 落在裁切线之上（旧 position:absolute + 280px 右上角）。处置后 max-height:calc(100vh-80px) + fixed 居中，四视口 clippedH=clippedW=0。"
+      },
+      "M2": {
+        "结论": "通过（两条路）",
+        "路1_留下继续编辑": {
+          "dark": "6 次 Tab 全部 inside=true",
+          "light": "6 次 Tab 全部 inside=true",
+          "序列": [
+            "settings-close",
+            "settings-cat-appearance",
+            "settings-cat-terminal",
+            "settings-cat-credentials",
+            "settings-cat-about",
+            "cred-new"
+          ]
+        },
+        "路2_丢弃草稿并切换": {
+          "dark": "6 次 Tab 全部 inside=true",
+          "light": "6 次 Tab 全部 inside=true",
+          "序列": [
+            "settings-close",
+            "settings-cat-appearance",
+            "settings-cat-terminal",
+            "settings-cat-credentials",
+            "settings-cat-about",
+            "(ghost 按钮)"
+          ]
+        },
+        "对照首轮": "首轮草稿对话框消解后焦点落到 body、keydown 不再冒泡到 box（逃逸）。处置后新增 useEffect([credDraftTo, showSettings]) 在草稿消解且焦点出框时把焦点拉回框内首个可聚焦元素，两条消解路径均生效。"
+      },
+      "M3": {
+        "结论": "通过（四视口 × 右栏关/开 八组，dx=dy=0）",
+        "实测": [
+          {
+            "vp": "1440x900",
+            "panel": "closed",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          },
+          {
+            "vp": "1280x800",
+            "panel": "closed",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          },
+          {
+            "vp": "1024x768",
+            "panel": "closed",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          },
+          {
+            "vp": "960x600",
+            "panel": "closed",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          },
+          {
+            "vp": "1440x900",
+            "panel": "open",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          },
+          {
+            "vp": "1280x800",
+            "panel": "open",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          },
+          {
+            "vp": "1024x768",
+            "panel": "open",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          },
+          {
+            "vp": "960x600",
+            "panel": "open",
+            "conn-detail": {
+              "dx": 0,
+              "dy": 0
+            },
+            "settings": {
+              "dx": 0,
+              "dy": 0
+            }
+          }
+        ],
+        "对照首轮": "首轮 1440/1280/1024 右栏关时 dx=+113px（position:absolute 以 .term-wrap 为含块）。处置后 position:fixed + translate(-50%,-50%)，八组全部 0/0，且 fixedContainingBlock()=[] 证明无祖先把它拉回局部含块。"
+      }
+    },
+    "几何相关回归": {
+      "结论": "全部通过",
+      "log_bar_横向溢出": {
+        "1440x900": 0,
+        "1280x800": 0,
+        "1024x768": 0,
+        "960x600": 0
+      },
+      "log_filters_折行": {
+        "1440x900": "1 行",
+        "1280x800": "1 行",
+        "1024x768": "1 行",
+        "960x600": "1 行"
+      },
+      "外观分类内容未裁": true,
+      "连接详情不被裁且无遮挡（右栏关，四视口）": true,
+      "设置不被裁且无遮挡（右栏关，四视口）": true,
+      "零_JS_错误": "dark/light/四视口 共 6 轮全零",
+      "fixed_包含块健康检查": "无祖先带 transform/filter/perspective/contain/willChange"
+    },
+    "处置后新发现": [
+      {
+        "id": "B5",
+        "类别": "遮挡/层叠",
+        "严重度": "高",
+        "是否阻断": true,
+        "描述": "窗口宽 ≤ ~1104px（主机栏展开）且右栏面板进入**完整视图**态（.task-panel.tp-full，position:absolute; inset:0; z-index:40）时，两个新对话框（.term-settings.conn-detail / .settings-wide，position:fixed; z-index:30）被整块盖在面板之下：**连接详情在 1024×768 全部 11/11 交互元素不可达（含 ✕ 关闭钮）、960×600 为 10/11；设置在 1024×768 为 8/8、960×600 为 4/8**。用户路径完全现实：1024×768 下 工具→活动记录（面板转为完整视图）→ 工具→连接详情…，屏幕上**什么都看不到**（见截图 vis-r41-recheck-dark-geo-1024x768-condetail-panelopen.png，整幅只剩活动记录）。",
+        "实测值": "1024x768: conn-detail overlapW=430(=整幅对话框宽) blocked=11/11; settings overlapW=596 blocked=8/8。960x600: conn-detail blocked=10/11; settings overlapW=564 blocked=4/8（左 56px 露出）。1440x900/1280x800: 面板为停靠态(z-index:auto, static)，blocked=0/11 与 0/8（1280 settings overlapW=54 但 z-index 30 > auto，仍全部可达）。",
+        "根因": "styles.css:192 `.task-panel.tp-full { position: absolute; inset: 0; width: auto; border-left: none; z-index: 40; }` 高于 styles.css:452 `.term-settings { ... z-index: 30 }`。tp-full 断点由 App.tsx:1648-1659 决定（availW < 560+panelNeed-16，panelNeed log/collab/forwards=400、files=384；主机栏展开再扣 320）。",
+        "基线对照": "**该层叠规则先于 R41 存在**：基线 :5184 (f6ea990) 在 1024×768 + 协作面板(tp-full) 下，旧 280px 设置对话框同样 blocked=12/12（z-index 30 vs 40）；1280×800 下基线 blocked=0/12。故：设置对话框的该缺陷是**既有**的（R41 未修复、亦未加重）；**连接详情是 R41 新增的对话框，继承了同一缺陷**，且它是从「工具」菜单打开的、与活动记录面板天然共存，因此在 R41 自己的主路径上可复现。",
+        "与 M3 修复的关系": "M3 修复（改为 fixed 视口居中）**未引入**该缺陷：修复前 dialog 为 position:absolute、含块=.term-wrap，在 tp-full 下同样被盖（.term-wrap 本身就在面板之下）。修复也**未消除**它。M3 本身八组 dx/dy=0 实测通过。",
+        "建议": "给对话框 z-index 提到 41+（高于 tp-full 的 40），或让 tp-full 面板在对话框打开时让位/降 z。修复后需回归 1440/1280 停靠态（现 0 遮挡）与 1024/960 完整视图态。",
+        "截图": [
+          "vis-r41-recheck-dark-geo-1024x768-condetail-panelopen.png",
+          "vis-r41-recheck-dark-geo-1024x768-settings-panelopen.png",
+          "vis-r41-recheck-dark-geo-960x600-condetail-panelopen.png",
+          "vis-r41-recheck-dark-geo-960x600-settings-panelopen.png"
+        ],
+        "备注": "本轮新增口径。首轮 98 项未覆盖此组合（首轮几何抽样未把「右栏 tp-full 态 + 对话框」作为独立组合）。"
+      }
+    ],
+    "复验口径自省": [
+      "本轮唯一 FAIL 均来自新增的 B5 遮挡审计；7 项处置自身 83/87 通过（4 个 FAIL 全部是 B5 的 1024/960 两组 × 两个对话框）。",
+      "已如实声明：本轮未跑原生 Tauri 域、未跑作者的全量 demo 探针、未重跑首轮 98 项；仅跑本定向探针（87 检查点）+ 两处诊断脚本。",
+      "浅色 L2 4.52:1 为擦线通过，已单独登记观察。"
+    ],
+    "最终判定": "7 项处置（B1/B2/B3/B4/M1/M2/M3，含 L2）**全部实测通过**；但复验中新增发现阻断级 B5（tp-full 面板盖住对话框，连接详情在 1024×768 完全不可达）→ **综合：不可签**，唯一阻断 = B5。若组长判定 B5 属既有层叠规则的独立任务（其设置对话框部分在基线 f6ea990 已复现），则仅就本轮 7 项处置而言为**可签**。"
+  },
+  "B5 处置后定向复验": {
+    "结论": "可签",
+    "B5主项": {
+      "1024x768": "panelZ=40 dlgZ=42 conn-detail blocked=0/11 (overlapW=430) settings blocked=0/16 (overlapW=596)",
+      "960x600": "panelZ=40 dlgZ=42 conn-detail blocked=0/11 (overlapW=430) settings blocked=0/16 (overlapW=564)",
+      "1440x900": "blocked=0/11, 0/16 (panelZ=auto)",
+      "1280x800": "blocked=0/11, 0/16 (panelZ=auto)",
+      "入口顺序": "先面板后对话框 / 先对话框后面板 均无差异",
+      "凭据表单展开": "clippedH=0 blocked=0/16 ×4 视口"
+    },
+    "层叠不倒退": {
+      "确认框压设置": "selfHit=true confirmMaskZ=90 > settingsZ=42 > popMaskZ=41",
+      "toast": "stackZ=120 > dlgZ=42，同处根层叠上下文(HTML)，pointer-events:none",
+      "工具菜单": "tp-full 态 self=true"
+    },
+    "toast像素实证": {
+      "合成视口": "680x560（低于 minWidth=960，仅强制重叠）",
+      "重叠": "4x37px",
+      "采样点": "(552,412)=rgb(127,191,143)=--ok 左边框",
+      "对照点": "(340,412)=rgb(28,36,51)",
+      "反证": "toast 消失后同点回落 rgb(28,36,51)"
+    },
+    "七项回归": {
+      "B1": "9.96/11.71 且选中态未被顶掉",
+      "B2": "6.53/6.97",
+      "B3": "6.53/6.97",
+      "L2": "5.07/4.52",
+      "B4": "count=0 且 sid 仍在 Connected",
+      "M1": "clippedH=0 ×4 视口",
+      "M2": "6/6 Tab 不逃逸 ×2 路径",
+      "M3": "dx=dy=0 ×4 视口（z-index 变更后重点重测）"
+    },
+    "几何回归": {
+      "log-bar": "clippedW=0 ×4 视口",
+      "log-filters": "clippedW=0 rows=1 ×4 视口",
+      "外观分类": "未被裁",
+      "JS错误": "全轮 0"
+    },
+    "log_note": {
+      "无会话文案": "本机时间（UTC+08:00）· 未接入会话，无可显示记录（dark/light 均一致）",
+      "对比度": "dark 7.4:1 / light 6.44:1（未变）",
+      "上轮FAIL": "我方探针跨 evaluate 读陈旧值所致，非产品缺陷"
+    },
+    "split_menu_新增改动": {
+      "改动": "z-index 30 → 43（styles.css:890，署名 R41 代码复验 C-2）",
+      "必要性": "App.tsx:3881-3884 .pop-mask 与 .split-menu 同父兄弟；遮罩抬 41 后菜单 30 会被自己遮罩吃掉点击",
+      "验证": "sameParent=true sameStackRoot=true menuZ=43>maskZ=41 blocked=0/2；真实鼠标点击进入分屏 aria-pressed false→true",
+      "判别性": "注入 mask41/menu30 → blocked=2/2 且真实点击 Timeout 2500ms exceeded"
+    },
+    "B5判别性独立复现": {
+      "方法": "运行时注入（未改工作树文件）",
+      "1024x768": "注入 29/30 → blocked=11/11，点击 cd-close 失败",
+      "960x600": "注入 29/30 → blocked=10/11，点击 cd-host 失败",
+      "前置断言": "dlgZ=30 && panelZ=40 均成立"
+    },
+    "非阻断观察": [
+      ".split-menu(43) 现高于 .term-settings(42)：实际不可达（遮罩挡住入口），语义略反直觉，本轮不建议改",
+      "基线 f6ea990 上设置对话框即已存在同类遮挡，本轮一并修复，覆盖面大于 R41 自身引入",
+      "原生 Tauri 域未实证（CSS 同源，推断成立但未实测）"
+    ]
+  }
+}

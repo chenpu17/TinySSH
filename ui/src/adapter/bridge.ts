@@ -38,6 +38,7 @@ interface CmdArgs {
   ssh_config_preview: { path?: string | null };
   ssh_config_import: { path?: string | null; names: string[]; overwrite?: boolean };
   list_sessions: undefined;
+  session_detail: { sid: string };
   create_session: { hostId: string };  // tauri v2 JS 侧实参为 camelCase，自动映射 rust host_id
   begin_connection: { hostId: string; opts?: wire.BeginConnectionOpts };
   connection_status: { attemptId: string };
@@ -84,7 +85,15 @@ interface CmdArgs {
   set_session_goal: { sid: string; goal: string | null };
   list_approvals: { pendingOnly: boolean };
   decide_approval: { id: string; decision: "approve" | "deny" | "edit"; edited?: string | null };
-  audit_query: { sid: string | null; limit: number };
+  // R41（§6.6）：过滤面全量过桥。sid=null → 全部会话；actor_kind ∈ {human, agent}；
+  // action 精确匹配动作名；beforeSeq 供「加载更早」按 seq 游标翻页（连续，不重不漏）。
+  audit_query: {
+    sid: string | null;
+    limit: number;
+    actorKind?: string | null;
+    action?: string | null;
+    beforeSeq?: number | null;
+  };
   issue_agent: { id: string; label: string };
   mcp_status: undefined;
   pending_host_keys: undefined;
@@ -108,6 +117,7 @@ interface CmdRet {
   ssh_config_preview: wire.SshConfigPreview[];
   ssh_config_import: wire.SshImportOutcome[];
   list_sessions: wire.SessionInfo[];
+  session_detail: wire.SessionDetail;
   create_session: wire.SessionId;
   begin_connection: wire.AttemptInfo;
   connection_status: wire.AttemptInfo;
