@@ -16,6 +16,9 @@ LOG=$DIR/beacon-r32.txt
 lsof -ti :15199 | xargs kill 2>/dev/null
 # 预置宿主测试文件（上传源）：2MB 实文件 + 400MB 稀疏文件
 mkdir -p "$DIR"
+# beacon.py 常驻仓库（scripts/native-smoke/beacon.py）——本驱动原依赖 /tmp/smoke-r32/beacon.py
+# 已存在的隐含前提，该临时副本已随系统清理消失；补显式拷贝（失败即退，不静默）。
+cp /Users/chenpu/workspace/claude-code/TinySSH/scripts/native-smoke/beacon.py "$DIR/beacon.py" || { echo "beacon.py 拷贝失败"; exit 2; }
 rm -f /tmp/r32up.bin /tmp/r32big.bin ~/Downloads/up.bin
 dd if=/dev/zero of=/tmp/r32up.bin bs=1024 count=2048 2>/dev/null
 truncate -s 400M /tmp/r32big.bin
@@ -105,12 +108,19 @@ fi
 kill $P3 2>/dev/null
 cp "$LOG" "$DIR/beacon-r32c.txt"
 
-echo "---- phase1 marks ----"
-grep "r32a|" "$DIR/beacon-r32a.txt" | tail -25
-echo "---- phase2 marks ----"
-grep "r32b|" "$DIR/beacon-r32b.txt" | tail -6
-echo "---- phase3 marks ----"
-grep "r32c|" "$DIR/beacon-r32c.txt" | tail -10
+# 标记回显：beacon 以 URL 编码落盘（`|`→%7C、中文→%XX），故必须解码后再筛——
+# 原先 `grep "r32a|"` 恒空（编码后无此字面），日志看着像「一条标记都没有」。
+show_marks() {  # show_marks <file> <prefix>
+  python3 -c "
+import urllib.parse,sys
+for line in open(sys.argv[1]):
+    s = urllib.parse.unquote(line.strip())
+    if s.startswith('/t/' + sys.argv[2]): print(s[3:])
+" "$1" "$2"
+}
+echo "---- phase1 marks ----"; show_marks "$DIR/beacon-r32a.txt" "r32a"
+echo "---- phase2 marks ----"; show_marks "$DIR/beacon-r32b.txt" "r32b"
+echo "---- phase3 marks ----"; show_marks "$DIR/beacon-r32c.txt" "r32c"
 echo "---- js errors per phase ----"
 for p in a b c; do echo -n "r32$p: "; grep -c "JS-ERROR\|JS-REJECT" "$DIR/beacon-r32$p.txt" 2>/dev/null || true; done
 echo "[driver] all phases DONE"

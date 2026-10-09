@@ -1,0 +1,7 @@
+/w/60000
+/t/r32c-open
+/t/r32c%7Cr32c-recovery-ok
+/w/100
+/t/r32c%7Cr32c-ui-ok
+/t/r32c%7Cr32c-DONE
+/t/r32c-DONE

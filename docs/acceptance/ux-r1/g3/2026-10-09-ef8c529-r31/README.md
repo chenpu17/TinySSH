@@ -25,7 +25,7 @@
 - **demo 探针**（真实 Chromium + vite :5183，r31-demo-probe.js）：**48/48 ×3 连续独立轮**（probe-run1/2/3.txt；run3=竞态处置后复验）。A 导航 14（首载+隐藏默认关/面包屑分段/双击进目录/返回·前进·上一级/编辑路径框切换+回车导航/前缀段点击/定位钮 enabled·导航·到 cwd 禁用/刷新保路径）；B 列表 6（隐藏项开关双向/筛选收窄/无匹配文案/大小升序〔目录在前·null 排后〕/降序翻转/时间升序+名称还原）；C 选择与键盘 12（单击选 1/⌘ 加选/**下载所选两卡**/目录给明确信息 toast/清除选择/方向键光标/Enter 进目录/Space 选中/双击文件弹菜单不直接执行/菜单下载建卡/菜单自关/Esc 关菜单）；D 恢复 4（种子会话附加/他会话独立浏览态/切回恢复路径+选择/面板关开保持）；E 完整视图 8（900px tp-full/缩窗不清选择 §4.2/加宽回侧板/分屏→tp-full/分屏窗格完好/关面板恢复分屏/360 时间列收起/300 名称独留）；Z 零 JS 错。
 - **竞态判别探针**（r31-race-probe.js，race-run1.txt）：**6/6**，两面判别实证（摘掉 gen 作废复跑：S3 红=晚到 /root 响应整体覆盖恢复态、S3b 红=条目被换内容）——A 会话慢导航在途 → 切 B（已具快照、无链路加载升代际）→ 切回 A 快照恢复 → 晚到响应落地：约定=恢复态不被旧会话在途结果覆盖。修复=切会话时 `sftpGenRef.current++` 作废一切在途 + `setSftpLoading(false)` 复位（被作废响应的 finally 不再清 loading，曾致骨架卡死——作者自查抓出，探针两面判别）。
 - **旧码判别力实证**（基线 ef8c529 worktree :5184，r31-oldcode-probe.js，oldcode-probe.txt）：**9/9 判别红**——面包屑缺席/返回·前进·定位钮缺席/筛选·排序工具缺席/单击不产生选择/双击无动作菜单/零传输创建/list_transfers shim 未实现/列表不可键盘聚焦/分屏不退完整视图。
-- **原生冒烟**（release 二进制 + 隔离 DB + 口令 env + beacon + 真机 sshd 容器；驱动 r31-driver.sh 单阶段两轮）：**待解锁补档**（定时闸解锁后跑 ×2 归档 beacon；锁屏同 tinyssh-e2e-needs-unlocked-screen 纪律）。
+- **原生冒烟**（release 二进制 + 隔离 DB + 口令 env + beacon + 真机 sshd 容器；驱动 r31-driver.sh 单阶段两轮）：**×2 全绿**（beacon-r31a-r1.txt / r2.txt，各 13 标记零 JS 错）。逐项：`init=/root`（首载链落容器 cwd）→ `nav-edit-ok`（面包屑/编辑路径框切换+回车导航）→ `nav-history-ok`（返回·前进·上一级）→ `hidden-ok`（显示隐藏项双向）→ `filter-ok`（筛选收窄+无匹配文案）→ `sort-ok`（名称/大小/时间升降序、目录恒在前）→ `kbd-ok`（方向键光标→Enter 进目录）→ `multidl-ok`（多选下载建卡）→ `dir-info-ok`（目录明确信息 toast）→ `menu-ok`（双击文件弹动作菜单）→ `locate-skip`（无集成主机→无可信 cwd→定位钮按设计禁用，登记）→ `restore-ok`（跨标签路径+选择恢复）→ `split-full-ok`/`split-restore-ok`（分屏×面板完整视图、关面板恢复分屏）。**落盘对账**（非仅 UI 标签）：每轮 `~/Downloads/a.txt` 内容 `hello`、`b.txt` 2048B 精确匹配（驱动 `downloads-verified`）。
 - **workspace**：**164/0**（32 套件全绿、无新增 rust 测试——纯 FE 轮，核心契约零改动；ws-full.txt）。tsc 0。
 - **vis 自检**：r31-vis.js **13/13**（vis-run.txt + vis-artifacts/）——welcome 双树（当前 vs ef8c529 :5184，统一深色）diff=0（噪声底 3）；导航行 6 钮 29px 等宽零截断；面包屑盒 361×29；工具行 4 钮零截断；面板零横向溢出；双选高亮+选择条 361×32；动作菜单 132×62 视口内；分屏→tp-full 零溢出、关面板恢复双窗格；360 窄窗时间列隐藏名称可读；零 JS 错。
 
@@ -35,7 +35,12 @@
 1. **选择条布局移位抓双击**：选择条初版渲染在列表上方——单击选中后布局下移，双击的第二击落在选择条上（dbg 事件流：mousedown:row→click:row→mousedown:sftp-selbar→dblclick:sftp-selbar，只有一次 click 到达行）。修=选择条移到列表下方（上方插入使列表位移是根因）。
 2. **探针连错会话**：demo 每次连接**新建**会话，探针轮询 list_sessions 却匹配到**种子** Connected 会话 id——后续按 id 切标签切到了从未浏览过的种子会话，恢复断言全红（dbg：effect 迁移日志显示 sid 实际为 s-demo-0101 而探针认为在 0001）。修=恢复测试改用种子会话标签切换（同会话重挂语义不变）。产品代码无恙。
 3. **demo resolve 的 / 不在树**：面包屑点击根段「/」在 demo 报 not_found（真实 sshd 可列 /）——判别面改用 mid 段（root）。
-4. **首载链与旧 brief**（既有观察，非本轮引入）：切会话瞬间 brief 尚未更新时，新会话首载链可能以旧 brief.cwd 起链——R30 同实现，demo 域 brief 同源（/var/log/nginx）故不可判别；真实面=原生（待补档后核对 init 标记）。
+4. **首载链与旧 brief**（既有观察，非本轮引入）：切会话瞬间 brief 尚未更新时，新会话首载链可能以旧 brief.cwd 起链——R30 同实现，demo 域 brief 同源（/var/log/nginx）故不可判别；真实面=原生（本次补档容器主机无 shell 集成 → 无可信 cwd → 定位钮按设计禁用，该分支在原生域亦不可达，观察仍未消解，沿登记）。
+5. **补档暴露的脚本自身缺陷（R31 脚本写就但从未真机执行过，非产品缺陷）**——三条均为脚本对「React 状态异步重渲染」的不当假设，修后 ×2 全绿：
+   - **kbd：同 tick 连发 Home→Enter**：`sftpListKey` 闭包 `sftpCursor`，同一 JS task 内 Enter 处理器仍见 `cur=-1` → 直接 return 不激活（FAIL-kbd-enter）。真实按键不可能落在同一 task（demo 探针用 Playwright 两次 press 天然有间隔故绿）。修=Home 后轮询等 `.sftp-row.cursor` 渲染出来再发 Enter。经 `git log -S sftpListKey` 核对该实现属 R31（4893865）且 R35 未触碰 → 确认脚本问题而非回归。
+   - **dir-info：选中后定值 sleep 再点**：`sftpSel` 同为 React 状态，应用忙时 `sleep(200)` 后点击仍可能闭包旧选择 → `skippedDirs=0` → 不 push 目录 toast（假红）。修=轮询等选择条文本 `已选 3 项` 再点（与上一步 multidl 的「已选 2 项」前置同工艺）。另：该 toast 在 `sftpDownloadSelected` 收尾后才 push（先 await 各目标 downloadRemote），第 2 次点击含 2 个已存在目标走冲突预检 → 落点常在 4s 开外，原 40 次轮询（4s）会漏，放大到 100 次。
+   - **multidl 第 2 轮假红**：驱动仅在启动时清一次 `~/Downloads`，第 1 轮落下的 a.txt/b.txt 在第 2 轮触发 R34 冲突裁决 → 首次「下载所选」落成决策卡而非直接落盘（脚本写于 R34 之前，按覆盖语义写就）。修=按轮清落盘面。
+   - 附带工具链修复（影响 R31/R32/R33/R34 全部驱动，见下「补档工具链」）。
 
 ## 取向登记
 
@@ -76,9 +81,10 @@
 - `r31-race-probe.js` + `race-run1.txt` / `race-run3.txt` — 竞态判别探针（6/6；绿侧 ×2）
 - `race-run-red.txt` — 红侧（临时摘 gen 作废）：S3/S3b 红=晚到响应覆盖恢复态（rev-r31 低-2 归档）
 - `r31-oldcode-probe.js` + `oldcode-probe.txt` — 基线 ef8c529 判别力（9/9 红）
-- `r31-driver.sh` — 原生冒烟驱动（r31a ×2；锁屏闸）
+- `r31-driver.sh` — 原生冒烟驱动（r31a ×2；锁屏闸；按轮清落盘面）
 - `r31-vis.js` + `vis-run.txt` / `vis-run2.txt` / `vis-run3.txt` / `vis-run4.txt` + `vis-artifacts/` — 视觉自检（13/13 ×4；run2=竞态处置后、run3=低-1 处置后、run4=rev 低项处置后〔命中区扩展+Range 判据〕）
 - `crumb-scroll-check.js` — vis-r31 低-1 处置判别（360 窄载面包屑当前段可见）
 - `vis-r31-artifacts/` — vis-r31 独立复验脚本与截图（14 张）
 - `ws-full.txt` — workspace 164/0 全量（32 套件）
-- （待补）`beacon-r31a-r1.txt` / `beacon-r31a-r2.txt` — 原生冒烟 ×2（等屏幕解锁，定时闸接管）
+- （已归档）`beacon-r31a-r1.txt` / `beacon-r31a-r2.txt` — 原生冒烟 ×2 全绿（各 13 标记、零 JS-ERROR/JS-REJECT；落盘对账 a.txt=hello、b.txt=2048B 由驱动核）
+- 补档工具链修复（跨轮共用，非本目录独有）：`scripts/native-smoke/beacon.py` 旧版把日志路径写死 `/tmp/t40_smoke/beacon.log`、**忽略 argv**——而 R31/R32/R33/R34 驱动都传了自己的 `$LOG`，于是标记全落默认文件、驱动 `wait_mark` 恒超时；此前侥幸可用只因驱动从 `/tmp/smoke-r32/` 拷「打了补丁的副本」，该临时目录已随系统清理消失、repo 里这份一直是失效的。现显式接收 `argv[2]` 并自动建父目录（保留 T40 默认路径），三驱动改为直接拷 repo 版本且失败即退（不再 `|| true` 静默跳过）。

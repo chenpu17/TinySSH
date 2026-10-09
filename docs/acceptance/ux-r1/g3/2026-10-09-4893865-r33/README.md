@@ -23,7 +23,7 @@
 - **demo 探针**（真实 Chromium + vite :5183，r33-demo-probe.js）：**36/36 ×3 连续独立轮**（probe-run1/2/3.txt）。A 上传入口 5（钮存在可用/取消零建卡/默认桩 2 文件上传/dest=浏览目录+固定会话）；B 下载目标 9（另存为菜单项/默认 Downloads 完整路径/blob 记忆/预置路径 honoring/记忆更新/普通下载落上次目录/**取消零副作用**/取消后记忆完好）；C 拖放分区与确认卡 13（终端落点出卡/预填可信 cwd/文件行/确认按固定会话上传/取消零上传/清空禁用/Esc 关/面板落点直传浏览目录无卡/面板关闭同坐标出卡/**切标签失效+明确 toast+不静默改投**/坏路径卡保持+明确错误行+零上传/`..` 归一上传）；D §354 不可见借用 6（浏览≠cwd 时定位钮 enabled 证明信号无歧义/覆写 null 后 disabled/**可见面板路径预填**/**不可见面板不借用：预填空+提示行+禁用**/可信恢复预填新值）；Z 零 JS 错。
 - **旧码判别力实证**（基线 4893865 worktree :5184，r33-oldcode-probe.js，oldcode-probe.txt）：**8/8 判别红**——上传钮缺席/pick_upload_files 未实现/pick_save_file 未实现/动作菜单无另存为/window.__demoDrop 钩子未注册/demo_drag_drop 未实现（旧码浏览器域无任何可触发拖放路径）/下载恒系统 Downloads 无记忆/transfers blob 域缺席。
 - **R31 回归**（当前树）：demo 探针 48/48 + 竞态判别 6/6（r31-regression.txt / r31-race-regression.txt）。
-- **原生冒烟**（release 二进制 + 隔离 DB + 口令 env + beacon + 真机 sshd 容器；驱动 r33-driver.sh 单阶段 r33a ×2）：**待解锁补档**（定时闸解锁后跑 ×2 归档 beacon；锁屏同 tinyssh-e2e-needs-unlocked-screen 纪律）。r33a 链路：面板「上传」→ NSOpenPanel（驱动 GoTo+⌘A+Return 多选确认）→ 3 文件真上传容器全 Succeeded → 动作菜单「另存为…」→ NSSavePanel（驱动 GoTo+Return）→ 真落盘 + blob 目录记忆 → 普通下载落上次目录真落盘 → 双轮落盘/远端对账。**原生拖拽通道（Finder 拖入）无法诚实合成**——分区/确认卡行为判别归 demo 域（登记）。
+- **原生冒烟**（release 二进制 + 隔离 DB + 口令 env + beacon + 真机 sshd 容器；驱动 r33-driver.sh 单阶段 r33a ×2）：**未完成——原生文件选择器在本环境不可自动化**（详见「执行插曲」§7 与「取向登记」）。已实证的部分：面板「上传」钮确实拉起**真实 NSOpenPanel**（证据截图 `r33-native-picker-opens.png`；beacon `beacon-r33-picker-unautomated.txt`）；`pick_upload_files` 的**取消=零副作用**在 demo 域已判（C 节）。未能实证：多选 3 文件→Open 的确认动作（脚本卡在 `FAIL-pick-no-upload`）。r33a 设计链路：面板「上传」→ NSOpenPanel（驱动 GoTo+⌘A+Return 多选确认）→ 3 文件真上传容器全 Succeeded → 动作菜单「另存为…」→ NSSavePanel（驱动 GoTo+Return）→ 真落盘 + blob 目录记忆 → 普通下载落上次目录真落盘 → 双轮落盘/远端对账。**原生拖拽通道（Finder 拖入）无法诚实合成**——分区/确认卡行为判别归 demo 域（登记）。
 - **workspace**：**165/0**（32 套件全绿；+1 session-api `workspace_transfers_field_wire_compat`：旧 blob 反序列化 transfers=None/新载荷 round-trip/域对象缺 download_dir 不虚构）。tsc 0。
 - **vis 自检**：r33-vis.js **14/14 ×2**（vis-run1/2.txt + vis-artifacts/）——welcome 双树 diff=4226px=本轮有意触碰的帮助文案行（有界局部差+新文案渲染断言）、导航行 7 钮零截断零重叠、确认卡盒测量视口内/输入 366×28/双钮可见/Esc 还原、动作菜单两钮 132×91 视口内、面板零横向溢出、零 JS 错。
 
@@ -33,10 +33,18 @@
 2. **demo_drag_drop 丢坐标**：首版 demo 钩子只转发 paths 未转发 x/y——面板分区判别全走终端分支（C5 红）。修=钩子透传坐标。
 3. **D 节信号歧义（作者自查）**：覆写 brief.cwd 后以「定位钮 disabled」为传播信号——但浏览目录==旧 cwd 时该钮本就 disabled（`sftpPath === brief.cwd` 亦真），waitFor 立即假通过，D1–D3 全红且红因不可判别。修=D0 前先导航浏览到 ≠cwd 目录使信号无歧义（D0b 断言 enabled 基线），修后 36/36 且三分支行为与设计一致；曾并行把 beginDropUploads 改 ref 读取（闭包竞态类别加固），保留。
 4. **rev-r33 中-1（预填借用不可见面板路径）**：初版 `prefill = brief.cwd || sftpPath` 无可见性门——会话无集成 + 曾浏览后面板关闭时预填旧路径，违 §354 且与卡内「无可信目录」提示自相矛盾。修=rp 门 + 判别面补齐（见 D 节）。
+7. **原生文件选择器在本环境不可自动化（补档实测，含一条待人工确认的观察）**——补档首次真机执行 r33a，卡在 `FAIL-pick-no-upload`。逐项排查（`/tmp` 隔离诊断 + 截图逐步取证）：
+   - **面板确实打开**：`upBtn.click()` → `pick_upload_files` → 真实 NSOpenPanel 出现（截图 `r33-native-picker-opens.png`），说明「上传入口 → 原生选择器」这一段原生链路成立，失败点在**面板内的选择确认**。
+   - **面板不可 AX 寻址**：NSOpenPanel 由 `com.apple.appkit.xpc.openAndSavePanelService`（AppKit 的**进程外**服务）承载，System Events 对该进程 `get name of every window` 返回空——无法用 AX 元素定位按钮/行，只能靠坐标。
+   - **键盘只到得了 GoTo 表单，到不了文件列表**：⌘⇧G 能开「前往」表单并能键入路径、Return 生效（面板随之导航，栏内高亮目标文件夹）；但表单关闭后浏览器列表**不接收键盘焦点**——⌘A / 方向键 / 字母 type-select 全部无反应、Open 钮恒灰。表现与「面板窗口未成为 key window、列表未成为 first responder」一致（rfd 经 `spawn_blocking` 走非主线程 → 主线程 dispatch 的模态路径疑似留下不完整响应链；**仅为机制推测，未证实**）。
+   - **合成鼠标点击能到达面板但不能可靠选中行**：Quartz CGEvent 点击「Cancel」可关闭面板（证明点击通道有效），但点文件行未观察到选中态复现；且面板几何随导航态变化（侧栏开合使列区位移），坐标法不稳定。本轮诊断期间还遇到一次 **ToDesk 远程桌面全屏抢占屏幕**，合成点击落到别的应用——环境本身对 GUI 合成不稳。
+   - **待人工确认的观察（不主张为产品缺陷）**：若上述「列表不收键盘焦点」对真实用户同样成立，则选择器内无法纯键盘选文件（a11y 退化）。但**合成输入被过滤与真实产品缺陷在证据上不可区分**，故不判缺陷，仅登记：建议由人工点一次「上传」实测鼠标选文件 + 键盘（Tab/方向键/⌘A）是否正常，再决定是否归后续轮。
+   - **结论与后续**：原生多选确认步骤**登记为不可自动化**；r33a 驱动保留（脚本逻辑本身未证伪），但不作为本轮的通过证据。R33 的原生覆盖面由此为：**上传入口拉起真实选择器**（已实证）+ 其余链路由 demo 域（36/36，`pick_upload_files` mock 同命令面）+ r32a 原生上传/下载（真机容器写穿、落盘对账）分担。
 
 ## 取向登记
 
 - **原生拖拽通道不可自动化**：真实 Finder 拖入无法诚实合成——分区/确认卡判别归 demo 域（demo_drag_drop 与原生共用 beginDropUploads，坐标口径原生=物理/dpr、demo=逻辑直传）；原生冒烟只验选择器/传输链路真通道。
+- **原生文件选择器的「选择确认」步骤不可自动化**（补档实测，详见执行插曲 §7）：NSOpenPanel 进程外、AX 不可寻址；键盘到得了 GoTo 表单却到不了文件列表；合成点击不可靠（面板几何随导航态漂移，且诊断期遭遇 ToDesk 全屏抢占）。已实证=上传入口拉起真实选择器；未实证=多选 3 文件 + Open。**待人工确认的观察**：选择器内键盘选文件是否对真实用户同样失效（a11y 退化）——合成输入过滤与产品缺陷在证据上不可区分，故不判缺陷、只登记，建议人工实测一次再决定归属。
 - **running 卡不显示完整本地目标**（rev 低-3 登记）：完成时刻显示完整 local（R32 既有卡面）；进行中显示「…」占位——§356「显示完整本地目标」在完成时刻满足，卡面增强归后续轮。
 - **pick_save_file defaultDir 被删**：原生面板回落默认位置，用户可导航/取消，无数据风险；demo 域不可测。
 - **zone=panel 且 sftpPath 空**（面板开着但首载失败/在途）：回落 brief.cwd 静默直传（窄窗+可信源+失败卡如实）——登记。
@@ -58,7 +66,7 @@
 - **低-4（已修）**：行级下载钮 title 与列表尾部 side-quiet 旧文案更新。
 - **处置复核（终裁已回）**：rev-r33 终裁**可签**——处置复核全过（中-1 修法正确：App.tsx prefill 可见性门 + rightPanelRef 化，ref 化顺带消除导航期重订阅窗判合理加固；低-1/低-2/低-4 已修且判别面补齐）；独立复跑全绿（tsc 0、session-api 8/8 Rust 面零触碰、demo 探针 36/36 ×2、oldcode 8/8、vis 14/14）；**红侧第三刀对新增守卫**：摘 prefill 可见性门 → D2 精准独红（35/36，仅 D2 prefill 借用重现），还原 cmp 逐字节通过后回绿 36/36——新守卫判别力实锤。其探针归档 rev-r33-probes/。
 - 注：终裁消息晚于主提交（013dc58）到达——提交时按当时状态如实登记「未回终裁」；终裁到达后本节修正，代码零改动。
-- **登记不阻塞**：defaultDir 被删原生面板回落；zone=panel 且 sftpPath 空回落 brief.cwd 静默直传（窄窗+可信源+失败卡如实）；拖放监听重订阅理论窗（旧码同模式）；原生冒烟 r33a 驱动就绪待解锁（拖放分区原生通道不可合成判别归 demo 域成立）；vault c8 flake 判既有家族。
+- **登记不阻塞**：defaultDir 被删原生面板回落；zone=panel 且 sftpPath 空回落 brief.cwd 静默直传（窄窗+可信源+失败卡如实）；拖放监听重订阅理论窗（旧码同模式）；原生冒烟补档后确认「上传入口拉起真实选择器」成立、**选择确认步骤不可自动化**（见取向登记与执行插曲 §7）；vault c8 flake 判既有家族。
 
 ### vis-r33（独立视觉复验）：**视觉可签（含处置复验 14/14 全过）**（初判 27/27 两轮全绿零 pageerror 零 FAIL；观察 a–d 全非阻塞，c/d 已处置；终裁处置后视觉可签）
 
@@ -76,4 +84,6 @@
 - `rev-r33-probes/` — rev-r33 独立红侧/判别探针（终态树复跑绿）
 - `r33-driver.sh` — 原生冒烟驱动（r33a ×2；锁屏闸；NSPanel 键序守望者）
 - `ws-full.txt` — workspace 165/0 全量（32 套件）
-- （待补）`beacon-r33a-r1.txt` / `beacon-r33a-r2.txt` — 原生冒烟 ×2（等屏幕解锁，定时闸接管）
+- `r33-native-picker-opens.png` — 原生冒烟补档实证：面板「上传」钮拉起**真实 NSOpenPanel**（截图；面板为进程外服务，故 AX 不可寻址）
+- `beacon-r33-picker-unautomated.txt` — 同次补档 beacon（`r33a-pick-open` → `FAIL-pick-no-upload`；选择确认步骤未能在本环境自动化，见执行插曲 §7）
+- （未产出）`beacon-r33a-r1.txt` / `beacon-r33a-r2.txt` — 原生冒烟 ×2 未完成：卡在原生选择器选择确认步骤（不可自动化，非产品缺陷判定，见执行插曲 §7）

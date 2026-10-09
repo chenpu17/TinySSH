@@ -2807,9 +2807,11 @@ fn r32_smoke_script(run_id: &str, mode: &str) -> String {
       if (doneD.kind !== 'Download' || doneD.source !== '/tmp/r32dir/up.bin') return title('FAIL-download-fields:' + JSON.stringify(doneD));
       await markSync('r32a-download-ok');
       // 失败注入：本地不存在 → Failed + 真实错误文本（不吞不猜）
+      // R35 起源侧先判别（ns_stat：上传源=本地、下载源=远端），缺源以「源文件不存在：<路径>」
+      // 如实失败——优于此前落到数据阶段的含糊 IO 文案，故此处断言随契约更新（原断言 'open'）。
       const hf = await inv('upload_file', { sid, local: '/tmp/r32-missing.bin', remote: '/tmp/r32dir/never.bin' });
       const doneF = await waitTerminal(hf.id, 100);
-      if (!doneF || doneF.status !== 'Failed' || !(doneF.error || '').includes('open')) return title('FAIL-failed-inject:' + JSON.stringify(doneF));
+      if (!doneF || doneF.status !== 'Failed' || !(doneF.error || '').includes('源文件不存在')) return title('FAIL-failed-inject:' + JSON.stringify(doneF));
       await markSync('r32a-failed-ok');
       // 取消：400MB 上传在途（bytes≥1MB）→ cancel → Cancelling|Cancelled 即现 → 终态 Cancelled/已取消/部分字节
       const hb = await inv('upload_file', { sid, local: '/tmp/r32big.bin', remote: '/tmp/r32dir/big.bin' });
@@ -2839,6 +2841,12 @@ fn r32_smoke_script(run_id: &str, mode: &str) -> String {
       const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
       if (!stBtn) return title('FAIL-no-files-btn');
       stBtn.click();
+      // R35 §194：传输卡移入工作区底部抽屉且默认收起（后台事件只更新计数、不自动展开）
+      // ——查卡面前先经状态条「传输 N」展开；脚本随之适配，卡面语义断言不变。
+      if (!document.querySelector('.queue-drawer')) {
+        document.querySelector('[data-testid="sb-transfer"]')?.click();
+        if (!await waitFor(() => document.querySelector('.queue-drawer') || null, 40)) return title('FAIL-no-queue-drawer');
+      }
       const rows = await waitFor(() => (document.querySelectorAll('.xfer-row').length >= 3 ? true : null), 60);
       if (!rows) return title('FAIL-no-xfer-cards:' + document.querySelectorAll('.xfer-row').length);
       const txt = [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ');
@@ -2938,14 +2946,19 @@ fn r32_smoke_script(run_id: &str, mode: &str) -> String {
         return list.find((t) => t.dest === '/tmp/r32dir/recovering.bin') || null;
       }, 50);
       if (!row) return title('FAIL-recovery-row-missing');
-      if (row.status !== 'Failed') return title('FAIL-recovery-status:' + JSON.stringify(row));
+      // R34 起恢复分类细分：提交前中断 = Interrupted（R32 原统一 Failed 已修正），
+      // 提交结果未知 = OutcomeUnknown（temp 保留）。在途被杀属前者，故断言 Interrupted。
+      if (row.status !== 'Interrupted') return title('FAIL-recovery-status:' + JSON.stringify(row));
       if (row.error !== '应用重启时传输中断') return title('FAIL-recovery-error:' + JSON.stringify(row));
       if (!row.finished_at) return title('FAIL-recovery-finished:' + JSON.stringify(row));
       await markSync('r32c-recovery-ok');
-      // UI 对账：重挂后注册表面在文件面板可见
-      const stBtn = await waitFor(() => document.querySelector('.st-file') || null, 100);
-      if (!stBtn) return title('FAIL-no-files-btn');
-      stBtn.click();
+      // UI 对账：重挂后注册表面在传输抽屉可见。
+      // R35 §194：卡面已从文件面板移入**工作区底部抽屉**（默认收起）——入口是页脚状态条
+      // 「传输 N」，抽屉与页脚均为工作区级、无会话也在场。R32 原脚本先点 `.st-file` 开文件
+      // 面板，但 `.st-file` 属**会话工具栏**（`{current && ...}`）——本阶段刻意不建连，故该
+      // 按钮不存在（FAIL-no-files-btn）。改为直接经状态条展开抽屉。
+      document.querySelector('[data-testid="sb-transfer"]')?.click();
+      if (!await waitFor(() => document.querySelector('.queue-drawer') || null, 40)) return title('FAIL-no-queue-drawer');
       const txt = await waitFor(() => {
         const t = [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ');
         return t.includes('应用重启时传输中断') ? t : null;
@@ -3126,6 +3139,11 @@ fn r31_smoke_script(run_id: &str) -> String {
       if (!list || list.getAttribute('tabindex') === null) return title('FAIL-list-not-focusable');
       list.focus();
       list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+      // 光标是 React 状态（sftpCursor）：Home 后必须等重渲染出 .cursor 行再发 Enter。
+      // 同 tick 连发时 Enter 的处理器仍闭包旧值 cur=-1 → 直接 return 不激活（R35 补档
+      // 实测：本脚本写于 R31 但从未真机执行过，此处为其自身竞态，非产品缺陷——真实
+      // 按键不可能落在同一 JS task；demo 探针用 Playwright 两次 press 天然有间隔故绿）。
+      if (!await waitFor(() => document.querySelector('.sftp-row.cursor') || null, 40)) return title('FAIL-kbd-no-cursor');
       list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
       if (!await waitFor(() => (crumbsPath() === '/tmp/r31dir/sub' ? true : null), 60)) return title('FAIL-kbd-enter:' + crumbsPath());
       if (!await clickNav('返回')) return title('FAIL-back3');
@@ -3137,6 +3155,11 @@ fn r31_smoke_script(run_id: &str) -> String {
       const selbar = await waitFor(() => document.querySelector('[data-testid="sftp-selbar"]'), 40);
       if (!selbar || !selbar.textContent.includes('已选 2 项')) return title('FAIL-selbar:' + (selbar?.textContent ?? 'null'));
       [...selbar.querySelectorAll('button')].find((b) => b.textContent.includes('下载所选'))?.click();
+      // R35 §194：传输卡移入工作区底部抽屉且默认收起——先展开再查卡面（语义断言不变）。
+      if (!document.querySelector('.queue-drawer')) {
+        document.querySelector('[data-testid="sb-transfer"]')?.click();
+        if (!await waitFor(() => document.querySelector('.queue-drawer') || null, 40)) return title('FAIL-no-queue-drawer');
+      }
       const doneTxt = await waitFor(() => {
         const t = [...document.querySelectorAll('.xfer-row')].map((r) => r.textContent).join(' || ');
         return (t.includes('完成') && (t.match(/完成/g) || []).length >= 2) ? t : null;
@@ -3145,12 +3168,20 @@ fn r31_smoke_script(run_id: &str) -> String {
       await markSync('r31a-multidl-ok');
       // 目录进选择 → 明确信息（不静默跳过）
       selRow('sub', true);
-      await sleep(200);
-      [...document.querySelectorAll('[data-testid="sftp-selbar"] button')].find((b) => b.textContent.includes('下载所选'))?.click();
+      // 选中是 React 状态：必须等选择条反映 3 项再点，否则点击处理器仍闭包旧的 sftpSel
+      // → skippedDirs=0 → 不 push 目录 toast，本断言即假红（R35 补档实测：定值 sleep(200)
+      // 在应用忙时不稳；与上一步 multidl 的「已选 2 项」前置同工艺）。
+      if (!await waitFor(() => {
+        const b = document.querySelector('[data-testid="sftp-selbar"]');
+        return b && b.textContent.includes('已选 3 项') ? true : null;
+      }, 40)) return title('FAIL-dir-sel:' + (document.querySelector('[data-testid="sftp-selbar"]')?.textContent || 'none'));
+      document.querySelector('[data-testid="sftp-sel-download"]')?.click();
+      // toast 在选择下载**收尾之后**才 push（sftpDownloadSelected 先 await 各目标 downloadRemote），
+      // 第 2 次点含 2 个已存在目标走冲突预检，落点常在 4s 开外——原 40 次轮询（4s）会漏，放大到 100 次。
       const toast = await waitFor(() => {
         const t = [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('|');
         return t.includes('目录') && t.includes('不支持直接下载') ? t : null;
-      }, 40);
+      }, 100);
       if (!toast) return title('FAIL-dir-info:' + [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('|'));
       await markSync('r31a-dir-info-ok');
       // 双击文件 → 动作菜单（不直接执行）→ 菜单下载
@@ -3162,6 +3193,9 @@ fn r31_smoke_script(run_id: &str) -> String {
       [...menu.querySelectorAll('button')].find((b) => b.textContent.includes('下载'))?.click();
       if (!await waitFor(() => document.querySelectorAll('.xfer-row').length > cardsBefore ? true : null, 60)) return title('FAIL-menu-dl');
       await markSync('r31a-menu-ok');
+      // 卡面断言完毕：收起抽屉，恢复本脚本其余断言（分屏×面板完整视图）的原始布局前提。
+      document.querySelector('[data-testid="queue-collapse"]')?.click();
+      await sleep(300);
       // 定位到终端目录：cwd 可达则点按可达（shell 集成未启用时按钮禁用=登记为 skip）
       if (!await navTo('/tmp')) return title('FAIL-nav-tmp');
       const locBtn = [...document.querySelectorAll('.sftp-nav button')].find((b) => b.getAttribute('aria-label') === '定位到终端目录');

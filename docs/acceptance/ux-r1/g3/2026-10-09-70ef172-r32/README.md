@@ -26,14 +26,20 @@
 
 - **demo 探针**（真实 Chromium + vite :5183，r32-demo-probe.js）：**22/22 ×3 连续独立轮**（probe-run1/2/3.txt；run3=rev-r32 中-1 处置后复验）。A 契约 11（list 初始空/handle 形状/**创建先注册**（handle 返回即 Queued 可查）/**终态字节全量+finished_at+revision 单调**/fail-demo 注入 Failed/download kind/取消三段（Cancelling 即现→Cancelled 已取消→终态幂等）/unknown-id invalid_input/注册表全量持有/revision 跨采样单调）；B UI 7（卡片在面板可见/完成·N.N MB/失败：演示注入/已取消/**进行中卡「传输中/排队中」**/取消钮存在/面板收敛终态）；Z 零 JS 错。
 - **旧码判别力实证**（基线 ddd9d60 worktree :5184，r32-oldcode-probe.js，oldcode-probe.txt）：**6/6 判别红**——list_transfers 命令不存在（shim 抛错）、upload/download 拒绝（「演示模式不提供真实 SFTP 传输」）、cancel_transfer 静默 no-op（旧「占位反馈」伪影同案）、UI 零传输卡能力。
-- **原生冒烟**（release 二进制 + 隔离 DB + 口令 env + beacon + 真机 sshd 容器；驱动 r32-driver.sh 三阶段：r32a 主链 → r32b 400MB 在途 ≥4MB 打标后 kill -9 → r32c 同库同口令重启恢复）：**锁屏发现与处置见「执行插曲」§1**。
+- **原生冒烟**（release 二进制 + 隔离 DB + 口令 env + beacon + 真机 sshd 容器；驱动 r32-driver.sh 三阶段：r32a 主链 → r32b 400MB 在途 ≥4MB 打标后 kill -9 → r32c 同库同口令重启恢复）：**三阶段全绿、零 JS 错**（beacon-r32a/b/c.txt）。r32a 11 标记：`list-empty-ok`（初始空）/`registered-ok`（handle 返回即注册可查）/`upload-ok`/`remote-write-ok`（真机容器写穿）/`download-ok`/`failed-ok`（演示注入）/`progress-seen=41877504`（400MB 在途快照）/`cancel-ok`（Cancelling→Cancelled）/`cancel-unknown-ok`/`ui-ok`（卡面在抽屉可见）/`DONE`；**落盘对账**：下载落 `~/Downloads/up.bin` 2097152B（2MB 精确）。r32b `TRANSFERRING=33226752`（≥4MB 后在途）→ kill -9。r32c `recovery-ok`（同库同口令重启后活动行判 **Interrupted** + `应用重启时传输中断` + finished_at 齐全）+ `ui-ok`（重挂注册表在**传输抽屉**可见）+ `DONE`——重启恢复面端到端成立。
 - **cargo 真机 e2e**（TINYSSH_E2E_SSHD=1，共享容器）：**7/7**（R30 面全绿 + 既有传输三测〔上传/下载/取消〕在新 progress 签名下真机通过）。
 - **workspace**：**164/0**（全量干净复跑；+6 core-session r32_tests +1 vault c5_roundtrip；另 vault c8 并行偶发一例单跑+复跑全绿判登记 flake 家族）。tsc 0。
 - **vis**：r32-vis.js **8/8**（vis-run.txt + vis-artifacts/）——welcome 双树（当前 vs 70ef172 :5186，统一深色）diff=0（容差=每通道 ≤8 滤 AA、通过线允许 max(噪声底,3)；终轮归档 PNG 字节级相同）；四态卡盒测量（进行中卡「传输中… 576.0 KB / 3.5 MB」进度文本实渲染、sub/name 零截断、取消钮 35×28 elementFromPoint 真命中、行高 60px 一致）；面板零横向溢出；640 窄窗卡渲染不破版；零 JS 错。
 
 ## 执行插曲（如实）
 
-1. **锁屏中断与发现**：原生冒烟首轮契约面 9 项全过（registered/upload/remote-write/download/failed/progress-seen=39714816/cancel/cancel-unknown-ok）后 UI 阶段静默冻结——排查确认 **loginwindow 主窗口=「登录」（屏幕已锁）**，WKWebView 冻结页面 JS（tinyssh-e2e-needs-unlocked-screen 纪律同源）；驱动补 lock_state 闸（锁屏即明确退出并指引重跑）+ wait_mark 超时信息改 stderr（原 `>/dev/null` 吞超时消息致首轮误读为即时失败）。**待解锁后重跑 ×2 归档 beacon**。
+1. **锁屏中断与发现**：原生冒烟首轮契约面 9 项全过（registered/upload/remote-write/download/failed/progress-seen=39714816/cancel/cancel-unknown-ok）后 UI 阶段静默冻结——排查确认 **loginwindow 主窗口=「登录」（屏幕已锁）**，WKWebView 冻结页面 JS（tinyssh-e2e-needs-unlocked-screen 纪律同源）；驱动补 lock_state 闸（锁屏即明确退出并指引重跑）+ wait_mark 超时信息改 stderr（原 `>/dev/null` 吞超时消息致首轮误读为即时失败）。**已解锁后重跑三阶段全绿并归档 beacon（见 e2e 节）**。
+6. **补档暴露的脚本/工具链缺陷（R32 脚本写于 R34/R35 之前，三处均非产品缺陷）**：
+   - **beacon.py 忽略 argv**（工具链，跨轮共用）：旧版把日志路径写死 `/tmp/t40_smoke/beacon.log`，而本驱动传的是 `$DIR/beacon-r32.txt` → 标记全落默认文件、`wait_mark` 恒超时。此前侥幸可用只因驱动从 `/tmp/smoke-r32/` 拷「打了补丁的副本」，该临时目录已随系统清理消失。修=显式接收 `argv[2]` 并自动建父目录（保留 T40 默认路径），驱动改为拷 repo 版本且失败即退（不再 `|| true` 静默跳过）。
+   - **r32c 点 `.st-file` 恒败（FAIL-no-files-btn）**：该步是 R32 时代写法（卡面在文件面板）；`.st-file` 属**会话工具栏**（FE `{current && ...}`），而 r32c 刻意**不建连**（纯恢复面对账）→ 按钮不存在。R35 §194 已把卡面移入**工作区底部抽屉**（工作区级、页脚「传输 N」为入口、无会话也在场）→ 改为直接经 `[data-testid="sb-transfer"]` 展开抽屉对账。
+   - **r32a 失败注入文案**：断言原查 `error.includes('open')`——R35 给源侧加了显式判别（上传源缺失 → `源文件不存在：<path>`），原字面不再出现；改为查 `源文件不存在`（语义未变，仍判「失败可识别」）。
+   - **r32c 恢复态**：断言原查 `Failed`——R34 已细分恢复分类（提交前中断 = **Interrupted**，提交结果未知 = OutcomeUnknown）；改为查 `Interrupted`（`应用重启时传输中断` 说明行断言保留）。
+   - 驱动标记回显 `grep "r32a|"` 恒空：beacon 以 URL 编码落盘（`|`→`%7C`、中文→`%XX`），改用 python3 解码后筛（`show_marks`），否则日志看着像「一条标记都没有」。
 2. **驱动遗漏 beacon.py**：首轮 exit「PHASE1 FAILED: beacon tail 无文件」——r30 工艺文件未随目录复制；补齐后契约面即通。
 3. **journal 列映射错位**（r32_tests 抓出）：journal_row_to_task state 列索引写 6（实为 5），load_active 静默 Err 被恢复面 `Err(_) => {}` 吞成空表——修正列序；恢复面吞错保留（journal 不可读不炸启动）但测试断言使空表不可通过。
 4. **初始 revision 0**：注册首帧 revision 从 1 起的契约由测试锁定（transfer() 初值修正）。
@@ -78,4 +84,4 @@
 - `rev-r32-probe.js` + `rev-r32-r3.js` — rev-r32 自设反证探针（11/11 活体）
 - `vis-r32-artifacts/` — vis-r32 独立复验脚本与截图（queued/cancelling 实捕 + 640 双树散点裁剪目检）
 - `probe-run3.txt` — 中-1 处置后复验 22/22
-- （待补）`beacon-r32a/b/c.txt` — 原生冒烟 ×2（等屏幕解锁）
+- （已归档）`beacon-r32a.txt` / `beacon-r32b.txt` / `beacon-r32c.txt` — 原生冒烟三阶段全绿（零 JS-ERROR/JS-REJECT；r32a 11 标记 + 落盘 2097152B 对账、r32b TRANSFERRING=33226752、r32c recovery+ui ok）

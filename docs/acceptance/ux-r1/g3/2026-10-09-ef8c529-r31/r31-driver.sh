@@ -12,7 +12,9 @@ DB=$DIR/tinyssh.db
 LOG=$DIR/beacon-r31.txt
 
 mkdir -p "$DIR"
-cp /tmp/smoke-r32/beacon.py "$DIR/beacon.py" 2>/dev/null || true
+# beacon.py 常驻仓库（scripts/native-smoke/beacon.py）；此前引用的 /tmp/smoke-r32/ 临时副本已随
+# 系统清理消失，且旧写法带 `|| true` 会静默跳过 → 信标不启动、日志恒空、wait_mark 超时。
+cp /Users/chenpu/workspace/claude-code/TinySSH/scripts/native-smoke/beacon.py "$DIR/beacon.py" || { echo "beacon.py 拷贝失败"; exit 2; }
 lsof -ti :15199 | xargs kill 2>/dev/null
 # 预置容器测试树：排序/隐藏/筛选/键盘/多选下载判别面
 docker exec tinyssh-e2e sh -c 'rm -rf /tmp/r31dir && mkdir -p /tmp/r31dir/sub && printf hello > /tmp/r31dir/a.txt && head -c 2048 /dev/zero > /tmp/r31dir/b.txt && head -c 102400 /dev/urandom > /tmp/r31dir/big.txt && printf h > /tmp/r31dir/.hidden && printf inner > /tmp/r31dir/sub/inner.txt' || { echo "precreate failed"; exit 2; }
@@ -67,6 +69,9 @@ fi
 
 for round in 1 2; do
   echo "[driver] ==== round $round ===="
+  # 每轮清下载落盘面（R34 起已有冲突裁决：残留目标会让本轮首次「下载所选」落成决策卡
+  # 而非直接落盘，脚本原按覆盖语义写就——R35 补档实测第 2 轮因此红，故按轮清）。
+  rm -f ~/Downloads/a.txt ~/Downloads/b.txt ~/Downloads/big.txt
   P1=$(launch "r31a-r$round" r31a)
   echo "[driver] pid=$P1"
   if wait_mark "r31a-DONE" 300; then
@@ -83,6 +88,13 @@ for round in 1 2; do
   fi
   kill $P1 2>/dev/null; sleep 2
   cp "$LOG" "$DIR/beacon-r31a-r$round.txt"
+  # 标记回显：beacon 以 URL 编码落盘（`|`→%7C、中文→%XX），须解码后再看。
+  python3 -c "
+import urllib.parse,sys
+for line in open(sys.argv[1]):
+    s = urllib.parse.unquote(line.strip())
+    if s.startswith('/t/'): print(s[3:])
+" "$DIR/beacon-r31a-r$round.txt"
   : > "$LOG"
 done
 

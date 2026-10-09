@@ -14,7 +14,9 @@ DB=$DIR/tinyssh.db
 LOG=$DIR/beacon-r33.txt
 
 mkdir -p "$DIR"
-cp /tmp/smoke-r32/beacon.py "$DIR/beacon.py" 2>/dev/null || true
+# beacon.py 常驻仓库（scripts/native-smoke/beacon.py）；旧引用的 /tmp/smoke-r32/ 临时副本已消失，
+# 且旧写法带 `|| true` 会静默跳过 → 信标不启动、日志恒空、wait_mark 超时。
+cp /Users/chenpu/workspace/claude-code/TinySSH/scripts/native-smoke/beacon.py "$DIR/beacon.py" || { echo "beacon.py 拷贝失败"; exit 2; }
 lsof -ti :15199 | xargs kill 2>/dev/null
 # 远端容器树（上传目标）+ 宿主选择器源目录（NSOpenPanel GoTo 目标）
 docker exec tinyssh-e2e sh -c 'rm -rf /tmp/r33dir && mkdir -p /tmp/r33dir && printf hello > /tmp/r33dir/app.txt && head -c 2048 /dev/zero > /tmp/r33dir/b.txt && head -c 65536 /dev/urandom > /tmp/r33dir/big.bin' || { echo "precreate container failed"; exit 2; }
@@ -125,6 +127,13 @@ for round in 1 2; do
   kill $W1 $W2 2>/dev/null
   kill $P1 2>/dev/null; sleep 2
   cp "$LOG" "$DIR/beacon-r33a-r$round.txt"
+  # 标记回显：beacon 以 URL 编码落盘（`|`→%7C、中文→%XX），须解码后再看。
+  python3 -c "
+import urllib.parse,sys
+for line in open(sys.argv[1]):
+    s = urllib.parse.unquote(line.strip())
+    if s.startswith('/t/'): print(s[3:])
+" "$DIR/beacon-r33a-r$round.txt"
   : > "$LOG"
   # 第二轮清落盘面（保证对账来自本轮）
   rm -rf /tmp/r33save && mkdir -p /tmp/r33save
