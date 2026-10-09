@@ -1,0 +1,97 @@
+[
+  {
+    "when": "连接本机后（1 会话）",
+    "count": 1,
+    "all": [
+      {
+        "i": 0,
+        "w": 1198,
+        "h": 656,
+        "holderCls": "term-session active"
+      }
+    ],
+    "firstMatch": {
+      "w": 1198,
+      "h": 656
+    }
+  },
+  {
+    "when": "再连 prod-1 后（2 会话）",
+    "count": 2,
+    "all": [
+      {
+        "i": 0,
+        "w": 0,
+        "h": 0,
+        "holderCls": "term-session"
+      },
+      {
+        "i": 1,
+        "w": 1198,
+        "h": 656,
+        "holderCls": "term-session active"
+      }
+    ],
+    "firstMatch": {
+      "w": 0,
+      "h": 0
+    }
+  },
+  {
+    "when": "关闭 prod-1 后（回 1 会话）",
+    "count": 2,
+    "all": [
+      {
+        "i": 0,
+        "w": 0,
+        "h": 0,
+        "holderCls": "term-session"
+      },
+      {
+        "i": 1,
+        "w": 1198,
+        "h": 656,
+        "holderCls": "term-session active"
+      }
+    ],
+    "firstMatch": {
+      "w": 0,
+      "h": 0
+    }
+  },
+  {
+    "when": "关闭后再连 prod-1（2 会话）",
+    "count": 3,
+    "all": [
+      {
+        "i": 0,
+        "w": 0,
+        "h": 0,
+        "holderCls": "term-session"
+      },
+      {
+        "i": 1,
+        "w": 0,
+        "h": 0,
+        "holderCls": "term-session"
+      },
+      {
+        "i": 2,
+        "w": 1198,
+        "h": 656,
+        "holderCls": "term-session active"
+      }
+    ],
+    "firstMatch": {
+      "w": 0,
+      "h": 0
+    }
+  },
+  {
+    "when": "全部会话关闭后",
+    "count": 0,
+    "all": [],
+    "firstMatch": null,
+    "toolbar": false
+  }
+]

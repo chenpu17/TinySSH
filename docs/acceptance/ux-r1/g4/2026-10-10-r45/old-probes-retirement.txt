@@ -1,0 +1,58 @@
+# R45 旧散落脚本退役清单（`ui/` 根目录 20 个 `*.cjs`）
+
+## 为什么退役
+
+这 20 个脚本是 T38–T44 各轮的**一次性走查脚本**，共同问题：
+
+1. **写死个人浏览器绝对路径**：`/Users/chenpu/Library/Caches/ms-playwright/chromium_headless_shell-1243/...`
+   —— 换机/换 Playwright 版本即全废，且把个人目录带进了仓库。
+2. **多数断言旧三栏坐标**（220 / flex / 280 或「三栏实测宽度」），R12 后该布局**已不存在**，
+   留着就是**过时断言**——正是 R45 验收项「无旧常驻命令框/三栏断言」要清的。
+3. 部分是**截图脚本**（输出到 `/tmp` 或 `docs/acceptance/screenshots`），不是可重复的回归入口。
+4. 少数依赖**临时改 `ui/src/demo.ts`** 才能跑（跑完须人工还原），本身不可重复运行。
+
+处置：**有效的功能覆盖迁进 `ui/test/specs/`**（见 `feature-regression-map.md`），
+其余**如实登记为未迁移**（不主张已验证），然后删除这 20 个文件。
+
+## 逐条处置
+
+| 脚本 | 原覆盖 | 处置 |
+|---|---|---|
+| `pv_fix_shots.cjs` | 截图：表单新布局 / GBK 徽章 / 目标框自动增高 | 截图部分**退役**；GBK 徽章 → `13-charset`；目标框 → `15-goal` |
+| `pv_fix_verify.cjs` | 5 项修复：编码行、主机卡中心点击、GBK 徽章、会话卡截断 title、目标 textarea 自动增高 + 草稿切标签不丢 | GBK 徽章 → `13-charset`；目标 → `15-goal`；**未迁移**：卡片几何中心点击不被拦截、截断名 title 提示、草稿切标签不丢、textarea 自动增高 |
+| `pv_gbk_walk.cjs` | GBK 走查 | → `13-charset`（**已迁移**） |
+| `pv_handoff_walkthrough.cjs` | 任务目标/委托留言全链路 + 简报可读性 | 目标 → `15-goal`；**未迁移**：简报可读性 |
+| `pv_polish_light.cjs` | 浅色主题 + **三栏实测宽度** | 三栏宽度断言**废弃**（布局已移除）；主题切换 → `09-settings` |
+| `pv_polish_light2.cjs` | 浅色 toast / 列表截图 | **退役**（纯截图） |
+| `pv_polish_walkthrough.cjs` | 列表/三栏/目标区/Toast/浅色/Timeline 截图 | **退役**（纯截图） |
+| `recheck_1_skeleton.cjs` | 首载 skeleton 帧（需对 `/src/demo.ts` 注入延迟） | **未迁移**：需 serve 期改写，非可重复入口 |
+| `recheck_2_attachhint.cjs` | 浅色 attach-hint pill 6s 生命周期 opacity 采样 | **未迁移**（时间敏感视觉采样） |
+| `recheck_3_layout_contrast.cjs` | **三栏宽度实测** + placeholder 对比度 | 三栏宽度**废弃**；**未迁移**：对比度（WCAG AA） |
+| `recheck_4_screenshots.cjs` | 双主题全屏截图 ×8 | **退役**（纯截图） |
+| `recheck_5_spec.cjs` | 主机卡 hover 操作组 + pointer-events 防幽灵点击；控制权徽标语义；连接 loading ≤400ms | 控制权徽标 → `02-session`；**未迁移**：幽灵点击像素实证、loading ≤400ms |
+| `recheck_6_dimtext.cjs` | `.dim` 辅助文字两主题对比度 | **未迁移**（信息性） |
+| `t38_goal_walkthrough.cjs` | 任务目标全链路（种子/编辑/保存/toast/审计/清除） | → `15-goal`（**已迁移**） |
+| `t40_keyauth_verify.cjs` | 私钥三入口、指纹确认、无效粘贴拦截、主机卡 auth 徽章 | 生成/导入/指纹 → `14-credentials`；**未迁移**：无效粘贴被拦截、主机卡 auth 徽章 |
+| `t41_sftp_verify.cjs` | SFTP 列表/进入/上一级/路径手输/不存在路径报错/下载失败卡 | 列表/进入/面包屑/动作菜单 → `05-files`；**未迁移**：上一级按钮、路径框手输跳转、不存在路径报错 |
+| `t42_forward_verify.cjs` | 转发 -L/-R/-D 三类、-D 隐藏目标、校验、停止、按 sid 归属、审计 | -L 校验/启动/停止 → `04-forwards`；**未迁移**：-R/-D 类型渲染、按 sid 归属清空与恢复、审计留痕 |
+| `t44_degraded_verify.cjs` | Degraded（降级）行展示（**需临时改 `demo.ts`**） | **未迁移**：注入式前置，不可重复运行 |
+| `t44_editable_verify.cjs` | 审批「编辑后批准」按 `editable` 门控（**需临时改 `demo.ts`**） | **未迁移**：同上 |
+| `v137_review_verify.cjs` | **H1** 目标跨会话串台；goal 变迁进简报；GBK 徽章置名前；连接 spinner | **H1 → `15-goal`（已迁移）**；**未迁移**：goal 进简报、徽章置名前 bbox、spinner |
+
+## 未迁移项汇总（不主张已验证）
+
+**过时/废弃**：三栏宽度类断言（布局已移除，**不应**迁移）。
+
+**登记待补**（本轮无自动化断言）：
+卡片几何中心点击不被拦截、截断名 title 提示、目标草稿切标签不丢、textarea 自动增高、
+简报可读性、首载 skeleton、attach-hint 生命周期、placeholder/`.dim` 对比度、
+幽灵点击像素实证、连接 loading ≤400ms、无效私钥粘贴拦截、主机卡 auth 徽章、
+SFTP「上一级」/路径手输/不存在路径报错、转发 -R/-D 类型与 sid 归属与审计、
+转发行 Degraded 展示、审批 `editable` 门控、goal 变迁进简报、连接 spinner。
+
+这些是**已知缺口**，不是「已验证」。后续如需覆盖，应写成**无个人路径、无临时注入**的 spec。
+
+## 删除方式与复核
+
+用 `/usr/bin/git rm` 删除（避免 conda git 的 UTF-8-MAC 陷阱），`git status` 显示 20 条 `D`。
+删除后 `ls ui/*.cjs` → 无匹配；`ui/` 根目录不再有脚本，回归入口统一为 `npm test --prefix ui`。

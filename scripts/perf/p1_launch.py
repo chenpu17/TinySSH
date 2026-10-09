@@ -24,8 +24,11 @@ import statistics
 import subprocess
 import time
 import uuid
+from pathlib import Path
 
-BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
+REPO = Path(__file__).resolve().parents[2]
+
+BIN = REPO / "target/release/tinyssh-app"
 LOG = "/tmp/t40_smoke/beacon.log"
 ENV = {"TINYSSH_DB": "/tmp/r4_p1/tinyssh.db",
        "TINYSSH_MASTER_KEY": "07" * 32,

@@ -16,11 +16,14 @@ import sys
 import time
 
 import Quartz
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 
-BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
-EV2 = "/Users/chenpu/workspace/claude-code/TinySSH/scripts/perf/ev2.py"
+BIN = REPO / "target/release/tinyssh-app"
+EV2 = REPO / "scripts/perf/ev2.py"
 
 
 def activate_by_pid(pid):

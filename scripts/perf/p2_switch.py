@@ -20,11 +20,14 @@ import statistics
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 
-BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
-EV2 = "/Users/chenpu/workspace/claude-code/TinySSH/scripts/perf/ev2.py"
+BIN = REPO / "target/release/tinyssh-app"
+EV2 = REPO / "scripts/perf/ev2.py"
 ENV = {"TINYSSH_MASTER_KEY": "07" * 32, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 K1, K2 = 18, 19  # keycode '1' '2'

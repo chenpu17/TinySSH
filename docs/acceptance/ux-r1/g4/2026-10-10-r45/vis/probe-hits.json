@@ -1,0 +1,380 @@
+[
+  {
+    "label": "工具菜单/连接详情…",
+    "text": "连接详情…",
+    "found": true,
+    "w": 162,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "工具菜单/端口转发",
+    "text": "端口转发",
+    "found": true,
+    "w": 162,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "工具菜单/活动记录",
+    "text": "活动记录",
+    "found": true,
+    "w": 162,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "工具菜单/关闭会话…",
+    "text": "关闭会话…",
+    "found": true,
+    "w": 162,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.tm-danger"
+  },
+  {
+    "label": "协作审批/批准",
+    "text": "批准",
+    "found": true,
+    "w": 48,
+    "h": 29,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "协作审批/编辑后批准",
+    "text": "编辑后批准",
+    "found": true,
+    "w": 86,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "协作审批/拒绝",
+    "text": "拒绝",
+    "found": true,
+    "w": 48,
+    "h": 29,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.danger"
+  },
+  {
+    "label": "协作/委托入口",
+    "sel": "[data-testid=delegate-open]",
+    "found": true,
+    "w": 99,
+    "h": 31,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "文件/选中条 selbar",
+    "sel": "[data-testid=sftp-selbar]",
+    "found": true,
+    "w": 363,
+    "h": 32,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "div.row"
+  },
+  {
+    "label": "文件/下载所选",
+    "sel": "[data-testid=sftp-sel-download]",
+    "found": true,
+    "w": 75,
+    "h": 22,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "文件/选中条 ✕",
+    "text": "✕",
+    "found": true,
+    "w": 22,
+    "h": 18,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "文件/动作菜单 下载",
+    "sel": "[data-testid=sftp-menu-download]",
+    "found": true,
+    "w": 122,
+    "h": 29,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "文件/动作菜单 另存为",
+    "sel": "[data-testid=sftp-menu-saveas]",
+    "found": true,
+    "w": 122,
+    "h": 29,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "详情/关闭钮 cd-close",
+    "sel": "[data-testid=cd-close]",
+    "found": true,
+    "w": 30,
+    "h": 26,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "path"
+  },
+  {
+    "label": "详情/复制 cd-copy",
+    "sel": "[data-testid=cd-copy]",
+    "found": true,
+    "w": 50,
+    "h": 31,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "详情/对话框本体",
+    "found": true,
+    "dialogTag": "cd-grid",
+    "hitInsideDialog": true
+  },
+  {
+    "label": "确认框/取消",
+    "text": "取消",
+    "found": true,
+    "w": 50,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "确认框/关闭会话",
+    "text": "关闭会话",
+    "found": true,
+    "w": 72,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.danger"
+  },
+  {
+    "label": "设置/主题 跟随系统",
+    "text": "跟随系统",
+    "found": true,
+    "w": 74,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "设置/主题 深色",
+    "text": "深色",
+    "found": true,
+    "w": 50,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "设置/主题 浅色",
+    "text": "浅色",
+    "found": true,
+    "w": 50,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "设置/settings-cat-appearance",
+    "sel": "[data-testid=settings-cat-appearance]",
+    "found": true,
+    "w": 75,
+    "h": 29,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.on"
+  },
+  {
+    "label": "设置/settings-cat-terminal",
+    "sel": "[data-testid=settings-cat-terminal]",
+    "found": true,
+    "w": 75,
+    "h": 29,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "设置/settings-cat-credentials",
+    "sel": "[data-testid=settings-cat-credentials]",
+    "found": true,
+    "w": 75,
+    "h": 29,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "设置/settings-cat-agent",
+    "sel": "[data-testid=settings-cat-agent]",
+    "found": true,
+    "w": 75,
+    "h": 46,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "设置/settings-cat-about",
+    "sel": "[data-testid=settings-cat-about]",
+    "found": true,
+    "w": 75,
+    "h": 29,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "设置/settings-close",
+    "sel": "[data-testid=settings-close]",
+    "found": true,
+    "w": 39,
+    "h": 27,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "path"
+  },
+  {
+    "label": "凭据/新建 cred-new",
+    "sel": "[data-testid=cred-new]",
+    "found": true,
+    "w": 86,
+    "h": 31,
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "指纹门/信任并连接",
+    "text": "信任并连接",
+    "found": true,
+    "w": 84,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button"
+  },
+  {
+    "label": "指纹门/取消",
+    "text": "取消",
+    "found": true,
+    "w": 50,
+    "h": 31,
+    "display": "flex",
+    "opacity": "1",
+    "pointerEvents": "auto",
+    "inVp": true,
+    "hitOk": true,
+    "hitTag": "button.ghost"
+  },
+  {
+    "label": "Toast 生命周期",
+    "found": true,
+    "samples": [
+      {
+        "ms": 0,
+        "opacity": "1",
+        "pe": "none",
+        "text": "已取消连接 prod-2"
+      },
+      {
+        "ms": 103,
+        "opacity": "1",
+        "pe": "none",
+        "text": "已取消连接 prod-2"
+      },
+      {
+        "ms": 206,
+        "opacity": "1",
+        "pe": "none",
+        "text": "已取消连接 prod-2"
+      },
+      {
+        "ms": 309,
+        "opacity": "1",
+        "pe": "none",
+        "text": "已取消连接 prod-2"
+      },
+      {
+        "ms": 411,
+        "opacity": "1",
+        "pe": "none",
+        "text": "已取消连接 prod-2"
+      }
+    ],
+    "count": 23
+  }
+]

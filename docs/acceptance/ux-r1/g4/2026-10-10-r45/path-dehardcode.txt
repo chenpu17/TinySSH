@@ -1,0 +1,75 @@
+# R45 去个人路径（写死的绝对路径 → 可移植解析）
+
+对应交付文档 §6.1：「**删除写死个人浏览器路径的依赖**」。
+
+## 一、前端回归入口：浏览器可执行文件
+
+**旧**：20 个散落脚本各自写死
+
+```js
+const EXE = "/Users/chenpu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+```
+
+换机器 / 换用户 / 换 Playwright 版本即失效，且把个人目录带进仓库。
+
+**新**：`ui/test/browser.cjs` 按优先级**发现**，源码内**零个人路径**：
+
+1. 环境变量 `TINYSSH_UI_CHROME`（显式覆盖，CI/本机指定用）
+2. `ms-playwright` 缓存目录扫描，取 **revision 最大**的一个
+   （macOS `~/Library/Caches/ms-playwright`；Linux `~/.cache/ms-playwright`；
+    `PLAYWRIGHT_BROWSERS_PATH` 优先）
+3. PATH 上的常见可执行名 / macOS 系统 Chrome 安装位置
+
+并显式**不依赖** vendored `playwright-core` 的默认解析——实测其 alpha 版本找
+`chromium_headless_shell-1186`，而缓存是 `-1243`，默认解析直接报
+`Executable doesn't exist`。发现式解析对**版本漂移免疫**。
+
+运行时打印来源，便于对账：
+
+```
+浏览器    /Users/<当前用户>/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/...
+          （来源：ms-playwright chromium-1243）
+```
+
+（上面这行里的路径是**运行时解析结果**，不是源码里的字面量。）
+
+## 二、性能脚本：仓库根目录
+
+`scripts/perf/*.py` 8 个脚本，**旧**：
+
+```python
+BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
+EV2 = "/Users/chenpu/workspace/claude-code/TinySSH/..."
+DOCS = "/Users/chenpu/workspace/claude-code/TinySSH/docs/..."
+```
+
+**新**：
+
+```python
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+
+BIN = REPO / "target/release/tinyssh-app"
+```
+
+相对 `__file__` 解析 → **任何检出位置都成立**；运行时解析到与原先**相同**的绝对路径。
+
+改动：`p1_launch` `p2_echo` `p2_switch` `p3_connect` `p4_download` `p5_pilot`
+`p6_cycles` `p7_list`（8 文件，+37 / −13）。全部 `py_compile` 通过。
+
+## 三、复核
+
+```
+$ grep -rn "/Users/chenpu" ui/src ui/test scripts docs/ux | grep -v node_modules
+（空）
+```
+
+- `ui/test/result.json` 是**每轮生成的产物**，内含运行时解析到的浏览器路径；
+  已由 `.gitignore` 覆盖（`ui/test/result.json`），**不会**进仓库。
+- `ui/` 与 `scripts/` 的**源码**里已无任何 `/Users/<个人>` 字面量。
+
+## 四、附带
+
+`.gitignore` 的 `__pycache__` 规则由「按目录逐条列举」收敛为通用 `__pycache__/`，
+覆盖 `scripts/__pycache__/`（`check-old-ui-contract`、`pv_analyze` 的字节码）等新增位置。

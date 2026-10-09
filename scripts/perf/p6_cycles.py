@@ -15,10 +15,13 @@ import subprocess
 import time
 
 import Quartz
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
 
 FAIL_RAW = None
 
-BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
+BIN = REPO / "target/release/tinyssh-app"
 ENV = {"TINYSSH_MASTER_KEY": "07" * 32, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 

@@ -13,8 +13,11 @@ import json
 import statistics
 import subprocess
 import time
+from pathlib import Path
 
-BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
+REPO = Path(__file__).resolve().parents[2]
+
+BIN = REPO / "target/release/tinyssh-app"
 ENV = {"TINYSSH_MASTER_KEY": "07" * 32, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
        "TINYSSH_AUTOCONNECT": "", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 DOCKER = ["docker", "exec", "tinyssh-e2e"]

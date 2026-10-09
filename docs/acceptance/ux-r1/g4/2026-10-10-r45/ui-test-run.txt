@@ -1,0 +1,298 @@
+# R45 前端回归入口全量运行（2026-10-10 02:55:28 CST）
+# 命令：node ui/test/run.cjs
+# 环境：headless Chromium（browser.cjs 自动发现）+ vite dev server :5183 + demo 内存后端
+# 树：HEAD 未改动的产品代码（git diff --stat -- ui/src/ 为空）
+
+基址      http://localhost:5183
+浏览器    /Users/chenpu/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
+          （来源：ms-playwright chromium-1243）
+
+
+── 01-shell.spec.cjs  应用外壳与主机栏
+  ok   存在 .app-shell
+  ok   存在 .titlebar
+  ok   存在 .hostbar
+  ok   存在 .tabbar-row
+  ok   存在 .statusbar
+  ok   旧三栏容器 .layout 已不存在（R12 移除）
+  ok   主机栏默认宽 224px（R12 规格）  — 实得 224px
+  ok   标题区 44px  — 实得 44px
+  ok   状态条 24px  — 实得 24px
+  ok   演示主机全部列出（7 台）  — 实得 7：本机 / noint-1（无集成） / otp-1（演示 2FA） / otp-2（演示 2FA 隐） / prod-1 / prod-2（演示连接失败） / staging-1
+  ok   含「本机」local
+  ok   含 prod-1
+  ok   搜索 prod 只剩 prod-* 两台  — 实得 prod-1 / prod-2（演示连接失败）
+  ok   清空搜索后恢复 7 台  — 实得 7
+  ok   收起后主机栏消失
+  ok   收起后出现展开钮 .hb-expand
+  ok   展开钮可恢复主机栏
+  ok   存在拖宽把手 .hb-grip
+  ok   向左猛拖夹在下限 200px  — 实得 200（期望 200–201）
+  ok   向右猛拖夹在上限 300px  — 实得 300（期望 299–300）
+  ok   主机栏底部有设置入口 .hb-settings
+  ok   无页面 JS 错误
+
+── 02-session.spec.cjs  会话建立与终端
+  ok   主机卡存在（本机）
+  ok   出现会话工具栏 .session-toolbar
+  ok   工具栏含「交给 Agent…」（首次委托入口）
+  ok   工具栏含搜索
+  ok   工具栏含分屏
+  ok   工具栏含协作入口
+  ok   工具栏含文件入口
+  ok   工具栏含工具菜单
+  ok   标签栏有「关闭会话」标签（新会话已建）
+  ok   标签栏有「所有标签」菜单
+  ok   终端已渲染且可见（非 0×0 幽灵）  — .xterm 共 1 个，非零尺寸 1 个，最大 [1198,656]
+  ok   控制权徽标显示「我控制中」  — 实得 我控制中
+  ok   状态条显示本地会话与编码  — 实得「本地 · UTF-8 转发 0 传输 0 ⌄」
+  ok   状态条有转发/传输计数入口  — 实得「本地 · UTF-8 转发 0 传输 0 ⌄」
+  ok   工具菜单含四项（连接详情/端口转发/活动记录/关闭会话）  — 实得 连接详情… / 端口转发 / 活动记录 / 关闭会话…
+  ok   无页面 JS 错误
+
+── 03-panels.spec.cjs  任务面板四视图互斥
+  ok   初始无任务面板  — 0
+  ok   文件视图标题  — "文件"
+  ok   切到端口转发（同一面板换视图）  — "端口转发"
+  ok   面板仍只有一个  — 1
+  ok   切到活动记录  — "活动记录"
+  ok   面板仍只有一个  — 1
+  ok   切到协作  — "协作"
+  ok   面板仍只有一个  — 1
+  ok   关闭后无任务面板  — 0
+  ok   可再次打开文件视图  — "文件"
+  ok   再次关闭成功  — 0
+  ok   无页面 JS 错误
+
+── 04-forwards.spec.cjs  端口转发表单与生命周期
+  ok   空表初始为「暂无转发」
+  ok   有 -L / -R / -D 三种类型
+  ok   空提交报监听端口错（fwd-err-listen）  — ⚠ 监听端口必须是 1–65535 的数字
+  ok   空提交报目标错（fwd-err-target）  — ⚠ 目标主机与端口（1–65535）都要填
+  ok   监听端口 99999 被拒（1–65535）  — ⚠ 监听端口必须是 1–65535 的数字
+  ok   合法提交后列表出现该转发  — S5 代理（-D） | 监听地址（在本机） | 本地端口 | 目标（远端侧解析） | 端口 | 启动转发 | 本地端口访问远端服务：本机监听，流量经 SSH 到远端目标。 | -L | 127.0.0.1:8080 → example.internal:80 | 监听中 | 停止 | 目标可达性未验证（首次连接时确认）
+  ok   转发显示「监听中」状态
+  ok   转发行有「停止」按钮
+  ok   校验错误在成功后清除
+  ok   停止后回到「暂无转发」
+  ok   无页面 JS 错误
+
+── 05-files.spec.cjs  远程文件浏览与传输入口
+  ok   文件面板有上传入口
+  ok   文件面板有「按路径」入口
+  ok   面包屑起始于简报 cwd（/var/log/nginx）  — 实得「/ / var / log / nginx」
+  ok   列出目录内容（≥4 项）  — 实得 5：archive / access.log / error.log / latest / php-fpm.sock
+  ok   含目录项 archive
+  ok   含文件项 access.log
+  ok   选中后出现选中条  — 已选 1 项 下载所选 ✕
+  ok   选中条含「下载」  — 已选 1 项 下载所选 ✕
+  ok   选中条有「下载所选」按钮
+  ok   选中条有清除选择按钮 ✕
+  ok   清除后选中条消失
+  ok   双击文件弹出动作菜单 sftp-menu
+  ok   菜单含「下载」
+  ok   菜单含「另存为…」
+  ok   Escape 关闭动作菜单
+  ok   双击目录后面包屑加深（含 archive）  — 实得「/ / var / log / nginx / archive」
+  ok   状态条有传输入口（sb-transfer）
+  ok   传输抽屉可打开（queue-drawer）
+  ok   无页面 JS 错误
+
+── 06-log.spec.cjs  活动记录筛选与刷新
+  ok   有范围切换（当前会话 / 全部会话）
+  ok   有主体筛选（log-actor）
+  ok   有事件类型筛选（log-action）
+  ok   有刷新按钮（log-refresh）
+  ok   默认范围=当前会话  — {"current":"true","all":"false"}
+  ok   当前会话有记录行  — 实得 1 行
+  ok   切换到全部会话后按钮态翻转  — {"current":"false","all":"true"}
+  ok   全部会话行数严格多于当前会话（范围真的生效）  — 全部 5 vs 当前 1
+  ok   主体筛选含人类/Agent 选项  — 全部 / 人类 / Agent
+  ok   筛 Agent 后行数减少（筛选真的生效）  — Agent 2 vs 全部 5
+  ok   筛 Agent 后每行主体都是 agent  — agent,agent
+  ok   事件类型含「执行命令」（value=exec）  — 全部 / 保存主机 / 传输失败 / 传输完成 / 传输作废 …
+  ok   按事件类型筛后每行 action 都是 exec  — 1 行：exec
+  ok   按事件类型筛后行数少于全部  — 1 vs 5
+  ok   刷新后行集不变（重读同一数据，未清空/未错乱）  — 前 5 → 后 5
+  ok   可切回当前会话范围  — {"current":"true","all":"false"}
+  ok   切回后行数回到当前会话的量  — 切回 1 vs 原 1
+  ok   无页面 JS 错误
+
+── 07-conn-detail.spec.cjs  连接详情
+  ok   详情为浮层（.pop-mask 遮罩存在）
+  ok   主机名  — "本机"
+  ok   用户名  — "ops"
+  ok   地址  — "local"
+  ok   端口  — "0"
+  ok   认证方式  — "密码"
+  ok   编码  — "UTF-8"
+  ok   会话 ID 形如 s-*  — 实得 s-demo-0101
+  ok   有指纹行（cd-fp）
+  ok   有创建时间行（cd-created）
+  ok   有复制按钮（cd-copy）
+  ok   点关闭钮后详情消失
+  ok   可再次打开详情
+  ok   点遮罩后详情消失
+  ok   无页面 JS 错误
+
+── 08-collab.spec.cjs  协作入口、审批与委托
+  ok   标题区有协作入口徽标  — 协作 · 2 待审批
+  ok   徽标显示待审批数（2 待审批）  — 协作 · 2 待审批
+  ok   协作面板标题  — "协作"
+  ok   审批按主机/会话分组（≥1 组）  — 实得 1 组
+  ok   演示种子的 2 条待审批都在（2 张卡）  — 实得 2 张
+  ok   审批卡显示目的（ap-purpose）
+  ok   面板含 Agent 名
+  ok   面板含分段命令与规则判定
+  ok   有「批准」按钮
+  ok   有「编辑后批准」按钮
+  ok   有「拒绝」按钮
+  ok   拒绝一条后待审批卡减少  — 2 → 1
+  ok   入口徽标随之更新（恰好剩 1 待审批）  — 协作 · 1 待审批
+  ok   有「交给 Agent…」入口
+  ok   打开首次委托对话框
+  ok   对话框有提交钮（delegate-submit）
+  ok   对话框可取消（Escape 关闭）
+  ok   无页面 JS 错误
+
+── 09-settings.spec.cjs  设置对话框与分区
+  ok   主机栏底部有设置入口
+  ok   设置含 settings-close
+  ok   设置含 settings-cat-appearance
+  ok   设置含 settings-cat-terminal
+  ok   设置含 settings-cat-credentials
+  ok   设置含 settings-cat-agent
+  ok   设置含 settings-cat-about
+  ok   默认打开外观分区（settings-pane-appearance）
+  ok   外观分区有三档应用外观
+  ok   外观分区有终端配色选项
+  ok   点「深色」后主题标记为 dark  — light → dark
+  ok   点「浅色」后主题标记为 light  — dark → light
+  ok   外观分区有字号控件
+  ok   终端分区显示其内容（多行粘贴保护）  — 粘贴 | 多行粘贴保护 | 粘贴内容含换行且远端未开启 bracketed paste 时，先预览确认再发送；关闭后立即发送。
+  ok   凭据分区有新建凭据入口（cred-new）
+  ok   凭据分区有空态或列表（cred-empty / cred-uses）
+  ok   Agent 分区有协作状态区（collab-state）
+  ok   Agent 分区有状态行（collab-state-row）
+  ok   关于分区显示产品说明（TinySSH / 本地优先）  — 关于 | TinySSH （浏览器演示模式） | 本地优先的 SSH 客户端：终端、主机库与凭据都留在本机。 | 凭据以加密形式存于本机凭据库，界面与日志只显示
+  ok   关闭后设置对话框消失
+  ok   无页面 JS 错误
+
+── 10-hosts.spec.cjs  主机增删改与 ssh_config 导入
+  ok   「仅保存」后新主机出现在列表  — 本机 / noint-1（无集成） / otp-1（演示 2FA） / otp-2（演示 2FA 隐） / prod-1 / prod-2（演示连接失败） / r45-new / staging-1
+  ok   收藏后出现「收藏」分组
+  ok   收藏分组内含 r45-new  — 收藏 | r45-new | 密码 | deploy@r45.example.com:2200 | 连接 | 其他主机 | 本机 | 密码 | ops@local:0 | 连接 | noint-1（无集成） | 密码 | ops@noint
+  ok   编辑表单预填 prod-1  —  / prod-1 / 10.0.0.11 / 22 / ops / 
+  ok   编辑表单预填地址 10.0.0.11
+  ok   编辑表单预填用户 ops
+  ok   编辑后主机改名生效  — r45-new / 本机 / noint-1（无集成） / otp-1（演示 2FA） / otp-2（演示 2FA 隐） / prod-1-renamed / prod-2（演示连接失败） / staging-1
+  ok   删除弹确认对话框  — 删除主机 r45-new？ | 凭据与指纹记录一并移除，之后无法再从它新建连接；已建立的会话不受影响。 | 删除 | 取消
+  ok   确认框说明会话不受影响
+  ok   取消后主机仍在
+  ok   确认后主机从列表移除  — 本机 / noint-1（无集成） / otp-1（演示 2FA） / otp-2（演示 2FA 隐） / prod-1-renamed / prod-2（演示连接失败） / staging-1
+  ok   导入面板标题「从 ~/.ssh/config 导入」
+  ok   预览列出 web-1
+  ok   预览列出 db-1（含非 22 端口 2222）
+  ok   阻断项（proxyjump）标出并给「转手工表单」
+  ok   缺用户项（nouser）标出并给「转手工表单」
+  ok   已存在主机（prod-1）标为可覆盖
+  ok   无页面 JS 错误
+
+── 11-tabs.spec.cjs  标签、重连、分屏与关闭会话
+  ok   标签栏含「所有标签」菜单
+  ok   标签栏含「新建连接」
+  ok   两个会话各有关闭钮  — 实得 4
+  ok   标签列表列出已连接会话
+  ok   标签列表标出「已断开」会话
+  ok   死会话有「重连」入口
+  ok   分屏菜单有「在右侧显示已有会话」
+  ok   分屏菜单有「在右侧新建会话」
+  ok   关闭会话弹确认框  — 关闭与 prod-1 的会话？ | 终端现场不可恢复——重连会是全新现场（记录保留）。 | · 将受影响的转发：无 | · 正在运行的任务/传输：状态未知——如有重要作业请先确认 | 关闭会话 | 取消
+  ok   确认框说明现场不可恢复
+  ok   确认框列出受影响转发
+  ok   确认框列出运行中任务/传输
+  ok   取消后会话仍在（终端可见，非 0×0）  — 可见 .xterm 1 个
+  ok   关闭后标签数减少  — 4 → 3
+  ok   无页面 JS 错误
+
+── 12-hostkey.spec.cjs  首次连接指纹门与失败路径
+  ok   已信任主机（prod-1）不弹指纹窗
+  ok   prod-1 会话已建立
+  ok   未信任主机弹出首次连接确认  — 首次连接确认 | 首次连接主机 prod-2（演示连接失败）（10.0.0.12:22）。 请核对服务器指纹（可向管理员确认）后决定是否信任： | SHA256:DemoFingerprint-prod-2（演示连接失败） | 信任并连接 | 取消
+  ok   确认框显示主机地址端口
+  ok   确认框显示待核对指纹（SHA256:）
+  ok   有「信任并连接」与「取消」
+  ok   取消后不新建标签  — 8 → 8
+  ok   取消给出可识别反馈（已取消连接）  — 已取消连接 prod-2（演示连接失败）
+  ok   再次连接仍弹确认（取消不改动信任）
+  ok   信任后建立会话
+  ok   远程会话状态条标为 SSH（区别于本地）  — 实得「SSH · UTF-8 转发 0 传输 0 ⌄」
+  ok   无页面 JS 错误
+
+── 13-charset.spec.cjs  远端编码 GBK 全链路
+  ok   认证方式可选（password/key/agent）  — password,key,agent
+  ok   编码可选 utf-8 / gbk  — utf-8,gbk
+  ok   GBK 主机保存成功
+  ok   GBK 主机建立会话
+  ok   状态条标为 GBK（而非默认 UTF-8）  — 实得「SSH · GBK 转发 0 传输 0 ⌄」
+  ok   连接详情编码为 GBK  — "GBK"
+  ok   无页面 JS 错误
+
+── 14-credentials.spec.cjs  凭据库增删
+  ok   凭据分区空态提示  — 设置 | 外观 | 终端 | 凭据 | Agent 接入 | 关于 | 凭据库 | 新建凭据… | 还没有凭据——用上面的「新建凭据…」生成或导入私钥，也可以在
+  ok   新建表单含 cred-new-form
+  ok   新建表单含 cred-new-label
+  ok   新建表单含 cred-new-gen-ed
+  ok   新建表单含 cred-new-gen-rsa
+  ok   新建表单含 cred-new-pem
+  ok   新建表单含 cred-new-pass
+  ok   新建表单含 cred-new-import
+  ok   新建表单含 cred-new-cancel
+  ok   表单说明「不落半成品」
+  ok   取消后仍为空态（无半成品）
+  ok   生成后有落库反馈（已保存 + 指纹）
+  ok   收起表单后凭据在列表中  — 设置 | 外观 | 终端 | 凭据 | Agent 接入 | 关于 | 凭据库 | 新建凭据… | r45-key | 未绑定 | Ed25519 密钥 | SHA256:demoKey101qZ3tN7vBw9xQmFpL2sKd== | 删除前自动检查引用；指纹用于核对库里存的是哪把钥匙，不会出现在日志里。
+  ok   列表显示指纹（SHA256:）
+  ok   空态提示消失
+  ok   该凭据标注为未绑定  — 设置 | 外观 | 终端 | 凭据 | Agent 接入 | 关于 | 凭据库 | 新建凭据… | r45-key | 未绑定 | Ed25519 密钥 | SHA256:demoKey101qZ3tN7vBw9xQmFpL2sKd== | 删除前自动检查引用；指纹用于核对库里存的是哪把钥匙，不会出现在日志里。
+  ok   凭据行有删除按钮
+  ok   删除弹确认框并说明引用检查  — 删除凭据 r45-key？ | 仍被主机引用的凭据会被拒绝并列出主机；已保存的凭据独立存在，删除前请确认没有主机依赖它。 | 删除凭据 | 取消
+  ok   删除后回到空态  — 设置 | 外观 | 终端 | 凭据 | Agent 接入 | 关于 | 凭据库 | 新建凭据… | 还没有凭据——用上面的「新建凭据…」生成或导入私钥，也可以在连接表单里保存。
+  ok   无页面 JS 错误
+
+── 15-goal.spec.cjs  任务目标保存/清除与跨会话隔离
+  ok   协作面板有「任务目标」小节  — 协作 | 2 待处理 | 审批（2） | 按目标主机与会话分组；跨会话操作请逐条核对来源。 | prod-1 | · s-demo-0001 | 已连接 | 2 待处理 | Agent：opencode | 删除文件/目录 | 目的 把 /
+  ok   有目标输入框 .goal-input
+  ok   保存后提示「任务目标已更新」  — 任务目标已更新，Agent 读简报可见
+  ok   保存后出现「清除」按钮
+  ok   清除后提示「任务目标已清除」  — 任务目标已清除，Agent 简报同步移除
+  ok   清除后输入框为空  — ""
+  ok   A 会话有未保存草稿  — "A 会话的草稿"
+  ok   切走后输入框一直在（断言不是空转）  — 切换后 101 帧，其中输入框在场 101 帧
+  ok   切走后每一帧都不显示上一会话的草稿（H1 瞬态）  — 切换后 101 帧，闪现 0 帧
+  ok   切到另一会话后目标框已渲染  — 实得 "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz"
+  ok   切到另一会话后目标框不显示 A 的草稿  — 实得 "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz"
+  ok   无页面 JS 错误
+
+════════ 汇总 ════════
+ ok   01-shell.spec.cjs              22 passed, 0 failed
+ ok   02-session.spec.cjs            16 passed, 0 failed
+ ok   03-panels.spec.cjs             12 passed, 0 failed
+ ok   04-forwards.spec.cjs           11 passed, 0 failed
+ ok   05-files.spec.cjs              19 passed, 0 failed
+ ok   06-log.spec.cjs                18 passed, 0 failed
+ ok   07-conn-detail.spec.cjs        15 passed, 0 failed
+ ok   08-collab.spec.cjs             18 passed, 0 failed
+ ok   09-settings.spec.cjs           21 passed, 0 failed
+ ok   10-hosts.spec.cjs              18 passed, 0 failed
+ ok   11-tabs.spec.cjs               15 passed, 0 failed
+ ok   12-hostkey.spec.cjs            12 passed, 0 failed
+ ok   13-charset.spec.cjs            7 passed, 0 failed
+ ok   14-credentials.spec.cjs        20 passed, 0 failed
+ ok   15-goal.spec.cjs               12 passed, 0 failed
+
+合计 236 项断言，236 通过，0 失败
+
+结果已写入 ui/test/result.json
+
+# 退出码：0

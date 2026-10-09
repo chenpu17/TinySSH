@@ -13,8 +13,11 @@ import re
 import statistics
 import subprocess
 import time
+from pathlib import Path
 
-BIN = "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app"
+REPO = Path(__file__).resolve().parents[2]
+
+BIN = REPO / "target/release/tinyssh-app"
 BASE_ENV = {"TINYSSH_MASTER_KEY": "07" * 32,
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 
