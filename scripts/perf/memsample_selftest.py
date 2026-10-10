@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""memsample v4 纯数据正负探针（G0 签署 §2「下次 P5 采样前」验收件）。
+"""memsample v4.1 纯数据正负探针（G0 签署 §2「下次 P5 采样前」验收件）。
 
 零外部依赖：不启动应用、不注入、不读真实 ps / 内存压力——monkeypatch
 webkit_helpers / rss_kb / time，直接驱动 CLI 子命令。覆盖签署探针实证的
@@ -13,6 +13,10 @@ webkit_helpers / rss_kb / time，直接驱动 CLI 子命令。覆盖签署探针
   P6 verify 应用退出后（当前表无候选）→ PASS exit 0
   P7 verify 候选仍在（同身份）→ FAIL exit 2
   P8 verify 同 PID 换身份复用 → FAIL exit 2
+  P9 损坏 PID 映射（非数字键）→ 干净 SamplerError（不抛裸 ValueError）
+  P10 零样本 --duration → 干净 SamplerError（不抛裸 StatisticsError）
+  P11 CLI 端到端：损坏输入 → exit 2 + 单行 FAIL + 无 Traceback
+  P12 非法 UTF-8 字节（UnicodeDecodeError）→ 干净 SamplerError
 
 用法：python3 scripts/perf/memsample_selftest.py --out <results.json>
 退出码：0 全 PASS / 1 有 FAIL。结果不构成性能数据，仅为仪表有效性证据。
@@ -24,6 +28,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -129,7 +134,61 @@ def main():
             code = module.cmd_verify(SimpleNamespace(cands=str(cands)))
         check("P8 verify fails on pid reuse", code == 2, f"exit={code} expect 2")
 
-    report = {"sampler": "memsample v4", "scope": "mocked data only; instrument validity evidence",
+        # P9 损坏的 PID 映射（非数字键）→ 干净 SamplerError，不抛裸 ValueError
+        bad = work / "bad_keys.json"
+        bad.write_text(json.dumps({"not-a-pid": helper("x")}))
+        try:
+            module.load_pid_map(str(bad))
+            err9 = None
+        except module.SamplerError as e:
+            err9 = str(e)
+        except Exception as e:  # 裸 ValueError 等 → 未收口
+            err9 = f"<{type(e).__name__}> {e}"
+        check("P9 malformed pid-map key -> SamplerError",
+              err9 is not None and "非数字键" in err9, f"err={err9}")
+
+        # P10 零样本 duration → 干净 SamplerError，不抛裸 StatisticsError
+        ns0 = SimpleNamespace(cands=str(cands), s0=None, app_pid=303,
+                              duration=0, interval=1, phase="B", out=str(work / "z.json"))
+        try:
+            with patch.object(module.time, "monotonic", return_value=0), \
+                 patch.object(module.time, "sleep"):
+                module.cmd_record(ns0)
+            err10 = None
+        except module.SamplerError as e:
+            err10 = str(e)
+        except Exception as e:  # 裸 StatisticsError 等 → 未收口
+            err10 = f"<{type(e).__name__}> {e}"
+        check("P10 zero-sample duration -> SamplerError",
+              err10 is not None and "未产生任何样本" in err10, f"err={err10}")
+
+        # P12 非法 UTF-8 字节 → UnicodeDecodeError（ValueError 子类，非 JSONDecodeError）
+        badenc = work / "bad_enc.json"
+        badenc.write_bytes(b"\xff\xfe\x00garbage")
+        try:
+            module.load_pid_map(str(badenc))
+            err12 = None
+        except module.SamplerError as e:
+            err12 = str(e)
+        except Exception as e:  # 裸 UnicodeDecodeError → 未收口
+            err12 = f"<{type(e).__name__}> {e}"
+        check("P12 bad-encoding pid map -> SamplerError",
+              err12 is not None and "无法读取 PID 映射" in err12, f"err={err12}")
+
+    # P11 CLI 端到端：损坏输入 → exit 2 + stderr 单行 FAIL + 无 Traceback
+    with tempfile.TemporaryDirectory() as td:
+        bad = Path(td) / "bad.json"
+        bad.write_text("{ not json")
+        r = subprocess.run([sys.executable, str(ROOT / "scripts/perf/memsample.py"),
+                            "record", "--app-pid", "1", "--cands", str(bad),
+                            "--phase", "B", "--out", str(Path(td) / "o.json")],
+                           capture_output=True, text=True)
+    check("P11 CLI malformed input exits 2 cleanly",
+          r.returncode == 2 and "Traceback" not in r.stderr
+          and r.stderr.strip().startswith("FAIL:"),
+          f"rc={r.returncode} stderr={r.stderr.strip()[:80]!r}")
+
+    report = {"sampler": "memsample v4.1", "scope": "mocked data only; instrument validity evidence",
               "checks": checks, "all_pass": all(c["pass"] for c in checks)}
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(f"== memsample selftest: {sum(c['pass'] for c in checks)}/{len(checks)} PASS -> {args.out}")

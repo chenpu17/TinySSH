@@ -7,6 +7,11 @@ v3→v4（受托签署 Q-05 重开）：JSON pid 键在装载边界统一转 int
 int 键写成字符串，导致 candidates 混入 S0、record 对活候选误判消失、verify
 残留检测恒空）；record 的 total 不再把应用 RSS 计两次；verify 增加「同 PID
 换启动身份」复用检测。修复依据：2026-10-06-e2ebdc4-signoff/memsample-probe.json。
+v4→v4.1（2026-10-10）：收口 rev-q05fix 留档的两条低危注记——损坏的 cands/s0 JSON
+（非数字键 / 非法 JSON）与零样本 --duration 原抛裸 traceback，改为 SamplerError
+干净报错 + 退出码 2。fail-closed 方向不变，**无测量语义变更**：合法输入下
+samples / median_mb / void 判定与 v4 逐值相同（仅 sampler_version、protocol 两个
+元数据标签变更）。自测 12/12，新增 P9/P10/P11 覆盖两条负路径与 CLI 端到端。
 
   ① snapshot：启动目标应用前记录系统 WebKit 辅助进程全集 S0
      python3 scripts/perf/memsample.py snapshot --out /tmp/p5_s0.json
@@ -57,6 +62,15 @@ def rss_kb(pid):
     return int(v) if v else None
 
 
+class SamplerError(Exception):
+    """输入/环境错误——fail-closed：干净报错 + 退出码 2，绝不产生门证据。
+
+    收口 rev-q05fix 留档的两条注记：损坏的 PID 映射与零样本 duration 原先抛裸
+    traceback（ValueError / StatisticsError），方向虽仍 fail-closed，但报错不可读、
+    且会把「环境坏了」与「采样作废」混为一谈。
+    """
+
+
 def load_pid_map(path):
     """装载 {pid: …} JSON 并把 pid 键统一转 int。
 
@@ -64,7 +78,22 @@ def load_pid_map(path):
     永不相交——candidates 混入 S0、record 对活候选误判消失、verify 残留检测
     恒空（签署探针实证的三处缺陷根源）。
     """
-    return {int(k): v for k, v in json.load(open(path)).items()}
+    try:
+        raw = json.load(open(path))
+    except (OSError, ValueError, RecursionError) as e:
+        # ValueError 涵盖 JSONDecodeError 与 UnicodeDecodeError（非法 UTF-8 字节）；
+        # RecursionError 涵盖病态深层嵌套。三者均属「文件损坏」，一律干净报错。
+        raise SamplerError(f"无法读取 PID 映射 {path}：{type(e).__name__}: {e}") from e
+    if not isinstance(raw, dict):
+        raise SamplerError(f"PID 映射 {path} 不是 JSON 对象（得到 {type(raw).__name__}）")
+    out = {}
+    for k, v in raw.items():
+        try:
+            out[int(k)] = v
+        except (TypeError, ValueError):
+            raise SamplerError(
+                f"PID 映射 {path} 含非数字键 {k!r}——文件损坏或非本采样器产物") from None
+    return out
 
 
 def cmd_snapshot(args):
@@ -125,18 +154,23 @@ def cmd_record(args):
         if broken and not void_reason:
             void_reason = broken
         time.sleep(args.interval)
+    if not samples:
+        raise SamplerError(
+            f"record 未产生任何样本（--duration {args.duration}s / --interval {args.interval}s）"
+            "——duration 须为正且不短于 interval，本次采样作废重跑")
     med = statistics.median(s["total_mb"] for s in samples)
-    result = {"phase": args.phase, "app_pid": args.app_pid, "sampler_version": "v4",
+    result = {"phase": args.phase, "app_pid": args.app_pid, "sampler_version": "v4.1",
               "candidates": {str(k): v for k, v in cand.items()},
               "voided": bool(void_reason),
               "void_reason": void_reason,
               "median_mb": round(med, 2) if not void_reason else None,
               "samples": samples,
-              "protocol": "differential attribution v4 (fail-closed): app + frozen candidates "
+              "protocol": "differential attribution v4.1 (fail-closed): app + frozen candidates "
                           "with lstart identity; JSON pid keys normalized to int at load "
                           "boundary; app RSS counted once; candidate disappearance/identity "
                           "change/unknown new webkit helper voids "
-                          f"the sample. {args.duration}s/"
+                          "the sample. v4.1 = v4 + 干净报错收口（无测量语义变更）。"
+                          f" {args.duration}s/"
                           f"{args.interval}s interval"}
     with open(args.out, "w") as f:
         json.dump(result, f, indent=1)
@@ -178,8 +212,13 @@ def main():
     r.add_argument("--interval", type=int, default=5)
     v = sub.add_parser("verify"); v.add_argument("--cands", required=True)
     args = ap.parse_args()
-    sys.exit({"snapshot": cmd_snapshot, "candidates": cmd_candidates,
-              "record": cmd_record, "verify": cmd_verify}[args.cmd](args))
+    try:
+        rc = {"snapshot": cmd_snapshot, "candidates": cmd_candidates,
+              "record": cmd_record, "verify": cmd_verify}[args.cmd](args)
+    except SamplerError as e:
+        print(f"FAIL: {e}", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":
