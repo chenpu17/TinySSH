@@ -8,6 +8,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import re
 import statistics
@@ -20,6 +21,14 @@ REPO = Path(__file__).resolve().parents[2]
 BIN = REPO / "target/release/tinyssh-app"
 BASE_ENV = {"TINYSSH_MASTER_KEY": "07" * 32,
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+
+
+def sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def wait_stderr_line(path, ok_re, fail_re, deadline_s):
@@ -107,11 +116,18 @@ def run_once(host_id, idx):
 
 
 def main():
+    global BIN
     ap = argparse.ArgumentParser()
     ap.add_argument("--bootstrap", action="store_true")
     ap.add_argument("--runs", type=int, default=30)
     ap.add_argument("--out", default="/tmp/r4_p3/p3.json")
+    ap.add_argument("--bin", default=str(BIN),
+                    help="被测二进制。默认=主树开发产物 target/release/tinyssh-app；"
+                         "B1/B2 基线须显式传入打包产物（漏传会静默跑成主树产物）")
     args = ap.parse_args()
+    BIN = Path(args.bin).resolve()
+    if not BIN.exists():
+        raise SystemExit(f"被测二进制不存在：{BIN}")
     subprocess.run(["mkdir", "-p", "/tmp/r4_p3"], check=True)
     db = "/tmp/r4_p3/tinyssh.db"
     if args.bootstrap:
@@ -130,7 +146,8 @@ def main():
     for r in runs:
         print(r, flush=True)
     ok = [r["total_ms"] for r in runs if "total_ms" in r]
-    summary = {"runs": runs,
+    summary = {"bin": str(BIN), "bin_sha256": sha256_file(BIN),
+               "runs": runs,
                "total": {"n": len(ok),
                          "median_ms": round(statistics.median(ok)) if ok else None,
                          "p95_ms": round(statistics.quantiles(ok, n=20, method="inclusive")[18]) if len(ok) >= 2 else None,

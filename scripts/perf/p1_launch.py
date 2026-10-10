@@ -19,6 +19,7 @@ dev 门控），operable = 该信标行到达时刻 − spawn 时刻，无任何
 """
 
 import argparse
+import hashlib
 import json
 import statistics
 import subprocess
@@ -33,6 +34,14 @@ LOG = "/tmp/t40_smoke/beacon.log"
 ENV = {"TINYSSH_DB": "/tmp/r4_p1/tinyssh.db",
        "TINYSSH_MASTER_KEY": "07" * 32,
        "TINYSSH_SMOKE": "1"}
+
+
+def sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def log_size():
@@ -88,12 +97,18 @@ def run_once(idx):
 
 
 def main():
-    global args
+    global args, BIN
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["cold", "warm"], required=True)
     ap.add_argument("--runs", type=int, default=10)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--bin", default=str(BIN),
+                    help="被测二进制。默认=主树开发产物 target/release/tinyssh-app；"
+                         "B1/B2 基线须显式传入打包产物（漏传会静默跑成主树产物）")
     args = ap.parse_args()
+    BIN = Path(args.bin).resolve()
+    if not BIN.exists():
+        raise SystemExit(f"被测二进制不存在：{BIN}")
     runs = []
     for i in range(args.runs):
         if args.mode == "cold":
@@ -103,6 +118,7 @@ def main():
         print(f"[{args.mode} #{i+1}] {r}", flush=True)
     ok = [r["operable_ms"] for r in runs if "operable_ms" in r]
     summary = {
+        "bin": str(BIN), "bin_sha256": sha256_file(BIN),
         "mode": args.mode, "runs": runs,
         "operable": {"n": len(ok), "median_ms": round(statistics.median(ok)) if ok else None,
                      "p95_ms": round(statistics.quantiles(ok, n=20, method="inclusive")[18]) if len(ok) >= 2 else None,

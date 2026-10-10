@@ -8,6 +8,8 @@ P6 门的口径是**同进程**会话连接/断开循环；旧版无会话级断
 另记录每循环 total_ms（兼作 P1 大样本补充）。
 """
 
+import argparse
+import hashlib
 import json
 import re
 import statistics
@@ -24,6 +26,14 @@ FAIL_RAW = None
 BIN = REPO / "target/release/tinyssh-app"
 ENV = {"TINYSSH_MASTER_KEY": "07" * 32, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+
+
+def sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def webkit_helpers():
@@ -78,8 +88,19 @@ def wait_line(path, host_id, deadline_s, pos0=0):
 
 
 def main():
-    runs_n = 100
-    out = "/tmp/r4_p3/p6_cycles.json"
+    global BIN
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--runs", type=int, default=100)
+    ap.add_argument("--out", default="/tmp/r4_p3/p6_cycles.json")
+    ap.add_argument("--bin", default=str(BIN),
+                    help="被测二进制。默认=主树开发产物 target/release/tinyssh-app；"
+                         "B1/B2 基线须显式传入打包产物（漏传会静默跑成主树产物）")
+    args = ap.parse_args()
+    BIN = Path(args.bin).resolve()
+    if not BIN.exists():
+        raise SystemExit(f"被测二进制不存在：{BIN}")
+    runs_n = args.runs
+    out = args.out
     import sqlite3
     conn = sqlite3.connect(ENV["TINYSSH_DB"])
     host_id = conn.execute(
@@ -124,7 +145,8 @@ def main():
     first10 = [r["rss_mb"] for r in ok[:10]]
     last10 = [r["rss_mb"] for r in ok[-10:]]
     f10, l10 = statistics.median(first10), statistics.median(last10)
-    summary = {"runs": results,
+    summary = {"bin": str(BIN), "bin_sha256": sha256_file(BIN),
+               "runs": results,
                "trend": {"first10_median_mb": round(f10, 2),
                          "last10_median_mb": round(l10, 2),
                          "delta_mb": round(l10 - f10, 2)},
