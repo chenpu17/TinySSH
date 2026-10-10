@@ -1,0 +1,72 @@
+{
+  "sampler": "memsample v4.1",
+  "scope": "mocked data only; instrument validity evidence",
+  "checks": [
+    {
+      "name": "P1 candidates excludes S0",
+      "pass": true,
+      "detail": "got [202], expect [202]"
+    },
+    {
+      "name": "P2a record keeps live candidate",
+      "pass": true,
+      "detail": "exit=0 voided=False reason=None"
+    },
+    {
+      "name": "P2b app counted once",
+      "pass": true,
+      "detail": "total_mb=2.0 expect 2.0 (app 1MiB + helper 1MiB)"
+    },
+    {
+      "name": "P3 record voids disappeared candidate",
+      "pass": true,
+      "detail": "exit=2 reason=candidate pid 202 disappeared mid-sample"
+    },
+    {
+      "name": "P4 record voids identity change",
+      "pass": true,
+      "detail": "exit=2 reason=candidate pid 202 lstart changed (PID reuse?)"
+    },
+    {
+      "name": "P5 record voids unknown new helper",
+      "pass": true,
+      "detail": "exit=2 reason=new webkit helper(s) appeared mid-sample: [999]（Q-05 漏计封口）"
+    },
+    {
+      "name": "P6 verify passes after clean exit",
+      "pass": true,
+      "detail": "exit=0 expect 0"
+    },
+    {
+      "name": "P7 verify fails on live residue",
+      "pass": true,
+      "detail": "exit=2 expect 2"
+    },
+    {
+      "name": "P8 verify fails on pid reuse",
+      "pass": true,
+      "detail": "exit=2 expect 2"
+    },
+    {
+      "name": "P9 malformed pid-map key -> SamplerError",
+      "pass": true,
+      "detail": "err=PID 映射 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmpk3smsxn8/bad_keys.json 含非数字键 'not-a-pid'——文件损坏或非本采样器产物"
+    },
+    {
+      "name": "P10 zero-sample duration -> SamplerError",
+      "pass": true,
+      "detail": "err=record 未产生任何样本（--duration 0s / --interval 1s）——duration 须为正且不短于 interval，本次采样作废重跑"
+    },
+    {
+      "name": "P12 bad-encoding pid map -> SamplerError",
+      "pass": true,
+      "detail": "err=无法读取 PID 映射 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmpk3smsxn8/bad_enc.json：UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+    },
+    {
+      "name": "P11 CLI malformed input exits 2 cleanly",
+      "pass": true,
+      "detail": "rc=2 stderr='FAIL: 无法读取 PID 映射 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmpb25rpdz7/b'"
+    }
+  ],
+  "all_pass": true
+}

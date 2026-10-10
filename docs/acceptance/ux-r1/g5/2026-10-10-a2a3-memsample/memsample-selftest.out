@@ -1,0 +1,2 @@
+PASS P11 CLI malformed input exits 2 cleanly -- rc=2 stderr='FAIL: 无法读取 PID 映射 /var/folders/35/7wcyk36s4hd9l_gf49fb45x40000gn/T/tmpb25rpdz7/b'
+== memsample selftest: 13/13 PASS -> docs/acceptance/ux-r1/g5/2026-10-10-a2a3-memsample/memsample-selftest.json
