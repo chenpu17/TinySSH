@@ -1,0 +1,46 @@
+# 落库对账（可重放）
+
+## /tmp/smoke-r43/tinyssh.db （R43 r43a+r43b）
+$ sqlite3 tinyssh.db 'pragma user_version;'
+  7
+$ sqlite3 tinyssh.db "select key,value from settings where key like 'collab%';"
+  collab.enabled  1    
+$ sqlite3 tinyssh.db 'select id,label,approval_mode,revoked_at from agents;'
+  r43-agent  R43 冒烟 Agent  per_command    (未吊销)                       
+$ sqlite3 tinyssh.db 'select seq,actor_kind,action,coalesce(session_id,"") from audit_events order by seq;'
+  1    human       workspace_set                                                     
+  2    human       workspace_set                                                     
+  3    human       host_upsert                                                       
+  4    human       host_key_confirm_requested                                        
+  5    human       host_key_decision                                                 
+  6    human       host_key_trusted                                                  
+  7    human       session_created             s-df175eea-7acd-496b-b86c-1ca8b5d41948
+  8    human       collab_enabled                                                    
+  9    human       handback                    s-df175eea-7acd-496b-b86c-1ca8b5d41948
+  10   human       session_delegated           s-df175eea-7acd-496b-b86c-1ca8b5d41948
+  11   human       collab_disabled                                                   
+  12   human       collab_enabled                                                    
+  13   human       session_closed              s-df175eea-7acd-496b-b86c-1ca8b5d41948
+  14   human       session_created             s-8446f2c7-1039-438f-a458-2bc0cc862da7
+  15   human       session_closed              s-8446f2c7-1039-438f-a458-2bc0cc862da7
+
+## /tmp/smoke-r44/tinyssh.db （R44 旧 UI × 新核心）
+$ sqlite3 tinyssh.db 'pragma user_version;'
+  7
+$ sqlite3 tinyssh.db 'select seq,ts,actor_kind,action,coalesce(session_id,""),payload_json from audit_events order by seq;'
+  1    1791591059121  human       host_upsert                                                         {"host":"h-f608e03a-3b76-4d04-aa67-12ab12971ef5","name":"demo-a"}                                                                      
+  2    1791591129082  human       host_key_confirm_requested                                          {"fingerprint":"SHA256:oZBWtorsVkdrTMkUT0aTXASW5v1NRHczEZdolWI2mOM","id":"hk-0c3bfa00-7e26-4197-b61a-8a3b9b621028","issue":"FirstSeen"}
+  3    1791591171550  human       host_upsert                                                         {"host":"h-c6a54842-2894-472e-9cbd-b91cdcd3bcfd","name":"demo-b"}                                                                      
+  4    1791591179480  human       host_key_confirm_requested                                          {"fingerprint":"SHA256:CY+Y9tof0nknE4b6tUAujb6udp35ePMysakEtSLWlRw","id":"hk-b3ddeaa7-ba98-4a95-b93f-838809ed1430","issue":"FirstSeen"}
+  5    1791591289465  human       host_key_decision                                                   {"accept":true,"fingerprint":"SHA256:CY+Y9tof0nknE4b6tUAujb6udp35ePMysakEtSLWlRw","issue":"FirstSeen"}                                 
+  6    1791591289466  human       host_key_trusted                                                    {"fingerprint":"SHA256:CY+Y9tof0nknE4b6tUAujb6udp35ePMysakEtSLWlRw"}                                                                   
+  7    1791591329966  human       session_created             s-c63bfea4-6dc4-4f40-97de-907160c5c69a  {"host":"h-c6a54842-2894-472e-9cbd-b91cdcd3bcfd","kind":"ssh","owner":"Human"}                                                         
+
+# ts 为毫秒 epoch；本地时区换算（同一脚本）
+   1791591059121 08:10:59
+   1791591129082 08:12:09
+   1791591171550 08:12:51
+   1791591179480 08:12:59
+   1791591289465 08:14:49
+   1791591289466 08:14:49
+   1791591329966 08:15:29

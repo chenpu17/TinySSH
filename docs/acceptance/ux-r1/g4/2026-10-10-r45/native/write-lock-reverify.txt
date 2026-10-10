@@ -1,0 +1,30 @@
+# 写锁复验（2026-10-10，重编后的二进制）
+# 二进制 mtime:
+  2026-10-10 08:21:40 target/release/tinyssh
+  2026-10-10 08:22:01 target/release/tinyssh-app
+
+# 对照实验：同机 flock 跨进程互斥
+  child: 被拒 -> [Errno 35] Resource temporarily unavailable
+  parent: 持有 LOCK_EX
+
+# 实例 A（GUI）启动，取写锁
+  A frontend alive: 2
+  A 持有的锁 fd:
+    tinyssh-a 39371 chenpu    3u     REG               1,16         0            90863007 /private/tmp/r45-lock5/tinyssh.db.lock
+
+# 实例 B（第二个 GUI）同库启动
+  thread 'main' (3312776) panicked at src-tauri/src/main.rs:1021:41:
+  open storage: Storage("另一个 TinySSH 实例正在使用该库（写锁 /tmp/r45-lock5/tinyssh.db.lock 被占用）：灰度期同一 vault 只允许一个实例持有写锁。请关闭另一实例后重试。")
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+# A 持锁时 CLI 各命令
+$ tinyssh host list
+  Error: 存储错误: 另一个 TinySSH 实例正在使用该库（写锁 /tmp/r45-lock5/tinyssh.db.lock 被占用）：灰度期同一 vault 只允许一个实例持有写锁。请关闭另一实例后重试。
+  （退出码经不带管道的单独测量：host list / host add 均 exit=1，vault version exit=0）
+$ tinyssh host add …
+  Error: 存储错误: 另一个 TinySSH 实例正在使用该库（写锁 /tmp/r45-lock5/tinyssh.db.lock 被占用）：灰度期同一 vault 只允许一个实例持有写锁。请关闭另一实例后重试。
+$ tinyssh vault version
+  库 /tmp/r45-lock5/tinyssh.db：schema 版本 7（本程序支持 7）
+
+# A 退出后同一写命令
+  host h-ec0a7669-d430-40d0-a83f-b78de2b69ef6 added

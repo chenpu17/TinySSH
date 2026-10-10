@@ -25,6 +25,7 @@
 - **Rust**：`core-session` lib **108 通过 / 0 失败**（98 基线 + `r43_tests` **10** 项）；`vault` 32；`mcp-server` 3（含端点停机信号）；`session-api` 12；`cargo test --workspace` **全绿**。
 - **构建**：`cargo build --release -p tinyssh-app` Finished（仅既有 warning）；`npx vite build` ✓ built。
 - **原生冒烟 r43a / r43b：未跑（屏幕锁定，WKWebView 冻结闸）**——按规约登记为**待用户解锁后重跑**（`r43-driver.sh` 已就绪，前置：`tinyssh-e2e` 容器在跑）。本文件**不主张**任何原生域结论。
+  - **补记（2026-10-10 解锁后）**：r43a / r43b **已补跑，全绿**（r43a 12 标记 / r43b 4 标记，零重试零跳过），见 `../2026-10-10-r45/native/README.md`。补跑中发现并修复了**本驱动脚本自身**的两处缺陷（`src-tauri/src/main.rs` 的 `r43_smoke_script`，非产品缺陷）：① 原顺序在无会话时开协作面板必失败（协作入口在 `{sid && …}` 会话工具栏内）；② `openAgentSettings` 缺 `.hb-settings` 兜底路径。本节以下的历史叙述保持原样不动。
 - **独立审核 rev-r43**：首轮 **不通过**（阻断 F1/F2）→ 处置（见 `rev-r43-disposition.md`）→ 二轮定向复核 **可签**（F1–F6 真正闭合，均经独立复跑 + 单点变异实证判别力；F7 不处置可接受；新增 F8 为经 UI 不可达的低级潜在不一致）→ **F8 已采纳修复** → 三轮极窄复核 **「F8 闭合，维持可签」**（独立核：`EndpointHandle` 全仓无 `clone`、唯一持久化点即 `AppState.mcp_endpoint`，故 `take`+`drop` 覆盖全部 sender；回滚后无死锁/无半态、下次启用经 `bind_increment` 自动递增端口不卡住；`cargo check -p tinyssh-app` Finished）。
 - **独立视觉复验 vis-r43**：首轮 6 项清单达标（零阻断/零中级）→ F3/F5 处置后补验 4/4「所见 = 期望」（零 JS 异常）→ 补验发现 2 项低级问题**均已闭合**：**O-5**（`DisableFailed` 文案重复「（保持封闭）」）→ 删冗余后缀；**D-1**（新增 `停用协作…` 钮浅色对比度 3.91:1 < AA）→ 令牌名笔误 `var(--err, #e5484d)` 正名为 `var(--danger)`，复验浅 **5.32:1** / 深 **5.00:1** 均过 AA。**D-1 的归属经审核员以 `git show HEAD` 硬证据更正**：该控件是 **R43 新增**（非沿袭既有），作者已接受更正并按 R35 既有 AA 口径一并处置。详见 `vis-r43-report.md`。
 
@@ -87,4 +88,5 @@ R42 探针原样对 R43 树跑为 **35/38**（G2/G6/G7 红）。逐条核对后�
 ## 未主张 / 待人工确认
 
 - **原生 GUI 冒烟 r43a / r43b 未跑**（屏幕锁定）；原生域的「真 vault V7 迁移 → 升级默认开启 + Agent 保留」「真核心原子停用 + 端点停机确认」**尚未实证**，登记为待用户解锁后重跑。
+  - **补记（2026-10-10 解锁后）**：**已补跑并实证**——真 vault V7 迁移 + 升级保留「MCP 默认开启」+ Agent/Token 保留（r43b 4 标记）；真核心原子停用 + 端点停机 + Token 保留 + 旧会话不复活（r43a 标记 11/12）。见 `../2026-10-10-r45/native/README.md`。
 - 视觉复验首轮覆盖 F3/F5 改动**前**的 UI 快照；补验节覆盖新增 DisableFailed 面。

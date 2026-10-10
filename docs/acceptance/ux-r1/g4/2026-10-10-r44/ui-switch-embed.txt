@@ -43,5 +43,8 @@ CARGO_TARGET_DIR=/tmp/r44-oldui-target TINYSSH_UI_V2=1 scripts/ui-switch.sh buil
 
 - 只证了**构建期内嵌**随开关切换；`scripts/ui-switch.sh dev`（`tauri dev` 指向 5184 的
   旧 UI vite）**未实跑**——它要拉起原生窗口，受屏幕锁定闸限制（见 README「未主张」）。
+  - **补记（2026-10-10 解锁后）**：旧 UI **在新核心上的真实运行**已补跑并取证（`ui-switch.sh build`
+  的 `TINYSSH_UI_V2=0` 二进制，内嵌 `tauri://localhost`，读到新核心真主机行 / 渲染新核心 TOFU /
+  跑通真实会话 `s-c63bfea4-…`），见 `../2026-10-10-r45/native/`。`dev` 模式本身仍未单独实跑。
 - 只证了「旧 UI 资源被内嵌」。旧 UI 是否**运行正确**属原生域，另见
   `contract-check.txt`（命令/参数名契约）与 README 的待人工确认项。

@@ -4566,8 +4566,18 @@ fn r43_smoke_script(run_id: &str, mode: &str) -> String {
   };
   const openAgentSettings = async () => {
     if (document.querySelector('[data-testid="settings-cat-agent"]')) return true;
+    // 停用/未配置态：协作面板内有「打开设置 → Agent 接入」入口
+    await openCollab();
     click('[data-testid="collab-open-settings"]');
-    return !!(await waitFor(() => (document.querySelector('[data-testid="settings-cat-agent"]') ? true : null), 60));
+    if (!await waitFor(() => (document.querySelector('[data-testid="settings-cat-agent"]') ? true : null), 40)) {
+      // 完整面板态（已签发 Agent 后）没有「打开设置」入口 → 走主机栏设置钮 + 切 Agent 分类
+      // （补档首次实跑发现：原实现缺此兜底，委托后重开设置必得 FAIL-open-settings2；与 demo
+      //  探针 openAgentSettings 的双路一致。）
+      click('.hb-settings');
+      await waitFor(() => (document.querySelector('[data-testid="settings-close"]') ? true : null), 40);
+      click('[data-testid="settings-cat-agent"]');
+    }
+    return !!(await waitFor(() => (document.querySelector('[data-testid="settings-cat-agent"]') ? true : null), 40));
   };
   const EP_RE = /^http:\/\/127\.0\.0\.1:\d+\/mcp$/;
   (async () => {
@@ -4591,6 +4601,18 @@ fn r43_smoke_script(run_id: &str, mode: &str) -> String {
         await markSync('r43a-fresh-ok（新装停用协作，无自动 MCP 端点）');
         if (cnt('[data-testid="collab-entry"]') !== 0) return title('FAIL-badge-shown');
         if (cnt('[data-testid="delegate-open"]') !== 0) return title('FAIL-delegate-shown');
+        // §3.2：协作是**会话工作区**下的同级入口——面板入口（tools-collab）在会话工具栏里，
+        // 没有会话时该钮不在 DOM。故必须先连真容器取得会话，面板才可达。
+        // （补档首次实跑发现：原顺序在无会话时开面板，必得 FAIL-open-collab；与 demo 探针
+        //  「先 connectHost 再 openCollab」一致，已更正。）
+        if (!connect('r43-a')) return title('FAIL-connect-a');
+        await trust();
+        if (!await waitFor(async () => (await activeSess('r43-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
+        const sess = await activeSess('r43-a');
+        await sleep(400);
+        // 连接后仍无徽标/委托入口（未配置 Agent 且无 Agent 活动）
+        if (cnt('[data-testid="collab-entry"]') !== 0) return title('FAIL-badge-shown2');
+        if (cnt('[data-testid="delegate-open"]') !== 0) return title('FAIL-delegate-shown2');
         // 停用态协作面板 = 一次性指引（无空审批区）
         if (!await openCollab()) return title('FAIL-open-collab');
         if (cnt('[data-testid="collab-disabled"]') !== 1) return title('FAIL-no-disabled-guidance');
@@ -4621,13 +4643,7 @@ fn r43_smoke_script(run_id: &str, mode: &str) -> String {
         if (!(ms1.agents || []).some((a) => a.id === 'r43-agent')) return title('FAIL-agent-not-persisted');
         await markSync('r43a-issue-ok（真命令签发 Agent 并落库）');
         click('[data-testid="settings-close"]');
-        // 连接真容器，真核心委托会话给 Agent（把控制权从 Human 转 Agent）
-        if (!connect('r43-a')) return title('FAIL-connect-a');
-        await trust();
-        if (!await waitFor(async () => (await activeSess('r43-a'))?.state === 'Connected' ? true : null, 150)) return title('FAIL-conn-a');
-        const sess = await activeSess('r43-a');
-        await sleep(400);
-        // D08：关协作面板不改变控制权
+        // D08：关协作面板不改变控制权（会话已在前面连好；此处不再重复连接）
         if (!await openCollab()) return title('FAIL-open-collab2');
         click('[data-testid="tp-close"]');
         await waitFor(() => (cnt('[data-testid="tp-title"]') === 0 ? true : null), 40);
