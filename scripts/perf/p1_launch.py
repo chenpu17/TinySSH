@@ -107,8 +107,10 @@ def main():
                          "B1/B2 基线须显式传入打包产物（漏传会静默跑成主树产物）")
     args = ap.parse_args()
     BIN = Path(args.bin).resolve()
-    if not BIN.exists():
-        raise SystemExit(f"被测二进制不存在：{BIN}")
+    if not BIN.is_file():
+        raise SystemExit(f"被测二进制不存在或不是文件：{BIN}")
+    if args.runs < 1:
+        ap.error("--runs must be >= 1")
     runs = []
     for i in range(args.runs):
         if args.mode == "cold":

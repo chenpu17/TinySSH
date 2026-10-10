@@ -97,8 +97,10 @@ def main():
                          "B1/B2 基线须显式传入打包产物（漏传会静默跑成主树产物）")
     args = ap.parse_args()
     BIN = Path(args.bin).resolve()
-    if not BIN.exists():
-        raise SystemExit(f"被测二进制不存在：{BIN}")
+    if not BIN.is_file():
+        raise SystemExit(f"被测二进制不存在或不是文件：{BIN}")
+    if args.runs < 1:
+        ap.error("--runs must be >= 1")
     runs_n = args.runs
     out = args.out
     import sqlite3
@@ -139,7 +141,7 @@ def main():
             r["residue_pids"] = residue  # 退出消失核验（差分法第④步），非空即本会话作废
         results.append(r)
         if (i + 1) % 20 == 0:
-            print(f".. {i+1}/100", flush=True)
+            print(f".. {i+1}/{runs_n}", flush=True)
     ok = [r for r in results if "rss_mb" in r]
     bad_residue = [r["idx"] for r in ok if r.get("residue_pids")]
     first10 = [r["rss_mb"] for r in ok[:10]]
