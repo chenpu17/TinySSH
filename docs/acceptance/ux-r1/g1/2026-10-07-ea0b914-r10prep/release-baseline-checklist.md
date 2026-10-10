@@ -33,11 +33,11 @@ PATH="$HOME/.cargo/bin:$PATH" cargo tauri build
 **§3 规则 2「关闭 vite dev server 状态下启动可用」验证**——以**更强口径**达成（**偏离登记**）：
 
 - 本机 `:5183` 上有**他人工作流的 vite dev server**（PID 31602，主树 `ui/`）及 Chrome 连接；用户长期指令禁止打断用户环境，故**未停该 server**。改为直接证明**打包二进制不依赖它**：
-  1. **加载 URL**：以 `TINYSSH_MASTER_KEY=<64 hex> TINYSSH_DB=<fresh>` 直启 `.app` 内二进制，stderr 记 `[app] window url: Ok(Url { scheme: "tauri", host: Domain("localhost") })`——即 `tauri://localhost/`（内嵌资产协议），**非** `http://localhost:5183`（`main.rs:1341` 无条件打印）。
-  2. **套接字**：`lsof -a -p <app-pid> -i` 仅见 `localhost:8722 (LISTEN)`（进程内 MCP 端点），**无任何到 :5183 的连接**。
+  1. **加载 URL**：以 `TINYSSH_MASTER_KEY=<64 hex> TINYSSH_DB=<fresh>` 直启 `.app` 内二进制，stderr 记 `[app] window url: Ok(Url { scheme: "tauri", host: Domain("localhost") })`——即 `tauri://localhost/`（内嵌资产协议），**非** `http://localhost:5183`（该打印在**主树** `src-tauri/src/main.rs:1341`、**old-ui 树** `src-tauri/src/main.rs:804`，无条件打印）。
+  2. **套接字**：`lsof -a -p <app-pid> -i` 仅见 `localhost:8722 (LISTEN)`（进程内 MCP 端点），**无任何到 :5183 的连接**。原始输出 `b1-lsof.txt`（2026-10-10 复跑留档，取该轮 PID 84643；同轮启动日志 `b1-lsof-launch.log`）。
   3. **前端存活**：stderr 见 `[app] page load event: Started/Finished "main"` 与 `[app] mcp_status invoked (frontend alive)`——前端 JS 实际执行并回调 Rust。
   4. **视觉**：`screencapture` 见旧版固定三栏（主机/会话｜终端｜审批）正常渲染，主机列表含 `本机`、MCP 端点 `http://127.0.0.1:8722/mcp`。
-- 该口径比「停 server 后能起」更强：**在 dev server 在场时**证明二进制不读它。原始日志 `/tmp/g5-a4/b1-launch.log`、截图 `/tmp/g5-a4/b1-screenshot.png`；正式归档时拷入本次证据包 `protocol/`。
+- 该口径比「停 server 后能起」更强：**在 dev server 在场时**证明二进制不读它。原始件已归档至 `docs/acceptance/ux-r1/g5/2026-10-10-ea0b914-b1/`（`b1-build.log` / `b1-launch.log` / `b1-screenshot.png` / `b1-lsof.txt` / `b1-lsof-launch.log`），该包 README 载完整口径与未做项。
 
 **未做/边界**：B2（新版打包）未构建，待 G5 候选冻结；B1 未做代码签名/公证（`cargo tauri build` 默认 ad-hoc，本地验证够用，发布门需另议）。
 

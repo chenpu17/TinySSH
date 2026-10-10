@@ -172,7 +172,9 @@ def main():
     ap.add_argument("--iy", type=int, required=True, help="按路径下载输入框 屏幕Y（截图标定）")
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--out", default="/tmp/r4_p3/p4_download.json")
-    ap.add_argument("--bin", default=str(BIN), help="被测二进制（B1 基线指向 worktree 打包产物）")
+    ap.add_argument("--bin", default=str(BIN),
+                    help="被测二进制。默认=主树开发产物 target/release/tinyssh-app；"
+                         "B1 基线须显式传入 worktree 打包产物（漏传会静默跑成主树产物）")
     ap.add_argument("--expect-sha", default=EXPECT_SHA, help="源文件 SHA256（默认=可复现夹具）")
     args = ap.parse_args()
     BIN = Path(args.bin)

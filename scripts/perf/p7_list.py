@@ -97,7 +97,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=10)
     ap.add_argument("--out", default="/tmp/r4_p3/p7_list.json")
-    ap.add_argument("--bin", default=str(BIN), help="被测二进制（B1 基线指向 worktree 打包产物）")
+    ap.add_argument("--bin", default=str(BIN),
+                    help="被测二进制。默认=主树开发产物 target/release/tinyssh-app；"
+                         "B1 基线须显式传入 worktree 打包产物（漏传会静默跑成主树产物）")
     args = ap.parse_args()
     BIN = Path(args.bin)
     n = prepare_dir()

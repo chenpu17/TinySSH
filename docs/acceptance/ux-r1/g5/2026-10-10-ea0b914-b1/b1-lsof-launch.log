@@ -1,0 +1,10 @@
+[app] starting, bench=
+[app] MCP endpoint in-process: http://127.0.0.1:8722/mcp
+[app] setup: windows=["main"]
+[app] native ctrl-key intercept installed
+[app] eval probe: Ok(())
+[app] window url: Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[app] page load event: Started "main"
+[app] page load event: Finished "main"
+[app] mcp_status invoked (frontend alive)
+[bench] bench_mode called -> false
