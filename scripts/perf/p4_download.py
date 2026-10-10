@@ -35,7 +35,10 @@ EV2 = REPO / "scripts/perf/ev2.py"
 ENV = {"TINYSSH_MASTER_KEY": "07" * 32, "TINYSSH_DB": "/tmp/r4_p3/tinyssh.db",
        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 LOCAL = os.path.expanduser("~/Downloads/p4_100mb.bin")
-EXPECT_SHA = "125af9fabbe7bbb690cc253e68341794ece9e92dfedb994611c32c606e69e7ce"
+# G5 B1 基线：R04 源文件为随机内容且随 /tmp 清空不可复原；改用**可复现**的
+# 确定性 100MB 源（字节模式 (i*7+11)%256）。协议不变（源=目标完整性对照），
+# 仅夹具身份变更——登记为偏离。可用 --expect-sha / --bin 覆盖。
+EXPECT_SHA = "f89010402d8ea934d4475a52777afc4b04fc5d127e4e953fd5f38902a6b0f651"
 SIZE = 104857600
 
 
@@ -163,12 +166,17 @@ def drag_upload_attempt(pid, wx, wy):
 
 
 def main():
+    global BIN, EXPECT_SHA
     ap = argparse.ArgumentParser()
     ap.add_argument("--ix", type=int, required=True, help="按路径下载输入框 屏幕X（截图标定）")
     ap.add_argument("--iy", type=int, required=True, help="按路径下载输入框 屏幕Y（截图标定）")
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--out", default="/tmp/r4_p3/p4_download.json")
+    ap.add_argument("--bin", default=str(BIN), help="被测二进制（B1 基线指向 worktree 打包产物）")
+    ap.add_argument("--expect-sha", default=EXPECT_SHA, help="源文件 SHA256（默认=可复现夹具）")
     args = ap.parse_args()
+    BIN = Path(args.bin)
+    EXPECT_SHA = args.expect_sha
     import sqlite3
     conn = sqlite3.connect(ENV["TINYSSH_DB"])
     host_id = conn.execute(

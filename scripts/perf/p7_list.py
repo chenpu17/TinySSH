@@ -93,10 +93,13 @@ def window_rect(pid):
 
 
 def main():
+    global BIN
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=10)
     ap.add_argument("--out", default="/tmp/r4_p3/p7_list.json")
+    ap.add_argument("--bin", default=str(BIN), help="被测二进制（B1 基线指向 worktree 打包产物）")
     args = ap.parse_args()
+    BIN = Path(args.bin)
     n = prepare_dir()
     net = sftp_network_baseline()
     import sqlite3
