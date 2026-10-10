@@ -1,0 +1,10 @@
+reset ui state: moved 0 LocalStorage dir(s) -> docs/acceptance/ux-r1/g5/2026-10-10-ev-delivery/main/ui-state-backup/
+app pid=6311 window origin=(221,71)
+baseline md5=4405d4771fc7
+round 0 mouse[pid] changed=False  (4405d4771f -> 4405d4771f)
+round 0 mouse[global] changed=True  (4405d4771f -> 5d92b3e566)
+round 1 mouse[pid] changed=False  (4405d4771f -> 4405d4771f)
+round 1 mouse[global] changed=True  (4405d4771f -> 5d92b3e566)
+round 2 mouse[pid] changed=False  (4405d4771f -> 4405d4771f)
+round 2 mouse[global] changed=True  (4405d4771f -> 5d92b3e566)
+VERDICT: pid_delivery_broken (exit 0)

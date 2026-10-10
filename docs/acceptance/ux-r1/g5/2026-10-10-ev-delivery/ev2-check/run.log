@@ -1,0 +1,20 @@
+A global:
+  A round 0: flipped=True attempts=1 rcs=[0]
+  A round 1: flipped=True attempts=2 rcs=[0, 0]
+  A round 2: flipped=True attempts=1 rcs=[0]
+  A round 3: flipped=True attempts=2 rcs=[0, 0]
+  A round 4: flipped=True attempts=1 rcs=[0]
+  A round 5: flipped=True attempts=1 rcs=[0]
+A -> PASS（丢事件 2/8 次尝试，rc 全 0=True）
+B default(pid):
+  B round 0: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
+  B round 1: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
+  B round 2: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
+  B round 3: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
+  B round 4: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
+  B round 5: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
+B -> PASS（rc 全 0=True）
+C nonexistent pid: rc=2 -> PASS
+D non-frontmost pid: rc=2 -> PASS
+VERDICT: ev2_delivery_verified (exit 0)
+  四段断言全过：global 可投递（rc 全 0 且像素翻转）、默认 pid 无效果（rc 全 0）、guard 两负例 exit 2。

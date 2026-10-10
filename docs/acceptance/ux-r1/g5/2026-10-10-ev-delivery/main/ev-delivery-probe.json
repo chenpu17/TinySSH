@@ -1,0 +1,84 @@
+{
+  "app_pid": 6311,
+  "window_origin": [
+    221,
+    71
+  ],
+  "bin": "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app",
+  "baseline_md5": "4405d4771fc7b27d982338a2e81f4741",
+  "sentinel": [
+    418,
+    124
+  ],
+  "field": [
+    309,
+    215
+  ],
+  "region": [
+    233,
+    176,
+    270,
+    320
+  ],
+  "mouse": {
+    "pid": false,
+    "global": true,
+    "pid_values": [
+      false,
+      false,
+      false
+    ],
+    "global_values": [
+      true,
+      true,
+      true
+    ]
+  },
+  "keyboard": {},
+  "mouse_rounds": [
+    {
+      "pid": {
+        "before": "4405d4771fc7b27d982338a2e81f4741",
+        "after": "4405d4771fc7b27d982338a2e81f4741",
+        "changed": false
+      },
+      "global": {
+        "before": "4405d4771fc7b27d982338a2e81f4741",
+        "after": "5d92b3e56697c920bf9e33496d81aaa1",
+        "changed": true
+      }
+    },
+    {
+      "pid": {
+        "before": "4405d4771fc7b27d982338a2e81f4741",
+        "after": "4405d4771fc7b27d982338a2e81f4741",
+        "changed": false
+      },
+      "global": {
+        "before": "4405d4771fc7b27d982338a2e81f4741",
+        "after": "5d92b3e56697c920bf9e33496d81aaa1",
+        "changed": true
+      }
+    },
+    {
+      "pid": {
+        "before": "4405d4771fc7b27d982338a2e81f4741",
+        "after": "4405d4771fc7b27d982338a2e81f4741",
+        "changed": false
+      },
+      "global": {
+        "before": "4405d4771fc7b27d982338a2e81f4741",
+        "after": "5d92b3e56697c920bf9e33496d81aaa1",
+        "changed": true
+      }
+    }
+  ],
+  "open_md5": "5d92b3e56697c920bf9e33496d81aaa1",
+  "verdict": "pid_delivery_broken",
+  "summary": {
+    "mouse": {
+      "pid": false,
+      "global": true
+    }
+  }
+}

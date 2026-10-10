@@ -1,0 +1,184 @@
+{
+  "bin": "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app",
+  "bin_sha256": "3bfecdf0d793449126fdf8187a6940c4d8caa0009971e941d14f92dfe3905773",
+  "settle_s": 2.5,
+  "rounds": 6,
+  "retry_budget": 3,
+  "pid": 13932,
+  "origin": [
+    221,
+    71
+  ],
+  "baseline_md5": "4405d4771fc7b27d982338a2e81f4741",
+  "A_global": {
+    "rounds": [
+      {
+        "round": 0,
+        "flipped": true,
+        "attempts": 1,
+        "rcs": [
+          0
+        ],
+        "md5": "5d92b3e56697c920bf9e33496d81aaa1"
+      },
+      {
+        "round": 1,
+        "flipped": true,
+        "attempts": 2,
+        "rcs": [
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      },
+      {
+        "round": 2,
+        "flipped": true,
+        "attempts": 1,
+        "rcs": [
+          0
+        ],
+        "md5": "5d92b3e56697c920bf9e33496d81aaa1"
+      },
+      {
+        "round": 3,
+        "flipped": true,
+        "attempts": 2,
+        "rcs": [
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      },
+      {
+        "round": 4,
+        "flipped": true,
+        "attempts": 1,
+        "rcs": [
+          0
+        ],
+        "md5": "5d92b3e56697c920bf9e33496d81aaa1"
+      },
+      {
+        "round": 5,
+        "flipped": true,
+        "attempts": 1,
+        "rcs": [
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      }
+    ],
+    "drops": 2,
+    "all_rc_zero": true,
+    "attempts_total": 8
+  },
+  "B_default_pid": {
+    "rounds": [
+      {
+        "round": 0,
+        "flipped": false,
+        "attempts": 3,
+        "rcs": [
+          0,
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      },
+      {
+        "round": 1,
+        "flipped": false,
+        "attempts": 3,
+        "rcs": [
+          0,
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      },
+      {
+        "round": 2,
+        "flipped": false,
+        "attempts": 3,
+        "rcs": [
+          0,
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      },
+      {
+        "round": 3,
+        "flipped": false,
+        "attempts": 3,
+        "rcs": [
+          0,
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      },
+      {
+        "round": 4,
+        "flipped": false,
+        "attempts": 3,
+        "rcs": [
+          0,
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      },
+      {
+        "round": 5,
+        "flipped": false,
+        "attempts": 3,
+        "rcs": [
+          0,
+          0,
+          0
+        ],
+        "md5": "4405d4771fc7b27d982338a2e81f4741"
+      }
+    ],
+    "drops": 18,
+    "all_rc_zero": true,
+    "attempts_total": 18
+  },
+  "C_nonexistent_pid": {
+    "rc": 2,
+    "stdout": "",
+    "stderr": "[ev2] ABORT (nothing posted): target pid 999999999 does not exist"
+  },
+  "D_nonfrontmost_pid": {
+    "rc": 2,
+    "stdout": "",
+    "stderr": "[ev2] ABORT (nothing posted): frontmost pid 13932 != target pid 14015",
+    "sleeper_pid": 14015
+  },
+  "checks": [
+    {
+      "name": "A global delivery flips panel within retry budget",
+      "pass": true
+    },
+    {
+      "name": "A every attempt exited 0 (delivery attempted, not guard-rejected)",
+      "pass": true
+    },
+    {
+      "name": "B default(pid) never flips panel, with rc=0 throughout",
+      "pass": true
+    },
+    {
+      "name": "C guard rejects nonexistent pid with exit 2",
+      "pass": true
+    },
+    {
+      "name": "D guard rejects non-frontmost pid with exit 2",
+      "pass": true
+    }
+  ],
+  "verdict": "ev2_delivery_verified",
+  "verdict_note": "四段断言全过：global 可投递（rc 全 0 且像素翻转）、默认 pid 无效果（rc 全 0）、guard 两负例 exit 2。"
+}

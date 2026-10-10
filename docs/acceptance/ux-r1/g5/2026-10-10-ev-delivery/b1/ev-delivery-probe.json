@@ -1,0 +1,84 @@
+{
+  "app_pid": 6352,
+  "window_origin": [
+    221,
+    71
+  ],
+  "bin": ".worktrees/old-ui/target/release/tinyssh-app",
+  "baseline_md5": "c8f7e62ccd8b065cce80471a78c89b1b",
+  "sentinel": [
+    314,
+    123
+  ],
+  "field": [
+    309,
+    215
+  ],
+  "region": [
+    229,
+    141,
+    210,
+    340
+  ],
+  "mouse": {
+    "pid": false,
+    "global": true,
+    "pid_values": [
+      false,
+      false,
+      false
+    ],
+    "global_values": [
+      true,
+      true,
+      true
+    ]
+  },
+  "keyboard": {},
+  "mouse_rounds": [
+    {
+      "pid": {
+        "before": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "after": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "changed": false
+      },
+      "global": {
+        "before": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "after": "919f431851dbfc0a8707106da42c434b",
+        "changed": true
+      }
+    },
+    {
+      "pid": {
+        "before": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "after": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "changed": false
+      },
+      "global": {
+        "before": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "after": "919f431851dbfc0a8707106da42c434b",
+        "changed": true
+      }
+    },
+    {
+      "pid": {
+        "before": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "after": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "changed": false
+      },
+      "global": {
+        "before": "c8f7e62ccd8b065cce80471a78c89b1b",
+        "after": "919f431851dbfc0a8707106da42c434b",
+        "changed": true
+      }
+    }
+  ],
+  "open_md5": "919f431851dbfc0a8707106da42c434b",
+  "verdict": "pid_delivery_broken",
+  "summary": {
+    "mouse": {
+      "pid": false,
+      "global": true
+    }
+  }
+}

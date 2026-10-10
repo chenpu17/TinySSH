@@ -1,0 +1,21 @@
+# 证据包被测二进制身份记录（2026-10-10）
+
+`ev2-check/ev2-check.json` 自记 `bin_sha256`（该字段在本包定稿时才加入工具）。
+`main/`、`b1/` 的 JSON 产出时工具尚未记录该字段，故在此统一登记。
+
+sha256 与 mtime 于 2026-10-10 采集；两二进制**自构建后未再重编译**——其 mtime
+均早于各自 `run.log` 的 mtime（见下），故运行的就是这些二进制。
+
+| 子归档 | 二进制路径 | sha256 | mtime |
+|---|---|---|---|
+| `main/` | `target/release/tinyssh-app` | `3bfecdf0d793449126fdf8187a6940c4d8caa0009971e941d14f92dfe3905773` | 2026-10-10 08:22:01 |
+| `b1/` | `.worktrees/old-ui/target/release/tinyssh-app` | `2c3ab20dbc90db7796b23e18f06dbf6262bf2bbd99da2ed92281d28ac5d08de8` | 2026-10-10 09:43:38 |
+| `ev2-check/` | `target/release/tinyssh-app` | `3bfecdf0d793449126fdf8187a6940c4d8caa0009971e941d14f92dfe3905773` | 2026-10-10 08:22:01 |
+
+各自 `run.log` 的 mtime（本次记录时的读值）：
+
+- `main/run.log`      2026-10-10 11:25:13
+- `b1/run.log`        2026-10-10 11:25:24
+- `ev2-check/run.log` 2026-10-10 11:58:28
+
+均晚于对应二进制 mtime ⇒ 期间未重编译。
