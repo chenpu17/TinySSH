@@ -48,7 +48,7 @@ PATH="$HOME/.cargo/bin:$PATH" cargo tauri build
 | P1 启动（列表就绪） | p1_launch.py | 高 | 打包版无 devUrl 依赖；验证 dev 前端条件与打包条件差值，作为 G5 同协议对比的旧版基线 |
 | P3 建连 | p3_connect.py | 高 | 30 次，stderr 精确 matcher |
 | P6 进程残留 | p6_cycles.py | 中 | 应用级循环（同进程门按 §3.3 冻结定义在受控环境执行） |
-| P5 归属试点 | memsample v4.1 / p5_pilot / vmstat_probe | 中 | **前置已清**：采样器 v4→v4.1 收口两条 fail-closed 注记（2026-10-10，独立复核可签）；压力观测采集器 `scripts/perf/vmstat_probe.py` 已实现（签署 §3：vm_stat/只读压力/swap/压缩/页回收同步、预登记频率与失效判据 I1–I8），自测 15/15。独立复核中危项已收口：缺字段/缺基线 → 不可判（I8）、增长类判据 I2/I3/I4 改逐相位相对基线、裁决输入加读取保护、试点校验各相位采集子进程退出码 |
+| P5 归属试点 | memsample v4.1 / p5_pilot / vmstat_probe | 中 | **前置已清**：采样器 v4→v4.1 收口两条 fail-closed 注记（2026-10-10，独立复核可签）；压力观测采集器 `scripts/perf/vmstat_probe.py` 已实现（签署 §3：vm_stat/只读压力/swap/压缩/页回收同步、预登记频率与失效判据 I1–I8），自测 19/19。两轮独立复核的中危项均已收口：①缺字段/缺基线/缺**整段相位**/类型非法/点位非对象 → 一律不可判（I8）；②增长类判据 I2/I3/I4 改逐相位相对基线；③I6 改排序前判；④I7 未喂入归属即不可判；⑤裁决输入加读取保护；⑥试点校验各相位（含 P0）采集子进程退出码并在轮首清理陈旧 press_*.json |
 | P2 切换/回显 | p2_switch/p2_echo | 受控 | ev2 定向；专用机/独立测试登录会话（签署 §4 授权范围） |
 | P4 传输 / P7 万条目录 | p4_download/p7_list | 受控 | 同上；P4/P7 期限为 G3 开始前 |
 

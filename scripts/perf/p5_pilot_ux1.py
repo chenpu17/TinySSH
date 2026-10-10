@@ -83,6 +83,10 @@ def main():
     args = ap.parse_args()
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
+    # workdir 跨轮复用：轮首清掉上一轮的相位点文件——否则本轮某相位采集失败时，
+    # 裁决会吃到陈旧点（基线错位，甚至输出假「可判」）。
+    for stale in work.glob("press_*.json"):
+        stale.unlink()
     env_prefix = f"TINYSSH_MASTER_KEY=$(python3 -c \"print('07'*32)\") TINYSSH_DB={args.db} TINYSSH_AUTOCONNECT={args.host_id}"
 
     def run(cmd):
@@ -136,6 +140,7 @@ def main():
     # ③ 预热（输出进管线填满重放环等缓存）→ 停 → 静置 60s → B
     #    压力观测自预热首点起，与各相位同频同步（P0 = 预热前基线）
     code, out, err = run(f"python3 {VMSTAT} point --phase P0 --out {work}/press_P0.json")
+    press_rcs["P0"] = code
     note(f"[5a] 压力基线 P0 rc={code} {out} {err}")
     press_warm = subprocess.Popen(
         f"python3 {VMSTAT} series --phase warmup --interval 5 --duration {args.warm_sec} "
@@ -216,8 +221,9 @@ def main():
     b, e = B.get("median_mb"), E.get("median_mb")
     growth = round((e - b) / b, 4) if b and e else None
     attribution_valid = B["voided"] is False and E["voided"] is False and code == 0
-    # 压力序列子进程退出码非 0 = 该相位无观测；裁决进程非 0 且非「判为不可判」的 2
-    # 之外一律按不可判处理（此处 code_p 只可能为 0/2，2 已被 invalid 覆盖）。
+    # 压力序列子进程退出码非 0 = 该相位无观测（含 P0 基线）。裁决进程 rc：0=可判 /
+    # 2=判为不可判或干净 FAIL / 其他=未预期异常；后两者**都不落产物**，已被上面的
+    # json.load 门拦下。故此处只需再并上各相位采集 rc。
     pressure_rc_ok = all(rc == 0 for rc in press_rcs.values())
     pressure_valid = (not pressure["invalid"]) and pressure_rc_ok
     result = {
@@ -249,9 +255,13 @@ def main():
 
 
 def finish(work, log, code):
+    """早退落盘。键名与正常路径**一致**（protocol_log / attribution_valid / …），
+    避免消费方按正常路径的键取值时在失败产物上再崩。"""
     (work / "pilot-result.json").write_text(json.dumps(
-        {"log": log, "attribution_valid": False, "pressure_valid": False,
-         "round_valid": False}, ensure_ascii=False, indent=1) + "\n")
+        {"sampler": "memsample v4.1 (differential attribution, fail-closed)",
+         "pressure_probe": "vmstat_probe v1 (read-only, synchronized; I1–I8)",
+         "protocol_log": log, "attribution_valid": False, "pressure_valid": False,
+         "round_valid": False, "early_exit": code}, ensure_ascii=False, indent=1) + "\n")
     return code
 
 

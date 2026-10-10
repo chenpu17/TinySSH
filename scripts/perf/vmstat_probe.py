@@ -37,9 +37,11 @@
   I5 采样缺口：**相位内**相邻点间隔 > 2× 登记频率，或系列相位点数 < 登记点数 − 1
      （相位之间的静置间隔是协议性的，不计入）。
   I6 时序：ts_epoch 在**原始输入顺序**上非严格递增（先排序再判会把乱序洗掉）。
-  I7 归属（外部喂入）：memsample 任一相位 voided=true。
-  I8 数据完整性：任一必需字段（ts_epoch / pressure_level / swap.used_mb /
-     mb.occupied_by_compressor / pages.purged）缺失，或缺 P0 基线相位 → 不可判
+  I7 归属：**未喂入 `--memsample` 输出即不可判**；喂入后 memsample 任一相位
+     voided=true 亦不可判（与 I8 同原则——缺数据不得放过）。
+  I8 数据完整性：必需字段（ts_epoch / pressure_level / swap.used_mb /
+     mb.occupied_by_compressor / pages.purged）缺失**或类型非法**，或 phase 标签
+     非法，或缺 `expected_phases`（P0/warmup/B/load/E）中任一相位 → 不可判
      （**缺数据不得当作「未超阈值」放过**）。
 判据 I1–I4 是**外部压力**的提示性证据，不是「外压 purge」的证明（签署 §3：RSS 同步
 下降只能提示回收，缺同期观测不能确诊）。应用自身引发的增长按签署 §3 须计入资源
@@ -51,7 +53,8 @@
       --out /tmp/p5_B_pressure.json
   # 单点（预热压力基线 P0）
   python3 scripts/perf/vmstat_probe.py point --phase P0 --out /tmp/p5_P0_pressure.json
-  # 整轮裁决（喂入 P0 + B + load + E 全部点，另可喂 memsample 输出查归属）
+  # 整轮裁决（喂入 P0 + warmup + B + load + E **全部**相位；必须同时喂 memsample
+  # 输出，否则 I7 判不可判。缺相位、缺字段、类型非法一律不可判）
   python3 scripts/perf/vmstat_probe.py verdict \
       --points /tmp/p5_P0_pressure.json /tmp/p5_B_pressure.json ... \
       --memsample /tmp/p5_B.json /tmp/p5_E.json --out /tmp/p5_pressure_verdict.json
@@ -74,6 +77,7 @@ PROTOCOL = {
     "phase_duration_s": 60,
     "points_per_phase": 12,
     "baseline_phase": "P0",
+    "expected_phases": ["P0", "warmup", "B", "load", "E"],
     "sources": ["vm_stat", "sysctl kern.memorystatus_vm_pressure_level",
                 "sysctl -n vm.swapusage", "memory_pressure"],
     "read_only": True,
@@ -85,8 +89,8 @@ PROTOCOL = {
         "I4_pages_purged_growth": "任一相位相对 P0 基线的最大增量 > 20000 页",
         "I5_sampling_gap": "相位内相邻点 ts_epoch 间隔 > 2x interval，或系列相位点数 < points_per_phase-1（相位间静置间隔不计）",
         "I6_monotonic_time": "ts_epoch 在原始输入顺序上非严格递增",
-        "I7_attribution_void": "memsample 任一相位 voided=true",
-        "I8_data_completeness": "必需字段（ts_epoch/pressure_level/swap.used_mb/mb.occupied_by_compressor/pages.purged）缺失，或缺 P0 基线相位",
+        "I7_attribution_void": "未喂入 --memsample 即不可判；喂入后 memsample 任一相位 voided=true 亦不可判",
+        "I8_data_completeness": "必需字段（ts_epoch/pressure_level/swap.used_mb/mb.occupied_by_compressor/pages.purged）缺失或类型非法，或 phase 标签非法，或缺 expected_phases 中任一相位（含 P0 基线）",
     },
     "note": ("判据为外部压力的提示性证据，非外压 purge 的证明；应用自身引发的增长"
              "计入资源问题调查，不得豁免。阈值先于测量登记，不得看结果后放宽。"),
@@ -245,48 +249,86 @@ def load_points(paths):
 REQUIRED_FIELDS = (
     ("ts_epoch", lambda p: p.get("ts_epoch")),
     ("pressure_level", lambda p: p.get("pressure_level")),
-    ("swap.used_mb", lambda p: (p.get("swap") or {}).get("used_mb")),
-    ("mb.occupied_by_compressor", lambda p: (p.get("mb") or {}).get("occupied_by_compressor")),
-    ("pages.purged", lambda p: (p.get("pages") or {}).get("purged")),
+    ("swap.used_mb", lambda p: sub(p, "swap", "used_mb")),
+    ("mb.occupied_by_compressor", lambda p: sub(p, "mb", "occupied_by_compressor")),
+    ("pages.purged", lambda p: sub(p, "pages", "purged")),
 )
 
 
+def num(v):
+    """数值判定：bool 不算数（Python 里 True 是 int 子类，混进来会让阈值判定失真）。"""
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def sub(p, sec, key):
+    """取嵌套字段；该节不是 dict（含字符串等畸形值）一律当缺失，不抛 AttributeError。"""
+    s = p.get(sec)
+    return s.get(key) if isinstance(s, dict) else None
+
+
 def evaluate(pts, memsample_paths, interval, points_per_phase, single_point_phases=("P0",),
-             baseline_phase="P0"):
+             baseline_phase="P0", expected_phases=None):
     """按预登记判据裁决。返回 (invalid, checks)。纯数据，可单测。
 
     跨进程排序/缺口一律用 ts_epoch（ts_mono 仅在同一采集进程内自洽，多个文件
-    拼接后不可比——故只作留档，不参与判据）。缺字段/缺文件不放过，一律判失效。"""
+    拼接后不可比——故只作留档，不参与判据）。**缺字段、类型非法、缺相位、缺文件
+    一律判失效**，不放过——fail-closed 是本判据集的立册方向。"""
     checks = []
 
     def add(cid, name, ok, detail):
         # ok=True 表示「判据未触发」（健康）；ok=False 表示触发失效
         checks.append({"id": cid, "name": name, "triggered": not ok, "detail": detail})
 
+    if expected_phases is None:
+        expected_phases = PROTOCOL["expected_phases"]
+
     if not pts:
         add("I5", "sampling gap", False, "无任何点")
         add("I8", "data completeness", False, "无任何点")
         return True, checks
 
+    # 点位必须是 JSON 对象：非对象无法安全取字段，直接判失效并停在此处（不冒险继续）
+    nonobj = [i for i, p in enumerate(pts) if not isinstance(p, dict)]
+    if nonobj:
+        add("I8", "data completeness", False,
+            f"点位不是 JSON 对象（索引 {nonobj[:8]}{'…' if len(nonobj) > 8 else ''}）")
+        return True, checks
+
     # I6 时序：必须在排序**之前**判——排序会把乱序洗成单调，等于放过。
-    raw_epoch = [p.get("ts_epoch") for p in pts]
+    raw_epoch = [num(p.get("ts_epoch")) for p in pts]
     inc = (all(e is not None for e in raw_epoch)
            and all(b > a for a, b in zip(raw_epoch, raw_epoch[1:])))
     add("I6", "monotonic time", inc, f"原始输入顺序 ts_epoch 严格递增={inc}")
 
-    pts = sorted(pts, key=lambda p: (p.get("ts_epoch") is None, p.get("ts_epoch") or 0))
+    pts = sorted(pts, key=lambda p: (num(p.get("ts_epoch")) is None,
+                                     num(p.get("ts_epoch")) or 0))
 
-    # I8 数据完整性：必需字段齐全 + 基线相位在场
-    missing = [f"#{i}({p.get('phase')}).{name}"
-               for i, p in enumerate(pts) for name, get in REQUIRED_FIELDS if get(p) is None]
-    if not any(p.get("phase") == baseline_phase for p in pts):
-        missing.append(f"缺相位 {baseline_phase}（压力基线）")
-    add("I8", "data completeness", not missing,
-        "必需字段齐全且基线相位在场" if not missing
-        else "缺失：" + ", ".join(missing[:8]) + ("…" if len(missing) > 8 else ""))
+    # I8 数据完整性：必需字段齐全且类型正确 + phase 标签合法 + 期望相位集完备。
+    # 缺**整段相位**（如漏采 load/E）不得判「可判」——这正是「缺数据不放过」的延伸。
+    missing, badtype = [], []
+    for i, p in enumerate(pts):
+        if not isinstance(p.get("phase"), str) or not p.get("phase"):
+            badtype.append(f"#{i}.phase={p.get('phase')!r}")
+        for name, get in REQUIRED_FIELDS:
+            raw = get(p)
+            if raw is None:
+                missing.append(f"#{i}({p.get('phase')}).{name}")
+            elif num(raw) is None:
+                badtype.append(f"#{i}({p.get('phase')}).{name}={raw!r}")
+    present = {p.get("phase") for p in pts}
+    absent = [ph for ph in expected_phases if ph not in present]
+    problems = []
+    if missing:
+        problems.append("字段缺失：" + ", ".join(missing[:6]) + ("…" if len(missing) > 6 else ""))
+    if badtype:
+        problems.append("类型/取值非法：" + ", ".join(badtype[:6]) + ("…" if len(badtype) > 6 else ""))
+    if absent:
+        problems.append("相位缺失：" + ", ".join(absent))
+    add("I8", "data completeness", not problems,
+        "必需字段齐全且类型正确、相位集完备" if not problems else "；".join(problems))
 
-    levels = [p.get("pressure_level") for p in pts]
-    worst = max([l for l in levels if l is not None], default=None)
+    levels = [l for l in (num(p.get("pressure_level")) for p in pts) if l is not None]
+    worst = max(levels, default=None)
     add("I1", "pressure critical", worst is not None and worst < 4,
         f"max pressure_level={worst}")
 
@@ -294,13 +336,13 @@ def evaluate(pts, memsample_paths, interval, points_per_phase, single_point_phas
 
     def growth_check(cid, name, get, limit, unit):
         """逐相位相对基线的**最大**增量。任一相位超阈值即失效——相位末回落不豁免。"""
-        b = get(base)
+        b = num(get(base))
         if b is None:
-            add(cid, name, False, f"基线相位 {baseline_phase} 缺该字段——无法评估")
+            add(cid, name, False, f"基线相位 {baseline_phase} 缺该字段或类型非法——无法评估")
             return
         per_phase = {}
         for p in pts:
-            v = get(p)
+            v = num(get(p))
             if v is not None:
                 per_phase.setdefault(p.get("phase"), []).append(v)
         if not per_phase:
@@ -312,17 +354,17 @@ def evaluate(pts, memsample_paths, interval, points_per_phase, single_point_phas
             f"各相位相对 {baseline_phase} 基线最大增量 Δ={d} {unit} @相位 {ph}（阈值 {limit}）")
 
     growth_check("I2", "swap growth",
-                 lambda p: (p.get("swap") or {}).get("used_mb"), 256, "MB")
+                 lambda p: sub(p, "swap", "used_mb"), 256, "MB")
     growth_check("I3", "compressor growth",
-                 lambda p: (p.get("mb") or {}).get("occupied_by_compressor"), 512, "MB")
+                 lambda p: sub(p, "mb", "occupied_by_compressor"), 512, "MB")
     growth_check("I4", "pages purged growth",
-                 lambda p: (p.get("pages") or {}).get("purged"), 20000, "页")
+                 lambda p: sub(p, "pages", "purged"), 20000, "页")
 
     # 缺口只在**相位内**判：相位之间有协议性的静置间隔（如 B/E 前静置 60s），
     # 跨相位差值不是采样失败。
     by_phase = {}
     for p in pts:  # pts 已按 ts_epoch 排序
-        by_phase.setdefault(p.get("phase"), []).append(p.get("ts_epoch"))
+        by_phase.setdefault(p.get("phase"), []).append(num(p.get("ts_epoch")))
     gaps = []
     for e_ph in by_phase.values():
         gaps += [round(b - a, 3) for a, b in zip(e_ph, e_ph[1:])
@@ -337,7 +379,11 @@ def evaluate(pts, memsample_paths, interval, points_per_phase, single_point_phas
         f"相位内 max gap={max_gap}s (阈值 {2 * interval}s), 点数={len(pts)}, "
         f"相位点数={counts}, 不足相位={short or '无'}")
 
-    if memsample_paths:
+    # I7 归属：**未喂入 memsample 输出即判不可判**——与 I8 同原则，缺数据不得放过。
+    if not memsample_paths:
+        add("I7", "attribution void", False,
+            "未喂入 memsample 输出（--memsample）——归属不可判")
+    else:
         voided = []
         for path in memsample_paths:
             doc = read_doc(path)
