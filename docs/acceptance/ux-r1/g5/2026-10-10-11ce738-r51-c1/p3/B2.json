@@ -1,0 +1,224 @@
+{
+ "bin": "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app",
+ "bin_sha256": "2a496c52905384b544cda0d2d7ff3df41aa2547df616ce9b4adf635d9c0a619c",
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 57719,
+   "total_ms": 271,
+   "sid": "s-f732416a-8fcf-4145-9281-2da8189ea26c",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-f732416a-8fcf-4145-9281-2da8189ea26c"
+  },
+  {
+   "idx": 2,
+   "pid": 57724,
+   "total_ms": 282,
+   "sid": "s-7d57fb7c-bda5-4b09-a839-392c04b6386d",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-7d57fb7c-bda5-4b09-a839-392c04b6386d"
+  },
+  {
+   "idx": 3,
+   "pid": 57730,
+   "total_ms": 276,
+   "sid": "s-018149b0-88ad-4c3b-bc70-1f430b328baa",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-018149b0-88ad-4c3b-bc70-1f430b328baa"
+  },
+  {
+   "idx": 4,
+   "pid": 57734,
+   "total_ms": 279,
+   "sid": "s-8f99c0dc-6901-413d-af60-fc67ffdfc340",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-8f99c0dc-6901-413d-af60-fc67ffdfc340"
+  },
+  {
+   "idx": 5,
+   "pid": 57738,
+   "total_ms": 271,
+   "sid": "s-cd6e08a6-596c-488b-8975-355fe1de531b",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-cd6e08a6-596c-488b-8975-355fe1de531b"
+  },
+  {
+   "idx": 6,
+   "pid": 57742,
+   "total_ms": 276,
+   "sid": "s-6a04c809-aad7-442d-bb29-087b4808ac27",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-6a04c809-aad7-442d-bb29-087b4808ac27"
+  },
+  {
+   "idx": 7,
+   "pid": 57746,
+   "total_ms": 290,
+   "sid": "s-c866534d-da47-44a1-a021-d8114c4505d5",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-c866534d-da47-44a1-a021-d8114c4505d5"
+  },
+  {
+   "idx": 8,
+   "pid": 57750,
+   "total_ms": 299,
+   "sid": "s-7a4b0853-3d90-47dc-997e-14dc58699f91",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-7a4b0853-3d90-47dc-997e-14dc58699f91"
+  },
+  {
+   "idx": 9,
+   "pid": 57756,
+   "total_ms": 283,
+   "sid": "s-3428cd3b-6fb8-4fde-868d-4134b97f5742",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-3428cd3b-6fb8-4fde-868d-4134b97f5742"
+  },
+  {
+   "idx": 10,
+   "pid": 57760,
+   "total_ms": 303,
+   "sid": "s-531c2a35-3ea2-4e6b-8d7c-301f8d289628",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-531c2a35-3ea2-4e6b-8d7c-301f8d289628"
+  },
+  {
+   "idx": 11,
+   "pid": 57764,
+   "total_ms": 290,
+   "sid": "s-b7c76920-a75b-4928-a2d1-66417dff0101",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-b7c76920-a75b-4928-a2d1-66417dff0101"
+  },
+  {
+   "idx": 12,
+   "pid": 57769,
+   "total_ms": 292,
+   "sid": "s-fee2aef6-27ef-4fc4-8eea-0120760de4ad",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-fee2aef6-27ef-4fc4-8eea-0120760de4ad"
+  },
+  {
+   "idx": 13,
+   "pid": 57773,
+   "total_ms": 304,
+   "sid": "s-8105ea2f-70e5-4945-a463-6118f4a91937",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-8105ea2f-70e5-4945-a463-6118f4a91937"
+  },
+  {
+   "idx": 14,
+   "pid": 57777,
+   "total_ms": 287,
+   "sid": "s-ce5bdbb1-1e67-469d-8d34-5a4c2a10dba5",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-ce5bdbb1-1e67-469d-8d34-5a4c2a10dba5"
+  },
+  {
+   "idx": 15,
+   "pid": 57781,
+   "total_ms": 276,
+   "sid": "s-174b2bb4-22e9-48d6-9f83-6fff3af8fd18",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-174b2bb4-22e9-48d6-9f83-6fff3af8fd18"
+  },
+  {
+   "idx": 16,
+   "pid": 57785,
+   "total_ms": 288,
+   "sid": "s-7d5d22a9-99a2-43ca-a551-3399141c975b",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-7d5d22a9-99a2-43ca-a551-3399141c975b"
+  },
+  {
+   "idx": 17,
+   "pid": 57789,
+   "total_ms": 298,
+   "sid": "s-7342141a-b035-48e4-a24f-6f04ad60028c",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-7342141a-b035-48e4-a24f-6f04ad60028c"
+  },
+  {
+   "idx": 18,
+   "pid": 57794,
+   "total_ms": 282,
+   "sid": "s-8425cb34-e5d6-4021-91db-3e25941acdcf",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-8425cb34-e5d6-4021-91db-3e25941acdcf"
+  },
+  {
+   "idx": 19,
+   "pid": 57799,
+   "total_ms": 281,
+   "sid": "s-2ddd2ac7-a930-4dee-93d0-7fd4650124f7",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-2ddd2ac7-a930-4dee-93d0-7fd4650124f7"
+  },
+  {
+   "idx": 20,
+   "pid": 57803,
+   "total_ms": 280,
+   "sid": "s-dc29baac-83a8-4106-aa8f-5e67dd6cca02",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-dc29baac-83a8-4106-aa8f-5e67dd6cca02"
+  },
+  {
+   "idx": 21,
+   "pid": 57807,
+   "total_ms": 289,
+   "sid": "s-75682877-cb3e-4457-b59d-4d1c788bb604",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-75682877-cb3e-4457-b59d-4d1c788bb604"
+  },
+  {
+   "idx": 22,
+   "pid": 57811,
+   "total_ms": 278,
+   "sid": "s-cdd01e15-37b0-4fae-9be7-50350253cddb",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-cdd01e15-37b0-4fae-9be7-50350253cddb"
+  },
+  {
+   "idx": 23,
+   "pid": 57815,
+   "total_ms": 291,
+   "sid": "s-92c62351-ce61-4df6-b226-5f7698bd36ae",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-92c62351-ce61-4df6-b226-5f7698bd36ae"
+  },
+  {
+   "idx": 24,
+   "pid": 57819,
+   "total_ms": 294,
+   "sid": "s-61239277-f61c-41d3-bc1e-ac21c11aa2cb",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-61239277-f61c-41d3-bc1e-ac21c11aa2cb"
+  },
+  {
+   "idx": 25,
+   "pid": 57824,
+   "total_ms": 276,
+   "sid": "s-323a5139-8ae6-431a-9537-dbc6d55e8cab",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-323a5139-8ae6-431a-9537-dbc6d55e8cab"
+  },
+  {
+   "idx": 26,
+   "pid": 57828,
+   "total_ms": 292,
+   "sid": "s-99ee2a8b-9586-4c06-9a9e-2c3a729e42cb",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-99ee2a8b-9586-4c06-9a9e-2c3a729e42cb"
+  },
+  {
+   "idx": 27,
+   "pid": 57832,
+   "total_ms": 286,
+   "sid": "s-05b0cef7-01cb-402e-9d19-fa94be5d3460",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-05b0cef7-01cb-402e-9d19-fa94be5d3460"
+  },
+  {
+   "idx": 28,
+   "pid": 57836,
+   "total_ms": 287,
+   "sid": "s-5473ae72-633f-4222-8a4d-6b1fc9e2e868",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-5473ae72-633f-4222-8a4d-6b1fc9e2e868"
+  },
+  {
+   "idx": 29,
+   "pid": 57842,
+   "total_ms": 284,
+   "sid": "s-807471ab-1e3e-4145-bf6b-91f699990c6c",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-807471ab-1e3e-4145-bf6b-91f699990c6c"
+  },
+  {
+   "idx": 30,
+   "pid": 57846,
+   "total_ms": 269,
+   "sid": "s-e04472a9-b8e8-42b0-9eda-10e8bde5c448",
+   "matched_line": "[app] autoconnect h-8086aab7-2b7f-4eb0-9c74-0b85ccb0b64a -> s-e04472a9-b8e8-42b0-9eda-10e8bde5c448"
+  }
+ ],
+ "total": {
+  "n": 30,
+  "median_ms": 285,
+  "p95_ms": 301,
+  "min_ms": 269,
+  "max_ms": 304
+ },
+ "protocol": "spawn -> stderr [app] autoconnect line; pre-trusted key host 127.0.0.1:2222; in-app phases not decomposable in unmodified baseline (registered)"
+}

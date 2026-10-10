@@ -1,0 +1,60 @@
+# R50 / E06 证据身份
+
+HEAD              11ce7389a26f96c22a8844bfad0b6090fe572a94
+日期              2026-10-10
+运行序号          attempts=1（归档目录在正式跑前已清空，含 .run-attempts sidecar；
+                  故 attempts=1 即自证目录内全部产物来自同一次运行）
+运行窗口          2026-10-10T08:58:28.407Z → 2026-10-10T08:59:00.364Z
+
+## 产物 sha256（前 16）
+
+probe-e06-collab-narrow.cjs  adb0d16e5848e5a4
+README.md                    e6ade55f7eb7e885（**已变更**：§2 焦点门四 conjunct + window blur 通道、
+                             §3.2 分屏算术闭合、§3.4 措辞、§5.7 注入边界 5 处、§4 视觉复验，2026-10-10）
+e06-raw.json                 540b6778b8fb2be6
+e06-stdout.txt               7d53f596453f87bc
+e06-err.txt                  e3b0c44298fc1c14（0 字节 = 无页面异常）
+screenshots/                 7 张：narrow-approval / split-two-panes / split-collab-tpfull /
+                             split-restored / notify-toast / background / foregroundControl
+
+## 探针自钉
+
+e06-raw.json.run.probeSha256 = adb0d16e5848e5a43a27e9d1bbd0a47811a6041b5bfdfd09d2d77f2f4bbdaf00
+（= probe-e06-collab-narrow.cjs 的 sha256 全值；读数与探针版本绑定）
+
+## 运行环境
+
+被测对象    ui/src/App.tsx、ui/src/styles.css、ui/src/demo.ts @ HEAD 11ce7389a26f96c22a8844bfad0b6090fe572a94
+浏览器      headless Chromium（ms-playwright chromium-1243，playwright-core 装在 ui/node_modules），
+            locale zh-CN；视口 640×800（A 节）与 1440×900（B/C/D 节）
+页面来源    http://localhost:5183/（vite dev server）
+夹具        **零播种**：demo 内置主机（本机 / prod-1）与 demo 种子的 2 条待审批
+
+## 本档引用的源码位置
+
+ui/src/App.tsx:1175         el.className = "term-session"（xterm 宿主元素；active/pane-* 由 1832 起命令式增删）
+ui/src/App.tsx:1695         if (splitPanes) { setTpFull(true); return; }（双分屏 ⇒ 面板一律完整视图）
+ui/src/App.tsx:3004-3005    注释：只查 document.hidden 挡不住窗口级失焦（r23a 原生实证）
+ui/src/App.tsx:3006-3007    gatesBusy = 他主机指纹/认证门挂起（**本档未行使**，见 README §5.3）
+ui/src/App.tsx:3008         前台判定：focusGenRef===gen0 && !document.hidden && document.hasFocus() && !gatesBusy
+ui/src/App.tsx:3009-3010    前台分支：attachSession + pushToast("已连接 X")
+ui/src/App.tsx:3011-3013    后台分支：只更新标签态 + pushToast("已连接 X——点击标签进入")
+ui/src/App.tsx:3894         data-testid="tools-collab"（协作面板入口）
+ui/src/App.tsx:4639         tp-full 提示「空间不足——完整视图，终端仍在运行」
+ui/src/App.tsx:5317         toast aria-live：err=assertive，其余=polite
+ui/src/styles.css:205       .task-panel.tp-full { position:absolute; inset:0; ... z-index:40 }
+ui/src/demo.ts              内置主机与种子待审批（夹具来源）
+
+## 本档使用的非「纯真实操作」手段（逐条声明，见 README §2/§5.7）
+
+1. D 节：CDP `Emulation.setFocusEmulationEnabled({enabled:false})` + 第二页 ⇒ document.hasFocus() 变 false。
+   **仅覆盖该读数**，非真实 OS 失焦。
+2. D 节：连接动作用 page.evaluate 对真实连接按钮派发 click()（避免指针事件把页面重新置前）；
+   由 D2 前台对照臂证明差异来自焦点而非该写法。
+3. B/C 节：另有 3 处 evaluate 派发 click（探针 163/186/218 行；分屏菜单项、关面板、右侧新建会话），
+   经独立复核者用真实指针复测结果完全相同（同 toast、同 panes）⇒ 偏差无害。
+
+## 探索性实验（不进本包，仅供复算 D 节配方）
+
+/tmp/e06exp/exp2,4,5,6,7,8,9.cjs —— 焦点配方对照实验，见 README §2 配方表。
+（/tmp 下，非归档产物，重启即失。）

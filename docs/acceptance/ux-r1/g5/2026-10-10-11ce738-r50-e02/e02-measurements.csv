@@ -1,0 +1,701 @@
+appearance,bucket,sel,text,fg,bg,ratio,threshold,large,fontSize,fontWeight,alpha,pass
+深色,welcome,app-title,TinySSH,#d4dbe6,#141922,12.65,4.5,false,13px,700,,true
+深色,welcome,collab-badge hot,协作,#2a2410,#d0b07a,7.49,4.5,false,11px,600,,true
+深色,welcome,collab-badge hot,· 2 待审批,#2a2410,#d0b07a,7.49,4.5,false,11px,600,,true
+深色,welcome,H4,全部主机,#9aaab8,#141922,7.4,4.5,false,10px,600,,true
+深色,welcome,host-name,本机,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,welcome,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,welcome,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,local,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,0,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-name,noint-1（无集成）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,welcome,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,welcome,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,noint.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-name,otp-1（演示 2FA）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,welcome,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,welcome,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,otp.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-name,otp-2（演示 2FA 隐）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,welcome,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,welcome,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,otp2.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,auth-tag live-tag on,●,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,welcome,auth-tag live-tag on,1,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,welcome,host-name,prod-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,welcome,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,welcome,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,10.0.0.11,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-name,prod-2（演示连接失败）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,welcome,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,welcome,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,10.0.0.12,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,auth-tag live-tag,●,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,welcome,auth-tag live-tag,1,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,welcome,host-name,staging-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,welcome,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,welcome,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,10.0.0.13,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,welcome,hb-settings,设置,#9aaab8,#141922,7.4,4.5,false,12px,600,,true
+深色,welcome,tab-label,prod-1,#9aaab8,#141922,7.4,4.5,false,12px,400,,true
+深色,welcome,tab-label,staging-1,#9aaab8,#141922,7.4,4.5,false,12px,400,,true
+深色,welcome,ghost tab-all,标签列表,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,welcome,welcome-title,TinySSH,#d4dbe6,#0c1017,13.68,3,true,19px,700,,true
+深色,welcome,welcome-sub,人机协同 SSH 工作台,#5d6f82,#0c1017,3.69,4.5,false,12px,500,,false
+深色,welcome,ws-k,连接,#3d9da8,#0c1017,5.98,4.5,false,10px,400,,true
+深色,welcome,DIV,主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接,#5d6f82,#0c1017,3.69,4.5,false,12px,400,,false
+深色,welcome,ws-k,操作,#3d9da8,#0c1017,5.98,4.5,false,10px,400,,true
+深色,welcome,DIV,点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全,#5d6f82,#0c1017,3.69,4.5,false,12px,400,,false
+深色,welcome,ws-k,多会话,#3d9da8,#0c1017,5.98,4.5,false,10px,400,,true
+深色,welcome,DIV,一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都,#5d6f82,#0c1017,3.69,4.5,false,12px,400,,false
+深色,welcome,ws-k,传输,#3d9da8,#0c1017,5.98,4.5,false,10px,400,,true
+深色,welcome,DIV,拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先,#5d6f82,#0c1017,3.69,4.5,false,12px,400,,false
+深色,welcome,BUTTON,添加主机,#0b1516,#3d9da8,5.81,4.5,false,12px,600,,true
+深色,welcome,ghost,导入 ~/.ssh/config,#3d9da8,#0c1017,5.98,4.5,false,12px,600,,true
+深色,welcome,ghost,打开本地终端,#3d9da8,#0c1017,5.98,4.5,false,12px,600,,true
+深色,welcome,dim welcome-note,已有 2 个会话未接入终端——点击上方标签或「标签列表」继续。,#5d6f82,#0c1017,3.69,4.5,false,11px,400,,false
+深色,welcome,mono sb-left,未连接,#5d6f82,#141922,3.41,4.5,false,11px,400,,false
+深色,welcome,sb-btn,转发,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,welcome,B,0,#d4dbe6,#141922,12.65,4.5,false,11px,600,,true
+深色,welcome,sb-btn,传输,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,welcome,B,0,#d4dbe6,#141922,12.65,4.5,false,11px,600,,true
+深色,welcome,sb-btn,⌄,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,page,app-title,TinySSH,#d4dbe6,#141922,12.65,4.5,false,13px,700,,true
+深色,page,collab-badge hot,协作,#2a2410,#d0b07a,7.49,4.5,false,11px,600,,true
+深色,page,collab-badge hot,· 2 待审批,#2a2410,#d0b07a,7.49,4.5,false,11px,600,,true
+深色,page,ctl-badge human,我控制中,#3d9da8,#18262f,4.85,4.5,false,11px,400,,true
+深色,page,H4,全部主机,#9aaab8,#141922,7.4,4.5,false,10px,600,,true
+深色,page,host-name,本机,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,page,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,page,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,local,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,0,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-name,noint-1（无集成）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,page,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,page,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,noint.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-name,otp-1（演示 2FA）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,page,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,page,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,otp.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-name,otp-2（演示 2FA 隐）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,page,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,page,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,otp2.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,auth-tag live-tag on,●,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,page,auth-tag live-tag on,2,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,page,host-name,prod-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,page,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,page,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,10.0.0.11,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-name,prod-2（演示连接失败）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,page,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,page,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,10.0.0.12,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,auth-tag live-tag,●,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,page,auth-tag live-tag,1,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,page,host-name,staging-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,page,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,page,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,10.0.0.13,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,page,hb-settings,设置,#9aaab8,#141922,7.4,4.5,false,12px,600,,true
+深色,page,tab-label,prod-1,#9aaab8,#141922,7.4,4.5,false,12px,400,,true
+深色,page,tab-label,staging-1,#9aaab8,#141922,7.4,4.5,false,12px,400,,true
+深色,page,tab-label,prod-1,#d4dbe6,#1c2433,11.17,4.5,false,12px,400,,true
+深色,page,ghost tab-all,标签列表,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,page,st-title mono,prod-1,#d4dbe6,#141922,12.65,4.5,false,12px,400,,true
+深色,page,mono st-state ok,已连接,#7fbf8f,#141922,8.18,4.5,false,11px,400,,true
+深色,page,ghost,交给 Agent…,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,page,ghost st-collab,协作,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,page,st-file,文件,#0b1516,#3d9da8,5.81,4.5,false,12px,600,,true
+深色,page,ghost,工具,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,page,ghost,中断,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,page,mono sb-left,SSH · UTF-8,#5d6f82,#141922,3.41,4.5,false,11px,400,,false
+深色,page,sb-btn,转发,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,page,B,0,#d4dbe6,#141922,12.65,4.5,false,11px,600,,true
+深色,page,sb-btn,传输,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,page,B,0,#d4dbe6,#141922,12.65,4.5,false,11px,600,,true
+深色,page,sb-btn,⌄,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,ph-page,INPUT,搜索主机,#9aaab8,#0c1017,8,4.5,false,12px,400,1,true
+深色,ph-page,INPUT,在 prod-1 上执行命令——回车执行，Ctrl+C 中断终端,#9aaab8,#1c2433,6.53,4.5,false,12px,400,1,true
+深色,hover,H4,全部主机,#9aaab8,#141922,7.4,4.5,false,10px,600,,true
+深色,hover,host-name,本机,#d4dbe6,#232d3d,9.96,4.5,false,13.5px,600,,true
+深色,hover,auth-tag,密码,#5d6f82,#232d3d,2.68,4.5,false,10px,400,,false
+深色,hover,host-addr mono,ops,#9aaab8,#232d3d,5.82,4.5,false,11px,400,,true
+深色,hover,host-addr mono,@,#9aaab8,#232d3d,5.82,4.5,false,11px,400,,true
+深色,hover,host-addr mono,local,#9aaab8,#232d3d,5.82,4.5,false,11px,400,,true
+深色,hover,host-addr mono,:,#9aaab8,#232d3d,5.82,4.5,false,11px,400,,true
+深色,hover,host-addr mono,0,#9aaab8,#232d3d,5.82,4.5,false,11px,400,,true
+深色,hover,host-connect-btn,连接,#3d9da8,#263848,3.78,4.5,false,11px,500,,false
+深色,hover,host-name,noint-1（无集成）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,hover,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,hover,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,noint.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-name,otp-1（演示 2FA）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,hover,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,hover,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,otp.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-name,otp-2（演示 2FA 隐）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,hover,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,hover,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,otp2.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,auth-tag live-tag on,●,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,hover,auth-tag live-tag on,2,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,hover,host-name,prod-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,hover,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,hover,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,10.0.0.11,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-name,prod-2（演示连接失败）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,hover,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,hover,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,10.0.0.12,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,auth-tag live-tag,●,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,hover,auth-tag live-tag,1,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,hover,host-name,staging-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,hover,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,hover,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,10.0.0.13,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,hover,hb-settings,设置,#9aaab8,#141922,7.4,4.5,false,12px,600,,true
+深色,settings,B,设置,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,700,,true
+深色,settings,on,外观,#d4dbe6,#1f303f,9.71,4.5,false,12px,600,,true
+深色,settings,BUTTON,终端,#9aaab8,#1c2433,6.53,4.5,false,12px,600,,true
+深色,settings,BUTTON,凭据,#9aaab8,#1c2433,6.53,4.5,false,12px,600,,true
+深色,settings,BUTTON,Agent 接入,#9aaab8,#1c2433,6.53,4.5,false,12px,600,,true
+深色,settings,BUTTON,关于,#9aaab8,#1c2433,6.53,4.5,false,12px,600,,true
+深色,settings,ts-label,字号,#5d6f82,#1c2433,3.01,4.5,false,11px,400,,false
+深色,settings,ts-val mono,14,#d4dbe6,#1c2433,11.17,4.5,false,14px,400,,true
+深色,settings,ghost,重置,#3d9da8,#1c2433,4.88,4.5,false,12px,600,,true
+深色,settings,ts-label,外观（应用）,#5d6f82,#1c2433,3.01,4.5,false,11px,400,,false
+深色,settings,ghost,跟随系统,#3d9da8,#1c2433,4.88,4.5,false,12px,600,,true
+深色,settings,ghost ts-active,深色,#3d9da8,#1f303f,4.24,4.5,false,12px,600,,false
+深色,settings,ghost,浅色,#3d9da8,#1c2433,4.88,4.5,false,12px,600,,true
+深色,settings,ts-label,终端配色,#5d6f82,#1c2433,3.01,4.5,false,11px,400,,false
+深色,settings,ts-swatch,Aa,#d7dee8,#10141a,13.64,4.5,false,10px,600,,true
+深色,settings,ghost ts-opt,深色（默认）,#3d9da8,#1f303f,4.24,4.5,false,11px,600,,false
+深色,settings,ts-swatch,Aa,#2a3138,#f7f7f2,12.25,4.5,false,10px,600,,true
+深色,settings,ghost ts-opt,浅色,#3d9da8,#1c2433,4.88,4.5,false,11px,600,,true
+深色,settings,ts-swatch,Aa,#93a1a1,#002b36,5.61,4.5,false,10px,600,,true
+深色,settings,ghost ts-opt,Solarized 深色,#3d9da8,#1c2433,4.88,4.5,false,11px,600,,true
+深色,settings,ts-swatch,Aa,#657b83,#fdf6e3,4.13,4.5,false,10px,600,,false
+深色,settings,ghost ts-opt ts-active,Solarized 浅色,#3d9da8,#1f303f,4.24,4.5,false,11px,600,,false
+深色,settings,dim,应用外观与终端配色相互独立；「跟随系统」随系统深浅实时切换。,#5d6f82,#1c2433,3.01,4.5,false,11px,400,,false
+深色,settings,dim,字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置,#5d6f82,#1c2433,3.01,4.5,false,11px,400,,false
+深色,addhost,LABEL,名称,#9aaab8,#1c2433,6.53,4.5,false,10px,400,,true
+深色,addhost,LABEL,地址（IP 或域名）,#9aaab8,#1c2433,6.53,4.5,false,10px,400,,true
+深色,addhost,LABEL,端口,#9aaab8,#1c2433,6.53,4.5,false,10px,400,,true
+深色,addhost,LABEL,用户名,#9aaab8,#1c2433,6.53,4.5,false,10px,400,,true
+深色,addhost,LABEL,认证方式,#9aaab8,#1c2433,6.53,4.5,false,10px,400,,true
+深色,addhost,LABEL,远端编码（老设备中文乱码时选 GBK）,#9aaab8,#1c2433,6.53,4.5,false,10px,400,,true
+深色,addhost,LABEL,"标签（可选，逗号分隔，如：生产, 成都）",#9aaab8,#1c2433,6.53,4.5,false,10px,400,,true
+深色,addhost,BUTTON,保存并连接,#0b1516,#3d9da8,5.81,4.5,false,12px,600,,true
+深色,addhost,ghost,仅保存,#3d9da8,#1c2433,4.88,4.5,false,12px,600,,true
+深色,addhost,dim,凭据加密存入本机凭据库，不会明文落盘。,#5d6f82,#1c2433,3.01,4.5,false,13.5px,400,,false
+深色,ph-addhost,INPUT,例：我的服务器,#9aaab8,#1c2433,6.53,4.5,false,12px,400,1,true
+深色,ph-addhost,INPUT,例：192.168.1.10 或 server.example.,#9aaab8,#1c2433,6.53,4.5,false,12px,400,1,true
+深色,ph-addhost,INPUT,例：ops 或 root,#9aaab8,#1c2433,6.53,4.5,false,12px,400,1,true
+深色,ph-addhost,INPUT,"例：生产, 数据库",#9aaab8,#1c2433,6.53,4.5,false,12px,400,1,true
+深色,ph-addhost,INPUT,密码,#9aaab8,#1c2433,6.53,4.5,false,12px,400,1,true
+深色,hostkey,hk-title,首次连接确认,#d4dbe6,#1c2433,11.17,4.5,false,14px,700,,true
+深色,hostkey,DIV,首次连接主机,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,400,,true
+深色,hostkey,B,prod-2（演示连接失败）,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,700,,true
+深色,hostkey,DIV,（,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,400,,true
+深色,hostkey,DIV,10.0.0.12,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,400,,true
+深色,hostkey,DIV,:,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,400,,true
+深色,hostkey,DIV,22,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,400,,true
+深色,hostkey,DIV,）。 请核对服务器指纹（可向管理员确认）后决定是否信任：,#d4dbe6,#1c2433,11.17,4.5,false,13.5px,400,,true
+深色,hostkey,hk-fp mono,SHA256:DemoFingerprint-prod-2（演示,#d4dbe6,#141922,12.65,4.5,false,11px,400,,true
+深色,hostkey,BUTTON,信任并连接,#0b1516,#3d9da8,5.81,4.5,false,12px,600,,true
+深色,hostkey,ghost,取消,#3d9da8,#1c2433,4.88,4.5,false,12px,600,,true
+深色,banner,B,✕,#d07a7a,#241d23,5.29,4.5,false,13.5px,700,,true
+深色,banner,B,连接 prod-2（演示连接失败）（ops@10.0.0.12:,#d07a7a,#241d23,5.29,4.5,false,13.5px,700,,true
+深色,banner,dim,认证失败：用户名或密码/密钥不正确——也可在主机卡上看到失败提示,#5d6f82,#241d23,3.19,4.5,false,13.5px,400,,false
+深色,banner,ghost,关闭,#3d9da8,#241d23,5.17,4.5,false,12px,600,,true
+深色,afterAll,app-title,TinySSH,#d4dbe6,#141922,12.65,4.5,false,13px,700,,true
+深色,afterAll,collab-badge hot,协作,#2a2410,#d0b07a,7.49,4.5,false,11px,600,,true
+深色,afterAll,collab-badge hot,· 2 待审批,#2a2410,#d0b07a,7.49,4.5,false,11px,600,,true
+深色,afterAll,ctl-badge human,我控制中,#3d9da8,#18262f,4.85,4.5,false,11px,400,,true
+深色,afterAll,H4,全部主机,#9aaab8,#141922,7.4,4.5,false,10px,600,,true
+深色,afterAll,host-name,本机,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,afterAll,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,afterAll,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,local,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,0,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-name,noint-1（无集成）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,afterAll,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,afterAll,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,noint.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-name,otp-1（演示 2FA）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,afterAll,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,afterAll,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,otp.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-name,otp-2（演示 2FA 隐）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,afterAll,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,afterAll,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,otp2.demo,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,auth-tag live-tag on,●,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,afterAll,auth-tag live-tag on,2,#7fbf8f,#141922,8.18,4.5,false,10px,400,,true
+深色,afterAll,host-name,prod-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,afterAll,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,afterAll,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,10.0.0.11,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-name,prod-2（演示连接失败）,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,afterAll,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,afterAll,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,10.0.0.12,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,err host-fail,✕ 上次连接失败——检查地址与凭据后重试,#d07a7a,#141922,5.66,4.5,false,11px,400,,true
+深色,afterAll,auth-tag live-tag,●,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,afterAll,auth-tag live-tag,1,#9aaab8,#141922,7.4,4.5,false,10px,400,,true
+深色,afterAll,host-name,staging-1,#d4dbe6,#141922,12.65,4.5,false,13.5px,600,,true
+深色,afterAll,auth-tag,密码,#5d6f82,#141922,3.41,4.5,false,10px,400,,false
+深色,afterAll,host-addr mono,ops,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,@,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,10.0.0.13,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,:,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,host-addr mono,22,#9aaab8,#141922,7.4,4.5,false,11px,400,,true
+深色,afterAll,hb-settings,设置,#9aaab8,#141922,7.4,4.5,false,12px,600,,true
+深色,afterAll,tab-label,prod-1,#9aaab8,#141922,7.4,4.5,false,12px,400,,true
+深色,afterAll,tab-label,staging-1,#9aaab8,#141922,7.4,4.5,false,12px,400,,true
+深色,afterAll,tab-label,prod-1,#d4dbe6,#1c2433,11.17,4.5,false,12px,400,,true
+深色,afterAll,ghost tab-all,标签列表,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,afterAll,B,✕,#d07a7a,#241d23,5.29,4.5,false,13.5px,700,,true
+深色,afterAll,B,连接 prod-2（演示连接失败）（ops@10.0.0.12:,#d07a7a,#241d23,5.29,4.5,false,13.5px,700,,true
+深色,afterAll,dim,认证失败：用户名或密码/密钥不正确——也可在主机卡上看到失败提示,#5d6f82,#241d23,3.19,4.5,false,13.5px,400,,false
+深色,afterAll,ghost,关闭,#3d9da8,#241d23,5.17,4.5,false,12px,600,,true
+深色,afterAll,st-title mono,prod-1,#d4dbe6,#141922,12.65,4.5,false,12px,400,,true
+深色,afterAll,mono st-state ok,已连接,#7fbf8f,#141922,8.18,4.5,false,11px,400,,true
+深色,afterAll,ghost,交给 Agent…,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,afterAll,ghost st-collab,协作,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,afterAll,st-file,文件,#0b1516,#3d9da8,5.81,4.5,false,12px,600,,true
+深色,afterAll,ghost,工具,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,afterAll,ghost,中断,#3d9da8,#141922,5.53,4.5,false,12px,600,,true
+深色,afterAll,mono sb-left,SSH · UTF-8,#5d6f82,#141922,3.41,4.5,false,11px,400,,false
+深色,afterAll,sb-btn,转发,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,afterAll,B,0,#d4dbe6,#141922,12.65,4.5,false,11px,600,,true
+深色,afterAll,sb-btn,传输,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+深色,afterAll,B,0,#d4dbe6,#141922,12.65,4.5,false,11px,600,,true
+深色,afterAll,sb-btn,⌄,#9aaab8,#141922,7.4,4.5,false,11px,600,,true
+浅色,welcome,app-title,TinySSH,#242e38,#f4f6f8,12.73,4.5,false,13px,700,,true
+浅色,welcome,collab-badge hot,协作,#ffffff,#96700a,4.55,4.5,false,11px,600,,true
+浅色,welcome,collab-badge hot,· 2 待审批,#ffffff,#96700a,4.55,4.5,false,11px,600,,true
+浅色,welcome,H4,全部主机,#4d5b68,#f4f6f8,6.44,4.5,false,10px,600,,true
+浅色,welcome,host-name,本机,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,welcome,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,welcome,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,local,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,0,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-name,noint-1（无集成）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,welcome,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,welcome,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,noint.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-name,otp-1（演示 2FA）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,welcome,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,welcome,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,otp.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-name,otp-2（演示 2FA 隐）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,welcome,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,welcome,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,otp2.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,auth-tag live-tag on,●,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,welcome,auth-tag live-tag on,1,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,welcome,host-name,prod-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,welcome,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,welcome,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,10.0.0.11,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-name,prod-2（演示连接失败）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,welcome,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,welcome,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,10.0.0.12,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,auth-tag live-tag,●,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,welcome,auth-tag live-tag,1,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,welcome,host-name,staging-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,welcome,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,welcome,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,10.0.0.13,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,welcome,hb-settings,设置,#4d5b68,#f4f6f8,6.44,4.5,false,12px,600,,true
+浅色,welcome,tab-label,prod-1,#4d5b68,#f4f6f8,6.44,4.5,false,12px,400,,true
+浅色,welcome,tab-label,staging-1,#4d5b68,#f4f6f8,6.44,4.5,false,12px,400,,true
+浅色,welcome,ghost tab-all,标签列表,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,welcome,welcome-title,TinySSH,#242e38,#eaeef2,11.83,3,true,19px,700,,true
+浅色,welcome,welcome-sub,人机协同 SSH 工作台,#5c6875,#eaeef2,4.88,4.5,false,12px,500,,true
+浅色,welcome,ws-k,连接,#1f767c,#eaeef2,4.57,4.5,false,10px,400,,true
+浅色,welcome,DIV,主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接,#5c6875,#eaeef2,4.88,4.5,false,12px,400,,true
+浅色,welcome,ws-k,操作,#1f767c,#eaeef2,4.57,4.5,false,10px,400,,true
+浅色,welcome,DIV,点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全,#5c6875,#eaeef2,4.88,4.5,false,12px,400,,true
+浅色,welcome,ws-k,多会话,#1f767c,#eaeef2,4.57,4.5,false,10px,400,,true
+浅色,welcome,DIV,一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都,#5c6875,#eaeef2,4.88,4.5,false,12px,400,,true
+浅色,welcome,ws-k,传输,#1f767c,#eaeef2,4.57,4.5,false,10px,400,,true
+浅色,welcome,DIV,拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先,#5c6875,#eaeef2,4.88,4.5,false,12px,400,,true
+浅色,welcome,BUTTON,添加主机,#ffffff,#1f767c,5.33,4.5,false,12px,600,,true
+浅色,welcome,ghost,导入 ~/.ssh/config,#1f767c,#eaeef2,4.57,4.5,false,12px,600,,true
+浅色,welcome,ghost,打开本地终端,#1f767c,#eaeef2,4.57,4.5,false,12px,600,,true
+浅色,welcome,dim welcome-note,已有 2 个会话未接入终端——点击上方标签或「标签列表」继续。,#5c6875,#eaeef2,4.88,4.5,false,11px,400,,true
+浅色,welcome,mono sb-left,未连接,#5c6875,#f4f6f8,5.25,4.5,false,11px,400,,true
+浅色,welcome,sb-btn,转发,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,welcome,B,0,#242e38,#f4f6f8,12.73,4.5,false,11px,600,,true
+浅色,welcome,sb-btn,传输,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,welcome,B,0,#242e38,#f4f6f8,12.73,4.5,false,11px,600,,true
+浅色,welcome,sb-btn,⌄,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,page,app-title,TinySSH,#242e38,#f4f6f8,12.73,4.5,false,13px,700,,true
+浅色,page,collab-badge hot,协作,#ffffff,#96700a,4.55,4.5,false,11px,600,,true
+浅色,page,collab-badge hot,· 2 待审批,#ffffff,#96700a,4.55,4.5,false,11px,600,,true
+浅色,page,ctl-badge human,我控制中,#1f767c,#dfe9ec,4.32,4.5,false,11px,400,,false
+浅色,page,H4,全部主机,#4d5b68,#f4f6f8,6.44,4.5,false,10px,600,,true
+浅色,page,host-name,本机,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,page,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,page,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,local,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,0,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-name,noint-1（无集成）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,page,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,page,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,noint.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-name,otp-1（演示 2FA）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,page,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,page,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,otp.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-name,otp-2（演示 2FA 隐）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,page,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,page,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,otp2.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,auth-tag live-tag on,●,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,page,auth-tag live-tag on,2,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,page,host-name,prod-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,page,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,page,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,10.0.0.11,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-name,prod-2（演示连接失败）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,page,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,page,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,10.0.0.12,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,auth-tag live-tag,●,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,page,auth-tag live-tag,1,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,page,host-name,staging-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,page,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,page,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,10.0.0.13,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,page,hb-settings,设置,#4d5b68,#f4f6f8,6.44,4.5,false,12px,600,,true
+浅色,page,tab-label,prod-1,#4d5b68,#f4f6f8,6.44,4.5,false,12px,400,,true
+浅色,page,tab-label,staging-1,#4d5b68,#f4f6f8,6.44,4.5,false,12px,400,,true
+浅色,page,tab-label,prod-1,#242e38,#ffffff,13.79,4.5,false,12px,400,,true
+浅色,page,ghost tab-all,标签列表,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,page,st-title mono,prod-1,#242e38,#f4f6f8,12.73,4.5,false,12px,400,,true
+浅色,page,mono st-state ok,已连接,#2e7d32,#f4f6f8,4.73,4.5,false,11px,400,,true
+浅色,page,ghost,交给 Agent…,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,page,ghost st-collab,协作,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,page,st-file,文件,#ffffff,#1f767c,5.33,4.5,false,12px,600,,true
+浅色,page,ghost,工具,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,page,ghost,中断,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,page,mono sb-left,SSH · UTF-8,#5c6875,#f4f6f8,5.25,4.5,false,11px,400,,true
+浅色,page,sb-btn,转发,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,page,B,0,#242e38,#f4f6f8,12.73,4.5,false,11px,600,,true
+浅色,page,sb-btn,传输,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,page,B,0,#242e38,#f4f6f8,12.73,4.5,false,11px,600,,true
+浅色,page,sb-btn,⌄,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,ph-page,INPUT,搜索主机,#4d5b68,#eaeef2,5.98,4.5,false,12px,400,1,true
+浅色,ph-page,INPUT,在 prod-1 上执行命令——回车执行，Ctrl+C 中断终端,#4d5b68,#ffffff,6.97,4.5,false,12px,400,1,true
+浅色,hover,H4,全部主机,#4d5b68,#f4f6f8,6.44,4.5,false,10px,600,,true
+浅色,hover,host-name,本机,#242e38,#e8edf2,11.71,4.5,false,13.5px,600,,true
+浅色,hover,auth-tag,密码,#5c6875,#e8edf2,4.83,4.5,false,10px,400,,true
+浅色,hover,host-addr mono,ops,#4d5b68,#e8edf2,5.92,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,@,#4d5b68,#e8edf2,5.92,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,local,#4d5b68,#e8edf2,5.92,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,:,#4d5b68,#e8edf2,5.92,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,0,#4d5b68,#e8edf2,5.92,4.5,false,11px,400,,true
+浅色,hover,host-connect-btn,连接,#1f767c,#d4e1e6,3.99,4.5,false,11px,500,,false
+浅色,hover,host-name,noint-1（无集成）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,hover,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,hover,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,noint.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-name,otp-1（演示 2FA）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,hover,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,hover,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,otp.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-name,otp-2（演示 2FA 隐）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,hover,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,hover,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,otp2.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,auth-tag live-tag on,●,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,hover,auth-tag live-tag on,2,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,hover,host-name,prod-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,hover,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,hover,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,10.0.0.11,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-name,prod-2（演示连接失败）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,hover,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,hover,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,10.0.0.12,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,auth-tag live-tag,●,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,hover,auth-tag live-tag,1,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,hover,host-name,staging-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,hover,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,hover,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,10.0.0.13,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,hover,hb-settings,设置,#4d5b68,#f4f6f8,6.44,4.5,false,12px,600,,true
+浅色,settings,B,设置,#242e38,#ffffff,13.79,4.5,false,13.5px,700,,true
+浅色,settings,on,外观,#242e38,#e9f1f2,12.04,4.5,false,12px,600,,true
+浅色,settings,BUTTON,终端,#4d5b68,#ffffff,6.97,4.5,false,12px,600,,true
+浅色,settings,BUTTON,凭据,#4d5b68,#ffffff,6.97,4.5,false,12px,600,,true
+浅色,settings,BUTTON,Agent 接入,#4d5b68,#ffffff,6.97,4.5,false,12px,600,,true
+浅色,settings,BUTTON,关于,#4d5b68,#ffffff,6.97,4.5,false,12px,600,,true
+浅色,settings,ts-label,字号,#5c6875,#ffffff,5.69,4.5,false,11px,400,,true
+浅色,settings,ts-val mono,14,#242e38,#ffffff,13.79,4.5,false,14px,400,,true
+浅色,settings,ghost,重置,#1f767c,#ffffff,5.33,4.5,false,12px,600,,true
+浅色,settings,ts-label,外观（应用）,#5c6875,#ffffff,5.69,4.5,false,11px,400,,true
+浅色,settings,ghost,跟随系统,#1f767c,#ffffff,5.33,4.5,false,12px,600,,true
+浅色,settings,ghost,深色,#1f767c,#ffffff,5.33,4.5,false,12px,600,,true
+浅色,settings,ghost ts-active,浅色,#1f767c,#e9f1f2,4.65,4.5,false,12px,600,,true
+浅色,settings,ts-label,终端配色,#5c6875,#ffffff,5.69,4.5,false,11px,400,,true
+浅色,settings,ts-swatch,Aa,#d7dee8,#10141a,13.64,4.5,false,10px,600,,true
+浅色,settings,ghost ts-opt,深色（默认）,#1f767c,#e9f1f2,4.65,4.5,false,11px,600,,true
+浅色,settings,ts-swatch,Aa,#2a3138,#f7f7f2,12.25,4.5,false,10px,600,,true
+浅色,settings,ghost ts-opt,浅色,#1f767c,#ffffff,5.33,4.5,false,11px,600,,true
+浅色,settings,ts-swatch,Aa,#93a1a1,#002b36,5.61,4.5,false,10px,600,,true
+浅色,settings,ghost ts-opt,Solarized 深色,#1f767c,#ffffff,5.33,4.5,false,11px,600,,true
+浅色,settings,ts-swatch,Aa,#657b83,#fdf6e3,4.13,4.5,false,10px,600,,false
+浅色,settings,ghost ts-opt ts-active,Solarized 浅色,#1f767c,#e9f1f2,4.65,4.5,false,11px,600,,true
+浅色,settings,dim,应用外观与终端配色相互独立；「跟随系统」随系统深浅实时切换。,#5c6875,#ffffff,5.69,4.5,false,11px,400,,true
+浅色,settings,dim,字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置,#5c6875,#ffffff,5.69,4.5,false,11px,400,,true
+浅色,addhost,LABEL,名称,#4d5b68,#ffffff,6.97,4.5,false,10px,400,,true
+浅色,addhost,LABEL,地址（IP 或域名）,#4d5b68,#ffffff,6.97,4.5,false,10px,400,,true
+浅色,addhost,LABEL,端口,#4d5b68,#ffffff,6.97,4.5,false,10px,400,,true
+浅色,addhost,LABEL,用户名,#4d5b68,#ffffff,6.97,4.5,false,10px,400,,true
+浅色,addhost,LABEL,认证方式,#4d5b68,#ffffff,6.97,4.5,false,10px,400,,true
+浅色,addhost,LABEL,远端编码（老设备中文乱码时选 GBK）,#4d5b68,#ffffff,6.97,4.5,false,10px,400,,true
+浅色,addhost,LABEL,"标签（可选，逗号分隔，如：生产, 成都）",#4d5b68,#ffffff,6.97,4.5,false,10px,400,,true
+浅色,addhost,BUTTON,保存并连接,#ffffff,#1f767c,5.33,4.5,false,12px,600,,true
+浅色,addhost,ghost,仅保存,#1f767c,#ffffff,5.33,4.5,false,12px,600,,true
+浅色,addhost,dim,凭据加密存入本机凭据库，不会明文落盘。,#5c6875,#ffffff,5.69,4.5,false,13.5px,400,,true
+浅色,ph-addhost,INPUT,例：我的服务器,#4d5b68,#ffffff,6.97,4.5,false,12px,400,1,true
+浅色,ph-addhost,INPUT,例：192.168.1.10 或 server.example.,#4d5b68,#ffffff,6.97,4.5,false,12px,400,1,true
+浅色,ph-addhost,INPUT,例：ops 或 root,#4d5b68,#ffffff,6.97,4.5,false,12px,400,1,true
+浅色,ph-addhost,INPUT,"例：生产, 数据库",#4d5b68,#ffffff,6.97,4.5,false,12px,400,1,true
+浅色,ph-addhost,INPUT,密码,#4d5b68,#ffffff,6.97,4.5,false,12px,400,1,true
+浅色,hostkey,hk-title,首次连接确认,#242e38,#ffffff,13.79,4.5,false,14px,700,,true
+浅色,hostkey,DIV,首次连接主机,#242e38,#ffffff,13.79,4.5,false,13.5px,400,,true
+浅色,hostkey,B,otp-1（演示 2FA）,#242e38,#ffffff,13.79,4.5,false,13.5px,700,,true
+浅色,hostkey,DIV,（,#242e38,#ffffff,13.79,4.5,false,13.5px,400,,true
+浅色,hostkey,DIV,otp.demo,#242e38,#ffffff,13.79,4.5,false,13.5px,400,,true
+浅色,hostkey,DIV,:,#242e38,#ffffff,13.79,4.5,false,13.5px,400,,true
+浅色,hostkey,DIV,22,#242e38,#ffffff,13.79,4.5,false,13.5px,400,,true
+浅色,hostkey,DIV,）。 请核对服务器指纹（可向管理员确认）后决定是否信任：,#242e38,#ffffff,13.79,4.5,false,13.5px,400,,true
+浅色,hostkey,hk-fp mono,SHA256:DemoFingerprint-otp-1（演示 ,#242e38,#f4f6f8,12.73,4.5,false,11px,400,,true
+浅色,hostkey,BUTTON,信任并连接,#ffffff,#1f767c,5.33,4.5,false,12px,600,,true
+浅色,hostkey,ghost,取消,#1f767c,#ffffff,5.33,4.5,false,12px,600,,true
+浅色,banner,B,✕,#b3484d,#e5dde2,3.99,4.5,false,13.5px,700,,false
+浅色,banner,B,连接 otp-1（演示 2FA）（ops@otp.demo:22,#b3484d,#e5dde2,3.99,4.5,false,13.5px,700,,false
+浅色,banner,dim,主机指纹验证失败（演示：已拒绝该主机指纹）——也可在主机卡上看到,#5c6875,#e5dde2,4.27,4.5,false,13.5px,400,,false
+浅色,banner,ghost,关闭,#1f767c,#e5dde2,4,4.5,false,12px,600,,false
+浅色,afterAll,app-title,TinySSH,#242e38,#f4f6f8,12.73,4.5,false,13px,700,,true
+浅色,afterAll,collab-badge hot,协作,#ffffff,#96700a,4.55,4.5,false,11px,600,,true
+浅色,afterAll,collab-badge hot,· 2 待审批,#ffffff,#96700a,4.55,4.5,false,11px,600,,true
+浅色,afterAll,ctl-badge human,我控制中,#1f767c,#dfe9ec,4.32,4.5,false,11px,400,,false
+浅色,afterAll,H4,全部主机,#4d5b68,#f4f6f8,6.44,4.5,false,10px,600,,true
+浅色,afterAll,host-name,本机,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,afterAll,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,afterAll,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,local,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,0,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-name,noint-1（无集成）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,afterAll,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,afterAll,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,noint.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-name,otp-1（演示 2FA）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,afterAll,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,afterAll,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,otp.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,err host-fail,✕ 上次连接失败——检查地址与凭据后重试,#b3484d,#f4f6f8,4.91,4.5,false,11px,400,,true
+浅色,afterAll,host-name,otp-2（演示 2FA 隐）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,afterAll,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,afterAll,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,otp2.demo,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,auth-tag live-tag on,●,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,afterAll,auth-tag live-tag on,2,#2e7d32,#f4f6f8,4.73,4.5,false,10px,400,,true
+浅色,afterAll,host-name,prod-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,afterAll,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,afterAll,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,10.0.0.11,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-name,prod-2（演示连接失败）,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,afterAll,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,afterAll,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,10.0.0.12,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,auth-tag live-tag,●,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,afterAll,auth-tag live-tag,1,#4d5b68,#f4f6f8,6.44,4.5,false,10px,400,,true
+浅色,afterAll,host-name,staging-1,#242e38,#f4f6f8,12.73,4.5,false,13.5px,600,,true
+浅色,afterAll,auth-tag,密码,#5c6875,#f4f6f8,5.25,4.5,false,10px,400,,true
+浅色,afterAll,host-addr mono,ops,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,@,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,10.0.0.13,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,:,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,host-addr mono,22,#4d5b68,#f4f6f8,6.44,4.5,false,11px,400,,true
+浅色,afterAll,hb-settings,设置,#4d5b68,#f4f6f8,6.44,4.5,false,12px,600,,true
+浅色,afterAll,tab-label,prod-1,#4d5b68,#f4f6f8,6.44,4.5,false,12px,400,,true
+浅色,afterAll,tab-label,staging-1,#4d5b68,#f4f6f8,6.44,4.5,false,12px,400,,true
+浅色,afterAll,tab-label,prod-1,#242e38,#ffffff,13.79,4.5,false,12px,400,,true
+浅色,afterAll,ghost tab-all,标签列表,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,afterAll,B,✕,#b3484d,#e5dde2,3.99,4.5,false,13.5px,700,,false
+浅色,afterAll,B,连接 otp-1（演示 2FA）（ops@otp.demo:22,#b3484d,#e5dde2,3.99,4.5,false,13.5px,700,,false
+浅色,afterAll,dim,主机指纹验证失败（演示：已拒绝该主机指纹）——也可在主机卡上看到,#5c6875,#e5dde2,4.27,4.5,false,13.5px,400,,false
+浅色,afterAll,ghost,关闭,#1f767c,#e5dde2,4,4.5,false,12px,600,,false
+浅色,afterAll,st-title mono,prod-1,#242e38,#f4f6f8,12.73,4.5,false,12px,400,,true
+浅色,afterAll,mono st-state ok,已连接,#2e7d32,#f4f6f8,4.73,4.5,false,11px,400,,true
+浅色,afterAll,ghost,交给 Agent…,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,afterAll,ghost st-collab,协作,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,afterAll,st-file,文件,#ffffff,#1f767c,5.33,4.5,false,12px,600,,true
+浅色,afterAll,ghost,工具,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,afterAll,ghost,中断,#1f767c,#f4f6f8,4.92,4.5,false,12px,600,,true
+浅色,afterAll,mono sb-left,SSH · UTF-8,#5c6875,#f4f6f8,5.25,4.5,false,11px,400,,true
+浅色,afterAll,sb-btn,转发,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,afterAll,B,0,#242e38,#f4f6f8,12.73,4.5,false,11px,600,,true
+浅色,afterAll,sb-btn,传输,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true
+浅色,afterAll,B,0,#242e38,#f4f6f8,12.73,4.5,false,11px,600,,true
+浅色,afterAll,sb-btn,⌄,#4d5b68,#f4f6f8,6.44,4.5,false,11px,600,,true

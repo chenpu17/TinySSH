@@ -1743,14 +1743,55 @@ fn p6_smoke_script(run_id: &str) -> String {
       let cycMax = 0, subsViol = 0;
       for (let i = 0; i < 100; i++) {
         const t0 = performance.now();
+        // 新会话的标签位置**不保证在末尾**：core `list_sessions` 按
+        // `out.sort_by(|a, b| a.id.cmp(&b.id))` 排序（uuid 字典序），新建会话落在其 id
+        // 应处的位置——可能在首、在中。旧探针按 `.tab:last-child` 取「新标签」，
+        // 当新 id 排在前面时会点到**旧**标签（旧标签已挂终端 ⇒ 条件恒不成立 ⇒ 假红）。
+        // 改为按「连接前后 list_sessions 的 id 差集」定位新会话，再按同一排序取标签。
+        const idsBefore = (await inv('list_sessions')).map((s) => s.id);
+        // 新 UI：连接进行中会禁用该主机的连接钮（`connectingIds` 由 attempts 派生；旧 UI
+        // 无此门）。真实用户同样点不了禁用钮——先等它可用再点。若始终不可用，如实报
+        // FAIL-btn-stuck（那才是真缺陷），不把「点空」当成连接失败。
+        const cbReady = await waitFor(() => {
+          const b = document.querySelector('.host-card .host-connect-btn');
+          return b && !b.disabled ? true : null;
+        }, 100);
+        if (!cbReady) return title('FAIL-btn-stuck:' + i);
+        const cb0 = document.querySelector('.host-card .host-connect-btn');
+        const preBtn = cb0 ? (cb0.disabled ? 'disabled' : 'enabled') : 'missing';
         document.querySelector('.host-card .host-connect-btn').click();
-        const created = await waitFor(() => document.querySelectorAll('.tabbar .tab').length === tabs0 + 1 ? document.querySelectorAll('.xterm').length === xterm0 + 1 : null, 50);
-        if (!created) return title('FAIL-cycle-open:' + i);
+        // 新版 §6.3 移植：连接完成仅在「窗口前台且焦点代际未变」时自动挂终端，否则只出
+        // 标签并提示「点击标签进入」（旧版无此门，探针原本依赖自动挂载——在 B2 上恒假红，
+        // 根因见 C1 证据 p6/rootcause）。探针按该契约显式点击新标签使终端挂载确定化，
+        // 与真实用户路径一致，且不要求探针全程持有窗口焦点。
+        if (!(await waitFor(() => document.querySelectorAll('.tabbar .tab').length === tabs0 + 1 ? true : null, 50))) {
+          const ls = (await inv('list_sessions')).map((s) => s.id.slice(0, 8) + ':' + s.state).join(',');
+          const ce = document.querySelector('.conn-error');
+          const cb = document.querySelector('.host-card .host-connect-btn');
+          return title('FAIL-cycle-open:' + i + ':{tabs:' + document.querySelectorAll('.tabbar .tab').length
+            + ',xt:' + document.querySelectorAll('.xterm').length + ',t0:' + tabs0 + ',x0:' + xterm0
+            + ',btn:' + (cb ? (cb.disabled ? 'disabled' : 'enabled') : 'missing') + ',preBtn:' + preBtn
+            + ',ls:[' + ls + ']|connErr:' + (ce ? ce.innerText.replace(/\n/g, ' ').slice(0, 120) : '-') + '}');
+        }
+        const idsAfter = (await inv('list_sessions')).map((s) => s.id);
+        const newSid = idsAfter.find((x) => idsBefore.indexOf(x) < 0);
+        if (!newSid) return title('FAIL-no-newsid:' + i);
+        const newIdx = idsAfter.slice().sort().indexOf(newSid);
+        const newTab = document.querySelectorAll('.tabbar .tab')[newIdx];
+        if (!newTab) return title('FAIL-no-newtab:' + i + ':' + newIdx + '/' + idsAfter.length);
+        newTab.click();
+        const created = await waitFor(() => document.querySelectorAll('.xterm').length === xterm0 + 1 ? true : null, 50);
+        if (!created) {
+          const dg = { tabs: document.querySelectorAll('.tabbar .tab').length, xt: document.querySelectorAll('.xterm').length, t0: tabs0, x0: xterm0, hidden: document.hidden, focus: document.hasFocus() };
+          return title('FAIL-cycle-attach:' + i + ':' + JSON.stringify(dg));
+        }
         const subs = await inv('debug_subscriptions', {});
         const live = (await inv('list_sessions', {})).length;
         const perOk = (subs.per_session || []).every((x) => x.subscription_ids.length <= 1);
         if (subs.active_count > live || !perOk) subsViol++;
-        document.querySelector('.tabbar .tab:last-child .tab-x').click();
+        // 关的必须是**刚建的那个**会话：标签按 uuid 排序，`.tab:last-child` 未必是它
+        // （同上）。按同一索引取。
+        document.querySelectorAll('.tabbar .tab')[newIdx].querySelector('.tab-x').click();
         // 连接中会话 close 先确认（requestCloseSession）——弹窗则点「断开连接」，无弹窗（秒关）直接继续
         const cf = await waitFor(() => {
           const c = document.querySelector('.confirm-mask button.danger');
@@ -1770,7 +1811,31 @@ fn p6_smoke_script(run_id: &str) -> String {
       await markSync('p6-cycles-ok|100|subsViol=' + subsViol + '|cycMaxMs=' + Math.round(cycMax));
       // ---- 200 标签切换 ----
       const tabs = () => [...document.querySelectorAll('.tabbar .tab')];
-      if (tabs().length < 2) { await (async () => { document.querySelector('.host-card .host-connect-btn').click(); await waitFor(() => tabs().length >= 2 || null, 50); })(); }
+      if (tabs().length < 2) {
+        // 与循环内同一路径：先等连接钮可用（新 UI `connectingIds` 门），再按 id 差集点新标签。
+        // 初版此处直接 click()——钮禁用时点空，被记成 FAIL-need2tabs（假红）。
+        const idsB = (await inv('list_sessions')).map((s) => s.id);
+        const okBtn = await waitFor(() => {
+          const b = document.querySelector('.host-card .host-connect-btn');
+          return b && !b.disabled ? true : null;
+        }, 100);
+        const cbNow = document.querySelector('.host-card .host-connect-btn');
+        if (!okBtn) return title('FAIL-need2tabs-btn:' + (cbNow ? 'disabled' : 'missing'));
+        cbNow.click();
+        if (!(await waitFor(() => tabs().length >= 2 ? true : null, 50))) {
+          const ls = (await inv('list_sessions')).map((s) => s.id.slice(0, 8) + ':' + s.state).join(',');
+          const ce = document.querySelector('.conn-error');
+          return title('FAIL-need2tabs-open:{tabs:' + tabs().length + ',btn:' + (cbNow.disabled ? 'disabled' : 'enabled')
+            + ',ls:[' + ls + ']|connErr:' + (ce ? ce.innerText.replace(/\n/g, ' ').slice(0, 120) : '-') + '}');
+        }
+        const idsA = (await inv('list_sessions')).map((s) => s.id);
+        const nSid = idsA.find((x) => idsB.indexOf(x) < 0);
+        const nIdx = nSid ? idsA.slice().sort().indexOf(nSid) : -1;
+        const nTab = document.querySelectorAll('.tabbar .tab')[nIdx];
+        if (!nTab) return title('FAIL-need2tabs-tab:' + nIdx + '/' + idsA.length);
+        nTab.click();
+        await waitFor(() => document.querySelectorAll('.xterm').length === xterm0 + 1 ? true : null, 50);
+      }
       if (tabs().length < 2) return title('FAIL-need2tabs');
       let swBad = 0, retried = 0;
       for (let i = 0; i < 200; i++) {

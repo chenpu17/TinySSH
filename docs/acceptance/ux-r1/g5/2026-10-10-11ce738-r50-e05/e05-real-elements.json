@@ -1,0 +1,124 @@
+{
+ "base": "http://localhost:5183",
+ "browser": "ms-playwright chromium-1243",
+ "cases": {
+  "no-preference": {
+   "counts": {
+    "tabbar": 1,
+    "tab": 2,
+    "hostCard": 7,
+    "hostCardSide": 7,
+    "connectBtn": 7
+   },
+   "firstButton": {
+    "tag": "BUTTON",
+    "cls": "ghost icon-btn",
+    "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+    "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+   },
+   "ghostButton": {
+    "tag": "BUTTON",
+    "cls": "ghost icon-btn",
+    "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+    "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+   },
+   "hostConnectBtn": {
+    "tag": "BUTTON",
+    "cls": "host-connect-btn",
+    "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+    "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+   },
+   "firstTab": {
+    "tag": "DIV",
+    "cls": "tab",
+    "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+    "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+   },
+   "allTabs": [
+    {
+     "tag": "DIV",
+     "cls": "tab",
+     "role": "tab",
+     "text": "prod-1",
+     "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+     "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+    },
+    {
+     "tag": "DIV",
+     "cls": "tab",
+     "role": "tab",
+     "text": "staging-1",
+     "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+     "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+    }
+   ]
+  },
+  "reduce": {
+   "counts": {
+    "tabbar": 1,
+    "tab": 2,
+    "hostCard": 7,
+    "hostCardSide": 7,
+    "connectBtn": 7
+   },
+   "firstButton": {
+    "tag": "BUTTON",
+    "cls": "ghost icon-btn",
+    "transitionDuration": "0s",
+    "transitionProperty": "none"
+   },
+   "ghostButton": {
+    "tag": "BUTTON",
+    "cls": "ghost icon-btn",
+    "transitionDuration": "0s",
+    "transitionProperty": "none"
+   },
+   "hostConnectBtn": {
+    "tag": "BUTTON",
+    "cls": "host-connect-btn",
+    "transitionDuration": "0s",
+    "transitionProperty": "none"
+   },
+   "firstTab": {
+    "tag": "DIV",
+    "cls": "tab",
+    "transitionDuration": "0s",
+    "transitionProperty": "none"
+   },
+   "allTabs": [
+    {
+     "tag": "DIV",
+     "cls": "tab",
+     "role": "tab",
+     "text": "prod-1",
+     "transitionDuration": "0s",
+     "transitionProperty": "none"
+    },
+    {
+     "tag": "DIV",
+     "cls": "tab",
+     "role": "tab",
+     "text": "staging-1",
+     "transitionDuration": "0s",
+     "transitionProperty": "none"
+    }
+   ]
+  }
+ },
+ "notes": [
+  {
+   "pref": "no-preference",
+   "pageErrors": []
+  },
+  {
+   "pref": "reduce",
+   "pageErrors": []
+  }
+ ],
+ "run": {
+  "attempts": 1,
+  "startedAt": "2026-10-10T09:03:31.458Z",
+  "probeSha256": "d3b627462acb31f6574b9fc1f5be80b12a7a2b444e27a0935264928940591c98",
+  "finishedAt": "2026-10-10T09:03:34.395Z"
+ }
+}

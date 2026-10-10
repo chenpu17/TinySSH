@@ -1,0 +1,85 @@
+{
+ "bin": "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app",
+ "bin_sha256": "2a496c52905384b544cda0d2d7ff3df41aa2547df616ce9b4adf635d9c0a619c",
+ "mode": "warm",
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 57660,
+   "run_id": "p1-warm-1-a780d774",
+   "list_ready_ms": 457,
+   "operable_ms": 457
+  },
+  {
+   "idx": 2,
+   "pid": 57667,
+   "run_id": "p1-warm-2-9ea987f4",
+   "list_ready_ms": 553,
+   "operable_ms": 553
+  },
+  {
+   "idx": 3,
+   "pid": 57672,
+   "run_id": "p1-warm-3-4dcc29f6",
+   "list_ready_ms": 594,
+   "operable_ms": 594
+  },
+  {
+   "idx": 4,
+   "pid": 57678,
+   "run_id": "p1-warm-4-979ad1b0",
+   "list_ready_ms": 515,
+   "operable_ms": 515
+  },
+  {
+   "idx": 5,
+   "pid": 57683,
+   "run_id": "p1-warm-5-b60f7c20",
+   "list_ready_ms": 515,
+   "operable_ms": 515
+  },
+  {
+   "idx": 6,
+   "pid": 57688,
+   "run_id": "p1-warm-6-a3d155e4",
+   "list_ready_ms": 512,
+   "operable_ms": 512
+  },
+  {
+   "idx": 7,
+   "pid": 57693,
+   "run_id": "p1-warm-7-b6ce438f",
+   "list_ready_ms": 509,
+   "operable_ms": 509
+  },
+  {
+   "idx": 8,
+   "pid": 57698,
+   "run_id": "p1-warm-8-14f5c137",
+   "list_ready_ms": 510,
+   "operable_ms": 510
+  },
+  {
+   "idx": 9,
+   "pid": 57703,
+   "run_id": "p1-warm-9-67f84042",
+   "list_ready_ms": 510,
+   "operable_ms": 510
+  },
+  {
+   "idx": 10,
+   "pid": 57709,
+   "run_id": "p1-warm-10-69abb2f4",
+   "list_ready_ms": 516,
+   "operable_ms": 516
+  }
+ ],
+ "operable": {
+  "n": 10,
+  "median_ms": 514,
+  "p95_ms": 576,
+  "min_ms": 457,
+  "max_ms": 594
+ },
+ "protocol": "Q-04 endpoint: operable = per-run beacon mark '<run_id>|s2-list-ready' arrival - t0 (direct observation: 20 seeded host cards rendered; no offset subtraction); run id isolates shared beacon log; cold=idle 60s process-cold"
+}

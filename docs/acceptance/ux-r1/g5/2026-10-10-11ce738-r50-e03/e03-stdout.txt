@@ -1,0 +1,10 @@
+{
+ "ok": true,
+ "attempts": 1,
+ "ipv6Rejected": true,
+ "longHost": true,
+ "longError": true,
+ "crumbs": true,
+ "longPathError": true,
+ "cardIndicatorViaTab": true
+}

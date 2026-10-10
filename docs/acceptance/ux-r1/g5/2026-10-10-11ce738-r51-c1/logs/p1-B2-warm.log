@@ -1,0 +1,11 @@
+[warm #1] {'idx': 1, 'pid': 57660, 'run_id': 'p1-warm-1-a780d774', 'list_ready_ms': 457, 'operable_ms': 457}
+[warm #2] {'idx': 2, 'pid': 57667, 'run_id': 'p1-warm-2-9ea987f4', 'list_ready_ms': 553, 'operable_ms': 553}
+[warm #3] {'idx': 3, 'pid': 57672, 'run_id': 'p1-warm-3-4dcc29f6', 'list_ready_ms': 594, 'operable_ms': 594}
+[warm #4] {'idx': 4, 'pid': 57678, 'run_id': 'p1-warm-4-979ad1b0', 'list_ready_ms': 515, 'operable_ms': 515}
+[warm #5] {'idx': 5, 'pid': 57683, 'run_id': 'p1-warm-5-b60f7c20', 'list_ready_ms': 515, 'operable_ms': 515}
+[warm #6] {'idx': 6, 'pid': 57688, 'run_id': 'p1-warm-6-a3d155e4', 'list_ready_ms': 512, 'operable_ms': 512}
+[warm #7] {'idx': 7, 'pid': 57693, 'run_id': 'p1-warm-7-b6ce438f', 'list_ready_ms': 509, 'operable_ms': 509}
+[warm #8] {'idx': 8, 'pid': 57698, 'run_id': 'p1-warm-8-14f5c137', 'list_ready_ms': 510, 'operable_ms': 510}
+[warm #9] {'idx': 9, 'pid': 57703, 'run_id': 'p1-warm-9-67f84042', 'list_ready_ms': 510, 'operable_ms': 510}
+[warm #10] {'idx': 10, 'pid': 57709, 'run_id': 'p1-warm-10-69abb2f4', 'list_ready_ms': 516, 'operable_ms': 516}
+== warm: n=10 median=514ms p95=576ms -> docs/acceptance/ux-r1/g5/2026-10-10-11ce738-r51-c1/p1/B2-warm.json

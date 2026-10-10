@@ -1,0 +1,302 @@
+{
+ "base": "http://localhost:5183",
+ "browser": "ms-playwright chromium-1243",
+ "headSha": "11ce7389a26f96c22a8844bfad0b6090fe572a94",
+ "run": {
+  "attempts": 1,
+  "startedAt": "2026-10-10T08:58:28.407Z",
+  "probeSha256": "adb0d16e5848e5a43a27e9d1bbd0a47811a6041b5bfdfd09d2d77f2f4bbdaf00",
+  "finishedAt": "2026-10-10T08:59:00.364Z"
+ },
+ "narrow": {
+  "connect": {
+   "ok": true
+  },
+  "geom": {
+   "groups": 1,
+   "items": [
+    {
+     "label": "批准",
+     "x": 247,
+     "y": 499,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "编辑后批准",
+     "x": 301,
+     "y": 498,
+     "w": 86,
+     "h": 31,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "拒绝",
+     "x": 393,
+     "y": 499,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "批准",
+     "x": 247,
+     "y": 734,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "编辑后批准",
+     "x": 301,
+     "y": 733,
+     "w": 86,
+     "h": 31,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "拒绝",
+     "x": 393,
+     "y": 734,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    }
+   ],
+   "panelTpFull": true,
+   "panelHint": "空间不足——完整视图，终端仍在运行",
+   "panelOverflowX": false,
+   "docOverflowX": false,
+   "panelBox": {
+    "x": 226,
+    "y": 124,
+    "w": 414,
+    "h": 652
+   },
+   "viewport": {
+    "w": 640,
+    "h": 800
+   },
+   "allItemsReachable": true
+  },
+  "geomStable": {
+   "groups": 1,
+   "items": [
+    {
+     "label": "批准",
+     "x": 247,
+     "y": 499,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "编辑后批准",
+     "x": 301,
+     "y": 498,
+     "w": 86,
+     "h": 31,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "拒绝",
+     "x": 393,
+     "y": 499,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "批准",
+     "x": 247,
+     "y": 734,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "编辑后批准",
+     "x": 301,
+     "y": 733,
+     "w": 86,
+     "h": 31,
+     "inViewport": true,
+     "sizeOk": true
+    },
+    {
+     "label": "拒绝",
+     "x": 393,
+     "y": 734,
+     "w": 48,
+     "h": 29,
+     "inViewport": true,
+     "sizeOk": true
+    }
+   ],
+   "panelTpFull": true,
+   "panelHint": "空间不足——完整视图，终端仍在运行",
+   "panelOverflowX": false,
+   "docOverflowX": false,
+   "panelBox": {
+    "x": 226,
+    "y": 124,
+    "w": 414,
+    "h": 652
+   },
+   "viewport": {
+    "w": 640,
+    "h": 800
+   },
+   "allItemsReachable": true
+  }
+ },
+ "split": {
+  "connectA": {
+   "ok": true
+  },
+  "connectB": {
+   "ok": true
+  },
+  "menuOpen": true,
+  "panesBefore": {
+   "left": 0,
+   "right": 0,
+   "active": 1
+  },
+  "panesAfter": {
+   "left": 1,
+   "right": 1,
+   "focused": 1,
+   "exitBtn": true
+  },
+  "panelInSplit": {
+   "tpFull": true,
+   "hint": "空间不足——完整视图，终端仍在运行"
+  },
+  "afterClosePanel": {
+   "panelGone": true,
+   "left": 1,
+   "right": 1,
+   "exitBtn": true
+  }
+ },
+ "notify": {
+  "toastCount": 1,
+  "toastTexts": [
+   "已就绪：下一次新建的会话将进入右侧分屏——连接一台主机或打开本地终端即可"
+  ],
+  "toastAriaLive": [
+   "polite"
+  ],
+  "toastKinds": [
+   "info"
+  ],
+  "toastTabIndex": [
+   -1
+  ],
+  "stackPointerEvents": "none",
+  "stackPosition": "fixed",
+  "activeAfter": {
+   "tag": "TEXTAREA",
+   "cls": "xterm-helper-textarea",
+   "text": ""
+  },
+  "focusBefore": {
+   "tag": "BUTTON",
+   "cls": "ghost icon-btn ts-open",
+   "text": ""
+  },
+  "focusNotStolen": true
+ },
+ "background": {
+  "background": {
+   "activeBefore": "本机",
+   "hasFocusBefore": true,
+   "hasFocusAfter": false,
+   "hiddenAfter": false,
+   "connect": {
+    "ok": true
+   },
+   "hasFocusAtClick": false,
+   "after": {
+    "toastTexts": [
+     "已连接 prod-1——点击标签进入"
+    ],
+    "toastAriaLive": [
+     "polite"
+    ],
+    "hasClickToEnter": true,
+    "activeAfter": "本机",
+    "tabTexts": [
+     "prod-1",
+     "staging-1",
+     "本机",
+     "prod-1"
+    ],
+    "attachedCount": 1
+   },
+   "activeUnchanged": true
+  },
+  "foregroundControl": {
+   "activeBefore": "本机",
+   "hasFocusBefore": true,
+   "hasFocusAfter": true,
+   "hiddenAfter": false,
+   "connect": {
+    "ok": true
+   },
+   "hasFocusAtClick": true,
+   "after": {
+    "toastTexts": [
+     "已连接 prod-1"
+    ],
+    "toastAriaLive": [
+     "polite"
+    ],
+    "hasClickToEnter": false,
+    "activeAfter": "prod-1",
+    "tabTexts": [
+     "prod-1",
+     "staging-1",
+     "本机",
+     "prod-1"
+    ],
+    "attachedCount": 1
+   },
+   "activeUnchanged": false
+  }
+ },
+ "notes": [
+  {
+   "section": "A",
+   "pageErrors": []
+  },
+  {
+   "section": "B",
+   "pageErrors": []
+  },
+  {
+   "section": "C",
+   "pageErrors": []
+  },
+  {
+   "section": "D/background",
+   "pageErrors": []
+  },
+  {
+   "section": "D/foregroundControl",
+   "pageErrors": []
+  }
+ ]
+}

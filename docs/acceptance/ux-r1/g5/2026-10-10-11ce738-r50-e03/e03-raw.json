@@ -1,0 +1,405 @@
+{
+ "base": "http://localhost:5183",
+ "browser": "ms-playwright chromium-1243",
+ "headSha": "11ce7389a26f96c22a8844bfad0b6090fe572a94",
+ "run": {
+  "attempts": 1,
+  "startedAt": "2026-10-10T09:13:53.407Z",
+  "probeSha256": "1a891b84341c5a2374bd8e522af9cbe225874719265754b084bbae8f60f412e3",
+  "finishedAt": "2026-10-10T09:14:19.215Z"
+ },
+ "fixtures": {
+  "LONG_NAME": "生产环境核心交易数据库主节点（华东一区可用区B）-只读副本-01-夜间批处理专用-禁止重启",
+  "LONG_ADDR": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.example.internal.corp",
+  "FAIL_ADDR": "10.0.0.12",
+  "TAGS12": [
+   "华东一区",
+   "生产",
+   "数据库",
+   "只读副本",
+   "核心交易",
+   "高优先级",
+   "禁止重启",
+   "值班必看",
+   "夜间维护",
+   "合规审计",
+   "备份源",
+   "监控接入"
+  ],
+  "IPV6": "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+  "LONG_PATH": "/var/log/nginx/archive/very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-deep",
+  "DEEP_REAL_PATH": "/root/releases/v3"
+ },
+ "seed": {
+  "longHost": {
+   "ok": true,
+   "formError": null
+  },
+  "failHost": {
+   "ok": true,
+   "formError": null
+  }
+ },
+ "longHost": {
+  "card": {
+   "x": 8,
+   "y": 269.5,
+   "w": 207,
+   "h": 75,
+   "r": 215
+  },
+  "name": {
+   "x": 18,
+   "y": 277.5,
+   "w": 150.7,
+   "h": 20.9,
+   "r": 168.7
+  },
+  "addr": {
+   "x": 18,
+   "y": 299.4,
+   "w": 187,
+   "h": 17,
+   "r": 205
+  },
+  "side": {
+   "x": 92,
+   "y": 296,
+   "w": 117,
+   "h": 22,
+   "r": 209
+  },
+  "nameText": "生产环境核心交易数据库主节点（华东一区可用区B）-只读副本-01-夜间批处理专用-禁止重启",
+  "nameOverflow": true,
+  "nameSW": 575,
+  "nameCW": 151,
+  "addrOverflow": true,
+  "addrSW": 1463,
+  "addrCW": 187,
+  "nameTitle": null,
+  "mainTitle": null,
+  "cardTitle": "ops@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.example.internal.corp:22\n指纹：首次连接时确认\n编码：UTF-8",
+  "ariaLabel": "主机 生产环境核心交易数据库主节点（华东一区可用区B）-只读副本-01-夜间批处理专用-禁止重启（ops@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.example.internal.corp:22）——Enter 连接",
+  "sideButtons": [
+   {
+    "title": "收藏（置顶「收藏」分组）",
+    "box": {
+     "x": 98,
+     "y": 297.5,
+     "w": 23,
+     "h": 19,
+     "r": 121
+    }
+   },
+   {
+    "title": "编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）",
+    "box": {
+     "x": 123,
+     "y": 297.5,
+     "w": 23,
+     "h": 19,
+     "r": 146
+    }
+   },
+   {
+    "title": "删除主机",
+    "box": {
+     "x": 148,
+     "y": 297.5,
+     "w": 23,
+     "h": 19,
+     "r": 171
+    }
+   },
+   {
+    "title": "连接（新建会话）——其他主机的连接不受影响",
+    "box": {
+     "x": 173,
+     "y": 296,
+     "w": 36,
+     "h": 22,
+     "r": 209
+    }
+   }
+  ],
+  "sideInsideCard": true,
+  "tagChips": [
+   "华东一区",
+   "生产",
+   "+10"
+  ],
+  "sideOpacity": "0"
+ },
+ "longError": {
+  "found": true,
+  "title": "✕ 连接 生产环境核心交易数据库主节点（华东一区可用区B）-只读副本-01-夜间批处理专用-禁止重启（失败探针）（ops@10.0.0.12:22）失败",
+  "detail": "认证失败：用户名或密码/密钥不正确——也可在主机卡上看到失败提示，修正后重试",
+  "titleLen": 76,
+  "box": {
+   "x": 234,
+   "y": 92,
+   "w": 1198,
+   "h": 64,
+   "r": 1432
+  },
+  "viewport": {
+   "w": 1440,
+   "h": 900
+  },
+  "docOverflowX": false,
+  "docSW": 1440,
+  "docCW": 1440,
+  "bannerOverflowX": false,
+  "bannerSW": 1196,
+  "bannerCW": 1196,
+  "closeBox": {
+   "x": 1369,
+   "r": 1419,
+   "y": 103,
+   "h": 31
+  },
+  "closeInViewport": true,
+  "closeSizeOk": true
+ },
+ "longPath": {
+  "panelOpened": true,
+  "crumbs": {
+   "found": true,
+   "title": "/root/releases/v3",
+   "text": "//root/releases/v3",
+   "overflowX": false,
+   "sw": 361,
+   "cw": 361,
+   "box": {
+    "w": 363,
+    "h": 29
+   },
+   "segCount": 4,
+   "focusableCrumbs": 3,
+   "titleEqualsPath": true
+  },
+  "crumbKeyboard": {
+   "found": true,
+   "focused": true,
+   "label": "/",
+   "title": "进入 /"
+  },
+  "crumbIndicator": {
+   "tag": "BUTTON",
+   "cls": "sftp-crumb",
+   "outline": "solid 2px rgb(36, 93, 180)",
+   "boxShadow": "none",
+   "indicator": true
+  },
+  "longInput": {
+   "valueLen": 171,
+   "sw": 1284,
+   "cw": 361,
+   "box": {
+    "w": 363,
+    "h": 28
+   },
+   "stillEditing": true
+  },
+  "longPathError": {
+   "found": true,
+   "text": "✕ 演示模式：路径不存在（/var/log/nginx/archive/very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-very-long-segment-deep）",
+   "echoesFullPath": true,
+   "overflowX": false,
+   "sw": 363,
+   "cw": 363,
+   "box": {
+    "x": 1067,
+    "w": 363,
+    "h": 105,
+    "r": 1430
+   },
+   "inViewport": true
+  }
+ },
+ "keyboard": {
+  "found": true,
+  "tabIndex": 0,
+  "role": "button",
+  "ariaLabel": "主机 生产环境核心交易数据库主节点（华东一区可用区B）-只读副本-01-夜间批处理专用-禁止重启（ops@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.example.internal.corp:22）——Enter 连接",
+  "cardFocusViaProgrammatic": true,
+  "sideOpacityOnCardFocus": "0.999598",
+  "actionCount": 4,
+  "tabSeq": [
+   {
+    "tag": "BUTTON",
+    "cls": "ghost fav-btn",
+    "title": "收藏（置顶「收藏」分组）",
+    "inCard": true,
+    "cardName": "生产环境核心交易数据",
+    "outline": "solid 2px rgb(36, 93, 180)",
+    "boxShadow": "none",
+    "indicator": true
+   },
+   {
+    "tag": "BUTTON",
+    "cls": "ghost",
+    "title": "编辑主机（名称/地址/端口/用户名/编码/标签，凭据",
+    "inCard": true,
+    "cardName": "生产环境核心交易数据",
+    "outline": "solid 2px rgb(36, 93, 180)",
+    "boxShadow": "none",
+    "indicator": true
+   },
+   {
+    "tag": "BUTTON",
+    "cls": "ghost host-del",
+    "title": "删除主机",
+    "inCard": true,
+    "cardName": "生产环境核心交易数据",
+    "outline": "solid 2px rgb(36, 93, 180)",
+    "boxShadow": "none",
+    "indicator": true
+   },
+   {
+    "tag": "BUTTON",
+    "cls": "host-connect-btn",
+    "title": "连接（新建会话）——其他主机的连接不受影响",
+    "inCard": true,
+    "cardName": "生产环境核心交易数据",
+    "outline": "solid 2px rgb(36, 93, 180)",
+    "boxShadow": "none",
+    "indicator": true
+   },
+   {
+    "tag": "DIV",
+    "cls": "host-card",
+    "title": "ops@noint.demo:22\n指纹：首次连接时",
+    "inCard": true,
+    "cardName": "noint-1（无集",
+    "outline": "solid 2px rgb(31, 118, 124)",
+    "boxShadow": "none",
+    "indicator": true
+   },
+   {
+    "tag": "BUTTON",
+    "cls": "ghost fav-btn",
+    "title": "收藏（置顶「收藏」分组）",
+    "inCard": true,
+    "cardName": "noint-1（无集",
+    "outline": "solid 2px rgb(36, 93, 180)",
+    "boxShadow": "none",
+    "indicator": true
+   }
+  ],
+  "cardViaTab": {
+   "tag": "DIV",
+   "cls": "host-card",
+   "title": "ops@noint.demo:22\n指纹：首次连接时",
+   "inCard": true,
+   "cardName": "noint-1（无集",
+   "outline": "solid 2px rgb(31, 118, 124)",
+   "boxShadow": "none",
+   "indicator": true
+  },
+  "cardIndicatorViaTab": true
+ },
+ "ipv6": {
+  "seedAttempt": {
+   "ok": false,
+   "formError": "✕ 地址格式不对——应为 IP 或域名（如 192.168.1.10 或 server.example.com），不带端口与协议"
+  },
+  "rejected": true,
+  "formError": "✕ 地址格式不对——应为 IP 或域名（如 192.168.1.10 或 server.example.com），不带端口与协议"
+ },
+ "notes": [
+  {
+   "pageErrors": []
+  }
+ ],
+ "longHostHover": {
+  "card": {
+   "x": 8,
+   "y": 269.5,
+   "w": 207,
+   "h": 75,
+   "r": 215
+  },
+  "name": {
+   "x": 18,
+   "y": 277.5,
+   "w": 150.7,
+   "h": 20.9,
+   "r": 168.7
+  },
+  "addr": {
+   "x": 18,
+   "y": 299.4,
+   "w": 187,
+   "h": 17,
+   "r": 205
+  },
+  "side": {
+   "x": 92,
+   "y": 296,
+   "w": 117,
+   "h": 22,
+   "r": 209
+  },
+  "nameText": "生产环境核心交易数据库主节点（华东一区可用区B）-只读副本-01-夜间批处理专用-禁止重启",
+  "nameOverflow": true,
+  "nameSW": 575,
+  "nameCW": 151,
+  "addrOverflow": true,
+  "addrSW": 1463,
+  "addrCW": 187,
+  "nameTitle": null,
+  "mainTitle": null,
+  "cardTitle": "ops@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.example.internal.corp:22\n指纹：首次连接时确认\n编码：UTF-8",
+  "ariaLabel": "主机 生产环境核心交易数据库主节点（华东一区可用区B）-只读副本-01-夜间批处理专用-禁止重启（ops@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.example.internal.corp:22）——Enter 连接",
+  "sideButtons": [
+   {
+    "title": "收藏（置顶「收藏」分组）",
+    "box": {
+     "x": 98,
+     "y": 297.5,
+     "w": 23,
+     "h": 19,
+     "r": 121
+    }
+   },
+   {
+    "title": "编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）",
+    "box": {
+     "x": 123,
+     "y": 297.5,
+     "w": 23,
+     "h": 19,
+     "r": 146
+    }
+   },
+   {
+    "title": "删除主机",
+    "box": {
+     "x": 148,
+     "y": 297.5,
+     "w": 23,
+     "h": 19,
+     "r": 171
+    }
+   },
+   {
+    "title": "连接（新建会话）——其他主机的连接不受影响",
+    "box": {
+     "x": 173,
+     "y": 296,
+     "w": 36,
+     "h": 22,
+     "r": 209
+    }
+   }
+  ],
+  "sideInsideCard": true,
+  "tagChips": [
+   "华东一区",
+   "生产",
+   "+10"
+  ],
+  "sideOpacity": "1"
+ }
+}

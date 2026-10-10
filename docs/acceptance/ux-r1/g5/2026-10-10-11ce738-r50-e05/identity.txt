@@ -1,0 +1,67 @@
+# R50 / E05 证据身份
+
+HEAD              11ce7389a26f96c22a8844bfad0b6090fe572a94
+日期              2026-10-10
+运行序号          attempts=1（归档目录在正式跑前已清空，含 .run-attempts sidecar；
+                  故 attempts=1 即自证读数只来自一次运行）
+运行窗口          2026-10-10T08:28:53.584Z → 2026-10-10T08:28:56.374Z
+
+## 产物 sha256（前 16）
+
+probe-e05-reduced-motion.cjs  357d4fd2daf46f8b
+README.md                     2854cd04cd2a4282（**已变更**：§2 补档 + §5.6 注，2026-10-10）
+e05-raw.json                  92b0e864e5f5906a
+e05-err.txt                   （0 字节 = 无页面异常）
+probe-e05-real-elements.cjs   d3b627462acb31f6（真实元素对照探针，见下「补档」节）
+e05-real-elements.json        840d53b35147bb37（详见下「补档」节）
+e05-real-elements-err.txt     （0 字节 = 无页面异常）
+
+## 探针自钉
+
+e05-raw.json.run.probeSha256 = 357d4fd2daf46f8b5798de28231ff8cdd5ccf6384124d4199e7dfb40c3f49af7
+（= probe-e05-reduced-motion.cjs 的 sha256 全值；读数与探针版本绑定）
+
+## 补档：真实元素对照（2026-10-10 追加，独立 sidecar）
+
+背景：README §2 原先写「该选择已由**复核者**在真实元素上复测」，但那支探针不在包内 ⇒
+**不可复算**。经复核者 rev-e05b 交出可归档版本，本节把它并入包内，使该主张可复算。
+
+probe-e05-real-elements.cjs   d3b627462acb31f6574b9fc1f5be80b12a7a2b444e27a0935264928940591c98
+e05-real-elements.json        840d53b35147bb37
+运行序号                      attempts=1（sidecar `.run-attempts-realelem` 独立计数，
+                              与主探针的 `.run-attempts` 互不干扰 ⇒ 主探针的单次干净自证不受影响）
+运行窗口                      2026-10-10T09:03:31.458Z → 2026-10-10T09:03:34.395Z
+探针自钉                      e05-real-elements.json.run.probeSha256
+                              = d3b627462acb31f6574b9fc1f5be80b12a7a2b444e27a0935264928940591c98
+
+**状态依赖（复跑须知）**：被测对象是 dev server 首屏（demo 种子态）。`.tab` 只在 demo 预置
+2 个会话（prod-1 / staging-1）时存在；首屏状态一变，`.tab` 相关项会变 `null`（不是读错，
+是读不到）。`counts` 段即用于对账首屏是否同一状态。
+
+**与主探针的对照结论**：`button` 与 `.tab` 两个选择器 × 两个口径（no-preference / reduce）
+共四组，真实元素读数与 `e05-raw.json` 注入件读数**逐字段相同**。
+
+## 运行环境
+
+被测对象    ui/src/styles.css @ HEAD 11ce7389a26f96c22a8844bfad0b6090fe572a94
+浏览器      headless Chromium（playwright-core，装在 ui/node_modules），两个上下文：
+            reducedMotion = "no-preference" 与 "reduce"
+页面来源    http://localhost:5183/（vite dev server）
+
+## 本档引用的源码位置
+
+ui/src/styles.css:157 / :271-273 / :348 / :349 / :810 / :949   六条 reduced-motion 块
+ui/src/styles.css:686                      .spin 基础规则（在 :349 之后 ⇒ 覆盖失效）
+ui/src/styles.css:969                      .host-card transition（无覆盖，E05-3）
+ui/src/styles.css:984                      .host-card-side transition（无覆盖，E05-3）
+ui/src/styles.css:1057 / :1063 / :1065     .attach-hint 块 / 动画 / keyframes（无覆盖，E05-2）
+ui/src/icons.tsx:18                        Svg 把 className 拼成 "ico " + className
+ui/src/icons.tsx:135                       注释「reduced-motion 下停转只留图形」（E05-1 的原始声明）
+ui/src/icons.tsx:135-139                   IconLoader → <svg class="ico spin">
+ui/src/App.tsx:533/:535                     scrollTabs 的 scrollBy({behavior:"smooth"})（§5.2 未覆盖的 JS 动效）
+ui/src/App.tsx:3456                        <IconLoader size={11} className="spin" />
+ui/src/App.tsx:4069                        <div className="attach-hint">（E05-2 非死代码）
+ui/src/App.tsx:4877                        <div className="skeleton sftp-sk">（§2 非动效 class 枚举）
+ui/dist/assets/index-O54pqTGs.css          （**gitignore，不在版本库**）E05-1 的 prod 旁证：
+                                           reduce 规则块 @15583、块内 .spin 选择器 @15623、
+                                           基础规则 @27165

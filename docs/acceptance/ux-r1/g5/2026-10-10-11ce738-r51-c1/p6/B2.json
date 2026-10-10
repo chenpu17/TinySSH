@@ -1,0 +1,820 @@
+{
+ "bin": "/Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app",
+ "bin_sha256": "2a496c52905384b544cda0d2d7ff3df41aa2547df616ce9b4adf635d9c0a619c",
+ "runs": [
+  {
+   "idx": 1,
+   "total_ms": 269,
+   "sid": "s-6c208784-f2e8-4bd1-9829-6c215a808c62",
+   "rss_mb": 170.25,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 2,
+   "total_ms": 257,
+   "sid": "s-1bd31677-81ec-4d6e-99fa-5ba9d22a54ab",
+   "rss_mb": 170.38,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 3,
+   "total_ms": 239,
+   "sid": "s-b271a207-e4b0-4e61-b9af-4907f23ca131",
+   "rss_mb": 169.45,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 4,
+   "total_ms": 263,
+   "sid": "s-04cc09a9-a4e8-4053-a14e-1ba0bc94f4ee",
+   "rss_mb": 168.77,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 5,
+   "total_ms": 254,
+   "sid": "s-ff2c2b16-102b-45ce-9c95-9143245df7c9",
+   "rss_mb": 170.47,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 6,
+   "total_ms": 244,
+   "sid": "s-ad05e6d3-4af0-4824-9e56-40572abcf217",
+   "rss_mb": 169.53,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 7,
+   "total_ms": 249,
+   "sid": "s-2e5690d9-a8e8-4403-b1e3-5356d9064dc0",
+   "rss_mb": 169.88,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 8,
+   "total_ms": 257,
+   "sid": "s-dd8a06d2-0c28-4e0d-ab58-2714f1a32dbc",
+   "rss_mb": 172.27,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 9,
+   "total_ms": 241,
+   "sid": "s-fe9e8401-35d5-4e01-8834-cf81789da028",
+   "rss_mb": 169.77,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 10,
+   "total_ms": 242,
+   "sid": "s-5bfc1571-a913-48ae-89f9-792ac49dd8ee",
+   "rss_mb": 169.66,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 11,
+   "total_ms": 244,
+   "sid": "s-4871d308-f01d-4443-bac4-566670be58fa",
+   "rss_mb": 170.0,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 12,
+   "total_ms": 249,
+   "sid": "s-35b41b14-ce2f-4c3c-958e-30a80e26fa33",
+   "rss_mb": 169.89,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 13,
+   "total_ms": 243,
+   "sid": "s-c32837d3-26b0-4dc5-beb8-94e018d87862",
+   "rss_mb": 169.56,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 14,
+   "total_ms": 246,
+   "sid": "s-315e27bd-7b41-48ba-8334-a2566a09a0da",
+   "rss_mb": 170.31,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 15,
+   "total_ms": 244,
+   "sid": "s-5e4cd7a6-71be-4664-99fd-2b95c3a5d84a",
+   "rss_mb": 170.39,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 16,
+   "total_ms": 242,
+   "sid": "s-8bb21521-7b7e-4ed7-9957-0f141086d61e",
+   "rss_mb": 170.34,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 17,
+   "total_ms": 256,
+   "sid": "s-1f3769b0-0833-42a0-a2cc-524947a34bd5",
+   "rss_mb": 170.73,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 18,
+   "total_ms": 242,
+   "sid": "s-3648c240-b4e3-4789-b365-53821b4a1f89",
+   "rss_mb": 169.7,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 19,
+   "total_ms": 240,
+   "sid": "s-5667ca6c-fa67-4907-bd35-46e03098bcf0",
+   "rss_mb": 169.31,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 20,
+   "total_ms": 239,
+   "sid": "s-14a7a706-5b5c-46c4-b967-438f1bb37e0e",
+   "rss_mb": 169.38,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 21,
+   "total_ms": 239,
+   "sid": "s-12af02ba-dc68-4afe-891e-0bceb461145b",
+   "rss_mb": 169.61,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 22,
+   "total_ms": 256,
+   "sid": "s-4f0cc332-d5ff-427b-a15a-618cd1d8157f",
+   "rss_mb": 169.52,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 23,
+   "total_ms": 236,
+   "sid": "s-ec3b8b00-0dd2-4203-a99d-8843a6f7d78e",
+   "rss_mb": 169.95,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 24,
+   "total_ms": 239,
+   "sid": "s-e345bdb8-fe05-4016-bd1a-fff6ceb71771",
+   "rss_mb": 169.92,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 25,
+   "total_ms": 247,
+   "sid": "s-476fda4c-67c3-4f33-a48e-68c02403742f",
+   "rss_mb": 173.86,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 26,
+   "total_ms": 243,
+   "sid": "s-c9ca77f6-be65-4708-a46f-b03718900db0",
+   "rss_mb": 169.25,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 27,
+   "total_ms": 253,
+   "sid": "s-171dc4b7-8f3f-4c32-892a-65b901940e27",
+   "rss_mb": 170.19,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 28,
+   "total_ms": 241,
+   "sid": "s-01ca0f7e-ef6b-4460-b784-37d4002b81f5",
+   "rss_mb": 170.2,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 29,
+   "total_ms": 249,
+   "sid": "s-b177420b-f010-476e-b9bd-ef4bd95d556a",
+   "rss_mb": 168.88,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 30,
+   "total_ms": 242,
+   "sid": "s-d39d6a4b-b4f4-4739-9a55-5cb2dec615c3",
+   "rss_mb": 169.55,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 31,
+   "total_ms": 261,
+   "sid": "s-7f811013-88fb-48bf-bd30-e16e1cdb6c2b",
+   "rss_mb": 170.44,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 32,
+   "total_ms": 247,
+   "sid": "s-d67a6869-6799-4ae9-8f38-8c9a99d2e166",
+   "rss_mb": 169.94,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 33,
+   "total_ms": 262,
+   "sid": "s-f25575ee-a173-421e-9e44-4886952dbbe3",
+   "rss_mb": 167.34,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 34,
+   "total_ms": 259,
+   "sid": "s-c1fc776c-f7c4-4bb1-9df2-143f5b741421",
+   "rss_mb": 173.59,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 35,
+   "total_ms": 243,
+   "sid": "s-f81d6176-451f-4841-923d-1e05fb91e537",
+   "rss_mb": 170.17,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 36,
+   "total_ms": 243,
+   "sid": "s-1a062fc4-bcf8-4d83-abf8-b2d4884c3ac9",
+   "rss_mb": 169.38,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 37,
+   "total_ms": 241,
+   "sid": "s-7a8235f8-b2a3-43e3-a5f4-a55a7f419348",
+   "rss_mb": 169.2,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 38,
+   "total_ms": 256,
+   "sid": "s-910ab31a-d26f-4d82-a370-2ac5047a1c39",
+   "rss_mb": 170.8,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 39,
+   "total_ms": 253,
+   "sid": "s-13115944-5019-4767-ad6d-8fe38e558b7b",
+   "rss_mb": 169.83,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 40,
+   "total_ms": 242,
+   "sid": "s-1d68dc41-b9b5-4a0f-8da3-ad660abf2bfd",
+   "rss_mb": 170.11,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 41,
+   "total_ms": 255,
+   "sid": "s-b723d8c4-f8c5-47f6-9a39-b4e3347fa112",
+   "rss_mb": 170.52,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 42,
+   "total_ms": 242,
+   "sid": "s-632b349c-26cb-41a5-aac0-0c1b2eca58f0",
+   "rss_mb": 169.42,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 43,
+   "total_ms": 247,
+   "sid": "s-7799d85e-3b91-4108-9fa9-1e7e0d44e38c",
+   "rss_mb": 169.98,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 44,
+   "total_ms": 248,
+   "sid": "s-2b1d113d-6128-4afb-bb63-bda450be553b",
+   "rss_mb": 170.06,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 45,
+   "total_ms": 240,
+   "sid": "s-81913c77-f5d6-449c-b1d2-d7ff69fb8783",
+   "rss_mb": 169.7,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 46,
+   "total_ms": 242,
+   "sid": "s-be17c8e2-29c3-4901-8eba-ab076b54e776",
+   "rss_mb": 169.5,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 47,
+   "total_ms": 247,
+   "sid": "s-6d377d34-7362-4d09-8a97-d05e1155b9ca",
+   "rss_mb": 169.66,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 48,
+   "total_ms": 244,
+   "sid": "s-ca92d59d-f664-4875-9966-4a47837bb99e",
+   "rss_mb": 170.28,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 49,
+   "total_ms": 252,
+   "sid": "s-9976f6a1-a736-4788-889e-c91aaaf58337",
+   "rss_mb": 171.3,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 50,
+   "total_ms": 241,
+   "sid": "s-fbe02674-fff9-4650-b995-ca669d3d1917",
+   "rss_mb": 169.0,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 51,
+   "total_ms": 258,
+   "sid": "s-1887e6a4-e9b5-4481-922c-1ffd45403317",
+   "rss_mb": 170.14,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 52,
+   "total_ms": 245,
+   "sid": "s-597eb715-88a8-4a43-8b6e-cf6826e704c7",
+   "rss_mb": 169.33,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 53,
+   "total_ms": 263,
+   "sid": "s-ef7ff5f4-0647-46a3-bd95-e9d2054ea83f",
+   "rss_mb": 169.19,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 54,
+   "total_ms": 252,
+   "sid": "s-a1a622ff-4035-4636-874d-8b089d18c191",
+   "rss_mb": 169.77,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 55,
+   "total_ms": 244,
+   "sid": "s-67439e72-2612-44db-9427-009f0ec6e4f7",
+   "rss_mb": 169.83,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 56,
+   "total_ms": 252,
+   "sid": "s-8921b778-dde4-4b12-bd08-423b22a34680",
+   "rss_mb": 170.36,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 57,
+   "total_ms": 238,
+   "sid": "s-371d556c-fc8c-472f-9d29-f784900b1ed1",
+   "rss_mb": 169.66,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 58,
+   "total_ms": 253,
+   "sid": "s-5f7bff3c-790f-453e-809a-8325ed901e72",
+   "rss_mb": 170.2,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 59,
+   "total_ms": 255,
+   "sid": "s-034ec4ae-09ba-4f6a-b020-16e6085ccaf2",
+   "rss_mb": 168.7,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 60,
+   "total_ms": 248,
+   "sid": "s-15567d2b-d12f-48b4-a246-07bf75588253",
+   "rss_mb": 169.0,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 61,
+   "total_ms": 240,
+   "sid": "s-08b471c9-8c97-439f-99d5-53f817fda005",
+   "rss_mb": 169.5,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 62,
+   "total_ms": 252,
+   "sid": "s-277fd047-f8a0-40ac-ad31-b11834d9976f",
+   "rss_mb": 170.0,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 63,
+   "total_ms": 245,
+   "sid": "s-fd642c63-907a-44f0-b183-7c28e1a70797",
+   "rss_mb": 169.41,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 64,
+   "total_ms": 243,
+   "sid": "s-f7dad1b0-363f-4736-a426-4bdb8d153ca1",
+   "rss_mb": 173.84,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 65,
+   "total_ms": 248,
+   "sid": "s-2ce2a794-dc63-4e01-a997-d36fce298f18",
+   "rss_mb": 170.36,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 66,
+   "total_ms": 246,
+   "sid": "s-f4eb6f2d-0fb2-47a7-b38a-7b889dca475d",
+   "rss_mb": 169.3,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 67,
+   "total_ms": 242,
+   "sid": "s-e87cb658-7742-4212-8b01-0afbcf0a62f2",
+   "rss_mb": 169.92,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 68,
+   "total_ms": 243,
+   "sid": "s-fc4e28f1-2e79-4fb7-80f0-f94ea7449b6b",
+   "rss_mb": 169.89,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 69,
+   "total_ms": 249,
+   "sid": "s-75c973a6-6afc-4cbe-991f-50634eefca50",
+   "rss_mb": 169.95,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 70,
+   "total_ms": 241,
+   "sid": "s-0345cf49-588f-4272-8d5e-1c07f140c32d",
+   "rss_mb": 169.67,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 71,
+   "total_ms": 242,
+   "sid": "s-fa5d2dd9-c2d0-4c59-ad92-0e91ecf728a0",
+   "rss_mb": 169.77,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 72,
+   "total_ms": 260,
+   "sid": "s-c91eecd0-f53a-4a37-98fa-038b81c93f14",
+   "rss_mb": 170.08,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 73,
+   "total_ms": 242,
+   "sid": "s-3a78eb70-7b2f-4523-98a8-d72e284df9d2",
+   "rss_mb": 169.27,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 74,
+   "total_ms": 244,
+   "sid": "s-0a33f4e7-d9fb-4dd1-9f40-119a240e9ab5",
+   "rss_mb": 169.98,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 75,
+   "total_ms": 240,
+   "sid": "s-4bb2453e-a2b3-48af-8d35-fec6b5209324",
+   "rss_mb": 170.22,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 76,
+   "total_ms": 244,
+   "sid": "s-b181918c-1670-49df-9a07-c508985257db",
+   "rss_mb": 169.69,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 77,
+   "total_ms": 241,
+   "sid": "s-b59ab72a-62e3-4c88-8f5d-c3520cdcd388",
+   "rss_mb": 170.17,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 78,
+   "total_ms": 242,
+   "sid": "s-8707db24-0f33-4fb7-acbe-36a315722155",
+   "rss_mb": 169.53,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 79,
+   "total_ms": 240,
+   "sid": "s-2ce650ed-b8d1-4e5b-8cbc-949dd1cbdfc9",
+   "rss_mb": 169.72,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 80,
+   "total_ms": 251,
+   "sid": "s-bad6f274-d851-4a96-a643-3630972b3177",
+   "rss_mb": 169.39,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 81,
+   "total_ms": 240,
+   "sid": "s-5a1aa8d0-4eac-47fc-b68f-86f25cbb58a5",
+   "rss_mb": 165.78,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 82,
+   "total_ms": 238,
+   "sid": "s-0ba3de6d-ecaa-4f19-878d-1ab1cefd5a11",
+   "rss_mb": 169.05,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 83,
+   "total_ms": 241,
+   "sid": "s-5ee9d78f-b121-49b6-b925-3de653b03493",
+   "rss_mb": 169.97,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 84,
+   "total_ms": 247,
+   "sid": "s-0fbae3ec-eda5-46da-a0d5-60a2333bd8e2",
+   "rss_mb": 169.67,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 85,
+   "total_ms": 251,
+   "sid": "s-749de241-43b5-4616-96ad-781f8fba761a",
+   "rss_mb": 169.8,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 86,
+   "total_ms": 242,
+   "sid": "s-de6da174-6f83-418d-a1e3-e27652426b65",
+   "rss_mb": 169.81,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 87,
+   "total_ms": 254,
+   "sid": "s-5cd59c94-833a-4b25-a2d9-efa24298581b",
+   "rss_mb": 170.06,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 88,
+   "total_ms": 244,
+   "sid": "s-d314199f-808f-4e44-abbc-45f8f98c3a2c",
+   "rss_mb": 170.11,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 89,
+   "total_ms": 246,
+   "sid": "s-9e1a1abe-78ba-4800-bbdb-74edfcead1a6",
+   "rss_mb": 170.28,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 90,
+   "total_ms": 235,
+   "sid": "s-1ccb4413-ac93-4c41-99c2-baa390f40550",
+   "rss_mb": 169.62,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 91,
+   "total_ms": 243,
+   "sid": "s-5d6c1727-2df2-4767-b477-9e025a768402",
+   "rss_mb": 170.05,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 92,
+   "total_ms": 240,
+   "sid": "s-311813e7-e63f-45fe-b85b-1d6fe2265aa4",
+   "rss_mb": 169.3,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 93,
+   "total_ms": 245,
+   "sid": "s-21fd29f1-378b-46da-b389-3f612a86ecde",
+   "rss_mb": 170.78,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 94,
+   "total_ms": 245,
+   "sid": "s-0a7276f6-b335-4163-bb4a-8b229b465231",
+   "rss_mb": 169.64,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 95,
+   "total_ms": 251,
+   "sid": "s-8ee6b9ba-4b45-4fce-abee-812b91748cb3",
+   "rss_mb": 169.66,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 96,
+   "total_ms": 271,
+   "sid": "s-20f142db-1a05-420d-9f6a-5ab31ccd6e4d",
+   "rss_mb": 170.69,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 97,
+   "total_ms": 256,
+   "sid": "s-2302894c-ccd1-4731-aad3-51a790431a3b",
+   "rss_mb": 171.22,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 98,
+   "total_ms": 250,
+   "sid": "s-beb3853f-7f3c-406f-9156-efa5d78a89d0",
+   "rss_mb": 169.72,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 99,
+   "total_ms": 247,
+   "sid": "s-3679a9ed-3cdb-4711-8744-e5838889c7ce",
+   "rss_mb": 169.58,
+   "helper_n": 3,
+   "residue_pids": []
+  },
+  {
+   "idx": 100,
+   "total_ms": 251,
+   "sid": "s-27a7739a-3a14-4b75-b69e-4007e0e50570",
+   "rss_mb": 169.09,
+   "helper_n": 3,
+   "residue_pids": []
+  }
+ ],
+ "trend": {
+  "first10_median_mb": 169.82,
+  "last10_median_mb": 169.69,
+  "delta_mb": -0.13
+ },
+ "teardown": {
+  "cycles_with_residue": 0,
+  "residue_cycle_idx": []
+ },
+ "cycle_ms": {
+  "n": 100,
+  "median_ms": 245
+ },
+ "protocol": "proxy baseline: old version lacks subscription counter (C10 contract); per-cycle spawn/teardown RSS with differential attribution (no browser quit); per-cycle quit-residue verification (non-empty residue voids that cycle); linear growth across cycles = P6 failure signal"
+}

@@ -1,0 +1,45 @@
+# R50 / E02 证据身份
+
+HEAD              11ce7389a26f96c22a8844bfad0b6090fe572a94
+日期              2026-10-10
+运行序号          attempts=1（归档目录在正式跑前已 rm -rf，含 .run-attempts sidecar；
+                  故 attempts=1 即自证目录内全部产物来自同一次运行）
+运行窗口          2026-10-10T08:23:54.500Z → 2026-10-10T08:24:49.244Z
+
+## 产物 sha256（前 16）
+
+probe-e02-contrast.cjs     204918878e6fd25d
+summarize-e02.cjs          0e5da3844f1ef68d
+README.md                  073c650e0434da3f
+e02-raw.json               d8798635e8001c1a
+e02-summary.json           9701662d226a5422
+e02-measurements.csv       6563b347c2a79db6
+
+## 探针自钉
+
+e02-raw.json.run.probeSha256 = 204918878e6fd25d8a54ba3c30519bb5408665d1a9553e93fed3f86c032097c9
+（= probe-e02-contrast.cjs 的 sha256 全值；读数与探针版本绑定）
+
+## 运行环境
+
+被测对象    ui/src/styles.css @ HEAD 11ce7389a26f96c22a8844bfad0b6090fe572a94
+后端        ui/src/demo.ts（浏览器域内存后端）
+浏览器      headless Chromium（playwright-core，装在 ui/node_modules）
+页面来源    http://localhost:5183/（vite dev server）
+
+## 本档引用的判据来源（均为**项目既有**口径，非本档新立）
+
+docs/acceptance/ux-r1/g4/2026-10-09-97035c8-r40/README.md:149   「低于 AA 4.5」
+ui/src/styles.css:535 / :584 / :1078                             「.dim 深色 3.01:1 不合格」三处注释
+ui/src/styles.css:20-22                                         --accent-text 专用档的设立理由与声明值
+docs/ux/ssh-client-ux-refactor-delivery.md:211                  E02 行级要求
+
+## 本档引用的源码位置
+
+ui/src/styles.css:977 / :983 / :986-988    .host-card-side 默认 opacity:0 与三条显形路径
+ui/src/styles.css:605                      .dim { color: var(--dim); }
+ui/src/App.tsx:381-427                     THEMES 四套配色声明表（探针据此解析）
+ui/src/App.tsx:1498                        data-chrome（应用外观）
+ui/src/App.tsx:4297                        应用外观与终端配色相互独立
+ui/src/App.tsx:3990-4037                   .welcome 空态子树
+ui/src/App.tsx:5526+                       添加主机表单（.card.add-host）

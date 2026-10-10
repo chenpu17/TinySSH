@@ -1,0 +1,85 @@
+{
+ "bin": "/private/tmp/g5-b1/tinyssh-app",
+ "bin_sha256": "2c3ab20dbc90db7796b23e18f06dbf6262bf2bbd99da2ed92281d28ac5d08de8",
+ "mode": "cold",
+ "runs": [
+  {
+   "idx": 1,
+   "pid": 53643,
+   "run_id": "p1-cold-1-5148c57f",
+   "list_ready_ms": 547,
+   "operable_ms": 547
+  },
+  {
+   "idx": 2,
+   "pid": 53958,
+   "run_id": "p1-cold-2-e86a7957",
+   "list_ready_ms": 517,
+   "operable_ms": 517
+  },
+  {
+   "idx": 3,
+   "pid": 54283,
+   "run_id": "p1-cold-3-36282757",
+   "list_ready_ms": 498,
+   "operable_ms": 498
+  },
+  {
+   "idx": 4,
+   "pid": 54614,
+   "run_id": "p1-cold-4-8e5a62bb",
+   "list_ready_ms": 504,
+   "operable_ms": 504
+  },
+  {
+   "idx": 5,
+   "pid": 54954,
+   "run_id": "p1-cold-5-441665b2",
+   "list_ready_ms": 534,
+   "operable_ms": 534
+  },
+  {
+   "idx": 6,
+   "pid": 55401,
+   "run_id": "p1-cold-6-6e2c23a7",
+   "list_ready_ms": 513,
+   "operable_ms": 513
+  },
+  {
+   "idx": 7,
+   "pid": 55703,
+   "run_id": "p1-cold-7-4b370913",
+   "list_ready_ms": 550,
+   "operable_ms": 550
+  },
+  {
+   "idx": 8,
+   "pid": 55784,
+   "run_id": "p1-cold-8-05838ab1",
+   "list_ready_ms": 497,
+   "operable_ms": 497
+  },
+  {
+   "idx": 9,
+   "pid": 55888,
+   "run_id": "p1-cold-9-bb9632f0",
+   "list_ready_ms": 545,
+   "operable_ms": 545
+  },
+  {
+   "idx": 10,
+   "pid": 55919,
+   "run_id": "p1-cold-10-74b0a757",
+   "list_ready_ms": 501,
+   "operable_ms": 501
+  }
+ ],
+ "operable": {
+  "n": 10,
+  "median_ms": 515,
+  "p95_ms": 549,
+  "min_ms": 497,
+  "max_ms": 550
+ },
+ "protocol": "Q-04 endpoint: operable = per-run beacon mark '<run_id>|s2-list-ready' arrival - t0 (direct observation: 20 seeded host cards rendered; no offset subtraction); run id isolates shared beacon log; cold=idle 60s process-cold"
+}

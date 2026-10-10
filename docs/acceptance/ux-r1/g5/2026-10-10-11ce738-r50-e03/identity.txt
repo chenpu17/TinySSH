@@ -1,0 +1,56 @@
+# R50 / E03 证据身份
+
+HEAD              11ce7389a26f96c22a8844bfad0b6090fe572a94
+日期              2026-10-10
+运行序号          attempts=1（归档目录在正式跑前已清空，含 .run-attempts sidecar；
+                  故 attempts=1 即自证目录内全部产物来自同一次运行）
+运行窗口          2026-10-10T09:13:53.407Z → 2026-10-10T09:14:19.215Z
+                  （第二轮：修正 §2 漏检 3 —— IPv6 截图改在「收起表单」之前拍 —— 后清空重跑）
+
+## 产物 sha256（前 16）
+
+probe-e03-longtext.cjs      1a891b84341c5a23
+README.md                   5583a44b1193be01（**已变更**：§3.1 方法归属更正 + §4 路径②降级 +
+                            §5.3「最深 4 段」/§5.7「192」残留更正 + §5.8 title 局限
+                            + §2 漏检 2「最深的真实目录」残留更正
+                            + §3.1 无标签卡复核句署名/口径更正（字墨「被改」→「被盖」、
+                            「同卡」→「对照 A 卡」，2026-10-10））
+e03-raw.json                e1749ab6fd53f40d
+e03-stdout.txt              23ad708d19c815a9
+e03-err.txt                 e3b0c44298fc1c14（0 字节 = 无页面异常）
+.run-attempts               内容 "1"
+screenshots/                6 张：ipv6-reject / longhost-default / longhost-hover /
+                            longerror / longpath-crumbs / longpath-error
+
+## 探针自钉
+
+e03-raw.json.run.probeSha256 = 1a891b84341c5a2374bd8e522af9cbe225874719265754b084bbae8f60f412e3
+（= probe-e03-longtext.cjs 的 sha256 全值；读数与探针版本绑定）
+
+## 运行环境
+
+被测对象    ui/src/App.tsx、ui/src/styles.css、ui/src/demo.ts @ HEAD 11ce7389a26f96c22a8844bfad0b6090fe572a94
+浏览器      headless Chromium（playwright-core，装在 ui/node_modules），
+            viewport 1440×900，locale zh-CN，reducedMotion 默认
+页面来源    http://localhost:5183/（vite dev server）
+夹具        **全部经真实「添加主机」表单播种**（见 README §2 与 e03-raw.json.fixtures）
+
+## 本档引用的源码位置
+
+ui/src/App.tsx:2764                       isLoopbackAddr 识别 "::1"/"0:0:0:0:0:0:0:1"（IPv6 另一入口，E03-2 限定）
+ui/src/App.tsx:3400                       .host-card aria-label（含完整名称，仅 SR 可及）
+ui/src/App.tsx:3407                       .host-card title（username@addr + 指纹 + 编码，不含名称）
+ui/src/App.tsx:3410-3412                  .host-card-main title（无会话时 undefined）
+ui/src/App.tsx:3423                       .host-name（无 title）
+ui/src/App.tsx:3429-3430                  标签 slice(0,2) + "+N"
+ui/src/App.tsx:3456                       <IconLoader size={11} className="spin" />
+ui/src/App.tsx:4826                       navigateTo 成功才退出编辑态（失败留在编辑态）
+ui/src/App.tsx:4832                       .sftp-crumbs title={sftpPath}
+ui/src/App.tsx:4840-4846                  面包屑 segs 结构（可见文本双斜杠来源）
+ui/src/App.tsx:4874                       sftpErr → <div className="err">
+ui/src/App.tsx:5404                       编辑表单 name 预填 editHost?.name（E03-1 限定）
+ui/src/App.tsx:5475                       地址校验 /^[a-zA-Z0-9._-]{1,253}$/（拒绝 IPv6，E03-2）
+ui/src/demo.ts:640                        10.0.0.12 → auth_failed（唯一失败地址）
+ui/src/demo.ts:1181 / :1254               演示 SFTP dirs（含 /var/log/nginx/archive，5 段，更深）
+ui/src/styles.css:977                     .host-card-side（position:absolute + 不透明 --panel3，悬停遮挡）
+crates/transport-ssh/src/lib.rs:1247      SOCKS5 目标解析（**非**唯一 IPv6 代码，见 App.tsx:2764）

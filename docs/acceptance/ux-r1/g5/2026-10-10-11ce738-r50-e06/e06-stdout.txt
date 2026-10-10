@@ -1,0 +1,29 @@
+{
+ "ok": true,
+ "attempts": 1,
+ "narrowTpFull": true,
+ "narrowReachable": true,
+ "splitTwoPanes": {
+  "left": 1,
+  "right": 1,
+  "focused": 1,
+  "exitBtn": true
+ },
+ "splitPanelTpFull": true,
+ "splitRestored": {
+  "panelGone": true,
+  "left": 1,
+  "right": 1,
+  "exitBtn": true
+ },
+ "notifyLive": [
+  "polite"
+ ],
+ "notifyNotStolen": true,
+ "bgFocusAfter": false,
+ "bgClickToEnter": true,
+ "bgActiveUnchanged": true,
+ "fgControlFocusAfter": true,
+ "fgControlClickToEnter": false,
+ "fgControlActiveAfter": "prod-1"
+}

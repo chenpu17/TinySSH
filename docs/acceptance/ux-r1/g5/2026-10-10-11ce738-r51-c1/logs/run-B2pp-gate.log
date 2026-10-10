@@ -1,0 +1,15 @@
+[15:38:52] launched pid=68480 rid=d2-1791617932 sha=ef5eeaf04cbe9e11
+[15:42:01] 结束
+/tmp/g5-b1/run-d10.sh: line 23: 68480 Terminated: 15          env TINYSSH_DB=/tmp/r4_p3/tinyssh.db TINYSSH_MASTER_KEY="$KEY" TINYSSH_SMOKE=1 TINYSSH_SMOKE_MODE=p6 TINYSSH_RUN_ID="$RID" TINYSSH_AUTOCONNECT=local "$BIN" > /tmp/g5-b1/d10.out 2> /tmp/g5-b1/d10.err
+=== 结果（解码）===
+p6-open
+d2-1791617932|p6-cyc|25|subsViol=0
+d2-1791617932|p6-cyc|50|subsViol=0
+d2-1791617932|p6-cyc|75|subsViol=0
+d2-1791617932|p6-cyc|100|subsViol=0
+d2-1791617932|p6-cycles-ok|100|subsViol=0|cycMaxMs=11111
+d2-1791617932|p6-switch-ok|200|retried=0
+d2-1791617932|p6-panel-ok|50
+p6-DONE
+=== 残留 ===
+8484 /bin/zsh -c source /Users/chenpu/.claude/shell-snapshots/snapshot-zsh-1791515292634-h0g58j.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'sleep 110; cat /tmp/g5-b1/run-d10.log; echo "--- 终态 ---"; grep -o '"'"'p6-[A-Za-z-]*'"'"' /tmp/t40_smoke/beacon.log | sort -u; echo "FAIL=$(grep -c FAIL /tmp/t40_smoke/beacon.log)  行数=$(wc -l < /tmp/t40_smoke/beacon.log)"; pgrep -fl tinyssh-app || echo "app 已退出"' && pwd -P >| /tmp/claude-d8cd-cwd

@@ -1,0 +1,7805 @@
+{
+ "base": "http://localhost:5183",
+ "browser": "ms-playwright chromium-1243",
+ "headSha": "11ce7389a26f96c22a8844bfad0b6090fe572a94",
+ "run": {
+  "attempts": 1,
+  "startedAt": "2026-10-10T08:23:54.500Z",
+  "probeSha256": "204918878e6fd25d8a54ba3c30519bb5408665d1a9553e93fed3f86c032097c9",
+  "finishedAt": "2026-10-10T08:24:49.244Z"
+ },
+ "declared": [
+  {
+   "id": "dark",
+   "label": "深色（默认）",
+   "bg": "#10141a",
+   "fg": "#d7dee8"
+  },
+  {
+   "id": "light",
+   "label": "浅色",
+   "bg": "#f7f7f2",
+   "fg": "#2a3138"
+  },
+  {
+   "id": "solar-dark",
+   "label": "Solarized 深色",
+   "bg": "#002b36",
+   "fg": "#93a1a1"
+  },
+  {
+   "id": "solar-light",
+   "label": "Solarized 浅色",
+   "bg": "#fdf6e3",
+   "fg": "#657b83"
+  }
+ ],
+ "termPalette": [
+  {
+   "appearance": "深色",
+   "themeId": "dark",
+   "activeLabel": "Aa深色（默认）",
+   "fgComputed": "rgb(215, 222, 232)",
+   "bgComputed": "rgb(16, 20, 26)",
+   "fgHex": "#d7dee8",
+   "bgHex": "#10141a",
+   "declaredFg": "#d7dee8",
+   "declaredBg": "#10141a",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 13.64,
+   "pixelShot": "term-dark-dark-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "16,20,26",
+     "hex": "#10141a",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  },
+  {
+   "appearance": "深色",
+   "themeId": "light",
+   "activeLabel": "Aa浅色",
+   "fgComputed": "rgb(42, 49, 56)",
+   "bgComputed": "rgb(247, 247, 242)",
+   "fgHex": "#2a3138",
+   "bgHex": "#f7f7f2",
+   "declaredFg": "#2a3138",
+   "declaredBg": "#f7f7f2",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 12.25,
+   "pixelShot": "term-light-dark-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "247,247,242",
+     "hex": "#f7f7f2",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  },
+  {
+   "appearance": "深色",
+   "themeId": "solar-dark",
+   "activeLabel": "AaSolarized 深色",
+   "fgComputed": "rgb(147, 161, 161)",
+   "bgComputed": "rgb(0, 43, 54)",
+   "fgHex": "#93a1a1",
+   "bgHex": "#002b36",
+   "declaredFg": "#93a1a1",
+   "declaredBg": "#002b36",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 5.61,
+   "pixelShot": "term-solar-dark-dark-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "0,43,54",
+     "hex": "#002b36",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  },
+  {
+   "appearance": "深色",
+   "themeId": "solar-light",
+   "activeLabel": "AaSolarized 浅色",
+   "fgComputed": "rgb(101, 123, 131)",
+   "bgComputed": "rgb(253, 246, 227)",
+   "fgHex": "#657b83",
+   "bgHex": "#fdf6e3",
+   "declaredFg": "#657b83",
+   "declaredBg": "#fdf6e3",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 4.13,
+   "pixelShot": "term-solar-light-dark-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "253,246,227",
+     "hex": "#fdf6e3",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  },
+  {
+   "appearance": "浅色",
+   "themeId": "dark",
+   "activeLabel": "Aa深色（默认）",
+   "fgComputed": "rgb(215, 222, 232)",
+   "bgComputed": "rgb(16, 20, 26)",
+   "fgHex": "#d7dee8",
+   "bgHex": "#10141a",
+   "declaredFg": "#d7dee8",
+   "declaredBg": "#10141a",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 13.64,
+   "pixelShot": "term-dark-light-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "16,20,26",
+     "hex": "#10141a",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  },
+  {
+   "appearance": "浅色",
+   "themeId": "light",
+   "activeLabel": "Aa浅色",
+   "fgComputed": "rgb(42, 49, 56)",
+   "bgComputed": "rgb(247, 247, 242)",
+   "fgHex": "#2a3138",
+   "bgHex": "#f7f7f2",
+   "declaredFg": "#2a3138",
+   "declaredBg": "#f7f7f2",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 12.25,
+   "pixelShot": "term-light-light-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "247,247,242",
+     "hex": "#f7f7f2",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  },
+  {
+   "appearance": "浅色",
+   "themeId": "solar-dark",
+   "activeLabel": "AaSolarized 深色",
+   "fgComputed": "rgb(147, 161, 161)",
+   "bgComputed": "rgb(0, 43, 54)",
+   "fgHex": "#93a1a1",
+   "bgHex": "#002b36",
+   "declaredFg": "#93a1a1",
+   "declaredBg": "#002b36",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 5.61,
+   "pixelShot": "term-solar-dark-light-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "0,43,54",
+     "hex": "#002b36",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  },
+  {
+   "appearance": "浅色",
+   "themeId": "solar-light",
+   "activeLabel": "AaSolarized 浅色",
+   "fgComputed": "rgb(101, 123, 131)",
+   "bgComputed": "rgb(253, 246, 227)",
+   "fgHex": "#657b83",
+   "bgHex": "#fdf6e3",
+   "declaredFg": "#657b83",
+   "declaredBg": "#fdf6e3",
+   "matchFg": true,
+   "matchBg": true,
+   "ratio": 4.13,
+   "pixelShot": "term-solar-light-light-bg.png",
+   "clip": {
+    "x": 1367,
+    "y": 764,
+    "width": 40,
+    "height": 12
+   },
+   "bgPixelTop": [
+    {
+     "rgb": "253,246,227",
+     "hex": "#fdf6e3",
+     "n": 480
+    }
+   ],
+   "matchBgPixel": true
+  }
+ ],
+ "chrome": {
+  "深色": {
+   "dataChrome": "dark",
+   "emptyState": [
+    {
+     "text": "TinySSH",
+     "sel": "app-title",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "协作",
+     "sel": "collab-badge hot",
+     "fg": "#2a2410",
+     "bg": "#d0b07a",
+     "ratio": 7.49,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "· 2 待审批",
+     "sel": "collab-badge hot",
+     "fg": "#2a2410",
+     "bg": "#d0b07a",
+     "ratio": 7.49,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "tab-label",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签列表",
+     "sel": "ghost tab-all",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "TinySSH",
+     "sel": "welcome-title",
+     "fg": "#d4dbe6",
+     "bg": "#0c1017",
+     "ratio": 13.68,
+     "large": true,
+     "fontSize": "19px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "人机协同 SSH 工作台",
+     "sel": "welcome-sub",
+     "fg": "#5d6f82",
+     "bg": "#0c1017",
+     "ratio": 3.69,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "500"
+    },
+    {
+     "text": "连接",
+     "sel": "ws-k",
+     "fg": "#3d9da8",
+     "bg": "#0c1017",
+     "ratio": 5.98,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接",
+     "sel": "DIV",
+     "fg": "#5d6f82",
+     "bg": "#0c1017",
+     "ratio": 3.69,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "操作",
+     "sel": "ws-k",
+     "fg": "#3d9da8",
+     "bg": "#0c1017",
+     "ratio": 5.98,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全",
+     "sel": "DIV",
+     "fg": "#5d6f82",
+     "bg": "#0c1017",
+     "ratio": 3.69,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "多会话",
+     "sel": "ws-k",
+     "fg": "#3d9da8",
+     "bg": "#0c1017",
+     "ratio": 5.98,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都",
+     "sel": "DIV",
+     "fg": "#5d6f82",
+     "bg": "#0c1017",
+     "ratio": 3.69,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "传输",
+     "sel": "ws-k",
+     "fg": "#3d9da8",
+     "bg": "#0c1017",
+     "ratio": 5.98,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先",
+     "sel": "DIV",
+     "fg": "#5d6f82",
+     "bg": "#0c1017",
+     "ratio": 3.69,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "添加主机",
+     "sel": "BUTTON",
+     "fg": "#0b1516",
+     "bg": "#3d9da8",
+     "ratio": 5.81,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "导入 ~/.ssh/config",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#0c1017",
+     "ratio": 5.98,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "打开本地终端",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#0c1017",
+     "ratio": 5.98,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "已有 2 个会话未接入终端——点击上方标签或「标签列表」继续。",
+     "sel": "dim welcome-note",
+     "fg": "#5d6f82",
+     "bg": "#0c1017",
+     "ratio": 3.69,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "未连接",
+     "sel": "mono sb-left",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "转发",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "传输",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "⌄",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    }
+   ],
+   "page": [
+    {
+     "text": "TinySSH",
+     "sel": "app-title",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "协作",
+     "sel": "collab-badge hot",
+     "fg": "#2a2410",
+     "bg": "#d0b07a",
+     "ratio": 7.49,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "· 2 待审批",
+     "sel": "collab-badge hot",
+     "fg": "#2a2410",
+     "bg": "#d0b07a",
+     "ratio": 7.49,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "我控制中",
+     "sel": "ctl-badge human",
+     "fg": "#3d9da8",
+     "bg": "#18262f",
+     "ratio": 4.85,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "2",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "tab-label",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签列表",
+     "sel": "ghost tab-all",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "st-title mono",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "已连接",
+     "sel": "mono st-state ok",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "交给 Agent…",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "协作",
+     "sel": "ghost st-collab",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "文件",
+     "sel": "st-file",
+     "fg": "#0b1516",
+     "bg": "#3d9da8",
+     "ratio": 5.81,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "工具",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "中断",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "SSH · UTF-8",
+     "sel": "mono sb-left",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "转发",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "传输",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "⌄",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    }
+   ],
+   "placeholderPage": [
+    {
+     "sel": "INPUT",
+     "ph": "搜索主机",
+     "rawColor": "rgb(154, 170, 184)",
+     "alpha": 1,
+     "fg": "#9aaab8",
+     "bg": "#0c1017",
+     "ratio": 8,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "在 prod-1 上执行命令——回车执行，Ctrl+C 中断终端",
+     "rawColor": "rgb(154, 170, 184)",
+     "alpha": 1,
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    }
+   ],
+   "hoverHostbar": [
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#232d3d",
+     "ratio": 9.96,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#232d3d",
+     "ratio": 2.68,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#232d3d",
+     "ratio": 5.82,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#232d3d",
+     "ratio": 5.82,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#232d3d",
+     "ratio": 5.82,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#232d3d",
+     "ratio": 5.82,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#232d3d",
+     "ratio": 5.82,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "连接",
+     "sel": "host-connect-btn",
+     "fg": "#3d9da8",
+     "bg": "#263848",
+     "ratio": 3.78,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "500"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "2",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    }
+   ],
+   "settingsDialog": [
+    {
+     "text": "设置",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "外观",
+     "sel": "on",
+     "fg": "#d4dbe6",
+     "bg": "#1f303f",
+     "ratio": 9.71,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "终端",
+     "sel": "BUTTON",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "凭据",
+     "sel": "BUTTON",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Agent 接入",
+     "sel": "BUTTON",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "关于",
+     "sel": "BUTTON",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "字号",
+     "sel": "ts-label",
+     "fg": "#5d6f82",
+     "bg": "#1c2433",
+     "ratio": 3.01,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "14",
+     "sel": "ts-val mono",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "14px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "重置",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#1c2433",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "外观（应用）",
+     "sel": "ts-label",
+     "fg": "#5d6f82",
+     "bg": "#1c2433",
+     "ratio": 3.01,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "跟随系统",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#1c2433",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "深色",
+     "sel": "ghost ts-active",
+     "fg": "#3d9da8",
+     "bg": "#1f303f",
+     "ratio": 4.24,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "浅色",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#1c2433",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "终端配色",
+     "sel": "ts-label",
+     "fg": "#5d6f82",
+     "bg": "#1c2433",
+     "ratio": 3.01,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#d7dee8",
+     "bg": "#10141a",
+     "ratio": 13.64,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "深色（默认）",
+     "sel": "ghost ts-opt",
+     "fg": "#3d9da8",
+     "bg": "#1f303f",
+     "ratio": 4.24,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#2a3138",
+     "bg": "#f7f7f2",
+     "ratio": 12.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "浅色",
+     "sel": "ghost ts-opt",
+     "fg": "#3d9da8",
+     "bg": "#1c2433",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#93a1a1",
+     "bg": "#002b36",
+     "ratio": 5.61,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Solarized 深色",
+     "sel": "ghost ts-opt",
+     "fg": "#3d9da8",
+     "bg": "#1c2433",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#657b83",
+     "bg": "#fdf6e3",
+     "ratio": 4.13,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Solarized 浅色",
+     "sel": "ghost ts-opt ts-active",
+     "fg": "#3d9da8",
+     "bg": "#1f303f",
+     "ratio": 4.24,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "应用外观与终端配色相互独立；「跟随系统」随系统深浅实时切换。",
+     "sel": "dim",
+     "fg": "#5d6f82",
+     "bg": "#1c2433",
+     "ratio": 3.01,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置",
+     "sel": "dim",
+     "fg": "#5d6f82",
+     "bg": "#1c2433",
+     "ratio": 3.01,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    }
+   ],
+   "placeholderSettings": [],
+   "addHostText": [
+    {
+     "text": "名称",
+     "sel": "LABEL",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "地址（IP 或域名）",
+     "sel": "LABEL",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "端口",
+     "sel": "LABEL",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "用户名",
+     "sel": "LABEL",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "认证方式",
+     "sel": "LABEL",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "远端编码（老设备中文乱码时选 GBK）",
+     "sel": "LABEL",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签（可选，逗号分隔，如：生产, 成都）",
+     "sel": "LABEL",
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "保存并连接",
+     "sel": "BUTTON",
+     "fg": "#0b1516",
+     "bg": "#3d9da8",
+     "ratio": 5.81,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "仅保存",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#1c2433",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "凭据加密存入本机凭据库，不会明文落盘。",
+     "sel": "dim",
+     "fg": "#5d6f82",
+     "bg": "#1c2433",
+     "ratio": 3.01,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    }
+   ],
+   "addHostPlaceholder": [
+    {
+     "sel": "INPUT",
+     "ph": "例：我的服务器",
+     "rawColor": "rgb(154, 170, 184)",
+     "alpha": 1,
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "例：192.168.1.10 或 server.example.",
+     "rawColor": "rgb(154, 170, 184)",
+     "alpha": 1,
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "例：ops 或 root",
+     "rawColor": "rgb(154, 170, 184)",
+     "alpha": 1,
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "例：生产, 数据库",
+     "rawColor": "rgb(154, 170, 184)",
+     "alpha": 1,
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "密码",
+     "rawColor": "rgb(154, 170, 184)",
+     "alpha": 1,
+     "fg": "#9aaab8",
+     "bg": "#1c2433",
+     "ratio": 6.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    }
+   ]
+  },
+  "浅色": {
+   "dataChrome": "light",
+   "emptyState": [
+    {
+     "text": "TinySSH",
+     "sel": "app-title",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "协作",
+     "sel": "collab-badge hot",
+     "fg": "#ffffff",
+     "bg": "#96700a",
+     "ratio": 4.55,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "· 2 待审批",
+     "sel": "collab-badge hot",
+     "fg": "#ffffff",
+     "bg": "#96700a",
+     "ratio": 4.55,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "tab-label",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签列表",
+     "sel": "ghost tab-all",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "TinySSH",
+     "sel": "welcome-title",
+     "fg": "#242e38",
+     "bg": "#eaeef2",
+     "ratio": 11.83,
+     "large": true,
+     "fontSize": "19px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "人机协同 SSH 工作台",
+     "sel": "welcome-sub",
+     "fg": "#5c6875",
+     "bg": "#eaeef2",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "500"
+    },
+    {
+     "text": "连接",
+     "sel": "ws-k",
+     "fg": "#1f767c",
+     "bg": "#eaeef2",
+     "ratio": 4.57,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接",
+     "sel": "DIV",
+     "fg": "#5c6875",
+     "bg": "#eaeef2",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "操作",
+     "sel": "ws-k",
+     "fg": "#1f767c",
+     "bg": "#eaeef2",
+     "ratio": 4.57,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全",
+     "sel": "DIV",
+     "fg": "#5c6875",
+     "bg": "#eaeef2",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "多会话",
+     "sel": "ws-k",
+     "fg": "#1f767c",
+     "bg": "#eaeef2",
+     "ratio": 4.57,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都",
+     "sel": "DIV",
+     "fg": "#5c6875",
+     "bg": "#eaeef2",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "传输",
+     "sel": "ws-k",
+     "fg": "#1f767c",
+     "bg": "#eaeef2",
+     "ratio": 4.57,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先",
+     "sel": "DIV",
+     "fg": "#5c6875",
+     "bg": "#eaeef2",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "添加主机",
+     "sel": "BUTTON",
+     "fg": "#ffffff",
+     "bg": "#1f767c",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "导入 ~/.ssh/config",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#eaeef2",
+     "ratio": 4.57,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "打开本地终端",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#eaeef2",
+     "ratio": 4.57,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "已有 2 个会话未接入终端——点击上方标签或「标签列表」继续。",
+     "sel": "dim welcome-note",
+     "fg": "#5c6875",
+     "bg": "#eaeef2",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "未连接",
+     "sel": "mono sb-left",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "转发",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "传输",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "⌄",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    }
+   ],
+   "page": [
+    {
+     "text": "TinySSH",
+     "sel": "app-title",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "协作",
+     "sel": "collab-badge hot",
+     "fg": "#ffffff",
+     "bg": "#96700a",
+     "ratio": 4.55,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "· 2 待审批",
+     "sel": "collab-badge hot",
+     "fg": "#ffffff",
+     "bg": "#96700a",
+     "ratio": 4.55,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "我控制中",
+     "sel": "ctl-badge human",
+     "fg": "#1f767c",
+     "bg": "#dfe9ec",
+     "ratio": 4.32,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "2",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "tab-label",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签列表",
+     "sel": "ghost tab-all",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "st-title mono",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "已连接",
+     "sel": "mono st-state ok",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "交给 Agent…",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "协作",
+     "sel": "ghost st-collab",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "文件",
+     "sel": "st-file",
+     "fg": "#ffffff",
+     "bg": "#1f767c",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "工具",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "中断",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "SSH · UTF-8",
+     "sel": "mono sb-left",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "转发",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "传输",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "⌄",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    }
+   ],
+   "placeholderPage": [
+    {
+     "sel": "INPUT",
+     "ph": "搜索主机",
+     "rawColor": "rgb(77, 91, 104)",
+     "alpha": 1,
+     "fg": "#4d5b68",
+     "bg": "#eaeef2",
+     "ratio": 5.98,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "在 prod-1 上执行命令——回车执行，Ctrl+C 中断终端",
+     "rawColor": "rgb(77, 91, 104)",
+     "alpha": 1,
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    }
+   ],
+   "hoverHostbar": [
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#e8edf2",
+     "ratio": 11.71,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#e8edf2",
+     "ratio": 4.83,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#e8edf2",
+     "ratio": 5.92,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#e8edf2",
+     "ratio": 5.92,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#e8edf2",
+     "ratio": 5.92,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#e8edf2",
+     "ratio": 5.92,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#e8edf2",
+     "ratio": 5.92,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "连接",
+     "sel": "host-connect-btn",
+     "fg": "#1f767c",
+     "bg": "#d4e1e6",
+     "ratio": 3.99,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "500"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "2",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    }
+   ],
+   "settingsDialog": [
+    {
+     "text": "设置",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "外观",
+     "sel": "on",
+     "fg": "#242e38",
+     "bg": "#e9f1f2",
+     "ratio": 12.04,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "终端",
+     "sel": "BUTTON",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "凭据",
+     "sel": "BUTTON",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Agent 接入",
+     "sel": "BUTTON",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "关于",
+     "sel": "BUTTON",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "字号",
+     "sel": "ts-label",
+     "fg": "#5c6875",
+     "bg": "#ffffff",
+     "ratio": 5.69,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "14",
+     "sel": "ts-val mono",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "14px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "重置",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#ffffff",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "外观（应用）",
+     "sel": "ts-label",
+     "fg": "#5c6875",
+     "bg": "#ffffff",
+     "ratio": 5.69,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "跟随系统",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#ffffff",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "深色",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#ffffff",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "浅色",
+     "sel": "ghost ts-active",
+     "fg": "#1f767c",
+     "bg": "#e9f1f2",
+     "ratio": 4.65,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "终端配色",
+     "sel": "ts-label",
+     "fg": "#5c6875",
+     "bg": "#ffffff",
+     "ratio": 5.69,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#d7dee8",
+     "bg": "#10141a",
+     "ratio": 13.64,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "深色（默认）",
+     "sel": "ghost ts-opt",
+     "fg": "#1f767c",
+     "bg": "#e9f1f2",
+     "ratio": 4.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#2a3138",
+     "bg": "#f7f7f2",
+     "ratio": 12.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "浅色",
+     "sel": "ghost ts-opt",
+     "fg": "#1f767c",
+     "bg": "#ffffff",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#93a1a1",
+     "bg": "#002b36",
+     "ratio": 5.61,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Solarized 深色",
+     "sel": "ghost ts-opt",
+     "fg": "#1f767c",
+     "bg": "#ffffff",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Aa",
+     "sel": "ts-swatch",
+     "fg": "#657b83",
+     "bg": "#fdf6e3",
+     "ratio": 4.13,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "Solarized 浅色",
+     "sel": "ghost ts-opt ts-active",
+     "fg": "#1f767c",
+     "bg": "#e9f1f2",
+     "ratio": 4.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "应用外观与终端配色相互独立；「跟随系统」随系统深浅实时切换。",
+     "sel": "dim",
+     "fg": "#5c6875",
+     "bg": "#ffffff",
+     "ratio": 5.69,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置",
+     "sel": "dim",
+     "fg": "#5c6875",
+     "bg": "#ffffff",
+     "ratio": 5.69,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    }
+   ],
+   "placeholderSettings": [],
+   "addHostText": [
+    {
+     "text": "名称",
+     "sel": "LABEL",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "地址（IP 或域名）",
+     "sel": "LABEL",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "端口",
+     "sel": "LABEL",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "用户名",
+     "sel": "LABEL",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "认证方式",
+     "sel": "LABEL",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "远端编码（老设备中文乱码时选 GBK）",
+     "sel": "LABEL",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签（可选，逗号分隔，如：生产, 成都）",
+     "sel": "LABEL",
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "保存并连接",
+     "sel": "BUTTON",
+     "fg": "#ffffff",
+     "bg": "#1f767c",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "仅保存",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#ffffff",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "凭据加密存入本机凭据库，不会明文落盘。",
+     "sel": "dim",
+     "fg": "#5c6875",
+     "bg": "#ffffff",
+     "ratio": 5.69,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    }
+   ],
+   "addHostPlaceholder": [
+    {
+     "sel": "INPUT",
+     "ph": "例：我的服务器",
+     "rawColor": "rgb(77, 91, 104)",
+     "alpha": 1,
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "例：192.168.1.10 或 server.example.",
+     "rawColor": "rgb(77, 91, 104)",
+     "alpha": 1,
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "例：ops 或 root",
+     "rawColor": "rgb(77, 91, 104)",
+     "alpha": 1,
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "例：生产, 数据库",
+     "rawColor": "rgb(77, 91, 104)",
+     "alpha": 1,
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "sel": "INPUT",
+     "ph": "密码",
+     "rawColor": "rgb(77, 91, 104)",
+     "alpha": 1,
+     "fg": "#4d5b68",
+     "bg": "#ffffff",
+     "ratio": 6.97,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    }
+   ]
+  }
+ },
+ "selection": {
+  "chromeSelectionRules": [
+   {
+    "sel": ".xterm .xterm-accessibility-tree:not(.debug) ::selection",
+    "color": "transparent",
+    "bg": ""
+   }
+  ],
+  "termSelection": {
+   "layerExists": true,
+   "childCount": 0,
+   "selText": "",
+   "shot": "term-selection.png",
+   "pixelTop": [
+    {
+     "rgb": "253,246,227",
+     "hex": "#fdf6e3",
+     "n": 5488
+    },
+    {
+     "rgb": "238,232,213",
+     "hex": "#eee8d5",
+     "n": 1542
+    },
+    {
+     "rgb": "101,123,131",
+     "hex": "#657b83",
+     "n": 62
+    },
+    {
+     "rgb": "252,246,227",
+     "hex": "#fcf6e3",
+     "n": 23
+    }
+   ]
+  },
+  "chromeSelection": {
+   "box": {
+    "x": 18,
+    "y": 129.5,
+    "w": 27.28125,
+    "h": 20.921875
+   },
+   "text": "本机",
+   "textColor": "rgb(36, 46, 56)",
+   "shot": "chrome-selection.png",
+   "pixelTop": [
+    {
+     "rgb": "248,214,184",
+     "hex": "#f8d6b8",
+     "n": 326
+    },
+    {
+     "rgb": "244,246,248",
+     "hex": "#f4f6f8",
+     "n": 27
+    },
+    {
+     "rgb": "126,117,110",
+     "hex": "#7e756e",
+     "n": 10
+    },
+    {
+     "rgb": "87,86,87",
+     "hex": "#575657",
+     "n": 10
+    }
+   ]
+  }
+ },
+ "notes": [
+  {
+   "connect": "ok"
+  },
+  {
+   "appearance": "深色",
+   "dataChrome": "dark"
+  },
+  {
+   "appearance": "浅色",
+   "dataChrome": "light"
+  },
+  {
+   "pageErrors": []
+  }
+ ],
+ "ansiRatios": [
+  {
+   "themeId": "dark",
+   "fgOnBg": 13.64,
+   "ansi": [
+    {
+     "k": "black",
+     "hex": "#2a3442",
+     "ratioVsBg": 1.47
+    },
+    {
+     "k": "red",
+     "hex": "#d07a7a",
+     "ratioVsBg": 5.93
+    },
+    {
+     "k": "green",
+     "hex": "#7fbf8f",
+     "ratioVsBg": 8.58
+    },
+    {
+     "k": "yellow",
+     "hex": "#d0b07a",
+     "ratioVsBg": 8.95
+    },
+    {
+     "k": "blue",
+     "hex": "#6da3d8",
+     "ratioVsBg": 6.93
+    },
+    {
+     "k": "magenta",
+     "hex": "#c08ac0",
+     "ratioVsBg": 6.72
+    },
+    {
+     "k": "cyan",
+     "hex": "#5fb3b5",
+     "ratioVsBg": 7.57
+    },
+    {
+     "k": "white",
+     "hex": "#c8d0da",
+     "ratioVsBg": 11.86
+    },
+    {
+     "k": "brightBlack",
+     "hex": "#8a97a8",
+     "ratioVsBg": 6.22
+    },
+    {
+     "k": "brightRed",
+     "hex": "#e69595",
+     "ratioVsBg": 8
+    },
+    {
+     "k": "brightGreen",
+     "hex": "#9dd4aa",
+     "ratioVsBg": 10.93
+    },
+    {
+     "k": "brightYellow",
+     "hex": "#e3c795",
+     "ratioVsBg": 11.32
+    },
+    {
+     "k": "brightBlue",
+     "hex": "#8fbde8",
+     "ratioVsBg": 9.33
+    },
+    {
+     "k": "brightMagenta",
+     "hex": "#d8a8d8",
+     "ratioVsBg": 9.25
+    },
+    {
+     "k": "brightCyan",
+     "hex": "#8ecfd1",
+     "ratioVsBg": 10.55
+    },
+    {
+     "k": "brightWhite",
+     "hex": "#f0f4f8",
+     "ratioVsBg": 16.71
+    }
+   ],
+   "selBgVsFg": 5.19,
+   "selBgVsBg": 2.63,
+   "selBg": "#4a5a70"
+  },
+  {
+   "themeId": "light",
+   "fgOnBg": 12.25,
+   "ansi": [
+    {
+     "k": "black",
+     "hex": "#2a3138",
+     "ratioVsBg": 12.25
+    },
+    {
+     "k": "red",
+     "hex": "#c4392f",
+     "ratioVsBg": 4.92
+    },
+    {
+     "k": "green",
+     "hex": "#2e7d32",
+     "ratioVsBg": 4.77
+    },
+    {
+     "k": "yellow",
+     "hex": "#a67c00",
+     "ratioVsBg": 3.55
+    },
+    {
+     "k": "blue",
+     "hex": "#1a5fb4",
+     "ratioVsBg": 5.85
+    },
+    {
+     "k": "magenta",
+     "hex": "#a1346b",
+     "ratioVsBg": 6.07
+    },
+    {
+     "k": "cyan",
+     "hex": "#1a7f8a",
+     "ratioVsBg": 4.39
+    },
+    {
+     "k": "white",
+     "hex": "#d0d0cc",
+     "ratioVsBg": 1.44
+    },
+    {
+     "k": "brightBlack",
+     "hex": "#6b7681",
+     "ratioVsBg": 4.31
+    },
+    {
+     "k": "brightRed",
+     "hex": "#e05545",
+     "ratioVsBg": 3.52
+    },
+    {
+     "k": "brightGreen",
+     "hex": "#46a353",
+     "ratioVsBg": 2.95
+    },
+    {
+     "k": "brightYellow",
+     "hex": "#c29300",
+     "ratioVsBg": 2.62
+    },
+    {
+     "k": "brightBlue",
+     "hex": "#3a7fd5",
+     "ratioVsBg": 3.78
+    },
+    {
+     "k": "brightMagenta",
+     "hex": "#c74d94",
+     "ratioVsBg": 3.97
+    },
+    {
+     "k": "brightCyan",
+     "hex": "#33a3b0",
+     "ratioVsBg": 2.79
+    },
+    {
+     "k": "brightWhite",
+     "hex": "#ffffff",
+     "ratioVsBg": 1.07
+    }
+   ],
+   "selBgVsFg": 7.58,
+   "selBgVsBg": 1.62,
+   "selBg": "#b9c6d4"
+  },
+  {
+   "themeId": "solar-dark",
+   "fgOnBg": 5.61,
+   "ansi": [
+    {
+     "k": "black",
+     "hex": "#073642",
+     "ratioVsBg": 1.15
+    },
+    {
+     "k": "red",
+     "hex": "#dc322f",
+     "ratioVsBg": 3.25
+    },
+    {
+     "k": "green",
+     "hex": "#859900",
+     "ratioVsBg": 4.69
+    },
+    {
+     "k": "yellow",
+     "hex": "#b58900",
+     "ratioVsBg": 4.68
+    },
+    {
+     "k": "blue",
+     "hex": "#268bd2",
+     "ratioVsBg": 4.08
+    },
+    {
+     "k": "magenta",
+     "hex": "#d33682",
+     "ratioVsBg": 3.3
+    },
+    {
+     "k": "cyan",
+     "hex": "#2aa198",
+     "ratioVsBg": 4.75
+    },
+    {
+     "k": "white",
+     "hex": "#eee8d5",
+     "ratioVsBg": 12.25
+    },
+    {
+     "k": "brightBlack",
+     "hex": "#586e75",
+     "ratioVsBg": 2.79
+    },
+    {
+     "k": "brightRed",
+     "hex": "#cb4b16",
+     "ratioVsBg": 3.26
+    },
+    {
+     "k": "brightGreen",
+     "hex": "#586e75",
+     "ratioVsBg": 2.79
+    },
+    {
+     "k": "brightYellow",
+     "hex": "#657b83",
+     "ratioVsBg": 3.37
+    },
+    {
+     "k": "brightBlue",
+     "hex": "#839496",
+     "ratioVsBg": 4.75
+    },
+    {
+     "k": "brightMagenta",
+     "hex": "#6c71c4",
+     "ratioVsBg": 3.43
+    },
+    {
+     "k": "brightCyan",
+     "hex": "#93a1a1",
+     "ratioVsBg": 5.61
+    },
+    {
+     "k": "brightWhite",
+     "hex": "#fdf6e3",
+     "ratioVsBg": 13.92
+    }
+   ],
+   "selBgVsFg": 4.86,
+   "selBgVsBg": 1.15,
+   "selBg": "#073642"
+  },
+  {
+   "themeId": "solar-light",
+   "fgOnBg": 4.13,
+   "ansi": [
+    {
+     "k": "black",
+     "hex": "#073642",
+     "ratioVsBg": 12.05
+    },
+    {
+     "k": "red",
+     "hex": "#dc322f",
+     "ratioVsBg": 4.29
+    },
+    {
+     "k": "green",
+     "hex": "#859900",
+     "ratioVsBg": 2.97
+    },
+    {
+     "k": "yellow",
+     "hex": "#b58900",
+     "ratioVsBg": 2.98
+    },
+    {
+     "k": "blue",
+     "hex": "#268bd2",
+     "ratioVsBg": 3.41
+    },
+    {
+     "k": "magenta",
+     "hex": "#d33682",
+     "ratioVsBg": 4.21
+    },
+    {
+     "k": "cyan",
+     "hex": "#2aa198",
+     "ratioVsBg": 2.93
+    },
+    {
+     "k": "white",
+     "hex": "#eee8d5",
+     "ratioVsBg": 1.14
+    },
+    {
+     "k": "brightBlack",
+     "hex": "#586e75",
+     "ratioVsBg": 4.99
+    },
+    {
+     "k": "brightRed",
+     "hex": "#cb4b16",
+     "ratioVsBg": 4.27
+    },
+    {
+     "k": "brightGreen",
+     "hex": "#586e75",
+     "ratioVsBg": 4.99
+    },
+    {
+     "k": "brightYellow",
+     "hex": "#657b83",
+     "ratioVsBg": 4.13
+    },
+    {
+     "k": "brightBlue",
+     "hex": "#839496",
+     "ratioVsBg": 2.93
+    },
+    {
+     "k": "brightMagenta",
+     "hex": "#6c71c4",
+     "ratioVsBg": 4.06
+    },
+    {
+     "k": "brightCyan",
+     "hex": "#93a1a1",
+     "ratioVsBg": 2.48
+    },
+    {
+     "k": "brightWhite",
+     "hex": "#fdf6e3",
+     "ratioVsBg": 1
+    }
+   ],
+   "selBgVsFg": 3.64,
+   "selBgVsBg": 1.14,
+   "selBg": "#eee8d5"
+  }
+ ],
+ "errorState": {
+  "深色": {
+   "dataChrome": "dark",
+   "connectResult": "ok",
+   "hostkeyDialogSeen": true,
+   "hostkeyDialog": [
+    {
+     "text": "首次连接确认",
+     "sel": "hk-title",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "14px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "首次连接主机",
+     "sel": "DIV",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "（",
+     "sel": "DIV",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "DIV",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "DIV",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "DIV",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "）。 请核对服务器指纹（可向管理员确认）后决定是否信任：",
+     "sel": "DIV",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "SHA256:DemoFingerprint-prod-2（演示",
+     "sel": "hk-fp mono",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "信任并连接",
+     "sel": "BUTTON",
+     "fg": "#0b1516",
+     "bg": "#3d9da8",
+     "ratio": 5.81,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "取消",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#1c2433",
+     "ratio": 4.88,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    }
+   ],
+   "errorBanner": [
+    {
+     "text": "✕",
+     "sel": "B",
+     "fg": "#d07a7a",
+     "bg": "#241d23",
+     "ratio": 5.29,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "连接 prod-2（演示连接失败）（ops@10.0.0.12:",
+     "sel": "B",
+     "fg": "#d07a7a",
+     "bg": "#241d23",
+     "ratio": 5.29,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "认证失败：用户名或密码/密钥不正确——也可在主机卡上看到失败提示",
+     "sel": "dim",
+     "fg": "#5d6f82",
+     "bg": "#241d23",
+     "ratio": 3.19,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "关闭",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#241d23",
+     "ratio": 5.17,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    }
+   ],
+   "afterAll": [
+    {
+     "text": "TinySSH",
+     "sel": "app-title",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "协作",
+     "sel": "collab-badge hot",
+     "fg": "#2a2410",
+     "bg": "#d0b07a",
+     "ratio": 7.49,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "· 2 待审批",
+     "sel": "collab-badge hot",
+     "fg": "#2a2410",
+     "bg": "#d0b07a",
+     "ratio": 7.49,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "我控制中",
+     "sel": "ctl-badge human",
+     "fg": "#3d9da8",
+     "bg": "#18262f",
+     "ratio": 4.85,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "2",
+     "sel": "auth-tag live-tag on",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "✕ 上次连接失败——检查地址与凭据后重试",
+     "sel": "err host-fail",
+     "fg": "#d07a7a",
+     "bg": "#141922",
+     "ratio": 5.66,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "tab-label",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#d4dbe6",
+     "bg": "#1c2433",
+     "ratio": 11.17,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签列表",
+     "sel": "ghost tab-all",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "✕",
+     "sel": "B",
+     "fg": "#d07a7a",
+     "bg": "#241d23",
+     "ratio": 5.29,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "连接 prod-2（演示连接失败）（ops@10.0.0.12:",
+     "sel": "B",
+     "fg": "#d07a7a",
+     "bg": "#241d23",
+     "ratio": 5.29,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "认证失败：用户名或密码/密钥不正确——也可在主机卡上看到失败提示",
+     "sel": "dim",
+     "fg": "#5d6f82",
+     "bg": "#241d23",
+     "ratio": 3.19,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "关闭",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#241d23",
+     "ratio": 5.17,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "st-title mono",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "已连接",
+     "sel": "mono st-state ok",
+     "fg": "#7fbf8f",
+     "bg": "#141922",
+     "ratio": 8.18,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "交给 Agent…",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "协作",
+     "sel": "ghost st-collab",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "文件",
+     "sel": "st-file",
+     "fg": "#0b1516",
+     "bg": "#3d9da8",
+     "ratio": 5.81,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "工具",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "中断",
+     "sel": "ghost",
+     "fg": "#3d9da8",
+     "bg": "#141922",
+     "ratio": 5.53,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "SSH · UTF-8",
+     "sel": "mono sb-left",
+     "fg": "#5d6f82",
+     "bg": "#141922",
+     "ratio": 3.41,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "转发",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "传输",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#d4dbe6",
+     "bg": "#141922",
+     "ratio": 12.65,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "⌄",
+     "sel": "sb-btn",
+     "fg": "#9aaab8",
+     "bg": "#141922",
+     "ratio": 7.4,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    }
+   ]
+  },
+  "浅色": {
+   "dataChrome": "light",
+   "connectResult": "ok",
+   "hostkeyDialogSeen": true,
+   "hostkeyDialog": [
+    {
+     "text": "首次连接确认",
+     "sel": "hk-title",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "14px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "首次连接主机",
+     "sel": "DIV",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "（",
+     "sel": "DIV",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "DIV",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "DIV",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "DIV",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "）。 请核对服务器指纹（可向管理员确认）后决定是否信任：",
+     "sel": "DIV",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "SHA256:DemoFingerprint-otp-1（演示 ",
+     "sel": "hk-fp mono",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "信任并连接",
+     "sel": "BUTTON",
+     "fg": "#ffffff",
+     "bg": "#1f767c",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "取消",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#ffffff",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    }
+   ],
+   "errorBanner": [
+    {
+     "text": "✕",
+     "sel": "B",
+     "fg": "#b3484d",
+     "bg": "#e5dde2",
+     "ratio": 3.99,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "连接 otp-1（演示 2FA）（ops@otp.demo:22",
+     "sel": "B",
+     "fg": "#b3484d",
+     "bg": "#e5dde2",
+     "ratio": 3.99,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "主机指纹验证失败（演示：已拒绝该主机指纹）——也可在主机卡上看到",
+     "sel": "dim",
+     "fg": "#5c6875",
+     "bg": "#e5dde2",
+     "ratio": 4.27,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "关闭",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#e5dde2",
+     "ratio": 4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    }
+   ],
+   "afterAll": [
+    {
+     "text": "TinySSH",
+     "sel": "app-title",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "协作",
+     "sel": "collab-badge hot",
+     "fg": "#ffffff",
+     "bg": "#96700a",
+     "ratio": 4.55,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "· 2 待审批",
+     "sel": "collab-badge hot",
+     "fg": "#ffffff",
+     "bg": "#96700a",
+     "ratio": 4.55,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "我控制中",
+     "sel": "ctl-badge human",
+     "fg": "#1f767c",
+     "bg": "#dfe9ec",
+     "ratio": 4.32,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "全部主机",
+     "sel": "H4",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "本机",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "local",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "0",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint-1（无集成）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "noint.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-1（演示 2FA）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "✕ 上次连接失败——检查地址与凭据后重试",
+     "sel": "err host-fail",
+     "fg": "#b3484d",
+     "bg": "#f4f6f8",
+     "ratio": 4.91,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp-2（演示 2FA 隐）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "otp2.demo",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "2",
+     "sel": "auth-tag live-tag on",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.11",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-2（演示连接失败）",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.12",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "●",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "1",
+     "sel": "auth-tag live-tag",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "host-name",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "密码",
+     "sel": "auth-tag",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "10px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "ops",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "@",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "10.0.0.13",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": ":",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "22",
+     "sel": "host-addr mono",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "设置",
+     "sel": "hb-settings",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "staging-1",
+     "sel": "tab-label",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "prod-1",
+     "sel": "tab-label",
+     "fg": "#242e38",
+     "bg": "#ffffff",
+     "ratio": 13.79,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "标签列表",
+     "sel": "ghost tab-all",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "✕",
+     "sel": "B",
+     "fg": "#b3484d",
+     "bg": "#e5dde2",
+     "ratio": 3.99,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "连接 otp-1（演示 2FA）（ops@otp.demo:22",
+     "sel": "B",
+     "fg": "#b3484d",
+     "bg": "#e5dde2",
+     "ratio": 3.99,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "700"
+    },
+    {
+     "text": "主机指纹验证失败（演示：已拒绝该主机指纹）——也可在主机卡上看到",
+     "sel": "dim",
+     "fg": "#5c6875",
+     "bg": "#e5dde2",
+     "ratio": 4.27,
+     "large": false,
+     "fontSize": "13.5px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "关闭",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#e5dde2",
+     "ratio": 4,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "prod-1",
+     "sel": "st-title mono",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "已连接",
+     "sel": "mono st-state ok",
+     "fg": "#2e7d32",
+     "bg": "#f4f6f8",
+     "ratio": 4.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "交给 Agent…",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "协作",
+     "sel": "ghost st-collab",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "文件",
+     "sel": "st-file",
+     "fg": "#ffffff",
+     "bg": "#1f767c",
+     "ratio": 5.33,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "工具",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "中断",
+     "sel": "ghost",
+     "fg": "#1f767c",
+     "bg": "#f4f6f8",
+     "ratio": 4.92,
+     "large": false,
+     "fontSize": "12px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "SSH · UTF-8",
+     "sel": "mono sb-left",
+     "fg": "#5c6875",
+     "bg": "#f4f6f8",
+     "ratio": 5.25,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "400"
+    },
+    {
+     "text": "转发",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "传输",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "0",
+     "sel": "B",
+     "fg": "#242e38",
+     "bg": "#f4f6f8",
+     "ratio": 12.73,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    },
+    {
+     "text": "⌄",
+     "sel": "sb-btn",
+     "fg": "#4d5b68",
+     "bg": "#f4f6f8",
+     "ratio": 6.44,
+     "large": false,
+     "fontSize": "11px",
+     "fontWeight": "600"
+    }
+   ]
+  }
+ }
+}

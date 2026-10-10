@@ -1,0 +1,200 @@
+{
+ "base": "http://localhost:5183",
+ "browser": "ms-playwright chromium-1243",
+ "cases": {
+  "button": {
+   "no-preference": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+    "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0s",
+    "transitionProperty": "none"
+   }
+  },
+  ".tab": {
+   "no-preference": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0.12s, 0.12s, 0.12s, 0.12s, 0.12s",
+    "transitionProperty": "background-color, border-color, color, box-shadow, opacity"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0s",
+    "transitionProperty": "none"
+   }
+  },
+  ".toast": {
+   "no-preference": {
+    "animationName": "toast-in",
+    "animationDuration": "0.18s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   }
+  },
+  ".spin": {
+   "no-preference": {
+    "animationName": "spin",
+    "animationDuration": "0.9s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   },
+   "reduce": {
+    "animationName": "spin",
+    "animationDuration": "0.9s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   }
+  },
+  ".skeleton": {
+   "no-preference": {
+    "animationName": "shimmer",
+    "animationDuration": "1.4s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   }
+  },
+  ".collab-badge.hot": {
+   "no-preference": {
+    "animationName": "collab-pulse",
+    "animationDuration": "2.4s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   }
+  },
+  ".sftp-row .sftp-dl": {
+   "no-preference": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0.12s",
+    "transitionProperty": "opacity"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0s",
+    "transitionProperty": "none"
+   }
+  },
+  ".attach-hint": {
+   "no-preference": {
+    "animationName": "attach-hint-fade",
+    "animationDuration": "6s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   },
+   "reduce": {
+    "animationName": "attach-hint-fade",
+    "animationDuration": "6s",
+    "transitionDuration": "0s",
+    "transitionProperty": "all"
+   }
+  },
+  ".host-card": {
+   "no-preference": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0.12s",
+    "transitionProperty": "background-color"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0.12s",
+    "transitionProperty": "background-color"
+   }
+  },
+  ".host-card-side": {
+   "no-preference": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0.12s",
+    "transitionProperty": "opacity"
+   },
+   "reduce": {
+    "animationName": "none",
+    "animationDuration": "0s",
+    "transitionDuration": "0.12s",
+    "transitionProperty": "opacity"
+   }
+  }
+ },
+ "cssom": {
+  "reduced": [
+   ".collab-badge.hot",
+   ".sftp-row .sftp-dl",
+   ".skeleton",
+   ".spin",
+   ".tab",
+   ".toast",
+   "button",
+   "input",
+   "select",
+   "textarea"
+  ],
+  "animated": [
+   ".attach-hint",
+   ".collab-badge.hot",
+   ".skeleton",
+   ".spin",
+   ".toast"
+  ],
+  "transitioned": [
+   ".host-card",
+   ".host-card-side",
+   ".sftp-row .sftp-dl",
+   ".tab",
+   "button",
+   "input",
+   "select",
+   "textarea"
+  ],
+  "diffAnimated": [
+   ".attach-hint"
+  ],
+  "diffTransitioned": [
+   ".host-card",
+   ".host-card-side"
+  ]
+ },
+ "notes": [
+  {
+   "pref": "no-preference",
+   "pageErrors": []
+  },
+  {
+   "pref": "reduce",
+   "pageErrors": []
+  }
+ ],
+ "run": {
+  "attempts": 1,
+  "startedAt": "2026-10-10T08:28:53.584Z",
+  "probeSha256": "357d4fd2daf46f8b5798de28231ff8cdd5ccf6384124d4199e7dfb40c3f49af7",
+  "finishedAt": "2026-10-10T08:28:56.374Z"
+ }
+}

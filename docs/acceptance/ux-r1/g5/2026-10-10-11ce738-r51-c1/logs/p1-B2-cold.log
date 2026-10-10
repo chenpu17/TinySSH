@@ -1,0 +1,11 @@
+[cold #1] {'idx': 1, 'pid': 57405, 'run_id': 'p1-cold-1-62421abf', 'list_ready_ms': 555, 'operable_ms': 555}
+[cold #2] {'idx': 2, 'pid': 57433, 'run_id': 'p1-cold-2-f7916564', 'list_ready_ms': 475, 'operable_ms': 475}
+[cold #3] {'idx': 3, 'pid': 57459, 'run_id': 'p1-cold-3-874ea2ed', 'list_ready_ms': 485, 'operable_ms': 485}
+[cold #4] {'idx': 4, 'pid': 57485, 'run_id': 'p1-cold-4-207acc27', 'list_ready_ms': 463, 'operable_ms': 463}
+[cold #5] {'idx': 5, 'pid': 57511, 'run_id': 'p1-cold-5-a23bbffa', 'list_ready_ms': 463, 'operable_ms': 463}
+[cold #6] {'idx': 6, 'pid': 57546, 'run_id': 'p1-cold-6-c27200d6', 'list_ready_ms': 482, 'operable_ms': 482}
+[cold #7] {'idx': 7, 'pid': 57571, 'run_id': 'p1-cold-7-2d9e351a', 'list_ready_ms': 481, 'operable_ms': 481}
+[cold #8] {'idx': 8, 'pid': 57599, 'run_id': 'p1-cold-8-31968a81', 'list_ready_ms': 537, 'operable_ms': 537}
+[cold #9] {'idx': 9, 'pid': 57626, 'run_id': 'p1-cold-9-3ee997f4', 'list_ready_ms': 471, 'operable_ms': 471}
+[cold #10] {'idx': 10, 'pid': 57651, 'run_id': 'p1-cold-10-899f8d51', 'list_ready_ms': 476, 'operable_ms': 476}
+== cold: n=10 median=478ms p95=547ms -> docs/acceptance/ux-r1/g5/2026-10-10-11ce738-r51-c1/p1/B2-cold.json

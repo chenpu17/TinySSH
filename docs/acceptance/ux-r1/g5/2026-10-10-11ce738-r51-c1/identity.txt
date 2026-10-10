@@ -1,0 +1,64 @@
+# C1 被测二进制与夹具身份（2026-10-10 14:08:25）
+
+HEAD: 11ce7389a26f96c22a8844bfad0b6090fe572a94
+B1 (旧UI打包, tag ea0b914): 2c3ab20dbc90db7796b23e18f06dbf6262bf2bbd99da2ed92281d28ac5d08de8  path=/tmp/g5-b1/tinyssh-app
+B2 (新UI打包, 构建点 f65a8b8): 2a496c52905384b544cda0d2d7ff3df41aa2547df616ce9b4adf635d9c0a619c  path=target/release/tinyssh-app
+P1 夹具 /tmp/r4_p1/tinyssh.db: e646f9807f1fc27e2b5249eeffdbed187b040c120e6beb883ed83e4bc1e10650  hosts=21
+P3/P6 夹具 /tmp/r4_p3/tinyssh.db: f1c67c519b712cd5aa1ddb34f77a02b177290b3e224fa4772a0699b78e661a4a  hosts=2
+sshd 容器: Up 21 hours
+beacon: 127.0.0.1:15199 -> /tmp/t40_smoke/beacon.log
+P1 种子: seed-01:生产-web-01, seed-02:生产-web-02, seed-03:生产-api-01, seed-04:生产-api-02, seed-05:生产-db-主库, seed-06:生产-db-从库, seed-07:预发环境-全量, seed-08:测试环境-A, seed-09:测试环境-B, seed-10:跳板机, seed-11:监控-普罗米修斯, seed-12:监控-Grafana, seed-13:日志-ELK, seed-14:缓存-Redis-01, seed-15:缓存-Redis-02, seed-16:对象存储-MinIO, seed-17:CI-构建机, seed-18:备份服务器, seed-19:IPv6-实验机, seed-20:长中文名称测试服务器-用于验证省略与全称可查看
+
+## 补充：P6 同进程门探针移植与诊断工件（2026-10-10 追加）
+
+# 起因：p6_smoke_script（G1 加入的 P6 同进程门探针）在 B2 上恒报 FAIL-cycle-open:0。
+# 根因见 p6/rootcause/README.md（新 UI §6.3 焦点代际门抑制自动 attach；旧 UI 无此门）。
+# 下列工件仅用于定位与移植验证；B2 的 P1/P3/P6 替代口径读数仍取上面记录的 2a496c52…
+
+B2′（移植后探针，diff 仅 p6_smoke_script 12+/2−）: cd1d4cf1ea6c06fea91501eb9a929582ef961f9bdd89c997837188836410c852  path=/tmp/g5-b1/tinyssh-app.B2p
+诊断工件（非 C1 证据）:
+  diag  (p6diag 轨迹探针)          : 6308e995f72d9dec7198e4d9916d74ba91674c8d2ccc207fd6f4bcc6769dab8a
+  diag2 (p6 FAIL 诊断对象)         : a127a5bdc08a46e5b05df4dfed939f1c6c0c23a1b83f1f1f19d8961e88f865c1
+  diag3 (+createSession 门打点)    : dbb5c9ee8172a93003f7e48c7ffc58b0c3bc9fa198d275b467db3a24fbb81cae
+  diag4 (+focusSession/attachSession/blur/activate 打点): d6933c64ce2eb8e9dab64891105a7a5a23e8b3bf3f3fe8ca73213965e2235c94  path=/tmp/g5-b1/tinyssh-app.diag4
+B1 备份（与上面 2c3ab20d… 同）: /tmp/g5-b1/tinyssh-app.B2 为 B2 备份；B1 备份见 /tmp/g5-b1/tinyssh-app
+B2 打包 bundle 备份: /tmp/g5-b1/TinySSH.B2.app（内二进制 sha = 2a496c52…）
+
+# 包外证据（README §6 引）/tmp/g5-b1/run-d7.log：首行
+#   [15:24:12] launched pid=49677 rid=d2-1791617052 sha=2e9fbbbab281aa2f
+# ⇒ 该轮被测二进制 sha = **2e9fbbbab281aa2f**（**非**上面任何 diag*，也非中间构建 397ffe41…）；
+#   rid 前缀 d2-1791617052 是**运行 rid**（≠ 构建代号 d2），勿把日志前缀误当构建身份。
+#   该日志非归档、重启即失；其内容（3×JS-REJECT + 1×FAIL-jserr）见 README §6。
+
+## 勘误（2026-10-10 复核后追加，独立复核发现）
+
+# 1) 上面第 5 行记的 `path=target/release/tinyssh-app` 现已不是 B2：该路径当前是 **B2″**
+#    （ef5eeaf0…，mtime 2026-10-10 15:38）。B2（2a496c52…）实体在 /tmp/g5-b1/tinyssh-app.B2
+#    与 /tmp/g5-b1/TinySSH.B2.app（两者核对一致）。路径→sha 那一行已过期，sha 本身无误。
+#    二次勘误（2026-10-10 独立复核后）：本条第 1 版曾写「当前是 B2′ cd1d4cf1…」，该值随后
+#    被 B2″ 构建覆盖。本条 sha/mtime 为 **2026-10-10 15:38 取时快照，非现值**（本档不记现值）。
+# 2) 上面第 6/7 行的夹具 sha 是「测量前快照」，非现值。两个夹具（/tmp/r4_p1、/tmp/r4_p3）都是
+#    **可变文件**，其「现值」随每次运行变化、物理上不可复核 ⇒ 本档一律**不记录现值**。
+#    - /tmp/r4_p3/tinyssh.db 于测量期（14:31–14:42）被运行写入而漂移，记的 f1c67c51…
+#      **已不可复核**（初版曾记「现值 0be6eff2…、带 -wal、mtime 14:42」，经独立复核指出该值
+#      本身亦已过期，故删）；
+#    - /tmp/r4_p1/tinyssh.db 是否漂移本档未主张。
+# 3) 上面第 4 行 B1=ea0b914 对 `debug_subscriptions` 零命中 ⇒ P6 同进程门探针在 B1 上
+#    不可跑；探针的通过记录出自 G1 退出点 37db283（见 p6/rootcause/README.md）。
+
+## 追加：P6 同进程门通过轮的二进制身份（2026-10-10 15:43）
+
+# 门判定工件 = p6/B2pp-gate-beacon.txt
+B2″（移植后探针·终版，p6_smoke_script +69/−4，无任何诊断打点）:
+  ef5eeaf04cbe9e112cd66fd57c2be5f5f9a7d7c0c7e3287216cfd0496e696e26
+  path=/tmp/g5-b1/tinyssh-app.d10（构建源 = 工作树 HEAD 11ce738 + 该函数体改动）
+中间构建（探针内另挂只读 mousedown 诊断监听，非门判定工件）:
+  397ffe41b191d9345c4f91d1a5a1fc7a29fba641e2185b55d1a5614eae18ec48
+  path=/tmp/g5-b1/tinyssh-app.d2（已被后续轮覆盖前留档）
+
+# 门信标工件 sha256（前 16）
+p6/B2pp-gate-beacon.txt              : 59eb082cb2416c0d
+p6/B2pp-gate-instrumented-beacon.txt : 094662e7cefae05b
+
+# 备注：工作树中 src-tauri/src/main.rs 的改动尚未提交；`git diff --stat` = 1 file, +69/−4，
+# 全部落在 p6_smoke_script 内（仅 TINYSSH_SMOKE_MODE=p6 可达）。

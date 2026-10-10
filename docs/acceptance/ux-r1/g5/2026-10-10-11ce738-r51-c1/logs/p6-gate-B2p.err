@@ -1,0 +1,12 @@
+[app] starting, bench=
+[app] collab disabled (fresh install or user-disabled) —— MCP endpoint not started
+[app] setup: windows=["main"]
+[app] native ctrl-key intercept installed
+[app] eval probe: Ok(())
+[app] window url: Ok(Url { scheme: "tauri", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("localhost")), port: None, path: "", query: None, fragment: None })
+[app] page load event: Started "main"
+[app] page load event: Finished "main"
+[app] smoke script injected: Ok(())
+[app] mcp_status invoked (frontend alive)
+[bench] bench_mode called -> false
+[app] autoconnect local -> s-3725e90f-f772-49d7-81f8-9025c7fdadb3
