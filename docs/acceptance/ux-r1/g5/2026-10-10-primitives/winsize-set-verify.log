@@ -1,0 +1,50 @@
+# winsize.py set 真实投递验证  2026-10-10 10:39:48
+# 被测二进制: /Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app
+3bfecdf0d793449126fdf8187a6940c4d8caa0009971e941d14f92dfe3905773  /Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app
+# screen locked raw(CGSSessionScreenIsLocked)=None  winsize.screen_locked()=False
+# 主显示器边界: origin=(0,0) size=1512x982
+# app pid=94413
+# 注意：本轮所有 set 均读回比对；exit=5 表示窗口管理器夹取/拒绝，该尺寸不得作为证据。
+
+## A. list
+pid=94413 窗口数=1
+  [0] size=(1280.0, 800.0) pos=(300.0, 200.0) title='TinySSH — 人机协同 SSH 工作台' AXSize可写=True
+
+## B. 尺寸实变（窗口置于 (100,71)，留出 1280x800 的空间）
+### set 1000x700 @ (100,71)  起点
+请求 size=(1000.0, 700.0) → 读回 size=(1000.0, 700.0) pos=(100.0, 71.0)
+exit=0
+### set 1280x800 @ (100,71)  实变 1000x700 -> 1280x800
+请求 size=(1280.0, 800.0) → 读回 size=(1280.0, 800.0) pos=(100.0, 71.0)
+exit=0
+### set 960x640 @ (100,71)  实变 1280x800 -> 960x640
+请求 size=(960.0, 640.0) → 读回 size=(960.0, 640.0) pos=(100.0, 71.0)
+exit=0
+
+## C. 低于 minWidth=960 -> 夹取（fail-closed exit 5）
+请求 size=(400.0, 300.0) → 读回 size=(960.0, 600.0) pos=(100.0, 71.0)
+[winsize] FAIL: 读回尺寸与请求不符（窗口被夹取或拒绝）——该尺寸不得作为证据
+exit=5
+
+## D. 位置相关夹取机制（实测）：WM 用窗口**当前**位置夹取请求尺寸，尺寸先于位置生效
+### D1 窗口先在 (300,200)（1000x700）
+请求 size=(1000.0, 700.0) → 读回 size=(1000.0, 700.0) pos=(300.0, 200.0)
+exit=0
+### D2 此时只请求 1280x800（不给位置）→ 预测夹到 1512-300=1212 x 982-200=782
+请求 size=(1280.0, 800.0) → 读回 size=(1212.0, 782.0) pos=(300.0, 200.0)
+[winsize] FAIL: 读回尺寸与请求不符（窗口被夹取或拒绝）——该尺寸不得作为证据
+exit=5
+### D3 窗口先在 (100,71)（1000x700）
+请求 size=(1000.0, 700.0) → 读回 size=(1000.0, 700.0) pos=(100.0, 71.0)
+exit=0
+### D4 此时请求 1280x800（不给位置）→ 预测成功
+请求 size=(1280.0, 800.0) → 读回 size=(1280.0, 800.0) pos=(100.0, 71.0)
+exit=0
+### D5 反向对照：窗口在 (100,71)，请求 1280x800 同时带位置 (300,200) → 预测尺寸被采纳（按旧位置夹取），随后位置移到 (300,200)
+请求 size=(1000.0, 700.0) → 读回 size=(1000.0, 700.0) pos=(100.0, 71.0)
+exit=0
+请求 size=(1280.0, 800.0) → 读回 size=(1280.0, 800.0) pos=(300.0, 200.0)
+exit=0
+
+## E. get (final)
+pid=94413 index=0 size=(1280.0, 800.0) pos=(300.0, 200.0) title='TinySSH — 人机协同 SSH 工作台' AXSize可写=True

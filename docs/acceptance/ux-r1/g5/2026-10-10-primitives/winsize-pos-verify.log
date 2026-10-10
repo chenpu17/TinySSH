@@ -1,0 +1,20 @@
+# winsize.py set --x/--y 位置投递验证  2026-10-10 10:40:34
+# 被测二进制: /Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app
+3bfecdf0d793449126fdf8187a6940c4d8caa0009971e941d14f92dfe3905773  /Users/chenpu/workspace/claude-code/TinySSH/target/release/tinyssh-app
+# screen locked raw(CGSSessionScreenIsLocked)=None  winsize.screen_locked()=False
+# 主显示器边界: origin=(0,0) size=1512x982
+# app pid=95044
+
+## A. get (before)
+pid=95044 index=0 size=(1280.0, 800.0) pos=(221.0, 71.0) title='TinySSH — 人机协同 SSH 工作台' AXSize可写=True
+
+## B. 归位到 1280x800 @ (100,71) 作基线
+请求 size=(1280.0, 800.0) → 读回 size=(1280.0, 800.0) pos=(100.0, 71.0)
+exit=0
+
+## C. set 1000x700 at (300,200) —— 位置与尺寸同时投递
+请求 size=(1000.0, 700.0) → 读回 size=(1000.0, 700.0) pos=(300.0, 200.0)
+exit=0
+
+## D. get (after)
+pid=95044 index=0 size=(1000.0, 700.0) pos=(300.0, 200.0) title='TinySSH — 人机协同 SSH 工作台' AXSize可写=True
