@@ -1,10 +1,10 @@
 A global (observation):
   A round 0: flipped=True attempts=1 rcs=[0]
-  A round 1: flipped=True attempts=1 rcs=[0]
+  A round 1: flipped=True attempts=2 rcs=[0, 0]
   A round 2: flipped=True attempts=1 rcs=[0]
-  A round 3: flipped=True attempts=1 rcs=[0]
+  A round 3: flipped=True attempts=2 rcs=[0, 0]
   A round 4: flipped=True attempts=1 rcs=[0]
-  A round 5: flipped=True attempts=1 rcs=[0]
+  A round 5: flipped=True attempts=2 rcs=[0, 0]
 B default(pid) (observation):
   B round 0: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
   B round 1: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
@@ -12,7 +12,7 @@ B default(pid) (observation):
   B round 3: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
   B round 4: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
   B round 5: flipped=False attempts=3 rcs=[0, 0, 0]  <- 重试预算耗尽仍未翻转
-观测：global 翻转=True（rc 全 0=True，丢事件 0/6）；默认 pid 翻转=False（rc 全 0=True）
+观测：global 翻转 6/6（rc 全 0=True，未翻转尝试 3）；默认 pid 翻转 0/6（rc 全 0=True，未翻转尝试 18）
 C nonexistent pid: rc=2 -> PASS
 D non-frontmost pid: rc=2 -> PASS
 E global w/o auth: rc=2 (stdout 空=True) -> PASS

@@ -4,7 +4,7 @@
   "settle_s": 2.5,
   "rounds": 6,
   "retry_budget": 3,
-  "pid": 17412,
+  "pid": 19883,
   "origin": [
     221,
     71
@@ -25,8 +25,9 @@
         {
           "round": 1,
           "flipped": true,
-          "attempts": 1,
+          "attempts": 2,
           "rcs": [
+            0,
             0
           ],
           "md5": "4405d4771fc7b27d982338a2e81f4741"
@@ -43,8 +44,9 @@
         {
           "round": 3,
           "flipped": true,
-          "attempts": 1,
+          "attempts": 2,
           "rcs": [
+            0,
             0
           ],
           "md5": "4405d4771fc7b27d982338a2e81f4741"
@@ -61,17 +63,20 @@
         {
           "round": 5,
           "flipped": true,
-          "attempts": 1,
+          "attempts": 2,
           "rcs": [
+            0,
             0
           ],
           "md5": "4405d4771fc7b27d982338a2e81f4741"
         }
       ],
-      "drops": 0,
-      "all_rc_zero": true,
-      "attempts_total": 6,
-      "global_flips_panel": true
+      "rounds_total": 6,
+      "flipped_rounds": 6,
+      "all_rounds_flipped": true,
+      "attempts_total": 9,
+      "unflipped_attempts": 3,
+      "all_rc_zero": true
     },
     "B_default_pid": {
       "rounds": [
@@ -142,12 +147,19 @@
           "md5": "4405d4771fc7b27d982338a2e81f4741"
         }
       ],
-      "drops": 18,
-      "all_rc_zero": true,
+      "rounds_total": 6,
+      "flipped_rounds": 0,
+      "all_rounds_flipped": false,
       "attempts_total": 18,
-      "pid_flips_panel": false
+      "unflipped_attempts": 18,
+      "all_rc_zero": true
     },
     "app_alive_at_end": true,
+    "field_notes": {
+      "flipped_rounds/rounds_total": "翻转轮数/总轮数——**这才是**「是否翻转」的正确读法",
+      "unflipped_attempts": "未翻转的尝试次数。**同一计数器，两段读法不同**：A 段（global 本机有效）→ 即**丢事件**数；B 段（pid 本机无效）→ 即「每轮重试预算耗尽」，**不是**丢事件。",
+      "all_rc_zero": "该段所有尝试 rc 是否全 0（排除 guard 拒绝致假过）"
+    },
     "interference": []
   },
   "C_nonexistent_pid": {
@@ -158,8 +170,8 @@
   "D_nonfrontmost_pid": {
     "rc": 2,
     "stdout": "",
-    "stderr": "[ev2] ABORT (nothing posted): frontmost pid 17412 != target pid 17507",
-    "sleeper_pid": 17507
+    "stderr": "[ev2] ABORT (nothing posted): frontmost pid 19883 != target pid 19975",
+    "sleeper_pid": 19975
   },
   "E_global_without_auth": {
     "rc": 2,

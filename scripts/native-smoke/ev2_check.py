@@ -40,8 +40,14 @@
    下见过约 1/6 的丢失；在轻仪表（每次点击仅一张截图、静置 0.75s）下 **60/60 无丢失**。
    丢因未定性（非事件间隔：gap 0/60/150ms 各 20 次全无丢失；非前台漂移：丢失时
    frontmost 仍等于目标）。**故本脚本不假设「点一次必中」**：A 段每轮允许最多
-   `--retry` 次尝试，记录实际尝试次数并汇总为 `drops` 计数落盘——**该计数是观测数据，
-   不是断言**。
+   `--retry` 次尝试，记录实际尝试次数并汇总为 `unflipped_attempts` 计数落盘——
+   **该计数是观测数据，不是断言**。
+
+**观测字段的读法（勿误读，独立复核 F2）**：判断「某段是否翻转」要看
+`flipped_rounds`/`rounds_total`，**不要**看 `all_rounds_flipped`（那问的是「是否**每轮**
+都翻转」，6 轮里 5 轮翻转会给 False，**低估**翻转）。`unflipped_attempts` 是同一个计数器，
+但两段读法不同：A 段（global 本机有效）读作**丢事件**数；B 段（pid 本机无效）读作
+「每轮重试预算耗尽」，**不是**丢事件。JSON 内 `observations.field_notes` 复述此约定。
 
 ⇒ **给调用方的结论**：用 global 做坐标取证时，**必须核验效果**（轮询状态/像素直到变化），
 不得假设「投递即生效」；单次点击触发的计时端点会因丢事件产生虚假长尾。
@@ -255,21 +261,42 @@ def main():
         # 「工具失败」的假结论（复核 blocking #3：并发干扰下 A 实例的应用被杀，像素
         # 「翻转」是窗口消失所致，却被打成 `pid_delivery_now_works`）。故 A/B **一律
         # 只作观测落盘**；裁决只由下面的纯接线断言（C/D/E）决定。
+        def _obs(detail, unflipped, rc_ok):
+            """把一个观测段的原始 detail 归纳成**语义无歧义**的字段。
+
+            关键（独立复核 F2）：**不能**用 `all(flipped)` 充当「是否翻转」——那实际是
+            「是否**每轮**都翻转」，若 6 轮里 5 轮翻转它会给出 False，**低估**翻转，
+            恰把 README 广告的那条「环境变化检测」弄瞎。故显式记 `flipped_rounds`/
+            `rounds_total`，另给一个**名字即含义**的布尔 `all_rounds_flipped`。
+            """
+            n = len(detail)
+            flipped = sum(1 for d in detail if d["flipped"])
+            return {"rounds": detail, "rounds_total": n, "flipped_rounds": flipped,
+                    "all_rounds_flipped": flipped == n,
+                    "attempts_total": sum(d["attempts"] for d in detail),
+                    "unflipped_attempts": unflipped, "all_rc_zero": rc_ok}
+
         print("A global (observation):")
-        a_detail, a_ok, a_drops = run_section("global", "A", args.rounds, args.retry)
+        a_detail, _a_all, a_unflipped = run_section("global", "A", args.rounds, args.retry)
         a_rc_ok = all_rc_zero(a_detail)
         print("B default(pid) (observation):")
-        b_detail, b_flipped, b_drops = run_section("pid", "B", args.rounds, args.retry)
+        b_detail, _b_all, b_unflipped = run_section("pid", "B", args.rounds, args.retry)
         b_rc_ok = all_rc_zero(b_detail)
         app_alive = proc.poll() is None
         res["observations"] = {
-            "A_global": {"rounds": a_detail, "drops": a_drops, "all_rc_zero": a_rc_ok,
-                         "attempts_total": sum(d["attempts"] for d in a_detail),
-                         "global_flips_panel": a_ok},
-            "B_default_pid": {"rounds": b_detail, "drops": b_drops, "all_rc_zero": b_rc_ok,
-                              "attempts_total": sum(d["attempts"] for d in b_detail),
-                              "pid_flips_panel": b_flipped},
+            "A_global": _obs(a_detail, a_unflipped, a_rc_ok),
+            "B_default_pid": _obs(b_detail, b_unflipped, b_rc_ok),
             "app_alive_at_end": app_alive,
+            "field_notes": {
+                "flipped_rounds/rounds_total":
+                    "翻转轮数/总轮数——**这才是**「是否翻转」的正确读法",
+                "unflipped_attempts":
+                    "未翻转的尝试次数。**同一计数器，两段读法不同**：A 段（global 本机"
+                    "有效）→ 即**丢事件**数；B 段（pid 本机无效）→ 即「每轮重试预算"
+                    "耗尽」，**不是**丢事件。",
+                "all_rc_zero":
+                    "该段所有尝试 rc 是否全 0（排除 guard 拒绝致假过）",
+            },
         }
         # 环境干扰提示（**不是裁决**）：应用中途死亡 / 有 rc != 0 的尝试 → 观测不可信。
         interference = []
@@ -278,9 +305,11 @@ def main():
         if not (a_rc_ok and b_rc_ok):
             interference.append("A/B 段存在 rc != 0 的尝试（guard 拒绝或中途中止）")
         res["observations"]["interference"] = interference
-        print(f"观测：global 翻转={a_ok}（rc 全 0={a_rc_ok}，丢事件 {a_drops}/"
-              f"{res['observations']['A_global']['attempts_total']}）；"
-              f"默认 pid 翻转={b_flipped}（rc 全 0={b_rc_ok}）")
+        oa, ob = res["observations"]["A_global"], res["observations"]["B_default_pid"]
+        print(f"观测：global 翻转 {oa['flipped_rounds']}/{oa['rounds_total']}"
+              f"（rc 全 0={a_rc_ok}，未翻转尝试 {a_unflipped}）；"
+              f"默认 pid 翻转 {ob['flipped_rounds']}/{ob['rounds_total']}"
+              f"（rc 全 0={b_rc_ok}，未翻转尝试 {b_unflipped}）")
         if interference:
             print("  ⚠ 环境干扰：" + "；".join(interference)
                   + " —— 以上观测不可信，请排查后重跑")
