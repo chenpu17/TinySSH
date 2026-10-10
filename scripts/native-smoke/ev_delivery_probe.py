@@ -33,7 +33,6 @@
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import time
@@ -215,12 +214,20 @@ def main():
         log(f"FAIL: 被测二进制不存在或不是文件：{BIN}")
         return 2
 
+    # DB 路径按 `--out` 派生（而非固定 `/tmp/ev_delivery_probe/tinyssh.db`）：否则两个
+    # 并发探针（**哪怕 --out 不同**）会互抢同一写锁，后到者 panic 退出——复核实测过这种
+    # 互扰（同一现象也污染过 ev2_check 的归档）。派生后不同 --out 天然隔离。
+    run_key = hashlib.sha1(str(out.resolve()).encode()).hexdigest()[:10]
+    dbdir = Path("/tmp") / f"ev_delivery_probe-{run_key}"
+    dbpath = dbdir / "tinyssh.db"
     env = {"TINYSSH_MASTER_KEY": "07" * 32,
-           "TINYSSH_DB": f"/tmp/ev_delivery_probe/tinyssh.db",
+           "TINYSSH_DB": str(dbpath),
            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
-    os.makedirs("/tmp/ev_delivery_probe", exist_ok=True)
-    for suf in ("", "-wal", "-shm"):
-        p = Path(env["TINYSSH_DB"] + suf)
+    dbdir.mkdir(parents=True, exist_ok=True)
+    # 含 `.lock`：上一轮若留下活着的实例，它会持写锁 → 本轮应用 panic 退出（症状是
+    # 「20s 内无窗口」，与真实故障难以区分）。清掉陈旧锁文件。
+    for suf in ("", "-wal", "-shm", ".lock"):
+        p = Path(str(dbpath) + suf)
         if p.exists():
             p.unlink()
     errf = open(out / "app.err", "wb")
@@ -229,11 +236,19 @@ def main():
         wx = wy = None
         for _ in range(40):
             time.sleep(0.5)
+            if proc.poll() is not None:
+                break   # 应用已退出（如 DB 写锁被占）——别白等 20s
             wx, wy = window_origin(proc.pid)
             if wx is not None:
                 break
         if wx is None:
-            log(f"FAIL: 未在 20s 内取得 {EXPECT_W}×{EXPECT_H} 窗口")
+            errf.flush()
+            tail = (out / "app.err").read_text(errors="replace").strip().splitlines()[-6:]
+            why = ("被测应用已退出（见 app.err）" if proc.poll() is not None
+                   else f"未在 20s 内取得 {EXPECT_W}×{EXPECT_H} 窗口")
+            log(f"FAIL: {why}；app.err 末尾：")
+            for l in tail:
+                log("    " + l)
             return 2
         activate(proc.pid)
         log(f"app pid={proc.pid} window origin=({wx},{wy})")

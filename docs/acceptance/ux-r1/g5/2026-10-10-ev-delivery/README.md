@@ -4,17 +4,21 @@
 > 取证」。本目录是**投递原语**的同级验证——`scripts/perf/ev2.py` 是 C2/A5/E04/E07
 > 全部受控注入的底座，先验它能不能把事件送进被测应用。
 
-归档时 HEAD：`db72d71`。锚点：
+归档时 HEAD：`a02e1a0`（本包**再版**；首版归档于 `db72d71`）。锚点：
 
 | 文件 | md5 |
 |---|---|
 | `scripts/perf/ev2.py`（**本轮修改**） | `f0e08b39bde6ce2412a2a0245b360f8b` |
-| `scripts/native-smoke/ev2_check.py`（本轮新增） | `11666fa10701e608f437510cf5ffba38` |
-| `scripts/native-smoke/ev_delivery_probe.py`（本轮新增） | `73a30f0e99f6abc3f24334b93bfb3849` |
+| `scripts/native-smoke/ev2_check.py`（本轮新增） | `b189908f012eae87f05d9ded445dadbc` |
+| `scripts/native-smoke/ev_delivery_probe.py`（本轮新增） | `ea979d9448b5d6bd161d9fb1604efea6` |
 
 > 上表为**本轮定稿版** md5（含独立复核后的修正：`ev2.py` 加 `release_buttons`、
-> `ev2_check.py` 记 rc/前置前台核验、`ev_delivery_probe.py` 修 `reset_ui_state`）。
-> 归档目录内各原始件另有其运行时的 `run.log`/JSON。
+> `ev2_check.py` 记 rc/前置前台核验/清锁/`wiring`+`observations` 拆分/E 段闸门、
+> `ev_delivery_probe.py` 修 `reset_ui_state` 与并发隔离）。归档目录内各原始件另有其
+> 运行时的 `run.log`/JSON。
+>
+> **注意**：三个脚本在本包**再版时仍为未提交的工作树状态**，故上表 md5 与 `HEAD`
+> 版**不同**——它们是本包结论所指的**实际执行版本**，以 md5 为准，不以 `HEAD` 为准。
 
 被测二进制 sha256（主树 `target/release/tinyssh-app`）：`3bfecdf0d7934491…`。
 
@@ -57,8 +61,10 @@
 `global` 点击后变为 `5d92b3e56697…`（面板展开）。三轮 md5 逐字相同，无抖动。
 `b1/` 同理（`c8f7e62ccd…` → `919f431851…`）。
 
-**不是 TCC 权限问题**：全局 HID 投递本身就需要「辅助功能」授权且**成功**，
-说明本进程已获授权；`CGEventPostToPid` 返回成功但事件被静默丢弃。
+**不支持「本进程缺少注入权限（TCC/辅助功能）」这一解释**：全局 HID 投递本身就需要
+「辅助功能」授权，而它在本机**成功**——故本进程**已获**该授权。（这是由「global 生效」
+反推的授权状态，**未**直接查询 TCC 数据库；两者若不一致见 §6 未做项。）
+`CGEventPostToPid` 返回成功却事件被静默丢弃，更指向该 API 路径自身，而非「没权限」。
 **不是「窗口未成为 key」问题**：先做全局点击建立 key window，再做 pid 点击，
 窗口区域仍**逐像素不变**。
 
@@ -67,24 +73,48 @@
 机制级对照用的是探针**自建**的投递代码；本节验的是 **ev2 这个工具本体**（`--deliver`
 接线、逐事件核验、guard 退出码），一律以 `subprocess` 调 `ev2.py`，不复制其代码。
 
+**本节的产出分两层，切勿混读**（此为独立复核 blocking #3 的修正）：
+
+- **接线段（`wiring`，C/D/E）——纯工具属性，构成本脚本的裁决**，恒应通过。
+- **观测段（`observations`，A/B）——环境属性，只记录、不判定**。A/B 测的是「本机
+  投递机制是否生效」，那是**环境**事实；把它写进裁决，环境一变（pid 恢复 / global
+  失灵 / 并发干扰）就会产出「工具失败」的**假结论**（复核实测：并发干扰下 A 实例的
+  应用被杀、窗口消失致像素「翻转」，被打成「pid 恢复了」）。
+
+### 3.1 接线（裁决依据）
+
 | 段 | 断言 | 结果 |
 |---|---|---|
-| A | `--deliver global` 点哨兵 → 面板像素翻转，且每次尝试 **rc=0** | **PASS** 6/6 轮翻转（8 次尝试，含 2 次丢事件，rc 全 0） |
-| B | **默认投递**（不传 `--deliver`，即 pid）→ 像素**永不**翻转，且每次尝试 **rc=0** | **PASS** 6/6 轮 0 翻转（18 次尝试，**rc 全 0**） |
 | C | 不存在的 pid → exit 2 且不投递 | **PASS**（`stderr` 含 `does not exist`） |
 | D | 存在但非前台（`sleep` 子进程）→ exit 2 且不投递 | **PASS**（`stderr` 含 `frontmost`） |
+| E | **不设** `TINYSSH_EV2_ALLOW_GLOBAL` 时 `--deliver global` → exit 2 且**一个事件都不发**（stdout 无 `T0=`） | **PASS**（`stderr` 含 `REFUSED`，stdout 空） |
+
+- C/D 不打扰任何用户应用（`sleep` 无 UI；不存在的 pid 无副作用）。
+- **E 是 fail-closed 闸门的直接证据**（此前完全未测，复核 blocking #3 建议补）：
+  证明「未授权时 global 真被拦下」，而不只是「代码里写着拦」。E 段刻意用
+  `ev2_noauth()`（不置该变量），因为其余段落的 `ev2()` 会自动置上它。
+- 本轮 `verdict = ev2_wiring_verified`（C/D/E 全过）。
+
+### 3.2 观测（环境属性，不进裁决）
+
+| 段 | 观测项 | 本轮读数 |
+|---|---|---|
+| A | `--deliver global` 点哨兵 → 面板像素翻转率；丢事件计数 | 6/6 轮翻转；6 次尝试（每轮 1 次即中），**0 次丢事件**；rc 全 0 |
+| B | **默认投递**（不传 `--deliver`，即 pid）→ 面板像素翻转率 | **0/6 轮翻转**；18 次尝试，**rc 全 0** |
+| — | `observations.interference` | **空**（应用全程存活、无 rc≠0 尝试） |
 
 - B 段**刻意不传 `--deliver`**：验的正是「默认值 = 签署授权的 pid」。
 - **B 的 `rc=0` 是关键证据**（独立复核 finding #3）：只看「没翻转」无法区分「投了但
   没效果」（= 要证的环境事实）与「guard 拒绝、根本没投」（= 工具坏了却假过）。本轮
   18 次尝试 rc **全 0** ⇒ 事件**确实投了出去**，pid 路径对本应用**无效果**，而非被拒。
-- C/D 不打扰任何用户应用（`sleep` 无 UI；不存在的 pid 无副作用）。
-- 该次运行 `ev2-check.json`：`A_global.drops=2`（8 次尝试）、`B_default_pid.drops=18`
-  ——B 的 18 是「每轮重试耗尽」的计数，即 pid **一次都没生效**，非丢事件。
-- 该 JSON 自记 `bin_sha256 = 3bfecdf0d7934491…`（= 上表被测二进制），证据包自证身份。
-- **裁决三分**（勿把环境差异误报成工具缺陷，finding #4）：`ev2_delivery_verified`
-  （全过）/ `pid_delivery_now_works`（B 翻转 = 本机 pid 恢复可用，属**环境属性变化**）/
-  `ev2_delivery_failed`（A 或 C/D 未过）。本轮为前者。
+- B 的 `drops=18` 是「每轮重试预算耗尽」的计数，**不是**丢事件——即 pid **一次都没生效**。
+  A 本轮 `drops=0`（6 次尝试全中）——**丢事件是低概率事件**（见 §4② 的其它读数），
+  本轮恰好没撞上，**不构成**「丢事件已消失」的主张。
+- 该 JSON 自记 `bin_sha256 = 3bfecdf0d7934491…`（= 上表被测二进制），证据包自证身份；
+  基线 md5 `4405d4771f…` 与 §2 机制级一致（坐标稳定，未受 §5 状态漂移影响）。
+- **读法**：若见 `ev2_wiring_failed`，才是**工具**问题；若 `observations` 里 B 翻转了
+  （本机 pid 恢复可用），那是**环境变化**，须重估 `ev2.py` 默认投递与 G0 签署 §4 前提，
+  而**不是**工具缺陷——本脚本不再把它写成裁决值。
 
 ## 4. 三个静默失判陷阱（实测撞到，已写进 `ev2.py` / `ev2_check.py` docstring）
 
@@ -113,7 +143,8 @@
 
 **③ 焦点漂移/残留实例会让「全程 rc=2」伪装成工具缺陷。** 症状：guard 对**每次**调用
 都返回 rc=2（什么都不投），但像素仍可能因**他窗口重绘**而「翻转」——于是 B 段假红，
-被误报成 `ev2_delivery_failed`（工具缺陷）。本轮实测**撞到两次**：
+被误报成工具缺陷（旧版会打成 `pid_delivery_now_works`/`ev2_delivery_failed`）。
+本轮实测**撞到两次**：
 
 - 残留 `tinyssh-app` 实例占住库写锁 `/tmp/ev2_check/tinyssh.db.lock` → 新实例
   `panic` 退出 → 探针 20s 内取不到窗口（症状与「应用起不来」无异）；
@@ -122,8 +153,10 @@
 缓解（本轮已加入 `ev2_check.py`，均属**把环境问题与工具问题分开**）：
 ① 清掉陈旧的 `.lock` 锁文件；② 应用早退时**立即**打印 `app.err` 末尾而非白等 20s；
 ③ **测量前置断言「前台 = 被测应用」**，重试 6 次仍不成立即以 exit 2（**环境问题**）
-退出，不继续产出垃圾数据。⇒ 若见 `ev2_delivery_failed`，**先查前台与残留实例**，
-再怀疑工具。
+退出，不继续产出垃圾数据；④ **结构性消除**（复核 blocking #3 的建议）：把 A/B 降级为
+`observations`、裁决只由纯接线断言 C/D/E 决定——于是「环境干扰致像素翻转」**再也不会**
+被写成工具裁决；另记 `observations.interference`（应用中途死亡 / 有 rc≠0 尝试）提示
+观测不可信。⇒ 若见 `ev2_wiring_failed`，**先查前台与残留实例**，再怀疑工具。
 
 ## 5. 附带发现：webview localStorage 让原生 UI 布局跨轮漂移
 
@@ -134,6 +167,10 @@ dev 二进制把 UI 状态持久化在 `~/Library/WebKit/tinyssh-app/WebsiteData
 `ui.hostbar` 置 0（隐藏主机栏）后，**下一轮启动仍是该布局**——于是同一套坐标在两次运行
 里指向不同控件，探针会以「两种投递都无变化」**静默失判**（本轮实测到：基线 md5 从
 `4405d4771f…` 变成 `2a7b5e1ddf…`，区域全空）。
+
+> **口径**：`2a7b5e1ddf…` 是当时**现场观察值**，其 PNG **未留档**（该次运行不属归档运行，
+> 目录内无对应原始件）——故此处只作**定性说明**（「状态漂移确会改变基线」），
+> **不主张**该具体 md5 可复现。可复现的是**成因**：`LocalStorage` 持久化 UI 布局。
 
 ⇒ 探针加了 `--reset-ui-state`：启动前把匹配到的 `LocalStorage` 目录 **`mv`** 到
 `<out>/ui-state-backup/`（可逆，不删）。**任何依赖坐标的原生取证都必须先复位该状态**，
@@ -174,10 +211,26 @@ dev 二进制把 UI 状态持久化在 `~/Library/WebKit/tinyssh-app/WebsiteData
 - 机制级探针裁决只看**鼠标**；`keyboard` 段即便开启也不参与裁决。
 - **`ev2.py` 的 `exit 3` 不可达**（本轮更正 docstring）：`guard` 在 pid 不存在时即返回
   拒绝消息 → `exit 2`。代码中无分支产生 `exit 3`。
+- **`ev2_check.py` 里 `ev2()` 硬编码 `TINYSSH_EV2_ALLOW_GLOBAL=1`**（复核提出）：这让
+  「审计可见的授权凭据」在跑 A/B 观测段时被**自动**置上，削弱其作为人为决策信号的价值。
+  已知并接受，理由：A/B 段本就要验 global 路径，不置则该段全是 fail-closed 拒绝、无观测
+  可言；**为不使闸门本身失去检验**，E 段另用 `ev2_noauth()`（显式不置）——那一段才证明
+  闸门真关着。⇒ 审计时**勿把本脚本的运行当作「已获授权」的证据**；它属**偏离登记**。
+- **`release_buttons` 在本机是「安全但可能无效」的尽力而为**（复核 finding #2 的修复）：
+  它**只用 `CGEventPostToPid`**（此刻前台已非目标，改用全局会误投用户应用），而该路径
+  在本机对 tinyssh-app **静默失效**（§1.1）——故它**不保证**目标真的抬起，只保证
+  **不会误投**。中止后目标应用**可能仍留在按下态**，调用方须自行处置。
 - **二进制身份**：见 `bin-identity.txt`（三处子归档的二进制路径 + sha256 + mtime；
   两二进制自构建后未重编译）。`ev2-check/ev2-check.json` 亦自记 `bin_sha256`。
-- 本目录由作者执行；**独立复核进行中**（复核者 `ev2-delivery-review`，已回报 7 条
+- **未直接查询 TCC 数据库**：§2「本进程已获辅助功能授权」是由「global 投递成功」**反推**
+  的，未读取 `TCC.db` 或 `AXIsProcessTrusted` 核对；若二者不一致（如 global 走的是别的
+  授权路径），该推断需修正。**未做**该项核对。
+- 本目录由作者执行；**独立复核进行中**（复核者 `ev2-delivery-review`）。首轮回报 7 条
   发现，均已处置：`release_buttons` 补抬起 + selftest ⑤ 断言、`ev2_check` 记 rc +
-  前置前台核验 + 清锁 + 早退报错、`reset_ui_state` 递归 glob 修正、B 段裁决三分）。
+  前置前台核验 + 清锁 + 早退报错、`reset_ui_state` 递归 glob 修正。第二轮回报**升级为
+  3 条阻塞项**，亦已处置：① 首版归档被并发运行污染 → 已重跑出干净归档；② `ev2_check`
+  硬编码 DB 路径致并发抢锁 → 已按 `--out` 派生（`ev_delivery_probe.py` 同步修）；
+  ③ `pid_delivery_now_works` 可被环境干扰伪触发 → 已把 A/B 降为 `observations`、裁决
+  改为 `ev2_wiring_verified`/`ev2_wiring_failed`，并补 E 段闸门断言。
   其完整报告（含视觉复验、主张对证据、审核期变异三节）到达后另立 `review-ev-delivery.md`
   归档；**在报告到达前，本包主张以作者自验为限。**

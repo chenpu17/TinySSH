@@ -5,24 +5,31 @@
 - 本脚本回答「**ev2 这个工具**（含 `--deliver` 接线、逐事件核验、guard 退出码）改好没有」——
   一律以 `subprocess` 调 `scripts/perf/ev2.py` 本体，不复制其投递代码。
 
-四段断言：
-  A. `--deliver global` 点哨兵 → 面板像素**翻转**（逐轮必须翻转；一轮内允许重试，重试次数
-     即**丢点击率的实测样本**，见下）。且每次尝试 **rc 必须为 0**——证明事件真投了出去，
-     而非 guard 拒绝。
-  B. **默认投递**（不传 `--deliver`，即签署授权的 pid）点同一哨兵 → 像素**永不翻转**，
-     且每次尝试 **rc 必须为 0**。B 不传 flag 是刻意的：验的正是「默认值 = pid」。
-     **rc=0 是 B 的关键**：只看「没翻转」无法区分「投了但没效果」（= 要证的环境事实）
-     与「guard 拒绝、根本没投」（= 工具坏了却假过）。rc 全 0 才排除后者。
+**结构：观测段（环境属性，只记录） + 接线段（纯工具属性，恒应通过）**
+
+观测段（A/B，**不参与裁决**）：
+  A. `--deliver global` 点哨兵 → 面板像素是否**翻转**（逐轮；一轮内允许重试，重试次数
+     即**丢点击率的实测样本**）。每次尝试记 `rc`。
+  B. **默认投递**（不传 `--deliver`，即签署授权的 pid）点同一哨兵 → 像素是否翻转。
+     B 不传 flag 是刻意的：验的正是「默认值 = pid」。**rc=0 是关键**：只看「没翻转」
+     无法区分「投了但没效果」（= 环境事实）与「guard 拒绝、根本没投」（= 工具坏了却假过）。
+  ⇒ A/B 测的是「**本机投递机制是否生效**」——那是**环境属性**。若把它写进裁决，环境
+    一变（pid 恢复 / global 失灵 / 并发干扰）就会产出「工具失败」的**假结论**（复核实测：
+    并发干扰下被测应用被杀、窗口消失致像素「翻转」，被打成「pid 恢复了」）。故 A/B
+    **一律只作观测落盘**，另记 `observations.interference`（应用中途死亡 / 有 rc≠0）。
+
+接线段（C/D/E，**恒应通过，构成本脚本的裁决**）：
   C. guard 负例①：不存在的 pid → **exit 2 且不投递**。
   D. guard 负例②：存在但非前台（临时 `sleep` 子进程）→ **exit 2 且不投递**。
      这两条不打扰任何用户应用（sleep 无 UI；不存在 pid 无副作用）。
+  E. fail-closed 闸门：**不设** `TINYSSH_EV2_ALLOW_GLOBAL` 时 `--deliver global` →
+     **exit 2 且 stdout 无 `T0=`（一个事件都没发）**。E 段刻意用 `ev2_noauth()`，因为
+     其余段落的 `ev2()` 会自动置上该变量（见其 docstring 注记）。
 
-**裁决三分（勿把环境差异误报成工具缺陷）**：`ev2-check.json` 的 `verdict` 取值——
-  - `ev2_delivery_verified`：四段全过。
-  - `pid_delivery_now_works`：**B 段翻转了**（本机 pid 投递恢复可用）。这是**环境属性
-    变化**，不是工具缺陷——B 断言的是「本机 pid 失效」这个环境事实。此时须重估
-    ev2.py 默认投递与 G0 签署 §4 的前提。
-  - `ev2_delivery_failed`：A 或 C/D 未过，须排查。
+**裁决（只有两个值）**：`ev2-check.json` 的 `verdict`——
+  - `ev2_wiring_verified`：C/D/E 全过（工具接线正确）。
+  - `ev2_wiring_failed`：有接线断言未过，须排查。
+  **投递机制是否生效（global 翻转 / pid 无效果）只出现在 `observations`，永不进裁决。**
 
 **两条已知的静默失判陷阱（都已在实测中撞到，故本脚本按此设计）**：
 
@@ -34,15 +41,17 @@
    丢因未定性（非事件间隔：gap 0/60/150ms 各 20 次全无丢失；非前台漂移：丢失时
    frontmost 仍等于目标）。**故本脚本不假设「点一次必中」**：A 段每轮允许最多
    `--retry` 次尝试，记录实际尝试次数并汇总为 `drops` 计数落盘——**该计数是观测数据，
-   不是断言**。真正被断言的是「global 在重试预算内能使像素翻转」。
+   不是断言**。
 
 ⇒ **给调用方的结论**：用 global 做坐标取证时，**必须核验效果**（轮询状态/像素直到变化），
 不得假设「投递即生效」；单次点击触发的计时端点会因丢事件产生虚假长尾。
 
+**并发隔离**：DB 路径按 `--out` 派生（`/tmp/ev2_check-<hash10>/tinyssh.db`），两个不同
+`--out` 的并发运行互不抢锁；启动前清 `<db>.lock`；应用早退时打印 `app.err` 尾部而非
+白等 20s；测量前断言「前台 = 被测应用」。
+
 用法：ev2_check.py --out <dir> [--bin PATH] [--rounds N] [--retry K] [--settle S]
-退出码：0 全部通过 / 1 有断言未过 / 2 环境问题（无窗口、二进制缺失、预热复位失败）。
-注意 exit 1 的两种子情形可由 `verdict` 区分：`pid_delivery_now_works` 是**环境变化**
-（非工具缺陷），`ev2_delivery_failed` 才是工具问题。
+退出码：0 接线全过 / 1 有接线断言未过 / 2 环境问题（无窗口、二进制缺失、非前台、预热复位失败）。
 """
 
 import argparse
@@ -81,11 +90,25 @@ def activate(pid):
 
 
 def ev2(args):
-    """调 ev2 本体。**总是带 `TINYSSH_EV2_ALLOW_GLOBAL=1`**——本脚本的全部意义就是验证
+    """调 ev2 本体。**总是带 `TINYSSH_EV2_ALLOW_GLOBAL=1`**——本脚本的 A/B 观测段要验
     global 路径，而 ev2 默认 fail-closed 拒绝它（G0 签署 §4 禁止全局 HID 注入）。
     在此显式设该变量 = 本验证活动声明「已知这是未授权偏离、产物仅作**偏离证据**，
-    不作门证据」。见 ev2.py docstring 与 docs/acceptance/ux-r1/g5/2026-10-10-ev-delivery/。"""
+    不作门证据」。见 ev2.py docstring 与 docs/acceptance/ux-r1/g5/2026-10-10-ev-delivery/。
+
+    **注记（复核提出）**：此处的硬编码使「审计可见的授权凭据」在跑测试时被**自动**置上，
+    削弱其作为人为决策信号的价值。故 E 段（fail-closed 闸门）另用 `ev2_noauth()`，
+    显式**不设**该变量——那一段才证明闸门真的关着。"""
     env = dict(os.environ, **{"TINYSSH_EV2_ALLOW_GLOBAL": "1"})
+    r = subprocess.run([sys.executable, str(EV2)] + args, capture_output=True,
+                       text=True, env=env)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def ev2_noauth(args):
+    """同 `ev2()`，但**不设** `TINYSSH_EV2_ALLOW_GLOBAL`（并主动从继承环境里剔除它）。
+    用于 E 段验证 fail-closed 闸门：未授权时 `--deliver global` 必须 **exit 2 且一个
+    事件都不发**（stdout 无 `T0=`）。"""
+    env = {k: v for k, v in os.environ.items() if k != "TINYSSH_EV2_ALLOW_GLOBAL"}
     r = subprocess.run([sys.executable, str(EV2)] + args, capture_output=True,
                        text=True, env=env)
     return r.returncode, r.stdout.strip(), r.stderr.strip()
@@ -108,14 +131,20 @@ def main():
         print(f"FAIL: 被测二进制不存在或不是文件：{BIN}")
         return 2
 
+    # DB 路径按 `--out` 派生（而非固定 `/tmp/ev2_check/tinyssh.db`）：否则两个并发
+    # ev2_check（**哪怕 --out 不同**）会互抢同一写锁，后到者 panic 退出——复核实测过
+    # 这种互扰。派生后不同 --out 天然隔离；同一 --out 重跑仍复用并清库。
+    run_key = hashlib.sha1(str(out.resolve()).encode()).hexdigest()[:10]
+    dbdir = Path("/tmp") / f"ev2_check-{run_key}"
+    dbpath = dbdir / "tinyssh.db"
     env = {"TINYSSH_MASTER_KEY": "07" * 32,
-           "TINYSSH_DB": "/tmp/ev2_check/tinyssh.db",
+           "TINYSSH_DB": str(dbpath),
            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
-    os.makedirs("/tmp/ev2_check", exist_ok=True)
+    dbdir.mkdir(parents=True, exist_ok=True)
     # 含 `.lock`：上一轮若留下活着的实例，它会持写锁，本轮应用会 panic 退出（症状是
     # 「20s 内无窗口」，与真实故障难以区分）。清掉陈旧锁文件，配合下方「应用早退」检测。
     for suf in ("", "-wal", "-shm", ".lock"):
-        p = Path(env["TINYSSH_DB"] + suf)
+        p = Path(str(dbpath) + suf)
         if p.exists():
             p.unlink()
 
@@ -220,36 +249,52 @@ def main():
         def all_rc_zero(detail):
             return all(rc == 0 for d in detail for rc in d["rcs"])
 
-        # ---- A: global 必须能翻转 ----
-        print("A global:")
+        # ================= 观测段（环境属性：只记录，不判定）=================
+        # A/B 测的是「本机投递机制是否生效」——那是**环境属性**，不是工具接线。若把
+        # 环境属性写进裁决，环境一变（pid 恢复 / global 失灵 / 并发干扰）就会产出
+        # 「工具失败」的假结论（复核 blocking #3：并发干扰下 A 实例的应用被杀，像素
+        # 「翻转」是窗口消失所致，却被打成 `pid_delivery_now_works`）。故 A/B **一律
+        # 只作观测落盘**；裁决只由下面的纯接线断言（C/D/E）决定。
+        print("A global (observation):")
         a_detail, a_ok, a_drops = run_section("global", "A", args.rounds, args.retry)
         a_rc_ok = all_rc_zero(a_detail)
-        res["A_global"] = {"rounds": a_detail, "drops": a_drops, "all_rc_zero": a_rc_ok,
-                           "attempts_total": sum(d["attempts"] for d in a_detail)}
-        checks = [("A global delivery flips panel within retry budget", a_ok),
-                  ("A every attempt exited 0 (delivery attempted, not guard-rejected)", a_rc_ok)]
-        print(f"A -> {'PASS' if a_ok and a_rc_ok else 'FAIL'}（丢事件 {a_drops}/"
-              f"{res['A_global']['attempts_total']} 次尝试，rc 全 0={a_rc_ok}）")
-
-        # ---- B: 默认投递（=pid）必须永不翻转，且每次都必须真的投了（rc=0）----
-        print("B default(pid):")
+        print("B default(pid) (observation):")
         b_detail, b_flipped, b_drops = run_section("pid", "B", args.rounds, args.retry)
         b_rc_ok = all_rc_zero(b_detail)
-        res["B_default_pid"] = {"rounds": b_detail, "drops": b_drops, "all_rc_zero": b_rc_ok,
-                                "attempts_total": sum(d["attempts"] for d in b_detail)}
-        # rc 必须全 0：否则「没翻转」可能只是 guard 拒绝，B 会假过。
-        b_ok = (not b_flipped) and b_rc_ok
-        checks.append(("B default(pid) never flips panel, with rc=0 throughout", b_ok))
-        print(f"B -> {'PASS' if b_ok else 'FAIL'}（rc 全 0={b_rc_ok}）")
+        app_alive = proc.poll() is None
+        res["observations"] = {
+            "A_global": {"rounds": a_detail, "drops": a_drops, "all_rc_zero": a_rc_ok,
+                         "attempts_total": sum(d["attempts"] for d in a_detail),
+                         "global_flips_panel": a_ok},
+            "B_default_pid": {"rounds": b_detail, "drops": b_drops, "all_rc_zero": b_rc_ok,
+                              "attempts_total": sum(d["attempts"] for d in b_detail),
+                              "pid_flips_panel": b_flipped},
+            "app_alive_at_end": app_alive,
+        }
+        # 环境干扰提示（**不是裁决**）：应用中途死亡 / 有 rc != 0 的尝试 → 观测不可信。
+        interference = []
+        if not app_alive:
+            interference.append("被测应用在测量结束前已退出")
+        if not (a_rc_ok and b_rc_ok):
+            interference.append("A/B 段存在 rc != 0 的尝试（guard 拒绝或中途中止）")
+        res["observations"]["interference"] = interference
+        print(f"观测：global 翻转={a_ok}（rc 全 0={a_rc_ok}，丢事件 {a_drops}/"
+              f"{res['observations']['A_global']['attempts_total']}）；"
+              f"默认 pid 翻转={b_flipped}（rc 全 0={b_rc_ok}）")
+        if interference:
+            print("  ⚠ 环境干扰：" + "；".join(interference)
+                  + " —— 以上观测不可信，请排查后重跑")
 
-        # ---- C: guard 负例①：不存在的 pid ----
+        # ================= 接线段（纯工具属性：恒应通过）=================
+        wiring = []
+        # C: guard 负例①：不存在的 pid
         rc_c, o_c, e_c = ev2(["click", "--pid", "999999999", "--x", str(sx), "--y", str(sy)])
         c_ok = rc_c == 2 and "does not exist" in e_c
         res["C_nonexistent_pid"] = {"rc": rc_c, "stdout": o_c, "stderr": e_c}
-        checks.append(("C guard rejects nonexistent pid with exit 2", c_ok))
+        wiring.append(("C guard rejects nonexistent pid with exit 2", c_ok))
         print(f"C nonexistent pid: rc={rc_c} -> {'PASS' if c_ok else 'FAIL'}")
 
-        # ---- D: guard 负例②：存在但非前台 ----
+        # D: guard 负例②：存在但非前台
         sleeper = subprocess.Popen(["sleep", "30"])
         try:
             rc_d, o_d, e_d = ev2(["click", "--pid", str(sleeper.pid),
@@ -260,25 +305,30 @@ def main():
         finally:
             sleeper.terminate()
             sleeper.wait(5)
-        checks.append(("D guard rejects non-frontmost pid with exit 2", d_ok))
+        wiring.append(("D guard rejects non-frontmost pid with exit 2", d_ok))
         print(f"D non-frontmost pid: rc={rc_d} -> {'PASS' if d_ok else 'FAIL'}")
 
-        ok = all(v for _, v in checks)
-        res["checks"] = [{"name": n, "pass": v} for n, v in checks]
-        # 裁决三分：B 变红（默认 pid 竟然翻转了）最可能是**环境属性变化**（pid 投递在
-        # 本机恢复可用），而非工具缺陷——B 断言的是「本机 pid 失效」这个环境事实。
-        # 若打成 ev2_delivery_failed 会把环境差异误报成工具缺陷（复核 finding #4）。
+        # E: fail-closed 闸门（**此前完全未测**，复核 blocking #3 建议补）：未设授权变量时
+        #    `--deliver global` 必须 exit 2 且**一个事件都不发**（stdout 无 `T0=`）。
+        rc_e, o_e, e_e = ev2_noauth(["click", "--pid", str(proc.pid), "--x", str(sx),
+                                     "--y", str(sy), "--deliver", "global"])
+        e_ok = rc_e == 2 and "REFUSED" in e_e and o_e == ""
+        res["E_global_without_auth"] = {"rc": rc_e, "stdout": o_e, "stderr": e_e}
+        wiring.append(("E --deliver global w/o auth env refused (exit 2, nothing posted)", e_ok))
+        print(f"E global w/o auth: rc={rc_e} (stdout 空={o_e == ''}) -> "
+              f"{'PASS' if e_ok else 'FAIL'}")
+
+        ok = all(v for _, v in wiring)
+        res["wiring"] = [{"name": n, "pass": v} for n, v in wiring]
+        res["verdict"] = "ev2_wiring_verified" if ok else "ev2_wiring_failed"
         if ok:
-            res["verdict"] = "ev2_delivery_verified"
-            res["verdict_note"] = "四段断言全过：global 可投递（rc 全 0 且像素翻转）、默认 pid 无效果（rc 全 0）、guard 两负例 exit 2。"
-        elif b_flipped:
-            res["verdict"] = "pid_delivery_now_works"
-            res["verdict_note"] = ("B 段失败：默认 pid 投递**翻转了**像素——即本机 pid 投递"
-                                   "已恢复可用（环境属性变化，**非本工具缺陷**）。"
-                                   "须重估 ev2.py 默认投递与 G0 签署 §4 的前提。")
+            res["verdict_note"] = (
+                "接线全部正确：guard 两类拒绝 + fail-closed 闸门均 exit 2 且不投递。"
+                "**投递机制是否生效见 observations**——那是环境属性，不参与裁决。")
         else:
-            res["verdict"] = "ev2_delivery_failed"
-            res["verdict_note"] = "A 或 C/D 断言未过（global 不可投递 / guard 未按预期拒绝），须排查。"
+            res["verdict_note"] = (
+                "有接线断言未过（guard 未按预期拒绝 / fail-closed 闸门失效），须排查；"
+                "注意 observations 里的环境属性与接线无关，勿混为一谈。")
         (out / "ev2-check.json").write_text(json.dumps(res, ensure_ascii=False, indent=2))
         print(f"VERDICT: {res['verdict']} (exit {0 if ok else 1})")
         print(f"  {res['verdict_note']}")

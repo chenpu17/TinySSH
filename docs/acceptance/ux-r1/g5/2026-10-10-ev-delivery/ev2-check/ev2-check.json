@@ -4,147 +4,151 @@
   "settle_s": 2.5,
   "rounds": 6,
   "retry_budget": 3,
-  "pid": 13932,
+  "pid": 17412,
   "origin": [
     221,
     71
   ],
   "baseline_md5": "4405d4771fc7b27d982338a2e81f4741",
-  "A_global": {
-    "rounds": [
-      {
-        "round": 0,
-        "flipped": true,
-        "attempts": 1,
-        "rcs": [
-          0
-        ],
-        "md5": "5d92b3e56697c920bf9e33496d81aaa1"
-      },
-      {
-        "round": 1,
-        "flipped": true,
-        "attempts": 2,
-        "rcs": [
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      },
-      {
-        "round": 2,
-        "flipped": true,
-        "attempts": 1,
-        "rcs": [
-          0
-        ],
-        "md5": "5d92b3e56697c920bf9e33496d81aaa1"
-      },
-      {
-        "round": 3,
-        "flipped": true,
-        "attempts": 2,
-        "rcs": [
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      },
-      {
-        "round": 4,
-        "flipped": true,
-        "attempts": 1,
-        "rcs": [
-          0
-        ],
-        "md5": "5d92b3e56697c920bf9e33496d81aaa1"
-      },
-      {
-        "round": 5,
-        "flipped": true,
-        "attempts": 1,
-        "rcs": [
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      }
-    ],
-    "drops": 2,
-    "all_rc_zero": true,
-    "attempts_total": 8
-  },
-  "B_default_pid": {
-    "rounds": [
-      {
-        "round": 0,
-        "flipped": false,
-        "attempts": 3,
-        "rcs": [
-          0,
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      },
-      {
-        "round": 1,
-        "flipped": false,
-        "attempts": 3,
-        "rcs": [
-          0,
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      },
-      {
-        "round": 2,
-        "flipped": false,
-        "attempts": 3,
-        "rcs": [
-          0,
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      },
-      {
-        "round": 3,
-        "flipped": false,
-        "attempts": 3,
-        "rcs": [
-          0,
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      },
-      {
-        "round": 4,
-        "flipped": false,
-        "attempts": 3,
-        "rcs": [
-          0,
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      },
-      {
-        "round": 5,
-        "flipped": false,
-        "attempts": 3,
-        "rcs": [
-          0,
-          0,
-          0
-        ],
-        "md5": "4405d4771fc7b27d982338a2e81f4741"
-      }
-    ],
-    "drops": 18,
-    "all_rc_zero": true,
-    "attempts_total": 18
+  "observations": {
+    "A_global": {
+      "rounds": [
+        {
+          "round": 0,
+          "flipped": true,
+          "attempts": 1,
+          "rcs": [
+            0
+          ],
+          "md5": "5d92b3e56697c920bf9e33496d81aaa1"
+        },
+        {
+          "round": 1,
+          "flipped": true,
+          "attempts": 1,
+          "rcs": [
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        },
+        {
+          "round": 2,
+          "flipped": true,
+          "attempts": 1,
+          "rcs": [
+            0
+          ],
+          "md5": "5d92b3e56697c920bf9e33496d81aaa1"
+        },
+        {
+          "round": 3,
+          "flipped": true,
+          "attempts": 1,
+          "rcs": [
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        },
+        {
+          "round": 4,
+          "flipped": true,
+          "attempts": 1,
+          "rcs": [
+            0
+          ],
+          "md5": "5d92b3e56697c920bf9e33496d81aaa1"
+        },
+        {
+          "round": 5,
+          "flipped": true,
+          "attempts": 1,
+          "rcs": [
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        }
+      ],
+      "drops": 0,
+      "all_rc_zero": true,
+      "attempts_total": 6,
+      "global_flips_panel": true
+    },
+    "B_default_pid": {
+      "rounds": [
+        {
+          "round": 0,
+          "flipped": false,
+          "attempts": 3,
+          "rcs": [
+            0,
+            0,
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        },
+        {
+          "round": 1,
+          "flipped": false,
+          "attempts": 3,
+          "rcs": [
+            0,
+            0,
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        },
+        {
+          "round": 2,
+          "flipped": false,
+          "attempts": 3,
+          "rcs": [
+            0,
+            0,
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        },
+        {
+          "round": 3,
+          "flipped": false,
+          "attempts": 3,
+          "rcs": [
+            0,
+            0,
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        },
+        {
+          "round": 4,
+          "flipped": false,
+          "attempts": 3,
+          "rcs": [
+            0,
+            0,
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        },
+        {
+          "round": 5,
+          "flipped": false,
+          "attempts": 3,
+          "rcs": [
+            0,
+            0,
+            0
+          ],
+          "md5": "4405d4771fc7b27d982338a2e81f4741"
+        }
+      ],
+      "drops": 18,
+      "all_rc_zero": true,
+      "attempts_total": 18,
+      "pid_flips_panel": false
+    },
+    "app_alive_at_end": true,
+    "interference": []
   },
   "C_nonexistent_pid": {
     "rc": 2,
@@ -154,22 +158,15 @@
   "D_nonfrontmost_pid": {
     "rc": 2,
     "stdout": "",
-    "stderr": "[ev2] ABORT (nothing posted): frontmost pid 13932 != target pid 14015",
-    "sleeper_pid": 14015
+    "stderr": "[ev2] ABORT (nothing posted): frontmost pid 17412 != target pid 17507",
+    "sleeper_pid": 17507
   },
-  "checks": [
-    {
-      "name": "A global delivery flips panel within retry budget",
-      "pass": true
-    },
-    {
-      "name": "A every attempt exited 0 (delivery attempted, not guard-rejected)",
-      "pass": true
-    },
-    {
-      "name": "B default(pid) never flips panel, with rc=0 throughout",
-      "pass": true
-    },
+  "E_global_without_auth": {
+    "rc": 2,
+    "stdout": "",
+    "stderr": "[ev2] REFUSED (nothing posted): --deliver global 属 G0 签署 §4 明文禁止的「回退全局 HID 注入」。\n  改用 global 的**唯一**理由是：签署授权的 pid 定向投递在本机对 tinyssh-app\n  静默失效（证据 docs/acceptance/ux-r1/g5/2026-10-10-ev-delivery/）。\n  该偏离须先取得**签署范围修订**，并与其产物一并登记。\n  确已获授权时：TINYSSH_EV2_ALLOW_GLOBAL=1 重跑（该变量是审计可见的授权凭据）。"
+  },
+  "wiring": [
     {
       "name": "C guard rejects nonexistent pid with exit 2",
       "pass": true
@@ -177,8 +174,12 @@
     {
       "name": "D guard rejects non-frontmost pid with exit 2",
       "pass": true
+    },
+    {
+      "name": "E --deliver global w/o auth env refused (exit 2, nothing posted)",
+      "pass": true
     }
   ],
-  "verdict": "ev2_delivery_verified",
-  "verdict_note": "四段断言全过：global 可投递（rc 全 0 且像素翻转）、默认 pid 无效果（rc 全 0）、guard 两负例 exit 2。"
+  "verdict": "ev2_wiring_verified",
+  "verdict_note": "接线全部正确：guard 两类拒绝 + fail-closed 闸门均 exit 2 且不投递。**投递机制是否生效见 observations**——那是环境属性，不参与裁决。"
 }
