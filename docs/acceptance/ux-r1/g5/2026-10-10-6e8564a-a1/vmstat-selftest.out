@@ -1,0 +1,20 @@
+PASS V1 healthy round is judgeable -- invalid=False checks=8 (I1–I8)
+PASS V2 I1 pressure critical triggers -- invalid=True
+PASS V3 I2 swap growth triggers -- invalid=True
+PASS V4 I3 compressor growth triggers -- invalid=True
+PASS V5 I4 pages purged triggers -- invalid=True
+PASS V6 I5 sampling gap triggers -- invalid=True
+PASS V7 I5 short phase triggers -- invalid=True
+PASS V8 I6 non-monotonic triggers -- invalid=True
+PASS V9 I7 attribution void triggers -- invalid=True
+PASS V10 empty points unjudgeable -- invalid=True
+PASS V11 inter-phase settle gap does not trigger -- invalid=False, I5=False
+PASS V12 I8 missing field unjudgeable -- invalid=True
+PASS V13 I8 missing baseline phase unjudgeable -- invalid=True
+PASS V14 I2 per-phase spike triggers -- invalid=True（全局末点 Δ=0，逐相位 Δ=300）
+PASS V15 I6 disorder before sort triggers -- invalid=True（排序后单调，仅原始顺序可判）
+PASS V16 I8 missing whole phases unjudgeable -- invalid=True, I8=相位缺失：load, E
+PASS V17 I8 bad field type unjudgeable (no traceback) -- err=None invalid=True
+PASS V18 I8 non-object point unjudgeable (no traceback) -- err=None invalid=True
+PASS V19 I7 missing attribution unjudgeable -- invalid=True
+== vmstat selftest: 19/19 PASS -> docs/acceptance/ux-r1/g5/2026-10-10-6e8564a-a1/vmstat-selftest.json

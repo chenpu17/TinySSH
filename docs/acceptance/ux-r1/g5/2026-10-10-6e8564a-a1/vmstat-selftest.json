@@ -1,0 +1,137 @@
+{
+  "probe": "vmstat_probe v1",
+  "scope": "synthetic data only; criteria validity evidence",
+  "protocol": {
+    "name": "P5 压力同步观测 v1",
+    "registered": "2026-10-10",
+    "frozen_for": "R51",
+    "interval_s": 5,
+    "phase_duration_s": 60,
+    "points_per_phase": 12,
+    "baseline_phase": "P0",
+    "expected_phases": [
+      "P0",
+      "warmup",
+      "B",
+      "load",
+      "E"
+    ],
+    "sources": [
+      "vm_stat",
+      "sysctl kern.memorystatus_vm_pressure_level",
+      "sysctl -n vm.swapusage",
+      "memory_pressure"
+    ],
+    "read_only": true,
+    "no_purge": true,
+    "invalidation": {
+      "I1_pressure_critical": "任一点 pressure_level >= 4（字段缺失见 I8）",
+      "I2_swap_growth_mb": "任一相位相对 P0 基线的最大增量 > 256",
+      "I3_compressor_growth_mb": "任一相位相对 P0 基线的最大增量 > 512",
+      "I4_pages_purged_growth": "任一相位相对 P0 基线的最大增量 > 20000 页",
+      "I5_sampling_gap": "相位内相邻点 ts_epoch 间隔 > 2x interval，或系列相位点数 < points_per_phase-1（相位间静置间隔不计）",
+      "I6_monotonic_time": "ts_epoch 在原始输入顺序上非严格递增",
+      "I7_attribution_void": "未喂入 --memsample 即不可判；喂入后 memsample 任一相位 voided=true 亦不可判",
+      "I8_data_completeness": "必需字段（ts_epoch/pressure_level/swap.used_mb/mb.occupied_by_compressor/pages.purged）缺失或类型非法，或 phase 标签非法，或缺 expected_phases 中任一相位（含 P0 基线）"
+    },
+    "note": "判据为外部压力的提示性证据，非外压 purge 的证明；应用自身引发的增长计入资源问题调查，不得豁免。阈值先于测量登记，不得看结果后放宽。"
+  },
+  "checks": [
+    {
+      "name": "V1 healthy round is judgeable",
+      "pass": true,
+      "detail": "invalid=False checks=8 (I1–I8)"
+    },
+    {
+      "name": "V2 I1 pressure critical triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V3 I2 swap growth triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V4 I3 compressor growth triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V5 I4 pages purged triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V6 I5 sampling gap triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V7 I5 short phase triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V8 I6 non-monotonic triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V9 I7 attribution void triggers",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V10 empty points unjudgeable",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V11 inter-phase settle gap does not trigger",
+      "pass": true,
+      "detail": "invalid=False, I5=False"
+    },
+    {
+      "name": "V12 I8 missing field unjudgeable",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V13 I8 missing baseline phase unjudgeable",
+      "pass": true,
+      "detail": "invalid=True"
+    },
+    {
+      "name": "V14 I2 per-phase spike triggers",
+      "pass": true,
+      "detail": "invalid=True（全局末点 Δ=0，逐相位 Δ=300）"
+    },
+    {
+      "name": "V15 I6 disorder before sort triggers",
+      "pass": true,
+      "detail": "invalid=True（排序后单调，仅原始顺序可判）"
+    },
+    {
+      "name": "V16 I8 missing whole phases unjudgeable",
+      "pass": true,
+      "detail": "invalid=True, I8=相位缺失：load, E"
+    },
+    {
+      "name": "V17 I8 bad field type unjudgeable (no traceback)",
+      "pass": true,
+      "detail": "err=None invalid=True"
+    },
+    {
+      "name": "V18 I8 non-object point unjudgeable (no traceback)",
+      "pass": true,
+      "detail": "err=None invalid=True"
+    },
+    {
+      "name": "V19 I7 missing attribution unjudgeable",
+      "pass": true,
+      "detail": "invalid=True"
+    }
+  ],
+  "all_pass": true
+}
