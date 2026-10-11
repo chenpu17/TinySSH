@@ -713,6 +713,9 @@ export default function App() {
   // 命令框历史（P2-14）：↑ 召回上一条、↓ 后退；连续重复不重复入栈
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const cmdHistIdx = useRef<number>(-1);
+  // 命令框在飞集合（八轮降噪）：exec_human 未返回的会话 id——「中断」钮只在此刻
+  // 在场（语义=「你提交的命令还在跑」）。空闲 shell 上发 \x03 只会打出 ^C 噪音。
+  const [busyExecs, setBusyExecs] = useState<Set<string>>(new Set());
   // 连接状态机：null=空闲；连接中显示主机名；失败显示错误
   // R23（C1 消费）：attempt 真值表——begin_connection 返回 attempt_id，
   // 相位经 connection-event（真实）/connection_status 轮询（demo）推进；
@@ -4785,7 +4788,7 @@ Authorization: Bearer <TOKEN>`}
                   ? current.state === "Disconnected"
                     ? "会话已断开——重连恢复后再执行命令"
                     : "网络中断，自动重连中——命令暂不发送"
-                  : `在 ${current.host_name} 上执行命令`
+                  : ""
                 : "先在主机栏连接一台主机，这里才能执行命令"
             }
             disabled={!sid}
@@ -4842,6 +4845,8 @@ Authorization: Bearer <TOKEN>`}
                 xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd}\x1b[0m\r\n`);
                 // 立即回焦终端（不等待执行完成：长驻命令 top/vim 也即时可中断）
                 xtermRef.current?.focus();
+                // 在飞登记：返回（含中断/超时/断线失败）前「中断」钮在场，finally 摘除
+                setBusyExecs((prev) => { const n = new Set(prev); n.add(sid); return n; });
                 try {
                   await invoke("exec_human", { sid, command: cmd });
                 } catch (err) {
@@ -4852,14 +4857,17 @@ Authorization: Bearer <TOKEN>`}
                   if (pe.kind === "shell_integration_unavailable") {
                     xtermRef.current?.write("\x1b[33m  该主机未启用 shell 集成——命令框按 Shell 模式执行被拒。\x1b[0m\r\n\x1b[33m  可在设置开启该主机集成；或在 CLI/MCP 显式以 Fresh 模式执行（无现场，退出码可靠）。\x1b[0m\r\n");
                   }
+                } finally {
+                  setBusyExecs((prev) => { const n = new Set(prev); n.delete(sid); return n; });
                 }
               }
             }}
           />
-          {sid && (
+          {sid && busyExecs.has(sid) && (
             <button
               className="ghost"
-              title="向前台进程发送 SIGINT（等同 Ctrl+C），不依赖输入法状态"
+              data-testid="exec-interrupt"
+              title="中断正在执行的命令（向前台进程发送 SIGINT，等同 Ctrl+C）"
               onClick={() => {
                 const s = sidRef.current;
                 const st = s ? sessionsRef.current.find((x) => x.id === s)?.state : undefined;
