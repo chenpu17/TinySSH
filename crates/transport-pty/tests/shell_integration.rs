@@ -111,3 +111,30 @@ async fn local_shell_produces_blocks_and_cwd() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "fresh_out");
     assert!(out.completed);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_exec_deadline_fires_without_output() {
+    // 审计 R1 回归：读泵曾与 select 串行（join! 在前）——「无输出且不退出」的
+    // 命令读端永不 EOF，deadline/cancel 分支不可达，exec 永久挂死。重构后
+    // deadline 应按时出局、completed=false、promptly 返回。
+    let (channel, _cleanup) = transport_pty::spawn_local_pty(120, 32)
+        .await
+        .expect("spawn local pty");
+    let started = std::time::Instant::now();
+    let out = channel
+        .exec_fresh(
+            "sleep 30",
+            &session_api::ExecOpts::default(),
+            std::time::Instant::now() + Duration::from_secs(2),
+            &session_api::transport::tokio_util_sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert!(!out.completed, "超时出局应 completed=false");
+    assert!(elapsed >= Duration::from_secs(2), "应等到 deadline 才出局");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "deadline 后应及时返回，实际 {elapsed:?}"
+    );
+}

@@ -330,12 +330,31 @@ async fn reveal_path(path: String) -> CmdResult<()> {
         return Err(WireError::from(Error::SftpPathNotFound { path }));
     }
     // `--` 终止选项解析：以「-」开头的文件名不会被 open 当作选项（R35 审核 低-6）。
-    std::process::Command::new("open")
-        .arg("-R")
-        .arg("--")
-        .arg(&p)
-        .spawn()
-        .map_err(|e| WireError::from(Error::Io(format!("reveal: {e}"))))?;
+    // Windows 分支（审计 W2）：原实现硬编码 macOS `open`，Windows 上恒 program-not-found
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg("--")
+            .arg(&p)
+            .spawn()
+            .map_err(|e| WireError::from(Error::Io(format!("reveal: {e}"))))?;
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", p.display()))
+            .spawn()
+            .map_err(|e| WireError::from(Error::Io(format!("reveal: {e}"))))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let dir = p.parent().unwrap_or(&p).to_path_buf();
+        std::process::Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| WireError::from(Error::Io(format!("reveal: {e}"))))?;
+    }
     Ok(())
 }
 
@@ -430,13 +449,34 @@ async fn list_recent_hosts(state: ApiState<'_>) -> CmdResult<Vec<RecentHost>> {
 }
 
 #[tauri::command]
-async fn open_url(url: String) -> CmdResult<()> {    if !(url.starts_with("http://") || url.starts_with("https://")) {
+async fn open_url(url: String) -> CmdResult<()> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(WireError::simple("invalid_input", "仅支持 http/https 链接"));
     }
-    tokio::process::Command::new("open")
-        .arg(&url)
-        .spawn()
-        .map_err(WireError::from)?;
+    // Windows 分支（审计 W2）：原实现硬编码 macOS `open`，Windows 上恒失败。
+    // rundll32 直调协议处理器，不经 cmd /c start 的引号再解析层。
+    #[cfg(target_os = "macos")]
+    {
+        tokio::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(WireError::from)?;
+    }
+    #[cfg(windows)]
+    {
+        tokio::process::Command::new("rundll32")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(&url)
+            .spawn()
+            .map_err(WireError::from)?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        tokio::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(WireError::from)?;
+    }
     Ok(())
 }
 
@@ -680,7 +720,7 @@ async fn bench_start(on_chunk: tauri::ipc::Channel<tauri::ipc::InvokeResponseBod
                 }
             }
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            if i % 4800 == 0 {
+            if i.is_multiple_of(4800) {
                 let _ = on_chunk.send(tauri::ipc::InvokeResponseBody::Json(
                     "{\"type\":\"resync\"}".into(),
                 ));
@@ -1344,7 +1384,7 @@ fn main() {
             }
             // 审批事件 → 前端
             let handle = app.handle().clone();
-            let mut rx = api.subscribe_approvals();
+            let rx = api.subscribe_approvals();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(rx);
@@ -1357,7 +1397,7 @@ fn main() {
             // 转发状态事件 → 前端（T44 真机冒烟补口：WKWebView 节流 timer 时
             // UI 的 3s 盲轮询挂起，Agent 建的转发对人工不可见——事件驱动补数据面可见性）
             let handle_fwd = app.handle().clone();
-            let mut fwd_rx = api.subscribe_forwards();
+            let fwd_rx = api.subscribe_forwards();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(fwd_rx);
@@ -1369,7 +1409,7 @@ fn main() {
             });
             // 主机指纹待决事件 → 前端（路线图⑤）
             let handle_hk = app.handle().clone();
-            let mut hk_rx = api.subscribe_host_keys();
+            let hk_rx = api.subscribe_host_keys();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(hk_rx);
@@ -1381,7 +1421,7 @@ fn main() {
             });
             // 2FA 认证提示事件 → 前端（路线图⑩）
             let handle_ap = app.handle().clone();
-            let mut ap_rx = api.subscribe_auth_prompts();
+            let ap_rx = api.subscribe_auth_prompts();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(ap_rx);
@@ -1393,7 +1433,7 @@ fn main() {
             });
             // C1 建连尝试事件 → 前端（R19，沿 approval-event 桥模式）
             let handle_conn = app.handle().clone();
-            let mut conn_rx = api.subscribe_connections();
+            let conn_rx = api.subscribe_connections();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(conn_rx);
@@ -1405,7 +1445,7 @@ fn main() {
             });
             // C3 shell 集成状态事件 → 前端（R24，同桥模式）
             let handle_shell = app.handle().clone();
-            let mut shell_rx = api.subscribe_shell_integration();
+            let shell_rx = api.subscribe_shell_integration();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(shell_rx);
@@ -1418,7 +1458,7 @@ fn main() {
             // R26（§6.4）：会话状态事件（断线/自动重连次数/重确认）即时推送——
             // 3s 列表轮询只做兜底对账，横幅与重试计数不进盲窗。
             let handle_state = app.handle().clone();
-            let mut state_rx = api.center.state_tx.subscribe();
+            let state_rx = api.center.state_tx.subscribe();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(state_rx);
@@ -1431,7 +1471,7 @@ fn main() {
             // C5（R32）：传输任务事件（进度/状态，revision 单调）即时推送——
             // 任务卡不进轮询盲窗；漏收由 list_transfers 查询对账兜底。
             let handle_xfer = app.handle().clone();
-            let mut xfer_rx = api.transfer_tx.subscribe();
+            let xfer_rx = api.transfer_tx.subscribe();
             tauri::async_runtime::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(xfer_rx);
@@ -5763,7 +5803,8 @@ fn r12_smoke_script(run_id: &str) -> String {
 /// 会话 attach → 订阅计数 → 3000 行高频输出全缓冲对账（无丢字/重复/零 resync）→
 /// resync 接口形状 + 过期订阅拒绝 → alt_screen 检查点导出 → 显式退订归零 + 幂等。
 fn r11_smoke_script(run_id: &str) -> String {
-    let base = r#"(function() {
+    
+    r#"(function() {
   const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
   const RUN = '__RUN__';
   const mark = (s) => fetch('http://127.0.0.1:15199/t/' + encodeURIComponent(RUN + '|' + s)).catch(() => {});
@@ -5863,12 +5904,17 @@ fn r11_smoke_script(run_id: &str) -> String {
     }
   })();
 })();"#
-    .replace("__RUN__", run_id);
-    base
+    .replace("__RUN__", run_id)
 }
 
 fn dirs_or_home() -> std::path::PathBuf {
-    std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from("."))
+    // Windows 原生环境（Explorer/开始菜单启动）通常无 HOME——只认 HOME 会回退 "."，
+    // DB/下载目录变成相对 CWD（装进 Program Files 即不可写、启动即 open storage 失败；
+    // 审计 W1）。回退 USERPROFILE 与 CLI 侧 dirs::home_dir() 同义，GUI/CLI 必须同库。
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 

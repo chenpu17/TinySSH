@@ -94,13 +94,13 @@ pub trait ChannelHandle: Send + Sync {
     /// path=None → 连接初始目录（SFTP "."，即服务端登录起始目录）。
     /// 不存在/权限不足返回可区别错误；悬空符号链接 canonical 不可得 → 错误呈现，
     /// 前端不猜路径（§352）。
-    async fn resolve_path(&self, path: Option<&str>) -> Result<crate::PathResolved> {
+    async fn resolve_path(&self, _path: Option<&str>) -> Result<crate::PathResolved> {
         Err(crate::Error::InvalidInput("该通路不支持路径解析（仅 SSH 会话）".into()))
     }
 
     /// C4（R30）：条目元数据。kind/symlink_target 为 lstat 语义（链接本身）；
     /// is_dir/size/mtime 为跟随语义（符号链接取目标，取不到回落链接本体）。
-    async fn stat_entry(&self, path: &str) -> Result<crate::EntryStat> {
+    async fn stat_entry(&self, _path: &str) -> Result<crate::EntryStat> {
         Err(crate::Error::InvalidInput("该通路不支持元数据查询（仅 SSH 会话）".into()))
     }
 

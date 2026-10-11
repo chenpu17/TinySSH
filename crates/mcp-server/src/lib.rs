@@ -5,7 +5,7 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::common::Extension;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
+    CallToolResult, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
 };
 use rmcp::tool;
 use rmcp::tool_handler;
@@ -13,13 +13,10 @@ use rmcp::tool_router;
 use rmcp::ServerHandler;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::{
-    Actor, ApprovalFilter, AuditFilter, CollisionDecision, ControlOpts, ControlOwner, CreateSessionReq,
-    Decision, DeniedReason, Epistemic, Error, ExecMode, ExecOpts, SessionApi, StopPolicy,
+    Actor, AuditFilter, CollisionDecision, CreateSessionReq, DeniedReason, Error, ExecMode, ExecOpts, SessionApi,
     TargetStat, TransferHandle, TransferStatus, WaitOpts,
 };
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -345,7 +342,7 @@ impl McpServer {
         _p: Parameters<ListHostsReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            Ok(api.list_hosts(&actor).await?)
+            api.list_hosts(&actor).await
         })
         .await
     }
@@ -357,7 +354,7 @@ impl McpServer {
         _p: Parameters<ListSessionsReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            Ok(api.list_sessions(&actor).await?)
+            api.list_sessions(&actor).await
         })
         .await
     }
@@ -448,7 +445,7 @@ impl McpServer {
         p: Parameters<SessionRefReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            Ok(api.get_session_brief(&actor, p.0.session_id).await?)
+            api.get_session_brief(&actor, p.0.session_id).await
         })
         .await
     }
@@ -486,7 +483,7 @@ impl McpServer {
         p: Parameters<ReadScreenReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            Ok(api.read_screen(&actor, p.0.session_id).await?)
+            api.read_screen(&actor, p.0.session_id).await
         })
         .await
     }
@@ -520,7 +517,7 @@ impl McpServer {
                 regex: p.0.regex,
                 timeout: p.0.timeout.map(Duration::from_secs),
             };
-            Ok(api.wait_output(&actor, p.0.session_id, opts).await?)
+            api.wait_output(&actor, p.0.session_id, opts).await
         })
         .await
     }

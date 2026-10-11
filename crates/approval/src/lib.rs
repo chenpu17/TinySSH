@@ -1,7 +1,7 @@
 //! 审批引擎实现（L1 §3.3）：deny → allow/TTL → default；tree-sitter-bash 逐段求值。
 //! 内置危险模式默认拒绝且不可删除；TTL 授权窗口到期自动失效。
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use regex::Regex;
 use session_api::{
     ApprovalMode, ApprovalStatus, Decision, Policy, SegmentReport,

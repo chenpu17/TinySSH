@@ -1,6 +1,6 @@
 //! 审计事件存储：SQLite + 哈希链（完整性检测口径，L1 §6/§7）。
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use rusqlite::Connection;
 use session_api::{AuditEvent, AuditFilter, AuditPage, Error, Result};
 use sha2::{Digest, Sha256};
@@ -82,7 +82,7 @@ impl AuditStore {
         let mut hash_input = String::new();
         hash_input.push_str(prev_hash.as_deref().unwrap_or(""));
         hash_input.push_str(&ts.timestamp_millis().to_string());
-        hash_input.push_str(&actor_kind);
+        hash_input.push_str(actor_kind);
         hash_input.push_str(agent_id.as_deref().unwrap_or(""));
         hash_input.push_str(action);
         hash_input.push_str(session_id.unwrap_or(""));

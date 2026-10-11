@@ -2,7 +2,6 @@
 
 use crate::handle::SessionHandle;
 use session_api::{BriefFact, Epistemic, SessionBrief, SessionState};
-use std::sync::Arc;
 
 pub async fn compute(h: &SessionHandle) -> SessionBrief {
     let state = *h.state.lock().await;
@@ -72,7 +71,7 @@ pub async fn compute(h: &SessionHandle) -> SessionBrief {
             detail: "重连后进入重确认：普通动作被拒，仅内置只读核实白名单（pwd/printenv/which/ps/systemctl status）可用，核实完成后恢复".into(),
             status: Epistemic::NeedsRecheck,
         });
-        if let Some(_) = &cwd {
+        if cwd.is_some() {
             // cwd 事实已在上面降级
         }
     }

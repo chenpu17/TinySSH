@@ -326,7 +326,7 @@ async fn r34_decision_guards() {
         Error::StaleDecision { expect_revision } => assert_eq!(expect_revision, card.revision, "错误应携带当前 revision"),
         other => panic!("期望 StaleDecision，得到 {other:?}"),
     }
-    let still = m.list_transfers(&Actor::Human).await.unwrap().into_iter().find(|t| t.id == t_id(&t)).unwrap();
+    let still = m.list_transfers(&Actor::Human).await.unwrap().into_iter().find(|t| t.id == t_id(t)).unwrap();
     assert_eq!(still.status, TransferStatus::AwaitingDecision);
     let agent = Actor::Agent { client_id: "mcp-1".into() };
     let e2 = m.submit_collision_decision(&agent, t.id.clone(), CollisionDecision::Skip, card.revision).await.unwrap_err();
@@ -406,7 +406,7 @@ async fn r34_download_local_fs_namespace() {
     m.submit_collision_decision(&Actor::Human, t3.id.clone(), CollisionDecision::KeepBoth, a3.revision).await.unwrap();
     let d3 = wait_terminal(&m, &t3.id).await;
     assert_eq!(d3.status, TransferStatus::Succeeded, "{:?}", d3.error);
-    let newp = format!("{}", dest_s.replace(".bin", ".tinyssh-1.bin"));
+    let newp = dest_s.replace(".bin", ".tinyssh-1.bin").to_string();
     assert_eq!(std::fs::metadata(&newp).unwrap().len(), T, "keep-both 落真实新名");
     assert_eq!(std::fs::read(&dest).unwrap(), b"original-bytes", "原文件零改动");
     assert!(d3.dest.ends_with(".tinyssh-1.bin"), "dest 回写实际发布路径: {}", d3.dest);
@@ -684,7 +684,7 @@ async fn r34_restart_recovery_classification() {
         v.transfer_journal_insert(&mk_task("t-u", TransferStatus::Committing, TransferKind::Upload, "/remote/b.bin")).unwrap();
         // Running（下载；本地 temp 残留待清理）
         v.transfer_journal_insert(&mk_task("t-i", TransferStatus::Running, TransferKind::Download, &format!("{}", dir.join("out.bin").display()))).unwrap();
-        let tmp = dir.join(format!(".tinyssh-part-t-i-out.bin"));
+        let tmp = dir.join(".tinyssh-part-t-i-out.bin".to_string());
         std::fs::write(&tmp, b"partial").unwrap();
         // AwaitingDecision → Interrupted
         v.transfer_journal_insert(&mk_task("t-d", TransferStatus::AwaitingDecision, TransferKind::Upload, "/remote/c.bin")).unwrap();

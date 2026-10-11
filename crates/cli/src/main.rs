@@ -439,7 +439,7 @@ async fn session_cmd(m: Arc<SessionManager>, cmd: SessionCmd) -> Result<()> {
                 .await?;
             println!("session {sid} created. 交互模式（V0 thin-slice）：输入命令执行；/brief 简报；/takeover 接管；/handback 交还；/exit 退出");
             // 人类直连交互：读行 → exec（Human 短路审批）
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
             let (attach, mut out_rx, _cancel) = m.subscribe_output_channel(sid.clone()).await?;
             let _ = attach; // cli 不消费检查点（只跟进实时流）
             let sid_out = sid.clone();

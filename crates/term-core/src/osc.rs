@@ -140,8 +140,8 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() + 1 && i + 2 < bytes.len() + 1 {
-            if i + 2 < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() + 1 && i + 2 < bytes.len() + 1
+            && i + 2 < bytes.len() {
                 let hi = (bytes[i + 1] as char).to_digit(16);
                 let lo = (bytes[i + 2] as char).to_digit(16);
                 if let (Some(hi), Some(lo)) = (hi, lo) {
@@ -150,7 +150,6 @@ fn percent_decode(s: &str) -> String {
                     continue;
                 }
             }
-        }
         out.push(bytes[i]);
         i += 1;
     }
@@ -189,11 +188,13 @@ mod tests {
     fn split_across_feeds() {
         let mut sc = OscScanner::new();
         assert!(sc.feed(b"\x1b]133;").is_empty());
-        assert!(sc.feed(b"A\x07").is_empty() == false || true);
+        // 跨 feed 边界：分片续喂后事件应产出（原 `== false || true` 恒真，clippy E0）
+        assert!(!sc.feed(b"A\x07").is_empty());
         // 重新构造：事件应跨 feed 边界依然产出
         let mut sc = OscScanner::new();
         assert!(sc.feed(b"\x1b]13").is_empty());
         let evs = sc.feed(b"3;B\x07");
+        assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].0, OscEvent::CommandStart);
     }
 }

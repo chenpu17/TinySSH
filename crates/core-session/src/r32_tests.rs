@@ -5,7 +5,7 @@
 
 use super::*;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrd};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrd};
 use std::time::Duration;
 
 /// 传输行为计划：Succeed=分片推进至 total（每片前 sleep 可测取消）；

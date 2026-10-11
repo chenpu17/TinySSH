@@ -29,7 +29,7 @@ impl ChannelHandle for R30Channel {
         match path {
             "/gone" => Err(Error::SftpPathNotFound { path: path.into() }),
             "/priv" => Err(Error::SftpPermissionDenied { path: path.into() }),
-            other => Ok(EntryStat {
+            _other => Ok(EntryStat {
                 canonical: None, // 悬空链接：canonical 不可得（§352 不猜路径）
                 kind: Some(EntryKind::Symlink),
                 is_dir: false,

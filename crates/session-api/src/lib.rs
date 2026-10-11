@@ -60,6 +60,7 @@ pub enum ExecMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ExecOpts {
     pub mode: ExecMode,
     /// 超时；自审批放行起算（不含审批等待）。None = 使用默认 30s。
@@ -70,16 +71,6 @@ pub struct ExecOpts {
     pub env: BTreeMap<String, String>,
 }
 
-impl Default for ExecOpts {
-    fn default() -> Self {
-        Self {
-            mode: ExecMode::default(),
-            timeout: None,
-            output_cap: None,
-            env: BTreeMap::new(),
-        }
-    }
-}
 
 /// 审批留痕（进 ExecResult 与审计）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2119,7 +2110,7 @@ mod wire_format_tests {
         // 决定值小写（MCP collision 参数同形；KeepBoth=无分隔小写，在此锁定）
         assert_eq!(serde_json::from_value::<CollisionDecision>(serde_json::json!("skip")).unwrap(), CollisionDecision::Skip);
         assert_eq!(serde_json::from_value::<CollisionDecision>(serde_json::json!("overwrite")).unwrap(), CollisionDecision::Overwrite);
-        let kv = serde_json::to_value(&CollisionDecision::KeepBoth).unwrap();
+        let kv = serde_json::to_value(CollisionDecision::KeepBoth).unwrap();
         assert_eq!(kv, serde_json::json!("keepboth"), "KeepBoth wire 值锁定（UI/MCP 三端一致）");
         assert_eq!(serde_json::from_value::<CollisionDecision>(kv).unwrap(), CollisionDecision::KeepBoth);
         // 决定提示载荷

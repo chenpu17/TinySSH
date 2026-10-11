@@ -1,8 +1,30 @@
 # TinySSH
 
-> **当前设计方向（2026-10-06）**：优先完善面向开发者的 SSH 客户端体验——终端为主、文件按需打开，MCP 协作后续优化。[UX-R1 重构设计](docs/ux/ssh-client-ux-refactor.md)及[实施与验收计划](docs/ux/ssh-client-ux-refactor-delivery.md)已形成文档基线，尚未实施或完成新一轮验收。既有工程结果见[历史验收报告](docs/acceptance/v0-mvp-acceptance.md)。
+> **当前设计方向（2026-10-06）**：优先完善面向开发者的 SSH 客户端体验——终端为主、文件按需打开，MCP 协作后续优化。[UX-R1 重构设计](docs/ux/ssh-client-ux-refactor.md)及[实施与验收计划](docs/ux/ssh-client-ux-refactor-delivery.md)已形成文档基线；G1–G4 已收官、G5 进行中，执行状态逐轮记录见[执行台账](docs/ux/ux-r1-execution-status.md)。既有工程结果见[历史验收报告](docs/acceptance/v0-mvp-acceptance.md)。
 
 > 面向经常连接几台到十几台服务器、进行开发、部署和排障的开发者：连接省心、终端顺手、文件操作方便，需要时接入 Agent 协作。
+
+## 开发
+
+```bash
+# 前端（demo 模式，纯浏览器可跑）
+cd ui && npm install && npm run dev      # http://localhost:5183
+npm test                                 # UI 套件（15 spec / 236 断言，headless）
+npm run build                            # tsc + vite build
+
+# 桌面应用（tauri dev；Rust 工作区）
+cargo run -p tinyssh-app                 # 或 cargo tauri dev
+cargo test --workspace                   # Rust 全量（-j 4 更稳，见下）
+
+# e2e（需 docker sshd 容器：scripts/dev-sshd.sh）
+TINYSSH_E2E_SSHD=1 cargo test --workspace
+```
+
+Windows 注意（实验性移植，分支 `ux/modernization`）：
+
+- 跑 UI 测试需 `TINYSSH_UI_CHROME` 指向 Edge/Chrome（如 `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`）；本机无 docker 时 e2e 用例自动 skip。
+- `cargo test --workspace` 默认并行可能触发编译期页面文件耗尽（os error 1455），用 `cargo test --workspace -j 4`。
+- 快捷键在 Windows 上以 Ctrl 等价 ⌘（Ctrl+B 主机栏 / Ctrl+F 搜索 / Ctrl+W 关标签 / Ctrl+1–9 切换）。
 
 ## 文档
 

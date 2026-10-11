@@ -26,7 +26,7 @@ pub struct LocalPtyChannel {
     alive: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
     /// 集成注入临时目录（respawn 时更换；调用方可取用做延迟清理）。
-    tmp: Mutex<Option<std::path::PathBuf>>,
+    tmp: std::sync::Mutex<Option<std::path::PathBuf>>,
     /// shell 集成是否注入成功（决定 Shell 模式可用性；respawn 时随新 shell 重估）。
     pub integration: AtomicBool,
 }
@@ -139,11 +139,11 @@ pub async fn spawn_local_pty(
         output_tx,
         alive: Arc::new(AtomicBool::new(true)),
         size: Mutex::new((cols, rows)),
-        tmp: Mutex::new(None),
+        tmp: std::sync::Mutex::new(None),
         integration: AtomicBool::new(false),
     });
     channel.respawn().await?;
-    let cleanup = channel.tmp.lock().await.clone();
+    let cleanup = channel.tmp.lock().unwrap().clone();
     Ok((channel, cleanup))
 }
 
@@ -213,7 +213,11 @@ impl LocalPtyChannel {
         *self.writer.lock().await = Some(writer.clone());
         *self.master.lock().await = Some(pair.master);
         *self.child.lock().await = Some(child);
-        *self.tmp.lock().await = Some(tmp);
+        // 换新注入目录前清掉旧目录（审计 R7：respawn 曾直接弃置旧目录，
+        // 每次本地重连泄漏一个含用户 .bashrc 全文的临时目录）
+        if let Some(old) = self.tmp.lock().unwrap().replace(tmp) {
+            let _ = std::fs::remove_dir_all(old);
+        }
         self.integration
             .store(!matches!(plan, ShellSpawn::Plain { .. }), Ordering::SeqCst);
         self.alive.store(true, Ordering::SeqCst);
@@ -267,6 +271,16 @@ impl LocalPtyChannel {
     }
 }
 
+impl Drop for LocalPtyChannel {
+    fn drop(&mut self) {
+        // 会话销毁收尾：注入临时目录（bashrc 分片含用户 shell 配置全文）不残留。
+        // spawn_local_pty 返回的 cleanup 句柄仅是延迟清理的备用口，这里是兜底。
+        if let Some(tmp) = self.tmp.lock().unwrap().take() {
+            let _ = std::fs::remove_dir_all(tmp);
+        }
+    }
+}
+
 #[async_trait]
 impl ChannelHandle for LocalPtyChannel {
     async fn write(&self, data: &[u8]) -> Result<()> {
@@ -307,10 +321,10 @@ impl ChannelHandle for LocalPtyChannel {
         // Windows 下 SHELL 可能被启动环境改写（Git Bash 里 SHELL=/usr/bin/bash）——
         // 按选定 shell 族给参：powershell 系 -NoProfile -Command，bash 系 -c。
         // 曾犯的错：shell 选择 SHELL 感知、参数写死 powershell → bash 报 "-N: invalid option"
-        if {
+        let res = {
             let s = shell.to_ascii_lowercase();
             s.contains("powershell") || s.contains("pwsh")
-        } {
+        }; if res {
             command.arg("-NoProfile").arg("-Command").arg(cmd);
         } else {
             command.arg("-c").arg(cmd);
@@ -325,11 +339,11 @@ impl ChannelHandle for LocalPtyChannel {
             .spawn()
             .map_err(|e| Error::Io(format!("spawn fresh: {e}")))?;
 
-        let mut out = child
+        let out = child
             .stdout
             .take()
             .ok_or_else(|| Error::Io("fresh stdout missing".into()))?;
-        let mut err = child
+        let err = child
             .stderr
             .take()
             .ok_or_else(|| Error::Io("fresh stderr missing".into()))?;
@@ -360,7 +374,14 @@ impl ChannelHandle for LocalPtyChannel {
             (buf, truncated)
         }
 
-        let (out_res, err_res) = tokio::join!(read_limited(out, cap), read_limited(err, cap));
+        // 读泵与等待**解耦**（审计 R1，2026-10-12）：原先 join!(读,读) 排在 select
+        // 之前——「无输出且不退出」的命令（sleep 3600）读端永不 EOF，join 永不返回，
+        // 其后的 deadline/cancel 分支不可达：exec 永久挂死、取消失效、exec_slot 被
+        // 占满后全队列 QueueBusy（SSH 版 select 包住 wait，无此问题）。改为读任务
+        // 后台排空（保留「继续读防子进程阻塞」语义），select 出局后 kill 子进程 →
+        // 管道 EOF → 读任务自然收尾，部分输出照常回收。
+        let out_task = tokio::spawn(read_limited(out, cap));
+        let err_task = tokio::spawn(read_limited(err, cap));
         let status = tokio::select! {
             s = child.wait() => Some(s.map_err(|e| Error::Io(format!("wait: {e}")))?),
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
@@ -373,6 +394,21 @@ impl ChannelHandle for LocalPtyChannel {
                 let _ = child.wait().await;
                 None
             }
+        };
+        // 极端路径（孙进程继承管道持有写端）下 kill 后读端仍可能不 EOF：限时收编，
+        // 超时放弃收集（子进程已死，结果如实标注未完成）。join! 产出元组非 Future，
+        // 包一层 async 块才能进 timeout。
+        let (out_res, err_res) = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            async { tokio::join!(out_task, err_task) },
+        )
+        .await
+        {
+            Ok((o, e)) => (
+                o.unwrap_or((Vec::new(), false)),
+                e.unwrap_or((Vec::new(), false)),
+            ),
+            Err(_) => ((Vec::new(), false), (Vec::new(), false)),
         };
 
         Ok(FreshOutcome {
@@ -464,10 +500,7 @@ impl ChannelHandle for LocalPtyChannel {
         {
             // 单条目 stat 失败不炸整表（§352：未知字段如实缺省），
             // kind/size/mtime 全 None，名称与类型兜底 is_dir=false
-            let md = match e.metadata().await {
-                Ok(m) => Some(m),
-                Err(_) => None,
-            };
+            let md = (e.metadata().await).ok();
             let (kind, is_dir, size, mtime) = match &md {
                 Some(m) => {
                     let ft = m.file_type();

@@ -24,13 +24,29 @@ pub fn is_whitelisted(cmd: &str) -> bool {
     let t = cmd.trim();
     // 仅限单条简单命令：复合（; && || | &）、替换（$(` )、重定向（><）、换行
     // 一律退出白名单——防 `pwd && <任意命令>` 借前缀绕过审批与重确认门槛。
-    const UNSAFE_CHARS: &[char] = &[';', '&', '|', '`', '\n', '>', '<'];
+    // \r 同样是命令分隔（PTY 行规程把每个 CR 当 Enter；`pwd\rrm -rf /` 会拆成
+    // 两条先后执行、第二条完全不经审批——审计 S2/R3）；\0 顺手封死。
+    const UNSAFE_CHARS: &[char] = &[';', '&', '|', '`', '\n', '\r', '\0', '>', '<'];
     if t.contains(UNSAFE_CHARS) || t.contains("$(") {
         return false;
     }
     RECONFIRM_WHITELIST
         .iter()
         .any(|w| t == *w || t.starts_with(&format!("{w} ")))
+}
+
+/// UTF-8 安全截断（审计 R2）：cap 落在多字节字符中间时回退到字符边界——
+/// 直接 `text[..cap]` 切中多字节即 panic（中文产品 + GBK 主机输出几乎必含多字节）。
+/// 返回 (截断文本, 是否发生了截断)。
+pub fn truncate_utf8(text: &str, cap: usize) -> (String, bool) {
+    if text.len() <= cap {
+        return (text.to_string(), false);
+    }
+    let mut end = cap;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_string(), true)
 }
 
 /// 决策消息（Decision 之外还有作废路径）。
@@ -391,8 +407,8 @@ impl SessionHandle {
                     .to_string();
             }
         }
-        let truncated = text.len() > cap;
-        let text = if truncated { text[..cap].to_string() } else { text };
+        let (owned, truncated) = truncate_utf8(&text, cap);
+        let text = owned;
         let (has_binary, text) = sanitize_utf8(&text);
 
         Ok(ExecResult {
@@ -458,8 +474,7 @@ impl SessionHandle {
         let cap = opts.output_cap.unwrap_or(DEFAULT_OUTPUT_CAP);
         let conv = |bytes: &[u8]| -> (bool, String, bool) {
             let text = String::from_utf8_lossy(bytes).into_owned();
-            let truncated = text.len() > cap;
-            let text = if truncated { text[..cap].to_string() } else { text };
+            let (text, truncated) = truncate_utf8(&text, cap);
             let (has_binary, text) = sanitize_utf8(&text);
             (has_binary, text, truncated)
         };
@@ -656,7 +671,7 @@ impl SessionHandle {
         &self,
         actor: &Actor,
         client_id: &AgentClientId,
-        exec_id: &ExecId,
+        _exec_id: &ExecId,
         cmd: &str,
         eval: &tinyssh_approval::Evaluation,
         editable: bool,
@@ -720,7 +735,19 @@ impl SessionHandle {
                 self.mark_status(&item.id, ApprovalStatus::Timeout);
                 return Err(Error::ApprovalDenied { reason: DeniedReason::ApprovalTimeout });
             }
-            _ = cancel.cancelled() => return Err(Error::Cancelled),
+            _ = cancel.cancelled() => {
+                // 取消（cancel_exec）与 timeout/接管同责收尾（审计 R4）：不置 Voided
+                // 则卡片永久 Pending、decisions 的 oneshot 滞留，人类后续决定报
+                // "receiver dropped" 且卡仍是 Pending
+                self.mark_status(&item.id, ApprovalStatus::Voided);
+                let voided_item = self.center.items.lock().unwrap().get(&item.id).cloned();
+                if let Some(mut it) = voided_item {
+                    it.status = ApprovalStatus::Voided;
+                    let _ = self.center.vault.save_approval(&it);
+                    let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+                }
+                return Err(Error::Cancelled);
+            }
             // 接管发生 → 本请求作废（含待审批卡片）
             _ = async {
                 loop {
@@ -780,7 +807,7 @@ impl SessionHandle {
                 self.mark_status(&item.id, ApprovalStatus::Denied);
                 let _ = self.center.audit.append(
                     actor, "approval_denied", Some(&self.id), Some(cmd), serde_json::json!({}), Some(&item.id));
-                return Err(Error::ApprovalDenied { reason: DeniedReason::Denied });
+                Err(Error::ApprovalDenied { reason: DeniedReason::Denied })
             }
             DecisionMsg::Voided => {
                 self.mark_status(&item.id, ApprovalStatus::Voided);
@@ -1121,6 +1148,22 @@ pub fn sanitize_utf8(text: &str) -> (bool, String) {
     (has_binary, text.to_string())
 }
 
+/// 审批卡片的目标摘要（命令本身的破坏性提示）。
+pub fn target_summary(cmd: &str) -> String {
+    let t = cmd.trim();
+    let first = t.split_whitespace().next().unwrap_or("");
+    match first {
+        "rm" => "删除文件/目录".into(),
+        "mv" => "移动/覆盖文件".into(),
+        "systemctl" => "服务管理".into(),
+        "docker" => "容器操作".into(),
+        "kill" | "pkill" => "终止进程".into(),
+        "chmod" | "chown" => "权限变更".into(),
+        "dd" => "块设备写入".into(),
+        _ => format!("执行命令（{first}）"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1139,21 +1182,32 @@ mod tests {
         assert!(!is_whitelisted("pwd > /tmp/overwrite"));
         assert!(!is_whitelisted("pwd & rm -rf /tmp/x"));
     }
-}
 
-/// 审批卡片的目标摘要（命令本身的破坏性提示）。
-pub fn target_summary(cmd: &str) -> String {
-    let t = cmd.trim();
-    let first = t.split_whitespace().next().unwrap_or("");
-    match first {
-        "rm" => "删除文件/目录".into(),
-        "mv" => "移动/覆盖文件".into(),
-        "systemctl" => "服务管理".into(),
-        "docker" => "容器操作".into(),
-        "kill" | "pkill" => "终止进程".into(),
-        "chmod" | "chown" => "权限变更".into(),
-        "dd" => "块设备写入".into(),
-        _ => format!("执行命令（{first}）"),
+    #[test]
+    fn whitelist_rejects_embedded_cr_and_nul() {
+        // 审计 R3 回归：\r 是命令分隔（PTY 行规程每个 CR 当 Enter）——
+        // `pwd\rrm -rf /` 曾借白名单前缀跳过审批拼出第二条命令
+        assert!(!is_whitelisted("pwd\rrm -rf /"));
+        assert!(!is_whitelisted("pwd\0rm -rf /"));
+        assert!(is_whitelisted("pwd"));
+    }
+
+    #[test]
+    fn truncate_utf8_stops_at_char_boundary() {
+        // 审计 R2 回归：cap 落在多字节字符中间时回退边界而非 panic
+        let s = "中文abc中文";
+        // 每个汉字 3 字节：cap=4 落在第二个汉字中间 → 截到 3
+        let (t, trunc) = truncate_utf8(s, 4);
+        assert_eq!(t, "中");
+        assert!(trunc);
+        // cap 恰在边界 → 按边界截断（仍是截断：len=10 > cap=6）
+        let (t2, trunc2) = truncate_utf8(s, 6);
+        assert_eq!(t2, "中文");
+        assert!(trunc2);
+        // cap 超长 → 不截断
+        let (t3, trunc3) = truncate_utf8(s, 100);
+        assert_eq!(t3, s);
+        assert!(!trunc3);
     }
 }
 

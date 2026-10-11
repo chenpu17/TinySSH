@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use russh::client::{self, Handle};
 use russh::keys::{decode_secret_key, PrivateKeyWithHashAlg};
 use russh::{Channel, ChannelMsg, ChannelWriteHalf};
-use russh::{Disconnect, Sig};
+use russh::Disconnect;
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
 use russh_sftp::protocol::StatusCode;
@@ -106,7 +106,7 @@ impl client::Handler for ClientHandler {
     async fn server_channel_open_forwarded_tcpip(
         &mut self,
         channel: Channel<russh::client::Msg>,
-        connected_address: &str,
+        _connected_address: &str,
         connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
@@ -228,7 +228,7 @@ impl SshChannel {
             return Err(Error::SessionClosed);
         }
         let handle = guard.as_ref().expect("checked above");
-        let mut channel = handle
+        let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
@@ -290,7 +290,7 @@ impl SshChannel {
                 let a = handle
                     .authenticate_password(&self.target.username, &self.target.secret)
                     .await
-                    .map_err(|e| Error::AuthFailed)?;
+                    .map_err(|_e| Error::AuthFailed)?;
                 if a.success() {
                     a
                 } else {
@@ -315,7 +315,7 @@ impl SshChannel {
                 handle
                     .authenticate_publickey(&self.target.username, with_hash)
                     .await
-                    .map_err(|e| Error::AuthFailed)?
+                    .map_err(|_e| Error::AuthFailed)?
             }
             AuthType::Agent => {
                 // Windows 实验性分支：russh 的 connect_env 走 unix socket（SSH_AUTH_SOCK），
@@ -598,7 +598,11 @@ impl ChannelHandle for SshChannel {
         if !opts.env.is_empty() {
             full.push_str("env");
             for (k, v) in &opts.env {
-                full.push_str(&format!(" {k}={v}"));
+                // 值按 sh 单引号转义（与 cmd 同法；审计 S6）：env 是公共 ExecOpts
+                // 字段，值含 `;`/`` ` ``/`$()` 时不转义会逃逸出 sh -c 边界——审批
+                // 卡与审计只记 effective_cmd，逃逸即「审批记 A、执行 B」
+                let vq = v.replace('\'', "'\\''");
+                full.push_str(&format!(" {k}='{vq}'"));
             }
             let quoted = cmd.replace("'", "'\\''");
             full.push_str(&format!(" sh -c '{quoted}'"));
@@ -743,7 +747,7 @@ impl ChannelHandle for SshChannel {
     ) -> Result<u64> {
         let handle_guard = self.handle.lock().await;
         let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-        let mut channel = handle
+        let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
@@ -800,7 +804,7 @@ impl ChannelHandle for SshChannel {
     ) -> Result<u64> {
         let handle_guard = self.handle.lock().await;
         let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-        let mut channel = handle
+        let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
@@ -854,7 +858,7 @@ impl ChannelHandle for SshChannel {
     async fn list_dir(&self, path: &str) -> Result<Vec<DirEntryS>> {
         let handle_guard = self.handle.lock().await;
         let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-        let mut channel = handle
+        let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
@@ -954,7 +958,7 @@ impl ChannelHandle for SshChannel {
             Err(russh_sftp::client::error::Error::Status(st)) => {
                 Ok(PublishOutcome::Rejected(format!("{} {}", st.status_code, st.error_message)))
             }
-            Err(e) => Ok(PublishOutcome::Ambiguous),
+            Err(_e) => Ok(PublishOutcome::Ambiguous),
         }
     }
 

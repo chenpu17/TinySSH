@@ -10,7 +10,7 @@ use std::time::Duration;
 use rmcp::model::{CallToolRequestParams, ClientConfig};
 use rmcp::ClientLifecycleMode;
 use session_api::*;
-use rmcp::service::{RunningService, RoleClient, ServiceExt as _, ClientServiceExt as _};
+use rmcp::service::{RunningService, RoleClient, ClientServiceExt as _};
 use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
 };
@@ -259,7 +259,7 @@ async fn journey2_reconnect_reconfirm() {
     }
     let _sshd_guard = tinyssh_testbed::sshd_lock();
     tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
-    let (m, url, token) = spawn_stack().await;
+    let (m, _url, _token) = spawn_stack().await;
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;
 
@@ -277,7 +277,7 @@ async fn journey2_reconnect_reconfirm() {
 
     // 等待核心完成重连并进入 Reconfirming
     let mut reached = false;
-    for i in 0..450 {
+    for _i in 0..450 {
         let sessions = m.list_sessions(&human).await.unwrap();
         if let Some(s) = sessions.iter().find(|s| s.id == sid) {
             if s.state == SessionState::Reconfirming {

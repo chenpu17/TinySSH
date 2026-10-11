@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tinyssh_approval::ApprovalEngine;
 use tokio::sync::{broadcast, oneshot};
-use transport_pty::LocalPtyChannel;
 use transport_ssh::SshChannel;
 
 /// C5（R32）：Unix 秒（TransferTask.created_at/finished_at 口径）。
@@ -398,8 +397,7 @@ impl SessionManager {
                 let _ = self.close_session(ctx, sid.clone()).await;
                 return Err(Error::Io("test-injected record failure".into()));
             }
-            self.center.vault.record_session(&sid, &host.id, &kind).map_err(Error::from)
-        };
+            self.center.vault.record_session(&sid, &host.id, &kind)};
         if let Err(e) = recorded {
             let _ = self.close_session(ctx, sid.clone()).await;
             return Err(e);
@@ -1173,6 +1171,9 @@ async fn host_key_gate(
         Some(false) => Err(Error::HostKeyRejected("用户拒绝连接".into())),
         None => {
             center.hk_pending.lock().unwrap().remove(&item.id);
+            // decisions 的 oneshot 一并回收（审计 R13）：只删 pending 会让 sender
+            // 滞留到进程结束（auth_prompt 门超时臂两表都删，此处原口径不一致）
+            center.hk_decisions.lock().unwrap().remove(&item.id);
             if let Some(a) = attempt {
                 let _ = center.audit.append(
                     ctx, "approval_voided", None, Some(&host.name),
@@ -1424,6 +1425,10 @@ impl SessionManager {
             if *owner == ControlOwner::Agent {
                 *owner = ControlOwner::Human;
                 h.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // C9 授权残留清理（审计 S3）：会话级 send_keys 授权随控制权交还一并
+                // 失效——与 takeover 的 clear 同口径，防「停用→重启用→再交接」后
+                // 旧授权无需审批即可继续键入
+                h.send_keys_auth.lock().unwrap().clear();
                 n += 1;
             }
         }
@@ -1698,7 +1703,7 @@ impl SessionApi for SessionManager {
 
     async fn cancel_exec(&self, ctx: &Actor, sid: SessionId, exec_id: ExecId) -> Result<()> {
         let h = self.get(&sid)?;
-        let found = h.live_execs.lock().unwrap().get(&exec_id).map(|c| c.clone());
+        let found = h.live_execs.lock().unwrap().get(&exec_id).cloned();
         match found {
             Some(c) => {
                 c.cancel();
@@ -1747,6 +1752,15 @@ impl SessionApi for SessionManager {
                 // 重确认期间 Agent 仅开放 exec 白名单核实（与 exec 同口径，L1 §3.1）
                 if *h.state.lock().await == SessionState::Reconfirming {
                     return Err(Error::ReconfirmingPending);
+                }
+                // 危险模式门与 exec 同口径（审计 S2）：会话级授权只免**审批**不免
+                // **检查**——首次键序良性不能推及后续任意键序（sudo/su 提示符处
+                // 键入、直接键入 `rm -rf …` 都会绕过 exec 侧 deny 引擎）
+                if let Some(reason) = self.center.engine.deny_reason(client_id, keys) {
+                    let _ = self.center.audit.append(
+                        ctx, "send_keys_denied", Some(&sid), Some(keys),
+                        serde_json::json!({"reason": reason}), None);
+                    return Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern });
                 }
                 // 会话级授权：一次审批，接管或会话结束失效
                 if !h.send_keys_auth.lock().unwrap().contains(client_id) {
@@ -2825,7 +2839,7 @@ impl SessionManager {
                 }
                 let replayable = h.replay.lock().unwrap().covers_from(f);
                 let ckpt_nearer =
-                    h.last_ckpt_seq.load(std::sync::atomic::Ordering::Acquire) >= f + 1;
+                    h.last_ckpt_seq.load(std::sync::atomic::Ordering::Acquire) > f;
                 !replayable || s.alt_screen() || ckpt_nearer
             }
         };
@@ -3800,7 +3814,10 @@ impl SessionManager {
     fn ssh_config_path(explicit: Option<&Path>) -> PathBuf {
         match explicit {
             Some(p) => p.to_path_buf(),
+            // Windows 原生环境无 HOME → 回退 USERPROFILE（审计 W1 同族；OpenSSH for
+            // Windows 的配置就在 %USERPROFILE%\.ssh\config）
             None => std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(|h| PathBuf::from(h).join(".ssh/config"))
                 .unwrap_or_else(|| PathBuf::from(".ssh/config")),
         }
@@ -4094,7 +4111,7 @@ mod c10_tests {
     use super::*;
     use crate::handle::{REPLAY_CAP_BYTES, ReplayRing};
     use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
-    use std::sync::atomic::Ordering;
+    
 
     struct StubChannel;
     #[async_trait::async_trait]

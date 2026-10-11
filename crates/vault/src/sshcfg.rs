@@ -257,13 +257,18 @@ fn split_kv(line: &str) -> Option<(&str, String)> {
     Some((k, v))
 }
 
+fn home_dir() -> Option<std::ffi::OsString> {
+    // Windows 原生环境无 HOME → 回退 USERPROFILE（审计 W1 同族）
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+}
+
 fn expand_tilde(p: &str) -> PathBuf {
     if p == "~" {
-        if let Some(h) = std::env::var_os("HOME") {
+        if let Some(h) = home_dir() {
             return PathBuf::from(h);
         }
     } else if let Some(rest) = p.strip_prefix("~/") {
-        if let Some(h) = std::env::var_os("HOME") {
+        if let Some(h) = home_dir() {
             return PathBuf::from(h).join(rest);
         }
     }

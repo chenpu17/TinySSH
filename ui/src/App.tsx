@@ -128,6 +128,37 @@ const AUDIT_LABELS: Record<string, string> = {
     host_key_confirm_requested: "请求指纹确认",
     host_key_decision: "指纹确认决定",
     host_key_trusted: "信任主机指纹",
+    host_key_rejected: "拒绝主机指纹",
+    // 审计 F8：以下与后端真实动作集对账补齐（此前 ~19 个动作在活动记录里裸英文、
+    // 且「事件类型」筛选永远选不到）
+    session_delegated: "委托会话",
+    session_reconnect_stop: "停止重连",
+    approval_timeout: "审批超时",
+    collab_enabled: "启用协作",
+    collab_disabled: "停用协作",
+    collab_disable_failed: "停用协作失败",
+    connection_failed: "连接失败",
+    connection_cancelled: "取消连接",
+    connection_cancelled_closed: "取消连接（会话已闭）",
+    connection_cancel_close_failed: "取消连接收尾失败",
+    forward_listen_failed: "转发监听失败",
+    host_favorite: "收藏主机",
+    auth_failed: "认证失败",
+    upload: "上传文件",
+    download: "下载文件",
+    sftp_stat: "查看文件信息",
+    transfer_cancel: "取消传输",
+    transfer_retry: "重试传输",
+    transfer_interrupted: "传输中断",
+    transfer_list: "查看传输列表",
+    transfer_decision: "传输冲突决定",
+    transfer_decision_rejected: "冲突决定被拒",
+    transfer_outcome_unknown: "传输结果未知",
+    transfer_outcome_verified: "传输结果已核实",
+    transfer_outcome_reverify: "传输结果复检",
+    transfer_recovered_succeeded: "重启恢复传输完成",
+    transfer_publish_blocked: "传输发布被阻",
+    transfer_temp_clean_failed: "临时文件清理失败",
 };
 const auditLabel = (a: string): string => AUDIT_LABELS[a] ?? a;
 
@@ -199,6 +230,23 @@ const stateLabel = (s: string): { text: string; cls: string } => {
 // Disconnected=核心拒绝；Degraded/Reconnecting=通道死亡（写必错），不排队给未来连接
 const inputBlockedState = (st: string): boolean =>
   st === "Disconnected" || st === "Degraded" || st === "Reconnecting";
+
+// tauri 事件订阅的退订竞态兜底（审计 F2）：listen 是异步的——effect cleanup 先于
+// promise resolve 时 `un?.()` 拿到的还是 undefined，第一条订阅永久泄漏（StrictMode
+// 双挂载必现双份事件；快速切标签的 forward-event 在生产同样触发）。同文件
+// onDragDropEvent 早已用 dead 标志修正过同型，此处统一收口。
+function tauriListen(p: Promise<() => void>): () => void {
+  let un: (() => void) | undefined;
+  let dead = false;
+  p.then((f) => {
+    if (dead) f();
+    else un = f;
+  }).catch(() => {});
+  return () => {
+    dead = true;
+    un?.();
+  };
+}
 
 // §7.4：弹窗 focus trap——打开时焦点入框、Tab/Shift+Tab 循环不出框、关闭时焦点
 // 还原到触发控件（VoiceOver/纯键盘用户的回位锚点）。只用于带遮罩的模态弹窗。
@@ -474,9 +522,7 @@ export default function App() {
   // 真实环境：session-state 事件（连接事件同款 transformCallback 通道）
   useEffect(() => {
     if (!inTauri) return;
-    let un: (() => void) | undefined;
-    listen<SessionStateEvent>("session-state", (e) => applyStateEvent(e.payload)).then((f) => (un = f));
-    return () => un?.();
+    return tauriListen(listen<SessionStateEvent>("session-state", (e) => applyStateEvent(e.payload)));
   }, [applyStateEvent]);
   // demo 环境：300ms 轮询 session_state_feed（无事件通道的兜底，C1 同款双路镜像）
   useEffect(() => {
@@ -1059,29 +1105,27 @@ export default function App() {
   // 审批事件推送（仅 Tauri 环境；纯浏览器 demo 模式无事件通道）
   useEffect(() => {
     if (!inTauri) return;
-    let un: (() => void) | undefined;
-    listen("approval-event", () => refreshLists()).then((f) => (un = f));
-    return () => un?.();
+    return tauriListen(listen("approval-event", () => refreshLists()));
   }, [refreshLists]);
 
   // R23（C1 消费）：connection-event 相位推进。真实环境走事件；demo 环境无事件
   // 通道，由下方轮询兜底（同一 settleAttempt 出口，语义一致）
   useEffect(() => {
     if (!inTauri) return;
-    let un: (() => void) | undefined;
-    listen<ConnectionEvent>("connection-event", (e) => {
-      const ev = e.payload;
-      settleAttempt({
-        attempt_id: ev.attempt_id,
-        host_id: attemptHostRef.current.get(ev.attempt_id) ?? "",
-        actor: "human",
-        phase: ev.phase,
-        session_id: ev.session_id,
-        created_at: "",
-        error: ev.error,
-      });
-    }).then((f) => (un = f));
-    return () => un?.();
+    return tauriListen(
+      listen<ConnectionEvent>("connection-event", (e) => {
+        const ev = e.payload;
+        settleAttempt({
+          attempt_id: ev.attempt_id,
+          host_id: attemptHostRef.current.get(ev.attempt_id) ?? "",
+          actor: "human",
+          phase: ev.phase,
+          session_id: ev.session_id,
+          created_at: "",
+          error: ev.error,
+        });
+      }),
+    );
   }, [settleAttempt]);
   // demo 轮询：对每个在途 attempt 拉 connection_status 至终态（300ms）
   useEffect(() => {
@@ -1103,11 +1147,11 @@ export default function App() {
   // 按 (session_id, subscription_id) 路由到对应终端的订阅水位状态机。
   useEffect(() => {
     if (!inTauri) return;
-    let un: (() => void) | undefined;
-    listen<{ session_id: string; from_seq: number | null; subscription_id: string }>("resync", (e) => {
-      termsRef.current.get(e.payload.session_id)?.feed?.onResyncEvent(e.payload.subscription_id);
-    }).then((f) => (un = f));
-    return () => un?.();
+    return tauriListen(
+      listen<{ session_id: string; from_seq: number | null; subscription_id: string }>("resync", (e) => {
+        termsRef.current.get(e.payload.session_id)?.feed?.onResyncEvent(e.payload.subscription_id);
+      }),
+    );
   }, []);
 
   // 主机指纹待决（T17）：初始拉取 + 事件推送；弹窗按到达顺序逐个出示。
@@ -1138,19 +1182,21 @@ export default function App() {
     invoke("pending_auth_prompts")
       .then((list) => setAuthPromptQueue((q) => (q.length ? q : list)))
       .catch(() => {});
-    let un: (() => void) | undefined;
-    let un2: (() => void) | undefined;
-    listen<PendingHostKey>("hostkey-event", (ev) => {
-      const item = ev.payload;
-      if (gateDecidedRef.current.has(item.id)) return; // 近期已决，不回弹
-      setHostKeyQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
-    }).then((f) => (un = f));
-    listen<PendingAuthPrompt>("authprompt-event", (ev) => {
-      const item = ev.payload;
-      if (gateDecidedRef.current.has(item.id)) return;
-      setAuthPromptQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
-    }).then((f) => (un2 = f));
-    return () => { un?.(); un2?.(); };
+    const unHk = tauriListen(
+      listen<PendingHostKey>("hostkey-event", (ev) => {
+        const item = ev.payload;
+        if (gateDecidedRef.current.has(item.id)) return; // 近期已决，不回弹
+        setHostKeyQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
+      }),
+    );
+    const unAp = tauriListen(
+      listen<PendingAuthPrompt>("authprompt-event", (ev) => {
+        const item = ev.payload;
+        if (gateDecidedRef.current.has(item.id)) return;
+        setAuthPromptQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
+      }),
+    );
+    return () => { unHk(); unAp(); };
   }, []);
   // R23（对账式门队列）：核心侧作废（取消/超时→hk_pending/ap_pending 移除）后 FE
   // 必须消散遮罩——权威列表驱动增删双向对账；近期已决 id 短窗内不回弹（answer
@@ -1524,11 +1570,12 @@ export default function App() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
     if (!inTauri) return;
-    let un: (() => void) | undefined;
     // 走统一分发（R13 §7.2）：原生菜单加速器与键盘快捷键同一 action 语义
-    listen("menu-settings", () => { dispatchRef.current({ id: "settings" }); }).then((f) => (un = f));
+    const un = tauriListen(
+      listen("menu-settings", () => { dispatchRef.current({ id: "settings" }); }),
+    );
     getVersion().then(setAppVersion).catch(() => {});
-    return () => un?.();
+    return un;
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
   const themeRef = useRef("dark");
@@ -1915,6 +1962,8 @@ export default function App() {
     if (hk) { void decideHostKey(hk, false); return true; }
     if (confirm) { setConfirm(null); return true; }
     if (pasteConfirm) { setPasteConfirm(null); return true; }
+    // 拖拽上传确认卡同样是模态（全屏遮罩+焦点陷阱）——Esc 链此前漏出（审计 F5）
+    if (pendingDrop) { setPendingDrop(null); return true; }
     if (detail || detailErr) { closeDetail(); return true; }
     if (splitMenu) { setSplitMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
@@ -1951,7 +2000,7 @@ export default function App() {
         return true;
       case "tab-switch": {
         const t = sessionsRef.current[a.index];
-        if (t) void attachSession(t.id);
+        if (t) void attachSession(t.id).catch((e) => pushToast("err", errMsg(e)));
         return !!t;
       }
       case "tab-cycle": {
@@ -1959,7 +2008,7 @@ export default function App() {
         if (!ss.length) return false;
         const i0 = Math.max(0, ss.findIndex((x) => x.id === sidRef.current));
         const target = ss[(i0 + a.dir + ss.length) % ss.length];
-        if (target) void attachSession(target.id);
+        if (target) void attachSession(target.id).catch((e) => pushToast("err", errMsg(e)));
         return true;
       }
       case "tab-close": {
@@ -2114,7 +2163,18 @@ export default function App() {
     const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
     channel.onmessage = (msg) => feed.onMessage(msg);
     // 先注册通道、后调 subscribe：注册起核心即缓存 live，检查点前的早到帧不丢
-    const attach = await invoke("subscribe_output", { sid: sessionSid, onEvent: channel });
+    let attach: Parameters<typeof feed.begin>[0];
+    try {
+      attach = await invoke("subscribe_output", { sid: sessionSid, onEvent: channel });
+    } catch (err) {
+      // 订阅失败自愈（审计 F1）：termsRef 已在本函数头部登记——不撤销的话后续
+      // 重试在 has() 处早退，会话标签永远静默（黑屏无输出、无自愈入口）
+      termsRef.current.delete(sessionSid);
+      made.feed = null;
+      try { made.term.dispose(); } catch { /* 已销毁则忽略 */ }
+      made.el.remove();
+      throw err;
+    }
     feed.begin(attach);
     subscribedRef.current.add(sessionSid);
     // 首次接入提示改为不占终端行的悬浮条（自动淡出）：写进终端流会把 shell 的
@@ -2298,23 +2358,24 @@ export default function App() {
   useDialogFocus(!!pendingDrop, dropCardRef);
   useEffect(() => {
     if (!inTauri) return;
-    let un: (() => void) | undefined;
     let alive = true;
-    listen("app-close-requested", () => {
-      (async () => {
-        try {
-          const ss = (await invoke("list_sessions")) as SessionInfo[];
-          let fw = 0;
-          for (const s of ss) {
-            try { fw += ((await invoke("list_forwards", { sid: s.id })) as ForwardInfo[]).length; } catch { /* 单会话失败不阻塞汇总 */ }
+    const un = tauriListen(
+      listen("app-close-requested", () => {
+        (async () => {
+          try {
+            const ss = (await invoke("list_sessions")) as SessionInfo[];
+            let fw = 0;
+            for (const s of ss) {
+              try { fw += ((await invoke("list_forwards", { sid: s.id })) as ForwardInfo[]).length; } catch { /* 单会话失败不阻塞汇总 */ }
+            }
+            if (alive) setQuitSummary({ sessions: ss, forwards: fw });
+          } catch {
+            if (alive) setQuitSummary({ sessions: [], forwards: 0 });
           }
-          if (alive) setQuitSummary({ sessions: ss, forwards: fw });
-        } catch {
-          if (alive) setQuitSummary({ sessions: [], forwards: 0 });
-        }
-      })();
-    }).then((f) => (un = f));
-    return () => { alive = false; un?.(); };
+        })();
+      }),
+    );
+    return () => { alive = false; un(); };
   }, [inTauri]);
   const confirmQuit = async () => {
     if (!quitSummary) return;
@@ -2324,7 +2385,7 @@ export default function App() {
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu);
+  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || pendingDrop);
   modalRef.current = modal;
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
@@ -2418,7 +2479,7 @@ export default function App() {
   // 会话属已知意图，此后完成的连接仍不得从当前会话抢焦点，代际已含开浮层那跳）。
   // 门卡（TOFU/2FA）不入列——它们属于连接自身流程，置位会误伤前台「信任后落终端」
   const overlayOpen = searchOpen || showSettings || showAddHost || showImport
-    || toolsOpen || tabsMenuOpen || rightPanel !== null || !!confirm;
+    || toolsOpen || tabsMenuOpen || rightPanel !== null || !!confirm || !!pendingDrop;
   const overlayPrevRef = useRef(overlayOpen);
   useEffect(() => {
     if (overlayOpen && !overlayPrevRef.current) focusGenRef.current++;
@@ -2952,12 +3013,13 @@ export default function App() {
     // 可见）；3s 盲轮询保留为兜底——真机实测 WKWebView 会节流 timer，纯轮询在
     // 挂起场景丢数据面可见性。仅 Tauri 环境订阅（纯浏览器 demo 模式无事件通道，
     // 轮询走 invoke shim——与 approval-event 同款守卫纪律，审核 D1）
-    let un: (() => void) | undefined;
-    if (inTauri) {
-      listen<{ session_id: string }>("forward-event", (e) => {
-        if (e.payload?.session_id === sidRef.current) void refreshForwards();
-      }).then((f) => (un = f));
-    }
+    const un = inTauri
+      ? tauriListen(
+          listen<{ session_id: string }>("forward-event", (e) => {
+            if (e.payload?.session_id === sidRef.current) void refreshForwards();
+          }),
+        )
+      : undefined;
     return () => { clearInterval(t); un?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid]);
@@ -3041,10 +3103,11 @@ export default function App() {
   // demo = 800ms 轮询 list_transfers（模拟事件通道的双路镜像，session-state 同工艺）
   useEffect(() => {
     if (!inTauri) return;
-    let un: (() => void) | undefined;
-    listen<TransferTask>("transfer-event", (e) => applyTransferTask(e.payload)).then((f) => (un = f));
+    const un = tauriListen(
+      listen<TransferTask>("transfer-event", (e) => applyTransferTask(e.payload)),
+    );
     void refreshTransfers();
-    return () => un?.();
+    return un;
   }, [inTauri, applyTransferTask, refreshTransfers]);
   useEffect(() => {
     if (inTauri) return;
@@ -3418,7 +3481,14 @@ export default function App() {
   const [editedCmd, setEditedCmd] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const decide = async (id: string, decision: "approve" | "deny" | "edit", edited: string | null) => {
-    await invoke("decide_approval", { id, decision, edited });
+    // 并发作废（接管/关会话）会拒绝决定（审计 F3）：无 catch 时 unhandled
+    // rejection + 编辑态卡死到下次轮询。失败如实上报、编辑态保留（卡片随轮询刷新）
+    try {
+      await invoke("decide_approval", { id, decision, edited });
+    } catch (err) {
+      pushToast("err", errMsg(err));
+      return;
+    }
     setEditingId(null);
     setConfirmId(null);
     await refreshLists();
@@ -3596,7 +3666,7 @@ export default function App() {
               const fav = metaById.get(h.id)?.favorite === true;
               const activate = () => {
                 if (connectingIds.has(h.id)) return; // §280：仅本主机连接中忽略，其他主机不受扰
-                if (latest) { void attachSession(latest.id); return; }
+                if (latest) { void attachSession(latest.id).catch((e) => pushToast("err", errMsg(e))); return; }
                 createSession(h);
               };
               return (
@@ -3805,9 +3875,9 @@ export default function App() {
                     // Enter/Space 冒泡到标签处理器会 preventDefault 吞掉按钮默认点击、
                     // 误触 attachSession——只有标签本体直接按键才激活
                     if (e.target !== e.currentTarget) return;
-                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id); }
+                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id).catch((er) => pushToast("err", errMsg(er))); }
                   }}
-                  onClick={() => attachSession(s.id)}
+                  onClick={() => void attachSession(s.id).catch((e) => pushToast("err", errMsg(e)))}
                 >
                   <span className={"tab-dot " + st.cls} aria-hidden="true" />
                   <span className="tab-label">{s.host_name}</span>
@@ -4842,7 +4912,10 @@ Authorization: Bearer <TOKEN>`}
                 setCmdHistory((h) => (h[h.length - 1] === cmd ? h : [...h, cmd]));
                 cmdHistIdx.current = -1;
                 setInput("");
-                xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd}\x1b[0m\r\n`);
+                // 回显剥离 ESC（审计 F4）：粘贴保护只拦换行不拦转义字节——含 ESC 的
+                // 输入原样 write 会被终端解释（伪造输出/改标题），简报侧 cleanCmd
+                // 已清理、此处统一收口
+                xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd.replace(/\x1b/g, "")}\x1b[0m\r\n`);
                 // 立即回焦终端（不等待执行完成：长驻命令 top/vim 也即时可中断）
                 xtermRef.current?.focus();
                 // 在飞登记：返回（含中断/超时/断线失败）前「中断」钮在场，finally 摘除

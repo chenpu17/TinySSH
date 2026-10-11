@@ -10,7 +10,7 @@ use rmcp::service::{RunningService, RoleClient};
 use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
 };
-use rmcp::{ServiceExt, ClientServiceExt};
+use rmcp::ClientServiceExt;
 
 // 主密钥走 env（vault 解析序 env > OS 钥匙串）：避免测试二进制重编译后
 // 签名变化触发 macOS 钥匙串授权弹窗并阻塞测试进程。

@@ -25,6 +25,14 @@ export interface ActionCtx {
   hasActiveTab: boolean;
 }
 
+/** 平台判定（审计 W4）：Ctrl 等价 ⌘ 的开关——macOS 用 metaKey（⌘），Win/Linux
+ * 原生侧用 ctrlKey。UA-CH 优先，回退 platform/userAgent（开发环境足够）。 */
+export function isMacPlatform(): boolean {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const p = nav.userAgentData?.platform ?? nav.platform ?? nav.userAgent ?? "";
+  return /mac|iphone|ipad|ios/i.test(p);
+}
+
 /** keymap 唯一事实源：返回 null = 不归应用动作（透传给终端/浏览器）。 */
 export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | null {
   // IME 组合期（§7.3 输入约定）：isComposing 与 keyCode 229（合成器改写的 keydown）
@@ -44,8 +52,13 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
     if (ev.key === "-" || ev.code === "Minus" || ev.code === "NumpadSubtract") return { id: "zoom-out" };
     if (ev.key === "0" || ev.code === "Digit0" || ev.code === "Numpad0") return { id: "zoom-reset" };
   }
-  if (!ev.metaKey || ev.ctrlKey || ev.altKey) return null;
-  // 模态层打开：任何 ⌘ 组合都不执行（§7.3 模态层不串输入）
+  // 非 mac 原生环境把 Ctrl 当作 ⌘ 等价键（审计 W4）：快捷键唯一事实源原先只认
+  // metaKey，Windows/Linux 上（metaKey=Win 键且多为系统保留）整套快捷键死键。
+  // 仅 native 生效——浏览器 demo 保持 metaKey-only（Ctrl 系归还浏览器行为，
+  // 防与 Ctrl+F 查找/Ctrl+W 关标签的浏览器语义双响应）。
+  const cmd = ev.metaKey || (!isMacPlatform() && ctx.native && ev.ctrlKey);
+  if (!cmd || ev.altKey) return null;
+  // 模态层打开：任何 ⌘/Ctrl 组合都不执行（§7.3 模态层不串输入）
   if (ctx.modal) return null;
   if (ev.shiftKey) {
     // ⇧] / ⇧[ 用物理键位判定（Shift 下 ev.key 是 }/{）

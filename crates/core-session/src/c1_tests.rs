@@ -307,7 +307,7 @@ async fn cancel_events_carry_terminal_phase_only() {
         let out = m.cancel_connection(&Actor::Human, aid.clone()).await.unwrap();
         assert!(matches!(out, CancelOutcome::Cancelled), "受理取消得 {out:?}");
         assert!(m.center.hk_pending.lock().unwrap().is_empty(), "待决卡必须移除（M1 幽灵卡）");
-        assert_eq!(rx.await.unwrap(), false, "门以拒绝结算");
+        assert!(!rx.await.unwrap(), "门以拒绝结算");
         // fabricated 条目无 run_attempt 任务——终态由本测试代任务结算（任务侧结算
         // 已由 cancel_while_connecting 等真路径测试覆盖）
         let mut st = entry.st.lock().await;

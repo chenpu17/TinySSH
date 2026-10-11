@@ -4,7 +4,7 @@
 
 use super::*;
 use session_api::{
-    Actor, AuditFilter, AuthType, Charset, ControlOwner, Error, Host, SessionState,
+    AuditFilter, AuthType, Charset, ControlOwner, Error, Host, SessionState,
 };
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
 use std::sync::Arc;

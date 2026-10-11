@@ -93,7 +93,7 @@ async fn approval_flow_deny_and_approve() {
         .unwrap();
     // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
     m.delegate_session(&human(), sid.clone(), None).await.unwrap();
-    let agent = Actor::Agent { client_id: "test-agent".into() };
+    let _agent = Actor::Agent { client_id: "test-agent".into() };
 
     // agent exec → 待审批（本地会话不经 create 审批；exec 每条必审）
     let m2 = m.clone();

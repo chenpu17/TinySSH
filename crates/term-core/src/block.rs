@@ -151,11 +151,10 @@ impl BlockIndex {
                         .take()
                         .or_else(|| self.open.typed_source.take())
                         .unwrap_or(BlockSource::Human);
-                    let command = if self.open.managed_source.is_some() {
-                        String::new() // 受管块命令文本由 core 在 open_managed 提供
-                    } else {
-                        String::from_utf8_lossy(&self.open.typed).trim().to_string()
-                    };
+                    // 受管块（replay/exec）的命令文本由 core 在 open_managed 时写入
+                    // typed——统一从 typed 取，与普通块同形态（审计 R10：原 is_some
+                    // 判定在 take() 之后恒 false，是死分支）
+                    let command = String::from_utf8_lossy(&self.open.typed).trim().to_string();
                     self.blocks.push(CommandBlock {
                         command,
                         start: self.open.start.take(),

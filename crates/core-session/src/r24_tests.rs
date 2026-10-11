@@ -142,7 +142,7 @@ async fn run_shell_gate_rejects_without_integration() {
 
     let human = Actor::Human;
     // 无集成：Shell 模式拒绝，载荷如实（host_setting=false）
-    let x = m.exec(&human, "s-r24".into(), "ls".into(), ExecOpts::default()).await;
+    let x = m.exec(&human, "s-r24".into(), "ls", ExecOpts::default()).await;
     match x {
         Err(Error::ShellIntegrationUnavailable { available }) => {
             assert!(!available.integration_present);
@@ -152,7 +152,7 @@ async fn run_shell_gate_rejects_without_integration() {
     }
     // 显式 Fresh：不受 Shell 门拦（Stub 通道恒败=InvalidInput，非 ShellIntegrationUnavailable）
     let x = m
-        .exec(&human, "s-r24".into(), "ls".into(), ExecOpts { mode: ExecMode::Fresh, ..Default::default() })
+        .exec(&human, "s-r24".into(), "ls", ExecOpts { mode: ExecMode::Fresh, ..Default::default() })
         .await;
     assert!(
         !matches!(x, Err(Error::ShellIntegrationUnavailable { .. })),
@@ -160,7 +160,7 @@ async fn run_shell_gate_rejects_without_integration() {
     );
     // 集成标记在场（真实路径=注入后远端 OSC133 回显）：门放行（后续败于 Stub 写）
     h.feed_output(b"\x1b]133;A\x07").await;
-    let x = m.exec(&human, "s-r24".into(), "ls".into(), ExecOpts::default()).await;
+    let x = m.exec(&human, "s-r24".into(), "ls", ExecOpts::default()).await;
     assert!(!matches!(x, Err(Error::ShellIntegrationUnavailable { .. })), "集成在场后门应放行，得 {x:?}");
 
     // DC3.3：能力只读查询（任何 Actor 可查，不产生副作用）

@@ -7,8 +7,8 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, Key as ChachaKey, XNonce};
 use rusqlite::{params, Connection};
 use session_api::{
-    Actor, AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
-    Error, Host, HostDraft, HostId, HostMeta, IdentityId, IdentityKind, IdentityMeta, IdentityReq,
+    AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
+    Error, Host, HostDraft, HostId, HostMeta, IdentityKind, IdentityMeta, IdentityReq,
     KeyKind, Policy, RecentHost, Result, SessionId, TransferKind, TransferStatus, TransferTask,
     Workspace,
 };
@@ -977,7 +977,7 @@ impl Vault {
                 favorite: favorite != 0,
                 last_connected_at: last
                     .and_then(chrono::DateTime::from_timestamp_millis)
-                    .map(|t| t.into()),
+                    .map(|t| t),
             });
         }
         Ok(out)
@@ -1013,8 +1013,7 @@ impl Vault {
                 host_id,
                 host_name,
                 connected_at: chrono::DateTime::from_timestamp_millis(last_at)
-                    .unwrap_or_default()
-                    .into(),
+                    .unwrap_or_default(),
             });
         }
         Ok(out)
@@ -1122,7 +1121,7 @@ impl Vault {
                     t.total.map(|v| v as i64),
                     t.revision as i64,
                     t.collision_decision
-                        .map(|d| Self::journal_collision_str(d)),
+                        .map(Self::journal_collision_str),
                     0i64,
                     t.error,
                     t.retry_of,
@@ -1152,7 +1151,7 @@ impl Vault {
                     t.total.map(|v| v as i64),
                     t.revision as i64,
                     t.collision_decision
-                        .map(|d| Self::journal_collision_str(d)),
+                        .map(Self::journal_collision_str),
                     verified.map(|v| if v { 1i64 } else { 0i64 }),
                     t.error,
                     t.finished_at,
@@ -1537,8 +1536,7 @@ impl Vault {
                             policy.ttl_windows.push(session_api::TtlWindow {
                                 pattern: p,
                                 expires_at: chrono::DateTime::from_timestamp_millis(exp)
-                                    .unwrap_or_default()
-                                    .into(),
+                                    .unwrap_or_default(),
                             });
                         }
                     }

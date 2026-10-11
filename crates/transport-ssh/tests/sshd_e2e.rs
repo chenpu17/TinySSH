@@ -68,7 +68,7 @@ async fn scenario() -> Result<(), String> {
             Err(_) => continue,
         }
     });
-    let mut drain = |screen: &mut Screen, rx_feed: &std::sync::mpsc::Receiver<Vec<u8>>| {
+    let drain = |screen: &mut Screen, rx_feed: &std::sync::mpsc::Receiver<Vec<u8>>| {
         while let Ok(d) = rx_feed.try_recv() {
             screen.feed(&d);
         }
@@ -166,7 +166,6 @@ async fn scenario() -> Result<(), String> {
     Ok(())
 }
 
-use tokio_util_like::CancellationToken as _CancellationTokenAlias;
 mod tokio_util_like {
     pub use session_api::transport::tokio_util_sync::CancellationToken;
 }
@@ -303,7 +302,7 @@ async fn sftp_list_lists_dir_entries_sorted() {
     let stl = channel.stat_entry("/tmp/t41_dir/link").await.unwrap();
     assert_eq!(stl.kind, Some(session_api::EntryKind::Symlink));
     assert_eq!(stl.symlink_target.as_deref(), Some("a.txt"));
-    assert_eq!(stl.is_dir, false);
+    assert!(!stl.is_dir);
     assert_eq!(stl.size, Some(b"world\n".len() as u64), "可达链接 size 跟随目标");
     assert_eq!(stl.canonical.as_deref(), Some("/tmp/t41_dir/a.txt"));
     let std_ = channel.stat_entry("/tmp/t41_dir/dangling").await.unwrap();
