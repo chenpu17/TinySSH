@@ -38,12 +38,12 @@ fn drain(s: &mut Screen, r: &std::sync::mpsc::Receiver<Vec<u8>>) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn spike2_render_fidelity_and_rss() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     // 环境抖动兜底（共享容器偶发输出滞留）：整场景最多重试两次
     for attempt in 0..2 {
         match tokio::spawn(spike2_body()).await {

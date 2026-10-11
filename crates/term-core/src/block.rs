@@ -64,6 +64,10 @@ struct OpenState {
     typed: Vec<u8>,
     /// B→C 键入来源归因（Agent 提交命令时由 core 设置）。
     typed_source: Option<BlockSource>,
+    /// B 前挂起的登记（Windows ConPTY 流序：A 与 B 可分片到达，B 前的键入登记
+    /// 若直接丢弃，B 的 typed.clear() 后命令文本归空——挂起到 B/C 收养）。
+    pending: Vec<u8>,
+    pending_source: Option<BlockSource>,
     /// C 时刻的 grid 绝对行号。
     output_start_line: Option<i32>,
     /// 打开块来源（受管块直接指定）。
@@ -85,15 +89,20 @@ impl BlockIndex {
 
     /// 通路 write 的回调：捕获 B→C 之间的键入命令文本。
     pub fn on_write(&mut self, data: &[u8]) {
-        if self.phase == BlockPhase::Typing {
-            self.open.typed.extend_from_slice(data);
+        match self.phase {
+            BlockPhase::Typing => self.open.typed.extend_from_slice(data),
+            // B 前的键入属于下一个命令：挂起待 B/C 收养（直接丢弃会被 B 的清空抹归因）
+            BlockPhase::Idle | BlockPhase::Prompt => self.open.pending.extend_from_slice(data),
+            BlockPhase::Output => {}
         }
     }
 
     /// 键入归因：Agent 在 B→C 阶段写入命令时调用。
     pub fn attribute_write(&mut self, source: BlockSource) {
-        if self.phase == BlockPhase::Typing {
-            self.open.typed_source = Some(source);
+        match self.phase {
+            BlockPhase::Typing => self.open.typed_source = Some(source),
+            BlockPhase::Idle | BlockPhase::Prompt => self.open.pending_source = Some(source),
+            BlockPhase::Output => {}
         }
     }
 
@@ -109,13 +118,25 @@ impl BlockIndex {
                 // B
                 if matches!(self.phase, BlockPhase::Prompt | BlockPhase::Idle) {
                     self.phase = BlockPhase::Typing;
-                    self.open.typed.clear();
-                    self.open.typed_source = None;
+                    // 收养 B 前挂起的登记（先到的键入属于本命令）
+                    self.open.typed = std::mem::take(&mut self.open.pending);
+                    self.open.typed_source = self.open.pending_source.take();
                 }
             }
             OscEvent::OutputStart => {
                 // C：块正式开始（尚未打开才打开；受管块已在 Output 态则跳过）
                 if matches!(self.phase, BlockPhase::Typing | BlockPhase::Prompt | BlockPhase::Idle) {
+                    // 兜底收养：异常流序下 C 先于 B 到达时挂起登记不丢
+                    if !self.open.pending.is_empty() {
+                        let mut p = std::mem::take(&mut self.open.pending);
+                        p.extend_from_slice(&self.open.typed);
+                        self.open.typed = p;
+                        self.open.typed_source = self
+                            .open
+                            .pending_source
+                            .take()
+                            .or(self.open.typed_source.take());
+                    }
                     self.open.start = Some(now);
                     self.open.output_start_line = Some(current_line);
                     self.phase = BlockPhase::Output;
@@ -166,6 +187,8 @@ impl BlockIndex {
             start: Some(now),
             typed: command.as_bytes().to_vec(),
             typed_source: None,
+            pending: Vec::new(),
+            pending_source: None,
             output_start_line: Some(current_line),
             managed_source: Some(source),
             managed_exec: exec_id,
@@ -261,6 +284,25 @@ mod tests {
         assert_eq!(idx.blocks[0].command, "ls");
         assert_eq!(idx.blocks[0].source, BlockSource::Agent { client_id: "cc".into() });
         assert_eq!(idx.blocks[0].exit_code, Some(2));
+    }
+
+    #[test]
+    fn pending_registration_adopted_at_b() {
+        // Windows 流序：A 与 B 分片，登记落在 A 后 B 前——B 的收养不得丢命令文本
+        let mut idx = BlockIndex::new();
+        let t0 = Utc::now();
+        let mut scanner = OscScanner::new();
+        for (ev, _) in scanner.feed(b"\x1b]133;A\x07") {
+            idx.on_osc(&ev, t0, 0);
+        }
+        idx.attribute_write(BlockSource::Human);
+        idx.on_write(b"echo pre\r");
+        for (ev, _) in scanner.feed(b"\x1b]133;B\x07\x1b]133;C\x07out\x1b]133;D;0\x07") {
+            idx.on_osc(&ev, t0, 1);
+        }
+        assert_eq!(idx.blocks.len(), 1);
+        assert_eq!(idx.blocks[0].command, "echo pre");
+        assert_eq!(idx.blocks[0].exit_code, Some(0));
     }
 
     #[test]

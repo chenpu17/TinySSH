@@ -80,7 +80,14 @@ fn dirs_or_home() -> std::path::PathBuf {
 
 /// 构造 shell 启动方式（写入注入文件；调用方负责清理临时目录）。
 pub fn plan_shell_spawn(shell: &str, tmpdir: &std::path::Path) -> ShellSpawn {
-    let basename = shell.rsplit('/').next().unwrap_or(shell);
+    // Windows 上 SHELL 常是反斜杠 + .exe 形态（C:\Program Files\Git\bin\bash.exe），
+    // POSIX 式 rsplit('/') 取不到文件名 → 全体误入 Plain、Shell 模式静默失效
+    //（ConPTY 实测透传 OSC133，2026-10-12 探针：注入/透传/发射均正常，唯此判型断链）。
+    let basename = shell
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(shell)
+        .trim_end_matches(".exe");
     match basename {
         "bash" => {
             let rc = tmpdir.join("bashrc");

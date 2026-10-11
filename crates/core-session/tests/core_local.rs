@@ -553,12 +553,14 @@ async fn wait_pending(m: &SessionManager, host_id: &str) -> PendingHostKey {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn host_key_gate_first_seen_change_and_reject() {
-    let lock = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
+    // 守卫先于就绪等待：无 docker 的开发机（TINYSSH_E2E_SSHD 未设）应当跳过，
+    // 而不是空等 30s 后在 await_sshd_ready 里 panic（守卫原本排在等待之后=形同虚设）
     if !std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false) {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let lock = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
     let _lock = lock;
     let m = manager().await;
     let hid = m
@@ -644,12 +646,13 @@ async fn host_key_gate_first_seen_change_and_reject() {
 // 命令含中文 → 线上走 GBK 字节、远端原样回显 → 解码后命令文本完好。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gbk_charset_roundtrip_over_ssh() {
-    let lock = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
+    // 守卫先于就绪等待（同 host_key_gate：无 docker 开发机跳过而非 30s 后 panic）
     if !std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false) {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let lock = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
     let _lock = lock;
     let m = manager().await;
     let hid = m

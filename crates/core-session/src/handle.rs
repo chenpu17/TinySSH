@@ -310,11 +310,26 @@ impl SessionHandle {
         // 登记用原 UTF-8（屏态吃的是泵侧解码后的回显），写线上的才是编码字节（GBK）。
         let mut text = cmd.trim_end().to_string();
         text.push('\r');
-        {
+        // 前一 exec 的重绘尾窗未收口（Windows 流序：文本可晚于 D 到达）→ 等收口
+        //（B 或 pump 静默兜底），上限 1s；否则串行 exec 会互相截断前者的输出尾部。
+        if self.screen.lock().await.capture_tail_busy() {
+            let quiet_deadline = Instant::now() + Duration::from_secs(1);
+            while self.screen.lock().await.capture_tail_busy() {
+                if Instant::now() >= quiet_deadline {
+                    self.screen.lock().await.flush_stale_capture(Duration::ZERO);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        // arm + 登记 + 订阅同锁完成后再写线：D 可在本函数返回前到达（本地 ConPTY
+        // 毫秒级往返），订阅晚于通知 = 通知丢失（等待落到 exec 超时）。
+        let mut cap_rx = {
             let mut s = self.screen.lock().await;
             s.arm_capture(exec_id);
             s.register_outgoing(text.as_bytes(), source_of(actor));
-        }
+            s.subscribe_capture()
+        };
         self.channel.write(&crate::charset::encode(self.host.charset, &text)).await?;
 
         self.running
@@ -326,11 +341,6 @@ impl SessionHandle {
                 started,
             });
 
-        // 等待块收尾（捕获完成通知）
-        let mut cap_rx = {
-            let s = self.screen.lock().await;
-            s.subscribe_capture()
-        };
         tokio::select! {
             r = async {
                 loop {
@@ -369,6 +379,17 @@ impl SessionHandle {
         // 对 MCP/UI 消费者是纯噪音（简报与命令框已各自清洗，此处统一收口）
         if text.contains(['\x01', '\x02']) {
             text = text.replace(['\x01', '\x02'], "");
+        }
+        // Windows ConPTY 重绘流序下回显行混进捕获窗（快路径 echo 也在 C 之后、慢路径
+        // 整帧在 D 之后）：已知命令文本自门控剥离首处回显——unix 流序回显在 C 之前，
+        // find 不到即无操作，语义逐字节不变。
+        let cmd_echo = cmd.trim_end();
+        if !cmd_echo.is_empty() {
+            if let Some(idx) = text.find(cmd_echo) {
+                text = text[idx + cmd_echo.len()..]
+                    .trim_start_matches(['\r', '\n'])
+                    .to_string();
+            }
         }
         let truncated = text.len() > cap;
         let text = if truncated { text[..cap].to_string() } else { text };

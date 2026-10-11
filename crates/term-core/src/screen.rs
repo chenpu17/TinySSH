@@ -48,12 +48,20 @@ struct LosslessChunk {
 }
 
 /// Shell 模式 exec 的输出捕获状态。
+/// Windows ConPTY 流序（2026-10-12 实测）：conhost 把 OSC 标记即时转发、把文本攒进
+/// 渲染缓冲按帧刷出——D 标记可先于命令输出到达（C→D 窗为空，文本落在 D 之后、下一
+/// 提示符 B 之前的重绘帧里，回显随帧混入）。故 D 不终结捕获：转 tail 继续收集到下一
+/// 个 B（提示符文本在 B 之后，天然切界）；B 不来由 pump 静默兜底收口。取数时 text
+/// 非空用 text（unix/快路径，与旧语义一致），text 空 则用 tail（调用方剥回显行）。
 #[derive(Debug)]
 struct CaptureState {
     exec_id: String,
     armed: bool,
     active: bool,
     text: Vec<u8>,
+    tail_active: bool,
+    tail: Vec<u8>,
+    tail_since: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -124,14 +132,20 @@ impl Screen {
 
         let events = self.scanner.feed(data);
         let mut cap_active = self.capture.as_ref().map(|c| c.active).unwrap_or(false);
+        let mut cap_tail = self.capture.as_ref().map(|c| c.tail_active).unwrap_or(false);
         let cap_armed = self.capture.as_ref().map(|c| c.armed).unwrap_or(false);
         let mut last_off = 0usize;
 
         for (ev, end_off) in events.iter().map(|(e, o)| (e.clone(), *o)) {
-            // 捕获激活期间：上一事件结束到本事件结束之间的字节属于输出
-            if cap_active {
+            // 捕获激活期间：上一事件结束到本事件结束之间的字节属于输出（active→text / tail→tail）
+            if cap_active || cap_tail {
                 if let Some(cap) = self.capture.as_mut() {
-                    cap.text.extend_from_slice(&data[last_off..end_off.min(data.len())]);
+                    let slice = &data[last_off..end_off.min(data.len())];
+                    if cap_active {
+                        cap.text.extend_from_slice(slice);
+                    } else {
+                        cap.tail.extend_from_slice(slice);
+                    }
                 }
             }
             match ev {
@@ -141,7 +155,7 @@ impl Screen {
                 }
                 OscEvent::OutputStart => {
                     self.saw_133 = true;
-                    if cap_armed && !cap_active {
+                    if cap_armed && !cap_active && !cap_tail {
                         cap_active = true;
                         if let Some(cap) = self.capture.as_mut() {
                             cap.active = true;
@@ -162,7 +176,10 @@ impl Screen {
                         cap_active = false;
                         if let Some(cap) = self.capture.as_mut() {
                             cap.active = false;
-                            let _ = self.capture_tx.send(cap.exec_id.clone());
+                            // D 不终结捕获：Windows 重绘流序下文本可能尚未到达，转 tail 续采
+                            cap.tail_active = true;
+                            cap.tail.clear();
+                            cap.tail_since = Some(std::time::Instant::now());
                         }
                     }
                     self.blocks.on_osc(&ev, now, current_line);
@@ -178,6 +195,17 @@ impl Screen {
                     }
                     let _ = exit;
                 }
+                OscEvent::CommandStart => {
+                    // tail 收口：下一提示符 B 之前的字节都归上一命令（提示符文本在 B 后）
+                    if cap_tail {
+                        cap_tail = false;
+                        if let Some(cap) = self.capture.as_mut() {
+                            cap.tail_active = false;
+                            let _ = self.capture_tx.send(cap.exec_id.clone());
+                        }
+                    }
+                    self.blocks.on_osc(&ev, now, current_line);
+                }
                 other => {
                     self.blocks.on_osc(&other, now, current_line);
                 }
@@ -186,16 +214,30 @@ impl Screen {
         }
 
         // 尾部仍激活：剩余字节全是输出
-        if cap_active && last_off < data.len() {
+        if (cap_active || cap_tail) && last_off < data.len() {
             if let Some(cap) = self.capture.as_mut() {
-                cap.text.extend_from_slice(&data[last_off..]);
+                let slice = &data[last_off..];
+                if cap_active {
+                    cap.text.extend_from_slice(slice);
+                } else {
+                    cap.tail.extend_from_slice(slice);
+                }
             }
         }
-        if cap_active {
+        if cap_active || cap_tail {
             if let Some(cap) = self.capture.as_mut() {
-                if cap.text.len() > self.config.lossless_cap {
-                    let drop = cap.text.len() / 2;
-                    cap.text.drain(..drop);
+                let (len, is_active) = if cap_active {
+                    (cap.text.len(), true)
+                } else {
+                    (cap.tail.len(), false)
+                };
+                if len > self.config.lossless_cap {
+                    let drop = len / 2;
+                    if is_active {
+                        cap.text.drain(..drop);
+                    } else {
+                        cap.tail.drain(..drop);
+                    }
                 }
             }
         }
@@ -234,7 +276,38 @@ impl Screen {
             armed: true,
             active: false,
             text: Vec::new(),
+            tail_active: false,
+            tail: Vec::new(),
+            tail_since: None,
         });
+    }
+
+    /// 前一 exec 的重绘尾窗是否仍在收集（Windows 流序：文本可晚于 D）。
+    pub fn capture_tail_busy(&self) -> bool {
+        self.capture
+            .as_ref()
+            .map(|c| c.tail_active)
+            .unwrap_or(false)
+    }
+
+    /// 静默兜底：tail 开启超过 max_age 仍无 B（如 exit 后无下一提示符）→ 收口并通知。
+    pub fn flush_stale_capture(&mut self, max_age: std::time::Duration) {
+        let stale = self
+            .capture
+            .as_ref()
+            .map(|c| {
+                c.tail_active
+                    && c.tail_since
+                        .map(|t| t.elapsed() >= max_age)
+                        .unwrap_or(true)
+            })
+            .unwrap_or(false);
+        if stale {
+            if let Some(cap) = self.capture.as_mut() {
+                cap.tail_active = false;
+                let _ = self.capture_tx.send(cap.exec_id.clone());
+            }
+        }
     }
 
     /// Shell 模式 exec：直接打开受管块（写入命令同时调用；命令文本受管提供）。
@@ -244,12 +317,17 @@ impl Screen {
             .open_managed(command, source, Some(exec_id.to_string()), Utc::now(), line);
     }
 
-    /// 取走某个 exec 的捕获输出（块收尾后调用）。
+    /// 取走某个 exec 的捕获输出（块收口后调用）。
+    /// C→D 窗（text）+ D→B 尾窗（tail）拼接返回；标记字节经调用方 strip_ansi 无痕。
+    /// Windows 重绘流序下输出整帧落在 tail（含随帧混入的回显行），由调用方按已知
+    /// 命令文本自门控剥离（find 不到即无操作，unix 流序回显在 C 之前天然不触发）。
     pub fn take_capture(&mut self, exec_id: &str) -> Option<Vec<u8>> {
         if let Some(cap) = self.capture.as_ref() {
-            if cap.exec_id == exec_id && !cap.active {
+            if cap.exec_id == exec_id && !cap.active && !cap.tail_active {
                 let cap = self.capture.take().unwrap();
-                return Some(cap.text);
+                let mut raw = cap.text;
+                raw.extend_from_slice(&cap.tail);
+                return Some(raw);
             }
         }
         None
@@ -628,12 +706,42 @@ mod tests {
     fn shell_mode_capture() {
         let mut s = screen();
         s.arm_capture("e1");
-        // 模拟注入 shell：A/B → 命令 → C → 输出 → D
+        // 模拟注入 shell：A/B → 命令 → C → 输出 → D →（tail）→ 下一提示符 B 收口
         s.open_managed_block("echo hi", BlockSource::Agent { client_id: "cc".into() }, "e1");
         s.feed(b"\x1b]133;C\x07hi\r\n\x1b]133;D;0\x07");
-        // C 到达时块已在 Output 态，捕获激活；D 收尾
+        // C 到达时块已在 Output 态，捕获激活；D 转 tail（不终结），B 收口
+        assert!(s.capture_tail_busy(), "D 后 tail 应开启");
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ ");
         let out = s.take_capture("e1").expect("capture should complete");
         assert_eq!(strip_ansi(&out).trim(), "hi");
+    }
+
+    #[test]
+    fn capture_tail_collects_late_text() {
+        // Windows 重绘流序：标记先 bursts（C/D/A），文本整帧晚于 D 到达
+        let mut s = screen();
+        s.arm_capture("e1");
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ ");
+        s.register_outgoing(b"echo out\r", BlockSource::Human);
+        s.feed(b"\x1b]133;C\x07");
+        s.feed(b"\x1b]133;D;0\x07\x1b]133;A\x07");
+        assert!(s.capture_tail_busy(), "D 早于文本 → tail 收集");
+        s.feed(b"$ echo out\r\nout\r\n\x1b[?2004h\x1b]133;B\x07");
+        let raw = s.take_capture("e1").expect("capture should complete");
+        assert!(strip_ansi(&raw).contains("out"));
+    }
+
+    #[test]
+    fn capture_quiet_flush_closes_tail() {
+        let mut s = screen();
+        s.arm_capture("e1");
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ \x1b]133;C\x07\x1b]133;D;0\x07");
+        // 无下一提示符（exit）：到龄兜底收口
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        s.flush_stale_capture(std::time::Duration::from_millis(1));
+        assert!(!s.capture_tail_busy());
+        let raw = s.take_capture("e1").expect("capture should complete");
+        assert!(strip_ansi(&raw).trim().is_empty());
     }
 
     #[test]

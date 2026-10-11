@@ -120,12 +120,12 @@ fn structured(r: &rmcp::model::CallToolResult) -> serde_json::Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acceptance_scenario_on_ssh() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     let (m, url, token) = spawn_stack().await;
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;
@@ -253,12 +253,12 @@ async fn acceptance_scenario_on_ssh() {
 /// 旅程 2：断线重连 → Reconfirming（白名单外动作被拒；核实后自动恢复）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn journey2_reconnect_reconfirm() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     let (m, url, token) = spawn_stack().await;
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;
@@ -339,12 +339,12 @@ async fn journey2_reconnect_reconfirm() {
 ///（§6-11 并发 flake 家族；v1.15–v1.19 回归漏带 e2e 守卫跳过未暴露）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn journey3_manual_reconnect_after_hard_down() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     let mut last = String::new();
     for attempt in 0..2 {
         let r = std::panic::AssertUnwindSafe(journey3_scenario());
@@ -465,12 +465,12 @@ async fn journey3_scenario() -> std::result::Result<(), String> {
 /// ③ 半截命令不得被执行（新 shell 不延续现场）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn journey4_reconnect_with_dirty_typing_state() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     struct ContainerStartGuard;
     impl Drop for ContainerStartGuard {
         fn drop(&mut self) {
@@ -554,12 +554,12 @@ async fn journey4_reconnect_with_dirty_typing_state() {
 /// (b) 集成注入 + 2J 清屏后，用户首屏应只有提示符，没有集成代码。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn create_session_screen_is_clean() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     let (m, _url, _token) = spawn_stack().await;
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;
@@ -619,12 +619,12 @@ async fn t44_read_banner(tcp: &mut tokio::net::TcpStream) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn journey5_agent_forward_approval_flow() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     let (m, url, token) = spawn_stack().await;
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;

@@ -23,12 +23,12 @@ fn target() -> transport_ssh::SshTarget {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ssh_shell_blocks_and_fresh() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     // 环境抖动兜底（共享容器偶发空流）：整场景最多重试两次
     let mut last_err = String::new();
     for attempt in 0..3 {
@@ -175,12 +175,12 @@ mod tokio_util_like {
 /// 断言返回 Cancelled 且本地未落完整文件（上传回路对称，同一循环实现）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sftp_download_cancel_midway() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     use session_api::transport::ChannelHandle;
     use session_api::transport::tokio_util_sync::CancellationToken;
 
@@ -237,12 +237,12 @@ async fn sftp_download_cancel_midway() {
 /// 断言过滤 . / ..、目录在前、名称序、size/mtime 非零；不存在路径报错。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sftp_list_lists_dir_entries_sorted() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     use session_api::transport::ChannelHandle;
     use session_api::transport::tokio_util_sync::CancellationToken;
 
@@ -333,12 +333,12 @@ async fn sftp_list_lists_dir_entries_sorted() {
 // 容器 authorized_keys 临时加公钥，Agent 认证建连后跑命令，最后全部清理。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ssh_agent_auth_connects() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     let dir = std::env::temp_dir().join(format!("tinyssh-agent-t21-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -449,12 +449,12 @@ async fn ssh_agent_auth_connects() {
 /// Password 认证回落 kb 循环——首条密码类提示自动应答库内密码，认证成功。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ssh_keyboard_interactive_fallback() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     match kb_scenario().await {
         Ok(()) => {}
         Err(e) => panic!("kb fallback scenario failed: {e}"),
@@ -563,12 +563,12 @@ async fn assert_port_closed(port: u16) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn forward_local_and_dynamic_roundtrip() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     use session_api::transport::ChannelHandle;
 
     let channel = transport_ssh::SshChannel::connect(target(), 80, 24).await.unwrap();
@@ -767,12 +767,12 @@ async fn forward_local_and_dynamic_roundtrip() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn forward_remote_roundtrip() {
-    let _sshd_guard = tinyssh_testbed::sshd_lock();
-    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     use session_api::transport::ChannelHandle;
     use tokio::io::AsyncWriteExt;
 

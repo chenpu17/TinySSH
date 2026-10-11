@@ -1290,6 +1290,12 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                         break;
                     }
                     Err(_timeout) => {
+                        // 静默期兜底：Windows 重绘尾窗等不到 B（如 exit 后无下一提示符）
+                        // → 到龄收口并通知，exec 不必干等到超时
+                        h.screen
+                            .lock()
+                            .await
+                            .flush_stale_capture(std::time::Duration::from_millis(300));
                         if !h.channel.is_alive().await {
                             lost = true;
                             break;
@@ -3296,7 +3302,16 @@ impl SessionManager {
                     return;
                 }
                 let final_name = intent.clone().unwrap_or_else(|| plan.name.clone());
-                let final_path = format!("{}/{}", plan.dir, final_name);
+                // 下载=本地路径平台分隔符（stage_plan 同理：Windows \\?\ 前缀下 '/'
+                // 恒 ERROR_INVALID_NAME）；上传=远端 POSIX 保持 '/'
+                let final_path = if is_upload {
+                    format!("{}/{}", plan.dir, final_name)
+                } else {
+                    std::path::Path::new(&plan.dir)
+                        .join(&final_name)
+                        .to_string_lossy()
+                        .into_owned()
+                };
                 // 复检（DF6.3 存在性+size+mtime）：发布路径一律复检；不一致一律按
                 // 新冲突（L3：显式 overwrite 只针对预检所见那份）
                 match SessionManager::ns_stat(&h2, is_upload, &final_path).await {
@@ -3616,16 +3631,21 @@ impl SessionManager {
                 .map_err(|e| Error::Io(format!("mkdir {}: {e}", dir.display())))?;
             let canon = tokio::fs::canonicalize(dir)
                 .await
-                .map_err(|e| Error::Io(format!("canonicalize {}: {e}", dir.display())))?
+                .map_err(|e| Error::Io(format!("canonicalize {}: {e}", dir.display())))?;
+            // 本地分支以平台分隔符拼（Windows canonicalize 产 \\?\ 前缀，其下 '/'
+            // 不再归一化，字符串拼 '/' 恒 ERROR_INVALID_NAME）；dir/target/temp 全走
+            // PathBuf::join。远端分支（上方）保持 POSIX '/'。
+            let dir_c = canon.to_string_lossy().into_owned();
+            let target = canon.join(&name).to_string_lossy().into_owned();
+            let temp = canon
+                .join(format!(".tinyssh-part-{tid}-{name}"))
                 .to_string_lossy()
                 .into_owned();
-            let dir_c = canon.trim_end_matches('/').to_string();
-            let target = format!("{dir_c}/{name}");
             Ok(StagePlan {
                 dir: dir_c.clone(),
                 name: name.clone(),
                 target: target.clone(),
-                temp: format!("{dir_c}/.tinyssh-part-{tid}-{name}"),
+                temp,
                 lock_key: format!("l:{target}"),
             })
         }
@@ -3674,7 +3694,16 @@ impl SessionManager {
                 Some(e) => format!("{stem}.tinyssh-{n}.{e}"),
                 None => format!("{name}.tinyssh-{n}"),
             };
-            let p = format!("{}/{}", dir.trim_end_matches('/'), cand);
+            // 上传=远端 POSIX 路径字符串拼；下载=本地路径平台分隔符（同 stage_plan：
+            // Windows \\?\ 前缀下 '/' 恒拒收）
+            let p = if is_upload {
+                format!("{}/{}", dir.trim_end_matches('/'), cand)
+            } else {
+                std::path::Path::new(dir)
+                    .join(&cand)
+                    .to_string_lossy()
+                    .into_owned()
+            };
             match SessionManager::ns_stat(h, is_upload, &p).await {
                 Err(Error::SftpPathNotFound { .. }) => return Ok(cand),
                 Ok(_) => continue, // 已占用 → 下一位

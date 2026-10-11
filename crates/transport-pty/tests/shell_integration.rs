@@ -74,7 +74,21 @@ async fn local_shell_produces_blocks_and_cwd() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(screen.snapshot_text().contains("tinyssh_smoke_42"));
+    // ConPTY 流序（2026-10-12 实测）：文本攒进渲染缓冲按帧刷出，可整帧晚于 D 标记
+    // 到达——块闭合 ≠ 输出已落屏。断言前等文本渲染（并行套件 CPU 争抢下必现）。
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        drain(&mut screen, &rx_feed);
+        if screen.snapshot_text().contains("tinyssh_smoke_42") {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "输出未落屏; screen:\n{}",
+            screen.snapshot_text()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
     // cwd 经 OSC 7 报告
     drain(&mut screen, &rx_feed);
