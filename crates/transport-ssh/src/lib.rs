@@ -318,41 +318,54 @@ impl SshChannel {
                     .map_err(|e| Error::AuthFailed)?
             }
             AuthType::Agent => {
-                // 私钥不出 agent：逐个尝试 agent 中已加载的密钥（ssh 标准行为）
-                use russh::keys::agent::client::AgentClient;
-                let mut agent = AgentClient::connect_env()
-                    .await
-                    .map_err(|e| Error::ConnectFailed(format!(
-                        "ssh-agent 不可达（检查 SSH_AUTH_SOCK）: {e}"
-                    )))?;
-                let identities = agent
-                    .request_identities()
-                    .await
-                    .map_err(|e| Error::ConnectFailed(format!("ssh-agent 列出密钥失败: {e}")))?;
-                if identities.is_empty() {
+                // Windows 实验性分支：russh 的 connect_env 走 unix socket（SSH_AUTH_SOCK），
+                // Windows 的命名管道 agent 通道未移植——副作用前明确拒绝，不静默降级。
+                #[cfg(not(unix))]
+                {
                     return Err(Error::ConnectFailed(
-                        "ssh-agent 中没有已加载的密钥（先 ssh-add）".into(),
+                        "ssh-agent 认证在 Windows 上暂不支持（实验性移植未实现）；\
+                         请改用密码或密钥认证"
+                            .into(),
                     ));
                 }
-                let mut ok = false;
-                for ident in &identities {
-                    let key = ident.public_key().into_owned();
-                    match handle
-                        .authenticate_publickey_with(&self.target.username, key, None, &mut agent)
+                #[cfg(unix)]
+                {
+                    // 私钥不出 agent：逐个尝试 agent 中已加载的密钥（ssh 标准行为）
+                    use russh::keys::agent::client::AgentClient;
+                    let mut agent = AgentClient::connect_env()
                         .await
-                    {
-                        Ok(r) if r.success() => {
-                            ok = true;
-                            break;
-                        }
-                        _ => continue,
+                        .map_err(|e| Error::ConnectFailed(format!(
+                            "ssh-agent 不可达（检查 SSH_AUTH_SOCK）: {e}"
+                        )))?;
+                    let identities = agent
+                        .request_identities()
+                        .await
+                        .map_err(|e| Error::ConnectFailed(format!("ssh-agent 列出密钥失败: {e}")))?;
+                    if identities.is_empty() {
+                        return Err(Error::ConnectFailed(
+                            "ssh-agent 中没有已加载的密钥（先 ssh-add）".into(),
+                        ));
                     }
+                    let mut ok = false;
+                    for ident in &identities {
+                        let key = ident.public_key().into_owned();
+                        match handle
+                            .authenticate_publickey_with(&self.target.username, key, None, &mut agent)
+                            .await
+                        {
+                            Ok(r) if r.success() => {
+                                ok = true;
+                                break;
+                            }
+                            _ => continue,
+                        }
+                    }
+                    if !ok {
+                        return Err(Error::AuthFailed);
+                    }
+                    // authenticate_publickey_with 已完成认证；占位 AuthResult 满足类型
+                    russh::client::AuthResult::Success
                 }
-                if !ok {
-                    return Err(Error::AuthFailed);
-                }
-                // authenticate_publickey_with 已完成认证；占位 AuthResult 满足类型
-                russh::client::AuthResult::Success
             }
         };
         if !auth.success() {

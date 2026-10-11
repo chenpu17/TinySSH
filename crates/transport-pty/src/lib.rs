@@ -145,7 +145,11 @@ impl LocalPtyChannel {
             let _ = old.kill();
         }
         let pty_system = NativePtySystem::default();
+        // Windows 实验性分支：SHELL 未设时回退 powershell（unix 路径原样保留）。
+        #[cfg(unix)]
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        #[cfg(windows)]
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".to_string());
         let tmp = tempfile_dir();
         let plan = plan_shell_spawn(&shell, &tmp);
 
@@ -165,6 +169,8 @@ impl LocalPtyChannel {
                 cmd.env("ZDOTDIR", zdotdir);
             }
             ShellSpawn::Plain { .. } => {
+                // `-i` 是 POSIX shell 交互标志，powershell 不接受
+                #[cfg(unix)]
                 cmd.arg("-i");
             }
         }
@@ -259,9 +265,16 @@ impl ChannelHandle for LocalPtyChannel {
         deadline: std::time::Instant,
         cancel: &CancellationToken,
     ) -> Result<FreshOutcome> {
+        // Windows 实验性分支：SHELL 未设时回退 powershell（unix 路径原样保留）。
+        #[cfg(unix)]
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        #[cfg(windows)]
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".to_string());
         let mut command = tokio::process::Command::new(&shell);
+        #[cfg(unix)]
         command.arg("-c").arg(cmd);
+        #[cfg(windows)]
+        command.arg("-NoProfile").arg("-Command").arg(cmd);
         for (k, v) in &opts.env {
             command.env(k, v);
         }

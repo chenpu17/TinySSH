@@ -5,14 +5,29 @@
 pub struct SshdLock(std::fs::File);
 
 pub fn sshd_lock() -> SshdLock {
-    use std::os::unix::io::AsRawFd;
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open("/tmp/tinyssh-sshd.lock")
-        .expect("open lock file");
-    unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-    SshdLock(f)
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open("/tmp/tinyssh-sshd.lock")
+            .expect("open lock file");
+        unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+        SshdLock(f)
+    }
+    // Windows 实验性分支：锁文件放系统临时目录；std 阻塞锁语义与 flock 一致
+    #[cfg(windows)]
+    {
+        let p = std::env::temp_dir().join("tinyssh-sshd.lock");
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(p)
+            .expect("open lock file");
+        f.lock().expect("sshd lock");
+        SshdLock(f)
+    }
 }
 
 /// 持锁后等待共享 sshd 就绪。journey2 会 docker restart 容器，

@@ -371,6 +371,7 @@ struct VaultLock {
 }
 
 impl VaultLock {
+    #[cfg(unix)]
     fn acquire(db_path: &Path) -> Result<Self> {
         let lock_path = lock_path_for(db_path);
         let file = std::fs::OpenOptions::new()
@@ -399,13 +400,48 @@ impl VaultLock {
         }
         Ok(Self { file })
     }
+
+    /// Windows 实验性分支（非本轮签收范围）：std 1.89+ 的跨平台文件锁
+    /// （底层 LockFileEx），「随打开句柄存活、进程崩溃由内核释放」的语义
+    /// 与 unix flock 一致；「被占用」判据按 ErrorKind::WouldBlock。
+    #[cfg(windows)]
+    fn acquire(db_path: &Path) -> Result<Self> {
+        let lock_path = lock_path_for(db_path);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|e| {
+                Error::Storage(format!("无法创建写锁文件 {}：{e}", lock_path.display()))
+            })?;
+        match file.try_lock() {
+            Ok(()) => Ok(Self { file }),
+            Err(std::fs::TryLockError::WouldBlock) => Err(Error::Storage(format!(
+                "另一个 TinySSH 实例正在使用该库（写锁 {} 被占用）：\
+                 灰度期同一 vault 只允许一个实例持有写锁。请关闭另一实例后重试。",
+                lock_path.display()
+            ))),
+            Err(std::fs::TryLockError::Error(e)) => Err(Error::Storage(format!(
+                "无法获取写锁 {}：{e}",
+                lock_path.display()
+            ))),
+        }
+    }
 }
 
 impl Drop for VaultLock {
+    #[cfg(unix)]
     fn drop(&mut self) {
         unsafe {
             libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
         }
+    }
+
+    #[cfg(windows)]
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
     }
 }
 
@@ -629,6 +665,7 @@ pub fn pre_restore_backup_path(db_path: &Path) -> std::path::PathBuf {
 
 
 
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
 use std::sync::Mutex;
