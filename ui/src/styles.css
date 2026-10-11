@@ -1,8 +1,10 @@
 /* ---- 内置可变字体（2026-10-11 主题色板批次，OFL 许可）----
    Windows 系统栈（Segoe UI/雅黑）的「工具味」是观感来源之一；Inter 管全部拉丁
-   正文，CJK 仍落 PingFang/微软雅黑 UI。JetBrains Mono 只用于 UI 等宽文本（命令/
-   路径）——该子集 229 字形**不含制表符**，终端栈保持 Cascadia 系不动（makeTerm），
-   避免 xterm 格子内逐字形回退造成混排错位。 */
+   正文，CJK 落 MiSans VF（uni-range 分片，main.tsx 注册）。JetBrains Mono 子集
+   只用于 UI 等宽文本（命令/路径）——该子集 229 字形**不含制表符**；终端另内置
+   全量 JetBrains Mono（官方发行版静态字重，1182 字形含框线/箭头/powerline，OFL
+   见 jetbrains-mono-full-LICENSE），家族名 "JetBrains Mono Term" 只进 makeTerm
+   终端栈——框线/半格块必须由同一等宽字体绘制，逐字形回退系统字体会混排错位。 */
 @font-face {
   font-family: "Inter";
   src: url("./assets/fonts/inter-var.woff2") format("woff2");
@@ -12,6 +14,16 @@
   font-family: "JetBrains Mono";
   src: url("./assets/fonts/jetbrains-mono-var.woff2") format("woff2");
   font-weight: 100 800; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono Term";
+  src: url("./assets/fonts/jetbrains-mono-full-Regular.woff2") format("woff2");
+  font-weight: 100 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono Term";
+  src: url("./assets/fonts/jetbrains-mono-full-Bold.woff2") format("woff2");
+  font-weight: 600 800; font-style: normal; font-display: swap;
 }
 :root {
   /* UX 现代化改版（2026-10-10，docs/ux 台账 §4 同日登记）：石墨蓝基座 + 半透明描边 +

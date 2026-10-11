@@ -370,6 +370,8 @@ const FONT_DEFAULT = 14;
 const SETTING_FONT = "ui.v2.terminal.font_size";
 const SETTING_FONT_LEGACY = "ui.font_size";
 const SETTING_THEME = "ui.theme";
+// UX 六轮：终端配色跟随主题色板（R27 之上的可选联动）——"1" 开启
+const SETTING_THEME_FOLLOW = "ui.theme.follow";
 // 主题色板（2026-10-11）：应用 chrome 的色板族，与外观三态（深浅）正交、与终端配色解耦
 // （R27 不变：终端预设仍只改终端）。KV 与 SETTING_THEME 同机制。
 const SETTING_PALETTE = "ui.palette";
@@ -1204,8 +1206,11 @@ export default function App() {
       // 对已有实例统一改 options 补齐
       fontSize: fontRef.current, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
       // UX 二轮精修：xterm 默认字体是 courier-new（Windows 上观感老旧）；行高 1.15 给
-      // 行间喘息感；滚轮 100ms 平滑滚动 + Alt 快滚；跨格字形重缩放防框线/符号断裂
-      fontFamily: '"SF Mono", "Cascadia Mono", Menlo, Consolas, "Courier New", monospace',
+      // 行间喘息感；滚轮 100ms 平滑滚动 + Alt 快滚；跨格字形重缩放防框线/符号断裂。
+      // UX 六轮：首位内置全量 JetBrains Mono（"JetBrains Mono Term"，styles.css @font-face，
+      // 1182 字形含框线/箭头/powerline）——全平台同一等宽字形，框线不再逐格回退系统字体；
+      // SF Mono/Cascadia 仅作加载失败兜底
+      fontFamily: '"JetBrains Mono Term", "SF Mono", "Cascadia Mono", Menlo, Consolas, "Courier New", monospace',
       lineHeight: 1.15,
       smoothScrollDuration: 100,
       fastScrollModifier: "alt", fastScrollSensitivity: 5,
@@ -1524,6 +1529,10 @@ export default function App() {
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
   const themeRef = useRef("dark");
+  // UX 六轮：终端配色跟随主题色板（R27 之上的可选联动）——ref 供 changePalette/
+  // changeAppearance/系统深浅监听闭包读取，避开 stale closure
+  const [themeFollow, setThemeFollow] = useState(false);
+  const themeFollowRef = useRef(false);
   // R27：应用外观三态（跟随系统/深色/浅色）——与终端配色解耦（§7.1/§244），
   // 事实源 = ui.v2.workspace blob 的 chrome 域（V5 迁移已为老用户写入映射值）
   const [appearance, setAppearance] = useState<Appearance>("system");
@@ -1576,9 +1585,15 @@ export default function App() {
     setTimeout(() => void fitTerminal(), 150);
   }, [persistSetting, fitTerminal]);
 
-  const changeTheme = useCallback((id: string) => {
+  const changeTheme = useCallback((id: string, fromStartup = false) => {
     const preset = themeById(id);
     if (preset.id !== id) return;
+    // UX 六轮：手动选终端预设 = 解除「跟随主题色板」联动（fromStartup=启动重放，非用户动作）
+    if (!fromStartup && themeFollowRef.current) {
+      themeFollowRef.current = false;
+      setThemeFollow(false);
+      persistSetting(SETTING_THEME_FOLLOW, "0");
+    }
     themeRef.current = id;
     setThemeId(id);
     persistSetting(SETTING_THEME, id);
@@ -1590,6 +1605,40 @@ export default function App() {
     }
   }, [persistSetting]);
 
+  // UX 六轮：色板联动终端的派生——终端底/前景/光标/选区取**当下生效的 chrome token**
+  // （data-theme×data-chrome 计算值，随色板与外观即时变化）；经 scratch 节点解析成
+  // rgb()（token 声明值可能是 color-mix(...)，xterm 的 css 色解析器不认，必须用
+  // resolved 值）；ANSI 16 色沿用深/浅基础预设——预设本底做过 WCAG 校验，不随板重排
+  const deriveTerminalTheme = useCallback((chrome: "dark" | "light") => {
+    const resolveTokenColor = (name: string): string => {
+      const scratch = document.createElement("span");
+      scratch.style.color = `var(${name})`;
+      document.body.appendChild(scratch);
+      const v = getComputedStyle(scratch).color;
+      scratch.remove();
+      return v;
+    };
+    const base = themeById(chrome);
+    return {
+      bg: resolveTokenColor("--bg"),
+      theme: {
+        ...base.theme,
+        background: resolveTokenColor("--bg"),
+        foreground: resolveTokenColor("--text"),
+        cursor: resolveTokenColor("--accent"),
+        cursorAccent: resolveTokenColor("--bg"),
+        selectionBackground: resolveTokenColor("--accent-ring"),
+      },
+    };
+  }, []);
+  const applyDerivedTerminal = useCallback(() => {
+    const { bg, theme } = deriveTerminalTheme(document.documentElement.dataset.chrome === "light" ? "light" : "dark");
+    for (const [, e] of termsRef.current) {
+      e.term.options.theme = { ...theme };
+      e.el.style.background = bg;
+    }
+  }, [deriveTerminalTheme]);
+
   // 外观应用（不落库）：system 按 prefers-color-scheme 现场解析；Tauri 原生窗口
   // system 态 setTheme(null) 归还系统跟随
   const applyAppearance = useCallback((a: Appearance) => {
@@ -1597,7 +1646,9 @@ export default function App() {
     setAppearance(a);
     applyChrome(a === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : a);
     if (inTauri) void getCurrentWindow().setTheme(a === "system" ? null : a).catch(() => {});
-  }, [applyChrome, inTauri]);
+    // UX 六轮：联动开启时，外观变化（含启动 blob 重放）带动终端派生
+    if (themeFollowRef.current) applyDerivedTerminal();
+  }, [applyChrome, inTauri, applyDerivedTerminal]);
 
   // 外观落库（blob chrome 域，走串行化链防与 hostbar 写交错丢更新）
   const changeAppearance = useCallback((a: Appearance) => {
@@ -1617,16 +1668,38 @@ export default function App() {
     applyPalette(id);
     pulseChrome();
     persistSetting(SETTING_PALETTE, id);
-  }, [applyPalette, pulseChrome, persistSetting]);
+    // UX 六轮：联动开启时终端随色板派生（默认关闭=纯 R27 解耦）
+    if (themeFollowRef.current) applyDerivedTerminal();
+  }, [applyPalette, pulseChrome, persistSetting, applyDerivedTerminal]);
+
+  // UX 六轮：联动开关——开启立即按当前 chrome/色板派生终端；关闭回退最近手动预设
+  const changeThemeFollow = useCallback((on: boolean) => {
+    if (on === themeFollowRef.current) return;
+    themeFollowRef.current = on;
+    setThemeFollow(on);
+    persistSetting(SETTING_THEME_FOLLOW, on ? "1" : "0");
+    if (on) applyDerivedTerminal();
+    else {
+      const preset = themeById(themeRef.current);
+      for (const [, e] of termsRef.current) {
+        e.term.options.theme = { ...preset.theme };
+        e.el.style.background = preset.bg;
+      }
+    }
+  }, [persistSetting, applyDerivedTerminal]);
 
   // 跟随系统：系统外观变化实时跟随（仅 system 态挂监听）
   useEffect(() => {
     if (appearance !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyChrome(mq.matches ? "dark" : "light");
+    const onChange = () => {
+      applyChrome(mq.matches ? "dark" : "light");
+      // UX 六轮：联动开启时系统深浅翻转也带动终端
+      if (themeFollowRef.current) applyDerivedTerminal();
+    };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, [appearance, applyChrome]);
+  }, [appearance, applyChrome, applyDerivedTerminal]);
 
   // UX 五轮：整页缩放——Ctrl/⌘±0 键盘经 R13 keymap→dispatch→zoom.ts，滚轮在此注册。
   // useLayoutEffect：上次档位的恢复必须发生在首帧 paint 前（useEffect 会先画一帧 100%
@@ -1642,7 +1715,16 @@ export default function App() {
   useEffect(() => {
     const apply = (f: number | null, t: string | null) => {
       if (f !== null && f >= FONT_MIN && f <= FONT_MAX) changeFontSize(f);
-      if (t) changeTheme(t);
+      // fromStartup：启动重放预设不清除联动标记（联动 KV 稍后到达，重放后覆盖派生）
+      if (t) changeTheme(t, true);
+    };
+    // UX 六轮：联动标记载入（合法="1"）——最后到达、最后派生，覆盖启动重放的预设
+    const loadThemeFollow = (v: string | null) => {
+      if (v === "1") {
+        themeFollowRef.current = true;
+        setThemeFollow(true);
+        applyDerivedTerminal();
+      }
     };
     // R20 登记「chrome blob 消费归 R27」：外观事实源 = blob chrome 域（demo 同契约）
     const applyChromeBlob = (ws: { chrome?: string } | null) => {
@@ -1661,6 +1743,7 @@ export default function App() {
       const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
       apply(Number.isFinite(raw) && raw > 0 ? raw : null, localStorage.getItem(SETTING_THEME));
       loadPalette(localStorage.getItem(SETTING_PALETTE));
+      loadThemeFollow(localStorage.getItem(SETTING_THEME_FOLLOW));
       invoke("get_workspace").then(applyChromeBlob).catch(() => {});
       return;
     }
@@ -1671,8 +1754,9 @@ export default function App() {
       }))
       .catch(() => {});
     invoke("get_setting", { key: SETTING_PALETTE }).then(loadPalette).catch(() => {});
+    invoke("get_setting", { key: SETTING_THEME_FOLLOW }).then(loadThemeFollow).catch(() => {});
     invoke("get_workspace").then(applyChromeBlob).catch(() => {});
-  }, [inTauri, changeFontSize, changeTheme, applyAppearance, applyPalette]);
+  }, [inTauri, changeFontSize, changeTheme, applyAppearance, applyPalette, applyDerivedTerminal]);
 
   // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
   // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
@@ -4467,7 +4551,18 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>外观三态与主题色板只改应用外观，终端配色独立；「跟随系统」随系统深浅实时切换。</div>
+                {/* UX 六轮：R27 之上的可选联动——终端配色跟随主题色板（chrome token 派生） */}
+                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 10 }}>
+                  <input type="checkbox" data-testid="theme-follow" checked={themeFollow}
+                    onChange={(e) => changeThemeFollow(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                    终端配色跟随主题色板
+                    <span className="dim" style={{ display: "block" }}>
+                      开启后终端底色/前景/光标随色板与外观派生（ANSI 16 色沿用基础预设）；手动选终端预设即解除联动。
+                    </span>
+                  </span>
+                </label>
+                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>默认相互独立（R27 解耦）；「跟随系统」随系统深浅实时切换。</div>
                 <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）</div>
                 </>)}
 

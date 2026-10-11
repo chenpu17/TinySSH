@@ -17,6 +17,13 @@ const BASE = process.env.TINYSSH_UI_BASE || "http://localhost:5183";
   await page.waitForTimeout(800);
   const r = await page.evaluate(async () => {
     await document.fonts.ready;
+    // fonts.check 不触发懒加载——终端字族只在会话渲染时被使用，先显式 load 再断言
+    const jbmTerm = await document.fonts.load('13px "JetBrains Mono Term"', "─│┌┘→")
+      .then((faces) => faces.length > 0)
+      .catch(() => false);
+    const jbmTermBold = await document.fonts.load('bold 13px "JetBrains Mono Term"', "─│┌┘")
+      .then((faces) => faces.length > 0)
+      .catch(() => false);
     const c = document.createElement("canvas").getContext("2d");
     const w = (font) => { c.font = font; return Math.round(c.measureText("中文界面 TinySSH").width * 100) / 100; };
     return {
@@ -24,13 +31,15 @@ const BASE = process.env.TINYSSH_UI_BASE || "http://localhost:5183";
       misans: document.fonts.check('13px "MiSans VF"', "中文"),
       misansLoaded: [...document.fonts].filter((f) => f.family.replace(/"/g, "") === "MiSans VF" && f.status === "loaded").length,
       jbm: document.fonts.check('13px "JetBrains Mono"'),
+      jbmTerm,
+      jbmTermBold,
       wMisans: w('20px "MiSans VF"'),
       wYahei: w('20px "Microsoft YaHei"'),
       wSans: w('20px sans-serif'),
       bodyStack: getComputedStyle(document.body).fontFamily,
     };
   });
-  const fontOk = r.inter && r.misans && r.jbm;
+  const fontOk = r.inter && r.misans && r.jbm && r.jbmTerm && r.jbmTermBold;
   const widthOk = r.wMisans !== r.wYahei && r.wMisans !== r.wSans;
   console.log(JSON.stringify(r, null, 2));
   console.log(`fonts ${fontOk ? "OK" : "FAIL"} · MiSans 宽度 ${widthOk ? "≠ 系统栈（生效：" + r.wMisans + " vs 雅黑 " + r.wYahei + " / sans " + r.wSans + "）" : "== 系统栈（未生效！）"}`);

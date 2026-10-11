@@ -14,8 +14,12 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{broadcast, Mutex};
 
+/// 共享写端：读循环（DSR 兜底应答）与 write_bytes（用户键入）同用一个 writer。
+/// std Mutex——两处都是短暂持锁、无 await 跨越。
+type PtyWriter = Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>>;
+
 pub struct LocalPtyChannel {
-    writer: Mutex<Option<Box<dyn std::io::Write + Send>>>,
+    writer: Mutex<Option<PtyWriter>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
     output_tx: broadcast::Sender<Vec<u8>>,
@@ -197,8 +201,9 @@ impl LocalPtyChannel {
             .master
             .take_writer()
             .map_err(|e| Error::Io(format!("take writer: {e}")))?;
+        let writer: PtyWriter = Arc::new(std::sync::Mutex::new(writer));
 
-        *self.writer.lock().await = Some(writer);
+        *self.writer.lock().await = Some(writer.clone());
         *self.master.lock().await = Some(pair.master);
         *self.child.lock().await = Some(child);
         *self.tmp.lock().await = Some(tmp);
@@ -206,7 +211,13 @@ impl LocalPtyChannel {
             .store(!matches!(plan, ShellSpawn::Plain { .. }), Ordering::SeqCst);
         self.alive.store(true, Ordering::SeqCst);
 
-        // 读循环：阻塞读 → 同一 broadcast
+        // 读循环：阻塞读 → 同一 broadcast。
+        // ConPTY 启动握手（Windows 实测，2026-10-11）：conhost 向客户端发 DSR 光标查询
+        // （\x1b[6n）并**阻塞等应答才放行首屏**——不应答则 PowerShell/bash 提示符永久
+        // 不来（复现：39s 零输出直至进程被杀；应答 \e[1;1R 后 10ms 内全量输出）。
+        // xterm 的 DSR 应答依赖 UI attach 时序（6n 常在 xterm 存在前到达），必须由
+        // 传输层兜底：读到 6n 立即以 1;1 应答 CPR。6n 照常转发 UI（xterm 后续应答
+        // 双份无害，Windows Terminal 同款做法）。
         let tx = self.output_tx.clone();
         let alive_r = self.alive.clone();
         tokio::task::spawn_blocking(move || {
@@ -216,6 +227,12 @@ impl LocalPtyChannel {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
+                        if buf[..n].windows(4).any(|w| w == b"\x1b[6n") {
+                            if let Ok(mut w) = writer.lock() {
+                                let _ = w.write_all(b"\x1b[1;1R");
+                                let _ = w.flush();
+                            }
+                        }
                         if tx.send(buf[..n].to_vec()).is_err() {
                             break;
                         }
@@ -229,8 +246,14 @@ impl LocalPtyChannel {
     }
 
     async fn write_bytes(&self, data: &[u8]) -> Result<()> {
-        let mut guard = self.writer.lock().await;
-        let w = guard.as_mut().ok_or(Error::SessionClosed)?;
+        let w = self
+            .writer
+            .lock()
+            .await
+            .as_ref()
+            .ok_or(Error::SessionClosed)?
+            .clone();
+        let mut w = w.lock().unwrap();
         w.write_all(data)
             .and_then(|_| w.flush())
             .map_err(|e| Error::Io(format!("pty write: {e}")))
@@ -274,7 +297,17 @@ impl ChannelHandle for LocalPtyChannel {
         #[cfg(unix)]
         command.arg("-c").arg(cmd);
         #[cfg(windows)]
-        command.arg("-NoProfile").arg("-Command").arg(cmd);
+        // Windows 下 SHELL 可能被启动环境改写（Git Bash 里 SHELL=/usr/bin/bash）——
+        // 按选定 shell 族给参：powershell 系 -NoProfile -Command，bash 系 -c。
+        // 曾犯的错：shell 选择 SHELL 感知、参数写死 powershell → bash 报 "-N: invalid option"
+        if {
+            let s = shell.to_ascii_lowercase();
+            s.contains("powershell") || s.contains("pwsh")
+        } {
+            command.arg("-NoProfile").arg("-Command").arg(cmd);
+        } else {
+            command.arg("-c").arg(cmd);
+        }
         for (k, v) in &opts.env {
             command.env(k, v);
         }

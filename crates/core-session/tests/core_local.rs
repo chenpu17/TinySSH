@@ -427,8 +427,19 @@ async fn local_session_manual_reconnect() {
         .create_session(&human(), CreateSessionReq { host_id: "local".into() })
         .await
         .unwrap();
+    // Windows 移植：powershell 无 OSC133 注入（ShellSpawn::Plain，Shell 模式设计性不可用）
+    // → 探针走 Fresh（独立通道，可靠退出码）；unix 保持默认 Shell 模式原语义。
+    // 此测试曾因 ConPTY DSR 握手挂死根本到不了这里（2026-10-11 修复）。
+    let probe_opts = || {
+        if cfg!(windows) {
+            ExecOpts { mode: ExecMode::Fresh, ..Default::default() }
+        } else {
+            ExecOpts::default()
+        }
+    };
+    let probe = if cfg!(windows) { "echo before_death" } else { "cd /tmp && echo before_death" };
     let r = m
-        .exec(&human(), sid.clone(), "cd /tmp && echo before_death", ExecOpts::default())
+        .exec(&human(), sid.clone(), probe, probe_opts())
         .await
         .unwrap();
     assert!(r.stdout.contains("before_death"));
@@ -463,18 +474,26 @@ async fn local_session_manual_reconnect() {
 
     // 白名单核实（pwd）即执行成功，并触发自动退出重确认 → Connected
     let r = m
-        .exec(&human(), sid.clone(), "pwd", ExecOpts::default())
+        .exec(&human(), sid.clone(), "pwd", probe_opts())
         .await
         .unwrap();
-    assert!(r.stdout.trim().starts_with("/"), "重连后应在新 shell（现场不延续）: {}", r.stdout);
+    // 现场不延续：unix 断言 POSIX 前缀；windows powershell 断言盘符/根前缀（家目录）
+    let cwd = r.stdout.trim();
+    let fresh_ok = if cfg!(windows) {
+        cwd.starts_with("C:") || cwd.starts_with('\\') || cwd.starts_with('/')
+    } else {
+        cwd.starts_with('/')
+    };
+    assert!(fresh_ok, "重连后应在新 shell（现场不延续）: {}", r.stdout);
     assert!(
         wait_state(&m, &sid, SessionState::Connected, 10).await,
         "核实后应自动退出 Reconfirming"
     );
 
     // 恢复后 shell 现场延续可用
+    let probe2 = if cfg!(windows) { "echo revived" } else { "cd /tmp && echo revived" };
     let r = m
-        .exec(&human(), sid.clone(), "cd /tmp && echo revived", ExecOpts::default())
+        .exec(&human(), sid.clone(), probe2, probe_opts())
         .await
         .unwrap();
     assert!(r.stdout.contains("revived"));
