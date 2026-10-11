@@ -50,7 +50,8 @@ module.exports = {
 
     // 状态条
     const sb = await page.evaluate(() => document.querySelector(".statusbar").innerText.replace(/\s+/g, " ").trim());
-    ck.check("状态条显示本地会话与编码", sb.includes("本地") && sb.includes("UTF-8"), `实得「${sb}」`);
+    // UX 五轮：默认编码 UTF-8 不再上状态条（GBK 例外保留——乱码排查信号）
+    ck.check("状态条显示本地会话且默认编码不上屏", sb.includes("本地") && !sb.includes("UTF-8"), `实得「${sb}」`);
     ck.check("状态条有转发/传输计数入口", sb.includes("转发") && sb.includes("传输"), `实得「${sb}」`);
 
     // 工具菜单四项

@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
 import { resolveAction } from "./actions";
 import type { AppAction } from "./actions";
+import {
+  registerZoomHotkeys, onZoomChange, currentZoom, setZoomScale,
+  zoomIn, zoomOut, zoomReset, ZOOM_LEVELS,
+} from "./zoom";
 import { createOutputFeed } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import type {
@@ -366,6 +370,9 @@ const FONT_DEFAULT = 14;
 const SETTING_FONT = "ui.v2.terminal.font_size";
 const SETTING_FONT_LEGACY = "ui.font_size";
 const SETTING_THEME = "ui.theme";
+// 主题色板（2026-10-11）：应用 chrome 的色板族，与外观三态（深浅）正交、与终端配色解耦
+// （R27 不变：终端预设仍只改终端）。KV 与 SETTING_THEME 同机制。
+const SETTING_PALETTE = "ui.palette";
 
 type Appearance = "system" | "dark" | "light";
 const APPEARANCES: { id: Appearance; label: string }[] = [
@@ -374,20 +381,31 @@ const APPEARANCES: { id: Appearance; label: string }[] = [
   { id: "light", label: "浅色" },
 ];
 
+// 主题色板族：dot = [深色底, 深色 accent] 用于设置页色板芯片预览（亮态预览取同 accent）
+type ChromePalette = { id: string; label: string; dot: [string, string] };
+const PALETTES: ChromePalette[] = [
+  { id: "graphite", label: "石墨", dot: ["#0a0e14", "#3ec3d3"] },
+  { id: "ember", label: "暖烬", dot: ["#17171a", "#e07856"] },
+  { id: "ocean", label: "深海", dot: ["#0d1117", "#4c8dff"] },
+  { id: "violet", label: "午夜", dot: ["#14111c", "#a78bfa"] },
+  { id: "noir", label: "鎏金", dot: ["#141210", "#c8a96e"] },
+];
+const PALETTE_DEFAULT = "graphite";
+
 type ThemePreset = {
   id: string; label: string;
   bg: string; fg: string; theme: Record<string, string>;
 };
 const THEMES: ThemePreset[] = [
   {
-    id: "dark", label: "深色（默认）", bg: "#10141a", fg: "#d7dee8",
+    id: "dark", label: "深色（默认）", bg: "#0f141c", fg: "#d2dae6",
     theme: {
-      foreground: "#d7dee8", background: "#10141a",
-      cursor: "#d7dee8", cursorAccent: "#10141a", selectionBackground: "#4a5a70",
-      black: "#2a3442", red: "#d07a7a", green: "#7fbf8f", yellow: "#d0b07a",
-      blue: "#6da3d8", magenta: "#c08ac0", cyan: "#5fb3b5", white: "#c8d0da",
-      brightBlack: "#8a97a8", brightRed: "#e69595", brightGreen: "#9dd4aa", brightYellow: "#e3c795",
-      brightBlue: "#8fbde8", brightMagenta: "#d8a8d8", brightCyan: "#8ecfd1", brightWhite: "#f0f4f8",
+      foreground: "#d2dae6", background: "#0f141c",
+      cursor: "#3ec3d3", cursorAccent: "#0f141c", selectionBackground: "#2a3f52",
+      black: "#1c2532", red: "#e57773", green: "#72c795", yellow: "#e0af68",
+      blue: "#82a7f0", magenta: "#bb9af7", cyan: "#3ec3d3", white: "#c8d3e0",
+      brightBlack: "#5a6b80", brightRed: "#f0938f", brightGreen: "#96dcb0", brightYellow: "#ecc489",
+      brightBlue: "#a3c0f7", brightMagenta: "#d3b5fa", brightCyan: "#7ddce8", brightWhite: "#eef2f8",
     },
   },
   {
@@ -1184,7 +1202,14 @@ export default function App() {
     const term = new Terminal({
       // 字号/主题（路线图⑥）走 refs：makeTerm 早于偏好载入，载入后由 changeFontSize/changeTheme
       // 对已有实例统一改 options 补齐
-      fontSize: fontRef.current, cursorBlink: true, scrollback: 5000, allowProposedApi: true,
+      fontSize: fontRef.current, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
+      // UX 二轮精修：xterm 默认字体是 courier-new（Windows 上观感老旧）；行高 1.15 给
+      // 行间喘息感；滚轮 100ms 平滑滚动 + Alt 快滚；跨格字形重缩放防框线/符号断裂
+      fontFamily: '"SF Mono", "Cascadia Mono", Menlo, Consolas, "Courier New", monospace',
+      lineHeight: 1.15,
+      smoothScrollDuration: 100,
+      fastScrollModifier: "alt", fastScrollSensitivity: 5,
+      rescaleOverlappingGlyphs: true,
       theme: { ...themeById(themeRef.current).theme },
       // OSC 8 超链接激活（T16）：WebLinksAddon 只管裸 URL 正则检测，
       // OSC 8 由核心 linkHandler 路由（不设则核心弹 confirm 对话框）
@@ -1196,6 +1221,8 @@ export default function App() {
       },
     });
     term.open(el);
+    // 会话层底色跟随终端预设：padding 留白框与画布同色，不渗 chrome 面板色
+    el.style.background = themeById(themeRef.current).bg;
     // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
     const searchAddon = new SearchAddon();
     searchAddon.onDidChangeResults((r) => {
@@ -1421,20 +1448,34 @@ export default function App() {
   // 终端尺寸自适应 + PTY 对齐（backend resize）。按「可见 pane」逐个校准：
   // 单 pane = 活动会话全幅；分屏 = 左右各按自身元素盒子（半幅）计算——
   // 每个 pane 的 xterm 尺寸与其 PTY 一一对应。
+  // 量取终端目标几何。xterm 5.5 无公开 dimensions 属性（fork API，恒 undefined →
+  // fit 静默失效、xterm 恒停在构造默认 80×24，13px 时恰好与正确值重合而长期未暴露）——
+  // cell 尺寸改经 _core 私有路径取（与官方 addon-fit 实现同源）。渲染器首帧未就绪返回
+  // null，由调用方决定重试。padEl：被量盒子的内边距来源（.term-session 有留白 padding；
+  // ensureSessionTerm 量的是 #term，须改传会话层元素扣掉同一组 padding）
+  const fitDimsOf = useCallback((term: Terminal, el: HTMLElement, padEl?: HTMLElement): { cols: number; rows: number } | null => {
+    const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number; height?: number } } } } } })._core;
+    const dims = core?._renderService?.dimensions;
+    const cw = dims?.css?.cell?.width;
+    const ch = dims?.css?.cell?.height;
+    if (!cw || !ch) return null;
+    // clientWidth 含 padding：不扣会把 PTY 算宽 2×padding，attach 后二次校准引重排
+    const ps = getComputedStyle(padEl ?? el);
+    const padX = (parseFloat(ps.paddingLeft) || 0) + (parseFloat(ps.paddingRight) || 0);
+    const padY = (parseFloat(ps.paddingTop) || 0) + (parseFloat(ps.paddingBottom) || 0);
+    return {
+      cols: Math.max(20, Math.min(400, Math.floor((el.clientWidth - padX) / cw))),
+      rows: Math.max(6, Math.min(200, Math.floor((el.clientHeight - padY) / ch))),
+    };
+  }, []);
   const fitOne = useCallback(async (target: string) => {
     const entry = termsRef.current.get(target);
     if (!entry) return;
     const { term, el } = entry;
     // 隐藏中的会话（display:none）clientWidth 为 0：不按 0 尺寸校准
     if (el.clientWidth < 60 || el.clientHeight < 60) return;
-    // xterm 5.5 无公开 dimensions 属性（fork API，恒 undefined → fit 静默失效、
-    // xterm 恒停在构造默认 80×24，13px 时恰好与正确值重合而长期未暴露）——
-    // cell 尺寸改经 _core 私有路径取（与官方 addon-fit 实现同源）
-    const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number; height?: number } } } } } })._core;
-    const dims = core?._renderService?.dimensions;
-    const cw = dims?.css?.cell?.width;
-    const ch = dims?.css?.cell?.height;
-    if (!cw || !ch) {
+    const dims = fitDimsOf(term, el);
+    if (!dims) {
       // 渲染器首帧未就绪：9px 兜底会把列数算错（PTY 宽度随之错位，
       // docker ps 等按宽度排版的输出会折行错乱）——等一帧重测，最多 5 次
       const t = term as unknown as { __fitRetries?: number };
@@ -1442,13 +1483,11 @@ export default function App() {
       if (t.__fitRetries <= 5) setTimeout(() => void fitOne(target), 120);
       return;
     }
-    const cols = Math.max(20, Math.min(400, Math.floor(el.clientWidth / cw)));
-    const rows = Math.max(6, Math.min(200, Math.floor(el.clientHeight / ch)));
-    if (term.cols !== cols || term.rows !== rows) {
-      term.resize(cols, rows);
-      invoke("resize", { sid: target, cols, rows }).catch(() => {});
+    if (term.cols !== dims.cols || term.rows !== dims.rows) {
+      term.resize(dims.cols, dims.rows);
+      invoke("resize", { sid: target, cols: dims.cols, rows: dims.rows }).catch(() => {});
     }
-  }, []);
+  }, [fitDimsOf]);
   const fitTerminal = useCallback(() => {
     const sp = splitRef.current;
     const targets = sp ? [sp.main, sp.second] : sidRef.current ? [sidRef.current] : [];
@@ -1489,6 +1528,11 @@ export default function App() {
   // 事实源 = ui.v2.workspace blob 的 chrome 域（V5 迁移已为老用户写入映射值）
   const [appearance, setAppearance] = useState<Appearance>("system");
   const appearanceRef = useRef<Appearance>("system");
+  // UX 五轮：整页缩放档位（事实源在 zoom.ts，这里只做设置下拉回显）
+  const [zoomLevel, setZoomLevel] = useState(currentZoom);
+  // 主题色板（data-theme，默认石墨——无 CSS 块命中即继承 :root）
+  const [palette, setPalette] = useState(PALETTE_DEFAULT);
+  const paletteRef = useRef(PALETTE_DEFAULT);
   // C8 工作区偏好串行化链（hostbar/外观共用；声明提前供 changeAppearance 使用）
   const wsWriteChain = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -1500,6 +1544,18 @@ export default function App() {
       void getCurrentWindow().setTheme(resolved === "dark" ? "dark" : "light").catch(() => {});
     }
   }, [inTauri]);
+
+  const applyPalette = useCallback((id: string) => {
+    document.documentElement.dataset.theme = id;
+  }, []);
+
+  // 主题切换脉冲（tiny-worker 同工艺）：仅切换瞬间挂 .theme-switching 开全量色彩
+  // 过渡（styles.css），320ms 摘除——常驻全局 transition 会拖累一切交互
+  const pulseChrome = useCallback(() => {
+    const el = document.documentElement;
+    el.classList.add("theme-switching");
+    window.setTimeout(() => el.classList.remove("theme-switching"), 320);
+  }, []);
 
   const persistSetting = useCallback((key: string, value: string) => {
     if (inTauri) void invoke("set_setting", { key, value }).catch(() => {});
@@ -1527,7 +1583,11 @@ export default function App() {
     setThemeId(id);
     persistSetting(SETTING_THEME, id);
     // R27 解耦：终端配色只改终端实例色板，不再触碰应用 chrome（data-chrome/setTheme）
-    for (const [, e] of termsRef.current) e.term.options.theme = { ...preset.theme };
+    // 会话层底色同步（padding 留白框），与画布同预设色
+    for (const [, e] of termsRef.current) {
+      e.term.options.theme = { ...preset.theme };
+      e.el.style.background = preset.bg;
+    }
   }, [persistSetting]);
 
   // 外观应用（不落库）：system 按 prefers-color-scheme 现场解析；Tauri 原生窗口
@@ -1542,11 +1602,22 @@ export default function App() {
   // 外观落库（blob chrome 域，走串行化链防与 hostbar 写交错丢更新）
   const changeAppearance = useCallback((a: Appearance) => {
     applyAppearance(a);
+    pulseChrome();
     wsWriteChain.current = wsWriteChain.current
       .then(() => invoke("get_workspace"))
       .then((ws) => invoke("set_workspace", { ws: { ...ws, chrome: a } }))
       .catch(() => {});
-  }, [applyAppearance]);
+  }, [applyAppearance, pulseChrome]);
+
+  // 主题色板切换：即时预览 + KV 落库（demo=localStorage）；只改应用 chrome，不触碰终端
+  const changePalette = useCallback((id: string) => {
+    if (!PALETTES.some((p) => p.id === id) || id === paletteRef.current) return;
+    paletteRef.current = id;
+    setPalette(id);
+    applyPalette(id);
+    pulseChrome();
+    persistSetting(SETTING_PALETTE, id);
+  }, [applyPalette, pulseChrome, persistSetting]);
 
   // 跟随系统：系统外观变化实时跟随（仅 system 态挂监听）
   useEffect(() => {
@@ -1556,6 +1627,16 @@ export default function App() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [appearance, applyChrome]);
+
+  // UX 五轮：整页缩放——Ctrl/⌘±0 键盘经 R13 keymap→dispatch→zoom.ts，滚轮在此注册。
+  // useLayoutEffect：上次档位的恢复必须发生在首帧 paint 前（useEffect 会先画一帧 100%
+  // 再跳变）；先订阅再注册，注册内同步恢复才能把档位刷进设置回显；注销必须接——
+  // StrictMode dev 双跑，漏接 = 滚轮监听双注册（一档跳 0.2）
+  useLayoutEffect(() => {
+    const un = onZoomChange(setZoomLevel);
+    const unreg = registerZoomHotkeys({ isTauri: inTauri, notify: pushToast });
+    return () => { un(); unreg(); };
+  }, [inTauri, pushToast]);
 
   // 启动载入偏好（Tauri=vault，浏览器=localStorage）；早于载入创建的实例一并补齐
   useEffect(() => {
@@ -1568,9 +1649,18 @@ export default function App() {
       const c = ws?.chrome;
       if (c === "system" || c === "dark" || c === "light") applyAppearance(c);
     };
+    // 主题色板启动载入（合法值才应用；缺省石墨，不写 data-theme 属性也成立）
+    const loadPalette = (v: string | null) => {
+      if (v && PALETTES.some((p) => p.id === v) && v !== paletteRef.current) {
+        paletteRef.current = v;
+        setPalette(v);
+        applyPalette(v);
+      }
+    };
     if (!inTauri) {
       const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
       apply(Number.isFinite(raw) && raw > 0 ? raw : null, localStorage.getItem(SETTING_THEME));
+      loadPalette(localStorage.getItem(SETTING_PALETTE));
       invoke("get_workspace").then(applyChromeBlob).catch(() => {});
       return;
     }
@@ -1580,8 +1670,9 @@ export default function App() {
         apply(f === null ? null : Number(f), t);
       }))
       .catch(() => {});
+    invoke("get_setting", { key: SETTING_PALETTE }).then(loadPalette).catch(() => {});
     invoke("get_workspace").then(applyChromeBlob).catch(() => {});
-  }, [inTauri, changeFontSize, changeTheme, applyAppearance]);
+  }, [inTauri, changeFontSize, changeTheme, applyAppearance, applyPalette]);
 
   // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
   // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
@@ -1761,9 +1852,9 @@ export default function App() {
         setSearchOpen(true);
         setTimeout(() => searchInputRef.current?.focus(), 0);
         return true;
-      case "font-up": changeFontSize(fontRef.current + 1); return true;
-      case "font-down": changeFontSize(fontRef.current - 1); return true;
-      case "font-reset": changeFontSize(FONT_DEFAULT); return true;
+      case "zoom-in": zoomIn(); return true;
+      case "zoom-out": zoomOut(); return true;
+      case "zoom-reset": zoomReset(); return true;
       case "hostbar": toggleHostbar(!hostbarOpenRef.current); return true;
       case "settings":
         // 菜单加速器不经 resolveAction 的模态门（NSMenu 在 WebView 之前消费），
@@ -1902,6 +1993,32 @@ export default function App() {
     const made = makeTerm(sessionSid);
     if (!made) return;
     termsRef.current.set(sessionSid, made);
+    // 首渲染前把几何对齐到位（term + 核心 PTY 一次到位）：检查点直接按目标尺寸
+    // 渲染，attach 后不再发生「已渲染内容」的重排——消灭登录横幅被 SIGWINCH 提示符
+    // 重绘 + xterm/alacritty 双侧重排打碎的窗口（Windows 上每次登录复现的横幅错位；
+    // R11「跨 resize 重放漂移」的可视形态：create_session 不带尺寸，PTY 以默认
+    // 120×32 启动，attach 时的 resize 撞上仍在流式输出的 MOTD）。渲染器未就绪则
+    // 短暂轮询；超时放弃走旧路径（订阅后由 fitTerminal 兜底，行为同旧版）。
+      // 量常驻容器 #term 而非 .term-session：后者要等 focusSession 加 .active 才可见
+      // （display:none 时 clientWidth=0），而激活后它铺满同一盒子，尺寸相同。
+      // #term 自身无 padding，留白在 .term-session 上——padding 按会话层元素扣（padEl）
+      const fitBox = termRef.current;
+      for (let i = 0; i < 8; i++) {
+        // 容器尚未布局（display:none / 首帧）：不按 0 尺寸对齐（会被钳到 20×6），
+        // 直接走旧路径——订阅后由 fitTerminal 兜底
+        if (!fitBox || fitBox.clientWidth < 60 || fitBox.clientHeight < 60) break;
+        const dims = fitDimsOf(made.term, fitBox, made.el);
+      if (dims) {
+        if (made.term.cols !== dims.cols || made.term.rows !== dims.rows) {
+          made.term.resize(dims.cols, dims.rows);
+          // 等核心 resize 完成再订阅：之后检查点即目标几何；SIGWINCH 触发的提示符
+          // 重绘字节要么已进检查点网格、要么按序落在网格光标处，不再有重排错位
+          await invoke("resize", { sid: sessionSid, cols: dims.cols, rows: dims.rows }).catch(() => {});
+        }
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 90));
+    }
     // 输出订阅（每会话仅一次，C10）：subscribe 返回 {subscription_id, checkpoint,
     // start_seq}；检查点应用前的早到帧由 feed 暂存，应用后按序消费 seq > start_seq。
     const term = made.term;
@@ -1917,7 +2034,7 @@ export default function App() {
     // 光标视角带偏——后续远端输出全部接在提示语之后渲染。
     setAttachHint(true);
     window.setTimeout(() => setAttachHint(false), 6000);
-  }, [makeTerm]);
+  }, [makeTerm, fitDimsOf]);
 
   const attachSession = useCallback(async (newSid: string) => {
     // rev-r21 M1：attach 亦属用户导航（标签点击/完成落定共用入口）——推进焦点代际。
@@ -3273,8 +3390,10 @@ export default function App() {
   })();
 
   const currentHost = current ? hosts.find((h) => h.id === current.host_id) : undefined;
+  // UX 五轮：默认编码 UTF-8 不再上状态条（没有 ssh client 关心默认编码；GBK 例外
+  // 保留——乱码排查信号，编码自适应的入口仍在连接详情/主机编辑）
   const sbLeft = current
-    ? `${currentHost?.address === "local" ? "本地" : "SSH"} · ${currentHost?.charset === "gbk" ? "GBK" : "UTF-8"}`
+    ? `${currentHost?.address === "local" ? "本地" : "SSH"}${currentHost?.charset === "gbk" ? " · GBK" : ""}`
     : "未连接";
   // R35 状态条计数=进行中任务（排队/传输/提交/取消中/待决——§194 后台事件只更新计数）
   const runningTransfers = transfers.filter((t) => t.status === "running" || t.status === "queued" || t.status === "committing" || t.status === "cancelling" || t.status === "awaiting").length;
@@ -3897,7 +4016,7 @@ export default function App() {
               onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}
             ><IconInbox size={14} />协作</button>
             <button
-              className={"st-file" + (rightPanel === "files" ? " ts-open" : "")}
+              className={"ghost st-file" + (rightPanel === "files" ? " ts-open" : "")}
               aria-pressed={rightPanel === "files"}
               title="文件：远程目录浏览与传输"
               onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}
@@ -4289,9 +4408,9 @@ export default function App() {
                 {settingsCat === "appearance" && (<>
                 <div className="ts-label">字号</div>
                 <div className="row">
-                  <button className="ghost" title="减小（⌘−）" aria-label="减小字号" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}><IconMinus size={13} /></button>
+                  <button className="ghost" title="减小字号" aria-label="减小字号" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}><IconMinus size={13} /></button>
                   <span className="ts-val mono">{fontSize}</span>
-                  <button className="ghost" title="增大（⌘=）" aria-label="增大字号" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}><IconPlus size={13} /></button>
+                  <button className="ghost" title="增大字号" aria-label="增大字号" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}><IconPlus size={13} /></button>
                   <button className="ghost" disabled={fontSize === FONT_DEFAULT} onClick={() => changeFontSize(FONT_DEFAULT)}>重置</button>
                 </div>
                 {/* R27（§7.1/§244）：应用外观与终端配色解耦——外观三态独立持久化
@@ -4302,6 +4421,36 @@ export default function App() {
                     <button key={a.id} className={"ghost" + (appearance === a.id ? " ts-active" : "")}
                       aria-pressed={appearance === a.id}
                       onClick={() => changeAppearance(a.id)}>{a.label}</button>
+                  ))}
+                </div>
+                {/* 主题色板（2026-10-11）：石墨=默认，另四族随 accent 换气质；深浅仍由上方三态管 */}
+                {/* UX 五轮：整页缩放（参考 tiny-worker）——webview 缩放，浏览器 demo
+                    不渲染（浏览器自带缩放；zoom.ts 亦不注册键盘/滚轮路径） */}
+                {inTauri && (<>
+                <div className="ts-label" style={{ marginTop: 10 }}>界面缩放</div>
+                <div className="row">
+                  <select value={zoomLevel} aria-label="界面缩放"
+                    onChange={(e) => setZoomScale(Number(e.target.value))}>
+                    {[...new Set([...ZOOM_LEVELS, zoomLevel])].sort((a, b) => a - b).map((z) => (
+                      <option key={z} value={z}>{Math.round(z * 100)}%</option>
+                    ))}
+                  </select>
+                  <button className="ghost" disabled={zoomLevel === 1} onClick={() => zoomReset()}>重置</button>
+                </div>
+                </>)}
+                <div className="ts-label" style={{ marginTop: 10 }}>主题色板</div>
+                <div className="ts-themes" role="group" aria-label="主题色板">
+                  {PALETTES.map((p) => (
+                    <button
+                      key={p.id}
+                      data-testid={`chrome-palette-${p.id}`}
+                      className={"ghost ts-opt" + (palette === p.id ? " ts-active" : "")}
+                      aria-pressed={palette === p.id}
+                      onClick={() => changePalette(p.id)}
+                    >
+                      <span className="ts-swatch" style={{ background: `linear-gradient(135deg, ${p.dot[1]}, ${p.dot[0]})`, borderColor: p.dot[1], color: p.dot[1] }}>Aa</span>
+                      {p.label}
+                    </button>
                   ))}
                 </div>
                 <div className="ts-label" style={{ marginTop: 10 }}>终端配色</div>
@@ -4318,8 +4467,8 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>应用外观与终端配色相互独立；「跟随系统」随系统深浅实时切换。</div>
-                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>字号快捷键：⌘= 增大 · ⌘− 减小 · ⌘0 重置</div>
+                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>外观三态与主题色板只改应用外观，终端配色独立；「跟随系统」随系统深浅实时切换。</div>
+                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）</div>
                 </>)}
 
                 {settingsCat === "terminal" && (<>
@@ -4541,7 +4690,7 @@ Authorization: Bearer <TOKEN>`}
                   ? current.state === "Disconnected"
                     ? "会话已断开——重连恢复后再执行命令"
                     : "网络中断，自动重连中——命令暂不发送"
-                  : `在 ${current.host_name} 上执行命令——回车执行，Ctrl+C 中断终端里的前台程序`
+                  : `在 ${current.host_name} 上执行命令`
                 : "先在主机栏连接一台主机，这里才能执行命令"
             }
             disabled={!sid}

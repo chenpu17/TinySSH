@@ -2782,13 +2782,21 @@ fn r27_smoke_script(run_id: &str) -> String {
       const ws = await inv('get_workspace', {});
       if (!ws || ws.chrome !== 'light') return title('FAIL-blob-chrome:' + String(ws && ws.chrome));
       await markSync('r27a-appear-ok');
-      // ⌘= 字号键（应用级 keydown 同一 action 语义）
-      const val0 = Number(document.querySelector('.ts-val')?.textContent?.trim() ?? '0');
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: '=', metaKey: true, bubbles: true, cancelable: true }));
+      // Ctrl/⌘= 缩放键（UX 五轮：字号键退役，同组合改归整页缩放——toast 报档位；
+      // marker 前缀 r27a-font-ok 保留：归档驱动 g2/r27-driver.sh 按前缀 wait_mark）。
+      // 先归一档位：上轮若在 ⌘= 后、⌘0 前被杀，ui.zoom=1.1 残留会让启动恢复 110%，
+      // ⌘= 步进断言就会跳到 120% 假红
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '0', metaKey: true, bubbles: true, cancelable: true }));
       await sleep(300);
-      const val1 = Number(document.querySelector('.ts-val')?.textContent?.trim() ?? '0');
-      if (val1 !== val0 + 1) return title('FAIL-font-key:' + val0 + '->' + val1);
-      await markSync('r27a-font-ok(14->' + val1 + ')');
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '=', metaKey: true, bubbles: true, cancelable: true }));
+      await sleep(400);
+      const zt = [...document.querySelectorAll('.toast')].map((t) => t.textContent).join('|');
+      if (!zt.includes('110%')) return title('FAIL-zoom-key:' + zt);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '0', metaKey: true, bubbles: true, cancelable: true }));
+      await sleep(400);
+      const zt0 = [...document.querySelectorAll('.toast')].map((t) => t.textContent).join('|');
+      if (!zt0.includes('100%')) return title('FAIL-zoom-reset:' + zt0);
+      await markSync('r27a-font-ok(zoom-110-100)');
       // ---- 交给驱动：杀进程 → DB 回卷 V4+旧键 ui.theme=solar-light → 重启 ----
       await markSync('r27a-relaunch-wait');
       await sleep(120000); // 驱动在此窗口内完成回卷与重启；本进程随后被杀
@@ -5469,10 +5477,6 @@ fn r13_smoke_script(run_id: &str) -> String {
     const els = document.querySelectorAll('.tabbar .tab');
     return !!(els[i] && els[i].classList.contains('tab-active'));
   };
-  const rowH = () => {
-    const r = document.querySelector('.xterm-rows > div');
-    return r ? Math.round(parseFloat(getComputedStyle(r).height)) : null;
-  };
   const searchVisible = () => {
     const s = document.querySelector('.term-search');
     return !!(s && getComputedStyle(s).display !== 'none');
@@ -5489,7 +5493,9 @@ fn r13_smoke_script(run_id: &str) -> String {
         location.reload();
         return;
       }
-      try { localStorage.removeItem('ui.r13fresh'); } catch (e) {}
+      try { localStorage.removeItem('ui.r13fresh'); localStorage.removeItem('ui.zoom'); } catch (e) {}
+      key({ key: '0', metaKey: true }); // UX 五轮：归一整页缩放档位（in-memory 档位不随 removeItem 复位）
+      await sleep(250);
       title('r13-opening');
       const cards = await waitFor(() => document.querySelectorAll('.host-card').length || null, 100);
       if (!cards) return title('FAIL-no-cards');
@@ -5537,15 +5543,15 @@ fn r13_smoke_script(run_id: &str) -> String {
       [...dlg2.querySelectorAll('button')].find((b) => b.textContent.includes('断开连接')).click();
       if (!(await waitFor(() => document.querySelectorAll('.tabbar .tab').length === 1 || null, 100))) return title('FAIL-cmdw-close');
       mark(RUN + '|r13-cmdw-ok');
-      // ⌘= 步进恰好 +1（双执行即 +2）；⌘0 复位
-      const h0 = rowH();
+      // Ctrl/⌘= 缩放步进恰 +1 档（toast 报档位；连续两按即 +2 档）；⌘0 复位（UX 五轮）
       key({ key: '=', metaKey: true });
-      await sleep(300);
-      const h1 = rowH();
-      if (h1 === null || h0 === null || h1 - h0 !== 1) return title('FAIL-fontstep:' + h0 + '->' + h1);
+      await sleep(400);
+      let zt = [...document.querySelectorAll('.toast')].map((t) => t.textContent).join('|');
+      if (!zt.includes('110%')) return title('FAIL-zoomstep:' + zt);
       key({ key: '0', metaKey: true });
-      await sleep(300);
-      if (rowH() !== h0) return title('FAIL-fontreset');
+      await sleep(400);
+      zt = [...document.querySelectorAll('.toast')].map((t) => t.textContent).join('|');
+      if (!zt.includes('100%')) return title('FAIL-zoom-reset:' + zt);
       // ⌘F → 搜索开 + 焦点入搜索框；Esc → 关 + 焦点回终端
       key({ key: 'f', metaKey: true });
       await sleep(300);

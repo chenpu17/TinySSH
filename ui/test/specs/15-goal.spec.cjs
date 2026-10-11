@@ -74,7 +74,11 @@ module.exports = {
     });
 
     // 切到已有的 prod-1 标签（面板保持打开，输入框一直在）
-    await page.click('.tab:has(.tab-label:text-is("prod-1"))');
+    // 点 .tab-label（文本）而非 .tab 整体：tab 内分屏/关闭按钮有 28×28 ::after 扩展
+    // 命中区（R27），Windows 字体下标签更窄，.tab 几何中心会落进扩展命中区、被
+    // stopPropagation 触发分屏而非切换会话——会话不切走，H1 断言全部空转假红。
+    // 点文本中心与真实用户点击标签等价，且对字体度量不敏感。
+    await page.click('.tab .tab-label:text-is("prod-1")');
     await page.waitForTimeout(1600);
     const samples = await page.evaluate(() => { clearInterval(window.__goalTimer); return window.__goalSamples; });
     // 只在**活动会话已不是本机**的帧上判泄漏——切换前的帧显示本机的草稿本就合法
