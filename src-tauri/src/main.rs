@@ -1101,6 +1101,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState { api: api.clone(), mcp_endpoint: mcp_endpoint_handle })
         .manage(terminal_input.clone())
         .on_page_load(|webview, payload| {

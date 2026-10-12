@@ -40,3 +40,6 @@ version = "2"
 [dependencies.tauri-plugin-dialog]
 version = "2"
 
+[dependencies.tauri-plugin-notification]
+version = "2"
+

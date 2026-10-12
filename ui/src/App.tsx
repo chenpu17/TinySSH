@@ -35,6 +35,7 @@ if (inTauri) {
 }
 import { getVersion } from "@tauri-apps/api/app";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { Terminal } from "@xterm/xterm";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -711,6 +712,11 @@ export default function App() {
   // 十五轮：选中即复制（PuTTY/Xshell 惯例）——开关持久化在 workspace blob terminal 域（默认关）
   const [copyOnSelect, setCopyOnSelect] = useState(false);
   const copyOnSelectRef = useRef(false);
+  // 十六轮：终端响铃（BEL）→ 系统通知开关（默认关；标签闪烁恒开）
+  const [bellNotify, setBellNotify] = useState(false);
+  const bellNotifyRef = useRef(false);
+  const [bellSids, setBellSids] = useState<Set<string>>(new Set());
+  const lastBellNotifRef = useRef<Map<string, number>>(new Map());
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string } | null>(null);
   // 十一轮续：粘贴入口统一（⌘V 与终端右键共用）——bracketed paste 语义由 xterm 按远端
   // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发
@@ -1371,6 +1377,25 @@ export default function App() {
       if (!sel) return;
       (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
     });
+    // 十六轮：BEL→标签闪烁（恒开，6s 自清）+ 系统通知（开关+窗口失焦门+每会话 10s 节流）。
+    // 长命令完成的通用信号：用户切走窗口后远端任务结束/需要关注时主动提示
+    term.onBell(() => {
+      setBellSids((cur) => new Set(cur).add(sessionSid));
+      setTimeout(() => setBellSids((cur) => { const n = new Set(cur); n.delete(sessionSid); return n; }), 6000);
+      if (!bellNotifyRef.current || !inTauri) return;
+      if (document.hasFocus()) return;
+      const now = Date.now();
+      if (now - (lastBellNotifRef.current.get(sessionSid) ?? 0) < 10_000) return;
+      lastBellNotifRef.current.set(sessionSid, now);
+      void (async () => {
+        const host = sessionsRef.current.find((x) => x.id === sessionSid)?.host_name ?? "会话";
+        try {
+          let granted = await isPermissionGranted();
+          if (!granted) granted = (await requestPermission()) === "granted";
+          if (granted) sendNotification({ title: `🔔 ${host} — 终端响铃`, body: "终端响铃（BEL）：远端可能有命令完成或需要关注" });
+        } catch { /* 通知失败静默——标签闪烁仍在 */ }
+      })();
+    });
     // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
     // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）
     if (import.meta.env.DEV) {
@@ -1892,6 +1917,11 @@ export default function App() {
             copyOnSelectRef.current = ws.terminal.copy_on_select;
             setCopyOnSelect(ws.terminal.copy_on_select);
           }
+          // 十六轮：响铃通知（缺省/未写入 = 关）
+          if (ws.terminal.bell_notify !== undefined) {
+            bellNotifyRef.current = ws.terminal.bell_notify;
+            setBellNotify(ws.terminal.bell_notify);
+          }
         }
         // R33 §356：上次下载目录（缺省/null = 落系统 Downloads）
         if (ws.transfers?.download_dir) downloadDirRef.current = ws.transfers.download_dir;
@@ -1916,25 +1946,37 @@ export default function App() {
 
   // 主机栏开合与拖宽（200–300，§4.2）；grip 用指针捕获，拖动即改宽、松手落盘
   //（落盘三处：localStorage 兼容留写 + C8 blob 事实源）
-  // R25 §318：粘贴保护开关——同链式串行化写 terminal 域（默认开）。
-  // 十五轮：域内改为合并写（...ws.terminal）——否则会抹掉同域的 copy_on_select
+  // R25 §318：粘贴保护开关——链式串行化写 terminal 域。
+  // 十六轮重构：terminal 域写入收口到 writeTerminalPrefs（显式合并三键）——逐键各写
+  // 一份字面量迟早再互踩（十五轮 changePasteGuard 整域替换抹掉 copy_on_select 即前科）
+  const writeTerminalPrefs = useCallback((patch: Partial<{ paste_guard: boolean; copy_on_select: boolean; bell_notify: boolean }>) => {
+    wsWriteChain.current = wsWriteChain.current
+      .then(() => invoke("get_workspace"))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: {
+        paste_guard: ws.terminal?.paste_guard ?? true,
+        copy_on_select: ws.terminal?.copy_on_select ?? false,
+        bell_notify: ws.terminal?.bell_notify ?? false,
+        ...patch,
+      } } }))
+      .catch(() => {});
+  }, []);
   const changePasteGuard = useCallback((pg: boolean) => {
     setPasteGuard(pg);
     pasteGuardRef.current = pg;
-    wsWriteChain.current = wsWriteChain.current
-      .then(() => invoke("get_workspace"))
-      .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: { paste_guard: pg, copy_on_select: ws.terminal?.copy_on_select ?? false } } }))
-      .catch(() => {});
-  }, []);
-  // 十五轮：选中即复制开关——同链合并写 terminal 域（默认关）
+    writeTerminalPrefs({ paste_guard: pg });
+  }, [writeTerminalPrefs]);
+  // 十五轮：选中即复制开关（默认关）
   const changeCopyOnSelect = useCallback((on: boolean) => {
     setCopyOnSelect(on);
     copyOnSelectRef.current = on;
-    wsWriteChain.current = wsWriteChain.current
-      .then(() => invoke("get_workspace"))
-      .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: { paste_guard: ws.terminal?.paste_guard ?? true, copy_on_select: on } } }))
-      .catch(() => {});
-  }, []);
+    writeTerminalPrefs({ copy_on_select: on });
+  }, [writeTerminalPrefs]);
+  // 十六轮：响铃通知开关（默认关）
+  const changeBellNotify = useCallback((on: boolean) => {
+    setBellNotify(on);
+    bellNotifyRef.current = on;
+    writeTerminalPrefs({ bell_notify: on });
+  }, [writeTerminalPrefs]);
 
   // —— 十五轮：重连上次会话 ——
   // blob sessions.last 记「当前打开会话的主机清单」（去重有序）。只有本运行用户
@@ -3973,6 +4015,7 @@ export default function App() {
                 <div
                   key={s.id}
                   className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")
+                    + (bellSids.has(s.id) ? " tab-bell" : "")
                     + (tabDropHint?.sid === s.id ? (tabDropHint.before ? " tab-drop-before" : " tab-drop-after") : "")}
                   draggable={renaming?.sid !== s.id}
                   onDragStart={(e) => {
@@ -5009,6 +5052,16 @@ export default function App() {
                     选中即复制
                     <span className="dim" style={{ display: "block" }}>
                       划选终端文字立即写入系统剪贴板（PuTTY/Xshell 惯例）；关闭后用 ⌘C 或右键「复制」。
+                    </span>
+                  </span>
+                </label>
+                {/* 十六轮：BEL→系统通知（默认关；标签闪烁恒开） */}
+                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 8 }}>
+                  <input type="checkbox" data-testid="bell-toggle" checked={bellNotify} onChange={(e) => changeBellNotify(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                    终端响铃时系统通知
+                    <span className="dim" style={{ display: "block" }}>
+                      窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知（每会话 10 秒至多一条）；标签闪烁提醒恒开。
                     </span>
                   </span>
                 </label>

@@ -589,10 +589,11 @@ export interface HostbarPrefs {
   width: number;
 }
 
-/** 终端偏好（R25 §318）：粘贴保护默认开；选中即复制默认关（十五轮） */
+/** 终端偏好（R25 §318）：粘贴保护默认开；选中即复制/响铃通知默认关（十五/十六轮） */
 export interface TerminalPrefs {
   paste_guard: boolean;
   copy_on_select?: boolean;
+  bell_notify?: boolean;
 }
 
 /** 会话域（十五轮）：「重连上次会话」记忆 */

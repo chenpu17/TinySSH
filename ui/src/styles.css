@@ -509,6 +509,13 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 .tab-drop-after { box-shadow: inset -2px 0 0 var(--accent); }
 .tab-active.tab-drop-before { box-shadow: inset 0 2px 0 var(--accent), inset 2px 0 0 var(--accent); }
 .tab-active.tab-drop-after { box-shadow: inset 0 2px 0 var(--accent), inset -2px 0 0 var(--accent); }
+/* 十六轮：BEL 标签闪烁——accent 软底脉冲 3 次（6s 自清），恒开不设开关 */
+@keyframes bell-pulse {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: var(--accent-soft); }
+}
+.tab-bell { animation: bell-pulse 1.4s ease-in-out 3; }
+.tab-active.tab-bell { animation: bell-pulse 1.4s ease-in-out 3; box-shadow: inset 0 2px 0 var(--accent); }
 /* R27（§7.4）：关闭/分屏改真按钮——键盘可达+focus-visible；视觉盒保持 18px 原样 */
 .tab-split, .tab-x {
   flex: none; width: 18px; height: 18px;

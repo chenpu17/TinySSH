@@ -1455,7 +1455,7 @@ pub struct Workspace {
     pub sessions: Option<SessionPrefs>,
 }
 
-/// 终端偏好（§318）：粘贴保护默认开；选中即复制默认关（十五轮）
+/// 终端偏好（§318）：粘贴保护默认开；选中即复制/响铃通知默认关（十五/十六轮）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalPrefs {
     /// 多行粘贴保护：内容含换行且远端未开 bracketed paste 时预览确认后才发送
@@ -1464,6 +1464,9 @@ pub struct TerminalPrefs {
     /// 选中即复制（十五轮，PuTTY/Xshell 惯例）：划选非空立即写系统剪贴板
     #[serde(default)]
     pub copy_on_select: bool,
+    /// 终端响铃（BEL）且窗口失焦时发系统通知（十六轮，默认关）
+    #[serde(default)]
+    pub bell_notify: bool,
 }
 
 /// 会话域（十五轮）：欢迎页「重连上次会话」的记忆
@@ -1905,11 +1908,18 @@ mod wire_format_tests {
             "schema_version": 1, "chrome": "system", "sessions": { "last": ["local", "h-prod1"] }
         })).unwrap();
         assert_eq!(r15.sessions.as_ref().unwrap().last, vec!["local".to_string(), "h-prod1".to_string()]);
-        // 旧载荷无 sessions / terminal 无 copy_on_select → 按缺省解释（None/false）
+        // 旧载荷无 sessions / terminal 无 copy_on_select、bell_notify → 按缺省解释（None/false）
         let old_term: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "system", "terminal": { "paste_guard": true }
         })).unwrap();
         assert_eq!(old_term.terminal.unwrap().copy_on_select, false);
+        // 十六轮：bell_notify round-trip（旧载荷缺键 = false）
+        let r16: Workspace = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "chrome": "system", "terminal": { "paste_guard": true, "bell_notify": true }
+        })).unwrap();
+        assert_eq!(r16.terminal.as_ref().unwrap().bell_notify, true);
+        let serialized = serde_json::to_value(&r16).unwrap();
+        assert_eq!(serialized["terminal"]["bell_notify"], true);
         // transfers 域对象存在但 download_dir 未写入 → None（不虚构默认值）
         let partial: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "system", "transfers": {}
