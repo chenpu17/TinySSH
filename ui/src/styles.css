@@ -993,8 +993,17 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
   border-radius: 12px; padding: 10px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
   display: flex; flex-direction: column; gap: 2px;
 }
-.split-menu .sm-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
-.split-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-menu .sm-item, .tab-menu .sm-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
+.split-menu .sm-item .sm-name, .tab-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 十一轮 §6.3 修订：标签右键菜单——fixed 跟随指针。R41 C-2 同族教训：配对遮罩的
+   浮层必须高于 .pop-mask(41)，取 44（.split-menu 43 同层语义，二者互不重叠） */
+.tab-menu {
+  position: fixed; z-index: 44;
+  width: 236px; background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 6px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.tab-menu .tab-menu-sep { height: 1px; background: var(--border); margin: 4px 6px; flex: none; }
 /* §185 退化提示条：一次性可关闭，不占终端行 */
 .split-hint {
   position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 25;

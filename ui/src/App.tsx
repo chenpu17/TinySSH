@@ -720,10 +720,11 @@ export default function App() {
   const delIdentRef = useRef<HTMLDivElement | null>(null);
   const pasteConfirmRef = useRef<HTMLDivElement | null>(null);
   const dropCardRef = useRef<HTMLDivElement | null>(null);
-  // R25 §322 分屏建立双语义：复用已有会话（菜单直选）/ 新建会话（武装标记，下一次
-  // 新建会话自动落右侧副 pane）
+  // R25 §322 分屏建立：复用已有会话（菜单直选）。「预武装下一次新建」模式已退役
+  // （十一轮 §6.3 修订：对象先存在、操作跟上来——新建会话先落标签，右键标签进分屏）
   const [splitMenu, setSplitMenu] = useState(false);
-  const splitNewPendingRef = useRef(false);
+  // 十一轮：标签右键菜单——按状态显隐的会话操作（分屏/重连/复制连接/详情/关闭）
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; sid: string } | null>(null);
   // R25 §185 宽度退化：每窗格至少 360 宽——空间不足时只呈现焦点窗格（另一个仍在
   // 标签中），加宽自动恢复；退化时显示一次可关闭的布局提示
   const [splitDegraded, setSplitDegraded] = useState(false);
@@ -1970,6 +1971,7 @@ export default function App() {
     // 拖拽上传确认卡同样是模态（全屏遮罩+焦点陷阱）——Esc 链此前漏出（审计 F5）
     if (pendingDrop) { setPendingDrop(null); return true; }
     if (detail || detailErr) { closeDetail(); return true; }
+    if (tabMenu) { setTabMenu(null); return true; }
     if (splitMenu) { setSplitMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
     if (showSettings) { closeSettings(); return true; }
@@ -2390,7 +2392,7 @@ export default function App() {
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || pendingDrop);
+  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || pendingDrop);
   modalRef.current = modal;
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
@@ -3254,21 +3256,6 @@ export default function App() {
       if (final.phase === "Ready" && final.session_id) {
         setLastFailed(null);
         await refreshLists();
-        // §322「在右侧新建会话」：武装标记下新建会话自动落右侧副 pane（当前会话留
-        // 左主）。用户显式要求分屏 = 主动导航——不走 gen/焦点四条件（同切标签语义）。
-        // rev-r25 L1：无当前会话（prevSid null）时武装承诺无法兑现——消费掉标记，
-        // 不留到更晚的连接意外触发分屏
-        const prevSid = sidRef.current;
-        const armSplit = splitNewPendingRef.current && !!prevSid && prevSid !== final.session_id;
-        if (splitNewPendingRef.current) {
-          splitNewPendingRef.current = false;
-          if (armSplit) {
-            await enterSplitWith(final.session_id);
-            await attachSession(final.session_id);
-            pushToast("ok", `已连接 ${host.name}（右侧分屏）`);
-            return;
-          }
-        }
         // rev-r21 M2：他主机门挂起中（用户注意力在其输入框，遮罩不持 DOM 焦）完成
         // 不抢焦——否则后续验证码 keystroke 误落已完成会话的远端 shell。本主机门在
         // attempt 终态前必已闭（应答先同步 splice 队列再 invoke），不受扰。
@@ -3883,6 +3870,12 @@ export default function App() {
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id).catch((er) => pushToast("err", errMsg(er))); }
                   }}
                   onClick={() => void attachSession(s.id).catch((e) => pushToast("err", errMsg(e)))}
+                  onContextMenu={(e) => {
+                    // 十一轮 §6.3 修订：右键标签弹会话操作菜单（按状态显隐）；右键不切换焦点标签
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTabMenu({ x: e.clientX, y: e.clientY, sid: s.id });
+                  }}
                 >
                   <span className={"tab-dot " + st.cls} aria-hidden="true" />
                   <span className="tab-label">{s.host_name}</span>
@@ -4408,18 +4401,62 @@ export default function App() {
                     </button>
                   );
                 })}
-                <div className="ts-label" style={{ marginTop: 8 }}>或</div>
-                <button className="ghost sm-item" role="menuitem"
-                  title="下一次新建的会话自动进入右侧分屏（当前会话留在左侧）"
-                  onClick={() => {
-                    splitNewPendingRef.current = true;
-                    setSplitMenu(false);
-                    pushToast("info", "已就绪：下一次新建的会话将进入右侧分屏——连接一台主机或打开本地终端即可");
-                  }}
-                >在右侧新建会话…</button>
+                <div className="dim" style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 2px 0" }}>
+                  新建的会话先落在标签栏——右键标签选「与当前会话分屏」即可。
+                </div>
               </div>
             </>
           )}
+          {/* 十一轮：标签右键菜单——对象先存在、操作跟上来。fixed 定位跟随指针并夹在
+              视口内；遮罩点击/右键都关闭；会话关闭后菜单自动只剩遮罩（点掉即净） */}
+          {tabMenu && (() => {
+            const s = sessions.find((x) => x.id === tabMenu.sid);
+            const mx = Math.min(tabMenu.x, window.innerWidth - 248);
+            const my = Math.min(tabMenu.y, window.innerHeight - 236);
+            const close = () => setTabMenu(null);
+            const inSplit = !!s && (splitPanes?.main === s.id || splitPanes?.second === s.id);
+            const menuHost = s ? hosts.find((h) => h.id === s.host_id) : undefined;
+            return (
+              <>
+                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+                {s && (
+                  <div className="tab-menu" role="menu" aria-label={`会话操作：${s.host_name}`} style={{ left: mx, top: my }}>
+                    {inSplit ? (
+                      <button className="ghost sm-item" role="menuitem"
+                        onClick={() => { close(); void exitSplit(); }}
+                      >退出分屏（两个会话都保留）</button>
+                    ) : s.id !== sid && !!sid ? (
+                      <button className="ghost sm-item" role="menuitem"
+                        onClick={() => { close(); void enterSplitWith(s.id); }}
+                      >{splitPanes ? "放到右侧分屏（替换右格）" : "与当前会话分屏（放到右侧）"}</button>
+                    ) : null}
+                    {autoReconn?.sid === s.id ? (
+                      <button className="ghost sm-item" role="menuitem"
+                        onClick={() => { close(); void stopRetry(s); }}
+                      >停止自动重连</button>
+                    ) : s.state === "Disconnected" ? (
+                      <button className="ghost sm-item" role="menuitem"
+                        onClick={() => { close(); void reconnectSession(s); }}
+                      >重连会话</button>
+                    ) : null}
+                    {menuHost && (
+                      <button className="ghost sm-item" role="menuitem"
+                        title="用同一台主机新建一条会话（现有会话不受影响）"
+                        onClick={() => { close(); void createSession(menuHost); }}
+                      >复制连接（同主机新会话）</button>
+                    )}
+                    <div className="tab-menu-sep" role="separator" />
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); void openSessionDetail(s); }}
+                    >连接详情…</button>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); requestCloseSession(s); }}
+                    >关闭会话…</button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
           {splitDegraded && splitHintOpen && (
             <div className="split-hint" role="status">
               <span>窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。</span>

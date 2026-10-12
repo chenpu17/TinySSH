@@ -43,7 +43,8 @@ module.exports = {
     await page.waitForTimeout(600);
     const split = await page.evaluate(() => [...document.querySelectorAll("[role=menu] *")].map((e) => e.textContent.trim()).join(" | "));
     ck.check("分屏菜单有「在右侧显示已有会话」", split.includes("在右侧显示已有会话"), "");
-    ck.check("分屏菜单有「在右侧新建会话」", split.includes("在右侧新建会话"), "");
+    // 十一轮：预武装模式退役——菜单指引右键标签路径
+    ck.check("分屏菜单提示「右键标签」路径（预武装退役）", split.includes("右键标签"), "");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
 
