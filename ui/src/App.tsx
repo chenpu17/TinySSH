@@ -3249,7 +3249,7 @@ export default function App() {
     }
   }, [sftpPath, startUploads, pushToast]);
 
-  const createSession = async (host: Host) => {
+  const createSession = async (host: Host, intoSplit = false) => {
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
     const gen0 = focusGenRef.current;
     setConnError(null);
@@ -3264,6 +3264,14 @@ export default function App() {
       if (final.phase === "Ready" && final.session_id) {
         setLastFailed(null);
         await refreshLists();
+        if (intoSplit) {
+          // 十三轮：右键活动标签「复制标签页到右侧」——显式参数直达（无跨点击的挂起
+          // 状态，非已退役的预武装模式）：这条连接就是右格，建好即进分屏
+          await enterSplitWith(final.session_id);
+          await attachSession(final.session_id);
+          pushToast("ok", `已连接 ${host.name}（右侧分屏）`);
+          return;
+        }
         // rev-r21 M2：他主机门挂起中（用户注意力在其输入框，遮罩不持 DOM 焦）完成
         // 不抢焦——否则后续验证码 keystroke 误落已完成会话的远端 shell。本主机门在
         // attempt 终态前必已闭（应答先同步 splice 队列再 invoke），不受扰。
@@ -4466,6 +4474,13 @@ export default function App() {
                       <button className="ghost sm-item" role="menuitem"
                         onClick={() => { close(); setSplitMenu(true); }}
                       >分屏（选择右侧会话）…</button>
+                    ) : s.id === sid && menuHost ? (
+                      // 十三轮：唯一会话也有分屏——复制本标签到右侧（新会话），Windows
+                      // Terminal "Split Tab" 语义；显式参数直达，无预武装挂起态
+                      <button className="ghost sm-item" role="menuitem"
+                        title="新建一条同主机连接并放入右侧窗格（当前会话留在左侧）"
+                        onClick={() => { close(); createSession(menuHost, true); }}
+                      >分屏：复制标签页到右侧（新会话）</button>
                     ) : null}
                     {autoReconn?.sid === s.id ? (
                       <button className="ghost sm-item" role="menuitem"
