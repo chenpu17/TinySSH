@@ -3,7 +3,7 @@ import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
-import { resolveAction } from "./actions";
+import { resolveAction, isMacPlatform } from "./actions";
 import type { AppAction } from "./actions";
 import {
   registerZoomHotkeys, onZoomChange, currentZoom, setZoomScale,
@@ -27,7 +27,12 @@ import {
 
 // macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
 // 只在原生模式加类——浏览器 demo 没有标题栏，留白反而是错的（走查可手动加类模拟）。
-if (inTauri) document.documentElement.classList.add("native-chrome");
+// native-mac 只标 macOS：84px 红绿灯安全区是 mac 专属（titleBarStyle Overlay 为
+// mac-only 字段，Windows 走原生标题栏，预留位是死缩进——十轮）。
+if (inTauri) {
+  document.documentElement.classList.add("native-chrome");
+  if (isMacPlatform()) document.documentElement.classList.add("native-mac");
+}
 import { getVersion } from "@tauri-apps/api/app";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";

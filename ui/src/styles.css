@@ -1039,8 +1039,10 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 }
 
 /* ---- T33/R12 标题栏融合与排版精致化 ---- */
-/* macOS Overlay 标题栏：红绿灯悬浮在 44px 标题区左端，预留落位；浏览器 demo 无标题栏不加类 */
-.native-chrome .titlebar { padding-left: 84px; }
+/* macOS Overlay 标题栏：红绿灯悬浮在 44px 标题区左端，预留落位；浏览器 demo 无标题栏不加类。
+   十轮：84px 安全区收进 .native-mac（Overlay 为 mac 专属；Windows/Linux 走原生标题栏，
+   预留位是死缩进） */
+.native-chrome.native-mac .titlebar { padding-left: 84px; }
 /* 标题区整行即拖拽区：文字不可选中、光标为箭头（标题栏语义）；按钮恢复手型 */
 .titlebar[data-tauri-drag-region] span { cursor: default; user-select: none; }
 .titlebar[data-tauri-drag-region] button { cursor: pointer; }

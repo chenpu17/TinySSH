@@ -77,7 +77,8 @@ pub struct SessionManager {
     sessions: StdMutex<HashMap<SessionId, Arc<SessionHandle>>>,
     pub center: Arc<ApprovalCenter>,
     approvals_rx_gen: StdMutex<()>,
-    /// C1 活跃 attempt 表（终态后保留至进程结束——connection_status 恒返回终态）。
+    /// C1 活跃 attempt 表（终态后保留供 connection_status 查询；超 [`ATTEMPTS_CAP`]
+    /// 按终态优先、最旧先淘汰——十轮防泄漏）。
     attempts: StdMutex<HashMap<AttemptId, Arc<AttemptEntry>>>,
     /// C1 幂等合并索引：(host_id, actor 域) → 活跃 attempt（DC1.5）。
     merge_index: StdMutex<HashMap<(HostId, String), AttemptId>>,
@@ -97,6 +98,10 @@ pub struct SessionManager {
     /// C6/R34 DF6.4 同目标锁：canonical path（r:远端/l:本地前缀区分命名空间）→
     /// 任务级互斥。只串行本客户端任务（外部写入由预检/复检/发布原语防线兜底）。
     target_locks: StdMutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+    /// 十轮：重启恢复登记的远端 temp（上传任务恢复期无通道可清）——(任务, 连续
+    /// 失败次数)。通道可用时（新传输启动前 / OutcomeUnknown 核实成功后）经
+    /// `drain_pending_remote_temps` 补偿清理；连续失败 3 次作废并审计留痕。
+    pending_remote_temps: StdMutex<HashMap<SessionId, Vec<(TransferTask, u8)>>>,
     /// R35 §366 窗口全局并行传输闸（跨会话 4；每会话闸挂 SessionHandle.xfer_gate_session）。
     xfer_gate_global: std::sync::Arc<tokio::sync::Semaphore>,
     /// C5 事件通道（可丢 broadcast；漏收由 list_transfers 查询对账兜底——§547
@@ -131,6 +136,9 @@ struct StagePlan {
     /// 同目标锁键（r:=远端命名空间 / l:=本地命名空间）
     lock_key: String,
 }
+
+/// attempts 登记上限（十轮防泄漏；收缩策略见 `SessionManager::gc_attempts`）。
+const ATTEMPTS_CAP: usize = 256;
 
 impl SessionManager {
     pub fn open(db_path: &Path) -> Result<Arc<Self>> {
@@ -180,6 +188,7 @@ impl SessionManager {
             ),
             transfers: StdMutex::new(HashMap::new()),
             target_locks: StdMutex::new(HashMap::new()),
+            pending_remote_temps: StdMutex::new(HashMap::new()),
             xfer_gate_global: Arc::new(tokio::sync::Semaphore::new(handle::TRANSFER_GLOBAL)),
             transfer_tx,
         });
@@ -218,8 +227,18 @@ impl SessionManager {
                             t.status = TransferStatus::Interrupted;
                             t.error = Some("应用重启时传输中断".into());
                             t.finished_at = Some(now);
-                            // 提交前中断=确未提交：本地 temp 清理（远端 temp 登记延后）
+                            // 提交前中断=确未提交：本地 temp 清理（下载侧直接删；
+                            // 上传侧远端 temp 需通道——十轮起登记补偿清理，不再
+                            // 「登记延后」无下文）
                             Self::cleanup_local_temp(&t);
+                            if t.kind == TransferKind::Upload {
+                                arc.pending_remote_temps
+                                    .lock()
+                                    .unwrap()
+                                    .entry(t.session_id.clone())
+                                    .or_default()
+                                    .push((t.clone(), 0));
+                            }
                             let _ = arc.center.audit.append(
                                 &Actor::Human, "transfer_interrupted", Some(&t.session_id), Some(&t.dest),
                                 serde_json::json!({"transfer": t.id}), None);
@@ -469,6 +488,7 @@ impl SessionManager {
                         term: AtomicBool::new(false),
                     });
                     at.insert(attempt_id.clone(), entry.clone());
+                    Self::gc_attempts(&mut at, ATTEMPTS_CAP);
                     mi.insert(key.clone(), attempt_id);
                     (false, entry)
                 }
@@ -1409,13 +1429,19 @@ impl SessionManager {
         ids.len()
     }
 
-    /// 把所有 Agent 持有控制权的会话转回 Human（**不**停止运行中任务；保留
-    /// `ever_agent_owned` 历史）。返回转换数。
+    /// 把所有 Agent 持有控制权的会话转回 Human（保留 `ever_agent_owned` 历史）。
+    /// 返回转换数。
     ///
     /// C9（R43）：转换时同时推进每个会话的**代际**——与接管同口径（`takeover`
     /// 亦 `generation += 1`）。这是「停用前已排队/未开始」动作的作废点：排队 exec
     /// 与排队传输都在开始读写前复核会话代际（`handle.rs` exec 步骤 2/4、
     /// `lib.rs` transfer 闸前/闸后），代际一变即作废（§9「覆盖排队传输及待启动动作」）。
+    ///
+    /// 十轮补充：**已过闸的在途传输也要取消**——代际复核只拦「未开始读写」的
+    /// 任务，数据阶段按块检查取消 token，不再复核代际。exec 的「不停运行中
+    /// 任务」是有意设计（前台进程随交接归人类），而传输无前台进程语义，停用
+    /// 协作后继续写远端只会在人类不知情下改目标文件——与 `takeover`（本文件
+    /// handle.rs 步骤 4）同口径排废。
     async fn convert_agent_sessions_to_human(&self) -> usize {
         let handles: Vec<Arc<SessionHandle>> =
             self.sessions.lock().unwrap().values().cloned().collect();
@@ -1429,6 +1455,14 @@ impl SessionManager {
                 // 失效——与 takeover 的 clear 同口径，防「停用→重启用→再交接」后
                 // 旧授权无需审批即可继续键入
                 h.send_keys_auth.lock().unwrap().clear();
+                // 排队传输作废（与 takeover 步骤 4 同口径）：在途任务在下一块
+                // IO 边界观察到取消即落 Cancelled 终态
+                {
+                    let mut transfers = h.transfers.lock().unwrap();
+                    for (_, t) in transfers.iter_mut() {
+                        t.cancel();
+                    }
+                }
                 n += 1;
             }
         }
@@ -1815,16 +1849,21 @@ impl SessionApi for SessionManager {
         let deadline = tokio::time::Instant::now() + timeout_d;
         let (watermark, notify) = {
             let s = h.screen.lock().await;
-            (s.lossless_len(), s.lossless_notify())
+            // 绝对水位（淘汰基数 + 存活长度）：deque 下标随环淘汰整体前滑，相对
+            // 下标水位会把水位与队头之间从未消费的输出静默跳过——漏匹配 → 假
+            // 超时（违背 ADR-7「有界环形缓冲杜绝丢块漏匹配」，十轮修复）。
+            (s.lossless_abs(), s.lossless_notify())
         };
         loop {
             {
                 let s = h.screen.lock().await;
-                let wm = watermark.min(s.lossless_len());
-                let text = s.text_since(wm);
+                let text = s.text_since_abs(watermark);
+                // 水位之前仍有存活前已淘汰 → 本次返回不完整（调用方可感知截断，
+                // 不再恒 false 伪装无损）
+                let truncated = s.lossless_evicted() > watermark;
                 let matched = re.as_ref().map(|r| r.is_match(&text)).unwrap_or(false);
                 if matched {
-                    return Ok(OutputChunk { text, matched: true, truncated_to_cap: false });
+                    return Ok(OutputChunk { text, matched: true, truncated_to_cap: truncated });
                 }
                 let quiet = std::time::Duration::from_millis(quiet_ms);
                 let is_quiet = s
@@ -1832,7 +1871,7 @@ impl SessionApi for SessionManager {
                     .map(|t| (chrono::Utc::now() - t).to_std().unwrap_or_default() >= quiet)
                     .unwrap_or(false);
                 if is_quiet && !text.is_empty() {
-                    return Ok(OutputChunk { text, matched: false, truncated_to_cap: false });
+                    return Ok(OutputChunk { text, matched: false, truncated_to_cap: truncated });
                 }
             }
             tokio::select! {
@@ -2080,6 +2119,29 @@ impl SessionApi for SessionManager {
                 serde_json::json!({ "transfer": t, "verified": true }),
                 None,
             );
+            // 十轮：已确认提交 → temp 冗余可清（与重启恢复 Succeeded{verified} 同
+            // 口径）——上传=远端 temp（会话在场才清）；下载=本地 temp。顺带清重启
+            // 登记的旧 temp。
+            if let Ok(h) = self.get(&sid) {
+                Self::drain_pending_remote_temps(self, &h).await;
+                let task = self.transfers.lock().unwrap().get(&t).map(|e| e.task.clone());
+                if let Some(task) = task {
+                    if let Some(temp) = Self::remote_temp_of(&h, &task).await {
+                        if let Err(e) = h.channel.remove_file(&temp).await {
+                            let _ = self.center.audit.append(
+                                &Actor::Human,
+                                "transfer_temp_clean_failed",
+                                Some(&sid),
+                                Some(&temp),
+                                serde_json::json!({"transfer": t, "error": e.to_string()}),
+                                None,
+                            );
+                        }
+                    } else if task.kind == TransferKind::Download {
+                        Self::cleanup_local_temp(&task);
+                    }
+                }
+            }
         } else {
             // 无绑定证据：保持未知（journal 行保持 Committing/verified=false 编码，
             // 重启恢复面继续可见；本次仅刷新复核说明，revision+1 事件帧出）
@@ -2623,13 +2685,47 @@ impl SessionManager {
 
     /// C6/R34 DF6.4：同目标锁（canonical path 键；持有至任务终态——本客户端
     /// 内同目标任务串行；外部写入由预检/复检/发布原语防线兜底）。
+    ///
+    /// 十轮回收：条目原从不删除（泄漏点——每去重目标永久占一条）。顺手摘除
+    /// 无外部持有者的死条目（`strong_count==1` = 仅 map 持有）：克隆只发生在
+    /// 本临界区内，计数在持锁期间不会变化，无竞态窗口；仍在飞/等待的任务持
+    /// 有克隆（计数 ≥2）不受影响。残留窗口 = 上一任务作用域未退出期间，由
+    /// 下一次任意传输的回收补摘。
     fn target_lock(&self, key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
-        self.target_locks
-            .lock()
-            .unwrap()
+        let mut locks = self.target_locks.lock().unwrap();
+        locks.retain(|_, v| Arc::strong_count(v) > 1);
+        locks
             .entry(key.to_string())
             .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
             .clone()
+    }
+
+    /// 连接尝试登记上限（十轮）：attempts 原只插不删（AttemptEntry 含 watch
+    /// 通道 + tokio Mutex，泄漏点）。超限按「终态优先、同组创建时间最旧先
+    /// 淘汰」收缩；活动条目也被波及时说明并发尝试本身异常，宁误删不泄漏。
+    /// 淘汰后 connection_status/cancel 对旧 attempt 返回 not-found（可接受）。
+    fn gc_attempts(
+        map: &mut HashMap<AttemptId, std::sync::Arc<AttemptEntry>>,
+        cap: usize,
+    ) {
+        if map.len() <= cap {
+            return;
+        }
+        let mut ordered: Vec<(chrono::DateTime<chrono::Utc>, bool, AttemptId)> = map
+            .iter()
+            .map(|(id, e)| {
+                (
+                    e.info.created_at,
+                    e.term.load(AtomicOrdering::Acquire),
+                    id.clone(),
+                )
+            })
+            .collect();
+        ordered.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let excess = map.len() - cap;
+        for (_, _, id) in ordered.into_iter().take(excess) {
+            map.remove(&id);
+        }
     }
 
     /// 变更任务并按节奏对外发帧/落 journal：状态变化即时发；进度合并 ≥200ms
@@ -3167,6 +3263,10 @@ impl SessionManager {
             }
             let human_path = ctx2.is_human();
             // C6/R34：canonical 目标规划（预检前置）。失败=确未提交，直接失败。
+            // 十轮：通道已就绪——补偿清理重启恢复登记的远端 temp（尽力而为，
+            // 失败保留登记下次再试；Queued 未起传任务推导的 temp 不存在，连续
+            // 失败 3 次自动作废）
+            mgr.drain_pending_remote_temps(&h2).await;
             let plan = match SessionManager::stage_plan(&h2, is_upload, &local2, &remote2, &tid2).await {
                 Ok(p) => p,
                 Err(e) => {
@@ -3675,8 +3775,8 @@ impl SessionManager {
         let _ = h.channel.remove_file(temp).await;
     }
 
-    /// C6/R34：重启恢复的本地 temp 清理（下载任务确未提交/已确认提交——远端
-    /// temp 需通道，登记延后）。temp 名与提交路径同源，不存在=幂等。
+    /// C6/R34：重启恢复的本地 temp 清理（下载任务确未提交/已确认提交）。temp 名
+    /// 与提交路径同源，不存在=幂等。上传侧远端 temp 走 [`Self::drain_pending_remote_temps`]。
     fn cleanup_local_temp(t: &TransferTask) {
         if t.kind != TransferKind::Download {
             return;
@@ -3687,6 +3787,79 @@ impl SessionManager {
         let tmp = dir.join(format!(".tinyssh-part-{}-{}", t.id, name));
         if tmp.exists() {
             let _ = std::fs::remove_file(&tmp);
+        }
+    }
+
+    /// 由持久化任务记录推导远端 temp（十轮补偿清理）：与 `stage_plan` 上传分支
+    /// 同构——dest → (dir, name) → canonical dir。目标目录已不存在等推导失败 →
+    /// None（temp 也必然不存在，条目作废即可）。
+    async fn remote_temp_of(h: &Arc<SessionHandle>, t: &TransferTask) -> Option<String> {
+        if t.kind != TransferKind::Upload {
+            return None;
+        }
+        let trimmed = t.dest.trim_end_matches('/');
+        if trimmed.is_empty() {
+            return None;
+        }
+        let (dir, name) = match trimmed.rsplit_once('/') {
+            Some((d, n)) if !n.is_empty() => (
+                if d.is_empty() { "/".to_string() } else { d.to_string() },
+                n.to_string(),
+            ),
+            Some(_) => return None,
+            None => (".".to_string(), trimmed.to_string()),
+        };
+        let canon = h.channel.resolve_path(Some(&dir)).await.ok()?.canonical;
+        Some(format!(
+            "{}/.tinyssh-part-{}-{}",
+            canon.trim_end_matches('/'),
+            t.id,
+            name
+        ))
+    }
+
+    /// 补偿清理（十轮）：清理重启恢复登记的远端 temp。仅在通道可用时调用（新
+    /// 传输启动前 / OutcomeUnknown 核实成功后）；remove 失败保留登记下次再试，
+    /// 连续 3 次失败作废并审计留痕（防「远端已无此文件」类死循环重登）。
+    async fn drain_pending_remote_temps(&self, h: &Arc<SessionHandle>) {
+        let mut tasks: Vec<(TransferTask, u8)> = {
+            let mut map = self.pending_remote_temps.lock().unwrap();
+            map.remove(&h.id).unwrap_or_default()
+        };
+        for (t, mut fails) in tasks.drain(..) {
+            let Some(temp) = Self::remote_temp_of(h, &t).await else { continue };
+            match h.channel.remove_file(&temp).await {
+                Ok(_) => {
+                    let _ = self.center.audit.append(
+                        &Actor::Human,
+                        "transfer_remote_temp_cleaned",
+                        Some(&h.id),
+                        Some(&temp),
+                        serde_json::json!({"transfer": t.id, "phase": "compensation"}),
+                        None,
+                    );
+                }
+                Err(e) => {
+                    fails += 1;
+                    if fails < 3 {
+                        self.pending_remote_temps
+                            .lock()
+                            .unwrap()
+                            .entry(h.id.clone())
+                            .or_default()
+                            .push((t, fails));
+                    } else {
+                        let _ = self.center.audit.append(
+                            &Actor::Human,
+                            "transfer_remote_temp_clean_failed",
+                            Some(&h.id),
+                            Some(&temp),
+                            serde_json::json!({"transfer": t.id, "error": e.to_string()}),
+                            None,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -4164,6 +4337,110 @@ mod c10_tests {
     /// 注册一个手装会话（绕过 create_session 的真实传输）。
     fn register(m: &SessionManager, h: Arc<SessionHandle>) {
         m.sessions.lock().unwrap().insert(h.id.clone(), h.clone());
+    }
+
+    fn mk_attempt(id: &str, phase: AttemptPhase, age_secs: i64) -> Arc<AttemptEntry> {
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        Arc::new(AttemptEntry {
+            info: AttemptInfo {
+                attempt_id: id.into(),
+                host_id: "h".into(),
+                actor: "human".into(),
+                phase,
+                session_id: None,
+                created_at: chrono::Utc::now() - chrono::Duration::seconds(age_secs),
+                error: None,
+            },
+            st: tokio::sync::Mutex::new(AttemptState {
+                phase,
+                session_id: None,
+                pending_sid: None,
+                error: None,
+                submitted: false,
+                delivered: false,
+                cancel_requested: false,
+            }),
+            cancel_tx,
+            cancel_rx,
+            term: AtomicBool::new(phase.is_terminal()),
+        })
+    }
+
+    /// 十轮：attempts 超限收缩——终态优先、同组最旧先淘汰。
+    #[test]
+    fn attempts_gc_evicts_terminal_oldest_first() {
+        let mut map = HashMap::new();
+        map.insert("t0".to_string(), mk_attempt("t0", AttemptPhase::Failed, 40));
+        map.insert("t1".to_string(), mk_attempt("t1", AttemptPhase::Failed, 30));
+        map.insert("t2".to_string(), mk_attempt("t2", AttemptPhase::Cancelled, 20));
+        map.insert("a0".to_string(), mk_attempt("a0", AttemptPhase::Connecting, 10));
+        map.insert("a1".to_string(), mk_attempt("a1", AttemptPhase::Connecting, 5));
+        SessionManager::gc_attempts(&mut map, 4);
+        assert_eq!(map.len(), 4, "超限 1 条：只淘汰最旧终态");
+        assert!(!map.contains_key("t0"), "终态最旧先淘汰");
+        assert!(map.contains_key("t1") && map.contains_key("t2") && map.contains_key("a0") && map.contains_key("a1"));
+        // 未超限不动
+        SessionManager::gc_attempts(&mut map, 8);
+        assert_eq!(map.len(), 4);
+    }
+
+    /// 十轮：target_locks 无外部持有者条目在下次取锁时回收。
+    #[test]
+    fn target_locks_reaped_when_unheld() {
+        let m = mgr();
+        let l = m.target_lock("r:/a");
+        {
+            let locks = m.target_locks.lock().unwrap();
+            assert_eq!(locks.len(), 1);
+            assert_eq!(Arc::strong_count(&l), 2, "map + 本地克隆");
+        }
+        drop(l);
+        let l2 = m.target_lock("r:/b");
+        {
+            let locks = m.target_locks.lock().unwrap();
+            assert_eq!(locks.len(), 1, "无持有者的 r:/a 条目应被回收");
+            assert!(locks.contains_key("r:/b"));
+        }
+        // 仍被持有（克隆在外）的条目不回收
+        let hold = l2.clone();
+        let _l3 = m.target_lock("r:/c");
+        {
+            let locks = m.target_locks.lock().unwrap();
+            assert_eq!(locks.len(), 2, "r:/b 持有中不得回收");
+        }
+        drop(hold);
+        drop(_l3);
+        drop(l2);
+        let _l4 = m.target_lock("r:/d");
+        {
+            let locks = m.target_locks.lock().unwrap();
+            assert_eq!(locks.len(), 1, "克隆放还后 r:/b、r:/c 在下次回收摘除");
+        }
+    }
+
+    /// 十轮：brief 反映会话态——断线运行中任务不可观测、控制权变迁、goal 透传。
+    #[tokio::test]
+    async fn brief_reflects_state_transitions_and_goal() {
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        *h.state.lock().await = session_api::SessionState::Disconnected;
+        h.transitions.lock().await.push((chrono::Utc::now(), "测试接管".into()));
+        *h.goal.lock().unwrap() = Some("排查磁盘".into());
+        let b = crate::brief::compute(&h).await;
+        // 断线 → 运行中任务状态未知（nohup/systemd 可能仍在跑，不得当作已结束）
+        let run_fact = b
+            .facts
+            .iter()
+            .find(|f| f.subject == "运行中任务")
+            .expect("断线态应有「运行中任务未知」事实");
+        assert_eq!(run_fact.status, session_api::Epistemic::Unobservable);
+        // 控制权变迁进 facts
+        assert!(b.facts.iter().any(|f| f.subject == "控制权" && f.detail.contains("测试接管")));
+        assert_eq!(b.goal.as_deref(), Some("排查磁盘"));
+        // fresh handle 无 cwd → 无 cwd 事实
+        assert!(b.cwd.is_none());
+        assert!(b.facts.iter().all(|f| f.subject != "cwd"));
     }
 
     #[tokio::test]

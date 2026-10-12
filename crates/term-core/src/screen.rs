@@ -76,6 +76,10 @@ pub struct Screen {
     pub blocks: BlockIndex,
     lossless: VecDeque<LosslessChunk>,
     lossless_bytes: usize,
+    /// 环淘汰累计数（头 pop 计数）：wait_output 水位用「淘汰基数 + 长度」作绝对
+    /// 序号——deque 下标随头部淘汰整体前滑，相对下标水位会把未消费的输出静默
+    /// 跳过（漏匹配 → 假超时，十轮）。
+    lossless_evicted: usize,
     /// 有新无损内容时 notify。
     lossless_notify: std::sync::Arc<tokio::sync::Notify>,
     cwd: Option<String>,
@@ -109,6 +113,7 @@ impl Screen {
             blocks: BlockIndex::new(),
             lossless: VecDeque::new(),
             lossless_bytes: 0,
+            lossless_evicted: 0,
             lossless_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
             cwd: None,
             cwd_ts: None,
@@ -257,6 +262,7 @@ impl Screen {
         while self.lossless_bytes > self.config.lossless_cap {
             if let Some(front) = self.lossless.pop_front() {
                 self.lossless_bytes -= front.text.len();
+                self.lossless_evicted += 1;
             } else {
                 break;
             }
@@ -521,16 +527,29 @@ impl Screen {
 
     // ---- wait_output 支撑（无锁协议：core-session 短锁轮询 + notify）----
 
-    /// 无损缓冲当前长度（水位）。
+    /// 无损缓冲当前长度（相对下标；水位请用 [`Self::lossless_abs`]）。
     pub fn lossless_len(&self) -> usize {
         self.lossless.len()
     }
 
-    /// 自水位以来的新增渲染文本。
-    pub fn text_since(&self, watermark: usize) -> String {
+    /// 环淘汰累计数（绝对水位基数）。
+    pub fn lossless_evicted(&self) -> usize {
+        self.lossless_evicted
+    }
+
+    /// 当前绝对水位 = 淘汰基数 + 存活长度。跨淘汰稳定：此后
+    /// `text_since_abs(该值)` 恰好取到「该时刻之后」的输出（淘汰越界部分除外，
+    /// 调用方以 `lossless_evicted()` 越过水位判定截断）。
+    pub fn lossless_abs(&self) -> usize {
+        self.lossless_evicted + self.lossless.len()
+    }
+
+    /// 自绝对水位以来的存活渲染文本；水位落在已淘汰区间时从头取（saturating）。
+    pub fn text_since_abs(&self, abs_watermark: usize) -> String {
+        let skip = abs_watermark.saturating_sub(self.lossless_evicted);
         self.lossless
             .iter()
-            .skip(watermark)
+            .skip(skip)
             .map(|c| c.text.as_str())
             .collect()
     }
@@ -700,6 +719,37 @@ mod tests {
         let mut s = screen();
         s.feed(b"\x1b]7;file://h/tmp/x\x07");
         assert_eq!(s.cwd().map(|s| s.as_str()), Some("/tmp/x"));
+    }
+
+    /// 十轮：环淘汰后绝对水位不漂移——淘汰发生前取的水位，之后仍取到「其后」
+    /// 存活文本（旧相对下标水位在此场景把未消费输出静默跳过）；截断经
+    /// `lossless_evicted() > 水位` 可感知。
+    #[test]
+    fn lossless_watermark_survives_eviction() {
+        let cfg = ScreenConfig { cols: 80, rows: 24, scrollback: 100, lossless_cap: 32 };
+        let mut s = Screen::new(cfg.clone() /* 每块 22B，环只容 1–2 块 */);
+        for i in 0..3 {
+            s.feed(format!("chunk-{i}-0123456789\r\n").as_bytes());
+        }
+        let wm = s.lossless_abs();
+        assert_eq!(wm, 3, "绝对水位 = 总推入块数（淘汰计数+存活长度）");
+        // 继续喂触发淘汰：水位前块被淘汰后，text_since_abs 只回存活部分
+        for i in 3..10 {
+            s.feed(format!("chunk-{i}-0123456789\r\n").as_bytes());
+        }
+        assert!(s.lossless_evicted() > wm, "小环下淘汰数必然越过水位");
+        let text = s.text_since_abs(wm);
+        assert!(text.contains("chunk-9"), "最新块必须在场：{text:?}");
+        assert!(!text.contains("chunk-2"), "水位前块不得混入：{text:?}");
+        assert!(s.lossless_evicted() > wm);
+        // 截断语义：evicted 越过水位 → 本次返回不含水位处及之前的块
+        assert!(!text.contains("chunk-3"));
+        // 水位在淘汰面之后的场景（无截断）：新水位起的新块完整可取
+        let wm2 = s.lossless_abs();
+        s.feed(b"chunk-tail-0123456789\r\n");
+        let text2 = s.text_since_abs(wm2);
+        assert!(text2.contains("chunk-tail"), "水位后新块必须完整：{text2:?}");
+        assert!(!text2.contains("chunk-9"), "水位前块不得混入：{text2:?}");
     }
 
     #[test]

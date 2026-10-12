@@ -24,9 +24,18 @@ pub const BUILTIN_DENY_PATTERNS: &[(&str, &str)] = &[
     (r":\(\)\s*\{.*\};\s*:", "fork 炸弹"),
     (r"^\s*chmod\s+(-[a-zA-Z]+\s+)*777\s+/(?:\s|$)", "根目录开放权限"),
     (r"^\s*wipefs\b", "擦除文件系统签名"),
-    (r"^\s*(?:fdisk|parted|sfdisk)\s+/dev/", "分区工具作用于块设备"),
+    (r"^\s*(?:fdisk|cfdisk|sfdisk|sgdisk|parted)\s+/dev/", "分区工具作用于块设备"),
     (r"^\s*blkdiscard\b", "丢弃块设备扇区"),
+    (r"^\s*shred\b[^;|&]*\s/dev/", "覆写块设备"),
+    (r"^\s*systemctl\s+(?:reboot|poweroff|halt)\b", "关机/重启"),
 ];
+
+/// 提权/包装前缀（十轮）：`sudo|doas|nohup|nice|time|env|command|exec`、
+/// `VAR=值` 环境赋值、短选项及其参数（`sudo -u alice`）。锚定在 `^\s*` 的内置
+/// deny 模式编译时统一前置此前缀——否则 `sudo rm -rf /` 直接绕过全部锚定模式
+/// （九轮审计）。任意间接（`sudo bash -c 'reboot'` 的内层命令是字符串参数，
+/// 无法用正则覆盖）仍由 tree-sitter 逐段求值 + 审批人看全文兜底。
+const WRAPPER_PREFIX: &str = r"(?:(?:\s*(?:sudo|doas|nohup|nice|time|env|command|exec)\b|\s*[A-Za-z_]\w*=\S*|\s*-{1,2}[A-Za-z][\w-]*(?:\s+\S+)?)\s*)*";
 
 /// 逐段求值结论。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,7 +168,15 @@ impl ApprovalEngine {
     pub fn new() -> Result<Self, session_api::Error> {
         let builtin_denies = BUILTIN_DENY_PATTERNS
             .iter()
-            .map(|(p, reason)| (Regex::new(p).expect("builtin deny regex"), *reason))
+            .map(|(p, reason)| {
+                // `^\s*` 锚定的模式统一前置 wrapper 前缀（提权绕过防线，见
+                // WRAPPER_PREFIX 注释）；非锚定模式原样编译。
+                let full = match p.strip_prefix(r"^\s*") {
+                    Some(rest) => format!("^{WRAPPER_PREFIX}{rest}"),
+                    None => (*p).to_string(),
+                };
+                (Regex::new(&full).expect("builtin deny regex"), *reason)
+            })
             .collect();
         Ok(Self {
             parser: Arc::new(CommandParser::new()?),
@@ -423,6 +440,40 @@ mod tests {
     fn safe_commands_not_flagged() {
         let e = engine();
         for cmd in ["rm -rf /tmp/build", "df -h", "echo reboot-is-a-word"] {
+            assert_ne!(e.evaluate("agent-a", cmd).verdict, SegmentVerdict::Dangerous, "cmd={cmd}");
+        }
+    }
+
+    /// 十轮：提权/包装前缀不得绕过锚定的内置 deny。
+    #[test]
+    fn wrapper_prefix_does_not_bypass_deny() {
+        let e = engine();
+        for cmd in [
+            "sudo rm -rf /",
+            "sudo -u alice rm -rf /",
+            "doas reboot",
+            "nohup shutdown now",
+            "env FOO=1 dd if=/dev/zero of=/dev/sda",
+            "PATH=/usr/sbin:/sbin init 0",
+            "nice -n 19 mkfs.ext4 /dev/sdb1",
+            "sudo systemctl reboot",
+            "sudo shred -n 1 /dev/sda",
+            "sudo cfdisk /dev/sdb",
+        ] {
+            assert_eq!(e.evaluate("agent-a", cmd).verdict, SegmentVerdict::Dangerous, "cmd={cmd}");
+        }
+    }
+
+    /// 提权前缀下的安全命令不得误伤（前缀引入后词边界语义保持）。
+    #[test]
+    fn wrapper_prefix_safe_commands_not_flagged() {
+        let e = engine();
+        for cmd in [
+            "sudo rm -rf /tmp/build",
+            "sudo apt install ripgrep",
+            "sudo df -h",
+            "env EDITOR=vim crontab -e",
+        ] {
             assert_ne!(e.evaluate("agent-a", cmd).verdict, SegmentVerdict::Dangerous, "cmd={cmd}");
         }
     }

@@ -210,9 +210,37 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// 主密钥来源优先级：TINYSSH_MASTER_KEY(hex) > TINYSSH_MASTER_PASSPHRASE(argon2id) > OS 钥匙串。
+/// 口令路径按 **v1 静态盐** 派生（兼容既有数据）。经 [`Vault::open`] 打库走
+/// [`master_key_for_db`]（口令路径用库内随机盐）。
 pub fn master_key() -> Result<Zeroizing<[u8; 32]>> {
-    if let Ok(hex_key) = std::env::var("TINYSSH_MASTER_KEY") {
-        let bytes = hex::decode(hex_key.trim()).map_err(|_| Error::Storage("bad master key hex".into()))?;
+    derive_from_sources(
+        &std::env::var("TINYSSH_MASTER_KEY").ok(),
+        &std::env::var("TINYSSH_MASTER_PASSPHRASE").ok(),
+        None,
+    )
+}
+
+/// 库绑定派生（[`Vault::open`] 专用）：与 [`master_key`] 同序，但口令路径的
+/// argon2 盐从**库内**取（settings `master.salt`）——静态盐让同一口令跨安装
+/// 派生同一密钥，攻击者拿一份库即可离线预计算；每库随机盐迫使逐库计算（十轮）。
+pub fn master_key_for_db(conn: &Connection) -> Result<Zeroizing<[u8; 32]>> {
+    derive_from_sources(
+        &std::env::var("TINYSSH_MASTER_KEY").ok(),
+        &std::env::var("TINYSSH_MASTER_PASSPHRASE").ok(),
+        Some(conn),
+    )
+}
+
+fn derive_from_sources(
+    key_env: &Option<String>,
+    pass_env: &Option<String>,
+    db: Option<&Connection>,
+) -> Result<Zeroizing<[u8; 32]>> {
+    if let Some(hex_key) = key_env.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        // env 覆盖在所有构建生效（无头验收/CI 依赖此流程，见
+        // docs/acceptance/v0-mvp-acceptance.md §7）——warn 提供可见性而非门控
+        tracing::warn!("主密钥来源：TINYSSH_MASTER_KEY 环境变量覆盖（跳过钥匙串）");
+        let bytes = hex::decode(hex_key).map_err(|_| Error::Storage("bad master key hex".into()))?;
         let mut out = [0u8; 32];
         if bytes.len() != 32 {
             return Err(Error::Storage("master key must be 32 bytes".into()));
@@ -220,15 +248,68 @@ pub fn master_key() -> Result<Zeroizing<[u8; 32]>> {
         out.copy_from_slice(&bytes);
         return Ok(Zeroizing::new(out));
     }
-    if let Ok(pass) = std::env::var("TINYSSH_MASTER_PASSPHRASE") {
-        return Ok(argon2_derive(&pass));
+    if let Some(pass) = pass_env.as_deref().filter(|s| !s.is_empty()) {
+        tracing::warn!("主密钥来源：TINYSSH_MASTER_PASSPHRASE 环境变量覆盖（argon2id）");
+        return match db {
+            Some(conn) => Ok(argon2_derive_with_salt(pass, &db_master_salt(conn)?)),
+            None => Ok(argon2_derive(pass)),
+        };
     }
     keychain_key()
 }
 
+/// v1 静态盐：仅剩两个消费者——`master_key()` 独立派生（open_shared 测试装配）
+/// 与**已有数据的旧库**（有凭据但无 `master.salt`，换盐=换密钥=全部不可解）。
+const LEGACY_MASTER_SALT: &[u8] = b"tinyssh-master-key-v1";
+const MASTER_SALT_KEY: &str = "master.salt";
+
+/// 库内口令盐（hex 16B，settings 表）：在场即用；不在场时新库（无主机/身份
+/// 行）生成随机盐落库，已有数据的旧库回落 v1 静态盐保持可解。
+fn db_master_salt(conn: &Connection) -> Result<Vec<u8>> {
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key=?1",
+            params![MASTER_SALT_KEY],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .filter(|s: &String| !s.is_empty());
+    if let Some(hex_salt) = stored {
+        let salt = hex::decode(hex_salt.trim())
+            .map_err(|_| Error::Storage("master.salt 损坏（非合法 hex）".into()))?;
+        if salt.len() < 8 {
+            return Err(Error::Storage("master.salt 损坏（长度不足）".into()));
+        }
+        return Ok(salt);
+    }
+    let has_secrets: i64 = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM hosts) + (SELECT COUNT(*) FROM identities)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| Error::Storage(e.to_string()))?;
+    if has_secrets > 0 {
+        return Ok(LEGACY_MASTER_SALT.to_vec());
+    }
+    use rand::RngCore;
+    let mut salt = [0u8; 16];
+    rand::rng().fill_bytes(&mut salt);
+    conn.execute(
+        "INSERT INTO settings(key,value) VALUES(?1,?2)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![MASTER_SALT_KEY, hex::encode(salt)],
+    )
+    .map_err(|e| Error::Storage(e.to_string()))?;
+    Ok(salt.to_vec())
+}
+
 fn argon2_derive(pass: &str) -> Zeroizing<[u8; 32]> {
+    argon2_derive_with_salt(pass, LEGACY_MASTER_SALT)
+}
+
+fn argon2_derive_with_salt(pass: &str, salt: &[u8]) -> Zeroizing<[u8; 32]> {
     use argon2::{Argon2, Algorithm, Params, Version};
-    let salt = b"tinyssh-master-key-v1";
     let params = Params::new(19456, 2, 1, Some(32)).expect("argon2 params");
     let a2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; 32];
@@ -676,7 +757,7 @@ impl Vault {
     pub fn open(path: &Path) -> Result<Self> {
         let lock = VaultLock::acquire(path)?;
         let conn = open(path)?;
-        let master = master_key()?;
+        let master = master_key_for_db(&conn)?;
         Ok(Self { conn: Mutex::new(conn), master, _lock: Some(lock) })
     }
 
@@ -2519,6 +2600,84 @@ mod tests {
         let err2 = restore_from(&db, &db).unwrap_err();
         assert!(format!("{err2:?}").contains("写锁"), "持锁时恢复须被拒：{err2:?}");
         drop(v);
+    }
+
+    // ---- 十轮：库内随机盐（口令派生）----
+
+    fn fresh_conn(dir: &std::path::Path) -> Connection {
+        open(&dir.join("v.db")).unwrap()
+    }
+
+    /// 新库（无凭据）首次口令派生：生成随机盐落库，重复派生稳定；同口令跨库
+    /// 盐不同 → 派生密钥不同（静态盐跨安装同值的隐患消除）。
+    #[test]
+    fn master_salt_random_on_fresh_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+        let s1 = db_master_salt(&conn).unwrap();
+        assert_eq!(s1.len(), 16);
+        // 落库后重复取值稳定（派生可重现）
+        assert_eq!(db_master_salt(&conn).unwrap(), s1);
+        let stored: String = conn
+            .query_row("SELECT value FROM settings WHERE key='master.salt'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hex::decode(&stored).unwrap(), s1);
+        // 同口令、另一新库 → 不同盐不同密钥
+        let dir2 = tempfile::tempdir().unwrap();
+        let conn2 = fresh_conn(dir2.path());
+        let k1 = argon2_derive_with_salt("pass-1", &db_master_salt(&conn).unwrap());
+        let k2 = argon2_derive_with_salt("pass-1", &db_master_salt(&conn2).unwrap());
+        assert_ne!(*k1, *k2);
+    }
+
+    /// 已有数据的旧库（无盐行）回落 v1 静态盐——换盐=换密钥=既有凭据不可解。
+    #[test]
+    fn master_salt_legacy_fallback_when_data_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+        conn.execute(
+            "INSERT INTO hosts(id,name,address,port,username,auth_type) VALUES('h1','n','x',22,'u','key')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(db_master_salt(&conn).unwrap(), LEGACY_MASTER_SALT.to_vec());
+        // v1 静态盐派生与旧实现逐字节一致（口令路径向后兼容锚点）
+        assert_eq!(*argon2_derive("p"), *argon2_derive_with_salt("p", LEGACY_MASTER_SALT));
+    }
+
+    /// 口令派生密钥端到端：新库存盐 → 加密凭据 → 同口令重开可解。
+    #[test]
+    fn passphrase_derived_key_roundtrip_via_db_salt() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("v.db");
+        let master = {
+            let conn = open(&db).unwrap();
+            derive_from_sources(&None, &Some("pass-2".into()), Some(&conn)).unwrap()
+        };
+        {
+            let v = Vault::open_shared(Connection::open(&db).unwrap(), master.clone()).unwrap();
+            v.upsert_host(&HostDraft {
+                id: None,
+                name: "n".into(),
+                address: "h".into(),
+                port: Some(22),
+                username: "u".into(),
+                auth: AuthDraft::Password { password: "sekret".into() },
+                tags: vec![],
+                charset: Charset::Utf8,
+                shell_integration: None,
+            })
+            .unwrap();
+        }
+        // 重开（同口令，库内盐在场）→ 凭据可解
+        let conn = open(&db).unwrap();
+        let master2 = derive_from_sources(&None, &Some("pass-2".into()), Some(&conn)).unwrap();
+        assert_eq!(*master, *master2);
+        let v = Vault::open_shared(Connection::open(&db).unwrap(), master2).unwrap();
+        let hosts = v.list_hosts().unwrap();
+        assert_eq!(hosts[0].auth_type, AuthType::Password);
+        let (_, secret) = v.host_secret(&hosts[0]).unwrap();
+        assert_eq!(&*secret, "sekret");
     }
 }
 

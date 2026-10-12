@@ -79,6 +79,8 @@ const demoState = {
   // R26（§6.4）：每会话最近一条状态事件（session_state_feed 轮询面；真实核心走
   // session-state 事件通道——C1 connection-event/demo 轮询双路的同款镜像）
   stateEvents: new Map<string, SessionStateEvent>(),
+  // 十轮：settings 进程内存储（get_setting/set_setting 契约对齐）
+  settings: new Map<string, string>(),
   // C4（R30）C02 判别钩子：预置 sftp_list 慢响应（path 命中即延迟 ms）
   sftpSlow: null as { path: string; ms: number } | null,
   // C5（R32）演示传输注册表（创建倒序；真实核心同契约）
@@ -752,9 +754,24 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       audit("human", "session_reconnect_stop", null, null, sid ?? null);
       return null;
     }
-    // R26：状态事件轮询面（demo 无事件通道——C1 connection_status 同款兜底）
-    case "session_state_feed":
-      return [...demoState.stateEvents.values()];
+    // R26：状态事件轮询面（demo 无事件通道——C1 connection_status 同款兜底）。
+    // 契约对齐（十轮）：真实核心=每会话恒有一条全量投影；demo 原只回走过断链/
+    // 重连演示流的稀疏集——现以会话表补全缺失条目（已有事件保留 attempt/detail）。
+    case "session_state_feed": {
+      const events = new Map(demoState.stateEvents);
+      for (const s of demoState.sessions) {
+        if (!events.has(s.id)) {
+          events.set(s.id, {
+            session_id: s.id,
+            state: s.state as SessionStateEvent["state"],
+            attempt: null,
+            max_attempts: null,
+            detail: null,
+          });
+        }
+      }
+      return [...events.values()];
+    }
     case "resize":
       return null;
     case "read_screen": {
@@ -847,16 +864,28 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       audit("human", "goal_set", s.goal, null, sid, { cleared: s.goal === null });
       return null;
     }
-    case "list_approvals":
+    case "list_approvals": {
       // R42（§6.7）「可用目的」按会话**当前**目标投影（真实 list_approvals 同款）：
       // 请求之后补写的目标，复核时也看得到；无目标即缺失。
-      return demoState.approvals.map((a) => ({
-        ...a,
-        segment_report: a.segment_report.map((s) => ({ ...s })),
-        purpose: demoState.sessions.find((x) => x.id === a.session_id)?.goal ?? null,
-      }));
+      // 契约对齐（十轮）：pendingOnly=true 只回 pending（真实 ApprovalFilter 同款，
+      // demo 原恒回全量）。
+      const pendingOnly = args?.pendingOnly === true;
+      return demoState.approvals
+        .filter((a) => !pendingOnly || a.status === "pending")
+        .map((a) => ({
+          ...a,
+          segment_report: a.segment_report.map((s) => ({ ...s })),
+          purpose: demoState.sessions.find((x) => x.id === a.session_id)?.goal ?? null,
+        }));
+    }
     case "decide_approval": {
       const id = args?.id as string;
+      // 契约对齐（十轮）：未知 decision 显式报错（真实 main.rs 同款 invalid_input），
+      // 不再静默按 approve 处理
+      const decision = args?.decision as string;
+      if (decision !== "approve" && decision !== "deny" && decision !== "edit") {
+        throw apiError("invalid_input", "bad decision");
+      }
       const it = demoState.approvals.find((a) => a.id === id);
       if (it) {
         // 镜像真实 mark_edited：原始请求保留在 command，实际放行文入 edited_command（PV R1 对齐）
@@ -1571,10 +1600,15 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return null;
     case "note_terminal":
     case "open_url":
-    case "get_setting":
-    case "set_setting":
     case "bench_start":
     case "bench_report":
+      return null;
+    // 契约对齐（十轮）：settings 进程内存储（真实=vault 持久化；demo 原读写恒
+    // null/丢弃——字体/主题等偏好在演示域往返断裂）
+    case "get_setting":
+      return demoState.settings.get(args?.key as string) ?? null;
+    case "set_setting":
+      demoState.settings.set(args?.key as string, String(args?.value ?? ""));
       return null;
     // ---- C8 偏好与主机元数据（R15 同契约）----
     case "get_workspace": {
