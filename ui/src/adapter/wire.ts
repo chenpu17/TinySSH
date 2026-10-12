@@ -580,6 +580,8 @@ export interface Workspace {
   terminal?: TerminalPrefs | null;
   /** 传输偏好（R33 §355）；null = 尚未写入，下载落系统默认目录 */
   transfers?: TransferPrefs | null;
+  /** 会话域（十五轮）：上次运行打开的主机清单（去重有序）；null = 尚未写入 */
+  sessions?: SessionPrefs | null;
 }
 
 export interface HostbarPrefs {
@@ -587,9 +589,16 @@ export interface HostbarPrefs {
   width: number;
 }
 
-/** 终端偏好（R25 §318）：粘贴保护开关，默认开 */
+/** 终端偏好（R25 §318）：粘贴保护默认开；选中即复制默认关（十五轮） */
 export interface TerminalPrefs {
   paste_guard: boolean;
+  copy_on_select?: boolean;
+}
+
+/** 会话域（十五轮）：「重连上次会话」记忆 */
+export interface SessionPrefs {
+  /** 上次运行仍打开会话的主机 ID（去重、按标签序）；空数组 = 上次全部关闭 */
+  last: string[];
 }
 
 /** 传输偏好（R33 §355）：下载默认目录记忆（首次=系统 Downloads；另存为后更新） */

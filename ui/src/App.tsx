@@ -516,7 +516,7 @@ export default function App() {
   // 事件应用：会话状态即时更新（免 3s 轮询盲窗）+ 重连计数推进；
   // 终态（Reconfirming/Disconnected/Connected/Closed）清除本会话在途计数
   const applyStateEvent = useCallback((ev: SessionStateEvent) => {
-    setSessions((cur) => cur.map((s) => (s.id === ev.session_id ? { ...s, state: ev.state } : s)));
+    setSessions((cur) => applyTabOrder(cur.map((s) => (s.id === ev.session_id ? { ...s, state: ev.state } : s))));
     setAutoReconn((cur) => {
       if (ev.state === "Reconnecting") {
         return { sid: ev.session_id, attempt: ev.attempt ?? 0, max: ev.max_attempts ?? 3 };
@@ -708,6 +708,9 @@ export default function App() {
   // 开关持久化在 workspace blob（ui.v2.terminal.paste_guard，默认开）
   const [pasteGuard, setPasteGuard] = useState(true);
   const pasteGuardRef = useRef(true);
+  // 十五轮：选中即复制（PuTTY/Xshell 惯例）——开关持久化在 workspace blob terminal 域（默认关）
+  const [copyOnSelect, setCopyOnSelect] = useState(false);
+  const copyOnSelectRef = useRef(false);
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string } | null>(null);
   // 十一轮续：粘贴入口统一（⌘V 与终端右键共用）——bracketed paste 语义由 xterm 按远端
   // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发
@@ -762,6 +765,30 @@ export default function App() {
       return next;
     });
     setRenaming(null);
+  };
+  // —— 十五轮：标签拖拽排序 ——
+  // 会话期内的显示顺序事实源；list_sessions 整表刷新（连接/断开触发）后仍按此序渲染。
+  // 不入 vault（会话本不跨重启）。⌘1-9 / ⌘⇧[] 读同一数组，快捷键序=所见序。
+  const tabOrderRef = useRef<string[]>([]);
+  const dragSidRef = useRef<string | null>(null);
+  const [tabDropHint, setTabDropHint] = useState<{ sid: string; before: boolean } | null>(null);
+  function applyTabOrder<T extends { id: string }>(list: T[]): T[] {
+    const rank = tabOrderRef.current;
+    if (!rank.length) return list;
+    const pos = new Map(rank.map((id, i) => [id, i] as const));
+    return [...list].sort((a, b) => (pos.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (pos.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+  }
+  const reorderTabs = (fromSid: string, toSid: string, before: boolean) => {
+    const ids = sessionsRef.current.map((s) => s.id);
+    const from = ids.indexOf(fromSid);
+    const to = ids.indexOf(toSid);
+    if (from < 0 || to < 0 || from === to) return;
+    ids.splice(from, 1);
+    let to2 = ids.indexOf(toSid);
+    if (!before) to2 += 1;
+    ids.splice(to2, 0, fromSid);
+    tabOrderRef.current = ids;
+    setSessions(applyTabOrder(sessionsRef.current));
   };
   // R25 §185 宽度退化：每窗格至少 360 宽——空间不足时只呈现焦点窗格（另一个仍在
   // 标签中），加宽自动恢复；退化时显示一次可关闭的布局提示
@@ -899,7 +926,7 @@ export default function App() {
 
   const refreshLists = useCallback(async () => {
     try {
-      setSessions(await invoke("list_sessions"));
+      setSessions(applyTabOrder(await invoke("list_sessions")));
       setHosts(await invoke("list_hosts"));
       // R20：收藏/最近元数据（失败不阻断列表——空 meta 即全部视为未收藏）
       try { setHostMeta(await invoke("list_host_metadata")); } catch { /* 容忍 */ }
@@ -1335,6 +1362,14 @@ export default function App() {
     // 远程设置的标题（OSC 0/2，T16）：按会话记录，显示在终端头部
     term.onTitleChange((t) => {
       if (t) setOscTitles((prev) => ({ ...prev, [sessionSid]: t }));
+    });
+    // 十五轮：选中即复制——划选非空立即写系统剪贴板（清选不写；PuTTY/Xshell 语义）。
+    // onSelectionChange 是 IEvent<void>（xterm 5.5），选区内容回调里自取
+    term.onSelectionChange(() => {
+      if (!copyOnSelectRef.current) return;
+      const sel = term.getSelection();
+      if (!sel) return;
+      (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
     });
     // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
     // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）
@@ -1852,6 +1887,11 @@ export default function App() {
         if (ws.terminal) {
           pasteGuardRef.current = ws.terminal.paste_guard;
           setPasteGuard(ws.terminal.paste_guard);
+          // 十五轮：选中即复制（缺省/未写入 = 关）
+          if (ws.terminal.copy_on_select !== undefined) {
+            copyOnSelectRef.current = ws.terminal.copy_on_select;
+            setCopyOnSelect(ws.terminal.copy_on_select);
+          }
         }
         // R33 §356：上次下载目录（缺省/null = 落系统 Downloads）
         if (ws.transfers?.download_dir) downloadDirRef.current = ws.transfers.download_dir;
@@ -1876,15 +1916,50 @@ export default function App() {
 
   // 主机栏开合与拖宽（200–300，§4.2）；grip 用指针捕获，拖动即改宽、松手落盘
   //（落盘三处：localStorage 兼容留写 + C8 blob 事实源）
-  // R25 §318：粘贴保护开关——同链式串行化写 terminal 域（默认开）
+  // R25 §318：粘贴保护开关——同链式串行化写 terminal 域（默认开）。
+  // 十五轮：域内改为合并写（...ws.terminal）——否则会抹掉同域的 copy_on_select
   const changePasteGuard = useCallback((pg: boolean) => {
     setPasteGuard(pg);
     pasteGuardRef.current = pg;
     wsWriteChain.current = wsWriteChain.current
       .then(() => invoke("get_workspace"))
-      .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: { paste_guard: pg } } }))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: { paste_guard: pg, copy_on_select: ws.terminal?.copy_on_select ?? false } } }))
       .catch(() => {});
   }, []);
+  // 十五轮：选中即复制开关——同链合并写 terminal 域（默认关）
+  const changeCopyOnSelect = useCallback((on: boolean) => {
+    setCopyOnSelect(on);
+    copyOnSelectRef.current = on;
+    wsWriteChain.current = wsWriteChain.current
+      .then(() => invoke("get_workspace"))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: { paste_guard: ws.terminal?.paste_guard ?? true, copy_on_select: on } } }))
+      .catch(() => {});
+  }, []);
+
+  // —— 十五轮：重连上次会话 ——
+  // blob sessions.last 记「当前打开会话的主机清单」（去重有序）。只有本运行用户
+  // 主动建连成功（createSession Ready → armed）才允许写：启动装载/demo 预置会话
+  // 不武装也不写（否则下次启动瞬间就用预置清单覆盖上次运行的记忆）。武装后随
+  // 会话集合变化跟随写（含全关=空集）。
+  const [lastSessionHosts, setLastSessionHosts] = useState<string[]>([]);
+  const lastTrackArmedRef = useRef(false);
+  useEffect(() => {
+    if (!lastTrackArmedRef.current) return;
+    const ids = [...new Set(sessions.map((s) => s.host_id))];
+    wsWriteChain.current = wsWriteChain.current
+      .then(() => invoke("get_workspace"))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, sessions: { last: ids } } }))
+      .catch(() => {});
+  }, [sessions]);
+  // 欢迎页可见时读清单（回欢迎页也重读——与 armed 写入一致；主机已删的行由渲染侧过滤）
+  useEffect(() => {
+    if (sessions.length > 0) return;
+    let dead = false;
+    invoke("get_workspace")
+      .then((ws) => { if (!dead) setLastSessionHosts(((ws?.sessions as { last?: string[] } | null)?.last ?? []) as string[]); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [sessions.length]);
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
@@ -3277,6 +3352,9 @@ export default function App() {
       const final = await waitForAttempt(a.attempt_id);
       if (final.phase === "Ready" && final.session_id) {
         setLastFailed(null);
+        // 十五轮：「重连上次会话」记忆的武装点——只有用户主动建连成功才置位；
+        // 启动装载/demo 预置会话不得武装（否则 reload 即覆盖上次运行的清单）
+        lastTrackArmedRef.current = true;
         await refreshLists();
         if (intoSplit) {
           // 十三轮：右键活动标签「复制标签页到右侧」——显式参数直达（无跨点击的挂起
@@ -3894,7 +3972,32 @@ export default function App() {
               return (
                 <div
                   key={s.id}
-                  className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")}
+                  className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")
+                    + (tabDropHint?.sid === s.id ? (tabDropHint.before ? " tab-drop-before" : " tab-drop-after") : "")}
+                  draggable={renaming?.sid !== s.id}
+                  onDragStart={(e) => {
+                    // 十五轮：拖拽排序——dataTransfer 不置数据 Chromium 不发起拖拽
+                    dragSidRef.current = s.id;
+                    e.dataTransfer.effectAllowed = "move";
+                    try { e.dataTransfer.setData("text/plain", s.id); } catch { /* 忽略 */ }
+                  }}
+                  onDragOver={(e) => {
+                    if (!dragSidRef.current || dragSidRef.current === s.id) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setTabDropHint({ sid: s.id, before: e.clientX < r.left + r.width / 2 });
+                  }}
+                  onDragLeave={() => { setTabDropHint((cur) => (cur?.sid === s.id ? null : cur)); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from = dragSidRef.current;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    if (from && from !== s.id) reorderTabs(from, s.id, e.clientX < r.left + r.width / 2);
+                    dragSidRef.current = null;
+                    setTabDropHint(null);
+                  }}
+                  onDragEnd={() => { dragSidRef.current = null; setTabDropHint(null); }}
                   title={`${label} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
                   aria-label={`${label}，${st.text}${inSplit ? "，在分屏中" : ""}${i < 9 ? `，⌘${i + 1}` : ""}`}
                   tabIndex={0}
@@ -4146,7 +4249,7 @@ export default function App() {
               </div>
               <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
                 正在运行的命令与传输会被终止；传输处于提交中/结果待核实时不代表已全部取消。
-                下次启动不恢复会话，需手动重连。
+                会话不跨启动保留——下次启动可在欢迎页「重连上次会话」一键恢复届时仍打开的主机。
               </div>
               <div className="hk-actions">
                 <button className="danger" onClick={() => void confirmQuit()}>结束会话并退出</button>
@@ -4351,6 +4454,24 @@ export default function App() {
                     }}><IconTerminal size={13} /> 打开本地终端</button>
                   )}
                 </div>
+                {/* 十五轮：重连上次会话——上次退出/刷新时仍打开的主机（去重有序），
+                    一键全部重连（点了才连，不自动拨号）。主机已删的行整体过滤 */}
+                {!sid && sessions.length === 0 && lastSessionHosts.length > 0 && (() => {
+                  const rowsH = lastSessionHosts.flatMap((hid) => hosts.find((h) => h.id === hid) ?? []);
+                  if (rowsH.length === 0) return null;
+                  return (
+                    <div className="welcome-recents" aria-label="上次会话">
+                      <div className="wr-title">上次会话</div>
+                      <button className="wr-row" data-testid="reconnect-last"
+                        title={`重连 ${rowsH.map((h) => h.name).join("、")}`}
+                        onClick={() => { for (const h of rowsH) void createSession(h); }}>
+                        <span className="wr-name">⟳ 重连上次会话（{rowsH.length}）</span>
+                        <span className="wr-addr">{rowsH.map((h) => h.name).join("、")}</span>
+                        <span className="wr-go">连接</span>
+                      </button>
+                    </div>
+                  );
+                })()}
                 {/* R20（§259）：已有主机但无会话 → 最近连接（后端派生、排除 local、上限 5）。
                     仅在欢迎页呈现（§261：避免每次连接使侧栏重排）；点击即建连。
                     rev-r20 L5：行全部失效（主机刚删的毫秒窗）时不渲染空标题块 */}
@@ -4878,6 +4999,16 @@ export default function App() {
                     多行粘贴保护
                     <span className="dim" style={{ display: "block" }}>
                       粘贴内容含换行且远端未开启 bracketed paste 时，先预览确认再发送；关闭后立即发送。
+                    </span>
+                  </span>
+                </label>
+                {/* 十五轮：选中即复制（PuTTY/Xshell 惯例，默认关） */}
+                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 8 }}>
+                  <input type="checkbox" data-testid="cos-toggle" checked={copyOnSelect} onChange={(e) => changeCopyOnSelect(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                    选中即复制
+                    <span className="dim" style={{ display: "block" }}>
+                      划选终端文字立即写入系统剪贴板（PuTTY/Xshell 惯例）；关闭后用 ⌘C 或右键「复制」。
                     </span>
                   </span>
                 </label>

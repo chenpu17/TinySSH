@@ -504,6 +504,11 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
   color: var(--text); background: color-mix(in srgb, var(--panel2) 70%, transparent);
   border: 1px solid var(--accent); border-radius: 5px; outline: none;
 }
+/* 十五轮：拖拽排序落点指示——目标标签左/右缘 2px accent 竖条（激活态叠加顶条不丢） */
+.tab-drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab-drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+.tab-active.tab-drop-before { box-shadow: inset 0 2px 0 var(--accent), inset 2px 0 0 var(--accent); }
+.tab-active.tab-drop-after { box-shadow: inset 0 2px 0 var(--accent), inset -2px 0 0 var(--accent); }
 /* R27（§7.4）：关闭/分屏改真按钮——键盘可达+focus-visible；视觉盒保持 18px 原样 */
 .tab-split, .tab-x {
   flex: none; width: 18px; height: 18px;
@@ -1134,6 +1139,9 @@ button.hb-tag.on:not(:disabled):hover { color: var(--accent); border-color: var(
   display: flex; align-items: center; gap: 8px; text-align: left;
   padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--panel2); cursor: pointer; font-size: 12px;
+  /* 十五轮补：全局 button 规则给的是 --on-accent（白），浅色主题下 wr-name 白字白底
+     隐身（R20 起最近连接的主机名一直没显示）——行按钮的正文回 --text */
+  color: var(--text);
 }
 button.wr-row:not(:disabled):hover { border-color: var(--accent-line); background: var(--panel3); }
 .wr-name { font-weight: 500; }

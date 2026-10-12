@@ -1450,14 +1450,28 @@ pub struct Workspace {
     /// 传输偏好（R33 §355；None = 尚未写入，下载落系统默认目录）
     #[serde(default)]
     pub transfers: Option<TransferPrefs>,
+    /// 会话域（十五轮）：「重连上次会话」主机清单；None = 尚未写入
+    #[serde(default)]
+    pub sessions: Option<SessionPrefs>,
 }
 
-/// 终端偏好（§318）：粘贴保护开关，默认开
+/// 终端偏好（§318）：粘贴保护默认开；选中即复制默认关（十五轮）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalPrefs {
     /// 多行粘贴保护：内容含换行且远端未开 bracketed paste 时预览确认后才发送
     #[serde(default = "serde_true")]
     pub paste_guard: bool,
+    /// 选中即复制（十五轮，PuTTY/Xshell 惯例）：划选非空立即写系统剪贴板
+    #[serde(default)]
+    pub copy_on_select: bool,
+}
+
+/// 会话域（十五轮）：欢迎页「重连上次会话」的记忆
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionPrefs {
+    /// 上次运行仍打开会话的主机 ID（去重、按标签序）；空 = 上次全部关闭
+    #[serde(default)]
+    pub last: Vec<String>,
 }
 
 fn default_chrome() -> String {
@@ -1479,7 +1493,7 @@ pub fn serde_true() -> bool {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None, terminal: None, transfers: None }
+        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None, terminal: None, transfers: None, sessions: None }
     }
 }
 
@@ -1874,16 +1888,28 @@ mod wire_format_tests {
             "schema_version": 1, "chrome": "dark", "hostbar": { "open": true, "width": 224 }
         })).unwrap();
         assert!(legacy.transfers.is_none());
+        assert!(legacy.sessions.is_none());
         // 新载荷 round-trip
         let ws = Workspace {
             schema_version: 1, chrome: "system".into(),
             hostbar: None, terminal: None,
             transfers: Some(TransferPrefs { download_dir: Some("/Users/demo/Downloads".into()) }),
+            sessions: None,
         };
         let v = serde_json::to_value(&ws).unwrap();
         assert_eq!(v["transfers"]["download_dir"], "/Users/demo/Downloads");
         let back: Workspace = serde_json::from_value(v).unwrap();
         assert_eq!(back, ws);
+        // 十五轮：sessions 域 round-trip（未知主机容忍，Vec 原样保序）
+        let r15: Workspace = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "chrome": "system", "sessions": { "last": ["local", "h-prod1"] }
+        })).unwrap();
+        assert_eq!(r15.sessions.as_ref().unwrap().last, vec!["local".to_string(), "h-prod1".to_string()]);
+        // 旧载荷无 sessions / terminal 无 copy_on_select → 按缺省解释（None/false）
+        let old_term: Workspace = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "chrome": "system", "terminal": { "paste_guard": true }
+        })).unwrap();
+        assert_eq!(old_term.terminal.unwrap().copy_on_select, false);
         // transfers 域对象存在但 download_dir 未写入 → None（不虚构默认值）
         let partial: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "system", "transfers": {}

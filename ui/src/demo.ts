@@ -1617,7 +1617,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         const raw = localStorage.getItem("ui.v2.workspace");
         if (raw) return JSON.parse(raw);
       } catch { /* 损坏自愈回落默认 */ }
-      return { schema_version: 1, chrome: "system", hostbar: null, terminal: null };
+      return { schema_version: 1, chrome: "system", hostbar: null, terminal: null, sessions: null };
     }
     case "set_workspace": {
       const ws = { ...(args?.ws as Record<string, unknown>), schema_version: 1 };
