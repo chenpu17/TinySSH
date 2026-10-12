@@ -19,13 +19,13 @@ const rightClickTab = async (page, namePart) => {
 
 const menuText = (page) =>
   page.evaluate(() => {
-    const m = document.querySelector(".tab-menu");
+    const m = document.querySelector(".ctx-menu");
     return m ? m.innerText.replace(/\n+/g, " | ") : null;
   });
 
 const clickItem = async (page, part) => {
   await page.evaluate((p) => {
-    const b = [...document.querySelectorAll(".tab-menu [role=menuitem]")].find((x) => x.textContent.includes(p));
+    const b = [...document.querySelectorAll(".ctx-menu [role=menuitem]")].find((x) => x.textContent.includes(p));
     if (!b) throw new Error("menuitem not found: " + p);
     b.click();
   }, part);
@@ -48,7 +48,7 @@ module.exports = {
     // ── 右键非当前标签：菜单出现，含分屏项，不含连接中无用的项 ──
     await rightClickTab(page, "prod-1");
     let menu = await menuText(page);
-    const menuOpen = await page.evaluate(() => !!document.querySelector(".tab-menu"));
+    const menuOpen = await page.evaluate(() => !!document.querySelector(".ctx-menu"));
     ck.check("右键标签弹出菜单", menuOpen, menu || "(无菜单)");
     ck.check("非当前标签有「与当前会话分屏」", !!menu && menu.includes("与当前会话分屏"), "");
     ck.check("已连接会话不出现「重连会话」", !!menu && !menu.includes("重连会话"), "");

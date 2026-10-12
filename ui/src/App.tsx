@@ -709,6 +709,27 @@ export default function App() {
   const [pasteGuard, setPasteGuard] = useState(true);
   const pasteGuardRef = useRef(true);
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string } | null>(null);
+  // 十一轮续：粘贴入口统一（⌘V 与终端右键共用）——bracketed paste 语义由 xterm 按远端
+  // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发
+  const pasteTextInto = (term: Terminal, sessionSid: string, t: string) => {
+    if (!t) return;
+    // rev-r26 低-5：断线/重连期粘贴与键入同口径拦截（确认框照弹会误导——
+    // 确认后字节仍被 onData 拦下）；⚠ 与 onData 告示同文
+    const pst = sessionsRef.current.find((x) => x.id === sessionSid)?.state;
+    if (pst && inputBlockedState(pst)) {
+      const why = pst === "Disconnected" ? "会话已断开" : "网络中断（自动重连中）";
+      term.write(`\r\n\x1b[33m⚠ ${why}——粘贴未发送。\x1b[0m\r\n`);
+      return;
+    }
+    if (pasteGuardRef.current && /[\n\r]/.test(t) && !term.modes.bracketedPasteMode) {
+      const h = sessionsRef.current.find((x) => x.id === sessionSid);
+      setPasteConfirm({ sid: sessionSid, hostName: h?.host_name ?? sessionSid.slice(0, 8), text: t });
+    } else {
+      term.paste(t);
+    }
+  };
+  const pasteTextIntoRef = useRef(pasteTextInto);
+  pasteTextIntoRef.current = pasteTextInto;
   // §7.4 弹窗 focus trap：带遮罩模态的容器 refs（hook 挂在组件顶层，active 随开合）
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
   // R41（§6.6/S09）：连接详情对话框（独立可关闭，焦点陷阱同其它对话框）
@@ -725,6 +746,9 @@ export default function App() {
   const [splitMenu, setSplitMenu] = useState(false);
   // 十一轮：标签右键菜单——按状态显隐的会话操作（分屏/重连/复制连接/详情/关闭）
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; sid: string } | null>(null);
+  // 十一轮续：右键通道补全——主机卡（连接/收藏/编辑/删除）与终端区（复制/粘贴/全选）
+  const [hostMenu, setHostMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
+  const [termMenu, setTermMenu] = useState<{ x: number; y: number; sid: string; hasSel: boolean } | null>(null);
   // R25 §185 宽度退化：每窗格至少 360 宽——空间不足时只呈现焦点窗格（另一个仍在
   // 标签中），加宽自动恢复；退化时显示一次可关闭的布局提示
   const [splitDegraded, setSplitDegraded] = useState(false);
@@ -1325,28 +1349,10 @@ export default function App() {
         return true; // 无选中 → xterm 原生 copy 事件
       }
       if (key === "v") {
-        // R25 §318：bracketed paste 语义由 xterm 按远端 DECSET 2004 自适配（不补换行
-        // 不代执行）；但远端未开启时多行内容 = 换行立即执行——预览确认后才发
-        const putPaste = (t: string) => {
-          if (!t) return;
-          // rev-r26 低-5：断线/重连期粘贴与键入同口径拦截（确认框照弹会误导——
-          // 确认后字节仍被 onData 拦下）；⚠ 与 onData 告示同文
-          const pst = sessionsRef.current.find((x) => x.id === sessionSid)?.state;
-          if (pst && inputBlockedState(pst)) {
-            const why = pst === "Disconnected" ? "会话已断开" : "网络中断（自动重连中）";
-            term.write(`\r\n\x1b[33m⚠ ${why}——粘贴未发送。\x1b[0m\r\n`);
-            return;
-          }
-          if (pasteGuardRef.current && /[\n\r]/.test(t) && !term.modes.bracketedPasteMode) {
-            const h = sessionsRef.current.find((x) => x.id === sessionSid);
-            setPasteConfirm({ sid: sessionSid, hostName: h?.host_name ?? sessionSid.slice(0, 8), text: t });
-          } else {
-            term.paste(t);
-          }
-        };
+        // R25 §318：粘贴语义收口在 pasteTextInto（终端右键「粘贴」同源）
         (inTauri
-          ? clipboard.readText().then(putPaste)
-          : navigator.clipboard?.readText().then(putPaste)
+          ? clipboard.readText().then((t) => pasteTextIntoRef.current(term, sessionSid, t))
+          : navigator.clipboard?.readText().then((t) => pasteTextIntoRef.current(term, sessionSid, t))
         ).catch(() => {});
         ev.preventDefault();
         return false;
@@ -1972,6 +1978,8 @@ export default function App() {
     if (pendingDrop) { setPendingDrop(null); return true; }
     if (detail || detailErr) { closeDetail(); return true; }
     if (tabMenu) { setTabMenu(null); return true; }
+    if (hostMenu) { setHostMenu(null); return true; }
+    if (termMenu) { setTermMenu(null); return true; }
     if (splitMenu) { setSplitMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
     if (showSettings) { closeSettings(); return true; }
@@ -2392,7 +2400,7 @@ export default function App() {
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || pendingDrop);
+  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || pendingDrop);
   modalRef.current = modal;
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
@@ -3664,6 +3672,12 @@ export default function App() {
               return (
               <div className="host-card" key={h.id}
                 tabIndex={0}
+                onContextMenu={(e) => {
+                  // 十一轮续：主机卡右键——连接/收藏/编辑/删除，与 hover 操作组同源同义
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setHostMenu({ x: e.clientX, y: e.clientY, hostId: h.id });
+                }}
                 role="button"
                 aria-label={`主机 ${h.name}（${h.username}@${h.address}:${h.port}）${latest ? "——Enter 切换到最近会话" : "——Enter 连接"}`}
                 onKeyDown={(e) => {
@@ -4314,7 +4328,24 @@ export default function App() {
               </div>
             </div>
           )}
-          <div id="term" ref={termRef} />
+          <div id="term" ref={termRef} onContextMenu={(e) => {
+            // 十一轮续：终端区右键——复制/粘贴/全选作用于右键命中的窗格（分屏时各格独立）；
+            // 未命中具体窗格回退焦点窗格。无终端实例（欢迎页）交给系统默认行为
+            if (termsRef.current.size === 0) return;
+            e.preventDefault();
+            let target: string | null = null;
+            for (const [s, en] of termsRef.current) {
+              const r = en.el.getBoundingClientRect();
+              if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) { target = s; break; }
+            }
+            if (!target) {
+              const focused = [...termsRef.current.entries()].find(([, en]) => en.el.classList.contains("active") || en.el.classList.contains("pane-focused"));
+              target = focused?.[0] ?? sidRef.current ?? null;
+            }
+            if (!target) return;
+            const en = termsRef.current.get(target);
+            setTermMenu({ x: e.clientX, y: e.clientY, sid: target, hasSel: !!en?.term.hasSelection() });
+          }} />
           {current?.state === "Disconnected" && (
             <div className="dead-overlay">
               <div className="dead-banner">
@@ -4420,7 +4451,7 @@ export default function App() {
               <>
                 <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
                 {s && (
-                  <div className="tab-menu" role="menu" aria-label={`会话操作：${s.host_name}`} style={{ left: mx, top: my }}>
+                  <div className="ctx-menu" role="menu" aria-label={`会话操作：${s.host_name}`} style={{ left: mx, top: my }}>
                     {inSplit ? (
                       <button className="ghost sm-item" role="menuitem"
                         onClick={() => { close(); void exitSplit(); }}
@@ -4445,13 +4476,83 @@ export default function App() {
                         onClick={() => { close(); void createSession(menuHost); }}
                       >复制连接（同主机新会话）</button>
                     )}
-                    <div className="tab-menu-sep" role="separator" />
+                    <div className="ctx-menu-sep" role="separator" />
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); void openSessionDetail(s); }}
                     >连接详情…</button>
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); requestCloseSession(s); }}
                     >关闭会话…</button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+          {/* 十一轮续：主机卡右键——与 hover 操作组同源同义（连接/收藏/编辑/删除） */}
+          {hostMenu && (() => {
+            const h = hosts.find((x) => x.id === hostMenu.hostId);
+            const mx = Math.min(hostMenu.x, window.innerWidth - 248);
+            const my = Math.min(hostMenu.y, window.innerHeight - 200);
+            const close = () => setHostMenu(null);
+            const fav = metaById.get(hostMenu.hostId)?.favorite === true;
+            return (
+              <>
+                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+                {h && (
+                  <div className="ctx-menu" role="menu" aria-label={`主机操作：${h.name}`} style={{ left: mx, top: my }}>
+                    {!connectingIds.has(h.id) && (
+                      <button className="ghost sm-item" role="menuitem"
+                        onClick={() => { close(); createSession(h); }}
+                      >连接（新建会话）</button>
+                    )}
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); void toggleFavorite(h.id, !fav); }}
+                    >{fav ? "取消收藏" : "收藏（置顶分组）"}</button>
+                    <div className="ctx-menu-sep" role="separator" />
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
+                    >编辑主机…</button>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
+                    >删除主机…</button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+          {/* 十一轮续：终端区右键——复制（仅选区在场）/粘贴/全选，作用于命中的窗格；
+              粘贴语义收口在 pasteTextInto（⌘V 同源：bracketed paste + 多行确认契约） */}
+          {termMenu && (() => {
+            const en = termsRef.current.get(termMenu.sid);
+            const mx = Math.min(termMenu.x, window.innerWidth - 200);
+            const my = Math.min(termMenu.y, window.innerHeight - 170);
+            const close = () => setTermMenu(null);
+            return (
+              <>
+                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+                {en && (
+                  <div className="ctx-menu" role="menu" aria-label="终端操作" style={{ left: mx, top: my }}>
+                    {termMenu.hasSel && (
+                      <button className="ghost sm-item" role="menuitem"
+                        onClick={() => {
+                          close();
+                          const sel = en.term.getSelection();
+                          if (sel) (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
+                        }}
+                      >复制</button>
+                    )}
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => {
+                        close();
+                        (inTauri
+                          ? clipboard.readText().then((t) => pasteTextIntoRef.current(en.term, termMenu.sid, t))
+                          : navigator.clipboard?.readText().then((t) => pasteTextIntoRef.current(en.term, termMenu.sid, t))
+                        ).catch(() => {});
+                      }}
+                    >粘贴</button>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); en.term.selectAll(); }}
+                    >全选</button>
                   </div>
                 )}
               </>
