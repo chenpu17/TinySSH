@@ -1,25 +1,33 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <!-- TinySSH 应用图标：macOS squircle，深色底 + 终端提示符，青色取自 UI accent 色 -->
+  <!-- TinySSH 品牌图标（十轮重设计）。栅格权威源=scripts/make_icon.py（4× 超采样
+       生成 app-icon.png，再 cargo tauri icon 派生全套）；本 SVG 是同构矢量版供手工微调。
+       语义：白「>」=人类提示符；紫渐变块光标=Agent/命令块——「人写提示符，机器回块」。 -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1e2938"/>
-      <stop offset="1" stop-color="#0f141b"/>
+      <stop offset="0" stop-color="#17203a"/>
+      <stop offset="1" stop-color="#0b0f1b"/>
     </linearGradient>
-    <linearGradient id="term" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#243144"/>
-      <stop offset="1" stop-color="#161e29"/>
+    <radialGradient id="glow" cx="0.42" cy="0.38" r="0.55">
+      <stop offset="0" stop-color="#7c5cff" stop-opacity="0.37"/>
+      <stop offset="1" stop-color="#7c5cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a18dff"/>
+      <stop offset="1" stop-color="#6c4aff"/>
     </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.02"/>
+    </linearGradient>
+    <clipPath id="squircle"><rect x="100" y="100" width="824" height="824" rx="224"/></clipPath>
+    <clipPath id="barclip"><rect x="591" y="540" width="210" height="160" rx="44"/></clipPath>
   </defs>
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="3"/>
-  <!-- 终端窗口 -->
-  <rect x="272" y="298" width="480" height="428" rx="52" fill="url(#term)" stroke="#4fa3a5" stroke-opacity="0.55" stroke-width="6"/>
-  <line x1="272" y1="392" x2="752" y2="392" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
-  <!-- 标题栏圆点（弱化的交通灯） -->
-  <circle cx="330" cy="345" r="13" fill="#5a6b7f"/>
-  <circle cx="372" cy="345" r="13" fill="#4a5a6d"/>
-  <circle cx="414" cy="345" r="13" fill="#3c4c5e"/>
-  <!-- 提示符 › 与光标块 -->
-  <path d="M 356 470 L 441 555 L 356 640" fill="none" stroke="#4fa3a5" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="497" y="588" width="120" height="52" rx="10" fill="#4fa3a5"/>
+  <g clip-path="url(#squircle)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#glow)"/>
+  </g>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="222.5" fill="none" stroke="#ffffff" stroke-opacity="0.1" stroke-width="3"/>
+  <path d="M 261 324 L 461 512 L 261 700" fill="none" stroke="#f0f3fa" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="591" y="540" width="210" height="160" rx="44" fill="url(#bar)"/>
+  <rect x="591" y="540" width="210" height="76" fill="url(#sheen)" clip-path="url(#barclip)"/>
 </svg>
