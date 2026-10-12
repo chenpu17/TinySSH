@@ -749,6 +749,20 @@ export default function App() {
   // 十一轮续：右键通道补全——主机卡（连接/收藏/编辑/删除）与终端区（复制/粘贴/全选）
   const [hostMenu, setHostMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
   const [termMenu, setTermMenu] = useState<{ x: number; y: number; sid: string; hasSel: boolean } | null>(null);
+  // 十四轮：标签重命名——sid → 自定名（覆盖 host_name 展示；复制标签页后同名「本机×2」
+  // 无法区分）。会话生命周期内有效（会话本就不跨重启存活），不入 vault。
+  const [tabNames, setTabNames] = useState<Record<string, string>>({});
+  const [renaming, setRenaming] = useState<{ sid: string; value: string } | null>(null);
+  // 提交重命名：空串/纯空白 = 清除自定名回退 host_name（双击重命名与右键菜单共用）
+  const commitTabRename = (sid: string, value: string) => {
+    const v = value.trim();
+    setTabNames((m) => {
+      const next = { ...m };
+      if (v) next[sid] = v; else delete next[sid];
+      return next;
+    });
+    setRenaming(null);
+  };
   // R25 §185 宽度退化：每窗格至少 360 宽——空间不足时只呈现焦点窗格（另一个仍在
   // 标签中），加宽自动恢复；退化时显示一次可关闭的布局提示
   const [splitDegraded, setSplitDegraded] = useState(false);
@@ -3875,12 +3889,14 @@ export default function App() {
             {sessions.map((s, i) => {
               const st = stateLabel(s.state);
               const inSplit = splitPanes?.main === s.id || splitPanes?.second === s.id;
+              // 十四轮：标签自定名（复制标签页后同名标签的区分），无则回退主机名
+              const label = tabNames[s.id] ?? s.host_name;
               return (
                 <div
                   key={s.id}
                   className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")}
-                  title={`${s.host_name} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
-                  aria-label={`${s.host_name}，${st.text}${inSplit ? "，在分屏中" : ""}${i < 9 ? `，⌘${i + 1}` : ""}`}
+                  title={`${label} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
+                  aria-label={`${label}，${st.text}${inSplit ? "，在分屏中" : ""}${i < 9 ? `，⌘${i + 1}` : ""}`}
                   tabIndex={0}
                   role="tab"
                   aria-selected={sid === s.id}
@@ -3892,6 +3908,18 @@ export default function App() {
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id).catch((er) => pushToast("err", errMsg(er))); }
                   }}
                   onClick={() => void attachSession(s.id).catch((e) => pushToast("err", errMsg(e)))}
+                  onMouseDown={(e) => {
+                    // 十四轮：中键关闭（浏览器/Windows Terminal 惯例），走与 ✕/右键
+                    // 同一确认契约；preventDefault 压掉中键自动滚动
+                    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); requestCloseSession(s); }
+                  }}
+                  onDoubleClick={(e) => {
+                    // 十四轮：双击重命名——只认标签本体/状态点/文字，子按钮双击不误触
+                    const t = e.target as HTMLElement;
+                    if (!(t === e.currentTarget || t.classList.contains("tab-label") || t.classList.contains("tab-dot"))) return;
+                    e.stopPropagation();
+                    setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name });
+                  }}
                   onContextMenu={(e) => {
                     // 十一轮 §6.3 修订：右键标签弹会话操作菜单（按状态显隐）；右键不切换焦点标签
                     e.preventDefault();
@@ -3900,7 +3928,27 @@ export default function App() {
                   }}
                 >
                   <span className={"tab-dot " + st.cls} aria-hidden="true" />
-                  <span className="tab-label">{s.host_name}</span>
+                  {renaming?.sid === s.id ? (
+                    <input
+                      className="tab-rename"
+                      value={renaming.value}
+                      autoFocus
+                      aria-label="重命名标签"
+                      onChange={(e) => setRenaming({ sid: s.id, value: e.target.value })}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        // 编辑框内按键不冒泡（Enter/Space 会被标签 onKeyDown 抢成激活）
+                        e.stopPropagation();
+                        if (e.key === "Enter") commitTabRename(s.id, renaming.value);
+                        else if (e.key === "Escape") setRenaming(null);
+                      }}
+                      onBlur={() => commitTabRename(s.id, renaming.value)}
+                    />
+                  ) : (
+                    <span className="tab-label">{label}</span>
+                  )}
                   {/* R27（§7.4）：关闭/分屏改真按钮——键盘 Tab 可达、focus-visible 可见、
                       可访问名称不依赖 hover；命中区 ≥28 由 CSS ::after 透明扩展 */}
                   <button
@@ -4497,6 +4545,10 @@ export default function App() {
                         onClick={() => { close(); void createSession(menuHost); }}
                       >复制标签页（同主机新会话）</button>
                     )}
+                    <button className="ghost sm-item" role="menuitem"
+                      title="自定义标签显示名（清空恢复主机名）；也可双击标签"
+                      onClick={() => { close(); setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name }); }}
+                    >重命名标签…</button>
                     <div className="ctx-menu-sep" role="separator" />
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); void openSessionDetail(s); }}
@@ -4546,7 +4598,7 @@ export default function App() {
           {termMenu && (() => {
             const en = termsRef.current.get(termMenu.sid);
             const mx = Math.min(termMenu.x, window.innerWidth - 200);
-            const my = Math.min(termMenu.y, window.innerHeight - 170);
+            const my = Math.min(termMenu.y, window.innerHeight - 236);
             const close = () => setTermMenu(null);
             return (
               <>
@@ -4574,6 +4626,20 @@ export default function App() {
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); en.term.selectAll(); }}
                     >全选</button>
+                    <div className="ctx-menu-sep" role="separator" />
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => {
+                        close();
+                        // 十四轮：查找作用于右键命中的窗格——非活动会话先切过去再开搜索框
+                        // （分屏副格命中时同样成立）；切失败也开（断开现场仍可搜冻结缓冲）
+                        const open = () => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 0); };
+                        if (sidRef.current === termMenu.sid) open();
+                        else void attachSession(termMenu.sid).then(open).catch(() => open());
+                      }}
+                    >查找…</button>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); en.term.clear(); }}
+                    >清屏</button>
                   </div>
                 )}
               </>

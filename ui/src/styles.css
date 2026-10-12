@@ -498,6 +498,12 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 .tab-dot.ok { background: var(--ok); }
 .tab-dot.err { background: var(--danger); }
 .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 十四轮：标签行内重命名框——占住标签文字位，描边用 accent 标示编辑态 */
+.tab-rename {
+  width: 96px; min-width: 0; height: 22px; padding: 0 4px; font-size: 12px;
+  color: var(--text); background: color-mix(in srgb, var(--panel2) 70%, transparent);
+  border: 1px solid var(--accent); border-radius: 5px; outline: none;
+}
 /* R27（§7.4）：关闭/分屏改真按钮——键盘可达+focus-visible；视觉盒保持 18px 原样 */
 .tab-split, .tab-x {
   flex: none; width: 18px; height: 18px;

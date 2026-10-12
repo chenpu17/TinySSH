@@ -60,6 +60,12 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
   if (!cmd || ev.altKey) return null;
   // 模态层打开：任何 ⌘/Ctrl 组合都不执行（§7.3 模态层不串输入）
   if (ctx.modal) return null;
+  // Ctrl+Tab / Ctrl+Shift+Tab（十四轮）：Win/Linux 标签应用的通用循环惯例，
+  // 与 ⌘⇧[/] 同一 action。须带修饰键判定（裸 Tab 归焦点导航），mac 的 ⌘Tab
+  // 是系统 App 切换器收不到，不影响；浏览器 demo 保持 native 门不劫持。
+  if (ev.key === "Tab" && ctx.native && ctx.hasSessions) {
+    return { id: "tab-cycle", dir: ev.shiftKey ? -1 : 1 };
+  }
   if (ev.shiftKey) {
     // ⇧] / ⇧[ 用物理键位判定（Shift 下 ev.key 是 }/{）
     if (ctx.native && ctx.hasSessions) {
