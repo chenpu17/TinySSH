@@ -52,7 +52,7 @@ module.exports = {
     ck.check("右键标签弹出菜单", menuOpen, menu || "(无菜单)");
     ck.check("非当前标签有「与当前会话分屏」", !!menu && menu.includes("与当前会话分屏"), "");
     ck.check("已连接会话不出现「重连会话」", !!menu && !menu.includes("重连会话"), "");
-    ck.check("有「复制连接」「连接详情」「关闭会话」", !!menu && menu.includes("复制连接") && menu.includes("连接详情") && menu.includes("关闭会话"), "");
+    ck.check("有「复制标签页」「连接详情」「关闭会话」", !!menu && menu.includes("复制标签页") && menu.includes("连接详情") && menu.includes("关闭会话"), "");
 
     // ── Esc 关闭菜单 ──
     await page.keyboard.press("Escape");
@@ -80,11 +80,28 @@ module.exports = {
     await page.waitForTimeout(400);
     ck.check("退出分屏后窗格清空", (await paneCount(page)) === 0, `panes=${await paneCount(page)}`);
 
-    // ── 复制连接：同主机新会话，标签数 +1 ──
+    // ── 十二轮：活动标签也有分屏入口（Xshell 惯例）——打开右侧会话选择菜单 ──
+    // 注：demo 预置 prod-1/staging-1，后连接的会话自动激活——右键 .tab-active 不猜名字
+    await page.evaluate(() => {
+      const tab = document.querySelector(".tab-active");
+      if (!tab) throw new Error("no active tab");
+      tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 380, clientY: 130 }));
+    });
+    await page.waitForTimeout(350);
+    menu = await menuText(page);
+    ck.check("活动标签有「分屏（选择右侧会话）」", !!menu && menu.includes("选择右侧会话"), menu || "(无菜单)");
+    await clickItem(page, "选择右侧会话");
+    await page.waitForTimeout(400);
+    const chooser = await page.evaluate(() => !!document.querySelector(".split-menu"));
+    ck.check("打开右侧会话选择菜单", chooser, "");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+
+    // ── 复制标签页：同主机新会话，标签数 +1 ──
     await rightClickTab(page, "本机");
-    await clickItem(page, "复制连接");
+    await clickItem(page, "复制标签页");
     await page.waitForTimeout(1800);
-    ck.check("复制连接新建一条会话", (await tabCount(page)) === t0 + 1, `${t0} → ${await tabCount(page)}`);
+    ck.check("复制标签页新建一条会话", (await tabCount(page)) === t0 + 1, `${t0} → ${await tabCount(page)}`);
 
     // ── 关闭会话走现有确认契约（取消不关闭）──
     await rightClickTab(page, "本机");

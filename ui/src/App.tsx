@@ -4460,6 +4460,12 @@ export default function App() {
                       <button className="ghost sm-item" role="menuitem"
                         onClick={() => { close(); void enterSplitWith(s.id); }}
                       >{splitPanes ? "放到右侧分屏（替换右格）" : "与当前会话分屏（放到右侧）"}</button>
+                    ) : s.id === sid && sessions.some((x) => x.id !== s.id) ? (
+                      // 十二轮：活动标签也得分屏（Xshell/Windows Terminal 惯例）——
+                      // 第二格是谁交给既有「右侧会话选择」菜单，不在此复制会话列表
+                      <button className="ghost sm-item" role="menuitem"
+                        onClick={() => { close(); setSplitMenu(true); }}
+                      >分屏（选择右侧会话）…</button>
                     ) : null}
                     {autoReconn?.sid === s.id ? (
                       <button className="ghost sm-item" role="menuitem"
@@ -4474,7 +4480,7 @@ export default function App() {
                       <button className="ghost sm-item" role="menuitem"
                         title="用同一台主机新建一条会话（现有会话不受影响）"
                         onClick={() => { close(); void createSession(menuHost); }}
-                      >复制连接（同主机新会话）</button>
+                      >复制标签页（同主机新会话）</button>
                     )}
                     <div className="ctx-menu-sep" role="separator" />
                     <button className="ghost sm-item" role="menuitem"
