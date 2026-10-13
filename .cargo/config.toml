@@ -1,0 +1,6 @@
+# Windows MSVC 目标静态链接 CRT（单一二进制发布的前提）。
+# 约束：便携单 exe 分发不能假设目标机装有 VC++ Redist——动态 CRT
+# （vcruntime140/msvcp140）缺失时启动即弹缺 DLL 对话框。静态后
+# 调试/发布同链路，避免用 RUSTFLAGS 环境变量切换造成缓存全量重编震荡。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

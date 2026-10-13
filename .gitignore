@@ -7,6 +7,7 @@ research/
 *.log
 /tmp
 dist-pv/
+dist-portable/
 pv-data/
 
 # Python 字节码缓存
