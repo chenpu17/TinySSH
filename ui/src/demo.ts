@@ -454,11 +454,14 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return demoState.sessions.map((s) => ({
         id: s.id, host_id: s.host_id, host_name: s.host_name, kind: s.kind,
         state: s.state, control_owner: s.control_owner, created_at: s.created_at,
-        // C3（R24）：demo 不做 shell 集成注入，恒 Disabled（真实侧 Ready≠集成就绪）
-        integration: "Disabled",
+        // C3（R24）：会话集成态——demo 按 host shell_integration 投影（真实侧 OSC 检测）：
+        // 关集成主机 Disabled（二十轮起命令框随之隐藏），其余 Ready
+        integration: (demoState.hosts.find((x) => x.id === s.host_id) as { shell_integration?: boolean } | undefined)?.shell_integration === false
+          ? ("Disabled" as const)
+          : ("Ready" as const),
         // R42（§6.7）：曾被 Agent 持有——与真实 SessionHandle.ever_agent_owned 对齐
         ever_agent_owned: s.ever_agent_owned,
-        // 十八轮：会话日志态随列表下发（真实侧 SessionInfo.logging 同语义）
+        // 十八轮：会话日志态随列表下发（真实核心 SessionInfo.logging 同语义）
         logging: !!s.logging,
       }));
     case "upsert_host": {

@@ -5421,6 +5421,10 @@ Authorization: Bearer <TOKEN>`}
             </>
           )}
         </div>
+        {/* 二十轮：命令框只在「集成可用或未定」的会话上出现——集成关（Disabled）或
+            检测无 OSC（Unavailable）的主机按 Shell 模式恒拒收，摆一条必拒收的死条
+            不如不摆（用户走查：连态空条被当渲染残留）。 */}
+        {!(current && (current.integration === "Unavailable" || current.integration === "Disabled")) && (
         <div className="panel-title row">
           <input
             placeholder={
@@ -5429,7 +5433,7 @@ Authorization: Bearer <TOKEN>`}
                   ? current.state === "Disconnected"
                     ? "会话已断开——重连恢复后再执行命令"
                     : "网络中断，自动重连中——命令暂不发送"
-                  : ""
+                  : "执行单条命令——Enter 发送，焦点自动回终端"
                 : "先在主机栏连接一台主机，这里才能执行命令"
             }
             disabled={!sid}
@@ -5525,6 +5529,7 @@ Authorization: Bearer <TOKEN>`}
             </button>
           )}
         </div>
+        )}
         </div>{/* /term-col */}
 
         {/* 右侧任务面板（§4.3/§6.6）：一次只呈现文件 / 转发 / 协作 / 活动记录之一；窄窗改中央完整视图 */}
