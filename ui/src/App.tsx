@@ -420,10 +420,11 @@ const SPLIT_PANE_MIN = 360;
 const SPLIT_DEGRADE_BELOW = SPLIT_PANE_MIN * 2;
 const SPLIT_RECOVER_AT = SPLIT_PANE_MIN * 2 + 6;
 
-// 显示设置（路线图⑥）：字号范围与终端配色预设。偏好存 vault（settings KV，跨进程记忆），
-// 浏览器演示模式退化为 localStorage。R27（§7.1/§244）：应用外观与终端配色解耦——
-// 外观三态（跟随系统/深色/浅色，新装默认跟随系统）走 ui.v2.workspace blob 的 chrome 域，
-// 终端配色四预设独立存 ui.theme；Tauri 下原生窗口外观（Overlay 红绿灯、原生面板）随外观同步。
+// 显示设置（路线图⑥）：字号范围与主题色板。偏好存 vault（settings KV，跨进程记忆），
+// 浏览器演示模式退化为 localStorage。R27（§7.1/§244）：外观三态（跟随系统/深色/浅色，
+// 新装默认跟随系统）走 ui.v2.workspace blob 的 chrome 域；二十二轮主题统一：主题色板
+// 是唯一主题事实源，终端配色由色板×深浅派生（ui.theme/ui.theme.follow 双轨退役）；
+// Tauri 下原生窗口外观（Overlay 红绿灯、原生面板）随外观同步。
 const FONT_MIN = 9;
 const FONT_MAX = 28;
 // §7.2：终端默认字号 14px（用户可调，范围 9–28 保留；已存偏好优先于默认）
@@ -432,11 +433,8 @@ const FONT_DEFAULT = 14;
 // 保留不删（回退兼容），浏览器 demo 读新键缺失时回落旧键
 const SETTING_FONT = "ui.v2.terminal.font_size";
 const SETTING_FONT_LEGACY = "ui.font_size";
-const SETTING_THEME = "ui.theme";
-// UX 六轮：终端配色跟随主题色板（R27 之上的可选联动）——"1" 开启
-const SETTING_THEME_FOLLOW = "ui.theme.follow";
-// 主题色板（2026-10-11）：应用 chrome 的色板族，与外观三态（深浅）正交、与终端配色解耦
-// （R27 不变：终端预设仍只改终端）。KV 与 SETTING_THEME 同机制。
+// 主题色板（2026-10-11）：统一主题族——既定应用 chrome，也经派生决定终端配色
+// （二十二轮起单一事实源，ui.theme/ui.theme.follow 双轨退役）。
 const SETTING_PALETTE = "ui.palette";
 
 type Appearance = "system" | "dark" | "light";
@@ -463,13 +461,15 @@ const PALETTES: ChromePalette[] = [
 ];
 const PALETTE_DEFAULT = "graphite";
 
+// ANSI 16 色基础预设（二十二轮起仅作终端派生的底色档，不再作为独立「终端配色」
+// 清单外显——统一主题见 PALETTES；Solarized 等第三方终端预设随双轨一并退役）
 type ThemePreset = {
   id: string; label: string;
   bg: string; fg: string; theme: Record<string, string>;
 };
 const THEMES: ThemePreset[] = [
   {
-    id: "dark", label: "深色（默认）", bg: "#0f141c", fg: "#d2dae6",
+    id: "dark", label: "深色 ANSI 基础", bg: "#0f141c", fg: "#d2dae6",
     theme: {
       foreground: "#d2dae6", background: "#0f141c",
       cursor: "#3ec3d3", cursorAccent: "#0f141c", selectionBackground: "#2a3f52",
@@ -480,7 +480,7 @@ const THEMES: ThemePreset[] = [
     },
   },
   {
-    id: "light", label: "浅色", bg: "#f7f7f2", fg: "#2a3138",
+    id: "light", label: "浅色 ANSI 基础", bg: "#f7f7f2", fg: "#2a3138",
     theme: {
       foreground: "#2a3138", background: "#f7f7f2",
       cursor: "#2a3138", cursorAccent: "#f7f7f2", selectionBackground: "#b9c6d4",
@@ -488,28 +488,6 @@ const THEMES: ThemePreset[] = [
       blue: "#1a5fb4", magenta: "#a1346b", cyan: "#1a7f8a", white: "#d0d0cc",
       brightBlack: "#6b7681", brightRed: "#e05545", brightGreen: "#46a353", brightYellow: "#c29300",
       brightBlue: "#3a7fd5", brightMagenta: "#c74d94", brightCyan: "#33a3b0", brightWhite: "#ffffff",
-    },
-  },
-  {
-    id: "solar-dark", label: "Solarized 深色", bg: "#002b36", fg: "#93a1a1",
-    theme: {
-      foreground: "#93a1a1", background: "#002b36",
-      cursor: "#839496", cursorAccent: "#002b36", selectionBackground: "#073642",
-      black: "#073642", red: "#dc322f", green: "#859900", yellow: "#b58900",
-      blue: "#268bd2", magenta: "#d33682", cyan: "#2aa198", white: "#eee8d5",
-      brightBlack: "#586e75", brightRed: "#cb4b16", brightGreen: "#586e75", brightYellow: "#657b83",
-      brightBlue: "#839496", brightMagenta: "#6c71c4", brightCyan: "#93a1a1", brightWhite: "#fdf6e3",
-    },
-  },
-  {
-    id: "solar-light", label: "Solarized 浅色", bg: "#fdf6e3", fg: "#657b83",
-    theme: {
-      foreground: "#657b83", background: "#fdf6e3",
-      cursor: "#586e75", cursorAccent: "#fdf6e3", selectionBackground: "#eee8d5",
-      black: "#073642", red: "#dc322f", green: "#859900", yellow: "#b58900",
-      blue: "#268bd2", magenta: "#d33682", cyan: "#2aa198", white: "#eee8d5",
-      brightBlack: "#586e75", brightRed: "#cb4b16", brightGreen: "#586e75", brightYellow: "#657b83",
-      brightBlue: "#839496", brightMagenta: "#6c71c4", brightCyan: "#93a1a1", brightWhite: "#fdf6e3",
     },
   },
 ];
@@ -1350,8 +1328,8 @@ export default function App() {
     // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
     // WebLinksAddon（registerLinkProvider）与 linkHandler（OSC 8 激活）均为 proposed API
     const term = new Terminal({
-      // 字号/主题（路线图⑥）走 refs：makeTerm 早于偏好载入，载入后由 changeFontSize/changeTheme
-      // 对已有实例统一改 options 补齐
+      // 字号/主题（路线图⑥）走 refs：makeTerm 早于偏好载入，载入后由 changeFontSize/
+      // applyDerivedTerminal 对已有实例统一改 options 补齐（二十二轮起主题=派生缓存）
       fontSize: fontRef.current, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
       // UX 二轮精修：xterm 默认字体是 courier-new（Windows 上观感老旧）；行高 1.15 给
       // 行间喘息感；滚轮 100ms 平滑滚动 + Alt 快滚；跨格字形重缩放防框线/符号断裂。
@@ -1363,7 +1341,7 @@ export default function App() {
       smoothScrollDuration: 100,
       fastScrollModifier: "alt", fastScrollSensitivity: 5,
       rescaleOverlappingGlyphs: true,
-      theme: { ...themeById(themeRef.current).theme },
+      theme: { ...derivedThemeRef.current.theme },
       // OSC 8 超链接激活（T16）：WebLinksAddon 只管裸 URL 正则检测，
       // OSC 8 由核心 linkHandler 路由（不设则核心弹 confirm 对话框）
       linkHandler: {
@@ -1374,8 +1352,8 @@ export default function App() {
       },
     });
     term.open(el);
-    // 会话层底色跟随终端预设：padding 留白框与画布同色，不渗 chrome 面板色
-    el.style.background = themeById(themeRef.current).bg;
+    // 会话层底色跟随当前派生主题：padding 留白框与画布同色，不渗 chrome 面板色
+    el.style.background = derivedThemeRef.current.bg;
     // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
     const searchAddon = new SearchAddon();
     searchAddon.onDidChangeResults((r) => {
@@ -1672,7 +1650,6 @@ export default function App() {
   // —— 显示设置（路线图⑥）：字号/主题，vault 持久化（跨进程记忆）——
   // 状态供 UI 渲染；ref 供 makeTerm 闭包与快捷键读取（避开 stale closure）
   const [fontSize, setFontSize] = useState(FONT_DEFAULT);
-  const [themeId, setThemeId] = useState("dark");
   const [showSettings, setShowSettings] = useState(false);
   // T34：原生菜单「设置…⌘,」→ 打开显示设置面板；应用版本号（关于面板同源）
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -1686,12 +1663,14 @@ export default function App() {
     return un;
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
-  const themeRef = useRef("dark");
-  // UX 六轮：终端配色跟随主题色板（R27 之上的可选联动）——ref 供 changePalette/
-  // changeAppearance/系统深浅监听闭包读取，避开 stale closure
-  const [themeFollow, setThemeFollow] = useState(false);
-  const themeFollowRef = useRef(false);
-  // R27：应用外观三态（跟随系统/深色/浅色）——与终端配色解耦（§7.1/§244），
+  // 二十二轮主题统一：终端配色恒由「色板×深浅」派生（无独立预设、无联动开关）。
+  // derivedThemeRef 缓存最近一次派生结果，makeTerm 建实例时直接取用（早于启动
+  // 派生到达时是深色基础派生值，启动尾部统一刷新一次）
+  const derivedThemeRef = useRef<{ bg: string; theme: Record<string, string> }>({
+    bg: THEMES[0].bg,
+    theme: { ...THEMES[0].theme },
+  });
+  // R27：应用外观三态（跟随系统/深色/浅色）——深浅仍独立成档（§7.1/§244），
   // 事实源 = ui.v2.workspace blob 的 chrome 域（V5 迁移已为老用户写入映射值）
   const [appearance, setAppearance] = useState<Appearance>("system");
   const appearanceRef = useRef<Appearance>("system");
@@ -1743,30 +1722,11 @@ export default function App() {
     setTimeout(() => void fitTerminal(), 150);
   }, [persistSetting, fitTerminal]);
 
-  const changeTheme = useCallback((id: string, fromStartup = false) => {
-    const preset = themeById(id);
-    if (preset.id !== id) return;
-    // UX 六轮：手动选终端预设 = 解除「跟随主题色板」联动（fromStartup=启动重放，非用户动作）
-    if (!fromStartup && themeFollowRef.current) {
-      themeFollowRef.current = false;
-      setThemeFollow(false);
-      persistSetting(SETTING_THEME_FOLLOW, "0");
-    }
-    themeRef.current = id;
-    setThemeId(id);
-    persistSetting(SETTING_THEME, id);
-    // R27 解耦：终端配色只改终端实例色板，不再触碰应用 chrome（data-chrome/setTheme）
-    // 会话层底色同步（padding 留白框），与画布同预设色
-    for (const [, e] of termsRef.current) {
-      e.term.options.theme = { ...preset.theme };
-      e.el.style.background = preset.bg;
-    }
-  }, [persistSetting]);
-
-  // UX 六轮：色板联动终端的派生——终端底/前景/光标/选区取**当下生效的 chrome token**
-  // （data-theme×data-chrome 计算值，随色板与外观即时变化）；经 scratch 节点解析成
-  // rgb()（token 声明值可能是 color-mix(...)，xterm 的 css 色解析器不认，必须用
-  // resolved 值）；ANSI 16 色沿用深/浅基础预设——预设本底做过 WCAG 校验，不随板重排
+  // 二十二轮主题统一：色板联动终端的派生——终端底/前景/光标/选区取**当下生效的
+  // chrome token**（data-theme×data-chrome 计算值，随色板与外观即时变化）；经
+  // scratch 节点解析成 rgb()（token 声明值可能是 color-mix(...)，xterm 的 css 色
+  // 解析器不认，必须用 resolved 值）；ANSI 16 色沿用深/浅基础预设——预设本底做过
+  // WCAG 校验，不随板重排。派生结果写入 derivedThemeRef 供 makeTerm 取初值。
   const deriveTerminalTheme = useCallback((chrome: "dark" | "light") => {
     const resolveTokenColor = (name: string): string => {
       const scratch = document.createElement("span");
@@ -1791,6 +1751,7 @@ export default function App() {
   }, []);
   const applyDerivedTerminal = useCallback(() => {
     const { bg, theme } = deriveTerminalTheme(document.documentElement.dataset.chrome === "light" ? "light" : "dark");
+    derivedThemeRef.current = { bg, theme: { ...theme } };
     for (const [, e] of termsRef.current) {
       e.term.options.theme = { ...theme };
       e.el.style.background = bg;
@@ -1804,8 +1765,8 @@ export default function App() {
     setAppearance(a);
     applyChrome(a === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : a);
     if (inTauri) void getCurrentWindow().setTheme(a === "system" ? null : a).catch(() => {});
-    // UX 六轮：联动开启时，外观变化（含启动 blob 重放）带动终端派生
-    if (themeFollowRef.current) applyDerivedTerminal();
+    // 二十二轮主题统一：外观变化（含启动 blob 重放）带动终端派生
+    applyDerivedTerminal();
   }, [applyChrome, inTauri, applyDerivedTerminal]);
 
   // 外观落库（blob chrome 域，走串行化链防与 hostbar 写交错丢更新）
@@ -1826,25 +1787,9 @@ export default function App() {
     applyPalette(id);
     pulseChrome();
     persistSetting(SETTING_PALETTE, id);
-    // UX 六轮：联动开启时终端随色板派生（默认关闭=纯 R27 解耦）
-    if (themeFollowRef.current) applyDerivedTerminal();
+    // 二十二轮主题统一：色板即主题——终端恒随派生
+    applyDerivedTerminal();
   }, [applyPalette, pulseChrome, persistSetting, applyDerivedTerminal]);
-
-  // UX 六轮：联动开关——开启立即按当前 chrome/色板派生终端；关闭回退最近手动预设
-  const changeThemeFollow = useCallback((on: boolean) => {
-    if (on === themeFollowRef.current) return;
-    themeFollowRef.current = on;
-    setThemeFollow(on);
-    persistSetting(SETTING_THEME_FOLLOW, on ? "1" : "0");
-    if (on) applyDerivedTerminal();
-    else {
-      const preset = themeById(themeRef.current);
-      for (const [, e] of termsRef.current) {
-        e.term.options.theme = { ...preset.theme };
-        e.el.style.background = preset.bg;
-      }
-    }
-  }, [persistSetting, applyDerivedTerminal]);
 
   // 跟随系统：系统外观变化实时跟随（仅 system 态挂监听）
   useEffect(() => {
@@ -1852,8 +1797,8 @@ export default function App() {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => {
       applyChrome(mq.matches ? "dark" : "light");
-      // UX 六轮：联动开启时系统深浅翻转也带动终端
-      if (themeFollowRef.current) applyDerivedTerminal();
+      // 二十二轮主题统一：深浅翻转带动终端派生
+      applyDerivedTerminal();
     };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
@@ -1869,20 +1814,12 @@ export default function App() {
     return () => { un(); unreg(); };
   }, [inTauri, pushToast]);
 
-  // 启动载入偏好（Tauri=vault，浏览器=localStorage）；早于载入创建的实例一并补齐
+  // 启动载入偏好（Tauri=vault，浏览器=localStorage）；早于载入创建的实例一并补齐。
+  // 二十二轮主题统一：只载字号/色板/外观三样，尾部统一派生终端一次——ui.theme /
+  // ui.theme.follow 老 KV 不再读（历史值残留无害），终端配色由色板×深浅唯一决定。
   useEffect(() => {
-    const apply = (f: number | null, t: string | null) => {
+    const applyFont = (f: number | null) => {
       if (f !== null && f >= FONT_MIN && f <= FONT_MAX) changeFontSize(f);
-      // fromStartup：启动重放预设不清除联动标记（联动 KV 稍后到达，重放后覆盖派生）
-      if (t) changeTheme(t, true);
-    };
-    // UX 六轮：联动标记载入（合法="1"）——最后到达、最后派生，覆盖启动重放的预设
-    const loadThemeFollow = (v: string | null) => {
-      if (v === "1") {
-        themeFollowRef.current = true;
-        setThemeFollow(true);
-        applyDerivedTerminal();
-      }
     };
     // R20 登记「chrome blob 消费归 R27」：外观事实源 = blob chrome 域（demo 同契约）
     const applyChromeBlob = (ws: { chrome?: string } | null) => {
@@ -1899,22 +1836,24 @@ export default function App() {
     };
     if (!inTauri) {
       const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
-      apply(Number.isFinite(raw) && raw > 0 ? raw : null, localStorage.getItem(SETTING_THEME));
+      applyFont(Number.isFinite(raw) && raw > 0 ? raw : null);
       loadPalette(localStorage.getItem(SETTING_PALETTE));
-      loadThemeFollow(localStorage.getItem(SETTING_THEME_FOLLOW));
-      invoke("get_workspace").then(applyChromeBlob).catch(() => {});
+      invoke("get_workspace")
+        .then(applyChromeBlob)
+        .catch(() => {})
+        .then(() => applyDerivedTerminal());
       return;
     }
-    invoke("get_setting", { key: SETTING_FONT })
+    const fontP = invoke("get_setting", { key: SETTING_FONT })
       .then((f) => (f === null ? invoke("get_setting", { key: SETTING_FONT_LEGACY }) : Promise.resolve(f)))
-      .then((f) => invoke("get_setting", { key: SETTING_THEME }).then((t) => {
-        apply(f === null ? null : Number(f), t);
-      }))
+      .then((f) => applyFont(f === null ? null : Number(f)))
       .catch(() => {});
-    invoke("get_setting", { key: SETTING_PALETTE }).then(loadPalette).catch(() => {});
-    invoke("get_setting", { key: SETTING_THEME_FOLLOW }).then(loadThemeFollow).catch(() => {});
-    invoke("get_workspace").then(applyChromeBlob).catch(() => {});
-  }, [inTauri, changeFontSize, changeTheme, applyAppearance, applyPalette, applyDerivedTerminal]);
+    const paletteP = invoke("get_setting", { key: SETTING_PALETTE }).then(loadPalette).catch(() => {});
+    const wsP = invoke("get_workspace").then(applyChromeBlob).catch(() => {});
+    // 字号/色板/外观三路都落定后派生一次（applyAppearance/loadPalette 内部亦有派生，
+    // 这里兜底「全部缺省」的首次启动路径）
+    void Promise.all([fontP, paletteP, wsP]).then(() => applyDerivedTerminal());
+  }, [inTauri, changeFontSize, applyAppearance, applyPalette, applyDerivedTerminal]);
 
   // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
   // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
@@ -5156,12 +5095,11 @@ export default function App() {
                   </nav>
                   <div className="settings-pane" role="tabpanel" data-testid={`settings-pane-${settingsCat}`}>
                 {settingsCat === "appearance" && (<>
-                {/* 二十一轮：卡片分区——应用外观 / 终端配色 / 字号与缩放；控件与测试锚点不变 */}
+                {/* 二十二轮：卡片收紧 + 主题统一——外观两卡（应用外观/字号与缩放）；
+                    终端配色不再单独成卡，由色板×深浅派生（ui.theme 双轨退役） */}
                 <div className="set-card">
                   <h4>应用外观</h4>
-                  <div className="set-desc">色板与深浅只改应用外壳（R27 解耦）；「跟随系统」随系统深浅实时切换。</div>
-                  {/* R27（§7.1/§244）：应用外观与终端配色解耦——外观三态独立持久化
-                      （blob chrome 域，新装默认跟随系统），终端配色只改终端 */}
+                  <div className="set-desc">主题同时决定应用外壳与终端配色（终端底色/前景/光标随当前色板与深浅派生，ANSI 16 色沿用基础预设）；「跟随系统」随系统深浅实时切换。</div>
                   <div className="row ts-appearance" role="group" aria-label="应用外观">
                     {APPEARANCES.map((a) => (
                       <button key={a.id} className={"ghost" + (appearance === a.id ? " ts-active" : "")}
@@ -5169,9 +5107,8 @@ export default function App() {
                         onClick={() => changeAppearance(a.id)}>{a.label}</button>
                     ))}
                   </div>
-                  {/* 主题色板（2026-10-11）：石墨=默认；二十一轮扩至九族，每族深浅两态 */}
-                  <div className="ts-label" style={{ marginTop: 14 }}>主题色板</div>
-                  <div className="ts-themes cols3" role="group" aria-label="主题色板">
+                  <div className="ts-label" style={{ marginTop: 14 }}>主题</div>
+                  <div className="ts-themes cols3" role="group" aria-label="主题">
                     {PALETTES.map((p) => (
                       <button
                         key={p.id}
@@ -5185,34 +5122,6 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className="set-card">
-                  <h4>终端配色</h4>
-                  <div className="set-desc">终端预设只改终端；开启「跟随色板」后，底色/前景/光标随上方色板与深浅派生（ANSI 16 色沿用基础预设）。</div>
-                  <div className="ts-themes" role="group" aria-label="终端配色">
-                    {THEMES.map((t) => (
-                      <button
-                        key={t.id}
-                        className={"ghost ts-opt" + (themeId === t.id ? " ts-active" : "")}
-                        aria-pressed={themeId === t.id}
-                        onClick={() => changeTheme(t.id)}
-                      >
-                        <span className="ts-swatch" style={{ background: t.bg, borderColor: t.fg, color: t.fg }}>Aa</span>
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                  {/* UX 六轮：R27 之上的可选联动——终端配色跟随主题色板（chrome token 派生） */}
-                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 12 }}>
-                    <input type="checkbox" data-testid="theme-follow" checked={themeFollow}
-                      onChange={(e) => changeThemeFollow(e.target.checked)} style={{ marginTop: 3 }} />
-                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                      终端配色跟随主题色板
-                      <span className="dim" style={{ display: "block" }}>
-                        手动选终端预设即解除联动；默认相互独立。
-                      </span>
-                    </span>
-                  </label>
                 </div>
                 <div className="set-card">
                   <h4>字号与缩放</h4>
@@ -5242,43 +5151,29 @@ export default function App() {
                 </>)}
 
                 {settingsCat === "terminal" && (<>
-                {/* 二十一轮：卡片分区——粘贴 / 复制 / 通知；开关与测试锚点不变 */}
+                {/* 二十二轮：单卡三条紧凑设置行（set-item）——卡片不再一卡一开关铺空；
+                    开关与测试锚点不变 */}
                 <div className="set-card">
-                  <h4>粘贴</h4>
-                  <div className="set-desc">R25 §318：多行粘贴保护——内容含换行且远端未开启 bracketed paste 时，先预览确认再发送；关闭后立即发送。</div>
-                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
-                    <input type="checkbox" checked={pasteGuard} onChange={(e) => changePasteGuard(e.target.checked)} style={{ marginTop: 3 }} />
-                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                      多行粘贴保护
-                      <span className="dim" style={{ display: "block" }}>
-                        防止把本地多行文本误当命令流灌进远端。
-                      </span>
+                  <h4>终端行为</h4>
+                  <label className="set-item">
+                    <input type="checkbox" checked={pasteGuard} onChange={(e) => changePasteGuard(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>多行粘贴保护</b>
+                      <span className="set-item-desc">内容含换行且远端未开启 bracketed paste 时，先预览确认再发送，防止把本地多行文本误当命令流灌进远端；关闭后立即发送。</span>
                     </span>
                   </label>
-                </div>
-                <div className="set-card">
-                  <h4>复制</h4>
-                  <div className="set-desc">十五轮：选中即复制（PuTTY/Xshell 惯例，默认关）。</div>
-                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
-                    <input type="checkbox" data-testid="cos-toggle" checked={copyOnSelect} onChange={(e) => changeCopyOnSelect(e.target.checked)} style={{ marginTop: 3 }} />
-                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                      选中即复制
-                      <span className="dim" style={{ display: "block" }}>
-                        划选终端文字立即写入系统剪贴板；关闭后用 ⌘C 或右键「复制」。
-                      </span>
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="cos-toggle" checked={copyOnSelect} onChange={(e) => changeCopyOnSelect(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>选中即复制</b>
+                      <span className="set-item-desc">划选终端文字立即写入系统剪贴板（PuTTY/Xshell 惯例，默认关）；关闭后用 ⌘C 或右键「复制」。</span>
                     </span>
                   </label>
-                </div>
-                <div className="set-card">
-                  <h4>通知</h4>
-                  <div className="set-desc">十六轮：BEL→系统通知（默认关；标签闪烁提醒恒开）。</div>
-                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
-                    <input type="checkbox" data-testid="bell-toggle" checked={bellNotify} onChange={(e) => changeBellNotify(e.target.checked)} style={{ marginTop: 3 }} />
-                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                      终端响铃时系统通知
-                      <span className="dim" style={{ display: "block" }}>
-                        窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知（每会话 10 秒至多一条）。
-                      </span>
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="bell-toggle" checked={bellNotify} onChange={(e) => changeBellNotify(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>终端响铃时系统通知</b>
+                      <span className="set-item-desc">窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知，每会话 10 秒至多一条；标签闪烁提醒恒开。</span>
                     </span>
                   </label>
                 </div>

@@ -28,7 +28,9 @@ module.exports = {
 
     const t0 = await bodyText(page);
     ck.check("外观分区有三档应用外观", t0.includes("跟随系统") && t0.includes("深色") && t0.includes("浅色"));
-    ck.check("外观分区有终端配色选项", t0.includes("Solarized"));
+    // 二十二轮主题统一：独立「终端配色」清单退役（Solarized 等双轨项不再出现），
+    // 主题=九族色板单一事实源，终端配色由色板×深浅派生
+    ck.check("外观分区无独立终端配色清单（主题统一）", !t0.includes("Solarized") && t0.includes("主题"));
 
     // 切深色 → 切浅色：主题标记随之翻转
     const before = await themeAttr(page);

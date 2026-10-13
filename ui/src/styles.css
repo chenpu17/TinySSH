@@ -663,11 +663,14 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 
 /* ---- R41（§6.6/S11）设置：单对话框，左分类 + 右内容 ----
    二十一轮大气化：620→880 宽、圆角 16、标题带副题、导航带图标与一句话定位、
-   内容按 .set-card 卡片分区（面板底 panel2、卡片底 panel，两级面拉开层次） */
+   内容按 .set-card 卡片分区（面板底 panel2、卡片底 panel，两级面拉开层次）。
+   二十二轮：**固定尺寸**（height 而非 max-height）——分类切换内容高度不同导致
+   面板跳变（用户不适应），改为定高 + 右侧 .settings-pane 滚动；单卡多设置行
+   .set-item 收紧密度（说明文字并入行内，不再一卡一开关铺空）。 */
 .term-settings.settings-wide {
   position: fixed;
   width: min(880px, calc(100vw - 40px));
-  max-height: calc(100vh - 56px);
+  height: min(640px, calc(100vh - 56px));
   top: 50%; right: auto; left: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column;
   padding: 18px 20px 16px; border-radius: 16px;
@@ -679,10 +682,12 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .settings-nav {
   display: flex; flex-direction: column; gap: 3px; width: 172px; flex: none;
   border-right: 1px solid var(--border); padding-right: 12px;
+  overflow-y: auto;
 }
 .settings-nav button {
   display: flex; align-items: center; gap: 10px; text-align: left;
-  border: none; background: transparent; color: var(--text-sub);
+  border: 1px solid transparent; background: transparent; box-shadow: none;
+  color: var(--text-sub); font-weight: 400;
   font-size: 13px; padding: 8px 10px; border-radius: 9px;
   white-space: nowrap; /* 「Agent 接入」等 4+ 字类目不换行 */
 }
@@ -696,15 +701,30 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
   font-size: 10px; font-weight: 400; color: var(--text-sub); margin-top: 1px;
   overflow: hidden; text-overflow: ellipsis;
 }
-.settings-pane { flex: 1; min-width: 0; overflow: auto; max-height: calc(100vh - 152px); padding-right: 2px; }
+/* 右侧内容滚动域：定高面板内 flex 撑满，类别切换只换内容不换盒子 */
+.settings-pane { flex: 1; min-width: 0; overflow-y: auto; padding-right: 4px; }
 /* 卡片分区：外观/终端多卡并列，凭据/Agent/关于单卡承载 */
 .set-card {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 14px 16px 15px; margin-bottom: 12px;
+  padding: 12px 16px 13px; margin-bottom: 12px;
 }
 .set-card:last-child { margin-bottom: 0; }
-.set-card h4 { margin: 0 0 3px; font-size: 13px; }
+.set-card h4 { margin: 0 0 8px; font-size: 13px; }
 .set-desc { font-size: 12px; line-height: 1.65; color: var(--text-sub); margin-bottom: 10px; }
+/* 紧凑设置行：开关在左，标题+一句说明在右；同行多条以分隔线区隔（说明并入行内，
+   不再 set-desc 与行内 dim 双份复读）。checkbox 对齐标题首行。 */
+.set-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 0; cursor: pointer;
+}
+.set-item + .set-item { border-top: 1px solid var(--border); }
+.set-item input[type="checkbox"] { flex: none; margin-top: 2px; }
+.set-item-txt { min-width: 0; }
+.set-item-txt b { display: block; font-size: 13px; font-weight: 600; }
+.set-item-desc { display: block; font-size: 12px; line-height: 1.6; color: var(--text-sub); margin-top: 2px; }
+/* 全局 input/select 是 width:100%（井底下凹隐喻）；设置卡是宽容器，表单控件回自动宽 */
+.set-card input, .set-card select { width: auto; }
+.set-card .cred-field input, .set-card .cred-field textarea { width: 100%; }
 
 /* R41 凭据类目：新建表单（显式提交）+ 占用者 + 未提交草稿确认 */
 .cred-new { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--panel3); }

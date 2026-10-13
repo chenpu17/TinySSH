@@ -130,24 +130,47 @@ module.exports = {
     const navDescs = await page.evaluate(() =>
       [...document.querySelectorAll(".settings-nav .set-nav-desc")].map((e) => e.textContent.trim()));
     ck.check("导航五类各带一句定位", navDescs.length === 5 && navDescs.every((d) => d.length > 0), JSON.stringify(navDescs));
+    // 二十二轮：外观两卡（应用外观/字号与缩放——终端配色卡随主题统一退役）
     const cardCounts = await page.evaluate(() => document.querySelectorAll(".settings-pane .set-card").length);
-    ck.check("外观分类三卡片分区", cardCounts === 3, `实得 ${cardCounts}`);
+    ck.check("外观分类两卡片分区", cardCounts === 2, `实得 ${cardCounts}`);
+    const dlgBox = () => page.evaluate(() => {
+      const d = document.querySelector(".term-settings.settings-wide");
+      return d ? { h: d.clientHeight, w: d.clientWidth } : null;
+    });
+    const boxA = await dlgBox();
+    ck.check("设置面板定高（固定尺寸）", !!boxA && boxA.h > 400, JSON.stringify(boxA));
 
     await page.evaluate(() => document.querySelector('[data-testid="chrome-palette-aurora"]').click());
     await page.waitForTimeout(400);
     ck.check("切换极光：data-theme 即时生效",
       await page.evaluate(() => document.documentElement.dataset.theme === "aurora"), "");
+    // 二十二轮主题统一：色板切换后活动终端主题随之派生（底色=当前 --bg resolved 值）
+    ck.check("极光下终端配色随之派生（统一主题）", await page.evaluate(() => {
+      const scratch = document.createElement("span");
+      scratch.style.color = "var(--bg)";
+      document.body.appendChild(scratch);
+      const want = getComputedStyle(scratch).color;
+      scratch.remove();
+      const terms = window.__t_terms;
+      if (!terms) throw new Error("__t_terms probe missing (dev only)");
+      // map 的 value 就是 xterm Terminal 本体（十四轮教训：含死会话残留，须过滤活实例）
+      const live = [...terms.values()].filter((t) => t.element && t.element.isConnected && t.element.getBoundingClientRect().height > 0);
+      return live.length > 0 && live.every((t) => t.options.theme.background === want);
+    }), "");
     await page.evaluate(() => document.querySelector('[data-testid="chrome-palette-obsidian"]').click());
     await page.waitForTimeout(400);
     ck.check("切换曜石：即时生效", await page.evaluate(() => document.documentElement.dataset.theme === "obsidian"), "");
     ck.check("色板选择 KV 持久（ui.palette）",
       await page.evaluate(() => localStorage.getItem("ui.palette") === "obsidian"), "");
 
-    // 终端分类同样三卡片；关闭设置
+    // 终端分类单卡三行；面板盒子尺寸恒定（分类切换只换内容不换盒子——用户反馈跳变）
     await page.click('[data-testid="settings-cat-terminal"]');
     await page.waitForTimeout(400);
-    ck.check("终端分类三卡片分区",
-      (await page.evaluate(() => document.querySelectorAll(".settings-pane .set-card").length)) === 3, "");
+    ck.check("终端分类单卡三设置行",
+      (await page.evaluate(() => document.querySelectorAll(".settings-pane .set-card").length)) === 1, "");
+    const boxT = await dlgBox();
+    ck.check("分类切换后面板尺寸恒定", !!boxT && boxT.h === boxA.h && boxT.w === boxA.w,
+      `${JSON.stringify(boxA)} → ${JSON.stringify(boxT)}`);
     await page.evaluate(() => document.querySelector('[data-testid="settings-close"]')?.click());
     await page.waitForTimeout(300);
 
