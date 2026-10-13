@@ -9,6 +9,7 @@ export type AppAction =
   | { id: "zoom-reset" }
   | { id: "hostbar" }
   | { id: "settings" }
+  | { id: "palette" }
   | { id: "tab-switch"; index: number }
   | { id: "tab-cycle"; dir: 1 | -1 }
   | { id: "tab-close" }
@@ -75,6 +76,9 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
     return null;
   }
   const k = ev.key.toLowerCase();
+  // ⌘K（十九轮）：命令面板。表单编辑焦点下也生效（非文本编辑键，同缩放门）；
+  // native 门——浏览器 demo 的 Ctrl+K 归浏览器语义不劫持（面板入口仍有工具栏按钮）
+  if (k === "k" && ctx.native) return { id: "palette" };
   // §7.4：主机栏开关「表单编辑焦点下不劫持」——正在输入时 ⌘B 不吞
   if (k === "b" && !ctx.inForm) return { id: "hostbar" };
   if (k === "f") return { id: "search" };

@@ -5,6 +5,7 @@ import {
 import { errMsg, parseWireError } from "./adapter/errors";
 import { resolveAction, isMacPlatform } from "./actions";
 import type { AppAction } from "./actions";
+import { CommandPalette, type PaletteItem } from "./palette";
 import {
   registerZoomHotkeys, onZoomChange, currentZoom, setZoomScale,
   zoomIn, zoomOut, zoomReset, ZOOM_LEVELS,
@@ -900,6 +901,8 @@ export default function App() {
   const [showAddHost, setShowAddHost] = useState(false);
   // 十七轮「快速连接」：不存主机一次性建连（内存态，重启即失）
   const [showQuickConnect, setShowQuickConnect] = useState(false);
+  // 十九轮：命令面板（⌘K / Ctrl+K / 工具栏按钮）
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showAgentHelp, setShowAgentHelp] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
@@ -2109,6 +2112,7 @@ export default function App() {
     if (pasteConfirm) { setPasteConfirm(null); return true; }
     // 拖拽上传确认卡同样是模态（全屏遮罩+焦点陷阱）——Esc 链此前漏出（审计 F5）
     if (pendingDrop) { setPendingDrop(null); return true; }
+    if (paletteOpen) { setPaletteOpen(false); return true; } // 十九轮：命令面板在浮层链内
     if (detail || detailErr) { closeDetail(); return true; }
     if (tabMenu) { setTabMenu(null); return true; }
     if (hostMenu) { setHostMenu(null); return true; }
@@ -2140,6 +2144,12 @@ export default function App() {
       case "zoom-out": zoomOut(); return true;
       case "zoom-reset": zoomReset(); return true;
       case "hostbar": toggleHostbar(!hostbarOpenRef.current); return true;
+      case "palette":
+        // ⌘K 命令面板（十九轮）：模态层不叠开（同 settings 门）；resolveAction
+        // 已按模态门吞键，此处门是菜单加速器等不经解析器的入口的对齐
+        if (modalRef.current) return false;
+        setPaletteOpen(true);
+        return true;
       case "settings":
         // 菜单加速器不经 resolveAction 的模态门（NSMenu 在 WebView 之前消费），
         // 这里补同一条 §7.3 规则：模态层打开时不叠开面板
@@ -2533,7 +2543,7 @@ export default function App() {
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || pendingDrop);
+  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || pendingDrop);
   modalRef.current = modal;
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
@@ -3736,6 +3746,97 @@ export default function App() {
   const canRetry = (t: TransferCard): boolean =>
     !t.id.startsWith("pending-") && !!t.sid && sessions.some((s) => s.id === t.sid);
 
+  // 十九轮：命令面板条目——按当前状态构建（会话/连接/当前会话操作/应用动作）。
+  // 置于组件尾部：引用的 handler 全部已初始化（useMemo 渲染期即执行，TDZ 敏感）。
+  const paletteItems = useMemo<PaletteItem[]>(() => {
+    const items: PaletteItem[] = [];
+    const active = sessions.find((x) => x.id === sid);
+    const stLabel = (s: SessionInfo) => (s.id === sid ? "当前" : s.state === "Connected" ? "已连接" : s.state === "Disconnected" ? "已断开" : s.state);
+    for (const s of sessions) {
+      items.push({
+        id: "goto-" + s.id, group: "会话",
+        title: `切换到 ${tabNames[s.id] ?? s.host_name}`,
+        hint: stLabel(s), keywords: s.host_name + " 切换",
+        run: () => { void attachSession(s.id).catch((e) => pushToast("err", errMsg(e))); },
+      });
+    }
+    if (hosts.some((h) => h.address === "local" || h.id === "local")) {
+      items.push({
+        id: "local-term", group: "连接", title: "打开本地终端", hint: "本机 PTY",
+        run: () => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh); },
+      });
+    }
+    for (const h of hosts) {
+      if (h.id === "local") continue;
+      items.push({
+        id: "conn-" + h.id, group: "连接",
+        title: `连接 ${h.name}`,
+        hint: `${h.username}@${h.address}:${h.port}`, keywords: h.address + " " + h.username + " 连接",
+        run: () => { void createSession(h).catch((e) => pushToast("err", errMsg(e))); },
+      });
+    }
+    items.push({
+      id: "quick-connect", group: "连接", title: "快速连接（不存主机，临时连接一次）",
+      keywords: "一次性 临时 connect",
+      run: () => { if (!hostbarOpen) toggleHostbar(true); setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); },
+    });
+    if (active) {
+      const menuHost = hosts.find((x) => x.id === active.host_id);
+      if (menuHost) {
+        items.push({
+          id: "dup-tab", group: "当前会话", title: `复制标签页（同主机新会话：${menuHost.name}）`,
+          run: () => { void createSession(menuHost); },
+        });
+      }
+      items.push({
+        id: "rename-tab", group: "当前会话", title: "重命名标签…",
+        run: () => setRenaming({ sid: active.id, value: tabNames[active.id] ?? active.host_name }),
+      });
+      items.push({
+        id: "toggle-log", group: "当前会话",
+        title: active.logging ? "停止记录会话日志" : "记录会话日志",
+        hint: "输出落 data/logs",
+        run: () => { void toggleSessionLog(active); },
+      });
+      if (active.logging) {
+        items.push({
+          id: "open-log", group: "当前会话", title: "打开日志文件夹",
+          run: () => { void openSessionLogFolder(active.id); },
+        });
+      }
+      items.push({
+        id: "close-session", group: "当前会话", title: `关闭会话（${tabNames[active.id] ?? active.host_name}）`,
+        danger: true, keywords: "关闭 断开",
+        run: () => requestCloseSession(active),
+      });
+    }
+    items.push({
+      id: "open-settings", group: "应用", title: "打开设置", keywords: "偏好 字号 外观 编码",
+      run: () => setShowSettings(true),
+    });
+    {
+      const idx = APPEARANCES.findIndex((a) => a.id === appearance);
+      const next = APPEARANCES[(idx + 1 + APPEARANCES.length) % APPEARANCES.length];
+      items.push({
+        id: "cycle-appearance", group: "应用",
+        title: `外观切换为「${next.label}」`, hint: "跟随系统 / 深色 / 浅色 循环",
+        keywords: "主题 深浅 暗色 亮色",
+        run: () => changeAppearance(next.id),
+      });
+    }
+    items.push({
+      id: "toggle-hostbar", group: "应用",
+      title: hostbarOpen ? "隐藏主机栏" : "显示主机栏", hint: "⌘B",
+      run: () => toggleHostbar(!hostbarOpen),
+    });
+    items.push({
+      id: "import-sshconfig", group: "应用", title: "导入 ~/.ssh/config",
+      run: () => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); },
+    });
+    return items;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, sid, hosts, tabNames, appearance, hostbarOpen, attachSession, createSession, toggleSessionLog, openSessionLogFolder, requestCloseSession, changeAppearance, toggleHostbar]);
+
   return (
     <div className="app-shell">
       {/* 标题区 44（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
@@ -4159,6 +4260,9 @@ export default function App() {
               onClick={() => scrollTabs(1)}>›</button>
           )}
           {splitPanes && <button className="ghost" onClick={exitSplit}>退出分屏</button>}
+          {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点） */}
+          <button className="ghost" title="命令面板（Ctrl+K / ⌘K）" aria-label="命令面板" data-testid="palette-open"
+            onClick={() => setPaletteOpen(true)}><IconSearch size={14} /></button>
           <div className="st-tools" ref={tabsMenuRef}>
             <button className="ghost tab-all" title="所有标签" aria-haspopup="menu" aria-expanded={tabsMenuOpen}
               onClick={() => setTabsMenuOpen(!tabsMenuOpen)}>标签列表</button>
@@ -6108,6 +6212,8 @@ Authorization: Bearer <TOKEN>`}
       <div className="toast-stack">
         {toasts.map((t) => <div className={"toast " + t.kind} key={t.id} aria-live={t.kind === "err" ? "assertive" : "polite"}>{t.text}</div>)}
       </div>
+      {/* 十九轮：命令面板（⌘K）；Esc/遮罩关闭走浮层链与本组件内键盘 */}
+      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
 
       {/* R31 §350 文件动作菜单：双击/Enter 文件弹出可用动作（不直接执行）；点外/Esc 关 */}
       {sftpMenu && (

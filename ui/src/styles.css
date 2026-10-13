@@ -1349,3 +1349,32 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
     transition: none !important;
   }
 }
+
+/* 十九轮：命令面板（⌘K）——confirm-mask 同族的居中浮层（z 90 段，低于 toast）。
+   面板宽 560，输入行 + 分组列表；选中行 accent 软底（同 .tab-bell 家族的
+   accent-soft 语义），危险动作红字。 */
+.palette-overlay { position: fixed; inset: 0; z-index: 90; background: var(--mask-plain); display: flex; align-items: flex-start; justify-content: center; }
+.palette {
+  margin-top: 12vh; width: 560px; max-width: calc(100vw - 48px); max-height: 68vh;
+  display: flex; flex-direction: column;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 4px 10px var(--shadow-soft), 0 24px 64px var(--shadow-dialog);
+  overflow: hidden;
+}
+.palette-input {
+  border: none; outline: none; background: transparent; color: var(--text);
+  padding: 13px 16px; font-size: 14px; border-bottom: 1px solid var(--border);
+}
+.palette-input::placeholder { color: var(--dim); }
+.palette-list { overflow: auto; padding: 6px 6px 10px; }
+.palette-group { font-size: 10px; color: var(--text-sub); letter-spacing: 0.5px; padding: 8px 10px 3px; }
+.palette-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; border: none; border-radius: 8px;
+  background: transparent; color: var(--text); padding: 8px 10px; font-size: 13px;
+  cursor: pointer;
+}
+.palette-item.palette-sel { background: var(--accent-soft); }
+.palette-item.palette-danger { color: var(--danger, #e5484d); }
+.palette-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-hint { flex: none; font-size: 11px; color: var(--dim); }
