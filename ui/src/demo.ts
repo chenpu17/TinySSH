@@ -16,6 +16,13 @@ type DemoHostSnap = {
   auth_type: string; fingerprint: string | null; charset: "utf-8" | "gbk";
 };
 
+/** demo 主机域（hosts 列表与十七轮快速连接注册表共用形态）。 */
+type DemoHost = {
+  id: string; name: string; address: string; port: number; username: string;
+  auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk";
+  tags?: string[]; ident_id?: string | null; shell_integration?: boolean;
+};
+
 type DemoSession = {
   id: string; host_id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
@@ -100,6 +107,9 @@ const demoState = {
   // R21 凭据基础管理：演示态凭据域（真实核心在 vault identities 表）+ 主机→凭据绑定
   //（真实 HostDraft.auth Key 携带 identity_id，demo 同语义存 ident_id）
   identities: [] as { id: string; label: string; kind: string; fingerprint: string }[],
+  // 十七轮「快速连接」：内存态快速主机（quick-demo-* 前缀）——不进 hosts 列表
+  //（主机栏/最近连接天然不含），应用生命周期内可重连，与真实核心同边界
+  quickHosts: new Map<string, DemoHost>(),
   hosts: [
     { id: "local", name: "本机", address: "local", port: 0, username: "ops", auth_type: "Password" },
     { id: "h-prod1", name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI" },
@@ -993,8 +1003,43 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       pushTo(args?.sid as string, (args?.keys as string) ?? "");
       return null;
     // ---- C1 建连尝试（R19；demo 同契约，无事件机制——探针经 connection_status 轮询）----
+    // 十七轮「快速连接」：begin_connection_draft 校验+注册内存态快速主机后与
+    // begin_connection 走完全相同的建连体（TOFU 按 address 同口径）。
+    case "begin_connection_draft":
     case "begin_connection": {
-      const hid = args?.hostId as string;
+      let hid: string;
+      if (cmd === "begin_connection_draft") {
+        const d = (args?.draft ?? {}) as {
+          name?: string; address?: string; port?: number; username?: string;
+          auth: import("./adapter/wire").AuthDraft; charset?: "utf-8" | "gbk";
+        };
+        const address = (d.address ?? "").trim();
+        const username = (d.username ?? "").trim();
+        if (!address || !username) throw apiError("invalid_input", "地址与用户名都不能为空（演示）");
+        if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address)) throw apiError("invalid_input", "地址格式不对——应为 IP 或域名（演示）");
+        const port = d.port ?? 22;
+        if (!Number.isInteger(port) || port <= 0 || port > 65535) throw apiError("invalid_input", "端口必须是 1–65535 的数字（演示）");
+        let auth_type: string;
+        let ident_id: string | null = null;
+        if (d.auth === "Agent") {
+          auth_type = "Agent";
+        } else if (d.auth && typeof d.auth === "object" && "Password" in d.auth) {
+          if (!d.auth.Password.password) throw apiError("invalid_input", "请输入密码（演示）");
+          auth_type = "Password";
+        } else if (d.auth && typeof d.auth === "object" && "Key" in d.auth) {
+          const iid = d.auth.Key.identity_id;
+          if (!demoState.identities.some((x) => x.id === iid)) throw apiError("invalid_input", "所选密钥不存在或已删除（演示）");
+          auth_type = "Key";
+          ident_id = iid;
+        } else {
+          throw apiError("invalid_input", "快速连接需要显式认证方式（密码/密钥/Agent）（演示）");
+        }
+        const name = (d.name ?? "").trim() || (port === 22 ? `${username}@${address}` : `${username}@${address}:${port}`);
+        hid = "quick-demo-" + String(demoSeq++).padStart(4, "0");
+        demoState.quickHosts.set(hid, { id: hid, name, address, port, username, auth_type, charset: d.charset ?? "utf-8", ...(ident_id ? { ident_id } : {}) });
+      } else {
+        hid = args?.hostId as string;
+      }
       const opts = (args?.opts ?? {}) as { new_session?: boolean };
       const TERMINAL = ["Ready", "Failed", "Cancelled", "CancelCloseFailed"];
       if (!opts.new_session) {
@@ -1008,7 +1053,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const setPhase = (phase: import("./adapter/wire").AttemptPhase) => { entry.info.phase = phase; };
       void (async () => {
         try {
-          const h = demoState.hosts.find((x) => x.id === hid);
+          const h = demoState.hosts.find((x) => x.id === hid) ?? demoState.quickHosts.get(hid);
           if (!h) throw apiError("invalid_input", "HostNotFound（演示）");
           if (h.address !== "local" && !demoState.trusted.has(h.address)) {
             setPhase("TrustRequired");
@@ -1042,7 +1087,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           // 与 create_session 同构建会话（同步快路径）
           const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
           demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
-          {
+          if (!h.id.startsWith("quick-")) {
+            // 十七轮：快速主机不进元数据（真实核心 vault 侧 EXISTS 守卫同语义）
             const m = demoState.hostMeta.get(h.id) ?? { favorite: false, last_connected_at: null };
             m.last_connected_at = new Date().toISOString();
             demoState.hostMeta.set(h.id, m);

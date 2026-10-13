@@ -41,6 +41,7 @@ interface CmdArgs {
   session_detail: { sid: string };
   create_session: { hostId: string };  // tauri v2 JS 侧实参为 camelCase，自动映射 rust host_id
   begin_connection: { hostId: string; opts?: wire.BeginConnectionOpts };
+  begin_connection_draft: { draft: wire.HostDraft; opts?: wire.BeginConnectionOpts };
   connection_status: { attemptId: string };
   cancel_connection: { attemptId: string };
   close_session: { sid: string };
@@ -129,6 +130,7 @@ interface CmdRet {
   session_detail: wire.SessionDetail;
   create_session: wire.SessionId;
   begin_connection: wire.AttemptInfo;
+  begin_connection_draft: wire.AttemptInfo;
   connection_status: wire.AttemptInfo;
   cancel_connection: wire.CancelOutcome;
   close_session: void;

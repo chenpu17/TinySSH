@@ -175,6 +175,20 @@ async fn begin_connection(
         .map_err(WireError::from)
 }
 
+/// 十七轮「快速连接」：不落 vault 直接建连（主机/凭据/TOFU 信任仅内存，重启即失）。
+#[tauri::command]
+async fn begin_connection_draft(
+    state: ApiState<'_>,
+    draft: session_api::HostDraft,
+    opts: Option<BeginConnectionOpts>,
+) -> CmdResult<AttemptInfo> {
+    state
+        .api
+        .begin_connection_draft(&human(), draft, opts.unwrap_or_default())
+        .await
+        .map_err(WireError::from)
+}
+
 #[tauri::command]
 async fn connection_status(state: ApiState<'_>, attempt_id: String) -> CmdResult<AttemptInfo> {
     state
@@ -1546,7 +1560,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
-            list_sessions, session_detail, create_session, begin_connection, connection_status, cancel_connection,
+            list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection,
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,

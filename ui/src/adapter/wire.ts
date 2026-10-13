@@ -59,6 +59,8 @@ export interface HostDraft {
   auth: AuthDraft;
   tags: string[];
   charset: Charset;
+  /** C3：null/缺省=新建默认（快速连接由核心兜底 Some(true)）；显式开关走 boolean。 */
+  shell_integration?: boolean | null;
 }
 
 export type IdentityReq =

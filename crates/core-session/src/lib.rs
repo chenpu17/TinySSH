@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tinyssh_approval::ApprovalEngine;
 use tokio::sync::{broadcast, oneshot};
 use transport_ssh::SshChannel;
+use zeroize::Zeroizing;
 
 /// C5（R32）：Unix 秒（TransferTask.created_at/finished_at 口径）。
 fn now_unix() -> i64 {
@@ -69,8 +70,20 @@ pub struct ApprovalCenter {
     /// R26（§6.4）：会话状态事件（断线/自动重连次数/重确认）——UI 即时推送，
     /// 免 3s 列表轮询盲窗。
     pub state_tx: broadcast::Sender<SessionStateEvent>,
+    /// 十七轮「快速连接」：内存态临时主机注册表（`quick-` 前缀 id）。主机与凭据
+    /// 不落 vault（应用退出即失），主机列表/最近连接天然不含（vault 无行）。
+    pub quick_hosts: StdMutex<HashMap<HostId, QuickHost>>,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
+}
+
+/// 快速连接的内存态主机（十七轮）：Host 全量 + 注册时即席解出的明文凭据 +
+/// 内存 TOFU 指纹。注册即解析（Key 引用的 vault identity 未知则注册即败）；
+/// 明文 Zeroizing 持有；信任只留本进程（快速连接不记忆信任，重启即忘）。
+pub struct QuickHost {
+    pub host: Host,
+    pub secret: Zeroizing<String>,
+    pub fingerprint: StdMutex<Option<String>>,
 }
 
 pub struct SessionManager {
@@ -170,6 +183,7 @@ impl SessionManager {
             conn_tx,
             shell_tx,
             state_tx,
+            quick_hosts: StdMutex::new(HashMap::new()),
             vault,
             audit,
         });
@@ -283,6 +297,9 @@ impl SessionManager {
         }
         let (host, kind) = if req.host_id == "local" {
             (self.ensure_local_host()?, "local".to_string())
+        } else if let Some(qh) = self.center.quick_hosts.lock().unwrap().get(&req.host_id) {
+            // 十七轮：内存态快速连接主机（vault 无行，注册表优先可见性一致）
+            (qh.host.clone(), "ssh".to_string())
         } else {
             let host = self
                 .center
@@ -317,7 +334,11 @@ impl SessionManager {
             let (ch, _cleanup) = transport_pty::spawn_local_pty(cols, rows).await?;
             ch
         } else {
-            let (auth_type, secret) = self.center.vault.host_secret(&host)?;
+            // 十七轮：快速连接主机凭据在注册表内存（注册时即席解出），不经 vault
+            let (auth_type, secret) = match self.center.quick_hosts.lock().unwrap().get(&host.id) {
+                Some(qh) => (host.auth_type, qh.secret.clone()),
+                None => self.center.vault.host_secret(&host)?,
+            };
             // TOFU 指纹门（路线图⑤）：闭包只捕获 ApprovalCenter，避免回指 SessionManager
             let center = self.center.clone();
             let gate_host = host.clone();
@@ -409,14 +430,16 @@ impl SessionManager {
         }
 
         // record_session 失败（vault Err）：v1 直调路径同样不留半会话（R23 前置清单
-        // 「v1 create_session 幽灵面」闭环——与 attempt 路径 N2 清扫同语义）
+        // 「v1 create_session 幽灵面」闭环——与 attempt 路径 N2 清扫同语义）。
+        // 十七轮：快速主机不在 hosts 表（sessions.host_id FK 会拒）——记 NULL。
         let recorded = {
             #[cfg(test)]
             if self.test_hooks.lock().unwrap().force_record_fail {
                 let _ = self.close_session(ctx, sid.clone()).await;
                 return Err(Error::Io("test-injected record failure".into()));
             }
-            self.center.vault.record_session(&sid, &host.id, &kind)};
+            let quick = self.center.quick_hosts.lock().unwrap().contains_key(&host.id);
+            self.center.vault.record_session(&sid, if quick { None } else { Some(host.id.as_str()) }, &kind)};
         if let Err(e) = recorded {
             let _ = self.close_session(ctx, sid.clone()).await;
             return Err(e);
@@ -430,6 +453,79 @@ impl SessionManager {
         Ok(sid)
     }
 
+    /// 十七轮：注册快速连接主机（校验 + 凭据即席解析 + 入内存注册表）。
+    /// 失败不产生注册表残留；成功返回的 Host id 为 `quick-` 前缀，仅存在于内存。
+    fn register_quick_host(&self, draft: HostDraft) -> Result<Host> {
+        let address = draft.address.trim().to_string();
+        let username = draft.username.trim().to_string();
+        if address.is_empty() || username.is_empty() {
+            return Err(Error::InvalidInput("地址与用户名都不能为空".into()));
+        }
+        if address.len() > 253
+            || !address
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        {
+            return Err(Error::InvalidInput(
+                "地址格式不对——应为 IP 或域名（不带端口与协议）".into(),
+            ));
+        }
+        let port = draft.port.unwrap_or(22);
+        if port == 0 {
+            return Err(Error::InvalidInput("端口必须是 1–65535 的数字".into()));
+        }
+        let (auth_type, identity_id, secret) = match &draft.auth {
+            AuthDraft::Password { password } => {
+                if password.is_empty() {
+                    return Err(Error::InvalidInput("请输入密码".into()));
+                }
+                (AuthType::Password, None, Zeroizing::new(password.clone()))
+            }
+            AuthDraft::Key { identity_id } => {
+                // 引用凭据库已有密钥：明文即席解出到内存（未知/已删 identity 注册即败）
+                let pem = self.center.vault.identity_secret(identity_id)?;
+                (AuthType::Key, Some(identity_id.clone()), pem)
+            }
+            AuthDraft::Agent => (AuthType::Agent, None, Zeroizing::new(String::new())),
+            AuthDraft::None => {
+                return Err(Error::InvalidInput(
+                    "快速连接需要显式认证方式（密码/密钥/Agent）".into(),
+                ));
+            }
+        };
+        let name = {
+            let n = draft.name.trim();
+            if n.is_empty() {
+                // 默认名与标签显示同口径：user@host（非 22 端口带 :port）
+                if port == 22 {
+                    format!("{username}@{address}")
+                } else {
+                    format!("{username}@{address}:{port}")
+                }
+            } else {
+                n.to_string()
+            }
+        };
+        let host = Host {
+            id: format!("quick-{}", uuid::Uuid::new_v4()),
+            name,
+            address,
+            port,
+            username,
+            auth_type,
+            identity_id,
+            tags: vec![],
+            fingerprint: None,
+            shell_integration: draft.shell_integration.or(Some(true)),
+            charset: draft.charset,
+        };
+        self.center.quick_hosts.lock().unwrap().insert(
+            host.id.clone(),
+            QuickHost { host: host.clone(), secret, fingerprint: StdMutex::new(None) },
+        );
+        Ok(host)
+    }
+
     /// C1：发起建连 attempt（立即返回，连接后台推进；相位经 connection-event）。
     async fn begin_connection_on(
         &self,
@@ -437,9 +533,11 @@ impl SessionManager {
         host_id: HostId,
         opts: BeginConnectionOpts,
     ) -> Result<AttemptInfo> {
-        // 主机存在性前置校验（无效主机不产生 attempt；kind 与 v1 create_session 同口径）
+        // 主机存在性前置校验（无效主机不产生 attempt；kind 与 v1 create_session 同口径）。
+        // 十七轮：内存态快速连接主机（quick- 前缀）同样可发起。
         let known = host_id == "local"
-            || self.center.vault.list_hosts()?.iter().any(|h| h.id == host_id);
+            || self.center.vault.list_hosts()?.iter().any(|h| h.id == host_id)
+            || self.center.quick_hosts.lock().unwrap().contains_key(&host_id);
         if !known {
             return Err(Error::SessionNotFound);
         }
@@ -1123,7 +1221,11 @@ async fn host_key_gate(
             return Err(Error::Cancelled);
         }
     }
-    let stored = center.vault.host_fingerprint(&host.id)?;
+    // 十七轮：快速连接主机的信任读内存注册表（vault 无行，直查会误报存储错误）
+    let stored = match center.quick_hosts.lock().unwrap().get(&host.id) {
+        Some(qh) => qh.fingerprint.lock().unwrap().clone(),
+        None => center.vault.host_fingerprint(&host.id)?,
+    };
     if stored.as_deref() == Some(fp) {
         return Ok(true);
     }
@@ -1175,10 +1277,23 @@ async fn host_key_gate(
     };
     match decided {
         Some(true) => {
-            center.vault.set_host_fingerprint(&host.id, fp)?;
+            // 十七轮：快速连接的信任只进内存注册表（重启即忘，不落 vault）
+            let quick_done = {
+                let mut reg = center.quick_hosts.lock().unwrap();
+                match reg.get_mut(&host.id) {
+                    Some(qh) => {
+                        *qh.fingerprint.lock().unwrap() = Some(fp.to_string());
+                        true
+                    }
+                    None => false,
+                }
+            };
+            if !quick_done {
+                center.vault.set_host_fingerprint(&host.id, fp)?;
+            }
             let _ = center.audit.append(
                 ctx, "host_key_trusted", None, Some(&host.name),
-                serde_json::json!({"fingerprint": fp}), None);
+                serde_json::json!({"fingerprint": fp, "transient": quick_done}), None);
             if let Some(a) = attempt {
                 let mut st = a.st.lock().await;
                 if !st.terminal() {
@@ -1620,6 +1735,21 @@ impl SessionApi for SessionManager {
         opts: BeginConnectionOpts,
     ) -> Result<AttemptInfo> {
         self.begin_connection_on(ctx, host_id, opts).await
+    }
+
+    async fn begin_connection_draft(
+        &self,
+        ctx: &Actor,
+        draft: HostDraft,
+        opts: BeginConnectionOpts,
+    ) -> Result<AttemptInfo> {
+        // 快速连接是人类 UI 特性：Agent 一律走已存主机路径（凭据引用可审计、
+        // 目标可追责——一次性目标不该成为 Agent 的隐蔽入口）
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("快速连接仅供人类入口使用".into()));
+        }
+        let host = self.register_quick_host(draft)?;
+        self.begin_connection_on(ctx, host.id, opts).await
     }
 
     async fn connection_status(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<AttemptInfo> {
@@ -4276,6 +4406,9 @@ mod r42_tests;
 #[cfg(test)]
 #[path = "r43_tests.rs"]
 mod r43_tests;
+#[cfg(test)]
+#[path = "quick_tests.rs"]
+mod quick_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle

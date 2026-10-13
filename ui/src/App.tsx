@@ -12,7 +12,7 @@ import {
 import { createOutputFeed } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import type {
-  Host, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
+  Host, HostDraft, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
@@ -898,6 +898,8 @@ export default function App() {
   const [connError, setConnError] = useState<{ title: string; detail: string } | null>(null);
   const [hostKeyQueue, setHostKeyQueue] = useState<PendingHostKey[]>([]);
   const [showAddHost, setShowAddHost] = useState(false);
+  // 十七轮「快速连接」：不存主机一次性建连（内存态，重启即失）
+  const [showQuickConnect, setShowQuickConnect] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showAgentHelp, setShowAgentHelp] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
@@ -3380,15 +3382,20 @@ export default function App() {
     }
   }, [sftpPath, startUploads, pushToast]);
 
-  const createSession = async (host: Host, intoSplit = false) => {
+  const createSession = async (host: Host, intoSplit = false, draft?: HostDraft) => {
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
     const gen0 = focusGenRef.current;
     setConnError(null);
     let attemptId: string | null = null;
     try {
       // R23（C1 消费）：begin_connection → attempt_id，终态经事件/轮询回回；
-      // 门挂起期间主机卡可取消（§302 等待中可取消）
-      const a = await invoke("begin_connection", { hostId: host.id }) as AttemptInfo;
+      // 门挂起期间主机卡可取消（§302 等待中可取消）。
+      // 十七轮：draft 在场 = 快速连接——begin_connection_draft 注册内存态主机
+      // 后走同一条 attempt 路径；真实 id 经 attempt 回带（门匹配/失败标记全用它）
+      const a = await (draft
+        ? invoke("begin_connection_draft", { draft, opts: {} })
+        : invoke("begin_connection", { hostId: host.id })) as AttemptInfo;
+      if (draft && a.host_id) host = { ...host, id: a.host_id };
       attemptId = a.attempt_id;
       settleAttempt(a);
       const final = await waitForAttempt(a.attempt_id);
@@ -3793,6 +3800,15 @@ export default function App() {
               }}
             />
           )}
+          {showQuickConnect && (
+            <QuickConnectForm
+              onConnect={(display, draft) => {
+                setShowQuickConnect(false);
+                void createSession(display, false, draft);
+              }}
+              onCancel={() => setShowQuickConnect(false)}
+            />
+          )}
           {(() => {
             // R20（§4.2）：卡片渲染收敛为局部函数——收藏分组（收藏/其他主机/全部主机）
             // 复用同一卡片形态；组内名称序已在 filteredHosts 派生时排序
@@ -4147,7 +4163,9 @@ export default function App() {
               </div>
             )}
           </div>
-          <button className="ghost" title="新建连接（打开主机栏「添加主机」表单，再点收起）" aria-label="新建连接" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(!showAddHost); setShowImport(false); }}><IconPlus size={14} /></button>
+          <button className="ghost" title="新建连接（打开主机栏「添加主机」表单，再点收起）" aria-label="新建连接" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); }}><IconPlus size={14} /></button>
+          {/* 十七轮：快速连接——不存主机一次性建连 */}
+          <button className="ghost" title="快速连接（不保存主机，临时连接一次）" aria-label="快速连接" data-testid="quick-connect-open" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -4488,7 +4506,8 @@ export default function App() {
                   <div><span className="ws-k">传输</span>拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标；下方命令框可逐条执行，焦点自动回终端</div>
                 </div>
                 <div className="welcome-actions">
-                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
+                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
+                  <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={13} /> 快速连接</button>
                   <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
                   {hosts.some((h) => h.id === "local") && (
                     <button className="ghost" onClick={() => {
@@ -6137,6 +6156,123 @@ function BriefCard({ brief }: { brief: Brief }) {
 }
 
 // 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）；Agent 只存引用
+// 十七轮「快速连接」：不存主机一次性建连。表单是 AddHostForm 的削剪——
+// 无名称（默认 user@host[:port]）/无标签/无私钥导入与生成（那会写凭据库）；
+// 认证三选一：密码 / 凭据库已有密钥（只引用不解出新明文）/ SSH Agent。
+// 提交 = begin_connection_draft：主机/凭据/TOFU 信任全在内存，应用退出即失。
+function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Host, draft: HostDraft) => void; onCancel: () => void }) {
+  const [address, setAddress] = useState("");
+  const [port, setPort] = useState("22");
+  const [username, setUsername] = useState("");
+  const [authMode, setAuthMode] = useState<"password" | "key" | "agent">("password");
+  const [password, setPassword] = useState("");
+  const [pickedIdentity, setPickedIdentity] = useState("");
+  const [charset, setCharset] = useState<"utf-8" | "gbk">("utf-8");
+  const [knownIdentities, setKnownIdentities] = useState<IdentityMeta[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke("list_identities")
+      .then((xs) => setKnownIdentities(xs.filter((x) => x.kind !== "Password")))
+      .catch(() => { /* 选择器降级为空，仍可密码/Agent */ });
+  }, []);
+
+  const submit = () => {
+    setErr(null);
+    if (!address.trim() || !username.trim()) { setErr("地址和用户名都不能为空"); return; }
+    if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
+      setErr("地址格式不对——应为 IP 或域名（如 192.168.1.10），不带端口与协议");
+      return;
+    }
+    const p = parseInt(port, 10);
+    if (!Number.isInteger(p) || p <= 0 || p > 65535) { setErr("端口必须是 1–65535 的数字"); return; }
+    let auth: AuthDraft;
+    if (authMode === "password") {
+      if (!password) { setErr("请输入密码"); return; }
+      auth = { Password: { password } };
+    } else if (authMode === "agent") {
+      auth = "Agent";
+    } else {
+      if (!pickedIdentity) { setErr("请选择凭据库中的已有密钥（或改用密码 / SSH Agent）"); return; }
+      auth = { Key: { identity_id: pickedIdentity } };
+    }
+    const addr = address.trim();
+    const user = username.trim();
+    const display: Host = {
+      id: "quick-pending",
+      name: p === 22 ? `${user}@${addr}` : `${user}@${addr}:${p}`,
+      address: addr, port: p, username: user,
+      auth_type: authMode === "password" ? "Password" : authMode === "agent" ? "Agent" : "Key",
+      identity_id: authMode === "key" ? pickedIdentity : null,
+      tags: [], fingerprint: null, charset,
+    };
+    onConnect(display, {
+      id: null, name: "", address: addr, port: p, username: user,
+      auth, tags: [], charset, shell_integration: null,
+    });
+  };
+
+  return (
+    <div className="card add-host" data-testid="quick-connect-form">
+      <div className="dim" style={{ fontSize: 11, marginBottom: 6 }}>
+        快速连接：临时打开，不保存到主机列表；应用退出后连接信息即丢弃。
+      </div>
+      <div className="row" style={{ alignItems: "flex-end" }}>
+        <div className="ah-field" style={{ flex: 2 }}>
+          <label>地址（IP 或域名）</label>
+          <input value={address} onChange={(e) => setAddress(e.target.value)} autoFocus
+            placeholder="例：192.168.1.10" style={{ minWidth: 0 }} />
+        </div>
+        <div className="ah-field" style={{ width: 76 }}>
+          <label>端口</label>
+          <input value={port} onChange={(e) => setPort(e.target.value)} />
+        </div>
+      </div>
+      <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
+        <div className="ah-field" style={{ flex: 1 }}>
+          <label>用户名</label>
+          <input value={username} onChange={(e) => setUsername(e.target.value)}
+            placeholder="例：ops 或 root" />
+        </div>
+        <div className="ah-field" style={{ flex: 1 }}>
+          <label>认证方式</label>
+          <select value={authMode} onChange={(e) => { setErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
+            <option value="password">密码登录</option>
+            <option value="key">已有密钥（凭据库）</option>
+            <option value="agent">SSH Agent</option>
+          </select>
+        </div>
+      </div>
+      {authMode === "password" && (
+        <input type="password" placeholder="密码" value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      )}
+      {authMode === "key" && (
+        <select value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)} style={{ marginTop: 6 }}>
+          <option value="">选择凭据库中的密钥…</option>
+          {knownIdentities.map((k) => (
+            <option key={k.id} value={k.id}>{k.label || k.id}</option>
+          ))}
+        </select>
+      )}
+      <div className="ah-field" style={{ marginTop: 6 }}>
+        <label>远端编码（老设备中文乱码时选 GBK）</label>
+        <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
+          <option value="utf-8">UTF-8（默认）</option>
+          <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
+        </select>
+      </div>
+      {err && <div className="form-error" style={{ marginTop: 6 }}>{err}</div>}
+      <div className="row" style={{ marginTop: 8, gap: 8 }}>
+        <button disabled={busy} onClick={submit} data-testid="quick-connect-go">连接</button>
+        <button className="ghost" onClick={onCancel}>取消</button>
+      </div>
+    </div>
+  );
+}
+
 // prefill（C7/DF7.4）：导入面板「转手工表单」用预览载荷预填——upsert_host，零新命令
 function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null; prefill?: SshConfigPreview | null }) {
   const editing = !!editHost;

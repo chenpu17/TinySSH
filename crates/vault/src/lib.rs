@@ -1342,6 +1342,13 @@ impl Vault {
             .identity_id
             .as_ref()
             .ok_or_else(|| Error::InvalidInput("host has no identity".into()))?;
+        Ok((host.auth_type, self.identity_secret(iid)?))
+    }
+
+    /// 按 id 解出凭据明文（十七轮：快速连接引用凭据库已有密钥时即席解出到内存，
+    /// 不新建不改 vault；明文由调用方 Zeroizing 持有，应用退出即失）。
+    /// 身份不存在/已删除 → InvalidInput（快速连接表单可行动文案，非存储错误）。
+    pub fn identity_secret(&self, iid: &str) -> Result<Zeroizing<String>> {
         let conn = self.conn.lock().unwrap();
         let blob: String = conn
             .query_row(
@@ -1349,15 +1356,17 @@ impl Vault {
                 params![iid],
                 |r| r.get(0),
             )
-            .map_err(db_err)?;
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    Error::InvalidInput("所选密钥不存在或已删除".into())
+                }
+                other => Error::Storage(other.to_string()),
+            })?;
         let raw = base64::engine::general_purpose::STANDARD
             .decode(blob)
             .map_err(|_| Error::Storage("bad blob b64".into()))?;
         let plain = open_seal(&self.master, &raw)?;
-        Ok((
-            host.auth_type,
-            Zeroizing::new(String::from_utf8_lossy(&plain).into_owned()),
-        ))
+        Ok(Zeroizing::new(String::from_utf8_lossy(&plain).into_owned()))
     }
 
     // ---- 身份（生成/导入）----
@@ -1659,7 +1668,9 @@ impl Vault {
     }
 
     // ---- 会话记录 ----
-    pub fn record_session(&self, sid: &SessionId, host_id: &str, kind: &str) -> Result<()> {
+    /// 会话行落库。十七轮：host_id 可为 None——快速连接主机不在 hosts 表
+    /// （FK 会拒），记 NULL；最近连接按 `host_id IS NOT NULL` 派生，天然排除。
+    pub fn record_session(&self, sid: &SessionId, host_id: Option<&str>, kind: &str) -> Result<()> {
         self.conn.lock().unwrap()
             .execute(
                 "INSERT INTO sessions (id, host_id, kind, state, created_at) VALUES (?1,?2,?3,'connected',?4)",
@@ -2061,10 +2072,10 @@ mod tests {
         v.touch_host_connection(&hid).unwrap();
         assert!(v.list_host_metadata().unwrap()[0].last_connected_at.is_some());
         // 最近连接（DF8.5）：sessions 派生、排除 local、每主机最近一次、删除主机无幽灵
-        v.record_session(&"s-1".to_string(), &hid, "ssh").unwrap();
-        v.record_session(&"s-2".to_string(), &hid, "ssh").unwrap();
-        v.record_session(&"s-3".to_string(), &hid, "local").unwrap(); // 排除
-        v.record_session(&"s-4".to_string(), &hid2, "ssh").unwrap();
+        v.record_session(&"s-1".to_string(), Some(&hid), "ssh").unwrap();
+        v.record_session(&"s-2".to_string(), Some(&hid), "ssh").unwrap();
+        v.record_session(&"s-3".to_string(), Some(&hid), "local").unwrap(); // 排除
+        v.record_session(&"s-4".to_string(), Some(&hid2), "ssh").unwrap();
         // 钉死时间戳：record_session 用 now_ms()，连续四写常落同一毫秒，而
         // list_recent_hosts 的 `ORDER BY last_at DESC` 对并列无确定序——本用例曾
         // 2/12 偶发红（h-8f9b… vs h-a61f…）。此处显式赋值使「s-4 晚于 s-2」恒真。

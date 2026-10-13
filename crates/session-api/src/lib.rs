@@ -1619,6 +1619,15 @@ pub trait SessionApi: Send + Sync {
         host_id: HostId,
         opts: BeginConnectionOpts,
     ) -> Result<AttemptInfo>;
+    /// 十七轮「快速连接」：不落 vault 直接建连——主机与凭据仅存内存（应用退出即失），
+    /// TOFU 信任同样只在内存（快速连接不记忆信任）。主机列表/最近连接不出现该目标。
+    /// 仅 Human 可调（Agent 走已存主机的审计路径）；id 分配 `quick-` 前缀。
+    async fn begin_connection_draft(
+        &self,
+        ctx: &Actor,
+        draft: HostDraft,
+        opts: BeginConnectionOpts,
+    ) -> Result<AttemptInfo>;
     /// attempt 快照查询；终态后恒返回终态（不设历史查询——DC1）。
     async fn connection_status(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<AttemptInfo>;
     /// 取消建连。Cancelled=受理（终态以事件为准）；AlreadyReady/CancelCloseFailed=
