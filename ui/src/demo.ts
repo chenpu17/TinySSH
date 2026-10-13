@@ -34,6 +34,8 @@ type DemoSession = {
   // R42（§6.7）：是否曾被 Agent 持有控制权（人类建会话恒 false；委托/交还后 true，
   // 接管不抹掉历史）——UI 据此区分「交给 Agent」与「交还 Agent」入口措辞。
   ever_agent_owned: boolean;
+  /** 十八轮：会话日志记录中（demo 内存态；真实核心落 data/logs）。 */
+  logging?: boolean;
   // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）。
   // ts 统一 ISO-UTC——简报侧转本地渲染（与真实 brief.rs 修复后口径一致，防时区伪影）
   transitions: { ts: string; what: string }[];
@@ -456,6 +458,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         integration: "Disabled",
         // R42（§6.7）：曾被 Agent 持有——与真实 SessionHandle.ever_agent_owned 对齐
         ever_agent_owned: s.ever_agent_owned,
+        // 十八轮：会话日志态随列表下发（真实侧 SessionInfo.logging 同语义）
+        logging: !!s.logging,
       }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[] };
@@ -1002,6 +1006,20 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "send_keys":
       pushTo(args?.sid as string, (args?.keys as string) ?? "");
       return null;
+    // ---- 十八轮：会话日志（demo 内存态，无真实文件；真实核心落 data/logs 并经 pump tap 写入）----
+    case "set_session_logging": {
+      const sid = args?.sid as string;
+      const enabled = !!args?.enabled;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "SessionNotFound（演示）");
+      s.logging = enabled;
+      return enabled ? "C:\\demo\\logs\\" + s.host_name.replace(/[\\/:*?"<>| ]/g, "_") + "_demo.log（演示）" : null;
+    }
+    case "session_log_path": {
+      const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
+      if (!s) throw apiError("session_not_found", "SessionNotFound（演示）");
+      return s.logging ? "C:\\demo\\logs\\" + s.host_name.replace(/[\\/:*?"<>| ]/g, "_") + "_demo.log（演示）" : null;
+    }
     // ---- C1 建连尝试（R19；demo 同契约，无事件机制——探针经 connection_status 轮询）----
     // 十七轮「快速连接」：begin_connection_draft 校验+注册内存态快速主机后与
     // begin_connection 走完全相同的建连体（TOFU 按 address 同口径）。

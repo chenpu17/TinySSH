@@ -198,6 +198,29 @@ async fn connection_status(state: ApiState<'_>, attempt_id: String) -> CmdResult
         .map_err(WireError::from)
 }
 
+/// 十八轮「会话日志」：开关（开启返回日志路径供 toast）与路径查询（供打开文件夹）。
+#[tauri::command]
+async fn set_session_logging(
+    state: ApiState<'_>,
+    sid: String,
+    enabled: bool,
+) -> CmdResult<Option<String>> {
+    state
+        .api
+        .set_session_logging(&human(), sid, enabled)
+        .await
+        .map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn session_log_path(state: ApiState<'_>, sid: String) -> CmdResult<Option<String>> {
+    state
+        .api
+        .session_log_path(&human(), sid)
+        .await
+        .map_err(WireError::from)
+}
+
 #[tauri::command]
 async fn cancel_connection(state: ApiState<'_>, attempt_id: String) -> CmdResult<CancelOutcome> {
     state
@@ -1560,7 +1583,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
-            list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection,
+            list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection, set_session_logging, session_log_path,
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,

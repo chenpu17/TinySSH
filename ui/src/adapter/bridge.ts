@@ -80,6 +80,8 @@ interface CmdArgs {
   list_recent_hosts: undefined;
   read_screen: { sid: string };
   send_keys: { sid: string; keys: string };
+  set_session_logging: { sid: string; enabled: boolean };
+  session_log_path: { sid: string };
   exec_human: { sid: string; command: string };
   set_control: { sid: string; owner: wire.ControlOwner; stopRunning?: boolean };
   // R42（§6.7）：首次委托/交还的**受控转换**（Human-only）。goal 可选——None 时
@@ -169,6 +171,8 @@ interface CmdRet {
   list_recent_hosts: wire.RecentHost[];
   read_screen: wire.ScreenSnapshot;
   send_keys: void;
+  set_session_logging: string | null;
+  session_log_path: string | null;
   exec_human: wire.ExecResult;
   set_control: wire.TakeoverReport;
   delegate_session: void;

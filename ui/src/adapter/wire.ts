@@ -128,6 +128,8 @@ export interface SessionInfo {
    * 缺省（旧后端）按 false 处理——保守侧，即当作首次委托。
    */
   ever_agent_owned?: boolean;
+  /** 十八轮：会话日志记录中（真实核心 SessionInfo.logging；缺省=旧后端视为关）。 */
+  logging?: boolean;
 }
 
 /**

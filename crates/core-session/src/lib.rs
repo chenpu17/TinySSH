@@ -1412,6 +1412,8 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                         let data = decoder.feed(&data);
                         // 线性化点内部完成 seq/重放环/订阅广播（C10）
                         h.feed_output(&data).await;
+                        // 十八轮：会话日志 tap——解码后 UTF-8 追加（后台输出不漏）
+                        h.log_append(&String::from_utf8_lossy(&data));
                     }
                     Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
                         let _ = h.output_tx.send(OutputEvent::Resync { sid: h.id.clone() });
@@ -1687,6 +1689,7 @@ impl SessionApi for SessionManager {
                 created_at: h.created_at,
                 integration: *h.integration.lock().unwrap(),
                 ever_agent_owned: h.ever_agent_owned.load(std::sync::atomic::Ordering::SeqCst),
+                logging: h.log_path.lock().unwrap().is_some(),
             });
         }
         out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -1766,6 +1769,71 @@ impl SessionApi for SessionManager {
         }
         let st = entry.st.lock().await;
         Ok(entry.snapshot(&st))
+    }
+
+    async fn set_session_logging(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        enabled: bool,
+    ) -> Result<Option<String>> {
+        let h = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.get(&sid).cloned()
+        }
+        .ok_or(Error::SessionNotFound)?;
+        if enabled {
+            let existing = h.log_path.lock().unwrap().clone();
+            if let Some(p) = existing {
+                return Ok(Some(p.to_string_lossy().into_owned()));
+            }
+            // 文件名：主机名清 Windows 非法字符 + 开启时刻（本地时区）；追加式
+            let safe: String = h
+                .host
+                .name
+                .chars()
+                .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+                .collect();
+            let dir = self.data_dir.join("logs");
+            std::fs::create_dir_all(&dir).map_err(|e| Error::Io(e.to_string()))?;
+            let path = dir.join(format!(
+                "{}_{}.log",
+                safe,
+                chrono::Local::now().format("%Y%m%d-%H%M%S")
+            ));
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| Error::Io(e.to_string()))?;
+            *h.log_path.lock().unwrap() = Some(path.clone());
+            *h.log_file.lock().unwrap() = Some(file);
+            let _ = self.center.audit.append(
+                ctx, "session_logging_on", Some(&sid), Some(&h.host.name),
+                serde_json::json!({"path": path.to_string_lossy()}), None);
+            Ok(Some(path.to_string_lossy().into_owned()))
+        } else {
+            // 收口：取走句柄即关闭（File drop 落盘）；路径一并清（SessionInfo.logging 归假）
+            let closed = h.log_file.lock().unwrap().take();
+            let path = h.log_path.lock().unwrap().take();
+            if let (Some(_), Some(p)) = (closed, path) {
+                let _ = self.center.audit.append(
+                    ctx, "session_logging_off", Some(&sid), Some(&h.host.name),
+                    serde_json::json!({"path": p.to_string_lossy()}), None);
+                return Ok(None);
+            }
+            Ok(None)
+        }
+    }
+
+    async fn session_log_path(&self, _ctx: &Actor, sid: SessionId) -> Result<Option<String>> {
+        let h = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.get(&sid).cloned()
+        }
+        .ok_or(Error::SessionNotFound)?;
+        let p = h.log_path.lock().unwrap().clone();
+        Ok(p.map(|q| q.to_string_lossy().into_owned()))
     }
 
     async fn cancel_connection(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<CancelOutcome> {
@@ -4409,6 +4477,9 @@ mod r43_tests;
 #[cfg(test)]
 #[path = "quick_tests.rs"]
 mod quick_tests;
+#[cfg(test)]
+#[path = "log_tests.rs"]
+mod log_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle

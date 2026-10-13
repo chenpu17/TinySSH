@@ -572,6 +572,10 @@ pub struct SessionInfo {
     /// 不同。serde default：旧消费方缺省 false（保守侧，按首次委托处理）。
     #[serde(default)]
     pub ever_agent_owned: bool,
+    /// 十八轮：会话日志记录中（落盘 tap 在 pump；路径不随列表下发——本地路径
+    /// 只经开关命令的返回值/toast 呈现）。serde default 防旧载荷。
+    #[serde(default)]
+    pub logging: bool,
 }
 
 /// R41（§6.6/S09）连接详情：**连接当时**的完整身份快照 + 会话运行时态。
@@ -1630,6 +1634,17 @@ pub trait SessionApi: Send + Sync {
     ) -> Result<AttemptInfo>;
     /// attempt 快照查询；终态后恒返回终态（不设历史查询——DC1）。
     async fn connection_status(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<AttemptInfo>;
+    /// 十八轮：会话日志开关。开启=在 data_dir/logs 建 `<主机>_<时间戳>.log` 追加
+    /// （pump tap 写解码后 UTF-8），返回日志路径；关闭=落盘收口并冲刷，返回 None。
+    /// 未注册会话 → SessionNotFound。
+    async fn set_session_logging(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        enabled: bool,
+    ) -> Result<Option<String>>;
+    /// 十八轮：查询会话日志路径（未开启 → None）。供「打开日志文件夹」。
+    async fn session_log_path(&self, ctx: &Actor, sid: SessionId) -> Result<Option<String>>;
     /// 取消建连。Cancelled=受理（终态以事件为准）；AlreadyReady/CancelCloseFailed=
     /// 竞态窗口结算；NotFound=已投递/已终态/不存在/跨 Actor 身份域。
     async fn cancel_connection(&self, ctx: &Actor, attempt_id: AttemptId) -> Result<CancelOutcome>;

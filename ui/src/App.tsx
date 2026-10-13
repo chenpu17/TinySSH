@@ -3382,6 +3382,28 @@ export default function App() {
     }
   }, [sftpPath, startUploads, pushToast]);
 
+  // 十八轮：会话日志开关——后端 pump tap 落盘（后台输出不漏），路径经 toast 呈现
+  const toggleSessionLog = async (s: SessionInfo) => {
+    try {
+      const r = await invoke("set_session_logging", { sid: s.id, enabled: !s.logging }) as string | null;
+      setSessions((cur) => cur.map((x) => (x.id === s.id ? { ...x, logging: !s.logging } : x)));
+      if (r) pushToast("ok", `已开始记录会话日志：${r}`);
+      else pushToast("info", "已停止记录会话日志");
+    } catch (e) {
+      pushToast("err", friendlyError(e));
+    }
+  };
+
+  const openSessionLogFolder = async (sid: string) => {
+    try {
+      const p = await invoke("session_log_path", { sid }) as string | null;
+      if (p) await invoke("reveal_path", { path: p });
+      else pushToast("info", "该会话未在记录日志");
+    } catch (e) {
+      pushToast("err", friendlyError(e));
+    }
+  };
+
   const createSession = async (host: Host, intoSplit = false, draft?: HostDraft) => {
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
     const gen0 = focusGenRef.current;
@@ -4419,6 +4441,8 @@ export default function App() {
                       协作是会话工作区下的**同级**入口（见工具栏「协作」钮），不塞进本菜单 */}
                   <button role="menuitem" data-testid="tools-conn-detail" onClick={() => { setToolsOpen(false); openSessionDetail(current); }}>连接详情…</button>
                   <button role="menuitem" onClick={() => { setRightPanel("forwards"); setToolsOpen(false); }}>端口转发</button>
+                  {/* 十八轮：会话日志开关（工具菜单与标签右键同源同义） */}
+                  <button role="menuitem" data-testid="tools-session-log" onClick={() => { setToolsOpen(false); void toggleSessionLog(current); }}>{current.logging ? "停止记录会话日志" : "记录会话日志"}</button>
                   <button role="menuitem" data-testid="tools-activity" onClick={() => { setRightPanel("log"); setToolsOpen(false); }}>活动记录</button>
                   <button role="menuitem" className="tm-danger" onClick={() => { setToolsOpen(false); requestCloseSession(current); }}>关闭会话…</button>
                 </div>
@@ -4732,6 +4756,16 @@ export default function App() {
                       title="自定义标签显示名（清空恢复主机名）；也可双击标签"
                       onClick={() => { close(); setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name }); }}
                     >重命名标签…</button>
+                    {/* 十八轮：会话日志——pump tap 落盘，开关态随 SessionInfo 下发不漂移 */}
+                    <button className="ghost sm-item" role="menuitem" data-testid="ctx-session-log"
+                      title="把该会话收到的全部输出记录到本地日志文件（data/logs 目录，追加写入）"
+                      onClick={() => { close(); void toggleSessionLog(s); }}
+                    >{s.logging ? "停止记录会话日志" : "记录会话日志"}</button>
+                    {s.logging && (
+                      <button className="ghost sm-item" role="menuitem" data-testid="ctx-session-log-open"
+                        onClick={() => { close(); void openSessionLogFolder(s.id); }}
+                      >打开日志文件夹</button>
+                    )}
                     <div className="ctx-menu-sep" role="separator" />
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); void openSessionDetail(s); }}

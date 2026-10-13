@@ -87,6 +87,9 @@ pub struct SessionHandle {
     /// R26（§6.4）：自动重连停止旗标——stop_auto_reconnect 置位后重试循环在
     /// 下一检查点（≤250ms）落 Disconnected；新断线周期/手动重连入口复位。
     pub retry_stop: AtomicBool,
+    // ---- 十八轮：会话日志（tap 在 pump；句柄由 set_session_logging 装卸）----
+    pub log_file: StdMutex<Option<std::fs::File>>,
+    pub log_path: StdMutex<Option<std::path::PathBuf>>,
     // exec 串行队列
     pub exec_slot: AsyncMutex<()>,
     pub queue_waiters: AtomicUsize,
@@ -207,6 +210,8 @@ impl SessionHandle {
             subs: StdMutex::new(HashMap::new()),
             integration: StdMutex::new(session_api::IntegrationState::Disabled),
             retry_stop: AtomicBool::new(false),
+            log_file: StdMutex::new(None),
+            log_path: StdMutex::new(None),
             center,
         })
     }
@@ -246,6 +251,19 @@ impl SessionHandle {
             .output_tx
             .send(OutputEvent::Raw { sid: self.id.clone(), seq, data });
         seq
+    }
+
+    /// 十八轮：pump 线性化点内的日志落盘（解码后 UTF-8 追加，随写随冲）。
+    /// 写失败（盘满/句柄失效）静默关日志——日志永远不能伤到终端本身。
+    pub fn log_append(&self, data: &str) {
+        let mut guard = self.log_file.lock().unwrap();
+        if let Some(f) = guard.as_mut() {
+            use std::io::Write;
+            if f.write_all(data.as_bytes()).and_then(|_| f.flush()).is_err() {
+                self.log_path.lock().unwrap().take();
+                *guard = None;
+            }
+        }
     }
 
     /// Shell 模式执行（现场延续；边界 = OSC 133 命令块）。
