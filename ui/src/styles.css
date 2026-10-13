@@ -588,6 +588,8 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .ts-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.4px; }
 .ts-val { font-size: 14px; min-width: 26px; text-align: center; }
 .ts-themes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* 二十一轮：九族色板用三列（终端预设 4 项仍两列） */
+.ts-themes.cols3 { grid-template-columns: repeat(3, 1fr); }
 /* T33：2 列网格收紧高度；标签不折行（宽度按最长项「Solarized 浅色」留足，超出兜底截断） */
 .ts-opt { display: flex; align-items: center; gap: 6px; justify-content: flex-start; text-align: left; padding: 5px 7px; font-size: 11px; white-space: nowrap; overflow: hidden; }
 .ts-opt.ts-active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
@@ -659,27 +661,50 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .log-sid { color: var(--text-sub); }
 .log-more { margin-top: 8px; width: 100%; font-size: 12px; }
 
-/* ---- R41（§6.6/S11）设置：单对话框，左分类 + 右内容 ---- */
+/* ---- R41（§6.6/S11）设置：单对话框，左分类 + 右内容 ----
+   二十一轮大气化：620→880 宽、圆角 16、标题带副题、导航带图标与一句话定位、
+   内容按 .set-card 卡片分区（面板底 panel2、卡片底 panel，两级面拉开层次） */
 .term-settings.settings-wide {
   position: fixed;
-  width: min(620px, calc(100vw - 32px));
-  max-height: calc(100vh - 80px);
+  width: min(880px, calc(100vw - 40px));
+  max-height: calc(100vh - 56px);
   top: 50%; right: auto; left: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column;
+  padding: 18px 20px 16px; border-radius: 16px;
 }
-.settings-body { display: flex; gap: 12px; min-height: 0; flex: 1; }
+.settings-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.settings-title { font-size: 16px; letter-spacing: 0.2px; }
+.settings-sub { display: block; font-size: 12px; color: var(--text-sub); margin-top: 3px; }
+.settings-body { display: flex; gap: 16px; min-height: 0; flex: 1; }
 .settings-nav {
-  display: flex; flex-direction: column; gap: 2px; width: 84px; flex: none;
-  border-right: 1px solid var(--border); padding-right: 8px;
+  display: flex; flex-direction: column; gap: 3px; width: 172px; flex: none;
+  border-right: 1px solid var(--border); padding-right: 12px;
 }
 .settings-nav button {
-  text-align: left; border: none; background: transparent; color: var(--text-sub);
-  font-size: 12px; padding: 6px 8px; border-radius: 6px;
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  border: none; background: transparent; color: var(--text-sub);
+  font-size: 13px; padding: 8px 10px; border-radius: 9px;
   white-space: nowrap; /* 「Agent 接入」等 4+ 字类目不换行 */
 }
 .settings-nav button:hover { background: var(--panel3); }
 .settings-nav button.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
-.settings-pane { flex: 1; min-width: 0; overflow: auto; max-height: calc(100vh - 170px); }
+.settings-nav .set-ic { display: flex; flex: none; color: var(--dim); }
+.settings-nav button.on .set-ic { color: var(--accent); }
+.set-nav-txt { display: flex; flex-direction: column; min-width: 0; }
+/* 导航描述是要读的字：用 --text-sub（≥4.5:1），不落 --dim（装饰档 3:1 口径） */
+.set-nav-desc {
+  font-size: 10px; font-weight: 400; color: var(--text-sub); margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.settings-pane { flex: 1; min-width: 0; overflow: auto; max-height: calc(100vh - 152px); padding-right: 2px; }
+/* 卡片分区：外观/终端多卡并列，凭据/Agent/关于单卡承载 */
+.set-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px 15px; margin-bottom: 12px;
+}
+.set-card:last-child { margin-bottom: 0; }
+.set-card h4 { margin: 0 0 3px; font-size: 13px; }
+.set-desc { font-size: 12px; line-height: 1.65; color: var(--text-sub); margin-bottom: 10px; }
 
 /* R41 凭据类目：新建表单（显式提交）+ 占用者 + 未提交草稿确认 */
 .cred-new { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--panel3); }
@@ -1336,6 +1361,113 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #4a6fa5; --focus: #684a18;
   --grad-a: #7d5a20; --grad-b: #684a18;
   --mark-grad: linear-gradient(160deg, #f3e9d2, #ffffff);
+}
+
+/* ---- 二十一轮扩四族（对表 Terminus 的主力板）：同工艺，文本档过 wcag-themes.mjs ---- */
+
+/* 极光 · 暗：墨松绿黑 + 翡翠薄荷——寒带针叶林的极光夜，绿系在终端工具里罕见 */
+:root[data-theme="aurora"][data-chrome="dark"] {
+  --bg: #0a120e; --panel: #0e1712; --panel2: #121d16; --panel3: #182720;
+  --border: rgba(150, 230, 190, 0.09); --border-hover: rgba(150, 230, 190, 0.18);
+  --text: #e6efe9; --text-sub: #9cb3a6; --dim: #7c9486;
+  --accent: #46d7a5; --accent-hover: #82e9c6; --accent-text: #82e9c6;
+  --danger: #e5736f; --danger-hover: #ef8a86;
+  --ok: #6fc983; --warn: #d6b458; --warn-text: #d6b458; --warn-hover: #e2c26c;
+  --on-accent: #06281a; --on-danger: #2a1010; --on-warn: #251d05;
+  --blue: #6fc4e8; --focus: #82e9c6;
+  --grad-a: #82e9c6; --grad-b: #22b184;
+  --mark-grad: linear-gradient(160deg, #11342a, #0a1a12);
+}
+/* 极光 · 亮：雾白苔绿底 + 深翡翠 */
+:root[data-theme="aurora"][data-chrome="light"] {
+  --bg: #edf4ee; --panel: #f5faf5; --panel2: #ffffff; --panel3: #e1ece3;
+  --border: rgba(24, 74, 48, 0.10); --border-hover: rgba(24, 74, 48, 0.20);
+  --text: #1a2921; --text-sub: #4c6154; --dim: #5c7063;
+  --accent: #147a51; --accent-hover: #0e6240; --accent-text: #0e6240;
+  --danger: #b83e42; --danger-hover: #a23437;
+  --ok: #1e7a46; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #2d6cb5; --focus: #0e6240;
+  --grad-a: #147a51; --grad-b: #0e6240;
+  --mark-grad: linear-gradient(160deg, #d9ede1, #ffffff);
+}
+/* 青瓷 · 暗：黛青墨底 + 青瓷玉——宋瓷的灰调青，比极光收敛、比石墨多一分温度 */
+:root[data-theme="celadon"][data-chrome="dark"] {
+  --bg: #0c1312; --panel: #101917; --panel2: #141f1d; --panel3: #1a2825;
+  --border: rgba(160, 220, 205, 0.09); --border-hover: rgba(160, 220, 205, 0.18);
+  --text: #e7efec; --text-sub: #9db1ab; --dim: #7e928c;
+  --accent: #7fd8c4; --accent-hover: #a5e5d6; --accent-text: #a5e5d6;
+  --danger: #e5736f; --danger-hover: #ef8a86;
+  --ok: #8bc97b; --warn: #d4b562; --warn-text: #d4b562; --warn-hover: #e0c378;
+  --on-accent: #07271f; --on-danger: #2a1010; --on-warn: #241d06;
+  --blue: #74bde0; --focus: #a5e5d6;
+  --grad-a: #a5e5d6; --grad-b: #35ae97;
+  --mark-grad: linear-gradient(160deg, #10302b, #0a1a17);
+}
+/* 青瓷 · 亮：月白底 + 深青瓷 */
+:root[data-theme="celadon"][data-chrome="light"] {
+  --bg: #edf3f1; --panel: #f5faf8; --panel2: #ffffff; --panel3: #e0ebe7;
+  --border: rgba(20, 70, 60, 0.10); --border-hover: rgba(20, 70, 60, 0.20);
+  --text: #1e2a27; --text-sub: #4e615c; --dim: #5e716c;
+  --accent: #0e7a66; --accent-hover: #0a604f; --accent-text: #0a604f;
+  --danger: #b83e42; --danger-hover: #a23437;
+  --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #2d6cb5; --focus: #0a604f;
+  --grad-a: #0e7a66; --grad-b: #0a604f;
+  --mark-grad: linear-gradient(160deg, #d8ece6, #ffffff);
+}
+/* 绯樱 · 暗：梅紫黑底 + 樱粉玫瑰——夜樱；粉系 accent 在 SSH 客户端里几乎无人做 */
+:root[data-theme="sakura"][data-chrome="dark"] {
+  --bg: #140f13; --panel: #1a1318; --panel2: #201820; --panel3: #291e28;
+  --border: rgba(240, 170, 195, 0.09); --border-hover: rgba(240, 170, 195, 0.18);
+  --text: #f1eaef; --text-sub: #b1a0ab; --dim: #907f8a;
+  --accent: #f0a8bc; --accent-hover: #f7c4d2; --accent-text: #f7c4d2;
+  --danger: #ea6e76; --danger-hover: #f48a91;
+  --ok: #6cc794; --warn: #d9a53f; --warn-text: #d9a53f; --warn-hover: #e5b45c;
+  --on-accent: #40101f; --on-danger: #2a1010; --on-warn: #251b06;
+  --blue: #8fa8e8; --focus: #f7c4d2;
+  --grad-a: #f7c4d2; --grad-b: #e38aa6;
+  --mark-grad: linear-gradient(160deg, #3c1f2b, #180d13);
+}
+/* 绯樱 · 亮：樱白暖底 + 深玫瑰 */
+:root[data-theme="sakura"][data-chrome="light"] {
+  --bg: #f7f0f3; --panel: #fcf8fa; --panel2: #ffffff; --panel3: #f0e3e9;
+  --border: rgba(96, 44, 66, 0.10); --border-hover: rgba(96, 44, 66, 0.20);
+  --text: #2b2126; --text-sub: #6d5762; --dim: #7c6671;
+  --accent: #b0486c; --accent-hover: #953957; --accent-text: #953957;
+  --danger: #b83e42; --danger-hover: #a23437;
+  --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #4a5fa5; --focus: #953957;
+  --grad-a: #b0486c; --grad-b: #953957;
+  --mark-grad: linear-gradient(160deg, #f7e3ea, #ffffff);
+}
+/* 曜石 · 暗：近纯黑 + 钛银——单色无相，极简奢侈品路线（银即 accent，语义色仍保留） */
+:root[data-theme="obsidian"][data-chrome="dark"] {
+  --bg: #0a0b0d; --panel: #0f1013; --panel2: #14161a; --panel3: #1b1e24;
+  --border: rgba(220, 230, 245, 0.09); --border-hover: rgba(220, 230, 245, 0.18);
+  --text: #eef1f5; --text-sub: #adb4bf; --dim: #8b929e;
+  --accent: #cdd6e2; --accent-hover: #e2e8f0; --accent-text: #e2e8f0;
+  --danger: #e5736f; --danger-hover: #ef8a86;
+  --ok: #6fc983; --warn: #d4b562; --warn-text: #d4b562; --warn-hover: #e0c378;
+  --on-accent: #0e1116; --on-danger: #2a1010; --on-warn: #241d06;
+  --blue: #9db8d8; --focus: #e2e8f0;
+  --grad-a: #e2e8f0; --grad-b: #9fb0c4;
+  --mark-grad: linear-gradient(160deg, #232a33, #0e1013);
+}
+/* 曜石 · 亮：冷灰白 + 石墨银（亮态 accent 转深钛灰，保持单色气质） */
+:root[data-theme="obsidian"][data-chrome="light"] {
+  --bg: #f0f1f3; --panel: #f8f9fa; --panel2: #ffffff; --panel3: #e5e8ec;
+  --border: rgba(40, 48, 60, 0.11); --border-hover: rgba(40, 48, 60, 0.21);
+  --text: #22262c; --text-sub: #565e6a; --dim: #666e7a;
+  --accent: #3c4654; --accent-hover: #2b333e; --accent-text: #2b333e;
+  --danger: #b83e42; --danger-hover: #a23437;
+  --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #2d6cb5; --focus: #2b333e;
+  --grad-a: #3c4654; --grad-b: #2b333e;
+  --mark-grad: linear-gradient(160deg, #e2e6eb, #ffffff);
 }
 
 /* 主题切换脉冲：仅切换瞬间（.theme-switching 挂 320ms，App.tsx）开全量色彩过渡，

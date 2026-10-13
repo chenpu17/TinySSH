@@ -1638,6 +1638,8 @@ async fn pick_upload_files(app: tauri::AppHandle) -> std::result::Result<Vec<Str
 }
 
 /// R33 §354 下载「另存为」：原生保存对话框（默认文件名/目录可给）；取消返回 None。
+/// 二十一轮真机修正：此前误用 blocking_pick_file（打开对话框——按钮「打开(O)」、
+/// 键入不存在的新名报「找不到文件」，无法另存新名）；保存语义必须 save_file。
 #[tauri::command]
 async fn pick_save_file(
     app: tauri::AppHandle,
@@ -1650,7 +1652,7 @@ async fn pick_save_file(
         if let Some(d) = default_dir {
             b = b.set_directory(d);
         }
-        Ok(b.blocking_pick_file().map(|p| p.to_string()))
+        Ok(b.blocking_save_file().map(|p| p.to_string()))
     })
     .await
     .map_err(|e| e.to_string())?

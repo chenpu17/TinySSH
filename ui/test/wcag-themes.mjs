@@ -28,8 +28,10 @@ const themeRe = /^:root\[data-theme="([a-z]+)"]\[data-chrome="(dark|light)"]$/;
 const rootBlock = blocks.find((b) => b.sel === ":root");
 const lightBlock = blocks.find((b) => b.sel === ':root[data-chrome="light"]');
 const themeBlocks = blocks.filter((b) => themeRe.test(b.sel));
-if (!rootBlock || !lightBlock || themeBlocks.length !== 8) {
-  console.error(`解析失败：root=${!!rootBlock} light=${!!lightBlock} theme块=${themeBlocks.length}/8`);
+// 二十一轮：色板 5→9 族（每族深浅两态=16 块），加 graphite 双态共 18 态
+const EXPECTED_THEMES = 16;
+if (!rootBlock || !lightBlock || themeBlocks.length !== EXPECTED_THEMES) {
+  console.error(`解析失败：root=${!!rootBlock} light=${!!lightBlock} theme块=${themeBlocks.length}/${EXPECTED_THEMES}`);
   process.exit(2);
 }
 
@@ -134,5 +136,5 @@ for (const [theme, chrome, block] of states) {
   worst.sort((a, b) => a.c - b.c);
   console.log(`${label.padEnd(16)} 最紧5档：${worst.slice(0, 5).map((w) => `${w.name} ${w.c.toFixed(2)}`).join(" · ")}`);
 }
-console.log(fail === 0 ? "\n✓ 10 态 × 23 档全部达标" : `\n✗ ${fail} 项不达标`);
+console.log(fail === 0 ? `\n✓ ${states.length} 态 × 23 档全部达标` : `\n✗ ${fail} 项不达标`);
 process.exit(fail === 0 ? 0 : 1);

@@ -73,12 +73,20 @@ const normApprovalStatus = (s: string): string =>
 // 审批行入库后 status 已归一为小写——状态集合用 string（wire 的 ApprovalStatus 仅在桥边界）
 type ApprovalRow = Omit<ApprovalItem, "status"> & { status: string };
 // R42（§6.6/S11）：设置对话框的分类（单实例，左分类 + 右内容）
+// 二十一轮：分类加导航描述（大气化——图标 + 标签 + 一句话定位）
 type SettingsCat = "appearance" | "terminal" | "credentials" | "agent" | "about";
-const SETTINGS_CATS: [SettingsCat, string][] = [
-  ["appearance", "外观"], ["terminal", "终端"], ["credentials", "凭据"],
-  ["agent", "Agent 接入"], ["about", "关于"],
+const SETTINGS_CATS: [SettingsCat, string, string][] = [
+  ["appearance", "外观", "色板 · 字号 · 缩放"],
+  ["terminal", "终端", "粘贴 · 复制 · 通知"],
+  ["credentials", "凭据", "密钥与口令"],
+  ["agent", "Agent 接入", "MCP 协作"],
+  ["about", "关于", "版本与数据"],
 ];
 const settingsCatLabel = (c: SettingsCat): string => SETTINGS_CATS.find(([id]) => id === c)?.[1] ?? c;
+const settingsCatIcon: Record<SettingsCat, typeof IconSliders> = {
+  appearance: IconSliders, terminal: IconTerminal, credentials: IconStar,
+  agent: IconInbox, about: IconClock,
+};
 // 最近处理（已决审批）六态标签：编辑后批准/超时/作废此前都被误显示成「✕ 拒绝」。
 const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {
   approved: { text: "✓ 批准", cls: "ok" },
@@ -446,6 +454,12 @@ const PALETTES: ChromePalette[] = [
   { id: "ocean", label: "深海", dot: ["#0d1117", "#4c8dff"] },
   { id: "violet", label: "午夜", dot: ["#14111c", "#a78bfa"] },
   { id: "noir", label: "鎏金", dot: ["#141210", "#c8a96e"] },
+  // 二十一轮扩四族（对表 Terminus 的主力板）：极光=翡翠薄荷 / 青瓷=黛青玉 /
+  // 绯樱=樱粉玫瑰 / 曜石=钛银单色——色相与既有五族零重叠
+  { id: "aurora", label: "极光", dot: ["#0e1712", "#46d7a5"] },
+  { id: "celadon", label: "青瓷", dot: ["#101917", "#7fd8c4"] },
+  { id: "sakura", label: "绯樱", dot: ["#1a1318", "#f0a8bc"] },
+  { id: "obsidian", label: "曜石", dot: ["#0f1013", "#cdd6e2"] },
 ];
 const PALETTE_DEFAULT = "graphite";
 
@@ -636,6 +650,9 @@ export default function App() {
   const [sftpEditPath, setSftpEditPath] = useState(false);
   const [sftpFilter, setSftpFilter] = useState("");
   const [sftpShowHidden, setShowHidden] = useState(false);
+  // 二十一轮：另存为模式（全局视图偏好）——开启后行内下载按钮/下载所选/手输路径/
+  // 菜单「下载」都改为弹原生保存对话框；右键「另存为…」无条件直通，不受开关影响
+  const [sftpSaveAs, setSftpSaveAs] = useState(false);
   const [sftpSort, setSftpSort] = useState<{ key: "name" | "size" | "mtime"; dir: 1 | -1 }>({ key: "name", dir: 1 });
   const [sftpMenu, setSftpMenu] = useState<{ name: string; x: number; y: number } | null>(null);
   const [sftpListW, setSftpListW] = useState(9999);
@@ -2824,12 +2841,15 @@ export default function App() {
   // 下载：远端绝对路径 → 本地。§356 目标=上次下载目录/同名文件（首次=null→核心落
   // 系统 Downloads）；另存为走原生保存对话框（取消=不建卡不传输），确认后记忆其目录。
   // 卡片显示完整本地目标（handle 回填的 h.local），不以文件名相同推断成功。
+  // 二十一轮：另存为模式开启时（sftpSaveAs），除显式 saveAs:false 的路径外全部
+  // 弹对话框——模式是入口级默认，右键「另存为…」（saveAs:true）不受影响。
   const downloadRemote = useCallback(async (rp: string, opts?: { saveAs?: boolean }) => {
     const s = sidRef.current;
     if (!s || !rp) return;
     const name = pathBasename(rp);
+    const saveAs = opts?.saveAs ?? sftpSaveAs;
     let local: string | null = null;
-    if (opts?.saveAs) {
+    if (saveAs) {
       try {
         const picked = await invoke("pick_save_file", { defaultName: name, defaultDir: downloadDirRef.current });
         if (!picked) return; // 用户取消——不发起传输
@@ -2851,7 +2871,7 @@ export default function App() {
     } catch (e) {
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(e) } : c)));
     }
-  }, [upsertTransfer, persistDownloadDir, pushToast]);
+  }, [upsertTransfer, persistDownloadDir, pushToast, sftpSaveAs]);
 
   const startDownload = async () => {
     const rp = downloadPath.trim();
@@ -3348,6 +3368,15 @@ export default function App() {
       (paths, x, y) => beginDropUploads(paths, x !== undefined && y !== undefined ? { x, y } : undefined);
     return () => { delete (window as unknown as { __demoDrop?: unknown }).__demoDrop; };
   }, [inTauri, beginDropUploads]);
+
+  // 二十一轮：demo 域命令探针（__demoDrop 同族）——spec 预置 demo_pick_result 等
+  // 判别钩子用；仅浏览器演示态存在，原生应用不暴露
+  useEffect(() => {
+    if (inTauri) return;
+    (window as unknown as { __demoInvoke?: (cmd: string, args?: unknown) => Promise<unknown> }).__demoInvoke =
+      (cmd, args) => (invoke as (c: string, a?: unknown) => Promise<unknown>)(cmd, args ?? {});
+    return () => { delete (window as unknown as { __demoInvoke?: unknown }).__demoInvoke; };
+  }, [inTauri]);
 
   // §354 切标签使未确认的目标选择失效——不静默改投另一主机；目标会话关闭同理
   useEffect(() => {
@@ -5098,137 +5127,169 @@ export default function App() {
             <>
               <div className="pop-mask" onClick={closeSettings} />
               <div className="term-settings settings-wide" ref={settingsPanelRef} role="dialog" aria-modal="true" aria-label="设置">
-                <div className="row" style={{ marginBottom: 10 }}>
-                  <b>设置</b>
+                {/* 二十一轮：大气化——标题行带副题，导航带图标与一句话定位，内容卡片分区 */}
+                <div className="settings-head">
+                  <div className="settings-head-txt">
+                    <b className="settings-title">设置</b>
+                    <span className="settings-sub">外观、终端与凭据——预览即时生效，凭据显式提交</span>
+                  </div>
                   <span style={{ flex: 1 }} />
                   <button className="ghost" title="关闭" aria-label="关闭设置" data-testid="settings-close" onClick={closeSettings}><IconX size={13} /></button>
                 </div>
                 {/* §231：单个对话框，左分类 + 右内容；外观/终端偏好即时预览，凭据显式提交 */}
                 <div className="settings-body">
                   <nav className="settings-nav" role="tablist" aria-label="设置分类">
-                    {SETTINGS_CATS.map(([id, label]) => (
-                      <button key={id} role="tab" data-testid={`settings-cat-${id}`}
-                        aria-selected={settingsCat === id} className={settingsCat === id ? "on" : ""}
-                        onClick={() => switchSettingsCat(id)}>{label}</button>
-                    ))}
+                    {SETTINGS_CATS.map(([id, label, desc]) => {
+                      const Ic = settingsCatIcon[id];
+                      return (
+                        <button key={id} role="tab" data-testid={`settings-cat-${id}`}
+                          aria-selected={settingsCat === id} className={settingsCat === id ? "on" : ""}
+                          onClick={() => switchSettingsCat(id)}>
+                          <span className="set-ic"><Ic size={15} /></span>
+                          <span className="set-nav-txt">
+                            <span>{label}</span>
+                            <span className="set-nav-desc">{desc}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </nav>
                   <div className="settings-pane" role="tabpanel" data-testid={`settings-pane-${settingsCat}`}>
                 {settingsCat === "appearance" && (<>
-                <div className="ts-label">字号</div>
-                <div className="row">
-                  <button className="ghost" title="减小字号" aria-label="减小字号" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}><IconMinus size={13} /></button>
-                  <span className="ts-val mono">{fontSize}</span>
-                  <button className="ghost" title="增大字号" aria-label="增大字号" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}><IconPlus size={13} /></button>
-                  <button className="ghost" disabled={fontSize === FONT_DEFAULT} onClick={() => changeFontSize(FONT_DEFAULT)}>重置</button>
-                </div>
-                {/* R27（§7.1/§244）：应用外观与终端配色解耦——外观三态独立持久化
-                    （blob chrome 域，新装默认跟随系统），终端配色只改终端 */}
-                <div className="ts-label" style={{ marginTop: 10 }}>外观（应用）</div>
-                <div className="row ts-appearance" role="group" aria-label="应用外观">
-                  {APPEARANCES.map((a) => (
-                    <button key={a.id} className={"ghost" + (appearance === a.id ? " ts-active" : "")}
-                      aria-pressed={appearance === a.id}
-                      onClick={() => changeAppearance(a.id)}>{a.label}</button>
-                  ))}
-                </div>
-                {/* 主题色板（2026-10-11）：石墨=默认，另四族随 accent 换气质；深浅仍由上方三态管 */}
-                {/* UX 五轮：整页缩放（参考 tiny-worker）——webview 缩放，浏览器 demo
-                    不渲染（浏览器自带缩放；zoom.ts 亦不注册键盘/滚轮路径） */}
-                {inTauri && (<>
-                <div className="ts-label" style={{ marginTop: 10 }}>界面缩放</div>
-                <div className="row">
-                  <select value={zoomLevel} aria-label="界面缩放"
-                    onChange={(e) => setZoomScale(Number(e.target.value))}>
-                    {[...new Set([...ZOOM_LEVELS, zoomLevel])].sort((a, b) => a - b).map((z) => (
-                      <option key={z} value={z}>{Math.round(z * 100)}%</option>
+                {/* 二十一轮：卡片分区——应用外观 / 终端配色 / 字号与缩放；控件与测试锚点不变 */}
+                <div className="set-card">
+                  <h4>应用外观</h4>
+                  <div className="set-desc">色板与深浅只改应用外壳（R27 解耦）；「跟随系统」随系统深浅实时切换。</div>
+                  {/* R27（§7.1/§244）：应用外观与终端配色解耦——外观三态独立持久化
+                      （blob chrome 域，新装默认跟随系统），终端配色只改终端 */}
+                  <div className="row ts-appearance" role="group" aria-label="应用外观">
+                    {APPEARANCES.map((a) => (
+                      <button key={a.id} className={"ghost" + (appearance === a.id ? " ts-active" : "")}
+                        aria-pressed={appearance === a.id}
+                        onClick={() => changeAppearance(a.id)}>{a.label}</button>
                     ))}
-                  </select>
-                  <button className="ghost" disabled={zoomLevel === 1} onClick={() => zoomReset()}>重置</button>
+                  </div>
+                  {/* 主题色板（2026-10-11）：石墨=默认；二十一轮扩至九族，每族深浅两态 */}
+                  <div className="ts-label" style={{ marginTop: 14 }}>主题色板</div>
+                  <div className="ts-themes cols3" role="group" aria-label="主题色板">
+                    {PALETTES.map((p) => (
+                      <button
+                        key={p.id}
+                        data-testid={`chrome-palette-${p.id}`}
+                        className={"ghost ts-opt" + (palette === p.id ? " ts-active" : "")}
+                        aria-pressed={palette === p.id}
+                        onClick={() => changePalette(p.id)}
+                      >
+                        <span className="ts-swatch" style={{ background: `linear-gradient(135deg, ${p.dot[1]}, ${p.dot[0]})`, borderColor: p.dot[1], color: p.dot[1] }}>Aa</span>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                </>)}
-                <div className="ts-label" style={{ marginTop: 10 }}>主题色板</div>
-                <div className="ts-themes" role="group" aria-label="主题色板">
-                  {PALETTES.map((p) => (
-                    <button
-                      key={p.id}
-                      data-testid={`chrome-palette-${p.id}`}
-                      className={"ghost ts-opt" + (palette === p.id ? " ts-active" : "")}
-                      aria-pressed={palette === p.id}
-                      onClick={() => changePalette(p.id)}
-                    >
-                      <span className="ts-swatch" style={{ background: `linear-gradient(135deg, ${p.dot[1]}, ${p.dot[0]})`, borderColor: p.dot[1], color: p.dot[1] }}>Aa</span>
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="ts-label" style={{ marginTop: 10 }}>终端配色</div>
-                <div className="ts-themes" role="group" aria-label="终端配色">
-                  {THEMES.map((t) => (
-                    <button
-                      key={t.id}
-                      className={"ghost ts-opt" + (themeId === t.id ? " ts-active" : "")}
-                      aria-pressed={themeId === t.id}
-                      onClick={() => changeTheme(t.id)}
-                    >
-                      <span className="ts-swatch" style={{ background: t.bg, borderColor: t.fg, color: t.fg }}>Aa</span>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                {/* UX 六轮：R27 之上的可选联动——终端配色跟随主题色板（chrome token 派生） */}
-                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 10 }}>
-                  <input type="checkbox" data-testid="theme-follow" checked={themeFollow}
-                    onChange={(e) => changeThemeFollow(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                    终端配色跟随主题色板
-                    <span className="dim" style={{ display: "block" }}>
-                      开启后终端底色/前景/光标随色板与外观派生（ANSI 16 色沿用基础预设）；手动选终端预设即解除联动。
+                <div className="set-card">
+                  <h4>终端配色</h4>
+                  <div className="set-desc">终端预设只改终端；开启「跟随色板」后，底色/前景/光标随上方色板与深浅派生（ANSI 16 色沿用基础预设）。</div>
+                  <div className="ts-themes" role="group" aria-label="终端配色">
+                    {THEMES.map((t) => (
+                      <button
+                        key={t.id}
+                        className={"ghost ts-opt" + (themeId === t.id ? " ts-active" : "")}
+                        aria-pressed={themeId === t.id}
+                        onClick={() => changeTheme(t.id)}
+                      >
+                        <span className="ts-swatch" style={{ background: t.bg, borderColor: t.fg, color: t.fg }}>Aa</span>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* UX 六轮：R27 之上的可选联动——终端配色跟随主题色板（chrome token 派生） */}
+                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 12 }}>
+                    <input type="checkbox" data-testid="theme-follow" checked={themeFollow}
+                      onChange={(e) => changeThemeFollow(e.target.checked)} style={{ marginTop: 3 }} />
+                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                      终端配色跟随主题色板
+                      <span className="dim" style={{ display: "block" }}>
+                        手动选终端预设即解除联动；默认相互独立。
+                      </span>
                     </span>
-                  </span>
-                </label>
-                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>默认相互独立（R27 解耦）；「跟随系统」随系统深浅实时切换。</div>
-                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）</div>
+                  </label>
+                </div>
+                <div className="set-card">
+                  <h4>字号与缩放</h4>
+                  <div className="set-desc">字号作用于全部终端；缩放作用于整个界面（webview）。</div>
+                  <div className="row">
+                    <button className="ghost" title="减小字号" aria-label="减小字号" disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}><IconMinus size={13} /></button>
+                    <span className="ts-val mono">{fontSize}</span>
+                    <button className="ghost" title="增大字号" aria-label="增大字号" disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}><IconPlus size={13} /></button>
+                    <button className="ghost" disabled={fontSize === FONT_DEFAULT} onClick={() => changeFontSize(FONT_DEFAULT)}>重置</button>
+                  </div>
+                  {/* UX 五轮：整页缩放（参考 tiny-worker）——webview 缩放，浏览器 demo
+                      不渲染（浏览器自带缩放；zoom.ts 亦不注册键盘/滚轮路径） */}
+                  {inTauri && (<>
+                  <div className="ts-label" style={{ marginTop: 12 }}>界面缩放</div>
+                  <div className="row" style={{ marginTop: 4 }}>
+                    <select value={zoomLevel} aria-label="界面缩放"
+                      onChange={(e) => setZoomScale(Number(e.target.value))}>
+                      {[...new Set([...ZOOM_LEVELS, zoomLevel])].sort((a, b) => a - b).map((z) => (
+                        <option key={z} value={z}>{Math.round(z * 100)}%</option>
+                      ))}
+                    </select>
+                    <button className="ghost" disabled={zoomLevel === 1} onClick={() => zoomReset()}>重置</button>
+                  </div>
+                  </>)}
+                  <div className="dim" style={{ marginTop: 8, fontSize: 11 }}>界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）</div>
+                </div>
                 </>)}
 
                 {settingsCat === "terminal" && (<>
-                {/* R25 §318：多行粘贴保护开关——阈值（内容含换行）与行为在设置明确说明 */}
-                <div className="ts-label">粘贴</div>
-                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
-                  <input type="checkbox" checked={pasteGuard} onChange={(e) => changePasteGuard(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                    多行粘贴保护
-                    <span className="dim" style={{ display: "block" }}>
-                      粘贴内容含换行且远端未开启 bracketed paste 时，先预览确认再发送；关闭后立即发送。
+                {/* 二十一轮：卡片分区——粘贴 / 复制 / 通知；开关与测试锚点不变 */}
+                <div className="set-card">
+                  <h4>粘贴</h4>
+                  <div className="set-desc">R25 §318：多行粘贴保护——内容含换行且远端未开启 bracketed paste 时，先预览确认再发送；关闭后立即发送。</div>
+                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
+                    <input type="checkbox" checked={pasteGuard} onChange={(e) => changePasteGuard(e.target.checked)} style={{ marginTop: 3 }} />
+                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                      多行粘贴保护
+                      <span className="dim" style={{ display: "block" }}>
+                        防止把本地多行文本误当命令流灌进远端。
+                      </span>
                     </span>
-                  </span>
-                </label>
-                {/* 十五轮：选中即复制（PuTTY/Xshell 惯例，默认关） */}
-                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 8 }}>
-                  <input type="checkbox" data-testid="cos-toggle" checked={copyOnSelect} onChange={(e) => changeCopyOnSelect(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                    选中即复制
-                    <span className="dim" style={{ display: "block" }}>
-                      划选终端文字立即写入系统剪贴板（PuTTY/Xshell 惯例）；关闭后用 ⌘C 或右键「复制」。
+                  </label>
+                </div>
+                <div className="set-card">
+                  <h4>复制</h4>
+                  <div className="set-desc">十五轮：选中即复制（PuTTY/Xshell 惯例，默认关）。</div>
+                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
+                    <input type="checkbox" data-testid="cos-toggle" checked={copyOnSelect} onChange={(e) => changeCopyOnSelect(e.target.checked)} style={{ marginTop: 3 }} />
+                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                      选中即复制
+                      <span className="dim" style={{ display: "block" }}>
+                        划选终端文字立即写入系统剪贴板；关闭后用 ⌘C 或右键「复制」。
+                      </span>
                     </span>
-                  </span>
-                </label>
-                {/* 十六轮：BEL→系统通知（默认关；标签闪烁恒开） */}
-                <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8, marginTop: 8 }}>
-                  <input type="checkbox" data-testid="bell-toggle" checked={bellNotify} onChange={(e) => changeBellNotify(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span style={{ fontSize: 12, lineHeight: 1.6 }}>
-                    终端响铃时系统通知
-                    <span className="dim" style={{ display: "block" }}>
-                      窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知（每会话 10 秒至多一条）；标签闪烁提醒恒开。
+                  </label>
+                </div>
+                <div className="set-card">
+                  <h4>通知</h4>
+                  <div className="set-desc">十六轮：BEL→系统通知（默认关；标签闪烁提醒恒开）。</div>
+                  <label className="row" style={{ cursor: "pointer", alignItems: "flex-start", gap: 8 }}>
+                    <input type="checkbox" data-testid="bell-toggle" checked={bellNotify} onChange={(e) => changeBellNotify(e.target.checked)} style={{ marginTop: 3 }} />
+                    <span style={{ fontSize: 12, lineHeight: 1.6 }}>
+                      终端响铃时系统通知
+                      <span className="dim" style={{ display: "block" }}>
+                        窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知（每会话 10 秒至多一条）。
+                      </span>
                     </span>
-                  </span>
-                </label>
+                  </label>
+                </div>
                 </>)}
 
                 {settingsCat === "credentials" && (<>
                 {/* R41（§231/§238/§267）设置 → 凭据：创建/删除/授权使用**显式提交**
                     （不即时保存）；未绑定态明确；删除前检查引用，不破坏其他主机认证。 */}
+                <div className="set-card">
                 <div className="row" style={{ alignItems: "center" }}>
-                  <div className="ts-label" style={{ marginTop: 0 }}>凭据库</div>
+                  <h4 style={{ margin: 0 }}>凭据库</h4>
                   <span style={{ flex: 1 }} />
                   <button className="ghost" data-testid="cred-new"
                     onClick={() => { setCredNewOpen(!credNewOpen); setCredNewErr(null); setCredNewOk(null); }}>
@@ -5323,13 +5384,15 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                </div>
                 </>)}
 
                 {settingsCat === "agent" && (<>
                 {/* R42（§5 迁移表/§6.7）：Agent 接入、端点、Token 从协作面板移入
                     「设置 → Agent 接入」——新装未启用协作时主界面不再出现 MCP 配置。
                     C9（R43）：本面板是协作**启用生命周期**的人类专属入口（启用/停用）。 */}
-                <div className="ts-label" style={{ marginTop: 0 }}>Agent 接入（MCP）</div>
+                <div className="set-card">
+                <h4 style={{ margin: "0 0 6px" }}>Agent 接入（MCP）</h4>
                 {/* §9：仅有登记身份 ≠ Agent 在线——「已配置」与「有活动请求」分别显示 */}
                 <div className="fact" style={{ marginTop: 6 }} data-testid="collab-state-row">
                   <span className={"badge " + (collabEnabled ? "ok" : "err")} data-testid="collab-state">{collabStateText}</span>
@@ -5405,14 +5468,17 @@ Authorization: Bearer <TOKEN>`}
                   </button>
                 )}
                 </>)}
+                </div>
                 </>)}
 
                 {settingsCat === "about" && (<>
-                <div className="ts-label" style={{ marginTop: 0 }}>关于</div>
+                <div className="set-card">
+                <h4 style={{ margin: "0 0 8px" }}>关于</h4>
                 <div style={{ fontSize: 12, lineHeight: 1.9 }}>
                   <div>TinySSH {appVersion ? `v${appVersion}` : "（浏览器演示模式）"}</div>
                   <div className="dim">本地优先的 SSH 客户端：终端、主机库与凭据都留在本机。</div>
                   <div className="dim">凭据以加密形式存于本机凭据库，界面与日志只显示指纹。</div>
+                </div>
                 </div>
                 </>)}
                   </div>
@@ -5754,6 +5820,10 @@ Authorization: Bearer <TOKEN>`}
                     value={sftpFilter} onChange={(e) => setSftpFilter(e.target.value)} />
                   <button className={"ghost" + (sftpShowHidden ? " ts-open" : "")} aria-pressed={sftpShowHidden}
                     title="显示隐藏项（. 开头）" onClick={() => setShowHidden((v) => !v)}>隐藏项</button>
+                  <button className={"ghost" + (sftpSaveAs ? " ts-open" : "")} aria-pressed={sftpSaveAs}
+                    data-testid="sftp-saveas-toggle"
+                    title="另存为模式：下载时逐个弹出保存对话框选位置（对行内下载、下载所选、路径下载、菜单「下载」生效；右键「另存为…」不受影响）"
+                    onClick={() => setSftpSaveAs((v) => !v)}>另存为</button>
                   {([["name", "名称"], ["size", "大小"], ["mtime", "时间"]] as const).map(([k, label]) => (
                     <button key={k} className={"ghost" + (sftpSort.key === k ? " ts-open" : "")} aria-pressed={sftpSort.key === k}
                       title={`按${label}排序${sftpSort.key === k ? (sftpSort.dir === 1 ? "（当前升序，点击改降序）" : "（当前降序，点击改升序）") : ""}`}
@@ -5812,7 +5882,7 @@ Authorization: Bearer <TOKEN>`}
                         {!e.is_dir && (
                           <button
                             className="ghost sftp-dl"
-                            title="下载（存上次下载目录，首次为「下载」文件夹；菜单「另存为…」可选位置）"
+                            title="下载（存上次下载目录，首次为「下载」文件夹；开「另存为」或菜单「另存为…」可选位置）"
                             onClick={(ev) => { ev.stopPropagation(); void downloadRemote(`${sftpPath.replace(/\/+$/, "")}/${e.name}`); }}
                           ><IconDownload size={12} />下载</button>
                         )}
@@ -5831,7 +5901,7 @@ Authorization: Bearer <TOKEN>`}
                       onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
                   </div>
                 )}
-                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），菜单「另存为…」可选位置；传输进度见底部队列（状态条「传输 N」展开）。</div>
+                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在每次下载时选位置；传输进度见底部队列（状态条「传输 N」展开）。</div>
               </>
             )}
           </div>
