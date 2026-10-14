@@ -2,6 +2,8 @@
 // window 捕获层与 xterm 自定义键处理器都经 resolveAction 解析、App 的 dispatch 执行，
 // 消除双绑定重复执行。⌘, 归原生菜单加速器（NSMenu 先于 WebView 消费），此处刻意不绑。
 // 传输层不在此列：Ctrl/Alt 控制字符编码、xterm onData 是终端输入路径，非应用动作。
+import { DEFAULT_KEYMAP, bindingOf, type Binding, type KeyActionId } from "./keymap.ts";
+
 export type AppAction =
   | { id: "search" }
   | { id: "zoom-in" }
@@ -26,6 +28,8 @@ export interface ActionCtx {
   inForm: boolean;
   hasSessions: boolean;
   hasActiveTab: boolean;
+  /** 可重绑动作的键位表（键位配置轮）：缺省用默认表；App 从 KV ui.keymap.v1 载入 */
+  keymap?: Record<KeyActionId, Binding>;
 }
 
 /** 平台判定（审计 W4）：Ctrl 等价 ⌘ 的开关——macOS 用 metaKey（⌘），Win/Linux
@@ -69,6 +73,24 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
   if (ev.key === "Tab" && ctx.native && ctx.hasSessions) {
     return { id: "tab-cycle", dir: ev.shiftKey ? -1 : 1 };
   }
+  // 键位表匹配（键位配置轮）：六个可配置动作按 ui.keymap.v1 表解析，门控逐动作保留
+  // （palette/tab-new/分屏关签 native 门；hostbar 表单焦点门；分屏关签需活动会话）。
+  // 先于 shift 早退——表允许 Ctrl+Shift+字母 形组合。cmd 门已过滤平台主修饰键：
+  // mac 真按 Ctrl 仍是 shell 键（cmd=metaKey 不成立）；demo 侧非平台 Ctrl 同理早退，
+  // Ctrl+F 等归浏览器语义。默认表=直键三键轮基线：T 新建 / W 关签 / D 分屏 /
+  // K 面板 / B 主机栏 / F 搜索；被表占用的字母在 App 控制字符直发层同步豁免。
+  const evb = bindingOf(ev, isMacPlatform());
+  if (evb) {
+    const km = ctx.keymap ?? DEFAULT_KEYMAP;
+    const hit = (id: KeyActionId) =>
+      km[id].key === evb.key && km[id].shift === evb.shift && km[id].alt === evb.alt;
+    if (hit("palette") && ctx.native) return { id: "palette" };
+    if (hit("hostbar") && !ctx.inForm) return { id: "hostbar" };
+    if (hit("search")) return { id: "search" };
+    if (hit("tab-new") && ctx.native) return { id: "tab-new" };
+    if (hit("split-toggle") && ctx.native && ctx.hasActiveTab) return { id: "split-toggle" };
+    if (hit("tab-close") && ctx.native && ctx.hasActiveTab) return { id: "tab-close" };
+  }
   if (ev.shiftKey) {
     // ⇧] / ⇧[ 用物理键位判定（Shift 下 ev.key 是 }/{）
     if (ctx.native && ctx.hasSessions) {
@@ -77,21 +99,6 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
     }
     return null;
   }
-  const k = ev.key.toLowerCase();
-  // ⌘K（十九轮）：命令面板。表单编辑焦点下也生效（非文本编辑键，同缩放门）；
-  // native 门——浏览器 demo 的 Ctrl+K 归浏览器语义不劫持（面板入口仍有工具栏按钮）
-  if (k === "k" && ctx.native) return { id: "palette" };
-  // §7.4：主机栏开关「表单编辑焦点下不劫持」——正在输入时 ⌘B 不吞
-  if (k === "b" && !ctx.inForm) return { id: "hostbar" };
-  if (k === "f") return { id: "search" };
-  // 直键三键（UX 六轮，用户裁定 Ctrl+Shift 组合难按）：Ctrl+T 新建连接 / Ctrl+D
-  // 分屏开关；Ctrl+W 关标签沿用下一行既有绑定。T/W/D 在 App 控制字符层同步豁免
-  // （不再进 PTY 做 transpose/werase/EOF——EOF 走 exit、删词走 Backspace）。
-  // mac 侧顺带得 ⌘T/⌘D（Terminal.app/iTerm2 同款语义）；浏览器 demo 保持 native
-  // 门不劫持（Ctrl+T/W 是 Chrome 保留键本就收不到，Ctrl+D 保留 shell EOF 语义）。
-  if (k === "t" && ctx.native) return { id: "tab-new" };
-  if (k === "d" && ctx.native && ctx.hasActiveTab) return { id: "split-toggle" };
-  if (ctx.native && ctx.hasActiveTab && k === "w") return { id: "tab-close" };
   if (ctx.native && ctx.hasSessions) {
     const n = Number.parseInt(ev.key, 10);
     if (n >= 1 && n <= 9) return { id: "tab-switch", index: n - 1 };

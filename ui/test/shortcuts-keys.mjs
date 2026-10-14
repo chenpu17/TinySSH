@@ -43,5 +43,27 @@ expect("Ctrl+K → 命令面板", resolveAction(key({ key: "k", code: "KeyK" }),
 expect("Esc → 浮层链（无条件）", resolveAction(key({ key: "Escape", code: "Escape", ctrlKey: false }), ctx()), { id: "esc" });
 expect("IME 组合期不解析", resolveAction(key({ isComposing: true }), ctx()), null);
 
+// ---- 键位表覆盖（键位配置轮）：resolveAction 按 ctx.keymap 解析 ----
+const KM_REBIND = {
+  ...{},
+  "tab-new": { key: "t", primary: true, shift: false, alt: false },
+  "tab-close": { key: "w", primary: true, shift: false, alt: false },
+  "split-toggle": { key: "d", primary: true, shift: false, alt: false },
+  palette: { key: "k", primary: true, shift: false, alt: false },
+  hostbar: { key: "b", primary: true, shift: false, alt: false },
+  search: { key: "j", primary: true, shift: false, alt: false }, // search 改绑 Ctrl+J
+};
+expect("改绑后 Ctrl+J → search", resolveAction(key({ key: "j", code: "KeyJ" }), ctx({ keymap: KM_REBIND })), { id: "search" });
+expect("改绑后 Ctrl+F 不再是 search（还给 shell）", resolveAction(key({ key: "f", code: "KeyF" }), ctx({ keymap: KM_REBIND })), null);
+const KM_SHIFT = {
+  ...KM_REBIND,
+  search: { key: "j", primary: true, shift: true, alt: false }, // search 改绑 Ctrl+Shift+J
+};
+expect("Shift 绑定生效（先于 shift 早退）", resolveAction(key({ key: "j", code: "KeyJ", shiftKey: true }), ctx({ keymap: KM_SHIFT })), { id: "search" });
+expect("裸 Ctrl+J（未绑）归 shell", resolveAction(key({ key: "j", code: "KeyJ" }), ctx({ keymap: KM_SHIFT })), null);
+expect("Ctrl+Shift+J 未绑时仍归 shell", resolveAction(key({ key: "j", code: "KeyJ", shiftKey: true }), ctx()), null);
+expect("⌘J 同义改绑（mac 平台键）", resolveAction(key({ key: "j", code: "KeyJ", ctrlKey: false, metaKey: true }), ctx({ keymap: KM_REBIND })), { id: "search" });
+expect("键位表门仍在：demo 改绑不生效", resolveAction(key({ key: "j", code: "KeyJ" }), ctx({ keymap: KM_REBIND, native: false })), null);
+
 console.log(fail === 0 ? "\n✓ 快捷键 keymap 全部通过" : `\n✗ ${fail} 项失败`);
 process.exit(fail === 0 ? 0 : 1);

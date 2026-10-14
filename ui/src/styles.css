@@ -725,6 +725,22 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 /* 全局 input/select 是 width:100%（井底下凹隐喻）；设置卡是宽容器，表单控件回自动宽 */
 .set-card input, .set-card select { width: auto; }
 .set-card .cred-field input, .set-card .cred-field textarea { width: 100%; }
+/* 快捷键绑定行（键位配置轮）：名称+说明占满、键位胶囊、动作钮右置；分隔线同 set-item */
+.km-rows { margin-top: 4px; }
+.km-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0;
+}
+.km-row + .km-row { border-top: 1px solid var(--border); }
+.km-name { flex: 1; min-width: 0; }
+.km-name b { display: block; font-size: 13px; font-weight: 600; }
+.km-key {
+  flex: none; min-width: 88px; text-align: center;
+  font-size: 12px; padding: 3px 10px;
+  background: var(--panel3); border: 1px solid var(--border); border-radius: 5px;
+  color: var(--text-sub);
+  white-space: nowrap;
+}
 
 /* R41 凭据类目：新建表单（显式提交）+ 占用者 + 未提交草稿确认 */
 .cred-new { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--panel3); }

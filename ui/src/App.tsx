@@ -5,6 +5,11 @@ import {
 import { errMsg, parseWireError } from "./adapter/errors";
 import { resolveAction, isMacPlatform } from "./actions";
 import type { AppAction } from "./actions";
+import {
+  DEFAULT_KEYMAP, KEYMAP_ACTIONS, KEYMAP_SETTING,
+  bindingOf, parseKeymap, conflictOf, formatBinding, sameBinding,
+  type Binding, type KeyActionId,
+} from "./keymap";
 import { CommandPalette, type PaletteItem } from "./palette";
 import {
   registerZoomHotkeys, onZoomChange, currentZoom, setZoomScale,
@@ -74,9 +79,10 @@ const normApprovalStatus = (s: string): string =>
 type ApprovalRow = Omit<ApprovalItem, "status"> & { status: string };
 // R42（§6.6/S11）：设置对话框的分类（单实例，左分类 + 右内容）
 // 二十一轮：分类加导航描述（大气化——图标 + 标签 + 一句话定位）
-type SettingsCat = "appearance" | "terminal" | "credentials" | "agent" | "about";
+type SettingsCat = "appearance" | "keys" | "terminal" | "credentials" | "agent" | "about";
 const SETTINGS_CATS: [SettingsCat, string, string][] = [
   ["appearance", "外观", "色板 · 字号 · 缩放"],
+  ["keys", "快捷键", "新建 · 关签 · 分屏 · 面板"],
   ["terminal", "终端", "粘贴 · 复制 · 通知"],
   ["credentials", "凭据", "密钥与口令"],
   ["agent", "Agent 接入", "MCP 协作"],
@@ -84,7 +90,7 @@ const SETTINGS_CATS: [SettingsCat, string, string][] = [
 ];
 const settingsCatLabel = (c: SettingsCat): string => SETTINGS_CATS.find(([id]) => id === c)?.[1] ?? c;
 const settingsCatIcon: Record<SettingsCat, typeof IconSliders> = {
-  appearance: IconSliders, terminal: IconTerminal, credentials: IconStar,
+  appearance: IconSliders, keys: IconPencil, terminal: IconTerminal, credentials: IconStar,
   agent: IconInbox, about: IconClock,
 };
 // 最近处理（已决审批）六态标签：编辑后批准/超时/作废此前都被误显示成「✕ 拒绝」。
@@ -1445,6 +1451,7 @@ export default function App() {
           inForm: false, // 此处理器只在 xterm textarea 焦点下触达，不属表单焦点
           hasSessions: sessionsRef.current.length > 0,
           hasActiveTab: !!sidRef.current,
+          keymap: keymapRef.current,
         });
         if (a && dispatchRef.current(a)) {
           ev.preventDefault();
@@ -1522,20 +1529,20 @@ export default function App() {
           return;
         }
         if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
-        // 直键三键豁免（UX 六轮，与 actions.ts 的 Ctrl+T/W/D 同一批）：归应用动作，
-        // 不再编码成 C0 直发 PTY。stopPropagation 不挡同节点后注册的 action 分发器
-        // （capture 同节点监听照常执行）——这正是目的：动作层接手；preventDefault
-        // 断掉向 xterm textarea 的下传，onData 编码路径不复存在。键匹配 ev.key 为主
-        // （注入器/RDP 的 keydown 可能缺 scan code，ev.code 会是空串），ev.code 兜底
-        // IME 的 "Process" 键。仅原生生效——demo 的 Ctrl+T/W 是浏览器保留键本就到
-        // 不了这里，Ctrl+D 保留 shell EOF 语义不劫持。
-        const direct = ev.key.length === 1 ? ev.key.toLowerCase() : null;
-        if (inTauri && !ev.shiftKey &&
-            (direct === "t" || direct === "w" || direct === "d" ||
-             ev.code === "KeyT" || ev.code === "KeyW" || ev.code === "KeyD")) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          return;
+        // 键位表豁免（键位配置轮）：组合被 ui.keymap.v1 占用即豁免——不再编码 C0
+        // 直发 PTY，动作层（同节点后注册的监听器，stopPropagation 挡不住=正是目的）
+        // 接手。bindingOf 以平台主修饰键判定：mac 真按 Ctrl 不豁免（⌘ 系才归应用），
+        // Win/Linux Ctrl 命中即豁免；shift/alt 逐位精确比对，未绑定的 Ctrl+Shift+字
+        // 母仍进 shell。ev.key 为主、ev.code 兜底（注入器/RDP 的 keydown 可能缺
+        // scan code——直键三键轮实证过 code 空串打穿纯 code 匹配）。demo 不豁免：
+        // Ctrl+D 保留 shell EOF，Ctrl+T/W 是浏览器保留键本就到不了这里。
+        if (inTauri) {
+          const evb = bindingOf(ev, isMacPlatform());
+          if (evb && Object.values(keymapRef.current).some((b) => sameBinding(b, evb))) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            return;
+          }
         }
         const s = sidRef.current;
         if (!s) return;
@@ -1699,6 +1706,18 @@ export default function App() {
   // 主题色板（data-theme，默认石墨——无 CSS 块命中即继承 :root）
   const [palette, setPalette] = useState(PALETTE_DEFAULT);
   const paletteRef = useRef(PALETTE_DEFAULT);
+  // 键位表（键位配置轮）：可重绑动作的当前表，缺省=默认表。ref 供 window 捕获层的
+  // 两个监听器（注册于挂载期、闭包不换）与控制字符直发层读取；state 供设置面板回显
+  const [keymap, setKeymap] = useState<Record<KeyActionId, Binding>>(() => parseKeymap(null));
+  const keymapRef = useRef(keymap);
+  const applyKeymap = useCallback((km: Record<KeyActionId, Binding>) => {
+    keymapRef.current = km;
+    setKeymap(km);
+  }, []);
+  // 录入态：正在等待「按下新组合」的动作 id；录入期整体按模态层处理（其余 ⌘ 组合吞掉）
+  const [keyCapture, setKeyCapture] = useState<KeyActionId | null>(null);
+  const keyCaptureRef = useRef<KeyActionId | null>(null);
+  keyCaptureRef.current = keyCapture;
   // C8 工作区偏好串行化链（hostbar/外观共用；声明提前供 changeAppearance 使用）
   const wsWriteChain = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -1858,6 +1877,9 @@ export default function App() {
       const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
       applyFont(Number.isFinite(raw) && raw > 0 ? raw : null);
       loadPalette(localStorage.getItem(SETTING_PALETTE));
+      // 键位表（键位配置轮）：demo 走 localStorage，坏串/缺省回落默认表
+      const kmRaw = localStorage.getItem(KEYMAP_SETTING);
+      if (kmRaw) applyKeymap(parseKeymap(kmRaw));
       invoke("get_workspace")
         .then(applyChromeBlob)
         .catch(() => {})
@@ -1869,11 +1891,14 @@ export default function App() {
       .then((f) => applyFont(f === null ? null : Number(f)))
       .catch(() => {});
     const paletteP = invoke("get_setting", { key: SETTING_PALETTE }).then(loadPalette).catch(() => {});
+    const keymapP = invoke("get_setting", { key: KEYMAP_SETTING })
+      .then((v) => { if (typeof v === "string" && v) applyKeymap(parseKeymap(v)); })
+      .catch(() => {});
     const wsP = invoke("get_workspace").then(applyChromeBlob).catch(() => {});
     // 字号/色板/外观三路都落定后派生一次（applyAppearance/loadPalette 内部亦有派生，
     // 这里兜底「全部缺省」的首次启动路径）
     void Promise.all([fontP, paletteP, wsP]).then(() => applyDerivedTerminal());
-  }, [inTauri, changeFontSize, applyAppearance, applyPalette, applyDerivedTerminal]);
+  }, [inTauri, changeFontSize, applyAppearance, applyPalette, applyDerivedTerminal, applyKeymap]);
 
   // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
   // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
@@ -2177,6 +2202,10 @@ export default function App() {
   // 直接返回 null（除 Esc 交浮层链）——模态层不串输入。
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
+      // 键位录入期整体让路（键位配置轮）：Esc 在这里会被当「关最上层浮层」把设置
+      // 对话框关掉（closeTopOverlay 链含 showSettings）——录入期的 Esc 只该取消录入，
+      // 由录入监听（注册序在其后）独家消费
+      if (keyCaptureRef.current) return;
       // §7.4：表单编辑焦点判定（终端 textarea 不算——终端里 ⌘ 组合照常响应）
       const ae = document.activeElement;
       const inForm = !!(ae instanceof HTMLElement &&
@@ -2188,6 +2217,7 @@ export default function App() {
         inForm,
         hasSessions: sessionsRef.current.length > 0,
         hasActiveTab: !!sidRef.current,
+        keymap: keymapRef.current,
       });
       if (!a) return;
       if (dispatchRef.current(a)) {
@@ -2535,8 +2565,37 @@ export default function App() {
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || pendingDrop);
+  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || pendingDrop || keyCapture);
   modalRef.current = modal;
+
+  // 键位录入（键位配置轮）：等待「按下新组合」期间吞掉一切键盘事件——Esc 取消、
+  // lone modifier 等组合、其余组合校验后落表。capture 监听注册在两个既有监听之后，
+  // 但它们都被模态门按住（resolveAction 模态返 null、直发层 modalRef 早退），此
+  // 处理器是唯一消费者；preventDefault+stopImmediatePropagation 断掉 xterm 下传。
+  useEffect(() => {
+    if (!keyCapture) return;
+    const onKey = (ev: KeyboardEvent) => {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      if (ev.key === "Escape") { setKeyCapture(null); return; }
+      const evb = bindingOf(ev, isMacPlatform());
+      if (!evb) return; // lone modifier：等组合齐
+      if (!evb.primary) { pushToast("err", "快捷键需带 Ctrl（mac 为 ⌘）"); return; }
+      if (evb.alt) { pushToast("err", "Alt 组合暂不支持（终端里 Alt+字母 是 Meta 序列）"); return; }
+      const clash = conflictOf(keymapRef.current, keyCapture, evb);
+      if (clash) {
+        pushToast("err", `与「${KEYMAP_ACTIONS.find((a) => a.id === clash)?.label ?? clash}」冲突，先给后者换键`);
+        return;
+      }
+      const next = { ...keymapRef.current, [keyCapture]: evb };
+      applyKeymap(next);
+      persistSetting(KEYMAP_SETTING, JSON.stringify(next));
+      pushToast("ok", `已设为 ${formatBinding(evb, isMacPlatform())}`);
+      setKeyCapture(null);
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [keyCapture, applyKeymap, pushToast]);
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
   useEffect(() => {
@@ -5183,6 +5242,53 @@ export default function App() {
                   </div>
                   </>)}
                   <div className="dim" style={{ marginTop: 8, fontSize: 11 }}>界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）</div>
+                </div>
+                </>)}
+
+                {settingsCat === "keys" && (<>
+                {/* 键位配置轮：六个可重绑动作 + 固定键位说明。录入=点修改后按组合；
+                    冲突拒绝、单条重置；表持久化 ui.keymap.v1（demo=localStorage） */}
+                <div className="set-card">
+                  <h4>应用快捷键</h4>
+                  <div className="set-desc">点「修改」后按下新组合（Ctrl/⌘ + 字母，可加 Shift），Esc 取消。被占用的字母不再发往终端——同名 shell 控制键让位（如 Ctrl+D=分屏后，EOF 请用 exit）。Ctrl+1-9 切换标签 · Ctrl+Tab 循环 · Ctrl/⌘ ±/0 缩放 · Esc 关浮层为固定键位。</div>
+                  <div className="km-rows" role="group" aria-label="快捷键绑定">
+                    {KEYMAP_ACTIONS.map(({ id, label, desc }) => {
+                      const capturing = keyCapture === id;
+                      return (
+                        <div className="km-row" key={id} data-testid={`keymap-row-${id}`}>
+                          <span className="km-name">
+                            <b>{label}</b>
+                            <span className="set-item-desc">{desc}</span>
+                          </span>
+                          <span className="km-key mono" data-testid={`keymap-key-${id}`}>
+                            {capturing ? "按下新组合…" : formatBinding(keymap[id], isMacPlatform())}
+                          </span>
+                          {capturing ? (
+                            <button className="ghost" data-testid={`keymap-cancel-${id}`} onClick={() => setKeyCapture(null)}>取消</button>
+                          ) : (
+                            <>
+                              <button className="ghost" data-testid={`keymap-edit-${id}`} onClick={() => setKeyCapture(id)}>修改</button>
+                              <button className="ghost" data-testid={`keymap-reset-${id}`}
+                                disabled={sameBinding(keymap[id], DEFAULT_KEYMAP[id])}
+                                onClick={() => {
+                                  const next = { ...keymapRef.current, [id]: DEFAULT_KEYMAP[id] };
+                                  applyKeymap(next);
+                                  persistSetting(KEYMAP_SETTING, JSON.stringify(next));
+                                }}>重置</button>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="row" style={{ marginTop: 12 }}>
+                    <button className="ghost" data-testid="keymap-reset-all"
+                      disabled={KEYMAP_ACTIONS.every(({ id }) => sameBinding(keymap[id], DEFAULT_KEYMAP[id]))}
+                      onClick={() => {
+                        applyKeymap(parseKeymap(null));
+                        persistSetting(KEYMAP_SETTING, JSON.stringify(parseKeymap(null)));
+                      }}>全部恢复默认</button>
+                  </div>
                 </div>
                 </>)}
 
