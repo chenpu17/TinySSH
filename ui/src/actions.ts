@@ -13,6 +13,8 @@ export type AppAction =
   | { id: "tab-switch"; index: number }
   | { id: "tab-cycle"; dir: 1 | -1 }
   | { id: "tab-close" }
+  | { id: "tab-new" }
+  | { id: "split-toggle" }
   | { id: "esc" };
 
 export interface ActionCtx {
@@ -82,6 +84,13 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
   // §7.4：主机栏开关「表单编辑焦点下不劫持」——正在输入时 ⌘B 不吞
   if (k === "b" && !ctx.inForm) return { id: "hostbar" };
   if (k === "f") return { id: "search" };
+  // 直键三键（UX 六轮，用户裁定 Ctrl+Shift 组合难按）：Ctrl+T 新建连接 / Ctrl+D
+  // 分屏开关；Ctrl+W 关标签沿用下一行既有绑定。T/W/D 在 App 控制字符层同步豁免
+  // （不再进 PTY 做 transpose/werase/EOF——EOF 走 exit、删词走 Backspace）。
+  // mac 侧顺带得 ⌘T/⌘D（Terminal.app/iTerm2 同款语义）；浏览器 demo 保持 native
+  // 门不劫持（Ctrl+T/W 是 Chrome 保留键本就收不到，Ctrl+D 保留 shell EOF 语义）。
+  if (k === "t" && ctx.native) return { id: "tab-new" };
+  if (k === "d" && ctx.native && ctx.hasActiveTab) return { id: "split-toggle" };
   if (ctx.native && ctx.hasActiveTab && k === "w") return { id: "tab-close" };
   if (ctx.native && ctx.hasSessions) {
     const n = Number.parseInt(ev.key, 10);

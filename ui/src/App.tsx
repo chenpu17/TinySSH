@@ -1522,6 +1522,21 @@ export default function App() {
           return;
         }
         if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        // 直键三键豁免（UX 六轮，与 actions.ts 的 Ctrl+T/W/D 同一批）：归应用动作，
+        // 不再编码成 C0 直发 PTY。stopPropagation 不挡同节点后注册的 action 分发器
+        // （capture 同节点监听照常执行）——这正是目的：动作层接手；preventDefault
+        // 断掉向 xterm textarea 的下传，onData 编码路径不复存在。键匹配 ev.key 为主
+        // （注入器/RDP 的 keydown 可能缺 scan code，ev.code 会是空串），ev.code 兜底
+        // IME 的 "Process" 键。仅原生生效——demo 的 Ctrl+T/W 是浏览器保留键本就到
+        // 不了这里，Ctrl+D 保留 shell EOF 语义不劫持。
+        const direct = ev.key.length === 1 ? ev.key.toLowerCase() : null;
+        if (inTauri && !ev.shiftKey &&
+            (direct === "t" || direct === "w" || direct === "d" ||
+             ev.code === "KeyT" || ev.code === "KeyW" || ev.code === "KeyD")) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
         const s = sidRef.current;
         if (!s) return;
         // 死会话/断线拦截：Ctrl 控制字符不进死通道（黑洞/排队）
@@ -1543,7 +1558,12 @@ export default function App() {
         const cc = ctrlCharOf(key);
         if (cc === null) return;
         ev.preventDefault();
-        ev.stopPropagation();
+        // stopImmediatePropagation：键已被终端消费（C0 直发 PTY），同节点的 action
+        // 分发器不得再解析同一事件——stopPropagation 挡不住同节点监听，W4 以来
+        // Windows 原生下 Ctrl+W/K/B/F 曾「进 shell 同时触发应用动作」双路径
+        // （Ctrl+W = werase 还关标签、Ctrl+K = kill-line 还开命令面板）。
+        // 死会话分支不在此列：吞的是直发，action 照常解析（Ctrl+W 关死标签是正道）。
+        ev.stopImmediatePropagation();
         void invoke("send_keys", { sid: s, keys: cc }).catch(() => {});
       };
       window.addEventListener("keydown", onKey, { capture: true });
@@ -2131,6 +2151,22 @@ export default function App() {
         const curSession = sessionsRef.current.find((x) => x.id === cur);
         if (curSession) requestCloseSession(curSession);
         else void disconnectSid(cur);
+        return true;
+      }
+      case "tab-new": {
+        // 直键 Ctrl+T（UX 六轮）：镜像工具栏「新建连接」按钮——开主机栏添加表单；
+        // 幂开不收起（键盘连按不闪烁），导入/快连两兄弟表单让位
+        if (!hostbarOpenRef.current) toggleHostbar(true);
+        setShowAddHost(true);
+        setShowImport(false);
+        setShowQuickConnect(false);
+        return true;
+      }
+      case "split-toggle": {
+        // 直键 Ctrl+D（UX 六轮）：与工具栏分屏按钮同路径——已分屏先退（两会话都
+        // 保留）；未分屏弹「右侧会话选择」菜单（空态菜单自会说「暂无其他会话」）
+        if (splitPanes) void exitSplit();
+        else setSplitMenu(true);
         return true;
       }
       default: return false;
@@ -4214,7 +4250,7 @@ export default function App() {
                   <button
                     type="button"
                     className="tab-x"
-                    title="关闭会话（⌘W，活动会话先确认影响）"
+                    title="关闭会话（⌘/Ctrl+W，活动会话先确认影响）"
                     aria-label={`关闭会话 ${s.host_name}`}
                     onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
                   ><IconX size={11} /></button>
@@ -4257,7 +4293,7 @@ export default function App() {
               </div>
             )}
           </div>
-          <button className="ghost" title="新建连接（打开主机栏「添加主机」表单，再点收起）" aria-label="新建连接" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); }}><IconPlus size={14} /></button>
+          <button className="ghost" title="新建连接（Ctrl+T）" aria-label="新建连接" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); }}><IconPlus size={14} /></button>
           {/* 十七轮：快速连接——不存主机一次性建连 */}
           <button className="ghost" title="快速连接（不保存主机，临时连接一次）" aria-label="快速连接" data-testid="quick-connect-open" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
         </div>
@@ -4482,7 +4518,7 @@ export default function App() {
             )}
             <button
               className={"ghost icon-btn" + (splitMenu ? " ts-open" : "")}
-              title={splitPanes ? "退出分屏（会话保留不断开）" : "分屏：在右侧显示已有会话，或在右侧新建会话"}
+              title={splitPanes ? "退出分屏（Ctrl+D；会话保留不断开）" : "分屏（Ctrl+D）：在右侧显示已有会话，或在右侧新建会话"}
               aria-haspopup={splitPanes ? undefined : "menu"}
               aria-expanded={splitPanes ? undefined : splitMenu}
               aria-pressed={!!splitPanes}
