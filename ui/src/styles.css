@@ -155,10 +155,13 @@ body {
      Windows 下中文回退微软雅黑是「土」观感的主因；Inter 管拉丁，MiSans 只接 CJK
      与 Inter 未覆盖字形，系统栈只做兜底（栈序对齐 tiny-worker） */
   font-family: "Inter", "MiSans VF", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  /* 精致化（§三）：中文基准 13.5px + 松行高 + 微字距，Retina 上更透 */
-  font-size: 13.5px;
-  line-height: 1.55;
-  letter-spacing: 0.01em;
+  /* 字体档（字体消糊轮）：13.5px 分数基准 + 0.01em 微字距是 Chromium 亚像素糊的
+     主因（A/B 实测）。改 14px 整数基准 + 去字距 + 行高 1.5；字重 430 比默认 400
+     稍实——Inter(100-900) 与 MiSans VF 双变量字体都真实生效，非合成加粗 */
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: normal;
+  font-weight: 430;
   -webkit-font-smoothing: antialiased;
 }
 ::selection { background: var(--accent-ring); }
@@ -1166,7 +1169,7 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 .host-card:focus-within .host-card-side,
 .host-card-side:has(.host-connect-btn:disabled) { opacity: 1; pointer-events: auto; }
 .host-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.host-name { font-size: 13.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-name { font-size: 14px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-addr { font-size: 11px; color: var(--text-sub); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-fail { font-size: 11px; margin-top: 2px; }
 .auth-tag {
@@ -1294,27 +1297,28 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
    文本档对比度全部经 ui/test/wcag-themes.mjs 脚本复验（正文 ≥4.5:1，装饰 ≥3:1）。
    命名借意 tiny-worker：暖烬=ember 陶土橙 / 深海=ocean 极光蓝 / 午夜=violet 罗兰 / 鎏金=noir 香槟金。 */
 
-/* 暖烬 · 暗：暖炭底 + 陶土橙——日志/告警橙语义亲和，长时间盯屏不冷 */
-:root[data-theme="ember"][data-chrome="dark"] {
+/* 暖烬 · 暗：暖炭底 + 陶土橙——日志/告警橙语义亲和，长时间盯屏不冷。
+   主题①轮：danger 橙红(25°)→绯红(17°)，与 accent(39°) 拉开 22° 色相距（原 13° 分不开） */:root[data-theme="ember"][data-chrome="dark"] {
   --bg: #121215; --panel: #17171a; --panel2: #1c1c20; --panel3: #232327;
   --border: rgba(255, 255, 255, 0.08); --border-hover: rgba(255, 255, 255, 0.17);
   --text: #ecedee; --text-sub: #a3a4a8; --dim: #83848b;
   --accent: #e07856; --accent-hover: #eda382; --accent-text: #eda382;
-  --danger: #ea7870; --danger-hover: #f49089;
+  --danger: #ea6a76; --danger-hover: #f28490;
   --ok: #57b08a; --warn: #d3a04c; --warn-text: #d3a04c; --warn-hover: #e0b153;
   --on-accent: #2a1206; --on-danger: #2a1010; --on-warn: #251b06;
   --blue: #6f9fe0; --focus: #f0b492;
   --grad-a: #f0b492; --grad-b: #e07856;
   --mark-grad: linear-gradient(160deg, #3a2417, #17110d);
 }
-/* 暖烬 · 亮：暖米纸底 + 赤陶橙（accent 与 danger 拉开橙/红距离） */
+/* 暖烬 · 亮：暖米纸底 + 赤陶橙。主题①轮：danger 加深绯调(22°→14°，与 accent 38°
+   拉开 24°)；ok 转暖苔绿呼应暖族（原共享石墨冷绿）；hover 同族跟随 */
 :root[data-theme="ember"][data-chrome="light"] {
   --bg: #f3f2f0; --panel: #fbfbfa; --panel2: #ffffff; --panel3: #ececea;
   --border: rgba(72, 48, 32, 0.10); --border-hover: rgba(72, 48, 32, 0.20);
   --text: #232323; --text-sub: #5f5f5e; --dim: #6f6f6c;
   --accent: #ad4726; --accent-hover: #8f3c1e; --accent-text: #8f3c1e;
-  --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
+  --danger: #b23a50; --danger-hover: #9c3145;
+  --ok: #4e7a2b; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #3b6fb5; --focus: #96401f;
   --grad-a: #ad4726; --grad-b: #8f3c1e;
@@ -1333,14 +1337,14 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #7db2ff; --grad-b: #4c8dff;
   --mark-grad: linear-gradient(160deg, #14283f, #0c1520);
 }
-/* 深海 · 亮：冷白 + 湖蓝 */
+/* 深海 · 亮：冷白 + 湖蓝。主题①轮：ok 转青调绿呼应冷族（原共享石墨暖绿） */
 :root[data-theme="ocean"][data-chrome="light"] {
   --bg: #eef2f7; --panel: #f7f9fc; --panel2: #ffffff; --panel3: #e7edf5;
   --border: rgba(28, 52, 82, 0.10); --border-hover: rgba(28, 52, 82, 0.20);
   --text: #1d2733; --text-sub: #4f5e6e; --dim: #5e6d7d;
   --accent: #2464ad; --accent-hover: #1d5493; --accent-text: #1d5493;
   --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
+  --ok: #1d7268; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #1d5493;
   --grad-a: #2464ad; --grad-b: #1d5493;
@@ -1359,40 +1363,43 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #c4b5fd; --grad-b: #a78bfa;
   --mark-grad: linear-gradient(160deg, #2a2044, #130f1e);
 }
-/* 午夜 · 亮：雾紫白底 + 电紫 */
+/* 午夜 · 亮：雾紫白底 + 电紫。主题①轮：danger 转紫红(4°，原共享石墨红 22°)
+   呼应紫族，与 accent 电紫拉开 85°+ */
 :root[data-theme="violet"][data-chrome="light"] {
   --bg: #f1f0fa; --panel: #f8f7fd; --panel2: #ffffff; --panel3: #e9e7f6;
   --border: rgba(80, 62, 190, 0.10); --border-hover: rgba(80, 62, 190, 0.20);
   --text: #262238; --text-sub: #554f76; --dim: #655e85;
   --accent: #6553e8; --accent-hover: #5342cc; --accent-text: #5342cc;
-  --danger: #b83e42; --danger-hover: #a23437;
+  --danger: #a83a5e; --danger-hover: #8f2f50;
   --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #5342cc;
   --grad-a: #6553e8; --grad-b: #5342cc;
   --mark-grad: linear-gradient(160deg, #e7e3fb, #ffffff);
 }
-/* 鎏金 · 暗：可可褐黑 + 香槟金，克制奢华（tiny-worker noir 同源，文字档已校验） */
+/* 鎏金 · 暗：可可褐黑 + 香槟金，克制奢华（tiny-worker noir 同源，文字档已校验）。
+   主题①轮：warn 金黄(88°)→橙琥珀(59°)，与 accent 金(83°) 拉开 24°（原 5° 同相不可辨） */
 :root[data-theme="noir"][data-chrome="dark"] {
   --bg: #0f0e0c; --panel: #141210; --panel2: #1b1916; --panel3: #221f19;
   --border: rgba(212, 180, 131, 0.09); --border-hover: rgba(212, 180, 131, 0.18);
   --text: #f0ece3; --text-sub: #a89f8f; --dim: #8d8474;
   --accent: #c8a96e; --accent-hover: #e0c89a; --accent-text: #e0c89a;
   --danger: #e07568; --danger-hover: #eb9184;
-  --ok: #6fae87; --warn: #d4b054; --warn-text: #d4b054; --warn-hover: #e0c06e;
+  --ok: #6fae87; --warn: #d47818; --warn-text: #d47818; --warn-hover: #e59b3f;
   --on-accent: #2a2110; --on-danger: #2a1010; --on-warn: #251b06;
   --blue: #8ba7c9; --focus: #e0c89a;
   --grad-a: #e6cf9f; --grad-b: #c8a96e;
   --mark-grad: linear-gradient(160deg, #2c2314, #141009);
 }
-/* 鎏金 · 亮：象牙纸底 + 琥珀铜金（tiny-worker dawn 同源） */
+/* 鎏金 · 亮：象牙纸底 + 琥珀铜金（tiny-worker dawn 同源）。
+   主题①轮：warn 橄榄金(83°)→深橙琥珀(53°)，与 accent 铜金(77°) 拉开 24°（原 6°） */
 :root[data-theme="noir"][data-chrome="light"] {
   --bg: #f1ede4; --panel: #faf8f3; --panel2: #ffffff; --panel3: #e9e3d6;
   --border: rgba(122, 96, 50, 0.11); --border-hover: rgba(122, 96, 50, 0.21);
   --text: #2b2620; --text-sub: #665e4e; --dim: #6f675a;
   --accent: #7d5a20; --accent-hover: #684a18; --accent-text: #684a18;
   --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #357953; --warn: #82600f; --warn-text: #82600f; --warn-hover: #6e520c;
+  --ok: #357953; --warn: #a04e02; --warn-text: #a04e02; --warn-hover: #8a4102;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #4a6fa5; --focus: #684a18;
   --grad-a: #7d5a20; --grad-b: #684a18;
@@ -1401,27 +1408,29 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 
 /* ---- 二十一轮扩四族（对表 Terminus 的主力板）：同工艺，文本档过 wcag-themes.mjs ---- */
 
-/* 极光 · 暗：墨松绿黑 + 翡翠薄荷——寒带针叶林的极光夜，绿系在终端工具里罕见 */
+/* 极光 · 暗：墨松绿黑 + 翡翠薄荷——寒带针叶林的极光夜，绿系在终端工具里罕见。
+   主题①轮：ok 翠绿(150°)→黄绿(131°)，与 accent 薄荷(166°) 拉开 35°（原 16° 贴线） */
 :root[data-theme="aurora"][data-chrome="dark"] {
   --bg: #0a120e; --panel: #0e1712; --panel2: #121d16; --panel3: #182720;
   --border: rgba(150, 230, 190, 0.09); --border-hover: rgba(150, 230, 190, 0.18);
   --text: #e6efe9; --text-sub: #9cb3a6; --dim: #7c9486;
   --accent: #46d7a5; --accent-hover: #82e9c6; --accent-text: #82e9c6;
   --danger: #e5736f; --danger-hover: #ef8a86;
-  --ok: #6fc983; --warn: #d6b458; --warn-text: #d6b458; --warn-hover: #e2c26c;
+  --ok: #8ec94e; --warn: #d6b458; --warn-text: #d6b458; --warn-hover: #e2c26c;
   --on-accent: #06281a; --on-danger: #2a1010; --on-warn: #251d05;
   --blue: #6fc4e8; --focus: #82e9c6;
   --grad-a: #82e9c6; --grad-b: #22b184;
   --mark-grad: linear-gradient(160deg, #11342a, #0a1a12);
 }
-/* 极光 · 亮：雾白苔绿底 + 深翡翠 */
+/* 极光 · 亮：雾白苔绿底 + 深翡翠。主题①轮：ok 深翠(154°)→深黄绿(130°)，与
+   accent 翡翠(160°) 拉开 30°（原 6.5° 同相不可辨，本轮硬伤） */
 :root[data-theme="aurora"][data-chrome="light"] {
   --bg: #edf4ee; --panel: #f5faf5; --panel2: #ffffff; --panel3: #e1ece3;
   --border: rgba(24, 74, 48, 0.10); --border-hover: rgba(24, 74, 48, 0.20);
   --text: #1a2921; --text-sub: #4c6154; --dim: #5c7063;
   --accent: #147a51; --accent-hover: #0e6240; --accent-text: #0e6240;
   --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #1e7a46; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --ok: #4e741a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #0e6240;
   --grad-a: #147a51; --grad-b: #0e6240;
@@ -1440,26 +1449,28 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #a5e5d6; --grad-b: #35ae97;
   --mark-grad: linear-gradient(160deg, #10302b, #0a1a17);
 }
-/* 青瓷 · 亮：月白底 + 深青瓷 */
+/* 青瓷 · 亮：月白底 + 深青瓷。主题①轮：ok 转黄绿(134°)，与 accent 青瓷(170°)
+   拉开 36°（原 20° 贴线） */
 :root[data-theme="celadon"][data-chrome="light"] {
   --bg: #edf3f1; --panel: #f5faf8; --panel2: #ffffff; --panel3: #e0ebe7;
   --border: rgba(20, 70, 60, 0.10); --border-hover: rgba(20, 70, 60, 0.20);
   --text: #1e2a27; --text-sub: #4e615c; --dim: #5e716c;
   --accent: #0e7a66; --accent-hover: #0a604f; --accent-text: #0a604f;
   --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --ok: #4b7a28; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #0a604f;
   --grad-a: #0e7a66; --grad-b: #0a604f;
   --mark-grad: linear-gradient(160deg, #d8ece6, #ffffff);
 }
-/* 绯樱 · 暗：梅紫黑底 + 樱粉玫瑰——夜樱；粉系 accent 在 SSH 客户端里几乎无人做 */
+/* 绯樱 · 暗：梅紫黑底 + 樱粉玫瑰——夜樱；粉系 accent 在 SSH 客户端里几乎无人做。
+   主题①轮：danger 珊瑚红(18°)→珊瑚橙(40°)，与樱粉 accent(1°) 拉开 39°（原 17°） */
 :root[data-theme="sakura"][data-chrome="dark"] {
   --bg: #140f13; --panel: #1a1318; --panel2: #201820; --panel3: #291e28;
   --border: rgba(240, 170, 195, 0.09); --border-hover: rgba(240, 170, 195, 0.18);
   --text: #f1eaef; --text-sub: #b1a0ab; --dim: #907f8a;
   --accent: #f0a8bc; --accent-hover: #f7c4d2; --accent-text: #f7c4d2;
-  --danger: #ea6e76; --danger-hover: #f48a91;
+  --danger: #e5764e; --danger-hover: #f18f68;
   --ok: #6cc794; --warn: #d9a53f; --warn-text: #d9a53f; --warn-hover: #e5b45c;
   --on-accent: #40101f; --on-danger: #2a1010; --on-warn: #251b06;
   --blue: #8fa8e8; --focus: #f7c4d2;
