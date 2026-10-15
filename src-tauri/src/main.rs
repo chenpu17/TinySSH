@@ -421,6 +421,14 @@ async fn sftp_stat(state: ApiState<'_>, sid: String, path: String) -> CmdResult<
     state.api.sftp_stat(&human(), sid, path).await.map_err(WireError::from)
 }
 
+/// 监控条采样（监控条轮）：FinalShell 式底部资源条数据源——人类专属只读
+/// Fresh 采样（固定 /proc 脚本在核心侧，UI 不可注入命令；不经审批/审计，
+/// 输出不回放终端）。非 Linux 远端输出不可解析，前端整条隐藏。
+#[tauri::command]
+async fn read_host_metrics(state: ApiState<'_>, sid: String) -> CmdResult<String> {
+    state.api.probe_metrics(&human(), &sid).await.map_err(WireError::from)
+}
+
 /// 端口转发（T42 FR-8）：列/建/停（人类 GUI 入口；Agent 侧留 MCP 审批版）。
 #[tauri::command]
 async fn list_forwards(state: ApiState<'_>, sid: String) -> CmdResult<Vec<ForwardInfo>> {
@@ -1592,7 +1600,7 @@ fn main() {
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             list_host_metadata, list_recent_hosts,
-            read_screen, send_keys, exec_human, set_control, delegate_session, session_brief, set_session_goal,
+            read_screen, send_keys, exec_human, read_host_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             collab_status, collab_disable_preview, collab_disable, collab_enable,

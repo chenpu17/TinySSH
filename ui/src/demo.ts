@@ -1006,6 +1006,40 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       audit("human", "exec", command, null, sid ?? null);
       return { stdout: "", exit_code: 0 };
     }
+    case "read_host_metrics": {
+      // 监控条（命令框退役轮）：固定 /proc 形状 + 随时间推进的计数器——CPU/网速
+      // 差分呈现真实跳动感。CPU 计数器必须**严格单调**（真实 /proc 如此）：total
+      // 恒速 +100/s，busy 份额按 sin 缓摆（19%–37%）——不能用「每档换 idle 占比」
+      // 的写法，那会让 idle 在跨档时负增长，差分出 null。不落审计（与真实后端
+      // 「直连通道不进审计」对齐——3s 轮询不能刷审计流）。
+      const sid = args?.sid as string;
+      if (!demoState.sessions.some((x) => x.id === sid)) throw apiError("session_not_found", "SessionNotFound（演示）");
+      const t = Math.floor(Date.now() / 1000);
+      const total = 40000000 + t * 100;
+      const usage = Math.floor(2800 + 900 * Math.sin(t / 17));
+      const idle = total - usage;
+      const user = Math.floor(usage * 0.5);
+      const up = 47500 + (t % 86400);
+      const rx = 8_000_000_000 + t * 6100;
+      const tx = 1_200_000_000 + t * 10300;
+      const load1 = (0.32 + (t % 7) * 0.11).toFixed(2);
+      return [
+        `cpu  ${user} 120 ${usage - user} ${idle} 0 1200 300 0 0 0`,
+        "cpu0 200 0 210 2900 0 75 18 0 0 0",
+        "MemTotal:       24210112 kB",
+        "MemFree:         1200332 kB",
+        "MemAvailable:   18350080 kB",
+        "Buffers:         2210400 kB",
+        "Cached:          9210400 kB",
+        `${up}.42 ${(up * 100).toFixed(2)}`,
+        `${load1} 0.18 0.12 2/1234 5678`,
+        " face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed",
+        `  eth0: ${rx} 90000000    0    0    0     0          0         0 ${tx} 62000000    0    0    0     0       0          0`,
+        "    lo: 7200312    5400    0    0    0     0          0         0 7200312    5400    0    0    0     0       0          0",
+        "==DF==",
+        "/dev/vda1  61873092  32549412  26156664  56% /",
+      ].join("\n");
+    }
     case "send_keys":
       pushTo(args?.sid as string, (args?.keys as string) ?? "");
       return null;

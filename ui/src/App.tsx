@@ -3,6 +3,7 @@ import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
+import { MetricsBar } from "./metrics";
 import { resolveAction, isMacPlatform } from "./actions";
 import type { AppAction } from "./actions";
 import {
@@ -834,13 +835,6 @@ export default function App() {
   // 停用影响预览对话框（非空 = 已拉取影响并等待用户确认）
   const [disableImpact, setDisableImpact] = useState<DisableImpact | null>(null);
   const [collabBusy, setCollabBusy] = useState(false);
-  const [input, setInput] = useState("");
-  // 命令框历史（P2-14）：↑ 召回上一条、↓ 后退；连续重复不重复入栈
-  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
-  const cmdHistIdx = useRef<number>(-1);
-  // 命令框在飞集合（八轮降噪）：exec_human 未返回的会话 id——「中断」钮只在此刻
-  // 在场（语义=「你提交的命令还在跑」）。空闲 shell 上发 \x03 只会打出 ^C 噪音。
-  const [busyExecs, setBusyExecs] = useState<Set<string>>(new Set());
   // 连接状态机：null=空闲；连接中显示主机名；失败显示错误
   // R23（C1 消费）：attempt 真值表——begin_connection 返回 attempt_id，
   // 相位经 connection-event（真实）/connection_status 轮询（demo）推进；
@@ -1505,7 +1499,7 @@ export default function App() {
     // 窗口级 Ctrl+字符 接管（捕获阶段）：中文输入法在 WKWebView 的 textarea 里
     // 会吞掉 Ctrl+字母（进入拼音组合，keydown 以 229 告终），xterm 收不到控制键——
     // top/vim 因此停不下来。这里在捕获阶段自行编码控制字符直发后端，绕过 IME。
-    // 命令框等真实输入控件不劫持（保留其编辑语义）；方向键/F 键等长键值交给 xterm。
+    // 真实输入控件（搜索框/表单）不劫持（保留其编辑语义）；方向键/F 键等长键值交给 xterm。
     useEffect(() => {
       const onKey = (ev: KeyboardEvent) => {
         // §7.4/native 同口径：只在「终端确实拥有焦点且无模态层」时转发控制字符。
@@ -1578,7 +1572,7 @@ export default function App() {
     }, []);
 
     // 终端聚焦状态上报 native 层：native Ctrl 键接管只在 xterm 聚焦时生效，
-    // 命令框等输入控件不受影响。
+    // 搜索框等输入控件不受影响。
     useEffect(() => {
       const report = (focused: boolean) => {
         void invoke("note_terminal", { sid: sidRef.current, focused }).catch(() => {});
@@ -2661,7 +2655,7 @@ export default function App() {
   }, []);
 
   // 旧 Esc 浮层链已并入统一 action 分发（closeTopOverlayRef，R13）。
-  // 输入控件语义：无浮层时 Esc 原样透传（命令框清空、搜索框自带关闭不变）；
+  // 输入控件语义：无浮层时 Esc 原样透传（搜索框自带关闭不变）；
   // 有浮层时浮层优先消费（§7.3）——与旧「INPUT/TEXTAREA 一律不劫持」相比，
   // 浮层开着时 Esc 不再被输入框吞掉。
 
@@ -4694,7 +4688,7 @@ export default function App() {
                   <div><span className="ws-k">连接</span>主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接</div>
                   <div><span className="ws-k">操作</span>点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴</div>
                   <div><span className="ws-k">多会话</span>一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留</div>
-                  <div><span className="ws-k">传输</span>拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标；下方命令框可逐条执行，焦点自动回终端</div>
+                  <div><span className="ws-k">传输</span>拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标</div>
                 </div>
                 <div className="welcome-actions">
                   <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
@@ -4801,7 +4795,7 @@ export default function App() {
             </div>
           )}
           {attachHint && sid && (
-            <div className="attach-hint">会话已接入——点击终端区直接打字，或用下方命令框</div>
+            <div className="attach-hint">会话已接入——点击终端区直接打字</div>
           )}
           {searchOpen && sid && (
             <div className="term-search">
@@ -5524,114 +5518,18 @@ Authorization: Bearer <TOKEN>`}
             </>
           )}
         </div>
-        {/* 二十轮：命令框只在「集成可用或未定」的会话上出现——集成关（Disabled）或
-            检测无 OSC（Unavailable）的主机按 Shell 模式恒拒收，摆一条必拒收的死条
-            不如不摆（用户走查：连态空条被当渲染残留）。 */}
-        {!(current && (current.integration === "Unavailable" || current.integration === "Disabled")) && (
-        <div className="panel-title row">
-          <input
-            placeholder={
-              current
-                ? inputBlockedState(current.state)
-                  ? current.state === "Disconnected"
-                    ? "会话已断开——重连恢复后再执行命令"
-                    : "网络中断，自动重连中——命令暂不发送"
-                  : "执行单条命令——Enter 发送，焦点自动回终端"
-                : "先在主机栏连接一台主机，这里才能执行命令"
-            }
-            disabled={!sid}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={async (e) => {
-              if (e.key.toLowerCase() === "c" && e.ctrlKey) {
-                e.preventDefault();
-                if (!input) {
-                  // 空输入的 Ctrl+C = 中断终端里的前台程序（top/vim…），并回到终端
-                  const s = sidRef.current;
-                  if (s) await invoke("send_keys", { sid: s, keys: "\u0003" }).catch(() => {});
-                  xtermRef.current?.focus();
-                } else {
-                  setInput("");
-                  cmdHistIdx.current = -1;
-                }
-                return;
-              }
-              // ↑/↓ 历史召回（P2-14）；输入法组合期间不劫持
-              if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.altKey && !e.metaKey && !e.ctrlKey &&
-                  !(e.nativeEvent as KeyboardEvent).isComposing && cmdHistory.length > 0) {
-                e.preventDefault();
-                const last = cmdHistory.length - 1;
-                if (e.key === "ArrowUp") {
-                  const next = cmdHistIdx.current < 0 ? last : Math.max(0, cmdHistIdx.current - 1);
-                  cmdHistIdx.current = next;
-                  setInput(cmdHistory[next]);
-                } else {
-                  if (cmdHistIdx.current < 0 || cmdHistIdx.current >= last) {
-                    cmdHistIdx.current = -1;
-                    setInput("");
-                  } else {
-                    cmdHistIdx.current += 1;
-                    setInput(cmdHistory[cmdHistIdx.current]);
-                  }
-                }
-                return;
-              }
-              if (e.key === "Enter" && input.trim() && sid) {
-                // 死会话/断线拦截（P2-7 + R26 §6.4）：命令不进死通道、不排队给未来连接
-                const cst = sessionsRef.current.find((x) => x.id === sid)?.state;
-                if (cst && inputBlockedState(cst)) {
-                  setConnError({
-                    title: cst === "Disconnected" ? "会话已断开" : "网络中断（自动重连中）",
-                    detail: "命令未发送。重连恢复后再执行。",
-                  });
-                  return;
-                }
-                const cmd = input;
-                setCmdHistory((h) => (h[h.length - 1] === cmd ? h : [...h, cmd]));
-                cmdHistIdx.current = -1;
-                setInput("");
-                // 回显剥离 ESC（审计 F4）：粘贴保护只拦换行不拦转义字节——含 ESC 的
-                // 输入原样 write 会被终端解释（伪造输出/改标题），简报侧 cleanCmd
-                // 已清理、此处统一收口
-                xtermRef.current?.write(`\r\n\x1b[90m❯ ${cmd.replace(/\x1b/g, "")}\x1b[0m\r\n`);
-                // 立即回焦终端（不等待执行完成：长驻命令 top/vim 也即时可中断）
-                xtermRef.current?.focus();
-                // 在飞登记：返回（含中断/超时/断线失败）前「中断」钮在场，finally 摘除
-                setBusyExecs((prev) => { const n = new Set(prev); n.add(sid); return n; });
-                try {
-                  await invoke("exec_human", { sid, command: cmd });
-                } catch (err) {
-                  xtermRef.current?.write(`\r\n\x1b[31m✕ ${errMsg(err)}\x1b[0m\r\n`);
-                  // R24-L5（DC3.4）：命令框恒 Shell 模式——集成关闭主机的拒绝要给下一步：
-                  // 开集成，或 CLI/MCP 显式 Fresh（UI 无 Fresh 入口，不假装有）
-                  const pe = parseWireError(err);
-                  if (pe.kind === "shell_integration_unavailable") {
-                    xtermRef.current?.write("\x1b[33m  该主机未启用 shell 集成——命令框按 Shell 模式执行被拒。\x1b[0m\r\n\x1b[33m  可在设置开启该主机集成；或在 CLI/MCP 显式以 Fresh 模式执行（无现场，退出码可靠）。\x1b[0m\r\n");
-                  }
-                } finally {
-                  setBusyExecs((prev) => { const n = new Set(prev); n.delete(sid); return n; });
-                }
-              }
-            }}
+        {/* 监控条（命令框退役轮）：命令框腾出的底部常驻条改为 FinalShell 式远端
+            资源采样——Fresh 独立通道直读 /proc，不进终端、不进审计。本地会话与
+            采样不可用（非 Linux 远端/连续失败）整条隐藏（MetricsBar 内部判定）。
+            key=sid：切签重置差分基线，避免跨主机算出假速率 */}
+        {sid && current && (
+          <MetricsBar
+            key={sid}
+            sid={sid}
+            kind={current.kind}
+            user={hosts.find((h) => h.id === current.host_id)?.username}
+            hostName={current.host_name}
           />
-          {sid && busyExecs.has(sid) && (
-            <button
-              className="ghost"
-              data-testid="exec-interrupt"
-              title="中断正在执行的命令（向前台进程发送 SIGINT，等同 Ctrl+C）"
-              onClick={() => {
-                const s = sidRef.current;
-                const st = s ? sessionsRef.current.find((x) => x.id === s)?.state : undefined;
-                if (s && st && !inputBlockedState(st)) {
-                  void invoke("send_keys", { sid: s, keys: "\u0003" }).catch(() => {});
-                }
-                xtermRef.current?.focus();
-              }}
-            >
-              <IconStop size={12} /> 中断
-            </button>
-          )}
-        </div>
         )}
         </div>{/* /term-col */}
 

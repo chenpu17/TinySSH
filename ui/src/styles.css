@@ -436,6 +436,39 @@ textarea {
   background: var(--panel); padding: 1px 5px; border-radius: 4px;
 }
 .term-wrap { flex: 1; min-height: 0; padding: 8px; display: flex; overflow: hidden; position: relative; }
+/* 监控条（命令框退役轮）：命令框腾出的底部常驻条改为 FinalShell 式远端资源
+   采样条。样式全走色板 token（9 族主题自适应）；数值 tabular-nums + 迷你条
+   固定轨宽防抖动；≥85% 转告警色（--warn）。本地会话/采样不可用时整条不渲染 */
+.metrics-bar {
+  flex: none; display: flex; align-items: center; gap: 16px;
+  height: 28px; padding: 0 12px;
+  background: var(--panel); border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text-sub);
+  white-space: nowrap; overflow: hidden;
+  user-select: none;
+}
+.metrics-bar .mhost { color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.metrics-bar .mseg { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.metrics-bar .mlabel { color: var(--dim); letter-spacing: 0.02em; }
+.metrics-bar .mval { color: var(--text-sub); }
+.metrics-bar .mnum { font-variant-numeric: tabular-nums; }
+.metrics-bar .down { color: var(--accent); }
+.metrics-bar .up { color: var(--ok); }
+.metrics-bar .mbar {
+  width: 44px; height: 4px; border-radius: 2px;
+  background: var(--panel3); overflow: hidden; flex: none;
+}
+.metrics-bar .mbar i {
+  display: block; height: 100%; border-radius: 2px;
+  background: var(--accent); transition: width 0.8s ease;
+}
+.metrics-bar .mbar.hot i { background: var(--warn); }
+.metrics-bar .mpause {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 5px;
+  background: transparent; color: var(--dim); cursor: pointer;
+}
+.metrics-bar .mpause:hover { background: var(--panel3); color: var(--text); }
 #term { width: 100%; height: 100%; position: relative; }
 /* 每会话一个终端层：切换 = 显示/隐藏，滚动历史与全屏程序状态原地保留。
    padding = 终端文本留白（底色由 JS 跟随终端预设，见 makeTerm/changeTheme）；

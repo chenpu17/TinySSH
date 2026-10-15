@@ -83,6 +83,8 @@ interface CmdArgs {
   set_session_logging: { sid: string; enabled: boolean };
   session_log_path: { sid: string };
   exec_human: { sid: string; command: string };
+  // 监控条（命令框退役轮）：只读采样，核心侧固定脚本、UI 不可注入命令
+  read_host_metrics: { sid: string };
   set_control: { sid: string; owner: wire.ControlOwner; stopRunning?: boolean };
   // R42（§6.7）：首次委托/交还的**受控转换**（Human-only）。goal 可选——None 时
   // 核心保留既有目标（与 set_session_goal 的 None=清除不同），故不得省略该参数语义。
@@ -174,6 +176,7 @@ interface CmdRet {
   set_session_logging: string | null;
   session_log_path: string | null;
   exec_human: wire.ExecResult;
+  read_host_metrics: string;
   set_control: wire.TakeoverReport;
   delegate_session: void;
   shell_capability: wire.ShellCapability;

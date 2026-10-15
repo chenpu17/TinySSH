@@ -132,6 +132,15 @@ export const IconClock = (p: IconProps) => (
   <Svg {...p}><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></Svg>
 );
 
+// 监控条（命令框退役轮）：暂停/恢复采样切换钮（lucide pause/play 同形）
+export const IconPause = (p: IconProps) => (
+  <Svg {...p}><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></Svg>
+);
+
+export const IconPlay = (p: IconProps) => (
+  <Svg {...p}><polygon points="6 3 20 12 6 21" /></Svg>
+);
+
 // 规格 §六「连接中」小 spinner（currentColor；旋转在 .spin，reduced-motion 下停转只留图形）
 export const IconLoader = (p: IconProps) => (
   <Svg {...p}><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></Svg>
