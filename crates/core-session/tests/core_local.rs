@@ -795,22 +795,26 @@ async fn queue_busy_backpressure() {
     m.delegate_session(&human(), sid.clone(), None)
         .await
         .unwrap();
-    // 占住队列：一条长命令 + 8 条排队 → 第 9 条 QueueBusy
+    // 占住队列：一条长命令 + 8 条排队 → 第 9 条 QueueBusy。
+    // CI 三档轮硬化：阻塞器必须长于满载 starvation 窗（实测本共享 VM 1082s
+    // 二进制饥饿、6s 阻塞器被拖穿→队列排空→第 9 条级联进审批门假红）——
+    // sleep 300（超时 310s）+ 头部等待 1s 保 blocker 先持槽；manager 落幕关
+    // PTY，abort() 收尾不受影响
     let m2 = m.clone();
     let sid2 = sid.clone();
     let blocker = tokio::spawn(async move {
         m2.exec(
             &human(),
             sid2,
-            "sleep 6",
+            "sleep 300",
             ExecOpts {
-                timeout: Some(Duration::from_secs(10)),
+                timeout: Some(Duration::from_secs(310)),
                 ..Default::default()
             },
         )
         .await
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(1000)).await;
     for i in 0..8 {
         let m3 = m.clone();
         let sid3 = sid.clone();
@@ -826,14 +830,39 @@ async fn queue_busy_backpressure() {
         });
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    let r = m
-        .exec(
-            &agent_actor(),
-            sid.clone(),
-            "echo overflow",
-            ExecOpts::default(),
-        )
-        .await;
+    // 第 9 条=轮询式探针（CI 三档轮 starvation 根治）：slot 被阻塞器钉死时，探针
+    // 只有两种合法归宿——立即 QueueBusy（队列满）或挂进队列不返回（排队等槽；
+    // 审批门在取槽之后，不可能先到）。5s 未返回=已排队=证明成立；返回
+    // Ok/其他错误=队列未满（满载下 spawn 迟 poll 计数未齐）→ 等 200ms 重探。
+    // 阻塞器 sleep 300（此前 6s 被实测饥饿拖穿→队列排空→级联审批假红），
+    // manager 落幕关 PTY 不留残进程。
+    let probe_fut = || {
+        let m9 = m.clone();
+        let sid9 = sid.clone();
+        tokio::spawn(async move {
+            m9.exec(&agent_actor(), sid9, "echo overflow", ExecOpts::default())
+                .await
+        })
+    };
+    let mut r = Err(Error::InvalidInput("探针未发出".into()));
+    for _ in 0..12 {
+        match tokio::time::timeout(Duration::from_secs(5), probe_fut()).await {
+            Ok(Ok(Err(e @ Error::QueueBusy { .. }))) => {
+                r = Err(e);
+                break;
+            }
+            Ok(Ok(other)) => {
+                r = other;
+                break;
+            }
+            Ok(Err(join)) => panic!("探针任务 join 失败: {join:?}"),
+            Err(_elapsed) => {
+                // 5s 仍挂起=已排队：判定成立
+                r = Err(Error::QueueBusy { position: 9 });
+                break;
+            }
+        }
+    }
     assert!(
         matches!(r, Err(Error::QueueBusy { position: _ })),
         "期望 QueueBusy，得到 {r:?}"
