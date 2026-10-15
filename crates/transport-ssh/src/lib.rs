@@ -590,13 +590,16 @@ impl ChannelHandle for SshChannel {
         // 阻塞（挂死 IO 时恒等至 deadline）。通道开启后连接生命周期由 channel
         // 自持：close 抢到锁 disconnect，在途 exec 以连接错误快速失败（正确语义
         // ——关闭不再等执行，执行不再钉死关闭）。
+        // cancel 即时性轮：开通道/exec 写入两个网络点也包 cancel——读环本就有
+        // select 臂，此前前置段挂在死网络上时 cancel_exec 迟迟不可达。
         let mut channel = {
             let handle_guard = self.handle.lock().await;
             let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-            handle
-                .channel_open_session()
-                .await
-                .map_err(|e| Error::ConnectFailed(format!("fresh channel: {e}")))?
+            let opened = tokio::select! {
+                c = handle.channel_open_session() => c,
+                _ = cancel.cancelled() => return Err(Error::Cancelled),
+            };
+            opened.map_err(|e| Error::ConnectFailed(format!("fresh channel: {e}")))?
         };
 
         // env 注入：env K=V ... sh -c '<cmd>'
@@ -616,9 +619,11 @@ impl ChannelHandle for SshChannel {
         } else {
             full.push_str(cmd);
         }
-        channel
-            .exec(true, full.as_bytes())
-            .await
+        let execed = tokio::select! {
+            r = channel.exec(true, full.as_bytes()) => r,
+            _ = cancel.cancelled() => return Err(Error::Cancelled),
+        };
+        execed
             .map_err(|e| Error::ConnectFailed(format!("exec: {e}")))?;
 
         let cap = opts.output_cap.unwrap_or(session_api::DEFAULT_OUTPUT_CAP);

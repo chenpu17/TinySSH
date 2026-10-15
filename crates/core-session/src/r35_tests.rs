@@ -16,6 +16,9 @@ enum TxPlan {
     Succeed { total: u64, chunk: u64, pause_ms: u64 },
     /// 冻结在途任务（持闸，供并发上限/排队观察）
     HoldGate { total: u64, gate: Arc<AtomicBool> },
+    /// 挂死模拟（cancel 即时性轮）：完全无视 cancel 的死 IO——真实域=死网络
+    /// 上永不返回的 write_all；取消只能靠编排层 select 掉 future 生效
+    Hang,
 }
 
 /// 发布原语脚本。
@@ -89,6 +92,12 @@ async fn run_plan(plan: &TxPlan, cancel: &CancellationToken, progress: &(dyn Fn(
                 progress(done, Some(*total));
             }
             Ok(done)
+        }
+        TxPlan::Hang => {
+            // 无视 cancel：永不返回、永不检查（外层 select 是唯一出口）
+            loop {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         }
     }
 }
@@ -246,6 +255,27 @@ async fn count_running(m: &SessionManager) -> usize {
 }
 
 const T: u64 = 4096;
+
+/// cancel 即时性轮（挂死 IO）：完全无视 cancel 的死 IO（TxPlan::Hang）上，
+/// cancel_transfer 必须秒级收敛 Cancelled——编排层 select 掉传输 future 是
+/// 唯一出口（真实域=死网络 write_all 挂死，传输环内 is_cancelled 检查永不可达；
+/// 此前裸 await 时本用例只能等 wait_terminal 6s 超时 panic）。
+#[tokio::test]
+async fn r35_cancel_cuts_hung_io() {
+    let m = mgr();
+    let (h, _c) = mk_sess(m.center.clone(), "s-r35", TxPlan::Hang, TxPlan::Succeed { total: T, chunk: T, pause_ms: 1 }, LinkPlan::Committed);
+    register(&m, h);
+    let t = m.upload(&Actor::Human, "s-r35".into(), std::path::Path::new("/tmp/r35-a.bin"), "/root/hang.bin", None).await.unwrap();
+    wait_status(&m, &t.id, TransferStatus::Running).await;
+    m.cancel_transfer(&Actor::Human, t.id.clone()).await.unwrap();
+    let start = std::time::Instant::now();
+    let done = wait_terminal(&m, &t.id).await;
+    assert!(start.elapsed() < Duration::from_secs(5), "挂死 IO 上取消必须即时（实测 {:?}）", start.elapsed());
+    assert_eq!(done.status, TransferStatus::Cancelled);
+    let (jr, verified) = m.center.vault.transfer_journal_get(&t.id).unwrap().unwrap();
+    assert_eq!(jr.status, TransferStatus::Cancelled);
+    assert!(!verified, "确未提交 → 无发布证据");
+}
 
 /// §366 每会话并行上限 2：同会话 3 个不同目标上传，2 个在途 Running、第 3 个
 /// 保持 Queued 排队；放行后在途完成、排队者接续并全部 Succeeded。

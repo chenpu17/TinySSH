@@ -3644,10 +3644,21 @@ impl SessionManager {
                 });
             };
             let temp_path = std::path::PathBuf::from(&plan.temp);
+            // cancel 即时性轮（挂死 IO）：编排层 select 包传输——此前裸 await，
+            // 取消只靠传输环内分片间检查，死网络上单个 write_all 挂死=「取消中」
+            // 永不收敛（同目标锁+会话槽全被钉住）。select 掉 future=IO await 点
+            // 即断（russh sftp 请求丢弃安全，连接由 close 收尾），挂死传输秒级
+            // 转 Cancelled。
             let r = if is_upload {
-                h2.channel.upload(&local2, &plan.temp, &cancel2, &progress).await
+                tokio::select! {
+                    r = h2.channel.upload(&local2, &plan.temp, &cancel2, &progress) => r,
+                    _ = cancel2.cancelled() => Err(Error::Cancelled),
+                }
             } else {
-                h2.channel.download(&remote2, &temp_path, &cancel2, &progress).await
+                tokio::select! {
+                    r = h2.channel.download(&remote2, &temp_path, &cancel2, &progress) => r,
+                    _ = cancel2.cancelled() => Err(Error::Cancelled),
+                }
             };
             let staged_bytes = match r {
                 Ok(b) => b,
