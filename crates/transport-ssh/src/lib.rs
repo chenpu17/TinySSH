@@ -585,12 +585,19 @@ impl ChannelHandle for SshChannel {
         deadline: std::time::Instant,
         cancel: &CancellationToken,
     ) -> Result<FreshOutcome> {
-        let handle_guard = self.handle.lock().await;
-        let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-        let mut channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("fresh channel: {e}")))?;
+        // 锁收窄（并发修复②）：handle 锁只罩 channel_open——此前 guard 全程持有
+        // 到 exec 收尾，force_close/reconnect/close 与并发 sftp 全被单次 exec
+        // 阻塞（挂死 IO 时恒等至 deadline）。通道开启后连接生命周期由 channel
+        // 自持：close 抢到锁 disconnect，在途 exec 以连接错误快速失败（正确语义
+        // ——关闭不再等执行，执行不再钉死关闭）。
+        let mut channel = {
+            let handle_guard = self.handle.lock().await;
+            let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
+            handle
+                .channel_open_session()
+                .await
+                .map_err(|e| Error::ConnectFailed(format!("fresh channel: {e}")))?
+        };
 
         // env 注入：env K=V ... sh -c '<cmd>'
         // （直接 `env K=V cmd` 会让外层 shell 先展开 cmd 里的 $VAR，注入无效）
@@ -745,12 +752,18 @@ impl ChannelHandle for SshChannel {
         cancel: &CancellationToken,
         progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64> {
-        let handle_guard = self.handle.lock().await;
-        let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
+        // 锁收窄（并发修复②，upload/download/list_dir 同款）：handle 锁只罩
+        // channel_open——大传输此前把锁拿在手里到传完，close/reconnect 与
+        // sftp_list（文件面板）全被阻塞数分钟；sftp 会话自 channel 派生后
+        // guard 即死重。close disconnect → 在途传输以连接错误快速失败。
+        let channel = {
+            let handle_guard = self.handle.lock().await;
+            let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
+            handle
+                .channel_open_session()
+                .await
+                .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?
+        };
         channel
             .request_subsystem(true, "sftp")
             .await
@@ -802,12 +815,18 @@ impl ChannelHandle for SshChannel {
         cancel: &CancellationToken,
         progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64> {
-        let handle_guard = self.handle.lock().await;
-        let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
+        // 锁收窄（并发修复②，upload/download/list_dir 同款）：handle 锁只罩
+        // channel_open——大传输此前把锁拿在手里到传完，close/reconnect 与
+        // sftp_list（文件面板）全被阻塞数分钟；sftp 会话自 channel 派生后
+        // guard 即死重。close disconnect → 在途传输以连接错误快速失败。
+        let channel = {
+            let handle_guard = self.handle.lock().await;
+            let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
+            handle
+                .channel_open_session()
+                .await
+                .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?
+        };
         channel
             .request_subsystem(true, "sftp")
             .await
@@ -856,12 +875,18 @@ impl ChannelHandle for SshChannel {
     /// 列目录（T41 FR-7）：临时 SFTP 通道 readdir（与上传下载同模式，无持久会话生命周期负担）。
     /// kind=条目自身类型（readdir 属性 lstat 语义）；size/mtime 未知为 None（§352 不伪造零值）。
     async fn list_dir(&self, path: &str) -> Result<Vec<DirEntryS>> {
-        let handle_guard = self.handle.lock().await;
-        let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
+        // 锁收窄（并发修复②，upload/download/list_dir 同款）：handle 锁只罩
+        // channel_open——大传输此前把锁拿在手里到传完，close/reconnect 与
+        // sftp_list（文件面板）全被阻塞数分钟；sftp 会话自 channel 派生后
+        // guard 即死重。close disconnect → 在途传输以连接错误快速失败。
+        let channel = {
+            let handle_guard = self.handle.lock().await;
+            let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
+            handle
+                .channel_open_session()
+                .await
+                .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?
+        };
         channel
             .request_subsystem(true, "sftp")
             .await
