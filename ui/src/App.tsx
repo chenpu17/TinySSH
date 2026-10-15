@@ -5,7 +5,7 @@ import {
 import { errMsg, parseWireError } from "./adapter/errors";
 import { MetricsBar } from "./metrics";
 import { SelfMeterDetail } from "./self-meter";
-import { resolveAction, isMacPlatform } from "./actions";
+import { resolveAction, isMacPlatform, isWindowsPlatform } from "./actions";
 import type { AppAction } from "./actions";
 import {
   DEFAULT_KEYMAP, KEYMAP_ACTIONS, KEYMAP_SETTING,
@@ -36,10 +36,12 @@ import {
 // macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
 // 只在原生模式加类——浏览器 demo 没有标题栏，留白反而是错的（走查可手动加类模拟）。
 // native-mac 只标 macOS：84px 红绿灯安全区是 mac 专属（titleBarStyle Overlay 为
-// mac-only 字段，Windows 走原生标题栏，预留位是死缩进——十轮）。
+// mac-only 字段）。native-win 标 Windows：tauri.windows.conf.json decorations:false 后
+// 应用标题行即唯一标题栏，右端 ─ □ ✕ 自绘窗口控件（双标题栏重设计）。
 if (inTauri) {
   document.documentElement.classList.add("native-chrome");
   if (isMacPlatform()) document.documentElement.classList.add("native-mac");
+  if (isWindowsPlatform()) document.documentElement.classList.add("native-win");
 }
 import { getVersion } from "@tauri-apps/api/app";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
@@ -507,6 +509,49 @@ const THEMES: ThemePreset[] = [
   },
 ];
 const themeById = (id: string): ThemePreset => THEMES.find((t) => t.id === id) ?? THEMES[0];
+
+// Windows 自绘窗口控件（双标题栏重设计）：tauri.windows.conf.json decorations:false 后，
+// 44px 应用标题行即唯一标题栏，右端 ─ □ ✕；最大化态经 onResized 跟踪（□/❐ 切换）。
+// demo/浏览器不渲染（无原生窗口，调用只会静默失败）。
+function WinControls() {
+  const [maxed, setMaxed] = useState(false);
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let un: (() => void) | undefined;
+    let alive = true;
+    const probe = () => { win.isMaximized().then((v) => { if (alive) setMaxed(v); }).catch(() => {}); };
+    probe();
+    win.onResized(() => probe())
+      .then((f) => { un = () => { try { void f(); } catch { /* 已卸载 */ } }; })
+      .catch(() => {});
+    return () => { alive = false; un?.(); };
+  }, []);
+  return (
+    <div className="win-controls" role="group" aria-label="窗口控制" data-testid="win-controls">
+      <button className="wc-btn" title="最小化" aria-label="最小化窗口"
+        onClick={() => void getCurrentWindow().minimize()}>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" strokeWidth="1" /></svg>
+      </button>
+      <button className="wc-btn" title={maxed ? "还原" : "最大化"} aria-label={maxed ? "还原窗口" : "最大化窗口"}
+        onClick={() => void getCurrentWindow().toggleMaximize()}>
+        {maxed ? (
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M3 0.5h6.5V7" fill="none" stroke="currentColor" strokeWidth="1" />
+            <rect x="0.5" y="3" width="6.5" height="6.5" fill="none" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        ) : (
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        )}
+      </button>
+      <button className="wc-btn wc-close" title="关闭" aria-label="关闭窗口"
+        onClick={() => void getCurrentWindow().close()}>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" strokeWidth="1" /></svg>
+      </button>
+    </div>
+  );
+}
 
 export default function App() {
 
@@ -3961,6 +4006,7 @@ export default function App() {
             ><span className="ctl-dot" />{owner === "Human" ? "我控制中" : hasAgents ? "Agent 控制中" : "手动控制"}</span>
           )}
         </div>
+        {inTauri && isWindowsPlatform() && <WinControls />}
       </header>
       <div className="workspace">
         {hostbarOpen && (

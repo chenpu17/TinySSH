@@ -1192,6 +1192,17 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
    十轮：84px 安全区收进 .native-mac（Overlay 为 mac 专属；Windows/Linux 走原生标题栏，
    预留位是死缩进） */
 .native-chrome.native-mac .titlebar { padding-left: 84px; }
+/* ---- Windows 自绘窗口控件（双标题栏重设计）：decorations:false 后标题行右端 ─ □ ✕，
+   右缘贴边（去 10px 内边距）、整行高 44px 命中域；关闭钮悬停 Windows 标准红 ---- */
+.native-chrome.native-win .titlebar { padding-right: 0; }
+.win-controls { display: flex; align-self: stretch; flex: none; }
+.win-controls .wc-btn {
+  width: 44px; display: flex; align-items: center; justify-content: center;
+  color: var(--text-sub); background: transparent; border: 0; border-radius: 0; cursor: pointer;
+  padding: 0;
+}
+.win-controls button.wc-btn:hover { background: var(--panel3); color: var(--text); }
+.win-controls button.wc-btn.wc-close:hover { background: #e81123; color: #fff; }
 /* 标题区整行即拖拽区：文字不可选中、光标为箭头（标题栏语义）；按钮恢复手型 */
 .titlebar[data-tauri-drag-region] span { cursor: default; user-select: none; }
 .titlebar[data-tauri-drag-region] button { cursor: pointer; }

@@ -40,6 +40,13 @@ export function isMacPlatform(): boolean {
   return /mac|iphone|ipad|ios/i.test(p);
 }
 
+/** Windows 判定（双标题栏重设计）：原生壳内用于显隐自绘窗口控件（─ □ ✕）。 */
+export function isWindowsPlatform(): boolean {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const p = nav.userAgentData?.platform ?? nav.platform ?? nav.userAgent ?? "";
+  return /win/i.test(p);
+}
+
 /** keymap 唯一事实源：返回 null = 不归应用动作（透传给终端/浏览器）。 */
 export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | null {
   // IME 组合期（§7.3 输入约定）：isComposing 与 keyCode 229（合成器改写的 keydown）
