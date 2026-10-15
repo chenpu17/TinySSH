@@ -562,7 +562,12 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
   padding: 1px 5px; margin-top: 2px;
   background: var(--accent-soft);
 }
-.welcome-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+/* 首页四动作 2×2 网格（字体档轮）：单行 flex 时每钮仅 ~94px，中文标签被硬折成
+   「添加主/机」「快速连/接」；双列后每钮 ~197px 全部单行。奇数尾钮（无本机主机时
+   只剩 3 个）通栏兜底，避免右下留空格 */
+.welcome-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.welcome-actions button { white-space: nowrap; }
+.welcome-actions button:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .welcome-note { font-size: 11px; }
 /* ⌘F 终端内搜索框（T16）：悬浮于终端右上角，不遮内容主区 */
 .term-search {
