@@ -6703,7 +6703,7 @@ function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: string,
         <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
           style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
       ) : authMode === "agent" ? (
-        <div className="dim" style={{ marginTop: 6 }}>连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。</div>
+        <div className="dim" style={{ marginTop: 6 }}>连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。Windows 需 OpenSSH Authentication Agent 服务在运行。</div>
       ) : (
         <>
           {/* R21（§265 已有密钥）：绑定凭据库既有凭据——取消表单后未绑定的凭据在此回收 */}

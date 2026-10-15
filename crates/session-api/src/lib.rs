@@ -426,7 +426,8 @@ pub enum AuthType {
     Key,
     Password,
     KeyboardInteractive,
-    /// 连接时经本机 ssh-agent（SSH_AUTH_SOCK）签名，私钥不出 agent。
+    /// 连接时经本机 ssh-agent 签名（unix=SSH_AUTH_SOCK；windows=OpenSSH 服务命名
+    /// 管道 \\.\pipe\openssh-ssh-agent），私钥不出 agent。
     Agent,
 }
 
