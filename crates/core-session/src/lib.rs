@@ -153,6 +153,15 @@ struct StagePlan {
 /// attempts 登记上限（十轮防泄漏；收缩策略见 `SessionManager::gc_attempts`）。
 const ATTEMPTS_CAP: usize = 256;
 
+/// 决策窗超时（决策窗原子化轮）：AwaitingDecision 最长钉住时长，超时按取消
+/// 语义收尾（journal 终态行即留痕，与 cancel 不发审计同约定）。在场人类裁决
+/// 以秒计，5 分钟足够宽裕；无界待决会永久占用同目标锁与 staging temp。
+/// 测试构建 1s 短窗——超时回归（r34）不必等 5 分钟，生产行为同路径。
+#[cfg(not(test))]
+const DECISION_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+#[cfg(test)]
+const DECISION_TTL: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl SessionManager {
     pub fn open(db_path: &Path) -> Result<Arc<Self>> {
         let vault = Arc::new(tinyssh_vault::Vault::open(db_path)?);
@@ -2930,12 +2939,25 @@ impl SessionManager {
     ///（§560 ~5 次/秒/任务）；journal 状态变化必写、纯进度 ≥1s 一写。
     /// R34：journal 行随写 verified 证据位（提交窗口同步）。
     fn transfer_apply(&self, tid: &TransferId, mutate: impl FnOnce(&mut TransferTask)) {
+        self.transfer_apply_entry(tid, |t, _| mutate(t));
+    }
+
+    /// 条目级变体（决策窗原子化轮）：闭包可同时改任务快照与条目附件
+    /// decision_tx——AwaitingDecision 的状态翻转与决策通道安装必须同锁原子，
+    /// 否则两段加锁之间的竞窗里人类提交（take 到 None → InvalidTransferState）
+    /// 与作废（take 到 None 后照旧收卡，真等待端 select 挂死在无人关闭的 rx）
+    /// 都会走错。emit/journal 节流语义与 transfer_apply 完全一致。
+    fn transfer_apply_entry(
+        &self,
+        tid: &TransferId,
+        mutate: impl FnOnce(&mut TransferTask, &mut Option<tokio::sync::oneshot::Sender<CollisionDecision>>),
+    ) {
         let now = std::time::Instant::now();
         let (emit_task, journal_task) = {
             let mut reg = self.transfers.lock().unwrap();
             let Some(e) = reg.get_mut(tid) else { return };
             let before = e.task.status;
-            mutate(&mut e.task);
+            mutate(&mut e.task, &mut e.decision_tx);
             e.task.revision += 1;
             let changed = e.task.status != before;
             let mut emit = None;
@@ -3005,7 +3027,7 @@ impl SessionManager {
     }
 
     /// C6/R34：进入 AwaitingDecision 并等待人类裁决（数据阶段前预检冲突——
-    /// 不白传字节）。返回 Some(决定)=继续发布编排；None=取消/作废收尾已落终态。
+    /// 不白传字节）。返回 Some(决定)=继续发布编排；None=取消/作废/超时收尾已落终态。
     async fn transfer_await_decision(
         &self,
         tid: &TransferId,
@@ -3015,42 +3037,85 @@ impl SessionManager {
         cancel: &CancellationToken,
     ) -> Option<CollisionDecision> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.transfer_apply(tid, |t| {
+        // 决策窗原子化轮：状态翻转与通道安装同锁——此前 transfer_apply 后二次
+        // 加锁装 decision_tx，中间窗任务已可见 AwaitingDecision 而通道未装。
+        self.transfer_apply_entry(tid, |t, slot| {
             t.status = TransferStatus::AwaitingDecision;
             t.decision_prompt = Some(DecisionPrompt {
                 target_path: target_path.to_string(),
                 target_stat: target_stat.clone(),
                 reason: reason.to_string(),
             });
+            *slot = Some(tx);
         });
-        if let Some(e) = self.transfers.lock().unwrap().get_mut(tid) {
-            e.decision_tx = Some(tx);
-        }
-        tokio::select! {
-            r = rx => match r {
-                Ok(d) => Some(d),
-                // 通道被取走即关闭=提交决定/取消/作废。关闭而非投递（含取消竞窗
-                // 抢先关闭）→ 确未提交，统一 Cancelled 收尾（取消=「已取消」、
-                // 作废=「决策卡已作废」，错误文本区分留痕）
-                Err(_) => {
-                    let msg = if cancel.is_cancelled() {
-                        "已取消（冲突待决中）".to_string()
-                    } else {
-                        "决策卡已作废（过期决定显式收卡）".to_string()
-                    };
-                    self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some(msg));
-                    None
+        // 决策窗超时轮：无人裁决不能无限钉住传输——同目标锁与 staging temp 全被
+        // 持有，同会话后续传输全部排队。超时=取消语义收尾（决策卡随事件帧翻
+        // 终态；journal 终态行即留痕，与 cancel 不发审计同约定）。
+        // select 用 &mut rx 借用——超时臂抢锁 take 失败=提交/作废竞窗先行拿走
+        // 通道，此时 rx 还要继续等真结局（提交者会 send、作废者会 drop）。
+        let sleep = tokio::time::sleep(DECISION_TTL);
+        tokio::pin!(sleep);
+        let mut rx = rx;
+        let mut race_lost = false;
+        let decision = loop {
+            tokio::select! {
+                r = &mut rx => break match r {
+                    Ok(d) => Some(d),
+                    // 通道被取走即关闭=提交决定/取消/作废。关闭而非投递（含取消竞窗
+                    // 抢先关闭）→ 确未提交，统一 Cancelled 收尾（取消=「已取消」、
+                    // 作废/超时=各自文案，留痕区分）
+                    Err(_) => {
+                        let msg = if cancel.is_cancelled() {
+                            "已取消（冲突待决中）".to_string()
+                        } else {
+                            "决策卡已作废（过期决定显式收卡）".to_string()
+                        };
+                        self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some(msg));
+                        None
+                    }
+                },
+                _ = cancel.cancelled() => {
+                    // 取消竞窗：通道取走防悬挂写；确未提交 → Cancelled
+                    if let Some(e) = self.transfers.lock().unwrap().get_mut(tid) {
+                        e.decision_tx = None;
+                    }
+                    self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some("已取消（冲突待决中）".into()));
+                    break None;
                 }
-            },
-            _ = cancel.cancelled() => {
-                // 取消竞窗：通道取走防悬挂写；确未提交 → Cancelled
-                if let Some(e) = self.transfers.lock().unwrap().get_mut(tid) {
-                    e.decision_tx = None;
+                _ = &mut sleep => {
+                    // 抢锁 take 通道：take 到=确无人提交，超时收尾；没抢到=提交/
+                    // 作废竞窗先行——出 select 后落回 rx 等真结局（rx 不能在本臂
+                    // await：&mut rx 借用仍被 select 持有）
+                    let took = self
+                        .transfers
+                        .lock()
+                        .unwrap()
+                        .get_mut(tid)
+                        .map(|e| e.decision_tx.take().is_some())
+                        .unwrap_or(false);
+                    if took {
+                        self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some("决策超时（无人裁决，传输已收卡）".into()));
+                        break None;
+                    }
+                    race_lost = true;
                 }
-                self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some("已取消（冲突待决中）".into()));
-                None
             }
-        }
+            if race_lost {
+                break match rx.await {
+                    Ok(d) => Some(d),
+                    Err(_) => {
+                        let msg = if cancel.is_cancelled() {
+                            "已取消（冲突待决中）".to_string()
+                        } else {
+                            "决策卡已作废（过期决定显式收卡）".to_string()
+                        };
+                        self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some(msg));
+                        None
+                    }
+                };
+            }
+        };
+        decision
     }
 
     // ---- C10 输出订阅恢复（R11；桥层专用，不在 SessionApi trait 面）----

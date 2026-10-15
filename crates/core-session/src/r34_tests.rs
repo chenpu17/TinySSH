@@ -338,6 +338,28 @@ async fn r34_decision_guards() {
     assert!(matches!(e3, Error::InvalidTransferState { .. }), "{e3:?}");
 }
 
+/// 决策窗超时（决策窗原子化轮）：无人裁决 → DECISION_TTL（测试构建 1s）后按
+/// 取消语义收尾，journal 落 Cancelled——不能无界钉住同目标锁与 staging temp。
+#[tokio::test]
+async fn r34_decision_timeout_closes_window() {
+    let m = mgr();
+    let (h, c) = mk(m.center.clone(), TxPlan::Succeed { total: T, chunk: T, pause_ms: 1 }, TxPlan::Fail { total: 1 }, LinkPlan::Committed);
+    register(&m, h);
+    c.seed("/root/dst.bin", 5);
+    let t = m.upload(&Actor::Human, "s-r34".into(), std::path::Path::new("/tmp/src.bin"), "/root/dst.bin", None).await.unwrap();
+    let _card = wait_status(&m, &t.id, TransferStatus::AwaitingDecision).await;
+    // 不提交，等超时收尾（wait_terminal 上限 6s > TTL 1s）
+    let done = wait_terminal(&m, &t.id).await;
+    assert_eq!(done.status, TransferStatus::Cancelled, "超时=取消语义收尾");
+    assert!(done.decision_prompt.is_none(), "离开待决即清提示载荷");
+    let (jr, verified) = m.center.vault.transfer_journal_get(&t.id).unwrap().unwrap();
+    assert_eq!(jr.status, TransferStatus::Cancelled);
+    assert!(!verified, "确未提交 → 无发布证据");
+    // 窗口关死：超时后提交 → InvalidTransferState
+    let e = m.submit_collision_decision(&Actor::Human, t.id.clone(), CollisionDecision::Skip, done.revision).await.unwrap_err();
+    assert!(matches!(e, Error::InvalidTransferState { .. }), "{e:?}");
+}
+
 fn t_id(t: &TransferTask) -> String { t.id.clone() }
 
 /// keep-both：换名 name.tinyssh-1.ext 后按新文件发布（no-clobber 原语同要求）；
