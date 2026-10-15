@@ -769,6 +769,8 @@ export default function App() {
   // 十一轮续：右键通道补全——主机卡（连接/收藏/编辑/删除）与终端区（复制/粘贴/全选）
   const [hostMenu, setHostMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
   const [termMenu, setTermMenu] = useState<{ x: number; y: number; sid: string; hasSel: boolean } | null>(null);
+  // 本轮：最近连接行右键菜单（连接/编辑主机/从最近连接隐藏/删除主机）
+  const [recentMenu, setRecentMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
   // 十四轮：标签重命名——sid → 自定名（覆盖 host_name 展示；复制标签页后同名「本机×2」
   // 无法区分）。会话生命周期内有效（会话本就不跨重启存活），不入 vault。
   const [tabNames, setTabNames] = useState<Record<string, string>>({});
@@ -821,6 +823,19 @@ export default function App() {
   // R20（C8 消费）：收藏/最近元数据 + 标签筛选 chip
   const [hostMeta, setHostMeta] = useState<HostMeta[]>([]);
   const [recents, setRecents] = useState<RecentHost[]>([]);
+  // 本轮：最近连接右键「从最近连接隐藏」——纯前端偏好（后端列表由 sessions 表
+  // 派生，删行会伤会话历史语义）；重连该主机时自动恢复显示
+  const [recentsHidden, setRecentsHidden] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("ui.recentsHidden") ?? "[]") as string[]; } catch { return []; }
+  });
+  const setRecentHidden = (hostId: string, hidden: boolean) => {
+    setRecentsHidden((prev) => {
+      if (prev.includes(hostId) === hidden) return prev;
+      const next = hidden ? [...prev, hostId] : prev.filter((x) => x !== hostId);
+      try { localStorage.setItem("ui.recentsHidden", JSON.stringify(next)); } catch { /* 隐私模式忽略 */ }
+      return next;
+    });
+  };
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
@@ -2130,6 +2145,7 @@ export default function App() {
     if (tabMenu) { setTabMenu(null); return true; }
     if (hostMenu) { setHostMenu(null); return true; }
     if (termMenu) { setTermMenu(null); return true; }
+    if (recentMenu) { setRecentMenu(null); return true; }
     if (splitMenu) { setSplitMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
     if (showSettings) { closeSettings(); return true; }
@@ -2577,7 +2593,7 @@ export default function App() {
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || pendingDrop || keyCapture);
+  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture);
   modalRef.current = modal;
 
   // 键位录入（键位配置轮）：等待「按下新组合」期间吞掉一切键盘事件——Esc 取消、
@@ -3490,6 +3506,8 @@ export default function App() {
   };
 
   const createSession = async (host: Host, intoSplit = false, draft?: HostDraft) => {
+    // 本轮：任何建连路径都恢复「从最近连接隐藏」的主机——重新连了就是「最近」
+    setRecentHidden(host.id, false);
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
     const gen0 = focusGenRef.current;
     setConnError(null);
@@ -4741,13 +4759,18 @@ export default function App() {
                     仅在欢迎页呈现（§261：避免每次连接使侧栏重排）；点击即建连。
                     rev-r20 L5：行全部失效（主机刚删的毫秒窗）时不渲染空标题块 */}
                 {!sid && sessions.length === 0 && recents.length > 0 && (() => {
-                  const rows = recents.slice(0, 5).map((r) => {
+                  // 本轮：隐藏偏好先滤再截 5（隐藏行不占坑）；右键出操作菜单
+                  const rows = recents
+                    .filter((r) => !recentsHidden.includes(r.host_id))
+                    .slice(0, 5)
+                    .map((r) => {
                     const rh = hosts.find((x) => x.id === r.host_id);
                     if (!rh) return null;
                     return (
                       <button key={r.host_id} className="wr-row"
-                        title={`连接 ${r.host_name}（${rh.username}@${rh.address}）`}
-                        onClick={() => void createSession(rh)}>
+                        title={`连接 ${r.host_name}（${rh.username}@${rh.address}）；右键更多操作`}
+                        onClick={() => void createSession(rh)}
+                        onContextMenu={(e) => { e.preventDefault(); setRecentMenu({ x: e.clientX, y: e.clientY, hostId: r.host_id }); }}>
                         <span className="wr-name">{r.host_name}</span>
                         <span className="wr-addr mono">{rh.username}@{rh.address}</span>
                         <span className="wr-go">连接</span>
@@ -5036,6 +5059,36 @@ export default function App() {
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); en.term.clear(); }}
                     >清屏</button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+          {/* 本轮：最近连接行右键——与主机卡菜单同源同义（连接/编辑/删除），
+              加「从最近连接隐藏」（纯前端偏好；重连自动恢复，createSession 统一钩子） */}
+          {recentMenu && (() => {
+            const h = hosts.find((x) => x.id === recentMenu.hostId);
+            const mx = Math.min(recentMenu.x, window.innerWidth - 248);
+            const my = Math.min(recentMenu.y, window.innerHeight - 200);
+            const close = () => setRecentMenu(null);
+            return (
+              <>
+                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+                {h && (
+                  <div className="ctx-menu" role="menu" aria-label={`最近连接操作：${h.name}`} style={{ left: mx, top: my }}>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); void createSession(h); }}
+                    >连接（新建会话）</button>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
+                    >编辑主机…</button>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); setRecentHidden(h.id, true); }}
+                    >从最近连接隐藏</button>
+                    <div className="ctx-menu-sep" role="separator" />
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
+                    >删除主机…</button>
                   </div>
                 )}
               </>

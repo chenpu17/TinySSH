@@ -123,6 +123,13 @@ const demoState = {
     { id: "h-noint", name: "noint-1（无集成）", address: "noint.demo", port: 22, username: "ops", auth_type: "Password", shell_integration: false },
     { id: "h-staging1", name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password" },
   ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk"; tags?: string[]; ident_id?: string | null }[],
+  // 本轮（最近连接右键）：会话历史表——对齐真实核心 vault sessions 表语义
+  //（建连 INSERT，关闭只 UPDATE state 不删行）；list_recent_hosts 从这里派生。
+  // 此前 demo 关会话即 splice，欢迎页「最近连接」在浏览器域永不可达（保真度缺口）。
+  sessionHistory: [
+    { host_id: "h-prod1", kind: "ssh", created_at: "2026-09-27T13:50:00Z" },
+    { host_id: "h-staging1", kind: "ssh", created_at: "2026-09-27T13:40:00Z" },
+  ] as { host_id: string; kind: string; created_at: string }[],
   sessions: [
     {
       id: "s-demo-0001", host_id: "h-prod1", host_name: "prod-1", kind: "ssh",
@@ -661,6 +668,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       // C2（B01/R24）：人类新建会话**默认由 Human 控制**（构造期定 owner）。demo 此前
       // 一律 Agent-owned——那会让「首次委托」在演示域永不出现（R42 对齐真实核心修正）。
       demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+      // 本轮：历史表打点对齐真实核心 record_session（关闭不删，recents 全历史派生）
+      demoState.sessionHistory.push({ host_id: h.id, kind: "ssh", created_at: new Date().toISOString() });
       audit("human", "session_created", null, null, sid);
       // C8 镜像：成功建连打点（真实核心 touch_host_connection 同语义）
       {
@@ -1753,9 +1762,11 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         last_connected_at: m.last_connected_at,
       }));
     case "list_recent_hosts": {
-      // DF8.5：sessions 派生、排除 local、每主机最近一次、倒序上限 5
+      // DF8.5：历史表派生、排除 local、每主机最近一次、倒序上限 5——本轮起从
+      // sessionHistory 派生（真实核心关会话不删行=全历史；demo 此前从活跃 sessions
+      // 派生且关闭即 splice，欢迎页最近连接在浏览器域永不可达）
       const lastByHost = new Map<string, string>();
-      for (const s of demoState.sessions) {
+      for (const s of demoState.sessionHistory) {
         if (s.kind === "local" || !s.host_id) continue;
         const prev = lastByHost.get(s.host_id);
         if (!prev || s.created_at > prev) lastByHost.set(s.host_id, s.created_at);
