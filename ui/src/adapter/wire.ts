@@ -626,3 +626,11 @@ export interface RecentHost {
   host_name: string;
   connected_at: string;
 }
+
+// 自身开销监控（本轮）：tinyssh-app 进程级资源快照（read_self_metrics）。
+// cpu_pct null=首样基线未立；非 Windows 核心恒 null/0（FE 据此整块隐藏）。
+export interface SelfMetrics {
+  cpu_pct: number | null;
+  ws_mb: number;
+  commit_mb: number;
+}

@@ -429,6 +429,111 @@ async fn read_host_metrics(state: ApiState<'_>, sid: String) -> CmdResult<String
     state.api.probe_metrics(&human(), &sid).await.map_err(WireError::from)
 }
 
+// ---- 自身开销监控（本轮）：tinyssh-app 进程级 CPU%/内存——kernel32 直读，零新依赖 ----
+
+#[cfg(windows)]
+mod self_proc {
+    //! 最小 Win32 面：只取本进程 CPU 时间与内存计数，不经 windows crate。
+    //! K32GetProcessMemoryInfo 在 kernel32（Win7+），随 MSVC 默认链接解析。
+    #![allow(non_snake_case)]
+    #[repr(C)]
+    struct FileTime { lo: u32, hi: u32 }
+    impl FileTime {
+        fn as_u64(&self) -> u64 { ((self.hi as u64) << 32) | self.lo as u64 }
+    }
+    #[repr(C)]
+    struct ProcMemCountersEx {
+        cb: u32,
+        PageFaultCount: u32,
+        PeakWorkingSetSize: usize,
+        WorkingSetSize: usize,
+        QuotaPeakPagedPoolUsage: usize,
+        QuotaPagedPoolUsage: usize,
+        QuotaPeakNonPagedPoolUsage: usize,
+        QuotaNonPagedPoolUsage: usize,
+        PagefileUsage: usize,
+        PeakPagefileUsage: usize,
+        PrivateUsage: usize, // EX 扩展：独占提交字节
+    }
+    extern "system" {
+        fn GetCurrentProcess() -> *mut core::ffi::c_void;
+        fn GetProcessTimes(
+            h: *mut core::ffi::c_void,
+            created: *mut FileTime,
+            exited: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+        fn K32GetProcessMemoryInfo(h: *mut core::ffi::c_void, out: *mut ProcMemCountersEx, cb: u32) -> i32;
+    }
+
+    /// 一次采样：（内核+用户 CPU 时间，100ns 累计），工作集字节，提交字节
+    pub fn sample() -> (u64, u64, u64) {
+        unsafe {
+            let h = GetCurrentProcess();
+            let (mut c, mut e, mut k, mut u) = (
+                FileTime { lo: 0, hi: 0 }, FileTime { lo: 0, hi: 0 },
+                FileTime { lo: 0, hi: 0 }, FileTime { lo: 0, hi: 0 },
+            );
+            let proc_time = if GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0 {
+                k.as_u64().wrapping_add(u.as_u64())
+            } else { 0 };
+            let mut mc = ProcMemCountersEx {
+                cb: std::mem::size_of::<ProcMemCountersEx>() as u32,
+                PageFaultCount: 0, PeakWorkingSetSize: 0, WorkingSetSize: 0,
+                QuotaPeakPagedPoolUsage: 0, QuotaPagedPoolUsage: 0,
+                QuotaPeakNonPagedPoolUsage: 0, QuotaNonPagedPoolUsage: 0,
+                PagefileUsage: 0, PeakPagefileUsage: 0, PrivateUsage: 0,
+            };
+            let (ws, commit) = if K32GetProcessMemoryInfo(h, &mut mc, mc.cb) != 0 {
+                (mc.WorkingSetSize as u64, mc.PrivateUsage as u64)
+            } else { (0, 0) };
+            (proc_time, ws, commit)
+        }
+    }
+}
+
+/// CPU 差分基线：上次采样的进程 CPU 时间（100ns）与墙钟锚点；None=首样未立
+#[derive(Default)]
+struct SelfMeter(std::sync::Mutex<Option<(u64, std::time::Instant)>>);
+
+/// 进程自身开销快照（过桥形状）
+#[derive(serde::Serialize)]
+struct SelfMetrics {
+    /// 占全部逻辑核的百分比（任务管理器「进程 CPU」同口径）；null=首样基线未立
+    cpu_pct: Option<f64>,
+    /// 工作集 MB
+    ws_mb: u64,
+    /// 提交内存 MB（PrivateUsage）
+    commit_mb: u64,
+}
+
+/// 纯函数（可单测）：CPU%=Δ进程时间 / (Δ墙钟×核数)。时间倒流/非法入参 → None
+fn cpu_pct(cur: u64, prev: u64, wall_secs: f64, ncores: f64) -> Option<f64> {
+    if wall_secs <= 0.0 || ncores <= 0.0 || cur < prev {
+        return None;
+    }
+    Some((((cur - prev) as f64 / 1e7 / wall_secs / ncores) * 100.0).clamp(0.0, 100.0))
+}
+
+/// 自身开销采样（2s 轮询）：不经审计/审批（自进程只读计数，与
+/// read_host_metrics 的直连通道同理——高频轮询不能刷审计流）。
+#[tauri::command]
+fn read_self_metrics(state: State<'_, SelfMeter>) -> SelfMetrics {
+    #[cfg(windows)]
+    let (proc_now, ws, commit) = self_proc::sample();
+    #[cfg(not(windows))]
+    let (proc_now, ws, commit) = (0u64, 0u64, 0u64);
+    let ncores = std::thread::available_parallelism().map(|n| n.get() as f64).unwrap_or(1.0);
+    let mut prev = state.0.lock().unwrap();
+    let cpu_pct = match prev.as_ref() {
+        Some((p, at)) => cpu_pct(proc_now, *p, at.elapsed().as_secs_f64(), ncores),
+        None => None,
+    };
+    *prev = Some((proc_now, std::time::Instant::now()));
+    SelfMetrics { cpu_pct, ws_mb: ws / 1048576, commit_mb: commit / 1048576 }
+}
+
 /// 端口转发（T42 FR-8）：列/建/停（人类 GUI 入口；Agent 侧留 MCP 审批版）。
 #[tauri::command]
 async fn list_forwards(state: ApiState<'_>, sid: String) -> CmdResult<Vec<ForwardInfo>> {
@@ -1149,6 +1254,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(AppState { api: api.clone(), mcp_endpoint: mcp_endpoint_handle })
         .manage(terminal_input.clone())
+        .manage(SelfMeter::default())
         .on_page_load(|webview, payload| {
             eprintln!("[app] page load event: {:?} {:?}", payload.event(), webview.label());
             // dev harness：TINYSSH_SMOKE=1 时页面就绪后注入驱动脚本，走完
@@ -1600,7 +1706,7 @@ fn main() {
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             list_host_metadata, list_recent_hosts,
-            read_screen, send_keys, exec_human, read_host_metrics, set_control, delegate_session, session_brief, set_session_goal,
+            read_screen, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
@@ -5965,6 +6071,43 @@ fn dirs_or_home() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
+
+#[cfg(test)]
+mod self_meter_tests {
+    use super::cpu_pct;
+
+    /// 自身开销轮：CPU% 差分数学——100ns→秒、除核数、钳 [0,100]；
+    /// 首样（wall=0）与时间倒流（cur<prev）返回 None。
+    #[test]
+    fn delta_math_and_edges() {
+        // 单核满载 1s：进程时间增量 = 1e7 (100ns)
+        assert!((cpu_pct(2 * 10_000_000, 10_000_000, 1.0, 1.0).unwrap() - 100.0).abs() < 1e-9);
+        // 8 核机器上单核满载 1s → 12.5%
+        assert!((cpu_pct(10_000_000, 0, 1.0, 8.0).unwrap() - 12.5).abs() < 1e-9);
+        // 半个核的量
+        assert!((cpu_pct(5_000_000, 0, 1.0, 1.0).unwrap() - 50.0).abs() < 1e-9);
+        // 超界钳 100（采样间隙调度抖动可能算出 >100）
+        assert_eq!(cpu_pct(u64::MAX, 0, 0.5, 1.0), Some(100.0));
+        // 非法入参
+        assert_eq!(cpu_pct(100, 0, 0.0, 8.0), None);
+        assert_eq!(cpu_pct(100, 0, 1.0, 0.0), None);
+        assert_eq!(cpu_pct(50, 100, 1.0, 8.0), None);
+    }
+
+    /// 真实 Win32 采样活体测试：本测试进程自身的计数应为正、CPU 时间单调——
+    /// FFI 签名/结构体布局任何走样在这里直接炸出来（不依赖 UI 冒烟）。
+    #[test]
+    #[cfg(windows)]
+    fn win32_sample_live() {
+        let (t1, ws, commit) = super::self_proc::sample();
+        assert!(t1 > 0, "GetProcessTimes 应返回非零进程时间: {t1}");
+        assert!(ws > 0, "工作集应为正: {ws}");
+        assert!(commit > 0, "提交内存应为正: {commit}");
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        let (t2, _, _) = super::self_proc::sample();
+        assert!(t2 >= t1, "进程 CPU 时间应单调不减: {t1} → {t2}");
+    }
+}
 
 #[cfg(test)]
 mod wire_error_tests {

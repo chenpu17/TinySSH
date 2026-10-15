@@ -1040,6 +1040,17 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         "/dev/vda1  61873092  32549412  26156664  56% /",
       ].join("\n");
     }
+    case "read_self_metrics": {
+      // 自身开销（本轮，模拟）：形状与真实后端一致（cpu_pct 恒有值——真实核心
+      // 首样为 null，FE 以「—」呈现；demo 供恒定有效值便于浏览器域断言刷新）。
+      // CPU 按 sin 缓摆 2%–7%，工作集/提交随毫秒时钟慢漂，肉眼观感有生命体征。
+      const t = Date.now();
+      return {
+        cpu_pct: +(4.5 + 2.5 * Math.sin(t / 9000)).toFixed(1),
+        ws_mb: 188 + Math.round(14 * Math.sin(t / 47000)),
+        commit_mb: 236 + Math.round(10 * Math.sin(t / 61000)),
+      };
+    }
     case "send_keys":
       pushTo(args?.sid as string, (args?.keys as string) ?? "");
       return null;

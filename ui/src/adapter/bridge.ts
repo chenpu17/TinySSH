@@ -1,5 +1,5 @@
 // R10 Tauri/demo 统一桥：App 的一切后端调用必须经本模块。
-// - CmdMap 是命令面的唯一类型登记处（42 命令，与 src-tauri generate_handler 一致）；
+// - CmdMap 是命令面的唯一类型登记处（43 命令，与 src-tauri generate_handler 一致）；
 //   App 调用点的命令名/实参/返回值由 TS 全量校验，demo 不再经 `as never` 绕过。
 // - demo（浏览器演示后端）实现同一命令名空间；未实现命令在 demo.invoke 内显式报错。
 // - 平台专属 API（clipboard/window/drag-drop/version）不属于 wire，仍在组件层直用。
@@ -85,6 +85,8 @@ interface CmdArgs {
   exec_human: { sid: string; command: string };
   // 监控条（命令框退役轮）：只读采样，核心侧固定脚本、UI 不可注入命令
   read_host_metrics: { sid: string };
+  // 自身开销监控（本轮）：本进程 CPU/内存，无参只读
+  read_self_metrics: undefined;
   set_control: { sid: string; owner: wire.ControlOwner; stopRunning?: boolean };
   // R42（§6.7）：首次委托/交还的**受控转换**（Human-only）。goal 可选——None 时
   // 核心保留既有目标（与 set_session_goal 的 None=清除不同），故不得省略该参数语义。
@@ -177,6 +179,7 @@ interface CmdRet {
   session_log_path: string | null;
   exec_human: wire.ExecResult;
   read_host_metrics: string;
+  read_self_metrics: wire.SelfMetrics | null;
   set_control: wire.TakeoverReport;
   delegate_session: void;
   shell_capability: wire.ShellCapability;

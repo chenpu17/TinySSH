@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "./adapter/bridge";
 import { IconPause, IconPlay } from "./icons";
+import { SelfMeterChip } from "./self-meter";
 
 // ---- 采样解析（纯函数）----
 
@@ -186,6 +187,9 @@ export function MetricsBar({ sid, kind, user, hostName }: {
   return (
     <div className="metrics-bar" data-testid="metrics-bar" aria-label="远端主机资源监控">
       <span className="mhost" title="活动会话">{[user, hostName].filter(Boolean).join("@")}</span>
+      {/* 本机段（自身开销轮）：tinyssh-app 进程自身 CPU/内存，紧跟主机 chip——
+          与远端各段以「本机」标签区分；核心不可达时整段自隐藏 */}
+      <SelfMeterChip />
       <span className="mseg" title={`CPU 使用率${v?.cpuPct != null ? `（负载 ${v.load1.toFixed(2)}）` : ""}`}>
         <span className="mlabel">CPU</span>
         <PctBar pct={v?.cpuPct ?? null} />

@@ -4,6 +4,7 @@ import {
 } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
 import { MetricsBar } from "./metrics";
+import { SelfMeterDetail } from "./self-meter";
 import { resolveAction, isMacPlatform } from "./actions";
 import type { AppAction } from "./actions";
 import {
@@ -5530,6 +5531,8 @@ Authorization: Bearer <TOKEN>`}
                   <div className="dim">本地优先的 SSH 客户端：终端、主机库与凭据都留在本机。</div>
                   <div className="dim">凭据以加密形式存于本机凭据库，界面与日志只显示指纹。</div>
                 </div>
+                {/* 自身开销监控（本轮）：本进程 CPU/内存 2s 实时采样；核心不可达时整块自隐藏 */}
+                <SelfMeterDetail />
                 </div>
                 </>)}
                   </div>
