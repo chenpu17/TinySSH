@@ -452,23 +452,25 @@ const APPEARANCES: { id: Appearance; label: string }[] = [
 ];
 
 // 主题色板族：dot = [深色底, 深色 accent] 用于设置页色板芯片预览（亮态预览取同 accent）
-type ChromePalette = { id: string; label: string; dot: [string, string] };
+// 主题④轮起芯片双面预览：dot=深色面 [底, accent]，lite=浅色面 [底, accent]——
+// 拾色器如实呈现每族的深浅两副面孔（此前恒示深色面，浅色模式下选板全凭想象）
+type ChromePalette = { id: string; label: string; dot: [string, string]; lite: [string, string] };
 const PALETTES: ChromePalette[] = [
-  { id: "graphite", label: "石墨", dot: ["#0a0e14", "#3ec3d3"] },
-  { id: "ember", label: "暖烬", dot: ["#17171a", "#e07856"] },
-  { id: "ocean", label: "深海", dot: ["#0d1117", "#4c8dff"] },
-  { id: "violet", label: "午夜", dot: ["#14111c", "#a78bfa"] },
-  { id: "noir", label: "鎏金", dot: ["#141210", "#c8a96e"] },
+  { id: "graphite", label: "石墨", dot: ["#0a0e14", "#3ec3d3"], lite: ["#eef1f5", "#0a7280"] },
+  { id: "ember", label: "暖烬", dot: ["#17171a", "#e07856"], lite: ["#f3f2f0", "#ad4726"] },
+  { id: "ocean", label: "深海", dot: ["#0d1117", "#4c8dff"], lite: ["#eef2f7", "#2464ad"] },
+  { id: "violet", label: "午夜", dot: ["#14111c", "#a78bfa"], lite: ["#f1f0fa", "#6553e8"] },
+  { id: "noir", label: "鎏金", dot: ["#141210", "#c8a96e"], lite: ["#f1ede4", "#7d5a20"] },
   // 二十一轮扩四族（对表 Terminus 的主力板）：极光=翡翠薄荷 / 青瓷=黛青玉 /
   // 绯樱=樱粉玫瑰 / 曜石=钛银单色——色相与既有五族零重叠
-  { id: "aurora", label: "极光", dot: ["#0e1712", "#46d7a5"] },
-  { id: "celadon", label: "青瓷", dot: ["#101917", "#7fd8c4"] },
-  { id: "sakura", label: "绯樱", dot: ["#1a1318", "#f0a8bc"] },
-  { id: "obsidian", label: "曜石", dot: ["#0f1013", "#cdd6e2"] },
+  { id: "aurora", label: "极光", dot: ["#0e1712", "#46d7a5"], lite: ["#edf4ee", "#147a51"] },
+  { id: "celadon", label: "青瓷", dot: ["#101917", "#7fd8c4"], lite: ["#edf3f1", "#0e7a66"] },
+  { id: "sakura", label: "绯樱", dot: ["#1a1318", "#f0a8bc"], lite: ["#f7f0f3", "#b0486c"] },
+  { id: "obsidian", label: "曜石", dot: ["#0f1013", "#cdd6e2"], lite: ["#f0f1f3", "#3c4654"] },
   // 主题③轮扩两族：霓虹=电光青×品红的夜航面板（唯一青→品红渐变族）/
-  // 水墨=宣纸米白×朱砂印（唯一以亮色为身份的族，暗态转夜墨）；dot 仍遵 [深色底， 深色 accent]
-  { id: "neon", label: "霓虹", dot: ["#0a0a12", "#2fd6ec"] },
-  { id: "ink", label: "水墨", dot: ["#161519", "#e06b4e"] },
+  // 水墨=宣纸米白×朱砂印（唯一以亮色为身份的族，暗态转夜墨）
+  { id: "neon", label: "霓虹", dot: ["#0a0a12", "#2fd6ec"], lite: ["#eef0f8", "#0b7291"] },
+  { id: "ink", label: "水墨", dot: ["#161519", "#e06b4e"], lite: ["#f2efe7", "#b23a2e"] },
 ];
 const PALETTE_DEFAULT = "graphite";
 
@@ -5203,7 +5205,7 @@ export default function App() {
                     终端配色不再单独成卡，由色板×深浅派生（ui.theme 双轨退役） */}
                 <div className="set-card">
                   <h4>应用外观</h4>
-                  <div className="set-desc">主题同时决定应用外壳与终端配色（底色/前景/光标/ANSI 16 色全部随当前色板与深浅派生，终端八色按族调相）；「跟随系统」随系统深浅实时切换。</div>
+                  <div className="set-desc">主题同时决定应用外壳与终端配色（底色/前景/光标/ANSI 16 色全部随当前色板与深浅派生，终端八色按族调相）；主按钮与指示件走鲜艳填充档（浅色下不再为可读性压暗）；「跟随系统」随系统深浅实时切换。</div>
                   <div className="row ts-appearance" role="group" aria-label="应用外观">
                     {APPEARANCES.map((a) => (
                       <button key={a.id} className={"ghost" + (appearance === a.id ? " ts-active" : "")}
@@ -5221,7 +5223,10 @@ export default function App() {
                         aria-pressed={palette === p.id}
                         onClick={() => changePalette(p.id)}
                       >
-                        <span className="ts-swatch" style={{ background: `linear-gradient(135deg, ${p.dot[1]}, ${p.dot[0]})`, borderColor: p.dot[1], color: p.dot[1] }}>Aa</span>
+                        <span className="ts-swatch" aria-hidden="true">
+                          <i style={{ background: `linear-gradient(135deg, ${p.dot[1]}, ${p.dot[0]})` }} />
+                          <i style={{ background: `linear-gradient(135deg, ${p.lite[1]}, ${p.lite[0]})` }} />
+                        </span>
                         {p.label}
                       </button>
                     ))}

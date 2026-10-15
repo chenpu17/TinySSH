@@ -51,6 +51,13 @@
   --warn-text: #e0af68;
   /* panel3 提亮底上的 accent 正文专用档（历史 R41 L2 判据保留）：深色 8.1:1。 */
   --accent-text: #5fcbd8;
+  /* 主题④轮拆档：--accent=可读身份色（文本/描边/软底派生源，对 bg/panel ≥4.5）；
+     --accent-fill=鲜艳填充档（按钮底/指示件，只对 --on-accent 与 bg≥3 负责）——
+     此前两职合一，浅色 chrome 的 accent 被文本判据压暗（深海 #4c8dff→#2464ad 之类），
+     拆档后填充回归鲜艳亮色；默认别名随板级联（var 在消费元素处解析），亮色族按需覆写实值 */
+  --accent-fill: var(--accent);
+  /* fill hover：白字系随浅色惯例加深，墨字系（霓虹亮）提亮——各自保 on-accent ≥4.5 */
+  --accent-fill-hover: var(--accent-hover);
   /* hover：深色提亮 / 浅色加深（浅色白字按钮 hover 加深才保 ≥4.5:1） */
   --accent-hover: #5cd0de;
   --danger-hover: #ef8d89;
@@ -244,7 +251,7 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
 .hb-grip {
   flex: none; width: 7px; margin-left: -5px; cursor: col-resize; z-index: 5; touch-action: none;
 }
-.hb-grip:hover, .hb-grip:active { background: var(--accent); opacity: 0.45; }
+.hb-grip:hover, .hb-grip:active { background: var(--accent-fill); opacity: 0.45; }
 .hb-expand { flex: none; align-self: flex-start; margin: 6px 4px; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 /* 会话工具栏 40：单行不换行（§4.2），ident 溢出省略 */
@@ -344,7 +351,7 @@ button, input, select, textarea, .tab {
 button {
   /* 主按钮 135° 品牌渐变（tiny-worker 同工艺）：--grad-a/b 随色板覆写，两端对
      --on-accent 均 ≥4.5:1；ghost/danger/warn 的 background 简写会一并重置渐变 */
-  background-color: var(--accent);
+  background-color: var(--accent-fill);
   background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
   color: var(--on-accent); border: none; border-radius: 8px;
   padding: 6px 13px; font-weight: 600; cursor: pointer; font-size: 12px;
@@ -361,7 +368,7 @@ label.file-btn { display: inline-flex; align-items: center; padding: 6px 13px; b
 label.file-btn:hover { background-color: var(--panel3); color: var(--text); border-color: var(--border-hover); }
 button.danger { background: var(--danger); color: var(--on-danger); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px var(--shadow-soft); }
 button.warn { background: var(--warn); color: var(--on-warn); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px var(--shadow-soft); }
-button:not(:disabled):hover { background-color: var(--accent-hover); background-image: none; }
+button:not(:disabled):hover { background-color: var(--accent-fill-hover); background-image: none; }
 button:not(:disabled):active { transform: translateY(0.5px); }
 button.ghost:not(:disabled):hover { background-color: var(--panel3); color: var(--text); border-color: var(--border-hover); }
 button.danger:not(:disabled):hover { background-color: var(--danger-hover); }
@@ -403,7 +410,7 @@ input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus),
 .ctl-badge.agent { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
 .ctl-badge.agent .ctl-dot { background: var(--warn); }
 .ctl-badge.human { color: var(--accent); border-color: var(--accent-ring); background: var(--accent-soft); }
-.ctl-badge.human .ctl-dot { background: var(--accent); }
+.ctl-badge.human .ctl-dot { background: var(--accent-fill); }
 
 /* Toast（精致化 §六/P3）：右下角轻通知，左侧色条分语义，自动消失由 JS 计时 */
 .toast-stack {
@@ -470,7 +477,7 @@ textarea {
 }
 .metrics-bar .mbar i {
   display: block; height: 100%; border-radius: 2px;
-  background: var(--accent); transition: width 0.8s ease;
+  background: var(--accent-fill); transition: width 0.8s ease;
 }
 .metrics-bar .mbar.hot i { background: var(--warn); }
 .metrics-bar .mpause {
@@ -808,10 +815,12 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
   border-radius: 8px; padding: 8px; font-size: 12px; color: var(--text);
 }
 .ts-swatch {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 18px; border-radius: 4px; border: 1px solid;
-  font-size: 10px; flex: none;
+  /* 主题④轮：深浅双面芯片——左暗右亮两半渐变，如实预览每族两副面孔 */
+  display: inline-flex; overflow: hidden;
+  width: 26px; height: 18px; border-radius: 4px; border: 1px solid var(--border);
+  flex: none;
 }
+.ts-swatch i { flex: 1; }
 .section { margin-bottom: 12px; }
 /* 精致化（§4.3）：分组标题去 uppercase（中文全大写无意义），靠上方留白+字距分组 */
 .section h4 {
@@ -885,7 +894,7 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
   background: var(--dim);
 }
 .tl-row.actor-human::after { background: var(--warn); }
-.tl-row.actor-agent::after { background: var(--accent); }
+.tl-row.actor-agent::after { background: var(--accent-fill); }
 .tl-meta {
   font-size: 10px;
   color: var(--dim);
@@ -1275,7 +1284,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--accent-ring); border-radius: 5px;
 }
-.host-connect-btn:not(:disabled):hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.host-connect-btn:not(:disabled):hover { background: var(--accent-fill); color: var(--on-accent); border-color: var(--accent-fill); }
 /* hover 操作钮（编辑/删除）：随操作组一同浮现 */
 .host-ops { display: flex; gap: 2px; }
 .host-ops button { padding: 2px 4px; }
@@ -1370,11 +1379,13 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --border: rgba(72, 48, 32, 0.10); --border-hover: rgba(72, 48, 32, 0.20);
   --text: #232323; --text-sub: #5f5f5e; --dim: #6f6f6c;
   --accent: #ad4726; --accent-hover: #8f3c1e; --accent-text: #8f3c1e;
+  /* 主题④轮填充档：赤陶橙提亮到饱和焰橙（正文/描边仍走 #ad4726 可读档） */
+  --accent-fill: #c2410c; --accent-fill-hover: #9a3412;
   --danger: #b23a50; --danger-hover: #9c3145;
   --ok: #4e7a2b; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #3b6fb5; --focus: #96401f;
-  --grad-a: #ad4726; --grad-b: #8f3c1e;
+  --grad-a: #c2410c; --grad-b: #9a3412;
   --mark-grad: linear-gradient(160deg, #fbe8dd, #ffffff);
 
   /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
@@ -1406,11 +1417,13 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --border: rgba(28, 52, 82, 0.10); --border-hover: rgba(28, 52, 82, 0.20);
   --text: #1d2733; --text-sub: #4f5e6e; --dim: #5e6d7d;
   --accent: #2464ad; --accent-hover: #1d5493; --accent-text: #1d5493;
+  /* 主题④轮填充档：浅色 accent 不再为文本判据压暗——按钮/指示件走鲜湖蓝 */
+  --accent-fill: #2563eb; --accent-fill-hover: #1d4ed8;
   --danger: #b83e42; --danger-hover: #a23437;
   --ok: #1d7268; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #1d5493;
-  --grad-a: #2464ad; --grad-b: #1d5493;
+  --grad-a: #2563eb; --grad-b: #1d4ed8;
   --mark-grad: linear-gradient(160deg, #dcebfa, #ffffff);
 
   /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
@@ -1481,11 +1494,13 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --border: rgba(122, 96, 50, 0.11); --border-hover: rgba(122, 96, 50, 0.21);
   --text: #2b2620; --text-sub: #665e4e; --dim: #6f675a;
   --accent: #7d5a20; --accent-hover: #684a18; --accent-text: #684a18;
+  /* 主题④轮填充档：暗铜金提亮到琥珀金（可读档保持深铜） */
+  --accent-fill: #b45309; --accent-fill-hover: #92400e;
   --danger: #b83e42; --danger-hover: #a23437;
   --ok: #357953; --warn: #a04e02; --warn-text: #a04e02; --warn-hover: #8a4102;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #4a6fa5; --focus: #684a18;
-  --grad-a: #7d5a20; --grad-b: #684a18;
+  --grad-a: #b45309; --grad-b: #92400e;
   --mark-grad: linear-gradient(160deg, #f3e9d2, #ffffff);
 
   /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
@@ -1596,11 +1611,13 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --border: rgba(96, 44, 66, 0.10); --border-hover: rgba(96, 44, 66, 0.20);
   --text: #2b2126; --text-sub: #6d5762; --dim: #7c6671;
   --accent: #b0486c; --accent-hover: #953957; --accent-text: #953957;
+  /* 主题④轮填充档：深玫瑰提亮到饱和樱玫（可读档保持） */
+  --accent-fill: #cf3065; --accent-fill-hover: #b02957;
   --danger: #b83e42; --danger-hover: #a23437;
   --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #4a5fa5; --focus: #953957;
-  --grad-a: #b0486c; --grad-b: #953957;
+  --grad-a: #cf3065; --grad-b: #b02957;
   --mark-grad: linear-gradient(160deg, #f7e3ea, #ffffff);
 
   /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
@@ -1673,11 +1690,13 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --border: rgba(56, 48, 128, 0.10); --border-hover: rgba(56, 48, 128, 0.20);
   --text: #1c2030; --text-sub: #4e5674; --dim: #5e6685;
   --accent: #0b7291; --accent-hover: #095e78; --accent-text: #095e78;
+  /* 主题④轮填充档：按钮回归电光亮青+墨字（电青的浅底白字窗太窄），渐变双极同步提亮 */
+  --accent-fill: #0794b4; --accent-fill-hover: #0897b6;
   --danger: #c22a4d; --danger-hover: #a32140;
   --ok: #0a7647; --warn: #8a6500; --warn-text: #8a6500; --warn-hover: #745400;
-  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --on-accent: #041c24; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #3050c8; --focus: #095e78;
-  --grad-a: #0b7291; --grad-b: #872d92;
+  --grad-a: #0897b6; --grad-b: #c74fd0;
   --mark-grad: linear-gradient(160deg, #dceafc, #ffffff);
 
   /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */

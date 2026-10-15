@@ -1,7 +1,8 @@
 // WCAG 色板全量校验（2026-10-11 主题色板批次）：解析 src/styles.css 的 :root /
 // [data-chrome=light] / [data-theme]×[data-chrome] 变量块，按继承链合成各族×深浅
 // 的全部态（主题③轮起 11 族共 22 态），对全部文本档跑对比度断言。判据沿用 R40/R41 口径：
-// 正文/语义文本 ≥4.5:1（AA），装饰 dim/focus ≥3:1。
+// 正文/语义文本 ≥4.5:1（AA），装饰 dim/focus ≥3:1；主题④轮起 --accent-fill 填充档
+// 独立成门（on-accent 对 fill 系 ≥4.5，fill 对 bg ≥3 非文本）。
 // 主题①轮起解析与色值工具走 theme-vars.mjs 公共库（与 semantic-hues 同一套，
 // 防两套解析漂移）。主题②轮起增审终端 ANSI 16 色（对终端底 --bg）：12 个彩档
 // 是终端正文 ≥4.5:1；「墨色」中性档（暗底 white/brightWhite、亮底 black/
@@ -44,12 +45,19 @@ for (const { theme, chrome, vars } of states) {
     ["ok@ok-soft⧉panel2", solid("--ok"), over(vars, "--ok-soft", panel2), 4.5],
     ["danger@danger-soft⧉panel2", solid("--danger"), over(vars, "--danger-soft", panel2), 4.5],
     ["warn@warn-soft⧉panel2", solid("--warn"), over(vars, "--warn-soft", panel2), 4.5],
-    ["on-accent/accent", solid("--on-accent"), solid("--accent"), 4.5],
     ["on-accent/grad-a", solid("--on-accent"), solid("--grad-a"), 4.5],
     ["on-accent/grad-b", solid("--on-accent"), solid("--grad-b"), 4.5],
     ["on-danger/danger", solid("--on-danger"), solid("--danger"), 4.5],
     ["on-warn/warn", solid("--on-warn"), solid("--warn"), 4.5],
-    ["on-accent/hover底", solid("--on-accent"), solid("--accent-hover"), 4.5],
+    // 主题④轮拆档注：on-accent/accent 与 on-accent/hover底 两门随填充面迁移退役——
+    // accent 不再充当按钮底（fill 系接管），on-accent 的配对门见下方 fill 四门；
+    // fill 别名 var(--accent) 的态数值等价，覆盖不缩水
+    // 主题④轮拆档：填充档（按钮底/指示件）独立成门——on-accent 对 fill 系 ≥4.5，
+    // fill 对 bg ≥3（非文本 UI 组件判据）；默认别名 var(--accent) 的态由解析器透传
+    ["on-accent/fill", solid("--on-accent"), solid("--accent-fill"), 4.5],
+    ["on-accent/fill-hover", solid("--on-accent"), solid("--accent-fill-hover"), 4.5],
+    ["fill/bg(非文本)", solid("--accent-fill"), bg, 3],
+    ["fill-hover/bg(非文本)", solid("--accent-fill-hover"), bg, 3],
     ["on-danger/hover底", solid("--on-danger"), solid("--danger-hover"), 4.5],
     ["on-warn/hover底", solid("--on-warn"), solid("--warn-hover"), 4.5],
     ["focus/bg(非文本)", solid("--focus"), bg, 3],
