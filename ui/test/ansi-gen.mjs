@@ -92,6 +92,10 @@ const FAMILY = {
   sakura: { dH: { red: -15, green: 5, yellow: -5, blue: 5, magenta: 15, cyan: 5 }, cM: { red: 1.05, green: 0.9, yellow: 0.95, blue: 0.9, magenta: 1.15, cyan: 0.9 } },
   // 曜石：近单色（0.38× 饱和度，残余微彩保持可辨但不出戏）
   obsidian: { dH: {}, cM: 0.38, cBase: 0.12 },
+  // 霓虹：电光青/品红当家（青品 +15~20% 饱和），红转霓虹粉、蓝向电蓝提
+  neon: { dH: { red: 5, green: 0, yellow: 5, blue: 10, magenta: 5, cyan: -8 }, cM: { red: 1.05, green: 1.05, yellow: 1.05, blue: 1.15, magenta: 1.2, cyan: 1.2 }, cBase: 0.13 },
+  // 水墨：全线降饱和（墨分五色的灰度气），红保朱砂相、绿向松绿、品红向胭脂
+  ink: { dH: { red: 0, green: -10, yellow: -10, blue: -5, magenta: 20, cyan: -10 }, cM: { red: 1.0, green: 0.68, yellow: 0.72, blue: 0.68, magenta: 0.75, cyan: 0.68 }, cBase: 0.12 },
 };
 const famCfg = (id) => {
   const f = FAMILY[id] ?? {};
@@ -105,7 +109,8 @@ const famCfg = (id) => {
 // ---- 逐态生成 ----
 const css = readFileSync(CSS_PATH, "utf8");
 const { states } = loadThemeCss(css);
-if (states.length !== 18) { console.error(`态数 ${states.length}/18 不对`); process.exit(2); }
+// 主题③轮：9→11 族（+霓虹/水墨），加 graphite 双态共 22 态
+if (states.length !== 22) { console.error(`态数 ${states.length}/22 不对`); process.exit(2); }
 
 const out = new Map(); // stateKey → { lines, checks }
 let fail = 0;
@@ -172,7 +177,7 @@ for (const { theme, chrome, vars } of states) {
 
   const lines = [
     "",
-    "  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */",
+    "  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */",
     `  --ansi-0: ${slots[0]?.hex}; --ansi-1: ${slots[1]?.hex}; --ansi-2: ${slots[2]?.hex}; --ansi-3: ${slots[3]?.hex};`,
     `  --ansi-4: ${slots[4]?.hex}; --ansi-5: ${slots[5]?.hex}; --ansi-6: ${slots[6]?.hex}; --ansi-7: ${slots[7]?.hex};`,
     `  --ansi-8: ${slots[8]?.hex}; --ansi-9: ${slots[9]?.hex}; --ansi-10: ${slots[10]?.hex}; --ansi-11: ${slots[11]?.hex};`,
@@ -209,4 +214,4 @@ if (WRITE) {
 } else {
   for (const [key, { lines }] of out) console.log(`\n# ${key}${lines.join("")}`);
 }
-console.log(`\n✓ 18 态 × 16 slot 全过双门（对比度 4.5 / 色相距 25°）`);
+console.log(`\n✓ ${out.size} 态 × 16 slot 全过双门（对比度 4.5 / 色相距 25°）`);

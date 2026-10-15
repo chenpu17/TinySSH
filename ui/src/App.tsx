@@ -465,6 +465,10 @@ const PALETTES: ChromePalette[] = [
   { id: "celadon", label: "青瓷", dot: ["#101917", "#7fd8c4"] },
   { id: "sakura", label: "绯樱", dot: ["#1a1318", "#f0a8bc"] },
   { id: "obsidian", label: "曜石", dot: ["#0f1013", "#cdd6e2"] },
+  // 主题③轮扩两族：霓虹=电光青×品红的夜航面板（唯一青→品红渐变族）/
+  // 水墨=宣纸米白×朱砂印（唯一以亮色为身份的族，暗态转夜墨）；dot 仍遵 [深色底， 深色 accent]
+  { id: "neon", label: "霓虹", dot: ["#0a0a12", "#2fd6ec"] },
+  { id: "ink", label: "水墨", dot: ["#161519", "#e06b4e"] },
 ];
 const PALETTE_DEFAULT = "graphite";
 

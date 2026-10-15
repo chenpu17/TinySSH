@@ -1,6 +1,6 @@
 // WCAG 色板全量校验（2026-10-11 主题色板批次）：解析 src/styles.css 的 :root /
-// [data-chrome=light] / [data-theme]×[data-chrome] 变量块，按继承链合成 9 族×深浅
-// 共 18 个态，对全部文本档跑对比度断言。判据沿用 R40/R41 口径：
+// [data-chrome=light] / [data-theme]×[data-chrome] 变量块，按继承链合成各族×深浅
+// 的全部态（主题③轮起 11 族共 22 态），对全部文本档跑对比度断言。判据沿用 R40/R41 口径：
 // 正文/语义文本 ≥4.5:1（AA），装饰 dim/focus ≥3:1。
 // 主题①轮起解析与色值工具走 theme-vars.mjs 公共库（与 semantic-hues 同一套，
 // 防两套解析漂移）。主题②轮起增审终端 ANSI 16 色（对终端底 --bg）：12 个彩档
@@ -13,9 +13,9 @@ import { loadThemeCss, resolveColor, over, contrast } from "./theme-vars.mjs";
 
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const { states } = loadThemeCss(css);
-// 二十一轮：色板 5→9 族（每族深浅两态=16 块），加 graphite 双态共 18 态
-if (states.length !== 18) {
-  console.error(`解析失败：态数 ${states.length}/18`);
+// 二十一轮：色板 5→9 族；主题③轮：9→11 族（+霓虹/水墨），加 graphite 双态共 22 态
+if (states.length !== 22) {
+  console.error(`解析失败：态数 ${states.length}/22`);
   process.exit(2);
 }
 

@@ -91,7 +91,7 @@
   --grad-b: #3ec3d3;
   --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #1d1f22; --ansi-1: #c76963; --ansi-2: #4e9352; --ansi-3: #9b8316;
   --ansi-4: #3b8ac7; --ansi-5: #a471ba; --ansi-6: #009494; --ansi-7: #86898e;
   --ansi-8: #3c4148; --ansi-9: #e57670; --ansi-10: #56a85b; --ansi-11: #b29503;
@@ -151,7 +151,7 @@
   --grad-a: #0a7280;
   --grad-b: #085e68;
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #5e6165; --ansi-1: #a24944; --ansi-2: #2c7232; --ansi-3: #776301;
   --ansi-4: #1169a3; --ansi-5: #825197; --ansi-6: #057070; --ansi-7: #d6d8db;
   --ansi-8: #626972; --ansi-9: #98312f; --ansi-10: #066319; --ansi-11: #655405;
@@ -1358,7 +1358,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #f0b492; --grad-b: #e07856;
   --mark-grad: linear-gradient(160deg, #3a2417, #17110d);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #232326; --ansi-1: #d86166; --ansi-2: #689348; --ansi-3: #a58304;
   --ansi-4: #4f8bc7; --ansi-5: #b36fb2; --ansi-6: #03969c; --ansi-7: #8b8b90;
   --ansi-8: #45454d; --ansi-9: #f86c72; --ansi-10: #75a74e; --ansi-11: #bb9510;
@@ -1377,7 +1377,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #ad4726; --grad-b: #8f3c1e;
   --mark-grad: linear-gradient(160deg, #fbe8dd, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #64615d; --ansi-1: #b03d45; --ansi-2: #487024; --ansi-3: #7c6205;
   --ansi-4: #2c68a1; --ansi-5: #8e4d8e; --ansi-6: #047175; --ansi-7: #dbd9d6;
   --ansi-8: #6e695f; --ansi-9: #a71c30; --ansi-10: #366002; --ansi-11: #6a5301;
@@ -1395,7 +1395,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #7db2ff; --grad-b: #4c8dff;
   --mark-grad: linear-gradient(160deg, #14283f, #0c1520);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #1b1d1f; --ansi-1: #c06b70; --ansi-2: #3c945c; --ansi-3: #998221;
   --ansi-4: #3787d2; --ansi-5: #9a73c0; --ansi-6: #049393; --ansi-7: #85888d;
   --ansi-8: #3a3e46; --ansi-9: #dc797f; --ansi-10: #3fa967; --ansi-11: #af941b;
@@ -1413,7 +1413,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #2464ad; --grad-b: #1d5493;
   --mark-grad: linear-gradient(160deg, #dcebfa, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #5e6266; --ansi-1: #9d4c52; --ansi-2: #12743e; --ansi-3: #786300;
   --ansi-4: #0c67b0; --ansi-5: #7b549e; --ansi-6: #007171; --ansi-7: #d7d9dc;
   --ansi-8: #636a72; --ansi-9: #923640; --ansi-10: #036332; --ansi-11: #655404;
@@ -1431,7 +1431,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #c4b5fd; --grad-b: #a78bfa;
   --mark-grad: linear-gradient(160deg, #2a2044, #130f1e);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #201f23; --ansi-1: #be6a93; --ansi-2: #539356; --ansi-3: #9b831a;
   --ansi-4: #5284d7; --ansi-5: #b169c2; --ansi-6: #079494; --ansi-7: #89888e;
   --ansi-8: #424048; --ansi-9: #da77a8; --ansi-10: #5ba85f; --ansi-11: #b2950c;
@@ -1450,7 +1450,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #6553e8; --grad-b: #5342cc;
   --mark-grad: linear-gradient(160deg, #e7e3fb, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #616065; --ansi-1: #9a4973; --ansi-2: #327236; --ansi-3: #776305;
   --ansi-4: #3363b3; --ansi-5: #8f489f; --ansi-6: #097070; --ansi-7: #d8d8dd;
   --ansi-8: #696772; --ansi-9: #8f3265; --ansi-10: #0e631c; --ansi-11: #655401;
@@ -1469,7 +1469,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #e6cf9f; --grad-b: #c8a96e;
   --mark-grad: linear-gradient(160deg, #2c2314, #141009);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #201f1c; --ansi-1: #d26353; --ansi-2: #6d8f49; --ansi-3: #968507;
   --ansi-4: #5588bd; --ansi-5: #b06eab; --ansi-6: #0e9494; --ansi-7: #8b8984;
   --ansi-8: #444039; --ansi-9: #f16f5d; --ansi-10: #7ca350; --ansi-11: #aa9712;
@@ -1488,7 +1488,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #7d5a20; --grad-b: #684a18;
   --mark-grad: linear-gradient(160deg, #f3e9d2, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #615e5a; --ansi-1: #aa3f31; --ansi-2: #4c6b26; --ansi-3: #706303;
   --ansi-4: #326597; --ansi-5: #8b4b86; --ansi-6: #076e6e; --ansi-7: #d6d4d0;
   --ansi-8: #6a665c; --ansi-9: #a02115; --ansi-10: #3b5c01; --ansi-11: #5f5300;
@@ -1510,7 +1510,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #82e9c6; --grad-b: #22b184;
   --mark-grad: linear-gradient(160deg, #11342a, #0a1a12);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #1e2220; --ansi-1: #c66d66; --ansi-2: #2e9850; --ansi-3: #908820;
   --ansi-4: #1f90bb; --ansi-5: #a872b5; --ansi-6: #01968a; --ansi-7: #868b88;
   --ansi-8: #3d4541; --ansi-9: #e37a73; --ansi-10: #2cae58; --ansi-11: #a59b17;
@@ -1529,7 +1529,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #147a51; --grad-b: #0e6240;
   --mark-grad: linear-gradient(160deg, #d9ede1, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #5e635f; --ansi-1: #a04b47; --ansi-2: #017534; --ansi-3: #6e6702;
   --ansi-4: #086d91; --ansi-5: #865192; --ansi-6: #067269; --ansi-7: #d7dad7;
   --ansi-8: #636b64; --ansi-9: #963532; --ansi-10: #05632c; --ansi-11: #5d5700;
@@ -1547,7 +1547,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #a5e5d6; --grad-b: #35ae97;
   --mark-grad: linear-gradient(160deg, #10302b, #0a1a17);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #202323; --ansi-1: #b8756f; --ansi-2: #519472; --ansi-3: #928747;
   --ansi-4: #4d8eb2; --ansi-5: #a578a7; --ansi-6: #38948f; --ansi-7: #868c8b;
   --ansi-8: #3d4746; --ansi-9: #d3847d; --ansi-10: #59a880; --ansi-11: #a79a4d;
@@ -1566,7 +1566,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #0e7a66; --grad-b: #0a604f;
   --mark-grad: linear-gradient(160deg, #d8ece6, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #5d6361; --ansi-1: #93534e; --ansi-2: #2e7151; --ansi-3: #706524;
   --ansi-4: #286b8e; --ansi-5: #815683; --ansi-6: #08716d; --ansi-7: #d6dad8;
   --ansi-8: #5f6c68; --ansi-9: #88403c; --ansi-10: #00623f; --ansi-11: #615600;
@@ -1585,7 +1585,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #f7c4d2; --grad-b: #e38aa6;
   --mark-grad: linear-gradient(160deg, #3c1f2b, #180d13);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #242123; --ansi-1: #ca6879; --ansi-2: #4e955f; --ansi-3: #a18224;
   --ansi-4: #508ac4; --ansi-5: #b96ab3; --ansi-6: #0c959b; --ansi-7: #8e898d;
   --ansi-8: #494147; --ansi-9: #e87489; --ansi-10: #56a96a; --ansi-11: #b8941f;
@@ -1603,7 +1603,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #b0486c; --grad-b: #953957;
   --mark-grad: linear-gradient(160deg, #f7e3ea, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #656062; --ansi-1: #a44659; --ansi-2: #2b723f; --ansi-3: #7c6200;
   --ansi-4: #2e68a0; --ansi-5: #95488f; --ansi-6: #007175; --ansi-7: #dcd8da;
   --ansi-8: #71666b; --ansi-9: #9a2d48; --ansi-10: #00632b; --ansi-11: #695303;
@@ -1621,7 +1621,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #e2e8f0; --grad-b: #9fb0c4;
   --mark-grad: linear-gradient(160deg, #232a33, #0e1013);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #1a1c1e; --ansi-1: #9f7b77; --ansi-2: #718971; --ansi-3: #8b8364;
   --ansi-4: #6c869d; --ansi-5: #8f7d98; --ansi-6: #618b8a; --ansi-7: #85878c;
   --ansi-8: #393d45; --ansi-9: #b68b87; --ansi-10: #809d80; --ansi-11: #9f9571;
@@ -1639,11 +1639,89 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --grad-a: #3c4654; --grad-b: #2b333e;
   --mark-grad: linear-gradient(160deg, #e2e6eb, #ffffff);
 
-  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #5f6166; --ansi-1: #7e5c59; --ansi-2: #536a53; --ansi-3: #6c6446;
   --ansi-4: #4e677d; --ansi-5: #705e78; --ansi-6: #436b6b; --ansi-7: #d7d8dc;
   --ansi-8: #646972; --ansi-9: #714b48; --ansi-10: #415b42; --ansi-11: #5e5532;
   --ansi-12: #3b5870; --ansi-13: #624e6b; --ansi-14: #2c5d5c; --ansi-15: #fbfcfd;}
+
+/* ---- 主题③轮扩两族：霓虹·夜航（暗色身份，青→品红双极渐变）/ 宣纸·水墨（亮色身份，
+   朱砂×墨），同工艺，文本档过 wcag-themes.mjs + semantic-hues.mjs 双审计 ---- */
+
+/* 霓虹 · 暗：夜航蓝紫黑 + 电光青——青→品红双极渐变在族里独一份，赛博夜航舱。
+   danger 转霓虹粉红(355°)与 accent 青(197°)拉开 162°；ok 电绿、warn 琥珀保工具可读 */
+:root[data-theme="neon"][data-chrome="dark"] {
+  --bg: #0a0a12; --panel: #0e0e19; --panel2: #13131f; --panel3: #1a1a2a;
+  --border: rgba(140, 200, 255, 0.10); --border-hover: rgba(140, 200, 255, 0.19);
+  --text: #e8ecf8; --text-sub: #9aa3c2; --dim: #7a83a6;
+  --accent: #2fd6ec; --accent-hover: #6ce4f4; --accent-text: #6ce4f4;
+  --danger: #f25f75; --danger-hover: #f97f92;
+  --ok: #3fe081; --warn: #ffc857; --warn-text: #ffc857; --warn-hover: #ffd478;
+  --on-accent: #062026; --on-danger: #2a1010; --on-warn: #251b06;
+  --blue: #6f9bff; --focus: #6ce4f4;
+  --grad-a: #ef8df5; --grad-b: #2fd6ec;
+  --mark-grad: linear-gradient(160deg, #241b4a, #0d0d18);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #1b1b20; --ansi-1: #cd6454; --ansi-2: #429448; --ansi-3: #948308;
+  --ansi-4: #3d84db; --ansi-5: #b165c2; --ansi-6: #0f938a; --ansi-7: #87878c;
+  --ansi-8: #3c3c44; --ansi-9: #ec705e; --ansi-10: #47a94f; --ansi-11: #a99600;
+  --ansi-12: #4296fc; --ansi-13: #cc72e0; --ansi-14: #08a79d; --ansi-15: #f3f3f6;}
+/* 霓虹 · 亮：冷雾紫白 + 深电青；渐变仍保青→品红双极（深墨品红端配白字） */
+:root[data-theme="neon"][data-chrome="light"] {
+  --bg: #eef0f8; --panel: #f7f8fc; --panel2: #ffffff; --panel3: #e5e8f4;
+  --border: rgba(56, 48, 128, 0.10); --border-hover: rgba(56, 48, 128, 0.20);
+  --text: #1c2030; --text-sub: #4e5674; --dim: #5e6685;
+  --accent: #0b7291; --accent-hover: #095e78; --accent-text: #095e78;
+  --danger: #c22a4d; --danger-hover: #a32140;
+  --ok: #0a7647; --warn: #8a6500; --warn-text: #8a6500; --warn-hover: #745400;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #3050c8; --focus: #095e78;
+  --grad-a: #0b7291; --grad-b: #872d92;
+  --mark-grad: linear-gradient(160deg, #dceafc, #ffffff);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5f6065; --ansi-1: #a94336; --ansi-2: #1d7328; --ansi-3: #726402;
+  --ansi-4: #1a64b7; --ansi-5: #9045a0; --ansi-6: #057069; --ansi-7: #d6d7db;
+  --ansi-8: #656872; --ansi-9: #9f281c; --ansi-10: #036318; --ansi-11: #615500;
+  --ansi-12: #0154a5; --ansi-13: #852c98; --ansi-14: #005f59; --ansi-15: #fbfcfd;}
+/* 宣纸 · 水墨 · 亮：宣纸米白 + 朱砂印——全族唯一以亮色为身份，暗态转夜墨。
+   danger 走胭脂(340°)与朱砂 accent(25°)拉开 45°；ok 松绿、warn 藤黄，全族颜料相 */
+:root[data-theme="ink"][data-chrome="light"] {
+  --bg: #f2efe7; --panel: #f9f7f1; --panel2: #ffffff; --panel3: #eae6da;
+  --border: rgba(90, 70, 40, 0.11); --border-hover: rgba(90, 70, 40, 0.21);
+  --text: #26231c; --text-sub: #5c564a; --dim: #6d675a;
+  --accent: #b23a2e; --accent-hover: #96301f; --accent-text: #96301f;
+  --danger: #a02448; --danger-hover: #871d3b;
+  --ok: #47703a; --warn: #7d600a; --warn-text: #8a6a10; --warn-hover: #755a0c;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #35608f; --focus: #96301f;
+  --grad-a: #b23a2e; --grad-b: #8f2b1c;
+  --mark-grad: linear-gradient(160deg, #f6e3dc, #ffffff);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #61605b; --ansi-1: #a14843; --ansi-2: #4d6c3b; --ansi-3: #7a6021;
+  --ansi-4: #32688c; --ansi-5: #86527b; --ansi-6: #136f67; --ansi-7: #d8d6d2;
+  --ansi-8: #6b675d; --ansi-9: #97302e; --ansi-10: #3a5d24; --ansi-11: #6b5002;
+  --ansi-12: #115981; --ansi-13: #7a3f6e; --ansi-14: #045f57; --ansi-15: #fcfcfa;}
+/* 宣纸 · 水墨 · 暗：夜墨底 + 朱砂提亮，宣纸白文字（暖墨相，区别石墨的冷蓝黑） */
+:root[data-theme="ink"][data-chrome="dark"] {
+  --bg: #161519; --panel: #1b1a1f; --panel2: #212026; --panel3: #282730;
+  --border: rgba(220, 200, 170, 0.09); --border-hover: rgba(220, 200, 170, 0.18);
+  --text: #eceae2; --text-sub: #a8a294; --dim: #87816f;
+  --accent: #e06b4e; --accent-hover: #eb8a6e; --accent-text: #eb8a6e;
+  --danger: #e3799a; --danger-hover: #ea84a0;
+  --ok: #74b063; --warn: #d2a53c; --warn-text: #d2a53c; --warn-hover: #e0b658;
+  --on-accent: #2a1008; --on-danger: #2a1010; --on-warn: #251b06;
+  --blue: #86acd0; --focus: #eb8a6e;
+  --grad-a: #eb8a6e; --grad-b: #e06b4e;
+  --mark-grad: linear-gradient(160deg, #3a221a, #171310);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #272729; --ansi-1: #cc6e68; --ansi-2: #729260; --ansi-3: #a28649;
+  --ansi-4: #588fb5; --ansi-5: #af78a2; --ansi-6: #44968d; --ansi-7: #8e8d92;
+  --ansi-8: #4b4951; --ansi-9: #ea7c74; --ansi-10: #80a76b; --ansi-11: #b9974f;
+  --ansi-12: #62a3cf; --ansi-13: #c887ba; --ansi-14: #48aba0; --ansi-15: #f4f3f6;}
 
 /* 主题切换脉冲：仅切换瞬间（.theme-switching 挂 320ms，App.tsx）开全量色彩过渡，
    平时零开销；@keyframes 动画期间优先级本就高于 transition，互不干扰 */

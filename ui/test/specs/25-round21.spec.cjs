@@ -1,7 +1,7 @@
 // 25 二十一轮：下载「另存为」模式 + 九族主题色板 + 设置面板大气化。
 // 另存为模式：工具行开关（默认关）——开启后行内下载/下载所选/路径下载/菜单「下载」
 // 全部弹保存对话框（demo 桩路径可断言），取消=不建卡；右键「另存为…」显式直通不受开关影响。
-// 色板：9 族芯片在场（新增 aurora/celadon/sakura/obsidian），切换即时生效且 KV 持久。
+// 色板：族芯片在场（二十一轮 9 族，主题③轮起 11 族 +neon/ink），切换即时生效且 KV 持久。
 // 设置面板：宽幅 + 图标导航（带描述）+ 卡片分区（外观 3 卡 / 终端 3 卡）。
 const connect = async (page, name) => {
   const c = await page.$(`.host-card:has(.host-name:text-is("${name}"))`);
@@ -121,12 +121,13 @@ module.exports = {
     ck.check("菜单「另存为…」显式直通", (await lastDownLocal(page)) === "/Users/demo/Downloads/access.log",
       await lastDownLocal(page));
 
-    // ── B/C. 设置面板：九族色板 + 大气化结构 ──
+    // ── B/C. 设置面板：十一族色板 + 大气化结构 ──
     await page.click(".hb-settings");
     await page.waitForTimeout(700);
-    const pals = ["graphite", "ember", "ocean", "violet", "noir", "aurora", "celadon", "sakura", "obsidian"];
+    // 主题③轮：9→11 族（+霓虹 neon / 水墨 ink）
+    const pals = ["graphite", "ember", "ocean", "violet", "noir", "aurora", "celadon", "sakura", "obsidian", "neon", "ink"];
     const chipCount = await page.evaluate((ids) => ids.filter((id) => document.querySelector(`[data-testid="chrome-palette-${id}"]`)).length, pals);
-    ck.check("九族色板芯片在场", chipCount === 9, `${chipCount}/9`);
+    ck.check("十一族色板芯片在场", chipCount === 11, `${chipCount}/11`);
     const navDescs = await page.evaluate(() =>
       [...document.querySelectorAll(".settings-nav .set-nav-desc")].map((e) => e.textContent.trim()));
     // 键位配置轮：设置分类 5→6（新增「快捷键」——新建 · 关签 · 分屏 · 面板）
