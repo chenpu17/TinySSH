@@ -20,7 +20,12 @@ fn mgr() -> Arc<SessionManager> {
 async fn logging_lifecycle_and_content() {
     let m = mgr();
     let sid = m
-        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &Actor::Human,
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     let path = m
@@ -30,7 +35,11 @@ async fn logging_lifecycle_and_content() {
         .unwrap();
     let p = std::path::PathBuf::from(&path);
     assert!(p.exists(), "日志文件已建：{}", path);
-    assert!(p.parent().unwrap().ends_with("logs"), "在 data/logs 下：{}", path);
+    assert!(
+        p.parent().unwrap().ends_with("logs"),
+        "在 data/logs 下：{}",
+        path
+    );
     assert!(
         p.file_name().unwrap().to_string_lossy().contains("本机"),
         "文件名含主机名：{}",
@@ -51,13 +60,19 @@ async fn logging_lifecycle_and_content() {
     assert!(content.contains("log-line-1"), "得 {content:?}");
     assert!(content.contains("log-line-2"));
     // 关闭：返回 None、SessionInfo.logging 归假、后续写不落、路径查询 None
-    let off = m.set_session_logging(&Actor::Human, sid.clone(), false).await.unwrap();
+    let off = m
+        .set_session_logging(&Actor::Human, sid.clone(), false)
+        .await
+        .unwrap();
     assert!(off.is_none());
     h.log_append("after-off");
     let content = std::fs::read_to_string(&p).unwrap();
     assert!(!content.contains("after-off"), "关闭后不再落盘");
     assert!(
-        m.session_log_path(&Actor::Human, sid.clone()).await.unwrap().is_none(),
+        m.session_log_path(&Actor::Human, sid.clone())
+            .await
+            .unwrap()
+            .is_none(),
         "路径查询归 None"
     );
     let info = m
@@ -75,8 +90,14 @@ async fn logging_lifecycle_and_content() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_session_not_found() {
     let m = mgr();
-    let r = m.set_session_logging(&Actor::Human, "s-missing".into(), true).await.unwrap_err();
+    let r = m
+        .set_session_logging(&Actor::Human, "s-missing".into(), true)
+        .await
+        .unwrap_err();
     assert!(matches!(r, Error::SessionNotFound), "得 {r:?}");
-    let r = m.session_log_path(&Actor::Human, "s-missing".into()).await.unwrap_err();
+    let r = m
+        .session_log_path(&Actor::Human, "s-missing".into())
+        .await
+        .unwrap_err();
     assert!(matches!(r, Error::SessionNotFound), "得 {r:?}");
 }

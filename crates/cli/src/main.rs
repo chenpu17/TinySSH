@@ -9,7 +9,11 @@ use std::io::Write as _;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "tinyssh", version, about = "TinySSH — 人机协同 SSH 客户端（V0 thin-slice）")]
+#[command(
+    name = "tinyssh",
+    version,
+    about = "TinySSH — 人机协同 SSH 客户端（V0 thin-slice）"
+)]
 struct Cli {
     /// 数据库路径（默认 ~/.tinyssh/tinyssh.db）
     #[arg(long, global = true)]
@@ -82,7 +86,9 @@ enum AgentCmd {
         #[arg(default_value = "unnamed")]
         label: String,
     },
-    Revoke { id: String },
+    Revoke {
+        id: String,
+    },
     /// 追加 allow 规则（免审）
     Allow {
         agent_id: String,
@@ -122,7 +128,9 @@ enum HostCmd {
 enum IdentityCmd {
     List,
     /// 删除凭据（被存活主机引用时拒绝并列出主机名，DF8.4）
-    Delete { id: String },
+    Delete {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -152,10 +160,17 @@ enum ApprovalCmd {
         #[arg(long, default_value_t = true)]
         pending_only: bool,
     },
-    Approve { id: String },
+    Approve {
+        id: String,
+    },
     /// 批准并编辑命令
-    Edit { id: String, command: String },
-    Deny { id: String },
+    Edit {
+        id: String,
+        command: String,
+    },
+    Deny {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -285,7 +300,9 @@ async fn serve(m: Arc<SessionManager>, port: u16) -> Result<()> {
         .context("bind")?;
     m.set_mcp_endpoint(format!("http://127.0.0.1:{actual}/mcp"));
     println!("TinySSH MCP endpoint: http://127.0.0.1:{actual}/mcp");
-    println!("shim: TINYSSH_TOKEN=<token> TINYSSH_MCP_URL=http://127.0.0.1:{actual}/mcp tinyssh-mcp");
+    println!(
+        "shim: TINYSSH_TOKEN=<token> TINYSSH_MCP_URL=http://127.0.0.1:{actual}/mcp tinyssh-mcp"
+    );
     let resolver: tinyssh_mcp_server::TokenResolver = {
         let vault = m.center.vault.clone();
         std::sync::Arc::new(move |t: &str| vault.resolve_token(t))
@@ -315,15 +332,27 @@ async fn agent_cmd(m: Arc<SessionManager>, cmd: AgentCmd) -> Result<()> {
             println!("agent {id} revoked");
             Ok(())
         }
-        AgentCmd::Allow { agent_id, pattern, note } => {
-            m.center.vault.add_allow_pattern(&agent_id, &pattern, &note)?;
+        AgentCmd::Allow {
+            agent_id,
+            pattern,
+            note,
+        } => {
+            m.center
+                .vault
+                .add_allow_pattern(&agent_id, &pattern, &note)?;
             println!("allow rule added: {agent_id} {pattern}");
             Ok(())
         }
-        AgentCmd::Ttl { agent_id, pattern, hours } => {
-            m.center
-                .vault
-                .add_ttl_window(&agent_id, &pattern, chrono::Utc::now() + chrono::Duration::hours(hours as i64))?;
+        AgentCmd::Ttl {
+            agent_id,
+            pattern,
+            hours,
+        } => {
+            m.center.vault.add_ttl_window(
+                &agent_id,
+                &pattern,
+                chrono::Utc::now() + chrono::Duration::hours(hours as i64),
+            )?;
             println!("TTL window added: {agent_id} {pattern} ({hours}h)");
             Ok(())
         }
@@ -332,7 +361,14 @@ async fn agent_cmd(m: Arc<SessionManager>, cmd: AgentCmd) -> Result<()> {
 
 async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
     match cmd {
-        HostCmd::Add { name, address, port, username, password, from_ssh_config } => {
+        HostCmd::Add {
+            name,
+            address,
+            port,
+            username,
+            password,
+            from_ssh_config,
+        } => {
             if from_ssh_config {
                 import_ssh_config(&m).await?;
                 return Ok(());
@@ -342,17 +378,20 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
                 None => bail!("--password required (或 --from-ssh-config)"),
             };
             let id = m
-                .upsert_host(&human(), HostDraft {
-                    id: None,
-                    name,
-                    address,
-                    port: Some(port),
-                    username,
-                    auth,
-                    tags: vec![],
-                    charset: Default::default(),
-                    shell_integration: None,
-                })
+                .upsert_host(
+                    &human(),
+                    HostDraft {
+                        id: None,
+                        name,
+                        address,
+                        port: Some(port),
+                        username,
+                        auth,
+                        tags: vec![],
+                        charset: Default::default(),
+                        shell_integration: None,
+                    },
+                )
                 .await?;
             println!("host {id} added");
             Ok(())
@@ -362,7 +401,11 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
                 // T34：指纹列（"-" = 信任未建立）——信任可查证在 CLI 同样成立
                 println!(
                     "{}\t{}\t{}@{}:{}\t{}\t{:?}",
-                    h.id, h.name, h.username, h.address, h.port,
+                    h.id,
+                    h.name,
+                    h.username,
+                    h.address,
+                    h.port,
                     h.fingerprint.as_deref().unwrap_or("-"),
                     h.tags
                 );
@@ -473,12 +516,26 @@ async fn session_cmd(m: Arc<SessionManager>, cmd: SessionCmd) -> Result<()> {
                         continue;
                     }
                     "/takeover" => {
-                        let r = m.set_control(&human(), sid.clone(), ControlOwner::Human, ControlOpts::default()).await?;
+                        let r = m
+                            .set_control(
+                                &human(),
+                                sid.clone(),
+                                ControlOwner::Human,
+                                ControlOpts::default(),
+                            )
+                            .await?;
                         println!("{}", serde_json::to_string_pretty(&r)?);
                         continue;
                     }
                     "/handback" => {
-                        let r = m.set_control(&human(), sid.clone(), ControlOwner::Agent, ControlOpts::default()).await?;
+                        let r = m
+                            .set_control(
+                                &human(),
+                                sid.clone(),
+                                ControlOwner::Agent,
+                                ControlOpts::default(),
+                            )
+                            .await?;
                         println!("{}", serde_json::to_string_pretty(&r)?);
                         continue;
                     }
@@ -503,13 +560,27 @@ async fn session_cmd(m: Arc<SessionManager>, cmd: SessionCmd) -> Result<()> {
         }
         SessionCmd::Takeover { session_id } => {
             let r = m
-                .set_control(&human(), session_id, ControlOwner::Human, ControlOpts { stop_running: StopPolicy::BestEffort })
+                .set_control(
+                    &human(),
+                    session_id,
+                    ControlOwner::Human,
+                    ControlOpts {
+                        stop_running: StopPolicy::BestEffort,
+                    },
+                )
                 .await?;
             println!("{}", serde_json::to_string_pretty(&r)?);
             Ok(())
         }
         SessionCmd::Handback { session_id } => {
-            let r = m.set_control(&human(), session_id, ControlOwner::Agent, ControlOpts::default()).await?;
+            let r = m
+                .set_control(
+                    &human(),
+                    session_id,
+                    ControlOwner::Agent,
+                    ControlOpts::default(),
+                )
+                .await?;
             println!("{}", serde_json::to_string_pretty(&r)?);
             Ok(())
         }
@@ -525,10 +596,22 @@ async fn approval_cmd(m: Arc<SessionManager>, cmd: ApprovalCmd) -> Result<()> {
     match cmd {
         ApprovalCmd::List { pending_only } => {
             let items = m
-                .list_approvals(&human(), ApprovalFilter { pending_only, ..Default::default() })
+                .list_approvals(
+                    &human(),
+                    ApprovalFilter {
+                        pending_only,
+                        ..Default::default()
+                    },
+                )
                 .await?;
             for it in items {
-                println!("{} [{}] {} :: {}", it.id, format!("{:?}", it.status).to_lowercase(), it.agent_id, it.command);
+                println!(
+                    "{} [{}] {} :: {}",
+                    it.id,
+                    format!("{:?}", it.status).to_lowercase(),
+                    it.agent_id,
+                    it.command
+                );
                 for seg in &it.segment_report {
                     println!("    - {} : {}", seg.segment, seg.verdict);
                 }
@@ -541,7 +624,8 @@ async fn approval_cmd(m: Arc<SessionManager>, cmd: ApprovalCmd) -> Result<()> {
             Ok(())
         }
         ApprovalCmd::Edit { id, command } => {
-            m.decide_approval(&human(), id, Decision::ApproveEdited(command)).await?;
+            m.decide_approval(&human(), id, Decision::ApproveEdited(command))
+                .await?;
             println!("approved (edited)");
             Ok(())
         }
@@ -557,16 +641,31 @@ async fn audit_cmd(m: Arc<SessionManager>, cmd: AuditCmd) -> Result<()> {
     match cmd {
         AuditCmd::Query { session_id, limit } => {
             let page = m
-                .query_audit(&human(), AuditFilter { session_id, limit, ..Default::default() })
+                .query_audit(
+                    &human(),
+                    AuditFilter {
+                        session_id,
+                        limit,
+                        ..Default::default()
+                    },
+                )
                 .await?;
             for ev in &page.events {
-                println!("{} #{} {} {:?} {}", ev.seq, ev.ts.format("%H:%M:%S"), ev.action, ev.agent_id, ev.command.clone().unwrap_or_default());
+                println!(
+                    "{} #{} {} {:?} {}",
+                    ev.seq,
+                    ev.ts.format("%H:%M:%S"),
+                    ev.action,
+                    ev.agent_id,
+                    ev.command.clone().unwrap_or_default()
+                );
             }
             println!("total: {}", page.total);
             Ok(())
         }
         AuditCmd::Export { out } => {
-            m.export_audit(&human(), AuditFilter::default(), std::path::Path::new(&out)).await?;
+            m.export_audit(&human(), AuditFilter::default(), std::path::Path::new(&out))
+                .await?;
             println!("exported to {out}");
             Ok(())
         }

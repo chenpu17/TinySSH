@@ -8,15 +8,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::model::{CallToolRequestParams, ClientConfig};
-use rmcp::ClientLifecycleMode;
-use session_api::*;
-use rmcp::service::{RunningService, RoleClient, ClientServiceExt as _};
+use rmcp::service::{ClientServiceExt as _, RoleClient, RunningService};
 use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
 };
+use rmcp::ClientLifecycleMode;
+use session_api::*;
 
 fn sshd_enabled() -> bool {
-    std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false)
+    std::env::var("TINYSSH_E2E_SSHD")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// T17 主机指纹门的测试侧人类应答器：轮询待决指纹并按人类身份接受。
@@ -63,7 +65,9 @@ async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
             address: "127.0.0.1".into(),
             port: Some(2222),
             username: "root".into(),
-            auth: AuthDraft::Password { password: "testpass".into() },
+            auth: AuthDraft::Password {
+                password: "testpass".into(),
+            },
             tags: vec![],
             charset: Default::default(),
             shell_integration: Some(true),
@@ -115,7 +119,9 @@ fn err_kind(r: &rmcp::model::CallToolResult) -> Option<String> {
 }
 
 fn structured(r: &rmcp::model::CallToolResult) -> serde_json::Value {
-    r.structured_content.clone().unwrap_or(serde_json::Value::Null)
+    r.structured_content
+        .clone()
+        .unwrap_or(serde_json::Value::Null)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -134,18 +140,38 @@ async fn acceptance_scenario_on_ssh() {
     // ---- Agent：create_session（远程 → 人类批准）----
     let client_c = connect(&url, &token).await;
     let jh = tokio::spawn(async move {
-        client_c.call_tool(call("create_session", serde_json::json!({"host_id": "e2e-linux"}))).await
+        client_c
+            .call_tool(call(
+                "create_session",
+                serde_json::json!({"host_id": "e2e-linux"}),
+            ))
+            .await
     });
     let mut card = None;
     for _ in 0..300 {
-        let items = m.list_approvals(&human, ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        let items = m
+            .list_approvals(
+                &human,
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         if let Some(it) = items.first() {
             card = Some(it.id.clone());
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    m.decide_approval(&human, card.expect("create_session 卡片"), Decision::Approve).await.unwrap();
+    m.decide_approval(
+        &human,
+        card.expect("create_session 卡片"),
+        Decision::Approve,
+    )
+    .await
+    .unwrap();
     let r = jh.await.unwrap().unwrap();
     let sid = structured(&r)["session_id"].as_str().unwrap().to_string();
 
@@ -154,13 +180,28 @@ async fn acceptance_scenario_on_ssh() {
     let sid_a = sid.clone();
     let jh_agent = tokio::spawn(async move {
         client_a
-            .call_tool(call("exec", serde_json::json!({"session_id": sid_a, "command": "echo old_request_should_die"})))
+            .call_tool(call(
+                "exec",
+                serde_json::json!({"session_id": sid_a, "command": "echo old_request_should_die"}),
+            ))
             .await
     });
     let mut old_card = None;
     for _ in 0..300 {
-        let items = m.list_approvals(&human, ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
-        if let Some(it) = items.iter().find(|it| it.command.contains("old_request_should_die")) {
+        let items = m
+            .list_approvals(
+                &human,
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        if let Some(it) = items
+            .iter()
+            .find(|it| it.command.contains("old_request_should_die"))
+        {
             old_card = Some(it.id.clone());
             break;
         }
@@ -170,7 +211,12 @@ async fn acceptance_scenario_on_ssh() {
 
     // ---- 步骤 2：人接管（冻结；不作废运行中——无运行任务）----
     let report = m
-        .set_control(&human, sid.clone(), ControlOwner::Human, ControlOpts::default())
+        .set_control(
+            &human,
+            sid.clone(),
+            ControlOwner::Human,
+            ControlOpts::default(),
+        )
         .await
         .unwrap();
     assert!(report.frozen);
@@ -185,66 +231,122 @@ async fn acceptance_scenario_on_ssh() {
     assert!(brief_in_err.is_some(), "错误载荷应附简报");
 
     // ---- 步骤 4：待审批卡片已作废且不可再生效 ----
-    let items = m.list_approvals(&human, ApprovalFilter::default()).await.unwrap();
+    let items = m
+        .list_approvals(&human, ApprovalFilter::default())
+        .await
+        .unwrap();
     let card_status = items.iter().find(|it| it.id == old_card).unwrap().status;
     assert_eq!(card_status, ApprovalStatus::Voided);
-    let revive = m.decide_approval(&human, old_card.clone(), Decision::Approve).await;
+    let revive = m
+        .decide_approval(&human, old_card.clone(), Decision::Approve)
+        .await;
     assert!(revive.is_err(), "作废卡片不可再生效");
     // Agent 侧控制权被拒
     let r = client
-        .call_tool(call("exec", serde_json::json!({"session_id": sid, "command": "echo blocked"})))
+        .call_tool(call(
+            "exec",
+            serde_json::json!({"session_id": sid, "command": "echo blocked"}),
+        ))
         .await
         .unwrap();
     assert_eq!(err_kind(&r).as_deref(), Some("control_taken_by_human"));
 
     // ---- 步骤 5：人类修改现场（mkdir + cd；Human 短路审批）----
-    m.exec(&human, sid.clone(), "mkdir -p /tmp/handoff-demo && cd /tmp/handoff-demo && touch marker_from_human", ExecOpts::default())
-        .await
-        .unwrap();
+    m.exec(
+        &human,
+        sid.clone(),
+        "mkdir -p /tmp/handoff-demo && cd /tmp/handoff-demo && touch marker_from_human",
+        ExecOpts::default(),
+    )
+    .await
+    .unwrap();
 
     // ---- 步骤 6：人交还 ----
-    m.set_control(&human, sid.clone(), ControlOwner::Agent, ControlOpts::default()).await.unwrap();
+    m.set_control(
+        &human,
+        sid.clone(),
+        ControlOwner::Agent,
+        ControlOpts::default(),
+    )
+    .await
+    .unwrap();
 
     // ---- 步骤 7：Agent 读简报核实（cwd 已变为人工现场）----
     let r = client
-        .call_tool(call("get_session_brief", serde_json::json!({"session_id": sid})))
+        .call_tool(call(
+            "get_session_brief",
+            serde_json::json!({"session_id": sid}),
+        ))
         .await
         .unwrap();
     let brief = structured(&r);
-    assert_eq!(brief["cwd"].as_str(), Some("/tmp/handoff-demo"), "简报 cwd={brief}");
+    assert_eq!(
+        brief["cwd"].as_str(),
+        Some("/tmp/handoff-demo"),
+        "简报 cwd={brief}"
+    );
 
     // ---- 步骤 8：Agent 核实后重新提交 → 批准 → 在新现场执行 ----
     let client_b = connect(&url, &token).await;
     let sid_b = sid.clone();
     let jh_resub = tokio::spawn(async move {
         client_b
-            .call_tool(call("exec", serde_json::json!({"session_id": sid_b, "command": "pwd && ls marker_from_human"})))
+            .call_tool(call(
+                "exec",
+                serde_json::json!({"session_id": sid_b, "command": "pwd && ls marker_from_human"}),
+            ))
             .await
     });
     let mut resub_card = None;
     for _ in 0..300 {
-        let items = m.list_approvals(&human, ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        let items = m
+            .list_approvals(
+                &human,
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         if let Some(it) = items.iter().find(|it| it.command.contains("pwd")) {
             resub_card = Some(it.id.clone());
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    m.decide_approval(&human, resub_card.expect("重新提交卡片"), Decision::Approve).await.unwrap();
+    m.decide_approval(&human, resub_card.expect("重新提交卡片"), Decision::Approve)
+        .await
+        .unwrap();
     let r = jh_resub.await.unwrap().unwrap();
     assert_eq!(r.is_error, Some(false), "{r:?}");
     let out = structured(&r);
     let stdout = out["stdout"].as_str().unwrap_or_default();
     assert!(stdout.contains("/tmp/handoff-demo"), "新现场 cwd：{stdout}");
-    assert!(stdout.contains("marker_from_human"), "人类修改可见：{stdout}");
+    assert!(
+        stdout.contains("marker_from_human"),
+        "人类修改可见：{stdout}"
+    );
 
     // 旧请求没有被自动执行：审计里没有 old_request_should_die 的成功 exec
     let page = m
-        .query_audit(&human, AuditFilter { session_id: Some(sid.clone()), limit: 1000, ..Default::default() })
+        .query_audit(
+            &human,
+            AuditFilter {
+                session_id: Some(sid.clone()),
+                limit: 1000,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     let old_ran = page.events.iter().any(|ev| {
-        ev.action == "exec" && ev.command.as_deref().unwrap_or("").contains("old_request_should_die")
+        ev.action == "exec"
+            && ev
+                .command
+                .as_deref()
+                .unwrap_or("")
+                .contains("old_request_should_die")
     });
     assert!(!old_ran, "旧请求被自动执行了！");
     let _ = client.close().await;
@@ -264,10 +366,22 @@ async fn journey2_reconnect_reconfirm() {
     let human = Actor::Human;
 
     let sid = m
-        .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
+        .create_session(
+            &human,
+            CreateSessionReq {
+                host_id: "e2e-linux".into(),
+            },
+        )
         .await
         .unwrap();
-    m.exec(&human, sid.clone(), "cd /tmp && echo ready", ExecOpts::default()).await.unwrap();
+    m.exec(
+        &human,
+        sid.clone(),
+        "cd /tmp && echo ready",
+        ExecOpts::default(),
+    )
+    .await
+    .unwrap();
 
     // 断线：重启容器（sshd 重启 <2s；核心 3 次重连机会，间隔 2s）
     let _ = std::process::Command::new("docker")
@@ -297,16 +411,44 @@ async fn journey2_reconnect_reconfirm() {
     }
 
     // 白名单外动作被拒
-    let r = m.exec(&Actor::Agent { client_id: "opencode".into() }, sid.clone(), "touch /tmp/nope", ExecOpts::default()).await;
+    let r = m
+        .exec(
+            &Actor::Agent {
+                client_id: "opencode".into(),
+            },
+            sid.clone(),
+            "touch /tmp/nope",
+            ExecOpts::default(),
+        )
+        .await;
     assert!(matches!(r, Err(Error::ReconfirmingPending)), "得到 {r:?}");
 
     // M1 回归：白名单命令携带复合段同样被拒（前缀匹配不得绕过重确认门槛）
-    let r = m.exec(&Actor::Agent { client_id: "opencode".into() }, sid.clone(), "pwd && touch /tmp/nope2", ExecOpts::default()).await;
-    assert!(matches!(r, Err(Error::ReconfirmingPending)), "复合白名单被放行？{r:?}");
+    let r = m
+        .exec(
+            &Actor::Agent {
+                client_id: "opencode".into(),
+            },
+            sid.clone(),
+            "pwd && touch /tmp/nope2",
+            ExecOpts::default(),
+        )
+        .await;
+    assert!(
+        matches!(r, Err(Error::ReconfirmingPending)),
+        "复合白名单被放行？{r:?}"
+    );
 
     // 白名单核实（Agent 侧允许）
     let r = m
-        .exec(&Actor::Agent { client_id: "opencode".into() }, sid.clone(), "pwd", ExecOpts::default())
+        .exec(
+            &Actor::Agent {
+                client_id: "opencode".into(),
+            },
+            sid.clone(),
+            "pwd",
+            ExecOpts::default(),
+        )
         .await
         .unwrap();
     assert_eq!(r.exit_code, Some(0));
@@ -329,7 +471,14 @@ async fn journey2_reconnect_reconfirm() {
 
     // 恢复后普通动作可用，且现场延续（cwd 仍为 /tmp —— 同一持久 shell? 重连是新 shell；
     // 正确断言：新 shell 的初始 cwd 生效即可（显示历史 ≠ 现场延续，PRD v0.5）
-    m.exec(&human, sid.clone(), "echo after_reconfirm", ExecOpts::default()).await.unwrap();
+    m.exec(
+        &human,
+        sid.clone(),
+        "echo after_reconfirm",
+        ExecOpts::default(),
+    )
+    .await
+    .unwrap();
 }
 
 /// 旅程 3（T13）：重连死端 → 一键重连闭环。
@@ -373,12 +522,22 @@ async fn journey3_scenario() -> std::result::Result<(), String> {
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;
     let sid = m
-        .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
+        .create_session(
+            &human,
+            CreateSessionReq {
+                host_id: "e2e-linux".into(),
+            },
+        )
         .await
         .unwrap();
-    m.exec(&human, sid.clone(), "cd /tmp && echo up_before_down", ExecOpts::default())
-        .await
-        .unwrap();
+    m.exec(
+        &human,
+        sid.clone(),
+        "cd /tmp && echo up_before_down",
+        ExecOpts::default(),
+    )
+    .await
+    .unwrap();
 
     // sshd 下线超过自动重连窗口（3 次尝试 + 2s 间隔）→ Disconnected 死端
     let _ = std::process::Command::new("docker")
@@ -400,7 +559,9 @@ async fn journey3_scenario() -> std::result::Result<(), String> {
     assert!(dead, "sshd 下线后会话应进入 Disconnected 死端");
 
     // 死端上 exec 明确失败
-    let r = m.exec(&human, sid.clone(), "echo should_fail", ExecOpts::default()).await;
+    let r = m
+        .exec(&human, sid.clone(), "echo should_fail", ExecOpts::default())
+        .await;
     assert!(r.is_err(), "死端 exec 应失败: {r:?}");
 
     // 容器恢复 → 一键重连
@@ -429,7 +590,11 @@ async fn journey3_scenario() -> std::result::Result<(), String> {
         .exec(&human, sid.clone(), "pwd", ExecOpts::default())
         .await
         .unwrap();
-    assert!(r.stdout.trim().starts_with("/"), "重连后应在新 shell: {:?}", r.stdout);
+    assert!(
+        r.stdout.trim().starts_with("/"),
+        "重连后应在新 shell: {:?}",
+        r.stdout
+    );
     let mut connected = false;
     for _ in 0..100 {
         let sessions = m.list_sessions(&human).await.unwrap();
@@ -444,15 +609,29 @@ async fn journey3_scenario() -> std::result::Result<(), String> {
     assert!(connected, "核实后应自动退出 Reconfirming");
 
     // 恢复后普通动作可用（审计应含手动重连事件）
-    m.exec(&human, sid.clone(), "echo after_manual_reconnect", ExecOpts::default())
-        .await
-        .unwrap();
+    m.exec(
+        &human,
+        sid.clone(),
+        "echo after_manual_reconnect",
+        ExecOpts::default(),
+    )
+    .await
+    .unwrap();
     let page = m
-        .query_audit(&human, AuditFilter { session_id: Some(sid.clone()), limit: 100, ..Default::default() })
+        .query_audit(
+            &human,
+            AuditFilter {
+                session_id: Some(sid.clone()),
+                limit: 100,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert!(
-        page.events.iter().any(|ev| ev.action == "session_reconnect"),
+        page.events
+            .iter()
+            .any(|ev| ev.action == "session_reconnect"),
         "审计应含 session_reconnect 事件"
     );
     Ok(())
@@ -483,15 +662,27 @@ async fn journey4_reconnect_with_dirty_typing_state() {
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;
     let sid = m
-        .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
+        .create_session(
+            &human,
+            CreateSessionReq {
+                host_id: "e2e-linux".into(),
+            },
+        )
         .await
         .unwrap();
-    m.exec(&human, sid.clone(), "cd /tmp && echo dirty_base", ExecOpts::default())
-        .await
-        .unwrap();
+    m.exec(
+        &human,
+        sid.clone(),
+        "cd /tmp && echo dirty_base",
+        ExecOpts::default(),
+    )
+    .await
+    .unwrap();
 
     // 键入一半（无回车）→ 屏上留下 Typing 相残留
-    m.send_keys(&human, sid.clone(), "echo 'half_typed_command").await.unwrap();
+    m.send_keys(&human, sid.clone(), "echo 'half_typed_command")
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // 容器重启（2s 内回来）→ 自动重连路径
@@ -520,7 +711,8 @@ async fn journey4_reconnect_with_dirty_typing_state() {
         !snap.text.contains("PROMPT_COMMAND")
             && !snap.text.contains("__t_prompt")
             && !snap.text.contains("printf '\\033[2J"),
-        "重连后注入片段明文泄漏进屏: {:?}", snap.text
+        "重连后注入片段明文泄漏进屏: {:?}",
+        snap.text
     );
 
     // ②③ shell exec 立即可用；新 shell 起始 cwd 是 /root（半截命令未执行、现场不延续）
@@ -529,11 +721,18 @@ async fn journey4_reconnect_with_dirty_typing_state() {
             &human,
             sid.clone(),
             "pwd",
-            ExecOpts { timeout: Some(Duration::from_secs(15)), ..Default::default() },
+            ExecOpts {
+                timeout: Some(Duration::from_secs(15)),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
-    assert!(r.stdout.contains("/root"), "新 shell 应在 /root（半截命令不得执行）: {:?}", r.stdout);
+    assert!(
+        r.stdout.contains("/root"),
+        "新 shell 应在 /root（半截命令不得执行）: {:?}",
+        r.stdout
+    );
 
     let mut connected = false;
     for _ in 0..100 {
@@ -564,7 +763,12 @@ async fn create_session_screen_is_clean() {
     auto_accept_host_keys(m.clone());
     let human = Actor::Human;
     let sid = m
-        .create_session(&human, CreateSessionReq { host_id: "e2e-linux".into() })
+        .create_session(
+            &human,
+            CreateSessionReq {
+                host_id: "e2e-linux".into(),
+            },
+        )
         .await
         .unwrap();
     let snap = m.read_screen(&human, sid).await.unwrap();
@@ -583,13 +787,27 @@ async fn create_session_screen_is_clean() {
 // T44（V1 收口）：Agent 建隧道/停隧道逐段审批——批准后隧道真实可用、停止必审、
 // 拒绝即不建；非回环监听地址被拒（审核中-6）。
 fn t44_free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
-async fn t44_wait_card(m: &Arc<core_session::SessionManager>, human: &Actor, needle: &str) -> String {
+async fn t44_wait_card(
+    m: &Arc<core_session::SessionManager>,
+    human: &Actor,
+    needle: &str,
+) -> String {
     for _ in 0..300 {
         let items = m
-            .list_approvals(human, ApprovalFilter { pending_only: true, ..Default::default() })
+            .list_approvals(
+                human,
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         if let Some(it) = items.iter().find(|it| it.command.contains(needle)) {
@@ -613,7 +831,9 @@ async fn t44_read_banner(tcp: &mut tokio::net::TcpStream) -> String {
             }
         }
     };
-    tokio::time::timeout(Duration::from_secs(10), fut).await.expect("10s 未读到 banner");
+    tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .expect("10s 未读到 banner");
     String::from_utf8_lossy(&buf).into_owned()
 }
 
@@ -633,10 +853,17 @@ async fn journey5_agent_forward_approval_flow() {
     // 建会话（远程默认必审，与既有旅程同款门）
     let client_c = connect(&url, &token).await;
     let jh = tokio::spawn(async move {
-        client_c.call_tool(call("create_session", serde_json::json!({"host_id": "e2e-linux"}))).await
+        client_c
+            .call_tool(call(
+                "create_session",
+                serde_json::json!({"host_id": "e2e-linux"}),
+            ))
+            .await
     });
     let card = t44_wait_card(&m, &human, "create_session").await;
-    m.decide_approval(&human, card, Decision::Approve).await.unwrap();
+    m.decide_approval(&human, card, Decision::Approve)
+        .await
+        .unwrap();
     let r = jh.await.unwrap().unwrap();
     let sid = structured(&r)["session_id"].as_str().unwrap().to_string();
 
@@ -649,42 +876,70 @@ async fn journey5_agent_forward_approval_flow() {
     let sid_f = sid.clone();
     let jh_f = tokio::spawn(async move {
         client_f
-            .call_tool(call("forward_start", serde_json::json!({
-                "session_id": sid_f,
-                "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp,
-                                      "target_host": "127.0.0.1", "target_port": 22 } }
-            })))
+            .call_tool(call(
+                "forward_start",
+                serde_json::json!({
+                    "session_id": sid_f,
+                    "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp,
+                                          "target_host": "127.0.0.1", "target_port": 22 } }
+                }),
+            ))
             .await
     });
     let fwd_cmd = format!("端口转发 -L 127.0.0.1:{lp}");
     let card = t44_wait_card(&m, &human, &fwd_cmd).await;
     // 卡片段落报告人类可读（逐段审批语义）
     {
-        let items = m.list_approvals(&human, ApprovalFilter::default()).await.unwrap();
+        let items = m
+            .list_approvals(&human, ApprovalFilter::default())
+            .await
+            .unwrap();
         let it = items.iter().find(|it| it.id == card).unwrap();
-        assert!(it.segment_report.iter().any(|s| s.segment.contains("-L") && s.verdict.contains("端口转发")), "{:?}", it.segment_report);
+        assert!(
+            it.segment_report
+                .iter()
+                .any(|s| s.segment.contains("-L") && s.verdict.contains("端口转发")),
+            "{:?}",
+            it.segment_report
+        );
     }
-    m.decide_approval(&human, card, Decision::Approve).await.unwrap();
+    m.decide_approval(&human, card, Decision::Approve)
+        .await
+        .unwrap();
     let r = jh_f.await.unwrap().unwrap();
     let fid = structured(&r)["forward_id"].as_str().unwrap().to_string();
 
     // ---- Agent 可查状态：Listening；隧道真实可用（读容器 sshd banner）----
     let r = client
-        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+        .call_tool(call(
+            "forwards_list",
+            serde_json::json!({"session_id": sid}),
+        ))
         .await
         .unwrap();
     let fwd = structured(&r)["forwards"][0].clone();
     assert_eq!(fwd["state"], "Listening", "{fwd:?}");
-    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.expect("本地监听应可连");
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", lp))
+        .await
+        .expect("本地监听应可连");
     let banner = t44_read_banner(&mut tcp).await;
-    assert!(banner.starts_with("SSH-2.0"), "经审批建立的隧道应通：{banner:?}");
+    assert!(
+        banner.starts_with("SSH-2.0"),
+        "经审批建立的隧道应通：{banner:?}"
+    );
 
     // ---- 非回环监听地址被拒（审核中-6；人类路径同样走 transport 校验）----
     let bad = m
-        .start_forward(&human, sid.clone(), session_api::ForwardSpec::Local {
-            listen_addr: "0.0.0.0".into(), listen_port: t44_free_port(),
-            target_host: "127.0.0.1".into(), target_port: 22,
-        })
+        .start_forward(
+            &human,
+            sid.clone(),
+            session_api::ForwardSpec::Local {
+                listen_addr: "0.0.0.0".into(),
+                listen_port: t44_free_port(),
+                target_host: "127.0.0.1".into(),
+                target_port: 22,
+            },
+        )
         .await;
     assert!(bad.is_err(), "0.0.0.0 监听应被拒");
 
@@ -694,27 +949,43 @@ async fn journey5_agent_forward_approval_flow() {
     let fid_s = fid.clone();
     let jh_s = tokio::spawn(async move {
         client_s
-            .call_tool(call("forward_stop", serde_json::json!({"session_id": sid_s, "forward_id": fid_s})))
+            .call_tool(call(
+                "forward_stop",
+                serde_json::json!({"session_id": sid_s, "forward_id": fid_s}),
+            ))
             .await
     });
     let card = t44_wait_card(&m, &human, &fwd_cmd).await; // 停卡命令串=「停止 +同描述」前缀，pending 队列再现
-    m.decide_approval(&human, card, Decision::Approve).await.unwrap();
+    m.decide_approval(&human, card, Decision::Approve)
+        .await
+        .unwrap();
     let r = jh_s.await.unwrap().unwrap();
     assert_eq!(structured(&r)["stopped"], true);
 
     // 停止后：列表空、端口关闭
     let r = client
-        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+        .call_tool(call(
+            "forwards_list",
+            serde_json::json!({"session_id": sid}),
+        ))
         .await
         .unwrap();
     assert_eq!(structured(&r)["forwards"].as_array().unwrap().len(), 0);
     for _ in 0..30 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.is_err() {
+        if tokio::net::TcpStream::connect(("127.0.0.1", lp))
+            .await
+            .is_err()
+        {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.is_err(), "停止后监听应关闭");
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", lp))
+            .await
+            .is_err(),
+        "停止后监听应关闭"
+    );
 
     // 事件收账：建 + 停至少各一条 Changed{session_id}（写口 → 广播全链）
     let mut ev_n = 0u32;
@@ -739,15 +1010,27 @@ async fn journey5_agent_forward_approval_flow() {
             .await
     });
     let card = t44_wait_card(&m, &human, "端口转发 -D").await;
-    m.decide_approval(&human, card, Decision::Deny).await.unwrap();
-    let r = jh_d.await.unwrap().unwrap();
-    let kind = err_kind(&r).unwrap_or_default();
-    assert!(kind.contains("denied") || kind.contains("Deny"), "拒绝应回审批拒绝错误：{kind}");
-    let r = client
-        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+    m.decide_approval(&human, card, Decision::Deny)
         .await
         .unwrap();
-    assert_eq!(structured(&r)["forwards"].as_array().unwrap().len(), 0, "拒绝后不应有转发");
+    let r = jh_d.await.unwrap().unwrap();
+    let kind = err_kind(&r).unwrap_or_default();
+    assert!(
+        kind.contains("denied") || kind.contains("Deny"),
+        "拒绝应回审批拒绝错误：{kind}"
+    );
+    let r = client
+        .call_tool(call(
+            "forwards_list",
+            serde_json::json!({"session_id": sid}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        structured(&r)["forwards"].as_array().unwrap().len(),
+        0,
+        "拒绝后不应有转发"
+    );
 
     // ---- 编辑后批准被后端拦截（复审②）：转发参数无法从编辑文本回解，不得静默
     // 按原文执行（UI 已按 editable 隐藏编辑钮，此处证后端防线对任何前端成立）----
@@ -756,25 +1039,42 @@ async fn journey5_agent_forward_approval_flow() {
     let sid_e = sid.clone();
     let jh_e = tokio::spawn(async move {
         client_e
-            .call_tool(call("forward_start", serde_json::json!({
-                "session_id": sid_e,
-                "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp2,
-                                      "target_host": "127.0.0.1", "target_port": 22 } }
-            })))
+            .call_tool(call(
+                "forward_start",
+                serde_json::json!({
+                    "session_id": sid_e,
+                    "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp2,
+                                          "target_host": "127.0.0.1", "target_port": 22 } }
+                }),
+            ))
             .await
     });
     let card = t44_wait_card(&m, &human, &format!("端口转发 -L 127.0.0.1:{lp2}")).await;
-    m.decide_approval(&human, card, Decision::ApproveEdited("端口转发 -L 127.0.0.1:9999 → 别的目标:22".into()))
-        .await
-        .unwrap();
+    m.decide_approval(
+        &human,
+        card,
+        Decision::ApproveEdited("端口转发 -L 127.0.0.1:9999 → 别的目标:22".into()),
+    )
+    .await
+    .unwrap();
     let r = jh_e.await.unwrap().unwrap();
     let kind = err_kind(&r).unwrap_or_default();
-    assert!(kind.contains("Invalid") || kind.contains("invalid"), "编辑后批准应被拒：{kind}");
+    assert!(
+        kind.contains("Invalid") || kind.contains("invalid"),
+        "编辑后批准应被拒：{kind}"
+    );
     let r = client
-        .call_tool(call("forwards_list", serde_json::json!({"session_id": sid})))
+        .call_tool(call(
+            "forwards_list",
+            serde_json::json!({"session_id": sid}),
+        ))
         .await
         .unwrap();
-    assert_eq!(structured(&r)["forwards"].as_array().unwrap().len(), 0, "编辑拦截后不应有转发（原文也不建）");
+    assert_eq!(
+        structured(&r)["forwards"].as_array().unwrap().len(),
+        0,
+        "编辑拦截后不应有转发（原文也不建）"
+    );
 
     // ---- 会话关闭作废滞留卡（T44 复核中-1）：堵「批了已死会话的卡 → 僵尸监听」----
     // 此前 close_session 不作废 pending 卡，human 仍可批准 → transport 层 bind 不查
@@ -784,24 +1084,38 @@ async fn journey5_agent_forward_approval_flow() {
     let sid_v = sid.clone();
     let jh_v = tokio::spawn(async move {
         client_v
-            .call_tool(call("forward_start", serde_json::json!({
-                "session_id": sid_v,
-                "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp3,
-                                      "target_host": "127.0.0.1", "target_port": 22 } }
-            })))
+            .call_tool(call(
+                "forward_start",
+                serde_json::json!({
+                    "session_id": sid_v,
+                    "spec": { "Local": { "listen_addr": "127.0.0.1", "listen_port": lp3,
+                                          "target_host": "127.0.0.1", "target_port": 22 } }
+                }),
+            ))
             .await
     });
     let card = t44_wait_card(&m, &human, &format!("端口转发 -L 127.0.0.1:{lp3}")).await;
     // 关闭会话：卡随之作废、Agent 等待即醒（不空等 120s）
     m.close_session(&human, sid.clone()).await.unwrap();
     {
-        let items = m.list_approvals(&human, ApprovalFilter::default()).await.unwrap();
+        let items = m
+            .list_approvals(&human, ApprovalFilter::default())
+            .await
+            .unwrap();
         let it = items.iter().find(|it| it.id == card).unwrap();
         assert_eq!(it.status, ApprovalStatus::Voided, "会话关闭应作废其待决卡");
     }
     let r = jh_v.await.unwrap().unwrap();
     let kind = err_kind(&r).unwrap_or_default();
-    assert!(kind.contains("voided"), "Agent 应收到作废错误而非僵尸成功：{kind}");
+    assert!(
+        kind.contains("voided"),
+        "Agent 应收到作废错误而非僵尸成功：{kind}"
+    );
     // 作废的卡不可再生效（事后补批被拦）
-    assert!(m.decide_approval(&human, card, Decision::Approve).await.is_err(), "作废卡不可再批");
+    assert!(
+        m.decide_approval(&human, card, Decision::Approve)
+            .await
+            .is_err(),
+        "作废卡不可再批"
+    );
 }

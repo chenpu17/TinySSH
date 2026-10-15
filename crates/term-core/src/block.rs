@@ -9,9 +9,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockSource {
     Human,
-    Agent { client_id: String },
+    Agent {
+        client_id: String,
+    },
     /// Fresh 结果镜像回放（带 Agent 标注块）。
-    Replay { client_id: Option<String> },
+    Replay {
+        client_id: Option<String>,
+    },
 }
 
 impl BlockSource {
@@ -125,7 +129,10 @@ impl BlockIndex {
             }
             OscEvent::OutputStart => {
                 // C：块正式开始（尚未打开才打开；受管块已在 Output 态则跳过）
-                if matches!(self.phase, BlockPhase::Typing | BlockPhase::Prompt | BlockPhase::Idle) {
+                if matches!(
+                    self.phase,
+                    BlockPhase::Typing | BlockPhase::Prompt | BlockPhase::Idle
+                ) {
                     // 兜底收养：异常流序下 C 先于 B 到达时挂起登记不丢
                     if !self.open.pending.is_empty() {
                         let mut p = std::mem::take(&mut self.open.pending);
@@ -273,7 +280,9 @@ mod tests {
             idx.on_osc(&ev, t0, 0);
         }
         // Agent 键入
-        idx.attribute_write(BlockSource::Agent { client_id: "cc".into() });
+        idx.attribute_write(BlockSource::Agent {
+            client_id: "cc".into(),
+        });
         idx.on_write(b"ls\r\n");
         for (ev, _) in scanner.feed(b"\x1b]133;C\x07out\x1b]133;D;2\x07") {
             idx.on_osc(&ev, t0, 1);
@@ -281,7 +290,12 @@ mod tests {
 
         assert_eq!(idx.blocks.len(), 1);
         assert_eq!(idx.blocks[0].command, "ls");
-        assert_eq!(idx.blocks[0].source, BlockSource::Agent { client_id: "cc".into() });
+        assert_eq!(
+            idx.blocks[0].source,
+            BlockSource::Agent {
+                client_id: "cc".into()
+            }
+        );
         assert_eq!(idx.blocks[0].exit_code, Some(2));
     }
 
@@ -308,10 +322,23 @@ mod tests {
     fn managed_block() {
         let mut idx = BlockIndex::new();
         let t0 = Utc::now();
-        idx.open_managed("docker ps", BlockSource::Replay { client_id: Some("cc".into()) }, None, t0, 0);
+        idx.open_managed(
+            "docker ps",
+            BlockSource::Replay {
+                client_id: Some("cc".into()),
+            },
+            None,
+            t0,
+            0,
+        );
         idx.on_osc(&crate::osc::OscEvent::CommandDone { exit: Some(0) }, t0, 5);
         assert_eq!(idx.blocks.len(), 1);
         assert_eq!(idx.blocks[0].command, "docker ps");
-        assert_eq!(idx.blocks[0].source, BlockSource::Replay { client_id: Some("cc".into()) });
+        assert_eq!(
+            idx.blocks[0].source,
+            BlockSource::Replay {
+                client_id: Some("cc".into())
+            }
+        );
     }
 }

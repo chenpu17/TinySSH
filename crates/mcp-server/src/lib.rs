@@ -1,8 +1,8 @@
 //! MCP 工具实现（L1 §4）：rmcp streamable HTTP + per-client Bearer Token。
 //! 身份仅来自 Token（协议参数不可指定）；错误映射为 isError 载荷（永不挂起协议层）。
 
-use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::common::Extension;
+use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
@@ -14,8 +14,8 @@ use rmcp::ServerHandler;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use session_api::{
-    Actor, AuditFilter, CollisionDecision, CreateSessionReq, DeniedReason, Error, ExecMode, ExecOpts, SessionApi,
-    TargetStat, TransferHandle, TransferStatus, WaitOpts,
+    Actor, AuditFilter, CollisionDecision, CreateSessionReq, DeniedReason, Error, ExecMode,
+    ExecOpts, SessionApi, TargetStat, TransferHandle, TransferStatus, WaitOpts,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -190,22 +190,58 @@ async fn wait_transfer_preflight(
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub enum McpForwardSpec {
     /// 本地转发 -L：本地 listen_addr:listen_port → target_host:target_port
-    Local { listen_addr: String, listen_port: u16, target_host: String, target_port: u16 },
+    Local {
+        listen_addr: String,
+        listen_port: u16,
+        target_host: String,
+        target_port: u16,
+    },
     /// 远程转发 -R：服务器 listen_addr:listen_port → 本机 target_host:target_port
-    Remote { listen_addr: String, listen_port: u16, target_host: String, target_port: u16 },
+    Remote {
+        listen_addr: String,
+        listen_port: u16,
+        target_host: String,
+        target_port: u16,
+    },
     /// 动态转发 -D（SOCKS5）：本地 listen_addr:listen_port
-    Dynamic { listen_addr: String, listen_port: u16 },
+    Dynamic {
+        listen_addr: String,
+        listen_port: u16,
+    },
 }
 
 impl From<McpForwardSpec> for session_api::ForwardSpec {
     fn from(s: McpForwardSpec) -> Self {
         match s {
-            McpForwardSpec::Local { listen_addr, listen_port, target_host, target_port } =>
-                session_api::ForwardSpec::Local { listen_addr, listen_port, target_host, target_port },
-            McpForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } =>
-                session_api::ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port },
-            McpForwardSpec::Dynamic { listen_addr, listen_port } =>
-                session_api::ForwardSpec::Dynamic { listen_addr, listen_port },
+            McpForwardSpec::Local {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            } => session_api::ForwardSpec::Local {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            },
+            McpForwardSpec::Remote {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            } => session_api::ForwardSpec::Remote {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            },
+            McpForwardSpec::Dynamic {
+                listen_addr,
+                listen_port,
+            } => session_api::ForwardSpec::Dynamic {
+                listen_addr,
+                listen_port,
+            },
         }
     }
 }
@@ -335,7 +371,11 @@ impl McpServer {
         }
     }
 
-    #[tool(name = "list_hosts", description = "列出已配置的主机", annotations(read_only_hint = true))]
+    #[tool(
+        name = "list_hosts",
+        description = "列出已配置的主机",
+        annotations(read_only_hint = true)
+    )]
     pub async fn list_hosts(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -347,7 +387,11 @@ impl McpServer {
         .await
     }
 
-    #[tool(name = "list_sessions", description = "列出活动会话", annotations(read_only_hint = true))]
+    #[tool(
+        name = "list_sessions",
+        description = "列出活动会话",
+        annotations(read_only_hint = true)
+    )]
     pub async fn list_sessions(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -359,7 +403,10 @@ impl McpServer {
         .await
     }
 
-    #[tool(name = "create_session", description = "建立到主机的共享会话（远程默认需人工审批）")]
+    #[tool(
+        name = "create_session",
+        description = "建立到主机的共享会话（远程默认需人工审批）"
+    )]
     pub async fn create_session(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -367,7 +414,12 @@ impl McpServer {
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
             let sid = api
-                .create_session(&actor, CreateSessionReq { host_id: p.0.host_id })
+                .create_session(
+                    &actor,
+                    CreateSessionReq {
+                        host_id: p.0.host_id,
+                    },
+                )
                 .await?;
             Ok::<_, Error>(serde_json::json!({"session_id": sid}))
         })
@@ -450,7 +502,11 @@ impl McpServer {
         .await
     }
 
-    #[tool(name = "query_audit", description = "查询审计事件", annotations(read_only_hint = true))]
+    #[tool(
+        name = "query_audit",
+        description = "查询审计事件",
+        annotations(read_only_hint = true)
+    )]
     pub async fn query_audit(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -476,7 +532,11 @@ impl McpServer {
         .await
     }
 
-    #[tool(name = "read_screen", description = "读取屏幕快照（渲染后文本，含回滚）", annotations(read_only_hint = true))]
+    #[tool(
+        name = "read_screen",
+        description = "读取屏幕快照（渲染后文本，含回滚）",
+        annotations(read_only_hint = true)
+    )]
     pub async fn read_screen(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -505,7 +565,11 @@ impl McpServer {
         .await
     }
 
-    #[tool(name = "wait_output", description = "等待会话出现新输出（静默期或正则命中）", annotations(read_only_hint = true))]
+    #[tool(
+        name = "wait_output",
+        description = "等待会话出现新输出（静默期或正则命中）",
+        annotations(read_only_hint = true)
+    )]
     pub async fn wait_output(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -522,7 +586,11 @@ impl McpServer {
         .await
     }
 
-    #[tool(name = "upload", description = "上传文件到远程主机", annotations(destructive_hint = true))]
+    #[tool(
+        name = "upload",
+        description = "上传文件到远程主机",
+        annotations(destructive_hint = true)
+    )]
     pub async fn upload(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -533,11 +601,17 @@ impl McpServer {
             // DF6.2 fail（缺省）：目标已存在 → 不建任务，结构化 ConflictDetected
             //（含目标 stat）；skip/overwrite 交任务预检裁决
             if collision.is_none() {
-                match api.sftp_stat(&actor, p.0.session_id.clone(), p.0.remote.clone()).await {
+                match api
+                    .sftp_stat(&actor, p.0.session_id.clone(), p.0.remote.clone())
+                    .await
+                {
                     Ok(st) => {
                         return Err(Error::ConflictDetected {
                             target_path: p.0.remote.clone(),
-                            target_stat: Some(TargetStat { size: st.size, mtime: st.mtime }),
+                            target_stat: Some(TargetStat {
+                                size: st.size,
+                                mtime: st.mtime,
+                            }),
                         });
                     }
                     Err(Error::SftpPathNotFound { .. }) => {}
@@ -545,14 +619,24 @@ impl McpServer {
                 }
             }
             let handle = api
-                .upload(&actor, p.0.session_id, PathBuf::from(&p.0.local).as_path(), &p.0.remote, collision)
+                .upload(
+                    &actor,
+                    p.0.session_id,
+                    PathBuf::from(&p.0.local).as_path(),
+                    &p.0.remote,
+                    collision,
+                )
                 .await?;
             Ok::<_, Error>(wait_transfer_preflight(&api, &actor, &handle).await)
         })
         .await
     }
 
-    #[tool(name = "download", description = "从远程主机下载文件", annotations(destructive_hint = true))]
+    #[tool(
+        name = "download",
+        description = "从远程主机下载文件",
+        annotations(destructive_hint = true)
+    )]
     pub async fn download(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -561,11 +645,17 @@ impl McpServer {
         run(&self.state, &parts, |api, actor| async move {
             let collision = parse_collision(p.0.collision.as_deref())?;
             if collision.is_none() {
-                match api.sftp_stat(&actor, p.0.session_id.clone(), p.0.local.clone()).await {
+                match api
+                    .sftp_stat(&actor, p.0.session_id.clone(), p.0.local.clone())
+                    .await
+                {
                     Ok(st) => {
                         return Err(Error::ConflictDetected {
                             target_path: p.0.local.clone(),
-                            target_stat: Some(TargetStat { size: st.size, mtime: st.mtime }),
+                            target_stat: Some(TargetStat {
+                                size: st.size,
+                                mtime: st.mtime,
+                            }),
                         });
                     }
                     Err(Error::SftpPathNotFound { .. }) => {}
@@ -573,7 +663,13 @@ impl McpServer {
                 }
             }
             let handle = api
-                .download(&actor, p.0.session_id, &p.0.remote, PathBuf::from(&p.0.local).as_path(), collision)
+                .download(
+                    &actor,
+                    p.0.session_id,
+                    &p.0.remote,
+                    PathBuf::from(&p.0.local).as_path(),
+                    collision,
+                )
                 .await?;
             Ok::<_, Error>(wait_transfer_preflight(&api, &actor, &handle).await)
         })
@@ -582,33 +678,48 @@ impl McpServer {
 
     // ---- 端口转发（T44 V1 收口）：Agent 建隧道/停隧道在 core 层走逐段审批 ----
 
-    #[tool(name = "forward_start", description = "建立端口转发（本地 -L / 远程 -R / SOCKS5 -D；需人工审批）", annotations(destructive_hint = true))]
+    #[tool(
+        name = "forward_start",
+        description = "建立端口转发（本地 -L / 远程 -R / SOCKS5 -D；需人工审批）",
+        annotations(destructive_hint = true)
+    )]
     pub async fn forward_start(
         &self,
         Extension(parts): Extension<HttpParts>,
         p: Parameters<ForwardStartReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            let fid = api.start_forward(&actor, p.0.session_id, p.0.spec.into()).await?;
+            let fid = api
+                .start_forward(&actor, p.0.session_id, p.0.spec.into())
+                .await?;
             Ok::<_, Error>(serde_json::json!({ "forward_id": fid }))
         })
         .await
     }
 
-    #[tool(name = "forward_stop", description = "停止端口转发（可能中断链路；需人工审批）", annotations(destructive_hint = true))]
+    #[tool(
+        name = "forward_stop",
+        description = "停止端口转发（可能中断链路；需人工审批）",
+        annotations(destructive_hint = true)
+    )]
     pub async fn forward_stop(
         &self,
         Extension(parts): Extension<HttpParts>,
         p: Parameters<ForwardStopReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            api.stop_forward(&actor, p.0.session_id, p.0.forward_id).await?;
+            api.stop_forward(&actor, p.0.session_id, p.0.forward_id)
+                .await?;
             Ok::<_, Error>(serde_json::json!({ "stopped": true }))
         })
         .await
     }
 
-    #[tool(name = "forwards_list", description = "列出会话的端口转发及状态（监听中/降级/失败）", annotations(read_only_hint = true))]
+    #[tool(
+        name = "forwards_list",
+        description = "列出会话的端口转发及状态（监听中/降级/失败）",
+        annotations(read_only_hint = true)
+    )]
     pub async fn forwards_list(
         &self,
         Extension(parts): Extension<HttpParts>,
@@ -624,11 +735,12 @@ impl McpServer {
     // ---- C5（R32）：任务注册表查询——进度/终态不靠猜（upload/download 返回
     // transfer_id 后，用本工具对账状态与字节数）----
 
-    #[tool(name = "transfer_list", description = "列出文件传输任务（状态/进度/字节数；含近期已完成任务）", annotations(read_only_hint = true))]
-    pub async fn transfer_list(
-        &self,
-        Extension(parts): Extension<HttpParts>,
-    ) -> CallToolResult {
+    #[tool(
+        name = "transfer_list",
+        description = "列出文件传输任务（状态/进度/字节数；含近期已完成任务）",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn transfer_list(&self, Extension(parts): Extension<HttpParts>) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
             let list = api.list_transfers(&actor).await?;
             Ok::<_, Error>(serde_json::json!({ "transfers": list }))
@@ -671,18 +783,17 @@ pub use http::request::Parts as HttpParts;
 
 // Re-export for axum assembly
 pub use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 
 /// 组装 axum 路由：Bearer 认证中间件 + /mcp 端点。
 pub fn build_router(state: McpState, config: StreamableHttpServerConfig) -> axum::Router {
     let factory_state = state.clone();
-    let service: StreamableHttpService<McpServer, LocalSessionManager> =
-        StreamableHttpService::new(
-            move || Ok(McpServer::new(factory_state.clone())),
-            Default::default(),
-            config,
-        );
+    let service: StreamableHttpService<McpServer, LocalSessionManager> = StreamableHttpService::new(
+        move || Ok(McpServer::new(factory_state.clone())),
+        Default::default(),
+        config,
+    );
     let auth_state = state.clone();
     axum::Router::new()
         .nest_service("/mcp", service)
@@ -792,7 +903,14 @@ pub async fn spawn_endpoint_with_shutdown(
         // serve 返回 = 监听器已释放（新连接被拒）
         let _ = stopped_tx.send(true);
     });
-    Ok((actual, EndpointHandle { shutdown: tx, stopped: stopped_rx, port: actual }))
+    Ok((
+        actual,
+        EndpointHandle {
+            shutdown: tx,
+            stopped: stopped_rx,
+            port: actual,
+        },
+    ))
 }
 
 async fn auth_middleware(
@@ -804,7 +922,10 @@ async fn auth_middleware(
         .headers()
         .get(http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")));
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        });
     let ok = bearer.and_then(|t| (state.resolver)(t)).is_some();
     if !ok {
         return axum::response::Response::builder()

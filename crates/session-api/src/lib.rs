@@ -59,8 +59,7 @@ pub enum ExecMode {
     Fresh,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecOpts {
     pub mode: ExecMode,
     /// 超时；自审批放行起算（不含审批等待）。None = 使用默认 30s。
@@ -70,7 +69,6 @@ pub struct ExecOpts {
     /// 仅 Fresh 模式生效。
     pub env: BTreeMap<String, String>,
 }
-
 
 /// 审批留痕（进 ExecResult 与审计）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -455,8 +453,12 @@ pub enum AuthDraft {
     #[default]
     #[serde(rename = "Keep")]
     None,
-    Key { identity_id: IdentityId },
-    Password { password: String },
+    Key {
+        identity_id: IdentityId,
+    },
+    Password {
+        password: String,
+    },
     /// 引用本机 ssh-agent（不落任何密钥材料）。
     Agent,
 }
@@ -542,9 +544,19 @@ pub enum IdentityKind {
 /// 生成或导入凭据；任何方法不返回私钥明文。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IdentityReq {
-    Generate { label: String, kind: KeyKind },
-    Import { label: String, pem: String, passphrase: Option<String> },
-    Password { label: String, password: String },
+    Generate {
+        label: String,
+        kind: KeyKind,
+    },
+    Import {
+        label: String,
+        pem: String,
+        passphrase: Option<String>,
+    },
+    Password {
+        label: String,
+        password: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -785,7 +797,11 @@ pub struct OutputChunk {
 /// Raw.seq 为会话内单调递增字节事件序号（C10）；桥层打包为 8 字节 LE 帧头 + 原始字节。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OutputEvent {
-    Raw { sid: SessionId, seq: u64, data: Vec<u8> },
+    Raw {
+        sid: SessionId,
+        seq: u64,
+        data: Vec<u8>,
+    },
     /// 屏幕状态大幅变化（resync 提示）。
     Resync { sid: SessionId },
 }
@@ -1018,19 +1034,19 @@ pub enum PublishOutcome {
 pub fn local_stat_entry(path: &str) -> Result<EntryStat> {
     let lst = std::fs::symlink_metadata(path).map_err(|e| Error::from_fs_err(path, &e))?;
     let ft = lst.file_type();
-    let kind = Some(
-        if ft.is_dir() {
-            EntryKind::Dir
-        } else if ft.is_file() {
-            EntryKind::File
-        } else if ft.is_symlink() {
-            EntryKind::Symlink
-        } else {
-            EntryKind::Other
-        },
-    );
+    let kind = Some(if ft.is_dir() {
+        EntryKind::Dir
+    } else if ft.is_file() {
+        EntryKind::File
+    } else if ft.is_symlink() {
+        EntryKind::Symlink
+    } else {
+        EntryKind::Other
+    });
     let symlink_target = if ft.is_symlink() {
-        std::fs::read_link(path).ok().map(|p| p.to_string_lossy().into_owned())
+        std::fs::read_link(path)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
     } else {
         None
     };
@@ -1041,7 +1057,9 @@ pub fn local_stat_entry(path: &str) -> Result<EntryStat> {
         lst
     };
     Ok(EntryStat {
-        canonical: std::fs::canonicalize(path).ok().map(|p| p.to_string_lossy().into_owned()),
+        canonical: std::fs::canonicalize(path)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned()),
         kind,
         is_dir: md.is_dir(),
         size: Some(md.len()),
@@ -1270,7 +1288,9 @@ pub enum Error {
     #[error("执行超时")]
     ExecTimeout,
     /// C3（R24）：无 shell 集成主机拒绝 Shell 模式执行（副作用前；禁止自动 Fresh 降级）。
-    #[error("该主机未启用 shell 集成，Shell 模式不可用——可显式指定 Fresh 模式执行（不继承终端现场）")]
+    #[error(
+        "该主机未启用 shell 集成，Shell 模式不可用——可显式指定 Fresh 模式执行（不继承终端现场）"
+    )]
     ShellIntegrationUnavailable { available: ShellCapability },
     /// cancel_exec / cancel_transfer。
     #[error("已取消")]
@@ -1311,7 +1331,10 @@ pub enum Error {
     StaleDecision { expect_revision: u64 },
     /// C5/R34：非法状态下的决定提交（非 AwaitingDecision / Agent 任务）。
     #[error("传输状态不允许该决定（task={task_id}, state={state:?}）")]
-    InvalidTransferState { task_id: TransferId, state: TransferStatus },
+    InvalidTransferState {
+        task_id: TransferId,
+        state: TransferStatus,
+    },
     /// R40（§6.6/D02）：转发监听建立失败——`field` 把错误定位到表单字段
     /// （"listen"=监听地址/端口，含端口占用与非法地址；"target"=目标侧），
     /// 供 FE 就地高亮对应输入而非只弹通用提示。
@@ -1359,9 +1382,10 @@ impl Error {
                 Some(serde_json::json!({ "available": available })),
             ),
             E::Cancelled => ("cancelled", None),
-            E::QueueBusy { position } => {
-                ("queue_busy", Some(serde_json::json!({ "position": position })))
-            }
+            E::QueueBusy { position } => (
+                "queue_busy",
+                Some(serde_json::json!({ "position": position })),
+            ),
             E::InvalidActor => ("invalid_actor", None),
             E::InvalidInput(_) => ("invalid_input", None),
             E::IdentityInUse { host_names } => (
@@ -1500,7 +1524,14 @@ pub fn serde_true() -> bool {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Workspace { schema_version: 1, chrome: default_chrome(), hostbar: None, terminal: None, transfers: None, sessions: None }
+        Workspace {
+            schema_version: 1,
+            chrome: default_chrome(),
+            hostbar: None,
+            terminal: None,
+            transfers: None,
+            sessions: None,
+        }
     }
 }
 
@@ -1667,7 +1698,8 @@ pub trait SessionApi: Send + Sync {
     // ---- 交互式（v1；PRD FR-6）----
     async fn read_screen(&self, ctx: &Actor, sid: SessionId) -> Result<ScreenSnapshot>;
     async fn send_keys(&self, ctx: &Actor, sid: SessionId, keys: &str) -> Result<()>;
-    async fn wait_output(&self, ctx: &Actor, sid: SessionId, opts: WaitOpts) -> Result<OutputChunk>;
+    async fn wait_output(&self, ctx: &Actor, sid: SessionId, opts: WaitOpts)
+        -> Result<OutputChunk>;
     async fn set_control(
         &self,
         ctx: &Actor,
@@ -1678,7 +1710,12 @@ pub trait SessionApi: Send + Sync {
 
     /// C2（R24）：首次委托——人类把会话交 Agent 执行并附目标（DC2.2 独立于裸 set_control，
     /// 承载确认语义与 session_delegated 审计）。仅 Human 可调。
-    async fn delegate_session(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()>;
+    async fn delegate_session(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        goal: Option<String>,
+    ) -> Result<()>;
 
     /// C3（R24）：shell 能力只读查询（DC3.3 任何 Actor 可查；执行时入口另重查）。
     async fn shell_capability(&self, ctx: &Actor, sid: SessionId) -> Result<ShellCapability>;
@@ -1725,7 +1762,11 @@ pub trait SessionApi: Send + Sync {
     /// C6/R34：OutcomeUnknown 复核（仅人类 UI）。只有 journal 证据（verified
     /// 标记）能绑定本次发布 → Succeeded{verified}；无绑定证据保持 OutcomeUnknown
     ///（同大小/temp 消失/摘要等单独不足——契约明文）。不自动重发/覆盖/清理。
-    async fn verify_transfer_outcome(&self, ctx: &Actor, task_id: TransferId) -> Result<TransferTask>;
+    async fn verify_transfer_outcome(
+        &self,
+        ctx: &Actor,
+        task_id: TransferId,
+    ) -> Result<TransferTask>;
 
     /// C5（§547）：任务注册表查询——全量快照（新建时间倒序），UI 重挂后对账与
     /// 事件漏收兜底（事件可合并可丢失，查询是权威）。任何 Actor 可查（只读）。
@@ -1744,7 +1785,12 @@ pub trait SessionApi: Send + Sync {
     /// C4（R30）：路径解析——canonical path 经 SFTP realpath（§352 不靠 shell 拼
     /// 命令、前端不猜）。path=None 时返回 SFTP 会话初始目录。不存在/权限可区别
     /// （SftpPathNotFound/SftpPermissionDenied）。只读、Human 浏览口径（同 sftp_list）。
-    async fn sftp_resolve_path(&self, ctx: &Actor, sid: SessionId, path: Option<String>) -> Result<PathResolved>;
+    async fn sftp_resolve_path(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        path: Option<String>,
+    ) -> Result<PathResolved>;
 
     /// C4（R30）：单条目元数据（类型/大小/时间/符号链接目标，未知字段为 None）。
     /// 只读、Human 浏览口径（同 sftp_list）。
@@ -1754,7 +1800,12 @@ pub trait SessionApi: Send + Sync {
     /// 列出会话的转发（任何 Actor 可查——PRD「MCP 可查询状态」口径）。
     async fn list_forwards(&self, ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>>;
     /// 创建并启动转发。人类直建；Agent 创建需授权——审批版留 V1/MCP 侧（当前无 Agent 入口）。
-    async fn start_forward(&self, ctx: &Actor, sid: SessionId, spec: ForwardSpec) -> Result<ForwardId>;
+    async fn start_forward(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        spec: ForwardSpec,
+    ) -> Result<ForwardId>;
     async fn stop_forward(&self, ctx: &Actor, sid: SessionId, fid: ForwardId) -> Result<()>;
     /// 转发状态变化事件（T44 真机冒烟补口）：start/stop/Degraded/恢复/Failed
     /// 状态写口广播——UI 事件驱动刷新转发面板，替代纯盲轮询。
@@ -1785,7 +1836,12 @@ pub trait SessionApi: Send + Sync {
 
     /// 设定会话任务目标/交接留言（R9：人类→Agent 委托入口；None=清除，仅人类）。
     /// Agent 经 get_session_brief 的 goal 字段读取；设定/清除全程审计留痕。
-    async fn set_session_goal(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()>;
+    async fn set_session_goal(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        goal: Option<String>,
+    ) -> Result<()>;
 
     // ---- C9 协作启用生命周期（R43；人类专属）----
     /// 协作服务状态（状态机 + 已配置 Agent 数 + 有活动请求数 + 端点地址）。
@@ -1833,12 +1889,30 @@ mod wire_format_tests {
     /// 改动即 MCP/Tauri wire 契约变更，须走 L1 契约评审，不得顺手 rename。
     #[test]
     fn approval_status_wire_format_is_pascal_case() {
-        assert_eq!(serde_json::to_value(ApprovalStatus::Pending).unwrap(), "Pending");
-        assert_eq!(serde_json::to_value(ApprovalStatus::Approved).unwrap(), "Approved");
-        assert_eq!(serde_json::to_value(ApprovalStatus::ApprovedEdited).unwrap(), "ApprovedEdited");
-        assert_eq!(serde_json::to_value(ApprovalStatus::Denied).unwrap(), "Denied");
-        assert_eq!(serde_json::to_value(ApprovalStatus::Timeout).unwrap(), "Timeout");
-        assert_eq!(serde_json::to_value(ApprovalStatus::Voided).unwrap(), "Voided");
+        assert_eq!(
+            serde_json::to_value(ApprovalStatus::Pending).unwrap(),
+            "Pending"
+        );
+        assert_eq!(
+            serde_json::to_value(ApprovalStatus::Approved).unwrap(),
+            "Approved"
+        );
+        assert_eq!(
+            serde_json::to_value(ApprovalStatus::ApprovedEdited).unwrap(),
+            "ApprovedEdited"
+        );
+        assert_eq!(
+            serde_json::to_value(ApprovalStatus::Denied).unwrap(),
+            "Denied"
+        );
+        assert_eq!(
+            serde_json::to_value(ApprovalStatus::Timeout).unwrap(),
+            "Timeout"
+        );
+        assert_eq!(
+            serde_json::to_value(ApprovalStatus::Voided).unwrap(),
+            "Voided"
+        );
     }
 
     /// 锁定 ApprovalItem.editable 的线上行为（T44 复核中-2）：字段随卡下发；
@@ -1847,10 +1921,18 @@ mod wire_format_tests {
     #[test]
     fn approval_item_editable_field_wire_behavior() {
         let item = ApprovalItem {
-            id: "a-1".into(), session_id: "s-1".into(), agent_id: "opencode".into(),
-            command: "ls".into(), edited_command: None, target_summary: String::new(),
-            segment_report: vec![], session_busy: false, editable: true,
-            created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
+            id: "a-1".into(),
+            session_id: "s-1".into(),
+            agent_id: "opencode".into(),
+            command: "ls".into(),
+            edited_command: None,
+            target_summary: String::new(),
+            segment_report: vec![],
+            session_busy: false,
+            editable: true,
+            created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             status: ApprovalStatus::Pending,
             attempt_id: None,
             purpose: None,
@@ -1874,11 +1956,20 @@ mod wire_format_tests {
     #[test]
     fn r42_purpose_and_ever_agent_owned_wire_compat() {
         let item = ApprovalItem {
-            id: "a-1".into(), session_id: "s-1".into(), agent_id: "opencode".into(),
-            command: "ls".into(), edited_command: None, target_summary: "读取目录".into(),
-            segment_report: vec![], session_busy: false, editable: false,
-            created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
-            status: ApprovalStatus::Pending, attempt_id: None,
+            id: "a-1".into(),
+            session_id: "s-1".into(),
+            agent_id: "opencode".into(),
+            command: "ls".into(),
+            edited_command: None,
+            target_summary: "读取目录".into(),
+            segment_report: vec![],
+            session_busy: false,
+            editable: false,
+            created_at: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            status: ApprovalStatus::Pending,
+            attempt_id: None,
             purpose: Some("把日志打包放到 /tmp".into()),
         };
         let v = serde_json::to_value(&item).unwrap();
@@ -1898,9 +1989,14 @@ mod wire_format_tests {
             "id": "s-1", "host_id": "h-1", "host_name": "prod-1", "kind": "ssh",
             "state": "Connected", "control_owner": "Human",
             "created_at": "1970-01-01T00:00:00Z",
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(!s.ever_agent_owned);
-        let v = serde_json::to_value(SessionInfo { ever_agent_owned: true, ..s }).unwrap();
+        let v = serde_json::to_value(SessionInfo {
+            ever_agent_owned: true,
+            ..s
+        })
+        .unwrap();
         assert_eq!(v["ever_agent_owned"], true);
     }
 
@@ -1913,14 +2009,19 @@ mod wire_format_tests {
         // 旧载荷：chrome+hostbar 时代 / terminal 时代 blob 均无 transfers
         let legacy: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "dark", "hostbar": { "open": true, "width": 224 }
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(legacy.transfers.is_none());
         assert!(legacy.sessions.is_none());
         // 新载荷 round-trip
         let ws = Workspace {
-            schema_version: 1, chrome: "system".into(),
-            hostbar: None, terminal: None,
-            transfers: Some(TransferPrefs { download_dir: Some("/Users/demo/Downloads".into()) }),
+            schema_version: 1,
+            chrome: "system".into(),
+            hostbar: None,
+            terminal: None,
+            transfers: Some(TransferPrefs {
+                download_dir: Some("/Users/demo/Downloads".into()),
+            }),
             sessions: None,
         };
         let v = serde_json::to_value(&ws).unwrap();
@@ -1930,12 +2031,17 @@ mod wire_format_tests {
         // 十五轮：sessions 域 round-trip（未知主机容忍，Vec 原样保序）
         let r15: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "system", "sessions": { "last": ["local", "h-prod1"] }
-        })).unwrap();
-        assert_eq!(r15.sessions.as_ref().unwrap().last, vec!["local".to_string(), "h-prod1".to_string()]);
+        }))
+        .unwrap();
+        assert_eq!(
+            r15.sessions.as_ref().unwrap().last,
+            vec!["local".to_string(), "h-prod1".to_string()]
+        );
         // 旧载荷无 sessions / terminal 无 copy_on_select、bell_notify → 按缺省解释（None/false）
         let old_term: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "system", "terminal": { "paste_guard": true }
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(old_term.terminal.unwrap().copy_on_select, false);
         // 十六轮：bell_notify round-trip（旧载荷缺键 = false）
         let r16: Workspace = serde_json::from_value(serde_json::json!({
@@ -1947,8 +2053,15 @@ mod wire_format_tests {
         // transfers 域对象存在但 download_dir 未写入 → None（不虚构默认值）
         let partial: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "system", "transfers": {}
-        })).unwrap();
-        assert_eq!(partial.transfers.as_ref().and_then(|t| t.download_dir.clone()), None);
+        }))
+        .unwrap();
+        assert_eq!(
+            partial
+                .transfers
+                .as_ref()
+                .and_then(|t| t.download_dir.clone()),
+            None
+        );
     }
 
     /// 锁定 Charset 的线上格式："utf-8"/"gbk"（与 vault hosts.charset 列、UI select、
@@ -1967,19 +2080,22 @@ mod wire_format_tests {
             "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
             "auth": { "Password": { "password": "p" } }, "tags": [],
             "charset": "utf-8",
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(draft.charset, Charset::Utf8);
         let draft: HostDraft = serde_json::from_value(serde_json::json!({
             "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
             "auth": { "Password": { "password": "p" } }, "tags": [],
             "charset": "gbk",
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(draft.charset, Charset::Gbk);
         // 缺省：老客户端不带 charset 字段
         let draft: HostDraft = serde_json::from_value(serde_json::json!({
             "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
             "auth": { "Password": { "password": "p" } }, "tags": [],
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(draft.charset, Charset::Utf8);
         // 错误口径必须被拒绝（曾经的 bug 形态 "utf8" 不再是合法值）
         let bad = serde_json::from_value::<HostDraft>(serde_json::json!({
@@ -1998,33 +2114,46 @@ mod wire_format_tests {
     #[test]
     fn identity_and_auth_draft_wire_format_matches_ui() {
         assert_eq!(
-            serde_json::to_value(IdentityReq::Generate { label: "k".into(), kind: KeyKind::Ed25519 }).unwrap(),
+            serde_json::to_value(IdentityReq::Generate {
+                label: "k".into(),
+                kind: KeyKind::Ed25519
+            })
+            .unwrap(),
             serde_json::json!({ "Generate": { "label": "k", "kind": "Ed25519" } })
         );
         assert_eq!(
-            serde_json::to_value(IdentityReq::Import { label: "k".into(), pem: "PEM".into(), passphrase: None }).unwrap(),
+            serde_json::to_value(IdentityReq::Import {
+                label: "k".into(),
+                pem: "PEM".into(),
+                passphrase: None
+            })
+            .unwrap(),
             serde_json::json!({ "Import": { "label": "k", "pem": "PEM", "passphrase": null } })
         );
         // UI upsert_host 的三种 auth 载荷形态
         let draft: HostDraft = serde_json::from_value(serde_json::json!({
             "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
             "auth": "Agent", "tags": [],
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(draft.auth, AuthDraft::Agent));
         let draft: HostDraft = serde_json::from_value(serde_json::json!({
             "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
             "auth": { "Key": { "identity_id": "id-1" } }, "tags": [],
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(draft.auth, AuthDraft::Key { .. }));
         let draft: HostDraft = serde_json::from_value(serde_json::json!({
             "id": null, "name": "n", "address": "a", "port": 22, "username": "u",
             "auth": "Keep", "tags": [],
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(matches!(draft.auth, AuthDraft::None));
         // create_identity 回包形态（UI 指纹确认直接展示 fingerprint 字段）
         let meta: IdentityMeta = serde_json::from_value(serde_json::json!({
             "id": "i", "label": "l", "kind": "Ed25519", "fingerprint": "SHA256:x",
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(meta.fingerprint, "SHA256:x");
     }
 
@@ -2035,13 +2164,18 @@ mod wire_format_tests {
     fn dir_entry_wire_format_matches_ui() {
         let e: DirEntryS = serde_json::from_value(serde_json::json!({
             "name": "a.txt", "is_dir": false, "size": 6, "mtime": 1790956800,
-        })).unwrap();
-        assert_eq!((e.name.as_str(), e.is_dir, e.size, e.mtime), ("a.txt", false, Some(6), Some(1790956800)));
+        }))
+        .unwrap();
+        assert_eq!(
+            (e.name.as_str(), e.is_dir, e.size, e.mtime),
+            ("a.txt", false, Some(6), Some(1790956800))
+        );
         assert_eq!(e.kind, None); // 旧载荷升级兼容
-        // 新载荷：symlink + 未知字段（§352 不伪造零值）
+                                  // 新载荷：symlink + 未知字段（§352 不伪造零值）
         let s: DirEntryS = serde_json::from_value(serde_json::json!({
             "name": "link", "is_dir": false, "kind": "symlink", "size": null, "mtime": null,
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(s.kind, Some(EntryKind::Symlink));
         assert_eq!((s.size, s.mtime), (None, None));
         assert_eq!(
@@ -2050,28 +2184,35 @@ mod wire_format_tests {
         );
         let d: DirEntryS = serde_json::from_value(serde_json::json!({
             "name": "d", "is_dir": true, "kind": "dir", "size": null, "mtime": 1790956800,
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(d.kind, Some(EntryKind::Dir));
     }
 
     /// C4（R30）：PathResolved / EntryStat 线上格式锁定。
     #[test]
     fn c4_path_stat_wire_format() {
-        let r: PathResolved = serde_json::from_value(serde_json::json!({ "canonical": "/root" })).unwrap();
+        let r: PathResolved =
+            serde_json::from_value(serde_json::json!({ "canonical": "/root" })).unwrap();
         assert_eq!(r.canonical, "/root");
         let st: EntryStat = serde_json::from_value(serde_json::json!({
             "canonical": "/root/link-target", "kind": "symlink", "is_dir": false,
             "size": 12, "mtime": 1790956800, "symlink_target": "/root/link-target",
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(st.kind, Some(EntryKind::Symlink));
         assert_eq!(st.symlink_target.as_deref(), Some("/root/link-target"));
         // 悬空链接：canonical 不可知为 null（§352 可解释，不猜路径）
         let st2: EntryStat = serde_json::from_value(serde_json::json!({
             "canonical": null, "kind": "symlink", "is_dir": false,
             "size": null, "mtime": null, "symlink_target": "/gone",
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(st2.canonical, None);
-        assert_eq!(serde_json::to_value(&st2).unwrap()["canonical"], serde_json::json!(null));
+        assert_eq!(
+            serde_json::to_value(&st2).unwrap()["canonical"],
+            serde_json::json!(null)
+        );
     }
 
     // T42 端口转发：ForwardSpec 外部标签三变体 + ForwardInfo 往返，锁 UI 的
@@ -2086,7 +2227,8 @@ mod wire_format_tests {
         })).unwrap();
         let dynamic: ForwardSpec = serde_json::from_value(serde_json::json!({
             "Dynamic": { "listen_addr": "127.0.0.1", "listen_port": 11080 }
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(
             serde_json::to_value(&local).unwrap(),
             serde_json::json!({ "Local": { "listen_addr": "127.0.0.1", "listen_port": 18080, "target_host": "10.0.0.5", "target_port": 80 } })
@@ -2129,7 +2271,8 @@ mod wire_format_tests {
             "status": "Running", "bytes_done": 512, "total": 1024,
             "revision": 7, "created_at": 1790956800,
             "finished_at": null, "error": null, "retry_of": null,
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(running.status, TransferStatus::Running);
         let v = serde_json::to_value(&running).unwrap();
         assert_eq!(v["status"], serde_json::json!("Running"));
@@ -2142,7 +2285,10 @@ mod wire_format_tests {
             "status": "Succeeded", "bytes_done": 9, "total": null,
             "revision": 9, "created_at": 1, "finished_at": 2,
             "error": null, "retry_of": null,
-        })).unwrap().status.is_terminal());
+        }))
+        .unwrap()
+        .status
+        .is_terminal());
         // 前向状态可反序列化（旧 UI 收到未知状态按「进行中」同待——R33/R34 载荷兼容面）；
         // OutcomeUnknown 例外=终态（无后续自动迁移，但恢复面按「提交结果未知」处置）
         for s in ["Committing", "AwaitingDecision"] {
@@ -2151,10 +2297,12 @@ mod wire_format_tests {
                 "source": "a", "dest": "b", "status": s, "bytes_done": 0,
                 "total": null, "revision": 1, "created_at": 0,
                 "finished_at": null, "error": null, "retry_of": null,
-            })).unwrap();
+            }))
+            .unwrap();
             assert!(!t.status.is_terminal());
         }
-        let ou: TransferStatus = serde_json::from_value(serde_json::json!("OutcomeUnknown")).unwrap();
+        let ou: TransferStatus =
+            serde_json::from_value(serde_json::json!("OutcomeUnknown")).unwrap();
         assert!(ou.is_terminal());
         // Cancelled 终态
         let c: TransferStatus = serde_json::from_value(serde_json::json!("Cancelled")).unwrap();
@@ -2168,16 +2316,30 @@ mod wire_format_tests {
     fn c6_collision_wire_format() {
         use serde_json::json;
         // 决定值小写（MCP collision 参数同形；KeepBoth=无分隔小写，在此锁定）
-        assert_eq!(serde_json::from_value::<CollisionDecision>(serde_json::json!("skip")).unwrap(), CollisionDecision::Skip);
-        assert_eq!(serde_json::from_value::<CollisionDecision>(serde_json::json!("overwrite")).unwrap(), CollisionDecision::Overwrite);
+        assert_eq!(
+            serde_json::from_value::<CollisionDecision>(serde_json::json!("skip")).unwrap(),
+            CollisionDecision::Skip
+        );
+        assert_eq!(
+            serde_json::from_value::<CollisionDecision>(serde_json::json!("overwrite")).unwrap(),
+            CollisionDecision::Overwrite
+        );
         let kv = serde_json::to_value(CollisionDecision::KeepBoth).unwrap();
-        assert_eq!(kv, serde_json::json!("keepboth"), "KeepBoth wire 值锁定（UI/MCP 三端一致）");
-        assert_eq!(serde_json::from_value::<CollisionDecision>(kv).unwrap(), CollisionDecision::KeepBoth);
+        assert_eq!(
+            kv,
+            serde_json::json!("keepboth"),
+            "KeepBoth wire 值锁定（UI/MCP 三端一致）"
+        );
+        assert_eq!(
+            serde_json::from_value::<CollisionDecision>(kv).unwrap(),
+            CollisionDecision::KeepBoth
+        );
         // 决定提示载荷
         let dp: DecisionPrompt = serde_json::from_value(json!({
             "target_path": "/root/a.conf", "target_stat": {"size": 12, "mtime": 1790000000},
             "reason": "target_exists"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(dp.reason, "target_exists");
         assert_eq!(dp.target_stat.as_ref().unwrap().size, Some(12));
         // target_stat 可缺（预检 stat 失败如实 None，不虚构）
@@ -2190,7 +2352,8 @@ mod wire_format_tests {
             "id": "t", "session_id": "s", "kind": "Upload", "source": "a", "dest": "b",
             "status": "Running", "bytes_done": 0, "total": null, "revision": 1,
             "created_at": 0, "finished_at": null, "error": null, "retry_of": null,
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(legacy.collision_decision.is_none() && legacy.decision_prompt.is_none());
         // 新载荷 round-trip 保形
         let full: TransferTask = serde_json::from_value(json!({
@@ -2201,20 +2364,60 @@ mod wire_format_tests {
             "decision_prompt": {"target_path": "/b", "target_stat": {"size": null, "mtime": null}, "reason": "target_exists"},
         })).unwrap();
         assert_eq!(full.collision_decision, Some(CollisionDecision::Skip));
-        assert_eq!(full.decision_prompt.as_ref().unwrap().reason, "target_exists");
-        let rt: TransferTask = serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
+        assert_eq!(
+            full.decision_prompt.as_ref().unwrap().reason,
+            "target_exists"
+        );
+        let rt: TransferTask =
+            serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
         assert_eq!(rt.collision_decision, full.collision_decision);
         assert_eq!(rt.decision_prompt, full.decision_prompt);
         // 新终态：Skipped / Interrupted（复审 H1 + §560 重启分类）
-        assert!(serde_json::from_value::<TransferStatus>(json!("Skipped")).unwrap().is_terminal());
-        assert!(serde_json::from_value::<TransferStatus>(json!("Interrupted")).unwrap().is_terminal());
+        assert!(serde_json::from_value::<TransferStatus>(json!("Skipped"))
+            .unwrap()
+            .is_terminal());
+        assert!(
+            serde_json::from_value::<TransferStatus>(json!("Interrupted"))
+                .unwrap()
+                .is_terminal()
+        );
         // 错误 wire kind（结构化冲突/能力阻止/决定锁）
-        assert_eq!(Error::ConflictDetected { target_path: "/b".into(), target_stat: None }.wire_parts().0, "conflict_detected");
-        assert_eq!(Error::ReplaceUnsupported { capability: "target_version_constraint".into() }.wire_parts().0, "replace_unsupported");
-        assert_eq!(Error::StaleDecision { expect_revision: 4 }.wire_parts().0, "stale_decision");
-        assert_eq!(Error::InvalidTransferState { task_id: "t".into(), state: TransferStatus::Running }.wire_parts().0, "invalid_transfer_state");
+        assert_eq!(
+            Error::ConflictDetected {
+                target_path: "/b".into(),
+                target_stat: None
+            }
+            .wire_parts()
+            .0,
+            "conflict_detected"
+        );
+        assert_eq!(
+            Error::ReplaceUnsupported {
+                capability: "target_version_constraint".into()
+            }
+            .wire_parts()
+            .0,
+            "replace_unsupported"
+        );
+        assert_eq!(
+            Error::StaleDecision { expect_revision: 4 }.wire_parts().0,
+            "stale_decision"
+        );
+        assert_eq!(
+            Error::InvalidTransferState {
+                task_id: "t".into(),
+                state: TransferStatus::Running
+            }
+            .wire_parts()
+            .0,
+            "invalid_transfer_state"
+        );
         // R40：转发监听失败字段定位（§6.6/D02）
-        let (k, d) = Error::ForwardListenFailed { field: "listen".into(), reason: "端口占用".into() }.wire_parts();
+        let (k, d) = Error::ForwardListenFailed {
+            field: "listen".into(),
+            reason: "端口占用".into(),
+        }
+        .wire_parts();
         assert_eq!(k, "forward_listen_failed");
         assert_eq!(d.unwrap()["field"], "listen");
     }
@@ -2225,12 +2428,22 @@ mod wire_format_tests {
     fn r41_session_detail_wire_format() {
         use serde_json::json;
         let d = SessionDetail {
-            id: "s-1".into(), host_id: "h-1".into(), host_name: "生产机".into(),
-            kind: "ssh".into(), state: SessionState::Connected, control_owner: ControlOwner::Human,
-            created_at: DateTime::parse_from_rfc3339("2026-10-09T01:02:03Z").unwrap().with_timezone(&Utc),
+            id: "s-1".into(),
+            host_id: "h-1".into(),
+            host_name: "生产机".into(),
+            kind: "ssh".into(),
+            state: SessionState::Connected,
+            control_owner: ControlOwner::Human,
+            created_at: DateTime::parse_from_rfc3339("2026-10-09T01:02:03Z")
+                .unwrap()
+                .with_timezone(&Utc),
             integration: IntegrationState::Ready,
-            address: "10.0.0.5".into(), port: 2222, username: "root".into(),
-            auth_type: AuthType::Key, fingerprint: Some("SHA256:abc".into()), charset: Charset::Gbk,
+            address: "10.0.0.5".into(),
+            port: 2222,
+            username: "root".into(),
+            auth_type: AuthType::Key,
+            fingerprint: Some("SHA256:abc".into()),
+            charset: Charset::Gbk,
         };
         let v = serde_json::to_value(&d).unwrap();
         // 枚举/编码/时间格式三处都是既有 wire 口径，不得顺手改
@@ -2252,7 +2465,8 @@ mod wire_format_tests {
             "created_at": "2026-10-09T01:02:03Z",
             "address": "a", "port": 22, "username": "u",
             "auth_type": "Password", "fingerprint": null, "charset": "utf-8"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(legacy.integration, IntegrationState::Disabled);
         // R41：审计过滤新增 actor_kind（人类/Agent 两类过滤；缺省不过滤）
         assert!(AuditFilter::default().actor_kind.is_none());

@@ -30,7 +30,9 @@ fn draft() -> HostDraft {
         address: format!("10.255.255.{}", 1 + n % 250),
         port: Some(2222),
         username: "root".into(),
-        auth: AuthDraft::Password { password: "qp".into() },
+        auth: AuthDraft::Password {
+            password: "qp".into(),
+        },
         tags: vec![],
         charset: Charset::Utf8,
         shell_integration: None,
@@ -52,7 +54,9 @@ async fn agent_rejected() {
     let before = m.center.vault.list_hosts().unwrap().len();
     let err = m
         .begin_connection_draft(
-            &Actor::Agent { client_id: "opencode".into() },
+            &Actor::Agent {
+                client_id: "opencode".into(),
+            },
             draft(),
             BeginConnectionOpts::default(),
         )
@@ -79,7 +83,9 @@ async fn input_validation_rejects() {
     let mut bad5 = draft();
     bad5.auth = AuthDraft::None;
     let mut bad6 = draft();
-    bad6.auth = AuthDraft::Password { password: String::new() };
+    bad6.auth = AuthDraft::Password {
+        password: String::new(),
+    };
     for d in [bad, bad2, bad3, bad4, bad5, bad6] {
         let err = m
             .begin_connection_draft(&Actor::Human, d, BeginConnectionOpts::default())
@@ -113,7 +119,11 @@ async fn registers_resolves_and_attempt_visible() {
     }
     // known：普通 begin 对已注册 id 合并到同一 attempt（M3 幂等）
     let merged = m
-        .begin_connection(&Actor::Human, info.host_id.clone(), BeginConnectionOpts::default())
+        .begin_connection(
+            &Actor::Human,
+            info.host_id.clone(),
+            BeginConnectionOpts::default(),
+        )
         .await
         .unwrap();
     assert_eq!(merged.attempt_id, info.attempt_id, "合并而非重复 spawn");
@@ -131,10 +141,15 @@ async fn key_identity_eager_resolution() {
     let meta = m
         .center
         .vault
-        .create_identity(&IdentityReq::Password { label: "k".into(), password: "kp".into() })
+        .create_identity(&IdentityReq::Password {
+            label: "k".into(),
+            password: "kp".into(),
+        })
         .unwrap();
     let mut d = draft();
-    d.auth = AuthDraft::Key { identity_id: meta.id.clone() };
+    d.auth = AuthDraft::Key {
+        identity_id: meta.id.clone(),
+    };
     let info = m
         .begin_connection_draft(&Actor::Human, d, BeginConnectionOpts::default())
         .await
@@ -146,7 +161,9 @@ async fn key_identity_eager_resolution() {
         assert_eq!(qh.host.identity_id.as_deref(), Some(meta.id.as_str()));
     }
     let mut d2 = draft();
-    d2.auth = AuthDraft::Key { identity_id: "i-missing".into() };
+    d2.auth = AuthDraft::Key {
+        identity_id: "i-missing".into(),
+    };
     let err = m
         .begin_connection_draft(&Actor::Human, d2, BeginConnectionOpts::default())
         .await
@@ -164,11 +181,23 @@ async fn session_row_records_null_host_for_quick() {
     let mut d = draft();
     d.auth = AuthDraft::Agent;
     let host = m.register_quick_host(d).unwrap();
-    let r = m.center.vault.record_session(&"s-qtest".to_string(), Some(&host.id), "ssh");
-    assert!(r.is_err(), "quick id 直接落库必撞 FK——这正是必须记 NULL 的原因");
-    m.center.vault.record_session(&"s-qtest".to_string(), None, "ssh").unwrap();
+    let r = m
+        .center
+        .vault
+        .record_session(&"s-qtest".to_string(), Some(&host.id), "ssh");
+    assert!(
+        r.is_err(),
+        "quick id 直接落库必撞 FK——这正是必须记 NULL 的原因"
+    );
+    m.center
+        .vault
+        .record_session(&"s-qtest".to_string(), None, "ssh")
+        .unwrap();
     let recents = m.center.vault.list_recent_hosts(5).unwrap();
-    assert!(recents.is_empty(), "NULL host_id 不进最近连接，得 {recents:?}");
+    assert!(
+        recents.is_empty(),
+        "NULL host_id 不进最近连接，得 {recents:?}"
+    );
 }
 
 /// TOFU 内存生命周期：首连 FirstSeen 卡 → 信任入内存（vault 永不落）→ 同指纹
@@ -198,19 +227,33 @@ async fn tofu_trust_stays_in_memory() {
     {
         let mut pending = m.center.hk_pending.lock().unwrap();
         pending.remove(&hk_id);
-        let tx = m.center.hk_decisions.lock().unwrap().remove(&hk_id).unwrap();
+        let tx = m
+            .center
+            .hk_decisions
+            .lock()
+            .unwrap()
+            .remove(&hk_id)
+            .unwrap();
         tx.send(true).unwrap();
     }
     assert!(g1.await.unwrap().unwrap(), "信任后放行");
     {
         let reg = m.center.quick_hosts.lock().unwrap();
         assert_eq!(
-            reg.get(&host.id).unwrap().fingerprint.lock().unwrap().as_deref(),
+            reg.get(&host.id)
+                .unwrap()
+                .fingerprint
+                .lock()
+                .unwrap()
+                .as_deref(),
             Some(fp),
             "信任入内存注册表"
         );
     }
-    assert!(m.center.vault.host_fingerprint(&host.id).is_err(), "vault 无行——永不落盘");
+    assert!(
+        m.center.vault.host_fingerprint(&host.id).is_err(),
+        "vault 无行——永不落盘"
+    );
     // 同指纹：直接放行、无新卡
     let g2 = gate(m.clone(), host.clone(), fp);
     assert!(g2.await.unwrap().unwrap(), "同指纹免确认");

@@ -1,10 +1,10 @@
 //! 网格渲染：从 alacritty `Term` 网格产出含 scrollback 的纯文本快照。
 
-use alacritty_terminal::term::Term;
+use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::event::EventListener;
+use alacritty_terminal::term::Term;
 
 /// 自定义尺寸：cols × rows 屏幕 + scrollback 历史。
 #[derive(Debug, Clone, Copy)]

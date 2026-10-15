@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use term_core::Screen;
-use tokio::sync::{broadcast, Mutex as AsyncMutex, oneshot};
+use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
 
 /// 重确认白名单（L1 §3.1：内置只读核实命令，Agent 不可自选）。
 pub const RECONFIRM_WHITELIST: &[&str] = &["pwd", "printenv", "which", "ps", "systemctl status"];
@@ -176,7 +176,9 @@ impl SessionHandle {
             let tx = center.forwards_tx.clone();
             let sid = id.clone();
             channel.set_forward_event_cb(Arc::new(move |_fid| {
-                let _ = tx.send(session_api::ForwardEvent::Changed { session_id: sid.clone() });
+                let _ = tx.send(session_api::ForwardEvent::Changed {
+                    session_id: sid.clone(),
+                });
             }));
         }
         Arc::new(Self {
@@ -244,12 +246,17 @@ impl SessionHandle {
     pub async fn feed_output_fn(&self, produce: impl FnOnce(&mut Screen) -> Vec<u8>) -> u64 {
         let mut s = self.screen.lock().await;
         let data = produce(&mut s);
-        let seq = self.output_seq.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+        let seq = self
+            .output_seq
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
         self.replay.lock().unwrap().push(seq, data.clone());
         drop(s);
-        let _ = self
-            .output_tx
-            .send(OutputEvent::Raw { sid: self.id.clone(), seq, data });
+        let _ = self.output_tx.send(OutputEvent::Raw {
+            sid: self.id.clone(),
+            seq,
+            data,
+        });
         seq
     }
 
@@ -259,7 +266,10 @@ impl SessionHandle {
         let mut guard = self.log_file.lock().unwrap();
         if let Some(f) = guard.as_mut() {
             use std::io::Write;
-            if f.write_all(data.as_bytes()).and_then(|_| f.flush()).is_err() {
+            if f.write_all(data.as_bytes())
+                .and_then(|_| f.flush())
+                .is_err()
+            {
                 self.log_path.lock().unwrap().take();
                 *guard = None;
             }
@@ -364,16 +374,18 @@ impl SessionHandle {
             s.register_outgoing(text.as_bytes(), source_of(actor));
             s.subscribe_capture()
         };
-        self.channel.write(&crate::charset::encode(self.host.charset, &text)).await?;
+        self.channel
+            .write(&crate::charset::encode(self.host.charset, &text))
+            .await?;
 
-        self.running
-            .lock()
-            .unwrap()
-            .insert(exec_id.clone(), RunningExec {
+        self.running.lock().unwrap().insert(
+            exec_id.clone(),
+            RunningExec {
                 mode: ExecMode::Shell,
                 cancel: cancel.clone(),
                 started,
-            });
+            },
+        );
 
         tokio::select! {
             r = async {
@@ -453,14 +465,14 @@ impl SessionHandle {
         trace: ApprovalTrace,
         started: Instant,
     ) -> Result<ExecResult> {
-        self.running
-            .lock()
-            .unwrap()
-            .insert(exec_id.clone(), RunningExec {
+        self.running.lock().unwrap().insert(
+            exec_id.clone(),
+            RunningExec {
                 mode: ExecMode::Fresh,
                 cancel: cancel.clone(),
                 started,
-            });
+            },
+        );
         let outcome = self.channel.exec_fresh(cmd, opts, deadline, &cancel).await;
         self.running.lock().unwrap().remove(exec_id);
         self.live_execs.lock().unwrap().remove(exec_id);
@@ -556,7 +568,9 @@ impl SessionHandle {
         if pos > MAX_EXEC_QUEUE {
             self.queue_waiters.fetch_sub(1, Ordering::SeqCst);
             self.live_execs.lock().unwrap().remove(&exec_id);
-            return Err(Error::QueueBusy { position: pos as u32 });
+            return Err(Error::QueueBusy {
+                position: pos as u32,
+            });
         }
         self.pending.lock().unwrap().push(exec_id.clone());
         let gen_at_entry = self.generation.load(Ordering::SeqCst);
@@ -565,7 +579,9 @@ impl SessionHandle {
         self.pending.lock().unwrap().retain(|e| e != &exec_id);
         if self.generation.load(Ordering::SeqCst) != gen_at_entry {
             self.live_execs.lock().unwrap().remove(&exec_id);
-            return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
+            return Err(Error::VoidedByHandback {
+                brief: self.gen_brief().await,
+            });
         }
         // C9（R43）：排队等槽期间协作被停用 → 本动作作废（连审批卡都不生成）。
         if let Err(e) = self.admit_agent_actor(actor) {
@@ -586,36 +602,47 @@ impl SessionHandle {
             Actor::Agent { client_id } => {
                 // 重确认白名单：内置只读核实命令，不进审批（核心自动判定完成）
                 if reconfirm_verify {
-                    ApprovalTrace { approval_id: None, outcome: ApprovalOutcome::Auto }
-                } else {
-                let eval = self.center.engine.evaluate(client_id, &effective_cmd);
-                match eval.verdict {
-                    tinyssh_approval::SegmentVerdict::Dangerous => {
-                        self.center.audit.append(
-                            actor,
-                            "exec_denied",
-                            Some(&self.id),
-                            Some(&effective_cmd),
-                            serde_json::json!({"reason": "dangerous_pattern"}),
-                            None,
-                        )?;
-                        return Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern });
-                    }
-                    tinyssh_approval::SegmentVerdict::AutoAllow => ApprovalTrace {
+                    ApprovalTrace {
                         approval_id: None,
                         outcome: ApprovalOutcome::Auto,
-                    },
-                    tinyssh_approval::SegmentVerdict::NeedsApproval => {
-                        let (t, edited) = self
-                            .wait_approval(
-                                actor, client_id, &exec_id, &effective_cmd, &eval, true,
-                                opts.mode == ExecMode::Fresh, cancel.clone(),
-                            )
-                            .await?;
-                        edited_cmd = edited;
-                        t
                     }
-                }
+                } else {
+                    let eval = self.center.engine.evaluate(client_id, &effective_cmd);
+                    match eval.verdict {
+                        tinyssh_approval::SegmentVerdict::Dangerous => {
+                            self.center.audit.append(
+                                actor,
+                                "exec_denied",
+                                Some(&self.id),
+                                Some(&effective_cmd),
+                                serde_json::json!({"reason": "dangerous_pattern"}),
+                                None,
+                            )?;
+                            return Err(Error::ApprovalDenied {
+                                reason: DeniedReason::DangerousPattern,
+                            });
+                        }
+                        tinyssh_approval::SegmentVerdict::AutoAllow => ApprovalTrace {
+                            approval_id: None,
+                            outcome: ApprovalOutcome::Auto,
+                        },
+                        tinyssh_approval::SegmentVerdict::NeedsApproval => {
+                            let (t, edited) = self
+                                .wait_approval(
+                                    actor,
+                                    client_id,
+                                    &exec_id,
+                                    &effective_cmd,
+                                    &eval,
+                                    true,
+                                    opts.mode == ExecMode::Fresh,
+                                    cancel.clone(),
+                                )
+                                .await?;
+                            edited_cmd = edited;
+                            t
+                        }
+                    }
                 }
             }
         };
@@ -625,7 +652,9 @@ impl SessionHandle {
 
         // 4) 开始前再查作废（已批准未开始 → 同样作废）
         if self.generation.load(Ordering::SeqCst) != gen_at_entry {
-            return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
+            return Err(Error::VoidedByHandback {
+                brief: self.gen_brief().await,
+            });
         }
         // C9（R43）：执行开始前复核协作 admission——停用期间（含排队/审批期间被停用）
         // 的 Agent 动作在此作废，不因排队或旧批准继续执行（§9 line 562-568）。
@@ -639,12 +668,30 @@ impl SessionHandle {
         let deadline = Instant::now() + timeout_d;
         let result = match opts.mode {
             ExecMode::Shell => {
-                self.run_shell(actor, &exec_id, &effective_cmd, &opts, deadline, cancel.clone(), trace.clone(), started)
-                    .await
+                self.run_shell(
+                    actor,
+                    &exec_id,
+                    &effective_cmd,
+                    &opts,
+                    deadline,
+                    cancel.clone(),
+                    trace.clone(),
+                    started,
+                )
+                .await
             }
             ExecMode::Fresh => {
-                self.run_fresh(actor, &exec_id, &effective_cmd, &opts, deadline, cancel.clone(), trace.clone(), started)
-                    .await
+                self.run_fresh(
+                    actor,
+                    &exec_id,
+                    &effective_cmd,
+                    &opts,
+                    deadline,
+                    cancel.clone(),
+                    trace.clone(),
+                    started,
+                )
+                .await
             }
         };
 
@@ -655,7 +702,8 @@ impl SessionHandle {
                 let hits = self.verification_hits.fetch_add(1, Ordering::SeqCst) + 1;
                 if hits >= 1 {
                     *self.state.lock().await = SessionState::Connected;
-                    self.note_transition("重确认完成：核实事实恢复 Confirmed").await;
+                    self.note_transition("重确认完成：核实事实恢复 Confirmed")
+                        .await;
                 }
             }
             let _ = r;
@@ -722,15 +770,26 @@ impl SessionHandle {
             let mut decisions = self.center.decisions.lock().unwrap();
             decisions.insert(item.id.clone(), tx);
         }
-        self.center.items.lock().unwrap().insert(item.id.clone(), item.clone());
+        self.center
+            .items
+            .lock()
+            .unwrap()
+            .insert(item.id.clone(), item.clone());
         if let Err(e) = self.center.vault.save_approval(&item) {
             tracing::warn!("save approval: {e}");
         }
-        let _ = self.center.approvals_tx.send(ApprovalEvent::New(item.clone()));
         let _ = self
             .center
-            .audit
-            .append(actor, "approval_requested", Some(&self.id), Some(cmd), serde_json::json!({"segments": eval.segments}), Some(&item.id));
+            .approvals_tx
+            .send(ApprovalEvent::New(item.clone()));
+        let _ = self.center.audit.append(
+            actor,
+            "approval_requested",
+            Some(&self.id),
+            Some(cmd),
+            serde_json::json!({"segments": eval.segments}),
+            Some(&item.id),
+        );
 
         // 卡片登记与代际捕获之间发生接管 → 登记后复查一次，即时作废返回
         // （否则该请求会空等到 120s 超时而非立即 VoidedByHandback）
@@ -742,7 +801,9 @@ impl SessionHandle {
                 let _ = self.center.vault.save_approval(&it);
                 let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
             }
-            return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
+            return Err(Error::VoidedByHandback {
+                brief: self.gen_brief().await,
+            });
         }
         let decision: DecisionMsg = tokio::select! {
             r = rx => match r {
@@ -789,7 +850,8 @@ impl SessionHandle {
         // 批准会漏掉「保存并批准」（ApproveEdited）这条 UI 可达路径。
         if matches!(
             decision,
-            DecisionMsg::Decide(Decision::Approve) | DecisionMsg::Decide(Decision::ApproveEdited(_))
+            DecisionMsg::Decide(Decision::Approve)
+                | DecisionMsg::Decide(Decision::ApproveEdited(_))
         ) {
             if let Err(e) = self.center.admit_agent() {
                 self.mark_status(&item.id, ApprovalStatus::Voided);
@@ -806,30 +868,48 @@ impl SessionHandle {
             DecisionMsg::Decide(Decision::Approve) => {
                 self.mark_status(&item.id, ApprovalStatus::Approved);
                 Ok((
-                    ApprovalTrace { approval_id: Some(item.id), outcome: ApprovalOutcome::Approved },
+                    ApprovalTrace {
+                        approval_id: Some(item.id),
+                        outcome: ApprovalOutcome::Approved,
+                    },
                     None,
                 ))
             }
             DecisionMsg::Decide(Decision::ApproveEdited(c)) => {
                 if !self.center.engine.is_editable_decision(client_id, &c) {
                     self.mark_status(&item.id, ApprovalStatus::Denied);
-                    return Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern });
+                    return Err(Error::ApprovalDenied {
+                        reason: DeniedReason::DangerousPattern,
+                    });
                 }
                 self.mark_edited(&item.id, &c);
                 Ok((
-                    ApprovalTrace { approval_id: Some(item.id), outcome: ApprovalOutcome::ApprovedEdited },
+                    ApprovalTrace {
+                        approval_id: Some(item.id),
+                        outcome: ApprovalOutcome::ApprovedEdited,
+                    },
                     Some(c),
                 ))
             }
             DecisionMsg::Decide(Decision::Deny) => {
                 self.mark_status(&item.id, ApprovalStatus::Denied);
                 let _ = self.center.audit.append(
-                    actor, "approval_denied", Some(&self.id), Some(cmd), serde_json::json!({}), Some(&item.id));
-                Err(Error::ApprovalDenied { reason: DeniedReason::Denied })
+                    actor,
+                    "approval_denied",
+                    Some(&self.id),
+                    Some(cmd),
+                    serde_json::json!({}),
+                    Some(&item.id),
+                );
+                Err(Error::ApprovalDenied {
+                    reason: DeniedReason::Denied,
+                })
             }
             DecisionMsg::Voided => {
                 self.mark_status(&item.id, ApprovalStatus::Voided);
-                return Err(Error::VoidedByHandback { brief: self.gen_brief().await });
+                return Err(Error::VoidedByHandback {
+                    brief: self.gen_brief().await,
+                });
             }
         }
     }
@@ -909,7 +989,8 @@ impl SessionHandle {
         *owner = ControlOwner::Human;
         drop(owner);
         self.generation.fetch_add(1, Ordering::SeqCst);
-        self.note_transition("人类接管（交接前未开始的请求全部作废）").await;
+        self.note_transition("人类接管（交接前未开始的请求全部作废）")
+            .await;
 
         // 2) 作废待审批卡片（不可再生效）
         let voided_ids: Vec<ApprovalId> = {
@@ -930,9 +1011,13 @@ impl SessionHandle {
                 // 也要能事后核对「作废了什么」。takeover 仅人类可入（set_control
                 // 前置校验），此处 actor 固定 Human。
                 let _ = self.center.audit.append(
-                    &Actor::Human, "approval_voided", Some(&self.id), Some(&it.command),
+                    &Actor::Human,
+                    "approval_voided",
+                    Some(&self.id),
+                    Some(&it.command),
                     serde_json::json!({"reason": "takeover", "agent": it.agent_id}),
-                    Some(id));
+                    Some(id),
+                );
                 let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
             }
         }
@@ -962,7 +1047,16 @@ impl SessionHandle {
                 .lock()
                 .unwrap()
                 .iter()
-                .map(|(k, v)| (k.clone(), RunningExec { mode: v.mode, cancel: v.cancel.clone(), started: v.started }))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        RunningExec {
+                            mode: v.mode,
+                            cancel: v.cancel.clone(),
+                            started: v.started,
+                        },
+                    )
+                })
                 .collect();
             for (id, r) in &running {
                 let outcome = self.stop_one(id, r).await;
@@ -979,7 +1073,12 @@ impl SessionHandle {
             serde_json::json!({"voided_approvals": voided_ids, "paused_queue": paused_queue, "stopped": stopped.iter().map(|(e, o)| (e, format!("{o:?}"))).collect::<Vec<_>>()}),
             None,
         );
-        Ok(TakeoverReport { frozen: true, paused_queue, stopped, brief: *brief })
+        Ok(TakeoverReport {
+            frozen: true,
+            paused_queue,
+            stopped,
+            brief: *brief,
+        })
     }
 
     /// 交还契约：恢复 Agent 控制权；旧请求不自动执行（已在接管时作废）。
@@ -993,10 +1092,23 @@ impl SessionHandle {
         }
         // R42（§6.7）：控制权一旦到过 Agent，此后 Human-owned 的入口措辞即「交还 Agent」。
         self.ever_agent_owned.store(true, Ordering::SeqCst);
-        self.note_transition("人类交还（Agent 先读简报，再重新决定动作）").await;
+        self.note_transition("人类交还（Agent 先读简报，再重新决定动作）")
+            .await;
         let brief = self.gen_brief().await;
-        let _ = self.center.audit.append(&Actor::Human, "handback", Some(&self.id), None, serde_json::json!({}), None);
-        Ok(TakeoverReport { frozen: false, paused_queue: Vec::new(), stopped: Vec::new(), brief: *brief })
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "handback",
+            Some(&self.id),
+            None,
+            serde_json::json!({}),
+            None,
+        );
+        Ok(TakeoverReport {
+            frozen: false,
+            paused_queue: Vec::new(),
+            stopped: Vec::new(),
+            brief: *brief,
+        })
     }
 
     /// 断线 → 尽力重连（不含注入；注入由 pump 在"先订阅"之后调用 reinject_integration）。
@@ -1012,26 +1124,44 @@ impl SessionHandle {
         }
         self.retry_stop.store(false, Ordering::SeqCst);
         self.note_transition("连接退化，尝试重连").await;
-        self.emit_state(SessionState::Degraded, None, None, None).await;
+        self.emit_state(SessionState::Degraded, None, None, None)
+            .await;
         let mut attempt = 0;
         loop {
             attempt += 1;
             if attempt > 3 {
                 *self.state.lock().await = SessionState::Disconnected;
                 self.note_transition("重连失败（Disconnected）").await;
-                self.emit_state(SessionState::Disconnected, None, None,
-                    Some("自动重连 3 次均失败".into())).await;
+                self.emit_state(
+                    SessionState::Disconnected,
+                    None,
+                    None,
+                    Some("自动重连 3 次均失败".into()),
+                )
+                .await;
                 return;
             }
             if self.retry_stop.load(Ordering::SeqCst) {
                 *self.state.lock().await = SessionState::Disconnected;
-                self.note_transition("用户停止自动重连（Disconnected）").await;
-                self.emit_state(SessionState::Disconnected, None, None,
-                    Some("已停止自动重连".into())).await;
+                self.note_transition("用户停止自动重连（Disconnected）")
+                    .await;
+                self.emit_state(
+                    SessionState::Disconnected,
+                    None,
+                    None,
+                    Some("已停止自动重连".into()),
+                )
+                .await;
                 return;
             }
             *self.state.lock().await = SessionState::Reconnecting;
-            self.emit_state(SessionState::Reconnecting, Some(attempt as u32), Some(3), None).await;
+            self.emit_state(
+                SessionState::Reconnecting,
+                Some(attempt as u32),
+                Some(3),
+                None,
+            )
+            .await;
             match self.channel.reconnect().await {
                 Ok(()) => {
                     // 重连成功 ≠ 现场延续：cwd/env 事实降级；新 shell 需重新注入集成
@@ -1053,8 +1183,13 @@ impl SessionHandle {
     }
 
     /// R26：会话状态事件广播（尽力发送；无订阅者时静默——UI 兜底 3s 列表轮询）。
-    pub async fn emit_state(&self, state: SessionState, attempt: Option<u32>,
-        max_attempts: Option<u32>, detail: Option<String>) {
+    pub async fn emit_state(
+        &self,
+        state: SessionState,
+        attempt: Option<u32>,
+        max_attempts: Option<u32>,
+        detail: Option<String>,
+    ) {
         let _ = self.center.state_tx.send(SessionStateEvent {
             session_id: self.id.clone(),
             state,
@@ -1089,7 +1224,10 @@ impl SessionHandle {
             let mut s = self.screen.lock().await;
             s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
         }
-        let _ = self.channel.write(&crate::charset::encode(self.host.charset, &text)).await;
+        let _ = self
+            .channel
+            .write(&crate::charset::encode(self.host.charset, &text))
+            .await;
         *self.integration.lock().unwrap() = session_api::IntegrationState::Pending;
         true
     }
@@ -1136,15 +1274,21 @@ impl SessionHandle {
         }
         self.verification_hits.store(0, Ordering::SeqCst);
         *self.state.lock().await = SessionState::Reconfirming;
-        self.note_transition("重连成功，进入重确认（仅内置只读白名单可用）").await;
-        self.emit_state(SessionState::Reconfirming, None, None, None).await;
+        self.note_transition("重连成功，进入重确认（仅内置只读白名单可用）")
+            .await;
+        self.emit_state(SessionState::Reconfirming, None, None, None)
+            .await;
     }
 }
 
 /// RAII：exec 管线退出时若仍登记 live token，则移除。
 /// 兜底审批拒绝/作废/超时等异常路径，防 live_execs 泄漏
 /// （run_shell 超时故意保留 running——命令确实仍在远端跑，接管时如实上报）。
-struct CancelOnDrop<'a>(ExecId, CancellationToken, &'a StdMutex<HashMap<ExecId, CancellationToken>>);
+struct CancelOnDrop<'a>(
+    ExecId,
+    CancellationToken,
+    &'a StdMutex<HashMap<ExecId, CancellationToken>>,
+);
 impl<'a> Drop for CancelOnDrop<'a> {
     fn drop(&mut self) {
         // 正常路径已在 run_* 中移除；重复移除无害
@@ -1155,7 +1299,9 @@ impl<'a> Drop for CancelOnDrop<'a> {
 pub fn source_of(actor: &Actor) -> term_core::BlockSource {
     match actor {
         Actor::Human => term_core::BlockSource::Human,
-        Actor::Agent { client_id } => term_core::BlockSource::Agent { client_id: client_id.clone() },
+        Actor::Agent { client_id } => term_core::BlockSource::Agent {
+            client_id: client_id.clone(),
+        },
     }
 }
 
@@ -1228,4 +1374,3 @@ mod tests {
         assert!(!trunc3);
     }
 }
-

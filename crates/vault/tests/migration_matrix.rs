@@ -117,7 +117,8 @@ fn build_at(path: &Path, target: u32) {
     let conn = Connection::open(path).unwrap();
     conn.execute_batch(SCHEMA_V1).unwrap();
     if target >= 2 {
-        conn.execute_batch("ALTER TABLE hosts ADD COLUMN host_fingerprint TEXT;").unwrap();
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN host_fingerprint TEXT;")
+            .unwrap();
     }
     if target >= 3 {
         conn.execute_batch(
@@ -133,12 +134,15 @@ fn build_at(path: &Path, target: u32) {
         conn.execute_batch(SCHEMA_V5).unwrap();
     }
     if target >= 6 {
-        conn.execute_batch("ALTER TABLE hosts ADD COLUMN shell_integration INTEGER;").unwrap();
+        conn.execute_batch("ALTER TABLE hosts ADD COLUMN shell_integration INTEGER;")
+            .unwrap();
     }
     seed_common(&conn);
     if target >= 3 {
-        conn.execute("INSERT INTO settings VALUES('ui.theme','solar-dark')", []).unwrap();
-        conn.execute("INSERT INTO settings VALUES('ui.font_size','16')", []).unwrap();
+        conn.execute("INSERT INTO settings VALUES('ui.theme','solar-dark')", [])
+            .unwrap();
+        conn.execute("INSERT INTO settings VALUES('ui.font_size','16')", [])
+            .unwrap();
     }
     if target >= 5 {
         // 模拟 V5 迁移产物：旧键已映射进 v2 blob；字号已复制到命名空间键。
@@ -147,7 +151,11 @@ fn build_at(path: &Path, target: u32) {
             params![r#"{"schema_version":1,"chrome":"dark","hostbar":null}"#],
         )
         .unwrap();
-        conn.execute("INSERT INTO settings VALUES('ui.v2.terminal.font_size','16')", []).unwrap();
+        conn.execute(
+            "INSERT INTO settings VALUES('ui.v2.terminal.font_size','16')",
+            [],
+        )
+        .unwrap();
     }
     if target >= 6 {
         // 模拟 V6 迁移产物：存量 SSH 主机一次性置 1（local 与软删行不动）。
@@ -156,27 +164,43 @@ fn build_at(path: &Path, target: u32) {
         )
         .unwrap();
     }
-    conn.pragma_update(None, "user_version", target as i32).unwrap();
+    conn.pragma_update(None, "user_version", target as i32)
+        .unwrap();
 }
 
 fn user_version(path: &Path) -> u32 {
-    Connection::open(path).unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    Connection::open(path)
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap()
 }
 
 fn scalar_i64(path: &Path, sql: &str) -> i64 {
-    Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+    Connection::open(path)
+        .unwrap()
+        .query_row(sql, [], |r| r.get(0))
+        .unwrap()
 }
 
 fn scalar_text(path: &Path, sql: &str) -> Option<String> {
-    Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).ok()
+    Connection::open(path)
+        .unwrap()
+        .query_row(sql, [], |r| r.get(0))
+        .ok()
 }
 
 fn scalar_opt_i64(path: &Path, sql: &str) -> Option<i64> {
-    Connection::open(path).unwrap().query_row(sql, [], |r| r.get::<_, Option<i64>>(0)).unwrap()
+    Connection::open(path)
+        .unwrap()
+        .query_row(sql, [], |r| r.get::<_, Option<i64>>(0))
+        .unwrap()
 }
 
 fn scalar_blob(path: &Path, sql: &str) -> Vec<u8> {
-    Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+    Connection::open(path)
+        .unwrap()
+        .query_row(sql, [], |r| r.get(0))
+        .unwrap()
 }
 
 /// 所有 fixture 的公共断言：升到链尾 + 无损。
@@ -199,7 +223,10 @@ fn assert_migrated_lossless(path: &Path, label: &str) {
         "{label}: 凭据引用保持"
     );
     assert_eq!(
-        scalar_i64(path, "SELECT COUNT(*) FROM hosts WHERE deleted_at IS NOT NULL"),
+        scalar_i64(
+            path,
+            "SELECT COUNT(*) FROM hosts WHERE deleted_at IS NOT NULL"
+        ),
         1,
         "{label}: 软删行不被迁移清掉（仍可回查）"
     );
@@ -216,13 +243,33 @@ fn assert_migrated_lossless(path: &Path, label: &str) {
         "{label}: Agent token 哈希保持"
     );
     // 策略/会话/审批链保持。
-    assert_eq!(scalar_i64(path, "SELECT COUNT(*) FROM policies"), 1, "{label}: 策略保持");
-    assert_eq!(scalar_i64(path, "SELECT COUNT(*) FROM sessions"), 1, "{label}: 会话保持");
-    assert_eq!(scalar_i64(path, "SELECT COUNT(*) FROM approvals"), 1, "{label}: 审批保持");
-    // 审计链连续（seq 与 hash 原样，不被迁移打断）。
-    assert_eq!(scalar_i64(path, "SELECT COUNT(*) FROM audit_events"), 2, "{label}: 审计行保持");
     assert_eq!(
-        scalar_text(path, "SELECT hash FROM audit_events ORDER BY seq DESC LIMIT 1").as_deref(),
+        scalar_i64(path, "SELECT COUNT(*) FROM policies"),
+        1,
+        "{label}: 策略保持"
+    );
+    assert_eq!(
+        scalar_i64(path, "SELECT COUNT(*) FROM sessions"),
+        1,
+        "{label}: 会话保持"
+    );
+    assert_eq!(
+        scalar_i64(path, "SELECT COUNT(*) FROM approvals"),
+        1,
+        "{label}: 审批保持"
+    );
+    // 审计链连续（seq 与 hash 原样，不被迁移打断）。
+    assert_eq!(
+        scalar_i64(path, "SELECT COUNT(*) FROM audit_events"),
+        2,
+        "{label}: 审计行保持"
+    );
+    assert_eq!(
+        scalar_text(
+            path,
+            "SELECT hash FROM audit_events ORDER BY seq DESC LIMIT 1"
+        )
+        .as_deref(),
         Some("h2"),
         "{label}: 审计链尾 hash 保持"
     );
@@ -261,11 +308,17 @@ fn r44_legacy_theme_maps_and_keeps_old_keys() {
     build_at(&p, 4);
     Connection::open(&p)
         .unwrap()
-        .execute("UPDATE settings SET value='solar-light' WHERE key='ui.theme'", [])
+        .execute(
+            "UPDATE settings SET value='solar-light' WHERE key='ui.theme'",
+            [],
+        )
         .unwrap();
     drop(tinyssh_vault::Vault::open(&p).unwrap());
     let blob = scalar_text(&p, "SELECT value FROM settings WHERE key='ui.v2.workspace'").unwrap();
-    assert!(blob.contains("\"light\""), "solar-light 须映射为 light：{blob}");
+    assert!(
+        blob.contains("\"light\""),
+        "solar-light 须映射为 light：{blob}"
+    );
     // 旧键保留（回退兼容：旧 UI 仍能读到自己的键）
     assert_eq!(
         scalar_text(&p, "SELECT value FROM settings WHERE key='ui.theme'").as_deref(),
@@ -273,7 +326,11 @@ fn r44_legacy_theme_maps_and_keeps_old_keys() {
         "旧键不得被删除"
     );
     assert_eq!(
-        scalar_text(&p, "SELECT value FROM settings WHERE key='ui.v2.terminal.font_size'").as_deref(),
+        scalar_text(
+            &p,
+            "SELECT value FROM settings WHERE key='ui.v2.terminal.font_size'"
+        )
+        .as_deref(),
         Some("16"),
         "字号迁到命名空间键"
     );
@@ -282,8 +339,15 @@ fn r44_legacy_theme_maps_and_keeps_old_keys() {
     let p2 = dir.path().join("theme-dark.db");
     build_at(&p2, 4); // 默认 ui.theme='solar-dark'
     drop(tinyssh_vault::Vault::open(&p2).unwrap());
-    let blob2 = scalar_text(&p2, "SELECT value FROM settings WHERE key='ui.v2.workspace'").unwrap();
-    assert!(blob2.contains("\"dark\""), "solar-dark 须映射为 dark：{blob2}");
+    let blob2 = scalar_text(
+        &p2,
+        "SELECT value FROM settings WHERE key='ui.v2.workspace'",
+    )
+    .unwrap();
+    assert!(
+        blob2.contains("\"dark\""),
+        "solar-dark 须映射为 dark：{blob2}"
+    );
 }
 
 /// §10.1-1：**只有新装才默认跟随系统**——V1 老库无 `ui.theme` 键时外观取 system；
@@ -355,7 +419,11 @@ fn r44_fresh_vs_upgrade_collab_default() {
     let fresh = dir.path().join("fresh.db");
     drop(tinyssh_vault::Vault::open(&fresh).unwrap());
     assert_eq!(
-        scalar_text(&fresh, "SELECT value FROM settings WHERE key='collab.enabled'").as_deref(),
+        scalar_text(
+            &fresh,
+            "SELECT value FROM settings WHERE key='collab.enabled'"
+        )
+        .as_deref(),
         Some("0"),
         "新装默认停用协作"
     );
@@ -424,9 +492,13 @@ fn r44_migrate_on_latest_is_noop() {
     drop(tinyssh_vault::Vault::open(&p).unwrap());
     {
         let conn = Connection::open(&p).unwrap();
-        conn.execute("INSERT INTO settings VALUES('sentinel','1')", []).unwrap();
-        conn.execute("UPDATE settings SET value='user-set' WHERE key='collab.enabled'", [])
+        conn.execute("INSERT INTO settings VALUES('sentinel','1')", [])
             .unwrap();
+        conn.execute(
+            "UPDATE settings SET value='user-set' WHERE key='collab.enabled'",
+            [],
+        )
+        .unwrap();
     }
     {
         let conn = Connection::open(&p).unwrap();
@@ -471,7 +543,10 @@ fn r44_upgrade_keeps_existing_agent_usable() {
         "升级后既有 Agent 须仍在列：{agents:?}"
     );
     // ③ 协作按升级默认开启（MCP 端点可用）
-    assert!(v.collab_enabled().unwrap(), "升级须保留旧默认「MCP 开启」，不掐断老用户");
+    assert!(
+        v.collab_enabled().unwrap(),
+        "升级须保留旧默认「MCP 开启」，不掐断老用户"
+    );
     drop(v);
 
     // 反面对照：全新安装默认停用（与升级路径区分开）——避免本用例因「恒真」而失去判别力

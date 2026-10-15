@@ -3,10 +3,8 @@
 //! 手装 handle + Stub 通道（同 r24_tests 工艺）隔离传输面。
 
 use super::*;
-use session_api::{
-    AuditFilter, AuthType, Charset, ControlOwner, Error, Host, SessionState,
-};
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
+use session_api::{AuditFilter, AuthType, Charset, ControlOwner, Error, Host, SessionState};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,18 +37,60 @@ fn ssh_host() -> Host {
 struct DeadChannel;
 #[async_trait::async_trait]
 impl ChannelHandle for DeadChannel {
-    async fn write(&self, _data: &[u8]) -> Result<()> { Err(Error::SessionClosed) }
-    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> { Ok(()) }
-    async fn exec_fresh(&self, _cmd: &str, _opts: &ExecOpts, _deadline: std::time::Instant, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<FreshOutcome> { Err(Error::SessionClosed) }
-    async fn signal(&self, _sig: TransportSignal) -> Result<()> { Ok(()) }
-    async fn force_close(&self) -> Result<()> { Ok(()) }
-    fn subscribe_output(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> { tokio::sync::broadcast::channel(1).1 }
-    async fn is_alive(&self) -> bool { false }
-    async fn reconnect(&self) -> Result<()> { Err(Error::SessionClosed) }
-    async fn close(&self) -> Result<()> { Ok(()) }
-    async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::SessionClosed) }
-    async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::SessionClosed) }
-    async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> { Err(Error::SessionClosed) }
+    async fn write(&self, _data: &[u8]) -> Result<()> {
+        Err(Error::SessionClosed)
+    }
+    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+    async fn exec_fresh(
+        &self,
+        _cmd: &str,
+        _opts: &ExecOpts,
+        _deadline: std::time::Instant,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+    ) -> Result<FreshOutcome> {
+        Err(Error::SessionClosed)
+    }
+    async fn signal(&self, _sig: TransportSignal) -> Result<()> {
+        Ok(())
+    }
+    async fn force_close(&self) -> Result<()> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        tokio::sync::broadcast::channel(1).1
+    }
+    async fn is_alive(&self) -> bool {
+        false
+    }
+    async fn reconnect(&self) -> Result<()> {
+        Err(Error::SessionClosed)
+    }
+    async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn upload(
+        &self,
+        _local: &std::path::Path,
+        _remote: &str,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn download(
+        &self,
+        _remote: &str,
+        _local: &std::path::Path,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> {
+        Err(Error::SessionClosed)
+    }
 }
 
 /// 重连即成功通道：订阅面活（sender 常驻 Arc 内，pump 空转不误判断线）。
@@ -65,27 +105,77 @@ impl OkReconnectChannel {
 }
 #[async_trait::async_trait]
 impl ChannelHandle for OkReconnectChannel {
-    async fn write(&self, _data: &[u8]) -> Result<()> { Err(Error::SessionClosed) }
-    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> { Ok(()) }
-    async fn exec_fresh(&self, _cmd: &str, _opts: &ExecOpts, _deadline: std::time::Instant, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<FreshOutcome> { Err(Error::SessionClosed) }
-    async fn signal(&self, _sig: TransportSignal) -> Result<()> { Ok(()) }
-    async fn force_close(&self) -> Result<()> { Ok(()) }
-    fn subscribe_output(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> { self.tx.subscribe() }
-    async fn is_alive(&self) -> bool { true }
-    async fn reconnect(&self) -> Result<()> { Ok(()) }
-    async fn close(&self) -> Result<()> { Ok(()) }
-    async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::SessionClosed) }
-    async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::SessionClosed) }
-    async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> { Err(Error::SessionClosed) }
+    async fn write(&self, _data: &[u8]) -> Result<()> {
+        Err(Error::SessionClosed)
+    }
+    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+    async fn exec_fresh(
+        &self,
+        _cmd: &str,
+        _opts: &ExecOpts,
+        _deadline: std::time::Instant,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+    ) -> Result<FreshOutcome> {
+        Err(Error::SessionClosed)
+    }
+    async fn signal(&self, _sig: TransportSignal) -> Result<()> {
+        Ok(())
+    }
+    async fn force_close(&self) -> Result<()> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        self.tx.subscribe()
+    }
+    async fn is_alive(&self) -> bool {
+        true
+    }
+    async fn reconnect(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn upload(
+        &self,
+        _local: &std::path::Path,
+        _remote: &str,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn download(
+        &self,
+        _remote: &str,
+        _local: &std::path::Path,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> {
+        Err(Error::SessionClosed)
+    }
 }
 
 fn hand_install(m: &SessionManager, kind: &str, ch: Arc<dyn ChannelHandle>) -> Arc<SessionHandle> {
     let screen = term_core::Screen::new(term_core::ScreenConfig {
-        cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20,
+        cols: 80,
+        rows: 24,
+        scrollback: 100,
+        lossless_cap: 1 << 20,
     });
     let h = SessionHandle::new(
-        format!("s-r26-{}", uuid::Uuid::new_v4()), ssh_host(), kind.into(),
-        ch, screen, m.center.clone(), ControlOwner::Human,
+        format!("s-r26-{}", uuid::Uuid::new_v4()),
+        ssh_host(),
+        kind.into(),
+        ch,
+        screen,
+        m.center.clone(),
+        ControlOwner::Human,
     );
     m.sessions.lock().unwrap().insert(h.id.clone(), h.clone());
     h
@@ -101,8 +191,14 @@ async fn drain_events(
     while out.len() < n {
         let left = deadline.saturating_duration_since(tokio::time::Instant::now());
         if left.is_zero() {
-            panic!("等待状态事件超时：已收 {}/{}（{:?}）", out.len(), n,
-                out.iter().map(|e: &SessionStateEvent| (e.state, e.attempt)).collect::<Vec<_>>());
+            panic!(
+                "等待状态事件超时：已收 {}/{}（{:?}）",
+                out.len(),
+                n,
+                out.iter()
+                    .map(|e: &SessionStateEvent| (e.state, e.attempt))
+                    .collect::<Vec<_>>()
+            );
         }
         match tokio::time::timeout(left, rx.recv()).await {
             Ok(Ok(ev)) => out.push(ev),
@@ -123,15 +219,21 @@ async fn auto_reconnect_emits_full_sequence_then_disconnected() {
     let mut rx = m.center.state_tx.subscribe();
     h.on_transport_reconnect().await;
     let evs = drain_events(&mut rx, 5).await;
-    let seq: Vec<(SessionState, Option<u32>, Option<u32>)> =
-        evs.iter().map(|e| (e.state, e.attempt, e.max_attempts)).collect();
-    assert_eq!(seq, vec![
-        (SessionState::Degraded, None, None),
-        (SessionState::Reconnecting, Some(1), Some(3)),
-        (SessionState::Reconnecting, Some(2), Some(3)),
-        (SessionState::Reconnecting, Some(3), Some(3)),
-        (SessionState::Disconnected, None, None),
-    ], "自动重连事件序列（含实际重试次数）不符：{seq:?}");
+    let seq: Vec<(SessionState, Option<u32>, Option<u32>)> = evs
+        .iter()
+        .map(|e| (e.state, e.attempt, e.max_attempts))
+        .collect();
+    assert_eq!(
+        seq,
+        vec![
+            (SessionState::Degraded, None, None),
+            (SessionState::Reconnecting, Some(1), Some(3)),
+            (SessionState::Reconnecting, Some(2), Some(3)),
+            (SessionState::Reconnecting, Some(3), Some(3)),
+            (SessionState::Disconnected, None, None),
+        ],
+        "自动重连事件序列（含实际重试次数）不符：{seq:?}"
+    );
     assert_eq!(*h.state.lock().await, SessionState::Disconnected);
 }
 
@@ -145,10 +247,14 @@ async fn stop_auto_reconnect_prevents_further_attempts() {
     // Reconnecting，停止时机就漂了）；观察到首个 Reconnecting 即同步停止。
     let mut rx = m.center.state_tx.subscribe();
     let h2 = h.clone();
-    let runner = tokio::spawn(async move { h2.on_transport_reconnect().await; });
+    let runner = tokio::spawn(async move {
+        h2.on_transport_reconnect().await;
+    });
     loop {
         let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         if ev.state == SessionState::Reconnecting {
             m.stop_auto_reconnect(&h.id).await.unwrap();
             break;
@@ -156,14 +262,26 @@ async fn stop_auto_reconnect_prevents_further_attempts() {
     }
     runner.await.unwrap();
     let evs = drain_events(&mut rx, 1).await;
-    let seq: Vec<(SessionState, Option<u32>)> =
-        evs.iter().map(|e| (e.state, e.attempt)).collect();
-    assert_eq!(seq, vec![(SessionState::Disconnected, None)],
-        "停止后不得再有第二次 Reconnecting，只余 Disconnected：{seq:?}");
+    let seq: Vec<(SessionState, Option<u32>)> = evs.iter().map(|e| (e.state, e.attempt)).collect();
+    assert_eq!(
+        seq,
+        vec![(SessionState::Disconnected, None)],
+        "停止后不得再有第二次 Reconnecting，只余 Disconnected：{seq:?}"
+    );
     assert_eq!(*h.state.lock().await, SessionState::Disconnected);
-    let audit = m.center.audit
-        .query(&AuditFilter { limit: 200, ..Default::default() }).unwrap().events;
-    assert!(audit.iter().any(|e| e.action == "session_reconnect_stop"), "停止动作须留审计");
+    let audit = m
+        .center
+        .audit
+        .query(&AuditFilter {
+            limit: 200,
+            ..Default::default()
+        })
+        .unwrap()
+        .events;
+    assert!(
+        audit.iter().any(|e| e.action == "session_reconnect_stop"),
+        "停止动作须留审计"
+    );
 }
 
 /// 手动重连失败：Reconnecting×3 事件 + Disconnected 事件，终态保持 Disconnected，
@@ -178,14 +296,17 @@ async fn manual_reconnect_failure_keeps_disconnected() {
     assert!(r.is_err(), "恒败通道手动重连应失败");
     // 每次尝试前各发一次 Reconnecting（次数数据面），失败后 Disconnected
     let evs = drain_events(&mut rx, 4).await;
-    let seq: Vec<(SessionState, Option<u32>)> =
-        evs.iter().map(|e| (e.state, e.attempt)).collect();
-    assert_eq!(seq, vec![
-        (SessionState::Reconnecting, Some(1)),
-        (SessionState::Reconnecting, Some(2)),
-        (SessionState::Reconnecting, Some(3)),
-        (SessionState::Disconnected, None),
-    ], "手动重连失败事件序列不符：{seq:?}");
+    let seq: Vec<(SessionState, Option<u32>)> = evs.iter().map(|e| (e.state, e.attempt)).collect();
+    assert_eq!(
+        seq,
+        vec![
+            (SessionState::Reconnecting, Some(1)),
+            (SessionState::Reconnecting, Some(2)),
+            (SessionState::Reconnecting, Some(3)),
+            (SessionState::Disconnected, None),
+        ],
+        "手动重连失败事件序列不符：{seq:?}"
+    );
     assert_eq!(*h.state.lock().await, SessionState::Disconnected);
 }
 
@@ -206,12 +327,15 @@ async fn manual_reconnect_success_enters_reconfirming_with_event() {
     m.reconnect_session(&h.id).await.unwrap();
     // 首次尝试即成功：1 次 Reconnecting + Reconfirming（B 标记到场放行，不等满窗）
     let evs = drain_events(&mut rx, 2).await;
-    let seq: Vec<(SessionState, Option<u32>)> =
-        evs.iter().map(|e| (e.state, e.attempt)).collect();
-    assert_eq!(seq, vec![
-        (SessionState::Reconnecting, Some(1)),
-        (SessionState::Reconfirming, None),
-    ], "手动重连成功事件序列不符：{seq:?}");
+    let seq: Vec<(SessionState, Option<u32>)> = evs.iter().map(|e| (e.state, e.attempt)).collect();
+    assert_eq!(
+        seq,
+        vec![
+            (SessionState::Reconnecting, Some(1)),
+            (SessionState::Reconfirming, None),
+        ],
+        "手动重连成功事件序列不符：{seq:?}"
+    );
     assert_eq!(*h.state.lock().await, SessionState::Reconfirming);
 }
 
@@ -226,15 +350,21 @@ async fn local_reconnect_enters_reconfirming_without_injection() {
     m.reconnect_session(&h.id).await.unwrap();
     // local 也走同一 3 次尝试循环（Reconnecting 次数事件同源），成功后不注入直接 Reconfirming
     let evs = drain_events(&mut rx, 2).await;
-    let seq: Vec<(SessionState, Option<u32>)> =
-        evs.iter().map(|e| (e.state, e.attempt)).collect();
-    assert_eq!(seq, vec![
-        (SessionState::Reconnecting, Some(1)),
-        (SessionState::Reconfirming, None),
-    ], "local 重连事件序列不符：{seq:?}");
+    let seq: Vec<(SessionState, Option<u32>)> = evs.iter().map(|e| (e.state, e.attempt)).collect();
+    assert_eq!(
+        seq,
+        vec![
+            (SessionState::Reconnecting, Some(1)),
+            (SessionState::Reconfirming, None),
+        ],
+        "local 重连事件序列不符：{seq:?}"
+    );
     assert_eq!(*h.state.lock().await, SessionState::Reconfirming);
-    assert_eq!(*h.integration.lock().unwrap(), session_api::IntegrationState::Disabled,
-        "local 重连不得注入集成");
+    assert_eq!(
+        *h.integration.lock().unwrap(),
+        session_api::IntegrationState::Disabled,
+        "local 重连不得注入集成"
+    );
     // 幂等 no-op：非重连期 stop_auto_reconnect 合法返回
     m.stop_auto_reconnect(&h.id).await.unwrap();
 }

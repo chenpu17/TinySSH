@@ -34,9 +34,15 @@ pub struct LocalPtyChannel {
 /// 选出用户 shell 并生成集成注入的启动方式。
 pub enum ShellSpawn {
     /// bash --rcfile <tmp>
-    Bash { program: String, rcfile: std::path::PathBuf },
+    Bash {
+        program: String,
+        rcfile: std::path::PathBuf,
+    },
     /// zsh，ZDOTDIR 指向注入目录
-    Zsh { program: String, zdotdir: std::path::PathBuf },
+    Zsh {
+        program: String,
+        zdotdir: std::path::PathBuf,
+    },
     /// 直接启动（无集成注入；Shell 模式将不可用，自动降级 Fresh）
     Plain { program: String },
 }
@@ -324,7 +330,8 @@ impl ChannelHandle for LocalPtyChannel {
         let res = {
             let s = shell.to_ascii_lowercase();
             s.contains("powershell") || s.contains("pwsh")
-        }; if res {
+        };
+        if res {
             command.arg("-NoProfile").arg("-Command").arg(cmd);
         } else {
             command.arg("-c").arg(cmd);
@@ -398,18 +405,18 @@ impl ChannelHandle for LocalPtyChannel {
         // 极端路径（孙进程继承管道持有写端）下 kill 后读端仍可能不 EOF：限时收编，
         // 超时放弃收集（子进程已死，结果如实标注未完成）。join! 产出元组非 Future，
         // 包一层 async 块才能进 timeout。
-        let (out_res, err_res) = match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            async { tokio::join!(out_task, err_task) },
-        )
-        .await
-        {
-            Ok((o, e)) => (
-                o.unwrap_or((Vec::new(), false)),
-                e.unwrap_or((Vec::new(), false)),
-            ),
-            Err(_) => ((Vec::new(), false), (Vec::new(), false)),
-        };
+        let (out_res, err_res) =
+            match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::join!(out_task, err_task)
+            })
+            .await
+            {
+                Ok((o, e)) => (
+                    o.unwrap_or((Vec::new(), false)),
+                    e.unwrap_or((Vec::new(), false)),
+                ),
+                Err(_) => ((Vec::new(), false), (Vec::new(), false)),
+            };
 
         Ok(FreshOutcome {
             exit_code: status.as_ref().and_then(|s| s.code()),

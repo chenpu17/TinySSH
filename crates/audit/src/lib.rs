@@ -41,13 +41,17 @@ impl AuditStore {
         let conn = open_db(path)?;
         conn.execute_batch(SCHEMA_V1)
             .map_err(|e| Error::Storage(e.to_string()))?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn open_shared(conn: Connection) -> Result<Self> {
         conn.execute_batch(SCHEMA_V1)
             .map_err(|e| Error::Storage(e.to_string()))?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// 追加事件；哈希链 = sha256(prev_hash + 规范化载荷)。
@@ -77,8 +81,8 @@ impl AuditStore {
             session_api::Actor::Human => ("human", None),
             session_api::Actor::Agent { client_id } => ("agent", Some(client_id.clone())),
         };
-        let payload = serde_json::to_string(&payload_json)
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        let payload =
+            serde_json::to_string(&payload_json).map_err(|e| Error::Storage(e.to_string()))?;
         let mut hash_input = String::new();
         hash_input.push_str(prev_hash.as_deref().unwrap_or(""));
         hash_input.push_str(&ts.timestamp_millis().to_string());
@@ -190,7 +194,9 @@ impl AuditStore {
             "SELECT seq, ts, actor_kind, agent_id, action, session_id, command, payload_json, approval_id, prev_hash, hash
              FROM audit_events {page_where_sql} ORDER BY seq DESC LIMIT {limit} OFFSET {offset}"
         );
-        let mut stmt = conn.prepare(&sql).map_err(|e| Error::Storage(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| Error::Storage(e.to_string()))?;
         let rows = stmt
             .query_map(psql.as_slice(), row_to_event)
             .map_err(|e| Error::Storage(e.to_string()))?;
@@ -281,8 +287,7 @@ fn row_to_event(r: &rusqlite::Row) -> rusqlite::Result<AuditEvent> {
         action: r.get(4)?,
         session_id: r.get(5)?,
         command: r.get(6)?,
-        payload_json: serde_json::from_str(&payload)
-            .unwrap_or(serde_json::Value::String(payload)),
+        payload_json: serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload)),
         approval_id: r.get(8)?,
         prev_hash: r.get(9)?,
         hash: r.get(10)?,
@@ -301,7 +306,9 @@ mod tests {
         for i in 0..5 {
             store
                 .append(
-                    &Actor::Agent { client_id: "cc".into() },
+                    &Actor::Agent {
+                        client_id: "cc".into(),
+                    },
                     "exec",
                     Some("s1"),
                     Some(&format!("cmd {i}")),
@@ -311,7 +318,14 @@ mod tests {
                 .unwrap();
         }
         store
-            .append(&Actor::Human, "takeover", Some("s1"), None, serde_json::json!({}), None)
+            .append(
+                &Actor::Human,
+                "takeover",
+                Some("s1"),
+                None,
+                serde_json::json!({}),
+                None,
+            )
             .unwrap();
 
         let page = store
@@ -344,47 +358,97 @@ mod tests {
         let store = AuditStore::open(&dir.path().join("a.db")).unwrap();
         for i in 0..5 {
             store
-                .append(&Actor::Human, "exec", Some("s1"), Some(&format!("c{i}")), serde_json::json!({}), None)
+                .append(
+                    &Actor::Human,
+                    "exec",
+                    Some("s1"),
+                    Some(&format!("c{i}")),
+                    serde_json::json!({}),
+                    None,
+                )
                 .unwrap();
         }
         store
-            .append(&Actor::Agent { client_id: "cc".into() }, "exec", Some("s2"), None, serde_json::json!({}), None)
+            .append(
+                &Actor::Agent {
+                    client_id: "cc".into(),
+                },
+                "exec",
+                Some("s2"),
+                None,
+                serde_json::json!({}),
+                None,
+            )
             .unwrap();
 
         // 全量：按 seq 倒序取前 2 条
-        let p1 = store.query(&AuditFilter { limit: 2, ..Default::default() }).unwrap();
+        let p1 = store
+            .query(&AuditFilter {
+                limit: 2,
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(p1.total, 6, "total 是过滤后总数");
         assert_eq!(p1.events.len(), 2);
         assert_eq!(p1.events[0].seq, 6);
 
         // 游标翻页：第二页严格早于第一页末条，且 total 不变
         let p2 = store
-            .query(&AuditFilter { limit: 2, before_seq: Some(p1.events[1].seq), ..Default::default() })
+            .query(&AuditFilter {
+                limit: 2,
+                before_seq: Some(p1.events[1].seq),
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(p2.total, 6, "翻页不改变 total");
         assert_eq!(p2.events.len(), 2);
         let s1: Vec<i64> = p1.events.iter().map(|e| e.seq).collect();
         let s2: Vec<i64> = p2.events.iter().map(|e| e.seq).collect();
-        assert!(s2.iter().all(|s| *s < s1[1]), "第二页全部早于第一页末条：{s1:?} / {s2:?}");
+        assert!(
+            s2.iter().all(|s| *s < s1[1]),
+            "第二页全部早于第一页末条：{s1:?} / {s2:?}"
+        );
         assert!(s1.iter().all(|s| !s2.contains(s)), "两页无重复");
 
         // 新事件入链后按游标继续翻页，仍不重复、不漏掉旧记录
         store
-            .append(&Actor::Human, "exec", Some("s3"), None, serde_json::json!({}), None)
+            .append(
+                &Actor::Human,
+                "exec",
+                Some("s3"),
+                None,
+                serde_json::json!({}),
+                None,
+            )
             .unwrap();
         let p3 = store
-            .query(&AuditFilter { limit: 2, before_seq: Some(p2.events[1].seq), ..Default::default() })
+            .query(&AuditFilter {
+                limit: 2,
+                before_seq: Some(p2.events[1].seq),
+                ..Default::default()
+            })
             .unwrap();
         let s3: Vec<i64> = p3.events.iter().map(|e| e.seq).collect();
-        assert!(s3.iter().all(|s| !s1.contains(s) && !s2.contains(s)), "第三页与前两页无重复：{s3:?}");
+        assert!(
+            s3.iter().all(|s| !s1.contains(s) && !s2.contains(s)),
+            "第三页与前两页无重复：{s3:?}"
+        );
         assert_eq!(p3.total, 7, "新事件入链后 total 跟上");
 
         // 过滤器 + 游标组合：total 只反映过滤条件，不含游标
         let pf = store
-            .query(&AuditFilter { session_id: Some("s1".into()), limit: 2, before_seq: Some(5), ..Default::default() })
+            .query(&AuditFilter {
+                session_id: Some("s1".into()),
+                limit: 2,
+                before_seq: Some(5),
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(pf.total, 5, "过滤后 total=5（s1 的行），游标不参与计数");
-        assert!(pf.events.iter().all(|e| e.session_id.as_deref() == Some("s1") && e.seq < 5));
+        assert!(pf
+            .events
+            .iter()
+            .all(|e| e.session_id.as_deref() == Some("s1") && e.seq < 5));
     }
 
     #[test]
@@ -393,8 +457,26 @@ mod tests {
         let path = dir.path().join("a.db");
         {
             let store = AuditStore::open(&path).unwrap();
-            store.append(&Actor::Human, "a", None, Some("x"), serde_json::json!({}), None).unwrap();
-            store.append(&Actor::Human, "b", None, Some("y"), serde_json::json!({}), None).unwrap();
+            store
+                .append(
+                    &Actor::Human,
+                    "a",
+                    None,
+                    Some("x"),
+                    serde_json::json!({}),
+                    None,
+                )
+                .unwrap();
+            store
+                .append(
+                    &Actor::Human,
+                    "b",
+                    None,
+                    Some("y"),
+                    serde_json::json!({}),
+                    None,
+                )
+                .unwrap();
         }
         // 直接改库（模拟篡改）
         let conn = Connection::open(&path).unwrap();

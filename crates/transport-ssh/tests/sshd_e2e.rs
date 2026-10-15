@@ -6,7 +6,9 @@ use std::time::Duration;
 use term_core::{Screen, ScreenConfig};
 
 fn sshd_enabled() -> bool {
-    std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false)
+    std::env::var("TINYSSH_E2E_SSHD")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 fn target() -> transport_ssh::SshTarget {
@@ -16,7 +18,7 @@ fn target() -> transport_ssh::SshTarget {
         username: "root".into(),
         auth_type: session_api::AuthType::Password,
         secret: "testpass".into(),
-        host_key_check: None, // 测试：全接受（生产走 TOFU 回调）
+        host_key_check: None,  // 测试：全接受（生产走 TOFU 回调）
         kb_prompt_check: None, // 2FA 门：测试直连不用
     }
 }
@@ -111,9 +113,16 @@ async fn scenario() -> Result<(), String> {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(screen.snapshot_text().contains("mark_a"));
-    eprintln!("DEBUG screen:\n{}\nblocks: {:?}", screen.snapshot_text(), screen.blocks.last_blocks(3));
+    eprintln!(
+        "DEBUG screen:\n{}\nblocks: {:?}",
+        screen.snapshot_text(),
+        screen.blocks.last_blocks(3)
+    );
     eprintln!("DEBUG cwd: {:?}", screen.cwd());
-    assert!(screen.cwd().map(|c| c.starts_with("/tmp")).unwrap_or(false), "cwd 应为 /tmp（OSC 7）");
+    assert!(
+        screen.cwd().map(|c| c.starts_with("/tmp")).unwrap_or(false),
+        "cwd 应为 /tmp（OSC 7）"
+    );
 
     // 第二条命令在同 shell：cwd 延续
     screen.register_outgoing(b"pwd\r", term_core::BlockSource::Human);
@@ -122,7 +131,12 @@ async fn scenario() -> Result<(), String> {
     loop {
         drain(&mut screen, &rx_feed);
         let count = screen.blocks.last_blocks(2).len();
-        let closed2 = screen.blocks.last_blocks(2).last().map(|b| b.end.is_some()).unwrap_or(false);
+        let closed2 = screen
+            .blocks
+            .last_blocks(2)
+            .last()
+            .map(|b| b.end.is_some())
+            .unwrap_or(false);
         if count >= 2 && closed2 {
             break;
         }
@@ -156,10 +170,16 @@ async fn scenario() -> Result<(), String> {
     let local = dir.path().join("u.txt");
     std::fs::write(&local, b"sftp-roundtrip-data").unwrap();
     let remote = format!("/tmp/{}.txt", std::process::id());
-    let n = channel.upload(&local, &remote, &Default::default(), &|_,_|{}).await.unwrap();
+    let n = channel
+        .upload(&local, &remote, &Default::default(), &|_, _| {})
+        .await
+        .unwrap();
     assert_eq!(n, b"sftp-roundtrip-data".len() as u64);
     let back = dir.path().join("d.txt");
-    channel.download(&remote, &back, &Default::default(), &|_,_|{}).await.unwrap();
+    channel
+        .download(&remote, &back, &Default::default(), &|_, _| {})
+        .await
+        .unwrap();
     assert_eq!(std::fs::read(&back).unwrap(), b"sftp-roundtrip-data");
 
     channel.close().await.unwrap();
@@ -180,8 +200,8 @@ async fn sftp_download_cancel_midway() {
     }
     let _sshd_guard = tinyssh_testbed::sshd_lock();
     tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
-    use session_api::transport::ChannelHandle;
     use session_api::transport::tokio_util_sync::CancellationToken;
+    use session_api::transport::ChannelHandle;
 
     let channel = transport_ssh::SshChannel::connect(target(), 80, 24)
         .await
@@ -204,8 +224,7 @@ async fn sftp_download_cancel_midway() {
     let dst = dir.path().join("partial.bin");
     let dst_check = dst.clone();
     let dl = tokio::spawn(async move {
-        ch2
-            .download("/tmp/t20_cancel.bin", &dst, &c2, &|_,_|{})
+        ch2.download("/tmp/t20_cancel.bin", &dst, &c2, &|_, _| {})
             .await
     });
     // 传输进行中取消（256MB 回环传输 ≈ 0.5–3s，200ms 必然处于中途；
@@ -242,8 +261,8 @@ async fn sftp_list_lists_dir_entries_sorted() {
     }
     let _sshd_guard = tinyssh_testbed::sshd_lock();
     tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
-    use session_api::transport::ChannelHandle;
     use session_api::transport::tokio_util_sync::CancellationToken;
+    use session_api::transport::ChannelHandle;
 
     let channel = transport_ssh::SshChannel::connect(target(), 80, 24)
         .await
@@ -261,8 +280,14 @@ async fn sftp_list_lists_dir_entries_sorted() {
 
     let entries = channel.list_dir("/tmp/t41_dir").await.unwrap();
     let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(names, vec!["sub", "a.txt", "b.txt", "dangling", "link"], "目录在前、名称序（链接与文件同序）：{names:?}");
-    assert!(entries.iter().all(|e| !matches!(e.name.as_str(), "." | "..")));
+    assert_eq!(
+        names,
+        vec!["sub", "a.txt", "b.txt", "dangling", "link"],
+        "目录在前、名称序（链接与文件同序）：{names:?}"
+    );
+    assert!(entries
+        .iter()
+        .all(|e| !matches!(e.name.as_str(), "." | "..")));
     // C4（R30）：kind 如实（readdir 属性 lstat 语义——链接条目报 Symlink 不冒充实体）
     let by_name = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
     assert_eq!(by_name("sub").kind, Some(session_api::EntryKind::Dir));
@@ -270,25 +295,45 @@ async fn sftp_list_lists_dir_entries_sorted() {
     let a = by_name("a.txt");
     assert_eq!(a.kind, Some(session_api::EntryKind::File));
     assert!(!a.is_dir && a.size == Some(b"world\n".len() as u64));
-    assert!(a.mtime.is_some_and(|v| v > 0), "mtime 应为服务器返回的真实时间");
+    assert!(
+        a.mtime.is_some_and(|v| v > 0),
+        "mtime 应为服务器返回的真实时间"
+    );
     assert_eq!(by_name("link").kind, Some(session_api::EntryKind::Symlink));
-    assert_eq!(by_name("dangling").kind, Some(session_api::EntryKind::Symlink));
+    assert_eq!(
+        by_name("dangling").kind,
+        Some(session_api::EntryKind::Symlink)
+    );
 
     // 不存在路径：可区别错误（SftpPathNotFound，非笼统 Io）
     let miss = channel.list_dir("/tmp/t41_dir/definitely-missing").await;
-    assert!(matches!(miss, Err(session_api::Error::SftpPathNotFound { .. })), "{miss:?}");
+    assert!(
+        matches!(miss, Err(session_api::Error::SftpPathNotFound { .. })),
+        "{miss:?}"
+    );
 
     // ---- C4（R30）：resolve_path / stat_entry 真机契约 ----
     // resolve：相对与 .. 归一为 canonical；None → SFTP 初始目录（绝对路径）。
     // 注：OpenSSH realpath 对不存在的末段宽容（词法归一即返回，不查存在性）——
     // 「不存在」的可区别错误由 list（read_dir）/stat（lstat）承担，二者必查存在。
-    let r = channel.resolve_path(Some("/tmp/t41_dir/../t41_dir")).await.unwrap();
+    let r = channel
+        .resolve_path(Some("/tmp/t41_dir/../t41_dir"))
+        .await
+        .unwrap();
     assert_eq!(r.canonical, "/tmp/t41_dir");
     let init = channel.resolve_path(None).await.unwrap();
-    assert!(init.canonical.starts_with('/') && init.canonical.len() > 1, "初始目录应绝对路径：{init:?}");
-    let rmiss = channel.resolve_path(Some("/tmp/t41_dir/definitely-missing")).await;
+    assert!(
+        init.canonical.starts_with('/') && init.canonical.len() > 1,
+        "初始目录应绝对路径：{init:?}"
+    );
+    let rmiss = channel
+        .resolve_path(Some("/tmp/t41_dir/definitely-missing"))
+        .await;
     match rmiss {
-        Ok(p) => assert!(p.canonical.starts_with('/') , "宽容 realpath 返回归一绝对路径：{p:?}"),
+        Ok(p) => assert!(
+            p.canonical.starts_with('/'),
+            "宽容 realpath 返回归一绝对路径：{p:?}"
+        ),
         Err(session_api::Error::SftpPathNotFound { .. }) => {} // 严格实现（服务端依赖）同样合法
         other => panic!("resolve missing 只应成功归一或 SftpPathNotFound：{other:?}"),
     }
@@ -303,18 +348,28 @@ async fn sftp_list_lists_dir_entries_sorted() {
     assert_eq!(stl.kind, Some(session_api::EntryKind::Symlink));
     assert_eq!(stl.symlink_target.as_deref(), Some("a.txt"));
     assert!(!stl.is_dir);
-    assert_eq!(stl.size, Some(b"world\n".len() as u64), "可达链接 size 跟随目标");
+    assert_eq!(
+        stl.size,
+        Some(b"world\n".len() as u64),
+        "可达链接 size 跟随目标"
+    );
     assert_eq!(stl.canonical.as_deref(), Some("/tmp/t41_dir/a.txt"));
     let std_ = channel.stat_entry("/tmp/t41_dir/dangling").await.unwrap();
     assert_eq!(std_.kind, Some(session_api::EntryKind::Symlink));
     assert_eq!(std_.symlink_target.as_deref(), Some("missing"));
     // canonical 服务端依赖：OpenSSH 宽容 realpath 返回归一化目标路径；严格实现报错 → None
     match &std_.canonical {
-        Some(c) => assert_eq!(c, "/tmp/t41_dir/missing", "宽容 realpath：悬空链接 canonical=归一化目标"),
+        Some(c) => assert_eq!(
+            c, "/tmp/t41_dir/missing",
+            "宽容 realpath：悬空链接 canonical=归一化目标"
+        ),
         None => {} // 严格实现（realpath 失败）→ None（§352 不猜路径）
     }
     let stmiss = channel.stat_entry("/tmp/t41_dir/definitely-missing").await;
-    assert!(matches!(stmiss, Err(session_api::Error::SftpPathNotFound { .. })), "{stmiss:?}");
+    assert!(
+        matches!(stmiss, Err(session_api::Error::SftpPathNotFound { .. })),
+        "{stmiss:?}"
+    );
 
     channel
         .exec_fresh(
@@ -345,11 +400,24 @@ async fn ssh_agent_auth_connects() {
     // 一次性 ed25519 key（无口令）
     let key_path = dir.join("id_test");
     let kg = std::process::Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-C", "tinyssh-agent-test", "-f"])
+        .args([
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-C",
+            "tinyssh-agent-test",
+            "-f",
+        ])
         .arg(&key_path)
         .output()
         .expect("ssh-keygen exists");
-    assert!(kg.status.success(), "ssh-keygen: {}", String::from_utf8_lossy(&kg.stderr));
+    assert!(
+        kg.status.success(),
+        "ssh-keygen: {}",
+        String::from_utf8_lossy(&kg.stderr)
+    );
 
     // 独立 ssh-agent：socket 固定在本测试目录，与用户真实 agent 隔离
     let agent_out = std::process::Command::new("ssh-agent")
@@ -357,7 +425,11 @@ async fn ssh_agent_auth_connects() {
         .arg(dir.join("agent.sock"))
         .output()
         .expect("ssh-agent exists");
-    assert!(agent_out.status.success(), "ssh-agent: {}", String::from_utf8_lossy(&agent_out.stderr));
+    assert!(
+        agent_out.status.success(),
+        "ssh-agent: {}",
+        String::from_utf8_lossy(&agent_out.stderr)
+    );
     let envs = String::from_utf8_lossy(&agent_out.stdout).to_string();
     let sock = envs
         .split("SSH_AUTH_SOCK=")
@@ -382,8 +454,14 @@ async fn ssh_agent_auth_connects() {
         fn drop(&mut self) {
             let _ = std::process::Command::new("kill").arg(&self.0).output();
             let _ = std::process::Command::new("docker")
-                .args(["exec", "tinyssh-e2e", "sed", "-i", "/tinyssh-agent-test$/d",
-                       "/root/.ssh/authorized_keys"])
+                .args([
+                    "exec",
+                    "tinyssh-e2e",
+                    "sed",
+                    "-i",
+                    "/tinyssh-agent-test$/d",
+                    "/root/.ssh/authorized_keys",
+                ])
                 .output();
             let _ = std::fs::remove_dir_all(&self.1);
         }
@@ -395,7 +473,11 @@ async fn ssh_agent_auth_connects() {
         .arg(&key_path)
         .output()
         .expect("ssh-add exists");
-    assert!(add.status.success(), "ssh-add: {}", String::from_utf8_lossy(&add.stderr));
+    assert!(
+        add.status.success(),
+        "ssh-add: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
 
     // 容器收公钥（StrictModes 要求目录/文件权限正确）
     let pubkey = std::fs::read_to_string(key_path.with_extension("pub")).unwrap();
@@ -406,7 +488,12 @@ async fn ssh_agent_auth_connects() {
         .stdin(std::process::Stdio::piped())
         .spawn()
         .expect("docker exec");
-    child.stdin.take().unwrap().write_all(pubkey.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(pubkey.as_bytes())
+        .unwrap();
     let added = child.wait().unwrap();
     assert!(added.success(), "docker exec authorized_keys");
 
@@ -481,13 +568,20 @@ async fn kb_scenario() -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !setup.status.success() {
-        return Err(format!("kb sshd 启动失败: {} {}", String::from_utf8_lossy(&setup.stderr), String::from_utf8_lossy(&setup.stdout)));
+        return Err(format!(
+            "kb sshd 启动失败: {} {}",
+            String::from_utf8_lossy(&setup.stderr),
+            String::from_utf8_lossy(&setup.stdout)
+        ));
     }
     // banner 探测 2223（TCP 提前接受在 docker 端口代理下失真——banner 为准）
     let mut up = false;
     for _ in 0..20 {
         let ok = std::process::Command::new("bash")
-            .args(["-c", "printf '' | nc -w 2 127.0.0.1 2223 2>/dev/null | head -c 4 | grep -q SSH-"])
+            .args([
+                "-c",
+                "printf '' | nc -w 2 127.0.0.1 2223 2>/dev/null | head -c 4 | grep -q SSH-",
+            ])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -528,7 +622,11 @@ async fn kb_scenario() -> Result<(), String> {
 // 容器要求：AllowTcpForwarding yes（Alpine 默认 no）+ GatewayPorts clientspecified
 //（远程转发 0.0.0.0 才能被 docker 端口代理够到）——dev-sshd.sh 已配置。
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 /// 读一行（到 \r\n 或 \n）带超时——sshd 连上即主动吐 banner，等不到就是转发没通
@@ -545,14 +643,19 @@ async fn read_banner(tcp: &mut tokio::net::TcpStream) -> String {
             }
         }
     };
-    tokio::time::timeout(Duration::from_secs(10), fut).await.expect("10s 未读到 banner");
+    tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .expect("10s 未读到 banner");
     String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// 停止后端口必须真的不可连（监听已关）：轮询到 refused，最多 3s
 async fn assert_port_closed(port: u16) {
     for _ in 0..30 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -570,13 +673,17 @@ async fn forward_local_and_dynamic_roundtrip() {
     tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
     use session_api::transport::ChannelHandle;
 
-    let channel = transport_ssh::SshChannel::connect(target(), 80, 24).await.unwrap();
+    let channel = transport_ssh::SshChannel::connect(target(), 80, 24)
+        .await
+        .unwrap();
 
     // 非法 spec（端口 0）立即拒绝
     assert!(channel
         .start_forward(session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: 0,
-            target_host: "127.0.0.1".into(), target_port: 22,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: 0,
+            target_host: "127.0.0.1".into(),
+            target_port: 22,
         })
         .await
         .is_err());
@@ -585,16 +692,22 @@ async fn forward_local_and_dynamic_roundtrip() {
     // 不是 r40_tests 的 stub 镜像（否则把生产 field 写错也三层全绿）
     for bad in [
         session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: free_port(),
-            target_host: "  ".into(), target_port: 22,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: free_port(),
+            target_host: "  ".into(),
+            target_port: 22,
         },
         session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: free_port(),
-            target_host: "127.0.0.1".into(), target_port: 0,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: free_port(),
+            target_host: "127.0.0.1".into(),
+            target_port: 0,
         },
         session_api::ForwardSpec::Remote {
-            listen_addr: "127.0.0.1".into(), listen_port: free_port(),
-            target_host: "".into(), target_port: 0,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: free_port(),
+            target_host: "".into(),
+            target_port: 0,
         },
     ] {
         let e = channel.start_forward(bad.clone()).await.unwrap_err();
@@ -604,20 +717,23 @@ async fn forward_local_and_dynamic_roundtrip() {
         );
     }
 
-
     // R40（§6.6/D02）：端口冲突 → 字段可定位错误（field=listen）——不是含糊 Io
     let dup = free_port();
     let f_dup = channel
         .start_forward(session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: dup,
-            target_host: "127.0.0.1".into(), target_port: 22,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: dup,
+            target_host: "127.0.0.1".into(),
+            target_port: 22,
         })
         .await
         .unwrap();
     let e_dup = channel
         .start_forward(session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: dup,
-            target_host: "127.0.0.1".into(), target_port: 22,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: dup,
+            target_host: "127.0.0.1".into(),
+            target_port: 22,
         })
         .await
         .unwrap_err();
@@ -631,17 +747,31 @@ async fn forward_local_and_dynamic_roundtrip() {
     let np = free_port();
     let f_nl = channel
         .start_forward(session_api::ForwardSpec::Local {
-            listen_addr: "0.0.0.0".into(), listen_port: np,
-            target_host: "127.0.0.1".into(), target_port: 22,
+            listen_addr: "0.0.0.0".into(),
+            listen_port: np,
+            target_host: "127.0.0.1".into(),
+            target_port: 22,
         })
         .await
         .unwrap();
     let infos_nl = channel.list_forwards().await.unwrap();
-    let e_nl = infos_nl.iter().find(|f| f.id == f_nl).expect("非回环转发应在列");
-    assert_eq!(e_nl.state, "Listening", "0.0.0.0 绑定应成功：{:?}", e_nl.error);
-    let mut t_nl = tokio::net::TcpStream::connect(("127.0.0.1", np)).await.expect("0.0.0.0 监听经回环应可连");
+    let e_nl = infos_nl
+        .iter()
+        .find(|f| f.id == f_nl)
+        .expect("非回环转发应在列");
+    assert_eq!(
+        e_nl.state, "Listening",
+        "0.0.0.0 绑定应成功：{:?}",
+        e_nl.error
+    );
+    let mut t_nl = tokio::net::TcpStream::connect(("127.0.0.1", np))
+        .await
+        .expect("0.0.0.0 监听经回环应可连");
     let banner_nl = read_banner(&mut t_nl).await;
-    assert!(banner_nl.starts_with("SSH-2.0"), "非回环转发真流量应读到 sshd banner：{banner_nl:?}");
+    assert!(
+        banner_nl.starts_with("SSH-2.0"),
+        "非回环转发真流量应读到 sshd banner：{banner_nl:?}"
+    );
     channel.stop_forward(&f_nl).await.unwrap();
     assert_port_closed(np).await;
 
@@ -649,21 +779,38 @@ async fn forward_local_and_dynamic_roundtrip() {
     let lp = free_port();
     let fid = channel
         .start_forward(session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: lp,
-            target_host: "127.0.0.1".into(), target_port: 22,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: lp,
+            target_host: "127.0.0.1".into(),
+            target_port: 22,
         })
         .await
         .unwrap();
     let infos = channel.list_forwards().await.unwrap();
-    let e = infos.iter().find(|f| f.id == fid).expect("list_forwards 应含刚启动的转发");
-    assert_eq!(e.state, "Listening", "本地转发应即刻 Listening：{:?}", e.error);
-    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", lp)).await.expect("本地监听应可连");
+    let e = infos
+        .iter()
+        .find(|f| f.id == fid)
+        .expect("list_forwards 应含刚启动的转发");
+    assert_eq!(
+        e.state, "Listening",
+        "本地转发应即刻 Listening：{:?}",
+        e.error
+    );
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", lp))
+        .await
+        .expect("本地监听应可连");
     let banner = read_banner(&mut tcp).await;
-    assert!(banner.starts_with("SSH-2.0"), "经 -L 读到的应是容器 sshd banner：{banner:?}");
+    assert!(
+        banner.starts_with("SSH-2.0"),
+        "经 -L 读到的应是容器 sshd banner：{banner:?}"
+    );
 
     // 停止：条目移除 + 监听关闭
     channel.stop_forward(&fid).await.unwrap();
-    assert!(channel.list_forwards().await.unwrap().is_empty(), "停止后列表应为空");
+    assert!(
+        channel.list_forwards().await.unwrap().is_empty(),
+        "停止后列表应为空"
+    );
     assert_port_closed(lp).await;
 
     // ---- 目标不可达 → Degraded 且文案指向目标侧（T44 复核中-3）：隧道健康、
@@ -671,12 +818,16 @@ async fn forward_local_and_dynamic_roundtrip() {
     let lp_bad = free_port();
     let fid_bad = channel
         .start_forward(session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: lp_bad,
-            target_host: "127.0.0.1".into(), target_port: 9, // 容器内无服务 → sshd 回 open failure
+            listen_addr: "127.0.0.1".into(),
+            listen_port: lp_bad,
+            target_host: "127.0.0.1".into(),
+            target_port: 9, // 容器内无服务 → sshd 回 open failure
         })
         .await
         .unwrap();
-    let mut tbad = tokio::net::TcpStream::connect(("127.0.0.1", lp_bad)).await.unwrap();
+    let mut tbad = tokio::net::TcpStream::connect(("127.0.0.1", lp_bad))
+        .await
+        .unwrap();
     let mut bbuf = [0u8; 16];
     let _ = tokio::time::timeout(Duration::from_secs(5), tbad.read(&mut bbuf)).await; // 失败即断开
     let mut deg: Option<Option<String>> = None;
@@ -691,23 +842,32 @@ async fn forward_local_and_dynamic_roundtrip() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let deg = deg.expect("目标拒绝后条目应转 Degraded");
-    assert!(deg.as_deref().unwrap_or("").contains("目标不可达"), "文案应指向目标侧而非隧道：{deg:?}");
+    assert!(
+        deg.as_deref().unwrap_or("").contains("目标不可达"),
+        "文案应指向目标侧而非隧道：{deg:?}"
+    );
     channel.stop_forward(&fid_bad).await.unwrap();
 
     // ---- SOCKS5 -D：手动 RFC1928 握手（域名目标 localhost:22）读 banner ----
     let dp = free_port();
     let fid2 = channel
         .start_forward(session_api::ForwardSpec::Dynamic {
-            listen_addr: "127.0.0.1".into(), listen_port: dp,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: dp,
         })
         .await
         .unwrap();
-    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", dp)).await.expect("SOCKS5 监听应可连");
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", dp))
+        .await
+        .expect("SOCKS5 监听应可连");
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     // 方法协商：[VER,NMETHODS][METHOD=无认证]
     s.write_all(&[5, 1, 0]).await.unwrap();
     let mut m = [0u8; 2];
-    tokio::time::timeout(Duration::from_secs(5), s.read_exact(&mut m)).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), s.read_exact(&mut m))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(&m, &[5, 0], "服务端应选定无认证");
     // CONNECT localhost:22（ATYP=域名）
     let mut req = vec![5, 1, 0, 3, b"localhost".len() as u8];
@@ -715,37 +875,59 @@ async fn forward_local_and_dynamic_roundtrip() {
     req.extend_from_slice(&22u16.to_be_bytes());
     s.write_all(&req).await.unwrap();
     let mut rep = [0u8; 10];
-    tokio::time::timeout(Duration::from_secs(5), s.read_exact(&mut rep)).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), s.read_exact(&mut rep))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(&rep[..3], &[5, 0, 0], "CONNECT 应答成功：{rep:?}");
     let banner = read_banner(&mut s).await;
-    assert!(banner.starts_with("SSH-2.0"), "经 SOCKS5 读到的应是容器 sshd banner：{banner:?}");
+    assert!(
+        banner.starts_with("SSH-2.0"),
+        "经 SOCKS5 读到的应是容器 sshd banner：{banner:?}"
+    );
 
     // BIND/UDP 不支持：CONNECT 之外的 cmd 直接断开（重置/EOF/超时都算「已断开」）
-    let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", dp)).await.unwrap();
+    let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", dp))
+        .await
+        .unwrap();
     s2.write_all(&[5, 1, 0]).await.unwrap();
     let mut m2 = [0u8; 2];
-    tokio::time::timeout(Duration::from_secs(5), s2.read_exact(&mut m2)).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), s2.read_exact(&mut m2))
+        .await
+        .unwrap()
+        .unwrap();
     s2.write_all(&[5, 2, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap(); // cmd=2 BIND
     match tokio::time::timeout(Duration::from_secs(5), s2.read(&mut [0u8; 8])).await {
-        Err(_) => {}                    // 超时无应答
-        Ok(Err(_)) => {}                // 连接重置
-        Ok(Ok(0)) => {}                 // EOF
+        Err(_) => {}     // 超时无应答
+        Ok(Err(_)) => {} // 连接重置
+        Ok(Ok(0)) => {}  // EOF
         Ok(Ok(n)) => panic!("非 CONNECT 不应有应答数据（{} 字节）", n),
     }
 
     // 目标拒绝 → REP=5 connection refused（复审①：字符串匹配是死代码，须枚举判定；
     // 容器内 127.0.0.1:9 无服务，OpenSSH 对 direct-tcpip 连接失败回 reason 2）
-    let mut s3 = tokio::net::TcpStream::connect(("127.0.0.1", dp)).await.unwrap();
+    let mut s3 = tokio::net::TcpStream::connect(("127.0.0.1", dp))
+        .await
+        .unwrap();
     s3.write_all(&[5, 1, 0]).await.unwrap();
     let mut m3 = [0u8; 2];
-    tokio::time::timeout(Duration::from_secs(5), s3.read_exact(&mut m3)).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), s3.read_exact(&mut m3))
+        .await
+        .unwrap()
+        .unwrap();
     let mut req3 = vec![5, 1, 0, 3, b"localhost".len() as u8];
     req3.extend_from_slice(b"localhost");
     req3.extend_from_slice(&9u16.to_be_bytes());
     s3.write_all(&req3).await.unwrap();
     let mut rep3 = [0u8; 10];
-    tokio::time::timeout(Duration::from_secs(5), s3.read_exact(&mut rep3)).await.unwrap().unwrap();
-    assert_eq!(rep3[1], 5, "目标拒绝应回 REP=5（connection refused）：{rep3:?}");
+    tokio::time::timeout(Duration::from_secs(5), s3.read_exact(&mut rep3))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rep3[1], 5,
+        "目标拒绝应回 REP=5（connection refused）：{rep3:?}"
+    );
 
     channel.stop_forward(&fid2).await.unwrap();
     assert_port_closed(dp).await;
@@ -755,8 +937,10 @@ async fn forward_local_and_dynamic_roundtrip() {
     let lp3 = free_port();
     channel
         .start_forward(session_api::ForwardSpec::Local {
-            listen_addr: "127.0.0.1".into(), listen_port: lp3,
-            target_host: "127.0.0.1".into(), target_port: 22,
+            listen_addr: "127.0.0.1".into(),
+            listen_port: lp3,
+            target_host: "127.0.0.1".into(),
+            target_port: 22,
         })
         .await
         .unwrap();
@@ -789,37 +973,60 @@ async fn forward_remote_roundtrip() {
         s.write_all(b"T42-REMOTE-MARKER\n").await.unwrap();
     });
 
-    let channel = transport_ssh::SshChannel::connect(target(), 80, 24).await.unwrap();
+    let channel = transport_ssh::SshChannel::connect(target(), 80, 24)
+        .await
+        .unwrap();
     // 远程 -R：容器 0.0.0.0:2223 →（回程）宿主机 127.0.0.1:mp。
     // GatewayPorts clientspecified 下 0.0.0.0 才可被 docker 端口代理够到。
     let fid = channel
         .start_forward(session_api::ForwardSpec::Remote {
-            listen_addr: "0.0.0.0".into(), listen_port: 2223,
-            target_host: "127.0.0.1".into(), target_port: mp,
+            listen_addr: "0.0.0.0".into(),
+            listen_port: 2223,
+            target_host: "127.0.0.1".into(),
+            target_port: mp,
         })
         .await
         .unwrap();
     let infos = channel.list_forwards().await.unwrap();
     let e = infos.iter().find(|f| f.id == fid).expect("远程转发应在列");
-    assert_eq!(e.state, "Listening", "tcpip_forward 应被接受（否则：{:?}）", e.error);
+    assert_eq!(
+        e.state, "Listening",
+        "tcpip_forward 应被接受（否则：{:?}）",
+        e.error
+    );
 
     // 从宿主机连 2223：docker 代理 → 容器 sshd 转发监听 → 经 SSH 回程打到本地标记服务器
-    let mut c = tokio::net::TcpStream::connect(("127.0.0.1", 2223)).await.expect("2223 应可连");
+    let mut c = tokio::net::TcpStream::connect(("127.0.0.1", 2223))
+        .await
+        .expect("2223 应可连");
     let got = read_banner(&mut c).await;
-    assert_eq!(got.trim_end(), "T42-REMOTE-MARKER", "远程转发回程应读到标记");
+    assert_eq!(
+        got.trim_end(),
+        "T42-REMOTE-MARKER",
+        "远程转发回程应读到标记"
+    );
     marker_task.await.unwrap();
 
     // UI 实际 wire 值 listen_addr=""（服务器默认绑定）也应被接受——锁住 UI↔transport 契约
     let fid_empty = channel
         .start_forward(session_api::ForwardSpec::Remote {
-            listen_addr: "".into(), listen_port: 2224,
-            target_host: "127.0.0.1".into(), target_port: mp,
+            listen_addr: "".into(),
+            listen_port: 2224,
+            target_host: "127.0.0.1".into(),
+            target_port: mp,
         })
         .await
         .unwrap();
     let infos2 = channel.list_forwards().await.unwrap();
-    let e2 = infos2.iter().find(|f| f.id == fid_empty).expect("空地址远程转发应在列");
-    assert_eq!(e2.state, "Listening", "listen_addr=\"\" 应被服务器接受（否则：{:?}）", e2.error);
+    let e2 = infos2
+        .iter()
+        .find(|f| f.id == fid_empty)
+        .expect("空地址远程转发应在列");
+    assert_eq!(
+        e2.state, "Listening",
+        "listen_addr=\"\" 应被服务器接受（否则：{:?}）",
+        e2.error
+    );
     channel.stop_forward(&fid_empty).await.unwrap();
 
     // 停止：cancel_tcpip_forward 后容器监听关闭。注意 docker 端口代理在宿主侧
@@ -832,10 +1039,19 @@ async fn forward_remote_roundtrip() {
             use tokio::io::AsyncReadExt;
             let mut b = [0u8; 1];
             match tokio::time::timeout(Duration::from_secs(1), s.read(&mut b)).await {
-                Err(_) => { closed = true; break; }      // 超时无数据
-                Ok(Err(_)) => { closed = true; break; }  // 代理重置
-                Ok(Ok(0)) => { closed = true; break; }   // 立即 EOF
-                Ok(Ok(_)) => {}                          // 仍有数据流过 = 未关
+                Err(_) => {
+                    closed = true;
+                    break;
+                } // 超时无数据
+                Ok(Err(_)) => {
+                    closed = true;
+                    break;
+                } // 代理重置
+                Ok(Ok(0)) => {
+                    closed = true;
+                    break;
+                } // 立即 EOF
+                Ok(Ok(_)) => {} // 仍有数据流过 = 未关
             }
         } else {
             closed = true;

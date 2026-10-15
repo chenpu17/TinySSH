@@ -47,7 +47,11 @@ pub async fn compute(h: &SessionHandle) -> SessionBrief {
     for (ts, what) in transitions.iter().rev().take(3).rev() {
         facts.push(BriefFact {
             subject: "控制权".into(),
-            detail: format!("{} · {}", ts.with_timezone(&chrono::Local).format("%H:%M:%S"), what),
+            detail: format!(
+                "{} · {}",
+                ts.with_timezone(&chrono::Local).format("%H:%M:%S"),
+                what
+            ),
             status: Epistemic::Confirmed,
         });
     }
@@ -81,7 +85,9 @@ pub async fn compute(h: &SessionHandle) -> SessionBrief {
         let items = h.center.items.lock().unwrap();
         items
             .iter()
-            .filter(|(_, it)| it.session_id == h.id && it.status == session_api::ApprovalStatus::Pending)
+            .filter(|(_, it)| {
+                it.session_id == h.id && it.status == session_api::ApprovalStatus::Pending
+            })
             .map(|(id, _)| id.clone())
             .collect()
     };

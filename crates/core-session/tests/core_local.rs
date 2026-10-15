@@ -30,13 +30,23 @@ fn human() -> Actor {
 async fn local_exec_and_shell_persistence() {
     let m = manager().await;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
 
     // Shell 模式（默认）：cd 现场延续
     let r1 = m
-        .exec(&human(), sid.clone(), "cd /tmp && echo step1", ExecOpts::default())
+        .exec(
+            &human(),
+            sid.clone(),
+            "cd /tmp && echo step1",
+            ExecOpts::default(),
+        )
         .await
         .unwrap();
     assert_eq!(r1.exit_code, Some(0), "stdout={}", r1.stdout);
@@ -46,7 +56,11 @@ async fn local_exec_and_shell_persistence() {
         .exec(&human(), sid.clone(), "pwd", ExecOpts::default())
         .await
         .unwrap();
-    assert!(r2.stdout.trim().starts_with("/tmp"), "cwd 未延续: {}", r2.stdout);
+    assert!(
+        r2.stdout.trim().starts_with("/tmp"),
+        "cwd 未延续: {}",
+        r2.stdout
+    );
 
     // 简报：cwd Confirmed
     let brief = m.get_session_brief(&human(), sid.clone()).await.unwrap();
@@ -60,7 +74,12 @@ async fn local_exec_and_shell_persistence() {
 async fn fresh_mode_real_exit_and_replay() {
     let m = manager().await;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
 
@@ -69,7 +88,10 @@ async fn fresh_mode_real_exit_and_replay() {
             &human(),
             sid.clone(),
             "echo fresh_out; exit 7",
-            ExecOpts { mode: ExecMode::Fresh, ..Default::default() },
+            ExecOpts {
+                mode: ExecMode::Fresh,
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -88,24 +110,48 @@ async fn approval_flow_deny_and_approve() {
     let token = m.center.vault.create_agent("test-agent", "Test").unwrap();
     let _ = token;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
-    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
-    let _agent = Actor::Agent { client_id: "test-agent".into() };
+    m.delegate_session(&human(), sid.clone(), None)
+        .await
+        .unwrap();
+    let _agent = Actor::Agent {
+        client_id: "test-agent".into(),
+    };
 
     // agent exec → 待审批（本地会话不经 create 审批；exec 每条必审）
     let m2 = m.clone();
     let sid2 = sid.clone();
     let jh = tokio::spawn(async move {
-        m2.exec(&agent_actor(), sid2, "echo approved_cmd", ExecOpts::default()).await
+        m2.exec(
+            &agent_actor(),
+            sid2,
+            "echo approved_cmd",
+            ExecOpts::default(),
+        )
+        .await
     });
 
     // 等待审批卡片出现
     let mut approval_id = None;
     for _ in 0..100 {
-        let items = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        let items = m
+            .list_approvals(
+                &human(),
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         if let Some(it) = items.first() {
             approval_id = Some(it.id.clone());
             break;
@@ -115,56 +161,103 @@ async fn approval_flow_deny_and_approve() {
     let approval_id = approval_id.expect("审批卡片未出现");
 
     // 拒绝 → ApprovalDenied{Denied}
-    m.decide_approval(&human(), approval_id.clone(), Decision::Deny).await.unwrap();
+    m.decide_approval(&human(), approval_id.clone(), Decision::Deny)
+        .await
+        .unwrap();
     let r = jh.await.unwrap();
-    assert!(matches!(r, Err(Error::ApprovalDenied { reason: DeniedReason::Denied })));
+    assert!(matches!(
+        r,
+        Err(Error::ApprovalDenied {
+            reason: DeniedReason::Denied
+        })
+    ));
 
     // 拒绝审计必须带命令全文（五人走查·陈工：批准带、拒绝不带 = 留痕不对称）
-    let page = m.center.audit.query(&AuditFilter {
-        action: Some("approval_decision".into()),
-        ..Default::default()
-    }).unwrap();
-    let deny_ev = page.events.iter().find(|e| e.approval_id.as_deref() == Some(approval_id.as_str()))
+    let page = m
+        .center
+        .audit
+        .query(&AuditFilter {
+            action: Some("approval_decision".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let deny_ev = page
+        .events
+        .iter()
+        .find(|e| e.approval_id.as_deref() == Some(approval_id.as_str()))
         .expect("deny 未留 approval_decision 审计");
-    assert_eq!(deny_ev.command.as_deref(), Some("echo approved_cmd"), "拒绝审计缺命令全文");
+    assert_eq!(
+        deny_ev.command.as_deref(),
+        Some("echo approved_cmd"),
+        "拒绝审计缺命令全文"
+    );
     assert_eq!(deny_ev.payload_json["decision"], "deny");
 
     // 再提交 → 批准 → 执行成功
     let m3 = m.clone();
     let sid3 = sid.clone();
     let jh2 = tokio::spawn(async move {
-        m3.exec(&agent_actor(), sid3, "echo approved_cmd", ExecOpts::default()).await
+        m3.exec(
+            &agent_actor(),
+            sid3,
+            "echo approved_cmd",
+            ExecOpts::default(),
+        )
+        .await
     });
     let mut approval_id = None;
     for _ in 0..100 {
-        let items = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        let items = m
+            .list_approvals(
+                &human(),
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         if let Some(it) = items.first() {
             approval_id = Some(it.id.clone());
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    m.decide_approval(&human(), approval_id.unwrap(), Decision::Approve).await.unwrap();
+    m.decide_approval(&human(), approval_id.unwrap(), Decision::Approve)
+        .await
+        .unwrap();
     let r = jh2.await.unwrap().unwrap();
     assert_eq!(r.approval.outcome, ApprovalOutcome::Approved);
     assert!(r.stdout.contains("approved_cmd"));
 }
 
 fn agent_actor() -> Actor {
-    Actor::Agent { client_id: "test-agent".into() }
+    Actor::Agent {
+        client_id: "test-agent".into(),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn allow_rule_skips_approval() {
     let m = manager().await;
     let _ = m.center.vault.create_agent("test-agent", "Test");
-    m.center.vault.add_allow_pattern("test-agent", "echo *", "echo 放行").unwrap();
+    m.center
+        .vault
+        .add_allow_pattern("test-agent", "echo *", "echo 放行")
+        .unwrap();
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
-    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
+    m.delegate_session(&human(), sid.clone(), None)
+        .await
+        .unwrap();
     let r = m
         .exec(&agent_actor(), sid, "echo direct", ExecOpts::default())
         .await
@@ -179,42 +272,79 @@ async fn dangerous_pattern_never_approved() {
     m.center.engine.set_policy(
         "test-agent",
         Policy {
-            allow_rules: vec![AllowRule { pattern: "*".into(), note: "全放行".into() }],
+            allow_rules: vec![AllowRule {
+                pattern: "*".into(),
+                note: "全放行".into(),
+            }],
             ..Default::default()
         },
     );
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
-    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
+    m.delegate_session(&human(), sid.clone(), None)
+        .await
+        .unwrap();
     let r = m
         .exec(&agent_actor(), sid, "reboot", ExecOpts::default())
         .await;
-    assert!(matches!(r, Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern })));
+    assert!(matches!(
+        r,
+        Err(Error::ApprovalDenied {
+            reason: DeniedReason::DangerousPattern
+        })
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn takeover_voids_pending_approval_and_card_cannot_revive() {
     let m = manager().await;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
-    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
+    m.delegate_session(&human(), sid.clone(), None)
+        .await
+        .unwrap();
 
     // agent 提交 exec → 卡片待审批；agent 阻塞中
     let m2 = m.clone();
     let sid2 = sid.clone();
     let jh = tokio::spawn(async move {
-        m2.exec(&agent_actor(), sid2, "echo old_request", ExecOpts::default()).await
+        m2.exec(
+            &agent_actor(),
+            sid2,
+            "echo old_request",
+            ExecOpts::default(),
+        )
+        .await
     });
 
     let mut approval_id = None;
     for _ in 0..200 {
-        let items = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        let items = m
+            .list_approvals(
+                &human(),
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         if let Some(it) = items.first() {
             approval_id = Some(it.id.clone());
             break;
@@ -225,39 +355,76 @@ async fn takeover_voids_pending_approval_and_card_cannot_revive() {
 
     // 人接管（旧请求待审批 → 接管生效即作废）
     let report = m
-        .set_control(&human(), sid.clone(), ControlOwner::Human, ControlOpts::default())
+        .set_control(
+            &human(),
+            sid.clone(),
+            ControlOwner::Human,
+            ControlOpts::default(),
+        )
         .await
         .unwrap();
     assert!(report.frozen);
     // 被作废的待审批卡片应已移出 pending 队列（接管即作废）
-    let pending = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
-    assert!(pending.iter().all(|it| it.id != approval_id), "作废卡片不得仍为 pending");
+    let pending = m
+        .list_approvals(
+            &human(),
+            ApprovalFilter {
+                pending_only: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        pending.iter().all(|it| it.id != approval_id),
+        "作废卡片不得仍为 pending"
+    );
 
     // agent 阻塞调用返回 VoidedByHandback{brief}
     let r = jh.await.unwrap();
     match r {
         Err(Error::VoidedByHandback { brief }) => {
             // 简报应反映接管
-            assert!(brief.facts.iter().any(|f| f.subject == "控制权" || f.subject == "SSH 现场"));
+            assert!(brief
+                .facts
+                .iter()
+                .any(|f| f.subject == "控制权" || f.subject == "SSH 现场"));
         }
         other => panic!("期望 VoidedByHandback，得到 {other:?}"),
     }
 
     // 卡片状态 voided；再次 decide → 拒绝（卡片不可再生效）
-    let items = m.list_approvals(&human(), ApprovalFilter::default()).await.unwrap();
+    let items = m
+        .list_approvals(&human(), ApprovalFilter::default())
+        .await
+        .unwrap();
     let card = items.iter().find(|it| it.id == approval_id).unwrap();
     assert_eq!(card.status, ApprovalStatus::Voided);
-    let decide = m.decide_approval(&human(), approval_id.clone(), Decision::Approve).await;
+    let decide = m
+        .decide_approval(&human(), approval_id.clone(), Decision::Approve)
+        .await;
     assert!(decide.is_err(), "作废卡片不得再生效");
 
     // 控制权在人类：agent 动作被拒
     let r = m
-        .exec(&agent_actor(), sid.clone(), "echo blocked", ExecOpts::default())
+        .exec(
+            &agent_actor(),
+            sid.clone(),
+            "echo blocked",
+            ExecOpts::default(),
+        )
         .await;
     assert!(matches!(r, Err(Error::ControlTakenByHuman)));
 
     // 人类交还 → agent 先读简报再重新提交（核实后成功）
-    m.set_control(&human(), sid.clone(), ControlOwner::Agent, ControlOpts::default()).await.unwrap();
+    m.set_control(
+        &human(),
+        sid.clone(),
+        ControlOwner::Agent,
+        ControlOpts::default(),
+    )
+    .await
+    .unwrap();
     let brief = m.get_session_brief(&human(), sid.clone()).await.unwrap();
     assert!(!brief.facts.is_empty());
 
@@ -265,28 +432,56 @@ async fn takeover_voids_pending_approval_and_card_cannot_revive() {
     let m4 = m.clone();
     let sid4 = sid.clone();
     let jh3 = tokio::spawn(async move {
-        m4.exec(&agent_actor(), sid4, "echo resubmitted", ExecOpts::default()).await
+        m4.exec(
+            &agent_actor(),
+            sid4,
+            "echo resubmitted",
+            ExecOpts::default(),
+        )
+        .await
     });
     let mut new_card = None;
     for _ in 0..200 {
-        let items = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        let items = m
+            .list_approvals(
+                &human(),
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         if let Some(it) = items.first() {
             new_card = Some(it.id.clone());
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    m.decide_approval(&human(), new_card.expect("重新提交的审批卡片未出现"), Decision::Approve).await.unwrap();
+    m.decide_approval(
+        &human(),
+        new_card.expect("重新提交的审批卡片未出现"),
+        Decision::Approve,
+    )
+    .await
+    .unwrap();
     let r = jh3.await.unwrap().unwrap();
     assert!(r.stdout.contains("resubmitted"));
 
     // 接管作废必须留痕（五人走查·老周）：reason=takeover、命令全文、approval_id 可核对
-    let page = m.center.audit.query(&AuditFilter {
-        action: Some("approval_voided".into()),
-        session_id: Some(sid.clone()),
-        ..Default::default()
-    }).unwrap();
-    let void_ev = page.events.iter().find(|e| e.approval_id.is_some())
+    let page = m
+        .center
+        .audit
+        .query(&AuditFilter {
+            action: Some("approval_voided".into()),
+            session_id: Some(sid.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+    let void_ev = page
+        .events
+        .iter()
+        .find(|e| e.approval_id.is_some())
         .expect("接管作废未留 approval_voided 审计");
     assert_eq!(void_ev.command.as_deref(), Some("echo old_request"));
     assert_eq!(void_ev.payload_json["reason"], "takeover");
@@ -299,20 +494,42 @@ async fn close_session_voided_approval_leaves_audit_trail() {
     let m = manager().await;
     let _ = m.center.vault.create_agent("test-agent", "Test");
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
-    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
+    m.delegate_session(&human(), sid.clone(), None)
+        .await
+        .unwrap();
 
     let m2 = m.clone();
     let sid2 = sid.clone();
     let jh = tokio::spawn(async move {
-        m2.exec(&agent_actor(), sid2, "echo pending_when_closed", ExecOpts::default()).await
+        m2.exec(
+            &agent_actor(),
+            sid2,
+            "echo pending_when_closed",
+            ExecOpts::default(),
+        )
+        .await
     });
     let mut approval_id = None;
     for _ in 0..200 {
-        let items = m.list_approvals(&human(), ApprovalFilter { pending_only: true, ..Default::default() }).await.unwrap();
+        let items = m
+            .list_approvals(
+                &human(),
+                ApprovalFilter {
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         if let Some(it) = items.first() {
             approval_id = Some(it.id.clone());
             break;
@@ -324,14 +541,24 @@ async fn close_session_voided_approval_leaves_audit_trail() {
     m.close_session(&human(), sid.clone()).await.unwrap();
     // agent 阻塞调用被唤醒（不得空等 120s）
     let r = jh.await.unwrap();
-    assert!(matches!(r, Err(Error::VoidedByHandback { .. }) | Err(Error::ApprovalDenied { .. })));
+    assert!(matches!(
+        r,
+        Err(Error::VoidedByHandback { .. }) | Err(Error::ApprovalDenied { .. })
+    ));
 
-    let page = m.center.audit.query(&AuditFilter {
-        action: Some("approval_voided".into()),
-        session_id: Some(sid.clone()),
-        ..Default::default()
-    }).unwrap();
-    let void_ev = page.events.iter().find(|e| e.approval_id.as_deref() == Some(approval_id.as_str()))
+    let page = m
+        .center
+        .audit
+        .query(&AuditFilter {
+            action: Some("approval_voided".into()),
+            session_id: Some(sid.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+    let void_ev = page
+        .events
+        .iter()
+        .find(|e| e.approval_id.as_deref() == Some(approval_id.as_str()))
         .expect("关闭作废未留 approval_voided 审计");
     assert_eq!(void_ev.command.as_deref(), Some("echo pending_when_closed"));
     assert_eq!(void_ev.payload_json["reason"], "session_closed");
@@ -343,7 +570,12 @@ async fn send_keys_ctrl_c_interrupts_foreground_process() {
     // 若中断失效，sleep 仍占住 shell 集成的 open block，后续 exec 会以 ExecTimeout 失败。
     let m = manager().await;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
 
@@ -351,7 +583,9 @@ async fn send_keys_ctrl_c_interrupts_foreground_process() {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // 前台跑一个长任务（等价 top 占住终端）
-    m.send_keys(&human(), sid.clone(), "sleep 60\r").await.unwrap();
+    m.send_keys(&human(), sid.clone(), "sleep 60\r")
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Ctrl+C
@@ -364,11 +598,18 @@ async fn send_keys_ctrl_c_interrupts_foreground_process() {
             &human(),
             sid.clone(),
             "echo alive_after_interrupt",
-            ExecOpts { timeout: Some(Duration::from_secs(15)), ..Default::default() },
+            ExecOpts {
+                timeout: Some(Duration::from_secs(15)),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
-    assert!(r.stdout.contains("alive_after_interrupt"), "stdout={}", r.stdout);
+    assert!(
+        r.stdout.contains("alive_after_interrupt"),
+        "stdout={}",
+        r.stdout
+    );
 }
 
 /// T14：⌥← 等 meta/导航序列（ESC 前缀）不是命令文本——登记的话裸 ESC 后的
@@ -378,13 +619,20 @@ async fn send_keys_ctrl_c_interrupts_foreground_process() {
 async fn human_meta_sequence_not_registered_as_command_text() {
     let m = manager().await;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // 模拟 ⌥← 词跳转键序：键入命令 → \x1bb（backward-word）→ 补一个字符 → 回车
-    m.send_keys(&human(), sid.clone(), "echo T14META").await.unwrap();
+    m.send_keys(&human(), sid.clone(), "echo T14META")
+        .await
+        .unwrap();
     m.send_keys(&human(), sid.clone(), "\u{1b}b").await.unwrap();
     m.send_keys(&human(), sid.clone(), "Z").await.unwrap();
     m.send_keys(&human(), sid.clone(), "\r").await.unwrap();
@@ -403,8 +651,14 @@ async fn human_meta_sequence_not_registered_as_command_text() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(detail.contains("echo T14METAZ"), "键入文本应完整登记：{detail}");
-    assert!(!detail.contains("T14METAbZ"), "meta 序列被当成命令文本（b 残留）：{detail}");
+    assert!(
+        detail.contains("echo T14METAZ"),
+        "键入文本应完整登记：{detail}"
+    );
+    assert!(
+        !detail.contains("T14METAbZ"),
+        "meta 序列被当成命令文本（b 残留）：{detail}"
+    );
 }
 
 async fn wait_state(m: &Arc<SessionManager>, sid: &str, want: SessionState, secs: u64) -> bool {
@@ -424,7 +678,12 @@ async fn wait_state(m: &Arc<SessionManager>, sid: &str, want: SessionState, secs
 async fn local_session_manual_reconnect() {
     let m = manager().await;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     // Windows 移植：powershell 无 OSC133 注入（ShellSpawn::Plain，Shell 模式设计性不可用）
@@ -432,12 +691,19 @@ async fn local_session_manual_reconnect() {
     // 此测试曾因 ConPTY DSR 握手挂死根本到不了这里（2026-10-11 修复）。
     let probe_opts = || {
         if cfg!(windows) {
-            ExecOpts { mode: ExecMode::Fresh, ..Default::default() }
+            ExecOpts {
+                mode: ExecMode::Fresh,
+                ..Default::default()
+            }
         } else {
             ExecOpts::default()
         }
     };
-    let probe = if cfg!(windows) { "echo before_death" } else { "cd /tmp && echo before_death" };
+    let probe = if cfg!(windows) {
+        "echo before_death"
+    } else {
+        "cd /tmp && echo before_death"
+    };
     let r = m
         .exec(&human(), sid.clone(), probe, probe_opts())
         .await
@@ -453,14 +719,24 @@ async fn local_session_manual_reconnect() {
 
     // 死端上 exec 明确失败（不得假成功）
     let r = m
-        .exec(&human(), sid.clone(), "echo should_fail", ExecOpts::default())
+        .exec(
+            &human(),
+            sid.clone(),
+            "echo should_fail",
+            ExecOpts::default(),
+        )
         .await;
     assert!(r.is_err(), "断线会话 exec 应失败: {r:?}");
 
     // 未断开的会话不可重连（防呆）
     let m2 = manager().await;
     let sid2 = m2
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     assert!(m2.reconnect_session(&sid2).await.is_err());
@@ -491,7 +767,11 @@ async fn local_session_manual_reconnect() {
     );
 
     // 恢复后 shell 现场延续可用
-    let probe2 = if cfg!(windows) { "echo revived" } else { "cd /tmp && echo revived" };
+    let probe2 = if cfg!(windows) {
+        "echo revived"
+    } else {
+        "cd /tmp && echo revived"
+    };
     let r = m
         .exec(&human(), sid.clone(), probe2, probe_opts())
         .await
@@ -503,11 +783,18 @@ async fn local_session_manual_reconnect() {
 async fn queue_busy_backpressure() {
     let m = manager().await;
     let sid = m
-        .create_session(&human(), CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
     // C2（B01/R24）：人建会话初始 Human-owned，Agent 动作前须委托（契约 C2 首次委托）
-    m.delegate_session(&human(), sid.clone(), None).await.unwrap();
+    m.delegate_session(&human(), sid.clone(), None)
+        .await
+        .unwrap();
     // 占住队列：一条长命令 + 8 条排队 → 第 9 条 QueueBusy
     let m2 = m.clone();
     let sid2 = sid.clone();
@@ -516,7 +803,10 @@ async fn queue_busy_backpressure() {
             &human(),
             sid2,
             "sleep 6",
-            ExecOpts { timeout: Some(Duration::from_secs(10)), ..Default::default() },
+            ExecOpts {
+                timeout: Some(Duration::from_secs(10)),
+                ..Default::default()
+            },
         )
         .await
     });
@@ -526,15 +816,28 @@ async fn queue_busy_backpressure() {
         let sid3 = sid.clone();
         tokio::spawn(async move {
             let _ = m3
-                .exec(&agent_actor(), sid3, &format!("echo q{i}"), ExecOpts::default())
+                .exec(
+                    &agent_actor(),
+                    sid3,
+                    &format!("echo q{i}"),
+                    ExecOpts::default(),
+                )
                 .await;
         });
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
     let r = m
-        .exec(&agent_actor(), sid.clone(), "echo overflow", ExecOpts::default())
+        .exec(
+            &agent_actor(),
+            sid.clone(),
+            "echo overflow",
+            ExecOpts::default(),
+        )
         .await;
-    assert!(matches!(r, Err(Error::QueueBusy { position: _ })), "期望 QueueBusy，得到 {r:?}");
+    assert!(
+        matches!(r, Err(Error::QueueBusy { position: _ })),
+        "期望 QueueBusy，得到 {r:?}"
+    );
     blocker.abort();
 }
 
@@ -555,7 +858,10 @@ async fn wait_pending(m: &SessionManager, host_id: &str) -> PendingHostKey {
 async fn host_key_gate_first_seen_change_and_reject() {
     // 守卫先于就绪等待：无 docker 的开发机（TINYSSH_E2E_SSHD 未设）应当跳过，
     // 而不是空等 30s 后在 await_sshd_ready 里 panic（守卫原本排在等待之后=形同虚设）
-    if !std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false) {
+    if !std::env::var("TINYSSH_E2E_SSHD")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
@@ -571,7 +877,9 @@ async fn host_key_gate_first_seen_change_and_reject() {
                 address: "127.0.0.1".into(),
                 port: Some(2222),
                 username: "root".into(),
-                auth: AuthDraft::Password { password: "testpass".into() },
+                auth: AuthDraft::Password {
+                    password: "testpass".into(),
+                },
                 tags: vec![],
                 ..Default::default()
             },
@@ -583,7 +891,8 @@ async fn host_key_gate_first_seen_change_and_reject() {
     let m2 = m.clone();
     let hid_spawn = hid.clone();
     let t1 = tokio::spawn(async move {
-        m2.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+        m2.create_session(&human(), CreateSessionReq { host_id: hid_spawn })
+            .await
     });
     let it = wait_pending(&m, &hid).await;
     assert_eq!(it.issue, HostKeyIssue::FirstSeen);
@@ -603,15 +912,22 @@ async fn host_key_gate_first_seen_change_and_reject() {
         .into_iter()
         .find(|h| h.id == hid)
         .expect("host should be listed");
-    assert_eq!(trusted.fingerprint.as_deref(), Some(it.fingerprint.as_str()));
+    assert_eq!(
+        trusted.fingerprint.as_deref(),
+        Some(it.fingerprint.as_str())
+    );
     m.close_session(&human(), sid).await.unwrap();
 
     // ② 变更告警：预置不一致旧指纹 → Changed；拒绝 → HostKeyRejected 且不改信任记录
-    m.center.vault.set_host_fingerprint(&hid, "SHA256:FAKE-OLD").unwrap();
+    m.center
+        .vault
+        .set_host_fingerprint(&hid, "SHA256:FAKE-OLD")
+        .unwrap();
     let m3 = m.clone();
     let hid_spawn = hid.clone();
     let t2 = tokio::spawn(async move {
-        m3.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+        m3.create_session(&human(), CreateSessionReq { host_id: hid_spawn })
+            .await
     });
     let it2 = wait_pending(&m, &hid).await;
     assert_eq!(it2.issue, HostKeyIssue::Changed);
@@ -628,7 +944,8 @@ async fn host_key_gate_first_seen_change_and_reject() {
     let m4 = m.clone();
     let hid_spawn = hid.clone();
     let t3 = tokio::spawn(async move {
-        m4.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+        m4.create_session(&human(), CreateSessionReq { host_id: hid_spawn })
+            .await
     });
     let it3 = wait_pending(&m, &hid).await;
     assert_eq!(it3.issue, HostKeyIssue::Changed);
@@ -647,7 +964,10 @@ async fn host_key_gate_first_seen_change_and_reject() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gbk_charset_roundtrip_over_ssh() {
     // 守卫先于就绪等待（同 host_key_gate：无 docker 开发机跳过而非 30s 后 panic）
-    if !std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false) {
+    if !std::env::var("TINYSSH_E2E_SSHD")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
@@ -664,7 +984,9 @@ async fn gbk_charset_roundtrip_over_ssh() {
                 address: "127.0.0.1".into(),
                 port: Some(2222),
                 username: "root".into(),
-                auth: AuthDraft::Password { password: "testpass".into() },
+                auth: AuthDraft::Password {
+                    password: "testpass".into(),
+                },
                 tags: vec![],
                 charset: Charset::Gbk,
                 shell_integration: Some(true),
@@ -677,7 +999,8 @@ async fn gbk_charset_roundtrip_over_ssh() {
     let m2 = m.clone();
     let hid_spawn = hid.clone();
     let t = tokio::spawn(async move {
-        m2.create_session(&human(), CreateSessionReq { host_id: hid_spawn }).await
+        m2.create_session(&human(), CreateSessionReq { host_id: hid_spawn })
+            .await
     });
     let it = wait_pending(&m, &hid).await;
     m.decide_host_key(&human(), &it.id, true).await.unwrap();
@@ -686,11 +1009,20 @@ async fn gbk_charset_roundtrip_over_ssh() {
     // ① 收方向：远端吐 GBK 字节「中文日志」（D6D0 CEC4 C8D5 D6BE），屏态须见 UTF-8 原文。
     //    若解码缺位，GBK 尾字节（如 D0='0'）会裸进 vt 解析，屏上是乱码/错位。
     let r = m
-        .exec(&human(), sid.clone(), r"printf '\326\320\316\304\310\325\326\276\n'", ExecOpts::default())
+        .exec(
+            &human(),
+            sid.clone(),
+            r"printf '\326\320\316\304\310\325\326\276\n'",
+            ExecOpts::default(),
+        )
         .await
         .unwrap();
     assert_eq!(r.exit_code, Some(0), "stdout={}", r.stdout);
-    assert!(r.stdout.contains("中文日志"), "GBK 解码缺位，stdout={:?}", r.stdout);
+    assert!(
+        r.stdout.contains("中文日志"),
+        "GBK 解码缺位，stdout={:?}",
+        r.stdout
+    );
 
     // ② 发方向：命令含中文，远端以字节级核验落线编码。
     //    「现场笔记」GBK = CF D6 B3 A1 B1 CA BC C7（UTF-8 则是 E7 8E B0…——
@@ -699,11 +1031,19 @@ async fn gbk_charset_roundtrip_over_ssh() {
     //    行编辑按 locale 丢「非法」字节（真实 GBK 主机跑 GBK locale 无此问题，
     //    这是容器环境语义而非本端缺陷）——故断言前 6 字节。
     let r2 = m
-        .exec(&human(), sid.clone(), "echo 现场笔记 | od -An -tx1", ExecOpts::default())
+        .exec(
+            &human(),
+            sid.clone(),
+            "echo 现场笔记 | od -An -tx1",
+            ExecOpts::default(),
+        )
         .await
         .unwrap();
     assert_eq!(r2.exit_code, Some(0), "stdout={}", r2.stdout);
-    assert!(r2.stdout.contains("cf d6 b3 a1 b1 ca"),
-        "GBK 编码未上链（落线仍是 UTF-8?），stdout={:?}", r2.stdout);
+    assert!(
+        r2.stdout.contains("cf d6 b3 a1 b1 ca"),
+        "GBK 编码未上链（落线仍是 UTF-8?），stdout={:?}",
+        r2.stdout
+    );
     m.close_session(&human(), sid).await.unwrap();
 }

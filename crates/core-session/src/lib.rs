@@ -39,7 +39,11 @@ pub struct CollabGate {
 impl CollabGate {
     pub fn new(enabled: bool) -> Self {
         Self {
-            state: if enabled { CollabState::Enabled } else { CollabState::Disabled },
+            state: if enabled {
+                CollabState::Enabled
+            } else {
+                CollabState::Disabled
+            },
             generation: 0,
         }
     }
@@ -235,16 +239,28 @@ impl SessionManager {
                             // 已确认提交：本地 temp 残留可清（链接已建立，temp 冗余）
                             Self::cleanup_local_temp(&t);
                             let _ = arc.center.audit.append(
-                                &Actor::Human, "transfer_recovered_succeeded", Some(&t.session_id), Some(&t.dest),
-                                serde_json::json!({"transfer": t.id, "verified": true}), None);
+                                &Actor::Human,
+                                "transfer_recovered_succeeded",
+                                Some(&t.session_id),
+                                Some(&t.dest),
+                                serde_json::json!({"transfer": t.id, "verified": true}),
+                                None,
+                            );
                         }
                         TransferStatus::Committing => {
                             t.status = TransferStatus::OutcomeUnknown;
-                            t.error = Some("应用重启时提交结果未知（temp 保留；可在卡片「重新核实」）".into());
+                            t.error = Some(
+                                "应用重启时提交结果未知（temp 保留；可在卡片「重新核实」）".into(),
+                            );
                             t.finished_at = Some(now);
                             let _ = arc.center.audit.append(
-                                &Actor::Human, "transfer_outcome_unknown", Some(&t.session_id), Some(&t.dest),
-                                serde_json::json!({"transfer": t.id, "phase": "restart"}), None);
+                                &Actor::Human,
+                                "transfer_outcome_unknown",
+                                Some(&t.session_id),
+                                Some(&t.dest),
+                                serde_json::json!({"transfer": t.id, "phase": "restart"}),
+                                None,
+                            );
                         }
                         _ => {
                             t.status = TransferStatus::Interrupted;
@@ -263,8 +279,13 @@ impl SessionManager {
                                     .push((t.clone(), 0));
                             }
                             let _ = arc.center.audit.append(
-                                &Actor::Human, "transfer_interrupted", Some(&t.session_id), Some(&t.dest),
-                                serde_json::json!({"transfer": t.id}), None);
+                                &Actor::Human,
+                                "transfer_interrupted",
+                                Some(&t.session_id),
+                                Some(&t.dest),
+                                serde_json::json!({"transfer": t.id}),
+                                None,
+                            );
                         }
                     }
                     t.revision += 1;
@@ -324,12 +345,19 @@ impl SessionManager {
         // 批准后进入 Authenticating。审批中取消由 cancel_connection 作废卡（Voided 路径）。
         if let Actor::Agent { client_id } = ctx {
             if kind == "ssh" {
-                self.wait_create_session_approval(ctx, client_id, &host, attempt).await?;
+                self.wait_create_session_approval(ctx, client_id, &host, attempt)
+                    .await?;
                 if let Some(a) = attempt {
                     let mut st = a.st.lock().await;
                     if !st.terminal() {
                         st.phase = AttemptPhase::Authenticating;
-                        emit_conn(&self.center, &a.info.attempt_id, AttemptPhase::Authenticating, None, None);
+                        emit_conn(
+                            &self.center,
+                            &a.info.attempt_id,
+                            AttemptPhase::Authenticating,
+                            None,
+                            None,
+                        );
                     }
                 }
             }
@@ -359,7 +387,9 @@ impl SessionManager {
                 let ctx = gate_ctx.clone();
                 let attempt = gate_attempt.clone();
                 let fp = fp.to_string(); // owned 后再装箱：future 不借入参（HRTB 约束）
-                Box::pin(async move { host_key_gate(&center, &ctx, &host, &fp, attempt.as_ref()).await })
+                Box::pin(
+                    async move { host_key_gate(&center, &ctx, &host, &fp, attempt.as_ref()).await },
+                )
             });
             // 2FA 人工应答门（路线图⑩）：kb 非密码提示 → 挂起等人类（同指纹门模式）
             let kb_center = self.center.clone();
@@ -372,7 +402,9 @@ impl SessionManager {
                 let ctx = kb_ctx.clone();
                 let attempt = kb_attempt.clone();
                 let prompt = prompt.to_string(); // owned 后再装箱（HRTB 约束，同上）
-                Box::pin(async move { auth_prompt_gate(&center, &ctx, &host, &prompt, echo, attempt.as_ref()).await })
+                Box::pin(async move {
+                    auth_prompt_gate(&center, &ctx, &host, &prompt, echo, attempt.as_ref()).await
+                })
             });
             let target = transport_ssh::SshTarget {
                 address: host.address.clone(),
@@ -392,7 +424,15 @@ impl SessionManager {
             Actor::Agent { .. } => ControlOwner::Agent,
             _ => ControlOwner::Human,
         };
-        let handle = SessionHandle::new(sid.clone(), host.clone(), kind.clone(), channel, screen, self.center.clone(), owner);
+        let handle = SessionHandle::new(
+            sid.clone(),
+            host.clone(),
+            kind.clone(),
+            channel,
+            screen,
+            self.center.clone(),
+            owner,
+        );
         // 先订阅再注入：远端回显/首个标记提示符不得落入无订阅者窗口
         // （broadcast 无接收者即丢——并发回归中集成标记迟到 10s+ 的根因）
         let pump_rx = handle.channel.subscribe_output();
@@ -403,7 +443,10 @@ impl SessionManager {
         if let Some(a) = attempt {
             a.st.lock().await.pending_sid = Some(sid.clone());
         }
-        self.sessions.lock().unwrap().insert(sid.clone(), handle.clone());
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(sid.clone(), handle.clone());
 
         // C3（R24）注入收敛单一入口（host_setting=false 不注入不等 OSC——P3/DC3.2）；
         // 注入后台化：create_session 不等集成（Ready 判据=通道建立），就绪经
@@ -412,7 +455,13 @@ impl SessionManager {
         if kind == "ssh" {
             if handle.inject_integration().await {
                 let _ = self.center.audit.append(
-                    ctx, "shell_integration_inject", Some(&sid), Some("OSC133+OSC7"), serde_json::json!({}), None);
+                    ctx,
+                    "shell_integration_inject",
+                    Some(&sid),
+                    Some("OSC133+OSC7"),
+                    serde_json::json!({}),
+                    None,
+                );
                 handle.spawn_integration_watcher(self.center.clone());
             }
         } else {
@@ -447,8 +496,18 @@ impl SessionManager {
                 let _ = self.close_session(ctx, sid.clone()).await;
                 return Err(Error::Io("test-injected record failure".into()));
             }
-            let quick = self.center.quick_hosts.lock().unwrap().contains_key(&host.id);
-            self.center.vault.record_session(&sid, if quick { None } else { Some(host.id.as_str()) }, &kind)};
+            let quick = self
+                .center
+                .quick_hosts
+                .lock()
+                .unwrap()
+                .contains_key(&host.id);
+            self.center.vault.record_session(
+                &sid,
+                if quick { None } else { Some(host.id.as_str()) },
+                &kind,
+            )
+        };
         if let Err(e) = recorded {
             let _ = self.close_session(ctx, sid.clone()).await;
             return Err(e);
@@ -530,7 +589,11 @@ impl SessionManager {
         };
         self.center.quick_hosts.lock().unwrap().insert(
             host.id.clone(),
-            QuickHost { host: host.clone(), secret, fingerprint: StdMutex::new(None) },
+            QuickHost {
+                host: host.clone(),
+                secret,
+                fingerprint: StdMutex::new(None),
+            },
         );
         Ok(host)
     }
@@ -545,8 +608,18 @@ impl SessionManager {
         // 主机存在性前置校验（无效主机不产生 attempt；kind 与 v1 create_session 同口径）。
         // 十七轮：内存态快速连接主机（quick- 前缀）同样可发起。
         let known = host_id == "local"
-            || self.center.vault.list_hosts()?.iter().any(|h| h.id == host_id)
-            || self.center.quick_hosts.lock().unwrap().contains_key(&host_id);
+            || self
+                .center
+                .vault
+                .list_hosts()?
+                .iter()
+                .any(|h| h.id == host_id)
+            || self
+                .center
+                .quick_hosts
+                .lock()
+                .unwrap()
+                .contains_key(&host_id);
         if !known {
             return Err(Error::SessionNotFound);
         }
@@ -638,8 +711,13 @@ impl SessionManager {
         match self.close_session(ctx, gsid.clone()).await {
             Ok(()) => {
                 let _ = self.center.audit.append(
-                    ctx, "connection_cancelled_closed", None, None,
-                    serde_json::json!({"attempt_id": attempt_id, "session_id": gsid}), None);
+                    ctx,
+                    "connection_cancelled_closed",
+                    None,
+                    None,
+                    serde_json::json!({"attempt_id": attempt_id, "session_id": gsid}),
+                    None,
+                );
             }
             Err(e) => {
                 let payload = e.payload();
@@ -651,7 +729,13 @@ impl SessionManager {
                 let _ = self.center.audit.append(
                     ctx, "connection_cancel_close_failed", None, None,
                     serde_json::json!({"attempt_id": attempt_id, "session_id": gsid, "error": e.to_string()}), None);
-                emit_conn(&self.center, attempt_id, AttemptPhase::CancelCloseFailed, Some(&gsid), Some(&payload));
+                emit_conn(
+                    &self.center,
+                    attempt_id,
+                    AttemptPhase::CancelCloseFailed,
+                    Some(&gsid),
+                    Some(&payload),
+                );
                 return true;
             }
         }
@@ -662,7 +746,11 @@ impl SessionManager {
     /// 并发下 merge_index 可能已被更新的 attempt 覆盖）。
     fn merge_remove(&self, host_id: &HostId, domain: &str, attempt_id: &str) {
         let mut mi = self.merge_index.lock().unwrap();
-        if mi.get(&(host_id.clone(), domain.to_string())).map(String::as_str) == Some(attempt_id) {
+        if mi
+            .get(&(host_id.clone(), domain.to_string()))
+            .map(String::as_str)
+            == Some(attempt_id)
+        {
             mi.remove(&(host_id.clone(), domain.to_string()));
         }
     }
@@ -683,8 +771,13 @@ impl SessionManager {
         // 跨 Actor 身份域：NotFound 不泄露存在性 + 审计留痕（契约序列 5）
         if entry.info.actor != actor_domain(ctx) {
             let _ = self.center.audit.append(
-                ctx, "cross_actor_cancel_denied", None, None,
-                serde_json::json!({"attempt_id": attempt_id, "caller_actor": actor_domain(ctx)}), None);
+                ctx,
+                "cross_actor_cancel_denied",
+                None,
+                None,
+                serde_json::json!({"attempt_id": attempt_id, "caller_actor": actor_domain(ctx)}),
+                None,
+            );
             return Ok(CancelOutcome::NotFound);
         }
         let mut st = entry.st.lock().await;
@@ -719,9 +812,20 @@ impl SessionManager {
                     entry.settle(&mut st, AttemptPhase::Cancelled);
                     drop(st);
                     let _ = self.center.audit.append(
-                        ctx, "connection_cancelled_closed", None, None,
-                        serde_json::json!({"attempt_id": attempt_id, "session_id": sid}), None);
-                    emit_conn(&self.center, &attempt_id, AttemptPhase::Cancelled, None, None);
+                        ctx,
+                        "connection_cancelled_closed",
+                        None,
+                        None,
+                        serde_json::json!({"attempt_id": attempt_id, "session_id": sid}),
+                        None,
+                    );
+                    emit_conn(
+                        &self.center,
+                        &attempt_id,
+                        AttemptPhase::Cancelled,
+                        None,
+                        None,
+                    );
                     Ok(CancelOutcome::AlreadyReady { session_id: sid })
                 }
                 Err(e) => {
@@ -733,7 +837,13 @@ impl SessionManager {
                     let _ = self.center.audit.append(
                         ctx, "connection_cancel_close_failed", None, None,
                         serde_json::json!({"attempt_id": attempt_id, "session_id": sid, "error": e.to_string()}), None);
-                    emit_conn(&self.center, &attempt_id, AttemptPhase::CancelCloseFailed, Some(&sid), Some(&payload));
+                    emit_conn(
+                        &self.center,
+                        &attempt_id,
+                        AttemptPhase::CancelCloseFailed,
+                        Some(&sid),
+                        Some(&payload),
+                    );
                     Ok(CancelOutcome::CancelCloseFailed { session_id: sid })
                 }
             }
@@ -748,7 +858,8 @@ impl SessionManager {
             let hk_ids: Vec<String> = {
                 self.center
                     .hk_pending
-                    .lock().unwrap()
+                    .lock()
+                    .unwrap()
                     .values()
                     .filter(|p| p.attempt_id.as_deref() == Some(&attempt_id))
                     .map(|p| p.id.clone())
@@ -763,7 +874,8 @@ impl SessionManager {
             let ap_ids: Vec<String> = {
                 self.center
                     .ap_pending
-                    .lock().unwrap()
+                    .lock()
+                    .unwrap()
                     .values()
                     .filter(|(p, _)| p.attempt_id.as_deref() == Some(&attempt_id))
                     .map(|(p, _)| p.id.clone())
@@ -778,7 +890,8 @@ impl SessionManager {
             let appr_ids: Vec<ApprovalId> = {
                 self.center
                     .items
-                    .lock().unwrap()
+                    .lock()
+                    .unwrap()
                     .iter()
                     .filter(|(_, it)| {
                         it.attempt_id.as_deref() == Some(&attempt_id)
@@ -800,9 +913,13 @@ impl SessionManager {
                         slot.status = ApprovalStatus::Voided;
                     }
                     let _ = self.center.audit.append(
-                        ctx, "approval_voided", None, Some(&it.command),
+                        ctx,
+                        "approval_voided",
+                        None,
+                        Some(&it.command),
                         serde_json::json!({"reason": "connection_cancelled", "agent": it.agent_id}),
-                        Some(&id));
+                        Some(&id),
+                    );
                     let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
                 }
                 if let Some(tx) = self.center.decisions.lock().unwrap().remove(&id) {
@@ -818,7 +935,9 @@ impl SessionManager {
         let attempt_id = entry.info.attempt_id.clone();
         let host_id = entry.info.host_id.clone();
         let domain = entry.info.actor.clone();
-        let req = CreateSessionReq { host_id: host_id.clone() };
+        let req = CreateSessionReq {
+            host_id: host_id.clone(),
+        };
         // 取消兜底：非门 await 阶段（TCP/认证中）受理的取消经 select 即时结算——
         // drop inner 前门卡已由受理路径作废（hk/ap/审批结算），无表残留
         let r = tokio::select! {
@@ -853,7 +972,13 @@ impl SessionManager {
                         let _ = self.center.audit.append(
                             &ctx, "connection_cancel_close_failed", None, None,
                             serde_json::json!({"attempt_id": attempt_id, "session_id": sid, "error": e.to_string()}), None);
-                        emit_conn(&self.center, &attempt_id, AttemptPhase::CancelCloseFailed, Some(&sid), Some(&payload));
+                        emit_conn(
+                            &self.center,
+                            &attempt_id,
+                            AttemptPhase::CancelCloseFailed,
+                            Some(&sid),
+                            Some(&payload),
+                        );
                         self.merge_remove(&host_id, &domain, &attempt_id);
                         return;
                     }
@@ -862,9 +987,20 @@ impl SessionManager {
                     entry.settle(&mut st, AttemptPhase::Cancelled);
                     drop(st);
                     let _ = self.center.audit.append(
-                        &ctx, "connection_cancelled_closed", None, None,
-                        serde_json::json!({"attempt_id": attempt_id, "session_id": sid}), None);
-                    emit_conn(&self.center, &attempt_id, AttemptPhase::Cancelled, None, None);
+                        &ctx,
+                        "connection_cancelled_closed",
+                        None,
+                        None,
+                        serde_json::json!({"attempt_id": attempt_id, "session_id": sid}),
+                        None,
+                    );
+                    emit_conn(
+                        &self.center,
+                        &attempt_id,
+                        AttemptPhase::Cancelled,
+                        None,
+                        None,
+                    );
                 } else {
                     drop(st);
                     // 测试钩子：停在「已提交未投递」窗口，供 cancel_connection 驱动
@@ -893,7 +1029,13 @@ impl SessionManager {
                     st.session_id = Some(sid.clone());
                     entry.settle(&mut st, AttemptPhase::Ready);
                     drop(st);
-                    emit_conn(&self.center, &attempt_id, AttemptPhase::Ready, Some(&sid), None);
+                    emit_conn(
+                        &self.center,
+                        &attempt_id,
+                        AttemptPhase::Ready,
+                        Some(&sid),
+                        None,
+                    );
                 }
             }
             Err(e) => {
@@ -901,7 +1043,10 @@ impl SessionManager {
                 drop(st);
                 if cancelled {
                     // H2：inner 被 drop 时若已过 insert 点，先关幽灵会话（可能改判 CCF）
-                    if self.settle_cancel_with_ghost(&entry, &ctx, &attempt_id).await {
+                    if self
+                        .settle_cancel_with_ghost(&entry, &ctx, &attempt_id)
+                        .await
+                    {
                         self.merge_remove(&host_id, &domain, &attempt_id);
                         return;
                     }
@@ -916,9 +1061,20 @@ impl SessionManager {
                     entry.settle(&mut st, AttemptPhase::Cancelled);
                     drop(st);
                     let _ = self.center.audit.append(
-                        &ctx, "connection_cancelled", None, None,
-                        serde_json::json!({"attempt_id": attempt_id}), None);
-                    emit_conn(&self.center, &attempt_id, AttemptPhase::Cancelled, None, None);
+                        &ctx,
+                        "connection_cancelled",
+                        None,
+                        None,
+                        serde_json::json!({"attempt_id": attempt_id}),
+                        None,
+                    );
+                    emit_conn(
+                        &self.center,
+                        &attempt_id,
+                        AttemptPhase::Cancelled,
+                        None,
+                        None,
+                    );
                 } else {
                     // N2：inner 失败（write/record_session Err）时若已过 insert 点，
                     // 半会话同样不留（attempt 路径；v1 直调同面缺陷另行登记）
@@ -938,25 +1094,47 @@ impl SessionManager {
                     entry.settle(&mut st, AttemptPhase::Failed);
                     drop(st);
                     let _ = self.center.audit.append(
-                        &ctx, "connection_failed", None, None,
-                        serde_json::json!({"attempt_id": attempt_id, "error": payload.kind}), None);
-                    emit_conn(&self.center, &attempt_id, AttemptPhase::Failed, None, Some(&payload));
+                        &ctx,
+                        "connection_failed",
+                        None,
+                        None,
+                        serde_json::json!({"attempt_id": attempt_id, "error": payload.kind}),
+                        None,
+                    );
+                    emit_conn(
+                        &self.center,
+                        &attempt_id,
+                        AttemptPhase::Failed,
+                        None,
+                        Some(&payload),
+                    );
                 }
             }
         }
         self.merge_remove(&host_id, &domain, &attempt_id);
     }
 
-
     /// 转发的人类可读描述（审批卡命令串与审计载荷同源；free fn 供 trait impl 与未来调用方共用）
     pub fn forward_desc(spec: &ForwardSpec) -> String {
         match spec {
-            ForwardSpec::Local { listen_addr, listen_port, target_host, target_port } =>
-                format!("端口转发 -L {listen_addr}:{listen_port} → {target_host}:{target_port}"),
-            ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } =>
-                format!("端口转发 -R 远端 {listen_addr}:{listen_port} → 本地 {target_host}:{target_port}"),
-            ForwardSpec::Dynamic { listen_addr, listen_port } =>
-                format!("端口转发 -D SOCKS5 {listen_addr}:{listen_port}"),
+            ForwardSpec::Local {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            } => format!("端口转发 -L {listen_addr}:{listen_port} → {target_host}:{target_port}"),
+            ForwardSpec::Remote {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            } => format!(
+                "端口转发 -R 远端 {listen_addr}:{listen_port} → 本地 {target_host}:{target_port}"
+            ),
+            ForwardSpec::Dynamic {
+                listen_addr,
+                listen_port,
+            } => format!("端口转发 -D SOCKS5 {listen_addr}:{listen_port}"),
         }
     }
 
@@ -964,7 +1142,11 @@ impl SessionManager {
     /// 无法从人类编辑后的文本回解，静默按原文执行会让审计「记 edited、实执行
     /// 原文」失真——统一拦截并明确报错（调用方不执行任何动作）。exec 卡除外
     /// （handle.rs 尊重 edited）。
-    pub fn reject_edited_approval(edited: &Option<String>, original: &str, what: &str) -> Result<()> {
+    pub fn reject_edited_approval(
+        edited: &Option<String>,
+        original: &str,
+        what: &str,
+    ) -> Result<()> {
         if let Some(e) = edited {
             if e != original {
                 return Err(Error::InvalidInput(format!(
@@ -1054,12 +1236,29 @@ impl SessionManager {
             purpose: None,
         };
         let (tx, rx) = oneshot::channel();
-        self.center.decisions.lock().unwrap().insert(item.id.clone(), tx);
-        self.center.items.lock().unwrap().insert(item.id.clone(), item.clone());
+        self.center
+            .decisions
+            .lock()
+            .unwrap()
+            .insert(item.id.clone(), tx);
+        self.center
+            .items
+            .lock()
+            .unwrap()
+            .insert(item.id.clone(), item.clone());
         let _ = self.center.vault.save_approval(&item);
-        let _ = self.center.approvals_tx.send(ApprovalEvent::New(item.clone()));
+        let _ = self
+            .center
+            .approvals_tx
+            .send(ApprovalEvent::New(item.clone()));
         let _ = self.center.audit.append(
-            actor, "approval_requested", None, Some(&item.command), serde_json::json!({}), Some(&item.id));
+            actor,
+            "approval_requested",
+            None,
+            Some(&item.command),
+            serde_json::json!({}),
+            Some(&item.id),
+        );
 
         match tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx).await {
             Ok(Ok(DecisionMsg::Decide(Decision::Approve))) => {
@@ -1095,12 +1294,16 @@ impl SessionManager {
                 if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
                     it.status = ApprovalStatus::Denied;
                 }
-                Err(Error::ApprovalDenied { reason: DeniedReason::Denied })
+                Err(Error::ApprovalDenied {
+                    reason: DeniedReason::Denied,
+                })
             }
-            Ok(Ok(DecisionMsg::Voided)) | Ok(Err(_)) => {
-                Err(Error::ApprovalDenied { reason: DeniedReason::Denied })
-            }
-            Err(_) => Err(Error::ApprovalDenied { reason: DeniedReason::ApprovalTimeout }),
+            Ok(Ok(DecisionMsg::Voided)) | Ok(Err(_)) => Err(Error::ApprovalDenied {
+                reason: DeniedReason::Denied,
+            }),
+            Err(_) => Err(Error::ApprovalDenied {
+                reason: DeniedReason::ApprovalTimeout,
+            }),
         }
     }
 }
@@ -1154,7 +1357,8 @@ impl AttemptEntry {
     /// 终态结算唯一入口：phase 与 term 原子镜像同锁内写（M3 查询侧判活依据）。
     fn settle(&self, st: &mut AttemptState, phase: AttemptPhase) {
         st.phase = phase;
-        self.term.store(phase.is_terminal(), AtomicOrdering::Release);
+        self.term
+            .store(phase.is_terminal(), AtomicOrdering::Release);
     }
     fn snapshot(&self, st: &AttemptState) -> AttemptInfo {
         AttemptInfo {
@@ -1256,17 +1460,36 @@ async fn host_key_gate(
         attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
     };
     let _ = center.audit.append(
-        ctx, "host_key_confirm_requested", None, Some(&host.name),
-        serde_json::json!({"id": item.id, "issue": format!("{issue:?}"), "fingerprint": fp}), None);
+        ctx,
+        "host_key_confirm_requested",
+        None,
+        Some(&host.name),
+        serde_json::json!({"id": item.id, "issue": format!("{issue:?}"), "fingerprint": fp}),
+        None,
+    );
     let (tx, rx) = oneshot::channel();
-    center.hk_decisions.lock().unwrap().insert(item.id.clone(), tx);
-    center.hk_pending.lock().unwrap().insert(item.id.clone(), item.clone());
+    center
+        .hk_decisions
+        .lock()
+        .unwrap()
+        .insert(item.id.clone(), tx);
+    center
+        .hk_pending
+        .lock()
+        .unwrap()
+        .insert(item.id.clone(), item.clone());
     let _ = center.hk_tx.send(item.clone());
     if let Some(a) = attempt {
         let mut st = a.st.lock().await;
         if !st.terminal() {
             st.phase = AttemptPhase::TrustRequired;
-            emit_conn(center, &a.info.attempt_id, AttemptPhase::TrustRequired, None, None);
+            emit_conn(
+                center,
+                &a.info.attempt_id,
+                AttemptPhase::TrustRequired,
+                None,
+                None,
+            );
         }
     }
     let wait = tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx);
@@ -1301,13 +1524,24 @@ async fn host_key_gate(
                 center.vault.set_host_fingerprint(&host.id, fp)?;
             }
             let _ = center.audit.append(
-                ctx, "host_key_trusted", None, Some(&host.name),
-                serde_json::json!({"fingerprint": fp, "transient": quick_done}), None);
+                ctx,
+                "host_key_trusted",
+                None,
+                Some(&host.name),
+                serde_json::json!({"fingerprint": fp, "transient": quick_done}),
+                None,
+            );
             if let Some(a) = attempt {
                 let mut st = a.st.lock().await;
                 if !st.terminal() {
                     st.phase = AttemptPhase::Authenticating;
-                    emit_conn(center, &a.info.attempt_id, AttemptPhase::Authenticating, None, None);
+                    emit_conn(
+                        center,
+                        &a.info.attempt_id,
+                        AttemptPhase::Authenticating,
+                        None,
+                        None,
+                    );
                 }
             }
             Ok(true)
@@ -1355,16 +1589,31 @@ async fn auth_prompt_gate(
         attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
     };
     let _ = center.audit.append(
-        ctx, "auth_prompt_requested", None, Some(&host.name),
-        serde_json::json!({"id": item.id, "prompt": prompt, "echo": echo}), None);
+        ctx,
+        "auth_prompt_requested",
+        None,
+        Some(&host.name),
+        serde_json::json!({"id": item.id, "prompt": prompt, "echo": echo}),
+        None,
+    );
     let (tx, rx) = oneshot::channel();
-    center.ap_pending.lock().unwrap().insert(item.id.clone(), (item.clone(), tx));
+    center
+        .ap_pending
+        .lock()
+        .unwrap()
+        .insert(item.id.clone(), (item.clone(), tx));
     let _ = center.ap_tx.send(item.clone());
     if let Some(a) = attempt {
         let mut st = a.st.lock().await;
         if !st.terminal() {
             st.phase = AttemptPhase::ChallengeRequired;
-            emit_conn(center, &a.info.attempt_id, AttemptPhase::ChallengeRequired, None, None);
+            emit_conn(
+                center,
+                &a.info.attempt_id,
+                AttemptPhase::ChallengeRequired,
+                None,
+                None,
+            );
         }
     }
     let wait = tokio::time::timeout(DEFAULT_APPROVAL_TIMEOUT, rx);
@@ -1384,9 +1633,18 @@ async fn auth_prompt_gate(
     match answered {
         Some(Some(answer)) => {
             let _ = center.audit.append(
-                ctx, "auth_prompt_answered", None, Some(&host.name),
-                serde_json::json!({"id": item.id, "answer_len": answer.chars().count()}), None);
-            if answer.is_empty() { Ok(None) } else { Ok(Some(answer)) }
+                ctx,
+                "auth_prompt_answered",
+                None,
+                Some(&host.name),
+                serde_json::json!({"id": item.id, "answer_len": answer.chars().count()}),
+                None,
+            );
+            if answer.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(answer))
+            }
         }
         Some(None) => {
             if let Some(a) = attempt {
@@ -1455,8 +1713,13 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
             if h.kind != "ssh" {
                 *h.state.lock().await = SessionState::Disconnected;
                 h.note_transition("本地 shell 退出（Disconnected）").await;
-                h.emit_state(SessionState::Disconnected, None, None,
-                    Some("本地 shell 已退出".into())).await;
+                h.emit_state(
+                    SessionState::Disconnected,
+                    None,
+                    None,
+                    Some("本地 shell 已退出".into()),
+                )
+                .await;
                 return;
             }
             h.on_transport_reconnect().await;
@@ -1576,7 +1839,8 @@ impl SessionManager {
             let mut owner = h.owner.lock().await;
             if *owner == ControlOwner::Agent {
                 *owner = ControlOwner::Human;
-                h.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                h.generation
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 // C9 授权残留清理（审计 S3）：会话级 send_keys 授权随控制权交还一并
                 // 失效——与 takeover 的 clear 同口径，防「停用→重启用→再交接」后
                 // 旧授权无需审批即可继续键入
@@ -1620,14 +1884,26 @@ impl SessionApi for SessionManager {
     async fn upsert_host(&self, ctx: &Actor, host: HostDraft) -> Result<HostId> {
         let id = self.center.vault.upsert_host(&host)?;
         let _ = self.center.audit.append(
-            ctx, "host_upsert", None, None,
-            serde_json::json!({"host": id, "name": host.name}), None);
+            ctx,
+            "host_upsert",
+            None,
+            None,
+            serde_json::json!({"host": id, "name": host.name}),
+            None,
+        );
         Ok(id)
     }
 
     async fn delete_host(&self, ctx: &Actor, id: HostId) -> Result<()> {
         self.center.vault.delete_host(&id)?;
-        let _ = self.center.audit.append(ctx, "host_delete", None, None, serde_json::json!({"host": id}), None);
+        let _ = self.center.audit.append(
+            ctx,
+            "host_delete",
+            None,
+            None,
+            serde_json::json!({"host": id}),
+            None,
+        );
         Ok(())
     }
 
@@ -1637,7 +1913,14 @@ impl SessionApi for SessionManager {
 
     async fn create_identity(&self, ctx: &Actor, req: IdentityReq) -> Result<IdentityMeta> {
         let meta = self.center.vault.create_identity(&req)?;
-        let _ = self.center.audit.append(ctx, "identity_create", None, None, serde_json::json!({"id": meta.id, "kind": format!("{:?}", meta.kind)}), None);
+        let _ = self.center.audit.append(
+            ctx,
+            "identity_create",
+            None,
+            None,
+            serde_json::json!({"id": meta.id, "kind": format!("{:?}", meta.kind)}),
+            None,
+        );
         Ok(meta)
     }
 
@@ -1648,7 +1931,14 @@ impl SessionApi for SessionManager {
             return Err(Error::IdentityInUse { host_names: refs });
         }
         self.center.vault.delete_identity(&id)?;
-        let _ = self.center.audit.append(ctx, "identity_delete", None, None, serde_json::json!({"id": id}), None);
+        let _ = self.center.audit.append(
+            ctx,
+            "identity_delete",
+            None,
+            None,
+            serde_json::json!({"id": id}),
+            None,
+        );
         Ok(())
     }
 
@@ -1666,8 +1956,14 @@ impl SessionApi for SessionManager {
 
     async fn set_host_favorite(&self, ctx: &Actor, host_id: HostId, favorite: bool) -> Result<()> {
         self.center.vault.set_host_favorite(&host_id, favorite)?;
-        let _ = self.center.audit.append(ctx, "host_favorite", None, None,
-            serde_json::json!({"host": host_id, "favorite": favorite}), None);
+        let _ = self.center.audit.append(
+            ctx,
+            "host_favorite",
+            None,
+            None,
+            serde_json::json!({"host": host_id, "favorite": favorite}),
+            None,
+        );
         Ok(())
     }
 
@@ -1707,7 +2003,11 @@ impl SessionApi for SessionManager {
 
     /// R41（§6.6/S09）连接详情：连接时 Host 快照（handle 持有构造期副本，主机配置此后
     /// 被编辑/删除都不影响）+ 真实创建时刻 + 运行时态。
-    async fn session_detail(&self, _ctx: &Actor, sid: SessionId) -> Result<session_api::SessionDetail> {
+    async fn session_detail(
+        &self,
+        _ctx: &Actor,
+        sid: SessionId,
+    ) -> Result<session_api::SessionDetail> {
         let h = {
             let sessions = self.sessions.lock().unwrap();
             sessions.get(&sid).cloned()
@@ -1801,7 +2101,13 @@ impl SessionApi for SessionManager {
                 .host
                 .name
                 .chars()
-                .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+                .map(|c| {
+                    if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                        '_'
+                    } else {
+                        c
+                    }
+                })
                 .collect();
             let dir = self.data_dir.join("logs");
             std::fs::create_dir_all(&dir).map_err(|e| Error::Io(e.to_string()))?;
@@ -1818,8 +2124,13 @@ impl SessionApi for SessionManager {
             *h.log_path.lock().unwrap() = Some(path.clone());
             *h.log_file.lock().unwrap() = Some(file);
             let _ = self.center.audit.append(
-                ctx, "session_logging_on", Some(&sid), Some(&h.host.name),
-                serde_json::json!({"path": path.to_string_lossy()}), None);
+                ctx,
+                "session_logging_on",
+                Some(&sid),
+                Some(&h.host.name),
+                serde_json::json!({"path": path.to_string_lossy()}),
+                None,
+            );
             Ok(Some(path.to_string_lossy().into_owned()))
         } else {
             // 收口：取走句柄即关闭（File drop 落盘）；路径一并清（SessionInfo.logging 归假）
@@ -1827,8 +2138,13 @@ impl SessionApi for SessionManager {
             let path = h.log_path.lock().unwrap().take();
             if let (Some(_), Some(p)) = (closed, path) {
                 let _ = self.center.audit.append(
-                    ctx, "session_logging_off", Some(&sid), Some(&h.host.name),
-                    serde_json::json!({"path": p.to_string_lossy()}), None);
+                    ctx,
+                    "session_logging_off",
+                    Some(&sid),
+                    Some(&h.host.name),
+                    serde_json::json!({"path": p.to_string_lossy()}),
+                    None,
+                );
                 return Ok(None);
             }
             Ok(None)
@@ -1899,9 +2215,13 @@ impl SessionApi for SessionManager {
                 // 作废必须留痕（五人走查·老周）：卡片凭空消失而审计无对应条目，
                 // 事后无法回答「这张卡为何没了」。与接管的作废口径一致。
                 let _ = self.center.audit.append(
-                    ctx, "approval_voided", Some(&sid), Some(&it.command),
+                    ctx,
+                    "approval_voided",
+                    Some(&sid),
+                    Some(&it.command),
                     serde_json::json!({"reason": "session_closed", "agent": it.agent_id}),
-                    Some(&id));
+                    Some(&id),
+                );
                 let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
             }
             // 唤醒等待方（wait_approval 的 Voided 臂即作废返回，Agent 不再空等 120s）
@@ -1910,7 +2230,14 @@ impl SessionApi for SessionManager {
             }
         }
         self.center.vault.close_session_row(&sid)?;
-        let _ = self.center.audit.append(ctx, "session_closed", Some(&sid), None, serde_json::json!({}), None);
+        let _ = self.center.audit.append(
+            ctx,
+            "session_closed",
+            Some(&sid),
+            None,
+            serde_json::json!({}),
+            None,
+        );
         Ok(())
     }
 
@@ -1948,7 +2275,14 @@ impl SessionApi for SessionManager {
         match found {
             Some(c) => {
                 c.cancel();
-                let _ = self.center.audit.append(ctx, "exec_cancel", Some(&sid), None, serde_json::json!({"exec": exec_id}), None);
+                let _ = self.center.audit.append(
+                    ctx,
+                    "exec_cancel",
+                    Some(&sid),
+                    None,
+                    serde_json::json!({"exec": exec_id}),
+                    None,
+                );
                 Ok(())
             }
             None => Err(Error::InvalidInput("exec not found or finished".into())),
@@ -1982,7 +2316,9 @@ impl SessionApi for SessionManager {
                     let mut s = h.screen.lock().await;
                     s.register_outgoing(keys.as_bytes(), term_core::BlockSource::Human);
                 }
-                h.channel.write(&charset::encode(h.host.charset, keys)).await
+                h.channel
+                    .write(&charset::encode(h.host.charset, keys))
+                    .await
             }
             Actor::Agent { client_id } => {
                 // C9（R43）：协作 admission——停用期间拒绝 Agent 键入（副作用前）。
@@ -1999,9 +2335,16 @@ impl SessionApi for SessionManager {
                 // 键入、直接键入 `rm -rf …` 都会绕过 exec 侧 deny 引擎）
                 if let Some(reason) = self.center.engine.deny_reason(client_id, keys) {
                     let _ = self.center.audit.append(
-                        ctx, "send_keys_denied", Some(&sid), Some(keys),
-                        serde_json::json!({"reason": reason}), None);
-                    return Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern });
+                        ctx,
+                        "send_keys_denied",
+                        Some(&sid),
+                        Some(keys),
+                        serde_json::json!({"reason": reason}),
+                        None,
+                    );
+                    return Err(Error::ApprovalDenied {
+                        reason: DeniedReason::DangerousPattern,
+                    });
                 }
                 // 会话级授权：一次审批，接管或会话结束失效
                 if !h.send_keys_auth.lock().unwrap().contains(client_id) {
@@ -2013,11 +2356,24 @@ impl SessionApi for SessionManager {
                         }],
                     };
                     let (trace, edited) = h
-                        .wait_approval(ctx, client_id, &"send_keys".to_string(), &format!("send_keys {keys:?}"), &eval, false, false, CancellationToken::new())
+                        .wait_approval(
+                            ctx,
+                            client_id,
+                            &"send_keys".to_string(),
+                            &format!("send_keys {keys:?}"),
+                            &eval,
+                            false,
+                            false,
+                            CancellationToken::new(),
+                        )
                         .await?;
                     let _ = trace;
                     // 键序列无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
-                    SessionManager::reject_edited_approval(&edited, &format!("send_keys {keys:?}"), "send_keys 审批")?;
+                    SessionManager::reject_edited_approval(
+                        &edited,
+                        &format!("send_keys {keys:?}"),
+                        "send_keys 审批",
+                    )?;
                     let _ = trace;
                     h.send_keys_auth.lock().unwrap().insert(client_id.clone());
                     // 授权后本次按键照常执行（逐次写入留痕）
@@ -2036,20 +2392,32 @@ impl SessionApi for SessionManager {
                     tokio::time::sleep(wait).await;
                 }
                 let _ = self.center.audit.append(
-                    ctx, "send_keys", Some(&sid), Some(keys), serde_json::json!({}), None);
-                h.channel.write(&charset::encode(h.host.charset, keys)).await
+                    ctx,
+                    "send_keys",
+                    Some(&sid),
+                    Some(keys),
+                    serde_json::json!({}),
+                    None,
+                );
+                h.channel
+                    .write(&charset::encode(h.host.charset, keys))
+                    .await
             }
         }
     }
 
-    async fn wait_output(&self, _ctx: &Actor, sid: SessionId, opts: WaitOpts) -> Result<OutputChunk> {
+    async fn wait_output(
+        &self,
+        _ctx: &Actor,
+        sid: SessionId,
+        opts: WaitOpts,
+    ) -> Result<OutputChunk> {
         let h = self.get(&sid)?;
         let timeout_d = opts.timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT);
         let quiet_ms = opts.quiet_ms.unwrap_or(DEFAULT_QUIET_MS);
         let re = match &opts.regex {
             Some(r) => Some(
-                regex::Regex::new(r)
-                    .map_err(|e| Error::InvalidInput(format!("bad regex: {e}")))?,
+                regex::Regex::new(r).map_err(|e| Error::InvalidInput(format!("bad regex: {e}")))?,
             ),
             None => None,
         };
@@ -2070,7 +2438,11 @@ impl SessionApi for SessionManager {
                 let truncated = s.lossless_evicted() > watermark;
                 let matched = re.as_ref().map(|r| r.is_match(&text)).unwrap_or(false);
                 if matched {
-                    return Ok(OutputChunk { text, matched: true, truncated_to_cap: truncated });
+                    return Ok(OutputChunk {
+                        text,
+                        matched: true,
+                        truncated_to_cap: truncated,
+                    });
                 }
                 let quiet = std::time::Duration::from_millis(quiet_ms);
                 let is_quiet = s
@@ -2078,7 +2450,11 @@ impl SessionApi for SessionManager {
                     .map(|t| (chrono::Utc::now() - t).to_std().unwrap_or_default() >= quiet)
                     .unwrap_or(false);
                 if is_quiet && !text.is_empty() {
-                    return Ok(OutputChunk { text, matched: false, truncated_to_cap: truncated });
+                    return Ok(OutputChunk {
+                        text,
+                        matched: false,
+                        truncated_to_cap: truncated,
+                    });
                 }
             }
             tokio::select! {
@@ -2109,7 +2485,12 @@ impl SessionApi for SessionManager {
     /// C2（DC2.2）：首次委托——人类把会话交 Agent 并附目标。内部走既有 handback
     /// 受控转换（接管/作废语义不变）+ 独立审计 session_delegated；取消对话框不产生
     /// 任何调用（无 cancel 路径依赖）。仅 Human 可调。
-    async fn delegate_session(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()> {
+    async fn delegate_session(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        goal: Option<String>,
+    ) -> Result<()> {
         if !ctx.is_human() {
             return Err(Error::InvalidActor);
         }
@@ -2119,8 +2500,13 @@ impl SessionApi for SessionManager {
             *h.goal.lock().unwrap() = Some(g.clone());
         }
         let _ = self.center.audit.append(
-            ctx, "session_delegated", Some(&sid), None,
-            serde_json::json!({"goal_present": goal.is_some()}), None);
+            ctx,
+            "session_delegated",
+            Some(&sid),
+            None,
+            serde_json::json!({"goal_present": goal.is_some()}),
+            None,
+        );
         Ok(())
     }
 
@@ -2144,8 +2530,16 @@ impl SessionApi for SessionManager {
         remote: &str,
         collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle> {
-        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), true, collision, None)
-            .await
+        self.transfer(
+            ctx,
+            sid,
+            local.to_path_buf(),
+            remote.to_string(),
+            true,
+            collision,
+            None,
+        )
+        .await
     }
 
     async fn download(
@@ -2156,8 +2550,16 @@ impl SessionApi for SessionManager {
         local: &Path,
         collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle> {
-        self.transfer(ctx, sid, local.to_path_buf(), remote.to_string(), false, collision, None)
-            .await
+        self.transfer(
+            ctx,
+            sid,
+            local.to_path_buf(),
+            remote.to_string(),
+            false,
+            collision,
+            None,
+        )
+        .await
     }
 
     async fn cancel_transfer(&self, _ctx: &Actor, t: TransferId) -> Result<()> {
@@ -2165,7 +2567,9 @@ impl SessionApi for SessionManager {
         // 再置位 token（传输循环尽快返回 Cancelled，终态由任务收尾统一落账）。
         let (cancel, sid) = {
             let reg = self.transfers.lock().unwrap();
-            let e = reg.get(&t).ok_or(Error::InvalidInput("transfer not found".into()))?;
+            let e = reg
+                .get(&t)
+                .ok_or(Error::InvalidInput("transfer not found".into()))?;
             if e.task.status.is_terminal() {
                 return Ok(());
             }
@@ -2217,13 +2621,21 @@ impl SessionApi for SessionManager {
                 .get_mut(&t)
                 .ok_or(Error::InvalidInput("transfer not found".into()))?;
             if e.task.status != TransferStatus::AwaitingDecision {
-                return Err(Error::InvalidTransferState { task_id: t, state: e.task.status });
+                return Err(Error::InvalidTransferState {
+                    task_id: t,
+                    state: e.task.status,
+                });
             }
             if e.task.revision != expect_revision {
-                return Err(Error::StaleDecision { expect_revision: e.task.revision });
+                return Err(Error::StaleDecision {
+                    expect_revision: e.task.revision,
+                });
             }
             let Some(tx) = e.decision_tx.take() else {
-                return Err(Error::InvalidTransferState { task_id: t, state: e.task.status });
+                return Err(Error::InvalidTransferState {
+                    task_id: t,
+                    state: e.task.status,
+                });
             };
             e.task.collision_decision = Some(decision);
             e.task.revision += 1;
@@ -2240,7 +2652,9 @@ impl SessionApi for SessionManager {
         );
         // 投递失败=等待端已消失（取消竞窗）：任务终态已落，本次提交按过期处置
         if tx.send(decision).is_err() {
-            return Err(Error::StaleDecision { expect_revision: snapshot.revision });
+            return Err(Error::StaleDecision {
+                expect_revision: snapshot.revision,
+            });
         }
         Ok(snapshot)
     }
@@ -2260,7 +2674,9 @@ impl SessionApi for SessionManager {
         }
         let sid = {
             let mut reg = self.transfers.lock().unwrap();
-            let e = reg.get_mut(&t).ok_or(Error::InvalidInput("transfer not found".into()))?;
+            let e = reg
+                .get_mut(&t)
+                .ok_or(Error::InvalidInput("transfer not found".into()))?;
             if e.task.status != TransferStatus::AwaitingDecision {
                 return Ok(()); // 幂等：不在待决态即无卡可作废
             }
@@ -2294,9 +2710,14 @@ impl SessionApi for SessionManager {
         }
         let (sid, now_verified) = {
             let reg = self.transfers.lock().unwrap();
-            let e = reg.get(&t).ok_or(Error::InvalidInput("transfer not found".into()))?;
+            let e = reg
+                .get(&t)
+                .ok_or(Error::InvalidInput("transfer not found".into()))?;
             if e.task.status != TransferStatus::OutcomeUnknown {
-                return Err(Error::InvalidTransferState { task_id: t, state: e.task.status });
+                return Err(Error::InvalidTransferState {
+                    task_id: t,
+                    state: e.task.status,
+                });
             }
             (e.task.session_id.clone(), e.verified)
         };
@@ -2331,7 +2752,12 @@ impl SessionApi for SessionManager {
             // 登记的旧 temp。
             if let Ok(h) = self.get(&sid) {
                 Self::drain_pending_remote_temps(self, &h).await;
-                let task = self.transfers.lock().unwrap().get(&t).map(|e| e.task.clone());
+                let task = self
+                    .transfers
+                    .lock()
+                    .unwrap()
+                    .get(&t)
+                    .map(|e| e.task.clone());
                 if let Some(task) = task {
                     if let Some(temp) = Self::remote_temp_of(&h, &task).await {
                         if let Err(e) = h.channel.remove_file(&temp).await {
@@ -2355,7 +2781,10 @@ impl SessionApi for SessionManager {
             {
                 let mut reg = self.transfers.lock().unwrap();
                 if let Some(e) = reg.get_mut(&t) {
-                    e.task.error = Some("重新核实：无绑定证据（verified=false），保持结果未知——temp 与恢复资料保留".into());
+                    e.task.error = Some(
+                        "重新核实：无绑定证据（verified=false），保持结果未知——temp 与恢复资料保留"
+                            .into(),
+                    );
                     e.task.revision += 1;
                     let snapshot = e.task.clone();
                     let _ = self.transfer_tx.send(snapshot.clone());
@@ -2371,7 +2800,9 @@ impl SessionApi for SessionManager {
             );
         }
         let reg = self.transfers.lock().unwrap();
-        reg.get(&t).map(|e| e.task.clone()).ok_or(Error::InvalidInput("transfer not found".into()))
+        reg.get(&t)
+            .map(|e| e.task.clone())
+            .ok_or(Error::InvalidInput("transfer not found".into()))
     }
 
     // C5（§547）：注册表全量快照（创建倒序）。事件可丢，查询是权威对账面。
@@ -2410,7 +2841,9 @@ impl SessionApi for SessionManager {
         path: Option<String>,
     ) -> Result<PathResolved> {
         if !ctx.is_human() {
-            return Err(Error::InvalidInput("sftp_resolve_path 仅人类浏览入口".into()));
+            return Err(Error::InvalidInput(
+                "sftp_resolve_path 仅人类浏览入口".into(),
+            ));
         }
         let h = self.get(&sid)?;
         h.channel.resolve_path(path.as_deref()).await
@@ -2423,10 +2856,14 @@ impl SessionApi for SessionManager {
         let h = self.get(&sid)?;
         let st = h.channel.stat_entry(&path).await?;
         if !ctx.is_human() {
-            let _ = self
-                .center
-                .audit
-                .append(ctx, "sftp_stat", Some(&sid), Some(&path), serde_json::json!({ "remote": path }), None);
+            let _ = self.center.audit.append(
+                ctx,
+                "sftp_stat",
+                Some(&sid),
+                Some(&path),
+                serde_json::json!({ "remote": path }),
+                None,
+            );
         }
         Ok(st)
     }
@@ -2438,7 +2875,12 @@ impl SessionApi for SessionManager {
         h.channel.list_forwards().await
     }
 
-    async fn start_forward(&self, ctx: &Actor, sid: SessionId, spec: ForwardSpec) -> Result<ForwardId> {
+    async fn start_forward(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        spec: ForwardSpec,
+    ) -> Result<ForwardId> {
         let h = self.get(&sid)?;
         // 审计可核对性（复核低-5）：forward_start 事件挂 approval_id（与 exec 同款）；
         // 人类直建时为 None
@@ -2460,7 +2902,18 @@ impl SessionApi for SessionManager {
                     verdict: "pending: 端口转发（建立网络隧道）".into(),
                 }],
             };
-            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_start".to_string(), &desc, &eval, false, false, CancellationToken::new()).await?;
+            let (trace, edited) = h
+                .wait_approval(
+                    ctx,
+                    client_id,
+                    &"forward_start".to_string(),
+                    &desc,
+                    &eval,
+                    false,
+                    false,
+                    CancellationToken::new(),
+                )
+                .await?;
             approval_id = trace.approval_id;
             // 编辑后批准不支持（复核中-2，复审②统一拦截）：ForwardSpec 无法从人类
             // 编辑后的中文描述回解——出现编辑即拒绝，审计不会出现「记了 edited、
@@ -2474,8 +2927,13 @@ impl SessionApi for SessionManager {
         }
         let fid = h.channel.start_forward(spec.clone()).await?;
         let _ = h.center.audit.append(
-            ctx, "forward_start", Some(&sid), None,
-            serde_json::json!({ "forward": fid, "spec": spec }), approval_id.as_deref());
+            ctx,
+            "forward_start",
+            Some(&sid),
+            None,
+            serde_json::json!({ "forward": fid, "spec": spec }),
+            approval_id.as_deref(),
+        );
         Ok(fid)
     }
 
@@ -2504,14 +2962,30 @@ impl SessionApi for SessionManager {
                     verdict: "pending: 停止端口转发（可能中断链路）".into(),
                 }],
             };
-            let (trace, edited) = h.wait_approval(ctx, client_id, &"forward_stop".to_string(), &desc, &eval, false, false, CancellationToken::new()).await?;
+            let (trace, edited) = h
+                .wait_approval(
+                    ctx,
+                    client_id,
+                    &"forward_stop".to_string(),
+                    &desc,
+                    &eval,
+                    false,
+                    false,
+                    CancellationToken::new(),
+                )
+                .await?;
             approval_id = trace.approval_id;
             SessionManager::reject_edited_approval(&edited, &desc, "停止端口转发审批")?;
         }
         h.channel.stop_forward(&fid).await?;
         let _ = h.center.audit.append(
-            ctx, "forward_stop", Some(&sid), None,
-            serde_json::json!({ "forward": fid }), approval_id.as_deref());
+            ctx,
+            "forward_stop",
+            Some(&sid),
+            None,
+            serde_json::json!({ "forward": fid }),
+            approval_id.as_deref(),
+        );
         Ok(())
     }
 
@@ -2530,8 +3004,14 @@ impl SessionApi for SessionManager {
         Ok(items
             .values()
             .filter(|it| {
-                f.session_id.as_ref().map(|s| &it.session_id == s).unwrap_or(true)
-                    && f.agent_id.as_ref().map(|a| &it.agent_id == a).unwrap_or(true)
+                f.session_id
+                    .as_ref()
+                    .map(|s| &it.session_id == s)
+                    .unwrap_or(true)
+                    && f.agent_id
+                        .as_ref()
+                        .map(|a| &it.agent_id == a)
+                        .unwrap_or(true)
                     && (!f.pending_only || it.status == ApprovalStatus::Pending)
             })
             .map(|it| {
@@ -2558,7 +3038,9 @@ impl SessionApi for SessionManager {
         }
         let status = self.center.vault.approval_status(&id)?;
         if matches!(status, Some(ApprovalStatus::Voided)) {
-            return Err(Error::InvalidInput("审批已作废（接管或会话关闭），不可再生效".into()));
+            return Err(Error::InvalidInput(
+                "审批已作废（接管或会话关闭），不可再生效".into(),
+            ));
         }
         let tx = self.center.decisions.lock().unwrap().remove(&id);
         match tx {
@@ -2586,13 +3068,19 @@ impl SessionApi for SessionManager {
                     ),
                 };
                 let _ = self.center.audit.append(
-                    ctx, "approval_decision",
-                    sid.as_deref(), cmd.as_deref(),
-                    serde_json::json!({"decision": decision_key}), Some(&id));
+                    ctx,
+                    "approval_decision",
+                    sid.as_deref(),
+                    cmd.as_deref(),
+                    serde_json::json!({"decision": decision_key}),
+                    Some(&id),
+                );
                 tx.send(DecisionMsg::Decide(d))
                     .map_err(|_| Error::Storage("decision receiver dropped".into()))
             }
-            None => Err(Error::InvalidInput("no pending approval with this id".into())),
+            None => Err(Error::InvalidInput(
+                "no pending approval with this id".into(),
+            )),
         }
     }
 
@@ -2626,7 +3114,9 @@ impl SessionApi for SessionManager {
                 tx.send(accept)
                     .map_err(|_| Error::Storage("host key gate receiver dropped".into()))
             }
-            _ => Err(Error::InvalidInput("no pending host key with this id".into())),
+            _ => Err(Error::InvalidInput(
+                "no pending host key with this id".into(),
+            )),
         }
     }
 
@@ -2660,8 +3150,13 @@ impl SessionApi for SessionManager {
         // 空串 = 取消：oneshot 关闭让 gate 返回 None；非空送应答
         if answer.is_empty() {
             let _ = self.center.audit.append(
-                ctx, "auth_prompt_answered", None, Some(&item.host_name),
-                serde_json::json!({"id": item.id, "cancelled": true}), None);
+                ctx,
+                "auth_prompt_answered",
+                None,
+                Some(&item.host_name),
+                serde_json::json!({"id": item.id, "cancelled": true}),
+                None,
+            );
             drop(tx);
             Ok(())
         } else {
@@ -2687,7 +3182,12 @@ impl SessionApi for SessionManager {
     }
 
     // ---- 任务目标/交接留言（R9：人类→Agent 委托入口）----
-    async fn set_session_goal(&self, ctx: &Actor, sid: SessionId, goal: Option<String>) -> Result<()> {
+    async fn set_session_goal(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        goal: Option<String>,
+    ) -> Result<()> {
         if !ctx.is_human() {
             return Err(Error::InvalidActor);
         }
@@ -2695,7 +3195,11 @@ impl SessionApi for SessionManager {
         // 空串归一 None（清除语义）
         let goal = goal.and_then(|g| {
             let t = g.trim().to_string();
-            if t.is_empty() { None } else { Some(t) }
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
         });
         *h.goal.lock().unwrap() = goal.clone();
         let _ = self.center.audit.append(
@@ -2746,7 +3250,11 @@ impl SessionApi for SessionManager {
             active_requests: pending + agent_owned,
             // 仅 Enabled 才对外播报端点地址；停用/停用中/停用失败一律空串
             //（不让「未启动」被误读为可用监听）。
-            endpoint: if state == CollabState::Enabled { self.mcp_endpoint() } else { String::new() },
+            endpoint: if state == CollabState::Enabled {
+                self.mcp_endpoint()
+            } else {
+                String::new()
+            },
         })
     }
 
@@ -2805,7 +3313,10 @@ impl SessionApi for SessionManager {
             serde_json::json!({"generation": gen, "voided": voided, "converted": converted}),
             None,
         );
-        Ok(DisableReport { voided_approvals: voided, converted_sessions: converted })
+        Ok(DisableReport {
+            voided_approvals: voided,
+            converted_sessions: converted,
+        })
     }
 
     async fn collab_mark_endpoint_stopped(&self, ctx: &Actor) -> Result<()> {
@@ -2860,13 +3371,16 @@ impl SessionApi for SessionManager {
             g.generation += 1;
         }
         let _ = self.center.vault.set_collab_enabled(true);
-        let _ = self
-            .center
-            .audit
-            .append(ctx, "collab_enabled", None, None, serde_json::json!({}), None);
+        let _ = self.center.audit.append(
+            ctx,
+            "collab_enabled",
+            None,
+            None,
+            serde_json::json!({}),
+            None,
+        );
         Ok(())
     }
-
 }
 
 impl SessionManager {
@@ -2911,10 +3425,7 @@ impl SessionManager {
     /// 通道 + tokio Mutex，泄漏点）。超限按「终态优先、同组创建时间最旧先
     /// 淘汰」收缩；活动条目也被波及时说明并发尝试本身异常，宁误删不泄漏。
     /// 淘汰后 connection_status/cancel 对旧 attempt 返回 not-found（可接受）。
-    fn gc_attempts(
-        map: &mut HashMap<AttemptId, std::sync::Arc<AttemptEntry>>,
-        cap: usize,
-    ) {
+    fn gc_attempts(map: &mut HashMap<AttemptId, std::sync::Arc<AttemptEntry>>, cap: usize) {
         if map.len() <= cap {
             return;
         }
@@ -2950,7 +3461,10 @@ impl SessionManager {
     fn transfer_apply_entry(
         &self,
         tid: &TransferId,
-        mutate: impl FnOnce(&mut TransferTask, &mut Option<tokio::sync::oneshot::Sender<CollisionDecision>>),
+        mutate: impl FnOnce(
+            &mut TransferTask,
+            &mut Option<tokio::sync::oneshot::Sender<CollisionDecision>>,
+        ),
     ) {
         let now = std::time::Instant::now();
         let (emit_task, journal_task) = {
@@ -2984,7 +3498,10 @@ impl SessionManager {
             let _ = self.transfer_tx.send(t);
         }
         if let Some((t, verified)) = journal_task {
-            let _ = self.center.vault.transfer_journal_update(&t, Some(verified));
+            let _ = self
+                .center
+                .vault
+                .transfer_journal_update(&t, Some(verified));
         }
     }
 
@@ -2992,7 +3509,13 @@ impl SessionManager {
     /// rev-r32 中-1：仅 Succeeded 覆写字节数——取消/失败保留在途进度（「恢复不抹账、
     /// 运行时同样不抹账」；终态字节 = MCP 对账权威面数据，0 会冒充「没传过」）。
     /// R34：离开 AwaitingDecision 即清提示载荷（wire：仅待决态非空）与决策通道。
-    fn transfer_finish(&self, tid: &TransferId, status: TransferStatus, bytes: u64, error: Option<String>) {
+    fn transfer_finish(
+        &self,
+        tid: &TransferId,
+        status: TransferStatus,
+        bytes: u64,
+        error: Option<String>,
+    ) {
         let now = now_unix();
         {
             let mut reg = self.transfers.lock().unwrap();
@@ -3140,13 +3663,18 @@ impl SessionManager {
             let s = h.screen.lock().await;
             let checkpoint = s.checkpoint();
             let start_seq = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
-            h.last_ckpt_seq.store(start_seq, std::sync::atomic::Ordering::Release);
+            h.last_ckpt_seq
+                .store(start_seq, std::sync::atomic::Ordering::Release);
             let sub = format!("sub-{}", uuid::Uuid::new_v4());
             h.subs.lock().unwrap().insert(sub.clone(), cancel_tx);
             (sub, checkpoint, start_seq)
         };
         Ok((
-            AttachOutput { subscription_id, checkpoint, start_seq },
+            AttachOutput {
+                subscription_id,
+                checkpoint,
+                start_seq,
+            },
             rx,
             cancel_rx,
         ))
@@ -3197,15 +3725,15 @@ impl SessionManager {
                     });
                 }
                 let replayable = h.replay.lock().unwrap().covers_from(f);
-                let ckpt_nearer =
-                    h.last_ckpt_seq.load(std::sync::atomic::Ordering::Acquire) > f;
+                let ckpt_nearer = h.last_ckpt_seq.load(std::sync::atomic::Ordering::Acquire) > f;
                 !replayable || s.alt_screen() || ckpt_nearer
             }
         };
         if checkpoint_mode {
             let checkpoint = s.checkpoint();
             let end_seq = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
-            h.last_ckpt_seq.store(end_seq, std::sync::atomic::Ordering::Release);
+            h.last_ckpt_seq
+                .store(end_seq, std::sync::atomic::Ordering::Release);
             return Ok(ResyncOutput::Checkpointed {
                 subscription_id: subscription_id.to_string(),
                 checkpoint,
@@ -3219,11 +3747,18 @@ impl SessionManager {
             .q
             .iter()
             .filter(|(seq, _)| *seq > f && *seq <= cur)
-            .map(|(seq, data)| SeqFrame { seq: *seq, data: data.clone() })
+            .map(|(seq, data)| SeqFrame {
+                seq: *seq,
+                data: data.clone(),
+            })
             .collect();
         // 环内连续到 cur（covers_from 已验首帧；seq 逐帧连续推进，末帧即 cur）
         let end_seq = events.last().map(|e| e.seq).unwrap_or(cur);
-        Ok(ResyncOutput::Replayed { subscription_id: subscription_id.to_string(), events, end_seq })
+        Ok(ResyncOutput::Replayed {
+            subscription_id: subscription_id.to_string(),
+            events,
+            end_seq,
+        })
     }
 
     /// P6 测量口径（DF10.5）：活跃订阅计数。
@@ -3234,9 +3769,15 @@ impl SessionManager {
         for (sid, h) in sessions.iter() {
             let ids: Vec<String> = h.subs.lock().unwrap().keys().cloned().collect();
             active_count += ids.len();
-            per_session.push(SessionSubs { session_id: sid.clone(), subscription_ids: ids });
+            per_session.push(SessionSubs {
+                session_id: sid.clone(),
+                subscription_ids: ids,
+            });
         }
-        DebugSubscriptions { active_count, per_session }
+        DebugSubscriptions {
+            active_count,
+            per_session,
+        }
     }
 }
 
@@ -3299,12 +3840,14 @@ impl SessionManager {
             }
         }
         h.note_transition("手动重连：重建连接").await;
-        h.retry_stop.store(false, std::sync::atomic::Ordering::SeqCst);
+        h.retry_stop
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         // 先订阅：新传输的输出不得落入无订阅者窗口（§6.1-11 同源根因）
         let rx = h.channel.subscribe_output();
         let mut last_err = None;
         for attempt in 1..=3 {
-            h.emit_state(SessionState::Reconnecting, Some(attempt), Some(3), None).await;
+            h.emit_state(SessionState::Reconnecting, Some(attempt), Some(3), None)
+                .await;
             match h.channel.reconnect().await {
                 Ok(()) => {
                     last_err = None;
@@ -3320,8 +3863,13 @@ impl SessionManager {
         if let Some(e) = last_err {
             *h.state.lock().await = SessionState::Disconnected;
             h.note_transition("手动重连失败（仍断开，可再试）").await;
-            h.emit_state(SessionState::Disconnected, None, None,
-                Some(format!("手动重连失败：{e}"))).await;
+            h.emit_state(
+                SessionState::Disconnected,
+                None,
+                None,
+                Some(format!("手动重连失败：{e}")),
+            )
+            .await;
             return Err(e);
         }
         h.reset_scene_after_reconnect().await;
@@ -3335,7 +3883,8 @@ impl SessionManager {
             *h.state.lock().await = SessionState::Reconfirming;
             h.note_transition("重连成功，进入重确认（仅内置只读白名单可用）")
                 .await;
-            h.emit_state(SessionState::Reconfirming, None, None, None).await;
+            h.emit_state(SessionState::Reconfirming, None, None, None)
+                .await;
         }
         let _ = self.center.audit.append(
             &Actor::Human,
@@ -3353,7 +3902,8 @@ impl SessionManager {
     /// 与手动重连入口负责，此处不复位）。UI 的停止动作，不进 SessionApi/MCP 面。
     pub async fn stop_auto_reconnect(&self, sid: &str) -> Result<()> {
         let h = self.get(sid)?;
-        h.retry_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        h.retry_stop
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = self.center.audit.append(
             &Actor::Human,
             "session_reconnect_stop",
@@ -3419,7 +3969,9 @@ impl SessionManager {
             if collision == Some(CollisionDecision::Overwrite) {
                 // rev-r34 低-2：DF6.1 冻结后覆盖发布必被能力阻止——审批卡如实告知，
                 // 不误导审批人放行一个注定失败的写请求
-                segment.push_str("（覆盖已存在目标——将被能力阻止：传输不提供目标版本约束，原文件零改动）");
+                segment.push_str(
+                    "（覆盖已存在目标——将被能力阻止：传输不提供目标版本约束，原文件零改动）",
+                );
             }
             let eval = tinyssh_approval::Evaluation {
                 verdict: tinyssh_approval::SegmentVerdict::NeedsApproval,
@@ -3429,11 +3981,24 @@ impl SessionManager {
                 }],
             };
             let (trace, e) = h
-                .wait_approval(ctx, client_id, &"transfer".to_string(), &format!("{op} {local:?} → {remote}"), &eval, false, false, CancellationToken::new())
+                .wait_approval(
+                    ctx,
+                    client_id,
+                    &"transfer".to_string(),
+                    &format!("{op} {local:?} → {remote}"),
+                    &eval,
+                    false,
+                    false,
+                    CancellationToken::new(),
+                )
                 .await?;
             let _ = trace;
             // 传输路径无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
-            SessionManager::reject_edited_approval(&e, &format!("{op} {local:?} → {remote}"), "传输审批")?;
+            SessionManager::reject_edited_approval(
+                &e,
+                &format!("{op} {local:?} → {remote}"),
+                "传输审批",
+            )?;
         }
         let _ = edited.take();
 
@@ -3441,20 +4006,35 @@ impl SessionManager {
         let handle = TransferHandle {
             id: tid.clone(),
             session_id: sid.clone(),
-            kind: if is_upload { TransferKind::Upload } else { TransferKind::Download },
+            kind: if is_upload {
+                TransferKind::Upload
+            } else {
+                TransferKind::Download
+            },
             local: local.clone(),
             remote: remote.clone(),
         };
         let cancel = CancellationToken::new();
-        h.transfers.lock().unwrap().insert(tid.clone(), cancel.clone());
+        h.transfers
+            .lock()
+            .unwrap()
+            .insert(tid.clone(), cancel.clone());
 
         // C5（§560）：创建先注册返回任务 ID 再开始读写——Queued 即注册表/journal/事件可见
         let task = TransferTask {
             id: tid.clone(),
             session_id: sid.clone(),
             kind: handle.kind,
-            source: if is_upload { local.display().to_string() } else { remote.clone() },
-            dest: if is_upload { remote.clone() } else { local.display().to_string() },
+            source: if is_upload {
+                local.display().to_string()
+            } else {
+                remote.clone()
+            },
+            dest: if is_upload {
+                remote.clone()
+            } else {
+                local.display().to_string()
+            },
             status: TransferStatus::Queued,
             bytes_done: 0,
             total: None,
@@ -3489,8 +4069,13 @@ impl SessionManager {
                 // 交接作废：任务从未开始读写——按 Cancelled 落账（§6.5 人类主权）
                 mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("接管作废".into()));
                 let _ = h2.center.audit.append(
-                    &ctx2, "transfer_voided", Some(&sid2), Some(&remote2),
-                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback"}), None);
+                    &ctx2,
+                    "transfer_voided",
+                    Some(&sid2),
+                    Some(&remote2),
+                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback"}),
+                    None,
+                );
                 h2.transfers.lock().unwrap().remove(&tid2);
                 return;
             }
@@ -3525,21 +4110,35 @@ impl SessionManager {
                 drop((gate_g, gate_s));
                 mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("接管作废".into()));
                 let _ = h2.center.audit.append(
-                    &ctx2, "transfer_voided", Some(&sid2), Some(&remote2),
-                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback_gated"}), None);
+                    &ctx2,
+                    "transfer_voided",
+                    Some(&sid2),
+                    Some(&remote2),
+                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback_gated"}),
+                    None,
+                );
                 h2.transfers.lock().unwrap().remove(&tid2);
                 return;
             }
             // R35：目录明确不支持（源侧判别；上传源=本地、下载源=远端）。
             // NotFound 同样在此如实失败（优于后续 File::open 的含糊 IO 文案）。
-            let src_path = if is_upload { local2.display().to_string() } else { remote2.clone() };
+            let src_path = if is_upload {
+                local2.display().to_string()
+            } else {
+                remote2.clone()
+            };
             match SessionManager::ns_stat(&h2, !is_upload, &src_path).await {
                 Ok(st) if st.is_dir => {
                     let msg = "目录传输不支持：仅支持单文件（目录请先打包）".to_string();
                     mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(msg.clone()));
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": msg}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": msg}),
+                        None,
+                    );
                     h2.transfers.lock().unwrap().remove(&tid2);
                     return;
                 }
@@ -3547,8 +4146,13 @@ impl SessionManager {
                     let msg = format!("源文件不存在：{src_path}");
                     mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(msg.clone()));
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": msg}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": msg}),
+                        None,
+                    );
                     h2.transfers.lock().unwrap().remove(&tid2);
                     return;
                 }
@@ -3560,17 +4164,23 @@ impl SessionManager {
             // 失败保留登记下次再试；Queued 未起传任务推导的 temp 不存在，连续
             // 失败 3 次自动作废）
             mgr.drain_pending_remote_temps(&h2).await;
-            let plan = match SessionManager::stage_plan(&h2, is_upload, &local2, &remote2, &tid2).await {
-                Ok(p) => p,
-                Err(e) => {
-                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
-                    let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
-                    h2.transfers.lock().unwrap().remove(&tid2);
-                    return;
-                }
-            };
+            let plan =
+                match SessionManager::stage_plan(&h2, is_upload, &local2, &remote2, &tid2).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
+                        let _ = h2.center.audit.append(
+                            &ctx2,
+                            "transfer_failed",
+                            Some(&sid2),
+                            Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "error": e.to_string()}),
+                            None,
+                        );
+                        h2.transfers.lock().unwrap().remove(&tid2);
+                        return;
+                    }
+                };
             // 同目标串行（DF6.4）：排队保持 Queued，持锁至终态（统一收尾释放）。
             // 锁内复查交接（排队期间接管=从未开始，按作废落账）。
             let lock = mgr.target_lock(&plan.lock_key);
@@ -3578,8 +4188,13 @@ impl SessionManager {
             if h2.generation.load(std::sync::atomic::Ordering::SeqCst) != gen {
                 mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("接管作废".into()));
                 let _ = h2.center.audit.append(
-                    &ctx2, "transfer_voided", Some(&sid2), Some(&remote2),
-                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback_locked"}), None);
+                    &ctx2,
+                    "transfer_voided",
+                    Some(&sid2),
+                    Some(&remote2),
+                    serde_json::json!({"transfer": tid2, "reason": "voided_by_handback_locked"}),
+                    None,
+                );
                 h2.transfers.lock().unwrap().remove(&tid2);
                 return;
             }
@@ -3597,29 +4212,55 @@ impl SessionManager {
                     self.h.transfers.lock().unwrap().remove(&self.tid);
                 }
             }
-            let g = Guard { h: h2.clone(), tid: tid2.clone() };
+            let g = Guard {
+                h: h2.clone(),
+                tid: tid2.clone(),
+            };
 
             // ---- 预检（数据阶段前；冲突先裁决不白传字节）----
             let mut intent: Option<String> = None; // None=原目标名（新文件）；Some=keep-both 候选名
             match SessionManager::ns_stat(&h2, is_upload, &plan.target).await {
                 Ok(st) => {
-                    let tstat = Some(TargetStat { size: st.size, mtime: st.mtime });
+                    let tstat = Some(TargetStat {
+                        size: st.size,
+                        mtime: st.mtime,
+                    });
                     match SessionManager::conflict_resolve(
-                        &mgr, &h2, &tid2, &cancel2, human_path, collision, is_upload, &plan.target, tstat,
-                        "target_exists", &plan.dir, &plan.name, &plan.temp, "preflight",
+                        &mgr,
+                        &h2,
+                        &tid2,
+                        &cancel2,
+                        human_path,
+                        collision,
+                        is_upload,
+                        &plan.target,
+                        tstat,
+                        "target_exists",
+                        &plan.dir,
+                        &plan.name,
+                        &plan.temp,
+                        "preflight",
                     )
                     .await
                     {
                         Some(cand) => intent = Some(cand),
-                        None => { g.done(); return; } // 终态已落（跳过/阻止/结构化失败）
+                        None => {
+                            g.done();
+                            return;
+                        } // 终态已落（跳过/阻止/结构化失败）
                     }
                 }
                 Err(Error::SftpPathNotFound { .. }) => {} // 新文件路径
                 Err(e) => {
                     mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": e.to_string()}),
+                        None,
+                    );
                     g.done();
                     return;
                 }
@@ -3667,8 +4308,13 @@ impl SessionManager {
                     SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
                     mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消".into()));
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}),
+                        None,
+                    );
                     g.done();
                     return;
                 }
@@ -3676,8 +4322,13 @@ impl SessionManager {
                     SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
                     mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(e.to_string()));
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": e.to_string()}),
+                        None,
+                    );
                     g.done();
                     return;
                 }
@@ -3693,8 +4344,13 @@ impl SessionManager {
                     );
                     mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(msg.clone()));
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": msg}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": msg}),
+                        None,
+                    );
                     g.done();
                     return;
                 }
@@ -3712,10 +4368,20 @@ impl SessionManager {
                 if rounds > 16 {
                     // 病态竞态回环防线：每轮复检不一致都真实重裁决，16 轮远超正常
                     SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
-                    mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some("发布复检竞态回环超限，已阻止提交".into()));
+                    mgr.transfer_finish(
+                        &tid2,
+                        TransferStatus::Failed,
+                        0,
+                        Some("发布复检竞态回环超限，已阻止提交".into()),
+                    );
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": "recheck loop bound"}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "recheck loop bound"}),
+                        None,
+                    );
                     g.done();
                     return;
                 }
@@ -3734,25 +4400,56 @@ impl SessionManager {
                 // 新冲突（L3：显式 overwrite 只针对预检所见那份）
                 match SessionManager::ns_stat(&h2, is_upload, &final_path).await {
                     Ok(st) => {
-                        let tstat = Some(TargetStat { size: st.size, mtime: st.mtime });
+                        let tstat = Some(TargetStat {
+                            size: st.size,
+                            mtime: st.mtime,
+                        });
                         match SessionManager::conflict_resolve(
-                            &mgr, &h2, &tid2, &cancel2, human_path, collision, is_upload, &final_path, tstat,
-                            "stat_changed_since_preflight", &plan.dir, &plan.name, &plan.temp, "recheck",
+                            &mgr,
+                            &h2,
+                            &tid2,
+                            &cancel2,
+                            human_path,
+                            collision,
+                            is_upload,
+                            &final_path,
+                            tstat,
+                            "stat_changed_since_preflight",
+                            &plan.dir,
+                            &plan.name,
+                            &plan.temp,
+                            "recheck",
                         )
                         .await
                         {
-                            Some(cand) => { intent = Some(cand); continue; }
-                            None => { g.done(); return; }
+                            Some(cand) => {
+                                intent = Some(cand);
+                                continue;
+                            }
+                            None => {
+                                g.done();
+                                return;
+                            }
                         }
                     }
                     Err(Error::SftpPathNotFound { .. }) => {} // 复检一致：目标不存在
                     Err(e) => {
                         // 复检通路失败=无法判定（提交未开始，确未提交）
                         SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
-                        mgr.transfer_finish(&tid2, TransferStatus::Failed, 0, Some(format!("复检失败（未提交）：{e}")));
+                        mgr.transfer_finish(
+                            &tid2,
+                            TransferStatus::Failed,
+                            0,
+                            Some(format!("复检失败（未提交）：{e}")),
+                        );
                         let _ = h2.center.audit.append(
-                            &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                            serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                            &ctx2,
+                            "transfer_failed",
+                            Some(&sid2),
+                            Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "error": e.to_string()}),
+                            None,
+                        );
                         g.done();
                         return;
                     }
@@ -3760,34 +4457,64 @@ impl SessionManager {
                 // 取消检查点（线性化点=下方 publish）：publish 前 → 确未提交
                 if cancel2.is_cancelled() {
                     SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
-                    mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消（提交窗口内）".into()));
+                    mgr.transfer_finish(
+                        &tid2,
+                        TransferStatus::Cancelled,
+                        0,
+                        Some("已取消（提交窗口内）".into()),
+                    );
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}),
+                        None,
+                    );
                     g.done();
                     return;
                 }
                 if fault::active("pre_publish") {
                     let _ = h2.center.audit.append(
-                        &ctx2, "fault_inject", Some(&sid2), None,
-                        serde_json::json!({"transfer": tid2, "point": "pre_publish"}), None);
+                        &ctx2,
+                        "fault_inject",
+                        Some(&sid2),
+                        None,
+                        serde_json::json!({"transfer": tid2, "point": "pre_publish"}),
+                        None,
+                    );
                 }
                 fault::pause("pre_publish").await;
                 // 暂停窗内到达的取消仍线性化在 publish 前（线性化点=publish 本身，
                 // 不是暂停起点——否则「取消」后目标仍被写入）
                 if cancel2.is_cancelled() {
                     SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
-                    mgr.transfer_finish(&tid2, TransferStatus::Cancelled, 0, Some("已取消（提交窗口内）".into()));
+                    mgr.transfer_finish(
+                        &tid2,
+                        TransferStatus::Cancelled,
+                        0,
+                        Some("已取消（提交窗口内）".into()),
+                    );
                     let _ = h2.center.audit.append(
-                        &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                        serde_json::json!({"transfer": tid2, "error": "已取消"}), None);
+                        &ctx2,
+                        "transfer_failed",
+                        Some(&sid2),
+                        Some(&remote2),
+                        serde_json::json!({"transfer": tid2, "error": "已取消"}),
+                        None,
+                    );
                     g.done();
                     return;
                 }
                 let publish_res = if fault::active("drop_link_response") && is_upload {
                     let _ = h2.center.audit.append(
-                        &ctx2, "fault_inject", Some(&sid2), None,
-                        serde_json::json!({"transfer": tid2, "point": "drop_link_response"}), None);
+                        &ctx2,
+                        "fault_inject",
+                        Some(&sid2),
+                        None,
+                        serde_json::json!({"transfer": tid2, "point": "drop_link_response"}),
+                        None,
+                    );
                     // C13 注入（分离续跑）：请求照发——服务端真实提交；应答弃收，
                     // 本侧按 Ambiguous 归一（提交与否不可知）。仅远端通路可注入
                     // （本地 syscall 无「应答丢失」形态）。
@@ -3808,12 +4535,18 @@ impl SessionManager {
                         mgr.transfer_mark_verified(&tid2);
                         if fault::active("post_verified") {
                             let _ = h2.center.audit.append(
-                                &ctx2, "fault_inject", Some(&sid2), None,
-                                serde_json::json!({"transfer": tid2, "point": "post_verified"}), None);
+                                &ctx2,
+                                "fault_inject",
+                                Some(&sid2),
+                                None,
+                                serde_json::json!({"transfer": tid2, "point": "post_verified"}),
+                                None,
+                            );
                         }
                         fault::pause("post_verified").await;
                         // temp 已提交为冗余：清理（失败非致命，审计留痕）
-                        if let Err(e) = SessionManager::ns_remove(&h2, is_upload, &plan.temp).await {
+                        if let Err(e) = SessionManager::ns_remove(&h2, is_upload, &plan.temp).await
+                        {
                             let _ = h2.center.audit.append(
                                 &ctx2, "transfer_temp_clean_failed", Some(&sid2), None,
                                 serde_json::json!({"transfer": tid2, "temp": plan.temp, "error": e.to_string()}), None);
@@ -3838,11 +4571,24 @@ impl SessionManager {
                     Ok(PublishOutcome::Unsupported) => {
                         // DF6.1：无经验证 no-clobber 能力 → 阻止发布（确未提交）
                         SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
-                        let msg = Error::ReplaceUnsupported { capability: "hardlink".into() }.to_string();
-                        mgr.transfer_finish(&tid2, TransferStatus::Failed, staged_bytes, Some(msg.clone()));
+                        let msg = Error::ReplaceUnsupported {
+                            capability: "hardlink".into(),
+                        }
+                        .to_string();
+                        mgr.transfer_finish(
+                            &tid2,
+                            TransferStatus::Failed,
+                            staged_bytes,
+                            Some(msg.clone()),
+                        );
                         let _ = h2.center.audit.append(
-                            &ctx2, "transfer_publish_blocked", Some(&sid2), Some(&remote2),
-                            serde_json::json!({"transfer": tid2, "capability": "hardlink"}), None);
+                            &ctx2,
+                            "transfer_publish_blocked",
+                            Some(&sid2),
+                            Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "capability": "hardlink"}),
+                            None,
+                        );
                         g.done();
                         return;
                     }
@@ -3851,24 +4597,54 @@ impl SessionManager {
                         // 目标此刻存在=竞态抢建 → 按冲突重裁决，否则真实错误
                         match SessionManager::ns_stat(&h2, is_upload, &final_path).await {
                             Ok(st) => {
-                                let tstat = Some(TargetStat { size: st.size, mtime: st.mtime });
+                                let tstat = Some(TargetStat {
+                                    size: st.size,
+                                    mtime: st.mtime,
+                                });
                                 match SessionManager::conflict_resolve(
-                                    &mgr, &h2, &tid2, &cancel2, human_path, collision, is_upload, &final_path,
-                                    tstat, "stat_changed_since_preflight", &plan.dir, &plan.name,
-                                    &plan.temp, "publish_raced",
+                                    &mgr,
+                                    &h2,
+                                    &tid2,
+                                    &cancel2,
+                                    human_path,
+                                    collision,
+                                    is_upload,
+                                    &final_path,
+                                    tstat,
+                                    "stat_changed_since_preflight",
+                                    &plan.dir,
+                                    &plan.name,
+                                    &plan.temp,
+                                    "publish_raced",
                                 )
                                 .await
                                 {
-                                    Some(cand) => { intent = Some(cand); continue; }
-                                    None => { g.done(); return; }
+                                    Some(cand) => {
+                                        intent = Some(cand);
+                                        continue;
+                                    }
+                                    None => {
+                                        g.done();
+                                        return;
+                                    }
                                 }
                             }
                             Err(_) => {
                                 SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
-                                mgr.transfer_finish(&tid2, TransferStatus::Failed, staged_bytes, Some(format!("发布被拒（未提交）：{reason}")));
+                                mgr.transfer_finish(
+                                    &tid2,
+                                    TransferStatus::Failed,
+                                    staged_bytes,
+                                    Some(format!("发布被拒（未提交）：{reason}")),
+                                );
                                 let _ = h2.center.audit.append(
-                                    &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                                    serde_json::json!({"transfer": tid2, "error": reason}), None);
+                                    &ctx2,
+                                    "transfer_failed",
+                                    Some(&sid2),
+                                    Some(&remote2),
+                                    serde_json::json!({"transfer": tid2, "error": reason}),
+                                    None,
+                                );
                                 g.done();
                                 return;
                             }
@@ -3881,25 +4657,43 @@ impl SessionManager {
                         mgr.transfer_apply(&tid2, |t| {
                             if !t.status.is_terminal() {
                                 t.status = TransferStatus::OutcomeUnknown;
-                                t.error = Some("发布应答丢失，提交结果未知（temp 保留；可在卡片「重新核实」）".into());
+                                t.error = Some(
+                                    "发布应答丢失，提交结果未知（temp 保留；可在卡片「重新核实」）"
+                                        .into(),
+                                );
                                 if t.finished_at.is_none() {
                                     t.finished_at = Some(now_unix());
                                 }
                             }
                         });
                         let _ = h2.center.audit.append(
-                            &ctx2, "transfer_outcome_unknown", Some(&sid2), Some(&remote2),
-                            serde_json::json!({"transfer": tid2, "phase": "live"}), None);
+                            &ctx2,
+                            "transfer_outcome_unknown",
+                            Some(&sid2),
+                            Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "phase": "live"}),
+                            None,
+                        );
                         g.done();
                         return;
                     }
                     Err(e) => {
                         // 发布调用未发出（通路失败）→ 确定未提交
                         SessionManager::cleanup_temp(&h2, is_upload, &plan.temp).await;
-                        mgr.transfer_finish(&tid2, TransferStatus::Failed, staged_bytes, Some(e.to_string()));
+                        mgr.transfer_finish(
+                            &tid2,
+                            TransferStatus::Failed,
+                            staged_bytes,
+                            Some(e.to_string()),
+                        );
                         let _ = h2.center.audit.append(
-                            &ctx2, "transfer_failed", Some(&sid2), Some(&remote2),
-                            serde_json::json!({"transfer": tid2, "error": e.to_string()}), None);
+                            &ctx2,
+                            "transfer_failed",
+                            Some(&sid2),
+                            Some(&remote2),
+                            serde_json::json!({"transfer": tid2, "error": e.to_string()}),
+                            None,
+                        );
                         g.done();
                         return;
                     }
@@ -3920,9 +4714,9 @@ impl SessionManager {
     async fn retry_transfer(&self, ctx: &Actor, task_id: &TransferId) -> Result<TransferHandle> {
         let old = {
             let reg = self.transfers.lock().unwrap();
-            let e = reg.get(task_id).ok_or_else(|| {
-                Error::InvalidInput(format!("transfer not found: {task_id}"))
-            })?;
+            let e = reg
+                .get(task_id)
+                .ok_or_else(|| Error::InvalidInput(format!("transfer not found: {task_id}")))?;
             e.task.clone()
         };
         match old.status {
@@ -3946,20 +4740,41 @@ impl SessionManager {
         }
         let sid = old.session_id.clone();
         let (local, remote, is_upload) = if old.kind == TransferKind::Upload {
-            (std::path::PathBuf::from(&old.source), old.dest.clone(), true)
+            (
+                std::path::PathBuf::from(&old.source),
+                old.dest.clone(),
+                true,
+            )
         } else {
-            (std::path::PathBuf::from(&old.dest), old.source.clone(), false)
+            (
+                std::path::PathBuf::from(&old.dest),
+                old.source.clone(),
+                false,
+            )
         };
         let h = self.get(&sid)?;
         if !ctx.is_human() && *h.owner.lock().await == ControlOwner::Human {
             return Err(Error::ControlTakenByHuman);
         }
         let handle = self
-            .transfer(ctx, sid, local, remote, is_upload, None, Some(task_id.clone()))
+            .transfer(
+                ctx,
+                sid,
+                local,
+                remote,
+                is_upload,
+                None,
+                Some(task_id.clone()),
+            )
             .await?;
         let _ = self.center.audit.append(
-            ctx, "transfer_retry", Some(&old.session_id), Some(&old.dest),
-            serde_json::json!({"retry_of": task_id, "new": handle.id}), None);
+            ctx,
+            "transfer_retry",
+            Some(&old.session_id),
+            Some(&old.dest),
+            serde_json::json!({"retry_of": task_id, "new": handle.id}),
+            None,
+        );
         Ok(handle)
     }
 
@@ -3971,11 +4786,7 @@ impl SessionManager {
     // 下载分支产本地 canonical），绝不经 ChannelHandle 路由——SSH 通路的这些
     // 方法是远端 SFTP 语义，本地路径会恒 NotFound（temp 核对必失败、下载冲突
     // 面失效）。本地语义唯一源=session_api::local_*（transport-pty 同源委托）。
-    async fn ns_stat(
-        h: &Arc<SessionHandle>,
-        is_upload: bool,
-        path: &str,
-    ) -> Result<EntryStat> {
+    async fn ns_stat(h: &Arc<SessionHandle>, is_upload: bool, path: &str) -> Result<EntryStat> {
         if is_upload {
             h.channel.stat_entry(path).await
         } else {
@@ -4018,7 +4829,11 @@ impl SessionManager {
             }
             let (dir, name) = match trimmed.rsplit_once('/') {
                 Some((d, n)) if !n.is_empty() => (
-                    if d.is_empty() { "/".to_string() } else { d.to_string() },
+                    if d.is_empty() {
+                        "/".to_string()
+                    } else {
+                        d.to_string()
+                    },
                     n.to_string(),
                 ),
                 Some(_) => return Err(Error::InvalidInput(format!("上传目标以 / 结尾：{remote}"))),
@@ -4087,7 +4902,9 @@ impl SessionManager {
         }
         let dest = std::path::Path::new(&t.dest);
         let Some(dir) = dest.parent() else { return };
-        let Some(name) = dest.file_name().and_then(|n| n.to_str()) else { return };
+        let Some(name) = dest.file_name().and_then(|n| n.to_str()) else {
+            return;
+        };
         let tmp = dir.join(format!(".tinyssh-part-{}-{}", t.id, name));
         if tmp.exists() {
             let _ = std::fs::remove_file(&tmp);
@@ -4107,7 +4924,11 @@ impl SessionManager {
         }
         let (dir, name) = match trimmed.rsplit_once('/') {
             Some((d, n)) if !n.is_empty() => (
-                if d.is_empty() { "/".to_string() } else { d.to_string() },
+                if d.is_empty() {
+                    "/".to_string()
+                } else {
+                    d.to_string()
+                },
                 n.to_string(),
             ),
             Some(_) => return None,
@@ -4131,7 +4952,9 @@ impl SessionManager {
             map.remove(&h.id).unwrap_or_default()
         };
         for (t, mut fails) in tasks.drain(..) {
-            let Some(temp) = Self::remote_temp_of(h, &t).await else { continue };
+            let Some(temp) = Self::remote_temp_of(h, &t).await else {
+                continue;
+            };
             match h.channel.remove_file(&temp).await {
                 Ok(_) => {
                     let _ = self.center.audit.append(
@@ -4201,7 +5024,9 @@ impl SessionManager {
                 Err(e) => return Err(e),
             }
         }
-        Err(Error::InvalidInput(format!("keep-both 候选名耗尽（{name}）")))
+        Err(Error::InvalidInput(format!(
+            "keep-both 候选名耗尽（{name}）"
+        )))
     }
 
     /// C6/R34：冲突共径（预检/复检/发布竞态三入口）。人类 → AwaitingDecision
@@ -4226,7 +5051,10 @@ impl SessionManager {
         _phase: &str,
     ) -> Option<String> {
         if human {
-            match mgr.transfer_await_decision(tid, target_path, target_stat, reason, cancel).await {
+            match mgr
+                .transfer_await_decision(tid, target_path, target_stat, reason, cancel)
+                .await
+            {
                 None => None, // 取消/作废：终态已落
                 Some(CollisionDecision::Skip) => {
                     SessionManager::cleanup_temp(h, is_upload, temp).await;
@@ -4237,7 +5065,10 @@ impl SessionManager {
                     // DF6.1 冻结：目标版本约束（CAS）原语不可得 → 覆盖发布一律阻止，
                     // 原目标零改动；确未提交 → temp 清理
                     SessionManager::cleanup_temp(h, is_upload, temp).await;
-                    let msg = Error::ReplaceUnsupported { capability: "target_version_constraint".into() }.to_string();
+                    let msg = Error::ReplaceUnsupported {
+                        capability: "target_version_constraint".into(),
+                    }
+                    .to_string();
                     mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
                     None
                 }
@@ -4246,7 +5077,12 @@ impl SessionManager {
                         Ok(c) => Some(c),
                         Err(e) => {
                             SessionManager::cleanup_temp(h, is_upload, temp).await;
-                            mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(e.to_string()));
+                            mgr.transfer_finish(
+                                tid,
+                                TransferStatus::Failed,
+                                0,
+                                Some(e.to_string()),
+                            );
                             None
                         }
                     }
@@ -4261,7 +5097,10 @@ impl SessionManager {
                 }
                 Some(CollisionDecision::Overwrite) => {
                     SessionManager::cleanup_temp(h, is_upload, temp).await;
-                    let msg = Error::ReplaceUnsupported { capability: "target_version_constraint".into() }.to_string();
+                    let msg = Error::ReplaceUnsupported {
+                        capability: "target_version_constraint".into(),
+                    }
+                    .to_string();
                     mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
                     None
                 }
@@ -4304,9 +5143,8 @@ impl SessionManager {
         explicit: Option<&Path>,
     ) -> Result<(PathBuf, Vec<tinyssh_vault::sshcfg::SshConfigEntry>)> {
         let path = Self::ssh_config_path(explicit);
-        let content = std::fs::read_to_string(&path).map_err(|e| {
-            Error::InvalidInput(format!("读取 {} 失败: {e}", path.display()))
-        })?;
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| Error::InvalidInput(format!("读取 {} 失败: {e}", path.display())))?;
         let mut entries = tinyssh_vault::sshcfg::parse_ssh_config(&content);
         // 同名 Host 块会被 ssh 合并；去重避免重复导入
         entries.dedup_by(|a, b| a.name == b.name);
@@ -4329,10 +5167,7 @@ impl SessionManager {
     /// 预览（C7）：解析 + DF7.1 分级 + 与现有主机对账（同名或同 address+port+user
     /// 视为已导入）。无 User 条目不静默 root——user_specified=false、
     /// directly_importable=false（DF7.5），username 仅作兜底猜测值。
-    pub async fn ssh_config_preview(
-        &self,
-        path: Option<&Path>,
-    ) -> Result<Vec<SshConfigPreview>> {
+    pub async fn ssh_config_preview(&self, path: Option<&Path>) -> Result<Vec<SshConfigPreview>> {
         let (cfg_path, entries) = Self::load_entries(path)?;
         let existing = self.list_hosts(&Actor::Human).await?;
         Ok(entries
@@ -4356,9 +5191,7 @@ impl SessionManager {
                 SshConfigPreview {
                     already_imported: existing.iter().any(|h| {
                         h.name == e.name
-                            || (h.address == e.address
-                                && h.port == port
-                                && h.username == username)
+                            || (h.address == e.address && h.port == port && h.username == username)
                     }),
                     has_identity: e.identity_path.is_some(),
                     directly_importable: Self::directly_importable(&e),
@@ -4418,7 +5251,15 @@ impl SessionManager {
         // 同三元组条目按 Duplicate 跳过（不双落库），与重新预览的对账一致
         let mut known: Vec<(String, String, String, u16, String)> = existing
             .iter()
-            .map(|h| (h.id.clone(), h.name.clone(), h.address.clone(), h.port, h.username.clone()))
+            .map(|h| {
+                (
+                    h.id.clone(),
+                    h.name.clone(),
+                    h.address.clone(),
+                    h.port,
+                    h.username.clone(),
+                )
+            })
             .collect();
         for name in names {
             let skipped = |reason: SshSkipReason| SshImportOutcome {
@@ -4478,7 +5319,9 @@ impl SessionManager {
                                 }
                                 other => other,
                             })?;
-                        AuthDraft::Key { identity_id: meta.id }
+                        AuthDraft::Key {
+                            identity_id: meta.id,
+                        }
                     }
                     None => AuthDraft::Agent,
                 };
@@ -4501,7 +5344,13 @@ impl SessionManager {
             .await;
             match r {
                 Ok(hid) => {
-                    known.push((hid.clone(), name.clone(), entry.address.clone(), port, username.clone()));
+                    known.push((
+                        hid.clone(),
+                        name.clone(),
+                        entry.address.clone(),
+                        port,
+                        username.clone(),
+                    ));
                     out.push(SshImportOutcome {
                         name: name.clone(),
                         host_id: Some(hid),
@@ -4531,10 +5380,18 @@ mod t44_tests {
     fn reject_edited_approval_gates_non_exec_cards() {
         let orig = "端口转发 -L 127.0.0.1:8080 → 10.0.0.1:22";
         assert!(SessionManager::reject_edited_approval(&None, orig, "端口转发审批").is_ok());
-        assert!(SessionManager::reject_edited_approval(&Some(orig.to_string()), orig, "端口转发审批").is_ok());
+        assert!(SessionManager::reject_edited_approval(
+            &Some(orig.to_string()),
+            orig,
+            "端口转发审批"
+        )
+        .is_ok());
         let err = SessionManager::reject_edited_approval(
-            &Some("端口转发 -L 127.0.0.1:9999 → 别处:22".to_string()), orig, "端口转发审批",
-        ).unwrap_err();
+            &Some("端口转发 -L 127.0.0.1:9999 → 别处:22".to_string()),
+            orig,
+            "端口转发审批",
+        )
+        .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("不支持编辑后批准"), "{msg}");
         assert!(msg.contains("端口转发审批"), "报错应指明卡类：{msg}");
@@ -4578,39 +5435,80 @@ mod r41_tests;
 mod r42_tests;
 
 #[cfg(test)]
-#[path = "r43_tests.rs"]
-mod r43_tests;
+#[path = "log_tests.rs"]
+mod log_tests;
 #[cfg(test)]
 #[path = "quick_tests.rs"]
 mod quick_tests;
 #[cfg(test)]
-#[path = "log_tests.rs"]
-mod log_tests;
+#[path = "r43_tests.rs"]
+mod r43_tests;
 #[cfg(test)]
 mod c10_tests {
     //! C10 订阅恢复与生命周期（R11）。不建真 PTY：手工装配 SessionHandle
     //! （屏幕/环/注册表全 pub 字段），以 handle::feed_output 走唯一线性化点。
 
     use super::*;
-    use crate::handle::{REPLAY_CAP_BYTES, ReplayRing};
+    use crate::handle::{ReplayRing, REPLAY_CAP_BYTES};
     use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
-    
 
     struct StubChannel;
     #[async_trait::async_trait]
     impl ChannelHandle for StubChannel {
-        async fn write(&self, _data: &[u8]) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
-        async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> { Ok(()) }
-        async fn exec_fresh(&self, _cmd: &str, _opts: &ExecOpts, _deadline: std::time::Instant, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<FreshOutcome> { Err(Error::InvalidInput("stub".into())) }
-        async fn signal(&self, _sig: TransportSignal) -> Result<()> { Ok(()) }
-        async fn force_close(&self) -> Result<()> { Ok(()) }
-        fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> { broadcast::channel(1).1 }
-        async fn is_alive(&self) -> bool { false }
-        async fn reconnect(&self) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
-        async fn close(&self) -> Result<()> { Ok(()) }
-        async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
-        async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
-        async fn list_dir(&self, _path: &str) -> Result<Vec<DirEntryS>> { Err(Error::InvalidInput("stub".into())) }
+        async fn write(&self, _data: &[u8]) -> Result<()> {
+            Err(Error::InvalidInput("stub".into()))
+        }
+        async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
+            Ok(())
+        }
+        async fn exec_fresh(
+            &self,
+            _cmd: &str,
+            _opts: &ExecOpts,
+            _deadline: std::time::Instant,
+            _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        ) -> Result<FreshOutcome> {
+            Err(Error::InvalidInput("stub".into()))
+        }
+        async fn signal(&self, _sig: TransportSignal) -> Result<()> {
+            Ok(())
+        }
+        async fn force_close(&self) -> Result<()> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> {
+            broadcast::channel(1).1
+        }
+        async fn is_alive(&self) -> bool {
+            false
+        }
+        async fn reconnect(&self) -> Result<()> {
+            Err(Error::InvalidInput("stub".into()))
+        }
+        async fn close(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn upload(
+            &self,
+            _local: &std::path::Path,
+            _remote: &str,
+            _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+            _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+        ) -> Result<u64> {
+            Err(Error::InvalidInput("stub".into()))
+        }
+        async fn download(
+            &self,
+            _remote: &str,
+            _local: &std::path::Path,
+            _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+            _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+        ) -> Result<u64> {
+            Err(Error::InvalidInput("stub".into()))
+        }
+        async fn list_dir(&self, _path: &str) -> Result<Vec<DirEntryS>> {
+            Err(Error::InvalidInput("stub".into()))
+        }
     }
 
     fn mgr() -> Arc<SessionManager> {
@@ -4639,9 +5537,20 @@ mod c10_tests {
             shell_integration: None,
         };
         let screen = term_core::Screen::new(term_core::ScreenConfig {
-            cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20,
+            cols: 80,
+            rows: 24,
+            scrollback: 100,
+            lossless_cap: 1 << 20,
         });
-        SessionHandle::new("s-c10".into(), host, "local".into(), Arc::new(StubChannel), screen, center, ControlOwner::Agent)
+        SessionHandle::new(
+            "s-c10".into(),
+            host,
+            "local".into(),
+            Arc::new(StubChannel),
+            screen,
+            center,
+            ControlOwner::Agent,
+        )
     }
 
     /// 注册一个手装会话（绕过 create_session 的真实传输）。
@@ -4682,13 +5591,27 @@ mod c10_tests {
         let mut map = HashMap::new();
         map.insert("t0".to_string(), mk_attempt("t0", AttemptPhase::Failed, 40));
         map.insert("t1".to_string(), mk_attempt("t1", AttemptPhase::Failed, 30));
-        map.insert("t2".to_string(), mk_attempt("t2", AttemptPhase::Cancelled, 20));
-        map.insert("a0".to_string(), mk_attempt("a0", AttemptPhase::Connecting, 10));
-        map.insert("a1".to_string(), mk_attempt("a1", AttemptPhase::Connecting, 5));
+        map.insert(
+            "t2".to_string(),
+            mk_attempt("t2", AttemptPhase::Cancelled, 20),
+        );
+        map.insert(
+            "a0".to_string(),
+            mk_attempt("a0", AttemptPhase::Connecting, 10),
+        );
+        map.insert(
+            "a1".to_string(),
+            mk_attempt("a1", AttemptPhase::Connecting, 5),
+        );
         SessionManager::gc_attempts(&mut map, 4);
         assert_eq!(map.len(), 4, "超限 1 条：只淘汰最旧终态");
         assert!(!map.contains_key("t0"), "终态最旧先淘汰");
-        assert!(map.contains_key("t1") && map.contains_key("t2") && map.contains_key("a0") && map.contains_key("a1"));
+        assert!(
+            map.contains_key("t1")
+                && map.contains_key("t2")
+                && map.contains_key("a0")
+                && map.contains_key("a1")
+        );
         // 未超限不动
         SessionManager::gc_attempts(&mut map, 8);
         assert_eq!(map.len(), 4);
@@ -4735,7 +5658,10 @@ mod c10_tests {
         let h = mk_handle(m.center.clone());
         register(&m, h.clone());
         *h.state.lock().await = session_api::SessionState::Disconnected;
-        h.transitions.lock().await.push((chrono::Utc::now(), "测试接管".into()));
+        h.transitions
+            .lock()
+            .await
+            .push((chrono::Utc::now(), "测试接管".into()));
         *h.goal.lock().unwrap() = Some("排查磁盘".into());
         let b = crate::brief::compute(&h).await;
         // 断线 → 运行中任务状态未知（nohup/systemd 可能仍在跑，不得当作已结束）
@@ -4746,7 +5672,10 @@ mod c10_tests {
             .expect("断线态应有「运行中任务未知」事实");
         assert_eq!(run_fact.status, session_api::Epistemic::Unobservable);
         // 控制权变迁进 facts
-        assert!(b.facts.iter().any(|f| f.subject == "控制权" && f.detail.contains("测试接管")));
+        assert!(b
+            .facts
+            .iter()
+            .any(|f| f.subject == "控制权" && f.detail.contains("测试接管")));
         assert_eq!(b.goal.as_deref(), Some("排查磁盘"));
         // fresh handle 无 cwd → 无 cwd 事实
         assert!(b.cwd.is_none());
@@ -4765,8 +5694,16 @@ mod c10_tests {
         // 水位 = 最后已包含事件的序号（包含）
         assert_eq!(attach.start_seq, 2);
         // 检查点包含末事件内容（不能截到已推进 seq、尚未应用到屏幕）
-        let joined: String = attach.checkpoint.buffers[0].lines.iter().flatten().map(|r| r.text.as_str()).collect();
-        assert!(joined.contains("one") && joined.contains("two"), "{joined:?}");
+        let joined: String = attach.checkpoint.buffers[0]
+            .lines
+            .iter()
+            .flatten()
+            .map(|r| r.text.as_str())
+            .collect();
+        assert!(
+            joined.contains("one") && joined.contains("two"),
+            "{joined:?}"
+        );
         assert_eq!(m.debug_subscriptions().active_count, 1);
     }
 
@@ -4782,13 +5719,21 @@ mod c10_tests {
         let sub = attach.subscription_id;
         // attach 已在 seq3 捕获检查点：from=1 早于检查点 →「检查点更近」走 checkpoint（契约字面）
         assert!(matches!(
-            m.resync_output("s-c10".into(), &sub, Some(1)).await.unwrap(),
+            m.resync_output("s-c10".into(), &sub, Some(1))
+                .await
+                .unwrap(),
             ResyncOutput::Checkpointed { .. }
         ));
         // attach 后新事件 seq4：from=3（恰为水位）→ 重放 [4]；水位包含末事件
         h.feed_output(b"c4").await;
-        match m.resync_output("s-c10".into(), &sub, Some(3)).await.unwrap() {
-            ResyncOutput::Replayed { events, end_seq, .. } => {
+        match m
+            .resync_output("s-c10".into(), &sub, Some(3))
+            .await
+            .unwrap()
+        {
+            ResyncOutput::Replayed {
+                events, end_seq, ..
+            } => {
                 assert_eq!(events.len(), 1);
                 assert_eq!(events[0].seq, 4);
                 assert_eq!(end_seq, 4);
@@ -4796,15 +5741,25 @@ mod c10_tests {
             other => panic!("expected replay, got {other:?}"),
         }
         // seq 恰等于水位（4=cur）：不重放（空 events）
-        match m.resync_output("s-c10".into(), &sub, Some(4)).await.unwrap() {
-            ResyncOutput::Replayed { events, end_seq, .. } => {
+        match m
+            .resync_output("s-c10".into(), &sub, Some(4))
+            .await
+            .unwrap()
+        {
+            ResyncOutput::Replayed {
+                events, end_seq, ..
+            } => {
                 assert!(events.is_empty());
                 assert_eq!(end_seq, 4);
             }
             other => panic!("expected empty replay, got {other:?}"),
         }
         // UI 领先核心（不可能态）：同样空重放
-        match m.resync_output("s-c10".into(), &sub, Some(9)).await.unwrap() {
+        match m
+            .resync_output("s-c10".into(), &sub, Some(9))
+            .await
+            .unwrap()
+        {
             ResyncOutput::Replayed { events, .. } => assert!(events.is_empty()),
             other => panic!("expected empty replay, got {other:?}"),
         }
@@ -4816,13 +5771,29 @@ mod c10_tests {
         let h = mk_handle(m.center.clone());
         register(&m, h.clone());
         h.feed_output(b"x").await;
-        let old = m.subscribe_output_channel("s-c10".into()).await.unwrap().0.subscription_id;
+        let old = m
+            .subscribe_output_channel("s-c10".into())
+            .await
+            .unwrap()
+            .0
+            .subscription_id;
         m.unsubscribe_output("s-c10".into(), &old).await.unwrap();
         // 过期订阅：拒绝（不改任何状态），且不得回落到同 session 新订阅
-        assert!(m.resync_output("s-c10".into(), &old, Some(1)).await.is_err());
-        let new = m.subscribe_output_channel("s-c10".into()).await.unwrap().0.subscription_id;
+        assert!(m
+            .resync_output("s-c10".into(), &old, Some(1))
+            .await
+            .is_err());
+        let new = m
+            .subscribe_output_channel("s-c10".into())
+            .await
+            .unwrap()
+            .0
+            .subscription_id;
         assert_ne!(old, new);
-        assert!(m.resync_output("s-c10".into(), &old, Some(1)).await.is_err());
+        assert!(m
+            .resync_output("s-c10".into(), &old, Some(1))
+            .await
+            .is_err());
         // 新订阅正常
         assert!(m.resync_output("s-c10".into(), &new, Some(1)).await.is_ok());
         // 退订幂等：重复/旧身份 no-op
@@ -4841,14 +5812,32 @@ mod c10_tests {
         for i in 1..=3 {
             h.feed_output(format!("c{i}").as_bytes()).await;
         }
-        let sub = m.subscribe_output_channel("s-c10".into()).await.unwrap().0.subscription_id;
+        let sub = m
+            .subscribe_output_channel("s-c10".into())
+            .await
+            .unwrap()
+            .0
+            .subscription_id;
         h.feed_output(b"post-attach").await;
         // 淘汰：清空重放环（模拟窗口滑出）→ checkpoint 路径
         h.replay.lock().unwrap().q.clear();
-        match m.resync_output("s-c10".into(), &sub, Some(1)).await.unwrap() {
-            ResyncOutput::Checkpointed { end_seq, checkpoint, .. } => {
+        match m
+            .resync_output("s-c10".into(), &sub, Some(1))
+            .await
+            .unwrap()
+        {
+            ResyncOutput::Checkpointed {
+                end_seq,
+                checkpoint,
+                ..
+            } => {
                 assert_eq!(end_seq, 4);
-                let joined: String = checkpoint.buffers[0].lines.iter().flatten().map(|r| r.text.as_str()).collect();
+                let joined: String = checkpoint.buffers[0]
+                    .lines
+                    .iter()
+                    .flatten()
+                    .map(|r| r.text.as_str())
+                    .collect();
                 assert!(joined.contains("post-attach"));
             }
             other => panic!("expected checkpoint, got {other:?}"),
@@ -4856,7 +5845,11 @@ mod c10_tests {
         // alt_screen 活跃 → checkpoint 路径（C-03）
         h.replay.lock().unwrap().q.clear();
         h.feed_output(b"\x1b[?1049h\x1b[2J\x1b[Halt-on").await;
-        match m.resync_output("s-c10".into(), &sub, Some(2)).await.unwrap() {
+        match m
+            .resync_output("s-c10".into(), &sub, Some(2))
+            .await
+            .unwrap()
+        {
             ResyncOutput::Checkpointed { checkpoint, .. } => {
                 assert_eq!(checkpoint.active_buffer, 1);
             }
@@ -4873,8 +5866,12 @@ mod c10_tests {
         let (attach, _, _) = m.subscribe_output_channel("s-c10".into()).await.unwrap();
         assert_eq!(attach.start_seq, 1); // attach 已捕获检查点 @1
         h.feed_output(b"b").await; // seq 2
-        // from=0：检查点(@1) 比 from 更近 → checkpoint 路径（契约字面）
-        match m.resync_output("s-c10".into(), &attach.subscription_id, Some(0)).await.unwrap() {
+                                   // from=0：检查点(@1) 比 from 更近 → checkpoint 路径（契约字面）
+        match m
+            .resync_output("s-c10".into(), &attach.subscription_id, Some(0))
+            .await
+            .unwrap()
+        {
             ResyncOutput::Checkpointed { end_seq, .. } => assert_eq!(end_seq, 2),
             other => panic!("expected checkpoint, got {other:?}"),
         }

@@ -41,7 +41,10 @@ pub struct SshConfigEntry {
 
 /// DF7.1 阻断级指令：影响建连路径/认证来源，V1 不跟随其语义
 fn is_blocking_key(key: &str) -> bool {
-    matches!(key, "proxyjump" | "proxycommand" | "proxyusefdpass" | "certificatefile" | "include")
+    matches!(
+        key,
+        "proxyjump" | "proxycommand" | "proxyusefdpass" | "certificatefile" | "include"
+    )
 }
 
 /// 影子登记（first-obtained-wins：首现即胜，后续同名键不覆盖早前记录）
@@ -92,7 +95,9 @@ pub fn parse_ssh_config(content: &str) -> Vec<SshConfigEntry> {
         if line.is_empty() {
             continue;
         }
-        let Some((key_raw, value)) = split_kv(&line) else { continue };
+        let Some((key_raw, value)) = split_kv(&line) else {
+            continue;
+        };
         let key = key_raw.to_ascii_lowercase();
         match key.as_str() {
             "host" => {
@@ -143,7 +148,9 @@ pub fn parse_ssh_config(content: &str) -> Vec<SshConfigEntry> {
                     push_shadow(&mut shadow, &key, lineno);
                 }
                 match key.as_str() {
-                    "hostname" | "user" | "port" | "identityfile" => push_shadow(&mut shadow, &key, lineno),
+                    "hostname" | "user" | "port" | "identityfile" => {
+                        push_shadow(&mut shadow, &key, lineno)
+                    }
                     _ => {}
                 }
             }
@@ -364,7 +371,8 @@ mod tests {
         let es = parse_ssh_config(cfg);
         assert_eq!(es.len(), 1);
         assert!(
-            es[0].unsupported
+            es[0]
+                .unsupported
                 .iter()
                 .any(|u| u.directive == "proxyjump" && u.blocking),
             "{:?}",
@@ -375,7 +383,8 @@ mod tests {
     #[test]
     fn match_warning_keys_do_not_shadow() {
         // 警告级键不入影子（不影响连通语义，避免后续条目误标阻断）
-        let cfg = "Match all\n  ServerAliveInterval 30\n\nHost web\n  HostName 10.0.0.8\n  User ops\n";
+        let cfg =
+            "Match all\n  ServerAliveInterval 30\n\nHost web\n  HostName 10.0.0.8\n  User ops\n";
         let es = parse_ssh_config(cfg);
         assert_eq!(es.len(), 1);
         assert!(es[0].unsupported.is_empty(), "{:?}", es[0].unsupported);
@@ -384,10 +393,15 @@ mod tests {
     /// rev-r22 L1 判别：影子登记首现即胜——多个通配块设同名键只记一次
     #[test]
     fn shadow_push_dedups() {
-        let cfg = "Host *.a\n  User one\n\nHost *.b\n  User two\n\nHost real\n  HostName 10.0.0.7\n";
+        let cfg =
+            "Host *.a\n  User one\n\nHost *.b\n  User two\n\nHost real\n  HostName 10.0.0.7\n";
         let es = parse_ssh_config(cfg);
         let e = es.iter().find(|e| e.name == "real").unwrap();
-        let users: Vec<_> = e.unsupported.iter().filter(|u| u.directive == "user").collect();
+        let users: Vec<_> = e
+            .unsupported
+            .iter()
+            .filter(|u| u.directive == "user")
+            .collect();
         assert_eq!(users.len(), 1, "影子 user 只登记首个: {:?}", e.unsupported);
         assert_eq!(users[0].line, 2);
     }
@@ -423,7 +437,10 @@ mod tests {
     fn include_in_block_is_blocking() {
         let cfg = "Host a\n  Include ~/.ssh/config.d/work\n";
         let e = &parse_ssh_config(cfg)[0];
-        assert!(e.unsupported.iter().any(|u| u.blocking && u.directive == "include"));
+        assert!(e
+            .unsupported
+            .iter()
+            .any(|u| u.blocking && u.directive == "include"));
     }
 
     #[test]
@@ -454,7 +471,11 @@ mod tests {
         let cfg = "Host *\n  Compression yes\nHost web\n  User u\n";
         let e = &parse_ssh_config(cfg)[0];
         assert_eq!(e.name, "web");
-        assert!(e.unsupported.iter().all(|u| !u.blocking), "{:?}", e.unsupported);
+        assert!(
+            e.unsupported.iter().all(|u| !u.blocking),
+            "{:?}",
+            e.unsupported
+        );
     }
 
     #[test]
@@ -462,7 +483,10 @@ mod tests {
         // DF7.2：顶层 Include V1 不跟随——其后所有条目阻断（值可能来自被包含文件）
         let cfg = "Include ~/.ssh/config.d/*\n\nHost web\n  User u\n";
         let e = &parse_ssh_config(cfg)[0];
-        assert!(e.unsupported.iter().any(|u| u.blocking && u.directive == "include"));
+        assert!(e
+            .unsupported
+            .iter()
+            .any(|u| u.blocking && u.directive == "include"));
         assert_eq!(e.unsupported[0].line, 1);
     }
 
@@ -471,7 +495,10 @@ mod tests {
         // `Host web web-*`：web-* 可匹配后续主机 → 块内五键入影子
         let cfg = "Host web web-*\n  User ops\nHost web2\n  User u\n";
         let e = &parse_ssh_config(cfg)[1];
-        assert!(e.unsupported.iter().any(|u| u.blocking && u.directive == "user"));
+        assert!(e
+            .unsupported
+            .iter()
+            .any(|u| u.blocking && u.directive == "user"));
     }
 
     #[test]

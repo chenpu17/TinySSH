@@ -1,17 +1,19 @@
-
 //! SSH 通路（russh 0.63）：持久 shell channel（PTY）+ 同连接 Fresh exec channel + SFTP。
 //! 主机指纹 TOFU 记录；断线检测 + 重连；shell 集成由 core 在会话建立后注入。
 
 use async_trait::async_trait;
 use russh::client::{self, Handle};
 use russh::keys::{decode_secret_key, PrivateKeyWithHashAlg};
-use russh::{Channel, ChannelMsg, ChannelWriteHalf};
 use russh::Disconnect;
+use russh::{Channel, ChannelMsg, ChannelWriteHalf};
+use russh_sftp::protocol::StatusCode;
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
-use russh_sftp::protocol::StatusCode;
-use session_api::{AuthType, DirEntryS, EntryKind, EntryStat, Error, ExecOpts, ForwardId, ForwardInfo, ForwardSpec, PathResolved, PublishOutcome, Result};
 use session_api::ForwardStateCb;
+use session_api::{
+    AuthType, DirEntryS, EntryKind, EntryStat, Error, ExecOpts, ForwardId, ForwardInfo,
+    ForwardSpec, PathResolved, PublishOutcome, Result,
+};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -29,7 +31,11 @@ pub type HostKeyCheck = Arc<
 /// 2FA 人工应答门（路线图⑩）：keyboard-interactive 非密码类提示交人类应答。
 /// Ok(None) = 人类取消/通道不可用（认证终止）。None 门 = 遇到非密码提示即失败。
 pub type KbPromptCheck = Arc<
-    dyn Fn(&str, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<String>>> + Send>>
+    dyn Fn(
+            &str,
+            bool,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<String>>> + Send>>
         + Send
         + Sync,
 >;
@@ -272,12 +278,19 @@ impl SshChannel {
             host_key_check: self.target.host_key_check.clone(),
             seen_fingerprint: self.seen_fingerprint.clone(),
             router: self.router.clone(),
-        };        let handle = tokio::time::timeout(
+        };
+        let handle = tokio::time::timeout(
             CONNECT_PHASE_TIMEOUT,
-            russh::client::connect(ssh_config(), (self.target.address.as_str(), self.target.port), handler),
+            russh::client::connect(
+                ssh_config(),
+                (self.target.address.as_str(), self.target.port),
+                handler,
+            ),
         )
         .await
-        .map_err(|_| Error::ConnectFailed("connect timeout（10s 内未完成 TCP/banner 交换）".into()))?
+        .map_err(|_| {
+            Error::ConnectFailed("connect timeout（10s 内未完成 TCP/banner 交换）".into())
+        })?
         .map_err(|e| match e {
             // 指纹门拒绝等 Api 错误原样透传（UI 显示"主机指纹验证失败（…）"）
             SshError::Api(e) => e,
@@ -309,8 +322,8 @@ impl SshChannel {
                 russh::client::AuthResult::Success
             }
             AuthType::Key => {
-                let key = decode_secret_key(&self.target.secret, None)
-                    .map_err(|_| Error::AuthFailed)?;
+                let key =
+                    decode_secret_key(&self.target.secret, None).map_err(|_| Error::AuthFailed)?;
                 let with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None);
                 handle
                     .authenticate_publickey(&self.target.username, with_hash)
@@ -332,15 +345,12 @@ impl SshChannel {
                 {
                     // 私钥不出 agent：逐个尝试 agent 中已加载的密钥（ssh 标准行为）
                     use russh::keys::agent::client::AgentClient;
-                    let mut agent = AgentClient::connect_env()
-                        .await
-                        .map_err(|e| Error::ConnectFailed(format!(
-                            "ssh-agent 不可达（检查 SSH_AUTH_SOCK）: {e}"
-                        )))?;
-                    let identities = agent
-                        .request_identities()
-                        .await
-                        .map_err(|e| Error::ConnectFailed(format!("ssh-agent 列出密钥失败: {e}")))?;
+                    let mut agent = AgentClient::connect_env().await.map_err(|e| {
+                        Error::ConnectFailed(format!("ssh-agent 不可达（检查 SSH_AUTH_SOCK）: {e}"))
+                    })?;
+                    let identities = agent.request_identities().await.map_err(|e| {
+                        Error::ConnectFailed(format!("ssh-agent 列出密钥失败: {e}"))
+                    })?;
                     if identities.is_empty() {
                         return Err(Error::ConnectFailed(
                             "ssh-agent 中没有已加载的密钥（先 ssh-add）".into(),
@@ -350,7 +360,12 @@ impl SshChannel {
                     for ident in &identities {
                         let key = ident.public_key().into_owned();
                         match handle
-                            .authenticate_publickey_with(&self.target.username, key, None, &mut agent)
+                            .authenticate_publickey_with(
+                                &self.target.username,
+                                key,
+                                None,
+                                &mut agent,
+                            )
                             .await
                         {
                             Ok(r) if r.success() => {
@@ -443,16 +458,27 @@ impl SshChannel {
             let m = self.forwards.lock().unwrap();
             m.iter()
                 .filter_map(|(id, e)| match &e.spec {
-                    ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
-                        Some((id.clone(), listen_addr.clone(), *listen_port, target_host.clone(), *target_port))
-                    }
+                    ForwardSpec::Remote {
+                        listen_addr,
+                        listen_port,
+                        target_host,
+                        target_port,
+                    } => Some((
+                        id.clone(),
+                        listen_addr.clone(),
+                        *listen_port,
+                        target_host.clone(),
+                        *target_port,
+                    )),
                     _ => None,
                 })
                 .collect()
         };
         for (id, addr, port, thost, tport) in remotes {
             // checked：快照后条目可能已被 stop 删除（审核中-5 幽灵监听防护）
-            let r = self.request_remote_checked(&id, &addr, port, &thost, tport).await;
+            let r = self
+                .request_remote_checked(&id, &addr, port, &thost, tport)
+                .await;
             let mut m = self.forwards.lock().unwrap();
             if let Some(e) = m.get_mut(&id) {
                 // 重连重注册：无条件写目标态（非 mark_* 条件翻转——Remote 条目
@@ -471,13 +497,22 @@ impl SshChannel {
         }
     }
 
-    async fn request_remote(&self, addr: &str, port: u16, thost: &str, tport: u16) -> std::result::Result<(), String> {
+    async fn request_remote(
+        &self,
+        addr: &str,
+        port: u16,
+        thost: &str,
+        tport: u16,
+    ) -> std::result::Result<(), String> {
         let guard = self.handle.lock().await;
         let h = guard.as_ref().ok_or("会话未连接")?;
         h.tcpip_forward(addr.to_string(), port as u32)
             .await
             .map_err(|e| format!("服务器拒绝监听 {addr}:{port}：{e}"))?;
-        self.router.lock().unwrap().insert(port as u32, (thost.to_string(), tport));
+        self.router
+            .lock()
+            .unwrap()
+            .insert(port as u32, (thost.to_string(), tport));
         Ok(())
     }
 
@@ -485,7 +520,12 @@ impl SshChannel {
     /// 快照后条目可能已被 stop 删除——请求成功但条目不在 = 幽灵监听（服务器在听、
     /// 回程路由挂着、列表为空无从停）。此时立即撤回监听，不上路由。
     async fn request_remote_checked(
-        &self, id: &str, addr: &str, port: u16, thost: &str, tport: u16,
+        &self,
+        id: &str,
+        addr: &str,
+        port: u16,
+        thost: &str,
+        tport: u16,
     ) -> std::result::Result<(), String> {
         let r = self.request_remote(addr, port, thost, tport).await;
         if r.is_ok() && self.forwards.lock().unwrap().get(id).is_none() {
@@ -517,23 +557,26 @@ impl SshChannel {
                     let mut answers = Vec::with_capacity(prompts.len());
                     for p in &prompts {
                         let text = p.prompt.trim().to_lowercase();
-                        let is_pw = !p.echo && (text.contains("password") || p.prompt.contains("密码"));
+                        let is_pw =
+                            !p.echo && (text.contains("password") || p.prompt.contains("密码"));
                         let ans = if is_pw {
                             self.target.secret.clone()
                         } else {
                             match &self.target.kb_prompt_check {
-                                Some(gate) => gate(&p.prompt, p.echo)
-                                    .await?
-                                    .ok_or_else(|| {
-                                        Error::ConnectFailed(
-                                            // 取消与超时同走 None：文案不得只说「被取消」冤枉超时，
-                                            // 更不能落进 AuthFailed——把「取消认证」误报成凭据错误（PV R4）
-                                            "服务器要求额外交互认证（2FA），人工应答被取消或超时".into(),
-                                        )
-                                    })?,
-                                None => return Err(Error::ConnectFailed(
-                                    "服务器要求额外交互认证（2FA），但本连接未启用人工应答通道".into(),
-                                )),
+                                Some(gate) => gate(&p.prompt, p.echo).await?.ok_or_else(|| {
+                                    Error::ConnectFailed(
+                                        // 取消与超时同走 None：文案不得只说「被取消」冤枉超时，
+                                        // 更不能落进 AuthFailed——把「取消认证」误报成凭据错误（PV R4）
+                                        "服务器要求额外交互认证（2FA），人工应答被取消或超时"
+                                            .into(),
+                                    )
+                                })?,
+                                None => {
+                                    return Err(Error::ConnectFailed(
+                                        "服务器要求额外交互认证（2FA），但本连接未启用人工应答通道"
+                                            .into(),
+                                    ))
+                                }
                             }
                         };
                         answers.push(ans);
@@ -623,8 +666,7 @@ impl ChannelHandle for SshChannel {
             r = channel.exec(true, full.as_bytes()) => r,
             _ = cancel.cancelled() => return Err(Error::Cancelled),
         };
-        execed
-            .map_err(|e| Error::ConnectFailed(format!("exec: {e}")))?;
+        execed.map_err(|e| Error::ConnectFailed(format!("exec: {e}")))?;
 
         let cap = opts.output_cap.unwrap_or(session_api::DEFAULT_OUTPUT_CAP);
         let mut stdout: Vec<u8> = Vec::new();
@@ -727,7 +769,9 @@ impl ChannelHandle for SshChannel {
     async fn reconnect(&self) -> Result<()> {
         // 断开旧连接，重建
         if let Some(old) = self.handle.lock().await.take() {
-            let _ = old.disconnect(Disconnect::ByApplication, "reconnect", "EN").await;
+            let _ = old
+                .disconnect(Disconnect::ByApplication, "reconnect", "EN")
+                .await;
         }
         self.alive.store(true, Ordering::SeqCst);
         self.establish().await
@@ -737,7 +781,13 @@ impl ChannelHandle for SshChannel {
         self.alive.store(false, Ordering::SeqCst);
         // T42：关闭会话即停全部转发——本地/-D 监听任务持有 Arc<Self>，
         // 不取消会连监听 socket 一起泄漏（端口被占到进程退出）
-        let entries: Vec<FwdEntry> = self.forwards.lock().unwrap().drain().map(|(_, e)| e).collect();
+        let entries: Vec<FwdEntry> = self
+            .forwards
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, e)| e)
+            .collect();
         self.router.lock().unwrap().clear();
         for e in entries {
             e.cancel.cancel();
@@ -784,10 +834,7 @@ impl ChannelHandle for SshChannel {
         let mut src = tokio::fs::File::open(local)
             .await
             .map_err(|e| Error::Io(format!("open {}: {e}", local.display())))?;
-        let total_len = tokio::fs::metadata(local)
-            .await
-            .ok()
-            .map(|m| m.len());
+        let total_len = tokio::fs::metadata(local).await.ok().map(|m| m.len());
         let mut total = 0u64;
         let mut buf = [0u8; 65536];
         loop {
@@ -985,9 +1032,9 @@ impl ChannelHandle for SshChannel {
         match r {
             Ok(true) => Ok(PublishOutcome::Committed),
             Ok(false) => Ok(PublishOutcome::Unsupported),
-            Err(russh_sftp::client::error::Error::Status(st)) => {
-                Ok(PublishOutcome::Rejected(format!("{} {}", st.status_code, st.error_message)))
-            }
+            Err(russh_sftp::client::error::Error::Status(st)) => Ok(PublishOutcome::Rejected(
+                format!("{} {}", st.status_code, st.error_message),
+            )),
             Err(_e) => Ok(PublishOutcome::Ambiguous),
         }
     }
@@ -1013,12 +1060,23 @@ impl ChannelHandle for SshChannel {
     async fn start_forward(&self, spec: ForwardSpec) -> Result<ForwardId> {
         let id = format!("f-{}", uuid::Uuid::new_v4());
         match spec.clone() {
-            ForwardSpec::Local { listen_addr, listen_port, target_host, target_port } => {
+            ForwardSpec::Local {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            } => {
                 if listen_port == 0 {
-                    return Err(Error::ForwardListenFailed { field: "listen".into(), reason: "监听端口须为 1–65535".into() });
+                    return Err(Error::ForwardListenFailed {
+                        field: "listen".into(),
+                        reason: "监听端口须为 1–65535".into(),
+                    });
                 }
                 if target_host.trim().is_empty() || target_port == 0 {
-                    return Err(Error::ForwardListenFailed { field: "target".into(), reason: "目标主机与端口（1–65535）不能为空".into() });
+                    return Err(Error::ForwardListenFailed {
+                        field: "target".into(),
+                        reason: "目标主机与端口（1–65535）不能为空".into(),
+                    });
                 }
                 validate_local_listen_addr(&listen_addr)?;
                 let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
@@ -1031,25 +1089,63 @@ impl ChannelHandle for SshChannel {
                 let arc = self.self_arc()?;
                 // 目标在 spawn 时捕获（审核中-1）：条目 spec 从不变更，逐连接按端口反查
                 // HashMap 只会引入同端口多绑定（127.0.0.1 与 0.0.0.0 可并存）的串台
-                tokio::spawn(run_local_forward(arc, listener, Some((target_host, target_port)), id.clone(), cancel.clone()));
-                insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
+                tokio::spawn(run_local_forward(
+                    arc,
+                    listener,
+                    Some((target_host, target_port)),
+                    id.clone(),
+                    cancel.clone(),
+                ));
+                insert_entry(
+                    &self.forwards,
+                    &self.forward_cb.lock().unwrap(),
+                    &id,
+                    spec,
+                    cancel,
+                );
             }
-            ForwardSpec::Remote { listen_addr, listen_port, target_host, target_port } => {
+            ForwardSpec::Remote {
+                listen_addr,
+                listen_port,
+                target_host,
+                target_port,
+            } => {
                 if listen_port == 0 {
-                    return Err(Error::ForwardListenFailed { field: "listen".into(), reason: "监听端口须为 1–65535".into() });
+                    return Err(Error::ForwardListenFailed {
+                        field: "listen".into(),
+                        reason: "监听端口须为 1–65535".into(),
+                    });
                 }
                 if target_host.trim().is_empty() || target_port == 0 {
-                    return Err(Error::ForwardListenFailed { field: "target".into(), reason: "目标主机与端口（1–65535）不能为空".into() });
+                    return Err(Error::ForwardListenFailed {
+                        field: "target".into(),
+                        reason: "目标主机与端口（1–65535）不能为空".into(),
+                    });
                 }
                 let cancel = CancellationToken::new();
-                insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
-                if let Err(msg) = self.request_remote(&listen_addr, listen_port, &target_host, target_port).await {
+                insert_entry(
+                    &self.forwards,
+                    &self.forward_cb.lock().unwrap(),
+                    &id,
+                    spec,
+                    cancel,
+                );
+                if let Err(msg) = self
+                    .request_remote(&listen_addr, listen_port, &target_host, target_port)
+                    .await
+                {
                     mark_failed(&self.forwards, &self.forward_cb.lock().unwrap(), &id, msg);
                 }
             }
-            ForwardSpec::Dynamic { listen_addr, listen_port } => {
+            ForwardSpec::Dynamic {
+                listen_addr,
+                listen_port,
+            } => {
                 if listen_port == 0 {
-                    return Err(Error::ForwardListenFailed { field: "listen".into(), reason: "监听端口须为 1–65535".into() });
+                    return Err(Error::ForwardListenFailed {
+                        field: "listen".into(),
+                        reason: "监听端口须为 1–65535".into(),
+                    });
                 }
                 validate_local_listen_addr(&listen_addr)?;
                 let listener = TcpListener::bind((listen_addr.as_str(), listen_port))
@@ -1060,8 +1156,20 @@ impl ChannelHandle for SshChannel {
                     })?;
                 let cancel = CancellationToken::new();
                 let arc = self.self_arc()?;
-                tokio::spawn(run_local_forward(arc, listener, None, id.clone(), cancel.clone()));
-                insert_entry(&self.forwards, &self.forward_cb.lock().unwrap(), &id, spec, cancel);
+                tokio::spawn(run_local_forward(
+                    arc,
+                    listener,
+                    None,
+                    id.clone(),
+                    cancel.clone(),
+                ));
+                insert_entry(
+                    &self.forwards,
+                    &self.forward_cb.lock().unwrap(),
+                    &id,
+                    spec,
+                    cancel,
+                );
             }
         }
         Ok(id)
@@ -1076,11 +1184,18 @@ impl ChannelHandle for SshChannel {
         if let Some(cb) = self.forward_cb.lock().unwrap().as_ref() {
             cb(id);
         }
-        if let ForwardSpec::Remote { listen_addr, listen_port, .. } = &e.spec {
+        if let ForwardSpec::Remote {
+            listen_addr,
+            listen_port,
+            ..
+        } = &e.spec
+        {
             self.router.lock().unwrap().remove(&(*listen_port as u32));
             let guard = self.handle.lock().await;
             if let Some(h) = guard.as_ref() {
-                let _ = h.cancel_tcpip_forward(listen_addr.clone(), *listen_port as u32).await;
+                let _ = h
+                    .cancel_tcpip_forward(listen_addr.clone(), *listen_port as u32)
+                    .await;
             }
         }
         Ok(())
@@ -1091,7 +1206,12 @@ impl ChannelHandle for SshChannel {
         Ok(m.iter()
             .map(|(id, e)| {
                 let (state, error) = e.state.lock().unwrap().clone();
-                ForwardInfo { id: id.clone(), spec: e.spec.clone(), state, error }
+                ForwardInfo {
+                    id: id.clone(),
+                    spec: e.spec.clone(),
+                    state,
+                    error,
+                }
             })
             .collect())
     }
@@ -1110,7 +1230,11 @@ fn insert_entry(
 ) {
     m.lock().unwrap().insert(
         id.to_string(),
-        FwdEntry { spec, state: StdMutex::new(("Listening".into(), None)), cancel },
+        FwdEntry {
+            spec,
+            state: StdMutex::new(("Listening".into(), None)),
+            cancel,
+        },
     );
     if let Some(cb) = cb.as_ref() {
         cb(&id.to_string());
@@ -1152,7 +1276,11 @@ fn mark_degraded(
 }
 
 /// 下一连接成功即恢复（仅 Degraded → Listening；不动 Failed）
-fn mark_recovered(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, cb: &Option<ForwardStateCb>, id: &str) {
+fn mark_recovered(
+    m: &StdMutex<HashMap<ForwardId, FwdEntry>>,
+    cb: &Option<ForwardStateCb>,
+    id: &str,
+) {
     if let Some(e) = m.lock().unwrap().get(id) {
         let mut st = e.state.lock().unwrap();
         if st.0 == "Degraded" {
@@ -1172,7 +1300,9 @@ fn mark_recovered(m: &StdMutex<HashMap<ForwardId, FwdEntry>>, cb: &Option<Forwar
 /// 由 start_forward 映射为 ForwardListenFailed{field:"listen"}）。
 fn validate_local_listen_addr(addr: &str) -> Result<()> {
     if addr.trim().is_empty() {
-        return Err(Error::InvalidInput("监听地址不能为空（默认 127.0.0.1）".into()));
+        return Err(Error::InvalidInput(
+            "监听地址不能为空（默认 127.0.0.1）".into(),
+        ));
     }
     Ok(())
 }
@@ -1229,7 +1359,13 @@ async fn run_local_forward(
     }
 }
 
-async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (String, u16), socks5: bool, fwd_id: &str) {
+async fn pump_direct(
+    this: &Arc<SshChannel>,
+    mut tcp: TcpStream,
+    (host, port): (String, u16),
+    socks5: bool,
+    fwd_id: &str,
+) {
     if host.is_empty() || port == 0 {
         return;
     }
@@ -1245,10 +1381,16 @@ async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (
             if socks5 {
                 let _ = tcp.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0]).await;
             }
-            mark_degraded(&this.forwards, &this.forward_cb.lock().unwrap(), fwd_id, "会话未连接（重连后自动恢复）");
+            mark_degraded(
+                &this.forwards,
+                &this.forward_cb.lock().unwrap(),
+                fwd_id,
+                "会话未连接（重连后自动恢复）",
+            );
             return;
         };
-        h.channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0).await
+        h.channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0)
+            .await
     };
     match chan {
         Ok(chan) => {
@@ -1286,7 +1428,12 @@ async fn pump_direct(this: &Arc<SshChannel>, mut tcp: TcpStream, (host, port): (
             } else {
                 format!("目标不可达或被拒绝：{e}")
             };
-            mark_degraded(&this.forwards, &this.forward_cb.lock().unwrap(), fwd_id, &msg);
+            mark_degraded(
+                &this.forwards,
+                &this.forward_cb.lock().unwrap(),
+                fwd_id,
+                &msg,
+            );
         }
     }
 }
@@ -1325,7 +1472,10 @@ async fn socks5_parse(tcp: &mut TcpStream) -> Option<(String, u16)> {
         4 => {
             let mut a = [0u8; 16];
             tcp.read_exact(&mut a).await.ok()?;
-            let parts: Vec<String> = a.chunks(2).map(|c| format!("{:02x}{:02x}", c[0], c[1])).collect();
+            let parts: Vec<String> = a
+                .chunks(2)
+                .map(|c| format!("{:02x}{:02x}", c[0], c[1]))
+                .collect();
             parts.join(":")
         }
         _ => return None,
@@ -1344,7 +1494,10 @@ mod t44_tests {
         m.insert(
             "f-x".into(),
             FwdEntry {
-                spec: ForwardSpec::Dynamic { listen_addr: "127.0.0.1".into(), listen_port: 11080 },
+                spec: ForwardSpec::Dynamic {
+                    listen_addr: "127.0.0.1".into(),
+                    listen_port: 11080,
+                },
                 state: StdMutex::new((state.to_string(), None)),
                 cancel: CancellationToken::new(),
             },
@@ -1352,7 +1505,15 @@ mod t44_tests {
         StdMutex::new(m)
     }
     fn state_of(m: &StdMutex<HashMap<ForwardId, FwdEntry>>) -> String {
-        m.lock().unwrap().get("f-x").unwrap().state.lock().unwrap().0.clone()
+        m.lock()
+            .unwrap()
+            .get("f-x")
+            .unwrap()
+            .state
+            .lock()
+            .unwrap()
+            .0
+            .clone()
     }
 
     // Degraded 状态机（审核中-4）：Listening → Degraded → Listening 可逆；
@@ -1392,7 +1553,10 @@ mod t44_tests {
             &m,
             &cb,
             "f-x",
-            ForwardSpec::Dynamic { listen_addr: "127.0.0.1".into(), listen_port: 11080 },
+            ForwardSpec::Dynamic {
+                listen_addr: "127.0.0.1".into(),
+                listen_port: 11080,
+            },
             CancellationToken::new(),
         );
         mark_degraded(&m, &cb, "f-x", "隧道暂不可用");
@@ -1409,8 +1573,18 @@ mod t44_tests {
     // 随 §6.6 放宽（D01：地址是显式字段，用户可显式选择对外监听）。
     #[test]
     fn local_listen_addr_only_rejects_empty() {
-        for ok in ["127.0.0.1", "127.8.8.7", "::1", "localhost", "LOCALHOST",
-                   "0.0.0.0", "::", "192.168.1.5", "8.8.8.8", "localhost."] {
+        for ok in [
+            "127.0.0.1",
+            "127.8.8.7",
+            "::1",
+            "localhost",
+            "LOCALHOST",
+            "0.0.0.0",
+            "::",
+            "192.168.1.5",
+            "8.8.8.8",
+            "localhost.",
+        ] {
             assert!(validate_local_listen_addr(ok).is_ok(), "{ok} 应放行");
         }
         for bad in ["", "   ", "\t"] {

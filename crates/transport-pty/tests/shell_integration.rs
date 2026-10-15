@@ -1,8 +1,8 @@
 //! 冒烟：本地 PTY + shell 集成注入 + OSC 133 块检测（transport × term-core 联动）。
 
+use session_api::transport::ChannelHandle;
 use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
-use session_api::transport::ChannelHandle;
 use term_core::{Screen, ScreenConfig};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -51,7 +51,10 @@ async fn local_shell_produces_blocks_and_cwd() {
 
     // 发送命令
     // 键入先向屏幕登记（core-session 的职责；决定命令文本归因与捕获）
-    screen.register_outgoing(b"echo tinyssh_smoke_$((40+2))\r", term_core::BlockSource::Human);
+    screen.register_outgoing(
+        b"echo tinyssh_smoke_$((40+2))\r",
+        term_core::BlockSource::Human,
+    );
     channel
         .write(b"echo tinyssh_smoke_$((40+2))\r")
         .await

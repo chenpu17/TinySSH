@@ -7,7 +7,9 @@ use std::time::Duration;
 use term_core::{Screen, ScreenConfig};
 
 fn sshd_enabled() -> bool {
-    std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false)
+    std::env::var("TINYSSH_E2E_SSHD")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 fn target() -> transport_ssh::SshTarget {
@@ -67,7 +69,15 @@ async fn spike2_body() {
         || !std::path::Path::new("/tmp/tinyssh_ref_key.pub").exists()
     {
         let st = std::process::Command::new("ssh-keygen")
-            .args(["-t", "ed25519", "-N", "", "-q", "-f", "/tmp/tinyssh_ref_key"])
+            .args([
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-q",
+                "-f",
+                "/tmp/tinyssh_ref_key",
+            ])
             .status()
             .expect("spawn ssh-keygen");
         assert!(st.success(), "ssh-keygen 失败");
@@ -88,14 +98,23 @@ async fn spike2_body() {
 
     // ---- 我们：russh 通路 → alacritty 渲染 ----
     let channel: std::sync::Arc<transport_ssh::SshChannel> =
-        transport_ssh::SshChannel::connect(target(), 80, 24).await.expect("connect");
-    let mut screen = Screen::new(ScreenConfig { cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20 });
+        transport_ssh::SshChannel::connect(target(), 80, 24)
+            .await
+            .expect("connect");
+    let mut screen = Screen::new(ScreenConfig {
+        cols: 80,
+        rows: 24,
+        scrollback: 100,
+        lossless_cap: 1 << 20,
+    });
     let mut rx = channel.subscribe_output();
     let (tx, rx_feed) = std::sync::mpsc::channel::<Vec<u8>>();
     tokio::task::spawn_blocking(move || loop {
         match rx.blocking_recv() {
             Ok(d) => {
-                if tx.send(d).is_err() { break; }
+                if tx.send(d).is_err() {
+                    break;
+                }
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             Err(_) => continue,
@@ -114,8 +133,12 @@ async fn spike2_body() {
         assert!(std::time::Instant::now() < deadline, "script not done");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let ours = extract_between(&screen.snapshot_text(), &format!("{marker_b}\n"), &format!("{marker_e}\n"))
-        .expect("ours extract");
+    let ours = extract_between(
+        &screen.snapshot_text(),
+        &format!("{marker_b}\n"),
+        &format!("{marker_e}\n"),
+    )
+    .expect("ours extract");
     let ours_lines: Vec<String> = ours
         .lines()
         .map(|l| l.trim().to_string())
@@ -126,12 +149,18 @@ async fn spike2_body() {
     let mut child = std::process::Command::new("ssh")
         .args([
             "-tt",
-            "-i", "/tmp/tinyssh_ref_key",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "BatchMode=yes",
-            "-o", "LogLevel=ERROR",
-            "-p", "2222",
+            "-i",
+            "/tmp/tinyssh_ref_key",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "LogLevel=ERROR",
+            "-p",
+            "2222",
             "root@127.0.0.1",
         ])
         .stdin(std::process::Stdio::piped())
@@ -147,12 +176,19 @@ async fn spike2_body() {
             match stdout.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if ttx.send(buf[..n].to_vec()).is_err() { break; }
+                    if ttx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
                 }
             }
         }
     });
-    let mut ref_screen = Screen::new(ScreenConfig { cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20 });
+    let mut ref_screen = Screen::new(ScreenConfig {
+        cols: 80,
+        rows: 24,
+        scrollback: 100,
+        lossless_cap: 1 << 20,
+    });
     stdin.write_all(b"export PS1='$ '\r").unwrap();
     std::thread::sleep(Duration::from_millis(600));
     drain(&mut ref_screen, &trx);
@@ -161,8 +197,12 @@ async fn spike2_body() {
     drain(&mut ref_screen, &trx);
     let _ = stdin.write_all(b"exit\r");
     let _ = child.kill();
-    let reference = extract_between(&ref_screen.snapshot_text(), &format!("{marker_b}\n"), &format!("{marker_e}\n"))
-        .expect("ref extract");
+    let reference = extract_between(
+        &ref_screen.snapshot_text(),
+        &format!("{marker_b}\n"),
+        &format!("{marker_e}\n"),
+    )
+    .expect("ref extract");
     let ref_lines: Vec<String> = reference
         .lines()
         .map(|l| l.trim().to_string())
@@ -182,17 +222,30 @@ async fn spike2_body() {
             .args(["-o", "rss=", "-p", &std::process::id().to_string()])
             .output()
             .expect("ps");
-        String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0)
     }
-    let warm = channel.exec_fresh("head -c 2000000 /dev/zero | base64", &Default::default(),
-        std::time::Instant::now() + Duration::from_secs(30),
-        &Default::default()).await;
+    let warm = channel
+        .exec_fresh(
+            "head -c 2000000 /dev/zero | base64",
+            &Default::default(),
+            std::time::Instant::now() + Duration::from_secs(30),
+            &Default::default(),
+        )
+        .await;
     let _ = warm;
     let rss_before = rss_kb();
     for _ in 0..4 {
-        let _ = channel.exec_fresh("head -c 5000000 /dev/zero | base64", &Default::default(),
-            std::time::Instant::now() + Duration::from_secs(30),
-            &Default::default()).await;
+        let _ = channel
+            .exec_fresh(
+                "head -c 5000000 /dev/zero | base64",
+                &Default::default(),
+                std::time::Instant::now() + Duration::from_secs(30),
+                &Default::default(),
+            )
+            .await;
     }
     tokio::time::sleep(Duration::from_millis(800)).await;
     let rss_after = rss_kb();

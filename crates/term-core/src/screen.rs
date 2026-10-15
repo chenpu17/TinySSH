@@ -1,11 +1,11 @@
 //! Screen：会话屏幕真源（网格 + 命令块 + cwd + 无损缓冲 + exec 输出捕获）。
 //! 非 Sync；由 core-session 以 Mutex 持有，feed 来自传输 pump 任务。
 
-use crate::block::{BlockIndex, BlockSource};
 #[allow(unused_imports)]
 use crate::block::BlockPhase;
+use crate::block::{BlockIndex, BlockSource};
 use crate::osc::{OscEvent, OscScanner};
-use crate::render::{GridSize, cursor_pos, render_screen_only, render_text};
+use crate::render::{cursor_pos, render_screen_only, render_text, GridSize};
 use crate::strip_ansi;
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
@@ -14,11 +14,10 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte;
 use alacritty_terminal::vte::ansi::{Color as VteColor, NamedColor};
-use session_api::{
-    BufferCheckpoint, CellRun, ColorSpec, CursorState, ScreenCheckpoint, ScreenModes,
-    cell_flags,
-};
 use chrono::{DateTime, Utc};
+use session_api::{
+    cell_flags, BufferCheckpoint, CellRun, ColorSpec, CursorState, ScreenCheckpoint, ScreenModes,
+};
 
 #[derive(Debug, Clone)]
 pub struct ScreenConfig {
@@ -137,7 +136,11 @@ impl Screen {
 
         let events = self.scanner.feed(data);
         let mut cap_active = self.capture.as_ref().map(|c| c.active).unwrap_or(false);
-        let mut cap_tail = self.capture.as_ref().map(|c| c.tail_active).unwrap_or(false);
+        let mut cap_tail = self
+            .capture
+            .as_ref()
+            .map(|c| c.tail_active)
+            .unwrap_or(false);
         let cap_armed = self.capture.as_ref().map(|c| c.armed).unwrap_or(false);
         let mut last_off = 0usize;
 
@@ -301,12 +304,7 @@ impl Screen {
         let stale = self
             .capture
             .as_ref()
-            .map(|c| {
-                c.tail_active
-                    && c.tail_since
-                        .map(|t| t.elapsed() >= max_age)
-                        .unwrap_or(true)
-            })
+            .map(|c| c.tail_active && c.tail_since.map(|t| t.elapsed() >= max_age).unwrap_or(true))
             .unwrap_or(false);
         if stale {
             if let Some(cap) = self.capture.as_mut() {
@@ -364,7 +362,13 @@ impl Screen {
         let head = format!("[{who}] $ {command}\r\n");
         bytes.extend_from_slice(head.as_bytes());
         // 打开受管块（command 文本 = 回放首行，带标注）
-        self.open_managed_block(&head, BlockSource::Replay { client_id: client_id.map(|s| s.to_string()) }, exec_id);
+        self.open_managed_block(
+            &head,
+            BlockSource::Replay {
+                client_id: client_id.map(|s| s.to_string()),
+            },
+            exec_id,
+        );
         bytes.extend_from_slice(b"\x1b]133;C\x07");
         if !stdout.is_empty() {
             bytes.extend_from_slice(stdout.as_bytes());
@@ -430,7 +434,9 @@ impl Screen {
             lines.push(row_runs(&row[..], cols as usize));
         }
         let active = if alt { 1u8 } else { 0 };
-        let inactive = BufferCheckpoint { lines: vec![Vec::new(); rows as usize] };
+        let inactive = BufferCheckpoint {
+            lines: vec![Vec::new(); rows as usize],
+        };
         let active_buf = BufferCheckpoint { lines };
         let buffers = if alt {
             [inactive, active_buf]
@@ -443,7 +449,9 @@ impl Screen {
         let rc = self.term.renderable_content().cursor;
         let (visible, style) = match rc.shape {
             alacritty_terminal::vte::ansi::CursorShape::Hidden => (false, "block".to_string()),
-            alacritty_terminal::vte::ansi::CursorShape::Underline => (true, "underline".to_string()),
+            alacritty_terminal::vte::ansi::CursorShape::Underline => {
+                (true, "underline".to_string())
+            }
             alacritty_terminal::vte::ansi::CursorShape::Beam => (true, "beam".to_string()),
             _ => (true, "block".to_string()),
         };
@@ -615,14 +623,30 @@ fn map_color(c: VteColor, _is_fg: bool) -> Option<ColorSpec> {
 
 fn map_flags(f: Flags) -> u32 {
     let mut out = 0u32;
-    if f.contains(Flags::BOLD) { out |= cell_flags::BOLD; }
-    if f.contains(Flags::DIM) { out |= cell_flags::DIM; }
-    if f.contains(Flags::ITALIC) { out |= cell_flags::ITALIC; }
-    if f.intersects(Flags::ALL_UNDERLINES) { out |= cell_flags::UNDERLINE; }
-    if f.contains(Flags::DOUBLE_UNDERLINE) { out |= cell_flags::DOUBLE_UNDERLINE; }
-    if f.contains(Flags::STRIKEOUT) { out |= cell_flags::STRIKEOUT; }
-    if f.contains(Flags::INVERSE) { out |= cell_flags::INVERSE; }
-    if f.contains(Flags::HIDDEN) { out |= cell_flags::HIDDEN; }
+    if f.contains(Flags::BOLD) {
+        out |= cell_flags::BOLD;
+    }
+    if f.contains(Flags::DIM) {
+        out |= cell_flags::DIM;
+    }
+    if f.contains(Flags::ITALIC) {
+        out |= cell_flags::ITALIC;
+    }
+    if f.intersects(Flags::ALL_UNDERLINES) {
+        out |= cell_flags::UNDERLINE;
+    }
+    if f.contains(Flags::DOUBLE_UNDERLINE) {
+        out |= cell_flags::DOUBLE_UNDERLINE;
+    }
+    if f.contains(Flags::STRIKEOUT) {
+        out |= cell_flags::STRIKEOUT;
+    }
+    if f.contains(Flags::INVERSE) {
+        out |= cell_flags::INVERSE;
+    }
+    if f.contains(Flags::HIDDEN) {
+        out |= cell_flags::HIDDEN;
+    }
     out
 }
 
@@ -638,7 +662,12 @@ fn row_runs(row: &[alacritty_terminal::term::cell::Cell], cols: usize) -> Vec<Ce
         () => {
             if let (Some(fg), Some(bg), Some(fl)) = (cur_fg, cur_bg, cur_flags) {
                 if !cur_text.is_empty() {
-                    runs.push(CellRun { text: std::mem::take(&mut cur_text), fg, bg, flags: fl });
+                    runs.push(CellRun {
+                        text: std::mem::take(&mut cur_text),
+                        fg,
+                        bg,
+                        flags: fl,
+                    });
                 }
             }
             cur_fg = None;
@@ -657,7 +686,9 @@ fn row_runs(row: &[alacritty_terminal::term::cell::Cell], cols: usize) -> Vec<Ce
         let bg = map_color(cell.bg, false);
         let fl = map_flags(cell.flags);
         if cur_flags.is_some()
-            && (cur_fg.as_ref() != Some(&fg) || cur_bg.as_ref() != Some(&bg) || cur_flags != Some(fl))
+            && (cur_fg.as_ref() != Some(&fg)
+                || cur_bg.as_ref() != Some(&bg)
+                || cur_flags != Some(fl))
         {
             flush!();
         }
@@ -676,7 +707,11 @@ fn row_runs(row: &[alacritty_terminal::term::cell::Cell], cols: usize) -> Vec<Ce
     flush!();
     // 行尾裁剪：默认属性的全空格 run 弹掉；末 run 的默认属性空格尾修剪
     while let Some(last) = runs.last() {
-        if last.fg.is_none() && last.bg.is_none() && last.flags == 0 && last.text.chars().all(|c| c == ' ') {
+        if last.fg.is_none()
+            && last.bg.is_none()
+            && last.flags == 0
+            && last.text.chars().all(|c| c == ' ')
+        {
             runs.pop();
         } else {
             break;
@@ -685,7 +720,11 @@ fn row_runs(row: &[alacritty_terminal::term::cell::Cell], cols: usize) -> Vec<Ce
     if let Some(last) = runs.last_mut() {
         if last.fg.is_none() && last.bg.is_none() && last.flags == 0 {
             let t = last.text.trim_end_matches(' ').to_string();
-            if t.is_empty() { runs.pop(); } else { last.text = t; }
+            if t.is_empty() {
+                runs.pop();
+            } else {
+                last.text = t;
+            }
         }
     }
     runs
@@ -726,7 +765,12 @@ mod tests {
     /// `lossless_evicted() > 水位` 可感知。
     #[test]
     fn lossless_watermark_survives_eviction() {
-        let cfg = ScreenConfig { cols: 80, rows: 24, scrollback: 100, lossless_cap: 32 };
+        let cfg = ScreenConfig {
+            cols: 80,
+            rows: 24,
+            scrollback: 100,
+            lossless_cap: 32,
+        };
         let mut s = Screen::new(cfg.clone() /* 每块 22B，环只容 1–2 块 */);
         for i in 0..3 {
             s.feed(format!("chunk-{i}-0123456789\r\n").as_bytes());
@@ -748,7 +792,10 @@ mod tests {
         let wm2 = s.lossless_abs();
         s.feed(b"chunk-tail-0123456789\r\n");
         let text2 = s.text_since_abs(wm2);
-        assert!(text2.contains("chunk-tail"), "水位后新块必须完整：{text2:?}");
+        assert!(
+            text2.contains("chunk-tail"),
+            "水位后新块必须完整：{text2:?}"
+        );
         assert!(!text2.contains("chunk-9"), "水位前块不得混入：{text2:?}");
     }
 
@@ -757,7 +804,13 @@ mod tests {
         let mut s = screen();
         s.arm_capture("e1");
         // 模拟注入 shell：A/B → 命令 → C → 输出 → D →（tail）→ 下一提示符 B 收口
-        s.open_managed_block("echo hi", BlockSource::Agent { client_id: "cc".into() }, "e1");
+        s.open_managed_block(
+            "echo hi",
+            BlockSource::Agent {
+                client_id: "cc".into(),
+            },
+            "e1",
+        );
         s.feed(b"\x1b]133;C\x07hi\r\n\x1b]133;D;0\x07");
         // C 到达时块已在 Output 态，捕获激活；D 转 tail（不终结），B 收口
         assert!(s.capture_tail_busy(), "D 后 tail 应开启");
@@ -800,7 +853,12 @@ mod tests {
         s.replay_fresh("docker ps", Some("cc"), "CONTAINER…", "", 0, "e2");
         let blocks = s.blocks.last_blocks(1);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].source, BlockSource::Replay { client_id: Some("cc".into()) });
+        assert_eq!(
+            blocks[0].source,
+            BlockSource::Replay {
+                client_id: Some("cc".into())
+            }
+        );
         assert_eq!(blocks[0].exit_code, Some(0));
         assert!(s.snapshot_text().contains("[agent:cc] $ docker ps"));
     }
@@ -820,7 +878,10 @@ mod tests {
         // 历史 + 可视：至少可视区两行有内容，网格总行数 = 24
         assert_eq!(lines.len(), 24);
         let joined: String = lines.iter().flatten().map(|r| r.text.as_str()).collect();
-        assert!(joined.contains("hello"), "checkpoint must contain hello: {joined:?}");
+        assert!(
+            joined.contains("hello"),
+            "checkpoint must contain hello: {joined:?}"
+        );
         assert!(joined.contains("world"));
         // 光标在 "world" 行尾（第 2 行 0 基 y=1, x=5）
         assert_eq!(ck.cursor.y, 1);
@@ -832,7 +893,9 @@ mod tests {
     fn checkpoint_colors_and_attrs() {
         let mut s = screen();
         // 红色粗体 + 256 色背景 + 下划线 + 真彩
-        s.feed(b"\x1b[1;31mRED\x1b[0m\x1b[48;5;21mB\x1b[0m\x1b[4mU\x1b[0m\x1b[38;2;10;20;30mT\x1b[0m");
+        s.feed(
+            b"\x1b[1;31mRED\x1b[0m\x1b[48;5;21mB\x1b[0m\x1b[4mU\x1b[0m\x1b[38;2;10;20;30mT\x1b[0m",
+        );
         let ck = s.checkpoint();
         let row0 = &ck.buffers[0].lines[0];
         let red = row0.iter().find(|r| r.text == "RED").expect("RED run");
@@ -858,7 +921,11 @@ mod tests {
         // 活动缓冲（备用）含 alt 内容；主缓冲为空形（行数仍 = rows）
         let alt_lines = &ck.buffers[1].lines;
         assert_eq!(alt_lines.len(), 24);
-        let joined: String = alt_lines.iter().flatten().map(|r| r.text.as_str()).collect();
+        let joined: String = alt_lines
+            .iter()
+            .flatten()
+            .map(|r| r.text.as_str())
+            .collect();
         assert!(joined.contains("alt-full-view"));
         assert!(!joined.contains("main content"));
         assert_eq!(ck.buffers[0].lines.len(), 24);
@@ -882,8 +949,16 @@ mod tests {
             s.feed(format!("line-{i}\r\n").as_bytes());
         }
         let ck = s.checkpoint();
-        let joined: String = ck.buffers[0].lines.iter().flatten().map(|r| r.text.as_str()).collect();
-        assert!(joined.contains("line-0"), "history line-0 must be in checkpoint");
+        let joined: String = ck.buffers[0]
+            .lines
+            .iter()
+            .flatten()
+            .map(|r| r.text.as_str())
+            .collect();
+        assert!(
+            joined.contains("line-0"),
+            "history line-0 must be in checkpoint"
+        );
         assert!(joined.contains("line-29"));
         assert!(ck.buffers[0].lines.len() >= 24);
     }

@@ -22,7 +22,10 @@ fn c3_wire_code_is_stable() {
         },
     };
     let (kind, detail) = e.wire_parts();
-    assert_eq!(kind, "shell_integration_unavailable", "C3 收紧的对外 code 不得漂移");
+    assert_eq!(
+        kind, "shell_integration_unavailable",
+        "C3 收紧的对外 code 不得漂移"
+    );
     assert!(detail.is_some(), "须带载荷说明成因，不能只有一句泛化失败");
 }
 
@@ -74,6 +77,12 @@ fn c3_payload_roundtrips() {
     let wire = serde_json::json!({ "kind": kind, "detail": detail });
     let s = serde_json::to_string(&wire).unwrap();
     let back: serde_json::Value = serde_json::from_str(&s).unwrap();
-    assert_eq!(back["kind"], serde_json::json!("shell_integration_unavailable"));
-    assert_eq!(back["detail"]["available"]["prompt_ready"], serde_json::json!(true));
+    assert_eq!(
+        back["kind"],
+        serde_json::json!("shell_integration_unavailable")
+    );
+    assert_eq!(
+        back["detail"]["available"]["prompt_ready"],
+        serde_json::json!(true)
+    );
 }

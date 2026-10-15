@@ -3,9 +3,7 @@
 
 use chrono::Utc;
 use regex::Regex;
-use session_api::{
-    ApprovalMode, ApprovalStatus, Decision, Policy, SegmentReport,
-};
+use session_api::{ApprovalMode, ApprovalStatus, Decision, Policy, SegmentReport};
 use std::sync::{Arc, Mutex};
 use tree_sitter::{Parser, Tree};
 
@@ -14,7 +12,10 @@ pub const BUILTIN_DENY_PATTERNS: &[(&str, &str)] = &[
     (r"^\s*rm\b[^\n;|&]*(?:\s|\A)/(?:\s|$)", "删除根目录"),
     (r"^\s*rm\b[^\n;|&]*\s/(?:\s|$)", "删除根目录"),
     (r"^\s*mkfs(\.\w+)?\b", "格式化文件系统"),
-    (r"^\s*dd\b[^\n]*\bof=/dev/(?:sd|nvme|vd|hd|disk|mapper)", "dd 覆写块设备"),
+    (
+        r"^\s*dd\b[^\n]*\bof=/dev/(?:sd|nvme|vd|hd|disk|mapper)",
+        "dd 覆写块设备",
+    ),
     (r">\s*/dev/(?:sd|nvme|vd|hd)[a-z]", "覆写块设备"),
     (r"^\s*shutdown\b", "关机"),
     (r"^\s*reboot\b", "重启"),
@@ -22,9 +23,15 @@ pub const BUILTIN_DENY_PATTERNS: &[(&str, &str)] = &[
     (r"^\s*poweroff\b", "断电"),
     (r"^\s*init\s+[06]\b", "切换运行级"),
     (r":\(\)\s*\{.*\};\s*:", "fork 炸弹"),
-    (r"^\s*chmod\s+(-[a-zA-Z]+\s+)*777\s+/(?:\s|$)", "根目录开放权限"),
+    (
+        r"^\s*chmod\s+(-[a-zA-Z]+\s+)*777\s+/(?:\s|$)",
+        "根目录开放权限",
+    ),
     (r"^\s*wipefs\b", "擦除文件系统签名"),
-    (r"^\s*(?:fdisk|cfdisk|sfdisk|sgdisk|parted)\s+/dev/", "分区工具作用于块设备"),
+    (
+        r"^\s*(?:fdisk|cfdisk|sfdisk|sgdisk|parted)\s+/dev/",
+        "分区工具作用于块设备",
+    ),
     (r"^\s*blkdiscard\b", "丢弃块设备扇区"),
     (r"^\s*shred\b[^;|&]*\s/dev/", "覆写块设备"),
     (r"^\s*systemctl\s+(?:reboot|poweroff|halt)\b", "关机/重启"),
@@ -106,7 +113,11 @@ pub fn extract_segments(tree: &Tree, source: &str) -> (Vec<String>, bool, bool) 
             return;
         }
         if kind == "command" {
-            let text = node.utf8_text(src.as_bytes()).unwrap_or("").trim().to_string();
+            let text = node
+                .utf8_text(src.as_bytes())
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if !text.is_empty() {
                 segments.push(text);
             }
@@ -133,13 +144,20 @@ pub fn extract_segments(tree: &Tree, source: &str) -> (Vec<String>, bool, bool) 
             continue; // ;、&&、|、\n 等匿名分隔符
         }
         let k = child.kind();
-        if !matches!(k, "list" | "pipeline" | "command" | "comment" | "variable_assignment") {
+        if !matches!(
+            k,
+            "list" | "pipeline" | "command" | "comment" | "variable_assignment"
+        ) {
             complex = true;
         }
     }
     let unparseable = unparseable || complex;
     if unparseable {
-        return (vec![source.trim().to_string()], unparseable, has_substitution);
+        return (
+            vec![source.trim().to_string()],
+            unparseable,
+            has_substitution,
+        );
     }
     (segments, unparseable, has_substitution)
 }
@@ -362,9 +380,18 @@ mod tests {
             "agent-a",
             Policy {
                 allow_rules: vec![
-                    AllowRule { pattern: "systemctl status*".into(), note: "查看状态".into() },
-                    AllowRule { pattern: "docker ps".into(), note: "列容器".into() },
-                    AllowRule { pattern: "^git (status|diff)".into(), note: "git 只读".into() },
+                    AllowRule {
+                        pattern: "systemctl status*".into(),
+                        note: "查看状态".into(),
+                    },
+                    AllowRule {
+                        pattern: "docker ps".into(),
+                        note: "列容器".into(),
+                    },
+                    AllowRule {
+                        pattern: "^git (status|diff)".into(),
+                        note: "git 只读".into(),
+                    },
                 ],
                 ttl_windows: vec![TtlWindow {
                     pattern: "echo *".into(),
@@ -378,26 +405,46 @@ mod tests {
 
     #[test]
     fn single_allow() {
-        assert_eq!(engine().evaluate("agent-a", "docker ps").verdict, SegmentVerdict::AutoAllow);
+        assert_eq!(
+            engine().evaluate("agent-a", "docker ps").verdict,
+            SegmentVerdict::AutoAllow
+        );
     }
 
     #[test]
     fn prefix_allow() {
-        assert_eq!(engine().evaluate("agent-a", "systemctl status nginx").verdict, SegmentVerdict::AutoAllow);
-        assert_eq!(engine().evaluate("agent-a", "systemctl stop nginx").verdict, SegmentVerdict::NeedsApproval);
+        assert_eq!(
+            engine()
+                .evaluate("agent-a", "systemctl status nginx")
+                .verdict,
+            SegmentVerdict::AutoAllow
+        );
+        assert_eq!(
+            engine().evaluate("agent-a", "systemctl stop nginx").verdict,
+            SegmentVerdict::NeedsApproval
+        );
     }
 
     #[test]
     fn regex_allow() {
         let e = engine();
-        assert_eq!(e.evaluate("agent-a", "git status").verdict, SegmentVerdict::AutoAllow);
-        assert_eq!(e.evaluate("agent-a", "git push").verdict, SegmentVerdict::NeedsApproval);
+        assert_eq!(
+            e.evaluate("agent-a", "git status").verdict,
+            SegmentVerdict::AutoAllow
+        );
+        assert_eq!(
+            e.evaluate("agent-a", "git push").verdict,
+            SegmentVerdict::NeedsApproval
+        );
     }
 
     #[test]
     fn ttl_allow_and_expiry() {
         let e = engine();
-        assert_eq!(e.evaluate("agent-a", "echo hi").verdict, SegmentVerdict::AutoAllow);
+        assert_eq!(
+            e.evaluate("agent-a", "echo hi").verdict,
+            SegmentVerdict::AutoAllow
+        );
         e.set_policy(
             "agent-a",
             Policy {
@@ -408,16 +455,26 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(e.evaluate("agent-a", "echo hi").verdict, SegmentVerdict::NeedsApproval);
+        assert_eq!(
+            e.evaluate("agent-a", "echo hi").verdict,
+            SegmentVerdict::NeedsApproval
+        );
     }
 
     #[test]
     fn compound_command_requires_all_segments() {
         // L1 §3.3：`systemctl status; reboot` 不得因前缀放行 reboot（deny 优先 → Dangerous）
         let e = engine();
-        assert_eq!(e.evaluate("agent-a", "systemctl status; reboot").verdict, SegmentVerdict::Dangerous);
+        assert_eq!(
+            e.evaluate("agent-a", "systemctl status; reboot").verdict,
+            SegmentVerdict::Dangerous
+        );
         // 未命中段阻止整体放行
-        assert_eq!(e.evaluate("agent-a", "docker ps && docker inspect x").verdict, SegmentVerdict::NeedsApproval);
+        assert_eq!(
+            e.evaluate("agent-a", "docker ps && docker inspect x")
+                .verdict,
+            SegmentVerdict::NeedsApproval
+        );
     }
 
     #[test]
@@ -432,7 +489,11 @@ mod tests {
             "mkfs.ext4 /dev/sdb1",
             "shutdown now",
         ] {
-            assert_eq!(e.evaluate("agent-a", cmd).verdict, SegmentVerdict::Dangerous, "cmd={cmd}");
+            assert_eq!(
+                e.evaluate("agent-a", cmd).verdict,
+                SegmentVerdict::Dangerous,
+                "cmd={cmd}"
+            );
         }
     }
 
@@ -440,7 +501,11 @@ mod tests {
     fn safe_commands_not_flagged() {
         let e = engine();
         for cmd in ["rm -rf /tmp/build", "df -h", "echo reboot-is-a-word"] {
-            assert_ne!(e.evaluate("agent-a", cmd).verdict, SegmentVerdict::Dangerous, "cmd={cmd}");
+            assert_ne!(
+                e.evaluate("agent-a", cmd).verdict,
+                SegmentVerdict::Dangerous,
+                "cmd={cmd}"
+            );
         }
     }
 
@@ -460,7 +525,11 @@ mod tests {
             "sudo shred -n 1 /dev/sda",
             "sudo cfdisk /dev/sdb",
         ] {
-            assert_eq!(e.evaluate("agent-a", cmd).verdict, SegmentVerdict::Dangerous, "cmd={cmd}");
+            assert_eq!(
+                e.evaluate("agent-a", cmd).verdict,
+                SegmentVerdict::Dangerous,
+                "cmd={cmd}"
+            );
         }
     }
 
@@ -474,14 +543,21 @@ mod tests {
             "sudo df -h",
             "env EDITOR=vim crontab -e",
         ] {
-            assert_ne!(e.evaluate("agent-a", cmd).verdict, SegmentVerdict::Dangerous, "cmd={cmd}");
+            assert_ne!(
+                e.evaluate("agent-a", cmd).verdict,
+                SegmentVerdict::Dangerous,
+                "cmd={cmd}"
+            );
         }
     }
 
     #[test]
     fn unparseable_goes_to_approval() {
         let e = engine();
-        assert_eq!(e.evaluate("agent-a", "if [ -f x ]; then").verdict, SegmentVerdict::NeedsApproval);
+        assert_eq!(
+            e.evaluate("agent-a", "if [ -f x ]; then").verdict,
+            SegmentVerdict::NeedsApproval
+        );
     }
 
     #[test]
@@ -491,11 +567,17 @@ mod tests {
         e.set_policy(
             "agent-b",
             Policy {
-                allow_rules: vec![AllowRule { pattern: "*".into(), note: "全放行".into() }],
+                allow_rules: vec![AllowRule {
+                    pattern: "*".into(),
+                    note: "全放行".into(),
+                }],
                 ..Default::default()
             },
         );
-        assert_eq!(e.evaluate("agent-b", "reboot").verdict, SegmentVerdict::Dangerous);
+        assert_eq!(
+            e.evaluate("agent-b", "reboot").verdict,
+            SegmentVerdict::Dangerous
+        );
     }
 
     #[test]
@@ -518,7 +600,10 @@ mod tests {
             );
         }
         // deny 仍优先：即便内容不可预判，整体文本命中内置 deny → Dangerous
-        assert_eq!(e.evaluate("agent-a", "reboot $(echo hi)").verdict, SegmentVerdict::Dangerous);
+        assert_eq!(
+            e.evaluate("agent-a", "reboot $(echo hi)").verdict,
+            SegmentVerdict::Dangerous
+        );
     }
 
     #[test]
@@ -536,7 +621,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(e.evaluate("agent-a", "curl example.com").verdict, SegmentVerdict::Dangerous);
-        assert_eq!(e.evaluate("agent-b", "curl example.com").verdict, SegmentVerdict::NeedsApproval);
+        assert_eq!(
+            e.evaluate("agent-a", "curl example.com").verdict,
+            SegmentVerdict::Dangerous
+        );
+        assert_eq!(
+            e.evaluate("agent-b", "curl example.com").verdict,
+            SegmentVerdict::NeedsApproval
+        );
     }
 }

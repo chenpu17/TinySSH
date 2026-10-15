@@ -3,16 +3,15 @@
 //! - 主密钥：OS 钥匙串托管的随机 32B（测试可用 env 覆盖）；
 //! - XChaCha20-Poly1305 加密；Zeroizing 包裹；Debug 不输出明文。
 
+use base64::Engine as _;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, Key as ChachaKey, XNonce};
+use chacha20poly1305::{Key as ChachaKey, XChaCha20Poly1305, XNonce};
 use rusqlite::{params, Connection};
 use session_api::{
-    AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset,
-    Error, Host, HostDraft, HostId, HostMeta, IdentityKind, IdentityMeta, IdentityReq,
-    KeyKind, Policy, RecentHost, Result, SessionId, TransferKind, TransferStatus, TransferTask,
-    Workspace,
+    AgentClientId, ApprovalId, ApprovalItem, ApprovalStatus, AuthDraft, AuthType, Charset, Error,
+    Host, HostDraft, HostId, HostMeta, IdentityKind, IdentityMeta, IdentityReq, KeyKind, Policy,
+    RecentHost, Result, SessionId, TransferKind, TransferStatus, TransferTask, Workspace,
 };
-use base64::Engine as _;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use zeroize::Zeroizing;
@@ -122,11 +121,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             .map_err(db_err)?;
         if has_blob == 0 {
             let theme: Option<String> = tx
-                .query_row(
-                    "SELECT value FROM settings WHERE key='ui.theme'",
-                    [],
-                    |r| r.get(0),
-                )
+                .query_row("SELECT value FROM settings WHERE key='ui.theme'", [], |r| {
+                    r.get(0)
+                })
                 .map(Some)
                 .or_else(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => Ok(None),
@@ -240,7 +237,8 @@ fn derive_from_sources(
         // env 覆盖在所有构建生效（无头验收/CI 依赖此流程，见
         // docs/acceptance/v0-mvp-acceptance.md §7）——warn 提供可见性而非门控
         tracing::warn!("主密钥来源：TINYSSH_MASTER_KEY 环境变量覆盖（跳过钥匙串）");
-        let bytes = hex::decode(hex_key).map_err(|_| Error::Storage("bad master key hex".into()))?;
+        let bytes =
+            hex::decode(hex_key).map_err(|_| Error::Storage("bad master key hex".into()))?;
         let mut out = [0u8; 32];
         if bytes.len() != 32 {
             return Err(Error::Storage("master key must be 32 bytes".into()));
@@ -309,7 +307,7 @@ fn argon2_derive(pass: &str) -> Zeroizing<[u8; 32]> {
 }
 
 fn argon2_derive_with_salt(pass: &str, salt: &[u8]) -> Zeroizing<[u8; 32]> {
-    use argon2::{Argon2, Algorithm, Params, Version};
+    use argon2::{Algorithm, Argon2, Params, Version};
     let params = Params::new(19456, 2, 1, Some(32)).expect("argon2 params");
     let a2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; 32];
@@ -323,11 +321,9 @@ fn keychain_key() -> Result<Zeroizing<[u8; 32]>> {
         .map_err(|e| Error::Storage(format!("keyring: {e}")))?;
     match entry.get_password() {
         Ok(b64) => {
-            let bytes = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                b64.trim(),
-            )
-            .map_err(|_| Error::Storage("bad keychain key".into()))?;
+            let bytes =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64.trim())
+                    .map_err(|_| Error::Storage("bad keychain key".into()))?;
             let mut out = [0u8; 32];
             if bytes.len() != 32 {
                 return Err(Error::Storage("keychain key must be 32 bytes".into()));
@@ -361,7 +357,13 @@ pub fn seal(master: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
     rand::rng().fill_bytes(&mut nonce_bytes);
     let nonce = XNonce::from_slice(&nonce_bytes);
     let ct = cipher
-        .encrypt(nonce, Payload { msg: plaintext, aad: b"tinyssh-identity" })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad: b"tinyssh-identity",
+            },
+        )
         .expect("chacha encrypt");
     let mut out = Vec::with_capacity(24 + ct.len());
     out.extend_from_slice(&nonce_bytes);
@@ -376,7 +378,13 @@ pub fn open_seal(master: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
     let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(master));
     let nonce = XNonce::from_slice(&blob[..24]);
     cipher
-        .decrypt(nonce, Payload { msg: &blob[24..], aad: b"tinyssh-identity" })
+        .decrypt(
+            nonce,
+            Payload {
+                msg: &blob[24..],
+                aad: b"tinyssh-identity",
+            },
+        )
         .map_err(|_| Error::Storage("decrypt failed".into()))
 }
 
@@ -660,8 +668,14 @@ fn restore_from_snapshot(db_path: &Path, from: &Path, src_copy: &Path) -> Result
     let src = Connection::open_with_flags(src_copy, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|e| Error::Storage(format!("无法读取备份 {}：{e}", from.display())))?;
     // R44 审核 F2：必须是**完整** TinySSH 库，不能只凭一张 `hosts` 表就认定。
-    const CORE_TABLES: [&str; 6] =
-        ["hosts", "identities", "agents", "policies", "sessions", "approvals"];
+    const CORE_TABLES: [&str; 6] = [
+        "hosts",
+        "identities",
+        "agents",
+        "policies",
+        "sessions",
+        "approvals",
+    ];
     for t in CORE_TABLES {
         let n: i64 = src
             .query_row(
@@ -700,8 +714,8 @@ fn restore_from_snapshot(db_path: &Path, from: &Path, src_copy: &Path) -> Result
     drop(src);
     {
         // 副本归我们所有，就地迁移到链尾以证明「这份备份真能用」；失败则目标库分毫未动。
-        let conn = Connection::open(&tmp)
-            .map_err(|e| Error::Storage(format!("恢复快照无法打开：{e}")))?;
+        let conn =
+            Connection::open(&tmp).map_err(|e| Error::Storage(format!("恢复快照无法打开：{e}")))?;
         if let Err(e) = migrate(&conn) {
             let _ = std::fs::remove_file(&tmp);
             return Err(Error::Storage(format!(
@@ -726,8 +740,7 @@ fn restore_from_snapshot(db_path: &Path, from: &Path, src_copy: &Path) -> Result
                 ))
             })?;
     }
-    std::fs::rename(&tmp, db_path)
-        .map_err(|e| Error::Storage(format!("替换目标库失败：{e}")))?;
+    std::fs::rename(&tmp, db_path).map_err(|e| Error::Storage(format!("替换目标库失败：{e}")))?;
     for suffix in ["-wal", "-shm"] {
         let mut p = db_path.as_os_str().to_os_string();
         p.push(suffix);
@@ -744,8 +757,6 @@ pub fn pre_restore_backup_path(db_path: &Path) -> std::path::PathBuf {
     std::path::PathBuf::from(p)
 }
 
-
-
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
@@ -758,14 +769,22 @@ impl Vault {
         let lock = VaultLock::acquire(path)?;
         let conn = open(path)?;
         let master = master_key_for_db(&conn)?;
-        Ok(Self { conn: Mutex::new(conn), master, _lock: Some(lock) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+            master,
+            _lock: Some(lock),
+        })
     }
 
     /// 由调用方提供连接：**不加写锁**（连接的归属与生命周期由调用方负责，加锁会
     /// 与调用方自己的打开方式冲突）。仅用于测试与嵌入式装配。
     pub fn open_shared(conn: Connection, master: Zeroizing<[u8; 32]>) -> Result<Self> {
         migrate(&conn)?;
-        Ok(Self { conn: Mutex::new(conn), master, _lock: None })
+        Ok(Self {
+            conn: Mutex::new(conn),
+            master,
+            _lock: None,
+        })
     }
 
     // ---- 主机 ----
@@ -866,8 +885,11 @@ impl Vault {
 
     pub fn delete_host(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("UPDATE hosts SET deleted_at=?2 WHERE id=?1", params![id, now_ms()])
-            .map_err(db_err)?;
+        conn.execute(
+            "UPDATE hosts SET deleted_at=?2 WHERE id=?1",
+            params![id, now_ms()],
+        )
+        .map_err(db_err)?;
         // C8 联动：主机元数据行随删（收藏/最近连接时间不留幽灵）；凭据不删、
         // 会话不隐式关闭（§5 已定）
         conn.execute("DELETE FROM host_metadata WHERE host_id=?1", params![id])
@@ -901,8 +923,19 @@ impl Vault {
             .map_err(db_err)?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, name, address, port, username, auth_type, identity_id, tags_json, fingerprint, charset, shell_integration) =
-                row.map_err(db_err)?;
+            let (
+                id,
+                name,
+                address,
+                port,
+                username,
+                auth_type,
+                identity_id,
+                tags_json,
+                fingerprint,
+                charset,
+                shell_integration,
+            ) = row.map_err(db_err)?;
             out.push(Host {
                 id,
                 name,
@@ -957,9 +990,11 @@ impl Vault {
     /// 读 UI 偏好（路线图⑥：字号/主题等）；None = 从未设置。
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        let v = conn.query_row("SELECT value FROM settings WHERE key=?1", params![key], |r| {
-            r.get::<_, String>(0)
-        });
+        let v = conn.query_row(
+            "SELECT value FROM settings WHERE key=?1",
+            params![key],
+            |r| r.get::<_, String>(0),
+        );
         match v {
             Ok(s) => Ok(Some(s).filter(|s| !s.is_empty())),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -1093,8 +1128,7 @@ impl Vault {
             out.push(RecentHost {
                 host_id,
                 host_name,
-                connected_at: chrono::DateTime::from_timestamp_millis(last_at)
-                    .unwrap_or_default(),
+                connected_at: chrono::DateTime::from_timestamp_millis(last_at).unwrap_or_default(),
             });
         }
         Ok(out)
@@ -1201,8 +1235,7 @@ impl Vault {
                     t.bytes_done as i64,
                     t.total.map(|v| v as i64),
                     t.revision as i64,
-                    t.collision_decision
-                        .map(Self::journal_collision_str),
+                    t.collision_decision.map(Self::journal_collision_str),
                     0i64,
                     t.error,
                     t.retry_of,
@@ -1231,8 +1264,7 @@ impl Vault {
                     t.bytes_done as i64,
                     t.total.map(|v| v as i64),
                     t.revision as i64,
-                    t.collision_decision
-                        .map(Self::journal_collision_str),
+                    t.collision_decision.map(Self::journal_collision_str),
                     verified.map(|v| if v { 1i64 } else { 0i64 }),
                     t.error,
                     t.finished_at,
@@ -1240,7 +1272,10 @@ impl Vault {
             )
             .map_err(db_err)?;
         if n == 0 {
-            return Err(Error::InvalidInput(format!("transfer journal row {} missing", t.id)));
+            return Err(Error::InvalidInput(format!(
+                "transfer journal row {} missing",
+                t.id
+            )));
         }
         Ok(())
     }
@@ -1403,9 +1438,9 @@ impl Vault {
                     .to_openssh(russh::keys::ssh_key::LineEnding::LF)
                     .map_err(|e| Error::Storage(format!("pem: {e}")))?
                     .to_string();
-                let fp = key.public_key().fingerprint(
-                    russh::keys::ssh_key::HashAlg::Sha256,
-                );
+                let fp = key
+                    .public_key()
+                    .fingerprint(russh::keys::ssh_key::HashAlg::Sha256);
                 (
                     label.clone(),
                     match kind {
@@ -1417,10 +1452,16 @@ impl Vault {
                     *kind,
                 )
             }
-            IdentityReq::Import { label, pem, passphrase } => {
+            IdentityReq::Import {
+                label,
+                pem,
+                passphrase,
+            } => {
                 let key = russh::keys::decode_secret_key(pem, passphrase.as_deref())
                     .map_err(|_| Error::InvalidInput("bad key or passphrase".into()))?;
-                let fp = key.public_key().fingerprint(russh::keys::ssh_key::HashAlg::Sha256);
+                let fp = key
+                    .public_key()
+                    .fingerprint(russh::keys::ssh_key::HashAlg::Sha256);
                 (
                     label.clone(),
                     if key.algorithm() == russh::keys::ssh_key::Algorithm::Ed25519 {
@@ -1464,7 +1505,12 @@ impl Vault {
             ],
         )
         .map_err(db_err)?;
-        Ok(IdentityMeta { id, label, kind, fingerprint })
+        Ok(IdentityMeta {
+            id,
+            label,
+            kind,
+            fingerprint,
+        })
     }
 
     pub fn list_identities(&self) -> Result<Vec<IdentityMeta>> {
@@ -1518,8 +1564,13 @@ impl Vault {
     }
 
     pub fn delete_identity(&self, id: &str) -> Result<()> {
-        self.conn.lock().unwrap()
-            .execute("UPDATE identities SET deleted_at=?2 WHERE id=?1", params![id, now_ms()])
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE identities SET deleted_at=?2 WHERE id=?1",
+                params![id, now_ms()],
+            )
             .map_err(db_err)?;
         Ok(())
     }
@@ -1532,7 +1583,9 @@ impl Vault {
         rand::rng().fill_bytes(&mut tok);
         let token = hex::encode(tok);
         let hash = token_hash(&token);
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO agents (id, label, token_hash, created_at) VALUES (?1,?2,?3,?4)
                  ON CONFLICT(id) DO UPDATE SET token_hash=?3, revoked_at=NULL, label=?2",
@@ -1571,7 +1624,11 @@ impl Vault {
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<i64>>(2)?))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
             })
             .map_err(db_err)?;
         let mut out = Vec::new();
@@ -1582,7 +1639,9 @@ impl Vault {
     }
 
     pub fn revoke_agent(&self, client_id: &str) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "UPDATE agents SET revoked_at=?2 WHERE id=?1",
                 params![client_id, now_ms()],
@@ -1657,7 +1716,12 @@ impl Vault {
         Ok(())
     }
 
-    pub fn add_ttl_window(&self, agent_id: &str, pattern: &str, expires_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    pub fn add_ttl_window(
+        &self,
+        agent_id: &str,
+        pattern: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
         self.conn.lock().unwrap()
             .execute(
                 "INSERT INTO policies (id, agent_id, kind, pattern, expires_at, created_by, created_at) VALUES (?1,?2,'ttl_window',?3,?4,'human',?5)",
@@ -1681,7 +1745,9 @@ impl Vault {
     }
 
     pub fn set_session_state(&self, sid: &SessionId, state: &str) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "UPDATE sessions SET state=?2 WHERE id=?1",
                 params![sid, state],
@@ -1691,7 +1757,9 @@ impl Vault {
     }
 
     pub fn close_session_row(&self, sid: &SessionId) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "UPDATE sessions SET state='closed', closed_at=?2 WHERE id=?1",
                 params![sid, now_ms()],
@@ -1808,7 +1876,9 @@ mod tests {
                 address: "10.0.0.1".into(),
                 port: Some(22),
                 username: "ops".into(),
-                auth: AuthDraft::Password { password: "hunter2".into() },
+                auth: AuthDraft::Password {
+                    password: "hunter2".into(),
+                },
                 ..Default::default()
             })
             .unwrap();
@@ -1846,7 +1916,9 @@ mod tests {
                 name: "e2e".into(),
                 address: "127.0.0.1".into(),
                 username: "root".into(),
-                auth: AuthDraft::Password { password: "testpass".into() },
+                auth: AuthDraft::Password {
+                    password: "testpass".into(),
+                },
                 ..Default::default()
             })
             .unwrap();
@@ -1854,9 +1926,15 @@ mod tests {
         assert!(v.host_fingerprint(&id).unwrap().is_none());
         // 确认后入库、可更新
         v.set_host_fingerprint(&id, "SHA256:AAAA").unwrap();
-        assert_eq!(v.host_fingerprint(&id).unwrap().as_deref(), Some("SHA256:AAAA"));
+        assert_eq!(
+            v.host_fingerprint(&id).unwrap().as_deref(),
+            Some("SHA256:AAAA")
+        );
         v.set_host_fingerprint(&id, "SHA256:BBBB").unwrap();
-        assert_eq!(v.host_fingerprint(&id).unwrap().as_deref(), Some("SHA256:BBBB"));
+        assert_eq!(
+            v.host_fingerprint(&id).unwrap().as_deref(),
+            Some("SHA256:BBBB")
+        );
         // 未知主机拒绝
         assert!(v.set_host_fingerprint("h-missing", "SHA256:X").is_err());
     }
@@ -1865,22 +1943,40 @@ mod tests {
     fn settings_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
-        let mk = || Vault::open_shared(Connection::open(dir.path().join("v.db")).unwrap(), master_key().unwrap()).unwrap();
+        let mk = || {
+            Vault::open_shared(
+                Connection::open(dir.path().join("v.db")).unwrap(),
+                master_key().unwrap(),
+            )
+            .unwrap()
+        };
         let v = mk();
         // 未设置 → None
         assert!(v.get_setting("ui.font_size").unwrap().is_none());
         // 写入、覆盖（upsert）、按 key 隔离
         v.set_setting("ui.font_size", "16").unwrap();
-        assert_eq!(v.get_setting("ui.font_size").unwrap().as_deref(), Some("16"));
+        assert_eq!(
+            v.get_setting("ui.font_size").unwrap().as_deref(),
+            Some("16")
+        );
         v.set_setting("ui.font_size", "13").unwrap();
-        assert_eq!(v.get_setting("ui.font_size").unwrap().as_deref(), Some("13"));
+        assert_eq!(
+            v.get_setting("ui.font_size").unwrap().as_deref(),
+            Some("13")
+        );
         v.set_setting("ui.theme", "light").unwrap();
         assert_eq!(v.get_setting("ui.theme").unwrap().as_deref(), Some("light"));
         // 重开同一库：迁移幂等 + 偏好仍在（跨进程记忆，同 T17 指纹语义）
         drop(v);
         let v2 = mk();
-        assert_eq!(v2.get_setting("ui.font_size").unwrap().as_deref(), Some("13"));
-        assert_eq!(v2.get_setting("ui.theme").unwrap().as_deref(), Some("light"));
+        assert_eq!(
+            v2.get_setting("ui.font_size").unwrap().as_deref(),
+            Some("13")
+        );
+        assert_eq!(
+            v2.get_setting("ui.theme").unwrap().as_deref(),
+            Some("light")
+        );
     }
 
     #[test]
@@ -1894,15 +1990,18 @@ mod tests {
             conn.execute_batch(SCHEMA_V1).unwrap();
             conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);")
                 .unwrap();
-            conn.execute("INSERT INTO settings VALUES('ui.theme','solar-light')", []).unwrap();
-            conn.execute("INSERT INTO settings VALUES('ui.font_size','15')", []).unwrap();
+            conn.execute("INSERT INTO settings VALUES('ui.theme','solar-light')", [])
+                .unwrap();
+            conn.execute("INSERT INTO settings VALUES('ui.font_size','15')", [])
+                .unwrap();
             conn.pragma_update(None, "user_version", 4).unwrap();
         }
         std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
         let v = Vault::open(&path).unwrap();
         let ver: u32 = {
             let conn = v.conn.lock().unwrap();
-            conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+            conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap()
         };
         // 开库升到当前链尾（R43 后=7）；V5 专属断言在下方逐项验证
         assert_eq!(ver, 7);
@@ -1911,22 +2010,39 @@ mod tests {
         assert_eq!(ws.chrome, "light"); // solar-light → light（DF8.3）
         assert!(ws.hostbar.is_none()); // 主机栏是 FE localStorage 域，核心不虚构
         assert_eq!(
-            v.get_setting("ui.v2.terminal.font_size").unwrap().as_deref(),
+            v.get_setting("ui.v2.terminal.font_size")
+                .unwrap()
+                .as_deref(),
             Some("15")
         );
         // 旧键保留不删（回退兼容）
-        assert_eq!(v.get_setting("ui.theme").unwrap().as_deref(), Some("solar-light"));
-        assert_eq!(v.get_setting("ui.font_size").unwrap().as_deref(), Some("15"));
+        assert_eq!(
+            v.get_setting("ui.theme").unwrap().as_deref(),
+            Some("solar-light")
+        );
+        assert_eq!(
+            v.get_setting("ui.font_size").unwrap().as_deref(),
+            Some("15")
+        );
         // 迁移幂等：重开 + 用户改写 blob 后再重开，保持用户值不被旧键重置
         let mut ws2 = v.workspace().unwrap();
         ws2.chrome = "dark".into();
-        ws2.hostbar = Some(session_api::HostbarPrefs { open: false, width: 260 });
+        ws2.hostbar = Some(session_api::HostbarPrefs {
+            open: false,
+            width: 260,
+        });
         v.set_workspace(&ws2).unwrap();
         drop(v);
         let v2 = Vault::open(&path).unwrap();
         let ws3 = v2.workspace().unwrap();
         assert_eq!(ws3.chrome, "dark");
-        assert_eq!(ws3.hostbar, Some(session_api::HostbarPrefs { open: false, width: 260 }));
+        assert_eq!(
+            ws3.hostbar,
+            Some(session_api::HostbarPrefs {
+                open: false,
+                width: 260
+            })
+        );
         assert_eq!(ws3.schema_version, 1);
         // 损坏 blob 自愈回落 Default（不炸启动）
         v2.set_setting("ui.v2.workspace", "not-json{").unwrap();
@@ -1964,9 +2080,16 @@ mod tests {
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch(SCHEMA_V1).unwrap();
-            conn.execute_batch("ALTER TABLE hosts ADD COLUMN host_fingerprint TEXT;").unwrap();
-            conn.execute_batch("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
-            conn.execute_batch("ALTER TABLE hosts ADD COLUMN charset TEXT NOT NULL DEFAULT 'utf-8';").unwrap();
+            conn.execute_batch("ALTER TABLE hosts ADD COLUMN host_fingerprint TEXT;")
+                .unwrap();
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .unwrap();
+            conn.execute_batch(
+                "ALTER TABLE hosts ADD COLUMN charset TEXT NOT NULL DEFAULT 'utf-8';",
+            )
+            .unwrap();
             conn.execute_batch(SCHEMA_V5).unwrap();
             conn.execute(
                 "INSERT INTO hosts(id,name,address,username,auth_type,created_at,updated_at)
@@ -1990,10 +2113,23 @@ mod tests {
         }
         std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
         let v = Vault::open(&path).unwrap();
-        let by = |id: &str| v.list_hosts().unwrap().into_iter().find(|h| h.id == id).unwrap();
-        assert_eq!(by("h-ssh").shell_integration, Some(true), "存量 SSH 主机一次性置启用（DC3.2）");
+        let by = |id: &str| {
+            v.list_hosts()
+                .unwrap()
+                .into_iter()
+                .find(|h| h.id == id)
+                .unwrap()
+        };
+        assert_eq!(
+            by("h-ssh").shell_integration,
+            Some(true),
+            "存量 SSH 主机一次性置启用（DC3.2）"
+        );
         assert_eq!(by("h-local").shell_integration, None, "local 主机不动");
-        assert!(v.list_hosts().unwrap().iter().all(|h| h.id != "h-del"), "软删行不在活列表");
+        assert!(
+            v.list_hosts().unwrap().iter().all(|h| h.id != "h-del"),
+            "软删行不在活列表"
+        );
         // 升级后 upsert 缺省（None）保原值——不静默关闭已迁移主机
         let h = by("h-ssh");
         v.upsert_host(&HostDraft {
@@ -2002,13 +2138,19 @@ mod tests {
             address: h.address.clone(),
             port: Some(h.port),
             username: h.username.clone(),
-            auth: AuthDraft::Password { password: "x".into() },
+            auth: AuthDraft::Password {
+                password: "x".into(),
+            },
             tags: h.tags.clone(),
             charset: h.charset,
             shell_integration: None,
         })
         .unwrap();
-        assert_eq!(by("h-ssh").shell_integration, Some(true), "缺省 upsert 保原值");
+        assert_eq!(
+            by("h-ssh").shell_integration,
+            Some(true),
+            "缺省 upsert 保原值"
+        );
         // 显式 Some(false) 生效（用户可关闭）
         let h = by("h-ssh");
         v.upsert_host(&HostDraft {
@@ -2017,7 +2159,9 @@ mod tests {
             address: h.address.clone(),
             port: Some(h.port),
             username: h.username.clone(),
-            auth: AuthDraft::Password { password: "x".into() },
+            auth: AuthDraft::Password {
+                password: "x".into(),
+            },
             tags: h.tags.clone(),
             charset: h.charset,
             shell_integration: Some(false),
@@ -2028,7 +2172,12 @@ mod tests {
         drop(v);
         let v2 = Vault::open(&path).unwrap();
         assert_eq!(
-            v2.list_hosts().unwrap().into_iter().find(|h| h.id == "h-ssh").unwrap().shell_integration,
+            v2.list_hosts()
+                .unwrap()
+                .into_iter()
+                .find(|h| h.id == "h-ssh")
+                .unwrap()
+                .shell_integration,
             Some(false),
             "重开不得重写用户显式值"
         );
@@ -2038,7 +2187,10 @@ mod tests {
     fn c8_favorites_recents_identity_refs_and_cascade() {
         let (_dir, v) = vault();
         let key_id = v
-            .create_identity(&IdentityReq::Generate { label: "k1".into(), kind: KeyKind::Ed25519 })
+            .create_identity(&IdentityReq::Generate {
+                label: "k1".into(),
+                kind: KeyKind::Ed25519,
+            })
             .unwrap()
             .id;
         let hid = v
@@ -2046,7 +2198,9 @@ mod tests {
                 name: "prod-1".into(),
                 address: "10.0.0.9".into(),
                 username: "ops".into(),
-                auth: AuthDraft::Key { identity_id: key_id.clone() },
+                auth: AuthDraft::Key {
+                    identity_id: key_id.clone(),
+                },
                 ..Default::default()
             })
             .unwrap();
@@ -2055,7 +2209,9 @@ mod tests {
                 name: "staging".into(),
                 address: "10.0.0.10".into(),
                 username: "ops".into(),
-                auth: AuthDraft::Key { identity_id: key_id.clone() },
+                auth: AuthDraft::Key {
+                    identity_id: key_id.clone(),
+                },
                 ..Default::default()
             })
             .unwrap();
@@ -2070,19 +2226,34 @@ mod tests {
         assert!(meta[0].last_connected_at.is_none());
         // 建连打点 → last_connected_at
         v.touch_host_connection(&hid).unwrap();
-        assert!(v.list_host_metadata().unwrap()[0].last_connected_at.is_some());
+        assert!(v.list_host_metadata().unwrap()[0]
+            .last_connected_at
+            .is_some());
         // 最近连接（DF8.5）：sessions 派生、排除 local、每主机最近一次、删除主机无幽灵
-        v.record_session(&"s-1".to_string(), Some(&hid), "ssh").unwrap();
-        v.record_session(&"s-2".to_string(), Some(&hid), "ssh").unwrap();
-        v.record_session(&"s-3".to_string(), Some(&hid), "local").unwrap(); // 排除
-        v.record_session(&"s-4".to_string(), Some(&hid2), "ssh").unwrap();
+        v.record_session(&"s-1".to_string(), Some(&hid), "ssh")
+            .unwrap();
+        v.record_session(&"s-2".to_string(), Some(&hid), "ssh")
+            .unwrap();
+        v.record_session(&"s-3".to_string(), Some(&hid), "local")
+            .unwrap(); // 排除
+        v.record_session(&"s-4".to_string(), Some(&hid2), "ssh")
+            .unwrap();
         // 钉死时间戳：record_session 用 now_ms()，连续四写常落同一毫秒，而
         // list_recent_hosts 的 `ORDER BY last_at DESC` 对并列无确定序——本用例曾
         // 2/12 偶发红（h-8f9b… vs h-a61f…）。此处显式赋值使「s-4 晚于 s-2」恒真。
         {
             let conn = v.conn.lock().unwrap();
-            for (sid, ts) in [("s-1", 1000i64), ("s-2", 2000), ("s-3", 3000), ("s-4", 4000)] {
-                conn.execute("UPDATE sessions SET created_at=?2 WHERE id=?1", params![sid, ts]).unwrap();
+            for (sid, ts) in [
+                ("s-1", 1000i64),
+                ("s-2", 2000),
+                ("s-3", 3000),
+                ("s-4", 4000),
+            ] {
+                conn.execute(
+                    "UPDATE sessions SET created_at=?2 WHERE id=?1",
+                    params![sid, ts],
+                )
+                .unwrap();
             }
         }
         let recents = v.list_recent_hosts(5).unwrap();
@@ -2110,8 +2281,10 @@ mod tests {
                 [],
             )
             .unwrap();
-            conn.query_row("SELECT COUNT(*) FROM transfer_journal", [], |r| r.get::<_, i64>(0))
-                .unwrap()
+            conn.query_row("SELECT COUNT(*) FROM transfer_journal", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap()
         };
         assert_eq!(n, 1);
     }
@@ -2123,7 +2296,11 @@ mod tests {
     fn c5_transfer_journal_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
-        let v = Vault::open_shared(Connection::open(dir.path().join("v.db")).unwrap(), master_key().unwrap()).unwrap();
+        let v = Vault::open_shared(
+            Connection::open(dir.path().join("v.db")).unwrap(),
+            master_key().unwrap(),
+        )
+        .unwrap();
         let t = TransferTask {
             id: "t-x1".into(),
             session_id: "s-1".into(),
@@ -2204,7 +2381,10 @@ mod tests {
         v.transfer_journal_update(&c, Some(true)).unwrap();
         let got = v.transfer_journal_get("t-x3").unwrap().unwrap();
         assert_eq!(got.0.status, TransferStatus::Committing);
-        assert_eq!(got.0.collision_decision, Some(session_api::CollisionDecision::Overwrite));
+        assert_eq!(
+            got.0.collision_decision,
+            Some(session_api::CollisionDecision::Overwrite)
+        );
         assert!(got.1, "发布原语成功后 verified=true 可读");
         let mut k = t.clone();
         k.id = "t-x4".into();
@@ -2212,7 +2392,10 @@ mod tests {
         k.collision_decision = Some(session_api::CollisionDecision::KeepBoth);
         v.transfer_journal_insert(&k).unwrap();
         let got2 = v.transfer_journal_get("t-x4").unwrap().unwrap();
-        assert_eq!(got2.0.collision_decision, Some(session_api::CollisionDecision::KeepBoth));
+        assert_eq!(
+            got2.0.collision_decision,
+            Some(session_api::CollisionDecision::KeepBoth)
+        );
         assert!(!got2.1);
         // 未知 id → None（不虚构）
         assert!(v.transfer_journal_get("t-nope").unwrap().is_none());
@@ -2228,8 +2411,12 @@ mod tests {
 
         // 新装：全新库（自 user_version=0 建起）默认关闭
         let fresh = dir.path().join("fresh.db");
-        let v = Vault::open_shared(Connection::open(&fresh).unwrap(), master_key().unwrap()).unwrap();
-        assert!(!v.collab_enabled().unwrap(), "全新库默认关闭协作（新装无自动 MCP 监听）");
+        let v =
+            Vault::open_shared(Connection::open(&fresh).unwrap(), master_key().unwrap()).unwrap();
+        assert!(
+            !v.collab_enabled().unwrap(),
+            "全新库默认关闭协作（新装无自动 MCP 监听）"
+        );
         drop(v);
 
         // 升级：造一个「既有 V6 库」（schema 已到 V7，但删去新键并把版本退到 6）
@@ -2237,11 +2424,15 @@ mod tests {
         drop(Vault::open_shared(Connection::open(&up).unwrap(), master_key().unwrap()).unwrap());
         {
             let conn = Connection::open(&up).unwrap();
-            conn.execute("DELETE FROM settings WHERE key='collab.enabled'", []).unwrap();
+            conn.execute("DELETE FROM settings WHERE key='collab.enabled'", [])
+                .unwrap();
             conn.pragma_update(None, "user_version", 6).unwrap();
         }
         let v = Vault::open_shared(Connection::open(&up).unwrap(), master_key().unwrap()).unwrap();
-        assert!(v.collab_enabled().unwrap(), "升级库缺新键时保留旧版「MCP 默认开启」行为");
+        assert!(
+            v.collab_enabled().unwrap(),
+            "升级库缺新键时保留旧版「MCP 默认开启」行为"
+        );
         drop(v);
 
         // 幂等：重开不翻转
@@ -2252,7 +2443,11 @@ mod tests {
         // 已有明确偏好优先：用户已显式关闭 → 迁移不覆盖
         {
             let conn = Connection::open(&up).unwrap();
-            conn.execute("UPDATE settings SET value='0' WHERE key='collab.enabled'", []).unwrap();
+            conn.execute(
+                "UPDATE settings SET value='0' WHERE key='collab.enabled'",
+                [],
+            )
+            .unwrap();
             conn.pragma_update(None, "user_version", 6).unwrap();
         }
         let v = Vault::open_shared(Connection::open(&up).unwrap(), master_key().unwrap()).unwrap();
@@ -2276,31 +2471,52 @@ mod tests {
         drop(Vault::open(&path).unwrap());
         {
             let conn = Connection::open(&path).unwrap();
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1).unwrap();
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                .unwrap();
         }
         // 记录拒绝前的库内容摘要（user_version + 表清单）
         let before = {
             let conn = Connection::open(&path).unwrap();
-            let ver: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            let ver: u32 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
             let tables: Vec<String> = {
-                let mut st = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").unwrap();
-                st.query_map([], |r| r.get(0)).unwrap().map(|x| x.unwrap()).collect()
+                let mut st = conn
+                    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                    .unwrap();
+                st.query_map([], |r| r.get(0))
+                    .unwrap()
+                    .map(|x| x.unwrap())
+                    .collect()
             };
             (ver, tables)
         };
 
         let err = Vault::open(&path).unwrap_err();
         let msg = format!("{err:?}");
-        assert!(msg.contains("高于本程序支持"), "拒绝信息须说明版本过高：{msg}");
-        assert!(msg.contains("vault backup"), "拒绝信息须给出备份出路：{msg}");
+        assert!(
+            msg.contains("高于本程序支持"),
+            "拒绝信息须说明版本过高：{msg}"
+        );
+        assert!(
+            msg.contains("vault backup"),
+            "拒绝信息须给出备份出路：{msg}"
+        );
 
         // 库未被改动：版本仍为未来值、表清单不变（未跑任何迁移）
         let after = {
             let conn = Connection::open(&path).unwrap();
-            let ver: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            let ver: u32 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
             let tables: Vec<String> = {
-                let mut st = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").unwrap();
-                st.query_map([], |r| r.get(0)).unwrap().map(|x| x.unwrap()).collect()
+                let mut st = conn
+                    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                    .unwrap();
+                st.query_map([], |r| r.get(0))
+                    .unwrap()
+                    .map(|x| x.unwrap())
+                    .collect()
             };
             (ver, tables)
         };
@@ -2351,7 +2567,10 @@ mod tests {
         drop(Vault::open(&db).unwrap());
         Connection::open(&db)
             .unwrap()
-            .execute("INSERT INTO settings(key,value) VALUES('r44.marker','keepme')", [])
+            .execute(
+                "INSERT INTO settings(key,value) VALUES('r44.marker','keepme')",
+                [],
+            )
             .unwrap();
 
         let bak = dir.path().join("bak.db");
@@ -2360,17 +2579,27 @@ mod tests {
 
         // 覆盖保护：同目标再备份须拒绝（不静默毁掉既有备份）
         let err = backup_to(&db, &bak).unwrap_err();
-        assert!(format!("{err:?}").contains("拒绝覆盖"), "须拒绝覆盖既有备份：{err:?}");
+        assert!(
+            format!("{err:?}").contains("拒绝覆盖"),
+            "须拒绝覆盖既有备份：{err:?}"
+        );
 
         // 改动原库 → 从备份恢复 → 内容回到备份时
         Connection::open(&db)
             .unwrap()
-            .execute("UPDATE settings SET value='changed' WHERE key='r44.marker'", [])
+            .execute(
+                "UPDATE settings SET value='changed' WHERE key='r44.marker'",
+                [],
+            )
             .unwrap();
         restore_from(&db, &bak).unwrap();
         let got: String = Connection::open(&db)
             .unwrap()
-            .query_row("SELECT value FROM settings WHERE key='r44.marker'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM settings WHERE key='r44.marker'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(got, "keepme", "恢复后应回到备份时的内容");
         // 恢复后仍可正常打开（迁移无碍）
@@ -2392,7 +2621,10 @@ mod tests {
         let target = dir.path().join("target.db");
         drop(Vault::open(&target).unwrap());
         let err = restore_from(&target, &future).unwrap_err();
-        assert!(format!("{err:?}").contains("高于本程序支持"), "须拒绝更新版本的备份：{err:?}");
+        assert!(
+            format!("{err:?}").contains("高于本程序支持"),
+            "须拒绝更新版本的备份：{err:?}"
+        );
     }
 
     /// R44（§10.2）：恢复**拒绝**不是 TinySSH 库的文件（缺 hosts 表）。
@@ -2408,7 +2640,10 @@ mod tests {
         let target = dir.path().join("target.db");
         drop(Vault::open(&target).unwrap());
         let err = restore_from(&target, &junk).unwrap_err();
-        assert!(format!("{err:?}").contains("不是 TinySSH 库"), "须拒绝非 vault 文件：{err:?}");
+        assert!(
+            format!("{err:?}").contains("不是 TinySSH 库"),
+            "须拒绝非 vault 文件：{err:?}"
+        );
     }
 
     /// R44 审核 F1 回归：护栏必须真正落在**任何持久写之前**。
@@ -2422,10 +2657,18 @@ mod tests {
         std::env::set_var("TINYSSH_MASTER_KEY", hex::encode([7u8; 32]));
         {
             let conn = Connection::open(&path).unwrap();
-            let jm: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
-            assert_ne!(jm.to_lowercase(), "wal", "前置条件：库须为非 WAL（实得 {jm}）");
-            conn.execute_batch("CREATE TABLE hosts (id TEXT PRIMARY KEY);").unwrap();
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1).unwrap();
+            let jm: String = conn
+                .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+                .unwrap();
+            assert_ne!(
+                jm.to_lowercase(),
+                "wal",
+                "前置条件：库须为非 WAL（实得 {jm}）"
+            );
+            conn.execute_batch("CREATE TABLE hosts (id TEXT PRIMARY KEY);")
+                .unwrap();
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                .unwrap();
         }
         let read_jm = || -> String {
             Connection::open(&path)
@@ -2437,9 +2680,16 @@ mod tests {
         let before_jm = read_jm();
 
         let err = Vault::open(&path).unwrap_err();
-        assert!(format!("{err:?}").contains("高于本程序支持"), "须因版本过高被拒：{err:?}");
+        assert!(
+            format!("{err:?}").contains("高于本程序支持"),
+            "须因版本过高被拒：{err:?}"
+        );
 
-        assert_eq!(std::fs::read(&path).unwrap(), before, "拒绝打开不得改动库文件任何字节");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "拒绝打开不得改动库文件任何字节"
+        );
         assert_eq!(read_jm(), before_jm, "拒绝打开不得把库切成 WAL");
     }
 
@@ -2459,16 +2709,26 @@ mod tests {
         drop(Vault::open(&target).unwrap());
         Connection::open(&target)
             .unwrap()
-            .execute("INSERT INTO settings(key,value) VALUES('f2.marker','survive')", [])
+            .execute(
+                "INSERT INTO settings(key,value) VALUES('f2.marker','survive')",
+                [],
+            )
             .unwrap();
 
         let err = restore_from(&target, &fake).unwrap_err();
-        assert!(format!("{err:?}").contains("不是 TinySSH 库"), "须拒绝残缺库：{err:?}");
+        assert!(
+            format!("{err:?}").contains("不是 TinySSH 库"),
+            "须拒绝残缺库：{err:?}"
+        );
 
         // 目标库未被毁：仍是完整 vault，标记行还在
         let got: String = Connection::open(&target)
             .unwrap()
-            .query_row("SELECT value FROM settings WHERE key='f2.marker'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM settings WHERE key='f2.marker'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(got, "survive", "拒绝恢复时目标库必须原样存活");
     }
@@ -2484,7 +2744,10 @@ mod tests {
         let set = |v: &str| {
             Connection::open(&db)
                 .unwrap()
-                .execute("INSERT OR REPLACE INTO settings(key,value) VALUES('f2b',?1)", [v])
+                .execute(
+                    "INSERT OR REPLACE INTO settings(key,value) VALUES('f2b',?1)",
+                    [v],
+                )
                 .unwrap();
         };
         set("backup-content");
@@ -2496,14 +2759,18 @@ mod tests {
 
         let live: String = Connection::open(&db)
             .unwrap()
-            .query_row("SELECT value FROM settings WHERE key='f2b'", [], |r| r.get(0))
+            .query_row("SELECT value FROM settings WHERE key='f2b'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(live, "backup-content", "恢复后应为备份内容");
         let pre = pre_restore_backup_path(&db);
         assert!(pre.exists(), "覆盖前必须留安全副本");
         let old: String = Connection::open(&pre)
             .unwrap()
-            .query_row("SELECT value FROM settings WHERE key='f2b'", [], |r| r.get(0))
+            .query_row("SELECT value FROM settings WHERE key='f2b'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(old, "live-content", "安全副本须是恢复前（被覆盖）的那份");
     }
@@ -2516,7 +2783,10 @@ mod tests {
         let db = dir.path().join("main.db");
         drop(Vault::open(&db).unwrap());
         let err = restore_from(&db, &db).unwrap_err();
-        assert!(format!("{err:?}").contains("同一个文件"), "须拒绝自我恢复：{err:?}");
+        assert!(
+            format!("{err:?}").contains("同一个文件"),
+            "须拒绝自我恢复：{err:?}"
+        );
     }
 
     /// R44 审核 F8：库不存在时 `backup_to` 须拒绝，**不得**先建空库再备份。
@@ -2527,7 +2797,10 @@ mod tests {
         let missing = dir.path().join("nope.db");
         let out = dir.path().join("out.db");
         let err = backup_to(&missing, &out).unwrap_err();
-        assert!(format!("{err:?}").contains("库不存在"), "须拒绝备份不存在的库：{err:?}");
+        assert!(
+            format!("{err:?}").contains("库不存在"),
+            "须拒绝备份不存在的库：{err:?}"
+        );
         assert!(!missing.exists(), "不得因备份而创建空库");
         assert!(!out.exists(), "不得产出备份文件");
     }
@@ -2545,7 +2818,11 @@ mod tests {
             conn.execute_batch(SCHEMA_V1).unwrap();
             conn.pragma_update(None, "user_version", 1).unwrap();
         }
-        assert_eq!(read_schema_version(&old).unwrap(), Some(1), "前置：来源须为 V1");
+        assert_eq!(
+            read_schema_version(&old).unwrap(),
+            Some(1),
+            "前置：来源须为 V1"
+        );
         // 目标是一份当前版本的库
         let db = dir.path().join("main.db");
         drop(Vault::open(&db).unwrap());
@@ -2572,7 +2849,9 @@ mod tests {
         drop(Vault::open(&src).unwrap()); // `open()` 会把库设成 WAL
         {
             let c = Connection::open(&src).unwrap();
-            let jm: String = c.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+            let jm: String = c
+                .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(jm.to_lowercase(), "wal", "前置：来源须为 WAL 库");
         }
         let before = std::fs::read(&src).unwrap();
@@ -2607,9 +2886,15 @@ mod tests {
         let db = dir.path().join("main.db");
         let v = Vault::open(&db).unwrap();
         let err = backup_to(&db, &dir.path().join("b.db")).unwrap_err();
-        assert!(format!("{err:?}").contains("写锁"), "持锁时导出须被拒：{err:?}");
+        assert!(
+            format!("{err:?}").contains("写锁"),
+            "持锁时导出须被拒：{err:?}"
+        );
         let err2 = restore_from(&db, &db).unwrap_err();
-        assert!(format!("{err2:?}").contains("写锁"), "持锁时恢复须被拒：{err2:?}");
+        assert!(
+            format!("{err2:?}").contains("写锁"),
+            "持锁时恢复须被拒：{err2:?}"
+        );
         drop(v);
     }
 
@@ -2630,7 +2915,11 @@ mod tests {
         // 落库后重复取值稳定（派生可重现）
         assert_eq!(db_master_salt(&conn).unwrap(), s1);
         let stored: String = conn
-            .query_row("SELECT value FROM settings WHERE key='master.salt'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM settings WHERE key='master.salt'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(hex::decode(&stored).unwrap(), s1);
         // 同口令、另一新库 → 不同盐不同密钥
@@ -2653,7 +2942,10 @@ mod tests {
         .unwrap();
         assert_eq!(db_master_salt(&conn).unwrap(), LEGACY_MASTER_SALT.to_vec());
         // v1 静态盐派生与旧实现逐字节一致（口令路径向后兼容锚点）
-        assert_eq!(*argon2_derive("p"), *argon2_derive_with_salt("p", LEGACY_MASTER_SALT));
+        assert_eq!(
+            *argon2_derive("p"),
+            *argon2_derive_with_salt("p", LEGACY_MASTER_SALT)
+        );
     }
 
     /// 口令派生密钥端到端：新库存盐 → 加密凭据 → 同口令重开可解。
@@ -2673,7 +2965,9 @@ mod tests {
                 address: "h".into(),
                 port: Some(22),
                 username: "u".into(),
-                auth: AuthDraft::Password { password: "sekret".into() },
+                auth: AuthDraft::Password {
+                    password: "sekret".into(),
+                },
                 tags: vec![],
                 charset: Charset::Utf8,
                 shell_integration: None,
@@ -2691,4 +2985,3 @@ mod tests {
         assert_eq!(&*secret, "sekret");
     }
 }
-

@@ -140,16 +140,19 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() + 1 && i + 2 < bytes.len() + 1
-            && i + 2 < bytes.len() {
-                let hi = (bytes[i + 1] as char).to_digit(16);
-                let lo = (bytes[i + 2] as char).to_digit(16);
-                if let (Some(hi), Some(lo)) = (hi, lo) {
-                    out.push((hi * 16 + lo) as u8);
-                    i += 3;
-                    continue;
-                }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len() + 1
+            && i + 2 < bytes.len() + 1
+            && i + 2 < bytes.len()
+        {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
             }
+        }
         out.push(bytes[i]);
         i += 1;
     }
@@ -181,7 +184,12 @@ mod tests {
         let mut sc = OscScanner::new();
         let evs = sc.feed(b"\x1b]7;file://myhost/tmp/a%20b\x07");
         assert_eq!(evs.len(), 1);
-        assert_eq!(evs[0].0, OscEvent::Cwd { path: "/tmp/a b".into() });
+        assert_eq!(
+            evs[0].0,
+            OscEvent::Cwd {
+                path: "/tmp/a b".into()
+            }
+        );
     }
 
     #[test]

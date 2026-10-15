@@ -23,7 +23,11 @@ struct TerminalInput {
 }
 
 #[tauri::command]
-fn note_terminal(state: State<'_, Arc<TerminalInput>>, sid: Option<String>, focused: bool) -> CmdResult<()> {
+fn note_terminal(
+    state: State<'_, Arc<TerminalInput>>,
+    sid: Option<String>,
+    focused: bool,
+) -> CmdResult<()> {
     *state.sid.lock().unwrap() = sid;
     *state.focused.lock().unwrap() = focused;
     Ok(())
@@ -50,7 +54,11 @@ struct WireError {
 
 impl WireError {
     fn simple(kind: &str, message: impl Into<String>) -> Self {
-        Self { kind: kind.to_string(), message: message.into(), detail: None }
+        Self {
+            kind: kind.to_string(),
+            message: message.into(),
+            detail: None,
+        }
     }
 }
 
@@ -71,7 +79,11 @@ impl From<session_api::Error> for WireError {
         // kind/detail 单点映射归核心 Error::wire_parts（C1 三端一致，R19 起）；
         // 这里只补 message
         let (kind, detail) = e.wire_parts();
-        Self { kind: kind.to_string(), message: e.to_string(), detail }
+        Self {
+            kind: kind.to_string(),
+            message: e.to_string(),
+            detail,
+        }
     }
 }
 
@@ -79,33 +91,57 @@ type CmdResult<T> = std::result::Result<T, WireError>;
 
 #[tauri::command]
 async fn list_hosts(state: ApiState<'_>) -> CmdResult<Vec<Host>> {
-    state.api.list_hosts(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .list_hosts(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn upsert_host(state: ApiState<'_>, host: HostDraft) -> CmdResult<HostId> {
-    state.api.upsert_host(&human(), host).await.map_err(WireError::from)
+    state
+        .api
+        .upsert_host(&human(), host)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn delete_host(state: ApiState<'_>, id: String) -> CmdResult<()> {
-    state.api.delete_host(&human(), id).await.map_err(WireError::from)
+    state
+        .api
+        .delete_host(&human(), id)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn create_identity(state: ApiState<'_>, req: IdentityReq) -> CmdResult<IdentityMeta> {
-    state.api.create_identity(&human(), req).await.map_err(WireError::from)
+    state
+        .api
+        .create_identity(&human(), req)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn list_identities(state: ApiState<'_>) -> CmdResult<Vec<IdentityMeta>> {
-    state.api.list_identities(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .list_identities(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// R21 凭据基础管理：删除前核心侧引用检查（被主机引用 → IdentityInUse{host_names}）
 #[tauri::command]
 async fn delete_identity(state: ApiState<'_>, id: String) -> CmdResult<()> {
-    state.api.delete_identity(&human(), id).await.map_err(WireError::from)
+    state
+        .api
+        .delete_identity(&human(), id)
+        .await
+        .map_err(WireError::from)
 }
 
 /// ~/.ssh/config 导入：解析预览（path 缺省 = ~/.ssh/config）
@@ -142,13 +178,21 @@ async fn ssh_config_import(
 
 #[tauri::command]
 async fn list_sessions(state: ApiState<'_>) -> CmdResult<Vec<SessionInfo>> {
-    state.api.list_sessions(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .list_sessions(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// R41（§6.6/S09）连接详情：连接时身份快照（地址/端口/用户/认证/指纹/编码）+ 真实创建时刻。
 #[tauri::command]
 async fn session_detail(state: ApiState<'_>, sid: String) -> CmdResult<session_api::SessionDetail> {
-    state.api.session_detail(&human(), sid).await.map_err(WireError::from)
+    state
+        .api
+        .session_detail(&human(), sid)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -232,26 +276,42 @@ async fn cancel_connection(state: ApiState<'_>, attempt_id: String) -> CmdResult
 
 #[tauri::command]
 async fn close_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
-    state.api.close_session(&human(), sid).await.map_err(WireError::from)
+    state
+        .api
+        .close_session(&human(), sid)
+        .await
+        .map_err(WireError::from)
 }
 
 /// 断线会话一键重连（T13）：仅 Disconnected 会话；成功后进入重确认。
 #[tauri::command]
 async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
-    state.api.reconnect_session(&sid).await.map_err(WireError::from)
+    state
+        .api
+        .reconnect_session(&sid)
+        .await
+        .map_err(WireError::from)
 }
 
 /// R26（§6.4「可停止重试」）：停止自动重连（≤250ms 内落 Disconnected）。
 /// 幂等：非重连期为合法 no-op。
 #[tauri::command]
 async fn stop_auto_reconnect(state: ApiState<'_>, sid: String) -> CmdResult<()> {
-    state.api.stop_auto_reconnect(&sid).await.map_err(WireError::from)
+    state
+        .api
+        .stop_auto_reconnect(&sid)
+        .await
+        .map_err(WireError::from)
 }
 
 /// R26：会话状态快照（demo/兜底轮询面；真实 UI 走 session-state 事件）。
 #[tauri::command]
 async fn session_state_feed(state: ApiState<'_>) -> CmdResult<Vec<SessionStateEvent>> {
-    let list = state.api.list_sessions(&Actor::Human).await.map_err(WireError::from)?;
+    let list = state
+        .api
+        .list_sessions(&Actor::Human)
+        .await
+        .map_err(WireError::from)?;
     Ok(list
         .into_iter()
         .map(|s| SessionStateEvent {
@@ -268,7 +328,12 @@ async fn session_state_feed(state: ApiState<'_>) -> CmdResult<Vec<SessionStateEv
 /// 结果经审计 transfer_done/transfer_failed 广播（payload 带 transfer id 供 UI 对账）。
 /// R34：人类路径 collision 恒 None——冲突进 AwaitingDecision 决策卡（DF6.2 参数仅 Agent）。
 #[tauri::command]
-async fn upload_file(state: ApiState<'_>, sid: String, local: String, remote: String) -> CmdResult<TransferHandle> {
+async fn upload_file(
+    state: ApiState<'_>,
+    sid: String,
+    local: String,
+    remote: String,
+) -> CmdResult<TransferHandle> {
     state
         .api
         .upload(&human(), sid, std::path::Path::new(&local), &remote, None)
@@ -287,7 +352,11 @@ async fn download_file(
     let dest = match local {
         Some(p) => std::path::PathBuf::from(p),
         None => {
-            let name = remote.rsplit('/').find(|s| !s.is_empty()).unwrap_or("download").to_string();
+            let name = remote
+                .rsplit('/')
+                .find(|s| !s.is_empty())
+                .unwrap_or("download")
+                .to_string();
             dirs_or_home().join("Downloads").join(name)
         }
     };
@@ -301,7 +370,11 @@ async fn download_file(
 /// 取消进行中的传输（取消语义：传输任务收到 Cancelled，审计记 transfer_failed/已取消）。
 #[tauri::command]
 async fn cancel_transfer(state: ApiState<'_>, id: String) -> CmdResult<()> {
-    state.api.cancel_transfer(&human(), id).await.map_err(WireError::from)
+    state
+        .api
+        .cancel_transfer(&human(), id)
+        .await
+        .map_err(WireError::from)
 }
 
 /// C6（R34）：冲突裁决提交（乐观锁 expect_revision；StaleDecision/InvalidTransferState
@@ -324,13 +397,21 @@ async fn submit_collision_decision(
 /// C5/R34：显式作废过期决策卡（非待决态幂等 no-op）。
 #[tauri::command]
 async fn reject_expired_decision(state: ApiState<'_>, id: String) -> CmdResult<()> {
-    state.api.reject_expired_decision(&human(), id).await.map_err(WireError::from)
+    state
+        .api
+        .reject_expired_decision(&human(), id)
+        .await
+        .map_err(WireError::from)
 }
 
 /// C6/R34：OutcomeUnknown 复核——journal verified 证据绑定则 Succeeded，否则保持未知。
 #[tauri::command]
 async fn verify_transfer_outcome(state: ApiState<'_>, id: String) -> CmdResult<TransferTask> {
-    state.api.verify_transfer_outcome(&human(), id).await.map_err(WireError::from)
+    state
+        .api
+        .verify_transfer_outcome(&human(), id)
+        .await
+        .map_err(WireError::from)
 }
 
 fn parse_collision_decision(s: &str) -> Result<session_api::CollisionDecision> {
@@ -347,7 +428,11 @@ fn parse_collision_decision(s: &str) -> Result<session_api::CollisionDecision> {
 /// C5（R32）：任务注册表查询——UI 重挂对账与事件漏收兜底（创建倒序全量）。
 #[tauri::command]
 async fn list_transfers(state: ApiState<'_>) -> CmdResult<Vec<TransferTask>> {
-    state.api.list_transfers(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .list_transfers(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// C5/R35：失败重试——以原参数创建新任务（retry_of=旧任务），重新校验连接/
@@ -355,7 +440,11 @@ async fn list_transfers(state: ApiState<'_>) -> CmdResult<Vec<TransferTask>> {
 /// 拒绝（UI 只提供「重新核实」）。
 #[tauri::command]
 async fn retry_transfer(state: ApiState<'_>, id: String) -> CmdResult<TransferHandle> {
-    state.api.retry_transfer(&human(), id).await.map_err(WireError::from)
+    state
+        .api
+        .retry_transfer(&human(), id)
+        .await
+        .map_err(WireError::from)
 }
 
 /// C5/R35「定位」（S08）：下载任务在访达中显示本地目标（open -R）。
@@ -398,7 +487,11 @@ async fn reveal_path(path: String) -> CmdResult<()> {
 /// SFTP 目录浏览（T41 FR-7）：只读 readdir，人类专属入口（不经审批）。
 #[tauri::command]
 async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<Vec<DirEntryS>> {
-    state.api.sftp_list(&human(), sid, &path).await.map_err(WireError::from)
+    state
+        .api
+        .sftp_list(&human(), sid, &path)
+        .await
+        .map_err(WireError::from)
 }
 
 /// C4（R30）：路径规范化。path=None → 连接初始目录（SFTP "."）。
@@ -418,7 +511,11 @@ async fn sftp_resolve_path(
 /// C4（R30）：条目元数据（kind/symlink/未知字段语义见 EntryStat）。
 #[tauri::command]
 async fn sftp_stat(state: ApiState<'_>, sid: String, path: String) -> CmdResult<EntryStat> {
-    state.api.sftp_stat(&human(), sid, path).await.map_err(WireError::from)
+    state
+        .api
+        .sftp_stat(&human(), sid, path)
+        .await
+        .map_err(WireError::from)
 }
 
 /// 监控条采样（监控条轮）：FinalShell 式底部资源条数据源——人类专属只读
@@ -426,7 +523,11 @@ async fn sftp_stat(state: ApiState<'_>, sid: String, path: String) -> CmdResult<
 /// 输出不回放终端）。非 Linux 远端输出不可解析，前端整条隐藏。
 #[tauri::command]
 async fn read_host_metrics(state: ApiState<'_>, sid: String) -> CmdResult<String> {
-    state.api.probe_metrics(&human(), &sid).await.map_err(WireError::from)
+    state
+        .api
+        .probe_metrics(&human(), &sid)
+        .await
+        .map_err(WireError::from)
 }
 
 // ---- 自身开销监控（本轮）：tinyssh-app 进程级 CPU%/内存——kernel32 直读，零新依赖 ----
@@ -437,9 +538,14 @@ mod self_proc {
     //! K32GetProcessMemoryInfo 在 kernel32（Win7+），随 MSVC 默认链接解析。
     #![allow(non_snake_case)]
     #[repr(C)]
-    struct FileTime { lo: u32, hi: u32 }
+    struct FileTime {
+        lo: u32,
+        hi: u32,
+    }
     impl FileTime {
-        fn as_u64(&self) -> u64 { ((self.hi as u64) << 32) | self.lo as u64 }
+        fn as_u64(&self) -> u64 {
+            ((self.hi as u64) << 32) | self.lo as u64
+        }
     }
     #[repr(C)]
     struct ProcMemCountersEx {
@@ -464,7 +570,11 @@ mod self_proc {
             kernel: *mut FileTime,
             user: *mut FileTime,
         ) -> i32;
-        fn K32GetProcessMemoryInfo(h: *mut core::ffi::c_void, out: *mut ProcMemCountersEx, cb: u32) -> i32;
+        fn K32GetProcessMemoryInfo(
+            h: *mut core::ffi::c_void,
+            out: *mut ProcMemCountersEx,
+            cb: u32,
+        ) -> i32;
     }
 
     /// 一次采样：（内核+用户 CPU 时间，100ns 累计），工作集字节，提交字节
@@ -472,22 +582,34 @@ mod self_proc {
         unsafe {
             let h = GetCurrentProcess();
             let (mut c, mut e, mut k, mut u) = (
-                FileTime { lo: 0, hi: 0 }, FileTime { lo: 0, hi: 0 },
-                FileTime { lo: 0, hi: 0 }, FileTime { lo: 0, hi: 0 },
+                FileTime { lo: 0, hi: 0 },
+                FileTime { lo: 0, hi: 0 },
+                FileTime { lo: 0, hi: 0 },
+                FileTime { lo: 0, hi: 0 },
             );
             let proc_time = if GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0 {
                 k.as_u64().wrapping_add(u.as_u64())
-            } else { 0 };
+            } else {
+                0
+            };
             let mut mc = ProcMemCountersEx {
                 cb: std::mem::size_of::<ProcMemCountersEx>() as u32,
-                PageFaultCount: 0, PeakWorkingSetSize: 0, WorkingSetSize: 0,
-                QuotaPeakPagedPoolUsage: 0, QuotaPagedPoolUsage: 0,
-                QuotaPeakNonPagedPoolUsage: 0, QuotaNonPagedPoolUsage: 0,
-                PagefileUsage: 0, PeakPagefileUsage: 0, PrivateUsage: 0,
+                PageFaultCount: 0,
+                PeakWorkingSetSize: 0,
+                WorkingSetSize: 0,
+                QuotaPeakPagedPoolUsage: 0,
+                QuotaPagedPoolUsage: 0,
+                QuotaPeakNonPagedPoolUsage: 0,
+                QuotaNonPagedPoolUsage: 0,
+                PagefileUsage: 0,
+                PeakPagefileUsage: 0,
+                PrivateUsage: 0,
             };
             let (ws, commit) = if K32GetProcessMemoryInfo(h, &mut mc, mc.cb) != 0 {
                 (mc.WorkingSetSize as u64, mc.PrivateUsage as u64)
-            } else { (0, 0) };
+            } else {
+                (0, 0)
+            };
             (proc_time, ws, commit)
         }
     }
@@ -524,30 +646,52 @@ fn read_self_metrics(state: State<'_, SelfMeter>) -> SelfMetrics {
     let (proc_now, ws, commit) = self_proc::sample();
     #[cfg(not(windows))]
     let (proc_now, ws, commit) = (0u64, 0u64, 0u64);
-    let ncores = std::thread::available_parallelism().map(|n| n.get() as f64).unwrap_or(1.0);
+    let ncores = std::thread::available_parallelism()
+        .map(|n| n.get() as f64)
+        .unwrap_or(1.0);
     let mut prev = state.0.lock().unwrap();
     let cpu_pct = match prev.as_ref() {
         Some((p, at)) => cpu_pct(proc_now, *p, at.elapsed().as_secs_f64(), ncores),
         None => None,
     };
     *prev = Some((proc_now, std::time::Instant::now()));
-    SelfMetrics { cpu_pct, ws_mb: ws / 1048576, commit_mb: commit / 1048576 }
+    SelfMetrics {
+        cpu_pct,
+        ws_mb: ws / 1048576,
+        commit_mb: commit / 1048576,
+    }
 }
 
 /// 端口转发（T42 FR-8）：列/建/停（人类 GUI 入口；Agent 侧留 MCP 审批版）。
 #[tauri::command]
 async fn list_forwards(state: ApiState<'_>, sid: String) -> CmdResult<Vec<ForwardInfo>> {
-    state.api.list_forwards(&human(), sid).await.map_err(WireError::from)
+    state
+        .api
+        .list_forwards(&human(), sid)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
-async fn start_forward(state: ApiState<'_>, sid: String, spec: ForwardSpec) -> CmdResult<ForwardId> {
-    state.api.start_forward(&human(), sid, spec).await.map_err(WireError::from)
+async fn start_forward(
+    state: ApiState<'_>,
+    sid: String,
+    spec: ForwardSpec,
+) -> CmdResult<ForwardId> {
+    state
+        .api
+        .start_forward(&human(), sid, spec)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn stop_forward(state: ApiState<'_>, sid: String, id: String) -> CmdResult<()> {
-    state.api.stop_forward(&human(), sid, id).await.map_err(WireError::from)
+    state
+        .api
+        .stop_forward(&human(), sid, id)
+        .await
+        .map_err(WireError::from)
 }
 
 /// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
@@ -555,18 +699,32 @@ async fn stop_forward(state: ApiState<'_>, sid: String, id: String) -> CmdResult
 /// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）
 #[tauri::command]
 fn get_setting(state: ApiState<'_>, key: String) -> CmdResult<Option<String>> {
-    state.api.center.vault.get_setting(&key).map_err(WireError::from)
+    state
+        .api
+        .center
+        .vault
+        .get_setting(&key)
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 fn set_setting(state: ApiState<'_>, key: String, value: String) -> CmdResult<()> {
-    state.api.center.vault.set_setting(&key, &value).map_err(WireError::from)
+    state
+        .api
+        .center
+        .vault
+        .set_setting(&key, &value)
+        .map_err(WireError::from)
 }
 
 // ---- C8 偏好与主机元数据（R15；经 SessionApi 走 Human 通道与审计）----
 #[tauri::command]
 async fn get_workspace(state: ApiState<'_>) -> CmdResult<Workspace> {
-    state.api.get_workspace(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .get_workspace(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -576,7 +734,11 @@ async fn set_workspace(state: ApiState<'_>, ws: Workspace) -> CmdResult<Workspac
         .set_workspace(&human(), ws)
         .await
         .map_err(WireError::from)?;
-    state.api.get_workspace(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .get_workspace(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -590,12 +752,20 @@ async fn set_host_favorite(state: ApiState<'_>, host_id: String, favorite: bool)
 
 #[tauri::command]
 async fn list_host_metadata(state: ApiState<'_>) -> CmdResult<Vec<HostMeta>> {
-    state.api.list_host_metadata(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .list_host_metadata(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn list_recent_hosts(state: ApiState<'_>) -> CmdResult<Vec<RecentHost>> {
-    state.api.list_recent_hosts(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .list_recent_hosts(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -632,7 +802,11 @@ async fn open_url(url: String) -> CmdResult<()> {
 
 #[tauri::command]
 async fn resize(state: ApiState<'_>, sid: String, cols: u16, rows: u16) -> CmdResult<()> {
-    state.api.resize(&human(), sid, cols, rows).await.map_err(WireError::from)
+    state
+        .api
+        .resize(&human(), sid, cols, rows)
+        .await
+        .map_err(WireError::from)
 }
 
 /// 输出流订阅：Channel 桥（可丢 broadcast + 失步 resync，L0 ADR-2/7；C10 R11）。
@@ -697,7 +871,11 @@ async fn subscribe_output(
 
 /// 显式退订（主清理路径）：UI 关闭终端实例时必须调用；幂等 no-op。
 #[tauri::command]
-async fn unsubscribe_output(state: ApiState<'_>, sid: String, subscription_id: String) -> CmdResult<()> {
+async fn unsubscribe_output(
+    state: ApiState<'_>,
+    sid: String,
+    subscription_id: String,
+) -> CmdResult<()> {
     state
         .api
         .unsubscribe_output(sid, &subscription_id)
@@ -728,12 +906,20 @@ fn debug_subscriptions(state: ApiState<'_>) -> DebugSubscriptions {
 
 #[tauri::command]
 async fn read_screen(state: ApiState<'_>, sid: String) -> CmdResult<ScreenSnapshot> {
-    state.api.read_screen(&human(), sid).await.map_err(WireError::from)
+    state
+        .api
+        .read_screen(&human(), sid)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn send_keys(state: ApiState<'_>, sid: String, keys: String) -> CmdResult<()> {
-    state.api.send_keys(&human(), sid, &keys).await.map_err(WireError::from)
+    state
+        .api
+        .send_keys(&human(), sid, &keys)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -759,51 +945,82 @@ async fn set_control(
             StopPolicy::None
         },
     };
-    state.api.set_control(&human(), sid, owner, opts).await.map_err(WireError::from)
+    state
+        .api
+        .set_control(&human(), sid, owner, opts)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
-async fn delegate_session(
-    state: ApiState<'_>,
-    sid: String,
-    goal: Option<String>,
-) -> CmdResult<()> {
-    state.api.delegate_session(&human(), sid, goal).await.map_err(WireError::from)
+async fn delegate_session(state: ApiState<'_>, sid: String, goal: Option<String>) -> CmdResult<()> {
+    state
+        .api
+        .delegate_session(&human(), sid, goal)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn shell_capability(state: ApiState<'_>, sid: String) -> CmdResult<ShellCapability> {
-    state.api.shell_capability(&human(), sid).await.map_err(WireError::from)
+    state
+        .api
+        .shell_capability(&human(), sid)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn session_brief(state: ApiState<'_>, sid: String) -> CmdResult<SessionBrief> {
-    state.api.get_session_brief(&human(), sid).await.map_err(WireError::from)
+    state
+        .api
+        .get_session_brief(&human(), sid)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn set_session_goal(state: ApiState<'_>, sid: String, goal: Option<String>) -> CmdResult<()> {
-    state.api.set_session_goal(&human(), sid, goal).await.map_err(WireError::from)
+    state
+        .api
+        .set_session_goal(&human(), sid, goal)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
 async fn list_approvals(state: ApiState<'_>, pending_only: bool) -> CmdResult<Vec<ApprovalItem>> {
     state
         .api
-        .list_approvals(&human(), ApprovalFilter { pending_only, ..Default::default() })
+        .list_approvals(
+            &human(),
+            ApprovalFilter {
+                pending_only,
+                ..Default::default()
+            },
+        )
         .await
         .map_err(WireError::from)
 }
 
 #[tauri::command]
-async fn decide_approval(state: ApiState<'_>, id: String, decision: String, edited: Option<String>) -> CmdResult<()> {
+async fn decide_approval(
+    state: ApiState<'_>,
+    id: String,
+    decision: String,
+    edited: Option<String>,
+) -> CmdResult<()> {
     let d = match decision.as_str() {
         "approve" => Decision::Approve,
         "deny" => Decision::Deny,
         "edit" => Decision::ApproveEdited(edited.unwrap_or_default()),
         _ => return Err(WireError::simple("invalid_input", "bad decision")),
     };
-    state.api.decide_approval(&human(), id, d).await.map_err(WireError::from)
+    state
+        .api
+        .decide_approval(&human(), id, d)
+        .await
+        .map_err(WireError::from)
 }
 
 /// R41（§6.6「默认当前会话，可切全部；可筛人类/Agent 与事件类型」）：过滤面全量过桥。
@@ -818,45 +1035,76 @@ async fn audit_query(
     action: Option<String>,
     before_seq: Option<i64>,
 ) -> CmdResult<AuditPage> {
-    let f = AuditFilter { session_id: sid, limit, actor_kind, action, before_seq, ..Default::default() };
-    state.api.query_audit(&human(), f).await.map_err(WireError::from)
+    let f = AuditFilter {
+        session_id: sid,
+        limit,
+        actor_kind,
+        action,
+        before_seq,
+        ..Default::default()
+    };
+    state
+        .api
+        .query_audit(&human(), f)
+        .await
+        .map_err(WireError::from)
 }
 
 /// 主机指纹待决列表（路线图⑤ TOFU：首连确认/变更告警）。
 #[tauri::command]
 async fn pending_host_keys(state: ApiState<'_>) -> CmdResult<Vec<PendingHostKey>> {
-    state.api.pending_host_keys(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .pending_host_keys(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// 人类对指纹确认作出决定；accept=true 时指纹入库并放行连接。
 #[tauri::command]
 async fn decide_host_key(state: ApiState<'_>, id: String, accept: bool) -> CmdResult<()> {
-    state.api.decide_host_key(&human(), &id, accept).await.map_err(WireError::from)
+    state
+        .api
+        .decide_host_key(&human(), &id, accept)
+        .await
+        .map_err(WireError::from)
 }
 
 /// 2FA 认证提示待决列表（路线图⑩：keyboard-interactive 非密码类提示）。
 #[tauri::command]
 async fn pending_auth_prompts(state: ApiState<'_>) -> CmdResult<Vec<PendingAuthPrompt>> {
-    state.api.pending_auth_prompts(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .pending_auth_prompts(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// 人类应答认证提示；answer 为空串视为取消（认证终止）。
 #[tauri::command]
 async fn answer_auth_prompt(state: ApiState<'_>, id: String, answer: String) -> CmdResult<()> {
-    state.api.answer_auth_prompt(&human(), &id, &answer).await.map_err(WireError::from)
+    state
+        .api
+        .answer_auth_prompt(&human(), &id, &answer)
+        .await
+        .map_err(WireError::from)
 }
 
 /// SPIKE-1：是否处于基准模式。
 #[tauri::command]
 async fn bench_mode() -> CmdResult<bool> {
-    let v = std::env::var("TINYSSH_BENCH").map(|x| x == "1").unwrap_or(false);
+    let v = std::env::var("TINYSSH_BENCH")
+        .map(|x| x == "1")
+        .unwrap_or(false);
     eprintln!("[bench] bench_mode called -> {v}");
     Ok(v)
 }
 
 /// SPIKE-1：IPC Channel 吞吐基准——Rust → WebView 原始字节推送。
 #[tauri::command]
-async fn bench_start(on_chunk: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>) -> CmdResult<()> {
+async fn bench_start(
+    on_chunk: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> CmdResult<()> {
     eprintln!("[bench] bench_start called");
     tokio::spawn(async move {
         let chunk = vec![b'a'; 1024 * 1024];
@@ -865,7 +1113,10 @@ async fn bench_start(on_chunk: tauri::ipc::Channel<tauri::ipc::InvokeResponseBod
         while tokio::time::Instant::now() < deadline {
             for _ in 0..4 {
                 i += 1;
-                if on_chunk.send(tauri::ipc::InvokeResponseBody::Raw(chunk.clone())).is_err() {
+                if on_chunk
+                    .send(tauri::ipc::InvokeResponseBody::Raw(chunk.clone()))
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -940,20 +1191,32 @@ async fn mcp_status(state: ApiState<'_>) -> CmdResult<serde_json::Value> {
 /// 协作服务状态（状态机 + 已配置 Agent 数 + 有活动请求数 + 端点地址）。
 #[tauri::command]
 async fn collab_status(state: ApiState<'_>) -> CmdResult<CollabStatus> {
-    state.api.collab_status(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .collab_status(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// 停用影响预览（确认前展示）。
 #[tauri::command]
 async fn collab_disable_preview(state: ApiState<'_>) -> CmdResult<DisableImpact> {
-    state.api.collab_disable_preview(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .collab_disable_preview(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// 确认停用：核心**原子**封 admission（拒绝新 Agent 请求）+ 作废未开始请求 +
 /// Agent 会话转回 Human；随后停止应用拥有的 MCP 端点。两层均确认后才 Disabled。
 #[tauri::command]
 async fn collab_disable(state: ApiState<'_>) -> CmdResult<DisableReport> {
-    let report = state.api.collab_disable(&human()).await.map_err(WireError::from)?;
+    let report = state
+        .api
+        .collab_disable(&human())
+        .await
+        .map_err(WireError::from)?;
     // 停止应用拥有的端点（若在运行）。**确认**监听器确已释放后才置 Disabled——
     // 发信号不等于已停（§9「监听器关闭不等于核心 gate 已生效，两层均需确认」）。
     let handle = state.mcp_endpoint.lock().unwrap().take();
@@ -981,7 +1244,11 @@ async fn collab_disable(state: ApiState<'_>) -> CmdResult<DisableReport> {
             state.api.set_mcp_endpoint(String::new());
         }
     }
-    state.api.collab_mark_endpoint_stopped(&human()).await.map_err(WireError::from)?;
+    state
+        .api
+        .collab_mark_endpoint_stopped(&human())
+        .await
+        .map_err(WireError::from)?;
     Ok(report)
 }
 
@@ -1002,7 +1269,9 @@ async fn collab_enable(state: ApiState<'_>) -> CmdResult<CollabStatus> {
         let api2 = state.api.clone();
         match tinyssh_mcp_server::spawn_endpoint_with_shutdown(api2, resolver, 8722).await {
             Ok((port, handle)) => {
-                state.api.set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
+                state
+                    .api
+                    .set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
                 new_handle = Some(handle);
             }
             Err(e) => {
@@ -1032,52 +1301,56 @@ async fn collab_enable(state: ApiState<'_>) -> CmdResult<CollabStatus> {
     if let Some(h) = new_handle {
         *state.mcp_endpoint.lock().unwrap() = Some(h);
     }
-    state.api.collab_status(&human()).await.map_err(WireError::from)
+    state
+        .api
+        .collab_status(&human())
+        .await
+        .map_err(WireError::from)
 }
 
 /// macOS 虚拟键码 → Ctrl 组合的 C0 控制字符（与真实终端 / 前端 ctrlCharOf 同表）。
 #[cfg(target_os = "macos")]
 fn ctrl_char_of_keycode(code: u64) -> Option<&'static str> {
     Some(match code {
-        0 => "\x01",   // a
-        11 => "\x02",  // b
-        8 => "\x03",   // c
-        2 => "\x04",   // d
-        14 => "\x05",  // e
-        3 => "\x06",   // f
-        5 => "\x07",   // g
-        4 => "\x08",   // h
-        34 => "\x09",  // i
-        38 => "\x0a",  // j
-        40 => "\x0b",  // k
-        37 => "\x0c",  // l
-        46 => "\x0d",  // m
-        45 => "\x0e",  // n
-        31 => "\x0f",  // o
-        35 => "\x10",  // p
-        12 => "\x11",  // q
-        15 => "\x12",  // r
-        1 => "\x13",   // s
-        17 => "\x14",  // t
-        32 => "\x15",  // u
-        9 => "\x16",   // v
-        13 => "\x17",  // w
-        7 => "\x18",   // x
-        16 => "\x19",  // y
-        6 => "\x1a",   // z
-        33 => "\x1b",  // [
-        42 => "\x1c",  // backslash
-        30 => "\x1d",  // ]
-        22 => "\x1e",  // 6
-        27 => "\x1f",  // -
-        44 => "\x1f",  // /
-        49 => "\x00",  // space
-        19 => "\x00",  // 2
-        20 => "\x1b",  // 3
-        21 => "\x1c",  // 4
-        23 => "\x1d",  // 5
-        26 => "\x1f",  // 7
-        28 => "\x7f",  // 8 (DEL)
+        0 => "\x01",  // a
+        11 => "\x02", // b
+        8 => "\x03",  // c
+        2 => "\x04",  // d
+        14 => "\x05", // e
+        3 => "\x06",  // f
+        5 => "\x07",  // g
+        4 => "\x08",  // h
+        34 => "\x09", // i
+        38 => "\x0a", // j
+        40 => "\x0b", // k
+        37 => "\x0c", // l
+        46 => "\x0d", // m
+        45 => "\x0e", // n
+        31 => "\x0f", // o
+        35 => "\x10", // p
+        12 => "\x11", // q
+        15 => "\x12", // r
+        1 => "\x13",  // s
+        17 => "\x14", // t
+        32 => "\x15", // u
+        9 => "\x16",  // v
+        13 => "\x17", // w
+        7 => "\x18",  // x
+        16 => "\x19", // y
+        6 => "\x1a",  // z
+        33 => "\x1b", // [
+        42 => "\x1c", // backslash
+        30 => "\x1d", // ]
+        22 => "\x1e", // 6
+        27 => "\x1f", // -
+        44 => "\x1f", // /
+        49 => "\x00", // space
+        19 => "\x00", // 2
+        20 => "\x1b", // 3
+        21 => "\x1c", // 4
+        23 => "\x1d", // 5
+        26 => "\x1f", // 7
+        28 => "\x7f", // 8 (DEL)
         _ => return None,
     })
 }
@@ -1103,7 +1376,8 @@ fn install_native_ctrl_intercept(core: Arc<SessionManager>, input: Arc<TerminalI
             let flags = ev.modifierFlags();
             // ⌘/⌥ 组合不劫持；⇧ 允许（ctrl+⇧+字母与 ctrl+字母同义）
             if !flags.contains(NSEventModifierFlags::Control)
-                || flags.intersects(NSEventModifierFlags::Command.union(NSEventModifierFlags::Option))
+                || flags
+                    .intersects(NSEventModifierFlags::Command.union(NSEventModifierFlags::Option))
             {
                 return None;
             }
@@ -1153,12 +1427,21 @@ fn install_native_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
             Some(AboutMetadata {
                 name: Some("TinySSH".into()),
                 version: Some(version.clone()),
-                credits: Some("主机凭据与 Agent 令牌经本机钥匙串加密存储，协作与审计链完整留存于本机。".into()),
+                credits: Some(
+                    "主机凭据与 Agent 令牌经本机钥匙串加密存储，协作与审计链完整留存于本机。"
+                        .into(),
+                ),
                 ..Default::default()
             }),
         )?)
         .separator()
-        .item(&MenuItem::with_id(app, "settings", "设置…", true, Some("CmdOrCtrl+,"))?)
+        .item(&MenuItem::with_id(
+            app,
+            "settings",
+            "设置…",
+            true,
+            Some("CmdOrCtrl+,"),
+        )?)
         .separator()
         .item(&PredefinedMenuItem::hide(app, Some("隐藏 TinySSH"))?)
         .item(&PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?)
@@ -1182,7 +1465,10 @@ fn install_native_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         .item(&PredefinedMenuItem::minimize(app, Some("最小化"))?)
         .item(&PredefinedMenuItem::maximize(app, Some("缩放"))?)
         .separator()
-        .item(&PredefinedMenuItem::bring_all_to_front(app, Some("前置全部"))?)
+        .item(&PredefinedMenuItem::bring_all_to_front(
+            app,
+            Some("前置全部"),
+        )?)
         .build()?;
     let menu = MenuBuilder::new(app)
         .items(&[&app_sub, &edit_sub, &view_sub, &window_sub])
@@ -1197,16 +1483,17 @@ fn install_native_menu(_app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 fn main() {
-    eprintln!("[app] starting, bench={}", std::env::var("TINYSSH_BENCH").unwrap_or_default());
+    eprintln!(
+        "[app] starting, bench={}",
+        std::env::var("TINYSSH_BENCH").unwrap_or_default()
+    );
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let db = std::env::var("TINYSSH_DB")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs_or_home().join(".tinyssh").join("tinyssh.db")
-        });
+        .unwrap_or_else(|_| dirs_or_home().join(".tinyssh").join("tinyssh.db"));
     std::fs::create_dir_all(db.parent().unwrap()).ok();
     let api = SessionManager::open(&db).expect("open storage");
     let terminal_input: Arc<TerminalInput> = Arc::default();
@@ -4999,7 +5286,8 @@ fn r43_smoke_script(run_id: &str, mode: &str) -> String {
     base.replace("__RUN__", run_id).replace("__MODE__", mode)
 }
 
-fn r26_smoke_script(run_id: &str) -> String {    let base = r#"(function() {
+fn r26_smoke_script(run_id: &str) -> String {
+    let base = r#"(function() {
   if (window.__R26_INJECTED__) return;
   window.__R26_INJECTED__ = true;
   const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
@@ -5643,7 +5931,8 @@ fn r15_smoke_script(run_id: &str) -> String {
   })();
 })();
 "#;
-    base.replace("__RUN__", run_id).replace("__EPOCH__", &epoch.to_string())
+    base.replace("__RUN__", run_id)
+        .replace("__EPOCH__", &epoch.to_string())
 }
 
 /// R13 统一 action 分发探针注入脚本（TINYSSH_SMOKE_MODE=r13；dev 门控，产品路径无关）：
@@ -5957,7 +6246,6 @@ fn r12_smoke_script(run_id: &str) -> String {
 /// 会话 attach → 订阅计数 → 3000 行高频输出全缓冲对账（无丢字/重复/零 resync）→
 /// resync 接口形状 + 过期订阅拒绝 → alt_screen 检查点导出 → 显式退订归零 + 幂等。
 fn r11_smoke_script(run_id: &str) -> String {
-    
     r#"(function() {
   const sleep = (ms) => fetch('http://127.0.0.1:15199/w/' + ms).catch(() => {});
   const RUN = '__RUN__';
@@ -6071,7 +6359,6 @@ fn dirs_or_home() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
-
 #[cfg(test)]
 mod self_meter_tests {
     use super::cpu_pct;
@@ -6126,32 +6413,59 @@ mod wire_error_tests {
         let e = E::Io("x".into());
         assert_eq!(WireError::from(e).kind, "io");
         assert_eq!(WireError::from(E::Storage("s".into())).kind, "storage");
-        assert_eq!(WireError::from(E::InvalidInput("i".into())).kind, "invalid_input");
+        assert_eq!(
+            WireError::from(E::InvalidInput("i".into())).kind,
+            "invalid_input"
+        );
         assert_eq!(WireError::from(E::InvalidActor).kind, "invalid_actor");
         let qb = WireError::from(E::QueueBusy { position: 3 });
         assert_eq!(qb.kind, "queue_busy");
         assert_eq!(qb.detail.as_ref().unwrap()["position"], 3);
         assert_eq!(WireError::from(E::Cancelled).kind, "cancelled");
         assert_eq!(WireError::from(E::ExecTimeout).kind, "exec_timeout");
-        assert_eq!(WireError::from(E::HostKeyRejected("fp".into())).kind, "host_key_rejected");
+        assert_eq!(
+            WireError::from(E::HostKeyRejected("fp".into())).kind,
+            "host_key_rejected"
+        );
         let cf = WireError::from(E::ConnectFailed("refused".into()));
         assert_eq!(cf.kind, "connect_failed");
         assert_eq!(cf.detail.as_ref().unwrap()["reason"], "refused");
         assert_eq!(WireError::from(E::AuthFailed).kind, "auth_failed");
         assert_eq!(WireError::from(E::SessionClosed).kind, "session_closed");
-        assert_eq!(WireError::from(E::SessionNotFound).kind, "session_not_found");
-        assert_eq!(WireError::from(E::ReconfirmingPending).kind, "reconfirming_pending");
-        assert_eq!(WireError::from(E::ControlTakenByHuman).kind, "control_taken_by_human");
-        assert_eq!(WireError::from(E::VoidedByHandback {
-            brief: Box::new(session_api::SessionBrief {
-                cwd: None, env_summary: String::new(), facts: Vec::new(),
-                running: Vec::new(), pending_approvals: Vec::new(),
-                screen_summary: String::new(), goal: None,
-            }),
-        }).kind, "voided_by_handback");
-        assert_eq!(WireError::from(E::ApprovalDenied {
-            reason: session_api::DeniedReason::Denied,
-        }).kind, "approval_denied");
+        assert_eq!(
+            WireError::from(E::SessionNotFound).kind,
+            "session_not_found"
+        );
+        assert_eq!(
+            WireError::from(E::ReconfirmingPending).kind,
+            "reconfirming_pending"
+        );
+        assert_eq!(
+            WireError::from(E::ControlTakenByHuman).kind,
+            "control_taken_by_human"
+        );
+        assert_eq!(
+            WireError::from(E::VoidedByHandback {
+                brief: Box::new(session_api::SessionBrief {
+                    cwd: None,
+                    env_summary: String::new(),
+                    facts: Vec::new(),
+                    running: Vec::new(),
+                    pending_approvals: Vec::new(),
+                    screen_summary: String::new(),
+                    goal: None,
+                }),
+            })
+            .kind,
+            "voided_by_handback"
+        );
+        assert_eq!(
+            WireError::from(E::ApprovalDenied {
+                reason: session_api::DeniedReason::Denied,
+            })
+            .kind,
+            "approval_denied"
+        );
         // 人话文案保留（friendlyError 依赖 message）
         let m = WireError::from(E::AuthFailed).message;
         assert!(!m.is_empty());

@@ -56,7 +56,11 @@ async fn preview_and_import_local_parts() {
         .arg(&key)
         .output()
         .expect("ssh-keygen");
-    assert!(kg.status.success(), "{}", String::from_utf8_lossy(&kg.stderr));
+    assert!(
+        kg.status.success(),
+        "{}",
+        String::from_utf8_lossy(&kg.stderr)
+    );
     let cfg = write_config(dir.path(), &key);
 
     let db = dir.path().join("t.db");
@@ -79,12 +83,21 @@ async fn preview_and_import_local_parts() {
     // 导入：Key 条目建身份；e2e-agent 与 e2e-key 同三元组（127.0.0.1:2222 root）
     // → 按 DF7.3 判 Duplicate 跳过（R22 M3 语义：不双落库同一目标）
     let outs = m
-        .ssh_config_import(&Actor::Human, Some(&cfg), &["e2e-key".into(), "e2e-agent".into()], false)
+        .ssh_config_import(
+            &Actor::Human,
+            Some(&cfg),
+            &["e2e-key".into(), "e2e-agent".into()],
+            false,
+        )
         .await;
     assert_eq!(outs.len(), 2, "{outs:?}");
     assert!(outs.iter().all(|o| o.error.is_none()), "{outs:?}");
     assert!(outs[0].host_id.is_some(), "{outs:?}");
-    assert_eq!(outs[1].skipped_reason, Some(SshSkipReason::Duplicate), "{outs:?}");
+    assert_eq!(
+        outs[1].skipped_reason,
+        Some(SshSkipReason::Duplicate),
+        "{outs:?}"
+    );
 
     let hosts = m.list_hosts(&Actor::Human).await.unwrap();
     // 2 = 内置「本机」+ e2e-key（e2e-agent 同三元组被跳过）
@@ -167,7 +180,12 @@ async fn c7_classification_skip_and_overwrite() {
         .ssh_config_import(
             &Actor::Human,
             Some(&cfg),
-            &["ok1".into(), "blocked".into(), "nouser".into(), "dup".into()],
+            &[
+                "ok1".into(),
+                "blocked".into(),
+                "nouser".into(),
+                "dup".into(),
+            ],
             false,
         )
         .await;
@@ -200,10 +218,17 @@ async fn c7_classification_skip_and_overwrite() {
     let outs2 = m
         .ssh_config_import(&Actor::Human, Some(&cfg), &["dup".into()], true)
         .await;
-    assert_eq!(outs2[0].host_id.as_deref(), Some(existing.id.as_str()), "{outs2:?}");
+    assert_eq!(
+        outs2[0].host_id.as_deref(),
+        Some(existing.id.as_str()),
+        "{outs2:?}"
+    );
     let after = m.list_hosts(&Actor::Human).await.unwrap();
     assert_eq!(after.iter().filter(|h| h.name == "dup").count(), 1);
-    assert_eq!(after.iter().find(|h| h.name == "dup").unwrap().username, "root");
+    assert_eq!(
+        after.iter().find(|h| h.name == "dup").unwrap().username,
+        "root"
+    );
 }
 
 /// C7（rev-r22 M3 判别，旧代码必红）：同批两条同三元组（不同名）条目——
@@ -223,11 +248,20 @@ async fn c7_batch_internal_duplicate_skipped() {
     let m = SessionManager::open(&db).unwrap();
 
     let outs = m
-        .ssh_config_import(&Actor::Human, Some(&cfg), &["n1".into(), "n2".into()], false)
+        .ssh_config_import(
+            &Actor::Human,
+            Some(&cfg),
+            &["n1".into(), "n2".into()],
+            false,
+        )
         .await;
     assert_eq!(outs.len(), 2, "{outs:?}");
     assert!(outs[0].host_id.is_some(), "{outs:?}");
-    assert_eq!(outs[1].skipped_reason, Some(SshSkipReason::Duplicate), "{outs:?}");
+    assert_eq!(
+        outs[1].skipped_reason,
+        Some(SshSkipReason::Duplicate),
+        "{outs:?}"
+    );
     assert!(outs[1].host_id.is_none());
 
     let hosts = m.list_hosts(&Actor::Human).await.unwrap();
@@ -241,7 +275,9 @@ async fn c7_batch_internal_duplicate_skipped() {
 /// Agent 认证全链路：一次性 agent + 容器公钥 → 导入的 Agent 主机真实建连。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn imported_agent_host_connects_via_ssh_agent() {
-    let sshd_enabled = std::env::var("TINYSSH_E2E_SSHD").map(|v| v == "1").unwrap_or(false);
+    let sshd_enabled = std::env::var("TINYSSH_E2E_SSHD")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     if !sshd_enabled {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
@@ -254,7 +290,16 @@ async fn imported_agent_host_connects_via_ssh_agent() {
     let keep = dir.into_path(); // agent/容器清理前不能删
     let key = keep.join("id_agent");
     let kg = std::process::Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-C", "t21-core-agent", "-f"])
+        .args([
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-C",
+            "t21-core-agent",
+            "-f",
+        ])
         .arg(&key)
         .output()
         .unwrap();
@@ -268,16 +313,36 @@ async fn imported_agent_host_connects_via_ssh_agent() {
         .unwrap();
     assert!(agent_out.status.success());
     let envs = String::from_utf8_lossy(&agent_out.stdout).to_string();
-    let sock_str = envs.split("SSH_AUTH_SOCK=").nth(1).unwrap().split(';').next().unwrap().to_string();
-    let agent_pid = envs.split("SSH_AGENT_PID=").nth(1).unwrap().split(';').next().unwrap().to_string();
+    let sock_str = envs
+        .split("SSH_AUTH_SOCK=")
+        .nth(1)
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let agent_pid = envs
+        .split("SSH_AGENT_PID=")
+        .nth(1)
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
 
     struct Cleanup(String, std::path::PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {
             let _ = std::process::Command::new("kill").arg(&self.0).output();
             let _ = std::process::Command::new("docker")
-                .args(["exec", "tinyssh-e2e", "sed", "-i", "/t21-core-agent$/d",
-                       "/root/.ssh/authorized_keys"])
+                .args([
+                    "exec",
+                    "tinyssh-e2e",
+                    "sed",
+                    "-i",
+                    "/t21-core-agent$/d",
+                    "/root/.ssh/authorized_keys",
+                ])
                 .output();
             let _ = std::fs::remove_dir_all(&self.1);
         }
@@ -289,7 +354,11 @@ async fn imported_agent_host_connects_via_ssh_agent() {
         .arg(&key)
         .output()
         .unwrap();
-    assert!(add.status.success(), "{}", String::from_utf8_lossy(&add.stderr));
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
 
     let pubkey = std::fs::read_to_string(key.with_extension("pub")).unwrap();
     let mut child = std::process::Command::new("docker")
@@ -298,7 +367,12 @@ async fn imported_agent_host_connects_via_ssh_agent() {
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(pubkey.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(pubkey.as_bytes())
+        .unwrap();
     assert!(child.wait().unwrap().success());
 
     // 合成 config（无 IdentityFile 条目）→ 导入 → Agent 主机建连
@@ -331,7 +405,12 @@ async fn imported_agent_host_connects_via_ssh_agent() {
     let prev_sock = std::env::var("SSH_AUTH_SOCK").ok();
     std::env::set_var("SSH_AUTH_SOCK", &sock_str);
     let sid = m
-        .create_session(&Actor::Human, CreateSessionReq { host_id: outs[0].host_id.clone().unwrap() })
+        .create_session(
+            &Actor::Human,
+            CreateSessionReq {
+                host_id: outs[0].host_id.clone().unwrap(),
+            },
+        )
         .await;
     if let Some(s) = prev_sock {
         std::env::set_var("SSH_AUTH_SOCK", s);

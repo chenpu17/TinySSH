@@ -10,20 +10,64 @@ use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
 struct R30Channel;
 #[async_trait::async_trait]
 impl ChannelHandle for R30Channel {
-    async fn write(&self, _data: &[u8]) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
-    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> { Ok(()) }
-    async fn exec_fresh(&self, _cmd: &str, _opts: &ExecOpts, _deadline: std::time::Instant, _cancel: &session_api::transport::tokio_util_sync::CancellationToken) -> Result<FreshOutcome> { Err(Error::InvalidInput("stub".into())) }
-    async fn signal(&self, _sig: TransportSignal) -> Result<()> { Ok(()) }
-    async fn force_close(&self) -> Result<()> { Ok(()) }
-    fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> { broadcast::channel(1).1 }
-    async fn is_alive(&self) -> bool { false }
-    async fn reconnect(&self) -> Result<()> { Err(Error::InvalidInput("stub".into())) }
-    async fn close(&self) -> Result<()> { Ok(()) }
-    async fn upload(&self, _local: &std::path::Path, _remote: &str, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
-    async fn download(&self, _remote: &str, _local: &std::path::Path, _cancel: &session_api::transport::tokio_util_sync::CancellationToken, _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64> { Err(Error::InvalidInput("stub".into())) }
-    async fn list_dir(&self, _path: &str) -> Result<Vec<DirEntryS>> { Err(Error::InvalidInput("stub".into())) }
+    async fn write(&self, _data: &[u8]) -> Result<()> {
+        Err(Error::InvalidInput("stub".into()))
+    }
+    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+    async fn exec_fresh(
+        &self,
+        _cmd: &str,
+        _opts: &ExecOpts,
+        _deadline: std::time::Instant,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+    ) -> Result<FreshOutcome> {
+        Err(Error::InvalidInput("stub".into()))
+    }
+    async fn signal(&self, _sig: TransportSignal) -> Result<()> {
+        Ok(())
+    }
+    async fn force_close(&self) -> Result<()> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> {
+        broadcast::channel(1).1
+    }
+    async fn is_alive(&self) -> bool {
+        false
+    }
+    async fn reconnect(&self) -> Result<()> {
+        Err(Error::InvalidInput("stub".into()))
+    }
+    async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn upload(
+        &self,
+        _local: &std::path::Path,
+        _remote: &str,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::InvalidInput("stub".into()))
+    }
+    async fn download(
+        &self,
+        _remote: &str,
+        _local: &std::path::Path,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::InvalidInput("stub".into()))
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Vec<DirEntryS>> {
+        Err(Error::InvalidInput("stub".into()))
+    }
     async fn resolve_path(&self, _path: Option<&str>) -> Result<PathResolved> {
-        Ok(PathResolved { canonical: "/home/u".into() })
+        Ok(PathResolved {
+            canonical: "/home/u".into(),
+        })
     }
     async fn stat_entry(&self, path: &str) -> Result<EntryStat> {
         match path {
@@ -36,7 +80,7 @@ impl ChannelHandle for R30Channel {
                 size: None,
                 mtime: None,
                 symlink_target: Some("/target".into()),
-            })
+            }),
         }
     }
 }
@@ -66,9 +110,20 @@ fn mk_handle(center: Arc<ApprovalCenter>) -> Arc<SessionHandle> {
         shell_integration: None,
     };
     let screen = term_core::Screen::new(term_core::ScreenConfig {
-        cols: 80, rows: 24, scrollback: 100, lossless_cap: 1 << 20,
+        cols: 80,
+        rows: 24,
+        scrollback: 100,
+        lossless_cap: 1 << 20,
     });
-    SessionHandle::new("s-r30".into(), host, "local".into(), Arc::new(R30Channel), screen, center, ControlOwner::Agent)
+    SessionHandle::new(
+        "s-r30".into(),
+        host,
+        "local".into(),
+        Arc::new(R30Channel),
+        screen,
+        center,
+        ControlOwner::Agent,
+    )
 }
 
 fn register(m: &SessionManager, h: Arc<SessionHandle>) {
@@ -81,11 +136,22 @@ fn register(m: &SessionManager, h: Arc<SessionHandle>) {
 async fn r30_sftp_entrypoints_human_only() {
     let m = mgr();
     register(&m, mk_handle(m.center.clone()));
-    let agent = Actor::Agent { client_id: "mcp-1".into() };
-    let e1 = m.sftp_resolve_path(&agent, "s-r30".into(), None).await.unwrap_err();
-    assert!(matches!(e1, Error::InvalidInput(ref s) if s.contains("仅人类浏览入口")), "{e1:?}");
+    let agent = Actor::Agent {
+        client_id: "mcp-1".into(),
+    };
+    let e1 = m
+        .sftp_resolve_path(&agent, "s-r30".into(), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(e1, Error::InvalidInput(ref s) if s.contains("仅人类浏览入口")),
+        "{e1:?}"
+    );
     // Agent stat 走通道（R30 桩有 stat 实现——返回条目形状而非门禁错误）
-    let st = m.sftp_stat(&agent, "s-r30".into(), "/x".into()).await.unwrap();
+    let st = m
+        .sftp_stat(&agent, "s-r30".into(), "/x".into())
+        .await
+        .unwrap();
     assert_eq!(st.symlink_target.as_deref(), Some("/target"));
 }
 
@@ -95,15 +161,33 @@ async fn r30_human_forwarding_and_errors() {
     let m = mgr();
     register(&m, mk_handle(m.center.clone()));
     let human = Actor::Human;
-    let r = m.sftp_resolve_path(&human, "s-r30".into(), None).await.unwrap();
+    let r = m
+        .sftp_resolve_path(&human, "s-r30".into(), None)
+        .await
+        .unwrap();
     assert_eq!(r.canonical, "/home/u");
     // 不存在/权限 → 专用变体（前端按 kind 呈现，不猜路径）
-    let nf = m.sftp_stat(&human, "s-r30".into(), "/gone".into()).await.unwrap_err();
-    assert!(matches!(nf, Error::SftpPathNotFound { ref path } if path == "/gone"), "{nf:?}");
-    let pd = m.sftp_stat(&human, "s-r30".into(), "/priv".into()).await.unwrap_err();
-    assert!(matches!(pd, Error::SftpPermissionDenied { ref path } if path == "/priv"), "{pd:?}");
+    let nf = m
+        .sftp_stat(&human, "s-r30".into(), "/gone".into())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(nf, Error::SftpPathNotFound { ref path } if path == "/gone"),
+        "{nf:?}"
+    );
+    let pd = m
+        .sftp_stat(&human, "s-r30".into(), "/priv".into())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(pd, Error::SftpPermissionDenied { ref path } if path == "/priv"),
+        "{pd:?}"
+    );
     // 悬空链接：canonical=None + kind=Symlink + size/mtime 未知（None，不伪造零值）
-    let st = m.sftp_stat(&human, "s-r30".into(), "/dangling".into()).await.unwrap();
+    let st = m
+        .sftp_stat(&human, "s-r30".into(), "/dangling".into())
+        .await
+        .unwrap();
     assert_eq!(st.canonical, None);
     assert_eq!(st.kind, Some(EntryKind::Symlink));
     assert_eq!((st.size, st.mtime), (None, None));
