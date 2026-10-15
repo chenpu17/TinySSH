@@ -468,8 +468,9 @@ const PALETTES: ChromePalette[] = [
 ];
 const PALETTE_DEFAULT = "graphite";
 
-// ANSI 16 色基础预设（二十二轮起仅作终端派生的底色档，不再作为独立「终端配色」
-// 清单外显——统一主题见 PALETTES；Solarized 等第三方终端预设随双轨一并退役）
+// ANSI 16 色基础预设（主题②轮起降级为**回落档**——按族真值在 styles.css 的
+// --ansi-0..15（ansi-gen.mjs 生成、双审计复核），仅某槽未声明时逐键回落到这里。
+// 不再作为独立「终端配色」清单外显；Solarized 等第三方预设随双轨早已退役）
 type ThemePreset = {
   id: string; label: string;
   bg: string; fg: string; theme: Record<string, string>;
@@ -1758,8 +1759,10 @@ export default function App() {
   // 二十二轮主题统一：色板联动终端的派生——终端底/前景/光标/选区取**当下生效的
   // chrome token**（data-theme×data-chrome 计算值，随色板与外观即时变化）；经
   // scratch 节点解析成 rgb()（token 声明值可能是 color-mix(...)，xterm 的 css 色
-  // 解析器不认，必须用 resolved 值）；ANSI 16 色沿用深/浅基础预设——预设本底做过
-  // WCAG 校验，不随板重排。派生结果写入 derivedThemeRef 供 makeTerm 取初值。
+  // 解析器不认，必须用 resolved 值）。主题②轮起 ANSI 16 色按族取 --ansi-0..15
+  // （styles.css 各族块写实色，ui/test/ansi-gen.mjs 生成、双审计独立复核）；
+  // 某槽未声明时逐键回落深/浅基础预设（THEMES，本底做过 WCAG 校验）。
+  // 派生结果写入 derivedThemeRef 供 makeTerm 取初值。
   const deriveTerminalTheme = useCallback((chrome: "dark" | "light") => {
     const resolveTokenColor = (name: string): string => {
       const scratch = document.createElement("span");
@@ -1770,10 +1773,18 @@ export default function App() {
       return v;
     };
     const base = themeById(chrome);
+    const ANSI_KEYS = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+      "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"];
+    const rootStyle = getComputedStyle(document.documentElement);
+    const ansi: Record<string, string> = {};
+    ANSI_KEYS.forEach((key, i) => {
+      if (rootStyle.getPropertyValue(`--ansi-${i}`).trim()) ansi[key] = resolveTokenColor(`--ansi-${i}`);
+    });
     return {
       bg: resolveTokenColor("--bg"),
       theme: {
         ...base.theme,
+        ...ansi,
         background: resolveTokenColor("--bg"),
         foreground: resolveTokenColor("--text"),
         cursor: resolveTokenColor("--accent"),
@@ -5188,7 +5199,7 @@ export default function App() {
                     终端配色不再单独成卡，由色板×深浅派生（ui.theme 双轨退役） */}
                 <div className="set-card">
                   <h4>应用外观</h4>
-                  <div className="set-desc">主题同时决定应用外壳与终端配色（终端底色/前景/光标随当前色板与深浅派生，ANSI 16 色沿用基础预设）；「跟随系统」随系统深浅实时切换。</div>
+                  <div className="set-desc">主题同时决定应用外壳与终端配色（底色/前景/光标/ANSI 16 色全部随当前色板与深浅派生，终端八色按族调相）；「跟随系统」随系统深浅实时切换。</div>
                   <div className="row ts-appearance" role="group" aria-label="应用外观">
                     {APPEARANCES.map((a) => (
                       <button key={a.id} className={"ghost" + (appearance === a.id ? " ts-active" : "")}

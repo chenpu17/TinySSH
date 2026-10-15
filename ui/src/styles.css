@@ -90,7 +90,12 @@
   --grad-a: #5fcbd8;
   --grad-b: #3ec3d3;
   --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #1d1f22; --ansi-1: #c76963; --ansi-2: #4e9352; --ansi-3: #9b8316;
+  --ansi-4: #3b8ac7; --ansi-5: #a471ba; --ansi-6: #009494; --ansi-7: #86898e;
+  --ansi-8: #3c4148; --ansi-9: #e57670; --ansi-10: #56a85b; --ansi-11: #b29503;
+  --ansi-12: #3e9de5; --ansi-13: #bc80d6; --ansi-14: #0ca8a8; --ansi-15: #f2f3f6;}
 
 /* ---- 浅色 chrome（R27：应用外观三态 system/dark/light，与终端配色解耦）----
    色板要点：accent/danger/ok/warn 全部深化到浅底 4.5:1 上下；彩色按钮文字换白；
@@ -145,7 +150,12 @@
   --mark-grad: linear-gradient(160deg, #d9f0f2, #ffffff);
   --grad-a: #0a7280;
   --grad-b: #085e68;
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5e6165; --ansi-1: #a24944; --ansi-2: #2c7232; --ansi-3: #776301;
+  --ansi-4: #1169a3; --ansi-5: #825197; --ansi-6: #057070; --ansi-7: #d6d8db;
+  --ansi-8: #626972; --ansi-9: #98312f; --ansi-10: #066319; --ansi-11: #655405;
+  --ansi-12: #02598d; --ansi-13: #763c8d; --ansi-14: #005f5f; --ansi-15: #fbfcfd;}
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
@@ -1347,7 +1357,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #6f9fe0; --focus: #f0b492;
   --grad-a: #f0b492; --grad-b: #e07856;
   --mark-grad: linear-gradient(160deg, #3a2417, #17110d);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #232326; --ansi-1: #d86166; --ansi-2: #689348; --ansi-3: #a58304;
+  --ansi-4: #4f8bc7; --ansi-5: #b36fb2; --ansi-6: #03969c; --ansi-7: #8b8b90;
+  --ansi-8: #45454d; --ansi-9: #f86c72; --ansi-10: #75a74e; --ansi-11: #bb9510;
+  --ansi-12: #579ee4; --ansi-13: #cd7dcd; --ansi-14: #10aab1; --ansi-15: #f3f3f6;}
 /* 暖烬 · 亮：暖米纸底 + 赤陶橙。主题①轮：danger 加深绯调(22°→14°，与 accent 38°
    拉开 24°)；ok 转暖苔绿呼应暖族（原共享石墨冷绿）；hover 同族跟随 */
 :root[data-theme="ember"][data-chrome="light"] {
@@ -1361,7 +1376,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #3b6fb5; --focus: #96401f;
   --grad-a: #ad4726; --grad-b: #8f3c1e;
   --mark-grad: linear-gradient(160deg, #fbe8dd, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #64615d; --ansi-1: #b03d45; --ansi-2: #487024; --ansi-3: #7c6205;
+  --ansi-4: #2c68a1; --ansi-5: #8e4d8e; --ansi-6: #047175; --ansi-7: #dbd9d6;
+  --ansi-8: #6e695f; --ansi-9: #a71c30; --ansi-10: #366002; --ansi-11: #6a5301;
+  --ansi-12: #025899; --ansi-13: #823883; --ansi-14: #006064; --ansi-15: #fcfcfa;}
 /* 深海 · 暗：GitHub 暗度蓝黑 + 极光蓝，经典开发工具气质 */
 :root[data-theme="ocean"][data-chrome="dark"] {
   --bg: #090c11; --panel: #0d1117; --panel2: #121722; --panel3: #1a2230;
@@ -1374,7 +1394,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #5fc4e8; --focus: #7db2ff;
   --grad-a: #7db2ff; --grad-b: #4c8dff;
   --mark-grad: linear-gradient(160deg, #14283f, #0c1520);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #1b1d1f; --ansi-1: #c06b70; --ansi-2: #3c945c; --ansi-3: #998221;
+  --ansi-4: #3787d2; --ansi-5: #9a73c0; --ansi-6: #049393; --ansi-7: #85888d;
+  --ansi-8: #3a3e46; --ansi-9: #dc797f; --ansi-10: #3fa967; --ansi-11: #af941b;
+  --ansi-12: #399af2; --ansi-13: #b182dc; --ansi-14: #11a7a7; --ansi-15: #f2f3f6;}
 /* 深海 · 亮：冷白 + 湖蓝。主题①轮：ok 转青调绿呼应冷族（原共享石墨暖绿） */
 :root[data-theme="ocean"][data-chrome="light"] {
   --bg: #eef2f7; --panel: #f7f9fc; --panel2: #ffffff; --panel3: #e7edf5;
@@ -1387,7 +1412,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #2d6cb5; --focus: #1d5493;
   --grad-a: #2464ad; --grad-b: #1d5493;
   --mark-grad: linear-gradient(160deg, #dcebfa, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5e6266; --ansi-1: #9d4c52; --ansi-2: #12743e; --ansi-3: #786300;
+  --ansi-4: #0c67b0; --ansi-5: #7b549e; --ansi-6: #007171; --ansi-7: #d7d9dc;
+  --ansi-8: #636a72; --ansi-9: #923640; --ansi-10: #036332; --ansi-11: #655404;
+  --ansi-12: #005799; --ansi-13: #6e4095; --ansi-14: #056060; --ansi-15: #fbfcfd;}
 /* 午夜 · 暗：紫夜底 + 罗兰紫，Linear/Arc 式现代产品感 */
 :root[data-theme="violet"][data-chrome="dark"] {
   --bg: #0f0d15; --panel: #14111c; --panel2: #1a1626; --panel3: #221c30;
@@ -1400,7 +1430,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #58bfe6; --focus: #c4b5fd;
   --grad-a: #c4b5fd; --grad-b: #a78bfa;
   --mark-grad: linear-gradient(160deg, #2a2044, #130f1e);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #201f23; --ansi-1: #be6a93; --ansi-2: #539356; --ansi-3: #9b831a;
+  --ansi-4: #5284d7; --ansi-5: #b169c2; --ansi-6: #079494; --ansi-7: #89888e;
+  --ansi-8: #424048; --ansi-9: #da77a8; --ansi-10: #5ba85f; --ansi-11: #b2950c;
+  --ansi-12: #5b96f8; --ansi-13: #cb75df; --ansi-14: #14a8a8; --ansi-15: #f3f3f6;}
 /* 午夜 · 亮：雾紫白底 + 电紫。主题①轮：danger 转紫红(4°，原共享石墨红 22°)
    呼应紫族，与 accent 电紫拉开 85°+ */
 :root[data-theme="violet"][data-chrome="light"] {
@@ -1414,7 +1449,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #2d6cb5; --focus: #5342cc;
   --grad-a: #6553e8; --grad-b: #5342cc;
   --mark-grad: linear-gradient(160deg, #e7e3fb, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #616065; --ansi-1: #9a4973; --ansi-2: #327236; --ansi-3: #776305;
+  --ansi-4: #3363b3; --ansi-5: #8f489f; --ansi-6: #097070; --ansi-7: #d8d8dd;
+  --ansi-8: #696772; --ansi-9: #8f3265; --ansi-10: #0e631c; --ansi-11: #655401;
+  --ansi-12: #1851ad; --ansi-13: #832f96; --ansi-14: #035f5f; --ansi-15: #fcfbfd;}
 /* 鎏金 · 暗：可可褐黑 + 香槟金，克制奢华（tiny-worker noir 同源，文字档已校验）。
    主题①轮：warn 金黄(88°)→橙琥珀(59°)，与 accent 金(83°) 拉开 24°（原 5° 同相不可辨） */
 :root[data-theme="noir"][data-chrome="dark"] {
@@ -1428,7 +1468,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #8ba7c9; --focus: #e0c89a;
   --grad-a: #e6cf9f; --grad-b: #c8a96e;
   --mark-grad: linear-gradient(160deg, #2c2314, #141009);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #201f1c; --ansi-1: #d26353; --ansi-2: #6d8f49; --ansi-3: #968507;
+  --ansi-4: #5588bd; --ansi-5: #b06eab; --ansi-6: #0e9494; --ansi-7: #8b8984;
+  --ansi-8: #444039; --ansi-9: #f16f5d; --ansi-10: #7ca350; --ansi-11: #aa9712;
+  --ansi-12: #5e9bd9; --ansi-13: #ca7cc4; --ansi-14: #05a8a8; --ansi-15: #f5f3f0;}
 /* 鎏金 · 亮：象牙纸底 + 琥珀铜金（tiny-worker dawn 同源）。
    主题①轮：warn 橄榄金(83°)→深橙琥珀(53°)，与 accent 铜金(77°) 拉开 24°（原 6°） */
 :root[data-theme="noir"][data-chrome="light"] {
@@ -1442,7 +1487,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #4a6fa5; --focus: #684a18;
   --grad-a: #7d5a20; --grad-b: #684a18;
   --mark-grad: linear-gradient(160deg, #f3e9d2, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #615e5a; --ansi-1: #aa3f31; --ansi-2: #4c6b26; --ansi-3: #706303;
+  --ansi-4: #326597; --ansi-5: #8b4b86; --ansi-6: #076e6e; --ansi-7: #d6d4d0;
+  --ansi-8: #6a665c; --ansi-9: #a02115; --ansi-10: #3b5c01; --ansi-11: #5f5300;
+  --ansi-12: #14558e; --ansi-13: #7f367b; --ansi-14: #025d5d; --ansi-15: #fcfcfa;}
 
 /* ---- 二十一轮扩四族（对表 Terminus 的主力板）：同工艺，文本档过 wcag-themes.mjs ---- */
 
@@ -1459,7 +1509,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #6fc4e8; --focus: #82e9c6;
   --grad-a: #82e9c6; --grad-b: #22b184;
   --mark-grad: linear-gradient(160deg, #11342a, #0a1a12);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #1e2220; --ansi-1: #c66d66; --ansi-2: #2e9850; --ansi-3: #908820;
+  --ansi-4: #1f90bb; --ansi-5: #a872b5; --ansi-6: #01968a; --ansi-7: #868b88;
+  --ansi-8: #3d4541; --ansi-9: #e37a73; --ansi-10: #2cae58; --ansi-11: #a59b17;
+  --ansi-12: #12a4d7; --ansi-13: #c181cf; --ansi-14: #0fab9d; --ansi-15: #f1f4f3;}
 /* 极光 · 亮：雾白苔绿底 + 深翡翠。主题①轮：ok 深翠(154°)→深黄绿(130°)，与
    accent 翡翠(160°) 拉开 30°（原 6.5° 同相不可辨，本轮硬伤） */
 :root[data-theme="aurora"][data-chrome="light"] {
@@ -1473,7 +1528,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #2d6cb5; --focus: #0e6240;
   --grad-a: #147a51; --grad-b: #0e6240;
   --mark-grad: linear-gradient(160deg, #d9ede1, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5e635f; --ansi-1: #a04b47; --ansi-2: #017534; --ansi-3: #6e6702;
+  --ansi-4: #086d91; --ansi-5: #865192; --ansi-6: #067269; --ansi-7: #d7dad7;
+  --ansi-8: #636b64; --ansi-9: #963532; --ansi-10: #05632c; --ansi-11: #5d5700;
+  --ansi-12: #025d7c; --ansi-13: #793d87; --ansi-14: #016159; --ansi-15: #fbfcfb;}
 /* 青瓷 · 暗：黛青墨底 + 青瓷玉——宋瓷的灰调青，比极光收敛、比石墨多一分温度 */
 :root[data-theme="celadon"][data-chrome="dark"] {
   --bg: #0c1312; --panel: #101917; --panel2: #141f1d; --panel3: #1a2825;
@@ -1486,7 +1546,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #74bde0; --focus: #a5e5d6;
   --grad-a: #a5e5d6; --grad-b: #35ae97;
   --mark-grad: linear-gradient(160deg, #10302b, #0a1a17);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #202323; --ansi-1: #b8756f; --ansi-2: #519472; --ansi-3: #928747;
+  --ansi-4: #4d8eb2; --ansi-5: #a578a7; --ansi-6: #38948f; --ansi-7: #868c8b;
+  --ansi-8: #3d4746; --ansi-9: #d3847d; --ansi-10: #59a880; --ansi-11: #a79a4d;
+  --ansi-12: #54a1cc; --ansi-13: #bc87bf; --ansi-14: #39a9a3; --ansi-15: #f1f4f4;}
 /* 青瓷 · 亮：月白底 + 深青瓷。主题①轮：ok 转黄绿(134°)，与 accent 青瓷(170°)
    拉开 36°（原 20° 贴线） */
 :root[data-theme="celadon"][data-chrome="light"] {
@@ -1500,7 +1565,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #2d6cb5; --focus: #0a604f;
   --grad-a: #0e7a66; --grad-b: #0a604f;
   --mark-grad: linear-gradient(160deg, #d8ece6, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5d6361; --ansi-1: #93534e; --ansi-2: #2e7151; --ansi-3: #706524;
+  --ansi-4: #286b8e; --ansi-5: #815683; --ansi-6: #08716d; --ansi-7: #d6dad8;
+  --ansi-8: #5f6c68; --ansi-9: #88403c; --ansi-10: #00623f; --ansi-11: #615600;
+  --ansi-12: #035c80; --ansi-13: #744477; --ansi-14: #03605c; --ansi-15: #fafcfc;}
 /* 绯樱 · 暗：梅紫黑底 + 樱粉玫瑰——夜樱；粉系 accent 在 SSH 客户端里几乎无人做。
    主题①轮：danger 珊瑚红(18°)→珊瑚橙(40°)，与樱粉 accent(1°) 拉开 39°（原 17°） */
 :root[data-theme="sakura"][data-chrome="dark"] {
@@ -1514,7 +1584,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #8fa8e8; --focus: #f7c4d2;
   --grad-a: #f7c4d2; --grad-b: #e38aa6;
   --mark-grad: linear-gradient(160deg, #3c1f2b, #180d13);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #242123; --ansi-1: #ca6879; --ansi-2: #4e955f; --ansi-3: #a18224;
+  --ansi-4: #508ac4; --ansi-5: #b96ab3; --ansi-6: #0c959b; --ansi-7: #8e898d;
+  --ansi-8: #494147; --ansi-9: #e87489; --ansi-10: #56a96a; --ansi-11: #b8941f;
+  --ansi-12: #589de2; --ansi-13: #d477cd; --ansi-14: #02a9b0; --ansi-15: #f5f2f4;}
 /* 绯樱 · 亮：樱白暖底 + 深玫瑰 */
 :root[data-theme="sakura"][data-chrome="light"] {
   --bg: #f7f0f3; --panel: #fcf8fa; --panel2: #ffffff; --panel3: #f0e3e9;
@@ -1527,7 +1602,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #4a5fa5; --focus: #953957;
   --grad-a: #b0486c; --grad-b: #953957;
   --mark-grad: linear-gradient(160deg, #f7e3ea, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #656062; --ansi-1: #a44659; --ansi-2: #2b723f; --ansi-3: #7c6200;
+  --ansi-4: #2e68a0; --ansi-5: #95488f; --ansi-6: #007175; --ansi-7: #dcd8da;
+  --ansi-8: #71666b; --ansi-9: #9a2d48; --ansi-10: #00632b; --ansi-11: #695303;
+  --ansi-12: #075897; --ansi-13: #893085; --ansi-14: #055f63; --ansi-15: #fdfbfc;}
 /* 曜石 · 暗：近纯黑 + 钛银——单色无相，极简奢侈品路线（银即 accent，语义色仍保留） */
 :root[data-theme="obsidian"][data-chrome="dark"] {
   --bg: #0a0b0d; --panel: #0f1013; --panel2: #14161a; --panel3: #1b1e24;
@@ -1540,7 +1620,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #9db8d8; --focus: #e2e8f0;
   --grad-a: #e2e8f0; --grad-b: #9fb0c4;
   --mark-grad: linear-gradient(160deg, #232a33, #0e1013);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #1a1c1e; --ansi-1: #9f7b77; --ansi-2: #718971; --ansi-3: #8b8364;
+  --ansi-4: #6c869d; --ansi-5: #8f7d98; --ansi-6: #618b8a; --ansi-7: #85878c;
+  --ansi-8: #393d45; --ansi-9: #b68b87; --ansi-10: #809d80; --ansi-11: #9f9571;
+  --ansi-12: #7a99b4; --ansi-13: #a48eae; --ansi-14: #6d9e9e; --ansi-15: #f2f3f6;}
 /* 曜石 · 亮：冷灰白 + 石墨银（亮态 accent 转深钛灰，保持单色气质） */
 :root[data-theme="obsidian"][data-chrome="light"] {
   --bg: #f0f1f3; --panel: #f8f9fa; --panel2: #ffffff; --panel3: #e5e8ec;
@@ -1553,7 +1638,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --blue: #2d6cb5; --focus: #2b333e;
   --grad-a: #3c4654; --grad-b: #2b333e;
   --mark-grad: linear-gradient(160deg, #e2e6eb, #ffffff);
-}
+
+  /* ANSI 16 按族（主题②轮）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5f6166; --ansi-1: #7e5c59; --ansi-2: #536a53; --ansi-3: #6c6446;
+  --ansi-4: #4e677d; --ansi-5: #705e78; --ansi-6: #436b6b; --ansi-7: #d7d8dc;
+  --ansi-8: #646972; --ansi-9: #714b48; --ansi-10: #415b42; --ansi-11: #5e5532;
+  --ansi-12: #3b5870; --ansi-13: #624e6b; --ansi-14: #2c5d5c; --ansi-15: #fbfcfd;}
 
 /* 主题切换脉冲：仅切换瞬间（.theme-switching 挂 320ms，App.tsx）开全量色彩过渡，
    平时零开销；@keyframes 动画期间优先级本就高于 transition，互不干扰 */

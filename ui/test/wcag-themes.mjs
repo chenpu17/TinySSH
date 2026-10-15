@@ -3,7 +3,11 @@
 // 共 18 个态，对全部文本档跑对比度断言。判据沿用 R40/R41 口径：
 // 正文/语义文本 ≥4.5:1（AA），装饰 dim/focus ≥3:1。
 // 主题①轮起解析与色值工具走 theme-vars.mjs 公共库（与 semantic-hues 同一套，
-// 防两套解析漂移）。用法：node test/wcag-themes.mjs   （退出码非 0 = 有不达标档）
+// 防两套解析漂移）。主题②轮起增审终端 ANSI 16 色（对终端底 --bg）：12 个彩档
+// 是终端正文 ≥4.5:1；「墨色」中性档（暗底 white/brightWhite、亮底 black/
+// brightBlack）同为正文 ≥4.5:1；表征档（暗底 black/brightBlack、亮底 white/
+// brightWhite）豁免——它们代表「黑/白」本身（Solarized 同理，天生低对比）。
+// 用法：node test/wcag-themes.mjs   （退出码非 0 = 有不达标档）
 import { readFileSync } from "node:fs";
 import { loadThemeCss, resolveColor, over, contrast } from "./theme-vars.mjs";
 
@@ -50,6 +54,20 @@ for (const { theme, chrome, vars } of states) {
     ["on-warn/hover底", solid("--on-warn"), solid("--warn-hover"), 4.5],
     ["focus/bg(非文本)", solid("--focus"), bg, 3],
   ];
+  // 主题②轮：终端 ANSI 16 档（值由 ansi-gen.mjs 生成并自验，这里独立复核——
+  // 生成器与审计互为对方的外部校验，防一手写一手验的闭环漂移）
+  const ansi = (i) => solid(`--ansi-${i}`);
+  if (ansi(1) === null) {
+    console.error(`✗ ${label} --ansi-*: 色值缺失`);
+    fail++;
+  } else {
+    const inkNeutral = chrome === "dark" ? [7, 15] : [0, 8]; // 该底上当正文用的中性档
+    for (let i = 0; i < 16; i++) {
+      const isNeutral = [0, 7, 8, 15].includes(i);
+      const min = isNeutral ? (inkNeutral.includes(i) ? 4.5 : null) : 4.5;
+      if (min) checks.push([`ansi${i}/bg`, ansi(i), bg, min]);
+    }
+  }
   const worst = [];
   for (const [name, fg, bgc, min] of checks) {
     if (!fg || !bgc) { console.error(`✗ ${label} ${name}: 色值缺失`); fail++; continue; }
@@ -61,5 +79,5 @@ for (const { theme, chrome, vars } of states) {
   worst.sort((a, b) => a.c - b.c);
   console.log(`${label.padEnd(16)} 最紧5档：${worst.slice(0, 5).map((w) => `${w.name} ${w.c.toFixed(2)}`).join(" · ")}`);
 }
-console.log(fail === 0 ? `\n✓ ${states.length} 态 × 23 档全部达标` : `\n✗ ${fail} 项不达标`);
+console.log(fail === 0 ? `\n✓ ${states.length} 态 × ${rows.length / states.length} 档全部达标` : `\n✗ ${fail} 项不达标`);
 process.exit(fail === 0 ? 0 : 1);
