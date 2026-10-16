@@ -63,11 +63,11 @@ async fn spike2_body() {
     // 尾部 `; true`：回显行以 true 结尾，__E__ 后跟 ";"——等待循环以 marker_e
     // 出现为准，不能让它命中命令回显行的行尾（Windows bash 首命令延迟比容器大，
     // 先命中回显会在输出到达前就提前收卷）
-    // 行间 20ms 节奏：Windows sshd 的 ConPTY 对「一次性 50 行爆发」会用
-    // 「光标跳 57;1 + 26 个换行 + 归位」的滚动协议整帧重绘，term-core 视口
-    // 模型跟不住会丢行（实测 ref 剩 29/50）；逐行小步输出走增量滚动。
-    let script =
-        "echo __B__; for i in $(seq 1 50); do echo $i; sleep 0.02; done; echo __E__; true\r";
+    // 不节流、直接 50 行爆发：Windows sshd 的 ConPTY 对「一次性 50 行爆发」会用
+    // 「光标跳 57;1 + 26 个换行 + 归位」的滚动协议整帧重绘——term-core 视口模型
+    // 曾跟不住丢行（登记实测 29/50），CupTranslator 超界 CUP 补偿后可全量保真；
+    // 本测试因此固定打爆发路径，作为该渲染缺口的 e2e 回归（此前靠 20ms 节流规避）。
+    let script = "echo __B__; for i in $(seq 1 50); do echo $i; done; echo __E__; true\r";
     let marker_b = "__B__";
     let marker_e = "__E__";
 

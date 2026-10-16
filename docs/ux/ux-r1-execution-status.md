@@ -228,3 +228,11 @@ G1–G4 已全部收官（R10–R15、R19–R27、R30–R35、R40–R45 均 `通
 - **状态与动作仍归 App()**：浏览/导航/选择/排序状态、传输任务与冲突裁决、对话框开合与 confirmAction/confirmQuit/submitDelegate/confirmDisable、logScope/loadLog 查询与续页、useDialogFocus 焦点陷阱与全部 dialogRef——零语义变更。
 - **死 import 清理 5 项**：IconFile/IconClock/decisionLabel/LOG_ACTION_OPTIONS/fmtBytes。
 - **验证**：tsc 0 错误；冻结后全量 specs **424/424**（15-goal 本轮未假红）。
+
+### UX-R1 G5 · term-core ConPTY 整帧重绘缺口修复（2026-10-13）——超界 CUP 补偿
+
+- **根因**（subagent 后台独立作业、主会话复核 diff）：ConPTY 整帧重绘的帧行号按 **ConPTY 自身窗口几何**编址（`57;1`≈其窗口高+1），可高于本端视口；alacritty_terminal 0.26 对超界 CUP **钳制到底行**（term/mod.rs `goto`→`bottommost_line`）——「归位后逐行 CUP 重绘全帧」时超界帧行逐行互覆，帧头丢失（上轮登记的 29/50 精确复现）。协议中「26 个换行」段本身不丢行（底行 LF 滚动入 scrollback）。
+- **修复**：`crates/term-core/src/screen.rs`（+198 行，唯一产品改动文件）新增 `CupTranslator`——进解析器前把行号>视口的 CUP/HVP 翻译为「`ESC[rows;cH` + (r−rows) 个 LF」；跨 feed 分片 carry、无 ESC 常态路径零拷贝（Cow::Borrowed）、视口内 CUP/DECSTBM/私有模式/冒号子参原样透传；OSC 扫描/捕获/无损缓冲仍吃原始字节；滚动区域阻止 LF 时退化为修复前钳制行为（不劣化）。
+- **验证**：新增 2 测——`conpty_full_frame_repaint_keeps_all_lines`（80×32 屏按登记协议构造，修复前精确剩 29 行、修复后 50 行+上下文全保且帧行序保持，先红后绿）+ `cup_translator_carries_and_passthrough`（分片 carry/透传/HVP 同待遇）；term-core **23/23**、core-session lib 123/123；spike2 **去 20ms 节流固化**（e2e 改打真实爆发路径，本机 1/1）；无 env 全量 workspace 零 FAILED；fmt 干净。
+- **e2e 证伪情报**：暂存修复后去节流 spike2 仍绿——本机栈 ours 通路（russh 80×24 PTY）即使不节流也不触发致丢行编码（登记 29/50 走系统 ssh.exe 参考通路）；缺口的回归锚是**单元测试**（登记字节序列复现），去节流版保留（更真实更快，若 ConPTY 未来改批量策略亦有兜底）。
+- **残余风险登记**：①VPA（`ESC[n d`）形态的超界定位未覆盖（台账/spike2 仅见 CUP 形态，如 e2e 再现丢行先查此项）；②翻译器按字节扫描不追踪 OSC 载荷，标题串内疑似 CUP 字节会被改写（污染仅及标题字符串，不伤屏模型）；③若真实流全帧重绘为 \r\n 顺序编码则本修复惰性无害。

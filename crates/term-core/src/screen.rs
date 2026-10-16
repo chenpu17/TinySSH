@@ -67,10 +67,109 @@ struct CaptureState {
 pub struct TermEventListener;
 impl EventListener for TermEventListener {}
 
+/// ConPTY 整帧重绘补偿：把行号高于本端视口的 CUP/HVP 翻译成「定位到底行 +
+/// 超出量个 LF」。ConPTY 窗口几何可高于 PTY 请求的视口（滚动协议里 57;1 ≈
+/// 其窗口高+1），重绘帧行号随之超界——alacritty 对超界 CUP 钳到底行，超界帧行
+/// 逐行覆盖同一行而丢失；底行 LF 则滚动入 scrollback。行号落在视口内（含全部
+/// 常规终端输出、alt-screen 应用）序列原样透传；若滚动区域阻止 LF 滚动，翻译
+/// 退化为修复前的钳制行为，不劣于此前。
+#[derive(Debug, Default)]
+struct CupTranslator {
+    /// 跨 feed 分片的未完成 ESC[ 序列尾片（终符未到，不能半截翻译）。
+    carry: Vec<u8>,
+}
+
+impl CupTranslator {
+    /// 返回 Borrowed 表示无需改写（无 ESC 的常态路径零拷贝）。
+    fn translate<'a>(&mut self, data: &'a [u8], rows: u16) -> Cow<'a, [u8]> {
+        if self.carry.is_empty() && !data.contains(&0x1b) {
+            return Cow::Borrowed(data);
+        }
+        let mut input = std::mem::take(&mut self.carry);
+        input.extend_from_slice(data);
+        let mut out = Vec::with_capacity(input.len());
+        let mut i = 0usize;
+        while i < input.len() {
+            if input[i] != 0x1b {
+                out.push(input[i]);
+                i += 1;
+                continue;
+            }
+            if i + 1 >= input.len() {
+                break; // 尾部裸 ESC：留待下一片
+            }
+            if input[i + 1] != b'[' {
+                out.extend_from_slice(&input[i..i + 2]);
+                i += 2;
+                continue;
+            }
+            // CSI：参数字节 0x30–0x3F，终符 0x40–0x7E
+            let mut j = i + 2;
+            while j < input.len() && (0x30..=0x3f).contains(&input[j]) {
+                j += 1;
+            }
+            if j >= input.len() {
+                break; // CSI 未完：整段留待下一片
+            }
+            let rewritten = if input[j] == b'H' || input[j] == b'f' {
+                parse_cup(&input[i + 2..j]).is_some_and(|(r, c)| {
+                    if r > rows as u32 {
+                        out.extend_from_slice(format!("\x1b[{};{c}H", rows).as_bytes());
+                        for _ in 0..r - rows as u32 {
+                            out.push(b'\n');
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            };
+            if !rewritten {
+                out.extend_from_slice(&input[i..=j]);
+            }
+            i = j + 1;
+        }
+        self.carry = input[i..].to_vec();
+        Cow::Owned(out)
+    }
+}
+
+/// CUP 参数解析（1 基行列，缺省 1）；含非数字（冒号子参/私有标记）或超两参
+/// 的非常规形式不支持，返回 None 走透传。
+fn parse_cup(params: &[u8]) -> Option<(u32, u32)> {
+    fn part(p: &[u8]) -> Option<u32> {
+        if p.is_empty() {
+            return Some(1);
+        }
+        let mut v: u32 = 0;
+        for &b in p {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            v = v.checked_mul(10)?.checked_add((b - b'0') as u32)?;
+        }
+        Some(v)
+    }
+    let mut parts = params.split(|&b| b == b';');
+    let r = part(parts.next()?)?;
+    let c = match parts.next() {
+        Some(p) => part(p)?,
+        None => 1,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((r, c))
+}
+
 pub struct Screen {
     config: ScreenConfig,
     term: Term<TermEventListener>,
     processor: vte::ansi::Processor,
+    /// ConPTY 超界 CUP 补偿（进解析器前的字节流预翻译）。
+    cup_fix: CupTranslator,
     scanner: OscScanner,
     pub blocks: BlockIndex,
     lossless: VecDeque<LosslessChunk>,
@@ -93,6 +192,7 @@ pub struct Screen {
     last_output_ts: Option<DateTime<Utc>>,
 }
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 impl Screen {
@@ -108,6 +208,7 @@ impl Screen {
             config,
             term,
             processor: vte::ansi::Processor::new(),
+            cup_fix: CupTranslator::default(),
             scanner: OscScanner::new(),
             blocks: BlockIndex::new(),
             lossless: VecDeque::new(),
@@ -131,7 +232,10 @@ impl Screen {
     /// 主输入口：pump 任务把传输原始字节送进来。
     pub fn feed(&mut self, data: &[u8]) {
         let now = Utc::now();
-        self.processor.advance(&mut self.term, data);
+        // ConPTY 超界 CUP 先翻译再进解析器；其余消费端（OSC 扫描/捕获/无损缓冲）
+        // 仍吃原始 data，互不影响。
+        let vt = self.cup_fix.translate(data, self.config.rows);
+        self.processor.advance(&mut self.term, &vt);
         let current_line = self.last_grid_line();
 
         let events = self.scanner.feed(data);
@@ -961,6 +1065,99 @@ mod tests {
         );
         assert!(joined.contains("line-29"));
         assert!(ck.buffers[0].lines.len() >= 24);
+    }
+
+    /// ConPTY（Win32-OpenSSH）对一次性 ~50 行爆发不逐行回传，而是整帧重绘：
+    /// `ESC[57;1H`（行号 ≈ ConPTY 窗口高+1，高于本端视口）→ 约 26 个换行 →
+    /// `ESC[H` → 按行 CUP 逐行重绘全帧（帧行数可超出本端视口）。屏模型必须把
+    /// 超出视口的 CUP 行号落成「底行定位+滚动入 scrollback」而不是钳到底行
+    /// 互相覆盖，否则帧头部行被抹掉（登记实测 50 行只剩 29 行，
+    /// docs/ux/ux-r1-execution-status.md）。
+    #[test]
+    fn conpty_full_frame_repaint_keeps_all_lines() {
+        let mut s = Screen::new(ScreenConfig {
+            cols: 80,
+            rows: 32,
+            scrollback: 10_000,
+            lossless_cap: 1 << 20,
+        });
+        // 突发前已有 3 行上下文（提示符/命令回显）
+        for i in 0..3 {
+            s.feed(format!("ctx-{i}\r\n").as_bytes());
+        }
+        // ConPTY 滚动协议：光标跳 57;1 → 26 个换行 → 归位 → 帧高 56 行逐行 CUP 重绘
+        // （帧 row1..3 = ctx，row4..53 = line-1..50，尾部空行不画）
+        let mut stream = Vec::new();
+        stream.extend_from_slice(b"\x1b[57;1H");
+        for _ in 0..26 {
+            stream.push(b'\n');
+        }
+        stream.extend_from_slice(b"\x1b[H");
+        for r in 1..=56u32 {
+            let text = if r <= 3 {
+                format!("ctx-{}", r - 1)
+            } else if r <= 53 {
+                format!("line-{}", r - 3)
+            } else {
+                continue;
+            };
+            stream.extend_from_slice(format!("\x1b[{r};1H{text}").as_bytes());
+        }
+        // 分片喂入：协议可能跨 chunk 到达，CUP 不能因分片漏翻
+        s.feed(&stream[..stream.len() / 2]);
+        s.feed(&stream[stream.len() / 2..]);
+
+        let snap = s.snapshot_text();
+        for i in 1..=50 {
+            assert!(
+                snap.contains(&format!("line-{i}\n")),
+                "line-{i} 整帧重绘后丢失"
+            );
+        }
+        for i in 0..3 {
+            assert!(snap.contains(&format!("ctx-{i}\n")), "ctx-{i} 丢失");
+        }
+        let first = snap.find("line-1\n").expect("line-1 在场");
+        let last = snap.find("line-50\n").expect("line-50 在场");
+        assert!(first < last, "帧行序必须保持（line-1 在 line-50 前）");
+    }
+
+    /// 翻译器边界：CUP 分片跨 feed 不漏翻；非 CUP（DECSTBM/私有模式/冒号子参）
+    /// 与视口内 CUP 原样透传；HVP（f）同待遇。
+    #[test]
+    fn cup_translator_carries_and_passthrough() {
+        fn lfs(n: u32) -> Vec<u8> {
+            vec![b'\n'; n as usize]
+        }
+        let rows = 24u16;
+        let mut t = CupTranslator::default();
+        let mut tr = |t: &mut CupTranslator, parts: &[&[u8]]| -> Vec<u8> {
+            let mut out = Vec::new();
+            for p in parts {
+                match t.translate(p, rows) {
+                    Cow::Owned(v) => out.extend_from_slice(&v),
+                    Cow::Borrowed(_) => out.extend_from_slice(p),
+                }
+            }
+            out
+        };
+        // ESC[57 跨片：carry 后补 1H → 底行定位 + 33 个 LF
+        let mut want = b"\x1b[24;1H".to_vec();
+        want.extend(lfs(33));
+        assert_eq!(tr(&mut t, &[b"\x1b[57", b";1H"]), want);
+        assert!(t.carry.is_empty());
+        // 非拦截序列原样透传（含跨片的非 CUP）
+        let out = tr(&mut t, &[b"\x1b[1;", b"10r\x1b[?1049h\x1b[2J\x1b[1;1:5H"]);
+        assert_eq!(out, b"\x1b[1;10r\x1b[?1049h\x1b[2J\x1b[1;1:5H");
+        // 视口内 CUP 透传；超界 HVP（f）同 CUP 待遇
+        let mut want = b"\x1b[5;3H\x1b[24;7H".to_vec();
+        want.extend(lfs(6));
+        assert_eq!(tr(&mut t, &[b"\x1b[5;3H", b"\x1b[30;7f"]), want);
+        // 尾部未完 CSI 挂起，下一片拼上后照常处理
+        let mut want = b"ok\x1b[24;1H".to_vec();
+        want.extend(lfs(75));
+        assert_eq!(tr(&mut t, &[b"ok\x1b[9", b"9;1H"]), want);
+        assert!(t.carry.is_empty());
     }
 
     #[test]
