@@ -28,8 +28,8 @@ import type {
 import {
   IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
   IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
-  IconArrowDown, IconUpload, IconDownload, IconInbox, IconClock, IconSearch, IconLoader,
-  IconFolder, IconFile, IconRefresh,
+  IconArrowDown, IconUpload, IconDownload, IconInbox, IconSearch, IconLoader,
+  IconFolder, IconRefresh,
 } from "./icons";
 
 // macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
@@ -54,9 +54,9 @@ import "@xterm/xterm/css/xterm.css";
 // 拆分①抽出的共享层：数据/工具/hooks（app-data）与自包含组件（components/*）
 import {
   altMetaSequence, ApprovalRow, approvalResolvedLabel, APPEARANCES, auditLabel, AUDIT_LABELS,
-  ChromePalette, ctrlCharOf, decisionLabel, epistemicLabel, exitText, fmtBytes,
+  ChromePalette, ctrlCharOf, epistemicLabel, exitText,
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, hhmm, inputBlockedState,
-  LOG_ACTION_OPTIONS, normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
+  normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
   runBench, SEARCH_OPTS, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_PALETTE,
   stateLabel, stampLocal, stopOutcomeText,
   SPLIT_DEGRADE_BELOW, SPLIT_PANE_MIN, SPLIT_RECOVER_AT, tauriListen, THEMES, ThemePreset,
@@ -69,6 +69,9 @@ import { QuickConnectForm } from "./components/quick-connect";
 import { AddHostForm } from "./components/add-host";
 import { SshConfigImportPanel } from "./components/ssh-import";
 import { SettingsPanel } from "./components/settings-panel";
+import { ConfirmDialogs } from "./components/confirm-dialogs";
+import { ActivityLogPanel } from "./components/activity-log-panel";
+import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 
 export default function App() {
 
@@ -3976,155 +3979,22 @@ export default function App() {
             <button className="ghost" onClick={() => setStopResult(null)}>知道了</button>
           </div>
         )}
-        {/* R42（§6.7）首次委托 / 交还对话框：主机、会话、能力、现有授权范围 → 明确提交。
-            「现有授权范围」只陈述核心能保证的（逐条审批 + 控制权是角色），不承诺某一
-            Agent 独占。服务未启用时提交钮禁用并引导设置接入，返回后仍须单独确认。 */}
-        {delegateDlg && current && (
-          <div className="confirm-mask" onClick={closeDelegate}>
-            <div className="confirm-dialog delegate-dlg" role="dialog" aria-modal="true"
-              ref={delegateDlgRef}
-              aria-labelledby="dlg-delegate-title" data-testid="delegate-dlg" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title" id="dlg-delegate-title">
-                {current.ever_agent_owned ? `交还 ${current.host_name} 给 Agent？` : `把 ${current.host_name} 交给 Agent？`}
-              </div>
-              <div className="dim" style={{ fontSize: 12 }}>
-                Agent 持有控制权期间，它的每个操作仍逐条经你审批；你随时可以接管（接管会作废尚未开始的请求）。
-              </div>
-              <div className="dlg-facts">
-                <div className="fact"><span className="dim">主机</span> <b>{current.host_name}</b>{" "}
-                  <span className="mono dim">{currentHost?.address && currentHost.address !== "local" ? `${currentHost.address}:${currentHost.port}` : "本机"}</span></div>
-                <div className="fact"><span className="dim">会话</span> <span className="mono">{current.id.slice(0, 12)}</span>{" "}
-                  <span className={"mono " + stateLabel(current.state).cls} style={{ fontSize: 11 }}>{stateLabel(current.state).text}</span></div>
-                <div className="fact"><span className="dim">能力</span>{" "}
-                  {delegateCap === null ? <span className="dim">查询中…</span>
-                    : delegateCap.integration_present && delegateCap.prompt_ready
-                      ? <span>持久 Shell 可用——Agent 可在当前目录与环境执行</span>
-                      : <span className="warn">无持久 Shell——委托后 Agent 只能走 exec 模式（不继承当前目录/环境）</span>}</div>
-                <div className="fact"><span className="dim">现有授权范围</span>{" "}
-                  {collabConfigured
-                    ? <span>已接入 {mcp.agents.map((a) => a.label).join("、")}；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）</span>
-                    : <span className="warn">尚未登记任何 Agent</span>}</div>
-              </div>
-              <div className="ts-label" style={{ marginTop: 10 }}>任务目标（可选）</div>
-              <textarea className="goal-input" rows={2} value={delegateGoal}
-                aria-label="任务目标（可选）"
-                placeholder="写给 Agent 的委托留言，例：把日志打包放到 /tmp 后交还给我"
-                onChange={(e) => setDelegateGoal(e.target.value)} />
-              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
-                留空也可以转交；留空不会清除会话上已有的目标。
-              </div>
-              {delegateErr && <div className="err" style={{ marginTop: 6, fontSize: 12 }} data-testid="delegate-err">✕ {delegateErr}</div>}
-              {!collabConfigured && (
-                <div className="side-quiet" data-testid="delegate-unconfigured">
-                  协作服务未启用——先到「设置 → Agent 接入」登记 Agent。返回后仍需在此单独确认转交。
-                  <div style={{ marginTop: 6 }}>
-                    <button className="ghost" data-testid="delegate-open-settings"
-                      onClick={() => { closeDelegate(); openSettingsAt("agent"); }}>打开设置 → Agent 接入</button>
-                  </div>
-                </div>
-              )}
-              <div className="hk-actions">
-                <button data-testid="delegate-submit" disabled={!collabConfigured || delegateBusy}
-                  onClick={() => void submitDelegate()}>
-                  {delegateBusy ? "提交中…" : current.ever_agent_owned ? "交还 Agent" : "交给 Agent"}
-                </button>
-                <button className="ghost" data-autofocus onClick={closeDelegate}>取消</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {/* C9（R43）停用影响预览对话框：先预览 → 确认后核心原子封 admission。
-            明确披露「运行中任务不自动终止」「重新启用不复活旧请求」，不承诺全清。 */}
-        {disableImpact && (
-          <div className="confirm-mask" onClick={() => setDisableImpact(null)}>
-            <div className="confirm-dialog" role="dialog" aria-modal="true"
-              aria-labelledby="dlg-disable-collab-title" data-testid="collab-disable-dlg" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title" id="dlg-disable-collab-title">停用协作？</div>
-              <div className="dim" style={{ fontSize: 12 }}>
-                确认后立即封闭入口——新 Agent 请求一律被拒绝，不等待你逐个接管；已有请求在执行开始前核对停用代际，作废留痕，不会因旧审批决定继续执行。
-              </div>
-              <div className="dlg-facts">
-                <div className="fact"><span className="dim">受影响的 Agent 会话</span> <b data-testid="collab-impact-sessions">{disableImpact.agent_owned_sessions}</b>{" "}
-                  <span className="dim">（转为你的控制，不自动终止已开始的任务）</span></div>
-                <div className="fact"><span className="dim">待审批请求</span> <b data-testid="collab-impact-approvals">{disableImpact.pending_approvals}</b> <span className="dim">（作废）</span></div>
-                <div className="fact"><span className="dim">已配置 Agent</span> <b data-testid="collab-impact-agents">{disableImpact.configured_agents}</b> <span className="dim">（身份与 Token 保留）</span></div>
-              </div>
-              <div className="side-quiet">
-                运行中的 Agent 任务不会被自动终止；应用拥有的 MCP 端点随之停止（外部 shim 是独立进程，不受影响）。重新启用须显式操作，先前作废的请求不会复活。
-              </div>
-              <div className="hk-actions">
-                <button data-testid="collab-disable-confirm" disabled={collabBusy} onClick={() => void confirmDisable()}>
-                  {collabBusy ? "停用中…" : "确认停用"}
-                </button>
-                <button className="ghost" data-autofocus data-testid="collab-disable-cancel" onClick={() => setDisableImpact(null)}>取消</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {confirm?.kind === "closeSession" && (
-          <div className="confirm-mask" onClick={() => setConfirm(null)}>
-            <div className="confirm-dialog" ref={closeConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-close-title" onClick={(e) => e.stopPropagation()}>
-              {/* R23 §6.4/§342：入口统一命名「关闭会话」；影响行只说可查证的
-                  （转发数），任务/传输状态未知时明确未知，不声称空闲 */}
-              <div className="hk-title" id="dlg-close-title">关闭与 {confirm.hostName} 的会话？</div>
-              <div>终端现场不可恢复——重连会是全新现场（记录保留）。</div>
-              <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
-                · 将受影响的转发：{confirmImpact ? (confirmImpact.forwards > 0 ? `${confirmImpact.forwards} 条（随会话关闭）` : "无") : "状态未知（查询失败）"}
-                <br />· 正在运行的任务/传输：状态未知——如有重要作业请先确认
-              </div>
-              <div className="hk-actions">
-                <button className="danger" onClick={confirmAction}>关闭会话</button>
-                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>取消</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {quitSummary && (
-          <div className="confirm-mask">
-            <div className="confirm-dialog" ref={quitConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-quit-title" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title" id="dlg-quit-title">退出 TinySSH？</div>
-              <div>
-                活动会话 {quitSummary.sessions.length} 个
-                {quitSummary.sessions.length > 0 && (
-                  <>（{quitSummary.sessions.map((s) => s.host_name).join("、")}）</>
-                )}
-                ，转发 {quitSummary.forwards} 条。
-              </div>
-              <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
-                正在运行的命令与传输会被终止；传输处于提交中/结果待核实时不代表已全部取消。
-                会话不跨启动保留——下次启动可在欢迎页「重连上次会话」一键恢复届时仍打开的主机。
-              </div>
-              <div className="hk-actions">
-                <button className="danger" onClick={() => void confirmQuit()}>结束会话并退出</button>
-                <button className="ghost" data-autofocus onClick={() => setQuitSummary(null)}>取消</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {confirm?.kind === "deleteHost" && (
-          <div className="confirm-mask" onClick={() => setConfirm(null)}>
-            <div className="confirm-dialog" ref={delHostRef} role="dialog" aria-modal="true" aria-labelledby="dlg-delhost-title" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title" id="dlg-delhost-title">删除主机 {confirm.name}？</div>
-              <div>凭据与指纹记录一并移除，之后无法再从它新建连接；已建立的会话不受影响。</div>
-              <div className="hk-actions">
-                <button className="danger" onClick={confirmAction}>删除</button>
-                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>取消</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {confirm?.kind === "deleteIdentity" && (
-          <div className="confirm-mask" onClick={() => setConfirm(null)}>
-            <div className="confirm-dialog" ref={delIdentRef} role="dialog" aria-modal="true" aria-labelledby="dlg-delident-title" onClick={(e) => e.stopPropagation()}>
-              <div className="hk-title" id="dlg-delident-title">删除凭据 {confirm.label}？</div>
-              <div>仍被主机引用的凭据会被拒绝并列出主机；已保存的凭据独立存在，删除前请确认没有主机依赖它。</div>
-              <div className="hk-actions">
-                <button className="danger" onClick={confirmAction}>删除凭据</button>
-                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>取消</button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* R42/R23/P1 危险确认·委托对话框群（拆分③出仓 components/confirm-dialogs.tsx，零语义变更） */}
+        <ConfirmDialogs
+          delegateDlg={delegateDlg} current={current} closeDelegate={closeDelegate}
+          delegateDlgRef={delegateDlgRef} currentHost={currentHost} delegateCap={delegateCap}
+          collabConfigured={collabConfigured} mcp={mcp}
+          delegateGoal={delegateGoal} setDelegateGoal={setDelegateGoal}
+          delegateErr={delegateErr} openSettingsAt={openSettingsAt}
+          delegateBusy={delegateBusy} submitDelegate={submitDelegate}
+          disableImpact={disableImpact} setDisableImpact={setDisableImpact}
+          collabBusy={collabBusy} confirmDisable={confirmDisable}
+          confirm={confirm} setConfirm={setConfirm}
+          closeConfirmRef={closeConfirmRef} confirmImpact={confirmImpact} confirmAction={confirmAction}
+          quitSummary={quitSummary} setQuitSummary={setQuitSummary}
+          quitConfirmRef={quitConfirmRef} confirmQuit={confirmQuit}
+          delHostRef={delHostRef} delIdentRef={delIdentRef}
+        />
         {/* 会话工具栏 40（§4.1）：活动会话才出现——欢迎页不放失效的终端工具 */}
         {current && (
           <div className="session-toolbar">
@@ -5004,173 +4874,25 @@ export default function App() {
             )
           )}
           {rightPanel === "files" && (
-            <>
-          <div className="section" ref={sftpWrapRef}>
-            <h4>远程文件</h4>
-            {!sid ? (
-              <div className="side-quiet">连接会话后可浏览远端目录；文件拖进窗口即上传到正在浏览的目录。</div>
-            ) : (
-              <>
-                <div className="row sftp-nav">
-                  <button className="ghost" title="返回上一位置" aria-label="返回" disabled={!sftpHist.length || sftpLoading}
-                    onClick={() => void sftpGoBack()}><IconChevronLeft size={13} /></button>
-                  <button className="ghost" title="前进" aria-label="前进" disabled={!sftpFwd.length || sftpLoading}
-                    onClick={() => void sftpGoFwd()}><IconChevronRight size={13} /></button>
-                  <button className="ghost" title="上一级目录" aria-label="上一级"
-                    disabled={!sftpPath || sftpPath === "/"}
-                    onClick={() => {
-                      const p = sftpPath.replace(/\/+$/, "").split("/");
-                      p.pop();
-                      void navigateTo(p.length ? p.join("/") || "/" : "/");
-                    }}
-                  ><IconChevronUp size={13} /></button>
-                  <button className="ghost" title="刷新当前目录" aria-label="刷新"
-                    disabled={!sftpPath || sftpLoading} onClick={() => void loadDir(sftpPath)}
-                  ><IconRefresh size={13} /></button>
-                  <button className="ghost" title="定位到终端目录（显式定位；不执行 cd，不自动跟随 shell）" aria-label="定位到终端目录"
-                    disabled={!brief?.cwd || sftpPath === brief.cwd}
-                    onClick={() => brief?.cwd && void navigateTo(brief.cwd)}
-                  ><IconTerminal size={13} /></button>
-                  <button className="ghost" title="上传本地文件到当前目录（原生文件选择器，可多选）" aria-label="上传"
-                    data-testid="sftp-upload-btn"
-                    disabled={!sftpPath || sftpLoading}
-                    onClick={() => void pickAndUpload()}
-                  ><IconUpload size={13} /></button>
-                  <button className={"ghost" + (byPathOpen ? " ts-open" : "")} title="按远端路径下载（保留 §246 入口）" aria-label="按路径下载"
-                    data-testid="sftp-by-path-btn" aria-pressed={byPathOpen}
-                    onClick={() => setByPathOpen(!byPathOpen)}
-                  ><IconDownload size={13} /></button>
-                  <span style={{ flex: 1 }} />
-                  <button className={"ghost" + (sftpEditPath ? " ts-open" : "")} title={sftpEditPath ? "切换为面包屑" : "编辑路径框"}
-                    aria-label="切换路径输入" aria-pressed={sftpEditPath}
-                    onClick={() => { if (sftpEditPath) setSftpEditPath(false); else { setSftpPathInput(sftpPath); setSftpEditPath(true); } }}
-                  ><IconPencil size={13} /></button>
-                </div>
-                {sftpEditPath ? (
-                  <div className="row sftp-path">
-                    <input
-                      className="mono" autoFocus data-testid="sftp-path-input"
-                      placeholder="远端目录（绝对路径，回车进入）"
-                      value={sftpPathInput}
-                      onChange={(e) => setSftpPathInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void navigateTo(sftpPathInput).then((ok) => { if (ok) setSftpEditPath(false); });
-                        else if (e.key === "Escape") { setSftpEditPath(false); setSftpPathInput(sftpPath); }
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div className="sftp-crumbs" data-testid="sftp-crumbs" ref={sftpCrumbsRef} title={sftpPath || undefined}>
-                    {sftpPath ? (() => {
-                      const parts = sftpPath.replace(/\/+$/, "").split("/").filter(Boolean);
-                      const segs: { label: string; path: string }[] = [{ label: "/", path: "/" }];
-                      let acc = "";
-                      for (const p of parts) { acc += "/" + p; segs.push({ label: p, path: acc }); }
-                      return segs.map((s, i) => (
-                        <span key={s.path} className="sftp-crumb-seg">
-                          {i > 0 && <span className="dim">/</span>}
-                          {i < segs.length - 1 ? (
-                            <button className="sftp-crumb" title={`进入 ${s.path}`} onClick={() => void navigateTo(s.path)}>{s.label}</button>
-                          ) : (
-                            <span className="sftp-crumb cur" aria-current="location">{s.label}</span>
-                          )}
-                        </span>
-                      ));
-                    })() : <span className="dim">未浏览——点「定位到终端目录」或 ✎ 输入绝对路径</span>}
-                  </div>
-                )}
-                <div className="row sftp-tools">
-                  <input className="sftp-filter" placeholder="筛选名称" aria-label="按名称筛选"
-                    value={sftpFilter} onChange={(e) => setSftpFilter(e.target.value)} />
-                  <button className={"ghost" + (sftpShowHidden ? " ts-open" : "")} aria-pressed={sftpShowHidden}
-                    title="显示隐藏项（. 开头）" onClick={() => setShowHidden((v) => !v)}>隐藏项</button>
-                  <button className={"ghost" + (sftpSaveAs ? " ts-open" : "")} aria-pressed={sftpSaveAs}
-                    data-testid="sftp-saveas-toggle"
-                    title="另存为模式：下载时逐个弹出保存对话框选位置（对行内下载、下载所选、路径下载、菜单「下载」生效；右键「另存为…」不受影响）"
-                    onClick={() => setSftpSaveAs((v) => !v)}>另存为</button>
-                  {([["name", "名称"], ["size", "大小"], ["mtime", "时间"]] as const).map(([k, label]) => (
-                    <button key={k} className={"ghost" + (sftpSort.key === k ? " ts-open" : "")} aria-pressed={sftpSort.key === k}
-                      title={`按${label}排序${sftpSort.key === k ? (sftpSort.dir === 1 ? "（当前升序，点击改降序）" : "（当前降序，点击改升序）") : ""}`}
-                      onClick={() => setSftpSort((s) => (s.key === k ? { key: k, dir: s.dir === 1 ? -1 : 1 } : { key: k, dir: 1 }))}
-                    >{label}{sftpSort.key === k ? (sftpSort.dir === 1 ? "↑" : "↓") : ""}</button>
-                  ))}
-                </div>
-                {byPathOpen && (
-                  <div className="row xfer-input">
-                    <input
-                      placeholder="下载远端文件（绝对路径，回车或点「下载」）"
-                      value={downloadPath}
-                      onChange={(e) => setDownloadPath(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && void startDownload()}
-                    />
-                    <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>下载</button>
-                  </div>
-                )}
-                {sftpErr && <div className="err" style={{ marginTop: 6 }}>✕ {sftpErr}</div>}
-                {sftpLoading && (
-                  <div className="sftp-list" aria-busy="true">
-                    {[0, 1, 2].map((i) => <div className="skeleton sftp-sk" key={i} style={{ width: `${90 - i * 18}%`, height: 18 }} />)}
-                  </div>
-                )}
-                {!sftpLoading && sftpEntries && sftpEntries.length === 0 && (
-                  <div className="side-quiet">空目录。</div>
-                )}
-                {!sftpLoading && sftpEntries && sftpEntries.length > 0 && sftpShown.length === 0 && (
-                  <div className="side-quiet">无匹配项（名称筛选或隐藏项过滤）。</div>
-                )}
-                {!sftpLoading && sftpShown.length > 0 && (
-                  <div
-                    className={"sftp-list" + (sftpListW <= 300 ? " cols-name-only" : sftpListW <= 340 ? " cols-no-time" : "")}
-                    data-testid="sftp-list" ref={sftpListRef} tabIndex={0}
-                    aria-label="文件列表（方向键移动，Enter 进入目录，Space 选中）"
-                    onKeyDown={sftpListKey}
-                  >
-                    {sftpShown.map((e, i) => (
-                      <div
-                        key={e.name} data-idx={i} data-name={e.name}
-                        className={"sftp-row" + (e.is_dir ? " dir" : "") + (sftpSel.has(e.name) ? " sel" : "") + (i === sftpCursor ? " cursor" : "")}
-                        onClick={(ev) => sftpRowClick(e, i, ev)}
-                        onDoubleClick={(ev) => sftpActivate(e, { x: ev.clientX, y: ev.clientY })}
-                        title={e.is_dir ? "双击进入" : e.kind === "symlink" ? "双击按目标处理" : "双击查看可用动作"}
-                      >
-                        <span className="sftp-ico" title={e.kind === "symlink" ? "符号链接" : undefined}>
-                          {e.kind === "symlink" ? "→" : e.is_dir ? <IconFolder size={13} /> : <IconFile size={13} />}
-                        </span>
-                        <span className="sftp-name mono" title={`${sftpPath.replace(/\/+$/, "")}/${e.name}`}>{e.name}</span>
-                        <span className="dim mono sftp-size" title={e.size == null ? "大小未知" : `${e.size} 字节`}>
-                          {e.is_dir ? "目录" : e.kind === "symlink" ? "链接" : e.size == null ? "—" : fmtBytes(e.size)}
-                        </span>
-                        <span className="dim mono sftp-time" title={e.mtime == null ? "修改时间未知" : new Date(e.mtime * 1000).toLocaleString("zh-CN")}>
-                          {e.mtime == null ? "—" : new Date(e.mtime * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}
-                        </span>
-                        {!e.is_dir && (
-                          <button
-                            className="ghost sftp-dl"
-                            title="下载（存上次下载目录，首次为「下载」文件夹；开「另存为」或菜单「另存为…」可选位置）"
-                            onClick={(ev) => { ev.stopPropagation(); void downloadRemote(`${sftpPath.replace(/\/+$/, "")}/${e.name}`); }}
-                          ><IconDownload size={12} />下载</button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {/* 选择条在列表下方（R31）：上方插入会使列表下移、双击第二击落空 */}
-                {sftpSel.size > 0 && (
-                  <div className="row sftp-selbar" data-testid="sftp-selbar">
-                    <span className="dim">已选 {sftpSel.size} 项</span>
-                    <button className="ghost" data-testid="sftp-sel-download" disabled={sftpLoading}
-                      onClick={() => void sftpDownloadSelected()}
-                    ><IconDownload size={12} /> 下载所选</button>
-                    <button className="ghost" title="清除选择" aria-label="清除选择"
-                      onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
-                  </div>
-                )}
-                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在每次下载时选位置；传输进度见底部队列（状态条「传输 N」展开）。</div>
-              </>
-            )}
-          </div>
-
-            </>
+            <FilesPanel
+              sid={sid} brief={brief}
+              sftpWrapRef={sftpWrapRef} sftpCrumbsRef={sftpCrumbsRef}
+              sftpListRef={sftpListRef} sftpAnchorRef={sftpAnchorRef}
+              sftpPath={sftpPath} sftpPathInput={sftpPathInput}
+              sftpEntries={sftpEntries} sftpLoading={sftpLoading} sftpErr={sftpErr}
+              sftpSel={sftpSel} sftpHist={sftpHist} sftpFwd={sftpFwd} sftpCursor={sftpCursor}
+              sftpEditPath={sftpEditPath} sftpFilter={sftpFilter} sftpShowHidden={sftpShowHidden}
+              sftpSaveAs={sftpSaveAs} sftpSort={sftpSort} sftpShown={sftpShown} sftpListW={sftpListW}
+              byPathOpen={byPathOpen} downloadPath={downloadPath}
+              setSftpSel={setSftpSel} setSftpEditPath={setSftpEditPath}
+              setSftpPathInput={setSftpPathInput} setSftpFilter={setSftpFilter}
+              setDownloadPath={setDownloadPath} setByPathOpen={setByPathOpen}
+              setShowHidden={setShowHidden} setSftpSaveAs={setSftpSaveAs} setSftpSort={setSftpSort}
+              sftpGoBack={sftpGoBack} sftpGoFwd={sftpGoFwd} navigateTo={navigateTo} loadDir={loadDir}
+              pickAndUpload={pickAndUpload} startDownload={startDownload}
+              sftpListKey={sftpListKey} sftpRowClick={sftpRowClick} sftpActivate={sftpActivate}
+              sftpDownloadSelected={sftpDownloadSelected} downloadRemote={downloadRemote}
+            />
           )}
           {rightPanel === "forwards" && (
             <>
@@ -5274,90 +4996,14 @@ export default function App() {
             </>
           )}
           {rightPanel === "log" && (
-            <>
-              <div className="section">
-                <div className="log-bar">
-                  <div className="seg" role="group" aria-label="记录范围">
-                    <button className={logScope === "current" ? "on" : ""} data-testid="log-scope-current"
-                      aria-pressed={logScope === "current"} disabled={!sid}
-                      title={sid ? "只看当前会话" : "未接入会话"}
-                      onClick={() => setLogScope("current")}>当前会话</button>
-                    <button className={logScope === "all" ? "on" : ""} data-testid="log-scope-all"
-                      aria-pressed={logScope === "all"}
-                      onClick={() => setLogScope("all")}>全部会话</button>
-                  </div>
-                  <span style={{ flex: 1 }} />
-                  <button className="ghost icon-btn" title="刷新" aria-label="刷新活动记录"
-                    data-testid="log-refresh" disabled={logBusy}
-                    onClick={() => void loadLog(false)}><IconRefresh size={14} /></button>
-                </div>
-                <div className="log-filters">
-                  <label>主体
-                    <select value={logActor} data-testid="log-actor"
-                      onChange={(e) => setLogActor(e.target.value as "" | "human" | "agent")}>
-                      <option value="">全部</option>
-                      <option value="human">人类</option>
-                      <option value="agent">Agent</option>
-                    </select>
-                  </label>
-                  <label>事件类型
-                    <select value={logAction} data-testid="log-action"
-                      onChange={(e) => setLogAction(e.target.value)}>
-                      <option value="">全部</option>
-                      {LOG_ACTION_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
-                    </select>
-                  </label>
-                </div>
-                <div className="log-note" data-testid="log-note">
-                  本机时间（{TZ_NOTE}）· {logScope === "current" && !sid
-                    ? "未接入会话，无可显示记录"
-                    : `共 ${logTotal} 条${logScope === "current" ? "（当前会话）" : ""}`}
-                </div>
-              </div>
-              <div className="section">
-                {logErr ? (
-                  <div className="empty" data-testid="log-err">{logErr}</div>
-                ) : logScope === "current" && !sid ? (
-                  <div className="empty" data-testid="log-empty-nosession"><IconTerminal size={14} />未接入会话——切到「全部会话」可查看历史记录。</div>
-                ) : logEvents.length === 0 ? (
-                  <div className="empty" data-testid="log-empty">
-                    <IconClock size={14} />{logBusy ? "载入中…" : "暂无记录。所有连接与命令都会留痕在这里。"}
-                  </div>
-                ) : (
-                  <>
-                    {logEvents.map((ev) => {
-                      const ident = ev.session_id ? sessionIdent.get(ev.session_id) : undefined;
-                      // 短 id 只用于辨认（完整 id 在 title 里）——太短的 id 直接全显，别截成无信息量的前缀
-                      const shortSid = ev.session_id ? (ev.session_id.length <= 12 ? ev.session_id : ev.session_id.slice(0, 8)) : "";
-                      return (
-                        <div className={`tl-row log-row actor-${ev.actor_kind}`} key={ev.seq} data-testid="log-row"
-                          data-action={ev.action} data-actor={ev.actor_kind}
-                          title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
-                          <div className="tl-meta">
-                            {stampLocal(ev.ts)}
-                            {ev.session_id && <> · {ident ?? <span className="log-sid">{shortSid}</span>}</>}
-                            {ev.session_id && <span className="log-sid" title={ev.session_id}>（{shortSid}）</span>}
-                          </div>
-                          <div className="tl-action">
-                            <span className="tl-actor">
-                              {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
-                            </span>{" "}
-                            {decisionLabel(ev)}
-                            {ev.command && <>{" "}<span className="tl-cmd-text">{ev.command}</span></>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {logEvents.length < logTotal && (
-                      <button className="ghost log-more" data-testid="log-more" disabled={logBusy}
-                        onClick={() => void loadLog(true)}>
-                        {logBusy ? "载入中…" : `加载更早（已显示 ${logEvents.length}/${logTotal}）`}
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            </>
+            <ActivityLogPanel
+              logScope={logScope} setLogScope={setLogScope}
+              logActor={logActor} setLogActor={setLogActor}
+              logAction={logAction} setLogAction={setLogAction}
+              sid={sid} logEvents={logEvents} logTotal={logTotal}
+              logBusy={logBusy} logErr={logErr}
+              sessionIdent={sessionIdent} loadLog={loadLog}
+            />
           )}
           {rightPanel === "collab" && (
             <>
@@ -5439,98 +5085,12 @@ export default function App() {
             状态条计数不自动展开；抽屉关闭不影响任务（纯展示层）。展开不销毁
             终端实例（兄弟节点，无重挂）。 */}
         {queueOpen && (
-          <div className="queue-drawer" data-testid="queue-drawer" role="region" aria-label="传输队列">
-            <div className="queue-head">
-              <span className="queue-title">传输</span>
-              <span className="queue-count">{transfers.length} 个任务</span>
-              <span style={{ flex: 1 }} />
-              <button className="ghost" data-testid="queue-collapse" aria-label="收起传输队列" onClick={() => setQueueOpen(false)}>收起 ⌄</button>
-            </div>
-            <div className="queue-body">
-              {transfers.length === 0 && (
-                <div className="side-quiet">暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。</div>
-              )}
-              {transfers.map((t) => (
-                <div className="card row xfer-row" key={t.id} data-testid={"xfer-" + t.status}>
-                  <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>
-                    {t.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="row" style={{ gap: 8 }}>
-                      <div className="xfer-name mono" title={t.name}>{t.name}</div>
-                      <span className="xfer-host mono" title={`会话：${hostLabel(t.sid)}`}>{hostLabel(t.sid)}</span>
-                      <span className="mono xfer-sub">
-                        {t.status === "queued" && "排队中…"}
-                        {t.status === "running" && (t.total != null && t.total > 0
-                          ? `传输中… ${fmtBytes(t.bytes ?? 0)} / ${fmtBytes(t.total)}`
-                          : `传输中… ${fmtBytes(t.bytes ?? 0)}${t.total == null ? "（总量未知）" : ""}`)}
-                        {t.status === "committing" && "提交中…（字节传完不代表提交完成）"}
-                        {t.status === "cancelling" && "取消中…"}
-                        {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)}`}
-                        {t.status === "failed" && `失败：${t.error ?? "未知错误"}`}
-                        {t.status === "cancelled" && "已取消"}
-                        {t.status === "skipped" && "已跳过：同名目标未改动"}
-                        {t.status === "interrupted" && `已中断：${t.error ?? "应用重启时传输中断"}`}
-                        {t.status === "unknown" && `结果未知：${t.error ?? "发布应答丢失"}`}
-                      </span>
-                    </div>
-                    {/* S08：完整 源 → 目标（方向语义：上传 本地→远端，下载 远端→本地） */}
-                    <div className="mono xfer-sub" title={t.kind === "Upload" ? `${t.local} → ${t.remote}` : `${t.remote} → ${t.local}`}>
-                      {t.kind === "Upload" ? `${t.local} → ${t.remote}` : `${t.remote} → ${t.local}`}
-                    </div>
-                    {t.status === "awaiting" && t.prompt && (
-                      <div className="xfer-conflict">
-                        <div className="mono xfer-sub">
-                          {t.prompt.reason === "stat_changed_since_preflight" ? "目标在提交前已变化，需重新裁决：" : "目标已存在："}
-                          <span className="mono" title={t.prompt.target_path}>{t.prompt.target_path}</span>
-                          {t.prompt.size != null && ` · ${fmtBytes(t.prompt.size)}`}
-                          {t.prompt.mtime != null && ` · ${new Date(t.prompt.mtime * 1000).toLocaleString()}`}
-                        </div>
-                        <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                          <button className="ghost" data-testid="cf-skip" onClick={() => { void decideCollision(t, "skip"); }}>跳过</button>
-                          <button className="ghost" data-testid="cf-overwrite" title="外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动" onClick={() => { void decideCollision(t, "overwrite"); }}>覆盖</button>
-                          <button className="ghost" data-testid="cf-keepboth" onClick={() => { void decideCollision(t, "keepboth"); }}>两个都要</button>
-                        </div>
-                      </div>
-                    )}
-                    {t.status === "unknown" && (
-                      <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                        <button className="ghost" data-testid="uo-reverify" onClick={() => { void verifyOutcome(t.id); }}>重新核实</button>
-                        <span className="mono xfer-note">temp 与恢复资料保留；不自动重发</span>
-                      </div>
-                    )}
-                  </div>
-                  {/* S08 该状态允许的操作：进行中=取消；失败/取消/跳过/中断=重试（新任务
-                      重新校验）；unknown 只有重新核实 + 查看目标（§374 界面须提供
-                      「重新核实」「查看目标/记录」，通用重试绝不作为默认动作）；
-                      完成=定位（下载访达显示本地目标 / 上传文件面板开目标目录） */}
-                  <div className="row" style={{ gap: 2, flex: "none" }}>
-                    {t.kind === "Download" && t.status === "done" && !t.local.startsWith("pending") && (
-                      <button className="ghost" data-testid="xfer-locate" title="在访达中显示本地目标" onClick={() => void locateTransfer(t)}>定位</button>
-                    )}
-                    {t.kind === "Upload" && t.status === "done" && t.sid && t.sid === sidRef.current && (
-                      <button className="ghost" data-testid="xfer-locate" title="在文件面板打开目标目录" onClick={() => void locateTransfer(t)}>定位</button>
-                    )}
-                    {t.status === "unknown" && (
-                      <button className="ghost" data-testid="xfer-view-target" title="查看目标：核对目标当前状态（下载在访达显示本地目标 / 上传打开文件面板目标目录）——仅目标存在不能证明本任务成功，结果仍待核实" onClick={() => void locateTransfer(t)}>查看目标</button>
-                    )}
-                    {(t.status === "failed" || t.status === "cancelled" || t.status === "skipped" || t.status === "interrupted") && (
-                      canRetry(t)
-                        ? <button className="ghost" data-testid="xfer-retry" title="重试：创建新任务，重新校验连接、源文件与冲突" onClick={() => { void retryTransfer(t.id); }}>重试</button>
-                        : <span className="xfer-note" data-testid="xfer-retry-unavailable" title="重试须在原会话内重跑（重新校验连接/源/冲突）；原会话已不在——请重连该主机后在文件面板重新发起">会话已不在</span>
-                    )}
-                    {t.status === "running" || t.status === "queued" || t.status === "cancelling" || t.status === "committing" || t.status === "awaiting" ? (
-                      <button className="ghost" title="取消传输" onClick={() => { invoke("cancel_transfer", { id: t.id }).catch(() => {}); }}>✕</button>
-                    ) : (
-                      <span className={t.status === "done" ? "ok" : t.status === "cancelled" || t.status === "skipped" ? "dim" : "err"} style={{ flex: "none", width: 18, textAlign: "center" }}>
-                        {t.status === "done" ? "✓" : t.status === "cancelled" || t.status === "skipped" ? "⊘" : "✕"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <TransferQueueDrawer
+            transfers={transfers} queueOpen={queueOpen} setQueueOpen={setQueueOpen}
+            sidRef={sidRef} hostLabel={hostLabel} canRetry={canRetry}
+            decideCollision={decideCollision} verifyOutcome={verifyOutcome}
+            locateTransfer={locateTransfer} retryTransfer={retryTransfer}
+          />
         )}
 
         {/* 页脚状态条 24（§4.2）：只放短状态与任务入口 */}
@@ -5556,19 +5116,10 @@ export default function App() {
 
       {/* R31 §350 文件动作菜单：双击/Enter 文件弹出可用动作（不直接执行）；点外/Esc 关 */}
       {sftpMenu && (
-        <div
-          className="sftp-menu" ref={sftpMenuRef} role="menu" data-testid="sftp-menu"
-          aria-label={`${sftpMenu.name} 可用动作`}
-          style={{ left: Math.max(6, Math.min(sftpMenu.x, winW - 160)), top: Math.min(sftpMenu.y, window.innerHeight - 84) }}
-        >
-          <div className="sftp-menu-title mono">{sftpMenu.name}</div>
-          <button role="menuitem" data-testid="sftp-menu-download"
-            onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`); }}
-          ><IconDownload size={12} /> 下载</button>
-          <button role="menuitem" data-testid="sftp-menu-saveas"
-            onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`, { saveAs: true }); }}
-          ><IconInbox size={12} /> 另存为…</button>
-        </div>
+        <SftpFileMenu
+          sftpMenu={sftpMenu} sftpMenuRef={sftpMenuRef} winW={winW}
+          sftpPathRef={sftpPathRef} setSftpMenu={setSftpMenu} downloadRemote={downloadRemote}
+        />
       )}
     </div>
   );

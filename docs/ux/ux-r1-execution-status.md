@@ -219,3 +219,12 @@ G1–G4 已全部收官（R10–R15、R19–R27、R30–R35、R40–R45 均 `通
   7. sftp subsystem 写成 sftp_server.exe（下划线）→ EOF during negotiation；真名 sftp-server.exe（连字符）。
 - **结果**：本机 gated 全绿——core_local **13/13**（原 11；host_key_gate_first_seen_change_and_reject 本机落地，gbk 有门跳过）、sshd_e2e **7/7**、spike2 **1/1**（ours 渲染保真 50/50 + RSS 泄漏门）、sshcfg_import 4/4；无 env 全量 workspace **35 套件零 FAILED**；fmt 干净；clippy 无新告警。mcp 六旅程留容器 CI（门已备好，容器恢复即跑）。
 - **回滚单**：`net stop sshd-e2e && sc delete sshd-e2e`；`reg delete "HKLM\SOFTWARE\OpenSSH" /v DefaultShell`；`reg delete "HKLM\SYSTEM\...\Session Manager\Environment" /v MSYS`；删 C:\Windows\.bashrc、C:\ProgramData\ssh\e2e_*；`net user root /delete && net user e2e /delete`。
+
+### UX-R1 G5 · App.tsx 拆分③（2026-10-13）——SFTP 面板/模态群/活动记录面板三片出仓
+
+- **变更**：三片五组件，App.tsx 5575→5123 行（净 -452）：`ui/src/components/sftp-panel.tsx`（379 行）=远端文件浏览卡（FilesPanel）+传输队列抽屉（TransferQueueDrawer）+文件动作菜单（SftpFileMenu）三个互不相邻块（原 5006-5174/5441-5534/5558-5572）一并出仓；`ui/src/components/confirm-dialogs.tsx`（209 行）=委托/交还、协作停用影响预览、关闭会话、退出应用、删除主机、删除凭据六个连续对话框（原 3979-4127）整体出仓，`ConfirmState` union 随迁导出；`ui/src/components/activity-log-panel.tsx`（118 行）=活动记录面板（原 5276-5361）。
+- **手术法升级——并行勘察+单趟成型**：三片的行号图/锚点/标识符清单/Props 草稿由 3 个只读 Explore subagent 并行勘定，主会话核对边界原文后**单趟 sed** 五块删除+插入一次成型（`-e 'N1,N2d' -e 'N-1r 调用文件'`×5，行号同指原始文件；组件体抽取先于改写执行，行号同源零漂移）。
+- **props 化 102 项**：FilesPanel 44 / TransferQueueDrawer 10 / SftpFileMenu 6 / ConfirmDialogs 29 / ActivityLogPanel 13；三个 updater 型 setter（setShowHidden/setSftpSaveAs/setSftpSort）须用 `Dispatch<SetStateAction<T>>` 全型（JSX 传 updater 函数，窄型 `(v:T)=>void` 不适配）；SftpFileMenu 组件内补 `if (!sftpMenu) return null` 守卫——开合条件留宿主后，回调里的 `sftpMenu.name` 类型收窄须组件自持；delegateDlg prop 沿 JSX 原文命名。
+- **状态与动作仍归 App()**：浏览/导航/选择/排序状态、传输任务与冲突裁决、对话框开合与 confirmAction/confirmQuit/submitDelegate/confirmDisable、logScope/loadLog 查询与续页、useDialogFocus 焦点陷阱与全部 dialogRef——零语义变更。
+- **死 import 清理 5 项**：IconFile/IconClock/decisionLabel/LOG_ACTION_OPTIONS/fmtBytes。
+- **验证**：tsc 0 错误；冻结后全量 specs **424/424**（15-goal 本轮未假红）。
