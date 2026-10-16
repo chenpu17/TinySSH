@@ -49,7 +49,10 @@ async fn agent_pipe_lists_signs_and_rejects_unloaded() {
         .unwrap_or_else(|| {
             panic!(
                 "找不到探针密钥，实际身份: {:?}",
-                identities.iter().map(|i| i.comment().to_owned()).collect::<Vec<_>>()
+                identities
+                    .iter()
+                    .map(|i| i.comment().to_owned())
+                    .collect::<Vec<_>>()
             )
         })
         .clone();
