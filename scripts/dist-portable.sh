@@ -19,7 +19,10 @@ echo "== 1/3 前端构建 =="
 npm run build --prefix ui
 
 echo "== 2/3 release 构建（首次 10-20 分钟）=="
-cargo build --release -p tinyssh-app
+# 必须带 custom-protocol（只有 tauri build 会自动加，裸 cargo 不会）：否则
+# release 二进制运行期加载 devUrl(http://localhost:5183) 而非内嵌资源，
+# 窗口直接报「localhost 拒绝连接 ERR_CONNECTION_REFUSED」。
+cargo build --release -p tinyssh-app --features tinyssh-app/custom-protocol
 
 echo "== 3/3 归档 =="
 out="dist-portable/$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
