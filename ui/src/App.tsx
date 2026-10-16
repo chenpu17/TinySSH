@@ -72,6 +72,7 @@ import { SettingsPanel } from "./components/settings-panel";
 import { ConfirmDialogs } from "./components/confirm-dialogs";
 import { ActivityLogPanel } from "./components/activity-log-panel";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
+import { SelfMeterTitlebar } from "./self-meter";
 
 export default function App() {
 
@@ -3501,6 +3502,8 @@ export default function App() {
       <header className="titlebar" data-tauri-drag-region>
         <div className="tb-left">
           <span className="app-title" data-tauri-drag-region>TinySSH</span>
+          {/* 自身开销读数（监控条「本机」段迁此）：标题栏常显不依赖会话；纯读数留在拖拽链上 */}
+          <SelfMeterTitlebar />
           {hostbarOpen && (
             <button className="ghost icon-btn" title="收起主机栏（⌘B）" aria-label="收起主机栏"
               onClick={() => toggleHostbar(false)}>

@@ -201,6 +201,16 @@ body {
 }
 .titlebar .app-title { font-weight: 700; font-size: 13px; letter-spacing: 0.3px; color: var(--text); }
 .tb-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* 标题栏自身开销读数（自监控轮迁移）：紧贴 app-title，分隔线起头；纯读数留在拖拽链上，
+   核心不可达组件自隐藏（无「不可用」占位） */
+.tb-self {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  margin-left: 6px; padding-left: 11px;
+  border-left: 1px solid var(--border);
+  font-size: 11px; font-variant-numeric: tabular-nums; color: var(--dim);
+  white-space: nowrap; user-select: none;
+}
+.tb-self .tb-self-val { color: var(--text); opacity: 0.85; }
 .tb-right { display: flex; align-items: center; gap: 6px; }
 /* 全局协作提醒（§3）：有待审批/Agent 活动必须显示，即使入口被收起——点击开协作面板 */
 .collab-badge {

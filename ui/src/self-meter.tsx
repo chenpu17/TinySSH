@@ -2,8 +2,9 @@
 // read_self_metrics（kernel32 GetProcessTimes/K32GetProcessMemoryInfo 直读，
 // 不经审批/审计），CPU% 由相邻两次采样的进程时间差分得出（任务管理器
 // 「进程 CPU」同口径：占全部逻辑核），首样无基线显示「—」。
-// 展示位两处：设置→关于（常驻可达，详版）与监控条「本机」段（会话中随手
-// 可见，缩略版）。核心不可达/非 Windows（恒 null+0）→ 两个组件都整块隐藏
+// 展示位两处：设置→关于（常驻可达，详版）与标题栏左区（常显不依赖会话在场，
+// 缩略版——原监控条「本机」段迁此，标题栏曝光比会话条件下的监控条更稳定）。
+// 核心不可达/非 Windows（恒 null+0）→ 两个组件都整块隐藏
 // ——摆一块永远「不可用」的牌子不如不摆。
 import { useEffect, useState } from "react";
 import { invoke } from "./adapter/bridge";
@@ -61,16 +62,18 @@ export function SelfMeterDetail() {
   );
 }
 
-/** 监控条缩略版：本机进程 CPU% + 工作集（3s 周期，与条内远端段同节奏） */
-export function SelfMeterChip() {
+/** 标题栏缩略版：本机进程 CPU% + 工作集（3s 周期）。挂在标题栏左区 app-title
+ *  之后——常显、位置恒定（不随主机栏/协作徽章出现而移动）；纯读数，挂
+ *  data-tauri-drag-region 保持整行可拖拽。核心不可达整块自隐藏。 */
+export function SelfMeterTitlebar() {
   const v = useSelfMetrics(3000);
   if (!v || (v.cpuPct == null && v.wsMb === 0)) return null;
   return (
-    <span className="mseg" data-testid="self-chip"
+    <span className="tb-self" data-testid="self-chip" data-tauri-drag-region
       title="本程序（tinyssh-app）进程自身开销：CPU 占全部逻辑核百分比 · 工作集内存">
-      <span className="mlabel">本机</span>
-      <span className="mval mnum">CPU {fmtCpuPct(v.cpuPct)}</span>
-      <span className="mval mnum">{v.wsMb} MB</span>
+      <span>本机</span>
+      <span className="tb-self-val">CPU {fmtCpuPct(v.cpuPct)}</span>
+      <span className="tb-self-val">{v.wsMb} MB</span>
     </span>
   );
 }

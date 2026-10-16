@@ -1,22 +1,17 @@
 // 27 自身开销监控（本轮）：tinyssh-app 进程级 CPU/内存上屏——设置→关于详版
-// （CPU%+工作集+提交+采样时刻，2s 刷新）与监控条「本机」缩略段（会话中随手
-// 可见）。demo 域供模拟值（形状与真实后端一致，cpu 恒有值）；核心不可达自
-// 隐藏由组件内 null 分支保证（demo 恒可达，不可达路径由真实域冒烟覆盖）。
+// （CPU%+工作集+提交+采样时刻，2s 刷新）与标题栏左区「本机」缩略读数（常显，
+// 不依赖会话在场——原监控条「本机」段迁此）。demo 域供模拟值（形状与真实后端
+// 一致，cpu 恒有值）；核心不可达自隐藏由组件内 null 分支保证（demo 恒可达，
+// 不可达路径由真实域冒烟覆盖）。
 module.exports = {
-  title: "自身开销：关于卡详版实时刷新，监控条「本机」段在场",
+  title: "自身开销：关于卡详版实时刷新，标题栏「本机」读数在场",
   async run({ page, ck }) {
-    // ---- 监控条「本机」段：SSH 会话在场时随手可见 ----
-    await page.evaluate(() => {
-      const tab = [...document.querySelectorAll(".tab")].find((x) => x.textContent.includes("prod-1"));
-      if (!tab) throw new Error("prod-1 tab not found");
-      tab.click();
-    });
+    // ---- 标题栏左区「本机」读数：常显（标题栏不依赖会话，空场即可断言） ----
     await page.waitForSelector('[data-testid="self-chip"]', { timeout: 6000 }).catch(() => {});
     const chip = await page.evaluate(() => document.querySelector('[data-testid="self-chip"]')?.textContent?.replace(/\s+/g, " ") ?? null);
-    ck.check("监控条「本机」段在场", !!chip, chip ?? "null");
+    ck.check("标题栏「本机」读数在场", !!chip, chip ?? "null");
     ck.check("本机段含 CPU 百分比", !!chip && /本机\s*CPU\s*[\d.]+%/.test(chip), chip);
     ck.check("本机段含工作集 MB", !!chip && /\d+ MB/.test(chip), chip);
-    // 关闭监控条所在会话不影响本段断言已有结论；随后关于卡在空场也可验证
     // ---- 设置→关于 详版：数值齐全且随轮询刷新 ----
     await page.click(".hb-settings");
     await page.click("[data-testid=settings-cat-about]");
