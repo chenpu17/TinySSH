@@ -1398,7 +1398,22 @@ async fn pump_direct(
             }
             mark_recovered(&this.forwards, &this.forward_cb.lock().unwrap(), fwd_id);
             let mut stream = chan.into_stream();
-            let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
+            let copied = tokio::io::copy_bidirectional(&mut tcp, &mut stream)
+                .await
+                .map(|(c2s, s2c)| c2s + s2c)
+                .unwrap_or(0);
+            // Win32-OpenSSH 对「目标拒绝」回「通道开启成功→立即零字节关闭」而非
+            // open-failure（容器/Alpine 走上面 Err 分支）——双向零字节即闭视为
+            // 目标侧拒绝（T44 语义：文案指目标侧），下一次成功连接即恢复 Listening。
+            if copied == 0 {
+                tracing::info!(forward = fwd_id, "direct 通道零字节即闭——目标侧拒绝");
+                mark_degraded(
+                    &this.forwards,
+                    &this.forward_cb.lock().unwrap(),
+                    fwd_id,
+                    "目标不可达或被拒绝（连接即断）",
+                );
+            }
         }
         Err(e) => {
             tracing::warn!(forward = fwd_id, error = %e, "direct_tcpip 通道开启失败");

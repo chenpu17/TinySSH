@@ -12,12 +12,13 @@ fn sshd_enabled() -> bool {
 }
 
 fn target() -> transport_ssh::SshTarget {
+    let (addr, port, username, secret) = tinyssh_testbed::sshd_endpoint();
     transport_ssh::SshTarget {
-        address: "127.0.0.1".into(),
-        port: 2222,
-        username: "root".into(),
+        address: addr.into(),
+        port,
+        username: username.into(),
         auth_type: session_api::AuthType::Password,
-        secret: "testpass".into(),
+        secret: secret.into(),
         host_key_check: None,  // 测试：全接受（生产走 TOFU 回调）
         kb_prompt_check: None, // 2FA 门：测试直连不用
     }
@@ -316,11 +317,20 @@ async fn sftp_list_lists_dir_entries_sorted() {
     // resolve：相对与 .. 归一为 canonical；None → SFTP 初始目录（绝对路径）。
     // 注：OpenSSH realpath 对不存在的末段宽容（词法归一即返回，不查存在性）——
     // 「不存在」的可区别错误由 list（read_dir）/stat（lstat）承担，二者必查存在。
+    // Win32-OpenSSH 的 realpath 返回盘符限定 canonical（"/C:/tmp/..."，盘符即
+    // 服务端真相）；容器/Alpine = POSIX 原样。canonical 断言统一走 canon()。
+    let canon = |p: &str| {
+        if tinyssh_testbed::docker_available() {
+            p.to_string()
+        } else {
+            format!("/C:{}", p)
+        }
+    };
     let r = channel
         .resolve_path(Some("/tmp/t41_dir/../t41_dir"))
         .await
         .unwrap();
-    assert_eq!(r.canonical, "/tmp/t41_dir");
+    assert_eq!(r.canonical, canon("/tmp/t41_dir"));
     let init = channel.resolve_path(None).await.unwrap();
     assert!(
         init.canonical.starts_with('/') && init.canonical.len() > 1,
@@ -342,7 +352,10 @@ async fn sftp_list_lists_dir_entries_sorted() {
     let st = channel.stat_entry("/tmp/t41_dir/a.txt").await.unwrap();
     assert_eq!(st.kind, Some(session_api::EntryKind::File));
     assert_eq!(st.size, Some(b"world\n".len() as u64));
-    assert_eq!(st.canonical.as_deref(), Some("/tmp/t41_dir/a.txt"));
+    assert_eq!(
+        st.canonical.as_deref(),
+        Some(canon("/tmp/t41_dir/a.txt").as_str())
+    );
     assert_eq!(st.symlink_target, None);
     let stl = channel.stat_entry("/tmp/t41_dir/link").await.unwrap();
     assert_eq!(stl.kind, Some(session_api::EntryKind::Symlink));
@@ -353,16 +366,40 @@ async fn sftp_list_lists_dir_entries_sorted() {
         Some(b"world\n".len() as u64),
         "可达链接 size 跟随目标"
     );
-    assert_eq!(stl.canonical.as_deref(), Some("/tmp/t41_dir/a.txt"));
+    // Win32 realpath 不跟随链接（返回链接自身 canonical），stat/size 仍跟随；
+    // 容器 realpath 跟随到目标
+    if tinyssh_testbed::docker_available() {
+        assert_eq!(
+            stl.canonical.as_deref(),
+            Some(canon("/tmp/t41_dir/a.txt").as_str())
+        );
+    } else {
+        assert_eq!(
+            stl.canonical.as_deref(),
+            Some(canon("/tmp/t41_dir/link").as_str())
+        );
+    }
     let std_ = channel.stat_entry("/tmp/t41_dir/dangling").await.unwrap();
     assert_eq!(std_.kind, Some(session_api::EntryKind::Symlink));
     assert_eq!(std_.symlink_target.as_deref(), Some("missing"));
     // canonical 服务端依赖：OpenSSH 宽容 realpath 返回归一化目标路径；严格实现报错 → None
     match &std_.canonical {
-        Some(c) => assert_eq!(
-            c, "/tmp/t41_dir/missing",
-            "宽容 realpath：悬空链接 canonical=归一化目标"
-        ),
+        Some(c) => {
+            // 容器 realpath 宽容归一（返回悬空目标）；Win32 返回链接自身路径
+            if tinyssh_testbed::docker_available() {
+                assert_eq!(
+                    c,
+                    &canon("/tmp/t41_dir/missing"),
+                    "宽容 realpath：悬空链接 canonical=归一化目标"
+                );
+            } else {
+                assert_eq!(
+                    c,
+                    &canon("/tmp/t41_dir/dangling"),
+                    "Win32 realpath：悬空链接 canonical=链接自身"
+                );
+            }
+        }
         None => {} // 严格实现（realpath 失败）→ None（§352 不猜路径）
     }
     let stmiss = channel.stat_entry("/tmp/t41_dir/definitely-missing").await;
@@ -389,6 +426,10 @@ async fn sftp_list_lists_dir_entries_sorted() {
 async fn ssh_agent_auth_connects() {
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    if !tinyssh_testbed::docker_available() {
+        eprintln!("skip: 容器内 authorized_keys 注入需 docker（本机 sshd 替代路径不带容器）");
         return;
     }
     let _sshd_guard = tinyssh_testbed::sshd_lock();
@@ -537,6 +578,10 @@ async fn ssh_agent_auth_connects() {
 async fn ssh_keyboard_interactive_fallback() {
     if !sshd_enabled() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    if !tinyssh_testbed::docker_available() {
+        eprintln!("skip: 2FA 场景需容器内 PAM sshd（本机 sshd 替代路径不带容器）");
         return;
     }
     let _sshd_guard = tinyssh_testbed::sshd_lock();
@@ -830,8 +875,11 @@ async fn forward_local_and_dynamic_roundtrip() {
         .unwrap();
     let mut bbuf = [0u8; 16];
     let _ = tokio::time::timeout(Duration::from_secs(5), tbad.read(&mut bbuf)).await; // 失败即断开
+    drop(tbad); // 真实客户端拿到 EOF 即关闭——Win32-sshd 走「通道开启→零字节即闭」，
+                // Degraded 转换在 pump 收尾（双向归零）时发生，不关 socket 则永不到来
     let mut deg: Option<Option<String>> = None;
-    for _ in 0..30 {
+    // Windows 目标拒绝有 ~2s 延迟（容器即时 RST）——轮询窗 3s→10s
+    for _ in 0..100 {
         let infos = channel.list_forwards().await.unwrap();
         if let Some(e) = infos.iter().find(|f| f.id == fid_bad) {
             if e.state == "Degraded" {
@@ -924,10 +972,22 @@ async fn forward_local_and_dynamic_roundtrip() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        rep3[1], 5,
-        "目标拒绝应回 REP=5（connection refused）：{rep3:?}"
-    );
+    if tinyssh_testbed::docker_available() {
+        assert_eq!(
+            rep3[1], 5,
+            "目标拒绝应回 REP=5（connection refused）：{rep3:?}"
+        );
+    } else {
+        // Win32-OpenSSH 对目标拒绝回「通道开启成功→立即零字节关闭」而非
+        // open-failure——REP 在通道确认时已回 0，拒绝语义只能靠紧随的 EOF 表达
+        assert_eq!(rep3[1], 0, "Win32-sshd 通道开启即回 REP=0：{rep3:?}");
+        let mut eof = [0u8; 1];
+        let n = tokio::time::timeout(Duration::from_secs(5), s3.read(&mut eof))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(n, 0, "目标拒绝后应立即 EOF");
+    }
 
     channel.stop_forward(&fid2).await.unwrap();
     assert_port_closed(dp).await;

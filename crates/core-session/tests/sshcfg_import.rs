@@ -282,6 +282,13 @@ async fn imported_agent_host_connects_via_ssh_agent() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    if !tinyssh_testbed::docker_available() {
+        // 本测试是容器+unix agent 全链路：MSYS ssh-agent 的 unix socket + 容器公钥注入，
+        // Windows 本机 sshd 替代路径（russh 走命名管道）不适用——Windows agent 通路
+        // 由 transport-ssh tests/agent_pipe.rs（TINYSSH_E2E_AGENT 门）覆盖。
+        eprintln!("skip: 本测试需 docker 容器（unix agent socket 全链路）");
+        return;
+    }
     let _guard = tinyssh_testbed::sshd_lock();
     tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
     test_master_key();

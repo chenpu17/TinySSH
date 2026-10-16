@@ -198,3 +198,24 @@ G1–G4 已全部收官（R10–R15、R19–R27、R30–R35、R40–R45 均 `通
 - **死 import 清理 9 项**：SelfMeterDetail/DEFAULT_KEYMAP/ZOOM_LEVELS/setZoomScale/IconMinus/SETTINGS_CATS/settingsCatIcon/settingsCatLabel 自 App.tsx import 移除（组件侧自带）。
 - **验证**：tsc 干净；vite build 绿（chunk 警告为既有）；定向 09-settings 21/21 + 26-keymap 18/18 + 14-credentials 20/20；冻结后全量 **424/424**（15-goal 本轮未假红）。
 - **后续切片登记**：App() 本体仍 ~5575 行；下一批候选=SFTP 面板（文件传输卡+远端浏览）、模态群（confirm/委托/影响预览）、活动记录面板；每片须过 tsc+全量 specs。
+
+### UX-R1 G5 · 本机 sshd testbed（2026-10-16）——docker sshd 的 Windows 本机替代落地
+
+- **背景**：core_local 11/13（余 2=testbed sshd 需 docker，本机无 docker）。Windows OpenSSH 套件本就有 sshd.exe——本轮验证「本机替代」路径并落全。
+- **测试基建（repo 内）**：testbed 新增 `sshd_endpoint()`（TINYSSH_E2E_ADDR/USER/PASS 覆盖；默认 root/testpass@127.0.0.1:2222 容器契约不变——本机密码须过 Windows 密码策略，testpass 字面量装不进去）、`docker_available()`、`bounce_sshd/sshd_down/sshd_up`（容器=docker restart/stop/start；本机=TINYSSH_E2E_LOCAL_SSHD_SERVICE 指定服务名 net stop/start；up 幂等尽力，drop 兜底不 panic）、`self_rss_kb()`（Windows=K32GetProcessMemoryInfo 内联 FFI 零新依赖；Unix=ps）。五处 testpass 硬编码端点化；docker-only 测试显式加门（agent 认证、2FA/PAM、sshcfg_import 的 unix-agent 全链路）。
+- **产品修复三件（本机实测暴露的真缺口）**：
+  1. run_shell 首命令竞态：ssh 会话 host_setting=true 时首命令可快于慢登录主机的 OSC133 回流→原硬拒绝 ShellIntegrationUnavailable；改有界等待（与 local 臂同窗 10s）+ **saw_133 && prompt_ready 双条件**（B 晚于注入片段清屏才放行——只等 133 会在片段多行回显仍在流中时提前放行，首命令捕获窗吃进注入回显）。
+  2. 捕获头注入回显自门控：慢主机上片段行回显（"fi"/"> fi"）落首命令捕获头——延伸「已知 outgoing 文本」门控哲学，逐行剥离捕获头部与注入片段一致的行（含 "> " 延续提示符前缀）。
+  3. pump_direct 零字节即闭=目标拒绝：Win32-sshd 对拒绝目标回「通道开启成功→立即零字节关闭」而非 open-failure（容器回 failure 走 Err 分支）——双向零字节即闭转 Degraded（T44 语义补齐，文案仍指目标侧；下次成功连接自愈 Listening）。
+- **测试适配（本机语义差异，分支断言而非阉割）**：sftp canonical 盘符限定（Win32 realpath 返回 "/C:/tmp/..." 且**不跟随链接**（link/dangling 返回自身路径）；stat/size 仍跟随）；转发目标拒绝 ~2s 延迟（容器即时 RST；轮询窗 3s→10s + drop(tbad) 对齐真实客户端——不关 socket 则 Degraded 永不到来）；SOCKS5 拒绝语义分支（本机 REP=0+紧随 EOF vs 容器 REP=5）；spike2 ref 通道 docker 门 + 输出 20ms 节奏（ConPTY 对 50 行爆发用「光标跳 57;1 + 26 换行 + 归位」滚动协议，term-core 视口模型跟不住丢 21 行——**登记 term-core 渲染器缺口**）；gbk 字节级往返 docker 门（Git-bash printf 把 \NNN 八进制按 locale 上转，实测 \326 吐 c3 96 而非裸 D6，「线上 GBK 裸字节」前提只在容器成立；编解码本身由 charset.rs 单测覆盖）；mcp 六旅程 docker 门（Agent create_session 审批卡在本机 MCP 栈 15s 不出现，结构差异非时序）。
+- **环境基建（Box 上，repo 外，全部可回滚）**：sshd-e2e 服务（127.0.0.1:2222 Manual，独立 config `-f`）；root 用户（管理员组+策略合规密码）+e2e 普通用户；DefaultShell=Git-bash（HKLM，**裸路径**）；SetEnv TMP=C:\tmp（Git-bash /tmp 与 sftp /tmp 同 view）；机器级 MSYS=winsymlinks:nativestrict（ln -s 原生符号链接）；C:\Windows\.bashrc 钉 HOME=/c/Users/root（无 profile 会话 cwd=C:\Windows，journey2 的 pwd 含 /root 断言依赖）；C:\ProgramData\ssh\e2e_authorized_keys（root 属主，绝对路径 AuthorizedKeysFile）。
+- **坑位记录（Win32-OpenSSH 9.5.5.2 实证，条条踩过）**：
+  1. **LogLevel DEBUG3 让每个会话认证后 c0000005 崩溃**（客户端见连接重置），服务不报错照常监听——曾误判为 Match 块问题（真相：同块内的 DEBUG3）。
+  2. Match 块内放非白名单指令（Subsystem/LogLevel）→ admin 用户会话崩溃（非 admin 不触发，极具迷惑性）。
+  3. DefaultShell 值带引号 → **所有实例所有用户认证全挂**（Authentication failed，含 stock 22 端口）；必须裸路径。
+  4. SetEnv 的 MSYS/BASH_ENV/HOME 被 Win32-OpenSSH 过滤（TMP/TEMP 幸存）——符号链接语义只能走机器级环境变量。
+  5. 无真实 profile 的用户 HOME=C:\Windows（手工注册 ProfileList 不生成 hive，CreateProcessWithLogonW 建档亦失败）→ authorized_keys 解析 C:\Windows\.ssh、会话 cwd 恒 C:\Windows；公钥改走绝对路径 AuthorizedKeysFile，且文件**属主必须是该用户**（Administrator 属主="Bad owner" 拒绝，icacls /setowner 解）。
+  6. net user 密码策略：密码含用户名直接拒（e2e 用户）；>14 字符触发 Y/N 控制台确认（管道喂不进，net.exe 读 CONIN$）——用 ≤14 字符密码绕。
+  7. sftp subsystem 写成 sftp_server.exe（下划线）→ EOF during negotiation；真名 sftp-server.exe（连字符）。
+- **结果**：本机 gated 全绿——core_local **13/13**（原 11；host_key_gate_first_seen_change_and_reject 本机落地，gbk 有门跳过）、sshd_e2e **7/7**、spike2 **1/1**（ours 渲染保真 50/50 + RSS 泄漏门）、sshcfg_import 4/4；无 env 全量 workspace **35 套件零 FAILED**；fmt 干净；clippy 无新告警。mcp 六旅程留容器 CI（门已备好，容器恢复即跑）。
+- **回滚单**：`net stop sshd-e2e && sc delete sshd-e2e`；`reg delete "HKLM\SOFTWARE\OpenSSH" /v DefaultShell`；`reg delete "HKLM\SYSTEM\...\Session Manager\Environment" /v MSYS`；删 C:\Windows\.bashrc、C:\ProgramData\ssh\e2e_*；`net user root /delete && net user e2e /delete`。

@@ -299,12 +299,16 @@ impl SessionHandle {
             // local 会话：PTY 启动时无条件注入（transport-pty rcfile/ZDOTDIR），集成由
             // 构造保证——此处是 shell 启动竞态而非「不可用」，有界等待 OSC133（与注入
             // 后台化一致，不回退 Fresh）。超时仍无 = 环境异常，如实拒绝。
-            if self.kind != "local" {
+            // ssh 会话若主机开了集成（host_setting=true，注入已发出）：慢登录主机
+            // （大 profile/慢 NFS home）首命令会跑赢 OSC133 回流，与本机同属启动竞态
+            // ——同样有界等待；未开集成的 ssh 会话维持立即拒绝（本机 sshd 实测首命令
+            // 快于 Git-bash profile 时必现）。
+            if self.kind != "local" && self.host.shell_integration != Some(true) {
                 return Err(Error::ShellIntegrationUnavailable {
                     available: session_api::ShellCapability {
                         integration_present: false,
                         prompt_ready,
-                        host_setting: self.host.shell_integration == Some(true),
+                        host_setting: false,
                     },
                 });
             }
@@ -312,7 +316,10 @@ impl SessionHandle {
             loop {
                 {
                     let s = self.screen.lock().await;
-                    if s.shell_integration_present() {
+                    // 集成标记 + prompt_ready（B 晚于注入片段清屏）双条件：只等 saw_133
+                    // 会在片段多行回显仍在流中时放行，首命令捕获窗吃进注入回显
+                    // （本机 Git-bash 逐行回显慢于容器时必现；与重连注入同一纪律）。
+                    if s.shell_integration_present() && s.prompt_ready() {
                         break;
                     }
                 }
@@ -435,6 +442,32 @@ impl SessionHandle {
                 text = text[idx + cmd_echo.len()..]
                     .trim_start_matches(['\r', '\n'])
                     .to_string();
+            }
+        }
+        // 注入片段回显自门控：慢登录主机上片段多行回显与清屏后的 ConPTY 重绘会
+        // 落进首命令捕获窗（本机 sshd+Git-bash 实证："fi"/"> fi" 在捕获头）——
+        // 与 cmd_echo 同一「已知 outgoing 文本」门控哲学：只删捕获头部与注入
+        // 片段行逐字一致（或行首延续提示符）的行。
+        if self.host.shell_integration == Some(true) && text.contains('\n') {
+            let snippet_lines: Vec<String> = crate::ssh_integration_snippet()
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+            loop {
+                let trimmed = text.trim_start_matches(['\r', '\n']);
+                let Some(line_end) = trimmed.find('\n') else {
+                    break;
+                };
+                let mut line = trimmed[..line_end].trim_end().to_string();
+                if let Some(stripped) = line.strip_prefix("> ") {
+                    line = stripped.to_string();
+                }
+                if !line.is_empty() && snippet_lines.iter().any(|s| *s == line) {
+                    text = trimmed[line_end..].to_string();
+                } else {
+                    break;
+                }
             }
         }
         let (owned, truncated) = truncate_utf8(&text, cap);

@@ -897,6 +897,7 @@ async fn host_key_gate_first_seen_change_and_reject() {
     let lock = tinyssh_testbed::sshd_lock();
     tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
     let _lock = lock;
+    let (_host, port, username, password) = tinyssh_testbed::sshd_endpoint();
     let m = manager().await;
     let hid = m
         .upsert_host(
@@ -904,10 +905,10 @@ async fn host_key_gate_first_seen_change_and_reject() {
             HostDraft {
                 name: "e2e-gate".into(),
                 address: "127.0.0.1".into(),
-                port: Some(2222),
-                username: "root".into(),
+                port: Some(port),
+                username: username.into(),
                 auth: AuthDraft::Password {
-                    password: "testpass".into(),
+                    password: password.into(),
                 },
                 tags: vec![],
                 ..Default::default()
@@ -1000,9 +1001,18 @@ async fn gbk_charset_roundtrip_over_ssh() {
         eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
         return;
     }
+    if !tinyssh_testbed::docker_available() {
+        // 字节级前提只在受控容器成立：Git-bash（本机 sshd 替代路径）的 printf
+        // 会把 \NNN 八进制按 locale 上转（实测 \326 吐 c3 96 而非裸 D6），
+        // 「线上 GBK 裸字节」的往返断言在 MSYS interactive shell 上不成立。
+        // GBK 编解码本身由 charset.rs 单测覆盖（含跨 chunk 序列）。
+        eprintln!("skip: 本机 sshd 替代路径（Git-bash printf 语义不符，需容器 UTF-8 locale）");
+        return;
+    }
     let lock = tinyssh_testbed::sshd_lock();
     tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
     let _lock = lock;
+    let (_host, port, username, password) = tinyssh_testbed::sshd_endpoint();
     let m = manager().await;
     let hid = m
         .upsert_host(
@@ -1011,10 +1021,10 @@ async fn gbk_charset_roundtrip_over_ssh() {
                 id: None,
                 name: "e2e-gbk".into(),
                 address: "127.0.0.1".into(),
-                port: Some(2222),
-                username: "root".into(),
+                port: Some(port),
+                username: username.into(),
                 auth: AuthDraft::Password {
-                    password: "testpass".into(),
+                    password: password.into(),
                 },
                 tags: vec![],
                 charset: Charset::Gbk,
