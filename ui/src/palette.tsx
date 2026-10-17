@@ -83,6 +83,7 @@ export function CommandPalette({ open, items, onClose }: {
           className="palette-input"
           data-testid="palette-input"
           aria-label="命令面板搜索"
+          spellCheck={false}
           value={q}
           placeholder="搜索会话、主机与命令…（↑↓ 选择，Enter 执行，Esc 关闭）"
           onChange={(e) => setQ(e.target.value)}

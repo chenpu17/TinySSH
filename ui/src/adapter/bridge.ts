@@ -79,6 +79,7 @@ interface CmdArgs {
   list_host_metadata: undefined;
   list_recent_hosts: undefined;
   read_screen: { sid: string };
+  pty_size: { sid: string };
   send_keys: { sid: string; keys: string };
   set_session_logging: { sid: string; enabled: boolean };
   session_log_path: { sid: string };
@@ -174,6 +175,7 @@ interface CmdRet {
   list_host_metadata: wire.HostMeta[];
   list_recent_hosts: wire.RecentHost[];
   read_screen: wire.ScreenSnapshot;
+  pty_size: [number, number];
   send_keys: void;
   set_session_logging: string | null;
   session_log_path: string | null;

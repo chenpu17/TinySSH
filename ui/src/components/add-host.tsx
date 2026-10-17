@@ -1,10 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, IdentityMeta, SshConfigPreview } from "../adapter/wire";
 import { friendlyError } from "../app-data";
 
-// prefill（C7/DF7.4）：导入面板「转手工表单」用预览载荷预填——upsert_host，零新命令
-export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null; prefill?: SshConfigPreview | null }) {
+// IME 组合期守卫（§7.3 与 resolveAction 同口径：isComposing 与 keyCode 229 双查）——
+// 中文输入法敲 Enter 是「确认候选词」，不是提交表单。表单全部回车提交经此封装。
+const enterKey = (fn: () => void) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
+  if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) fn();
+};
+
+// prefill（C7/DF7.4）：导入面板「转手工表单」用预览载荷预填——upsert_host，零新命令。
+// 挂在居中对话框里（用户反馈二轮：220px 侧栏塞不下），onCancel 由对话框传「取消」钮。
+export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null; prefill?: SshConfigPreview | null; onCancel?: () => void }) {
   const editing = !!editHost;
   const [name, setName] = useState(editHost?.name ?? prefill?.name ?? "");
   const [address, setAddress] = useState(editHost?.address ?? prefill?.address ?? "");
@@ -71,6 +78,7 @@ export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: 
 
   // connect=false 走「仅保存」：批量录入场景不被逐台自动连接绑架（五人走查·林姐/小王）
   const submit = async (connect = true) => {
+    if (busy) return; // 回车提交绕过按钮 disabled——在途时丢弃重复提交
     setErr(null);
     if (!name.trim() || !address.trim() || !username.trim()) {
       setErr("名称、地址、用户名都不能为空");
@@ -139,7 +147,9 @@ export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: 
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>名称</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例：我的服务器" />
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            onKeyDown={enterKey(() => submit())}
+            placeholder="例：我的服务器" />
         </div>
         <div className="ah-field" style={{ flex: 2 }}>
           <label>地址（IP 或域名）</label>
@@ -149,13 +159,15 @@ export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: 
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label>端口</label>
-          <input value={port} onChange={(e) => setPort(e.target.value)} />
+          <input value={port} onChange={(e) => setPort(e.target.value)}
+            onKeyDown={enterKey(() => submit())} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>用户名</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="例：ops 或 root" />
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="例：ops 或 root"
+            onKeyDown={enterKey(() => submit())} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>认证方式</label>
@@ -166,29 +178,18 @@ export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: 
           </select>
         </div>
       </div>
-      {/* T38-PV：220px 侧栏里三个字段挤一行会把下拉压到 55px（选中值只剩「密」「UT」），
-          编码独占一行让选项说明全文可读 */}
-      <div className="ah-field" style={{ marginTop: 6 }}>
-        <label>远端编码（老设备中文乱码时选 GBK）</label>
-        <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
-          <option value="utf-8">UTF-8（默认）</option>
-          <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
-        </select>
-      </div>
-      {/* R20：标签（逗号分隔）——主机卡徽章显示，搜索与标签 chip 筛选可命中 */}
-      <div className="ah-field" style={{ marginTop: 6 }}>
-        <label>标签（可选，逗号分隔，如：生产, 成都）</label>
-        <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
-          placeholder="例：生产, 数据库" onKeyDown={(e) => e.key === "Enter" && submit()} />
-      </div>
+      {/* 凭据紧跟认证方式（用户反馈三轮：密码原来排在编码/标签之后太靠下）——
+          字段顺序 = 填写动线：连接信息 → 认证凭据 → 编码/标签等次要项 */}
       {editing ? (
         <>
           {editHost?.auth_type === "Password" ? (
             <>
-              <input type="password" placeholder="更换密码——留空保持原密码" value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
-              <div className="dim" style={{ marginTop: 4 }}>密码留空保持不变；填写即更换（用当前主密钥重新加密保存）。</div>
+              <div className="ah-field" style={{ marginTop: 6 }}>
+                <label>更换密码（留空保持不变）</label>
+                <input type="password" placeholder="输入新密码即更换（用当前主密钥重新加密）" value={password}
+                  onChange={(e) => setPassword(e.target.value)} onKeyDown={enterKey(() => submit())} />
+              </div>
+              <div className="dim" style={{ marginTop: 4 }}>密码留空保持不变。</div>
             </>
           ) : (
             <div className="dim" style={{ marginTop: 6 }}>认证凭据保持不变（{authLabel}）。如需更换凭据，删除该主机后重新添加。</div>
@@ -204,8 +205,11 @@ export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: 
           )}
         </>
       ) : authMode === "password" ? (
-        <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
-          style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <div className="ah-field" style={{ marginTop: 6 }}>
+          <label>密码</label>
+          <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={enterKey(() => submit())} />
+        </div>
       ) : authMode === "agent" ? (
         <div className="dim" style={{ marginTop: 6 }}>连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。Windows 需 OpenSSH Authentication Agent 服务在运行。</div>
       ) : (
@@ -255,13 +259,28 @@ export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: 
                 onChange={(e) => setPem(e.target.value)} rows={4} style={{ marginTop: 6, width: "100%" }} />
               <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
                 <input type="password" placeholder="私钥口令（无可留空）" value={passphrase} style={{ flex: 1 }}
-                  onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importPem()} />
+                  onChange={(e) => setPassphrase(e.target.value)} onKeyDown={enterKey(importPem)} />
                 <button disabled={busy} onClick={importPem}>{busy ? "处理中…" : "导入并确认指纹"}</button>
               </div>
             </>
           ))}
         </>
       )}
+      {/* T38-PV：220px 侧栏里三个字段挤一行会把下拉压到 55px（选中值只剩「密」「UT」），
+          编码独占一行让选项说明全文可读 */}
+      <div className="ah-field" style={{ marginTop: 6 }}>
+        <label>远端编码（老设备中文乱码时选 GBK）</label>
+        <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
+          <option value="utf-8">UTF-8（默认）</option>
+          <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
+        </select>
+      </div>
+      {/* R20：标签（逗号分隔）——主机卡徽章显示，搜索与标签 chip 筛选可命中 */}
+      <div className="ah-field" style={{ marginTop: 6 }}>
+        <label>标签（可选，逗号分隔，如：生产, 成都）</label>
+        <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
+          placeholder="例：生产, 数据库" onKeyDown={enterKey(() => submit())} />
+      </div>
       {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
       <div className="row" style={{ marginTop: 8 }}>
         {editing ? (
@@ -273,6 +292,7 @@ export function AddHostForm({ onSaved, editHost, prefill }: { onSaved: (hostId: 
               title="只保存配置不连接——批量录入主机时用">仅保存</button>
           </>
         )}
+        {onCancel && <button className="ghost" onClick={onCancel}>取消</button>}
         <span className="dim">凭据加密存入本机凭据库，不会明文落盘。</span>
       </div>
     </div>

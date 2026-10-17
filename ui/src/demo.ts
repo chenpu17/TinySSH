@@ -804,6 +804,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === args?.sid);
       return { text: s ? s.out.slice(-2048) : "", cols: 120, rows: 32, cursor_row: 3, cursor_col: 16, alt_screen: false };
     }
+    // 五轮架构：FE 尺寸对账看门狗轻探针（与真实后端同语义，尺寸同 read_screen 口径）
+    case "pty_size": {
+      const s = demoState.sessions.find((x) => x.id === args?.sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      return [120, 32];
+    }
     case "subscribe_output": {
       const sid = args?.sid as string;
       const channel = args?.onEvent as { onmessage?: Handler };

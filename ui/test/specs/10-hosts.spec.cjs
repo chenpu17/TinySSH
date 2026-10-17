@@ -9,14 +9,14 @@ module.exports = {
     // ── 新增 ──
     await page.click('.hostbar button[title="添加主机"]');
     await page.waitForTimeout(500);
-    const inputs = await page.$$(".hostbar input");
-    // 表单 DOM 顺序：0=搜索 1=名称 2=地址 3=端口 4=用户名 5=标签 6=密码
-    await inputs[1].fill("r45-new");
-    await inputs[2].fill("r45.example.com");
-    await inputs[3].fill("2200");
-    await inputs[4].fill("deploy");
-    await inputs[6].fill("s3cret");
-    await page.evaluate(() => [...document.querySelectorAll(".hostbar button")].find((b) => b.textContent.trim() === "仅保存").click());
+    const inputs = await page.$$(".add-host-dlg input");
+    // 表单已移居中弹窗（.add-host-dlg）：0=名称 1=地址 2=端口 3=用户名 4=密码 5=标签
+    await inputs[0].fill("r45-new");
+    await inputs[1].fill("r45.example.com");
+    await inputs[2].fill("2200");
+    await inputs[3].fill("deploy");
+    await inputs[4].fill("s3cret");
+    await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "仅保存").click());
     await page.waitForTimeout(900);
     ck.check("「仅保存」后新主机出现在列表", (await hostNames(page)).includes("r45-new"), (await hostNames(page)).join(" / "));
 
@@ -36,13 +36,13 @@ module.exports = {
     await page.waitForTimeout(300);
     await (await c2.$('button[title^="编辑主机"]')).click();
     await page.waitForTimeout(500);
-    const vals = await page.$$eval(".hostbar input", (els) => els.map((e) => e.value));
+    const vals = await page.$$eval(".add-host-dlg input", (els) => els.map((e) => e.value));
     ck.check("编辑表单预填 prod-1", vals.includes("prod-1"), vals.slice(0, 6).join(" / "));
     ck.check("编辑表单预填地址 10.0.0.11", vals.includes("10.0.0.11"), "");
     ck.check("编辑表单预填用户 ops", vals.includes("ops"), "");
-    const editInputs = await page.$$(".hostbar input");
-    await editInputs[1].fill("prod-1-renamed");
-    await page.evaluate(() => [...document.querySelectorAll(".hostbar button")].find((b) => b.textContent.trim() === "保存修改").click());
+    const editInputs = await page.$$(".add-host-dlg input");
+    await editInputs[0].fill("prod-1-renamed");
+    await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "保存修改").click());
     await page.waitForTimeout(900);
     ck.check("编辑后主机改名生效", (await hostNames(page)).includes("prod-1-renamed"), (await hostNames(page)).join(" / "));
 

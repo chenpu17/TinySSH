@@ -91,18 +91,29 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
           </select>
         </div>
       </div>
+      {/* 密码/密钥带 label（巡检补）：与 AddHostForm 对齐——此前只有 placeholder，
+          表单有整体 label 体系时单独裸输入框读起来突兀，读屏也不可达 */}
       {authMode === "password" && (
-        <input type="password" placeholder="密码" value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ marginTop: 6 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <div className="ah-field" style={{ marginTop: 6 }}>
+          <label>密码</label>
+          <input type="password" placeholder="密码" value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => {
+              // IME 组合期 Enter 是确认候选词，不提交（§7.3 与 resolveAction 同口径）
+              if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) submit();
+            }} />
+        </div>
       )}
       {authMode === "key" && (
-        <select value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)} style={{ marginTop: 6 }}>
-          <option value="">选择凭据库中的密钥…</option>
-          {knownIdentities.map((k) => (
-            <option key={k.id} value={k.id}>{k.label || k.id}</option>
-          ))}
-        </select>
+        <div className="ah-field" style={{ marginTop: 6 }}>
+          <label>已有密钥（凭据库）</label>
+          <select value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)}>
+            <option value="">选择凭据库中的密钥…</option>
+            {knownIdentities.map((k) => (
+              <option key={k.id} value={k.id}>{k.label || k.id}</option>
+            ))}
+          </select>
+        </div>
       )}
       <div className="ah-field" style={{ marginTop: 6 }}>
         <label>远端编码（老设备中文乱码时选 GBK）</label>

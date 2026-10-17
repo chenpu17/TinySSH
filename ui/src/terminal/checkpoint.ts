@@ -126,19 +126,23 @@ export function createOutputFeed(opts: {
   };
 
   const drain = () => {
-    while (pending.length > 0) {
-      const f = pending[0];
+    // 游标推进 + 一次性 splice 出队：shift 每次整体前移，积压 N 帧时是 O(N²)
+    // （大输出爆发 + 检查点未就绪的窗口里正是这种形态）。
+    let n = 0;
+    while (n < pending.length) {
+      const f = pending[n];
       if (f.seq <= lastApplied) {
-        pending.shift();
+        n++;
         continue;
       }
       if (f.seq === lastApplied + 1) {
-        pending.shift();
+        n++;
         apply(f);
         continue;
       }
       break; // 缺口：交给 resync，不跨缺口推进
     }
+    if (n > 0) pending.splice(0, n);
     if (pending.length > 0 && pending[0].seq > lastApplied + 1) void requestResync(false);
   };
 

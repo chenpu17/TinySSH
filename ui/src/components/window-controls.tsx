@@ -14,11 +14,14 @@ export function WinControls() {
     let un: (() => void) | undefined;
     let alive = true;
     const probe = () => { win.isMaximized().then((v) => { if (alive) setMaxed(v); }).catch(() => {}); };
+    // 拖拽窗口期间 onResized 逐 tick 触发 isMaximized IPC——200ms 防抖；挂载时仍立即探测
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const probeSoon = () => { if (t) clearTimeout(t); t = setTimeout(probe, 200); };
     probe();
-    win.onResized(() => probe())
+    win.onResized(() => probeSoon())
       .then((f) => { un = () => { try { void f(); } catch { /* 已卸载 */ } }; })
       .catch(() => {});
-    return () => { alive = false; un?.(); };
+    return () => { alive = false; un?.(); if (t) clearTimeout(t); };
   }, []);
   return (
     <div className="win-controls" role="group" aria-label="窗口控制" data-testid="win-controls">

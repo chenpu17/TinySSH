@@ -29,7 +29,7 @@ import {
   IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
   IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
   IconArrowDown, IconUpload, IconDownload, IconInbox, IconSearch, IconLoader,
-  IconFolder, IconRefresh,
+  IconFolder, IconRefresh, IconMaximize, IconMinimize,
 } from "./icons";
 
 // macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
@@ -48,12 +48,13 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { Terminal } from "@xterm/xterm";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import "@xterm/xterm/css/xterm.css";
 // 拆分①抽出的共享层：数据/工具/hooks（app-data）与自包含组件（components/*）
 import {
-  altMetaSequence, ApprovalRow, approvalResolvedLabel, APPEARANCES, auditLabel, AUDIT_LABELS,
+  altMetaSequence, ApprovalRow, APPEARANCES, auditLabel, AUDIT_LABELS,
   ChromePalette, ctrlCharOf, epistemicLabel, exitText,
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, hhmm, inputBlockedState,
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
@@ -64,15 +65,36 @@ import {
   type Appearance, type SettingsCat,
 } from "./app-data";
 import { WinControls } from "./components/window-controls";
-import { BriefCard } from "./components/brief-card";
 import { QuickConnectForm } from "./components/quick-connect";
 import { AddHostForm } from "./components/add-host";
 import { SshConfigImportPanel } from "./components/ssh-import";
 import { SettingsPanel } from "./components/settings-panel";
 import { ConfirmDialogs } from "./components/confirm-dialogs";
 import { ActivityLogPanel } from "./components/activity-log-panel";
+import { Welcome } from "./components/welcome";
+import { CtxMenus } from "./components/ctx-menus";
+import { CollabApprovals, CollabDelegate } from "./components/collab-panel";
+import { ConnDetail } from "./components/conn-detail";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 import { SelfMeterTitlebar } from "./self-meter";
+
+// —— UX 八轮（性能）：轮询对账 bailout ——
+// invoke 每轮返回全新对象，引用必不同：不拦截则整棵树每 3 秒空转一轮重渲染，
+// 并级联触发标题 setTitle IPC、workspace 写链、applyPanes 遍历等下游 effect。
+// 结构相同则复用 prev 引用，所有依赖 sessions/hosts/…的 useMemo/effect 全部静默。
+function sameShape<T>(prev: T[], next: T[]): T[] {
+  if (prev === next) return prev;
+  if (prev.length !== next.length) return next;
+  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
+// 审批高危命令形态（rm -rf/格式化/关机类……后端内置 deny 只拦最狠子集）：
+// 模块级编译一次——原先在组件体内，每次渲染重建 RegExp
+// 五轮架构：主机过滤纯函数化——渲染派生（filteredHosts）与搜索框 Enter 直达
+// 共用同一口径（防抖未落地时 Enter 以输入框实时值重算，两侧结果必然一致）。
+function hostMatches(h: Host, qN: string): boolean {
+  return [h.name, h.address, h.username, ...(h.tags ?? [])].some((v) => v.toLowerCase().includes(qN));
+}
 
 export default function App() {
 
@@ -152,7 +174,9 @@ export default function App() {
     const ro = new ResizeObserver(measureTabbar);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [measureTabbar, sessions.length]);
+  }, [measureTabbar]);
+  // 会话增减不改 tabbar 盒子（RO 不触发）——单独补测一次，不再为此拆掉重建 observer
+  useEffect(() => { measureTabbar(); }, [measureTabbar, sessions.length]);
   useEffect(() => {
     // 激活标签滚入视野（键盘循环切换时不再落到视野外）。两个补滚成因：
     // ① 滚动钮显隐（tabScroll 状态）翻转会改行内布局并回钳 scrollLeft，首滚可能
@@ -327,6 +351,13 @@ export default function App() {
   const delIdentRef = useRef<HTMLDivElement | null>(null);
   const pasteConfirmRef = useRef<HTMLDivElement | null>(null);
   const dropCardRef = useRef<HTMLDivElement | null>(null);
+  // 巡检补：TOFU 指纹 / 双因素 / 新建主机 / 快速连接四块 hk-mask 同为遮罩模态，
+  // 此前没有焦点陷阱——Tab 会逃到遮罩后（可见性为零；zen-auto 藏条还会被
+  // focus-within 意外拉出）。容器 ref 同上列，hook 见下方 useDialogFocus 区。
+  const hkDlgRef = useRef<HTMLDivElement | null>(null);
+  const authDlgRef = useRef<HTMLDivElement | null>(null);
+  const addHostDlgRef = useRef<HTMLDivElement | null>(null);
+  const quickDlgRef = useRef<HTMLDivElement | null>(null);
   // R25 §322 分屏建立：复用已有会话（菜单直选）。「预武装下一次新建」模式已退役
   // （十一轮 §6.3 修订：对象先存在、操作跟上来——新建会话先落标签，右键标签进分屏）
   const [splitMenu, setSplitMenu] = useState(false);
@@ -505,11 +536,36 @@ export default function App() {
     } catch { return 224; }
   });
   const [hostQuery, setHostQuery] = useState("");
+  // 五轮架构（逐键全树重渲染根治）：主机搜索改非受控 + 150ms 防抖——此前每键
+  // setHostQuery 都触发整棵 App 树 reconcile。键入即时上屏（原生 DOM），过滤值
+  // 150ms 后落地；Enter 直达读输入框实时值重算，不信渲染闭包里的滞后过滤结果。
+  const hostSearchRef = useRef<HTMLInputElement | null>(null);
+  const hostDebounceRef = useRef(0);
+  useEffect(() => () => { if (hostDebounceRef.current) window.clearTimeout(hostDebounceRef.current); }, []);
   // 右侧任务面板：一次只呈现文件 / 协作 / 转发 / 活动记录之一（§4.3/§6.6），缺省关闭
   const [rightPanel, setRightPanel] = useState<null | "files" | "collab" | "forwards" | "log">(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [winW, setWinW] = useState(() => window.innerWidth);
+  // 专注模式（F11）：标题栏/主机栏/会话工具栏/状态条全让位 + 系统级全屏，标签条
+  // 变 overlay（藏态留 6px 抓手，hover/钉住态滑出）。初值读 localStorage 同步恢复
+  // chrome 态（首帧无闪烁，同 zoom.ts 的理由——KV 异步会闪一帧满 chrome）；
+  // 系统全屏由首帧 effect 补投。显隐全走 CSS：退出后各区域原样恢复，状态零破坏。
+  const [focusMode, setFocusMode] = useState(() => {
+    try { return localStorage.getItem("ui.focus") === "1"; } catch { return false; }
+  });
+  // 专注模式标签条形态（用户反馈二轮「能否保持常驻」）：默认常驻——标签条像常态一样
+  // 在流内显示，多标签环境感知（很多用户习惯常驻）；可选自动隐藏（v1 行为：藏条 +
+  // 顶缘迷你浮标）。localStorage 记档键 ui.zenStrip，与 zoom 同理首帧同步读。
+  const [zenStripAuto, setZenStripAuto] = useState(() => {
+    try { return localStorage.getItem("ui.zenStrip") === "auto"; } catch { return false; }
+  });
+  const setZenStrip = useCallback((auto: boolean) => {
+    setZenStripAuto(auto);
+    try { localStorage.setItem("ui.zenStrip", auto ? "auto" : "pin"); } catch { /* 隐私模式忽略 */ }
+  }, []);
+  const zenStripAutoRef = useRef(zenStripAuto);
+  zenStripAutoRef.current = zenStripAuto;
   // R13 统一分发：keymap 解析（actions.ts）与执行分离；ref 持有最新执行器，
   // 捕获层 effect 与 xterm 键处理器都经它走同一条路。modal/主机栏开合同步 ref。
   const dispatchRef = useRef<(a: AppAction) => boolean>(() => false);
@@ -519,16 +575,67 @@ export default function App() {
   const hostbarWidthRef = useRef(hostbarWidth);
   hostbarWidthRef.current = hostbarWidth;
 
+  // 专注模式切换（F11 / 标签条按钮 / 命令面板同一入口）：chrome 态同步落 localStorage；
+  // 系统全屏走 Tauri setFullscreen（capability core:window:allow-set-fullscreen）。
+  // invoke 失败回滚内存档位与落盘——窗口没动，回滚才有下次切换从真状态起算（同 zoom.ts）；
+  // 典型失败面：dev 前端配旧二进制（无新 capability）。进入提示只给本运行第一次，
+  // F11 连切不反复轰炸。demo（浏览器）不劫持 F11，面板/按钮只切 chrome 不动全屏。
+  const focusHintShownRef = useRef(false);
+  const applyFocus = useCallback((on: boolean, announce = true) => {
+    setFocusMode(on);
+    try { localStorage.setItem("ui.focus", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+    if (!inTauri) {
+      if (announce) pushToast("info", on ? "已进入专注模式（浏览器演示不切系统全屏）" : "已退出专注模式");
+      return;
+    }
+    getCurrentWindow().setFullscreen(on)
+      .then(() => {
+        if (announce && on && !focusHintShownRef.current) {
+          focusHintShownRef.current = true;
+          pushToast("info", zenStripAutoRef.current
+            ? "专注模式：F11 退出 · 鼠标移到顶部唤出标签"
+            : "专注模式：F11 退出 · 标签条常驻（Ctrl+K 可切自动隐藏）");
+        }
+      })
+      .catch((e) => {
+        setFocusMode(!on);
+        try { localStorage.setItem("ui.focus", on ? "0" : "1"); } catch { /* 忽略 */ }
+        pushToast("err", `专注模式切换失败：${errMsg(e).slice(0, 80)}`);
+      });
+  }, [pushToast]);
+
+  // 启动恢复：chrome 态已由 useState 初值同步恢复；系统全屏在首帧后补投（invoke
+  // 异步，可能闪一帧任务栏——与缩放首帧权衡同理）。恢复给一次性轻提示，用户重开
+  // 窗口时不必回想「怎么退出去」。
+  useEffect(() => {
+    if (!inTauri) return;
+    let on = false;
+    try { on = localStorage.getItem("ui.focus") === "1"; } catch { /* 忽略 */ }
+    if (!on) return;
+    getCurrentWindow().setFullscreen(true)
+      .then(() => pushToast("info", "已恢复专注模式 · F11 退出"))
+      .catch(() => {});
+    // 仅首帧：focusMode 后续变化都走 applyFocus，此处不依赖它
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const refreshLists = useCallback(async () => {
     try {
-      setSessions(applyTabOrder(await invoke("list_sessions")));
-      setHosts(await invoke("list_hosts"));
+      // UX 八轮：先取数后 setState——结构无变化时复用旧引用（sameShape），
+      // 3s 轮询数据没变则整树与下游 effect 全部静默，不再每轮空转
+      const nextSessions = applyTabOrder((await invoke("list_sessions")) as SessionInfo[]);
+      const nextHosts = (await invoke("list_hosts")) as Host[];
       // R20：收藏/最近元数据（失败不阻断列表——空 meta 即全部视为未收藏）
-      try { setHostMeta(await invoke("list_host_metadata")); } catch { /* 容忍 */ }
-      try { setRecents(await invoke("list_recent_hosts")); } catch { /* 容忍 */ }
+      const nextMeta = await invoke("list_host_metadata").then((v) => v as HostMeta[]).catch(() => null);
+      const nextRecents = await invoke("list_recent_hosts").then((v) => v as RecentHost[]).catch(() => null);
+      const nextApprovals = ((await invoke("list_approvals", { pendingOnly: false })) as ApprovalItem[])
+        .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) }));
+      setSessions((prev) => sameShape(prev, nextSessions));
+      setHosts((prev) => sameShape(prev, nextHosts));
+      if (nextMeta) setHostMeta((prev) => sameShape(prev, nextMeta));
+      if (nextRecents) setRecents((prev) => sameShape(prev, nextRecents));
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
-      setApprovals((await invoke("list_approvals", { pendingOnly: false }))
-        .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) })));
+      setApprovals((prev) => sameShape(prev, nextApprovals));
     } catch {
       // 审核低-5：首载失败也必须撤骨架给出空态出口（否则永久骨架 + 未处理 rejection）；
       // 3s 轮询自愈，错误不逐条打扰（连接类失败另有常驻横幅）
@@ -756,9 +863,11 @@ export default function App() {
       for (const p of visiblePanes) {
         const t = termsRef.current.get(p)?.term;
         if (!t) continue;
-        invoke("read_screen", { sid: p })
-          .then((snap) => {
-            if (snap.cols !== t.cols || snap.rows !== t.rows) {
+        // 五轮架构：pty_size 轻探针（只回 cols/rows 两个数）——此前误用 read_screen，
+        // 每 pane 每 3s 序列化整屏网格只为比对宽高
+        invoke("pty_size", { sid: p })
+          .then((sz) => {
+            if (sz[0] !== t.cols || sz[1] !== t.rows) {
               void invoke("resize", { sid: p, cols: t.cols, rows: t.rows }).catch(() => {});
             }
           })
@@ -941,6 +1050,14 @@ export default function App() {
       },
     });
     term.open(el);
+    // 渲染性能（UX 八轮）：WebGL 合成优先——高吞吐输出（构建日志/大 cat）下 DOM
+    // 渲染器是首要 CPU 瓶颈；初始化失败（无 GPU/远程桌面）或运行中上下文丢失时
+    // 释放 addon 自动回落 DOM 渲染器，主题热更（options.theme）与搜索装饰不受影响
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch { /* 已释放 */ } });
+      term.loadAddon(webgl);
+    } catch { /* DOM 渲染器兜底 */ }
     // 会话层底色跟随当前派生主题：padding 留白框与画布同色，不渗 chrome 面板色
     el.style.background = derivedThemeRef.current.bg;
     // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
@@ -1252,7 +1369,7 @@ export default function App() {
       timer = setTimeout(() => { checkSplitWidthRef.current(); fitTerminal(); }, 150);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { if (timer) clearTimeout(timer); ro.disconnect(); };
   }, [fitTerminal]);
   // 分屏建立/退出/换副窗格时也重估宽度退化态
   useEffect(() => { checkSplitWidthRef.current(); }, [splitPanes]);
@@ -1607,17 +1724,27 @@ export default function App() {
     persistHostbarPrefs(open, hostbarWidthRef.current);
   }, [persistHostbarPrefs]);
   const gripDrag = useRef(false);
+  const gripRaf = useRef(0);
   const gripDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     gripDrag.current = true;
   };
   const gripMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    // e.buttons 兜底 pointercancel/失焦后残留的拖拽态（rev-r12 LOW-4）
-    if (gripDrag.current && e.buttons !== 0) setHostbarWidth(Math.min(300, Math.max(200, Math.round(e.clientX))));
+    // e.buttons 兜底 pointercancel/失焦后残留的拖拽态（rev-r12 LOW-4）；pointermove
+    // 高频（>屏幕刷新率）——rAF 合帧 + 同值跳过，拖把手不再按事件频率整树重渲染
+    if (!gripDrag.current || e.buttons === 0) return;
+    if (gripRaf.current) return;
+    const x = e.clientX;
+    gripRaf.current = requestAnimationFrame(() => {
+      gripRaf.current = 0;
+      const w = Math.min(300, Math.max(200, Math.round(x)));
+      setHostbarWidth((cur) => (cur === w ? cur : w));
+    });
   };
   const gripUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!gripDrag.current) return;
     gripDrag.current = false;
+    if (gripRaf.current) { cancelAnimationFrame(gripRaf.current); gripRaf.current = 0; }
     e.currentTarget.releasePointerCapture(e.pointerId);
     // 落盘用事件坐标重算而非渲染帧闭包值（分离事件序列下前者才是最新）
     const w = Math.min(300, Math.max(200, Math.round(e.clientX)));
@@ -1638,8 +1765,7 @@ export default function App() {
   const tagFiltered = activeTag ? hosts.filter((h) => (h.tags ?? []).includes(activeTag)) : hosts;
   // rev-r20 L1：无查询时 tagFiltered===hosts，原地 sort 会在渲染期改 state 数组——拷贝后排序
   const filteredHosts = [...(hostQueryN
-    ? tagFiltered.filter((h) =>
-        [h.name, h.address, h.username, ...(h.tags ?? [])].some((v) => v.toLowerCase().includes(hostQueryN)))
+    ? tagFiltered.filter((h) => hostMatches(h, hostQueryN))
     : tagFiltered
   )].sort(byName);
   const favHosts = filteredHosts.filter(isFav);
@@ -1677,9 +1803,12 @@ export default function App() {
     return () => window.removeEventListener("mousedown", onDown, true);
   }, [toolsOpen, tabsMenuOpen]);
   useEffect(() => {
-    const on = () => setWinW(window.innerWidth);
+    // resize 连发期间防抖 120ms（与终端 fit 防抖同节奏）：availW/tpFull 判定、
+    // 文件菜单定位都不需要逐帧精度，不必按事件频率整树重渲染
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const on = () => { if (t) clearTimeout(t); t = setTimeout(() => setWinW(window.innerWidth), 120); };
     window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
+    return () => { window.removeEventListener("resize", on); if (t) clearTimeout(t); };
   }, []);
 
   // Esc 关浮层（R13）：三个模态（确认/指纹/双因素）最优先——它们视觉上也最上层；
@@ -1773,9 +1902,8 @@ export default function App() {
         return true;
       }
       case "tab-new": {
-        // 直键 Ctrl+T（UX 六轮）：镜像工具栏「新建连接」按钮——开主机栏添加表单；
-        // 幂开不收起（键盘连按不闪烁），导入/快连两兄弟表单让位
-        if (!hostbarOpenRef.current) toggleHostbar(true);
+        // 直键 Ctrl+T（UX 六轮）：镜像工具栏「新建连接」按钮。表单已改居中对话框
+        // （用户反馈二轮）——主机栏不必展开、专注模式也不必退出（mask 可盖全屏）
         setShowAddHost(true);
         setShowImport(false);
         setShowQuickConnect(false);
@@ -1788,6 +1916,10 @@ export default function App() {
         else setSplitMenu(true);
         return true;
       }
+      case "focus-toggle":
+        // F11 专注模式（固定键）：与标签条按钮/命令面板同走 applyFocus 单入口
+        applyFocus(!focusMode);
+        return true;
       default: return false;
     }
   };
@@ -2130,6 +2262,10 @@ export default function App() {
   useDialogFocus(confirm?.kind === "deleteIdentity", delIdentRef);
   useDialogFocus(!!pasteConfirm, pasteConfirmRef);
   useDialogFocus(!!pendingDrop, dropCardRef);
+  useDialogFocus(hostKeyQueue.length > 0, hkDlgRef);
+  useDialogFocus(authPromptQueue.length > 0, authDlgRef);
+  useDialogFocus(showAddHost, addHostDlgRef);
+  useDialogFocus(showQuickConnect, quickDlgRef);
   useEffect(() => {
     if (!inTauri) return;
     let alive = true;
@@ -2158,8 +2294,12 @@ export default function App() {
     }
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
   };
-  // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链
-  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture);
+  // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链。
+  // 新建/快速连接（二轮拨壳成 hk-mask 全屏遮罩）与设置面板（pop-mask）同为遮罩模态，
+  // 巡检补进列表：此前不在列——对话框开着 Ctrl+W/⌘1-9/F11 仍在遮罩后执行
+  // （关标签/切标签/把窗口切全屏），Ctrl+T 还会把快速连接里已填的表单悄悄换成新建。
+  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
+    || showAddHost || showQuickConnect || showSettings);
   modalRef.current = modal;
 
   // 键位录入（键位配置轮）：等待「按下新组合」期间吞掉一切键盘事件——Esc 取消、
@@ -2338,17 +2478,36 @@ export default function App() {
       : null,
   }), []);
 
-  // 事件帧应用（id+revision 幂等；真实 id 之外的 pending- 占位不受影响）
-  const applyTransferTask = useCallback((t: TransferTask) => {
+  // 事件帧应用（id+revision 幂等；真实 id 之外的 pending- 占位不受影响）。
+  // UX 八轮：传输进度事件高频（大文件期间每秒数十条），逐条 setState 即逐条整树
+  // 重渲染——120ms 尾随合帧封顶 ~8 次/秒；决定走乐观锁（StaleDecision 自愈），
+  // 百毫秒级显示延迟不伤正确性
+  const transferBufRef = useRef<TransferTask[]>([]);
+  const transferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushTransfers = useCallback(() => {
+    transferTimerRef.current = null;
+    const batch = transferBufRef.current;
+    if (batch.length === 0) return;
+    transferBufRef.current = [];
     setTransfers((cur) => {
-      const i = cur.findIndex((x) => x.id === t.id);
-      const card = taskToCard(t);
-      if (i < 0) return [card, ...cur];
-      const next = [...cur];
-      next[i] = card;
+      let next = cur;
+      for (const t of batch) {
+        const card = taskToCard(t);
+        const i = next.findIndex((x) => x.id === card.id);
+        if (i < 0) next = [card, ...next];
+        else if (next[i] !== card) {
+          if (next === cur) next = [...cur];
+          next[i] = card;
+        }
+      }
       return next;
     });
   }, [taskToCard]);
+  const applyTransferTask = useCallback((t: TransferTask) => {
+    transferBufRef.current.push(t);
+    if (transferTimerRef.current !== null) return;
+    transferTimerRef.current = setTimeout(flushTransfers, 120);
+  }, [flushTransfers]);
 
   // 注册表全量对账（UI 重挂/事件漏收兜底）：pending- 占位卡保留（尚未拿到真实 id）
   const refreshTransfers = useCallback(async () => {
@@ -3334,19 +3493,7 @@ export default function App() {
     await refreshLists();
   };
 
-  // 审批卡风险分级：deny 命中根本不会出卡（内置危险模式直接拦），出卡的都至少
-  // 有一段待审。需要人为减速带的两种形态——① 全段 pending：系统零正向信号，
-  // 完全不知道安不安全；② 命中高危命令形态（rm -rf/格式化/关机类，后端内置
-  // deny 只拦了其中最狠的子集，如 rm -rf /tmp 仍会出卡）。
-  const DANGER_SHAPE_RE =
-    /\brm\s+(?:-[a-zA-Z]+\s+)*-[a-z]*r[a-z]*f|\bmkfs\b|\bdd\b[^\n]*\bof=\/dev\/|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bwipefs\b|\bchmod\s+(?:-[a-zA-Z]+\s+)*777\s+\//;
-  const approvalRisk = (a: ApprovalRow): string | null => {
-    const segs = a.segment_report;
-    if (segs.length > 0 && segs.every((s) => s.verdict.startsWith("pending:")))
-      return "所有分段均未命中任何允许规则（系统无法判定安全性）";
-    if (DANGER_SHAPE_RE.test(a.command)) return "命令包含高危形态（删除/格式化/关机类）";
-    return null;
-  };
+  // 审批卡风险分级 approvalRisk 已随审批卡出仓 components/collab-panel.tsx（拆分⑤）
 
   // 控制权徽标
   useEffect(() => {
@@ -3374,7 +3521,7 @@ export default function App() {
   const collabConfigured = collabEnabled && mcp.agents.length > 0;
   const collabActive = collabEnabled && (pendingCount > 0 || sessions.some((s) => s.control_owner === "Agent"));
   // §3.2：跨会话审批按「主机 + 会话」明确分组——绝不只展示「当前主机」而误批其他会话。
-  const approvalGroups = (() => {
+  const approvalGroups = useMemo(() => {
     const bySid = new Map<string, { sess?: SessionInfo; items: ApprovalRow[] }>();
     for (const a of pendingApprovals) {
       let g = bySid.get(a.session_id);
@@ -3384,7 +3531,7 @@ export default function App() {
     return [...bySid.entries()]
       .map(([sidKey, g]) => ({ sid: sidKey, sess: g.sess, items: g.items }))
       .sort((x, y) => (x.sess?.host_name ?? "￿").localeCompare(y.sess?.host_name ?? "￿", "zh") || x.sid.localeCompare(y.sid));
-  })();
+  }, [pendingApprovals, sessions]);
 
   const currentHost = current ? hosts.find((h) => h.id === current.host_id) : undefined;
   // UX 五轮：默认编码 UTF-8 不再上状态条（没有 ssh client 关心默认编码；GBK 例外
@@ -3406,8 +3553,11 @@ export default function App() {
     !t.id.startsWith("pending-") && !!t.sid && sessions.some((s) => s.id === t.sid);
 
   // 十九轮：命令面板条目——按当前状态构建（会话/连接/当前会话操作/应用动作）。
-  // 置于组件尾部：引用的 handler 全部已初始化（useMemo 渲染期即执行，TDZ 敏感）。
-  const paletteItems = useMemo<PaletteItem[]>(() => {
+  // 置于组件尾部：引用的 handler 全部已初始化（TDZ 敏感）。
+  // 五轮架构审计：曾是 useMemo——但依赖里 createSession/toggleSessionLog/takeover
+  // 等是每次渲染新建的普通函数，memo 从未命中，徒留 24 项依赖数组的维护负担与
+  // 「已优化」的错觉；数组本身构建很便宜（几个循环），改为普通求值。
+  const paletteItems = (() => {
     const items: PaletteItem[] = [];
     const active = sessions.find((x) => x.id === sid);
     const stLabel = (s: SessionInfo) => (s.id === sid ? "当前" : s.state === "Connected" ? "已连接" : s.state === "Disconnected" ? "已断开" : s.state);
@@ -3437,7 +3587,7 @@ export default function App() {
     items.push({
       id: "quick-connect", group: "连接", title: "快速连接（不存主机，临时连接一次）",
       keywords: "一次性 临时 connect",
-      run: () => { if (!hostbarOpen) toggleHostbar(true); setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); },
+      run: () => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); },
     });
     if (active) {
       const menuHost = hosts.find((x) => x.id === active.host_id);
@@ -3461,6 +3611,46 @@ export default function App() {
         items.push({
           id: "open-log", group: "当前会话", title: "打开日志文件夹",
           run: () => { void openSessionLogFolder(active.id); },
+        });
+      }
+      // 专注模式巡检补：session-toolbar/工具菜单整条隐藏后，下面这些动作此前
+      // 只剩键盘路径或完全无入口（接管并停止、文件/转发面板）。⌘K 面板是唯一
+      // 全模式可达层——专注下照样可用，入口在此补齐。
+      items.push({
+        id: "term-search", group: "当前会话", title: "搜索终端内容", hint: "⌘F",
+        keywords: "查找 search",
+        run: () => { dispatchRef.current({ id: "search" }); },
+      });
+      items.push({
+        id: "panel-files", group: "当前会话",
+        title: rightPanel === "files" ? "关闭文件面板" : "打开文件面板",
+        keywords: "sftp 上传 下载 目录浏览",
+        run: () => setRightPanel(rightPanel === "files" ? null : "files"),
+      });
+      items.push({
+        id: "panel-forwards", group: "当前会话",
+        title: rightPanel === "forwards" ? "关闭端口转发面板" : "打开端口转发面板",
+        keywords: "隧道 tunnel",
+        run: () => setRightPanel(rightPanel === "forwards" ? null : "forwards"),
+      });
+      if (hasAgents && owner === "Agent") {
+        items.push({
+          id: "takeover", group: "当前会话", title: "接管（冻结 Agent，待审批作废）",
+          keywords: "控制权 takeover",
+          run: () => { void takeover(); },
+        });
+        items.push({
+          id: "takeover-stop", group: "当前会话", title: "接管并停止任务（尝试停止正在运行的命令）",
+          danger: true, keywords: "控制权 停止 takeover",
+          run: () => { void takeoverStop(); },
+        });
+      }
+      if (collabConfigured && owner === "Human") {
+        items.push({
+          id: "delegate", group: "当前会话",
+          title: active.ever_agent_owned ? "交还 Agent…" : "交给 Agent…",
+          keywords: "委托 控制权 delegate",
+          run: () => openDelegate(),
         });
       }
       items.push({
@@ -3489,15 +3679,44 @@ export default function App() {
       run: () => toggleHostbar(!hostbarOpen),
     });
     items.push({
+      id: "toggle-focus", group: "应用",
+      title: focusMode ? "退出专注模式" : "进入专注模式（界面全让位给终端）",
+      hint: "F11", keywords: "全屏 zen focus 专注 沉浸 极简",
+      run: () => applyFocus(!focusMode),
+    });
+    items.push({
+      id: "toggle-zen-strip", group: "应用",
+      title: zenStripAuto ? "专注模式标签条：改为常驻" : "专注模式标签条：改为自动隐藏",
+      hint: zenStripAuto ? "当前：自动隐藏（顶缘浮标唤出）" : "当前：常驻",
+      keywords: "标签 常驻 隐藏 自动 专注",
+      run: () => { setZenStrip(!zenStripAuto); pushToast("ok", zenStripAuto ? "专注模式标签条已改为常驻" : "专注模式标签条已改为自动隐藏（顶缘浮标唤出）"); },
+    });
+    items.push({
       id: "import-sshconfig", group: "应用", title: "导入 ~/.ssh/config",
-      run: () => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); },
+      run: () => { if (focusMode) applyFocus(false); if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); },
     });
     return items;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions, sid, hosts, tabNames, appearance, hostbarOpen, attachSession, createSession, toggleSessionLog, openSessionLogFolder, requestCloseSession, changeAppearance, toggleHostbar]);
+  })();
+
+
+  // 专注模式（F11）标签条钉住态：焦点/重要事实在标签条上时不可藏——hover 依赖
+  // 鼠标，这些态鼠标可能根本不在窗口（键盘流、后台响铃、断线横幅）。钉住时标签
+  // 条回流到常规槽位（CSS .zen-pin），绝不悬浮遮盖断线/接管等 notice。
+  // 空会话也钉（巡检补）：浮标要 sessions>0 才渲染，专注+自动隐藏+零标签时整条
+  // 只剩 6px 抓手，「新建连接」钮无从发现——没有标签时条就留在眼前。
+  // 标签右键菜单/分屏菜单也钉（巡检补）：.ctx-menu 44、.split-menu 43 都低于
+  // 滑出条的 45——钉住回流 static 后整条落到 z41 遮罩之下，菜单不被压住。
+  const zenPin = sessions.length === 0 || searchOpen || !!renaming || tabsMenuOpen || !!tabMenu || !!splitMenu || !!connError
+    || pendingCount > 0 || bellSids.size > 0
+    || (current != null && (
+      current.state === "Degraded" || current.state === "Reconnecting"
+      || current.state === "Disconnected" || current.state === "Reconfirming"
+      || (hasAgents && owner === "Agent")
+    ));
 
   return (
-    <div className="app-shell">
+    <div className={"app-shell" + (focusMode ? " focus-mode" : "") + (focusMode && zenStripAuto ? " zen-auto" : "")}>
       {/* 标题区 44（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
       <header className="titlebar" data-tauri-drag-region>
         <div className="tb-left">
@@ -3539,8 +3758,41 @@ export default function App() {
               <div className="hb-top">
                 <div className="hb-search">
                   <IconSearch size={13} />
-                  <input placeholder="搜索主机" aria-label="搜索主机（名称 / 地址 / 用户 / 标签）"
-                    value={hostQuery} onChange={(e) => setHostQuery(e.target.value)} />
+                  <input placeholder="搜索主机" aria-label="搜索主机（名称 / 地址 / 用户 / 标签）" spellCheck={false}
+                    ref={hostSearchRef}
+                    onInput={(e) => {
+                      // 非受控 + 150ms 防抖（五轮架构）：键入路径不再逐键 setState
+                      // 触发全树 reconcile；hostQuery 只服务列表过滤，允许滞后
+                      const v = (e.target as HTMLInputElement).value;
+                      if (hostDebounceRef.current) window.clearTimeout(hostDebounceRef.current);
+                      hostDebounceRef.current = window.setTimeout(() => {
+                        hostDebounceRef.current = 0;
+                        setHostQuery(v);
+                      }, 150);
+                    }}
+                    onKeyDown={(e) => {
+                      // 回车直达第一个命中主机（巡检补）——此前搜到后还必须挪鼠标点卡片。
+                      // 与主机卡 activate() 同动线：有活跃会话切最近一个，否则新建；
+                      // 连接中的主机忽略（§280 仅本主机连接中不扰）。
+                      // IME 组合期不触发（§7.3 同 resolveAction 口径）：敲 Enter 确认
+                      // 候选词不是「连接」
+                      if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      // 防抖未落地的键入以输入框实时值重算——渲染闭包里的
+                      // filteredHosts 可能还停留在 150ms 前的查询词
+                      const qN = (hostSearchRef.current?.value ?? "").trim().toLowerCase();
+                      if (!qN) return;
+                      const pool = (activeTag ? hosts.filter((h) => (h.tags ?? []).includes(activeTag)) : hosts)
+                        .filter((h) => hostMatches(h, qN))
+                        .sort(byName);
+                      if (pool.length === 0) return;
+                      const h = pool[0];
+                      if (connectingIds.has(h.id)) return;
+                      const mine = sessions.filter((s) => s.host_id === h.id);
+                      const live = mine.filter((s) => s.state !== "Disconnected");
+                      const latest = [...live].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+                      if (latest) { void attachSession(latest.id).catch((er) => pushToast("err", errMsg(er))); }
+                      else createSession(h);
+                    }} />
                 </div>
                 <button className="ghost icon-btn" title={showImport ? "收起导入" : "导入 ~/.ssh/config"} aria-label={showImport ? "收起导入" : "导入 ~/.ssh/config"}
                   onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
@@ -3568,32 +3820,8 @@ export default function App() {
               onManual={(e) => { setPrefillEntry(e); setEditingHost(null); setShowImport(false); setShowAddHost(true); }}
             />
           )}
-          {showAddHost && (
-            <AddHostForm
-              editHost={editingHost}
-              prefill={prefillEntry}
-              onSaved={async (hid, wasEdit, connect = true) => {
-                setShowAddHost(false);
-                setEditingHost(null);
-                setPrefillEntry(null);
-                await refreshLists();
-                if (wasEdit || !connect) return; // 编辑只改配置；仅保存不自动建连
-                const h = hosts.find((x) => x.id === hid);
-                // list_hosts 刚刷新过，直接用返回值兜底
-                const target = h ?? (await invoke("list_hosts")).find((x) => x.id === hid);
-                if (target) createSession(target);
-              }}
-            />
-          )}
-          {showQuickConnect && (
-            <QuickConnectForm
-              onConnect={(display, draft) => {
-                setShowQuickConnect(false);
-                void createSession(display, false, draft);
-              }}
-              onCancel={() => setShowQuickConnect(false)}
-            />
-          )}
+          {/* 新建/编辑主机与快速连接已改居中对话框（用户反馈二轮：220px 侧栏塞不下
+              表单）——挂载点移到 App 顶层浮层区，见下方 form-mask 两块 */}
           {(() => {
             // R20（§4.2）：卡片渲染收敛为局部函数——收藏分组（收藏/其他主机/全部主机）
             // 复用同一卡片形态；组内名称序已在 filteredHosts 派生时排序
@@ -3800,7 +4028,20 @@ export default function App() {
         {/* 标签页（T19）：每个会话一签，状态点随连接状态变色；◫ 进/换分屏，✕ 关闭（⌘W） */}
         {/* 溢出结构（五人走查·林姐）：滚动钮与尾部控件钉在行内，不随标签流滚走
             ——此前「＋」在溢出时也一起消失 */}
-        <div className="tabbar-row">
+        {/* 专注模式顶缘迷你浮标（tmux 状态条的最小形态）：藏条时唯一可见物——活动
+            标签名 + 标签数，给多标签用户环境提示（首轮实测反馈：纯 6px 抓手在浅色
+            主题下不可见，「上面还压着标签」无从得知）。放在 tabbar-row 之前：hover
+            浮标经相邻选择器展开标签条，鼠标下移即被条自身 :hover 接管，无缝续期。
+            zenPin（钉住回流 static）时不渲染——static 元素不吃 z-index，浮标会反过来
+            盖在标签条上，而钉住态整条已在眼前，浮标纯属多余。 */}
+        {focusMode && zenStripAuto && sessions.length > 0 && !zenPin && (
+          <div className="zen-pill" aria-hidden="true">
+            <IconChevronDown size={10} />
+            {tabNames[sid ?? ""] ?? current?.host_name ?? "TinySSH"}
+            {sessions.length > 1 ? ` · ${sessions.length}` : ""}
+          </div>
+        )}
+        <div className={"tabbar-row" + (focusMode && zenStripAuto && zenPin ? " zen-pin" : "")}>
           {tabScroll.left && (
             <button className="tab-scroll" aria-label="向左滚动标签"
               title={`左侧还有 ${tabScroll.hiddenL} 个会话被收起——点击展开（⌘⇧[ 可循环切换）`}
@@ -3830,7 +4071,9 @@ export default function App() {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
                     const r = e.currentTarget.getBoundingClientRect();
-                    setTabDropHint({ sid: s.id, before: e.clientX < r.left + r.width / 2 });
+                    const before = e.clientX < r.left + r.width / 2;
+                    // dragover ≈ 每帧一发：落点不变则复用旧引用，拖拽悬停不再整树重渲染
+                    setTabDropHint((cur) => (cur?.sid === s.id && cur?.before === before ? cur : { sid: s.id, before }));
                   }}
                   onDragLeave={() => { setTabDropHint((cur) => (cur?.sid === s.id ? null : cur)); }}
                   onDrop={(e) => {
@@ -3888,6 +4131,8 @@ export default function App() {
                       onKeyDown={(e) => {
                         // 编辑框内按键不冒泡（Enter/Space 会被标签 onKeyDown 抢成激活）
                         e.stopPropagation();
+                        // IME 组合期 Enter 是确认候选词，不提交重命名（§7.3 口径）
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                         if (e.key === "Enter") commitTabRename(s.id, renaming.value);
                         else if (e.key === "Escape") setRenaming(null);
                       }}
@@ -3925,6 +4170,40 @@ export default function App() {
           {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点） */}
           <button className="ghost" title="命令面板（Ctrl+K / ⌘K）" aria-label="命令面板" data-testid="palette-open"
             onClick={() => setPaletteOpen(true)}><IconSearch size={14} /></button>
+          {/* 专注模式（F11）：常态是 ⤢ 图标；专注下滑出条里另有文字钮，双入口同 applyFocus。
+              协作/传输入口在此补位——专注下标题栏与状态条都藏了，而 §3 要求待审批等
+              提醒必须可达（pendingCount>0 已让 zenPin 钉住标签条，入口就在眼前） */}
+          {/* 接管双钮同样只在工具栏的话，专注+Agent 控制时想停下危险命令就得先退
+              专注（巡检补）——zenPin 已保证此态标签条钉在眼前，入口放这里正好 */}
+          {focusMode && sid && hasAgents && owner === "Agent" && (
+            <>
+              <button className="warn" title="接管会话：Agent 冻结、待审批请求作废，终端归你。Agent 正在跑的命令不会被中断"
+                onClick={takeover}>接管</button>
+              <button className="ghost-danger" title="接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红"
+                onClick={takeoverStop}>接管并停止</button>
+            </>
+          )}
+          {focusMode && collabConfigured && (
+            <button className={"ghost" + (rightPanel === "collab" ? " ts-open" : "")}
+              title="协作：审批、任务目标与现场简报"
+              onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
+              协作{pendingCount > 0 ? ` · ${pendingCount}` : ""}
+            </button>
+          )}
+          {focusMode && runningTransfers > 0 && (
+            <button className={"ghost" + (queueOpen ? " ts-open" : "")}
+              title="传输队列（底部抽屉）"
+              onClick={() => setQueueOpen(!queueOpen)}>传输 {runningTransfers}</button>
+          )}
+          {focusMode && <button className="ghost" onClick={() => applyFocus(false)}>退出专注</button>}
+          <button className={"ghost icon-btn" + (focusMode ? " ts-open" : "")} data-testid="focus-toggle"
+            title={focusMode ? "退出专注模式（F11）"
+              : zenStripAuto ? "专注模式（F11）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条藏为顶缘浮标"
+              : "专注模式（F11）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条保持常驻"}
+            aria-pressed={focusMode} aria-label={focusMode ? "退出专注模式" : "进入专注模式"}
+            onClick={() => applyFocus(!focusMode)}>
+            {focusMode ? <IconMinimize size={14} /> : <IconMaximize size={14} />}
+          </button>
           <div className="st-tools" ref={tabsMenuRef}>
             <button className="ghost tab-all" title="所有标签" aria-haspopup="menu" aria-expanded={tabsMenuOpen}
               onClick={() => setTabsMenuOpen(!tabsMenuOpen)}>标签列表</button>
@@ -3951,9 +4230,9 @@ export default function App() {
               </div>
             )}
           </div>
-          <button className="ghost" title="新建连接（Ctrl+T）" aria-label="新建连接" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); }}><IconPlus size={14} /></button>
+          <button className="ghost" title="新建连接（Ctrl+T）" aria-label="新建连接" onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); }}><IconPlus size={14} /></button>
           {/* 十七轮：快速连接——不存主机一次性建连 */}
-          <button className="ghost" title="快速连接（不保存主机，临时连接一次）" aria-label="快速连接" data-testid="quick-connect-open" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
+          <button className="ghost" title="快速连接（不保存主机，临时连接一次）" aria-label="快速连接" data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -4086,8 +4365,8 @@ export default function App() {
         {hostKeyQueue.length > 0 && (() => {
           const hk = hostKeyQueue[0];
           return (
-            <div className="hk-mask">
-              <div className={"hk-dialog" + (hk.issue === "Changed" ? " hk-danger" : "")}>
+            <div className="hk-mask hk-top">
+              <div className={"hk-dialog" + (hk.issue === "Changed" ? " hk-danger" : "")} ref={hkDlgRef}>
                 {hk.issue === "Changed" ? (
                   <>
                     <div className="hk-title hk-warn">⚠ 主机指纹已变更</div>
@@ -4099,7 +4378,9 @@ export default function App() {
                     <div className="hk-fp mono">新指纹　{hk.fingerprint}</div>
                     <div className="hk-actions">
                       <button className="danger" onClick={() => decideHostKey(hk, true)}>我已核实，更新指纹并连接</button>
-                      <button className="ghost" onClick={() => decideHostKey(hk, false)}>拒绝连接</button>
+                      {/* data-autofocus（巡检补）：useDialogFocus 初始焦点落安全钮——
+                          指纹变更框 Enter 的默认动作绝不能是「信任」 */}
+                      <button className="ghost" data-autofocus onClick={() => decideHostKey(hk, false)}>拒绝连接</button>
                     </div>
                   </>
                 ) : (
@@ -4112,7 +4393,7 @@ export default function App() {
                     <div className="hk-fp mono">{hk.fingerprint}</div>
                     <div className="hk-actions">
                       <button onClick={() => decideHostKey(hk, true)}>信任并连接</button>
-                      <button className="ghost" onClick={() => decideHostKey(hk, false)}>取消</button>
+                      <button className="ghost" data-autofocus onClick={() => decideHostKey(hk, false)}>取消</button>
                     </div>
                   </>
                 )}
@@ -4123,8 +4404,8 @@ export default function App() {
         {authPromptQueue.length > 0 && (() => {
           const ap = authPromptQueue[0];
           return (
-            <div className="hk-mask">
-              <div className="hk-dialog">
+            <div className="hk-mask hk-top">
+              <div className="hk-dialog" ref={authDlgRef}>
                 <div className="hk-title">服务器请求认证输入（双因素）</div>
                 <div>
                   主机 <b>{ap.host_name}</b> 要求完成额外交互认证。请输入服务器要求的验证信息：
@@ -4134,7 +4415,7 @@ export default function App() {
                   type={ap.echo ? "text" : "password"}
                   value={authAnswer}
                   onChange={(e) => setAuthAnswer(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && authAnswer.trim()) void answerAuthPrompt(ap.id, authAnswer); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229) && authAnswer.trim()) void answerAuthPrompt(ap.id, authAnswer); }}
                   placeholder={ap.echo ? "输入验证码" : "输入验证码（输入不回显）"}
                   autoFocus
                   style={{ width: "100%" }}
@@ -4148,86 +4429,66 @@ export default function App() {
             </div>
           );
         })()}
+        {/* 新建/编辑主机对话框（用户反馈二轮）：主机栏 220px 太挤——居中 560px 大窗，
+            字段一行三列呼吸展开；浮层链 Esc 可关，表单逻辑零改动仅拨壳 */}
+        {showAddHost && (
+          <div className="hk-mask" role="dialog" aria-modal="true" aria-label={editingHost ? "编辑主机" : "新建连接"} data-testid="add-host-dialog">
+            <div className="hk-dialog add-host-dlg" ref={addHostDlgRef}>
+              <div className="dlg-head">
+                <b>{editingHost ? "编辑主机" : "新建连接"}</b>
+                <button className="ghost icon-btn" aria-label="关闭"
+                  onClick={() => { setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); }}><IconX size={14} /></button>
+              </div>
+              <AddHostForm
+                editHost={editingHost}
+                prefill={prefillEntry}
+                onCancel={() => { setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); }}
+                onSaved={async (hid, wasEdit, connect = true) => {
+                  setShowAddHost(false);
+                  setEditingHost(null);
+                  setPrefillEntry(null);
+                  await refreshLists();
+                  if (wasEdit || !connect) return; // 编辑只改配置；仅保存不自动建连
+                  const h = hosts.find((x) => x.id === hid);
+                  // list_hosts 刚刷新过，直接用返回值兜底
+                  const target = h ?? (await invoke("list_hosts")).find((x) => x.id === hid);
+                  if (target) createSession(target);
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {showQuickConnect && (
+          <div className="hk-mask" role="dialog" aria-modal="true" aria-label="快速连接" data-testid="quick-connect-dialog">
+            <div className="hk-dialog add-host-dlg" ref={quickDlgRef}>
+              <div className="dlg-head">
+                <b>快速连接</b>
+                <button className="ghost icon-btn" aria-label="关闭" onClick={() => setShowQuickConnect(false)}><IconX size={14} /></button>
+              </div>
+              <QuickConnectForm
+                onConnect={(display, draft) => {
+                  setShowQuickConnect(false);
+                  void createSession(display, false, draft);
+                }}
+                onCancel={() => setShowQuickConnect(false)}
+              />
+            </div>
+          </div>
+        )}
         <div className="content">
         <div className="term-col">
         <div className="term-wrap">
           {!sid && (
-            <div className="welcome">
-              <div className="welcome-box">
-                <div className="welcome-mark"><IconTerminal size={26} /></div>
-                <div className="welcome-title">TinySSH<span className="welcome-sub">人机协同 SSH 工作台</span></div>
-                <div className="welcome-steps">
-                  <div><span className="ws-k">连接</span>主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接</div>
-                  <div><span className="ws-k">操作</span>点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴</div>
-                  <div><span className="ws-k">多会话</span>一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留</div>
-                  <div><span className="ws-k">传输</span>拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标</div>
-                </div>
-                <div className="welcome-actions">
-                  <button onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
-                  <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={13} /> 快速连接</button>
-                  <button className="ghost" onClick={() => { if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); }}>导入 ~/.ssh/config</button>
-                  {hosts.some((h) => h.id === "local") && (
-                    <button className="ghost" onClick={() => {
-                      const lh = hosts.find((h) => h.id === "local");
-                      if (lh) void createSession(lh);
-                    }}><IconTerminal size={13} /> 打开本地终端</button>
-                  )}
-                </div>
-                {/* 十五轮：重连上次会话——上次退出/刷新时仍打开的主机（去重有序），
-                    一键全部重连（点了才连，不自动拨号）。主机已删的行整体过滤 */}
-                {!sid && sessions.length === 0 && lastSessionHosts.length > 0 && (() => {
-                  const rowsH = lastSessionHosts.flatMap((hid) => hosts.find((h) => h.id === hid) ?? []);
-                  if (rowsH.length === 0) return null;
-                  return (
-                    <div className="welcome-recents" aria-label="上次会话">
-                      <div className="wr-title">上次会话</div>
-                      <button className="wr-row" data-testid="reconnect-last"
-                        title={`重连 ${rowsH.map((h) => h.name).join("、")}`}
-                        onClick={() => { for (const h of rowsH) void createSession(h); }}>
-                        <span className="wr-name">⟳ 重连上次会话（{rowsH.length}）</span>
-                        <span className="wr-addr">{rowsH.map((h) => h.name).join("、")}</span>
-                        <span className="wr-go">连接</span>
-                      </button>
-                    </div>
-                  );
-                })()}
-                {/* R20（§259）：已有主机但无会话 → 最近连接（后端派生、排除 local、上限 5）。
-                    仅在欢迎页呈现（§261：避免每次连接使侧栏重排）；点击即建连。
-                    rev-r20 L5：行全部失效（主机刚删的毫秒窗）时不渲染空标题块 */}
-                {!sid && sessions.length === 0 && recents.length > 0 && (() => {
-                  // 本轮：隐藏偏好先滤再截 5（隐藏行不占坑）；右键出操作菜单
-                  const rows = recents
-                    .filter((r) => !recentsHidden.includes(r.host_id))
-                    .slice(0, 5)
-                    .map((r) => {
-                    const rh = hosts.find((x) => x.id === r.host_id);
-                    if (!rh) return null;
-                    return (
-                      <button key={r.host_id} className="wr-row"
-                        title={`连接 ${r.host_name}（${rh.username}@${rh.address}）；右键更多操作`}
-                        onClick={() => void createSession(rh)}
-                        onContextMenu={(e) => { e.preventDefault(); setRecentMenu({ x: e.clientX, y: e.clientY, hostId: r.host_id }); }}>
-                        <span className="wr-name">{r.host_name}</span>
-                        <span className="wr-addr mono">{rh.username}@{rh.address}</span>
-                        <span className="wr-go">连接</span>
-                      </button>
-                    );
-                  }).filter(Boolean);
-                  if (rows.length === 0) return null;
-                  return (
-                    <div className="welcome-recents" aria-label="最近连接">
-                      <div className="wr-title">最近连接</div>
-                      {rows}
-                    </div>
-                  );
-                })()}
-                <div className="dim welcome-note">
-                  {sessions.length > 0
-                    ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或「标签列表」继续。`
-                    : "暂无会话——从主机栏连接主机开始，或导入 ~/.ssh/config。"}
-                </div>
-              </div>
-            </div>
+            /* 欢迎页（拆分⑤出仓 components/welcome.tsx，零语义变更） */
+            <Welcome
+              sid={sid} sessions={sessions} hosts={hosts}
+              lastSessionHosts={lastSessionHosts} recents={recents} recentsHidden={recentsHidden}
+              focusMode={focusMode} hostbarOpen={hostbarOpen}
+              createSession={createSession} applyFocus={applyFocus} toggleHostbar={toggleHostbar}
+              setShowAddHost={setShowAddHost} setShowImport={setShowImport}
+              setShowQuickConnect={setShowQuickConnect} setEditingHost={setEditingHost}
+              setPrefillEntry={setPrefillEntry} setRecentMenu={setRecentMenu}
+            />
           )}
           <div id="term" ref={termRef} onContextMenu={(e) => {
             // 十一轮续：终端区右键——复制/粘贴/全选作用于右键命中的窗格（分屏时各格独立）；
@@ -4279,6 +4540,7 @@ export default function App() {
               <input
                 ref={searchInputRef}
                 autoFocus
+                spellCheck={false}
                 placeholder="搜索终端内容…"
                 value={searchQuery}
                 onChange={(e) => {
@@ -4315,227 +4577,30 @@ export default function App() {
               <button className="ghost" title="关闭（Esc）" aria-label="关闭搜索" onClick={closeSearch}><IconX size={12} /></button>
             </div>
           )}
-          {splitMenu && (
-            <>
-              <div className="pop-mask" onClick={() => setSplitMenu(false)} />
-              <div className="split-menu" role="menu" aria-label="分屏">
-                <div className="ts-label">在右侧显示已有会话<span className="dim">（复用现有连接，不新建）</span></div>
-                {[...sessions].filter((s) => s.id !== sid).length === 0 && (
-                  <div className="dim" style={{ fontSize: 12, padding: "2px 0 4px" }}>暂无其他会话</div>
-                )}
-                {[...sessions].filter((s) => s.id !== sid).map((s) => {
-                  const st = stateLabel(s.state);
-                  return (
-                    <button key={s.id} className="ghost sm-item" role="menuitem"
-                      onClick={() => { setSplitMenu(false); void enterSplitWith(s.id); }}>
-                      <span className="sm-name">{s.host_name}</span>
-                      <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
-                    </button>
-                  );
-                })}
-                <div className="dim" style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 2px 0" }}>
-                  新建的会话先落在标签栏——右键标签选「与当前会话分屏」即可。
-                </div>
-              </div>
-            </>
-          )}
-          {/* 十一轮：标签右键菜单——对象先存在、操作跟上来。fixed 定位跟随指针并夹在
-              视口内；遮罩点击/右键都关闭；会话关闭后菜单自动只剩遮罩（点掉即净） */}
-          {tabMenu && (() => {
-            const s = sessions.find((x) => x.id === tabMenu.sid);
-            const mx = Math.min(tabMenu.x, window.innerWidth - 248);
-            const my = Math.min(tabMenu.y, window.innerHeight - 236);
-            const close = () => setTabMenu(null);
-            const inSplit = !!s && (splitPanes?.main === s.id || splitPanes?.second === s.id);
-            const menuHost = s ? hosts.find((h) => h.id === s.host_id) : undefined;
-            return (
-              <>
-                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
-                {s && (
-                  <div className="ctx-menu" role="menu" aria-label={`会话操作：${s.host_name}`} style={{ left: mx, top: my }}>
-                    {inSplit ? (
-                      <button className="ghost sm-item" role="menuitem"
-                        onClick={() => { close(); void exitSplit(); }}
-                      >退出分屏（两个会话都保留）</button>
-                    ) : s.id !== sid && !!sid ? (
-                      <button className="ghost sm-item" role="menuitem"
-                        onClick={() => { close(); void enterSplitWith(s.id); }}
-                      >{splitPanes ? "放到右侧分屏（替换右格）" : "与当前会话分屏（放到右侧）"}</button>
-                    ) : s.id === sid && sessions.some((x) => x.id !== s.id) ? (
-                      // 十二轮：活动标签也得分屏（Xshell/Windows Terminal 惯例）——
-                      // 第二格是谁交给既有「右侧会话选择」菜单，不在此复制会话列表
-                      <button className="ghost sm-item" role="menuitem"
-                        onClick={() => { close(); setSplitMenu(true); }}
-                      >分屏（选择右侧会话）…</button>
-                    ) : s.id === sid && menuHost ? (
-                      // 十三轮：唯一会话也有分屏——复制本标签到右侧（新会话），Windows
-                      // Terminal "Split Tab" 语义；显式参数直达，无预武装挂起态
-                      <button className="ghost sm-item" role="menuitem"
-                        title="新建一条同主机连接并放入右侧窗格（当前会话留在左侧）"
-                        onClick={() => { close(); createSession(menuHost, true); }}
-                      >分屏：复制标签页到右侧（新会话）</button>
-                    ) : null}
-                    {autoReconn?.sid === s.id ? (
-                      <button className="ghost sm-item" role="menuitem"
-                        onClick={() => { close(); void stopRetry(s); }}
-                      >停止自动重连</button>
-                    ) : s.state === "Disconnected" ? (
-                      <button className="ghost sm-item" role="menuitem"
-                        onClick={() => { close(); void reconnectSession(s); }}
-                      >重连会话</button>
-                    ) : null}
-                    {menuHost && (
-                      <button className="ghost sm-item" role="menuitem"
-                        title="用同一台主机新建一条会话（现有会话不受影响）"
-                        onClick={() => { close(); void createSession(menuHost); }}
-                      >复制标签页（同主机新会话）</button>
-                    )}
-                    <button className="ghost sm-item" role="menuitem"
-                      title="自定义标签显示名（清空恢复主机名）；也可双击标签"
-                      onClick={() => { close(); setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name }); }}
-                    >重命名标签…</button>
-                    {/* 十八轮：会话日志——pump tap 落盘，开关态随 SessionInfo 下发不漂移 */}
-                    <button className="ghost sm-item" role="menuitem" data-testid="ctx-session-log"
-                      title="把该会话收到的全部输出记录到本地日志文件（data/logs 目录，追加写入）"
-                      onClick={() => { close(); void toggleSessionLog(s); }}
-                    >{s.logging ? "停止记录会话日志" : "记录会话日志"}</button>
-                    {s.logging && (
-                      <button className="ghost sm-item" role="menuitem" data-testid="ctx-session-log-open"
-                        onClick={() => { close(); void openSessionLogFolder(s.id); }}
-                      >打开日志文件夹</button>
-                    )}
-                    <div className="ctx-menu-sep" role="separator" />
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); void openSessionDetail(s); }}
-                    >连接详情…</button>
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); requestCloseSession(s); }}
-                    >关闭会话…</button>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-          {/* 十一轮续：主机卡右键——与 hover 操作组同源同义（连接/收藏/编辑/删除） */}
-          {hostMenu && (() => {
-            const h = hosts.find((x) => x.id === hostMenu.hostId);
-            const mx = Math.min(hostMenu.x, window.innerWidth - 248);
-            const my = Math.min(hostMenu.y, window.innerHeight - 200);
-            const close = () => setHostMenu(null);
-            const fav = metaById.get(hostMenu.hostId)?.favorite === true;
-            return (
-              <>
-                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
-                {h && (
-                  <div className="ctx-menu" role="menu" aria-label={`主机操作：${h.name}`} style={{ left: mx, top: my }}>
-                    {!connectingIds.has(h.id) && (
-                      <button className="ghost sm-item" role="menuitem"
-                        onClick={() => { close(); createSession(h); }}
-                      >连接（新建会话）</button>
-                    )}
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); void toggleFavorite(h.id, !fav); }}
-                    >{fav ? "取消收藏" : "收藏（置顶分组）"}</button>
-                    <div className="ctx-menu-sep" role="separator" />
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
-                    >编辑主机…</button>
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
-                    >删除主机…</button>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-          {/* 十一轮续：终端区右键——复制（仅选区在场）/粘贴/全选，作用于命中的窗格；
-              粘贴语义收口在 pasteTextInto（⌘V 同源：bracketed paste + 多行确认契约） */}
-          {termMenu && (() => {
-            const en = termsRef.current.get(termMenu.sid);
-            const mx = Math.min(termMenu.x, window.innerWidth - 200);
-            const my = Math.min(termMenu.y, window.innerHeight - 236);
-            const close = () => setTermMenu(null);
-            return (
-              <>
-                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
-                {en && (
-                  <div className="ctx-menu" role="menu" aria-label="终端操作" style={{ left: mx, top: my }}>
-                    {termMenu.hasSel && (
-                      <button className="ghost sm-item" role="menuitem"
-                        onClick={() => {
-                          close();
-                          const sel = en.term.getSelection();
-                          if (sel) (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
-                        }}
-                      >复制</button>
-                    )}
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => {
-                        close();
-                        (inTauri
-                          ? clipboard.readText().then((t) => pasteTextIntoRef.current(en.term, termMenu.sid, t))
-                          : navigator.clipboard?.readText().then((t) => pasteTextIntoRef.current(en.term, termMenu.sid, t))
-                        ).catch(() => {});
-                      }}
-                    >粘贴</button>
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); en.term.selectAll(); }}
-                    >全选</button>
-                    <div className="ctx-menu-sep" role="separator" />
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => {
-                        close();
-                        // 十四轮：查找作用于右键命中的窗格——非活动会话先切过去再开搜索框
-                        // （分屏副格命中时同样成立）；切失败也开（断开现场仍可搜冻结缓冲）
-                        const open = () => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 0); };
-                        if (sidRef.current === termMenu.sid) open();
-                        else void attachSession(termMenu.sid).then(open).catch(() => open());
-                      }}
-                    >查找…</button>
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); en.term.clear(); }}
-                    >清屏</button>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-          {/* 本轮：最近连接行右键——与主机卡菜单同源同义（连接/编辑/删除），
-              加「从最近连接隐藏」（纯前端偏好；重连自动恢复，createSession 统一钩子） */}
-          {recentMenu && (() => {
-            const h = hosts.find((x) => x.id === recentMenu.hostId);
-            const mx = Math.min(recentMenu.x, window.innerWidth - 248);
-            const my = Math.min(recentMenu.y, window.innerHeight - 200);
-            const close = () => setRecentMenu(null);
-            return (
-              <>
-                <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
-                {h && (
-                  <div className="ctx-menu" role="menu" aria-label={`最近连接操作：${h.name}`} style={{ left: mx, top: my }}>
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); void createSession(h); }}
-                    >连接（新建会话）</button>
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
-                    >编辑主机…</button>
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); setRecentHidden(h.id, true); }}
-                    >从最近连接隐藏</button>
-                    <div className="ctx-menu-sep" role="separator" />
-                    <button className="ghost sm-item" role="menuitem"
-                      onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
-                    >删除主机…</button>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-          {splitDegraded && splitHintOpen && (
-            <div className="split-hint" role="status">
-              <span>窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。</span>
-              <button className="ghost" aria-label="关闭提示" onClick={() => { splitHintDismissedRef.current = true; setSplitHintOpen(false); }}><IconX size={12} /></button>
-            </div>
-          )}
+          {/* 五个右键/弹出菜单 + 分屏退化提示（拆分⑤出仓 components/ctx-menus.tsx，
+              零语义变更）：分屏选择、标签右键、主机卡右键、终端区右键、最近连接行右键 */}
+          <CtxMenus
+            sessions={sessions} sid={sid} hosts={hosts} hostMeta={hostMeta}
+            connectingIds={connectingIds} splitPanes={splitPanes} tabNames={tabNames}
+            autoReconn={autoReconn}
+            splitMenu={splitMenu} setSplitMenu={setSplitMenu} enterSplitWith={enterSplitWith}
+            tabMenu={tabMenu} setTabMenu={setTabMenu} exitSplit={exitSplit}
+            stopRetry={stopRetry} reconnectSession={reconnectSession} setRenaming={setRenaming}
+            toggleSessionLog={toggleSessionLog} openSessionLogFolder={openSessionLogFolder}
+            openSessionDetail={openSessionDetail} requestCloseSession={requestCloseSession}
+            hostMenu={hostMenu} setHostMenu={setHostMenu}
+            recentMenu={recentMenu} setRecentMenu={setRecentMenu}
+            createSession={createSession} toggleFavorite={toggleFavorite}
+            setEditingHost={setEditingHost} setPrefillEntry={setPrefillEntry}
+            setShowImport={setShowImport} setShowAddHost={setShowAddHost}
+            setRecentHidden={setRecentHidden} setConfirm={setConfirm}
+            termMenu={termMenu} setTermMenu={setTermMenu}
+            termsRef={termsRef} pasteTextIntoRef={pasteTextIntoRef}
+            setSearchOpen={setSearchOpen} searchInputRef={searchInputRef} sidRef={sidRef}
+            attachSession={attachSession}
+            splitDegraded={splitDegraded} splitHintOpen={splitHintOpen}
+            splitHintDismissedRef={splitHintDismissedRef} setSplitHintOpen={setSplitHintOpen}
+          />
           {pasteConfirm && (
             // rev-r25 H1：对话框必须是 confirm-mask 的子元素（flex 居中+同层叠上下文）——
             // 兄弟写法下 dialog 仍是 term-wrap 流内静态项且被 mask 盖住，鼠标点不中
@@ -4599,65 +4664,13 @@ export default function App() {
           {/* R41（§6.6/S09）连接详情：**独立可关闭对话框**（§193——不与审批共用长滚动页）。
               展示连接**当时**的身份快照（§6.1：主机配置此后被改/删都不影响），
               session ID 收在「技术详情」里可复制。 */}
-          {(detail || detailErr) && (() => {
-            return (
-              <>
-                <div className="pop-mask" onClick={closeDetail} />
-                <div className="term-settings conn-detail" ref={detailPanelRef} role="dialog" aria-modal="true"
-                  aria-label="连接详情" data-testid="conn-detail">
-                  <div className="cd-head">
-                    <b>连接详情</b>
-                    {detail && <span className={"chip " + stateLabel(detail.state).cls}>{stateLabel(detail.state).text}</span>}
-                    {detail?.control_owner === "Agent" && <span className="badge agent">Agent 控制</span>}
-                    <span style={{ flex: 1 }} />
-                    <button className="ghost icon-btn" aria-label="关闭连接详情" data-testid="cd-close"
-                      onClick={closeDetail}><IconX size={14} /></button>
-                  </div>
-                  {detailErr ? (
-                    <div className="empty" data-testid="cd-err">{detailErr}</div>
-                  ) : detail && (
-                    <>
-                      <div className="cd-grid">
-                        <div className="cd-k">主机</div><div className="cd-v" data-testid="cd-host">{detail.host_name}</div>
-                        <div className="cd-k">用户</div><div className="cd-v" data-testid="cd-user">{detail.username}</div>
-                        <div className="cd-k">地址</div><div className="cd-v" data-testid="cd-addr">{detail.address}</div>
-                        <div className="cd-k">端口</div><div className="cd-v" data-testid="cd-port">{detail.port}</div>
-                        <div className="cd-k">认证类型</div><div className="cd-v" data-testid="cd-auth">
-                          {detail.auth_type === "Key" ? "密钥" : detail.auth_type === "Agent" ? "SSH Agent"
-                            : detail.auth_type === "KeyboardInteractive" ? "键盘交互" : "密码"}
-                        </div>
-                        <div className="cd-k">指纹</div><div className="cd-v cd-fp" data-testid="cd-fp">
-                          {detail.fingerprint ?? <span className="dim">未记录（首次连接确认前）</span>}
-                        </div>
-                        <div className="cd-k">编码</div><div className="cd-v" data-testid="cd-charset">
-                          {detail.charset === "gbk" ? "GBK" : "UTF-8"}
-                        </div>
-                        <div className="cd-k">创建时间</div><div className="cd-v" data-testid="cd-created">
-                          {stampLocal(detail.created_at)}（{TZ_NOTE}）
-                        </div>
-                      </div>
-                      <div className="cd-sec">
-                        <h4>技术详情</h4>
-                        <div className="cd-sidrow">
-                          <span className="cd-k">会话 ID</span>
-                          <code data-testid="cd-sid">{detail.id}</code>
-                          <button className="ghost" data-testid="cd-copy"
-                            onClick={() => {
-                              (inTauri ? clipboard.writeText(detail.id) : navigator.clipboard?.writeText(detail.id))
-                                .then(() => pushToast("ok", "会话 ID 已复制"))
-                                .catch(() => pushToast("err", "复制失败——请手动选中复制"));
-                            }}>复制</button>
-                        </div>
-                      </div>
-                      <div className="dim cd-hint">
-                        以上为连接时的身份快照——主机配置此后被修改或删除，都不影响这里显示的信息。
-                      </div>
-                    </>
-                  )}
-                </div>
-              </>
-            );
-          })()}
+          {/* 连接详情（拆分⑤出仓 components/conn-detail.tsx，零语义变更）：
+              **独立可关闭对话框**（§193——不与审批共用长滚动页）。展示连接**当时**的
+              身份快照（§6.1），session ID 收在「技术详情」里可复制。 */}
+          <ConnDetail
+            detail={detail} detailErr={detailErr} closeDetail={closeDetail}
+            detailPanelRef={detailPanelRef} pushToast={pushToast}
+          />
           {showSettings && (
             <SettingsPanel
               settingsCat={settingsCat}
@@ -4749,132 +4762,17 @@ export default function App() {
             </div>
             <div className="tp-scroll">
           {rightPanel === "collab" && (
-            !collabEnabled ? (
-              // C9（R43）：协作停用/停用中/停用失败时不出现空审批区——改为停用态指引。
-              <div className="empty" data-testid="collab-disabled">
-                <IconInbox size={14} />
-                <div>
-                  {collabStateText}。{collab.state === "Enabled" ? "" : "新 Agent 请求已被拒绝"}
-                  {collab.state === "Disabling" ? "，正在收敛存量。" : "。"}
-                  <div style={{ marginTop: 6 }}>
-                    <button className="ghost" data-testid="collab-open-settings"
-                      onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
-                  </div>
-                </div>
-              </div>
-            ) : !collabConfigured && !collabActive ? (
-              // §6.7：新装未启用协作时不出现空审批区——改为一次性引导（不渲染空壳表单）
-              <div className="empty" data-testid="collab-unconfigured">
-                <IconInbox size={14} />
-                <div>
-                  协作未接入 Agent。到「设置 → Agent 接入」签发 Token 登记 Agent 后，这里会显示审批、任务目标与现场简报。
-                  <div style={{ marginTop: 6 }}>
-                    <button className="ghost" data-testid="collab-open-settings"
-                      onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-            <>
-          <div className="section">
-            <h4>审批{pendingCount > 0 ? `（${pendingCount}）` : ""}</h4>
-            {/* §3.2：跨会话待办按主机与会话分组——绝不只展示「当前主机」而误批其他会话 */}
-            <div className="side-quiet">按目标主机与会话分组；跨会话操作请逐条核对来源。</div>
-          </div>
-          <div className="collab-approvals">
-          {approvalGroups.map((g) => (
-            <div className="ap-group" key={g.sid} data-testid="ap-group">
-              <div className="ap-group-head">
-                <b>{g.sess ? g.sess.host_name : "会话已不在列表"}</b>
-                <span className="mono dim" title={g.sid}> · {g.sid.slice(0, 12)}</span>
-                {g.sess && <span className={"mono " + stateLabel(g.sess.state).cls} style={{ fontSize: 10 }}>{stateLabel(g.sess.state).text}</span>}
-                <span className="badge agent">{g.items.length} 待处理</span>
-              </div>
-              {g.items.map((a) => {
-                const risk = approvalRisk(a);
-                return (
-                  <div className="card" key={a.id}>
-                    <div className="row">
-                      <span className="badge">Agent：{a.agent_id}</span>
-                      {/* 破坏性提示由核心算出（target_summary），UI 不自猜 */}
-                      {a.target_summary && <span className="tsum-chip" title="命令本身的破坏性提示（核心判定）">{a.target_summary}</span>}
-                    </div>
-                    {/* §6.7「可用目的」：会话当前委托目标的投影；无法获知时**明确缺失**，
-                        不得留白让人误读为「无风险」 */}
-                    <div className={"purpose-line" + (a.purpose ? "" : " missing")} data-testid="ap-purpose">
-                      <span className="dim">目的</span>{" "}
-                      {a.purpose ? <span>{a.purpose}</span> : <span className="dim">未提供（Agent 未收到委托说明）</span>}
-                    </div>
-                    {/* 目标上下文：多会话并存时 rm -rf 级裁决必须知道落在哪台机器 */}
-                    <div className="dim" style={{ fontSize: 11, marginTop: 5 }} title={a.session_id}>
-                      目标：{g.sess ? <b style={{ color: "var(--text)" }}>{g.sess.host_name}</b> : "会话已不在列表"}
-                      <span className="mono"> · {a.session_id.slice(0, 12)}</span>
-                      {g.sess?.state === "Disconnected" && " · 会话已断开"}
-                      {a.session_busy && " · 会话正在交互程序中"}
-                    </div>
-                    <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
-                    {a.segment_report.map((s, i) => (
-                      <div key={i} className="dim" style={{ fontSize: 11 }}>
-                        · {s.segment} — {s.verdict}
-                      </div>
-                    ))}
-                    {risk && confirmId !== a.id && (
-                      <div className="dim" style={{ fontSize: 11, marginTop: 6, color: "var(--warn)" }}>
-                        ⚠ {risk}——批准前请确认命令的全部效果。
-                      </div>
-                    )}
-                    {editingId === a.id ? (
-                      <div style={{ marginTop: 8 }}>
-                        <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
-                        <div className="row" style={{ marginTop: 6 }}>
-                          <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>保存并批准</button>
-                          <button className="ghost" onClick={() => setEditingId(null)}>取消</button>
-                        </div>
-                        <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
-                      </div>
-                    ) : (
-                      <div className="row" style={{ marginTop: 8 }}>
-                        <button
-                          className={confirmId === a.id ? "warn" : undefined}
-                          title={risk ? "高危/未知安全性的请求：需二次确认" : undefined}
-                          onClick={() => {
-                            if (risk && confirmId !== a.id) { setConfirmId(a.id); return; }
-                            void decide(a.id, "approve", null);
-                          }}
-                        >{confirmId === a.id ? "再次点击确认批准" : "批准"}</button>
-                        {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
-                        {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>}
-                        <button className="danger" onClick={() => void decide(a.id, "deny", null)}>拒绝</button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-          {pendingApprovals.length === 0 && (
-            <div className="empty"><IconInbox size={14} />暂无待审批请求。Agent 通过 MCP 发起操作时会出现在这里。</div>
-          )}
-          {resolvedApprovals.length > 0 && (
-            <div className="side-quiet">
-              <div className="side-sub">最近处理</div>
-              {resolvedApprovals.map((a) => (
-                <div className="tl-row" key={a.id} title={a.edited_command || a.command}>
-                  <div className="tl-action">
-                    <span className={(approvalResolvedLabel[a.status] ?? { cls: "err" }).cls} style={{ fontSize: 11 }}>
-                      {(approvalResolvedLabel[a.status] ?? { text: a.status }).text}
-                    </span>{" "}
-                    {/* 编辑后批准显示实际放行文，不是原始请求（PV R1） */}
-                    <span className="tl-cmd-text">{a.edited_command || a.command}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          </div>
-
-            </>
-            )
+            /* 审批区（拆分⑤出仓 components/collab-panel.tsx，零语义变更） */
+            <CollabApprovals
+              collabEnabled={collabEnabled} collab={collab} collabStateText={collabStateText}
+              collabConfigured={collabConfigured} collabActive={collabActive}
+              pendingCount={pendingCount} approvalGroups={approvalGroups}
+              pendingApprovals={pendingApprovals} resolvedApprovals={resolvedApprovals}
+              confirmId={confirmId} setConfirmId={setConfirmId}
+              editingId={editingId} setEditingId={setEditingId}
+              editedCmd={editedCmd} setEditedCmd={setEditedCmd}
+              decide={decide} openSettingsAt={openSettingsAt}
+            />
           )}
           {rightPanel === "files" && (
             <FilesPanel
@@ -5009,75 +4907,14 @@ export default function App() {
             />
           )}
           {rightPanel === "collab" && (
-            <>
-          {/* §6.7：委托是显式动作（首次委托对话框）。此处给入口与当前控制权事实；
-              MCP 配置已迁至「设置 → Agent 接入」（§5 迁移表），面板不再重复。 */}
-          <div className="section">
-            <h4>委托</h4>
-            {!sid ? (
-              <div className="side-quiet">连接会话后可委托给 Agent。</div>
-            ) : !collabConfigured ? (
-              <>
-                <div className="side-quiet">{collabEnabled ? "协作未接入 Agent，暂不能委托。先登记 Agent 接入。" : "协作已停用，暂不能委托。先到「设置 → Agent 接入」启用。"}</div>
-                <button className="ghost" data-testid="collab-open-settings-delegate"
-                  onClick={() => openSettingsAt("agent")}>打开设置 → Agent 接入</button>
-              </>
-            ) : current?.control_owner === "Agent" ? (
-              <>
-                <div className="side-quiet">本会话控制权在 Agent。要收回请用会话工具栏的「接管」——接管会立即冻结并作废未开始的请求。</div>
-                {owner === "Human" && (
-                  <button className="ghost" data-testid="takeover-from-panel"
-                    onClick={() => void takeover()}>接管（仅冻结）</button>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="side-quiet">把控制权显式交给 Agent 后，它的操作请求才会进入上方审批队列。</div>
-                <button data-testid="delegate-open-panel" onClick={openDelegate}>
-                  {current?.ever_agent_owned ? "交还 Agent…" : "交给 Agent…"}
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* §6.7：任务目标仅在协作已启用且处于受控会话时呈现——人类普通 SSH 不展示空白委托表单 */}
-          <div className="section">
-            <h4>任务目标</h4>
-            {!collabConfigured ? (
-              <div className="side-quiet">协作未启用。任务目标用于向 Agent 说明委托意图。</div>
-            ) : sid ? (
-              <>
-                <textarea
-                  ref={goalRef}
-                  className="goal-input"
-                  rows={2}
-                  placeholder="写给 Agent 的委托留言，例：把日志打包放到 /tmp 后交还给我"
-                  value={goalDraft}
-                  onChange={(e) => { goalDirty.current = true; setGoalDraft(e.target.value); }}
-                />
-                <div className="row" style={{ gap: 6, marginTop: 6 }}>
-                  <button
-                    disabled={goalDraft.trim() === (brief?.goal ?? "")}
-                    onClick={() => void saveGoal()}
-                  >保存</button>
-                  {(brief?.goal ?? "") !== "" && (
-                    <button className="ghost" onClick={() => void saveGoal(true)}>清除</button>
-                  )}
-                </div>
-                <div className="side-quiet">Agent 接管与读简报时会先看到这里；随会话结束自动消失。</div>
-              </>
-            ) : (
-              <div className="side-quiet">连接会话后可给 Agent 留言委托任务。</div>
-            )}
-          </div>
-
-          <div className="section">
-            <h4>现场简报</h4>
-            {brief ? <BriefCard brief={brief} /> : (
-              <div className="empty"><IconTerminal size={14} />未接入会话。连接主机后显示当前目录与最近命令。</div>
-            )}
-          </div>
-            </>
+            /* 委托/任务目标/现场简报（拆分⑤出仓 components/collab-panel.tsx，零语义变更） */
+            <CollabDelegate
+              sid={sid} current={current} owner={owner}
+              collabEnabled={collabEnabled} collabConfigured={collabConfigured}
+              openDelegate={openDelegate} takeover={takeover} openSettingsAt={openSettingsAt}
+              goalRef={goalRef} goalDraft={goalDraft} setGoalDraft={setGoalDraft}
+              goalDirty={goalDirty} brief={brief} saveGoal={saveGoal}
+            />
           )}
             </div>
           </aside>

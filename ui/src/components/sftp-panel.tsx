@@ -9,6 +9,9 @@ import {
   IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconUpload,
 } from "../icons";
 
+// 传输抽屉最多渲染的行数（五轮架构）：超出只显示最近 N 条并如实声明省略数。
+const XFER_ROWS_SHOWN = 120;
+
 interface FilesPanelProps {
   sid: string | null;
   brief: Brief | null;
@@ -144,7 +147,7 @@ export function FilesPanel({
                 )}
                 <div className="row sftp-tools">
                   <input className="sftp-filter" placeholder="筛选名称" aria-label="按名称筛选"
-                    value={sftpFilter} onChange={(e) => setSftpFilter(e.target.value)} />
+                    spellCheck={false} value={sftpFilter} onChange={(e) => setSftpFilter(e.target.value)} />
                   <button className={"ghost" + (sftpShowHidden ? " ts-open" : "")} aria-pressed={sftpShowHidden}
                     title="显示隐藏项（. 开头）" onClick={() => setShowHidden((v) => !v)}>隐藏项</button>
                   <button className={"ghost" + (sftpSaveAs ? " ts-open" : "")} aria-pressed={sftpSaveAs}
@@ -265,7 +268,15 @@ export function TransferQueueDrawer({
               {transfers.length === 0 && (
                 <div className="side-quiet">暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。</div>
               )}
-              {transfers.map((t) => (
+              {/* 五轮架构（虚拟化等效）：历史行无上限会随使用无限增长，每个传输事件
+                  （120ms 合帧）都全量 diff。封到最近 120 条——完整事实仍在（总数如实
+                  展示，省略数如实声明），抽屉只是运行视图不是审计视图。 */}
+              {transfers.length > XFER_ROWS_SHOWN && (
+                <div className="side-quiet" data-testid="queue-omitted">
+                  已省略最早 {transfers.length - XFER_ROWS_SHOWN} 条（共 {transfers.length} 条，只显示最近 {XFER_ROWS_SHOWN} 条）
+                </div>
+              )}
+              {transfers.slice(-XFER_ROWS_SHOWN).map((t) => (
                 <div className="card row xfer-row" key={t.id} data-testid={"xfer-" + t.status}>
                   <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>
                     {t.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}

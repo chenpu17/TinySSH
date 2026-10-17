@@ -17,6 +17,7 @@ export type AppAction =
   | { id: "tab-close" }
   | { id: "tab-new" }
   | { id: "split-toggle" }
+  | { id: "focus-toggle" }
   | { id: "esc" };
 
 export interface ActionCtx {
@@ -55,6 +56,12 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
   // Esc 无条件归浮层链：模态期由 closeTopOverlay 关最上层（确认=取消、指纹=拒绝、
   // 双因素=取消认证）；无浮层时 dispatch 返回 false 原样透传（输入框/终端不受影响）
   if (ev.key === "Escape") return { id: "esc" };
+  // 专注模式（F11，固定键不开放改绑——命名键不进可重绑表，同缩放/Esc 的理由）：
+  // native 门——浏览器 demo 的 F11 归浏览器原生全屏，不劫持；模态门同 ⌘ 组合规则，
+  // 模态层打开时不切（返回 null 透传，此时焦点在模态层，无系统级副作用）。
+  // window 捕获层先于 xterm 截下：preventDefault+stopPropagation 后事件到不了
+  // 终端自定义键处理器，F11 不会作为输入序列发给远端。
+  if (ev.key === "F11" && ctx.native && !ctx.modal) return { id: "focus-toggle" };
   // 整页缩放（UX 五轮，参考 tiny-worker zoom.ts）：Ctrl（Win/Linux）或 ⌘（mac）
   // ±/0 归应用缩放；字号键退役（字号收进设置面板）。native 门——浏览器 demo 不劫持
   // （浏览器自带缩放，键盘语义归浏览器）；模态门同 ⌘ 组合规则；e.key 为主（跟随

@@ -913,6 +913,13 @@ async fn read_screen(state: ApiState<'_>, sid: String) -> CmdResult<ScreenSnapsh
         .map_err(WireError::from)
 }
 
+// 五轮架构：FE 尺寸对账看门狗专用（每 3s 每 pane）——替代误用的 read_screen
+// （整屏网格序列化只为读 cols/rows）。返回 (cols, rows) 元组。
+#[tauri::command]
+async fn pty_size(state: ApiState<'_>, sid: String) -> CmdResult<(u16, u16)> {
+    state.api.pty_size(&human(), sid).await.map_err(WireError::from)
+}
+
 #[tauri::command]
 async fn send_keys(state: ApiState<'_>, sid: String, keys: String) -> CmdResult<()> {
     state
@@ -1993,7 +2000,7 @@ fn main() {
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             list_host_metadata, list_recent_hosts,
-            read_screen, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
+            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
             list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
             collab_status, collab_disable_preview, collab_disable, collab_enable,

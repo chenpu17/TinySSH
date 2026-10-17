@@ -84,13 +84,31 @@ export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }):
       })
       .catch(() => {});
   }
+  let wheelRaf = 0;
+  let wheelLatest: WheelEvent | null = null;
   const wheel = (e: WheelEvent) => {
     if (!e.ctrlKey) return;
     e.preventDefault();
     e.stopPropagation();
-    // 滚轮是连续手势，不打 toast
-    void apply(level + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP), false);
+    // 滚轮是连续手势，不打 toast；事件频率可超屏幕刷新率——rAF 合帧每帧至多一档
+    //（取手势内最后一个方向），已触边（0.5/2.0）同档早退，不再逐事件发 IPC
+    wheelLatest = e;
+    if (wheelRaf) return;
+    wheelRaf = requestAnimationFrame(() => {
+      wheelRaf = 0;
+      const ev = wheelLatest;
+      wheelLatest = null;
+      if (!ev) return;
+      const next = clampZoom(level + (ev.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+      if (next === level) return;
+      void apply(next, false);
+    });
   };
   window.addEventListener("wheel", wheel, { passive: false, capture: true });
-  return () => window.removeEventListener("wheel", wheel, { capture: true });
+  return () => {
+    window.removeEventListener("wheel", wheel, { capture: true });
+    if (wheelRaf) cancelAnimationFrame(wheelRaf);
+    wheelRaf = 0;
+    wheelLatest = null;
+  };
 }

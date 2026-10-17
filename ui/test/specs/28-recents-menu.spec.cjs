@@ -73,11 +73,11 @@ module.exports = {
     await openRecentsMenu(page, "staging-1");
     await menuItem(page, "编辑主机…");
     await page.waitForTimeout(500);
-    const vals = await page.$$eval(".hostbar input", (els) => els.map((e) => e.value));
+    const vals = await page.$$eval(".add-host-dlg input", (els) => els.map((e) => e.value)); // 编辑表单已移居中弹窗
     ck.check("编辑表单预填 staging-1 地址", vals.includes("10.0.0.13"), vals.slice(0, 6).join(" / "));
     await page.keyboard.press("Escape");
     await page.waitForTimeout(400);
-    ck.check("Esc 收起编辑表单", await page.evaluate(() => ![...document.querySelectorAll(".hostbar button")].some((b) => b.textContent.trim() === "保存修改")), "");
+    ck.check("Esc 收起编辑表单", await page.evaluate(() => !document.querySelector(".add-host-dlg")), "");
 
     // ── 重连恢复：隐藏的主机重新建连即取消隐藏 ──
     const c = await page.$('.host-card:has(.host-name:text-is("prod-1"))');

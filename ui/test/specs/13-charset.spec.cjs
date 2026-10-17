@@ -5,21 +5,21 @@ module.exports = {
   async run({ page, ck }) {
     await page.click('.hostbar button[title="添加主机"]');
     await page.waitForTimeout(500);
-    const ins = await page.$$(".hostbar input");
-    await ins[1].fill("gbk-host");
-    await ins[2].fill("gbk.demo");
-    await ins[3].fill("22");
-    await ins[4].fill("ops");
-    await ins[6].fill("pw");
+    const ins = await page.$$(".add-host-dlg input"); // 弹窗内：0=名称 1=地址 2=端口 3=用户名 4=密码
+    await ins[0].fill("gbk-host");
+    await ins[1].fill("gbk.demo");
+    await ins[2].fill("22");
+    await ins[3].fill("ops");
+    await ins[4].fill("pw");
 
-    const selOpts = await page.$$eval(".hostbar select", (els) => els.map((e) => [...e.options].map((o) => o.value)));
+    const selOpts = await page.$$eval(".add-host-dlg select", (els) => els.map((e) => [...e.options].map((o) => o.value)));
     ck.check("认证方式可选（password/key/agent）", selOpts[0].join(",") === "password,key,agent", selOpts[0].join(","));
     ck.check("编码可选 utf-8 / gbk", selOpts[1].join(",") === "utf-8,gbk", selOpts[1].join(","));
 
-    const sels = await page.$$(".hostbar select");
+    const sels = await page.$$(".add-host-dlg select");
     await sels[1].selectOption("gbk");
     await page.waitForTimeout(200);
-    await page.evaluate(() => [...document.querySelectorAll(".hostbar button")].find((b) => b.textContent.trim() === "仅保存").click());
+    await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "仅保存").click());
     await page.waitForTimeout(900);
     ck.check("GBK 主机保存成功", await page.evaluate(() => [...document.querySelectorAll(".host-name")].map((e) => e.textContent).includes("gbk-host")));
 

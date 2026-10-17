@@ -2304,6 +2304,14 @@ impl SessionApi for SessionManager {
         })
     }
 
+    // 五轮架构：FE 尺寸对账专用轻探针（trait 默认实现返回不支持，这里覆盖）。
+    // 只取 screen config 里的 cols/rows，不走整屏网格序列化。
+    async fn pty_size(&self, _ctx: &Actor, sid: SessionId) -> Result<(u16, u16)> {
+        let h = self.get(&sid)?;
+        let s = h.screen.lock().await;
+        Ok((s.config().cols, s.config().rows))
+    }
+
     async fn send_keys(&self, ctx: &Actor, sid: SessionId, keys: &str) -> Result<()> {
         let h = self.get(&sid)?;
         match ctx {

@@ -145,3 +145,18 @@ export const IconPlay = (p: IconProps) => (
 export const IconLoader = (p: IconProps) => (
   <Svg {...p}><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></Svg>
 );
+
+// 专注模式（F11 轮）：lucide maximize-2 / minimize-2 同形——四角向外的展开与向内的收拢
+export const IconMaximize = (p: IconProps) => (
+  <Svg {...p}>
+    <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+    <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+  </Svg>
+);
+
+export const IconMinimize = (p: IconProps) => (
+  <Svg {...p}>
+    <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
+    <line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+  </Svg>
+);
