@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { AppAction } from "../actions";
 import type { SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
+import type { SplitPanes } from "../app-data";
 import {
   IconChevronDown, IconFolder, IconInbox, IconSearch, IconSplit,
 } from "../icons";
@@ -19,7 +20,7 @@ export interface SessionToolbarProps {
   collabConfigured: boolean;
   searchOpen: boolean;
   splitMenu: boolean;
-  splitPanes: { main: string; second: string } | null;
+  splitPanes: SplitPanes | null;
   rightPanel: null | "files" | "collab" | "forwards" | "log";
   toolsOpen: boolean;
   toolsRef: { current: HTMLDivElement | null };
@@ -89,7 +90,7 @@ export function SessionToolbar({
       )}
       <button
         className={"ghost icon-btn" + (splitMenu ? " ts-open" : "")}
-        title={splitPanes ? "退出分屏（Ctrl+D；会话保留不断开）" : "分屏（Ctrl+D）：在右侧显示已有会话，或在右侧新建会话"}
+        title={splitPanes ? "退出分屏（Ctrl+D；会话保留不断开）" : "分屏（Ctrl+D）：在右侧/下侧显示已有会话（方向可在菜单选择）"}
         aria-haspopup={splitPanes ? undefined : "menu"}
         aria-expanded={splitPanes ? undefined : splitMenu}
         aria-pressed={!!splitPanes}

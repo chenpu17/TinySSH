@@ -391,10 +391,24 @@ export const SEARCH_OPTS = {
   },
 };
 
-// §185 分屏窗格宽界：双窗格各不足 360 宽即退化单窗格；恢复带 6px 迟滞防抖
+// §185 分屏窗格宽界：双窗格各不足 360 宽即退化单窗格；恢复带 6px 迟滞防抖。
+// 分屏⑥轮起方向可选（lr=左右 / tb=上下）：竖排按高度退化——12 行/格 ≈190px 的
+// 底限比横向宽松（列太窄易折行，行少些尚可滚动看），恢复带同款 6px 迟滞
 export const SPLIT_PANE_MIN = 360;
 export const SPLIT_DEGRADE_BELOW = SPLIT_PANE_MIN * 2;
 export const SPLIT_RECOVER_AT = SPLIT_PANE_MIN * 2 + 6;
+export const SPLIT_PANE_MIN_H = 190;
+export const SPLIT_DEGRADE_BELOW_H = SPLIT_PANE_MIN_H * 2;
+export const SPLIT_RECOVER_AT_H = SPLIT_PANE_MIN_H * 2 + 6;
+
+// 分屏方向：lr=左右（主格在左）/ tb=上下（主格在上）。方向是「记住的上次选择」
+// （Windows Terminal 惯例）：分屏菜单的方向选择写回，各入口（标签分屏钮/右键/
+// 复制标签页）不带显式方向时沿用
+export type SplitDir = "lr" | "tb";
+export type SplitPanes = { main: string; second: string; dir: SplitDir };
+/** 拖拽分割条的占比夹取界：主格 20%~80%，任何一侧都不小于可读下限 */
+export const SPLIT_FRAC_MIN = 0.2;
+export const SPLIT_FRAC_MAX = 0.8;
 
 // 显示设置（路线图⑥）：字号范围与主题色板。偏好存 vault（settings KV，跨进程记忆），
 // 浏览器演示模式退化为 localStorage。R27（§7.1/§244）：外观三态（跟随系统/深色/浅色，

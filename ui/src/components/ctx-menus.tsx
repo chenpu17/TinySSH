@@ -7,6 +7,7 @@ import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import type { Host, HostMeta, SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
 import type { ConfirmState } from "./confirm-dialogs";
+import type { SplitDir, SplitPanes } from "../app-data";
 import { IconX } from "../icons";
 
 export interface CtxMenusProps {
@@ -15,13 +16,16 @@ export interface CtxMenusProps {
   hosts: Host[];
   hostMeta: HostMeta[];
   connectingIds: Set<string>;
-  splitPanes: { main: string; second: string } | null;
+  splitPanes: SplitPanes | null;
   tabNames: Record<string, string>;
   autoReconn: { sid: string; attempt: number; max: number } | null;
   // —— 分屏选择菜单 ——
   splitMenu: boolean;
   setSplitMenu: (v: boolean) => void;
-  enterSplitWith: (sid: string) => Promise<void>;
+  enterSplitWith: (sid: string, dir?: SplitDir) => Promise<void>;
+  // 方向选择（分屏⑥轮）：菜单内的左右/上下分段选择，写回后各入口沿用
+  splitDir: SplitDir;
+  setSplitDir: (d: SplitDir) => void;
   // —— 标签右键 ——
   tabMenu: { x: number; y: number; sid: string } | null;
   setTabMenu: (v: { x: number; y: number; sid: string } | null) => void;
@@ -64,7 +68,7 @@ export interface CtxMenusProps {
 
 export function CtxMenus({
   sessions, sid, hosts, hostMeta, connectingIds, splitPanes, tabNames, autoReconn,
-  splitMenu, setSplitMenu, enterSplitWith,
+  splitMenu, setSplitMenu, enterSplitWith, splitDir, setSplitDir,
   tabMenu, setTabMenu, exitSplit, stopRetry, reconnectSession, setRenaming,
   toggleSessionLog, openSessionLogFolder, openSessionDetail, requestCloseSession,
   hostMenu, setHostMenu, recentMenu, setRecentMenu, createSession, toggleFavorite,
@@ -75,30 +79,47 @@ export function CtxMenus({
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
   return (
     <>
-      {splitMenu && (
-        <>
-          <div className="pop-mask" onClick={() => setSplitMenu(false)} />
-          <div className="split-menu" role="menu" aria-label="分屏">
-            <div className="ts-label">在右侧显示已有会话<span className="dim">（复用现有连接，不新建）</span></div>
-            {[...sessions].filter((s) => s.id !== sid).length === 0 && (
-              <div className="dim" style={{ fontSize: 12, padding: "2px 0 4px" }}>暂无其他会话</div>
-            )}
-            {[...sessions].filter((s) => s.id !== sid).map((s) => {
-              const st = stateLabel(s.state);
-              return (
-                <button key={s.id} className="ghost sm-item" role="menuitem"
-                  onClick={() => { setSplitMenu(false); void enterSplitWith(s.id); }}>
-                  <span className="sm-name">{s.host_name}</span>
-                  <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
-                </button>
-              );
-            })}
-            <div className="dim" style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 2px 0" }}>
-              新建的会话先落在标签栏——右键标签选「与当前会话分屏」即可。
+      {splitMenu && (() => {
+        const side = splitDir === "tb" ? "下侧" : "右侧";
+        return (
+          <>
+            <div className="pop-mask" onClick={() => setSplitMenu(false)} />
+            <div className="split-menu" role="menu" aria-label="分屏">
+              {/* 分屏⑥轮：方向可选（Windows Terminal/iTerm2 习惯）——记住上次选择，
+                  标签分屏钮/右键项沿用；已分屏时选向即旋转布局 */}
+              <div className="split-dir-row" role="radiogroup" aria-label="分屏方向">
+                <button type="button" className={"sm-dir" + (splitDir === "lr" ? " on" : "")} role="radio"
+                  aria-checked={splitDir === "lr"} data-testid="split-dir-lr"
+                  title="左右分屏：当前会话在左，副格在右"
+                  onClick={() => setSplitDir("lr")}
+                >左右分屏</button>
+                <button type="button" className={"sm-dir" + (splitDir === "tb" ? " on" : "")} role="radio"
+                  aria-checked={splitDir === "tb"} data-testid="split-dir-tb"
+                  title="上下分屏：当前会话在上，副格在下"
+                  onClick={() => setSplitDir("tb")}
+                >上下分屏</button>
+              </div>
+              <div className="ts-label">在{side}显示已有会话<span className="dim">（复用现有连接，不新建）</span></div>
+              {[...sessions].filter((s) => s.id !== sid).length === 0 && (
+                <div className="dim" style={{ fontSize: 12, padding: "2px 0 4px" }}>暂无其他会话</div>
+              )}
+              {[...sessions].filter((s) => s.id !== sid).map((s) => {
+                const st = stateLabel(s.state);
+                return (
+                  <button key={s.id} className="ghost sm-item" role="menuitem"
+                    onClick={() => { setSplitMenu(false); void enterSplitWith(s.id, splitDir); }}>
+                    <span className="sm-name">{s.host_name}</span>
+                    <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
+                  </button>
+                );
+              })}
+              <div className="dim" style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 2px 0" }}>
+                新建的会话先落在标签栏——右键标签选「与当前会话分屏」即可。
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
       {/* 十一轮：标签右键菜单——对象先存在、操作跟上来。fixed 定位跟随指针并夹在
           视口内；遮罩点击/右键都关闭；会话关闭后菜单自动只剩遮罩（点掉即净） */}
       {tabMenu && (() => {
@@ -108,32 +129,39 @@ export function CtxMenus({
         const close = () => setTabMenu(null);
         const inSplit = !!s && (splitPanes?.main === s.id || splitPanes?.second === s.id);
         const menuHost = s ? hosts.find((h) => h.id === s.host_id) : undefined;
+        const side = splitDir === "tb" ? "下" : "右";
         return (
           <>
             <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
             {s && (
               <div className="ctx-menu" role="menu" aria-label={`会话操作：${s.host_name}`} style={{ left: mx, top: my }}>
                 {inSplit ? (
-                  <button className="ghost sm-item" role="menuitem"
-                    onClick={() => { close(); void exitSplit(); }}
-                  >退出分屏（两个会话都保留）</button>
+                  <>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); void exitSplit(); }}
+                    >退出分屏（两个会话都保留）</button>
+                    {/* 分屏⑥轮：布局旋转（tmux/Windows Terminal 习惯）——两会话不动，只换方向 */}
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); void enterSplitWith(s.id, splitDir === "tb" ? "lr" : "tb"); }}
+                    >改为{splitDir === "tb" ? "左右" : "上下"}分屏</button>
+                  </>
                 ) : s.id !== sid && !!sid ? (
                   <button className="ghost sm-item" role="menuitem"
-                    onClick={() => { close(); void enterSplitWith(s.id); }}
-                  >{splitPanes ? "放到右侧分屏（替换右格）" : "与当前会话分屏（放到右侧）"}</button>
+                    onClick={() => { close(); void enterSplitWith(s.id, splitDir); }}
+                  >{splitPanes ? `放到${side}侧分屏（替换${side}格）` : `与当前会话分屏（放到${side}侧）`}</button>
                 ) : s.id === sid && sessions.some((x) => x.id !== s.id) ? (
                   // 十二轮：活动标签也得分屏（Xshell/Windows Terminal 惯例）——
-                  // 第二格是谁交给既有「右侧会话选择」菜单，不在此复制会话列表
+                  // 第二格是谁交给既有「会话选择」菜单，不在此复制会话列表
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => { close(); setSplitMenu(true); }}
-                  >分屏（选择右侧会话）…</button>
+                  >分屏（选择{side}侧会话）…</button>
                 ) : s.id === sid && menuHost ? (
-                  // 十三轮：唯一会话也有分屏——复制本标签到右侧（新会话），Windows
+                  // 十三轮：唯一会话也有分屏——复制本标签到副格（新会话），Windows
                   // Terminal "Split Tab" 语义；显式参数直达，无预武装挂起态
                   <button className="ghost sm-item" role="menuitem"
-                    title="新建一条同主机连接并放入右侧窗格（当前会话留在左侧）"
+                    title={`新建一条同主机连接并放入${side}侧窗格（当前会话留在${splitDir === "tb" ? "上" : "左"}侧）`}
                     onClick={() => { close(); createSession(menuHost, true); }}
-                  >分屏：复制标签页到右侧（新会话）</button>
+                  >分屏：复制标签页到{side}侧（新会话）</button>
                 ) : null}
                 {autoReconn?.sid === s.id ? (
                   <button className="ghost sm-item" role="menuitem"
@@ -292,7 +320,9 @@ export function CtxMenus({
       })()}
       {splitDegraded && splitHintOpen && (
         <div className="split-hint" role="status">
-          <span>窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。</span>
+          <span>{splitPanes?.dir === "tb"
+            ? "窗口高度不足——分屏临时退化为单窗格，另一个会话仍在标签中；拉高窗口自动恢复。"
+            : "窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。"}</span>
           <button className="ghost" aria-label="关闭提示" onClick={() => { splitHintDismissedRef.current = true; setSplitHintOpen(false); }}><IconX size={12} /></button>
         </div>
       )}

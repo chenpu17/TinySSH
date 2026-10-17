@@ -38,7 +38,7 @@ export const DEFAULT_KEYMAP: Record<KeyActionId, Binding> = {
 export const KEYMAP_ACTIONS: { id: KeyActionId; label: string; desc: string }[] = [
   { id: "tab-new", label: "新建连接", desc: "打开主机栏添加表单" },
   { id: "tab-close", label: "关闭当前标签", desc: "活动会话先确认影响" },
-  { id: "split-toggle", label: "分屏 / 退出分屏", desc: "未分屏时弹右侧会话选择" },
+  { id: "split-toggle", label: "分屏 / 退出分屏", desc: "未分屏时弹会话选择（左右/上下方向）" },
   { id: "palette", label: "命令面板", desc: "命令与跳转" },
   { id: "hostbar", label: "主机栏开关", desc: "表单编辑焦点下不劫持" },
   { id: "search", label: "搜索终端内容", desc: "当前会话缓冲内查找" },

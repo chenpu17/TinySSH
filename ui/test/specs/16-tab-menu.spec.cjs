@@ -33,7 +33,7 @@ const clickItem = async (page, part) => {
 };
 
 const paneCount = (page) =>
-  page.evaluate(() => document.querySelectorAll(".pane-left, .pane-right").length);
+  page.evaluate(() => document.querySelectorAll(".pane-left, .pane-right, .pane-top, .pane-bottom").length);
 
 const tabCount = (page) =>
   page.evaluate(() => document.querySelectorAll(".tab").length);

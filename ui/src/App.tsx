@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import {
   invoke, MkChannel, inTauri, listen,
 } from "./adapter/bridge";
@@ -61,9 +61,10 @@ import {
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
   runBench, SEARCH_OPTS, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_PALETTE,
   stateLabel, stampLocal, stopOutcomeText,
-  SPLIT_DEGRADE_BELOW, SPLIT_PANE_MIN, SPLIT_RECOVER_AT, tauriListen, THEMES, ThemePreset,
+  SPLIT_DEGRADE_BELOW, SPLIT_DEGRADE_BELOW_H, SPLIT_FRAC_MAX, SPLIT_FRAC_MIN,
+  SPLIT_RECOVER_AT, SPLIT_RECOVER_AT_H, tauriListen, THEMES, ThemePreset,
   TransferCard, themeById, TZ_NOTE, useDialogFocus,
-  type Appearance, type SettingsCat,
+  type Appearance, type SettingsCat, type SplitDir, type SplitPanes,
 } from "./app-data";
 import { WinControls } from "./components/window-controls";
 import { QuickConnectForm } from "./components/quick-connect";
@@ -137,11 +138,21 @@ export default function App() {
     }, 300);
     return () => clearInterval(t);
   }, [inTauri, applyStateEvent]);
-  // 分屏（T19）：main=左主 pane，second=右副 pane；null=单 pane。布局（谁在左谁在右）
-  // 与焦点（sid）解耦——分屏时点右 pane 只挪焦点，终端内容不左右跳动。
-  // ref 与 state 并行：fitTerminal/看门狗等回调内读 ref，避开 stale closure。
-  const [splitPanes, setSplitPanes] = useState<{ main: string; second: string } | null>(null);
-  const splitRef = useRef<{ main: string; second: string } | null>(null);
+  // 分屏（T19；分屏⑥轮起方向可选+可拖拽）：main=左主/上主 pane，second=右副/下副
+  // pane，dir=布局方向；null=单 pane。布局（谁在哪格、方向、占比）与焦点（sid）解耦
+  // ——分屏时点另一格只挪焦点，终端内容不跳动。ref 与 state 并行：fitTerminal/看门狗
+  // 等回调内读 ref，避开 stale closure。splitDir 是「记住的上次方向」（app 运行期内），
+  // 各入口不带显式方向时沿用；splitFrac 主格占比，拖拽条/双击复位写它
+  const [splitPanes, setSplitPanes] = useState<SplitPanes | null>(null);
+  const splitRef = useRef<SplitPanes | null>(null);
+  const [splitDir, setSplitDir] = useState<SplitDir>("lr");
+  const splitDirRef = useRef<SplitDir>("lr");
+  const splitFracRef = useRef(0.5);
+  // 把占比写进 #term 的 --split-frac（CSS 几何与分割条定位都吃这个变量）
+  const applySplitFrac = useCallback(() => {
+    const el = termRef.current;
+    if (el) el.style.setProperty("--split-frac", splitFracRef.current.toFixed(4));
+  }, []);
   // 标签栏溢出指示（五人走查·林姐：16 会话时 10 个标签静默不可见，无任何溢出
   // affordance——横向滚动条 overlay 不滚动不出现）。测左/右可滚 + 被裁标签数，
   // 两侧出现 ‹ › 滚动钮；激活标签切换（含 ⌘⇧]/[ 循环）自动滚入视野
@@ -1908,7 +1919,7 @@ export default function App() {
       }
       case "split-toggle": {
         // 直键 Ctrl+D（UX 六轮）：与工具栏分屏按钮同路径——已分屏先退（两会话都
-        // 保留）；未分屏弹「右侧会话选择」菜单（空态菜单自会说「暂无其他会话」）
+        // 保留）；未分屏弹「会话选择」菜单（方向左右/上下在菜单内选择）
         if (splitPanes) void exitSplit();
         else setSplitMenu(true);
         return true;
@@ -1953,16 +1964,18 @@ export default function App() {
   }, []);
 
   // 由 splitRef/sidRef 统一同步各终端层的显示类（display 归它管，React 不渲染这些层）：
-  // 单 pane：活动会话 .active；分屏：main=左半、second=右半，焦点 pane 加高亮与名牌
-  // §185 退化态：只呈现焦点窗格全幅（另一个仍在标签中），类同单 pane
+  // 单 pane：活动会话 .active；分屏：主格=左半/上半（dir），副格=另一半，焦点 pane 加
+  // 高亮与名牌。§185 退化态：只呈现焦点窗格全幅（另一个仍在标签中），类同单 pane
   const applyPanes = useCallback(() => {
     const sp = splitRef.current;
     const degraded = !!sp && splitDegradedRef.current;
+    const clsMain = sp?.dir === "tb" ? "pane-top" : "pane-left";
+    const clsSecond = sp?.dir === "tb" ? "pane-bottom" : "pane-right";
     for (const [s, e] of termsRef.current) {
-      e.el.classList.remove("active", "pane-left", "pane-right", "pane-focused");
+      e.el.classList.remove("active", "pane-left", "pane-right", "pane-top", "pane-bottom", "pane-focused");
       if (sp && !degraded) {
         if (s === sp.main || s === sp.second) {
-          e.el.classList.add(s === sp.main ? "pane-left" : "pane-right");
+          e.el.classList.add(s === sp.main ? clsMain : clsSecond);
           e.tag.textContent = sessionsRef.current.find((x) => x.id === s)?.host_name ?? s.slice(0, 12);
           if (s === sidRef.current) e.el.classList.add("pane-focused");
         }
@@ -1976,13 +1989,18 @@ export default function App() {
   const applyPanesRef = useRef<() => void>(() => {});
   applyPanesRef.current = applyPanes;
 
-  // §185 宽度退化：双窗格各 <360 宽即退化单窗格（恢复带 6px 迟滞防阈值抖动）
+  // §185 宽度退化（分屏⑥轮起按方向取度量）：左右双格各 <360 宽、上下双格各 <190 高
+  // 即退化单窗格（恢复带 6px 迟滞防阈值抖动；竖排底限更宽松——行少尚可滚动，
+  // 列太窄必折行）
   const checkSplitWidth = useCallback(() => {
     const el = termRef.current;
     if (!el) return;
-    const w = el.clientWidth;
     const sp = splitRef.current;
-    const next = !!sp && (splitDegradedRef.current ? w < SPLIT_RECOVER_AT : w < SPLIT_DEGRADE_BELOW);
+    const tb = sp?.dir === "tb";
+    const m = tb ? el.clientHeight : el.clientWidth;
+    const below = tb ? SPLIT_DEGRADE_BELOW_H : SPLIT_DEGRADE_BELOW;
+    const recover = tb ? SPLIT_RECOVER_AT_H : SPLIT_RECOVER_AT;
+    const next = !!sp && (splitDegradedRef.current ? m < recover : m < below);
     if (next !== splitDegradedRef.current) {
       splitDegradedRef.current = next;
       setSplitDegraded(next);
@@ -1993,6 +2011,49 @@ export default function App() {
   }, [applyPanes, fitTerminal]);
   const checkSplitWidthRef = useRef<() => void>(() => {});
   checkSplitWidthRef.current = checkSplitWidth;
+
+  // 分割条拖拽（分屏⑥轮，补齐 Windows Terminal/iTerm2/tmux 的基本习惯）：主格占比
+  // 0.2~0.8 夹取（任一侧都不小于可读下限），pointer capture 全程跟手；拖动中每 150ms
+  // 校准一次 PTY 几何，松手再校准终态。双击复位对半。占比存内存（会话本就不跨重启）
+  const splitDragRef = useRef<{ dir: SplitDir; startFrac: number; startPt: number; total: number; lastFit: number } | null>(null);
+  const onDivDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const mount = termRef.current;
+    const sp = splitRef.current;
+    if (!mount || !sp) return;
+    const r = mount.getBoundingClientRect();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    splitDragRef.current = {
+      dir: sp.dir,
+      startFrac: splitFracRef.current,
+      startPt: sp.dir === "tb" ? e.clientY : e.clientX,
+      total: sp.dir === "tb" ? r.height : r.width,
+      lastFit: 0,
+    };
+    document.body.classList.add("split-dragging", sp.dir === "tb" ? "split-drag-tb" : "split-drag-lr");
+  }, []);
+  const onDivMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const dg = splitDragRef.current;
+    if (!dg) return;
+    const pt = dg.dir === "tb" ? e.clientY : e.clientX;
+    const frac = Math.min(SPLIT_FRAC_MAX, Math.max(SPLIT_FRAC_MIN, dg.startFrac + (pt - dg.startPt) / dg.total));
+    if (frac !== splitFracRef.current) {
+      splitFracRef.current = frac;
+      applySplitFrac();
+    }
+    const now = performance.now();
+    if (now - dg.lastFit > 150) { dg.lastFit = now; fitTerminal(); }
+  }, [applySplitFrac, fitTerminal]);
+  const onDivUp = useCallback(() => {
+    if (!splitDragRef.current) return;
+    splitDragRef.current = null;
+    document.body.classList.remove("split-dragging", "split-drag-lr", "split-drag-tb");
+    fitTerminal();
+  }, [fitTerminal]);
+  const resetSplitFrac = useCallback(() => {
+    splitFracRef.current = 0.5;
+    applySplitFrac();
+    fitTerminal();
+  }, [applySplitFrac, fitTerminal]);
 
   // 聚焦某会话（点标签/点 pane/⌘1-9 共用）：只挪焦点不动布局——分屏时点右 pane
   // 不会把终端内容左右对调。rev-r21 M1：应用内导航推进焦点代际（§6.3——慢建连
@@ -2098,8 +2159,8 @@ export default function App() {
     const sp = splitRef.current;
     if (sp && newSid !== sp.main && newSid !== sp.second) {
       splitRef.current = sidRef.current === sp.second
-        ? { main: sp.main, second: newSid }
-        : { main: newSid, second: sp.second };
+        ? { ...sp, second: newSid }
+        : { ...sp, main: newSid };
       setSplitPanes(splitRef.current);
     }
     focusSession(newSid);
@@ -2118,30 +2179,38 @@ export default function App() {
     setBrief(null);
     void invoke("note_terminal", { sid: null, focused: false }).catch(() => {});
     for (const [, e] of termsRef.current) {
-      e.el.classList.remove("active", "pane-left", "pane-right", "pane-focused");
+      e.el.classList.remove("active", "pane-left", "pane-right", "pane-top", "pane-bottom", "pane-focused");
     }
   }, []);
 
-  // 进入/调整分屏（T19）：把 target 放到右副 pane（已在分屏中则替换副 pane）。
-  // 主 pane 与焦点不动；50/50 固定比例（V0 不做拖拽分割条）。
-  const enterSplitWith = useCallback(async (target: string) => {
+  // 进入/调整分屏（T19；分屏⑥轮起方向可选+可旋转）：把 target 放到副 pane（主 pane
+  // 与焦点不动）。dir 缺省沿用记住的上次方向（splitDirRef）。已分屏时的语义：
+  // 换向 = 旋转布局（tmux/Windows Terminal 习惯）；屏外 target = 替换副 pane；
+  // 换向 + 屏外 target = 两者同时发生（「放到下侧」的直觉：新会话进下格）。
+  // 占比不重置——退出再进、旋转都沿用上次拖出的比例。
+  const enterSplitWith = useCallback(async (target: string, dir?: SplitDir) => {
+    const d = dir ?? splitDirRef.current;
+    splitDirRef.current = d;
+    setSplitDir(d);
     const sp = splitRef.current;
     if (sp) {
-      if (target === sp.main || target === sp.second) return;
-      splitRef.current = { ...sp, second: target };
+      const second = target === sp.main || target === sp.second ? sp.second : target;
+      if (d === sp.dir && second === sp.second) return; // 同向且副格不变：无操作
+      splitRef.current = { main: sp.main, second, dir: d };
     } else {
       if (!sidRef.current || target === sidRef.current) return;
-      splitRef.current = { main: sidRef.current, second: target };
+      splitRef.current = { main: sidRef.current, second: target, dir: d };
     }
     setSplitPanes(splitRef.current);
     await ensureSessionTerm(target);
+    applySplitFrac();
     applyPanes();
     fitTerminal();
     checkSplitWidthRef.current();
     setTimeout(() => void fitTerminal(), 150);
     // 工具栏点击会把焦点留在按钮上——把焦点送回终端，打字不中断
     if (sidRef.current) focusSession(sidRef.current);
-  }, [ensureSessionTerm, applyPanes, fitTerminal, focusSession]);
+  }, [ensureSessionTerm, applySplitFrac, applyPanes, fitTerminal, focusSession]);
 
   const exitSplit = useCallback(() => {
     if (!splitRef.current) return;
@@ -3253,11 +3322,11 @@ export default function App() {
         lastTrackArmedRef.current = true;
         await refreshLists();
         if (intoSplit) {
-          // 十三轮：右键活动标签「复制标签页到右侧」——显式参数直达（无跨点击的挂起
-          // 状态，非已退役的预武装模式）：这条连接就是右格，建好即进分屏
+          // 十三轮：右键活动标签「复制标签页到右侧/下侧」——显式参数直达（无跨点击的
+          // 挂起状态，非已退役的预武装模式）：这条连接就是副格，建好即进分屏
           await enterSplitWith(final.session_id);
           await attachSession(final.session_id);
-          pushToast("ok", `已连接 ${host.name}（右侧分屏）`);
+          pushToast("ok", `已连接 ${host.name}（${splitDirRef.current === "tb" ? "下" : "右"}侧分屏）`);
           return;
         }
         // rev-r21 M2：他主机门挂起中（用户注意力在其输入框，遮罩不持 DOM 焦）完成
@@ -3943,9 +4012,9 @@ export default function App() {
                   <button
                     type="button"
                     className="tab-split"
-                    title={splitPanes ? "放到右侧分屏" : s.id === sid ? "已在主视图" : "与当前会话分屏"}
-                    aria-label={splitPanes ? `把 ${s.host_name} 放到右侧分屏` : s.id === sid ? `${s.host_name} 已在主视图` : `与 ${s.host_name} 分屏`}
-                    onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id); }}
+                    title={splitPanes ? `放到${splitDir === "tb" ? "下" : "右"}侧分屏` : s.id === sid ? "已在主视图" : `与当前会话分屏（放到${splitDir === "tb" ? "下" : "右"}侧）`}
+                    aria-label={splitPanes ? `把 ${s.host_name} 放到${splitDir === "tb" ? "下" : "右"}侧分屏` : s.id === sid ? `${s.host_name} 已在主视图` : `与 ${s.host_name} 分屏（${splitDir === "tb" ? "上下" : "左右"}）`}
+                    onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id, splitDir); }}
                   ><IconSplit size={12} /></button>
                   <button
                     type="button"
@@ -4234,7 +4303,25 @@ export default function App() {
             if (!target) return;
             const en = termsRef.current.get(target);
             setTermMenu({ x: e.clientX, y: e.clientY, sid: target, hasSel: !!en?.term.hasSelection() });
-          }} />
+          }}>
+            {/* 分屏⑥轮：可拖拽分割条（退化态随窗格一起消失）。唯一 React 子节点——
+                .term-session 层由 makeTerm 以 appendChild 挂入，互不干扰 */}
+            {splitPanes && !splitDegraded && (
+              <div
+                className={"pane-div " + (splitPanes.dir === "tb" ? "div-tb" : "div-lr")}
+                data-testid="pane-div"
+                role="separator"
+                aria-orientation={splitPanes.dir === "tb" ? "horizontal" : "vertical"}
+                aria-label="分屏分割条"
+                title="拖拽调整两格比例（20%~80%）；双击复位对半"
+                onPointerDown={onDivDown}
+                onPointerMove={onDivMove}
+                onPointerUp={onDivUp}
+                onPointerCancel={onDivUp}
+                onDoubleClick={resetSplitFrac}
+              />
+            )}
+          </div>
           {current?.state === "Disconnected" && (
             <div className="dead-overlay">
               <div className="dead-banner">
@@ -4311,6 +4398,7 @@ export default function App() {
             connectingIds={connectingIds} splitPanes={splitPanes} tabNames={tabNames}
             autoReconn={autoReconn}
             splitMenu={splitMenu} setSplitMenu={setSplitMenu} enterSplitWith={enterSplitWith}
+            splitDir={splitDir} setSplitDir={(d) => { splitDirRef.current = d; setSplitDir(d); }}
             tabMenu={tabMenu} setTabMenu={setTabMenu} exitSplit={exitSplit}
             stopRetry={stopRetry} reconnectSession={reconnectSession} setRenaming={setRenaming}
             toggleSessionLog={toggleSessionLog} openSessionLogFolder={openSessionLogFolder}

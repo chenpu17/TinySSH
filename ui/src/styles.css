@@ -552,9 +552,25 @@ textarea {
    几何测量经 fitDimsOf 扣除此 padding，PTY 列行与可视区严格一致 */
 .term-session { position: absolute; inset: 0; display: none; padding: 6px 10px; }
 .term-session.active { display: block; }
-/* 分屏（T19）：左主/右副各半，1px 分隔线；焦点 pane 细高亮圈，名牌常显 */
-.term-session.pane-left { display: block; right: 50%; border-right: 1px solid var(--border); }
-.term-session.pane-right { display: block; left: 50%; }
+/* 分屏（T19；分屏⑥轮起方向可选+可拖拽）：--split-frac 主格占比（#term 内联变量，
+   分割条写入，0.2~0.8）。左右=左主/右副，上下=上主/下副；焦点 pane 细高亮圈，名牌常显。
+   分隔线由 .pane-div 分割条承担（悬停/拖拽亮起），窗格本体不再画边 */
+.term-session.pane-left { display: block; right: calc((1 - var(--split-frac, 0.5)) * 100%); }
+.term-session.pane-right { display: block; left: calc(var(--split-frac, 0.5) * 100%); }
+.term-session.pane-top { display: block; bottom: calc((1 - var(--split-frac, 0.5)) * 100%); }
+.term-session.pane-bottom { display: block; top: calc(var(--split-frac, 0.5) * 100%); }
+/* 分割条：10px 命中区（视线只有 1px，拖拽不跟丢），中线悬停/拖拽时亮 accent-glow；
+   拖拽期间全窗锁光标（capture 后指针会跑出条外）并禁选中文本 */
+.pane-div { position: absolute; z-index: 6; touch-action: none; }
+.pane-div.div-lr { top: 0; bottom: 0; left: calc(var(--split-frac, 0.5) * 100% - 5px); width: 10px; cursor: col-resize; }
+.pane-div.div-tb { left: 0; right: 0; top: calc(var(--split-frac, 0.5) * 100% - 5px); height: 10px; cursor: row-resize; }
+.pane-div::after { content: ""; position: absolute; background: var(--border); }
+.pane-div.div-lr::after { top: 0; bottom: 0; left: calc(50% - 0.5px); width: 1px; }
+.pane-div.div-tb::after { left: 0; right: 0; top: calc(50% - 0.5px); height: 1px; }
+.pane-div:hover::after, body.split-dragging .pane-div::after { background: var(--accent-glow); }
+body.split-dragging { user-select: none; }
+body.split-drag-lr, body.split-drag-lr * { cursor: col-resize !important; }
+body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .term-session.pane-focused::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   box-shadow: inset 0 0 0 1px var(--accent-glow);
@@ -565,7 +581,8 @@ textarea {
   background: var(--glass); padding: 1px 6px; border-radius: 4px;
   pointer-events: none;
 }
-.term-session.pane-left .pane-tag, .term-session.pane-right .pane-tag { display: block; }
+.term-session.pane-left .pane-tag, .term-session.pane-right .pane-tag,
+.term-session.pane-top .pane-tag, .term-session.pane-bottom .pane-tag { display: block; }
 .term-session.pane-focused .pane-tag { color: var(--accent); }
 
 /* 标签页（T19）：中栏顶部一条，与会话一一对应
@@ -1202,6 +1219,16 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 }
 .split-menu .sm-item, .ctx-menu .sm-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
 .split-menu .sm-item .sm-name, .ctx-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 分屏⑥轮：方向选择（左右/上下）分段单选——选中态 accent 描边；记住的选择
+   沿用到标签分屏钮/右键项，直到下次改选 */
+.split-dir-row { display: flex; gap: 6px; padding-bottom: 6px; }
+.split-menu .sm-dir {
+  flex: 1; padding: 5px 0; border-radius: 6px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-sub); font-size: 12px; font-family: inherit;
+  line-height: 1.4; cursor: pointer; text-align: center;
+}
+.split-menu .sm-dir:hover { border-color: var(--border-hover); color: var(--text); }
+.split-menu .sm-dir.on { border-color: var(--accent); color: var(--accent); background: var(--accent-ring); font-weight: 600; }
 /* 十一轮 §6.3 修订：右键上下文菜单（标签/主机卡/终端区共用 .ctx-menu）——fixed 跟随
    指针。R41 C-2 同族教训：配对遮罩的浮层必须高于 .pop-mask(41)，取 44（.split-menu 43
    同层语义，互不重叠） */
