@@ -55,6 +55,7 @@ import "@xterm/xterm/css/xterm.css";
 // 拆分①抽出的共享层：数据/工具/hooks（app-data）与自包含组件（components/*）
 import {
   altMetaSequence, ApprovalRow, APPEARANCES, auditLabel, AUDIT_LABELS,
+  byName, hostMatches, phaseText,
   ChromePalette, ctrlCharOf, epistemicLabel, exitText,
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, hhmm, inputBlockedState,
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
@@ -75,6 +76,8 @@ import { Welcome } from "./components/welcome";
 import { CtxMenus } from "./components/ctx-menus";
 import { CollabApprovals, CollabDelegate } from "./components/collab-panel";
 import { ConnDetail } from "./components/conn-detail";
+import { Hostbar } from "./components/hostbar";
+import { SessionToolbar } from "./components/session-toolbar";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 import { SelfMeterTitlebar } from "./self-meter";
 
@@ -90,11 +93,8 @@ function sameShape<T>(prev: T[], next: T[]): T[] {
 
 // 审批高危命令形态（rm -rf/格式化/关机类……后端内置 deny 只拦最狠子集）：
 // 模块级编译一次——原先在组件体内，每次渲染重建 RegExp
-// 五轮架构：主机过滤纯函数化——渲染派生（filteredHosts）与搜索框 Enter 直达
-// 共用同一口径（防抖未落地时 Enter 以输入框实时值重算，两侧结果必然一致）。
-function hostMatches(h: Host, qN: string): boolean {
-  return [h.name, h.address, h.username, ...(h.tags ?? [])].some((v) => v.toLowerCase().includes(qN));
-}
+// 五轮架构：主机过滤/排序/相位文案已提升 app-data.ts（hostMatches/byName/phaseText），
+// 宿主与 hostbar.tsx 共用同一口径。
 
 export default function App() {
 
@@ -501,9 +501,7 @@ export default function App() {
     }
     attemptWaitersRef.current.set(attemptId, resolve);
   }), []);
-  // 相位中文（§6.2：不得猜测——只呈示核心给出的阶段）
-  const phaseText = (p: AttemptPhase) =>
-    p === "Connecting" ? "连接中…" : p === "TrustRequired" ? "等待指纹确认" : p === "Authenticating" ? "认证中…" : "等待验证码";
+  // 相位中文 phaseText 已提升 app-data.ts（仅主机栏连接钮使用）
   // R21（§6.3）：焦点代际——用户导航（attach/开浮层）或离开窗口都会推进；
   // 连接完成时仅当代际未变且窗口前台才落终端焦点，后台完成只更新标签态不抢焦点。
   // R23 消费 C1 事件后在此基础上深化（attempt 级 current-selection 判定）
@@ -1754,10 +1752,9 @@ export default function App() {
   };
   const hostQueryN = hostQuery.trim().toLowerCase();
   // R20（§4.2 主机栏）：收藏置顶分组（有收藏→「收藏/其他主机」两组；无收藏→「全部主机」）、
-  // 组内名称排序（排序稳定：查询/收藏变化不抖动——sort 在过滤后一次性应用）、标签 chip 筛选
+  // 组内名称排序（byName 见 app-data）、标签 chip 筛选
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
   const isFav = (h: Host) => metaById.get(h.id)?.favorite === true;
-  const byName = (a: Host, b: Host) => a.name.localeCompare(b.name, "zh", { numeric: true });
   const allTags = [...new Set(hosts.flatMap((h) => h.tags ?? []))].sort((a, b) => a.localeCompare(b, "zh"));
   // rev-r20 M1：活跃标签经编辑/删除在全部主机上消失后 chip 不再渲染，tagFilter 残留会
   // 让列表恒空且无清除入口——失效筛选自动失效
@@ -3752,226 +3749,26 @@ export default function App() {
       </header>
       <div className="workspace">
         {hostbarOpen && (
-          <>
-            {/* 主机栏 224（可拖 200–300）：主机负责连接资源；会话只看标签（§3 信息结构） */}
-            <aside className="hostbar" style={{ width: hostbarWidth }} aria-label="主机栏">
-              <div className="hb-top">
-                <div className="hb-search">
-                  <IconSearch size={13} />
-                  <input placeholder="搜索主机" aria-label="搜索主机（名称 / 地址 / 用户 / 标签）" spellCheck={false}
-                    ref={hostSearchRef}
-                    onInput={(e) => {
-                      // 非受控 + 150ms 防抖（五轮架构）：键入路径不再逐键 setState
-                      // 触发全树 reconcile；hostQuery 只服务列表过滤，允许滞后
-                      const v = (e.target as HTMLInputElement).value;
-                      if (hostDebounceRef.current) window.clearTimeout(hostDebounceRef.current);
-                      hostDebounceRef.current = window.setTimeout(() => {
-                        hostDebounceRef.current = 0;
-                        setHostQuery(v);
-                      }, 150);
-                    }}
-                    onKeyDown={(e) => {
-                      // 回车直达第一个命中主机（巡检补）——此前搜到后还必须挪鼠标点卡片。
-                      // 与主机卡 activate() 同动线：有活跃会话切最近一个，否则新建；
-                      // 连接中的主机忽略（§280 仅本主机连接中不扰）。
-                      // IME 组合期不触发（§7.3 同 resolveAction 口径）：敲 Enter 确认
-                      // 候选词不是「连接」
-                      if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
-                      // 防抖未落地的键入以输入框实时值重算——渲染闭包里的
-                      // filteredHosts 可能还停留在 150ms 前的查询词
-                      const qN = (hostSearchRef.current?.value ?? "").trim().toLowerCase();
-                      if (!qN) return;
-                      const pool = (activeTag ? hosts.filter((h) => (h.tags ?? []).includes(activeTag)) : hosts)
-                        .filter((h) => hostMatches(h, qN))
-                        .sort(byName);
-                      if (pool.length === 0) return;
-                      const h = pool[0];
-                      if (connectingIds.has(h.id)) return;
-                      const mine = sessions.filter((s) => s.host_id === h.id);
-                      const live = mine.filter((s) => s.state !== "Disconnected");
-                      const latest = [...live].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
-                      if (latest) { void attachSession(latest.id).catch((er) => pushToast("err", errMsg(er))); }
-                      else createSession(h);
-                    }} />
-                </div>
-                <button className="ghost icon-btn" title={showImport ? "收起导入" : "导入 ~/.ssh/config"} aria-label={showImport ? "收起导入" : "导入 ~/.ssh/config"}
-                  onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
-                  {showImport ? <IconChevronUp size={14} /> : <IconUpload size={14} />}
-                </button>
-                <button className="ghost icon-btn" title={showAddHost ? "收起表单" : "添加主机"} aria-label={showAddHost ? "收起表单" : "添加主机"}
-                  onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); setPrefillEntry(null); }}>
-                  {showAddHost ? <IconChevronUp size={14} /> : <IconPlus size={14} />}
-                </button>
-              </div>
-              {allTags.length > 0 && (
-                <div className="hb-tags" role="group" aria-label="按标签筛选">
-                  {allTags.map((t) => (
-                    <button key={t} className={"hb-tag" + (activeTag === t ? " on" : "")} aria-pressed={activeTag === t}
-                      title={activeTag === t ? `取消筛选「${t}」` : `只看带「${t}」标签的主机`}
-                      onClick={() => setTagFilter(activeTag === t ? null : t)}>{t}</button>
-                  ))}
-                </div>
-              )}
-              <div className="hb-scroll">
-          {showImport && (
-            <SshConfigImportPanel
-              onDone={refreshLists}
-              onClose={() => setShowImport(false)}
-              onManual={(e) => { setPrefillEntry(e); setEditingHost(null); setShowImport(false); setShowAddHost(true); }}
-            />
-          )}
-          {/* 新建/编辑主机与快速连接已改居中对话框（用户反馈二轮：220px 侧栏塞不下
-              表单）——挂载点移到 App 顶层浮层区，见下方 form-mask 两块 */}
-          {(() => {
-            // R20（§4.2）：卡片渲染收敛为局部函数——收藏分组（收藏/其他主机/全部主机）
-            // 复用同一卡片形态；组内名称序已在 filteredHosts 派生时排序
-            const renderHostCard = (h: Host) => {
-              // 该主机的现有会话（五人走查·林姐：误点已连主机静默开重复会话）。
-              // 在线徽章 + 点击切到最近会话；显式另开走右侧「连接」钮
-              const mine = sessions.filter((s) => s.host_id === h.id);
-              const live = mine.filter((s) => s.state !== "Disconnected");
-              const anyOnline = mine.some((s) => s.state === "Connected");
-              // 最近会话按时间戳比较：chrono 秒级无小数、纳秒级带小数位，
-              // 字符串字典序在「同一秒内混合精度」时会错序（'Z' > '.'）
-              const latest = [...live].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
-              const fav = metaById.get(h.id)?.favorite === true;
-              const activate = () => {
-                if (connectingIds.has(h.id)) return; // §280：仅本主机连接中忽略，其他主机不受扰
-                if (latest) { void attachSession(latest.id).catch((e) => pushToast("err", errMsg(e))); return; }
-                createSession(h);
-              };
-              return (
-              <div className="host-card" key={h.id}
-                tabIndex={0}
-                onContextMenu={(e) => {
-                  // 十一轮续：主机卡右键——连接/收藏/编辑/删除，与 hover 操作组同源同义
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setHostMenu({ x: e.clientX, y: e.clientY, hostId: h.id });
-                }}
-                role="button"
-                aria-label={`主机 ${h.name}（${h.username}@${h.address}:${h.port}）${latest ? "——Enter 切换到最近会话" : "——Enter 连接"}`}
-                onKeyDown={(e) => {
-                  // rev-r20 H1：冒泡自内层按钮（星标/编辑/删除）的 Enter/Space 不劫持——
-                  // 否则 preventDefault 吞掉按钮自身激活再误触 activate()
-                  if (e.target !== e.currentTarget) return;
-                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
-                }}
-                title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
-                {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
-                <div className="host-card-main" style={{ cursor: connectingIds.has(h.id) ? "default" : "pointer" }}
-                  title={latest
-                    ? `该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话\n${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老设备）" : "UTF-8"}`
-                    : undefined}
-                  onClick={activate}>
-                  {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩。
-                      T38 审核：GBK 徽章置名前——行尾会落入 hover 操作组覆盖区，置尾恰在
-                      准备连接的交互时刻不可见；置左恒可见 */}
-                  <div className="host-line">
-                    {h.charset === "gbk" && <span className="auth-tag" title="远端编码：GBK">GBK</span>}
-                    {mine.length > 0 && (
-                      <span className={"auth-tag live-tag" + (anyOnline ? " on" : "")}
-                        title={`已有 ${mine.length} 个会话（存活 ${live.length}）——点击主行切换到最近会话`}>● {mine.length}</span>
-                    )}
-                    <span className="host-name">{h.name}</span>
-                    <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
-                  </div>
-                  <div className="host-addr mono">{h.username}@{h.address}:{h.port}</div>
-                  {(h.tags ?? []).length > 0 && (
-                    <div className="host-tags">
-                      {(h.tags ?? []).slice(0, 2).map((t) => <span key={t} className="host-tag">{t}</span>)}
-                      {(h.tags ?? []).length > 2 && <span className="host-tag more">+{(h.tags ?? []).length - 2}</span>}
-                    </div>
-                  )}
-                  {lastFailed === h.id && !connectingIds.has(h.id) && (
-                    <div className="err host-fail">✕ 上次连接失败——检查地址与凭据后重试</div>
-                  )}
-                </div>
-                  <div className="host-card-side">
-                    <div className="host-ops">
-                      <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
-                        title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
-                        onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
-                      <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
-                        onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
-                      <button className="ghost host-del" title="删除主机"
-                        onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
-                    </div>
-                    {/* R23（§302 等待中可取消）：attempt 在途显示核心相位 + 取消入口；
-                        取消终态由核心串行裁决后呈示（cancelConnect 不自行改状态） */}
-                    <div className="row" style={{ flexWrap: "nowrap", gap: 4 }}>
-                      <button className="host-connect-btn" disabled={connectingIds.has(h.id)}
-                        title="连接（新建会话）——其他主机的连接不受影响"
-                        onClick={() => createSession(h)}>
-                        {(() => {
-                          const a = hostAttempt(h.id);
-                          return a
-                            ? <><IconLoader size={11} className="spin" /> {phaseText(a.phase)}</>
-                            : "连接";
-                        })()}
-                      </button>
-                      {hostAttempt(h.id) && (
-                        <button className="ghost" style={{ width: "auto", flexShrink: 0 }}
-                          title="取消本次连接（终态由核心裁决：已取消/已完成可见）"
-                          onClick={(e) => { e.stopPropagation(); void cancelConnect(h.id); }}>取消</button>
-                      )}
-                    </div>
-                  </div>
-              </div>
-              );
-            };
-            const skeletons = !hostsLoaded ? (<><div className="skeleton" /><div className="skeleton" /></>) : null;
-            const emptyAll = hostsLoaded && hosts.length === 0 && (
-              <div className="dim">还没有主机。点上方「＋」填入地址和密码即可连接。</div>
-            );
-            const noMatch = hostsLoaded && hosts.length > 0 && filteredHosts.length === 0 && (
-              <>
-                <div className="dim">无匹配主机——可清除搜索/标签筛选，或直接添加：</div>
-                <button className="ghost" style={{ marginTop: 6 }}
-                  onClick={() => { setShowImport(false); setEditingHost(null); setPrefillEntry(null); setShowAddHost(true); }}>
-                  <IconPlus size={12} /> 添加主机
-                </button>
-              </>
-            );
-            const firstSection = (title: string, cards: Host[]) => (
-              <div className="section">
-                <h4>{title}</h4>
-                {skeletons}
-                {cards.map(renderHostCard)}
-                {emptyAll}
-                {noMatch}
-              </div>
-            );
-            // 契约 §4.2：有收藏 → 「收藏」+「其他主机」两组；无收藏 → 「全部主机」单组。
-            // 骨架/空态只随首组渲染一次；rev-r20 L2：全部可见主机均收藏时不渲染空「其他主机」节头
-            if (favHosts.length > 0) {
-              return (
-                <>
-                  {firstSection("收藏", favHosts)}
-                  {otherHosts.length > 0 && (
-                    <div className="section">
-                      <h4>其他主机</h4>
-                      {otherHosts.map(renderHostCard)}
-                    </div>
-                  )}
-                </>
-              );
-            }
-            return firstSection("全部主机", otherHosts);
-          })()}
-        </div>
-        <div className="hb-bottom">
-          <button className="hb-settings" title="设置（外观 / 终端 / 凭据）" aria-label="设置"
-            onClick={() => dispatchRef.current({ id: "settings" })}>
-            <IconSliders size={14} />设置
-          </button>
-        </div>
-            </aside>
-            <div className="hb-grip" role="separator" aria-orientation="vertical"
-              aria-label="拖动调整主机栏宽度（200–300 px）" title="拖动调整宽度（200–300 px）"
-              onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp}
-              onPointerCancel={() => { gripDrag.current = false; }} />
-          </>
+          /* 主机栏（拆分⑤出仓 components/hostbar.tsx，零语义变更）：搜索防抖、
+             标签筛选、收藏分组卡片、导入面板挂载点、设置钮与宽度抓手 */
+          <Hostbar
+            hostbarWidth={hostbarWidth} hosts={hosts} hostMeta={hostMeta}
+            sessions={sessions} hostsLoaded={hostsLoaded}
+            filteredHosts={filteredHosts} favHosts={favHosts} otherHosts={otherHosts}
+            allTags={allTags} activeTag={activeTag}
+            connectingIds={connectingIds} lastFailed={lastFailed}
+            showImport={showImport} showAddHost={showAddHost} attempts={attempts}
+            hostSearchRef={hostSearchRef} hostDebounceRef={hostDebounceRef}
+            setHostQuery={setHostQuery}
+            gripDrag={gripDrag} gripDown={gripDown} gripMove={gripMove} gripUp={gripUp}
+            dispatchRef={dispatchRef}
+            setTagFilter={setTagFilter} setShowImport={setShowImport}
+            setShowAddHost={setShowAddHost} setEditingHost={setEditingHost}
+            setPrefillEntry={setPrefillEntry} setHostMenu={setHostMenu} setConfirm={setConfirm}
+            attachSession={attachSession} createSession={createSession}
+            toggleFavorite={toggleFavorite} cancelConnect={cancelConnect}
+            pushToast={pushToast} refreshLists={refreshLists}
+          />
         )}
         {!hostbarOpen && (
           <button className="ghost icon-btn hb-expand" title="展开主机栏（⌘B）" aria-label="展开主机栏"
@@ -4277,90 +4074,20 @@ export default function App() {
           quitConfirmRef={quitConfirmRef} confirmQuit={confirmQuit}
           delHostRef={delHostRef} delIdentRef={delIdentRef}
         />
-        {/* 会话工具栏 40（§4.1）：活动会话才出现——欢迎页不放失效的终端工具 */}
+        {/* 会话工具栏 40（拆分⑤出仓 components/session-toolbar.tsx，零语义变更） */}
         {current && (
-          <div className="session-toolbar">
-            <div className="st-ident">
-              <span className="st-title mono" title={`${current.host_name} · ${sid!.slice(0, 12)}`}>
-                {current.host_name}
-                {oscTitles[sid!] ? ` · 「${oscTitles[sid!]}」` : ""}
-              </span>
-              <span className={"mono st-state " + stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>
-            </div>
-            <span style={{ flex: 1 }} />
-            {sid && hasAgents && owner === "Agent" && (
-              <>
-                <button
-                  className="warn"
-                  title="接管会话：Agent 冻结、待审批请求作废，终端归你操作。Agent 正在跑的命令不会被中断"
-                  onClick={takeover}
-                >接管</button>
-                <button
-                  className="ghost-danger"
-                  title="接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红"
-                  onClick={takeoverStop}
-                >接管并停止任务</button>
-              </>
-            )}
-            {sid && collabConfigured && owner === "Human" && (
-              <button
-                className="ghost"
-                data-testid="delegate-open"
-                title={current?.ever_agent_owned
-                  ? "交还会话：Agent 恢复操作（后续请求重新走审批）。已作废的请求不会自动重发——Agent 会收到作废通知，由它决定是否重新提交"
-                  : "首次委托：把会话交给 Agent 执行。需在对话框中查看主机/会话/能力与现有授权范围后明确提交；取消不改动控制权"}
-                onClick={() => openDelegate()}
-              >{current?.ever_agent_owned ? "交还 Agent" : "交给 Agent…"}</button>
-            )}
-            {sid && (
-              <button
-                className={"ghost icon-btn" + (searchOpen ? " ts-open" : "")}
-                title="搜索终端内容（⌘F）"
-                aria-label="搜索终端内容"
-                onClick={() => dispatchRef.current({ id: "search" })}
-              ><IconSearch size={15} /></button>
-            )}
-            <button
-              className={"ghost icon-btn" + (splitMenu ? " ts-open" : "")}
-              title={splitPanes ? "退出分屏（Ctrl+D；会话保留不断开）" : "分屏（Ctrl+D）：在右侧显示已有会话，或在右侧新建会话"}
-              aria-haspopup={splitPanes ? undefined : "menu"}
-              aria-expanded={splitPanes ? undefined : splitMenu}
-              aria-pressed={!!splitPanes}
-              onClick={() => {
-                if (splitPanes) { void exitSplit(); return; }
-                setSplitMenu((v) => !v);
-              }}
-            ><IconSplit size={15} /></button>
-            <button
-              className={"ghost st-collab" + (rightPanel === "collab" ? " ts-open" : "")}
-              data-testid="tools-collab"
-              aria-pressed={rightPanel === "collab"}
-              title="协作：审批、任务目标与现场简报（有 Agent 活动时必须可达）"
-              onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}
-            ><IconInbox size={14} />协作</button>
-            <button
-              className={"ghost st-file" + (rightPanel === "files" ? " ts-open" : "")}
-              aria-pressed={rightPanel === "files"}
-              title="文件：远程目录浏览与传输"
-              onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}
-            ><IconFolder size={14} />文件</button>
-            <div className="st-tools" ref={toolsRef}>
-              <button className="ghost" aria-haspopup="menu" aria-expanded={toolsOpen}
-                onClick={() => setToolsOpen(!toolsOpen)}>工具<IconChevronDown size={12} /></button>
-              {toolsOpen && (
-                <div className="tools-menu" role="menu">
-                  {/* §3.2：「连接工具」菜单只放连接详情、端口转发、活动记录、关闭会话；
-                      协作是会话工作区下的**同级**入口（见工具栏「协作」钮），不塞进本菜单 */}
-                  <button role="menuitem" data-testid="tools-conn-detail" onClick={() => { setToolsOpen(false); openSessionDetail(current); }}>连接详情…</button>
-                  <button role="menuitem" onClick={() => { setRightPanel("forwards"); setToolsOpen(false); }}>端口转发</button>
-                  {/* 十八轮：会话日志开关（工具菜单与标签右键同源同义） */}
-                  <button role="menuitem" data-testid="tools-session-log" onClick={() => { setToolsOpen(false); void toggleSessionLog(current); }}>{current.logging ? "停止记录会话日志" : "记录会话日志"}</button>
-                  <button role="menuitem" data-testid="tools-activity" onClick={() => { setRightPanel("log"); setToolsOpen(false); }}>活动记录</button>
-                  <button role="menuitem" className="tm-danger" onClick={() => { setToolsOpen(false); requestCloseSession(current); }}>关闭会话…</button>
-                </div>
-              )}
-            </div>
-          </div>
+          <SessionToolbar
+            current={current} sid={sid} oscTitles={oscTitles}
+            hasAgents={hasAgents} owner={owner} collabConfigured={collabConfigured}
+            searchOpen={searchOpen} splitMenu={splitMenu} splitPanes={splitPanes}
+            rightPanel={rightPanel} toolsOpen={toolsOpen} toolsRef={toolsRef}
+            dispatchRef={dispatchRef} setSplitMenu={setSplitMenu}
+            setRightPanel={setRightPanel} setToolsOpen={setToolsOpen}
+            exitSplit={exitSplit} openDelegate={openDelegate}
+            takeover={takeover} takeoverStop={takeoverStop}
+            openSessionDetail={openSessionDetail} toggleSessionLog={toggleSessionLog}
+            requestCloseSession={requestCloseSession}
+          />
         )}
         {hostKeyQueue.length > 0 && (() => {
           const hk = hostKeyQueue[0];

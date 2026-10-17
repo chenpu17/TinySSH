@@ -6,7 +6,18 @@ import { IconSliders, IconPencil, IconTerminal, IconStar, IconInbox, IconClock }
 import { useEffect, type RefObject } from "react";
 import { invoke, MkChannel } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
-import type { ApprovalItem, AuditEvent } from "./adapter/wire";
+import type { ApprovalItem, AuditEvent, Host } from "./adapter/wire";
+
+// —— 主机栏共享纯函数（五轮架构：过滤/排序/相位文案单一口径，宿主与 hostbar.tsx 共用）——
+/** 主机过滤：名称/地址/用户/标签任一包含查询词（qN 已 trim+lowercase）。 */
+export function hostMatches(h: Host, qN: string): boolean {
+  return [h.name, h.address, h.username, ...(h.tags ?? [])].some((v) => v.toLowerCase().includes(qN));
+}
+/** 组内名称序（排序稳定：查询/收藏变化不抖动——sort 在过滤后一次性应用）。 */
+export const byName = (a: Host, b: Host) => a.name.localeCompare(b.name, "zh", { numeric: true });
+/** 相位中文（§6.2：不得猜测——只呈示核心给出的阶段）。 */
+export const phaseText = (p: string) =>
+  p === "Connecting" ? "连接中…" : p === "TrustRequired" ? "等待指纹确认" : p === "Authenticating" ? "认证中…" : "等待验证码";
 
 // 传输卡片是 UI 呈现态；C5（R32）起终态/进度来自任务注册表（list_transfers 查询
 // + transfer-event 事件，revision 单调幂等），pending- 前缀占位卡在拿到真实
