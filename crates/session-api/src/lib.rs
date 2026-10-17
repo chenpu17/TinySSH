@@ -1245,6 +1245,9 @@ pub struct AuditFilter {
     /// R41（「记录连续」）：按 seq 游标翻页——只取 `seq < before_seq` 的记录。
     /// 用 offset 分页会在新事件入链后错位/重复，seq 是主键自增，游标才连续。
     pub before_seq: Option<i64>,
+    /// rev-r46：反方向游标——只取 `seq > after_seq` 的记录（跟随新事件，如等
+    /// 审批时轮询增量）。与 before_seq 同为翻页游标，不计入 total。
+    pub after_seq: Option<i64>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
     pub offset: i64,

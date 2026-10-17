@@ -183,6 +183,11 @@ impl AuditStore {
             params.push(Box::new(s));
             where_clauses.push(format!("seq < ?{}", params.len()));
         }
+        // rev-r46：反方向游标（跟随新事件），与 before_seq 同不计入 total
+        if let Some(s) = f.after_seq {
+            params.push(Box::new(s));
+            where_clauses.push(format!("seq > ?{}", params.len()));
+        }
         let page_where_sql = if where_clauses.is_empty() {
             String::new()
         } else {
@@ -449,6 +454,54 @@ mod tests {
             .events
             .iter()
             .all(|e| e.session_id.as_deref() == Some("s1") && e.seq < 5));
+    }
+
+    #[test]
+    fn after_seq_cursor_follows_new_events() {
+        // rev-r46：after_seq 反方向游标——跟随新事件（等审批时轮询增量），不计入 total
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.db");
+        let store = AuditStore::open(&path).unwrap();
+        for action in ["a1", "a2", "a3"] {
+            store
+                .append(&Actor::Human, action, None, None, serde_json::json!({}), None)
+                .unwrap();
+        }
+        let base = store
+            .query(&AuditFilter {
+                limit: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let head = base.events[0].seq;
+        store
+            .append(&Actor::Human, "a4", None, None, serde_json::json!({}), None)
+            .unwrap();
+        let inc = store
+            .query(&AuditFilter {
+                after_seq: Some(head),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(inc.total, 4, "after_seq 不参与 total 计数（全表仍 4 条）");
+        assert_eq!(
+            inc.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![head + 1],
+            "只取游标之后的增量"
+        );
+        // 双游标开窗：1 < seq < 3
+        let win = store
+            .query(&AuditFilter {
+                after_seq: Some(1),
+                before_seq: Some(3),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            win.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![2],
+            "双游标取开窗区间"
+        );
     }
 
     #[test]

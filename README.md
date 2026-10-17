@@ -55,3 +55,14 @@ UX-R1 v1.1 为当前重构设计基线，PRD v0.7 登记方向与独立审核后
 ## 技术栈（概览）
 
 Tauri v2 · Rust（tokio / russh ≥0.61 / portable-pty / alacritty_terminal / tree-sitter-bash）· React + xterm.js · SQLite · MCP（rmcp ≥2.0.0，streamable HTTP + stdio shim）
+
+## Agent 接入（协作）
+
+应用启用协作后在 `127.0.0.1`（默认 8722，被占递增）内嵌 MCP 端点，并提供**内置接入文档**：
+`http://127.0.0.1:<port>/integration.md`（Markdown，含端点/认证/行为约定/实时工具目录；`/` 为人读页面）。
+把该 URL 扔给任何能取网页的 Agent 即可自助对接。接入步骤：设置 → Agent 接入 →
+`tinyssh agent create <id> <名称>` 签发 Token（仅展示一次）→ Agent 侧按文档配置 HTTP 直连
+或 stdio shim（`tinyssh-mcp`）。危险命令与 Agent 传输逐条人工审批；所有操作进审计。
+无头场景可用 `tinyssh serve` 起同款端点——注意它与 GUI 共享数据库但**不共享内存态**，
+请分时使用（审批队列互不可见）。
+

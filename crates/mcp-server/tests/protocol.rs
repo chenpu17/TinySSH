@@ -107,6 +107,12 @@ async fn spike3_protocol_compliance() {
         "read_screen",
         "send_keys",
         "wait_output",
+        // rev-r46 能力面补齐
+        "sftp_list",
+        "sftp_stat",
+        "shell_capability",
+        "cancel_transfer",
+        "retry_transfer",
     ] {
         assert!(
             names.contains(&expected.to_string()),
@@ -350,4 +356,219 @@ async fn spawn_endpoint_serves_in_process_stack() {
         .unwrap();
     assert_ne!(r.is_error, Some(true), "list_sessions 经内嵌端点应成功");
     client.cancel().await;
+}
+
+// ---- rev-r46：内置接入文档路由 + exec 心跳 + output_cap（裸 HTTP 验证）----
+
+use futures_util::StreamExt;
+
+/// 裸 HTTP 会话：initialize → 捕获 Mcp-Session-Id（shim 同款语义）。
+async fn raw_init(base: &str, token: &str) -> reqwest::Client {
+    let client = reqwest::Client::new();
+    let r = client
+        .post(format!("{base}/mcp"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "raw-probe", "version": "0.1"}
+                }
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .expect("initialize POST");
+    assert!(r.status().is_success(), "initialize: {}", r.status());
+    let sid = r
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
+        .expect("initialize 响应必须带 mcp-session-id");
+    let _ = r.text().await;
+    // 之后的请求统一回传 session id（+ 延续 Bearer）
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "mcp-session-id",
+        reqwest::header::HeaderValue::from_str(&sid).unwrap(),
+    );
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn docs_routes_served_without_auth() {
+    let (_m, url, _port, token) = spawn_stack().await;
+    let client = raw_init(&url, &token).await;
+    // 文档挂在 origin（/mcp 的上一级），不在 MCP 路径下
+    let origin = url.trim_end_matches("/mcp").to_string();
+
+    // /integration.md：Markdown、含端点与工具目录（目录与工具面实时一致）
+    let r = client.get(format!("{origin}/integration.md")).send().await.unwrap();
+    assert_eq!(r.status(), 200, "GET /integration.md 非 200");
+    assert!(r
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .contains("text/markdown"));
+    let md = r.text().await.unwrap();
+    assert!(md.contains(&url), "端点必须写进文档");
+    for t in ["exec", "sftp_list", "retry_transfer", "get_session_brief"] {
+        assert!(md.contains(&format!("`{t}`")), "工具目录缺 {t}");
+    }
+    assert!(md.contains("Bearer <TOKEN>"));
+    assert!(md.contains("approval_denied"));
+    assert!(!md.contains(&token), "文档不得泄露真实 Token");
+
+    // / ：人读 HTML
+    let r = client.get(format!("{origin}/")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .contains("text/html"));
+    let html = r.text().await.unwrap();
+    assert!(html.contains("/integration.md"));
+    assert!(html.contains("TinySSH"));
+
+    // 认证边界不松动：/mcp 无 Token 仍 401
+    let anon = reqwest::Client::new();
+    let r = anon.get(format!("{url}/mcp")).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn exec_sends_progress_heartbeat_during_approval() {
+    // 审批挂起 120s 期间，带 progressToken 的调用每 10s 收到 progress 心跳——
+    // 否则真实客户端（默认超时 30–60s）会先掐断连接。
+    let (m, url, _port, token) = spawn_stack().await;
+    let client = raw_init(&url, &token).await;
+    let sid = m
+        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+
+    let c2 = client.clone();
+    let sid2 = sid.clone();
+    let call = tokio::spawn(async move {
+        c2.post(format!("{url}/mcp"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                    "params": {
+                        "name": "exec",
+                        "arguments": {"session_id": sid2, "command": "printf needs_hb"},
+                        "_meta": {"progressToken": "hb-1"}
+                    }
+                })
+                .to_string(),
+            )
+            .send()
+            .await
+            .expect("exec POST")
+    });
+    let mut resp = tokio::time::timeout(Duration::from_secs(10), call)
+        .await
+        .unwrap()
+        .unwrap();
+    let st = resp.status();
+    eprintln!("[hb] exec POST status={st}");
+    assert!(st.is_success(), "exec POST 应成功：{st}");
+
+    // 流式收 SSE 帧：等 progress 心跳（progressToken=hb-1），见到即喂狗成功
+    let mut stream = resp.bytes_stream();
+    let mut buf = String::new();
+    let mut saw_heartbeat = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+    let human = Actor::Human;
+    while !saw_heartbeat {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            panic!("25s 内未收到 progress 心跳");
+        }
+        let chunk = tokio::time::timeout(remaining, stream.next()).await;
+        match chunk {
+            Ok(Some(item)) => {
+                let bytes = item.expect("stream chunk");
+                buf.push_str(&String::from_utf8_lossy(&bytes));
+                while let Some(pos) = buf.find("\n\n") {
+                    let frame: String = buf.drain(..pos + 2).collect();
+                    if frame.contains("notifications/progress") && frame.contains("hb-1") {
+                        saw_heartbeat = true;
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    assert!(saw_heartbeat, "审批挂起期间应收到 progress 心跳");
+    // 心跳确认后人类拒绝，调用应收敛返回（流结束）
+    let items = m
+        .list_approvals(&human, ApprovalFilter { pending_only: true, ..Default::default() })
+        .await
+        .unwrap();
+    m.decide_approval(&human, items.first().unwrap().id.clone(), Decision::Deny)
+        .await
+        .unwrap();
+    let mut rest = String::new();
+    while let Some(chunk) = stream.next().await {
+        rest.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+        if rest.contains("approval_denied") {
+            break;
+        }
+    }
+    assert!(rest.contains("approval_denied"), "拒绝后应返回结构化错误：{rest}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn exec_output_cap_truncates() {
+    // rev-r46：output_cap 暴露到 MCP 面——超限截断并标 truncated
+    let (m, url, _port, token) = spawn_stack().await;
+    let client = connect(&url, &token).await;
+    let sid = m
+        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+
+    let long = "x".repeat(4000);
+    let r = client
+        .call_tool(call(
+            "exec",
+            serde_json::json!({
+                "session_id": sid,
+                "command": format!("echo {long}"),
+                "output_cap": 256
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(r.is_error, Some(false), "{r:?}");
+    let text = r
+        .structured_content
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let out: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+    assert_eq!(out["truncated"], true, "应标 truncated：{text}");
+    let s = out["stdout"].as_str().unwrap_or_default();
+    assert!(s.chars().count() < 400, "stdout 应被截断：{} 字符", s.chars().count());
 }

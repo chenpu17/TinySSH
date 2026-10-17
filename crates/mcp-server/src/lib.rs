@@ -1,5 +1,9 @@
 //! MCP 工具实现（L1 §4）：rmcp streamable HTTP + per-client Bearer Token。
 //! 身份仅来自 Token（协议参数不可指定）；错误映射为 isError 载荷（永不挂起协议层）。
+//! rev-r46：认证层只护 /mcp；`GET /` 与 `GET /integration.md` 是内置接入文档
+//! （docs.rs，工具目录实时枚举，页面不含机密）。
+
+pub mod docs;
 
 use rmcp::handler::server::common::Extension;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -7,9 +11,11 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
 };
+use rmcp::service::RequestContext;
 use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
+use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,6 +23,7 @@ use session_api::{
     Actor, AuditFilter, CollisionDecision, CreateSessionReq, DeniedReason, Error, ExecMode,
     ExecOpts, SessionApi, TargetStat, TransferHandle, TransferStatus, WaitOpts,
 };
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,6 +67,12 @@ pub struct ExecReq {
     /// 秒；自审批放行起算
     #[serde(default)]
     pub timeout: Option<u64>,
+    /// stdout/stderr 上限（字节）；缺省 128 KiB，超限截断并标 truncated
+    #[serde(default)]
+    pub output_cap: Option<u64>,
+    /// 仅 fresh 模式生效的额外环境变量
+    #[serde(default)]
+    pub env: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -117,9 +130,17 @@ pub struct QueryAuditReq {
     /// R41：按动作名精确过滤（如 "exec" / "forward_start"）。
     #[serde(default)]
     pub action: Option<String>,
-    /// R41（「记录连续」）：seq 游标——只取 seq 更早的记录，供翻页。
+    /// R41（「记录连续」）：seq 游标——只取 seq 更早的记录，供向前翻页。
     #[serde(default)]
     pub before_seq: Option<i64>,
+    /// rev-r46：seq 游标——只取 seq 更晚的记录（跟随新事件，如等审批时轮询增量）。
+    #[serde(default)]
+    pub after_seq: Option<i64>,
+    /// RFC3339 时间下/上限（如 2026-10-17T00:00:00Z）。
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
     #[serde(default)]
     pub limit: Option<i64>,
 }
@@ -261,6 +282,20 @@ pub struct ForwardStopReq {
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ForwardListReq {
     pub session_id: String,
+}
+
+/// rev-r46：能力面补齐——SFTP 结构化浏览/统计。
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct SftpPathReq {
+    pub session_id: String,
+    /// 绝对路径
+    pub path: String,
+}
+
+/// rev-r46：传输收口——取消/重试（对账 transfer_list 后使用）。
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct TransferIdReq {
+    pub transfer_id: String,
 }
 
 pub struct McpServer {
@@ -428,15 +463,37 @@ impl McpServer {
 
     #[tool(
         name = "exec",
-        description = "在共享会话中执行命令。shell 模式默认：cwd/env 现场延续；危险命令需人工审批",
+        description = "在共享会话中执行命令。shell 模式默认：cwd/env 现场延续；危险命令需人工审批（等待期间有 progress 心跳）",
         annotations(destructive_hint = true)
     )]
     pub async fn exec(
         &self,
         Extension(parts): Extension<HttpParts>,
+        ctx: RequestContext<RoleServer>,
         p: Parameters<ExecReq>,
     ) -> CallToolResult {
-        run(&self.state, &parts, move |api, actor| async move {
+        // rev-r46：审批挂起最长 120s，而真实 MCP 客户端默认超时普遍 30–60s——
+        // 客户端带了 progressToken 就每 10s 发一次 progress 心跳喂狗（消息走本次
+        // 调用的响应流；经修好的 stdio shim 透传给 stdio 客户端）。调用结束即停。
+        let mut ticker: Option<tokio::task::JoinHandle<()>> = None;
+        if let Some(tok) = ctx.meta.get_progress_token() {
+            let peer = ctx.peer.clone();
+            let token = tok.clone();
+            ticker = Some(tokio::spawn(async move {
+                let mut n: f64 = 0.0;
+                loop {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    n += 1.0;
+                    let _ = peer
+                        .notify_progress(
+                            rmcp::model::ProgressNotificationParam::new(token.clone(), n)
+                                .with_message("等待人工审批/命令执行中…"),
+                        )
+                        .await;
+                }
+            }));
+        }
+        let r = run(&self.state, &parts, move |api, actor| async move {
             let mode = match p.0.mode.as_deref() {
                 Some("fresh") => ExecMode::Fresh,
                 _ => ExecMode::Shell,
@@ -444,7 +501,8 @@ impl McpServer {
             let opts = ExecOpts {
                 mode,
                 timeout: p.0.timeout.map(Duration::from_secs),
-                ..Default::default()
+                output_cap: p.0.output_cap.map(|x| x as usize),
+                env: p.0.env.unwrap_or_default(),
             };
             let r = api.exec(&actor, p.0.session_id, &p.0.command, opts).await?;
             Ok::<_, Error>(serde_json::json!({
@@ -457,7 +515,11 @@ impl McpServer {
                 "approval": r.approval.outcome,
             }))
         })
-        .await
+        .await;
+        if let Some(h) = ticker {
+            h.abort();
+        }
+        r
     }
 
     #[tool(name = "cancel_exec", description = "取消排队或运行中的执行")]
@@ -504,7 +566,7 @@ impl McpServer {
 
     #[tool(
         name = "query_audit",
-        description = "查询审计事件",
+        description = "查询审计事件（seq 游标翻页：before_seq 向前、after_seq 跟随新事件；since/until 为 RFC3339）",
         annotations(read_only_hint = true)
     )]
     pub async fn query_audit(
@@ -513,6 +575,16 @@ impl McpServer {
         p: Parameters<QueryAuditReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
+            let parse_dt = |label: &str, v: &Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, Error> {
+                match v {
+                    None => Ok(None),
+                    Some(s) => chrono::DateTime::parse_from_rfc3339(s)
+                        .map(|d| Some(d.with_timezone(&chrono::Utc)))
+                        .map_err(|e| Error::InvalidInput(format!("{label} 需 RFC3339（如 2026-10-17T00:00:00Z）：{e}"))),
+                }
+            };
+            let since = parse_dt("since", &p.0.since)?;
+            let until = parse_dt("until", &p.0.until)?;
             let page = api
                 .query_audit(
                     &actor,
@@ -522,6 +594,9 @@ impl McpServer {
                         actor_kind: p.0.actor_kind,
                         action: p.0.action,
                         before_seq: p.0.before_seq,
+                        after_seq: p.0.after_seq,
+                        since,
+                        until,
                         limit: p.0.limit.unwrap_or(50),
                         ..Default::default()
                     },
@@ -747,6 +822,92 @@ impl McpServer {
         })
         .await
     }
+
+    // ---- rev-r46 能力面补齐（session-api 已有、此前仅 GUI 可达的能力）----
+
+    #[tool(
+        name = "shell_capability",
+        description = "查询会话 shell 集成能力（integration_present/prompt_ready/host_setting）——决定 exec 用 shell 还是 fresh 前先查",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn shell_capability(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<SessionRefReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            api.shell_capability(&actor, p.0.session_id).await
+        })
+        .await
+    }
+
+    #[tool(
+        name = "sftp_list",
+        description = "列出远程目录（结构化条目：名称/大小/权限/是否目录，目录在前）——不要用 exec ls 解析文本",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn sftp_list(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<SftpPathReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let list = api.sftp_list(&actor, p.0.session_id, &p.0.path).await?;
+            Ok::<_, Error>(serde_json::json!({ "entries": list }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "sftp_stat",
+        description = "查询远程文件/目录元数据（size/mtime）",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn sftp_stat(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<SftpPathReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let st = api.sftp_stat(&actor, p.0.session_id, p.0.path).await?;
+            Ok::<_, Error>(serde_json::json!({ "stat": st }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "cancel_transfer",
+        description = "取消传输任务（排队/进行中可见 Cancelling；终态幂等无害）",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn cancel_transfer(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<TransferIdReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            api.cancel_transfer(&actor, p.0.transfer_id).await?;
+            Ok::<_, Error>(serde_json::json!({ "cancelled": true }))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "retry_transfer",
+        description = "重试失败/取消的传输（以原参数建新任务，重新校验与冲突预检；不带原授权，覆盖需重新声明）",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn retry_transfer(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<TransferIdReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let handle = api.retry_transfer(&actor, p.0.transfer_id).await?;
+            Ok::<_, Error>(wait_transfer_preflight(&api, &actor, &handle).await)
+        })
+        .await
+    }
 }
 
 /// 工具调用的统一入口：身份解析 → SessionApi → 结果/错误序列化。
@@ -786,7 +947,9 @@ pub use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 
-/// 组装 axum 路由：Bearer 认证中间件 + /mcp 端点。
+/// 组装 axum 路由：/mcp 带 Bearer 认证中间件；`/` 与 `/integration.md` 是内置
+/// 接入文档（公开但无机密——Token 由人类单独签发；仅绑定 127.0.0.1）。
+/// 注意用 nest 而非 merge：merge 场景下 layer 会渗到兄弟路由（实测 docs 401）。
 pub fn build_router(state: McpState, config: StreamableHttpServerConfig) -> axum::Router {
     let factory_state = state.clone();
     let service: StreamableHttpService<McpServer, LocalSessionManager> = StreamableHttpService::new(
@@ -795,12 +958,55 @@ pub fn build_router(state: McpState, config: StreamableHttpServerConfig) -> axum
         config,
     );
     let auth_state = state.clone();
-    axum::Router::new()
-        .nest_service("/mcp", service)
+    let mcp = axum::Router::new()
+        .fallback_service(service)
         .layer(axum::middleware::from_fn_with_state(
             auth_state,
             auth_middleware,
-        ))
+        ));
+    axum::Router::new()
+        .nest("/mcp", mcp)
+        .route("/", axum::routing::get(doc_html_handler))
+        .route("/integration.md", axum::routing::get(doc_md_handler))
+        .with_state(state)
+}
+
+/// 从请求 Host 头推导对外基准 URL（端口漂移自动正确；明文 http——仅回环）。
+fn base_url(req: &axum::http::Request<axum::body::Body>) -> String {
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("127.0.0.1");
+    format!("http://{host}")
+}
+
+async fn doc_tools(state: &McpState) -> Vec<docs::ToolDoc> {
+    docs::collect_tools(McpServer::new(state.clone()).tool_router.list_all().iter())
+}
+
+async fn doc_html_handler(
+    axum::extract::State(state): axum::extract::State<McpState>,
+    req: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    let html = docs::index_html(&base_url(&req), &doc_tools(&state).await);
+    axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(axum::body::Body::from(html))
+        .unwrap()
+}
+
+async fn doc_md_handler(
+    axum::extract::State(state): axum::extract::State<McpState>,
+    req: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    let md = docs::integration_markdown(&base_url(&req), &doc_tools(&state).await);
+    axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header("Content-Type", "text/markdown; charset=utf-8")
+        .body(axum::body::Body::from(md))
+        .unwrap()
 }
 
 /// 端口占用递增绑定（L1 §3.5）：从 `port` 起逐 +1，最多试 32 个。

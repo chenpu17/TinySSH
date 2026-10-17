@@ -4503,6 +4503,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -4522,12 +4523,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams 0.4.2",
  "web-sys",
  "webpki-roots",
 ]
@@ -4562,7 +4565,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
+ "wasm-streams 0.5.0",
  "web-sys",
 ]
 
@@ -6363,6 +6366,7 @@ dependencies = [
  "core-session",
  "futures-util",
  "http",
+ "reqwest 0.12.28",
  "rmcp",
  "schemars 1.2.2",
  "serde",
@@ -6385,9 +6389,14 @@ name = "tinyssh-shim"
 version = "0.9.0"
 dependencies = [
  "anyhow",
+ "core-session",
+ "futures-util",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "session-api",
+ "tempfile",
+ "tinyssh-mcp-server",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -7086,6 +7095,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

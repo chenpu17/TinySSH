@@ -300,6 +300,8 @@ async fn serve(m: Arc<SessionManager>, port: u16) -> Result<()> {
         .context("bind")?;
     m.set_mcp_endpoint(format!("http://127.0.0.1:{actual}/mcp"));
     println!("TinySSH MCP endpoint: http://127.0.0.1:{actual}/mcp");
+    // rev-r46：内置接入文档——URL 扔给 Agent 即可自助对接（无需人工转述协议细节）
+    println!("Agent integration doc: http://127.0.0.1:{actual}/integration.md");
     println!(
         "shim: TINYSSH_TOKEN=<token> TINYSSH_MCP_URL=http://127.0.0.1:{actual}/mcp tinyssh-mcp"
     );

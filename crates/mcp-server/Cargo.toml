@@ -28,3 +28,4 @@ core-session = { workspace = true }
 tinyssh-vault = { workspace = true }
 tracing-subscriber = { workspace = true }
 futures-util = "0.3"
+reqwest = { workspace = true, features = ["stream"] }

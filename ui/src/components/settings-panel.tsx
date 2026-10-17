@@ -399,6 +399,15 @@ export function SettingsPanel({
                   <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
                   <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }} data-testid="agent-endpoint">{mcp.endpoint || "未启动"}</span>
                 </div>
+                {mcp.endpoint && (
+                  <div className="fact" style={{ marginTop: 4 }}>
+                    <span className="dim" style={{ fontSize: 11 }}>接入文档</span>{" "}
+                    <span className="mono" style={{ fontSize: 11, wordBreak: "break-all", userSelect: "all" }} data-testid="agent-doc-url">
+                      {new URL(mcp.endpoint).origin}/integration.md
+                    </span>
+                    <span className="dim" style={{ fontSize: 11 }}>（把这个 URL 扔给 Agent，即可自助完成接入）</span>
+                  </div>
+                )}
                 <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
                   {showAgentHelp ? "收起接入说明" : "接入新 Agent"}
                 </button>

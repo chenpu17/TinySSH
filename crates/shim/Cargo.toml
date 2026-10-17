@@ -11,9 +11,16 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tinyssh-mcp-server = { workspace = true }
+core-session = { workspace = true }
+session-api = { workspace = true }
