@@ -14,9 +14,10 @@ import { loadThemeCss, resolveColor, over, contrast } from "./theme-vars.mjs";
 
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const { states } = loadThemeCss(css);
-// 二十一轮：色板 5→9 族；主题③轮：9→11 族（+霓虹/水墨），加 graphite 双态共 22 态
-if (states.length !== 22) {
-  console.error(`解析失败：态数 ${states.length}/22`);
+// 二十一轮：色板 5→9 族；主题③轮：9→11 族（+霓虹/水墨）；主题⑤轮：11→15 族
+// （+诺德/复古/东京夜/摩卡），加 graphite 双态共 30 态
+if (states.length !== 30) {
+  console.error(`解析失败：态数 ${states.length}/30`);
   process.exit(2);
 }
 

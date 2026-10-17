@@ -8,7 +8,12 @@ const BASE = process.env.TINYSSH_UI_BASE || "http://localhost:5183";
 const OUT = process.env.SHOT_DIR || ".ux-shots/themes";
 fs.mkdirSync(OUT, { recursive: true });
 
-const PALETTES = ["graphite", "ember", "ocean", "violet", "noir", "aurora", "celadon", "sakura", "obsidian"];
+// 主题⑤轮起全量 15 族（缺 neon/ink 的历史截图可按需单独补）
+const PALETTES = [
+  "graphite", "ember", "ocean", "violet", "noir",
+  "aurora", "celadon", "sakura", "obsidian", "neon",
+  "ink", "nord", "gruvbox", "tokyo", "mocha",
+];
 
 // 真实感终端输出（同 audit-shots，截断版）
 function payload() {

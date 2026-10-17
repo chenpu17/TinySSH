@@ -1821,6 +1821,166 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --ansi-8: #4b4951; --ansi-9: #ea7c74; --ansi-10: #80a76b; --ansi-11: #b9974f;
   --ansi-12: #62a3cf; --ansi-13: #c887ba; --ansi-14: #48aba0; --ansi-15: #f4f3f6;}
 
+/* 主题⑤轮（程序员经典移植）：Nord / Gruvbox / Tokyo Night / Catppuccin 四族——
+   开发者工具圈辨识度最高的四套配色按「族×深浅」双面体系移植；底/面板层次对齐各自
+   官方阶位（Nord Polar Night、gruvbox bg 系、东京夜 bg/highlight、Catppuccin
+   crust→surface0），语义档按本仓 WCAG 门重校（wcag-themes / semantic-hues / ansi-gen 三器同过） */
+/* 诺德 · 暗：Polar Night 四档 slate + 霜蓝青 accent（Nord7 霜青），语义档取 Aurora 色相提亮达标 */
+:root[data-theme="nord"][data-chrome="dark"] {
+  --bg: #232831; --panel: #2e3440; --panel2: #353c4a; --panel3: #3b4252;
+  --border: rgba(216, 222, 233, 0.10); --border-hover: rgba(216, 222, 233, 0.20);
+  --text: #eceff4; --text-sub: #b8c2d3; --dim: #8291a7;
+  --accent: #88c0d0; --accent-hover: #a5d3e0; --accent-text: #a5d3e0;
+  --danger: #f2a9af; --danger-hover: #f7bcc1;
+  --ok: #a3be8c; --warn: #ebcb8b; --warn-text: #ebcb8b; --warn-hover: #f0d7a2;
+  --on-accent: #16232a; --on-danger: #2e1416; --on-warn: #2b2210;
+  --blue: #81a1c1; --focus: #9fccdc;
+  --grad-a: #a5d3e0; --grad-b: #88c0d0;
+  --mark-grad: linear-gradient(160deg, #2c3d48, #232a35);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #383b40; --ansi-1: #d9817a; --ansi-2: #6ca76e; --ansi-3: #ae9842;
+  --ansi-4: #629dda; --ansi-5: #b589c9; --ansi-6: #05aba5; --ansi-7: #9b9ea3;
+  --ansi-8: #5b5f67; --ansi-9: #f89189; --ansi-10: #77bd7a; --ansi-11: #c6ac44;
+  --ansi-12: #6bb2f9; --ansi-13: #ce9ae5; --ansi-14: #12c1ba; --ansi-15: #f2f3f6;}
+/* 诺德 · 亮：Snow Storm 雪原 + nord10 深蓝。nord10 原值在浅底不过 4.5，按本仓门加深 */
+:root[data-theme="nord"][data-chrome="light"] {
+  --bg: #e8ecf1; --panel: #f4f6f9; --panel2: #fcfdfe; --panel3: #dde3ea;
+  --border: rgba(46, 52, 64, 0.12); --border-hover: rgba(46, 52, 64, 0.22);
+  --text: #2e3440; --text-sub: #4c566a; --dim: #6d7889;
+  --accent: #3f6288; --accent-hover: #35547a; --accent-text: #3a5b80;
+  /* 主题④轮填充档：霜蓝填充钮（白字 ≥4.5） */
+  --accent-fill: #4c74a0; --accent-fill-hover: #3d6089;
+  --danger: #a63d47; --danger-hover: #8f333c;
+  --ok: #4d713e; --warn: #826609; --warn-text: #826609; --warn-hover: #6f5708;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #3a6fa8; --focus: #35547a;
+  --grad-a: #4c74a0; --grad-b: #3d6089;
+  --mark-grad: linear-gradient(160deg, #d9e3ea, #fdfdfe);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5b5e62; --ansi-1: #9a4944; --ansi-2: #346d37; --ansi-3: #736004;
+  --ansi-4: #29649c; --ansi-5: #7b518d; --ansi-6: #056d69; --ansi-7: #d1d3d6;
+  --ansi-8: #5f666e; --ansi-9: #8f3330; --ansi-10: #165f20; --ansi-11: #625100;
+  --ansi-12: #045492; --ansi-13: #6e3e83; --ansi-14: #005c59; --ansi-15: #fbfcfd;}
+/* 复古 · 暗：gruvbox bg 系四档 + 芥黄 accent（gruvbox 的检索黄）——奶油前景对炭底 */
+:root[data-theme="gruvbox"][data-chrome="dark"] {
+  --bg: #1d2021; --panel: #282828; --panel2: #32302f; --panel3: #3c3836;
+  --border: rgba(235, 219, 178, 0.10); --border-hover: rgba(235, 219, 178, 0.20);
+  --text: #ebdbb2; --text-sub: #bdae93; --dim: #928374;
+  --accent: #fabd2f; --accent-hover: #ffc94d; --accent-text: #ffc94d;
+  --danger: #ff8a7b; --danger-hover: #ffa291;
+  --ok: #b8bb26; --warn: #fe8019; --warn-text: #fe8019; --warn-hover: #ff9540;
+  --on-accent: #201c10; --on-danger: #2e0f08; --on-warn: #2e1305;
+  --blue: #83a598; --focus: #ffce54;
+  --grad-a: #ffc94d; --grad-b: #fabd2f;
+  --mark-grad: linear-gradient(160deg, #3d3725, #221f1c);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #2f3233; --ansi-1: #e0705f; --ansi-2: #709e4b; --ansi-3: #b48b0c;
+  --ansi-4: #6793d0; --ansi-5: #b87cbf; --ansi-6: #12a1a1; --ansi-7: #909799;
+  --ansi-8: #4d575b; --ansi-9: #fe7e6c; --ansi-10: #7db351; --ansi-11: #cd9e00;
+  --ansi-12: #73a6ef; --ansi-13: #d28bda; --ansi-14: #08b7b7; --ansi-15: #f1f4f5;}
+/* 复古 · 亮：gruvbox light 米纸底（bg0 #fbf1c7 加深一档做输入井）+ 焙黄 accent。
+   芥黄系与白字凑不齐 4.5，填充档走深焙金——墨感优先，亮面不改奶油纸底 */
+:root[data-theme="gruvbox"][data-chrome="light"] {
+  --bg: #ede4c4; --panel: #f6efd6; --panel2: #fcf8ea; --panel3: #e3d9ba;
+  --border: rgba(60, 44, 20, 0.12); --border-hover: rgba(60, 44, 20, 0.22);
+  --text: #3c3836; --text-sub: #665c54; --dim: #7c6f64;
+  --accent: #7d570b; --accent-hover: #6a4909; --accent-text: #6f4d0a;
+  /* 主题④轮填充档：深焙金填充钮（白字 ≥4.5） */
+  --accent-fill: #8a670c; --accent-fill-hover: #755a0a;
+  --danger: #9d0006; --danger-hover: #870005;
+  --ok: #6d680c; --warn: #a35308; --warn-text: #a35308; --warn-hover: #8f4907;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #076678; --focus: #6b4d09;
+  --grad-a: #8a670c; --grad-b: #755a0a;
+  --mark-grad: linear-gradient(160deg, #ede2bd, #fdf9ec);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5a5954; --ansi-1: #a3392c; --ansi-2: #3d680f; --ansi-3: #755901;
+  --ansi-4: #345d97; --ansi-5: #804787; --ansi-6: #036868; --ansi-7: #d0cbbc;
+  --ansi-8: #636157; --ansi-9: #99190d; --ansi-10: #305702; --ansi-11: #624a02;
+  --ansi-12: #1c4d8e; --ansi-13: #74337c; --ansi-14: #055757; --ansi-15: #fcfcfa;}
+/* 东京夜 · 暗：#1a1b26 靛夜四档 + 晴空蓝 accent（#7aa2f7），多彩档取官方 bright 系 */
+:root[data-theme="tokyo"][data-chrome="dark"] {
+  --bg: #14151f; --panel: #1a1b26; --panel2: #1f2232; --panel3: #292e42;
+  --border: rgba(140, 165, 230, 0.10); --border-hover: rgba(140, 165, 230, 0.20);
+  --text: #c0caf5; --text-sub: #9aa5ce; --dim: #70789b;
+  --accent: #7aa2f7; --accent-hover: #97b8ff; --accent-text: #97b8ff;
+  --danger: #f7768e; --danger-hover: #fb92a5;
+  --ok: #9ece6a; --warn: #e0af68; --warn-text: #e0af68; --warn-hover: #eabf7f;
+  --on-accent: #101527; --on-danger: #2e1015; --on-warn: #2a1f0a;
+  --blue: #7dcfff; --focus: #97b8ff;
+  --grad-a: #97b8ff; --grad-b: #7aa2f7;
+  --mark-grad: linear-gradient(160deg, #232a52, #161a2c);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #26272d; --ansi-1: #cf6c6e; --ansi-2: #509954; --ansi-3: #a2870a;
+  --ansi-4: #428cdd; --ansi-5: #ba6dbe; --ansi-6: #0e9993; --ansi-7: #8c8d93;
+  --ansi-8: #484a52; --ansi-9: #ed797c; --ansi-10: #57ae5d; --ansi-11: #b89a00;
+  --ansi-12: #469fff; --ansi-13: #d57ada; --ansi-14: #04aea8; --ansi-15: #f3f3f6;}
+/* 东京夜 · 亮：Tokyo Night Light 蓝墨水面孔——正文走 #3358ac 蓝墨（原 #3760bf
+   在浅底不过 4.5，加深一档保住「蓝墨水」身份），accent 走晴空蓝加深档 */
+:root[data-theme="tokyo"][data-chrome="light"] {
+  --bg: #dfe2e9; --panel: #e6e9f0; --panel2: #f2f4fa; --panel3: #d2d7e3;
+  --border: rgba(40, 60, 110, 0.12); --border-hover: rgba(40, 60, 110, 0.22);
+  --text: #3358ac; --text-sub: #556394; --dim: #66739e;
+  --accent: #1b5fc0; --accent-hover: #14509f; --accent-text: #1654a6;
+  /* 主题④轮填充档：晴空蓝填充钮（白字 ≥4.5） */
+  --accent-fill: #2470e0; --accent-fill-hover: #1c60c8;
+  --danger: #b03a46; --danger-hover: #a83a45;
+  --ok: #22764a; --warn: #8a5600; --warn-text: #8a5600; --warn-hover: #7a4b00;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #0a7bc4; --focus: #14509f;
+  --grad-a: #2470e0; --grad-b: #1c60c8;
+  --mark-grad: linear-gradient(160deg, #d8e2f5, #f5f8fd);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #56585d; --ansi-1: #9a3d41; --ansi-2: #1d6926; --ansi-3: #6d5a01;
+  --ansi-4: #055caa; --ansi-5: #883e8d; --ansi-6: #026763; --ansi-7: #c8cacd;
+  --ansi-8: #5b5f69; --ansi-9: #90232e; --ansi-10: #005913; --ansi-11: #5b4b02;
+  --ansi-12: #004d90; --ansi-13: #7c2583; --ansi-14: #035652; --ansi-15: #fbfcfd;}
+/* 摩卡 · 暗：Catppuccin Mocha——crust 输入井 / mantle chrome / base 浮卡 / surface0 hover，
+   accent 走 mauve（#cba6f7），语义档取 red/green/peach 官方名 */
+:root[data-theme="mocha"][data-chrome="dark"] {
+  --bg: #11111b; --panel: #181825; --panel2: #1e1e2e; --panel3: #313244;
+  --border: rgba(205, 214, 244, 0.09); --border-hover: rgba(205, 214, 244, 0.18);
+  --text: #cdd6f4; --text-sub: #a6adc8; --dim: #6c7086;
+  --accent: #cba6f7; --accent-hover: #d7bfff; --accent-text: #d7bfff;
+  --danger: #f38ba8; --danger-hover: #f6a4bb;
+  --ok: #a6e3a1; --warn: #fab387; --warn-text: #fab387; --warn-hover: #fcc4a4;
+  --on-accent: #1c1626; --on-danger: #330e17; --on-warn: #33180a;
+  --blue: #89b4fa; --focus: #b4befe;
+  --grad-a: #d7bfff; --grad-b: #cba6f7;
+  --mark-grad: linear-gradient(160deg, #2a2342, #191827);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #232328; --ansi-1: #bf7175; --ansi-2: #559463; --ansi-3: #958734;
+  --ansi-4: #518aca; --ansi-5: #ab72b8; --ansi-6: #009791; --ansi-7: #8a8b90;
+  --ansi-8: #45454d; --ansi-9: #db7f84; --ansi-10: #5ea970; --ansi-11: #aa9a35;
+  --ansi-12: #599ce9; --ansi-13: #c480d4; --ansi-14: #0daba5; --ansi-15: #f3f3f6;}
+/* 摩卡 · 亮：Catppuccin Latte——base 雾白四档 + mauve accent。#8839ef 在浅底
+   边缘（4.3），加深一档保门；填充档保留官方 mauve 原值（白字 5.4 达标） */
+:root[data-theme="mocha"][data-chrome="light"] {
+  --bg: #e4e8ef; --panel: #edeff4; --panel2: #f8f9fc; --panel3: #dfe3eb;
+  --border: rgba(76, 79, 105, 0.12); --border-hover: rgba(76, 79, 105, 0.22);
+  --text: #4c4f69; --text-sub: #5c5f77; --dim: #7b7f99;
+  --accent: #7c30d8; --accent-hover: #6b28bd; --accent-text: #6f2cc4;
+  /* 主题④轮填充档：官方 mauve 填充钮（白字 ≥4.5） */
+  --accent-fill: #8839ef; --accent-fill-hover: #7a2fd6;
+  --danger: #c50e34; --danger-hover: #ab0c2d;
+  --ok: #2d7a25; --warn: #86600a; --warn-text: #86600a; --warn-hover: #745409;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #1a5fd0; --focus: #6b28bd;
+  --grad-a: #8839ef; --grad-b: #7a2fd6;
+  --mark-grad: linear-gradient(160deg, #e6dff6, #f9fafd);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #595c60; --ansi-1: #92494e; --ansi-2: #2b6b3d; --ansi-3: #6c5f06;
+  --ansi-4: #28619e; --ansi-5: #814a8d; --ansi-6: #086b66; --ansi-7: #cdcfd3;
+  --ansi-8: #5e636c; --ansi-9: #87343c; --ansi-10: #025d28; --ansi-11: #5b5001;
+  --ansi-12: #005096; --ansi-13: #753583; --ansi-14: #025a56; --ansi-15: #fbfcfd;}
 /* 主题切换脉冲：仅切换瞬间（.theme-switching 挂 320ms，App.tsx）开全量色彩过渡，
    平时零开销；@keyframes 动画期间优先级本就高于 transition，互不干扰 */
 .theme-switching, .theme-switching *, .theme-switching *::before, .theme-switching *::after {

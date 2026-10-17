@@ -440,6 +440,12 @@ export const PALETTES: ChromePalette[] = [
   // 水墨=宣纸米白×朱砂印（唯一以亮色为身份的族，暗态转夜墨）
   { id: "neon", label: "霓虹", dot: ["#0a0a12", "#2fd6ec"], lite: ["#eef0f8", "#0b7291"] },
   { id: "ink", label: "水墨", dot: ["#161519", "#e06b4e"], lite: ["#f2efe7", "#b23a2e"] },
+  // 主题⑤轮（程序员经典移植）：Nord / Gruvbox / Tokyo Night / Catppuccin——
+  // 开发者工具圈辨识度最高的四套配色，按「族×深浅」双面体系各出两副面孔
+  { id: "nord", label: "诺德", dot: ["#2e3440", "#88c0d0"], lite: ["#e8ecf1", "#3f6288"] },
+  { id: "gruvbox", label: "复古", dot: ["#282828", "#fabd2f"], lite: ["#ede4c4", "#7d570b"] },
+  { id: "tokyo", label: "东京夜", dot: ["#1a1b26", "#7aa2f7"], lite: ["#dfe2e9", "#1b5fc0"] },
+  { id: "mocha", label: "摩卡", dot: ["#1e1e2e", "#cba6f7"], lite: ["#e4e8ef", "#7c30d8"] },
 ];
 export const PALETTE_DEFAULT = "graphite";
 
