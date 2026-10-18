@@ -1030,6 +1030,27 @@ async fn decide_approval(
         .map_err(WireError::from)
 }
 
+/// 「批准并记住」（审批减摩擦①）：写放行策略（TTL 精确记忆 / 持久 pattern），
+/// 返回实际写入的 pattern。前端随后自行走 decide_approval 完成批准。
+#[tauri::command]
+async fn remember_approval(
+    state: ApiState<'_>,
+    id: String,
+    ttl_minutes: Option<u32>,
+    pattern: Option<String>,
+) -> CmdResult<Vec<String>> {
+    let scope = match (ttl_minutes, pattern) {
+        (Some(m), _) => RememberScope::Ttl { minutes: m },
+        (None, Some(p)) => RememberScope::Persistent { pattern: p },
+        _ => return Err(WireError::simple("invalid_input", "需要 ttl_minutes 或 pattern")),
+    };
+    state
+        .api
+        .remember_approval(&human(), id, scope)
+        .await
+        .map_err(WireError::from)
+}
+
 /// R41（§6.6「默认当前会话，可切全部；可筛人类/Agent 与事件类型」）：过滤面全量过桥。
 /// `sid=None` = 全部会话；`actor_kind` ∈ {human, agent}（未知值不匹配任何行）；
 /// `action` 精确匹配动作名；`before_seq` 供「加载更早」按 seq 游标翻页（连续，不重不漏）。
@@ -2063,7 +2084,7 @@ fn main() {
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
-            list_approvals, decide_approval, audit_query, issue_agent, revoke_agent, mcp_status,
+            list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,

@@ -3558,6 +3558,8 @@ export default function App() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedCmd, setEditedCmd] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [persistId, setPersistId] = useState<string | null>(null);
+  const [persistPattern, setPersistPattern] = useState("");
   const decide = async (id: string, decision: "approve" | "deny" | "edit", edited: string | null) => {
     // 并发作废（接管/关会话）会拒绝决定（审计 F3）：无 catch 时 unhandled
     // rejection + 编辑态卡死到下次轮询。失败如实上报、编辑态保留（卡片随轮询刷新）
@@ -3569,7 +3571,26 @@ export default function App() {
     }
     setEditingId(null);
     setConfirmId(null);
+    setPersistId(null);
     await refreshLists();
+  };
+  // 「批准并记住」（审批减摩擦①）：先写策略再批准。记忆失败不阻断批准——
+  // 批准是人类显式意图，记忆只是增益；错误如实上报（如实降级为普通批准）。
+  const rememberThenDecide = async (
+    id: string,
+    scope: { ttlMinutes: number } | { pattern: string },
+  ) => {
+    try {
+      const patterns = await invoke("remember_approval", {
+        id,
+        ttlMinutes: "ttlMinutes" in scope ? scope.ttlMinutes : null,
+        pattern: "pattern" in scope ? scope.pattern : null,
+      });
+      pushToast("ok", `已记住：${patterns.join("；")}`);
+    } catch (err) {
+      pushToast("err", `记忆规则未写入：${errMsg(err)}`);
+    }
+    await decide(id, "approve", null);
   };
 
   // 审批卡风险分级 approvalRisk 已随审批卡出仓 components/collab-panel.tsx（拆分⑤）
@@ -4601,7 +4622,9 @@ export default function App() {
               confirmId={confirmId} setConfirmId={setConfirmId}
               editingId={editingId} setEditingId={setEditingId}
               editedCmd={editedCmd} setEditedCmd={setEditedCmd}
-              decide={decide} openSettingsAt={openSettingsAt}
+              persistId={persistId} setPersistId={setPersistId}
+              persistPattern={persistPattern} setPersistPattern={setPersistPattern}
+              decide={decide} rememberThenDecide={rememberThenDecide} openSettingsAt={openSettingsAt}
             />
           )}
           {rightPanel === "files" && (

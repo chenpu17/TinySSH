@@ -324,6 +324,15 @@ pub enum Decision {
     Deny,
 }
 
+/// 「批准并记住」的记忆范围（审批减摩擦①）：TTL=按卡上命令逐段**精确**记忆
+/// （无通配，语义零漂移，到期自动失效）；Persistent=人类确认过的 pattern
+/// （UI 预填可编辑，写 allow 规则）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RememberScope {
+    Ttl { minutes: u32 },
+    Persistent { pattern: String },
+}
+
 // ---------------------------------------------------------------------------
 // 人类预配置策略（存 vault；ApprovalMode 由人类配置，MCP 不可指定）
 // ---------------------------------------------------------------------------
@@ -1825,6 +1834,16 @@ pub trait SessionApi: Send + Sync {
     async fn list_approvals(&self, ctx: &Actor, f: ApprovalFilter) -> Result<Vec<ApprovalItem>>;
     fn subscribe_approvals(&self) -> broadcast::Receiver<ApprovalEvent>;
     async fn decide_approval(&self, ctx: &Actor, id: ApprovalId, d: Decision) -> Result<()>;
+    /// 「批准并记住」（审批减摩擦①）：为审批卡写放行策略（vault 单一事实源，
+    /// 下次 exec 自动刷新进引擎），随后人类再走常规 decide。只写策略、不动卡——
+    /// 记忆失败不阻断批准，批准失败（如已作废）也不回滚已写的规则（规则对未来有益）。
+    /// 返回实际写入的 pattern 列表（UI 可提示）。
+    async fn remember_approval(
+        &self,
+        ctx: &Actor,
+        id: ApprovalId,
+        scope: RememberScope,
+    ) -> Result<Vec<String>>;
     // ---- 主机指纹门（路线图⑤ TOFU）----
     async fn pending_host_keys(&self, ctx: &Actor) -> Result<Vec<PendingHostKey>>;
     fn subscribe_host_keys(&self) -> broadcast::Receiver<PendingHostKey>;

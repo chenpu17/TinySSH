@@ -7,19 +7,29 @@ import { approvalResolvedLabel, stateLabel, type ApprovalRow, type SettingsCat }
 import { IconInbox, IconTerminal } from "../icons";
 import { BriefCard } from "./brief-card";
 
-// 审批卡风险分级：deny 命中根本不会出卡（内置危险模式直接拦），出卡的都至少
-// 有一段待审。需要人为减速带的两种形态——① 全段 pending：系统零正向信号，
-// 完全不知道安不安全；② 命中高危命令形态（rm -rf/格式化/关机类，后端内置
-// deny 只拦了其中最狠的子集，如 rm -rf /tmp 仍会出卡）。正则常驻模块顶层。
+// 审批卡风险分级（审批减摩擦①后两档）：deny 命中根本不会出卡（内置危险模式直接拦）。
+// ——高危形态（rm -rf/格式化/关机类）：唯一保留「二次确认」减速带的档；
+// ——全段 pending（系统无法判定安全性）：降为**提示**不阻断单击——批准本身
+//    就是刻意的第一次接触，重复摩擦由「批准并记住」消化。正则常驻模块顶层。
 const DANGER_SHAPE_RE =
   /\brm\s+(?:-[a-zA-Z]+\s+)*-[a-z]*r[a-z]*f|\bmkfs\b|\bdd\b[^\n]*\bof=\/dev\/|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bwipefs\b|\bchmod\s+(?:-[a-zA-Z]+\s+)*777\s+\//;
 
 function approvalRisk(a: ApprovalRow): string | null {
-  const segs = a.segment_report;
-  if (segs.length > 0 && segs.every((s) => s.verdict.startsWith("pending:")))
-    return "所有分段均未命中任何允许规则（系统无法判定安全性）";
   if (DANGER_SHAPE_RE.test(a.command)) return "命令包含高危形态（删除/格式化/关机类）";
   return null;
+}
+
+function approvalUncertainty(a: ApprovalRow): string | null {
+  const segs = a.segment_report;
+  if (segs.length > 0 && segs.every((s) => s.verdict.startsWith("pending:")))
+    return "所有分段均未命中允许规则（系统无法判定安全性）";
+  return null;
+}
+
+/// 命令替换/解析失败的卡：内容不可预判，引擎对这类命令**跳过** allow/TTL——
+/// 「记住」对未来无效果，不出记忆钮（如实告知，不出假按钮）。
+function rememberEligible(a: ApprovalRow): boolean {
+  return !a.segment_report.some((s) => s.verdict.includes("不可预判"));
 }
 
 export interface ApprovalGroup {
@@ -44,7 +54,15 @@ interface CollabApprovalsProps {
   setEditingId: (v: string | null) => void;
   editedCmd: string;
   setEditedCmd: (v: string) => void;
+  persistId: string | null;
+  setPersistId: (v: string | null) => void;
+  persistPattern: string;
+  setPersistPattern: (v: string) => void;
   decide: (id: string, decision: "approve" | "deny" | "edit", edited: string | null) => Promise<void>;
+  rememberThenDecide: (
+    id: string,
+    scope: { ttlMinutes: number } | { pattern: string },
+  ) => Promise<void>;
   openSettingsAt: (cat: SettingsCat) => void;
 }
 
@@ -52,7 +70,8 @@ export function CollabApprovals({
   collabEnabled, collab, collabStateText, collabConfigured, collabActive,
   pendingCount, approvalGroups, pendingApprovals, resolvedApprovals,
   confirmId, setConfirmId, editingId, setEditingId, editedCmd, setEditedCmd,
-  decide, openSettingsAt,
+  persistId, setPersistId, persistPattern, setPersistPattern,
+  decide, rememberThenDecide, openSettingsAt,
 }: CollabApprovalsProps) {
   return (
     !collabEnabled ? (
@@ -98,6 +117,11 @@ export function CollabApprovals({
               </div>
               {g.items.map((a) => {
                 const risk = approvalRisk(a);
+                const uncertainty = approvalUncertainty(a);
+                // 高危卡批准类按钮共享一次确认：首次点击只置 confirmId，卡上任意
+                // 批准类按钮的第二次点击才执行（人已对这张卡表过态）
+                const gated = risk !== null && confirmId !== a.id;
+                const eligible = rememberEligible(a);
                 return (
                   <div className="card" key={a.id}>
                     <div className="row">
@@ -129,6 +153,11 @@ export function CollabApprovals({
                         ⚠ {risk}——批准前请确认命令的全部效果。
                       </div>
                     )}
+                    {uncertainty && (
+                      <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                        ⚠ {uncertainty}——批准前请确认命令的全部效果。
+                      </div>
+                    )}
                     {editingId === a.id ? (
                       <div style={{ marginTop: 8 }}>
                         <textarea value={editedCmd} onChange={(e) => setEditedCmd(e.target.value)} rows={3} style={{ width: "100%" }} />
@@ -138,20 +167,71 @@ export function CollabApprovals({
                         </div>
                         <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>改后批准会记录为人工编辑（审计留痕）。</div>
                       </div>
-                    ) : (
-                      <div className="row" style={{ marginTop: 8 }}>
-                        <button
-                          className={confirmId === a.id ? "warn" : undefined}
-                          title={risk ? "高危/未知安全性的请求：需二次确认" : undefined}
-                          onClick={() => {
-                            if (risk && confirmId !== a.id) { setConfirmId(a.id); return; }
-                            void decide(a.id, "approve", null);
-                          }}
-                        >{confirmId === a.id ? "再次点击确认批准" : "批准"}</button>
-                        {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
-                        {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>}
-                        <button className="danger" onClick={() => void decide(a.id, "deny", null)}>拒绝</button>
+                    ) : persistId === a.id ? (
+                      // 持久放行编辑器：预填命令前缀（可编辑），写入该 Agent 的 allow 规则
+                      <div style={{ marginTop: 8 }}>
+                        <input
+                          className="mono"
+                          value={persistPattern}
+                          onChange={(e) => setPersistPattern(e.target.value)}
+                          style={{ width: "100%" }}
+                        />
+                        <div className="row" style={{ marginTop: 6 }}>
+                          <button
+                            disabled={!persistPattern.trim()}
+                            onClick={() => {
+                              if (gated) { setConfirmId(a.id); return; }
+                              void rememberThenDecide(a.id, { pattern: persistPattern.trim() });
+                            }}
+                          >{gated ? "再次点击确认" : "保存规则并批准"}</button>
+                          <button className="ghost" onClick={() => setPersistId(null)}>取消</button>
+                        </div>
+                        <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                          前缀匹配（`*` 前为字面前缀），对该 Agent 永久生效，可到设置 → Agent 接入 管理；写入即审计留痕。
+                        </div>
                       </div>
+                    ) : (
+                      <>
+                        <div className="row" style={{ marginTop: 8 }}>
+                          <button
+                            className={confirmId === a.id ? "warn" : undefined}
+                            title={risk ? "高危形态请求：需二次确认" : undefined}
+                            onClick={() => {
+                              if (gated) { setConfirmId(a.id); return; }
+                              void decide(a.id, "approve", null);
+                            }}
+                          >{confirmId === a.id ? "再次点击确认批准" : "批准"}</button>
+                          {/* 「批准并记住」（审批减摩擦①）：TTL 精确记忆，到期自动失效；
+                              高危卡同样吃二次确认闸门 */}
+                          {eligible && (
+                            <button className="ghost"
+                              title="同命令 30 分钟内免审（逐段精确匹配，过期自动失效）"
+                              onClick={() => {
+                                if (gated) { setConfirmId(a.id); return; }
+                                void rememberThenDecide(a.id, { ttlMinutes: 30 });
+                              }}
+                            >记住并批准</button>
+                          )}
+                          {/* 持久放行只对单段可解析命令开放：复合命令的前缀通配难一眼核对 */}
+                          {eligible && a.segment_report.length <= 1 && (
+                            <button className="ghost"
+                              title="预填命令前缀（可编辑），写入该 Agent 的持久放行规则"
+                              onClick={() => {
+                                setConfirmId(null); setPersistId(a.id);
+                                setPersistPattern(((a.segment_report[0]?.segment ?? a.command).trim()) + " *");
+                              }}
+                            >持久放行…</button>
+                          )}
+                          {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
+                          {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>编辑后批准</button>}
+                          <button className="danger" onClick={() => void decide(a.id, "deny", null)}>拒绝</button>
+                        </div>
+                        {!eligible && (
+                          <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                            命令替换/解析失败：内容不可预判，无法记忆放行（每次都会重新送审）。
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );

@@ -102,6 +102,8 @@ interface CmdArgs {
   set_session_goal: { sid: string; goal: string | null };
   list_approvals: { pendingOnly: boolean };
   decide_approval: { id: string; decision: "approve" | "deny" | "edit"; edited?: string | null };
+  // 「批准并记住」（审批减摩擦①）：ttlMinutes（精确记忆）或 pattern（持久放行）二选一
+  remember_approval: { id: string; ttlMinutes?: number | null; pattern?: string | null };
   // R41（§6.6）：过滤面全量过桥。sid=null → 全部会话；actor_kind ∈ {human, agent}；
   // action 精确匹配动作名；beforeSeq 供「加载更早」按 seq 游标翻页（连续，不重不漏）。
   audit_query: {
@@ -194,6 +196,7 @@ interface CmdRet {
   set_session_goal: void;
   list_approvals: wire.ApprovalItem[];
   decide_approval: void;
+  remember_approval: string[];
   audit_query: wire.AuditPage;
   issue_agent: string;
   revoke_agent: void;

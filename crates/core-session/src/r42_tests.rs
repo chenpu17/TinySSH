@@ -491,3 +491,139 @@ async fn wait_card(m: &SessionManager, sid: &str) -> ApprovalItem {
     }
     panic!("审批卡未在 3s 内出现");
 }
+
+/// ①「批准并记住」TTL：按卡上未命中段**精确**写入 TTL 窗口（vault 单一事实源），
+/// 重载进引擎后同命令 AutoAllow——复现「同一命令第二次不再出卡」的减摩擦语义。
+#[tokio::test]
+async fn r42_remember_ttl_grants_exact_repeat() {
+    let m = mgr();
+    let h = mk_handle("s-1", ControlOwner::Agent, m.center.clone());
+    register(&m, h.clone());
+    m.center.vault.create_agent("opencode", "OpenCode").unwrap();
+
+    let h1 = h.clone();
+    let j1 = tokio::spawn(async move {
+        h1.wait_approval(
+            &Actor::Agent { client_id: "opencode".into() },
+            &"opencode".to_string(),
+            &"e-1".to_string(),
+            "docker system prune -f",
+            &needs_approval("docker system prune -f"),
+            true,
+            false,
+            session_api::transport::tokio_util_sync::CancellationToken::new(),
+        )
+        .await
+    });
+    let card = wait_card(&m, "s-1").await;
+    let written = m
+        .remember_approval(
+            &Actor::Human,
+            card.id.clone(),
+            RememberScope::Ttl { minutes: 30 },
+        )
+        .await
+        .unwrap();
+    assert_eq!(written, vec!["docker system prune -f".to_string()]);
+
+    // exec 入口的刷新路径：vault → 引擎；同命令应免审
+    let policy = m.center.vault.load_policy("opencode");
+    m.center.engine.set_policy("opencode", policy);
+    assert_eq!(
+        m.center.engine.evaluate("opencode", "docker system prune -f").verdict,
+        tinyssh_approval::SegmentVerdict::AutoAllow,
+        "记住后同命令必须免审"
+    );
+    // 不同命令仍报审（精确记忆无通配）
+    assert_eq!(
+        m.center.engine.evaluate("opencode", "docker system prune -a").verdict,
+        tinyssh_approval::SegmentVerdict::NeedsApproval
+    );
+    // TTL 行带过期时间（> now），且秒级 clamp 生效（0 → 1 分钟）
+    let p = m.center.vault.load_policy("opencode");
+    assert!(p.ttl_windows.iter().any(|w| w.expires_at > chrono::Utc::now()));
+    // 收尾：拒绝让等待侧收敛（与 r42 同款；只记不住卡——remember 不动决定）
+    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny)
+        .await
+        .unwrap();
+    let _ = j1.await.unwrap();
+}
+
+/// ①「批准并记住」持久放行：写 allow 规则 + 审计；Agent 不可自记；空 pattern 拒绝。
+#[tokio::test]
+async fn r42_remember_persistent_and_guards() {
+    let m = mgr();
+    let h = mk_handle("s-1", ControlOwner::Agent, m.center.clone());
+    register(&m, h.clone());
+    m.center.vault.create_agent("opencode", "OpenCode").unwrap();
+
+    let h1 = h.clone();
+    let j1 = tokio::spawn(async move {
+        h1.wait_approval(
+            &Actor::Agent { client_id: "opencode".into() },
+            &"opencode".to_string(),
+            &"e-1".to_string(),
+            "df -h",
+            &needs_approval("df -h"),
+            true,
+            false,
+            session_api::transport::tokio_util_sync::CancellationToken::new(),
+        )
+        .await
+    });
+    let card = wait_card(&m, "s-1").await;
+
+    // Agent 不能给自己写放行（InvalidActor）
+    assert!(matches!(
+        m.remember_approval(
+            &Actor::Agent { client_id: "opencode".into() },
+            card.id.clone(),
+            RememberScope::Persistent { pattern: "*".into() },
+        )
+        .await,
+        Err(Error::InvalidActor)
+    ));
+    // 空 pattern 拒绝
+    assert!(m
+        .remember_approval(
+            &Actor::Human,
+            card.id.clone(),
+            RememberScope::Persistent { pattern: "   ".into() },
+        )
+        .await
+        .is_err());
+
+    let written = m
+        .remember_approval(
+            &Actor::Human,
+            card.id.clone(),
+            RememberScope::Persistent { pattern: "df *".into() },
+        )
+        .await
+        .unwrap();
+    assert_eq!(written, vec!["df *".to_string()]);
+    let policy = m.center.vault.load_policy("opencode");
+    m.center.engine.set_policy("opencode", policy);
+    assert_eq!(
+        m.center.engine.evaluate("opencode", "df -h").verdict,
+        tinyssh_approval::SegmentVerdict::AutoAllow,
+        "持久放行后前缀命中免审"
+    );
+    // 审计留痕（approval_remember ×2：1 条 Agent 拒绝路径不落审计，Human 两条 1 成功）
+    let audit = m
+        .query_audit(
+            &Actor::Human,
+            AuditFilter {
+                action: Some("approval_remember".into()),
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(audit.events.len() >= 1, "approval_remember 必须进审计");
+    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny)
+        .await
+        .unwrap();
+    let _ = j1.await.unwrap();
+}

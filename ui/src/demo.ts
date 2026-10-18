@@ -923,6 +923,26 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           purpose: demoState.sessions.find((x) => x.id === a.session_id)?.goal ?? null,
         }));
     }
+    case "remember_approval": {
+      // 「批准并记住」demo 镜像：只写规则（demo 态并入 audit 留痕）+ 审计，不动卡；
+      // 决定仍走 decide_approval。真实实现见 core-session remember_approval。
+      const id = args?.id as string;
+      const it = demoState.approvals.find((a) => a.id === id);
+      if (!it) throw apiError("invalid_input", "no such approval");
+      const patterns: string[] = [];
+      if (typeof args?.ttlMinutes === "number") {
+        patterns.push(...it.segment_report
+          .filter((s) => s.verdict.startsWith("pending:"))
+          .map((s) => s.segment));
+        if (patterns.length === 0) patterns.push(it.command.trim());
+      } else if (typeof args?.pattern === "string" && args.pattern.trim()) {
+        patterns.push(args.pattern.trim());
+      } else {
+        throw apiError("invalid_input", "需要 ttlMinutes 或 pattern");
+      }
+      audit("human", "approval_remember", it.command, null, it.session_id, { patterns });
+      return patterns;
+    }
     case "decide_approval": {
       const id = args?.id as string;
       // 契约对齐（十轮）：未知 decision 显式报错（真实 main.rs 同款 invalid_input），

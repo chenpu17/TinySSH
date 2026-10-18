@@ -3092,6 +3092,73 @@ impl SessionApi for SessionManager {
         }
     }
 
+    /// 「批准并记住」（审批减摩擦①）：只写 vault 策略，不动卡、不发决定——
+    /// 决定仍走 decide_approval。策略在 Agent 下次 exec 时由 exec 入口刷新进引擎，
+    /// 因此这里无需触碰 ApprovalEngine。
+    async fn remember_approval(
+        &self,
+        ctx: &Actor,
+        id: ApprovalId,
+        scope: RememberScope,
+    ) -> Result<Vec<String>> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let item = self.center.items.lock().unwrap().get(&id).cloned();
+        let item = item.ok_or_else(|| Error::InvalidInput("no such approval".into()))?;
+        let scope_tag = match &scope {
+            RememberScope::Ttl { minutes } => format!("ttl_{minutes}m"),
+            RememberScope::Persistent { .. } => "persistent".to_string(),
+        };
+        let mut written = Vec::new();
+        match scope {
+            RememberScope::Ttl { minutes } => {
+                let minutes = minutes.clamp(1, 24 * 60);
+                // 只记未命中段（已命中 allow/TTL 的段重复记忆是噪音）；空报告退整条命令
+                let segs: Vec<String> = if item.segment_report.is_empty() {
+                    vec![item.command.trim().to_string()]
+                } else {
+                    item.segment_report
+                        .iter()
+                        .filter(|s| s.verdict.starts_with("pending:"))
+                        .map(|s| s.segment.clone())
+                        .collect()
+                };
+                if segs.is_empty() {
+                    return Err(Error::InvalidInput(
+                        "卡上没有待审段（全部已命中放行规则），无需记忆".into(),
+                    ));
+                }
+                let expires = chrono::Utc::now() + chrono::Duration::minutes(i64::from(minutes));
+                for seg in segs {
+                    self.center
+                        .vault
+                        .add_ttl_window(&item.agent_id, &seg, expires)?;
+                    written.push(seg);
+                }
+            }
+            RememberScope::Persistent { pattern } => {
+                let pattern = pattern.trim();
+                if pattern.is_empty() || pattern.len() > 512 {
+                    return Err(Error::InvalidInput("pattern 为空或超长（>512）".into()));
+                }
+                self.center
+                    .vault
+                    .add_allow_pattern(&item.agent_id, pattern, "审批卡快捷放行")?;
+                written.push(pattern.to_string());
+            }
+        }
+        let _ = self.center.audit.append(
+            ctx,
+            "approval_remember",
+            Some(&item.session_id),
+            Some(&item.command),
+            serde_json::json!({"scope": scope_tag, "patterns": written}),
+            Some(&id),
+        );
+        Ok(written)
+    }
+
     // ---- 主机指纹门（路线图⑤ TOFU）----
     async fn pending_host_keys(&self, _ctx: &Actor) -> Result<Vec<PendingHostKey>> {
         Ok(self

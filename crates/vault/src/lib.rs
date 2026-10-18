@@ -1754,6 +1754,11 @@ impl Vault {
     // ---- 策略（per agent）----
     pub fn load_policy(&self, agent_id: &str) -> Policy {
         let conn = self.conn.lock().unwrap();
+        // 过期 TTL 窗口顺手清理（「批准并记住」会持续产生短命行）
+        let _ = conn.execute(
+            "DELETE FROM policies WHERE kind='ttl_window' AND expires_at IS NOT NULL AND expires_at < ?1",
+            params![chrono::Utc::now().timestamp_millis()],
+        );
         let mut stmt = match conn
             .prepare("SELECT kind, pattern, scope, expires_at FROM policies WHERE agent_id=?1 AND deleted_at IS NULL")
         {
