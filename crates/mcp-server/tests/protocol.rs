@@ -572,3 +572,194 @@ async fn exec_output_cap_truncates() {
     let s = out["stdout"].as_str().unwrap_or_default();
     assert!(s.chars().count() < 400, "stdout 应被截断：{} 字符", s.chars().count());
 }
+
+// ---- rev-r48：资源/订阅/提示能力面（第二能力面）----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn resources_prompts_served_over_mcp() {
+    let (_m, url, _port, token) = spawn_stack().await;
+    let client = connect(&url, &token).await;
+
+    // resources/list：4 个静态资源 + 2 个模板
+    let rs = client.list_resources(None).await.expect("list resources");
+    let uris: Vec<String> = rs.resources.iter().map(|r| r.uri.clone()).collect();
+    for u in ["tinyssh://sessions", "tinyssh://transfers", "tinyssh://forwards", "tinyssh://approvals/pending"] {
+        assert!(uris.contains(&u.to_string()), "缺资源 {u}: {uris:?}");
+    }
+    let ts = client.list_resource_templates(None).await.expect("templates");
+    assert_eq!(ts.resource_templates.len(), 2);
+
+    // resources/read：空会话列表也应是合法 JSON 数组
+    let r = client
+        .read_resource(rmcp::model::ReadResourceRequestParams::new("tinyssh://sessions"))
+        .await
+        .expect("read sessions");
+    assert_eq!(r.contents.len(), 1);
+    let (uri, mime_type, text) = match &r.contents[0] {
+        rmcp::model::ResourceContents::TextResourceContents { uri, mime_type, text, .. } => {
+            (uri, mime_type, text)
+        }
+        other => panic!("应为文本资源内容：{other:?}"),
+    };
+    assert_eq!(uri, "tinyssh://sessions");
+    assert_eq!(mime_type.as_deref(), Some("application/json"));
+    let parsed: serde_json::Value = serde_json::from_str(text).expect("会话列表应是 JSON");
+    assert!(parsed.is_array(), "{parsed}");
+
+    // 未知 uri → 协议错误（invalid_params）
+    assert!(client
+        .read_resource(rmcp::model::ReadResourceRequestParams::new("file:///etc/passwd"))
+        .await
+        .is_err(), "未知资源必须是协议错误");
+
+    // prompts/list + get（带参与缺参）
+    let ps = client.list_prompts(None).await.expect("list prompts");
+    let pnames: Vec<String> = ps.prompts.iter().map(|p| p.name.clone()).collect();
+    for n in ["onboarding", "session-triage", "transfer-followup"] {
+        assert!(pnames.contains(&n.to_string()), "缺提示 {n}: {pnames:?}");
+    }
+    let g = client
+        .get_prompt(
+            rmcp::model::GetPromptRequestParams::new("session-triage").with_arguments(
+                serde_json::json!({ "session_id": "s-x" }).as_object().cloned().unwrap(),
+            ),
+        )
+        .await
+        .expect("get session-triage");
+    let text = g
+        .messages
+        .first()
+        .map(|m| match &m.content {
+            rmcp::model::ContentBlock::Text(t) => t.text.clone(),
+            _ => String::new(),
+        })
+        .unwrap_or_default();
+    assert!(text.contains("s-x"), "参数须注入提示文本: {text}");
+    assert!(
+        client
+            .get_prompt(rmcp::model::GetPromptRequestParams::new("session-triage"))
+            .await
+            .is_err(),
+        "缺参数必须是协议错误"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn subscribe_pushes_resource_updated() {
+    // 订阅 tinyssh://approvals/pending → 人类侧产生新审批 →
+    // GET SSE 流收到 notifications/resources/updated（推式可观测性，替代轮询）
+    let (m, url, _port, token) = spawn_stack().await;
+    let client = raw_init(&url, &token).await;
+    let sid = m
+        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+
+    // 规范动作：initialized 通知（202），随后开 GET SSE 流收服务器推送
+    let r = client
+        .post(format!("{url}/mcp"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202, "initialized 通知应 202：{}", r.status());
+    let get_resp = client
+        .get(format!("{url}/mcp"))
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .expect("GET SSE 流");
+    assert!(get_resp.status().is_success(), "GET 流应成功：{}", get_resp.status());
+    let mut stream = get_resp.bytes_stream();
+    let buf: Arc<std::sync::Mutex<String>> = Arc::default();
+    let buf2 = buf.clone();
+    tokio::spawn(async move {
+        while let Some(Ok(chunk)) = stream.next().await {
+            buf2.lock().unwrap().push_str(&String::from_utf8_lossy(&chunk));
+        }
+    });
+
+    // 订阅 → 触发（exec 走审批 → ApprovalEvent::New）→ 等推送
+    let r = client
+        .post(format!("{url}/mcp"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 8, "method": "resources/subscribe",
+                "params": {"uri": "tinyssh://approvals/pending"}
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "subscribe 应成功：{}", r.status());
+
+    let c2 = client.clone();
+    let sid2 = sid.clone();
+    let url2 = url.clone();
+    let exec = tokio::spawn(async move {
+        c2.post(format!("{url2}/mcp"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                    "params": {"name": "exec", "arguments": {"session_id": sid2, "command": "printf sub_evt"}}
+                })
+                .to_string(),
+            )
+            .send()
+            .await
+            .expect("exec POST")
+    });
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let b = buf.lock().unwrap().clone();
+        if b.contains("notifications/resources/updated") && b.contains("tinyssh://approvals/pending") {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("15s 内未收到 resources/updated 推送；缓冲：{b}");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // 收敛：拒绝审批，exec 返回结构化错误；unsubscribe 幂等成功
+    m.decide_approval(
+        &Actor::Human,
+        m.list_approvals(&Actor::Human, ApprovalFilter { pending_only: true, ..Default::default() })
+            .await
+            .unwrap()
+            .first()
+            .unwrap()
+            .id
+            .clone(),
+        Decision::Deny,
+    )
+    .await
+    .unwrap();
+    let resp = tokio::time::timeout(Duration::from_secs(10), exec).await.unwrap().unwrap();
+    let body = resp.text().await.unwrap_or_default();
+    assert!(body.contains("approval_denied"), "拒绝后 exec 应收敛：{body}");
+    let r = client
+        .post(format!("{url}/mcp"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 10, "method": "resources/unsubscribe",
+                "params": {"uri": "tinyssh://approvals/pending"}
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "unsubscribe 应成功：{}", r.status());
+}

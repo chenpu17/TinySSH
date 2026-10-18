@@ -4,14 +4,19 @@
 //! （docs.rs，工具目录实时枚举，页面不含机密）。
 
 pub mod docs;
+pub mod resources;
 
 use rmcp::handler::server::common::Extension;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
-    CallToolResult, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
+    CallToolResult, GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ProtocolVersion,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, ResourceContents,
+    ServerCapabilities, ServerConfig, SubscribeRequestParams, UnsubscribeRequestParams,
 };
-use rmcp::service::RequestContext;
+use rmcp::service::{Peer, RequestContext};
 use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
@@ -28,6 +33,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use resources::SubRegistry;
+
 /// Bearer Token 解析器（由装配层注入；mcp-server 只依赖 session-api 契约，L1 §1）。
 pub type TokenResolver = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
@@ -39,6 +46,8 @@ pub struct McpState {
     /// rev-r47：应用数据目录（端点自发现文件 `<data_dir>/mcp-endpoint` 落点；
     /// None = 测试/未装配，接入文档省略自发现指引）。
     pub data_dir: Option<PathBuf>,
+    /// 资源订阅注册表（(client_id, uri) → 看护任务；重复订阅替换）。
+    pub subs: SubRegistry,
 }
 
 impl McpState {
@@ -47,6 +56,7 @@ impl McpState {
             api,
             resolver,
             data_dir: None,
+            subs: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 }
@@ -970,13 +980,189 @@ where
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("tinyssh-mcp", env!("CARGO_PKG_VERSION")))
-            .with_instructions("TinySSH 人机协同 SSH：exec 默认 shell 模式（现场延续），审批/接管/简报保障知情与可控")
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .enable_resources()
+                .enable_resources_subscribe()
+                .build(),
+        )
+        .with_server_info(Implementation::new("tinyssh-mcp", env!("CARGO_PKG_VERSION")))
+        .with_instructions("TinySSH 人机协同 SSH：exec 默认 shell 模式（现场延续），审批/接管/简报保障知情与可控。除工具外提供资源（tinyssh://sessions 等现场状态，可 subscribe 收 notifications/resources/updated 推送）与引导提示（prompts/get）。")
     }
 
     fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
         std::borrow::Cow::Borrowed(&[ProtocolVersion::V_2025_03_26, ProtocolVersion::V_2025_06_18])
+    }
+
+    // -----------------------------------------------------------------------
+    // 资源：list / templates / read（身份与工具同源：HTTP Bearer → Actor）
+    // -----------------------------------------------------------------------
+
+    async fn list_resources(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult::with_all_items(resources::resource_catalog()))
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult::with_all_items(
+            resources::resource_template_catalog(),
+        ))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        let q = resources::parse_resource_uri(&request.uri).ok_or_else(|| {
+            McpError::invalid_params(format!("未知资源: {}（先 resources/list）", request.uri), None)
+        })?;
+        let actor = actor_from_ctx(&self.state, &context)?;
+        let v = resources::read_resource_value(&self.state.api, &actor, &q)
+            .await
+            .map_err(mcp_err_from_read)?;
+        let text = serde_json::to_string_pretty(&v)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(ReadResourceResponse::Complete(ReadResourceResult::new(
+            vec![ResourceContents::text(text, request.uri).with_mime_type("application/json")],
+        )))
+    }
+
+    // -----------------------------------------------------------------------
+    // 订阅：resources/subscribe（legacy，2025-03-26/06-18 客户端唯一通路）。
+    // 2026-07-28 的 subscriptions/listen 未启用（服务器不宣称该版本）。
+    // -----------------------------------------------------------------------
+
+    #[allow(deprecated)]
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let q = resources::parse_resource_uri(&request.uri).ok_or_else(|| {
+            McpError::invalid_params(
+                format!("不可订阅的资源: {}（可订阅：tinyssh://sessions|transfers|forwards|approvals/pending 及 sessions|transfers/<id>）", request.uri),
+                None,
+            )
+        })?;
+        let (actor, client_id) = actor_and_client_from_ctx(&self.state, &context)?;
+        let peer: Peer<RoleServer> = context.peer.clone();
+        // 不锚定 context.ct：rmcp 在订阅响应发出时即取消请求级 token，
+        // 看护任务必须活得比这次 POST 久（生命周期见 spawn_watcher 注释）。
+        let handle = resources::spawn_watcher(
+            self.state.api.clone(),
+            actor,
+            request.uri.clone(),
+            q,
+            peer,
+        );
+        let mut subs = self
+            .state
+            .subs
+            .lock()
+            .map_err(|_| McpError::internal_error("订阅表锁中毒", None))?;
+        if let Some(old) = subs.insert((client_id, request.uri), handle) {
+            old.abort(); // 同 Token 同 uri 重复订阅：替换旧看护任务
+        }
+        Ok(())
+    }
+
+    #[allow(deprecated)]
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let (_, client_id) = actor_and_client_from_ctx(&self.state, &context)?;
+        if let Ok(mut subs) = self.state.subs.lock() {
+            if let Some(h) = subs.remove(&(client_id, request.uri)) {
+                h.abort();
+            }
+        }
+        Ok(()) // 幂等：未订阅也视为成功
+    }
+
+    // -----------------------------------------------------------------------
+    // 提示：prompts/list / get（引导模板，参数注入，无机密）
+    // -----------------------------------------------------------------------
+
+    async fn list_prompts(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult::with_all_items(resources::prompt_catalog()))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, McpError> {
+        let text = resources::prompt_text(&request.name, request.arguments.as_ref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let mut r = GetPromptResult::new(vec![rmcp::model::PromptMessage::new_text(
+            rmcp::model::Role::User,
+            text,
+        )]);
+        r.description = Some(format!("TinySSH 引导提示：{}", request.name));
+        Ok(r.into())
+    }
+}
+
+/// 从请求上下文提取 Actor（与工具同源：HTTP Parts 里的 Bearer → resolver）。
+fn actor_from_ctx(
+    state: &McpState,
+    context: &RequestContext<RoleServer>,
+) -> Result<Actor, McpError> {
+    Ok(actor_and_client_from_ctx(state, context)?.0)
+}
+
+/// 提取 Actor + client_id（订阅注册表键需要 Token 身份，不只是 Actor 形状）。
+fn actor_and_client_from_ctx(
+    state: &McpState,
+    context: &RequestContext<RoleServer>,
+) -> Result<(Actor, String), McpError> {
+    let parts = context
+        .extensions
+        .get::<HttpParts>()
+        .ok_or_else(|| McpError::internal_error("无 HTTP 请求上下文", None))?;
+    let auth = parts
+        .headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| McpError::invalid_params("缺少 Authorization", None))?;
+    let token = auth
+        .strip_prefix("Bearer ")
+        .or_else(|| auth.strip_prefix("bearer "))
+        .ok_or_else(|| McpError::invalid_params("Authorization 形态非法", None))?;
+    let client_id = (state.resolver)(token)
+        .ok_or_else(|| McpError::invalid_params("身份无效（Token 失效？）", None))?;
+    Ok((Actor::Agent { client_id: client_id.clone() }, client_id))
+}
+
+/// 资源读错误 → 协议错误：找不到实例/身份/入参 → invalid_params；其余 → internal。
+fn mcp_err_from_read(e: resources::ReadErr) -> McpError {
+    let params_err = match &e {
+        resources::ReadErr::NotFound { .. } => true,
+        resources::ReadErr::Core(
+            Error::SessionNotFound | Error::InvalidActor | Error::InvalidInput(_),
+        ) => true,
+        resources::ReadErr::Core(_) => false,
+    };
+    if params_err {
+        McpError::invalid_params(e.to_string(), None)
+    } else {
+        McpError::internal_error(e.to_string(), None)
     }
 }
 

@@ -161,6 +161,38 @@ fn security_sections() -> String {
         .to_string()
 }
 
+/// 资源/订阅/提示能力面（工具之外的第二能力面；身份与审批模型同工具）。
+fn resources_prompts_sections() -> String {
+    "## 资源与订阅（工具之外的第二能力面）\n\
+     服务端还提供 resources（现场状态快照）与 prompts（引导模板）；\n\
+     身份、权限与审批模型和工具完全一致，资源只读、不含机密。\n\n\
+     ### 可读资源（resources/list / read，application/json）\n\
+     - `tinyssh://sessions`：活动会话列表；单会话走模板 `tinyssh://sessions/{session_id}`\n\
+     - `tinyssh://transfers`：传输任务列表；单任务走模板 `tinyssh://transfers/{transfer_id}`\n\
+     - `tinyssh://forwards`：各会话端口转发汇总\n\
+     - `tinyssh://approvals/pending`：待审批队列\n\n\
+     ```json\n\
+     {\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"resources/read\",\"params\":{\"uri\":\"tinyssh://sessions\"}}\n\
+     ```\n\n\
+     ### 订阅推送（resources/subscribe → notifications/resources/updated）\n\
+     对以上任意 uri 订阅后，状态变化即收到 `notifications/resources/updated`\n\
+     （只带 uri 的「请重读」信号，收到后重新 resources/read）：\n\
+     审批/转发/连接变化即时推送；传输在服务端为 2 秒差分。同一 uri 重复订阅 = 替换；\n\
+     `resources/unsubscribe` 或断开连接即回收。长连接（SSE）下才收得到推送。\n\n\
+     ```json\n\
+     {\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"resources/subscribe\",\"params\":{\"uri\":\"tinyssh://approvals/pending\"}}\n\
+     ```\n\
+     推送形态：`{\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/updated\",\"params\":{\"uri\":\"tinyssh://approvals/pending\"}}`\n\n\
+     ### 提示模板（prompts/list / get）\n\
+     - `onboarding`：接入后第一步（了解现场、理解审批模型、向人确认目标）\n\
+     - `session-triage`（参数 `session_id`）：会话体检套路\n\
+     - `transfer-followup`（参数 `transfer_id`）：传输跟进与失败处置\n\n\
+     ```json\n\
+     {\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"prompts/get\",\"params\":{\"name\":\"session-triage\",\"arguments\":{\"session_id\":\"<id>\"}}}\n\
+     ```\n\n"
+        .to_string()
+}
+
 fn tools_section(tools: &[ToolDoc], md: bool) -> String {
     let mut s = String::from("## 工具目录（自动生成，与应用运行版本一致）\n");
     for t in tools {
@@ -190,6 +222,8 @@ pub fn integration_markdown(meta: &DocMeta, tools: &[ToolDoc]) -> String {
     s.push_str(&intro_sections(base));
     s.push('\n');
     s.push_str(&howto_sections(meta));
+    s.push('\n');
+    s.push_str(&resources_prompts_sections());
     s.push('\n');
     s.push_str(&conduct_sections());
     s.push('\n');
@@ -232,6 +266,11 @@ pub fn index_html(meta: &DocMeta, tools: &[ToolDoc]) -> String {
         body,
         "<div class=card><h2>接入方式</h2><pre>{}</pre></div>",
         esc(howto_sections(meta).trim())
+    );
+    let _ = writeln!(
+        body,
+        "<div class=card><h2>资源 / 订阅 / 提示</h2><pre>{}</pre></div>",
+        esc(resources_prompts_sections().trim())
     );
     let _ = writeln!(
         body,
@@ -315,6 +354,10 @@ mod tests {
         assert!(md.contains("Bearer <TOKEN>"));
         assert!(md.contains("control_taken_by_human"));
         assert!(md.contains("\"command\""));
+        assert!(md.contains("tinyssh://approvals/pending"), "资源章节须列出待审批资源");
+        assert!(md.contains("resources/subscribe"), "订阅章节须存在");
+        assert!(md.contains("notifications/resources/updated"), "推送形态须存在");
+        assert!(md.contains("prompts/get"), "提示章节须存在");
     }
 
     #[test]
