@@ -24,6 +24,7 @@ import type {
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
+  McpStatus,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -459,7 +460,7 @@ export default function App() {
   const briefRef = useRef<Brief | null>(null);
   useEffect(() => { briefRef.current = brief; }, [brief]);
   const [owner, setOwner] = useState<"Human" | "Agent">("Agent");
-  const [mcp, setMcp] = useState<{ endpoint: string; agents: { id: string; label: string }[] }>({ endpoint: "", agents: [] });
+  const [mcp, setMcp] = useState<McpStatus>({ endpoint: "", agents: [] });
   // C9（R43）：协作启用生命周期（人类专属）。state=Enabled 才开放 Agent admission；
   // 新装默认 Disabled（无自动 MCP 监听），旧版升级保留 Enabled。generation 供停用封口对账。
   const [collab, setCollab] = useState<CollabStatus>({ state: "Disabled", generation: 0, configured_agents: 0, active_requests: 0, endpoint: "" });
@@ -3542,6 +3543,18 @@ export default function App() {
     finally { setCollabBusy(false); }
   };
 
+  // rev-r47：Agent 生命周期（GUI 内签发/吊销，不再强制去 CLI）。签发返回 token
+  //（仅此一次展示，由设置页弹层呈现）；成功后刷新 mcp_status 投影。
+  const issueAgent = async (id: string, label: string, expiresDays: number | null): Promise<string> => {
+    const token = await invoke("issue_agent", { id, label, expires_days: expiresDays });
+    setMcp(await invoke("mcp_status"));
+    return token;
+  };
+  const revokeAgent = async (id: string): Promise<void> => {
+    await invoke("revoke_agent", { id });
+    setMcp(await invoke("mcp_status"));
+  };
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedCmd, setEditedCmd] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -4545,6 +4558,8 @@ export default function App() {
               openDisableDialog={openDisableDialog}
               retryDisableConvergence={retryDisableConvergence}
               enableCollab={enableCollab}
+              issueAgent={issueAgent}
+              revokeAgent={revokeAgent}
             />
           )}
         </div>

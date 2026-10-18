@@ -71,6 +71,23 @@ const ERROR_KINDS: &[(&str, &str)] = &[
     ("collab_disabled", "协作已被人类停用，Agent 动作一律被拒"),
 ];
 
+/// 文档生成上下文（rev-r47）。
+pub struct DocMeta {
+    /// 对外基准（http://127.0.0.1:port）
+    pub base: String,
+    /// stdio shim 的绝对路径（便携安装不在 PATH；开发态可能是裸名回退）
+    pub shim_path: String,
+    /// 端点自发现文件绝对路径（None = 未装配数据目录，省略自发现章节）
+    pub endpoint_file: Option<String>,
+}
+
+impl DocMeta {
+    /// shim 路径的 JSON 字面量（含引号与反斜杠转义，直接嵌入配置示例）。
+    fn shim_json(&self) -> String {
+        serde_json::to_string(&self.shim_path).unwrap_or_else(|_| "\"tinyssh-mcp\"".into())
+    }
+}
+
 fn intro_sections(base: &str) -> String {
     format!(
         "## 端点与认证\n\
@@ -84,21 +101,32 @@ fn intro_sections(base: &str) -> String {
     )
 }
 
-fn howto_sections(base: &str) -> String {
-    format!(
+fn howto_sections(meta: &DocMeta) -> String {
+    let base = &meta.base;
+    let shim = meta.shim_json();
+    let mut s = format!(
         "## 接入方式 A：streamable HTTP 直连（推荐）\n\
          ```json\n\
          {{\n  \"mcpServers\": {{\n    \"tinyssh\": {{\n      \"type\": \"http\",\n      \"url\": \"{base}/mcp\",\n      \"headers\": {{ \"Authorization\": \"Bearer <TOKEN>\" }}\n    }}\n  }}\n}}\n\
          ```\n\
          Claude Code 示例：`claude mcp add --transport http tinyssh {base}/mcp --header \"Authorization: Bearer <TOKEN>\"`\n\n\
          ## 接入方式 B：stdio shim（客户端只支持 stdio 时）\n\
-         命令 `tinyssh-mcp`（应用自带；对 Agent 说 stdio，对应用说 streamable HTTP，\n\
+         命令 `{shim}`（应用自带；对 Agent 说 stdio，对应用说 streamable HTTP，\n\
          自动回传会话 id、透传 progress 心跳）：\n\
          ```json\n\
-         {{\n  \"mcpServers\": {{\n    \"tinyssh\": {{\n      \"command\": \"tinyssh-mcp\",\n      \"env\": {{ \"TINYSSH_TOKEN\": \"<TOKEN>\", \"TINYSSH_MCP_URL\": \"{base}/mcp\" }}\n    }}\n  }}\n}}\n\
+         {{\n  \"mcpServers\": {{\n    \"tinyssh\": {{\n      \"command\": {shim},\n      \"env\": {{ \"TINYSSH_TOKEN\": \"<TOKEN>\", \"TINYSSH_MCP_URL\": \"{base}/mcp\" }}\n    }}\n  }}\n}}\n\
          ```\n",
-        base = base
-    )
+        base = base,
+        shim = shim
+    );
+    if let Some(f) = &meta.endpoint_file {
+        s.push_str(&format!(
+            "\n## 端点连不上时（自发现）\n\
+             应用重启后端口可能漂移（默认 8722 被占自动 +1）。配置里的 URL 连接失败时，\n\
+             读取本机文件 `{f}`（JSON，取 `endpoint` 字段）获得当前端点再重试。\n"
+        ));
+    }
+    s
 }
 
 fn conduct_sections() -> String {
@@ -152,7 +180,8 @@ fn tools_section(tools: &[ToolDoc], md: bool) -> String {
     s
 }
 
-pub fn integration_markdown(base: &str, tools: &[ToolDoc]) -> String {
+pub fn integration_markdown(meta: &DocMeta, tools: &[ToolDoc]) -> String {
+    let base = &meta.base;
     let mut s = String::from(
         "# TinySSH Agent 接入指南\n\n\
          > 本页由 TinySSH 应用在本机实时生成（端点、工具目录与应用运行态一致）。\n\
@@ -160,7 +189,7 @@ pub fn integration_markdown(base: &str, tools: &[ToolDoc]) -> String {
     );
     s.push_str(&intro_sections(base));
     s.push('\n');
-    s.push_str(&howto_sections(base));
+    s.push_str(&howto_sections(meta));
     s.push('\n');
     s.push_str(&conduct_sections());
     s.push('\n');
@@ -179,7 +208,8 @@ fn esc(s: &str) -> String {
     .replace('"', "&quot;")
 }
 
-pub fn index_html(base: &str, tools: &[ToolDoc]) -> String {
+pub fn index_html(meta: &DocMeta, tools: &[ToolDoc]) -> String {
+    let base = &meta.base;
     let mut body = String::new();
     let _ = writeln!(
         body,
@@ -201,7 +231,7 @@ pub fn index_html(base: &str, tools: &[ToolDoc]) -> String {
     let _ = writeln!(
         body,
         "<div class=card><h2>接入方式</h2><pre>{}</pre></div>",
-        esc(howto_sections(base).trim())
+        esc(howto_sections(meta).trim())
     );
     let _ = writeln!(
         body,
@@ -270,14 +300,33 @@ mod tests {
             "在共享会话中执行命令",
             r#"{"type":"object","properties":{"command":{"type":"string"}}}"#,
         )));
-        let md = integration_markdown("http://127.0.0.1:8722", &tools);
+        let meta = DocMeta {
+            base: "http://127.0.0.1:8722".into(),
+            shim_path: r#"C:\apps\tinyssh\tinyssh-mcp.exe"#.into(),
+            endpoint_file: Some(r"C:\Users\u\.tinyssh\mcp-endpoint".into()),
+        };
+        let md = integration_markdown(&meta, &tools);
         assert!(md.contains("http://127.0.0.1:8722/mcp"));
         assert!(md.contains("TINYSSH_MCP_URL"));
+        assert!(md.contains(r##"C:\\apps\\tinyssh\\tinyssh-mcp.exe"##), "shim 须给 JSON 转义的绝对路径");
+        assert!(md.contains("mcp-endpoint"), "自发现章节须存在");
         assert!(md.contains("`exec`"));
         assert!(md.contains("approval_denied"));
         assert!(md.contains("Bearer <TOKEN>"));
         assert!(md.contains("control_taken_by_human"));
         assert!(md.contains("\"command\""));
+    }
+
+    #[test]
+    fn markdown_omits_discovery_without_data_dir() {
+        let tools = collect_tools(std::iter::once(&tool("exec", "e", r#"{"type":"object"}"#)));
+        let meta = DocMeta {
+            base: "http://127.0.0.1:9000".into(),
+            shim_path: "tinyssh-mcp".into(),
+            endpoint_file: None,
+        };
+        let md = integration_markdown(&meta, &tools);
+        assert!(!md.contains("自发现"), "未装配数据目录时省略自发现章节");
     }
 
     #[test]
@@ -287,7 +336,12 @@ mod tests {
             "exec <cmd> & \"quote\"",
             r#"{"type":"object"}"#,
         )));
-        let html = index_html("http://127.0.0.1:9000", &tools);
+        let meta = DocMeta {
+            base: "http://127.0.0.1:9000".into(),
+            shim_path: "tinyssh-mcp".into(),
+            endpoint_file: None,
+        };
+        let html = index_html(&meta, &tools);
         assert!(html.contains("http://127.0.0.1:9000/integration.md"));
         assert!(html.contains("exec &lt;cmd&gt; &amp; &quot;quote&quot;"));
         assert!(!html.contains("<script"));

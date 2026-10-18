@@ -395,6 +395,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return {
         endpoint: demoState.collabEnabled ? "http://127.0.0.1:8722/mcp（演示模式）" : "",
         agents: demoState.agents,
+        // rev-r47：生命周期明细与 shim 路径（演示态无真实使用记录）
+        agents_detail: demoState.agents.map((a) => ({
+          ...a,
+          last_used_at: null,
+          expires_at: null,
+        })),
+        shim_path: "C:\\demo\\tinyssh-mcp.exe",
       };
     // R42（§6.7）：签发 Token（仅展示一次）。登记 Agent 是「启用协作」的既有动作，
     // 但**不转移**任何会话的控制权（D11）——owner/ever_agent_owned 都不变。
@@ -403,6 +410,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const label = args?.label as string;
       if (!demoState.agents.some((a) => a.id === id)) demoState.agents.push({ id, label });
       return "demo-token-" + id;
+    }
+    // rev-r47：吊销 Agent（GUI 内生命周期管理）——从已接入列表移除
+    case "revoke_agent": {
+      const id = args?.id as string;
+      demoState.agents = demoState.agents.filter((a) => a.id !== id);
+      return undefined;
     }
     // C9（R43）：协作启用生命周期（人类专属）。内部审批状态用 demo 惯例小写
     //（App 经 normApprovalStatus 归一，与真实 PascalCase 线格式在 UI 侧一致）。

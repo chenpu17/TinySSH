@@ -36,12 +36,52 @@ pub struct McpState {
     /// 双前端对等：MCP 面向 SessionApi 门面（L1 §1 依赖规则）
     pub api: Arc<dyn SessionApi>,
     pub resolver: TokenResolver,
+    /// rev-r47：应用数据目录（端点自发现文件 `<data_dir>/mcp-endpoint` 落点；
+    /// None = 测试/未装配，接入文档省略自发现指引）。
+    pub data_dir: Option<PathBuf>,
 }
 
 impl McpState {
     pub fn new(api: Arc<dyn SessionApi>, resolver: TokenResolver) -> Self {
-        Self { api, resolver }
+        Self {
+            api,
+            resolver,
+            data_dir: None,
+        }
     }
+}
+
+/// rev-r47：端点自发现文件——bind 成功后写 `<data_dir>/mcp-endpoint`（JSON：
+/// `{"endpoint": "...", "pid": ...}`）。端口漂移（8722 被占递增）后 Agent 配置里
+/// 的旧 URL 失效时，同机的 Agent 可读此文件自愈。停用/退出时删除，避免陈旧误导。
+pub fn write_endpoint_file(data_dir: &std::path::Path, url: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(data_dir)?;
+    let path = data_dir.join("mcp-endpoint");
+    let body = serde_json::json!({ "endpoint": url, "pid": std::process::id() });
+    std::fs::write(&path, body.to_string())?;
+    Ok(path)
+}
+
+/// 删除端点自发现文件（幂等：不存在即无操作）。
+pub fn remove_endpoint_file(data_dir: &std::path::Path) {
+    let _ = std::fs::remove_file(data_dir.join("mcp-endpoint"));
+}
+
+/// rev-r47：同目录 stdio shim 的**绝对路径**（便携安装下 `tinyssh-mcp` 不在
+/// PATH，接入文档必须给全路径才接得起来）。同目录不存在时回退裸命令名
+/// （开发/测试态，文档退化为「需要自行定位 shim」的提示形态）。
+pub fn shim_display_path() -> String {
+    let name = if cfg!(windows) {
+        "tinyssh-mcp.exe"
+    } else {
+        "tinyssh-mcp"
+    };
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join(name)))
+        .filter(|p| p.exists())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| name.to_string())
 }
 
 /// 工具参数结构。
@@ -972,24 +1012,47 @@ pub fn build_router(state: McpState, config: StreamableHttpServerConfig) -> axum
 }
 
 /// 从请求 Host 头推导对外基准 URL（端口漂移自动正确；明文 http——仅回环）。
+/// P2 加固（rev-r47）：Host 头是客户端可控的——非回环名一律收敛回 127.0.0.1，
+/// 只保留端口，杜绝伪造 Host 让文档生成指向外部主机的链接。
 fn base_url(req: &axum::http::Request<axum::body::Body>) -> String {
     let host = req
         .headers()
         .get(axum::http::header::HOST)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("127.0.0.1");
-    format!("http://{host}")
+        .unwrap_or("127.0.0.1:8722");
+    let (name, port) = match host.rsplit_once(':') {
+        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty() => (h, p),
+        _ => (host, "8722"),
+    };
+    let name = name.trim_start_matches('[').trim_end_matches(']');
+    let safe = matches!(name, "127.0.0.1" | "::1" | "localhost");
+    format!(
+        "http://{}:{port}",
+        if safe { name } else { "127.0.0.1" }
+    )
 }
 
 async fn doc_tools(state: &McpState) -> Vec<docs::ToolDoc> {
     docs::collect_tools(McpServer::new(state.clone()).tool_router.list_all().iter())
 }
 
+/// rev-r47：文档上下文——基准 URL + shim 绝对路径 + 自发现文件（装配了数据目录才给）。
+fn doc_meta(state: &McpState, req: &axum::http::Request<axum::body::Body>) -> docs::DocMeta {
+    docs::DocMeta {
+        base: base_url(req),
+        shim_path: shim_display_path(),
+        endpoint_file: state
+            .data_dir
+            .as_ref()
+            .map(|d| d.join("mcp-endpoint").display().to_string()),
+    }
+}
+
 async fn doc_html_handler(
     axum::extract::State(state): axum::extract::State<McpState>,
     req: axum::http::Request<axum::body::Body>,
 ) -> axum::response::Response {
-    let html = docs::index_html(&base_url(&req), &doc_tools(&state).await);
+    let html = docs::index_html(&doc_meta(&state, &req), &doc_tools(&state).await);
     axum::response::Response::builder()
         .status(axum::http::StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
@@ -1001,7 +1064,7 @@ async fn doc_md_handler(
     axum::extract::State(state): axum::extract::State<McpState>,
     req: axum::http::Request<axum::body::Body>,
 ) -> axum::response::Response {
-    let md = docs::integration_markdown(&base_url(&req), &doc_tools(&state).await);
+    let md = docs::integration_markdown(&doc_meta(&state, &req), &doc_tools(&state).await);
     axum::response::Response::builder()
         .status(axum::http::StatusCode::OK)
         .header("Content-Type", "text/markdown; charset=utf-8")
@@ -1093,7 +1156,19 @@ pub async fn spawn_endpoint_with_shutdown(
     resolver: TokenResolver,
     port: u16,
 ) -> std::io::Result<(u16, EndpointHandle)> {
-    let state = McpState::new(api, resolver);
+    spawn_endpoint_full(api, resolver, port, None).await
+}
+
+/// rev-r47：同上，但为 McpState 附加应用数据目录——接入文档据此给出端点自发现
+/// 文件路径（GUI 装配用此变体）。
+pub async fn spawn_endpoint_full(
+    api: Arc<dyn SessionApi>,
+    resolver: TokenResolver,
+    port: u16,
+    data_dir: Option<PathBuf>,
+) -> std::io::Result<(u16, EndpointHandle)> {
+    let mut state = McpState::new(api, resolver);
+    state.data_dir = data_dir;
     let config = StreamableHttpServerConfig::default().with_json_response(true);
     let router = build_router(state, config);
     let (listener, actual) = bind_increment(port).await?;

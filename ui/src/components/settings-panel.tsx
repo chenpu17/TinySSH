@@ -1,8 +1,10 @@
 // 设置面板（App.tsx 拆分②）：单实例六分类对话框（外观/快捷键/终端/凭据/Agent 接入/关于）。
 // 从 App.tsx 原样出仓——全部状态与动作仍归 App()（切分类草稿丢弃守卫、关闭即清草稿、
 // useDialogFocus 焦点陷阱都留在宿主），本组件只收 props 呈现，零语义变更。
+import { useState } from "react";
 import {
   APPEARANCES, FONT_DEFAULT, FONT_MAX, FONT_MIN, PALETTES, SETTINGS_CATS,
+  friendlyError,
   settingsCatIcon, settingsCatLabel,
   type Appearance, type SettingsCat,
 } from "../app-data";
@@ -13,7 +15,7 @@ import {
 import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { isMacPlatform } from "../actions";
 import { inTauri } from "../adapter/bridge";
-import type { CollabStatus, Host, IdentityMeta, IdentityReq } from "../adapter/wire";
+import type { CollabStatus, Host, IdentityMeta, IdentityReq, McpStatus } from "../adapter/wire";
 import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
 import { SelfMeterDetail } from "../self-meter";
 
@@ -72,7 +74,7 @@ interface SettingsPanelProps {
   setConfirm: (c: { kind: "deleteIdentity"; id: string; label: string } | null) => void;
   // Agent 接入
   collab: CollabStatus;
-  mcp: { endpoint: string; agents: { id: string; label: string }[] };
+  mcp: McpStatus;
   collabEnabled: boolean;
   collabStateText: string;
   collabBusy: boolean;
@@ -81,6 +83,10 @@ interface SettingsPanelProps {
   openDisableDialog: () => void;
   retryDisableConvergence: () => void;
   enableCollab: () => void;
+  /** rev-r47：GUI 内签发 Token（返回值仅此一次展示）；expiresDays=null 永不过期 */
+  issueAgent: (id: string, label: string, expiresDays: number | null) => Promise<string>;
+  /** rev-r47：吊销 Agent（token 立即失效；已建会话控制权不受影响） */
+  revokeAgent: (id: string) => Promise<void>;
 }
 
 export function SettingsPanel({
@@ -93,8 +99,36 @@ export function SettingsPanel({
   credLabel, setCredLabel, credPem, setCredPem, credPass, setCredPass,
   credBusy, credErr, setCredErr, credDraftTo, setCredDraftTo, discardCredDraft, submitNewIdentity, setConfirm,
   collab, mcp, collabEnabled, collabStateText, collabBusy, showAgentHelp, setShowAgentHelp,
-  openDisableDialog, retryDisableConvergence, enableCollab,
+  openDisableDialog, retryDisableConvergence, enableCollab, issueAgent, revokeAgent,
 }: SettingsPanelProps) {
+  // rev-r47：签发/吊销表单的**面板本地**临时态——关面板即弃（与宿主「关闭即清草稿」
+  // 同语义；token 只在此刻的弹层展示一次，不进任何全局状态）。
+  const [agentForm, setAgentForm] = useState({ id: "", label: "", expires: "" });
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentErr, setAgentErr] = useState<string | null>(null);
+  const [issuedToken, setIssuedToken] = useState<{ id: string; token: string } | null>(null);
+  const [revokeArm, setRevokeArm] = useState<string | null>(null);
+  const submitIssueAgent = async () => {
+    if (agentBusy) return;
+    const id = agentForm.id.trim();
+    if (!id) { setAgentErr("请填写 Agent id（如 my-codex）"); return; }
+    setAgentBusy(true);
+    setAgentErr(null);
+    try {
+      const days = agentForm.expires ? Number(agentForm.expires) : null;
+      const token = await issueAgent(id, agentForm.label.trim() || id, days);
+      setIssuedToken({ id, token });
+      setAgentForm({ id: "", label: "", expires: "" });
+    } catch (e) {
+      setAgentErr(friendlyError(e));
+    } finally {
+      setAgentBusy(false);
+    }
+  };
+  const doRevoke = async (id: string) => {
+    setRevokeArm(null);
+    try { await revokeAgent(id); } catch { /* 明细刷新后如实反映 */ }
+  };
   return (
             <>
               <div className="pop-mask" onClick={closeSettings} />
@@ -381,18 +415,71 @@ export function SettingsPanel({
                 <div style={{ fontSize: 12, lineHeight: 1.8 }}>
                   MCP 端点随本应用自动运行。为 Agent 签发 Token 后，它的操作请求会进入协作面板逐条审批。
                 </div>
-                {mcp.agents.length > 0 ? (
+                {/* rev-r47：GUI 内签发——id/名称/有效期，token 仅在下方弹层展示一次 */}
+                <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }} data-testid="agent-issue-form">
+                  <input
+                    className="mono" style={{ fontSize: 11, width: 130 }}
+                    placeholder="id（如 my-codex）" aria-label="Agent id"
+                    value={agentForm.id}
+                    onChange={(e) => setAgentForm({ ...agentForm, id: e.target.value })}
+                  />
+                  <input
+                    style={{ fontSize: 11, width: 110 }}
+                    placeholder="名称（可选）" aria-label="Agent 名称"
+                    value={agentForm.label}
+                    onChange={(e) => setAgentForm({ ...agentForm, label: e.target.value })}
+                  />
+                  <select
+                    style={{ fontSize: 11 }}
+                    aria-label="Token 有效期"
+                    value={agentForm.expires}
+                    onChange={(e) => setAgentForm({ ...agentForm, expires: e.target.value })}
+                  >
+                    <option value="">永不过期</option>
+                    <option value="30">30 天有效</option>
+                    <option value="7">7 天有效</option>
+                    <option value="1">1 天有效</option>
+                  </select>
+                  <button className="ghost" disabled={agentBusy} data-testid="agent-issue-btn" onClick={() => void submitIssueAgent()}>
+                    签发 Token
+                  </button>
+                </div>
+                {agentErr && <div className="err" style={{ fontSize: 11, marginTop: 4 }}>{agentErr}</div>}
+                {issuedToken && (
+                  <div className="card" style={{ marginTop: 8, padding: 10, border: "1px solid var(--accent-glow)", borderRadius: 8 }} data-testid="agent-token-once">
+                    <div style={{ fontSize: 12 }}><b>Token 已签发（{issuedToken.id}）——仅此一次展示</b></div>
+                    <pre className="mono" style={{ fontSize: 11, userSelect: "all", whiteSpace: "pre-wrap", margin: "6px 0" }}>{issuedToken.token}</pre>
+                    <div className="dim" style={{ fontSize: 11 }}>现在复制并填入 Agent 配置；关闭后无法再次查看（可吊销后重签）。</div>
+                    <button className="ghost" style={{ marginTop: 6 }} data-testid="agent-token-close" onClick={() => setIssuedToken(null)}>我已保存，关闭</button>
+                  </div>
+                )}
+                {mcp.agents_detail && mcp.agents_detail.length > 0 ? (
                   <div style={{ marginTop: 6 }} data-testid="agent-list">
-                    {mcp.agents.map((a) => (
-                      <div className="fact" key={a.id} data-testid="agent-row">
+                    {mcp.agents_detail.map((a) => (
+                      <div className="fact" key={a.id} data-testid="agent-row" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <span className="s">{a.label}</span>
                         {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
+                        <span className="dim" style={{ fontSize: 10 }}>
+                          {a.last_used_at
+                            ? ` · 最近使用 ${new Date(a.last_used_at).toLocaleString()}`
+                            : " · 从未使用"}
+                          {a.expires_at ? ` · ${new Date(a.expires_at) <= new Date() ? "已过期" : `过期 ${new Date(a.expires_at).toLocaleDateString()}`}` : ""}
+                        </span>
+                        <span style={{ flex: 1 }} />
+                        {revokeArm === a.id ? (
+                          <button className="ghost" style={{ color: "var(--danger)", fontSize: 11 }} data-testid="agent-revoke-confirm"
+                            onClick={() => void doRevoke(a.id)}>确认吊销？</button>
+                        ) : (
+                          <button className="ghost" style={{ fontSize: 11 }} data-testid="agent-revoke"
+                            title="吊销后 token 立即失效（Agent 侧报 invalid_actor）"
+                            onClick={() => setRevokeArm(a.id)}>吊销</button>
+                        )}
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="dim" style={{ fontSize: 12, marginTop: 6 }} data-testid="agent-empty">
-                    暂无 Agent 接入——按下方三步接入。
+                    暂无 Agent 接入——上方表单签发 Token 即完成登记。
                   </div>
                 )}
                 <div className="fact" style={{ marginTop: 6 }}>
@@ -414,11 +501,16 @@ export function SettingsPanel({
                 {showAgentHelp && (
                   <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
                     <div>1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；</div>
-                    <div>2. 为 Agent 签发 Token（仅展示一次）：<code>tinyssh agent create &lt;id&gt; &lt;名称&gt;</code>；</div>
+                    <div>2. 用上方表单签发 Token（仅展示一次；也可 CLI <code>tinyssh agent create &lt;id&gt; &lt;名称&gt; --expires-days 30</code>）；</div>
                     <div>3. 在 Agent 的 MCP 配置里填入端点与 Token：</div>
                     <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
 {`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
 Authorization: Bearer <TOKEN>`}
+                    </pre>
+                    <div>或者更省事：把上面「接入文档」链接直接发给 Agent，它会按文档自助完成接入。只支持 stdio 的客户端用自带 shim（应用同目录）：</div>
+                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
+{`command: ${mcp.shim_path || "(同应用目录 tinyssh-mcp)"}
+env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:8722/mcp"}`}
                     </pre>
                     <div>接入后，Agent 的操作请求会出现在协作面板的审批队列逐段裁决。</div>
                   </div>

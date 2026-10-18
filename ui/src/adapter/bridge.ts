@@ -111,7 +111,8 @@ interface CmdArgs {
     action?: string | null;
     beforeSeq?: number | null;
   };
-  issue_agent: { id: string; label: string };
+  issue_agent: { id: string; label: string; expires_days?: number | null };
+  revoke_agent: { id: string };
   mcp_status: undefined;
   pending_host_keys: undefined;
   decide_host_key: { id: string; accept: boolean };
@@ -195,6 +196,7 @@ interface CmdRet {
   decide_approval: void;
   audit_query: wire.AuditPage;
   issue_agent: string;
+  revoke_agent: void;
   mcp_status: wire.McpStatus;
   pending_host_keys: wire.PendingHostKey[];
   decide_host_key: void;

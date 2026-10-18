@@ -24,7 +24,16 @@ pub use db::{SCHEMA_V1, SCHEMA_V5};
 /// 本程序理解的最新 schema 版本（迁移链尾）。**只增不减**：升级应用即抬高，
 /// 回退到旧二进制时旧程序读到的 `user_version` 会大于此值 → 拒绝打开（见 [`migrate`]）。
 /// R44（§10.2 回退检查）把它显式化，避免「版本号散落在各 `if version < N` 分支里」。
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
+
+/// rev-r47：Agent 账号明细（`list_agents_detailed`）。时间均为 epoch ms。
+pub struct AgentAccount {
+    pub id: String,
+    pub label: String,
+    pub revoked_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+    pub expires_at: Option<i64>,
+}
 
 /// 打开/创建库并执行迁移。
 pub fn open(path: &Path) -> Result<Connection> {
@@ -197,6 +206,33 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         )
         .map_err(|e| Error::Storage(e.to_string()))?;
         conn.pragma_update(None, "user_version", 7)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
+    // V8（rev-r47）：Agent Token 生命周期——last_used_at（resolve 命中时节流回写，
+    // 供 GUI/CLI 展示「最近使用」与泄露排查）+ expires_at（可选过期；过期 token 与
+    // 吊销同路径拒绝）。两列均可空，旧行零感知。
+    // 幂等：按列存在性加列——部分应用后重放（如迁移中途崩溃、或测试把 user_version
+    // 倒回重跑）不会 duplicate column。
+    if version < 8 {
+        let has_col = |name: &str| -> Result<bool> {
+            Ok(conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?1",
+                    params![name],
+                    |r| r.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .map_err(|e| Error::Storage(e.to_string()))?)
+        };
+        if !has_col("last_used_at")? {
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN last_used_at INTEGER;")
+                .map_err(|e| Error::Storage(e.to_string()))?;
+        }
+        if !has_col("expires_at")? {
+            conn.execute_batch("ALTER TABLE agents ADD COLUMN expires_at INTEGER;")
+                .map_err(|e| Error::Storage(e.to_string()))?;
+        }
+        conn.pragma_update(None, "user_version", 8)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
     Ok(())
@@ -1576,8 +1612,19 @@ impl Vault {
     }
 
     // ---- Agent 身份与 Token ----
-    /// 创建 agent；返回原始 Token（仅此一次展示）。
+    /// 创建 agent；返回原始 Token（仅此一次展示）。不过期。
     pub fn create_agent(&self, client_id: &str, label: &str) -> Result<String> {
+        self.create_agent_ex(client_id, label, None)
+    }
+
+    /// rev-r47：创建 agent 并附可选过期时间——过期后 token 解析即拒（与吊销同路径
+    /// `invalid_actor`，不新增错误类别）。重签发（同 id）会重置过期时间。
+    pub fn create_agent_ex(
+        &self,
+        client_id: &str,
+        label: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<String> {
         use rand::RngCore;
         let mut tok = [0u8; 32];
         rand::rng().fill_bytes(&mut tok);
@@ -1587,34 +1634,61 @@ impl Vault {
             .lock()
             .unwrap()
             .execute(
-                "INSERT INTO agents (id, label, token_hash, created_at) VALUES (?1,?2,?3,?4)
-                 ON CONFLICT(id) DO UPDATE SET token_hash=?3, revoked_at=NULL, label=?2",
-                params![client_id, label, hash.to_vec(), now_ms()],
+                "INSERT INTO agents (id, label, token_hash, created_at, expires_at) VALUES (?1,?2,?3,?4,?5)
+                 ON CONFLICT(id) DO UPDATE SET token_hash=?3, revoked_at=NULL, label=?2, expires_at=?5",
+                params![client_id, label, hash.to_vec(), now_ms(), expires_at.map(|e| e.timestamp_millis())],
             )
             .map_err(db_err)?;
         Ok(token)
     }
 
     /// 校验 Token → client_id（常数时间比较 via sha256 比对）。
+    /// rev-r47：过期 token 视同吊销（返回 None → invalid_actor）；
+    /// 命中时节流回写 `last_used_at`（60s 内不重复写，避免每请求一次写放大）。
     pub fn resolve_token(&self, token: &str) -> Option<AgentClientId> {
+        const TOUCH_THROTTLE_MS: i64 = 60_000;
         let hash = token_hash(token);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, token_hash FROM agents WHERE revoked_at IS NULL")
+            .prepare("SELECT id, token_hash, expires_at, last_used_at FROM agents WHERE revoked_at IS NULL")
             .ok()?;
         let rows = stmt
             .query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
             })
             .ok()?;
+        let mut matched: Option<(String, bool)> = None;
         for row in rows {
-            let (id, stored) = row.ok()?;
+            let (id, stored, expires_at, last_used_at) = row.ok()?;
             // 常数时间比较
             if stored.len() == 32 && constant_time_eq(&stored, &hash) {
-                return Some(id);
+                // 过期 token：与吊销同口径拒绝
+                if let Some(e) = expires_at {
+                    if e <= now_ms() {
+                        return None;
+                    }
+                }
+                let touch = last_used_at
+                    .map(|t| now_ms().saturating_sub(t) > TOUCH_THROTTLE_MS)
+                    .unwrap_or(true);
+                matched = Some((id, touch));
+                break;
             }
         }
-        None
+        drop(stmt);
+        let (id, touch) = matched?;
+        if touch {
+            let _ = conn.execute(
+                "UPDATE agents SET last_used_at=?1 WHERE id=?2",
+                params![now_ms(), id],
+            );
+        }
+        Some(id)
     }
 
     pub fn list_agents(&self) -> Result<Vec<(String, String, Option<i64>)>> {
@@ -1629,6 +1703,33 @@ impl Vault {
                     r.get::<_, String>(1)?,
                     r.get::<_, Option<i64>>(2)?,
                 ))
+            })
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(db_err)?);
+        }
+        Ok(out)
+    }
+
+    /// rev-r47：带生命周期字段的明细（GUI/CLI 列表用）——id/label/吊销/最近使用/过期。
+    pub fn list_agents_detailed(&self) -> Result<Vec<AgentAccount>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, label, revoked_at, last_used_at, expires_at
+                 FROM agents ORDER BY (revoked_at IS NOT NULL), created_at",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(AgentAccount {
+                    id: r.get(0)?,
+                    label: r.get(1)?,
+                    revoked_at: r.get(2)?,
+                    last_used_at: r.get(3)?,
+                    expires_at: r.get(4)?,
+                })
             })
             .map_err(db_err)?;
         let mut out = Vec::new();
@@ -1868,6 +1969,51 @@ mod tests {
     }
 
     #[test]
+    fn agent_token_expiry_and_last_used() {
+        // rev-r47：过期 token 与吊销同口径拒绝；命中回写 last_used_at（节流）
+        let (_dir, v) = vault();
+        // 已过期：解析即拒
+        let tok = v
+            .create_agent_ex(
+                "stale",
+                "过期 Agent",
+                Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+            )
+            .unwrap();
+        assert!(v.resolve_token(&tok).is_none(), "过期 token 必须被拒");
+        // 未过期：解析成功，且 last_used_at 被回写
+        let tok2 = v
+            .create_agent_ex(
+                "live",
+                "在用 Agent",
+                Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            )
+            .unwrap();
+        assert_eq!(v.resolve_token(&tok2).as_deref(), Some("live"));
+        let detail = v
+            .list_agents_detailed()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == "live")
+            .unwrap();
+        assert!(detail.last_used_at.is_some(), "命中后 last_used_at 应被回写");
+        assert!(detail.expires_at.is_some());
+        // 不过期路径：expires_at 为空
+        let tok3 = v.create_agent("forever", "永不过期").unwrap();
+        assert_eq!(v.resolve_token(&tok3).as_deref(), Some("forever"));
+        let d3 = v
+            .list_agents_detailed()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == "forever")
+            .unwrap();
+        assert!(d3.expires_at.is_none());
+        // 重签发重置过期时间：过期 agent 重新签发后复活
+        let tok4 = v.create_agent_ex("stale", "续期", Some(chrono::Utc::now() + chrono::Duration::hours(2))).unwrap();
+        assert_eq!(v.resolve_token(&tok4).as_deref(), Some("stale"));
+    }
+
+    #[test]
     fn host_password_encrypted_at_rest() {
         let (_dir, v) = vault();
         let hid = v
@@ -2003,8 +2149,8 @@ mod tests {
             conn.query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap()
         };
-        // 开库升到当前链尾（R43 后=7）；V5 专属断言在下方逐项验证
-        assert_eq!(ver, 7);
+        // 开库升到当前链尾（rev-r47 后=8）；V5 专属断言在下方逐项验证
+        assert_eq!(ver, SCHEMA_VERSION);
         let ws = v.workspace().unwrap();
         assert_eq!(ws.schema_version, 1);
         assert_eq!(ws.chrome, "light"); // solar-light → light（DF8.3）

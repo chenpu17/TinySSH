@@ -72,6 +72,44 @@ module.exports = {
     ck.check("Agent 分区有协作状态区（collab-state）", agentIds.includes("collab-state"));
     ck.check("Agent 分区有状态行（collab-state-row）", agentIds.includes("collab-state-row"));
 
+    // ── rev-r47：GUI 内 Token 生命周期（签发→仅展示一次→吊销二次确认）──
+    if (agentIds.includes("agent-issue-form")) {
+      ck.check("Agent 分区有接入文档链接（agent-doc-url）", agentIds.includes("agent-doc-url"));
+      // 签发：填 id → 点签发 → token 弹层只此一次
+      await page.evaluate(() => {
+        const inp = document.querySelector('[data-testid=agent-issue-form] input[aria-label="Agent id"]');
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(inp, "spec-agent");
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await page.click("[data-testid=agent-issue-btn]");
+      await page.waitForTimeout(600);
+      ck.check("签发后 token 仅展示一次弹层出现", await page.evaluate(() => !!document.querySelector("[data-testid=agent-token-once]")));
+      const onceText = await paneTextOf(page, "agent-token-once");
+      ck.check("token 弹层标注仅此一次并给全 token", onceText.includes("仅此一次展示"), onceText.slice(0, 60));
+      await page.click("[data-testid=agent-token-close]");
+      await page.waitForTimeout(400);
+      const rowText = await page.evaluate(() => {
+        const row = [...document.querySelectorAll("[data-testid=agent-row]")].find((r) => r.innerText.includes("spec-agent"));
+        return row ? row.innerText.replace(/\n+/g, " ") : "";
+      });
+      ck.check("签发后列表出现新 Agent（含从未使用标注）", rowText.includes("spec-agent") && rowText.includes("从未使用"), rowText.slice(0, 80));
+      // 吊销：二次确认才生效
+      const revokeBtn = await page.evaluateHandle(() => {
+        const row = [...document.querySelectorAll("[data-testid=agent-row]")].find((r) => r.innerText.includes("spec-agent"));
+        return row.querySelector("[data-testid=agent-revoke]");
+      });
+      await revokeBtn.asElement().click();
+      await page.waitForTimeout(300);
+      ck.check("吊销首次点击只进入确认态", await page.evaluate(() => !!document.querySelector("[data-testid=agent-revoke-confirm]")));
+      await page.click("[data-testid=agent-revoke-confirm]");
+      await page.waitForTimeout(600);
+      const still = await page.evaluate(() => [...document.querySelectorAll("[data-testid=agent-row]")].some((r) => r.innerText.includes("spec-agent")));
+      ck.check("确认吊销后 Agent 从列表消失", !still);
+    } else {
+      ck.check("Agent 分区含接入引导（未启用态）", (await bodyText(page)).includes("接入"));
+    }
+
     // 切到关于分区
     await page.click("[data-testid=settings-cat-about]");
     await page.waitForTimeout(500);

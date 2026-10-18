@@ -85,7 +85,12 @@ enum AgentCmd {
         id: String,
         #[arg(default_value = "unnamed")]
         label: String,
+        /// Token 有效天数（缺省永不过期；过期后解析即拒，与吊销同路径）
+        #[arg(long)]
+        expires_days: Option<u64>,
     },
+    /// 列出 agent（含吊销/最近使用/过期时间——泄露排查用）
+    List,
     Revoke {
         id: String,
     },
@@ -298,35 +303,80 @@ async fn serve(m: Arc<SessionManager>, port: u16) -> Result<()> {
     let (listener, actual) = tinyssh_mcp_server::bind_increment(port)
         .await
         .context("bind")?;
-    m.set_mcp_endpoint(format!("http://127.0.0.1:{actual}/mcp"));
-    println!("TinySSH MCP endpoint: http://127.0.0.1:{actual}/mcp");
-    // rev-r46：内置接入文档——URL 扔给 Agent 即可自助对接（无需人工转述协议细节）
+    let url = format!("http://127.0.0.1:{actual}/mcp");
+    m.set_mcp_endpoint(url.clone());
+    println!("TinySSH MCP endpoint: {url}");
+    // rev-r47：端点自发现文件——Agent 配置因端口漂移失效时可读它自愈
+    let ep_file = tinyssh_mcp_server::write_endpoint_file(&m.data_dir, &url)
+        .context("write endpoint file")?;
     println!("Agent integration doc: http://127.0.0.1:{actual}/integration.md");
-    println!(
-        "shim: TINYSSH_TOKEN=<token> TINYSSH_MCP_URL=http://127.0.0.1:{actual}/mcp tinyssh-mcp"
-    );
+    println!("shim: TINYSSH_TOKEN=<token> TINYSSH_MCP_URL={url} tinyssh-mcp");
     let resolver: tinyssh_mcp_server::TokenResolver = {
         let vault = m.center.vault.clone();
         std::sync::Arc::new(move |t: &str| vault.resolve_token(t))
     };
-    let state = tinyssh_mcp_server::McpState::new(m.clone(), resolver);
+    let mut state = tinyssh_mcp_server::McpState::new(m.clone(), resolver);
+    state.data_dir = Some(m.data_dir.clone());
     let config = rmcp::transport::streamable_http_server::StreamableHttpServerConfig::default()
         .with_json_response(true);
     let router = tinyssh_mcp_server::build_router(state, config);
-    axum::serve(listener, router)
+    let served = axum::serve(listener, router)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
-        .await?;
+        .await;
+    // 退出清文件：陈旧的 endpoint 文件会把 Agent 指向不存在的端口
+    tinyssh_mcp_server::remove_endpoint_file(&m.data_dir);
+    let _ = ep_file;
+    served?;
     Ok(())
 }
 
 async fn agent_cmd(m: Arc<SessionManager>, cmd: AgentCmd) -> Result<()> {
     match cmd {
-        AgentCmd::Create { id, label } => {
-            let token = m.center.vault.create_agent(&id, &label)?;
+        AgentCmd::Create {
+            id,
+            label,
+            expires_days,
+        } => {
+            let expires = expires_days
+                .map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
+            let token = m.center.vault.create_agent_ex(&id, &label, expires)?;
             println!("agent {id} ({label}) created");
+            if let Some(e) = expires {
+                println!("过期时间：{e}（过期后 token 解析即拒）");
+            }
             println!("TOKEN（仅此一次展示）:\n{token}");
+            Ok(())
+        }
+        AgentCmd::List => {
+            // rev-r47：明细列表——最近使用/过期时间直接可查（泄露排查：长期未用
+            // 却仍有效的 token 是首要吊销对象）
+            println!("id\tlabel\t状态\t最近使用\t过期");
+            for a in m.center.vault.list_agents_detailed()? {
+                let fmt = |t: Option<i64>| match t {
+                    Some(ms) => chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms)
+                        .map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_else(|| "?".into()),
+                    None => "-".into(),
+                };
+                let now = chrono::Utc::now().timestamp_millis();
+                let state = if a.revoked_at.is_some() {
+                    "已吊销"
+                } else if a.expires_at.map_or(false, |e| e <= now) {
+                    "已过期"
+                } else {
+                    "有效"
+                };
+                println!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    a.id,
+                    a.label,
+                    state,
+                    fmt(a.last_used_at),
+                    fmt(a.expires_at)
+                );
+            }
             Ok(())
         }
         AgentCmd::Revoke { id } => {

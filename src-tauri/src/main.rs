@@ -1160,18 +1160,51 @@ async fn bench_report(bytes: u64, resyncs: u32, seconds: u64) -> CmdResult<()> {
 
 /// Agent Token 签发（仅展示一次）。
 #[tauri::command]
-async fn issue_agent(state: ApiState<'_>, id: String, label: String) -> CmdResult<String> {
+async fn issue_agent(
+    state: ApiState<'_>,
+    id: String,
+    label: String,
+    expires_days: Option<u64>,
+) -> CmdResult<String> {
+    let expires =
+        expires_days.map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
     state
         .api
         .center
         .vault
-        .create_agent(&id, &label)
+        .create_agent_ex(&id, &label, expires)
         .map_err(WireError::from)
+}
+
+/// rev-r47：吊销 Agent（GUI 内完成生命周期管理，不再强制去 CLI）。
+#[tauri::command]
+async fn revoke_agent(state: ApiState<'_>, id: String) -> CmdResult<()> {
+    state
+        .api
+        .center
+        .vault
+        .revoke_agent(&id)
+        .map_err(WireError::from)
+}
+
+/// rev-r47：端点自发现文件维护——Some(url) 写入 / None 删除（幂等）。
+/// Agent 配置因端口漂移失效时可读此文件自愈；停用/退出删除避免陈旧误导。
+fn refresh_endpoint_file(api: &Arc<SessionManager>, url: Option<&str>) {
+    match url {
+        Some(u) => {
+            if let Err(e) = tinyssh_mcp_server::write_endpoint_file(&api.data_dir, u) {
+                eprintln!("[app] endpoint file write failed: {e}");
+            }
+        }
+        None => tinyssh_mcp_server::remove_endpoint_file(&api.data_dir),
+    }
 }
 
 /// MCP 端点状态（端口展示，L1 §3.5）。
 /// R42：`agents` 投影为 `{id,label}`（与 wire/demo 契约一致；vault 内部为三元组，且含已吊销行，
 /// 已吊销不算「已接入」）。协作入口/Agent 面板据此判定「有协作配置」。
+/// rev-r47：追加 `agents_detail`（最近使用/过期，生命周期管理用）与 `shim_path`
+/// （便携安装不在 PATH——接入文档与设置页都给绝对路径）。
 #[tauri::command]
 async fn mcp_status(state: ApiState<'_>) -> CmdResult<serde_json::Value> {
     eprintln!("[app] mcp_status invoked (frontend alive)");
@@ -1185,9 +1218,26 @@ async fn mcp_status(state: ApiState<'_>) -> CmdResult<serde_json::Value> {
         .filter(|(_, _, revoked)| revoked.is_none())
         .map(|(id, label, _)| serde_json::json!({ "id": id, "label": label }))
         .collect();
+    let agents_detail: Vec<serde_json::Value> = state
+        .api
+        .center
+        .vault
+        .list_agents_detailed()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| a.revoked_at.is_none())
+        .map(|a| {
+            serde_json::json!({
+                "id": a.id, "label": a.label,
+                "last_used_at": a.last_used_at, "expires_at": a.expires_at,
+            })
+        })
+        .collect();
     Ok(serde_json::json!({
         "endpoint": state.api.mcp_endpoint(),
         "agents": agents,
+        "agents_detail": agents_detail,
+        "shim_path": tinyssh_mcp_server::shim_display_path(),
     }))
 }
 
@@ -1245,10 +1295,13 @@ async fn collab_disable(state: ApiState<'_>) -> CmdResult<DisableReport> {
                 )));
             }
             state.api.set_mcp_endpoint(String::new());
+            // rev-r47：端点确认已停 → 自发现文件一并撤下
+            refresh_endpoint_file(&state.api, None);
         }
         None => {
             // 本就没起端点（如新装未启用）→ 视为已停止
             state.api.set_mcp_endpoint(String::new());
+            refresh_endpoint_file(&state.api, None);
         }
     }
     state
@@ -1274,15 +1327,17 @@ async fn collab_enable(state: ApiState<'_>) -> CmdResult<CollabStatus> {
             Arc::new(move |t: &str| vault.resolve_token(t))
         };
         let api2 = state.api.clone();
-        match tinyssh_mcp_server::spawn_endpoint_with_shutdown(api2, resolver, 8722).await {
+        let data_dir = state.api.data_dir.clone();
+        match tinyssh_mcp_server::spawn_endpoint_full(api2, resolver, 8722, Some(data_dir)).await {
             Ok((port, handle)) => {
-                state
-                    .api
-                    .set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
+                let url = format!("http://127.0.0.1:{port}/mcp");
+                state.api.set_mcp_endpoint(url.clone());
+                refresh_endpoint_file(&state.api, Some(&url));
                 new_handle = Some(handle);
             }
             Err(e) => {
                 state.api.set_mcp_endpoint(String::new());
+                refresh_endpoint_file(&state.api, None);
                 eprintln!("[app] collab enable: MCP endpoint bind failed: {e}");
                 return Err(WireError::from(session_api::Error::InvalidInput(format!(
                     "MCP 端点启动失败（端口被占？）：{e}"
@@ -1514,6 +1569,8 @@ fn main() {
         let enabled = api.center.vault.collab_enabled().unwrap_or(false);
         if !enabled {
             api.set_mcp_endpoint(String::new());
+            // rev-r47：上次异常退出可能留下陈旧 endpoint 文件——端点未运行即删
+            refresh_endpoint_file(&api, None);
             eprintln!("[app] collab disabled (fresh install or user-disabled) —— MCP endpoint not started");
             std::sync::Mutex::new(None)
         } else {
@@ -1522,19 +1579,23 @@ fn main() {
                 Arc::new(move |t: &str| vault.resolve_token(t))
             };
             let api2 = api.clone();
+            let data_dir = api.data_dir.clone();
             // bind 失败降级不 panic（审核中-1）：打包后 stderr 无人接，全损的是
             // 「应用打不开」；端点面板已有「未启动」兜底，如实降级可诊断
             let bound = tauri::async_runtime::block_on(async move {
-                tinyssh_mcp_server::spawn_endpoint_with_shutdown(api2, resolver, 8722).await
+                tinyssh_mcp_server::spawn_endpoint_full(api2, resolver, 8722, Some(data_dir)).await
             });
             match bound {
                 Ok((port, handle)) => {
-                    api.set_mcp_endpoint(format!("http://127.0.0.1:{port}/mcp"));
-                    eprintln!("[app] MCP endpoint in-process: http://127.0.0.1:{port}/mcp");
+                    let url = format!("http://127.0.0.1:{port}/mcp");
+                    api.set_mcp_endpoint(url.clone());
+                    refresh_endpoint_file(&api, Some(&url));
+                    eprintln!("[app] MCP endpoint in-process: {url}");
                     std::sync::Mutex::new(Some(handle))
                 }
                 Err(e) => {
                     api.set_mcp_endpoint(String::new());
+                    refresh_endpoint_file(&api, None);
                     eprintln!("[app] MCP endpoint bind failed (8722..8753): {e} —— Agent 接入不可用，其余功能不受影响");
                     std::sync::Mutex::new(None)
                 }
@@ -2002,7 +2063,7 @@ fn main() {
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
-            list_approvals, decide_approval, audit_query, issue_agent, mcp_status,
+            list_approvals, decide_approval, audit_query, issue_agent, revoke_agent, mcp_status,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,
@@ -2020,9 +2081,11 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-/// R23：FE 汇总确认「结束会话并退出」后的受控退出（不用 destroy 绕过窗口事件）
+/// R23：FE 汇总确认「结束会话并退出」后的受控退出（不用 destroy 绕过窗口事件）。
+/// rev-r47：退出前撤下端点自发现文件（进程退出后端点不复存在，陈旧文件误导 Agent）。
 #[tauri::command]
-fn quit_app(app: tauri::AppHandle) {
+fn quit_app(app: tauri::AppHandle, state: ApiState<'_>) {
+    refresh_endpoint_file(&state.api, None);
     app.exit(0);
 }
 

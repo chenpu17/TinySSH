@@ -482,6 +482,15 @@ export interface AuditPage {
 export interface McpStatus {
   endpoint: string;
   agents: { id: string; label: string }[];
+  /** rev-r47：生命周期明细（最近使用/过期；epoch ms，null=未用/不过期） */
+  agents_detail?: {
+    id: string;
+    label: string;
+    last_used_at: number | null;
+    expires_at: number | null;
+  }[];
+  /** rev-r47：stdio shim 绝对路径（便携安装不在 PATH，配置须给全路径） */
+  shim_path?: string;
 }
 
 /** 输出通道实况（R11 起带 seq 帧头）：通道送 <u64 LE seq（8 字节头）><原始字节>；

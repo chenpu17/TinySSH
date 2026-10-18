@@ -3993,7 +3993,9 @@ impl SessionManager {
                     ctx,
                     client_id,
                     &"transfer".to_string(),
-                    &format!("{op} {local:?} → {remote}"),
+                    // rev-r47：display() 而非 Debug——审批卡上人读的是干净路径
+                    //（Debug 的引号/转义徒增误读）
+                    &format!("{op} {} → {remote}", local.display()),
                     &eval,
                     false,
                     false,
@@ -4004,7 +4006,7 @@ impl SessionManager {
             // 传输路径无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
             SessionManager::reject_edited_approval(
                 &e,
-                &format!("{op} {local:?} → {remote}"),
+                &format!("{op} {} → {remote}", local.display()),
                 "传输审批",
             )?;
         }
