@@ -29,6 +29,7 @@ session-api = { workspace = true }
 core-session = { workspace = true }
 tinyssh-mcp-server = { workspace = true }
 tinyssh-vault = { workspace = true }
+tinyssh-records = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }

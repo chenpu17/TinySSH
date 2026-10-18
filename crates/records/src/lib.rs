@@ -167,6 +167,11 @@ impl RecordStore {
         Ok(n)
     }
 
+    /// 存储目录（④ 导出面用：明文导出默认落在隔壁 `records-export/`）。
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     pub fn count(&self) -> std::io::Result<u64> {
         let mut n = 0u64;
         for p in self.list_files()? {

@@ -107,6 +107,9 @@ interface CmdArgs {
   // ② 自主模式：按 Agent 开/关（人类专属）；ttlMinutes=null/undefined=手动关才失效
   set_autonomy: { agentId: string; enable: boolean; ttlMinutes?: number | null };
   autonomy_list: undefined;
+  // ④ 记录审计：时间线查询（人类全量视角）+ 明文导出（落点固定 records-export/）
+  query_records: { filter?: Partial<wire.RecordsQuery> };
+  export_records: { filter?: Partial<wire.RecordsQuery> };
   // R41（§6.6）：过滤面全量过桥。sid=null → 全部会话；actor_kind ∈ {human, agent}；
   // action 精确匹配动作名；beforeSeq 供「加载更早」按 seq 游标翻页（连续，不重不漏）。
   audit_query: {
@@ -202,6 +205,8 @@ interface CmdRet {
   remember_approval: string[];
   set_autonomy: void;
   autonomy_list: wire.AutonomyGrant[];
+  query_records: wire.ActionRecord[];
+  export_records: { count: number; path: string };
   audit_query: wire.AuditPage;
   issue_agent: string;
   revoke_agent: void;

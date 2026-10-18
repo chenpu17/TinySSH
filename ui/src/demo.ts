@@ -79,6 +79,42 @@ const demoState = {
   agents: [{ id: "opencode", label: "opencode（演示）" }] as { id: string; label: string }[],
   // ② 自主模式授权表（demo 镜像；真实核心只存内存、重启即失效）
   autonomy: new Set<string>(),
+  // ④ 记录审计样本（demo 镜像；真实核心是按天加密落盘的 records-*.jsonl.enc，
+  // 写入侧已脱敏）。新→旧排列，覆盖三类动作与主要终态，供时间线/筛选/导出走查。
+  records: [
+    {
+      seq: 5, ts: new Date(Date.now() - 4 * 60e3).toISOString(), kind: "exec",
+      session_id: "s-demo", agent_id: "opencode",
+      summary: "kubectl get pods -n prod", status: "ok", exit_code: 0,
+      duration_ms: 1240, output_excerpt: "NAME READY STATUS …\nweb-7d9 1/1 Running",
+      meta: { mode: "Reuse" },
+    },
+    {
+      seq: 4, ts: new Date(Date.now() - 22 * 60e3).toISOString(), kind: "transfer",
+      session_id: "s-demo", agent_id: "opencode",
+      summary: "upload C:\\work\\report.pdf → /srv/www/report.pdf", status: "ok",
+      exit_code: null, duration_ms: 8600, output_excerpt: null,
+      meta: { transfer: "t-demo-1" },
+    },
+    {
+      seq: 3, ts: new Date(Date.now() - 51 * 60e3).toISOString(), kind: "exec",
+      session_id: "s-demo", agent_id: "opencode",
+      summary: "systemctl restart nginx", status: "denied", exit_code: null,
+      duration_ms: null, output_excerpt: null, meta: {},
+    },
+    {
+      seq: 2, ts: new Date(Date.now() - 75 * 60e3).toISOString(), kind: "forward",
+      session_id: "s-demo", agent_id: null,
+      summary: "forward 127.0.0.1:8443 → 10.0.0.5:443", status: "ok",
+      exit_code: null, duration_ms: null, output_excerpt: null, meta: {},
+    },
+    {
+      seq: 1, ts: new Date(Date.now() - 110 * 60e3).toISOString(), kind: "exec",
+      session_id: "s-demo", agent_id: "opencode",
+      summary: "rm -rf /var/lib/old-builds", status: "dangerous", exit_code: null,
+      duration_ms: null, output_excerpt: null, meta: {},
+    },
+  ] as import("./adapter/wire").ActionRecord[],
   // C9（R43）：协作启用态（真实核心 vault.settings['collab.enabled']）。新装默认关闭
   // （无自动 MCP 监听），旧版升级保留开启。generation 随每次启用/停用 +1（停用封口
   // 后旧请求按代际核对）。`?fresh` 置 false 复现「新装未启用」。
@@ -935,6 +971,23 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "autonomy_list": {
       return [...demoState.autonomy].map((agent_id) => ({ agent_id, expires_at: null }));
+    }
+    case "query_records": {
+      // ④ demo 镜像：按种类/来源/条数过滤（新→旧；真实实现见 core-session query_records，
+      // Agent 侧强制只查自己的记录——demo 里 invoke 只来自人类 UI，不做该投影）
+      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; limit?: number };
+      return demoState.records
+        .filter((r) => (f.kind ? r.kind === f.kind : true) && (f.agentId ? r.agent_id === f.agentId : true))
+        .slice(0, f.limit ?? 200);
+    }
+    case "export_records": {
+      // ④ demo 镜像：同样的过滤，计数返回；demo 无文件系统不落盘，路径如实说明
+      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; limit?: number };
+      const n = demoState.records
+        .filter((r) => (f.kind ? r.kind === f.kind : true) && (f.agentId ? r.agent_id === f.agentId : true))
+        .length;
+      audit("human", "records_export", null, null, null, { count: n });
+      return { count: n, path: "（演示模式不落盘；真实应用导出到 records-export\\records-<时间戳>.jsonl）" };
     }
     case "remember_approval": {
       // 「批准并记住」demo 镜像：只写规则（demo 态并入 audit 留痕）+ 审计，不动卡；

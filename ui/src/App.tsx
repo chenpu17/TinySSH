@@ -24,7 +24,7 @@ import type {
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
-  McpStatus, AutonomyGrant,
+  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -449,6 +449,14 @@ export default function App() {
   const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
   // ② 自主模式授权表（横幅）：非空即有 Agent 正在免逐条审批运行
   const [autonomy, setAutonomy] = useState<AutonomyGrant[]>([]);
+  // ④ 记录审计时间线：打开设置「记录审计」分区或筛选变化时拉取（不进 3s 轮询——
+  // 记录只在动作发生时增长，手动刷新 + 分区打开即拉已够）
+  const [recordsRows, setRecordsRows] = useState<ActionRecord[] | null>(null);
+  const [recordsFilter, setRecordsFilter] = useState<RecordsQuery>({ agentId: null, kind: null, limit: 200 });
+  const [recordsBusy, setRecordsBusy] = useState(false);
+  const [recordsExportBusy, setRecordsExportBusy] = useState(false);
+  // ⑤ 自主模式传输免审 opt-in（vault 设置 collab.autonomy.transfers；默认关=逐条审批）
+  const [transferAutonomy, setTransferAutonomy] = useState(false);
   const [brief, setBrief] = useState<Brief | null>(null);
   // 任务目标（R9：人类→Agent 委托留言）：draft 编辑中不被简报轮询覆盖，
   // 保存/清除后落盘（goalDirty 复位）再随简报同步；
@@ -1605,6 +1613,8 @@ export default function App() {
       // 键位表（键位配置轮）：demo 走 localStorage，坏串/缺省回落默认表
       const kmRaw = localStorage.getItem(KEYMAP_SETTING);
       if (kmRaw) applyKeymap(parseKeymap(kmRaw));
+      // ⑤ 传输免审 opt-in：demo 与 persistSetting 同走 localStorage
+      setTransferAutonomy(localStorage.getItem("collab.autonomy.transfers") === "1");
       invoke("get_workspace")
         .then(applyChromeBlob)
         .catch(() => {})
@@ -1620,6 +1630,10 @@ export default function App() {
       .then((v) => { if (typeof v === "string" && v) applyKeymap(parseKeymap(v)); })
       .catch(() => {});
     const wsP = invoke("get_workspace").then(applyChromeBlob).catch(() => {});
+    // ⑤ 传输免审 opt-in 开关回读（vault 设置，默认关=传输逐条审批）
+    invoke("get_setting", { key: "collab.autonomy.transfers" })
+      .then((v) => setTransferAutonomy(v === "1"))
+      .catch(() => {});
     // 字号/色板/外观三路都落定后派生一次（applyAppearance/loadPalette 内部亦有派生，
     // 这里兜底「全部缺省」的首次启动路径）
     void Promise.all([fontP, paletteP, wsP]).then(() => applyDerivedTerminal());
@@ -3619,6 +3633,42 @@ export default function App() {
     await refreshLists();
   }, [pushToast, refreshLists]);
 
+  // ---- ④ 记录审计时间线（数据面；呈现见 components/records-pane.tsx）----
+  const refreshRecords = useCallback(async (f: RecordsQuery) => {
+    setRecordsBusy(true);
+    try {
+      setRecordsRows((await invoke("query_records", { filter: f })) as ActionRecord[]);
+    } catch {
+      // 记录库读不出来（目录异常等）给空态而非报错弹窗——时间线是回看面，不阻塞设置
+      setRecordsRows([]);
+    } finally {
+      setRecordsBusy(false);
+    }
+  }, []);
+
+  // 打开「记录审计」分区或筛选变化即拉取；手动「刷新」按钮走同一入口
+  useEffect(() => {
+    if (settingsCat === "records") void refreshRecords(recordsFilter);
+  }, [settingsCat, recordsFilter, refreshRecords]);
+
+  const exportRecords = useCallback(async () => {
+    setRecordsExportBusy(true);
+    try {
+      const r = (await invoke("export_records", { filter: recordsFilter })) as { count: number; path: string };
+      pushToast("ok", `已导出 ${r.count} 条 → ${r.path}`);
+    } catch (err) {
+      pushToast("err", `导出失败：${errMsg(err)}`);
+    } finally {
+      setRecordsExportBusy(false);
+    }
+  }, [recordsFilter, pushToast]);
+
+  // ---- ⑤ 自主模式传输免审 opt-in（vault 设置持久；重启保留，随时刻关）----
+  const changeTransferAutonomy = useCallback((v: boolean) => {
+    setTransferAutonomy(v);
+    persistSetting("collab.autonomy.transfers", v ? "1" : "");
+  }, [persistSetting]);
+
   // 审批卡风险分级 approvalRisk 已随审批卡出仓 components/collab-panel.tsx（拆分⑤）
 
   // 控制权徽标
@@ -4632,6 +4682,12 @@ export default function App() {
               enableCollab={enableCollab}
               issueAgent={issueAgent}
               revokeAgent={revokeAgent}
+              recordsRows={recordsRows} recordsFilter={recordsFilter}
+              recordsBusy={recordsBusy} recordsExportBusy={recordsExportBusy}
+              onRecordsFilter={setRecordsFilter}
+              onRecordsRefresh={() => void refreshRecords(recordsFilter)}
+              onRecordsExport={() => void exportRecords()}
+              transferAutonomy={transferAutonomy} onChangeTransferAutonomy={changeTransferAutonomy}
             />
           )}
         </div>

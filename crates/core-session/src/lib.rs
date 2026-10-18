@@ -1800,6 +1800,11 @@ fi"#;
 // C9（R43）：协作启用生命周期的 admission 门与状态机
 // ---------------------------------------------------------------------------
 
+/// ⑤ 传输免审 opt-in 的 vault 设置键：值 `"1"` = 该设置开启且某 Agent 自主模式
+/// 在效时，其传输跳过逐条审批；缺省/其他值 = 传输一律逐条审批（L1 §4 最保守侧）。
+/// 免审 ≠ 免记：审计（transfer_autonomous）与动作记录照常落。
+pub const SETTING_AUTONOMY_TRANSFERS: &str = "collab.autonomy.transfers";
+
 impl ApprovalCenter {
     /// C9：Agent admission——**仅** `Enabled` 开放；其余三态（含 `Disabling`/`DisableFailed`）
     /// 一律拒绝新的 Agent 请求。人类请求不经此门。这是「封 admission」的单点判定。
@@ -3274,10 +3279,26 @@ impl SessionApi for SessionManager {
         if !ctx.is_human() {
             return Err(Error::InvalidActor);
         }
-        self.center
+        let n = self
+            .center
             .records
             .export_jsonl(&f, to)
-            .map_err(|e| Error::Storage(format!("records export: {e}")))
+            .map_err(|e| Error::Storage(format!("records export: {e}")))?;
+        // 明文导出是敏感动作：审计留痕（导到哪、导了多少、按什么过滤）
+        let _ = self.center.audit.append(
+            ctx,
+            "records_export",
+            None,
+            None,
+            serde_json::json!({
+                "to": to.display().to_string(),
+                "count": n,
+                "agent_id": f.agent_id,
+                "kind": f.kind,
+            }),
+            None,
+        );
+        Ok(n)
     }
 
     // ---- 自主模式（②）----
@@ -4242,10 +4263,32 @@ impl SessionManager {
                 "collision 仅 Agent 传输参数（人类冲突经决策卡裁决）".into(),
             ));
         }
-        // Agent 传输必审（L1 §4）；collision=overwrite 审批卡明示（DF6.2）
+        // Agent 传输必审（L1 §4）；collision=overwrite 审批卡明示（DF6.2）。
+        // ⑤ 传输免审 opt-in：默认必审；仅当该 Agent 自主模式在效**且**人类显式打开
+        // SETTING_AUTONOMY_TRANSFERS 才跳过逐条审批（决定权与关闭权始终在人类）。
         let mut edited: Option<String> = None;
         if let Actor::Agent { client_id } = ctx {
             let op = if is_upload { "upload" } else { "download" };
+            let transfers_free = self.center.autonomy_active(client_id)
+                && self
+                    .center
+                    .vault
+                    .get_setting(SETTING_AUTONOMY_TRANSFERS)
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    == Some("1");
+            if transfers_free {
+                let brief = format!("{op} {} → {remote}", local.display());
+                let _ = self.center.audit.append(
+                    ctx,
+                    "transfer_autonomous",
+                    Some(&sid),
+                    Some(&brief),
+                    serde_json::json!({"agent": client_id, "autonomous": true}),
+                    None,
+                );
+            } else {
             let mut segment = format!("{op} → {remote}");
             if collision == Some(CollisionDecision::Overwrite) {
                 // rev-r34 低-2：DF6.1 冻结后覆盖发布必被能力阻止——审批卡如实告知，
@@ -4282,6 +4325,7 @@ impl SessionManager {
                 &format!("{op} {} → {remote}", local.display()),
                 "传输审批",
             )?;
+            }
         }
         let _ = edited.take();
 

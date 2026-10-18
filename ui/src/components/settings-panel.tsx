@@ -1,4 +1,4 @@
-// 设置面板（App.tsx 拆分②）：单实例六分类对话框（外观/快捷键/终端/凭据/Agent 接入/关于）。
+// 设置面板（App.tsx 拆分②）：单实例七分类对话框（外观/快捷键/终端/凭据/Agent 接入/记录审计/关于）。
 // 从 App.tsx 原样出仓——全部状态与动作仍归 App()（切分类草稿丢弃守卫、关闭即清草稿、
 // useDialogFocus 焦点陷阱都留在宿主），本组件只收 props 呈现，零语义变更。
 import { useState } from "react";
@@ -15,10 +15,11 @@ import {
 import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { isMacPlatform } from "../actions";
 import { inTauri } from "../adapter/bridge";
-import type { AutonomyGrant } from "../adapter/wire";
+import type { ActionRecord, AutonomyGrant, RecordsQuery } from "../adapter/wire";
 import type { CollabStatus, Host, IdentityMeta, IdentityReq, McpStatus } from "../adapter/wire";
 import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
 import { SelfMeterDetail } from "../self-meter";
+import { RecordsPane } from "./records-pane";
 
 interface SettingsPanelProps {
   // 呈现框架
@@ -91,6 +92,17 @@ interface SettingsPanelProps {
   issueAgent: (id: string, label: string, expiresDays: number | null) => Promise<string>;
   /** rev-r47：吊销 Agent（token 立即失效；已建会话控制权不受影响） */
   revokeAgent: (id: string) => Promise<void>;
+  // ④ 记录审计：数据在宿主拉取（打开分区/筛选变化/刷新），本面板只呈现
+  recordsRows: ActionRecord[] | null;
+  recordsFilter: RecordsQuery;
+  recordsBusy: boolean;
+  recordsExportBusy: boolean;
+  onRecordsFilter: (f: RecordsQuery) => void;
+  onRecordsRefresh: () => void;
+  onRecordsExport: () => void;
+  // ⑤ 自主模式传输免审 opt-in（vault 设置持久；默认关=传输一律逐条审批）
+  transferAutonomy: boolean;
+  onChangeTransferAutonomy: (v: boolean) => void;
 }
 
 export function SettingsPanel({
@@ -105,6 +117,8 @@ export function SettingsPanel({
   collab, mcp, collabEnabled, collabStateText, collabBusy, showAgentHelp, setShowAgentHelp,
   openDisableDialog, retryDisableConvergence, enableCollab, issueAgent, revokeAgent,
   autonomy, onToggleAutonomy,
+  recordsRows, recordsFilter, recordsBusy, recordsExportBusy, onRecordsFilter, onRecordsRefresh, onRecordsExport,
+  transferAutonomy, onChangeTransferAutonomy,
 }: SettingsPanelProps) {
   // rev-r47：签发/吊销表单的**面板本地**临时态——关面板即弃（与宿主「关闭即清草稿」
   // 同语义；token 只在此刻的弹层展示一次，不进任何全局状态）。
@@ -522,6 +536,20 @@ export function SettingsPanel({
                     暂无 Agent 接入——上方表单签发 Token 即完成登记。
                   </div>
                 )}
+                {/* ⑤ 传输免审 opt-in：全局一个开关（对全部 Agent 生效），默认最保守。
+                    危险形态命令的 deny 硬拦不受影响；免审期间传输全部留审计+记录。 */}
+                <div className="fact" style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="dim" style={{ fontSize: 11 }}>自主模式下的文件传输</span>
+                  <button
+                    className={"ghost" + (transferAutonomy ? " warn" : "")}
+                    style={{ fontSize: 11 }}
+                    data-testid="autonomy-transfers-toggle"
+                    title="默认传输逐条审批（最保守）。打开后：自主模式在效期间的传输不再逐条弹卡——审计与记录照常，随时刻关。"
+                    onClick={() => onChangeTransferAutonomy(!transferAutonomy)}
+                  >
+                    {transferAutonomy ? "免逐条审批（点击恢复审批）" : "逐条审批（点击改免审）"}
+                  </button>
+                </div>
                 <div className="fact" style={{ marginTop: 6 }}>
                   <span className="dim" style={{ fontSize: 11 }}>端点</span>{" "}
                   <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }} data-testid="agent-endpoint">{mcp.endpoint || "未启动"}</span>
@@ -589,6 +617,14 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                 </>)}
                 </div>
                 </>)}
+
+                {settingsCat === "records" && (
+                  <RecordsPane
+                    rows={recordsRows} busy={recordsBusy} exportBusy={recordsExportBusy}
+                    filter={recordsFilter} agents={mcp.agents_detail ?? []}
+                    onFilter={onRecordsFilter} onRefresh={onRecordsRefresh} onExport={onRecordsExport}
+                  />
+                )}
 
                 {settingsCat === "about" && (<>
                 <div className="set-card">

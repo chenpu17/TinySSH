@@ -6288,6 +6288,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
  "tinyssh-mcp-server",
+ "tinyssh-records",
  "tinyssh-vault",
  "tokio",
  "tokio-stream",

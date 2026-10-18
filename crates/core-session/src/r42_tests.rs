@@ -744,3 +744,81 @@ async fn r42_autonomy_exec_skips_card_deny_still_holds() {
         "自主放行的 exec 审计必须带 autonomous:true"
     );
 }
+
+/// ⑤ 传输免审 opt-in：默认必审（自主模式也不豁免）；人类显式开
+/// SETTING_AUTONOMY_TRANSFERS 后，自主模式在效的 Agent 传输跳过逐条审批
+/// ——但审计（transfer_autonomous）与动作记录照常；关掉开关即恢复必审。
+#[tokio::test]
+async fn r42_transfer_autonomy_opt_in() {
+    let m = mgr();
+    *m.center.collab.lock().unwrap() = CollabGate::new(true);
+    let h = mk_handle("s-t42x", ControlOwner::Agent, m.center.clone());
+    register(&m, h.clone());
+    m.center.vault.create_agent("opencode", "OpenCode").unwrap();
+    let agent = Actor::Agent { client_id: "opencode".into() };
+    m.set_autonomy(&Actor::Human, "opencode".into(), true, None).await.unwrap();
+    let dl = {
+        let m2 = m.clone();
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            m2.download(&agent, "s-t42x".to_string(), "/tmp/src.txt", std::path::Path::new("/local/dst.txt"), None).await
+        })
+    };
+
+    // 默认（未 opt-in）：自主模式也不免传输审批——出卡，拒绝收场
+    let card = wait_card(&m, "s-t42x").await;
+    assert!(card.command.contains("download"), "传输卡摘要应含 download：{}", card.command);
+    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny).await.unwrap();
+    assert!(matches!(dl.await.unwrap(), Err(Error::ApprovalDenied { .. })));
+
+    // opt-in 开：免审直达传输层（stub 通道任务异步失败），无卡、审计带标记、记录照落
+    m.center
+        .vault
+        .set_setting(SETTING_AUTONOMY_TRANSFERS, "1")
+        .unwrap();
+    let r = m
+        .download(&agent, "s-t42x".to_string(), "/tmp/src.txt", std::path::Path::new("/local/dst.txt"), None)
+        .await;
+    assert!(r.is_ok(), "免审传输应同步返回句柄，实际 {:?}", r.err());
+    let pending = m
+        .list_approvals(&Actor::Human, ApprovalFilter { pending_only: true, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(pending.is_empty(), "免审传输不得出卡：{pending:?}");
+    let audit = m
+        .query_audit(&Actor::Human, AuditFilter { action: Some("transfer_autonomous".into()), limit: 50, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(
+        audit.events.iter().any(|e| e.payload_json.get("autonomous").and_then(|v| v.as_bool()) == Some(true)),
+        "免审传输必须留 transfer_autonomous 审计"
+    );
+    let recs = m
+        .query_records(
+            &Actor::Human,
+            tinyssh_records::RecordFilter {
+                agent_id: Some("opencode".into()),
+                kind: Some(tinyssh_records::RecordKind::Transfer),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!recs.is_empty(), "免审传输仍须进动作记录");
+
+    // opt-in 关：恢复逐条审批
+    m.center
+        .vault
+        .set_setting(SETTING_AUTONOMY_TRANSFERS, "")
+        .unwrap();
+    let dl2 = {
+        let m2 = m.clone();
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            m2.download(&agent, "s-t42x".to_string(), "/tmp/src.txt", std::path::Path::new("/local/dst.txt"), None).await
+        })
+    };
+    let card2 = wait_card(&m, "s-t42x").await;
+    m.decide_approval(&Actor::Human, card2.id.clone(), Decision::Deny).await.unwrap();
+    assert!(matches!(dl2.await.unwrap(), Err(Error::ApprovalDenied { .. })));
+}

@@ -1,4 +1,4 @@
-// 09 设置：外观 / 终端 / 凭据 / Agent 接入 / 关于 五个分区（§6.7 / §10.1）。
+// 09 设置：外观 / 终端 / 凭据 / Agent 接入 / 记录审计 / 关于 分区（§6.7 / §10.1）。
 
 const openSettings = async (page) => {
   await page.click(".hb-settings");
@@ -21,7 +21,7 @@ module.exports = {
     await openSettings(page);
 
     const ids = await paneIds(page);
-    for (const t of ["settings-close", "settings-cat-appearance", "settings-cat-terminal", "settings-cat-credentials", "settings-cat-agent", "settings-cat-about"]) {
+    for (const t of ["settings-close", "settings-cat-appearance", "settings-cat-terminal", "settings-cat-credentials", "settings-cat-agent", "settings-cat-records", "settings-cat-about"]) {
       ck.check(`设置含 ${t}`, ids.includes(t));
     }
     ck.check("默认打开外观分区（settings-pane-appearance）", ids.includes("settings-pane-appearance"));

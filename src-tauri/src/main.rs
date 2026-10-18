@@ -1076,6 +1076,76 @@ async fn autonomy_list(state: ApiState<'_>) -> CmdResult<Vec<session_api::Autono
         .map_err(WireError::from)
 }
 
+// ---- ④ 记录审计 GUI：时间线查询 + 明文导出（人类视角全量；Agent 走 MCP 只见自己）----
+
+/// UI 过滤面（camelCase 过桥；kind 走 RecordKind 的 serde snake_case 契约）。
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct RecordsFilterReq {
+    agent_id: Option<String>,
+    kind: Option<tinyssh_records::RecordKind>,
+    limit: Option<u32>,
+}
+
+impl From<RecordsFilterReq> for tinyssh_records::RecordFilter {
+    fn from(r: RecordsFilterReq) -> Self {
+        tinyssh_records::RecordFilter {
+            session_id: None,
+            agent_id: r.agent_id,
+            kind: r.kind,
+            since: None,
+            until: None,
+            limit: r.limit,
+        }
+    }
+}
+
+#[tauri::command]
+async fn query_records(
+    state: ApiState<'_>,
+    filter: Option<RecordsFilterReq>,
+) -> CmdResult<Vec<tinyssh_records::RecordEvent>> {
+    state
+        .api
+        .query_records(&human(), filter.map(Into::into).unwrap_or_default())
+        .await
+        .map_err(WireError::from)
+}
+
+#[derive(serde::Serialize)]
+struct RecordsExported {
+    count: u64,
+    path: String,
+}
+
+/// 明文导出（人类专属，核心层再校验一次）：落点固定在记录库隔壁
+/// `records-export/records-<UTC时间戳>.jsonl`，不开放任意路径写。
+#[tauri::command]
+async fn export_records(
+    state: ApiState<'_>,
+    filter: Option<RecordsFilterReq>,
+) -> CmdResult<RecordsExported> {
+    let dir = state
+        .api
+        .center
+        .records
+        .dir()
+        .parent()
+        .ok_or_else(|| WireError::simple("storage", "记录库目录异常"))?
+        .join("records-export");
+    std::fs::create_dir_all(&dir).map_err(|e| WireError::simple("storage", e.to_string()))?;
+    let to = dir.join(format!(
+        "records-{}.jsonl",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+    let count = state
+        .api
+        .export_records(&human(), filter.map(Into::into).unwrap_or_default(), &to)
+        .await
+        .map_err(WireError::from)?;
+    Ok(RecordsExported { count, path: to.display().to_string() })
+}
+
 /// R41（§6.6「默认当前会话，可切全部；可筛人类/Agent 与事件类型」）：过滤面全量过桥。
 /// `sid=None` = 全部会话；`actor_kind` ∈ {human, agent}（未知值不匹配任何行）；
 /// `action` 精确匹配动作名；`before_seq` 供「加载更早」按 seq 游标翻页（连续，不重不漏）。
@@ -2109,7 +2179,7 @@ fn main() {
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
-            list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list,
+            list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,

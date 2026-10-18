@@ -649,3 +649,31 @@ export interface AutonomyGrant {
   agent_id: string;
   expires_at: string | null;
 }
+
+// ---- ④ 记录审计（核心 tinyssh_records::RecordEvent 直通，serde snake_case 契约）----
+
+export type ActionRecordKind = "exec" | "transfer" | "forward";
+
+/** 一条结构化动作记录：摘要 + 状态 + 脱敏输出摘录（≤4KB，写入侧已启发式擦密钥）。 */
+export interface ActionRecord {
+  seq: number;
+  ts: string;
+  kind: ActionRecordKind;
+  session_id: string | null;
+  /** null = 人类动作。 */
+  agent_id: string | null;
+  summary: string;
+  /** ok | error | denied | timeout | cancelled | dangerous */
+  status: string;
+  exit_code: number | null;
+  duration_ms: number | null;
+  output_excerpt: string | null;
+  meta: Record<string, unknown>;
+}
+
+/** 时间线查询面（App 持有的完整形态；过桥时同形直传）。 */
+export interface RecordsQuery {
+  agentId: string | null;
+  kind: ActionRecordKind | null;
+  limit: number;
+}

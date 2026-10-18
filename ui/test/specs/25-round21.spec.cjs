@@ -130,8 +130,8 @@ module.exports = {
     ck.check("十一族色板芯片在场", chipCount === 11, `${chipCount}/11`);
     const navDescs = await page.evaluate(() =>
       [...document.querySelectorAll(".settings-nav .set-nav-desc")].map((e) => e.textContent.trim()));
-    // 键位配置轮：设置分类 5→6（新增「快捷键」——新建 · 关签 · 分屏 · 面板）
-    ck.check("导航六类各带一句定位", navDescs.length === 6 && navDescs.every((d) => d.length > 0), JSON.stringify(navDescs));
+    // 键位配置轮：设置分类 5→6（快捷键）；④ 记录审计轮 6→7（记录审计——时间线 · 导出）
+    ck.check("导航七类各带一句定位", navDescs.length === 7 && navDescs.every((d) => d.length > 0), JSON.stringify(navDescs));
     // 二十二轮：外观两卡（应用外观/字号与缩放——终端配色卡随主题统一退役）
     const cardCounts = await page.evaluate(() => document.querySelectorAll(".settings-pane .set-card").length);
     ck.check("外观分类两卡片分区", cardCounts === 2, `实得 ${cardCounts}`);

@@ -63,13 +63,15 @@ Tauri v2 · Rust（tokio / russh ≥0.61 / portable-pty / alacritty_terminal / t
 把该 URL 扔给任何能取网页的 Agent 即可自助对接。能力面：23 个工具（会话/exec/传输/转发/审计/执行记录）、
 资源（`tinyssh://sessions` 等现场状态，可 `resources/subscribe` 收变化推送）与引导提示（`prompts/get`）。
 Agent 侧所有动作（命令/传输/转发，含被拒的）进**结构化执行记录**：加密落盘、输出摘录脱敏、
-保留 30 天，Agent 可 `query_records` 自查，人类可时间线回放与导出。
+保留 30 天，Agent 可 `query_records` 自查，人类在 设置 → 记录审计 时间线回看（种类/来源筛选），
+并可一键导出明文 JSONL（落 `records-export/`，导出留审计）。
 接入步骤：设置 → Agent 接入 →
 `tinyssh agent create <id> <名称>` 签发 Token（仅展示一次）→ Agent 侧按文档配置 HTTP 直连
 或 stdio shim（`tinyssh-mcp`）。危险命令与 Agent 传输逐条人工审批
 （审批卡支持「记住并批准」：30 分钟精确免审或写入持久放行规则；也可按 Agent
-开启**自主模式**——免逐条审批运行，危险命令仍硬拦、传输仍审批、全部动作进
-执行记录，横幅常显一键急停，重启即失效）；所有操作进审计。
+开启**自主模式**——免逐条审批运行，危险命令仍硬拦、全部动作进
+执行记录，横幅常显一键急停，重启即失效；传输默认仍逐条审批，
+可在 设置 → Agent 接入 显式改「自主模式下传输免审」，随时刻关）；所有操作进审计。
 无头场景可用 `tinyssh serve` 起同款端点——注意它与 GUI 共享数据库但**不共享内存态**，
 请分时使用（审批队列互不可见）。
 
