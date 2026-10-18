@@ -24,7 +24,7 @@ import type {
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
-  McpStatus,
+  McpStatus, AutonomyGrant,
 } from "./adapter/wire";
 import {
   IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
@@ -447,6 +447,8 @@ export default function App() {
   };
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
+  // ② 自主模式授权表（横幅）：非空即有 Agent 正在免逐条审批运行
+  const [autonomy, setAutonomy] = useState<AutonomyGrant[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
   // 任务目标（R9：人类→Agent 委托留言）：draft 编辑中不被简报轮询覆盖，
   // 保存/清除后落盘（goalDirty 复位）再随简报同步；
@@ -640,12 +642,15 @@ export default function App() {
       const nextRecents = await invoke("list_recent_hosts").then((v) => v as RecentHost[]).catch(() => null);
       const nextApprovals = ((await invoke("list_approvals", { pendingOnly: false })) as ApprovalItem[])
         .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) }));
+      // ② 自主模式横幅数据（跟随 3s 轮询；到期由核心惰性清除，前端只显示剩余）
+      const nextAutonomy = (await invoke("autonomy_list")) as AutonomyGrant[];
       setSessions((prev) => sameShape(prev, nextSessions));
       setHosts((prev) => sameShape(prev, nextHosts));
       if (nextMeta) setHostMeta((prev) => sameShape(prev, nextMeta));
       if (nextRecents) setRecents((prev) => sameShape(prev, nextRecents));
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
       setApprovals((prev) => sameShape(prev, nextApprovals));
+      setAutonomy(nextAutonomy);
     } catch {
       // 审核低-5：首载失败也必须撤骨架给出空态出口（否则永久骨架 + 未处理 rejection）；
       // 3s 轮询自愈，错误不逐条打扰（连接类失败另有常驻横幅）
@@ -3592,6 +3597,27 @@ export default function App() {
     }
     await decide(id, "approve", null);
   };
+  // ② 自主模式急停（横幅按钮）：立即收回该 Agent 的免审批授权
+  const killAutonomy = useCallback(async (agentId: string) => {
+    try {
+      await invoke("set_autonomy", { agentId, enable: false });
+      pushToast("ok", `已收回 ${agentId} 的自主模式`);
+    } catch (err) {
+      pushToast("err", errMsg(err));
+    }
+    await refreshLists();
+  }, [pushToast, refreshLists]);
+  // ② 自主模式开关（设置页）：enable + 可选 TTL（分钟）
+  const toggleAutonomy = useCallback(async (agentId: string, enable: boolean, ttlMinutes: number | null) => {
+    try {
+      await invoke("set_autonomy", { agentId, enable, ttlMinutes });
+      pushToast("ok", enable ? `已开启 ${agentId} 自主模式` : `已关闭 ${agentId} 自主模式`);
+    } catch (err) {
+      pushToast("err", errMsg(err));
+      return;
+    }
+    await refreshLists();
+  }, [pushToast, refreshLists]);
 
   // 审批卡风险分级 approvalRisk 已随审批卡出仓 components/collab-panel.tsx（拆分⑤）
 
@@ -3851,6 +3877,29 @@ export default function App() {
         {inTauri && isWindowsPlatform() && <WinControls />}
       </header>
       <div className="workspace">
+        {autonomy.length > 0 && (
+          /* ② 自主模式常驻横幅：醒目、随 3s 轮询刷新剩余时间、一键急停 */
+          <div className="autonomy-banner" data-testid="autonomy-banner" role="alert"
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 12px",
+              background: "var(--warn-bg, #4a3208)", color: "var(--warn, #ffb454)",
+              borderBottom: "1px solid var(--warn, #ffb454)", fontSize: 12 }}>
+            <b>⚡ 自主模式运行中</b>
+            {autonomy.map((g) => (
+              <span key={g.agent_id} className="mono" data-testid={`autonomy-${g.agent_id}`}>
+                {g.agent_id}
+                {g.expires_at
+                  ? ` · 剩余 ${Math.max(0, Math.round((new Date(g.expires_at).getTime() - Date.now()) / 60000))} 分`
+                  : " · 手动关闭前有效"}
+              </span>
+            ))}
+            <span className="dim" style={{ fontSize: 11 }}>危险命令仍被拦截；传输仍需审批；全部动作有记录。</span>
+            {autonomy.map((g) => (
+              <button key={`k-${g.agent_id}`} className="danger" data-testid={`autonomy-kill-${g.agent_id}`}
+                style={{ padding: "1px 10px", fontSize: 11 }}
+                onClick={() => void killAutonomy(g.agent_id)}>急停 {g.agent_id}</button>
+            ))}
+          </div>
+        )}
         {hostbarOpen && (
           /* 主机栏（拆分⑤出仓 components/hostbar.tsx，零语义变更）：搜索防抖、
              标签筛选、收藏分组卡片、导入面板挂载点、设置钮与宽度抓手 */
@@ -4527,6 +4576,8 @@ export default function App() {
               closeSettings={closeSettings}
               settingsPanelRef={settingsPanelRef}
               appVersion={appVersion}
+              autonomy={autonomy}
+              onToggleAutonomy={toggleAutonomy}
               appearance={appearance}
               changeAppearance={changeAppearance}
               palette={palette}

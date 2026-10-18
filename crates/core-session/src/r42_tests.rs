@@ -627,3 +627,120 @@ async fn r42_remember_persistent_and_guards() {
         .unwrap();
     let _ = j1.await.unwrap();
 }
+
+/// ② 自主模式：授权生命周期（人类专属 / TTL clamp / 过期惰性清除 / 急停即收回）。
+#[tokio::test]
+async fn r42_autonomy_grant_lifecycle() {
+    let m = mgr();
+    m.center.vault.create_agent("opencode", "OpenCode").unwrap();
+
+    // Agent 不能给自己授权
+    assert!(matches!(
+        m.set_autonomy(
+            &Actor::Agent { client_id: "opencode".into() },
+            "opencode".into(),
+            true,
+            None,
+        )
+        .await,
+        Err(Error::InvalidActor)
+    ));
+
+    // 人类开启（TTL 0 → clamp 到 1 分钟）
+    m.set_autonomy(&Actor::Human, "opencode".into(), true, Some(0))
+        .await
+        .unwrap();
+    let grants = m.autonomy_list(&Actor::Human).await.unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].agent_id, "opencode");
+    assert!(grants[0].expires_at.is_some_and(|e| e > chrono::Utc::now()));
+    assert!(m.center.autonomy_active("opencode"));
+
+    // Agent 只能看到自己的授权
+    let own = m.autonomy_list(&Actor::Agent { client_id: "opencode".into() }).await.unwrap();
+    assert_eq!(own.len(), 1);
+
+    // 过期 → 惰性清除判定为不活跃
+    *m.center.autonomy.lock().unwrap().get_mut("opencode").unwrap() =
+        Some(chrono::Utc::now() - chrono::Duration::minutes(1));
+    assert!(!m.center.autonomy_active("opencode"), "过期授权不得放行");
+    let grants = m.autonomy_list(&Actor::Human).await.unwrap();
+    assert!(grants.is_empty(), "过期项不进状态列表");
+
+    // 无过期授权 + 急停
+    m.set_autonomy(&Actor::Human, "opencode".into(), true, None)
+        .await
+        .unwrap();
+    assert!(m.center.autonomy_active("opencode"));
+    m.set_autonomy(&Actor::Human, "opencode".into(), false, None)
+        .await
+        .unwrap();
+    assert!(!m.center.autonomy_active("opencode"), "急停必须立即生效");
+    assert!(m.autonomy_list(&Actor::Human).await.unwrap().is_empty());
+
+    // 审批模型变更进审计
+    let audit = m
+        .query_audit(
+            &Actor::Human,
+            AuditFilter { action: Some("autonomy_set".into()), limit: 50, ..Default::default() },
+        )
+        .await
+        .unwrap();
+    assert!(audit.events.len() >= 3, "开/关都要留痕");
+}
+
+/// ② exec 级端到端：自主模式开启后同一条命令**不出审批卡**直接到执行层
+/// （stub 通道的执行错误 ≠ 审批拒绝）；关闭后恢复出卡；deny 名单在自主模式下
+/// 仍硬拦（reboot 直接 Dangerous，不进执行层）。
+#[tokio::test]
+async fn r42_autonomy_exec_skips_card_deny_still_holds() {
+    let m = mgr();
+    *m.center.collab.lock().unwrap() = CollabGate::new(true);
+    let h = mk_handle("s-1", ControlOwner::Agent, m.center.clone());
+    register(&m, h.clone());
+    m.center.vault.create_agent("opencode", "OpenCode").unwrap();
+    let agent = Actor::Agent { client_id: "opencode".into() };
+    let cmd = "docker system prune -f";
+
+    // 关闭态：出卡（走审批）
+    let j1 = {
+        let h = h.clone();
+        let agent = agent.clone();
+        tokio::spawn(async move { h.exec(&agent, cmd, ExecOpts::default()).await })
+    };
+    let card = wait_card(&m, "s-1").await;
+    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny).await.unwrap();
+    assert!(matches!(j1.await.unwrap(), Err(Error::ApprovalDenied { .. })));
+
+    // 开启自主：同命令不再出卡，直接到执行层（stub 通道报 InvalidInput("stub")）
+    m.set_autonomy(&Actor::Human, "opencode".into(), true, None).await.unwrap();
+    let r2 = h.exec(&agent, cmd, ExecOpts { mode: ExecMode::Fresh, ..Default::default() }).await;
+    match r2 {
+        Err(Error::InvalidInput(msg)) if msg.contains("stub") => {}
+        other => panic!("自主模式应跳过审批直达执行层（stub 错误），实际 {other:?}"),
+    }
+    let pending = m
+        .list_approvals(&Actor::Human, ApprovalFilter { pending_only: true, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(pending.is_empty(), "自主模式不得产生审批卡：{pending:?}");
+
+    // deny 名单仍硬拦：reboot 在自主模式下同样 Dangerous 拒绝
+    let r3 = h.exec(&agent, "reboot", ExecOpts::default()).await;
+    assert!(
+        matches!(&r3, Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern })),
+        "deny 名单必须先于自主模式：{r3:?}"
+    );
+
+    // 审计：自主放行的 exec 带 autonomous 标记
+    let audit = m
+        .query_audit(&Actor::Human, AuditFilter { action: Some("exec".into()), limit: 50, ..Default::default() })
+        .await
+        .unwrap();
+    assert!(
+        audit.events.iter().any(|e| {
+            e.payload_json.get("autonomous").and_then(|v| v.as_bool()) == Some(true)
+        }),
+        "自主放行的 exec 审计必须带 autonomous:true"
+    );
+}

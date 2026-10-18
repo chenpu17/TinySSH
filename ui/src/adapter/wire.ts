@@ -643,3 +643,9 @@ export interface SelfMetrics {
   ws_mb: number;
   commit_mb: number;
 }
+
+/** ② 自主模式授权视图：expires_at=null=手动关闭前有效（重启即失效，只存核心内存） */
+export interface AutonomyGrant {
+  agent_id: string;
+  expires_at: string | null;
+}

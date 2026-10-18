@@ -15,6 +15,7 @@ import {
 import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { isMacPlatform } from "../actions";
 import { inTauri } from "../adapter/bridge";
+import type { AutonomyGrant } from "../adapter/wire";
 import type { CollabStatus, Host, IdentityMeta, IdentityReq, McpStatus } from "../adapter/wire";
 import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
 import { SelfMeterDetail } from "../self-meter";
@@ -75,6 +76,9 @@ interface SettingsPanelProps {
   // Agent 接入
   collab: CollabStatus;
   mcp: McpStatus;
+  // ② 自主模式：授权表 + 开关回调（宿主持有状态与调用）
+  autonomy: AutonomyGrant[];
+  onToggleAutonomy: (agentId: string, enable: boolean, ttlMinutes: number | null) => Promise<void>;
   collabEnabled: boolean;
   collabStateText: string;
   collabBusy: boolean;
@@ -100,6 +104,7 @@ export function SettingsPanel({
   credBusy, credErr, setCredErr, credDraftTo, setCredDraftTo, discardCredDraft, submitNewIdentity, setConfirm,
   collab, mcp, collabEnabled, collabStateText, collabBusy, showAgentHelp, setShowAgentHelp,
   openDisableDialog, retryDisableConvergence, enableCollab, issueAgent, revokeAgent,
+  autonomy, onToggleAutonomy,
 }: SettingsPanelProps) {
   // rev-r47：签发/吊销表单的**面板本地**临时态——关面板即弃（与宿主「关闭即清草稿」
   // 同语义；token 只在此刻的弹层展示一次，不进任何全局状态）。
@@ -108,6 +113,9 @@ export function SettingsPanel({
   const [agentErr, setAgentErr] = useState<string | null>(null);
   const [issuedToken, setIssuedToken] = useState<{ id: string; token: string } | null>(null);
   const [revokeArm, setRevokeArm] = useState<string | null>(null);
+  // ② 自主模式：开启确认臂 + 每 Agent TTL 选择（面板本地临时态，与吊销臂同工艺）
+  const [autonomyArm, setAutonomyArm] = useState<string | null>(null);
+  const [autonomyTtl, setAutonomyTtl] = useState<Record<string, string>>({});
   const submitIssueAgent = async () => {
     if (agentBusy) return;
     const id = agentForm.id.trim();
@@ -466,6 +474,38 @@ export function SettingsPanel({
                           {a.expires_at ? ` · ${new Date(a.expires_at) <= new Date() ? "已过期" : `过期 ${new Date(a.expires_at).toLocaleDateString()}`}` : ""}
                         </span>
                         <span style={{ flex: 1 }} />
+                        {/* ② 自主模式开关：开启带 TTL 选择；危险形态命令仍被 deny 硬拦，
+                            传输仍逐条审批；急停走横幅或这里关闭 */}
+                        {(() => {
+                          const grant = autonomy.find((g) => g.agent_id === a.id);
+                          const ttlSel = autonomyTtl[a.id] ?? "30";
+                          return grant ? (
+                            <button className="warn" style={{ fontSize: 11 }} data-testid={`autonomy-off-${a.id}`}
+                              title="立即收回该 Agent 的免逐条审批授权"
+                              onClick={() => void onToggleAutonomy(a.id, false, null)}>关闭自主</button>
+                          ) : (
+                            <>
+                              <select style={{ fontSize: 10 }} aria-label="自主模式时长"
+                                value={ttlSel}
+                                onChange={(e) => setAutonomyTtl({ ...autonomyTtl, [a.id]: e.target.value })}>
+                                <option value="30">30 分钟</option>
+                                <option value="120">2 小时</option>
+                                <option value="manual">手动关闭</option>
+                              </select>
+                              {autonomyArm === a.id ? (
+                                <button className="warn" style={{ fontSize: 11 }} data-testid={`autonomy-on-confirm-${a.id}`}
+                                  title="开启后该 Agent 的命令不再逐条审批（危险命令仍拦截、全量记录）"
+                                  onClick={() => { setAutonomyArm(null); void onToggleAutonomy(a.id, true, ttlSel === "manual" ? null : Number(ttlSel)); }}>
+                                  确认开启？
+                                </button>
+                              ) : (
+                                <button className="ghost" style={{ fontSize: 11 }} data-testid={`autonomy-on-${a.id}`}
+                                  title="免逐条审批的自主运行（危险命令仍拦截、全量记录、可急停）"
+                                  onClick={() => setAutonomyArm(a.id)}>自主模式</button>
+                              )}
+                            </>
+                          );
+                        })()}
                         {revokeArm === a.id ? (
                           <button className="ghost" style={{ color: "var(--danger)", fontSize: 11 }} data-testid="agent-revoke-confirm"
                             onClick={() => void doRevoke(a.id)}>确认吊销？</button>

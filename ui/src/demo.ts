@@ -77,6 +77,8 @@ const demoState = {
   // R42（§6.7/D11）：已登记 Agent（真实核心 vault.list_agents）。mcp_status 由此投影，
   // issue_agent 追加——登记**不**转移任何会话控制权。`?fresh` 置空以复现「新装未启用」态。
   agents: [{ id: "opencode", label: "opencode（演示）" }] as { id: string; label: string }[],
+  // ② 自主模式授权表（demo 镜像；真实核心只存内存、重启即失效）
+  autonomy: new Set<string>(),
   // C9（R43）：协作启用态（真实核心 vault.settings['collab.enabled']）。新装默认关闭
   // （无自动 MCP 监听），旧版升级保留开启。generation 随每次启用/停用 +1（停用封口
   // 后旧请求按代际核对）。`?fresh` 置 false 复现「新装未启用」。
@@ -922,6 +924,17 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           segment_report: a.segment_report.map((s) => ({ ...s })),
           purpose: demoState.sessions.find((x) => x.id === a.session_id)?.goal ?? null,
         }));
+    }
+    case "set_autonomy": {
+      // ② demo 镜像：开/关授权 + 审计留痕（真实实现见 core-session set_autonomy）
+      const id = args?.agentId as string;
+      if (args?.enable) demoState.autonomy.add(id);
+      else demoState.autonomy.delete(id);
+      audit("human", "autonomy_set", null, null, null, { agent: id, enable: args?.enable === true });
+      return null;
+    }
+    case "autonomy_list": {
+      return [...demoState.autonomy].map((agent_id) => ({ agent_id, expires_at: null }));
     }
     case "remember_approval": {
       // 「批准并记住」demo 镜像：只写规则（demo 态并入 audit 留痕）+ 审计，不动卡；

@@ -82,6 +82,9 @@ pub struct ApprovalCenter {
     /// ③ 执行记录（结构化、加密落盘、带输出摘录）：时间线回放/自查/后续评测。
     /// 写入失败一律吞（记录不得使动作失败）；密钥经 vault 闭包注入。
     pub records: Arc<tinyssh_records::RecordStore>,
+    /// ② 自主模式授权表（agent_id → 到期时刻；None=手动关才失效）。
+    /// **只存内存**：重启即回审批模式（失败安全——授权是高权限状态，宁可失忆）。
+    pub autonomy: StdMutex<HashMap<AgentClientId, Option<chrono::DateTime<chrono::Utc>>>>,
 }
 
 /// 快速连接的内存态主机（十七轮）：Host 全量 + 注册时即席解出的明文凭据 +
@@ -236,6 +239,7 @@ impl SessionManager {
             },
             vault,
             audit,
+            autonomy: StdMutex::new(HashMap::new()),
         });
         let arc = Arc::new(Self {
             sessions: StdMutex::new(HashMap::new()),
@@ -1807,6 +1811,23 @@ impl ApprovalCenter {
         }
     }
 
+    /// ② 自主模式单点判定：授权在位且未过期（过期惰性清除）。
+    pub fn autonomy_active(&self, agent_id: &str) -> bool {
+        let mut g = self.autonomy.lock().unwrap();
+        match g.get(agent_id) {
+            None => false,
+            Some(None) => true,
+            Some(Some(exp)) => {
+                if *exp > chrono::Utc::now() {
+                    true
+                } else {
+                    g.remove(agent_id);
+                    false
+                }
+            }
+        }
+    }
+
     pub fn collab_state(&self) -> CollabState {
         self.collab.lock().unwrap().state
     }
@@ -3257,6 +3278,56 @@ impl SessionApi for SessionManager {
             .records
             .export_jsonl(&f, to)
             .map_err(|e| Error::Storage(format!("records export: {e}")))
+    }
+
+    // ---- 自主模式（②）----
+
+    async fn set_autonomy(
+        &self,
+        ctx: &Actor,
+        agent_id: AgentClientId,
+        enable: bool,
+        ttl_minutes: Option<u32>,
+    ) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        let mut g = self.center.autonomy.lock().unwrap();
+        if enable {
+            let expires = ttl_minutes.map(|m| {
+                let m = m.clamp(1, 24 * 60);
+                chrono::Utc::now() + chrono::Duration::minutes(i64::from(m))
+            });
+            g.insert(agent_id.clone(), expires);
+        } else {
+            g.remove(&agent_id);
+        }
+        drop(g);
+        // 审批模型变更必须留痕（谁何时给的/收了什么权限）
+        let _ = self.center.audit.append(
+            ctx,
+            "autonomy_set",
+            None,
+            None,
+            serde_json::json!({"agent": agent_id, "enable": enable, "ttl_minutes": ttl_minutes}),
+            None,
+        );
+        Ok(())
+    }
+
+    async fn autonomy_list(&self, ctx: &Actor) -> Result<Vec<AutonomyGrant>> {
+        let g = self.center.autonomy.lock().unwrap();
+        let now = chrono::Utc::now();
+        let mut out: Vec<AutonomyGrant> = g
+            .iter()
+            .filter(|(_, exp)| exp.map_or(true, |e| e > now))
+            .map(|(a, e)| AutonomyGrant { agent_id: a.clone(), expires_at: *e })
+            .collect();
+        drop(g);
+        if let Actor::Agent { client_id } = ctx {
+            out.retain(|gr| &gr.agent_id == client_id);
+        }
+        Ok(out)
     }
 
     // ---- 主机指纹门（路线图⑤ TOFU）----

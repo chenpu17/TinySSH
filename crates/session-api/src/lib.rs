@@ -87,6 +87,8 @@ pub enum ApprovalOutcome {
     Approved,
     /// 人类批准并编辑了命令（实际执行 edited_command）。
     ApprovedEdited,
+    /// ② 自主模式：人类按 Agent 显式授权期间跳过逐条审批（deny 名单仍硬拦）。
+    Autonomous,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +333,13 @@ pub enum Decision {
 pub enum RememberScope {
     Ttl { minutes: u32 },
     Persistent { pattern: String },
+}
+
+/// 自主模式授权视图（②）：expires_at=None=手动关闭前有效。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutonomyGrant {
+    pub agent_id: AgentClientId,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1872,6 +1881,21 @@ pub trait SessionApi: Send + Sync {
         f: tinyssh_records::RecordFilter,
         to: &std::path::Path,
     ) -> Result<u64>;
+
+    // ---- 自主模式（② 审批减摩擦的延伸：事前拦截 → 事后全量记录）----
+    /// 按 Agent 开/关自主模式（人类专属）。开启后该 Agent 的 exec 跳过逐条审批
+    /// （内置 deny 名单仍硬拦；传输仍逐条审批；记录/审计照常）。`ttl_minutes`
+    /// 为 Some 时到期自动失效（1..=1440）；None=手动关闭前一直有效。
+    /// **授权只存内存**：应用重启即回审批模式（保守侧，失败安全）。
+    async fn set_autonomy(
+        &self,
+        ctx: &Actor,
+        agent_id: AgentClientId,
+        enable: bool,
+        ttl_minutes: Option<u32>,
+    ) -> Result<()>;
+    /// 自主模式状态（横幅/设置页）；Agent 可查自己，人类查全部。
+    async fn autonomy_list(&self, ctx: &Actor) -> Result<Vec<AutonomyGrant>>;
     async fn export_audit(&self, ctx: &Actor, f: AuditFilter, to: &std::path::Path) -> Result<()>;
 
     // ---- 现场简报（v1；交接核心工件，PRD FR-3/FR-6）----

@@ -1051,6 +1051,31 @@ async fn remember_approval(
         .map_err(WireError::from)
 }
 
+/// ② 自主模式：按 Agent 开/关（人类专属）。deny 名单仍硬拦、传输仍逐条审批、
+/// 记录/审计照常；重启即失效（授权只存内存）。
+#[tauri::command]
+async fn set_autonomy(
+    state: ApiState<'_>,
+    agent_id: String,
+    enable: bool,
+    ttl_minutes: Option<u32>,
+) -> CmdResult<()> {
+    state
+        .api
+        .set_autonomy(&human(), agent_id, enable, ttl_minutes)
+        .await
+        .map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn autonomy_list(state: ApiState<'_>) -> CmdResult<Vec<session_api::AutonomyGrant>> {
+    state
+        .api
+        .autonomy_list(&human())
+        .await
+        .map_err(WireError::from)
+}
+
 /// R41（§6.6「默认当前会话，可切全部；可筛人类/Agent 与事件类型」）：过滤面全量过桥。
 /// `sid=None` = 全部会话；`actor_kind` ∈ {human, agent}（未知值不匹配任何行）；
 /// `action` 精确匹配动作名；`before_seq` 供「加载更早」按 seq 游标翻页（连续，不重不漏）。
@@ -2084,7 +2109,7 @@ fn main() {
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,
-            list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status,
+            list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,

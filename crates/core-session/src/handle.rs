@@ -726,6 +726,15 @@ impl SessionHandle {
                             outcome: ApprovalOutcome::Auto,
                         },
                         tinyssh_approval::SegmentVerdict::NeedsApproval => {
+                            // ② 自主模式：人类按 Agent 显式授权期间跳过逐条审批。
+                            // deny 名单已在上面 Dangerous 分支硬拦（先于本分支）；
+                            // 传输仍逐条审批；记录/审计照常（本动作 outcome=Autonomous 可辨）。
+                            if self.center.autonomy_active(client_id) {
+                                ApprovalTrace {
+                                    approval_id: None,
+                                    outcome: ApprovalOutcome::Autonomous,
+                                }
+                            } else {
                             let (t, edited) = self
                                 .wait_approval(
                                     actor,
@@ -740,6 +749,7 @@ impl SessionHandle {
                                 .await?;
                             edited_cmd = edited;
                             t
+                            }
                         }
                     }
                 }
@@ -813,8 +823,12 @@ impl SessionHandle {
             Ok(r) => serde_json::json!({
                 "exit_code": r.exit_code, "duration_ms": r.duration.as_millis() as u64,
                 "truncated": r.truncated, "mode": format!("{:?}", opts.mode),
+                "autonomous": matches!(trace.outcome, ApprovalOutcome::Autonomous),
             }),
-            Err(e) => serde_json::json!({"error": e.to_string()}),
+            Err(e) => serde_json::json!({
+                "error": e.to_string(),
+                "autonomous": matches!(trace.outcome, ApprovalOutcome::Autonomous),
+            }),
         };
         let _ = self.center.audit.append(
             actor,
