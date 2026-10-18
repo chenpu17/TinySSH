@@ -79,6 +79,9 @@ pub struct ApprovalCenter {
     pub quick_hosts: StdMutex<HashMap<HostId, QuickHost>>,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
+    /// ③ 执行记录（结构化、加密落盘、带输出摘录）：时间线回放/自查/后续评测。
+    /// 写入失败一律吞（记录不得使动作失败）；密钥经 vault 闭包注入。
+    pub records: Arc<tinyssh_records::RecordStore>,
 }
 
 /// 快速连接的内存态主机（十七轮）：Host 全量 + 注册时即席解出的明文凭据 +
@@ -157,6 +160,23 @@ struct StagePlan {
 /// attempts 登记上限（十轮防泄漏；收缩策略见 `SessionManager::gc_attempts`）。
 const ATTEMPTS_CAP: usize = 256;
 
+/// ③ 记录状态归一（发起侧）：Ok → "initiated"；审批/取消/危险各有专名。
+fn record_outcome<T>(r: &Result<T>) -> (&'static str, Option<String>) {
+    match r {
+        Ok(_) => ("initiated", None),
+        Err(Error::ApprovalDenied { reason }) => (
+            match reason {
+                DeniedReason::Denied => "denied",
+                DeniedReason::ApprovalTimeout => "timeout",
+                DeniedReason::DangerousPattern => "dangerous",
+            },
+            None,
+        ),
+        Err(Error::Cancelled) => ("cancelled", None),
+        Err(e) => ("error", Some(e.to_string())),
+    }
+}
+
 /// 决策窗超时（决策窗原子化轮）：AwaitingDecision 最长钉住时长，超时按取消
 /// 语义收尾（journal 终态行即留痕，与 cancel 不发审计同约定）。在场人类裁决
 /// 以秒计，5 分钟足够宽裕；无界待决会永久占用同目标锁与 staging temp。
@@ -197,6 +217,23 @@ impl SessionManager {
             shell_tx,
             state_tx,
             quick_hosts: StdMutex::new(HashMap::new()),
+            records: {
+                // ③ 记录目录 = 数据目录/records；保留期 30 天（一期常量，设置面后续轮）。
+                let rec_dir = db_path.parent().unwrap_or(Path::new(".")).join("records");
+                let vault_seal = vault.clone();
+                let vault_open = vault.clone();
+                Arc::new(tinyssh_records::RecordStore::open(
+                    &rec_dir,
+                    30,
+                    tinyssh_records::Crypto {
+                        seal: Box::new(move |b: &[u8]| vault_seal.seal_bytes(b)),
+                        open: Box::new(move |b: &[u8]| {
+                            vault_open.open_bytes(b).map_err(|e| e.to_string())
+                        }),
+                    },
+                )
+                .map_err(|e| Error::Storage(format!("records store: {e}")))?)
+            },
             vault,
             audit,
         });
@@ -2538,16 +2575,32 @@ impl SessionApi for SessionManager {
         remote: &str,
         collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle> {
-        self.transfer(
-            ctx,
-            sid,
-            local.to_path_buf(),
-            remote.to_string(),
-            true,
-            collision,
-            None,
-        )
-        .await
+        // ③ 记录发起（actor 在手）；结局由 transfer_finish 另记（按 transfer id 关联）
+        let r = self
+            .transfer(
+                ctx,
+                sid.clone(),
+                local.to_path_buf(),
+                remote.to_string(),
+                true,
+                collision,
+                None,
+            )
+            .await;
+        let (status, err) = record_outcome(&r);
+        if let Ok(h) = self.get(&sid) {
+            h.record_action(
+                ctx,
+                tinyssh_records::RecordKind::Transfer,
+                &format!("upload {} → {}", local.display(), remote),
+                status,
+                None,
+                None,
+                None,
+                serde_json::json!({ "transfer": r.as_ref().ok().map(|h| h.id.clone()), "error": err }),
+            );
+        }
+        r
     }
 
     async fn download(
@@ -2558,16 +2611,31 @@ impl SessionApi for SessionManager {
         local: &Path,
         collision: Option<CollisionDecision>,
     ) -> Result<TransferHandle> {
-        self.transfer(
-            ctx,
-            sid,
-            local.to_path_buf(),
-            remote.to_string(),
-            false,
-            collision,
-            None,
-        )
-        .await
+        let r = self
+            .transfer(
+                ctx,
+                sid.clone(),
+                local.to_path_buf(),
+                remote.to_string(),
+                false,
+                collision,
+                None,
+            )
+            .await;
+        let (status, err) = record_outcome(&r);
+        if let Ok(h) = self.get(&sid) {
+            h.record_action(
+                ctx,
+                tinyssh_records::RecordKind::Transfer,
+                &format!("download {} → {}", remote, local.display()),
+                status,
+                None,
+                None,
+                None,
+                serde_json::json!({ "transfer": r.as_ref().ok().map(|h| h.id.clone()), "error": err }),
+            );
+        }
+        r
     }
 
     async fn cancel_transfer(&self, _ctx: &Actor, t: TransferId) -> Result<()> {
@@ -3159,6 +3227,38 @@ impl SessionApi for SessionManager {
         Ok(written)
     }
 
+    // ---- 执行记录（③）----
+
+    async fn query_records(
+        &self,
+        ctx: &Actor,
+        mut f: tinyssh_records::RecordFilter,
+    ) -> Result<Vec<tinyssh_records::RecordEvent>> {
+        // 权限边界在查询面强制：Agent 恒只见自己的记录（不信任调用方传的过滤）
+        if let Actor::Agent { client_id } = ctx {
+            f.agent_id = Some(client_id.clone());
+        }
+        self.center
+            .records
+            .query(&f)
+            .map_err(|e| Error::Storage(format!("records query: {e}")))
+    }
+
+    async fn export_records(
+        &self,
+        ctx: &Actor,
+        f: tinyssh_records::RecordFilter,
+        to: &Path,
+    ) -> Result<u64> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        self.center
+            .records
+            .export_jsonl(&f, to)
+            .map_err(|e| Error::Storage(format!("records export: {e}")))
+    }
+
     // ---- 主机指纹门（路线图⑤ TOFU）----
     async fn pending_host_keys(&self, _ctx: &Actor) -> Result<Vec<PendingHostKey>> {
         Ok(self
@@ -3609,6 +3709,41 @@ impl SessionManager {
                 t.finished_at = Some(now);
             }
         });
+        // ③ 传输结局记录（发起时已记 actor，这里补终态；agent_id=None 可辨）
+        let task = self.transfers.lock().unwrap().get(tid).map(|e| e.task.clone());
+        if let Some(t) = task {
+            let (status_s, exit) = match status {
+                TransferStatus::Succeeded => ("ok", Some(0)),
+                TransferStatus::Failed => ("error", None),
+                TransferStatus::Cancelled => ("cancelled", None),
+                _ => return,
+            };
+            let duration_ms: Option<u64> = t
+                .finished_at
+                .map(|f| (f.saturating_sub(t.created_at)).saturating_mul(1000))
+                .map(|d| u64::try_from(d).unwrap_or(0));
+            let _ = self.center.records.append(tinyssh_records::RecordEvent {
+                seq: 0,
+                ts: chrono::Utc::now(),
+                kind: tinyssh_records::RecordKind::Transfer,
+                session_id: Some(t.session_id.clone()),
+                agent_id: None,
+                summary: format!(
+                    "{} {} → {}",
+                    match t.kind { TransferKind::Upload => "upload", TransferKind::Download => "download" },
+                    t.source,
+                    t.dest
+                ),
+                status: status_s.into(),
+                exit_code: exit,
+                duration_ms,
+                output_excerpt: None,
+                meta: serde_json::json!({
+                    "transfer": t.id, "bytes": bytes, "error": t.error,
+                    "initiated_at": t.created_at,
+                }),
+            });
+        }
     }
 
     /// C6/R34 DF5.2：发布原语成功 → verified 证据即时落 journal（先于收尾帧与

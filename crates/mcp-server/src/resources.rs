@@ -34,6 +34,7 @@ pub enum ResQuery {
     Transfer(String),
     Forwards,
     ApprovalsPending,
+    Records,
 }
 
 /// `tinyssh://` 资源 URI 解析。未知 scheme/路径 → None（调用方回 invalid_params）。
@@ -50,6 +51,9 @@ pub fn parse_resource_uri(uri: &str) -> Option<ResQuery> {
     }
     if rest == "approvals/pending" {
         return Some(ResQuery::ApprovalsPending);
+    }
+    if rest == "records" || rest == "records/recent" {
+        return Some(ResQuery::Records);
     }
     if let Some(id) = rest.strip_prefix("sessions/") {
         if !id.is_empty() && !id.contains('/') {
@@ -78,6 +82,9 @@ pub fn resource_catalog() -> Vec<Resource> {
             .with_mime_type("application/json"),
         Resource::new("tinyssh://approvals/pending", "待审批队列")
             .with_description("等待人类逐条裁决的操作（建议订阅此资源获得推送）")
+            .with_mime_type("application/json"),
+        Resource::new("tinyssh://records/recent", "执行记录（最近）")
+            .with_description("你自己的最近 100 条执行记录（命令/传输/转发 + 输出摘录 + 耗时）；复盘与自查")
             .with_mime_type("application/json"),
     ]
 }
@@ -134,6 +141,21 @@ pub async fn read_resource_value(
             serde_json::to_value(api.list_transfers(actor).await.map_err(ReadErr::Core)?)
                 .unwrap_or_default()
         }
+        ResQuery::Records => {
+            // Agent 恒只见自己的（服务端强制）；人类经资源读=全量最近 100
+            serde_json::to_value(
+                api.query_records(
+                    actor,
+                    tinyssh_records::RecordFilter {
+                        limit: Some(100),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(ReadErr::Core)?,
+            )
+            .unwrap_or_default()
+        }
         ResQuery::Transfer(id) => {
             let all = api.list_transfers(actor).await.map_err(ReadErr::Core)?;
             let one = all.into_iter().find(|t| t.id == *id);
@@ -187,8 +209,8 @@ pub fn spawn_watcher(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         match q {
-            // 传输：核心无事件面，2s 差分（首次只建基线不通知）
-            ResQuery::Transfers | ResQuery::Transfer(_) => {
+            // 传输/记录：核心无事件面，2s 差分（首次只建基线不通知）
+            ResQuery::Transfers | ResQuery::Transfer(_) | ResQuery::Records => {
                 let mut prev = String::new();
                 let mut tick = tokio::time::interval(Duration::from_secs(2));
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -338,6 +360,8 @@ mod tests {
             parse_resource_uri("tinyssh://approvals/pending"),
             Some(ResQuery::ApprovalsPending)
         );
+        assert_eq!(parse_resource_uri("tinyssh://records/recent"), Some(ResQuery::Records));
+        assert_eq!(parse_resource_uri("tinyssh://records"), Some(ResQuery::Records));
         // 未知 scheme / 空 id / 多段路径 / 相邻资源误匹配
         assert_eq!(parse_resource_uri("file:///etc/passwd"), None);
         assert_eq!(parse_resource_uri("tinyssh://sessions/"), None);
@@ -349,7 +373,7 @@ mod tests {
     #[test]
     fn catalogs_are_shaped() {
         let rs = resource_catalog();
-        assert_eq!(rs.len(), 4);
+        assert_eq!(rs.len(), 5);
         assert!(rs.iter().all(|r| r.mime_type.as_deref() == Some("application/json")));
         let ts = resource_template_catalog();
         assert_eq!(ts.len(), 2);

@@ -9,6 +9,7 @@ authors.workspace = true
 schemars = "1"
 tokio-util = "0.7"
 session-api = { workspace = true }
+tinyssh-records = { workspace = true }
 rmcp = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }

@@ -113,6 +113,8 @@ async fn spike3_protocol_compliance() {
         "shell_capability",
         "cancel_transfer",
         "retry_transfer",
+        // ③ 执行记录
+        "query_records",
     ] {
         assert!(
             names.contains(&expected.to_string()),
@@ -580,10 +582,10 @@ async fn resources_prompts_served_over_mcp() {
     let (_m, url, _port, token) = spawn_stack().await;
     let client = connect(&url, &token).await;
 
-    // resources/list：4 个静态资源 + 2 个模板
+    // resources/list：5 个静态资源 + 2 个模板
     let rs = client.list_resources(None).await.expect("list resources");
     let uris: Vec<String> = rs.resources.iter().map(|r| r.uri.clone()).collect();
-    for u in ["tinyssh://sessions", "tinyssh://transfers", "tinyssh://forwards", "tinyssh://approvals/pending"] {
+    for u in ["tinyssh://sessions", "tinyssh://transfers", "tinyssh://forwards", "tinyssh://approvals/pending", "tinyssh://records/recent"] {
         assert!(uris.contains(&u.to_string()), "缺资源 {u}: {uris:?}");
     }
     let ts = client.list_resource_templates(None).await.expect("templates");
@@ -762,4 +764,69 @@ async fn subscribe_pushes_resource_updated() {
         .await
         .unwrap();
     assert!(r.status().is_success(), "unsubscribe 应成功：{}", r.status());
+}
+
+// ---- ③ 执行记录：exec 留痕 → query_records 可查 → Agent 隔离 ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn records_capture_exec_and_are_agent_scoped() {
+    let (m, url, _port, token) = spawn_stack().await;
+    let client = connect(&url, &token).await;
+    let sid = m
+        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .await
+        .unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+
+    let r = client
+        .call_tool(call(
+            "exec",
+            serde_json::json!({"session_id": sid, "command": "echo records_live"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(r.is_error, Some(false), "{r:?}");
+
+    // 记录可查：状态 ok、输出摘录含命令回显
+    let q = client
+        .call_tool(call("query_records", serde_json::json!({"limit": 50})))
+        .await
+        .unwrap();
+    assert_eq!(q.is_error, Some(false), "{q:?}");
+    let text = q
+        .structured_content
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let out: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+    let records = out["records"].as_array().cloned().unwrap_or_default();
+    assert!(out["total"].as_i64().unwrap_or(0) >= 1, "{text}");
+    let hit = records.iter().find(|rec| {
+        rec["summary"].as_str().map(|s| s.contains("records_live")).unwrap_or(false)
+    });
+    let hit = hit.expect("exec 记录必须出现在 query_records 结果里");
+    assert_eq!(hit["status"], "ok");
+    assert_eq!(hit["agent_id"], "claude-code");
+    assert!(
+        hit["output_excerpt"].as_str().unwrap_or_default().contains("records_live"),
+        "输出摘录应含回显：{hit}"
+    );
+
+    // 隔离：另一个 Agent 查不到 claude-code 的记录（服务端强制 agent_id 过滤）
+    let token2 = m.center.vault.create_agent("other", "Other").unwrap();
+    let client2 = connect(&url, &token2).await;
+    let q2 = client2
+        .call_tool(call("query_records", serde_json::json!({})))
+        .await
+        .unwrap();
+    let text2 = q2
+        .structured_content
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let out2: serde_json::Value = serde_json::from_str(&text2).unwrap_or(serde_json::json!({}));
+    assert_eq!(
+        out2["total"].as_i64().unwrap_or(-1), 0,
+        "另一 Agent 不得看到别人的记录：{text2}"
+    );
 }

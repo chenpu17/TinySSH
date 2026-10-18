@@ -573,6 +573,72 @@ impl SessionHandle {
         cmd: &str,
         opts: ExecOpts,
     ) -> Result<ExecResult> {
+        // ③ 执行记录：包住全路径（含审批拒绝/超时/危险拦截等早退），失败吞——
+        // 记录不得使动作失败。人类动作同样入记录（agent_id=None 侧可辨）。
+        let started = Instant::now();
+        let mode_dbg = format!("{:?}", opts.mode);
+        let r = self.exec_inner(actor, cmd, opts).await;
+        let (status, exit_code, output) = match &r {
+            Ok(res) => ("ok", res.exit_code, Some(res.stdout.as_str())),
+            Err(Error::ApprovalDenied { reason }) => match reason {
+                DeniedReason::Denied => ("denied", None, None),
+                DeniedReason::ApprovalTimeout => ("timeout", None, None),
+                DeniedReason::DangerousPattern => ("dangerous", None, None),
+            },
+            Err(Error::Cancelled) => ("cancelled", None, None),
+            Err(_) => ("error", None, None),
+        };
+        self.record_action(
+            actor,
+            tinyssh_records::RecordKind::Exec,
+            cmd,
+            status,
+            exit_code,
+            Some(started.elapsed()),
+            output,
+            serde_json::json!({ "mode": mode_dbg }),
+        );
+        r
+    }
+
+    /// ③ 动作记录（exec/传输/转发共用出口）：输出摘录截断 + 脱敏后入库。
+    pub(crate) fn record_action(
+        self: &Arc<Self>,
+        actor: &Actor,
+        kind: tinyssh_records::RecordKind,
+        summary: &str,
+        status: &str,
+        exit_code: Option<i32>,
+        duration: Option<Duration>,
+        output: Option<&str>,
+        meta: serde_json::Value,
+    ) {
+        let ev = tinyssh_records::RecordEvent {
+            seq: 0,
+            ts: chrono::Utc::now(),
+            kind,
+            session_id: Some(self.id.clone()),
+            agent_id: match actor {
+                Actor::Agent { client_id } => Some(client_id.clone()),
+                Actor::Human => None,
+            },
+            summary: summary.to_string(),
+            status: status.to_string(),
+            exit_code,
+            duration_ms: duration.map(|d| d.as_millis() as u64),
+            output_excerpt: output
+                .map(|o| tinyssh_records::redact::excerpt(o, tinyssh_records::OUTPUT_EXCERPT_CAP)),
+            meta,
+        };
+        let _ = self.center.records.append(ev);
+    }
+
+    async fn exec_inner(
+        self: &Arc<Self>,
+        actor: &Actor,
+        cmd: &str,
+        opts: ExecOpts,
+    ) -> Result<ExecResult> {
         if cmd.trim().is_empty() {
             return Err(Error::InvalidInput("empty command".into()));
         }

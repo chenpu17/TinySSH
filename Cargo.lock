@@ -1001,6 +1001,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tinyssh-approval",
  "tinyssh-audit",
+ "tinyssh-records",
  "tinyssh-testbed",
  "tinyssh-vault",
  "tokio",
@@ -5331,6 +5332,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tinyssh-records",
  "tokio",
 ]
 
@@ -6374,6 +6376,7 @@ dependencies = [
  "session-api",
  "tempfile",
  "thiserror 2.0.21",
+ "tinyssh-records",
  "tinyssh-testbed",
  "tinyssh-vault",
  "tokio",
@@ -6381,6 +6384,20 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "tinyssh-records"
+version = "0.9.0"
+dependencies = [
+ "chacha20poly1305",
+ "chrono",
+ "rand 0.9.5",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
  "uuid",
 ]
 

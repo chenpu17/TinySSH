@@ -10,6 +10,7 @@ members = [
     "crates/approval",
     "crates/audit",
     "crates/vault",
+    "crates/records",
     "crates/mcp-server",
     "crates/shim",
     "crates/cli",
@@ -25,6 +26,7 @@ default-members = [
     "crates/approval",
     "crates/audit",
     "crates/vault",
+    "crates/records",
     "crates/mcp-server",
     "crates/shim",
     "crates/cli",
@@ -49,6 +51,7 @@ term-core = { path = "crates/term-core" }
 tinyssh-approval = { path = "crates/approval" }
 tinyssh-audit = { path = "crates/audit" }
 tinyssh-vault = { path = "crates/vault" }
+tinyssh-records = { path = "crates/records" }
 tinyssh-mcp-server = { path = "crates/mcp-server" }
 tinyssh-shim = { path = "crates/shim" }
 tinyssh-testbed = { path = "crates/testbed" }

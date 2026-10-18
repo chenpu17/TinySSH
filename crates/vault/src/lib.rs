@@ -1837,6 +1837,15 @@ impl Vault {
         Ok(())
     }
 
+    // ---- 执行记录加解密面（tinyssh-records 注入用；密钥不出 vault）----
+    pub fn seal_bytes(&self, plaintext: &[u8]) -> Vec<u8> {
+        seal(&self.master, plaintext)
+    }
+
+    pub fn open_bytes(&self, blob: &[u8]) -> Result<Vec<u8>> {
+        open_seal(&self.master, blob)
+    }
+
     // ---- 会话记录 ----
     /// 会话行落库。十七轮：host_id 可为 None——快速连接主机不在 hosts 表
     /// （FK 会拒），记 NULL；最近连接按 `host_id IS NOT NULL` 派生，天然排除。

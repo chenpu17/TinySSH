@@ -1858,6 +1858,20 @@ pub trait SessionApi: Send + Sync {
 
     // ---- 审计（v1；PRD FR-5）----
     async fn query_audit(&self, ctx: &Actor, f: AuditFilter) -> Result<AuditPage>;
+    // ---- 执行记录（③ 时间线/自查：结构化、带输出摘录；与审计互补）----
+    /// Agent 只能查**自己**的记录（强制 agent_id 过滤）；人类查全部。
+    async fn query_records(
+        &self,
+        ctx: &Actor,
+        f: tinyssh_records::RecordFilter,
+    ) -> Result<Vec<tinyssh_records::RecordEvent>>;
+    /// 导出明文 JSONL（人类专属——记录整体是敏感数据）。
+    async fn export_records(
+        &self,
+        ctx: &Actor,
+        f: tinyssh_records::RecordFilter,
+        to: &std::path::Path,
+    ) -> Result<u64>;
     async fn export_audit(&self, ctx: &Actor, f: AuditFilter, to: &std::path::Path) -> Result<()>;
 
     // ---- 现场简报（v1；交接核心工件，PRD FR-3/FR-6）----

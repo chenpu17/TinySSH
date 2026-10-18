@@ -60,8 +60,10 @@ Tauri v2 · Rust（tokio / russh ≥0.61 / portable-pty / alacritty_terminal / t
 
 应用启用协作后在 `127.0.0.1`（默认 8722，被占递增）内嵌 MCP 端点，并提供**内置接入文档**：
 `http://127.0.0.1:<port>/integration.md`（Markdown，含端点/认证/行为约定/实时工具目录；`/` 为人读页面）。
-把该 URL 扔给任何能取网页的 Agent 即可自助对接。能力面：22 个工具（会话/exec/传输/转发/审计）、
+把该 URL 扔给任何能取网页的 Agent 即可自助对接。能力面：23 个工具（会话/exec/传输/转发/审计/执行记录）、
 资源（`tinyssh://sessions` 等现场状态，可 `resources/subscribe` 收变化推送）与引导提示（`prompts/get`）。
+Agent 侧所有动作（命令/传输/转发，含被拒的）进**结构化执行记录**：加密落盘、输出摘录脱敏、
+保留 30 天，Agent 可 `query_records` 自查，人类可时间线回放与导出。
 接入步骤：设置 → Agent 接入 →
 `tinyssh agent create <id> <名称>` 签发 Token（仅展示一次）→ Agent 侧按文档配置 HTTP 直连
 或 stdio shim（`tinyssh-mcp`）。危险命令与 Agent 传输逐条人工审批

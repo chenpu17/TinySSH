@@ -12,6 +12,7 @@ transport-ssh = { workspace = true }
 transport-pty = { workspace = true }
 tinyssh-approval = { workspace = true }
 tinyssh-audit = { workspace = true }
+tinyssh-records = { workspace = true }
 tinyssh-vault = { workspace = true }
 zeroize = { workspace = true }
 tokio = { workspace = true }

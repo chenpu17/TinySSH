@@ -170,7 +170,8 @@ fn resources_prompts_sections() -> String {
      - `tinyssh://sessions`：活动会话列表；单会话走模板 `tinyssh://sessions/{session_id}`\n\
      - `tinyssh://transfers`：传输任务列表；单任务走模板 `tinyssh://transfers/{transfer_id}`\n\
      - `tinyssh://forwards`：各会话端口转发汇总\n\
-     - `tinyssh://approvals/pending`：待审批队列\n\n\
+     - `tinyssh://approvals/pending`：待审批队列\n\
+     - `tinyssh://records/recent`：你自己的最近 100 条执行记录（命令/传输/转发 + 输出摘录 + 耗时；复盘与自查，也可用 `query_records` 工具带过滤查询）\n\n\
      ```json\n\
      {\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"resources/read\",\"params\":{\"uri\":\"tinyssh://sessions\"}}\n\
      ```\n\n\

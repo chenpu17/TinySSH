@@ -195,6 +195,23 @@ pub struct QueryAuditReq {
     pub limit: Option<i64>,
 }
 
+/// ③ 执行记录查询（Agent 恒只见自己的记录——服务端强制，不信任入参）。
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct QueryRecordsReq {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// "exec" | "transfer" | "forward"。
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// RFC3339（如 2026-10-17T00:00:00Z）。
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TransferReq {
     pub session_id: String,
@@ -653,6 +670,57 @@ impl McpServer {
                 )
                 .await?;
             Ok::<_, Error>(serde_json::json!({"total": page.total, "events": page.events}))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "query_records",
+        description = "查询执行记录（结构化：命令/传输/转发 + 输出摘录 + 耗时；你只能查到自己的记录）。复盘与自查用",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn query_records(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<QueryRecordsReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let parse_dt = |label: &str, v: &Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, Error> {
+                match v {
+                    None => Ok(None),
+                    Some(s) => chrono::DateTime::parse_from_rfc3339(s)
+                        .map(|d| Some(d.with_timezone(&chrono::Utc)))
+                        .map_err(|e| Error::InvalidInput(format!("{label} 需 RFC3339：{e}"))),
+                }
+            };
+            let since = parse_dt("since", &p.0.since)?;
+            let until = parse_dt("until", &p.0.until)?;
+            let kind = match p.0.kind.as_deref() {
+                None => None,
+                Some("exec") => Some(tinyssh_records::RecordKind::Exec),
+                Some("transfer") => Some(tinyssh_records::RecordKind::Transfer),
+                Some("forward") => Some(tinyssh_records::RecordKind::Forward),
+                Some(other) => {
+                    return Err(Error::InvalidInput(format!(
+                        "kind 只认 exec|transfer|forward，收到 {other}"
+                    )));
+                }
+            };
+            let records = api
+                .query_records(
+                    &actor,
+                    tinyssh_records::RecordFilter {
+                        session_id: p.0.session_id,
+                        agent_id: None, // 服务端按 actor 强制
+                        kind,
+                        since,
+                        until,
+                        limit: p.0.limit.map(|l| l.clamp(1, 1000) as u32),
+                    },
+                )
+                .await?;
+            let total = records.len();
+            Ok::<_, Error>(serde_json::json!({"total": total, "records": records}))
         })
         .await
     }
