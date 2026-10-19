@@ -40,8 +40,7 @@ pub fn collect_tools<'a>(tools: impl Iterator<Item = &'a Tool>) -> Vec<ToolDoc> 
                     .map(|c| c.to_string())
                     .unwrap_or_default(),
                 hints,
-                schema: serde_json::to_string_pretty(t.input_schema.as_ref())
-                    .unwrap_or_default(),
+                schema: serde_json::to_string_pretty(t.input_schema.as_ref()).unwrap_or_default(),
             }
         })
         .collect();
@@ -57,7 +56,7 @@ const ERROR_KINDS: &[(&str, &str)] = &[
     ("control_taken_by_human", "人类已接管会话——先交还或另建会话"),
     ("voided_by_handback", "接管/交还使旧请求作废，核实现场后重提"),
     ("reconfirming_pending", "会话处于重确认期，普通动作被拒"),
-    ("session_not_found", "会话不存在（可能已关闭）"),
+    ("session_not_found", "会话不存在：应用可能重启过（会话在内存、不跨重启）或已关闭——先 list_sessions 看现状，为空则按原主机 create_session 重新接入并请人类重新委托"),
     ("session_closed", "会话已关闭"),
     ("auth_failed / connect_failed / host_key_rejected", "连接侧失败"),
     ("exec_timeout", "命令超时（自审批放行起算）"),
@@ -144,7 +143,10 @@ fn conduct_sections() -> String {
      6. **传输冲突**：upload/download 缺省 fail（目标已存在 → `conflict_detected` + 目标 stat）；\n\
      显式 `collision: \"skip\"|\"overwrite\"` 可改（overwrite 一样要审批）。任务先返回 transfer_id，\n\
      用 `transfer_list` 对账；失败用 `retry_transfer`，卡住用 `cancel_transfer`。\n\
-     7. **端口转发**：forward_start/stop 逐段审批；`forwards_list` 查看监听状态。\n\n\
+     7. **端口转发**：forward_start/stop 逐段审批；`forwards_list` 查看监听状态。\n\
+     8. **HTTP 404 \"Session not found\"（MCP 传输层会话失效）**：长时间不发请求或本应用重启后，\n\
+     旧 `Mcp-Session-Id` 会失效——这是传输层状态，**TinySSH 业务状态无损**（Token 有效、会话/审批都在）。\n\
+     重新走一遍 `initialize` 拿新会话 id 后继续即可，无需重配、无需换 Token。\n\n\
      ## 错误类别（kind）\n"
         .to_string()
         + &ERROR_KINDS
@@ -238,9 +240,9 @@ pub fn integration_markdown(meta: &DocMeta, tools: &[ToolDoc]) -> String {
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
-    .replace('<', "&lt;")
-    .replace('>', "&gt;")
-    .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 pub fn index_html(meta: &DocMeta, tools: &[ToolDoc]) -> String {
@@ -278,7 +280,11 @@ pub fn index_html(meta: &DocMeta, tools: &[ToolDoc]) -> String {
         "<div class=card><h2>使用须知与错误类别</h2><pre>{}</pre></div>",
         esc(conduct_sections().trim())
     );
-    let _ = writeln!(body, "<div class=card><h2>工具目录（{} 个，自动生成）</h2>", tools.len());
+    let _ = writeln!(
+        body,
+        "<div class=card><h2>工具目录（{} 个，自动生成）</h2>",
+        tools.len()
+    );
     for t in tools {
         let h = t.hints.join("、");
         let _ = writeln!(
@@ -348,16 +354,25 @@ mod tests {
         let md = integration_markdown(&meta, &tools);
         assert!(md.contains("http://127.0.0.1:8722/mcp"));
         assert!(md.contains("TINYSSH_MCP_URL"));
-        assert!(md.contains(r##"C:\\apps\\tinyssh\\tinyssh-mcp.exe"##), "shim 须给 JSON 转义的绝对路径");
+        assert!(
+            md.contains(r##"C:\\apps\\tinyssh\\tinyssh-mcp.exe"##),
+            "shim 须给 JSON 转义的绝对路径"
+        );
         assert!(md.contains("mcp-endpoint"), "自发现章节须存在");
         assert!(md.contains("`exec`"));
         assert!(md.contains("approval_denied"));
         assert!(md.contains("Bearer <TOKEN>"));
         assert!(md.contains("control_taken_by_human"));
         assert!(md.contains("\"command\""));
-        assert!(md.contains("tinyssh://approvals/pending"), "资源章节须列出待审批资源");
+        assert!(
+            md.contains("tinyssh://approvals/pending"),
+            "资源章节须列出待审批资源"
+        );
         assert!(md.contains("resources/subscribe"), "订阅章节须存在");
-        assert!(md.contains("notifications/resources/updated"), "推送形态须存在");
+        assert!(
+            md.contains("notifications/resources/updated"),
+            "推送形态须存在"
+        );
         assert!(md.contains("prompts/get"), "提示章节须存在");
     }
 
@@ -395,7 +410,11 @@ mod tests {
     fn collect_tools_sorts_and_annotates() {
         let mut t = tool("b_tool", "b", r#"{"type":"object"}"#);
         t.annotations = Some(rmcp::model::ToolAnnotations::from_raw(
-            None, Some(true), None, None, None,
+            None,
+            Some(true),
+            None,
+            None,
+            None,
         ));
         let a = tool("a_tool", "a", r#"{"type":"object"}"#);
         let docs = collect_tools([&t, &a].into_iter());

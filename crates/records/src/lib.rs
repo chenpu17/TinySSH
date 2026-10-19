@@ -100,10 +100,7 @@ impl RecordStore {
         // 回播种：读最新文件末行 seq（失败从 0 起——序号只为排序，不承诺连续）
         if let Some(f) = store.latest_file() {
             if let Ok(fh) = std::fs::File::open(f) {
-                let last = std::io::BufReader::new(fh)
-                    .lines()
-                    .flatten()
-                    .last();
+                let last = std::io::BufReader::new(fh).lines().flatten().last();
                 if let Some(line) = last {
                     if let Some(ev) = store.decode_line(&line) {
                         store.seq.store(ev.seq, Ordering::SeqCst);
@@ -137,10 +134,14 @@ impl RecordStore {
         let mut files = self.list_files()?;
         files.reverse(); // 新→旧
         'files: for path in files {
-            let Ok(fh) = std::fs::File::open(path) else { continue };
+            let Ok(fh) = std::fs::File::open(path) else {
+                continue;
+            };
             let lines: Vec<String> = std::io::BufReader::new(fh).lines().flatten().collect();
             for line in lines.into_iter().rev() {
-                let Some(ev) = self.decode_line(&line) else { continue };
+                let Some(ev) = self.decode_line(&line) else {
+                    continue;
+                };
                 if !matches(&ev, f) {
                     continue;
                 }
@@ -175,7 +176,9 @@ impl RecordStore {
     pub fn count(&self) -> std::io::Result<u64> {
         let mut n = 0u64;
         for p in self.list_files()? {
-            n += std::io::BufReader::new(std::fs::File::open(p)?).lines().count() as u64;
+            n += std::io::BufReader::new(std::fs::File::open(p)?)
+                .lines()
+                .count() as u64;
         }
         Ok(n)
     }
@@ -243,7 +246,9 @@ fn matches(ev: &RecordEvent, f: &RecordFilter) -> bool {
 }
 
 fn day_of(file_name: &str) -> Option<chrono::NaiveDate> {
-    let rest = file_name.strip_prefix("records-")?.strip_suffix(".jsonl.enc")?;
+    let rest = file_name
+        .strip_prefix("records-")?
+        .strip_suffix(".jsonl.enc")?;
     chrono::NaiveDate::parse_from_str(rest, "%Y-%m-%d").ok()
 }
 
@@ -274,7 +279,13 @@ pub fn chacha_crypto(key: &[u8; 32]) -> Crypto {
         let cipher = XChaCha20Poly1305::new(ChachaKey::from_slice(&key));
         let nonce = XNonce::from_slice(&blob[..24]);
         cipher
-            .decrypt(nonce, Payload { msg: &blob[24..], aad: &[] })
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: &blob[24..],
+                    aad: &[],
+                },
+            )
             .map_err(|_| "decrypt failed".to_string())
     };
     Crypto {
@@ -381,9 +392,7 @@ mod tests {
         let s = store(&dir);
         s.append(ev(RecordKind::Exec, "echo hi")).unwrap();
         let to = dir.parent().unwrap().join("export.jsonl");
-        let n = s
-            .export_jsonl(&RecordFilter::default(), &to)
-            .unwrap();
+        let n = s.export_jsonl(&RecordFilter::default(), &to).unwrap();
         assert_eq!(n, 1);
         let text = std::fs::read_to_string(&to).unwrap();
         assert!(text.contains("\"echo hi\""), "导出是明文 JSONL：{text}");
@@ -407,12 +416,16 @@ mod tests {
 
     /// ⑥ 时间线「加载更早」的游标依据：until 含端点（<=）、since 含端点（>=）。
     /// 翻页传「已载最旧 ts − 1ms」即可表达严格小于（同毫秒多条一起翻走，不重不漏）。
+    /// append 落盘时间戳 = 当前时刻，条间 sleep 5ms 保证三条 ts 可分（Windows 下
+    /// 时间戳有量化，背靠背 append 曾撞出同毫秒令游标断言偶发失真）。
     #[test]
     fn filter_window_since_until_bounds() {
         let dir = std::env::temp_dir().join(format!("rec-{}", uuid::Uuid::new_v4()));
         let s = store(&dir);
         s.append(ev(RecordKind::Exec, "old-cmd")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
         s.append(ev(RecordKind::Exec, "mid-cmd")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
         s.append(ev(RecordKind::Exec, "new-cmd")).unwrap();
         let all = s.query(&RecordFilter::default()).unwrap();
         assert_eq!(all.len(), 3);

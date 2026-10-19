@@ -418,7 +418,11 @@ async fn docs_routes_served_without_auth() {
     let origin = url.trim_end_matches("/mcp").to_string();
 
     // /integration.md：Markdown、含端点与工具目录（目录与工具面实时一致）
-    let r = client.get(format!("{origin}/integration.md")).send().await.unwrap();
+    let r = client
+        .get(format!("{origin}/integration.md"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 200, "GET /integration.md 非 200");
     assert!(r
         .headers()
@@ -461,10 +465,17 @@ async fn exec_sends_progress_heartbeat_during_approval() {
     let (m, url, _port, token) = spawn_stack().await;
     let client = raw_init(&url, &token).await;
     let sid = m
-        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &Actor::Human,
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
-    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None)
+        .await
+        .unwrap();
 
     let c2 = client.clone();
     let sid2 = sid.clone();
@@ -524,7 +535,13 @@ async fn exec_sends_progress_heartbeat_during_approval() {
     assert!(saw_heartbeat, "审批挂起期间应收到 progress 心跳");
     // 心跳确认后人类拒绝，调用应收敛返回（流结束）
     let items = m
-        .list_approvals(&human, ApprovalFilter { pending_only: true, ..Default::default() })
+        .list_approvals(
+            &human,
+            ApprovalFilter {
+                pending_only: true,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     m.decide_approval(&human, items.first().unwrap().id.clone(), Decision::Deny)
@@ -537,7 +554,10 @@ async fn exec_sends_progress_heartbeat_during_approval() {
             break;
         }
     }
-    assert!(rest.contains("approval_denied"), "拒绝后应返回结构化错误：{rest}");
+    assert!(
+        rest.contains("approval_denied"),
+        "拒绝后应返回结构化错误：{rest}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -546,10 +566,17 @@ async fn exec_output_cap_truncates() {
     let (m, url, _port, token) = spawn_stack().await;
     let client = connect(&url, &token).await;
     let sid = m
-        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &Actor::Human,
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
-    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None)
+        .await
+        .unwrap();
 
     let long = "x".repeat(4000);
     let r = client
@@ -572,7 +599,11 @@ async fn exec_output_cap_truncates() {
     let out: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
     assert_eq!(out["truncated"], true, "应标 truncated：{text}");
     let s = out["stdout"].as_str().unwrap_or_default();
-    assert!(s.chars().count() < 400, "stdout 应被截断：{} 字符", s.chars().count());
+    assert!(
+        s.chars().count() < 400,
+        "stdout 应被截断：{} 字符",
+        s.chars().count()
+    );
 }
 
 // ---- rev-r48：资源/订阅/提示能力面（第二能力面）----
@@ -585,22 +616,36 @@ async fn resources_prompts_served_over_mcp() {
     // resources/list：5 个静态资源 + 2 个模板
     let rs = client.list_resources(None).await.expect("list resources");
     let uris: Vec<String> = rs.resources.iter().map(|r| r.uri.clone()).collect();
-    for u in ["tinyssh://sessions", "tinyssh://transfers", "tinyssh://forwards", "tinyssh://approvals/pending", "tinyssh://records/recent"] {
+    for u in [
+        "tinyssh://sessions",
+        "tinyssh://transfers",
+        "tinyssh://forwards",
+        "tinyssh://approvals/pending",
+        "tinyssh://records/recent",
+    ] {
         assert!(uris.contains(&u.to_string()), "缺资源 {u}: {uris:?}");
     }
-    let ts = client.list_resource_templates(None).await.expect("templates");
+    let ts = client
+        .list_resource_templates(None)
+        .await
+        .expect("templates");
     assert_eq!(ts.resource_templates.len(), 2);
 
     // resources/read：空会话列表也应是合法 JSON 数组
     let r = client
-        .read_resource(rmcp::model::ReadResourceRequestParams::new("tinyssh://sessions"))
+        .read_resource(rmcp::model::ReadResourceRequestParams::new(
+            "tinyssh://sessions",
+        ))
         .await
         .expect("read sessions");
     assert_eq!(r.contents.len(), 1);
     let (uri, mime_type, text) = match &r.contents[0] {
-        rmcp::model::ResourceContents::TextResourceContents { uri, mime_type, text, .. } => {
-            (uri, mime_type, text)
-        }
+        rmcp::model::ResourceContents::TextResourceContents {
+            uri,
+            mime_type,
+            text,
+            ..
+        } => (uri, mime_type, text),
         other => panic!("应为文本资源内容：{other:?}"),
     };
     assert_eq!(uri, "tinyssh://sessions");
@@ -609,10 +654,15 @@ async fn resources_prompts_served_over_mcp() {
     assert!(parsed.is_array(), "{parsed}");
 
     // 未知 uri → 协议错误（invalid_params）
-    assert!(client
-        .read_resource(rmcp::model::ReadResourceRequestParams::new("file:///etc/passwd"))
-        .await
-        .is_err(), "未知资源必须是协议错误");
+    assert!(
+        client
+            .read_resource(rmcp::model::ReadResourceRequestParams::new(
+                "file:///etc/passwd"
+            ))
+            .await
+            .is_err(),
+        "未知资源必须是协议错误"
+    );
 
     // prompts/list + get（带参与缺参）
     let ps = client.list_prompts(None).await.expect("list prompts");
@@ -623,7 +673,10 @@ async fn resources_prompts_served_over_mcp() {
     let g = client
         .get_prompt(
             rmcp::model::GetPromptRequestParams::new("session-triage").with_arguments(
-                serde_json::json!({ "session_id": "s-x" }).as_object().cloned().unwrap(),
+                serde_json::json!({ "session_id": "s-x" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
             ),
         )
         .await
@@ -653,10 +706,17 @@ async fn subscribe_pushes_resource_updated() {
     let (m, url, _port, token) = spawn_stack().await;
     let client = raw_init(&url, &token).await;
     let sid = m
-        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &Actor::Human,
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
-    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None)
+        .await
+        .unwrap();
 
     // 规范动作：initialized 通知（202），随后开 GET SSE 流收服务器推送
     let r = client
@@ -674,13 +734,19 @@ async fn subscribe_pushes_resource_updated() {
         .send()
         .await
         .expect("GET SSE 流");
-    assert!(get_resp.status().is_success(), "GET 流应成功：{}", get_resp.status());
+    assert!(
+        get_resp.status().is_success(),
+        "GET 流应成功：{}",
+        get_resp.status()
+    );
     let mut stream = get_resp.bytes_stream();
     let buf: Arc<std::sync::Mutex<String>> = Arc::default();
     let buf2 = buf.clone();
     tokio::spawn(async move {
         while let Some(Ok(chunk)) = stream.next().await {
-            buf2.lock().unwrap().push_str(&String::from_utf8_lossy(&chunk));
+            buf2.lock()
+                .unwrap()
+                .push_str(&String::from_utf8_lossy(&chunk));
         }
     });
 
@@ -723,7 +789,9 @@ async fn subscribe_pushes_resource_updated() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let b = buf.lock().unwrap().clone();
-        if b.contains("notifications/resources/updated") && b.contains("tinyssh://approvals/pending") {
+        if b.contains("notifications/resources/updated")
+            && b.contains("tinyssh://approvals/pending")
+        {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -735,20 +803,32 @@ async fn subscribe_pushes_resource_updated() {
     // 收敛：拒绝审批，exec 返回结构化错误；unsubscribe 幂等成功
     m.decide_approval(
         &Actor::Human,
-        m.list_approvals(&Actor::Human, ApprovalFilter { pending_only: true, ..Default::default() })
-            .await
-            .unwrap()
-            .first()
-            .unwrap()
-            .id
-            .clone(),
+        m.list_approvals(
+            &Actor::Human,
+            ApprovalFilter {
+                pending_only: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone(),
         Decision::Deny,
     )
     .await
     .unwrap();
-    let resp = tokio::time::timeout(Duration::from_secs(10), exec).await.unwrap().unwrap();
+    let resp = tokio::time::timeout(Duration::from_secs(10), exec)
+        .await
+        .unwrap()
+        .unwrap();
     let body = resp.text().await.unwrap_or_default();
-    assert!(body.contains("approval_denied"), "拒绝后 exec 应收敛：{body}");
+    assert!(
+        body.contains("approval_denied"),
+        "拒绝后 exec 应收敛：{body}"
+    );
     let r = client
         .post(format!("{url}/mcp"))
         .header("Content-Type", "application/json")
@@ -763,7 +843,11 @@ async fn subscribe_pushes_resource_updated() {
         .send()
         .await
         .unwrap();
-    assert!(r.status().is_success(), "unsubscribe 应成功：{}", r.status());
+    assert!(
+        r.status().is_success(),
+        "unsubscribe 应成功：{}",
+        r.status()
+    );
 }
 
 // ---- ③ 执行记录：exec 留痕 → query_records 可查 → Agent 隔离 ----
@@ -773,10 +857,17 @@ async fn records_capture_exec_and_are_agent_scoped() {
     let (m, url, _port, token) = spawn_stack().await;
     let client = connect(&url, &token).await;
     let sid = m
-        .create_session(&Actor::Human, CreateSessionReq { host_id: "local".into() })
+        .create_session(
+            &Actor::Human,
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
         .await
         .unwrap();
-    m.delegate_session(&Actor::Human, sid.clone(), None).await.unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None)
+        .await
+        .unwrap();
 
     let r = client
         .call_tool(call(
@@ -802,13 +893,19 @@ async fn records_capture_exec_and_are_agent_scoped() {
     let records = out["records"].as_array().cloned().unwrap_or_default();
     assert!(out["total"].as_i64().unwrap_or(0) >= 1, "{text}");
     let hit = records.iter().find(|rec| {
-        rec["summary"].as_str().map(|s| s.contains("records_live")).unwrap_or(false)
+        rec["summary"]
+            .as_str()
+            .map(|s| s.contains("records_live"))
+            .unwrap_or(false)
     });
     let hit = hit.expect("exec 记录必须出现在 query_records 结果里");
     assert_eq!(hit["status"], "ok");
     assert_eq!(hit["agent_id"], "claude-code");
     assert!(
-        hit["output_excerpt"].as_str().unwrap_or_default().contains("records_live"),
+        hit["output_excerpt"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("records_live"),
         "输出摘录应含回显：{hit}"
     );
 
@@ -826,7 +923,8 @@ async fn records_capture_exec_and_are_agent_scoped() {
         .unwrap_or_default();
     let out2: serde_json::Value = serde_json::from_str(&text2).unwrap_or(serde_json::json!({}));
     assert_eq!(
-        out2["total"].as_i64().unwrap_or(-1), 0,
+        out2["total"].as_i64().unwrap_or(-1),
+        0,
         "另一 Agent 不得看到别人的记录：{text2}"
     );
 }

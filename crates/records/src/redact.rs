@@ -11,7 +11,10 @@ fn patterns() -> &'static Vec<(Regex, &'static str)> {
     P.get_or_init(|| {
         vec![
             // PEM 私钥（含头尾整块）
-            (r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "私钥块"),
+            (
+                r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+                "私钥块",
+            ),
             // AWS AccessKeyId
             (r"\bAKIA[0-9A-Z]{16}\b", "AWS Key"),
             // GitHub token 系列
@@ -20,14 +23,23 @@ fn patterns() -> &'static Vec<(Regex, &'static str)> {
             // OpenAI / 通用 sk-
             (r"\bsk-[A-Za-z0-9_-]{20,}\b", "API Key"),
             // JWT（三段 base64url）
-            (r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b", "JWT"),
+            (
+                r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b",
+                "JWT",
+            ),
             // Bearer / Authorization 头
             (r"(?i)\b(authorization\s*:\s*)\S.*", "认证头"),
             (r"(?i)\bbearer\s+[A-Za-z0-9._-]{10,}", "Bearer Token"),
             // 键值形态：password/passwd/secret/token/api_key…
-            (r"(?i)\b(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key)\b\s*[=:]\s*\S+", "凭据键值"),
+            (
+                r"(?i)\b(pass(word|wd)?|secret|token|api[_-]?key|private[_-]?key)\b\s*[=:]\s*\S+",
+                "凭据键值",
+            ),
             // 连接串里的口令
-            (r"(?i)\b(ssh|sshpass|mysql|postgres(ql)?|mongodb(\+srv)?)://[^\s:@/]+:[^\s@/]+@", "连接串凭据"),
+            (
+                r"(?i)\b(ssh|sshpass|mysql|postgres(ql)?|mongodb(\+srv)?)://[^\s:@/]+:[^\s@/]+@",
+                "连接串凭据",
+            ),
         ]
         .into_iter()
         .map(|(p, label): (&str, &str)| (Regex::new(p).expect("redact regex"), label))
@@ -102,6 +114,9 @@ mod tests {
 
     #[test]
     fn plain_text_untouched() {
-        assert_eq!(scrub("total 4\ndrwxr-xr-x 2 root root"), "total 4\ndrwxr-xr-x 2 root root");
+        assert_eq!(
+            scrub("total 4\ndrwxr-xr-x 2 root root"),
+            "total 4\ndrwxr-xr-x 2 root root"
+        );
     }
 }

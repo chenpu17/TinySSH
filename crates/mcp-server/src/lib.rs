@@ -460,6 +460,12 @@ fn error_detail(e: &Error) -> serde_json::Value {
         Error::ForwardListenFailed { field, reason } => {
             serde_json::json!({ "field": field, "reason": reason })
         }
+        // 会话不存在 = 应用重启过（会话在内存、不跨重启）或已被关闭——给 Agent
+        // 可执行的自愈路径，而不是让它把错误原样抛给人类
+        Error::SessionNotFound => serde_json::json!({
+            "hint": "会话不存在：应用可能重启过或会话已关闭。先 list_sessions 看现状；\
+                     若为空，按原主机 create_session 重新接入，并请人类重新把会话交给你。"
+        }),
         _ => serde_json::Value::Null,
     }
 }
@@ -642,12 +648,18 @@ impl McpServer {
         p: Parameters<QueryAuditReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            let parse_dt = |label: &str, v: &Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, Error> {
+            let parse_dt = |label: &str,
+                            v: &Option<String>|
+             -> Result<Option<chrono::DateTime<chrono::Utc>>, Error> {
                 match v {
                     None => Ok(None),
                     Some(s) => chrono::DateTime::parse_from_rfc3339(s)
                         .map(|d| Some(d.with_timezone(&chrono::Utc)))
-                        .map_err(|e| Error::InvalidInput(format!("{label} 需 RFC3339（如 2026-10-17T00:00:00Z）：{e}"))),
+                        .map_err(|e| {
+                            Error::InvalidInput(format!(
+                                "{label} 需 RFC3339（如 2026-10-17T00:00:00Z）：{e}"
+                            ))
+                        }),
                 }
             };
             let since = parse_dt("since", &p.0.since)?;
@@ -685,7 +697,9 @@ impl McpServer {
         p: Parameters<QueryRecordsReq>,
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
-            let parse_dt = |label: &str, v: &Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, Error> {
+            let parse_dt = |label: &str,
+                            v: &Option<String>|
+             -> Result<Option<chrono::DateTime<chrono::Utc>>, Error> {
                 match v {
                     None => Ok(None),
                     Some(s) => chrono::DateTime::parse_from_rfc3339(s)
@@ -1073,7 +1087,9 @@ impl ServerHandler for McpServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        Ok(ListResourcesResult::with_all_items(resources::resource_catalog()))
+        Ok(ListResourcesResult::with_all_items(
+            resources::resource_catalog(),
+        ))
     }
 
     async fn list_resource_templates(
@@ -1092,7 +1108,10 @@ impl ServerHandler for McpServer {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, McpError> {
         let q = resources::parse_resource_uri(&request.uri).ok_or_else(|| {
-            McpError::invalid_params(format!("未知资源: {}（先 resources/list）", request.uri), None)
+            McpError::invalid_params(
+                format!("未知资源: {}（先 resources/list）", request.uri),
+                None,
+            )
         })?;
         let actor = actor_from_ctx(&self.state, &context)?;
         let v = resources::read_resource_value(&self.state.api, &actor, &q)
@@ -1126,13 +1145,8 @@ impl ServerHandler for McpServer {
         let peer: Peer<RoleServer> = context.peer.clone();
         // 不锚定 context.ct：rmcp 在订阅响应发出时即取消请求级 token，
         // 看护任务必须活得比这次 POST 久（生命周期见 spawn_watcher 注释）。
-        let handle = resources::spawn_watcher(
-            self.state.api.clone(),
-            actor,
-            request.uri.clone(),
-            q,
-            peer,
-        );
+        let handle =
+            resources::spawn_watcher(self.state.api.clone(), actor, request.uri.clone(), q, peer);
         let mut subs = self
             .state
             .subs
@@ -1168,7 +1182,9 @@ impl ServerHandler for McpServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        Ok(ListPromptsResult::with_all_items(resources::prompt_catalog()))
+        Ok(ListPromptsResult::with_all_items(
+            resources::prompt_catalog(),
+        ))
     }
 
     async fn get_prompt(
@@ -1215,7 +1231,12 @@ fn actor_and_client_from_ctx(
         .ok_or_else(|| McpError::invalid_params("Authorization 形态非法", None))?;
     let client_id = (state.resolver)(token)
         .ok_or_else(|| McpError::invalid_params("身份无效（Token 失效？）", None))?;
-    Ok((Actor::Agent { client_id: client_id.clone() }, client_id))
+    Ok((
+        Actor::Agent {
+            client_id: client_id.clone(),
+        },
+        client_id,
+    ))
 }
 
 /// 资源读错误 → 协议错误：找不到实例/身份/入参 → invalid_params；其余 → internal。
@@ -1241,6 +1262,22 @@ pub use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 
+/// MCP 传输层会话（Mcp-Session-Id）的空闲回收窗。
+///
+/// rmcp `SessionConfig` 默认 keep_alive=5 分钟：Agent 闲置超过即被服务端关会话，
+/// 下次请求吃 HTTP 404 "Session not found"（规范上客户端应自动重开 initialize，
+/// 但不少客户端会原样报错——本机实测如此）。拉长到 24h 覆盖人类尺度的空闲；
+/// 仍保留僵尸会话回收（客户端 HTTP 连接静默掉线的兜底）。应用重启是同症状的
+/// 另一来源（内存会话表清零）——那层走错误 detail 的自愈提示与接入文档。
+pub const MCP_SESSION_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// 统一装配点：keep_alive 覆写为 [`MCP_SESSION_KEEP_ALIVE`]，其余取 rmcp 默认。
+fn local_session_manager() -> LocalSessionManager {
+    let mut m = LocalSessionManager::default();
+    m.session_config.keep_alive = Some(MCP_SESSION_KEEP_ALIVE);
+    m
+}
+
 /// 组装 axum 路由：/mcp 带 Bearer 认证中间件；`/` 与 `/integration.md` 是内置
 /// 接入文档（公开但无机密——Token 由人类单独签发；仅绑定 127.0.0.1）。
 /// 注意用 nest 而非 merge：merge 场景下 layer 会渗到兄弟路由（实测 docs 401）。
@@ -1248,16 +1285,17 @@ pub fn build_router(state: McpState, config: StreamableHttpServerConfig) -> axum
     let factory_state = state.clone();
     let service: StreamableHttpService<McpServer, LocalSessionManager> = StreamableHttpService::new(
         move || Ok(McpServer::new(factory_state.clone())),
-        Default::default(),
+        local_session_manager().into(),
         config,
     );
     let auth_state = state.clone();
-    let mcp = axum::Router::new()
-        .fallback_service(service)
-        .layer(axum::middleware::from_fn_with_state(
-            auth_state,
-            auth_middleware,
-        ));
+    let mcp =
+        axum::Router::new()
+            .fallback_service(service)
+            .layer(axum::middleware::from_fn_with_state(
+                auth_state,
+                auth_middleware,
+            ));
     axum::Router::new()
         .nest("/mcp", mcp)
         .route("/", axum::routing::get(doc_html_handler))
@@ -1280,10 +1318,7 @@ fn base_url(req: &axum::http::Request<axum::body::Body>) -> String {
     };
     let name = name.trim_start_matches('[').trim_end_matches(']');
     let safe = matches!(name, "127.0.0.1" | "::1" | "localhost");
-    format!(
-        "http://{}:{port}",
-        if safe { name } else { "127.0.0.1" }
-    )
+    format!("http://{}:{port}", if safe { name } else { "127.0.0.1" })
 }
 
 async fn doc_tools(state: &McpState) -> Vec<docs::ToolDoc> {
@@ -1470,4 +1505,21 @@ async fn auth_middleware(
             .unwrap();
     }
     next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 404 "Session not found" 根因钉（2026-10-19 本机实测）：rmcp 默认 keep_alive
+    /// 5 分钟会把闲置 Agent 的传输层会话收掉，下次请求即 404。装配点必须显式拉长。
+    #[test]
+    fn session_keep_alive_configured_beyond_rmcp_default() {
+        let m = local_session_manager();
+        assert_eq!(m.session_config.keep_alive, Some(MCP_SESSION_KEEP_ALIVE));
+        assert!(
+            MCP_SESSION_KEEP_ALIVE > std::time::Duration::from_secs(3600),
+            "闲置回收窗必须远大于 rmcp 默认的 5 分钟（Agent 常见空闲尺度是分钟到小时）"
+        );
+    }
 }

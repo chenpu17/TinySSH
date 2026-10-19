@@ -23,7 +23,8 @@ use session_api::{Actor, ApprovalFilter, Error, SessionApi};
 use tokio::sync::broadcast;
 
 /// 订阅注册表：(client_id, uri) → 看护任务句柄。重复订阅替换（旧任务 abort）。
-pub type SubRegistry = Arc<Mutex<std::collections::HashMap<(String, String), tokio::task::JoinHandle<()>>>>;
+pub type SubRegistry =
+    Arc<Mutex<std::collections::HashMap<(String, String), tokio::task::JoinHandle<()>>>>;
 
 /// 可订阅/可读的资源查询（URI 解析结果）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +85,9 @@ pub fn resource_catalog() -> Vec<Resource> {
             .with_description("等待人类逐条裁决的操作（建议订阅此资源获得推送）")
             .with_mime_type("application/json"),
         Resource::new("tinyssh://records/recent", "执行记录（最近）")
-            .with_description("你自己的最近 100 条执行记录（命令/传输/转发 + 输出摘录 + 耗时）；复盘与自查")
+            .with_description(
+                "你自己的最近 100 条执行记录（命令/传输/转发 + 输出摘录 + 耗时）；复盘与自查",
+            )
             .with_mime_type("application/json"),
     ]
 }
@@ -134,7 +137,12 @@ pub async fn read_resource_value(
             let one = all.into_iter().find(|s| s.id == *id);
             match one {
                 Some(s) => serde_json::to_value(s).unwrap_or_default(),
-                None => return Err(ReadErr::NotFound { what: "会话", id: id.clone() }),
+                None => {
+                    return Err(ReadErr::NotFound {
+                        what: "会话",
+                        id: id.clone(),
+                    })
+                }
             }
         }
         ResQuery::Transfers => {
@@ -162,7 +170,12 @@ pub async fn read_resource_value(
             match one {
                 Some(t) => serde_json::to_value(t).unwrap_or_default(),
                 // 终态任务会从注册表归档（R32）：读到不存在 ≈ 已回收
-                None => return Err(ReadErr::NotFound { what: "传输任务", id: id.clone() }),
+                None => {
+                    return Err(ReadErr::NotFound {
+                        what: "传输任务",
+                        id: id.clone(),
+                    })
+                }
             }
         }
         ResQuery::Forwards => {
@@ -180,7 +193,13 @@ pub async fn read_resource_value(
         }
         ResQuery::ApprovalsPending => {
             let items = api
-                .list_approvals(actor, ApprovalFilter { pending_only: true, ..Default::default() })
+                .list_approvals(
+                    actor,
+                    ApprovalFilter {
+                        pending_only: true,
+                        ..Default::default()
+                    },
+                )
                 .await
                 .map_err(ReadErr::Core)?;
             serde_json::to_value(items).unwrap_or_default()
@@ -216,7 +235,9 @@ pub fn spawn_watcher(
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 loop {
                     tick.tick().await;
-                    let Ok(v) = read_resource_value(&api, &actor, &q).await else { continue };
+                    let Ok(v) = read_resource_value(&api, &actor, &q).await else {
+                        continue;
+                    };
                     let fp = v.to_string();
                     if !prev.is_empty() && fp != prev {
                         if notify_updated(&peer, &uri).await.is_err() {
@@ -280,11 +301,18 @@ pub fn spawn_watcher(
 /// 提示模板目录（prompts/list）。
 pub fn prompt_catalog() -> Vec<Prompt> {
     vec![
-        Prompt::new("onboarding", Some("刚接入后的第一步：了解现场、理解审批模型、向人确认目标"), None),
+        Prompt::new(
+            "onboarding",
+            Some("刚接入后的第一步：了解现场、理解审批模型、向人确认目标"),
+            None,
+        ),
         Prompt::new(
             "session-triage",
             Some("对一个会话做体检：读现场 → 读屏 → 谨慎执行诊断命令"),
-            Some(vec![required_arg("session_id", "会话 id（list_sessions 或 tinyssh://sessions 得到）")]),
+            Some(vec![required_arg(
+                "session_id",
+                "会话 id（list_sessions 或 tinyssh://sessions 得到）",
+            )]),
         ),
         Prompt::new(
             "transfer-followup",
@@ -302,7 +330,10 @@ fn required_arg(name: &str, desc: &str) -> PromptArgument {
 }
 
 /// 生成提示文本。返回 Err = 参数缺失（调用方回 invalid_params）。
-pub fn prompt_text(name: &str, arguments: Option<&serde_json::Map<String, serde_json::Value>>) -> Result<String, String> {
+pub fn prompt_text(
+    name: &str,
+    arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<String, String> {
     let arg = |k: &str| -> Result<String, String> {
         arguments
             .and_then(|m| m.get(k))
@@ -320,7 +351,7 @@ pub fn prompt_text(name: &str, arguments: Option<&serde_json::Map<String, serde_
         "session-triage" => {
             let sid = arg("session_id")?;
             Ok(format!(r#"对会话 {sid} 做一次体检，按顺序：
-1. 读资源 tinyssh://sessions/{sid} 确认会话在位（404/错误则停下来向人报告）。
+1. 读资源 tinyssh://sessions/{sid} 确认会话在位。若报 404/session_not_found：先读 tinyssh://sessions 核对——HTTP 404 是传输层会话过期（重新 initialize 即可，业务无损）；业务层 session_not_found 多为会话已关闭或应用重启过（会话不跨重启），不在列表就向人报告并建议重新连接。
 2. 用 read_screen 读当前终端画面，理解现场（cwd、正在跑的进程、最近输出）。
 3. 如需诊断命令，用 exec（shell 模式默认，现场延续；危险命令会进审批队列等人类裁决）。
 4. 结论先讲事实（读到的现场），再讲判断，最后讲建议；每条建议注明是否需要人审批。"#
@@ -345,23 +376,38 @@ mod tests {
 
     #[test]
     fn parse_resource_uri_roundtrip() {
-        assert_eq!(parse_resource_uri("tinyssh://sessions"), Some(ResQuery::Sessions));
+        assert_eq!(
+            parse_resource_uri("tinyssh://sessions"),
+            Some(ResQuery::Sessions)
+        );
         assert_eq!(
             parse_resource_uri("tinyssh://sessions/s-1"),
             Some(ResQuery::Session("s-1".into()))
         );
-        assert_eq!(parse_resource_uri("tinyssh://transfers"), Some(ResQuery::Transfers));
+        assert_eq!(
+            parse_resource_uri("tinyssh://transfers"),
+            Some(ResQuery::Transfers)
+        );
         assert_eq!(
             parse_resource_uri("tinyssh://transfers/t-9"),
             Some(ResQuery::Transfer("t-9".into()))
         );
-        assert_eq!(parse_resource_uri("tinyssh://forwards"), Some(ResQuery::Forwards));
+        assert_eq!(
+            parse_resource_uri("tinyssh://forwards"),
+            Some(ResQuery::Forwards)
+        );
         assert_eq!(
             parse_resource_uri("tinyssh://approvals/pending"),
             Some(ResQuery::ApprovalsPending)
         );
-        assert_eq!(parse_resource_uri("tinyssh://records/recent"), Some(ResQuery::Records));
-        assert_eq!(parse_resource_uri("tinyssh://records"), Some(ResQuery::Records));
+        assert_eq!(
+            parse_resource_uri("tinyssh://records/recent"),
+            Some(ResQuery::Records)
+        );
+        assert_eq!(
+            parse_resource_uri("tinyssh://records"),
+            Some(ResQuery::Records)
+        );
         // 未知 scheme / 空 id / 多段路径 / 相邻资源误匹配
         assert_eq!(parse_resource_uri("file:///etc/passwd"), None);
         assert_eq!(parse_resource_uri("tinyssh://sessions/"), None);
@@ -374,7 +420,9 @@ mod tests {
     fn catalogs_are_shaped() {
         let rs = resource_catalog();
         assert_eq!(rs.len(), 5);
-        assert!(rs.iter().all(|r| r.mime_type.as_deref() == Some("application/json")));
+        assert!(rs
+            .iter()
+            .all(|r| r.mime_type.as_deref() == Some("application/json")));
         let ts = resource_template_catalog();
         assert_eq!(ts.len(), 2);
         assert!(ts[0].uri_template.contains("{session_id}"));
@@ -385,11 +433,22 @@ mod tests {
     #[test]
     fn prompts_need_arguments() {
         assert!(prompt_text("onboarding", None).is_ok());
-        let args = serde_json::json!({ "session_id": "s-1" }).as_object().cloned();
-        assert!(prompt_text("session-triage", args.as_ref()).unwrap().contains("s-1"));
-        assert!(prompt_text("session-triage", None).is_err(), "缺参数必须报错");
-        let targs = serde_json::json!({ "transfer_id": "t-1" }).as_object().cloned();
-        assert!(prompt_text("transfer-followup", targs.as_ref()).unwrap().contains("t-1"));
+        let args = serde_json::json!({ "session_id": "s-1" })
+            .as_object()
+            .cloned();
+        assert!(prompt_text("session-triage", args.as_ref())
+            .unwrap()
+            .contains("s-1"));
+        assert!(
+            prompt_text("session-triage", None).is_err(),
+            "缺参数必须报错"
+        );
+        let targs = serde_json::json!({ "transfer_id": "t-1" })
+            .as_object()
+            .cloned();
+        assert!(prompt_text("transfer-followup", targs.as_ref())
+            .unwrap()
+            .contains("t-1"));
         assert!(prompt_text("no-such-prompt", None).is_err());
     }
 }
