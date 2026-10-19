@@ -455,8 +455,16 @@ export default function App() {
   const [recordsFilter, setRecordsFilter] = useState<RecordsQuery>({ agentId: null, kind: null, limit: 200 });
   const [recordsBusy, setRecordsBusy] = useState(false);
   const [recordsExportBusy, setRecordsExportBusy] = useState(false);
+  // ⑥ 翻页：complete=true 表示最近一页不满页（已到底）；保留期（0=永久，启动读 vault）
+  const [recordsComplete, setRecordsComplete] = useState(true);
+  const [recordsMoreBusy, setRecordsMoreBusy] = useState(false);
+  const [recordsRetention, setRecordsRetention] = useState(30);
   // ⑤ 自主模式传输免审 opt-in（vault 设置 collab.autonomy.transfers；默认关=逐条审批）
   const [transferAutonomy, setTransferAutonomy] = useState(false);
+  // ⑧ 自主模式到期即时提示：轮询差分——上一轮在场、这一轮消失且非人工收回 → toast。
+  // 人工收回在 toggle/kill 时登记进 KILLED，避免「点了急停还弹到期提示」的误报。
+  const autonomyKnownRef = useRef<Set<string>>(new Set());
+  const autonomyKilledRef = useRef<Set<string>>(new Set());
   const [brief, setBrief] = useState<Brief | null>(null);
   // 任务目标（R9：人类→Agent 委托留言）：draft 编辑中不被简报轮询覆盖，
   // 保存/清除后落盘（goalDirty 复位）再随简报同步；
@@ -652,6 +660,16 @@ export default function App() {
         .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) }));
       // ② 自主模式横幅数据（跟随 3s 轮询；到期由核心惰性清除，前端只显示剩余）
       const nextAutonomy = (await invoke("autonomy_list")) as AutonomyGrant[];
+      // ⑧ 到期差分：消失且非人工收回 → 即时提示（横幅本身随 setAutonomy 3s 内消隐）
+      for (const a of autonomyKnownRef.current) {
+        if (!nextAutonomy.some((g) => g.agent_id === a) && !autonomyKilledRef.current.has(a)) {
+          pushToast("info", `${a} 的自主模式已到期，恢复逐条审批`);
+        }
+      }
+      for (const a of [...autonomyKilledRef.current]) {
+        if (!nextAutonomy.some((g) => g.agent_id === a)) autonomyKilledRef.current.delete(a);
+      }
+      autonomyKnownRef.current = new Set(nextAutonomy.map((g) => g.agent_id));
       setSessions((prev) => sameShape(prev, nextSessions));
       setHosts((prev) => sameShape(prev, nextHosts));
       if (nextMeta) setHostMeta((prev) => sameShape(prev, nextMeta));
@@ -664,7 +682,7 @@ export default function App() {
       // 3s 轮询自愈，错误不逐条打扰（连接类失败另有常驻横幅）
       setHostsLoaded(true);
     }
-  }, []);
+  }, [pushToast]);
 
   // R41（§6.6「保留主机/会话身份」）：累积 sid→主机名。会话关闭后从 sessions 消失，
   // 但它的记录还要能标出「当时是哪台主机」——故只增不删，查不到时如实显示短 id。
@@ -1615,6 +1633,9 @@ export default function App() {
       if (kmRaw) applyKeymap(parseKeymap(kmRaw));
       // ⑤ 传输免审 opt-in：demo 与 persistSetting 同走 localStorage
       setTransferAutonomy(localStorage.getItem("collab.autonomy.transfers") === "1");
+      // ⑦ 记录保留期：demo 同走 localStorage（坏值回落 30 天）
+      const rr = Number(localStorage.getItem("collab.records.retention_days") ?? "30");
+      setRecordsRetention(Number.isFinite(rr) && rr >= 0 ? rr : 30);
       invoke("get_workspace")
         .then(applyChromeBlob)
         .catch(() => {})
@@ -1633,6 +1654,13 @@ export default function App() {
     // ⑤ 传输免审 opt-in 开关回读（vault 设置，默认关=传输逐条审批）
     invoke("get_setting", { key: "collab.autonomy.transfers" })
       .then((v) => setTransferAutonomy(v === "1"))
+      .catch(() => {});
+    // ⑦ 记录保留期回读（vault 设置，坏值回落 30 天；0=永久）
+    invoke("get_setting", { key: "collab.records.retention_days" })
+      .then((v) => {
+        const n = Number(v ?? "30");
+        setRecordsRetention(Number.isFinite(n) && n >= 0 ? n : 30);
+      })
       .catch(() => {});
     // 字号/色板/外观三路都落定后派生一次（applyAppearance/loadPalette 内部亦有派生，
     // 这里兜底「全部缺省」的首次启动路径）
@@ -3613,6 +3641,7 @@ export default function App() {
   };
   // ② 自主模式急停（横幅按钮）：立即收回该 Agent 的免审批授权
   const killAutonomy = useCallback(async (agentId: string) => {
+    autonomyKilledRef.current.add(agentId); // ⑧ 人工收回：差分提示不再报「到期」
     try {
       await invoke("set_autonomy", { agentId, enable: false });
       pushToast("ok", `已收回 ${agentId} 的自主模式`);
@@ -3623,6 +3652,7 @@ export default function App() {
   }, [pushToast, refreshLists]);
   // ② 自主模式开关（设置页）：enable + 可选 TTL（分钟）
   const toggleAutonomy = useCallback(async (agentId: string, enable: boolean, ttlMinutes: number | null) => {
+    if (!enable) autonomyKilledRef.current.add(agentId); // ⑧ 人工关闭：不报「到期」
     try {
       await invoke("set_autonomy", { agentId, enable, ttlMinutes });
       pushToast("ok", enable ? `已开启 ${agentId} 自主模式` : `已关闭 ${agentId} 自主模式`);
@@ -3637,14 +3667,36 @@ export default function App() {
   const refreshRecords = useCallback(async (f: RecordsQuery) => {
     setRecordsBusy(true);
     try {
-      setRecordsRows((await invoke("query_records", { filter: f })) as ActionRecord[]);
+      const rows = (await invoke("query_records", { filter: f })) as ActionRecord[];
+      setRecordsRows(rows);
+      setRecordsComplete(rows.length < f.limit);
     } catch {
       // 记录库读不出来（目录异常等）给空态而非报错弹窗——时间线是回看面，不阻塞设置
       setRecordsRows([]);
+      setRecordsComplete(true);
     } finally {
       setRecordsBusy(false);
     }
   }, []);
+
+  // ⑥ 「加载更早」：游标 = 已载最旧 ts − 1ms（核心 until 为 <= 含端点，同毫秒多条
+  // 随游标一起翻走）；追加前按 seq 去重只是双击竞态兜底
+  const loadMoreRecords = useCallback(async () => {
+    const rows = recordsRows;
+    if (!rows || rows.length === 0 || recordsMoreBusy) return;
+    setRecordsMoreBusy(true);
+    try {
+      const until = new Date(new Date(rows[rows.length - 1].ts).getTime() - 1).toISOString();
+      const batch = (await invoke("query_records", { filter: { ...recordsFilter, until } })) as ActionRecord[];
+      const seen = new Set(rows.map((r) => r.seq));
+      setRecordsRows([...rows, ...batch.filter((r) => !seen.has(r.seq))]);
+      setRecordsComplete(batch.length < recordsFilter.limit);
+    } catch (err) {
+      pushToast("err", `加载更早失败：${errMsg(err)}`);
+    } finally {
+      setRecordsMoreBusy(false);
+    }
+  }, [recordsRows, recordsFilter, recordsMoreBusy, pushToast]);
 
   // 打开「记录审计」分区或筛选变化即拉取；手动「刷新」按钮走同一入口
   useEffect(() => {
@@ -3668,6 +3720,13 @@ export default function App() {
     setTransferAutonomy(v);
     persistSetting("collab.autonomy.transfers", v ? "1" : "");
   }, [persistSetting]);
+
+  // ---- ⑦ 记录保留期（vault 设置持久；超期清理发生在启动 open，重启后生效）----
+  const changeRecordsRetention = useCallback((days: number) => {
+    setRecordsRetention(days);
+    persistSetting("collab.records.retention_days", String(days));
+    pushToast("ok", "记录保留期已保存，重启后生效");
+  }, [persistSetting, pushToast]);
 
   // 审批卡风险分级 approvalRisk 已随审批卡出仓 components/collab-panel.tsx（拆分⑤）
 
@@ -4687,6 +4746,9 @@ export default function App() {
               onRecordsFilter={setRecordsFilter}
               onRecordsRefresh={() => void refreshRecords(recordsFilter)}
               onRecordsExport={() => void exportRecords()}
+              recordsHasMore={!recordsComplete} recordsMoreBusy={recordsMoreBusy}
+              onRecordsMore={() => void loadMoreRecords()}
+              recordsRetention={recordsRetention} onChangeRecordsRetention={changeRecordsRetention}
               transferAutonomy={transferAutonomy} onChangeTransferAutonomy={changeTransferAutonomy}
             />
           )}

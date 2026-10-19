@@ -114,6 +114,20 @@ const demoState = {
       summary: "rm -rf /var/lib/old-builds", status: "dangerous", exit_code: null,
       duration_ms: null, output_excerpt: null, meta: {},
     },
+    // ⑥ 翻页样本：250 条满页（下拉最小档 200）走「加载更早」→ 第二页到底撤钮
+    ...Array.from({ length: 245 }, (_, i) => ({
+      seq: 300 - i,
+      ts: new Date(Date.now() - (130 + i) * 60e3).toISOString(),
+      kind: "exec" as const,
+      session_id: "s-demo",
+      agent_id: "opencode",
+      summary: `df -h /srv/data${i + 1}`,
+      status: "ok",
+      exit_code: 0,
+      duration_ms: 100 + i,
+      output_excerpt: null,
+      meta: {},
+    })),
   ] as import("./adapter/wire").ActionRecord[],
   // C9（R43）：协作启用态（真实核心 vault.settings['collab.enabled']）。新装默认关闭
   // （无自动 MCP 监听），旧版升级保留开启。generation 随每次启用/停用 +1（停用封口
@@ -973,18 +987,25 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return [...demoState.autonomy].map((agent_id) => ({ agent_id, expires_at: null }));
     }
     case "query_records": {
-      // ④ demo 镜像：按种类/来源/条数过滤（新→旧；真实实现见 core-session query_records，
-      // Agent 侧强制只查自己的记录——demo 里 invoke 只来自人类 UI，不做该投影）
-      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; limit?: number };
+      // ④ demo 镜像：按种类/来源/条数过滤（新→旧；until 同核心语义 <= 含端点，
+      // 真实实现见 core-session query_records——Agent 侧强制只查自己的记录，
+      // demo 里 invoke 只来自人类 UI，不做该投影）
+      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; until?: string | null; limit?: number };
       return demoState.records
-        .filter((r) => (f.kind ? r.kind === f.kind : true) && (f.agentId ? r.agent_id === f.agentId : true))
+        .filter((r) =>
+          (f.kind ? r.kind === f.kind : true)
+          && (f.agentId ? r.agent_id === f.agentId : true)
+          && (f.until ? r.ts <= f.until : true))
         .slice(0, f.limit ?? 200);
     }
     case "export_records": {
       // ④ demo 镜像：同样的过滤，计数返回；demo 无文件系统不落盘，路径如实说明
-      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; limit?: number };
+      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; until?: string | null; limit?: number };
       const n = demoState.records
-        .filter((r) => (f.kind ? r.kind === f.kind : true) && (f.agentId ? r.agent_id === f.agentId : true))
+        .filter((r) =>
+          (f.kind ? r.kind === f.kind : true)
+          && (f.agentId ? r.agent_id === f.agentId : true)
+          && (f.until ? r.ts <= f.until : true))
         .length;
       audit("human", "records_export", null, null, null, { count: n });
       return { count: n, path: "（演示模式不落盘；真实应用导出到 records-export\\records-<时间戳>.jsonl）" };

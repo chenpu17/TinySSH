@@ -1,5 +1,6 @@
 // 31 记录审计：设置新增「记录审计」分区（④ 记录与审计的 GUI 消费面）。
-// demo 域样本覆盖三类动作与主要终态——时间线渲染、种类/来源筛选、明文导出反馈。
+// demo 域样本覆盖三类动作与主要终态——时间线渲染、种类/来源筛选、明文导出反馈，
+// 以及 ⑥「加载更早」翻页与 ⑦ 保留期选择面。
 
 const openSettings = async (page) => {
   await page.click(".hb-settings");
@@ -52,5 +53,24 @@ module.exports = {
     await page.click("[data-testid=records-export]");
     await page.waitForTimeout(400);
     ck.check("导出反馈含条数", (await toast(page)).includes("已导出 1 条"), await toast(page));
+
+    // ⑥ 翻页：样本共 250 条、下拉最小档 200——重置筛选后首拉即满页（200 行）出
+    // 「加载更早」，翻一页到底（250 行）按钮撤下；全程真实 selectOption/click 交互
+    await page.selectOption("[data-testid=records-kind-filter]", "");
+    await page.selectOption("[data-testid=records-agent-filter]", "");
+    await page.waitForTimeout(600);
+    const snap = () => page.evaluate(() => ({
+      rows: document.querySelectorAll("[data-testid=records-row]").length,
+      more: !!document.querySelector("[data-testid=records-more]"),
+    }));
+    let s = await snap();
+    ck.check("首拉满页 200 行且出「加载更早」", s.rows === 200 && s.more, JSON.stringify(s));
+    await page.click("[data-testid=records-more]");
+    await page.waitForTimeout(600);
+    s = await snap();
+    ck.check("翻页到底 250 行且按钮撤下", s.rows === 250 && !s.more, JSON.stringify(s));
+
+    // ⑦ 保留期选择面在场（demo 不落盘，只验证选择与说明）
+    ck.check("保留期选择在场", await page.evaluate(() => !!document.querySelector("[data-testid=records-retention]")));
   },
 };

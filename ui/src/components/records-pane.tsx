@@ -43,10 +43,18 @@ interface RecordsPaneProps {
   onFilter: (next: RecordsQuery) => void;
   onRefresh: () => void;
   onExport: () => void;
+  /** true = 最近一次拉取恰好满页（可能还有更早的），显示「加载更早」 */
+  hasMore: boolean;
+  moreBusy: boolean;
+  onLoadMore: () => void;
+  /** 记录保留天数（0=永久；启动时从 vault 读，改动重启后生效） */
+  retention: number;
+  onChangeRetention: (days: number) => void;
 }
 
 export function RecordsPane(props: RecordsPaneProps) {
-  const { rows, busy, exportBusy, filter, agents, onFilter, onRefresh, onExport } = props;
+  const { rows, busy, exportBusy, filter, agents, onFilter, onRefresh, onExport,
+    hasMore, moreBusy, onLoadMore, retention, onChangeRetention } = props;
   // 摘录展开态（面板本地；按 seq 记，翻筛后自然失效无害）
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const toggle = (seq: number) => {
@@ -143,6 +151,27 @@ export function RecordsPane(props: RecordsPaneProps) {
             ))
           )}
         </div>
+        {/* ⑥ 「加载更早」：满页才显示（不满页=已到底）；游标 = 已载最旧 ts−1ms（宿主算） */}
+        {rows !== null && rows.length > 0 && hasMore && (
+          <button className="ghost" style={{ marginTop: 10 }} disabled={moreBusy}
+            data-testid="records-more" onClick={onLoadMore}>
+            {moreBusy ? "加载中…" : "加载更早"}
+          </button>
+        )}
+      </div>
+      <div className="set-card">
+        <h4>保留期</h4>
+        <div className="set-desc">
+          超过保留期的记录在应用启动时自动清理（落盘即密文，清理即删除）；0 = 永久保留（记录库会随使用无界增长，慎选）。改动在重启后生效。
+        </div>
+        <select style={{ fontSize: 12, marginTop: 8 }} aria-label="记录保留期" data-testid="records-retention"
+          value={String(retention)}
+          onChange={(e) => onChangeRetention(Number(e.target.value))}>
+          <option value="30">保留 30 天（默认）</option>
+          <option value="90">保留 90 天</option>
+          <option value="365">保留 365 天</option>
+          <option value="0">永久保留</option>
+        </select>
       </div>
       <div className="set-card">
         <h4>导出</h4>

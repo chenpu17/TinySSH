@@ -100,6 +100,13 @@ interface SettingsPanelProps {
   onRecordsFilter: (f: RecordsQuery) => void;
   onRecordsRefresh: () => void;
   onRecordsExport: () => void;
+  /** ⑥ 翻页：true=最近一页满页（可能还有更早） */
+  recordsHasMore: boolean;
+  recordsMoreBusy: boolean;
+  onRecordsMore: () => void;
+  /** ⑦ 记录保留天数（0=永久；改动重启后生效） */
+  recordsRetention: number;
+  onChangeRecordsRetention: (days: number) => void;
   // ⑤ 自主模式传输免审 opt-in（vault 设置持久；默认关=传输一律逐条审批）
   transferAutonomy: boolean;
   onChangeTransferAutonomy: (v: boolean) => void;
@@ -118,6 +125,7 @@ export function SettingsPanel({
   openDisableDialog, retryDisableConvergence, enableCollab, issueAgent, revokeAgent,
   autonomy, onToggleAutonomy,
   recordsRows, recordsFilter, recordsBusy, recordsExportBusy, onRecordsFilter, onRecordsRefresh, onRecordsExport,
+  recordsHasMore, recordsMoreBusy, onRecordsMore, recordsRetention, onChangeRecordsRetention,
   transferAutonomy, onChangeTransferAutonomy,
 }: SettingsPanelProps) {
   // rev-r47：签发/吊销表单的**面板本地**临时态——关面板即弃（与宿主「关闭即清草稿」
@@ -623,6 +631,8 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                     rows={recordsRows} busy={recordsBusy} exportBusy={recordsExportBusy}
                     filter={recordsFilter} agents={mcp.agents_detail ?? []}
                     onFilter={onRecordsFilter} onRefresh={onRecordsRefresh} onExport={onRecordsExport}
+                    hasMore={recordsHasMore} moreBusy={recordsMoreBusy} onLoadMore={onRecordsMore}
+                    retention={recordsRetention} onChangeRetention={onChangeRecordsRetention}
                   />
                 )}
 

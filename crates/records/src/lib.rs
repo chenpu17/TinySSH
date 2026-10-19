@@ -404,4 +404,35 @@ mod tests {
         assert!(seq > 2, "重开后续接序号：{seq}");
         std::fs::remove_dir_all(dir).ok();
     }
+
+    /// ⑥ 时间线「加载更早」的游标依据：until 含端点（<=）、since 含端点（>=）。
+    /// 翻页传「已载最旧 ts − 1ms」即可表达严格小于（同毫秒多条一起翻走，不重不漏）。
+    #[test]
+    fn filter_window_since_until_bounds() {
+        let dir = std::env::temp_dir().join(format!("rec-{}", uuid::Uuid::new_v4()));
+        let s = store(&dir);
+        s.append(ev(RecordKind::Exec, "old-cmd")).unwrap();
+        s.append(ev(RecordKind::Exec, "mid-cmd")).unwrap();
+        s.append(ev(RecordKind::Exec, "new-cmd")).unwrap();
+        let all = s.query(&RecordFilter::default()).unwrap();
+        assert_eq!(all.len(), 3);
+        let mid_ts = all.iter().find(|e| e.summary == "mid-cmd").unwrap().ts;
+
+        let mut f = RecordFilter::default();
+        f.until = Some(mid_ts);
+        let page = s.query(&f).unwrap();
+        assert_eq!(page.len(), 2, "until 含端点");
+        assert!(page.iter().all(|e| e.summary != "new-cmd"));
+
+        let mut f2 = RecordFilter::default();
+        f2.until = Some(mid_ts - chrono::Duration::milliseconds(1));
+        let page2 = s.query(&f2).unwrap();
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].summary, "old-cmd");
+
+        let mut f3 = RecordFilter::default();
+        f3.since = Some(mid_ts);
+        assert_eq!(s.query(&f3).unwrap().len(), 2, "since 含端点");
+        std::fs::remove_dir_all(dir).ok();
+    }
 }

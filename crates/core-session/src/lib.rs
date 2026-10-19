@@ -221,13 +221,21 @@ impl SessionManager {
             state_tx,
             quick_hosts: StdMutex::new(HashMap::new()),
             records: {
-                // ③ 记录目录 = 数据目录/records；保留期 30 天（一期常量，设置面后续轮）。
+                // ③ 记录目录 = 数据目录/records。保留期可设（vault 设置
+                // collab.records.retention_days，0=永久），缺省 30 天；超期文件在
+                // 启动 open 时清理，故改动在下次启动生效——UI 如实标注。
                 let rec_dir = db_path.parent().unwrap_or(Path::new(".")).join("records");
+                let retention = vault
+                    .get_setting("collab.records.retention_days")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.trim().parse::<u32>().ok())
+                    .unwrap_or(30);
                 let vault_seal = vault.clone();
                 let vault_open = vault.clone();
                 Arc::new(tinyssh_records::RecordStore::open(
                     &rec_dir,
-                    30,
+                    retention,
                     tinyssh_records::Crypto {
                         seal: Box::new(move |b: &[u8]| vault_seal.seal_bytes(b)),
                         open: Box::new(move |b: &[u8]| {

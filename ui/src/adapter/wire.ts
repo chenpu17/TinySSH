@@ -671,9 +671,11 @@ export interface ActionRecord {
   meta: Record<string, unknown>;
 }
 
-/** 时间线查询面（App 持有的完整形态；过桥时同形直传）。 */
+/** 时间线查询面（App 持有的完整形态；过桥时同形直传）。
+ * until 供「加载更早」翻页：传已载最旧 ts−1ms（核心 until 为 <= 含端点）。 */
 export interface RecordsQuery {
   agentId: string | null;
   kind: ActionRecordKind | null;
   limit: number;
+  until?: string | null;
 }
