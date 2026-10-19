@@ -57,6 +57,17 @@ pub trait ChannelHandle: Send + Sync {
     /// 原始输出字节流（可丢块 broadcast；消费方 term-core）。
     fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>>;
 
+    /// 通路对 shell 集成的**先验**（构造期已知的事实，非观测）：
+    /// `None` = 通路不表态（SSH：注入与否由 host_setting 决定，且只有注入回流后
+    /// 才有观测）；`Some(true)` = 启动期已注入集成片段（本地 PTY 的
+    /// rcfile/ZDOTDIR/-C/脚本四族）；`Some(false)` = 该 shell 无法注入（本地 cmd、
+    /// WSL 的 wsl.exe、dash/ksh 等无 preexec 钩子者）。
+    /// run_shell 入口据此对 `Some(false)` **立即**如实拒绝 Shell 模式：不白等观测窗口，
+    /// 也不把「本地 shell 不支持」误报成「主机未启用集成」。
+    fn shell_integration_hint(&self) -> Option<bool> {
+        None
+    }
+
     /// 通路是否存活。
     async fn is_alive(&self) -> bool;
 

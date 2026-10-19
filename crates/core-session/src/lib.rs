@@ -516,15 +516,20 @@ impl SessionManager {
                 handle.spawn_integration_watcher(self.center.clone());
             }
         } else {
-            // local：注入在 PTY 启动时同步完成（rcfile/ZDOTDIR），此处等的是 shell
-            // 启动耗时——建连返回即可键入的既有不变量（旧 10s 窗，全量回归下首个
-            // 提示符实测 5s+，50ms×200 保同口径）。失败不阻断（事件照发，run_shell
+            // local：注入在 PTY 启动时同步完成（rcfile/ZDOTDIR/-C/脚本），此处等的是
+            // shell 启动耗时——建连返回即可键入的既有不变量（旧 10s 窗，全量回归下
+            // 首个提示符实测 5s+，50ms×200 保同口径）。失败不阻断（事件照发，run_shell
             // 门内有界重查兜底）。SSH 侧维持契约：不等 OSC，就绪走事件（DC3.5）。
-            for _ in 0..200 {
-                if handle.screen.lock().await.shell_integration_present() {
-                    break;
+            // 先验 false（cmd/WSL/dash 等构造性不可注入）：标记永远不会来，白等只会
+            // 让这类本机会话每次建连固定多挂 10s——跳过等待直接 Unavailable。
+            let prior_unavailable = handle.channel.shell_integration_hint() == Some(false);
+            if !prior_unavailable {
+                for _ in 0..200 {
+                    if handle.screen.lock().await.shell_integration_present() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
             let state = if handle.screen.lock().await.shell_integration_present() {
                 IntegrationState::Ready
@@ -5753,6 +5758,10 @@ mod c1_tests;
 #[cfg(test)]
 #[path = "r24_tests.rs"]
 mod r24_tests;
+
+#[cfg(test)]
+#[path = "p1_tests.rs"]
+mod p1_tests;
 
 #[cfg(test)]
 #[path = "r26_tests.rs"]

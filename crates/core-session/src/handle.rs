@@ -296,13 +296,26 @@ impl SessionHandle {
             (s.shell_integration_present(), s.prompt_ready())
         };
         if !integrated {
-            // local 会话：PTY 启动时无条件注入（transport-pty rcfile/ZDOTDIR），集成由
-            // 构造保证——此处是 shell 启动竞态而非「不可用」，有界等待 OSC133（与注入
-            // 后台化一致，不回退 Fresh）。超时仍无 = 环境异常，如实拒绝。
+            // local 会话：PTY 启动时无条件注入（transport-pty 四族：bash rcfile / zsh
+            // ZDOTDIR / fish -C / powershell·pwsh 脚本），集成由构造保证——此处是 shell
+            // 启动竞态而非「不可用」，有界等待 OSC133（与注入后台化一致，不回退 Fresh）。
+            // 超时仍无 = 环境异常，如实拒绝。
+            // 但通路先验 `Some(false)`（cmd/WSL/dash 等无法注入的 shell）是**构造性**
+            // 不可用：入口立即如实拒绝——此前白等 10s，还把「本地 shell 不支持」
+            // 误报成 host_setting=false（「主机未启用集成」），指引面因此指向错误方向。
             // ssh 会话若主机开了集成（host_setting=true，注入已发出）：慢登录主机
             // （大 profile/慢 NFS home）首命令会跑赢 OSC133 回流，与本机同属启动竞态
             // ——同样有界等待；未开集成的 ssh 会话维持立即拒绝（本机 sshd 实测首命令
             // 快于 Git-bash profile 时必现）。
+            if self.kind == "local" && self.channel.shell_integration_hint() == Some(false) {
+                return Err(Error::ShellIntegrationUnavailable {
+                    available: session_api::ShellCapability {
+                        integration_present: false,
+                        prompt_ready,
+                        host_setting: false,
+                    },
+                });
+            }
             if self.kind != "local" && self.host.shell_integration != Some(true) {
                 return Err(Error::ShellIntegrationUnavailable {
                     available: session_api::ShellCapability {

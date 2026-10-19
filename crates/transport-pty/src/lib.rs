@@ -27,7 +27,8 @@ pub struct LocalPtyChannel {
     size: Mutex<(u16, u16)>,
     /// 集成注入临时目录（respawn 时更换；调用方可取用做延迟清理）。
     tmp: std::sync::Mutex<Option<std::path::PathBuf>>,
-    /// shell 集成是否注入成功（决定 Shell 模式可用性；respawn 时随新 shell 重估）。
+    /// 启动期集成注入是否成功（bash/zsh/fish/powershell·pwsh 判型命中即 true；
+    /// respawn 时随新 shell 重估）。这是**先验**：标记回流与否由屏幕观测。
     pub integration: AtomicBool,
 }
 
@@ -43,7 +44,18 @@ pub enum ShellSpawn {
         program: String,
         zdotdir: std::path::PathBuf,
     },
-    /// 直接启动（无集成注入；Shell 模式将不可用，自动降级 Fresh）
+    /// fish -C 'source <tmp>'（-C 在读完配置之后、首个提示符之前执行）
+    Fish {
+        program: String,
+        init: std::path::PathBuf,
+    },
+    /// powershell/pwsh：-NoExit -Command ". <tmp>"（配置之后执行，包装 prompt 与 PSReadLine 读行钩子）
+    PowerShell {
+        program: String,
+        script: std::path::PathBuf,
+    },
+    /// 直接启动（无集成注入；Shell 模式由 run_shell 入口如实拒绝，不静默降级：
+    /// 通路先验 shell_integration_hint=false 让 core 立即给出原因，见 session-api）
     Plain { program: String },
 }
 
@@ -80,21 +92,115 @@ add-zsh-hook preexec __tinyssh_preexec
     .to_string()
 }
 
+/// fish 集成片段：**只注册事件钩子**（不包装 fish_prompt 函数，也不清屏）。
+/// 钩子是附加的——用户/主题随后定义的 prompt 函数不会被我们截断；A/B 在提示符
+/// 渲染前连发（渲染文本属 shell 输出，人类键入的字节仍落在 B 之后，块语义不受影响）。
+/// `fish_prompt` 事件在提示符显示前触发、`fish_preexec` 只在真有命令要执行时触发
+///（空行回车无事件 → 不产生空块），与 bash 侧 PROMPT_COMMAND/PS0 同口径。
+pub fn shell_integration_fish() -> String {
+    // \e / \a 由 fish 的 printf 内建解释（POSIX 语义）；状态码必须先存（printf 自身会刷新 $status）
+    r#"
+if not set -q __tinyssh_integration
+  set -g __tinyssh_integration 1
+  function __tinyssh_prompt --on-event fish_prompt
+    set -l __tinyssh_rc $status
+    set -l __tinyssh_p (string replace -a \\ / -- $PWD)
+    if string match -q -r '^[A-Za-z]:' -- $__tinyssh_p
+      set __tinyssh_p "/$__tinyssh_p"
+    end
+    printf '\e]7;file://%s\a' $__tinyssh_p
+    printf '\e]133;D;%d\a' $__tinyssh_rc
+    printf '\e]133;A\a'
+    printf '\e]133;B\a'
+  end
+  function __tinyssh_preexec --on-event fish_preexec
+    printf '\e]133;C\a'
+  end
+end
+"#
+    .to_string()
+}
+
+/// PowerShell 集成片段（powershell.exe 5.1 与 pwsh 7+ 同一份）：
+/// - 包装 `prompt`：退出码必须在调原 prompt **之前**取（原 prompt 自身会改写 `$?`），
+///   随后 D 退出码 → A 提示符开始 → 原 prompt 正文 → B 键入开始（把用户自己的提示符
+///   夹在 A/B 之间，视觉与归属都不变）；
+/// - 包装 PSReadLine 的 `PSConsoleHostReadLine`：读到非空行 → C 输出开始。钩子在
+///   首个 `prompt` 调用时挂（PSReadLine 正是那个调用方，此刻必然已加载；未就绪则
+///   每次提示符重试）。缺 PSReadLine 时**不伪造** C：Shell 模式 exec 走受管块不依赖 C，
+///   人类键入不成块——如实降级。
+/// 退出码映射：成功 0；失败优先原生命令退出码（`$LASTEXITCODE`），否则 1。PS 不暴露
+///「上一条是否原生命令」，cmdlet 失败后残留的旧 `$LASTEXITCODE` 会被误读——如实接受，
+/// 且**不改动** `$LASTEXITCODE`（用户可见语义，宁可自身读数偏差也不动用户环境）。
+pub fn shell_integration_powershell() -> String {
+    // 注意 $esc/$bel 必须放在 $? 读取之后：PowerShell 的赋值语句本身会把 $?
+    // 置 true（实测 2026-10-19：cmd /c exit 7 后执行 $y=2 再读 $? 得 True）——先读后用。
+    r#"
+$global:__tinyssh_orig_prompt = $function:prompt
+function global:prompt {
+  $__tinyssh_rc = if ($?) { 0 } elseif ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) { $LASTEXITCODE } else { 1 }
+  $esc = [char]27; $bel = [char]7
+  $__tinyssh_body = ''
+  if ($null -ne $global:__tinyssh_orig_prompt) { $__tinyssh_body = ((& $global:__tinyssh_orig_prompt) -join '') }
+  $__tinyssh_cwd = ''
+  if ($PWD.Provider.Name -eq 'FileSystem') {
+    $__tinyssh_p = ([string]$PWD.Path).Replace('\', '/')
+    if ($__tinyssh_p -match '^[A-Za-z]:') { $__tinyssh_p = "/$__tinyssh_p" }
+    $__tinyssh_cwd = "$esc]7;file://$__tinyssh_p$bel"
+  }
+  if (-not $global:__tinyssh_readline_hook -and $null -ne $function:PSConsoleHostReadLine) {
+    $global:__tinyssh_readline_hook = $true
+    $global:__tinyssh_orig_readline = $function:PSConsoleHostReadLine
+    function global:PSConsoleHostReadLine {
+      $__tinyssh_line = & $global:__tinyssh_orig_readline
+      if ($null -ne $__tinyssh_line -and "$__tinyssh_line".Trim().Length -gt 0) {
+        [Console]::Write("$([char]27)]133;C$([char]7)")
+      }
+      return $__tinyssh_line
+    }
+  }
+  "$esc]133;D;$__tinyssh_rc$bel$esc]133;A$bel$__tinyssh_cwd$__tinyssh_body$esc]133;B$bel"
+}
+"#
+    .to_string()
+}
+
 fn dirs_or_home() -> std::path::PathBuf {
     dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"))
 }
 
+/// 注入脚本路径的可移植写法：Windows 路径统一正斜杠——fish 的单引号里反斜杠是
+/// 转义前缀、PowerShell 的 `-Command` 会二次解析，正斜杠两种 shell 都照字面吃。
+fn script_path(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// PowerShell 单引号字符串字面量（内部的 `'` 翻倍转义）。
+fn ps_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// fish 单引号字符串字面量（内部的 `'` 与 `\` 加反斜杠转义；路径已转正斜杠）。
+fn fish_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
 /// 构造 shell 启动方式（写入注入文件；调用方负责清理临时目录）。
+/// 判型表：bash / zsh / fish / powershell·pwsh（含 pwsh-preview）→ 注入集成；
+/// 其余（cmd、WSL 的 wsl.exe、dash/ksh 等无 preexec 钩子的 shell）→ Plain，
+/// 由通路先验 shell_integration_hint=false 让 core 立即如实拒绝 Shell 模式。
 pub fn plan_shell_spawn(shell: &str, tmpdir: &std::path::Path) -> ShellSpawn {
     // Windows 上 SHELL 常是反斜杠 + .exe 形态（C:\Program Files\Git\bin\bash.exe），
     // POSIX 式 rsplit('/') 取不到文件名 → 全体误入 Plain、Shell 模式静默失效
     //（ConPTY 实测透传 OSC133，2026-10-12 探针：注入/透传/发射均正常，唯此判型断链）。
+    // 大小写一并归一：Windows 文件名不区分大小写（BASH.EXE 同样是 bash）。
     let basename = shell
         .rsplit(['/', '\\'])
         .next()
         .unwrap_or(shell)
-        .trim_end_matches(".exe");
-    match basename {
+        .to_ascii_lowercase();
+    let base = basename.strip_suffix(".exe").unwrap_or(&basename);
+    match base {
         "bash" => {
             let rc = tmpdir.join("bashrc");
             let existing =
@@ -118,6 +224,23 @@ pub fn plan_shell_spawn(shell: &str, tmpdir: &std::path::Path) -> ShellSpawn {
             ShellSpawn::Zsh {
                 program: shell.to_string(),
                 zdotdir: zdot,
+            }
+        }
+        "fish" => {
+            let init = tmpdir.join("integration.fish");
+            std::fs::write(&init, shell_integration_fish()).ok();
+            ShellSpawn::Fish {
+                program: shell.to_string(),
+                init,
+            }
+        }
+        // pwsh-preview（预览版官方名）、powershell_ise 走不了（非控制台宿主）故不入表
+        b if b == "powershell" || b.starts_with("pwsh") => {
+            let script = tmpdir.join("integration.ps1");
+            std::fs::write(&script, shell_integration_powershell()).ok();
+            ShellSpawn::PowerShell {
+                program: shell.to_string(),
+                script,
             }
         }
         _ => ShellSpawn::Plain {
@@ -173,6 +296,8 @@ impl LocalPtyChannel {
         let program = match &plan {
             ShellSpawn::Bash { program, .. } => program.clone(),
             ShellSpawn::Zsh { program, .. } => program.clone(),
+            ShellSpawn::Fish { program, .. } => program.clone(),
+            ShellSpawn::PowerShell { program, .. } => program.clone(),
             ShellSpawn::Plain { program } => program.clone(),
         };
         let mut cmd = CommandBuilder::new(program.as_str());
@@ -184,6 +309,17 @@ impl LocalPtyChannel {
             }
             ShellSpawn::Zsh { zdotdir, .. } => {
                 cmd.env("ZDOTDIR", zdotdir);
+            }
+            ShellSpawn::Fish { init, .. } => {
+                cmd.arg("-i");
+                cmd.arg("-C");
+                cmd.arg(format!("source {}", fish_quote(&script_path(init))));
+            }
+            ShellSpawn::PowerShell { script, .. } => {
+                // -NoExit：跑完注入脚本后留在交互会话（-Command 会二次解析，脚本路径单引号包）
+                cmd.arg("-NoExit");
+                cmd.arg("-Command");
+                cmd.arg(format!(". {}", ps_quote(&script_path(script))));
             }
             ShellSpawn::Plain { .. } => {
                 // `-i` 是 POSIX shell 交互标志，powershell 不接受
@@ -325,14 +461,26 @@ impl ChannelHandle for LocalPtyChannel {
         command.arg("-c").arg(cmd);
         #[cfg(windows)]
         // Windows 下 SHELL 可能被启动环境改写（Git Bash 里 SHELL=/usr/bin/bash）——
-        // 按选定 shell 族给参：powershell 系 -NoProfile -Command，bash 系 -c。
-        // 曾犯的错：shell 选择 SHELL 感知、参数写死 powershell → bash 报 "-N: invalid option"
-        let res = {
+        // 按选定 shell 族给参：powershell 系 -NoProfile -Command，cmd 系 /c，bash 系 -c。
+        // 曾犯的错：shell 选择 SHELL 感知、参数写死 powershell → bash 报 "-N: invalid option"；
+        // cmd 族此前漏配（落到 -c）：cmd 不认 -c，只会打横幅后退出——cmd 本机会话
+        // Shell 模式被门拒后 Fresh 是唯一通路，必须可用（P1 扩面同轮补齐）。
+        let family = {
             let s = shell.to_ascii_lowercase();
-            s.contains("powershell") || s.contains("pwsh")
+            let base = s.rsplit(['/', '\\']).next().unwrap_or(&s);
+            let base = base.strip_suffix(".exe").unwrap_or(base);
+            if base.contains("powershell") || base.contains("pwsh") {
+                2
+            } else if base == "cmd" {
+                1
+            } else {
+                0
+            }
         };
-        if res {
+        if family == 2 {
             command.arg("-NoProfile").arg("-Command").arg(cmd);
+        } else if family == 1 {
+            command.arg("/c").arg(cmd);
         } else {
             command.arg("-c").arg(cmd);
         }
@@ -446,6 +594,13 @@ impl ChannelHandle for LocalPtyChannel {
 
     fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> {
         self.output_tx.subscribe()
+    }
+
+    /// C3 扩面（P1 终端轮）：本地通路对 shell 集成有**先验**——构造期就知道判型
+    /// 结果（rcfile/ZDOTDIR/-C/脚本四种注入），远端通路没有（注入由 host_setting
+    /// 决定且只看回流标记）。
+    fn shell_integration_hint(&self) -> Option<bool> {
+        Some(self.integration.load(Ordering::SeqCst))
     }
 
     async fn is_alive(&self) -> bool {
@@ -623,4 +778,127 @@ async fn copy_file(
         progress(total, total_len);
     }
     Ok(total)
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+
+    fn tmp() -> std::path::PathBuf {
+        tempfile_dir()
+    }
+
+    /// 判型表（P1 shell 集成扩面）：四种注入族 + 大小写/`.exe` 归一 + 未知族 Plain。
+    #[test]
+    fn shell_family_detection() {
+        let d = tmp();
+        // bash：POSIX 形态与 Git for Windows 的 Windows 形态（含大写 .EXE）都命中，
+        // rcfile 落在临时目录且带注入片段
+        for s in [
+            "/bin/bash",
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "BASH.EXE",
+        ] {
+            match plan_shell_spawn(s, &d) {
+                ShellSpawn::Bash { rcfile, .. } => {
+                    let body = std::fs::read_to_string(&rcfile).unwrap();
+                    assert!(body.contains("__tinyssh_prompt"), "{s}: rcfile 缺注入片段");
+                }
+                other => panic!("{s} 应判为 Bash，得 {}", kind_of(&other)),
+            }
+        }
+        // zsh
+        match plan_shell_spawn("/usr/bin/zsh", &d) {
+            ShellSpawn::Zsh { zdotdir, .. } => {
+                let body = std::fs::read_to_string(zdotdir.join(".zshrc")).unwrap();
+                assert!(body.contains("__tinyssh_precmd"));
+            }
+            other => panic!("zsh 应判为 Zsh，得 {}", kind_of(&other)),
+        }
+        // fish：-C 注入片段含 fish_prompt/fish_preexec 事件钩子与 C 标记
+        for s in ["/usr/bin/fish", "C:\\tools\\fish\\fish.exe"] {
+            match plan_shell_spawn(s, &d) {
+                ShellSpawn::Fish { init, .. } => {
+                    let body = std::fs::read_to_string(&init).unwrap();
+                    assert!(
+                        body.contains("--on-event fish_prompt"),
+                        "{s}: 缺 prompt 钩子"
+                    );
+                    assert!(
+                        body.contains("--on-event fish_preexec"),
+                        "{s}: 缺 preexec 钩子"
+                    );
+                    assert!(body.contains("133;C"), "{s}: 缺 C 标记");
+                }
+                other => panic!("{s} 应判为 Fish，得 {}", kind_of(&other)),
+            }
+        }
+        // powershell / pwsh / pwsh-preview
+        for s in [
+            "powershell.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "pwsh-preview.exe",
+        ] {
+            match plan_shell_spawn(s, &d) {
+                ShellSpawn::PowerShell { script, .. } => {
+                    let body = std::fs::read_to_string(&script).unwrap();
+                    assert!(body.contains("PSConsoleHostReadLine"), "{s}: 缺读行钩子");
+                    assert!(body.contains("133;D;"), "{s}: 缺 D 标记");
+                }
+                other => panic!("{s} 应判为 PowerShell，得 {}", kind_of(&other)),
+            }
+        }
+        // 未支持族：Plain（core 侧靠 shell_integration_hint=false 立即如实拒绝）
+        for s in [
+            "cmd.exe",
+            "C:\\Windows\\System32\\wsl.exe",
+            "/bin/dash",
+            "ksh",
+        ] {
+            match plan_shell_spawn(s, &d) {
+                ShellSpawn::Plain { program } => assert_eq!(program, s),
+                other => panic!("{s} 应判为 Plain，得 {}", kind_of(&other)),
+            }
+        }
+    }
+
+    /// 启动参数与注入文件路径的引号/斜杠约定（Windows 路径统一正斜杠）。
+    #[test]
+    fn launch_args_and_paths() {
+        // PowerShell：-Command 走二次解析，脚本路径单引号包裹、反斜杠转正斜杠
+        let d = tmp();
+        match plan_shell_spawn("pwsh.exe", &d) {
+            ShellSpawn::PowerShell { script, .. } => {
+                let arg = format!(". {}", ps_quote(&script_path(&script)));
+                assert!(arg.starts_with(". '"), "{arg}");
+                assert!(!arg.contains('\\'), "路径应转正斜杠：{arg}");
+                assert!(arg.ends_with("integration.ps1'"), "{arg}");
+            }
+            other => panic!("pwsh 应判为 PowerShell，得 {}", kind_of(&other)),
+        }
+        // fish：source 单引号 + 反斜杠转义（路径无单引号时不含反斜杠）
+        let d2 = tmp();
+        match plan_shell_spawn("fish", &d2) {
+            ShellSpawn::Fish { init, .. } => {
+                let arg = format!("source {}", fish_quote(&script_path(&init)));
+                assert!(arg.starts_with("source '"), "{arg}");
+                assert!(!arg.contains('\\'), "路径应转正斜杠：{arg}");
+            }
+            other => panic!("fish 应判为 Fish，得 {}", kind_of(&other)),
+        }
+        // 单引号转义：PowerShell 翻倍、fish 加反斜杠
+        assert_eq!(ps_quote("a'b"), "'a''b'");
+        assert_eq!(fish_quote("a'\\b"), "'a\\'\\\\b'");
+    }
+
+    fn kind_of(p: &ShellSpawn) -> &'static str {
+        match p {
+            ShellSpawn::Bash { .. } => "Bash",
+            ShellSpawn::Zsh { .. } => "Zsh",
+            ShellSpawn::Fish { .. } => "Fish",
+            ShellSpawn::PowerShell { .. } => "PowerShell",
+            ShellSpawn::Plain { .. } => "Plain",
+        }
+    }
 }

@@ -686,8 +686,9 @@ async fn local_session_manual_reconnect() {
         )
         .await
         .unwrap();
-    // Windows 移植：powershell 无 OSC133 注入（ShellSpawn::Plain，Shell 模式设计性不可用）
-    // → 探针走 Fresh（独立通道，可靠退出码）；unix 保持默认 Shell 模式原语义。
+    // Windows 探针刻意走 Fresh（独立通道、可靠退出码、不依赖集成标记时序）——
+    // P1 起 powershell 本地 shell 也有 OSC133 注入（Shell 模式可用），但本测试的
+    // 主角是断线/重连状态机，探针不掺入启动竞态变量；unix 保持默认 Shell 模式原语义。
     // 此测试曾因 ConPTY DSR 握手挂死根本到不了这里（2026-10-11 修复）。
     let probe_opts = || {
         if cfg!(windows) {
