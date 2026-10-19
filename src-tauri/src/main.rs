@@ -1011,6 +1011,21 @@ async fn session_brief(state: ApiState<'_>, sid: String) -> CmdResult<SessionBri
         .map_err(WireError::from)
 }
 
+/// FR-10 V2（P1-b）：命令块查询（最近 N 条旧→新）。人类侧只读面板数据面；
+/// Agent 侧走 MCP 简报（最近 6 块），不开独立工具（V2 交接引用块先在人类侧）。
+#[tauri::command]
+async fn read_blocks(
+    state: ApiState<'_>,
+    sid: String,
+    limit: Option<u32>,
+) -> CmdResult<Vec<BlockInfo>> {
+    state
+        .api
+        .read_blocks(&human(), sid, limit.unwrap_or(50))
+        .await
+        .map_err(WireError::from)
+}
+
 #[tauri::command]
 async fn set_session_goal(state: ApiState<'_>, sid: String, goal: Option<String>) -> CmdResult<()> {
     state
@@ -2214,7 +2229,7 @@ fn main() {
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             scan_paste_danger,
             list_host_metadata, list_recent_hosts,
-            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
+            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks,
             shell_capability,
             list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,
             collab_status, collab_disable_preview, collab_disable, collab_enable,

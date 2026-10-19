@@ -160,3 +160,94 @@ async fn local_shell_mode_rejected_immediately_on_constructional_prior() {
         "先验 true + 标记在场门应放行，得 {x:?}"
     );
 }
+
+/// P1-b（FR-10 V2）：read_blocks 只读投影——BlockIndex 唯一事实源，最近 N 条
+/// 旧→新、字段直通（来源 describe、退出码、exec_id），limit 截断与未知会话。
+#[tokio::test(flavor = "multi_thread")]
+async fn read_blocks_projects_block_index() {
+    if std::env::var("TINYSSH_MASTER_KEY").is_err() {
+        std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
+    }
+    let dir = std::env::temp_dir().join(format!("p1b-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let m = SessionManager::open(&dir.join("t.db")).unwrap();
+
+    let h = SessionHandle::new(
+        "s-p1blk".into(),
+        local_host(),
+        "local".into(),
+        Arc::new(HintChannel(None)),
+        screen(),
+        m.center.clone(),
+        ControlOwner::Human,
+    );
+    m.sessions.lock().unwrap().insert(h.id.clone(), h.clone());
+
+    // 块 1：人类键入（A B → 登记 → C → D;0）
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+    h.screen
+        .lock()
+        .await
+        .register_outgoing(b"echo one\r", term_core::BlockSource::Human);
+    h.feed_output(b"\x1b]133;C\x07out\x1b]133;D;0\x07").await;
+    // 块 2：Agent 键入
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+    h.screen.lock().await.register_outgoing(
+        b"ls\r",
+        term_core::BlockSource::Agent {
+            client_id: "cc".into(),
+        },
+    );
+    h.feed_output(b"\x1b]133;C\x07\x1b]133;D;2\x07").await;
+    // 块 3：受管回放块（exec_id 关联）
+    h.feed_output(b"\x1b]133;A\x07").await;
+    h.screen.lock().await.open_managed_block(
+        "docker ps",
+        term_core::BlockSource::Replay {
+            client_id: Some("cc".into()),
+        },
+        "e-1",
+    );
+    h.feed_output(b"\x1b]133;D;0\x07").await;
+
+    let all = m
+        .read_blocks(&Actor::Human, "s-p1blk".into(), 500)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 3, "limit 500 → 上限截断为 200 但只有 3 块");
+    assert_eq!(all[0].command, "echo one");
+    assert_eq!(all[0].exit_code, Some(0));
+    assert_eq!(all[0].source, "human");
+    assert_eq!(all[0].exec_id, None);
+    assert_eq!(all[1].source, "agent:cc");
+    assert_eq!(all[1].exit_code, Some(2));
+    assert_eq!(all[2].command, "docker ps");
+    assert_eq!(all[2].source, "replay:cc");
+    assert_eq!(all[2].exec_id.as_deref(), Some("e-1"));
+
+    // last N：取最新
+    let two = m
+        .read_blocks(&Actor::Human, "s-p1blk".into(), 2)
+        .await
+        .unwrap();
+    assert_eq!(two.len(), 2);
+    assert_eq!(two[0].command, "ls", "旧→新序");
+    // limit 0 收敛为 1（防误传）
+    let one = m
+        .read_blocks(&Actor::Human, "s-p1blk".into(), 0)
+        .await
+        .unwrap();
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].command, "docker ps");
+
+    // 未知会话如实 NotFound；Agent 与人类同权只读
+    let agent = Actor::Agent {
+        client_id: "cc".into(),
+    };
+    assert!(matches!(
+        m.read_blocks(&agent, "s-missing".into(), 10).await,
+        Err(Error::SessionNotFound)
+    ));
+    let cap = m.read_blocks(&agent, "s-p1blk".into(), 3).await.unwrap();
+    assert_eq!(cap.len(), 3);
+}

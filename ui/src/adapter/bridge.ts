@@ -1,5 +1,5 @@
 // R10 Tauri/demo 统一桥：App 的一切后端调用必须经本模块。
-// - CmdMap 是命令面的唯一类型登记处（43 命令，与 src-tauri generate_handler 一致）；
+// - CmdMap 是命令面的唯一类型登记处（44 命令，与 src-tauri generate_handler 一致）；
 //   App 调用点的命令名/实参/返回值由 TS 全量校验，demo 不再经 `as never` 绕过。
 // - demo（浏览器演示后端）实现同一命令名空间；未实现命令在 demo.invoke 内显式报错。
 // - 平台专属 API（clipboard/window/drag-drop/version）不属于 wire，仍在组件层直用。
@@ -102,6 +102,8 @@ interface CmdArgs {
   collab_enable: undefined;
   session_brief: { sid: string };
   set_session_goal: { sid: string; goal: string | null };
+  // P1-b（FR-10 V2）：命令块查询（最近 N 条旧→新；面板与交接引用块数据面）
+  read_blocks: { sid: string; limit?: number };
   list_approvals: { pendingOnly: boolean };
   decide_approval: { id: string; decision: "approve" | "deny" | "edit"; edited?: string | null };
   // 「批准并记住」（审批减摩擦①）：ttlMinutes（精确记忆）或 pattern（持久放行）二选一
@@ -203,6 +205,7 @@ interface CmdRet {
   collab_enable: wire.CollabStatus;
   session_brief: wire.SessionBrief;
   set_session_goal: void;
+  read_blocks: wire.BlockInfo[];
   list_approvals: wire.ApprovalItem[];
   decide_approval: void;
   remember_approval: string[];

@@ -24,7 +24,7 @@ import type {
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
-  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit,
+  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import {
@@ -80,6 +80,7 @@ import { SshConfigImportPanel } from "./components/ssh-import";
 import { SettingsPanel } from "./components/settings-panel";
 import { ConfirmDialogs } from "./components/confirm-dialogs";
 import { ActivityLogPanel } from "./components/activity-log-panel";
+import { BlocksPanel } from "./components/blocks-panel";
 import { Welcome } from "./components/welcome";
 import { CtxMenus } from "./components/ctx-menus";
 import { CollabApprovals, CollabDelegate } from "./components/collab-panel";
@@ -337,7 +338,7 @@ export default function App() {
   const bellNotifyRef = useRef(false);
   const [bellSids, setBellSids] = useState<Set<string>>(new Set());
   const lastBellNotifRef = useRef<Map<string, number>>(new Map());
-  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean } | null>(null);
+  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun" } | null>(null);
   // P0 终端品质轮：粘贴危险形态的**廉价预筛**——命中词根才过 Rust 扫描（判定唯一在
   // Rust：approval::scan_dangerous 的同一张内置 deny 表 + tree-sitter 逐段 + wrapper
   // 前缀；这里只决定「要不要问」，不做第二份规则）。漏筛=少一次提示，误筛=多一次 IPC。
@@ -366,6 +367,7 @@ export default function App() {
           text: t,
           risk,
           multi,
+          kind: "paste",
         });
       } else {
         term.paste(t);
@@ -600,7 +602,7 @@ export default function App() {
   const hostDebounceRef = useRef(0);
   useEffect(() => () => { if (hostDebounceRef.current) window.clearTimeout(hostDebounceRef.current); }, []);
   // 右侧任务面板：一次只呈现文件 / 协作 / 转发 / 活动记录之一（§4.3/§6.6），缺省关闭
-  const [rightPanel, setRightPanel] = useState<null | "files" | "collab" | "forwards" | "log">(null);
+  const [rightPanel, setRightPanel] = useState<null | "files" | "collab" | "forwards" | "log" | "blocks">(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [winW, setWinW] = useState(() => window.innerWidth);
@@ -788,6 +790,84 @@ export default function App() {
     void loadLog(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rightPanel, logScope, logActor, logAction, sid]);
+
+  // ---- P1-b：命令块面板（FR-10 V2）。数据=read_blocks 最近 50 条（旧→新），
+  // 打开/切会话取一次 + 5s 轮询 + 手动刷新；重跑走粘贴安全链（下方 rerunCommand）。 ----
+  const [blocksList, setBlocksList] = useState<BlockInfo[]>([]);
+  const [blocksBusy, setBlocksBusy] = useState(false);
+  const [blocksErr, setBlocksErr] = useState<string | null>(null);
+  const loadBlocks = useCallback(async () => {
+    const s = sidRef.current;
+    if (!s) { setBlocksList([]); setBlocksErr(null); return; }
+    setBlocksBusy(true);
+    try {
+      const rows = await invoke("read_blocks", { sid: s, limit: 50 });
+      setBlocksList(rows ?? []);
+      setBlocksErr(null);
+    } catch (e) {
+      setBlocksErr(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setBlocksBusy(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (rightPanel !== "blocks") return;
+    void loadBlocks();
+    const t = setInterval(() => void loadBlocks(), 5000);
+    return () => clearInterval(t);
+  }, [rightPanel, sid, loadBlocks]);
+  // 最近失败块（blocks 数组内下标；exit 已知且非 0）——「跳到最近失败」的高亮与跳转目标
+  const blocksFailIdx = blocksList.reduce(
+    (acc, b, i) => (b.exit_code !== null && b.exit_code !== 0 ? i : acc), -1);
+  // 块重跑：与粘贴同一条安全链（危险形态 Rust 扫描 + 多行确认），确认后 send_keys
+  // 命令+\r——经核心 register_outgoing，块归因人类（不借 term.paste：bracketed paste
+  // 会把 \r 包进粘贴体，bash 只插入不执行，等于没跑）。
+  const rerunCommand = useCallback((sessionSid: string, t: string) => {
+    if (!t) return;
+    const pst = sessionsRef.current.find((x) => x.id === sessionSid)?.state;
+    if (pst && inputBlockedState(pst)) {
+      pushToast("err", pst === "Disconnected" ? "会话已断开——重跑未发送" : "网络中断（自动重连中）——重跑未发送");
+      return;
+    }
+    const multi = pasteGuardRef.current && /[\n\r]/.test(t);
+    const deliver = (risk: PasteHit[]) => {
+      if (multi || risk.length) {
+        const h = sessionsRef.current.find((x) => x.id === sessionSid);
+        setPasteConfirm({
+          sid: sessionSid,
+          hostName: h?.host_name ?? sessionSid.slice(0, 8),
+          text: t,
+          risk,
+          multi,
+          kind: "rerun",
+        });
+      } else {
+        void invoke("send_keys", { sid: sessionSid, keys: t + "\r" })
+          .catch(() => pushToast("err", "重跑发送失败"));
+      }
+    };
+    if (pasteGuardRef.current && PASTE_DANGER_PREFILTER.test(t)) {
+      invoke("scan_paste_danger", { text: t })
+        .then((hits) => deliver(hits ?? []))
+        .catch(() => deliver([]));
+    } else {
+      deliver([]);
+    }
+  }, [pushToast]);
+  const copyBlock = useCallback((t: string) => {
+    try {
+      const p = inTauri ? clipboard.writeText(t) : navigator.clipboard?.writeText(t);
+      void Promise.resolve(p).catch(() => {});
+    } catch { /* 演示环境无剪贴板：静默 */ }
+    pushToast("ok", "已复制命令");
+  }, [pushToast]);
+  // 块定位：search addon 文本搜索（best-effort）——FR-10 明示行号跨实现不对齐，
+  // 不承诺精确滚动；同名命令命中搜索方向上最近一处（光标在底部=最近一次出现）。
+  const locateBlock = useCallback((targetSid: string, t: string) => {
+    const addon = termsRef.current.get(targetSid)?.search;
+    if (!addon) { pushToast("info", "终端未挂载——接入会话后再定位"); return; }
+    addon.findPrevious(t, SEARCH_OPTS);
+  }, [pushToast]);
 
   // R41（§6.6/S11）设置 → 凭据：新建走**显式提交**（生成 / 粘贴私钥），与连接表单同后端。
   // 列表刷新复用既有 refreshIdentities（R21：面板打开与删除后共用）。
@@ -2040,7 +2120,7 @@ export default function App() {
   // 窄窗完整视图断点（§4.2）：可用宽度 < 主机栏 + 560 + 面板宽 → 面板改中央完整视图。
   // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
-  const panelNeed = rightPanel === "collab" || rightPanel === "forwards" || rightPanel === "log" ? 400 : 384;
+  const panelNeed = rightPanel === "collab" || rightPanel === "forwards" || rightPanel === "log" || rightPanel === "blocks" ? 400 : 384;
   const availW = winW - (hostbarOpen ? hostbarWidth : 0);
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
@@ -3418,7 +3498,7 @@ export default function App() {
   // 面板开合/浏览路径经 ref 读取（探针实证 300ms 窗内 hook 重注册竞态——闭包捕获
   // 旧 rightPanel 会借到已关闭面板的路径，违 §354）——同源判别用 ref 不用闭包
   const taskPanelRef = useRef<HTMLElement | null>(null);
-  const rightPanelRef = useRef<null | "files" | "collab" | "forwards" | "log">(null);
+  const rightPanelRef = useRef<null | "files" | "collab" | "forwards" | "log" | "blocks">(null);
   useEffect(() => { rightPanelRef.current = rightPanel; }, [rightPanel]);
   const beginDropUploads = useCallback((paths: string[], pos?: { x: number; y: number }) => {
     if (!paths.length) return;
@@ -4078,6 +4158,12 @@ export default function App() {
         title: rightPanel === "forwards" ? "关闭端口转发面板" : "打开端口转发面板",
         keywords: "隧道 tunnel",
         run: () => setRightPanel(rightPanel === "forwards" ? null : "forwards"),
+      });
+      items.push({
+        id: "panel-blocks", group: "当前会话",
+        title: rightPanel === "blocks" ? "关闭命令块面板" : "打开命令块面板",
+        keywords: "命令 块 blocks 历史 重跑",
+        run: () => setRightPanel(rightPanel === "blocks" ? null : "blocks"),
       });
       if (hasAgents && owner === "Agent") {
         items.push({
@@ -4826,13 +4912,21 @@ export default function App() {
               <div className="confirm-dialog paste-dialog" ref={pasteConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-paste-title" onClick={(e) => e.stopPropagation()}>
                 <div className="hk-title" id="dlg-paste-title" data-testid="paste-dialog-title">
                   {pasteConfirm.risk.length
-                    ? `⚠ 危险内容粘贴到 ${pasteConfirm.hostName}？`
-                    : `粘贴多行内容到 ${pasteConfirm.hostName}？`}
+                    ? (pasteConfirm.kind === "rerun"
+                      ? `⚠ 危险命令重跑到 ${pasteConfirm.hostName}？`
+                      : `⚠ 危险内容粘贴到 ${pasteConfirm.hostName}？`)
+                    : (pasteConfirm.kind === "rerun"
+                      ? `重跑多行命令到 ${pasteConfirm.hostName}？`
+                      : `粘贴多行内容到 ${pasteConfirm.hostName}？`)}
                 </div>
                 {pasteConfirm.risk.length ? (
-                  <div>粘贴内容命中危险形态（与 Agent 审批同一张内置规则表）——确认后才会发送，取消则不发送任何字节。</div>
+                  <div>{pasteConfirm.kind === "rerun"
+                    ? "重跑命令命中危险形态（与 Agent 审批同一张内置规则表）——确认后重新执行，取消则不发送任何字节。"
+                    : "粘贴内容命中危险形态（与 Agent 审批同一张内置规则表）——确认后才会发送，取消则不发送任何字节。"}</div>
                 ) : (
-                  <div>目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。</div>
+                  <div>{pasteConfirm.kind === "rerun"
+                    ? "命令含多行——重跑会按行依次执行。请确认；取消则不发送任何字节。"
+                    : "目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。"}</div>
                 )}
                 {pasteConfirm.risk.length > 0 && (
                   <ul className="paste-risk" data-testid="paste-risk-list">
@@ -4846,10 +4940,16 @@ export default function App() {
                   : pasteConfirm.text}</pre>
                 <div className="hk-actions">
                   <button className="danger" data-testid="paste-send" onClick={() => {
-                    termsRef.current.get(pasteConfirm.sid)?.term.paste(pasteConfirm.text);
+                    if (pasteConfirm.kind === "rerun") {
+                      void invoke("send_keys", { sid: pasteConfirm.sid, keys: pasteConfirm.text + "\r" }).catch(() => {});
+                    } else {
+                      termsRef.current.get(pasteConfirm.sid)?.term.paste(pasteConfirm.text);
+                    }
                     setPasteConfirm(null);
                     restoreTermFocus();
-                  }}>{pasteConfirm.risk.length ? "仍然发送" : "发送"}</button>
+                  }}>{pasteConfirm.kind === "rerun"
+                    ? (pasteConfirm.risk.length ? "仍然重跑" : "重跑")
+                    : (pasteConfirm.risk.length ? "仍然发送" : "发送")}</button>
                   <button className="ghost" data-autofocus onClick={() => setPasteConfirm(null)}>取消</button>
                 </div>
               </div>
@@ -5011,7 +5111,7 @@ export default function App() {
         {rightPanel && (
           <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label="任务面板" ref={taskPanelRef}>
             <div className="tp-head">
-              <b data-testid="tp-title">{rightPanel === "files" ? "文件" : rightPanel === "forwards" ? "端口转发" : rightPanel === "log" ? "活动记录" : "协作"}</b>
+              <b data-testid="tp-title">{rightPanel === "files" ? "文件" : rightPanel === "forwards" ? "端口转发" : rightPanel === "log" ? "活动记录" : rightPanel === "blocks" ? "命令块" : "协作"}</b>
               {tpFull && <span className="dim" style={{ fontSize: 11 }}>空间不足——完整视图，终端仍在运行</span>}
               {rightPanel === "collab" && pendingCount > 0 && <span className="badge agent">{pendingCount} 待处理</span>}
               <span style={{ flex: 1 }} />
@@ -5157,6 +5257,17 @@ export default function App() {
 
             </>
           )}
+          {rightPanel === "blocks" && (
+            /* P1-b（FR-10 V2）：命令块时间线——BlockIndex 的人类侧呈现；
+               重跑/复制/定位的动作实现都在宿主（粘贴安全链、剪贴板、search addon） */
+            <BlocksPanel
+              sid={sid} blocks={blocksList} busy={blocksBusy} err={blocksErr} failIdx={blocksFailIdx}
+              load={() => void loadBlocks()}
+              rerun={(cmd) => { if (sid) rerunCommand(sid, cmd); }}
+              copy={copyBlock}
+              locate={(cmd) => { if (sid) locateBlock(sid, cmd); }}
+            />
+          )}
           {rightPanel === "log" && (
             <ActivityLogPanel
               logScope={logScope} setLogScope={setLogScope}
@@ -5199,6 +5310,8 @@ export default function App() {
           <span className="mono sb-left">{sbLeft}</span>
           <span style={{ flex: 1 }} />
           <span className="sb-right">
+            <button className={"sb-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="sb-blocks" title="命令块：最近命令时间线（shell 集成 OSC 133）" aria-pressed={rightPanel === "blocks"}
+              onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}>块 <b>{blocksList.length > 0 ? blocksList.length : ""}</b></button>
             <button className="sb-btn" title="端口转发" onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>转发 <b>{forwards.length}</b></button>
             <button className={"sb-btn" + (queueOpen ? " ts-open" : "")} data-testid="sb-transfer" title="传输队列（底部抽屉；后台事件只更新计数不自动展开）" aria-pressed={queueOpen}
               onClick={() => setQueueOpen(!queueOpen)}>传输 <b>{runningTransfers}</b> {queueOpen ? "⌃" : "⌄"}</button>

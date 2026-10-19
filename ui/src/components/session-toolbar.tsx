@@ -21,12 +21,12 @@ export interface SessionToolbarProps {
   searchOpen: boolean;
   splitMenu: boolean;
   splitPanes: SplitPanes | null;
-  rightPanel: null | "files" | "collab" | "forwards" | "log";
+  rightPanel: null | "files" | "collab" | "forwards" | "log" | "blocks";
   toolsOpen: boolean;
   toolsRef: { current: HTMLDivElement | null };
   dispatchRef: { current: (a: AppAction) => boolean };
   setSplitMenu: Dispatch<SetStateAction<boolean>>;
-  setRightPanel: (v: null | "files" | "collab" | "forwards" | "log") => void;
+  setRightPanel: (v: null | "files" | "collab" | "forwards" | "log" | "blocks") => void;
   setToolsOpen: (v: boolean) => void;
   exitSplit: () => void;
   openDelegate: () => void;
@@ -123,6 +123,7 @@ export function SessionToolbar({
             <button role="menuitem" onClick={() => { setRightPanel("forwards"); closeTools(); }}>端口转发</button>
             {/* 十八轮：会话日志开关（工具菜单与标签右键同源同义） */}
             <button role="menuitem" data-testid="tools-session-log" onClick={() => { closeTools(); void toggleSessionLog(current); }}>{current.logging ? "停止记录会话日志" : "记录会话日志"}</button>
+            <button role="menuitem" data-testid="tools-blocks" onClick={() => { setRightPanel("blocks"); closeTools(); }}>命令块</button>
             <button role="menuitem" data-testid="tools-activity" onClick={() => { setRightPanel("log"); closeTools(); }}>活动记录</button>
             <button role="menuitem" className="tm-danger" onClick={() => { closeTools(); requestCloseSession(current); }}>关闭会话…</button>
           </div>

@@ -959,6 +959,27 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         goal: bs ? bs.goal : null,
       };
     }
+    // P1-b（FR-10 V2）：命令块查询。demo 无 BlockIndex——按 sid 给**确定性**合成块
+    //（时间相对 now，含失败/Agent 块，供面板断言与跳转最近失败）；
+    // 真实侧唯一事实源在 term-core BlockIndex（read_blocks 只是只读投影）。
+    case "read_blocks": {
+      const sid = args?.sid as string;
+      if (!demoState.sessions.some((x) => x.id === sid)) throw apiError("session_not_found", "SessionNotFound（演示）");
+      const now = Date.now();
+      const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+      const blk = (command: string, exit_code: number | null, source: string, startMs: number, durMs: number, exec_id: string | null = null) =>
+        ({ command, exit_code, source, start: iso(startMs + durMs), end: iso(startMs), exec_id });
+      const catalog: Record<string, ReturnType<typeof blk>[]> = {
+        "s-demo-0001": [
+          blk("shutdown -h now", 0, "human", 20 * 60e3, 200),
+          blk("df -h", 0, "human", 14 * 60e3, 300),
+          blk("du -sh /var/* | sort -h | tail -20", 0, "agent:claude-code", 11 * 60e3, 2400, "e-demo-1"),
+          blk("systemctl restart nginx", 1, "human", 7 * 60e3, 900),
+          blk("tail -n 50 /var/log/nginx/error.log", 0, "agent:claude-code", 4 * 60e3, 500, "e-demo-2"),
+        ],
+      };
+      return catalog[sid] ?? [];
+    }
     // R9：人类→Agent 委托入口。镜像真实后端语义——trim 后空串归一为 null（清除）、
     // 仅人类可设、goal_set 审计留痕（command 位记目标文本，payload 记 cleared）。
     case "set_session_goal": {

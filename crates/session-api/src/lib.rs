@@ -188,6 +188,22 @@ pub struct SessionBrief {
     pub goal: Option<String>,
 }
 
+/// FR-10 V2（P1-b 命令块轮）：命令块查询行——term-core BlockIndex 的只读投影。
+/// 人类与 Agent 同权（与简报同口径）；输出区间不在此暴露（grid 绝对行号仅供
+/// 索引展示，跨实现不保证与前端缓冲区对齐——前端定位走文本搜索）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockInfo {
+    pub command: String,
+    pub start: Option<DateTime<Utc>>,
+    pub end: Option<DateTime<Utc>>,
+    /// OSC 133 D 提供的退出码；断线强制收尾/未完成块为 None（如实未知）。
+    pub exit_code: Option<i32>,
+    /// `BlockSource::describe()`：human / agent:<client> / replay[:<client>]。
+    pub source: String,
+    /// Shell 模式 exec 关联的执行记录 id；人类键入块为 None。
+    pub exec_id: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // 审批队列类型（读取路径契约）
 // ---------------------------------------------------------------------------
@@ -1902,6 +1918,11 @@ pub trait SessionApi: Send + Sync {
 
     // ---- 现场简报（v1；交接核心工件，PRD FR-3/FR-6）----
     async fn get_session_brief(&self, ctx: &Actor, sid: SessionId) -> Result<SessionBrief>;
+
+    /// FR-10 V2（P1-b）：命令块查询——最近 `limit` 条（1..=200 截断），旧→新序。
+    /// 人类与 Agent 同权只读（与简报同口径，交接引用块的数据面）；不产生副作用、
+    /// 不进审计。数据唯一事实源在 term-core BlockIndex，这里只是投影。
+    async fn read_blocks(&self, ctx: &Actor, sid: SessionId, limit: u32) -> Result<Vec<BlockInfo>>;
 
     /// 设定会话任务目标/交接留言（R9：人类→Agent 委托入口；None=清除，仅人类）。
     /// Agent 经 get_session_brief 的 goal 字段读取；设定/清除全程审计留痕。

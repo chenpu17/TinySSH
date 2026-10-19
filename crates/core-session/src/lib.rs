@@ -3466,6 +3466,31 @@ impl SessionApi for SessionManager {
         Ok(brief::compute(&h).await)
     }
 
+    // ---- 命令块（FR-10 V2 / P1-b：块面板与交接引用块的数据面）----
+    async fn read_blocks(
+        &self,
+        _ctx: &Actor,
+        sid: SessionId,
+        limit: u32,
+    ) -> Result<Vec<BlockInfo>> {
+        let h = self.get(&sid)?;
+        let s = h.screen.lock().await;
+        // 上限截断：面板/交接用不到更多；200 条天花板防误传大值拖序列化
+        let n = limit.clamp(1, 200) as usize;
+        Ok(s.blocks
+            .last_blocks(n)
+            .into_iter()
+            .map(|b| BlockInfo {
+                command: b.command.clone(),
+                start: b.start,
+                end: b.end,
+                exit_code: b.exit_code,
+                source: b.source.describe(),
+                exec_id: b.exec_id.clone(),
+            })
+            .collect())
+    }
+
     // ---- 任务目标/交接留言（R9：人类→Agent 委托入口）----
     async fn set_session_goal(
         &self,

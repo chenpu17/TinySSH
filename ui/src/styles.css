@@ -2061,3 +2061,29 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 .palette-item.palette-danger { color: var(--danger, #e5534b); }
 .palette-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-hint { flex: none; font-size: 11px; color: var(--dim); }
+
+/* ---- P1-b（FR-10 V2）：命令块面板 ---- */
+.block-row { display: flex; flex-direction: column; gap: 3px; }
+.block-row .tl-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.blk-src {
+  flex: none; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+.blk-src.human { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.blk-src.agent { background: color-mix(in srgb, var(--accent-fill) 16%, transparent); color: var(--accent-fill); }
+.blk-src.replay { background: color-mix(in srgb, var(--text-sub) 14%, transparent); color: var(--text-sub); }
+.blk-exit { font-size: 11px; }
+.blk-exit.ok { color: var(--ok, #4ea44e); }
+.blk-exit.err { color: var(--danger, #e5534b); font-weight: 600; }
+.blk-exit.unknown { color: var(--text-sub); }
+.blk-cmd {
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%;
+}
+.blk-acts { display: flex; gap: 6px; }
+.blk-acts .ghost { font-size: 11px; padding: 2px 8px; }
+.block-row.blk-fail {
+  outline: 1px solid color-mix(in srgb, var(--danger, #e5534b) 55%, transparent);
+  outline-offset: -1px;
+  border-radius: 8px;
+}

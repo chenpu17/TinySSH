@@ -240,6 +240,18 @@ export interface SessionBrief {
   goal: string | null;
 }
 
+/** FR-10 V2（P1-b）：命令块查询行（read_blocks，最近 N 条旧→新）。
+ *  source 为 BlockSource::describe()：human / agent:<client> / replay[:<client>]；
+ *  exit_code null=断线强制收尾/未完成（如实未知）。 */
+export interface BlockInfo {
+  command: string;
+  start: string | null;
+  end: string | null;
+  exit_code: number | null;
+  source: string;
+  exec_id: string | null;
+}
+
 export interface TakeoverReport {
   frozen: boolean;
   paused_queue: ExecId[];
