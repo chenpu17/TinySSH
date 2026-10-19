@@ -16,7 +16,7 @@ import {
   registerZoomHotkeys, onZoomChange, currentZoom,
   zoomIn, zoomOut, zoomReset,
 } from "./zoom";
-import { createOutputFeed } from "./terminal/checkpoint";
+import { createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import type {
   Host, HostDraft, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
@@ -24,7 +24,7 @@ import type {
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
-  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange,
+  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import {
@@ -49,6 +49,8 @@ import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { Terminal } from "@xterm/xterm";
 import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -62,11 +64,14 @@ import {
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, hhmm, inputBlockedState,
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
   runBench, SEARCH_OPTS, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_PALETTE,
+  SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
+  SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK,
   stateLabel, stampLocal, stopOutcomeText,
   SPLIT_DEGRADE_BELOW, SPLIT_DEGRADE_BELOW_H, SPLIT_FRAC_MAX, SPLIT_FRAC_MIN,
   SPLIT_RECOVER_AT, SPLIT_RECOVER_AT_H, tauriListen, THEMES, ThemePreset,
   TransferCard, themeById, TZ_NOTE, useDialogFocus,
-  type Appearance, type SettingsCat, type SplitDir, type SplitPanes,
+  TERM_FONT_DEFAULT, TERM_FONTS, termFontCss, TERM_LETTER_SPACING_DEFAULT, TERM_SCROLLBACK_DEFAULT,
+  type Appearance, type SettingsCat, type SplitDir, type SplitPanes, type TermCursorStyle,
 } from "./app-data";
 import { WinControls } from "./components/window-controls";
 import { QuickConnectForm } from "./components/quick-connect";
@@ -106,7 +111,8 @@ export default function App() {
   const sidRef = useRef<string | null>(null);          // onData 闭包用 ref，避免 stale state
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
   // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
-  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement; feed: OutputFeed | null }>>(new Map());
+  // （P0 终端品质轮：webgl/liga 记住当前渲染器句柄——连字开关要在两者间热切换）
+  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement; feed: OutputFeed | null; webgl: WebglAddon | null; liga: LigaturesAddon | null }>>(new Map());
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const sessionsRef = useRef<SessionInfo[]>([]);
@@ -331,9 +337,15 @@ export default function App() {
   const bellNotifyRef = useRef(false);
   const [bellSids, setBellSids] = useState<Set<string>>(new Set());
   const lastBellNotifRef = useRef<Map<string, number>>(new Map());
-  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string } | null>(null);
+  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean } | null>(null);
+  // P0 终端品质轮：粘贴危险形态的**廉价预筛**——命中词根才过 Rust 扫描（判定唯一在
+  // Rust：approval::scan_dangerous 的同一张内置 deny 表 + tree-sitter 逐段 + wrapper
+  // 前缀；这里只决定「要不要问」，不做第二份规则）。漏筛=少一次提示，误筛=多一次 IPC。
+  const PASTE_DANGER_PREFILTER = /\b(?:rm|dd|mkfs|wipefs|blkdiscard|shred|fdisk|cfdisk|sfdisk|sgdisk|parted|shutdown|reboot|halt|poweroff|chmod|systemctl|sudo|doas|nohup)\b|:\(\)/;
   // 十一轮续：粘贴入口统一（⌘V 与终端右键共用）——bracketed paste 语义由 xterm 按远端
-  // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发
+  // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发。
+  // P0 轮：命中内置危险形态（Rust 判定）同样先确认再发——即便远端开着 bracketed paste，
+  // 贴进来的 `sudo rm -rf /` 也值得多看一眼（信任模型：人类自己也不盲贴）。
   const pasteTextInto = (term: Terminal, sessionSid: string, t: string) => {
     if (!t) return;
     // rev-r26 低-5：断线/重连期粘贴与键入同口径拦截（确认框照弹会误导——
@@ -344,11 +356,27 @@ export default function App() {
       term.write(`\r\n\x1b[33m⚠ ${why}——粘贴未发送。\x1b[0m\r\n`);
       return;
     }
-    if (pasteGuardRef.current && /[\n\r]/.test(t) && !term.modes.bracketedPasteMode) {
-      const h = sessionsRef.current.find((x) => x.id === sessionSid);
-      setPasteConfirm({ sid: sessionSid, hostName: h?.host_name ?? sessionSid.slice(0, 8), text: t });
+    const multi = pasteGuardRef.current && /[\n\r]/.test(t) && !term.modes.bracketedPasteMode;
+    const deliver = (risk: PasteHit[]) => {
+      if (multi || risk.length) {
+        const h = sessionsRef.current.find((x) => x.id === sessionSid);
+        setPasteConfirm({
+          sid: sessionSid,
+          hostName: h?.host_name ?? sessionSid.slice(0, 8),
+          text: t,
+          risk,
+          multi,
+        });
+      } else {
+        term.paste(t);
+      }
+    };
+    if (pasteGuardRef.current && PASTE_DANGER_PREFILTER.test(t)) {
+      invoke("scan_paste_danger", { text: t })
+        .then((hits) => deliver(hits ?? []))
+        .catch(() => deliver([])); // 扫描失败不阻断人类操作：退回多行确认口径
     } else {
-      term.paste(t);
+      deliver([]);
     }
   };
   const pasteTextIntoRef = useRef(pasteTextInto);
@@ -1069,14 +1097,18 @@ export default function App() {
     // WebLinksAddon（registerLinkProvider）与 linkHandler（OSC 8 激活）均为 proposed API
     const term = new Terminal({
       // 字号/主题（路线图⑥）走 refs：makeTerm 早于偏好载入，载入后由 changeFontSize/
-      // applyDerivedTerminal 对已有实例统一改 options 补齐（二十二轮起主题=派生缓存）
-      fontSize: fontRef.current, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
+      // applyDerivedTerminal 对已有实例统一改 options 补齐（二十二轮起主题=派生缓存）。
+      // P0 终端品质轮：外观五项（字体族/光标样式/闪烁/滚屏行数/字距）同走 refs，
+      // 载入后由 applyTermPrefs 补齐存量实例。
+      fontSize: fontRef.current, cursorBlink: termCursorBlinkRef.current,
+      cursorStyle: termCursorStyleRef.current, scrollback: termScrollbackRef.current,
+      letterSpacing: termLetterSpacingRef.current, allowProposedApi: true,
       // UX 二轮精修：xterm 默认字体是 courier-new（Windows 上观感老旧）；行高 1.15 给
       // 行间喘息感；滚轮 100ms 平滑滚动 + Alt 快滚；跨格字形重缩放防框线/符号断裂。
       // UX 六轮：首位内置全量 JetBrains Mono（"JetBrains Mono Term"，styles.css @font-face，
       // 1182 字形含框线/箭头/powerline）——全平台同一等宽字形，框线不再逐格回退系统字体；
-      // SF Mono/Cascadia 仅作加载失败兜底
-      fontFamily: '"JetBrains Mono Term", "SF Mono", "Cascadia Mono", Menlo, Consolas, "Courier New", monospace',
+      // SF Mono/Cascadia 仅作加载失败兜底。P0 轮起字体族可由用户选（含 Nerd Font 等）。
+      fontFamily: termFontFamilyRef.current,
       lineHeight: 1.15,
       smoothScrollDuration: 100,
       fastScrollModifier: "alt", fastScrollSensitivity: 5,
@@ -1092,14 +1124,28 @@ export default function App() {
       },
     });
     term.open(el);
-    // 渲染性能（UX 八轮）：WebGL 合成优先——高吞吐输出（构建日志/大 cat）下 DOM
-    // 渲染器是首要 CPU 瓶颈；初始化失败（无 GPU/远程桌面）或运行中上下文丢失时
-    // 释放 addon 自动回落 DOM 渲染器，主题热更（options.theme）与搜索装饰不受影响
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => { try { webgl.dispose(); } catch { /* 已释放 */ } });
-      term.loadAddon(webgl);
-    } catch { /* DOM 渲染器兜底 */ }
+    // 扩展字符宽度（P0 终端品质轮）：CJK/emoji 宽度按 Unicode 11 表判定——xterm 内置
+    // 表基于 Unicode 6，中文/emoji 混排会串格（宽字符占 1 列、ZWJ 序列拆散）。新版表
+    // 严格更好，不设开关，恒开。
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = "11";
+    // 渲染器（P0 轮起二选一）：连字依赖 character joiner，仅 DOM 渲染器实现，与 WebGL
+    // 合成互斥——连字开则不上 WebGL，关则维持 UX 八轮的 WebGL 优先：高吞吐输出（构建
+    // 日志/大 cat）下 DOM 渲染器是首要 CPU 瓶颈；初始化失败（无 GPU/远程桌面）或运行中
+    // 上下文丢失时释放 addon 自动回落 DOM 渲染器，主题热更与搜索装饰不受影响
+    let webgl: WebglAddon | null = null;
+    let liga: LigaturesAddon | null = null;
+    if (termLigaRef.current) {
+      liga = new LigaturesAddon();
+      term.loadAddon(liga);
+    } else {
+      try {
+        const w = new WebglAddon();
+        w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
+        term.loadAddon(w);
+        webgl = w;
+      } catch { webgl = null; /* DOM 渲染器兜底 */ }
+    }
     // 会话层底色跟随当前派生主题：padding 留白框与画布同色，不渗 chrome 面板色
     el.style.background = derivedThemeRef.current.bg;
     // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
@@ -1147,9 +1193,12 @@ export default function App() {
     // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
     // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）
     if (import.meta.env.DEV) {
-      const w = window as unknown as { __t_terms?: Map<string, Terminal> };
+      const w = window as unknown as { __t_terms?: Map<string, Terminal>; __t_liga?: Set<string> };
       w.__t_terms ??= new Map();
       w.__t_terms.set(sessionSid, term);
+      // P0 轮：连字生效集合（character joiner 不进 options，无公开可读面——spec 断言用）
+      w.__t_liga ??= new Set();
+      if (liga) w.__t_liga.add(sessionSid); else w.__t_liga.delete(sessionSid);
     }
     // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
     // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
@@ -1225,7 +1274,7 @@ export default function App() {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
     });
-    return { term, el, search: searchAddon, tag, feed: null as OutputFeed | null };
+    return { term, el, search: searchAddon, tag, feed: null as OutputFeed | null, webgl, liga };
   }, []);
 
   // 终端区域（含内容下方空白）点击即聚焦当前会话终端。
@@ -1432,6 +1481,20 @@ export default function App() {
     return un;
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
+  // —— P0 终端品质轮：外观五项 + 连字（vault settings KV，demo 退 localStorage，与字号同工艺）——
+  // 状态供设置面板回显；ref 供 makeTerm 闭包与即时应用函数读取（避开 stale closure）
+  const [termFont, setTermFont] = useState(TERM_FONT_DEFAULT);
+  const termFontFamilyRef = useRef(termFontCss(TERM_FONT_DEFAULT));
+  const [termLiga, setTermLiga] = useState(false);
+  const termLigaRef = useRef(false);
+  const [termCursorStyle, setTermCursorStyle] = useState<TermCursorStyle>("block");
+  const termCursorStyleRef = useRef<TermCursorStyle>("block");
+  const [termCursorBlink, setTermCursorBlink] = useState(true);
+  const termCursorBlinkRef = useRef(true);
+  const [termScrollback, setTermScrollback] = useState(TERM_SCROLLBACK_DEFAULT);
+  const termScrollbackRef = useRef(TERM_SCROLLBACK_DEFAULT);
+  const [termLetterSpacing, setTermLetterSpacing] = useState(TERM_LETTER_SPACING_DEFAULT);
+  const termLetterSpacingRef = useRef(TERM_LETTER_SPACING_DEFAULT);
   // 二十二轮主题统一：终端配色恒由「色板×深浅」派生（无独立预设、无联动开关）。
   // derivedThemeRef 缓存最近一次派生结果，makeTerm 建实例时直接取用（早于启动
   // 派生到达时是深色基础派生值，启动尾部统一刷新一次）
@@ -1502,6 +1565,92 @@ export default function App() {
     // PTY 不跟随（走查实证 stty 恒 80 列）。延迟校准与 attachSession 的二次校准同理。
     setTimeout(() => void fitTerminal(), 150);
   }, [persistSetting, fitTerminal]);
+
+  // P0 终端品质轮：外观五项即时应用到全部实例（新实例由 makeTerm 读 refs 继承）
+  const applyTermPrefs = useCallback(() => {
+    // 检查点重放的光标形状/闪烁同步取这里（避免 attach 把偏好冲回默认）
+    setCursorDefault(termCursorStyleRef.current, termCursorBlinkRef.current);
+    for (const [, e] of termsRef.current) {
+      e.term.options.fontFamily = termFontFamilyRef.current;
+      e.term.options.cursorStyle = termCursorStyleRef.current;
+      e.term.options.cursorBlink = termCursorBlinkRef.current;
+      e.term.options.scrollback = termScrollbackRef.current;
+      e.term.options.letterSpacing = termLetterSpacingRef.current;
+    }
+  }, []);
+  // 影响 cell 度量的改动（字体族/字距）后重排 + 重算 PTY——与改字号同工艺：
+  // 立即 fit 拿的是旧 cell 尺寸，150ms 后补一次（渲染器下一帧才反映新度量）
+  const refitAfterMetrics = useCallback(() => {
+    void fitTerminal();
+    setTimeout(() => void fitTerminal(), 150);
+  }, [fitTerminal]);
+  const changeTermFont = useCallback((id: string) => {
+    setTermFont(id);
+    termFontFamilyRef.current = termFontCss(id);
+    applyTermPrefs();
+    refitAfterMetrics();
+    persistSetting(SETTING_TERM_FONT_FAMILY, id);
+  }, [applyTermPrefs, refitAfterMetrics, persistSetting]);
+  const changeTermCursorStyle = useCallback((s: TermCursorStyle) => {
+    setTermCursorStyle(s);
+    termCursorStyleRef.current = s;
+    applyTermPrefs();
+    persistSetting(SETTING_TERM_CURSOR_STYLE, s);
+  }, [applyTermPrefs, persistSetting]);
+  const changeTermCursorBlink = useCallback((on: boolean) => {
+    setTermCursorBlink(on);
+    termCursorBlinkRef.current = on;
+    applyTermPrefs();
+    persistSetting(SETTING_TERM_CURSOR_BLINK, on ? "1" : "0");
+  }, [applyTermPrefs, persistSetting]);
+  const changeTermScrollback = useCallback((n: number) => {
+    setTermScrollback(n);
+    termScrollbackRef.current = n;
+    applyTermPrefs();
+    persistSetting(SETTING_TERM_SCROLLBACK, String(n));
+  }, [applyTermPrefs, persistSetting]);
+  const changeTermLetterSpacing = useCallback((n: number) => {
+    setTermLetterSpacing(n);
+    termLetterSpacingRef.current = n;
+    applyTermPrefs();
+    refitAfterMetrics();
+    persistSetting(SETTING_TERM_LETTER_SPACING, String(n));
+  }, [applyTermPrefs, refitAfterMetrics, persistSetting]);
+  // 连字开关（P0 轮）：真开/真关渲染器——开 = 释放 WebGL 换 DOM 渲染器（character
+  // joiner 仅 DOM 实现）再载 LigaturesAddon；关 = 卸 addon、重挂 WebGL（失败回落 DOM）。
+  // 逐实例热切换，不重建缓冲（滚动历史与在跑程序原地保留）；新建实例由 makeTerm 继承。
+  const applyLigatures = useCallback((on: boolean) => {
+    for (const [key, e] of termsRef.current) {
+      if (on) {
+        if (e.webgl) { try { e.webgl.dispose(); } catch { /* 已释放 */ } e.webgl = null; }
+        if (!e.liga) {
+          const l = new LigaturesAddon();
+          try { e.term.loadAddon(l); e.liga = l; } catch { /* 载入失败：维持无连字 */ }
+        }
+      } else {
+        if (e.liga) { try { e.liga.dispose(); } catch { /* 已释放 */ } e.liga = null; }
+        if (!e.webgl) {
+          try {
+            const w = new WebglAddon();
+            w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
+            e.term.loadAddon(w);
+            e.webgl = w;
+          } catch { /* DOM 渲染器兜底 */ }
+        }
+      }
+      if (import.meta.env.DEV) {
+        const probe = window as unknown as { __t_liga?: Set<string> };
+        probe.__t_liga ??= new Set();
+        if (e.liga) probe.__t_liga.add(key); else probe.__t_liga.delete(key);
+      }
+    }
+  }, []);
+  const changeTermLigatures = useCallback((on: boolean) => {
+    setTermLiga(on);
+    termLigaRef.current = on;
+    applyLigatures(on);
+    persistSetting(SETTING_TERM_LIGATURES, on ? "1" : "0");
+  }, [applyLigatures, persistSetting]);
 
   // 二十二轮主题统一：色板联动终端的派生——终端底/前景/光标/选区取**当下生效的
   // chrome token**（data-theme×data-chrome 计算值，随色板与外观即时变化）；经
@@ -1625,6 +1774,45 @@ export default function App() {
         applyPalette(v);
       }
     };
+    // P0 终端品质轮：外观五项 + 连字的取值（get 缺省 null；坏值逐键回落默认——
+    // 键名/合法域见 app-data 的 SETTING_TERM_*/TERM_*）。载入后统一补齐存量实例
+    // （首屏可能在偏好落定前就建了终端），连字开则逐实例切渲染器。
+    const applyTermQuality = (get: (k: string) => string | null) => {
+      const fid = get(SETTING_TERM_FONT_FAMILY);
+      if (fid && TERM_FONTS.some((f) => f.id === fid)) {
+        termFontFamilyRef.current = termFontCss(fid);
+        setTermFont(fid);
+      }
+      const cs = get(SETTING_TERM_CURSOR_STYLE);
+      if (cs === "block" || cs === "bar" || cs === "underline") {
+        termCursorStyleRef.current = cs;
+        setTermCursorStyle(cs);
+      }
+      const cb = get(SETTING_TERM_CURSOR_BLINK);
+      if (cb !== null) {
+        const on = cb !== "0";
+        termCursorBlinkRef.current = on;
+        setTermCursorBlink(on);
+      }
+      const sb = Number(get(SETTING_TERM_SCROLLBACK));
+      if (Number.isFinite(sb) && sb >= 1000 && sb <= 1_000_000) {
+        termScrollbackRef.current = sb;
+        setTermScrollback(sb);
+      }
+      const ls = Number(get(SETTING_TERM_LETTER_SPACING));
+      if (Number.isFinite(ls) && ls >= 0 && ls <= 4) {
+        termLetterSpacingRef.current = ls;
+        setTermLetterSpacing(ls);
+      }
+      const lg = get(SETTING_TERM_LIGATURES);
+      if (lg !== null) {
+        const on = lg === "1";
+        termLigaRef.current = on;
+        setTermLiga(on);
+      }
+      applyTermPrefs();
+      if (termLigaRef.current) applyLigatures(true);
+    };
     if (!inTauri) {
       const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
       applyFont(Number.isFinite(raw) && raw > 0 ? raw : null);
@@ -1637,6 +1825,8 @@ export default function App() {
       // ⑦ 记录保留期：demo 同走 localStorage（坏值回落 30 天）
       const rr = Number(localStorage.getItem("collab.records.retention_days") ?? "30");
       setRecordsRetention(Number.isFinite(rr) && rr >= 0 ? rr : 30);
+      // P0 终端品质：同源 localStorage（persistSetting 的 demo 分支写入）
+      applyTermQuality((k) => { try { return localStorage.getItem(k); } catch { return null; } });
       invoke("get_workspace")
         .then(applyChromeBlob)
         .catch(() => {})
@@ -1652,6 +1842,21 @@ export default function App() {
       .then((v) => { if (typeof v === "string" && v) applyKeymap(parseKeymap(v)); })
       .catch(() => {});
     const wsP = invoke("get_workspace").then(applyChromeBlob).catch(() => {});
+    // P0 终端品质：六键一次并发回读（任一路失败回落该键默认，不拖累其余）；
+    // 只在存量实例上补齐，不阻塞下面的主题派生
+    void Promise.all(
+      [
+        SETTING_TERM_FONT_FAMILY, SETTING_TERM_LIGATURES, SETTING_TERM_CURSOR_STYLE,
+        SETTING_TERM_CURSOR_BLINK, SETTING_TERM_SCROLLBACK, SETTING_TERM_LETTER_SPACING,
+      ].map((k) =>
+        invoke("get_setting", { key: k })
+          .then((v) => [k, v === null ? null : String(v)] as const)
+          .catch(() => [k, null] as const),
+      ),
+    ).then((pairs) => {
+      const m = new Map(pairs);
+      applyTermQuality((k) => m.get(k) ?? null);
+    });
     // ⑤ 传输免审 opt-in 开关回读（vault 设置，默认关=传输逐条审批）
     invoke("get_setting", { key: "collab.autonomy.transfers" })
       .then((v) => setTransferAutonomy(v === "1"))
@@ -1666,7 +1871,7 @@ export default function App() {
     // 字号/色板/外观三路都落定后派生一次（applyAppearance/loadPalette 内部亦有派生，
     // 这里兜底「全部缺省」的首次启动路径）
     void Promise.all([fontP, paletteP, wsP]).then(() => applyDerivedTerminal());
-  }, [inTauri, changeFontSize, applyAppearance, applyPalette, applyDerivedTerminal, applyKeymap]);
+  }, [inTauri, changeFontSize, applyAppearance, applyPalette, applyDerivedTerminal, applyKeymap, applyTermPrefs, applyLigatures]);
 
   // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
   // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
@@ -4619,17 +4824,32 @@ export default function App() {
             // 兄弟写法下 dialog 仍是 term-wrap 流内静态项且被 mask 盖住，鼠标点不中
             <div className="confirm-mask" onClick={() => setPasteConfirm(null)}>
               <div className="confirm-dialog paste-dialog" ref={pasteConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-paste-title" onClick={(e) => e.stopPropagation()}>
-                <div className="hk-title" id="dlg-paste-title">粘贴多行内容到 {pasteConfirm.hostName}？</div>
-                <div>目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。</div>
+                <div className="hk-title" id="dlg-paste-title" data-testid="paste-dialog-title">
+                  {pasteConfirm.risk.length
+                    ? `⚠ 危险内容粘贴到 ${pasteConfirm.hostName}？`
+                    : `粘贴多行内容到 ${pasteConfirm.hostName}？`}
+                </div>
+                {pasteConfirm.risk.length ? (
+                  <div>粘贴内容命中危险形态（与 Agent 审批同一张内置规则表）——确认后才会发送，取消则不发送任何字节。</div>
+                ) : (
+                  <div>目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。</div>
+                )}
+                {pasteConfirm.risk.length > 0 && (
+                  <ul className="paste-risk" data-testid="paste-risk-list">
+                    {pasteConfirm.risk.map((h, i) => (
+                      <li key={i}><b>{h.reason}</b><span className="mono dim">{h.segment}</span></li>
+                    ))}
+                  </ul>
+                )}
                 <pre className="paste-preview mono">{pasteConfirm.text.length > 2000
                   ? pasteConfirm.text.slice(0, 2000) + `\n……（预览截断，共 ${pasteConfirm.text.length} 字符）`
                   : pasteConfirm.text}</pre>
                 <div className="hk-actions">
-                  <button className="danger" onClick={() => {
+                  <button className="danger" data-testid="paste-send" onClick={() => {
                     termsRef.current.get(pasteConfirm.sid)?.term.paste(pasteConfirm.text);
                     setPasteConfirm(null);
                     restoreTermFocus();
-                  }}>发送</button>
+                  }}>{pasteConfirm.risk.length ? "仍然发送" : "发送"}</button>
                   <button className="ghost" data-autofocus onClick={() => setPasteConfirm(null)}>取消</button>
                 </div>
               </div>
@@ -4712,6 +4932,18 @@ export default function App() {
               changeCopyOnSelect={changeCopyOnSelect}
               bellNotify={bellNotify}
               changeBellNotify={changeBellNotify}
+              termFont={termFont}
+              onChangeTermFont={changeTermFont}
+              termLigatures={termLiga}
+              onChangeTermLigatures={changeTermLigatures}
+              termCursorStyle={termCursorStyle}
+              onChangeTermCursorStyle={changeTermCursorStyle}
+              termCursorBlink={termCursorBlink}
+              onChangeTermCursorBlink={changeTermCursorBlink}
+              termScrollback={termScrollback}
+              onChangeTermScrollback={changeTermScrollback}
+              termLetterSpacing={termLetterSpacing}
+              onChangeTermLetterSpacing={changeTermLetterSpacing}
               identities={identities}
               hosts={hosts}
               referencedIdentityIds={referencedIdentityIds}

@@ -6,7 +6,8 @@ import {
   APPEARANCES, FONT_DEFAULT, FONT_MAX, FONT_MIN, PALETTES, SETTINGS_CATS,
   friendlyError,
   settingsCatIcon, settingsCatLabel,
-  type Appearance, type SettingsCat,
+  TERM_CURSOR_STYLES, TERM_FONTS, TERM_LETTER_SPACINGS, TERM_SCROLLBACKS,
+  type Appearance, type SettingsCat, type TermCursorStyle,
 } from "../app-data";
 import {
   DEFAULT_KEYMAP, KEYMAP_ACTIONS, KEYMAP_SETTING, formatBinding, parseKeymap, sameBinding,
@@ -50,6 +51,19 @@ interface SettingsPanelProps {
   changeCopyOnSelect: (v: boolean) => void;
   bellNotify: boolean;
   changeBellNotify: (v: boolean) => void;
+  // P0 终端品质轮：外观五项 + 连字（状态与即时应用在宿主，本面板只呈现）
+  termFont: string;
+  onChangeTermFont: (id: string) => void;
+  termLigatures: boolean;
+  onChangeTermLigatures: (on: boolean) => void;
+  termCursorStyle: TermCursorStyle;
+  onChangeTermCursorStyle: (s: TermCursorStyle) => void;
+  termCursorBlink: boolean;
+  onChangeTermCursorBlink: (on: boolean) => void;
+  termScrollback: number;
+  onChangeTermScrollback: (n: number) => void;
+  termLetterSpacing: number;
+  onChangeTermLetterSpacing: (n: number) => void;
   // 凭据库（显式提交；草稿状态仍在宿主——切分类守卫与关闭清理都依赖它）
   identities: IdentityMeta[];
   hosts: Host[];
@@ -119,6 +133,9 @@ export function SettingsPanel({
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   keymap, keymapRef, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
+  termFont, onChangeTermFont, termLigatures, onChangeTermLigatures,
+  termCursorStyle, onChangeTermCursorStyle, termCursorBlink, onChangeTermCursorBlink,
+  termScrollback, onChangeTermScrollback, termLetterSpacing, onChangeTermLetterSpacing,
   identities, hosts, referencedIdentityIds,
   credNewOpen, setCredNewOpen, credNewErr, setCredNewErr, credNewOk, setCredNewOk,
   credLabel, setCredLabel, credPem, setCredPem, credPass, setCredPass,
@@ -308,7 +325,7 @@ export function SettingsPanel({
                     <input type="checkbox" checked={pasteGuard} onChange={(e) => changePasteGuard(e.target.checked)} />
                     <span className="set-item-txt">
                       <b>多行粘贴保护</b>
-                      <span className="set-item-desc">内容含换行且远端未开启 bracketed paste 时，先预览确认再发送，防止把本地多行文本误当命令流灌进远端；关闭后立即发送。</span>
+                      <span className="set-item-desc">内容含换行且远端未开启 bracketed paste 时，先预览确认再发送，防止把本地多行文本误当命令流灌进远端；内容命中危险形态（如 rm -rf /、mkfs、dd 覆写块设备——与 Agent 审批同一张内置规则表）时同样先确认。关闭后立即发送。</span>
                     </span>
                   </label>
                   <label className="set-item">
@@ -325,6 +342,69 @@ export function SettingsPanel({
                       <span className="set-item-desc">窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知，每会话 10 秒至多一条；标签闪烁提醒恒开。</span>
                     </span>
                   </label>
+                </div>
+                {/* P0 终端品质轮：外观五项 + 连字——即时应用到全部终端（新实例继承） */}
+                <div className="set-card">
+                  <h4>终端外观</h4>
+                  <div className="set-desc">
+                    作用于全部终端，改动即时生效；字体族/字距改变字符度量，会重排版并按新尺寸校准远端 PTY。
+                  </div>
+                  <div className="set-item">
+                    <span className="set-item-txt">
+                      <b>字体</b>
+                      <span className="set-item-desc">内置 JetBrains Mono 全量字形（框线/箭头/powerline）；其余选项按系统是否安装回落。</span>
+                    </span>
+                    <select className="set-item-ctl" data-testid="term-font-select" aria-label="终端字体"
+                      value={termFont} onChange={(e) => onChangeTermFont(e.target.value)}>
+                      {TERM_FONTS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                    </select>
+                  </div>
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="term-liga-toggle" checked={termLigatures} onChange={(e) => onChangeTermLigatures(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>连字（ligatures）</b>
+                      <span className="set-item-desc">把 =&gt;、!=、&gt;= 等合成连字图形（字体需含连字字形）。开启即改用 DOM 渲染器（关闭 GPU 合成），高吞吐输出时 CPU 占用更高——默认关。</span>
+                    </span>
+                  </label>
+                  <div className="set-item">
+                    <span className="set-item-txt">
+                      <b>光标样式</b>
+                      <span className="set-item-desc">默认光标形状；vim 等程序可在其运行期自行覆盖。</span>
+                    </span>
+                    <select className="set-item-ctl" data-testid="term-cursor-select" aria-label="光标样式"
+                      value={termCursorStyle} onChange={(e) => onChangeTermCursorStyle(e.target.value as TermCursorStyle)}>
+                      {TERM_CURSOR_STYLES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                    </select>
+                  </div>
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="term-cursor-blink-toggle" checked={termCursorBlink} onChange={(e) => onChangeTermCursorBlink(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>光标闪烁</b>
+                      <span className="set-item-desc">关闭后光标恒亮不闪。</span>
+                    </span>
+                  </label>
+                  <div className="set-item">
+                    <span className="set-item-txt">
+                      <b>滚动历史</b>
+                      <span className="set-item-desc">每会话回滚缓冲行数；越大越吃内存（长构建 / 大日志建议 5 万行以上）。</span>
+                    </span>
+                    <select className="set-item-ctl" data-testid="term-scrollback-select" aria-label="滚动历史行数"
+                      value={String(termScrollback)} onChange={(e) => onChangeTermScrollback(Number(e.target.value))}>
+                      {TERM_SCROLLBACKS.map((n) => (
+                        <option key={n} value={String(n)}>{n === 10000 ? "10,000 行（默认）" : `${n.toLocaleString("en-US")} 行`}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="set-item">
+                    <span className="set-item-txt">
+                      <b>字距</b>
+                      <span className="set-item-desc">额外字符间距（px）；0 为字体原生度量。</span>
+                    </span>
+                    <select className="set-item-ctl" data-testid="term-spacing-select" aria-label="字符间距"
+                      value={String(termLetterSpacing)} onChange={(e) => onChangeTermLetterSpacing(Number(e.target.value))}>
+                      {TERM_LETTER_SPACINGS.map((n) => <option key={n} value={String(n)}>{n === 0 ? "0（默认）" : String(n)}</option>)}
+                    </select>
+                  </div>
                 </div>
                 </>)}
 

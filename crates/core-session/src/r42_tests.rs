@@ -504,7 +504,9 @@ async fn r42_remember_ttl_grants_exact_repeat() {
     let h1 = h.clone();
     let j1 = tokio::spawn(async move {
         h1.wait_approval(
-            &Actor::Agent { client_id: "opencode".into() },
+            &Actor::Agent {
+                client_id: "opencode".into(),
+            },
             &"opencode".to_string(),
             &"e-1".to_string(),
             "docker system prune -f",
@@ -530,18 +532,27 @@ async fn r42_remember_ttl_grants_exact_repeat() {
     let policy = m.center.vault.load_policy("opencode");
     m.center.engine.set_policy("opencode", policy);
     assert_eq!(
-        m.center.engine.evaluate("opencode", "docker system prune -f").verdict,
+        m.center
+            .engine
+            .evaluate("opencode", "docker system prune -f")
+            .verdict,
         tinyssh_approval::SegmentVerdict::AutoAllow,
         "记住后同命令必须免审"
     );
     // 不同命令仍报审（精确记忆无通配）
     assert_eq!(
-        m.center.engine.evaluate("opencode", "docker system prune -a").verdict,
+        m.center
+            .engine
+            .evaluate("opencode", "docker system prune -a")
+            .verdict,
         tinyssh_approval::SegmentVerdict::NeedsApproval
     );
     // TTL 行带过期时间（> now），且秒级 clamp 生效（0 → 1 分钟）
     let p = m.center.vault.load_policy("opencode");
-    assert!(p.ttl_windows.iter().any(|w| w.expires_at > chrono::Utc::now()));
+    assert!(p
+        .ttl_windows
+        .iter()
+        .any(|w| w.expires_at > chrono::Utc::now()));
     // 收尾：拒绝让等待侧收敛（与 r42 同款；只记不住卡——remember 不动决定）
     m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny)
         .await
@@ -560,7 +571,9 @@ async fn r42_remember_persistent_and_guards() {
     let h1 = h.clone();
     let j1 = tokio::spawn(async move {
         h1.wait_approval(
-            &Actor::Agent { client_id: "opencode".into() },
+            &Actor::Agent {
+                client_id: "opencode".into(),
+            },
             &"opencode".to_string(),
             &"e-1".to_string(),
             "df -h",
@@ -576,9 +589,13 @@ async fn r42_remember_persistent_and_guards() {
     // Agent 不能给自己写放行（InvalidActor）
     assert!(matches!(
         m.remember_approval(
-            &Actor::Agent { client_id: "opencode".into() },
+            &Actor::Agent {
+                client_id: "opencode".into()
+            },
             card.id.clone(),
-            RememberScope::Persistent { pattern: "*".into() },
+            RememberScope::Persistent {
+                pattern: "*".into()
+            },
         )
         .await,
         Err(Error::InvalidActor)
@@ -588,7 +605,9 @@ async fn r42_remember_persistent_and_guards() {
         .remember_approval(
             &Actor::Human,
             card.id.clone(),
-            RememberScope::Persistent { pattern: "   ".into() },
+            RememberScope::Persistent {
+                pattern: "   ".into()
+            },
         )
         .await
         .is_err());
@@ -597,7 +616,9 @@ async fn r42_remember_persistent_and_guards() {
         .remember_approval(
             &Actor::Human,
             card.id.clone(),
-            RememberScope::Persistent { pattern: "df *".into() },
+            RememberScope::Persistent {
+                pattern: "df *".into(),
+            },
         )
         .await
         .unwrap();
@@ -637,7 +658,9 @@ async fn r42_autonomy_grant_lifecycle() {
     // Agent 不能给自己授权
     assert!(matches!(
         m.set_autonomy(
-            &Actor::Agent { client_id: "opencode".into() },
+            &Actor::Agent {
+                client_id: "opencode".into()
+            },
             "opencode".into(),
             true,
             None,
@@ -657,12 +680,21 @@ async fn r42_autonomy_grant_lifecycle() {
     assert!(m.center.autonomy_active("opencode"));
 
     // Agent 只能看到自己的授权
-    let own = m.autonomy_list(&Actor::Agent { client_id: "opencode".into() }).await.unwrap();
+    let own = m
+        .autonomy_list(&Actor::Agent {
+            client_id: "opencode".into(),
+        })
+        .await
+        .unwrap();
     assert_eq!(own.len(), 1);
 
     // 过期 → 惰性清除判定为不活跃
-    *m.center.autonomy.lock().unwrap().get_mut("opencode").unwrap() =
-        Some(chrono::Utc::now() - chrono::Duration::minutes(1));
+    *m.center
+        .autonomy
+        .lock()
+        .unwrap()
+        .get_mut("opencode")
+        .unwrap() = Some(chrono::Utc::now() - chrono::Duration::minutes(1));
     assert!(!m.center.autonomy_active("opencode"), "过期授权不得放行");
     let grants = m.autonomy_list(&Actor::Human).await.unwrap();
     assert!(grants.is_empty(), "过期项不进状态列表");
@@ -682,7 +714,11 @@ async fn r42_autonomy_grant_lifecycle() {
     let audit = m
         .query_audit(
             &Actor::Human,
-            AuditFilter { action: Some("autonomy_set".into()), limit: 50, ..Default::default() },
+            AuditFilter {
+                action: Some("autonomy_set".into()),
+                limit: 50,
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -699,7 +735,9 @@ async fn r42_autonomy_exec_skips_card_deny_still_holds() {
     let h = mk_handle("s-1", ControlOwner::Agent, m.center.clone());
     register(&m, h.clone());
     m.center.vault.create_agent("opencode", "OpenCode").unwrap();
-    let agent = Actor::Agent { client_id: "opencode".into() };
+    let agent = Actor::Agent {
+        client_id: "opencode".into(),
+    };
     let cmd = "docker system prune -f";
 
     // 关闭态：出卡（走审批）
@@ -709,18 +747,40 @@ async fn r42_autonomy_exec_skips_card_deny_still_holds() {
         tokio::spawn(async move { h.exec(&agent, cmd, ExecOpts::default()).await })
     };
     let card = wait_card(&m, "s-1").await;
-    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny).await.unwrap();
-    assert!(matches!(j1.await.unwrap(), Err(Error::ApprovalDenied { .. })));
+    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny)
+        .await
+        .unwrap();
+    assert!(matches!(
+        j1.await.unwrap(),
+        Err(Error::ApprovalDenied { .. })
+    ));
 
     // 开启自主：同命令不再出卡，直接到执行层（stub 通道报 InvalidInput("stub")）
-    m.set_autonomy(&Actor::Human, "opencode".into(), true, None).await.unwrap();
-    let r2 = h.exec(&agent, cmd, ExecOpts { mode: ExecMode::Fresh, ..Default::default() }).await;
+    m.set_autonomy(&Actor::Human, "opencode".into(), true, None)
+        .await
+        .unwrap();
+    let r2 = h
+        .exec(
+            &agent,
+            cmd,
+            ExecOpts {
+                mode: ExecMode::Fresh,
+                ..Default::default()
+            },
+        )
+        .await;
     match r2 {
         Err(Error::InvalidInput(msg)) if msg.contains("stub") => {}
         other => panic!("自主模式应跳过审批直达执行层（stub 错误），实际 {other:?}"),
     }
     let pending = m
-        .list_approvals(&Actor::Human, ApprovalFilter { pending_only: true, ..Default::default() })
+        .list_approvals(
+            &Actor::Human,
+            ApprovalFilter {
+                pending_only: true,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert!(pending.is_empty(), "自主模式不得产生审批卡：{pending:?}");
@@ -728,19 +788,32 @@ async fn r42_autonomy_exec_skips_card_deny_still_holds() {
     // deny 名单仍硬拦：reboot 在自主模式下同样 Dangerous 拒绝
     let r3 = h.exec(&agent, "reboot", ExecOpts::default()).await;
     assert!(
-        matches!(&r3, Err(Error::ApprovalDenied { reason: DeniedReason::DangerousPattern })),
+        matches!(
+            &r3,
+            Err(Error::ApprovalDenied {
+                reason: DeniedReason::DangerousPattern
+            })
+        ),
         "deny 名单必须先于自主模式：{r3:?}"
     );
 
     // 审计：自主放行的 exec 带 autonomous 标记
     let audit = m
-        .query_audit(&Actor::Human, AuditFilter { action: Some("exec".into()), limit: 50, ..Default::default() })
+        .query_audit(
+            &Actor::Human,
+            AuditFilter {
+                action: Some("exec".into()),
+                limit: 50,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert!(
-        audit.events.iter().any(|e| {
-            e.payload_json.get("autonomous").and_then(|v| v.as_bool()) == Some(true)
-        }),
+        audit
+            .events
+            .iter()
+            .any(|e| { e.payload_json.get("autonomous").and_then(|v| v.as_bool()) == Some(true) }),
         "自主放行的 exec 审计必须带 autonomous:true"
     );
 }
@@ -755,21 +828,41 @@ async fn r42_transfer_autonomy_opt_in() {
     let h = mk_handle("s-t42x", ControlOwner::Agent, m.center.clone());
     register(&m, h.clone());
     m.center.vault.create_agent("opencode", "OpenCode").unwrap();
-    let agent = Actor::Agent { client_id: "opencode".into() };
-    m.set_autonomy(&Actor::Human, "opencode".into(), true, None).await.unwrap();
+    let agent = Actor::Agent {
+        client_id: "opencode".into(),
+    };
+    m.set_autonomy(&Actor::Human, "opencode".into(), true, None)
+        .await
+        .unwrap();
     let dl = {
         let m2 = m.clone();
         let agent = agent.clone();
         tokio::spawn(async move {
-            m2.download(&agent, "s-t42x".to_string(), "/tmp/src.txt", std::path::Path::new("/local/dst.txt"), None).await
+            m2.download(
+                &agent,
+                "s-t42x".to_string(),
+                "/tmp/src.txt",
+                std::path::Path::new("/local/dst.txt"),
+                None,
+            )
+            .await
         })
     };
 
     // 默认（未 opt-in）：自主模式也不免传输审批——出卡，拒绝收场
     let card = wait_card(&m, "s-t42x").await;
-    assert!(card.command.contains("download"), "传输卡摘要应含 download：{}", card.command);
-    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny).await.unwrap();
-    assert!(matches!(dl.await.unwrap(), Err(Error::ApprovalDenied { .. })));
+    assert!(
+        card.command.contains("download"),
+        "传输卡摘要应含 download：{}",
+        card.command
+    );
+    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Deny)
+        .await
+        .unwrap();
+    assert!(matches!(
+        dl.await.unwrap(),
+        Err(Error::ApprovalDenied { .. })
+    ));
 
     // opt-in 开：免审直达传输层（stub 通道任务异步失败），无卡、审计带标记、记录照落
     m.center
@@ -777,20 +870,42 @@ async fn r42_transfer_autonomy_opt_in() {
         .set_setting(SETTING_AUTONOMY_TRANSFERS, "1")
         .unwrap();
     let r = m
-        .download(&agent, "s-t42x".to_string(), "/tmp/src.txt", std::path::Path::new("/local/dst.txt"), None)
+        .download(
+            &agent,
+            "s-t42x".to_string(),
+            "/tmp/src.txt",
+            std::path::Path::new("/local/dst.txt"),
+            None,
+        )
         .await;
     assert!(r.is_ok(), "免审传输应同步返回句柄，实际 {:?}", r.err());
     let pending = m
-        .list_approvals(&Actor::Human, ApprovalFilter { pending_only: true, ..Default::default() })
+        .list_approvals(
+            &Actor::Human,
+            ApprovalFilter {
+                pending_only: true,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert!(pending.is_empty(), "免审传输不得出卡：{pending:?}");
     let audit = m
-        .query_audit(&Actor::Human, AuditFilter { action: Some("transfer_autonomous".into()), limit: 50, ..Default::default() })
+        .query_audit(
+            &Actor::Human,
+            AuditFilter {
+                action: Some("transfer_autonomous".into()),
+                limit: 50,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert!(
-        audit.events.iter().any(|e| e.payload_json.get("autonomous").and_then(|v| v.as_bool()) == Some(true)),
+        audit
+            .events
+            .iter()
+            .any(|e| e.payload_json.get("autonomous").and_then(|v| v.as_bool()) == Some(true)),
         "免审传输必须留 transfer_autonomous 审计"
     );
     let recs = m
@@ -815,10 +930,22 @@ async fn r42_transfer_autonomy_opt_in() {
         let m2 = m.clone();
         let agent = agent.clone();
         tokio::spawn(async move {
-            m2.download(&agent, "s-t42x".to_string(), "/tmp/src.txt", std::path::Path::new("/local/dst.txt"), None).await
+            m2.download(
+                &agent,
+                "s-t42x".to_string(),
+                "/tmp/src.txt",
+                std::path::Path::new("/local/dst.txt"),
+                None,
+            )
+            .await
         })
     };
     let card2 = wait_card(&m, "s-t42x").await;
-    m.decide_approval(&Actor::Human, card2.id.clone(), Decision::Deny).await.unwrap();
-    assert!(matches!(dl2.await.unwrap(), Err(Error::ApprovalDenied { .. })));
+    m.decide_approval(&Actor::Human, card2.id.clone(), Decision::Deny)
+        .await
+        .unwrap();
+    assert!(matches!(
+        dl2.await.unwrap(),
+        Err(Error::ApprovalDenied { .. })
+    ));
 }

@@ -735,20 +735,20 @@ impl SessionHandle {
                                     outcome: ApprovalOutcome::Autonomous,
                                 }
                             } else {
-                            let (t, edited) = self
-                                .wait_approval(
-                                    actor,
-                                    client_id,
-                                    &exec_id,
-                                    &effective_cmd,
-                                    &eval,
-                                    true,
-                                    opts.mode == ExecMode::Fresh,
-                                    cancel.clone(),
-                                )
-                                .await?;
-                            edited_cmd = edited;
-                            t
+                                let (t, edited) = self
+                                    .wait_approval(
+                                        actor,
+                                        client_id,
+                                        &exec_id,
+                                        &effective_cmd,
+                                        &eval,
+                                        true,
+                                        opts.mode == ExecMode::Fresh,
+                                        cancel.clone(),
+                                    )
+                                    .await?;
+                                edited_cmd = edited;
+                                t
                             }
                         }
                     }

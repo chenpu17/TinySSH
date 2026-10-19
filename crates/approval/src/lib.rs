@@ -343,6 +343,43 @@ impl ApprovalEngine {
         self.deny_reason(agent_id, edited).is_none()
     }
 
+    /// 人类粘贴前的危险形态扫描（P0 终端品质轮）：只用**内置** deny 表——tree-sitter
+    /// 逐段求值（解析失败或单段时整串即段），返回 (命中段, 原因) 去重列表。
+    /// 与 Agent 审批同一张表、同一套 wrapper 前缀：人类粘贴与 Agent 执行同口径，
+    /// 只是人类侧只提示、不阻断（确认后仍可发送；Agent 侧 deny 不可绕过）。
+    /// 不含任何 agent 策略（人类粘贴借用别人的 allow/deny 规则没有语义）。
+    pub fn scan_dangerous(&self, text: &str) -> Vec<(String, String)> {
+        let mut hits: Vec<(String, String)> = Vec::new();
+        {
+            let mut consider = |seg: &str| {
+                if let Some(reason) = self.builtin_hit(seg) {
+                    if !hits.iter().any(|(s, r)| s == seg && r == &reason) {
+                        hits.push((seg.to_string(), reason));
+                    }
+                }
+            };
+            // 内置 deny 全部锚定在行首且不吃换行——逐段扫即等价（整串扫会跨不了行，
+            // 反而把多行粘贴文本当整段报出来把预览搅浑）；解析失败/单段时整串即段。
+            let segments = self.segments_of(text).0;
+            if segments.len() <= 1 {
+                consider(text.trim());
+            } else {
+                for seg in segments {
+                    consider(seg.trim());
+                }
+            }
+        }
+        hits
+    }
+
+    /// 内置 deny 表命中（单串；不含用户规则）。
+    fn builtin_hit(&self, command: &str) -> Option<String> {
+        self.builtin_denies
+            .iter()
+            .find(|(re, _)| re.is_match(command))
+            .map(|(_, reason)| (*reason).to_string())
+    }
+
     fn segments_of(&self, command: &str) -> (Vec<String>, bool) {
         match self.parser.parse(command) {
             Some(tree) => {
@@ -507,6 +544,41 @@ mod tests {
                 "cmd={cmd}"
             );
         }
+    }
+
+    /// P0 终端品质轮：人类粘贴危险形态扫描——多行逐段命中、wrapper 前缀穿透、
+    /// 日常命令（含 `rm -rf ./build`、词中含 reboot）不误报。
+    #[test]
+    fn scan_dangerous_paste_guard() {
+        let e = engine();
+        assert!(e.scan_dangerous("echo hi\nls -la").is_empty());
+        assert!(e
+            .scan_dangerous("rm -rf ./build\ndocker compose up -d")
+            .is_empty());
+
+        let hits = e.scan_dangerous("ls\nsudo rm -rf /\n");
+        assert!(
+            hits.iter()
+                .any(|(seg, r)| seg.contains("rm -rf /") && r == "删除根目录"),
+            "{hits:?}"
+        );
+        // 段命中只报命中段，不把整段粘贴文本当成命中
+        assert!(
+            hits.iter().all(|(seg, _)| !seg.contains("ls\n")),
+            "{hits:?}"
+        );
+
+        // 提权/包装前缀与审批同口径
+        let hits = e.scan_dangerous("sudo reboot");
+        assert!(hits.iter().any(|(_, r)| r == "重启"), "{hits:?}");
+
+        // 整串单行（不做分段也能命中）
+        let hits = e.scan_dangerous(":(){ :|:& };:");
+        assert!(hits.iter().any(|(_, r)| r == "fork 炸弹"), "{hits:?}");
+
+        // 去重：同一段多处出现只报一条
+        let hits = e.scan_dangerous("reboot\nreboot");
+        assert_eq!(hits.len(), 1, "{hits:?}");
     }
 
     /// 十轮：提权/包装前缀不得绕过锚定的内置 deny。

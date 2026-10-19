@@ -1882,6 +1882,31 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "set_setting":
       demoState.settings.set(args?.key as string, String(args?.value ?? ""));
       return null;
+    case "scan_paste_danger": {
+      // P0 终端品质轮：真实判定在 Rust（approval::scan_dangerous——内置 deny 表 +
+      // tree-sitter 逐段 + wrapper 前缀）；这里挑典型形态做**等价演示**，保证 demo
+      // 路径的粘贴保护不静默。规则形态与他们对齐（锚定行首、sudo/doas 等前缀穿透）。
+      const prefix = "(?:(?:sudo|doas|nohup|nice|time|env|command|exec)\\s+)?";
+      const rules: [RegExp, string][] = [
+        [new RegExp(`^\\s*${prefix}rm\\b[^\\n;|&]*(?:\\s|^)/(?:\\s|$)`), "删除根目录"],
+        [new RegExp(`^\\s*${prefix}rm\\b[^\\n;|&]*\\s/(?:\\s|$)`), "删除根目录"],
+        [new RegExp(`^\\s*${prefix}mkfs`), "格式化文件系统"],
+        [new RegExp(`^\\s*${prefix}dd\\b[^\\n]*\\bof=/dev/(?:sd|nvme|vd|hd|disk|mapper)`), "dd 覆写块设备"],
+        [new RegExp(`^\\s*${prefix}(?:shutdown|reboot|halt|poweroff)\\b`), "关机/重启/停机"],
+        [/:\(\)\s*\{.*\};\s*:/, "fork 炸弹"],
+        [new RegExp(`^\\s*${prefix}chmod\\s+(-[a-zA-Z]+\\s+)*777\\s+/(?:\\s|$)`), "根目录开放权限"],
+        [new RegExp(`^\\s*${prefix}(?:wipefs|blkdiscard)\\b`), "擦除/丢弃块设备"],
+        [new RegExp(`^\\s*${prefix}(?:fdisk|cfdisk|sfdisk|sgdisk|parted)\\s+/dev/`), "分区工具作用于块设备"],
+      ];
+      const hits: { segment: string; reason: string }[] = [];
+      for (const raw of String(args?.text ?? "").split("\n")) {
+        const seg = raw.trim();
+        if (!seg) continue;
+        const hit = rules.find(([re]) => re.test(seg));
+        if (hit && !hits.some((h) => h.segment === seg)) hits.push({ segment: seg, reason: hit[1] });
+      }
+      return hits;
+    }
     // ---- C8 偏好与主机元数据（R15 同契约）----
     case "get_workspace": {
       // 浏览器域：localStorage 同键承载（与真实核心的 settings 表同为整取整存）

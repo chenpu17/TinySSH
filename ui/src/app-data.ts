@@ -429,6 +429,63 @@ export const SETTING_FONT_LEGACY = "ui.font_size";
 // （二十二轮起单一事实源，ui.theme/ui.theme.follow 双轨退役）。
 export const SETTING_PALETTE = "ui.palette";
 
+// ---------------------------------------------------------------------------
+// 终端品质（P0 轮）：字体族/连字/光标/滚屏/字距偏好（vault settings KV，
+// demo 退 localStorage，与字号同工艺）。均在创建新终端时读取，改动即时应用到存量实例。
+// ---------------------------------------------------------------------------
+export const SETTING_TERM_FONT_FAMILY = "ui.v2.terminal.font_family";
+export const SETTING_TERM_LIGATURES = "ui.v2.terminal.ligatures";
+export const SETTING_TERM_CURSOR_STYLE = "ui.v2.terminal.cursor_style";
+export const SETTING_TERM_CURSOR_BLINK = "ui.v2.terminal.cursor_blink";
+export const SETTING_TERM_SCROLLBACK = "ui.v2.terminal.scrollback";
+export const SETTING_TERM_LETTER_SPACING = "ui.v2.terminal.letter_spacing";
+
+/** 字体族选项（id → CSS 字体栈）。首位内置 JetBrains Mono 全量字形；其余按平台常见提供，
+ *  找不到即浏览器按栈回落——不承诺"装了才有"。 */
+export type TermFontChoice = { id: string; label: string; css: string };
+export const TERM_FONTS: TermFontChoice[] = [
+  {
+    id: "jetbrains",
+    label: "JetBrains Mono（内置）",
+    css: '"JetBrains Mono Term", "SF Mono", "Cascadia Mono", Menlo, Consolas, "Courier New", monospace',
+  },
+  {
+    id: "jetbrains-nerd",
+    label: "JetBrains Mono Nerd Font（若已安装）",
+    css: '"JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrains Mono Term", "Cascadia Mono", Consolas, monospace',
+  },
+  {
+    id: "cascadia",
+    label: "Cascadia Mono / Code（Windows）",
+    css: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+  },
+  { id: "consolas", label: "Consolas（Windows）", css: 'Consolas, "Courier New", monospace' },
+  { id: "menlo", label: "SF Mono / Menlo（macOS）", css: '"SF Mono", Menlo, Monaco, monospace' },
+  {
+    id: "system",
+    label: "系统等宽（ui-monospace）",
+    css: 'ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace',
+  },
+];
+export const TERM_FONT_DEFAULT = TERM_FONTS[0].id;
+export function termFontCss(id: string | null | undefined): string {
+  return (TERM_FONTS.find((f) => f.id === id) ?? TERM_FONTS[0]).css;
+}
+
+export type TermCursorStyle = "block" | "bar" | "underline";
+export const TERM_CURSOR_STYLES: { id: TermCursorStyle; label: string }[] = [
+  { id: "block", label: "方块" },
+  { id: "bar", label: "竖线" },
+  { id: "underline", label: "下划线" },
+];
+
+/** 滚屏行数档（xterm scrollback；越大越吃内存，100 万行仅建议窄用） */
+export const TERM_SCROLLBACKS = [2000, 5000, 10000, 50000, 100000];
+export const TERM_SCROLLBACK_DEFAULT = 10000;
+/** 字距（px，浮点可选） */
+export const TERM_LETTER_SPACINGS = [0, 0.5, 1, 1.5, 2];
+export const TERM_LETTER_SPACING_DEFAULT = 0;
+
 export type Appearance = "system" | "dark" | "light";
 export const APPEARANCES: { id: Appearance; label: string }[] = [
   { id: "system", label: "跟随系统" },

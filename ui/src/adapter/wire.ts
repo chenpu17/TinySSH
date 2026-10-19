@@ -674,6 +674,12 @@ export interface ActionRecord {
 /** 时间范围档位（App 在拉取时刻换算成 since ISO；「今天」按本机零点）。 */
 export type RecordsRange = "all" | "today" | "24h" | "7d" | "30d";
 
+/** 粘贴危险形态命中（P0 终端品质轮）：命中段 + 原因（内置 deny 表，与审批同一张）。 */
+export interface PasteHit {
+  segment: string;
+  reason: string;
+}
+
 /** 时间线查询面（App 持有的完整形态；过桥时同形直传，range 由宿主换算为 since）。
  * until 供「加载更早」翻页：传已载最旧 ts−1ms（核心 until 为 <= 含端点）。 */
 export interface RecordsQuery {

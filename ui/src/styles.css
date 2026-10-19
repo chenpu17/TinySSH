@@ -858,6 +858,9 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .set-item-txt { min-width: 0; }
 .set-item-txt b { display: block; font-size: 13px; font-weight: 600; }
 .set-item-desc { display: block; font-size: 12px; line-height: 1.6; color: var(--text-sub); margin-top: 2px; }
+/* P0 终端品质轮：带右侧下拉的设置行（文本占满，控件垂直居中靠右） */
+.set-item > .set-item-txt { flex: 1; }
+.set-item .set-item-ctl { flex: none; align-self: center; max-width: 260px; }
 /* 全局 input/select 是 width:100%（井底下凹隐喻）；设置卡是宽容器，表单控件回自动宽 */
 .set-card input, .set-card select { width: auto; }
 .set-card .cred-field input, .set-card .cred-field textarea { width: 100%; }
@@ -1249,6 +1252,16 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 .split-hint span { overflow: hidden; flex: 1; min-width: 0; /* 两行封顶防撑破（vis-r25 L1：640px 单行 ellipsis 截断恢复指引） */ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 /* §318 多行粘贴确认：等宽预览块，超长内容内部滚动不撑破对话框 */
 .paste-dialog { width: min(560px, calc(100vw - 80px)); }
+/* P0 终端品质轮：危险粘贴命中清单（内置 deny 表：原因 + 命中段） */
+.paste-risk {
+  margin: 10px 0 0; padding: 8px 10px 8px 26px; max-height: 140px; overflow: auto;
+  background: color-mix(in srgb, var(--danger, #e5534b) 12%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--danger, #e5534b) 45%, var(--border));
+  border-radius: 6px; font-size: 12px; line-height: 1.6; text-align: left;
+}
+.paste-risk li { margin: 0; }
+.paste-risk b { color: var(--danger, #e5534b); }
+.paste-risk .dim { margin-left: 8px; word-break: break-all; }
 .paste-preview {
   margin: 10px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto;
   background: var(--panel); border: 1px solid var(--border); border-radius: 6px;

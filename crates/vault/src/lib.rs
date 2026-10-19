@@ -2010,7 +2010,10 @@ mod tests {
             .into_iter()
             .find(|a| a.id == "live")
             .unwrap();
-        assert!(detail.last_used_at.is_some(), "命中后 last_used_at 应被回写");
+        assert!(
+            detail.last_used_at.is_some(),
+            "命中后 last_used_at 应被回写"
+        );
         assert!(detail.expires_at.is_some());
         // 不过期路径：expires_at 为空
         let tok3 = v.create_agent("forever", "永不过期").unwrap();
@@ -2023,7 +2026,13 @@ mod tests {
             .unwrap();
         assert!(d3.expires_at.is_none());
         // 重签发重置过期时间：过期 agent 重新签发后复活
-        let tok4 = v.create_agent_ex("stale", "续期", Some(chrono::Utc::now() + chrono::Duration::hours(2))).unwrap();
+        let tok4 = v
+            .create_agent_ex(
+                "stale",
+                "续期",
+                Some(chrono::Utc::now() + chrono::Duration::hours(2)),
+            )
+            .unwrap();
         assert_eq!(v.resolve_token(&tok4).as_deref(), Some("stale"));
     }
 

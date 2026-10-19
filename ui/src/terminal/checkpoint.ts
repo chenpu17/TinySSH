@@ -8,6 +8,15 @@ import type { AttachOutput, CellRun, ColorSpec, ScreenCheckpoint, SeqFrame } fro
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
+/** 光标首选项（P0 终端品质轮）：检查点重放时的形状/闪烁取**应用侧偏好**——核心快照
+ *  只存形状、不存 blink 位（alacritty shape-only），也无法区分「远端设过 DECSCUSR」
+ *  与「从未设过」；重放若硬编码默认，会把用户设的光标样式在每次 attach 时冲回方块。
+ *  远端 live 流的 DECSCUSR 仍会自然覆盖（运行期程序的即时意图优先于偏好）。 */
+let cursorDefault: { style: "block" | "underline" | "bar"; blink: boolean } = { style: "block", blink: true };
+export function setCursorDefault(style: "block" | "underline" | "bar", blink: boolean): void {
+  cursorDefault = { style, blink };
+}
+
 /** CellRun 序列 → SGR 文本（每 run 前重置再上属性）。 */
 function runsSgr(runs: CellRun[]): string {
   let out = "";
@@ -73,11 +82,10 @@ export function applyCheckpoint(term: Terminal, ck: ScreenCheckpoint): void {
   const y = clamp(ck.cursor.y, 0, Math.max(0, ck.rows - 1));
   out.push(`\x1b[${y + 1};${x + 1}H`);
   out.push(ck.cursor.visible ? "\x1b[?25h" : "\x1b[?25l");
-  // blink 变体（vis-r11 R1）：steady 变体会把 xterm cursorBlink 置 false——恢复后
-  // 光标永久停闪，用户可见回归。核心侧不存 blink 位（alacritty shape-only），
-  // 取 makeTerm 的 blink 默认观感；远端 DECSCUSR 经 live 流随后自然覆盖。
-  const styleCode = ck.cursor.style === "underline" ? 3 : ck.cursor.style === "beam" ? 5 : 1;
-  out.push(`\x1b[${styleCode} q`);
+  // 光标形状/闪烁（P0 终端品质轮）：取应用侧偏好（见 setCursorDefault 注释）。
+  // DECSCUSR：1/3/5 = 闪烁方块/下划线/竖线，2/4/6 = 稳定变体。
+  const shape = cursorDefault.style === "underline" ? 3 : cursorDefault.style === "bar" ? 5 : 1;
+  out.push(`\x1b[${shape + (cursorDefault.blink ? 0 : 1)} q`);
   term.write(out.join(""));
   term.scrollToBottom();
 }

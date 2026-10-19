@@ -464,7 +464,14 @@ mod tests {
         let store = AuditStore::open(&path).unwrap();
         for action in ["a1", "a2", "a3"] {
             store
-                .append(&Actor::Human, action, None, None, serde_json::json!({}), None)
+                .append(
+                    &Actor::Human,
+                    action,
+                    None,
+                    None,
+                    serde_json::json!({}),
+                    None,
+                )
                 .unwrap();
         }
         let base = store

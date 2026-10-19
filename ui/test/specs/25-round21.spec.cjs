@@ -165,11 +165,18 @@ module.exports = {
     ck.check("色板选择 KV 持久（ui.palette）",
       await page.evaluate(() => localStorage.getItem("ui.palette") === "obsidian"), "");
 
-    // 终端分类单卡三行；面板盒子尺寸恒定（分类切换只换内容不换盒子——用户反馈跳变）
+    // 终端分类：终端行为（3 行）+ 终端外观（P0 品质轮加卡）两卡；面板盒子尺寸恒定
+    // （分类切换只换内容不换盒子——用户反馈跳变）
     await page.click('[data-testid="settings-cat-terminal"]');
     await page.waitForTimeout(400);
-    ck.check("终端分类单卡三设置行",
-      (await page.evaluate(() => document.querySelectorAll(".settings-pane .set-card").length)) === 1, "");
+    ck.check("终端分类两卡（行为 3 行 + 外观 6 行）",
+      (await page.evaluate(() => {
+        const cards = [...document.querySelectorAll(".settings-pane .set-card")];
+        if (cards.length !== 2) return false;
+        const rows = (c) => c.querySelectorAll(".set-item").length;
+        return rows(cards[0]) === 3 && rows(cards[1]) === 6;
+      })), await page.evaluate(() =>
+        [...document.querySelectorAll(".settings-pane .set-card")].map((c) => c.querySelectorAll(".set-item").length).join(",")));
     const boxT = await dlgBox();
     ck.check("分类切换后面板尺寸恒定", !!boxT && boxT.h === boxA.h && boxT.w === boxA.w,
       `${JSON.stringify(boxA)} → ${JSON.stringify(boxT)}`);

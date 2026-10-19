@@ -233,17 +233,19 @@ impl SessionManager {
                     .unwrap_or(30);
                 let vault_seal = vault.clone();
                 let vault_open = vault.clone();
-                Arc::new(tinyssh_records::RecordStore::open(
-                    &rec_dir,
-                    retention,
-                    tinyssh_records::Crypto {
-                        seal: Box::new(move |b: &[u8]| vault_seal.seal_bytes(b)),
-                        open: Box::new(move |b: &[u8]| {
-                            vault_open.open_bytes(b).map_err(|e| e.to_string())
-                        }),
-                    },
+                Arc::new(
+                    tinyssh_records::RecordStore::open(
+                        &rec_dir,
+                        retention,
+                        tinyssh_records::Crypto {
+                            seal: Box::new(move |b: &[u8]| vault_seal.seal_bytes(b)),
+                            open: Box::new(move |b: &[u8]| {
+                                vault_open.open_bytes(b).map_err(|e| e.to_string())
+                            }),
+                        },
+                    )
+                    .map_err(|e| Error::Storage(format!("records store: {e}")))?,
                 )
-                .map_err(|e| Error::Storage(format!("records store: {e}")))?)
             },
             vault,
             audit,
@@ -3350,7 +3352,10 @@ impl SessionApi for SessionManager {
         let mut out: Vec<AutonomyGrant> = g
             .iter()
             .filter(|(_, exp)| exp.map_or(true, |e| e > now))
-            .map(|(a, e)| AutonomyGrant { agent_id: a.clone(), expires_at: *e })
+            .map(|(a, e)| AutonomyGrant {
+                agent_id: a.clone(),
+                expires_at: *e,
+            })
             .collect();
         drop(g);
         if let Actor::Agent { client_id } = ctx {
@@ -3810,7 +3815,12 @@ impl SessionManager {
             }
         });
         // ③ 传输结局记录（发起时已记 actor，这里补终态；agent_id=None 可辨）
-        let task = self.transfers.lock().unwrap().get(tid).map(|e| e.task.clone());
+        let task = self
+            .transfers
+            .lock()
+            .unwrap()
+            .get(tid)
+            .map(|e| e.task.clone());
         if let Some(t) = task {
             let (status_s, exit) = match status {
                 TransferStatus::Succeeded => ("ok", Some(0)),
@@ -3830,7 +3840,10 @@ impl SessionManager {
                 agent_id: None,
                 summary: format!(
                     "{} {} → {}",
-                    match t.kind { TransferKind::Upload => "upload", TransferKind::Download => "download" },
+                    match t.kind {
+                        TransferKind::Upload => "upload",
+                        TransferKind::Download => "download",
+                    },
                     t.source,
                     t.dest
                 ),
@@ -4297,42 +4310,42 @@ impl SessionManager {
                     None,
                 );
             } else {
-            let mut segment = format!("{op} → {remote}");
-            if collision == Some(CollisionDecision::Overwrite) {
-                // rev-r34 低-2：DF6.1 冻结后覆盖发布必被能力阻止——审批卡如实告知，
-                // 不误导审批人放行一个注定失败的写请求
-                segment.push_str(
-                    "（覆盖已存在目标——将被能力阻止：传输不提供目标版本约束，原文件零改动）",
-                );
-            }
-            let eval = tinyssh_approval::Evaluation {
-                verdict: tinyssh_approval::SegmentVerdict::NeedsApproval,
-                segments: vec![SegmentReport {
-                    segment,
-                    verdict: "pending: 传输必审".into(),
-                }],
-            };
-            let (trace, e) = h
-                .wait_approval(
-                    ctx,
-                    client_id,
-                    &"transfer".to_string(),
-                    // rev-r47：display() 而非 Debug——审批卡上人读的是干净路径
-                    //（Debug 的引号/转义徒增误读）
+                let mut segment = format!("{op} → {remote}");
+                if collision == Some(CollisionDecision::Overwrite) {
+                    // rev-r34 低-2：DF6.1 冻结后覆盖发布必被能力阻止——审批卡如实告知，
+                    // 不误导审批人放行一个注定失败的写请求
+                    segment.push_str(
+                        "（覆盖已存在目标——将被能力阻止：传输不提供目标版本约束，原文件零改动）",
+                    );
+                }
+                let eval = tinyssh_approval::Evaluation {
+                    verdict: tinyssh_approval::SegmentVerdict::NeedsApproval,
+                    segments: vec![SegmentReport {
+                        segment,
+                        verdict: "pending: 传输必审".into(),
+                    }],
+                };
+                let (trace, e) = h
+                    .wait_approval(
+                        ctx,
+                        client_id,
+                        &"transfer".to_string(),
+                        // rev-r47：display() 而非 Debug——审批卡上人读的是干净路径
+                        //（Debug 的引号/转义徒增误读）
+                        &format!("{op} {} → {remote}", local.display()),
+                        &eval,
+                        false,
+                        false,
+                        CancellationToken::new(),
+                    )
+                    .await?;
+                let _ = trace;
+                // 传输路径无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
+                SessionManager::reject_edited_approval(
+                    &e,
                     &format!("{op} {} → {remote}", local.display()),
-                    &eval,
-                    false,
-                    false,
-                    CancellationToken::new(),
-                )
-                .await?;
-            let _ = trace;
-            // 传输路径无法从编辑文本回解（复审②：静默按原文执行 = 审计失真）
-            SessionManager::reject_edited_approval(
-                &e,
-                &format!("{op} {} → {remote}", local.display()),
-                "传输审批",
-            )?;
+                    "传输审批",
+                )?;
             }
         }
         let _ = edited.take();

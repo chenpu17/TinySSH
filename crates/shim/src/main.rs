@@ -106,7 +106,10 @@ async fn forward_line(
         }
     };
     let id = parsed.get("id").cloned().filter(|v| !v.is_null());
-    let method = parsed.get("method").and_then(|m| m.as_str()).map(String::from);
+    let method = parsed
+        .get("method")
+        .and_then(|m| m.as_str())
+        .map(String::from);
     // 请求 = 有 id 且有 method；通知（无 id）不回写任何输出
     let is_request = id.is_some() && method.is_some();
 

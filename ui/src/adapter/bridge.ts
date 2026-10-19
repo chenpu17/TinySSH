@@ -73,6 +73,8 @@ interface CmdArgs {
   stop_forward: { sid: string; id: string };
   get_setting: { key: string };
   set_setting: { key: string; value: string };
+  // P0 终端品质轮：粘贴危险形态扫描（人类侧提示；判定在 Rust，同一张内置 deny 表）
+  scan_paste_danger: { text: string };
   get_workspace: undefined;
   set_workspace: { ws: wire.Workspace };
   set_host_favorite: { hostId: string; favorite: boolean };
@@ -178,6 +180,7 @@ interface CmdRet {
   stop_forward: void;
   get_setting: string | null;
   set_setting: void;
+  scan_paste_danger: wire.PasteHit[];
   get_workspace: wire.Workspace;
   set_workspace: wire.Workspace;
   set_host_favorite: void;

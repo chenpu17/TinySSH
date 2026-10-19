@@ -43,10 +43,9 @@ async fn spawn_stack() -> (
         std::sync::Arc::new(move |t: &str| vault.resolve_token(t))
     };
     // 句柄必须存活并随栈返回：shutdown watch 发送端一 drop 即触发端点停机
-    let (port, handle) =
-        tinyssh_mcp_server::spawn_endpoint_with_shutdown(m.clone(), resolver, 0)
-            .await
-            .unwrap();
+    let (port, handle) = tinyssh_mcp_server::spawn_endpoint_with_shutdown(m.clone(), resolver, 0)
+        .await
+        .unwrap();
     let url = format!("http://127.0.0.1:{port}/mcp");
     (m, url, token, handle)
 }
@@ -69,7 +68,11 @@ impl ShimProcess {
             .expect("spawn shim binary");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Self { child, stdin, stdout }
+        Self {
+            child,
+            stdin,
+            stdout,
+        }
     }
 
     async fn send(&mut self, v: serde_json::Value) {
@@ -133,10 +136,7 @@ async fn shim_stdio_full_handshake() {
     }))
     .await;
     let leaked = shim.read_line(Duration::from_millis(1500)).await;
-    assert!(
-        leaked.is_none(),
-        "通知不得产生输出行：{leaked:?}"
-    );
+    assert!(leaked.is_none(), "通知不得产生输出行：{leaked:?}");
 
     // 3) tools/list：session id 回传后的第一个真请求（回归点：以前 4xx）
     shim.send(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
@@ -145,8 +145,8 @@ async fn shim_stdio_full_handshake() {
         .read_line(Duration::from_secs(10))
         .await
         .expect("tools/list 必须有响应（session id 必须被回传）");
-    let tl: serde_json::Value =
-        serde_json::from_str(&tl_line).unwrap_or_else(|e| panic!("tools/list 非 JSON：{tl_line:?}（{e}）"));
+    let tl: serde_json::Value = serde_json::from_str(&tl_line)
+        .unwrap_or_else(|e| panic!("tools/list 非 JSON：{tl_line:?}（{e}）"));
     assert!(tl.get("error").is_none(), "tools/list 报错：{tl_line:?}");
     let names: Vec<&str> = tl["result"]["tools"]
         .as_array()
@@ -171,7 +171,8 @@ async fn shim_stdio_full_handshake() {
     let call: serde_json::Value = serde_json::from_str(&call_line)
         .unwrap_or_else(|e| panic!("tools/call 非 JSON：{call_line:?}（{e}）"));
     assert!(
-        call.get("error").is_none() && call["result"].get("isError") != Some(&serde_json::json!(true)),
+        call.get("error").is_none()
+            && call["result"].get("isError") != Some(&serde_json::json!(true)),
         "list_sessions 调用失败：{call_line:?}"
     );
 
@@ -199,7 +200,10 @@ async fn shim_bad_token_maps_to_jsonrpc_error() {
     let v: serde_json::Value = serde_json::from_str(&line)
         .unwrap_or_else(|e| panic!("错误响应必须是 JSON-RPC：{line:?}（{e}）"));
     assert_eq!(v["id"], 7);
-    assert_eq!(v["error"]["code"], -32000, "HTTP 层错误映射 -32000：{line:?}");
+    assert_eq!(
+        v["error"]["code"], -32000,
+        "HTTP 层错误映射 -32000：{line:?}"
+    );
     assert!(
         v["error"]["message"]
             .as_str()

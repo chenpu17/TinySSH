@@ -759,6 +759,27 @@ async fn list_host_metadata(state: ApiState<'_>) -> CmdResult<Vec<HostMeta>> {
         .map_err(WireError::from)
 }
 
+/// 粘贴危险形态命中（P0 终端品质轮）：段 + 原因。
+#[derive(serde::Serialize)]
+struct PasteHit {
+    segment: String,
+    reason: String,
+}
+
+/// 人类粘贴前的危险形态扫描——与 Agent 审批同一张内置 deny 表（approval::scan_dangerous）。
+/// UI 侧只在廉价预筛命中时才调它，判定本身完全在 Rust（不做第二份规则）。
+#[tauri::command]
+fn scan_paste_danger(state: ApiState<'_>, text: String) -> CmdResult<Vec<PasteHit>> {
+    Ok(state
+        .api
+        .center
+        .engine
+        .scan_dangerous(&text)
+        .into_iter()
+        .map(|(segment, reason)| PasteHit { segment, reason })
+        .collect())
+}
+
 #[tauri::command]
 async fn list_recent_hosts(state: ApiState<'_>) -> CmdResult<Vec<RecentHost>> {
     state
@@ -917,7 +938,11 @@ async fn read_screen(state: ApiState<'_>, sid: String) -> CmdResult<ScreenSnapsh
 // （整屏网格序列化只为读 cols/rows）。返回 (cols, rows) 元组。
 #[tauri::command]
 async fn pty_size(state: ApiState<'_>, sid: String) -> CmdResult<(u16, u16)> {
-    state.api.pty_size(&human(), sid).await.map_err(WireError::from)
+    state
+        .api
+        .pty_size(&human(), sid)
+        .await
+        .map_err(WireError::from)
 }
 
 #[tauri::command]
@@ -1042,7 +1067,12 @@ async fn remember_approval(
     let scope = match (ttl_minutes, pattern) {
         (Some(m), _) => RememberScope::Ttl { minutes: m },
         (None, Some(p)) => RememberScope::Persistent { pattern: p },
-        _ => return Err(WireError::simple("invalid_input", "需要 ttl_minutes 或 pattern")),
+        _ => {
+            return Err(WireError::simple(
+                "invalid_input",
+                "需要 ttl_minutes 或 pattern",
+            ))
+        }
     };
     state
         .api
@@ -1147,7 +1177,10 @@ async fn export_records(
         .export_records(&human(), filter.map(Into::into).unwrap_or_default(), &to)
         .await
         .map_err(WireError::from)?;
-    Ok(RecordsExported { count, path: to.display().to_string() })
+    Ok(RecordsExported {
+        count,
+        path: to.display().to_string(),
+    })
 }
 
 /// R41（§6.6「默认当前会话，可切全部；可筛人类/Agent 与事件类型」）：过滤面全量过桥。
@@ -1286,8 +1319,7 @@ async fn issue_agent(
     label: String,
     expires_days: Option<u64>,
 ) -> CmdResult<String> {
-    let expires =
-        expires_days.map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
+    let expires = expires_days.map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
     state
         .api
         .center
@@ -2180,6 +2212,7 @@ fn main() {
             pick_upload_files, pick_save_file,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
+            scan_paste_danger,
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal,
             shell_capability,

@@ -1723,7 +1723,9 @@ pub trait SessionApi: Send + Sync {
     /// 尺寸失配，此前误用 read_screen——每 pane 每 3s 序列化整屏网格只为读
     /// cols/rows 两个数。默认不支持（mock/无终端实现不必陪跑）；真实实现覆盖。
     async fn pty_size(&self, _ctx: &Actor, _sid: SessionId) -> Result<(u16, u16)> {
-        Err(Error::InvalidInput("pty_size: not supported by this backend".into()))
+        Err(Error::InvalidInput(
+            "pty_size: not supported by this backend".into(),
+        ))
     }
     async fn send_keys(&self, ctx: &Actor, sid: SessionId, keys: &str) -> Result<()>;
     async fn wait_output(&self, ctx: &Actor, sid: SessionId, opts: WaitOpts)

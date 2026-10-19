@@ -339,8 +339,8 @@ async fn agent_cmd(m: Arc<SessionManager>, cmd: AgentCmd) -> Result<()> {
             label,
             expires_days,
         } => {
-            let expires = expires_days
-                .map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
+            let expires =
+                expires_days.map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
             let token = m.center.vault.create_agent_ex(&id, &label, expires)?;
             println!("agent {id} ({label}) created");
             if let Some(e) = expires {
@@ -356,7 +356,11 @@ async fn agent_cmd(m: Arc<SessionManager>, cmd: AgentCmd) -> Result<()> {
             for a in m.center.vault.list_agents_detailed()? {
                 let fmt = |t: Option<i64>| match t {
                     Some(ms) => chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms)
-                        .map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+                        .map(|d| {
+                            d.with_timezone(&chrono::Local)
+                                .format("%Y-%m-%d %H:%M")
+                                .to_string()
+                        })
                         .unwrap_or_else(|| "?".into()),
                     None => "-".into(),
                 };
