@@ -252,6 +252,19 @@ export interface BlockInfo {
   exec_id: string | null;
 }
 
+/** P2-b 输出触发器：规则（人类专属设置；匹配按完整行、剥 ANSI、冷却节流）。 */
+export type TriggerAction = "Notify" | "SendKeys";
+export interface TriggerRule {
+  id: string;
+  name: string;
+  pattern: string;
+  action: TriggerAction;
+  /** SendKeys 必填；发送前建审批卡等人类裁决（可编辑键序）。 */
+  keys: string | null;
+  enabled: boolean;
+  cooldown_secs: number;
+}
+
 export interface TakeoverReport {
   frozen: boolean;
   paused_queue: ExecId[];

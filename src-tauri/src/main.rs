@@ -1026,6 +1026,28 @@ async fn read_blocks(
         .map_err(WireError::from)
 }
 
+// P2-b 输出触发器：人类专属设置读写（Agent 无 API——规则能自动请求键序发送）
+#[tauri::command]
+async fn read_triggers(state: ApiState<'_>) -> CmdResult<Vec<session_api::TriggerRule>> {
+    state
+        .api
+        .read_triggers(&human())
+        .await
+        .map_err(WireError::from)
+}
+
+#[tauri::command]
+async fn save_triggers(
+    state: ApiState<'_>,
+    rules: Vec<session_api::TriggerRule>,
+) -> CmdResult<Vec<session_api::TriggerRule>> {
+    state
+        .api
+        .save_triggers(&human(), rules)
+        .await
+        .map_err(WireError::from)
+}
+
 #[tauri::command]
 async fn set_session_goal(state: ApiState<'_>, sid: String, goal: Option<String>) -> CmdResult<()> {
     state
@@ -2142,6 +2164,18 @@ fn main() {
                     }
                 }
             });
+            // P2-b：输出触发器命中事件 → 前端 toast/铃（同桥模式）
+            let handle_trigger = app.handle().clone();
+            let trigger_rx = api.center.trigger_tx.subscribe();
+            tauri::async_runtime::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = tokio_stream::wrappers::BroadcastStream::new(trigger_rx);
+                while let Some(ev) = stream.next().await {
+                    if let Ok(ev) = ev {
+                        let _ = handle_trigger.emit("trigger-event", serde_json::to_value(ev).unwrap_or_default());
+                    }
+                }
+            });
             // C5（R32）：传输任务事件（进度/状态，revision 单调）即时推送——
             // 任务卡不进轮询盲窗；漏收由 list_transfers 查询对账兜底。
             let handle_xfer = app.handle().clone();
@@ -2229,7 +2263,7 @@ fn main() {
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             scan_paste_danger,
             list_host_metadata, list_recent_hosts,
-            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks,
+            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers,
             shell_capability,
             list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,
             collab_status, collab_disable_preview, collab_disable, collab_enable,

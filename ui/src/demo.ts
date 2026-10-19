@@ -980,6 +980,50 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       };
       return catalog[sid] ?? [];
     }
+    // ---- P2-b 输出触发器（演示镜像）：校验/归一与真实 set_rules 同口径，持久化在
+    // localStorage（演示域无 vault）。命中路径（引擎/审批卡）由 Rust triggers_tests 钉住，
+    // demo 无真实输出流可命中——如实不做假命中。----
+    case "read_triggers": {
+      try { return JSON.parse(localStorage.getItem("ui.v2.triggers") ?? "[]"); }
+      catch { return []; }
+    }
+    case "save_triggers": {
+      const rules = (args?.rules ?? []) as import("./adapter/wire").TriggerRule[];
+      if (rules.length > 32) throw apiError("invalid_input", "触发器最多 32 条（演示）");
+      const norm = rules.map((r, i) => {
+        const name = (r.name ?? "").trim();
+        if (!name) throw apiError("invalid_input", `第 ${i + 1} 条规则缺少名称（演示）`);
+        const pattern = (r.pattern ?? "").trim();
+        try { new RegExp(pattern); }
+        catch { throw apiError("invalid_input", `规则「${name}」正则无效（演示）`); }
+        if (r.action === "SendKeys" && !(r.keys ?? "").length) {
+          throw apiError("invalid_input", `规则「${name}」动作为「发送键序」，必须填写要发送的键序（演示）`);
+        }
+        if (r.action === "SendKeys") {
+          // 键序转义校验与真实 decode_keys 同口径（\r \n \t \0 \\）
+          const k = r.keys ?? "";
+          for (let i = 0; i < k.length; i++) {
+            if (k[i] !== "\\") continue;
+            const n = k[i + 1];
+            if (!["r", "n", "t", "0", "\\"].includes(n)) {
+              throw apiError("invalid_input", `规则「${name}」键序转义无效——支持 \\r \\n \\t \\0 \\\\（演示）`);
+            }
+            i++;
+          }
+        }
+        return {
+          id: r.id?.trim() ? r.id.trim() : "t-" + Math.random().toString(16).slice(2, 10),
+          name,
+          pattern,
+          action: r.action,
+          keys: r.action === "SendKeys" ? (r.keys ?? "") : null,
+          enabled: r.enabled ?? true,
+          cooldown_secs: Math.min(3600, Math.max(5, Math.round(r.cooldown_secs || 60))),
+        };
+      });
+      localStorage.setItem("ui.v2.triggers", JSON.stringify(norm));
+      return norm;
+    }
     // R9：人类→Agent 委托入口。镜像真实后端语义——trim 后空串归一为 null（清除）、
     // 仅人类可设、goal_set 审计留痕（command 位记目标文本，payload 记 cleared）。
     case "set_session_goal": {

@@ -24,7 +24,7 @@ import type {
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
-  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo,
+  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import {
@@ -412,6 +412,16 @@ export default function App() {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [broadcastOpen]);
+
+  // P2-b 输出触发器：设置卡读写（读失败如实给空表——卡内可重存修复；错误文案由保存路径给）
+  const loadTriggers = useCallback(async (): Promise<TriggerRule[]> => {
+    try { return (await invoke("read_triggers", {})) as TriggerRule[]; }
+    catch { return []; }
+  }, []);
+  const saveTriggers = useCallback(
+    (rules: TriggerRule[]) => invoke("save_triggers", { rules }) as Promise<TriggerRule[]>,
+    [],
+  );
   // 十一轮续：粘贴入口统一（⌘V 与终端右键共用）——bracketed paste 语义由 xterm 按远端
   // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发。
   // P0 轮：命中内置危险形态（Rust 判定）同样先确认再发——即便远端开着 bracketed paste，
@@ -1102,6 +1112,28 @@ export default function App() {
     if (!inTauri) return;
     return tauriListen(listen("approval-event", () => refreshLists()));
   }, [refreshLists]);
+
+  // P2-b 输出触发器命中：toast + 标签铃（send 动作的审批卡走 approval-event 既有链）。
+  // demo 域无事件通道——命中路径由 Rust triggers_tests 钉住，UI 侧只管呈现。
+  useEffect(() => {
+    if (!inTauri) return;
+    return tauriListen(
+      listen<{ sid: string; rule_name: string; action: string; matched: string }>(
+        "trigger-event",
+        (e) => {
+          const ev = e.payload;
+          pushToast("info", `触发器「${ev.rule_name}」命中：${ev.matched.slice(0, 80)}`);
+          setBellSids((cur) => {
+            if (cur.has(ev.sid)) return cur;
+            const n = new Set(cur);
+            n.add(ev.sid);
+            return n;
+          });
+        },
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // R23（C1 消费）：connection-event 相位推进。真实环境走事件；demo 环境无事件
   // 通道，由下方轮询兜底（同一 settleAttempt 出口，语义一致）
@@ -5174,6 +5206,7 @@ export default function App() {
               recordsSessionNames={sessionIdent}
               recordsRetention={recordsRetention} onChangeRecordsRetention={changeRecordsRetention}
               transferAutonomy={transferAutonomy} onChangeTransferAutonomy={changeTransferAutonomy}
+              loadTriggers={loadTriggers} saveTriggers={saveTriggers}
             />
           )}
         </div>

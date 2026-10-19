@@ -5,6 +5,7 @@ mod brief;
 mod charset;
 mod fault;
 mod handle;
+pub mod triggers;
 
 pub use handle::{is_whitelisted, DecisionMsg, SessionHandle};
 
@@ -71,6 +72,11 @@ pub struct ApprovalCenter {
     pub conn_tx: broadcast::Sender<ConnectionEvent>,
     /// C3（R24）：shell 集成态事件（Ready/Unavailable；DC3.5）
     pub shell_tx: broadcast::Sender<ShellIntegrationEvent>,
+    /// P2-b：输出触发器命中事件（notify→UI toast/铃；send 另有审批卡事件流）。
+    pub trigger_tx: broadcast::Sender<session_api::TriggerEvent>,
+    /// P2-b：输出触发器引擎（编译规则快照 + 每会话滚动行缓冲/冷却）。人类经
+    /// save_triggers 热更；Agent 无权（规则能自动请求键序发送）。
+    pub triggers: triggers::TriggerEngineCell,
     /// R26（§6.4）：会话状态事件（断线/自动重连次数/重确认）——UI 即时推送，
     /// 免 3s 列表轮询盲窗。
     pub state_tx: broadcast::Sender<SessionStateEvent>,
@@ -201,6 +207,7 @@ impl SessionManager {
         let (shell_tx, _) = broadcast::channel(64);
         let (state_tx, _) = broadcast::channel(64);
         let (transfer_tx, _) = broadcast::channel(128);
+        let (trigger_tx, _) = broadcast::channel(64);
         // C9（R43）：启动时的协作状态取自持久化期望态（V7 迁移保证键存在：
         // 新装 "0"=Disabled / 升级 "1"=Enabled）。读取失败按关闭处理（保守侧）。
         let collab_enabled = vault.collab_enabled().unwrap_or(false);
@@ -219,6 +226,8 @@ impl SessionManager {
             conn_tx,
             shell_tx,
             state_tx,
+            trigger_tx,
+            triggers: StdMutex::new(triggers::TriggerEngine::new()),
             quick_hosts: StdMutex::new(HashMap::new()),
             records: {
                 // ③ 记录目录 = 数据目录/records。保留期可设（vault 设置
@@ -251,6 +260,8 @@ impl SessionManager {
             audit,
             autonomy: StdMutex::new(HashMap::new()),
         });
+        // P2-b：启动装载触发器规则（坏配置不阻断启动——引擎空转，UI 读取显原样，重存即修复）
+        triggers::load_from_vault(&center);
         let arc = Arc::new(Self {
             sessions: StdMutex::new(HashMap::new()),
             center,
@@ -1736,7 +1747,10 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                         // 线性化点内部完成 seq/重放环/订阅广播（C10）
                         h.feed_output(&data).await;
                         // 十八轮：会话日志 tap——解码后 UTF-8 追加（后台输出不漏）
-                        h.log_append(&String::from_utf8_lossy(&data));
+                        let text = String::from_utf8_lossy(&data);
+                        h.log_append(&text);
+                        // P2-b：输出触发器 tap（同点同字符集语义；引擎自持滚动行缓冲）
+                        triggers::on_output(&h.center, &h, &text);
                     }
                     Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
                         let _ = h.output_tx.send(OutputEvent::Resync { sid: h.id.clone() });
@@ -2269,6 +2283,8 @@ impl SessionApi for SessionManager {
         *h.state.lock().await = SessionState::Closed;
         h.channel.close().await?;
         self.sessions.lock().unwrap().remove(&sid);
+        // P2-b：触发器引擎清该会话的滚动行缓冲与冷却记录（防缓慢泄漏）
+        self.center.triggers.lock().unwrap().drop_session(&sid);
         // 会话关闭即作废其待决审批卡（T44 复核中-1）：否则 Agent 的 forward 卡在
         // 会话关闭后仍可被批准，而 transport 层 Local/Dynamic 分支 bind 不查会话
         // 状态——会造出 forwards_list 已查不到、也无入口可停的僵尸监听（泄漏到进程
@@ -3489,6 +3505,51 @@ impl SessionApi for SessionManager {
                 exec_id: b.exec_id.clone(),
             })
             .collect())
+    }
+
+    // ---- P2-b 输出触发器（人类专属：规则能自动请求键序发送，Agent 无权）----
+    async fn read_triggers(&self, ctx: &Actor) -> Result<Vec<TriggerRule>> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        match self
+            .center
+            .vault
+            .get_setting(session_api::TRIGGERS_KV_KEY)?
+        {
+            None => Ok(Vec::new()),
+            Some(raw) => serde_json::from_str(&raw)
+                .map_err(|e| Error::InvalidInput(format!("触发器配置损坏（重存即可修复）：{e}"))),
+        }
+    }
+
+    async fn save_triggers(
+        &self,
+        ctx: &Actor,
+        rules: Vec<TriggerRule>,
+    ) -> Result<Vec<TriggerRule>> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidActor);
+        }
+        // 校验+归一+编译快照热更（任一规则非法即整体拒绝，旧快照不动）
+        let norm = self.center.triggers.lock().unwrap().set_rules(rules)?;
+        self.center.vault.set_setting(
+            session_api::TRIGGERS_KV_KEY,
+            &serde_json::to_string(&norm)
+                .map_err(|e| Error::Storage(format!("serialize triggers: {e}")))?,
+        )?;
+        let _ = self.center.audit.append(
+            ctx,
+            "triggers_saved",
+            None,
+            None,
+            serde_json::json!({
+                "count": norm.len(),
+                "send_actions": norm.iter().filter(|r| r.action == TriggerAction::SendKeys).count(),
+            }),
+            None,
+        );
+        Ok(norm)
     }
 
     // ---- 任务目标/交接留言（R9：人类→Agent 委托入口）----
@@ -5787,6 +5848,10 @@ mod r24_tests;
 #[cfg(test)]
 #[path = "p1_tests.rs"]
 mod p1_tests;
+
+#[cfg(test)]
+#[path = "triggers_tests.rs"]
+mod triggers_tests;
 
 #[cfg(test)]
 #[path = "r26_tests.rs"]

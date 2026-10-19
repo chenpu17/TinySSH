@@ -2,7 +2,7 @@
 // 终端键入辅助、搜索/分屏/字号/色板常量与主题预设、tauri 订阅兜底与弹窗焦点
 // 陷阱 hook。纯函数/常量为主（唯一带 React 的是 useDialogFocus）；不含组件。
 // 新增标签必须与后端审计动作同步（见 AUDIT_LABELS 注）。
-import { IconSliders, IconPencil, IconTerminal, IconStar, IconInbox, IconClock, IconRefresh } from "./icons"; // settingsCatIcon 图标映射用（值引用，无 JSX）
+import { IconSliders, IconPencil, IconTerminal, IconSearch, IconStar, IconInbox, IconClock, IconRefresh } from "./icons"; // settingsCatIcon 图标映射用（值引用，无 JSX）
 import { useEffect, type RefObject } from "react";
 import { invoke, MkChannel } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
@@ -50,11 +50,12 @@ export type ApprovalRow = Omit<ApprovalItem, "status"> & { status: string };
 // R42（§6.6/S11）：设置对话框的分类（单实例，左分类 + 右内容）
 // 二十一轮：分类加导航描述（大气化——图标 + 标签 + 一句话定位）
 // ④ 记录审计：Agent 动作的时间线/导出入口（数据在核心加密记录库）
-export type SettingsCat = "appearance" | "keys" | "terminal" | "credentials" | "agent" | "records" | "about";
+export type SettingsCat = "appearance" | "keys" | "terminal" | "triggers" | "credentials" | "agent" | "records" | "about";
 export const SETTINGS_CATS: [SettingsCat, string, string][] = [
   ["appearance", "外观", "色板 · 字号 · 缩放"],
   ["keys", "快捷键", "新建 · 关签 · 分屏 · 面板"],
   ["terminal", "终端", "粘贴 · 复制 · 通知"],
+  ["triggers", "输出触发器", "输出正则 → 通知 / 键序"],
   ["credentials", "凭据", "密钥与口令"],
   ["agent", "Agent 接入", "MCP 协作"],
   ["records", "记录审计", "时间线 · 导出"],
@@ -62,8 +63,8 @@ export const SETTINGS_CATS: [SettingsCat, string, string][] = [
 ];
 export const settingsCatLabel = (c: SettingsCat): string => SETTINGS_CATS.find(([id]) => id === c)?.[1] ?? c;
 export const settingsCatIcon: Record<SettingsCat, typeof IconSliders> = {
-  appearance: IconSliders, keys: IconPencil, terminal: IconTerminal, credentials: IconStar,
-  agent: IconInbox, records: IconRefresh, about: IconClock,
+  appearance: IconSliders, keys: IconPencil, terminal: IconTerminal, triggers: IconSearch,
+  credentials: IconStar, agent: IconInbox, records: IconRefresh, about: IconClock,
 };
 // 最近处理（已决审批）六态标签：编辑后批准/超时/作废此前都被误显示成「✕ 拒绝」。
 export const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {

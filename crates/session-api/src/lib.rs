@@ -205,6 +205,60 @@ pub struct BlockInfo {
 }
 
 // ---------------------------------------------------------------------------
+// P2-b 输出触发器：规则（人类设置项）与命中事件
+// ---------------------------------------------------------------------------
+
+/// 触发器规则在 vault settings 表的 KV 键（JSON `Vec<TriggerRule>`）。
+pub const TRIGGERS_KV_KEY: &str = "triggers.v1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TriggerAction {
+    /// 命中即通知：UI toast + 标签铃 + 审计 `trigger_fired`。无副作用。
+    Notify,
+    /// 命中后**请求**向会话发送键序——建审批卡等人类裁决（可编辑键序），批准才
+    /// 写通道。绝不静默自动执行；Agent 在控/停用协作不拦截（裁决权在人类）。
+    SendKeys,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TriggerRule {
+    /// `t-` 前缀短 id；保存端归一（空则补），冷却历史按 (id, session) 记。
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    /// 按**完整行**匹配的正则（匹配前剥离 ANSI CSI/OSC；跨行不命中——如实边界）。
+    pub pattern: String,
+    pub action: TriggerAction,
+    /// SendKeys 必填；**转义原文**（`\r` `\n` `\t` `\0` `\\`，存原文可保真回显/再编辑），
+    /// 发送前解码并经 PTY 直写（非命令文本，不记命令块——归因不撒谎）。
+    #[serde(default)]
+    pub keys: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 同规则同会话两次触发的最小间隔（秒）；存端 clamp 5..=3600，缺省 60。
+    #[serde(default = "default_cooldown_secs")]
+    pub cooldown_secs: u32,
+}
+fn default_true() -> bool {
+    true
+}
+fn default_cooldown_secs() -> u32 {
+    60
+}
+
+/// 触发命中事件（broadcast → UI toast/铃）；SendKeys 动作另有审批卡事件流。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerEvent {
+    pub sid: SessionId,
+    pub rule_id: String,
+    pub rule_name: String,
+    /// `notify` | `send`
+    pub action: String,
+    /// 命中行摘录（≤160 字符，已剥离 ANSI）——toast 与审批卡的上下文。
+    pub matched: String,
+}
+
+// ---------------------------------------------------------------------------
 // 审批队列类型（读取路径契约）
 // ---------------------------------------------------------------------------
 
@@ -1923,6 +1977,15 @@ pub trait SessionApi: Send + Sync {
     /// 人类与 Agent 同权只读（与简报同口径，交接引用块的数据面）；不产生副作用、
     /// 不进审计。数据唯一事实源在 term-core BlockIndex，这里只是投影。
     async fn read_blocks(&self, ctx: &Actor, sid: SessionId, limit: u32) -> Result<Vec<BlockInfo>>;
+
+    /// P2-b 输出触发器：读取规则。**人类专属**——规则可自动请求键序发送，
+    /// Agent 无读写 API（不让 Agent 自己写自动化入口）。
+    async fn read_triggers(&self, ctx: &Actor) -> Result<Vec<TriggerRule>>;
+
+    /// P2-b 输出触发器：整卡保存。校验+归一（补 id / 冷却 clamp / 上限）→ 持久化
+    /// → 引擎热更快照；返回归一后的规则（UI 以此回显真实生效值）。
+    async fn save_triggers(&self, ctx: &Actor, rules: Vec<TriggerRule>)
+        -> Result<Vec<TriggerRule>>;
 
     /// 设定会话任务目标/交接留言（R9：人类→Agent 委托入口；None=清除，仅人类）。
     /// Agent 经 get_session_brief 的 goal 字段读取；设定/清除全程审计留痕。

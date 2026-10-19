@@ -2112,3 +2112,16 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 .bp-state { flex: none; font-size: 11px; }
 .bp-empty { color: var(--dim); font-size: 12px; padding: 8px 4px; }
 .bp-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ---- P2-b：输出触发器设置卡 ---- */
+.trigger-row {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; margin-top: 8px; border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.trigger-line { display: flex; align-items: center; gap: 8px; }
+.trigger-in {
+  flex: 1; min-width: 0; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px;
+}
+.trigger-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; flex: none; }
