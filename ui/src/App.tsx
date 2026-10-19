@@ -343,6 +343,75 @@ export default function App() {
   // Rust：approval::scan_dangerous 的同一张内置 deny 表 + tree-sitter 逐段 + wrapper
   // 前缀；这里只决定「要不要问」，不做第二份规则）。漏筛=少一次提示，误筛=多一次 IPC。
   const PASTE_DANGER_PREFILTER = /\b(?:rm|dd|mkfs|wipefs|blkdiscard|shred|fdisk|cfdisk|sfdisk|sgdisk|parted|shutdown|reboot|halt|poweroff|chmod|systemctl|sudo|doas|nohup)\b|:\(\)/;
+  // P2-a 广播输入（iTerm 同款）：勾选若干会话后，在当前会话打字的每个键序（onData
+  // 字符、Ctrl 控制键、⌥ Meta 序列）同时复制发到勾选会话。扇出只是 UI 层多打几次
+  // 既有 send_keys——每个目标走同一条 Human 路径（register_outgoing 记块、按各自主
+  // 机字符集编码），归属天然正确，不新增后端面。勾选集=「额外目标」：当前会话无论
+  // 勾选与否都接收（你打字总在它里面），勾选的含义是「切走后仍接收」。
+  const [broadcastTargets, setBroadcastTargets] = useState<string[]>([]);
+  const broadcastRef = useRef<string[]>([]);            // onData/Ctrl/⌥ 闭包读 ref，避免 stale state
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const broadcastPopRef = useRef<HTMLDivElement | null>(null);
+  // 目标离线的一次性告示记（写入目标自己的终端，切过去能看见）；恢复可达即清除
+  const bcastWarnedRef = useRef<Map<string, boolean>>(new Map());
+  // 粘贴永不广播：term.paste 触发的 onData 携带整段内容，而危险/多行确认链都是单
+  // 会话语义——统一「粘贴只进当前会话」，发粘贴期间压住扇出（paste→onData 同步，
+  // 微任务复位即可）。块重跑走 send_keys 直发，不经 onData，天然不广播。
+  const bcastSuppressRef = useRef(false);
+  // 扇出实现挂在 ref 上：onData 闭包在 createTerm([]) 里定型，不能依赖后声明的 state
+  const broadcastSendRef = useRef<(from: string, keys: string) => void>(() => {});
+  useEffect(() => {
+    broadcastSendRef.current = (from: string, keys: string) => {
+      for (const t of broadcastRef.current) {
+        if (t === from) continue;
+        const st = sessionsRef.current.find((x) => x.id === t)?.state;
+        if (!st || inputBlockedState(st)) {
+          if (!bcastWarnedRef.current.get(t)) {
+            bcastWarnedRef.current.set(t, true);
+            termsRef.current.get(t)?.term.write(`\r\n\x1b[33m⚠ 广播：该会话${!st ? "已不存在" : "离线/断线中"}——键入未发送。\x1b[0m\r\n`);
+          }
+          continue;
+        }
+        bcastWarnedRef.current.delete(t);
+        void invoke("send_keys", { sid: t, keys }).catch(() => {});
+      }
+    };
+  }, []);
+  const toggleBroadcast = useCallback((t: string) => {
+    setBroadcastTargets((cur) => {
+      const next = cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t];
+      broadcastRef.current = next;
+      if (cur.includes(t)) bcastWarnedRef.current.delete(t);
+      return next;
+    });
+  }, []);
+  const clearBroadcast = useCallback(() => {
+    broadcastRef.current = [];
+    bcastWarnedRef.current.clear();
+    setBroadcastTargets([]);
+  }, []);
+  // 会话关闭后从广播集剔除（告示记一并清理）；无变化不 setState
+  useEffect(() => {
+    const live = new Set(sessions.map((s) => s.id));
+    const next = broadcastRef.current.filter((t) => live.has(t));
+    if (next.length !== broadcastRef.current.length) {
+      broadcastRef.current = next;
+      setBroadcastTargets(next);
+    }
+    for (const k of [...bcastWarnedRef.current.keys()]) if (!live.has(k)) bcastWarnedRef.current.delete(k);
+  }, [sessions]);
+  // 浮层点外关闭（chip 在浮层外，点它交给自身 toggle，不能双触发）
+  useEffect(() => {
+    if (!broadcastOpen) return;
+    const onDown = (ev: MouseEvent) => {
+      const t = ev.target as Node;
+      if (broadcastPopRef.current?.contains(t)) return;
+      if (document.querySelector('[data-testid="sb-broadcast"]')?.contains(t)) return;
+      setBroadcastOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [broadcastOpen]);
   // 十一轮续：粘贴入口统一（⌘V 与终端右键共用）——bracketed paste 语义由 xterm 按远端
   // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发。
   // P0 轮：命中内置危险形态（Rust 判定）同样先确认再发——即便远端开着 bracketed paste，
@@ -370,7 +439,8 @@ export default function App() {
           kind: "paste",
         });
       } else {
-        term.paste(t);
+        bcastSuppressRef.current = true;
+        try { term.paste(t); } finally { queueMicrotask(() => { bcastSuppressRef.current = false; }); }
       }
     };
     if (pasteGuardRef.current && PASTE_DANGER_PREFILTER.test(t)) {
@@ -1353,6 +1423,8 @@ export default function App() {
       invoke("send_keys", { sid: sessionSid, keys: d }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
+      // 广播扇出（P2-a）：主发之后复制到勾选会话（目标逐会话过离线闸，见 broadcastSendRef）
+      if (!bcastSuppressRef.current) broadcastSendRef.current(sessionSid, d);
     });
     return { term, el, search: searchAddon, tag, feed: null as OutputFeed | null, webgl, liga };
   }, []);
@@ -1397,6 +1469,7 @@ export default function App() {
           const s0 = sidRef.current;
           if (!s0 || (() => { const st = sessionsRef.current.find((x) => x.id === s0)?.state; return !st || inputBlockedState(st); })()) return;
           void invoke("send_keys", { sid: s0, keys: seq }).catch(() => {});
+          broadcastSendRef.current(s0, seq);
           return;
         }
         if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
@@ -1443,6 +1516,7 @@ export default function App() {
         // 死会话分支不在此列：吞的是直发，action 照常解析（Ctrl+W 关死标签是正道）。
         ev.stopImmediatePropagation();
         void invoke("send_keys", { sid: s, keys: cc }).catch(() => {});
+        broadcastSendRef.current(s, cc);
       };
       window.addEventListener("keydown", onKey, { capture: true });
       return () => window.removeEventListener("keydown", onKey, { capture: true });
@@ -4165,6 +4239,13 @@ export default function App() {
         keywords: "命令 块 blocks 历史 重跑",
         run: () => setRightPanel(rightPanel === "blocks" ? null : "blocks"),
       });
+      // P2-a 广播输入：专注模式藏了状态栏，⌘K 是唯一全模式可达入口（巡检补入口同款）
+      items.push({
+        id: "panel-broadcast", group: "当前会话",
+        title: broadcastTargets.length > 0 ? `广播输入（已勾选 ${broadcastTargets.length} 个会话）` : "广播输入…",
+        keywords: "broadcast 多会话 同步键入 同发",
+        run: () => setBroadcastOpen(true),
+      });
       if (hasAgents && owner === "Agent") {
         items.push({
           id: "takeover", group: "当前会话", title: "接管（冻结 Agent，待审批作废）",
@@ -4645,6 +4726,7 @@ export default function App() {
             takeover={takeover} takeoverStop={takeoverStop}
             openSessionDetail={openSessionDetail} toggleSessionLog={toggleSessionLog}
             requestCloseSession={requestCloseSession}
+            broadcastArmed={broadcastTargets.length} openBroadcast={() => setBroadcastOpen(true)}
           />
         )}
         {hostKeyQueue.length > 0 && (() => {
@@ -4943,7 +5025,10 @@ export default function App() {
                     if (pasteConfirm.kind === "rerun") {
                       void invoke("send_keys", { sid: pasteConfirm.sid, keys: pasteConfirm.text + "\r" }).catch(() => {});
                     } else {
-                      termsRef.current.get(pasteConfirm.sid)?.term.paste(pasteConfirm.text);
+                      // 确认后的危险粘贴同样只进当前会话（广播抑制，与安全粘贴同口径）
+                      bcastSuppressRef.current = true;
+                      try { termsRef.current.get(pasteConfirm.sid)?.term.paste(pasteConfirm.text); }
+                      finally { queueMicrotask(() => { bcastSuppressRef.current = false; }); }
                     }
                     setPasteConfirm(null);
                     restoreTermFocus();
@@ -5310,6 +5395,8 @@ export default function App() {
           <span className="mono sb-left">{sbLeft}</span>
           <span style={{ flex: 1 }} />
           <span className="sb-right">
+            <button className={"sb-btn" + (broadcastTargets.length > 0 ? " ts-open" : "")} data-testid="sb-broadcast" title="广播输入：同一键入同时发到勾选的会话（点开选择目标）" aria-pressed={broadcastOpen}
+              onClick={() => setBroadcastOpen(!broadcastOpen)}>广播 <b>{broadcastTargets.length > 0 ? broadcastTargets.length : ""}</b></button>
             <button className={"sb-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="sb-blocks" title="命令块：最近命令时间线（shell 集成 OSC 133）" aria-pressed={rightPanel === "blocks"}
               onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}>块 <b>{blocksList.length > 0 ? blocksList.length : ""}</b></button>
             <button className="sb-btn" title="端口转发" onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>转发 <b>{forwards.length}</b></button>
@@ -5328,6 +5415,38 @@ export default function App() {
       {/* 十九轮：命令面板（⌘K）；Esc/遮罩关闭走浮层链与本组件内键盘 */}
       <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
 
+      {/* P2-a 广播输入目标浮层：状态栏 chip / 工具菜单 / ⌘K 打开；点外关闭 */}
+      {broadcastOpen && (
+        <div className="broadcast-pop" ref={broadcastPopRef} data-testid="broadcast-pop" role="dialog" aria-label="广播输入">
+          <div className="bp-title">广播输入</div>
+          <div className="bp-note">打字与 Ctrl/⌥ 控制键会同时发到勾选的会话；当前会话始终接收（勾选 = 切走后仍接收）。粘贴与块重跑只进当前会话，不广播。离线目标自动跳过并在其终端里告示。</div>
+          {sessions.length === 0 ? (
+            <div className="bp-empty" data-testid="broadcast-empty">没有打开的会话。</div>
+          ) : (
+            <div className="bp-list">
+              {sessions.map((s) => {
+                const stl = stateLabel(s.state);
+                return (
+                  <label key={s.id} className="bp-row" data-testid="broadcast-row" data-sid={s.id} data-state={s.state}>
+                    <input type="checkbox" data-testid="broadcast-check" checked={broadcastTargets.includes(s.id)}
+                      onChange={() => toggleBroadcast(s.id)} />
+                    <span className="bp-name">{tabNames[s.id] ?? s.host_name}{sid === s.id ? "（当前）" : ""}</span>
+                    {s.control_owner === "Agent" && (
+                      <span className="bp-owner" title="该会话由 Agent 掌握——广播键入按人类输入记块，不会自动暂停 Agent">Agent</span>
+                    )}
+                    <span className={"bp-state " + stl.cls}>{stl.text}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          <div className="bp-foot">
+            <button className="ghost" data-testid="broadcast-clear" disabled={broadcastTargets.length === 0}
+              onClick={clearBroadcast}>全部取消</button>
+            <button className="primary" data-testid="broadcast-close" onClick={() => setBroadcastOpen(false)}>完成</button>
+          </div>
+        </div>
+      )}
       {/* R31 §350 文件动作菜单：双击/Enter 文件弹出可用动作（不直接执行）；点外/Esc 关 */}
       {sftpMenu && (
         <SftpFileMenu

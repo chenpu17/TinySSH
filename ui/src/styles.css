@@ -2087,3 +2087,28 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   outline-offset: -1px;
   border-radius: 8px;
 }
+
+/* ---- P2-a：广播输入目标浮层（状态栏 chip / 工具菜单 / ⌘K 打开） ---- */
+.broadcast-pop {
+  position: fixed; right: 12px; bottom: 40px; width: 380px; max-height: 52vh;
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; z-index: 60;
+  box-shadow: 0 2px 6px var(--shadow-soft), 0 12px 32px var(--shadow-pop);
+}
+.bp-title { font-weight: 600; }
+.bp-note { font-size: 12px; color: var(--dim); line-height: 1.55; }
+.bp-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.bp-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 6px;
+  border-radius: 6px; cursor: pointer;
+}
+.bp-row:hover { background: var(--accent-soft); }
+.bp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-owner {
+  flex: none; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn);
+}
+.bp-state { flex: none; font-size: 11px; }
+.bp-empty { color: var(--dim); font-size: 12px; padding: 8px 4px; }
+.bp-foot { display: flex; justify-content: flex-end; gap: 8px; }
