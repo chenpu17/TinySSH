@@ -1079,12 +1079,14 @@ async fn autonomy_list(state: ApiState<'_>) -> CmdResult<Vec<session_api::Autono
 // ---- ④ 记录审计 GUI：时间线查询 + 明文导出（人类视角全量；Agent 走 MCP 只见自己）----
 
 /// UI 过滤面（camelCase 过桥；kind 走 RecordKind 的 serde snake_case 契约；
-/// until 供时间线「加载更早」翻页——传已载最旧 ts−1ms 表达严格小于）。
+/// since 供时间范围筛选，until 供「加载更早」翻页——传已载最旧 ts−1ms 表达严格小于）。
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct RecordsFilterReq {
+    session_id: Option<String>,
     agent_id: Option<String>,
     kind: Option<tinyssh_records::RecordKind>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
     until: Option<chrono::DateTime<chrono::Utc>>,
     limit: Option<u32>,
 }
@@ -1092,10 +1094,10 @@ struct RecordsFilterReq {
 impl From<RecordsFilterReq> for tinyssh_records::RecordFilter {
     fn from(r: RecordsFilterReq) -> Self {
         tinyssh_records::RecordFilter {
-            session_id: None,
+            session_id: r.session_id,
             agent_id: r.agent_id,
             kind: r.kind,
-            since: None,
+            since: r.since,
             until: r.until,
             limit: r.limit,
         }

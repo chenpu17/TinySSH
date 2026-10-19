@@ -24,8 +24,9 @@ import type {
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
-  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery,
+  McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange,
 } from "./adapter/wire";
+import { recordsRangeSince } from "./components/records-pane";
 import {
   IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
   IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
@@ -452,7 +453,7 @@ export default function App() {
   // ④ 记录审计时间线：打开设置「记录审计」分区或筛选变化时拉取（不进 3s 轮询——
   // 记录只在动作发生时增长，手动刷新 + 分区打开即拉已够）
   const [recordsRows, setRecordsRows] = useState<ActionRecord[] | null>(null);
-  const [recordsFilter, setRecordsFilter] = useState<RecordsQuery>({ agentId: null, kind: null, limit: 200 });
+  const [recordsFilter, setRecordsFilter] = useState<RecordsQuery>({ agentId: null, kind: null, limit: 200, range: "all", sessionId: null });
   const [recordsBusy, setRecordsBusy] = useState(false);
   const [recordsExportBusy, setRecordsExportBusy] = useState(false);
   // ⑥ 翻页：complete=true 表示最近一页不满页（已到底）；保留期（0=永久，启动读 vault）
@@ -3664,10 +3665,15 @@ export default function App() {
   }, [pushToast, refreshLists]);
 
   // ---- ④ 记录审计时间线（数据面；呈现见 components/records-pane.tsx）----
+  // ⑨ range 只存档位，since 在拉取时刻换算（久置页面的「今天」边界不漂移）
+  const recordsFilterPayload = useCallback(
+    (f: RecordsQuery, until?: string | null) => ({ ...f, since: recordsRangeSince(f.range), until: until ?? null }),
+    [],
+  );
   const refreshRecords = useCallback(async (f: RecordsQuery) => {
     setRecordsBusy(true);
     try {
-      const rows = (await invoke("query_records", { filter: f })) as ActionRecord[];
+      const rows = (await invoke("query_records", { filter: recordsFilterPayload(f) })) as ActionRecord[];
       setRecordsRows(rows);
       setRecordsComplete(rows.length < f.limit);
     } catch {
@@ -3677,7 +3683,7 @@ export default function App() {
     } finally {
       setRecordsBusy(false);
     }
-  }, []);
+  }, [recordsFilterPayload]);
 
   // ⑥ 「加载更早」：游标 = 已载最旧 ts − 1ms（核心 until 为 <= 含端点，同毫秒多条
   // 随游标一起翻走）；追加前按 seq 去重只是双击竞态兜底
@@ -3687,7 +3693,7 @@ export default function App() {
     setRecordsMoreBusy(true);
     try {
       const until = new Date(new Date(rows[rows.length - 1].ts).getTime() - 1).toISOString();
-      const batch = (await invoke("query_records", { filter: { ...recordsFilter, until } })) as ActionRecord[];
+      const batch = (await invoke("query_records", { filter: recordsFilterPayload(recordsFilter, until) })) as ActionRecord[];
       const seen = new Set(rows.map((r) => r.seq));
       setRecordsRows([...rows, ...batch.filter((r) => !seen.has(r.seq))]);
       setRecordsComplete(batch.length < recordsFilter.limit);
@@ -3696,7 +3702,7 @@ export default function App() {
     } finally {
       setRecordsMoreBusy(false);
     }
-  }, [recordsRows, recordsFilter, recordsMoreBusy, pushToast]);
+  }, [recordsRows, recordsFilter, recordsMoreBusy, recordsFilterPayload, pushToast]);
 
   // 打开「记录审计」分区或筛选变化即拉取；手动「刷新」按钮走同一入口
   useEffect(() => {
@@ -4748,6 +4754,7 @@ export default function App() {
               onRecordsExport={() => void exportRecords()}
               recordsHasMore={!recordsComplete} recordsMoreBusy={recordsMoreBusy}
               onRecordsMore={() => void loadMoreRecords()}
+              recordsSessionNames={sessionIdent}
               recordsRetention={recordsRetention} onChangeRecordsRetention={changeRecordsRetention}
               transferAutonomy={transferAutonomy} onChangeTransferAutonomy={changeTransferAutonomy}
             />

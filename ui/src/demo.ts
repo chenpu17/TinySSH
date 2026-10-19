@@ -84,47 +84,62 @@ const demoState = {
   records: [
     {
       seq: 5, ts: new Date(Date.now() - 4 * 60e3).toISOString(), kind: "exec",
-      session_id: "s-demo", agent_id: "opencode",
+      session_id: "s-demo-0001", agent_id: "opencode",
       summary: "kubectl get pods -n prod", status: "ok", exit_code: 0,
       duration_ms: 1240, output_excerpt: "NAME READY STATUS …\nweb-7d9 1/1 Running",
       meta: { mode: "Reuse" },
     },
     {
       seq: 4, ts: new Date(Date.now() - 22 * 60e3).toISOString(), kind: "transfer",
-      session_id: "s-demo", agent_id: "opencode",
+      session_id: "s-demo-0001", agent_id: "opencode",
       summary: "upload C:\\work\\report.pdf → /srv/www/report.pdf", status: "ok",
       exit_code: null, duration_ms: 8600, output_excerpt: null,
       meta: { transfer: "t-demo-1" },
     },
     {
       seq: 3, ts: new Date(Date.now() - 51 * 60e3).toISOString(), kind: "exec",
-      session_id: "s-demo", agent_id: "opencode",
+      session_id: "s-demo-0001", agent_id: "opencode",
       summary: "systemctl restart nginx", status: "denied", exit_code: null,
       duration_ms: null, output_excerpt: null, meta: {},
     },
     {
       seq: 2, ts: new Date(Date.now() - 75 * 60e3).toISOString(), kind: "forward",
-      session_id: "s-demo", agent_id: null,
+      session_id: "s-demo-0001", agent_id: null,
       summary: "forward 127.0.0.1:8443 → 10.0.0.5:443", status: "ok",
       exit_code: null, duration_ms: null, output_excerpt: null, meta: {},
     },
     {
       seq: 1, ts: new Date(Date.now() - 110 * 60e3).toISOString(), kind: "exec",
-      session_id: "s-demo", agent_id: "opencode",
+      session_id: "s-demo-0001", agent_id: "opencode",
       summary: "rm -rf /var/lib/old-builds", status: "dangerous", exit_code: null,
       duration_ms: null, output_excerpt: null, meta: {},
     },
-    // ⑥ 翻页样本：250 条满页（下拉最小档 200）走「加载更早」→ 第二页到底撤钮
-    ...Array.from({ length: 245 }, (_, i) => ({
+    // ⑥⑨ 翻页/时间筛选样本：250 条 = 5 多态 + 185 近端（约 2~5.4h 前）+ 60 远端
+    // （约 48h 前，被「近 24 小时」档砍掉）——下拉最小档 200：全部时间 200 满页出
+    // 「加载更早」→ 翻到底撤钮；近 24 小时剩 190 行无钮。
+    ...Array.from({ length: 185 }, (_, i) => ({
       seq: 300 - i,
       ts: new Date(Date.now() - (130 + i) * 60e3).toISOString(),
       kind: "exec" as const,
-      session_id: "s-demo",
+      session_id: "s-demo-0001",
       agent_id: "opencode",
       summary: `df -h /srv/data${i + 1}`,
       status: "ok",
       exit_code: 0,
       duration_ms: 100 + i,
+      output_excerpt: null,
+      meta: {},
+    })),
+    ...Array.from({ length: 60 }, (_, i) => ({
+      seq: 100 - i,
+      ts: new Date(Date.now() - (48 * 60 + i) * 60e3).toISOString(),
+      kind: "exec" as const,
+      session_id: "s-demo-0001",
+      agent_id: "opencode",
+      summary: `echo archive-${i + 1}`,
+      status: "ok",
+      exit_code: 0,
+      duration_ms: 5,
       output_excerpt: null,
       meta: {},
     })),
@@ -987,24 +1002,34 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       return [...demoState.autonomy].map((agent_id) => ({ agent_id, expires_at: null }));
     }
     case "query_records": {
-      // ④ demo 镜像：按种类/来源/条数过滤（新→旧；until 同核心语义 <= 含端点，
-      // 真实实现见 core-session query_records——Agent 侧强制只查自己的记录，
-      // demo 里 invoke 只来自人类 UI，不做该投影）
-      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; until?: string | null; limit?: number };
+      // ④ demo 镜像：按会话/种类/来源/时间/条数过滤（新→旧；since>=、until<= 与核心
+      // 端点语义一致；真实实现见 core-session query_records——Agent 侧强制只查自己
+      // 的记录，demo 里 invoke 只来自人类 UI，不做该投影）
+      const f = (args?.filter ?? {}) as {
+        sessionId?: string | null; agentId?: string | null; kind?: string | null;
+        since?: string | null; until?: string | null; limit?: number;
+      };
       return demoState.records
         .filter((r) =>
-          (f.kind ? r.kind === f.kind : true)
+          (f.sessionId ? r.session_id === f.sessionId : true)
+          && (f.kind ? r.kind === f.kind : true)
           && (f.agentId ? r.agent_id === f.agentId : true)
+          && (f.since ? r.ts >= f.since : true)
           && (f.until ? r.ts <= f.until : true))
         .slice(0, f.limit ?? 200);
     }
     case "export_records": {
       // ④ demo 镜像：同样的过滤，计数返回；demo 无文件系统不落盘，路径如实说明
-      const f = (args?.filter ?? {}) as { agentId?: string | null; kind?: string | null; until?: string | null; limit?: number };
+      const f = (args?.filter ?? {}) as {
+        sessionId?: string | null; agentId?: string | null; kind?: string | null;
+        since?: string | null; until?: string | null; limit?: number;
+      };
       const n = demoState.records
         .filter((r) =>
-          (f.kind ? r.kind === f.kind : true)
+          (f.sessionId ? r.session_id === f.sessionId : true)
+          && (f.kind ? r.kind === f.kind : true)
           && (f.agentId ? r.agent_id === f.agentId : true)
+          && (f.since ? r.ts >= f.since : true)
           && (f.until ? r.ts <= f.until : true))
         .length;
       audit("human", "records_export", null, null, null, { count: n });

@@ -63,7 +63,7 @@ Tauri v2 · Rust（tokio / russh ≥0.61 / portable-pty / alacritty_terminal / t
 把该 URL 扔给任何能取网页的 Agent 即可自助对接。能力面：23 个工具（会话/exec/传输/转发/审计/执行记录）、
 资源（`tinyssh://sessions` 等现场状态，可 `resources/subscribe` 收变化推送）与引导提示（`prompts/get`）。
 Agent 侧所有动作（命令/传输/转发，含被拒的）进**结构化执行记录**：加密落盘、输出摘录脱敏、
-保留 30 天，Agent 可 `query_records` 自查，人类在 设置 → 记录审计 时间线回看（种类/来源筛选），
+保留 30 天（可在 设置 → 记录审计 调整），Agent 可 `query_records` 自查，人类在 设置 → 记录审计 时间线回看（种类/来源/会话/时间筛选、加载更早），
 并可一键导出明文 JSONL（落 `records-export/`，导出留审计）。
 接入步骤：设置 → Agent 接入 →
 `tinyssh agent create <id> <名称>` 签发 Token（仅展示一次）→ Agent 侧按文档配置 HTTP 直连

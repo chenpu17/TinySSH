@@ -4,7 +4,20 @@
 // 落点固定在核心 records-export/（不开放任意路径），导出动作留审计。
 
 import { useState } from "react";
-import type { ActionRecord, ActionRecordKind, RecordsQuery } from "../adapter/wire";
+import type { ActionRecord, ActionRecordKind, RecordsQuery, RecordsRange } from "../adapter/wire";
+
+/** ⑨ 时间范围档位 → since ISO（「今天」按本机零点；all=null 不过滤）。
+ * 在拉取时刻换算，筛选态里只存档位，避免久置页面的边界漂移。 */
+export function recordsRangeSince(range: RecordsRange): string | null {
+  if (range === "all") return null;
+  if (range === "today") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+  const hours = range === "24h" ? 24 : range === "7d" ? 24 * 7 : 24 * 30;
+  return new Date(Date.now() - hours * 3600e3).toISOString();
+}
 
 const KIND_LABEL: Record<ActionRecordKind, string> = {
   exec: "命令",
@@ -40,6 +53,8 @@ interface RecordsPaneProps {
   filter: RecordsQuery;
   /** 筛选下拉的 Agent 选项（来自 MCP 登记面） */
   agents: { id: string; label: string }[];
+  /** ⑨ 会话 id → 主机名（R41 累积面，含已关会话）：会话筛选选项 + 行内主机标注 */
+  sessionNames: Map<string, string>;
   onFilter: (next: RecordsQuery) => void;
   onRefresh: () => void;
   onExport: () => void;
@@ -53,7 +68,7 @@ interface RecordsPaneProps {
 }
 
 export function RecordsPane(props: RecordsPaneProps) {
-  const { rows, busy, exportBusy, filter, agents, onFilter, onRefresh, onExport,
+  const { rows, busy, exportBusy, filter, agents, sessionNames, onFilter, onRefresh, onExport,
     hasMore, moreBusy, onLoadMore, retention, onChangeRetention } = props;
   // 摘录展开态（面板本地；按 seq 记，翻筛后自然失效无害）
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -96,6 +111,27 @@ export function RecordsPane(props: RecordsPaneProps) {
             ))}
           </select>
           <select
+            style={{ fontSize: 11 }} aria-label="按时间筛选" data-testid="records-range-filter"
+            value={filter.range}
+            onChange={(e) => onFilter({ ...filter, range: e.target.value as RecordsQuery["range"] })}
+          >
+            <option value="all">全部时间</option>
+            <option value="today">今天</option>
+            <option value="24h">近 24 小时</option>
+            <option value="7d">近 7 天</option>
+            <option value="30d">近 30 天</option>
+          </select>
+          <select
+            style={{ fontSize: 11 }} aria-label="按会话筛选" data-testid="records-session-filter"
+            value={filter.sessionId ?? ""}
+            onChange={(e) => onFilter({ ...filter, sessionId: e.target.value || null })}
+          >
+            <option value="">全部会话</option>
+            {[...sessionNames.entries()].map(([sid, label]) => (
+              <option key={sid} value={sid}>{label}</option>
+            ))}
+          </select>
+          <select
             style={{ fontSize: 11 }} aria-label="条数上限" data-testid="records-limit-filter"
             value={String(filter.limit)}
             onChange={(e) => onFilter({ ...filter, limit: Number(e.target.value) || 200 })}
@@ -128,6 +164,13 @@ export function RecordsPane(props: RecordsPaneProps) {
                   <span className="dim" style={{ fontSize: 11 }}>
                     {r.agent_id ? `Agent ${r.agent_id}` : "人类"}
                   </span>
+                  {/* ⑨ 主机标注（R41 累积面）：会话已关也能标出「当时在哪台主机」；
+                      查不到如实显示短 id */}
+                  {r.session_id && (
+                    <span className="dim" style={{ fontSize: 11 }}>
+                      · {sessionNames.get(r.session_id) ?? r.session_id.slice(0, 8)}
+                    </span>
+                  )}
                   <span className={"mono" /* 摘要可选中复制，命令/路径常被回看 */} style={{ fontSize: 11, userSelect: "text", wordBreak: "break-all", flex: "1 1 auto" }}>
                     {r.summary}
                   </span>

@@ -1,6 +1,6 @@
 // 31 记录审计：设置新增「记录审计」分区（④ 记录与审计的 GUI 消费面）。
 // demo 域样本覆盖三类动作与主要终态——时间线渲染、种类/来源筛选、明文导出反馈，
-// 以及 ⑥「加载更早」翻页与 ⑦ 保留期选择面。
+// 以及 ⑥「加载更早」翻页、⑦ 保留期选择面、⑨ 日期/会话筛选与行内主机标注。
 
 const openSettings = async (page) => {
   await page.click(".hb-settings");
@@ -69,6 +69,24 @@ module.exports = {
     await page.waitForTimeout(600);
     s = await snap();
     ck.check("翻页到底 250 行且按钮撤下", s.rows === 250 && !s.more, JSON.stringify(s));
+
+    // ⑨ 日期筛选：近 24 小时砍掉 48h 远端桶（190 < 200 → 无翻页钮）
+    await page.selectOption("[data-testid=records-range-filter]", "24h");
+    await page.waitForTimeout(600);
+    s = await snap();
+    ck.check("近 24 小时剩 190 行且无翻页钮", s.rows === 190 && !s.more, JSON.stringify(s));
+
+    // ⑨ 会话筛选 + 主机标注：demo 全部记录属 prod-1 会话——选中后行数不变
+    //（过滤实现错误才会丢行）；行内主机标注可见
+    await page.selectOption("[data-testid=records-session-filter]", "s-demo-0001");
+    await page.waitForTimeout(600);
+    ck.check(
+      "会话筛选不丢行（全部记录属该会话）",
+      await page.evaluate(() => document.querySelectorAll("[data-testid=records-row]").length) === 190,
+    );
+    const firstRow = await page.evaluate(() =>
+      document.querySelector("[data-testid=records-row]")?.innerText ?? "");
+    ck.check("行内标注主机 prod-1", firstRow.includes("prod-1"), firstRow);
 
     // ⑦ 保留期选择面在场（demo 不落盘，只验证选择与说明）
     ck.check("保留期选择在场", await page.evaluate(() => !!document.querySelector("[data-testid=records-retention]")));

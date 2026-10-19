@@ -104,6 +104,8 @@ interface SettingsPanelProps {
   recordsHasMore: boolean;
   recordsMoreBusy: boolean;
   onRecordsMore: () => void;
+  /** ⑨ 会话 id → 主机名（R41 累积面，含已关会话）：会话筛选 + 行内主机标注 */
+  recordsSessionNames: Map<string, string>;
   /** ⑦ 记录保留天数（0=永久；改动重启后生效） */
   recordsRetention: number;
   onChangeRecordsRetention: (days: number) => void;
@@ -125,7 +127,7 @@ export function SettingsPanel({
   openDisableDialog, retryDisableConvergence, enableCollab, issueAgent, revokeAgent,
   autonomy, onToggleAutonomy,
   recordsRows, recordsFilter, recordsBusy, recordsExportBusy, onRecordsFilter, onRecordsRefresh, onRecordsExport,
-  recordsHasMore, recordsMoreBusy, onRecordsMore, recordsRetention, onChangeRecordsRetention,
+  recordsHasMore, recordsMoreBusy, onRecordsMore, recordsSessionNames, recordsRetention, onChangeRecordsRetention,
   transferAutonomy, onChangeTransferAutonomy,
 }: SettingsPanelProps) {
   // rev-r47：签发/吊销表单的**面板本地**临时态——关面板即弃（与宿主「关闭即清草稿」
@@ -632,6 +634,7 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                     filter={recordsFilter} agents={mcp.agents_detail ?? []}
                     onFilter={onRecordsFilter} onRefresh={onRecordsRefresh} onExport={onRecordsExport}
                     hasMore={recordsHasMore} moreBusy={recordsMoreBusy} onLoadMore={onRecordsMore}
+                    sessionNames={recordsSessionNames}
                     retention={recordsRetention} onChangeRetention={onChangeRecordsRetention}
                   />
                 )}
