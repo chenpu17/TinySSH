@@ -53,6 +53,8 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { ImageAddon } from "@xterm/addon-image";
+import { matchPaths, pathLinkProvider } from "./term-links";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import "@xterm/xterm/css/xterm.css";
@@ -1360,6 +1362,18 @@ export default function App() {
       if (inTauri) void invoke("open_url", { url }).catch(() => {});
       else window.open(url, "_blank");
     }));
+    // 可点击路径（P2）：文件路径 + :line:col 识别为链接，点击复制原文——远端路径
+    // 没法在本机打开，复制是最诚实有用的动作（本地会话同语义）；协议前缀让路给
+    // 上一行的网页链接。toast 告知复制了什么。
+    term.registerLinkProvider(pathLinkProvider(term, (text) => {
+      (inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
+        .then(() => pushToast("ok", `已复制路径 ${text}`))
+        .catch(() => pushToast("err", "复制路径失败（权限拒绝或窗口无焦点）"));
+    }));
+    // 图片协议（P2）：sixel + iTerm2（OSC 1337）内嵌图渲染，恒开（ghostty/iTerm
+    // 语义；ssh 里 cat 图片/带图工具直接可见）。默认存储上限内自动淘汰最旧图。
+    const imgAddon = new ImageAddon();
+    term.loadAddon(imgAddon);
     // 远程设置的标题（OSC 0/2，T16）：按会话记录，显示在终端头部
     term.onTitleChange((t) => {
       if (t) setOscTitles((prev) => ({ ...prev, [sessionSid]: t }));
@@ -1413,12 +1427,17 @@ export default function App() {
     // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
     // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）
     if (import.meta.env.DEV) {
-      const w = window as unknown as { __t_terms?: Map<string, Terminal>; __t_liga?: Set<string> };
+      const w = window as unknown as { __t_terms?: Map<string, Terminal>; __t_liga?: Set<string>; __t_pathmatch?: typeof matchPaths; __t_img?: Map<string, ImageAddon> };
       w.__t_terms ??= new Map();
       w.__t_terms.set(sessionSid, term);
       // P0 轮：连字生效集合（character joiner 不进 options，无公开可读面——spec 断言用）
       w.__t_liga ??= new Set();
       if (liga) w.__t_liga.add(sessionSid); else w.__t_liga.delete(sessionSid);
+      // 可点击路径（P2）：纯匹配器直测面
+      w.__t_pathmatch = matchPaths;
+      // 图片协议（P2）：addon 实例（getImageAtBufferCell 断言渲染发生）
+      w.__t_img ??= new Map();
+      w.__t_img.set(sessionSid, imgAddon);
     }
     // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
     // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
