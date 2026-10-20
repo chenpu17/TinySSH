@@ -18,7 +18,7 @@ import {
 } from "../keymap";
 import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { isMacPlatform } from "../actions";
-import { inTauri } from "../adapter/bridge";
+import { inTauri, invoke } from "../adapter/bridge";
 import type { ActionRecord, AutonomyGrant, RecordsQuery, TriggerRule } from "../adapter/wire";
 import type { CollabStatus, Host, IdentityMeta, IdentityReq, McpStatus } from "../adapter/wire";
 import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
@@ -539,6 +539,8 @@ export function SettingsPanel({
                 </>)}
 
                 {settingsCat === "agent" && (<>
+                {/* 接真模型轮：内置 Agent 对话的模型服务（本卡草稿态面板本地） */}
+                <AgentModelCard />
                 {/* R42（§5 迁移表/§6.7）：Agent 接入、端点、Token 从协作面板移入
                     「设置 → Agent 接入」——新装未启用协作时主界面不再出现 MCP 配置。
                     C9（R43）：本面板是协作**启用生命周期**的人类专属入口（启用/停用）。 */}
@@ -861,6 +863,87 @@ function TriggersCard({ load, save }: {
       </div>
       {err && <div className="err" style={{ fontSize: 12, marginTop: 6 }} data-testid="triggers-err" role="alert">✕ {err}</div>}
       {ok && <div className="dim" style={{ fontSize: 12, marginTop: 6 }} data-testid="triggers-ok" role="status">✓ {ok}</div>}
+    </div>
+  );
+}
+
+// ── 模型服务卡（接真模型轮）：内置 Agent 对话的 provider/base_url/model/api_key。
+// 面板本地草稿态（与 TriggersCard 同工艺）；api_key 只写入 vault 密封 KV，永不明文
+// 落盘/回显——只回 has_key 事实。保存后广播 agent-model-saved（Agent 视图即时切真模式）。
+function AgentModelCard() {
+  const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [hasKey, setHasKey] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  useEffect(() => {
+    // 不分 demo/Tauri：demo 镜像（localStorage）也走同一条 invoke 读路径——
+    // 回显在两个域行为一致；realMode 的域门只在 Agent 视图，不在这里。
+    let dead = false;
+    invoke("agent_model_get", {})
+      .then((v) => {
+        if (dead || !v) return;
+        const c = v as { provider?: string; base_url?: string; model?: string; has_key?: boolean };
+        if (c.provider === "openai" || c.provider === "anthropic") setProvider(c.provider);
+        setBaseUrl(c.base_url ?? "");
+        setModel(c.model ?? "");
+        setHasKey(c.has_key === true);
+      })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, []);
+
+  const save = () => {
+    setBusy(true);
+    setMsg(null);
+    invoke("agent_model_set", {
+      provider,
+      baseUrl: baseUrl.trim() || null,
+      model: model,
+      apiKey: apiKey.trim() || null,
+    })
+      .then(() => {
+        setHasKey(hasKey || apiKey.trim().length > 0);
+        setApiKey("");
+        setMsg({ kind: "ok", text: "已保存（api_key 加密入库，不回显）" });
+        window.dispatchEvent(new Event("agent-model-saved"));
+      })
+      .catch((e) => setMsg({ kind: "err", text: String(e) }))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="set-card" data-testid="agent-model-card">
+      <h4 style={{ margin: "0 0 6px" }}>模型服务（内置 Agent 对话）</h4>
+      <div className="dim" style={{ fontSize: 11, lineHeight: 1.7 }}>
+        配置后左侧 Agent 视图从演练外壳切换为真实模型。agent 的 exec 等操作仍走本应用既有审批链（危险命令需人工批准）。
+      </div>
+      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        <select data-testid="agent-model-provider" style={{ fontSize: 12 }} value={provider}
+          onChange={(e) => setProvider(e.target.value as "openai" | "anthropic")} aria-label="provider 类型">
+          <option value="openai">OpenAI 兼容（GLM / DeepSeek / Qwen / Kimi…）</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
+        <input data-testid="agent-model-url" className="mono" style={{ fontSize: 11, width: 210 }}
+          placeholder="base_url（可选，缺省官方端点）" aria-label="base_url"
+          value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+        <input data-testid="agent-model-name" className="mono" style={{ fontSize: 11, width: 150 }}
+          placeholder="模型名（如 glm-4.7）" aria-label="模型名"
+          value={model} onChange={(e) => setModel(e.target.value)} />
+        <input data-testid="agent-model-key" type="password" className="mono" style={{ fontSize: 11, width: 190 }}
+          placeholder={hasKey ? "已配置（重填可更换）" : "api_key"}
+          aria-label="api_key"
+          value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+        <button className="ghost" data-testid="agent-model-save" disabled={busy || !model.trim()} onClick={save}>保存</button>
+      </div>
+      {msg && (
+        <div className={msg.kind} style={{ fontSize: 11, marginTop: 5 }} data-testid="agent-model-msg" role="status">
+          {msg.kind === "ok" ? "✓ " : "✕ "}{msg.text}
+        </div>
+      )}
     </div>
   );
 }

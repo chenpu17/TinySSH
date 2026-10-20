@@ -106,6 +106,12 @@ interface CmdArgs {
   read_blocks: { sid: string; limit?: number };
   read_triggers: Record<string, never>;
   read_restore: Record<string, never>;
+  // 内置 Agent（接真模型轮）：模型服务配置 + 会话内对话（agent-host 宿主）
+  agent_model_get: Record<string, never>;
+  agent_model_set: { provider: string; baseUrl: string | null; model: string; apiKey: string | null };
+  agent_send: { sid: string; text: string };
+  agent_cancel: { sid: string };
+  agent_history: { sid: string };
   save_triggers: { rules: wire.TriggerRule[] };
   list_approvals: { pendingOnly: boolean };
   decide_approval: { id: string; decision: "approve" | "deny" | "edit"; edited?: string | null };
@@ -211,6 +217,12 @@ interface CmdRet {
   read_blocks: wire.BlockInfo[];
   read_triggers: wire.TriggerRule[];
   read_restore: wire.RestoreEntry[];
+  // 内置 Agent（api_key 永不下发——只回 has_key 事实）
+  agent_model_get: { provider: string; base_url?: string; model: string; has_key: boolean } | null;
+  agent_model_set: void;
+  agent_send: void;
+  agent_cancel: boolean;
+  agent_history: { kind: string; data?: unknown }[];
   save_triggers: wire.TriggerRule[];
   list_approvals: wire.ApprovalItem[];
   decide_approval: void;

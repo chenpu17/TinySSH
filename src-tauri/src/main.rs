@@ -13,6 +13,101 @@ struct AppState {
     /// C9（R43）：应用拥有的 MCP 端点关闭句柄。停用协作时据以停止监听器；
     /// 重新启用时重新起端点并回填。None = 端点未运行。
     mcp_endpoint: std::sync::Mutex<Option<tinyssh_mcp_server::EndpointHandle>>,
+    /// 内置 Agent 宿主（接真模型轮）：每会话一个 agent，工具经 AgentSshOps
+    /// 桥回 SessionManager（审批/审计在 core-session 层自动继承）。
+    agent_host: Arc<tinyssh_agent_host::AgentHost>,
+}
+
+/// 内嵌 agent 的 actor：身份固定（非参数可指定，与 MCP 的 token 身份同一原则）。
+fn embedded_agent() -> Actor {
+    Actor::Agent {
+        client_id: tinyssh_agent_host::AGENT_CLIENT_ID.into(),
+    }
+}
+
+/// SshOps 适配器：agent 工作线程上的同步阻塞调用 → tokio 上的 SessionApi。
+/// 审批等待期间工具阻塞（agent 线程本就为它存在）；错误字符串即模型看到的
+/// is_error 工具结果。
+struct AgentSshOps {
+    api: Arc<SessionManager>,
+    rt: tokio::runtime::Handle,
+}
+
+impl tinyssh_agent_host::SshOps for AgentSshOps {
+    fn exec(
+        &self,
+        sid: &str,
+        cmd: &str,
+        timeout_secs: Option<u64>,
+        output_cap: Option<u64>,
+    ) -> std::result::Result<String, String> {
+        let api = self.api.clone();
+        let (sid, cmd) = (sid.to_string(), cmd.to_string());
+        self.rt.block_on(async move {
+            let opts = ExecOpts {
+                mode: ExecMode::Shell,
+                timeout: timeout_secs.map(std::time::Duration::from_secs),
+                output_cap: output_cap.map(|x| x as usize),
+                env: Default::default(),
+            };
+            match api.exec(&embedded_agent(), sid, &cmd, opts).await {
+                Ok(r) => serde_json::to_string(&r).map_err(|e| e.to_string()),
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
+    fn read_screen(&self, sid: &str) -> std::result::Result<String, String> {
+        let api = self.api.clone();
+        let sid = sid.to_string();
+        self.rt.block_on(async move {
+            match api.read_screen(&embedded_agent(), sid).await {
+                Ok(mut s) => {
+                    // 画面文本保尾截断（滚回可能巨大；模型关心的是当前现场）
+                    const SCREEN_TAIL: usize = 8 * 1024;
+                    if s.text.len() > SCREEN_TAIL {
+                        let mut cut = s.text.len() - SCREEN_TAIL;
+                        while !s.text.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                        s.text = format!("…（前段略）{}", &s.text[cut..]);
+                    }
+                    serde_json::to_string(&s).map_err(|e| e.to_string())
+                }
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
+    fn read_blocks(&self, sid: &str, limit: u32) -> std::result::Result<String, String> {
+        let api = self.api.clone();
+        let sid = sid.to_string();
+        self.rt.block_on(async move {
+            match api.read_blocks(&embedded_agent(), sid, limit).await {
+                Ok(r) => serde_json::to_string(&r).map_err(|e| e.to_string()),
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
+    fn wait_output(
+        &self,
+        sid: &str,
+        quiet_ms: Option<u64>,
+        regex: Option<String>,
+        timeout_secs: Option<u64>,
+    ) -> std::result::Result<String, String> {
+        let api = self.api.clone();
+        let sid = sid.to_string();
+        self.rt.block_on(async move {
+            let opts = WaitOpts {
+                quiet_ms,
+                regex,
+                timeout: timeout_secs.map(std::time::Duration::from_secs),
+            };
+            match api.wait_output(&embedded_agent(), sid, opts).await {
+                Ok(r) => serde_json::to_string(&r).map_err(|e| e.to_string()),
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
 }
 
 /// 终端聚焦状态（native Ctrl 键接管依据：只有 xterm textarea 聚焦时才劫持）。
@@ -276,6 +371,8 @@ async fn cancel_connection(state: ApiState<'_>, attempt_id: String) -> CmdResult
 
 #[tauri::command]
 async fn close_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
+    // 会话关闭同步撤内嵌 agent 的槽位与转写（运行中的先发取消，自然收尾）
+    state.agent_host.close(&sid);
     state
         .api
         .close_session(&human(), sid)
@@ -1792,11 +1889,20 @@ fn main() {
         }
     };
 
+    // 内置 Agent 宿主装配（接真模型轮）：rt 句柄经 block_on 从共享运行时取
+    //（builder 装配线程不在运行时上下文内，直接 Handle::current() 会 panic）
+    let agent_rt: tokio::runtime::Handle =
+        tauri::async_runtime::block_on(async { tokio::runtime::Handle::current() });
+    let agent_host = Arc::new(tinyssh_agent_host::AgentHost::new(Arc::new(AgentSshOps {
+        api: api.clone(),
+        rt: agent_rt,
+    })));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(AppState { api: api.clone(), mcp_endpoint: mcp_endpoint_handle })
+        .manage(AppState { api: api.clone(), mcp_endpoint: mcp_endpoint_handle, agent_host })
         .manage(terminal_input.clone())
         .manage(SelfMeter::default())
         .on_page_load(|webview, payload| {
@@ -2264,6 +2370,7 @@ fn main() {
             scan_paste_danger,
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers, read_restore,
+            agent_model_get, agent_model_set, agent_send, agent_cancel, agent_history,
             shell_capability,
             list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
@@ -2302,6 +2409,132 @@ async fn quit_app(app: tauri::AppHandle, state: ApiState<'_>) -> CmdResult<()> {
 #[tauri::command]
 async fn read_restore(state: ApiState<'_>) -> CmdResult<Vec<core_session::restore::RestoreEntry>> {
     Ok(state.api.read_restore_snapshots().await)
+}
+
+// ── 内置 Agent（接真模型轮）：模型服务配置 + 会话内对话 ──
+
+/// 读模型服务配置（FE 设置卡）。api_key **永不下发**——只回 has_key 事实。
+#[tauri::command]
+async fn agent_model_get(
+    state: ApiState<'_>,
+) -> std::result::Result<Option<serde_json::Value>, String> {
+    let raw = state.api.get_agent_model().map_err(|e| e.to_string())?;
+    Ok(raw
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map(|mut v| {
+            if let Some(o) = v.as_object_mut() {
+                let has_key = o
+                    .get("api_key")
+                    .and_then(|k| k.as_str())
+                    .map(|k| !k.is_empty())
+                    .unwrap_or(false);
+                o.insert("has_key".into(), serde_json::Value::Bool(has_key));
+                o.remove("api_key");
+            }
+            v
+        }))
+}
+
+/// 写模型服务配置。api_key 缺省 = 保留既有（只改端点/模型）；首次配置必填。
+/// 存储走 vault 密封 KV（agent.model.v1，core_session::agent_model）。
+#[tauri::command]
+async fn agent_model_set(
+    state: ApiState<'_>,
+    provider: String,
+    base_url: Option<String>,
+    model: String,
+    api_key: Option<String>,
+) -> std::result::Result<(), String> {
+    if provider != "openai" && provider != "anthropic" {
+        return Err("provider 仅支持 openai / anthropic".into());
+    }
+    let model = model.trim().to_string();
+    if model.is_empty() {
+        return Err("模型名不能为空".into());
+    }
+    let key = match api_key
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+    {
+        Some(k) => k,
+        None => {
+            let existing = state.api.get_agent_model().map_err(|e| e.to_string())?;
+            let existing: serde_json::Value = existing
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::Value::Null);
+            existing
+                .get("api_key")
+                .and_then(|k| k.as_str())
+                .filter(|k| !k.is_empty())
+                .ok_or("api_key 必填（首次配置）")?
+                .to_string()
+        }
+    };
+    let json = serde_json::json!({
+        "provider": provider,
+        "base_url": base_url.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()),
+        "model": model,
+        "api_key": key,
+    })
+    .to_string();
+    state.api.set_agent_model(&json).map_err(|e| e.to_string())
+}
+
+/// 发送一条用户消息到该会话的内嵌 agent。事件经 `agent-event` 推送
+///（{sid, event}），会话串行（上一位在跑则报错）。
+#[tauri::command]
+async fn agent_send(
+    state: ApiState<'_>,
+    app: tauri::AppHandle,
+    sid: String,
+    text: String,
+) -> std::result::Result<(), String> {
+    let raw = state
+        .api
+        .get_agent_model()
+        .map_err(|e| e.to_string())?
+        .ok_or("未配置模型服务——请在设置 → Agent 里配置")?;
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let cfg = tinyssh_agent_host::ModelConfig {
+        provider: v
+            .get("provider")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        base_url: v.get("base_url").and_then(|x| x.as_str()).map(String::from),
+        model: v
+            .get("model")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        api_key: v
+            .get("api_key")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+    };
+    let sink: tinyssh_agent_host::EventSink = Arc::new(move |sid: &str, ev| {
+        let _ = app.emit(
+            "agent-event",
+            serde_json::json!({ "sid": sid, "event": ev }),
+        );
+    });
+    state.agent_host.send(&sid, &text, &cfg, sink)
+}
+
+/// 请求取消当前运行（工具/轮次间隙生效）。返回是否确有运行在途。
+#[tauri::command]
+async fn agent_cancel(state: ApiState<'_>, sid: String) -> std::result::Result<bool, String> {
+    Ok(state.agent_host.cancel(&sid))
+}
+
+/// 会话对话转写（FE 重挂载重建；最旧在前）。
+#[tauri::command]
+async fn agent_history(
+    state: ApiState<'_>,
+    sid: String,
+) -> std::result::Result<Vec<tinyssh_agent_host::HostEvent>, String> {
+    Ok(state.agent_host.history(&sid))
 }
 
 /// R33 §353 上传入口：原生文件选择器（多选）。对话框必须在非主线程跑——

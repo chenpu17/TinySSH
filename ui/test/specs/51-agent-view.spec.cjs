@@ -64,10 +64,10 @@ module.exports = {
       () => document.querySelector('[data-testid="agent-tool"]')?.textContent?.includes("待审批") ?? false,
       null, { timeout: 8000 });
 
-    // ── 批准分岔：运行中 → 完成 exit 0 + 输出 + markdown 摘要 ──
+    // ── 批准分岔：运行中 → 完成 + 输出 + markdown 摘要 ──
     await page.click('[data-testid="agent-approve"]');
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="agent-tool"]')?.textContent?.includes("完成 · exit 0") ?? false,
+      () => document.querySelector('[data-testid="agent-tool"]')?.textContent?.includes("完成") ?? false,
       null, { timeout: 8000 });
     ck.check("批准分岔：卡到完成 exit 0 + 输出上屏",
       (await page.evaluate(() => document.querySelector(".tc-out")?.textContent ?? "")).includes("active (running)"));

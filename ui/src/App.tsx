@@ -4713,10 +4713,11 @@ export default function App() {
           </button>
         )}
         {agentOpen && (
-          /* Agent 对话视图（活动栏轮）：左侧栏第二视图，演练外壳——回复/工具卡为
-             agent-mock 脚本数据，真实模型接入在后续轮。对话按会话隔离（键 = sid） */
+          /* Agent 对话视图：双模式——真模型（inTauri + 已配置模型服务，Rust 侧
+             agent-host 驱动，审批卡对账 pendingApprovals 内联呈现）或演练外壳 */
           <AgentView
             width={agentWidth} sid={sid} hostLabel={hostLabel(sid ?? undefined)}
+            pending={pendingApprovals} onDecide={decide}
             gripDrag={agGripDrag} gripDown={agGripDown} gripMove={agGripMove} gripUp={agGripUp}
             onClose={() => toggleAgent(false)} pushToast={pushToast}
           />

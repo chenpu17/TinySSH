@@ -1001,6 +1001,33 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       try { return JSON.parse(localStorage.getItem("ui.v2.restore") ?? "[]"); }
       catch { return []; }
     }
+    // ---- 内置 Agent 模型服务（演示镜像）：配置存 localStorage（演示域无 vault 密封）。
+    // agent_send/agent_cancel/agent_history 是 Tauri 侧 agent-host 的运行面——demo 无法
+    // 跑真实 agent loop，FE 的 realMode 门（inTauri && 已配置）保证不会走到这三个命令，
+    // 走到即显式报错（不静默假装）。----
+    case "agent_model_get": {
+      try { return JSON.parse(localStorage.getItem("ui.v2.agentModel") ?? "null"); }
+      catch { return null; }
+    }
+    case "agent_model_set": {
+      const prev = (() => {
+        try { return JSON.parse(localStorage.getItem("ui.v2.agentModel") ?? "null"); }
+        catch { return null; }
+      })() as { has_key?: boolean } | null;
+      const key = (args?.apiKey ?? "") as string;
+      const rec = {
+        provider: args?.provider,
+        base_url: args?.baseUrl ?? null,
+        model: args?.model,
+        has_key: key ? true : (prev?.has_key === true),
+      };
+      localStorage.setItem("ui.v2.agentModel", JSON.stringify(rec));
+      return null;
+    }
+    case "agent_send":
+    case "agent_cancel":
+    case "agent_history":
+      throw apiError("invalid_input", "内置 Agent 的真实运行需要桌面应用（浏览器演示域只有演练外壳）");
 case "read_triggers": {
       try { return JSON.parse(localStorage.getItem("ui.v2.triggers") ?? "[]"); }
       catch { return []; }

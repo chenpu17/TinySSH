@@ -15,6 +15,7 @@ members = [
     "crates/shim",
     "crates/cli",
     "crates/testbed",
+    "crates/agent-host",
 ]
 default-members = [
     "src-tauri",
@@ -31,6 +32,7 @@ default-members = [
     "crates/shim",
     "crates/cli",
     "crates/testbed",
+    "crates/agent-host",
 ]
 # src-tauri 作为独立 member 加入（见 src-tauri/Cargo.toml），此处不列出以避免
 # 未安装前端依赖时阻塞 workspace 命令；src-tauri/Cargo.toml 自身声明 workspace = true。
@@ -55,6 +57,7 @@ tinyssh-records = { path = "crates/records" }
 tinyssh-mcp-server = { path = "crates/mcp-server" }
 tinyssh-shim = { path = "crates/shim" }
 tinyssh-testbed = { path = "crates/testbed" }
+tinyssh-agent-host = { path = "crates/agent-host" }
 
 # 异步与基础
 tokio = { version = "1", features = ["full"] }

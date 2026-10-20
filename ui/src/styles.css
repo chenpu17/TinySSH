@@ -2244,6 +2244,16 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 .tool-card.tc-pending { border-color: var(--warn); }
 .tool-card.tc-running { border-color: var(--accent); }
 .tool-card.tc-denied { opacity: 0.75; }
+.tool-card.tc-err { border-color: var(--danger); }
+.tc-chip.err { color: var(--danger); border: 1px solid var(--danger); }
+/* 推理模型的思考块（折叠，dim 色——不是回复正文） */
+.ag-think { margin: 2px 0 6px; font-size: 11px; color: var(--text-sub); }
+.ag-think summary { cursor: pointer; user-select: none; }
+.ag-think pre {
+  margin: 4px 0 0; padding: 6px 9px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap;
+  word-break: break-word; max-height: 180px; overflow-y: auto; color: var(--text-sub);
+}
 .tc-head { display: flex; align-items: center; gap: 7px; padding: 6px 10px; min-width: 0; }
 .tc-tool { flex: none; font-size: 11px; color: var(--accent-text); background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; }
 .tc-args { flex: 1; min-width: 0; font-size: 11px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

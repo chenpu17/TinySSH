@@ -1,6 +1,7 @@
 //! core-session：SessionApi 实现（L1 §2/§3.1）。
 //! 双前端（GUI/MCP）唯一核心；审批在门面之后强制挂接（L0 ADR-5）。
 
+pub mod agent_model;
 mod brief;
 mod charset;
 mod fault;
