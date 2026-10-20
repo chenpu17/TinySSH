@@ -350,7 +350,7 @@ export function SettingsPanel({
                     <input type="checkbox" data-testid="bell-toggle" checked={bellNotify} onChange={(e) => changeBellNotify(e.target.checked)} />
                     <span className="set-item-txt">
                       <b>终端响铃时系统通知</b>
-                      <span className="set-item-desc">窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知，每会话 10 秒至多一条；标签闪烁提醒恒开。远端 OSC 9 主动通知走同一开关与节流。</span>
+                      <span className="set-item-desc">窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知，每会话 10 秒至多一条；标签闪烁提醒恒开。远端 OSC 9 主动通知、后台会话命令失败（shell 集成 OSC 133 退出码）走同一开关与节流。</span>
                     </span>
                   </label>
                   <div className="set-item">

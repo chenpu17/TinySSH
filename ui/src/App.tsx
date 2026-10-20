@@ -341,6 +341,8 @@ export default function App() {
   const bellNotifyRef = useRef(false);
   const [bellSids, setBellSids] = useState<Set<string>>(new Set());
   const lastBellNotifRef = useRef<Map<string, number>>(new Map());
+  // 块失败 toast 的每会话节流（系统通知的节流在 flashAndNotify 内建，两者独立）
+  const lastFailToastRef = useRef<Map<string, number>>(new Map());
   // P2-c：OSC 52 写剪贴板策略（allow/ask/deny，默认 ask；workspace blob terminal 域）。
   // 远端程序可借转义序列改写本机剪贴板（tmux/ssh 远端复制回本地靠它），也是剪贴板
   // 投毒的入口——默认每次询问，读取（查询）一律拒绝。
@@ -1443,13 +1445,42 @@ export default function App() {
     // 合并 ConPTY 提示符重绘的 A/B 突发；无集成 shell 无 133，5s 轮询仍是兜底。
     let blocksMarkTimer: number | null = null;
     term.parser.registerOscHandler(133, (data) => {
-      const kind = data.split(";")[0]?.trim();
+      const parts = data.split(";");
+      const kind = parts[0]?.trim();
       if (kind === "A" || kind === "B" || kind === "C" || kind === "D") {
         if (blocksMarkTimer === null) {
           blocksMarkTimer = window.setTimeout(() => {
             blocksMarkTimer = null;
             blocksActivityRef.current(sessionSid);
           }, 150);
+        }
+      }
+      // 块失败通知：D 标记带退出码（`133;D;<code>`，FinalTerm/iTerm2 惯例）且非零
+      // 时提示。标签闪烁恒开；系统通知走「响铃时系统通知」既有开关 + 窗口失焦门
+      // + 节流（flashAndNotify 内建——与 OSC 9 同款策略，不另立旋钮）；当前会话
+      // 不 toast（正看着终端，失败直接可见），后台会话才 toast 点名失败命令
+      // （read_blocks 取最新块对账——D 广播前屏幕已吃进标记，块必已闭合；取不到
+      // 或退出码对不上就只报退出码，不虚构命令）。每会话 10s 节流防失败循环刷屏。
+      if (kind === "D") {
+        const code = Number.parseInt(parts[1]?.trim() ?? "", 10);
+        if (Number.isInteger(code) && code !== 0) {
+          flashAndNotify(`❌ 命令失败（exit ${code}）`, " — 命令失败");
+          if (sidRef.current !== sessionSid) {
+            const now = Date.now();
+            if (now - (lastFailToastRef.current.get(sessionSid) ?? 0) >= 10_000) {
+              lastFailToastRef.current.set(sessionSid, now);
+              void (async () => {
+                let cmd = "";
+                try {
+                  const rows = await invoke("read_blocks", { sid: sessionSid, limit: 1 }) as BlockInfo[];
+                  const hit = rows?.[rows.length - 1];
+                  if (hit && hit.exit_code === code) cmd = hit.command;
+                } catch { /* 取不到就只报退出码 */ }
+                const host = sessionsRef.current.find((x) => x.id === sessionSid)?.host_name ?? "会话";
+                pushToast("err", `❌ ${host} 命令失败（exit ${code}）${cmd ? `：${cmd}` : ""}`);
+              })();
+            }
+          }
         }
       }
       return false; // 不消费：xterm 维持对 133 的默认忽略，后续行为不变
