@@ -108,6 +108,128 @@ impl tinyssh_agent_host::SshOps for AgentSshOps {
             }
         })
     }
+    fn stat_remote(
+        &self,
+        sid: &str,
+        path: &str,
+    ) -> std::result::Result<Option<tinyssh_agent_host::StatInfo>, String> {
+        let api = self.api.clone();
+        let (sid, path) = (sid.to_string(), path.to_string());
+        self.rt.block_on(async move {
+            match api.sftp_stat(&embedded_agent(), sid, path).await {
+                Ok(st) => Ok(Some(tinyssh_agent_host::StatInfo {
+                    size: st.size,
+                    mtime: st.mtime,
+                    is_dir: st.is_dir,
+                })),
+                // 预检语义：不存在=无冲突（Err 才是异常）
+                Err(Error::SftpPathNotFound { .. }) => Ok(None),
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
+    fn stat_local(
+        &self,
+        path: &str,
+    ) -> std::result::Result<Option<tinyssh_agent_host::StatInfo>, String> {
+        match std::fs::metadata(path) {
+            Ok(md) => Ok(Some(tinyssh_agent_host::StatInfo {
+                size: Some(md.len()),
+                mtime: md
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64),
+                is_dir: md.is_dir(),
+            })),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("本地路径不可访问：{e}")),
+        }
+    }
+    fn transfer_start(
+        &self,
+        sid: &str,
+        local: &str,
+        remote: &str,
+        is_upload: bool,
+        collision: Option<&str>,
+    ) -> std::result::Result<String, String> {
+        let api = self.api.clone();
+        let (sid, local, remote) = (sid.to_string(), local.to_string(), remote.to_string());
+        let collision = match collision {
+            None => None,
+            Some("skip") => Some(CollisionDecision::Skip),
+            Some("overwrite") => Some(CollisionDecision::Overwrite),
+            Some(other) => return Err(format!("非法 collision：{other}")),
+        };
+        self.rt.block_on(async move {
+            // api.upload/download 内部即传输必审（审批阻塞在此，拒绝即 Err）
+            let local_path = std::path::PathBuf::from(&local);
+            let r = if is_upload {
+                api.upload(
+                    &embedded_agent(),
+                    sid,
+                    local_path.as_path(),
+                    &remote,
+                    collision,
+                )
+                .await
+            } else {
+                api.download(
+                    &embedded_agent(),
+                    sid,
+                    &remote,
+                    local_path.as_path(),
+                    collision,
+                )
+                .await
+            };
+            match r {
+                Ok(h) => Ok(h.id),
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
+    fn transfer_status(
+        &self,
+        tid: &str,
+    ) -> std::result::Result<tinyssh_agent_host::TransferPoll, String> {
+        let api = self.api.clone();
+        let tid = tid.to_string();
+        self.rt.block_on(async move {
+            let list = api
+                .list_transfers(&embedded_agent())
+                .await
+                .map_err(|e| format!("{e}"))?;
+            match list.iter().find(|t| t.id == tid) {
+                Some(t) => Ok(tinyssh_agent_host::TransferPoll {
+                    status: transfer_status_str(t.status).to_string(),
+                    error: t.error.clone(),
+                    bytes_done: t.bytes_done,
+                    total: t.total,
+                }),
+                None => Err(format!("传输任务不存在：{tid}")),
+            }
+        })
+    }
+}
+
+/// TransferStatus → 宿主轮询串（小写下划线；见 agent-host::TransferPoll 契约）。
+fn transfer_status_str(s: TransferStatus) -> &'static str {
+    use TransferStatus::*;
+    match s {
+        Queued => "queued",
+        Running => "running",
+        Committing => "committing",
+        Succeeded => "succeeded",
+        Failed => "failed",
+        Cancelled => "cancelled",
+        Cancelling => "cancelling",
+        AwaitingDecision => "awaiting_decision",
+        OutcomeUnknown => "outcome_unknown",
+        Skipped => "skipped",
+        Interrupted => "interrupted",
+    }
 }
 
 /// 终端聚焦状态（native Ctrl 键接管依据：只有 xterm textarea 聚焦时才劫持）。

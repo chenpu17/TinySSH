@@ -880,21 +880,30 @@ impl McpServer {
         run(&self.state, &parts, |api, actor| async move {
             let collision = parse_collision(p.0.collision.as_deref())?;
             if collision.is_none() {
-                match api
-                    .sftp_stat(&actor, p.0.session_id.clone(), p.0.local.clone())
-                    .await
-                {
-                    Ok(st) => {
-                        return Err(Error::ConflictDetected {
-                            target_path: p.0.local.clone(),
-                            target_stat: Some(TargetStat {
-                                size: st.size,
-                                mtime: st.mtime,
-                            }),
-                        });
+                // DF6.2 fail（缺省）：本地目标已存在（普通文件）→ 不建任务，结构化
+                // ConflictDetected（含本地 stat）。修正：此前误用 sftp_stat 在**远端**
+                // stat 本地路径，下载冲突预检从不触发；目录目标放行（下载进目录
+                // 语义），与内置 agent 工具同一判定。
+                match std::fs::metadata(&p.0.local) {
+                    Ok(md) => {
+                        if !md.is_dir() {
+                            return Err(Error::ConflictDetected {
+                                target_path: p.0.local.clone(),
+                                target_stat: Some(TargetStat {
+                                    size: Some(md.len()),
+                                    mtime: md.modified().ok().and_then(|t| {
+                                        t.duration_since(std::time::UNIX_EPOCH)
+                                            .ok()
+                                            .map(|d| d.as_secs() as i64)
+                                    }),
+                                }),
+                            });
+                        }
                     }
-                    Err(Error::SftpPathNotFound { .. }) => {}
-                    Err(e) => return Err(e),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        return Err(Error::InvalidInput(format!("本地目标不可访问：{e}")));
+                    }
                 }
             }
             let handle = api
