@@ -2171,6 +2171,23 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   font-size: 10px; color: var(--warn-text); border: 1px solid var(--warn);
   border-radius: 6px; padding: 0 5px; opacity: 0.9; flex: none; cursor: help;
 }
+/* 控制权徽标（真模式）：未交托=中性提示，已受托=强调 Agent 持有 */
+.ag-own {
+  font-size: 10px; color: var(--dim); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0 5px; flex: none; cursor: help;
+}
+.ag-own.on {
+  color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft);
+}
+/* 夺权显式化确认条：人类持有控制权时发送任务 → 请求交托（不悄悄改控制权） */
+.ag-delegate {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  margin: 0 12px 6px; padding: 8px 10px;
+  border: 1px solid var(--warn); border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+.ag-delegate-text { flex: 1; font-size: 12px; color: var(--text-sub); min-width: 0; }
+.ag-delegate button { flex: none; font-size: 12px; padding: 3px 10px; }
 .ag-scroll { flex: 1; overflow-y: auto; padding: 10px 12px; min-height: 0; }
 .ag-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; }
 .msg-row { display: flex; margin: 8px 0; }

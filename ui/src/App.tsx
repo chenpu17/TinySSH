@@ -4143,6 +4143,20 @@ export default function App() {
       await refreshLists();
     } catch (e) { pushToast("err", friendlyError(e)); }
   };
+  // 内嵌 Agent 的轻量委托：Agent 视图发送门用（不走 MCP 协作对话框——控制权交托
+  // 同一个核心 delegate_session，目标留空；返回 true=已交托，调用方继续发送）。
+  const delegateEmbedded = async (): Promise<boolean> => {
+    if (!sid) return false;
+    try {
+      await invoke("delegate_session", { sid, goal: null });
+      await refreshLists();
+      pushToast("info", "已把会话交给内置 Agent——工具栏「接管」随时收回");
+      return true;
+    } catch (e) {
+      pushToast("err", friendlyError(e));
+      return false;
+    }
+  };
   // R42（§6.7）首次委托 / 交还：**显式提交**的同一个受控转换（核心 delegate_session）。
   // 取消对话框不改动控制权；核心成功返回才切 Agent-owned；任务目标可选（留空**不清除**
   // 既有目标——与「任务目标」栏的清除语义不同）。服务未启用时先引导设置接入，返回后
@@ -4162,7 +4176,7 @@ export default function App() {
     setDelegateDlg(false); setDelegateGoal(""); setDelegateErr(null); setDelegateBusy(false);
   };
   const submitDelegate = async () => {
-    if (!sid || delegateBusy || !collabConfigured) return;
+    if (!sid || delegateBusy || (!collabConfigured && !embeddedReady)) return;
     setDelegateBusy(true); setDelegateErr(null);
     try {
       const g = delegateGoal.trim();
@@ -4380,6 +4394,22 @@ export default function App() {
     if (s) setOwner(s.control_owner);
   }, [sessions, sid]);
 
+  // 内嵌 Agent 就绪（已配模型服务）：委托/接管入口的第二把钥匙——此前这些入口
+  // 全部门控 MCP 协作，内嵌 agent 无 MCP 配置时无法进入委托态（exec 一律
+  // ControlTakenByHuman），第一公里断裂。demo（非 inTauri）恒 false，界面零变化。
+  const [agentModelReady, setAgentModelReady] = useState(false);
+  useEffect(() => {
+    if (!inTauri) return;
+    const load = () =>
+      invoke("agent_model_get", {})
+        .then((v) => setAgentModelReady(!!v))
+        .catch(() => setAgentModelReady(false));
+    load();
+    window.addEventListener("agent-model-saved", load);
+    return () => window.removeEventListener("agent-model-saved", load);
+  }, []);
+  const embeddedReady = inTauri && agentModelReady;
+
   // C9（R43）：admission 门只在 Enabled 开放——停用/停用中/停用失败一律按「未启用」对待
   //（失败保持封闭，不得回退为可用）。Disabling/DisableFailed 时主界面不出现空审批区。
   const collabEnabled = collab.state === "Enabled";
@@ -4525,7 +4555,7 @@ export default function App() {
         keywords: "broadcast 多会话 同步键入 同发",
         run: () => setBroadcastOpen(true),
       });
-      if (hasAgents && owner === "Agent") {
+      if ((hasAgents || embeddedReady) && owner === "Agent") {
         items.push({
           id: "takeover", group: "当前会话", title: "接管（冻结 Agent，待审批作废）",
           keywords: "控制权 takeover",
@@ -4537,7 +4567,7 @@ export default function App() {
           run: () => { void takeoverStop(); },
         });
       }
-      if (collabConfigured && owner === "Human") {
+      if ((collabConfigured || embeddedReady) && owner === "Human") {
         items.push({
           id: "delegate", group: "当前会话",
           title: active.ever_agent_owned ? "交还 Agent…" : "交给 Agent…",
@@ -4718,6 +4748,7 @@ export default function App() {
           <AgentView
             width={agentWidth} sid={sid} hostLabel={hostLabel(sid ?? undefined)}
             pending={pendingApprovals} onDecide={decide}
+            owner={owner} onDelegate={delegateEmbedded}
             gripDrag={agGripDrag} gripDown={agGripDown} gripMove={agGripMove} gripUp={agGripUp}
             onClose={() => toggleAgent(false)} pushToast={pushToast}
           />
@@ -4725,7 +4756,7 @@ export default function App() {
         <main className="main">
         {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释
             精致化 §5.2：状态/说明类信息走 Notice Bar，不与面包屑混排 */}
-        {sid && hasAgents && owner === "Agent" && (
+        {sid && (hasAgents || embeddedReady) && owner === "Agent" && (
           <div className="notice-bar info">
             接管＝冻结 Agent、待审批作废，正在跑的命令不中断 · 接管并停止任务＝再尝试停止跑着的命令（结果逐条显示）
           </div>
@@ -5025,6 +5056,7 @@ export default function App() {
           <SessionToolbar
             current={current} sid={sid} oscTitles={oscTitles}
             hasAgents={hasAgents} owner={owner} collabConfigured={collabConfigured}
+            embeddedReady={embeddedReady}
             searchOpen={searchOpen} splitMenu={splitMenu} splitPanes={splitPanes}
             rightPanel={rightPanel} toolsOpen={toolsOpen} toolsRef={toolsRef}
             dispatchRef={dispatchRef} setSplitMenu={setSplitMenu}

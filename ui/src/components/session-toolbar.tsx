@@ -18,6 +18,8 @@ export interface SessionToolbarProps {
   hasAgents: boolean;
   owner: string;
   collabConfigured: boolean;
+  /** 内嵌 Agent 已配模型服务：委托/接管入口的第二把钥匙（无需 MCP 协作配置） */
+  embeddedReady: boolean;
   searchOpen: boolean;
   splitMenu: boolean;
   splitPanes: SplitPanes | null;
@@ -41,7 +43,7 @@ export interface SessionToolbarProps {
 }
 
 export function SessionToolbar({
-  current, sid, oscTitles, hasAgents, owner, collabConfigured,
+  current, sid, oscTitles, hasAgents, owner, collabConfigured, embeddedReady,
   searchOpen, splitMenu, splitPanes, rightPanel, toolsOpen, toolsRef,
   dispatchRef, setSplitMenu, setRightPanel, setToolsOpen,
   exitSplit, openDelegate, takeover, takeoverStop,
@@ -60,7 +62,7 @@ export function SessionToolbar({
         <span className={"mono st-state " + stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>
       </div>
       <span style={{ flex: 1 }} />
-      {sid && hasAgents && owner === "Agent" && (
+      {sid && (hasAgents || embeddedReady) && owner === "Agent" && (
         <>
           <button
             className="warn"
@@ -74,7 +76,7 @@ export function SessionToolbar({
           >接管并停止任务</button>
         </>
       )}
-      {sid && collabConfigured && owner === "Human" && (
+      {sid && (collabConfigured || embeddedReady) && owner === "Human" && (
         <button
           className="ghost"
           data-testid="delegate-open"

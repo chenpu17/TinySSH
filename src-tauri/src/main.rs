@@ -212,6 +212,18 @@ impl tinyssh_agent_host::SshOps for AgentSshOps {
             }
         })
     }
+    fn send_keys(&self, sid: &str, keys: &str) -> std::result::Result<String, String> {
+        let api = self.api.clone();
+        let (sid, keys) = (sid.to_string(), keys.to_string());
+        self.rt.block_on(async move {
+            // core-session 侧：协作门→人类控制权拒→危险模式引擎→会话级授权
+            //（一次审批）→人类输入 2s 优先窗→审计。错误文本即模型所见。
+            match api.send_keys(&embedded_agent(), sid, &keys).await {
+                Ok(()) => Ok(serde_json::json!({ "sent": true }).to_string()),
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
 }
 
 /// TransferStatus → 宿主轮询串（小写下划线；见 agent-host::TransferPoll 契约）。

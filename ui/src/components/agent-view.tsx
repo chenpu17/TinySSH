@@ -38,6 +38,10 @@ export interface AgentViewProps {
   /** 该会话的内嵌 agent 待审批（inline 批准/拒绝走既有 decide_approval 链） */
   pending: ApprovalRow[];
   onDecide: (id: string, decision: "approve" | "deny" | "edit", edited: string | null) => void;
+  /** 会话控制权（"Human" | "Agent"）：真模式下发送门据此请求交托（夺权显式化） */
+  owner: string;
+  /** 轻量委托（核心 delegate_session，目标留空）；true=已交托 */
+  onDelegate: () => Promise<boolean>;
   gripDrag: { current: boolean };
   gripDown: (e: PointerEvent<HTMLDivElement>) => void;
   gripMove: (e: PointerEvent<HTMLDivElement>) => void;
@@ -68,6 +72,14 @@ function summarizeTool(name: string, input: Record<string, unknown> | undefined)
   if (name === "exec") return String(i.command ?? "");
   if (name === "read_blocks") return `limit=${String(i.limit ?? 20)}`;
   if (name === "wait_output") return i.regex ? `/${String(i.regex)}/` : "静默等待新输出";
+  if (name === "upload") return `${String(i.local ?? "")} → ${String(i.remote ?? "")}`.slice(0, 90);
+  if (name === "download") return `${String(i.remote ?? "")} → ${String(i.local ?? "")}`.slice(0, 90);
+  if (name === "send_keys") {
+    return String(i.keys ?? "")
+      .replace(/\x1b/g, "\\x1b").replace(/\r/g, "\\r")
+      .replace(/\n/g, "\\n").replace(/\t/g, "\\t")
+      .slice(0, 60);
+  }
   return "";
 }
 
@@ -128,11 +140,15 @@ function applyAgentEvent(msgs: AgentMsg[], ev: AgentWireEvent, seq: { n: number 
 }
 
 export function AgentView({
-  width, sid, hostLabel, pending, onDecide, gripDrag, gripDown, gripMove, gripUp, onClose, pushToast,
+  width, sid, hostLabel, pending, onDecide, owner, onDelegate,
+  gripDrag, gripDown, gripMove, gripUp, onClose, pushToast,
 }: AgentViewProps) {
   const [convs, setConvs] = useState<Record<string, AgentMsg[]>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [draft, setDraft] = useState("");
+  // 夺权显式化：真模式下人类持有控制权时发送 → 先请求交托（确认条），不悄悄改控制权
+  const [askDelegate, setAskDelegate] = useState(false);
+  const [askText, setAskText] = useState("");
   // 真模式前提：inTauri 且已配置模型服务（null = 未配置/浏览器 demo）
   const [modelCfg, setModelCfg] = useState<{ provider?: string; model?: string } | null>(null);
   const realMode = inTauri && modelCfg !== null;
@@ -217,6 +233,12 @@ export function AgentView({
     return () => { alive.current = false; timers.current.forEach(clearTimeout); timers.current = []; };
   }, []);
 
+  // 切会话收起委托确认条（待发文本是上一个会话的语境）
+  useEffect(() => {
+    setAskDelegate(false);
+    setAskText("");
+  }, [sid]);
+
   // 新消息/流式增长 → 贴底
   useEffect(() => {
     const el = scrollRef.current;
@@ -247,6 +269,17 @@ export function AgentView({
   const send = () => {
     const text = draft.trim();
     if (!text || !sid) return;
+    // 夺权显式化：真模式下会话还在人类手里 → 先请求交托（确认条），草稿保留
+    if (realMode && owner !== "Agent") {
+      setAskText(text);
+      setAskDelegate(true);
+      return;
+    }
+    doSend(text);
+  };
+
+  const doSend = (text: string) => {
+    if (!sid) return;
     setDraft("");
     if (realMode) {
       patch(key, (cur) => [...cur, { id: newId(), role: "user", text }]);
@@ -266,6 +299,14 @@ export function AgentView({
       patch(k, (cur) => [...cur, { id: tid, role: "tool", tool: script.tool.tool, argsLabel: script.tool.argsLabel, status: "pending" }]);
       pendingTool.current = { k, id: tid, script };
     });
+  };
+
+  const confirmDelegate = async () => {
+    const ok = await onDelegate();
+    if (!ok) return; // 委托失败：保留确认条与待发文本，用户可重试或取消
+    setAskDelegate(false);
+    doSend(askText);
+    setAskText("");
   };
 
   const stop = () => {
@@ -309,7 +350,8 @@ export function AgentView({
   };
 
   const busyNow = !!busy[key] && realMode;
-  // 真模式内联审批：最近一张 exec 卡运行中 + 存在本会话内嵌 agent 的待审批 → 对账呈现
+  // 真模式内联审批：最近一张工具卡运行中 + 存在本会话内嵌 agent 的待审批 → 对账呈现
+  //（exec/send_keys/upload/download 的审批都在 core-session 同一条链上）
   const inlineApproval = realMode && sid
     ? pending.find((p) => p.agent_id === EMBEDDED_AGENT_ID && p.session_id === sid)
     : undefined;
@@ -318,7 +360,7 @@ export function AgentView({
     switch (m.status) {
       case "pending": return <span className="tc-chip warn">待审批</span>;
       case "running":
-        return inlineApproval && m.tool === "exec"
+        return inlineApproval && ["exec", "send_keys", "upload", "download"].includes(m.tool)
           ? <span className="tc-chip warn">待审批</span>
           : <span className="tc-chip info"><IconLoader size={11} className="spin" /> 运行中</span>;
       case "ok": return <span className="tc-chip ok">完成</span>;
@@ -349,6 +391,15 @@ export function AgentView({
           <span className="ag-host" title={`模型服务：${modelCfg?.provider ?? ""}`}>{modelCfg?.model}</span>
         ) : (
           <span className="ag-mock" title="当前为演练外壳：回复与工具卡是脚本数据，配置模型服务后自动切换为真实模型">演练</span>
+        )}
+        {realMode && sid && (
+          <span
+            className={"ag-own" + (owner === "Agent" ? " on" : "")}
+            data-testid="agent-own"
+            title={owner === "Agent"
+              ? "会话控制权已交托给 Agent（工具栏「接管」随时收回）"
+              : "会话控制权在你手里——发送任务时会先请求交托"}
+          >{owner === "Agent" ? "已受托" : "未交托"}</span>
         )}
         <span style={{ flex: 1 }} />
         {sid && (
@@ -386,7 +437,8 @@ export function AgentView({
                   </div>
                 );
               }
-              const showApprove = m.status === "running" && !!inlineApproval && m.tool === "exec";
+              const showApprove = m.status === "running" && !!inlineApproval
+                && ["exec", "send_keys", "upload", "download"].includes(m.tool);
               const showLocalButtons = m.status === "pending";
               return (
                 <div className={"tool-card tc-" + (m.status === "err" ? "err" : m.status)} key={m.id} data-testid="agent-tool">
@@ -413,6 +465,15 @@ export function AgentView({
               );
             })}
           </div>
+          {askDelegate && (
+            <div className="ag-delegate" data-testid="agent-delegate-strip">
+              <span className="ag-delegate-text">
+                会话控制权在你手里——交给 Agent 后它才能在这台终端上干活（工具栏「接管」随时收回）。
+              </span>
+              <button className="primary" data-testid="agent-delegate-confirm" onClick={confirmDelegate}>委托并发送</button>
+              <button className="ghost" onClick={() => setAskDelegate(false)}>取消</button>
+            </div>
+          )}
           <div className="ag-composer">
             <textarea
               data-testid="agent-input"

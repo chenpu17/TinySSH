@@ -7,10 +7,11 @@
 //! 缓存（FE 重挂载重建对话）+ 取消。
 //!
 //! 安全边界（与既有审批链的关系）：agent 以 `Actor::Agent{client_id: AGENT_CLIENT_ID}`
-//! 走 SessionManager 的同一批方法——exec 的危险命令审批、**传输必审**、审计、
-//! 夺权语义全部在 core-session 层自动继承，本 crate 不做任何放行。工具集只装配
-//! 七个 SSH 操作（exec/read_screen/read_blocks/wait_output + upload/download/
-//! transfer_status），本地 shell/file 内置工具一律不装配（tiny-a config `tools: []`）。
+//! 走 SessionManager 的同一批方法——exec 的危险命令审批、**传输必审**、send_keys
+//! 的会话级授权与人类输入优先窗、审计、夺权语义全部在 core-session 层自动继承，
+//! 本 crate 不做任何放行。工具集只装配八个 SSH 操作（exec/read_screen/read_blocks/
+//! wait_output + upload/download/transfer_status + send_keys），本地 shell/file
+//! 内置工具一律不装配（tiny-a config `tools: []`）。
 //! 每会话串行对话（一次一个运行）；取消在工具/轮次间隙生效（tiny-a 语义）。
 
 use serde::Serialize;
@@ -106,6 +107,9 @@ pub trait SshOps: Send + Sync {
     ) -> Result<String, String>;
     /// 任务状态对账（宿主流程轮询 + transfer_status 工具共用）。
     fn transfer_status(&self, tid: &str) -> Result<TransferPoll, String>;
+    /// 注入按键到会话终端——core-session 侧套完整夺权语义（人类控制权拒/
+    /// 危险模式引擎/**会话级授权一次审批**/人类输入 2s 优先窗/审计）。
+    fn send_keys(&self, sid: &str, keys: &str) -> Result<String, String>;
 }
 
 /// stat 摘要（冲突卡用；Option 字段=源数据未必报）。
@@ -234,6 +238,7 @@ const SYS_PROMPT: &str = "你是 TinySSH 内置的运维助手，通过工具操
 - exec 在该会话的持久 shell 里执行（cwd/env 延续）；危险命令会被人工审批，此调用会阻塞等待决定；被拒绝时如实告知用户并给出更安全的替代，绝不换着花样重试被拒命令。\n\
 - 了解现场优先 read_blocks（最近的命令与结果）与 read_screen（当前画面）；长命令用 wait_output 跟踪。\n\
 - 传文件用 upload/download（本机↔主机，双方都要绝对路径）；目标已存在会结构化报 conflict_detected，与用户确认后用 collision=\"skip\"/\"overwrite\" 重试；大文件超时会返回 transfer_id，用 transfer_status 对账，不要盲目重试。传输与命令一样需人工审批。\n\
+- 驱动交互式程序（vim/htop、sudo 密码、y/n 确认）用 send_keys 注入按键（\\r 回车、\\t Tab、\\x03 Ctrl+C、\\x1b Esc）；首次使用要一次会话级授权（一次审批，本会话内后续按键免审）；每次键入后用 read_screen/wait_output 确认效果再继续，不要盲发。控制权在人类手里时会被拒——如实告知用户需要把会话交托给 Agent。\n\
 - 输出可能被截断（保尾），如实转述；不确定的事实不虚构，报得出来的 exit code 就报。\n\
 - 面向用户的回复用简体中文，简洁，可用 markdown（代码块标注语言）。";
 
@@ -343,7 +348,7 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
         },
     );
     let o7 = ops.clone();
-    let s7 = sid;
+    let s7 = sid.clone();
     let download = CallbackTool::new(
         ToolDef {
             name: "download".into(),
@@ -365,7 +370,7 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
             transfer_flow(&o7, &s7, local, remote, false, c.as_deref())
         },
     );
-    let o8 = ops;
+    let o8 = ops.clone();
     let tstatus = CallbackTool::new(
         ToolDef {
             name: "transfer_status".into(),
@@ -387,6 +392,33 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
             Ok(ToolOutput::text(poll_json(tid, &p).to_string()))
         },
     );
+    let o9 = ops;
+    let s9 = sid;
+    let keys = CallbackTool::new(
+        ToolDef {
+            name: "send_keys".into(),
+            description: "向会话终端注入按键——驱动交互式程序（vim/htop、sudo 密码、y/n 确认）。特殊键用转义序列：\\r 回车、\\t Tab、\\x03 Ctrl+C、\\x1b Esc、方向键 \\x1b[A 等。首次使用需一次会话级授权（一次审批，本会话内后续按键免审）；控制权在人类手里时被拒（如实告知用户需要交托会话）。每次发送后用 read_screen/wait_output 确认效果，不要盲发。".into(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "keys": { "type": "string", "description": "要注入的按键序列（支持 \\r \\t \\x03 等转义）" }
+                },
+                "required": ["keys"]
+            }),
+        },
+        move |input, _ctx| {
+            let k = input
+                .get("keys")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("缺少 keys"))?;
+            if k.is_empty() {
+                return Err(anyhow::anyhow!("keys 不能为空"));
+            }
+            o9.send_keys(&s9, k)
+                .map(ToolOutput::text)
+                .map_err(|e| anyhow::anyhow!(e))
+        },
+    );
     vec![
         Box::new(exec),
         Box::new(screen),
@@ -395,6 +427,7 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
         Box::new(upload),
         Box::new(download),
         Box::new(tstatus),
+        Box::new(keys),
     ]
 }
 
@@ -729,6 +762,9 @@ mod tests {
         local_stat: Mutex<Option<Result<Option<StatInfo>, String>>>,
         start_results: Mutex<std::collections::VecDeque<Result<String, String>>>,
         polls: Mutex<std::collections::VecDeque<TransferPoll>>,
+        /// send_keys 预置结果队列（耗尽即成功）+ 键序记录。
+        send_keys_results: Mutex<std::collections::VecDeque<Result<String, String>>>,
+        keys_sent: Mutex<Vec<String>>,
         calls: Mutex<Vec<String>>,
     }
     impl SshOps for FakeOps {
@@ -811,6 +847,14 @@ mod tests {
                     bytes_done: 0,
                     total: None,
                 }))
+        }
+        fn send_keys(&self, _sid: &str, keys: &str) -> Result<String, String> {
+            self.keys_sent.lock().unwrap().push(keys.to_string());
+            self.send_keys_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok(json!({"sent": true}).to_string()))
         }
     }
 
@@ -948,6 +992,9 @@ mod tests {
                 Err("会话不存在".into())
             }
             fn transfer_status(&self, _: &str) -> Result<TransferPoll, String> {
+                Err("会话不存在".into())
+            }
+            fn send_keys(&self, _: &str, _: &str) -> Result<String, String> {
                 Err("会话不存在".into())
             }
         }
@@ -1153,6 +1200,52 @@ mod tests {
                 .iter()
                 .any(|c| c.contains("start:down:") && c.contains("Some(\"skip\")")),
             "skip 应带 collision 发起：{calls:?}"
+        );
+    }
+
+    #[test]
+    fn send_keys_records_and_error_passthrough() {
+        let ops = Arc::new(FakeOps {
+            // 预置两次成功占位 + 一次拒绝（会话级授权被人类拒绝）→ 第三拍 is_error 透传
+            send_keys_results: Mutex::new(std::collections::VecDeque::from(vec![
+                Ok(json!({"sent": true}).to_string()),
+                Ok(json!({"sent": true}).to_string()),
+                Err("审批被拒绝（send_keys）：人类拒绝会话级授权".into()),
+            ])),
+            ..Default::default()
+        });
+        let host = AgentHost::new(ops.clone());
+        let (ev, sink) = collect();
+        // JSON 里的 \r \x03 由 serde 解成真实控制字符再进 SshOps（转义契约）
+        let (prov, _s) = MockProvider::new(vec![
+            mock::resp_tool("t1", "send_keys", json!({"keys": "j"}), None),
+            mock::resp_tool("t2", "send_keys", json!({"keys": "\r"}), None),
+            mock::resp_tool("t3", "send_keys", json!({"keys": "\x03"}), None),
+            mock::resp_text("退出了", None),
+        ]);
+        host.send_with_mock("s7", "操作一下 vim", Box::new(prov), sink)
+            .expect("send");
+        assert!(host.wait_idle("s7"));
+
+        let results: Vec<(bool, String)> = ev
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                HostEvent::ToolResult {
+                    is_error, content, ..
+                } => Some((*is_error, content.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 3, "应有 3 个工具结果：{results:?}");
+        assert!(!results[0].0 && results[0].1.contains("sent"));
+        assert!(!results[1].0 && results[1].1.contains("sent"));
+        assert!(results[2].0 && results[2].1.contains("审批被拒绝"));
+        // 键序按序到达 SshOps；JSON 转义已解成真实控制字符
+        assert_eq!(
+            *ops.keys_sent.lock().unwrap(),
+            vec!["j".to_string(), "\r".to_string(), "\x03".to_string()]
         );
     }
 }
