@@ -160,3 +160,52 @@ export const IconMinimize = (p: IconProps) => (
     <line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
   </Svg>
 );
+
+// —— 活动栏批次（活动栏轮）：lucide 同形描边 ——
+
+// 连接视图（lucide server 同形：双层机箱 + 指示点）
+export const IconServer = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" />
+    <line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" />
+  </Svg>
+);
+
+// Agent 对话视图（lucide bot 同形：头身一体 + 双眼 + 天线）
+export const IconBot = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 8V4H8" /><rect x="4" y="8" width="16" height="12" rx="2" />
+    <line x1="9" y1="13" x2="9.01" y2="13" /><line x1="15" y1="13" x2="15.01" y2="13" />
+    <line x1="9" y1="17" x2="15" y2="17" />
+  </Svg>
+);
+
+// 协作（lucide users 同形）
+export const IconUsers = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </Svg>
+);
+
+// 端口转发（lucide shuffle 同形）
+export const IconShuffle = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.8-1.1 2-1.7 3.3-1.7H22" />
+    <path d="m18 2 4 4-4 4" /><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2" />
+    <path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8" /><path d="m18 14 4 4-4 4" />
+  </Svg>
+);
+
+// 活动记录（lucide rows 同形）
+export const IconRows = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><line x1="3" y1="15" x2="21" y2="15" /></Svg>
+);
+
+// 命令块（lucide layers 同形：三层堆叠）
+export const IconBlocks = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m12 2 8.5 4.77L12 11.53 3.5 6.77 12 2z" />
+    <path d="m3.5 11.77 8.5 4.76 8.5-4.76" /><path d="m3.5 16.77 8.5 4.76 8.5-4.76" />
+  </Svg>
+);

@@ -33,6 +33,7 @@ import {
   IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
   IconArrowDown, IconUpload, IconDownload, IconInbox, IconSearch, IconLoader,
   IconFolder, IconRefresh, IconMaximize, IconMinimize,
+  IconServer, IconBot, IconUsers, IconShuffle, IconRows, IconBlocks,
 } from "./icons";
 
 // macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
@@ -89,6 +90,7 @@ import { CtxMenus } from "./components/ctx-menus";
 import { CollabApprovals, CollabDelegate } from "./components/collab-panel";
 import { ConnDetail } from "./components/conn-detail";
 import { Hostbar } from "./components/hostbar";
+import { AgentView } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 import { SelfMeterTitlebar } from "./self-meter";
@@ -698,6 +700,19 @@ export default function App() {
       return Number.isFinite(v) ? Math.min(300, Math.max(200, v)) : 224;
     } catch { return 224; }
   });
+  // 活动栏轮：左侧栏第二个视图「Agent 对话」。与主机栏互斥（开一个关另一个，双写
+  // localStorage），默认关（首次须从活动栏显式打开——演练外壳，别抢首屏）。宽度
+  // 320–560（对话面板比主机栏宽），只走 localStorage（主机栏的 blob 域不带它，
+  // 避免动 workspace schema；刷新恢复同效）。
+  const [agentOpen, setAgentOpen] = useState(() => {
+    try { return localStorage.getItem("ui.agentbar") === "1"; } catch { return false; }
+  });
+  const [agentWidth, setAgentWidth] = useState(() => {
+    try {
+      const v = Number.parseInt(localStorage.getItem("ui.agentbar_w") ?? "", 10);
+      return Number.isFinite(v) ? Math.min(560, Math.max(320, v)) : 420;
+    } catch { return 420; }
+  });
   const [hostQuery, setHostQuery] = useState("");
   // 五轮架构（逐键全树重渲染根治）：主机搜索改非受控 + 150ms 防抖——此前每键
   // setHostQuery 都触发整棵 App 树 reconcile。键入即时上屏（原生 DOM），过滤值
@@ -737,6 +752,10 @@ export default function App() {
   hostbarOpenRef.current = hostbarOpen;
   const hostbarWidthRef = useRef(hostbarWidth);
   hostbarWidthRef.current = hostbarWidth;
+  const agentOpenRef = useRef(agentOpen);
+  agentOpenRef.current = agentOpen;
+  const agentWidthRef = useRef(agentWidth);
+  agentWidthRef.current = agentWidth;
 
   // 专注模式切换（F11 / 标签条按钮 / 命令面板同一入口）：chrome 态同步落 localStorage；
   // 系统全屏走 Tauri setFullscreen（capability core:window:allow-set-fullscreen）。
@@ -2308,9 +2327,21 @@ export default function App() {
   }, []);
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
+    // 活动栏轮：左栏两视图互斥——展开主机栏即收起 Agent 视图（双写各自持久键）
+    if (open) {
+      setAgentOpen(false);
+      try { localStorage.setItem("ui.agentbar", "0"); } catch { /* 隐私模式忽略 */ }
+    }
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
     persistHostbarPrefs(open, hostbarWidthRef.current);
   }, [persistHostbarPrefs]);
+  // Agent 视图开关（活动栏 rail-agent / 命令面板同一入口）：与主机栏互斥。
+  // 关闭也落盘——刷新后保持「上次关了」的意图。
+  const toggleAgent = useCallback((open: boolean) => {
+    setAgentOpen(open);
+    try { localStorage.setItem("ui.agentbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+    if (open && hostbarOpenRef.current) toggleHostbar(false);
+  }, [toggleHostbar]);
   const gripDrag = useRef(false);
   const gripRaf = useRef(0);
   const gripDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -2325,7 +2356,8 @@ export default function App() {
     const x = e.clientX;
     gripRaf.current = requestAnimationFrame(() => {
       gripRaf.current = 0;
-      const w = Math.min(300, Math.max(200, Math.round(x)));
+      // 活动栏轮：左缘 44px 活动栏占位，抓手 x 要先扣掉才是主机栏宽
+      const w = Math.min(300, Math.max(200, Math.round(x) - 44));
       setHostbarWidth((cur) => (cur === w ? cur : w));
     });
   };
@@ -2335,10 +2367,38 @@ export default function App() {
     if (gripRaf.current) { cancelAnimationFrame(gripRaf.current); gripRaf.current = 0; }
     e.currentTarget.releasePointerCapture(e.pointerId);
     // 落盘用事件坐标重算而非渲染帧闭包值（分离事件序列下前者才是最新）
-    const w = Math.min(300, Math.max(200, Math.round(e.clientX)));
+    const w = Math.min(300, Math.max(200, Math.round(e.clientX) - 44));
     setHostbarWidth(w);
     try { localStorage.setItem("ui.hostbar_w", String(w)); } catch { /* 隐私模式忽略 */ }
     persistHostbarPrefs(hostbarOpenRef.current, w);
+  };
+  // Agent 视图宽度抓手（活动栏轮）：同 hostbar 抓手的 rAF 合帧模式，宽度档 320–560。
+  // x 起算点含活动栏 44px——抓手事件坐标直接对「抓手左缘 = 期望宽」自洽（与 hostbar
+  // 不同：那边无活动栏时抓手 x 即宽）。此处 agentbar 在活动栏右侧，宽 = x - 44。
+  const agGripDrag = useRef(false);
+  const agGripRaf = useRef(0);
+  const agGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    agGripDrag.current = true;
+  };
+  const agGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!agGripDrag.current || e.buttons === 0) return;
+    if (agGripRaf.current) return;
+    const x = e.clientX;
+    agGripRaf.current = requestAnimationFrame(() => {
+      agGripRaf.current = 0;
+      const w = Math.min(560, Math.max(320, Math.round(x) - 44));
+      setAgentWidth((cur) => (cur === w ? cur : w));
+    });
+  };
+  const agGripUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!agGripDrag.current) return;
+    agGripDrag.current = false;
+    if (agGripRaf.current) { cancelAnimationFrame(agGripRaf.current); agGripRaf.current = 0; }
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    const w = Math.min(560, Math.max(320, Math.round(e.clientX) - 44));
+    setAgentWidth(w);
+    try { localStorage.setItem("ui.agentbar_w", String(w)); } catch { /* 隐私模式忽略 */ }
   };
   const hostQueryN = hostQuery.trim().toLowerCase();
   // R20（§4.2 主机栏）：收藏置顶分组（有收藏→「收藏/其他主机」两组；无收藏→「全部主机」）、
@@ -2366,7 +2426,8 @@ export default function App() {
   // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
   const panelNeed = rightPanel === "collab" || rightPanel === "forwards" || rightPanel === "log" || rightPanel === "blocks" ? 400 : 384;
-  const availW = winW - (hostbarOpen ? hostbarWidth : 0);
+  // 活动栏轮：availW 扣当前打开的左栏视图（主机栏或 Agent 视图，互斥不同时开）
+  const availW = winW - (hostbarOpen ? hostbarWidth : agentOpen ? agentWidth : 0);
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
     if (rightPanel === null) { setTpFull(false); return; }
@@ -4510,6 +4571,12 @@ export default function App() {
       run: () => toggleHostbar(!hostbarOpen),
     });
     items.push({
+      id: "toggle-agent", group: "应用",
+      title: agentOpen ? "关闭 Agent 对话" : "打开 Agent 对话（演练）",
+      hint: "活动栏", keywords: "agent ai 助手 对话 演练 内置",
+      run: () => toggleAgent(!agentOpen),
+    });
+    items.push({
       id: "toggle-focus", group: "应用",
       title: focusMode ? "退出专注模式" : "进入专注模式（界面全让位给终端）",
       hint: "F11", keywords: "全屏 zen focus 专注 沉浸 极简",
@@ -4605,6 +4672,18 @@ export default function App() {
             ))}
           </div>
         )}
+        {/* 活动栏（活动栏轮）：左缘图标栏 = 侧栏视图入口。连接/Agent 两视图互斥
+            （开一个关另一个），全关 = 纯终端；专注模式整体隐藏（.focus-mode CSS） */}
+        <nav className="actrail" data-testid="actrail" aria-label="侧栏视图">
+          <button className={"rail-btn" + (hostbarOpen ? " ts-open" : "")} data-testid="rail-hosts"
+            title="连接（⌘B）" aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
+            <IconServer size={17} />
+          </button>
+          <button className={"rail-btn" + (agentOpen ? " ts-open" : "")} data-testid="rail-agent"
+            title="Agent 对话（演练）" aria-pressed={agentOpen} onClick={() => toggleAgent(!agentOpen)}>
+            <IconBot size={17} />
+          </button>
+        </nav>
         {hostbarOpen && (
           /* 主机栏（拆分⑤出仓 components/hostbar.tsx，零语义变更）：搜索防抖、
              标签筛选、收藏分组卡片、导入面板挂载点、设置钮与宽度抓手 */
@@ -4627,11 +4706,20 @@ export default function App() {
             pushToast={pushToast} refreshLists={refreshLists}
           />
         )}
-        {!hostbarOpen && (
+        {!hostbarOpen && !agentOpen && (
           <button className="ghost icon-btn hb-expand" title="展开主机栏（⌘B）" aria-label="展开主机栏"
             onClick={() => toggleHostbar(true)}>
             <IconChevronRight size={15} />
           </button>
+        )}
+        {agentOpen && (
+          /* Agent 对话视图（活动栏轮）：左侧栏第二视图，演练外壳——回复/工具卡为
+             agent-mock 脚本数据，真实模型接入在后续轮。对话按会话隔离（键 = sid） */
+          <AgentView
+            width={agentWidth} sid={sid} hostLabel={hostLabel(sid ?? undefined)}
+            gripDrag={agGripDrag} gripDown={agGripDown} gripMove={agGripMove} gripUp={agGripUp}
+            onClose={() => toggleAgent(false)} pushToast={pushToast}
+          />
         )}
         <main className="main">
         {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释
@@ -5621,6 +5709,28 @@ export default function App() {
             </div>
           </aside>
         )}
+        {/* 右缘图标栏（活动栏轮）：任务面板五视图的常驻入口，与左活动栏同视觉语言。
+            只加入口不减：状态栏/工具栏既有开关原样保留（依赖它们的 spec 与肌肉记忆不动） */}
+        <div className="rb-rail" data-testid="rb-rail" aria-label="任务面板视图">
+          <button className={"rail-btn" + (rightPanel === "files" ? " ts-open" : "")} data-testid="rb-files"
+            title="文件" aria-pressed={rightPanel === "files"}
+            onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}><IconFolder size={17} /></button>
+          <button className={"rail-btn" + (rightPanel === "collab" ? " ts-open" : "")} data-testid="rb-collab"
+            title="协作" aria-pressed={rightPanel === "collab"}
+            onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
+            <IconUsers size={17} />
+            {pendingCount > 0 && <span className="rail-badge">{pendingCount > 9 ? "9+" : pendingCount}</span>}
+          </button>
+          <button className={"rail-btn" + (rightPanel === "forwards" ? " ts-open" : "")} data-testid="rb-forwards"
+            title="端口转发" aria-pressed={rightPanel === "forwards"}
+            onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}><IconShuffle size={17} /></button>
+          <button className={"rail-btn" + (rightPanel === "log" ? " ts-open" : "")} data-testid="rb-log"
+            title="活动记录" aria-pressed={rightPanel === "log"}
+            onClick={() => setRightPanel(rightPanel === "log" ? null : "log")}><IconRows size={17} /></button>
+          <button className={"rail-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="rb-blocks"
+            title="命令块" aria-pressed={rightPanel === "blocks"}
+            onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}><IconBlocks size={17} /></button>
+        </div>
         </div>{/* /content */}
 
         {/* R35 S08 §194：传输队列=工作区底部抽屉，默认收起；后台事件只更新
