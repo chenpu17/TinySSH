@@ -894,7 +894,9 @@ export default function App() {
   }, [rightPanel, logScope, logActor, logAction, sid]);
 
   // ---- P1-b：命令块面板（FR-10 V2）。数据=read_blocks 最近 50 条（旧→新），
-  // 打开/切会话取一次 + 5s 轮询 + 手动刷新；重跑走粘贴安全链（下方 rerunCommand）。 ----
+  // 打开/切会话取一次 + OSC 133 推送即时刷新（makeTerm parser handler →
+  // blocksActivityRef）+ 5s 轮询兜底（无 shell 集成时唯一来源）+ 手动刷新；
+  // 重跑走粘贴安全链（下方 rerunCommand）。 ----
   const [blocksList, setBlocksList] = useState<BlockInfo[]>([]);
   const [blocksBusy, setBlocksBusy] = useState(false);
   const [blocksErr, setBlocksErr] = useState<string | null>(null);
@@ -918,6 +920,16 @@ export default function App() {
     const t = setInterval(() => void loadBlocks(), 5000);
     return () => clearInterval(t);
   }, [rightPanel, sid, loadBlocks]);
+  // OSC 133 标记直达（makeTerm parser handler 经 ref 中转，handler 不随面板状态
+  // 重挂）：仅本会话焦点 + 面板打开 + term 在场时取数——块开/合瞬间上屏。
+  const blocksActivityRef = useRef<(sid: string) => void>(() => {});
+  useEffect(() => {
+    blocksActivityRef.current = (bsid: string) => {
+      if (rightPanel !== "blocks" || sidRef.current !== bsid) return;
+      if (!termsRef.current.has(bsid)) return;
+      void loadBlocks();
+    };
+  }, [rightPanel, loadBlocks]);
   // 最近失败块（blocks 数组内下标；exit 已知且非 0）——「跳到最近失败」的高亮与跳转目标
   const blocksFailIdx = blocksList.reduce(
     (acc, b, i) => (b.exit_code !== null && b.exit_code !== 0 ? i : acc), -1);
@@ -1424,6 +1436,23 @@ export default function App() {
         else if (osc52PolicyRef.current === "ask") setOsc52Ask({ sid: sessionSid, text });
       } catch { /* 非法 base64：吞 */ }
       return true;
+    });
+    // P1-b 增量：OSC 133 shell 集成标记直达刷新。核心输出通道广播的是喂屏原始
+    // 字节，133 原样到达 FE xterm（xterm 默认忽略）——在此注册 parser handler，
+    // 块开/合（A/B/C/D）瞬间即可刷新块面板，未开面板时零取数。150ms 尾沿去抖
+    // 合并 ConPTY 提示符重绘的 A/B 突发；无集成 shell 无 133，5s 轮询仍是兜底。
+    let blocksMarkTimer: number | null = null;
+    term.parser.registerOscHandler(133, (data) => {
+      const kind = data.split(";")[0]?.trim();
+      if (kind === "A" || kind === "B" || kind === "C" || kind === "D") {
+        if (blocksMarkTimer === null) {
+          blocksMarkTimer = window.setTimeout(() => {
+            blocksMarkTimer = null;
+            blocksActivityRef.current(sessionSid);
+          }, 150);
+        }
+      }
+      return false; // 不消费：xterm 维持对 133 的默认忽略，后续行为不变
     });
     // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
     // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）

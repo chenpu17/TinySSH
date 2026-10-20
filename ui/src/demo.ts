@@ -984,7 +984,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
             true),
         ],
       };
-      return catalog[sid] ?? [];
+      // 附加块（spec 种入）：localStorage `ui.v2.blocksExtra:<sid>`，数组元素同
+      // BlockInfo 形，追加在合成目录之后（=最新）。演练「新块经 OSC 133 推送
+      // 即时上屏」的数据面；真实侧事实源在 term-core BlockIndex，无此旁路。
+      let extra: ReturnType<typeof blk>[] = [];
+      try { extra = JSON.parse(localStorage.getItem(`ui.v2.blocksExtra:${sid}`) ?? "[]"); }
+      catch { /* 损坏种子忽略 */ }
+      return [...(catalog[sid] ?? []), ...extra];
     }
     // ---- P2-b 输出触发器（演示镜像）：校验/归一与真实 set_rules 同口径，持久化在
     // localStorage（演示域无 vault）。命中路径（引擎/审批卡）由 Rust triggers_tests 钉住，
