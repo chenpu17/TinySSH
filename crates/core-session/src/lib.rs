@@ -3503,6 +3503,10 @@ impl SessionApi for SessionManager {
                 exit_code: b.exit_code,
                 source: b.source.describe(),
                 exec_id: b.exec_id.clone(),
+                // 块输出文本（采集窗在 term-core Screen 内已保尾 8KB，这里直通；
+                // 空串 = 无输出源/空输出，如实透传不虚构）
+                output: b.output.clone(),
+                output_truncated: b.output_truncated,
             })
             .collect())
     }

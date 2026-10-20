@@ -955,12 +955,12 @@ export default function App() {
       deliver([]);
     }
   }, [pushToast]);
-  const copyBlock = useCallback((t: string) => {
+  const copyBlock = useCallback((t: string, what = "命令") => {
     try {
       const p = inTauri ? clipboard.writeText(t) : navigator.clipboard?.writeText(t);
       void Promise.resolve(p).catch(() => {});
     } catch { /* 演示环境无剪贴板：静默 */ }
-    pushToast("ok", "已复制命令");
+    pushToast("ok", `已复制${what}`);
   }, [pushToast]);
   // 块定位：search addon 文本搜索（best-effort）——FR-10 明示行号跨实现不对齐，
   // 不承诺精确滚动；同名命令命中搜索方向上最近一处（光标在底部=最近一次出现）。

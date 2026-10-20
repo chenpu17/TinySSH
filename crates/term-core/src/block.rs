@@ -44,6 +44,14 @@ pub struct CommandBlock {
     pub source: BlockSource,
     /// 关联的 exec（Shell 模式 exec 写入时登记）。
     pub exec_id: Option<String>,
+    /// 块输出文本（「块输出文本」增量）：Screen 按 C→D 主窗 + D→B 尾窗逐段采集
+    /// 的渲染后文本（已剥 ANSI）。截断保留**末尾 8KB**（报错/堆栈通常在尾部）；
+    /// 无输出源（窗口为空/旧索引）为空串——不虚构。
+    #[serde(default)]
+    pub output: String,
+    /// output 相对完整输出是否有丢失（8KB 窗截断丢弃了头部）。
+    #[serde(default)]
+    pub output_truncated: bool,
 }
 
 /// 索引当前打开块的状态机位置。
@@ -170,6 +178,9 @@ impl BlockIndex {
                         output_line_range: self.open.output_start_line.map(|s| (s, current_line)),
                         source,
                         exec_id: self.open.managed_exec.take(),
+                        // 输出文本由 Screen 的采集窗在 D（主窗）/B（尾窗合并）时回填
+                        output: String::new(),
+                        output_truncated: false,
                     });
                     self.open.typed.clear();
                     self.phase = BlockPhase::Idle;
@@ -222,6 +233,8 @@ impl BlockIndex {
                     .map(|s| (s, self.open.output_start_line.unwrap_or(s))),
                 source,
                 exec_id: self.open.managed_exec.take(),
+                output: String::new(),
+                output_truncated: false,
             });
         }
         self.open = OpenState::default();
@@ -251,14 +264,14 @@ mod tests {
 
         // 提示符与 B 先到（shell 打印 PS1）
         let evs = scanner.feed(b"\x1b]133;A\x07$ \x1b]133;B\x07");
-        for (ev, _) in evs {
+        for (ev, _, _) in evs {
             idx.on_osc(&ev, t0, 0);
         }
         // 人类键入命令（B→C 之间）
         idx.on_write(b"echo hi\r\n");
         // C、输出、D
         let evs = scanner.feed(b"\x1b]133;C\x07hi\n\x1b]133;D;0\x07$ ");
-        for (i, (ev, _)) in evs.iter().enumerate() {
+        for (i, (ev, _, _)) in evs.iter().enumerate() {
             idx.on_osc(ev, t0, i as i32);
         }
 
@@ -276,7 +289,7 @@ mod tests {
         let mut scanner = OscScanner::new();
 
         // 提示符与 B 来自 shell
-        for (ev, _) in scanner.feed(b"\x1b]133;A\x07\x1b]133;B\x07") {
+        for (ev, _, _) in scanner.feed(b"\x1b]133;A\x07\x1b]133;B\x07") {
             idx.on_osc(&ev, t0, 0);
         }
         // Agent 键入
@@ -284,7 +297,7 @@ mod tests {
             client_id: "cc".into(),
         });
         idx.on_write(b"ls\r\n");
-        for (ev, _) in scanner.feed(b"\x1b]133;C\x07out\x1b]133;D;2\x07") {
+        for (ev, _, _) in scanner.feed(b"\x1b]133;C\x07out\x1b]133;D;2\x07") {
             idx.on_osc(&ev, t0, 1);
         }
 
@@ -305,12 +318,12 @@ mod tests {
         let mut idx = BlockIndex::new();
         let t0 = Utc::now();
         let mut scanner = OscScanner::new();
-        for (ev, _) in scanner.feed(b"\x1b]133;A\x07") {
+        for (ev, _, _) in scanner.feed(b"\x1b]133;A\x07") {
             idx.on_osc(&ev, t0, 0);
         }
         idx.attribute_write(BlockSource::Human);
         idx.on_write(b"echo pre\r");
-        for (ev, _) in scanner.feed(b"\x1b]133;B\x07\x1b]133;C\x07out\x1b]133;D;0\x07") {
+        for (ev, _, _) in scanner.feed(b"\x1b]133;B\x07\x1b]133;C\x07out\x1b]133;D;0\x07") {
             idx.on_osc(&ev, t0, 1);
         }
         assert_eq!(idx.blocks.len(), 1);

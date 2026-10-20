@@ -105,6 +105,7 @@ async fn spike3_protocol_compliance() {
         "get_session_brief",
         "query_audit",
         "read_screen",
+        "read_blocks",
         "send_keys",
         "wait_output",
         // rev-r46 能力面补齐
@@ -850,7 +851,125 @@ async fn subscribe_pushes_resource_updated() {
     );
 }
 
-// ---- ③ 执行记录：exec 留痕 → query_records 可查 → Agent 隔离 ----
+// ---- 「块输出文本」增量：read_blocks 只读工具 ----
+
+/// 「块输出文本」增量：read_blocks 只读工具——tools/list 在册（read_only_hint）、
+/// 调用返回块列表且含 output 字段（shell 模式 exec 的真实命令输出）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn read_blocks_returns_blocks_with_output() {
+    let (m, url, _port, token) = spawn_stack().await;
+    let client = connect(&url, &token).await;
+
+    // 在册 + 只读标注（与 read_screen 同级语义：人类与 Agent 同权只读，无审批）
+    let tools = client.list_tools(None).await.expect("list tools");
+    let rb = tools
+        .tools
+        .iter()
+        .find(|t| t.name == "read_blocks")
+        .expect("read_blocks 必须在 tools/list");
+    assert_eq!(
+        rb.annotations.as_ref().and_then(|a| a.read_only_hint),
+        Some(true)
+    );
+
+    let sid = m
+        .create_session(
+            &Actor::Human,
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
+        .await
+        .unwrap();
+    m.delegate_session(&Actor::Human, sid.clone(), None)
+        .await
+        .unwrap();
+
+    // shell 模式 exec（allow 规则放行）→ 块随 OSC 133 标记落账
+    let r = client
+        .call_tool(call(
+            "exec",
+            serde_json::json!({"session_id": sid, "command": "echo mcp_block_out"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(r.is_error, Some(false), "{r:?}");
+
+    // exec 返回即块已收口（捕获尾窗在下一提示符 B 收口后才取数）；轮询兜底
+    // ConPTY 帧序抖动，5s 内 block 的 output 应带上命令输出
+    let mut found: Option<serde_json::Value> = None;
+    for _ in 0..20 {
+        let r = client
+            .call_tool(call(
+                "read_blocks",
+                serde_json::json!({"session_id": sid, "limit": 10}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.is_error, Some(false), "{r:?}");
+        let text = r
+            .structured_content
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        let out: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+        let blocks = out["blocks"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            out["total"].as_i64(),
+            Some(blocks.len() as i64),
+            "total 与 blocks 一致：{text}"
+        );
+        // 形状：每块都带 output / output_truncated 字段（空输出为 ""，不缺键）
+        for b in &blocks {
+            assert!(
+                b.get("output").map(|v| v.is_string()).unwrap_or(false),
+                "块必须带 output 字段：{b}"
+            );
+            assert!(
+                b.get("output_truncated")
+                    .map(|v| v.is_boolean())
+                    .unwrap_or(false),
+                "块必须带 output_truncated 字段：{b}"
+            );
+        }
+        if let Some(hit) = blocks.iter().find(|b| {
+            b["command"]
+                .as_str()
+                .map(|c| c.contains("echo mcp_block_out"))
+                .unwrap_or(false)
+        }) {
+            if hit["output"]
+                .as_str()
+                .map(|o| o.contains("mcp_block_out"))
+                .unwrap_or(false)
+            {
+                found = Some(hit.clone());
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let hit = found.expect("exec 过的命令块必须出现在 read_blocks 且 output 含命令输出");
+    assert_eq!(hit["exit_code"], 0);
+    assert_eq!(hit["source"], "agent:claude-code");
+    assert!(
+        hit["output"]
+            .as_str()
+            .unwrap_or("")
+            .contains("mcp_block_out"),
+        "{hit}"
+    );
+
+    // 未知会话如实结构化错误（session_not_found），不挂协议层
+    let r = client
+        .call_tool(call(
+            "read_blocks",
+            serde_json::json!({"session_id": "s-missing"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(err_kind(&r).as_deref(), Some("session_not_found"));
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn records_capture_exec_and_are_agent_scoped() {

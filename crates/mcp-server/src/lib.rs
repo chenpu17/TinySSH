@@ -150,6 +150,14 @@ pub struct ReadScreenReq {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct ReadBlocksReq {
+    pub session_id: String,
+    /// 最近 N 条（服务端截断 1..=200；缺省 50，与 UI 块面板同默认）
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SendKeysReq {
     pub session_id: String,
     pub keys: String,
@@ -751,6 +759,26 @@ impl McpServer {
     ) -> CallToolResult {
         run(&self.state, &parts, |api, actor| async move {
             api.read_screen(&actor, p.0.session_id).await
+        })
+        .await
+    }
+
+    #[tool(
+        name = "read_blocks",
+        description = "读取最近命令块（命令文本/起止时间/退出码/来源/输出文本）——复盘与引用命令输出用；输出每块截断保留末尾 8KB（报错堆栈在尾部），truncated 如实标注，无输出为空串",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn read_blocks(
+        &self,
+        Extension(parts): Extension<HttpParts>,
+        p: Parameters<ReadBlocksReq>,
+    ) -> CallToolResult {
+        run(&self.state, &parts, |api, actor| async move {
+            let blocks = api
+                .read_blocks(&actor, p.0.session_id, p.0.limit.unwrap_or(50))
+                .await?;
+            let total = blocks.len();
+            Ok::<_, Error>(serde_json::json!({ "total": total, "blocks": blocks }))
         })
         .await
     }

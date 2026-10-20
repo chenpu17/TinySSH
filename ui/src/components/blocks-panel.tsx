@@ -41,7 +41,8 @@ interface BlocksPanelProps {
   load: () => void;
   /** 重跑：宿主走粘贴安全链（危险/多行先确认），不在本组件直发 */
   rerun: (cmd: string) => void;
-  copy: (cmd: string) => void;
+  /** 复制到剪贴板：what 用于 toast 区分（命令/输出） */
+  copy: (text: string, what?: string) => void;
   /** 定位（文本搜索 best-effort；跨实现行号不对齐，不承诺精确滚动） */
   locate: (cmd: string) => void;
 }
@@ -95,6 +96,11 @@ export function BlocksPanel({ sid, blocks, busy, err, failIdx, load, rerun, copy
                 <div className="tl-action blk-cmd mono">{b.command}</div>
                 <div className="blk-acts">
                   <button className="ghost" data-testid="block-copy" title="复制命令" onClick={() => copy(b.command)}>复制</button>
+                  {(b.output ?? "").length > 0 && (
+                    <button className="ghost" data-testid="block-copy-output"
+                      title={`复制输出${b.output_truncated ? "（超 8KB 已截断，保留尾部）" : ""}：${b.output!.slice(0, 120)}${b.output!.length > 120 ? "…" : ""}`}
+                      onClick={() => copy(b.output!, "输出")}>输出{b.output_truncated ? "✂" : ""}</button>
+                  )}
                   <button className="ghost" data-testid="block-rerun" title="重跑（经粘贴安全链：危险/多行先确认）"
                     onClick={() => rerun(b.command)}>重跑</button>
                   <button className="ghost" data-testid="block-locate" title="在终端中定位（按命令文本搜索，同名命令取最近）"

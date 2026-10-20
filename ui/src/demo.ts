@@ -967,15 +967,21 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (!demoState.sessions.some((x) => x.id === sid)) throw apiError("session_not_found", "SessionNotFound（演示）");
       const now = Date.now();
       const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
-      const blk = (command: string, exit_code: number | null, source: string, startMs: number, durMs: number, exec_id: string | null = null) =>
-        ({ command, exit_code, source, start: iso(startMs + durMs), end: iso(startMs), exec_id });
+      const blk = (
+        command: string, exit_code: number | null, source: string, startMs: number, durMs: number,
+        exec_id: string | null = null, output = "", output_truncated = false,
+      ) => ({ command, exit_code, source, start: iso(startMs + durMs), end: iso(startMs), exec_id, output, output_truncated });
       const catalog: Record<string, ReturnType<typeof blk>[]> = {
         "s-demo-0001": [
           blk("shutdown -h now", 0, "human", 20 * 60e3, 200),
-          blk("df -h", 0, "human", 14 * 60e3, 300),
-          blk("du -sh /var/* | sort -h | tail -20", 0, "agent:claude-code", 11 * 60e3, 2400, "e-demo-1"),
-          blk("systemctl restart nginx", 1, "human", 7 * 60e3, 900),
-          blk("tail -n 50 /var/log/nginx/error.log", 0, "agent:claude-code", 4 * 60e3, 500, "e-demo-2"),
+          blk("df -h", 0, "human", 14 * 60e3, 300, null, "Filesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        40G   21G   17G  56% /\ntmpfs           3.2G     0  3.2G   0% /dev/shm"),
+          blk("du -sh /var/* | sort -h | tail -20", 0, "agent:claude-code", 11 * 60e3, 2400, "e-demo-1",
+            "4.0K\t/var/crash\n2.1G\t/var/lib/docker\n3.4G\t/var/log"),
+          blk("systemctl restart nginx", 1, "human", 7 * 60e3, 900, null,
+            "Job for nginx.service failed because the control process exited with error code.\nSee \"systemctl status nginx.service\" and \"journalctl -xeu nginx.service\" for details."),
+          blk("tail -n 50 /var/log/nginx/error.log", 0, "agent:claude-code", 4 * 60e3, 500, "e-demo-2",
+            "2026/10/20 11:02:07 [error] 18812#18812: *44 connect() failed (111: Connection refused) while connecting to upstream",
+            true),
         ],
       };
       return catalog[sid] ?? [];

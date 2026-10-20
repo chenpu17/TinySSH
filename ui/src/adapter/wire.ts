@@ -250,6 +250,10 @@ export interface BlockInfo {
   exit_code: number | null;
   source: string;
   exec_id: string | null;
+  /** 块输出文本（P2：OSC 133 标记跨度采集，渲染后文本已剥 ANSI，≤8KB 保尾；无数据为空串） */
+  output: string;
+  /** true = 完整输出超 8KB，头部被裁（保留尾部） */
+  output_truncated: boolean;
 }
 
 /** P2-b 输出触发器：规则（人类专属设置；匹配按完整行、剥 ANSI、冷却节流）。 */

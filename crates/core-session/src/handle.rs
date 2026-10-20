@@ -1332,7 +1332,9 @@ impl SessionHandle {
     pub async fn reset_scene_after_reconnect(&self) {
         let mut s = self.screen.lock().await;
         s.reset_integration_tracking();
-        s.blocks.force_close_open(chrono::Utc::now());
+        // Screen 层收尾：强制闭合打开块 + 落账未回填的块输出采集窗（尾窗滞留的
+        // 输出不随窗作废）
+        s.force_close_open(chrono::Utc::now());
         s.invalidate_cwd();
     }
 

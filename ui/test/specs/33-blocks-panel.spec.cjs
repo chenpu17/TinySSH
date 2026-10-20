@@ -73,6 +73,29 @@ module.exports = {
       window.__copied === "tail -n 50 /var/log/nginx/error.log"
       && !!document.querySelector(".toast.ok")), await page.evaluate(() => String(window.__copied)));
 
+    // ── 块输出文本（P2 后端 BlockInfo.output）：有输出才给「输出」钮；截断标记 ✂；复制原文 ──
+    ck.check("有输出的块带「输出」钮", await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid="block-row"]')];
+      const hit = rows.find((r) => r.querySelector(".blk-cmd")?.textContent?.includes("df -h"));
+      return !!hit?.querySelector('[data-testid="block-copy-output"]');
+    }));
+    ck.check("无输出的块不给「输出」钮（shutdown）", await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid="block-row"]')];
+      const hit = rows.find((r) => r.querySelector(".blk-cmd")?.textContent?.includes("shutdown"));
+      return hit && !hit.querySelector('[data-testid="block-copy-output"]');
+    }));
+    await clickRowAction(page, "systemctl restart nginx", "block-copy-output");
+    ck.check("复制输出原文 + toast「已复制输出」", await page.evaluate(() =>
+      String(window.__copied ?? "").includes("Job for nginx.service failed")
+      && [...document.querySelectorAll(".toast.ok")].some((t) => t.textContent?.includes("已复制输出"))),
+    await page.evaluate(() => String(window.__copied)));
+    ck.check("截断块标 ✂ 且 title 披露（tail 块 output_truncated）", await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid="block-row"]')];
+      const hit = rows.find((r) => r.querySelector(".blk-cmd")?.textContent?.includes("tail -n 50"));
+      const btn = hit?.querySelector('[data-testid="block-copy-output"]');
+      return btn && btn.textContent.includes("✂") && (btn.title ?? "").includes("截断");
+    }));
+
     // ── 危险重跑：shutdown -h now 命中内置形态 → 确认框（仍可取消）──
     await clickRowAction(page, "shutdown -h now", "block-rerun");
     ck.check("危险重跑弹确认框（标题「危险命令重跑到」）", (await dialogTitle(page) ?? "").includes("危险命令重跑到"),

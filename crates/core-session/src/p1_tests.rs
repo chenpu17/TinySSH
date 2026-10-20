@@ -251,3 +251,102 @@ async fn read_blocks_projects_block_index() {
     let cap = m.read_blocks(&agent, "s-p1blk".into(), 3).await.unwrap();
     assert_eq!(cap.len(), 3);
 }
+
+/// 「块输出文本」增量：read_blocks 投影三态——有输出（C→D 主窗）/ 超长截断保尾
+/// （≤8KB + truncated 如实）/ 无输出（空串 + false，不虚构）。输出在 term-core
+/// Screen 的采集窗落账，这里验证经 read_blocks 投影后的活数据流与 JSON 形状。
+#[tokio::test(flavor = "multi_thread")]
+async fn read_blocks_projects_output_text() {
+    if std::env::var("TINYSSH_MASTER_KEY").is_err() {
+        std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
+    }
+    let dir = std::env::temp_dir().join(format!("p1bo-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let m = SessionManager::open(&dir.join("t.db")).unwrap();
+
+    let h = SessionHandle::new(
+        "s-p1bout".into(),
+        local_host(),
+        "local".into(),
+        Arc::new(HintChannel(None)),
+        screen(),
+        m.center.clone(),
+        ControlOwner::Human,
+    );
+    m.sessions.lock().unwrap().insert(h.id.clone(), h.clone());
+
+    // 块 1：有输出（回显在 C 之前不进窗；C→D 主窗文本照实；B 收口尾窗）
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+    h.screen
+        .lock()
+        .await
+        .register_outgoing(b"echo one\r", term_core::BlockSource::Human);
+    h.feed_output(b"echo one\r\n\x1b]133;C\x07out-123\r\n\x1b]133;D;0\x07")
+        .await;
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+
+    // 块 2：超长输出（24KB > 8KB 上限）→ 截断保尾
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+    h.screen
+        .lock()
+        .await
+        .register_outgoing(b"cat big.log\r", term_core::BlockSource::Human);
+    h.feed_output(b"\x1b]133;C\x07").await;
+    for i in 0..300 {
+        h.feed_output(format!("row-{i:04}-{}", "x".repeat(64)).as_bytes())
+            .await;
+    }
+    h.feed_output(b"\x1b]133;D;0\x07").await;
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+
+    // 块 3：无输出（cd 类命令，C→D 窗为空）
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+    h.screen
+        .lock()
+        .await
+        .register_outgoing(b"cd /tmp\r", term_core::BlockSource::Human);
+    h.feed_output(b"\x1b]133;C\x07\x1b]133;D;0\x07").await;
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+
+    let blocks = m
+        .read_blocks(&Actor::Human, "s-p1bout".into(), 10)
+        .await
+        .unwrap();
+    assert_eq!(blocks.len(), 3);
+
+    // 有输出：主窗文本直通，回显（C 前）不混入
+    assert_eq!(blocks[0].command, "echo one");
+    assert_eq!(blocks[0].output, "out-123", "{:?}", blocks[0].output);
+    assert!(!blocks[0].output_truncated);
+
+    // 超长：≤8KB 保尾 + truncated 如实
+    assert_eq!(blocks[1].command, "cat big.log");
+    assert!(
+        blocks[1].output.len() <= 8 * 1024,
+        "单块输出 ≤8KB：{}",
+        blocks[1].output.len()
+    );
+    assert!(blocks[1].output_truncated, "截断必须如实标注");
+    assert!(
+        blocks[1].output.contains("row-0299"),
+        "保尾：最后一行在场：…{:?}",
+        blocks[1].output.chars().rev().take(80).collect::<String>()
+    );
+    assert!(!blocks[1].output.contains("row-0000"), "头部应被裁掉");
+
+    // 无输出：空串 + false（不是「未知」，是真没有）
+    assert_eq!(blocks[2].command, "cd /tmp");
+    assert_eq!(blocks[2].output, "");
+    assert!(!blocks[2].output_truncated);
+    // JSON 形状：字段恒在（String 恒序列化），消费方无需 Option 判空
+    let v = serde_json::to_value(&blocks[2]).unwrap();
+    assert_eq!(v["output"], "");
+    assert_eq!(v["output_truncated"], false);
+
+    // Agent 与人类同权只读（与简报同口径）
+    let agent = Actor::Agent {
+        client_id: "cc".into(),
+    };
+    let seen = m.read_blocks(&agent, "s-p1bout".into(), 10).await.unwrap();
+    assert_eq!(seen[0].output, "out-123");
+}

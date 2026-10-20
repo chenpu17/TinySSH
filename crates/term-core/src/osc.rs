@@ -20,6 +20,10 @@ pub enum OscEvent {
 pub struct OscScanner {
     state: State,
     buf: Vec<u8>,
+    /// 当前（或上一 feed 分片中的）标记 ESC 字节偏移——事件跨度起点。
+    /// 块输出采集靠它把「标记前的正文」与「标记字节」切开（只收标记前文本）；
+    /// 标记跨 feed 分片时 ESC 落在上一个分片，本分片内按 0 计。
+    esc_at: usize,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -39,14 +43,21 @@ impl OscScanner {
         Self::default()
     }
 
-    /// 喂入字节，返回本轮提取到的完整 OSC 事件及其终止符后的字节偏移。
-    pub fn feed(&mut self, data: &[u8]) -> Vec<(OscEvent, usize)> {
-        let mut events: Vec<(OscEvent, usize)> = Vec::new();
+    /// 喂入字节，返回本轮提取到的完整 OSC 事件及其标记跨度
+    /// `(事件, 起始偏移, 终止符后偏移)`——起始是标记 ESC 的位置（标记跨 feed
+    /// 分片时 ESC 在上一分片，本分片内按 0 计），终止后偏移即旧语义的 end。
+    pub fn feed(&mut self, data: &[u8]) -> Vec<(OscEvent, usize, usize)> {
+        // 分片中途开场：ESC 在上一分片，本分片内的跨度从 0 起
+        if !matches!(self.state, State::Ground) {
+            self.esc_at = 0;
+        }
+        let mut events: Vec<(OscEvent, usize, usize)> = Vec::new();
         for (i, &b) in data.iter().enumerate() {
             match std::mem::replace(&mut self.state, State::Ground) {
                 State::Ground => {
                     if b == 0x1b {
                         self.state = State::Esc;
+                        self.esc_at = i;
                     }
                 }
                 State::Esc => {
@@ -55,13 +66,14 @@ impl OscScanner {
                         self.buf.clear();
                     } else if b == 0x1b {
                         self.state = State::Esc;
+                        self.esc_at = i;
                     }
                 }
                 State::Osc => {
                     if b == 0x07 {
                         // BEL 终止
                         if let Some(ev) = Self::parse(&self.buf) {
-                            events.push((ev, i + 1));
+                            events.push((ev, self.esc_at, i + 1));
                         }
                         self.buf.clear();
                     } else if b == 0x1b {
@@ -78,7 +90,7 @@ impl OscScanner {
                 State::OscEsc => {
                     if b == b'\\' {
                         if let Some(ev) = Self::parse(&self.buf) {
-                            events.push((ev, i + 1));
+                            events.push((ev, self.esc_at, i + 1));
                         }
                         self.buf.clear();
                         self.state = State::Ground;
@@ -204,5 +216,27 @@ mod tests {
         let evs = sc.feed(b"3;B\x07");
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].0, OscEvent::CommandStart);
+    }
+
+    #[test]
+    fn spans_delimit_marker_bytes() {
+        // 跨度语义：start 指向标记 ESC，end 在终止符之后——两者之间就是标记本体，
+        // 块输出采集据此只收「标记前正文」，分片再碎也不把标记残片当输出文本。
+        let mut sc = OscScanner::new();
+        let data: &[u8] = b"pre\x1b]133;C\x07post";
+        let evs = sc.feed(data);
+        assert_eq!(evs.len(), 1);
+        let (_, s, e) = &evs[0];
+        assert_eq!(&data[*s..*e], &b"\x1b]133;C\x07"[..]);
+        assert_eq!(&data[..*s], b"pre");
+        // 标记跨分片：start 收敛为 0（ESC 在上一分片），不把上一分片偏移错用到本分片
+        let mut sc = OscScanner::new();
+        assert!(sc.feed(b"\x1b]133;D;").is_empty());
+        let data2: &[u8] = b"0\x07tail";
+        let evs2 = sc.feed(data2);
+        assert_eq!(evs2.len(), 1);
+        let (_, s2, e2) = &evs2[0];
+        assert_eq!(*s2, 0);
+        assert_eq!(&data2[*s2..*e2], &b"0\x07"[..]);
     }
 }

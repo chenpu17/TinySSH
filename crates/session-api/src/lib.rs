@@ -189,8 +189,8 @@ pub struct SessionBrief {
 }
 
 /// FR-10 V2（P1-b 命令块轮）：命令块查询行——term-core BlockIndex 的只读投影。
-/// 人类与 Agent 同权（与简报同口径）；输出区间不在此暴露（grid 绝对行号仅供
-/// 索引展示，跨实现不保证与前端缓冲区对齐——前端定位走文本搜索）。
+/// 人类与 Agent 同权（与简报同口径）；grid 绝对行号仍不在此暴露（仅供索引展示，
+/// 跨实现不保证与前端缓冲区对齐——前端定位走文本搜索）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockInfo {
     pub command: String,
@@ -202,6 +202,17 @@ pub struct BlockInfo {
     pub source: String,
     /// Shell 模式 exec 关联的执行记录 id；人类键入块为 None。
     pub exec_id: Option<String>,
+    /// 块输出文本（「块输出文本」增量）：OSC 133 C→D 主窗 + D→B 尾窗的渲染后
+    /// 文本（已剥 ANSI，UTF-8 lossy）。尾窗是给 Windows ConPTY 整帧重绘流序的
+    /// ——文本可晚于 D 到达，与 exec 捕获同一语义。截断**保留末尾 8KB**：报错
+    /// 堆栈/摘要通常在尾部，头部（提示符重复横幅等）价值最低。取不到输出文本
+    /// 的块（旧索引数据/无标记源）如实为空串，绝不虚构。
+    #[serde(default)]
+    pub output: String,
+    /// output 相对完整输出是否有丢失（窗口被截/头部被丢）。缺省 false：旧载荷
+    /// 无此键按「完整」解释（空串 + false = 未知而非空输出，不谎称有输出）。
+    #[serde(default)]
+    pub output_truncated: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -2234,6 +2245,34 @@ mod wire_format_tests {
                 .and_then(|t| t.download_dir.clone()),
             None
         );
+    }
+
+    /// 锁定 BlockInfo.output 域的兼容行为（「块输出文本」增量）：字段随块下发；
+    /// 旧载荷（P1-b 时代的 read_blocks 消费方缓存/镜像）缺 output/output_truncated
+    /// 键时按空串 + false 解释——「无数据」而非「无输出」，不谎称有输出。
+    #[test]
+    fn block_info_output_field_wire_compat() {
+        let info = BlockInfo {
+            command: "echo hi".into(),
+            start: None,
+            end: None,
+            exit_code: Some(0),
+            source: "human".into(),
+            exec_id: None,
+            output: "hi".into(),
+            output_truncated: false,
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["output"], "hi");
+        assert_eq!(v["output_truncated"], false);
+        // 旧载荷缺两键 → 空串 + false（serde default，与 TerminalPrefs 同惯例）
+        let legacy: BlockInfo = serde_json::from_value(serde_json::json!({
+            "command": "ls", "start": null, "end": null, "exit_code": 0,
+            "source": "human", "exec_id": null,
+        }))
+        .unwrap();
+        assert_eq!(legacy.output, "");
+        assert!(!legacy.output_truncated);
     }
 
     /// 锁定 Charset 的线上格式："utf-8"/"gbk"（与 vault hosts.charset 列、UI select、

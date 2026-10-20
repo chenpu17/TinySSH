@@ -63,6 +63,43 @@ struct CaptureState {
     tail_since: Option<std::time::Instant>,
 }
 
+/// 块输出采集窗（「块输出文本」增量）：C→D 主窗 + D→B 尾窗共用一个**顺序**缓冲。
+/// 尾窗与 exec 捕获（CaptureState）同源语义：Windows ConPTY 整帧重绘流序下命令
+/// 文本可晚于 D 到达，落在 D 之后、下一提示符 B 之前（提示符文本在 B 之后，天然
+/// 切界）；unix 流序输出在 C→D 主窗、尾窗近空。缓冲只保留**末尾 8KB**（报错
+/// 堆栈/摘要通常在尾部，头部价值最低）。
+#[derive(Debug, Default)]
+struct BlockTap {
+    buf: String,
+    /// D 已过：进入尾窗（B 到达即收口回填到块）。
+    tail_active: bool,
+    /// 缓冲超上限丢过头部（截断如实标注，不静默伪装完整）。
+    clipped: bool,
+}
+
+/// 单块输出文本上限：8 KiB，与 BlockInfo.output 的 JSON 契约一致。
+const BLOCK_OUTPUT_CAP: usize = 8 * 1024;
+
+impl BlockTap {
+    /// 追加一段渲染后文本，超限即保尾裁剪到上限（字符边界对齐，不在多字节
+    /// 中间下刀）。逐次裁保证 buf 在任意无锁观察点 ≤ 上限（read_blocks 与 feed
+    /// 共享屏锁，投影看到的输出不会超出 JSON 契约）。
+    fn absorb(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.buf.push_str(text);
+        if self.buf.len() > BLOCK_OUTPUT_CAP {
+            let mut cut = self.buf.len() - BLOCK_OUTPUT_CAP;
+            while !self.buf.is_char_boundary(cut) {
+                cut += 1;
+            }
+            self.buf.drain(..cut);
+            self.clipped = true;
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct TermEventListener;
 impl EventListener for TermEventListener {}
@@ -185,6 +222,8 @@ pub struct Screen {
     capture: Option<CaptureState>,
     /// 捕获完成通知（exec_id）。
     capture_tx: tokio::sync::broadcast::Sender<String>,
+    /// 当前打开块的输出采集窗（None = 无打开块或已收口）。
+    block_tap: Option<BlockTap>,
     /// 曾收到 OSC 133（判断主机是否注入 shell 集成）。
     saw_133: bool,
     /// 重置型就绪信号：重连后等首个 B 标记（见 prompt_ready）。
@@ -219,6 +258,7 @@ impl Screen {
             cwd_ts: None,
             capture: None,
             capture_tx,
+            block_tap: None,
             saw_133: false,
             saw_prompt: false,
             last_output_ts: None,
@@ -248,11 +288,11 @@ impl Screen {
         let cap_armed = self.capture.as_ref().map(|c| c.armed).unwrap_or(false);
         let mut last_off = 0usize;
 
-        for (ev, end_off) in events.iter().map(|(e, o)| (e.clone(), *o)) {
+        for (ev, ev_start, ev_end) in events.iter().map(|(e, s, o)| (e.clone(), *s, *o)) {
             // 捕获激活期间：上一事件结束到本事件结束之间的字节属于输出（active→text / tail→tail）
             if cap_active || cap_tail {
                 if let Some(cap) = self.capture.as_mut() {
-                    let slice = &data[last_off..end_off.min(data.len())];
+                    let slice = &data[last_off..ev_end.min(data.len())];
                     if cap_active {
                         cap.text.extend_from_slice(slice);
                     } else {
@@ -262,11 +302,21 @@ impl Screen {
             }
             match ev {
                 OscEvent::Cwd { path } => {
+                    // cwd 报告可出现在块输出中途：标记前正文归采集窗
+                    if let Some(t) = &mut self.block_tap {
+                        t.absorb(&strip_ansi(
+                            &data[last_off..ev_start.max(last_off).min(data.len())],
+                        ));
+                    }
                     self.cwd = Some(path);
                     self.cwd_ts = Some(now);
                 }
                 OscEvent::OutputStart => {
                     self.saw_133 = true;
+                    // 新块开采集窗；旧窗（C→D 未走完的残窗）就地作废不回填——
+                    // 残窗的块要么已在其 D 回填过主窗，要么从未成块，张冠李戴
+                    // 比缺数据更糟（归因不撒谎）。
+                    self.block_tap = Some(BlockTap::default());
                     if cap_armed && !cap_active && !cap_tail {
                         cap_active = true;
                         if let Some(cap) = self.capture.as_mut() {
@@ -279,6 +329,12 @@ impl Screen {
                 OscEvent::PromptStart => {
                     self.saw_133 = true;
                     self.saw_prompt = true;
+                    // A 在 D 之后 B 之前（尾窗内）：标记前正文归上一块的尾窗
+                    if let Some(t) = &mut self.block_tap {
+                        t.absorb(&strip_ansi(
+                            &data[last_off..ev_start.max(last_off).min(data.len())],
+                        ));
+                    }
                     self.blocks.on_osc(&ev, now, current_line);
                 }
                 OscEvent::CommandDone { exit } => {
@@ -294,6 +350,13 @@ impl Screen {
                             cap.tail_since = Some(std::time::Instant::now());
                         }
                     }
+                    // C→D 主窗收口：标记前正文进缓冲；转尾窗（D→B 续采）
+                    if let Some(t) = &mut self.block_tap {
+                        t.absorb(&strip_ansi(
+                            &data[last_off..ev_start.max(last_off).min(data.len())],
+                        ));
+                        t.tail_active = true;
+                    }
                     self.blocks.on_osc(&ev, now, current_line);
                     // 捕获归属：把 exec_id 挂到刚闭合的块上，并记录退出码
                     if finishing {
@@ -305,10 +368,12 @@ impl Screen {
                             }
                         }
                     }
+                    // 主窗先回填（B 不来——断线/无下一提示符——也有主窗可读）
+                    self.attach_block_output();
                     let _ = exit;
                 }
                 OscEvent::CommandStart => {
-                    // tail 收口：下一提示符 B 之前的字节都归上一命令（提示符文本在 B 后）
+                    // 尾窗收口：下一提示符 B 之前的字节都归上一命令（提示符文本在 B 后）
                     if cap_tail {
                         cap_tail = false;
                         if let Some(cap) = self.capture.as_mut() {
@@ -316,13 +381,32 @@ impl Screen {
                             let _ = self.capture_tx.send(cap.exec_id.clone());
                         }
                     }
-                    self.blocks.on_osc(&ev, now, current_line);
+                    // 块输出尾窗收口：B 前正文并入缓冲，主窗+尾窗整体回填后作废
+                    let close_tap = matches!(&self.block_tap, Some(t) if t.tail_active);
+                    if close_tap {
+                        if let Some(t) = &mut self.block_tap {
+                            t.absorb(&strip_ansi(
+                                &data[last_off..ev_start.max(last_off).min(data.len())],
+                            ));
+                        }
+                        self.blocks.on_osc(&ev, now, current_line);
+                        self.attach_block_output();
+                        self.block_tap = None;
+                    } else {
+                        // C→D 途中的 B（流序异常）：不收口，正文照采
+                        if let Some(t) = &mut self.block_tap {
+                            t.absorb(&strip_ansi(
+                                &data[last_off..ev_start.max(last_off).min(data.len())],
+                            ));
+                        }
+                        self.blocks.on_osc(&ev, now, current_line);
+                    }
                 }
                 other => {
                     self.blocks.on_osc(&other, now, current_line);
                 }
             }
-            last_off = end_off;
+            last_off = ev_end;
         }
 
         // 尾部仍激活：剩余字节全是输出
@@ -334,6 +418,12 @@ impl Screen {
                 } else {
                     cap.tail.extend_from_slice(slice);
                 }
+            }
+        }
+        // 块输出采集尾部：本 feed 剩余未接标记的字节属于当前窗
+        if let Some(t) = &mut self.block_tap {
+            if last_off < data.len() {
+                t.absorb(&strip_ansi(&data[last_off..]));
             }
         }
         if cap_active || cap_tail {
@@ -443,6 +533,45 @@ impl Screen {
 
     pub fn subscribe_capture(&self) -> tokio::sync::broadcast::Receiver<String> {
         self.capture_tx.subscribe()
+    }
+
+    /// 把当前采集窗回填到最近一个块（「块输出文本」增量）。
+    /// D 时回填主窗、B 时整体回填（主窗+尾窗）——都指向同一个刚收口的块（D 与 B
+    /// 之间无新块入账）。命令回显剥离与 exec 捕获同款自门控：Windows 重绘流序下
+    /// 回显行随帧混入尾窗，按已知命令文本剥首处（find 不到即无操作，unix 流序
+    /// 回显在 C 之前天然不在窗内）；窗口边界的换行噪音一并修剪。
+    fn attach_block_output(&mut self) {
+        let Some(tap) = self.block_tap.as_ref() else {
+            return;
+        };
+        if tap.buf.is_empty() {
+            return;
+        }
+        let Some(b) = self.blocks.blocks.last_mut() else {
+            return;
+        };
+        let mut text = tap.buf.clone();
+        let cmd = b.command.trim_end();
+        if !cmd.is_empty() {
+            if let Some(idx) = text.find(cmd) {
+                text = text[idx + cmd.len()..]
+                    .trim_start_matches(['\r', '\n'])
+                    .to_string();
+            }
+        }
+        b.output = text
+            .trim_start_matches(['\r', '\n'])
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        b.output_truncated = tap.clipped;
+    }
+
+    /// 断线/重连：强制收尾打开块，并把未回填的采集窗一并落账（尾窗滞留的输出
+    /// 不随窗作废丢弃）；随后采集窗作废——旧 shell 已死，窗再无归属。
+    pub fn force_close_open(&mut self, now: DateTime<Utc>) {
+        self.blocks.force_close_open(now);
+        self.attach_block_output();
+        self.block_tap = None;
     }
 
     /// Fresh 镜像回放：把结构化结果组装为带 Agent 标注的块写入屏幕（L1 §3.1 不可省略）。
@@ -1173,5 +1302,98 @@ mod tests {
         assert_eq!(total, 2);
         // 红「中」与默认「文」分属两个 run（属性不同不合并）
         assert_eq!(row0.len(), 2);
+    }
+
+    // ---- 块输出采集（「块输出文本」增量）----
+
+    /// unix 流序：输出在 C→D 主窗；B 收口后整体回填。回显在 C 之前（不采），
+    /// 命令文本自门控剥离 find 不到即无操作。
+    #[test]
+    fn block_output_captured_in_c_to_d_window() {
+        let mut s = screen();
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ ");
+        s.register_outgoing(b"echo hi\r", BlockSource::Human);
+        // 回显行在 C 之前（B→C 键入回显），C 后是输出（strip_ansi 归一 \r\n→\n）
+        s.feed(b"echo hi\r\n\x1b]133;C\x07hello\r\nworld\x1b]133;D;0\x07");
+        let b = s.blocks.last_blocks(1)[0].clone();
+        assert_eq!(b.output, "hello\nworld", "主窗输出照实：{:?}", b.output);
+        assert!(!b.output_truncated);
+        // 尾窗收口（B 到达）不改变结果
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ ");
+        let b = s.blocks.last_blocks(1)[0].clone();
+        assert_eq!(b.output, "hello\nworld");
+    }
+
+    /// Windows ConPTY 流序：D 先到、命令文本整帧落在 D 后 B 前——尾窗兜住，
+    /// 回显行随帧混入按已知命令文本剥首处（与 exec 捕获同款语义）。
+    #[test]
+    fn block_output_late_text_via_tail_window() {
+        let mut s = screen();
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ ");
+        s.register_outgoing(b"echo late\r", BlockSource::Human);
+        s.feed(b"\x1b]133;C\x07\x1b]133;D;0\x07\x1b]133;A\x07");
+        // D 时刻主窗为空也照实（B 不来至少有主窗；此处主窗空则保持空）
+        let b = s.blocks.last_blocks(1)[0].clone();
+        assert_eq!(b.output, "");
+        // 重绘帧整帧晚到：回显 + 输出 + 下一提示符 B，B 收口
+        s.feed(b"$ echo late\r\nlate output\r\n\x1b]133;B\x07");
+        let b = s.blocks.last_blocks(1)[0].clone();
+        assert_eq!(b.output, "late output", "回显剥离+尾窗合并：{:?}", b.output);
+        assert!(!b.output_truncated);
+    }
+
+    /// 截断：单块超 8KB 保**末尾** 8KB（报错堆栈在尾部），truncated 如实标注。
+    #[test]
+    fn block_output_truncated_keeps_tail() {
+        let mut s = screen();
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07\x1b]133;C\x07");
+        for i in 0..2000 {
+            s.feed(format!("line-{i:04}-0123456789\r\n").as_bytes());
+        }
+        s.feed(b"\x1b]133;D;0\x07\x1b]133;A\x07\x1b]133;B\x07");
+        let b = s.blocks.last_blocks(1)[0].clone();
+        assert!(b.output.len() <= 8 * 1024, "≤8KB 上限：{}", b.output.len());
+        assert!(b.output_truncated, "头部被丢必须如实标注");
+        assert!(b.output.contains("line-1999"), "保尾：最后一行必须在场");
+        assert!(!b.output.contains("line-0000"), "头部应被裁掉");
+        // UTF-8 边界：多字节字符不在中间下刀（首尾必是完整字符）
+        let mut s2 = screen();
+        s2.feed(b"\x1b]133;A\x07\x1b]133;B\x07\x1b]133;C\x07");
+        for _ in 0..1200 {
+            s2.feed("命令输出中文行\r\n".as_bytes());
+        }
+        s2.feed(b"\x1b]133;D;0\x07\x1b]133;A\x07\x1b]133;B\x07");
+        let b2 = s2.blocks.last_blocks(1)[0].clone();
+        assert!(b2.output.len() <= 8 * 1024, "{}", b2.output.len());
+        assert!(b2.output_truncated);
+        assert!(b2.output.contains("中文行"), "{:?}", b2.output);
+    }
+
+    /// 空输出窗（命令无输出）：空串 + truncated=false——如实，不虚构也不误标。
+    #[test]
+    fn block_output_empty_window_is_empty_not_fabricated() {
+        let mut s = screen();
+        s.feed(b"\x1b]133;A\x07\x1b]133;B\x07");
+        s.register_outgoing(b"cd /tmp\r", BlockSource::Human);
+        s.feed(b"\x1b]133;C\x07\x1b]133;D;0\x07\x1b]133;A\x07\x1b]133;B\x07");
+        let b = s.blocks.last_blocks(1)[0].clone();
+        assert_eq!(b.command, "cd /tmp");
+        assert_eq!(b.output, "");
+        assert!(!b.output_truncated);
+    }
+
+    /// 回放块（Fresh 镜像）：stdout/stderr 在 C→D 窗内照实采集，回放头不混入。
+    #[test]
+    fn replay_block_captures_output() {
+        let mut s = screen();
+        s.replay_fresh("docker ps", Some("cc"), "CONTAINER-1\n", "warn…", 0, "e2");
+        let b = s.blocks.last_blocks(1)[0].clone();
+        assert!(b.output.contains("CONTAINER-1"), "{:?}", b.output);
+        assert!(b.output.contains("[stderr] warn…"), "{:?}", b.output);
+        assert!(
+            !b.output.contains("[agent:cc] $ docker ps"),
+            "回放头不混入输出：{:?}",
+            b.output
+        );
     }
 }
