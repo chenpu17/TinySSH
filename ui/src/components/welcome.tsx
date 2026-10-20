@@ -1,6 +1,6 @@
 // 欢迎页（App.tsx 拆分⑤）：无活跃会话时的引导区——步骤说明、主行动钮、
 // 重连上次会话、最近连接。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
-import type { Host, RecentHost, SessionInfo } from "../adapter/wire";
+import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
 import { IconPlus, IconTerminal } from "../icons";
 
 interface WelcomeProps {
@@ -11,6 +11,9 @@ interface WelcomeProps {
   lastSessionHosts: string[];
   recents: RecentHost[];
   recentsHidden: string[];
+  /** P3：上次受控退出的现场快照（加密 vault KV；恢复走宿主 onRestoreScene） */
+  restoreEntries: RestoreEntry[];
+  onRestoreScene: (entries: RestoreEntry[]) => void;
   focusMode: boolean;
   hostbarOpen: boolean;
   createSession: (h: Host) => void;
@@ -26,6 +29,7 @@ interface WelcomeProps {
 
 export function Welcome({
   sid, sessions, hosts, lastSessionHosts, recents, recentsHidden,
+  restoreEntries, onRestoreScene,
   focusMode, hostbarOpen, createSession, applyFocus, toggleHostbar,
   setShowAddHost, setShowImport, setShowQuickConnect, setEditingHost,
   setPrefillEntry, setRecentMenu,
@@ -73,6 +77,29 @@ export function Welcome({
                 <span className="wr-name">⟳ 重连上次会话（{rowsH.length}）</span>
                 <span className="wr-addr">{rowsH.map((h) => h.name).join("、")}</span>
                 <span className="wr-go">连接</span>
+              </button>
+            </div>
+          );
+        })()}
+        {/* P3：恢复上次现场——受控退出时的屏幕快照（加密 vault KV）。点了才连，
+            每条走既有建连全流程；主机已删的条目由宿主恢复逻辑如实跳过并 toast */}
+        {sessions.length === 0 && restoreEntries.length > 0 && (() => {
+          const rows = restoreEntries
+            .map((e) => ({ e, h: hosts.find((x) => x.id === e.host_id) }))
+            .filter((r) => r.h);
+          if (rows.length === 0) return null;
+          const names = rows.map((r) => r.h!.name).join("、");
+          let when = rows[0].e.saved_at;
+          try { when = new Date(rows[0].e.saved_at).toLocaleString("zh-CN"); } catch { /* 原样 */ }
+          return (
+            <div className="welcome-recents" aria-label="恢复现场">
+              <div className="wr-title">上次现场</div>
+              <button className="wr-row" data-testid="restore-scene"
+                title={`快照 ${when}；${restoreEntries.length > rows.length ? `另有 ${restoreEntries.length - rows.length} 个主机已删的条目将跳过。` : ""}恢复后终端回到快照画面（滚回保留尾部 300 行）`}
+                onClick={() => onRestoreScene(restoreEntries)}>
+                <span className="wr-name">⏮ 恢复上次现场（{rows.length}）</span>
+                <span className="wr-addr">{names} · 快照 {when}</span>
+                <span className="wr-go">恢复</span>
               </button>
             </div>
           );

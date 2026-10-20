@@ -601,6 +601,15 @@ export type ResyncOutput =
   | { kind: "replayed"; subscription_id: string; events: SeqFrame[]; end_seq: number }
   | { kind: "checkpointed"; subscription_id: string; checkpoint: ScreenCheckpoint; end_seq: number };
 
+/** P3 会话现场恢复：一条快照（主机身份 + C10 屏幕检查点；加密存于 vault KV，随凭据库同盘）。 */
+export interface RestoreEntry {
+  host_id: string;
+  /** 快照时刻 RFC3339（恢复按钮与公告行引用） */
+  saved_at: string;
+  checkpoint: ScreenCheckpoint;
+}
+
+
 /** debug_subscriptions 返回（P6 测量口径）。 */
 export interface DebugSubscriptions {
   active_count: number;

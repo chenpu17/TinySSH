@@ -16,7 +16,7 @@ import {
   registerZoomHotkeys, onZoomChange, currentZoom,
   zoomIn, zoomOut, zoomReset,
 } from "./zoom";
-import { createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
+import { applyCheckpoint, createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import type {
   Host, HostDraft, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
@@ -25,6 +25,7 @@ import type {
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
   McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
+  RestoreEntry,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import {
@@ -2236,6 +2237,15 @@ export default function App() {
       .catch(() => {});
     return () => { dead = true; };
   }, [sessions.length]);
+  // —— P3 会话现场恢复：欢迎页「恢复上次现场」数据源（退出快照，vault KV 加密）——
+  const [restoreEntries, setRestoreEntries] = useState<RestoreEntry[]>([]);
+  useEffect(() => {
+    let dead = false;
+    invoke("read_restore", {})
+      .then((rs) => { if (!dead) setRestoreEntries(rs); })
+      .catch(() => { if (!dead) setRestoreEntries([]); });
+    return () => { dead = true; };
+  }, []);
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
@@ -3895,6 +3905,50 @@ export default function App() {
     }
   };
 
+  // —— P3 会话现场恢复：欢迎页一键入口。逐条目走既有建连全流程（TOFU/双因素
+  // 原样把关，点了才连），新会话 term 挂载后先写恢复公告行、再 applyCheckpoint
+  // 重放快照（历史进滚回、可视区/光标/模式复位）。主机已删或 20s 内未见新会话
+  // 如实跳过并 toast；恢复完成后清空数据源（现场已被消费，陈旧快照不复活）。
+  const restoreScenes = async (entries: RestoreEntry[]) => {
+    if (restoringRef.current) return;
+    restoringRef.current = true;
+    let restored = 0;
+    const skipped: string[] = [];
+    try {
+      for (const e of entries) {
+        const host = hosts.find((x) => x.id === e.host_id);
+        if (!host) { skipped.push(e.host_id); continue; }
+        const before = new Set(sessionsRef.current.map((x) => x.id));
+        void createSession(host);
+        const sid = await new Promise<string | null>((resolve) => {
+          const t0 = Date.now();
+          const tick = () => {
+            const fresh = sessionsRef.current.find((x) => !before.has(x.id) && x.host_id === e.host_id);
+            if (fresh && termsRef.current.has(fresh.id)) return resolve(fresh.id);
+            if (Date.now() - t0 > 20000) return resolve(null);
+            setTimeout(tick, 250);
+          };
+          tick();
+        });
+        if (!sid) { skipped.push(host.name); continue; }
+        const entry = termsRef.current.get(sid);
+        if (!entry) { skipped.push(host.name); continue; }
+        let when = e.saved_at;
+        try { when = new Date(e.saved_at).toLocaleString("zh-CN"); } catch { /* 原样 */ }
+        // 先重放再公告：applyCheckpoint 会重置缓冲（尺寸对齐+清屏），先写会被擦掉
+        applyCheckpoint(entry.term, e.checkpoint);
+        entry.term.write(`\r\n\x1b[2m—— 已恢复上次会话现场（快照 ${when}）——\x1b[0m\r\n`);
+        restored++;
+      }
+    } finally {
+      restoringRef.current = false;
+    }
+    if (restored > 0) pushToast("ok", `已恢复 ${restored} 个会话现场`);
+    if (skipped.length > 0) pushToast("err", `${skipped.length} 个现场未恢复（主机已删或连接未就绪）：${skipped.join("、")}`);
+    if (restored > 0) setRestoreEntries([]);
+  };
+  const restoringRef = useRef(false);
+
   // §302/§6.2：等待中可取消——终态经核心串行裁决，已取消只在核心确认后呈示
   const cancelConnect = async (hostId: string) => {
     const a = hostAttempt(hostId);
@@ -4954,6 +5008,7 @@ export default function App() {
             <Welcome
               sid={sid} sessions={sessions} hosts={hosts}
               lastSessionHosts={lastSessionHosts} recents={recents} recentsHidden={recentsHidden}
+              restoreEntries={restoreEntries} onRestoreScene={(e) => void restoreScenes(e)}
               focusMode={focusMode} hostbarOpen={hostbarOpen}
               createSession={createSession} applyFocus={applyFocus} toggleHostbar={toggleHostbar}
               setShowAddHost={setShowAddHost} setShowImport={setShowImport}

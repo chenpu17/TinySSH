@@ -2263,7 +2263,7 @@ fn main() {
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             scan_paste_danger,
             list_host_metadata, list_recent_hosts,
-            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers,
+            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers, read_restore,
             shell_capability,
             list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
@@ -2285,10 +2285,23 @@ fn main() {
 
 /// R23：FE 汇总确认「结束会话并退出」后的受控退出（不用 destroy 绕过窗口事件）。
 /// rev-r47：退出前撤下端点自发现文件（进程退出后端点不复存在，陈旧文件误导 Agent）。
+/// P3：退出前采集会话现场快照（C10 checkpoint 裁尾入 vault KV，加密；下次启动
+/// 欢迎页「恢复上次现场」数据源）——强杀/崩溃来不及快照，如实只覆盖受控退出。
 #[tauri::command]
-fn quit_app(app: tauri::AppHandle, state: ApiState<'_>) {
+async fn quit_app(app: tauri::AppHandle, state: ApiState<'_>) -> CmdResult<()> {
     refresh_endpoint_file(&state.api, None);
+    let n = state.api.capture_restore_snapshots().await;
+    if n > 0 {
+        tracing::info!("退出快照：已存 {n} 个会话现场");
+    }
     app.exit(0);
+    Ok(())
+}
+
+/// P3：读会话现场快照条目（欢迎页恢复入口数据源）。损坏/缺省如实给空表。
+#[tauri::command]
+async fn read_restore(state: ApiState<'_>) -> CmdResult<Vec<core_session::restore::RestoreEntry>> {
+    Ok(state.api.read_restore_snapshots().await)
 }
 
 /// R33 §353 上传入口：原生文件选择器（多选）。对话框必须在非主线程跑——

@@ -212,7 +212,7 @@ fn screen() -> term_core::Screen {
     })
 }
 
-async fn harness() -> (
+pub(crate) async fn harness() -> (
     Arc<SessionManager>,
     Arc<SessionHandle>,
     Arc<StdMutex<Vec<Vec<u8>>>>,

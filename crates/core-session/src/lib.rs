@@ -5,6 +5,7 @@ mod brief;
 mod charset;
 mod fault;
 mod handle;
+pub mod restore;
 pub mod triggers;
 
 pub use handle::{is_whitelisted, DecisionMsg, SessionHandle};
@@ -5856,6 +5857,10 @@ mod p1_tests;
 #[cfg(test)]
 #[path = "triggers_tests.rs"]
 mod triggers_tests;
+
+#[cfg(test)]
+#[path = "restore_tests.rs"]
+mod restore_tests;
 
 #[cfg(test)]
 #[path = "r26_tests.rs"]

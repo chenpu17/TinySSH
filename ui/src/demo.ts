@@ -989,7 +989,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     // ---- P2-b 输出触发器（演示镜像）：校验/归一与真实 set_rules 同口径，持久化在
     // localStorage（演示域无 vault）。命中路径（引擎/审批卡）由 Rust triggers_tests 钉住，
     // demo 无真实输出流可命中——如实不做假命中。----
-    case "read_triggers": {
+        // ---- P3 会话现场恢复（演示镜像）：读 localStorage；快照由 spec 直接种入。
+    // 采集侧（退出快照）是 Tauri 受控退出路径，演示域无对应入口——如实不做假采集。----
+    case "read_restore": {
+      try { return JSON.parse(localStorage.getItem("ui.v2.restore") ?? "[]"); }
+      catch { return []; }
+    }
+case "read_triggers": {
       try { return JSON.parse(localStorage.getItem("ui.v2.triggers") ?? "[]"); }
       catch { return []; }
     }
