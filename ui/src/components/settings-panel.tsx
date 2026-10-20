@@ -5,6 +5,7 @@
 // 与签发表单同工艺——设置类表单不该污染全局状态。
 import { useEffect, useState } from "react";
 import {
+  APP_VERSION,
   APPEARANCES, FONT_DEFAULT, FONT_MAX, FONT_MIN, PALETTES, SETTINGS_CATS,
   friendlyError,
   settingsCatIcon, settingsCatLabel,
@@ -733,7 +734,8 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                 <div className="set-card">
                 <h4 style={{ margin: "0 0 8px" }}>关于</h4>
                 <div style={{ fontSize: 12, lineHeight: 1.9 }}>
-                  <div>TinySSH {appVersion ? `v${appVersion}` : "（浏览器演示模式）"}</div>
+                  <div data-testid="about-version">TinySSH v{appVersion ?? APP_VERSION}{inTauri ? "" : "（浏览器演示模式）"}</div>
+                  <div data-testid="about-author">作者：陈普</div>
                   <div className="dim">本地优先的 SSH 客户端：终端、主机库与凭据都留在本机。</div>
                   <div className="dim">凭据以加密形式存于本机凭据库，界面与日志只显示指纹。</div>
                 </div>

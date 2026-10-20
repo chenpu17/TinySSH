@@ -115,6 +115,11 @@ module.exports = {
     await page.waitForTimeout(500);
     const aboutPane = await paneTextOf(page, "settings-pane-about");
     ck.check("关于分区显示产品说明（TinySSH / 本地优先）", aboutPane.includes("TinySSH") && aboutPane.includes("本地优先"), aboutPane.slice(0, 80));
+    // 本轮：版本号（演示模式回退 package.json 同源 0.9.0）+ 作者署名
+    const ver = await page.textContent("[data-testid=about-version]");
+    ck.check("关于分区显示版本号 v0.9.0", /TinySSH v0\.9\.0/.test(ver ?? ""), ver ?? "");
+    const author = await page.textContent("[data-testid=about-author]");
+    ck.check("关于分区署名作者：陈普", author === "作者：陈普", author ?? "");
 
     // 关闭
     await page.click("[data-testid=settings-close]");

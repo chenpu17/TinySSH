@@ -7,6 +7,10 @@ import { useEffect, type RefObject } from "react";
 import { invoke, MkChannel } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
 import type { ApprovalItem, AuditEvent, Host } from "./adapter/wire";
+// 应用版本（关于卡）：构建期从 package.json 内联（Vite JSON 具名导出 → 纯字符串），
+// 真机由 tauri getVersion() 同源覆盖；此常量仅供演示模式回退，不另立第四份拷贝。
+import { version as pkgVersion } from "../package.json";
+export const APP_VERSION: string = pkgVersion;
 
 // —— 主机栏共享纯函数（五轮架构：过滤/排序/相位文案单一口径，宿主与 hostbar.tsx 共用）——
 /** 主机过滤：名称/地址/用户/标签任一包含查询词（qN 已 trim+lowercase）。 */
