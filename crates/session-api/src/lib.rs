@@ -1575,8 +1575,9 @@ pub struct Workspace {
     pub sessions: Option<SessionPrefs>,
 }
 
-/// 终端偏好（§318）：粘贴保护默认开；选中即复制/响铃通知默认关（十五/十六轮）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 终端偏好（§318）：粘贴保护默认开；选中即复制/响铃通知默认关（十五/十六轮）；
+/// osc52 = 远端写剪贴板策略（P2-c，String 枚举：allow/ask/deny，消费方按缺省 ask 解释）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalPrefs {
     /// 多行粘贴保护：内容含换行且远端未开 bracketed paste 时预览确认后才发送
     #[serde(default = "serde_true")]
@@ -1587,6 +1588,9 @@ pub struct TerminalPrefs {
     /// 终端响铃（BEL）且窗口失焦时发系统通知（十六轮，默认关）
     #[serde(default)]
     pub bell_notify: bool,
+    /// 远端写剪贴板策略（P2-c）：allow/ask/deny；缺省或未知值由消费方按 ask 解释
+    #[serde(default)]
+    pub osc52: String,
 }
 
 /// 会话域（十五轮）：欢迎页「重连上次会话」的记忆
@@ -2203,6 +2207,21 @@ mod wire_format_tests {
         assert_eq!(r16.terminal.as_ref().unwrap().bell_notify, true);
         let serialized = serde_json::to_value(&r16).unwrap();
         assert_eq!(serialized["terminal"]["bell_notify"], true);
+        // P2-c：osc52 round-trip（旧载荷缺键 = ""，消费方按 ask 解释；值原样透传不校验——
+        // 校验在 UI 载入处做，这里只保证 round-trip 不丢键）
+        let pc: Workspace = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "chrome": "system", "terminal": { "paste_guard": true, "osc52": "deny" }
+        })).unwrap();
+        assert_eq!(pc.terminal.as_ref().unwrap().osc52, "deny");
+        assert_eq!(
+            serde_json::to_value(&pc).unwrap()["terminal"]["osc52"],
+            "deny"
+        );
+        let old52: Workspace = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "chrome": "system", "terminal": { "paste_guard": true }
+        }))
+        .unwrap();
+        assert_eq!(old52.terminal.as_ref().unwrap().osc52, "");
         // transfers 域对象存在但 download_dir 未写入 → None（不虚构默认值）
         let partial: Workspace = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "chrome": "system", "transfers": {}

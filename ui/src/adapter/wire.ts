@@ -627,11 +627,13 @@ export interface HostbarPrefs {
   width: number;
 }
 
-/** 终端偏好（R25 §318）：粘贴保护默认开；选中即复制/响铃通知默认关（十五/十六轮） */
+/** 终端偏好（R25 §318）：粘贴保护默认开；选中即复制/响铃通知默认关（十五/十六轮）；
+ * osc52 = 远端写剪贴板策略（P2-c，缺省/"ask" 外非法值均按 ask 解释） */
 export interface TerminalPrefs {
   paste_guard: boolean;
   copy_on_select?: boolean;
   bell_notify?: boolean;
+  osc52?: string;
 }
 
 /** 会话域（十五轮）：「重连上次会话」记忆 */

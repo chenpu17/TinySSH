@@ -170,12 +170,13 @@ module.exports = {
     // （分类切换只换内容不换盒子——用户反馈跳变）
     await page.click('[data-testid="settings-cat-terminal"]');
     await page.waitForTimeout(400);
-    ck.check("终端分类两卡（行为 3 行 + 外观 6 行）",
+    ck.check("终端分类两卡（行为 4 行 + 外观 6 行）",
       (await page.evaluate(() => {
         const cards = [...document.querySelectorAll(".settings-pane .set-card")];
         if (cards.length !== 2) return false;
         const rows = (c) => c.querySelectorAll(".set-item").length;
-        return rows(cards[0]) === 3 && rows(cards[1]) === 6;
+        // P2-c 轮：行为卡 3→4（新增 OSC 52 写剪贴板策略下拉）
+        return rows(cards[0]) === 4 && rows(cards[1]) === 6;
       })), await page.evaluate(() =>
         [...document.querySelectorAll(".settings-pane .set-card")].map((c) => c.querySelectorAll(".set-item").length).join(",")));
     const boxT = await dlgBox();

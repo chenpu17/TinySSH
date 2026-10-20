@@ -338,6 +338,14 @@ export default function App() {
   const bellNotifyRef = useRef(false);
   const [bellSids, setBellSids] = useState<Set<string>>(new Set());
   const lastBellNotifRef = useRef<Map<string, number>>(new Map());
+  // P2-c：OSC 52 写剪贴板策略（allow/ask/deny，默认 ask；workspace blob terminal 域）。
+  // 远端程序可借转义序列改写本机剪贴板（tmux/ssh 远端复制回本地靠它），也是剪贴板
+  // 投毒的入口——默认每次询问，读取（查询）一律拒绝。
+  const [osc52Policy, setOsc52Policy] = useState<"allow" | "ask" | "deny">("ask");
+  const osc52PolicyRef = useRef<"allow" | "ask" | "deny">("ask");
+  // 写入前的询问卡（同刻新请求覆盖旧待决——last-wins，预览只展最新一条）
+  const [osc52Ask, setOsc52Ask] = useState<{ sid: string; text: string } | null>(null);
+  const osc52AskRef = useRef<HTMLDivElement | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun" } | null>(null);
   // P0 终端品质轮：粘贴危险形态的**廉价预筛**——命中词根才过 Rust 扫描（判定唯一在
   // Rust：approval::scan_dangerous 的同一张内置 deny 表 + tree-sitter 逐段 + wrapper
@@ -377,6 +385,17 @@ export default function App() {
       }
     };
   }, []);
+  // P2-c：OSC 52 实际写入同样经 ref（makeTerm([]) 闭包只认 ref）。写成功给 toast——
+  // 剪贴板被远端改写这件事必须让用户知道；失败如实报（WebView 权限/窗口无焦点都可能）。
+  const osc52WriteRef = useRef<(sid: string, text: string) => void>(() => {});
+  useEffect(() => {
+    osc52WriteRef.current = (sid, text) => {
+      const host = sessionsRef.current.find((x) => x.id === sid)?.host_name ?? "会话";
+      (inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
+        .then(() => pushToast("info", `远端已写入剪贴板（OSC 52）· ${host}`))
+        .catch(() => pushToast("err", `OSC 52 写剪贴板失败 · ${host}（权限拒绝或窗口无焦点）`));
+    };
+  }, [pushToast]);
   const toggleBroadcast = useCallback((t: string) => {
     setBroadcastTargets((cur) => {
       const next = cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t];
@@ -1354,8 +1373,10 @@ export default function App() {
       (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
     });
     // 十六轮：BEL→标签闪烁（恒开，6s 自清）+ 系统通知（开关+窗口失焦门+每会话 10s 节流）。
-    // 长命令完成的通用信号：用户切走窗口后远端任务结束/需要关注时主动提示
-    term.onBell(() => {
+    // 长命令完成的通用信号：用户切走窗口后远端任务结束/需要关注时主动提示。
+    // P2-c：OSC 9（远端主动通知，iTerm2 惯例）走同一通路——闪烁恒开，通知同门同节流；
+    // 策略即既有「响铃时系统通知」开关，不另立旋钮。
+    const flashAndNotify = (body: string, suffix = "") => {
       setBellSids((cur) => new Set(cur).add(sessionSid));
       setTimeout(() => setBellSids((cur) => { const n = new Set(cur); n.delete(sessionSid); return n; }), 6000);
       if (!bellNotifyRef.current || !inTauri) return;
@@ -1368,9 +1389,26 @@ export default function App() {
         try {
           let granted = await isPermissionGranted();
           if (!granted) granted = (await requestPermission()) === "granted";
-          if (granted) sendNotification({ title: `🔔 ${host} — 终端响铃`, body: "终端响铃（BEL）：远端可能有命令完成或需要关注" });
+          if (granted) sendNotification({ title: `🔔 ${host}${suffix}`, body });
         } catch { /* 通知失败静默——标签闪烁仍在 */ }
       })();
+    };
+    term.onBell(() => flashAndNotify("终端响铃（BEL）：远端可能有命令完成或需要关注", " — 终端响铃"));
+    term.parser.registerOscHandler(9, (data) => { flashAndNotify(data.slice(0, 200) || "远端通知"); return true; });
+    // P2-c：OSC 52 策略。载荷格式 `选择区;base64`：`?` = 查询（读）一律拒绝（远端
+    // 不得读本机剪贴板）；空载荷吞掉（不做「清空剪贴板」语义——同样是破坏面）；
+    // 其余 base64 → UTF-8 解码后按策略 allow=直写、ask=询问卡、deny=静默吞（与主流
+    // 终端一致）。handler 必须同步返回已消费；实际写入异步走（裁决后经 osc52WriteRef）。
+    term.parser.registerOscHandler(52, (data) => {
+      try {
+        let b64 = data.slice(data.indexOf(";") + 1).replace(/\s+/g, "");
+        if (!b64 || b64 === "?") return true;
+        b64 = b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b64.length % 4)) % 4);
+        const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+        if (osc52PolicyRef.current === "allow") osc52WriteRef.current(sessionSid, text);
+        else if (osc52PolicyRef.current === "ask") setOsc52Ask({ sid: sessionSid, text });
+      } catch { /* 非法 base64：吞 */ }
+      return true;
     });
     // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
     // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）
@@ -2087,6 +2125,11 @@ export default function App() {
             bellNotifyRef.current = ws.terminal.bell_notify;
             setBellNotify(ws.terminal.bell_notify);
           }
+          // P2-c：OSC 52 写剪贴板策略（缺省/未知值 = ask）
+          const o52 = ws.terminal.osc52;
+          const pol = o52 === "allow" || o52 === "deny" ? o52 : "ask";
+          osc52PolicyRef.current = pol;
+          setOsc52Policy(pol);
         }
         // R33 §356：上次下载目录（缺省/null = 落系统 Downloads）
         if (ws.transfers?.download_dir) downloadDirRef.current = ws.transfers.download_dir;
@@ -2114,13 +2157,14 @@ export default function App() {
   // R25 §318：粘贴保护开关——链式串行化写 terminal 域。
   // 十六轮重构：terminal 域写入收口到 writeTerminalPrefs（显式合并三键）——逐键各写
   // 一份字面量迟早再互踩（十五轮 changePasteGuard 整域替换抹掉 copy_on_select 即前科）
-  const writeTerminalPrefs = useCallback((patch: Partial<{ paste_guard: boolean; copy_on_select: boolean; bell_notify: boolean }>) => {
+  const writeTerminalPrefs = useCallback((patch: Partial<{ paste_guard: boolean; copy_on_select: boolean; bell_notify: boolean; osc52: "allow" | "ask" | "deny" }>) => {
     wsWriteChain.current = wsWriteChain.current
       .then(() => invoke("get_workspace"))
       .then((ws) => invoke("set_workspace", { ws: { ...ws, terminal: {
         paste_guard: ws.terminal?.paste_guard ?? true,
         copy_on_select: ws.terminal?.copy_on_select ?? false,
         bell_notify: ws.terminal?.bell_notify ?? false,
+        osc52: ws.terminal?.osc52 === "allow" || ws.terminal?.osc52 === "deny" ? ws.terminal.osc52 : "ask",
         ...patch,
       } } }))
       .catch(() => {});
@@ -2141,6 +2185,12 @@ export default function App() {
     setBellNotify(on);
     bellNotifyRef.current = on;
     writeTerminalPrefs({ bell_notify: on });
+  }, [writeTerminalPrefs]);
+  // P2-c：OSC 52 写剪贴板策略（默认 ask）
+  const changeOsc52Policy = useCallback((v: "allow" | "ask" | "deny") => {
+    setOsc52Policy(v);
+    osc52PolicyRef.current = v;
+    writeTerminalPrefs({ osc52: v });
   }, [writeTerminalPrefs]);
 
   // —— 十五轮：重连上次会话 ——
@@ -2281,6 +2331,8 @@ export default function App() {
     if (hk) { void decideHostKey(hk, false); return true; }
     if (confirm) { setConfirm(null); return true; }
     if (pasteConfirm) { setPasteConfirm(null); return true; }
+    // P2-c：OSC 52 询问卡同属模态链——Esc 即拒绝（关卡不写剪贴板）
+    if (osc52Ask) { setOsc52Ask(null); return true; }
     // 拖拽上传确认卡同样是模态（全屏遮罩+焦点陷阱）——Esc 链此前漏出（审计 F5）
     if (pendingDrop) { setPendingDrop(null); return true; }
     if (paletteOpen) { setPaletteOpen(false); return true; } // 十九轮：命令面板在浮层链内
@@ -2767,6 +2819,7 @@ export default function App() {
   useDialogFocus(confirm?.kind === "deleteHost", delHostRef);
   useDialogFocus(confirm?.kind === "deleteIdentity", delIdentRef);
   useDialogFocus(!!pasteConfirm, pasteConfirmRef);
+  useDialogFocus(!!osc52Ask, osc52AskRef);
   useDialogFocus(!!pendingDrop, dropCardRef);
   useDialogFocus(hostKeyQueue.length > 0, hkDlgRef);
   useDialogFocus(authPromptQueue.length > 0, authDlgRef);
@@ -2804,7 +2857,7 @@ export default function App() {
   // 新建/快速连接（二轮拨壳成 hk-mask 全屏遮罩）与设置面板（pop-mask）同为遮罩模态，
   // 巡检补进列表：此前不在列——对话框开着 Ctrl+W/⌘1-9/F11 仍在遮罩后执行
   // （关标签/切标签/把窗口切全屏），Ctrl+T 还会把快速连接里已填的表单悄悄换成新建。
-  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || splitMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
+  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || osc52Ask || splitMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
     || showAddHost || showQuickConnect || showSettings);
   modalRef.current = modal;
 
@@ -5072,6 +5125,29 @@ export default function App() {
               </div>
             </div>
           )}
+          {osc52Ask && (
+            // P2-c：OSC 52 写剪贴板询问卡（与粘贴确认同工艺：confirm-mask 子元素、
+            // Esc 链与模态门都在列）。允许=覆盖现有剪贴板并 toast 告知；拒绝=不写任何字节。
+            <div className="confirm-mask" onClick={() => setOsc52Ask(null)}>
+              <div className="confirm-dialog paste-dialog" ref={osc52AskRef} role="dialog" aria-modal="true" aria-labelledby="dlg-osc52-title" onClick={(e) => e.stopPropagation()}>
+                <div className="hk-title" id="dlg-osc52-title" data-testid="osc52-dialog">
+                  远端请求写入剪贴板 · {sessions.find((s) => s.id === osc52Ask.sid)?.host_name ?? "会话"}
+                </div>
+                <div>远端程序通过 OSC 52 转义序列请求改写你本机的剪贴板——允许后现有内容会被覆盖，拒绝则不写入任何字节。读取类请求（查询）一律拒绝，不经此卡。</div>
+                <pre className="paste-preview mono" data-testid="osc52-preview">{osc52Ask.text.length > 400
+                  ? osc52Ask.text.slice(0, 400) + `……（预览截断，共 ${osc52Ask.text.length} 字符）`
+                  : osc52Ask.text}</pre>
+                <div className="hk-actions">
+                  <button className="danger" data-testid="osc52-allow" onClick={() => {
+                    osc52WriteRef.current(osc52Ask.sid, osc52Ask.text);
+                    setOsc52Ask(null);
+                    restoreTermFocus();
+                  }}>允许写入</button>
+                  <button className="ghost" data-autofocus data-testid="osc52-deny" onClick={() => { setOsc52Ask(null); restoreTermFocus(); }}>拒绝</button>
+                </div>
+              </div>
+            </div>
+          )}
           {pendingDrop && (
             // R33 §354 终端拖入确认：目标会话在拖放开始时固定（切标签即失效，见 effect）；
             // 目录输入预填可信 cwd（无可信不借用不可见面板路径）；确认=按固定会话上传
@@ -5149,6 +5225,8 @@ export default function App() {
               changeCopyOnSelect={changeCopyOnSelect}
               bellNotify={bellNotify}
               changeBellNotify={changeBellNotify}
+              osc52Policy={osc52Policy}
+              changeOsc52Policy={changeOsc52Policy}
               termFont={termFont}
               onChangeTermFont={changeTermFont}
               termLigatures={termLiga}

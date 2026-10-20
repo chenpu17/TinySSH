@@ -54,6 +54,9 @@ interface SettingsPanelProps {
   changeCopyOnSelect: (v: boolean) => void;
   bellNotify: boolean;
   changeBellNotify: (v: boolean) => void;
+  // P2-c：OSC 52 写剪贴板策略（allow/ask/deny，默认 ask）
+  osc52Policy: "allow" | "ask" | "deny";
+  changeOsc52Policy: (v: "allow" | "ask" | "deny") => void;
   // P0 终端品质轮：外观五项 + 连字（状态与即时应用在宿主，本面板只呈现）
   termFont: string;
   onChangeTermFont: (id: string) => void;
@@ -139,6 +142,7 @@ export function SettingsPanel({
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   keymap, keymapRef, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
+  osc52Policy, changeOsc52Policy,
   termFont, onChangeTermFont, termLigatures, onChangeTermLigatures,
   termCursorStyle, onChangeTermCursorStyle, termCursorBlink, onChangeTermCursorBlink,
   termScrollback, onChangeTermScrollback, termLetterSpacing, onChangeTermLetterSpacing,
@@ -346,9 +350,21 @@ export function SettingsPanel({
                     <input type="checkbox" data-testid="bell-toggle" checked={bellNotify} onChange={(e) => changeBellNotify(e.target.checked)} />
                     <span className="set-item-txt">
                       <b>终端响铃时系统通知</b>
-                      <span className="set-item-desc">窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知，每会话 10 秒至多一条；标签闪烁提醒恒开。</span>
+                      <span className="set-item-desc">窗口不在前台时收到远端 BEL（如长命令完成）即发系统通知，每会话 10 秒至多一条；标签闪烁提醒恒开。远端 OSC 9 主动通知走同一开关与节流。</span>
                     </span>
                   </label>
+                  <div className="set-item">
+                    <span className="set-item-txt">
+                      <b>远端写剪贴板（OSC 52）</b>
+                      <span className="set-item-desc">远端程序可用转义序列改写你本机剪贴板——tmux/ssh 里复制回本地靠它，也可能被用来投毒（悄悄替换你将要粘贴的内容）。读取类请求（查询）一律拒绝；写入按此策略执行，「拒绝」为静默丢弃。</span>
+                    </span>
+                    <select className="set-item-ctl" data-testid="osc52-select" aria-label="OSC 52 写剪贴板策略"
+                      value={osc52Policy} onChange={(e) => changeOsc52Policy(e.target.value as "allow" | "ask" | "deny")}>
+                      <option value="ask">每次询问（默认）</option>
+                      <option value="allow">允许</option>
+                      <option value="deny">拒绝</option>
+                    </select>
+                  </div>
                 </div>
                 {/* P0 终端品质轮：外观五项 + 连字——即时应用到全部终端（新实例继承） */}
                 <div className="set-card">
