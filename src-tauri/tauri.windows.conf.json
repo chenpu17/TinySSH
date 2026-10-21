@@ -2,6 +2,8 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "TinySSH — 人机协同 SSH",
         "width": 1280,
         "height": 800,

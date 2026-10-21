@@ -2292,6 +2292,29 @@ fn main() {
         .setup(move |app| {
             use tauri::Manager as _;
             eprintln!("[app] setup: windows={:?}", app.webview_windows().keys().collect::<Vec<_>>());
+            // 窗口创建移入 setup（tauri.conf create:false）：为了在创建期按环境变量
+            // 注入 WebView 附加参数。wry 程序化参数优先级高于 WEBVIEW2_ADDITIONAL_
+            // BROWSER_ARGUMENTS 环境变量（实测被忽略），CDP 自动化验收（远程调试口）
+            // 只能走这里。未设 TINYSSH_WEBVIEW_ARGS 时复刻 wry 默认参数，行为零变化。
+            {
+                let wcfg = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|w| w.label == "main")
+                    .cloned()
+                    .ok_or("tauri.conf 缺 main 窗口")?;
+                let mut b = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), &wcfg)?;
+                if let Ok(extra) = std::env::var("TINYSSH_WEBVIEW_ARGS") {
+                    if !extra.trim().is_empty() {
+                        b = b.additional_browser_args(&format!(
+                            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection {extra}"
+                        ));
+                    }
+                }
+                b.build()?;
+            }
             // SMOKE 冒烟专用：窗口置顶聚焦。WKWebView 会冻结不可见窗口的页面 JS
             //（信标停摆的根因），冒烟运行约 20s 即被外部终止，产品路径不受影响。
             if std::env::var("TINYSSH_SMOKE").map(|v| v == "1").unwrap_or(false) {
@@ -2677,7 +2700,15 @@ async fn agent_send(
             serde_json::json!({ "sid": sid, "event": ev }),
         );
     });
-    state.agent_host.send(&sid, &text, &cfg, sink)
+    // Fleet 轮补缺（真模型 E2E 实证）：FE 编排视图发的 sid 是固定键 "fleet"，
+    // 必须路由到 send_fleet（编排三工具 fleet_sessions/dispatch_task/wait_task +
+    // FLEET_SYS_PROMPT）——走通用 send 会装配出绑在 "fleet" 这个不存在会话上的
+    // 普通工具面（exec 等全部报「会话不存在」）。演练壳测不到这条，spec 53 只盖 FE。
+    if sid == tinyssh_agent_host::FLEET_KEY {
+        state.agent_host.send_fleet(&text, &cfg, sink)
+    } else {
+        state.agent_host.send(&sid, &text, &cfg, sink)
+    }
 }
 
 /// 请求取消当前运行（工具/轮次间隙生效）。返回是否确有运行在途。
