@@ -707,6 +707,12 @@ export default function App() {
   const [agentOpen, setAgentOpen] = useState(() => {
     try { return localStorage.getItem("ui.agentbar") === "1"; } catch { return false; }
   });
+  // 编排者视图（Fleet 轮）：活动栏第三入口，跨会话派发任务。与主机栏/Agent 视图
+  // 三向互斥（同一左栏），持久键 ui.fleetbar；对话键固定 "fleet"（与 Rust 侧
+  // FLEET_KEY 对应），不随激活标签页切换。
+  const [fleetOpen, setFleetOpen] = useState(() => {
+    try { return localStorage.getItem("ui.fleetbar") === "1"; } catch { return false; }
+  });
   const [agentWidth, setAgentWidth] = useState(() => {
     try {
       const v = Number.parseInt(localStorage.getItem("ui.agentbar_w") ?? "", 10);
@@ -2327,20 +2333,36 @@ export default function App() {
   }, []);
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
-    // 活动栏轮：左栏两视图互斥——展开主机栏即收起 Agent 视图（双写各自持久键）
+    // 活动栏轮：左栏视图互斥——展开主机栏即收起 Agent/编排视图（双写各自持久键）
     if (open) {
       setAgentOpen(false);
       try { localStorage.setItem("ui.agentbar", "0"); } catch { /* 隐私模式忽略 */ }
+      setFleetOpen(false);
+      try { localStorage.setItem("ui.fleetbar", "0"); } catch { /* 隐私模式忽略 */ }
     }
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
     persistHostbarPrefs(open, hostbarWidthRef.current);
   }, [persistHostbarPrefs]);
-  // Agent 视图开关（活动栏 rail-agent / 命令面板同一入口）：与主机栏互斥。
+  // Agent 视图开关（活动栏 rail-agent / 命令面板同一入口）：与主机栏/编排视图互斥。
   // 关闭也落盘——刷新后保持「上次关了」的意图。
   const toggleAgent = useCallback((open: boolean) => {
     setAgentOpen(open);
     try { localStorage.setItem("ui.agentbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
-    if (open && hostbarOpenRef.current) toggleHostbar(false);
+    if (open) {
+      setFleetOpen(false);
+      try { localStorage.setItem("ui.fleetbar", "0"); } catch { /* 隐私模式忽略 */ }
+      if (hostbarOpenRef.current) toggleHostbar(false);
+    }
+  }, [toggleHostbar]);
+  // 编排者视图开关（Fleet 轮）：同款三向互斥。
+  const toggleFleet = useCallback((open: boolean) => {
+    setFleetOpen(open);
+    try { localStorage.setItem("ui.fleetbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+    if (open) {
+      setAgentOpen(false);
+      try { localStorage.setItem("ui.agentbar", "0"); } catch { /* 隐私模式忽略 */ }
+      if (hostbarOpenRef.current) toggleHostbar(false);
+    }
   }, [toggleHostbar]);
   const gripDrag = useRef(false);
   const gripRaf = useRef(0);
@@ -2427,7 +2449,7 @@ export default function App() {
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
   const panelNeed = rightPanel === "collab" || rightPanel === "forwards" || rightPanel === "log" || rightPanel === "blocks" ? 400 : 384;
   // 活动栏轮：availW 扣当前打开的左栏视图（主机栏或 Agent 视图，互斥不同时开）
-  const availW = winW - (hostbarOpen ? hostbarWidth : agentOpen ? agentWidth : 0);
+  const availW = winW - (hostbarOpen ? hostbarWidth : agentOpen || fleetOpen ? agentWidth : 0);
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
     if (rightPanel === null) { setTpFull(false); return; }
@@ -4607,6 +4629,12 @@ export default function App() {
       run: () => toggleAgent(!agentOpen),
     });
     items.push({
+      id: "toggle-fleet", group: "应用",
+      title: fleetOpen ? "关闭跨主机编排" : "打开跨主机编排（Fleet）",
+      hint: "活动栏", keywords: "fleet 编排 跨主机 批量 多机 派发",
+      run: () => toggleFleet(!fleetOpen),
+    });
+    items.push({
       id: "toggle-focus", group: "应用",
       title: focusMode ? "退出专注模式" : "进入专注模式（界面全让位给终端）",
       hint: "F11", keywords: "全屏 zen focus 专注 沉浸 极简",
@@ -4702,7 +4730,7 @@ export default function App() {
             ))}
           </div>
         )}
-        {/* 活动栏（活动栏轮）：左缘图标栏 = 侧栏视图入口。连接/Agent 两视图互斥
+        {/* 活动栏（活动栏轮）：左缘图标栏 = 侧栏视图入口。连接/Agent/编排三视图互斥
             （开一个关另一个），全关 = 纯终端；专注模式整体隐藏（.focus-mode CSS） */}
         <nav className="actrail" data-testid="actrail" aria-label="侧栏视图">
           <button className={"rail-btn" + (hostbarOpen ? " ts-open" : "")} data-testid="rail-hosts"
@@ -4712,6 +4740,11 @@ export default function App() {
           <button className={"rail-btn" + (agentOpen ? " ts-open" : "")} data-testid="rail-agent"
             title="Agent 对话（演练）" aria-pressed={agentOpen} onClick={() => toggleAgent(!agentOpen)}>
             <IconBot size={17} />
+          </button>
+          <button className={"rail-btn" + (fleetOpen ? " ts-open" : "")} data-testid="rail-fleet"
+            title="跨主机编排（Fleet）：派发任务给各会话的执行 agent 并汇总" aria-pressed={fleetOpen}
+            onClick={() => toggleFleet(!fleetOpen)}>
+            <IconShuffle size={17} />
           </button>
         </nav>
         {hostbarOpen && (
@@ -4736,21 +4769,25 @@ export default function App() {
             pushToast={pushToast} refreshLists={refreshLists}
           />
         )}
-        {!hostbarOpen && !agentOpen && (
+        {!hostbarOpen && !agentOpen && !fleetOpen && (
           <button className="ghost icon-btn hb-expand" title="展开主机栏（⌘B）" aria-label="展开主机栏"
             onClick={() => toggleHostbar(true)}>
             <IconChevronRight size={15} />
           </button>
         )}
-        {agentOpen && (
+        {(agentOpen || fleetOpen) && (
           /* Agent 对话视图：双模式——真模型（inTauri + 已配置模型服务，Rust 侧
-             agent-host 驱动，审批卡对账 pendingApprovals 内联呈现）或演练外壳 */
+             agent-host 驱动，审批卡对账 pendingApprovals 内联呈现）或演练外壳。
+             fleet 形态（Fleet 轮）：对话键固定 "fleet"（Rust FLEET_KEY），跨会话
+             编排者——无委托门/控制权徽标（它不直接操作机器），其余交互同款 */
           <AgentView
-            width={agentWidth} sid={sid} hostLabel={hostLabel(sid ?? undefined)}
+            width={agentWidth} fleet={fleetOpen}
+            sid={fleetOpen ? "fleet" : sid}
+            hostLabel={fleetOpen ? "跨主机编排" : hostLabel(sid ?? undefined)}
             pending={pendingApprovals} onDecide={decide}
             owner={owner} onDelegate={delegateEmbedded}
             gripDrag={agGripDrag} gripDown={agGripDown} gripMove={agGripMove} gripUp={agGripUp}
-            onClose={() => toggleAgent(false)} pushToast={pushToast}
+            onClose={() => (fleetOpen ? toggleFleet(false) : toggleAgent(false))} pushToast={pushToast}
           />
         )}
         <main className="main">

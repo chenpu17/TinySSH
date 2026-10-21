@@ -110,6 +110,8 @@ pub trait SshOps: Send + Sync {
     /// 注入按键到会话终端——core-session 侧套完整夺权语义（人类控制权拒/
     /// 危险模式引擎/**会话级授权一次审批**/人类输入 2s 优先窗/审计）。
     fn send_keys(&self, sid: &str, keys: &str) -> Result<String, String>;
+    /// 已连接会话清单（编排者选目标用；core-session 只读，任何 Actor 可查）。
+    fn list_sessions(&self) -> Result<String, String>;
 }
 
 /// stat 摘要（冲突卡用；Option 字段=源数据未必报）。
@@ -241,6 +243,14 @@ const SYS_PROMPT: &str = "你是 TinySSH 内置的运维助手，通过工具操
 - 驱动交互式程序（vim/htop、sudo 密码、y/n 确认）用 send_keys 注入按键（\\r 回车、\\t Tab、\\x03 Ctrl+C、\\x1b Esc）；首次使用要一次会话级授权（一次审批，本会话内后续按键免审）；每次键入后用 read_screen/wait_output 确认效果再继续，不要盲发。控制权在人类手里时会被拒——如实告知用户需要把会话交托给 Agent。\n\
 - 输出可能被截断（保尾），如实转述；不确定的事实不虚构，报得出来的 exit code 就报。\n\
 - 面向用户的回复用简体中文，简洁，可用 markdown（代码块标注语言）。";
+
+/// 编排者（Fleet）系统提示：跨会话派发，不直接碰机器（Fleet 契约——目标会话的
+/// 审批/危险扫描/控制权独立生效，编排者没有任何绕过路径）。
+const FLEET_SYS_PROMPT: &str = "你是 TinySSH 的跨主机编排者（Fleet）：你的会话不绑定任何一台机器，通过工具把任务派发给其他已连接会话上的执行 agent，等结果、做汇总。铁律：\n\
+- 你自己没有 exec/传输/键入工具——不直接操作任何机器；每台目标机的操作审批、危险扫描、控制权都在目标会话里独立生效，你派发不出绕过审批的任务，被拒或被夺权的任务会如实失败。\n\
+- 派发前先 fleet_sessions 确认目标（session_id=会话 id）；可对多台并行 dispatch_task，再逐个 wait_task 收结果；目标正忙（上一条未完成）会派发失败——如实告知并稍后重试，不要丢弃。\n\
+- 任务文本必须自包含（目标 agent 看不到你们的对话）：写清在那台机器上做什么、验收标准是什么。\n\
+- 汇总如实转述，失败与拒绝不隐瞒、不美化；面向用户的回复用简体中文，简洁，可用 markdown。";
 
 // ── 工具装配：sid 在装配时绑死进闭包（每会话一次），模型无法选会话 ──
 
@@ -431,6 +441,145 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
     ]
 }
 
+// ── 编排者（Fleet）工具装配：不绑机器，只派发/等待/汇总 ──
+
+/// 编排者会话的槽位键与事件 sid（FE 用同一常量打开编排视图）。
+pub const FLEET_KEY: &str = "fleet";
+
+/// dispatch_task 的背后：Real=用编排者自己的模型配置把任务文本作为用户消息
+/// 发给目标会话的执行 agent（agent-host::send，事件仍以目标 sid 桥给 FE，
+/// 目标对话在 Agent 视图可见）；Test=弹出预置 mock provider（离线全链测试）。
+pub type DispatchFn = Arc<dyn Fn(&str, &str) -> Result<(), String> + Send + Sync>;
+
+/// wait_task 轮询节奏（与传输轮询同款测试/生产分叉）。
+const WAIT_POLL_MS: u64 = if cfg!(test) { 5 } else { 500 };
+
+fn build_fleet_tools(
+    ops: Arc<dyn SshOps>,
+    host: std::sync::Weak<AgentHost>,
+    self_key: String,
+    dispatch: DispatchFn,
+) -> Vec<Box<dyn Tool>> {
+    let o1 = ops;
+    let sessions = CallbackTool::new(
+        ToolDef {
+            name: "fleet_sessions".into(),
+            description: "列出当前已连接的会话（编排目标清单）：session_id、主机名、状态、控制权。派发前先看这个。".into(),
+            schema: json!({"type": "object", "properties": {}}),
+        },
+        move |_input, _ctx| {
+            o1.list_sessions()
+                .map(ToolOutput::text)
+                .map_err(|e| anyhow::anyhow!(e))
+        },
+    );
+    let d2 = dispatch.clone();
+    let k2 = self_key.clone();
+    let dispatch_tool = CallbackTool::new(
+        ToolDef {
+            name: "dispatch_task".into(),
+            description: "把一条自包含任务派发给目标会话的执行 agent（它有自己的工具面：exec/传输/键入，全部走该会话的既有审批链）。返回即受理（异步执行）；目标正忙会报错，不要丢弃。".into(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "目标会话 id（fleet_sessions 里拿）" },
+                    "task": { "type": "string", "description": "自包含任务描述（目标 agent 看不到你们的对话）" }
+                },
+                "required": ["session_id", "task"]
+            }),
+        },
+        move |input, _ctx| {
+            let sid = input
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("缺少 session_id"))?;
+            let task = input
+                .get("task")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("缺少 task"))?;
+            if sid == k2 {
+                return Err(anyhow::anyhow!("不能派发给编排者自己"));
+            }
+            d2(sid, task)
+                .map(|_| ToolOutput::text(json!({ "dispatched": true, "session_id": sid }).to_string()))
+                .map_err(|e| anyhow::anyhow!(e))
+        },
+    );
+    let wait_tool = CallbackTool::new(
+        ToolDef {
+            name: "wait_task".into(),
+            description: "等待目标会话当前任务结束并取回结果（state=done|failed|running + 它最后的文本回复）。并行派发后逐个调用；超时返回 running 可再次调用继续等。".into(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "目标会话 id" },
+                    "timeout_secs": { "type": "integer", "description": "最多等多少秒（缺省 300，上限 900）" }
+                },
+                "required": ["session_id"]
+            }),
+        },
+        move |input, _ctx| {
+            let sid = input
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("缺少 session_id"))?;
+            let cap = input
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(300)
+                .min(900);
+            let h = host
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("宿主已释放"))?;
+            let polls = (cap * 1000 / WAIT_POLL_MS).max(1);
+            for _ in 0..polls {
+                if !h.busy(sid) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(WAIT_POLL_MS));
+            }
+            let running = h.busy(sid);
+            let state = if running {
+                "running"
+            } else {
+                match h.history(sid).iter().rev().find_map(|e| match e {
+                    HostEvent::Done { .. } => Some("done"),
+                    HostEvent::Failed { .. } => Some("failed"),
+                    _ => None,
+                }) {
+                    Some(s) => s,
+                    None => "unknown",
+                }
+            };
+            let mut payload = json!({ "session_id": sid, "state": state });
+            if state == "failed" {
+                if let Some(HostEvent::Failed { message }) = h
+                    .history(sid)
+                    .iter()
+                    .rev()
+                    .find(|e| matches!(e, HostEvent::Failed { .. }))
+                {
+                    payload["error"] = json!(message);
+                }
+            }
+            if !running {
+                if let Some(t) = h.last_final_text(sid) {
+                    payload["result"] = json!(tail(&t));
+                }
+            }
+            if running {
+                payload["note"] = json!("仍在运行；稍后再次 wait_task 继续等");
+            }
+            Ok(ToolOutput::text(payload.to_string()))
+        },
+    );
+    vec![
+        Box::new(sessions),
+        Box::new(dispatch_tool),
+        Box::new(wait_tool),
+    ]
+}
+
 // ── 宿主 ──
 
 #[derive(Default)]
@@ -473,6 +622,9 @@ pub struct AgentHost {
     sessions: Mutex<HashMap<String, Arc<SessionSlot>>>,
     // Arc：运行线程持有句柄写转写，宿主侧 close/history 经 self 访问同一份
     transcripts: Arc<Mutex<HashMap<String, Vec<HostEvent>>>>,
+    // 编排者工具要回呼宿主（dispatch→send / wait→busy+history）：由 new_arc
+    // 装配的 Weak 自引用；new()（测试直连）不装配，fleet 工具届时报「宿主未装配」。
+    self_weak: Mutex<std::sync::Weak<AgentHost>>,
 }
 
 enum SendCfg<'a> {
@@ -481,13 +633,28 @@ enum SendCfg<'a> {
     Test(Box<dyn tiny_agent::Provider>),
 }
 
+/// 编排者装配包：Some=本次构建用 fleet 工具面（build_fleet_tools）与
+/// FLEET_SYS_PROMPT；None=普通会话（八个 SSH 工具 + SYS_PROMPT）。
+struct FleetAssemble {
+    host: std::sync::Weak<AgentHost>,
+    dispatch: DispatchFn,
+}
+
 impl AgentHost {
     pub fn new(ops: Arc<dyn SshOps>) -> Self {
         Self {
             ops,
             sessions: Mutex::new(HashMap::new()),
             transcripts: Arc::new(Mutex::new(HashMap::new())),
+            self_weak: Mutex::new(std::sync::Weak::new()),
         }
+    }
+
+    /// 应用入口：装配 Weak 自引用（编排者 dispatch/wait 工具回呼宿主用）。
+    pub fn new_arc(ops: Arc<dyn SshOps>) -> Arc<Self> {
+        let host = Arc::new(Self::new(ops));
+        *host.self_weak.lock().unwrap() = Arc::downgrade(&host);
+        host
     }
 
     fn slot(&self, sid: &str) -> Arc<SessionSlot> {
@@ -504,6 +671,39 @@ impl AgentHost {
             .clone()
     }
 
+    /// 会话是否在运行（编排者 wait_task 的完成判定）。
+    pub fn busy(&self, sid: &str) -> bool {
+        self.slot(sid).state.lock().unwrap().busy
+    }
+
+    /// 目标会话最后一条**封口**的 assistant 文本（编排者 wait_task 取结果用）：
+    /// 转写重放——Text/Thinking 增量聚入当前缓冲，任何其他事件封口；只认已封口
+    /// 的缓冲（流式中未完的 tail 不算，避免把半截话当结论）。
+    pub fn last_final_text(&self, sid: &str) -> Option<String> {
+        let list = self.transcripts.lock().unwrap().get(sid)?.clone();
+        let mut cur = String::new();
+        let mut in_text = false;
+        let mut last: Option<String> = None;
+        for ev in list {
+            match ev {
+                HostEvent::Text(t) | HostEvent::Thinking(t) => {
+                    cur.push_str(&t);
+                    in_text = true;
+                }
+                _ => {
+                    if in_text {
+                        if !cur.trim().is_empty() {
+                            last = Some(cur);
+                        }
+                        cur = String::new();
+                        in_text = false;
+                    }
+                }
+            }
+        }
+        last
+    }
+
     /// 发送一条用户消息并启动（或延续）该会话的 agent 运行。
     /// 同会话上一次运行未结束时报错（串行对话——一个终端一个指挥）。
     pub fn send(
@@ -513,7 +713,34 @@ impl AgentHost {
         cfg: &ModelConfig,
         sink: EventSink,
     ) -> Result<(), String> {
-        self.send_inner(sid, text, SendCfg::Real(cfg), sink)
+        self.send_inner(sid, text, SendCfg::Real(cfg), sink, None)
+    }
+
+    /// 编排者会话：跨会话派发工具面 + FLEET_SYS_PROMPT。dispatch 闭包用编排者
+    /// 自己的模型配置把任务发给目标会话（目标对话与审批都在目标侧原样呈现）。
+    pub fn send_fleet(&self, text: &str, cfg: &ModelConfig, sink: EventSink) -> Result<(), String> {
+        let weak = self.self_weak.lock().unwrap().clone();
+        let weak2 = weak.clone();
+        let cfg2 = cfg.clone();
+        let sink2 = sink.clone();
+        let self_key = FLEET_KEY.to_string();
+        let dispatch: DispatchFn = Arc::new(move |sid: &str, task: &str| {
+            if sid == self_key {
+                return Err("不能派发给编排者自己".into());
+            }
+            let host = weak.upgrade().ok_or_else(|| "宿主已释放".to_string())?;
+            host.send(sid, task, &cfg2, sink2.clone())
+        });
+        self.send_inner(
+            FLEET_KEY,
+            text,
+            SendCfg::Real(cfg),
+            sink,
+            Some(FleetAssemble {
+                host: weak2,
+                dispatch,
+            }),
+        )
     }
 
     /// 测试专用：注入脚本化 provider 离线驱动全链（依赖 dev-dependencies 的
@@ -526,7 +753,45 @@ impl AgentHost {
         provider: Box<dyn tiny_agent::Provider>,
         sink: EventSink,
     ) -> Result<(), String> {
-        self.send_inner(sid, text, SendCfg::Test(provider), sink)
+        self.send_inner(sid, text, SendCfg::Test(provider), sink, None)
+    }
+
+    /// 测试专用：编排者离线全链——编排者 provider 脚本化，dispatch 弹出预置的
+    /// 目标 provider 队列驱动目标会话（每次派发一个）。
+    #[cfg(test)]
+    pub fn send_fleet_with_mock(
+        &self,
+        text: &str,
+        provider: Box<dyn tiny_agent::Provider>,
+        targets: Arc<Mutex<std::collections::VecDeque<Box<dyn tiny_agent::Provider>>>>,
+        sink: EventSink,
+    ) -> Result<(), String> {
+        let weak = self.self_weak.lock().unwrap().clone();
+        let weak2 = weak.clone();
+        let sink2 = sink.clone();
+        let self_key = FLEET_KEY.to_string();
+        let dispatch: DispatchFn = Arc::new(move |sid: &str, task: &str| {
+            if sid == self_key {
+                return Err("不能派发给编排者自己".into());
+            }
+            let host = weak.upgrade().ok_or_else(|| "宿主已释放".to_string())?;
+            let p = targets
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or("测试目标 provider 已耗尽")?;
+            host.send_with_mock(sid, task, p, sink2.clone())
+        });
+        self.send_inner(
+            FLEET_KEY,
+            text,
+            SendCfg::Test(provider),
+            sink,
+            Some(FleetAssemble {
+                host: weak2,
+                dispatch,
+            }),
+        )
     }
 
     fn send_inner(
@@ -535,6 +800,7 @@ impl AgentHost {
         text: &str,
         cfg: SendCfg<'_>,
         sink: EventSink,
+        fleet: Option<FleetAssemble>,
     ) -> Result<(), String> {
         let slot = self.slot(sid);
         let cancel = Arc::new(AtomicBool::new(false));
@@ -564,16 +830,29 @@ impl AgentHost {
         let slot2 = slot.clone();
         let ops = self.ops.clone();
         let sid_for_build = sid_owned.clone();
+        let sys: &'static str = if fleet.is_some() {
+            FLEET_SYS_PROMPT
+        } else {
+            SYS_PROMPT
+        };
 
         let build = move || -> Result<tiny_agent::Agent, String> {
-            let tools = build_tools(ops, sid_for_build);
+            let tools = match &fleet {
+                Some(ft) => build_fleet_tools(
+                    ops,
+                    ft.host.clone(),
+                    sid_for_build.clone(),
+                    ft.dispatch.clone(),
+                ),
+                None => build_tools(ops, sid_for_build),
+            };
             let (ta_cfg, provider) = match cfg {
                 SendCfg::Real(c) => {
                     let mut cfg_json = json!({
                         "provider": c.provider,
                         "api_key_env": "TINYSSH_EMBEDDED_KEY_UNUSED",
                         "model": c.model,
-                        "system_prompt": SYS_PROMPT,
+                        "system_prompt": sys,
                         "tools": [],
                         "inject_environment": false,
                     });
@@ -592,7 +871,7 @@ impl AgentHost {
                         "provider": "openai",
                         "api_key_env": "UNUSED",
                         "model": "mock",
-                        "system_prompt": SYS_PROMPT,
+                        "system_prompt": sys,
                         "tools": [],
                         "inject_environment": false,
                     }))
@@ -856,6 +1135,13 @@ mod tests {
                 .pop_front()
                 .unwrap_or_else(|| Ok(json!({"sent": true}).to_string()))
         }
+        fn list_sessions(&self) -> Result<String, String> {
+            Ok(json!([
+                {"session_id": "t1", "host": "web-1", "kind": "ssh", "state": "Ready", "control_owner": "Agent"},
+                {"session_id": "t2", "host": "db-1", "kind": "ssh", "state": "Ready", "control_owner": "Agent"}
+            ])
+            .to_string())
+        }
     }
 
     fn collect() -> (Arc<Mutex<Vec<HostEvent>>>, EventSink) {
@@ -995,6 +1281,9 @@ mod tests {
                 Err("会话不存在".into())
             }
             fn send_keys(&self, _: &str, _: &str) -> Result<String, String> {
+                Err("会话不存在".into())
+            }
+            fn list_sessions(&self) -> Result<String, String> {
                 Err("会话不存在".into())
             }
         }
@@ -1247,5 +1536,112 @@ mod tests {
             *ops.keys_sent.lock().unwrap(),
             vec!["j".to_string(), "\r".to_string(), "\x03".to_string()]
         );
+    }
+
+    #[test]
+    fn fleet_dispatch_wait_and_aggregate() {
+        let ops = Arc::new(FakeOps::default());
+        // new_arc：装配 Weak 自引用（dispatch/wait 工具回呼宿主）
+        let host = AgentHost::new_arc(ops.clone());
+        let (ev, sink) = collect();
+        // 编排者脚本：看清单 → 并行派发两台 → 逐个等待 → 自派发被拒 → 汇总
+        let (fleet_prov, _fs) = MockProvider::new(vec![
+            mock::resp_tool("f1", "fleet_sessions", json!({}), None),
+            mock::resp_tool(
+                "f2",
+                "dispatch_task",
+                json!({"session_id": "t1", "task": "查磁盘占用"}),
+                None,
+            ),
+            mock::resp_tool(
+                "f3",
+                "dispatch_task",
+                json!({"session_id": "t2", "task": "查内存"}),
+                None,
+            ),
+            mock::resp_tool("f4", "wait_task", json!({"session_id": "t1"}), None),
+            mock::resp_tool("f5", "wait_task", json!({"session_id": "t2"}), None),
+            mock::resp_tool(
+                "f6",
+                "dispatch_task",
+                json!({"session_id": "fleet", "task": "自派发应被拒"}),
+                None,
+            ),
+            mock::resp_text("两台都完成了", None),
+        ]);
+        // 目标机脚本：各自 exec + 文本总结（每次派发弹出一个 provider）
+        let (p1, _s1) = MockProvider::new(vec![
+            mock::resp_tool("a1", "exec", json!({"command": "df -h"}), None),
+            mock::resp_text("磁盘 40% 已用", None),
+        ]);
+        let (p2, _s2) = MockProvider::new(vec![
+            mock::resp_tool("a2", "exec", json!({"command": "free -m"}), None),
+            mock::resp_text("内存 2G/8G", None),
+        ]);
+        let targets: Arc<Mutex<std::collections::VecDeque<Box<dyn tiny_agent::Provider>>>> =
+            Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
+                Box::new(p1) as Box<dyn tiny_agent::Provider>,
+                Box::new(p2) as Box<dyn tiny_agent::Provider>,
+            ])));
+        host.send_fleet_with_mock("盘点两台机器", Box::new(fleet_prov), targets, sink)
+            .expect("send fleet");
+        assert!(host.wait_idle(FLEET_KEY), "编排运行未在期限内结束");
+        assert!(
+            host.wait_idle("t1") && host.wait_idle("t2"),
+            "目标运行未结束"
+        );
+
+        // 目标机真实执行了各自任务（Session 工具面，非编排面）
+        assert_eq!(
+            *ops.cmds.lock().unwrap(),
+            vec!["df -h".to_string(), "free -m".to_string()]
+        );
+        let evs = ev.lock().unwrap();
+        let result_texts: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match e {
+                HostEvent::ToolResult { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+            .collect();
+        // 清单给到编排者
+        assert!(
+            result_texts
+                .iter()
+                .any(|t| t.contains("web-1") && t.contains("db-1")),
+            "fleet_sessions 结果应有目标清单：{result_texts:?}"
+        );
+        // 两个 wait_task 都 done 且带回目标最后文本
+        assert!(
+            result_texts
+                .iter()
+                .any(|t| t.contains("\"session_id\":\"t1\"")
+                    && t.contains("\"state\":\"done\"")
+                    && t.contains("磁盘 40% 已用")),
+            "wait t1 应 done 带结果：{result_texts:?}"
+        );
+        assert!(
+            result_texts
+                .iter()
+                .any(|t| t.contains("\"session_id\":\"t2\"")
+                    && t.contains("\"state\":\"done\"")
+                    && t.contains("内存 2G/8G")),
+            "wait t2 应 done 带结果：{result_texts:?}"
+        );
+        // 自派发被拒（编排者不能指使自己）
+        assert!(
+            result_texts
+                .iter()
+                .any(|t| t.contains("不能派发给编排者自己")),
+            "自派发应被拒：{result_texts:?}"
+        );
+        // 编排者转写独立成键（FE 编排视图重建用）
+        let fleet_hist = host.history(FLEET_KEY);
+        assert!(fleet_hist
+            .iter()
+            .any(|e| matches!(e, HostEvent::User(t) if t == "盘点两台机器")));
+        // last_final_text：目标总结可提取（wait_task 的数据源）
+        assert_eq!(host.last_final_text("t1").as_deref(), Some("磁盘 40% 已用"));
+        assert_eq!(host.last_final_text("t2").as_deref(), Some("内存 2G/8G"));
     }
 }

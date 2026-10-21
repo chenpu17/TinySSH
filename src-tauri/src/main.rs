@@ -224,6 +224,30 @@ impl tinyssh_agent_host::SshOps for AgentSshOps {
             }
         })
     }
+    fn list_sessions(&self) -> std::result::Result<String, String> {
+        let api = self.api.clone();
+        self.rt.block_on(async move {
+            match api.list_sessions(&embedded_agent()).await {
+                Ok(list) => {
+                    // 编排者视角的简要清单：够选目标即可，不漏控制权（派发预期管理）
+                    let briefs: Vec<serde_json::Value> = list
+                        .iter()
+                        .map(|s| {
+                            serde_json::json!({
+                                "session_id": s.id,
+                                "host": s.host_name,
+                                "kind": s.kind,
+                                "state": s.state,
+                                "control_owner": s.control_owner,
+                            })
+                        })
+                        .collect();
+                    Ok(serde_json::Value::Array(briefs).to_string())
+                }
+                Err(e) => Err(format!("{e}")),
+            }
+        })
+    }
 }
 
 /// TransferStatus → 宿主轮询串（小写下划线；见 agent-host::TransferPoll 契约）。
@@ -2027,10 +2051,10 @@ fn main() {
     //（builder 装配线程不在运行时上下文内，直接 Handle::current() 会 panic）
     let agent_rt: tokio::runtime::Handle =
         tauri::async_runtime::block_on(async { tokio::runtime::Handle::current() });
-    let agent_host = Arc::new(tinyssh_agent_host::AgentHost::new(Arc::new(AgentSshOps {
+    let agent_host = tinyssh_agent_host::AgentHost::new_arc(Arc::new(AgentSshOps {
         api: api.clone(),
         rt: agent_rt,
-    })));
+    }));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())

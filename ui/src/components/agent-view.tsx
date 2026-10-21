@@ -32,8 +32,11 @@ type AgentWire = { sid: string; event: AgentWireEvent };
 
 export interface AgentViewProps {
   width: number;
-  /** 当前会话 sid；欢迎页（无会话）为 null——显空态不可输入 */
+  /** 当前会话 sid；欢迎页（无会话）为 null——显空态不可输入。编排形态固定 "fleet" */
   sid: string | null;
+  /** 编排者形态（Fleet 轮）：对话键固定 "fleet"，无委托门/控制权徽标
+      （编排者不直接操作机器），派发的目标对话仍按各自 sid 在会话 Agent 视图呈现 */
+  fleet?: boolean;
   hostLabel: string;
   /** 该会话的内嵌 agent 待审批（inline 批准/拒绝走既有 decide_approval 链） */
   pending: ApprovalRow[];
@@ -140,7 +143,7 @@ function applyAgentEvent(msgs: AgentMsg[], ev: AgentWireEvent, seq: { n: number 
 }
 
 export function AgentView({
-  width, sid, hostLabel, pending, onDecide, owner, onDelegate,
+  width, sid, fleet, hostLabel, pending, onDecide, owner, onDelegate,
   gripDrag, gripDown, gripMove, gripUp, onClose, pushToast,
 }: AgentViewProps) {
   const [convs, setConvs] = useState<Record<string, AgentMsg[]>>({});
@@ -269,8 +272,9 @@ export function AgentView({
   const send = () => {
     const text = draft.trim();
     if (!text || !sid) return;
-    // 夺权显式化：真模式下会话还在人类手里 → 先请求交托（确认条），草稿保留
-    if (realMode && owner !== "Agent") {
+    // 夺权显式化：真模式下会话还在人类手里 → 先请求交托（确认条），草稿保留。
+    // 编排形态跳过——它不直接操作机器，目标会话的审批/控制权在目标侧独立生效。
+    if (realMode && !fleet && owner !== "Agent") {
       setAskText(text);
       setAskDelegate(true);
       return;
@@ -392,7 +396,7 @@ export function AgentView({
         ) : (
           <span className="ag-mock" title="当前为演练外壳：回复与工具卡是脚本数据，配置模型服务后自动切换为真实模型">演练</span>
         )}
-        {realMode && sid && (
+        {realMode && sid && !fleet && (
           <span
             className={"ag-own" + (owner === "Agent" ? " on" : "")}
             data-testid="agent-own"
@@ -400,6 +404,9 @@ export function AgentView({
               ? "会话控制权已交托给 Agent（工具栏「接管」随时收回）"
               : "会话控制权在你手里——发送任务时会先请求交托"}
           >{owner === "Agent" ? "已受托" : "未交托"}</span>
+        )}
+        {fleet && (
+          <span className="ag-own on" title="编排者不直接操作机器；派发目标的审批/控制权在目标会话独立生效">编排</span>
         )}
         <span style={{ flex: 1 }} />
         {sid && (
@@ -415,7 +422,11 @@ export function AgentView({
         <>
           <div className="ag-scroll" ref={scrollRef} onClick={onScrollClick}>
             {msgs.length === 0 && realMode && (
-              <div className="ag-empty">会话已就绪（模型 {modelCfg?.model}）——直接下达任务。</div>
+              <div className="ag-empty">
+                {fleet
+                  ? `编排者就绪（模型 ${modelCfg?.model}）——下达跨主机任务，它会派发给各会话的执行 agent 并汇总结果。`
+                  : `会话已就绪（模型 ${modelCfg?.model}）——直接下达任务。`}
+              </div>
             )}
             {msgs.map((m) => {
               if (m.role === "user") {
@@ -479,7 +490,9 @@ export function AgentView({
               data-testid="agent-input"
               value={draft}
               rows={2}
-              placeholder="给 Agent 下达任务…（Enter 发送，Shift+Enter 换行）"
+              placeholder={fleet
+                ? "下达跨主机任务…（Enter 发送，Shift+Enter 换行）"
+                : "给 Agent 下达任务…（Enter 发送，Shift+Enter 换行）"}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
