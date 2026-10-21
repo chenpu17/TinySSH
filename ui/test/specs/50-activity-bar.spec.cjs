@@ -1,6 +1,8 @@
 // 50 活动栏（活动栏轮）：左缘图标栏（连接/Agent 两视图入口，互斥）、Agent 视图
 // 开合与宽度持久化（localStorage ui.agentbar / ui.agentbar_w）、专注模式整体隐藏。
 // 主机栏既有语义不动（⌘B/开关/宽度只改坐标口径：抓手 x −44 活动栏占位）。
+// 富文本轮补：设置常驻第四图标（rail-settings，钉栏底、不占互斥位）——全关态
+// 下设置面板仍可直开（此前全关态只剩 ⌘K 可达）。
 
 module.exports = {
   title: "活动栏：视图切换互斥、Agent 视图宽度持久化、专注模式隐藏",
@@ -60,6 +62,24 @@ module.exports = {
     await page.waitForTimeout(250);
     ck.check("再点全关：两视图都收、hb-expand 浮标在场",
       !(await vis(".hostbar")) && !(await vis('[data-testid="agent-view"]')) && !!(await page.$(".hb-expand")));
+
+    // ── 设置常驻图标（不占互斥位）：全关态（此刻设置只剩 ⌘K 可达）直开面板 ──
+    ck.check("rail-settings 在场且钉栏底（rail-tail）",
+      await page.evaluate(() => {
+        const b = document.querySelector('[data-testid="rail-settings"]');
+        return !!b && b.classList.contains("rail-tail");
+      }));
+    await page.click('[data-testid="rail-settings"]');
+    await page.waitForTimeout(250);
+    ck.check("全关态点 rail-settings：设置面板直开 + 图标点亮",
+      (await vis(".term-settings.settings-wide")) &&
+      await page.evaluate(() => document.querySelector('[data-testid="rail-settings"]')?.classList.contains("ts-open")));
+    await page.click('[data-testid="settings-close"]');
+    await page.waitForTimeout(250);
+    ck.check("关闭设置面板：点亮态清除、侧栏保持全关",
+      !(await vis(".term-settings.settings-wide")) &&
+      !await page.evaluate(() => document.querySelector('[data-testid="rail-settings"]')?.classList.contains("ts-open")) &&
+      !(await vis(".hostbar")));
 
     // ── 专注模式：活动栏/Agent 栏/右缘栏整体隐藏（回现场再退出）──
     await page.click('[data-testid="rail-hosts"]');

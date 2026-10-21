@@ -4731,7 +4731,10 @@ export default function App() {
           </div>
         )}
         {/* 活动栏（活动栏轮）：左缘图标栏 = 侧栏视图入口。连接/Agent/编排三视图互斥
-            （开一个关另一个），全关 = 纯终端；专注模式整体隐藏（.focus-mode CSS） */}
+            （开一个关另一个），全关 = 纯终端；专注模式整体隐藏（.focus-mode CSS）。
+            设置常驻第四图标（不占互斥位、钉栏底 = VSCode 惯例：视图入口在上、
+            应用级动作在下）——设置钮原住主机栏，侧栏互斥+持久化后会有
+            「找不到设置」的时刻；它不开任何侧栏，直开设置面板 */}
         <nav className="actrail" data-testid="actrail" aria-label="侧栏视图">
           <button className={"rail-btn" + (hostbarOpen ? " ts-open" : "")} data-testid="rail-hosts"
             title="连接（⌘B）" aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
@@ -4745,6 +4748,11 @@ export default function App() {
             title="跨主机编排（Fleet）：派发任务给各会话的执行 agent 并汇总" aria-pressed={fleetOpen}
             onClick={() => toggleFleet(!fleetOpen)}>
             <IconShuffle size={17} />
+          </button>
+          <button className={"rail-btn rail-tail" + (showSettings ? " ts-open" : "")} data-testid="rail-settings"
+            title="设置（外观 / 终端 / 凭据 / Agent）" aria-label="设置"
+            onClick={() => dispatchRef.current({ id: "settings" })}>
+            <IconSliders size={17} />
           </button>
         </nav>
         {hostbarOpen && (
