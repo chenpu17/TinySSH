@@ -14,6 +14,8 @@ import { inTauri, invoke, listen } from "../adapter/bridge";
 import type { ApprovalRow } from "../app-data";
 import { WELCOME_MD, mockScript } from "../agent-mock";
 import { renderAgentMd } from "../mdview";
+import { renderMermaidIn, rerenderMermaids } from "../mmd";
+import { renderMathIn } from "../math";
 import { IconBot, IconLoader, IconPlus, IconX } from "../icons";
 
 type ToolStatus = "pending" | "running" | "ok" | "err" | "denied";
@@ -248,6 +250,31 @@ export function AgentView({
     if (el) el.scrollTop = el.scrollHeight;
   }, [msgs]);
 
+  // mermaid/公式占位渲染：流式中保持源码原文（尾块每帧重建不值得反复渲染），
+  // turn 末稳定后 rAF 一拍（等 innerHTML 落地）再批量渲染；data-done 占位防
+  // 并发重渲染，库加载/语法失败诚实保持源码原文（见 mmd.ts/math.ts）
+  useEffect(() => {
+    if (msgs.some((m) => m.role === "assistant" && m.streaming)) return;
+    const raf = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      void renderMermaidIn(el);
+      void renderMathIn(el);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [msgs]);
+
+  // 主题/深浅切换（palette data-theme × chrome data-chrome 双轴）→ 已渲染的
+  // mermaid 图按新主题变量重画（公式是纯文本排版不受主题影响，无需重渲染）
+  useEffect(() => {
+    const obs = new MutationObserver(() => {
+      const el = scrollRef.current;
+      if (el) void rerenderMermaids(el);
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-chrome"] });
+    return () => obs.disconnect();
+  }, []);
+
   /** 流式追加一条 assistant markdown，结束后回调（演练脚本链）。 */
   const streamMd = (k: string, full: string, after?: () => void) => {
     const id = newId();
@@ -340,8 +367,11 @@ export function AgentView({
   const onScrollClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
     if (t.classList.contains("code-copy")) {
-      const pre = t.closest(".md-code")?.querySelector("pre");
-      const text = pre?.textContent ?? "";
+      // mermaid：渲染成功后 pre 已被 SVG 替换，源码从 data-mm 取（URL 编码形态）
+      const mmWrap = t.closest(".mermaid-wrap") as HTMLElement | null;
+      const text = mmWrap?.dataset.mm
+        ? decodeURIComponent(mmWrap.dataset.mm)
+        : t.closest(".md-code")?.querySelector("pre")?.textContent ?? "";
       (inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text)).catch(() => {});
       pushToast("ok", "已复制代码");
     } else if (t.classList.contains("code-expand")) {

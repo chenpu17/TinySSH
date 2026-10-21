@@ -1,6 +1,7 @@
 // 内置 Agent 的演练脚本（活动栏轮，纯数据无状态）：真实模型接入前的对话外壳
 // 数据面。每条用户消息走同一条脚本——开场流式文本 → exec 工具卡（停在「待审批」，
-// 由用户批准/拒绝分岔）→ 摘要（markdown：标题/表格/30 行代码块，覆盖渲染规则）。
+// 由用户批准/拒绝分岔）→ 摘要（markdown：标题/表格/长代码块/mermaid 图/公式，
+// 覆盖渲染规则）。
 // 明确标注「演练」不虚构真模型；状态机与计时在 agent-view.tsx。
 
 export interface MockScript {
@@ -61,6 +62,15 @@ const SUMMARY_CODE = [
   "# 行 31",
 ].join("\n");
 
+// 富文本摘要样本（渲染轮）：mermaid 图 + 行内/块级/围栏公式 + 货币误判样本——
+// 覆盖 mmd.ts/math.ts 的占位渲染与 $..$ 配对纪律（金额保持字面）
+const SUMMARY_MERMAID = [
+  "flowchart LR",
+  "  U[你] --> A{Agent}",
+  "  A -->|批准| R[执行命令]",
+  "  A -->|拒绝| C[取消]",
+].join("\n");
+
 export function mockScript(input: string): MockScript {
   const brief = input.trim().length > 24 ? input.trim().slice(0, 24) + "…" : input.trim();
   return {
@@ -93,6 +103,24 @@ export function mockScript(input: string): MockScript {
       "",
       "```bash",
       SUMMARY_CODE,
+      "```",
+      "",
+      "### 架构与容量",
+      "",
+      "```mermaid",
+      SUMMARY_MERMAID,
+      "```",
+      "",
+      "内存占用约 $18.4\\text{ MiB}$，服务年化成本约 $100/月（这个金额保持字面不渲染）。",
+      "",
+      "可用率目标：",
+      "",
+      "$$",
+      "\\text{可用率} = 1 - \\frac{\\text{故障时长}}{\\text{总时长}}",
+      "$$",
+      "",
+      "```math",
+      "E = mc^2",
       "```",
       "",
       "> 本回复由**演练外壳**生成，非真实模型——接入模型服务后这里将是真实的分析与建议。",

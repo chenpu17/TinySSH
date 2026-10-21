@@ -2252,6 +2252,18 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 34px;
   background: linear-gradient(transparent, var(--bg)); pointer-events: none;
 }
+/* mermaid 渲染成功态（.mm-ok，mmd.ts）：SVG 容器替换 pre（头条常驻，源码复制
+   不因渲染成功而消失），自适应宽度居中；fallback 态（未渲染/失败）就是普通
+   代码块外观，无需专门样式 */
+.md-code.mermaid-wrap .mm-body svg {
+  max-width: 100%; height: auto; display: block; margin: 0 auto; padding: 10px;
+}
+/* 数学公式（math.ts 占位 → KaTeX）：fallback 走行内 code 样式（渲染成功被
+   替换），块级公式横向滚动防撑破面板；段内 display 形态成块排版 */
+.math-inline .math-fallback, .math-block .math-fallback { white-space: pre-wrap; }
+.math-block { display: block; margin: 10px 0; overflow-x: auto; overflow-y: hidden; }
+.math-block.math-ok, .math-inline.math-display.math-ok { text-align: center; }
+.math-inline.math-display { display: block; margin: 10px 0; overflow-x: auto; overflow-y: hidden; }
 
 /* —— 工具卡（模拟 exec 审批卡；真模型轮沿用此形状） —— */
 .tool-card {
