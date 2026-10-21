@@ -40,12 +40,20 @@ impl tinyssh_agent_host::SshOps for AgentSshOps {
         cmd: &str,
         timeout_secs: Option<u64>,
         output_cap: Option<u64>,
+        mode: Option<&str>,
     ) -> std::result::Result<String, String> {
         let api = self.api.clone();
         let (sid, cmd) = (sid.to_string(), cmd.to_string());
+        // 缺省 shell（持久现场）；未启用 shell 集成的主机上 shell 模式不可用，
+        // 工具表引导模型显式传 "fresh"（独立通道，可靠退出码）
+        let exec_mode = if mode == Some("fresh") {
+            ExecMode::Fresh
+        } else {
+            ExecMode::Shell
+        };
         self.rt.block_on(async move {
             let opts = ExecOpts {
-                mode: ExecMode::Shell,
+                mode: exec_mode,
                 timeout: timeout_secs.map(std::time::Duration::from_secs),
                 output_cap: output_cap.map(|x| x as usize),
                 env: Default::default(),

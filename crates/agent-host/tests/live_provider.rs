@@ -28,6 +28,7 @@ impl SshOps for LiveOps {
         cmd: &str,
         _timeout_secs: Option<u64>,
         _output_cap: Option<u64>,
+        _mode: Option<&str>,
     ) -> Result<String, String> {
         self.calls.lock().unwrap().push(cmd.to_string());
         Ok(format!("live-ok-marker\n(来自 LiveOps 桩, 命令: {cmd})"))

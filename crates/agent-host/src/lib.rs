@@ -72,12 +72,15 @@ pub enum HostEvent {
 /// 返回值为**工具文本**（JSON 字符串，形状与 MCP 同名工具对齐），Err 文本成为
 /// 模型看到的 is_error 结果。
 pub trait SshOps: Send + Sync {
+    /// `mode`: None=适配器默认（shell）；"shell"|"fresh"。fresh=独立通道执行
+    ///（可靠退出码，不延续现场）——未启用 shell 集成的主机上 shell 模式不可用。
     fn exec(
         &self,
         sid: &str,
         cmd: &str,
         timeout_secs: Option<u64>,
         output_cap: Option<u64>,
+        mode: Option<&str>,
     ) -> Result<String, String>;
     fn read_screen(&self, sid: &str) -> Result<String, String>;
     fn read_blocks(&self, sid: &str, limit: u32) -> Result<String, String>;
@@ -161,6 +164,40 @@ fn poll_json(tid: &str, p: &TransferPoll) -> serde_json::Value {
         "total": p.total,
         "error": p.error,
     })
+}
+
+/// 按键串的字面转义解释（send_keys 契约落地）：模型双重转义时 JSON 解码后仍剩
+/// `\r` 两个字符——按工具描述把它们翻成真实控制字节。识别 \r \n \t \\ 与
+/// \xHH（十六进制字节，如 \x1b Esc、\x03 Ctrl+C）；未知转义原样保留（诚实）。
+/// 真实控制字节（JSON 正确解码的产物）不含反斜杠、天然直通不受影响。
+fn interpret_key_escapes(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        match b[i + 1] {
+            b'r' => { out.push(b'\r'); i += 2; }
+            b'n' => { out.push(b'\n'); i += 2; }
+            b't' => { out.push(b'\t'); i += 2; }
+            b'\\' => { out.push(b'\\'); i += 2; }
+            b'x' | b'X' if i + 4 <= b.len() => {
+                match s.get(i + 2..i + 4).and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                    Some(v) => { out.push(v); i += 4; }
+                    None => { out.push(b'\\'); i += 1; }
+                }
+            }
+            other => { out.push(b'\\'); out.push(other); i += 2; }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// upload/download 共用流程：DF6.2 同款「缺省 fail」预检（upload 查远端目标、
@@ -260,11 +297,12 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
     let exec = CallbackTool::new(
         ToolDef {
             name: "exec".into(),
-            description: "在会话的持久 shell 中执行命令（cwd/env 延续）。危险命令需人工审批，等待期间此调用阻塞；被拒绝时如实报告，不要换着花样重试。".into(),
+            description: "在会话上执行命令。缺省 shell 模式（持久 shell，cwd/env 延续）；主机未启用 shell 集成时 shell 模式不可用，用 mode:\"fresh\"（独立通道，可靠退出码，不延续现场）。危险命令需人工审批，等待期间此调用阻塞；被拒绝时如实报告，不要换着花样重试。".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "要执行的命令" },
+                    "mode": { "type": "string", "enum": ["shell", "fresh"], "description": "执行模式：shell（缺省，持久 shell 现场）| fresh（独立通道；未启用 shell 集成的主机必须用这个）" },
                     "timeout_secs": { "type": "integer", "description": "超时秒数（缺省 30，审批等待不计入）" },
                     "output_cap_bytes": { "type": "integer", "description": "stdout/stderr 返回上限字节（缺省 128KiB，超限截断）" }
                 },
@@ -273,9 +311,15 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
         },
         move |input, _ctx| {
             let cmd = input.get("command").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 command"))?;
+            let mode = input.get("mode").and_then(|v| v.as_str());
+            if let Some(m) = mode {
+                if m != "shell" && m != "fresh" {
+                    return Err(anyhow::anyhow!("mode 仅支持 shell|fresh，得到 {m:?}"));
+                }
+            }
             let t = input.get("timeout_secs").and_then(|v| v.as_u64());
             let cap = input.get("output_cap_bytes").and_then(|v| v.as_u64());
-            o2.exec(&s2, cmd, t, cap).map(ToolOutput::text).map_err(|e| anyhow::anyhow!(e))
+            o2.exec(&s2, cmd, t, cap, mode).map(ToolOutput::text).map_err(|e| anyhow::anyhow!(e))
         },
     );
     let o3 = ops.clone();
@@ -407,11 +451,11 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
     let keys = CallbackTool::new(
         ToolDef {
             name: "send_keys".into(),
-            description: "向会话终端注入按键——驱动交互式程序（vim/htop、sudo 密码、y/n 确认）。特殊键用转义序列：\\r 回车、\\t Tab、\\x03 Ctrl+C、\\x1b Esc、方向键 \\x1b[A 等。首次使用需一次会话级授权（一次审批，本会话内后续按键免审）；控制权在人类手里时被拒（如实告知用户需要交托会话）。每次发送后用 read_screen/wait_output 确认效果，不要盲发。".into(),
+            description: "向会话终端注入按键——驱动交互式程序（vim/htop、sudo 密码、y/n 确认）。回车写 \\r、Tab 写 \\t、Ctrl+C 写 \\x03、Esc 写 \\x1b、方向键 \\x1b[A 等；字面反斜杠序列（模型双重转义时）与真实控制字节都接受。首次使用需一次会话级授权（一次审批，本会话内后续按键免审）；控制权在人类手里时被拒（如实告知用户需要交托会话）。每次发送后用 read_screen/wait_output 确认效果，不要盲发。".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "keys": { "type": "string", "description": "要注入的按键序列（支持 \\r \\t \\x03 等转义）" }
+                    "keys": { "type": "string", "description": "要注入的按键序列（\\r 回车 \\t Tab \\x03 Ctrl+C \\x1b Esc）" }
                 },
                 "required": ["keys"]
             }),
@@ -424,7 +468,7 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
             if k.is_empty() {
                 return Err(anyhow::anyhow!("keys 不能为空"));
             }
-            o9.send_keys(&s9, k)
+            o9.send_keys(&s9, &interpret_key_escapes(k))
                 .map(ToolOutput::text)
                 .map_err(|e| anyhow::anyhow!(e))
         },
@@ -1053,6 +1097,7 @@ mod tests {
             cmd: &str,
             _t: Option<u64>,
             _c: Option<u64>,
+            _mode: Option<&str>,
         ) -> Result<String, String> {
             self.cmds.lock().unwrap().push(cmd.to_string());
             if let Some(rx) = self.gate.lock().unwrap().take() {
@@ -1243,6 +1288,7 @@ mod tests {
                 _c: &str,
                 _t: Option<u64>,
                 _o: Option<u64>,
+                _mode: Option<&str>,
             ) -> Result<String, String> {
                 Err("会话不存在".into())
             }
@@ -1536,6 +1582,27 @@ mod tests {
             *ops.keys_sent.lock().unwrap(),
             vec!["j".to_string(), "\r".to_string(), "\x03".to_string()]
         );
+    }
+
+    #[test]
+    fn key_escapes_interpreted() {
+        // 字面转义（模型双重转义、JSON 解码后残留 "\r" 两字符）→ 真实控制字节
+        assert_eq!(interpret_key_escapes("echo ok\\r"), "echo ok\r");
+        assert_eq!(interpret_key_escapes("a\\tb"), "a\tb");
+        assert_eq!(interpret_key_escapes("\\x1b"), "\x1b");
+        assert_eq!(interpret_key_escapes("\\x03"), "\x03");
+        assert_eq!(interpret_key_escapes("\\x41\\x42\\x43"), "ABC");
+        // \\\\ 字面反斜杠自身 → 单个反斜杠
+        assert_eq!(interpret_key_escapes("a\\\\b"), "a\\b");
+        // 真实控制字节（JSON 正确解码）直通不受影响
+        assert_eq!(interpret_key_escapes("j\r"), "j\r");
+        assert_eq!(interpret_key_escapes("\x1b[A"), "\x1b[A");
+        // 未知转义原样保留（诚实）；非转义反斜杠尾不崩
+        assert_eq!(interpret_key_escapes("\\q"), "\\q");
+        assert_eq!(interpret_key_escapes("a\\"), "a\\");
+        // CJK 与无反斜杠文本原样
+        assert_eq!(interpret_key_escapes("普通文本"), "普通文本");
+        assert_eq!(interpret_key_escapes(""), "");
     }
 
     #[test]
