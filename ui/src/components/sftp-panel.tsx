@@ -251,10 +251,11 @@ interface TransferQueueDrawerProps {
   verifyOutcome: (id: string) => Promise<void>;
   locateTransfer: (t: TransferCard) => Promise<void>;
   retryTransfer: (id: string) => Promise<void>;
+  openTransfer: (t: TransferCard) => Promise<void>;
 }
 export function TransferQueueDrawer({
   transfers, queueOpen, setQueueOpen, sidRef, hostLabel, canRetry,
-  decideCollision, verifyOutcome, locateTransfer, retryTransfer,
+  decideCollision, verifyOutcome, locateTransfer, retryTransfer, openTransfer,
 }: TransferQueueDrawerProps) {
   return (
           <div className="queue-drawer" data-testid="queue-drawer" role="region" aria-label="传输队列">
@@ -329,10 +330,14 @@ export function TransferQueueDrawer({
                   {/* S08 该状态允许的操作：进行中=取消；失败/取消/跳过/中断=重试（新任务
                       重新校验）；unknown 只有重新核实 + 查看目标（§374 界面须提供
                       「重新核实」「查看目标/记录」，通用重试绝不作为默认动作）；
-                      完成=定位（下载访达显示本地目标 / 上传文件面板开目标目录） */}
+                      完成=打开+定位（下载：系统默认程序开文件本身 / 访达显示本地
+                      目标；上传=文件面板开目标目录） */}
                   <div className="row" style={{ gap: 2, flex: "none" }}>
                     {t.kind === "Download" && t.status === "done" && !t.local.startsWith("pending") && (
-                      <button className="ghost" data-testid="xfer-locate" title="在访达中显示本地目标" onClick={() => void locateTransfer(t)}>定位</button>
+                      <>
+                        <button className="ghost" data-testid="xfer-open" title="立即打开：用系统默认程序打开该文件" onClick={() => void openTransfer(t)}>打开</button>
+                        <button className="ghost" data-testid="xfer-locate" title="在访达中显示本地目标" onClick={() => void locateTransfer(t)}>定位</button>
+                      </>
                     )}
                     {t.kind === "Upload" && t.status === "done" && t.sid && t.sid === sidRef.current && (
                       <button className="ghost" data-testid="xfer-locate" title="在文件面板打开目标目录" onClick={() => void locateTransfer(t)}>定位</button>

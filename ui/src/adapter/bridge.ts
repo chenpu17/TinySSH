@@ -61,6 +61,7 @@ interface CmdArgs {
   cancel_transfer: { id: string };
   retry_transfer: { id: string };
   reveal_path: { path: string };
+  open_path: { path: string };
   list_transfers: undefined;
   submit_collision_decision: { id: string; decision: wire.CollisionDecision; expectRevision: number };
   reject_expired_decision: { id: string };
@@ -179,6 +180,7 @@ interface CmdRet {
   cancel_transfer: void;
   retry_transfer: wire.TransferHandle;
   reveal_path: void;
+  open_path: void;
   list_transfers: wire.TransferTask[];
   submit_collision_decision: wire.TransferTask;
   reject_expired_decision: void;

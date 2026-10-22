@@ -1980,6 +1980,10 @@ case "read_triggers": {
     // 真实面=原生 reveal_path（open -R）
     case "reveal_path":
       return null;
+    // 「立即打开」（系统默认程序开本地文件）：演示域无真实 ShellExecute——no-op，
+    // 真实面=原生 open_path（explorer/open/xdg-open）
+    case "open_path":
+      return null;
     case "note_terminal":
     case "open_url":
     case "bench_start":

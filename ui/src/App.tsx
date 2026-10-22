@@ -3316,6 +3316,16 @@ export default function App() {
     }
   }, [pushToast]);
 
+  // 「立即打开」：系统默认程序打开下载完成的本地文件（与「定位」同源校验——
+  // 后端只开已存在的路径；无关联扩展名由系统「打开方式」兜底，前端不预判扩展名）
+  const openTransfer = useCallback(async (t: TransferCard) => {
+    try {
+      await invoke("open_path", { path: t.local });
+    } catch (e) {
+      pushToast("err", `打开失败：${friendlyError(e)}`);
+    }
+  }, [pushToast]);
+
   // 拖拽上传：目标目录优先取远程文件区正在浏览的目录（T41），否则现场简报 cwd。
   // 先挂 pending 卡占位，拿到真实 TransferHandle 后换 id（终态对账按真实 id 匹配审计）。
   // pending 卡 id 序号（R31）：同毫秒批量发起多张卡时防 id 碰撞
@@ -5836,6 +5846,7 @@ export default function App() {
             sidRef={sidRef} hostLabel={hostLabel} canRetry={canRetry}
             decideCollision={decideCollision} verifyOutcome={verifyOutcome}
             locateTransfer={locateTransfer} retryTransfer={retryTransfer}
+            openTransfer={openTransfer}
           />
         )}
 

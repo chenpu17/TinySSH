@@ -747,6 +747,40 @@ async fn reveal_path(path: String) -> CmdResult<()> {
     Ok(())
 }
 
+/// 下载完成卡的「立即打开」：用系统默认程序打开本地文件本身（「定位」开所在
+/// 文件夹，本命令开文件——双击语义）。与 reveal_path 同源校验：仅接受已存在的
+/// 路径；无关联扩展名由系统「打开方式」选择器兜底，不在应用内预判扩展名。
+#[tauri::command]
+async fn open_path(path: String) -> CmdResult<()> {
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err(WireError::from(Error::SftpPathNotFound { path }));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("--")
+            .arg(&p)
+            .spawn()
+            .map_err(|e| WireError::from(Error::Io(format!("open: {e}"))))?;
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(&p)
+            .spawn()
+            .map_err(|e| WireError::from(Error::Io(format!("open: {e}"))))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&p)
+            .spawn()
+            .map_err(|e| WireError::from(Error::Io(format!("open: {e}"))))?;
+    }
+    Ok(())
+}
+
 /// SFTP 目录浏览（T41 FR-7）：只读 readdir，人类专属入口（不经审批）。
 #[tauri::command]
 async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<Vec<DirEntryS>> {
@@ -2552,7 +2586,7 @@ fn main() {
             close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
-            upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,
+            upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,
             pick_upload_files, pick_save_file,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,

@@ -65,18 +65,39 @@ module.exports = {
     await page.waitForTimeout(250);
     ck.check("Escape 关闭动作菜单", await page.evaluate(() => !document.querySelector("[data-testid=sftp-menu]")));
 
+    // 下载一次 → 传输队列抽屉（完成卡：打开 + 定位）。放在进入 archive **之前**——
+    // 进目录后 access.log 不在列表里， dblclick 会超时（首轮实测）。
+    await page.dblclick('.sftp-row[data-name="access.log"]');
+    await page.waitForTimeout(400);
+    await page.click("[data-testid=sftp-menu-download]");
+    await page.waitForTimeout(300);
+    // 抽屉条件挂载——不开就没有 xfer-* 节点；demo 传输 ~3s 到 done，轮询等不硬睡
+    ck.check("状态条有传输入口（sb-transfer）", await page.evaluate(() => !!document.querySelector("[data-testid=sb-transfer]")));
+    await page.click("[data-testid=sb-transfer]");
+    ck.check("传输抽屉可打开（queue-drawer）", await page.evaluate(() => !!document.querySelector("[data-testid=queue-drawer]")));
+    await page.waitForSelector('[data-testid="xfer-done"]', { timeout: 9000 });
+    const doneCard = await page.evaluate(() => {
+      const row = document.querySelector('[data-testid="xfer-done"]');
+      if (!row) return null;
+      return {
+        open: !!row.querySelector('[data-testid="xfer-open"]'),
+        locate: !!row.querySelector('[data-testid="xfer-locate"]'),
+      };
+    });
+    ck.check("下载完成卡带「打开」按钮（xfer-open）", !!doneCard && doneCard.open, JSON.stringify(doneCard));
+    ck.check("完成卡仍带「定位」（打开不替代定位）", !!doneCard && doneCard.locate, JSON.stringify(doneCard));
+    // 点「打开」（演示域 open_path=no-op）：不得报错（真实面=系统默认程序拉起文件）
+    await page.evaluate(() => document.querySelector('[data-testid="xfer-open"]').click());
+    await page.waitForTimeout(400);
+    ck.check("点「打开」无错误提示（演示域 no-op；真实面走 open_path）", await page.evaluate(() => !document.querySelector(".toast.err")));
+    ck.check("点「打开」后完成卡动作仍在", await page.evaluate(() => !!document.querySelector('[data-testid="xfer-open"]')));
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(250);
+
     // 双击目录进入
     await page.dblclick('.sftp-row.dir[data-name="archive"]');
     await page.waitForTimeout(800);
     const c1 = await crumbs(page);
     ck.check("双击目录后面包屑加深（含 archive）", !!c1 && c1.includes("archive"), `实得「${c1}」`);
-
-    // 传输队列抽屉
-    ck.check("状态条有传输入口（sb-transfer）", await page.evaluate(() => !!document.querySelector("[data-testid=sb-transfer]")));
-    await page.click("[data-testid=sb-transfer]");
-    await page.waitForTimeout(500);
-    ck.check("传输抽屉可打开（queue-drawer）", await page.evaluate(() => !!document.querySelector("[data-testid=queue-drawer]")));
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(250);
   },
 };
