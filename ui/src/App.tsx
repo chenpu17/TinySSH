@@ -4825,13 +4825,9 @@ export default function App() {
           />
         )}
         <main className="main">
-        {/* 双接管按钮语义说明（PV R3：3/6 参与者只能靠猜）：Agent 持有控制权时常显一行解释
-            精致化 §5.2：状态/说明类信息走 Notice Bar，不与面包屑混排 */}
-        {sid && (hasAgents || embeddedReady) && owner === "Agent" && (
-          <div className="notice-bar info">
-            接管＝冻结 Agent、待审批作废，正在跑的命令不中断 · 接管并停止任务＝再尝试停止跑着的命令（结果逐条显示）
-          </div>
-        )}
+        {/* 双接管按钮的语义说明不再常显（用户反馈：占一行没用处）——完整语义
+            已在两钮的 title 悬停提示里（接管=冻结/待审批作废/跑着的不中断；
+            接管并停止=再尝试停止/结果逐条显示），随用随看不占空间 */}
         {/* 重确认：§6.4 原文「已重连；旧现场待核实」——人类可继续操作，受限的是
             Agent 变更（有协作在场时点名「Agent 暂停」）；核实完成自动恢复 */}
         {current?.state === "Reconfirming" && (
