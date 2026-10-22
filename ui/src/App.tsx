@@ -90,7 +90,7 @@ import { CtxMenus } from "./components/ctx-menus";
 import { CollabApprovals, CollabDelegate } from "./components/collab-panel";
 import { ConnDetail } from "./components/conn-detail";
 import { Hostbar } from "./components/hostbar";
-import { AgentView } from "./components/agent-view";
+import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 import { SelfMeterTitlebar } from "./self-meter";
@@ -4179,6 +4179,20 @@ export default function App() {
       return false;
     }
   };
+  // 内嵌 agent 自主模式（人类授权，按 client_id 记账）：免逐条审批，deny 名单
+  // 仍硬拦、传输仍逐条、审计 outcome=Autonomous 可辨；急停行（autonomy_list 变化）
+  // 与此处同源——刷新后状态一致。ttl 传 null = 手动关闭才失效。
+  const toggleEmbeddedAutonomy = async (enable: boolean) => {
+    try {
+      await invoke("set_autonomy", { agentId: EMBEDDED_AGENT_ID, enable, ttlMinutes: null });
+      await refreshLists();
+      enable
+        ? pushToast("ok", "已开启自主模式：命令免逐条审批（危险名单仍拦截、传输仍逐条、全量记录，急停条可撤回）")
+        : pushToast("info", "已关闭自主模式：恢复逐条审批");
+    } catch (e) {
+      pushToast("err", `自主模式切换失败：${errMsg(e)}`);
+    }
+  };
   // R42（§6.7）首次委托 / 交还：**显式提交**的同一个受控转换（核心 delegate_session）。
   // 取消对话框不改动控制权；核心成功返回才切 Agent-owned；任务目标可选（留空**不清除**
   // 既有目标——与「任务目标」栏的清除语义不同）。服务未启用时先引导设置接入，返回后
@@ -4794,6 +4808,8 @@ export default function App() {
             hostLabel={fleetOpen ? "跨主机编排" : hostLabel(sid ?? undefined)}
             pending={pendingApprovals} onDecide={decide}
             owner={owner} onDelegate={delegateEmbedded}
+            autonomyOn={autonomy.some((g) => g.agent_id === EMBEDDED_AGENT_ID)}
+            onToggleAutonomy={toggleEmbeddedAutonomy}
             gripDrag={agGripDrag} gripDown={agGripDown} gripMove={agGripMove} gripUp={agGripUp}
             onClose={() => (fleetOpen ? toggleFleet(false) : toggleAgent(false))} pushToast={pushToast}
           />

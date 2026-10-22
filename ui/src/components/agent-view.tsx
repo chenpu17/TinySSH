@@ -47,6 +47,9 @@ export interface AgentViewProps {
   owner: string;
   /** 轻量委托（核心 delegate_session，目标留空）；true=已交托 */
   onDelegate: () => Promise<boolean>;
+  /** 内嵌 agent 自主模式（人类授权，deny 名单仍硬拦/传输仍逐条/全量记录可急停） */
+  autonomyOn: boolean;
+  onToggleAutonomy: (enable: boolean) => void;
   gripDrag: { current: boolean };
   gripDown: (e: PointerEvent<HTMLDivElement>) => void;
   gripMove: (e: PointerEvent<HTMLDivElement>) => void;
@@ -60,7 +63,7 @@ const STREAM_CHARS = 24;
 const STREAM_MS = 90;
 const RUN_MS = 600;
 /** 真模式：会话内嵌 agent 的审批对账身份（与 crates/agent-host AGENT_CLIENT_ID 对应） */
-const EMBEDDED_AGENT_ID = "tinyssh-embedded";
+export const EMBEDDED_AGENT_ID = "tinyssh-embedded";
 
 function closeStreaming(msgs: AgentMsg[]): AgentMsg[] {
   const last = msgs[msgs.length - 1];
@@ -146,6 +149,7 @@ function applyAgentEvent(msgs: AgentMsg[], ev: AgentWireEvent, seq: { n: number 
 
 export function AgentView({
   width, sid, fleet, hostLabel, pending, onDecide, owner, onDelegate,
+  autonomyOn, onToggleAutonomy,
   gripDrag, gripDown, gripMove, gripUp, onClose, pushToast,
 }: AgentViewProps) {
   const [convs, setConvs] = useState<Record<string, AgentMsg[]>>({});
@@ -154,6 +158,21 @@ export function AgentView({
   // 夺权显式化：真模式下人类持有控制权时发送 → 先请求交托（确认条），不悄悄改控制权
   const [askDelegate, setAskDelegate] = useState(false);
   const [askText, setAskText] = useState("");
+  // 自主模式两击确认（开启才需要；关闭单击即回）。arm 4s 无第二击自动回退
+  const [autonomyArm, setAutonomyArm] = useState(false);
+  const autonomyArmTimer = useRef(0);
+  useEffect(() => () => { if (autonomyArmTimer.current) window.clearTimeout(autonomyArmTimer.current); }, []);
+  const clickAutonomy = () => {
+    if (autonomyOn) { setAutonomyArm(false); onToggleAutonomy(false); return; }
+    if (autonomyArm) {
+      if (autonomyArmTimer.current) window.clearTimeout(autonomyArmTimer.current);
+      setAutonomyArm(false);
+      onToggleAutonomy(true);
+      return;
+    }
+    setAutonomyArm(true);
+    autonomyArmTimer.current = window.setTimeout(() => setAutonomyArm(false), 4000);
+  };
   // 真模式前提：inTauri 且已配置模型服务（null = 未配置/浏览器 demo）
   const [modelCfg, setModelCfg] = useState<{ provider?: string; model?: string } | null>(null);
   const realMode = inTauri && modelCfg !== null;
@@ -313,7 +332,9 @@ export function AgentView({
     if (!sid) return;
     setDraft("");
     if (realMode) {
-      patch(key, (cur) => [...cur, { id: newId(), role: "user", text }]);
+      // 用户气泡由 Rust 侧同步 emit 的 User 事件写入（单一写入方）——这里再乐观
+      // 追加会与事件流各出一条（真机实测同文气泡×2）。send 本地失败时 catch 里
+      // 补「发送失败」块，不丢反馈。
       setBusy((b) => ({ ...b, [key]: true }));
       invoke("agent_send", { sid, text }).catch((e) => {
         patch(key, (cur) => [...closeStreaming(cur), { id: newId(), role: "assistant", md: `**发送失败**：${String(e)}`, think: "", streaming: false }]);
@@ -434,6 +455,18 @@ export function AgentView({
               ? "会话控制权已交托给 Agent（工具栏「接管」随时收回）"
               : "会话控制权在你手里——发送任务时会先请求交托"}
           >{owner === "Agent" ? "已受托" : "未交托"}</span>
+        )}
+        {realMode && sid && !fleet && (
+          <button
+            className={"ag-autonomy" + (autonomyOn ? " on" : "") + (autonomyArm ? " arm" : "")}
+            data-testid="agent-autonomy"
+            title={autonomyOn
+              ? "自主模式开启中：命令免逐条审批（危险名单仍硬拦、传输仍逐条、全量记录，上方急停条可随时撤回）。点击关闭"
+              : autonomyArm
+                ? "再点一次确认开启自主模式（命令免逐条审批；危险名单仍硬拦、传输仍逐条、全量记录、可急停）"
+                : "自主模式：命令免逐条审批（危险名单仍硬拦、传输仍逐条、全量记录、可急停）。点击开启"}
+            onClick={clickAutonomy}
+          >{autonomyOn ? "自主" : autonomyArm ? "确认开启？" : "自主"}</button>
         )}
         {fleet && (
           <span className="ag-own on" title="编排者不直接操作机器；派发目标的审批/控制权在目标会话独立生效">编排</span>
