@@ -122,22 +122,24 @@ module.exports = {
     await page.waitForTimeout(2000);
     ck.check("一键重连恢复 2 标签", (await tabCount(page)) === 2, `tabs=${await tabCount(page)}`);
 
-    // ── 拖拽排序：合成 DnD 事件序列（playwright 原生 dragAndDrop 不触发本应用的
-    // HTML5 处理器；原生发起路径由真机鼠标拖拽验证）。第 1 标签拖到第 2 标签右半
-    // → 插到其后 → 次序对调 ──
+    // ── 拖拽排序：真鼠标手势。拖拽组合分屏轮起标签拖拽是 pointer 自定义拖拽
+    // （HTML5 DnD 在 WebView2 被 wry 的 IDropTarget 接管根本发不起来）——真鼠标
+    // 三端一致，demo 即测真路径。第 1 标签按住拖到第 2 标签右半 → 插到其后 → 对调 ──
     const before = await tabLabels(page);
-    await page.evaluate(() => {
+    const pts = await page.evaluate(() => {
       const tabs = [...document.querySelectorAll(".tab")];
       if (tabs.length < 2) throw new Error("need 2 tabs");
-      const src = tabs[0], dst = tabs[1];
-      const dt = new DataTransfer();
-      src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
-      const r = dst.getBoundingClientRect();
-      const cx = r.right - 6, cy = r.top + r.height / 2;
-      dst.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: cx, clientY: cy }));
-      dst.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: cx, clientY: cy }));
-      src.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      // 抓标签文字中心（人手抓标签的自然位置，避开常显的分屏/关闭钮）
+      const s = tabs[0].querySelector(".tab-label").getBoundingClientRect();
+      const d = tabs[1].getBoundingClientRect();
+      return { sx: s.left + s.width / 2, sy: s.top + s.height / 2, dx: d.left + d.width * 0.8, dy: d.top + d.height / 2 };
     });
+    await page.mouse.move(pts.sx, pts.sy);
+    await page.mouse.down();
+    await page.mouse.move((pts.sx + pts.dx) / 2, (pts.sy + pts.dy) / 2, { steps: 5 });
+    await page.mouse.move(pts.dx, pts.dy, { steps: 5 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
     await page.waitForTimeout(500);
     const after = await tabLabels(page);
     ck.check("拖拽后标签次序对调", before.length === 2 && after[0] === before[1] && after[1] === before[0],

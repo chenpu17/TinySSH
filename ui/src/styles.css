@@ -598,6 +598,24 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .term-session.pane-top .pane-tag, .term-session.pane-bottom .pane-tag { display: block; }
 .term-session.pane-focused .pane-tag { color: var(--accent); }
 
+/* 拖标签组合分屏的落点提示（scrim + 高亮区）。高亮 inset 与 .pane-* 同公式吃
+   #term 的 --split-frac——已分屏时高亮就是真实窗格几何，未分屏（默认 .5）为半区；
+   z 与 .drop-overlay 同层惯例，pointer-events:none 让 dragover 穿到 #term */
+.drag-split-hint {
+  position: absolute; inset: 0; z-index: 30; pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+.dsh-zone {
+  position: absolute; border-radius: 8px;
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transition: top .08s ease, right .08s ease, bottom .08s ease, left .08s ease;
+}
+.dsh-zone.zone-l { top: 4px; right: calc((1 - var(--split-frac, 0.5)) * 100%); bottom: 4px; left: 4px; }
+.dsh-zone.zone-r { top: 4px; right: 4px; bottom: 4px; left: calc(var(--split-frac, 0.5) * 100%); }
+.dsh-zone.zone-t { top: 4px; right: 4px; bottom: calc((1 - var(--split-frac, 0.5)) * 100%); left: 4px; }
+.dsh-zone.zone-b { top: calc(var(--split-frac, 0.5) * 100%); right: 4px; bottom: 4px; left: 4px; }
+
 /* 标签页（T19）：中栏顶部一条，与会话一一对应
    精致化（§5.3）：浏览器式上圆角改全圆角 pill，去常显描边，active 用轻投影圈 */
 /* 标签栏（药丸重设计，对标 Termius）：行容器钉住滚动钮与尾部控件；.tabbar 只做
@@ -654,7 +672,9 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
 .tab-dot.ok { background: var(--ok); box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 50%, transparent); }
 .tab-dot.err { background: var(--danger); box-shadow: 0 0 5px color-mix(in srgb, var(--danger) 55%, transparent); }
-.tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* label 撑满药丸余宽：分屏/关闭钮靠右收边（Windows Terminal 布局）——短标签
+   （「本机」）药丸中部不再被常显按钮占住，抓中间即可拖拽、点中间也不再误触分屏 */
+.tab-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 十四轮：标签行内重命名框——占住标签文字位，描边用 accent 标示编辑态 */
 .tab-rename {
   width: 96px; min-width: 0; height: 22px; padding: 0 4px; font-size: 12px;
@@ -665,6 +685,15 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
    阴影一并带上，阴影换型不丢型） */
 .tab-drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tab-drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+
+/* 标签拖拽（pointer 自定义拖拽）：药丸 grab 光标示意可拖、拖动源变淡、全窗 grabbing
+   锁定（capture 后指针会跑出药丸外）。touch-action:none 让触屏按住即可拖（标签条
+   滚动让位给药丸间空隙与 ›‹ 钮）；重命名输入框回 text 光标 */
+.tab { cursor: grab; touch-action: none; }
+.tab .tab-rename { cursor: text; }
+.tab.tab-drag-src { opacity: 0.55; }
+body.tab-dragging { user-select: none; }
+body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .tab-active.tab-drop-before { box-shadow: inset 2px 0 0 var(--accent), 0 1px 6px var(--shadow-soft); }
 .tab-active.tab-drop-after { box-shadow: inset -2px 0 0 var(--accent), 0 1px 6px var(--shadow-soft); }
 /* 十六轮：BEL 标签闪烁——accent 光环脉冲 3 次（6s 自清），恒开不设开关。

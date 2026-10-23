@@ -533,12 +533,20 @@ export default function App() {
     });
     setRenaming(null);
   };
-  // —— 十五轮：标签拖拽排序 ——
+  // —— 十五轮：标签拖拽排序；拖拽组合分屏轮起改 pointer 自定义拖拽 ——
   // 会话期内的显示顺序事实源；list_sessions 整表刷新（连接/断开触发）后仍按此序渲染。
   // 不入 vault（会话本不跨重启）。⌘1-9 / ⌘⇧[] 读同一数组，快捷键序=所见序。
+  // 弃 HTML5 DnD 的原因：wry 为 onDragDropEvent（文件拖入上传）在 WebView2 HWND 上
+  // RevokeDragDrop+RegisterDragDrop 换掉了系统 IDropTarget，页内 dragstart 走 OS 拖放
+  // 循环根本发不起来——真机拖不动的根因；pointer 事件不进该循环，三端行为一致。
   const tabOrderRef = useRef<string[]>([]);
-  const dragSidRef = useRef<string | null>(null);
+  const [tabDragSid, setTabDragSid] = useState<string | null>(null);
+  const tabDragRef = useRef<{ sid: string; startX: number; startY: number; active: boolean } | null>(null);
+  const dragClickSupRef = useRef(false); // 拖后随至的 click 不当「激活标签」
   const [tabDropHint, setTabDropHint] = useState<{ sid: string; before: boolean } | null>(null);
+  // 拖标签组合分屏：悬在 #term 上时的落点提示（l/r/t/b 象限；null=不在终端区）。
+  // pointermove 高频触发——同值复用旧引用，避免整树重渲染（tabDropHint 同款守卫）
+  const [termDropHint, setTermDropHint] = useState<"l" | "r" | "t" | "b" | null>(null);
   function applyTabOrder<T extends { id: string }>(list: T[]): T[] {
     const rank = tabOrderRef.current;
     if (!rank.length) return list;
@@ -2953,6 +2961,93 @@ export default function App() {
     if (sidRef.current) focusSession(sidRef.current);
   }, [applyPanes, fitTerminal, focusSession]);
 
+  // 拖拽组合分屏（标签拖到终端区松手）：把 target 放到指定槽位（main=左/上，
+  // second=右/下）。与 enterSplitWith 的差别：主格槽允许「被拖者当主格」（原焦点
+  // 退副格），且落点格拿焦点——拖放是指向动作，焦点跟手。已分屏时落到另一格=
+  // 替换（被拖者本在屏内即交换两格），落到自己格由调用方无操作。dir 仅建屏时生效。
+  const placeInSplit = useCallback(async (target: string, slot: "main" | "second", dir?: SplitDir) => {
+    const sp = splitRef.current;
+    if (!sp) {
+      const focus = sidRef.current;
+      if (!focus || focus === target) return; // 单会话无可组合对象
+      const d = dir ?? splitDirRef.current;
+      splitDirRef.current = d;
+      setSplitDir(d);
+      splitRef.current = slot === "main" ? { main: target, second: focus, dir: d } : { main: focus, second: target, dir: d };
+    } else if (target === sp.main || target === sp.second) {
+      if ((slot === "main") === (target === sp.main)) return; // 落到自己所在格
+      splitRef.current = { ...sp, main: sp.second, second: sp.main }; // 交换两格
+    } else {
+      splitRef.current = slot === "main" ? { ...sp, main: target } : { ...sp, second: target };
+    }
+    setSplitPanes(splitRef.current);
+    focusGenRef.current++; // 拖放同属用户导航（rev-r21 M1 焦点代际）
+    await ensureSessionTerm(target);
+    applySplitFrac();
+    applyPanes();
+    fitTerminal();
+    checkSplitWidthRef.current();
+    setTimeout(() => void fitTerminal(), 150);
+    focusSession(target);
+  }, [ensureSessionTerm, applySplitFrac, applyPanes, fitTerminal, focusSession]);
+
+  // 拖拽组合分屏：指针命中的分屏格（已分屏时提示与落格都按真实窗格几何，不做死象限）。
+  // 两格矩形贴合处（分割条覆盖的缝）按主格优先；未分屏时调用方不会走到
+  const paneAtPoint = (x: number, y: number): "main" | "second" => {
+    const sp = splitRef.current;
+    if (sp && termRef.current) {
+      for (const slot of ["main", "second"] as const) {
+        const el = termRef.current.querySelector(sp.dir === "tb"
+          ? (slot === "main" ? ".pane-top" : ".pane-bottom")
+          : (slot === "main" ? ".pane-left" : ".pane-right"));
+        const r = el?.getBoundingClientRect();
+        if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return slot;
+      }
+    }
+    return "main";
+  };
+
+  // 标签拖拽命中：指针下的目标标签（纵向 band 判定在调用方）；横向 ±3px 容差吃药丸缝隙
+  const tabAtPoint = (x: number, y: number): { sid: string; before: boolean } | null => {
+    for (const el of document.querySelectorAll(".tab")) {
+      const r = el.getBoundingClientRect();
+      if (y < r.top || y > r.bottom || x < r.left - 3 || x > r.right + 3) continue;
+      const hitSid = (el as HTMLElement).dataset.sid;
+      if (!hitSid) continue;
+      return { sid: hitSid, before: x < r.left + r.width / 2 };
+    }
+    return null;
+  };
+
+  // 拖拽松手裁决：标签条药丸上=重排；终端区=组合分屏（未分屏按主轴象限定槽位与方向，
+  // 已分屏按命中格）；标签条空白处=退出分屏（两会话保留）。都不满足=无操作
+  const finishTabDrag = (from: string, x: number, y: number) => {
+    const bar = tabbarRef.current?.getBoundingClientRect();
+    const inStrip = !!bar && x >= bar.left && x <= bar.right && y >= bar.top && y <= bar.bottom;
+    const tr = termRef.current?.getBoundingClientRect();
+    const inTerm = !!tr && x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom;
+    const hit = inStrip ? tabAtPoint(x, y) : null;
+    if (hit && hit.sid !== from) {
+      reorderTabs(from, hit.sid, hit.before);
+    } else if (inTerm && sessionsRef.current.length >= 2 && tr) {
+      const sp = splitRef.current;
+      let slot: "main" | "second";
+      let dir: SplitDir | undefined;
+      if (sp) {
+        slot = paneAtPoint(x, y);
+      } else {
+        const dx = (x - (tr.left + tr.width / 2)) / tr.width;
+        const dy = (y - (tr.top + tr.height / 2)) / tr.height;
+        const horiz = Math.abs(dx) > Math.abs(dy);
+        slot = (horiz ? dx < 0 : dy < 0) ? "main" : "second";
+        dir = horiz ? "lr" : "tb";
+      }
+      void placeInSplit(from, slot, dir);
+    } else if (inStrip && !hit && splitRef.current) {
+      exitSplit();
+    }
+  };
+
   // 关闭会话（标签 ×/⌘W/工具菜单共用，§6.4 统一「关闭会话」语义）：核心确认关闭
   // 后才 dispose；失败保留标签、画面与重试入口（§337）
   const disconnectSid = useCallback(async (id: string) => {
@@ -5042,35 +5137,83 @@ export default function App() {
               return (
                 <div
                   key={s.id}
+                  data-sid={s.id}
                   className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")
                     + (bellSids.has(s.id) ? " tab-bell" : "")
+                    + (tabDragSid === s.id ? " tab-drag-src" : "")
                     + (tabDropHint?.sid === s.id ? (tabDropHint.before ? " tab-drop-before" : " tab-drop-after") : "")}
-                  draggable={renaming?.sid !== s.id}
-                  onDragStart={(e) => {
-                    // 十五轮：拖拽排序——dataTransfer 不置数据 Chromium 不发起拖拽
-                    dragSidRef.current = s.id;
-                    e.dataTransfer.effectAllowed = "move";
-                    try { e.dataTransfer.setData("text/plain", s.id); } catch { /* 忽略 */ }
+                  onPointerDown={(e) => {
+                    // pointer 自定义拖拽（原因见 tabDragRef 注释）：仅左键且不在子控件
+                    // （✕/分屏钮/重命名输入框）上才起拖；不 preventDefault——保住 click、
+                    // 双击重命名、中键关闭
+                    if (e.button !== 0) return;
+                    if (e.target instanceof Element && e.target.closest("button, input")) return;
+                    dragClickSupRef.current = false;
+                    tabDragRef.current = { sid: s.id, startX: e.clientX, startY: e.clientY, active: false };
+                    e.currentTarget.setPointerCapture(e.pointerId);
                   }}
-                  onDragOver={(e) => {
-                    if (!dragSidRef.current || dragSidRef.current === s.id) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    const r = e.currentTarget.getBoundingClientRect();
-                    const before = e.clientX < r.left + r.width / 2;
-                    // dragover ≈ 每帧一发：落点不变则复用旧引用，拖拽悬停不再整树重渲染
-                    setTabDropHint((cur) => (cur?.sid === s.id && cur?.before === before ? cur : { sid: s.id, before }));
+                  onPointerMove={(e) => {
+                    const drag = tabDragRef.current;
+                    if (!drag || drag.sid !== s.id || !tabDragRef.current) return;
+                    if (!drag.active) {
+                      // 5px 阈值区分点击与拖拽（阈值前不动任何提示）
+                      if (Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY) < 5) return;
+                      drag.active = true;
+                      setTabDragSid(s.id);
+                      document.body.classList.add("tab-dragging");
+                    }
+                    // 悬停提示：标签条=插入位；终端区=组合分屏落格（已分屏按命中格）；
+                    // 其余区域清空。同值复用旧引用，拖拽悬停不整树重渲染
+                    const bar = tabbarRef.current?.getBoundingClientRect();
+                    const tr = termRef.current?.getBoundingClientRect();
+                    const inStrip = !!bar && e.clientX >= bar.left && e.clientX <= bar.right && e.clientY >= bar.top && e.clientY <= bar.bottom;
+                    const inTerm = !!tr && e.clientX >= tr.left && e.clientX <= tr.right && e.clientY >= tr.top && e.clientY <= tr.bottom;
+                    if (inStrip) {
+                      const hit = tabAtPoint(e.clientX, e.clientY);
+                      setTermDropHint((cur) => (cur ? null : cur));
+                      setTabDropHint((cur) => {
+                        const next = hit && hit.sid !== drag.sid ? hit : null;
+                        return next && cur?.sid === next.sid && cur?.before === next.before ? cur : next;
+                      });
+                    } else {
+                      setTabDropHint((cur) => (cur ? null : cur));
+                      if (inTerm && sessionsRef.current.length >= 2 && tr) {
+                        const sp = splitRef.current;
+                        let zone: "l" | "r" | "t" | "b";
+                        if (sp) {
+                          zone = paneAtPoint(e.clientX, e.clientY) === "main"
+                            ? (sp.dir === "tb" ? "t" : "l")
+                            : (sp.dir === "tb" ? "b" : "r");
+                        } else {
+                          const dx = (e.clientX - (tr.left + tr.width / 2)) / tr.width;
+                          const dy = (e.clientY - (tr.top + tr.height / 2)) / tr.height;
+                          zone = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "l" : "r") : (dy < 0 ? "t" : "b");
+                        }
+                        setTermDropHint((cur) => (cur === zone ? cur : zone));
+                      } else {
+                        setTermDropHint((cur) => (cur ? null : cur));
+                      }
+                    }
                   }}
-                  onDragLeave={() => { setTabDropHint((cur) => (cur?.sid === s.id ? null : cur)); }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = dragSidRef.current;
-                    const r = e.currentTarget.getBoundingClientRect();
-                    if (from && from !== s.id) reorderTabs(from, s.id, e.clientX < r.left + r.width / 2);
-                    dragSidRef.current = null;
+                  onPointerUp={(e) => {
+                    const drag = tabDragRef.current;
+                    tabDragRef.current = null;
+                    document.body.classList.remove("tab-dragging");
+                    if (!drag || drag.sid !== s.id) return;
+                    if (!drag.active) return; // 未过阈值=纯点击，click 事件照常激活
+                    setTabDragSid(null);
                     setTabDropHint(null);
+                    setTermDropHint(null);
+                    dragClickSupRef.current = true;
+                    finishTabDrag(drag.sid, e.clientX, e.clientY);
                   }}
-                  onDragEnd={() => { dragSidRef.current = null; setTabDropHint(null); }}
+                  onPointerCancel={() => {
+                    tabDragRef.current = null;
+                    setTabDragSid(null);
+                    setTabDropHint(null);
+                    setTermDropHint(null);
+                    document.body.classList.remove("tab-dragging");
+                  }}
                   title={`${label} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
                   aria-label={`${label}，${st.text}${inSplit ? "，在分屏中" : ""}${i < 9 ? `，⌘${i + 1}` : ""}`}
                   tabIndex={0}
@@ -5083,7 +5226,10 @@ export default function App() {
                     if (e.target !== e.currentTarget) return;
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id).catch((er) => pushToast("err", errMsg(er))); }
                   }}
-                  onClick={() => void attachSession(s.id).catch((e) => pushToast("err", errMsg(e)))}
+                  onClick={() => {
+                    if (dragClickSupRef.current) { dragClickSupRef.current = false; return; }
+                    void attachSession(s.id).catch((e) => pushToast("err", errMsg(e)));
+                  }}
                   onMouseDown={(e) => {
                     // 十四轮：中键关闭（浏览器/Windows Terminal 惯例），走与 ✕/右键
                     // 同一确认契约；preventDefault 压掉中键自动滚动
@@ -5409,7 +5555,8 @@ export default function App() {
               setPrefillEntry={setPrefillEntry} setRecentMenu={setRecentMenu}
             />
           )}
-          <div id="term" ref={termRef} onContextMenu={(e) => {
+          <div id="term" ref={termRef}
+            onContextMenu={(e) => {
             // 十一轮续：终端区右键——复制/粘贴/全选作用于右键命中的窗格（分屏时各格独立）；
             // 未命中具体窗格回退焦点窗格。无终端实例（欢迎页）交给系统默认行为
             if (termsRef.current.size === 0) return;
@@ -5443,6 +5590,13 @@ export default function App() {
                 onPointerCancel={onDivUp}
                 onDoubleClick={resetSplitFrac}
               />
+            )}
+            {/* 拖标签组合分屏：落点提示。高亮块 inset 吃 #term 的 --split-frac——
+                已分屏时高亮恰为真实窗格几何，未分屏（默认 .5）即为半区 */}
+            {termDropHint && (
+              <div className="drag-split-hint" data-testid="drag-split-hint">
+                <div className={"dsh-zone zone-" + termDropHint} />
+              </div>
             )}
           </div>
           {current?.state === "Disconnected" && (
@@ -5600,7 +5754,7 @@ export default function App() {
                 <div className="hk-title" id="dlg-osc52-title" data-testid="osc52-dialog">
                   远端请求写入剪贴板 · {sessions.find((s) => s.id === osc52Ask.sid)?.host_name ?? "会话"}
                 </div>
-                <div>远端程序通过 OSC 52 转义序列请求改写你本机的剪贴板——允许后现有内容会被覆盖，拒绝则不写入任何字节。读取类请求（查询）一律拒绝，不经此卡。</div>
+                <div>远端程序通过 OSC 52 转义序列请求改写你本机的剪贴板——允许后现有内容会被覆盖，拒绝则不写入任何字节。「始终允许」本次照写且此后不再询问（设置→终端 可改回）。读取类请求（查询）一律拒绝，不经此卡。</div>
                 <pre className="paste-preview mono" data-testid="osc52-preview">{osc52Ask.text.length > 400
                   ? osc52Ask.text.slice(0, 400) + `……（预览截断，共 ${osc52Ask.text.length} 字符）`
                   : osc52Ask.text}</pre>
@@ -5610,6 +5764,13 @@ export default function App() {
                     setOsc52Ask(null);
                     restoreTermFocus();
                   }}>允许写入</button>
+                  {/* 用户反馈：选区每次都弹卡太严——一键把策略翻 allow（走既有持久化），此后直写 */}
+                  <button className="ghost" data-testid="osc52-allow-forever" onClick={() => {
+                    osc52WriteRef.current(osc52Ask.sid, osc52Ask.text);
+                    changeOsc52Policy("allow");
+                    setOsc52Ask(null);
+                    restoreTermFocus();
+                  }}>始终允许</button>
                   <button className="ghost" data-autofocus data-testid="osc52-deny" onClick={() => { setOsc52Ask(null); restoreTermFocus(); }}>拒绝</button>
                 </div>
               </div>

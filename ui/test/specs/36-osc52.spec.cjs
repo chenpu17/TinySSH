@@ -1,5 +1,6 @@
 // 36 P2-c：OSC 52 写剪贴板策略 + OSC 9 通知。查询（?）一律拒（连询问卡都不弹）；
-// 写入三档——ask（默认）弹卡预览、allow 直写并 toast 告知、deny 静默吞；Esc=拒绝。
+// 写入三档——ask（默认）弹卡预览、allow 直写并 toast 告知、deny 静默吞；Esc=拒绝；
+// 卡上「始终允许」= 本次照写 + 策略持久化翻 allow（设置可改回）。
 // OSC 9 走响铃闪烁通路（恒开）。注入走 __t_terms（dev 探针），剪贴板经 context 授权后断言。
 const connect = async (page, name) => {
   const c = await page.$(`.host-card:has(.host-name:text-is("${name}"))`);
@@ -122,6 +123,33 @@ module.exports = {
     await inject(btoa("fresh-instance"));
     await page.waitForTimeout(400);
     ck.check("重连后新实例 OSC 52 仍弹卡", await dialogOpen());
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+
+    // ── 始终允许：本次照写 + 策略持久化翻 allow，此后直写不弹卡；设置可改回 ──
+    await inject(btoa("forever-payload"));
+    await page.waitForTimeout(400);
+    ck.check("卡上有「始终允许」按钮", await page.evaluate(() => !!document.querySelector("[data-testid=osc52-allow-forever]")));
+    await page.click("[data-testid=osc52-allow-forever]");
+    await page.waitForTimeout(500);
+    ck.check("始终允许：本次内容照写", (await clip()) === "forever-payload");
+    await inject(btoa("never-again"));
+    await page.waitForTimeout(400);
+    ck.check("始终允许后直写不再弹卡", !await dialogOpen() && (await clip()) === "never-again");
+    ck.check("始终允许已持久化 osc52=allow",
+      (await page.evaluate(() => JSON.parse(localStorage.getItem("ui.v2.workspace") ?? "{}").terminal?.osc52)) === "allow");
+    await page.click(".hb-settings");
+    await page.waitForTimeout(700);
+    await page.click('[data-testid="settings-cat-terminal"]');
+    await page.waitForTimeout(400);
+    ck.check("设置下拉同步显示 allow", await page.evaluate(() => document.querySelector('[data-testid="osc52-select"]')?.value === "allow"));
+    await page.selectOption('[data-testid="osc52-select"]', "ask");
+    await page.waitForTimeout(400);
+    await page.evaluate(() => document.querySelector('[data-testid="settings-close"]')?.click());
+    await page.waitForTimeout(300);
+    await inject(btoa("ask-again"));
+    await page.waitForTimeout(400);
+    ck.check("改回 ask 后恢复弹卡（可逆）", await dialogOpen());
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
 

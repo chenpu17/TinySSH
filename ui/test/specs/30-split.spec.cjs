@@ -1,5 +1,6 @@
 // 30 分屏交互（分屏⑥轮）：方向可选（左右/上下，记住上次选择）、分割条拖拽与双击复位、
-// 分屏中旋转布局、退出恢复单窗格。demo 预置 prod-1/staging-1 开箱即用，不依赖真连。
+// 分屏中旋转布局、退出恢复单窗格。拖拽组合轮：标签拖到终端区四象限建屏/换格/交换、
+// 拖到标签条空白退出分屏。demo 预置 prod-1/staging-1 开箱即用，不依赖真连。
 const rightClickTab = async (page, namePart) => {
   await page.evaluate((t) => {
     const tab = [...document.querySelectorAll(".tab")].find((x) => x.textContent.includes(t));
@@ -147,5 +148,115 @@ module.exports = {
     // 方向记忆=上次使用的方向：旋转到左右已把它改写为 lr（与下次点击行为自洽）
     const tabBtn2 = await splitBtnTitleOfStaging(page);
     ck.check("旋转改写方向记忆（回到右侧）", tabBtn2.includes("右"), tabBtn2);
+
+    // ── 拖拽组合分屏（拖标签到终端区，Windows Terminal 语义）──
+    // 拖拽组合分屏轮起标签拖拽是 pointer 自定义拖拽（HTML5 DnD 在 WebView2 被 wry
+    // 的 IDropTarget 接管根本发不起来）——playwright 真鼠标三端一致，demo 即测真路径。
+    // mode "over"=按住拖到位不松（断言悬停提示）；"drop"=拖到位松手
+    const tabDrag = async (namePart, fx, fy, mode = "drop") => {
+      const pos = await page.evaluate(({ t, x, y }) => {
+        const tab = [...document.querySelectorAll(".tab")].find((el) => el.textContent.includes(t));
+        if (!tab) throw new Error("tab not found: " + t);
+        // 抓标签文字中心（人手抓标签的自然位置，避开常显的分屏/关闭钮）
+        const s = tab.querySelector(".tab-label").getBoundingClientRect();
+        const el = document.getElementById("term");
+        const r = el.getBoundingClientRect();
+        return { sx: s.left + s.width / 2, sy: s.top + s.height / 2, tx: r.left + r.width * x, ty: r.top + r.height * y };
+      }, { t: namePart, x: fx, y: fy });
+      await page.mouse.move(pos.sx, pos.sy);
+      await page.mouse.down();
+      await page.mouse.move((pos.sx + pos.tx) / 2, (pos.sy + pos.ty) / 2, { steps: 4 });
+      await page.mouse.move(pos.tx, pos.ty, { steps: 4 });
+      await page.waitForTimeout(150);
+      if (mode === "over") return;
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+    };
+
+    // 两格归属按名牌（host_name）；hint 读落点提示层
+    const paneNames = () => page.evaluate(() => {
+      const name = (sel) => document.querySelector(sel)?.querySelector(".pane-tag")?.textContent ?? null;
+      return {
+        main: name(".pane-left, .pane-top"),
+        second: name(".pane-right, .pane-bottom"),
+        focused: name(".pane-focused"),
+        hint: document.querySelector('[data-testid="drag-split-hint"] .dsh-zone')?.className ?? null,
+      };
+    });
+
+    // ① 未分屏：拖 staging-1 悬停右半 → 出 zone-r 提示；松手 = 进右副格、焦点跟落点
+    await tabDrag("staging-1", 0.9, 0.5, "over");
+    const h1 = await paneNames();
+    ck.check("拖标签悬停终端区出象限提示（zone-r）", (h1.hint ?? "").includes("zone-r"), h1.hint ?? "无提示");
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    ck.check("拖右半建屏：双窗格", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
+    const p1 = await paneNames();
+    ck.check("右半=副格（本机主 / staging-1 副）", p1.main === "本机" && p1.second === "staging-1", JSON.stringify(p1));
+    ck.check("落点格拿焦点（staging-1）", p1.focused === "staging-1", JSON.stringify(p1));
+    ck.check("drop 后提示已清", !await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]')));
+
+    // ② 已分屏：拖主格标签落到另一格 = 交换两格，焦点跟到落点格
+    await tabDrag("本机", 0.9, 0.5, "drop");
+    await page.waitForTimeout(500);
+    const p2 = await paneNames();
+    ck.check("主格标签拖到另一格=交换两格", p2.main === "staging-1" && p2.second === "本机", JSON.stringify(p2));
+    ck.check("交换后焦点在落点格（本机）", p2.focused === "本机", JSON.stringify(p2));
+
+    // ③ 落到自己所在格 = 无操作
+    await tabDrag("本机", 0.9, 0.5, "drop");
+    await page.waitForTimeout(400);
+    const p3 = await paneNames();
+    ck.check("落到自己所在格无操作", p3.main === "staging-1" && p3.second === "本机" && p3.focused === "本机", JSON.stringify(p3));
+
+    // ④ 屏外会话（prod-1）拖到主格 = 替换主格，布局方向不动。
+    //    落点取 x=0.1：上轮分割条测试把 frac 留在 0.2，主格只占左侧 20% 宽
+    await tabDrag("prod-1", 0.1, 0.5, "drop");
+    await page.waitForTimeout(500);
+    const p4 = await paneNames();
+    const dirStillLr = await page.evaluate(() => !!document.querySelector(".pane-div.div-lr"));
+    ck.check("屏外会话拖到主格=替换主格", p4.main === "prod-1" && p4.second === "本机", JSON.stringify(p4));
+    ck.check("替换不动布局方向（仍 div-lr）", dirStillLr, "");
+    ck.check("替换后焦点在落点格（prod-1）", p4.focused === "prod-1", JSON.stringify(p4));
+
+    // ⑤ 拖到标签条空白处（非任何标签上）= 退出分屏，两会话保留
+    const blank = await page.evaluate(() => {
+      const bar = document.querySelector(".tabbar").getBoundingClientRect();
+      const tabs = document.querySelectorAll(".tab");
+      const last = tabs[tabs.length - 1].getBoundingClientRect();
+      return { x: Math.min(last.right + 40, bar.right - 8), y: bar.top + bar.height / 2 };
+    });
+    const src5 = await page.evaluate(() => {
+      const tab = [...document.querySelectorAll(".tab")].find((el) => el.textContent.includes("staging-1"));
+      const r = tab.querySelector(".tab-label").getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(src5.x, src5.y);
+    await page.mouse.down();
+    await page.mouse.move(blank.x, blank.y, { steps: 6 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    ck.check("拖到标签条空白=退出分屏且标签保留", (await paneCount(page)) === 0
+      && await page.evaluate(() => document.querySelectorAll(".tab").length) >= 2);
+
+    // ⑥ 单会话无可组合对象：悬停不出提示、drop 不建屏
+    const closeTab = async (namePart) => {
+      await rightClickTab(page, namePart);
+      await clickItem(page, "关闭会话");
+      await page.waitForTimeout(400);
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll(".confirm-dialog button")].find((x) => x.textContent.trim() === "关闭会话");
+        if (b) b.click();
+      });
+      await page.waitForTimeout(600);
+    };
+    await closeTab("prod-1");
+    await closeTab("staging-1");
+    await tabDrag("本机", 0.9, 0.5, "over");
+    ck.check("单会话拖终端区：无提示不建屏",
+      !await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]')) && (await paneCount(page)) === 0);
+    await page.mouse.up();
+    await page.waitForTimeout(300);
   },
 };
