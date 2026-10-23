@@ -134,7 +134,8 @@ export function FilesPanel({
                       for (const p of parts) { acc += "/" + p; segs.push({ label: p, path: acc }); }
                       return segs.map((s, i) => (
                         <span key={s.path} className="sftp-crumb-seg">
-                          {i > 0 && <span className="dim">/</span>}
+                          {/* 首段 label 本身是 "/"，自带斜杠；从第三段起才补分隔符，避免根路径渲染成 // */}
+                          {i > 1 && <span className="dim">/</span>}
                           {i < segs.length - 1 ? (
                             <button className="sftp-crumb" title={`进入 ${s.path}`} onClick={() => void navigateTo(s.path)}>{s.label}</button>
                           ) : (

@@ -32,6 +32,8 @@ interface SettingsPanelProps {
   closeSettings: () => void;
   settingsPanelRef: { current: HTMLDivElement | null };
   appVersion: string | null;
+  // 版本号轮：编译时间（build.rs 注入；演示域 null → 关于卡略去「编译于」段）
+  buildTime: string | null;
   // 外观与字号/缩放
   appearance: Appearance;
   changeAppearance: (a: Appearance) => void;
@@ -138,7 +140,7 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({
-  settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion,
+  settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   keymap, keymapRef, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
@@ -498,7 +500,7 @@ export function SettingsPanel({
                 )}
                 {identities.length === 0 ? (
                   <div className="dim cred-empty" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-empty">
-                    还没有凭据——用上面的「新建凭据…」生成或导入私钥，也可以在连接表单里保存。
+                    还没有凭据——用右上角的「新建凭据…」生成或导入私钥，也可以在连接表单里保存。
                   </div>
                 ) : (
                   <div style={{ marginTop: 4 }}>
@@ -752,7 +754,13 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                 <div className="set-card">
                 <h4 style={{ margin: "0 0 8px" }}>关于</h4>
                 <div style={{ fontSize: 12, lineHeight: 1.9 }}>
-                  <div data-testid="about-version">TinySSH v{appVersion ?? APP_VERSION}{inTauri ? "" : "（浏览器演示模式）"}</div>
+                  {/* 版本号轮：编译时间随版本号同排展示（build.rs 编译期注入；演示域
+                      无编译产物自动略去） */}
+                  <div data-testid="about-version">
+                    TinySSH v{appVersion ?? APP_VERSION}
+                    {buildTime ? <span className="dim">（{buildTime} 编译）</span> : null}
+                    {inTauri ? "" : "（浏览器演示模式）"}
+                  </div>
                   <div data-testid="about-author">作者：陈普</div>
                   <div className="dim">本地优先的 SSH 客户端：终端、主机库与凭据都留在本机。</div>
                   <div className="dim">凭据以加密形式存于本机凭据库，界面与日志只显示指纹。</div>

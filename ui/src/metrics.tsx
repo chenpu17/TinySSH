@@ -208,7 +208,7 @@ export function MetricsBar({ sid, kind, user, hostName }: {
       <span className="mseg" title="根分区用量">
         <span className="mlabel">磁盘</span>
         <PctBar pct={v?.diskPct ?? null} />
-        <span className="mval mnum">{v?.diskPct != null ? `/ ${v.diskPct}%` : "—"}</span>
+        <span className="mval mnum">{v?.diskPct != null ? `${v.diskPct}%` : "—"}</span>
       </span>
       <span style={{ flex: 1 }} />
       <button className="mpause" data-testid="metrics-pause" onClick={togglePause}

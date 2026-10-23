@@ -4241,6 +4241,35 @@ impl SessionManager {
         Ok(String::from_utf8_lossy(&outcome.stdout).into_owned())
     }
 
+    /// NPU 采样脚本（监控面板轮）：与 METRICS_SCRIPT 同款直连通路。有 npu-smi 则
+    /// 打 ==NPU== 标记后输出完整默认表格（stderr 并入，权限不足时前端可见原始报错），
+    /// 无则 NO_NPU——前端区分「无工具（隐藏 NPU 区）」与「有工具但表头未识别」。
+    const NPU_SCRIPT: &str = "if command -v npu-smi >/dev/null 2>&1; then echo ==NPU==; npu-smi info 2>&1; else echo NO_NPU; fi";
+
+    /// NPU 采样（监控面板轮）：Ascend 服务器 npu-smi 原文采样，解析放在前端——
+    /// 各 CANN 版本表格列略有差异，原文过通道便于前端防御性解析与真机校准。
+    /// 同 probe_metrics：人类专属、直连 Fresh 通道、无审批/无审计/无镜像回放。
+    /// npu-smi 首次调用可能偏慢（驱动初始化），超时放宽到 5s。
+    pub async fn probe_npu_metrics(&self, ctx: &Actor, sid: &str) -> Result<String> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("监控采样仅人类 GUI 入口".into()));
+        }
+        let h = self.get(sid)?;
+        let opts = ExecOpts {
+            mode: ExecMode::Fresh,
+            timeout: Some(std::time::Duration::from_secs(5)),
+            output_cap: Some(32 * 1024),
+            env: Default::default(),
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let cancel = CancellationToken::new();
+        let outcome = h
+            .channel
+            .exec_fresh(Self::NPU_SCRIPT, &opts, deadline, &cancel)
+            .await?;
+        Ok(String::from_utf8_lossy(&outcome.stdout).into_owned())
+    }
+
     /// 手动重连（GUI「重连」按钮；不在 SessionApi/MCP 面——断线恢复是人的基础设施动作）。
     /// 前置：会话处于 Disconnected（pump 已退出，自动重连 3 次均已失败或本地 shell 已死）。
     /// 与自动重连同构，但泵已不在：先订阅（broadcast 不因重连更换，UI 既有订阅继续有效）

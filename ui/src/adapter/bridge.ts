@@ -89,6 +89,10 @@ interface CmdArgs {
   exec_human: { sid: string; command: string };
   // 监控条（命令框退役轮）：只读采样，核心侧固定脚本、UI 不可注入命令
   read_host_metrics: { sid: string };
+  // 监控面板轮：Ascend npu-smi 原文采样，同一人类专属直连通路
+  read_npu_metrics: { sid: string };
+  // 版本号轮：编译时间（build.rs 注入的编译期常量，关于卡可溯源）
+  get_build_time: undefined;
   // 自身开销监控（本轮）：本进程 CPU/内存，无参只读
   read_self_metrics: undefined;
   set_control: { sid: string; owner: wire.ControlOwner; stopRunning?: boolean };
@@ -206,6 +210,9 @@ interface CmdRet {
   session_log_path: string | null;
   exec_human: wire.ExecResult;
   read_host_metrics: string;
+  read_npu_metrics: string;
+  // 演示域无编译产物，回 null（关于卡略去「编译于」段）
+  get_build_time: string | null;
   read_self_metrics: wire.SelfMetrics | null;
   set_control: wire.TakeoverReport;
   delegate_session: void;

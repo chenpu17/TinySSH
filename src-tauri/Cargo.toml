@@ -17,6 +17,8 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# 编译时间注入（build.rs → env TINYSSH_BUILD_TIME，关于卡可溯源）
+chrono = { workspace = true }
 
 [dependencies]
 tauri = { version = "2", features = [] }

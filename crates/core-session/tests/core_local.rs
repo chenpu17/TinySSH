@@ -1087,3 +1087,92 @@ async fn gbk_charset_roundtrip_over_ssh() {
     );
     m.close_session(&human(), sid).await.unwrap();
 }
+
+// ---- 监控面板采样（监控面板轮）：probe_metrics / probe_npu_metrics 直连通路 ----
+
+// 本地会话即可验的三件事：人类可采（不 error）、Agent 身份被人类专属门拦下、
+// 脚本不依赖注入（远端无 /proc 或无 npu-smi 时返回标记而非错误——本机 Windows
+// cmd 解析不了 POSIX if 也只是空输出/非零退出码，probe 仍 Ok）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn npu_probe_human_gate_and_local_ok() {
+    let m = manager().await;
+    let sid = m
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let base = m
+        .probe_npu_metrics(&human(), &sid)
+        .await
+        .expect("human probe must not error even on non-POSIX local shell");
+    let _ = base; // Windows 本地无 npu-smi：内容形状由 sshd e2e / live 测试锁
+
+    let err = m
+        .probe_npu_metrics(&agent_actor(), &sid)
+        .await
+        .expect_err("agent must be rejected");
+    assert!(matches!(err, Error::InvalidInput(_)), "got: {err:?}");
+    m.close_session(&human(), sid).await.unwrap();
+}
+
+// 走 e2e sshd 锁真实 SSH 通道：probe_metrics 出 /proc 样本、probe_npu_metrics
+// 在无 npu-smi 的容器里返回 NO_NPU 标记（前端据此隐藏 NPU 区）——通道、脚本、
+// 超时闸三者在真 Fresh 通道上过一遍。需 TINYSSH_E2E_SSHD=1 + docker tinyssh-e2e。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn metrics_and_npu_probe_over_sshd() {
+    if !std::env::var("TINYSSH_E2E_SSHD")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    let lock = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(Duration::from_secs(30)).await;
+    let _lock = lock;
+    let (_host, port, username, password) = tinyssh_testbed::sshd_endpoint();
+    let m = manager().await;
+    let hid = m
+        .upsert_host(
+            &human(),
+            HostDraft {
+                name: "e2e-probe".into(),
+                address: "127.0.0.1".into(),
+                port: Some(port),
+                username: username.into(),
+                auth: AuthDraft::Password {
+                    password: password.into(),
+                },
+                tags: vec![],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let m2 = m.clone();
+    let hid_spawn = hid.clone();
+    let t1 = tokio::spawn(async move {
+        m2.create_session(&human(), CreateSessionReq { host_id: hid_spawn })
+            .await
+    });
+    let it = wait_pending(&m, &hid).await;
+    m.decide_host_key(&human(), &it.id, true).await.unwrap();
+    let sid = t1.await.unwrap().expect("first-seen accept should connect");
+
+    let metrics = m
+        .probe_metrics(&human(), &sid)
+        .await
+        .expect("probe_metrics over sshd");
+    assert!(metrics.contains("MemTotal"), "stdout={}", metrics);
+
+    let npu = m
+        .probe_npu_metrics(&human(), &sid)
+        .await
+        .expect("probe_npu_metrics over sshd");
+    assert_eq!(npu.trim(), "NO_NPU", "容器无 npu-smi 应返回标记: {:?}", npu);
+    m.close_session(&human(), sid).await.unwrap();
+}

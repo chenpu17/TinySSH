@@ -28,12 +28,14 @@ import type {
   RestoreEntry,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
+import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
+import { isMonitorPaused, setMonitorPaused as setStoreMonitorPaused, setMonEnabled, syncMonitorTargets } from "./monitor-store";
 import {
   IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
   IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
   IconArrowDown, IconUpload, IconDownload, IconInbox, IconSearch, IconLoader,
   IconFolder, IconRefresh, IconMaximize, IconMinimize,
-  IconServer, IconBot, IconUsers, IconShuffle, IconRows, IconBlocks,
+  IconServer, IconBot, IconUsers, IconShuffle, IconRows, IconBlocks, IconGauge,
 } from "./icons";
 
 // macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
@@ -62,7 +64,7 @@ import type { DragDropEvent } from "@tauri-apps/api/webview";
 import "@xterm/xterm/css/xterm.css";
 // 拆分①抽出的共享层：数据/工具/hooks（app-data）与自包含组件（components/*）
 import {
-  altMetaSequence, ApprovalRow, APPEARANCES, auditLabel, AUDIT_LABELS,
+  altMetaSequence, ApprovalRow, APPEARANCES, APP_VERSION, auditLabel, AUDIT_LABELS,
   byName, hostMatches, phaseText,
   ChromePalette, ctrlCharOf, epistemicLabel, exitText,
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, hhmm, inputBlockedState,
@@ -713,6 +715,24 @@ export default function App() {
   const [fleetOpen, setFleetOpen] = useState(() => {
     try { return localStorage.getItem("ui.fleetbar") === "1"; } catch { return false; }
   });
+  // 监控大屏（大屏轮）：活动栏第四入口，多服务器资源监控（CPU/内存/网络 +
+  // Ascend NPU）。同左栏互斥族（现四向），持久键 ui.monitorbar。呈现为盖住
+  // 主区的整幅大屏（绝对定位覆盖层，终端不卸载），不再有侧栏宽度态。
+  const [monitorOpen, setMonitorOpen] = useState(() => {
+    try { return localStorage.getItem("ui.monitorbar") === "1"; } catch { return false; }
+  });
+  // 采样暂停（store 单例持真值，React 只镜像按钮态）：持久键与监控条的区分开，
+  // 两个面板语义独立（监控条暂停≠面板暂停）
+  const [monitorPaused, setMonitorPaused] = useState(isMonitorPaused);
+  // 采集开关（开关轮）：通用/NPU 两路独立 opt-in，localStorage 持久——开了就
+  // 后台持续采（关大屏不中断，store 的 syncMonitorTargets 自持链条），全关零
+  // 开销。与 store 初值同源同读（都读 tinyssh.monGeneral/monNpu），双向一致
+  const [monGeneral, setMonGeneral] = useState(() => {
+    try { return localStorage.getItem("tinyssh.monGeneral") === "1"; } catch { return false; }
+  });
+  const [monNpu, setMonNpu] = useState(() => {
+    try { return localStorage.getItem("tinyssh.monNpu") === "1"; } catch { return false; }
+  });
   const [agentWidth, setAgentWidth] = useState(() => {
     try {
       const v = Number.parseInt(localStorage.getItem("ui.agentbar_w") ?? "", 10);
@@ -1092,15 +1112,20 @@ export default function App() {
   // 切会话：把上一会话的未保存草稿按 sid 暂存；目标会话有暂存草稿则恢复，
   // 否则清空待本会话简报回填——绝不显示上一会话的目标（审核H1：A 的委托
   // 短暂出现在 B 的输入框里，被随手一存就把 A 的任务写进 B）
-  useEffect(() => {
-    const prev = prevSidRef.current;
-    if (prev && prev !== sid && goalDirty.current) goalDrafts.current.set(prev, goalDraft);
-    const stashed = sid ? goalDrafts.current.get(sid) : undefined;
-    if (stashed !== undefined) { setGoalDraft(stashed); goalDirty.current = true; }
-    else { goalDirty.current = false; setGoalDraft(""); }
-    prevSidRef.current = sid;
-    // 仅在 sid 变化时执行：goalDraft 取的是切换前渲染帧的旧会话草稿，正是要暂存的值
-  }, [sid]);
+  // 草稿换装必须**渲染期同步**（官方 adjust-state-on-prop-change 模式）：effect 版
+  // 先提交「新 sid + 旧草稿」再在 effect 里清——两拍之间必有一帧已画出的泄漏窗
+  // 口，16ms 逐帧采样器（15-goal H1 断言）撞上就闪 1 帧；渲染期 setState 让同一
+  // 次提交就带上正确草稿，窗口归零
+  {
+    const prevSid = prevSidRef.current;
+    if (prevSid !== sid) {
+      if (prevSid && goalDirty.current) goalDrafts.current.set(prevSid, goalDraft);
+      const stashed = sid ? goalDrafts.current.get(sid) : undefined;
+      if (stashed !== undefined) { goalDirty.current = true; setGoalDraft(stashed); }
+      else { goalDirty.current = false; setGoalDraft(""); }
+      prevSidRef.current = sid;
+    }
+  }
   // 目标输入框随内容自动增高（上限 150px ≈ 7 行半，超出转内部滚动）
   useEffect(() => {
     const el = goalRef.current;
@@ -1800,6 +1825,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   // T34：原生菜单「设置…⌘,」→ 打开显示设置面板；应用版本号（关于面板同源）
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  // 版本号轮：编译时间（build.rs 注入的编译期常量；演示域 demo 镜像回 null，
+  // 关于卡略去「编译于」段）
+  const [buildTime, setBuildTime] = useState<string | null>(null);
   useEffect(() => {
     if (!inTauri) return;
     // 走统一分发（R13 §7.2）：原生菜单加速器与键盘快捷键同一 action 语义
@@ -1807,6 +1835,7 @@ export default function App() {
       listen("menu-settings", () => { dispatchRef.current({ id: "settings" }); }),
     );
     getVersion().then(setAppVersion).catch(() => {});
+    invoke("get_build_time").then((t) => setBuildTime(t ?? null)).catch(() => {});
     return un;
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
@@ -2333,17 +2362,19 @@ export default function App() {
   }, []);
   const toggleHostbar = useCallback((open: boolean) => {
     setHostbarOpen(open);
-    // 活动栏轮：左栏视图互斥——展开主机栏即收起 Agent/编排视图（双写各自持久键）
+    // 活动栏轮：左栏视图互斥——展开主机栏即收起 Agent/编排/监控（双写各自持久键）
     if (open) {
       setAgentOpen(false);
       try { localStorage.setItem("ui.agentbar", "0"); } catch { /* 隐私模式忽略 */ }
       setFleetOpen(false);
       try { localStorage.setItem("ui.fleetbar", "0"); } catch { /* 隐私模式忽略 */ }
+      setMonitorOpen(false);
+      try { localStorage.setItem("ui.monitorbar", "0"); } catch { /* 隐私模式忽略 */ }
     }
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
     persistHostbarPrefs(open, hostbarWidthRef.current);
   }, [persistHostbarPrefs]);
-  // Agent 视图开关（活动栏 rail-agent / 命令面板同一入口）：与主机栏/编排视图互斥。
+  // Agent 视图开关（活动栏 rail-agent / 命令面板同一入口）：与主机栏/编排/监控互斥。
   // 关闭也落盘——刷新后保持「上次关了」的意图。
   const toggleAgent = useCallback((open: boolean) => {
     setAgentOpen(open);
@@ -2351,19 +2382,53 @@ export default function App() {
     if (open) {
       setFleetOpen(false);
       try { localStorage.setItem("ui.fleetbar", "0"); } catch { /* 隐私模式忽略 */ }
+      setMonitorOpen(false);
+      try { localStorage.setItem("ui.monitorbar", "0"); } catch { /* 隐私模式忽略 */ }
       if (hostbarOpenRef.current) toggleHostbar(false);
     }
   }, [toggleHostbar]);
-  // 编排者视图开关（Fleet 轮）：同款三向互斥。
+  // 编排者视图开关（Fleet 轮）：同款互斥族。
   const toggleFleet = useCallback((open: boolean) => {
     setFleetOpen(open);
     try { localStorage.setItem("ui.fleetbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
     if (open) {
       setAgentOpen(false);
       try { localStorage.setItem("ui.agentbar", "0"); } catch { /* 隐私模式忽略 */ }
+      setMonitorOpen(false);
+      try { localStorage.setItem("ui.monitorbar", "0"); } catch { /* 隐私模式忽略 */ }
       if (hostbarOpenRef.current) toggleHostbar(false);
     }
   }, [toggleHostbar]);
+  // 监控大屏开关（大屏轮）：同左栏互斥族（现四向）——开一个关其余，关闭
+  // 也落盘（刷新后保持「上次关了」的意图，与 Agent/Fleet 一致）。
+  const toggleMonitor = useCallback((open: boolean) => {
+    setMonitorOpen(open);
+    try { localStorage.setItem("ui.monitorbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+    if (open) {
+      setAgentOpen(false);
+      try { localStorage.setItem("ui.agentbar", "0"); } catch { /* 隐私模式忽略 */ }
+      setFleetOpen(false);
+      try { localStorage.setItem("ui.fleetbar", "0"); } catch { /* 隐私模式忽略 */ }
+      if (hostbarOpenRef.current) toggleHostbar(false);
+    }
+  }, [toggleHostbar]);
+  const toggleMonitorPause = useCallback(() => {
+    setMonitorPaused((p) => {
+      const next = !p;
+      setStoreMonitorPaused(next);
+      try { localStorage.setItem("tinyssh.monitorPaused", next ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+      return next;
+    });
+  }, []);
+  // 采集开关 toggle（开关轮）：React 态落地后由 effect 推给 store（store 负责落
+  // 盘与在存条目的差量收拾），这里只翻状态
+  const toggleMonGeneral = useCallback(() => setMonGeneral((g) => !g), []);
+  const toggleMonNpu = useCallback(() => setMonNpu((g) => !g), []);
+  // 开关 → store：落盘 + 差量收拾（关掉的一路清历史/拆条目）。先推开关再同步
+  // 目标（目标同步 effect 在 monitorCards 之后声明，同一次提交内按序执行）
+  useEffect(() => {
+    setMonEnabled({ general: monGeneral, npu: monNpu });
+  }, [monGeneral, monNpu]);
   const gripDrag = useRef(false);
   const gripRaf = useRef(0);
   const gripDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -2448,7 +2513,8 @@ export default function App() {
   // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
   const panelNeed = rightPanel === "collab" || rightPanel === "forwards" || rightPanel === "log" || rightPanel === "blocks" ? 400 : 384;
-  // 活动栏轮：availW 扣当前打开的左栏视图（主机栏或 Agent 视图，互斥不同时开）
+  // 活动栏轮：availW 扣当前打开的左栏视图（主机栏或 Agent 视图，互斥不同时开）。
+  // 大屏轮：监控改主区覆盖层（不挤占终端宽度），不再参与 availW 计算
   const availW = winW - (hostbarOpen ? hostbarWidth : agentOpen || fleetOpen ? agentWidth : 0);
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
@@ -4659,6 +4725,12 @@ export default function App() {
       run: () => toggleFleet(!fleetOpen),
     });
     items.push({
+      id: "toggle-monitor", group: "应用",
+      title: monitorOpen ? "关闭资源监控大屏" : "打开资源监控大屏（多服务器 + Ascend NPU）",
+      hint: "活动栏", keywords: "监控 资源 cpu 内存 网络 npu ascend 仪表 监视 面板",
+      run: () => toggleMonitor(!monitorOpen),
+    });
+    items.push({
       id: "toggle-focus", group: "应用",
       title: focusMode ? "退出专注模式" : "进入专注模式（界面全让位给终端）",
       hint: "F11", keywords: "全屏 zen focus 专注 沉浸 极简",
@@ -4695,6 +4767,49 @@ export default function App() {
       || (hasAgents && owner === "Agent")
     ));
 
+  // 监控大屏卡片数据（大屏轮）：按**服务器**去重——同一台机器的多条 SSH 连接
+  // 合一张卡（×N 徽标），采样也只走一条通道（monitor-store 按键单例，多条连接
+  // 对同一台机器各轮一遍 exec 是纯浪费）。键 = user@address:port（保存主机回查
+  // 得到；快速连接的主机不在 hosts 里，退回 @主机名——同名去重，异名不去）。
+  // Closed/Disconnected 不进大屏——已停采的机器不占卡片；Degraded/Reconnecting
+  // 保留存在感。代言会话选代表：优先 Connected、再当前激活标签，稳定不抖动；
+  // 代表关闭时同机其余会话自动顶上（store 重绑，历史曲线不断）。
+  const monitorCards: MonitorCardHost[] = useMemo(() => {
+    const keyOf = (s: SessionInfo): string => {
+      const h = hosts.find((x) => x.id === s.host_id);
+      return h ? `${h.username}@${h.address}:${h.port}` : `@${s.host_name}`;
+    };
+    const groups = new Map<string, SessionInfo[]>();
+    for (const s of sessions) {
+      if (s.kind !== "ssh" || s.state === "Closed" || s.state === "Disconnected") continue;
+      const k = keyOf(s);
+      const g = groups.get(k);
+      if (g) g.push(s); else groups.set(k, [s]);
+    }
+    const rank = (s: SessionInfo): number => ((s.state === "Connected" ? 0 : 1) * 2 + (s.id === sid ? 0 : 1));
+    return [...groups.entries()].map(([key, g]) => {
+      const rep = [...g].sort((a, b) => rank(a) - rank(b))[0];
+      return {
+        key,
+        sid: rep.id,
+        hostName: rep.host_name,
+        user: hosts.find((h) => h.id === rep.host_id)?.username,
+        state: rep.state,
+        active: g.some((s) => s.id === sid),
+        dup: g.length,
+        tabNames: g.map((s) => tabNames[s.id] ?? s.host_name),
+      };
+    });
+  }, [sessions, hosts, sid, tabNames]);
+
+  // 在连服务器 → store（开关轮）：条目生命周期的唯一入口。monitorCards 随会话
+  // 清单（3s 轮询）重算，effect 跟着重跑——新连接自动开采、关掉的连接自动拆
+  // 链；大屏关着也照跑（采集跟开关走，不跟面板走）。放在 monitorCards 声明后：
+  // deps 数组内联求值，前置会 TDZ 炸
+  useEffect(() => {
+    syncMonitorTargets(monitorCards.map((c) => ({ key: c.key, sid: c.sid })));
+  }, [monitorCards, monGeneral, monNpu]);
+
   return (
     <div className={"app-shell" + (focusMode ? " focus-mode" : "") + (focusMode && zenStripAuto ? " zen-auto" : "")}>
       {/* 标题区 44（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
@@ -4727,6 +4842,11 @@ export default function App() {
               title="「Agent 控制中」= Agent 可发起命令、经你审批执行；「我控制中」= 终端归你，Agent 冻结"
             ><span className="ctl-dot" />{owner === "Human" ? "我控制中" : hasAgents ? "Agent 控制中" : "手动控制"}</span>
           )}
+          {/* 版本号轮：标题栏右侧常驻版本（关于卡另有编译时间，悬停提示指引） */}
+          <span className="ver-tag" data-tauri-drag-region
+            title={`TinySSH v${appVersion ?? APP_VERSION}——编译时间见 设置 → 关于`}>
+            v{appVersion ?? APP_VERSION}
+          </span>
         </div>
         {inTauri && isWindowsPlatform() && <WinControls />}
       </header>
@@ -4773,6 +4893,13 @@ export default function App() {
             onClick={() => toggleFleet(!fleetOpen)}>
             <IconShuffle size={17} />
           </button>
+          <button className={"rail-btn" + (monitorOpen ? " ts-open" : "")} data-testid="rail-monitor"
+            title={`资源监控大屏：多服务器 CPU/内存/网络 与 Ascend NPU${monGeneral || monNpu ? "（后台采集中）" : ""}`} aria-pressed={monitorOpen}
+            onClick={() => toggleMonitor(!monitorOpen)}>
+            <IconGauge size={17} />
+            {/* 后台采集呼吸点（开关轮）：大屏关着也在采时给个环境提示 */}
+            {(monGeneral || monNpu) && <span className="rail-live" data-testid="rail-monitor-live" aria-hidden="true" />}
+          </button>
           <button className={"rail-btn rail-tail" + (showSettings ? " ts-open" : "")} data-testid="rail-settings"
             title="设置（外观 / 终端 / 凭据 / Agent）" aria-label="设置"
             onClick={() => dispatchRef.current({ id: "settings" })}>
@@ -4801,7 +4928,7 @@ export default function App() {
             pushToast={pushToast} refreshLists={refreshLists}
           />
         )}
-        {!hostbarOpen && !agentOpen && !fleetOpen && (
+        {!hostbarOpen && !agentOpen && !fleetOpen && !monitorOpen && (
           <button className="ghost icon-btn hb-expand" title="展开主机栏（⌘B）" aria-label="展开主机栏"
             onClick={() => toggleHostbar(true)}>
             <IconChevronRight size={15} />
@@ -4825,6 +4952,24 @@ export default function App() {
           />
         )}
         <main className="main">
+        {monitorOpen && (
+          /* 监控大屏（大屏轮 / 开关轮修订）：整幅主区覆盖层（main 已
+             position:relative）——终端/标签条不卸载、会话照常收数，关闭即露出
+             原视图。按服务器去重一卡一机；采样在 monitor-store 单例、由通用/
+             NPU 两枚开关驱动后台持续采集——关大屏链条不停，重开历史直接在，
+             全关零开销（未开启空态）；卡片头点击跳该机终端并收起大屏 */
+          <MonitorView
+            cards={monitorCards}
+            swGeneral={monGeneral}
+            swNpu={monNpu}
+            paused={monitorPaused}
+            onToggleGeneral={toggleMonGeneral}
+            onToggleNpu={toggleMonNpu}
+            onTogglePause={toggleMonitorPause}
+            onOpenSession={(target) => { void attachSession(target); toggleMonitor(false); }}
+            onClose={() => toggleMonitor(false)}
+          />
+        )}
         {/* 双接管按钮的语义说明不再常显（用户反馈：占一行没用处）——完整语义
             已在两钮的 title 悬停提示里（接管=冻结/待审批作废/跑着的不中断；
             接管并停止=再尝试停止/结果逐条显示），随用随看不占空间 */}
@@ -5526,6 +5671,7 @@ export default function App() {
               closeSettings={closeSettings}
               settingsPanelRef={settingsPanelRef}
               appVersion={appVersion}
+              buildTime={buildTime}
               autonomy={autonomy}
               onToggleAutonomy={toggleAutonomy}
               appearance={appearance}

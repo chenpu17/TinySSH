@@ -209,3 +209,10 @@ export const IconBlocks = (p: IconProps) => (
     <path d="m3.5 11.77 8.5 4.76 8.5-4.76" /><path d="m3.5 16.77 8.5 4.76 8.5-4.76" />
   </Svg>
 );
+
+// 资源监控（lucide gauge 同形：表盘 + 指针）
+export const IconGauge = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m12 14 4-4" /><path d="M3.34 19a10 10 0 1 1 17.32 0" />
+  </Svg>
+);

@@ -115,11 +115,17 @@ module.exports = {
     await page.waitForTimeout(500);
     const aboutPane = await paneTextOf(page, "settings-pane-about");
     ck.check("关于分区显示产品说明（TinySSH / 本地优先）", aboutPane.includes("TinySSH") && aboutPane.includes("本地优先"), aboutPane.slice(0, 80));
-    // 本轮：版本号（演示模式回退 package.json 同源 0.9.0）+ 作者署名
+    // 版本号轮：0.9.1（演示模式回退 package.json 同源；演示域无编译产物，
+    // 「（… 编译）」段自动略去——真机由 get_build_time 注入）
     const ver = await page.textContent("[data-testid=about-version]");
-    ck.check("关于分区显示版本号 v0.9.0", /TinySSH v0\.9\.0/.test(ver ?? ""), ver ?? "");
+    ck.check("关于分区显示版本号 v0.9.1（无编译时间段）",
+      /TinySSH v0\.9\.1/.test(ver ?? "") && !/编译/.test(ver ?? ""), ver ?? "");
     const author = await page.textContent("[data-testid=about-author]");
     ck.check("关于分区署名作者：陈普", author === "作者：陈普", author ?? "");
+    // 版本号轮：标题栏右侧常驻版本标签（同源 package.json 回退）
+    ck.check("标题栏右侧显示版本标签 v0.9.1",
+      await page.evaluate(() =>
+        /^v0\.9\.1$/.test(document.querySelector(".titlebar .ver-tag")?.textContent.trim() ?? "")));
 
     // 关闭
     await page.click("[data-testid=settings-close]");

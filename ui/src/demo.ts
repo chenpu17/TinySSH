@@ -1310,6 +1310,42 @@ case "read_triggers": {
         "/dev/vda1  61873092  32549412  26156664  56% /",
       ].join("\n");
     }
+    case "read_npu_metrics": {
+      // 监控面板轮（模拟）：prod-1 视作 2×910B2C 的 Ascend 节点，返回与真机
+      // 相同形状的 npu-smi 默认表格（瞬时值，无差分需求）；其余主机 NO_NPU——
+      // 与真实后端「无 npu-smi 返回标记」对齐，前端据此隐藏 NPU 区。数值随
+      // sin 缓摆出生命体征；不落审计（与直连通道不进审计对齐）。
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "SessionNotFound（演示）");
+      if (s.host_id !== "h-prod1") return "NO_NPU";
+      const t = Math.floor(Date.now() / 1000);
+      const aic = (i: number, base: number, amp: number) =>
+        Math.max(0, Math.round(base + amp * Math.sin(t / 13 + i * 2.1)));
+      const hbmU = (i: number) => 41000 + i * 2200 + Math.round(900 * Math.sin(t / 19 + i));
+      const pwr = (i: number) => (66 + 22 * Math.sin(t / 11 + i * 1.3)).toFixed(1);
+      const line1 = (i: number, name: string, health: string, pw: string, temp: number) =>
+        `| ${i}       ${name}            | ${health}            | ${pw}         ${temp}               0    / 0             |`;
+      const line2 = (bus: string, a: number, hU: number) =>
+        `| 0       0                 | ${bus}  | ${a}            0 / 0 ${hU}/ 65536           |`;
+      const n1 = Math.round(60 + 7 * Math.sin(t / 21));
+      const n2 = Math.round(57 + 9 * Math.sin(t / 27 + 1.4));
+      return [
+        "==NPU==",
+        "+------------------------------------------------------------------------------------------------+",
+        "| npu-smi 24.1.rc2                           Version: 24.1.rc2                                   |",
+        "+---------------------------+---------------+----------------------------------------------------+",
+        "| NPU     Name              | Health        | Power(W)     Temp(C)         Hugepages-Usage(page) |",
+        "| Chip    Device            | Bus-Id        | AICore(%)    Memory-Usage(MB)  HBM-Usage(MB)       |",
+        "+===========================+===============+====================================================+",
+        line1(0, "910B2C", "OK", pwr(0), n1),
+        line2("0000:5A:00.0", aic(0, 28, 26), hbmU(0)),
+        "+===========================+===============+====================================================+",
+        line1(1, "910B2C", "Warning", pwr(1), n2),
+        line2("0000:19:00.0", aic(1, 46, 30), hbmU(1)),
+        "+===========================+===============+====================================================+",
+      ].join("\n");
+    }
     case "read_self_metrics": {
       // 自身开销（本轮，模拟）：形状与真实后端一致（cpu_pct 恒有值——真实核心
       // 首样为 null，FE 以「—」呈现；demo 供恒定有效值便于浏览器域断言刷新）。
@@ -1988,6 +2024,9 @@ case "read_triggers": {
     case "open_url":
     case "bench_start":
     case "bench_report":
+      return null;
+    // 版本号轮：演示域无编译产物，回 null（关于卡略去「编译于」段）
+    case "get_build_time":
       return null;
     // 契约对齐（十轮）：settings 进程内存储（真实=vault 持久化；demo 原读写恒
     // null/丢弃——字体/主题等偏好在演示域往返断裂）

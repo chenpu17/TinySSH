@@ -827,6 +827,25 @@ async fn read_host_metrics(state: ApiState<'_>, sid: String) -> CmdResult<String
         .map_err(WireError::from)
 }
 
+/// 编译时间（版本号轮）：build.rs 注入的 env（本地时区 YYYY-MM-DD HH:MM），
+/// 关于卡「编译于 …」可溯源。纯编译期常量，不涉任何会话/凭据。
+#[tauri::command]
+fn get_build_time() -> String {
+    env!("TINYSSH_BUILD_TIME").to_string()
+}
+
+/// NPU 采样（监控面板轮）：Ascend npu-smi 原文数据源——与 read_host_metrics
+/// 同款人类专属直连 Fresh 采样（脚本固定在核心侧，UI 不可注入命令；不经审批/
+/// 审计，输出不回放终端）。无 npu-smi 的远端返回 NO_NPU，前端隐藏 NPU 区。
+#[tauri::command]
+async fn read_npu_metrics(state: ApiState<'_>, sid: String) -> CmdResult<String> {
+    state
+        .api
+        .probe_npu_metrics(&human(), &sid)
+        .await
+        .map_err(WireError::from)
+}
+
 // ---- 自身开销监控（本轮）：tinyssh-app 进程级 CPU%/内存——kernel32 直读，零新依赖 ----
 
 #[cfg(windows)]
@@ -2592,7 +2611,8 @@ fn main() {
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             scan_paste_danger,
             list_host_metadata, list_recent_hosts,
-            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers, read_restore,
+            read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_npu_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers, read_restore,
+            get_build_time,
             agent_model_get, agent_model_set, agent_send, agent_cancel, agent_history,
             shell_capability,
             list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,

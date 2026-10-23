@@ -212,6 +212,11 @@ body {
 }
 .tb-self .tb-self-val { color: var(--text); opacity: 0.85; }
 .tb-right { display: flex; align-items: center; gap: 6px; }
+/* 版本号轮：标题栏右侧常驻版本标签——11px 次要色随主题，不与控制权徽标抢眼 */
+.ver-tag {
+  font-size: 11px; color: var(--text-sub); font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
 /* 全局协作提醒（§3）：有待审批/Agent 活动必须显示，即使入口被收起——点击开协作面板 */
 .collab-badge {
   display: inline-flex; align-items: center; gap: 5px;
@@ -290,7 +295,7 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
   flex: none; width: 384px; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--border);
 }
-.task-panel.tp-full { position: absolute; inset: 0; width: auto; border-left: none; z-index: 40; }
+.task-panel.tp-full { position: absolute; inset: 0; width: auto; border-left: none; z-index: 55; }
 .tp-head {
   min-height: 40px; flex: none; display: flex; align-items: center; gap: 8px;
   padding: 0 10px; border-bottom: 1px solid var(--border); font-size: 12px;
@@ -323,7 +328,8 @@ button.sb-btn:not(:disabled):hover { background: var(--panel2); color: var(--tex
    想要的；此时它是常规流内一行，notice 横幅在其下正常排版，绝不被盖。 ===== */
 .focus-mode .titlebar, .focus-mode .hostbar, .focus-mode .hb-grip,
 .focus-mode .hb-expand, .focus-mode .session-toolbar, .focus-mode .statusbar,
-.focus-mode .actrail, .focus-mode .agentbar, .focus-mode .rb-rail { display: none; }
+.focus-mode .actrail, .focus-mode .agentbar,
+.focus-mode .rb-rail { display: none; }
 .focus-mode.zen-auto .tabbar-row {
   position: absolute; top: 0; left: 0; right: 0; z-index: 45;
   transform: translateY(calc(-100% + 6px));
@@ -374,7 +380,7 @@ button.sb-btn:not(:disabled):hover { background: var(--panel2); color: var(--tex
 .tools-menu button {
   text-align: left; background: none; border: none; color: var(--text);
   cursor: pointer; border-radius: 6px; font-size: 12px; padding: 7px 10px;
-  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px; min-width: 0;
 }
 .tools-menu button:not(:disabled):hover { background: var(--panel2); }
 .tools-menu .tm-main { flex: 1; }
@@ -445,6 +451,12 @@ input, select {
   /* UX 改版：输入框用 --bg 井底（比所在面板深一档的「凹陷」隐喻），panel2 留给浮起卡片 */
   background: var(--bg); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 6px 9px; font-size: 12px; width: 100%;
+}
+/* width:100% 只该管文本输入；checkbox/radio 是固定尺寸控件，放行后在 flex 行里
+   会把 .bp-name 这类 flex:1 兄弟挤到 0 宽（vis-r42：广播浮层整列主机名消失） */
+input[type="checkbox"], input[type="radio"] {
+  width: auto; flex: none; padding: 0;
+  background: transparent; border: none;
 }
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: none; border-color: var(--accent);
@@ -588,76 +600,92 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 
 /* 标签页（T19）：中栏顶部一条，与会话一一对应
    精致化（§5.3）：浏览器式上圆角改全圆角 pill，去常显描边，active 用轻投影圈 */
-/* 标签栏（五人走查·林姐重排）：行容器钉住滚动钮与尾部控件；.tabbar 只做横向
-   滚动。溢出时 overlay 滚动条不动就不出现——显式 ‹ › 钮是被藏标签的唯一提示 */
+/* 标签栏（药丸重设计，对标 Termius）：行容器钉住滚动钮与尾部控件；.tabbar 只做
+   横向滚动。标签改浮岛药丸——放弃旧「激活标签与工具栏底缘相接」的连接隐喻，
+   换辨识度：药丸在井色条带上一眼可数，激活态 accent 软底 + 描边 + 微浮阴影，
+   悬停有 120ms 过渡。溢出时显式 ‹ › 钮仍是被藏标签的唯一提示 */
 .tabbar-row {
-  display: flex; align-items: flex-end; gap: 2px; flex: none;
-  padding: 5px 10px 0; height: 40px;
-  /* UX 五轮：条带保持井色 --bg，但激活标签改与下方工具栏同为 panel 且底缘相接——
-     标签「长」在 console 区域上（浏览器式连接），不再是浮在井里的孤岛 */
+  display: flex; align-items: center; gap: 4px; flex: none;
+  padding: 0 10px; height: 40px;
   background: var(--bg);
 }
-/* 非标签行内控件（滚动钮/所有标签/新建连接/退出分屏）在 flex-end 容器里保持垂直居中；
+/* 非标签行内控件（滚动钮/所有标签/新建连接/退出分屏）保持垂直居中；
    仍不折行：窄视口+分屏时「退出分屏」曾 4 字竖排把行撑到 95px（视觉核验员实测） */
 .tabbar-row .ghost, .tabbar-row .tab-scroll { align-self: center; white-space: nowrap; flex: none; }
 .tabbar {
-  display: flex; align-items: flex-end; gap: 2px; flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0;
   align-self: stretch;
   overflow-x: auto; overflow-y: hidden;
+  padding: 5px 2px; /* 药丸悬停底/焦点环的呼吸空间，滚动裁剪不出界 */
 }
 .tab-scroll {
   flex: none; width: 20px; height: 22px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 14px; line-height: 1; color: var(--text-sub);
-  background: transparent; border: 1px solid var(--border); border-radius: 5px;
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
   cursor: pointer;
 }
 button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(--text); }
 .tab {
-  display: flex; align-items: center; gap: 5px; flex: none; min-width: 120px;
-  max-width: 220px; height: 33px; padding: 0 11px; font-size: 12px; font-weight: 500; color: var(--text-sub);
-  border: none; border-radius: 8px 8px 0 0;
-  background: transparent; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 7px; flex: none; min-width: 120px;
+  max-width: 220px; height: 30px; padding: 0 6px 0 10px; font-size: 12px; font-weight: 500; color: var(--text-sub);
+  border: 1px solid transparent; border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 45%, transparent); cursor: pointer; user-select: none;
+  position: relative;
+  transition: background 120ms, color 120ms, border-color 120ms, box-shadow 120ms;
 }
-/* 井色条带上的悬停：半透 panel 浮起；排除激活态（激活标签不因悬停褪成半透） */
-.tab:not(.tab-active):hover { background: color-mix(in srgb, var(--panel) 55%, transparent); color: var(--text); }
-/* UX 五轮：激活标签 = 与工具栏同色（panel）+ 顶部 2px accent 指示条，底缘与工具栏
-   无缝相接——同一 panel 色在标签/工具栏间无界线，连接感由色面连续性给出 */
-.tab-active { background: var(--panel); color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
+/* 非激活悬停：药丸浮起成实色；激活态不因悬停褪回 */
+.tab:not(.tab-active):hover { background: var(--panel2); color: var(--text); }
+/* 激活药丸：accent 软底 + 半透 accent 描边 + 微浮阴影 + 顶缘高光一线；
+   底色用 panel2 混 accent——深浅主题下都与井色条带拉开一档 */
+.tab-active {
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel2));
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--text);
+  box-shadow: 0 1px 6px var(--shadow-soft), inset 0 1px 0 color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* 分屏成员标记：文字提亮 + 药丸底缘内侧 2px accent 短线（::after 定位，不动
+   box-shadow——激活态阴影与拖拽指示都住 box-shadow，不能互抢） */
 .tab-pane { color: var(--text); }
-.tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
-.tab-dot.ok { background: var(--ok); }
-.tab-dot.err { background: var(--danger); }
+.tab-pane::after {
+  content: ""; position: absolute; left: 9px; right: 9px; bottom: 2px; height: 2px;
+  border-radius: 1px; background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
+.tab-dot.ok { background: var(--ok); box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 50%, transparent); }
+.tab-dot.err { background: var(--danger); box-shadow: 0 0 5px color-mix(in srgb, var(--danger) 55%, transparent); }
 .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 十四轮：标签行内重命名框——占住标签文字位，描边用 accent 标示编辑态 */
 .tab-rename {
   width: 96px; min-width: 0; height: 22px; padding: 0 4px; font-size: 12px;
   color: var(--text); background: color-mix(in srgb, var(--panel2) 70%, transparent);
-  border: 1px solid var(--accent); border-radius: 5px; outline: none;
+  border: 1px solid var(--accent); border-radius: 7px; outline: none;
 }
-/* 十五轮：拖拽排序落点指示——目标标签左/右缘 2px accent 竖条（激活态叠加顶条不丢） */
+/* 十五轮：拖拽排序落点指示——目标药丸左/右缘 2px accent 竖条（激活态把浮起
+   阴影一并带上，阴影换型不丢型） */
 .tab-drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tab-drop-after { box-shadow: inset -2px 0 0 var(--accent); }
-.tab-active.tab-drop-before { box-shadow: inset 0 2px 0 var(--accent), inset 2px 0 0 var(--accent); }
-.tab-active.tab-drop-after { box-shadow: inset 0 2px 0 var(--accent), inset -2px 0 0 var(--accent); }
-/* 十六轮：BEL 标签闪烁——accent 软底脉冲 3 次（6s 自清），恒开不设开关 */
+.tab-active.tab-drop-before { box-shadow: inset 2px 0 0 var(--accent), 0 1px 6px var(--shadow-soft); }
+.tab-active.tab-drop-after { box-shadow: inset -2px 0 0 var(--accent), 0 1px 6px var(--shadow-soft); }
+/* 十六轮：BEL 标签闪烁——accent 光环脉冲 3 次（6s 自清），恒开不设开关。
+   用 box-shadow 环不用 background 脉冲：激活药丸的底色/描边不被动画打断 */
 @keyframes bell-pulse {
-  0%, 100% { background-color: transparent; }
-  50% { background-color: var(--accent-soft); }
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 3px var(--accent-soft); }
 }
 .tab-bell { animation: bell-pulse 1.4s ease-in-out 3; }
-.tab-active.tab-bell { animation: bell-pulse 1.4s ease-in-out 3; box-shadow: inset 0 2px 0 var(--accent); }
-@media (prefers-reduced-motion: reduce) { .tab-bell, .tab-active.tab-bell { animation: none; } }
-/* R27（§7.4）：关闭/分屏改真按钮——键盘可达+focus-visible；视觉盒保持 18px 原样 */
+@media (prefers-reduced-motion: reduce) { .tab-bell { animation: none; } }
+/* R27（§7.4）：关闭/分屏改真按钮——键盘可达+focus-visible；圆形药丸内嵌钮，
+   默认收 75% 存在感，悬停满色 */
 .tab-split, .tab-x {
   flex: none; width: 18px; height: 18px;
   display: inline-flex; align-items: center; justify-content: center;
   background: none; border: none; padding: 0;
-  border-radius: 4px; color: var(--dim); cursor: pointer;
+  border-radius: 50%; color: var(--dim); cursor: pointer; opacity: 0.75;
 }
-button.tab-split:not(:disabled):hover { background: var(--accent-ring); color: var(--accent); }
+button.tab-split:not(:disabled):hover { background: var(--accent-ring); color: var(--accent); opacity: 1; }
 /* UX 三轮：关闭钮悬停用淡红底替代实红块——危险语义保留，视觉不再刺耳 */
-button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(--danger); }
+button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(--danger); opacity: 1; }
 /* 欢迎页（T32 重设计）：居中卡片式空状态，品牌标记 + 分组引导 + 快捷动作 */
 /* UX 三轮精修：原盒裸浮于满屏虚空（最大设计短板）。加舞台光晕（::before 径向
    accent-soft，深浅色板各有取值）+ 盒体卡片化（panel 渐变底 + 描边 + 浮起阴影），
@@ -708,17 +736,18 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .term-search input { width: 180px; padding: 4px 8px; }
 .term-search button { padding: 2px 8px; font-size: 12px; line-height: 1.4; }
 /* 显示设置弹出面板（T18）：悬浮于终端右上角；透明遮罩点击面板外即关。
-   R41 视觉复验 B5：右栏面板进入**完整视图**态时 `.task-panel.tp-full` 是 z-index 40，
-   而遮罩/对话框原为 29/30——窄窗（≲1104px）下「工具→活动记录」把面板转成 tp-full 后，
-   再开「连接详情」会被整块盖住（1024×768 实测 11/11 元素不可达，屏幕上只剩活动记录）。
-   模态必须高于常驻面板：遮罩 41、对话框 42。
-   R41 代码复验 C-2：**凡与 `.pop-mask` 配对的浮层都必须高于遮罩**——`.split-menu` 原是
-   与遮罩同级的 30，遮罩一抬到 41 就把自己的菜单盖死（真鼠标点击实测：菜单项中心命中
-   `pop-mask`，分屏从未进入）。故同族浮层一并抬到遮罩之上（`.split-menu` 43）。
-   全部仍低于 `.confirm-mask`(90)/toast(120)/`.tools-menu`(70)/右键菜单(200)。 */
-.pop-mask { position: fixed; inset: 0; z-index: 41; }
+   R41 视觉复验 B5：右栏面板进入**完整视图**态时 `.task-panel.tp-full` 与遮罩/对话框
+   的相对次序——模态必须高于常驻面板（原 40/41/42，窄窗实测 11/11 元素不可达后定的序）。
+   R41 代码复验 C-2：**凡与 `.pop-mask` 配对的浮层都必须高于遮罩**——`.split-menu`
+   与遮罩同级时把自己的菜单盖死（分屏从未进入）。
+   开关轮 z 复检：家族整体从 40/41/42/43 抬到 55/56/57/58——监控大屏（.mon-dash 46，
+   main 内覆盖层）骑在这个家族与 tabbar（44/45）之间，**设置面板在大屏开着时必须
+   可见可点**（用户实测「监控面板下设置打不开」），相对次序原样平移不破 B5/C-2。
+   全部仍低于 `.broadcast-pop`(60)/`.tools-menu`(70)/`.confirm-mask`(90)/palette(90)/
+   toast(120)/右键菜单(200)。 */
+.pop-mask { position: fixed; inset: 0; z-index: 56; }
 .term-settings {
-  position: absolute; top: 10px; right: 14px; z-index: 42;
+  position: absolute; top: 10px; right: 14px; z-index: 57;
   width: 280px; background: var(--panel2); border: 1px solid var(--border);
   border-radius: 12px; padding: 12px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
 }
@@ -822,7 +851,7 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
   overflow-y: auto;
 }
 .settings-nav button {
-  display: flex; align-items: center; gap: 10px; text-align: left;
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px; text-align: left;
   border: 1px solid transparent; background: transparent; box-shadow: none;
   color: var(--text-sub); font-weight: 400;
   font-size: 13px; padding: 8px 10px; border-radius: 8px;
@@ -1166,7 +1195,7 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 }
 .sftp-menu-title { font-size: 11px; color: var(--dim); padding: 4px 8px 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sftp-menu button {
-  display: flex; align-items: center; gap: 6px; background: none; border: none;
+  display: flex; align-items: center; justify-content: flex-start; gap: 6px; background: none; border: none;
   color: var(--text); font-size: 12px; padding: 6px 8px; cursor: pointer; text-align: left; border-radius: 6px;
 }
 .sftp-menu button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -1213,15 +1242,16 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 .dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 4px 10px var(--shadow-soft), 0 24px 64px var(--shadow-dialog); pointer-events: auto; }
 
 /* R25 §322 分屏菜单：复用已有会话 / 在右侧新建会话（§185 同源的浮层工艺）。
-   R41 代码复验 C-2：本菜单与 `.pop-mask` 是同父兄弟——遮罩抬到 41（B5）后必须同步高于它，
-   否则自己的遮罩吃掉自己的点击（分屏永久进不去）。故 30 → 43。 */
+   R41 代码复验 C-2：本菜单与 `.pop-mask` 是同父兄弟——必须高于遮罩，
+   否则自己的遮罩吃掉自己的点击（分屏永久进不去）。30 → 43 → 58（开关轮随
+   设置家族整体平移，见 .pop-mask 处注释）。 */
 .split-menu {
-  position: absolute; top: 10px; right: 14px; z-index: 43;
+  position: absolute; top: 10px; right: 14px; z-index: 58;
   width: 260px; background: var(--panel2); border: 1px solid var(--border);
   border-radius: 12px; padding: 10px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
   display: flex; flex-direction: column; gap: 2px;
 }
-.split-menu .sm-item, .ctx-menu .sm-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
+.split-menu .sm-item, .ctx-menu .sm-item { display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
 .split-menu .sm-item .sm-name, .ctx-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 分屏⑥轮：方向选择（左右/上下）分段单选——选中态 accent 描边；记住的选择
    沿用到标签分屏钮/右键项，直到下次改选 */
@@ -1234,10 +1264,11 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 .split-menu .sm-dir:hover { border-color: var(--border-hover); color: var(--text); }
 .split-menu .sm-dir.on { border-color: var(--accent); color: var(--accent); background: var(--accent-ring); font-weight: 600; }
 /* 十一轮 §6.3 修订：右键上下文菜单（标签/主机卡/终端区共用 .ctx-menu）——fixed 跟随
-   指针。R41 C-2 同族教训：配对遮罩的浮层必须高于 .pop-mask(41)，取 44（.split-menu 43
-   同层语义，互不重叠） */
+   指针。R41 C-2 同族教训：配对遮罩的浮层必须高于 .pop-mask。开关轮随遮罩家族平移
+   （41→56）：44 → 66，高于 split-menu(58)；真实鼠标点菜单项曾被 56 的自家遮罩吃掉
+   （22 号 spec 收尾「关闭会话」超时实测——evaluate 里 .click() 不经命中测试才没炸） */
 .ctx-menu {
-  position: fixed; z-index: 44;
+  position: fixed; z-index: 66;
   width: 236px; background: var(--panel2); border: 1px solid var(--border);
   border-radius: 10px; padding: 6px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
   display: flex; flex-direction: column; gap: 1px;
@@ -1384,7 +1415,7 @@ button.hb-tag.on:not(:disabled):hover { color: var(--accent); border-color: var(
 .welcome-recents { margin: 4px 0 12px; display: flex; flex-direction: column; gap: 4px; }
 .wr-title { font-size: 11px; color: var(--dim); margin-bottom: 2px; }
 .wr-row {
-  display: flex; align-items: center; gap: 8px; text-align: left;
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px; text-align: left;
   padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--panel2); cursor: pointer; font-size: 12px;
   /* 十五轮补：全局 button 规则给的是 --on-accent（白），浅色主题下 wr-name 白字白底
@@ -2151,6 +2182,18 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   padding: 0 3px; border-radius: 7px; background: var(--accent-fill); color: var(--on-accent);
   font-size: 10px; line-height: 14px; text-align: center; font-weight: 600;
 }
+/* 后台采集呼吸点（开关轮）：rail-monitor 右上角小绿点——大屏关着也在采的环境
+   提示；2s 呼吸不抢眼，reduced-motion 下退化为常亮点 */
+.rail-live {
+  position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok); box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 60%, transparent);
+  animation: rail-live-breathe 2s ease-in-out infinite;
+}
+@keyframes rail-live-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) { .rail-live { animation: none; } }
 .rb-rail {
   flex: none; width: 40px; display: flex; flex-direction: column; align-items: center;
   gap: 6px; padding: 10px 0; background: var(--panel); border-left: 1px solid var(--border);
@@ -2161,6 +2204,181 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   flex: none; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-right: 1px solid var(--border); position: relative;
 }
+/* 监控大屏（大屏轮）：整幅主区覆盖层（main 内绝对定位铺满）——终端不卸载，
+   关屏即露出原视图。响应式卡片网格 + 环形仪表，全部吃主题 token。
+   z-index 46：盖过 tabbar/notice/zen-pill（44/45）与 dead-overlay（20），
+   低于全局 fixed 层与设置家族（tp-full 55/pop-mask 56/term-settings 57/
+   split-menu 58——大屏开着时设置必须可开，见 .pop-mask 处注释）。 */
+.mon-dash {
+  position: absolute; inset: 0; z-index: 46;
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg); overflow: hidden;
+}
+.mon-dash-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+  color: var(--text);
+}
+.mon-dash-sub { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mon-dash-hint { color: var(--dim); font-size: 11px; opacity: 0.75; }
+.mon-dash .mpause, .mon-dash-head .ghost.icon-btn { flex: none; }
+/* 采集开关（开关轮）：头部药丸开关——旋钮圆点常在，开着变 accent 并发光 */
+.mon-sw {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 10px 0 6px; font-size: 11px; font-weight: 600;
+  color: var(--text-sub); background: transparent;
+  border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.mon-sw:hover { border-color: var(--border-hover); color: var(--text); }
+.mon-sw .mon-sw-knob {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  background: var(--panel3); border: 1px solid var(--border);
+  transition: background 120ms, border-color 120ms, box-shadow 120ms;
+}
+.mon-sw.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.mon-sw.on .mon-sw-knob { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
+/* 未开启空态（开关轮）：虚线框舞台 + 两张大开关卡（hover 预演打开态） */
+.mon-offboard {
+  flex: 1; overflow-y: auto; margin: 18px 16px; padding: 30px 32px;
+  display: flex; flex-direction: column; gap: 12px; align-items: flex-start;
+  border: 1px dashed var(--border); border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 40%, transparent);
+}
+.mon-off-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.mon-off-sub { font-size: 12px; line-height: 1.9; color: var(--dim); max-width: 620px; }
+.mon-off-sub b { color: var(--text-sub); }
+.mon-off-sw { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.mon-swcard {
+  display: flex; align-items: center; justify-content: flex-start; gap: 14px; min-width: 250px;
+  padding: 12px 14px; text-align: left; cursor: pointer;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 12px;
+  transition: border-color 120ms, background 120ms;
+}
+.mon-swcard:hover { border-color: var(--accent-line); background: var(--panel); }
+.mon-swcard-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mon-swcard-txt b { font-size: 13px; color: var(--text); }
+.mon-swcard-txt span { font-size: 11px; color: var(--dim); }
+.mon-sw-visual {
+  flex: none; position: relative; width: 32px; height: 18px; border-radius: 999px;
+  background: var(--panel3); border: 1px solid var(--border);
+  transition: background 140ms, border-color 140ms;
+}
+.mon-sw-visual::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--dim);
+  transition: left 140ms ease, background 140ms;
+}
+.mon-swcard:hover .mon-sw-visual { border-color: var(--accent-line); background: var(--accent-soft); }
+.mon-swcard:hover .mon-sw-visual::after { left: 16px; background: var(--accent); }
+.mon-off-note { font-size: 11px; color: var(--dim); opacity: 0.85; }
+.mon-grid {
+  flex: 1; overflow-y: auto; padding: 14px 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 12px; align-content: start;
+}
+.mon-empty {
+  grid-column: 1 / -1; color: var(--dim); font-size: 12px;
+  padding: 48px 16px; text-align: center; line-height: 1.8;
+}
+.mon-card {
+  display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  overflow: hidden;
+}
+.mon-card.active { border-color: var(--accent-line); }
+.mon-card.degraded { opacity: 0.75; }
+.mon-card-head {
+  display: flex; align-items: center; justify-content: flex-start; gap: 7px; width: 100%; padding: 8px 12px;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); font-family: inherit; font-size: 12.5px; cursor: pointer; text-align: left;
+}
+.mon-card-head:hover { background: var(--panel3); }
+.mon-card.active .mon-card-name { color: var(--accent); }
+.mon-card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mon-dup {
+  flex: none; font-size: 10px; font-variant-numeric: tabular-nums;
+  color: var(--accent); border: 1px solid var(--accent-line); border-radius: 6px; padding: 0 5px;
+}
+.mon-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.mon-dot.off { background: var(--warn); }
+.mon-state { font-size: 10px; color: var(--warn); flex: none; }
+.mon-card-body { padding: 10px 12px 11px; display: flex; flex-direction: column; gap: 8px; }
+.mon-card-note { font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.mon-card-note.bad { color: var(--warn); }
+.mon-retry {
+  font-size: 11px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px;
+  background: none; color: var(--text-sub); cursor: pointer; font-family: inherit;
+}
+.mon-retry:hover { color: var(--text); border-color: var(--border-hover); }
+/* 环形仪表：双环居中；弧线颜色分档（默认 accent / 60+ warn / 85+ danger） */
+.mon-rings { display: flex; align-items: flex-start; justify-content: center; gap: 22px; }
+.mon-ring { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; min-width: 0; }
+.mon-ring-dial { position: relative; width: 64px; height: 64px; }
+.mon-ring-dial .rbg { fill: none; stroke: var(--panel3); stroke-width: 5.5; }
+.mon-ring-dial .rfg {
+  fill: none; stroke: var(--accent); stroke-width: 5.5;
+  transition: stroke-dasharray 0.6s ease-out, stroke 0.3s;
+}
+.mon-ring.warm .rfg { stroke: var(--warn); }
+.mon-ring.hot .rfg { stroke: var(--danger); }
+.mon-ring-num {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text);
+}
+.mon-ring.warm .mon-ring-num { color: var(--warn); }
+.mon-ring.hot .mon-ring-num { color: var(--danger); }
+.mon-ring-lab { font-size: 10px; color: var(--dim); letter-spacing: 0.5px; }
+.mon-ring-sub {
+  max-width: 110px; font-size: 10px; color: var(--text-sub); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mon-row .mon-spark { flex: 1; min-width: 40px; }
+.mon-up { overflow: hidden; text-overflow: ellipsis; }
+.mon-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.mon-lab { flex: none; width: 26px; color: var(--dim); }
+/* CPU 走势图（开关轮）：头行=标签+时间轴，折线满宽在下；此前的光秃折线
+   没名没轴被用户认不出是什么 */
+.mon-chart { display: flex; flex-direction: column; gap: 3px; }
+.mon-chart-head { display: flex; align-items: baseline; gap: 8px; }
+.mon-chart-head .mon-lab { width: auto; }
+.mon-axis { margin-left: auto; font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.mon-num { font-variant-numeric: tabular-nums; color: var(--text-sub); white-space: nowrap; }
+.mon-num.dim { color: var(--dim); }
+.mon-num.down { color: var(--accent); }
+.mon-num.up { color: var(--ok); }
+.mon-bar {
+  flex: 1; max-width: 160px; height: 4px; border-radius: 2px;
+  background: var(--panel3); overflow: hidden;
+}
+.mon-bar i {
+  display: block; height: 100%; border-radius: 2px;
+  background: var(--accent-fill); transition: width 0.35s ease-out;
+}
+.mon-bar.hot i { background: var(--warn); }
+.mon-spark { flex: none; color: var(--border); }
+.mon-spark polyline { stroke: var(--accent); }
+.mon-spark.cpu { display: block; }
+.mon-spark.cpu polyline { stroke: var(--accent); opacity: 0.85; }
+.mon-spark.net .p2 { stroke: var(--ok); }
+.mon-npu { border-top: 1px dashed var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.mon-npu-head { font-size: 10px; color: var(--dim); letter-spacing: 0.5px; }
+.mon-npu-chip { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
+.mon-npu-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mon-npu-top .mon-num { margin-left: auto; }
+.mon-npu-usage { display: flex; align-items: center; gap: 6px; }
+.mon-npu-usage .mon-lab { width: auto; }
+.mon-npu-idx { color: var(--text); font-weight: 600; }
+.mon-npu-name { color: var(--text-sub); }
+.mon-hbadge { font-size: 10px; border-radius: 5px; padding: 0 5px; border: 1px solid var(--border); color: var(--dim); }
+.mon-hbadge.ok { color: var(--ok); border-color: var(--ok-line); }
+.mon-hbadge.bad { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.mon-dash .mpause {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 5px;
+  background: transparent; color: var(--dim); cursor: pointer;
+}
+.mon-dash .mpause:hover { background: var(--panel3); color: var(--text); }
 .ag-head {
   flex: none; display: flex; align-items: center; gap: 7px; padding: 9px 10px 9px 12px;
   border-bottom: 1px solid var(--border); color: var(--text); min-height: 38px;

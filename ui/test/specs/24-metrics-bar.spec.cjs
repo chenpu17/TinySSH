@@ -59,7 +59,7 @@ module.exports = {
     ck.check("内存段=用量/总量 GB", /\d+\.\d{2} \/ \d+\.\d{2} GB/.test(flat), flat);
     ck.check("网络段有收发速率", /↓/.test(flat) && /↑/.test(flat) && /(B\/s|KB\/s|MB\/s)/.test(flat), flat);
     ck.check("运行段有时长", /运行\s*(刚刚|\d+ 分钟|\d+ 小时|\d+ 天)/.test(flat), flat);
-    ck.check("磁盘段=根分区 56%", /磁盘.*\/ 56%/.test(flat), flat);
+    ck.check("磁盘段=根分区 56%", /磁盘.*56%/.test(flat), flat);
 
     // 暂停切换：按钮 aria-pressed 翻转（demo 后端供样恒成功，采样停止在真实域验证）
     const pressed0 = await page.evaluate(() => document.querySelector('[data-testid="metrics-pause"]')?.getAttribute("aria-pressed"));
