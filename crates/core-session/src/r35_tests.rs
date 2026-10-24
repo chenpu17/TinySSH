@@ -290,9 +290,11 @@ fn mk_sess(
         up_fail: AtomicBool::new(false),
         down_fail: AtomicBool::new(false),
     });
-    // R35 源侧判别（生产契约：上传源必须存在且非目录）：本套件固定本地源落真实文件
+    // R35 源侧判别（生产契约：上传源必须存在且非目录）：本套件固定本地源落真实文件。
+    // 父目录先建 + 硬失败（.ok() 吞错在干净机上 = 源静默缺席，见 r32 夹具注）
+    std::fs::create_dir_all("/tmp").unwrap();
     for p in ["/tmp/r35-a.bin", "/tmp/r35-b.bin", "/tmp/r35-c.bin"] {
-        std::fs::write(p, b"r35-src").ok();
+        std::fs::write(p, b"r35-src").unwrap();
     }
     let h = SessionHandle::new(
         sid.into(),
@@ -749,7 +751,8 @@ async fn r35_retry_revalidates_source() {
         LinkPlan::Committed,
     );
     register(&m, h);
-    std::fs::write("/tmp/r35-gone.bin", b"r35").ok();
+    // 硬失败同夹具注：吞错会让「重试换名」用例静默缺源
+    std::fs::write("/tmp/r35-gone.bin", b"r35").unwrap();
     c.up_fail.store(true, AtomicOrd::SeqCst);
     let old = m
         .upload(

@@ -281,10 +281,12 @@ fn mk(
         stat_hits: AtomicU32::new(0),
     });
     // R35 源侧判别（生产契约：上传源必须存在且非目录；下载远端源须可 stat）：
-    // 本套件固定源路径——本地源真实落盘、远端源进 mock stat map
-    std::fs::write("/tmp/src.bin", b"r34-src").ok();
+    // 本套件固定源路径——本地源真实落盘、远端源进 mock stat map。
+    // 父目录先建 + 硬失败（.ok() 吞错在干净机上 = 源静默缺席，见 r32 夹具注）
+    std::fs::create_dir_all("/tmp").unwrap();
+    std::fs::write("/tmp/src.bin", b"r34-src").unwrap();
     for p in ["/tmp/a.bin", "/tmp/b.bin", "/tmp/c.bin"] {
-        std::fs::write(p, b"r34-src").ok();
+        std::fs::write(p, b"r34-src").unwrap();
     }
     c.seed("/remote/src.bin", 64);
     let h = SessionHandle::new(

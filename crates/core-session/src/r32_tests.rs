@@ -236,14 +236,18 @@ fn mk_handle(center: Arc<ApprovalCenter>, up: TxPlan, down: TxPlan) -> Arc<Sessi
         scrollback: 100,
         lossless_cap: 1 << 20,
     });
-    // R35 源侧判别（生产契约：上传源必须存在且非目录）：本套件固定源路径落真实文件
+    // R35 源侧判别（生产契约：上传源必须存在且非目录）：本套件固定源路径落真实文件。
+    // 父目录先建 + 失败即 panic——曾用 .ok() 吞错：干净机（CI runner）上 /tmp
+    //（Windows 解析为 D:\tmp）不存在，源静默缺席 → 上传恒 Failed「源文件不存在」，
+    // 是否翻车取决于此前有没有下载类测试恰好建出该目录（顺序赌博）。
+    std::fs::create_dir_all("/tmp").unwrap();
     for p in [
         "/tmp/src.tar.gz",
         "/tmp/a.bin",
         "/tmp/big.bin",
         "/tmp/v.bin",
     ] {
-        std::fs::write(p, b"r32-src").ok();
+        std::fs::write(p, b"r32-src").unwrap();
     }
     // 下载源=远端语义（ns_stat→channel.stat_entry），故在 mock 文件表登记下载源
     // （R35 源侧判别同样适用；不登记则下载恒「源文件不存在」，遮蔽数据阶段注入）
