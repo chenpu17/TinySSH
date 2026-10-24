@@ -28,15 +28,34 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm, cache-dependency-path: ui/package-lock.json }
       - run: cargo fmt --all --check
+      # 元数据/依赖拉取探针：把解析阶段失败与编译失败分开定位
+      - run: |
+          set -o pipefail
+          if ! cargo metadata --format-version 1 >meta.json 2>meta.err; then
+            n=0
+            while IFS= read -r l; do
+              if [ -n "$l" ]; then echo "::error::META $l"; n=$((n+1)); fi
+              [ $n -ge 10 ] && break
+            done < meta.err
+            exit 1
+          fi
       - run: |
           set -o pipefail
           cargo clippy --workspace --exclude tinyssh-app --quiet 2>&1 | tee clippy.log
-      - name: 失败时把错误尾部写进 step summary（匿名可读，无需登录看日志）
+      - name: 失败时错误尾部进 step summary + 注解（注解经公开 API 匿名可读）
         if: failure()
         run: |
           printf '### clippy tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 200 clippy.log >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
+          awk '/^error/{found=1} found' clippy.log | head -40 > err.txt || true
+          if [ -s err.txt ]; then
+            split -l 4 err.txt chunk_
+            for c in chunk_*; do
+              msg=$(cat "$c" | tr '\n' ' ' | cut -c1-240)
+              echo "::error::CLIPPY $msg"
+            done
+          fi
       - run: |
           set -o pipefail
           cargo test --workspace --lib --bins --exclude tinyssh-app 2>&1 | tee core-test.log
@@ -71,7 +90,7 @@ jobs:
           cargo test --workspace -j 4 2>&1 | Tee-Object -FilePath test.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         shell: pwsh
-      - name: 失败时把测试失败尾部写进 step summary（匿名可读，无需登录看日志）
+      - name: 失败时测试失败尾部进 step summary + 注解（注解经公开 API 匿名可读）
         if: failure()
         shell: pwsh
         run: |
@@ -79,6 +98,19 @@ jobs:
           Add-Content $env:GITHUB_STEP_SUMMARY '```'
           Get-Content test.log -Tail 250 | Add-Content $env:GITHUB_STEP_SUMMARY
           Add-Content $env:GITHUB_STEP_SUMMARY '```'
+          $lines = Get-Content test.log
+          $hit = $lines | Select-String -Pattern 'failures:|panicked at|test result: FAILED|error\['
+          $tail = @($hit | Select-Object -First 20 | ForEach-Object { $_.Line })
+          if (-not $tail -or $tail.Count -eq 0) { $tail = @($lines | Select-Object -Last 20) }
+          $chunk = ''; $n = 0
+          foreach ($l in $tail) {
+            if (($chunk + ' ' + $l).Length -gt 230) {
+              Write-Host "::error::TESTS $chunk"
+              $chunk = ''; $n++; if ($n -ge 10) { break }
+            }
+            $chunk = ($chunk + ' ' + $l).Trim()
+          }
+          if ($chunk -and $n -lt 10) { Write-Host "::error::TESTS $chunk" }
 
   tier2:
     name: ubuntu · UI specs（PR / 手动）
