@@ -2,6 +2,7 @@
 
 > 版本：v1.32 · 日期：2026-10-03 · 验收对象：V0 thin-slice MVP（[PRD v0.5 §10](../prd.md)、[L1 v0.5](../architecture/l1-component-design.md)、[validation-plan v0.4](../validation-plan.md)）
 > 验收方式：自动化测试 + Spike 基准 + GUI 交互走查 + **独立 subagent 审计与复跑（v1.1 新增，见 §5）**；全部可复现（见 §7 复现指令）。
+> 注：2026-10-24 开源迁移时，`docs/acceptance/` 下的全部截图（含本文引用）已从仓库与历史中剥离（内部验收画面含真实环境信息）；本报告文本与复现指令不受影响。
 
 ---
 

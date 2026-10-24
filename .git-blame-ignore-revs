@@ -1,3 +1,4 @@
 # rustfmt 全量归一（CI 三档轮）：一次性机械格式化，git blame 请忽略本提交。
 # 启用：git config blame.ignoreRevsFile .git-blame-ignore-revs
-2ecb9436cc2c6a6a1c2c68e3a411d5b1c1a3aa0a
+# 注：开源迁移轮 filter-branch 剥离 docs 截图后全史 SHA 变化，此处已同步为新 SHA。
+bbfbb701f0c9ee39875c4a29b3efca1325cfcb4f

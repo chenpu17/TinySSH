@@ -4,3 +4,8 @@
 # 调试/发布同链路，避免用 RUSTFLAGS 环境变量切换造成缓存全量重编震荡。
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# git 依赖统一走 git CLI 拉取：尊重用户 git 配置（insteadOf 覆写、代理），
+# 弱网下也比 libgit2 内建传输稳。TinyAgent 内核即经此通路解析。
+[net]
+git-fetch-with-cli = true

@@ -5,7 +5,11 @@ edition = "2021"
 description = "TinySSH 内置 Agent 宿主：tiny-agent-core 驱动的会话内对话 agent，工具桥接 SSH 会话"
 
 [dependencies]
-tiny_agent = { package = "tiny-agent-core", path = "../../../git/tiny-a/crates/core" }
+# TinyAgent 内核走 git 依赖（开源轮）：克隆本仓库即编译，无需并排 checkout 姊妹仓库。
+# 钉 rev = TinyAgent 开源首推 master（v0.4.2 tag 还是 kernel 拆分前的旧单体布局，
+# 不含 crates/core）；待 TinyAgent 发布含 kernel 的 0.4.3 tag 后可改钉 tag。
+# 本机网络受限时配 url."git@github.com:".insteadOf 把 https 覆写成 ssh 拉取（见 CLAUDE.md）。
+tiny_agent = { package = "tiny-agent-core", git = "https://github.com/chenpu17/TinyAgent", rev = "10c77e01076868bdd83bd961feba5fa5eaf17293" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -13,4 +17,4 @@ serde_json = "1"
 [dev-dependencies]
 # mock provider 仅测试构建统一进来（cargo feature 统一规则：dev-dependencies 的
 # feature 在测试构建生效，release 构建不受影响）——离线跑通「对话→工具→审批」全链。
-tiny_agent = { package = "tiny-agent-core", path = "../../../git/tiny-a/crates/core", features = ["mock"] }
+tiny_agent = { package = "tiny-agent-core", git = "https://github.com/chenpu17/TinyAgent", rev = "10c77e01076868bdd83bd961feba5fa5eaf17293", features = ["mock"] }
