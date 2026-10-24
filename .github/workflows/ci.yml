@@ -18,12 +18,12 @@ on:
 jobs:
   tier1:
     name: ubuntu · fmt + clippy + core tests + ui build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
-        with: { components: rustfmt, clippy }
+        with: { components: "rustfmt,clippy" }
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm, cache-dependency-path: ui/package-lock.json }
@@ -48,7 +48,7 @@ jobs:
           printf '### clippy tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 200 clippy.log >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
-          awk '/^error/{found=1} found' clippy.log | head -40 > err.txt || true
+          head -80 clippy.log > err.txt || true
           if [ -s err.txt ]; then
             split -l 4 err.txt chunk_
             for c in chunk_*; do
@@ -62,6 +62,7 @@ jobs:
       - name: 失败时把测试失败尾部写进 step summary
         if: failure()
         run: |
+          [ -f core-test.log ] || exit 0
           printf '### core tests tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 200 core-test.log >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
@@ -115,7 +116,7 @@ jobs:
   tier2:
     name: ubuntu · UI specs（PR / 手动）
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
@@ -139,7 +140,7 @@ jobs:
   tier3:
     name: ubuntu · e2e（docker sshd，手动档 3）
     if: github.event.workflow_dispatch.inputs.tier == '3'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }

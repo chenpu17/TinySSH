@@ -444,14 +444,32 @@ async fn r32_cancel_mid_flight() {
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
     m.cancel_transfer(&human, h.id.clone()).await.unwrap();
-    // Cancelling 可见（进行中任务 → 取消请求即刻呈现，不等传输循环返回）
-    let soon = m
+    // Cancelling 可见（进行中任务 → 取消请求呈现，不等传输循环返回）。
+    // 单发读取在慢 runner 上会撞上状态翻转前一拍（CI 实测翻车）——给有界
+    // 宽限轮询，契约不变：取消必须在有界时间内呈现为 Cancelling/Cancelled。
+    let mut soon = m
         .list_transfers(&human)
         .await
         .unwrap()
         .into_iter()
         .find(|t| t.id == h.id)
         .unwrap();
+    for _ in 0..100 {
+        if matches!(
+            soon.status,
+            TransferStatus::Cancelling | TransferStatus::Cancelled
+        ) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        soon = m
+            .list_transfers(&human)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == h.id)
+            .unwrap();
+    }
     assert!(
         matches!(
             soon.status,

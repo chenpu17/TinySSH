@@ -1158,9 +1158,11 @@ async fn r34_cancel_before_publish_wins() {
         )
         .await
         .unwrap();
-    // 等任务进提交窗口（Gated 发布=已过检查点前一瞬——用复检 stat 阻塞模拟：
-    // 直接以发布挂起为窗口，在挂起期取消；线性化点=publish 本身）
-    for _ in 0..200 {
+    // 等进提交窗口：publish 被 gate 挂起 → Committing 无限期驻留，轮询到它为止。
+    // 不能接受 Running——那会把取消挪进 publish 前的合法取消窗口（慢 runner 上
+    // 首查即 Running 时必得 Cancelled，CI 实测翻车）；本测的线性化点是 publish 本身。
+    let mut entered = false;
+    for _ in 0..2000 {
         if matches!(
             m.list_transfers(&Actor::Human)
                 .await
@@ -1168,12 +1170,14 @@ async fn r34_cancel_before_publish_wins() {
                 .into_iter()
                 .find(|x| x.id == t.id)
                 .map(|x| x.status),
-            Some(TransferStatus::Committing) | Some(TransferStatus::Running)
+            Some(TransferStatus::Committing)
         ) {
+            entered = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    assert!(entered, "未在 20s 内进入 Committing（gate 挂起发布）");
     m.cancel_transfer(&Actor::Human, t.id.clone())
         .await
         .unwrap();
