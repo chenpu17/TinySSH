@@ -48,7 +48,10 @@ jobs:
           printf '### clippy tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 200 clippy.log >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
-          head -80 clippy.log > err.txt || true
+          # 注解每步限 10 条：error 行（带上下文）优先——head 全文会被排在前面
+          # 的 warning 淹没，真 error 挤不进前 40 行（CI 实测翻车）。
+          grep -n -B2 -A8 '^error' clippy.log > err.txt || true
+          [ -s err.txt ] || head -80 clippy.log > err.txt || true
           if [ -s err.txt ]; then
             split -l 4 err.txt chunk_
             for c in chunk_*; do

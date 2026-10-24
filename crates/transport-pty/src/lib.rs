@@ -631,35 +631,39 @@ impl ChannelHandle for LocalPtyChannel {
         let mut command = tokio::process::Command::new(&shell);
         #[cfg(unix)]
         command.arg("-c").arg(cmd);
-        #[cfg(windows)]
         // Windows 下 SHELL 可能被启动环境改写（Git Bash 里 SHELL=/usr/bin/bash）——
         // 按选定 shell 族给参：powershell 系 -NoProfile -Command，cmd 系 /c，bash 系 -c。
         // 曾犯的错：shell 选择 SHELL 感知、参数写死 powershell → bash 报 "-N: invalid option"；
         // cmd 族此前漏配（落到 -c）：cmd 不认 -c，只会打横幅后退出——cmd 本机会话
         // Shell 模式被门拒后 Fresh 是唯一通路，必须可用（P1 扩面同轮补齐）。
-        let family = {
-            let s = shell.to_ascii_lowercase();
-            let base = s.rsplit(['/', '\\']).next().unwrap_or(&s);
-            let base = base.strip_suffix(".exe").unwrap_or(base);
-            if base.contains("powershell") || base.contains("pwsh") {
-                2
-            } else if base == "cmd" {
-                1
-            } else if base == "wsl" {
-                3
+        // family 的计算与分派必须整体收在同一个 cfg(windows) 块里——曾把 let family
+        // 单独 cfg 而使用裸奔，unix 侧 E0425（本地 Windows 永远编译不到，CI ubuntu 首爆）。
+        #[cfg(windows)]
+        {
+            let family = {
+                let s = shell.to_ascii_lowercase();
+                let base = s.rsplit(['/', '\\']).next().unwrap_or(&s);
+                let base = base.strip_suffix(".exe").unwrap_or(base);
+                if base.contains("powershell") || base.contains("pwsh") {
+                    2
+                } else if base == "cmd" {
+                    1
+                } else if base == "wsl" {
+                    3
+                } else {
+                    0
+                }
+            };
+            if family == 2 {
+                command.arg("-NoProfile").arg("-Command").arg(cmd);
+            } else if family == 1 {
+                command.arg("/c").arg(cmd);
+            } else if family == 3 {
+                // wsl.exe：`-- <cmd>` 经默认发行版 shell 执行；-c 会被当发行版名
+                command.arg("--").arg(cmd);
             } else {
-                0
+                command.arg("-c").arg(cmd);
             }
-        };
-        if family == 2 {
-            command.arg("-NoProfile").arg("-Command").arg(cmd);
-        } else if family == 1 {
-            command.arg("/c").arg(cmd);
-        } else if family == 3 {
-            // wsl.exe：`-- <cmd>` 经默认发行版 shell 执行；-c 会被当发行版名
-            command.arg("--").arg(cmd);
-        } else {
-            command.arg("-c").arg(cmd);
         }
         for (k, v) in &opts.env {
             command.env(k, v);

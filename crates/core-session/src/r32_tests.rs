@@ -9,13 +9,20 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrd};
 use std::time::Duration;
 
 /// 传输行为计划：Succeed=分片推进至 total（每片前 sleep 可测取消）；
-/// HoldGate=等待外部放行再成功（供事件时序断言）；Fail=注入失败。
+/// HoldGate=等待外部放行再成功（供事件时序断言）；Fail=注入失败；
+/// SucceedHoldAfterFirst=首片上报后挂起等放行——取消类测试用它把「在途」
+/// 钉成确定态（不赌轮询预算/取消落点）。
 #[derive(Clone)]
 enum TxPlan {
     Succeed {
         total: u64,
         chunk: u64,
         pause_ms: u64,
+    },
+    SucceedHoldAfterFirst {
+        total: u64,
+        chunk: u64,
+        gate: Arc<AtomicBool>,
     },
     HoldGate {
         total: u64,
@@ -49,6 +56,28 @@ async fn run_plan(
             let mut done = 0u64;
             while done < *total {
                 tokio::time::sleep(Duration::from_millis(*pause_ms)).await;
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                done = (done + *chunk).min(*total);
+                progress(done, Some(*total));
+            }
+            Ok(done)
+        }
+        TxPlan::SucceedHoldAfterFirst { total, chunk, gate } => {
+            // 首片立即上报（bytes=chunk）进入在途，随后挂起：gate 不置位就永不
+            // 推进。取消在挂起期落地 → 泵从挂起轮询的取消检查退出，字节停在
+            // 首片——「在途字节保留」不再依赖取消与时序赛跑（CI 慢 runner 实测
+            // 两种翻法：预算耗尽取消早于数据 / 取消落进末片后检查点前）。
+            let mut done = (*chunk).min(*total);
+            progress(done, Some(*total));
+            while done < *total {
+                while !gate.load(AtomicOrd::SeqCst) {
+                    if cancel.is_cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
                 if cancel.is_cancelled() {
                     return Err(Error::Cancelled);
                 }
@@ -405,14 +434,15 @@ async fn r32_running_progress_frames() {
 #[tokio::test]
 async fn r32_cancel_mid_flight() {
     let m = mgr();
+    let gate: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     register(
         &m,
         mk_handle(
             m.center.clone(),
-            TxPlan::Succeed {
+            TxPlan::SucceedHoldAfterFirst {
                 total: 1_048_576,
                 chunk: 4096,
-                pause_ms: 40,
+                gate: gate.clone(),
             },
             TxPlan::Fail { total: 1 },
         ),
@@ -428,9 +458,10 @@ async fn r32_cancel_mid_flight() {
         )
         .await
         .unwrap();
-    // 等在途进度落地（bytes>0）再取消——保证「取消保留在途字节」断言可判别
-    //（取消先于任何 progress 则字节本就 0，不构成抹账）
-    for _ in 0..100 {
+    // 等确定性在途信号：首片 4096B 已上报且泵已挂起（此后不再推进）——
+    // 取消落在挂起期，字节钉在首片，>0 与 <total 都不再靠时序运气。
+    let mut entered = false;
+    for _ in 0..1000 {
         let row = m
             .list_transfers(&human)
             .await
@@ -438,11 +469,13 @@ async fn r32_cancel_mid_flight() {
             .into_iter()
             .find(|t| t.id == h.id)
             .unwrap();
-        if row.status == TransferStatus::Running && row.bytes_done > 0 {
+        if row.status == TransferStatus::Running && row.bytes_done == 4096 {
+            entered = true;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    assert!(entered, "未在 10s 内进入在途挂起（首片未上报）");
     m.cancel_transfer(&human, h.id.clone()).await.unwrap();
     // Cancelling 可见（进行中任务 → 取消请求呈现，不等传输循环返回）。
     // 单发读取在慢 runner 上会撞上状态翻转前一拍（CI 实测翻车）——给有界
