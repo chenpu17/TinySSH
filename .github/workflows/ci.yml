@@ -59,16 +59,29 @@ jobs:
               echo "::error::CLIPPY $msg"
             done
           fi
+      # 超时上限：linux 侧疑似存在挂死测试（实测本步骤 90min+ 不完成；windows 同
+      # 构步骤 ~25min）。超时被杀也能靠下方转储看到日志尾（最后完成的测试）+ 进程表
+      #（挂死二进制名）。
       - run: |
           set -o pipefail
           cargo test --workspace --lib --bins --exclude tinyssh-app 2>&1 | tee core-test.log
-      - name: 失败时把测试失败尾部写进 step summary
-        if: failure()
+        timeout-minutes: 45
+      - name: 失败时把测试失败尾部写进 step summary + 注解
+        if: failure() || cancelled()
         run: |
           [ -f core-test.log ] || exit 0
           printf '### core tests tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 200 core-test.log >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
+          # 注解带进程表 + 日志尾（匿名可读，定位挂死/失败点）
+          { ps aux --sort=-%cpu | head -25; echo ---LOG-TAIL---; tail -40 core-test.log; } > ct.txt || true
+          if [ -s ct.txt ]; then
+            split -l 4 ct.txt ctc_
+            for c in ctc_*; do
+              msg=$(cat "$c" | tr '\n' ' ' | cut -c1-240)
+              echo "::error::CORE-TEST $msg"
+            done
+          fi
       - run: npm ci
         working-directory: ui
       # tsc 版本随 lock 钉死（此前裸 npx tsc 拉当日最新版，版本漂移不可复现）
