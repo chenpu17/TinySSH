@@ -137,5 +137,22 @@ module.exports = {
     });
     ck.check("后端拒绝编辑本机", !!upErr && upErr.includes("不可编辑或删除"), upErr || "(未拒)");
     ck.check("拒绝后本机仍在列表", (await hostNames(page)).includes("本机"), (await hostNames(page)).join(" / "));
+    // 「新开」语义绕过幂等合并：右键「用 Git Bash 新开」连点两次 → 两只标签。
+    // （(host_id, actor) 在途合并会把第二次 begin 吞成第一只——不同 shell 的
+    // 显式选择会被静默换掉，所以显式入口必须 new_session 绕过）
+    const tabs0 = await page.$$eval(".tab", (t) => t.length);
+    for (let i = 0; i < 2; i++) {
+      await lc.click({ button: "right" });
+      await page.waitForTimeout(350);
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll(".ctx-menu button")].find((x) => x.textContent.includes("用 Git Bash 新开"));
+        if (!b) throw new Error("menuitem not found: 用 Git Bash 新开");
+        b.click();
+      });
+      await page.waitForTimeout(250);
+    }
+    await page.waitForFunction((n) => document.querySelectorAll(".tab").length >= n, tabs0 + 2, { timeout: 8000 });
+    const tabs2 = await page.$$eval(".tab", (t) => t.length);
+    ck.check("「新开」两次得两只标签（绕过幂等合并）", tabs2 === tabs0 + 2, `前 ${tabs0} 后 ${tabs2}`);
   },
 };

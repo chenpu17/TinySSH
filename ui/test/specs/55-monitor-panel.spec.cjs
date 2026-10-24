@@ -316,5 +316,24 @@ module.exports = {
     ck.check("卡头跳出：大屏收起且活动标签是 prod-1",
       !(await vis(page, '[data-testid="monitor-view"]')) &&
       await page.evaluate(() => [...document.querySelectorAll(".tab.tab-active")].some((x) => x.textContent.includes("prod-1"))));
+
+    // ── 本机监控轮：local 会话进大屏——连本机 → 新增一张卡（键 ops@local:0）。
+    //    真实后端走核心原生快照通路（local_metrics，probe_metrics 按 kind 分支）；
+    //    demo 镜像 fixture 同价。键口径 user@addr:port 天然一卡一机。──
+    await page.click('[data-testid="rail-hosts"]');
+    await page.waitForTimeout(400);
+    const lc = await page.$('.host-card:has(.host-name:text-is("本机"))');
+    await lc.hover();
+    await page.waitForTimeout(250);
+    await (await lc.$('button[title^="连接"]')).click();
+    await page.waitForTimeout(1500);
+    await page.click('[data-testid="rail-monitor"]');
+    await page.waitForTimeout(400);
+    await page.waitForFunction(
+      () => !!document.querySelector('[data-mon-key="ops@local:0"]'),
+      null, { timeout: 8000 });
+    ck.check("本机进大屏：ops@local:0 卡片在场", true);
+    const cntLocal = await countText(page);
+    ck.check("计数含本机为 2 台服务器", cntLocal.includes("2 台服务器"), cntLocal);
   },
 };

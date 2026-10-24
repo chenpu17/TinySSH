@@ -1209,10 +1209,10 @@ export default function App() {
           const shells = localShells.length ? localShells : ((await invoke("list_local_shells")) as LocalShell[]);
           if (!localShells.length) setLocalShells(shells);
           const path = shells.find((s) => s.id === chosen)?.path;
-          if (path) { void createSession(lh, false, undefined, path); return; }
+          if (path) { void createSession(lh, false, undefined, path, false); return; }
         }
       } catch { /* 读失败走默认解析 */ }
-      void createSession(lh);
+      void createSession(lh, false, undefined, undefined, false);
     })();
     // createSession 声明在后（TDZ：deps 数组渲染期求值不可引用）；effect 体运行时
     // 已初始化，闭包捕获安全。autoLocalRef 保证仅首装执行一次。
@@ -2607,6 +2607,10 @@ export default function App() {
   // 筛选影响（内置条目心智：永远在那，编辑/删除入口同轮移除）
   const localHost = hosts.find((h) => h.id === "local") ?? null;
   const poolHosts = hosts.filter((h) => h.id !== "local");
+  // 是否有非本地会话在开——端口转发是 SSH 专属能力，纯本机（或空）时收起全部
+  // 入口（rail/状态条/工具菜单/⌘K），点了才报错不如不摆（本机一等公民轮口径）。
+  // ⌘K 恢复枢纽同用此条件：本地 PTY 标签不算「有会话」。
+  const remoteOpen = sessions.some((s) => s.kind !== "local");
   const allTags = [...new Set(hosts.flatMap((h) => h.tags ?? []))].sort((a, b) => a.localeCompare(b, "zh"));
   // rev-r20 M1：活跃标签经编辑/删除在全部主机上消失后 chip 不再渲染，tagFilter 残留会
   // 让列表恒空且无清除入口——失效筛选自动失效
@@ -4325,7 +4329,7 @@ export default function App() {
     }
   };
 
-  const createSession = async (host: Host, intoSplit = false, draft?: HostDraft, localShellPath?: string) => {
+  const createSession = async (host: Host, intoSplit = false, draft?: HostDraft, localShellPath?: string, localNew = true) => {
     // 本轮：任何建连路径都恢复「从最近连接隐藏」的主机——重新连了就是「最近」
     setRecentHidden(host.id, false);
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
@@ -4339,10 +4343,14 @@ export default function App() {
       // 后走同一条 attempt 路径；真实 id 经 attempt 回带（门匹配/失败标记全用它）
       // 本地终端一等公民轮：本机建连带上所选 shell——显式 localShellPath 优先
       //（本机右键「用 … 新开」），否则按 KV 默认选择换算成路径；重连 respawn 复用。
+      // 显式入口默认 new_session（「新开」语义绕过幂等合并——在途时第二次带不同
+      // shell 的选择会被合并吞掉）；仅启动自动开传 false 保幂等。
       let opts: BeginConnectionOpts | undefined;
       if (host.id === "local" && !draft) {
         const chosen = localShellPath ?? (localShellId ? localShells.find((s) => s.id === localShellId)?.path : undefined);
-        if (chosen) opts = { local_shell: chosen };
+        if (chosen || localNew) {
+          opts = { ...(chosen ? { local_shell: chosen } : {}), ...(localNew ? { new_session: true } : {}) };
+        }
       }
       const a = await (draft
         ? invoke("begin_connection_draft", { draft, opts: {} })
@@ -4892,9 +4900,8 @@ export default function App() {
       });
     }
     // 本地终端一等公民轮：启动自动开本地终端占据首屏后，恢复枢纽收进面板常驻可达
-    //（「点了才连」语义不变，TOFU/双因素照旧）。本地 PTY 标签不算「有会话」——
-    // 否则自动开让空态恒假，恢复入口在开机首屏永远不出现。
-    const remoteOpen = sessions.some((s) => s.kind !== "local");
+    //（「点了才连」语义不变，TOFU/双因素照旧）。门控用组件级 remoteOpen——
+    // 本地 PTY 标签不算「有会话」，否则自动开让空态恒假，恢复入口永不出现。
     if (!remoteOpen && restoreEntries.length > 0) {
       items.push({
         id: "restore-scene", group: "连接", title: `恢复上次现场（${restoreEntries.length}）`,
@@ -4964,12 +4971,14 @@ export default function App() {
         keywords: "sftp 上传 下载 目录浏览",
         run: () => setRightPanel(rightPanel === "files" ? null : "files"),
       });
-      items.push({
-        id: "panel-forwards", group: "当前会话",
-        title: rightPanel === "forwards" ? "关闭端口转发面板" : "打开端口转发面板",
-        keywords: "隧道 tunnel",
-        run: () => setRightPanel(rightPanel === "forwards" ? null : "forwards"),
-      });
+      if (remoteOpen) {
+        items.push({
+          id: "panel-forwards", group: "当前会话",
+          title: rightPanel === "forwards" ? "关闭端口转发面板" : "打开端口转发面板",
+          keywords: "隧道 tunnel",
+          run: () => setRightPanel(rightPanel === "forwards" ? null : "forwards"),
+        });
+      }
       items.push({
         id: "panel-blocks", group: "当前会话",
         title: rightPanel === "blocks" ? "关闭命令块面板" : "打开命令块面板",
@@ -5097,7 +5106,9 @@ export default function App() {
     };
     const groups = new Map<string, SessionInfo[]>();
     for (const s of sessions) {
-      if (s.kind !== "ssh" || s.state === "Closed" || s.state === "Disconnected") continue;
+      // 本机监控轮：local 会话进大屏——probe_metrics 按 kind 分支原生采样，
+      // 本地与远端都是终端，监控同权（键 user@local:0 天然一卡一机）。
+      if ((s.kind !== "ssh" && s.kind !== "local") || s.state === "Closed" || s.state === "Disconnected") continue;
       const k = keyOf(s);
       const g = groups.get(k);
       if (g) g.push(s); else groups.set(k, [s]);
@@ -5648,6 +5659,7 @@ export default function App() {
             openSessionDetail={openSessionDetail} toggleSessionLog={toggleSessionLog}
             requestCloseSession={requestCloseSession}
             broadcastArmed={broadcastTargets.length} openBroadcast={() => setBroadcastOpen(true)}
+            canForward={remoteOpen}
           />
         )}
         {hostKeyQueue.length > 0 && (() => {
@@ -6357,9 +6369,11 @@ export default function App() {
             <IconUsers size={17} />
             {pendingCount > 0 && <span className="rail-badge">{pendingCount > 9 ? "9+" : pendingCount}</span>}
           </button>
-          <button className={"rail-btn" + (rightPanel === "forwards" ? " ts-open" : "")} data-testid="rb-forwards"
-            title="端口转发" aria-pressed={rightPanel === "forwards"}
-            onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}><IconShuffle size={17} /></button>
+          {remoteOpen && (
+            <button className={"rail-btn" + (rightPanel === "forwards" ? " ts-open" : "")} data-testid="rb-forwards"
+              title="端口转发" aria-pressed={rightPanel === "forwards"}
+              onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}><IconShuffle size={17} /></button>
+          )}
           <button className={"rail-btn" + (rightPanel === "log" ? " ts-open" : "")} data-testid="rb-log"
             title="活动记录" aria-pressed={rightPanel === "log"}
             onClick={() => setRightPanel(rightPanel === "log" ? null : "log")}><IconRows size={17} /></button>
@@ -6391,7 +6405,7 @@ export default function App() {
               onClick={() => setBroadcastOpen(!broadcastOpen)}>广播 <b>{broadcastTargets.length > 0 ? broadcastTargets.length : ""}</b></button>
             <button className={"sb-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="sb-blocks" title="命令块：最近命令时间线（shell 集成 OSC 133）" aria-pressed={rightPanel === "blocks"}
               onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}>块 <b>{blocksList.length > 0 ? blocksList.length : ""}</b></button>
-            <button className="sb-btn" title="端口转发" onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>转发 <b>{forwards.length}</b></button>
+            {remoteOpen && <button className="sb-btn" title="端口转发" onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>转发 <b>{forwards.length}</b></button>}
             <button className={"sb-btn" + (queueOpen ? " ts-open" : "")} data-testid="sb-transfer" title="传输队列（底部抽屉；后台事件只更新计数不自动展开）" aria-pressed={queueOpen}
               onClick={() => setQueueOpen(!queueOpen)}>传输 <b>{runningTransfers}</b> {queueOpen ? "⌃" : "⌄"}</button>
           </span>

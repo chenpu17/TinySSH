@@ -6,6 +6,7 @@ mod brief;
 mod charset;
 mod fault;
 mod handle;
+mod local_metrics;
 pub mod restore;
 pub mod triggers;
 
@@ -4309,7 +4310,8 @@ impl SessionManager {
 
     /// 监控条采样脚本（监控条轮）：一次 Fresh 通道读全五类样本。只用 POSIX 基元
     /// （cat/df/tail），无 bashism（dash/ash 登录壳兼容）；缺 /proc 的远端
-    /// （BSD/macOS/本地 Windows）输出缺 cpu 行 → 前端判「不可用」整条隐藏。
+    /// （BSD/macOS）输出缺 cpu 行 → 前端判「不可用」整条隐藏。本地 Windows
+    /// 会话不经此脚本——probe_metrics 按 kind 分支走 local_metrics 原生快照。
     const METRICS_SCRIPT: &str = "cat /proc/stat /proc/meminfo /proc/uptime /proc/loadavg /proc/net/dev 2>/dev/null; echo ==DF==; df -kP / 2>/dev/null | tail -n 1";
 
     /// 监控条采样（命令框退役轮）：FinalShell 式底部资源条的人类专属只读数据源。
@@ -4317,11 +4319,16 @@ impl SessionManager {
     /// 无镜像回放。原因：3s 轮询不能刷审计流；样本字节也绝不能写回终端现场
     /// （run_fresh 的镜像回放桥会把 stdout 打到屏幕上）。3s 超时 deadline/cancel
     /// 双闸兜底；输出上限 32 KiB 远大于脚本产物（proc 全文通常 <8 KiB）。
+    /// 本机监控轮：local 会话无远端可执行脚本——原生直读本机计数器
+    ///（local_metrics::snapshot，同形状文本），前端解析零改动。
     pub async fn probe_metrics(&self, ctx: &Actor, sid: &str) -> Result<String> {
         if !ctx.is_human() {
             return Err(Error::InvalidInput("监控采样仅人类 GUI 入口".into()));
         }
         let h = self.get(sid)?;
+        if h.kind == "local" {
+            return Ok(local_metrics::snapshot());
+        }
         let opts = ExecOpts {
             mode: ExecMode::Fresh,
             timeout: Some(std::time::Duration::from_secs(3)),
@@ -4351,6 +4358,10 @@ impl SessionManager {
             return Err(Error::InvalidInput("监控采样仅人类 GUI 入口".into()));
         }
         let h = self.get(sid)?;
+        if h.kind == "local" {
+            // 本机无 npu-smi 通路：NO_NPU 语义=前端隐藏 NPU 区（GPU 监控另立案）
+            return Ok("NO_NPU".into());
+        }
         let opts = ExecOpts {
             mode: ExecMode::Fresh,
             timeout: Some(std::time::Duration::from_secs(5)),

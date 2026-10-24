@@ -56,5 +56,38 @@ module.exports = {
     await page.evaluate(() => [...document.querySelectorAll(".task-panel button")].find((b) => b.textContent.trim() === "停止").click());
     await page.waitForTimeout(600);
     ck.check("停止后回到「暂无转发」", (await panelText(page)).includes("暂无转发"));
+
+    // 本机一等公民轮：纯本机（或零会话）时端口转发入口整体收起——rail/状态条
+    //（工具菜单共用同一 canForward 条件）。能力对 local 无意义，点了才报错不如不摆。
+    for (let i = 0; i < 6; i++) {
+      const first = await page.evaluate(() => document.querySelector(".tab")?.textContent.trim() ?? null);
+      if (!first) break;
+      await page.evaluate((t) => {
+        const tab = [...document.querySelectorAll(".tab")].find((x) => x.textContent.trim() === t)
+          ?? [...document.querySelectorAll(".tab")][0];
+        tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 380, clientY: 130 }));
+      }, first);
+      await page.waitForTimeout(350);
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll(".ctx-menu [role=menuitem]")].find((x) => x.textContent.includes("关闭会话"));
+        if (b) b.click();
+      });
+      await page.waitForTimeout(500);
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll(".confirm-dialog button")].find((x) => x.textContent.trim() === "关闭会话");
+        if (b) b.click();
+      });
+      await page.waitForTimeout(900);
+    }
+    ck.check("零会话：rail 端口转发入口收起", !(await page.$('[data-testid="rb-forwards"]')), "");
+    const sb0 = await page.evaluate(() => document.querySelector(".statusbar")?.innerText ?? "");
+    ck.check("零会话：状态条无「转发」", !sb0.includes("转发"), sb0.replace(/\s+/g, " "));
+    // 连上本机后仍收起（纯本机语境——remoteOpen 只认非本地会话）
+    const lcx = await page.$('.host-card:has(.host-name:text-is("本机"))');
+    await lcx.hover();
+    await page.waitForTimeout(250);
+    await (await lcx.$('button[title^="连接"]')).click();
+    await page.waitForTimeout(1500);
+    ck.check("纯本机：rail 端口转发入口仍收起", !(await page.$('[data-testid="rb-forwards"]')), "");
   },
 };

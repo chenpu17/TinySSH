@@ -135,7 +135,7 @@ export function MetricsBar({ sid, kind, user, hostName }: {
   user?: string;
   hostName?: string;
 }) {
-  const isSsh = kind === "ssh";
+  const isSsh = kind === "ssh" || kind === "local"; // 本机监控轮：local 走核心原生快照，与远端同权
   const [view, setView] = useState<MetricsView | null>(null);
   const [dead, setDead] = useState(false);          // 不支持/连续失败 → 整条隐藏
   const [paused, setPaused] = useState(() => {
@@ -187,7 +187,7 @@ export function MetricsBar({ sid, kind, user, hostName }: {
   };
   const v = view;
   return (
-    <div className="metrics-bar" data-testid="metrics-bar" aria-label="远端主机资源监控">
+    <div className="metrics-bar" data-testid="metrics-bar" aria-label="主机资源监控">
       <span className="mhost" title="活动会话">{[user, hostName].filter(Boolean).join("@")}</span>
       <span className="mseg" title={`CPU 使用率${v?.cpuPct != null ? `（负载 ${v.load1.toFixed(2)}）` : ""}`}>
         <span className="mlabel">CPU</span>

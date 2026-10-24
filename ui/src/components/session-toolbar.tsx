@@ -40,6 +40,8 @@ export interface SessionToolbarProps {
   /** P2-a 广播输入：当前勾选数（>0 时菜单项带计数）与浮层打开动作 */
   broadcastArmed: number;
   openBroadcast: () => void;
+  /** 本机监控轮：存在非本地会话才提供端口转发入口（纯本机时收起，能力无意义） */
+  canForward: boolean;
 }
 
 export function SessionToolbar({
@@ -48,7 +50,7 @@ export function SessionToolbar({
   dispatchRef, setSplitMenu, setRightPanel, setToolsOpen,
   exitSplit, openDelegate, takeover, takeoverStop,
   openSessionDetail, toggleSessionLog, requestCloseSession,
-  broadcastArmed, openBroadcast,
+  broadcastArmed, openBroadcast, canForward,
 }: SessionToolbarProps) {
   // 工具菜单开合的收口（原内联 setToolsOpen(false) 同款）
   const closeTools = () => setToolsOpen(false);
@@ -126,7 +128,7 @@ export function SessionToolbar({
             {/* §3.2：「连接工具」菜单只放连接详情、端口转发、活动记录、关闭会话；
                 协作是会话工作区下的**同级**入口（见工具栏「协作」钮），不塞进本菜单 */}
             <button role="menuitem" data-testid="tools-conn-detail" onClick={() => { closeTools(); void openSessionDetail(current); }}>连接详情…</button>
-            <button role="menuitem" onClick={() => { setRightPanel("forwards"); closeTools(); }}>端口转发</button>
+            {canForward && <button role="menuitem" onClick={() => { setRightPanel("forwards"); closeTools(); }}>端口转发</button>}
             {/* P2-a 广播输入：浮层锚在状态栏右下（勾选目标、显示各会话状态） */}
             <button role="menuitem" data-testid="tools-broadcast" onClick={() => { closeTools(); openBroadcast(); }}>广播输入…{broadcastArmed > 0 ? `（${broadcastArmed}）` : ""}</button>
             {/* 十八轮：会话日志开关（工具菜单与标签右键同源同义） */}
