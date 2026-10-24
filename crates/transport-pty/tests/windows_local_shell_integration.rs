@@ -40,7 +40,7 @@ async fn wait_for(
 async fn powershell_integration_and_plain_prior() {
     // ---- powershell.exe：判型命中 → 注入脚本 → 全链块 ----
     std::env::set_var("SHELL", "powershell.exe");
-    let (channel, cleanup) = transport_pty::spawn_local_pty(120, 32)
+    let (channel, cleanup) = transport_pty::spawn_local_pty(120, 32, None)
         .await
         .expect("spawn local pty");
     assert!(
@@ -121,7 +121,7 @@ async fn powershell_integration_and_plain_prior() {
 
     // ---- cmd.exe：无法注入 → 构造性先验 false（core 据此立即如实拒绝 Shell 模式）----
     std::env::set_var("SHELL", "cmd.exe");
-    let (channel, cleanup) = transport_pty::spawn_local_pty(120, 32)
+    let (channel, cleanup) = transport_pty::spawn_local_pty(120, 32, None)
         .await
         .expect("spawn cmd pty");
     assert_eq!(channel.shell_integration_hint(), Some(false));

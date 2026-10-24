@@ -94,6 +94,29 @@ pub struct BlockIndex {
     open: OpenState,
 }
 
+/// 稳定轮：键入/挂起命令文本的累计上限（保头）。无 shell 集成的会话里 Idle
+/// 态 write 永远落在 pending、永不被收养——大体积回显（cat 大文件）曾可把
+/// pending 喂到任意大。64KB 装得下任何合理命令行，超限部分对块面板无意义。
+const TYPED_CAP: usize = 64 * 1024;
+/// 收尾块保留上限（read_blocks 的面板上限 200 的 2.5 倍），最旧先淘汰。
+/// 长跑会话的 blocks 曾无上限增长（每块含 8KB 输出尾），月级进程可堆百 MB。
+const BLOCKS_CAP: usize = 500;
+
+fn extend_capped(buf: &mut Vec<u8>, data: &[u8]) {
+    if buf.len() >= TYPED_CAP {
+        return;
+    }
+    let room = TYPED_CAP - buf.len();
+    buf.extend_from_slice(&data[..data.len().min(room)]);
+}
+
+fn trim_blocks(blocks: &mut Vec<CommandBlock>) {
+    if blocks.len() > BLOCKS_CAP {
+        let over = blocks.len() - BLOCKS_CAP;
+        blocks.drain(..over);
+    }
+}
+
 impl BlockIndex {
     pub fn new() -> Self {
         Self::default()
@@ -102,9 +125,9 @@ impl BlockIndex {
     /// 通路 write 的回调：捕获 B→C 之间的键入命令文本。
     pub fn on_write(&mut self, data: &[u8]) {
         match self.phase {
-            BlockPhase::Typing => self.open.typed.extend_from_slice(data),
+            BlockPhase::Typing => extend_capped(&mut self.open.typed, data),
             // B 前的键入属于下一个命令：挂起待 B/C 收养（直接丢弃会被 B 的清空抹归因）
-            BlockPhase::Idle | BlockPhase::Prompt => self.open.pending.extend_from_slice(data),
+            BlockPhase::Idle | BlockPhase::Prompt => extend_capped(&mut self.open.pending, data),
             BlockPhase::Output => {}
         }
     }
@@ -182,6 +205,7 @@ impl BlockIndex {
                         output: String::new(),
                         output_truncated: false,
                     });
+                    trim_blocks(&mut self.blocks);
                     self.open.typed.clear();
                     self.phase = BlockPhase::Idle;
                 }
@@ -202,7 +226,11 @@ impl BlockIndex {
     ) {
         self.open = OpenState {
             start: Some(now),
-            typed: command.as_bytes().to_vec(),
+            typed: {
+                let mut t = command.as_bytes().to_vec();
+                t.truncate(TYPED_CAP);
+                t
+            },
             typed_source: None,
             pending: Vec::new(),
             pending_source: None,
@@ -236,6 +264,7 @@ impl BlockIndex {
                 output: String::new(),
                 output_truncated: false,
             });
+            trim_blocks(&mut self.blocks);
         }
         self.open = OpenState::default();
         self.phase = BlockPhase::Idle;
@@ -353,5 +382,48 @@ mod tests {
                 client_id: Some("cc".into())
             }
         );
+    }
+}
+
+/// 稳定轮（余量清单）回归：BlockIndex 的三处无界增长点。
+#[cfg(test)]
+mod stability_tests {
+    use super::*;
+    use crate::OscScanner;
+
+    /// 无集成会话的 Idle 态 write 永远落 pending 且不被收养——大体积回显曾可
+    /// 把 pending 喂到任意大。现在累计钳在 64KB（保头）。
+    #[test]
+    fn pending_write_capped() {
+        let mut idx = BlockIndex::new();
+        // 1MB 单字节写（128 字节块 ×8192），Idle 态全部落 pending
+        let chunk = [b'x'; 128];
+        for _ in 0..8192 {
+            idx.on_write(&chunk);
+        }
+        assert!(idx.blocks.is_empty());
+        let capped = std::mem::take(&mut idx.open.pending);
+        assert_eq!(capped.len(), 64 * 1024, "pending 必须钳在 TYPED_CAP");
+        assert!(capped.starts_with(b"xxxx"), "保头不保尾");
+    }
+
+    /// 收尾块无上限增长——501 个块后最旧被淘汰，恒 500。
+    #[test]
+    fn blocks_trimmed_to_cap() {
+        let mut idx = BlockIndex::new();
+        let t0 = Utc::now();
+        let mut scanner = OscScanner::new();
+        for i in 0..501i32 {
+            for (ev, _, _) in scanner.feed(b"\x1b]133;A\x07\x1b]133;B\x07") {
+                idx.on_osc(&ev, t0, 0);
+            }
+            idx.on_write(format!("cmd {i}").as_bytes());
+            for (ev, _, _) in scanner.feed(b"\x1b]133;C\x07\x1b]133;D;0\x07") {
+                idx.on_osc(&ev, t0, i);
+            }
+        }
+        assert_eq!(idx.blocks.len(), 500, "blocks 必须钳在 BLOCKS_CAP");
+        assert_eq!(idx.blocks[0].command, "cmd 1", "最旧的 cmd 0 被淘汰");
+        assert_eq!(idx.blocks[499].command, "cmd 500");
     }
 }

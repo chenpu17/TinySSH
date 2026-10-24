@@ -42,6 +42,7 @@ interface ConfirmDialogsProps {
   setQuitSummary: (v: { sessions: SessionInfo[]; forwards: number } | null) => void;
   quitConfirmRef: { current: HTMLDivElement | null };
   confirmQuit: () => Promise<void>;
+  cancelQuit: () => void | Promise<void>;
   delHostRef: { current: HTMLDivElement | null };
   delIdentRef: { current: HTMLDivElement | null };
 }
@@ -51,7 +52,7 @@ export function ConfirmDialogs({
   collabConfigured, mcp, delegateGoal, setDelegateGoal, delegateErr, openSettingsAt,
   delegateBusy, submitDelegate, disableImpact, setDisableImpact, collabBusy, confirmDisable,
   confirm, setConfirm, closeConfirmRef, confirmImpact, confirmAction,
-  quitSummary, setQuitSummary, quitConfirmRef, confirmQuit, delHostRef, delIdentRef,
+  quitSummary, setQuitSummary, quitConfirmRef, confirmQuit, cancelQuit, delHostRef, delIdentRef,
 }: ConfirmDialogsProps) {
   return (
     <>
@@ -175,7 +176,7 @@ export function ConfirmDialogs({
               </div>
               <div className="hk-actions">
                 <button className="danger" onClick={() => void confirmQuit()}>结束会话并退出</button>
-                <button className="ghost" data-autofocus onClick={() => setQuitSummary(null)}>取消</button>
+                <button className="ghost" data-autofocus onClick={() => void cancelQuit()}>取消</button>
               </div>
             </div>
           </div>

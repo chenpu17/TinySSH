@@ -157,6 +157,11 @@ pub struct SshChannel {
     handle: Mutex<Option<Handle<ClientHandler>>>,
     shell: Mutex<Option<ChannelWriteHalf<russh::client::Msg>>>,
     output_tx: broadcast::Sender<Vec<u8>>,
+    /// 保活订阅者：broadcast 零接收者时 send 即 Err，读泵会误判「无人听」而
+    /// 永久退出（core 订阅晚于 establish 的窗口内到达的首包即触发——表现为
+    /// 「连上了但终端无输出」，只能手动重连）。常驻一个永不 drop 的 Receiver
+    /// 后 send 永不因零订阅失败；环形缓冲有界，不消费也无内存风险。
+    keepalive_rx: broadcast::Receiver<Vec<u8>>,
     alive: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
     seen_fingerprint: Arc<Mutex<Option<String>>>,
@@ -225,6 +230,27 @@ fn kind_of(ft: russh_sftp::protocol::FileType) -> EntryKind {
 /// （2FA 交互等待人的应答，不能限时）。
 const CONNECT_PHASE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// SFTP 单步网络等待的有界窗。服务器僵死（TCP 活着但对端不再应答）时 SFTP
+/// 操作曾可无限悬挂：resolve/stat 的 `sftp_channel` guard 跨网络 await 持锁，
+/// close/重连的 handle 锁随后被 indefinite 阻塞，传输抽屉的轮询任务也堆积。
+/// 每步（非整操作）限时——大传输的总时长不受影响，只防「单步永远不来」。
+const SFTP_STEP_SECS: u64 = 30;
+
+/// SFTP 单步有界等待：内层错误交由调用方 mapper（保留 NotFound/Permission
+/// 专用变体），超时统一映射为 Io（含窗口说明）。
+async fn sftp_step<T, E, F, M>(fut: F, mapper: M) -> Result<T>
+where
+    F: std::future::Future<Output = std::result::Result<T, E>>,
+    M: FnOnce(E) -> Error,
+{
+    match tokio::time::timeout(std::time::Duration::from_secs(SFTP_STEP_SECS), fut).await {
+        Ok(r) => r.map_err(mapper),
+        Err(_) => Err(Error::Io(format!(
+            "sftp 步骤超时（{SFTP_STEP_SECS}s 无响应，连接可能已僵死）"
+        ))),
+    }
+}
+
 impl SshChannel {
     /// SFTP 临时通道开启（subsystem + init）。guard 与 session 成对——调用方
     /// 在使用期间持有 guard，防并发 close 拆掉连接。
@@ -234,23 +260,26 @@ impl SshChannel {
             return Err(Error::SessionClosed);
         }
         let handle = guard.as_ref().expect("checked above");
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp subsystem: {e}")))?;
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp init: {e}")))?;
+        let channel = sftp_step(handle.channel_open_session(), |e| {
+            Error::ConnectFailed(format!("sftp channel: {e}"))
+        })
+        .await?;
+        sftp_step(channel.request_subsystem(true, "sftp"), |e| {
+            Error::ConnectFailed(format!("sftp subsystem: {e}"))
+        })
+        .await?;
+        let sftp = sftp_step(
+            russh_sftp::client::SftpSession::new(channel.into_stream()),
+            |e| Error::ConnectFailed(format!("sftp init: {e}")),
+        )
+        .await?;
         Ok((guard, sftp))
     }
 
     pub async fn connect(target: SshTarget, cols: u16, rows: u16) -> Result<Arc<Self>> {
         let seen = Arc::new(Mutex::new(None::<String>));
         let (output_tx, _) = broadcast::channel(4096);
+        let keepalive_rx = output_tx.subscribe();
         let alive = Arc::new(AtomicBool::new(true));
         let router = Arc::new(StdMutex::new(HashMap::new()));
 
@@ -258,6 +287,7 @@ impl SshChannel {
             handle: Mutex::new(None),
             shell: Mutex::new(None),
             output_tx,
+            keepalive_rx,
             alive,
             size: Mutex::new((cols, rows)),
             seen_fingerprint: seen.clone(),
@@ -811,23 +841,25 @@ impl ChannelHandle for SshChannel {
         let channel = {
             let handle_guard = self.handle.lock().await;
             let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-            handle
-                .channel_open_session()
-                .await
-                .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?
+            sftp_step(handle.channel_open_session(), |e| {
+                Error::ConnectFailed(format!("sftp channel: {e}"))
+            })
+            .await?
         };
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp subsystem: {e}")))?;
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp init: {e}")))?;
+        sftp_step(channel.request_subsystem(true, "sftp"), |e| {
+            Error::ConnectFailed(format!("sftp subsystem: {e}"))
+        })
+        .await?;
+        let sftp = sftp_step(
+            russh_sftp::client::SftpSession::new(channel.into_stream()),
+            |e| Error::ConnectFailed(format!("sftp init: {e}")),
+        )
+        .await?;
 
-        let mut file = sftp
-            .create(remote)
-            .await
-            .map_err(|e| Error::Io(format!("sftp create {remote}: {e}")))?;
+        let mut file = sftp_step(sftp.create(remote), |e| {
+            Error::Io(format!("sftp create {remote}: {e}"))
+        })
+        .await?;
         let mut src = tokio::fs::File::open(local)
             .await
             .map_err(|e| Error::Io(format!("open {}: {e}", local.display())))?;
@@ -838,22 +870,20 @@ impl ChannelHandle for SshChannel {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            let n = src
-                .read(&mut buf)
-                .await
-                .map_err(|e| Error::Io(format!("read: {e}")))?;
+            let n = sftp_step(src.read(&mut buf), |e| Error::Io(format!("read: {e}"))).await?;
             if n == 0 {
                 break;
             }
-            file.write_all(&buf[..n])
-                .await
-                .map_err(|e| Error::Io(format!("sftp write: {e}")))?;
+            sftp_step(file.write_all(&buf[..n]), |e| {
+                Error::Io(format!("sftp write: {e}"))
+            })
+            .await?;
             total += n as u64;
             progress(total, total_len);
         }
         file.flush().await.ok();
         drop(file);
-        sftp.close().await.ok();
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         Ok(total)
     }
 
@@ -871,23 +901,25 @@ impl ChannelHandle for SshChannel {
         let channel = {
             let handle_guard = self.handle.lock().await;
             let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-            handle
-                .channel_open_session()
-                .await
-                .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?
+            sftp_step(handle.channel_open_session(), |e| {
+                Error::ConnectFailed(format!("sftp channel: {e}"))
+            })
+            .await?
         };
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp subsystem: {e}")))?;
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp init: {e}")))?;
+        sftp_step(channel.request_subsystem(true, "sftp"), |e| {
+            Error::ConnectFailed(format!("sftp subsystem: {e}"))
+        })
+        .await?;
+        let sftp = sftp_step(
+            russh_sftp::client::SftpSession::new(channel.into_stream()),
+            |e| Error::ConnectFailed(format!("sftp init: {e}")),
+        )
+        .await?;
 
-        let mut file = sftp
-            .open(remote)
-            .await
-            .map_err(|e| Error::Io(format!("sftp open {remote}: {e}")))?;
+        let mut file = sftp_step(sftp.open(remote), |e| {
+            Error::Io(format!("sftp open {remote}: {e}"))
+        })
+        .await?;
         let total_len = sftp.metadata(remote).await.ok().and_then(|a| a.size);
         if let Some(parent) = local.parent() {
             tokio::fs::create_dir_all(parent)
@@ -903,21 +935,22 @@ impl ChannelHandle for SshChannel {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            let n = file
-                .read(&mut buf)
-                .await
-                .map_err(|e| Error::Io(format!("sftp read: {e}")))?;
+            let n = sftp_step(file.read(&mut buf), |e| {
+                Error::Io(format!("sftp read: {e}"))
+            })
+            .await?;
             if n == 0 {
                 break;
             }
-            dst.write_all(&buf[..n])
-                .await
-                .map_err(|e| Error::Io(format!("write: {e}")))?;
+            sftp_step(dst.write_all(&buf[..n]), |e| {
+                Error::Io(format!("write: {e}"))
+            })
+            .await?;
             total += n as u64;
             progress(total, total_len);
         }
         drop(dst);
-        sftp.close().await.ok();
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         Ok(total)
     }
 
@@ -931,23 +964,22 @@ impl ChannelHandle for SshChannel {
         let channel = {
             let handle_guard = self.handle.lock().await;
             let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
-            handle
-                .channel_open_session()
-                .await
-                .map_err(|e| Error::ConnectFailed(format!("sftp channel: {e}")))?
+            sftp_step(handle.channel_open_session(), |e| {
+                Error::ConnectFailed(format!("sftp channel: {e}"))
+            })
+            .await?
         };
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp subsystem: {e}")))?;
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("sftp init: {e}")))?;
+        sftp_step(channel.request_subsystem(true, "sftp"), |e| {
+            Error::ConnectFailed(format!("sftp subsystem: {e}"))
+        })
+        .await?;
+        let sftp = sftp_step(
+            russh_sftp::client::SftpSession::new(channel.into_stream()),
+            |e| Error::ConnectFailed(format!("sftp init: {e}")),
+        )
+        .await?;
 
-        let rd = sftp
-            .read_dir(path)
-            .await
-            .map_err(|e| map_sftp_err("readdir", path, e))?;
+        let rd = sftp_step(sftp.read_dir(path), |e| map_sftp_err("readdir", path, e)).await?;
         let mut out: Vec<DirEntryS> = rd
             .filter(|e| !matches!(e.file_name().as_str(), "." | ".."))
             .map(|e| {
@@ -967,7 +999,7 @@ impl ChannelHandle for SshChannel {
                 .cmp(&a.is_dir)
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
-        sftp.close().await.ok();
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         Ok(out)
     }
 
@@ -975,11 +1007,11 @@ impl ChannelHandle for SshChannel {
     async fn resolve_path(&self, path: Option<&str>) -> Result<PathResolved> {
         let target = path.unwrap_or(".");
         let (_guard, sftp) = self.sftp_channel().await?;
-        let canon = sftp
-            .canonicalize(target)
-            .await
-            .map_err(|e| map_sftp_err("realpath", target, e))?;
-        sftp.close().await.ok();
+        let canon = sftp_step(sftp.canonicalize(target), |e| {
+            map_sftp_err("realpath", target, e)
+        })
+        .await?;
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         Ok(PathResolved { canonical: canon })
     }
 
@@ -987,27 +1019,39 @@ impl ChannelHandle for SshChannel {
     /// 跟随语义（链接取目标，失败回落链接本体）；canonical 悬空链接为 None（§352 不猜路径）。
     async fn stat_entry(&self, path: &str) -> Result<EntryStat> {
         let (_guard, sftp) = self.sftp_channel().await?;
-        let lst = sftp
-            .symlink_metadata(path)
-            .await
-            .map_err(|e| map_sftp_err("lstat", path, e))?;
+        let lst = sftp_step(sftp.symlink_metadata(path), |e| {
+            map_sftp_err("lstat", path, e)
+        })
+        .await?;
         let ft = lst.file_type();
         let kind = Some(kind_of(ft));
         let symlink_target = if ft.is_symlink() {
-            sftp.read_link(path).await.ok()
+            sftp_step(sftp.read_link(path), |e| {
+                Error::Io(format!("sftp readlink {path}: {e}"))
+            })
+            .await
+            .ok()
         } else {
             None
         };
         let md = if ft.is_symlink() {
-            match sftp.metadata(path).await {
+            match sftp_step(sftp.metadata(path), |e| {
+                Error::Io(format!("sftp stat {path}: {e}"))
+            })
+            .await
+            {
                 Ok(m) => m,
-                Err(_) => lst, // 悬空链接等：回落链接本体，size/mtime 照服务器所报
+                Err(_) => lst, // 悬空链接/超时等：回落链接本体，size/mtime 照服务器所报
             }
         } else {
             lst
         };
-        let canonical = sftp.canonicalize(path).await.ok();
-        sftp.close().await.ok();
+        let canonical = sftp_step(sftp.canonicalize(path), |e| {
+            map_sftp_err("realpath", path, e)
+        })
+        .await
+        .ok();
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         Ok(EntryStat {
             canonical,
             kind,
@@ -1024,8 +1068,17 @@ impl ChannelHandle for SshChannel {
     /// 发出、应答丢失/失稳 → Ambiguous（提交与否不可知，调用方落 OutcomeUnknown）。
     async fn publish_hardlink(&self, existing: &str, new: &str) -> Result<PublishOutcome> {
         let (_guard, sftp) = self.sftp_channel().await?;
-        let r = sftp.hardlink(existing, new).await;
-        sftp.close().await.ok();
+        let r = match tokio::time::timeout(
+            std::time::Duration::from_secs(SFTP_STEP_SECS),
+            sftp.hardlink(existing, new),
+        )
+        .await
+        {
+            Ok(r) => r,
+            // 请求已发出、30s 无应答——提交与否不可知，与 IO/Timeout 同口径
+            Err(_) => return Ok(PublishOutcome::Ambiguous),
+        };
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         match r {
             Ok(true) => Ok(PublishOutcome::Committed),
             Ok(false) => Ok(PublishOutcome::Unsupported),
@@ -1039,8 +1092,20 @@ impl ChannelHandle for SshChannel {
     /// C6/R34：远端文件删除（temp 清理；不存在=幂等 Ok）。
     async fn remove_file(&self, path: &str) -> Result<()> {
         let (_guard, sftp) = self.sftp_channel().await?;
-        let r = sftp.remove_file(path).await;
-        sftp.close().await.ok();
+        let r = match tokio::time::timeout(
+            std::time::Duration::from_secs(SFTP_STEP_SECS),
+            sftp.remove_file(path),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                return Err(Error::Io(format!(
+                    "sftp remove {path}: 超时（{SFTP_STEP_SECS}s 无响应）"
+                )))
+            }
+        };
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         match r {
             Ok(()) => Ok(()),
             Err(russh_sftp::client::error::Error::Status(st))

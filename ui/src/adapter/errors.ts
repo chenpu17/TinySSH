@@ -26,6 +26,8 @@ export const WIRE_ERROR_KINDS = [
   // r03-contracts §11 ADR-15 前向预留（后端未实现前不会出现）
   "shell_integration_unavailable",
   "identity_in_use",
+  // 本地终端一等公民轮：「本机」内置条目不可编辑/删除（SessionApi 单点守卫）
+  "local_host_immutable",
   "collaboration_disabled",
   "conflict_detected",
   "replace_unsupported",

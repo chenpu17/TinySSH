@@ -30,7 +30,7 @@ async fn recv_until(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pty_reconnect_revives_shell_on_same_broadcast() {
-    let (ch, _cleanup) = transport_pty::spawn_local_pty(100, 30).await.unwrap();
+    let (ch, _cleanup) = transport_pty::spawn_local_pty(100, 30, None).await.unwrap();
     let mut rx = ch.subscribe_output();
 
     // shell 退出 → 死端

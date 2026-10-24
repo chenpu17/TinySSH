@@ -153,7 +153,7 @@ export function FilesPanel({
                     title="显示隐藏项（. 开头）" onClick={() => setShowHidden((v) => !v)}>隐藏项</button>
                   <button className={"ghost" + (sftpSaveAs ? " ts-open" : "")} aria-pressed={sftpSaveAs}
                     data-testid="sftp-saveas-toggle"
-                    title="另存为模式：下载时逐个弹出保存对话框选位置（对行内下载、下载所选、路径下载、菜单「下载」生效；右键「另存为…」不受影响）"
+                    title="另存为模式：下载时弹出对话框选位置（行内下载、路径下载、菜单「下载」逐文件弹；下载所选多选只弹一次目录选择器，全部落同一目录；右键「另存为…」不受影响）"
                     onClick={() => setSftpSaveAs((v) => !v)}>另存为</button>
                   {([["name", "名称"], ["size", "大小"], ["mtime", "时间"]] as const).map(([k, label]) => (
                     <button key={k} className={"ghost" + (sftpSort.key === k ? " ts-open" : "")} aria-pressed={sftpSort.key === k}
@@ -184,6 +184,11 @@ export function FilesPanel({
                 )}
                 {!sftpLoading && sftpEntries && sftpEntries.length > 0 && sftpShown.length === 0 && (
                   <div className="side-quiet">无匹配项（名称筛选或隐藏项过滤）。</div>
+                )}
+                {!sftpLoading && sftpEntries && sftpEntries.length >= 5000 && (
+                  // 与后端 SFTP_LIST_CAP 同值：大目录截断如实提示（数据盘/CI 产物
+                  // 几万条目曾全量渲染秒级冻结）
+                  <div className="side-quiet">目录过大，仅显示前 5000 项——用名称筛选或进入子目录。</div>
                 )}
                 {!sftpLoading && sftpShown.length > 0 && (
                   <div
@@ -232,7 +237,7 @@ export function FilesPanel({
                       onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
                   </div>
                 )}
-                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在每次下载时选位置；传输进度见底部队列（状态条「传输 N」展开）。</div>
+                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在下载时选位置（多选下载只选一次目录）；传输进度见底部队列（状态条「传输 N」展开）。</div>
               </>
             )}
           </div>
@@ -337,7 +342,7 @@ export function TransferQueueDrawer({
                     {t.kind === "Download" && t.status === "done" && !t.local.startsWith("pending") && (
                       <>
                         <button className="ghost" data-testid="xfer-open" title="立即打开：用系统默认程序打开该文件" onClick={() => void openTransfer(t)}>打开</button>
-                        <button className="ghost" data-testid="xfer-locate" title="在访达中显示本地目标" onClick={() => void locateTransfer(t)}>定位</button>
+                        <button className="ghost" data-testid="xfer-locate" title="在文件管理器中显示本地目标（资源管理器选中该文件）" onClick={() => void locateTransfer(t)}>定位</button>
                       </>
                     )}
                     {t.kind === "Upload" && t.status === "done" && t.sid && t.sid === sidRef.current && (

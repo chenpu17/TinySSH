@@ -368,3 +368,131 @@ async fn local_reconnect_enters_reconfirming_without_injection() {
     // 幂等 no-op：非重连期 stop_auto_reconnect 合法返回
     m.stop_auto_reconnect(&h.id).await.unwrap();
 }
+
+/// 稳定轮（P0-2 僵尸会话）：close 置 Closed 后，重连链路不得把它改写回活着
+/// 的状态——旧码 reinject_integration 无条件置 Reconfirming、泵外层出口只认
+/// Disconnected，两处叠加让已从会话表移除的会话下一轮 tick 被「复活」并发起
+/// 真实重连（可达主机留下带活连接的僵尸 + 永久任务）。
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_session_not_resurrected_by_reconnect_path() {
+    let m = mgr();
+    let h = hand_install(&m, "ssh", Arc::new(DeadChannel));
+    *h.state.lock().await = SessionState::Closed;
+    // on_transport_reconnect 对 Closed 早退（既有守卫，状态原地不动）
+    h.on_transport_reconnect().await;
+    assert_eq!(*h.state.lock().await, SessionState::Closed);
+    // reinject（泵重连出口的下一站）同样不得改写 Closed——修复前必红
+    h.reinject_integration().await;
+    assert_eq!(*h.state.lock().await, SessionState::Closed);
+}
+
+/// 稳定轮（余量清单·重连竞态）：on_transport_reconnect 置 Disconnected 与泵
+/// 自检之间存在 await 空窗，手动重连可在此拉起新泵——旧泵若按「状态已不是
+/// Disconnected」继续跑，就是双泵双写屏，其迟到的 is_alive=false 还会把健康
+/// 会话重新打进重连（假断线）。泵代际守卫：代际不符 = 已被替换，立即退出。
+/// 通道语义：is_alive 恒 false（泵每轮 500ms 静默 tick 判 lost）+ reconnect
+/// 恒 Ok（on_transport_reconnect 成功返回，泵按旧码会无限续环）。
+struct ZombieAliveChannel {
+    tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    reconnects: std::sync::atomic::AtomicUsize,
+}
+impl ZombieAliveChannel {
+    fn new() -> Arc<Self> {
+        let (tx, _) = tokio::sync::broadcast::channel(16);
+        Arc::new(Self {
+            tx,
+            reconnects: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+}
+#[async_trait::async_trait]
+impl ChannelHandle for ZombieAliveChannel {
+    async fn write(&self, _data: &[u8]) -> Result<()> {
+        Err(Error::SessionClosed)
+    }
+    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+    async fn exec_fresh(
+        &self,
+        _cmd: &str,
+        _opts: &ExecOpts,
+        _deadline: std::time::Instant,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+    ) -> Result<FreshOutcome> {
+        Err(Error::SessionClosed)
+    }
+    async fn signal(&self, _sig: TransportSignal) -> Result<()> {
+        Ok(())
+    }
+    async fn force_close(&self) -> Result<()> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        self.tx.subscribe()
+    }
+    async fn is_alive(&self) -> bool {
+        false
+    }
+    async fn reconnect(&self) -> Result<()> {
+        self.reconnects
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+    async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn upload(
+        &self,
+        _local: &std::path::Path,
+        _remote: &str,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn download(
+        &self,
+        _remote: &str,
+        _local: &std::path::Path,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> {
+        Err(Error::SessionClosed)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_pump_exits_when_generation_moves() {
+    let m = mgr();
+    let ch = ZombieAliveChannel::new();
+    let h = hand_install(&m, "ssh", ch.clone());
+    // 泵 A 上场（gen=1）：is_alive 恒 false，每个 500ms tick 走一轮
+    // lost → on_transport_reconnect(Ok) → 旧码会无限续环
+    spawn_pump(h.clone(), h.channel.subscribe_output());
+    assert_eq!(h.pump_gen.load(std::sync::atomic::Ordering::SeqCst), 1);
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let after_a = ch.reconnects.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(after_a >= 1, "泵 A 应已在跑重连环（reconnects={after_a}）");
+
+    // 手动重连路径：spawn_pump 递增代际（gen=2）
+    spawn_pump(h.clone(), h.channel.subscribe_output());
+    assert_eq!(h.pump_gen.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    // 给泵 A ≥1 个 tick 醒来发现代际不符退出；随后 reconnects 不得再涨
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let snap = ch.reconnects.load(std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let after_b = ch.reconnects.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        snap, after_b,
+        "代际更替后旧泵必须退场（还在续环=双泵假断线竞态回归）"
+    );
+
+    // 清场：代际再+1 让 gen=2 的泵也退（is_alive 恒 false 的通道上它同样在续环）
+    h.pump_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    *h.state.lock().await = SessionState::Closed;
+}

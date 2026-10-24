@@ -115,5 +115,47 @@ module.exports = {
       await closeViaMenu("staging-1");
     }
     ck.check("收尾清空会话", (await page.evaluate(() => document.querySelectorAll(".tab").length)) === 0, "");
+
+    // ── 本地终端一等公民轮：恢复枢纽进面板 ──
+    // 启动自动开本地终端占据首屏后，「恢复上次现场」须 ⌘K 恒可达（空态条件与
+    // 欢迎页行同口径）。种入快照 → reload（demo 预置会话回来先关）→ 空态开面板。
+    await page.evaluate((ck1) => {
+      localStorage.setItem("ui.v2.restore", JSON.stringify([
+        { host_id: "local", saved_at: "2026-10-23T09:00:00Z", checkpoint: ck1 },
+      ]));
+    }, {
+      cols: 80, rows: 24,
+      buffers: [{ lines: [[{ text: "palette restore probe", fg: null, bg: null, flags: 0 }]] }, { lines: [] }],
+      active_buffer: 0,
+      cursor: { x: 0, y: 1, visible: true, style: "block" },
+      modes: { autowrap: true, application_cursor: false, bracketed_paste: false, origin_mode: false },
+      title: null,
+    });
+    await page.reload();
+    await page.waitForTimeout(1500);
+    await closeViaMenu("prod-1");
+    await closeViaMenu("staging-1");
+    await page.click('[data-testid="palette-open"]');
+    await page.waitForTimeout(400);
+    const titles3 = await page.evaluate(() => [...document.querySelectorAll(".palette-item .palette-title")].map((x) => x.textContent));
+    ck.check("空态面板有「恢复上次现场」条目", titles3.some((t) => t.includes("恢复上次现场")), titles3.join(" | ").slice(0, 160));
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+
+    // 本地 PTY 标签开着时恢复入口仍在——启动自动开本地终端后 sessions.length 恒
+    // ≥1，若门控只看数量，恢复枢纽在开机首屏永远不出现（回归：门控看 kind）
+    const lc = await page.$('.host-card:has(.host-name:text-is("本机"))');
+    await lc.hover();
+    await page.waitForTimeout(250);
+    await (await lc.$('button[title^="连接"]')).click();
+    await page.waitForTimeout(1200);
+    await page.click('[data-testid="palette-open"]');
+    await page.waitForTimeout(400);
+    const titles4 = await page.evaluate(() => [...document.querySelectorAll(".palette-item .palette-title")].map((x) => x.textContent));
+    ck.check("本地标签开着仍有「恢复上次现场」", titles4.some((t) => t.includes("恢复上次现场")), titles4.join(" | ").slice(0, 160));
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    // 清探针（不污染后续 spec 域——各 spec 新开页本就隔离，habit 收尾）
+    await page.evaluate(() => localStorage.removeItem("ui.v2.restore"));
   },
 };

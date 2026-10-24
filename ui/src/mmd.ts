@@ -11,6 +11,19 @@ type Purify = (typeof import("dompurify"))["default"];
 
 let seq = 0;
 
+/** 复杂度闸（稳定轮余量项）：超限图不进渲染、诚实保持代码原文。mermaid 的
+ *  布局器对超大图（巨量节点/边）可能长时间占主线程甚至 OOM——模型生成超长
+ *  「图」往往本就不是有效图表。字节数与行数双上限，超限在控制台说明原因。 */
+const MMD_MAX_BYTES = 64 * 1024;
+const MMD_MAX_LINES = 2_000;
+export function mermaidTooComplex(src: string): boolean {
+  const over =
+    new TextEncoder().encode(src).length > MMD_MAX_BYTES ||
+    src.split("\n").length > MMD_MAX_LINES;
+  if (over) console.warn("[mmd] 图源超过复杂度上限（64KB/2000 行），保持代码原文");
+  return over;
+}
+
 const escHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -115,6 +128,7 @@ export async function renderMermaidIn(root: ParentNode): Promise<void> {
   for (const w of Array.from(wraps)) {
     w.setAttribute("data-done", "1"); // 先占位：并发调用不重渲染同一占位
     const src = decodeURIComponent(w.dataset.mm ?? "");
+    if (mermaidTooComplex(src)) continue; // 超限：data-done 已置，保持代码原文不重试
     try {
       const { svg } = await mermaid.render(`mmd-${++seq}`, src);
       // 渲染期间容器可能被主题切换 reset（data-done 已摘）：本次成果作废，

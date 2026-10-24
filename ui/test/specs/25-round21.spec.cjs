@@ -121,6 +121,56 @@ module.exports = {
     ck.check("菜单「另存为…」显式直通", (await lastDownLocal(page)) === "/Users/demo/Downloads/access.log",
       await lastDownLocal(page));
 
+    // ── A2. 0.10.0 轮：另存为模式下批量下载只弹一次目录选择器 ──
+    // 选择状态机要确定：先清残留选择，再「单击首项 + Ctrl 单击次项」（§350 单击选中/Ctrl 切换）
+    const clearSel = async () => {
+      const has = await page.evaluate(() => !!document.querySelector('[data-testid=sftp-selbar] button[title="清除选择"]'));
+      if (has) {
+        await page.evaluate(() => document.querySelector('[data-testid=sftp-selbar] button[title="清除选择"]').click());
+        await page.waitForTimeout(250);
+      }
+    };
+    const select2 = async () => {
+      await clearSel();
+      await page.click('.sftp-row[data-name="access.log"]');
+      await page.click('.sftp-row[data-name="error.log"]', { modifiers: ["Control"] });
+      await page.waitForTimeout(250);
+    };
+    await page.click('[data-testid="sftp-saveas-toggle"]');   // 重开另存为模式
+    await page.waitForTimeout(300);
+    // 预置对话框种类记录器；指定「所选目录」=/Users/demo/BatchDir（saveResult 探针）
+    await page.evaluate(() => { window.__pickLog = []; });
+    await page.evaluate(() => window.__demoInvoke?.("demo_pick_result", { path: "/Users/demo/BatchDir" }));
+    await select2();
+    ck.check("多选两文件选中条出现", await page.evaluate(() => !!document.querySelector("[data-testid=sftp-selbar]")));
+    await page.click("[data-testid=sftp-sel-download]");
+    await page.waitForTimeout(1000);
+    const pickLog = await page.evaluate(() => window.__pickLog ?? []);
+    ck.check("批量只弹一次目录选择器、零逐文件保存框", pickLog.length === 1 && pickLog[0] === "dir", JSON.stringify(pickLog));
+    const batchLocals = await page.evaluate(() =>
+      [...document.querySelectorAll(".xfer-row .xfer-sub")].map((e) => e.textContent).filter((t) => t.includes("BatchDir")));
+    ck.check("两文件都落所选目录（原名直落）",
+      batchLocals.length >= 2
+      && batchLocals.some((t) => t.includes("/Users/demo/BatchDir/access.log"))
+      && batchLocals.some((t) => t.includes("/Users/demo/BatchDir/error.log")),
+      JSON.stringify(batchLocals));
+    // 目录选择器取消=整批不发起
+    const beforeBatchCancel = await cardCount(page);
+    await page.evaluate(() => { window.__pickLog = []; });
+    await page.evaluate(() => window.__demoInvoke?.("demo_pick_result", { path: "" }));
+    await select2();
+    await page.click("[data-testid=sftp-sel-download]");
+    await page.waitForTimeout(900);
+    ck.check("目录选择器取消：整批不建卡", (await cardCount(page)) === beforeBatchCancel,
+      `${beforeBatchCancel} → ${await cardCount(page)}`);
+    ck.check("取消路径同样只进了目录选择器", (await page.evaluate(() => window.__pickLog)).join() === "dir");
+    // 恢复：探针与开关还原（后续分区不受影响）
+    await page.evaluate(() => window.__demoInvoke?.("demo_pick_result", {}));
+    await page.evaluate(() => { window.__pickLog = []; });
+    await clearSel();
+    await page.click('[data-testid="sftp-saveas-toggle"]');
+    await page.waitForTimeout(300);
+
     // ── B/C. 设置面板：十一族色板 + 大气化结构 ──
     await page.click(".hb-settings");
     await page.waitForTimeout(700);
@@ -170,13 +220,13 @@ module.exports = {
     // （分类切换只换内容不换盒子——用户反馈跳变）
     await page.click('[data-testid="settings-cat-terminal"]');
     await page.waitForTimeout(400);
-    ck.check("终端分类两卡（行为 4 行 + 外观 6 行）",
+    ck.check("终端分类两卡（行为 5 行 + 外观 6 行）",
       (await page.evaluate(() => {
         const cards = [...document.querySelectorAll(".settings-pane .set-card")];
         if (cards.length !== 2) return false;
         const rows = (c) => c.querySelectorAll(".set-item").length;
-        // P2-c 轮：行为卡 3→4（新增 OSC 52 写剪贴板策略下拉）
-        return rows(cards[0]) === 4 && rows(cards[1]) === 6;
+        // P2-c 轮：行为卡 3→4（OSC 52 策略）；本地终端一等公民轮 4→5（本地 Shell 下拉）
+        return rows(cards[0]) === 5 && rows(cards[1]) === 6;
       })), await page.evaluate(() =>
         [...document.querySelectorAll(".settings-pane .set-card")].map((c) => c.querySelectorAll(".set-item").length).join(",")));
     const boxT = await dlgBox();

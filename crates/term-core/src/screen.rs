@@ -116,6 +116,14 @@ struct CupTranslator {
     carry: Vec<u8>,
 }
 
+/// carry 上限：未终结 CSI 尾片的丢弃阈值（合法参数序列几十字节封顶）。
+const CUP_CARRY_CAP: usize = 4096;
+/// 超界 CUP 补 LF 的单序列上限：真实 ConPTY 窗口与视口的差值是个位数～几十行，
+/// 1024 已是宽裕头寸；`parse_cup` 允许行号到 u32::MAX，不设上限时单条 20 字节
+/// 序列曾可产出 ~4.3GB 的 LF（OOM 炸弹），设上限后单序列至多 1KB、单 8KB
+/// chunk 至多 ~1MB，内存有界。
+const CUP_LF_CAP: u32 = 1024;
+
 impl CupTranslator {
     /// 返回 Borrowed 表示无需改写（无 ESC 的常态路径零拷贝）。
     fn translate<'a>(&mut self, data: &'a [u8], rows: u16) -> Cow<'a, [u8]> {
@@ -152,7 +160,10 @@ impl CupTranslator {
                 parse_cup(&input[i + 2..j]).is_some_and(|(r, c)| {
                     if r > rows as u32 {
                         out.extend_from_slice(format!("\x1b[{};{c}H", rows).as_bytes());
-                        for _ in 0..r - rows as u32 {
+                        // 补的 LF 数截到 CUP_LF_CAP：更大的 r 只是多灌空白行
+                        // （~4.3GB 炸弹 → ≤1KB）；合法 ConPTY 重绘的超界量
+                        // （窗口高于视口的差值）远小于上限，不受影响。
+                        for _ in 0..(r - rows as u32).min(CUP_LF_CAP) {
                             out.push(b'\n');
                         }
                         true
@@ -168,7 +179,14 @@ impl CupTranslator {
             }
             i = j + 1;
         }
-        self.carry = input[i..].to_vec();
+        // carry 上限：永不终结的 CSI 参数流（远端持续输出 ESC[+参数字节，或
+        // 二进制数据撞分片边界）曾让 carry 随总输入无界增长。合法 CSI 参数
+        // ≤ 几十字节，超限即视为垃圾序列整体丢弃。
+        if input.len() - i > CUP_CARRY_CAP {
+            self.carry.clear();
+        } else {
+            self.carry = input[i..].to_vec();
+        }
         Cow::Owned(out)
     }
 }
@@ -719,6 +737,10 @@ impl Screen {
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
+        // 钳到 ≥1×1：cols/rows 是 u16 直通入参（Tauri 命令/MCP 均无校验），
+        // 传 0 会在后续渲染 Column(cols-1) usize 下溢 panic——单点钳住所有调用方
+        let cols = cols.max(1);
+        let rows = rows.max(1);
         self.config.cols = cols;
         self.config.rows = rows;
         let size = GridSize {
@@ -1395,5 +1417,59 @@ mod tests {
             "回放头不混入输出：{:?}",
             b.output
         );
+    }
+
+    /// 稳定轮（P0-1）：畸形大行号 CUP 不得产出 LF 炸弹——u32::MAX 行曾逐字节
+    /// 补 ~43 亿个 LF（~4.3GB），现在钳到 CUP_LF_CAP（1024）。
+    #[test]
+    fn cup_huge_row_bounded_output() {
+        let mut t = CupTranslator::default();
+        for seq in [
+            &b"\x1b[4294967295;1H"[..],
+            b"\x1b[2147483647;80f",
+            b"\x1b[1000000;1H",
+        ] {
+            let out = t.translate(seq, 24);
+            let lfs = out.iter().filter(|&&b| b == b'\n').count();
+            assert!(lfs <= CUP_LF_CAP as usize, "seq={:?} 产 {} 个 LF", seq, lfs);
+            assert!(out.len() < 1100, "seq={:?} 输出 {} 字节", seq, out.len());
+        }
+    }
+
+    /// 合法 ConPTY 超界（小差值）语义不变：底行定位 + 超界量个 LF。
+    #[test]
+    fn cup_small_overflow_keeps_semantics() {
+        let mut t = CupTranslator::default();
+        let out = t.translate(b"\x1b[57;1H", 50);
+        assert!(out.starts_with(b"\x1b[50;1H"), "{:?}", out);
+        assert_eq!(out.iter().filter(|&&b| b == b'\n').count(), 7);
+    }
+
+    /// 稳定轮（P1-2）：永不终结的 CSI 参数流不得让 carry 无界增长。
+    #[test]
+    fn cup_carry_capped_on_unterminated_csi() {
+        let mut t = CupTranslator::default();
+        t.translate(b"\x1b[", 24);
+        let junk = vec![b'9'; 8192];
+        let _ = t.translate(&junk, 24);
+        assert!(t.carry.len() <= CUP_CARRY_CAP, "carry={}", t.carry.len());
+        // 丢弃后新序列照常翻译（不卡死在坏态）
+        let out = t.translate(b"\x1b[57;1H", 50);
+        assert!(out.starts_with(b"\x1b[50;1H"), "{:?}", out);
+    }
+
+    /// 稳定轮：resize(0,0) 钳到 1×1——渲染路径 Column(cols-1) 不再 usize 下溢
+    /// panic（Tauri 命令/MCP 对 cols/rows 均为 u16 直通无校验）。
+    #[test]
+    fn resize_zero_clamped_no_panic() {
+        let mut s = screen();
+        s.feed(b"hello\r\nworld");
+        s.resize(0, 0);
+        s.feed(b"after");
+        let snap = s.snapshot_text();
+        assert!(snap.contains("hello"), "钳制后旧内容仍在：{snap:?}");
+        assert!(snap.contains("after"));
+        // 1×1 网格渲染/检查点路径不 panic
+        let _ = s.checkpoint();
     }
 }

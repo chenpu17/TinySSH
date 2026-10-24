@@ -4,7 +4,7 @@
 import type { Terminal } from "@xterm/xterm";
 import { inTauri } from "../adapter/bridge";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
-import type { Host, HostMeta, SessionInfo } from "../adapter/wire";
+import type { Host, HostMeta, LocalShell, SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
 import type { ConfirmState } from "./confirm-dialogs";
 import type { SplitDir, SplitPanes } from "../app-data";
@@ -44,6 +44,9 @@ export interface CtxMenusProps {
   setRecentMenu: (v: { x: number; y: number; hostId: string } | null) => void;
   createSession: (h: Host, intoSplit?: boolean) => void;
   toggleFavorite: (id: string, fav: boolean) => Promise<void>;
+  // 本地终端一等公民轮：本机右键「用指定 shell 新开」（探测清单 + 回调）
+  localShells: LocalShell[];
+  onLocalShell: (path: string) => void;
   setEditingHost: (h: Host | null) => void;
   setPrefillEntry: (v: null) => void;
   setShowImport: (v: boolean) => void;
@@ -72,6 +75,7 @@ export function CtxMenus({
   tabMenu, setTabMenu, exitSplit, stopRetry, reconnectSession, setRenaming,
   toggleSessionLog, openSessionLogFolder, openSessionDetail, requestCloseSession,
   hostMenu, setHostMenu, recentMenu, setRecentMenu, createSession, toggleFavorite,
+  localShells, onLocalShell,
   setEditingHost, setPrefillEntry, setShowImport, setShowAddHost, setRecentHidden, setConfirm,
   termMenu, setTermMenu, termsRef, pasteTextIntoRef, setSearchOpen, searchInputRef, sidRef, attachSession,
   splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen,
@@ -204,9 +208,12 @@ export function CtxMenus({
           </>
         );
       })()}
-      {/* 十一轮续：主机卡右键——与 hover 操作组同源同义（连接/收藏/编辑/删除） */}
+      {/* 十一轮续：主机卡右键——与 hover 操作组同源同义（连接/收藏/编辑/删除）。
+          本地终端一等公民轮：「本机」是内置条目——菜单裁剪为连接 + 指定 shell 新开
+          （探测清单 >1 才列；默认选择仍在 设置 → 终端） */}
       {hostMenu && (() => {
         const h = hosts.find((x) => x.id === hostMenu.hostId);
+        const isLocal = hostMenu.hostId === "local";
         const mx = Math.min(hostMenu.x, window.innerWidth - 248);
         const my = Math.min(hostMenu.y, window.innerHeight - 200);
         const close = () => setHostMenu(null);
@@ -221,16 +228,28 @@ export function CtxMenus({
                     onClick={() => { close(); createSession(h); }}
                   >连接（新建会话）</button>
                 )}
-                <button className="ghost sm-item" role="menuitem"
-                  onClick={() => { close(); void toggleFavorite(h.id, !fav); }}
-                >{fav ? "取消收藏" : "收藏（置顶分组）"}</button>
-                <div className="ctx-menu-sep" role="separator" />
-                <button className="ghost sm-item" role="menuitem"
-                  onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
-                >编辑主机…</button>
-                <button className="ghost sm-item" role="menuitem"
-                  onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
-                >删除主机…</button>
+                {isLocal && localShells.length > 1 && localShells.map((s) => (
+                  <button key={s.id} className="ghost sm-item" role="menuitem"
+                    title={s.integrable ? `用 ${s.name} 新开本地终端` : `用 ${s.name} 新开（无 shell 集成：命令块/现场延续不可用）`}
+                    onClick={() => { close(); onLocalShell(s.path); }}
+                  >用 {s.name} 新开{s.integrable ? "" : "（无命令块）"}</button>
+                ))}
+                {!isLocal && (
+                  <button className="ghost sm-item" role="menuitem"
+                    onClick={() => { close(); void toggleFavorite(h.id, !fav); }}
+                  >{fav ? "取消收藏" : "收藏（置顶分组）"}</button>
+                )}
+                {!isLocal && (
+                  <>
+                    <div className="ctx-menu-sep" role="separator" />
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
+                    >编辑主机…</button>
+                    <button className="ghost sm-item" role="menuitem"
+                      onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
+                    >删除主机…</button>
+                  </>
+                )}
               </div>
             )}
           </>

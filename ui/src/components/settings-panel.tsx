@@ -20,7 +20,7 @@ import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { isMacPlatform } from "../actions";
 import { inTauri, invoke } from "../adapter/bridge";
 import type { ActionRecord, AutonomyGrant, RecordsQuery, TriggerRule } from "../adapter/wire";
-import type { CollabStatus, Host, IdentityMeta, IdentityReq, McpStatus } from "../adapter/wire";
+import type { CollabStatus, Host, IdentityMeta, IdentityReq, LocalShell, McpStatus } from "../adapter/wire";
 import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
 import { SelfMeterDetail } from "../self-meter";
 import { RecordsPane } from "./records-pane";
@@ -59,6 +59,10 @@ interface SettingsPanelProps {
   // P2-c：OSC 52 写剪贴板策略（allow/ask/deny，默认 ask）
   osc52Policy: "allow" | "ask" | "deny";
   changeOsc52Policy: (v: "allow" | "ask" | "deny") => void;
+  // 本地终端一等公民轮：本机默认 shell（id 空串=系统默认 $SHELL/PowerShell 回退）
+  localShells: LocalShell[];
+  localShellId: string;
+  onChangeLocalShell: (id: string) => void;
   // P0 终端品质轮：外观五项 + 连字（状态与即时应用在宿主，本面板只呈现）
   termFont: string;
   onChangeTermFont: (id: string) => void;
@@ -145,6 +149,7 @@ export function SettingsPanel({
   keymap, keymapRef, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
+  localShells, localShellId, onChangeLocalShell,
   termFont, onChangeTermFont, termLigatures, onChangeTermLigatures,
   termCursorStyle, onChangeTermCursorStyle, termCursorBlink, onChangeTermCursorBlink,
   termScrollback, onChangeTermScrollback, termLetterSpacing, onChangeTermLetterSpacing,
@@ -367,6 +372,21 @@ export function SettingsPanel({
                       <option value="deny">拒绝</option>
                     </select>
                   </div>
+                  {/* 本地终端一等公民轮：本机默认 shell——启动自动开的本地终端与本机卡
+                      「连接」用此 shell；本机右键可临时用指定 shell 新开（不改默认） */}
+                  <div className="set-item">
+                    <span className="set-item-txt">
+                      <b>本地 Shell</b>
+                      <span className="set-item-desc">本地终端（含启动时自动打开的那个）使用的 shell。标注「无命令块」的 shell（cmd、WSL）无 shell 集成——命令块、现场延续与 Shell 模式执行不可用，如实降级为纯终端。</span>
+                    </span>
+                    <select className="set-item-ctl" data-testid="local-shell-select" aria-label="本地 Shell"
+                      value={localShellId} onChange={(e) => onChangeLocalShell(e.target.value)}>
+                      <option value="">系统默认（$SHELL / PowerShell）</option>
+                      {localShells.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}{s.integrable ? "" : "（无命令块）"}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 {/* P0 终端品质轮：外观五项 + 连字——即时应用到全部终端（新实例继承） */}
                 <div className="set-card">
@@ -377,7 +397,7 @@ export function SettingsPanel({
                   <div className="set-item">
                     <span className="set-item-txt">
                       <b>字体</b>
-                      <span className="set-item-desc">内置 JetBrains Mono 全量字形（框线/箭头/powerline）；其余选项按系统是否安装回落。</span>
+                      <span className="set-item-desc">默认内置 Maple Mono 圆润中文等宽（中文输出对齐不落宋体）；JetBrains Mono 全量字形（框线/箭头/powerline）；其余选项按系统是否安装回落，中文一律垫 MiSans/雅黑。</span>
                     </span>
                     <select className="set-item-ctl" data-testid="term-font-select" aria-label="终端字体"
                       value={termFont} onChange={(e) => onChangeTermFont(e.target.value)}>

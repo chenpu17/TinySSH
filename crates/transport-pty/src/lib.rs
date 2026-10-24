@@ -8,6 +8,8 @@ use portable_pty::{Child, CommandBuilder, MasterPty, NativePtySystem, PtySize, P
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
 use session_api::{Error, ExecOpts, Result};
+// 探测面返回类型随 detect_local_shells 就近可用（tauri 命令签名直书 transport_pty::LocalShellInfo）
+pub use session_api::LocalShellInfo;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -23,6 +25,10 @@ pub struct LocalPtyChannel {
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
     output_tx: broadcast::Sender<Vec<u8>>,
+    /// 保活订阅者：broadcast 零接收者时 send 即 Err，读循环会误判「无人听」而
+    /// 永久退出（core 订阅晚于 spawn 的窗口内首包即触发——表现为本地终端无
+    /// 输出）。常驻 Receiver 后 send 永不因零订阅失败；环形缓冲有界。
+    keepalive_rx: broadcast::Receiver<Vec<u8>>,
     alive: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
     /// 集成注入临时目录（respawn 时更换；调用方可取用做延迟清理）。
@@ -30,6 +36,9 @@ pub struct LocalPtyChannel {
     /// 启动期集成注入是否成功（bash/zsh/fish/powershell·pwsh 判型命中即 true；
     /// respawn 时随新 shell 重估）。这是**先验**：标记回流与否由屏幕观测。
     pub integration: AtomicBool,
+    /// 用户指定的 shell 可执行路径（本地终端一等公民轮：设置「本地 Shell」/
+    /// 右键指定 shell）。None=默认解析；respawn（重连）复用同一选择。
+    shell_override: Option<String>,
 }
 
 /// 选出用户 shell 并生成集成注入的启动方式。
@@ -255,21 +264,160 @@ fn tempfile_dir() -> std::path::PathBuf {
     d
 }
 
+/// 判型是否可注入集成（与 plan_shell_spawn 同表；探测面用，不动启动路径）。
+pub fn shell_is_integrable(shell: &str) -> bool {
+    let basename = shell
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+    let base = basename.strip_suffix(".exe").unwrap_or(&basename);
+    matches!(base, "bash" | "zsh" | "fish") || base == "powershell" || base.starts_with("pwsh")
+}
+
+/// PATH 逐目录找可执行文件；`skip` 排除特定目录（System32 的 bash.exe 是 WSL
+/// 启动器，绝不能当 Git Bash）。返回首个命中。
+fn find_in_path(exe: &str, skip: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    let path = std::env::var("PATH").ok()?;
+    // Windows 路径大小写不敏感：机器 PATH 写的是 ...\system32（小写）而探测
+    // 构造的是 System32——按大小写敏感比较跳过永不命中，WSL bash 会漏网
+    let norm = |p: &std::path::Path| p.to_string_lossy().trim_end_matches(['\\', '/']).to_owned();
+    for dir in std::env::split_paths(&path) {
+        let hit = skip.iter().any(|s| {
+            if cfg!(windows) {
+                norm(&dir).eq_ignore_ascii_case(&norm(s))
+            } else {
+                dir == *s
+            }
+        });
+        if hit {
+            continue;
+        }
+        let p = dir.join(exe);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// 探测本机可用 shell（设置「本地 Shell」下拉与本机右键菜单数据源）。
+/// 只做存在性检查、不启动进程；顺序即展示序（默认回退 powershell 在首）。
+/// id 稳定供 FE 持久化；`integrable` 按 plan_shell_spawn 同表如实标注
+///（cmd/WSL 无 preexec 钩子 → false，命令块/现场延续不可用）。
+pub fn detect_local_shells() -> Vec<session_api::LocalShellInfo> {
+    let mut out: Vec<session_api::LocalShellInfo> = Vec::new();
+    let mut add = |id: &str, name: &str, path: std::path::PathBuf| {
+        let path = path.to_string_lossy().into_owned();
+        // 同一可执行可能同时命中已知布局与 PATH 扫描——按路径去重（Windows 不区分大小写）
+        if out.iter().any(|s| s.path.eq_ignore_ascii_case(&path)) {
+            return;
+        }
+        let integrable = shell_is_integrable(&path);
+        out.push(session_api::LocalShellInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            path,
+            integrable,
+        });
+    };
+    #[cfg(windows)]
+    {
+        let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let sys_dir = std::path::Path::new(&sys).join("System32");
+        let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
+        // Windows PowerShell 5.1 恒在（系统组件），也是默认回退——置首
+        let ps = sys_dir.join(r"WindowsPowerShell\v1.0\powershell.exe");
+        if ps.is_file() {
+            add("powershell", "Windows PowerShell", ps);
+        }
+        // PowerShell 7+：官方布局按版本目录，兜底 PATH（PATH 命中同样是 pwsh.exe）
+        let pwsh = ["7", "7-preview", "6"]
+            .iter()
+            .map(|v| {
+                std::path::Path::new(&pf)
+                    .join("PowerShell")
+                    .join(v)
+                    .join("pwsh.exe")
+            })
+            .find(|p| p.is_file())
+            .or_else(|| find_in_path("pwsh.exe", &[]));
+        if let Some(p) = pwsh {
+            add("pwsh", "PowerShell 7", p);
+        }
+        // Git Bash：常见安装布局 + PATH（跳过 System32——那是 WSL bash 启动器）
+        let mut gb = std::path::Path::new(&pf).join(r"Git\bin\bash.exe");
+        if !gb.is_file() {
+            if let Ok(x86) = std::env::var("ProgramFiles(x86)") {
+                gb = std::path::Path::new(&x86).join(r"Git\bin\bash.exe");
+            }
+        }
+        let git_bash = if gb.is_file() {
+            Some(gb)
+        } else {
+            std::env::var("LocalAppData")
+                .ok()
+                .map(|lad| std::path::Path::new(&lad).join(r"Programs\Git\bin\bash.exe"))
+                .filter(|p| p.is_file())
+                .or_else(|| find_in_path("bash.exe", &[sys_dir.clone()]))
+        };
+        if let Some(p) = git_bash {
+            add("git-bash", "Git Bash", p);
+        }
+        let cmd = sys_dir.join("cmd.exe");
+        if cmd.is_file() {
+            add("cmd", "cmd", cmd);
+        }
+        let wsl = sys_dir.join("wsl.exe");
+        // wsl.exe 收录于所有现代 Windows，存在性证明不了装了发行版；查 Lxss
+        // 注册表键（有发行版才存在）如实 gating——否则「用 WSL 新开」落得
+        // 「没有已安装的分发版」闪退再被泵拉起，循环三次进 Disconnected
+        let wsl_ready = std::process::Command::new("reg")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss",
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if wsl.is_file() && wsl_ready {
+            add("wsl", "WSL", wsl);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(sh) = std::env::var("SHELL") {
+            let base = std::path::Path::new(&sh)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| sh.clone());
+            add(&base, &base, std::path::PathBuf::from(sh));
+        }
+    }
+    out
+}
+
 /// 启动本地持久 shell PTY。返回通路与需要延迟清理的临时目录。
+/// `shell` 为用户指定的 shell 可执行路径（detect_local_shells 的 path 原样透传）；
+/// None=默认解析（$SHELL → Windows 回退 powershell.exe）。
 pub async fn spawn_local_pty(
     cols: u16,
     rows: u16,
+    shell: Option<String>,
 ) -> Result<(Arc<LocalPtyChannel>, Option<std::path::PathBuf>)> {
     let (output_tx, _) = broadcast::channel(4096);
+    let keepalive_rx = output_tx.subscribe();
     let channel = Arc::new(LocalPtyChannel {
         writer: Mutex::new(None),
         master: Mutex::new(None),
         child: Mutex::new(None),
         output_tx,
+        keepalive_rx,
         alive: Arc::new(AtomicBool::new(true)),
         size: Mutex::new((cols, rows)),
         tmp: std::sync::Mutex::new(None),
         integration: AtomicBool::new(false),
+        shell_override: shell,
     });
     channel.respawn().await?;
     let cleanup = channel.tmp.lock().unwrap().clone();
@@ -285,11 +433,17 @@ impl LocalPtyChannel {
             let _ = old.kill();
         }
         let pty_system = NativePtySystem::default();
-        // Windows 实验性分支：SHELL 未设时回退 powershell（unix 路径原样保留）。
+        // shell 解析：用户 override → $SHELL → Windows 实验性分支回退 powershell
+        //（unix 路径原样保留）。override 随通路存续，重连 respawn 复用同一选择。
         #[cfg(unix)]
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let shell = self
+            .shell_override
+            .clone()
+            .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
         #[cfg(windows)]
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".to_string());
+        let shell = self.shell_override.clone().unwrap_or_else(|| {
+            std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".to_string())
+        });
         let tmp = tempfile_dir();
         let plan = plan_shell_spawn(&shell, &tmp);
 
@@ -406,10 +560,21 @@ impl LocalPtyChannel {
             .as_ref()
             .ok_or(Error::SessionClosed)?
             .clone();
-        let mut w = w.lock().unwrap();
-        w.write_all(data)
-            .and_then(|_| w.flush())
-            .map_err(|e| Error::Io(format!("pty write: {e}")))
+        // 阻塞写移出 tokio worker：ConPTY 输入管道写满（子进程挂起/停读、超大
+        // 粘贴）曾把 worker 线程无限钉死且 cancel 令牌失效，还连带卡住抢同一把
+        // std 锁的 DSR 兜底线程。blocking 池独立扩容不占运行时调度；外层 async
+        // Mutex 保证同一会话写不重排，std 锁只与 DSR 兜底线程互斥。
+        let data = data.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let mut w = w
+                .lock()
+                .map_err(|_| Error::Io("pty writer poisoned".into()))?;
+            w.write_all(&data)
+                .and_then(|_| w.flush())
+                .map_err(|e| Error::Io(format!("pty write: {e}")))
+        })
+        .await
+        .map_err(|e| Error::Io(format!("pty write join: {e}")))?
     }
 }
 
@@ -452,10 +617,17 @@ impl ChannelHandle for LocalPtyChannel {
         cancel: &CancellationToken,
     ) -> Result<FreshOutcome> {
         // Windows 实验性分支：SHELL 未设时回退 powershell（unix 路径原样保留）。
+        // 会话的 shell_override 优先——agent 对本地 cmd/WSL 会话 fresh exec 是
+        // 唯一通路（Shell 模式被门拒），落回 $SHELL/powershell 就跑错族了
         #[cfg(unix)]
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let shell = self
+            .shell_override
+            .clone()
+            .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
         #[cfg(windows)]
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".to_string());
+        let shell = self.shell_override.clone().unwrap_or_else(|| {
+            std::env::var("SHELL").unwrap_or_else(|_| "powershell.exe".to_string())
+        });
         let mut command = tokio::process::Command::new(&shell);
         #[cfg(unix)]
         command.arg("-c").arg(cmd);
@@ -473,6 +645,8 @@ impl ChannelHandle for LocalPtyChannel {
                 2
             } else if base == "cmd" {
                 1
+            } else if base == "wsl" {
+                3
             } else {
                 0
             }
@@ -481,6 +655,9 @@ impl ChannelHandle for LocalPtyChannel {
             command.arg("-NoProfile").arg("-Command").arg(cmd);
         } else if family == 1 {
             command.arg("/c").arg(cmd);
+        } else if family == 3 {
+            // wsl.exe：`-- <cmd>` 经默认发行版 shell 执行；-c 会被当发行版名
+            command.arg("--").arg(cmd);
         } else {
             command.arg("-c").arg(cmd);
         }

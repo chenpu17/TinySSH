@@ -58,6 +58,39 @@ module.exports = {
     const termPane = await paneTextOf(page, "settings-pane-terminal");
     ck.check("终端分区显示其内容（多行粘贴保护）", termPane.includes("多行粘贴保护"), termPane.slice(0, 80));
 
+    // ── 本地终端一等公民轮：本地 Shell 选择 ──
+    const shellSel = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="local-shell-select"]');
+      if (!el) return null;
+      return {
+        value: el.value,
+        options: [...el.querySelectorAll("option")].map((o) => ({ v: o.value, t: o.textContent })),
+      };
+    });
+    ck.check("本地 Shell 下拉在场且默认系统默认", !!shellSel && shellSel.value === "", JSON.stringify(shellSel));
+    ck.check("本地 Shell 列出探测 fixture（5 族 + 系统默认）",
+      !!shellSel && shellSel.options.length === 6 &&
+      shellSel.options.some((o) => o.t === "Git Bash") && shellSel.options.some((o) => o.t.includes("cmd") && o.t.includes("无命令块")),
+      JSON.stringify(shellSel && shellSel.options));
+    // 保存回显：选 Git Bash → select 值切换（KV 写走 persistSetting 同路）
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="local-shell-select"]');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+      setter.call(el, "git-bash");
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForTimeout(400);
+    const shellSel2 = await page.evaluate(() => document.querySelector('[data-testid="local-shell-select"]')?.value);
+    ck.check("本地 Shell 切换生效（git-bash）", shellSel2 === "git-bash", String(shellSel2));
+    // 复位默认（不污染其他用例域；本 spec 域隔离无碍，habit 上收干净）
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="local-shell-select"]');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+      setter.call(el, "");
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForTimeout(200);
+
     // 切到凭据分区
     await page.click("[data-testid=settings-cat-credentials]");
     await page.waitForTimeout(600);
@@ -115,17 +148,17 @@ module.exports = {
     await page.waitForTimeout(500);
     const aboutPane = await paneTextOf(page, "settings-pane-about");
     ck.check("关于分区显示产品说明（TinySSH / 本地优先）", aboutPane.includes("TinySSH") && aboutPane.includes("本地优先"), aboutPane.slice(0, 80));
-    // 版本号轮：0.9.1（演示模式回退 package.json 同源；演示域无编译产物，
+    // 版本号轮：0.10.0（演示模式回退 package.json 同源；演示域无编译产物，
     // 「（… 编译）」段自动略去——真机由 get_build_time 注入）
     const ver = await page.textContent("[data-testid=about-version]");
-    ck.check("关于分区显示版本号 v0.9.1（无编译时间段）",
-      /TinySSH v0\.9\.1/.test(ver ?? "") && !/编译/.test(ver ?? ""), ver ?? "");
+    ck.check("关于分区显示版本号 v0.10.0（无编译时间段）",
+      /TinySSH v0\.10\.0/.test(ver ?? "") && !/编译/.test(ver ?? ""), ver ?? "");
     const author = await page.textContent("[data-testid=about-author]");
     ck.check("关于分区署名作者：陈普", author === "作者：陈普", author ?? "");
-    // 版本号轮：标题栏右侧常驻版本标签（同源 package.json 回退）
-    ck.check("标题栏右侧显示版本标签 v0.9.1",
+    // 版本号轮：标题栏应用名右侧常驻版本标签（同源 package.json 回退）
+    ck.check("标题栏应用名右侧显示版本标签 v0.10.0",
       await page.evaluate(() =>
-        /^v0\.9\.1$/.test(document.querySelector(".titlebar .ver-tag")?.textContent.trim() ?? "")));
+        /^v0\.10\.0$/.test(document.querySelector(".titlebar .tb-left .ver-tag")?.textContent.trim() ?? "")));
 
     // 关闭
     await page.click("[data-testid=settings-close]");

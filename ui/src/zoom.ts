@@ -74,8 +74,10 @@ export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }):
   if (!tauri) return () => {};
   // 恢复上次缩放：合法且非 100% 才回放；非法值静默忽略；**invoke 成功才落内存档位**——
   // 失败（旧二进制无 capability、webview 初始化期）档位留在 100%，设置绝不显示
-  // 到不了的幻影档；localStorage 保留（瞬时失败下次启动重试，成功即静默无感）
-  const saved = Number(localStorage.getItem(ZOOM_KEY));
+  // 到不了的幻影档；localStorage 保留（瞬时失败下次启动重试，成功即静默无感）。
+  // localStorage 访问本身也可能被禁（SecurityError）——useLayoutEffect 期抛错即白屏。
+  let saved = Number.NaN;
+  try { saved = Number(localStorage.getItem(ZOOM_KEY)); } catch { /* 禁用态：留默认 */ }
   if (Number.isFinite(saved) && saved > 0 && clampZoom(saved) === saved && saved !== 1) {
     void invoke("plugin:webview|set_webview_zoom", { value: clampZoom(saved) })
       .then(() => {

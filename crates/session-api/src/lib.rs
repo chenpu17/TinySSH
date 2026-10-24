@@ -740,6 +740,20 @@ pub struct ShellCapability {
     pub host_setting: bool,
 }
 
+/// 本机可用 shell 清单条目（list_local_shells；本地终端一等公民轮）。
+/// 只做存在性探测不启动进程；`path` 可原样作为 spawn_local_pty 的 shell override。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalShellInfo {
+    /// 稳定 id（FE 持久化默认选择用）：powershell | pwsh | cmd | git-bash | wsl | unix 原名
+    pub id: String,
+    /// 展示名（Windows PowerShell / PowerShell 7 / cmd / Git Bash / WSL）
+    pub name: String,
+    /// 可执行文件绝对路径
+    pub path: String,
+    /// plan_shell_spawn 判型可注入 OSC133（命令块/现场延续可用；cmd/WSL 如实为 false）
+    pub integrable: bool,
+}
+
 /// C3 事件：shell-integration-event { session_id, state }（DC3.5 就绪独立事件）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellIntegrationEvent {
@@ -837,6 +851,10 @@ pub struct BeginConnectionOpts {
     /// 显式绕过 (host_id, actor) 幂等合并（DC1.5）。
     #[serde(default)]
     pub new_session: bool,
+    /// 本地会话指定 shell 可执行路径（本地终端一等公民轮）。None=默认解析
+    /// （override → $SHELL → powershell.exe）；仅 host_id="local" 时有意义。
+    #[serde(default)]
+    pub local_shell: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1408,6 +1426,10 @@ pub enum Error {
     /// 凭据仍被主机引用，不可删除（DF8.4）：附引用主机名列表。
     #[error("凭据正在被主机引用（{host_names:?}），无法删除")]
     IdentityInUse { host_names: Vec<String> },
+    /// 「本机」（id="local"）是内置条目：不可编辑、不可删除（本地终端一等公民轮）。
+    /// ensure_local_host 每次列表/建连时自动重建，删除无意义、编辑会破坏本地通路前提。
+    #[error("「本机」是内置条目，不可编辑或删除")]
+    LocalHostImmutable,
     #[error("存储错误: {0}")]
     Storage(String),
     #[error("IO 错误: {0}")]
@@ -1495,6 +1517,7 @@ impl Error {
                 "identity_in_use",
                 Some(serde_json::json!({ "host_names": host_names })),
             ),
+            E::LocalHostImmutable => ("local_host_immutable", None),
             E::Storage(_) => ("storage", None),
             E::Io(_) => ("io", None),
             E::SftpPathNotFound { path } => (

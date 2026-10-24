@@ -203,6 +203,17 @@ export interface AttemptInfo {
 export interface BeginConnectionOpts {
   /** 显式绕过 (host_id, actor) 幂等合并（DC1.5）。 */
   new_session?: boolean;
+  /** 本地会话指定 shell 可执行路径（本机条目用；缺省=默认解析 $SHELL → powershell.exe）。 */
+  local_shell?: string | null;
+}
+
+/** 本机可用 shell（list_local_shells；本地终端一等公民轮）。integrable=false 表示
+ *  该 shell 无 preexec 钩子（cmd/WSL）——命令块/现场延续不可用，如实标注。 */
+export interface LocalShell {
+  id: string;
+  name: string;
+  path: string;
+  integrable: boolean;
 }
 
 export type CancelOutcome =

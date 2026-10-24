@@ -5,7 +5,7 @@ import type { PointerEvent } from "react";
 import { errMsg } from "../adapter/errors";
 import type { AppAction } from "../actions";
 import type {
-  AttemptPhase, ErrorPayload, Host, HostDraft, HostMeta, SessionInfo, SshConfigPreview,
+  AttemptPhase, ErrorPayload, Host, HostDraft, HostMeta, LocalShell, SessionInfo, SshConfigPreview,
 } from "../adapter/wire";
 import { byName, hostMatches, phaseText } from "../app-data";
 import type { ConfirmState } from "./confirm-dialogs";
@@ -24,6 +24,10 @@ export interface HostbarProps {
   filteredHosts: Host[];
   favHosts: Host[];
   otherHosts: Host[];
+  // 本地终端一等公民轮：本机置顶节（不过滤链）+ 探测 shell 清单与「用 … 新开」回调
+  localHost: Host | null;
+  localShells: LocalShell[];
+  onLocalShell: (path: string) => void;
   allTags: string[];
   activeTag: string | null;
   connectingIds: Set<string>;
@@ -59,6 +63,7 @@ export interface HostbarProps {
 export function Hostbar({
   hostbarWidth, hosts, hostMeta, sessions, hostsLoaded,
   filteredHosts, favHosts, otherHosts, allTags, activeTag,
+  localHost, localShells, onLocalShell,
   connectingIds, lastFailed, showImport, showAddHost, attempts,
   hostSearchRef, hostDebounceRef, setHostQuery,
   gripDrag, gripDown, gripMove, gripUp, dispatchRef,
@@ -141,7 +146,9 @@ export function Hostbar({
           {(() => {
             // R20（§4.2）：卡片渲染收敛为局部函数——收藏分组（收藏/其他主机/全部主机）
             // 复用同一卡片形态；组内名称序已在 filteredHosts 派生时排序
-            const renderHostCard = (h: Host) => {
+            // 本地终端一等公民轮：isLocal 分支——「本机」是内置条目，徽标显「本地」、
+            // 无收藏/编辑/删除（后端 LocalHostImmutable 同门兜底），连接语义不变
+            const renderHostCard = (h: Host, isLocal = false) => {
               // 该主机的现有会话（五人走查·林姐：误点已连主机静默开重复会话）。
               // 在线徽章 + 点击切到最近会话；显式另开走右侧「连接」钮
               const mine = sessions.filter((s) => s.host_id === h.id);
@@ -173,11 +180,15 @@ export function Hostbar({
                     if (e.target !== e.currentTarget) return;
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
                   }}
-                  title={`${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
+                  title={isLocal
+                    ? "本机 PTY——内置条目：不可编辑、不可删除\n默认 shell 在 设置 → 终端 选择；右键可用指定 shell 新开"
+                    : `${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
                   {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
                   <div className="host-card-main" style={{ cursor: connectingIds.has(h.id) ? "default" : "pointer" }}
                     title={latest
-                      ? `该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话\n${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老设备）" : "UTF-8"}`
+                      ? (isLocal
+                        ? `已有 ${mine.length} 个本地终端——点击切换到最近会话，右侧「连接」可另开`
+                        : `该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话\n${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老设备）" : "UTF-8"}`)
                       : undefined}
                     onClick={activate}>
                     {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩。
@@ -190,9 +201,11 @@ export function Hostbar({
                           title={`已有 ${mine.length} 个会话（存活 ${live.length}）——点击主行切换到最近会话`}>● {mine.length}</span>
                       )}
                       <span className="host-name">{h.name}</span>
-                      <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>
+                      {isLocal
+                        ? <span className="auth-tag" title="本机 PTY——内置条目，不可编辑或删除">本地</span>
+                        : <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>}
                     </div>
-                    <div className="host-addr mono">{h.username}@{h.address}:{h.port}</div>
+                    <div className="host-addr mono">{isLocal ? `本地 shell · ${h.username}` : `${h.username}@${h.address}:${h.port}`}</div>
                     {(h.tags ?? []).length > 0 && (
                       <div className="host-tags">
                         {(h.tags ?? []).slice(0, 2).map((t) => <span key={t} className="host-tag">{t}</span>)}
@@ -204,20 +217,22 @@ export function Hostbar({
                     )}
                   </div>
                   <div className="host-card-side">
-                    <div className="host-ops">
-                      <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
-                        title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
-                        onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
-                      <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
-                        onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
-                      <button className="ghost host-del" title="删除主机"
-                        onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
-                    </div>
+                    {!isLocal && (
+                      <div className="host-ops">
+                        <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
+                          title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
+                          onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
+                        <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
+                          onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
+                        <button className="ghost host-del" title="删除主机"
+                          onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
+                      </div>
+                    )}
                     {/* R23（§302 等待中可取消）：attempt 在途显示核心相位 + 取消入口；
                         取消终态由核心串行裁决后呈示（cancelConnect 不自行改状态） */}
                     <div className="row" style={{ flexWrap: "nowrap", gap: 4 }}>
                       <button className="host-connect-btn" disabled={connectingIds.has(h.id)}
-                        title="连接（新建会话）——其他主机的连接不受影响"
+                        title={isLocal ? "连接（新开本地终端）——shell 在 设置 → 终端 选择，右键可指定 shell 新开" : "连接（新建会话）——其他主机的连接不受影响"}
                         onClick={() => createSession(h)}>
                         {(() => {
                           const a = hostAttempt(h.id);
@@ -253,9 +268,17 @@ export function Hostbar({
               <div className="section">
                 <h4>{title}</h4>
                 {skeletons}
-                {cards.map(renderHostCard)}
+                {cards.map((c) => renderHostCard(c))}
                 {emptyAll}
                 {noMatch}
+              </div>
+            );
+            // 本地终端一等公民轮：「本机」置顶节——不过滤链（搜索/标签筛选不影响）、
+            // 内置条目（卡片无编辑/删除；右键菜单同轮裁剪）。先于收藏组渲染。
+            const localSection = localHost && (
+              <div className="section" data-testid="local-host-section">
+                <h4>本机</h4>
+                {renderHostCard(localHost, true)}
               </div>
             );
             // 契约 §4.2：有收藏 → 「收藏」+「其他主机」两组；无收藏 → 「全部主机」单组。
@@ -263,17 +286,23 @@ export function Hostbar({
             if (favHosts.length > 0) {
               return (
                 <>
+                  {localSection}
                   {firstSection("收藏", favHosts)}
                   {otherHosts.length > 0 && (
                     <div className="section">
                       <h4>其他主机</h4>
-                      {otherHosts.map(renderHostCard)}
+                      {otherHosts.map((c) => renderHostCard(c))}
                     </div>
                   )}
                 </>
               );
             }
-            return firstSection("全部主机", otherHosts);
+            return (
+              <>
+                {localSection}
+                {firstSection("全部主机", otherHosts)}
+              </>
+            );
           })()}
         </div>
         <div className="hb-bottom">

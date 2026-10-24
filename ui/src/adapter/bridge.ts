@@ -42,6 +42,7 @@ interface CmdArgs {
   create_session: { hostId: string };  // tauri v2 JS 侧实参为 camelCase，自动映射 rust host_id
   begin_connection: { hostId: string; opts?: wire.BeginConnectionOpts };
   begin_connection_draft: { draft: wire.HostDraft; opts?: wire.BeginConnectionOpts };
+  list_local_shells: undefined;
   connection_status: { attemptId: string };
   cancel_connection: { attemptId: string };
   close_session: { sid: string };
@@ -58,6 +59,7 @@ interface CmdArgs {
   download_file: { sid: string; remote: string; local?: string | null };
   pick_upload_files: undefined;
   pick_save_file: { defaultName: string; defaultDir?: string | null };
+  pick_save_dir: { defaultDir?: string | null };
   cancel_transfer: { id: string };
   retry_transfer: { id: string };
   reveal_path: { path: string };
@@ -148,6 +150,7 @@ interface CmdArgs {
   bench_start: { onChunk: WireChannel };
   bench_report: { bytes: number; resyncs: number; seconds: number };
   quit_app: undefined;
+  cancel_app_close: undefined;
 }
 
 interface CmdRet {
@@ -165,6 +168,7 @@ interface CmdRet {
   create_session: wire.SessionId;
   begin_connection: wire.AttemptInfo;
   begin_connection_draft: wire.AttemptInfo;
+  list_local_shells: wire.LocalShell[];
   connection_status: wire.AttemptInfo;
   cancel_connection: wire.CancelOutcome;
   close_session: void;
@@ -181,6 +185,7 @@ interface CmdRet {
   download_file: wire.TransferHandle;
   pick_upload_files: string[];
   pick_save_file: string | null;
+  pick_save_dir: string | null;
   cancel_transfer: void;
   retry_transfer: wire.TransferHandle;
   reveal_path: void;
@@ -252,6 +257,7 @@ interface CmdRet {
   bench_start: void;
   bench_report: void;
   quit_app: void;
+  cancel_app_close: void;
 }
 
 export type CmdName = keyof CmdArgs & keyof CmdRet;

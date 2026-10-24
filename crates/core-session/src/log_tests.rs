@@ -56,6 +56,8 @@ async fn logging_lifecycle_and_content() {
     let h = m.sessions.lock().unwrap().get(&sid).cloned().unwrap();
     h.log_append("log-line-1\n");
     h.log_append("log-line-2");
+    // 稳定轮改攒批（64KB/500ms 阈值）：读盘前显式冲刷——落盘不再即时可见
+    h.log_flush();
     let content = std::fs::read_to_string(&p).unwrap();
     assert!(content.contains("log-line-1"), "得 {content:?}");
     assert!(content.contains("log-line-2"));

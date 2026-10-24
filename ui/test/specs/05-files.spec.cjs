@@ -86,6 +86,17 @@ module.exports = {
     });
     ck.check("下载完成卡带「打开」按钮（xfer-open）", !!doneCard && doneCard.open, JSON.stringify(doneCard));
     ck.check("完成卡仍带「定位」（打开不替代定位）", !!doneCard && doneCard.locate, JSON.stringify(doneCard));
+    // 0.10.0 轮：完成 toast 附「打开所在文件夹」动作（带动作驻留 8s，不抓瞬）；点按=定位语义
+    const doneToast = await page.evaluate(() => ({
+      text: document.querySelector(".toast.ok")?.textContent ?? "",
+      label: document.querySelector('[data-testid="toast-action"]')?.textContent ?? "",
+    }));
+    ck.check("下载完成 toast 出现且附「打开所在文件夹」动作",
+      doneToast.text.includes("传输完成") && doneToast.label === "打开所在文件夹", JSON.stringify(doneToast));
+    await page.evaluate(() => document.querySelector('[data-testid="toast-action"]').click());
+    await page.waitForTimeout(300);
+    ck.check("点 toast 动作后该条消失（动作即消费；演示域 reveal_path no-op 无报错）",
+      await page.evaluate(() => !document.querySelector('[data-testid="toast-action"]') && !document.querySelector(".toast.err")));
     // 点「打开」（演示域 open_path=no-op）：不得报错（真实面=系统默认程序拉起文件）
     await page.evaluate(() => document.querySelector('[data-testid="xfer-open"]').click());
     await page.waitForTimeout(400);

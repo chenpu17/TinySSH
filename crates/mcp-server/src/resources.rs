@@ -219,6 +219,9 @@ async fn notify_updated(peer: &Peer<RoleServer>, uri: &str) -> Result<(), rmcp::
 /// 注意不能锚定请求级 CancellationToken——rmcp 在该请求响应发出时即取消它
 /// （service.rs ToSink 分支 remove+cancel），订阅必须活得比 subscribe 请求久。
 /// 断连后未显式 unsubscribe 的看护任务由发送失败自清；同 (token,uri) 重订阅替换。
+/// 稳定轮补两类滞留面：轮询读持续失败（无效 id 刷订阅）与广播分支长时间无匹配
+/// 事件（静默断连/无人关注的 Session id）——原实现在这两类下任务与注册表条目
+/// 永不回收；现一律周期性「通知探活」，peer 失活（发送失败）即退出自清。
 pub fn spawn_watcher(
     api: Arc<dyn SessionApi>,
     actor: Actor,
@@ -226,6 +229,7 @@ pub fn spawn_watcher(
     q: ResQuery,
     peer: Peer<RoleServer>,
 ) -> tokio::task::JoinHandle<()> {
+    const WATCH_PROBE_SECS: u64 = 60;
     tokio::spawn(async move {
         match q {
             // 传输/记录：核心无事件面，2s 差分（首次只建基线不通知）
@@ -233,27 +237,46 @@ pub fn spawn_watcher(
                 let mut prev = String::new();
                 let mut tick = tokio::time::interval(Duration::from_secs(2));
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut errs: u32 = 0;
                 loop {
                     tick.tick().await;
-                    let Ok(v) = read_resource_value(&api, &actor, &q).await else {
-                        continue;
-                    };
-                    let fp = v.to_string();
-                    if !prev.is_empty() && fp != prev {
-                        if notify_updated(&peer, &uri).await.is_err() {
-                            break;
+                    match read_resource_value(&api, &actor, &q).await {
+                        Ok(v) => {
+                            errs = 0;
+                            let fp = v.to_string();
+                            if !prev.is_empty() && fp != prev {
+                                if notify_updated(&peer, &uri).await.is_err() {
+                                    break;
+                                }
+                            }
+                            prev = fp;
+                        }
+                        Err(_) => {
+                            // 持续读失败：每 ~30s 通知探活，peer 没了就退出
+                            errs += 1;
+                            if errs >= 15 {
+                                if notify_updated(&peer, &uri).await.is_err() {
+                                    break;
+                                }
+                                errs = 0;
+                            }
                         }
                     }
-                    prev = fp;
                 }
             }
             ResQuery::ApprovalsPending => {
                 let mut rx = api.subscribe_approvals();
                 loop {
-                    let changed = match rx.recv().await {
-                        Ok(_) => true,
-                        Err(broadcast::error::RecvError::Lagged(_)) => true,
-                        Err(broadcast::error::RecvError::Closed) => break,
+                    let changed = match tokio::time::timeout(
+                        Duration::from_secs(WATCH_PROBE_SECS),
+                        rx.recv(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => true,
+                        Ok(Err(broadcast::error::RecvError::Lagged(_))) => true,
+                        Ok(Err(broadcast::error::RecvError::Closed)) => break,
+                        Err(_silent) => notify_updated(&peer, &uri).await.is_ok(),
                     };
                     if changed && notify_updated(&peer, &uri).await.is_err() {
                         break;
@@ -263,10 +286,16 @@ pub fn spawn_watcher(
             ResQuery::Forwards => {
                 let mut rx = api.subscribe_forwards();
                 loop {
-                    let changed = match rx.recv().await {
-                        Ok(_) => true,
-                        Err(broadcast::error::RecvError::Lagged(_)) => true,
-                        Err(broadcast::error::RecvError::Closed) => break,
+                    let changed = match tokio::time::timeout(
+                        Duration::from_secs(WATCH_PROBE_SECS),
+                        rx.recv(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => true,
+                        Ok(Err(broadcast::error::RecvError::Lagged(_))) => true,
+                        Ok(Err(broadcast::error::RecvError::Closed)) => break,
+                        Err(_silent) => notify_updated(&peer, &uri).await.is_ok(),
                     };
                     if changed && notify_updated(&peer, &uri).await.is_err() {
                         break;
@@ -276,14 +305,27 @@ pub fn spawn_watcher(
             ResQuery::Sessions | ResQuery::Session(_) => {
                 let mut rx = api.subscribe_connections();
                 loop {
-                    let hit = match rx.recv().await {
-                        Ok(ev) => match (&q, ev.session_id) {
+                    let hit = match tokio::time::timeout(
+                        Duration::from_secs(WATCH_PROBE_SECS),
+                        rx.recv(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(ev)) => match (&q, ev.session_id) {
                             (ResQuery::Sessions, _) => true,
                             (ResQuery::Session(want), Some(sid)) => *want == sid,
                             _ => false,
                         },
-                        Err(broadcast::error::RecvError::Lagged(_)) => true,
-                        Err(broadcast::error::RecvError::Closed) => break,
+                        Ok(Err(broadcast::error::RecvError::Lagged(_))) => true,
+                        Ok(Err(broadcast::error::RecvError::Closed)) => break,
+                        // 长时间无匹配事件（无效 id / 关注的会话无动静）：探活，
+                        // peer 失活即退出；活着则继续守（探活通知本身无害）
+                        Err(_silent) => {
+                            if notify_updated(&peer, &uri).await.is_err() {
+                                break;
+                            }
+                            false
+                        }
                     };
                     if hit && notify_updated(&peer, &uri).await.is_err() {
                         break;

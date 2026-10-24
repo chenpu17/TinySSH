@@ -96,16 +96,24 @@ fn live_openai_compat_full_chain() {
     let base = std::env::var("TINYSSH_LIVE_BASE").unwrap_or_default();
     let model = std::env::var("TINYSSH_LIVE_MODEL").unwrap_or_default();
     let key = std::env::var("TINYSSH_LIVE_KEY").unwrap_or_default();
-    assert!(!base.is_empty() && !key.is_empty(),
-        "需要 TINYSSH_LIVE_BASE / TINYSSH_LIVE_MODEL / TINYSSH_LIVE_KEY 环境变量");
+    assert!(
+        !base.is_empty() && !key.is_empty(),
+        "需要 TINYSSH_LIVE_BASE / TINYSSH_LIVE_MODEL / TINYSSH_LIVE_KEY 环境变量"
+    );
     let cfg = ModelConfig {
         provider: "openai".into(),
         base_url: Some(base),
-        model: if model.is_empty() { "glm-5.3-flash".into() } else { model },
+        model: if model.is_empty() {
+            "glm-5.3-flash".into()
+        } else {
+            model
+        },
         api_key: key,
     };
 
-    let ops = Arc::new(LiveOps { calls: Mutex::new(Vec::new()) });
+    let ops = Arc::new(LiveOps {
+        calls: Mutex::new(Vec::new()),
+    });
     let host = AgentHost::new_arc(ops.clone() as Arc<dyn SshOps>);
     let events: Arc<Mutex<Vec<HostEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let ev2 = events.clone();
@@ -133,7 +141,10 @@ fn live_openai_compat_full_chain() {
     println!("事件序列: {kinds:?}");
     assert!(kinds.contains(&"Done"), "应有 Done 终态（实际 {kinds:?}）");
     assert!(!kinds.contains(&"Failed"), "不应 Failed（实际 {kinds:?}）");
-    assert!(kinds.contains(&"ToolStart"), "模型应发起工具调用（实际 {kinds:?}）");
+    assert!(
+        kinds.contains(&"ToolStart"),
+        "模型应发起工具调用（实际 {kinds:?}）"
+    );
 
     // exec 真被调用且命令指向目标
     let calls = ops.calls.lock().unwrap();
@@ -144,26 +155,46 @@ fn live_openai_compat_full_chain() {
     );
     // 工具结果回灌模型（is_error=false 且内容含标记）
     let tr = evs.iter().find_map(|e| match e {
-        HostEvent::ToolResult { content, is_error, .. } => Some((content.clone(), *is_error)),
+        HostEvent::ToolResult {
+            content, is_error, ..
+        } => Some((content.clone(), *is_error)),
         _ => None,
     });
     let (content, is_err) = tr.expect("应有 ToolResult 事件");
     assert!(!is_err, "工具结果不应是错误: {content}");
-    assert!(content.contains("live-ok-marker"), "回灌内容应含标记: {content}");
+    assert!(
+        content.contains("live-ok-marker"),
+        "回灌内容应含标记: {content}"
+    );
 
     // 流式上屏：文本增量非空；思考增量（推理模型）只打印不强断言——非推理
     // provider 也应过本测试
     let text_len: usize = evs
         .iter()
-        .map(|e| if let HostEvent::Text(t) = e { t.len() } else { 0 })
+        .map(|e| {
+            if let HostEvent::Text(t) = e {
+                t.len()
+            } else {
+                0
+            }
+        })
         .sum();
     let think_len: usize = evs
         .iter()
-        .map(|e| if let HostEvent::Thinking(t) = e { t.len() } else { 0 })
+        .map(|e| {
+            if let HostEvent::Thinking(t) = e {
+                t.len()
+            } else {
+                0
+            }
+        })
         .sum();
     println!("文本增量 {text_len} 字符, 思考增量 {think_len} 字符");
     assert!(text_len > 0, "应有流式文本增量");
 
     // 转写完整性：User 消息在转写首位
-    assert!(matches!(host.history("live-1").first(), Some(HostEvent::User(_))));
+    assert!(matches!(
+        host.history("live-1").first(),
+        Some(HostEvent::User(_))
+    ));
 }

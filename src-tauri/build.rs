@@ -6,7 +6,11 @@ fn main() {
         .expect("system clock before Unix epoch")
         .as_secs() as i64;
     let build_time = chrono::DateTime::from_timestamp(secs, 0)
-        .map(|utc| utc.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+        .map(|utc| {
+            utc.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
         .unwrap_or_default();
     println!("cargo:rustc-env=TINYSSH_BUILD_TIME={build_time}");
     tauri_build::build()

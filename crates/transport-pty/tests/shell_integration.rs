@@ -7,7 +7,7 @@ use term_core::{Screen, ScreenConfig};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_shell_produces_blocks_and_cwd() {
-    let (channel, _cleanup) = transport_pty::spawn_local_pty(120, 32)
+    let (channel, _cleanup) = transport_pty::spawn_local_pty(120, 32, None)
         .await
         .expect("spawn local pty");
 
@@ -120,7 +120,7 @@ async fn fresh_exec_deadline_fires_without_output() {
     // 审计 R1 回归：读泵曾与 select 串行（join! 在前）——「无输出且不退出」的
     // 命令读端永不 EOF，deadline/cancel 分支不可达，exec 永久挂死。重构后
     // deadline 应按时出局、completed=false、promptly 返回。
-    let (channel, _cleanup) = transport_pty::spawn_local_pty(120, 32)
+    let (channel, _cleanup) = transport_pty::spawn_local_pty(120, 32, None)
         .await
         .expect("spawn local pty");
     let started = std::time::Instant::now();

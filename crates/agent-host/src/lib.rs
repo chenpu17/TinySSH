@@ -184,17 +184,42 @@ fn interpret_key_escapes(s: &str) -> String {
             continue;
         }
         match b[i + 1] {
-            b'r' => { out.push(b'\r'); i += 2; }
-            b'n' => { out.push(b'\n'); i += 2; }
-            b't' => { out.push(b'\t'); i += 2; }
-            b'\\' => { out.push(b'\\'); i += 2; }
+            b'r' => {
+                out.push(b'\r');
+                i += 2;
+            }
+            b'n' => {
+                out.push(b'\n');
+                i += 2;
+            }
+            b't' => {
+                out.push(b'\t');
+                i += 2;
+            }
+            b'\\' => {
+                out.push(b'\\');
+                i += 2;
+            }
             b'x' | b'X' if i + 4 <= b.len() => {
-                match s.get(i + 2..i + 4).and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                    Some(v) => { out.push(v); i += 4; }
-                    None => { out.push(b'\\'); i += 1; }
+                match s
+                    .get(i + 2..i + 4)
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                {
+                    Some(v) => {
+                        out.push(v);
+                        i += 4;
+                    }
+                    None => {
+                        out.push(b'\\');
+                        i += 1;
+                    }
                 }
             }
-            other => { out.push(b'\\'); out.push(other); i += 2; }
+            other => {
+                out.push(b'\\');
+                out.push(other);
+                i += 2;
+            }
         }
     }
     String::from_utf8_lossy(&out).into_owned()
@@ -715,9 +740,13 @@ impl AgentHost {
             .clone()
     }
 
-    /// 会话是否在运行（编排者 wait_task 的完成判定）。
+    /// 会话是否在运行（编排者 wait_task 的完成判定）。get 而非 entry——模型
+    /// 喂来任意 sid 不再往 sessions 表塞空槽（幽灵条目累积）。
     pub fn busy(&self, sid: &str) -> bool {
-        self.slot(sid).state.lock().unwrap().busy
+        match self.sessions.lock().unwrap().get(sid) {
+            Some(s) => s.state.lock().unwrap().busy,
+            None => false,
+        }
     }
 
     /// 目标会话最后一条**封口**的 assistant 文本（编排者 wait_task 取结果用）：
@@ -963,59 +992,136 @@ impl AgentHost {
             let emit = |ev: HostEvent| {
                 sink(&sid_owned, &ev);
                 let mut t = transcripts.lock().unwrap();
-                let list = t.entry(sid_owned.clone()).or_default();
+                // close 已撤键则不再回插：会话关闭后运行线程的残余事件曾把
+                // 已清空的转写键复活（串扰新会话）。FE 侧 sink 照发（自行忽略）。
+                if !t.contains_key(&sid_owned) {
+                    return;
+                }
+                let list = t.get_mut(&sid_owned).expect("key checked above");
                 list.push(ev);
                 if list.len() > TRANSCRIPT_CAP {
                     let over = list.len() - TRANSCRIPT_CAP;
                     list.drain(..over);
                 }
             };
-            let outcome = (|| -> Result<(), String> {
-                let mut cell = slot2.agent.lock().unwrap();
-                let Some(agent) = cell.as_mut() else {
-                    return Err("会话 agent 已不存在".into());
-                };
-                agent.set_cancel(cancel);
-                let r = agent.run(&mut |ev: tiny_agent::AgentEvent| {
-                    let mapped = match ev {
-                        tiny_agent::AgentEvent::TurnStart(n) => Some(HostEvent::Turn(n)),
-                        tiny_agent::AgentEvent::TextDelta(t) => Some(HostEvent::Text(t)),
-                        tiny_agent::AgentEvent::ThinkingDelta(t) => Some(HostEvent::Thinking(t)),
-                        tiny_agent::AgentEvent::ToolCall { name, input } => {
-                            Some(HostEvent::ToolStart { name, input })
-                        }
-                        tiny_agent::AgentEvent::ToolResult {
-                            name,
-                            is_error,
-                            content,
-                        } => Some(HostEvent::ToolResult {
-                            name,
-                            is_error,
-                            content: tail(&content),
-                        }),
-                        tiny_agent::AgentEvent::Warning(w) => Some(HostEvent::Notice(w)),
-                        tiny_agent::AgentEvent::Usage {
-                            input_tokens,
-                            output_tokens,
-                            ..
-                        } => Some(HostEvent::Usage {
-                            input: input_tokens,
-                            output: output_tokens,
-                        }),
-                        tiny_agent::AgentEvent::Done { stop_reason } => {
-                            Some(HostEvent::Done { stop_reason })
-                        }
-                        _ => None,
+            // catch_unwind 包住运行体：tiny-a 内部 panic 默认只杀线程不杀进程，
+            // 但 busy 位焊死会让该会话永远「上一条还在运行」只能重启应用——
+            // panic 也走正常收尾（Failed 事件 + busy 复位）
+            let outcome =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), String> {
+                    let mut cell = slot2.agent.lock().unwrap();
+                    let Some(agent) = cell.as_mut() else {
+                        return Err("会话 agent 已不存在".into());
                     };
-                    if let Some(e) = mapped {
-                        emit(e);
+                    agent.set_cancel(cancel);
+                    // Rust 侧合帧（稳定轮余量项）：真模型每秒可吐百级 TextDelta/
+                    // ThinkingDelta，逐条 emit = 逐条 tauri IPC + 转写 push。80ms 窗口
+                    // 内合并（或 8KB 上限即冲），换事件种类/工具卡/Done 前先冲尾保序；
+                    // 文本是拼接不变量，转写重放与 FE 侧 120ms 合帧行为不变。
+                    const COALESCE_WINDOW: std::time::Duration =
+                        std::time::Duration::from_millis(80);
+                    const COALESCE_CAP: usize = 8 * 1024;
+                    let mut text_buf = String::new();
+                    let mut think_buf = String::new();
+                    let mut last_flush = std::time::Instant::now();
+                    let r = agent.run(&mut |ev: tiny_agent::AgentEvent| {
+                        let mapped = match ev {
+                            tiny_agent::AgentEvent::TurnStart(n) => Some(HostEvent::Turn(n)),
+                            tiny_agent::AgentEvent::TextDelta(t) => Some(HostEvent::Text(t)),
+                            tiny_agent::AgentEvent::ThinkingDelta(t) => {
+                                Some(HostEvent::Thinking(t))
+                            }
+                            tiny_agent::AgentEvent::ToolCall { name, input } => {
+                                Some(HostEvent::ToolStart { name, input })
+                            }
+                            tiny_agent::AgentEvent::ToolResult {
+                                name,
+                                is_error,
+                                content,
+                            } => Some(HostEvent::ToolResult {
+                                name,
+                                is_error,
+                                content: tail(&content),
+                            }),
+                            tiny_agent::AgentEvent::Warning(w) => Some(HostEvent::Notice(w)),
+                            tiny_agent::AgentEvent::Usage {
+                                input_tokens,
+                                output_tokens,
+                                ..
+                            } => Some(HostEvent::Usage {
+                                input: input_tokens,
+                                output: output_tokens,
+                            }),
+                            tiny_agent::AgentEvent::Done { stop_reason } => {
+                                Some(HostEvent::Done { stop_reason })
+                            }
+                            _ => None,
+                        };
+                        if let Some(e) = mapped {
+                            let now = std::time::Instant::now();
+                            let due = now.duration_since(last_flush) >= COALESCE_WINDOW;
+                            match e {
+                                HostEvent::Text(t) => {
+                                    if !think_buf.is_empty() {
+                                        let b = std::mem::take(&mut think_buf);
+                                        emit(HostEvent::Thinking(b));
+                                    }
+                                    text_buf.push_str(&t);
+                                    if due || text_buf.len() >= COALESCE_CAP {
+                                        let b = std::mem::take(&mut text_buf);
+                                        emit(HostEvent::Text(b));
+                                        last_flush = now;
+                                    }
+                                }
+                                HostEvent::Thinking(t) => {
+                                    if !text_buf.is_empty() {
+                                        let b = std::mem::take(&mut text_buf);
+                                        emit(HostEvent::Text(b));
+                                    }
+                                    think_buf.push_str(&t);
+                                    if due || think_buf.len() >= COALESCE_CAP {
+                                        let b = std::mem::take(&mut think_buf);
+                                        emit(HostEvent::Thinking(b));
+                                        last_flush = now;
+                                    }
+                                }
+                                other => {
+                                    if !text_buf.is_empty() {
+                                        let b = std::mem::take(&mut text_buf);
+                                        emit(HostEvent::Text(b));
+                                    }
+                                    if !think_buf.is_empty() {
+                                        let b = std::mem::take(&mut think_buf);
+                                        emit(HostEvent::Thinking(b));
+                                    }
+                                    last_flush = now;
+                                    emit(other);
+                                }
+                            }
+                        }
+                    });
+                    if !text_buf.is_empty() {
+                        let b = std::mem::take(&mut text_buf);
+                        emit(HostEvent::Text(b));
                     }
+                    if !think_buf.is_empty() {
+                        let b = std::mem::take(&mut think_buf);
+                        emit(HostEvent::Thinking(b));
+                    }
+                    match r {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(tail(&e.to_string())),
+                    }
+                }))
+                .unwrap_or_else(|p| {
+                    Err(format!(
+                        "agent 运行线程 panic：{}",
+                        p.downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| p.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic".into())
+                    ))
                 });
-                match r {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(tail(&e.to_string())),
-                }
-            })();
             if let Err(msg) = outcome {
                 emit(HostEvent::Failed { message: msg });
             }
@@ -1027,9 +1133,12 @@ impl AgentHost {
     }
 
     /// 请求取消当前运行（工具/轮次间隙生效——tiny-a 的取消语义）。
-    /// 返回是否确有运行在途。
+    /// 返回是否确有运行在途。get 而非 entry：未知 sid 不建空槽。
     pub fn cancel(&self, sid: &str) -> bool {
-        let slot = self.slot(sid);
+        let slot = match self.sessions.lock().unwrap().get(sid) {
+            Some(s) => s.clone(),
+            None => return false,
+        };
         let st = slot.state.lock().unwrap();
         match &st.cancel {
             Some(f) => {
@@ -1060,7 +1169,7 @@ impl AgentHost {
     /// 测试/关停同步：等待会话空闲（上限 30s，防挂死）。
     pub fn wait_idle(&self, sid: &str) -> bool {
         for _ in 0..1500 {
-            if !self.slot(sid).state.lock().unwrap().busy {
+            if !self.busy(sid) {
                 return true;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));

@@ -32,7 +32,7 @@ module.exports = {
 
     // ── 主机卡右键：连接/收藏/编辑/删除 ──
     await rightClick(page, () => {
-      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("本机"));
+      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("staging-1"));
       if (!card) throw new Error("host-card not found");
       card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 320 }));
     });
@@ -43,7 +43,7 @@ module.exports = {
     // 收藏切换：点收藏 → 重开菜单变「取消收藏」→ 再点恢复（不留状态给其他 spec）
     await clickItem(page, "收藏");
     await rightClick(page, () => {
-      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("本机"));
+      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("staging-1"));
       card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 320 }));
     });
     menu = await menuText(page);
@@ -52,7 +52,7 @@ module.exports = {
 
     // 编辑入口打开既有表单（取消关闭，不留痕）
     await rightClick(page, () => {
-      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("本机"));
+      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("staging-1"));
       card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 320 }));
     });
     await clickItem(page, "编辑主机");
@@ -64,7 +64,7 @@ module.exports = {
 
     // ── Esc 关闭主机菜单 ──
     await rightClick(page, () => {
-      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("本机"));
+      const card = [...document.querySelectorAll(".host-card")].find((x) => x.textContent.includes("staging-1"));
       card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 320 }));
     });
     await page.keyboard.press("Escape");

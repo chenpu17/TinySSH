@@ -314,6 +314,9 @@ function pushTo(sid: string, text: string) {
   const s = demoState.sessions.find((x) => x.id === sid);
   if (!s) return;
   s.out += text;
+  // 稳定轮（余量项）：out 是无界字符串——demo 长跑（cat 大文件/循环输出）曾可
+  // 累到任意大。检查点合成只用最后 32 行，256KB 尾部窗口绰绰有余，超限截尾。
+  if (s.out.length > 256 * 1024) s.out = s.out.slice(-128 * 1024);
   s.seq += 1;
   const raw = encoder.encode(text);
   s.ring.push({ seq: s.seq, data: raw });
@@ -537,6 +540,16 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     case "list_hosts":
       // identity_id 为 wire Host 契约字段（凭据绑定，R21 凭据库「使用中」标记的消费面）
       return demoState.hosts.map((h) => ({ ...h, identity_id: h.ident_id ?? null }));
+    case "list_local_shells":
+      // 本地终端一等公民轮：探测面 fixture（真实侧 transport-pty detect_local_shells）。
+      // integrable 与真实判型同口径：cmd/WSL 无 preexec 钩子如实 false
+      return [
+        { id: "powershell", name: "Windows PowerShell", path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", integrable: true },
+        { id: "pwsh", name: "PowerShell 7", path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe", integrable: true },
+        { id: "git-bash", name: "Git Bash", path: "C:\\Program Files\\Git\\bin\\bash.exe", integrable: true },
+        { id: "cmd", name: "cmd", path: "C:\\Windows\\System32\\cmd.exe", integrable: false },
+        { id: "wsl", name: "WSL", path: "C:\\Windows\\System32\\wsl.exe", integrable: false },
+      ];
     case "list_sessions":
       return demoState.sessions.map((s) => ({
         id: s.id, host_id: s.host_id, host_name: s.host_name, kind: s.kind,
@@ -553,6 +566,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[] };
+      // 本地终端一等公民轮：「本机」是内置条目不可编辑（与核心 LocalHostImmutable 同码同义）
+      if (h.id === "local") throw apiError("local_host_immutable", "「本机」是内置条目，不可编辑或删除");
       // 真实后端按 HostDraft.auth 推导 auth_type，demo 同口径（修复：此前新建一律
       // 硬编码 Password——密钥/Agent 主机在浏览器走查里会顶错徽章，属头部警告的对账类别）
       const a = h.auth;
@@ -587,6 +602,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "delete_host": {
       const id = args?.id as string;
+      if (id === "local") throw apiError("local_host_immutable", "「本机」是内置条目，不可编辑或删除");
       const h = demoState.hosts.find((x) => x.id === id);
       demoState.hosts = demoState.hosts.filter((x) => x.id !== id);
       if (h) audit("human", "host_delete", h.name);
@@ -747,9 +763,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
       // C2（B01/R24）：人类新建会话**默认由 Human 控制**（构造期定 owner）。demo 此前
       // 一律 Agent-owned——那会让「首次委托」在演示域永不出现（R42 对齐真实核心修正）。
-      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: h.address === "local" ? "local" : "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
       // 本轮：历史表打点对齐真实核心 record_session（关闭不删，recents 全历史派生）
-      demoState.sessionHistory.push({ host_id: h.id, kind: "ssh", created_at: new Date().toISOString() });
+      demoState.sessionHistory.push({ host_id: h.id, kind: h.address === "local" ? "local" : "ssh", created_at: new Date().toISOString() });
       audit("human", "session_created", null, null, sid);
       // C8 镜像：成功建连打点（真实核心 touch_host_connection 同语义）
       {
@@ -1458,7 +1474,7 @@ case "read_triggers": {
           if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
           // 与 create_session 同构建会话（同步快路径）
           const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: h.address === "local" ? "local" : "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
           if (!h.id.startsWith("quick-")) {
             // 十七轮：快速主机不进元数据（真实核心 vault 侧 EXISTS 守卫同语义）
             const m = demoState.hostMeta.get(h.id) ?? { favorite: false, last_connected_at: null };
@@ -1535,6 +1551,9 @@ case "read_triggers": {
       return demoState.pendingKeys.map((x) => x.pk);
     case "quit_app":
       // demo（浏览器）无窗口生命周期：no-op（真实环境由 tauri quit_app 退出进程）
+      return null;
+    case "cancel_app_close":
+      // 同上：关闭看护是桌面窗口生命周期语义，demo 无此路径
       return null;
     case "pending_auth_prompts":
       return demoState.pendingPrompts.map((x) => x.item);
@@ -1760,10 +1779,18 @@ case "read_triggers": {
       return demoState.pickResult ?? ["/Users/demo/Desktop/deploy.tar.gz", "/Users/demo/Desktop/app.yml"];
     }
     case "pick_save_file": {
+      // 测试探针：预置 window.__pickLog 数组时记录对话框种类（批量「一次目录」断言用）
+      (window as unknown as { __pickLog?: string[] }).__pickLog?.push("file");
       if (demoState.saveResult !== null) return demoState.saveResult;
       const name = String(args?.defaultName ?? "file");
       const dir = String(args?.defaultDir ?? "/Users/demo/Downloads");
       return `${dir}/${name}`;
+    }
+    case "pick_save_dir": {
+      // 与 pick_save_file 共用 saveResult 探针（path:""=取消，无键=默认桩回目录本身）
+      (window as unknown as { __pickLog?: string[] }).__pickLog?.push("dir");
+      if (demoState.saveResult !== null) return demoState.saveResult || null;
+      return String(args?.defaultDir ?? "/Users/demo/Downloads");
     }
     // T42 FR-8：端口转发注册表演示。demo 无法真实监听端口/建隧道——仅按会话
     // 维护转发条目（wire 契约同口径：外部标签 spec + state/error），审计随操作

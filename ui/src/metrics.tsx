@@ -138,7 +138,10 @@ export function MetricsBar({ sid, kind, user, hostName }: {
   const isSsh = kind === "ssh";
   const [view, setView] = useState<MetricsView | null>(null);
   const [dead, setDead] = useState(false);          // 不支持/连续失败 → 整条隐藏
-  const [paused, setPaused] = useState(() => localStorage.getItem("tinyssh.metricsPaused") === "1");
+  const [paused, setPaused] = useState(() => {
+    // localStorage 被禁用/企业策略拦时抛 SecurityError——渲染期抛错=整窗白屏
+    try { return localStorage.getItem("tinyssh.metricsPaused") === "1"; } catch { return false; }
+  });
   const prevRef = useRef<MetricsRaw | null>(null);  // 差分基线（上次采样）
   const prevAtRef = useRef(0);
   const pausedRef = useRef(paused);

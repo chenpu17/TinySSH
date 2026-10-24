@@ -212,22 +212,42 @@ impl AuditStore {
         Ok(AuditPage { total, events })
     }
 
-    /// 导出 JSONL（含哈希链校验说明性字段）。
+    /// 导出 JSONL（含哈希链校验说明性字段）。稳定轮改流式：seq 递减游标分批
+    /// （批 2000）边查边写 BufWriter——原实现 limit=i64::MAX 把全部行物化成
+    /// Vec 再拼一整块 String（双份驻留），审计积累大后点导出即 OOM abort
+    /// 整个进程；游标翻页对导出期间新入链的事件也天然不重不漏。
     pub fn export(&self, f: &AuditFilter, to: &Path) -> Result<usize> {
-        let mut all = AuditFilter {
-            limit: i64::MAX,
-            ..f.clone()
-        };
-        all.offset = 0;
-        let page = self.query(&all)?;
-        let mut out = String::new();
-        for ev in &page.events {
-            let line = serde_json::to_string(ev).map_err(|e| Error::Storage(e.to_string()))?;
-            out.push_str(&line);
-            out.push('\n');
+        use std::io::Write;
+        const BATCH: i64 = 2000;
+        let file = std::fs::File::create(to).map_err(|e| Error::Io(e.to_string()))?;
+        let mut out = std::io::BufWriter::new(file);
+        let mut before_seq: Option<i64> = None;
+        let mut n = 0usize;
+        loop {
+            let mut page_f = AuditFilter {
+                limit: BATCH,
+                ..f.clone()
+            };
+            page_f.offset = 0;
+            page_f.before_seq = before_seq;
+            let page = self.query(&page_f)?;
+            if page.events.is_empty() {
+                break;
+            }
+            for ev in &page.events {
+                let line = serde_json::to_string(ev).map_err(|e| Error::Storage(e.to_string()))?;
+                out.write_all(line.as_bytes())
+                    .map_err(|e| Error::Io(e.to_string()))?;
+                out.write_all(b"\n").map_err(|e| Error::Io(e.to_string()))?;
+            }
+            n += page.events.len();
+            before_seq = Some(page.events.last().expect("non-empty page").seq);
+            if (page.events.len() as i64) < BATCH {
+                break;
+            }
         }
-        std::fs::write(to, out).map_err(|e| Error::Io(e.to_string()))?;
-        Ok(page.events.len())
+        out.flush().map_err(|e| Error::Io(e.to_string()))?;
+        Ok(n)
     }
 
     /// 哈希链校验（完整性检测）。
@@ -544,5 +564,63 @@ mod tests {
             .unwrap();
         let store = AuditStore::open(&path).unwrap();
         assert!(!store.verify_chain().unwrap());
+    }
+
+    /// 稳定轮：导出流式化（seq 递减游标分批）跨批不重不漏——5000 条（>批 2000
+    /// 须走 3 批）导出行数与内容序与 query 全量一致；导出期间新入链的更高 seq
+    /// 事件天然不混入。
+    #[test]
+    fn export_streams_in_batches_without_dup_or_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AuditStore::open(&dir.path().join("a.db")).unwrap();
+        const N: i64 = 5000;
+        for i in 0..N {
+            store
+                .append(
+                    &Actor::Human,
+                    "exec",
+                    Some("s1"),
+                    Some(&format!("cmd-{i}")),
+                    serde_json::json!({}),
+                    None,
+                )
+                .unwrap();
+        }
+        let f = AuditFilter {
+            session_id: Some("s1".into()),
+            ..Default::default()
+        };
+        let to = dir.path().join("export.jsonl");
+        let n = store.export(&f, &to).unwrap();
+        assert_eq!(n as i64, N);
+        let content = std::fs::read_to_string(&to).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len() as i64, N, "行数一致（无重无漏）");
+        // 全量 query 对账：行序（seq 倒序）与命令一一对应
+        let page = store
+            .query(&AuditFilter {
+                limit: N,
+                session_id: Some("s1".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.events.len() as i64, N);
+        for (line, ev) in lines.iter().zip(&page.events) {
+            let cmd = ev.command.as_deref().unwrap_or("");
+            assert!(line.contains(cmd), "行与 seq 倒序一一对应：{cmd}");
+        }
+        // 导出是活视图（与旧实现一致）：期间新入链事件会随下一次导出进入
+        store
+            .append(
+                &Actor::Human,
+                "late",
+                Some("s1"),
+                Some("late"),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+        assert_eq!(store.export(&f, &to).unwrap(), N as usize + 1);
+        assert!(std::fs::read_to_string(&to).unwrap().contains("late"));
     }
 }

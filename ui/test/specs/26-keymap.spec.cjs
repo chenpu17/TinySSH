@@ -1,6 +1,7 @@
-// 26 键位配置轮：设置 → 快捷键——六动作行渲染、默认绑定展示、录入流（Esc 取消 /
+// 26 键位配置轮：设置 → 快捷键——动作行渲染、默认绑定展示、录入流（Esc 取消 /
 // 改绑生效 / 冲突拒绝）、localStorage 持久化跨 reload、单条重置。resolveAction 的
 // 键位表解析与豁免推导由单测（keymap-cfg/shortcuts-keys）覆盖；此处断言 UI 面。
+// 本地终端一等公民轮起七个动作（term-local 默认 Ctrl+Shift+T）。
 const pressCombo = (page, b) => page.evaluate(({ key, code, ctrlKey, shiftKey, altKey }) => {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, code, ctrlKey, shiftKey, altKey, bubbles: true, cancelable: true }));
 }, b);
@@ -17,10 +18,11 @@ module.exports = {
     await page.click('[data-testid="settings-cat-keys"]');
     await page.waitForTimeout(400);
 
-    for (const id of ["tab-new", "tab-close", "split-toggle", "palette", "hostbar", "search"]) {
+    for (const id of ["tab-new", "tab-close", "term-local", "split-toggle", "palette", "hostbar", "search"]) {
       ck.check(`绑定行在场：${id}`, await page.evaluate((t) => !!document.querySelector(`[data-testid="keymap-row-${t}"]`), id));
     }
     ck.check("默认绑定展示（search=Ctrl+F）", (await keyTextOf(page, "search")) === "Ctrl+F", await keyTextOf(page, "search"));
+    ck.check("默认绑定展示（term-local=Ctrl+Shift+T）", (await keyTextOf(page, "term-local")) === "Ctrl+Shift+T", await keyTextOf(page, "term-local"));
     ck.check("重置钮默认禁用（已是默认值）", await page.evaluate(() => document.querySelector('[data-testid="keymap-reset-search"]').disabled), "");
 
     // 录入流：Esc 取消

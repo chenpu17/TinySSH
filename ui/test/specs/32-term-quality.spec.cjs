@@ -91,8 +91,8 @@ module.exports = {
       scrollback: document.querySelector('[data-testid="term-scrollback-select"]').value,
       spacing: document.querySelector('[data-testid="term-spacing-select"]').value,
     }));
-    ck.check("默认回显（JetBrains Mono / 连字关 / 方块光标 / 闪烁开 / 10000 行 / 字距 0）",
-      defaults.font === "jetbrains" && !defaults.liga && defaults.cursor === "block"
+    ck.check("默认回显（Maple Mono 中文等宽 / 连字关 / 方块光标 / 闪烁开 / 10000 行 / 字距 0）",
+      defaults.font === "maple" && !defaults.liga && defaults.cursor === "block"
         && defaults.blink && defaults.scrollback === "10000" && defaults.spacing === "0",
       JSON.stringify(defaults));
 

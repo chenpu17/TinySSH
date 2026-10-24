@@ -124,7 +124,10 @@ async fn merge_index_idempotent_and_new_session_bypass() {
         .begin_connection(
             &Actor::Human,
             hid.clone(),
-            BeginConnectionOpts { new_session: true },
+            BeginConnectionOpts {
+                new_session: true,
+                local_shell: None,
+            },
         )
         .await
         .unwrap();
@@ -468,6 +471,7 @@ fn fabricate_entry(
         cancel_tx,
         cancel_rx,
         term: std::sync::atomic::AtomicBool::new(false),
+        local_shell: None,
     });
     m.attempts
         .lock()

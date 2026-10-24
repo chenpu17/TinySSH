@@ -23,9 +23,10 @@ import type {
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
   IdentityMeta, TakeoverReport, TransferHandle, DirEntryS, ForwardSpec, ForwardInfo,
   AttemptPhase, AttemptInfo, ErrorPayload, ConnectionEvent, CancelOutcome, SessionStateEvent,
+  BeginConnectionOpts,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
   McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
-  RestoreEntry,
+  RestoreEntry, LocalShell,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
@@ -69,7 +70,7 @@ import {
   ChromePalette, ctrlCharOf, epistemicLabel, exitText,
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, hhmm, inputBlockedState,
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
-  runBench, SEARCH_OPTS, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_PALETTE,
+  runBench, SEARCH_OPTS, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
   SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
   SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK,
   stateLabel, stampLocal, stopOutcomeText,
@@ -105,6 +106,12 @@ function sameShape<T>(prev: T[], next: T[]): T[] {
   if (prev === next) return prev;
   if (prev.length !== next.length) return next;
   return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
+// 稳定轮：对象版 bailout——brief/collab 的 3s 轮询曾每拍必换新引用，架空
+// sameShape 的「数据没变整树静默」承诺（空闲时也全量重渲染）。
+function sameJson<T>(prev: T, next: T): T {
+  return prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
 }
 
 // 审批高危命令形态（rm -rf/格式化/关机类……后端内置 deny 只拦最狠子集）：
@@ -318,13 +325,17 @@ export default function App() {
   const [credNewOk, setCredNewOk] = useState<IdentityMeta | null>(null);
   // §231「切分类遇未提交敏感表单时先处理草稿」：待切换的目标分类（非空即弹草稿确认）
   const [credDraftTo, setCredDraftTo] = useState<SettingsCat | null>(null);
-  // Toast（精致化 §六/P3）：右下角轻通知，2.6s 自动消失；最多同屏 4 条
-  const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string }[]>([]);
+  // Toast（精致化 §六/P3）：右下角轻通知；普通 2.6s 自动消失，带动作 8s（留出点击
+  // 时间）；最多同屏 4 条。动作（0.10.0 轮）：下载完成 toast 附「打开所在文件夹」，
+  // 不用为点定位先展开传输抽屉
+  const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err" | "info"; text: string;
+    action?: { label: string; title: string; run: () => void } }[]>([]);
   const toastSeq = useRef(0);
-  const pushToast = useCallback((kind: "ok" | "err" | "info", text: string) => {
+  const pushToast = useCallback((kind: "ok" | "err" | "info", text: string,
+    action?: { label: string; title: string; run: () => void }) => {
     const id = ++toastSeq.current;
-    setToasts((cur) => [...cur.slice(-3), { id, kind, text }]);
-    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), 2600);
+    setToasts((cur) => [...cur.slice(-3), { id, kind, text, action }]);
+    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), action ? 8000 : 2600);
   }, []);
   // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
   const [searchOpen, setSearchOpen] = useState(false);
@@ -576,6 +587,10 @@ export default function App() {
   const [oscTitles, setOscTitles] = useState<Record<string, string>>({});
   const [hosts, setHosts] = useState<Host[]>([]);
   const [hostsLoaded, setHostsLoaded] = useState(false);
+  // 本地终端一等公民轮：本机 shell 探测清单（设置「本地 Shell」下拉 + 本机右键
+  // 「用 … 新开」数据源）与默认选择 id（KV，空串=系统默认 $SHELL/PowerShell 回退）
+  const [localShells, setLocalShells] = useState<LocalShell[]>([]);
+  const [localShellId, setLocalShellId] = useState("");
   // R20（C8 消费）：收藏/最近元数据 + 标签筛选 chip
   const [hostMeta, setHostMeta] = useState<HostMeta[]>([]);
   const [recents, setRecents] = useState<RecentHost[]>([]);
@@ -1095,7 +1110,7 @@ export default function App() {
   const refreshBrief = useCallback(async (s: string) => {
     try {
       const b = await invoke("session_brief", { sid: s });      if (sidRef.current !== s) return; // 审核H1：已切走会话的过期简报直接丢弃，防简报/任务目标跨会话串台
-      setBrief(b);
+      setBrief((prev) => sameJson(prev, b));
     } catch { /* 会话已关 */ }
   }, []);
 
@@ -1165,11 +1180,44 @@ export default function App() {
   useEffect(() => {
     refreshLists();
     invoke("mcp_status").then(setMcp);
-    invoke("collab_status").then(setCollab).catch(() => {});
+    invoke("collab_status").then((v) => setCollab((prev) => sameJson(prev, v))).catch(() => {});
+    // 本地终端一等公民轮：探测清单 + 已选默认 shell（失败静默——下拉空、建连走默认解析）
+    invoke("list_local_shells").then((v) => setLocalShells(v)).catch(() => {});
+    invoke("get_setting", { key: SETTING_LOCAL_SHELL }).then((v) => setLocalShellId(v ?? "")).catch(() => {});
     invoke("bench_mode").then((b) => {
       if (b) runBench();
     });
   }, [refreshLists]);
+
+  // 本地终端一等公民轮：启动即有一个可敲命令的本地终端（真实模式专属——demo 域
+  // 豁免：55 个 spec 的初始态是「2 个演示会话+欢迎页」，自动开会全炸；真实链路
+  // 由真机验证钉住）。仅一次；先内联读默认 shell（与上方 state 装载无序，读毕再连）。
+  // SSH 恢复仍「点了才连」：恢复入口在欢迎页空态与 ⌘K 面板。
+  const autoLocalRef = useRef(false);
+  useEffect(() => {
+    if (!inTauri || !hostsLoaded || autoLocalRef.current) return;
+    autoLocalRef.current = true;
+    const lh = hosts.find((h) => h.id === "local");
+    if (!lh) return;
+    void (async () => {
+      try {
+        const chosen = (await invoke("get_setting", { key: SETTING_LOCAL_SHELL })) ?? "";
+        if (chosen) setLocalShellId(chosen);
+        // state 本拍不生效（闭包里 localShellId 还是旧值）——显式解析成 path 走
+        // 第参传给 createSession，别让默认 shell 是否生效取决于 promise 竞速
+        if (chosen) {
+          const shells = localShells.length ? localShells : ((await invoke("list_local_shells")) as LocalShell[]);
+          if (!localShells.length) setLocalShells(shells);
+          const path = shells.find((s) => s.id === chosen)?.path;
+          if (path) { void createSession(lh, false, undefined, path); return; }
+        }
+      } catch { /* 读失败走默认解析 */ }
+      void createSession(lh);
+    })();
+    // createSession 声明在后（TDZ：deps 数组渲染期求值不可引用）；effect 体运行时
+    // 已初始化，闭包捕获安全。autoLocalRef 保证仅首装执行一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostsLoaded, hosts]);
 
   // 列表轮询：会话状态（断线/重连/重确认）与审计时间线自动刷新
   useEffect(() => {
@@ -1178,7 +1226,7 @@ export default function App() {
       if (sidRef.current) refreshBrief(sidRef.current);
       // C9（R43）：协作状态与活动请求数随轮询对账（停用封口/重新启用由核心推进，
       // 多窗口或外部触发时 UI 须收敛）
-      invoke("collab_status").then(setCollab).catch(() => {});
+      invoke("collab_status").then((v) => setCollab((prev) => sameJson(prev, v))).catch(() => {});
       // 终端尺寸对账：docker ps 等按 PTY 宽度排版，PTY 与 xterm 失配时表格折行错乱。
       // xterm（用户所见）为权威单向校正后端——任何一环丢掉的 resize 在 3s 内自动收敛。
       // 分屏（T19）时左右两个 pane 各自对账。
@@ -1357,6 +1405,31 @@ export default function App() {
     try { await invoke("answer_auth_prompt", { id, answer }); } catch { /* 已超时/不存在 */ }
   };
 
+  // 字体轮：终端字体面预取 + 就绪后全量重绘。canvas/WebGL 字形图集按绘制时刻
+  // 已加载的字体取字形——默认字体（Maple 1.7MB）晚于首帧就绪时，先画的 CJK/
+  // 框线会以回退链/空白入册；预取把加载提前到建连之前，fonts.ready 后再对全部
+  // 存活终端强制 refresh 一次（陈旧图集单元随之重烘焙）。
+  useEffect(() => {
+    if (typeof document === "undefined" || !document.fonts) return;
+    void document.fonts.load('14px "Maple Mono CN Term"', "你好abc┌─0");
+    void document.fonts.load('bold 14px "Maple Mono CN Term"', "你好abc┌─0");
+    let cancelled = false;
+    void document.fonts.ready.then(() => {
+      if (cancelled) return;
+      for (const [, e] of termsRef.current) {
+        try {
+          // 回写字体栈触发 handleFontChange：warmup 时刻字体未就绪的图集
+          // （含几何绘制的框线/块元素）随之整体重建，再强制全量重绘。
+          e.term.options.fontFamily = termFontFamilyRef.current;
+          e.term.refresh(0, Math.max(0, e.term.rows - 1));
+        } catch { /* 终端已释放 */ }
+      }
+    });
+    return () => { cancelled = true; };
+    // termsRef 是稳定 Map：只挂一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 终端实例工厂：每个会话一个独立 xterm。
   const makeTerm = useCallback((sessionSid: string) => {
     const mount = termRef.current;
@@ -1389,6 +1462,11 @@ export default function App() {
       smoothScrollDuration: 100,
       fastScrollModifier: "alt", fastScrollSensitivity: 5,
       rescaleOverlappingGlyphs: true,
+      // 字体轮目检（2026-10-23，Edge/WebView2 155 实测）：customGlyphs 的框线
+      // 连排几何绘制在当前运行时缺格（`────` 连串只画部分格，JetBrains/Maple
+      // 皆中招、HEAD 基线同样复现=环境级回归而非应用代码）。改走字体字形
+      // （内置字体都带全量框线/块元素/powerline），格格有墨，横线略带字模侧距。
+      customGlyphs: false,
       theme: { ...derivedThemeRef.current.theme },
       // OSC 8 超链接激活（T16）：WebLinksAddon 只管裸 URL 正则检测，
       // OSC 8 由核心 linkHandler 路由（不设则核心弹 confirm 对话框）
@@ -1447,9 +1525,22 @@ export default function App() {
     // 语义；ssh 里 cat 图片/带图工具直接可见）。默认存储上限内自动淘汰最旧图。
     const imgAddon = new ImageAddon();
     term.loadAddon(imgAddon);
-    // 远程设置的标题（OSC 0/2，T16）：按会话记录，显示在终端头部
+    // 远程设置的标题（OSC 0/2，T16）：按会话记录，显示在终端头部。
+    // 稳定轮：远端可高频刷标题（时钟/循环 printf）——150ms 合帧 + 同值跳过，
+    // 不再逐条 setState 整树重渲染（OSC 133 标记同款去抖口径）
+    let titlePending: string | null = null;
+    let titleTimer: number | null = null;
     term.onTitleChange((t) => {
-      if (t) setOscTitles((prev) => ({ ...prev, [sessionSid]: t }));
+      if (!t) return;
+      titlePending = t;
+      if (titleTimer === null) {
+        titleTimer = window.setTimeout(() => {
+          titleTimer = null;
+          const v = titlePending;
+          titlePending = null;
+          if (v) setOscTitles((prev) => (prev[sessionSid] === v ? prev : { ...prev, [sessionSid]: v }));
+        }, 150);
+      }
     });
     // 十五轮：选中即复制——划选非空立即写系统剪贴板（清选不写；PuTTY/Xshell 语义）。
     // onSelectionChange 是 IEvent<void>（xterm 5.5），选区内容回调里自取
@@ -1463,9 +1554,18 @@ export default function App() {
     // 长命令完成的通用信号：用户切走窗口后远端任务结束/需要关注时主动提示。
     // P2-c：OSC 9（远端主动通知，iTerm2 惯例）走同一通路——闪烁恒开，通知同门同节流；
     // 策略即既有「响铃时系统通知」开关，不另立旋钮。
+    let bellLit = false;
     const flashAndNotify = (body: string, suffix = "") => {
-      setBellSids((cur) => new Set(cur).add(sessionSid));
-      setTimeout(() => setBellSids((cur) => { const n = new Set(cur); n.delete(sessionSid); return n; }), 6000);
+      // 稳定轮：BEL 风暴闸——已亮则跳过（远端循环 \007 曾每条造新 Set + 新
+      // 6s timer 打满渲染）；亮/灭沿只在边沿各 setState 一次
+      if (!bellLit) {
+        bellLit = true;
+        setBellSids((cur) => new Set(cur).add(sessionSid));
+        setTimeout(() => {
+          bellLit = false;
+          setBellSids((cur) => { const n = new Set(cur); n.delete(sessionSid); return n; });
+        }, 6000);
+      }
       if (!bellNotifyRef.current || !inTauri) return;
       if (document.hasFocus()) return;
       const now = Date.now();
@@ -1490,6 +1590,9 @@ export default function App() {
       try {
         let b64 = data.slice(data.indexOf(";") + 1).replace(/\s+/g, "");
         if (!b64 || b64 === "?") return true;
+        // 稳定轮：载荷上限 256KB——恶意远端推数 MB 序列曾全量解码并驻留 state
+        //（ask 卡预览截 400 字符，但解码串与「允许」时的写入全文无界）
+        if (b64.length > 256 * 1024) return true;
         b64 = b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b64.length % 4)) % 4);
         const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
         if (osc52PolicyRef.current === "allow") osc52WriteRef.current(sessionSid, text);
@@ -2500,11 +2603,15 @@ export default function App() {
   // 组内名称排序（byName 见 app-data）、标签 chip 筛选
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
   const isFav = (h: Host) => metaById.get(h.id)?.favorite === true;
+  // 本地终端一等公民轮：本机从过滤链摘出——置顶「本机」节常驻，不受搜索/标签
+  // 筛选影响（内置条目心智：永远在那，编辑/删除入口同轮移除）
+  const localHost = hosts.find((h) => h.id === "local") ?? null;
+  const poolHosts = hosts.filter((h) => h.id !== "local");
   const allTags = [...new Set(hosts.flatMap((h) => h.tags ?? []))].sort((a, b) => a.localeCompare(b, "zh"));
   // rev-r20 M1：活跃标签经编辑/删除在全部主机上消失后 chip 不再渲染，tagFilter 残留会
   // 让列表恒空且无清除入口——失效筛选自动失效
   const activeTag = tagFilter !== null && allTags.includes(tagFilter) ? tagFilter : null;
-  const tagFiltered = activeTag ? hosts.filter((h) => (h.tags ?? []).includes(activeTag)) : hosts;
+  const tagFiltered = activeTag ? poolHosts.filter((h) => (h.tags ?? []).includes(activeTag)) : poolHosts;
   // rev-r20 L1：无查询时 tagFiltered===hosts，原地 sort 会在渲染期改 state 数组——拷贝后排序
   const filteredHosts = [...(hostQueryN
     ? tagFiltered.filter((h) => hostMatches(h, hostQueryN))
@@ -2569,7 +2676,7 @@ export default function App() {
   };
   const closeTopOverlayRef = useRef<() => boolean>(() => false);
   closeTopOverlayRef.current = (): boolean => {
-    if (quitSummary) { setQuitSummary(null); return true; }
+    if (quitSummary) { void cancelQuit(); return true; }
     if (delegateDlg) { closeDelegate(); return true; }
     const ap = authPromptQueue[0];
     if (ap) { void answerAuthPrompt(ap.id, ""); return true; }
@@ -2654,6 +2761,13 @@ export default function App() {
         setShowImport(false);
         setShowQuickConnect(false);
         return true;
+      }
+      case "term-local": {
+        // Ctrl+Shift+T（本地终端一等公民轮）：直连「本机」开本地 shell——
+        // 与 ⌘K「打开本地终端」/置顶本机卡同路径（shell 默认选择在 createSession 单点）
+        const lh = hosts.find((h) => h.id === "local");
+        if (lh) void createSession(lh);
+        return !!lh;
       }
       case "split-toggle": {
         // 直键 Ctrl+D（UX 六轮）：与工具栏分屏按钮同路径——已分屏先退（两会话都
@@ -3112,6 +3226,53 @@ export default function App() {
     refreshLists();
   }, [detach, applyPanes, fitTerminal, refreshLists, refreshBrief]);
 
+  // 稳定轮：termsRef 对账——会话从后端消失（Agent 经 MCP close_session 等 UI 外
+  // 关闭路径）时标签随 3s 轮询消失，但 xterm/WebGL 上下文/订阅/DOM 无人释放
+  // （WebGL 上下文浏览器上限 ~16 个，只涨不跌直到新终端建不出渲染器）。守卫：
+  // sessionIdent 只增不删且仅在轮询见过该 sid 后才有——刚建连还没进轮询的新会话
+  // 不会被误杀。分屏成员被外部关闭则退分屏、焦点自动落存活会话（同款语义）。
+  useEffect(() => {
+    const alive = new Set(sessions.map((s) => s.id));
+    const dead: string[] = [];
+    for (const [id, entry] of [...termsRef.current]) {
+      if (alive.has(id) || !sessionIdent.has(id)) continue;
+      entry.feed?.dispose();
+      entry.term.dispose();
+      entry.el.remove();
+      termsRef.current.delete(id);
+      subscribedRef.current.delete(id);
+      dead.push(id);
+    }
+    if (!dead.length) return;
+    const sp = splitRef.current;
+    if (sp && (dead.includes(sp.main) || dead.includes(sp.second))) {
+      const survivor = dead.includes(sp.main) ? sp.second : sp.main;
+      splitRef.current = null;
+      setSplitPanes(null);
+      const next = termsRef.current.get(survivor);
+      if (next && (sidRef.current === null || dead.includes(sidRef.current))) {
+        setSid(survivor);
+        sidRef.current = survivor;
+        xtermRef.current = next.term;
+        refreshBrief(survivor);
+        void invoke("note_terminal", { sid: survivor, focused: true }).catch(() => {});
+      }
+    } else if (sidRef.current && dead.includes(sidRef.current)) {
+      const next = sessionsRef.current.find((s) => !dead.includes(s.id) && termsRef.current.has(s.id));
+      if (next) {
+        setSid(next.id);
+        sidRef.current = next.id;
+        xtermRef.current = termsRef.current.get(next.id)!.term;
+        refreshBrief(next.id);
+        void invoke("note_terminal", { sid: next.id, focused: true }).catch(() => {});
+      } else {
+        detach();
+      }
+    }
+    applyPanes();
+    fitTerminal();
+  }, [sessions, sessionIdent, detach, applyPanes, fitTerminal, refreshBrief]);
+
   // 危险动作确认（P1-5/P1-4）：断开活会话、删除主机都先过弹层；死会话直接关（无需确认）
   const [confirm, setConfirm] = useState<
     { kind: "closeSession"; sid: string; hostName: string } | { kind: "deleteHost"; id: string; name: string } | { kind: "deleteIdentity"; id: string; label: string } | null
@@ -3181,10 +3342,14 @@ export default function App() {
   }, [inTauri]);
   const confirmQuit = async () => {
     if (!quitSummary) return;
-    for (const s of quitSummary.sessions) {
-      try { await invoke("close_session", { sid: s.id }); } catch { /* 尽力关闭；退出路径不受阻 */ }
-    }
+    // 会话收口已下沉 quit_app（shutdown_all：close_session 同口径 + 卡住强制
+    // 摘表的超时预算）——FE 逐个 close 曾可能被悬挂会话卡死在退出前一步。
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
+  };
+  const cancelQuit = async () => {
+    setQuitSummary(null);
+    // 解除 Rust 侧关闭看护：用户只是犹豫，不是 webview 死亡（稳定轮兜底配套）
+    try { await invoke("cancel_app_close"); } catch { /* demo 无此命令 */ }
   };
   // 模态层信号（R13 §7.3）：确认/指纹/双因素/退出汇总任一打开即 true——⌘ 组合全吞，Esc 交给浮层链。
   // 新建/快速连接（二轮拨壳成 hk-mask 全屏遮罩）与设置面板（pop-mask）同为遮罩模态，
@@ -3532,13 +3697,19 @@ export default function App() {
   // 卡片显示完整本地目标（handle 回填的 h.local），不以文件名相同推断成功。
   // 二十一轮：另存为模式开启时（sftpSaveAs），除显式 saveAs:false 的路径外全部
   // 弹对话框——模式是入口级默认，右键「另存为…」（saveAs:true）不受影响。
-  const downloadRemote = useCallback(async (rp: string, opts?: { saveAs?: boolean }) => {
+  // 0.10.0 轮：批量下载（下载所选多选）由调用方先选好目录、经 opts.local 直给——
+  // 一次目录选择器替代逐文件保存框，文件名沿用远端原名。
+  const downloadRemote = useCallback(async (rp: string, opts?: { saveAs?: boolean; local?: string }) => {
     const s = sidRef.current;
     if (!s || !rp) return;
     const name = pathBasename(rp);
     const saveAs = opts?.saveAs ?? sftpSaveAs;
     let local: string | null = null;
-    if (saveAs) {
+    if (opts?.local) {
+      local = opts.local;
+      const dir = local.replace(/\/+$/, "").replace(/\/[^/]*$/, "");
+      if (dir) persistDownloadDir(dir);
+    } else if (saveAs) {
       try {
         const picked = await invoke("pick_save_file", { defaultName: name, defaultDir: downloadDirRef.current });
         if (!picked) return; // 用户取消——不发起传输
@@ -3788,7 +3959,22 @@ export default function App() {
       else if (e.kind === "other") skippedOther++;
       else targets.push(`${base}/${n}`);
     }
-    for (const t of targets) await downloadRemote(t);
+    // 0.10.0 轮：另存为模式下批量（>1 个文件）只弹**一次目录选择器**——用户反馈
+    // 「每个文件都要选保存太繁」。取消=整批不发起；单文件仍走逐文件另存（可改名）。
+    // 模式关时维持既有语义：直接落上次下载目录，零对话框。
+    let batchDir: string | null = null;
+    if (sftpSaveAs && targets.length > 1) {
+      try {
+        batchDir = await invoke("pick_save_dir", { defaultDir: downloadDirRef.current });
+      } catch (e) {
+        pushToast("err", `选择目录失败：${friendlyError(e)}`);
+        return;
+      }
+      if (!batchDir) return; // 用户取消——整批不发起
+    }
+    for (const t of targets) {
+      await downloadRemote(t, batchDir ? { local: `${batchDir.replace(/\/+$/, "")}/${pathBasename(t)}` } : undefined);
+    }
     if (skippedDirs > 0 || skippedOther > 0) {
       const parts: string[] = [];
       if (skippedDirs > 0) parts.push(`${skippedDirs} 个目录`);
@@ -3797,7 +3983,7 @@ export default function App() {
         ? `已开始下载 ${targets.length} 个文件；${parts.join("、")}不支持直接下载`
         : `${parts.join("、")}不支持直接下载——请进入目录选择其中的文件`);
     }
-  }, [sftpEntries, sftpSel, downloadRemote, pushToast]);
+  }, [sftpEntries, sftpSel, downloadRemote, pushToast, sftpSaveAs]);
 
   // R31 §350 键盘导航：列表容器获焦后方向键移动光标、Home/End 跳端、Enter 激活
   //（目录进入/文件动作菜单）、Space 切换选中；不与筛选输入抢键（各自 onKeyDown 独立）
@@ -3983,16 +4169,23 @@ export default function App() {
   }, [inTauri, refreshTransfers]);
 
   // 传输终态 toast（§六）：running → done/failed 迁移时通知；卡片本身仍常显，
-  // 即时失败（未接入会话等）有卡可见不重复 toast；取消是用户主动动作不打扰
+  // 即时失败（未接入会话等）有卡可见不重复 toast；取消是用户主动动作不打扰。
+  // 下载完成附带「打开所在文件夹」（0.10.0 轮，用户需求）：同卡「定位」语义
+  // （reveal_path 资源管理器 /select 选中文件），无有效本地路径（pending/… 占位）不给动作
   const prevTransferStatus = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     for (const t of transfers) {
       const prev = prevTransferStatus.current.get(t.id);
-      if (prev === "running" && t.status === "done") pushToast("ok", `传输完成：${t.name}`);
+      if (prev === "running" && t.status === "done") {
+        pushToast("ok", `传输完成：${t.name}`,
+          t.kind === "Download" && !t.local.startsWith("pending") && t.local !== "…"
+            ? { label: "打开所在文件夹", title: "在文件管理器中显示下载的文件", run: () => { void locateTransfer(t); } }
+            : undefined);
+      }
       if (prev === "running" && t.status === "failed") pushToast("err", `传输失败：${t.name}——${t.error ?? "未知错误"}`);
       prevTransferStatus.current.set(t.id, t.status);
     }
-  }, [transfers, pushToast]);
+  }, [transfers, pushToast, locateTransfer]);
 
   // R33 §354 拖放落点分区：文件面板落点=直接上传到正在浏览的目录（不确认）；
   // 其余落点（终端等）=目标确认卡。物理像素→逻辑像素后与面板实测矩形求交，
@@ -4132,7 +4325,7 @@ export default function App() {
     }
   };
 
-  const createSession = async (host: Host, intoSplit = false, draft?: HostDraft) => {
+  const createSession = async (host: Host, intoSplit = false, draft?: HostDraft, localShellPath?: string) => {
     // 本轮：任何建连路径都恢复「从最近连接隐藏」的主机——重新连了就是「最近」
     setRecentHidden(host.id, false);
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
@@ -4144,9 +4337,16 @@ export default function App() {
       // 门挂起期间主机卡可取消（§302 等待中可取消）。
       // 十七轮：draft 在场 = 快速连接——begin_connection_draft 注册内存态主机
       // 后走同一条 attempt 路径；真实 id 经 attempt 回带（门匹配/失败标记全用它）
+      // 本地终端一等公民轮：本机建连带上所选 shell——显式 localShellPath 优先
+      //（本机右键「用 … 新开」），否则按 KV 默认选择换算成路径；重连 respawn 复用。
+      let opts: BeginConnectionOpts | undefined;
+      if (host.id === "local" && !draft) {
+        const chosen = localShellPath ?? (localShellId ? localShells.find((s) => s.id === localShellId)?.path : undefined);
+        if (chosen) opts = { local_shell: chosen };
+      }
       const a = await (draft
         ? invoke("begin_connection_draft", { draft, opts: {} })
-        : invoke("begin_connection", { hostId: host.id })) as AttemptInfo;
+        : invoke("begin_connection", { hostId: host.id, opts })) as AttemptInfo;
       if (draft && a.host_id) host = { ...host, id: a.host_id };
       attemptId = a.attempt_id;
       settleAttempt(a);
@@ -4691,6 +4891,27 @@ export default function App() {
         run: () => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh); },
       });
     }
+    // 本地终端一等公民轮：启动自动开本地终端占据首屏后，恢复枢纽收进面板常驻可达
+    //（「点了才连」语义不变，TOFU/双因素照旧）。本地 PTY 标签不算「有会话」——
+    // 否则自动开让空态恒假，恢复入口在开机首屏永远不出现。
+    const remoteOpen = sessions.some((s) => s.kind !== "local");
+    if (!remoteOpen && restoreEntries.length > 0) {
+      items.push({
+        id: "restore-scene", group: "连接", title: `恢复上次现场（${restoreEntries.length}）`,
+        hint: "受控退出时的屏幕快照——恢复走完整建连流程", keywords: "恢复 现场 快照 restore",
+        run: () => { void restoreScenes(restoreEntries); },
+      });
+    }
+    if (!remoteOpen && lastSessionHosts.length > 0) {
+      const rowsH = lastSessionHosts.flatMap((hid) => hosts.find((h) => h.id === hid) ?? []);
+      if (rowsH.length > 0) {
+        items.push({
+          id: "reconnect-last", group: "连接", title: `重连上次会话（${rowsH.length}）`,
+          hint: rowsH.map((h) => h.name).join("、"), keywords: "重连 上次 会话 reconnect",
+          run: () => { for (const h of rowsH) void createSession(h); },
+        });
+      }
+    }
     for (const h of hosts) {
       if (h.id === "local") continue;
       items.push({
@@ -4911,6 +5132,12 @@ export default function App() {
       <header className="titlebar" data-tauri-drag-region>
         <div className="tb-left">
           <span className="app-title" data-tauri-drag-region>TinySSH</span>
+          {/* 版本号轮：常驻版本标签（0.10.0 起挪到应用名右边，紧贴名称更直观；
+              关于卡另有编译时间，悬停提示指引） */}
+          <span className="ver-tag" data-tauri-drag-region
+            title={`TinySSH v${appVersion ?? APP_VERSION}——编译时间见 设置 → 关于`}>
+            v{appVersion ?? APP_VERSION}
+          </span>
           {/* 自身开销读数（监控条「本机」段迁此）：标题栏常显不依赖会话；纯读数留在拖拽链上 */}
           <SelfMeterTitlebar />
           {hostbarOpen && (
@@ -4937,11 +5164,6 @@ export default function App() {
               title="「Agent 控制中」= Agent 可发起命令、经你审批执行；「我控制中」= 终端归你，Agent 冻结"
             ><span className="ctl-dot" />{owner === "Human" ? "我控制中" : hasAgents ? "Agent 控制中" : "手动控制"}</span>
           )}
-          {/* 版本号轮：标题栏右侧常驻版本（关于卡另有编译时间，悬停提示指引） */}
-          <span className="ver-tag" data-tauri-drag-region
-            title={`TinySSH v${appVersion ?? APP_VERSION}——编译时间见 设置 → 关于`}>
-            v{appVersion ?? APP_VERSION}
-          </span>
         </div>
         {inTauri && isWindowsPlatform() && <WinControls />}
       </header>
@@ -5008,6 +5230,8 @@ export default function App() {
             hostbarWidth={hostbarWidth} hosts={hosts} hostMeta={hostMeta}
             sessions={sessions} hostsLoaded={hostsLoaded}
             filteredHosts={filteredHosts} favHosts={favHosts} otherHosts={otherHosts}
+            localHost={localHost} localShells={localShells}
+            onLocalShell={(path) => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh, false, undefined, path); }}
             allTags={allTags} activeTag={activeTag}
             connectingIds={connectingIds} lastFailed={lastFailed}
             showImport={showImport} showAddHost={showAddHost} attempts={attempts}
@@ -5406,7 +5630,7 @@ export default function App() {
           confirm={confirm} setConfirm={setConfirm}
           closeConfirmRef={closeConfirmRef} confirmImpact={confirmImpact} confirmAction={confirmAction}
           quitSummary={quitSummary} setQuitSummary={setQuitSummary}
-          quitConfirmRef={quitConfirmRef} confirmQuit={confirmQuit}
+          quitConfirmRef={quitConfirmRef} confirmQuit={confirmQuit} cancelQuit={cancelQuit}
           delHostRef={delHostRef} delIdentRef={delIdentRef}
         />
         {/* 会话工具栏 40（拆分⑤出仓 components/session-toolbar.tsx，零语义变更） */}
@@ -5674,6 +5898,8 @@ export default function App() {
             sessions={sessions} sid={sid} hosts={hosts} hostMeta={hostMeta}
             connectingIds={connectingIds} splitPanes={splitPanes} tabNames={tabNames}
             autoReconn={autoReconn}
+            localShells={localShells}
+            onLocalShell={(path) => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh, false, undefined, path); }}
             splitMenu={splitMenu} setSplitMenu={setSplitMenu} enterSplitWith={enterSplitWith}
             splitDir={splitDir} setSplitDir={(d) => { splitDirRef.current = d; setSplitDir(d); }}
             tabMenu={tabMenu} setTabMenu={setTabMenu} exitSplit={exitSplit}
@@ -5856,6 +6082,9 @@ export default function App() {
               changeBellNotify={changeBellNotify}
               osc52Policy={osc52Policy}
               changeOsc52Policy={changeOsc52Policy}
+              localShells={localShells}
+              localShellId={localShellId}
+              onChangeLocalShell={(id) => { setLocalShellId(id); persistSetting(SETTING_LOCAL_SHELL, id); }}
               termFont={termFont}
               onChangeTermFont={changeTermFont}
               termLigatures={termLiga}
@@ -6170,10 +6399,22 @@ export default function App() {
         </main>
       </div>{/* /workspace */}
 
-      {/* Toast（§六/P3）：右下角轻通知，2.6s 自动消失，不挡交互（pointer-events 放行）。
+      {/* Toast（§六/P3）：右下角轻通知，普通 2.6s/带动作 8s 自动消失，不挡交互
+          （栈 pointer-events:none，动作钮自身收回事件）。
           live 级别逐条给：err 用 assertive 立即播报，其余 polite（审核吹毛求疵-4） */}
       <div className="toast-stack">
-        {toasts.map((t) => <div className={"toast " + t.kind} key={t.id} aria-live={t.kind === "err" ? "assertive" : "polite"}>{t.text}</div>)}
+        {toasts.map((t) => {
+          const act = t.action;
+          return (
+            <div className={"toast " + t.kind} key={t.id} aria-live={t.kind === "err" ? "assertive" : "polite"}>
+              {t.text}
+              {act && (
+                <button className="toast-act" data-testid="toast-action" title={act.title}
+                  onClick={() => { act.run(); setToasts((cur) => cur.filter((x) => x.id !== t.id)); }}>{act.label}</button>
+              )}
+            </div>
+          );
+        })}
       </div>
       {/* 十九轮：命令面板（⌘K）；Esc/遮罩关闭走浮层链与本组件内键盘 */}
       <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />

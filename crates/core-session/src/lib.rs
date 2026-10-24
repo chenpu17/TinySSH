@@ -9,7 +9,7 @@ mod handle;
 pub mod restore;
 pub mod triggers;
 
-pub use handle::{is_whitelisted, DecisionMsg, SessionHandle};
+pub use handle::{is_whitelisted, DecisionMsg, SessionHandle, SessionLogFile};
 
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::ChannelHandle;
@@ -170,6 +170,11 @@ struct StagePlan {
 
 /// attempts 登记上限（十轮防泄漏；收缩策略见 `SessionManager::gc_attempts`）。
 const ATTEMPTS_CAP: usize = 256;
+
+/// 稳定轮（余量项）：终态传输任务保留上限——注册表曾只进不出，完成/失败卡在
+/// 长跑进程里无限堆积。清最旧终态条目；Queued/Running/Committing/Cancelling/
+/// AwaitingDecision/OutcomeUnknown（活跃或待核实）一律不动。
+const TRANSFER_TERMINAL_KEEP: usize = 50;
 
 /// ③ 记录状态归一（发起侧）：Ok → "initiated"；审批/取消/危险各有专名。
 fn record_outcome<T>(r: &Result<T>) -> (&'static str, Option<String>) {
@@ -432,7 +437,10 @@ impl SessionManager {
         let rows = 32u16;
 
         let channel: Arc<dyn ChannelHandle> = if kind == "local" {
-            let (ch, _cleanup) = transport_pty::spawn_local_pty(cols, rows).await?;
+            // 本地终端一等公民轮：shell override 从 attempt opts 带入（None=默认解析）；
+            // override 随通路存续，重连 respawn 复用同一选择
+            let shell = attempt.and_then(|a| a.local_shell.clone());
+            let (ch, _cleanup) = transport_pty::spawn_local_pty(cols, rows, shell).await?;
             ch
         } else {
             // 十七轮：快速连接主机凭据在注册表内存（注册时即席解出），不经 vault
@@ -735,6 +743,7 @@ impl SessionManager {
                         cancel_tx,
                         cancel_rx,
                         term: AtomicBool::new(false),
+                        local_shell: opts.local_shell.clone(),
                     });
                     at.insert(attempt_id.clone(), entry.clone());
                     Self::gc_attempts(&mut at, ATTEMPTS_CAP);
@@ -1238,6 +1247,12 @@ impl SessionManager {
 
     /// 创建本地会话用的隐式主机记录。
     fn ensure_local_host(&self) -> Result<Host> {
+        // Windows GUI 启动没有 USER（那是 MSYS 约定），系统变量是 USERNAME
+        let real_user = || {
+            std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "user".into())
+        };
         if let Some(h) = self
             .center
             .vault
@@ -1245,6 +1260,24 @@ impl SessionManager {
             .into_iter()
             .find(|h| h.id == "local")
         {
+            // 旧库可能在 USER 未设的环境落了占位名「user」——有真名就自愈一次
+            if h.username == "user" {
+                let real = real_user();
+                if real != "user" {
+                    let _ = self.center.vault.upsert_host(&HostDraft {
+                        id: Some("local".into()),
+                        name: "本机".into(),
+                        address: "local".into(),
+                        port: Some(0),
+                        username: real,
+                        auth: AuthDraft::None,
+                        tags: vec![],
+                        charset: Charset::Utf8,
+                        shell_integration: None,
+                    });
+                    return self.ensure_local_host();
+                }
+            }
             return Ok(h);
         }
         let draft = HostDraft {
@@ -1252,7 +1285,7 @@ impl SessionManager {
             name: "本机".into(),
             address: "local".into(),
             port: Some(0),
-            username: std::env::var("USER").unwrap_or_else(|_| "user".into()),
+            username: real_user(),
             auth: AuthDraft::None,
             tags: vec![],
             charset: Charset::Utf8,
@@ -1417,6 +1450,9 @@ struct AttemptEntry {
     /// 终态原子镜像（settle 置位，Release/Acquire 配对）：合并查询在 Std 锁临界区内
     /// 判活不跨 await（M3——tokio Mutex 的 phase 不可在 Std 锁内读）。
     term: AtomicBool,
+    /// 本地会话指定 shell（本地终端一等公民轮）：从 opts 带到 create_session_inner。
+    /// 合并命中时沿用首个 attempt 的选择（幂等合并语义自然延伸）。
+    local_shell: Option<String>,
 }
 
 impl AttemptEntry {
@@ -1736,6 +1772,10 @@ async fn auth_prompt_gate(
 }
 
 fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Vec<u8>>) {
+    // 泵代际：本泵持有 spawn 时刻的号。手动重连（以及任何未来再拉泵的路径）
+    // 都会经 spawn_pump 递增代际——旧泵从重连等长 await 醒来后发现代际已换，
+    // 立即退出，不得再订阅/喂屏（双泵双写屏），更不得把健康会话判死。
+    let my_gen = h.pump_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     tokio::spawn(async move {
         // 会话级流式解码器（GBK）：多字节序列可跨 chunk 切开，须全程同一实例；
         // 解码后屏态与订阅广播只见 UTF-8（GBK 尾字节撞 ASCII，裸喂会腐蚀屏态）
@@ -1773,6 +1813,7 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                             .lock()
                             .await
                             .flush_stale_capture(std::time::Duration::from_millis(300));
+                        h.log_flush();
                         if !h.channel.is_alive().await {
                             lost = true;
                             break;
@@ -1795,7 +1836,21 @@ fn spawn_pump(h: Arc<SessionHandle>, mut rx: tokio::sync::broadcast::Receiver<Ve
                 return;
             }
             h.on_transport_reconnect().await;
-            if *h.state.lock().await == SessionState::Disconnected {
+            // Closed 与 Disconnected 同为终态出口：close_session 只置 Closed 不
+            // 停泵，此处若放行 Closed，下方 reinject 会把状态改写回 Reconfirming
+            // （P0 修复前）——已从会话表移除的会话下一轮 tick 被真实重连「复活」，
+            // 留下带活连接的僵尸会话与永久任务。
+            if matches!(
+                *h.state.lock().await,
+                SessionState::Disconnected | SessionState::Closed
+            ) {
+                return;
+            }
+            // 代际守卫：on_transport_reconnect 置 Disconnected 后有 note/emit 的
+            // await 空窗，手动重连可趁隙拉起新泵（代际+1）。此泵若继续跑，旧
+            // 订阅还在——双泵双写屏；后续它迟到的 is_alive=false 还会把健康
+            // 会话重新打进重连（假断线）。
+            if h.pump_gen.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
                 return;
             }
             // 先订阅新通道、再注入集成：远端回显与首个标记提示符不得落入
@@ -1976,6 +2031,11 @@ impl SessionApi for SessionManager {
     }
 
     async fn upsert_host(&self, ctx: &Actor, host: HostDraft) -> Result<HostId> {
+        // 本地终端一等公民轮：「本机」是内置条目，不可编辑。ensure_local_host 直调
+        // vault.upsert_host 不走此门，复活机制不受影响；Agent/MCP 通路同被拦。
+        if host.id.as_deref() == Some("local") {
+            return Err(Error::LocalHostImmutable);
+        }
         let id = self.center.vault.upsert_host(&host)?;
         let _ = self.center.audit.append(
             ctx,
@@ -1989,6 +2049,9 @@ impl SessionApi for SessionManager {
     }
 
     async fn delete_host(&self, ctx: &Actor, id: HostId) -> Result<()> {
+        if id == "local" {
+            return Err(Error::LocalHostImmutable);
+        }
         self.center.vault.delete_host(&id)?;
         let _ = self.center.audit.append(
             ctx,
@@ -2216,7 +2279,7 @@ impl SessionApi for SessionManager {
                 .open(&path)
                 .map_err(|e| Error::Io(e.to_string()))?;
             *h.log_path.lock().unwrap() = Some(path.clone());
-            *h.log_file.lock().unwrap() = Some(file);
+            *h.log_file.lock().unwrap() = Some(handle::SessionLogFile::new(file, path.clone()));
             let _ = self.center.audit.append(
                 ctx,
                 "session_logging_on",
@@ -2227,8 +2290,14 @@ impl SessionApi for SessionManager {
             );
             Ok(Some(path.to_string_lossy().into_owned()))
         } else {
-            // 收口：取走句柄即关闭（File drop 落盘）；路径一并清（SessionInfo.logging 归假）
-            let closed = h.log_file.lock().unwrap().take();
+            // 收口：先冲净 BufWriter 再关；路径一并清（SessionInfo.logging 归假）
+            let closed = {
+                let mut g = h.log_file.lock().unwrap();
+                if let Some(l) = g.as_mut() {
+                    let _ = std::io::Write::flush(&mut l.writer);
+                }
+                g.take()
+            };
             let path = h.log_path.lock().unwrap().take();
             if let (Some(_), Some(p)) = (closed, path) {
                 let _ = self.center.audit.append(
@@ -2283,6 +2352,9 @@ impl SessionApi for SessionManager {
             return Err(Error::ControlTakenByHuman);
         }
         *h.state.lock().await = SessionState::Closed;
+        // 泵代际+1：正在 on_transport_reconnect 重试环里的旧泵醒后即退，
+        // 不再对已关闭会话续跑 3 轮重试（只置 Closed 时它要到重试结束才自检）。
+        h.pump_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         h.channel.close().await?;
         self.sessions.lock().unwrap().remove(&sid);
         // P2-b：触发器引擎清该会话的滚动行缓冲与冷却记录（防缓慢泄漏）
@@ -2941,14 +3013,11 @@ impl SessionApi for SessionManager {
     }
 
     // C5（§547）：注册表全量快照（创建倒序）。事件可丢，查询是权威对账面。
+    // 稳定轮：随查询顺带收最旧终态条目（TRANSFER_TERMINAL_KEEP），注册表不再只进不出。
     async fn list_transfers(&self, _ctx: &Actor) -> Result<Vec<TransferTask>> {
-        let mut v: Vec<TransferTask> = self
-            .transfers
-            .lock()
-            .unwrap()
-            .values()
-            .map(|e| e.task.clone())
-            .collect();
+        let mut reg = self.transfers.lock().unwrap();
+        Self::gc_transfers_terminal(&mut reg, TRANSFER_TERMINAL_KEEP);
+        let mut v: Vec<TransferTask> = reg.values().map(|e| e.task.clone()).collect();
         v.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
         Ok(v)
     }
@@ -3823,6 +3892,33 @@ impl SessionManager {
         }
     }
 
+    /// 稳定轮（余量项）：终态传输条目最旧先淘汰，保 `TRANSFER_TERMINAL_KEEP` 条。
+    /// 调用点 = list_transfers（FE 轮询/MCP 对账的唯一权威查询面），随查询顺带收。
+    fn gc_transfers_terminal(map: &mut HashMap<TransferId, TransferRegEntry>, keep: usize) {
+        let mut terminal: Vec<(i64, TransferId)> = map
+            .iter()
+            .filter(|(_, e)| {
+                matches!(
+                    e.task.status,
+                    TransferStatus::Succeeded
+                        | TransferStatus::Failed
+                        | TransferStatus::Cancelled
+                        | TransferStatus::Skipped
+                        | TransferStatus::Interrupted
+                )
+            })
+            .map(|(id, e)| (e.task.created_at, id.clone()))
+            .collect();
+        if terminal.len() <= keep {
+            return;
+        }
+        terminal.sort_by(|a, b| a.0.cmp(&b.0));
+        let excess = terminal.len() - keep;
+        for (_, id) in terminal.into_iter().take(excess) {
+            map.remove(&id);
+        }
+    }
+
     /// 变更任务并按节奏对外发帧/落 journal：状态变化即时发；进度合并 ≥200ms
     ///（§560 ~5 次/秒/任务）；journal 状态变化必写、纯进度 ≥1s 一写。
     /// R34：journal 行随写 verified 证据位（提交窗口同步）。
@@ -4268,6 +4364,32 @@ impl SessionManager {
             .exec_fresh(Self::NPU_SCRIPT, &opts, deadline, &cancel)
             .await?;
         Ok(String::from_utf8_lossy(&outcome.stdout).into_owned())
+    }
+
+    /// 受控退出收口（稳定轮余量项）：逐会话走 close_session 同口径（审计、
+    /// 审批作废、会话行收口、传输取消），远端 shell 得到干净断开而非等服务端
+    /// 超时清扫。单会话卡住按 1.5s 上限强制摘表（进程即将退出，不陪网络悬挂）；
+    /// 整体 4s 预算，退出不被大会话数拖住。返回成功收口数。
+    pub async fn shutdown_all(&self) -> usize {
+        let sids: Vec<String> = self.sessions.lock().unwrap().keys().cloned().collect();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        let mut n = 0usize;
+        for sid in sids {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                self.sessions.lock().unwrap().remove(&sid);
+                continue;
+            }
+            let fut = self.close_session(&Actor::Human, sid.clone());
+            match tokio::time::timeout(left.min(std::time::Duration::from_millis(1500)), fut).await
+            {
+                Ok(Ok(())) => n += 1,
+                _ => {
+                    self.sessions.lock().unwrap().remove(&sid);
+                }
+            }
+        }
+        n
     }
 
     /// 手动重连（GUI「重连」按钮；不在 SessionApi/MCP 面——断线恢复是人的基础设施动作）。
@@ -6068,6 +6190,7 @@ mod c10_tests {
             cancel_tx,
             cancel_rx,
             term: AtomicBool::new(phase.is_terminal()),
+            local_shell: None,
         })
     }
 

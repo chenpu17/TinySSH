@@ -38,10 +38,11 @@ module.exports = {
     ck.check("含 prod-1", hosts.includes("prod-1"));
 
     // ── 搜索过滤 ──
+    // 本地终端一等公民轮：「本机」置顶节不过滤链——搜索 prod 时仍置顶在场，其余只剩 prod-*
     await page.fill(".hb-search input", "prod");
     await page.waitForTimeout(250);
     const filtered = await page.$$eval(".host-card .host-name", (els) => els.map((e) => e.textContent.trim()));
-    ck.check("搜索 prod 只剩 prod-* 两台", filtered.length === 2 && filtered.every((n) => n.startsWith("prod-")), `实得 ${filtered.join(" / ")}`);
+    ck.check("搜索 prod：本机置顶常驻 + 只剩 prod-* 两台", filtered.length === 3 && filtered[0] === "本机" && filtered.slice(1).every((n) => n.startsWith("prod-")), `实得 ${filtered.join(" / ")}`);
     await page.fill(".hb-search input", "");
     await page.waitForTimeout(250);
     const restored = await page.$$eval(".host-card", (e) => e.length);

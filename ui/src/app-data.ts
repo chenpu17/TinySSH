@@ -433,6 +433,9 @@ export const SETTING_FONT_LEGACY = "ui.font_size";
 // 主题色板（2026-10-11）：统一主题族——既定应用 chrome，也经派生决定终端配色
 // （二十二轮起单一事实源，ui.theme/ui.theme.follow 双轨退役）。
 export const SETTING_PALETTE = "ui.palette";
+// 本地终端一等公民轮：本机默认 shell（值为 list_local_shells 的 id；空串=系统默认
+// $SHELL/PowerShell 回退）。真实域 vault settings KV，demo 域同镜像。
+export const SETTING_LOCAL_SHELL = "ui.v2.terminal.local_shell";
 
 // ---------------------------------------------------------------------------
 // 终端品质（P0 轮）：字体族/连字/光标/滚屏/字距偏好（vault settings KV，
@@ -445,31 +448,47 @@ export const SETTING_TERM_CURSOR_BLINK = "ui.v2.terminal.cursor_blink";
 export const SETTING_TERM_SCROLLBACK = "ui.v2.terminal.scrollback";
 export const SETTING_TERM_LETTER_SPACING = "ui.v2.terminal.letter_spacing";
 
-/** 字体族选项（id → CSS 字体栈）。首位内置 JetBrains Mono 全量字形；其余按平台常见提供，
- *  找不到即浏览器按栈回落——不承诺"装了才有"。 */
+/** 字体族选项（id → CSS 字体栈）。首位内置 Maple Mono CN（圆润 + 全量中文等宽，
+ *  中文输出不再落到系统宋体）；JetBrains Mono 全量字形次席；其余按平台常见提供，
+ *  找不到即浏览器按栈回落——不承诺"装了才有"。所有栈都垫 MiSans VF/雅黑：
+ *  未内置 CJK 的字体（JetBrains/Consolas 等）中文输出经它们兜底，而非系统
+ *  monospace 链的宋体（字体轮：终端「中文难看」的真正来源）。 */
 export type TermFontChoice = { id: string; label: string; css: string };
 export const TERM_FONTS: TermFontChoice[] = [
   {
+    id: "maple",
+    label: "Maple Mono 圆润中文等宽（内置）",
+    css: '"Maple Mono CN Term", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+  },
+  {
     id: "jetbrains",
     label: "JetBrains Mono（内置）",
-    css: '"JetBrains Mono Term", "SF Mono", "Cascadia Mono", Menlo, Consolas, "Courier New", monospace',
+    css: '"JetBrains Mono Term", "SF Mono", "Cascadia Mono", Menlo, Consolas, "MiSans VF", "Microsoft YaHei", "Courier New", monospace',
   },
   {
     id: "jetbrains-nerd",
     label: "JetBrains Mono Nerd Font（若已安装）",
-    css: '"JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrains Mono Term", "Cascadia Mono", Consolas, monospace',
+    css: '"JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrains Mono Term", "Cascadia Mono", Consolas, "MiSans VF", "Microsoft YaHei", monospace',
   },
   {
     id: "cascadia",
     label: "Cascadia Mono / Code（Windows）",
-    css: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+    css: '"Cascadia Mono", "Cascadia Code", Consolas, "MiSans VF", "Microsoft YaHei", "Courier New", monospace',
   },
-  { id: "consolas", label: "Consolas（Windows）", css: 'Consolas, "Courier New", monospace' },
-  { id: "menlo", label: "SF Mono / Menlo（macOS）", css: '"SF Mono", Menlo, Monaco, monospace' },
+  {
+    id: "consolas",
+    label: "Consolas（Windows）",
+    css: 'Consolas, "MiSans VF", "Microsoft YaHei", "Courier New", monospace',
+  },
+  {
+    id: "menlo",
+    label: "SF Mono / Menlo（macOS）",
+    css: '"SF Mono", Menlo, Monaco, "MiSans VF", "Hiragino Sans GB", "Microsoft YaHei", monospace',
+  },
   {
     id: "system",
     label: "系统等宽（ui-monospace）",
-    css: 'ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace',
+    css: 'ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "MiSans VF", "Microsoft YaHei", monospace',
   },
 ];
 export const TERM_FONT_DEFAULT = TERM_FONTS[0].id;

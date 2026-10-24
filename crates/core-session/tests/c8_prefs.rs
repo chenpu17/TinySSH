@@ -146,3 +146,40 @@ async fn recents_empty_when_only_local() {
     .unwrap();
     assert!(m.list_recent_hosts(&human()).await.unwrap().is_empty());
 }
+
+// 本地终端一等公民轮：「本机」是内置条目——不可编辑、不可删除（LocalHostImmutable）；
+// 列表恒含本机（ensure_local_host 懒建，是唯一生成途径）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_host_is_immutable_builtin() {
+    let m = manager().await;
+    let hosts = m.list_hosts(&human()).await.unwrap();
+    assert!(hosts.iter().any(|h| h.id == "local"), "本机应恒在");
+    // 编辑拒绝（Agent 通路同门——守卫在 SessionApi 单点）
+    let e = m
+        .upsert_host(
+            &Actor::Agent {
+                client_id: "test-agent".into(),
+            },
+            HostDraft {
+                id: Some("local".into()),
+                name: "改名".into(),
+                address: "local".into(),
+                port: Some(0),
+                username: "ops".into(),
+                auth: AuthDraft::None,
+                tags: vec![],
+                charset: Default::default(),
+                shell_integration: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(e, Error::LocalHostImmutable), "{e:?}");
+    // 删除拒绝
+    let e = m.delete_host(&human(), "local".into()).await.unwrap_err();
+    assert!(matches!(e, Error::LocalHostImmutable), "{e:?}");
+    // 拒后本机仍在、未被改名
+    let hosts = m.list_hosts(&human()).await.unwrap();
+    let local = hosts.iter().find(|h| h.id == "local").unwrap();
+    assert_eq!(local.name, "本机");
+}

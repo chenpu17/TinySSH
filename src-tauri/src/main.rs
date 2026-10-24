@@ -782,14 +782,21 @@ async fn open_path(path: String) -> CmdResult<()> {
 }
 
 /// SFTP 目录浏览（T41 FR-7）：只读 readdir，人类专属入口（不经审批）。
+/// 稳定轮：截断 5000 条——几万条目的大目录（数据盘/CI 产物）曾全量过 IPC +
+/// 全量 DOM，秒级冻结乃至 webview OOM；截断由前端给「结果截断」提示。
 #[tauri::command]
 async fn sftp_list(state: ApiState<'_>, sid: String, path: String) -> CmdResult<Vec<DirEntryS>> {
-    state
+    let mut es = state
         .api
         .sftp_list(&human(), sid, &path)
         .await
-        .map_err(WireError::from)
+        .map_err(WireError::from)?;
+    es.truncate(SFTP_LIST_CAP);
+    Ok(es)
 }
+
+/// sftp_list 单次返回上限（前端依此长度显示截断提示）。
+const SFTP_LIST_CAP: usize = 5000;
 
 /// C4（R30）：路径规范化。path=None → 连接初始目录（SFTP "."）。
 #[tauri::command]
@@ -956,8 +963,10 @@ fn cpu_pct(cur: u64, prev: u64, wall_secs: f64, ncores: f64) -> Option<f64> {
 
 /// 自身开销采样（2s 轮询）：不经审计/审批（自进程只读计数，与
 /// read_host_metrics 的直连通道同理——高频轮询不能刷审计流）。
+/// async 化（稳定轮）：同步 command 跑主线程，2s 一拍的采样不该占主线程；
+/// 带 State 的 async command 须返回 Result（tauri 规则），FE 侧序列化不变。
 #[tauri::command]
-fn read_self_metrics(state: State<'_, SelfMeter>) -> SelfMetrics {
+async fn read_self_metrics(state: State<'_, SelfMeter>) -> CmdResult<SelfMetrics> {
     #[cfg(windows)]
     let (proc_now, ws, commit) = self_proc::sample();
     #[cfg(not(windows))]
@@ -971,11 +980,11 @@ fn read_self_metrics(state: State<'_, SelfMeter>) -> SelfMetrics {
         None => None,
     };
     *prev = Some((proc_now, std::time::Instant::now()));
-    SelfMetrics {
+    Ok(SelfMetrics {
         cpu_pct,
         ws_mb: ws / 1048576,
         commit_mb: commit / 1048576,
-    }
+    })
 }
 
 /// 端口转发（T42 FR-8）：列/建/停（人类 GUI 入口；Agent 侧留 MCP 审批版）。
@@ -1010,11 +1019,11 @@ async fn stop_forward(state: ApiState<'_>, sid: String, id: String) -> CmdResult
         .map_err(WireError::from)
 }
 
-/// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
-/// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
-/// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）
+/// UI 偏好读取（路线图⑥：字号/主题；管理面直连 vault，§6.9 既有先例）。
+/// async 化（稳定轮）：同步 command 跑在主线程——偏好读写是高频路径（各面板
+/// 挂载即读、设置即写），SQLite 行锁/IO 卡顿会直接冻结 UI 帧。
 #[tauri::command]
-fn get_setting(state: ApiState<'_>, key: String) -> CmdResult<Option<String>> {
+async fn get_setting(state: ApiState<'_>, key: String) -> CmdResult<Option<String>> {
     state
         .api
         .center
@@ -1024,7 +1033,7 @@ fn get_setting(state: ApiState<'_>, key: String) -> CmdResult<Option<String>> {
 }
 
 #[tauri::command]
-fn set_setting(state: ApiState<'_>, key: String, value: String) -> CmdResult<()> {
+async fn set_setting(state: ApiState<'_>, key: String, value: String) -> CmdResult<()> {
     state
         .api
         .center
@@ -1084,8 +1093,9 @@ struct PasteHit {
 
 /// 人类粘贴前的危险形态扫描——与 Agent 审批同一张内置 deny 表（approval::scan_dangerous）。
 /// UI 侧只在廉价预筛命中时才调它，判定本身完全在 Rust（不做第二份规则）。
+/// async 化（稳定轮）：超大粘贴的正则扫描曾整段跑在主线程，UI 随粘贴卡一拍。
 #[tauri::command]
-fn scan_paste_danger(state: ApiState<'_>, text: String) -> CmdResult<Vec<PasteHit>> {
+async fn scan_paste_danger(state: ApiState<'_>, text: String) -> CmdResult<Vec<PasteHit>> {
     Ok(state
         .api
         .center
@@ -1105,6 +1115,8 @@ async fn list_recent_hosts(state: ApiState<'_>) -> CmdResult<Vec<RecentHost>> {
         .map_err(WireError::from)
 }
 
+/// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
+/// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
 #[tauri::command]
 async fn open_url(url: String) -> CmdResult<()> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -1316,6 +1328,13 @@ async fn shell_capability(state: ApiState<'_>, sid: String) -> CmdResult<ShellCa
         .shell_capability(&human(), sid)
         .await
         .map_err(WireError::from)
+}
+
+/// 本机可用 shell 清单（本地终端一等公民轮）。机器信息不走 SessionApi——
+/// 与会话无关、无 actor 语义；transport-pty 只做存在性探测不启动进程。
+#[tauri::command]
+async fn list_local_shells() -> CmdResult<Vec<transport_pty::LocalShellInfo>> {
+    Ok(transport_pty::detect_local_shells())
 }
 
 #[tauri::command]
@@ -1614,10 +1633,15 @@ async fn bench_mode() -> CmdResult<bool> {
 }
 
 /// SPIKE-1：IPC Channel 吞吐基准——Rust → WebView 原始字节推送。
+/// 稳定轮：仅 debug 构建可用——4MB/s IPC 洪水 + `exit(0)` 这类基准工具语义
+/// 不该留在生产 invoke 表里（前端一次误调即可打洪水/自杀进程）。
 #[tauri::command]
 async fn bench_start(
     on_chunk: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> CmdResult<()> {
+    if !cfg!(debug_assertions) {
+        return Err("bench 命令仅 debug 构建可用".to_string().into());
+    }
     eprintln!("[bench] bench_start called");
     tokio::spawn(async move {
         let chunk = vec![b'a'; 1024 * 1024];
@@ -1648,9 +1672,12 @@ async fn bench_start(
     Ok(())
 }
 
-/// SPIKE-1：WebView 回报收到的字节数并退出。
+/// SPIKE-1：WebView 回报收到的字节数并退出（debug 构建）。
 #[tauri::command]
 async fn bench_report(bytes: u64, resyncs: u32, seconds: u64) -> CmdResult<()> {
+    if !cfg!(debug_assertions) {
+        return Err("bench 命令仅 debug 构建可用".to_string().into());
+    }
     eprintln!("[bench] report: bytes={bytes} resyncs={resyncs} seconds={seconds}");
     let out = serde_json::json!({
         "bytes": bytes,
@@ -2049,6 +2076,24 @@ fn install_native_menu(_app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 启动期致命错误的原生对话框：windows_subsystem 构建无控制台，panic/eprintln
+/// 全部不可见（双开/库损坏曾表现为「点了没反应」）。零依赖直调 user32。
+#[cfg(windows)]
+fn show_fatal_dialog(msg: &str) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, utype: u32) -> i32;
+    }
+    let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+    let t = wide(msg);
+    let c = wide("TinySSH");
+    unsafe { MessageBoxW(0, t.as_ptr(), c.as_ptr(), 0x10) }; // MB_ICONERROR
+}
+#[cfg(not(windows))]
+fn show_fatal_dialog(msg: &str) {
+    eprintln!("{msg}");
+}
+
 fn main() {
     eprintln!(
         "[app] starting, bench={}",
@@ -2061,8 +2106,25 @@ fn main() {
     let db = std::env::var("TINYSSH_DB")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs_or_home().join(".tinyssh").join("tinyssh.db"));
-    std::fs::create_dir_all(db.parent().unwrap()).ok();
-    let api = SessionManager::open(&db).expect("open storage");
+    // 稳定轮：启动期不再 panic——windows_subsystem 下 panic 不可见，双开（vault
+    // 独占锁）/库损坏/路径异常的用户只会看到「点了没反应」。失败给原生对话框。
+    match db.parent() {
+        Some(p) => {
+            std::fs::create_dir_all(p).ok();
+        }
+        None => {} // db 在盘根（如 TINYSSH_DB=C:\）：无需建目录
+    }
+    let api = match SessionManager::open(&db) {
+        Ok(a) => a,
+        Err(e) => {
+            let msg = format!(
+                "TinySSH 存储库打开失败，无法启动：\n{e}\n\n常见原因：\n· 另一个 TinySSH 实例正在运行（同时只能运行一个）\n· 数据库文件损坏或被占用\n\n路径：{}",
+                db.display()
+            );
+            show_fatal_dialog(&msg);
+            std::process::exit(101);
+        }
+    };
     let terminal_input: Arc<TerminalInput> = Arc::default();
 
     // T43（§6-7 进程模型收口）：MCP 端点装配进 GUI 进程——与 tauri 命令共享同一
@@ -2124,6 +2186,7 @@ fn main() {
         .manage(AppState { api: api.clone(), mcp_endpoint: mcp_endpoint_handle, agent_host })
         .manage(terminal_input.clone())
         .manage(SelfMeter::default())
+        .manage(Arc::new(CloseGuard::default()))
         .on_page_load(|webview, payload| {
             eprintln!("[app] page load event: {:?} {:?}", payload.event(), webview.label());
             // dev harness：TINYSSH_SMOKE=1 时页面就绪后注入驱动脚本，走完
@@ -2606,7 +2669,7 @@ fn main() {
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
             upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,
-            pick_upload_files, pick_save_file,
+            pick_upload_files, pick_save_file, pick_save_dir,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,
             scan_paste_danger,
@@ -2615,22 +2678,69 @@ fn main() {
             get_build_time,
             agent_model_get, agent_model_set, agent_send, agent_cancel, agent_history,
             shell_capability,
+            list_local_shells,
             list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,
             collab_status, collab_disable_preview, collab_disable, collab_enable,
             pending_host_keys, decide_host_key, pending_auth_prompts, answer_auth_prompt,
             bench_start, bench_report, bench_mode, note_terminal,
-            quit_app,
+            quit_app, cancel_app_close,
         ])
-        .on_window_event(|window, event| {
+        .on_window_event(move |window, event| {
+            use tauri::Manager as _;
             // R23 §6.4 退出契约：主窗口关闭=请求退出，交 FE 汇总确认（活动会话/转发/
             // 未知传输），不引入「窗口已关但后台仍跑」的新模式
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let guard = window.app_handle().state::<Arc<CloseGuard>>();
+                guard.pending.store(true, std::sync::atomic::Ordering::SeqCst);
+                let gen = guard.gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 let _ = window.emit("app-close-requested", ());
                 api.prevent_close();
+                // 兜底看护（稳定轮余量项）：webview 死亡时 FE 永远收不到事件、
+                // quit_app 永远不会被调——窗口就永远关不掉。看护线程每 2s 用
+                // eval 探活：webview 死（eval 报错）即强退；确认对话超 90s 无人
+                // 应答则解除 pending（人在犹豫，不强杀活会话），下次点关闭重新武装。
+                let w = window.app_handle().get_webview_window("main");
+                let g = window.app_handle().state::<Arc<CloseGuard>>().inner().clone();
+                std::thread::spawn(move || {
+                    for _ in 0..45 {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        if g.gen.load(std::sync::atomic::Ordering::SeqCst) != gen
+                            || !g.pending.load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            return;
+                        }
+                        let alive = match &w {
+                            Some(wv) => wv.eval("void 0").is_ok(),
+                            None => false,
+                        };
+                        if !alive {
+                            tracing::error!("webview 已死且退出确认无应答——强制退出");
+                            std::process::exit(0);
+                        }
+                    }
+                    g.pending.store(false, std::sync::atomic::Ordering::SeqCst);
+                });
             }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// 窗口关闭确认态（稳定轮·窗口关闭兜底）：pending=已请求关闭等 FE 确认；
+/// gen=关闭请求代际（每次 CloseRequested 递增，看护线程据此识别被顶替的请求）。
+#[derive(Default)]
+struct CloseGuard {
+    pending: std::sync::atomic::AtomicBool,
+    gen: std::sync::atomic::AtomicU64,
+}
+
+/// FE 用户在退出确认对话框点了「取消」：解除关闭看护（webview 存活即继续用）。
+/// webview 死亡时 FE 到不了这里——由看护线程的 eval 探活强制退出兜底。
+#[tauri::command]
+fn cancel_app_close(guard: tauri::State<'_, Arc<CloseGuard>>) {
+    guard
+        .pending
+        .store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// R23：FE 汇总确认「结束会话并退出」后的受控退出（不用 destroy 绕过窗口事件）。
@@ -2643,6 +2753,13 @@ async fn quit_app(app: tauri::AppHandle, state: ApiState<'_>) -> CmdResult<()> {
     let n = state.api.capture_restore_snapshots().await;
     if n > 0 {
         tracing::info!("退出快照：已存 {n} 个会话现场");
+    }
+    // 稳定轮（余量项）：退出前主动收口会话——远端 shell 干净断开、审批作废/
+    // 会话行收口走同一 close_session 口径；卡住的会话按 shutdown_all 内部
+    // 预算强制摘表，退出不被网络悬挂拖住。
+    let closed = state.api.shutdown_all().await;
+    if closed > 0 {
+        tracing::info!("退出收口：已关闭 {closed} 个会话");
     }
     app.exit(0);
     Ok(())
@@ -2823,6 +2940,25 @@ async fn pick_save_file(
             b = b.set_directory(d);
         }
         Ok(b.blocking_save_file().map(|p| p.to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 批量下载「只选一个目录」（0.10.0 轮，用户反馈另存为模式下逐文件弹保存框太繁）：
+/// 原生目录选择器，默认目录可给；取消返回 None。与 pick_save_file 同为
+/// spawn_blocking（对话框阻塞不能占命令主线程）。
+#[tauri::command]
+async fn pick_save_dir(
+    app: tauri::AppHandle,
+    default_dir: Option<String>,
+) -> std::result::Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut b = tauri_plugin_dialog::DialogExt::dialog(&app).file();
+        if let Some(d) = default_dir {
+            b = b.set_directory(d);
+        }
+        Ok(b.blocking_pick_folder().map(|p| p.to_string()))
     })
     .await
     .map_err(|e| e.to_string())?

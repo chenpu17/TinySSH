@@ -16,6 +16,7 @@ export type AppAction =
   | { id: "tab-cycle"; dir: 1 | -1 }
   | { id: "tab-close" }
   | { id: "tab-new" }
+  | { id: "term-local" }
   | { id: "split-toggle" }
   | { id: "focus-toggle" }
   | { id: "esc" };
@@ -87,12 +88,12 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
   if (ev.key === "Tab" && ctx.native && ctx.hasSessions) {
     return { id: "tab-cycle", dir: ev.shiftKey ? -1 : 1 };
   }
-  // 键位表匹配（键位配置轮）：六个可配置动作按 ui.keymap.v1 表解析，门控逐动作保留
-  // （palette/tab-new/分屏关签 native 门；hostbar 表单焦点门；分屏关签需活动会话）。
+  // 键位表匹配（键位配置轮）：可配置动作按 ui.keymap.v1 表解析，门控逐动作保留
+  // （palette/tab-new/term-local/分屏关签 native 门；hostbar 表单焦点门；分屏关签需活动会话）。
   // 先于 shift 早退——表允许 Ctrl+Shift+字母 形组合。cmd 门已过滤平台主修饰键：
   // mac 真按 Ctrl 仍是 shell 键（cmd=metaKey 不成立）；demo 侧非平台 Ctrl 同理早退，
-  // Ctrl+F 等归浏览器语义。默认表=直键三键轮基线：T 新建 / W 关签 / D 分屏 /
-  // K 面板 / B 主机栏 / F 搜索；被表占用的字母在 App 控制字符直发层同步豁免。
+  // Ctrl+F 等归浏览器语义。默认表=直键三键轮基线：T 新建 / W 关签 / ⇧T 本地终端 /
+  // D 分屏 / K 面板 / B 主机栏 / F 搜索；被表占用的字母在 App 控制字符直发层同步豁免。
   const evb = bindingOf(ev, isMacPlatform());
   if (evb) {
     const km = ctx.keymap ?? DEFAULT_KEYMAP;
@@ -102,6 +103,7 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
     if (hit("hostbar") && !ctx.inForm) return { id: "hostbar" };
     if (hit("search")) return { id: "search" };
     if (hit("tab-new") && ctx.native) return { id: "tab-new" };
+    if (hit("term-local") && ctx.native) return { id: "term-local" };
     if (hit("split-toggle") && ctx.native && ctx.hasActiveTab) return { id: "split-toggle" };
     if (hit("tab-close") && ctx.native && ctx.hasActiveTab) return { id: "tab-close" };
   }

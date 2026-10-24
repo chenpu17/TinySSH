@@ -25,6 +25,22 @@
   src: url("./assets/fonts/jetbrains-mono-full-Bold.woff2") format("woff2");
   font-weight: 600 800; font-style: normal; font-display: swap;
 }
+/* ---- Maple Mono CN（2026-10-23 字体轮，OFL 1.1 见 maple-mono-cn-LICENSE）----
+   终端默认字体：圆润字形 + 全量 CJK 等宽（中文文件名/报错不再落到系统宋体）。
+   官方发行版子集（8611 字：GB2312 全表 + ASCII/标点/制表符/块元素/箭头/
+   powerline），两字重共 ~3.5MB。家族名 "Maple Mono CN Term" 只进终端栈，
+   与 "JetBrains Mono Term" 同工艺；框线/块元素随 customGlyphs=false 一并走
+   字体字形（makeTerm 注释：WebView2 155 连排几何绘制缺格，环境级回归）。 */
+@font-face {
+  font-family: "Maple Mono CN Term";
+  src: url("./assets/fonts/maple-mono-cn-Regular.woff2") format("woff2");
+  font-weight: 100 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Maple Mono CN Term";
+  src: url("./assets/fonts/maple-mono-cn-Bold.woff2") format("woff2");
+  font-weight: 600 800; font-style: normal; font-display: swap;
+}
 :root {
   /* UX 现代化改版（2026-10-10，docs/ux 台账 §4 同日登记）：石墨蓝基座 + 半透明描边 +
      集中一处的高饱和 cyan accent——深浅两套色板全部经 WCAG 脚本复验（文本档 ≥4.5:1，
@@ -96,7 +112,7 @@
   --mark-grad: linear-gradient(160deg, #10333b, #10161f);
   --grad-a: #5fcbd8;
   --grad-b: #3ec3d3;
-  --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, "Cascadia Mono", "MiSans VF", "Microsoft YaHei", monospace;
 
   /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
   --ansi-0: #1d1f22; --ansi-1: #c76963; --ansi-2: #4e9352; --ansi-3: #9b8316;
@@ -212,7 +228,8 @@ body {
 }
 .tb-self .tb-self-val { color: var(--text); opacity: 0.85; }
 .tb-right { display: flex; align-items: center; gap: 6px; }
-/* 版本号轮：标题栏右侧常驻版本标签——11px 次要色随主题，不与控制权徽标抢眼 */
+/* 版本号轮：常驻版本标签——11px 次要色随主题，不与控制权徽标抢眼；
+   0.10.0 起挪到标题栏应用名右边（tb-left 内），紧贴名称比贴右侧窗口钮更直观 */
 .ver-tag {
   font-size: 11px; color: var(--text-sub); font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
@@ -499,6 +516,17 @@ input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus),
 }
 .toast.ok   { border-left: 3px solid var(--ok); }
 .toast.err  { border-left: 3px solid var(--danger); }
+/* 带动作的 toast（下载完成「打开所在文件夹」）：栈整体 pointer-events:none 放行
+   点击，动作钮自己收回事件；点按后组件侧移除该条 toast */
+.toast .toast-act {
+  pointer-events: auto;
+  margin-left: 8px; padding: 2px 9px; font-size: 11px;
+  background: transparent; border: 1px solid var(--border); border-radius: 7px;
+  color: var(--text); cursor: pointer;
+}
+.toast .toast-act:not(:disabled):hover {
+  background: transparent; border-color: var(--accent); color: var(--accent);
+}
 .toast.info { border-left: 3px solid var(--accent); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }

@@ -1,6 +1,6 @@
 // 键位配置（直键轮 2026-10-14）：快捷键解析唯一事实源仍是 actions.ts 的 resolveAction，
 // 本模块只管「可重绑动作」的键位表——默认值、KV 序列化（ui.keymap.v1）、keydown 匹配、
-// 冲突检测与展示格式。六个可配置动作都是「主修饰键（⌘/Ctrl）+ 单字母」形；
+// 冲突检测与展示格式。七个可配置动作都是「主修饰键（⌘/Ctrl）+ 单字母」形；
 // Ctrl+1-9 切标签、Ctrl+Tab 循环、Ctrl/⌘±0 缩放、F11 专注模式、Esc 浮层链为固定键位
 // 不开放改绑
 // （浏览器/系统惯例冲突面大；数字键与 1-9 切标签撞车，故字符限字母）。
@@ -9,6 +9,7 @@
 export type KeyActionId =
   | "tab-new"
   | "tab-close"
+  | "term-local"
   | "split-toggle"
   | "palette"
   | "hostbar"
@@ -29,6 +30,8 @@ export const KEYMAP_SETTING = "ui.keymap.v1";
 export const DEFAULT_KEYMAP: Record<KeyActionId, Binding> = {
   "tab-new": { key: "t", primary: true, shift: false, alt: false },
   "tab-close": { key: "w", primary: true, shift: false, alt: false },
+  // 本地终端一等公民轮：Shift 区分「新建连接表单」（Ctrl+T）与「直接开本地终端」
+  "term-local": { key: "t", primary: true, shift: true, alt: false },
   "split-toggle": { key: "d", primary: true, shift: false, alt: false },
   palette: { key: "k", primary: true, shift: false, alt: false },
   hostbar: { key: "b", primary: true, shift: false, alt: false },
@@ -38,6 +41,7 @@ export const DEFAULT_KEYMAP: Record<KeyActionId, Binding> = {
 export const KEYMAP_ACTIONS: { id: KeyActionId; label: string; desc: string }[] = [
   { id: "tab-new", label: "新建连接", desc: "打开主机栏添加表单" },
   { id: "tab-close", label: "关闭当前标签", desc: "活动会话先确认影响" },
+  { id: "term-local", label: "新建本地终端", desc: "直接连接「本机」开本地 shell" },
   { id: "split-toggle", label: "分屏 / 退出分屏", desc: "未分屏时弹会话选择（左右/上下方向）" },
   { id: "palette", label: "命令面板", desc: "命令与跳转" },
   { id: "hostbar", label: "主机栏开关", desc: "表单编辑焦点下不劫持" },

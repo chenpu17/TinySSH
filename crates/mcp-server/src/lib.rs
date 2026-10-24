@@ -429,6 +429,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::InvalidActor => "invalid_actor",
         Error::InvalidInput(_) => "invalid_input",
         Error::IdentityInUse { .. } => "identity_in_use",
+        Error::LocalHostImmutable => "local_host_immutable",
         Error::Storage(_) => "storage",
         Error::Io(_) => "io",
         Error::SftpPathNotFound { .. } => "sftp_path_not_found",
@@ -555,12 +556,23 @@ impl McpServer {
     ) -> CallToolResult {
         // rev-r46：审批挂起最长 120s，而真实 MCP 客户端默认超时普遍 30–60s——
         // 客户端带了 progressToken 就每 10s 发一次 progress 心跳喂狗（消息走本次
-        // 调用的响应流；经修好的 stdio shim 透传给 stdio 客户端）。调用结束即停。
-        let mut ticker: Option<tokio::task::JoinHandle<()>> = None;
+        // 调用的响应流；经修好的 stdio shim 透传给 stdio 客户端）。稳定轮：心跳
+        // 句柄挂 Drop-guard——客户端在审批等待中超时断连是**常见路径**（axum 会
+        // drop 本 future），原「await 正常返回才 abort」的收尾在 drop 路径永远
+        // 执行不到，每次泄漏一个 10s 永续任务 + Peer 句柄。
+        struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
+        impl Drop for AbortOnDrop {
+            fn drop(&mut self) {
+                if let Some(h) = self.0.take() {
+                    h.abort();
+                }
+            }
+        }
+        let mut ticker = AbortOnDrop(None);
         if let Some(tok) = ctx.meta.get_progress_token() {
             let peer = ctx.peer.clone();
             let token = tok.clone();
-            ticker = Some(tokio::spawn(async move {
+            ticker.0 = Some(tokio::spawn(async move {
                 let mut n: f64 = 0.0;
                 loop {
                     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -597,9 +609,7 @@ impl McpServer {
             }))
         })
         .await;
-        if let Some(h) = ticker {
-            h.abort();
-        }
+        drop(ticker); // 正常返回 / future 被 drop 两条路径都经 Drop-guard abort 心跳
         r
     }
 

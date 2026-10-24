@@ -7,6 +7,7 @@ use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, TransportSignal};
 use session_api::*;
 use std::collections::{HashMap, HashSet};
+use std::io::Write as IoWrite;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -19,6 +20,80 @@ pub const RECONFIRM_WHITELIST: &[&str] = &["pwd", "printenv", "which", "ps", "sy
 /// R35 §366 并行传输上限：每会话默认 2、窗口全局 4（其余排队保持 Queued）。
 pub const TRANSFER_PER_SESSION: usize = 2;
 pub const TRANSFER_GLOBAL: usize = 4;
+
+/// 内存审批表容量上限：未被人类裁决就终结的审批（超时/取消/接管）曾与已裁决
+/// 条目一起永久滞留；历史真相在 vault/audit，内存只留最近窗口（超出按
+/// created_at 淘汰最旧的已终态条目，Pending 永不淘汰）。
+pub const APPROVAL_ITEMS_CAP: usize = 500;
+
+/// 超限淘汰：按 created_at 摘最旧的已终态条目至容量内（Pending 保留）。
+fn evict_approval_items(items: &mut HashMap<String, ApprovalItem>, cap: usize) {
+    if items.len() <= cap {
+        return;
+    }
+    let mut done: Vec<(String, chrono::DateTime<chrono::Utc>)> = items
+        .iter()
+        .filter(|(_, it)| it.status != ApprovalStatus::Pending)
+        .map(|(id, it)| (id.clone(), it.created_at))
+        .collect();
+    done.sort_by_key(|(_, ts)| *ts);
+    let excess = items.len() - cap;
+    for (id, _) in done.into_iter().take(excess) {
+        items.remove(&id);
+    }
+}
+
+/// 会话日志单文件轮转阈值（超限改名 .old 重开，只留一代）。
+pub const SESSION_LOG_ROTATE_BYTES: u64 = 64 * 1024 * 1024;
+/// 会话日志攒批冲刷阈值（满即 flush；不满由 pump 500ms tick 兜底）。
+pub const SESSION_LOG_FLUSH_BYTES: usize = 64 * 1024;
+
+/// 会话日志句柄：BufWriter 攒批 + 字节计数（轮转判据）+ 冲刷水位。
+pub struct SessionLogFile {
+    pub writer: std::io::BufWriter<std::fs::File>,
+    pub path: std::path::PathBuf,
+    pub written: u64,
+    pub flushed: u64,
+    pub last_flush: Instant,
+    /// 轮转阈值（new 给默认值；测试调小直测轮转语义）。
+    pub rotate_at: u64,
+}
+
+impl SessionLogFile {
+    pub fn new(file: std::fs::File, path: std::path::PathBuf) -> Self {
+        Self {
+            writer: std::io::BufWriter::new(file),
+            path,
+            written: 0,
+            flushed: 0,
+            last_flush: Instant::now(),
+            rotate_at: SESSION_LOG_ROTATE_BYTES,
+        }
+    }
+
+    /// 追加一段：单文件超限先轮转（改名 .old 覆盖上一代，只留一代），满
+    /// 64KB 或距上次冲刷 ≥500ms 才 flush（其余由 pump 静默 tick 兜底）。
+    pub fn append(&mut self, data: &str) -> std::io::Result<()> {
+        if self.rotate_at > 0 && self.written >= self.rotate_at {
+            let _ = std::fs::rename(&self.path, self.path.with_extension("old.log"));
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?;
+            *self = SessionLogFile::new(file, self.path.clone());
+        }
+        self.writer.write_all(data.as_bytes())?;
+        self.written += data.len() as u64;
+        if self.written - self.flushed >= SESSION_LOG_FLUSH_BYTES as u64
+            || self.last_flush.elapsed() >= Duration::from_millis(500)
+        {
+            self.writer.flush()?;
+            self.flushed = self.written;
+            self.last_flush = Instant::now();
+        }
+        Ok(())
+    }
+}
 
 pub fn is_whitelisted(cmd: &str) -> bool {
     let t = cmd.trim();
@@ -87,8 +162,13 @@ pub struct SessionHandle {
     /// R26（§6.4）：自动重连停止旗标——stop_auto_reconnect 置位后重试循环在
     /// 下一检查点（≤250ms）落 Disconnected；新断线周期/手动重连入口复位。
     pub retry_stop: AtomicBool,
+    /// 泵代际：spawn_pump 每次先递增并持有自己的号。on_transport_reconnect 置
+    /// Disconnected 与泵自检之间有 await 空窗，手动重连可在此间隙拉起新泵——
+    /// 旧泵若按旧状态判定继续跑，就是双泵双写屏；其迟到的一次 is_alive=false
+    /// 又会把健康会话打进重连（假断线）。代际不符 = 你已被替换，立即退出。
+    pub pump_gen: AtomicU64,
     // ---- 十八轮：会话日志（tap 在 pump；句柄由 set_session_logging 装卸）----
-    pub log_file: StdMutex<Option<std::fs::File>>,
+    pub log_file: StdMutex<Option<SessionLogFile>>,
     pub log_path: StdMutex<Option<std::path::PathBuf>>,
     // exec 串行队列
     pub exec_slot: AsyncMutex<()>,
@@ -212,6 +292,7 @@ impl SessionHandle {
             subs: StdMutex::new(HashMap::new()),
             integration: StdMutex::new(session_api::IntegrationState::Disabled),
             retry_stop: AtomicBool::new(false),
+            pump_gen: AtomicU64::new(0),
             log_file: StdMutex::new(None),
             log_path: StdMutex::new(None),
             center,
@@ -260,18 +341,27 @@ impl SessionHandle {
         seq
     }
 
-    /// 十八轮：pump 线性化点内的日志落盘（解码后 UTF-8 追加，随写随冲）。
-    /// 写失败（盘满/句柄失效）静默关日志——日志永远不能伤到终端本身。
+    /// 十八轮：pump 线性化点内的日志落盘（解码后 UTF-8 追加）。稳定轮改攒批+
+    /// 轮转（SessionLogFile::append，原「随写随冲」在每 8KB 一块的高吞吐输出
+    /// 下放大 IO 拖慢泵）。写失败（盘满/句柄失效）静默关日志——日志永远不能
+    /// 伤到终端本身。
     pub fn log_append(&self, data: &str) {
         let mut guard = self.log_file.lock().unwrap();
-        if let Some(f) = guard.as_mut() {
-            use std::io::Write;
-            if f.write_all(data.as_bytes())
-                .and_then(|_| f.flush())
-                .is_err()
-            {
-                self.log_path.lock().unwrap().take();
+        if let Some(log) = guard.as_mut() {
+            if log.append(data).is_err() {
                 *guard = None;
+                self.log_path.lock().unwrap().take();
+            }
+        }
+    }
+
+    /// pump 静默 tick 兜底冲刷：500ms 内的尾巴不长期滞留 BufWriter。
+    pub fn log_flush(&self) {
+        let mut guard = self.log_file.lock().unwrap();
+        if let Some(log) = guard.as_mut() {
+            if log.flushed < log.written && log.writer.flush().is_ok() {
+                log.flushed = log.written;
+                log.last_flush = Instant::now();
             }
         }
     }
@@ -896,11 +986,11 @@ impl SessionHandle {
             let mut decisions = self.center.decisions.lock().unwrap();
             decisions.insert(item.id.clone(), tx);
         }
-        self.center
-            .items
-            .lock()
-            .unwrap()
-            .insert(item.id.clone(), item.clone());
+        {
+            let mut items = self.center.items.lock().unwrap();
+            items.insert(item.id.clone(), item.clone());
+            evict_approval_items(&mut items, APPROVAL_ITEMS_CAP);
+        }
         if let Err(e) = self.center.vault.save_approval(&item) {
             tracing::warn!("save approval: {e}");
         }
@@ -921,6 +1011,7 @@ impl SessionHandle {
         // （否则该请求会空等到 120s 超时而非立即 VoidedByHandback）
         if self.generation.load(Ordering::SeqCst) != gen_at_entry {
             self.mark_status(&item.id, ApprovalStatus::Voided);
+            self.forget_decision(&item.id);
             let voided_item = self.center.items.lock().unwrap().get(&item.id).cloned();
             if let Some(mut it) = voided_item {
                 it.status = ApprovalStatus::Voided;
@@ -938,6 +1029,7 @@ impl SessionHandle {
             },
             _ = tokio::time::sleep(DEFAULT_APPROVAL_TIMEOUT) => {
                 self.mark_status(&item.id, ApprovalStatus::Timeout);
+                self.forget_decision(&item.id);
                 return Err(Error::ApprovalDenied { reason: DeniedReason::ApprovalTimeout });
             }
             _ = cancel.cancelled() => {
@@ -945,6 +1037,7 @@ impl SessionHandle {
                 // 则卡片永久 Pending、decisions 的 oneshot 滞留，人类后续决定报
                 // "receiver dropped" 且卡仍是 Pending
                 self.mark_status(&item.id, ApprovalStatus::Voided);
+                self.forget_decision(&item.id);
                 let voided_item = self.center.items.lock().unwrap().get(&item.id).cloned();
                 if let Some(mut it) = voided_item {
                     it.status = ApprovalStatus::Voided;
@@ -961,6 +1054,7 @@ impl SessionHandle {
                 }
             } => {
                 self.mark_status(&item.id, ApprovalStatus::Voided);
+                self.forget_decision(&item.id);
                 let voided_item = self.center.items.lock().unwrap().get(&item.id).cloned();
                 if let Some(mut it) = voided_item {
                     it.status = ApprovalStatus::Voided;
@@ -981,6 +1075,7 @@ impl SessionHandle {
         ) {
             if let Err(e) = self.center.admit_agent() {
                 self.mark_status(&item.id, ApprovalStatus::Voided);
+                self.forget_decision(&item.id);
                 let snap = self.center.items.lock().unwrap().get(&item.id).cloned();
                 if let Some(mut it) = snap {
                     it.status = ApprovalStatus::Voided;
@@ -1045,6 +1140,17 @@ impl SessionHandle {
         if let Some(it) = items.get_mut(id) {
             it.status = status;
         }
+        // 注意：这里**不动 decisions**。外部作废方（takeover/close_session）与本
+        // future 的 select 多臂存在竞态——若在此摘除 oneshot 且不发送，rx 臂同时
+        // 变 ready（Err(Canceled)），随机选中即把本应 VoidedByHandback 的路径污染
+        // 成 Storage 错。oneshot 的清理归 wait_approval 自己的出口（forget_decision）
+        // 与显式 send(Voided) 的收口方（close_session）。
+    }
+
+    /// wait_approval 出口自清：摘除本卡仍挂着的 oneshot Sender（仅超时/取消/
+    /// 接管返回等 waiter 自己退出时调用；无人再需要它，留着即泄漏）。
+    fn forget_decision(&self, id: &str) {
+        self.center.decisions.lock().unwrap().remove(id);
     }
 
     fn mark_edited(&self, id: &str, edited: &str) {
@@ -1389,6 +1495,12 @@ impl SessionHandle {
     /// 只等 saw_133（C 标记）会提前放行，读屏截到清屏前的注入回显（§6-17 疑似真因）。
     /// C3（B12）：未启用集成的重连不注入/不等标记。
     pub async fn reinject_integration(self: &Arc<Self>) {
+        // 关闭态不复活：close_session 置 Closed 后泵仍会走一遍重连出口，若此处
+        // 无守卫，末尾无条件置 Reconfirming 会把已关会话改写回「活着」的状态，
+        // 下一轮 tick 对已移除的会话发起真实重连（僵尸会话 + 任务泄漏）。
+        if *self.state.lock().await == SessionState::Closed {
+            return;
+        }
         let center = self.center.clone();
         if self.inject_integration().await {
             // 窗口 10s：冷容器 + 高负载下首个提示符可能很慢（实测 3s 不够）
@@ -1500,5 +1612,86 @@ mod tests {
         let (t3, trunc3) = truncate_utf8(s, 100);
         assert_eq!(t3, s);
         assert!(!trunc3);
+    }
+}
+
+#[cfg(test)]
+mod stability_tests {
+    use super::*;
+
+    /// 稳定轮：审批内存表超限淘汰——最旧的已终态条目被摘、Pending 保留、
+    /// 容量收至上限；未超限不动。
+    #[test]
+    fn approval_items_eviction_keeps_pending_and_newest() {
+        fn mk(id: &str, age_secs: i64, status: ApprovalStatus) -> ApprovalItem {
+            ApprovalItem {
+                id: id.into(),
+                session_id: "s-1".into(),
+                agent_id: "cc".into(),
+                command: "ls".into(),
+                edited_command: None,
+                target_summary: String::new(),
+                segment_report: vec![],
+                session_busy: false,
+                editable: false,
+                created_at: chrono::Utc::now() + chrono::Duration::seconds(age_secs),
+                status,
+                attempt_id: None,
+                purpose: None,
+            }
+        }
+        let mut items: HashMap<String, ApprovalItem> = HashMap::new();
+        // 10 条已终态（age 递增 = 0 最旧）+ 2 条 Pending（更老也必须保留）
+        for i in 0..10 {
+            let it = mk(&format!("a-{i}"), i, ApprovalStatus::Denied);
+            items.insert(it.id.clone(), it);
+        }
+        for i in 0..2 {
+            let it = mk(&format!("p-{i}"), -100 - i, ApprovalStatus::Pending);
+            items.insert(it.id.clone(), it);
+        }
+        evict_approval_items(&mut items, 6);
+        assert_eq!(items.len(), 6, "淘汰后容量收至上限：{:?}", items.keys());
+        assert!(
+            items.contains_key("p-0") && items.contains_key("p-1"),
+            "Pending 永不淘汰"
+        );
+        assert!(
+            !items.contains_key("a-0") && !items.contains_key("a-1"),
+            "最旧终态先走"
+        );
+        assert!(items.contains_key("a-9"), "最新终态保留");
+        // 未超限：不动
+        evict_approval_items(&mut items, 6);
+        assert_eq!(items.len(), 6);
+    }
+
+    /// 稳定轮：会话日志轮转——超限改名 .old（覆盖上一代）重开，内容两边分对。
+    #[test]
+    fn session_log_rotates_at_threshold() {
+        let dir = std::env::temp_dir().join(format!("tssh-log-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("host.log");
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let mut log = SessionLogFile::new(f, path.clone());
+        log.rotate_at = 100;
+        for _ in 0..2 {
+            log.append(&"x".repeat(60)).unwrap();
+        }
+        assert_eq!(log.written, 120);
+        // 第三段触发入口轮转：现件改名 .old 重开，新件只有这一段
+        log.append(&"y".repeat(60)).unwrap();
+        log.writer.flush().unwrap();
+        assert!(dir.join("host.old.log").exists(), "轮转件存在");
+        let old = std::fs::read(dir.join("host.old.log")).unwrap();
+        assert_eq!(old.len(), 120, "旧代 120 字节");
+        let cur = std::fs::read(&path).unwrap();
+        assert_eq!(cur.len(), 60, "新代仅最新一段");
+        assert_eq!(log.written, 60, "written 随轮转归零重计");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

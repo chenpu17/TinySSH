@@ -7,7 +7,7 @@
 //    agent_id=tinyssh-embedded 内联呈现，决策走既有 decide_approval 链）。
 //  · 演练（浏览器 demo / 未配置）：agent-mock 脚本驱动，交互形态与真模式一致，
 //    如实标注「演练」。
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { inTauri, invoke, listen } from "../adapter/bridge";
@@ -147,6 +147,26 @@ function applyAgentEvent(msgs: AgentMsg[], ev: AgentWireEvent, seq: { n: number 
   }
 }
 
+/** assistant 消息独立 memo：props 全是基本量——历史消息在流式期间不再逐 delta
+    重跑 renderAgentMd + hljs 全量高亮（每 delta × 全部历史消息曾是 O(总字节×事件数)
+    的主线程热点；只有流式中那条会重渲染）。 */
+const AssistantMsg = memo(function AssistantMsg({ md, think, streaming }: { md: string; think: string; streaming: boolean }) {
+  return (
+    <div className="msg-row assistant">
+      <div style={{ maxWidth: "100%", minWidth: 0 }}>
+        {think && (
+          <details className="ag-think">
+            <summary>思考过程</summary>
+            <pre>{think}</pre>
+          </details>
+        )}
+        <div className="md-block" data-testid="agent-md" dangerouslySetInnerHTML={{ __html: renderAgentMd(md, streaming) }} />
+        {streaming && <span className="ag-cursor" aria-hidden="true" />}
+      </div>
+    </div>
+  );
+});
+
 export function AgentView({
   width, sid, fleet, hostLabel, pending, onDecide, owner, onDelegate,
   autonomyOn, onToggleAutonomy,
@@ -208,23 +228,47 @@ export function AgentView({
     return () => { dead = true; window.removeEventListener("agent-model-saved", load); };
   }, []);
 
-  // 真模式：agent-event 订阅（任何会话的事件都收——后台会话也会推进）
+  // 真模式：agent-event 订阅（任何会话的事件都收——后台会话也会推进）。
+  // 稳定轮：120ms 合帧——真模型流式每秒可达百级 TextDelta，逐条 setState 曾把
+  // 整树渲染打满（transfer 事件本就有 120ms 合帧，此处同口径）；done/failed
+  // 终态即时落（先冲积压保顺序，busy 翻转不滞后）。
+  const frameRef = useRef<{ evs: AgentWire[]; timer: number } | null>(null);
   useEffect(() => {
     if (!inTauri || !realMode) return;
     let un: (() => void) | null = null;
     let dead = false;
+    const flush = () => {
+      const buf = frameRef.current;
+      if (!buf) return;
+      frameRef.current = null;
+      setConvs((cur) => {
+        let next = cur;
+        for (const wire of buf.evs) {
+          next = { ...next, [wire.sid]: applyAgentEvent(next[wire.sid] ?? [], wire.event, seq.current) };
+        }
+        return next;
+      });
+    };
     listen("agent-event", (ev) => {
       const wire = (ev as unknown as { payload: AgentWire }).payload;
       if (!wire?.sid || !wire?.event) return;
-      setConvs((cur) => ({
-        ...cur,
-        [wire.sid]: applyAgentEvent(cur[wire.sid] ?? [], wire.event, seq.current),
-      }));
       if (wire.event.kind === "done" || wire.event.kind === "failed") {
+        flush();
+        setConvs((cur) => ({ ...cur, [wire.sid]: applyAgentEvent(cur[wire.sid] ?? [], wire.event, seq.current) }));
         setBusy((b) => ({ ...b, [wire.sid]: false }));
+        return;
+      }
+      const buf = frameRef.current ?? { evs: [], timer: 0 };
+      buf.evs.push(wire);
+      if (!frameRef.current) {
+        buf.timer = window.setTimeout(flush, 120);
+        frameRef.current = buf;
       }
     }).then((u) => { if (dead) u(); else un = u; });
-    return () => { dead = true; if (un) un(); };
+    return () => {
+      dead = true; if (un) un();
+      if (frameRef.current) { window.clearTimeout(frameRef.current.timer); frameRef.current = null; }
+    };
   }, [realMode]);
 
   // 真模式：切会话拉转写重建（重挂载/切标签后对话完整回放）
@@ -496,20 +540,7 @@ export function AgentView({
                 return <div className="msg-row user" key={m.id}><div className="bubble-user">{m.text}</div></div>;
               }
               if (m.role === "assistant") {
-                return (
-                  <div className="msg-row assistant" key={m.id}>
-                    <div style={{ maxWidth: "100%", minWidth: 0 }}>
-                      {m.think && (
-                        <details className="ag-think">
-                          <summary>思考过程</summary>
-                          <pre>{m.think}</pre>
-                        </details>
-                      )}
-                      <div className="md-block" data-testid="agent-md" dangerouslySetInnerHTML={{ __html: renderAgentMd(m.md, m.streaming) }} />
-                      {m.streaming && <span className="ag-cursor" aria-hidden="true" />}
-                    </div>
-                  </div>
-                );
+                return <AssistantMsg key={m.id} md={m.md} think={m.think} streaming={m.streaming} />;
               }
               const showApprove = m.status === "running" && !!inlineApproval
                 && ["exec", "send_keys", "upload", "download"].includes(m.tool);
