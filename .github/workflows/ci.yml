@@ -21,14 +21,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
         with: { components: rustfmt, clippy }
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm, cache-dependency-path: ui/package-lock.json }
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --exclude tinyssh-app --quiet
-      - run: cargo test --workspace --lib --bins --exclude tinyssh-app
+      - run: |
+          set -o pipefail
+          cargo clippy --workspace --exclude tinyssh-app --quiet 2>&1 | tee clippy.log
+      - name: 失败时把错误尾部写进 step summary（匿名可读，无需登录看日志）
+        if: failure()
+        run: |
+          printf '### clippy tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          tail -n 200 clippy.log >> "$GITHUB_STEP_SUMMARY"
+          printf '```\n' >> "$GITHUB_STEP_SUMMARY"
+      - run: |
+          set -o pipefail
+          cargo test --workspace --lib --bins --exclude tinyssh-app 2>&1 | tee core-test.log
+      - name: 失败时把测试失败尾部写进 step summary
+        if: failure()
+        run: |
+          printf '### core tests tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          tail -n 200 core-test.log >> "$GITHUB_STEP_SUMMARY"
+          printf '```\n' >> "$GITHUB_STEP_SUMMARY"
       - run: npm ci
         working-directory: ui
       # tsc 版本随 lock 钉死（此前裸 npx tsc 拉当日最新版，版本漂移不可复现）
@@ -40,6 +57,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
@@ -49,7 +67,18 @@ jobs:
       # 先出 ui/dist 再编 tauri 壳（tauri-build 校验 frontendDist 存在）
       - run: npm run build
         working-directory: ui
-      - run: cargo test --workspace
+      - run: |
+          cargo test --workspace -j 4 2>&1 | Tee-Object -FilePath test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        shell: pwsh
+      - name: 失败时把测试失败尾部写进 step summary（匿名可读，无需登录看日志）
+        if: failure()
+        shell: pwsh
+        run: |
+          Add-Content $env:GITHUB_STEP_SUMMARY '### cargo test tail'
+          Add-Content $env:GITHUB_STEP_SUMMARY '```'
+          Get-Content test.log -Tail 250 | Add-Content $env:GITHUB_STEP_SUMMARY
+          Add-Content $env:GITHUB_STEP_SUMMARY '```'
 
   tier2:
     name: ubuntu · UI specs（PR / 手动）
@@ -57,6 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
@@ -80,6 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/dev-sshd.sh
