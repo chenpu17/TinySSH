@@ -257,6 +257,12 @@ async fn r43_fresh_install_no_endpoint_and_gate_closed() {
         .is_ok(),
         "人类请求不经 admission 门"
     );
+    // 本地会话开必关（全套件纪律，r24/c1 同款）：读泵阻塞在 master read 上，
+    // unclosed 会话的收尾不能留给测试 runtime 退出兜底。
+    let sessions = m.list_sessions(&Actor::Human).await.unwrap();
+    for s in sessions {
+        let _ = m.close_session(&Actor::Human, s.id).await;
+    }
 }
 
 /// D08：确认停用先**原子**封 admission，随后作废存量、Agent 会话转 Human（不终止任务）；
@@ -429,6 +435,11 @@ async fn r43_enable_requires_convergence_and_does_not_revive_voided() {
         )
         .await
         .is_ok());
+    // 开必关（见 fresh_install 注）：agent 建的会话由 agent 收尾
+    let sessions = m.list_sessions(&Actor::Human).await.unwrap();
+    for s in sessions {
+        let _ = m.close_session(&agent(), s.id).await;
+    }
 
     // 旧作废请求不复活
     let old = m

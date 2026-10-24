@@ -85,8 +85,10 @@ async fn spawn_with_override_uses_requested_shell() {
     ch.write(b"echo %TINYSSH_PTY_OVERRIDE_PROBE%\r")
         .await
         .unwrap();
+    // 谓词只认展开产物 override_ok——字面变量名在 cmd 回显输入时就出现，
+    // 用它做命中条件会抢在展开输出到达前提前返回（时序竞态，实测翻车）
     let out = recv_until(&mut rx, Duration::from_secs(15), |t| {
-        t.contains("override_ok") || t.contains("TINYSSH_PTY_OVERRIDE_PROBE")
+        t.contains("override_ok")
     })
     .await;
     assert!(out.contains("override_ok"), "cmd 应展开变量（实得 {out:?})");

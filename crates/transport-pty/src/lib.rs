@@ -527,7 +527,13 @@ impl LocalPtyChannel {
         // 双份无害，Windows Terminal 同款做法）。
         let tx = self.output_tx.clone();
         let alive_r = self.alive.clone();
-        tokio::task::spawn_blocking(move || {
+        // 读泵必须是普通线程而非 spawn_blocking：阻塞 read 在 unix 上会无限挂
+        //（bash 活着、master 无数据），tokio runtime drop 等待已启动的 blocking
+        // 任务 → 开了本地会话未显式关闭的测试整个二进制挂死（ubuntu CI 实测
+        // 45min 超时；windows 侥幸不挂是 ConPTY 关停级联 EOF，属平台巧合）。
+        // 普通线程不抵押 runtime 退出；会话关闭（kill 子进程）后 master EOF/错
+        // 误自然终结线程，unclosed 残留随进程退出回收。
+        std::thread::spawn(move || {
             let mut reader = reader;
             let mut buf = [0u8; 8192];
             loop {
