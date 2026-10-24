@@ -5,12 +5,38 @@ use session_api::*;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// 本组测试按 POSIX shell 语义书写（`&&`、`pwd` 纯路径输出、`cd /tmp` 现场延续）。
+/// 本地会话 shell 解析序为 override → $SHELL → powershell：开发机从 Git Bash 跑
+/// 测试时 $SHELL 天然是 bash；CI runner 的 pwsh 环境不设 $SHELL → 回落
+/// powershell.exe（PS 5.1 无 `&&`，`pwd` 打印表格头）→ POSIX 断言假翻车。
+/// 夹具统一把 SHELL 钉到 git-bash；找不到则维持原样（纯 PowerShell 机器无法
+/// 表达这些用例，属环境不支持，不应静默换成别的东西硬跑）。
+/// `cd /tmp` 用例还要求 /tmp（Windows 解析为 D:\tmp）存在——一并兜底，
+/// 不依赖 lib 测试二进制恰好先跑过并建出目录。
+fn pin_posix_shell() {
+    std::fs::create_dir_all("/tmp").unwrap();
+    let cur = std::env::var("SHELL").unwrap_or_default();
+    if cur.contains("bash") || cur.contains("zsh") || cur.contains("sh") {
+        return;
+    }
+    for p in [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+    ] {
+        if std::path::Path::new(p).exists() {
+            std::env::set_var("SHELL", p);
+            return;
+        }
+    }
+}
+
 async fn manager() -> Arc<SessionManager> {
     // 主密钥走 env（vault 解析序 env > OS 钥匙串）：避免测试二进制重编译后
     // 签名变化触发 macOS 钥匙串授权弹窗并阻塞测试进程。
     if std::env::var("TINYSSH_MASTER_KEY").is_err() {
         std::env::set_var("TINYSSH_MASTER_KEY", "07".repeat(32));
     }
+    pin_posix_shell();
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("t.db");
     // dir 泄漏以覆盖测试生命周期（含 tokio 任务）
