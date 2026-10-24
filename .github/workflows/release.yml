@@ -1,0 +1,215 @@
+# Release 工作流：推 v* tag 触发四平台矩阵构建，产物挂上 GitHub Release。
+# 构建路线与 scripts/dist-portable.sh / dist.sh 的本机约定完全同构：
+# 「raw cargo + custom-protocol」，不依赖 tauri CLI（无版本漂移、无外部下载）。
+# - windows：单文件便携 exe（CRT 静态，见 .cargo/config.toml）+ tinyssh CLI exe
+# - linux：dpkg-deb 手工 .deb（/usr/bin + .desktop + 图标，runner 原生工具）+ 二进制 tar.gz
+# - macos（arm64/x64 双跑）：手工 .app bundle（ad-hoc 签名——arm64 拒绝执行未签名
+#   二进制）+ hdiutil dmg + CLI tar.gz
+# workflow_dispatch 手动演练：只产 artifacts，不发 Release（发布只认 tag）。
+# 未签名分发的用户侧提示写在 Release notes：mac 右键「打开」/ xattr，Win SmartScreen。
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: "windows · portable exe + cli", os: windows-latest, id: windows }
+          - { label: "linux · deb + tar.gz", os: ubuntu-24.04, id: linux }
+          - { label: "macos arm64 · app + dmg", os: macos-14, id: macos-arm64 }
+          - { label: "macos x64 · app + dmg", os: macos-13, id: macos-x64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: ui/package-lock.json }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux webkit2gtk 依赖（tauri v2 = 4.1）
+        if: matrix.id == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev \
+            pkg-config file
+      - name: 版本号（tag 优先，回退 Cargo.toml）
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          fi
+          echo "VER=$VER" >> "$GITHUB_ENV"
+      # 前端先于 cargo：tauri 编期内嵌 ../ui/dist（build.rs 校验），缺了直接编译失败
+      - name: 前端构建
+        run: npm ci && npm run build
+        working-directory: ui
+      - name: Release 构建（tinyssh-app 便携 + tinyssh CLI）
+        run: |
+          set -o pipefail
+          cargo build --release -p tinyssh-app -p tinyssh-cli \
+            --features tinyssh-app/custom-protocol 2>&1 | tee build.log
+      - name: 失败转储（error 行优先，注解匿名可读）
+        if: failure()
+        run: |
+          [ -f build.log ] || exit 0
+          { grep -n -B2 -A8 '^error' build.log || true; } > err.txt
+          [ -s err.txt ] || tail -40 build.log > err.txt
+          split -l 4 err.txt chunk_ || true
+          n=0
+          for c in chunk_*; do
+            [ $n -ge 10 ] && break
+            msg=$(cat "$c" | tr '\n' ' ' | cut -c1-240)
+            echo "::error::REL $msg"
+            n=$((n+1))
+          done
+
+      - name: 打包（windows · 便携 exe + CLI exe）
+        if: matrix.id == 'windows'
+        run: |
+          mkdir -p dist
+          cp target/release/tinyssh-app.exe "dist/TinySSH_${VER}_windows_x64_portable.exe"
+          cp target/release/tinyssh.exe "dist/tinyssh-cli_${VER}_windows_x64.exe"
+
+      - name: 打包（linux · deb + tar.gz）
+        if: matrix.id == 'linux'
+        run: |
+          mkdir -p dist
+          debroot="$(mktemp -d)"
+          mkdir -p "$debroot/DEBIAN" "$debroot/usr/bin" \
+            "$debroot/usr/share/applications" \
+            "$debroot/usr/share/icons/hicolor/512x512/apps"
+          install -m 755 target/release/tinyssh-app "$debroot/usr/bin/tinyssh-app"
+          cat > "$debroot/DEBIAN/control" <<EOF
+          Package: tinyssh
+          Version: ${VER}
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Maintainer: TinySSH contributors <https://github.com/chenpu17/TinySSH>
+          Depends: libwebkit2gtk-4.1-0, libgtk-3-0
+          Description: TinySSH - human-AI collaborative terminal
+           SSH + local shell + embedded TinyAgent, behind approvals / audit /
+           control hand-off. Desktop app (Tauri/WebKitGTK).
+          EOF
+          cat > "$debroot/usr/share/applications/tinyssh.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=TinySSH
+          Exec=/usr/bin/tinyssh-app
+          Icon=tinyssh
+          Categories=Network;
+          EOF
+          cp src-tauri/icons/icon.png "$debroot/usr/share/icons/hicolor/512x512/apps/tinyssh.png"
+          dpkg-deb --build --root-owner-group "$debroot" "dist/TinySSH_${VER}_linux_amd64.deb"
+          tgz="$(mktemp -d)"
+          cp target/release/tinyssh-app "$tgz/tinyssh-app"
+          cp target/release/tinyssh "$tgz/tinyssh"
+          tar -czf "dist/TinySSH_${VER}_linux_amd64.tar.gz" -C "$tgz" tinyssh-app tinyssh
+
+      - name: 打包（macos · .app + dmg）
+        if: startsWith(matrix.id, 'macos')
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p dist/staging
+          app="dist/staging/TinySSH.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/tinyssh-app "$app/Contents/MacOS/TinySSH"
+          cp src-tauri/icons/icon.icns "$app/Contents/Resources/TinySSH.icns"
+          cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>TinySSH</string>
+            <key>CFBundleDisplayName</key><string>TinySSH</string>
+            <key>CFBundleIdentifier</key><string>com.tinyssh.app</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
+            <key>CFBundleExecutable</key><string>TinySSH</string>
+            <key>CFBundleIconFile</key><string>TinySSH</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>10.15</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+          # ad-hoc 签名兜底：Apple Silicon 拒绝执行完全未签名的二进制；
+          # Gatekeeper（下载隔离）仍需用户右键「打开」/xattr，Release notes 有说明
+          codesign --force -s - "$app"
+          ditto -c -k --keepParent "$app" "dist/TinySSH_${VER}_macos_${ARCH}.app.zip"
+          ln -s /Applications dist/staging/Applications
+          hdiutil create -volname TinySSH -srcfolder dist/staging -ov -format UDZO \
+            "dist/TinySSH_${VER}_macos_${ARCH}.dmg"
+          rm -rf dist/staging
+          tgz="$(mktemp -d)"
+          cp target/release/tinyssh "$tgz/tinyssh"
+          tar -czf "dist/tinyssh-cli_${VER}_macos_${ARCH}.tar.gz" -C "$tgz" tinyssh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.id }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: "dist-*", merge-multiple: true, path: rel }
+      - name: 校验和与发布说明
+        run: |
+          cd rel
+          ls -l
+          sha256sum * > SHA256SUMS.txt
+          cat > notes.md <<EOF
+          ## 下载 / Downloads
+
+          | 平台 | 产物 |
+          |---|---|
+          | Windows 10/11 x64 | \`TinySSH_${VER}_windows_x64_portable.exe\`（单文件便携版）+ \`tinyssh-cli_*.exe\` |
+          | macOS 11+ (Apple Silicon) | \`TinySSH_${VER}_macos_arm64.app.zip\` / \`.dmg\` |
+          | macOS 10.15+ (Intel) | \`TinySSH_${VER}_macos_x86_64.app.zip\` / \`.dmg\` |
+          | Linux amd64 | \`TinySSH_${VER}_linux_amd64.deb\`（推荐，自动拉依赖）或 \`.tar.gz\`（需自备 libwebkit2gtk-4.1-0） |
+
+          ## 安装提示 / Install notes
+
+          - Windows：SmartScreen 提示时点「更多信息 → 仍要运行」（未签名分发）。
+          - macOS：未签名/未公证，首开右键 App →「打开」，或 \`xattr -cr /Applications/TinySSH.app\`。
+          - Linux：deb 自动拉取 WebKitGTK 依赖；tar.gz 路线先 \`sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0\`。
+          - \`tinyssh\` CLI：随附的命令行伴侣（主机 / Agent Token / 审批 / 接管 / 简报 / 审计），与人机协同主程序同走一套核心。
+
+          构建于 commit ${GITHUB_SHA}。运行期依赖：Windows 自带 WebView2；Linux WebKitGTK 4.1；macOS 系统 WKWebView。
+          EOF
+      - name: 创建 Release 并上传产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd rel
+          gh release create "$GITHUB_REF_NAME" \
+            --title "TinySSH ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md \
+            --latest \
+            TinySSH_* tinyssh-cli_* SHA256SUMS.txt

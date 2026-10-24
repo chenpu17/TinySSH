@@ -11,6 +11,18 @@ English docs: [README.md](README.md)。
 
 > 面向经常连接几台到十几台服务器、进行开发、部署和排障的开发者：连接省心、终端顺手、文件操作方便，需要时接入 Agent 协作。
 
+## 下载
+
+预编译二进制由 [release 工作流](.github/workflows/release.yml)在打 tag 时自动构建发布（未签名）：
+
+| 平台 | 产物 |
+|---|---|
+| Windows 10/11 x64 | `TinySSH_<版本>_windows_x64_portable.exe`——单文件便携版，仅依赖系统自带 WebView2 |
+| macOS 11+ / 10.15+ | `TinySSH_<版本>_macos_<架构>.app.zip` 或 `.dmg`（Apple Silicon 与 Intel 双架构） |
+| Linux amd64 | `TinySSH_<版本>_linux_amd64.deb`（自动拉依赖，推荐）或 `.tar.gz`（需自备 libwebkit2gtk-4.1） |
+
+每个 Release 同时附带 `tinyssh` CLI 伴侣工具与 `SHA256SUMS.txt` 校验和。未签名构建首开提示：Windows SmartScreen →「更多信息 → 仍要运行」；macOS 右键 App →「打开」（或 `xattr -cr /Applications/TinySSH.app`）。
+
 ## 开发
 
 ```bash

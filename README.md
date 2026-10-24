@@ -29,6 +29,18 @@ If you operate a few to a dozen servers — developing, deploying, troubleshooti
 - **Built-in MCP server** — enable it and any MCP-capable agent gets 23 tools (sessions, exec, transfers, forwards, records), subscribable live resources, and guided prompts on `127.0.0.1` (default 8722). Token onboarding via `tinyssh agent create`, HTTP or stdio shim.
 - **Single portable exe** on Windows — statically linked CRT, SQLite at rest in an encrypted vault (hosts, credentials, API keys, settings).
 
+## Download
+
+Prebuilt binaries (built by [release workflow](.github/workflows/release.yml), unsigned):
+
+| Platform | Artifact |
+|---|---|
+| Windows 10/11 x64 | `TinySSH_<ver>_windows_x64_portable.exe` — single file, needs only the built-in WebView2 |
+| macOS 11+ / 10.15+ | `TinySSH_<ver>_macos_<arch>.app.zip` or `.dmg` (Apple Silicon & Intel) |
+| Linux amd64 | `TinySSH_<ver>_linux_amd64.deb` (auto-dependencies) or `.tar.gz` (bring your own libwebkit2gtk-4.1) |
+
+Each release also ships the `tinyssh` CLI companion and a `SHA256SUMS.txt`. First launch caveats for unsigned builds: Windows SmartScreen → "More info → Run anyway"; macOS right-click → Open (or `xattr -cr /Applications/TinySSH.app`).
+
 ## Getting started
 
 Prerequisites: Rust ≥ 1.86, Node ≥ 20.
