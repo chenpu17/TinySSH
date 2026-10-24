@@ -60,11 +60,11 @@ jobs:
             done
           fi
       # 超时上限：linux 侧疑似存在挂死测试（实测本步骤 90min+ 不完成；windows 同
-      # 构步骤 ~25min）。超时被杀也能靠下方转储看到日志尾（最后完成的测试）+ 进程表
-      #（挂死二进制名）。
+      # 构步骤 ~25min）。ubuntu 侧用单线程跑：挂死时「最后一个 ok 的下一个测试」
+      # 即挂点，转储逐字可读（并行调度下挂点无法从日志尾推定）。windows 维持并行。
       - run: |
           set -o pipefail
-          cargo test --workspace --lib --bins --exclude tinyssh-app 2>&1 | tee core-test.log
+          cargo test --workspace --lib --bins --exclude tinyssh-app -- --test-threads=1 2>&1 | tee core-test.log
         timeout-minutes: 45
       - name: 失败时把测试失败尾部写进 step summary + 注解
         if: failure() || cancelled()
@@ -73,8 +73,9 @@ jobs:
           printf '### core tests tail\n```\n' >> "$GITHUB_STEP_SUMMARY"
           tail -n 200 core-test.log >> "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
-          # 注解带进程表 + 日志尾（匿名可读，定位挂死/失败点）
-          { ps aux --sort=-%cpu | head -25; echo ---LOG-TAIL---; tail -40 core-test.log; } > ct.txt || true
+          # 注解（每步上限 10 条=40 行）先给日志尾 40 行——单线程下最后一个
+          # ok 的下一个测试即挂点；进程表垫后留作旁证。
+          { tail -40 core-test.log; echo ---PS---; ps aux --sort=-%cpu | head -12; } > ct.txt || true
           if [ -s ct.txt ]; then
             split -l 4 ct.txt ctc_
             for c in ctc_*; do
