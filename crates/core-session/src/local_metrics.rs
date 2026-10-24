@@ -265,18 +265,37 @@ mod tests {
             v.iter().all(|x| x.parse::<u64>().is_ok()),
             "cpu 列须非负整数：{cpu:?}"
         );
-        // net 行：第 0 列 rx、第 8 列 tx（前端按位置取）
-        let net = s
-            .lines()
-            .find(|l| l.starts_with("net0:"))
-            .expect("缺 net0 行");
-        let nums: Vec<u64> = net
-            .split(':')
-            .nth(1)
-            .unwrap()
-            .split_whitespace()
-            .map(|x| x.parse().unwrap())
-            .collect();
-        assert!(nums.len() >= 9, "net 行须 ≥9 列：{net:?}");
+        // net 行：第 0 列 rx、第 8 列 tx（前端按位置取）。
+        // windows 探针合成 net0: 行；unix 直读 /proc/net/dev（eth0:/lo: 原样），
+        // 前端两形都认——按平台断言各自的形状（unix 分支在 CI ubuntu 首跑）。
+        #[cfg(windows)]
+        {
+            let net = s
+                .lines()
+                .find(|l| l.starts_with("net0:"))
+                .expect("缺 net0 行");
+            let nums: Vec<u64> = net
+                .split(':')
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .map(|x| x.parse().unwrap())
+                .collect();
+            assert!(nums.len() >= 9, "net 行须 ≥9 列：{net:?}");
+        }
+        #[cfg(unix)]
+        {
+            assert!(
+                s.lines().any(|l| {
+                    l.split_once(':').is_some_and(|(_, rest)| {
+                        rest.split_whitespace()
+                            .filter_map(|x| x.parse::<u64>().ok())
+                            .count()
+                            >= 16
+                    })
+                }),
+                "缺 /proc/net/dev 接口行（接口: 16 列）：{s:?}"
+            );
+        }
     }
 }
