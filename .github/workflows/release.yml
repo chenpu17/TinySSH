@@ -224,17 +224,58 @@ jobs:
       - name: 创建 Release 并上传产物
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           cd rel
-          # create 容错（tag 曾被移动重打时旧 run 可能已建同 tag release）：
-          # 已存在则改标题/说明，产物一律 --clobber 上传，收敛到最新一次构建
-          gh release create "$GITHUB_REF_NAME" \
-            --title "TinySSH ${GITHUB_REF_NAME#v}" \
-            --notes-file notes.md \
-            --latest \
-            TinySSH_* tinyssh-cli_* SHA256SUMS.txt \
-          || gh release edit "$GITHUB_REF_NAME" \
-            --title "TinySSH ${GITHUB_REF_NAME#v}" \
-            --notes-file notes.md --latest
+          ls -l
+          set -o pipefail
+          # create 容错（tag 重打后旧 run 可能已建同 tag release）：已存在则 edit，
+          # 产物一律 --clobber 上传，收敛到最新一次构建。gh 失败再走 curl 直连
+          # REST 兜底（node 造 JSON 保证 notes 转义正确）。
+          { gh release create "$GITHUB_REF_NAME" \
+              --title "TinySSH ${GITHUB_REF_NAME#v}" \
+              --notes-file notes.md \
+              --latest \
+              TinySSH_* tinyssh-cli_* SHA256SUMS.txt \
+            || gh release edit "$GITHUB_REF_NAME" \
+              --title "TinySSH ${GITHUB_REF_NAME#v}" \
+              --notes-file notes.md --latest \
+            || { node -e "
+                  const fs=require('fs');
+                  fs.writeFileSync('body.json', JSON.stringify({
+                    tag_name: process.env.GITHUB_REF_NAME,
+                    name: 'TinySSH ' + process.env.GITHUB_REF_NAME.slice(1),
+                    body: fs.readFileSync('notes.md','utf8'),
+                    make_latest: 'true',
+                  }));
+                " \
+              && curl -sf -X POST \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" \
+                --data-binary @body.json; } \
+          } 2>&1 | tee rel.log
           gh release upload "$GITHUB_REF_NAME" --clobber \
-            TinySSH_* tinyssh-cli_* SHA256SUMS.txt
+            TinySSH_* tinyssh-cli_* SHA256SUMS.txt 2>&1 | tee -a rel.log \
+          || { # curl 兜底上传：取 release id，逐个 POST 到 uploads.github.com
+            rid=$(curl -sf "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/$GITHUB_REF_NAME" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(JSON.parse(s).id)})")
+            for f in TinySSH_* tinyssh-cli_* SHA256SUMS.txt; do
+              curl -sf -X POST \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary @"$f" \
+                "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$rid/assets?name=$f"
+            done
+          }
+      - name: Release 失败转储（注解匿名可读）
+        if: failure()
+        run: |
+          [ -f rel/rel.log ] || exit 0
+          tail -24 rel/rel.log > err.txt
+          split -l 4 err.txt chunk_ || true
+          for c in chunk_*; do
+            msg=$(cat "$c" | tr '\n' ' ' | cut -c1-240)
+            echo "::error::GH-REL $msg"
+          done
