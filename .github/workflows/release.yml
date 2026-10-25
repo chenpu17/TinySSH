@@ -16,9 +16,9 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+# 不设 concurrency：同 tag 重打后新旧 run 并行跑，Release 侧靠
+# create||edit + upload --clobber 收敛到最新构建；并发组反而会让新 run
+# 排队卡在等不到 runner 的旧 run 后面（实测翻车）。
 
 jobs:
   build:
