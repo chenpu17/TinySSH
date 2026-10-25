@@ -31,8 +31,9 @@ jobs:
         include:
           - { label: "windows · portable exe + cli", os: windows-latest, id: windows }
           - { label: "linux · deb + tar.gz", os: ubuntu-24.04, id: linux }
-          - { label: "macos arm64 · app + dmg", os: macos-14, id: macos-arm64 }
-          - { label: "macos x64 · app + dmg", os: macos-13, id: macos-x64 }
+          # mac 单跑双架构：arm64 原生 + x86_64 交叉编译（macOS 原生支持）。
+          # 曾用 macos-13 独立跑 Intel——共享池紧俏排队 75min+ 不出队，弃。
+          - { label: "macos · app + dmg（arm64 + x64）", os: macos-14, id: macos }
     defaults:
       run:
         shell: bash
@@ -67,11 +68,18 @@ jobs:
           set -o pipefail
           cargo build --release -p tinyssh-app -p tinyssh-cli \
             --features tinyssh-app/custom-protocol 2>&1 | tee build.log
+      - name: 交叉编译 x86_64（mac 单跑双架构）
+        if: startsWith(matrix.id, 'macos')
+        run: |
+          set -o pipefail
+          rustup target add x86_64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin -p tinyssh-app -p tinyssh-cli \
+            --features tinyssh-app/custom-protocol 2>&1 | tee build-x64.log
       - name: 失败转储（error 行优先，注解匿名可读）
         if: failure()
         run: |
-          [ -f build.log ] || exit 0
-          { grep -n -B2 -A8 '^error' build.log || true; } > err.txt
+          [ -f build.log ] || [ -f build-x64.log ] || exit 0
+          { grep -n -B2 -A8 '^error' build.log build-x64.log || true; } > err.txt
           [ -s err.txt ] || tail -40 build.log > err.txt
           split -l 4 err.txt chunk_ || true
           n=0
@@ -125,44 +133,54 @@ jobs:
           cp target/release/tinyssh "$tgz/tinyssh"
           tar -czf "dist/TinySSH_${VER}_linux_amd64.tar.gz" -C "$tgz" tinyssh-app tinyssh
 
-      - name: 打包（macos · .app + dmg）
+      - name: 打包（macos · 双架构 .app + dmg）
         if: startsWith(matrix.id, 'macos')
         run: |
-          ARCH=$(uname -m)
-          mkdir -p dist/staging
-          app="dist/staging/TinySSH.app"
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp target/release/tinyssh-app "$app/Contents/MacOS/TinySSH"
-          cp src-tauri/icons/icon.icns "$app/Contents/Resources/TinySSH.icns"
-          cat > "$app/Contents/Info.plist" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key><string>TinySSH</string>
-            <key>CFBundleDisplayName</key><string>TinySSH</string>
-            <key>CFBundleIdentifier</key><string>com.tinyssh.app</string>
-            <key>CFBundleVersion</key><string>${VER}</string>
-            <key>CFBundleShortVersionString</key><string>${VER}</string>
-            <key>CFBundleExecutable</key><string>TinySSH</string>
-            <key>CFBundleIconFile</key><string>TinySSH</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>LSMinimumSystemVersion</key><string>10.15</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          EOF
-          # ad-hoc 签名兜底：Apple Silicon 拒绝执行完全未签名的二进制；
-          # Gatekeeper（下载隔离）仍需用户右键「打开」/xattr，Release notes 有说明
-          codesign --force -s - "$app"
-          ditto -c -k --keepParent "$app" "dist/TinySSH_${VER}_macos_${ARCH}.app.zip"
-          ln -s /Applications dist/staging/Applications
-          hdiutil create -volname TinySSH -srcfolder dist/staging -ov -format UDZO \
-            "dist/TinySSH_${VER}_macos_${ARCH}.dmg"
-          rm -rf dist/staging
-          tgz="$(mktemp -d)"
-          cp target/release/tinyssh "$tgz/tinyssh"
-          tar -czf "dist/tinyssh-cli_${VER}_macos_${ARCH}.tar.gz" -C "$tgz" tinyssh
+          mkdir -p dist
+          # Info.plist 用 echo 行拼（函数体内 heredoc 终止符必须顶格，缩进会炸）
+          write_plist() {
+            {
+              echo '<?xml version="1.0" encoding="UTF-8"?>'
+              echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+              echo '<plist version="1.0">'
+              echo '<dict>'
+              echo '  <key>CFBundleName</key><string>TinySSH</string>'
+              echo '  <key>CFBundleDisplayName</key><string>TinySSH</string>'
+              echo '  <key>CFBundleIdentifier</key><string>com.tinyssh.app</string>'
+              echo "  <key>CFBundleVersion</key><string>${VER}</string>"
+              echo "  <key>CFBundleShortVersionString</key><string>${VER}</string>"
+              echo '  <key>CFBundleExecutable</key><string>TinySSH</string>'
+              echo '  <key>CFBundleIconFile</key><string>TinySSH</string>'
+              echo '  <key>CFBundlePackageType</key><string>APPL</string>'
+              echo '  <key>LSMinimumSystemVersion</key><string>10.15</string>'
+              echo '  <key>NSHighResolutionCapable</key><true/>'
+              echo '</dict>'
+              echo '</plist>'
+            } > "$1"
+          }
+          # $1=架构标签 $2=二进制目录（native=target/release，交叉=target/<triple>/release）
+          bundle_arch() {
+            local staging="dist/staging-$1"
+            local app="$staging/TinySSH.app"
+            mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+            cp "$2/tinyssh-app" "$app/Contents/MacOS/TinySSH"
+            cp src-tauri/icons/icon.icns "$app/Contents/Resources/TinySSH.icns"
+            write_plist "$app/Contents/Info.plist"
+            # ad-hoc 签名兜底：Apple Silicon 拒绝执行完全未签名的二进制；
+            # Gatekeeper（下载隔离）仍需用户右键「打开」/xattr，Release notes 有说明
+            codesign --force -s - "$app"
+            ditto -c -k --keepParent "$app" "dist/TinySSH_${VER}_macos_$1.app.zip"
+            ln -s /Applications "$staging/Applications"
+            hdiutil create -volname TinySSH -srcfolder "$staging" -ov -format UDZO \
+              "dist/TinySSH_${VER}_macos_$1.dmg"
+            rm -rf "$staging"
+            local tgz
+            tgz="$(mktemp -d)"
+            cp "$2/tinyssh" "$tgz/tinyssh"
+            tar -czf "dist/tinyssh-cli_${VER}_macos_$1.tar.gz" -C "$tgz" tinyssh
+          }
+          bundle_arch arm64 target/release
+          bundle_arch x86_64 target/x86_64-apple-darwin/release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -208,8 +226,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd rel
+          # create 容错（tag 曾被移动重打时旧 run 可能已建同 tag release）：
+          # 已存在则改标题/说明，产物一律 --clobber 上传，收敛到最新一次构建
           gh release create "$GITHUB_REF_NAME" \
             --title "TinySSH ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md \
             --latest \
+            TinySSH_* tinyssh-cli_* SHA256SUMS.txt \
+          || gh release edit "$GITHUB_REF_NAME" \
+            --title "TinySSH ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md --latest
+          gh release upload "$GITHUB_REF_NAME" --clobber \
             TinySSH_* tinyssh-cli_* SHA256SUMS.txt
