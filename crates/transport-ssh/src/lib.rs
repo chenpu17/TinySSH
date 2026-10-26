@@ -140,6 +140,22 @@ impl client::Handler for ClientHandler {
     }
 }
 
+/// ProxyJump（FR-9）单跳参数：由 core 会话层从 vault 主机条目展平生成——
+/// 凭据/TOFU/2FA 门都取自被引用主机自身配置（无内联凭据，信任归属单一）。
+#[derive(Clone)]
+pub struct JumpHop {
+    pub address: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_type: AuthType,
+    /// password 或解密后的私钥 PEM（与 SshTarget.secret 同语义）
+    pub secret: String,
+    pub host_key_check: Option<HostKeyCheck>,
+    pub kb_prompt_check: Option<KbPromptCheck>,
+    /// 失败归因标签（如「第1跳(bastion)」）。
+    pub label: String,
+}
+
 pub struct SshTarget {
     pub address: String,
     pub port: u16,
@@ -150,11 +166,18 @@ pub struct SshTarget {
     pub host_key_check: Option<HostKeyCheck>,
     /// keyboard-interactive 非密码类提示的人工应答门（2FA）。
     pub kb_prompt_check: Option<KbPromptCheck>,
+    /// ProxyJump：跳板链（顺序=连接顺序，hops[0] 先连；最终目标经最后一跳的
+    /// direct-tcpip 转发流握手）。空 = 直连（现行为）。
+    pub hops: Vec<JumpHop>,
 }
 
 pub struct SshChannel {
     target: SshTarget,
     handle: Mutex<Option<Handle<ClientHandler>>>,
+    /// ProxyJump：存活的跳板 Handle 链（顺序=连接顺序）。Handle 的 Drop 只打
+    /// 日志不断连——close/force_close/reconnect 必须逐个显式 disconnect，
+    /// 否则跳板 TCP 泄漏到进程退出。
+    hop_handles: Mutex<Vec<Handle<ClientHandler>>>,
     shell: Mutex<Option<ChannelWriteHalf<russh::client::Msg>>>,
     output_tx: broadcast::Sender<Vec<u8>>,
     /// 保活订阅者：broadcast 零接收者时 send 即 Err，读泵会误判「无人听」而
@@ -251,6 +274,17 @@ where
     }
 }
 
+/// ProxyJump：逐跳失败归因——跳板上的失败包一层「第i跳(名):」便于定位；
+/// 取消/门控制类错误原样透传（attempt 语义不能被包装改变）。
+fn wrap_hop(hop: &JumpHop, e: Error) -> Error {
+    match e {
+        Error::ConnectFailed(_) | Error::AuthFailed | Error::HostKeyRejected(_) | Error::Io(_) => {
+            Error::ConnectFailed(format!("{}: {}", hop.label, e))
+        }
+        other => other,
+    }
+}
+
 impl SshChannel {
     /// SFTP 临时通道开启（subsystem + init）。guard 与 session 成对——调用方
     /// 在使用期间持有 guard，防并发 close 拆掉连接。
@@ -285,6 +319,7 @@ impl SshChannel {
 
         let chan = Arc::new(Self {
             handle: Mutex::new(None),
+            hop_handles: Mutex::new(Vec::new()),
             shell: Mutex::new(None),
             output_tx,
             keepalive_rx,
@@ -303,116 +338,146 @@ impl SshChannel {
     }
 
     /// 连接 + 认证 + 打开持久 shell（PTY）。
+    /// ProxyJump（FR-9）：hops 非空时逐跳建链——hop0 直接 TCP，第 i 跳经前一跳
+    /// direct-tcpip 通道（into_stream 字节流）connect_stream 握手。每跳独立
+    /// ClientHandler（独立 TOFU 记忆）与独立 10s 握手窗；认证/门失败归因到跳
+    /// （「第i跳(名)」）。全链 Handle 存 hop_handles——Handle 的 Drop 只打日志
+    /// 不断连，close/force_close/reconnect 显式拆；建链中途失败在此收口拆链。
     async fn establish(&self) -> Result<()> {
+        let mut hops: Vec<Handle<ClientHandler>> = Vec::new();
+        let r = self.establish_chain(&mut hops).await;
+        if r.is_err() {
+            for h in hops.drain(..) {
+                let _ = h
+                    .disconnect(Disconnect::ByApplication, "jump chain aborted", "EN")
+                    .await;
+            }
+            return r;
+        }
+        *self.hop_handles.lock().await = hops;
+        Ok(())
+    }
+
+    async fn establish_chain(&self, hops: &mut Vec<Handle<ClientHandler>>) -> Result<()> {
+        // —— 逐跳：hops[i] 握手成功后向下一节点（后续跳板或最终目标）开转发通道 ——
+        let mut prev_stream: Option<russh::ChannelStream<russh::client::Msg>> = None;
+        for (i, hop) in self.target.hops.iter().enumerate() {
+            let handler = ClientHandler {
+                host_key_check: hop.host_key_check.clone(),
+                seen_fingerprint: Arc::new(Mutex::new(None)),
+                router: Arc::new(StdMutex::new(HashMap::new())),
+            };
+            let (next_addr, next_port) = match self.target.hops.get(i + 1) {
+                Some(n) => (n.address.as_str(), n.port),
+                None => (self.target.address.as_str(), self.target.port),
+            };
+            let mut handle = match prev_stream.take() {
+                None => tokio::time::timeout(
+                    CONNECT_PHASE_TIMEOUT,
+                    russh::client::connect(ssh_config(), (hop.address.as_str(), hop.port), handler),
+                )
+                .await
+                .map_err(|_| {
+                    Error::ConnectFailed(format!(
+                        "{}: connect timeout（10s 内未完成握手）",
+                        hop.label
+                    ))
+                })?
+                .map_err(|e| match e {
+                    SshError::Api(e) => e,
+                    other => Error::ConnectFailed(format!("{other}")),
+                })?,
+                Some(stream) => tokio::time::timeout(
+                    CONNECT_PHASE_TIMEOUT,
+                    russh::client::connect_stream(ssh_config(), stream, handler),
+                )
+                .await
+                .map_err(|_| {
+                    Error::ConnectFailed(format!(
+                        "{}: connect timeout（10s 内未完成经跳板的握手）",
+                        hop.label
+                    ))
+                })?
+                .map_err(|e| match e {
+                    SshError::Api(e) => e,
+                    other => Error::ConnectFailed(format!("{other}")),
+                })?,
+            };
+            self.authenticate_node(
+                &mut handle,
+                &hop.username,
+                &hop.auth_type,
+                &hop.secret,
+                &hop.kb_prompt_check,
+            )
+            .await
+            .map_err(|e| wrap_hop(hop, e))?;
+            // host 参数在跳板侧解析——写「跳板可达」的地址，不是本机可达性
+            let channel = handle
+                .channel_open_direct_tcpip(next_addr, next_port as u32, "127.0.0.1", 0)
+                .await
+                .map_err(|e| {
+                    wrap_hop(
+                        hop,
+                        Error::ConnectFailed(format!(
+                            "跳板拒绝/无法转发到 {next_addr}:{next_port}（direct-tcpip）: {e}"
+                        )),
+                    )
+                })?;
+            prev_stream = Some(channel.into_stream());
+            hops.push(handle);
+        }
+
+        // —— 最终目标：无跳板=直接 TCP（原行为）；有跳板=经最后一跳转发流 ——
         let handler = ClientHandler {
             host_key_check: self.target.host_key_check.clone(),
             seen_fingerprint: self.seen_fingerprint.clone(),
             router: self.router.clone(),
         };
-        let handle = tokio::time::timeout(
-            CONNECT_PHASE_TIMEOUT,
-            russh::client::connect(
-                ssh_config(),
-                (self.target.address.as_str(), self.target.port),
-                handler,
-            ),
-        )
-        .await
-        .map_err(|_| {
-            Error::ConnectFailed("connect timeout（10s 内未完成 TCP/banner 交换）".into())
-        })?
-        .map_err(|e| match e {
-            // 指纹门拒绝等 Api 错误原样透传（UI 显示"主机指纹验证失败（…）"）
-            SshError::Api(e) => e,
-            other => Error::ConnectFailed(format!("{other}")),
-        })?;
-
-        let mut handle = handle;
-        let auth = match self.target.auth_type {
-            AuthType::Password => {
-                let a = handle
-                    .authenticate_password(&self.target.username, &self.target.secret)
-                    .await
-                    .map_err(|_e| Error::AuthFailed)?;
-                if a.success() {
-                    a
-                } else {
-                    // 2FA 服务器常见形态：拒绝 password 方法、只提供 keyboard-interactive
-                    //（第一轮往往就是密码提示）。回落 kb 循环重试。
-                    if !self.kb_loop(&mut handle).await? {
-                        return Err(Error::AuthFailed);
-                    }
-                    russh::client::AuthResult::Success
-                }
+        let mut handle = match prev_stream.take() {
+            None => {
+                tokio::time::timeout(
+                    CONNECT_PHASE_TIMEOUT,
+                    russh::client::connect(
+                        ssh_config(),
+                        (self.target.address.as_str(), self.target.port),
+                        handler,
+                    ),
+                )
+                .await
+                .map_err(|_| {
+                    Error::ConnectFailed("connect timeout（10s 内未完成 TCP/banner 交换）".into())
+                })?
+                .map_err(|e| match e {
+                    // 指纹门拒绝等 Api 错误原样透传（UI 显示"主机指纹验证失败（…）"）
+                    SshError::Api(e) => e,
+                    other => Error::ConnectFailed(format!("{other}")),
+                })?
             }
-            AuthType::KeyboardInteractive => {
-                if !self.kb_loop(&mut handle).await? {
-                    return Err(Error::AuthFailed);
-                }
-                russh::client::AuthResult::Success
-            }
-            AuthType::Key => {
-                let key =
-                    decode_secret_key(&self.target.secret, None).map_err(|_| Error::AuthFailed)?;
-                let with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                handle
-                    .authenticate_publickey(&self.target.username, with_hash)
-                    .await
-                    .map_err(|_e| Error::AuthFailed)?
-            }
-            AuthType::Agent => {
-                // 私钥不出 agent：逐个尝试 agent 中已加载的密钥（ssh 标准行为）。
-                // 通道按平台：unix=SSH_AUTH_SOCK；windows=OpenSSH 服务命名管道
-                // \\.\pipe\openssh-ssh-agent（TINYSSH_SSH_AGENT_PIPE 可覆盖，供测试/第三方 agent）。
-                use russh::keys::agent::client::AgentClient;
-                #[cfg(unix)]
-                let mut agent = AgentClient::connect_env().await.map_err(|e| {
-                    Error::ConnectFailed(format!("ssh-agent 不可达（检查 SSH_AUTH_SOCK）: {e}"))
-                })?;
-                #[cfg(windows)]
-                let mut agent = {
-                    let pipe = std::env::var("TINYSSH_SSH_AGENT_PIPE")
-                        .unwrap_or_else(|_| r"\\.\pipe\openssh-ssh-agent".to_string());
-                    AgentClient::connect_named_pipe(&pipe).await.map_err(|e| {
-                        Error::ConnectFailed(format!(
-                            "ssh-agent 不可达（命名管道 {pipe}；确认 OpenSSH Authentication \
-                             Agent 服务已启动）: {e}"
-                        ))
-                    })?
-                };
-                let identities = agent
-                    .request_identities()
-                    .await
-                    .map_err(|e| Error::ConnectFailed(format!("ssh-agent 列出密钥失败: {e}")))?;
-                if identities.is_empty() {
-                    return Err(Error::ConnectFailed(
-                        "ssh-agent 中没有已加载的密钥（先 ssh-add）".into(),
-                    ));
-                }
-                let mut ok = false;
-                for ident in &identities {
-                    let key = ident.public_key().into_owned();
-                    match handle
-                        .authenticate_publickey_with(&self.target.username, key, None, &mut agent)
-                        .await
-                    {
-                        Ok(r) if r.success() => {
-                            ok = true;
-                            break;
-                        }
-                        _ => continue,
-                    }
-                }
-                if !ok {
-                    return Err(Error::AuthFailed);
-                }
-                // authenticate_publickey_with 已完成认证；占位 AuthResult 满足类型
-                russh::client::AuthResult::Success
-            }
+            Some(stream) => tokio::time::timeout(
+                CONNECT_PHASE_TIMEOUT,
+                russh::client::connect_stream(ssh_config(), stream, handler),
+            )
+            .await
+            .map_err(|_| {
+                Error::ConnectFailed(
+                    "connect timeout（10s 内未完成经跳板的 TCP/banner 交换）".into(),
+                )
+            })?
+            .map_err(|e| match e {
+                SshError::Api(e) => e,
+                other => Error::ConnectFailed(format!("{other}")),
+            })?,
         };
-        if !auth.success() {
-            return Err(Error::AuthFailed);
-        }
+
+        self.authenticate_node(
+            &mut handle,
+            &self.target.username,
+            &self.target.auth_type,
+            &self.target.secret,
+            &self.target.kb_prompt_check,
+        )
+        .await?;
 
         // ---------- 认证完成，打开 PTY shell ----------
 
@@ -476,6 +541,103 @@ impl SshChannel {
         *self.handle.lock().await = Some(handle);
         // 重连恢复：远程转发随旧连接失效，本地/Dynamic 监听任务存活（逐连接取 handle）
         self.restore_remote_forwards().await;
+        Ok(())
+    }
+
+    /// 单节点认证（ProxyJump 抽取）：跳板与最终目标共用同一套语义——密码拒绝
+    /// 回落 keyboard-interactive（2FA 常见形态）、密钥/agent 通路、kb 人工门。
+    async fn authenticate_node(
+        &self,
+        handle: &mut Handle<ClientHandler>,
+        username: &str,
+        auth_type: &AuthType,
+        secret: &str,
+        kb_gate: &Option<KbPromptCheck>,
+    ) -> Result<()> {
+        let auth = match auth_type {
+            AuthType::Password => {
+                let a = handle
+                    .authenticate_password(username, secret)
+                    .await
+                    .map_err(|_e| Error::AuthFailed)?;
+                if a.success() {
+                    a
+                } else {
+                    // 2FA 服务器常见形态：拒绝 password 方法、只提供 keyboard-interactive
+                    //（第一轮往往就是密码提示）。回落 kb 循环重试。
+                    if !self.kb_loop(handle, username, secret, kb_gate).await? {
+                        return Err(Error::AuthFailed);
+                    }
+                    russh::client::AuthResult::Success
+                }
+            }
+            AuthType::KeyboardInteractive => {
+                if !self.kb_loop(handle, username, secret, kb_gate).await? {
+                    return Err(Error::AuthFailed);
+                }
+                russh::client::AuthResult::Success
+            }
+            AuthType::Key => {
+                let key = decode_secret_key(secret, None).map_err(|_| Error::AuthFailed)?;
+                let with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                handle
+                    .authenticate_publickey(username, with_hash)
+                    .await
+                    .map_err(|_e| Error::AuthFailed)?
+            }
+            AuthType::Agent => {
+                // 私钥不出 agent：逐个尝试 agent 中已加载的密钥（ssh 标准行为）。
+                // 通道按平台：unix=SSH_AUTH_SOCK；windows=OpenSSH 服务命名管道
+                // \\.\pipe\openssh-ssh-agent（TINYSSH_SSH_AGENT_PIPE 可覆盖，供测试/第三方 agent）。
+                use russh::keys::agent::client::AgentClient;
+                #[cfg(unix)]
+                let mut agent = AgentClient::connect_env().await.map_err(|e| {
+                    Error::ConnectFailed(format!("ssh-agent 不可达（检查 SSH_AUTH_SOCK）: {e}"))
+                })?;
+                #[cfg(windows)]
+                let mut agent = {
+                    let pipe = std::env::var("TINYSSH_SSH_AGENT_PIPE")
+                        .unwrap_or_else(|_| r"\\.\pipe\openssh-ssh-agent".to_string());
+                    AgentClient::connect_named_pipe(&pipe).await.map_err(|e| {
+                        Error::ConnectFailed(format!(
+                            "ssh-agent 不可达（命名管道 {pipe}；确认 OpenSSH Authentication \
+                             Agent 服务已启动）: {e}"
+                        ))
+                    })?
+                };
+                let identities = agent
+                    .request_identities()
+                    .await
+                    .map_err(|e| Error::ConnectFailed(format!("ssh-agent 列出密钥失败: {e}")))?;
+                if identities.is_empty() {
+                    return Err(Error::ConnectFailed(
+                        "ssh-agent 中没有已加载的密钥（先 ssh-add）".into(),
+                    ));
+                }
+                let mut ok = false;
+                for ident in &identities {
+                    let key = ident.public_key().into_owned();
+                    match handle
+                        .authenticate_publickey_with(username, key, None, &mut agent)
+                        .await
+                    {
+                        Ok(r) if r.success() => {
+                            ok = true;
+                            break;
+                        }
+                        _ => continue,
+                    }
+                }
+                if !ok {
+                    return Err(Error::AuthFailed);
+                }
+                // authenticate_publickey_with 已完成认证；占位 AuthResult 满足类型
+                russh::client::AuthResult::Success
+            }
+        };
+        if !auth.success() {
+            return Err(Error::AuthFailed);
+        }
         Ok(())
     }
 
@@ -570,10 +732,16 @@ impl SshChannel {
     /// 应答策略：非回显且文本含 password/密码 的提示 → 自动用库内密码（省一次
     /// 重复输入，服务器要求的正是表单里那个密码）；其余提示（OTP/验证码等）→
     /// 人工门。无门且需要人工 → ConnectFailed 明说，不静默失败。
-    async fn kb_loop(&self, handle: &mut russh::client::Handle<ClientHandler>) -> Result<bool> {
+    async fn kb_loop(
+        &self,
+        handle: &mut russh::client::Handle<ClientHandler>,
+        username: &str,
+        secret: &str,
+        kb_gate: &Option<KbPromptCheck>,
+    ) -> Result<bool> {
         use russh::client::KeyboardInteractiveAuthResponse as R;
         let mut resp = handle
-            .authenticate_keyboard_interactive_start(&self.target.username, None)
+            .authenticate_keyboard_interactive_start(username, None)
             .await
             .map_err(|_| Error::AuthFailed)?;
         loop {
@@ -587,9 +755,9 @@ impl SshChannel {
                         let is_pw =
                             !p.echo && (text.contains("password") || p.prompt.contains("密码"));
                         let ans = if is_pw {
-                            self.target.secret.clone()
+                            secret.to_string()
                         } else {
-                            match &self.target.kb_prompt_check {
+                            match kb_gate {
                                 Some(gate) => gate(&p.prompt, p.echo).await?.ok_or_else(|| {
                                     Error::ConnectFailed(
                                         // 取消与超时同走 None：文案不得只说「被取消」冤枉超时，
@@ -775,6 +943,12 @@ impl ChannelHandle for SshChannel {
                 .disconnect(Disconnect::ByApplication, "force close", "EN")
                 .await;
         }
+        // ProxyJump：跳板链一并拆（Handle Drop 只打日志不断连）
+        for h in self.hop_handles.lock().await.drain(..) {
+            let _ = h
+                .disconnect(Disconnect::ByApplication, "force close", "EN")
+                .await;
+        }
         Ok(())
     }
 
@@ -800,6 +974,12 @@ impl ChannelHandle for SshChannel {
                 .disconnect(Disconnect::ByApplication, "reconnect", "EN")
                 .await;
         }
+        // ProxyJump：旧链先拆再重建（establish 只写不清——残留 Handle 泄漏）
+        for h in self.hop_handles.lock().await.drain(..) {
+            let _ = h
+                .disconnect(Disconnect::ByApplication, "reconnect", "EN")
+                .await;
+        }
         self.alive.store(true, Ordering::SeqCst);
         self.establish().await
     }
@@ -821,6 +1001,12 @@ impl ChannelHandle for SshChannel {
         }
         if let Some(handle) = self.handle.lock().await.take() {
             let _ = handle
+                .disconnect(Disconnect::ByApplication, "session closed", "EN")
+                .await;
+        }
+        // ProxyJump：跳板链一并拆
+        for h in self.hop_handles.lock().await.drain(..) {
+            let _ = h
                 .disconnect(Disconnect::ByApplication, "session closed", "EN")
                 .await;
         }

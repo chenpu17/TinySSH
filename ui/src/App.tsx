@@ -26,7 +26,7 @@ import type {
   BeginConnectionOpts,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
   McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
-  RestoreEntry, LocalShell,
+  RestoreEntry, LocalShell, UpdateCheck,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
@@ -1939,6 +1939,22 @@ export default function App() {
   // 版本号轮：编译时间（build.rs 注入的编译期常量；演示域 demo 镜像回 null，
   // 关于卡略去「编译于」段）
   const [buildTime, setBuildTime] = useState<string | null>(null);
+  // 发布轮：应用内版本检查（启动静默查一次 GitHub Release；有新版才 toast，
+  // 关于卡常驻更新行）。任何失败折算 hasUpdate=false，静默不扰。
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  // 发布轮：诊断包导出——固定落 <数据目录>/diagnostics/（无对话框），toast 带「打开所在文件夹」
+  const [diagBusy, setDiagBusy] = useState(false);
+  const exportDiagnostics = useCallback(() => {
+    if (diagBusy) return;
+    setDiagBusy(true);
+    invoke("export_diagnostics")
+      .then((p) => pushToast("ok", "诊断包已导出（不含凭据与主机信息）", {
+        label: "打开所在文件夹", title: p,
+        run: () => { invoke("reveal_path", { path: p }).catch(() => {}); },
+      }))
+      .catch((e) => pushToast("err", `诊断包导出失败：${friendlyError(e)}`))
+      .finally(() => setDiagBusy(false));
+  }, [diagBusy, pushToast]);
   useEffect(() => {
     if (!inTauri) return;
     // 走统一分发（R13 §7.2）：原生菜单加速器与键盘快捷键同一 action 语义
@@ -1947,6 +1963,16 @@ export default function App() {
     );
     getVersion().then(setAppVersion).catch(() => {});
     invoke("get_build_time").then((t) => setBuildTime(t ?? null)).catch(() => {});
+    // 发布轮：启动静默查一次更新；有新版才 toast（demo 域镜像恒 hasUpdate=false）
+    invoke("check_update").then((u) => {
+      setUpdateInfo(u);
+      if (u.hasUpdate && u.latest) {
+        pushToast("info", `新版本 v${u.latest} 已发布`, {
+          label: "打开发布页", title: u.url ?? "",
+          run: () => { if (u.url) invoke("open_url", { url: u.url }).catch(() => {}); },
+        });
+      }
+    }).catch(() => {});
     return un;
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
@@ -4377,10 +4403,14 @@ export default function App() {
         // 不抢焦——否则后续验证码 keystroke 误落已完成会话的远端 shell。本主机门在
         // attempt 终态前必已闭（应答先同步 splice 队列再 invoke），不受扰。
         // R21-L6 勘误闭环：gatesBusy 改按 host_id 精确匹配（wire 已补 host_id）
+        // ProxyJump：跳板门卡的 host_id 是跳板主机——按 attempt 归属判定他机门
+        //（attempt_id 缺失的旧事件回落 host_id 比对）
         // §6.3「窗口在前台」：真实失焦（他应用激活）期间完成不切视图不抢焦，
         // 只查 document.hidden 挡不住窗口级失焦（r23a 原生实证）
-        const gatesBusy = hostKeyQueueRef.current.some((x) => x.host_id !== host.id)
-          || authPromptQueueRef.current.some((x) => x.host_id !== host.id);
+        const foreignGate = (x: { host_id?: string; attempt_id?: string | null }) =>
+          x.attempt_id ? x.attempt_id !== attemptId : x.host_id !== host.id;
+        const gatesBusy = hostKeyQueueRef.current.some(foreignGate)
+          || authPromptQueueRef.current.some(foreignGate);
         if (focusGenRef.current === gen0 && !document.hidden && document.hasFocus() && !gatesBusy) {
           await attachSession(final.session_id);
           pushToast("ok", `已连接 ${host.name}`);
@@ -5685,10 +5715,11 @@ export default function App() {
                   </>
                 ) : (
                   <>
-                    <div className="hk-title">首次连接确认</div>
+                    <div className="hk-title">首次连接确认{hk.jump_note ? `（${hk.jump_note}·跳板机）` : ""}</div>
                     <div>
-                      首次连接主机 <b>{hk.host_name}</b>（{hk.address}:{hk.port}）。
-                      请核对服务器指纹（可向管理员确认）后决定是否信任：
+                      {hk.jump_note
+                        ? <>经跳板连接目标前，须先信任跳板主机 <b>{hk.host_name}</b>（{hk.address}:{hk.port}）。请核对指纹后决定是否信任：</>
+                        : <>首次连接主机 <b>{hk.host_name}</b>（{hk.address}:{hk.port}）。请核对服务器指纹（可向管理员确认）后决定是否信任：</>}
                     </div>
                     <div className="hk-fp mono">{hk.fingerprint}</div>
                     <div className="hk-actions">
@@ -5706,9 +5737,9 @@ export default function App() {
           return (
             <div className="hk-mask hk-top">
               <div className="hk-dialog" ref={authDlgRef}>
-                <div className="hk-title">服务器请求认证输入（双因素）</div>
+                <div className="hk-title">服务器请求认证输入（双因素）{ap.jump_note ? `（${ap.jump_note}·跳板机）` : ""}</div>
                 <div>
-                  主机 <b>{ap.host_name}</b> 要求完成额外交互认证。请输入服务器要求的验证信息：
+                  主机 <b>{ap.host_name}</b> 要求完成额外交互认证{ap.jump_note ? "（目标连接须经此跳板转发）" : ""}。请输入服务器要求的验证信息：
                 </div>
                 <div className="dim mono" style={{ margin: "6px 0", fontSize: 11 }}>{ap.prompt || ap.name || "verification"}</div>
                 <input
@@ -6071,6 +6102,9 @@ export default function App() {
               settingsPanelRef={settingsPanelRef}
               appVersion={appVersion}
               buildTime={buildTime}
+              updateInfo={updateInfo}
+              diagBusy={diagBusy}
+              onExportDiagnostics={exportDiagnostics}
               autonomy={autonomy}
               onToggleAutonomy={toggleAutonomy}
               appearance={appearance}

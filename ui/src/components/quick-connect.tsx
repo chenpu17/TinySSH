@@ -52,11 +52,11 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
       address: addr, port: p, username: user,
       auth_type: authMode === "password" ? "Password" : authMode === "agent" ? "Agent" : "Key",
       identity_id: authMode === "key" ? pickedIdentity : null,
-      tags: [], fingerprint: null, charset,
+      tags: [], fingerprint: null, charset, jump_host_id: null,
     };
     onConnect(display, {
       id: null, name: "", address: addr, port: p, username: user,
-      auth, tags: [], charset, shell_integration: null,
+      auth, tags: [], charset, shell_integration: null, jump_host_id: null,
     });
   };
 

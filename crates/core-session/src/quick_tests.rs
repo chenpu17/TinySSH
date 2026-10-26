@@ -36,6 +36,7 @@ fn draft() -> HostDraft {
         tags: vec![],
         charset: Charset::Utf8,
         shell_integration: None,
+        jump_host_id: None,
     }
 }
 
@@ -210,7 +211,9 @@ async fn tofu_trust_stays_in_memory() {
     let host = m.register_quick_host(d).unwrap();
     let fp = "SHA256:quick-test-fp";
     let gate = |m: Arc<SessionManager>, h: Host, f: &'static str| {
-        tokio::spawn(async move { host_key_gate(&m.center, &Actor::Human, &h, f, None).await })
+        tokio::spawn(
+            async move { host_key_gate(&m.center, &Actor::Human, &h, f, None, None).await },
+        )
     };
     // 首连：FirstSeen 卡
     let g1 = gate(m.clone(), host.clone(), fp);

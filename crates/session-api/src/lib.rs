@@ -340,6 +340,10 @@ pub struct PendingHostKey {
     /// C1：门所属 attempt（serde default——旧事件消费方兼容）。
     #[serde(default)]
     pub attempt_id: Option<AttemptId>,
+    /// ProxyJump：该门挂在跳板机上（「第N跳」标注卡面归属）；None=目标主机自身门。
+    /// serde default——旧事件消费方兼容。
+    #[serde(default)]
+    pub jump_note: Option<String>,
 }
 
 /// 服务器 keyboard-interactive 认证提示（路线图⑩ 2FA）：密码类提示由
@@ -362,6 +366,9 @@ pub struct PendingAuthPrompt {
     /// C1：门所属 attempt（serde default——旧事件消费方兼容）。
     #[serde(default)]
     pub attempt_id: Option<AttemptId>,
+    /// ProxyJump：该门挂在跳板机上（「第N跳」标注卡面归属）；None=目标主机自身门。
+    #[serde(default)]
+    pub jump_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -490,6 +497,11 @@ pub struct Host {
     /// 解码发生在传输出口（vt 解析之前）——GBK 尾字节与 ASCII 冲突，裸喂会腐蚀屏态。
     #[serde(default)]
     pub charset: Charset,
+    /// ProxyJump（FR-9）：跳板主机引用，指向既有主机条目（复用其凭据/TOFU/编辑/
+    /// 审计——无内联凭据，跳板认证永远走被引用主机自身配置）。None=直连；
+    /// 链式引用表达多跳（A.jump=B，B.jump=C），建连时展平（深度≤3，禁环）。
+    #[serde(default)]
+    pub jump_host_id: Option<HostId>,
 }
 
 /// 会话字节编码。线格式 "utf-8"/"gbk"（显式逐变体 rename——serde kebab-case 对
@@ -544,6 +556,10 @@ pub struct HostDraft {
     /// C3：None=编辑保原值/新建 false；Some(v)=显式设置（DC3.2，serde default 防旧客户端缺字段）。
     #[serde(default)]
     pub shell_integration: Option<bool>,
+    /// ProxyJump：跳板主机引用。None=不设跳板（覆盖清空既有设置）；写入侧
+    /// 守卫见 core-session upsert_host（存在/非自引用/非本机/不成环/不超深）。
+    #[serde(default)]
+    pub jump_host_id: Option<HostId>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1430,6 +1446,12 @@ pub enum Error {
     /// ensure_local_host 每次列表/建连时自动重建，删除无意义、编辑会破坏本地通路前提。
     #[error("「本机」是内置条目，不可编辑或删除")]
     LocalHostImmutable,
+    /// ProxyJump（FR-9）：跳板链无效（自引用/环/超深/引用缺失/指向「本机」）。
+    #[error("跳板链无效：{0}")]
+    JumpChainInvalid(String),
+    /// ProxyJump：该主机仍被其他主机的跳板设置引用，不可删除（仿 DF8.4 附引用主机名）。
+    #[error("跳板机正在被主机引用（{host_names:?}），无法删除")]
+    JumpHostInUse { host_names: Vec<String> },
     #[error("存储错误: {0}")]
     Storage(String),
     #[error("IO 错误: {0}")]
@@ -1518,6 +1540,14 @@ impl Error {
                 Some(serde_json::json!({ "host_names": host_names })),
             ),
             E::LocalHostImmutable => ("local_host_immutable", None),
+            E::JumpChainInvalid(r) => (
+                "jump_chain_invalid",
+                Some(serde_json::json!({ "reason": r })),
+            ),
+            E::JumpHostInUse { host_names } => (
+                "jump_host_in_use",
+                Some(serde_json::json!({ "host_names": host_names })),
+            ),
             E::Storage(_) => ("storage", None),
             E::Io(_) => ("io", None),
             E::SftpPathNotFound { path } => (

@@ -204,6 +204,10 @@ export function Hostbar({
                       {isLocal
                         ? <span className="auth-tag" title="本机 PTY——内置条目，不可编辑或删除">本地</span>
                         : <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>}
+                      {h.jump_host_id && (
+                        <span className="auth-tag"
+                          title={`经跳板转发连接（跳板：${hosts.find((x) => x.id === h.jump_host_id)?.name ?? h.jump_host_id}）`}>跳板</span>
+                      )}
                     </div>
                     <div className="host-addr mono">{isLocal ? `本地 shell · ${h.username}` : `${h.username}@${h.address}:${h.port}`}</div>
                     {(h.tags ?? []).length > 0 && (

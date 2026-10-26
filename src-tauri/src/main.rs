@@ -33,6 +33,45 @@ struct AgentSshOps {
     rt: tokio::runtime::Handle,
 }
 
+/// 提示词/技能资产源（提示词/技能资产化轮）：直连 vault settings（get_setting
+/// 命令同款路径——管理面直连 vault 既有先例，同步读、SQLite 行级锁、微秒级）。
+struct AgentPromptAssets {
+    api: Arc<SessionManager>,
+}
+
+impl tinyssh_agent_host::PromptAssets for AgentPromptAssets {
+    fn session_extra(&self) -> String {
+        self.setting("agent.prompt_extra")
+    }
+    fn fleet_extra(&self) -> String {
+        self.setting("agent.fleet_prompt_extra")
+    }
+    fn skills(&self) -> Vec<(String, String)> {
+        // KV 单键 JSON 对象（名称 → 正文）；损坏/缺省视为空库，不阻塞对话
+        let raw = self.setting("agent.skills");
+        let mut out: Vec<(String, String)> =
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|(k, v)| v.as_str().map(|b| (k, b.to_string())))
+                .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+}
+
+impl AgentPromptAssets {
+    fn setting(&self, key: &str) -> String {
+        self.api
+            .center
+            .vault
+            .get_setting(key)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+}
+
 impl tinyssh_agent_host::SshOps for AgentSshOps {
     fn exec(
         &self,
@@ -839,6 +878,329 @@ async fn read_host_metrics(state: ApiState<'_>, sid: String) -> CmdResult<String
 #[tauri::command]
 fn get_build_time() -> String {
     env!("TINYSSH_BUILD_TIME").to_string()
+}
+
+// ---- 应用内更新检查（check_update）：GitHub releases/latest 只读探测 ----
+
+/// 更新检查唯一出处：GitHub API 要求 UA；Accept 走官方 vendor 头。
+const RELEASE_API: &str = "https://api.github.com/repos/chenpu17/TinySSH/releases/latest";
+/// 总超时（连接+响应全程）：应用内静默检查，5 秒拿不到就当失败静默。
+const UPDATE_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// releases/latest 响应里用得到的字段（其余忽略；缺字段按解析失败走）。
+#[derive(serde::Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    html_url: String,
+}
+
+/// check_update 过桥结构：任一环节失败都不 Err——has_update=false + error
+/// 带一句中文原因，前端据此静默。latest/url 失败时为 null。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCheck {
+    current: String,
+    latest: Option<String>,
+    has_update: bool,
+    url: Option<String>,
+    error: Option<String>,
+}
+
+impl UpdateCheck {
+    fn failed(current: &str, reason: String) -> Self {
+        Self {
+            current: current.to_string(),
+            latest: None,
+            has_update: false,
+            url: None,
+            error: Some(reason),
+        }
+    }
+}
+
+/// 版本分段解析：按「.」切成数字段；出现空段/非数字段即 None
+/// （调用方按「无法比较」处理，绝不误报更新；不要求 pre-release 语义，
+/// v0.11.0-beta 之类自然落 None）。
+fn parse_version_parts(s: &str) -> Option<Vec<u64>> {
+    let s = s.trim();
+    let s = s.strip_prefix(['v', 'V']).unwrap_or(s);
+    if s.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for seg in s.split('.') {
+        // 全数字才收（不允许符号/空白/后缀）；段空（"1..2"）同样拒绝
+        if seg.is_empty() || !seg.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        // 已验全数字，不会 parse 失败；u64 溢出的天文数字段同样拒绝
+        parts.push(seg.parse::<u64>().ok()?);
+    }
+    Some(parts)
+}
+
+/// 版本比较纯函数：逐段数字比较，缺段视作 0（1.2 < 1.2.1）；任一侧
+/// 无法解析 → None。Some(Equal) 即同版本。
+fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let (pa, pb) = (parse_version_parts(a)?, parse_version_parts(b)?);
+    let n = pa.len().max(pb.len());
+    for i in 0..n {
+        let x = pa.get(i).copied().unwrap_or(0);
+        let y = pb.get(i).copied().unwrap_or(0);
+        match x.cmp(&y) {
+            std::cmp::Ordering::Equal => continue,
+            other => return Some(other),
+        }
+    }
+    Some(std::cmp::Ordering::Equal)
+}
+
+/// 拉取并比较最新版本。永不 panic、永不 Err：失败折算成 has_update=false
+/// + 中文 error（前端静默，不打扰）。
+async fn fetch_latest_release(current: &str) -> UpdateCheck {
+    let client = match reqwest::Client::builder()
+        // GitHub API 必需 UA（无 UA 直接 403）
+        .user_agent(format!("TinySSH/{current}"))
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return UpdateCheck::failed(current, format!("网络客户端初始化失败：{e}")),
+    };
+    let resp = match client
+        .get(RELEASE_API)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return UpdateCheck::failed(current, format!("网络请求失败：{e}")),
+    };
+    if !resp.status().is_success() {
+        return UpdateCheck::failed(current, format!("更新服务返回异常状态：{}", resp.status()));
+    }
+    let release: GhRelease = match resp.json().await {
+        Ok(r) => r,
+        Err(e) => return UpdateCheck::failed(current, format!("更新信息解析失败：{e}")),
+    };
+    // tag 形如 v0.10.1：去 v 前缀后与当前版本同口径比较
+    let latest = release.tag_name.trim();
+    let latest = latest.strip_prefix(['v', 'V']).unwrap_or(latest);
+    match compare_versions(current, latest) {
+        Some(std::cmp::Ordering::Less) => UpdateCheck {
+            current: current.to_string(),
+            latest: Some(latest.to_string()),
+            has_update: true,
+            url: Some(release.html_url),
+            error: None,
+        },
+        Some(_) => UpdateCheck {
+            current: current.to_string(),
+            latest: Some(latest.to_string()),
+            has_update: false,
+            url: Some(release.html_url),
+            error: None,
+        },
+        None => UpdateCheck::failed(current, "版本号无法比较（远端版本格式异常）".into()),
+    }
+}
+
+/// 应用内版本检查（版本号轮）：与 GitHub 最新 release 比对。当前版本取
+/// package_info（与原生关于卡同一来源——版本展示单一出处）。网络/解析失败
+/// 不 Err：返回 has_update=false + error，前端静默。
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> CmdResult<UpdateCheck> {
+    let current = app.package_info().version.to_string();
+    Ok(fetch_latest_release(&current).await)
+}
+
+// ---- 诊断包导出（export_diagnostics）：供用户报障的脱敏文本包 ----
+
+/// 进程起点（运行时长用）：main() 装配最前 set 一次；get_or_init 兜底
+/// （测试/极早调用不 panic，只是时长从首个调用点起算）。
+static APP_STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// 诊断包内日志尾部总量上限（字节）：内容硬约束之一，多日志也不超。
+const DIAG_LOG_TAIL_CAP: usize = 64 * 1024;
+
+/// 诊断包固定落点：数据目录隔壁 `diagnostics/`，固定命名
+/// tinyssh-diagnostics-<UTC>.txt（与 export_records 的 records-export/ 同一
+/// 「固定路径+时间戳命名」模式，不开放任意路径写；定位由前端 reveal_path 做）。
+fn diagnostics_dir(api: &SessionManager) -> std::path::PathBuf {
+    api.data_dir.join("diagnostics")
+}
+
+/// 取字符串尾部最多 cap 字节，UTF-8 安全（截断点回退到字符边界）。
+/// 日志常含中文/多字节，直接按字节切会撕出非法 UTF-8。
+fn utf8_tail(s: &str, cap: usize) -> &str {
+    if s.len() <= cap {
+        return s;
+    }
+    let start = s.len() - cap;
+    let mut start = start;
+    while !s.is_char_boundary(start) {
+        start += 1;
+    }
+    &s[start..]
+}
+
+/// 从已开启会话日志的磁盘文件读尾部：单文件最多 cap 字节（EOF 侧 seek，
+/// 不整读大文件），拼完后总量仍钳在 DIAG_LOG_TAIL_CAP（保尾部=保最新）。
+/// BufWriter 未冲刷的最后一批（≤64KB/500ms tick）读不到，如实以盘上为准。
+/// 只读文件内容，绝不把日志文件路径/文件名写进诊断包（文件名含主机名）。
+fn collect_log_tail(paths: &[std::path::PathBuf]) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for p in paths {
+        let Ok(mut f) = std::fs::File::open(p) else {
+            continue;
+        };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        if len == 0 {
+            continue;
+        }
+        let want = (len as usize).min(DIAG_LOG_TAIL_CAP) as u64;
+        use std::io::{Read, Seek, SeekFrom};
+        if f.seek(SeekFrom::End(-(want as i64))).is_err() {
+            continue;
+        }
+        let mut buf = String::new();
+        if f.take(want).read_to_string(&mut buf).is_err() {
+            continue; // 非法 UTF-8 的日志按整段放弃（不输出半截乱码）
+        }
+        let tail = utf8_tail(buf.trim_start(), DIAG_LOG_TAIL_CAP);
+        if !tail.trim().is_empty() {
+            parts.push(tail.to_string());
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let joined = parts.join("\n");
+    Some(utf8_tail(&joined, DIAG_LOG_TAIL_CAP).to_string())
+}
+
+/// 诊断包事实面（渲染前先采集齐；结构体里没有任何主机/凭据/设置字段，
+/// 从源头保证「想泄也泄不出去」）。
+struct DiagFacts {
+    version: String,
+    build_time: String,
+    os: &'static str,
+    arch: &'static str,
+    uptime: std::time::Duration,
+    session_count: usize,
+    audit_total: i64,
+    audit_latest: Option<chrono::DateTime<chrono::Utc>>,
+    log_tail: Option<String>,
+}
+
+/// 渲染诊断包文本：每段中文小标题；审计只出条数与最近时间戳（绝无记录正文）；
+/// 日志只出尾部纯文本（≤64KB）。
+fn render_diagnostics(f: &DiagFacts, generated_at: chrono::DateTime<chrono::Utc>) -> String {
+    let secs = f.uptime.as_secs();
+    let uptime = if secs >= 3600 {
+        format!("{}小时{}分{}秒", secs / 3600, (secs % 3600) / 60, secs % 60)
+    } else if secs >= 60 {
+        format!("{}分{}秒", secs / 60, secs % 60)
+    } else {
+        format!("{secs}秒")
+    };
+    let mut out = String::new();
+    out.push_str("TinySSH 诊断包\n");
+    out.push_str(&format!(
+        "生成时间：{}\n",
+        generated_at.format("%Y-%m-%d %H:%M:%S UTC")
+    ));
+    out.push_str(
+        "说明：本文件仅含版本/环境/运行概况与会话日志尾部，不含凭据、主机地址、\n主机名、用户名、设置值，也不含任何审计记录正文。\n",
+    );
+    out.push_str("\n【应用版本】\n");
+    out.push_str(&format!("- 应用版本：{}\n", f.version));
+    out.push_str(&format!("- 编译时间：{}\n", f.build_time));
+    out.push_str("\n【操作系统与架构】\n");
+    out.push_str(&format!("- 操作系统：{}\n", f.os));
+    out.push_str(&format!("- 架构：{}\n", f.arch));
+    out.push_str("\n【本次运行时长】\n");
+    out.push_str(&format!("- 自本次启动已运行：{uptime}\n"));
+    out.push_str("\n【当前会话数量】\n");
+    out.push_str(&format!("- 当前会话数量：{}\n", f.session_count));
+    out.push_str("\n【审计概况（仅条数与最近时间戳，不含任何记录内容）】\n");
+    out.push_str(&format!("- 审计记录总条数：{}\n", f.audit_total));
+    match f.audit_latest {
+        Some(ts) => out.push_str(&format!(
+            "- 最近一条记录时间：{}\n",
+            ts.format("%Y-%m-%d %H:%M:%S UTC")
+        )),
+        None => out.push_str("- 最近一条记录时间：无\n"),
+    }
+    out.push_str("\n【会话日志尾部（纯文本，最多 64KB；不含日志文件路径与文件名）】\n");
+    match &f.log_tail {
+        Some(tail) => {
+            out.push_str("---- 日志尾部开始 ----\n");
+            out.push_str(tail);
+            if !tail.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("---- 日志尾部结束 ----\n");
+        }
+        None => out.push_str("（本次运行没有已落盘的会话日志）\n"),
+    }
+    out
+}
+
+/// 导出诊断包（报障自助）：落点固定 `数据目录/diagnostics/tinyssh-diagnostics-
+/// <UTC时间戳>.txt`，返回写入路径（前端 toast/reveal 另做）。只读采集
+/// （list_sessions / session_log_path / query_audit 均只读），不产生审计记录，
+/// 不含任何记录正文/凭据/主机信息/设置值。
+#[tauri::command]
+async fn export_diagnostics(app: tauri::AppHandle, state: ApiState<'_>) -> CmdResult<String> {
+    // 只读三源：会话列表（数量+逐个日志路径）、审计汇总、进程信息
+    let sessions = state
+        .api
+        .list_sessions(&human())
+        .await
+        .map_err(WireError::from)?;
+    let mut log_paths: Vec<std::path::PathBuf> = Vec::new();
+    for s in &sessions {
+        if let Ok(Some(p)) = state.api.session_log_path(&human(), s.id.clone()).await {
+            log_paths.push(std::path::PathBuf::from(p));
+        }
+    }
+    // limit=1：total 是全量计数（不随 limit 缩水），events[0] 即最近一条——
+    // 只要汇总面（条数+最近时间戳），绝不取记录正文
+    let (audit_total, audit_latest) = match state
+        .api
+        .query_audit(
+            &human(),
+            AuditFilter {
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        Ok(page) => (page.total, page.events.first().map(|e| e.ts)),
+        Err(_) => (0, None), // 审计读不出不阻断导出，如实计 0
+    };
+    let facts = DiagFacts {
+        version: app.package_info().version.to_string(),
+        build_time: env!("TINYSSH_BUILD_TIME").to_string(),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        uptime: APP_STARTED.get_or_init(std::time::Instant::now).elapsed(),
+        session_count: sessions.len(),
+        audit_total,
+        audit_latest,
+        log_tail: collect_log_tail(&log_paths),
+    };
+    let body = render_diagnostics(&facts, chrono::Utc::now());
+    let dir = diagnostics_dir(&state.api);
+    std::fs::create_dir_all(&dir).map_err(|e| WireError::simple("storage", e.to_string()))?;
+    let to = dir.join(format!(
+        "tinyssh-diagnostics-{}.txt",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+    std::fs::write(&to, body).map_err(|e| WireError::simple("storage", e.to_string()))?;
+    Ok(to.display().to_string())
 }
 
 /// NPU 采样（监控面板轮）：Ascend npu-smi 原文数据源——与 read_host_metrics
@@ -2095,6 +2457,8 @@ fn show_fatal_dialog(msg: &str) {
 }
 
 fn main() {
+    // 运行时长锚点（诊断包用）：装配最前记一次
+    let _ = APP_STARTED.set(std::time::Instant::now());
     eprintln!(
         "[app] starting, bench={}",
         std::env::var("TINYSSH_BENCH").unwrap_or_default()
@@ -2174,10 +2538,13 @@ fn main() {
     //（builder 装配线程不在运行时上下文内，直接 Handle::current() 会 panic）
     let agent_rt: tokio::runtime::Handle =
         tauri::async_runtime::block_on(async { tokio::runtime::Handle::current() });
-    let agent_host = tinyssh_agent_host::AgentHost::new_arc(Arc::new(AgentSshOps {
-        api: api.clone(),
-        rt: agent_rt,
-    }));
+    let agent_host = tinyssh_agent_host::AgentHost::new_arc_with(
+        Arc::new(AgentSshOps {
+            api: api.clone(),
+            rt: agent_rt,
+        }),
+        Some(Arc::new(AgentPromptAssets { api: api.clone() })),
+    );
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -2676,6 +3043,7 @@ fn main() {
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_npu_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers, read_restore,
             get_build_time,
+            check_update, export_diagnostics,
             agent_model_get, agent_model_set, agent_send, agent_cancel, agent_history,
             shell_capability,
             list_local_shells,
@@ -7381,5 +7749,132 @@ mod wire_error_tests {
         let v = serde_json::to_value(WireError::from(E::AuthFailed)).unwrap();
         assert_eq!(v["kind"], "auth_failed");
         assert!(v.get("detail").is_none());
+    }
+}
+
+#[cfg(test)]
+mod update_check_tests {
+    use super::{compare_versions, parse_version_parts};
+    use std::cmp::Ordering::*;
+
+    /// 版本比较门禁：相同 / 更新 / 更旧 / 位数不同 / 非法段，v 前缀剥离同测。
+    #[test]
+    fn version_compare_matrix() {
+        // 相同
+        assert_eq!(compare_versions("0.10.0", "0.10.0"), Some(Equal));
+        // 更新（远端更大）
+        assert_eq!(compare_versions("0.10.0", "0.10.1"), Some(Less));
+        assert_eq!(compare_versions("0.9.9", "0.10.0"), Some(Less));
+        // 更旧
+        assert_eq!(compare_versions("0.10.1", "0.10.0"), Some(Greater));
+        // 位数不同：缺段视作 0 → 1.2 < 1.2.1；补零等价
+        assert_eq!(compare_versions("1.2", "1.2.1"), Some(Less));
+        assert_eq!(compare_versions("1.2", "1.2.0"), Some(Equal));
+        assert_eq!(compare_versions("1.2.0.0", "1.2"), Some(Equal));
+        // 非法段：空串 / 空段 / 非数字 / 带后缀 / 负数形态一律 None（不误报更新）
+        assert_eq!(compare_versions("", "1.0.0"), None);
+        assert_eq!(compare_versions("1..2", "1.2.0"), None);
+        assert_eq!(compare_versions("1.2.x", "1.2.1"), None);
+        assert_eq!(compare_versions("0.10.0-beta", "0.10.0"), None);
+        assert_eq!(compare_versions("1.2", "1.2.-3"), None);
+        // 解析口径：v 前缀剥离、空白容忍、全数字段成功
+        assert_eq!(parse_version_parts("v0.10.1").unwrap(), vec![0, 10, 1]);
+        assert_eq!(parse_version_parts("V1.2").unwrap(), vec![1, 2]);
+        assert_eq!(parse_version_parts(" 0.10.0 ").unwrap(), vec![0, 10, 0]);
+        assert_eq!(parse_version_parts("v"), None);
+        assert_eq!(parse_version_parts("1.2.3"), Some(vec![1, 2, 3]));
+    }
+
+    /// wire 形状门禁：camelCase（has_update→hasUpdate），字段恒全量出现
+    /// （失败侧 latest/url/error 为 null 而非缺键——FE 据此静默）。
+    #[test]
+    fn update_check_wire_shape_is_camel_case() {
+        let ok = super::UpdateCheck {
+            current: "0.10.0".into(),
+            latest: Some("0.10.1".into()),
+            has_update: true,
+            url: Some("https://example.invalid".into()),
+            error: None,
+        };
+        let v = serde_json::to_value(&ok).unwrap();
+        assert_eq!(v["current"], "0.10.0");
+        assert_eq!(v["latest"], "0.10.1");
+        assert_eq!(v["hasUpdate"], true);
+        assert_eq!(v["url"], "https://example.invalid");
+        assert!(v.get("error").unwrap().is_null());
+        let fail = super::UpdateCheck::failed("0.10.0", "网络请求失败：x".into());
+        let v2 = serde_json::to_value(&fail).unwrap();
+        assert_eq!(v2["hasUpdate"], false);
+        assert!(v2.get("latest").unwrap().is_null());
+        assert!(v2.get("url").unwrap().is_null());
+        assert!(v2["error"].as_str().unwrap().contains("网络"));
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::{utf8_tail, DiagFacts, DIAG_LOG_TAIL_CAP};
+    use chrono::TimeZone;
+
+    /// UTF-8 安全尾部截断：多字节字符不撕半截；不超 cap；小输入原样返回。
+    #[test]
+    fn utf8_tail_keeps_char_boundary() {
+        // 全 ASCII 直取
+        assert_eq!(utf8_tail("abcdef", 3), "def");
+        // 中文三字节：cap=4 落在「中」中间 → 回退到「国」边界
+        assert_eq!(utf8_tail("中国", 4), "国");
+        assert_eq!(utf8_tail("中国", 6), "中国");
+        // 不超 cap 原样
+        assert_eq!(utf8_tail("中国abc", 64), "中国abc");
+        // 64KB 语义：总量钳制生效
+        let big = "x".repeat(DIAG_LOG_TAIL_CAP + 10);
+        assert_eq!(utf8_tail(&big, DIAG_LOG_TAIL_CAP).len(), DIAG_LOG_TAIL_CAP);
+    }
+
+    /// 内容硬约束面：诊断包渲染只含约定字段；审计只出条数与时间戳；
+    /// 日志尾部正文进得来、但文件路径/文件名（含主机名）没有进结构体的通道。
+    #[test]
+    fn render_contains_only_whitelisted_sections() {
+        let facts = DiagFacts {
+            version: "0.10.0".into(),
+            build_time: "2026-10-23 10:00".into(),
+            os: "windows",
+            arch: "x86_64",
+            uptime: std::time::Duration::from_secs(3723),
+            session_count: 2,
+            audit_total: 123,
+            audit_latest: Some(chrono::Utc.with_ymd_and_hms(2026, 10, 23, 8, 0, 0).unwrap()),
+            log_tail: Some("例：某段会话输出文本\n".into()),
+        };
+        let out = super::render_diagnostics(&facts, chrono::Utc::now());
+        for title in [
+            "【应用版本】",
+            "【操作系统与架构】",
+            "【本次运行时长】",
+            "【当前会话数量】",
+            "【审计概况",
+            "【会话日志尾部",
+        ] {
+            assert!(out.contains(title), "缺小标题：{title}");
+        }
+        assert!(out.contains("应用版本：0.10.0"));
+        assert!(out.contains("编译时间：2026-10-23 10:00"));
+        assert!(out.contains("windows"));
+        assert!(out.contains("x86_64"));
+        assert!(out.contains("1小时2分3秒"));
+        assert!(out.contains("当前会话数量：2"));
+        assert!(out.contains("审计记录总条数：123"));
+        assert!(out.contains("2026-10-23 08:00:00 UTC"));
+        assert!(out.contains("例：某段会话输出文本"));
+        // 无日志 / 审计为空的兜底文案
+        let empty = DiagFacts {
+            log_tail: None,
+            audit_total: 0,
+            audit_latest: None,
+            ..facts
+        };
+        let out2 = super::render_diagnostics(&empty, chrono::Utc::now());
+        assert!(out2.contains("没有已落盘的会话日志"));
+        assert!(out2.contains("最近一条记录时间：无"));
     }
 }

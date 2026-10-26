@@ -3,7 +3,7 @@
 // useDialogFocus 焦点陷阱都留在宿主），本组件只收 props 呈现，零语义变更。
 // 例外：P2-b 输出触发器卡的草稿态是**面板本地**（TriggersCard 内聚，关面板即弃），
 // 与签发表单同工艺——设置类表单不该污染全局状态。
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   APP_VERSION,
   APPEARANCES, FONT_DEFAULT, FONT_MAX, FONT_MIN, PALETTES, SETTINGS_CATS,
@@ -20,7 +20,7 @@ import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { isMacPlatform } from "../actions";
 import { inTauri, invoke } from "../adapter/bridge";
 import type { ActionRecord, AutonomyGrant, RecordsQuery, TriggerRule } from "../adapter/wire";
-import type { CollabStatus, Host, IdentityMeta, IdentityReq, LocalShell, McpStatus } from "../adapter/wire";
+import type { CollabStatus, Host, IdentityMeta, IdentityReq, LocalShell, McpStatus, UpdateCheck } from "../adapter/wire";
 import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
 import { SelfMeterDetail } from "../self-meter";
 import { RecordsPane } from "./records-pane";
@@ -34,6 +34,11 @@ interface SettingsPanelProps {
   appVersion: string | null;
   // 版本号轮：编译时间（build.rs 注入；演示域 null → 关于卡略去「编译于」段）
   buildTime: string | null;
+  // 发布轮：版本检查结果（启动静默查一次；null=未返回或演示域未启用检查）
+  updateInfo: UpdateCheck | null;
+  // 发布轮：诊断包导出（动作在宿主，toast 带「打开所在文件夹」；本面板只呈现按钮）
+  diagBusy: boolean;
+  onExportDiagnostics: () => void;
   // 外观与字号/缩放
   appearance: Appearance;
   changeAppearance: (a: Appearance) => void;
@@ -145,6 +150,7 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({
   settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime,
+  updateInfo, diagBusy, onExportDiagnostics,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   keymap, keymapRef, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
@@ -563,6 +569,8 @@ export function SettingsPanel({
                 {settingsCat === "agent" && (<>
                 {/* 接真模型轮：内置 Agent 对话的模型服务（本卡草稿态面板本地） */}
                 <AgentModelCard />
+                {/* 提示词/技能资产化轮：附加提示词 + 技能库（改动即存 KV，面板本地） */}
+                <PromptSkillsCard />
                 {/* R42（§5 迁移表/§6.7）：Agent 接入、端点、Token 从协作面板移入
                     「设置 → Agent 接入」——新装未启用协作时主界面不再出现 MCP 配置。
                     C9（R43）：本面板是协作**启用生命周期**的人类专属入口（启用/停用）。 */}
@@ -784,6 +792,26 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                   <div data-testid="about-author">作者：陈普</div>
                   <div className="dim">本地优先的 SSH 客户端：终端、主机库与凭据都留在本机。</div>
                   <div className="dim">凭据以加密形式存于本机凭据库，界面与日志只显示指纹。</div>
+                  {/* 发布轮：有新版才出现的更新行（demo 域 check_update 恒 hasUpdate=false） */}
+                  {updateInfo?.hasUpdate && updateInfo.latest ? (
+                    <div data-testid="about-update" style={{ marginTop: 6 }}>
+                      新版本 v{updateInfo.latest} 已发布
+                      <button className="ghost" data-testid="about-update-open" style={{ marginLeft: 8 }}
+                        title={updateInfo.url ?? ""}
+                        onClick={() => { if (updateInfo.url) invoke("open_url", { url: updateInfo.url }).catch(() => {}); }}>
+                        打开发布页
+                      </button>
+                    </div>
+                  ) : null}
+                  {/* 发布轮：诊断包导出（报障附件，Rust 侧从源头封死泄露通道） */}
+                  <div style={{ marginTop: 6 }}>
+                    <button className="ghost" data-testid="diag-export-btn" disabled={diagBusy} onClick={onExportDiagnostics}>
+                      {diagBusy ? "导出中…" : "导出诊断包"}
+                    </button>
+                    <span className="dim" style={{ marginLeft: 8, fontSize: 11 }}>
+                      版本/平台/日志尾/审计条数——不含凭据与主机信息
+                    </span>
+                  </div>
                 </div>
                 {/* 自身开销监控（本轮）：本进程 CPU/内存 2s 实时采样；核心不可达时整块自隐藏 */}
                 <SelfMeterDetail />
@@ -969,6 +997,136 @@ function AgentModelCard() {
       </div>
       {msg && (
         <div className={msg.kind} style={{ fontSize: 11, marginTop: 5 }} data-testid="agent-model-msg" role="status">
+          {msg.kind === "ok" ? "✓ " : "✕ "}{msg.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 提示词/技能资产化轮：内置 Agent 的用户附加提示词 + 技能库（面板本地，改动即存 KV）。
+// KV 键：agent.prompt_extra / agent.fleet_prompt_extra / agent.skills（JSON 对象：名称→正文）。
+// 真侧 Rust（AgentPromptAssets）同键读取；附加段超 8KB 截断保头，textarea maxLength 对齐约 2700 汉字。
+// 技能库显式保存（草稿语义）；附加段 blur 即存 + 卸载兜底，关面板不丢最后一次编辑。
+const AGENT_EXTRA_MAX_CHARS = 2700; // ≈ 8192 字节（CJK 每字 3 字节），真侧 clamp 同源
+function PromptSkillsCard() {
+  const [extra, setExtra] = useState("");
+  const [fleetExtra, setFleetExtra] = useState("");
+  const [skills, setSkills] = useState<{ name: string; body: string }[]>([]);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const loadedRef = useRef(false);
+  const draftRef = useRef({ extra: "", fleetExtra: "" });
+  draftRef.current = { extra, fleetExtra };
+
+  useEffect(() => {
+    // 不分 demo/Tauri：demo 镜像（settings Map）也走同一条 invoke 读路径（AgentModelCard 同工艺）
+    const gets = [
+      invoke("get_setting", { key: "agent.prompt_extra" }).then((v) => setExtra(v ?? "")),
+      invoke("get_setting", { key: "agent.fleet_prompt_extra" }).then((v) => setFleetExtra(v ?? "")),
+      invoke("get_setting", { key: "agent.skills" }).then((v) => {
+        try {
+          const m = v ? JSON.parse(v) : {};
+          setSkills(Object.entries(m).map(([name, body]) => ({ name, body: String(body) })));
+        } catch { /* 损坏视为空库（真侧同样容忍，不阻塞对话） */ }
+      }),
+    ];
+    // 三读全部落定才置位 loadedRef——任一未归位就卸载的话，兜底写会用初始 "" 清掉真值
+    void Promise.all(gets.map((p) => p.catch(() => {}))).finally(() => { loadedRef.current = true; });
+  }, []);
+
+  // 卸载兜底：直接关面板/切分类未触发 blur 的最后一次编辑也不丢（载入完成前不写，防清空竞态）
+  useEffect(() => () => {
+    if (!loadedRef.current) return;
+    const d = draftRef.current;
+    void invoke("set_setting", { key: "agent.prompt_extra", value: d.extra }).catch(() => {});
+    void invoke("set_setting", { key: "agent.fleet_prompt_extra", value: d.fleetExtra }).catch(() => {});
+  }, []);
+
+  const saveKV = (key: string, value: string) => {
+    void invoke("set_setting", { key, value }).catch(() => {});
+  };
+
+  const saveSkills = (list: { name: string; body: string }[]) => {
+    setMsg(null);
+    if (list.length > 32) {
+      setMsg({ kind: "err", text: "技能最多 32 条" });
+      return false;
+    }
+    const names = list.map((s) => s.name.trim());
+    if (names.some((n) => !n)) {
+      setMsg({ kind: "err", text: "技能名称不能为空" });
+      return false;
+    }
+    if (new Set(names).size !== names.length) {
+      setMsg({ kind: "err", text: "技能名称重复" });
+      return false;
+    }
+    saveKV("agent.skills", JSON.stringify(Object.fromEntries(list.map((s, i) => [names[i], s.body]))));
+    return true;
+  };
+
+  return (
+    <div className="set-card" data-testid="agent-prompt-skills-card">
+      <h4 style={{ margin: "0 0 6px" }}>提示词与技能（内置 Agent）</h4>
+      <div className="dim" style={{ fontSize: 11, lineHeight: 1.7 }}>
+        在内置系统提示词之上追加的组织/现场约定——不改内置安全铁律（审批/不虚构等），冲突时以铁律为准。
+        会话助手与 Fleet 编排者各一段，保存后 agent 的下一条消息即生效。技能库供 agent 用 load_skill 工具按名加载。
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 12, marginBottom: 3 }}>会话助手附加提示词</div>
+        <textarea data-testid="agent-prompt-extra" className="mono" style={{ width: "100%", fontSize: 11 }}
+          rows={4} maxLength={AGENT_EXTRA_MAX_CHARS}
+          placeholder="例如：生产库只读优先，改动先报备；机器统一 Ubuntu，用 apt 而非 yum。"
+          aria-label="会话助手附加提示词" value={extra}
+          onChange={(e) => setExtra(e.target.value)}
+          onBlur={() => saveKV("agent.prompt_extra", extra)} />
+        <button className="ghost" style={{ marginTop: 2 }} data-testid="agent-prompt-extra-clear"
+          onClick={() => { setExtra(""); saveKV("agent.prompt_extra", ""); }}>清空</button>
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <div style={{ fontSize: 12, marginBottom: 3 }}>Fleet 编排者附加提示词</div>
+        <textarea data-testid="agent-fleet-prompt-extra" className="mono" style={{ width: "100%", fontSize: 11 }}
+          rows={3} maxLength={AGENT_EXTRA_MAX_CHARS}
+          placeholder="例如：汇总一律用表格；失败项单独列出并给复跑建议。"
+          aria-label="Fleet 编排者附加提示词" value={fleetExtra}
+          onChange={(e) => setFleetExtra(e.target.value)}
+          onBlur={() => saveKV("agent.fleet_prompt_extra", fleetExtra)} />
+        <button className="ghost" style={{ marginTop: 2 }} data-testid="agent-fleet-prompt-extra-clear"
+          onClick={() => { setFleetExtra(""); saveKV("agent.fleet_prompt_extra", ""); }}>清空</button>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 12, marginBottom: 3 }}>技能库（{skills.length}/32）</div>
+        {skills.length === 0 && (
+          <div className="dim" style={{ fontSize: 11 }} data-testid="agent-skills-empty">
+            暂无技能——添加后 agent 可用 load_skill 工具按名加载（名称 + 操作手册正文）。
+          </div>
+        )}
+        {skills.map((s, i) => (
+          <div key={i} style={{ marginTop: 6, borderTop: "1px solid var(--border)", paddingTop: 6 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input data-testid={`skill-name-${i}`} className="mono" style={{ fontSize: 11, width: 180 }}
+                maxLength={50} placeholder="技能名（如 nginx 排障）" aria-label={`技能 ${i + 1} 名称`}
+                value={s.name}
+                onChange={(e) => setSkills(skills.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+              <button className="ghost" data-testid={`skill-del-${i}`} aria-label={`删除技能 ${s.name || i + 1}`}
+                onClick={() => setSkills(skills.filter((_, j) => j !== i))}><IconTrash size={12} /></button>
+            </div>
+            <textarea data-testid={`skill-body-${i}`} className="mono" style={{ width: "100%", fontSize: 11, marginTop: 4 }}
+              rows={4} maxLength={16000} placeholder="操作手册正文：步骤、验收标准、注意事项（agent 加载后照做）。"
+              aria-label={`技能 ${i + 1} 正文`} value={s.body}
+              onChange={(e) => setSkills(skills.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))} />
+          </div>
+        ))}
+        <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
+          <button className="ghost" data-testid="skill-add"
+            onClick={() => setSkills([...skills, { name: "", body: "" }])}>添加技能</button>
+          <button className="ghost" data-testid="skill-save"
+            onClick={() => { if (saveSkills(skills)) setMsg({ kind: "ok", text: `已保存（${skills.length} 条）` }); }}>
+            保存技能库</button>
+        </div>
+      </div>
+      {msg && (
+        <div className={msg.kind} style={{ fontSize: 11, marginTop: 5 }} data-testid="agent-skills-msg" role="status">
           {msg.kind === "ok" ? "✓ " : "✕ "}{msg.text}
         </div>
       )}

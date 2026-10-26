@@ -21,6 +21,7 @@ fn target() -> transport_ssh::SshTarget {
         secret: secret.into(),
         host_key_check: None,  // 测试：全接受（生产走 TOFU 回调）
         kb_prompt_check: None, // 2FA 门：测试直连不用
+        hops: Vec::new(),
     }
 }
 

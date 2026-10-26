@@ -122,6 +122,7 @@ fn host() -> Host {
         fingerprint: None,
         shell_integration: Some(true),
         charset: Charset::Utf8,
+        jump_host_id: None,
     }
 }
 

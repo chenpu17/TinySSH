@@ -39,6 +39,7 @@ fn seed_unreachable(mgr: &SessionManager) -> HostId {
             tags: vec![],
             charset: Charset::Utf8,
             shell_integration: None,
+            jump_host_id: None,
         })
         .expect("seed host")
 }
@@ -504,6 +505,7 @@ async fn cancel_while_gate_pending_clears_cards() {
             previous_fingerprint: None,
             created_at: chrono::Utc::now(),
             attempt_id: Some(aid.clone()),
+            jump_note: None,
         },
     );
     m.center
@@ -722,6 +724,7 @@ async fn failed_attempt_carries_error_and_audit() {
             tags: vec![],
             charset: Charset::Utf8,
             shell_integration: None,
+            jump_host_id: None,
         })
         .expect("seed refused host");
     let info = m

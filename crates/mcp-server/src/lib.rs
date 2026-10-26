@@ -430,6 +430,8 @@ fn error_kind(e: &Error) -> &'static str {
         Error::InvalidInput(_) => "invalid_input",
         Error::IdentityInUse { .. } => "identity_in_use",
         Error::LocalHostImmutable => "local_host_immutable",
+        Error::JumpChainInvalid(_) => "jump_chain_invalid",
+        Error::JumpHostInUse { .. } => "jump_host_in_use",
         Error::Storage(_) => "storage",
         Error::Io(_) => "io",
         Error::SftpPathNotFound { .. } => "sftp_path_not_found",
@@ -447,6 +449,8 @@ fn error_detail(e: &Error) -> serde_json::Value {
     match e {
         Error::VoidedByHandback { brief } => serde_json::json!({ "brief": brief }),
         Error::IdentityInUse { host_names } => serde_json::json!({ "host_names": host_names }),
+        Error::JumpChainInvalid(reason) => serde_json::json!({ "reason": reason }),
+        Error::JumpHostInUse { host_names } => serde_json::json!({ "host_names": host_names }),
         Error::ShellIntegrationUnavailable { available } => {
             serde_json::json!({ "available": available })
         }

@@ -170,6 +170,7 @@ async fn c7_classification_skip_and_overwrite() {
             tags: vec![],
             charset: Charset::Utf8,
             shell_integration: None,
+            jump_host_id: None,
         },
     )
     .await

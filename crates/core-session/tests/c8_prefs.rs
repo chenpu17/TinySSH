@@ -111,6 +111,7 @@ async fn identity_in_use_reference_check() {
                 tags: vec![],
                 charset: Default::default(),
                 shell_integration: None,
+                jump_host_id: None,
             },
         )
         .await
@@ -170,6 +171,7 @@ async fn local_host_is_immutable_builtin() {
                 tags: vec![],
                 charset: Default::default(),
                 shell_integration: None,
+                jump_host_id: None,
             },
         )
         .await

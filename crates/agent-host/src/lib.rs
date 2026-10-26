@@ -10,7 +10,8 @@
 //! 走 SessionManager 的同一批方法——exec 的危险命令审批、**传输必审**、send_keys
 //! 的会话级授权与人类输入优先窗、审计、夺权语义全部在 core-session 层自动继承，
 //! 本 crate 不做任何放行。工具集只装配八个 SSH 操作（exec/read_screen/read_blocks/
-//! wait_output + upload/download/transfer_status + send_keys），本地 shell/file
+//! wait_output + upload/download/transfer_status + send_keys）+ 可选技能库工具
+//! load_skill（装配了资产源时；提示词/技能资产化轮），本地 shell/file
 //! 内置工具一律不装配（tiny-a config `tools: []`）。
 //! 每会话串行对话（一次一个运行）；取消在工具/轮次间隙生效（tiny-a 语义）。
 
@@ -298,25 +299,90 @@ fn tail(s: &str) -> String {
     format!("…（前段略）{}", &s[cut..])
 }
 
-const SYS_PROMPT: &str = "你是 TinySSH 内置的运维助手，通过工具操作一台已连接的远程 SSH 主机（工具的会话由宿主绑定，不需要也不能指定会话）。要点：\n\
-- exec 在该会话的持久 shell 里执行（cwd/env 延续）；危险命令会被人工审批，此调用会阻塞等待决定；被拒绝时如实告知用户并给出更安全的替代，绝不换着花样重试被拒命令。\n\
-- 了解现场优先 read_blocks（最近的命令与结果）与 read_screen（当前画面）；长命令用 wait_output 跟踪。\n\
-- 传文件用 upload/download（本机↔主机，双方都要绝对路径）；目标已存在会结构化报 conflict_detected，与用户确认后用 collision=\"skip\"/\"overwrite\" 重试；大文件超时会返回 transfer_id，用 transfer_status 对账，不要盲目重试。传输与命令一样需人工审批。\n\
-- 驱动交互式程序（vim/htop、sudo 密码、y/n 确认）用 send_keys 注入按键（\\r 回车、\\t Tab、\\x03 Ctrl+C、\\x1b Esc）；首次使用要一次会话级授权（一次审批，本会话内后续按键免审）；每次键入后用 read_screen/wait_output 确认效果再继续，不要盲发。控制权在人类手里时会被拒——如实告知用户需要把会话交托给 Agent。\n\
-- 输出可能被截断（保尾），如实转述；不确定的事实不虚构，报得出来的 exit code 就报。\n\
-- 面向用户的回复用简体中文，简洁，可用 markdown（代码块标注语言）。";
+/// 内置系统提示词已资产化（assets/*.md，include_str! 静态内嵌，随二进制分发）。
+/// 安全契约行（审批/不虚构/简体中文）由测试钉住：tests/prompt_assets.rs。
+const SYS_PROMPT: &str = include_str!("../assets/system-prompt.md");
 
 /// 编排者（Fleet）系统提示：跨会话派发，不直接碰机器（Fleet 契约——目标会话的
 /// 审批/危险扫描/控制权独立生效，编排者没有任何绕过路径）。
-const FLEET_SYS_PROMPT: &str = "你是 TinySSH 的跨主机编排者（Fleet）：你的会话不绑定任何一台机器，通过工具把任务派发给其他已连接会话上的执行 agent，等结果、做汇总。铁律：\n\
-- 你自己没有 exec/传输/键入工具——不直接操作任何机器；每台目标机的操作审批、危险扫描、控制权都在目标会话里独立生效，你派发不出绕过审批的任务，被拒或被夺权的任务会如实失败。\n\
-- 派发前先 fleet_sessions 确认目标（session_id=会话 id）；可对多台并行 dispatch_task，再逐个 wait_task 收结果；目标正忙（上一条未完成）会派发失败——如实告知并稍后重试，不要丢弃。\n\
-- 任务文本必须自包含（目标 agent 看不到你们的对话）：写清在那台机器上做什么、验收标准是什么。\n\
-- 汇总如实转述，失败与拒绝不隐瞒、不美化；面向用户的回复用简体中文，简洁，可用 markdown。";
+const FLEET_SYS_PROMPT: &str = include_str!("../assets/fleet-system-prompt.md");
+
+/// 用户附加提示词上限（字节，截断保头）。UI 侧 maxLength 同值。
+const PROMPT_EXTRA_CAP: usize = 8192;
+
+/// 提示词/技能资产源：宿主装配时注入（src-tauri 侧实现，读 vault settings）。
+/// None（测试直连 `new`）= 无附加段、无技能库，行为与资产化前完全一致。
+pub trait PromptAssets: Send + Sync {
+    /// 会话助手提示词的追加段（空串=不追加）。
+    fn session_extra(&self) -> String;
+    /// Fleet 编排者提示词的追加段（空串=不追加）。
+    fn fleet_extra(&self) -> String;
+    /// 技能库快照（名称 → 正文）。load_skill 工具每次调用现读，编辑即生效、无需重建。
+    fn skills(&self) -> Vec<(String, String)>;
+}
+
+/// 按字节上限截断（保头，字符边界安全）——附加段超长时的兜底，UI 已 maxLength 同值。
+fn clamp_utf8_head(s: &str, cap: usize) -> String {
+    if s.len() <= cap {
+        return s.to_string();
+    }
+    let mut cut = cap;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}…（附加段超长，已截断）", &s[..cut])
+}
+
+/// 组装最终系统提示词：内置资产为底；有资产源时按会话/Fleet 取对应附加段，
+/// 非空则追加（标注「与安全铁律冲突时以铁律为准」）；会话面追加技能库用法一行。
+/// Fleet 不给技能库——编排者只派发自包含任务，机器侧流程归目标 agent 现场加载。
+fn compose_sys_prompt(fleet: bool, assets: Option<&dyn PromptAssets>) -> String {
+    let mut base = if fleet {
+        FLEET_SYS_PROMPT.to_string()
+    } else {
+        SYS_PROMPT.to_string()
+    };
+    let Some(a) = assets else {
+        return base;
+    };
+    if !fleet {
+        base.push_str(
+            "\n- 技能库：任务涉及组织标准流程时，先不带参数调用 load_skill 列出可用技能，命中就加载后照做。",
+        );
+    }
+    let raw = if fleet {
+        a.fleet_extra()
+    } else {
+        a.session_extra()
+    };
+    let extra = raw.trim();
+    if !extra.is_empty() {
+        base.push_str("\n\n## 用户附加约定（现场/组织约定；与上方安全铁律冲突时以铁律为准）\n");
+        base.push_str(&clamp_utf8_head(extra, PROMPT_EXTRA_CAP));
+    }
+    base
+}
+
+/// load_skill 无参调用返回的清单文本：名称 + 正文首行作简介。
+fn skills_list_text(skills: &[(String, String)]) -> String {
+    if skills.is_empty() {
+        return "技能库为空（可在 设置 → Agent → 提示词与技能 里添加）。".into();
+    }
+    let mut out = String::from("可用技能：\n");
+    for (name, body) in skills {
+        let intro = body.lines().next().unwrap_or("").trim();
+        out.push_str(&format!("- {name}——{intro}\n"));
+    }
+    out
+}
 
 // ── 工具装配：sid 在装配时绑死进闭包（每会话一次），模型无法选会话 ──
 
-fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
+fn build_tools(
+    ops: Arc<dyn SshOps>,
+    sid: String,
+    assets: Option<Arc<dyn PromptAssets>>,
+) -> Vec<Box<dyn Tool>> {
     let o2 = ops.clone();
     let s2 = sid.clone();
     let exec = CallbackTool::new(
@@ -498,6 +564,44 @@ fn build_tools(ops: Arc<dyn SshOps>, sid: String) -> Vec<Box<dyn Tool>> {
                 .map_err(|e| anyhow::anyhow!(e))
         },
     );
+    // 技能库工具（提示词/技能资产化轮）：仅在装配了资产源时挂载；正文每次调用现读
+    //（设置里改技能无需重建 agent），无参=清单（名称+首行简介），带 name=全文。
+    if let Some(src) = assets {
+        let skills = CallbackTool::new(
+            ToolDef {
+                name: "load_skill".into(),
+                description: "技能库（用户在 设置 → Agent → 提示词与技能 里维护的组织标准流程/操作手册）。不带参数调用=列出全部技能与简介；带 name=返回该技能全文，命中任务就按其步骤执行。".into(),
+                schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "技能名称；缺省=列出全部" }
+                    }
+                }),
+            },
+            move |input, _ctx| {
+                let skills = src.skills();
+                match input.get("name").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    None => Ok(ToolOutput::text(skills_list_text(&skills))),
+                    Some(n) => skills
+                        .iter()
+                        .find(|(name, _)| name == n)
+                        .map(|(_, body)| ToolOutput::text(body.clone()))
+                        .ok_or_else(|| anyhow::anyhow!("技能库中没有「{n}」——不带参数调用可列出全部")),
+                }
+            },
+        );
+        return vec![
+            Box::new(exec),
+            Box::new(screen),
+            Box::new(blocks),
+            Box::new(wait),
+            Box::new(upload),
+            Box::new(download),
+            Box::new(tstatus),
+            Box::new(keys),
+            Box::new(skills),
+        ];
+    }
     vec![
         Box::new(exec),
         Box::new(screen),
@@ -671,6 +775,14 @@ fn sig_of(cfg: &ModelConfig) -> u64 {
     h.finish()
 }
 
+/// 任意字符串指纹（附加段折进重建签名用）。
+fn hash_str(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
 #[cfg(test)]
 fn next_test_sig() -> u64 {
     use std::sync::atomic::AtomicU64;
@@ -688,6 +800,9 @@ pub type EventSink = Arc<dyn Fn(&str, &HostEvent) + Send + Sync>;
 
 pub struct AgentHost {
     ops: Arc<dyn SshOps>,
+    // 提示词/技能资产源（提示词/技能资产化轮）：Some 时系统提示词追加用户附加段、
+    // 会话工具面多出 load_skill；None（测试直连）保持无附加段。
+    assets: Option<Arc<dyn PromptAssets>>,
     sessions: Mutex<HashMap<String, Arc<SessionSlot>>>,
     // Arc：运行线程持有句柄写转写，宿主侧 close/history 经 self 访问同一份
     transcripts: Arc<Mutex<HashMap<String, Vec<HostEvent>>>>,
@@ -703,7 +818,7 @@ enum SendCfg<'a> {
 }
 
 /// 编排者装配包：Some=本次构建用 fleet 工具面（build_fleet_tools）与
-/// FLEET_SYS_PROMPT；None=普通会话（八个 SSH 工具 + SYS_PROMPT）。
+/// FLEET_SYS_PROMPT；None=普通会话（八个 SSH 工具 + 可选 load_skill + SYS_PROMPT）。
 struct FleetAssemble {
     host: std::sync::Weak<AgentHost>,
     dispatch: DispatchFn,
@@ -713,6 +828,7 @@ impl AgentHost {
     pub fn new(ops: Arc<dyn SshOps>) -> Self {
         Self {
             ops,
+            assets: None,
             sessions: Mutex::new(HashMap::new()),
             transcripts: Arc::new(Mutex::new(HashMap::new())),
             self_weak: Mutex::new(std::sync::Weak::new()),
@@ -721,7 +837,15 @@ impl AgentHost {
 
     /// 应用入口：装配 Weak 自引用（编排者 dispatch/wait 工具回呼宿主用）。
     pub fn new_arc(ops: Arc<dyn SshOps>) -> Arc<Self> {
-        let host = Arc::new(Self::new(ops));
+        Self::new_arc_with(ops, None)
+    }
+
+    /// 应用入口（带资产源）：系统提示词追加用户附加段 + 会话面挂 load_skill。
+    pub fn new_arc_with(ops: Arc<dyn SshOps>, assets: Option<Arc<dyn PromptAssets>>) -> Arc<Self> {
+        let host = Arc::new(Self {
+            assets,
+            ..Self::new(ops)
+        });
         *host.self_weak.lock().unwrap() = Arc::downgrade(&host);
         host
     }
@@ -877,14 +1001,16 @@ impl AgentHost {
     ) -> Result<(), String> {
         let slot = self.slot(sid);
         let cancel = Arc::new(AtomicBool::new(false));
+        // 系统提示词先于 sig 组装：附加段改动折进重建指纹（改设置→下一条消息即重建生效）。
+        let sys = compose_sys_prompt(fleet.is_some(), self.assets.as_ref().map(|a| a.as_ref()));
         #[cfg(test)]
         let sig_opt: Option<u64> = match &cfg {
-            SendCfg::Real(c) => Some(sig_of(c)),
+            SendCfg::Real(c) => Some(sig_of(c) ^ hash_str(&sys)),
             SendCfg::Test(_) => Some(next_test_sig()),
         };
         #[cfg(not(test))]
         let sig_opt: Option<u64> = match &cfg {
-            SendCfg::Real(c) => Some(sig_of(c)),
+            SendCfg::Real(c) => Some(sig_of(c) ^ hash_str(&sys)),
         };
         let needs_rebuild;
         {
@@ -903,12 +1029,7 @@ impl AgentHost {
         let slot2 = slot.clone();
         let ops = self.ops.clone();
         let sid_for_build = sid_owned.clone();
-        let sys: &'static str = if fleet.is_some() {
-            FLEET_SYS_PROMPT
-        } else {
-            SYS_PROMPT
-        };
-
+        let assets_for_tools = self.assets.clone();
         let build = move || -> Result<tiny_agent::Agent, String> {
             let tools = match &fleet {
                 Some(ft) => build_fleet_tools(
@@ -917,7 +1038,7 @@ impl AgentHost {
                     sid_for_build.clone(),
                     ft.dispatch.clone(),
                 ),
-                None => build_tools(ops, sid_for_build),
+                None => build_tools(ops, sid_for_build, assets_for_tools),
             };
             let (ta_cfg, provider) = match cfg {
                 SendCfg::Real(c) => {
@@ -1819,5 +1940,119 @@ mod tests {
         // last_final_text：目标总结可提取（wait_task 的数据源）
         assert_eq!(host.last_final_text("t1").as_deref(), Some("磁盘 40% 已用"));
         assert_eq!(host.last_final_text("t2").as_deref(), Some("内存 2G/8G"));
+    }
+
+    // ── 提示词/技能资产化 ──
+
+    /// 测试资产源：固定内容。
+    struct FixedAssets {
+        session: String,
+        fleet: String,
+        skills: Vec<(String, String)>,
+    }
+    impl Default for FixedAssets {
+        fn default() -> Self {
+            Self {
+                session: String::new(),
+                fleet: String::new(),
+                skills: Vec::new(),
+            }
+        }
+    }
+    impl PromptAssets for FixedAssets {
+        fn session_extra(&self) -> String {
+            self.session.clone()
+        }
+        fn fleet_extra(&self) -> String {
+            self.fleet.clone()
+        }
+        fn skills(&self) -> Vec<(String, String)> {
+            self.skills.clone()
+        }
+    }
+
+    #[test]
+    fn builtin_prompt_contract_keeps_safety_lines() {
+        // 资产文件是「可改的」——安全契约行必须钉死，改丢即测试红
+        for kw in [
+            "审批",
+            "不虚构",
+            "简体中文",
+            "exec",
+            "upload",
+            "download",
+            "send_keys",
+        ] {
+            assert!(SYS_PROMPT.contains(kw), "SYS_PROMPT 丢失关键契约行：{kw}");
+        }
+        for kw in ["不直接操作任何机器", "自包含", "如实", "简体中文"] {
+            assert!(
+                FLEET_SYS_PROMPT.contains(kw),
+                "FLEET_SYS_PROMPT 丢失关键契约行：{kw}"
+            );
+        }
+    }
+
+    #[test]
+    fn compose_without_assets_is_builtin_verbatim() {
+        // 无资产源（测试直连路径）行为与资产化前一致
+        assert_eq!(compose_sys_prompt(false, None), SYS_PROMPT);
+        assert_eq!(compose_sys_prompt(true, None), FLEET_SYS_PROMPT);
+    }
+
+    #[test]
+    fn compose_appends_extra_and_skills_line() {
+        let a = FixedAssets {
+            session: "  生产库只读优先，改动先报备  ".into(),
+            fleet: "汇总用表格".into(),
+            skills: vec![],
+        };
+        let with = compose_sys_prompt(false, Some(&a));
+        assert!(
+            with.starts_with(SYS_PROMPT),
+            "附加段只能追加在内置提示词之后"
+        );
+        assert!(with.contains("用户附加约定"));
+        assert!(with.contains("生产库只读优先，改动先报备"), "trim 后再追加");
+        assert!(with.contains("load_skill"), "会话面要教模型用技能库");
+        let fleet = compose_sys_prompt(true, Some(&a));
+        assert!(fleet.starts_with(FLEET_SYS_PROMPT));
+        assert!(fleet.contains("汇总用表格"));
+        assert!(
+            !fleet.contains("load_skill"),
+            "Fleet 不挂技能库（任务自包含契约）"
+        );
+        // 无附加段：不加约定标题，但会话面仍保留技能库引导行
+        let b = FixedAssets::default();
+        let plain = compose_sys_prompt(false, Some(&b));
+        assert!(!plain.contains("用户附加约定"));
+        assert!(plain.contains("load_skill"));
+    }
+
+    #[test]
+    fn extra_cap_truncates_on_char_boundary() {
+        let long = "测".repeat(PROMPT_EXTRA_CAP); // 每字 3 字节，必超限
+        let out = clamp_utf8_head(&long, PROMPT_EXTRA_CAP);
+        assert!(out.len() < long.len() + 64, "超限必须截断");
+        assert!(out.ends_with("…（附加段超长，已截断）"));
+        assert!(out.contains("测"), "保头截断");
+        assert!(!out.ends_with('\u{FFFD}'), "截断不得落在字符中间");
+        // 上限内原样通过
+        assert_eq!(clamp_utf8_head("abc", 100), "abc");
+    }
+
+    #[test]
+    fn skills_list_text_formats_and_handles_empty() {
+        assert!(skills_list_text(&[]).contains("技能库为空"));
+        let s = skills_list_text(&[
+            (
+                "nginx 排障".into(),
+                "先看 error.log 的 upstream 超时\n再查端口".into(),
+            ),
+            ("备份".into(), "rsync 快照".into()),
+        ]);
+        assert!(s.contains("- nginx 排障——先看 error.log 的 upstream 超时"));
+        assert!(s.contains("- 备份——rsync 快照"), "简介只取首行");
+        assert!(!s.contains("再查端口"), "清单不携带正文");
     }
 }

@@ -30,6 +30,7 @@ fn ssh_host() -> Host {
         fingerprint: None,
         charset: Charset::Utf8,
         shell_integration: Some(true),
+        jump_host_id: None,
     }
 }
 

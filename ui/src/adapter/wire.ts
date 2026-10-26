@@ -42,6 +42,8 @@ export interface Host {
   /** 已信任指纹（TOFU）；null = 信任未建立 */
   fingerprint: string | null;
   charset: Charset;
+  /** ProxyJump：跳板主机引用（指向既有主机条目）；null = 直连。 */
+  jump_host_id: string | null;
 }
 
 export type AuthDraft =
@@ -61,6 +63,8 @@ export interface HostDraft {
   charset: Charset;
   /** C3：null/缺省=新建默认（快速连接由核心兜底 Some(true)）；显式开关走 boolean。 */
   shell_integration?: boolean | null;
+  /** ProxyJump：跳板主机 id；null/缺省=直连（编辑提交 null = 清除跳板设置）。 */
+  jump_host_id?: string | null;
 }
 
 export type IdentityReq =
@@ -360,6 +364,8 @@ export interface PendingHostKey {
   previous_fingerprint: string | null;
   created_at: string;
   attempt_id?: AttemptId | null;
+  /** ProxyJump：该门挂在跳板机上（「第N跳」）；null/缺省 = 目标主机自身门。 */
+  jump_note?: string | null;
 }
 
 export interface PendingAuthPrompt {
@@ -372,6 +378,10 @@ export interface PendingAuthPrompt {
   prompt: string;
   echo: boolean;
   created_at: string;
+  /** C1：门所属 attempt（旧载荷无此字段）；ProxyJump 跳板门按 attempt 归属判定 */
+  attempt_id?: AttemptId | null;
+  /** ProxyJump：该门挂在跳板机上（「第N跳」）；null/缺省 = 目标主机自身门。 */
+  jump_note?: string | null;
 }
 
 export interface ScreenSnapshot {
@@ -739,4 +749,14 @@ export interface RecordsQuery {
   limit: number;
   range: RecordsRange;
   sessionId: string | null;
+}
+
+/** 发布轮：应用内版本检查（check_update）。任何网络/解析失败都折算为
+ * hasUpdate=false + error（一句中文），绝不抛 Err、绝不误报升级。 */
+export interface UpdateCheck {
+  current: string;
+  latest: string | null;
+  hasUpdate: boolean;
+  url: string | null;
+  error: string | null;
 }

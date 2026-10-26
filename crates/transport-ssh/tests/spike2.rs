@@ -22,6 +22,7 @@ fn target() -> transport_ssh::SshTarget {
         secret: secret.into(),
         host_key_check: None,
         kb_prompt_check: None,
+        hops: Vec::new(),
     }
 }
 

@@ -21,6 +21,8 @@ type DemoHost = {
   id: string; name: string; address: string; port: number; username: string;
   auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk";
   tags?: string[]; ident_id?: string | null; shell_integration?: boolean;
+  /** ProxyJump：跳板主机 id（引用既有主机条目）；缺省 = 直连。 */
+  jump_host_id?: string | null;
 };
 
 type DemoSession = {
@@ -68,6 +70,8 @@ type PendingKey = {
     id: string; host_id: string; host_name: string; address: string; port: number;
     issue: "FirstSeen" | "Changed"; fingerprint: string; previous_fingerprint: string | null;
     created_at: string; attempt_id?: string | null;
+    /** ProxyJump：该门挂在跳板机上（「第N跳」）；缺省 = 目标主机自身门。 */
+    jump_note?: string | null;
   };
   resolve: (ok: boolean) => void;
 };
@@ -189,7 +193,7 @@ const demoState = {
     // R26（R24-L5 指引面）：集成显式关的演示主机——命令框 Shell 模式拒绝 + Fresh 指引
     { id: "h-noint", name: "noint-1（无集成）", address: "noint.demo", port: 22, username: "ops", auth_type: "Password", shell_integration: false },
     { id: "h-staging1", name: "staging-1", address: "10.0.0.13", port: 22, username: "ops", auth_type: "Password" },
-  ] as { id: string; name: string; address: string; port: number; username: string; auth_type: string; fingerprint?: string; charset?: "utf-8" | "gbk"; tags?: string[]; ident_id?: string | null }[],
+  ] as DemoHost[],
   // 本轮（最近连接右键）：会话历史表——对齐真实核心 vault sessions 表语义
   //（建连 INSERT，关闭只 UPDATE state 不删行）；list_recent_hosts 从这里派生。
   // 此前 demo 关会话即 splice，欢迎页「最近连接」在浏览器域永不可达（保真度缺口）。
@@ -279,6 +283,41 @@ const demoState = {
   attempts: new Map<string, { info: import("./adapter/wire").AttemptInfo; hostId: string; actor: string }>(),
   cancelledAttempts: new Set<string>(),
 };
+
+/** ProxyJump 镜像：逐跳 TOFU——跳板先于目标挂卡（与真实门序一致），信任按
+ * address 同口径共享。拒绝抛 HostKeyRejected；attemptId 供门卡归属
+ * （begin_connection 传 attempt、create_session 无 attempt 传 null）。 */
+async function jumpHopTofuMirror(
+  hostId: string,
+  attemptId: string | null,
+  setPhase?: (p: import("./adapter/wire").AttemptPhase) => void,
+): Promise<void> {
+  let next = demoState.hosts.find((x) => x.id === hostId)?.jump_host_id ?? null;
+  let hopNo = 0;
+  while (next) {
+    const jh = demoState.hosts.find((x) => x.id === next);
+    if (!jh || jh.id === "local") throw apiError("jump_chain_invalid", "跳板主机不存在或已删除（演示）");
+    if (++hopNo > 3) throw apiError("jump_chain_invalid", "跳板链超过 3 层上限（演示）");
+    if (!demoState.trusted.has(jh.address)) {
+      setPhase?.("TrustRequired");
+      const ok = await new Promise<boolean>((resolve) => {
+        demoState.pendingKeys.push({
+          pk: {
+            id: "hk-demo-" + demoSeq++, host_id: jh.id, host_name: jh.name, address: jh.address,
+            port: jh.port ?? 22, issue: "FirstSeen", fingerprint: "SHA256:DemoFingerprint-" + jh.name,
+            previous_fingerprint: null, created_at: new Date().toISOString(),
+            ...(attemptId ? { attempt_id: attemptId } : {}),
+            jump_note: `第${hopNo}跳`,
+          },
+          resolve,
+        });
+      });
+      if (attemptId && demoState.cancelledAttempts.has(attemptId)) throw apiError("cancelled", "已取消");
+      if (!ok) throw apiError("host_key_rejected", "主机指纹验证失败（演示：已拒绝该主机指纹）");
+    }
+    next = jh.jump_host_id ?? null;
+  }
+}
 
 const encoder = new TextEncoder();
 
@@ -538,8 +577,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     // React 靠引用变化感知更新——shim 返回同一可变数组会让 setSessions 失效
     // （接管后 chip 不翻转的根因）。
     case "list_hosts":
-      // identity_id 为 wire Host 契约字段（凭据绑定，R21 凭据库「使用中」标记的消费面）
-      return demoState.hosts.map((h) => ({ ...h, identity_id: h.ident_id ?? null }));
+      // identity_id 为 wire Host 契约字段（凭据绑定，R21 凭据库「使用中」标记的消费面）；
+      // jump_host_id 为 ProxyJump 契约字段（主机表单跳板下拉 + 卡面「跳板」徽章的消费面）
+      return demoState.hosts.map((h) => ({ ...h, identity_id: h.ident_id ?? null, jump_host_id: h.jump_host_id ?? null }));
     case "list_local_shells":
       // 本地终端一等公民轮：探测面 fixture（真实侧 transport-pty detect_local_shells）。
       // integrable 与真实判型同口径：cmd/WSL 无 preexec 钩子如实 false
@@ -565,9 +605,27 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         logging: !!s.logging,
       }));
     case "upsert_host": {
-      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[] };
+      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[]; jump_host_id?: string | null };
       // 本地终端一等公民轮：「本机」是内置条目不可编辑（与核心 LocalHostImmutable 同码同义）
       if (h.id === "local") throw apiError("local_host_immutable", "「本机」是内置条目，不可编辑或删除");
+      // ProxyJump 镜像：跳板引用校验（与核心 validate_jump_ref 同门——存在/非自引用/
+      // 非本机/不成环/不超深）。None=直连（覆盖清空既有设置）。
+      const jumpId = h.jump_host_id ?? null;
+      if (jumpId) {
+        if (jumpId === "local") throw apiError("jump_chain_invalid", "「本机」不能作为跳板机（演示）");
+        if (jumpId === h.id) throw apiError("jump_chain_invalid", "跳板不能是主机自身（演示）");
+        let cur = jumpId;
+        for (let depth = 0; depth < 3; depth++) {
+          const j = demoState.hosts.find((x) => x.id === cur);
+          if (!j) throw apiError("jump_chain_invalid", "跳板主机不存在或已删除（演示）");
+          if (!j.jump_host_id) break;
+          if (j.jump_host_id === h.id) throw apiError("jump_chain_invalid", "跳板链成环（演示）");
+          cur = j.jump_host_id;
+        }
+        if (demoState.hosts.find((x) => x.id === cur)?.jump_host_id) {
+          throw apiError("jump_chain_invalid", "跳板链超过 3 层上限（演示）");
+        }
+      }
       // 真实后端按 HostDraft.auth 推导 auth_type，demo 同口径（修复：此前新建一律
       // 硬编码 Password——密钥/Agent 主机在浏览器走查里会顶错徽章，属头部警告的对账类别）
       const a = h.auth;
@@ -585,6 +643,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         if (ex) {
           ex.name = h.name; ex.address = h.address; ex.port = h.port ?? 22; ex.username = h.username;
           ex.charset = h.charset ?? "utf-8";
+          ex.jump_host_id = jumpId;
           if (h.tags) ex.tags = h.tags.filter((t) => t.trim()).map((t) => t.trim());
           if (authType !== "Keep") ex.auth_type = authType;
           ex.ident_id = authType === "Key" ? identId : null;
@@ -596,13 +655,19 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       demoState.hosts.push({ id, name: h.name, address: h.address, port: h.port ?? 22, username: h.username,
         auth_type: authType === "Keep" ? "Password" : authType, charset: h.charset ?? "utf-8",
         tags: (h.tags ?? []).filter((t: string) => typeof t === "string" && t.trim()).map((t: string) => t.trim()),
-        ident_id: authType === "Key" ? identId : null });
+        ident_id: authType === "Key" ? identId : null,
+        jump_host_id: jumpId });
       audit("human", "host_upsert", h.name);
       return id;
     }
     case "delete_host": {
       const id = args?.id as string;
       if (id === "local") throw apiError("local_host_immutable", "「本机」是内置条目，不可编辑或删除");
+      // ProxyJump 镜像：仍被引用的跳板机不可删（与核心 JumpHostInUse 同码同文案）
+      const jumpRefs = demoState.hosts.filter((x) => x.jump_host_id === id);
+      if (jumpRefs.length > 0) {
+        throw apiError("jump_host_in_use", `跳板机正在被主机引用（${jumpRefs.map((x) => x.name).join("、")}）`, { host_names: jumpRefs.map((x) => x.name) });
+      }
       const h = demoState.hosts.find((x) => x.id === id);
       demoState.hosts = demoState.hosts.filter((x) => x.id !== id);
       if (h) audit("human", "host_delete", h.name);
@@ -717,6 +782,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const hid = args?.hostId as string;
       const h = demoState.hosts.find((x) => x.id === hid);
       if (!h) throw apiError("invalid_input", "HostNotFound（演示）");
+      // ProxyJump 镜像：逐跳 TOFU——跳板卡先于目标卡（真实门序同构；无 attempt 归属）
+      await jumpHopTofuMirror(h.id, null);
       // 门序与真实 SSH 一致：先 TOFU 指纹门（密钥交换期），后 2FA 认证提示
       // TOFU 指纹门：未信任主机在门内挂起（弹窗决定），与真实后端同构——
       // 拒绝时 HostKeyRejected 从原始 createSession 调用抛出，主机卡红色失败态。
@@ -1161,6 +1228,15 @@ case "read_triggers": {
       audit("human", "records_export", null, null, null, { count: n });
       return { count: n, path: "（演示模式不落盘；真实应用导出到 records-export\\records-<时间戳>.jsonl）" };
     }
+    case "check_update": {
+      // 发布轮 demo 镜像：演示域永远无新版本（不造假升级提示），形状与真机一致
+      return { current: "0.0.0", latest: null, hasUpdate: false, url: null, error: null };
+    }
+    case "export_diagnostics": {
+      // 发布轮 demo 镜像：demo 无文件系统不落盘，路径如实说明（同 export_records 姿势）
+      audit("human", "diagnostics_export", null, null, null, undefined);
+      return "（演示模式不落盘；真实应用导出到 diagnostics\\tinyssh-diagnostics-<时间戳>.txt）";
+    }
     case "remember_approval": {
       // 「批准并记住」demo 镜像：只写规则（demo 态并入 audit 留痕）+ 审计，不动卡；
       // 决定仍走 decide_approval。真实实现见 core-session remember_approval。
@@ -1443,6 +1519,8 @@ case "read_triggers": {
         try {
           const h = demoState.hosts.find((x) => x.id === hid) ?? demoState.quickHosts.get(hid);
           if (!h) throw apiError("invalid_input", "HostNotFound（演示）");
+          // ProxyJump 镜像：逐跳 TOFU——跳板卡先于目标卡挂起（真实门序同构）
+          await jumpHopTofuMirror(h.id, aid, setPhase);
           if (h.address !== "local" && !demoState.trusted.has(h.address)) {
             setPhase("TrustRequired");
             const ok = await new Promise<boolean>((resolve) => {

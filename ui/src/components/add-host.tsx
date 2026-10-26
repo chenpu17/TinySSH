@@ -21,6 +21,11 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
     editHost ? "password" : prefill ? (prefill.has_identity ? "key" : "agent") : "password");
   const [charset, setCharset] = useState<"utf-8" | "gbk">(editHost?.charset ?? "utf-8");
   const [tagsInput, setTagsInput] = useState((editHost?.tags ?? (prefill ? ["ssh-config"] : [])).join(","));
+  // ProxyJump：跳板机（可选）——引用既有主机条目（复用其凭据/TOFU/编辑/审计，
+  // 不做内联凭据）。候选排除自身/「本机」/链路会绕回自身的主机（成环 UX 前置，
+  // 后端 upsert 同门兜底）。
+  const [jumpId, setJumpId] = useState<string>(editHost?.jump_host_id ?? "");
+  const [jumpCandidates, setJumpCandidates] = useState<Host[]>([]);
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -37,7 +42,24 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
     invoke("list_identities")
       .then((xs) => setKnownIdentities(xs.filter((x) => x.kind !== "Password")))
       .catch(() => { /* 选择器降级为空，仍可生成/导入 */ });
+    invoke("list_hosts")
+      .then((xs) => setJumpCandidates(xs))
+      .catch(() => { /* 跳板选择器降级为空：仍可直连 */ });
   }, []);
+
+  // 跳板候选：排除自身/本机/成环（沿 jump_host_id 向上走，绕回自身即排除；
+  // seen 集合同时防他人成环导致死循环）。后端 upsert 会再验一遍。
+  const jumpOptions = jumpCandidates.filter((h) => {
+    if (h.id === editHost?.id || h.id === "local") return false;
+    let cur: string | null = h.jump_host_id ?? null;
+    const seen = new Set<string>([h.id]);
+    while (cur) {
+      if (cur === editHost?.id || seen.has(cur)) return false;
+      seen.add(cur);
+      cur = jumpCandidates.find((x) => x.id === cur)?.jump_host_id ?? null;
+    }
+    return true;
+  });
 
   const keyLabel = () => `${username.trim() || "key"}@${address.trim() || name.trim() || "host"}`;
 
@@ -121,9 +143,10 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
           id: editHost?.id ?? null, name: name.trim(), address: address.trim(),
           port: p, username: username.trim(), auth, tags,
           charset,
+          jump_host_id: jumpId || null,
         },
       });
-      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); setPickedIdentity(""); setTagsInput(""); }
+      if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); setPickedIdentity(""); setTagsInput(""); setJumpId(""); }
       setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
       onSaved(hid, editing, connect);
     } catch (e) {
@@ -273,6 +296,18 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
         <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
           <option value="utf-8">UTF-8（默认）</option>
           <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
+        </select>
+      </div>
+      {/* ProxyJump：跳板机（可选）——经跳板转发连接目标；跳板自身的凭据/指纹
+          确认沿用其主机条目（连接时会先出示跳板的指纹卡，再出示目标的） */}
+      <div className="ah-field" style={{ marginTop: 6 }}>
+        <label>跳板机（可选，经其转发连接）</label>
+        <select value={jumpId} data-testid="jump-select"
+          onChange={(e) => { setErr(null); setJumpId(e.target.value); }}>
+          <option value="">直连（不经跳板）</option>
+          {jumpOptions.map((h) => (
+            <option key={h.id} value={h.id}>{h.name}（{h.username}@{h.address}）</option>
+          ))}
         </select>
       </div>
       {/* R20：标签（逗号分隔）——主机卡徽章显示，搜索与标签 chip 筛选可命中 */}

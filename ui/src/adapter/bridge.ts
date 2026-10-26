@@ -95,6 +95,9 @@ interface CmdArgs {
   read_npu_metrics: { sid: string };
   // 版本号轮：编译时间（build.rs 注入的编译期常量，关于卡可溯源）
   get_build_time: undefined;
+  // 发布轮：版本检查 + 诊断包导出（src-tauri check_update / export_diagnostics）
+  check_update: undefined;
+  export_diagnostics: undefined;
   // 自身开销监控（本轮）：本进程 CPU/内存，无参只读
   read_self_metrics: undefined;
   set_control: { sid: string; owner: wire.ControlOwner; stopRunning?: boolean };
@@ -218,6 +221,9 @@ interface CmdRet {
   read_npu_metrics: string;
   // 演示域无编译产物，回 null（关于卡略去「编译于」段）
   get_build_time: string | null;
+  // 发布轮：任何失败折算 hasUpdate=false + error（不误报、不抛 Err）
+  check_update: wire.UpdateCheck;
+  export_diagnostics: string;
   read_self_metrics: wire.SelfMetrics | null;
   set_control: wire.TakeoverReport;
   delegate_session: void;

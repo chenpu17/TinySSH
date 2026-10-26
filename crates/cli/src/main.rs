@@ -122,6 +122,9 @@ enum HostCmd {
         /// password 交互输入省略：直接传（试点）
         #[arg(long)]
         password: Option<String>,
+        /// 跳板机（ProxyJump）：引用既有主机条目的 id 或名称（复用其凭据/TOFU）
+        #[arg(long)]
+        jump: Option<String>,
         /// 导入 ~/.ssh/config
         #[arg(long, default_value_t = false)]
         from_ssh_config: bool,
@@ -423,6 +426,7 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
             port,
             username,
             password,
+            jump,
             from_ssh_config,
         } => {
             if from_ssh_config {
@@ -432,6 +436,17 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
             let auth = match password {
                 Some(p) => AuthDraft::Password { password: p },
                 None => bail!("--password required (或 --from-ssh-config)"),
+            };
+            // ProxyJump：跳板按 id 或名称解析到既有主机条目（复用其凭据/TOFU）
+            let jump_host_id = match jump {
+                Some(j) => {
+                    let hosts = m.list_hosts(&human()).await?;
+                    match hosts.into_iter().find(|h| h.id == j || h.name == j) {
+                        Some(h) => Some(h.id),
+                        None => bail!("跳板主机不存在（{j}）——先 host add，或用已有主机的名称引用"),
+                    }
+                }
+                None => None,
             };
             let id = m
                 .upsert_host(
@@ -446,6 +461,7 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
                         tags: vec![],
                         charset: Default::default(),
                         shell_integration: None,
+                        jump_host_id,
                     },
                 )
                 .await?;

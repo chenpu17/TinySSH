@@ -437,6 +437,10 @@ impl SessionManager {
         let cols = 120u16;
         let rows = 32u16;
 
+        // ProxyJump（FR-9）：展平跳板链（快速连接主机无 vault 行恒直连；本机
+        // kind="local" 无 jump_host_id）。每跳独立凭据/TOFU/2FA 门——门卡
+        // jump_note 标注「第N跳」，指纹按各跳主机落 vault；失败文案归因到跳。
+        let (jump_hops, jump_ids) = resolve_jump_hops(&self.center, ctx, attempt, &host)?;
         let channel: Arc<dyn ChannelHandle> = if kind == "local" {
             // 本地终端一等公民轮：shell override 从 attempt opts 带入（None=默认解析）；
             // override 随通路存续，重连 respawn 复用同一选择
@@ -460,9 +464,9 @@ impl SessionManager {
                 let ctx = gate_ctx.clone();
                 let attempt = gate_attempt.clone();
                 let fp = fp.to_string(); // owned 后再装箱：future 不借入参（HRTB 约束）
-                Box::pin(
-                    async move { host_key_gate(&center, &ctx, &host, &fp, attempt.as_ref()).await },
-                )
+                Box::pin(async move {
+                    host_key_gate(&center, &ctx, &host, &fp, attempt.as_ref(), None).await
+                })
             });
             // 2FA 人工应答门（路线图⑩）：kb 非密码提示 → 挂起等人类（同指纹门模式）
             let kb_center = self.center.clone();
@@ -476,7 +480,8 @@ impl SessionManager {
                 let attempt = kb_attempt.clone();
                 let prompt = prompt.to_string(); // owned 后再装箱（HRTB 约束，同上）
                 Box::pin(async move {
-                    auth_prompt_gate(&center, &ctx, &host, &prompt, echo, attempt.as_ref()).await
+                    auth_prompt_gate(&center, &ctx, &host, &prompt, echo, attempt.as_ref(), None)
+                        .await
                 })
             });
             let target = transport_ssh::SshTarget {
@@ -487,6 +492,7 @@ impl SessionManager {
                 secret: secret.to_string(),
                 host_key_check: Some(gate),
                 kb_prompt_check: Some(kb_gate),
+                hops: jump_hops,
             };
             SshChannel::connect(target, cols, rows).await?
         };
@@ -593,10 +599,50 @@ impl SessionManager {
         // C8：成功建连打点（host_metadata.last_connected_at；最近连接由 sessions
         // 表派生，此处只供元数据展示）
         let _ = self.center.vault.touch_host_connection(&host.id);
-        let _ = self.center.audit.append(
-            ctx, "session_created", Some(&sid), None,
-            serde_json::json!({"host": host.id, "kind": kind, "owner": match owner { ControlOwner::Agent => "Agent", ControlOwner::Human => "Human" }}), None);
+        // ProxyJump：经跳板建连的会话在审计里记跳板链（主机 id，不落地址/凭据）
+        let mut created = serde_json::json!({"host": host.id, "kind": kind, "owner": match owner { ControlOwner::Agent => "Agent", ControlOwner::Human => "Human" }});
+        if !jump_ids.is_empty() {
+            created["jump"] = serde_json::json!(jump_ids);
+        }
+        let _ = self
+            .center
+            .audit
+            .append(ctx, "session_created", Some(&sid), None, created, None);
         Ok(sid)
+    }
+
+    /// ProxyJump：upsert 侧跳板引用守卫——目标存在、非自引用、非本机、链不成环、
+    /// 链深≤3（建连时 resolve_jump_hops 再验一次，防并发编辑的双保险）。
+    fn validate_jump_ref(&self, draft: &HostDraft, jid: &str) -> Result<()> {
+        if jid == "local" {
+            return Err(Error::JumpChainInvalid("「本机」不能作为跳板机".into()));
+        }
+        if draft.id.as_deref() == Some(jid) {
+            return Err(Error::JumpChainInvalid("跳板不能是主机自身".into()));
+        }
+        let hosts = self.center.vault.list_hosts()?;
+        let mut cur = jid.to_string();
+        for _ in 0..3 {
+            let h = hosts.iter().find(|x| x.id == cur).ok_or_else(|| {
+                Error::JumpChainInvalid(format!("跳板主机不存在或已删除（{cur}）"))
+            })?;
+            if h.id == "local" {
+                return Err(Error::JumpChainInvalid("「本机」不能作为跳板机".into()));
+            }
+            match &h.jump_host_id {
+                None => return Ok(()),
+                Some(nx) => {
+                    if draft.id.as_deref() == Some(nx.as_str()) {
+                        return Err(Error::JumpChainInvalid(format!(
+                            "跳板链成环（{} → {}）",
+                            h.name, draft.name
+                        )));
+                    }
+                    cur = nx.clone();
+                }
+            }
+        }
+        Err(Error::JumpChainInvalid("跳板链超过 3 层上限".into()))
     }
 
     /// 十七轮：注册快速连接主机（校验 + 凭据即席解析 + 入内存注册表）。
@@ -664,6 +710,7 @@ impl SessionManager {
             fingerprint: None,
             shell_integration: draft.shell_integration.or(Some(true)),
             charset: draft.charset,
+            jump_host_id: draft.jump_host_id.clone(),
         };
         self.center.quick_hosts.lock().unwrap().insert(
             host.id.clone(),
@@ -1275,6 +1322,7 @@ impl SessionManager {
                         tags: vec![],
                         charset: Charset::Utf8,
                         shell_integration: None,
+                        jump_host_id: None,
                     });
                     return self.ensure_local_host();
                 }
@@ -1291,6 +1339,7 @@ impl SessionManager {
             tags: vec![],
             charset: Charset::Utf8,
             shell_integration: None,
+            jump_host_id: None,
         };
         self.center.vault.upsert_host(&draft)?;
         Ok(Host {
@@ -1305,6 +1354,7 @@ impl SessionManager {
             fingerprint: None,
             shell_integration: None,
             charset: Charset::Utf8,
+            jump_host_id: None,
         })
     }
 
@@ -1515,6 +1565,99 @@ fn emit_conn(
     });
 }
 
+/// ProxyJump（FR-9）：把 host.jump_host_id 链展平成逐跳连接参数。规则：跳板必须
+/// 是既有 vault 主机（复用其凭据/TOFU/编辑/审计，无内联凭据）；深度≤3；禁自引用/
+/// 环/指向「本机」/引用缺失。返回（逐跳参数，跳板主机 id 列表——后者供审计）。
+/// upsert 侧 validate_jump_ref 已把关一遍，这里建连时再验（并发编辑的双保险）。
+fn resolve_jump_hops(
+    center: &Arc<ApprovalCenter>,
+    ctx: &Actor,
+    attempt: Option<&Arc<AttemptEntry>>,
+    host: &Host,
+) -> Result<(Vec<transport_ssh::JumpHop>, Vec<String>)> {
+    let mut hops = Vec::new();
+    let mut ids = Vec::new();
+    let mut visited: Vec<String> = vec![host.id.clone()];
+    let mut next = host.jump_host_id.clone();
+    while let Some(jid) = next {
+        if hops.len() >= 3 {
+            return Err(Error::JumpChainInvalid("跳板链超过 3 层上限".into()));
+        }
+        if visited.iter().any(|v| v == &jid) {
+            return Err(Error::JumpChainInvalid(format!("跳板链成环（{jid}）")));
+        }
+        let h = center
+            .vault
+            .list_hosts()?
+            .into_iter()
+            .find(|x| x.id == jid)
+            .ok_or_else(|| Error::JumpChainInvalid(format!("跳板主机不存在或已删除（{jid}）")))?;
+        if h.id == "local" {
+            return Err(Error::JumpChainInvalid("「本机」不能作为跳板机".into()));
+        }
+        visited.push(h.id.clone());
+        let (auth_type, secret) = center.vault.host_secret(&h)?;
+        let hop_no = hops.len() + 1;
+        let (kc, kbc) = hop_gates(center, ctx, attempt, &h, hop_no);
+        hops.push(transport_ssh::JumpHop {
+            address: h.address.clone(),
+            port: h.port,
+            username: h.username.clone(),
+            auth_type,
+            secret: secret.to_string(),
+            host_key_check: Some(kc),
+            kb_prompt_check: Some(kbc),
+            label: format!("第{}跳({})", hop_no, h.name),
+        });
+        ids.push(h.id.clone());
+        next = h.jump_host_id.clone();
+    }
+    Ok((hops, ids))
+}
+
+/// ProxyJump：单跳的门对（TOFU + 2FA）。归属信息由 hop Host 带入（卡面显示
+/// 跳板自身名称/地址），jump_note 额外标注「第N跳」让用户知道这不是目标主机在问。
+fn hop_gates(
+    center: &Arc<ApprovalCenter>,
+    ctx: &Actor,
+    attempt: Option<&Arc<AttemptEntry>>,
+    hop_host: &Host,
+    hop_no: usize,
+) -> (transport_ssh::HostKeyCheck, transport_ssh::KbPromptCheck) {
+    let note = Some(format!("第{}跳", hop_no));
+    let (c1, h1, x1, a1, n1) = (
+        center.clone(),
+        hop_host.clone(),
+        ctx.clone(),
+        attempt.cloned(),
+        note.clone(),
+    );
+    let hk: transport_ssh::HostKeyCheck = Arc::new(move |fp| {
+        let (center, host, ctx, attempt, note) =
+            (c1.clone(), h1.clone(), x1.clone(), a1.clone(), n1.clone());
+        let fp = fp.to_string(); // owned 后再装箱：future 不借入参（HRTB 约束）
+        Box::pin(
+            async move { host_key_gate(&center, &ctx, &host, &fp, attempt.as_ref(), note).await },
+        )
+    });
+    let (c2, h2, x2, a2, n2) = (
+        center.clone(),
+        hop_host.clone(),
+        ctx.clone(),
+        attempt.cloned(),
+        note,
+    );
+    let kb: transport_ssh::KbPromptCheck = Arc::new(move |prompt, echo| {
+        let (center, host, ctx, attempt, note) =
+            (c2.clone(), h2.clone(), x2.clone(), a2.clone(), n2.clone());
+        let prompt = prompt.to_string(); // owned 后再装箱（HRTB 约束，同上）
+        Box::pin(async move {
+            auth_prompt_gate(&center, &ctx, &host, &prompt, echo, attempt.as_ref(), note).await
+        })
+    });
+    (hk, kb)
+}
+
 /// TOFU 主机指纹门（路线图⑤）：vault 已信任且一致 → 静默放行；
 /// 首连 → 确认弹窗；不一致 → 变更红色告警。人类放行后指纹入库。
 /// 拒绝/超时返回 HostKeyRejected（经 russh 透传为 create_session 的错误）。
@@ -1533,6 +1676,7 @@ async fn host_key_gate(
     host: &Host,
     fp: &str,
     attempt: Option<&Arc<AttemptEntry>>,
+    jump_note: Option<String>,
 ) -> Result<bool> {
     // C1：门挂起前已受理取消 → 直接以取消结束（不新挂 pending 卡）
     if let Some(a) = attempt {
@@ -1564,6 +1708,7 @@ async fn host_key_gate(
         previous_fingerprint: stored,
         created_at: chrono::Utc::now(),
         attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
+        jump_note,
     };
     let _ = center.audit.append(
         ctx,
@@ -1677,6 +1822,7 @@ async fn auth_prompt_gate(
     prompt: &str,
     echo: bool,
     attempt: Option<&Arc<AttemptEntry>>,
+    jump_note: Option<String>,
 ) -> Result<Option<String>> {
     if let Some(a) = attempt {
         if *a.cancel_rx.borrow() {
@@ -1693,6 +1839,7 @@ async fn auth_prompt_gate(
         echo,
         created_at: chrono::Utc::now(),
         attempt_id: attempt.map(|a| a.info.attempt_id.clone()),
+        jump_note,
     };
     let _ = center.audit.append(
         ctx,
@@ -2037,6 +2184,10 @@ impl SessionApi for SessionManager {
         if host.id.as_deref() == Some("local") {
             return Err(Error::LocalHostImmutable);
         }
+        // ProxyJump：跳板引用守卫（存在/非自引用/非本机/不成环/不超深）
+        if let Some(jid) = &host.jump_host_id {
+            self.validate_jump_ref(&host, jid)?;
+        }
         let id = self.center.vault.upsert_host(&host)?;
         let _ = self.center.audit.append(
             ctx,
@@ -2052,6 +2203,13 @@ impl SessionApi for SessionManager {
     async fn delete_host(&self, ctx: &Actor, id: HostId) -> Result<()> {
         if id == "local" {
             return Err(Error::LocalHostImmutable);
+        }
+        // ProxyJump：仍被其他主机的跳板设置引用时不可删（仿 DF8.4，附引用主机名）
+        let jump_refs = self.center.vault.jump_host_refs(&id)?;
+        if !jump_refs.is_empty() {
+            return Err(Error::JumpHostInUse {
+                host_names: jump_refs,
+            });
         }
         self.center.vault.delete_host(&id)?;
         let _ = self.center.audit.append(
@@ -5944,6 +6102,7 @@ impl SessionManager {
                         tags: vec!["ssh-config".into()],
                         charset: Charset::Utf8,
                         shell_integration: Some(true), // ssh-config 导入=存量 SSH 主机同口径（DC3.2）
+                        jump_host_id: None, // ProxyJump 指令 V1 阻断导入（sshcfg_import fixture 锁）
                     },
                 )
                 .await
@@ -6154,6 +6313,7 @@ mod c10_tests {
             fingerprint: None,
             charset: Charset::Utf8,
             shell_integration: None,
+            jump_host_id: None,
         };
         let screen = term_core::Screen::new(term_core::ScreenConfig {
             cols: 80,

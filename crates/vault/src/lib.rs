@@ -898,9 +898,9 @@ impl Vault {
             }
         };
         conn.execute(
-            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, charset, shell_integration, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?11,?10,?10)
-             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, charset=?9, shell_integration=?11, updated_at=?10",
+            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, charset, shell_integration, jump_host_id, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?11,?12,?10,?10)
+             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, charset=?9, shell_integration=?11, jump_host_id=?12, updated_at=?10",
             params![
                 id,
                 host.name,
@@ -913,6 +913,7 @@ impl Vault {
                 host.charset.as_str(),
                 now_ms(),
                 shell_integration,
+                host.jump_host_id,
             ],
         )
         .map_err(db_err)?;
@@ -936,7 +937,7 @@ impl Vault {
     pub fn list_hosts(&self) -> Result<Vec<Host>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint, charset, shell_integration FROM hosts WHERE deleted_at IS NULL")
+            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint, charset, shell_integration, jump_host_id FROM hosts WHERE deleted_at IS NULL")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |r| {
@@ -954,6 +955,7 @@ impl Vault {
                     r.get::<_, Option<String>>(8)?.filter(|s| !s.is_empty()),
                     r.get::<_, String>(9)?,
                     r.get::<_, Option<i64>>(10)?.map(|v| v != 0),
+                    r.get::<_, Option<String>>(11)?,
                 ))
             })
             .map_err(db_err)?;
@@ -971,6 +973,7 @@ impl Vault {
                 fingerprint,
                 charset,
                 shell_integration,
+                jump_host_id,
             ) = row.map_err(db_err)?;
             out.push(Host {
                 id,
@@ -988,6 +991,7 @@ impl Vault {
                 fingerprint,
                 shell_integration,
                 charset: Charset::parse(&charset),
+                jump_host_id,
             });
         }
         Ok(out)
@@ -1391,6 +1395,25 @@ impl Vault {
         let mut stmt = conn
             .prepare(
                 "SELECT name FROM hosts WHERE identity_id=?1 AND deleted_at IS NULL ORDER BY name",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map(params![id], |r| r.get::<_, String>(0))
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(db_err)?);
+        }
+        Ok(out)
+    }
+
+    /// 跳板引用检查（ProxyJump）：返回仍把该主机设为跳板机的存活主机名列表
+    /// （删除守卫用——被引用的跳板机不可删，仿 DF8.4 语义）。
+    pub fn jump_host_refs(&self, id: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM hosts WHERE jump_host_id=?1 AND deleted_at IS NULL ORDER BY name",
             )
             .map_err(db_err)?;
         let rows = stmt
@@ -2036,6 +2059,72 @@ mod tests {
         assert_eq!(v.resolve_token(&tok4).as_deref(), Some("stale"));
     }
 
+    /// ProxyJump（FR-9）：jump_host_id 列 round-trip + 引用检查（跳板机删除守卫的
+    /// 数据面）。语义：Some=设置、None=覆盖清空（编辑表单整行提交）。
+    #[test]
+    fn jump_host_id_roundtrip_and_refs() {
+        let (_dir, v) = vault();
+        let hid_a = v
+            .upsert_host(&HostDraft {
+                name: "bastion".into(),
+                address: "10.0.0.9".into(),
+                port: Some(22),
+                username: "ops".into(),
+                auth: AuthDraft::Password {
+                    password: "pw".into(),
+                },
+                ..Default::default()
+            })
+            .unwrap();
+        // None=直连（跳板未设置）
+        let hid_b = v
+            .upsert_host(&HostDraft {
+                name: "behind".into(),
+                address: "10.0.1.7".into(),
+                port: Some(22),
+                username: "ops".into(),
+                auth: AuthDraft::Password {
+                    password: "pw".into(),
+                },
+                jump_host_id: Some(hid_a.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        let listed = v.list_hosts().unwrap();
+        let b = listed.iter().find(|h| h.id == hid_b).unwrap();
+        assert_eq!(b.jump_host_id.as_deref(), Some(hid_a.as_str()));
+        let a = listed.iter().find(|h| h.id == hid_a).unwrap();
+        assert_eq!(a.jump_host_id, None, "直连主机不带跳板字段值");
+        // 引用检查：bastion 被 behind 引用；无引用主机为空
+        assert_eq!(
+            v.jump_host_refs(&hid_a).unwrap(),
+            vec!["behind".to_string()]
+        );
+        assert!(v.jump_host_refs(&hid_b).unwrap().is_empty());
+        assert!(v.jump_host_refs("h-none").unwrap().is_empty());
+        // 覆盖清空（编辑去掉跳板）→ 引用随之消失
+        v.upsert_host(&HostDraft {
+            id: Some(hid_b.clone()),
+            name: "behind".into(),
+            address: "10.0.1.7".into(),
+            port: Some(22),
+            username: "ops".into(),
+            auth: AuthDraft::None, // Keep 语义（serde rename）：编辑保原凭据
+            jump_host_id: None,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(v.jump_host_refs(&hid_a).unwrap().is_empty());
+        let b2 = v
+            .list_hosts()
+            .unwrap()
+            .into_iter()
+            .find(|h| h.id == hid_b)
+            .unwrap();
+        assert_eq!(b2.jump_host_id, None);
+        // AuthDraft::Keep 不动凭据列（顺带回归：编辑保密码行）
+    }
+
     #[test]
     fn host_password_encrypted_at_rest() {
         let (_dir, v) = vault();
@@ -2313,6 +2402,7 @@ mod tests {
             tags: h.tags.clone(),
             charset: h.charset,
             shell_integration: None,
+            jump_host_id: None,
         })
         .unwrap();
         assert_eq!(
@@ -2334,6 +2424,7 @@ mod tests {
             tags: h.tags.clone(),
             charset: h.charset,
             shell_integration: Some(false),
+            jump_host_id: None,
         })
         .unwrap();
         assert_eq!(by("h-ssh").shell_integration, Some(false), "显式关闭生效");
@@ -3140,6 +3231,7 @@ mod tests {
                 tags: vec![],
                 charset: Charset::Utf8,
                 shell_integration: None,
+                jump_host_id: None,
             })
             .unwrap();
         }

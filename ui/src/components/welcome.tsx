@@ -1,7 +1,7 @@
 // 欢迎页（App.tsx 拆分⑤）：无活跃会话时的引导区——步骤说明、主行动钮、
 // 重连上次会话、最近连接。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
 import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
-import { IconPlus, IconTerminal } from "../icons";
+import { IconPlus, IconTerminal, IconUpload } from "../icons";
 
 interface WelcomeProps {
   sid: string | null;
@@ -49,13 +49,15 @@ export function Welcome({
         <div className="welcome-actions">
           <button onClick={() => { setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
           <button className="ghost" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={13} /> 快速连接</button>
-          <button className="ghost" onClick={() => {
-            // 导入面板住在主机栏里：专注模式下主机栏整列 display:none，点了没反应
-            // （巡检实锤）——先退出专注让主机栏现身再展开导入
+          <button className="ghost" data-testid="welcome-import-btn" onClick={() => {
+            // 复用取舍：导入 UI 本就完整住在主机栏（hostbar.tsx 挂 SshConfigImportPanel，
+            // 预览→分级勾选→导入→行内结果一条龙），欢迎页不重刻极简确认对话框——
+            // 把既有面板打开并滚到位即是复用；专注模式下主机栏整列 display:none，
+            // 先退专注让主机栏现身再展开导入（巡检实锤，与 Ctrl+K 入口同流程）
             if (focusMode) applyFocus(false);
             if (!hostbarOpen) toggleHostbar(true);
             setShowImport(true); setShowAddHost(false);
-          }}>导入 ~/.ssh/config</button>
+          }}><IconUpload size={13} /> 从 ~/.ssh/config 导入</button>
           {hosts.some((h) => h.id === "local") && (
             <button className="ghost" onClick={() => {
               const lh = hosts.find((h) => h.id === "local");

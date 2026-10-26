@@ -36,6 +36,8 @@ tinyssh-vault = { workspace = true }
 tinyssh-records = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+# 应用内更新检查（check_update）：与 mcp-server 同一 workspace 依赖（rustls-tls）
+reqwest = { workspace = true }
 anyhow = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"

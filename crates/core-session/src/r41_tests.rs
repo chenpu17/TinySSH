@@ -144,6 +144,7 @@ async fn seed_host(m: &SessionManager, name: &str, address: &str, charset: Chars
                 tags: vec![],
                 charset,
                 shell_integration: None,
+                jump_host_id: None,
             },
         )
         .await
@@ -194,6 +195,7 @@ async fn r41_detail_is_connection_time_snapshot() {
             tags: vec![],
             charset: Charset::Utf8,
             shell_integration: None,
+            jump_host_id: None,
         },
     )
     .await
@@ -434,6 +436,7 @@ async fn r41_identity_delete_checks_host_refs() {
                 tags: vec![],
                 charset: Charset::Utf8,
                 shell_integration: None,
+                jump_host_id: None,
             },
         )
         .await

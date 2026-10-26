@@ -1056,6 +1056,7 @@ async fn gbk_charset_roundtrip_over_ssh() {
                 tags: vec![],
                 charset: Charset::Gbk,
                 shell_integration: Some(true),
+                jump_host_id: None,
             },
         )
         .await

@@ -2620,3 +2620,16 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 .hljs-type, .hljs-built_in, .hljs-builtin-name, .hljs-class .hljs-title, .hljs-title.class_ { color: var(--hl-type); }
 .hljs-comment, .hljs-quote { color: var(--dim); }
 .hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 600; }
+
+/* ── 记录时间线可视化（records-pane 泳道图）── */
+.rec-chart { width: 100%; display: block; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.rec-chart circle { cursor: pointer; }
+.rec-lane-sep { stroke: var(--border); stroke-width: 1; }
+.rec-lane-label { font-size: 10px; fill: var(--dim); }
+.rec-axis-label { font-size: 10px; fill: var(--dim); }
+.rec-dot-flash { animation: recFlash 1.6s ease-out; }
+@keyframes recFlash {
+  0% { stroke: var(--accent); stroke-width: 4; }
+  100% { stroke-width: 0; }
+}
+.rec-row-flash { outline: 2px solid var(--accent); border-radius: 4px; }

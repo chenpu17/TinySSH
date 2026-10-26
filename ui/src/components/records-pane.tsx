@@ -3,7 +3,7 @@
 // 记录本体在核心侧按天加密落盘、写入时已脱敏；这里的「导出」是唯一明文出口，
 // 落点固定在核心 records-export/（不开放任意路径），导出动作留审计。
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ActionRecord, ActionRecordKind, RecordsQuery, RecordsRange } from "../adapter/wire";
 
 /** ⑨ 时间范围档位 → since ISO（「今天」按本机零点；all=null 不过滤）。
@@ -45,6 +45,114 @@ function fmtDur(ms: number | null): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
 }
 
+// ── 时间线可视化（任务时间线轮）：会话泳道 SVG——x=时间、颜色=状态、
+// 实心=Agent/空心=人类、半径=耗时（对数）。纯呈现：直接吃当前筛选的 rows，
+// 点击刻度滚动定位到明细行并闪烁。数据模型无任务 id，「任务视角」由
+// 时间邻近 + 会话泳道承担，不造假分组。 ──
+
+const STATUS_COLOR: Record<string, string> = {
+  ok: "#3a9e5f",
+  error: "#d64545",
+  denied: "#e08a2e",
+  timeout: "#c9a227",
+  cancelled: "#8a8f98",
+  dangerous: "#a01f1f",
+};
+
+const CHART_W = 640;
+const LANE_H = 24;
+const CHART_TOP = 10;
+const CHART_PAD_X = 54;
+
+function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
+  rows: ActionRecord[];
+  sessionNames: Map<string, string>;
+  onPick: (seq: number) => void;
+  flashSeq: number | null;
+}) {
+  const lanes = useMemo(
+    () => [...new Set(rows.map((r) => r.session_id ?? "unknown"))],
+    [rows],
+  );
+  const domain = useMemo(() => {
+    const ts = rows.map((r) => +new Date(r.ts));
+    const t0 = Math.min(...ts);
+    const t1 = Math.max(...ts);
+    // 窗口至少 1 分钟：单条/同刻记录不至于挤成一个点，单点落窗中央
+    const span = Math.max(t1 - t0, 60e3);
+    const lead = (span - (t1 - t0)) / 2;
+    return { t0: t0 - lead, span };
+  }, [rows]);
+  const x = (t: string) =>
+    CHART_PAD_X + ((+new Date(t) - domain.t0) / domain.span) * (CHART_W - CHART_PAD_X * 2);
+  const rOf = (ms: number | null) =>
+    ms == null ? 3.5 : 3.5 + 5.5 * Math.min(1, Math.log10(Math.max(ms, 10)) / 6);
+  const H = CHART_TOP + lanes.length * LANE_H + 8;
+  const laneLabel = (sid: string) =>
+    sid === "unknown" ? "未知会话" : sessionNames.get(sid) ?? sid.slice(0, 8);
+
+  const stats = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of rows) c[r.status] = (c[r.status] ?? 0) + 1;
+    return c;
+  }, [rows]);
+  const statsText = `${rows.length} 条 · ` + Object.entries(stats)
+    .map(([s, n]) => `${n} ${STATUS_LABEL[s]?.replace(/^[^ ]+ /, "") ?? s}`)
+    .join(" · ");
+
+  return (
+    <div style={{ marginTop: 10 }} data-testid="records-chart-wrap">
+      <div className="dim" style={{ fontSize: 11, marginBottom: 4 }} data-testid="records-chart-caption">
+        {statsText}
+      </div>
+      <svg className="rec-chart" data-testid="records-chart" viewBox={`0 0 ${CHART_W} ${H}`}
+        width="100%" height={H} role="img" aria-label="动作时间线泳道图">
+        {lanes.map((sid, i) => (
+          <g key={sid}>
+            {i > 0 && (
+              <line className="rec-lane-sep" x1={0} x2={CHART_W}
+                y1={CHART_TOP + i * LANE_H} y2={CHART_TOP + i * LANE_H} />
+            )}
+            <text className="rec-lane-label" x={6} y={CHART_TOP + i * LANE_H + LANE_H / 2 + 3.5}
+              data-testid="records-lane">{laneLabel(sid)}</text>
+          </g>
+        ))}
+        {rows.map((r) => {
+          const cy = CHART_TOP + lanes.indexOf(r.session_id ?? "unknown") * LANE_H + LANE_H / 2;
+          const agent = r.agent_id != null;
+          const color = STATUS_COLOR[r.status] ?? "#8a8f98";
+          return (
+            <circle key={r.seq} data-testid={`records-dot-${r.seq}`} data-seq={r.seq}
+              data-status={r.status} data-agent={agent ? "1" : "0"}
+              cx={x(r.ts)} cy={cy} r={rOf(r.duration_ms)}
+              fill={agent ? color : "none"} stroke={color} strokeWidth={1.6}
+              className={flashSeq === r.seq ? "rec-dot-flash" : undefined}
+              onClick={() => onPick(r.seq)}>
+              <title>
+                {`${new Date(r.ts).toLocaleString()}\n${KIND_LABEL[r.kind] ?? r.kind} · ${agent ? `Agent ${r.agent_id}` : "人类"}\n${r.summary}\n${STATUS_LABEL[r.status] ?? r.status}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ""}`}
+              </title>
+            </circle>
+          );
+        })}
+        <text className="rec-axis-label" x={CHART_PAD_X} y={H - 1} textAnchor="start">
+          {new Date(domain.t0).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+        </text>
+        <text className="rec-axis-label" x={CHART_W - CHART_PAD_X} y={H - 1} textAnchor="end">
+          {new Date(domain.t0 + domain.span).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+        </text>
+      </svg>
+      <div className="dim" style={{ fontSize: 10, marginTop: 3 }} data-testid="records-chart-legend">
+        {[...new Set(rows.map((r) => r.status))].map((s) => (
+          <span key={s} style={{ marginRight: 10 }}>
+            <span style={{ color: STATUS_COLOR[s] ?? "#8a8f98" }}>●</span> {STATUS_LABEL[s] ?? s}
+          </span>
+        ))}
+        <span>实心 = Agent · 空心 = 人类 · 点大小 = 耗时 · 点击刻度定位明细</span>
+      </div>
+    </div>
+  );
+}
+
 interface RecordsPaneProps {
   /** null = 首拉中；[] = 查询无结果 */
   rows: ActionRecord[] | null;
@@ -72,6 +180,17 @@ export function RecordsPane(props: RecordsPaneProps) {
     hasMore, moreBusy, onLoadMore, retention, onChangeRetention } = props;
   // 摘录展开态（面板本地；按 seq 记，翻筛后自然失效无害）
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  // 时间线点击 → 定位明细行（闪烁约 1.6s 自动退场）
+  const [flashSeq, setFlashSeq] = useState<number | null>(null);
+  useEffect(() => {
+    if (flashSeq == null) return;
+    const t = setTimeout(() => setFlashSeq(null), 1700);
+    return () => clearTimeout(t);
+  }, [flashSeq]);
+  const pickFromChart = (seq: number) => {
+    setFlashSeq(seq);
+    document.getElementById(`records-row-${seq}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
   const toggle = (seq: number) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -154,8 +273,12 @@ export function RecordsPane(props: RecordsPaneProps) {
               当前筛选下暂无记录——Agent 执行命令 / 传输文件后会出现在这里。
             </div>
           ) : (
-            rows.map((r) => (
-              <div key={r.seq} data-testid="records-row" style={{ padding: "6px 0", borderBottom: "1px dashed var(--border)" }}>
+            <>
+              <RecordsChart rows={rows} sessionNames={sessionNames} onPick={pickFromChart} flashSeq={flashSeq} />
+              {rows.map((r) => (
+                <div key={r.seq} id={`records-row-${r.seq}`}
+                  className={flashSeq === r.seq ? "rec-row-flash" : undefined}
+                  data-testid="records-row" style={{ padding: "6px 0", borderBottom: "1px dashed var(--border)" }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
                   <span className="dim mono" style={{ fontSize: 11 }}>
                     {new Date(r.ts).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -191,7 +314,8 @@ export function RecordsPane(props: RecordsPaneProps) {
                   </pre>
                 )}
               </div>
-            ))
+            ))}
+            </>
           )}
         </div>
         {/* ⑥ 「加载更早」：满页才显示（不满页=已到底）；游标 = 已载最旧 ts−1ms（宿主算） */}

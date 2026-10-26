@@ -160,6 +160,16 @@ module.exports = {
       await page.evaluate(() =>
         /^v0\.10\.0$/.test(document.querySelector(".titlebar .tb-left .ver-tag")?.textContent.trim() ?? "")));
 
+    // 发布轮：关于卡常驻「导出诊断包」——demo 镜像返回演示路径说明，toast 带
+    // 「打开所在文件夹」动作；demo 域 check_update 恒 hasUpdate=false，更新行不出现
+    await page.click("[data-testid=diag-export-btn]");
+    await page.waitForSelector(".toast", { timeout: 5000 });
+    const diagToast = await page.textContent(".toast");
+    const diagAct = await page.textContent("[data-testid=toast-action]");
+    ck.check("导出诊断包出 toast 且带「打开所在文件夹」动作",
+      (diagToast ?? "").includes("诊断包已导出") && (diagAct ?? "").includes("打开所在文件夹"), diagToast ?? "");
+    ck.check("演示域不出现新版本更新行", await page.evaluate(() => !document.querySelector("[data-testid=about-update]")));
+
     // 关闭
     await page.click("[data-testid=settings-close]");
     await page.waitForTimeout(500);

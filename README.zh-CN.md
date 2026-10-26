@@ -11,6 +11,18 @@ English docs: [README.md](README.md)。
 
 > 面向经常连接几台到十几台服务器、进行开发、部署和排障的开发者：连接省心、终端顺手、文件操作方便，需要时接入 Agent 协作。
 
+## 与现有工具的取舍
+
+定位快照（v0.10.0，2026-10），按品类概括而非逐产品评测。
+
+| | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
+|---|---|---|---|
+| 许可 | Apache-2.0 开源 | 通常商业闭源 | 通常闭源 |
+| 覆盖面 | SSH + 本地终端 + 文件 + 监控，一个应用 | 以 SSH 为中心 | 本地优先 shell |
+| Agent 能真实操作你的服务器 | 有——审批链、审计、显式控制权交托兜底 | 无 | 常见，但少有逐动作审批与审计 |
+| 扩展方式 | 内置 MCP 服务端（23 工具），自带 agent 即插 | 插件体系 | 有限 |
+| 交付形态 | 单文件便携，凭据加密保管库 | 安装包 | 不等 |
+
 ## 下载
 
 预编译二进制由 [release 工作流](.github/workflows/release.yml)在打 tag 时自动构建发布（未签名）：
@@ -23,12 +35,14 @@ English docs: [README.md](README.md)。
 
 每个 Release 同时附带 `tinyssh` CLI 伴侣工具与 `SHA256SUMS.txt` 校验和。未签名构建首开提示：Windows SmartScreen →「更多信息 → 仍要运行」；macOS 右键 App →「打开」（或 `xattr -cr /Applications/TinySSH.app`）。
 
+Windows 是主要验证平台——全套测试与逐轮真机验证都在它上面跑；macOS 与 Linux 产物由 CI 构建并通过单元测试，但尚未在物理设备上验证，遇到问题请带着平台信息提 issue。
+
 ## 开发
 
 ```bash
 # 前端（demo 模式，纯浏览器可跑）
 cd ui && npm ci && npm run dev           # http://localhost:5183
-npm test                                 # UI 套件（47 spec / 769 断言，headless）
+npm test                                 # UI 套件（48 spec / 789 断言，headless）
 npm run build                            # tsc + vite build
 
 # 桌面应用（tauri dev；Rust 工作区，需 Rust ≥ 1.86）
@@ -47,6 +61,8 @@ Windows 注意：
 
 ## 功能总览
 
+- 跳板机（ProxyJump）：主机表单选「跳板机（可选）」即经既有主机条目转发连接（至多三跳，链式引用）——跳板的凭据/指纹信任/编辑/审计**复用其主机配置，不做内联凭据**；连接时逐跳出示指纹确认与 2FA 输入（卡面标注「第N跳·跳板机」），失败文案点名是哪一跳；被引用的跳板机不可删除；端口转发/SFTP/Agent 全套能力在链路末端照常可用（快速连接与 `~/.ssh/config` 的 `ProxyJump` 指令导入暂不支持，如实阻断）。
+
 - 本地终端一等公民：侧栏「本机」是**内置条目**——置顶常驻（不受搜索/标签筛选影响）、不可编辑、不可删除（UI 无入口，后端 `LocalHostImmutable` 同门兜底，Agent/MCP 通路同样被拦）；**启动即自动打开一个本地终端**（真实模式；关掉后从置顶本机卡 / ⌘K「打开本地终端」/ Ctrl+Shift+T 随时再开），本地与远程会话同权——同一套标签/分屏/命令块/搜索/SFTP（本机文件浏览）能力。默认 shell 在 设置 → 终端「本地 Shell」选择（自动探测 Windows PowerShell/PowerShell 7/Git Bash/cmd/WSL，无 shell 集成的如实标「无命令块」），本机右键可临时用指定 shell 新开。**本机同样可监控**：监控条/监控大屏对本机走核心原生采样（Windows 直读 kernel32/iphlpapi，unix 直读 /proc），与远端 /proc 脚本同一条解析链；纯本机（无 SSH 会话）时端口转发入口整体收起——能力对本地无意义就不摆。
 
 - 终端品质：宽度表按 Unicode 11 判定（CJK/emoji 混排不串格）；设置 → 终端「终端外观」可调字体族（内置 JetBrains Mono 全量字形，亦可选 Nerd Font/Cascadia 等，按系统已装回落）、连字（开启即改用 DOM 渲染器——连字依赖 character joiner，与 GPU 合成互斥）、光标样式/闪烁、滚动历史行数与字距，改动即时生效。粘贴保护除多行确认外，命中危险形态（`rm -rf /`、`mkfs`、`dd` 覆写块设备等——与 Agent 审批同一张内置规则表）同样先确认再发送。
@@ -59,10 +75,20 @@ Windows 注意：
 - 图片协议：内置 `@xterm/addon-image`，终端直接渲染 sixel 与 iTerm2（OSC 1337）内嵌图片（ssh 里 cat 图片、带图工具输出直接可见）；支持 `width`/`height` 按单元格/像素/百分比声明尺寸，存储超限自动淘汰最旧图，恒开无需配置。
 - 会话现场恢复（P3）：受控退出时自动给每个会话拍屏幕快照（C10 检查点：滚回尾 300 行 + 可视区 + 光标 + 终端模式），与凭据同库加密存储；下次启动欢迎页「⏮ 恢复上次现场」一键重建会话并重放画面（公告行标注快照时刻）——恢复走完整建连流程（TOFU/双因素原样把关，不自动拨号）；主机已删的条目如实跳过。强杀/断电来不及快照，如实只覆盖受控退出。
 - 专注模式：F11 进出——标题栏/主机栏/工具栏/状态条全让位并系统全屏；标签条默认常驻（Ctrl+K 面板可切「自动隐藏」：藏为顶部 6px 抓手 + 顶缘浮标，扫上缘唤出）；状态记忆跨启动恢复。
-- 活动栏与内置 Agent 视图（接真模型）：左缘图标栏切换「连接 / Agent / 编排」三个侧栏视图（互斥，全关 = 纯终端），栏底另设常驻设置图标（不随侧栏互斥隐藏，直开设置面板）；Agent 对话按会话隔离（跟随激活标签页），markdown 流式渲染（原始 HTML 一律转义、链接防钓鱼、代码块高亮 + 复制 + 长折叠；mermaid 图与 KaTeX 公式占位 + 懒加载渲染，独立 chunk 不进主包，加载/语法失败诚实保持源码原文）、推理模型思考块可折叠、工具审批卡（批准/拒绝内联在对话里，决策走既有审批链）。设置 → Agent 配置「模型服务」（OpenAI 兼容覆盖 GLM/DeepSeek/Qwen/Kimi 或 Anthropic）后自动从演练外壳切真模型：内核是 TinyAgent（[TinyAgent](https://github.com/chenpu17/TinyAgent)，git 依赖钉 rev），工具为 exec / read_blocks / read_screen / wait_output + upload / download / transfer_status + send_keys 八件（文件传输缺省冲突即失败并结构化报目标 stat，确认后 skip/overwrite 重试；send_keys 驱动交互式程序，会话级授权一次审批；**传输必审**、危险键序与危险命令同一引擎），经 SessionManager 同一 agent actor 执行——审批、审计、夺权语义全自动继承，内嵌 agent 无任何绕过路径；api_key 加密入库（vault 密封 KV，永不回显/明文落盘）。控制权显式交托：会话在人类手里时发送任务先弹「委托并发送」确认（工具栏「接管」随时收回，无需配置 MCP 协作）；模型服务配置即解锁委托/接管入口。Agent 视图头部「自主」开关（两击确认）：免逐条审批的自主运行——危险名单仍硬拦、传输仍逐条、全量记录（审计可辨自主动作）、急停条随时撤回。**跨主机编排（Fleet）**：第三视图的编排者不直接操作任何机器——用 fleet_sessions/dispatch_task/wait_task 把自包含任务并行派发给各会话的执行 agent 并汇总结果，目标会话的审批/危险扫描/控制权独立生效、拒绝如实上报（组合派发不覆盖逐机约束）。会话串行对话、可停止、跨会话独立上下文；切换模型服务后对话记忆重置（如实提示）。右缘图标栏常驻任务面板五视图入口（状态栏/工具栏既有入口保留）。
+- 活动栏与内置 Agent 视图（接真模型）：左缘图标栏切换「连接 / Agent / 编排」三个侧栏视图（互斥，全关 = 纯终端），栏底另设常驻设置图标（不随侧栏互斥隐藏，直开设置面板）；Agent 对话按会话隔离（跟随激活标签页），markdown 流式渲染（原始 HTML 一律转义、链接防钓鱼、代码块高亮 + 复制 + 长折叠；mermaid 图与 KaTeX 公式占位 + 懒加载渲染，独立 chunk 不进主包，加载/语法失败诚实保持源码原文）、推理模型思考块可折叠、工具审批卡（批准/拒绝内联在对话里，决策走既有审批链）。设置 → Agent 配置「模型服务」（OpenAI 兼容覆盖 GLM/DeepSeek/Qwen/Kimi 或 Anthropic）后自动从演练外壳切真模型：内核是 TinyAgent（[TinyAgent](https://github.com/chenpu17/TinyAgent)，git 依赖钉 rev），工具为 exec / read_blocks / read_screen / wait_output + upload / download / transfer_status + send_keys 八件（文件传输缺省冲突即失败并结构化报目标 stat，确认后 skip/overwrite 重试；send_keys 驱动交互式程序，会话级授权一次审批；**传输必审**、危险键序与危险命令同一引擎）；提示词与技能可按组织约定定制（设置 → Agent「提示词与技能」：附加提示词给会话助手与 Fleet 编排者各一段——只追加、不替代内置安全铁律，保存后下一条消息即生效；技能库按名维护操作手册，agent 用 load_skill 工具现场加载，改技能无需重开会话），经 SessionManager 同一 agent actor 执行——审批、审计、夺权语义全自动继承，内嵌 agent 无任何绕过路径；api_key 加密入库（vault 密封 KV，永不回显/明文落盘）。控制权显式交托：会话在人类手里时发送任务先弹「委托并发送」确认（工具栏「接管」随时收回，无需配置 MCP 协作）；模型服务配置即解锁委托/接管入口。Agent 视图头部「自主」开关（两击确认）：免逐条审批的自主运行——危险名单仍硬拦、传输仍逐条、全量记录（审计可辨自主动作）、急停条随时撤回。**跨主机编排（Fleet）**：第三视图的编排者不直接操作任何机器——用 fleet_sessions/dispatch_task/wait_task 把自包含任务并行派发给各会话的执行 agent 并汇总结果，目标会话的审批/危险扫描/控制权独立生效、拒绝如实上报（组合派发不覆盖逐机约束）。会话串行对话、可停止、跨会话独立上下文；切换模型服务后对话记忆重置（如实提示）。右缘图标栏常驻任务面板五视图入口（状态栏/工具栏既有入口保留）。
 - 资源监控大屏（活动栏第四视图，整幅覆盖层）：多服务器资源卡——每台**服务器**一张卡（同机多连接去重合一，×N 徽标）CPU/内存环形仪表 + 磁盘/网络折线 + 近 30 分钟历史（内联 SVG，随主题），支持 Ascend 服务器 NPU 监控（npu-smi 每芯片健康/功耗/温度/利用率/HBM；无 npu-smi 自动隐藏 NPU 区，「有工具但表头未识别」显式呈现便于真机校准）。**采集开关 opt-in**：通用监控与 NPU 监控两枚独立开关，默认全关零后台开销；打开后后台持续采样（每 3 秒，关大屏不中断），重开大屏历史直接在，开关态持久化。数据通路沿底部监控条先例：人类专属直连 Fresh 通道采样、不经审批/审计/终端回放；连续采样失败卡片置灰可重试，点击卡片头切换会话。底部监控条（活动会话资源条）继续独立工作，两者暂停互不影响。
 - 新建/编辑主机与快速连接为居中大对话框（Ctrl+T / ⌘K）；侧栏不再塞表单。
 - 传输队列：底部抽屉（状态条「传输」）管理上传/下载任务——进行中可取消，失败/取消/中断可重试（新任务重新校验连接/源/冲突），结果未知可「重新核实」；下载完成卡「定位」（资源管理器中显示文件）与「打开」（系统默认程序打开文件本身，无关联扩展名由系统「打开方式」兜底）。
+
+## 界面速览
+
+以下截图全部来自内置浏览器演示模式——假会话、如实标注，UI 与真实应用一致。
+
+| 终端 | Agent 内联审批卡 |
+|---|---|
+| ![终端](docs/img/readme-terminal.png) | ![Agent](docs/img/readme-agent.png) |
+| **多服务器监控大屏** | **命令块** |
+| ![监控](docs/img/readme-monitor.png) | ![命令块](docs/img/readme-blocks.png) |
 
 ## 文档
 
@@ -86,7 +112,7 @@ Windows 注意：
 
 ## 状态
 
-v0.10.0。主平台（Windows）全绿：Rust 工作区测试 + 47 spec / 769 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+v0.10.0。主平台（Windows）全绿：Rust 工作区测试 + 48 spec / 789 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
 
 ## 技术栈（概览）
 
@@ -99,7 +125,7 @@ Tauri v2 · Rust（tokio / russh ≥0.61 / portable-pty / alacritty_terminal / t
 把该 URL 扔给任何能取网页的 Agent 即可自助对接。能力面：23 个工具（会话/exec/传输/转发/审计/执行记录）、
 资源（`tinyssh://sessions` 等现场状态，可 `resources/subscribe` 收变化推送）与引导提示（`prompts/get`）。
 Agent 侧所有动作（命令/传输/转发，含被拒的）进**结构化执行记录**：加密落盘、输出摘录脱敏、
-保留 30 天（可在 设置 → 记录审计 调整），Agent 可 `query_records` 自查，人类在 设置 → 记录审计 时间线回看（种类/来源/会话/时间筛选、加载更早），
+保留 30 天（可在 设置 → 记录审计 调整），Agent 可 `query_records` 自查，人类在 设置 → 记录审计 时间线回看——**会话泳道图 + 明细双层**：图上 x=时间、颜色=终态、实心=Agent/空心=人类、点大小=耗时，点击刻度定位明细行；下方列表带种类/来源/会话/时间筛选与加载更早，
 并可一键导出明文 JSONL（落 `records-export/`，导出留审计）。
 接入步骤：设置 → Agent 接入 →
 `tinyssh agent create <id> <名称>` 签发 Token（仅展示一次）→ Agent 侧按文档配置 HTTP 直连

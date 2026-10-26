@@ -229,6 +229,7 @@ fn mk_handle(center: Arc<ApprovalCenter>, up: TxPlan, down: TxPlan) -> Arc<Sessi
         fingerprint: None,
         charset: Charset::Utf8,
         shell_integration: None,
+        jump_host_id: None,
     };
     let screen = term_core::Screen::new(term_core::ScreenConfig {
         cols: 80,
