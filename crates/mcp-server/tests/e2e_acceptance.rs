@@ -47,6 +47,9 @@ fn auto_accept_host_keys(m: Arc<core_session::SessionManager>) {
 }
 
 async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
+    // 同 protocol.rs：双 provider 统一（tauri 栈带入 aws-lc-rs）下 reqwest 0.13
+    // 不再自动装 provider，rmcp 客户端建连接前必须显式安装（重复安装忽略）。
+    let _ = rustls::crypto::ring::default_provider().install_default();
     // 主密钥走 env（vault 解析序 env > OS 钥匙串）：避免测试二进制重编译后
     // 签名变化触发 macOS 钥匙串授权弹窗并阻塞测试进程。
     if std::env::var("TINYSSH_MASTER_KEY").is_err() {
@@ -705,12 +708,13 @@ async fn journey4_reconnect_with_dirty_typing_state() {
     }
     assert!(reconfirmed, "自动重连后未进入 Reconfirming");
 
-    // ① 屏上不得残留注入片段明文
+    // ① 屏上不得残留注入片段明文（V2 起含探针行：标记 __T= 同批被尾清屏抹掉）
     let snap = m.read_screen(&human, sid.clone()).await.unwrap();
     assert!(
         !snap.text.contains("PROMPT_COMMAND")
             && !snap.text.contains("__t_prompt")
-            && !snap.text.contains("printf '\\033[2J"),
+            && !snap.text.contains("printf '\\033[2J")
+            && !snap.text.contains("__T="),
         "重连后注入片段明文泄漏进屏: {:?}",
         snap.text
     );
@@ -773,7 +777,9 @@ async fn create_session_screen_is_clean() {
         .unwrap();
     let snap = m.read_screen(&human, sid).await.unwrap();
     assert!(
-        !snap.text.contains("__t_prompt") && !snap.text.contains("PROMPT_COMMAND"),
+        !snap.text.contains("__t_prompt")
+            && !snap.text.contains("PROMPT_COMMAND")
+            && !snap.text.contains("__T="),
         "read_screen 泄漏集成注入回显:\n{}",
         snap.text
     );

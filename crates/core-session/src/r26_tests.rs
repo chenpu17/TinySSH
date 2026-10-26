@@ -497,3 +497,132 @@ async fn stale_pump_exits_when_generation_moves() {
     h.pump_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     *h.state.lock().await = SessionState::Closed;
 }
+
+/// V2（snippets 盘点轮立案）探针接线测试①：远端 fish（探针标记 __T=||ver）
+/// → 判型任务必须在窗口内补写 fish 片段；且首次注入文本含探针行 + sh 片段。
+struct FishProbeChannel {
+    tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    writes: std::sync::Mutex<Vec<Vec<u8>>>,
+    marker_sent: std::sync::atomic::AtomicBool,
+    marker: String,
+}
+impl FishProbeChannel {
+    fn new(marker: &str) -> Arc<Self> {
+        let (tx, _) = tokio::sync::broadcast::channel(64);
+        Arc::new(Self {
+            tx,
+            writes: std::sync::Mutex::new(Vec::new()),
+            marker_sent: std::sync::atomic::AtomicBool::new(false),
+            marker: marker.into(),
+        })
+    }
+    fn all_writes(&self) -> String {
+        String::from_utf8_lossy(&self.writes.lock().unwrap().concat()).to_string()
+    }
+}
+#[async_trait::async_trait]
+impl ChannelHandle for FishProbeChannel {
+    async fn write(&self, data: &[u8]) -> Result<()> {
+        self.writes.lock().unwrap().push(data.to_vec());
+        // 模拟远端 shell：注入批次回显后输出探针标记（一次性）。真实 PTY 流里
+        // marker 以 CRLF 收尾、紧随下一行输出（审查轮：干净假流会把判型缺陷遮绿）
+        if !self
+            .marker_sent
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let _ = self.tx.send(format!("{}\r\n", self.marker).into_bytes());
+        }
+        Ok(())
+    }
+    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+    async fn exec_fresh(
+        &self,
+        _cmd: &str,
+        _opts: &ExecOpts,
+        _deadline: std::time::Instant,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+    ) -> Result<FreshOutcome> {
+        Err(Error::SessionClosed)
+    }
+    async fn signal(&self, _sig: TransportSignal) -> Result<()> {
+        Ok(())
+    }
+    async fn force_close(&self) -> Result<()> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        self.tx.subscribe()
+    }
+    async fn is_alive(&self) -> bool {
+        true
+    }
+    async fn reconnect(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn upload(
+        &self,
+        _local: &std::path::Path,
+        _remote: &str,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn download(
+        &self,
+        _remote: &str,
+        _local: &std::path::Path,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> {
+        Err(Error::SessionClosed)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fish_host_gets_fish_snippet_topup() {
+    let m = mgr();
+    let ch = FishProbeChannel::new("__T=||3.7.1");
+    let h = hand_install(&m, "ssh", ch.clone());
+    assert!(h.inject_integration().await);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while !ch.all_writes().contains("fish_postexec") {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "fish 补写未在判型窗口内到达"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let all = ch.all_writes();
+    assert!(all.contains("__T="), "注入文本缺探针行");
+    assert!(all.contains("PROMPT_COMMAND"), "注入文本缺 sh 片段");
+    assert!(
+        all.contains("commandline -f repaint"),
+        "fish 补写缺 repaint 尾"
+    );
+}
+
+/// V2 探针接线测试②：bash 主机（标记 __T=bashver||）判型非 Fish——不补写，
+/// 注入批次之后 writes 停在 1（探针窗口走完也保持沉默）。
+#[tokio::test(flavor = "multi_thread")]
+async fn bash_host_no_fish_topup() {
+    let m = mgr();
+    let ch = FishProbeChannel::new("__T=5.2.21(1)-release||");
+    let h = hand_install(&m, "ssh", ch.clone());
+    assert!(h.inject_integration().await);
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    let all = ch.all_writes();
+    assert!(all.contains("__T=") && all.contains("PROMPT_COMMAND"));
+    assert!(
+        !all.contains("fish_postexec"),
+        "bash 主机不得补写 fish 片段"
+    );
+}

@@ -2030,6 +2030,85 @@ fi"#;
     format!("{bash}\n{zsh}\nprintf '\\033[2J\\033[H'\n")
 }
 
+/// V2（snippets 盘点轮立案）shell 家族探针：polyglot printf——sh/zsh/fish 都能
+/// 解析同一行（未定义变量在双引号内展开为空；fish 的 `$FISH_VERSION` 恒在）。
+/// 随注入文本首发、先于钩子安装执行（不产生命令块），输出与片段回显一起被
+/// 尾清屏抹掉。tcsh 对未定义变量报错 → 输出无有效标记 → 如实回落 sh-only。
+/// 标记输出必须自带换行：交互 shell 的下一个输出（下一条命令的回显/解析报错）
+/// 会直接粘在 printf 输出之后，无换行则字段白名单判型必然失败（审查轮 P0）。
+pub const SSH_SHELL_PROBE: &str =
+    r#"printf '__T=%s|%s|%s\n' "$BASH_VERSION" "$ZSH_VERSION" "$FISH_VERSION""#;
+
+/// fish 登录 shell 集成片段（探针判型 Fish 后补写）。事件钩子制（fish_prompt /
+/// fish_preexec / fish_postexec），不覆盖用户自定义 prompt 函数；字段对应 sh 版：
+/// preexec→C、postexec→D、prompt→OSC7+A+B。尾清屏抹补写回显，末行
+/// `commandline -f repaint` 在清屏后重画提示符并即刻触发 fish_prompt（首个标记）。
+pub fn ssh_fish_integration_snippet() -> String {
+    r#"function __t_fish_preexec --on-event fish_preexec
+  printf '\033]133;C\007'
+end
+function __t_fish_postexec --on-event fish_postexec
+  printf '\033]133;D;%s\007' $status
+end
+function __t_fish_prompt --on-event fish_prompt
+  printf '\033]7;file://%s%s\007' $hostname $PWD
+  printf '\033]133;A\007'
+  printf '\033]133;B\007'
+end
+printf '\033[2J\033[H'
+commandline -f repaint"#
+        .to_string()
+}
+
+/// 远端登录 shell 家族（探针判型结果）。`Sh` = sh 族或未知（sh 片段的 if 块
+/// 自守兜底；tcsh 等不兼容 shell 维持 V1 行为：报错被尾清屏抹掉、如实 Unavailable）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteShellFamily {
+    Sh,
+    Bash,
+    Zsh,
+    Fish,
+}
+
+/// 探针输出判型：找 `__T=` 标记取三个 `|` 分隔字段。注入行的**回显**含 `%s`/
+/// 引号等，过不了字段字符白名单（版本号形态 `[0-9A-Za-z-.+_()]`），不会误判；
+/// 多次出现（回显+真输出）取首个有效者。
+pub fn classify_shell_probe(out: &str) -> RemoteShellFamily {
+    let ok = |s: &str| {
+        !s.contains('%')
+            && s.bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-.+_()".contains(&c))
+    };
+    let mut from = 0;
+    while let Some(p) = out[from..].find("__T=") {
+        let start = from + p + 4;
+        let rest = &out[start..];
+        // 80 字节窗口须落在 char 边界（输入来自 from_utf8_lossy，多字节 banner
+        // 常见；截半切片会 panic 在探针任务里，静默丢判型——审查轮 P1）
+        let mut end = rest.find(['\r', '\n']).unwrap_or(rest.len()).min(80);
+        while end > 0 && !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut it = rest[..end].splitn(3, '|');
+        let b = it.next().unwrap_or("");
+        let z = it.next().unwrap_or("");
+        let f = it.next().unwrap_or("");
+        if ok(b) && ok(z) && ok(f) {
+            return if !b.is_empty() {
+                RemoteShellFamily::Bash
+            } else if !z.is_empty() {
+                RemoteShellFamily::Zsh
+            } else if !f.is_empty() {
+                RemoteShellFamily::Fish
+            } else {
+                RemoteShellFamily::Sh
+            };
+        }
+        from = start;
+    }
+    RemoteShellFamily::Sh
+}
+
 // ---------------------------------------------------------------------------
 // C9（R43）：协作启用生命周期的 admission 门与状态机
 // ---------------------------------------------------------------------------

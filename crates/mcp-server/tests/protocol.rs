@@ -21,6 +21,11 @@ fn test_master_key() {
 }
 
 async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, u16, String) {
+    // rmcp 3 的 reqwest 0.13 传输要求进程级 rustls crypto provider。单 crate 跑
+    // 时 rustls 只统一到 ring 一个 provider（可按 crate 特征自动安装）；workspace
+    // 全量跑时 tauri/updater 栈把 aws-lc-rs 一并统一进来，双 provider 下自动安装
+    // 失效，测试线程建客户端即 panic——这里显式抢先安装（重复安装静默忽略）。
+    let _ = rustls::crypto::ring::default_provider().install_default();
     test_master_key();
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("t.db");

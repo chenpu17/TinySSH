@@ -552,8 +552,12 @@ impl SessionHandle {
         // 与 cmd_echo 同一「已知 outgoing 文本」门控哲学：只删捕获头部与注入
         // 片段行逐字一致（或行首延续提示符）的行。
         if self.host.shell_integration == Some(true) && text.contains('\n') {
+            // 门控清单 = sh 片段 + 探针行 + fish 补写片段（三者都可能以注入回显
+            // 形态落进首命令捕获头；按行 trim 后逐字比对剥离）
             let snippet_lines: Vec<String> = crate::ssh_integration_snippet()
                 .lines()
+                .chain(crate::SSH_SHELL_PROBE.lines())
+                .chain(crate::ssh_fish_integration_snippet().lines())
                 .map(|l| l.trim().to_string())
                 .filter(|l| !l.is_empty())
                 .collect();
@@ -564,7 +568,9 @@ impl SessionHandle {
                 };
                 let mut line = trimmed[..line_end].trim_end().to_string();
                 if let Some(stripped) = line.strip_prefix("> ") {
-                    line = stripped.to_string();
+                    // 延续提示符后保留着片段源码缩进（fish 函数体全带两空格），
+                    // 与 trim 过的门控行比对前须再去前导空白（审查轮 P2）
+                    line = stripped.trim_start().to_string();
                 }
                 if !line.is_empty() && snippet_lines.iter().any(|s| *s == line) {
                     text = trimmed[line_end..].to_string();
@@ -1446,13 +1452,21 @@ impl SessionHandle {
 
     /// C3（R24）三注入点收敛：按 host_setting 注入集成片段。返回是否注入
     /// （host_setting=false → Disabled 不注入不等 OSC——DC3/P3；B12 重连同口径）。
-    pub async fn inject_integration(&self) -> bool {
+    /// V2：注入文本前置探针行（同批执行在钩子安装前，不产生命令块），并派
+    /// 旁路判型任务——fish 登录主机补写 fish 片段（bash/zsh/sh 族零额外动作）。
+    pub async fn inject_integration(self: &Arc<Self>) -> bool {
         if self.host.shell_integration != Some(true) || self.kind != "ssh" {
             *self.integration.lock().unwrap() = session_api::IntegrationState::Disabled;
             return false;
         }
-        let snippet = crate::ssh_integration_snippet();
-        let mut text = snippet.to_string();
+        // 先订阅再写：探针输出不得落入无订阅者窗口（与泵同款纪律）
+        let probe_rx = self.channel.subscribe_output();
+        let snippet = format!(
+            "{}\n{}\n",
+            crate::SSH_SHELL_PROBE,
+            crate::ssh_integration_snippet()
+        );
+        let mut text = snippet;
         text.push('\n');
         {
             let mut s = self.screen.lock().await;
@@ -1463,7 +1477,59 @@ impl SessionHandle {
             .write(&crate::charset::encode(self.host.charset, &text))
             .await;
         *self.integration.lock().unwrap() = session_api::IntegrationState::Pending;
+        self.spawn_shell_family_probe(probe_rx);
         true
+    }
+
+    /// V2 旁路判型：监听注入批次输出 ≤3s，探针标记判出 Fish 才补写 fish 片段。
+    /// 判型失败/超时/sh 族 → 静默退出（sh 片段已就位，行为与 V1 完全一致）。
+    /// 用户刚敲过键（<2s）则放弃补写：避免补写文本插进用户正在输入的命令行。
+    fn spawn_shell_family_probe(self: &Arc<Self>, mut rx: broadcast::Receiver<Vec<u8>>) {
+        let h = self.clone();
+        tokio::spawn(async move {
+            let mut buf: Vec<u8> = Vec::new();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                tokio::select! {
+                    chunk = rx.recv() => match chunk {
+                        Ok(b) => {
+                            buf.extend_from_slice(&b);
+                            if buf.len() > 64 * 1024 {
+                                buf.drain(..buf.len() - 64 * 1024);
+                            }
+                            if crate::classify_shell_probe(&String::from_utf8_lossy(&buf))
+                                != crate::RemoteShellFamily::Sh
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => return, // 通道关闭：会话退场，不补写
+                    },
+                    _ = tokio::time::sleep_until(deadline) => break,
+                }
+            }
+            if crate::classify_shell_probe(&String::from_utf8_lossy(&buf))
+                != crate::RemoteShellFamily::Fish
+            {
+                return;
+            }
+            // 刚敲过键不放补写文本（防插队进用户命令行）；本次放弃，重连重探。
+            if let Some(t) = *h.last_human_input.lock().await {
+                if t.elapsed() < Duration::from_secs(2) {
+                    return;
+                }
+            }
+            let text = format!("{}\n", crate::ssh_fish_integration_snippet());
+            {
+                let mut s = h.screen.lock().await;
+                s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+            }
+            let _ = h
+                .channel
+                .write(&crate::charset::encode(h.host.charset, &text))
+                .await;
+        });
     }
 
     /// C3：后台等集成标记（≤10s）→ Ready/Unavailable + 事件（DC3.5 就绪独立表达，
