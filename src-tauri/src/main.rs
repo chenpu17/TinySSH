@@ -1014,6 +1014,98 @@ async fn check_update(app: tauri::AppHandle) -> CmdResult<UpdateCheck> {
     Ok(fetch_latest_release(&current).await)
 }
 
+// ---- 自动更新（tauri-plugin-updater，V1 仅 macOS app.tar.gz 通道）----
+// Windows 便携单文件 exe 不是插件支持的安装形态（仅 NSIS/MSI），Linux 无
+// AppImage 产物——这两条路 V1 如实不支持：updater_info.supported 只在
+// macOS+已配公钥时为 true，UI 据此显隐按钮；其余平台走 check_update + 发布页。
+// 公钥编译期注入：CI 在 secrets 里有 TAURI_UPDATER_PUBKEY 时导出给 rustc
+//（option_env!），本地构建/未配密钥时为占位符——占位符下 check/install 会
+// 在验签时如实报错，但注册与启动零风险（插件注册期不校验公钥）。
+
+const UPDATER_ENDPOINT: &str =
+    "https://github.com/chenpu17/TinySSH/releases/latest/download/latest.json";
+const UPDATER_PUBKEY_PLACEHOLDER: &str = "UNCONFIGURED_UPDATER_PUBKEY";
+
+/// build.rs 恒注入（未配密钥=空串）；空串按占位符处理（updater_info.supported=false）。
+fn updater_pubkey() -> &'static str {
+    let k: &'static str = env!("TAURI_UPDATER_PUBKEY");
+    if k.is_empty() {
+        UPDATER_PUBKEY_PLACEHOLDER
+    } else {
+        k
+    }
+}
+
+/// 自动更新能力面（UI 显隐依据）。
+#[derive(serde::Serialize)]
+struct UpdaterInfo {
+    /// 编译期带上了真公钥（CI 配了签名 secrets 的构建）。
+    configured: bool,
+    /// 当前构建形态可自动更新（V1：macOS）。
+    supported: bool,
+    /// 操作系统（win32/darwin/linux——前端文案与边界说明用）。
+    platform: String,
+}
+
+#[tauri::command]
+fn updater_info() -> UpdaterInfo {
+    let configured = updater_pubkey() != UPDATER_PUBKEY_PLACEHOLDER;
+    UpdaterInfo {
+        configured,
+        supported: configured && cfg!(target_os = "macos"),
+        platform: std::env::consts::OS.into(),
+    }
+}
+
+/// 检查并安装更新（macOS：下载 app.tar.gz → 验签安装 → 重启）。下载进度经
+/// `updater-progress` 事件透传（downloaded/total 字节）；已是最新返回 Ok(false)。
+#[tauri::command]
+async fn updater_install(app: tauri::AppHandle) -> CmdResult<bool> {
+    use tauri_plugin_updater::UpdaterExt;
+    if !updater_pubkey_configured_guard() {
+        return Err(WireError::simple(
+            "updater_unavailable",
+            "本构建未配置自动更新签名（占位公钥）——请从发布页手动下载",
+        ));
+    }
+    let update = app
+        .updater_builder()
+        .endpoints(vec![UPDATER_ENDPOINT.parse().map_err(|e| {
+            WireError::simple("updater_unavailable", format!("端点无效：{e}"))
+        })?])
+        .map_err(|e| WireError::simple("updater_unavailable", format!("端点无效：{e}")))?
+        .build()
+        .map_err(|e| WireError::simple("updater_unavailable", format!("更新器不可用：{e}")))?
+        .check()
+        .await
+        .map_err(|e| WireError::simple("updater_failed", format!("更新检查失败：{e}")))?;
+    let Some(mut u) = update else {
+        return Ok(false);
+    };
+    let emitter = app.clone();
+    u.download_and_install(
+        move |chunk, total| {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::sync::OnceLock;
+            static ACC: OnceLock<AtomicU64> = OnceLock::new();
+            let acc = ACC.get_or_init(|| AtomicU64::new(0));
+            let done = acc.fetch_add(chunk as u64, Ordering::SeqCst) + chunk as u64;
+            let _ = emitter.emit(
+                "updater-progress",
+                serde_json::json!({"downloaded": done, "total": total}),
+            );
+        },
+        || {},
+    )
+    .await
+    .map_err(|e| WireError::simple("updater_failed", format!("下载/安装失败：{e}")))?;
+    app.restart(); // -> ! ：安装成功即重启，不返回
+}
+
+fn updater_pubkey_configured_guard() -> bool {
+    updater_pubkey() != UPDATER_PUBKEY_PLACEHOLDER
+}
+
 // ---- 诊断包导出（export_diagnostics）：供用户报障的脱敏文本包 ----
 
 /// 进程起点（运行时长用）：main() 装配最前 set 一次；get_or_init 兜底
@@ -2550,6 +2642,13 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        // 自动更新（V1 仅 macOS 通道）：注册期不校验公钥，占位符构建启动零风险；
+        // check/install 时的验签失败在 updater_install 里如实回报
+        .plugin(
+            tauri_plugin_updater::Builder::new()
+                .pubkey(updater_pubkey())
+                .build(),
+        )
         .manage(AppState { api: api.clone(), mcp_endpoint: mcp_endpoint_handle, agent_host })
         .manage(terminal_input.clone())
         .manage(SelfMeter::default())
@@ -3043,7 +3142,7 @@ fn main() {
             list_host_metadata, list_recent_hosts,
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_npu_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers, read_restore,
             get_build_time,
-            check_update, export_diagnostics,
+            check_update, export_diagnostics, updater_info, updater_install,
             agent_model_get, agent_model_set, agent_send, agent_cancel, agent_history,
             shell_capability,
             list_local_shells,

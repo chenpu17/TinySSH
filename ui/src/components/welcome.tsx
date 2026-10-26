@@ -2,6 +2,7 @@
 // 重连上次会话、最近连接。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
 import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
 import { IconPlus, IconTerminal, IconUpload } from "../icons";
+import { t } from "../i18n";
 
 interface WelcomeProps {
   sid: string | null;
@@ -38,17 +39,17 @@ export function Welcome({
     <div className="welcome">
       <div className="welcome-box">
         <div className="welcome-mark"><IconTerminal size={26} /></div>
-        <div className="welcome-title">TinySSH<span className="welcome-sub">人机协同 SSH 工作台</span></div>
+        <div className="welcome-title">TinySSH<span className="welcome-sub">{t("人机协同 SSH 工作台")}</span></div>
         <div className="welcome-steps">
-          <div><span className="ws-k">连接</span>主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接</div>
-          <div><span className="ws-k">操作</span>点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴</div>
-          <div><span className="ws-k">多会话</span>一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留</div>
-          <div><span className="ws-k">传输</span>拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标</div>
-          <div><span className="ws-k">专注</span>F11 进入全屏专注：界面全让位给终端，标签条常驻顶部（Ctrl+K 面板可切自动隐藏），再按 F11 退出</div>
+          <div><span className="ws-k">{t("连接")}</span>{t("主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接")}</div>
+          <div><span className="ws-k">{t("操作")}</span>{t("点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴")}</div>
+          <div><span className="ws-k">{t("多会话")}</span>{t("一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留")}</div>
+          <div><span className="ws-k">{t("传输")}</span>{t("拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标")}</div>
+          <div><span className="ws-k">{t("专注")}</span>{t("F11 进入全屏专注：界面全让位给终端，标签条常驻顶部（Ctrl+K 面板可切自动隐藏），再按 F11 退出")}</div>
         </div>
         <div className="welcome-actions">
-          <button onClick={() => { setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> 添加主机</button>
-          <button className="ghost" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={13} /> 快速连接</button>
+          <button onClick={() => { setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> {t("添加主机")}</button>
+          <button className="ghost" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={13} /> {t("快速连接")}</button>
           <button className="ghost" data-testid="welcome-import-btn" onClick={() => {
             // 复用取舍：导入 UI 本就完整住在主机栏（hostbar.tsx 挂 SshConfigImportPanel，
             // 预览→分级勾选→导入→行内结果一条龙），欢迎页不重刻极简确认对话框——
@@ -57,12 +58,12 @@ export function Welcome({
             if (focusMode) applyFocus(false);
             if (!hostbarOpen) toggleHostbar(true);
             setShowImport(true); setShowAddHost(false);
-          }}><IconUpload size={13} /> 从 ~/.ssh/config 导入</button>
+          }}><IconUpload size={13} /> {t("从 ~/.ssh/config 导入")}</button>
           {hosts.some((h) => h.id === "local") && (
             <button className="ghost" onClick={() => {
               const lh = hosts.find((h) => h.id === "local");
               if (lh) void createSession(lh);
-            }}><IconTerminal size={13} /> 打开本地终端</button>
+            }}><IconTerminal size={13} /> {t("打开本地终端")}</button>
           )}
         </div>
         {/* 十五轮：重连上次会话——上次退出/刷新时仍打开的主机（去重有序），
@@ -71,14 +72,14 @@ export function Welcome({
           const rowsH = lastSessionHosts.flatMap((hid) => hosts.find((h) => h.id === hid) ?? []);
           if (rowsH.length === 0) return null;
           return (
-            <div className="welcome-recents" aria-label="上次会话">
-              <div className="wr-title">上次会话</div>
+            <div className="welcome-recents" aria-label={t("上次会话")}>
+              <div className="wr-title">{t("上次会话")}</div>
               <button className="wr-row" data-testid="reconnect-last"
-                title={`重连 ${rowsH.map((h) => h.name).join("、")}`}
+                title={t("重连 {0}", rowsH.map((h) => h.name).join("、"))}
                 onClick={() => { for (const h of rowsH) void createSession(h); }}>
-                <span className="wr-name">⟳ 重连上次会话（{rowsH.length}）</span>
+                <span className="wr-name">{t("⟳ 重连上次会话（{0}）", rowsH.length)}</span>
                 <span className="wr-addr">{rowsH.map((h) => h.name).join("、")}</span>
-                <span className="wr-go">连接</span>
+                <span className="wr-go">{t("连接")}</span>
               </button>
             </div>
           );
@@ -94,14 +95,14 @@ export function Welcome({
           let when = rows[0].e.saved_at;
           try { when = new Date(rows[0].e.saved_at).toLocaleString("zh-CN"); } catch { /* 原样 */ }
           return (
-            <div className="welcome-recents" aria-label="恢复现场">
-              <div className="wr-title">上次现场</div>
+            <div className="welcome-recents" aria-label={t("恢复现场")}>
+              <div className="wr-title">{t("上次现场")}</div>
               <button className="wr-row" data-testid="restore-scene"
-                title={`快照 ${when}；${restoreEntries.length > rows.length ? `另有 ${restoreEntries.length - rows.length} 个主机已删的条目将跳过。` : ""}恢复后终端回到快照画面（滚回保留尾部 300 行）`}
+                title={`${t("快照 {0}", when)}；${restoreEntries.length > rows.length ? t("另有 {0} 个主机已删的条目将跳过。", restoreEntries.length - rows.length) : ""}${t("恢复后终端回到快照画面（滚回保留尾部 300 行）")}`}
                 onClick={() => onRestoreScene(restoreEntries)}>
-                <span className="wr-name">⏮ 恢复上次现场（{rows.length}）</span>
-                <span className="wr-addr">{names} · 快照 {when}</span>
-                <span className="wr-go">恢复</span>
+                <span className="wr-name">{t("⏮ 恢复上次现场（{0}）", rows.length)}</span>
+                <span className="wr-addr">{names} · {t("快照 {0}", when)}</span>
+                <span className="wr-go">{t("恢复")}</span>
               </button>
             </div>
           );
@@ -119,27 +120,27 @@ export function Welcome({
             if (!rh) return null;
             return (
               <button key={r.host_id} className="wr-row"
-                title={`连接 ${r.host_name}（${rh.username}@${rh.address}）；右键更多操作`}
+                title={t("连接 {0}（{1}）；右键更多操作", r.host_name, `${rh.username}@${rh.address}`)}
                 onClick={() => void createSession(rh)}
                 onContextMenu={(e) => { e.preventDefault(); setRecentMenu({ x: e.clientX, y: e.clientY, hostId: r.host_id }); }}>
                 <span className="wr-name">{r.host_name}</span>
                 <span className="wr-addr mono">{rh.username}@{rh.address}</span>
-                <span className="wr-go">连接</span>
+                <span className="wr-go">{t("连接")}</span>
               </button>
             );
           }).filter(Boolean);
           if (rows.length === 0) return null;
           return (
-            <div className="welcome-recents" aria-label="最近连接">
-              <div className="wr-title">最近连接</div>
+            <div className="welcome-recents" aria-label={t("最近连接")}>
+              <div className="wr-title">{t("最近连接")}</div>
               {rows}
             </div>
           );
         })()}
         <div className="dim welcome-note">
           {sessions.length > 0
-            ? `已有 ${sessions.length} 个会话未接入终端——点击上方标签或「标签列表」继续。`
-            : "暂无会话——从主机栏连接主机开始，或导入 ~/.ssh/config。"}
+            ? t("已有 {0} 个会话未接入终端——点击上方标签或「标签列表」继续。", sessions.length)
+            : t("暂无会话——从主机栏连接主机开始，或导入 ~/.ssh/config。")}
         </div>
       </div>
     </div>

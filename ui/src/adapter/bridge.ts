@@ -98,6 +98,9 @@ interface CmdArgs {
   // 发布轮：版本检查 + 诊断包导出（src-tauri check_update / export_diagnostics）
   check_update: undefined;
   export_diagnostics: undefined;
+  // updater 轮：能力面（无参）+ 检查并安装（成功即重启不返回；Ok(false)=已是最新）
+  updater_info: undefined;
+  updater_install: undefined;
   // 自身开销监控（本轮）：本进程 CPU/内存，无参只读
   read_self_metrics: undefined;
   set_control: { sid: string; owner: wire.ControlOwner; stopRunning?: boolean };
@@ -224,6 +227,9 @@ interface CmdRet {
   // 发布轮：任何失败折算 hasUpdate=false + error（不误报、不抛 Err）
   check_update: wire.UpdateCheck;
   export_diagnostics: string;
+  // updater 轮：能力面；安装返回 true=已装新版并即将重启 / false=已是最新
+  updater_info: wire.UpdaterInfo;
+  updater_install: boolean;
   read_self_metrics: wire.SelfMetrics | null;
   set_control: wire.TakeoverReport;
   delegate_session: void;

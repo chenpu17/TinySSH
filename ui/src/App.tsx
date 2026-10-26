@@ -26,7 +26,7 @@ import type {
   BeginConnectionOpts,
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
   McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
-  RestoreEntry, LocalShell, UpdateCheck,
+  RestoreEntry, LocalShell, UpdateCheck, UpdaterInfo,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
@@ -80,6 +80,7 @@ import {
   TERM_FONT_DEFAULT, TERM_FONTS, termFontCss, TERM_LETTER_SPACING_DEFAULT, TERM_SCROLLBACK_DEFAULT,
   type Appearance, type SettingsCat, type SplitDir, type SplitPanes, type TermCursorStyle,
 } from "./app-data";
+import { localeNow, setLocale, SETTING_LOCALE, t, type Locale } from "./i18n";
 import { WinControls } from "./components/window-controls";
 import { QuickConnectForm } from "./components/quick-connect";
 import { AddHostForm } from "./components/add-host";
@@ -591,6 +592,10 @@ export default function App() {
   // 「用 … 新开」数据源）与默认选择 id（KV，空串=系统默认 $SHELL/PowerShell 回退）
   const [localShells, setLocalShells] = useState<LocalShell[]>([]);
   const [localShellId, setLocalShellId] = useState("");
+  // i18n 轮：界面语言（App state——变化触发全树重渲染，渲染期 t() 重读模块态；
+  // 初值取 t() 模块初值（localStorage），真实域 KV 装载后以此为准覆盖。
+  // changeLocale 在 persistSetting 声明之后——deps 数组渲染期求值，先声明会 TDZ）
+  const [locale, setLocaleState] = useState<Locale>(localeNow);
   // R20（C8 消费）：收藏/最近元数据 + 标签筛选 chip
   const [hostMeta, setHostMeta] = useState<HostMeta[]>([]);
   const [recents, setRecents] = useState<RecentHost[]>([]);
@@ -1038,12 +1043,12 @@ export default function App() {
       deliver([]);
     }
   }, [pushToast]);
-  const copyBlock = useCallback((t: string, what = "命令") => {
+  const copyBlock = useCallback((text: string, what = "命令") => {
     try {
-      const p = inTauri ? clipboard.writeText(t) : navigator.clipboard?.writeText(t);
+      const p = inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text);
       void Promise.resolve(p).catch(() => {});
     } catch { /* 演示环境无剪贴板：静默 */ }
-    pushToast("ok", `已复制${what}`);
+    pushToast("ok", t("已复制{0}", t(what)));
   }, [pushToast]);
   // 块定位：search addon 文本搜索（best-effort）——FR-10 明示行号跨实现不对齐，
   // 不承诺精确滚动；同名命令命中搜索方向上最近一处（光标在底部=最近一次出现）。
@@ -1942,6 +1947,23 @@ export default function App() {
   // 发布轮：应用内版本检查（启动静默查一次 GitHub Release；有新版才 toast，
   // 关于卡常驻更新行）。任何失败折算 hasUpdate=false，静默不扰。
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  // updater 轮：自动更新能力面（demo 域恒 null → 关于卡不出现按钮）与安装 busy
+  const [updaterCap, setUpdaterCap] = useState<UpdaterInfo | null>(null);
+  const [updaterBusy, setUpdaterBusy] = useState(false);
+  const autoUpdate = useCallback(() => {
+    if (updaterBusy) return;
+    setUpdaterBusy(true);
+    // 成功路径：安装完成 app.restart()，不返回；Ok(false)=已是最新
+    invoke("updater_install")
+      .then((changed) => {
+        setUpdaterBusy(false);
+        if (!changed) pushToast("info", "已是最新版本");
+      })
+      .catch((e) => {
+        setUpdaterBusy(false);
+        pushToast("err", `自动更新失败：${friendlyError(e)}`);
+      });
+  }, [updaterBusy, pushToast]);
   // 发布轮：诊断包导出——固定落 <数据目录>/diagnostics/（无对话框），toast 带「打开所在文件夹」
   const [diagBusy, setDiagBusy] = useState(false);
   const exportDiagnostics = useCallback(() => {
@@ -1963,6 +1985,8 @@ export default function App() {
     );
     getVersion().then(setAppVersion).catch(() => {});
     invoke("get_build_time").then((t) => setBuildTime(t ?? null)).catch(() => {});
+    // updater 轮：能力面（supported 只在 macOS+真公钥构建为 true）
+    invoke("updater_info").then(setUpdaterCap).catch(() => {});
     // 发布轮：启动静默查一次更新；有新版才 toast（demo 域镜像恒 hasUpdate=false）
     invoke("check_update").then((u) => {
       setUpdateInfo(u);
@@ -2046,6 +2070,14 @@ export default function App() {
     if (inTauri) void invoke("set_setting", { key, value }).catch(() => {});
     else try { localStorage.setItem(key, value); } catch { /* demo 模式尽力而为 */ }
   }, [inTauri]);
+
+  // i18n 轮：切语言（设置面板唯一调用口）——写 t() 模块态 + App state 触发全树
+  // 重渲染刷新读数 + 双域持久化（真实域 vault KV / demo 域 persistSetting 的 localStorage）
+  const changeLocale = useCallback((l: Locale) => {
+    setLocale(l);
+    setLocaleState(l);
+    persistSetting(SETTING_LOCALE, l);
+  }, [persistSetting]);
 
   const changeFontSize = useCallback((n: number) => {
     const next = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(n)));
@@ -2333,6 +2365,15 @@ export default function App() {
       .then((f) => applyFont(f === null ? null : Number(f)))
       .catch(() => {});
     const paletteP = invoke("get_setting", { key: SETTING_PALETTE }).then(loadPalette).catch(() => {});
+    // i18n 轮：语言与字体/色板同通路（vault KV；demo 分支上面那段走 persistSetting 的
+    // localStorage 落点，t() 模块初值已从 localStorage 读到）。KV 与初值不一致时以 KV 为准。
+    const localeP = invoke("get_setting", { key: SETTING_LOCALE })
+      .then((v) => {
+        if (v === "en" || v === "zh") {
+          if (localeNow() !== v) { setLocale(v); setLocaleState(v); }
+        }
+      })
+      .catch(() => {});
     const keymapP = invoke("get_setting", { key: KEYMAP_SETTING })
       .then((v) => { if (typeof v === "string" && v) applyKeymap(parseKeymap(v)); })
       .catch(() => {});
@@ -4914,18 +4955,18 @@ export default function App() {
   const paletteItems = (() => {
     const items: PaletteItem[] = [];
     const active = sessions.find((x) => x.id === sid);
-    const stLabel = (s: SessionInfo) => (s.id === sid ? "当前" : s.state === "Connected" ? "已连接" : s.state === "Disconnected" ? "已断开" : s.state);
+    const stLabel = (s: SessionInfo) => (s.id === sid ? t("当前") : s.state === "Connected" ? t("已连接") : s.state === "Disconnected" ? t("已断开") : s.state);
     for (const s of sessions) {
       items.push({
-        id: "goto-" + s.id, group: "会话",
-        title: `切换到 ${tabNames[s.id] ?? s.host_name}`,
+        id: "goto-" + s.id, group: t("会话"),
+        title: t("切换到 {0}", tabNames[s.id] ?? s.host_name),
         hint: stLabel(s), keywords: s.host_name + " 切换",
         run: () => { void attachSession(s.id).catch((e) => pushToast("err", errMsg(e))); },
       });
     }
     if (hosts.some((h) => h.address === "local" || h.id === "local")) {
       items.push({
-        id: "local-term", group: "连接", title: "打开本地终端", hint: "本机 PTY",
+        id: "local-term", group: t("连接"), title: t("打开本地终端"), hint: t("本机 PTY"),
         run: () => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh); },
       });
     }
@@ -4934,8 +4975,8 @@ export default function App() {
     // 本地 PTY 标签不算「有会话」，否则自动开让空态恒假，恢复入口永不出现。
     if (!remoteOpen && restoreEntries.length > 0) {
       items.push({
-        id: "restore-scene", group: "连接", title: `恢复上次现场（${restoreEntries.length}）`,
-        hint: "受控退出时的屏幕快照——恢复走完整建连流程", keywords: "恢复 现场 快照 restore",
+        id: "restore-scene", group: t("连接"), title: t("恢复上次现场（{0}）", restoreEntries.length),
+        hint: t("受控退出时的屏幕快照——恢复走完整建连流程"), keywords: "恢复 现场 快照 restore",
         run: () => { void restoreScenes(restoreEntries); },
       });
     }
@@ -4943,7 +4984,7 @@ export default function App() {
       const rowsH = lastSessionHosts.flatMap((hid) => hosts.find((h) => h.id === hid) ?? []);
       if (rowsH.length > 0) {
         items.push({
-          id: "reconnect-last", group: "连接", title: `重连上次会话（${rowsH.length}）`,
+          id: "reconnect-last", group: t("连接"), title: t("重连上次会话（{0}）", rowsH.length),
           hint: rowsH.map((h) => h.name).join("、"), keywords: "重连 上次 会话 reconnect",
           run: () => { for (const h of rowsH) void createSession(h); },
         });
@@ -4952,14 +4993,14 @@ export default function App() {
     for (const h of hosts) {
       if (h.id === "local") continue;
       items.push({
-        id: "conn-" + h.id, group: "连接",
-        title: `连接 ${h.name}`,
+        id: "conn-" + h.id, group: t("连接"),
+        title: t("连接 {0}", h.name),
         hint: `${h.username}@${h.address}:${h.port}`, keywords: h.address + " " + h.username + " 连接",
         run: () => { void createSession(h).catch((e) => pushToast("err", errMsg(e))); },
       });
     }
     items.push({
-      id: "quick-connect", group: "连接", title: "快速连接（不存主机，临时连接一次）",
+      id: "quick-connect", group: t("连接"), title: t("快速连接（不存主机，临时连接一次）"),
       keywords: "一次性 临时 connect",
       run: () => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); },
     });
@@ -4967,23 +5008,23 @@ export default function App() {
       const menuHost = hosts.find((x) => x.id === active.host_id);
       if (menuHost) {
         items.push({
-          id: "dup-tab", group: "当前会话", title: `复制标签页（同主机新会话：${menuHost.name}）`,
+          id: "dup-tab", group: t("当前会话"), title: t("复制标签页（同主机新会话：{0}）", menuHost.name),
           run: () => { void createSession(menuHost); },
         });
       }
       items.push({
-        id: "rename-tab", group: "当前会话", title: "重命名标签…",
+        id: "rename-tab", group: t("当前会话"), title: t("重命名标签…"),
         run: () => setRenaming({ sid: active.id, value: tabNames[active.id] ?? active.host_name }),
       });
       items.push({
-        id: "toggle-log", group: "当前会话",
-        title: active.logging ? "停止记录会话日志" : "记录会话日志",
-        hint: "输出落 data/logs",
+        id: "toggle-log", group: t("当前会话"),
+        title: active.logging ? t("停止记录会话日志") : t("记录会话日志"),
+        hint: t("输出落 data/logs"),
         run: () => { void toggleSessionLog(active); },
       });
       if (active.logging) {
         items.push({
-          id: "open-log", group: "当前会话", title: "打开日志文件夹",
+          id: "open-log", group: t("当前会话"), title: t("打开日志文件夹"),
           run: () => { void openSessionLogFolder(active.id); },
         });
       }
@@ -4991,45 +5032,45 @@ export default function App() {
       // 只剩键盘路径或完全无入口（接管并停止、文件/转发面板）。⌘K 面板是唯一
       // 全模式可达层——专注下照样可用，入口在此补齐。
       items.push({
-        id: "term-search", group: "当前会话", title: "搜索终端内容", hint: "⌘F",
+        id: "term-search", group: t("当前会话"), title: t("搜索终端内容"), hint: "⌘F",
         keywords: "查找 search",
         run: () => { dispatchRef.current({ id: "search" }); },
       });
       items.push({
-        id: "panel-files", group: "当前会话",
-        title: rightPanel === "files" ? "关闭文件面板" : "打开文件面板",
+        id: "panel-files", group: t("当前会话"),
+        title: rightPanel === "files" ? t("关闭文件面板") : t("打开文件面板"),
         keywords: "sftp 上传 下载 目录浏览",
         run: () => setRightPanel(rightPanel === "files" ? null : "files"),
       });
       if (remoteOpen) {
         items.push({
-          id: "panel-forwards", group: "当前会话",
-          title: rightPanel === "forwards" ? "关闭端口转发面板" : "打开端口转发面板",
+          id: "panel-forwards", group: t("当前会话"),
+          title: rightPanel === "forwards" ? t("关闭端口转发面板") : t("打开端口转发面板"),
           keywords: "隧道 tunnel",
           run: () => setRightPanel(rightPanel === "forwards" ? null : "forwards"),
         });
       }
       items.push({
-        id: "panel-blocks", group: "当前会话",
-        title: rightPanel === "blocks" ? "关闭命令块面板" : "打开命令块面板",
+        id: "panel-blocks", group: t("当前会话"),
+        title: rightPanel === "blocks" ? t("关闭命令块面板") : t("打开命令块面板"),
         keywords: "命令 块 blocks 历史 重跑",
         run: () => setRightPanel(rightPanel === "blocks" ? null : "blocks"),
       });
       // P2-a 广播输入：专注模式藏了状态栏，⌘K 是唯一全模式可达入口（巡检补入口同款）
       items.push({
         id: "panel-broadcast", group: "当前会话",
-        title: broadcastTargets.length > 0 ? `广播输入（已勾选 ${broadcastTargets.length} 个会话）` : "广播输入…",
+        title: broadcastTargets.length > 0 ? t("广播输入（已勾选 {0} 个会话）", broadcastTargets.length) : t("广播输入…"),
         keywords: "broadcast 多会话 同步键入 同发",
         run: () => setBroadcastOpen(true),
       });
       if ((hasAgents || embeddedReady) && owner === "Agent") {
         items.push({
-          id: "takeover", group: "当前会话", title: "接管（冻结 Agent，待审批作废）",
+          id: "takeover", group: t("当前会话"), title: t("接管（冻结 Agent，待审批作废）"),
           keywords: "控制权 takeover",
           run: () => { void takeover(); },
         });
         items.push({
-          id: "takeover-stop", group: "当前会话", title: "接管并停止任务（尝试停止正在运行的命令）",
+          id: "takeover-stop", group: t("当前会话"), title: t("接管并停止任务（尝试停止正在运行的命令）"),
           danger: true, keywords: "控制权 停止 takeover",
           run: () => { void takeoverStop(); },
         });
@@ -5037,69 +5078,69 @@ export default function App() {
       if ((collabConfigured || embeddedReady) && owner === "Human") {
         items.push({
           id: "delegate", group: "当前会话",
-          title: active.ever_agent_owned ? "交还 Agent…" : "交给 Agent…",
+          title: active.ever_agent_owned ? t("交还 Agent…") : t("交给 Agent…"),
           keywords: "委托 控制权 delegate",
           run: () => openDelegate(),
         });
       }
       items.push({
-        id: "close-session", group: "当前会话", title: `关闭会话（${tabNames[active.id] ?? active.host_name}）`,
+        id: "close-session", group: t("当前会话"), title: t("关闭会话（{0}）", tabNames[active.id] ?? active.host_name),
         danger: true, keywords: "关闭 断开",
         run: () => requestCloseSession(active),
       });
     }
     items.push({
-      id: "open-settings", group: "应用", title: "打开设置", keywords: "偏好 字号 外观 编码",
+      id: "open-settings", group: t("应用"), title: t("打开设置"), keywords: "偏好 字号 外观 编码",
       run: () => setShowSettings(true),
     });
     {
       const idx = APPEARANCES.findIndex((a) => a.id === appearance);
       const next = APPEARANCES[(idx + 1 + APPEARANCES.length) % APPEARANCES.length];
       items.push({
-        id: "cycle-appearance", group: "应用",
-        title: `外观切换为「${next.label}」`, hint: "跟随系统 / 深色 / 浅色 循环",
+        id: "cycle-appearance", group: t("应用"),
+        title: t("外观切换为「{0}」", t(next.label)), hint: t("跟随系统 / 深色 / 浅色 循环"),
         keywords: "主题 深浅 暗色 亮色",
         run: () => changeAppearance(next.id),
       });
     }
     items.push({
-      id: "toggle-hostbar", group: "应用",
-      title: hostbarOpen ? "隐藏主机栏" : "显示主机栏", hint: "⌘B",
+      id: "toggle-hostbar", group: t("应用"),
+      title: hostbarOpen ? t("隐藏主机栏") : t("显示主机栏"), hint: "⌘B",
       run: () => toggleHostbar(!hostbarOpen),
     });
     items.push({
-      id: "toggle-agent", group: "应用",
-      title: agentOpen ? "关闭 Agent 对话" : "打开 Agent 对话（演练）",
+      id: "toggle-agent", group: t("应用"),
+      title: agentOpen ? t("关闭 Agent 对话") : t("打开 Agent 对话（演练）"),
       hint: "活动栏", keywords: "agent ai 助手 对话 演练 内置",
       run: () => toggleAgent(!agentOpen),
     });
     items.push({
-      id: "toggle-fleet", group: "应用",
-      title: fleetOpen ? "关闭跨主机编排" : "打开跨主机编排（Fleet）",
+      id: "toggle-fleet", group: t("应用"),
+      title: fleetOpen ? t("关闭跨主机编排") : t("打开跨主机编排（Fleet）"),
       hint: "活动栏", keywords: "fleet 编排 跨主机 批量 多机 派发",
       run: () => toggleFleet(!fleetOpen),
     });
     items.push({
-      id: "toggle-monitor", group: "应用",
-      title: monitorOpen ? "关闭资源监控大屏" : "打开资源监控大屏（多服务器 + Ascend NPU）",
+      id: "toggle-monitor", group: t("应用"),
+      title: monitorOpen ? t("关闭资源监控大屏") : t("打开资源监控大屏（多服务器 + Ascend NPU）"),
       hint: "活动栏", keywords: "监控 资源 cpu 内存 网络 npu ascend 仪表 监视 面板",
       run: () => toggleMonitor(!monitorOpen),
     });
     items.push({
-      id: "toggle-focus", group: "应用",
-      title: focusMode ? "退出专注模式" : "进入专注模式（界面全让位给终端）",
+      id: "toggle-focus", group: t("应用"),
+      title: focusMode ? t("退出专注模式") : t("进入专注模式（界面全让位给终端）"),
       hint: "F11", keywords: "全屏 zen focus 专注 沉浸 极简",
       run: () => applyFocus(!focusMode),
     });
     items.push({
-      id: "toggle-zen-strip", group: "应用",
-      title: zenStripAuto ? "专注模式标签条：改为常驻" : "专注模式标签条：改为自动隐藏",
-      hint: zenStripAuto ? "当前：自动隐藏（顶缘浮标唤出）" : "当前：常驻",
+      id: "toggle-zen-strip", group: t("应用"),
+      title: zenStripAuto ? t("专注模式标签条：改为常驻") : t("专注模式标签条：改为自动隐藏"),
+      hint: zenStripAuto ? t("当前：自动隐藏（顶缘浮标唤出）") : t("当前：常驻"),
       keywords: "标签 常驻 隐藏 自动 专注",
-      run: () => { setZenStrip(!zenStripAuto); pushToast("ok", zenStripAuto ? "专注模式标签条已改为常驻" : "专注模式标签条已改为自动隐藏（顶缘浮标唤出）"); },
+      run: () => { setZenStrip(!zenStripAuto); pushToast("ok", zenStripAuto ? t("专注模式标签条已改为常驻") : t("专注模式标签条已改为自动隐藏（顶缘浮标唤出）")); },
     });
     items.push({
-      id: "import-sshconfig", group: "应用", title: "导入 ~/.ssh/config",
+      id: "import-sshconfig", group: t("应用"), title: t("导入 ~/.ssh/config"),
       run: () => { if (focusMode) applyFocus(false); if (!hostbarOpen) toggleHostbar(true); setShowImport(true); setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); },
     });
     return items;
@@ -5237,29 +5278,29 @@ export default function App() {
             设置常驻第四图标（不占互斥位、钉栏底 = VSCode 惯例：视图入口在上、
             应用级动作在下）——设置钮原住主机栏，侧栏互斥+持久化后会有
             「找不到设置」的时刻；它不开任何侧栏，直开设置面板 */}
-        <nav className="actrail" data-testid="actrail" aria-label="侧栏视图">
+        <nav className="actrail" data-testid="actrail" aria-label={t("侧栏视图")}>
           <button className={"rail-btn" + (hostbarOpen ? " ts-open" : "")} data-testid="rail-hosts"
-            title="连接（⌘B）" aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
+            title={t("连接（⌘B）")} aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
             <IconServer size={17} />
           </button>
           <button className={"rail-btn" + (agentOpen ? " ts-open" : "")} data-testid="rail-agent"
-            title="Agent 对话（演练）" aria-pressed={agentOpen} onClick={() => toggleAgent(!agentOpen)}>
+            title={t("Agent 对话（演练）")} aria-pressed={agentOpen} onClick={() => toggleAgent(!agentOpen)}>
             <IconBot size={17} />
           </button>
           <button className={"rail-btn" + (fleetOpen ? " ts-open" : "")} data-testid="rail-fleet"
-            title="跨主机编排（Fleet）：派发任务给各会话的执行 agent 并汇总" aria-pressed={fleetOpen}
+            title={t("跨主机编排（Fleet）：派发任务给各会话的执行 agent 并汇总")} aria-pressed={fleetOpen}
             onClick={() => toggleFleet(!fleetOpen)}>
             <IconShuffle size={17} />
           </button>
           <button className={"rail-btn" + (monitorOpen ? " ts-open" : "")} data-testid="rail-monitor"
-            title={`资源监控大屏：多服务器 CPU/内存/网络 与 Ascend NPU${monGeneral || monNpu ? "（后台采集中）" : ""}`} aria-pressed={monitorOpen}
+            title={t("资源监控大屏：多服务器 CPU/内存/网络 与 Ascend NPU{0}", monGeneral || monNpu ? t("（后台采集中）") : "")} aria-pressed={monitorOpen}
             onClick={() => toggleMonitor(!monitorOpen)}>
             <IconGauge size={17} />
             {/* 后台采集呼吸点（开关轮）：大屏关着也在采时给个环境提示 */}
             {(monGeneral || monNpu) && <span className="rail-live" data-testid="rail-monitor-live" aria-hidden="true" />}
           </button>
           <button className={"rail-btn rail-tail" + (showSettings ? " ts-open" : "")} data-testid="rail-settings"
-            title="设置（外观 / 终端 / 凭据 / Agent）" aria-label="设置"
+            title={t("设置（外观 / 终端 / 凭据 / Agent）")} aria-label={t("设置")}
             onClick={() => dispatchRef.current({ id: "settings" })}>
             <IconSliders size={17} />
           </button>
@@ -5970,20 +6011,20 @@ export default function App() {
                 <div className="hk-title" id="dlg-paste-title" data-testid="paste-dialog-title">
                   {pasteConfirm.risk.length
                     ? (pasteConfirm.kind === "rerun"
-                      ? `⚠ 危险命令重跑到 ${pasteConfirm.hostName}？`
-                      : `⚠ 危险内容粘贴到 ${pasteConfirm.hostName}？`)
+                      ? t("⚠ 危险命令重跑到 {0}？", pasteConfirm.hostName)
+                      : t("⚠ 危险内容粘贴到 {0}？", pasteConfirm.hostName))
                     : (pasteConfirm.kind === "rerun"
-                      ? `重跑多行命令到 ${pasteConfirm.hostName}？`
-                      : `粘贴多行内容到 ${pasteConfirm.hostName}？`)}
+                      ? t("重跑多行命令到 {0}？", pasteConfirm.hostName)
+                      : t("粘贴多行内容到 {0}？", pasteConfirm.hostName))}
                 </div>
                 {pasteConfirm.risk.length ? (
                   <div>{pasteConfirm.kind === "rerun"
-                    ? "重跑命令命中危险形态（与 Agent 审批同一张内置规则表）——确认后重新执行，取消则不发送任何字节。"
-                    : "粘贴内容命中危险形态（与 Agent 审批同一张内置规则表）——确认后才会发送，取消则不发送任何字节。"}</div>
+                    ? t("重跑命令命中危险形态（与 Agent 审批同一张内置规则表）——确认后重新执行，取消则不发送任何字节。")
+                    : t("粘贴内容命中危险形态（与 Agent 审批同一张内置规则表）——确认后才会发送，取消则不发送任何字节。")}</div>
                 ) : (
                   <div>{pasteConfirm.kind === "rerun"
-                    ? "命令含多行——重跑会按行依次执行。请确认；取消则不发送任何字节。"
-                    : "目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。"}</div>
+                    ? t("命令含多行——重跑会按行依次执行。请确认；取消则不发送任何字节。")
+                    : t("目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。")}</div>
                 )}
                 {pasteConfirm.risk.length > 0 && (
                   <ul className="paste-risk" data-testid="paste-risk-list">
@@ -5993,7 +6034,7 @@ export default function App() {
                   </ul>
                 )}
                 <pre className="paste-preview mono">{pasteConfirm.text.length > 2000
-                  ? pasteConfirm.text.slice(0, 2000) + `\n……（预览截断，共 ${pasteConfirm.text.length} 字符）`
+                  ? pasteConfirm.text.slice(0, 2000) + t("\n……（预览截断，共 {0} 字符）", pasteConfirm.text.length)
                   : pasteConfirm.text}</pre>
                 <div className="hk-actions">
                   <button className="danger" data-testid="paste-send" onClick={() => {
@@ -6008,9 +6049,9 @@ export default function App() {
                     setPasteConfirm(null);
                     restoreTermFocus();
                   }}>{pasteConfirm.kind === "rerun"
-                    ? (pasteConfirm.risk.length ? "仍然重跑" : "重跑")
-                    : (pasteConfirm.risk.length ? "仍然发送" : "发送")}</button>
-                  <button className="ghost" data-autofocus onClick={() => setPasteConfirm(null)}>取消</button>
+                    ? (pasteConfirm.risk.length ? t("仍然重跑") : t("重跑"))
+                    : (pasteConfirm.risk.length ? t("仍然发送") : t("发送"))}</button>
+                  <button className="ghost" data-autofocus onClick={() => setPasteConfirm(null)}>{t("取消")}</button>
                 </div>
               </div>
             </div>
@@ -6021,26 +6062,26 @@ export default function App() {
             <div className="confirm-mask" onClick={() => setOsc52Ask(null)}>
               <div className="confirm-dialog paste-dialog" ref={osc52AskRef} role="dialog" aria-modal="true" aria-labelledby="dlg-osc52-title" onClick={(e) => e.stopPropagation()}>
                 <div className="hk-title" id="dlg-osc52-title" data-testid="osc52-dialog">
-                  远端请求写入剪贴板 · {sessions.find((s) => s.id === osc52Ask.sid)?.host_name ?? "会话"}
+                  {t("远端请求写入剪贴板 ·")} {sessions.find((s) => s.id === osc52Ask.sid)?.host_name ?? t("该会话")}
                 </div>
-                <div>远端程序通过 OSC 52 转义序列请求改写你本机的剪贴板——允许后现有内容会被覆盖，拒绝则不写入任何字节。「始终允许」本次照写且此后不再询问（设置→终端 可改回）。读取类请求（查询）一律拒绝，不经此卡。</div>
+                <div>{t("远端程序通过 OSC 52 转义序列请求改写你本机的剪贴板——允许后现有内容会被覆盖，拒绝则不写入任何字节。「始终允许」本次照写且此后不再询问（设置→终端 可改回）。读取类请求（查询）一律拒绝，不经此卡。")}</div>
                 <pre className="paste-preview mono" data-testid="osc52-preview">{osc52Ask.text.length > 400
-                  ? osc52Ask.text.slice(0, 400) + `……（预览截断，共 ${osc52Ask.text.length} 字符）`
+                  ? osc52Ask.text.slice(0, 400) + t("……（预览截断，共 {0} 字符）", osc52Ask.text.length)
                   : osc52Ask.text}</pre>
                 <div className="hk-actions">
                   <button className="danger" data-testid="osc52-allow" onClick={() => {
                     osc52WriteRef.current(osc52Ask.sid, osc52Ask.text);
                     setOsc52Ask(null);
                     restoreTermFocus();
-                  }}>允许写入</button>
+                  }}>{t("允许写入")}</button>
                   {/* 用户反馈：选区每次都弹卡太严——一键把策略翻 allow（走既有持久化），此后直写 */}
                   <button className="ghost" data-testid="osc52-allow-forever" onClick={() => {
                     osc52WriteRef.current(osc52Ask.sid, osc52Ask.text);
                     changeOsc52Policy("allow");
                     setOsc52Ask(null);
                     restoreTermFocus();
-                  }}>始终允许</button>
-                  <button className="ghost" data-autofocus data-testid="osc52-deny" onClick={() => { setOsc52Ask(null); restoreTermFocus(); }}>拒绝</button>
+                  }}>{t("始终允许")}</button>
+                  <button className="ghost" data-autofocus data-testid="osc52-deny" onClick={() => { setOsc52Ask(null); restoreTermFocus(); }}>{t("拒绝")}</button>
                 </div>
               </div>
             </div>
@@ -6053,33 +6094,33 @@ export default function App() {
                 onKeyDown={(e) => { if (e.key === "Escape") setPendingDrop(null); }}
                 onClick={(e) => e.stopPropagation()}>
                 <div className="hk-title" id="dlg-drop-title">
-                  上传到 {sessionsRef.current.find((x) => x.id === pendingDrop.sid)?.host_name ?? "该会话"}：
+                  {t("上传到")} {sessionsRef.current.find((x) => x.id === pendingDrop.sid)?.host_name ?? t("该会话")}{t("：")}
                 </div>
                 <div className="row" style={{ gap: 6 }}>
                   <input
                     className="mono" data-testid="drop-dir-input" data-autofocus
-                    style={{ flex: 1 }} aria-label="远端目标目录"
-                    placeholder={pendingDropDir ? "" : "远端目录（绝对路径，必填）"}
+                    style={{ flex: 1 }} aria-label={t("远端目标目录")}
+                    placeholder={pendingDropDir ? "" : t("远端目录（绝对路径，必填）")}
                     value={pendingDropDir}
                     onChange={(e) => setPendingDropDir(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && pendingDropDir.trim()) confirmDropUpload(); }}
                   />
                 </div>
                 <div className="dim" style={{ marginTop: 6, fontSize: 12 }} data-testid="drop-files-line">
-                  {pendingDrop.paths.length} 个文件：{pendingDrop.paths.slice(0, 3).map((p) => pathBasename(p)).join("、")}
-                  {pendingDrop.paths.length > 3 ? ` 等 ${pendingDrop.paths.length} 个` : ""}
+                  {t("{0} 个文件：", pendingDrop.paths.length)}{pendingDrop.paths.slice(0, 3).map((p) => pathBasename(p)).join("、")}
+                  {pendingDrop.paths.length > 3 ? t(" 等 {0} 个", pendingDrop.paths.length) : ""}
                 </div>
                 {!briefRef.current?.cwd && (
                   <div className="dim" style={{ marginTop: 4, fontSize: 12 }} data-testid="drop-no-cwd-hint">
-                    该会话无可信工作目录（shell 集成未上报 cwd）——请填写远端目录。
+                    {t("该会话无可信工作目录（shell 集成未上报 cwd）——请填写远端目录。")}
                   </div>
                 )}
                 {pendingDropErr && (
                   <div className="err" style={{ marginTop: 4, fontSize: 12 }} data-testid="drop-err">{pendingDropErr}</div>
                 )}
                 <div className="hk-actions">
-                  <button className="ghost" onClick={() => setPendingDrop(null)}>取消</button>
-                  <button data-testid="drop-confirm" disabled={!pendingDropDir.trim()} onClick={confirmDropUpload}>上传到此处</button>
+                  <button className="ghost" onClick={() => setPendingDrop(null)}>{t("取消")}</button>
+                  <button data-testid="drop-confirm" disabled={!pendingDropDir.trim()} onClick={confirmDropUpload}>{t("上传到此处")}</button>
                 </div>
               </div>
             </div>
@@ -6105,6 +6146,9 @@ export default function App() {
               updateInfo={updateInfo}
               diagBusy={diagBusy}
               onExportDiagnostics={exportDiagnostics}
+              updaterCap={updaterCap}
+              updaterBusy={updaterBusy}
+              onAutoUpdate={autoUpdate}
               autonomy={autonomy}
               onToggleAutonomy={toggleAutonomy}
               appearance={appearance}
@@ -6130,6 +6174,7 @@ export default function App() {
               changeOsc52Policy={changeOsc52Policy}
               localShells={localShells}
               localShellId={localShellId}
+              locale={locale} onChangeLocale={changeLocale}
               onChangeLocalShell={(id) => { setLocalShellId(id); persistSetting(SETTING_LOCAL_SHELL, id); }}
               termFont={termFont}
               onChangeTermFont={changeTermFont}
@@ -6435,13 +6480,13 @@ export default function App() {
           <span className="mono sb-left">{sbLeft}</span>
           <span style={{ flex: 1 }} />
           <span className="sb-right">
-            <button className={"sb-btn" + (broadcastTargets.length > 0 ? " ts-open" : "")} data-testid="sb-broadcast" title="广播输入：同一键入同时发到勾选的会话（点开选择目标）" aria-pressed={broadcastOpen}
-              onClick={() => setBroadcastOpen(!broadcastOpen)}>广播 <b>{broadcastTargets.length > 0 ? broadcastTargets.length : ""}</b></button>
-            <button className={"sb-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="sb-blocks" title="命令块：最近命令时间线（shell 集成 OSC 133）" aria-pressed={rightPanel === "blocks"}
-              onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}>块 <b>{blocksList.length > 0 ? blocksList.length : ""}</b></button>
-            {remoteOpen && <button className="sb-btn" title="端口转发" onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>转发 <b>{forwards.length}</b></button>}
-            <button className={"sb-btn" + (queueOpen ? " ts-open" : "")} data-testid="sb-transfer" title="传输队列（底部抽屉；后台事件只更新计数不自动展开）" aria-pressed={queueOpen}
-              onClick={() => setQueueOpen(!queueOpen)}>传输 <b>{runningTransfers}</b> {queueOpen ? "⌃" : "⌄"}</button>
+            <button className={"sb-btn" + (broadcastTargets.length > 0 ? " ts-open" : "")} data-testid="sb-broadcast" title={t("广播输入：同一键入同时发到勾选的会话（点开选择目标）")} aria-pressed={broadcastOpen}
+              onClick={() => setBroadcastOpen(!broadcastOpen)}>{t("广播")} <b>{broadcastTargets.length > 0 ? broadcastTargets.length : ""}</b></button>
+            <button className={"sb-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="sb-blocks" title={t("命令块：最近命令时间线（shell 集成 OSC 133）")} aria-pressed={rightPanel === "blocks"}
+              onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}>{t("块")} <b>{blocksList.length > 0 ? blocksList.length : ""}</b></button>
+            {remoteOpen && <button className="sb-btn" title={t("端口转发")} onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>{t("转发")} <b>{forwards.length}</b></button>}
+            <button className={"sb-btn" + (queueOpen ? " ts-open" : "")} data-testid="sb-transfer" title={t("传输队列（底部抽屉；后台事件只更新计数不自动展开）")} aria-pressed={queueOpen}
+              onClick={() => setQueueOpen(!queueOpen)}>{t("传输")} <b>{runningTransfers}</b> {queueOpen ? "⌃" : "⌄"}</button>
           </span>
         </footer>
         </main>

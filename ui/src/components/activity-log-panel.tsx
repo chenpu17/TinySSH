@@ -2,6 +2,7 @@
 // 范围与筛选 state、loadLog 查询/续页、sessionIdent 留痕表全部留在宿主，
 // 本组件只收 props 呈现，零语义变更。
 import { decisionLabel, LOG_ACTION_OPTIONS, stampLocal, TZ_NOTE } from "../app-data";
+import { t } from "../i18n";
 import type { AuditEvent } from "../adapter/wire";
 import { IconClock, IconRefresh, IconTerminal } from "../icons";
 
@@ -33,51 +34,51 @@ export function ActivityLogPanel({
             <>
               <div className="section">
                 <div className="log-bar">
-                  <div className="seg" role="group" aria-label="记录范围">
+                  <div className="seg" role="group" aria-label={t("记录范围")}>
                     <button className={logScope === "current" ? "on" : ""} data-testid="log-scope-current"
                       aria-pressed={logScope === "current"} disabled={!sid}
-                      title={sid ? "只看当前会话" : "未接入会话"}
-                      onClick={() => setLogScope("current")}>当前会话</button>
+                      title={sid ? t("只看当前会话") : t("未接入会话")}
+                      onClick={() => setLogScope("current")}>{t("当前会话")}</button>
                     <button className={logScope === "all" ? "on" : ""} data-testid="log-scope-all"
                       aria-pressed={logScope === "all"}
-                      onClick={() => setLogScope("all")}>全部会话</button>
+                      onClick={() => setLogScope("all")}>{t("全部会话")}</button>
                   </div>
                   <span style={{ flex: 1 }} />
-                  <button className="ghost icon-btn" title="刷新" aria-label="刷新活动记录"
+                  <button className="ghost icon-btn" title={t("刷新")} aria-label={t("刷新活动记录")}
                     data-testid="log-refresh" disabled={logBusy}
                     onClick={() => void loadLog(false)}><IconRefresh size={14} /></button>
                 </div>
                 <div className="log-filters">
-                  <label>主体
+                  <label>{t("主体")}
                     <select value={logActor} data-testid="log-actor"
                       onChange={(e) => setLogActor(e.target.value as "" | "human" | "agent")}>
-                      <option value="">全部</option>
-                      <option value="human">人类</option>
+                      <option value="">{t("全部")}</option>
+                      <option value="human">{t("人类")}</option>
                       <option value="agent">Agent</option>
                     </select>
                   </label>
-                  <label>事件类型
+                  <label>{t("事件类型")}
                     <select value={logAction} data-testid="log-action"
                       onChange={(e) => setLogAction(e.target.value)}>
-                      <option value="">全部</option>
-                      {LOG_ACTION_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                      <option value="">{t("全部")}</option>
+                      {LOG_ACTION_OPTIONS.map((o) => <option key={o.v} value={o.v}>{t(o.label)}</option>)}
                     </select>
                   </label>
                 </div>
                 <div className="log-note" data-testid="log-note">
-                  本机时间（{TZ_NOTE}）· {logScope === "current" && !sid
-                    ? "未接入会话，无可显示记录"
-                    : `共 ${logTotal} 条${logScope === "current" ? "（当前会话）" : ""}`}
+                  {t("本机时间（{0}）· {1}", TZ_NOTE, logScope === "current" && !sid
+                    ? t("未接入会话，无可显示记录")
+                    : `${t("共 {0} 条", logTotal)}${logScope === "current" ? t("（当前会话）") : ""}`)}
                 </div>
               </div>
               <div className="section">
                 {logErr ? (
                   <div className="empty" data-testid="log-err">{logErr}</div>
                 ) : logScope === "current" && !sid ? (
-                  <div className="empty" data-testid="log-empty-nosession"><IconTerminal size={14} />未接入会话——切到「全部会话」可查看历史记录。</div>
+                  <div className="empty" data-testid="log-empty-nosession"><IconTerminal size={14} />{t("未接入会话——切到「全部会话」可查看历史记录。")}</div>
                 ) : logEvents.length === 0 ? (
                   <div className="empty" data-testid="log-empty">
-                    <IconClock size={14} />{logBusy ? "载入中…" : "暂无记录。所有连接与命令都会留痕在这里。"}
+                    <IconClock size={14} />{logBusy ? t("载入中…") : t("暂无记录。所有连接与命令都会留痕在这里。")}
                   </div>
                 ) : (
                   <>
@@ -96,7 +97,7 @@ export function ActivityLogPanel({
                           </div>
                           <div className="tl-action">
                             <span className="tl-actor">
-                              {ev.actor_kind === "human" ? "我" : `Agent${ev.agent_id ? ` · ${ev.agent_id}` : ""}`}
+                              {ev.actor_kind === "human" ? t("我") : (ev.agent_id ? t("Agent · {0}", ev.agent_id) : "Agent")}
                             </span>{" "}
                             {decisionLabel(ev)}
                             {ev.command && <>{" "}<span className="tl-cmd-text">{ev.command}</span></>}
@@ -107,7 +108,7 @@ export function ActivityLogPanel({
                     {logEvents.length < logTotal && (
                       <button className="ghost log-more" data-testid="log-more" disabled={logBusy}
                         onClick={() => void loadLog(true)}>
-                        {logBusy ? "载入中…" : `加载更早（已显示 ${logEvents.length}/${logTotal}）`}
+                        {logBusy ? t("载入中…") : t("加载更早（已显示 {0}/{1}）", logEvents.length, logTotal)}
                       </button>
                     )}
                   </>

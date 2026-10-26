@@ -6,6 +6,7 @@ import { IconSliders, IconPencil, IconTerminal, IconSearch, IconStar, IconInbox,
 import { useEffect, type RefObject } from "react";
 import { invoke, MkChannel } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
+import { t } from "./i18n";
 import type { ApprovalItem, AuditEvent, Host } from "./adapter/wire";
 // 应用版本（关于卡）：构建期从 package.json 内联（Vite JSON 具名导出 → 纯字符串），
 // 真机由 tauri getVersion() 同源覆盖；此常量仅供演示模式回退，不另立第四份拷贝。
@@ -19,9 +20,9 @@ export function hostMatches(h: Host, qN: string): boolean {
 }
 /** 组内名称序（排序稳定：查询/收藏变化不抖动——sort 在过滤后一次性应用）。 */
 export const byName = (a: Host, b: Host) => a.name.localeCompare(b.name, "zh", { numeric: true });
-/** 相位中文（§6.2：不得猜测——只呈示核心给出的阶段）。 */
+/** 相位文案（§6.2：不得猜测——只呈示核心给出的阶段）。i18n：取值函数在渲染期被调，内部 t() 安全。 */
 export const phaseText = (p: string) =>
-  p === "Connecting" ? "连接中…" : p === "TrustRequired" ? "等待指纹确认" : p === "Authenticating" ? "认证中…" : "等待验证码";
+  t(p === "Connecting" ? "连接中…" : p === "TrustRequired" ? "等待指纹确认" : p === "Authenticating" ? "认证中…" : "等待验证码");
 
 // 传输卡片是 UI 呈现态；C5（R32）起终态/进度来自任务注册表（list_transfers 查询
 // + transfer-event 事件，revision 单调幂等），pending- 前缀占位卡在拿到真实
@@ -38,9 +39,9 @@ export type TransferCard = {
 };
 export function stopOutcomeText(v: unknown): { text: string; bad: boolean } {
   if (v && typeof v === "object" && "Exited" in (v as Record<string, unknown>))
-    return { text: `已停止（exit ${(v as { Exited: number }).Exited}）`, bad: false };
-  if (v === "Unresponsive") return { text: "升级后仍未停止", bad: true };
-  if (v === "Escalated") return { text: "升级后停止", bad: false };
+    return { text: t("已停止（exit {0}）", (v as { Exited: number }).Exited), bad: false };
+  if (v === "Unresponsive") return { text: t("升级后仍未停止"), bad: true };
+  if (v === "Escalated") return { text: t("升级后停止"), bad: false };
   return { text: String(v), bad: false };
 }
 // 审批状态契约：后端 ApprovalStatus 是 PascalCase（session-api v1 冻结契约，serde 无
@@ -65,7 +66,8 @@ export const SETTINGS_CATS: [SettingsCat, string, string][] = [
   ["records", "记录审计", "时间线 · 导出"],
   ["about", "关于", "版本与数据"],
 ];
-export const settingsCatLabel = (c: SettingsCat): string => SETTINGS_CATS.find(([id]) => id === c)?.[1] ?? c;
+export const settingsCatLabel = (c: SettingsCat): string => t(SETTINGS_CATS.find(([id]) => id === c)?.[1] ?? c);
+export const settingsCatDesc = (c: SettingsCat): string => SETTINGS_CATS.find(([id]) => id === c)?.[2] ?? "";
 export const settingsCatIcon: Record<SettingsCat, typeof IconSliders> = {
   appearance: IconSliders, keys: IconPencil, terminal: IconTerminal, triggers: IconSearch,
   credentials: IconStar, agent: IconInbox, records: IconRefresh, about: IconClock,
@@ -81,11 +83,11 @@ export const approvalResolvedLabel: Record<string, { text: string; cls: string }
 
 // 认知状态 → 用户能看懂的标签
 export const epistemicLabel = (s: string) =>
-  s === "Confirmed" ? "已核实" : s === "NeedsRecheck" ? "需复核" : "未观测";
+  t(s === "Confirmed" ? "已核实" : s === "NeedsRecheck" ? "需复核" : "未观测");
 
 // 退出码 → 人话
 export const exitText = (code: string): string =>
-  code === "0" ? "成功" : code === "130" ? "Ctrl+C 中断" : code === "未知" ? "已结束（退出码未知）" : `退出码 ${code}`;
+  t(code === "0" ? "成功" : code === "130" ? "Ctrl+C 中断" : code === "未知" ? "已结束（退出码未知）" : "退出码 {0}", code);
 
 // 字节数 → 人话
 export const fmtBytes = (n: number): string =>
@@ -158,22 +160,22 @@ export const AUDIT_LABELS: Record<string, string> = {
     transfer_publish_blocked: "传输发布被阻",
     transfer_temp_clean_failed: "临时文件清理失败",
 };
-export const auditLabel = (a: string): string => AUDIT_LABELS[a] ?? a;
+export const auditLabel = (a: string): string => t(AUDIT_LABELS[a] ?? a);
 
 // 审批决定行：payload.decision 区分批准/编辑后批准/拒绝（旧库存量是 Debug 串
 // "ApproveEdited(\"…\")"，按小写前缀兼容），命令本身由后端 audit 直接给实际放行文（PV R1）。
 // goal_set/approval_voided 同样读 payload 细分（五人走查：清除≠更新；作废要给原因）。
 export const decisionLabel = (ev: AuditEvent): string => {
-  if (ev.action === "goal_set") return ev.payload_json?.cleared ? "清除任务目标" : "更新任务目标";
+  if (ev.action === "goal_set") return t(ev.payload_json?.cleared ? "清除任务目标" : "更新任务目标");
   if (ev.action === "approval_voided") {
     const r = ev.payload_json?.reason;
-    return r === "takeover" ? "作废审批（接管）" : r === "session_closed" ? "作废审批（会话关闭）" : "作废审批";
+    return t(r === "takeover" ? "作废审批（接管）" : r === "session_closed" ? "作废审批（会话关闭）" : "作废审批");
   }
   if (ev.action !== "approval_decision") return auditLabel(ev.action);
   const d = (ev.payload_json?.decision ?? "").toLowerCase();
-  if (d.startsWith("approve_edited") || d.startsWith("approveedited")) return "批准（编辑后）";
-  if (d.startsWith("deny")) return "拒绝";
-  if (d.startsWith("approve")) return "批准";
+  if (d.startsWith("approve_edited") || d.startsWith("approveedited")) return t("批准（编辑后）");
+  if (d.startsWith("deny")) return t("拒绝");
+  if (d.startsWith("approve")) return t("批准");
   return auditLabel(ev.action);
 };
 
@@ -212,15 +214,15 @@ export const LOG_ACTION_OPTIONS: { v: string; label: string }[] = [...Object.key
   .map((v) => ({ v, label: v === "goal_set" ? "更新/清除任务目标" : auditLabel(v) }))
   .sort((x, y) => x.label.localeCompare(y.label, "zh-CN"));
 
-// 会话状态 → 中文标签 + 颜色类
+// 会话状态 → 标签 + 颜色类
 export const stateLabel = (s: string): { text: string; cls: string } => {
   switch (s) {
-    case "Connected": return { text: "已连接", cls: "ok" };
-    case "Degraded": return { text: "连接中断", cls: "err" };
-    case "Reconnecting": return { text: "重连中…", cls: "err" };
+    case "Connected": return { text: t("已连接"), cls: "ok" };
+    case "Degraded": return { text: t("连接中断"), cls: "err" };
+    case "Reconnecting": return { text: t("重连中…"), cls: "err" };
     // §6.4：重确认期人类可继续操作（受限的是 Agent 变更）——标签不再写「受限」误导人
-    case "Reconfirming": return { text: "重确认", cls: "err" };
-    default: return { text: "已断开", cls: "dim" };
+    case "Reconfirming": return { text: t("重确认"), cls: "err" };
+    default: return { text: t("已断开"), cls: "dim" };
   }
 };
 
@@ -288,25 +290,25 @@ export const friendlyError = (e: unknown): string => {
   if (pe.kind === "identity_in_use") {
     const names = (pe.detail as { host_names?: string[] } | undefined)?.host_names ?? [];
     return names.length
-      ? `凭据仍被 ${names.length} 台主机使用（${names.join("、")}）——请先为这些主机改绑凭据或删除主机`
-      : "凭据仍被主机使用——请先解除引用后再删除";
+      ? t("凭据仍被 {0} 台主机使用（{1}）——请先为这些主机改绑凭据或删除主机", names.length, names.join("、"))
+      : t("凭据仍被主机使用——请先解除引用后再删除");
   }
   const raw = errMsg(e);
   const r = raw.toLowerCase();
-  if (r.includes("authfailed") || r.includes("authentication")) return "认证失败：用户名或密码/密钥不正确";
+  if (r.includes("authfailed") || r.includes("authentication")) return t("认证失败：用户名或密码/密钥不正确");
   // 取消 2FA 走 ConnectFailed（含「人工应答被取消」），不是凭据错误——
   // 顺序须在 authfailed 判定之后、兜底之前，避免把「取消认证」引向改密码（PV R4）
-  if (r.includes("人工应答被取消")) return "2FA 认证未完成：人工应答被取消或超时，连接已中止（凭据未被改动，可重新连接）";
-  if (r.includes("refused")) return "连接被拒绝：端口不对，或主机上的 SSH 服务没有运行";
+  if (r.includes("人工应答被取消")) return t("2FA 认证未完成：人工应答被取消或超时，连接已中止（凭据未被改动，可重新连接）");
+  if (r.includes("refused")) return t("连接被拒绝：端口不对，或主机上的 SSH 服务没有运行");
   if (r.includes("timeout") || r.includes("timed out") || r.includes("unreachable"))
-    return "连接超时：主机不可达（地址错误、网络不通或防火墙拦截）";
+    return t("连接超时：主机不可达（地址错误、网络不通或防火墙拦截）");
   if (r.includes("dns") || r.includes("name or service") || r.includes("nodename"))
-    return "地址无法解析：请检查主机名/IP 是否写对";
-  if (r.includes("keychain") || r.includes("master")) return "凭据库解锁失败：" + raw;
+    return t("地址无法解析：请检查主机名/IP 是否写对");
+  if (r.includes("keychain") || r.includes("master")) return t("凭据库解锁失败：") + raw;
   // 凭据 blob 解不开 = 主密钥换了（用户走查实锤：密码主机全部由带 TINYSSH_MASTER_KEY 的
   // 开发实例加密，正式启动（钥匙串路径）实例读不开，横幅直出 "存储错误: decrypt failed"）
   if (r.includes("decrypt"))
-    return "凭据解密失败：本机主密钥与保存密码时不一致。编辑该主机重新输入密码并保存即可（会用当前密钥重新加密）；若多台主机同时如此，通常与应用启动方式变更有关";
+    return t("凭据解密失败：本机主密钥与保存密码时不一致。编辑该主机重新输入密码并保存即可（会用当前密钥重新加密）；若多台主机同时如此，通常与应用启动方式变更有关");
   return raw;
 };
 

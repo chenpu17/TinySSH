@@ -2,6 +2,7 @@
 // 条目由 App 按当前状态构建（sessions/hosts/外观等），本组件只管过滤、键盘
 // 导航与分组渲染；执行 = onClose 后再 run（避免面板 DOM 残留时切焦点）。
 import { useEffect, useMemo, useRef, useState } from "react";
+import { t } from "./i18n";
 
 export interface PaletteItem {
   id: string;
@@ -77,21 +78,21 @@ export function CommandPalette({ open, items, onClose }: {
   return (
     <div className="palette-overlay" data-testid="palette-overlay"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="palette" role="dialog" aria-label="命令面板">
+      <div className="palette" role="dialog" aria-label={t("命令面板")}>
         <input
           ref={inputRef}
           className="palette-input"
           data-testid="palette-input"
-          aria-label="命令面板搜索"
+          aria-label={t("命令面板搜索")}
           spellCheck={false}
           value={q}
-          placeholder="搜索会话、主机与命令…（↑↓ 选择，Enter 执行，Esc 关闭）"
+          placeholder={t("搜索会话、主机与命令…（↑↓ 选择，Enter 执行，Esc 关闭）")}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <div className="palette-list" ref={listRef}>
           {filtered.length === 0 && (
-            <div className="dim" style={{ padding: "10px 12px" }}>无匹配——试试会话名、主机地址或「设置」「快速连接」。</div>
+            <div className="dim" style={{ padding: "10px 12px" }}>{t("无匹配——试试会话名、主机地址或「设置」「快速连接」。")}</div>
           )}
           {groups.map((g) => (
             <div key={g.name}>

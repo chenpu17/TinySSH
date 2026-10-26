@@ -6,6 +6,7 @@ import { inTauri } from "../adapter/bridge";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import type { Host, HostMeta, LocalShell, SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
+import { t } from "../i18n";
 import type { ConfirmState } from "./confirm-dialogs";
 import type { SplitDir, SplitPanes } from "../app-data";
 import { IconX } from "../icons";
@@ -84,28 +85,28 @@ export function CtxMenus({
   return (
     <>
       {splitMenu && (() => {
-        const side = splitDir === "tb" ? "下侧" : "右侧";
+        const side = splitDir === "tb" ? t("下侧") : t("右侧");
         return (
           <>
             <div className="pop-mask" onClick={() => setSplitMenu(false)} />
-            <div className="split-menu" role="menu" aria-label="分屏">
+            <div className="split-menu" role="menu" aria-label={t("分屏")}>
               {/* 分屏⑥轮：方向可选（Windows Terminal/iTerm2 习惯）——记住上次选择，
                   标签分屏钮/右键项沿用；已分屏时选向即旋转布局 */}
-              <div className="split-dir-row" role="radiogroup" aria-label="分屏方向">
+              <div className="split-dir-row" role="radiogroup" aria-label={t("分屏方向")}>
                 <button type="button" className={"sm-dir" + (splitDir === "lr" ? " on" : "")} role="radio"
                   aria-checked={splitDir === "lr"} data-testid="split-dir-lr"
-                  title="左右分屏：当前会话在左，副格在右"
+                  title={t("左右分屏：当前会话在左，副格在右")}
                   onClick={() => setSplitDir("lr")}
-                >左右分屏</button>
+                >{t("左右分屏")}</button>
                 <button type="button" className={"sm-dir" + (splitDir === "tb" ? " on" : "")} role="radio"
                   aria-checked={splitDir === "tb"} data-testid="split-dir-tb"
-                  title="上下分屏：当前会话在上，副格在下"
+                  title={t("上下分屏：当前会话在上，副格在下")}
                   onClick={() => setSplitDir("tb")}
-                >上下分屏</button>
+                >{t("上下分屏")}</button>
               </div>
-              <div className="ts-label">在{side}显示已有会话<span className="dim">（复用现有连接，不新建）</span></div>
+              <div className="ts-label">{t("在{0}显示已有会话", side)}<span className="dim">{t("（复用现有连接，不新建）")}</span></div>
               {[...sessions].filter((s) => s.id !== sid).length === 0 && (
-                <div className="dim" style={{ fontSize: 12, padding: "2px 0 4px" }}>暂无其他会话</div>
+                <div className="dim" style={{ fontSize: 12, padding: "2px 0 4px" }}>{t("暂无其他会话")}</div>
               )}
               {[...sessions].filter((s) => s.id !== sid).map((s) => {
                 const st = stateLabel(s.state);
@@ -118,7 +119,7 @@ export function CtxMenus({
                 );
               })}
               <div className="dim" style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 2px 0" }}>
-                新建的会话先落在标签栏——右键标签选「与当前会话分屏」即可。
+                {t("新建的会话先落在标签栏——右键标签选「与当前会话分屏」即可。")}
               </div>
             </div>
           </>
@@ -133,76 +134,76 @@ export function CtxMenus({
         const close = () => setTabMenu(null);
         const inSplit = !!s && (splitPanes?.main === s.id || splitPanes?.second === s.id);
         const menuHost = s ? hosts.find((h) => h.id === s.host_id) : undefined;
-        const side = splitDir === "tb" ? "下" : "右";
+        const side = splitDir === "tb" ? t("下") : t("右");
         return (
           <>
             <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
             {s && (
-              <div className="ctx-menu" role="menu" aria-label={`会话操作：${s.host_name}`} style={{ left: mx, top: my }}>
+              <div className="ctx-menu" role="menu" aria-label={t("会话操作：{0}", s.host_name)} style={{ left: mx, top: my }}>
                 {inSplit ? (
                   <>
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); void exitSplit(); }}
-                    >退出分屏（两个会话都保留）</button>
+                    >{t("退出分屏（两个会话都保留）")}</button>
                     {/* 分屏⑥轮：布局旋转（tmux/Windows Terminal 习惯）——两会话不动，只换方向 */}
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); void enterSplitWith(s.id, splitDir === "tb" ? "lr" : "tb"); }}
-                    >改为{splitDir === "tb" ? "左右" : "上下"}分屏</button>
+                    >{t("改为{0}分屏", splitDir === "tb" ? t("左右") : t("上下"))}</button>
                   </>
                 ) : s.id !== sid && !!sid ? (
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => { close(); void enterSplitWith(s.id, splitDir); }}
-                  >{splitPanes ? `放到${side}侧分屏（替换${side}格）` : `与当前会话分屏（放到${side}侧）`}</button>
+                  >{splitPanes ? t("放到{0}侧分屏（替换{0}格）", side) : t("与当前会话分屏（放到{0}侧）", side)}</button>
                 ) : s.id === sid && sessions.some((x) => x.id !== s.id) ? (
                   // 十二轮：活动标签也得分屏（Xshell/Windows Terminal 惯例）——
                   // 第二格是谁交给既有「会话选择」菜单，不在此复制会话列表
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => { close(); setSplitMenu(true); }}
-                  >分屏（选择{side}侧会话）…</button>
+                  >{t("分屏（选择{0}侧会话）…", side)}</button>
                 ) : s.id === sid && menuHost ? (
                   // 十三轮：唯一会话也有分屏——复制本标签到副格（新会话），Windows
                   // Terminal "Split Tab" 语义；显式参数直达，无预武装挂起态
                   <button className="ghost sm-item" role="menuitem"
-                    title={`新建一条同主机连接并放入${side}侧窗格（当前会话留在${splitDir === "tb" ? "上" : "左"}侧）`}
+                    title={t("新建一条同主机连接并放入{0}侧窗格（当前会话留在{1}侧）", side, splitDir === "tb" ? t("上") : t("左"))}
                     onClick={() => { close(); createSession(menuHost, true); }}
-                  >分屏：复制标签页到{side}侧（新会话）</button>
+                  >{t("分屏：复制标签页到{0}侧（新会话）", side)}</button>
                 ) : null}
                 {autoReconn?.sid === s.id ? (
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => { close(); void stopRetry(s); }}
-                  >停止自动重连</button>
+                  >{t("停止自动重连")}</button>
                 ) : s.state === "Disconnected" ? (
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => { close(); void reconnectSession(s); }}
-                  >重连会话</button>
+                  >{t("重连会话")}</button>
                 ) : null}
                 {menuHost && (
                   <button className="ghost sm-item" role="menuitem"
-                    title="用同一台主机新建一条会话（现有会话不受影响）"
+                    title={t("用同一台主机新建一条会话（现有会话不受影响）")}
                     onClick={() => { close(); void createSession(menuHost); }}
-                  >复制标签页（同主机新会话）</button>
+                  >{t("复制标签页（同主机新会话）")}</button>
                 )}
                 <button className="ghost sm-item" role="menuitem"
-                  title="自定义标签显示名（清空恢复主机名）；也可双击标签"
+                  title={t("自定义标签显示名（清空恢复主机名）；也可双击标签")}
                   onClick={() => { close(); setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name }); }}
-                >重命名标签…</button>
+                >{t("重命名标签…")}</button>
                 {/* 十八轮：会话日志——pump tap 落盘，开关态随 SessionInfo 下发不漂移 */}
                 <button className="ghost sm-item" role="menuitem" data-testid="ctx-session-log"
-                  title="把该会话收到的全部输出记录到本地日志文件（data/logs 目录，追加写入）"
+                  title={t("把该会话收到的全部输出记录到本地日志文件（data/logs 目录，追加写入）")}
                   onClick={() => { close(); void toggleSessionLog(s); }}
-                >{s.logging ? "停止记录会话日志" : "记录会话日志"}</button>
+                >{s.logging ? t("停止记录会话日志") : t("记录会话日志")}</button>
                 {s.logging && (
                   <button className="ghost sm-item" role="menuitem" data-testid="ctx-session-log-open"
                     onClick={() => { close(); void openSessionLogFolder(s.id); }}
-                  >打开日志文件夹</button>
+                  >{t("打开日志文件夹")}</button>
                 )}
                 <div className="ctx-menu-sep" role="separator" />
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); void openSessionDetail(s); }}
-                >连接详情…</button>
+                >{t("连接详情…")}</button>
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); requestCloseSession(s); }}
-                >关闭会话…</button>
+                >{t("关闭会话…")}</button>
               </div>
             )}
           </>
@@ -222,32 +223,32 @@ export function CtxMenus({
           <>
             <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
             {h && (
-              <div className="ctx-menu" role="menu" aria-label={`主机操作：${h.name}`} style={{ left: mx, top: my }}>
+              <div className="ctx-menu" role="menu" aria-label={t("主机操作：{0}", h.name)} style={{ left: mx, top: my }}>
                 {!connectingIds.has(h.id) && (
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => { close(); createSession(h); }}
-                  >连接（新建会话）</button>
+                  >{t("连接（新建会话）")}</button>
                 )}
                 {isLocal && localShells.length > 1 && localShells.map((s) => (
                   <button key={s.id} className="ghost sm-item" role="menuitem"
-                    title={s.integrable ? `用 ${s.name} 新开本地终端` : `用 ${s.name} 新开（无 shell 集成：命令块/现场延续不可用）`}
+                    title={s.integrable ? t("用 {0} 新开本地终端", s.name) : t("用 {0} 新开（无 shell 集成：命令块/现场延续不可用）", s.name)}
                     onClick={() => { close(); onLocalShell(s.path); }}
-                  >用 {s.name} 新开{s.integrable ? "" : "（无命令块）"}</button>
+                  >{t("用 {0} 新开", s.name)}{s.integrable ? "" : t("（无命令块）")}</button>
                 ))}
                 {!isLocal && (
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => { close(); void toggleFavorite(h.id, !fav); }}
-                  >{fav ? "取消收藏" : "收藏（置顶分组）"}</button>
+                  >{fav ? t("取消收藏") : t("收藏（置顶分组）")}</button>
                 )}
                 {!isLocal && (
                   <>
                     <div className="ctx-menu-sep" role="separator" />
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
-                    >编辑主机…</button>
+                    >{t("编辑主机…")}</button>
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
-                    >删除主机…</button>
+                    >{t("删除主机…")}</button>
                   </>
                 )}
               </div>
@@ -266,7 +267,7 @@ export function CtxMenus({
           <>
             <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
             {en && (
-              <div className="ctx-menu" role="menu" aria-label="终端操作" style={{ left: mx, top: my }}>
+              <div className="ctx-menu" role="menu" aria-label={t("终端操作")} style={{ left: mx, top: my }}>
                 {termMenu.hasSel && (
                   <button className="ghost sm-item" role="menuitem"
                     onClick={() => {
@@ -274,20 +275,20 @@ export function CtxMenus({
                       const sel = en.term.getSelection();
                       if (sel) (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
                     }}
-                  >复制</button>
+                  >{t("复制")}</button>
                 )}
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => {
                     close();
                     (inTauri
-                      ? clipboard.readText().then((t) => pasteTextIntoRef.current(en.term, termMenu.sid, t))
-                      : navigator.clipboard?.readText().then((t) => pasteTextIntoRef.current(en.term, termMenu.sid, t))
+                      ? clipboard.readText().then((txt) => pasteTextIntoRef.current(en.term, termMenu.sid, txt))
+                      : navigator.clipboard?.readText().then((txt) => pasteTextIntoRef.current(en.term, termMenu.sid, txt))
                     ).catch(() => {});
                   }}
-                >粘贴</button>
+                >{t("粘贴")}</button>
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); en.term.selectAll(); }}
-                >全选</button>
+                >{t("全选")}</button>
                 <div className="ctx-menu-sep" role="separator" />
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => {
@@ -298,10 +299,10 @@ export function CtxMenus({
                     if (sidRef.current === termMenu.sid) open();
                     else void attachSession(termMenu.sid).then(open).catch(() => open());
                   }}
-                >查找…</button>
+                >{t("查找…")}</button>
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); en.term.clear(); }}
-                >清屏</button>
+                >{t("清屏")}</button>
               </div>
             )}
           </>
@@ -318,20 +319,20 @@ export function CtxMenus({
           <>
             <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
             {h && (
-              <div className="ctx-menu" role="menu" aria-label={`最近连接操作：${h.name}`} style={{ left: mx, top: my }}>
+              <div className="ctx-menu" role="menu" aria-label={t("最近连接操作：{0}", h.name)} style={{ left: mx, top: my }}>
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); void createSession(h); }}
-                >连接（新建会话）</button>
+                >{t("连接（新建会话）")}</button>
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}
-                >编辑主机…</button>
+                >{t("编辑主机…")}</button>
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); setRecentHidden(h.id, true); }}
-                >从最近连接隐藏</button>
+                >{t("从最近连接隐藏")}</button>
                 <div className="ctx-menu-sep" role="separator" />
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => { close(); setConfirm({ kind: "deleteHost", id: h.id, name: h.name }); }}
-                >删除主机…</button>
+                >{t("删除主机…")}</button>
               </div>
             )}
           </>
@@ -340,9 +341,9 @@ export function CtxMenus({
       {splitDegraded && splitHintOpen && (
         <div className="split-hint" role="status">
           <span>{splitPanes?.dir === "tb"
-            ? "窗口高度不足——分屏临时退化为单窗格，另一个会话仍在标签中；拉高窗口自动恢复。"
-            : "窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。"}</span>
-          <button className="ghost" aria-label="关闭提示" onClick={() => { splitHintDismissedRef.current = true; setSplitHintOpen(false); }}><IconX size={12} /></button>
+            ? t("窗口高度不足——分屏临时退化为单窗格，另一个会话仍在标签中；拉高窗口自动恢复。")
+            : t("窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。")}</span>
+          <button className="ghost" aria-label={t("关闭提示")} onClick={() => { splitHintDismissedRef.current = true; setSplitHintOpen(false); }}><IconX size={12} /></button>
         </div>
       )}
     </>

@@ -37,6 +37,13 @@ jobs:
     defaults:
       run:
         shell: bash
+    # updater 轮：签名三件套经 secrets 注入（未配置 = 空串 = 本次发布无自动更新
+    # 清单，构建照常绿）。TAURI_UPDATER_PUBKEY 编译进 macOS 产物（build.rs），
+    # 其余平台不消费它——updater_info.supported 只在 macOS+真公钥为 true。
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
@@ -170,6 +177,8 @@ jobs:
             # Gatekeeper（下载隔离）仍需用户右键「打开」/xattr，Release notes 有说明
             codesign --force -s - "$app"
             ditto -c -k --keepParent "$app" "dist/TinySSH_${VER}_macos_$1.app.zip"
+            # updater 轮：自动更新通道用 .app.tar.gz（tauri updater 的 mac 更新格式）
+            tar -czf "dist/TinySSH_${VER}_macos_$1.app.tar.gz" -C "$staging" TinySSH.app
             ln -s /Applications "$staging/Applications"
             hdiutil create -volname TinySSH -srcfolder "$staging" -ov -format UDZO \
               "dist/TinySSH_${VER}_macos_$1.dmg"
@@ -181,6 +190,37 @@ jobs:
           }
           bundle_arch arm64 target/release
           bundle_arch x86_64 target/x86_64-apple-darwin/release
+
+      - name: 自动更新签名与清单（macOS；未配 secrets 时如实跳过）
+        if: matrix.id == 'macos'
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "未配置 TAURI_SIGNING_PRIVATE_KEY —— 本次发布无 latest.json（应用内不出现「自动更新」入口）"
+            exit 0
+          fi
+          npm i -g @tauri-apps/cli
+          set -e
+          for f in dist/TinySSH_${VER}_macos_*.app.tar.gz; do
+            tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" "$f"
+          done
+          set +e
+          # latest.json：tauri updater 清单（darwin-aarch64 / darwin-x86_64 双条目）
+          {
+            printf '{\n  "version": "%s",\n  "pub_date": "%s",\n  "platforms": {\n' \
+              "$VER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            first=1
+            for pair in "darwin-aarch64:TinySSH_${VER}_macos_arm64.app.tar.gz" \
+                        "darwin-x86_64:TinySSH_${VER}_macos_x86_64.app.tar.gz"; do
+              plat="${pair%%:*}"; file="${pair#*:}"
+              sig=$(cat "dist/${file}.sig")
+              [ "$first" -eq 0 ] && printf ',\n'
+              printf '    "%s": { "signature": "%s", "url": "https://github.com/%s/releases/download/%s/%s" }' \
+                "$plat" "$sig" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$file"
+              first=0
+            done
+            printf '\n  }\n}\n'
+          } > dist/latest.json
+          node -e "JSON.parse(require('fs').readFileSync('dist/latest.json','utf8')); console.log('latest.json 合法')"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -221,6 +261,12 @@ jobs:
 
           构建于 commit ${GITHUB_SHA}。运行期依赖：Windows 自带 WebView2；Linux WebKitGTK 4.1；macOS 系统 WKWebView。
           EOF
+          # updater 轮：latest.json 在场（配了签名 secrets）→ 自动更新说明；否则如实说明
+          if [ -f latest.json ]; then
+            echo "- 自动更新：macOS（.app/.dmg 安装形态）在应用内 设置 → 关于 →「自动更新（下载并重启）」一键升级；Windows 便携版与 Linux 请从本页下载新产物替换。" >> notes.md
+          else
+            echo "- 自动更新：本次发布未配置更新签名（TAURI_SIGNING_* / TAURI_UPDATER_PUBKEY secrets 未设置），应用内不出现「自动更新」入口——请从本页手动下载更新。" >> notes.md
+          fi
       - name: 创建 Release 并上传产物
         env:
           GH_TOKEN: ${{ github.token }}
@@ -236,7 +282,7 @@ jobs:
               --title "TinySSH ${GITHUB_REF_NAME#v}" \
               --notes-file notes.md \
               --latest \
-              TinySSH_* tinyssh-cli_* SHA256SUMS.txt \
+              TinySSH_* tinyssh-cli_* SHA256SUMS.txt $( [ -f latest.json ] && echo latest.json ) \
             || gh release edit "$GITHUB_REF_NAME" \
               --title "TinySSH ${GITHUB_REF_NAME#v}" \
               --notes-file notes.md --latest \
@@ -256,12 +302,12 @@ jobs:
                 --data-binary @body.json; } \
           } 2>&1 | tee rel.log
           gh release upload "$GITHUB_REF_NAME" --clobber \
-            TinySSH_* tinyssh-cli_* SHA256SUMS.txt 2>&1 | tee -a rel.log \
+            TinySSH_* tinyssh-cli_* SHA256SUMS.txt $( [ -f latest.json ] && echo latest.json ) 2>&1 | tee -a rel.log \
           || { # curl 兜底上传：取 release id，逐个 POST 到 uploads.github.com
             rid=$(curl -sf "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/$GITHUB_REF_NAME" \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(JSON.parse(s).id)})")
-            for f in TinySSH_* tinyssh-cli_* SHA256SUMS.txt; do
+            for f in TinySSH_* tinyssh-cli_* SHA256SUMS.txt $( [ -f latest.json ] && echo latest.json ); do
               curl -sf -X POST \
                 -H "Authorization: Bearer $GITHUB_TOKEN" \
                 -H "Content-Type: application/octet-stream" \

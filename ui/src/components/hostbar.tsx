@@ -8,6 +8,7 @@ import type {
   AttemptPhase, ErrorPayload, Host, HostDraft, HostMeta, LocalShell, SessionInfo, SshConfigPreview,
 } from "../adapter/wire";
 import { byName, hostMatches, phaseText } from "../app-data";
+import { t } from "../i18n";
 import type { ConfirmState } from "./confirm-dialogs";
 import { SshConfigImportPanel } from "./ssh-import";
 import {
@@ -75,11 +76,11 @@ export function Hostbar({
   const hostAttempt = (hostId: string) => Object.values(attempts).find((a) => a.hostId === hostId) ?? null;
   return (
     <>
-      <aside className="hostbar" style={{ width: hostbarWidth }} aria-label="主机栏">
+      <aside className="hostbar" style={{ width: hostbarWidth }} aria-label={t("主机栏")}>
         <div className="hb-top">
           <div className="hb-search">
             <IconSearch size={13} />
-            <input placeholder="搜索主机" aria-label="搜索主机（名称 / 地址 / 用户 / 标签）" spellCheck={false}
+            <input placeholder={t("搜索主机")} aria-label={t("搜索主机（名称 / 地址 / 用户 / 标签）")} spellCheck={false}
               ref={hostSearchRef}
               onInput={(e) => {
                 // 非受控 + 150ms 防抖（五轮架构）：键入路径不再逐键 setState
@@ -115,21 +116,21 @@ export function Hostbar({
                 else createSession(h);
               }} />
           </div>
-          <button className="ghost icon-btn" title={showImport ? "收起导入" : "导入 ~/.ssh/config"} aria-label={showImport ? "收起导入" : "导入 ~/.ssh/config"}
+          <button className="ghost icon-btn" title={showImport ? t("收起导入") : t("导入 ~/.ssh/config")} aria-label={showImport ? t("收起导入") : t("导入 ~/.ssh/config")}
             onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
             {showImport ? <IconChevronUp size={14} /> : <IconUpload size={14} />}
           </button>
-          <button className="ghost icon-btn" title={showAddHost ? "收起表单" : "添加主机"} aria-label={showAddHost ? "收起表单" : "添加主机"}
+          <button className="ghost icon-btn" title={showAddHost ? t("收起表单") : t("添加主机")} aria-label={showAddHost ? t("收起表单") : t("添加主机")}
             onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); setPrefillEntry(null); }}>
             {showAddHost ? <IconChevronUp size={14} /> : <IconPlus size={14} />}
           </button>
         </div>
         {allTags.length > 0 && (
-          <div className="hb-tags" role="group" aria-label="按标签筛选">
-            {allTags.map((t) => (
-              <button key={t} className={"hb-tag" + (activeTag === t ? " on" : "")} aria-pressed={activeTag === t}
-                title={activeTag === t ? `取消筛选「${t}」` : `只看带「${t}」标签的主机`}
-                onClick={() => setTagFilter(activeTag === t ? null : t)}>{t}</button>
+          <div className="hb-tags" role="group" aria-label={t("按标签筛选")}>
+            {allTags.map((tag) => (
+              <button key={tag} className={"hb-tag" + (activeTag === tag ? " on" : "")} aria-pressed={activeTag === tag}
+                title={activeTag === tag ? t("取消筛选「{0}」", tag) : t("只看带「{0}」标签的主机", tag)}
+                onClick={() => setTagFilter(activeTag === tag ? null : tag)}>{tag}</button>
             ))}
           </div>
         )}
@@ -173,7 +174,9 @@ export function Hostbar({
                     setHostMenu({ x: e.clientX, y: e.clientY, hostId: h.id });
                   }}
                   role="button"
-                  aria-label={`主机 ${h.name}（${h.username}@${h.address}:${h.port}）${latest ? "——Enter 切换到最近会话" : "——Enter 连接"}`}
+                  aria-label={latest
+                    ? t("主机 {0}（{1}）——Enter 切换到最近会话", h.name, `${h.username}@${h.address}:${h.port}`)
+                    : t("主机 {0}（{1}）——Enter 连接", h.name, `${h.username}@${h.address}:${h.port}`)}
                   onKeyDown={(e) => {
                     // rev-r20 H1：冒泡自内层按钮（星标/编辑/删除）的 Enter/Space 不劫持——
                     // 否则 preventDefault 吞掉按钮自身激活再误触 activate()
@@ -181,54 +184,54 @@ export function Hostbar({
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
                   }}
                   title={isLocal
-                    ? "本机 PTY——内置条目：不可编辑、不可删除\n默认 shell 在 设置 → 终端 选择；右键可用指定 shell 新开"
-                    : `${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老旧设备）" : "UTF-8"}`}>
+                    ? t("本机 PTY——内置条目：不可编辑、不可删除\n默认 shell 在 设置 → 终端 选择；右键可用指定 shell 新开")
+                    : `${h.username}@${h.address}:${h.port}\n${t("指纹：")}${h.fingerprint ?? t("首次连接时确认")}\n${t("编码：")}${h.charset === "gbk" ? t("GBK（中文 Windows / 老旧设备）") : "UTF-8"}`}>
                   {/* R8：高频动作（连接）拿主区大点击目标；编辑/删除在右侧 hover 操作组 */}
                   <div className="host-card-main" style={{ cursor: connectingIds.has(h.id) ? "default" : "pointer" }}
                     title={latest
                       ? (isLocal
-                        ? `已有 ${mine.length} 个本地终端——点击切换到最近会话，右侧「连接」可另开`
-                        : `该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话\n${h.username}@${h.address}:${h.port}\n指纹：${h.fingerprint ?? "首次连接时确认"}\n编码：${h.charset === "gbk" ? "GBK（中文 Windows / 老设备）" : "UTF-8"}`)
+                        ? t("已有 {0} 个本地终端——点击切换到最近会话，右侧「连接」可另开", mine.length)
+                        : `${t("该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话")}\n${h.username}@${h.address}:${h.port}\n${t("指纹：")}${h.fingerprint ?? t("首次连接时确认")}\n${t("编码：")}${h.charset === "gbk" ? t("GBK（中文 Windows / 老设备）") : "UTF-8"}`)
                       : undefined}
                     onClick={activate}>
                     {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩。
                         T38 审核：GBK 徽章置名前——行尾会落入 hover 操作组覆盖区，置尾恰在
                         准备连接的交互时刻不可见；置左恒可见 */}
                     <div className="host-line">
-                      {h.charset === "gbk" && <span className="auth-tag" title="远端编码：GBK">GBK</span>}
+                      {h.charset === "gbk" && <span className="auth-tag" title={t("远端编码：GBK")}>GBK</span>}
                       {mine.length > 0 && (
                         <span className={"auth-tag live-tag" + (anyOnline ? " on" : "")}
-                          title={`已有 ${mine.length} 个会话（存活 ${live.length}）——点击主行切换到最近会话`}>● {mine.length}</span>
+                          title={t("已有 {0} 个会话（存活 {1}）——点击主行切换到最近会话", mine.length, live.length)}>● {mine.length}</span>
                       )}
                       <span className="host-name">{h.name}</span>
                       {isLocal
-                        ? <span className="auth-tag" title="本机 PTY——内置条目，不可编辑或删除">本地</span>
-                        : <span className="auth-tag">{h.auth_type === "Key" ? "密钥" : h.auth_type === "Agent" ? "Agent" : "密码"}</span>}
+                        ? <span className="auth-tag" title={t("本机 PTY——内置条目，不可编辑或删除")}>{t("本地")}</span>
+                        : <span className="auth-tag">{h.auth_type === "Key" ? t("密钥") : h.auth_type === "Agent" ? "Agent" : t("密码")}</span>}
                       {h.jump_host_id && (
                         <span className="auth-tag"
-                          title={`经跳板转发连接（跳板：${hosts.find((x) => x.id === h.jump_host_id)?.name ?? h.jump_host_id}）`}>跳板</span>
+                          title={t("经跳板转发连接（跳板：{0}）", hosts.find((x) => x.id === h.jump_host_id)?.name ?? h.jump_host_id)}>{t("跳板")}</span>
                       )}
                     </div>
-                    <div className="host-addr mono">{isLocal ? `本地 shell · ${h.username}` : `${h.username}@${h.address}:${h.port}`}</div>
+                    <div className="host-addr mono">{isLocal ? `${t("本地 shell ·")} ${h.username}` : `${h.username}@${h.address}:${h.port}`}</div>
                     {(h.tags ?? []).length > 0 && (
                       <div className="host-tags">
-                        {(h.tags ?? []).slice(0, 2).map((t) => <span key={t} className="host-tag">{t}</span>)}
+                        {(h.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className="host-tag">{tag}</span>)}
                         {(h.tags ?? []).length > 2 && <span className="host-tag more">+{(h.tags ?? []).length - 2}</span>}
                       </div>
                     )}
                     {lastFailed === h.id && !connectingIds.has(h.id) && (
-                      <div className="err host-fail">✕ 上次连接失败——检查地址与凭据后重试</div>
+                      <div className="err host-fail">✕ {t("上次连接失败——检查地址与凭据后重试")}</div>
                     )}
                   </div>
                   <div className="host-card-side">
                     {!isLocal && (
                       <div className="host-ops">
                         <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
-                          title={fav ? "取消收藏（移出「收藏」分组）" : "收藏（置顶「收藏」分组）"}
+                          title={fav ? t("取消收藏（移出「收藏」分组）") : t("收藏（置顶「收藏」分组）")}
                           onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
-                        <button className="ghost" title="编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）"
+                        <button className="ghost" title={t("编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）")}
                           onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
-                        <button className="ghost host-del" title="删除主机"
+                        <button className="ghost host-del" title={t("删除主机")}
                           onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
                       </div>
                     )}
@@ -236,19 +239,19 @@ export function Hostbar({
                         取消终态由核心串行裁决后呈示（cancelConnect 不自行改状态） */}
                     <div className="row" style={{ flexWrap: "nowrap", gap: 4 }}>
                       <button className="host-connect-btn" disabled={connectingIds.has(h.id)}
-                        title={isLocal ? "连接（新开本地终端）——shell 在 设置 → 终端 选择，右键可指定 shell 新开" : "连接（新建会话）——其他主机的连接不受影响"}
+                        title={isLocal ? t("连接（新开本地终端）——shell 在 设置 → 终端 选择，右键可指定 shell 新开") : t("连接（新建会话）——其他主机的连接不受影响")}
                         onClick={() => createSession(h)}>
                         {(() => {
                           const a = hostAttempt(h.id);
                           return a
                             ? <><IconLoader size={11} className="spin" /> {phaseText(a.phase)}</>
-                            : "连接";
+                            : t("连接");
                         })()}
                       </button>
                       {hostAttempt(h.id) && (
                         <button className="ghost" style={{ width: "auto", flexShrink: 0 }}
-                          title="取消本次连接（终态由核心裁决：已取消/已完成可见）"
-                          onClick={(e) => { e.stopPropagation(); void cancelConnect(h.id); }}>取消</button>
+                          title={t("取消本次连接（终态由核心裁决：已取消/已完成可见）")}
+                          onClick={(e) => { e.stopPropagation(); void cancelConnect(h.id); }}>{t("取消")}</button>
                       )}
                     </div>
                   </div>
@@ -257,20 +260,20 @@ export function Hostbar({
             };
             const skeletons = !hostsLoaded ? (<><div className="skeleton" /><div className="skeleton" /></>) : null;
             const emptyAll = hostsLoaded && hosts.length === 0 && (
-              <div className="dim">还没有主机。点上方「＋」填入地址和密码即可连接。</div>
+              <div className="dim">{t("还没有主机。点上方「＋」填入地址和密码即可连接。")}</div>
             );
             const noMatch = hostsLoaded && hosts.length > 0 && filteredHosts.length === 0 && (
               <>
-                <div className="dim">无匹配主机——可清除搜索/标签筛选，或直接添加：</div>
+                <div className="dim">{t("无匹配主机——可清除搜索/标签筛选，或直接添加：")}</div>
                 <button className="ghost" style={{ marginTop: 6 }}
                   onClick={() => { setShowImport(false); setEditingHost(null); setPrefillEntry(null); setShowAddHost(true); }}>
-                  <IconPlus size={12} /> 添加主机
+                  <IconPlus size={12} /> {t("添加主机")}
                 </button>
               </>
             );
             const firstSection = (title: string, cards: Host[]) => (
               <div className="section">
-                <h4>{title}</h4>
+                <h4>{t(title)}</h4>
                 {skeletons}
                 {cards.map((c) => renderHostCard(c))}
                 {emptyAll}
@@ -281,7 +284,7 @@ export function Hostbar({
             // 内置条目（卡片无编辑/删除；右键菜单同轮裁剪）。先于收藏组渲染。
             const localSection = localHost && (
               <div className="section" data-testid="local-host-section">
-                <h4>本机</h4>
+                <h4>{t("本机")}</h4>
                 {renderHostCard(localHost, true)}
               </div>
             );
@@ -294,7 +297,7 @@ export function Hostbar({
                   {firstSection("收藏", favHosts)}
                   {otherHosts.length > 0 && (
                     <div className="section">
-                      <h4>其他主机</h4>
+                      <h4>{t("其他主机")}</h4>
                       {otherHosts.map((c) => renderHostCard(c))}
                     </div>
                   )}
@@ -310,14 +313,14 @@ export function Hostbar({
           })()}
         </div>
         <div className="hb-bottom">
-          <button className="hb-settings" title="设置（外观 / 终端 / 凭据）" aria-label="设置"
+          <button className="hb-settings" title={t("设置（外观 / 终端 / 凭据）")} aria-label={t("设置")}
             onClick={() => dispatchRef.current({ id: "settings" })}>
-            <IconSliders size={14} />设置
+            <IconSliders size={14} />{t("设置")}
           </button>
         </div>
       </aside>
       <div className="hb-grip" role="separator" aria-orientation="vertical"
-        aria-label="拖动调整主机栏宽度（200–300 px）" title="拖动调整宽度（200–300 px）"
+        aria-label={t("拖动调整主机栏宽度（200–300 px）")} title={t("拖动调整宽度（200–300 px）")}
         onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp}
         onPointerCancel={() => { gripDrag.current = false; }} />
     </>
