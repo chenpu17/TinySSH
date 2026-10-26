@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "r
 import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, IdentityMeta, SshConfigPreview } from "../adapter/wire";
 import { friendlyError } from "../app-data";
+import { t } from "../i18n";
 
 // IME 组合期守卫（§7.3 与 resolveAction 同口径：isComposing 与 keyCode 229 双查）——
 // 中文输入法敲 Enter 是「确认候选词」，不是提交表单。表单全部回车提交经此封装。
@@ -66,7 +67,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
   // 粘贴/文件读入的私钥 → 凭据库身份；只回元数据，不出私钥明文
   const importPem = async () => {
     setErr(null);
-    if (!pem.includes("PRIVATE KEY")) { setErr("请先粘贴 OpenSSH / PEM 格式的私钥内容，或「从文件导入…」"); return; }
+    if (!pem.includes("PRIVATE KEY")) { setErr(t("请先粘贴 OpenSSH / PEM 格式的私钥内容，或「从文件导入…」")); return; }
     setBusy(true);
     try {
       const meta = await invoke("create_identity", {
@@ -103,17 +104,17 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
     if (busy) return; // 回车提交绕过按钮 disabled——在途时丢弃重复提交
     setErr(null);
     if (!name.trim() || !address.trim() || !username.trim()) {
-      setErr("名称、地址、用户名都不能为空");
+      setErr(t("名称、地址、用户名都不能为空"));
       return;
     }
     // 地址格式校验（P2-3）：IP 或域名，不带协议/端口/路径——之前的乱码地址能一路存到「连接成功」
     if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
-      setErr("地址格式不对——应为 IP 或域名（如 192.168.1.10 或 server.example.com），不带端口与协议");
+      setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10 或 server.example.com），不带端口与协议"));
       return;
     }
     const p = parseInt(port, 10);
     if (!Number.isInteger(p) || p <= 0 || p > 65535) {
-      setErr("端口必须是 1–65535 的数字");
+      setErr(t("端口必须是 1–65535 的数字"));
       return;
     }
     setBusy(true);
@@ -125,7 +126,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
         // 主密钥不匹配/换密码场景的唯一入口，用户走查实锤需求）
         auth = password ? { Password: { password } } : "Keep";
       } else if (authMode === "password") {
-        if (!password) { setErr("请输入密码"); setBusy(false); return; }
+        if (!password) { setErr(t("请输入密码")); setBusy(false); return; }
         auth = { Password: { password } };
       } else if (authMode === "agent") {
         auth = "Agent";
@@ -133,7 +134,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
         // R21：绑定凭据库已有密钥（含取消表单后未绑定的凭据——§267 不默默删除的消费面）
         auth = { Key: { identity_id: pickedIdentity } };
       } else {
-        if (!identity) { setErr("请先「导入并确认指纹」「生成新密钥」或选择已有密钥"); setBusy(false); return; }
+        if (!identity) { setErr(t("请先「导入并确认指纹」「生成新密钥」或选择已有密钥")); setBusy(false); return; }
         auth = { Key: { identity_id: identity.id } };
       }
       // 标签（R20）：逗号分隔（中英文逗号皆可）→ 去重去空
@@ -156,47 +157,47 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
     }
   };
 
-  const authLabel = editHost?.auth_type === "Key" ? "密钥" : editHost?.auth_type === "Agent" ? "SSH Agent" : "密码";
+  const authLabel = editHost?.auth_type === "Key" ? t("密钥") : editHost?.auth_type === "Agent" ? "SSH Agent" : t("密码");
 
   return (
     <div className="card add-host">
       {prefill && !editing && (
         <div className="dim" style={{ fontSize: 11, marginBottom: 6 }}>
-          预填自 ~/.ssh/config:{prefill.source_line}
-          {prefill.unsupported.some((u) => u.level === "Blocking") && "（含不兼容指令，请核对后保存）"}
-          {!prefill.user_specified && "（config 未指定用户，请补全）"}
+          {t("预填自 ~/.ssh/config:")}{prefill.source_line}
+          {prefill.unsupported.some((u) => u.level === "Blocking") && t("（含不兼容指令，请核对后保存）")}
+          {!prefill.user_specified && t("（config 未指定用户，请补全）")}
         </div>
       )}
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
-          <label>名称</label>
+          <label>{t("名称")}</label>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
             onKeyDown={enterKey(() => submit())}
-            placeholder="例：我的服务器" />
+            placeholder={t("例：我的服务器")} />
         </div>
         <div className="ah-field" style={{ flex: 2 }}>
-          <label>地址（IP 或域名）</label>
+          <label>{t("地址（IP 或域名）")}</label>
           <input value={address} onChange={(e) => setAddress(e.target.value)}
             onBlur={() => { if (!name.trim() && address.trim()) setName(address.trim()); }}
-            placeholder="例：192.168.1.10 或 server.example.com" style={{ minWidth: 0 }} />
+            placeholder={t("例：192.168.1.10 或 server.example.com")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
-          <label>端口</label>
+          <label>{t("端口")}</label>
           <input value={port} onChange={(e) => setPort(e.target.value)}
             onKeyDown={enterKey(() => submit())} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
-          <label>用户名</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="例：ops 或 root"
+          <label>{t("用户名")}</label>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("例：ops 或 root")}
             onKeyDown={enterKey(() => submit())} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
-          <label>认证方式</label>
+          <label>{t("认证方式")}</label>
           <select value={authMode} disabled={editing} onChange={(e) => { setErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
-            <option value="password">密码登录</option>
-            <option value="key">私钥登录</option>
+            <option value="password">{t("密码登录")}</option>
+            <option value="key">{t("私钥登录")}</option>
             <option value="agent">SSH Agent</option>
           </select>
         </div>
@@ -208,42 +209,42 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
           {editHost?.auth_type === "Password" ? (
             <>
               <div className="ah-field" style={{ marginTop: 6 }}>
-                <label>更换密码（留空保持不变）</label>
-                <input type="password" placeholder="输入新密码即更换（用当前主密钥重新加密）" value={password}
+                <label>{t("更换密码（留空保持不变）")}</label>
+                <input type="password" placeholder={t("输入新密码即更换（用当前主密钥重新加密）")} value={password}
                   onChange={(e) => setPassword(e.target.value)} onKeyDown={enterKey(() => submit())} />
               </div>
-              <div className="dim" style={{ marginTop: 4 }}>密码留空保持不变。</div>
+              <div className="dim" style={{ marginTop: 4 }}>{t("密码留空保持不变。")}</div>
             </>
           ) : (
-            <div className="dim" style={{ marginTop: 6 }}>认证凭据保持不变（{authLabel}）。如需更换凭据，删除该主机后重新添加。</div>
+            <div className="dim" style={{ marginTop: 6 }}>{t("认证凭据保持不变（{0}）。如需更换凭据，删除该主机后重新添加。", authLabel)}</div>
           )}
           {/* T34：信任可查证——编辑主机时出示 TOFU 信任状态与指纹原文 */}
           {editHost?.fingerprint ? (
             <div className="trust-row" style={{ marginTop: 6 }}>
-              <span className="ok">✓ 主机指纹已信任（首次连接时确认）</span>
+              <span className="ok">✓ {t("主机指纹已信任（首次连接时确认）")}</span>
               <span className="mono fp">{editHost.fingerprint}</span>
             </div>
           ) : (
-            <div className="dim" style={{ marginTop: 4 }}>主机指纹尚未建立——首次连接时会出示并要求确认。</div>
+            <div className="dim" style={{ marginTop: 4 }}>{t("主机指纹尚未建立——首次连接时会出示并要求确认。")}</div>
           )}
         </>
       ) : authMode === "password" ? (
         <div className="ah-field" style={{ marginTop: 6 }}>
-          <label>密码</label>
-          <input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)}
+          <label>{t("密码")}</label>
+          <input type="password" placeholder={t("密码")} value={password} onChange={(e) => setPassword(e.target.value)}
             onKeyDown={enterKey(() => submit())} />
         </div>
       ) : authMode === "agent" ? (
-        <div className="dim" style={{ marginTop: 6 }}>连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。Windows 需 OpenSSH Authentication Agent 服务在运行。</div>
+        <div className="dim" style={{ marginTop: 6 }}>{t("连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。Windows 需 OpenSSH Authentication Agent 服务在运行。")}</div>
       ) : (
         <>
           {/* R21（§265 已有密钥）：绑定凭据库既有凭据——取消表单后未绑定的凭据在此回收 */}
           {knownIdentities.length > 0 && !identity && (
             <div className="ah-field" style={{ marginTop: 6 }}>
-              <label>已有密钥（凭据库）</label>
+              <label>{t("已有密钥（凭据库）")}</label>
               <select value={pickedIdentity}
                 onChange={(e) => { setErr(null); setPickedIdentity(e.target.value); }}>
-                <option value="">新密钥（下方生成 / 导入）</option>
+                <option value="">{t("新密钥（下方生成 / 导入）")}</option>
                 {knownIdentities.map((k) => (
                   <option key={k.id} value={k.id}>{k.label} · {k.fingerprint.slice(0, 19)}…</option>
                 ))}
@@ -253,19 +254,19 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
           {!pickedIdentity && (identity ? (
             <>
               <div className="trust-row" style={{ marginTop: 6 }}>
-                <span className="ok">✓ 密钥已加密存入凭据库（{identity.label}）</span>
-                <span className="mono fp">指纹　{identity.fingerprint}</span>
+                <span className="ok">✓ {t("密钥已加密存入凭据库（{0}）", identity.label)}</span>
+                <span className="mono fp">{t("指纹")}　{identity.fingerprint}</span>
               </div>
-              <div className="dim" style={{ marginTop: 4 }}>保存后以此密钥登录；指纹用于核对凭据库里存的是哪把钥匙。</div>
+              <div className="dim" style={{ marginTop: 4 }}>{t("保存后以此密钥登录；指纹用于核对凭据库里存的是哪把钥匙。")}</div>
               <button className="ghost" style={{ marginTop: 6 }} disabled={busy} onClick={() => setIdentity(null)}>
-                更换密钥（重新粘贴 / 从文件导入 / 生成）
+                {t("更换密钥（重新粘贴 / 从文件导入 / 生成）")}
               </button>
             </>
           ) : (
             <>
               <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
                 <label className="file-btn">
-                  从文件导入…
+                  {t("从文件导入…")}
                   <input type="file" style={{ display: "none" }} accept=".pem,.key,id_ed25519,id_rsa,id_ecdsa"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
@@ -276,14 +277,14 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
                       e.target.value = ""; // 允许同一文件二次选择仍触发 onChange
                     }} />
                 </label>
-                <button className="ghost" disabled={busy} onClick={genKey}>生成新密钥（ed25519）</button>
+                <button className="ghost" disabled={busy} onClick={genKey}>{t("生成新密钥（ed25519）")}</button>
               </div>
-              <textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n粘贴私钥内容，或点「从文件导入…」"} value={pem}
+              <textarea placeholder={`${t("-----BEGIN OPENSSH PRIVATE KEY-----")}\n${t("粘贴私钥内容，或点「从文件导入…」")}`} value={pem}
                 onChange={(e) => setPem(e.target.value)} rows={4} style={{ marginTop: 6, width: "100%" }} />
               <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
-                <input type="password" placeholder="私钥口令（无可留空）" value={passphrase} style={{ flex: 1 }}
+                <input type="password" placeholder={t("私钥口令（无可留空）")} value={passphrase} style={{ flex: 1 }}
                   onChange={(e) => setPassphrase(e.target.value)} onKeyDown={enterKey(importPem)} />
-                <button disabled={busy} onClick={importPem}>{busy ? "处理中…" : "导入并确认指纹"}</button>
+                <button disabled={busy} onClick={importPem}>{busy ? t("处理中…") : t("导入并确认指纹")}</button>
               </div>
             </>
           ))}
@@ -292,43 +293,43 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
       {/* T38-PV：220px 侧栏里三个字段挤一行会把下拉压到 55px（选中值只剩「密」「UT」），
           编码独占一行让选项说明全文可读 */}
       <div className="ah-field" style={{ marginTop: 6 }}>
-        <label>远端编码（老设备中文乱码时选 GBK）</label>
+        <label>{t("远端编码（老设备中文乱码时选 GBK）")}</label>
         <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
-          <option value="utf-8">UTF-8（默认）</option>
-          <option value="gbk">GBK（中文 Windows / 老旧设备）</option>
+          <option value="utf-8">{t("UTF-8（默认）")}</option>
+          <option value="gbk">{t("GBK（中文 Windows / 老旧设备）")}</option>
         </select>
       </div>
       {/* ProxyJump：跳板机（可选）——经跳板转发连接目标；跳板自身的凭据/指纹
           确认沿用其主机条目（连接时会先出示跳板的指纹卡，再出示目标的） */}
       <div className="ah-field" style={{ marginTop: 6 }}>
-        <label>跳板机（可选，经其转发连接）</label>
+        <label>{t("跳板机（可选，经其转发连接）")}</label>
         <select value={jumpId} data-testid="jump-select"
           onChange={(e) => { setErr(null); setJumpId(e.target.value); }}>
-          <option value="">直连（不经跳板）</option>
+          <option value="">{t("直连（不经跳板）")}</option>
           {jumpOptions.map((h) => (
-            <option key={h.id} value={h.id}>{h.name}（{h.username}@{h.address}）</option>
+            <option key={h.id} value={h.id}>{t("{0}（{1}@{2}）", h.name, h.username, h.address)}</option>
           ))}
         </select>
       </div>
       {/* R20：标签（逗号分隔）——主机卡徽章显示，搜索与标签 chip 筛选可命中 */}
       <div className="ah-field" style={{ marginTop: 6 }}>
-        <label>标签（可选，逗号分隔，如：生产, 成都）</label>
+        <label>{t("标签（可选，逗号分隔，如：生产, 成都）")}</label>
         <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
-          placeholder="例：生产, 数据库" onKeyDown={enterKey(() => submit())} />
+          placeholder={t("例：生产, 数据库")} onKeyDown={enterKey(() => submit())} />
       </div>
       {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
       <div className="row" style={{ marginTop: 8 }}>
         {editing ? (
-          <button disabled={busy} onClick={() => submit()}>{busy ? "保存中…" : "保存修改"}</button>
+          <button disabled={busy} onClick={() => submit()}>{busy ? t("保存中…") : t("保存修改")}</button>
         ) : (
           <>
-            <button disabled={busy} onClick={() => submit()}>{busy ? "保存中…" : "保存并连接"}</button>
+            <button disabled={busy} onClick={() => submit()}>{busy ? t("保存中…") : t("保存并连接")}</button>
             <button className="ghost" disabled={busy} onClick={() => submit(false)}
-              title="只保存配置不连接——批量录入主机时用">仅保存</button>
+              title={t("只保存配置不连接——批量录入主机时用")}>{t("仅保存")}</button>
           </>
         )}
-        {onCancel && <button className="ghost" onClick={onCancel}>取消</button>}
-        <span className="dim">凭据加密存入本机凭据库，不会明文落盘。</span>
+        {onCancel && <button className="ghost" onClick={onCancel}>{t("取消")}</button>}
+        <span className="dim">{t("凭据加密存入本机凭据库，不会明文落盘。")}</span>
       </div>
     </div>
   );

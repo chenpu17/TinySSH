@@ -45,8 +45,31 @@ module.exports = {
     await page2.waitForTimeout(500);
     ck.check("en 启动：终端行为卡开关变 Copy on select（表内值已译）",
       (await page2.evaluate(() => document.querySelector(".settings-pane")?.textContent ?? "")).includes("Copy on select"));
+    await page2.click('[data-testid="settings-close"]');
+    await page2.waitForTimeout(400);
+
+    // ── B2. en 下面板内文（铺开轮）：文件面板 / 命令块面板（无会话空态即可断言）──
+    await page2.click('[data-testid="rb-files"]');
+    await page2.waitForTimeout(400);
+    ck.check("en 面板内文：文件面板节头变 Remote files",
+      (await page2.evaluate(() => document.querySelector(".task-panel h4")?.textContent)) === "Remote files",
+      await page2.evaluate(() => document.querySelector(".task-panel h4")?.textContent));
+    ck.check("en 面板内文：文件面板空态变 Connect to a session…",
+      (await page2.evaluate(() => document.querySelector(".task-panel")?.innerText ?? "")).includes("Connect to a session to browse"),
+      "");
+    await page2.click('[data-testid="tp-close"]');
+    await page2.waitForTimeout(300);
+    await page2.click('[data-testid="rb-blocks"]');
+    await page2.waitForTimeout(400);
+    ck.check("en 面板内文：命令块面板空态变 No session.",
+      (await page2.evaluate(() => document.querySelector('[data-testid="blocks-empty-nosession"]')?.textContent ?? "")).includes("No session"),
+      await page2.evaluate(() => document.querySelector('[data-testid="blocks-empty-nosession"]')?.textContent));
+    await page2.click('[data-testid="tp-close"]');
+    await page2.waitForTimeout(300);
 
     // ── C. 面板内切回 zh：即时生效（无 reload——location 未变）──
+    await page2.click(".hb-settings");
+    await page2.waitForTimeout(600);
     await page2.click('[data-testid="settings-cat-appearance"]');
     await page2.waitForTimeout(500);
     await page2.evaluate(() => {

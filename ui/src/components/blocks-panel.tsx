@@ -3,14 +3,15 @@
 // 粘贴安全链：危险形态/多行先确认）、定位（文本搜索，best-effort）。
 // 数据经 read_blocks（最近 N 条旧→新），状态与动作全部归宿主，本组件只呈现。
 import type { BlockInfo } from "../adapter/wire";
+import { t } from "../i18n";
 import { IconRefresh, IconTerminal } from "../icons";
 
 /** source（BlockSource::describe()）→ 徽标文案与语义色类。 */
 function sourceBadge(source: string): { label: string; cls: string; title: string } {
-  if (source === "human") return { label: "人类", cls: "human", title: "人类键盘输入" };
-  if (source.startsWith("agent:")) return { label: `Agent · ${source.slice(6)}`, cls: "agent", title: `Agent（${source.slice(6)}）提交的命令` };
-  if (source === "replay") return { label: "回放", cls: "replay", title: "Fresh 结果镜像回放块" };
-  if (source.startsWith("replay:")) return { label: `回放 · ${source.slice(7)}`, cls: "replay", title: `Fresh 结果镜像回放（${source.slice(7)}）` };
+  if (source === "human") return { label: t("人类"), cls: "human", title: t("人类键盘输入") };
+  if (source.startsWith("agent:")) return { label: t("Agent · {0}", source.slice(6)), cls: "agent", title: t("Agent（{0}）提交的命令", source.slice(6)) };
+  if (source === "replay") return { label: t("回放"), cls: "replay", title: t("Fresh 结果镜像回放块") };
+  if (source.startsWith("replay:")) return { label: t("回放 · {0}", source.slice(7)), cls: "replay", title: t("Fresh 结果镜像回放（{0}）", source.slice(7)) };
   return { label: source, cls: "replay", title: source };
 }
 
@@ -55,13 +56,13 @@ export function BlocksPanel({ sid, blocks, busy, err, failIdx, load, rerun, copy
       <div className="section">
         <div className="log-bar">
           <span className="side-quiet" data-testid="blocks-note">
-            {sid ? `最近 ${blocks.length} 块（旧→新取回）` : "未接入会话"}
+            {sid ? t("最近 {0} 块（旧→新取回）", blocks.length) : t("未接入会话")}
           </span>
           <span style={{ flex: 1 }} />
           <button className="ghost" data-testid="blocks-jump-fail" disabled={failIdx < 0}
-            title={failIdx >= 0 ? `跳到最近失败：${blocks[failIdx].command.slice(0, 60)}` : "暂无失败块（exit ≠ 0）"}
-            onClick={() => failIdx >= 0 && locate(blocks[failIdx].command)}>跳到最近失败</button>
-          <button className="ghost icon-btn" title="刷新" aria-label="刷新命令块"
+            title={failIdx >= 0 ? t("跳到最近失败：{0}", blocks[failIdx].command.slice(0, 60)) : t("暂无失败块（exit ≠ 0）")}
+            onClick={() => failIdx >= 0 && locate(blocks[failIdx].command)}>{t("跳到最近失败")}</button>
+          <button className="ghost icon-btn" title={t("刷新")} aria-label={t("刷新命令块")}
             data-testid="blocks-refresh" disabled={busy}
             onClick={load}><IconRefresh size={14} /></button>
         </div>
@@ -70,10 +71,10 @@ export function BlocksPanel({ sid, blocks, busy, err, failIdx, load, rerun, copy
         {err ? (
           <div className="empty" data-testid="blocks-err">{err}</div>
         ) : !sid ? (
-          <div className="empty" data-testid="blocks-empty-nosession"><IconTerminal size={14} />未接入会话。</div>
+          <div className="empty" data-testid="blocks-empty-nosession"><IconTerminal size={14} />{t("未接入会话。")}</div>
         ) : rows.length === 0 ? (
           <div className="empty" data-testid="blocks-empty">
-            <IconTerminal size={14} />{busy ? "载入中…" : "暂无命令块。shell 集成（OSC 133）开启后，每条命令自动成块。"}
+            <IconTerminal size={14} />{busy ? t("载入中…") : t("暂无命令块。shell 集成（OSC 133）开启后，每条命令自动成块。")}
           </div>
         ) : (
           rows.map(({ b, i }) => {
@@ -84,7 +85,7 @@ export function BlocksPanel({ sid, blocks, busy, err, failIdx, load, rerun, copy
               <div className={`tl-row block-row src-${badge.cls}${i === failIdx ? " blk-fail" : ""}`}
                 key={`${b.start ?? "n"}-${i}`} data-testid="block-row"
                 data-source={b.source} data-exit={b.exit_code === null ? "unknown" : String(b.exit_code)}
-                title={`${b.command}${b.exit_code === null ? "\nexit 未知" : `\nexit ${b.exit_code}`}${dur ? `\n耗时 ${dur}` : ""}${b.exec_id ? `\nexec ${b.exec_id}` : ""}`}>
+                title={`${b.command}${b.exit_code === null ? `\n${t("exit 未知")}` : `\nexit ${b.exit_code}`}${dur ? `\n${t("耗时 {0}", dur)}` : ""}${b.exec_id ? `\nexec ${b.exec_id}` : ""}`}>
                 <div className="tl-meta">
                   <span className={`blk-src ${badge.cls}`}>{badge.label}</span>
                   <span>{clockText(b.end ?? b.start)}</span>
@@ -95,16 +96,16 @@ export function BlocksPanel({ sid, blocks, busy, err, failIdx, load, rerun, copy
                 </div>
                 <div className="tl-action blk-cmd mono">{b.command}</div>
                 <div className="blk-acts">
-                  <button className="ghost" data-testid="block-copy" title="复制命令" onClick={() => copy(b.command)}>复制</button>
+                  <button className="ghost" data-testid="block-copy" title={t("复制命令")} onClick={() => copy(b.command)}>{t("复制")}</button>
                   {(b.output ?? "").length > 0 && (
                     <button className="ghost" data-testid="block-copy-output"
-                      title={`复制输出${b.output_truncated ? "（超 8KB 已截断，保留尾部）" : ""}：${b.output!.slice(0, 120)}${b.output!.length > 120 ? "…" : ""}`}
-                      onClick={() => copy(b.output!, "输出")}>输出{b.output_truncated ? "✂" : ""}</button>
+                      title={`${t("复制输出")}${b.output_truncated ? t("（超 8KB 已截断，保留尾部）") : ""}：${b.output!.slice(0, 120)}${b.output!.length > 120 ? "…" : ""}`}
+                      onClick={() => copy(b.output!, t("输出"))}>{t("输出")}{b.output_truncated ? "✂" : ""}</button>
                   )}
-                  <button className="ghost" data-testid="block-rerun" title="重跑（经粘贴安全链：危险/多行先确认）"
-                    onClick={() => rerun(b.command)}>重跑</button>
-                  <button className="ghost" data-testid="block-locate" title="在终端中定位（按命令文本搜索，同名命令取最近）"
-                    onClick={() => locate(b.command)}>定位</button>
+                  <button className="ghost" data-testid="block-rerun" title={t("重跑（经粘贴安全链：危险/多行先确认）")}
+                    onClick={() => rerun(b.command)}>{t("重跑")}</button>
+                  <button className="ghost" data-testid="block-locate" title={t("在终端中定位（按命令文本搜索，同名命令取最近）")}
+                    onClick={() => locate(b.command)}>{t("定位")}</button>
                 </div>
               </div>
             );

@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ActionRecord, ActionRecordKind, RecordsQuery, RecordsRange } from "../adapter/wire";
+import { t } from "../i18n";
 
 /** ⑨ 时间范围档位 → since ISO（「今天」按本机零点；all=null 不过滤）。
  * 在拉取时刻换算，筛选态里只存档位，避免久置页面的边界漂移。 */
@@ -19,6 +20,7 @@ export function recordsRangeSince(range: RecordsRange): string | null {
   return new Date(Date.now() - hours * 3600e3).toISOString();
 }
 
+// KIND_LABEL/STATUS_LABEL 存中文原文（模块导入期禁 t()），消费点包裹翻译
 const KIND_LABEL: Record<ActionRecordKind, string> = {
   exec: "命令",
   transfer: "传输",
@@ -89,15 +91,15 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
     ms == null ? 3.5 : 3.5 + 5.5 * Math.min(1, Math.log10(Math.max(ms, 10)) / 6);
   const H = CHART_TOP + lanes.length * LANE_H + 8;
   const laneLabel = (sid: string) =>
-    sid === "unknown" ? "未知会话" : sessionNames.get(sid) ?? sid.slice(0, 8);
+    sid === "unknown" ? t("未知会话") : sessionNames.get(sid) ?? sid.slice(0, 8);
 
   const stats = useMemo(() => {
     const c: Record<string, number> = {};
     for (const r of rows) c[r.status] = (c[r.status] ?? 0) + 1;
     return c;
   }, [rows]);
-  const statsText = `${rows.length} 条 · ` + Object.entries(stats)
-    .map(([s, n]) => `${n} ${STATUS_LABEL[s]?.replace(/^[^ ]+ /, "") ?? s}`)
+  const statsText = t("{0} 条 · ", rows.length) + Object.entries(stats)
+    .map(([s, n]) => `${n} ${STATUS_LABEL[s] ? t(STATUS_LABEL[s]).replace(/^[^ ]+ /, "") : s}`)
     .join(" · ");
 
   return (
@@ -106,7 +108,7 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
         {statsText}
       </div>
       <svg className="rec-chart" data-testid="records-chart" viewBox={`0 0 ${CHART_W} ${H}`}
-        width="100%" height={H} role="img" aria-label="动作时间线泳道图">
+        width="100%" height={H} role="img" aria-label={t("动作时间线泳道图")}>
         {lanes.map((sid, i) => (
           <g key={sid}>
             {i > 0 && (
@@ -129,7 +131,7 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
               className={flashSeq === r.seq ? "rec-dot-flash" : undefined}
               onClick={() => onPick(r.seq)}>
               <title>
-                {`${new Date(r.ts).toLocaleString()}\n${KIND_LABEL[r.kind] ?? r.kind} · ${agent ? `Agent ${r.agent_id}` : "人类"}\n${r.summary}\n${STATUS_LABEL[r.status] ?? r.status}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ""}`}
+                {`${new Date(r.ts).toLocaleString()}\n${t(KIND_LABEL[r.kind] ?? r.kind)} · ${agent ? t("Agent {0}", r.agent_id ?? "") : t("人类")}\n${r.summary}\n${STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ""}`}
               </title>
             </circle>
           );
@@ -147,7 +149,7 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
             <span style={{ color: STATUS_COLOR[s] ?? "#8a8f98" }}>●</span> {STATUS_LABEL[s] ?? s}
           </span>
         ))}
-        <span>实心 = Agent · 空心 = 人类 · 点大小 = 耗时 · 点击刻度定位明细</span>
+        <span> {t("实心 = Agent · 空心 = 人类 · 点大小 = 耗时 · 点击刻度定位明细")}</span>
       </div>
     </div>
   );
@@ -203,74 +205,73 @@ export function RecordsPane(props: RecordsPaneProps) {
   return (
     <>
       <div className="set-card">
-        <h4>动作时间线</h4>
+        <h4>{t("动作时间线")}</h4>
         <div className="set-desc">
-          Agent 与人类的命令 / 传输 / 转发动作都会记录在案（落盘即密文，输出摘录写入时已启发式擦除密钥）；
-          Agent 只能经 MCP 查自己的记录，这里是人类的全量视角。与「协作面板 → 活动记录」的哈希链审计互补：审计面向追责，时间线面向回看。
+          {t("Agent 与人类的命令 / 传输 / 转发动作都会记录在案（落盘即密文，输出摘录写入时已启发式擦除密钥）；Agent 只能经 MCP 查自己的记录，这里是人类的全量视角。与「协作面板 → 活动记录」的哈希链审计互补：审计面向追责，时间线面向回看。")}
         </div>
         <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
           <select
-            style={{ fontSize: 11 }} aria-label="按种类筛选" data-testid="records-kind-filter"
+            style={{ fontSize: 11 }} aria-label={t("按种类筛选")} data-testid="records-kind-filter"
             value={filter.kind ?? ""}
             onChange={(e) => onFilter({ ...filter, kind: (e.target.value || null) as RecordsQuery["kind"] })}
           >
-            <option value="">全部种类</option>
-            <option value="exec">命令</option>
-            <option value="transfer">传输</option>
-            <option value="forward">转发</option>
+            <option value="">{t("全部种类")}</option>
+            <option value="exec">{t("命令")}</option>
+            <option value="transfer">{t("传输")}</option>
+            <option value="forward">{t("转发")}</option>
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label="按来源筛选" data-testid="records-agent-filter"
+            style={{ fontSize: 11 }} aria-label={t("按来源筛选")} data-testid="records-agent-filter"
             value={filter.agentId ?? ""}
             onChange={(e) => onFilter({ ...filter, agentId: e.target.value || null })}
           >
-            <option value="">全部来源</option>
+            <option value="">{t("全部来源")}</option>
             {agents.map((a) => (
               <option key={a.id} value={a.id}>{a.label}</option>
             ))}
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label="按时间筛选" data-testid="records-range-filter"
+            style={{ fontSize: 11 }} aria-label={t("按时间筛选")} data-testid="records-range-filter"
             value={filter.range}
             onChange={(e) => onFilter({ ...filter, range: e.target.value as RecordsQuery["range"] })}
           >
-            <option value="all">全部时间</option>
-            <option value="today">今天</option>
-            <option value="24h">近 24 小时</option>
-            <option value="7d">近 7 天</option>
-            <option value="30d">近 30 天</option>
+            <option value="all">{t("全部时间")}</option>
+            <option value="today">{t("今天")}</option>
+            <option value="24h">{t("近 24 小时")}</option>
+            <option value="7d">{t("近 7 天")}</option>
+            <option value="30d">{t("近 30 天")}</option>
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label="按会话筛选" data-testid="records-session-filter"
+            style={{ fontSize: 11 }} aria-label={t("按会话筛选")} data-testid="records-session-filter"
             value={filter.sessionId ?? ""}
             onChange={(e) => onFilter({ ...filter, sessionId: e.target.value || null })}
           >
-            <option value="">全部会话</option>
+            <option value="">{t("全部会话")}</option>
             {[...sessionNames.entries()].map(([sid, label]) => (
               <option key={sid} value={sid}>{label}</option>
             ))}
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label="条数上限" data-testid="records-limit-filter"
+            style={{ fontSize: 11 }} aria-label={t("条数上限")} data-testid="records-limit-filter"
             value={String(filter.limit)}
             onChange={(e) => onFilter({ ...filter, limit: Number(e.target.value) || 200 })}
           >
-            <option value="200">最近 200 条</option>
-            <option value="500">最近 500 条</option>
-            <option value="1000">最近 1000 条</option>
+            <option value="200">{t("最近 200 条")}</option>
+            <option value="500">{t("最近 500 条")}</option>
+            <option value="1000">{t("最近 1000 条")}</option>
           </select>
           <button className="ghost" style={{ fontSize: 11 }} disabled={busy} data-testid="records-refresh" onClick={onRefresh}>
-            刷新
+            {t("刷新")}
           </button>
         </div>
         <div style={{ marginTop: 8 }} data-testid="records-timeline">
           {rows === null ? (
             <div className="dim" style={{ fontSize: 12, padding: "10px 0" }}>
-              {busy ? "加载中…" : "打开本分区加载记录"}
+              {busy ? t("加载中…") : t("打开本分区加载记录")}
             </div>
           ) : rows.length === 0 ? (
             <div className="dim" style={{ fontSize: 12, padding: "10px 0" }} data-testid="records-empty">
-              当前筛选下暂无记录——Agent 执行命令 / 传输文件后会出现在这里。
+              {t("当前筛选下暂无记录——Agent 执行命令 / 传输文件后会出现在这里。")}
             </div>
           ) : (
             <>
@@ -283,9 +284,9 @@ export function RecordsPane(props: RecordsPaneProps) {
                   <span className="dim mono" style={{ fontSize: 11 }}>
                     {new Date(r.ts).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>
-                  <span className="badge" style={{ fontSize: 10 }}>{KIND_LABEL[r.kind] ?? r.kind}</span>
+                  <span className="badge" style={{ fontSize: 10 }}>{t(KIND_LABEL[r.kind] ?? r.kind)}</span>
                   <span className="dim" style={{ fontSize: 11 }}>
-                    {r.agent_id ? `Agent ${r.agent_id}` : "人类"}
+                    {r.agent_id ? t("Agent {0}", r.agent_id) : t("人类")}
                   </span>
                   {/* ⑨ 主机标注（R41 累积面）：会话已关也能标出「当时在哪台主机」；
                       查不到如实显示短 id */}
@@ -304,7 +305,7 @@ export function RecordsPane(props: RecordsPaneProps) {
                     <button className="ghost" style={{ fontSize: 10 }}
                       data-testid={`records-expand-${r.seq}`}
                       onClick={() => toggle(r.seq)}>
-                      {expanded.has(r.seq) ? "收起输出" : "看输出"}
+                      {expanded.has(r.seq) ? t("收起输出") : t("看输出")}
                     </button>
                   )}
                 </div>
@@ -322,32 +323,32 @@ export function RecordsPane(props: RecordsPaneProps) {
         {rows !== null && rows.length > 0 && hasMore && (
           <button className="ghost" style={{ marginTop: 10 }} disabled={moreBusy}
             data-testid="records-more" onClick={onLoadMore}>
-            {moreBusy ? "加载中…" : "加载更早"}
+            {moreBusy ? t("加载中…") : t("加载更早")}
           </button>
         )}
       </div>
       <div className="set-card">
-        <h4>保留期</h4>
+        <h4>{t("保留期")}</h4>
         <div className="set-desc">
-          超过保留期的记录在应用启动时自动清理（落盘即密文，清理即删除）；0 = 永久保留（记录库会随使用无界增长，慎选）。改动在重启后生效。
+          {t("超过保留期的记录在应用启动时自动清理（落盘即密文，清理即删除）；0 = 永久保留（记录库会随使用无界增长，慎选）。改动在重启后生效。")}
         </div>
-        <select style={{ fontSize: 12, marginTop: 8 }} aria-label="记录保留期" data-testid="records-retention"
+        <select style={{ fontSize: 12, marginTop: 8 }} aria-label={t("记录保留期")} data-testid="records-retention"
           value={String(retention)}
           onChange={(e) => onChangeRetention(Number(e.target.value))}>
-          <option value="30">保留 30 天（默认）</option>
-          <option value="90">保留 90 天</option>
-          <option value="365">保留 365 天</option>
-          <option value="0">永久保留</option>
+          <option value="30">{t("保留 30 天（默认）")}</option>
+          <option value="90">{t("保留 90 天")}</option>
+          <option value="365">{t("保留 365 天")}</option>
+          <option value="0">{t("永久保留")}</option>
         </select>
       </div>
       <div className="set-card">
-        <h4>导出</h4>
+        <h4>{t("导出")}</h4>
         <div className="set-desc">
-          按当前筛选导出<strong>明文</strong> JSONL（每行一条记录，含脱敏输出摘录），供离线分析 / 评测集使用。
-          导出是敏感动作：文件落在记录库隔壁的 <code>records-export/</code>（文件名带时间戳），并留审计。记录默认保留 30 天，到期自动清理。
+          {t("按当前筛选导出")}<strong>{t("明文")}</strong>{t(" JSONL（每行一条记录，含脱敏输出摘录），供离线分析 / 评测集使用。")}
+          {t("导出是敏感动作：文件落在记录库隔壁的")} <code>records-export/</code>{t("（文件名带时间戳），并留审计。记录默认保留 30 天，到期自动清理。")}
         </div>
         <button className="ghost" style={{ marginTop: 8 }} disabled={exportBusy || !rows || rows.length === 0} data-testid="records-export" onClick={onExport}>
-          {exportBusy ? "导出中…" : `导出当前筛选${rows ? `（${rows.length} 条）` : ""}`}
+          {exportBusy ? t("导出中…") : t("导出当前筛选") + (rows ? t("（{0} 条）", rows.length) : "")}
         </button>
       </div>
     </>

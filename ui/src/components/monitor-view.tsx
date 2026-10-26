@@ -8,14 +8,15 @@
 // 开销）；开了就持续采（关大屏不中断），哪路开着就呈现哪路的数据。
 import { IconGauge, IconPause, IconPlay, IconX } from "../icons";
 import { fmtGB, fmtRate, fmtUptime } from "../metrics";
+import { t } from "../i18n";
 import { useMonitorSeries, retryMonitor, MON_POLL_SEC, type MonSeries } from "../monitor-store";
 import type { NpuChip } from "../npu";
 
 /** 折线时间窗文案：点数 × 采样周期；<2 点还没画得出来，给「积累中」。 */
 const fmtSpan = (points: number): string => {
-  if (points < 2) return "积累中…";
+  if (points < 2) return t("积累中…");
   const sec = points * MON_POLL_SEC;
-  return sec < 60 ? `近 ${sec} 秒` : `近 ${Math.max(1, Math.round(sec / 60))} 分钟`;
+  return sec < 60 ? t("近 {0} 秒", sec) : t("近 {0} 分钟", Math.max(1, Math.round(sec / 60)));
 };
 
 export interface MonitorCardHost {
@@ -114,14 +115,14 @@ const NpuChipRow = ({ chip }: { chip: NpuChip }) => (
       <span className="mon-npu-idx">NPU{chip.index}</span>
       <span className="mon-npu-name">{chip.name}</span>
       <span className={"mon-hbadge " + healthCls(chip.health)}>{chip.health}</span>
-      <span className="mon-num" title="功耗 / 温度">{chip.powerW.toFixed(1)}W · {chip.tempC}°C</span>
+      <span className="mon-num" title={t("功耗 / 温度")}>{chip.powerW.toFixed(1)}W · {chip.tempC}°C</span>
     </div>
     <div className="mon-npu-usage">
-      <span className="mon-lab" title="AICore / NPU 利用率（列名随 CANN 版本：AICore(%) 或 NPU Util(%)）">利用率</span>
+      <span className="mon-lab" title={t("AICore / NPU 利用率（列名随 CANN 版本：AICore(%) 或 NPU Util(%)）")}>{t("利用率")}</span>
       <Bar pct={chip.aicorePct} />
       <span className="mon-num">{chip.aicorePct}%</span>
       {chip.hbmTotalMB != null && chip.hbmTotalMB > 0 && (
-        <span className="mon-num dim" title="HBM 显存 已用/总量">
+        <span className="mon-num dim" title={t("HBM 显存 已用/总量")}>
           HBM {chip.hbmUsedMB}/{chip.hbmTotalMB} MB
         </span>
       )}
@@ -149,13 +150,13 @@ const MonCard = ({ c, swGeneral, swNpu, onOpenSession }: {
     <>
       {s.npu.parsed && s.npu.parsed.state === "ok" && (
         <div className="mon-npu" data-testid="mon-npu">
-          <div className="mon-npu-head">Ascend NPU × {s.npu.parsed.chips.length}</div>
+          <div className="mon-npu-head">{t("Ascend NPU × {0}", s.npu.parsed.chips.length)}</div>
           {s.npu.parsed.chips.map((chip) => <NpuChipRow key={chip.index} chip={chip} />)}
         </div>
       )}
       {s.npu.parsed?.state === "no-table" && (
         <div className="mon-card-note bad" title={s.npu.parsed.detail}
-          data-testid="mon-npu-unknown">检测到 npu-smi，但输出表头未识别（CANN 版本差异）</div>
+          data-testid="mon-npu-unknown">{t("检测到 npu-smi，但输出表头未识别（CANN 版本差异）")}</div>
       )}
     </>
   );
@@ -164,51 +165,51 @@ const MonCard = ({ c, swGeneral, swNpu, onOpenSession }: {
       // 只开 NPU：基础区不采，给一句说明占位（数据语义不含糊）
       return (
         <>
-          <div className="mon-card-note">通用监控未开启——CPU/内存/网络/磁盘不采样</div>
-          {swNpu && !s?.npu.parsed && <div className="mon-card-note">等待 NPU 首样…</div>}
+          <div className="mon-card-note">{t("通用监控未开启——CPU/内存/网络/磁盘不采样")}</div>
+          {swNpu && !s?.npu.parsed && <div className="mon-card-note">{t("等待 NPU 首样…")}</div>}
           {npuBlk}
         </>
       );
     }
-    if (s?.unsupported) return <div className="mon-card-note">此主机不支持采样（非 Linux 远端）</div>;
+    if (s?.unsupported) return <div className="mon-card-note">{t("此主机不支持采样（非 Linux 远端）")}</div>;
     if (s?.degraded) return (
       <div className="mon-card-note bad">
-        采样失败（连续 3 次）
-        <button className="mon-retry" data-testid="mon-retry" onClick={() => retryMonitor(c.key)}>重试</button>
+        {t("采样失败（连续 3 次）")}
+        <button className="mon-retry" data-testid="mon-retry" onClick={() => retryMonitor(c.key)}>{t("重试")}</button>
       </div>
     );
-    if (!v) return <div className="mon-card-note">等待首样…</div>;
+    if (!v) return <div className="mon-card-note">{t("等待首样…")}</div>;
     return (
       <>
         <div className="mon-rings">
-          <Ring pct={v.cpuPct} lab="CPU" testid="mon-ring-cpu"
+          <Ring pct={v.cpuPct} lab={t("CPU")} testid="mon-ring-cpu"
             sub={v.load1 != null ? `load ${v.load1.toFixed(2)}` : undefined} />
-          <Ring pct={v.memPct} lab="内存" testid="mon-ring-mem"
+          <Ring pct={v.memPct} lab={t("内存")} testid="mon-ring-mem"
             sub={`${fmtGB(v.memUsedGB)} / ${fmtGB(v.memTotalGB)} GB`} />
         </div>
-        <div className="mon-row" title={`网络收发速率（全部网卡合计；↓ 青 / ↑ 绿），与 CPU 走势同一时间窗（${fmtSpan(s?.cpuHist.length ?? 0)}）`}>
-          <span className="mon-lab">网络</span>
+        <div className="mon-row" title={t("网络收发速率（全部网卡合计；↓ 青 / ↑ 绿），与 CPU 走势同一时间窗（{0}）", fmtSpan(s?.cpuHist.length ?? 0))}>
+          <span className="mon-lab">{t("网络")}</span>
           <Spark2 a={s?.rxHist ?? []} b={s?.txHist ?? []} cls="net" fluid w={160} h={22} />
           <span className="mon-num down">↓ {v.rxRate != null ? fmtRate(v.rxRate) : "—"}</span>
           <span className="mon-num up">↑ {v.txRate != null ? fmtRate(v.txRate) : "—"}</span>
         </div>
-        <div className="mon-row" title="根分区用量 / 系统运行时长">
-          <span className="mon-lab">磁盘</span>
+        <div className="mon-row" title={t("根分区用量 / 系统运行时长")}>
+          <span className="mon-lab">{t("磁盘")}</span>
           <Bar pct={v.diskPct} />
           <span className="mon-num">{v.diskPct != null ? `${v.diskPct}%` : "—"}</span>
-          <span className="mon-num dim mon-up">运行 {fmtUptime(v.uptimeSec)}</span>
+          <span className="mon-num dim mon-up">{t("运行 {0}", fmtUptime(v.uptimeSec))}</span>
         </div>
         {/* CPU 走势（开关轮补标签+时间轴）：此前光秃一条线没名没轴，用户认不出
             是什么——头部补「CPU 走势」+ 时间窗（右端=现在）；折线随样本数增长，
             窗口文案如实反映已积累的时长而非满窗 30 分钟 */}
         <div className="mon-chart" data-testid="mon-chart-cpu">
           <div className="mon-chart-head">
-            <span className="mon-lab" title="CPU 占有率历史">CPU 走势</span>
+            <span className="mon-lab" title={t("CPU 占有率历史")}>{t("CPU 走势")}</span>
             <span className="mon-axis" data-testid="mon-axis-cpu"
               title={pts < 2
-                ? `每 ${MON_POLL_SEC} 秒采样一拍，攒够 2 点开始画`
-                : `折线左端为 ${spanText} 前，右端为刚刚（每 ${MON_POLL_SEC} 秒一拍）`}>
-              {spanText === "积累中…" ? spanText : `${spanText} · 现在在最右`}
+                ? t("每 {0} 秒采样一拍，攒够 2 点开始画", MON_POLL_SEC)
+                : t("折线左端为 {0} 前，右端为刚刚（每 {1} 秒一拍）", spanText, MON_POLL_SEC)}>
+              {spanText === t("积累中…") ? spanText : t("{0} · 现在在最右", spanText)}
             </span>
           </div>
           <Spark data={s?.cpuHist ?? []} cls="cpu" fluid w={280} h={30} />
@@ -220,14 +221,14 @@ const MonCard = ({ c, swGeneral, swNpu, onOpenSession }: {
   return (
     <div className={"mon-card" + (c.active ? " active" : "") + (s?.degraded ? " degraded" : "")}
       data-testid="mon-card" data-mon-key={c.key}>
-      <button className="mon-card-head" title={`打开 ${label} 的终端`} onClick={() => onOpenSession(c.sid)}>
+      <button className="mon-card-head" title={t("打开 {0} 的终端", label)} onClick={() => onOpenSession(c.sid)}>
         <span className={"mon-dot" + (connected ? "" : " off")} />
         <span className="mon-card-name">{label}</span>
         {c.dup > 1 && (
           <span className="mon-dup" data-testid="mon-dup"
-            title={`${c.dup} 条连接：${c.tabNames.join("、")}`}>×{c.dup}</span>
+            title={t("{0} 条连接：{1}", c.dup, c.tabNames.join("、"))}>×{c.dup}</span>
         )}
-        {!connected && <span className="mon-state">{c.state === "Reconnecting" ? "重连中…" : c.state}</span>}
+        {!connected && <span className="mon-state">{c.state === "Reconnecting" ? t("重连中…") : c.state}</span>}
       </button>
       <div className="mon-card-body">{body}</div>
     </div>
@@ -250,33 +251,33 @@ export function MonitorView({ cards, swGeneral, swNpu, paused, onToggleGeneral, 
   const conns = cards.reduce((n, c) => n + c.dup, 0);
   const collecting = swGeneral || swNpu;
   return (
-    <section className="mon-dash" data-testid="monitor-view" role="region" aria-label="资源监控大屏">
+    <section className="mon-dash" data-testid="monitor-view" role="region" aria-label={t("资源监控大屏")}>
       <div className="mon-dash-head">
         <IconGauge size={16} />
-        <b>资源监控</b>
-        <span className="mon-dash-sub" data-testid="monitor-count" title="已连接的服务器数 / SSH 连接数">
-          {cards.length} 台服务器{conns !== cards.length ? ` · ${conns} 条连接` : ""}
+        <b>{t("资源监控")}</b>
+        <span className="mon-dash-sub" data-testid="monitor-count" title={t("已连接的服务器数 / SSH 连接数")}>
+          {t("{0} 台服务器", cards.length)}{conns !== cards.length ? t(" · {0} 条连接", conns) : ""}
         </span>
         {/* 采集开关（开关轮）：opt-in 双路，开了就后台持续采（关大屏不中断），
             全关零开销。扩展位——以后其它采集类功能照此加第四枚 */}
         <button className={"mon-sw" + (swGeneral ? " on" : "")} data-testid="mon-sw-general"
           aria-pressed={swGeneral} onClick={onToggleGeneral}
-          title="通用监控：CPU/内存/网络/磁盘。打开后后台持续采样（每 3 秒一拍），关闭大屏不中断">
-          <i className="mon-sw-knob" aria-hidden="true" />通用监控
+          title={t("通用监控：CPU/内存/网络/磁盘。打开后后台持续采样（每 3 秒一拍），关闭大屏不中断")}>
+          <i className="mon-sw-knob" aria-hidden="true" />{t("通用监控")}
         </button>
         <button className={"mon-sw" + (swNpu ? " on" : "")} data-testid="mon-sw-npu"
           aria-pressed={swNpu} onClick={onToggleNpu}
-          title="NPU 监控：Ascend npu-smi 每芯片利用率/HBM/功耗温度。打开后后台持续采样，无 NPU 的机器探测一次后自动停">
-          <i className="mon-sw-knob" aria-hidden="true" />NPU 监控
+          title={t("NPU 监控：Ascend npu-smi 每芯片利用率/HBM/功耗温度。打开后后台持续采样，无 NPU 的机器探测一次后自动停")}>
+          <i className="mon-sw-knob" aria-hidden="true" />{t("NPU 监控")}
         </button>
         <span style={{ flex: 1 }} />
         <button className="mpause" data-testid="monitor-pause" aria-pressed={paused}
-          title={paused ? "恢复采样（当前已暂停）" : "暂停采样（停止向远端发探测命令，已采历史保留）"}
+          title={paused ? t("恢复采样（当前已暂停）") : t("暂停采样（停止向远端发探测命令，已采历史保留）")}
           onClick={onTogglePause}>
           {paused ? <IconPlay size={12} /> : <IconPause size={12} />}
         </button>
-        <button className="ghost icon-btn" data-testid="monitor-close" title="关闭监控大屏（回到终端；采集按开关继续）"
-          aria-label="关闭监控大屏" onClick={onClose}>
+        <button className="ghost icon-btn" data-testid="monitor-close" title={t("关闭监控大屏（回到终端；采集按开关继续）")}
+          aria-label={t("关闭监控大屏")} onClick={onClose}>
           <IconX size={14} />
         </button>
       </div>
@@ -284,34 +285,34 @@ export function MonitorView({ cards, swGeneral, swNpu, paused, onToggleGeneral, 
         // 未开启空态：两张大开关卡（hover 预演打开态）——「统计费性能」的顾虑
         // 在这里给出答案：不开就完全不采
         <div className="mon-offboard" data-testid="mon-empty">
-          <div className="mon-off-title">监控未开启</div>
+          <div className="mon-off-title">{t("监控未开启")}</div>
           <div className="mon-off-sub">
             {cards.length > 0
-              ? <>已连接 <b>{cards.length}</b> 台服务器。打开下面的采集开关，卡片立即可见；数据在后台持续采集（每 3 秒一拍），<b>关掉大屏也不中断</b>，回来就能看到全程曲线。</>
-              : <>这里会显示每台已连接 SSH 服务器的资源卡片（同一台机器的多条连接合并为一张卡）。先连接服务器，再打开采集开关。</>}
+              ? <>{t("已连接")} <b>{cards.length}</b> {t("台服务器。打开下面的采集开关，卡片立即可见；数据在后台持续采集（每 3 秒一拍），")}<b>{t("关掉大屏也不中断")}</b>{t("，回来就能看到全程曲线。")}</>
+              : <>{t("这里会显示每台已连接 SSH 服务器的资源卡片（同一台机器的多条连接合并为一张卡）。先连接服务器，再打开采集开关。")}</>}
           </div>
           <div className="mon-off-sw">
             <button className="mon-swcard" data-testid="mon-sw-general-big" onClick={onToggleGeneral}>
               <span className="mon-swcard-txt">
-                <b>通用监控</b>
-                <span>CPU / 内存 / 网络 / 磁盘 / 负载，每 3 秒一拍</span>
+                <b>{t("通用监控")}</b>
+                <span>{t("CPU / 内存 / 网络 / 磁盘 / 负载，每 3 秒一拍")}</span>
               </span>
               <i className="mon-sw-visual" aria-hidden="true" />
             </button>
             <button className="mon-swcard" data-testid="mon-sw-npu-big" onClick={onToggleNpu}>
               <span className="mon-swcard-txt">
-                <b>NPU 监控</b>
-                <span>Ascend npu-smi：每芯片利用率 / HBM / 功耗温度</span>
+                <b>{t("NPU 监控")}</b>
+                <span>{t("Ascend npu-smi：每芯片利用率 / HBM / 功耗温度")}</span>
               </span>
               <i className="mon-sw-visual" aria-hidden="true" />
             </button>
           </div>
-          <div className="mon-off-note">采集只在开关打开时进行；随时关掉即停采并清空曲线，不留后台任务。</div>
+          <div className="mon-off-note">{t("采集只在开关打开时进行；随时关掉即停采并清空曲线，不留后台任务。")}</div>
         </div>
       ) : (
         <div className="mon-grid">
           {cards.length === 0 && (
-            <div className="mon-empty">暂无已连接的 SSH 服务器——连接服务器后这里会出现资源卡片；同一台机器的多条连接会合并为一张卡。</div>
+            <div className="mon-empty">{t("暂无已连接的 SSH 服务器——连接服务器后这里会出现资源卡片；同一台机器的多条连接会合并为一张卡。")}</div>
           )}
           {cards.map((c) => (
             <MonCard key={c.key} c={c} swGeneral={swGeneral} swNpu={swNpu} onOpenSession={onOpenSession} />

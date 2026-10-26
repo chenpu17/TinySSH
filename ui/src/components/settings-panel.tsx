@@ -391,7 +391,7 @@ export function SettingsPanel({
                       <b>{t("远端写剪贴板（OSC 52）")}</b>
                       <span className="set-item-desc">{t("远端程序可用转义序列改写你本机剪贴板——tmux/ssh 里复制回本地靠它，也可能被用来投毒（悄悄替换你将要粘贴的内容）。读取类请求（查询）一律拒绝；写入按此策略执行，「拒绝」为静默丢弃。")}</span>
                     </span>
-                    <select className="set-item-ctl" data-testid="osc52-select" aria-label="OSC 52 写剪贴板策略"
+                    <select className="set-item-ctl" data-testid="osc52-select" aria-label={t("OSC 52 写剪贴板策略")}
                       value={osc52Policy} onChange={(e) => changeOsc52Policy(e.target.value as "allow" | "ask" | "deny")}>
                       <option value="ask">{t("每次询问（默认）")}</option>
                       <option value="allow">{t("允许")}</option>
@@ -1004,7 +1004,7 @@ function AgentModelCard() {
       </div>
       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         <select data-testid="agent-model-provider" style={{ fontSize: 12 }} value={provider}
-          onChange={(e) => setProvider(e.target.value as "openai" | "anthropic")} aria-label="provider 类型">
+          onChange={(e) => setProvider(e.target.value as "openai" | "anthropic")} aria-label={t("provider 类型")}>
           <option value="openai">{t("OpenAI 兼容（GLM / DeepSeek / Qwen / Kimi…）")}</option>
           <option value="anthropic">Anthropic</option>
         </select>

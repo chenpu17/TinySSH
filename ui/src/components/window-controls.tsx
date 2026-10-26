@@ -3,6 +3,7 @@
 // demo/浏览器不渲染（无原生窗口，调用只会静默失败）。
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { t } from "../i18n";
 
 // Windows 自绘窗口控件（双标题栏重设计）：tauri.windows.conf.json decorations:false 后，
 // 44px 应用标题行即唯一标题栏，右端 ─ □ ✕；最大化态经 onResized 跟踪（□/❐ 切换）。
@@ -24,12 +25,12 @@ export function WinControls() {
     return () => { alive = false; un?.(); if (t) clearTimeout(t); };
   }, []);
   return (
-    <div className="win-controls" role="group" aria-label="窗口控制" data-testid="win-controls">
-      <button className="wc-btn" title="最小化" aria-label="最小化窗口"
+    <div className="win-controls" role="group" aria-label={t("窗口控制")} data-testid="win-controls">
+      <button className="wc-btn" title={t("最小化")} aria-label={t("最小化窗口")}
         onClick={() => void getCurrentWindow().minimize()}>
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" strokeWidth="1" /></svg>
       </button>
-      <button className="wc-btn" title={maxed ? "还原" : "最大化"} aria-label={maxed ? "还原窗口" : "最大化窗口"}
+      <button className="wc-btn" title={maxed ? t("还原") : t("最大化")} aria-label={maxed ? t("还原窗口") : t("最大化窗口")}
         onClick={() => void getCurrentWindow().toggleMaximize()}>
         {maxed ? (
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
@@ -42,7 +43,7 @@ export function WinControls() {
           </svg>
         )}
       </button>
-      <button className="wc-btn wc-close" title="关闭" aria-label="关闭窗口"
+      <button className="wc-btn wc-close" title={t("关闭")} aria-label={t("关闭窗口")}
         onClick={() => void getCurrentWindow().close()}>
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" strokeWidth="1" /></svg>
       </button>

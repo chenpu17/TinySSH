@@ -16,6 +16,7 @@ import { WELCOME_MD, mockScript } from "../agent-mock";
 import { renderAgentMd } from "../mdview";
 import { renderMermaidIn, rerenderMermaids } from "../mmd";
 import { renderMathIn } from "../math";
+import { t } from "../i18n";
 import { IconBot, IconLoader, IconPlus, IconX } from "../icons";
 
 type ToolStatus = "pending" | "running" | "ok" | "err" | "denied";
@@ -79,7 +80,7 @@ function summarizeTool(name: string, input: Record<string, unknown> | undefined)
   const i = input ?? {};
   if (name === "exec") return String(i.command ?? "");
   if (name === "read_blocks") return `limit=${String(i.limit ?? 20)}`;
-  if (name === "wait_output") return i.regex ? `/${String(i.regex)}/` : "静默等待新输出";
+  if (name === "wait_output") return i.regex ? `/${String(i.regex)}/` : t("静默等待新输出");
   if (name === "upload") return `${String(i.local ?? "")} → ${String(i.remote ?? "")}`.slice(0, 90);
   if (name === "download") return `${String(i.remote ?? "")} → ${String(i.local ?? "")}`.slice(0, 90);
   if (name === "send_keys") {
@@ -141,7 +142,7 @@ function applyAgentEvent(msgs: AgentMsg[], ev: AgentWireEvent, seq: { n: number 
     case "done":
       return closeStreaming(msgs);
     case "failed":
-      return [...closeStreaming(msgs), { id: uid(), role: "assistant", md: `**运行失败**：${String((data as { message?: string })?.message ?? "未知错误")}`, think: "", streaming: false }];
+      return [...closeStreaming(msgs), { id: uid(), role: "assistant", md: `**${t("运行失败")}**：${String((data as { message?: string })?.message ?? t("未知错误"))}`, think: "", streaming: false }];
     default:
       return msgs;
   }
@@ -156,7 +157,7 @@ const AssistantMsg = memo(function AssistantMsg({ md, think, streaming }: { md: 
       <div style={{ maxWidth: "100%", minWidth: 0 }}>
         {think && (
           <details className="ag-think">
-            <summary>思考过程</summary>
+            <summary>{t("思考过程")}</summary>
             <pre>{think}</pre>
           </details>
         )}
@@ -381,7 +382,7 @@ export function AgentView({
       // 补「发送失败」块，不丢反馈。
       setBusy((b) => ({ ...b, [key]: true }));
       invoke("agent_send", { sid, text }).catch((e) => {
-        patch(key, (cur) => [...closeStreaming(cur), { id: newId(), role: "assistant", md: `**发送失败**：${String(e)}`, think: "", streaming: false }]);
+        patch(key, (cur) => [...closeStreaming(cur), { id: newId(), role: "assistant", md: `**${t("发送失败")}**：${String(e)}`, think: "", streaming: false }]);
         setBusy((b) => ({ ...b, [key]: false }));
       });
       return;
@@ -430,20 +431,20 @@ export function AgentView({
 
   // markdown 代码块 复制/展开 点击走容器事件代理（流式重建 DOM 不能直绑）
   const onScrollClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const t = e.target as HTMLElement;
-    if (t.classList.contains("code-copy")) {
+    const el = e.target as HTMLElement;
+    if (el.classList.contains("code-copy")) {
       // mermaid：渲染成功后 pre 已被 SVG 替换，源码从 data-mm 取（URL 编码形态）
-      const mmWrap = t.closest(".mermaid-wrap") as HTMLElement | null;
+      const mmWrap = el.closest(".mermaid-wrap") as HTMLElement | null;
       const text = mmWrap?.dataset.mm
         ? decodeURIComponent(mmWrap.dataset.mm)
-        : t.closest(".md-code")?.querySelector("pre")?.textContent ?? "";
+        : el.closest(".md-code")?.querySelector("pre")?.textContent ?? "";
       (inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text)).catch(() => {});
-      pushToast("ok", "已复制代码");
-    } else if (t.classList.contains("code-expand")) {
-      const box = t.closest(".md-code");
+      pushToast("ok", t("已复制代码"));
+    } else if (el.classList.contains("code-expand")) {
+      const box = el.closest(".md-code");
       if (box) {
         const collapsed = box.classList.toggle("code-collapsed");
-        t.textContent = collapsed ? "展开全部" : "收起";
+        el.textContent = collapsed ? t("展开全部") : t("收起");
       }
     }
   };
@@ -457,14 +458,14 @@ export function AgentView({
 
   const toolChip = (m: Extract<AgentMsg, { role: "tool" }>) => {
     switch (m.status) {
-      case "pending": return <span className="tc-chip warn">待审批</span>;
+      case "pending": return <span className="tc-chip warn">{t("待审批")}</span>;
       case "running":
         return inlineApproval && ["exec", "send_keys", "upload", "download"].includes(m.tool)
-          ? <span className="tc-chip warn">待审批</span>
-          : <span className="tc-chip info"><IconLoader size={11} className="spin" /> 运行中</span>;
-      case "ok": return <span className="tc-chip ok">完成</span>;
-      case "err": return <span className="tc-chip err">出错</span>;
-      case "denied": return <span className="tc-chip dim">已拒绝</span>;
+          ? <span className="tc-chip warn">{t("待审批")}</span>
+          : <span className="tc-chip info"><IconLoader size={11} className="spin" /> {t("运行中")}</span>;
+      case "ok": return <span className="tc-chip ok">{t("完成")}</span>;
+      case "err": return <span className="tc-chip err">{t("出错")}</span>;
+      case "denied": return <span className="tc-chip dim">{t("已拒绝")}</span>;
     }
   };
 
@@ -473,7 +474,7 @@ export function AgentView({
     if (realMode) {
       // 真模式「新对话」= 清 FE 呈现（Rust 侧 agent 上下文仍在——如实提示，不冒充清空）
       setConvs((cur) => ({ ...cur, [key]: [] }));
-      pushToast("info", "已清空对话显示（模型上下文仍在，重启应用才彻底重置）");
+      pushToast("info", t("已清空对话显示（模型上下文仍在，重启应用才彻底重置）"));
       return;
     }
     setConvs((cur) => ({ ...cur, [key]: [{ id: `w-${key}-${Date.now()}`, role: "assistant", md: WELCOME_MD, think: "", streaming: false }] }));
@@ -481,49 +482,49 @@ export function AgentView({
 
   return (
     <>
-      <aside className="agentbar" data-testid="agent-view" style={{ width }} aria-label="Agent 对话">
+      <aside className="agentbar" data-testid="agent-view" style={{ width }} aria-label={t("Agent 对话")}>
       <div className="ag-head">
         <IconBot size={15} />
         <b>Agent</b>
-        {sid && <span className="ag-host" title="当前会话（对话按会话隔离）">{hostLabel}</span>}
+        {sid && <span className="ag-host" title={t("当前会话（对话按会话隔离）")}>{hostLabel}</span>}
         {realMode ? (
-          <span className="ag-host" title={`模型服务：${modelCfg?.provider ?? ""}`}>{modelCfg?.model}</span>
+          <span className="ag-host" title={t("模型服务：{0}", modelCfg?.provider ?? "")}>{modelCfg?.model}</span>
         ) : (
-          <span className="ag-mock" title="当前为演练外壳：回复与工具卡是脚本数据，配置模型服务后自动切换为真实模型">演练</span>
+          <span className="ag-mock" title={t("当前为演练外壳：回复与工具卡是脚本数据，配置模型服务后自动切换为真实模型")}>{t("演练")}</span>
         )}
         {realMode && sid && !fleet && (
           <span
             className={"ag-own" + (owner === "Agent" ? " on" : "")}
             data-testid="agent-own"
             title={owner === "Agent"
-              ? "会话控制权已交托给 Agent（工具栏「接管」随时收回）"
-              : "会话控制权在你手里——发送任务时会先请求交托"}
-          >{owner === "Agent" ? "已受托" : "未交托"}</span>
+              ? t("会话控制权已交托给 Agent（工具栏「接管」随时收回）")
+              : t("会话控制权在你手里——发送任务时会先请求交托")}
+          >{owner === "Agent" ? t("已受托") : t("未交托")}</span>
         )}
         {realMode && sid && !fleet && (
           <button
             className={"ag-autonomy" + (autonomyOn ? " on" : "") + (autonomyArm ? " arm" : "")}
             data-testid="agent-autonomy"
             title={autonomyOn
-              ? "自主模式开启中：命令免逐条审批（危险名单仍硬拦、传输仍逐条、全量记录，上方急停条可随时撤回）。点击关闭"
+              ? t("自主模式开启中：命令免逐条审批（危险名单仍硬拦、传输仍逐条、全量记录，上方急停条可随时撤回）。点击关闭")
               : autonomyArm
-                ? "再点一次确认开启自主模式（命令免逐条审批；危险名单仍硬拦、传输仍逐条、全量记录、可急停）"
-                : "自主模式：命令免逐条审批（危险名单仍硬拦、传输仍逐条、全量记录、可急停）。点击开启"}
+                ? t("再点一次确认开启自主模式（命令免逐条审批；危险名单仍硬拦、传输仍逐条、全量记录、可急停）")
+                : t("自主模式：命令免逐条审批（危险名单仍硬拦、传输仍逐条、全量记录、可急停）。点击开启")}
             onClick={clickAutonomy}
-          >{autonomyOn ? "自主" : autonomyArm ? "确认开启？" : "自主"}</button>
+          >{autonomyOn ? t("自主") : autonomyArm ? t("确认开启？") : t("自主")}</button>
         )}
         {fleet && (
-          <span className="ag-own on" title="编排者不直接操作机器；派发目标的审批/控制权在目标会话独立生效">编排</span>
+          <span className="ag-own on" title={t("编排者不直接操作机器；派发目标的审批/控制权在目标会话独立生效")}>{t("编排")}</span>
         )}
         <span style={{ flex: 1 }} />
         {sid && (
-          <button className="ghost icon-btn" title="新对话（清空当前会话的对话显示）" aria-label="新对话"
+          <button className="ghost icon-btn" title={t("新对话（清空当前会话的对话显示）")} aria-label={t("新对话")}
             data-testid="agent-new"
             onClick={newConversation}>
             <IconPlus size={14} />
           </button>
         )}
-        <button className="ghost icon-btn" title="关闭 Agent 视图" aria-label="关闭 Agent 视图" onClick={onClose}><IconX size={14} /></button>
+        <button className="ghost icon-btn" title={t("关闭 Agent 视图")} aria-label={t("关闭 Agent 视图")} onClick={onClose}><IconX size={14} /></button>
       </div>
       {sid ? (
         <>
@@ -531,8 +532,8 @@ export function AgentView({
             {msgs.length === 0 && realMode && (
               <div className="ag-empty">
                 {fleet
-                  ? `编排者就绪（模型 ${modelCfg?.model}）——下达跨主机任务，它会派发给各会话的执行 agent 并汇总结果。`
-                  : `会话已就绪（模型 ${modelCfg?.model}）——直接下达任务。`}
+                  ? t("编排者就绪（模型 {0}）——下达跨主机任务，它会派发给各会话的执行 agent 并汇总结果。", modelCfg?.model ?? "")
+                  : t("会话已就绪（模型 {0}）——直接下达任务。", modelCfg?.model ?? "")}
               </div>
             )}
             {msgs.map((m) => {
@@ -555,15 +556,15 @@ export function AgentView({
                   {(m.status === "ok" || m.status === "err") && m.output && <pre className="tc-out">{m.output}</pre>}
                   {showLocalButtons && (
                     <div className="tc-actions">
-                      <button className="primary" data-testid="agent-approve" onClick={approve}>批准执行</button>
-                      <button className="ghost" data-testid="agent-deny" onClick={deny}>拒绝</button>
+                      <button className="primary" data-testid="agent-approve" onClick={approve}>{t("批准执行")}</button>
+                      <button className="ghost" data-testid="agent-deny" onClick={deny}>{t("拒绝")}</button>
                     </div>
                   )}
                   {showApprove && inlineApproval && (
                     <div className="tc-actions">
                       <div className="dim" style={{ fontSize: 11, flex: 1, alignSelf: "center", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} title={inlineApproval.command}>{inlineApproval.command}</div>
-                      <button className="primary" data-testid="agent-approve-real" onClick={() => onDecide(inlineApproval.id, "approve", null)}>批准</button>
-                      <button className="ghost" data-testid="agent-deny-real" onClick={() => onDecide(inlineApproval.id, "deny", null)}>拒绝</button>
+                      <button className="primary" data-testid="agent-approve-real" onClick={() => onDecide(inlineApproval.id, "approve", null)}>{t("批准")}</button>
+                      <button className="ghost" data-testid="agent-deny-real" onClick={() => onDecide(inlineApproval.id, "deny", null)}>{t("拒绝")}</button>
                     </div>
                   )}
                 </div>
@@ -573,10 +574,10 @@ export function AgentView({
           {askDelegate && (
             <div className="ag-delegate" data-testid="agent-delegate-strip">
               <span className="ag-delegate-text">
-                会话控制权在你手里——交给 Agent 后它才能在这台终端上干活（工具栏「接管」随时收回）。
+                {t("会话控制权在你手里——交给 Agent 后它才能在这台终端上干活（工具栏「接管」随时收回）。")}
               </span>
-              <button className="primary" data-testid="agent-delegate-confirm" onClick={confirmDelegate}>委托并发送</button>
-              <button className="ghost" onClick={() => setAskDelegate(false)}>取消</button>
+              <button className="primary" data-testid="agent-delegate-confirm" onClick={confirmDelegate}>{t("委托并发送")}</button>
+              <button className="ghost" onClick={() => setAskDelegate(false)}>{t("取消")}</button>
             </div>
           )}
           <div className="ag-composer">
@@ -585,8 +586,8 @@ export function AgentView({
               value={draft}
               rows={2}
               placeholder={fleet
-                ? "下达跨主机任务…（Enter 发送，Shift+Enter 换行）"
-                : "给 Agent 下达任务…（Enter 发送，Shift+Enter 换行）"}
+                ? t("下达跨主机任务…（Enter 发送，Shift+Enter 换行）")
+                : t("给 Agent 下达任务…（Enter 发送，Shift+Enter 换行）")}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -596,19 +597,19 @@ export function AgentView({
               }}
             />
             {busyNow && (
-              <button className="ghost" data-testid="agent-stop" title="请求停止当前运行" onClick={stop}>停止</button>
+              <button className="ghost" data-testid="agent-stop" title={t("请求停止当前运行")} onClick={stop}>{t("停止")}</button>
             )}
-            <button className="primary" data-testid="agent-send" disabled={!draft.trim()} onClick={send}>发送</button>
+            <button className="primary" data-testid="agent-send" disabled={!draft.trim()} onClick={send}>{t("发送")}</button>
           </div>
         </>
       ) : (
-        <div className="ag-empty">连接主机后开始与 Agent 对话。</div>
+        <div className="ag-empty">{t("连接主机后开始与 Agent 对话。")}</div>
       )}
       </aside>
       {/* 拖宽把手与 hostbar 同构：aside 的兄弟节点（.workspace 行内、贴面板右缘），
           命中区 7px；宽度 = clientX − 44（活动栏占位，见 App.tsx agGripUp） */}
       <div className="hb-grip" role="separator" aria-orientation="vertical"
-        aria-label="拖动调整 Agent 视图宽度（320–560 px）" title="拖动调整宽度（320–560 px）"
+        aria-label={t("拖动调整 Agent 视图宽度（320–560 px）")} title={t("拖动调整宽度（320–560 px）")}
         onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp}
         onPointerCancel={() => { gripDrag.current = false; }} />
     </>

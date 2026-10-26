@@ -3,6 +3,7 @@
 // 命令历史压到最近两条、认知标签翻成中文、屏尾调试 dump 不再上屏。
 import type { SessionBrief as Brief } from "../adapter/wire";
 import { epistemicLabel, exitText } from "../app-data";
+import { t } from "../i18n";
 
 
 // 现场简报（人话版）：当前目录 / 运行中 / 最近命令 / 提示。
@@ -29,11 +30,11 @@ export function BriefCard({ brief }: { brief: Brief }) {
       {cwd && (
         <div className={"brief-fact " + epi(cwd.status)}>
           <span className={"epistemic-badge " + epi(cwd.status)}>{epistemicLabel(cwd.status)}</span>
-          <div className="bf-body">当前目录 <span className="mono">{cwd.detail}</span></div>
+          <div className="bf-body">{t("当前目录")} <span className="mono">{cwd.detail}</span></div>
         </div>
       )}
       {brief.running.length > 0 && (
-        <div className="brief-fact"><div className="bf-body err">运行中：{brief.running.join("、")}</div></div>
+        <div className="brief-fact"><div className="bf-body err">{t("运行中：")}{brief.running.join("、")}</div></div>
       )}
       {cmds.map((f, i) => {
         const { cmd, exit } = parseCmd(f.detail);
@@ -58,7 +59,7 @@ export function BriefCard({ brief }: { brief: Brief }) {
       {ctl && (
         <div className={"brief-fact " + epi(ctl.status)} title={ctl.detail}>
           <span className={"epistemic-badge " + epi(ctl.status)}>{epistemicLabel(ctl.status)}</span>
-          <div className="bf-body dim">控制权：{ctl.detail}</div>
+          <div className="bf-body dim">{t("控制权：")}{ctl.detail}</div>
         </div>
       )}
     </div>

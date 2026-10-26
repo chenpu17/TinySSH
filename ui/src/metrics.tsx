@@ -6,6 +6,7 @@
 // （BSD/macOS）与连续采样失败都整条隐藏——摆一条永远「—」的死条不如不摆。
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "./adapter/bridge";
+import { t } from "./i18n";
 import { IconPause, IconPlay } from "./icons";
 
 // ---- 采样解析（纯函数）----
@@ -187,36 +188,36 @@ export function MetricsBar({ sid, kind, user, hostName }: {
   };
   const v = view;
   return (
-    <div className="metrics-bar" data-testid="metrics-bar" aria-label="主机资源监控">
-      <span className="mhost" title="活动会话">{[user, hostName].filter(Boolean).join("@")}</span>
-      <span className="mseg" title={`CPU 使用率${v?.cpuPct != null ? `（负载 ${v.load1.toFixed(2)}）` : ""}`}>
+    <div className="metrics-bar" data-testid="metrics-bar" aria-label={t("主机资源监控")}>
+      <span className="mhost" title={t("活动会话")}>{[user, hostName].filter(Boolean).join("@")}</span>
+      <span className="mseg" title={v?.cpuPct != null ? t("CPU 使用率（负载 {0}）", v.load1.toFixed(2)) : t("CPU 使用率")}>
         <span className="mlabel">CPU</span>
         <PctBar pct={v?.cpuPct ?? null} />
         <span className="mval mnum">{v?.cpuPct != null ? `${Math.round(v.cpuPct)}%` : "—"}</span>
       </span>
-      <span className="mseg" title="内存用量 / 总量">
-        <span className="mlabel">内存</span>
+      <span className="mseg" title={t("内存用量 / 总量")}>
+        <span className="mlabel">{t("内存")}</span>
         <PctBar pct={v ? v.memPct : null} />
         <span className="mval mnum">{v ? `${fmtGB(v.memUsedGB)} / ${fmtGB(v.memTotalGB)} GB` : "—"}</span>
       </span>
-      <span className="mseg" title="网络收发速率（全部网卡合计）">
-        <span className="mlabel">网络</span>
+      <span className="mseg" title={t("网络收发速率（全部网卡合计）")}>
+        <span className="mlabel">{t("网络")}</span>
         <span className="mval mnum down">↓ {v?.rxRate != null ? fmtRate(v.rxRate) : "—"}</span>
         <span className="mval mnum up">↑ {v?.txRate != null ? fmtRate(v.txRate) : "—"}</span>
       </span>
-      <span className="mseg" title="系统运行时长">
-        <span className="mlabel">运行</span>
+      <span className="mseg" title={t("系统运行时长")}>
+        <span className="mlabel">{t("运行")}</span>
         <span className="mval">{v ? fmtUptime(v.uptimeSec) : "—"}</span>
       </span>
-      <span className="mseg" title="根分区用量">
-        <span className="mlabel">磁盘</span>
+      <span className="mseg" title={t("根分区用量")}>
+        <span className="mlabel">{t("磁盘")}</span>
         <PctBar pct={v?.diskPct ?? null} />
         <span className="mval mnum">{v?.diskPct != null ? `${v.diskPct}%` : "—"}</span>
       </span>
       <span style={{ flex: 1 }} />
       <button className="mpause" data-testid="metrics-pause" onClick={togglePause}
         aria-pressed={paused}
-        title={paused ? "恢复资源采样（当前已暂停）" : "暂停资源采样（停止向远端发探测命令）"}>
+        title={paused ? t("恢复资源采样（当前已暂停）") : t("暂停资源采样（停止向远端发探测命令）")}>
         {paused ? <IconPlay size={12} /> : <IconPause size={12} />}
       </button>
     </div>

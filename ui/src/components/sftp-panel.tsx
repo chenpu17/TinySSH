@@ -4,6 +4,7 @@
 import { invoke } from "../adapter/bridge";
 import type { CollisionDecision, DirEntryS, SessionBrief as Brief } from "../adapter/wire";
 import { fmtBytes, type TransferCard } from "../app-data";
+import { t, localeNow } from "../i18n";
 import {
   IconChevronLeft, IconChevronRight, IconChevronUp, IconDownload, IconFile,
   IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconUpload,
@@ -11,6 +12,9 @@ import {
 
 // 传输抽屉最多渲染的行数（五轮架构）：超出只显示最近 N 条并如实声明省略数。
 const XFER_ROWS_SHOWN = 120;
+
+// 时间列的展示 locale 跟随界面语言（数字为主，仅月/日形态有差异：5月3日 vs 5/3）
+const dateLocale = () => (localeNow() === "en" ? "en-US" : "zh-CN");
 
 interface FilesPanelProps {
   sid: string | null;
@@ -72,17 +76,17 @@ export function FilesPanel({
 }: FilesPanelProps) {
   return (
           <div className="section" ref={sftpWrapRef}>
-            <h4>远程文件</h4>
+            <h4>{t("远程文件")}</h4>
             {!sid ? (
-              <div className="side-quiet">连接会话后可浏览远端目录；文件拖进窗口即上传到正在浏览的目录。</div>
+              <div className="side-quiet">{t("连接会话后可浏览远端目录；文件拖进窗口即上传到正在浏览的目录。")}</div>
             ) : (
               <>
                 <div className="row sftp-nav">
-                  <button className="ghost" title="返回上一位置" aria-label="返回" disabled={!sftpHist.length || sftpLoading}
+                  <button className="ghost" title={t("返回上一位置")} aria-label={t("返回")} disabled={!sftpHist.length || sftpLoading}
                     onClick={() => void sftpGoBack()}><IconChevronLeft size={13} /></button>
-                  <button className="ghost" title="前进" aria-label="前进" disabled={!sftpFwd.length || sftpLoading}
+                  <button className="ghost" title={t("前进")} aria-label={t("前进")} disabled={!sftpFwd.length || sftpLoading}
                     onClick={() => void sftpGoFwd()}><IconChevronRight size={13} /></button>
-                  <button className="ghost" title="上一级目录" aria-label="上一级"
+                  <button className="ghost" title={t("上一级目录")} aria-label={t("上一级")}
                     disabled={!sftpPath || sftpPath === "/"}
                     onClick={() => {
                       const p = sftpPath.replace(/\/+$/, "").split("/");
@@ -90,25 +94,25 @@ export function FilesPanel({
                       void navigateTo(p.length ? p.join("/") || "/" : "/");
                     }}
                   ><IconChevronUp size={13} /></button>
-                  <button className="ghost" title="刷新当前目录" aria-label="刷新"
+                  <button className="ghost" title={t("刷新当前目录")} aria-label={t("刷新")}
                     disabled={!sftpPath || sftpLoading} onClick={() => void loadDir(sftpPath)}
                   ><IconRefresh size={13} /></button>
-                  <button className="ghost" title="定位到终端目录（显式定位；不执行 cd，不自动跟随 shell）" aria-label="定位到终端目录"
+                  <button className="ghost" title={t("定位到终端目录（显式定位；不执行 cd，不自动跟随 shell）")} aria-label={t("定位到终端目录")}
                     disabled={!brief?.cwd || sftpPath === brief.cwd}
                     onClick={() => brief?.cwd && void navigateTo(brief.cwd)}
                   ><IconTerminal size={13} /></button>
-                  <button className="ghost" title="上传本地文件到当前目录（原生文件选择器，可多选）" aria-label="上传"
+                  <button className="ghost" title={t("上传本地文件到当前目录（原生文件选择器，可多选）")} aria-label={t("上传")}
                     data-testid="sftp-upload-btn"
                     disabled={!sftpPath || sftpLoading}
                     onClick={() => void pickAndUpload()}
                   ><IconUpload size={13} /></button>
-                  <button className={"ghost" + (byPathOpen ? " ts-open" : "")} title="按远端路径下载（保留 §246 入口）" aria-label="按路径下载"
+                  <button className={"ghost" + (byPathOpen ? " ts-open" : "")} title={t("按远端路径下载（保留 §246 入口）")} aria-label={t("按路径下载")}
                     data-testid="sftp-by-path-btn" aria-pressed={byPathOpen}
                     onClick={() => setByPathOpen(!byPathOpen)}
                   ><IconDownload size={13} /></button>
                   <span style={{ flex: 1 }} />
-                  <button className={"ghost" + (sftpEditPath ? " ts-open" : "")} title={sftpEditPath ? "切换为面包屑" : "编辑路径框"}
-                    aria-label="切换路径输入" aria-pressed={sftpEditPath}
+                  <button className={"ghost" + (sftpEditPath ? " ts-open" : "")} title={sftpEditPath ? t("切换为面包屑") : t("编辑路径框")}
+                    aria-label={t("切换路径输入")} aria-pressed={sftpEditPath}
                     onClick={() => { if (sftpEditPath) setSftpEditPath(false); else { setSftpPathInput(sftpPath); setSftpEditPath(true); } }}
                   ><IconPencil size={13} /></button>
                 </div>
@@ -116,7 +120,7 @@ export function FilesPanel({
                   <div className="row sftp-path">
                     <input
                       className="mono" autoFocus data-testid="sftp-path-input"
-                      placeholder="远端目录（绝对路径，回车进入）"
+                      placeholder={t("远端目录（绝对路径，回车进入）")}
                       value={sftpPathInput}
                       onChange={(e) => setSftpPathInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -137,40 +141,42 @@ export function FilesPanel({
                           {/* 首段 label 本身是 "/"，自带斜杠；从第三段起才补分隔符，避免根路径渲染成 // */}
                           {i > 1 && <span className="dim">/</span>}
                           {i < segs.length - 1 ? (
-                            <button className="sftp-crumb" title={`进入 ${s.path}`} onClick={() => void navigateTo(s.path)}>{s.label}</button>
+                            <button className="sftp-crumb" title={t("进入 {0}", s.path)} onClick={() => void navigateTo(s.path)}>{s.label}</button>
                           ) : (
                             <span className="sftp-crumb cur" aria-current="location">{s.label}</span>
                           )}
                         </span>
                       ));
-                    })() : <span className="dim">未浏览——点「定位到终端目录」或 ✎ 输入绝对路径</span>}
+                    })() : <span className="dim">{t("未浏览——点「定位到终端目录」或 ✎ 输入绝对路径")}</span>}
                   </div>
                 )}
                 <div className="row sftp-tools">
-                  <input className="sftp-filter" placeholder="筛选名称" aria-label="按名称筛选"
+                  <input className="sftp-filter" placeholder={t("筛选名称")} aria-label={t("按名称筛选")}
                     spellCheck={false} value={sftpFilter} onChange={(e) => setSftpFilter(e.target.value)} />
                   <button className={"ghost" + (sftpShowHidden ? " ts-open" : "")} aria-pressed={sftpShowHidden}
-                    title="显示隐藏项（. 开头）" onClick={() => setShowHidden((v) => !v)}>隐藏项</button>
+                    title={t("显示隐藏项（. 开头）")} onClick={() => setShowHidden((v) => !v)}>{t("隐藏项")}</button>
                   <button className={"ghost" + (sftpSaveAs ? " ts-open" : "")} aria-pressed={sftpSaveAs}
                     data-testid="sftp-saveas-toggle"
-                    title="另存为模式：下载时弹出对话框选位置（行内下载、路径下载、菜单「下载」逐文件弹；下载所选多选只弹一次目录选择器，全部落同一目录；右键「另存为…」不受影响）"
-                    onClick={() => setSftpSaveAs((v) => !v)}>另存为</button>
+                    title={t("另存为模式：下载时弹出对话框选位置（行内下载、路径下载、菜单「下载」逐文件弹；下载所选多选只弹一次目录选择器，全部落同一目录；右键「另存为…」不受影响）")}
+                    onClick={() => setSftpSaveAs((v) => !v)}>{t("另存为")}</button>
                   {([["name", "名称"], ["size", "大小"], ["mtime", "时间"]] as const).map(([k, label]) => (
                     <button key={k} className={"ghost" + (sftpSort.key === k ? " ts-open" : "")} aria-pressed={sftpSort.key === k}
-                      title={`按${label}排序${sftpSort.key === k ? (sftpSort.dir === 1 ? "（当前升序，点击改降序）" : "（当前降序，点击改升序）") : ""}`}
+                      title={sftpSort.key === k
+                        ? (sftpSort.dir === 1 ? t("按{0}排序（当前升序，点击改降序）", t(label)) : t("按{0}排序（当前降序，点击改升序）", t(label)))
+                        : t("按{0}排序", t(label))}
                       onClick={() => setSftpSort((s) => (s.key === k ? { key: k, dir: s.dir === 1 ? -1 : 1 } : { key: k, dir: 1 }))}
-                    >{label}{sftpSort.key === k ? (sftpSort.dir === 1 ? "↑" : "↓") : ""}</button>
+                    >{t(label)}{sftpSort.key === k ? (sftpSort.dir === 1 ? "↑" : "↓") : ""}</button>
                   ))}
                 </div>
                 {byPathOpen && (
                   <div className="row xfer-input">
                     <input
-                      placeholder="下载远端文件（绝对路径，回车或点「下载」）"
+                      placeholder={t("下载远端文件（绝对路径，回车或点「下载」）")}
                       value={downloadPath}
                       onChange={(e) => setDownloadPath(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && void startDownload()}
                     />
-                    <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>下载</button>
+                    <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>{t("下载")}</button>
                   </div>
                 )}
                 {sftpErr && <div className="err" style={{ marginTop: 6 }}>✕ {sftpErr}</div>}
@@ -180,21 +186,21 @@ export function FilesPanel({
                   </div>
                 )}
                 {!sftpLoading && sftpEntries && sftpEntries.length === 0 && (
-                  <div className="side-quiet">空目录。</div>
+                  <div className="side-quiet">{t("空目录。")}</div>
                 )}
                 {!sftpLoading && sftpEntries && sftpEntries.length > 0 && sftpShown.length === 0 && (
-                  <div className="side-quiet">无匹配项（名称筛选或隐藏项过滤）。</div>
+                  <div className="side-quiet">{t("无匹配项（名称筛选或隐藏项过滤）。")}</div>
                 )}
                 {!sftpLoading && sftpEntries && sftpEntries.length >= 5000 && (
                   // 与后端 SFTP_LIST_CAP 同值：大目录截断如实提示（数据盘/CI 产物
                   // 几万条目曾全量渲染秒级冻结）
-                  <div className="side-quiet">目录过大，仅显示前 5000 项——用名称筛选或进入子目录。</div>
+                  <div className="side-quiet">{t("目录过大，仅显示前 5000 项——用名称筛选或进入子目录。")}</div>
                 )}
                 {!sftpLoading && sftpShown.length > 0 && (
                   <div
                     className={"sftp-list" + (sftpListW <= 300 ? " cols-name-only" : sftpListW <= 340 ? " cols-no-time" : "")}
                     data-testid="sftp-list" ref={sftpListRef} tabIndex={0}
-                    aria-label="文件列表（方向键移动，Enter 进入目录，Space 选中）"
+                    aria-label={t("文件列表（方向键移动，Enter 进入目录，Space 选中）")}
                     onKeyDown={sftpListKey}
                   >
                     {sftpShown.map((e, i) => (
@@ -203,24 +209,24 @@ export function FilesPanel({
                         className={"sftp-row" + (e.is_dir ? " dir" : "") + (sftpSel.has(e.name) ? " sel" : "") + (i === sftpCursor ? " cursor" : "")}
                         onClick={(ev) => sftpRowClick(e, i, ev)}
                         onDoubleClick={(ev) => sftpActivate(e, { x: ev.clientX, y: ev.clientY })}
-                        title={e.is_dir ? "双击进入" : e.kind === "symlink" ? "双击按目标处理" : "双击查看可用动作"}
+                        title={e.is_dir ? t("双击进入") : e.kind === "symlink" ? t("双击按目标处理") : t("双击查看可用动作")}
                       >
-                        <span className="sftp-ico" title={e.kind === "symlink" ? "符号链接" : undefined}>
+                        <span className="sftp-ico" title={e.kind === "symlink" ? t("符号链接") : undefined}>
                           {e.kind === "symlink" ? "→" : e.is_dir ? <IconFolder size={13} /> : <IconFile size={13} />}
                         </span>
                         <span className="sftp-name mono" title={`${sftpPath.replace(/\/+$/, "")}/${e.name}`}>{e.name}</span>
-                        <span className="dim mono sftp-size" title={e.size == null ? "大小未知" : `${e.size} 字节`}>
-                          {e.is_dir ? "目录" : e.kind === "symlink" ? "链接" : e.size == null ? "—" : fmtBytes(e.size)}
+                        <span className="dim mono sftp-size" title={e.size == null ? t("大小未知") : t("{0} 字节", e.size)}>
+                          {e.is_dir ? t("目录") : e.kind === "symlink" ? t("链接") : e.size == null ? "—" : fmtBytes(e.size)}
                         </span>
-                        <span className="dim mono sftp-time" title={e.mtime == null ? "修改时间未知" : new Date(e.mtime * 1000).toLocaleString("zh-CN")}>
-                          {e.mtime == null ? "—" : new Date(e.mtime * 1000).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}
+                        <span className="dim mono sftp-time" title={e.mtime == null ? t("修改时间未知") : new Date(e.mtime * 1000).toLocaleString(dateLocale())}>
+                          {e.mtime == null ? "—" : new Date(e.mtime * 1000).toLocaleDateString(dateLocale(), { month: "numeric", day: "numeric" })}
                         </span>
                         {!e.is_dir && (
                           <button
                             className="ghost sftp-dl"
-                            title="下载（存上次下载目录，首次为「下载」文件夹；开「另存为」或菜单「另存为…」可选位置）"
+                            title={t("下载（存上次下载目录，首次为「下载」文件夹；开「另存为」或菜单「另存为…」可选位置）")}
                             onClick={(ev) => { ev.stopPropagation(); void downloadRemote(`${sftpPath.replace(/\/+$/, "")}/${e.name}`); }}
-                          ><IconDownload size={12} />下载</button>
+                          ><IconDownload size={12} />{t("下载")}</button>
                         )}
                       </div>
                     ))}
@@ -229,15 +235,15 @@ export function FilesPanel({
                 {/* 选择条在列表下方（R31）：上方插入会使列表下移、双击第二击落空 */}
                 {sftpSel.size > 0 && (
                   <div className="row sftp-selbar" data-testid="sftp-selbar">
-                    <span className="dim">已选 {sftpSel.size} 项</span>
+                    <span className="dim">{t("已选 {0} 项", sftpSel.size)}</span>
                     <button className="ghost" data-testid="sftp-sel-download" disabled={sftpLoading}
                       onClick={() => void sftpDownloadSelected()}
-                    ><IconDownload size={12} /> 下载所选</button>
-                    <button className="ghost" title="清除选择" aria-label="清除选择"
+                    ><IconDownload size={12} /> {t("下载所选")}</button>
+                    <button className="ghost" title={t("清除选择")} aria-label={t("清除选择")}
                       onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
                   </div>
                 )}
-                <div className="side-quiet">单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在下载时选位置（多选下载只选一次目录）；传输进度见底部队列（状态条「传输 N」展开）。</div>
+                <div className="side-quiet">{t("单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在下载时选位置（多选下载只选一次目录）；传输进度见底部队列（状态条「传输 N」展开）。")}</div>
               </>
             )}
           </div>
@@ -264,72 +270,72 @@ export function TransferQueueDrawer({
   decideCollision, verifyOutcome, locateTransfer, retryTransfer, openTransfer,
 }: TransferQueueDrawerProps) {
   return (
-          <div className="queue-drawer" data-testid="queue-drawer" role="region" aria-label="传输队列">
+          <div className="queue-drawer" data-testid="queue-drawer" role="region" aria-label={t("传输队列")}>
             <div className="queue-head">
-              <span className="queue-title">传输</span>
-              <span className="queue-count">{transfers.length} 个任务</span>
+              <span className="queue-title">{t("传输")}</span>
+              <span className="queue-count">{t("{0} 个任务", transfers.length)}</span>
               <span style={{ flex: 1 }} />
-              <button className="ghost" data-testid="queue-collapse" aria-label="收起传输队列" onClick={() => setQueueOpen(false)}>收起 ⌄</button>
+              <button className="ghost" data-testid="queue-collapse" aria-label={t("收起传输队列")} onClick={() => setQueueOpen(false)}>{t("收起 ⌄")}</button>
             </div>
             <div className="queue-body">
               {transfers.length === 0 && (
-                <div className="side-quiet">暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。</div>
+                <div className="side-quiet">{t("暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。")}</div>
               )}
               {/* 五轮架构（虚拟化等效）：历史行无上限会随使用无限增长，每个传输事件
                   （120ms 合帧）都全量 diff。封到最近 120 条——完整事实仍在（总数如实
                   展示，省略数如实声明），抽屉只是运行视图不是审计视图。 */}
               {transfers.length > XFER_ROWS_SHOWN && (
                 <div className="side-quiet" data-testid="queue-omitted">
-                  已省略最早 {transfers.length - XFER_ROWS_SHOWN} 条（共 {transfers.length} 条，只显示最近 {XFER_ROWS_SHOWN} 条）
+                  {t("已省略最早 {0} 条（共 {1} 条，只显示最近 {2} 条）", transfers.length - XFER_ROWS_SHOWN, transfers.length, XFER_ROWS_SHOWN)}
                 </div>
               )}
-              {transfers.slice(-XFER_ROWS_SHOWN).map((t) => (
-                <div className="card row xfer-row" key={t.id} data-testid={"xfer-" + t.status}>
-                  <span className={"xfer-dir " + (t.kind === "Upload" ? "up" : "down")}>
-                    {t.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
+              {transfers.slice(-XFER_ROWS_SHOWN).map((t2) => (
+                <div className="card row xfer-row" key={t2.id} data-testid={"xfer-" + t2.status}>
+                  <span className={"xfer-dir " + (t2.kind === "Upload" ? "up" : "down")}>
+                    {t2.kind === "Upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="row" style={{ gap: 8 }}>
-                      <div className="xfer-name mono" title={t.name}>{t.name}</div>
-                      <span className="xfer-host mono" title={`会话：${hostLabel(t.sid)}`}>{hostLabel(t.sid)}</span>
+                      <div className="xfer-name mono" title={t2.name}>{t2.name}</div>
+                      <span className="xfer-host mono" title={t("会话：{0}", hostLabel(t2.sid))}>{hostLabel(t2.sid)}</span>
                       <span className="mono xfer-sub">
-                        {t.status === "queued" && "排队中…"}
-                        {t.status === "running" && (t.total != null && t.total > 0
-                          ? `传输中… ${fmtBytes(t.bytes ?? 0)} / ${fmtBytes(t.total)}`
-                          : `传输中… ${fmtBytes(t.bytes ?? 0)}${t.total == null ? "（总量未知）" : ""}`)}
-                        {t.status === "committing" && "提交中…（字节传完不代表提交完成）"}
-                        {t.status === "cancelling" && "取消中…"}
-                        {t.status === "done" && `完成 · ${fmtBytes(t.bytes ?? 0)}`}
-                        {t.status === "failed" && `失败：${t.error ?? "未知错误"}`}
-                        {t.status === "cancelled" && "已取消"}
-                        {t.status === "skipped" && "已跳过：同名目标未改动"}
-                        {t.status === "interrupted" && `已中断：${t.error ?? "应用重启时传输中断"}`}
-                        {t.status === "unknown" && `结果未知：${t.error ?? "发布应答丢失"}`}
+                        {t2.status === "queued" && t("排队中…")}
+                        {t2.status === "running" && (t2.total != null && t2.total > 0
+                          ? t("传输中… {0} / {1}", fmtBytes(t2.bytes ?? 0), fmtBytes(t2.total))
+                          : t("传输中… {0}{1}", fmtBytes(t2.bytes ?? 0), t2.total == null ? t("（总量未知）") : ""))}
+                        {t2.status === "committing" && t("提交中…（字节传完不代表提交完成）")}
+                        {t2.status === "cancelling" && t("取消中…")}
+                        {t2.status === "done" && t("完成 · {0}", fmtBytes(t2.bytes ?? 0))}
+                        {t2.status === "failed" && t("失败：{0}", t2.error ?? t("未知错误"))}
+                        {t2.status === "cancelled" && t("已取消")}
+                        {t2.status === "skipped" && t("已跳过：同名目标未改动")}
+                        {t2.status === "interrupted" && t("已中断：{0}", t2.error ?? t("应用重启时传输中断"))}
+                        {t2.status === "unknown" && t("结果未知：{0}", t2.error ?? t("发布应答丢失"))}
                       </span>
                     </div>
                     {/* S08：完整 源 → 目标（方向语义：上传 本地→远端，下载 远端→本地） */}
-                    <div className="mono xfer-sub" title={t.kind === "Upload" ? `${t.local} → ${t.remote}` : `${t.remote} → ${t.local}`}>
-                      {t.kind === "Upload" ? `${t.local} → ${t.remote}` : `${t.remote} → ${t.local}`}
+                    <div className="mono xfer-sub" title={t2.kind === "Upload" ? `${t2.local} → ${t2.remote}` : `${t2.remote} → ${t2.local}`}>
+                      {t2.kind === "Upload" ? `${t2.local} → ${t2.remote}` : `${t2.remote} → ${t2.local}`}
                     </div>
-                    {t.status === "awaiting" && t.prompt && (
+                    {t2.status === "awaiting" && t2.prompt && (
                       <div className="xfer-conflict">
                         <div className="mono xfer-sub">
-                          {t.prompt.reason === "stat_changed_since_preflight" ? "目标在提交前已变化，需重新裁决：" : "目标已存在："}
-                          <span className="mono" title={t.prompt.target_path}>{t.prompt.target_path}</span>
-                          {t.prompt.size != null && ` · ${fmtBytes(t.prompt.size)}`}
-                          {t.prompt.mtime != null && ` · ${new Date(t.prompt.mtime * 1000).toLocaleString()}`}
+                          {t2.prompt.reason === "stat_changed_since_preflight" ? t("目标在提交前已变化，需重新裁决：") : t("目标已存在：")}
+                          <span className="mono" title={t2.prompt.target_path}>{t2.prompt.target_path}</span>
+                          {t2.prompt.size != null && ` · ${fmtBytes(t2.prompt.size)}`}
+                          {t2.prompt.mtime != null && ` · ${new Date(t2.prompt.mtime * 1000).toLocaleString(dateLocale())}`}
                         </div>
                         <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                          <button className="ghost" data-testid="cf-skip" onClick={() => { void decideCollision(t, "skip"); }}>跳过</button>
-                          <button className="ghost" data-testid="cf-overwrite" title="外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动" onClick={() => { void decideCollision(t, "overwrite"); }}>覆盖</button>
-                          <button className="ghost" data-testid="cf-keepboth" onClick={() => { void decideCollision(t, "keepboth"); }}>两个都要</button>
+                          <button className="ghost" data-testid="cf-skip" onClick={() => { void decideCollision(t2, "skip"); }}>{t("跳过")}</button>
+                          <button className="ghost" data-testid="cf-overwrite" title={t("外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动")} onClick={() => { void decideCollision(t2, "overwrite"); }}>{t("覆盖")}</button>
+                          <button className="ghost" data-testid="cf-keepboth" onClick={() => { void decideCollision(t2, "keepboth"); }}>{t("两个都要")}</button>
                         </div>
                       </div>
                     )}
-                    {t.status === "unknown" && (
+                    {t2.status === "unknown" && (
                       <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                        <button className="ghost" data-testid="uo-reverify" onClick={() => { void verifyOutcome(t.id); }}>重新核实</button>
-                        <span className="mono xfer-note">temp 与恢复资料保留；不自动重发</span>
+                        <button className="ghost" data-testid="uo-reverify" onClick={() => { void verifyOutcome(t2.id); }}>{t("重新核实")}</button>
+                        <span className="mono xfer-note">{t("temp 与恢复资料保留；不自动重发")}</span>
                       </div>
                     )}
                   </div>
@@ -339,28 +345,28 @@ export function TransferQueueDrawer({
                       完成=打开+定位（下载：系统默认程序开文件本身 / 访达显示本地
                       目标；上传=文件面板开目标目录） */}
                   <div className="row" style={{ gap: 2, flex: "none" }}>
-                    {t.kind === "Download" && t.status === "done" && !t.local.startsWith("pending") && (
+                    {t2.kind === "Download" && t2.status === "done" && !t2.local.startsWith("pending") && (
                       <>
-                        <button className="ghost" data-testid="xfer-open" title="立即打开：用系统默认程序打开该文件" onClick={() => void openTransfer(t)}>打开</button>
-                        <button className="ghost" data-testid="xfer-locate" title="在文件管理器中显示本地目标（资源管理器选中该文件）" onClick={() => void locateTransfer(t)}>定位</button>
+                        <button className="ghost" data-testid="xfer-open" title={t("立即打开：用系统默认程序打开该文件")} onClick={() => void openTransfer(t2)}>{t("打开")}</button>
+                        <button className="ghost" data-testid="xfer-locate" title={t("在文件管理器中显示本地目标（资源管理器选中该文件）")} onClick={() => void locateTransfer(t2)}>{t("定位")}</button>
                       </>
                     )}
-                    {t.kind === "Upload" && t.status === "done" && t.sid && t.sid === sidRef.current && (
-                      <button className="ghost" data-testid="xfer-locate" title="在文件面板打开目标目录" onClick={() => void locateTransfer(t)}>定位</button>
+                    {t2.kind === "Upload" && t2.status === "done" && t2.sid && t2.sid === sidRef.current && (
+                      <button className="ghost" data-testid="xfer-locate" title={t("在文件面板打开目标目录")} onClick={() => void locateTransfer(t2)}>{t("定位")}</button>
                     )}
-                    {t.status === "unknown" && (
-                      <button className="ghost" data-testid="xfer-view-target" title="查看目标：核对目标当前状态（下载在访达显示本地目标 / 上传打开文件面板目标目录）——仅目标存在不能证明本任务成功，结果仍待核实" onClick={() => void locateTransfer(t)}>查看目标</button>
+                    {t2.status === "unknown" && (
+                      <button className="ghost" data-testid="xfer-view-target" title={t("查看目标：核对目标当前状态（下载在访达显示本地目标 / 上传打开文件面板目标目录）——仅目标存在不能证明本任务成功，结果仍待核实")} onClick={() => void locateTransfer(t2)}>{t("查看目标")}</button>
                     )}
-                    {(t.status === "failed" || t.status === "cancelled" || t.status === "skipped" || t.status === "interrupted") && (
-                      canRetry(t)
-                        ? <button className="ghost" data-testid="xfer-retry" title="重试：创建新任务，重新校验连接、源文件与冲突" onClick={() => { void retryTransfer(t.id); }}>重试</button>
-                        : <span className="xfer-note" data-testid="xfer-retry-unavailable" title="重试须在原会话内重跑（重新校验连接/源/冲突）；原会话已不在——请重连该主机后在文件面板重新发起">会话已不在</span>
+                    {(t2.status === "failed" || t2.status === "cancelled" || t2.status === "skipped" || t2.status === "interrupted") && (
+                      canRetry(t2)
+                        ? <button className="ghost" data-testid="xfer-retry" title={t("重试：创建新任务，重新校验连接、源文件与冲突")} onClick={() => { void retryTransfer(t2.id); }}>{t("重试")}</button>
+                        : <span className="xfer-note" data-testid="xfer-retry-unavailable" title={t("重试须在原会话内重跑（重新校验连接/源/冲突）；原会话已不在——请重连该主机后在文件面板重新发起")}>{t("会话已不在")}</span>
                     )}
-                    {t.status === "running" || t.status === "queued" || t.status === "cancelling" || t.status === "committing" || t.status === "awaiting" ? (
-                      <button className="ghost" title="取消传输" onClick={() => { invoke("cancel_transfer", { id: t.id }).catch(() => {}); }}>✕</button>
+                    {t2.status === "running" || t2.status === "queued" || t2.status === "cancelling" || t2.status === "committing" || t2.status === "awaiting" ? (
+                      <button className="ghost" title={t("取消传输")} onClick={() => { invoke("cancel_transfer", { id: t2.id }).catch(() => {}); }}>✕</button>
                     ) : (
-                      <span className={t.status === "done" ? "ok" : t.status === "cancelled" || t.status === "skipped" ? "dim" : "err"} style={{ flex: "none", width: 18, textAlign: "center" }}>
-                        {t.status === "done" ? "✓" : t.status === "cancelled" || t.status === "skipped" ? "⊘" : "✕"}
+                      <span className={t2.status === "done" ? "ok" : t2.status === "cancelled" || t2.status === "skipped" ? "dim" : "err"} style={{ flex: "none", width: 18, textAlign: "center" }}>
+                        {t2.status === "done" ? "✓" : t2.status === "cancelled" || t2.status === "skipped" ? "⊘" : "✕"}
                       </span>
                     )}
                   </div>
@@ -388,16 +394,16 @@ export function SftpFileMenu({
   return (
         <div
           className="sftp-menu" ref={sftpMenuRef} role="menu" data-testid="sftp-menu"
-          aria-label={`${sftpMenu.name} 可用动作`}
+          aria-label={t("{0} 可用动作", sftpMenu.name)}
           style={{ left: Math.max(6, Math.min(sftpMenu.x, winW - 160)), top: Math.min(sftpMenu.y, window.innerHeight - 84) }}
         >
           <div className="sftp-menu-title mono">{sftpMenu.name}</div>
           <button role="menuitem" data-testid="sftp-menu-download"
             onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`); }}
-          ><IconDownload size={12} /> 下载</button>
+          ><IconDownload size={12} /> {t("下载")}</button>
           <button role="menuitem" data-testid="sftp-menu-saveas"
             onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`, { saveAs: true }); }}
-          ><IconInbox size={12} /> 另存为…</button>
+          ><IconInbox size={12} /> {t("另存为…")}</button>
         </div>
   );
 }
