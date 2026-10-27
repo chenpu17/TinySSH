@@ -2060,6 +2060,22 @@ commandline -f repaint"#
         .to_string()
 }
 
+/// 找茬轮 F1：非 POSIX 远端（Windows OpenSSH 默认 shell=cmd/PowerShell）没有
+/// printf——注入批次（探针行+片段+尾清屏）在其上只会逐行报错且**尾清屏自身
+/// 也报错不执行**，呕吐物永留终端、每次重连再吐一遍。探针输出里出现「报错
+/// 引用 printf」的签名即判定阻断。签名取高精度锚：cmd 中文（'printf' 不是…）、
+/// cmd 英文（is not recognized as an internal…）、PowerShell 全 locale（异常
+/// 类型名 CommandNotFoundException 不本地化）。其余 cmd 语种如实维持旧行为
+/// （立案：TCP 层 banner 嗅探可做到零呕吐，russh 0.63 未暴露 remote_sshid）。
+pub fn windows_probe_error(buf: &str) -> bool {
+    if !buf.contains("printf") {
+        return false;
+    }
+    buf.contains("不是内部或外部命令")
+        || buf.contains("is not recognized as an internal")
+        || buf.contains("CommandNotFoundException")
+}
+
 /// 远端登录 shell 家族（探针判型结果）。`Sh` = sh 族或未知（sh 片段的 if 块
 /// 自守兜底；tcsh 等不兼容 shell 维持 V1 行为：报错被尾清屏抹掉、如实 Unavailable）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2593,6 +2609,8 @@ impl SessionApi for SessionManager {
         // 泵代际+1：正在 on_transport_reconnect 重试环里的旧泵醒后即退，
         // 不再对已关闭会话续跑 3 轮重试（只置 Closed 时它要到重试结束才自检）。
         h.pump_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // F2：探针任务持有会话 Arc，close 后仍可空转到判型窗口结束——收掉。
+        h.abort_probe_task();
         h.channel.close().await?;
         self.sessions.lock().unwrap().remove(&sid);
         // P2-b：触发器引擎清该会话的滚动行缓冲与冷却记录（防缓慢泄漏）

@@ -626,3 +626,164 @@ async fn bash_host_no_fish_topup() {
         "bash 主机不得补写 fish 片段"
     );
 }
+
+/// 找茬轮接线通道：首次 write 后按场景回吐——延迟标记（重连交叠/慢回显）或
+/// cmd printf 报错（非 POSIX 远端，无标记）。
+struct ScenarioProbeChannel {
+    tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    writes: std::sync::Mutex<Vec<Vec<u8>>>,
+    first_seen: std::sync::atomic::AtomicBool,
+    payload: String,
+    delay_ms: u64,
+}
+impl ScenarioProbeChannel {
+    fn new_raw(payload: String, delay_ms: u64) -> Arc<Self> {
+        let (tx, _) = tokio::sync::broadcast::channel(64);
+        Arc::new(Self {
+            tx,
+            writes: std::sync::Mutex::new(Vec::new()),
+            first_seen: std::sync::atomic::AtomicBool::new(false),
+            payload,
+            delay_ms,
+        })
+    }
+    fn delayed_marker(marker: &str, delay_ms: u64) -> Arc<Self> {
+        Self::new_raw(format!("{}\r\n", marker), delay_ms)
+    }
+    /// Windows Server 20348 cmd 实测形态：先回显探针行（含裸 | 与字面 \n），
+    /// 再报「不是内部或外部命令」；无探针标记输出。
+    fn windows_cmd_error() -> Arc<Self> {
+        Self::new_raw(
+            "D:\\work>printf '__T=%s|%s|%s\\n' \"$BASH_VERSION\" \"$ZSH_VERSION\" \"$FISH_VERSION\"\r\n'printf' 不是内部或外部命令，也不是可运行的程序\r\n或批处理文件。\r\n"
+                .to_string(),
+            0,
+        )
+    }
+    fn all_writes(&self) -> String {
+        String::from_utf8_lossy(&self.writes.lock().unwrap().concat()).to_string()
+    }
+}
+#[async_trait::async_trait]
+impl ChannelHandle for ScenarioProbeChannel {
+    async fn write(&self, data: &[u8]) -> Result<()> {
+        self.writes.lock().unwrap().push(data.to_vec());
+        if !self
+            .first_seen
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let tx = self.tx.clone();
+            let payload = self.payload.clone();
+            let delay = self.delay_ms;
+            tokio::spawn(async move {
+                if delay > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+                let _ = tx.send(payload.into_bytes());
+            });
+        }
+        Ok(())
+    }
+    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+    async fn exec_fresh(
+        &self,
+        _cmd: &str,
+        _opts: &ExecOpts,
+        _deadline: std::time::Instant,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+    ) -> Result<FreshOutcome> {
+        Err(Error::SessionClosed)
+    }
+    async fn signal(&self, _sig: TransportSignal) -> Result<()> {
+        Ok(())
+    }
+    async fn force_close(&self) -> Result<()> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        self.tx.subscribe()
+    }
+    async fn is_alive(&self) -> bool {
+        true
+    }
+    async fn reconnect(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn upload(
+        &self,
+        _local: &std::path::Path,
+        _remote: &str,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn download(
+        &self,
+        _remote: &str,
+        _local: &std::path::Path,
+        _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
+        _progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64> {
+        Err(Error::SessionClosed)
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Vec<session_api::DirEntryS>> {
+        Err(Error::SessionClosed)
+    }
+}
+
+/// 找茬轮 F1 接线：cmd 登录 shell（探针报错签名）→ 阻断旗标 + cls 自愈 +
+/// 集成即刻 Unavailable；不补写 fish。
+#[tokio::test(flavor = "multi_thread")]
+async fn windows_cmd_host_blocked_and_healed() {
+    let m = mgr();
+    let ch = ScenarioProbeChannel::windows_cmd_error();
+    let h = hand_install(&m, "ssh", ch.clone());
+    assert!(h.inject_integration().await);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !h
+        .remote_shell_blocked
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "阻断旗标未在判型窗口内置位"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(matches!(
+        *h.integration.lock().unwrap(),
+        session_api::IntegrationState::Unavailable
+    ));
+    let all = ch.all_writes();
+    assert!(all.contains("cls"), "缺 cls 自愈写");
+    assert!(!all.contains("fish_postexec"), "cmd 主机不得补写 fish 片段");
+}
+
+/// 找茬轮 F2 接线：快速连续两次注入（模拟断线即重连的 reinject），延迟回吐的
+/// 标记只允许触发一份 fish 补写——旧探针任务必须被 abort（broadcast 跨重连
+/// 存活，旧任务也收得到新连接的探针输出）。
+#[tokio::test(flavor = "multi_thread")]
+async fn reinject_aborts_stale_probe_no_double_topup() {
+    let m = mgr();
+    let ch = ScenarioProbeChannel::delayed_marker("__T=||3.7.1", 400);
+    let h = hand_install(&m, "ssh", ch.clone());
+    assert!(h.inject_integration().await);
+    assert!(h.inject_integration().await);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while !ch.all_writes().contains("fish_postexec") {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "fish 补写未在判型窗口内到达"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // 多等 600ms：若旧任务未被 abort，第二份补写会在此期间追上来
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let topups = ch.all_writes().matches("commandline -f repaint").count();
+    assert_eq!(topups, 1, "fish 补写双写：旧探针任务未被 abort");
+}

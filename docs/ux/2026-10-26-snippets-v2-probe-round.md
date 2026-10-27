@@ -36,5 +36,5 @@
 
 - **真 fish 远端未实测**（本机无 fish、在手远端主机无 fish）——链路证据=接线级 mock 测试 + fish 片段按官方事件模型核对；与 V1 的 fish/pwsh 本地同口径。真机 fish 验证候补：docker sshd e2e 加 fish 镜像变体。
 - tcsh/csh 仍不支持：未定义变量报错 → 输出无有效标记 → 判型 Sh → sh 片段照发（报错被尾清屏抹掉）→ 如实 Unavailable，与 V1 一致。
-- Windows OpenSSH 远端（cmd/powershell 登录 shell）：探针行命令不存在报错同样被清屏抹掉，行为同 V1。
-- 补写竞态窗：判型期间用户打字 >2s 守卫兜住；重连场景本来就整体重注入，风险面与 V1 相同。
+- ~~Windows OpenSSH 远端（cmd/powershell 登录 shell）：探针行命令不存在报错同样被清屏抹掉，行为同 V1。~~ **【0.10.2 勘误·此断言错误】**：尾清屏是批次内一行 `printf '\033[2J\033[H'`，cmd/PowerShell 没有 printf——**清屏根本不执行**，注入源码+报错永留终端、每次重连再吐一遍；cmd 还把探针行裸 `|` 拆成管道（`'%s' 不是内部或外部命令`）。找茬轮真机+代码双实锤，0.10.2 以探针侧报错签名检测（`windows_probe_error`）+ `cls` 自愈 + run_shell 快速拒绝修复，详见 2026-10-27-doa-hotfix-round.md。
+- 补写竞态窗：判型期间用户打字 >2s 守卫兜住；~~重连场景本来就整体重注入，风险面与 V1 相同~~ **【0.10.2 勘误】**重连另有双写面：transport 层 broadcast 跨重连存活（transport-ssh:315 channel 不随重连重建），快速断线重连时新旧探针任务同挂一个广播、fish 补写可双写——0.10.2 存 JoinHandle 于 reinject 前 abort 修复。

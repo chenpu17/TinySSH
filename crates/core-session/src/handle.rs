@@ -167,6 +167,13 @@ pub struct SessionHandle {
     /// 旧泵若按旧状态判定继续跑，就是双泵双写屏；其迟到的一次 is_alive=false
     /// 又会把健康会话打进重连（假断线）。代际不符 = 你已被替换，立即退出。
     pub pump_gen: AtomicU64,
+    /// 找茬轮 F1：探针检出非 POSIX 远端（Windows OpenSSH 的 cmd/PowerShell 登录
+    /// shell，没有 printf）——run_shell 快速拒绝旗标（否则该会话每次 exec 白等
+    /// 10s 才报不可用）；reinject 重探时复位。
+    pub remote_shell_blocked: AtomicBool,
+    /// 找茬轮 F2：在飞探针任务句柄。reinject 前 abort 旧任务——broadcast 跨
+    /// 重连存活，旧任务同样收得到新连接的探针输出，不中止则 fish 补写可能双写。
+    pub probe_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     // ---- 十八轮：会话日志（tap 在 pump；句柄由 set_session_logging 装卸）----
     pub log_file: StdMutex<Option<SessionLogFile>>,
     pub log_path: StdMutex<Option<std::path::PathBuf>>,
@@ -293,6 +300,8 @@ impl SessionHandle {
             integration: StdMutex::new(session_api::IntegrationState::Disabled),
             retry_stop: AtomicBool::new(false),
             pump_gen: AtomicU64::new(0),
+            remote_shell_blocked: AtomicBool::new(false),
+            probe_task: StdMutex::new(None),
             log_file: StdMutex::new(None),
             log_path: StdMutex::new(None),
             center,
@@ -412,6 +421,18 @@ impl SessionHandle {
                         integration_present: false,
                         prompt_ready,
                         host_setting: false,
+                    },
+                });
+            }
+            if self.kind != "local" && self.remote_shell_blocked.load(Ordering::Relaxed) {
+                // 找茬轮 F1：探针判定非 POSIX 远端（cmd/PowerShell 登录 shell）。
+                // 立即拒绝，不进 10s 等待（该会话每次 exec 白等 10s 是找茬轮
+                // 实锤的存量痛）。
+                return Err(Error::ShellIntegrationUnavailable {
+                    available: session_api::ShellCapability {
+                        integration_present: false,
+                        prompt_ready,
+                        host_setting: true,
                     },
                 });
             }
@@ -1459,6 +1480,8 @@ impl SessionHandle {
             *self.integration.lock().unwrap() = session_api::IntegrationState::Disabled;
             return false;
         }
+        // 重连重探：复位上一轮的阻断判定（远端默认 shell 可能已更换）
+        self.remote_shell_blocked.store(false, Ordering::Relaxed);
         // 先订阅再写：探针输出不得落入无订阅者窗口（与泵同款纪律）
         let probe_rx = self.channel.subscribe_output();
         let snippet = format!(
@@ -1481,14 +1504,18 @@ impl SessionHandle {
         true
     }
 
-    /// V2 旁路判型：监听注入批次输出 ≤3s，探针标记判出 Fish 才补写 fish 片段。
+    /// V2 旁路判型：监听注入批次输出，探针标记判出 Fish 才补写 fish 片段。
     /// 判型失败/超时/sh 族 → 静默退出（sh 片段已就位，行为与 V1 完全一致）。
     /// 用户刚敲过键（<2s）则放弃补写：避免补写文本插进用户正在输入的命令行。
     fn spawn_shell_family_probe(self: &Arc<Self>, mut rx: broadcast::Receiver<Vec<u8>>) {
         let h = self.clone();
-        tokio::spawn(async move {
+        let jh = tokio::spawn(async move {
             let mut buf: Vec<u8> = Vec::new();
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+            // 窗口 10s 与重连路径同源：冷容器/高负载下首个提示符实测 3s 不够，
+            // 3s 时慢登录 fish 主机判型永远落空、且此后每次 run_shell 罚等 10s
+            // （找茬轮 F3 对齐重连注释的实测数据）。
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            let mut windows_blocked = false;
             loop {
                 tokio::select! {
                     chunk = rx.recv() => match chunk {
@@ -1497,7 +1524,12 @@ impl SessionHandle {
                             if buf.len() > 64 * 1024 {
                                 buf.drain(..buf.len() - 64 * 1024);
                             }
-                            if crate::classify_shell_probe(&String::from_utf8_lossy(&buf))
+                            let text = String::from_utf8_lossy(&buf);
+                            if crate::windows_probe_error(&text) {
+                                windows_blocked = true;
+                                break;
+                            }
+                            if crate::classify_shell_probe(&text)
                                 != crate::RemoteShellFamily::Sh
                             {
                                 break;
@@ -1508,6 +1540,14 @@ impl SessionHandle {
                     },
                     _ = tokio::time::sleep_until(deadline) => break,
                 }
+            }
+            if windows_blocked {
+                // 找茬轮 F1：cmd/PowerShell 没有 printf，注入批次（探针行+片段+
+                // 尾清屏）只会逐行报错且永不清除。发 cls 自愈清屏并置阻断旗标，
+                // run_shell 从此立即如实拒绝（host_setting 如实为 true：是平台
+                // 没有可注入的 POSIX shell，不是用户没开开关）。
+                h.mark_remote_shell_blocked().await;
+                return;
             }
             if crate::classify_shell_probe(&String::from_utf8_lossy(&buf))
                 != crate::RemoteShellFamily::Fish
@@ -1530,6 +1570,35 @@ impl SessionHandle {
                 .write(&crate::charset::encode(h.host.charset, &text))
                 .await;
         });
+        // F2：存句柄并 abort 上一轮任务——快速断线重连时旧任务还挂在同一个
+        // broadcast 上（transport 层 channel 不随重连重建），会与新任务一起
+        // 判 Fish 造成补写双写。
+        if let Some(old) = self.probe_task.lock().unwrap().replace(jh) {
+            old.abort();
+        }
+    }
+
+    /// F1 收口：非 POSIX 远端（cmd/PowerShell 登录 shell）——发 cls 清掉注入
+    /// 呕吐物、置阻断旗标、集成态即刻 Unavailable（不等 watcher 10s 超时）。
+    async fn mark_remote_shell_blocked(self: &Arc<Self>) {
+        self.remote_shell_blocked.store(true, Ordering::Relaxed);
+        *self.integration.lock().unwrap() = session_api::IntegrationState::Unavailable;
+        let text = "cls\r\n".to_string();
+        {
+            let mut s = self.screen.lock().await;
+            s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+        }
+        let _ = self
+            .channel
+            .write(&crate::charset::encode(self.host.charset, &text))
+            .await;
+    }
+
+    /// F2：会话关闭时收掉在飞探针任务（判型窗口拉长到 10s 后僵尸窗口同步变大）。
+    pub fn abort_probe_task(&self) {
+        if let Some(jh) = self.probe_task.lock().unwrap().take() {
+            jh.abort();
+        }
     }
 
     /// C3：后台等集成标记（≤10s）→ Ready/Unavailable + 事件（DC3.5 就绪独立表达，

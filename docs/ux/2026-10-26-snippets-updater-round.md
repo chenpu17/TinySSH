@@ -21,10 +21,10 @@
 
 **形态边界（如实）**：updater 插件在 Windows 只支持 NSIS/MSI 安装形态——**便携单文件 exe 不可自更新**；Linux 通道是 AppImage——仓库无 AppImage 产物。故 V1：**macOS（.app/.dmg）自动更新先行**，Windows 便携 / Linux 保持「check_update 检查 + 发布页下载」并如实说明。
 
-- 后端：注册 `tauri-plugin-updater`（注册期不校验公钥——占位符构建启动零风险）；`updater_info`（configured=编译带真公钥 / supported=macOS 且 configured / platform）+ `updater_install`（check → download_and_install → app.restart()，进度经 `updater-progress` 事件透传；Ok(false)=已是最新；错误结构化 updater_unavailable/updater_failed）。
+- 后端：注册 `tauri-plugin-updater`（~~注册期不校验公钥——占位符构建启动零风险~~ **【0.10.2 勘误】这句推断错了两处**：插件注册确实不校验公钥**值**，但 2.14.0 要求 tauri.conf.json 存在 `plugins.updater` 段——`endpoints`/`pubkey` 均无 serde default，缺段=Tauri 传 Null=**启动即 panic `PluginInitialization`**，v0.10.1 全平台产物因此 DOA（本轮只验了「构建绿」没验「能起」）；0.10.2 补配置段 + `src-tauri/tests/tauri_conf_sentinel.rs` 静态哨兵防回归，详见 2026-10-27-doa-hotfix-round.md）；`updater_info`（configured=编译带真公钥 / supported=macOS 且 configured / platform）+ `updater_install`（check → download_and_install → app.restart()，进度经 `updater-progress` 事件透传；Ok(false)=已是最新；错误结构化 updater_unavailable/updater_failed）。
 - 公钥注入：build.rs `rerun-if-env-changed=TAURI_UPDATER_PUBKEY` + rustc-env（**显式 rerun 是防 rust-cache 吐出没带公钥的旧产物**）；端点固定 `…/releases/latest/download/latest.json`。
 - UI：设置 → 关于 更新行加「自动更新（下载并重启）」按钮——**只在 updaterCap.supported 时出现**（demo 域恒 null；Windows/Linux/未签名构建不摆无效按钮）；busy 文案「下载中…完成后自动重启」。
 - release 工作流：mac 打包出 `.app.tar.gz`（updater 的 mac 更新格式）；配了 `TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]` 时 `tauri signer sign` + 生成 `latest.json`（darwin-aarch64/darwin-x86_64 双条目，node 校验 JSON 合法）；未配则如实跳过并在 Release notes 说明。上传 glob 条件附 latest.json。
 - **用户动作（启用自动更新，三步）**：`npx @tauri-apps/cli signer generate -w tinyssh.key` 生成密钥对 → GitHub secrets 配三个（`TAURI_UPDATER_PUBKEY` 公钥、`TAURI_SIGNING_PRIVATE_KEY`、可选 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）→ 打 v* tag 发版，之后 mac 用户应用内一键升级。
 
-**验证口径**：Rust 面 cargo check/workspace 测试 + fmt；UI 面 tsc + 全套（demo 域按钮不出现=既有断言不受扰）。**updater 全链路（真下载验签安装）需 macOS runner + secrets 实测，本轮未跑**——工作流与代码按插件 2.14.0 源码核对 API（check 在 Updater 上、build() 空端点报 EmptyEndpoints、download_and_install 签名），如实标注「待首次签名发版实测」。
+**验证口径**：Rust 面 cargo check/workspace 测试 + fmt；UI 面 tsc + 全套（demo 域按钮不出现=既有断言不受扰）。**updater 全链路（真下载验签安装）需 macOS runner + secrets 实测，本轮未跑**——工作流与代码按插件 2.14.0 源码核对 API（check 在 Updater 上、build() 空端点报 EmptyEndpoints、download_and_install 签名），如实标注「待首次签名发版实测」。**【0.10.2 补记】此口径漏了最便宜也最致命的一项：真机启动产物**——UI 套件跑 demo 域不启动 Rust app、cargo test 不运行 bin、CI 只构建不启动，updater 配置缺失这种「只在启动时炸」的问题三路全盲；发布前真机启动冒烟自 0.10.2 起为必做步骤（见 2026-10-27-doa-hotfix-round.md）。
