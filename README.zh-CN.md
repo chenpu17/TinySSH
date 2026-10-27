@@ -84,13 +84,17 @@ Windows 注意：
 
 ## 界面速览
 
-以下截图全部来自内置浏览器演示模式——假会话、如实标注，UI 与真实应用一致。
+以下截图全部来自内置浏览器演示模式——假会话、如实标注，UI 与真实应用一致。深色 · **东京夜**主题（出厂默认）。
 
-| 终端 | Agent 内联审批卡 |
+| 终端 + 主机栏 + 状态条 | Agent 内联审批卡 |
 |---|---|
 | ![终端](docs/img/readme-terminal.png) | ![Agent](docs/img/readme-agent.png) |
-| **多服务器监控大屏** | **命令块** |
+| **Agent 回复富渲染：mermaid 架构图 + KaTeX 公式** | **Fleet 编排：一段对话跨主机派发，逐条 exec 必审** |
+| ![富渲染](docs/img/readme-md.png) | ![Fleet](docs/img/readme-fleet.png) |
+| **多服务器监控大屏（含本机、Ascend NPU）** | **命令块：人类/Agent 归因、退出码、复制重跑** |
 | ![监控](docs/img/readme-monitor.png) | ![命令块](docs/img/readme-blocks.png) |
+| **远程文件多选批量下载** | **记录审计：泳道时间线，每笔动作可回溯** |
+| ![文件](docs/img/readme-files.png) | ![记录](docs/img/readme-records.png) |
 
 ## 文档
 

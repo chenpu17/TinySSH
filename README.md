@@ -46,13 +46,17 @@ Positioning snapshot at v0.10.3 (October 2026) — categories, not product revie
 
 ## Screenshots
 
-All shots are the built-in browser demo mode — fake sessions, clearly labeled, same UI as the real app.
+All shots are the built-in browser demo mode — fake sessions, clearly labeled, same UI as the real app. Dark theme on the **Tokyo Night** palette (the factory default).
 
-| Terminal | Agent with inline approval card |
+| Terminal with host bar and status bar | Agent with inline approval card |
 |---|---|
 | ![Terminal](docs/img/readme-terminal.png) | ![Agent](docs/img/readme-agent.png) |
-| **Multi-server monitoring dashboard** | **Command blocks** |
+| **Agent answers with rendered diagrams (mermaid) and formulas (KaTeX)** | **Fleet view — one conversation, many hosts, every exec approved** |
+| ![Rich markdown](docs/img/readme-md.png) | ![Fleet](docs/img/readme-fleet.png) |
+| **Multi-server monitoring dashboard (incl. local machine, Ascend NPU)** | **Command blocks — every command attributed human/agent, exit codes, rerun** |
 | ![Monitoring](docs/img/readme-monitor.png) | ![Blocks](docs/img/readme-blocks.png) |
+| **Remote files with multi-select batch download** | **Records audit — swimlane timeline, every action accounted** |
+| ![Files](docs/img/readme-files.png) | ![Records](docs/img/readme-records.png) |
 
 ## Download
 

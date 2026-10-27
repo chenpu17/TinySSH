@@ -546,7 +546,9 @@ export const PALETTES: ChromePalette[] = [
   { id: "tokyo", label: "东京夜", dot: ["#1a1b26", "#7aa2f7"], lite: ["#dfe2e9", "#1b5fc0"] },
   { id: "mocha", label: "摩卡", dot: ["#1e1e2e", "#cba6f7"], lite: ["#e4e8ef", "#7c30d8"] },
 ];
-export const PALETTE_DEFAULT = "graphite";
+// 出厂色板族（2026-10-27 用户拍板）：东京夜——深色面靛夜底×晴空蓝、浅色面蓝墨
+// 水面孔；终端 ANSI 16 色按族从 styles.css --ansi-0..15 派生，切族即整体换装
+export const PALETTE_DEFAULT = "tokyo";
 
 // ANSI 16 色基础预设（主题②轮起降级为**回落档**——按族真值在 styles.css 的
 // --ansi-0..15（ansi-gen.mjs 生成、双审计复核），仅某槽未声明时逐键回落到这里。

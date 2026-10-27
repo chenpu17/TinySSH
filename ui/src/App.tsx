@@ -2027,7 +2027,7 @@ export default function App() {
   const appearanceRef = useRef<Appearance>("system");
   // UX 五轮：整页缩放档位（事实源在 zoom.ts，这里只做设置下拉回显）
   const [zoomLevel, setZoomLevel] = useState(currentZoom);
-  // 主题色板（data-theme，默认石墨——无 CSS 块命中即继承 :root）
+  // 主题色板（data-theme，默认东京夜——无 CSS 块命中即继承 :root 石墨基底）
   const [palette, setPalette] = useState(PALETTE_DEFAULT);
   const paletteRef = useRef(PALETTE_DEFAULT);
   // 键位表（键位配置轮）：可重绑动作的当前表，缺省=默认表。ref 供 window 捕获层的
@@ -2293,13 +2293,14 @@ export default function App() {
       const c = ws?.chrome;
       if (c === "system" || c === "dark" || c === "light") applyAppearance(c);
     };
-    // 主题色板启动载入（合法值才应用；缺省石墨，不写 data-theme 属性也成立）
+    // 主题色板启动载入（合法值才覆盖）；**缺省也必须显式写 data-theme**——不写
+    // 属性时 CSS 落回 :root 石墨基底，出厂默认名存实亡（2026-10-27 切默认东京夜时实锤）
     const loadPalette = (v: string | null) => {
       if (v && PALETTES.some((p) => p.id === v) && v !== paletteRef.current) {
         paletteRef.current = v;
         setPalette(v);
-        applyPalette(v);
       }
+      applyPalette(paletteRef.current);
     };
     // P0 终端品质轮：外观五项 + 连字的取值（get 缺省 null；坏值逐键回落默认——
     // 键名/合法域见 app-data 的 SETTING_TERM_*/TERM_*）。载入后统一补齐存量实例
