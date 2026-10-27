@@ -18,7 +18,7 @@ If you operate a few to a dozen servers — developing, deploying, troubleshooti
 
 ## How it compares
 
-Positioning snapshot at v0.10.2 (October 2026) — categories, not product reviews.
+Positioning snapshot at v0.10.3 (October 2026) — categories, not product reviews.
 
 | | TinySSH | Classic SSH clients (XShell, Termius…) | AI terminals (Warp…) |
 |---|---|---|---|
@@ -117,7 +117,7 @@ Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-u
 
 ## Status
 
-v0.10.2. All suites green on the primary platform: Rust workspace tests, 52 UI specs / 842 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.10.3. All suites green on the primary platform: Rust workspace tests, 52 UI specs / 842 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
 ## Sister project
 

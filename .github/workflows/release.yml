@@ -191,6 +191,44 @@ jobs:
           bundle_arch arm64 target/release
           bundle_arch x86_64 target/x86_64-apple-darwin/release
 
+      - name: 启动冒烟（macos · 真启动探活）
+        if: matrix.id == 'macos'
+        run: |
+          # 三路全盲补位：UI 套件 / cargo test / CI 构建都不启动产物——macOS 配置
+          # 覆盖层双建 main webview（a9e4ec4）随 v0.10.0–0.10.2 三版出货无人知。
+          # 解包 arm64 .app 真启动：15s 进程存活 + setup 钩子走到 + 日志无 panic。
+          # TINYSSH_MASTER_KEY 环境变量绕开钥匙串（runner 上避免 ACL 交互挂起）。
+          set -e
+          mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          ditto -x -k "$GITHUB_WORKSPACE/dist/TinySSH_${VER}_macos_arm64.app.zip" .
+          export TINYSSH_DB="$PWD/smoke.db"
+          export TINYSSH_MASTER_KEY="$(printf 'ab%.0s' $(seq 1 32))"
+          "./TinySSH.app/Contents/MacOS/TinySSH" > smoke.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 15); do
+            sleep 1
+            kill -0 "$pid" 2>/dev/null || break
+          done
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "::error::mac 启动冒烟失败：进程提前退出（应存活 ≥15s）"
+            cat smoke.log
+            exit 1
+          fi
+          if grep -q "panicked" smoke.log; then
+            echo "::error::mac 启动冒烟失败：日志出现 panic"
+            cat smoke.log
+            kill "$pid"
+            exit 1
+          fi
+          grep -q "setup: windows=" smoke.log || {
+            echo "::error::mac 启动冒烟失败：未到达 setup 钩子"
+            cat smoke.log
+            kill "$pid"
+            exit 1
+          }
+          kill "$pid"
+          echo "mac 启动冒烟 PASS（15s 存活，setup 正常，无 panic）"
+
       - name: 自动更新签名与清单（macOS；未配 secrets 时如实跳过）
         if: matrix.id == 'macos'
         run: |
@@ -255,7 +293,7 @@ jobs:
           ## 安装提示 / Install notes
 
           - Windows：SmartScreen 提示时点「更多信息 → 仍要运行」（未签名分发）。
-          - macOS：未签名/未公证，首开右键 App →「打开」，或 \`xattr -cr /Applications/TinySSH.app\`。
+          - macOS：未签名/未公证。下载后先用 Finder 把 App 拖入「应用程序」（避免系统隔离转存导致钥匙串反复弹窗），首开右键 →「打开」；仍被拦则终端执行 \`xattr -cr /Applications/TinySSH.app\`。系统弹出钥匙串访问时点「允许」（凭据加密主密钥存于钥匙串）。
           - Linux：deb 自动拉取 WebKitGTK 依赖；tar.gz 路线先 \`sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0\`。
           - \`tinyssh\` CLI：随附的命令行伴侣（主机 / Agent Token / 审批 / 接管 / 简报 / 审计），与人机协同主程序同走一套核心。
 

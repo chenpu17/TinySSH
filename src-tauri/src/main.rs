@@ -2545,6 +2545,21 @@ fn show_fatal_dialog(msg: &str) {
 }
 #[cfg(not(windows))]
 fn show_fatal_dialog(msg: &str) {
+    // macOS：Finder 启动的 .app 无控制台，eprintln 全部不可见——此前任何启动期
+    // 致命错误都表现为「Dock 弹一下就退出」（mac 双建 webview 崩死三版无人知）。
+    // 零新依赖走 osascript 弹原生对话框（Linux 无 osascript，保持 eprintln）。
+    #[cfg(target_os = "macos")]
+    {
+        let esc = msg.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "display dialog \"{}\" with title \"TinySSH\" buttons {{\"好\"}} default button 1 with icon stop",
+            esc
+        );
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status();
+    }
     eprintln!("{msg}");
 }
 
