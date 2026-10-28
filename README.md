@@ -18,7 +18,7 @@ If you operate a few to a dozen servers — developing, deploying, troubleshooti
 
 ## How it compares
 
-Positioning snapshot at v0.10.3 (October 2026) — categories, not product reviews.
+Positioning snapshot at v0.10.4 (October 2026) — categories, not product reviews.
 
 | | TinySSH | Classic SSH clients (XShell, Termius…) | AI terminals (Warp…) |
 |---|---|---|---|
@@ -70,7 +70,7 @@ Prebuilt binaries (built by [release workflow](.github/workflows/release.yml), u
 
 Each release also ships the `tinyssh` CLI companion and a `SHA256SUMS.txt`. First launch caveats for unsigned builds: Windows SmartScreen → "More info → Run anyway"; macOS right-click → Open (or `xattr -cr /Applications/TinySSH.app`).
 
-Windows is the primary validation platform — the full test suites and real-machine verification rounds run there. The macOS and Linux artifacts are built and unit-tested by CI but have not yet been validated on physical devices; if something breaks, please open an issue with your platform details.
+Windows is the primary validation platform — the full test suites and real-machine verification rounds run there. macOS (Apple Silicon) has been validated end-to-end on physical hardware since v0.10.3 (launch, day-to-day use, local monitoring and self-overhead readings); the Intel macOS and Linux artifacts are built and unit-tested by CI but have not been validated on physical devices. If something breaks, please open an issue with your platform details.
 
 ## Getting started
 
@@ -121,7 +121,7 @@ Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-u
 
 ## Status
 
-v0.10.3. All suites green on the primary platform: Rust workspace tests, 52 UI specs / 842 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.10.4. All suites green on the primary platform: Rust workspace tests, 52 UI specs / 842 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
 ## Sister project
 

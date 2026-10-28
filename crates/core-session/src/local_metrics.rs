@@ -1,8 +1,9 @@
 //! 本机整机指标快照（本机监控轮）：给 probe_metrics 的 local 分支提供与
 //! METRICS_SCRIPT 同形状的 /proc 文本——前端 parseMetricsSample 零改动复用
 //! （本地与远端都是终端，监控条/大屏同权）。Windows 走 kernel32/iphlpapi
-//! 直读（沿 src-tauri self_proc 零新依赖先例）；unix 本机直读 /proc + 一次
-//! df 子进程；其余平台返回空串（前端缺 cpu 行判「不可用」整条隐藏）。
+//! 直读（沿 src-tauri self_proc 零新依赖先例）；Linux/BSD 本机直读 /proc +
+//! 一次 df 子进程；macOS 无 procfs，走 mach/sysctl 原生计数器（mac 本机监控
+//! 轮）；其余平台返回空串（前端缺 cpu 行判「不可用」整条隐藏）。
 //! 纯读无副作用；计数器单位只需自洽——CPU% 与网速都是相邻采样的差分比值。
 //! 诚实边界：Windows 无 loadavg 概念，负载段省略（前端按 0 显示）；
 //! GetIfEntry 的 In/OutOctets 是 32 位计数，溢出回绕时单次差分出 0（前端
@@ -212,10 +213,10 @@ fn if_rows_octets() -> (u64, u64) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn snapshot() -> String {
-    // unix 本机：/proc 就在本地，直读同款文件 + 一次 df；缺文件静默跳过
-    //（macOS/BSD 缺 /proc → 无 cpu 行 → 前端整条隐藏，与远端口径一致）。
+    // Linux/BSD 本机：/proc 就在本地，直读同款文件 + 一次 df；缺文件静默跳过
+    //（macOS 走下方原生计数器分支 → 前端整条隐藏只留给真未知平台）。
     let mut out = String::new();
     for f in [
         "/proc/stat",
@@ -239,6 +240,207 @@ pub fn snapshot() -> String {
         }
     }
     out
+}
+
+/// macOS 本机快照（mac 本机监控轮）：无 procfs，全部走 mach/sysctl 原生计数器，
+/// 拼出与 METRICS_SCRIPT 同形状的文本（前端解析零改动）。各段独立尽力而为：
+/// 任一段失败只是缺该行（前端按既有缺省语义显示「—」），不整体消失。
+///
+/// 单位与形状对齐 /proc 口径（差分比值自洽即可）：
+/// - cpu：HOST_CPU_LOAD_INFO 的累积 tick（user/nice/system/idle），按原值输出，
+///   8 列形状同 /proc/stat（tick 是 u32，跨年被回绕；前端差分出负即丢弃该拍）。
+/// - mem：hw.memsize 为 total；可用 = free+inactive+speculative+purgeable
+///   （Activity Monitor「可用内存」同口径，含可回收页）。
+/// - uptime：kern.boottime 与当前墙钟之差（浮点秒，同 /proc/uptime 形状）。
+/// - loadavg：getloadavg 三值一行（前端首列即 load1）。
+/// - net：net.link.generic.ifdata.<idx>.general 的 ifi_ibytes/ifi_obytes 求和，
+///   跳过 IFF_LOOPBACK。**ifmibdata 是 packed(4)**，字段须 read_unaligned 取。
+///   实测与 netstat 逐项对齐（64 位字节计数）；RTM_IFINFO2 路由消息里的同名字段
+///   在 macOS 26 上恒为 32 位回绕值，不可用——故走 sysctl 而非 if_msghdr2。
+/// - disk：statvfs("/")，总量/可用 kB 与已用百分比（同 df -kP 尾行形状）。
+#[cfg(target_os = "macos")]
+pub fn snapshot() -> String {
+    use std::mem::size_of;
+    let mut out = String::new();
+
+    // SAFETY：全部只读系统调用；缓冲区与长度按 libc 声明的尺寸传入，失败即跳过。
+    unsafe {
+        // ---- CPU（user nice system idle）----
+        #[allow(deprecated)] // libc 建议换 mach2，但本 crate 不为一个 MIG 调用新增依赖
+        let host = libc::mach_host_self();
+        let mut cpu: libc::host_cpu_load_info = std::mem::zeroed();
+        let mut cnt = libc::HOST_CPU_LOAD_INFO_COUNT as libc::mach_msg_type_number_t;
+        if libc::host_statistics(
+            host,
+            libc::HOST_CPU_LOAD_INFO as libc::host_flavor_t,
+            &mut cpu as *mut _ as libc::host_info_t,
+            &mut cnt,
+        ) == libc::KERN_SUCCESS
+        {
+            let t = |i: libc::c_int| u64::from(cpu.cpu_ticks[i as usize]);
+            out.push_str(&format!(
+                "cpu  {} {} {} {} 0 0 0 0\n",
+                t(libc::CPU_STATE_USER),
+                t(libc::CPU_STATE_NICE),
+                t(libc::CPU_STATE_SYSTEM),
+                t(libc::CPU_STATE_IDLE),
+            ));
+        }
+
+        // ---- 内存（MemTotal / MemAvailable，kB 口径）----
+        let mut memsize: u64 = 0;
+        let mut msz = size_of::<u64>();
+        let ok_mem = libc::sysctlbyname(
+            c"hw.memsize".as_ptr(),
+            &mut memsize as *mut _ as *mut _,
+            &mut msz,
+            std::ptr::null_mut(),
+            0,
+        ) == 0;
+        let mut vm: libc::vm_statistics64 = std::mem::zeroed();
+        let mut vmcnt = libc::HOST_VM_INFO64_COUNT;
+        let ok_vm = libc::host_statistics64(
+            host,
+            libc::HOST_VM_INFO64 as libc::host_flavor_t,
+            &mut vm as *mut _ as libc::host_info64_t,
+            &mut vmcnt,
+        ) == libc::KERN_SUCCESS;
+        if ok_mem && ok_vm {
+            let mut pagesize: u64 = 0;
+            let mut psz = size_of::<u64>();
+            let ok_page = libc::sysctlbyname(
+                c"hw.pagesize".as_ptr(),
+                &mut pagesize as *mut _ as *mut _,
+                &mut psz,
+                std::ptr::null_mut(),
+                0,
+            ) == 0;
+            if ok_page && pagesize > 0 {
+                let avail_pages = u64::from(vm.free_count)
+                    + u64::from(vm.inactive_count)
+                    + u64::from(vm.speculative_count)
+                    + u64::from(vm.purgeable_count);
+                out.push_str(&format!(
+                    "MemTotal:       {} kB\nMemAvailable:   {} kB\n",
+                    memsize / 1024,
+                    (avail_pages * pagesize) / 1024,
+                ));
+            }
+        }
+
+        // ---- 运行时长（kern.boottime → 浮点秒，同 /proc/uptime 形状）----
+        let mut mib = [libc::CTL_KERN, libc::KERN_BOOTTIME];
+        let mut boot: libc::timeval = std::mem::zeroed();
+        let mut bsz = size_of::<libc::timeval>();
+        if libc::sysctl(
+            mib.as_mut_ptr(),
+            2,
+            &mut boot as *mut _ as *mut _,
+            &mut bsz,
+            std::ptr::null_mut(),
+            0,
+        ) == 0
+            && boot.tv_sec > 0
+        {
+            let mut now: libc::timeval = std::mem::zeroed();
+            if libc::gettimeofday(&mut now, std::ptr::null_mut()) == 0 {
+                let up =
+                    (now.tv_sec - boot.tv_sec) as f64 + (now.tv_usec - boot.tv_usec) as f64 / 1e6;
+                if up >= 0.0 {
+                    out.push_str(&format!("{up:.2} {up:.2}\n"));
+                }
+            }
+        }
+
+        // ---- 负载（三值一行；前端首列 load1）----
+        let mut la = [0f64; 3];
+        if libc::getloadavg(la.as_mut_ptr(), 3) > 0 {
+            out.push_str(&format!("{:.2} {:.2} {:.2}\n", la[0], la[1], la[2]));
+        }
+
+        // ---- 网络（全部非环回网卡的 64 位收发字节求和）----
+        let mut ifcount: i32 = 0;
+        let mut isz = size_of::<i32>();
+        if libc::sysctlbyname(
+            c"net.link.generic.system.ifcount".as_ptr(),
+            &mut ifcount as *mut _ as *mut _,
+            &mut isz,
+            std::ptr::null_mut(),
+            0,
+        ) == 0
+        {
+            let (mut rx, mut tx) = (0u64, 0u64);
+            for idx in 1..=ifcount {
+                // CTL_NET / PF_LINK / NETLINK_GENERIC / IFMIB_IFDATA / <ifindex> / IFDATA_GENERAL
+                let mut nmib = [
+                    libc::CTL_NET,
+                    libc::PF_LINK,
+                    libc::NETLINK_GENERIC,
+                    libc::IFMIB_IFDATA,
+                    idx,
+                    libc::IFDATA_GENERAL,
+                ];
+                let mut data: libc::ifmibdata = std::mem::zeroed();
+                let mut dsz = size_of::<libc::ifmibdata>();
+                if libc::sysctl(
+                    nmib.as_mut_ptr(),
+                    nmib.len() as libc::c_uint,
+                    &mut data as *mut _ as *mut _,
+                    &mut dsz,
+                    std::ptr::null_mut(),
+                    0,
+                ) != 0
+                {
+                    continue;
+                }
+                if data.ifmd_flags & libc::IFF_LOOPBACK as u32 != 0 {
+                    continue;
+                }
+                let d = std::ptr::addr_of!(data.ifmd_data).read_unaligned();
+                rx += d.ifi_ibytes;
+                tx += d.ifi_obytes;
+            }
+            // 合成单行 net/dev（与 Windows 分支同形：解析器逐行求和、跳 lo）。
+            out.push_str(&format!("net0: {rx} 0 0 0 0 0 0 0 {tx} 0 0 0 0 0 0 0\n"));
+        }
+    }
+
+    // ---- 磁盘（statvfs("/")，按 Darwin 真实布局读取，见函数头注）----
+    out.push_str("==DF==\n");
+    if let Some((total_kb, avail_kb, pct)) = macos_root_disk() {
+        out.push_str(&format!(
+            "/: {total_kb} {} {avail_kb} {pct}% /\n",
+            total_kb.saturating_sub(avail_kb)
+        ));
+    }
+    out
+}
+
+/// 根卷用量（总量 kB / 可用 kB / 已用百分比）。statvfs 失败或总量为 0 → None。
+/// libc 的 apple `statvfs` 声明与 Darwin 头一致（`fsblkcnt_t = c_uint`，故
+/// f_blocks/f_bavail 是 u32，需转宽）。两点实测口径：
+/// - 用 f_bavail 而非 f_bfree：APFS 上 f_bfree 含本地快照占位，bavail 才等于
+///   `df` 的 Avail 列。
+/// - 校准时别看 `df -h /`：Ventura+ 的 `/` 是密封只读系统卷（常报 4%），用户
+///   数据在 `/System/Volumes/Data`（同一 APFS 卷组，statvfs("/") 报的是卷组
+///   全量）。本实现与 `df -h /System/Volumes/Data` 同值。
+#[cfg(target_os = "macos")]
+fn macos_root_disk() -> Option<(u64, u64, u64)> {
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY：C 字面量以 NUL 结尾；syscall 只写调用方缓冲，长度由结构体定义。
+    if unsafe { libc::statvfs(c"/".as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    let frsize = st.f_frsize;
+    let blocks = u64::from(st.f_blocks);
+    let avail = u64::from(st.f_bavail);
+    if frsize == 0 || blocks == 0 {
+        return None;
+    }
+    let total_kb = blocks * frsize / 1024;
+    let avail_kb = avail * frsize / 1024;
+    let pct = ((blocks.saturating_sub(avail)) * 100 / blocks).min(100);
+    Some((total_kb, avail_kb, pct))
 }
 
 #[cfg(not(any(windows, unix)))]
@@ -297,5 +499,17 @@ mod tests {
                 "缺 /proc/net/dev 接口行（接口: 16 列）：{s:?}"
             );
         }
+        // DF 尾行须命中前端正则 `/^\S+\s+\d+\s+\d+\s+\d+\s+(\d+)%\s+\S+$/`
+        //（metrics.tsx parseMetricsSample 的磁盘段）——三平台各写各的形状，
+        // 拼错一个空格磁盘就整段「—」。
+        let tail = s.split("==DF==\n").nth(1).unwrap_or("").trim_end();
+        let cols: Vec<&str> = tail.split_whitespace().collect();
+        assert!(
+            cols.len() == 6
+                && cols[1..4].iter().all(|c| c.parse::<u64>().is_ok())
+                && cols[4].ends_with('%')
+                && cols[4].trim_end_matches('%').parse::<u64>().is_ok(),
+            "DF 尾行形状不符前端正则：{tail:?}"
+        );
     }
 }

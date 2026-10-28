@@ -13,7 +13,7 @@ English docs: [README.md](README.md)。
 
 ## 与现有工具的取舍
 
-定位快照（v0.10.3，2026-10），按品类概括而非逐产品评测。
+定位快照（v0.10.4，2026-10），按品类概括而非逐产品评测。
 
 | | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
 |---|---|---|---|
@@ -35,7 +35,7 @@ English docs: [README.md](README.md)。
 
 每个 Release 同时附带 `tinyssh` CLI 伴侣工具与 `SHA256SUMS.txt` 校验和。未签名构建首开提示：Windows SmartScreen →「更多信息 → 仍要运行」；macOS 右键 App →「打开」（或 `xattr -cr /Applications/TinySSH.app`）。
 
-Windows 是主要验证平台——全套测试与逐轮真机验证都在它上面跑；macOS 与 Linux 产物由 CI 构建并通过单元测试，但尚未在物理设备上验证，遇到问题请带着平台信息提 issue。
+Windows 是主要验证平台——全套测试与逐轮真机验证都在它上面跑；macOS（Apple Silicon）自 v0.10.3 起在物理设备上完成启动与端到端使用验证（含本机监控/自身开销读数），Intel 构建与 Linux 仍只经 CI 构建与单元测试；遇到问题请带着平台信息提 issue。
 
 ## 开发
 
@@ -63,7 +63,7 @@ Windows 注意：
 
 - 跳板机（ProxyJump）：主机表单选「跳板机（可选）」即经既有主机条目转发连接（至多三跳，链式引用）——跳板的凭据/指纹信任/编辑/审计**复用其主机配置，不做内联凭据**；连接时逐跳出示指纹确认与 2FA 输入（卡面标注「第N跳·跳板机」），失败文案点名是哪一跳；被引用的跳板机不可删除；端口转发/SFTP/Agent 全套能力在链路末端照常可用（快速连接与 `~/.ssh/config` 的 `ProxyJump` 指令导入暂不支持，如实阻断）。
 
-- 本地终端一等公民：侧栏「本机」是**内置条目**——置顶常驻（不受搜索/标签筛选影响）、不可编辑、不可删除（UI 无入口，后端 `LocalHostImmutable` 同门兜底，Agent/MCP 通路同样被拦）；**启动即自动打开一个本地终端**（真实模式；关掉后从置顶本机卡 / ⌘K「打开本地终端」/ Ctrl+Shift+T 随时再开），本地与远程会话同权——同一套标签/分屏/命令块/搜索/SFTP（本机文件浏览）能力。默认 shell 在 设置 → 终端「本地 Shell」选择（自动探测 Windows PowerShell/PowerShell 7/Git Bash/cmd/WSL，无 shell 集成的如实标「无命令块」），本机右键可临时用指定 shell 新开。**本机同样可监控**：监控条/监控大屏对本机走核心原生采样（Windows 直读 kernel32/iphlpapi，unix 直读 /proc），与远端 /proc 脚本同一条解析链；纯本机（无 SSH 会话）时端口转发入口整体收起——能力对本地无意义就不摆。
+- 本地终端一等公民：侧栏「本机」是**内置条目**——置顶常驻（不受搜索/标签筛选影响）、不可编辑、不可删除（UI 无入口，后端 `LocalHostImmutable` 同门兜底，Agent/MCP 通路同样被拦）；**启动即自动打开一个本地终端**（真实模式；关掉后从置顶本机卡 / ⌘K「打开本地终端」/ Ctrl+Shift+T 随时再开），本地与远程会话同权——同一套标签/分屏/命令块/搜索/SFTP（本机文件浏览）能力。默认 shell 在 设置 → 终端「本地 Shell」选择（自动探测 Windows PowerShell/PowerShell 7/Git Bash/cmd/WSL，无 shell 集成的如实标「无命令块」），本机右键可临时用指定 shell 新开。**本机同样可监控**：监控条/监控大屏对本机走核心原生采样（Windows 直读 kernel32/iphlpapi，Linux/BSD 直读 /proc，macOS 走 mach/sysctl 原生计数器），与远端 /proc 脚本同一条解析链；纯本机（无 SSH 会话）时端口转发入口整体收起——能力对本地无意义就不摆。
 
 - 界面语言：设置 → 外观「界面语言」中文（默认）/ English 即时切换（不打断终端会话）；覆盖面=外壳 chrome + 各功能面板内文（设置/主机栏/主机与快速连接表单/菜单/对话框/命令面板/记录审计/文件面板与传输队列/端口转发/命令块/协作/监控大屏/Agent 对话）+ toast 与终端内联告示；未覆盖文案保持中文，不留半截假翻译。
 - 终端品质：宽度表按 Unicode 11 判定（CJK/emoji 混排不串格）；设置 → 终端「终端外观」可调字体族（内置 JetBrains Mono 全量字形，亦可选 Nerd Font/Cascadia 等，按系统已装回落）、连字（开启即改用 DOM 渲染器——连字依赖 character joiner，与 GPU 合成互斥）、光标样式/闪烁、滚动历史行数与字距，改动即时生效。粘贴保护除多行确认外，命中危险形态（`rm -rf /`、`mkfs`、`dd` 覆写块设备等——与 Agent 审批同一张内置规则表）同样先确认再发送。
@@ -118,7 +118,7 @@ Windows 注意：
 
 ## 状态
 
-v0.10.3。主平台（Windows）全绿：Rust 工作区测试 + 52 spec / 842 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+v0.10.4。主平台（Windows）全绿：Rust 工作区测试 + 52 spec / 842 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
 
 ## 技术栈（概览）
 

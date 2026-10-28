@@ -1392,27 +1392,74 @@ mod self_proc {
     }
 }
 
-/// CPU 差分基线：上次采样的进程 CPU 时间（100ns）与墙钟锚点；None=首样未立
+/// CPU 差分基线：上次采样的进程 CPU 时间与墙钟锚点（单位随采样侧，见
+/// read_self_metrics 的 ns 归一）；None=首样未立
 #[derive(Default)]
 struct SelfMeter(std::sync::Mutex<Option<(u64, std::time::Instant)>>);
+
+/// macOS 自身开销采样（mac 自进程监控轮）：此前 `cfg(not(windows))` 直接给
+/// `(0,0,0)`，前端只判 `cpuPct==null && wsMb==0` 才隐藏——首样后 cpuPct 变成
+/// `Some(0.0)`，于是标题栏稳定显示「本机 CPU 0.0% / 0 MB」假读数（用户真机
+/// 实锤）。这里填真值，让「不支持就隐藏」的分支只对真正的未知平台生效。
+///
+/// - CPU 时间：`getrusage(RUSAGE_SELF)` 的 utime+stime（timeval，μs 精度）。
+///   **不用** `proc_pid_rusage` 的 ri_user_time/ri_system_time——macOS 实测
+///   其单位是 ns 但精度只有 ~100ms（2s 忙等只报 48ms），差分出来常年偏低。
+/// - 工作集：`proc_pid_rusage` v2 的 ri_resident_size（字节，RSS 等价；
+///   与 `ps` 的 RSS 一致）。提交内存：ri_phys_footprint（物理足迹，mac 无
+///   「提交」概念，语义最接近的诚实替代——注释与 UI 标题如实标注）。
+#[cfg(target_os = "macos")]
+mod self_proc {
+    /// 一次采样：（CPU 时间累计，ns），工作集字节，物理足迹字节
+    pub fn sample() -> (u64, u64, u64) {
+        // SAFETY：getrusage/proc_pid_rusage 只读本进程结构；rusage 布局由 libc
+        // 声明保证，rusage_info 按 Darwin v2 前缀读取（长度以 WORD 计 = 字节/4）。
+        unsafe {
+            let mut ru: libc::rusage = std::mem::zeroed();
+            let cpu_ns = if libc::getrusage(libc::RUSAGE_SELF, &mut ru) == 0 {
+                let us = |tv: libc::timeval| (tv.tv_sec as u64) * 1_000_000 + tv.tv_usec as u64;
+                (us(ru.ru_utime) + us(ru.ru_stime)) * 1_000
+            } else {
+                0
+            };
+            // rusage_info_v2 由 libc 按 Darwin 布局声明（ri_uuid[16] 起头）；
+            // 第三参是 `*mut rusage_info_t`（= *mut *mut c_void 的别名），
+            // 直接传结构体指针的地址即可（C 侧按 flavor 决定读多少字节）。
+            let mut buf: libc::rusage_info_v2 = std::mem::zeroed();
+            let rc = libc::proc_pid_rusage(
+                std::process::id() as libc::c_int,
+                libc::RUSAGE_INFO_V2,
+                (&mut buf as *mut libc::rusage_info_v2).cast(),
+            );
+            if rc != 0 {
+                return (cpu_ns, 0, 0);
+            }
+            (cpu_ns, buf.ri_resident_size, buf.ri_phys_footprint)
+        }
+    }
+}
 
 /// 进程自身开销快照（过桥形状）
 #[derive(serde::Serialize)]
 struct SelfMetrics {
     /// 占全部逻辑核的百分比（任务管理器「进程 CPU」同口径）；null=首样基线未立
+    /// **或本平台不支持采样**（前端据此整块隐藏——不再用 0.0% 冒充读数）
     cpu_pct: Option<f64>,
     /// 工作集 MB
     ws_mb: u64,
-    /// 提交内存 MB（PrivateUsage）
+    /// 提交内存 MB（Windows=PrivateUsage；macOS=物理足迹 phys_footprint，
+    /// 该平台无「提交」概念，取语义最近的可观测值）
     commit_mb: u64,
 }
 
-/// 纯函数（可单测）：CPU%=Δ进程时间 / (Δ墙钟×核数)。时间倒流/非法入参 → None
+/// 纯函数（可单测）：CPU%=Δ进程时间 / (Δ墙钟×核数)。时间倒流/非法入参 → None。
+/// 时间单位统一为 **ns**（Windows 100ns 计数在采样侧 ×100 折算；macOS 直接 ns，
+/// 避免两平台在同一个差分公式里各带一个魔数）。
 fn cpu_pct(cur: u64, prev: u64, wall_secs: f64, ncores: f64) -> Option<f64> {
     if wall_secs <= 0.0 || ncores <= 0.0 || cur < prev {
         return None;
     }
-    Some((((cur - prev) as f64 / 1e7 / wall_secs / ncores) * 100.0).clamp(0.0, 100.0))
+    Some((((cur - prev) as f64 / 1e9 / wall_secs / ncores) * 100.0).clamp(0.0, 100.0))
 }
 
 /// 自身开销采样（2s 轮询）：不经审计/审批（自进程只读计数，与
@@ -1421,10 +1468,27 @@ fn cpu_pct(cur: u64, prev: u64, wall_secs: f64, ncores: f64) -> Option<f64> {
 /// 带 State 的 async command 须返回 Result（tauri 规则），FE 侧序列化不变。
 #[tauri::command]
 async fn read_self_metrics(state: State<'_, SelfMeter>) -> CmdResult<SelfMetrics> {
+    // 未知平台：None = 不支持，FE 整块隐藏（不产出 0 值假读数）
     #[cfg(windows)]
-    let (proc_now, ws, commit) = self_proc::sample();
-    #[cfg(not(windows))]
-    let (proc_now, ws, commit) = (0u64, 0u64, 0u64);
+    let sampled = {
+        let (proc_now_100ns, ws, commit) = self_proc::sample();
+        Some((proc_now_100ns * 100, ws, commit))
+    };
+    #[cfg(target_os = "macos")]
+    let sampled = {
+        let (proc_now_ns, ws, commit) = self_proc::sample();
+        Some((proc_now_ns, ws, commit))
+    };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let sampled: Option<(u64, u64, u64)> = None;
+
+    let Some((proc_now, ws, commit)) = sampled else {
+        return Ok(SelfMetrics {
+            cpu_pct: None,
+            ws_mb: 0,
+            commit_mb: 0,
+        });
+    };
     let ncores = std::thread::available_parallelism()
         .map(|n| n.get() as f64)
         .unwrap_or(1.0);
@@ -7750,16 +7814,18 @@ fn dirs_or_home() -> std::path::PathBuf {
 mod self_meter_tests {
     use super::cpu_pct;
 
-    /// 自身开销轮：CPU% 差分数学——100ns→秒、除核数、钳 [0,100]；
+    /// 自身开销轮：CPU% 差分数学——ns→秒、除核数、钳 [0,100]；
     /// 首样（wall=0）与时间倒流（cur<prev）返回 None。
     #[test]
     fn delta_math_and_edges() {
-        // 单核满载 1s：进程时间增量 = 1e7 (100ns)
-        assert!((cpu_pct(2 * 10_000_000, 10_000_000, 1.0, 1.0).unwrap() - 100.0).abs() < 1e-9);
+        // 单核满载 1s：进程时间增量 = 1e9 (ns)
+        assert!(
+            (cpu_pct(2 * 1_000_000_000, 1_000_000_000, 1.0, 1.0).unwrap() - 100.0).abs() < 1e-9
+        );
         // 8 核机器上单核满载 1s → 12.5%
-        assert!((cpu_pct(10_000_000, 0, 1.0, 8.0).unwrap() - 12.5).abs() < 1e-9);
+        assert!((cpu_pct(1_000_000_000, 0, 1.0, 8.0).unwrap() - 12.5).abs() < 1e-9);
         // 半个核的量
-        assert!((cpu_pct(5_000_000, 0, 1.0, 1.0).unwrap() - 50.0).abs() < 1e-9);
+        assert!((cpu_pct(500_000_000, 0, 1.0, 1.0).unwrap() - 50.0).abs() < 1e-9);
         // 超界钳 100（采样间隙调度抖动可能算出 >100）
         assert_eq!(cpu_pct(u64::MAX, 0, 0.5, 1.0), Some(100.0));
         // 非法入参
@@ -7783,6 +7849,20 @@ mod self_meter_tests {
         assert!(ws > 0, "工作集应为正: {ws}");
         assert!(commit > 0, "提交内存应为正: {commit}");
         std::thread::sleep(std::time::Duration::from_millis(15));
+        let (t2, _, _) = super::self_proc::sample();
+        assert!(t2 >= t1, "进程 CPU 时间应单调不减: {t1} → {t2}");
+    }
+
+    /// 真实 macOS 采样活体测试（mac 自进程监控轮）：此前该平台恒返回
+    /// (0,0,0)，标题栏永远 0.0% / 0 MB。FFI 签名/结构体布局走样在此炸出。
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_sample_live() {
+        let (t1, ws, commit) = super::self_proc::sample();
+        assert!(ws > 0, "RSS 应为正（proc_pid_rusage v2 布局走样？）: {ws}");
+        assert!(commit > 0, "物理足迹应为正: {commit}");
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        // 短睡 CPU 时间可能不变，但绝不允许倒流
         let (t2, _, _) = super::self_proc::sample();
         assert!(t2 >= t1, "进程 CPU 时间应单调不减: {t1} → {t2}");
     }

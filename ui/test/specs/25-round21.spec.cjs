@@ -130,10 +130,13 @@ module.exports = {
         await page.waitForTimeout(250);
       }
     };
+    // 切换修饰键按平台取：macOS 上 Chromium 把 Ctrl+单击转成右键（DOM 收不到
+    // click），多选改用 ⌘+单击（UI 侧 metaKey||ctrlKey 同语义）
+    const toggleMod = (await page.evaluate(() => /mac/i.test(navigator.platform))) ? "Meta" : "Control";
     const select2 = async () => {
       await clearSel();
       await page.click('.sftp-row[data-name="access.log"]');
-      await page.click('.sftp-row[data-name="error.log"]', { modifiers: ["Control"] });
+      await page.click('.sftp-row[data-name="error.log"]', { modifiers: [toggleMod] });
       await page.waitForTimeout(250);
     };
     await page.click('[data-testid="sftp-saveas-toggle"]');   // 重开另存为模式

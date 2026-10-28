@@ -47,6 +47,9 @@ tauri-plugin-updater = "2"
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 block2 = "0.6"
+# 自身开销采样（mac 自进程监控轮）：getrusage / proc_pid_rusage 零新框架，
+# 与 core-session 的 mac 本机指标同一 workspace 版本。
+libc = { workspace = true }
 
 [dependencies.tauri-plugin-clipboard-manager]
 version = "2"

@@ -52,6 +52,7 @@ export function parseMetricsSample(text: string): MetricsRaw | null {
     } else if (line.startsWith("MemTotal:")) memTotalKB = lineKB(line);
     else if (line.startsWith("MemAvailable:")) memAvailKB = lineKB(line);
     else if (/^\d+\.\d+\s+\d+\.\d+$/.test(line.trim())) uptimeSec = Number(line.trim().split(/\s+/)[0]);
+    else if (/^[\d.]+\s+[\d.]+\s+[\d.]+$/.test(line.trim())) load1 = Number(line.trim().split(/\s+/)[0]); // 三值纯负载行（本机 mac 快照：getloadavg 无 /proc/loadavg 的任务计数字段）
     else if (/^[\d.]+\s+[\d.]+\s+[\d.]+\s+\d+\/\d+\s/.test(line.trim())) load1 = Number(line.trim().split(/\s+/)[0]);
     else {
       // /proc/net/dev 数据行（行首有缩进）：「eth0: rx_bytes packets … tx_bytes …」

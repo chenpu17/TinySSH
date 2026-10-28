@@ -30,3 +30,9 @@ encoding_rs = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tinyssh-testbed = { workspace = true }
+
+# 本机整机指标（mac 本机监控轮）：macOS 无 procfs，走 mach/sysctl 原生计数器
+#（host_statistics / sysctlbyname / statvfs），零子进程。Windows 分支仍用
+# 手写 FFI（kernel32/iphlpapi），不引 windows crate。
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true }

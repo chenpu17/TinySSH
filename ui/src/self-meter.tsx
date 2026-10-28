@@ -1,11 +1,12 @@
 // 自身开销监控（本轮）：tinyssh-app 进程级 CPU/内存上屏。数据源
-// read_self_metrics（kernel32 GetProcessTimes/K32GetProcessMemoryInfo 直读，
-// 不经审批/审计），CPU% 由相邻两次采样的进程时间差分得出（任务管理器
-// 「进程 CPU」同口径：占全部逻辑核），首样无基线显示「—」。
+// read_self_metrics（Windows=GetProcessTimes/K32GetProcessMemoryInfo，
+// macOS=getrusage/proc_pid_rusage 直读，不经审批/审计），CPU% 由相邻两次采样的
+// 进程时间差分得出（任务管理器「进程 CPU」同口径：占全部逻辑核），首样无基线「—」。
 // 展示位两处：设置→关于（常驻可达，详版）与标题栏左区（常显不依赖会话在场，
 // 缩略版——原监控条「本机」段迁此，标题栏曝光比会话条件下的监控条更稳定）。
-// 核心不可达/非 Windows（恒 null+0）→ 两个组件都整块隐藏
-// ——摆一块永远「不可用」的牌子不如不摆。
+// 核心不可达/平台不支持（cpu_pct 恒 null 且 ws_mb=0，如 Linux 桌面壳未接
+// 原生采样）→ 两个组件都整块隐藏——摆一块永远「不可用」的牌子不如不摆。
+// Windows 走 kernel32，macOS 走 getrusage/proc_pid_rusage（见 src-tauri self_proc）。
 import { useEffect, useState } from "react";
 import { invoke } from "./adapter/bridge";
 
@@ -53,7 +54,7 @@ export function SelfMeterDetail() {
         <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
           title="工作集内存">内存 {v.wsMb} MB</span>
         <span className="dim" style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
-          title="提交内存（独占提交字节）">提交 {v.commitMb} MB</span>
+          title="提交内存（Windows=独占提交字节；macOS 无此概念，取物理足迹 phys_footprint）">提交 {v.commitMb} MB</span>
       </div>
       <div className="dim" style={{ fontSize: 11, marginTop: 2 }} data-testid="self-meter-at">
         采样于 {new Date(v.at).toTimeString().slice(0, 8)}
