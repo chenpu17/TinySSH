@@ -61,6 +61,39 @@ module.exports = {
     ck.check("运行段有时长", /运行\s*(刚刚|\d+ 分钟|\d+ 小时|\d+ 天)/.test(flat), flat);
     ck.check("磁盘段=根分区 56%", /磁盘.*56%/.test(flat), flat);
 
+    // 挤压回归（用户反馈窄窗各段文字互压）：旧实现 .mseg 允许 flex 收缩，
+    // min-width:0 + nowrap 让文字溢出到邻段；现为 flex:none + 容器分档隐藏。
+    // 两个宽度各验一次：段盒不重叠，且窄档确实按优先级隐藏。
+    const vp0 = page.viewportSize();
+    const barCheck = () => page.evaluate(() => {
+      const bar = document.querySelector('[data-testid="metrics-bar"]');
+      if (!bar) return { w: 0, overlap: true, hidden: [] };
+      const kids = [...bar.children].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && getComputedStyle(el).display !== "none";
+      });
+      let overlap = false;
+      for (let i = 1; i < kids.length; i++) {
+        if (kids[i].getBoundingClientRect().left < kids[i - 1].getBoundingClientRect().right - 0.5) overlap = true;
+      }
+      const hidden = [...bar.querySelectorAll(".mseg")]
+        .filter((el) => getComputedStyle(el).display === "none")
+        .map((el) => el.getAttribute("data-pri"));
+      return { w: Math.round(bar.clientWidth), overlap, hidden };
+    });
+    const wide = await (async () => { await page.setViewportSize({ width: 1440, height: vp0.height }); await page.waitForTimeout(250); return barCheck(); })();
+    ck.check("宽窗：各段盒子不重叠", !wide.overlap, JSON.stringify(wide));
+    const narrow = await (async () => { await page.setViewportSize({ width: 1000, height: vp0.height }); await page.waitForTimeout(250); return barCheck(); })();
+    ck.check("窄窗：各段盒子不重叠（不互相压字）", !narrow.overlap, JSON.stringify(narrow));
+    ck.check("窄窗：按优先级隐藏低优先段", narrow.hidden.length > 0 && narrow.w > 0, JSON.stringify(narrow));
+    ck.check("窄窗：CPU/内存恒在", await page.evaluate(() => {
+      const bar = document.querySelector('[data-testid="metrics-bar"]');
+      const t = bar?.textContent ?? "";
+      return t.includes("CPU") && t.includes("内存");
+    }), "");
+    await page.setViewportSize(vp0);
+    await page.waitForTimeout(250);
+
     // 暂停切换：按钮 aria-pressed 翻转（demo 后端供样恒成功，采样停止在真实域验证）
     const pressed0 = await page.evaluate(() => document.querySelector('[data-testid="metrics-pause"]')?.getAttribute("aria-pressed"));
     await page.evaluate(() => document.querySelector('[data-testid="metrics-pause"]').click());

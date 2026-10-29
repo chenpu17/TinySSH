@@ -3495,10 +3495,16 @@ async fn agent_history(
 #[tauri::command]
 async fn pick_upload_files(app: tauri::AppHandle) -> std::result::Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let picked = tauri_plugin_dialog::DialogExt::dialog(&app)
-            .file()
-            .add_filter("所有文件", &["*"])
-            .blocking_pick_files();
+        let mut dialog = tauri_plugin_dialog::DialogExt::dialog(&app).file();
+        // macOS 的 NSOpenPanel 没有 "*" 通配语义：rfd 把它原样交给
+        // setAllowedFileTypes，AppKit 转成一个动态 UTI（dyn.ah62d4rv4ge8wy），
+        // 并不等于「所有文件」；不设过滤器才是（rfd 过滤列表为空时根本不调
+        // setAllowedFileTypes）。Linux xdg portal 后端特判了 "*"、Windows 会
+        // 展开成 "*.*"，这两条按原样保留。
+        if !cfg!(target_os = "macos") {
+            dialog = dialog.add_filter("所有文件", &["*"]);
+        }
+        let picked = dialog.blocking_pick_files();
         Ok(picked
             .unwrap_or_default()
             .into_iter()

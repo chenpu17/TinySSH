@@ -201,21 +201,21 @@ export function MetricsBar({ sid, kind, user, hostName }: {
         <PctBar pct={v ? v.memPct : null} />
         <span className="mval mnum">{v ? `${fmtGB(v.memUsedGB)} / ${fmtGB(v.memTotalGB)} GB` : "—"}</span>
       </span>
-      <span className="mseg" title={t("网络收发速率（全部网卡合计）")}>
+      <span className="mseg" data-pri="2" title={t("网络收发速率（全部网卡合计）")}>
         <span className="mlabel">{t("网络")}</span>
         <span className="mval mnum down">↓ {v?.rxRate != null ? fmtRate(v.rxRate) : "—"}</span>
         <span className="mval mnum up">↑ {v?.txRate != null ? fmtRate(v.txRate) : "—"}</span>
       </span>
-      <span className="mseg" title={t("系统运行时长")}>
+      <span className="mseg" data-pri="3" title={t("系统运行时长")}>
         <span className="mlabel">{t("运行")}</span>
         <span className="mval">{v ? fmtUptime(v.uptimeSec) : "—"}</span>
       </span>
-      <span className="mseg" title={t("根分区用量")}>
+      <span className="mseg" data-pri="1" title={t("根分区用量")}>
         <span className="mlabel">{t("磁盘")}</span>
         <PctBar pct={v?.diskPct ?? null} />
         <span className="mval mnum">{v?.diskPct != null ? `${v.diskPct}%` : "—"}</span>
       </span>
-      <span style={{ flex: 1 }} />
+      <span className="mspacer" />
       <button className="mpause" data-testid="metrics-pause" onClick={togglePause}
         aria-pressed={paused}
         title={paused ? t("恢复资源采样（当前已暂停）") : t("暂停资源采样（停止向远端发探测命令）")}>

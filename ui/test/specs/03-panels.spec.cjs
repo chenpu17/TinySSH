@@ -25,6 +25,29 @@ module.exports = {
     await page.waitForTimeout(800);
     ck.eq("文件视图标题", await tpTitle(page), "文件");
 
+    // 宽度可拖（用户反馈固定 384 读文件/日志太窄）：左缘抓手拖动改宽，
+    // 320–560 钳位，松手落 localStorage（下次启动恢复）
+    const panelW = () => page.evaluate(() => Math.round(document.querySelector(".task-panel").getBoundingClientRect().width));
+    const w0 = await panelW();
+    const dragGrip = async (dx) => {
+      const gb = await (await page.$(".tp-grip")).boundingBox();
+      const y = gb.y + 60;
+      await page.mouse.move(gb.x + gb.width / 2, y);
+      await page.mouse.down();
+      await page.mouse.move(gb.x + gb.width / 2 + dx, y, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      return panelW();
+    };
+    ck.eq("默认面板宽 384", w0, 384);
+    const w1 = await dragGrip(-100);
+    ck.check("拖左 100px 面板加宽（384→≈484）", Math.abs(w1 - (w0 + 100)) <= 3, `${w0}→${w1}`);
+    const w2 = await dragGrip(-600);
+    ck.check("拖到上限钳在 560", w2 === 560, String(w2));
+    const w3 = await dragGrip(600);
+    ck.check("拖到下限钳在 320", w3 === 320, String(w3));
+    ck.eq("宽度落 localStorage", await page.evaluate(() => localStorage.getItem("ui.taskpanel_w")), "320");
+
     await openTools(page, "端口转发");
     ck.eq("切到端口转发（同一面板换视图）", await tpTitle(page), "端口转发");
     ck.eq("面板仍只有一个", await panelCount(page), 1);

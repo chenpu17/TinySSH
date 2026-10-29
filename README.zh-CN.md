@@ -13,7 +13,7 @@ English docs: [README.md](README.md)。
 
 ## 与现有工具的取舍
 
-定位快照（v0.10.5，2026-10），按品类概括而非逐产品评测。
+定位快照（v0.10.6，2026-10），按品类概括而非逐产品评测。
 
 | | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
 |---|---|---|---|
@@ -118,7 +118,7 @@ Windows 注意：
 
 ## 状态
 
-v0.10.5。主平台（Windows）全绿：Rust 工作区测试 + 52 spec / 845 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+v0.10.6。主平台（Windows）全绿：Rust 工作区测试 + 52 spec / 854 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
 
 ## 技术栈（概览）
 

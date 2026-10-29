@@ -800,6 +800,14 @@ export default function App() {
   useEffect(() => () => { if (hostDebounceRef.current) window.clearTimeout(hostDebounceRef.current); }, []);
   // 右侧任务面板：一次只呈现文件 / 协作 / 转发 / 活动记录之一（§4.3/§6.6），缺省关闭
   const [rightPanel, setRightPanel] = useState<null | "files" | "collab" | "forwards" | "log" | "blocks">(null);
+  // 面板宽度（用户反馈固定 384 读文件/日志太窄）：左缘抓手拖动，320–560 档；
+  // 落 localStorage（同 hostbar/agentbar 宽度的做法，workspace blob 只管开合）。
+  const [taskPanelW, setTaskPanelW] = useState(() => {
+    try {
+      const v = Number.parseInt(localStorage.getItem("ui.taskpanel_w") ?? "", 10);
+      return Number.isFinite(v) ? Math.min(560, Math.max(320, v)) : 384;
+    } catch { return 384; }
+  });
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [winW, setWinW] = useState(() => window.innerWidth);
@@ -1488,7 +1496,11 @@ export default function App() {
       // SF Mono/Cascadia 仅作加载失败兜底。P0 轮起字体族可由用户选（含 Nerd Font 等）。
       fontFamily: termFontFamilyRef.current,
       lineHeight: 1.15,
-      smoothScrollDuration: 100,
+      // 平滑滚屏（用户反馈 mac 上滚动不跟手）：Windows 滚轮是逐格跳变，100ms 补间
+      // 让它顺滑；macOS 触控板给的是像素级连续 delta，xterm 的线性补间每个事件重启
+      // 起点、松手后再滑 100ms，反而落后手指——本地终端（Terminal/iTerm/VS Code
+      // 默认值 0）都是 1:1 直跟，故 mac 关掉平滑。
+      smoothScrollDuration: isMacPlatform() ? 0 : 100,
       fastScrollModifier: "alt", fastScrollSensitivity: 5,
       rescaleOverlappingGlyphs: true,
       // 字体轮目检（2026-10-23，Edge/WebView2 155 实测）：customGlyphs 的框线
@@ -2751,12 +2763,45 @@ export default function App() {
     hosts.flatMap((h) => (h.identity_id ? [h.identity_id] : [])),
   );
   // 窄窗完整视图断点（§4.2）：可用宽度 < 主机栏 + 560 + 面板宽 → 面板改中央完整视图。
-  // 面板需求与实际面板宽一致（files=384，rev-r12 M1：此前按 320 算断点但面板钉死 384，
+  // 面板需求与实际面板宽一致（rev-r12 M1：此前按 320 算断点但面板钉死 384，
   // 终端实测可被压到 504 < 规范下限 560）；16px 回差双阈值防临界抖动。
-  const panelNeed = rightPanel === "collab" || rightPanel === "forwards" || rightPanel === "log" || rightPanel === "blocks" ? 400 : 384;
+  // 可拖宽后断点吃当前宽度——拖动越线会切完整视图，所以抓手同时把上限钳在
+  // 「终端保底 560」，正常拖动只会停在边界，不触发整层切换。
+  const panelNeed = taskPanelW;
   // 活动栏轮：availW 扣当前打开的左栏视图（主机栏或 Agent 视图，互斥不同时开）。
   // 大屏轮：监控改主区覆盖层（不挤占终端宽度），不再参与 availW 计算
   const availW = winW - (hostbarOpen ? hostbarWidth : agentOpen || fleetOpen ? agentWidth : 0);
+  // 右侧活动栏 44px 常驻：终端可用宽 = availW - 面板 - 44，故拖宽上限随之收
+  const tpMaxW = Math.max(320, Math.min(560, availW - 560 - 44));
+  const tpGripDrag = useRef(false);
+  const tpGripRaf = useRef(0);
+  const tpGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    tpGripDrag.current = true;
+  };
+  const tpGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    // 与 hostbar/agentbar 抓手同款 rAF 合帧 + 同值跳过，拖动不按事件频率整树重渲染
+    if (!tpGripDrag.current || e.buttons === 0) return;
+    if (tpGripRaf.current) return;
+    const x = e.clientX;
+    tpGripRaf.current = requestAnimationFrame(() => {
+      tpGripRaf.current = 0;
+      // 面板贴右缘：右边界取实际盒子（它不随宽度变），宽度 = 右缘 - 指针 x
+      const right = taskPanelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+      const w = Math.min(tpMaxW, Math.max(320, Math.round(right - x)));
+      setTaskPanelW((cur) => (cur === w ? cur : w));
+    });
+  };
+  const tpGripUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!tpGripDrag.current) return;
+    tpGripDrag.current = false;
+    if (tpGripRaf.current) { cancelAnimationFrame(tpGripRaf.current); tpGripRaf.current = 0; }
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    const right = taskPanelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+    const w = Math.min(tpMaxW, Math.max(320, Math.round(right - e.clientX)));
+    setTaskPanelW(w);
+    try { localStorage.setItem("ui.taskpanel_w", String(w)); } catch { /* 隐私模式忽略 */ }
+  };
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
     if (rightPanel === null) { setTpFull(false); return; }
@@ -6486,7 +6531,14 @@ export default function App() {
 
         {/* 右侧任务面板（§4.3/§6.6）：一次只呈现文件 / 转发 / 协作 / 活动记录之一；窄窗改中央完整视图 */}
         {rightPanel && (
-          <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label={t("任务面板")} ref={taskPanelRef}>
+          <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label={t("任务面板")} ref={taskPanelRef}
+            style={tpFull ? undefined : { width: taskPanelW }}>
+            {!tpFull && (
+              <div className="tp-grip" role="separator" aria-orientation="vertical"
+                aria-label={t("拖动调整面板宽度（320–560）")} title={t("拖动调整面板宽度")}
+                onPointerDown={tpGripDown} onPointerMove={tpGripMove} onPointerUp={tpGripUp}
+                onPointerCancel={() => { tpGripDrag.current = false; }} />
+            )}
             <div className="tp-head">
               <b data-testid="tp-title">{rightPanel === "files" ? t("文件") : rightPanel === "forwards" ? t("端口转发") : rightPanel === "log" ? t("活动记录") : rightPanel === "blocks" ? t("命令块") : t("协作")}</b>
               {tpFull && <span className="dim" style={{ fontSize: 11 }}>{t("空间不足——完整视图，终端仍在运行")}</span>}
