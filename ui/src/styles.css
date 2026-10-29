@@ -307,11 +307,18 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
 .session-toolbar .st-state.err { background: var(--danger-soft); color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger-ring); }
 .content { flex: 1; display: flex; min-height: 0; position: relative; }
 .term-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-/* 右侧任务面板 384（§4.2 并排 320–560）；窄窗 tp-full 覆盖内容区（完整视图，终端持续运行） */
+/* 右侧任务面板 384（§4.2 并排 320–560）；窄窗 tp-full 覆盖内容区（完整视图，终端持续运行）。
+   宽度可拖（用户反馈固定宽读文件/日志太窄）：左缘抓手 7px 叠在边框上，命中区不占布局 */
 .task-panel {
+  position: relative;
   flex: none; width: 384px; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--border);
 }
+.tp-grip {
+  position: absolute; left: -4px; top: 0; bottom: 0; width: 7px;
+  cursor: col-resize; z-index: 6; touch-action: none;
+}
+.tp-grip:hover, .tp-grip:active { background: var(--accent-fill); opacity: 0.45; }
 .task-panel.tp-full { position: absolute; inset: 0; width: auto; border-left: none; z-index: 55; }
 .tp-head {
   min-height: 40px; flex: none; display: flex; align-items: center; gap: 8px;
@@ -555,7 +562,10 @@ textarea {
 .term-wrap { flex: 1; min-height: 0; padding: 8px; display: flex; overflow: hidden; position: relative; }
 /* 监控条（命令框退役轮）：命令框腾出的底部常驻条改为 FinalShell 式远端资源
    采样条。样式全走色板 token（9 族主题自适应）；数值 tabular-nums + 迷你条
-   固定轨宽防抖动；≥85% 转告警色（--warn）。本地会话/采样不可用时整条不渲染 */
+   固定轨宽防抖动；≥85% 转告警色（--warn）。本地会话/采样不可用时整条不渲染。
+   窄窗收缩修复（用户反馈挤压后文字互压）：段不再允许 flex 收缩（此前 min-width:0
+   让每段缩到内容以下、nowrap 文字溢出到邻段上）；改为按容器宽度分档隐藏——
+   运行(<980) → 网络(<860) → 磁盘(<740)，主机名可省略，CPU/内存恒在。 */
 .metrics-bar {
   flex: none; display: flex; align-items: center; gap: 16px;
   height: 28px; padding: 0 12px;
@@ -563,9 +573,14 @@ textarea {
   font-size: 11px; color: var(--text-sub);
   white-space: nowrap; overflow: hidden;
   user-select: none;
+  container-type: inline-size;
 }
-.metrics-bar .mhost { color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-.metrics-bar .mseg { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.metrics-bar .mhost { flex: 0 1 auto; min-width: 48px; color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.metrics-bar .mseg { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+.metrics-bar .mspacer { flex: 1 1 auto; min-width: 0; }
+@container (max-width: 980px) { .metrics-bar .mseg[data-pri="3"] { display: none; } }
+@container (max-width: 860px) { .metrics-bar .mseg[data-pri="2"] { display: none; } }
+@container (max-width: 740px) { .metrics-bar .mseg[data-pri="1"] { display: none; } }
 .metrics-bar .mlabel { color: var(--dim); letter-spacing: 0.02em; }
 .metrics-bar .mval { color: var(--text-sub); }
 .metrics-bar .mnum { font-variant-numeric: tabular-nums; }
@@ -588,6 +603,9 @@ textarea {
 }
 .metrics-bar .mpause:hover { background: var(--panel3); color: var(--text); }
 #term { width: 100%; height: 100%; position: relative; }
+/* 终端滚到历史首/尾时截断滚动链：滚轮余量不再冒到外层、也不给 WKWebView
+   橡皮筋回弹的机会，与本地终端的边界手感一致 */
+.term-session .xterm .xterm-viewport { overscroll-behavior: none; }
 /* 每会话一个终端层：切换 = 显示/隐藏，滚动历史与全屏程序状态原地保留。
    padding = 终端文本留白（底色由 JS 跟随终端预设，见 makeTerm/changeTheme）；
    几何测量经 fitDimsOf 扣除此 padding，PTY 列行与可视区严格一致 */

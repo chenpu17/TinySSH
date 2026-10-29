@@ -38,7 +38,7 @@ default-members = [
 # 未安装前端依赖时阻塞 workspace 命令；src-tauri/Cargo.toml 自身声明 workspace = true。
 
 [workspace.package]
-version = "0.10.5"
+version = "0.10.6"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["TinySSH contributors"]
