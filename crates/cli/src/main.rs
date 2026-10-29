@@ -462,6 +462,7 @@ async fn host_cmd(m: Arc<SessionManager>, cmd: HostCmd) -> Result<()> {
                         charset: Default::default(),
                         shell_integration: None,
                         jump_host_id,
+                        startup_command: None,
                     },
                 )
                 .await?;

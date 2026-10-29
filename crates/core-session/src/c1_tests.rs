@@ -40,6 +40,7 @@ fn seed_unreachable(mgr: &SessionManager) -> HostId {
             charset: Charset::Utf8,
             shell_integration: None,
             jump_host_id: None,
+            startup_command: None,
         })
         .expect("seed host")
 }
@@ -725,6 +726,7 @@ async fn failed_attempt_carries_error_and_audit() {
             charset: Charset::Utf8,
             shell_integration: None,
             jump_host_id: None,
+            startup_command: None,
         })
         .expect("seed refused host");
     let info = m

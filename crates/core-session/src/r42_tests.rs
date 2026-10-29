@@ -119,6 +119,7 @@ fn host() -> Host {
         shell_integration: Some(true),
         charset: Charset::Utf8,
         jump_host_id: None,
+        startup_command: None,
     }
 }
 
@@ -254,6 +255,7 @@ async fn r42_approval_purpose_projects_current_goal() {
             &needs_approval("rm -rf /tmp/old-build"),
             true,
             false,
+            None,
             cancel,
         )
         .await
@@ -288,6 +290,7 @@ async fn r42_approval_purpose_projects_current_goal() {
             &needs_approval("docker system prune -f"),
             true,
             false,
+            None,
             session_api::transport::tokio_util_sync::CancellationToken::new(),
         )
         .await
@@ -353,6 +356,7 @@ async fn r42_purpose_is_none_when_session_gone() {
             &needs_approval("ls /tmp"),
             true,
             false,
+            None,
             session_api::transport::tokio_util_sync::CancellationToken::new(),
         )
         .await
@@ -419,6 +423,7 @@ async fn r42_takeover_default_freezes_only_and_voids_are_final() {
             &needs_approval("systemctl restart nginx"),
             true,
             false,
+            None,
             session_api::transport::tokio_util_sync::CancellationToken::new(),
         )
         .await
@@ -514,6 +519,7 @@ async fn r42_remember_ttl_grants_exact_repeat() {
             &needs_approval("docker system prune -f"),
             true,
             false,
+            None,
             session_api::transport::tokio_util_sync::CancellationToken::new(),
         )
         .await
@@ -581,6 +587,7 @@ async fn r42_remember_persistent_and_guards() {
             &needs_approval("df -h"),
             true,
             false,
+            None,
             session_api::transport::tokio_util_sync::CancellationToken::new(),
         )
         .await

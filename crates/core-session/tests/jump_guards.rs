@@ -34,6 +34,7 @@ fn draft(name: &str, jump: Option<String>) -> HostDraft {
         charset: Charset::Utf8,
         shell_integration: None,
         jump_host_id: jump,
+        startup_command: None,
     }
 }
 

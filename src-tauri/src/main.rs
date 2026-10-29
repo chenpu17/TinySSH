@@ -595,6 +595,44 @@ async fn reconnect_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
         .map_err(WireError::from)
 }
 
+/// tmux 联动：探测远端 tmux 可用性与会话清单（exec_fresh 独立通道，零屏污染）。
+/// 失败保留上次结果（断线横幅展示的是断线前仍在运行的会话）。
+#[tauri::command]
+async fn tmux_probe(state: ApiState<'_>, sid: String) -> CmdResult<session_api::TmuxStatus> {
+    state.api.tmux_probe(&sid).await.map_err(WireError::from)
+}
+
+/// tmux 联动：恢复现场——先走既有手动重连全机器（会话已连时跳过），再探针
+/// 解析目标并 capture-pane 抓近史。attach 由前端经 tmux_attach 二段式下发。
+#[tauri::command]
+async fn tmux_restore(
+    state: ApiState<'_>,
+    sid: String,
+    session: Option<String>,
+) -> CmdResult<session_api::TmuxRestorePlan> {
+    state
+        .api
+        .tmux_restore(&sid, session)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 联动：注入 attach/switch 到 PTY（人类归属）。auto=true（断线自动恢复）
+/// 时用户 2s 内刚敲过键则静默跳过。已挂 tmux 的会话自动改走 switch-client。
+#[tauri::command]
+async fn tmux_attach(
+    state: ApiState<'_>,
+    sid: String,
+    session: String,
+    auto: Option<bool>,
+) -> CmdResult<()> {
+    state
+        .api
+        .tmux_attach(&sid, &session, auto.unwrap_or(false))
+        .await
+        .map_err(WireError::from)
+}
+
 /// R26（§6.4「可停止重试」）：停止自动重连（≤250ms 内落 Disconnected）。
 /// 幂等：非重连期为合法 no-op。
 #[tauri::command]
@@ -3210,7 +3248,8 @@ fn main() {
             list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
             list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection, set_session_logging, session_log_path,
-            close_session, reconnect_session, stop_auto_reconnect, session_state_feed, resize, subscribe_output,
+            close_session, reconnect_session, stop_auto_reconnect, tmux_probe, tmux_restore,
+            tmux_attach, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
             upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,

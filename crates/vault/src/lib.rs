@@ -24,7 +24,7 @@ pub use db::{SCHEMA_V1, SCHEMA_V5};
 /// 本程序理解的最新 schema 版本（迁移链尾）。**只增不减**：升级应用即抬高，
 /// 回退到旧二进制时旧程序读到的 `user_version` 会大于此值 → 拒绝打开（见 [`migrate`]）。
 /// R44（§10.2 回退检查）把它显式化，避免「版本号散落在各 `if version < N` 分支里」。
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 
 /// rev-r47：Agent 账号明细（`list_agents_detailed`）。时间均为 epoch ms。
 pub struct AgentAccount {
@@ -233,6 +233,24 @@ pub fn migrate(conn: &Connection) -> Result<()> {
                 .map_err(|e| Error::Storage(e.to_string()))?;
         }
         conn.pragma_update(None, "user_version", 8)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+    }
+    // V9（tmux 联动）：主机启动命令列（连接后自动执行一次；TEXT，NULL=未设置）。
+    // 列存在性守卫同 V8：测试构造的退版库可能已带列（裸 ALTER 必炸 duplicate column）。
+    if version < 9 {
+        let has_col: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name='startup_command'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        if !has_col {
+            conn.execute_batch("ALTER TABLE hosts ADD COLUMN startup_command TEXT;")
+                .map_err(|e| Error::Storage(e.to_string()))?;
+        }
+        conn.pragma_update(None, "user_version", 9)
             .map_err(|e| Error::Storage(e.to_string()))?;
     }
     Ok(())
@@ -898,9 +916,9 @@ impl Vault {
             }
         };
         conn.execute(
-            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, charset, shell_integration, jump_host_id, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?11,?12,?10,?10)
-             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, charset=?9, shell_integration=?11, jump_host_id=?12, updated_at=?10",
+            "INSERT INTO hosts (id, name, address, port, username, auth_type, identity_id, tags_json, charset, shell_integration, jump_host_id, startup_command, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?11,?12,?13,?10,?10)
+             ON CONFLICT(id) DO UPDATE SET name=?2, address=?3, port=?4, username=?5, auth_type=?6, identity_id=?7, tags_json=?8, charset=?9, shell_integration=?11, jump_host_id=?12, startup_command=?13, updated_at=?10",
             params![
                 id,
                 host.name,
@@ -914,6 +932,12 @@ impl Vault {
                 now_ms(),
                 shell_integration,
                 host.jump_host_id,
+                // 空串归一为 NULL（前端清空输入框即清除；库不留空串幽灵）
+                host.startup_command
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
             ],
         )
         .map_err(db_err)?;
@@ -937,7 +961,7 @@ impl Vault {
     pub fn list_hosts(&self) -> Result<Vec<Host>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint, charset, shell_integration, jump_host_id FROM hosts WHERE deleted_at IS NULL")
+            .prepare("SELECT id, name, address, port, username, auth_type, identity_id, tags_json, host_fingerprint, charset, shell_integration, jump_host_id, startup_command FROM hosts WHERE deleted_at IS NULL")
             .map_err(db_err)?;
         let rows = stmt
             .query_map([], |r| {
@@ -956,6 +980,10 @@ impl Vault {
                     r.get::<_, String>(9)?,
                     r.get::<_, Option<i64>>(10)?.map(|v| v != 0),
                     r.get::<_, Option<String>>(11)?,
+                    // 启动命令：NULL/空串统一为 None（旧库行无此列值）
+                    r.get::<_, Option<String>>(12)?
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.trim().to_string()),
                 ))
             })
             .map_err(db_err)?;
@@ -974,6 +1002,7 @@ impl Vault {
                 charset,
                 shell_integration,
                 jump_host_id,
+                startup_command,
             ) = row.map_err(db_err)?;
             out.push(Host {
                 id,
@@ -992,6 +1021,7 @@ impl Vault {
                 shell_integration,
                 charset: Charset::parse(&charset),
                 jump_host_id,
+                startup_command,
             });
         }
         Ok(out)
@@ -2087,6 +2117,7 @@ mod tests {
                     password: "pw".into(),
                 },
                 jump_host_id: Some(hid_a.clone()),
+                startup_command: None,
                 ..Default::default()
             })
             .unwrap();
@@ -2111,6 +2142,7 @@ mod tests {
             username: "ops".into(),
             auth: AuthDraft::None, // Keep 语义（serde rename）：编辑保原凭据
             jump_host_id: None,
+            startup_command: None,
             ..Default::default()
         })
         .unwrap();
@@ -2403,6 +2435,7 @@ mod tests {
             charset: h.charset,
             shell_integration: None,
             jump_host_id: None,
+            startup_command: None,
         })
         .unwrap();
         assert_eq!(
@@ -2425,6 +2458,7 @@ mod tests {
             charset: h.charset,
             shell_integration: Some(false),
             jump_host_id: None,
+            startup_command: None,
         })
         .unwrap();
         assert_eq!(by("h-ssh").shell_integration, Some(false), "显式关闭生效");
@@ -3232,6 +3266,7 @@ mod tests {
                 charset: Charset::Utf8,
                 shell_integration: None,
                 jump_host_id: None,
+                startup_command: None,
             })
             .unwrap();
         }

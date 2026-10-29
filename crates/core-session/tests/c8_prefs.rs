@@ -112,6 +112,7 @@ async fn identity_in_use_reference_check() {
                 charset: Default::default(),
                 shell_integration: None,
                 jump_host_id: None,
+                startup_command: None,
             },
         )
         .await
@@ -172,6 +173,7 @@ async fn local_host_is_immutable_builtin() {
                 charset: Default::default(),
                 shell_integration: None,
                 jump_host_id: None,
+                startup_command: None,
             },
         )
         .await

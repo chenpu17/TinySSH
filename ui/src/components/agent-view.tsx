@@ -41,6 +41,9 @@ export interface AgentViewProps {
       （编排者不直接操作机器），派发的目标对话仍按各自 sid 在会话 Agent 视图呈现 */
   fleet?: boolean;
   hostLabel: string;
+  /** tmux 联动二（Agent 分窗）：会话已 attach tmux 时的一行说明
+      （命令自动落远端专属窗口 tinyssh-agent）；null = 不显示 */
+  tmuxNote?: string | null;
   /** 该会话的内嵌 agent 待审批（inline 批准/拒绝走既有 decide_approval 链） */
   pending: ApprovalRow[];
   onDecide: (id: string, decision: "approve" | "deny" | "edit", edited: string | null) => void;
@@ -169,7 +172,7 @@ const AssistantMsg = memo(function AssistantMsg({ md, think, streaming }: { md: 
 });
 
 export function AgentView({
-  width, sid, fleet, hostLabel, pending, onDecide, owner, onDelegate,
+  width, sid, fleet, hostLabel, tmuxNote, pending, onDecide, owner, onDelegate,
   autonomyOn, onToggleAutonomy,
   gripDrag, gripDown, gripMove, gripUp, onClose, pushToast,
 }: AgentViewProps) {
@@ -578,6 +581,13 @@ export function AgentView({
               </span>
               <button className="primary" data-testid="agent-delegate-confirm" onClick={confirmDelegate}>{t("委托并发送")}</button>
               <button className="ghost" onClick={() => setAskDelegate(false)}>{t("取消")}</button>
+            </div>
+          )}
+          {!fleet && tmuxNote && (
+            /* tmux 联动二（Agent 分窗）：一行小字说明——命令自动落远端专属
+               tmux 窗口，切过去可旁观（无设置项，语义不进任何面板） */
+            <div className="ag-tmux" data-testid="agent-tmux-hint" title={tmuxNote}>
+              {tmuxNote}
             </div>
           )}
           <div className="ag-composer">

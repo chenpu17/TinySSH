@@ -44,6 +44,8 @@ export interface Host {
   charset: Charset;
   /** ProxyJump：跳板主机引用（指向既有主机条目）；null = 直连。 */
   jump_host_id: string | null;
+  /** tmux 联动：连接成功后自动执行一次的启动命令（如 `tmux new -A -s work`）；null = 未设置。 */
+  startup_command: string | null;
 }
 
 export type AuthDraft =
@@ -65,6 +67,8 @@ export interface HostDraft {
   shell_integration?: boolean | null;
   /** ProxyJump：跳板主机 id；null/缺省=直连（编辑提交 null = 清除跳板设置）。 */
   jump_host_id?: string | null;
+  /** tmux 联动：启动命令（连接后自动执行一次）；null/缺省=清除既有设置；空串归一 null。 */
+  startup_command?: string | null;
 }
 
 export type IdentityReq =
@@ -134,6 +138,35 @@ export interface SessionInfo {
   ever_agent_owned?: boolean;
   /** 十八轮：会话日志记录中（真实核心 SessionInfo.logging；缺省=旧后端视为关）。 */
   logging?: boolean;
+  /** tmux 联动：远端 tmux 状态（仅 SSH 会话下发；缺省 = 非 SSH/未探测/旧后端）。 */
+  tmux?: TmuxStatus | null;
+  /** tmux 联动二：PTY 已 attach 的 tmux 会话名（恢复现场/手动 attach 后非空；缺省=未 attach/旧后端）。 */
+  tmux_attached?: string | null;
+}
+
+// ---- tmux 联动：远端 tmux 状态与恢复现场计划（GUI 专用三命令） ----
+
+/** 远端单个 tmux 会话快照（`tmux ls -F` 探针产物）。 */
+export interface TmuxSession {
+  name: string;
+  windows: number;
+  attached: number;
+}
+
+/** 远端 tmux 可用性与会话清单。available=false 含「无 tmux」与「从未探测」两种，
+ * UI 同样降级为普通重连呈现，不区分。 */
+export interface TmuxStatus {
+  available: boolean;
+  version: string | null;
+  sessions: TmuxSession[];
+}
+
+/** 恢复现场计划：target=null 且 sessions>1 表示需用户挑选（断线横幅内联列表）；
+ * history 为目标窗格近史（带 ANSI）——前端先写入本地 scrollback 再触发 attach。 */
+export interface TmuxRestorePlan {
+  sessions: TmuxSession[];
+  target: TmuxSession | null;
+  history: string | null;
 }
 
 /**

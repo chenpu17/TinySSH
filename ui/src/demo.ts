@@ -23,6 +23,14 @@ type DemoHost = {
   tags?: string[]; ident_id?: string | null; shell_integration?: boolean;
   /** ProxyJump：跳板主机 id（引用既有主机条目）；缺省 = 直连。 */
   jump_host_id?: string | null;
+  /** tmux 联动：连接成功后自动执行一次的启动命令；缺省/空 = 未设置。 */
+  startup_command?: string | null;
+};
+
+/** tmux 联动：远端 tmux 状态（真实 session_api::TmuxStatus 同形状）。 */
+type DemoTmux = {
+  available: boolean; version: string | null;
+  sessions: { name: string; windows: number; attached: number }[];
 };
 
 type DemoSession = {
@@ -38,6 +46,11 @@ type DemoSession = {
   ever_agent_owned: boolean;
   /** 十八轮：会话日志记录中（demo 内存态；真实核心落 data/logs）。 */
   logging?: boolean;
+  /** tmux 联动：最近探测的远端 tmux 状态（SSH 会话下发；真实 SessionHandle.tmux 同语义——
+   * 探测失败保留上次结果，断线横幅展示的是断线前仍在运行的清单）。 */
+  tmux?: DemoTmux | null;
+  /** 本会话内由我们注入 attach 的 tmux 会话名（再挂自动改 switch-client）。 */
+  tmux_attached?: string | null;
   // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）。
   // ts 统一 ISO-UTC——简报侧转本地渲染（与真实 brief.rs 修复后口径一致，防时区伪影）
   transitions: { ts: string; what: string }[];
@@ -213,6 +226,8 @@ const demoState = {
       handlers: [] as Handler[],
       seq: 0, ring: [], subs: new Set<string>(),
       forwards: [],
+      // tmux 联动 fixture：demo 主机出厂带 tmux 3.2a（真实侧建连后静默探测）
+      tmux: { available: true, version: "3.2a", sessions: [{ name: "work", windows: 2, attached: 1 }] },
     },
     {
       id: "s-demo-0002", host_id: "h-staging1", host_name: "staging-1", kind: "ssh",
@@ -225,6 +240,9 @@ const demoState = {
       handlers: [] as Handler[],
       seq: 0, ring: [], subs: new Set<string>(),
       forwards: [],
+      // tmux 联动 fixture：断线会话带两个会话——断线横幅内联挑选列表的走查面
+      //（真实侧语义：探测失败保留上次结果，此处预置即「断线前仍在运行」的清单）
+      tmux: { available: true, version: "3.2a", sessions: [{ name: "work", windows: 2, attached: 0 }, { name: "logs", windows: 1, attached: 0 }] },
     },
   ] as DemoSession[],
   approvals: [
@@ -603,9 +621,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         ever_agent_owned: s.ever_agent_owned,
         // 十八轮：会话日志态随列表下发（真实核心 SessionInfo.logging 同语义）
         logging: !!s.logging,
+        // tmux 联动：SSH 会话下发最近探测状态（None=local/未探测，同真实口径）
+        tmux: s.kind === "ssh" ? (s.tmux ?? null) : null,
+        // tmux 联动二：已 attach 的 tmux 会话名（恢复现场后非空；Agent 分窗提示行据它显示）
+        tmux_attached: s.kind === "ssh" ? (s.tmux_attached ?? null) : null,
       }));
     case "upsert_host": {
-      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[]; jump_host_id?: string | null };
+      const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[]; jump_host_id?: string | null; startup_command?: string | null };
       // 本地终端一等公民轮：「本机」是内置条目不可编辑（与核心 LocalHostImmutable 同码同义）
       if (h.id === "local") throw apiError("local_host_immutable", "「本机」是内置条目，不可编辑或删除");
       // ProxyJump 镜像：跳板引用校验（与核心 validate_jump_ref 同门——存在/非自引用/
@@ -644,6 +666,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           ex.name = h.name; ex.address = h.address; ex.port = h.port ?? 22; ex.username = h.username;
           ex.charset = h.charset ?? "utf-8";
           ex.jump_host_id = jumpId;
+          // tmux 联动：启动命令随编辑更新（trim 空归 null，与真实 vault 同口径）
+          ex.startup_command = h.startup_command?.trim() || null;
           if (h.tags) ex.tags = h.tags.filter((t) => t.trim()).map((t) => t.trim());
           if (authType !== "Keep") ex.auth_type = authType;
           ex.ident_id = authType === "Key" ? identId : null;
@@ -656,7 +680,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         auth_type: authType === "Keep" ? "Password" : authType, charset: h.charset ?? "utf-8",
         tags: (h.tags ?? []).filter((t: string) => typeof t === "string" && t.trim()).map((t: string) => t.trim()),
         ident_id: authType === "Key" ? identId : null,
-        jump_host_id: jumpId });
+        jump_host_id: jumpId,
+        startup_command: h.startup_command?.trim() || null });
       audit("human", "host_upsert", h.name);
       return id;
     }
@@ -844,6 +869,14 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if ((h as { shell_integration?: boolean }).shell_integration !== false) {
         audit("human", "shell_integration_inject", "OSC133+OSC7", null, sid);
       }
+      // tmux 联动镜像：启动命令回显（真实核心于提示符处执行、回显可见是设计使然）；
+      // SSH 会话预置 tmux 探针 fixture（demo 主机出厂带 tmux 3.2a + work 会话）
+      const sess = demoState.sessions.find((x) => x.id === sid)!;
+      const sc = h.startup_command?.trim();
+      if (sc) sess.out += `\r\n[演示] ${sc}\r\n`;
+      if (h.address !== "local") {
+        sess.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+      }
       return sid;
     }
     case "close_session": {
@@ -941,6 +974,61 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       demoEmitState(sid, "Disconnected", null, null, "已停止自动重连");
       s.transitions.push({ ts: new Date().toISOString(), what: "用户停止自动重连（Disconnected）" });
       audit("human", "session_reconnect_stop", null, null, sid ?? null);
+      return null;
+    }
+    // ---- tmux 联动（恢复现场轮）：三命令 GUI 专用面镜像。真实侧探测/补史走
+    // exec_fresh 独立通道（零屏污染）、attach 走 PTY 注入；demo 以 out 缓冲演示回显 ----
+    case "tmux_probe": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 探测仅支持 SSH 会话（演示）");
+      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+      return s.tmux;
+    }
+    case "tmux_restore": {
+      const sid = args?.sid as string;
+      const want = (args?.session as string | null | undefined) ?? null;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "恢复现场仅支持 SSH 会话（演示）");
+      if (s.state === "Disconnected") {
+        // 镜像真实 tmux_restore：内部先走手动重连全机器（Reconnecting 事件 + 800ms 完成窗）
+        demoEmitState(sid, "Reconnecting", 1, 3, null);
+        s.state = "Reconnecting";
+        await new Promise((r) => setTimeout(r, 800));
+        s.state = "Reconfirming";
+        demoEmitState(sid, "Reconfirming", null, null, null);
+        pushTo(sid, "\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
+        audit("human", "session_reconnect", null, null, sid ?? null);
+      } else if (s.state !== "Connected" && s.state !== "Reconfirming") {
+        throw apiError("invalid_input", "会话状态不支持恢复现场（演示）");
+      }
+      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+      const sessions = s.tmux.sessions;
+      const target = want ? (sessions.find((x) => x.name === want) ?? null) : sessions.length === 1 ? sessions[0] : null;
+      const history = target
+        ? "[演示] ops@host:~$ tail -f app.log\r\n11:02:14 WARN disk usage 93%\r\n11:02:20 INFO build finished\r\n（capture-pane 近史 · demo）\r\n"
+        : null;
+      audit("human", "tmux_restore", target?.name ?? null, null, sid ?? null, { sessions: sessions.length });
+      return { sessions, target, history };
+    }
+    case "tmux_attach": {
+      const sid = args?.sid as string;
+      const name = (args?.session as string ?? "").trim();
+      const auto = Boolean(args?.auto);
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux attach 仅支持 SSH 会话（演示）");
+      if (!name || name.includes("'")) throw apiError("invalid_input", "非法的 tmux 会话名（演示）");
+      if (s.state === "Disconnected" || s.state === "Closed") {
+        throw apiError("invalid_input", "会话未连接：请先重连再挂 tmux（演示）");
+      }
+      // 已挂 tmux 的会话再挂自动改 switch-client（真实核心 $TMUX 守卫同语义）
+      const verb = s.tmux_attached ? "tmux switch-client" : "tmux attach";
+      pushTo(sid, `\r\n[演示] ${verb} -t '=${name}'\r\n`);
+      s.tmux_attached = name;
+      audit("human", "tmux_attach", name, null, sid ?? null, { auto });
       return null;
     }
     // R26：状态事件轮询面（demo 无事件通道——C1 connection_status 同款兜底）。
@@ -1553,6 +1641,14 @@ case "read_triggers": {
           // 与 create_session 同构建会话（同步快路径）
           const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
           demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: h.address === "local" ? "local" : "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+          // tmux 联动镜像（attempt 路径，与 create_session 分支同构）：启动命令回显
+          //（真实核心于提示符处执行、回显可见是设计使然）；SSH 会话预置 tmux fixture
+          const sessNew = demoState.sessions.find((x) => x.id === sid)!;
+          const scNew = h.startup_command?.trim();
+          if (scNew) sessNew.out += `\r\n[演示] ${scNew}\r\n`;
+          if (h.address !== "local") {
+            sessNew.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+          }
           if (!h.id.startsWith("quick-")) {
             // 十七轮：快速主机不进元数据（真实核心 vault 侧 EXISTS 守卫同语义）
             const m = demoState.hostMeta.get(h.id) ?? { favorite: false, last_connected_at: null };

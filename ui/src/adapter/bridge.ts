@@ -48,6 +48,10 @@ interface CmdArgs {
   close_session: { sid: string };
   reconnect_session: { sid: string };
   stop_auto_reconnect: { sid: string };
+  // tmux 联动（恢复现场轮）：探测/恢复/注入 attach（GUI 专用面，同 reconnect 口径）
+  tmux_probe: { sid: string };
+  tmux_restore: { sid: string; session?: string | null };
+  tmux_attach: { sid: string; session: string; auto?: boolean };
   session_state_feed: undefined;
   resize: { sid: string; cols: number; rows: number };
   subscribe_output: { sid: string; onEvent: WireChannel };
@@ -180,6 +184,9 @@ interface CmdRet {
   close_session: void;
   reconnect_session: void;
   stop_auto_reconnect: void;
+  tmux_probe: wire.TmuxStatus;
+  tmux_restore: wire.TmuxRestorePlan;
+  tmux_attach: void;
   session_state_feed: wire.SessionStateEvent[];
   resize: void;
   subscribe_output: wire.AttachOutput;

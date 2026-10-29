@@ -84,6 +84,7 @@ async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
             charset: Default::default(),
             shell_integration: Some(true),
             jump_host_id: None,
+            startup_command: None,
         },
     )
     .await

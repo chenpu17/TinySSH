@@ -31,6 +31,7 @@ fn ssh_host() -> Host {
         charset: Charset::Utf8,
         shell_integration: Some(true),
         jump_host_id: None,
+        startup_command: None,
     }
 }
 

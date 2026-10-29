@@ -275,6 +275,7 @@ fn mk_sess(
         charset: Charset::Utf8,
         shell_integration: None,
         jump_host_id: None,
+        startup_command: None,
     };
     let screen = term_core::Screen::new(term_core::ScreenConfig {
         cols: 80,

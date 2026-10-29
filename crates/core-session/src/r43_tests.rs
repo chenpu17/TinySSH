@@ -123,6 +123,7 @@ fn host() -> Host {
         shell_integration: Some(true),
         charset: Charset::Utf8,
         jump_host_id: None,
+        startup_command: None,
     }
 }
 
@@ -213,6 +214,7 @@ async fn spawn_pending(
             &needs_approval(&c),
             true,
             false,
+            None,
             session_api::transport::tokio_util_sync::CancellationToken::new(),
         )
         .await

@@ -388,7 +388,7 @@ fn build_tools(
     let exec = CallbackTool::new(
         ToolDef {
             name: "exec".into(),
-            description: "在会话上执行命令。缺省 shell 模式（持久 shell，cwd/env 延续）；主机未启用 shell 集成时 shell 模式不可用，用 mode:\"fresh\"（独立通道，可靠退出码，不延续现场）。危险命令需人工审批，等待期间此调用阻塞；被拒绝时如实报告，不要换着花样重试。".into(),
+            description: "在会话上执行命令。缺省 shell 模式（持久 shell，cwd/env 延续）；主机未启用 shell 集成时 shell 模式不可用，用 mode:\"fresh\"（独立通道，可靠退出码，不延续现场）。会话已接入 tmux 时，shell 模式自动落进远端专属窗口（tinyssh-agent）执行——用户随时可切到该窗口旁观，命令输出照常返回。危险命令需人工审批，等待期间此调用阻塞；被拒绝时如实报告，不要换着花样重试。".into(),
             schema: json!({
                 "type": "object",
                 "properties": {

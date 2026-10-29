@@ -502,6 +502,11 @@ pub struct Host {
     /// 链式引用表达多跳（A.jump=B，B.jump=C），建连时展平（深度≤3，禁环）。
     #[serde(default)]
     pub jump_host_id: Option<HostId>,
+    /// tmux 联动：连接成功后自动执行一次的启动命令（如 `tmux new -A -s work`）。
+    /// None=未设置。与 shell 集成开关无关（用户配置的命令就该执行）；回显可见
+    /// 是设计使然。vault 列 hosts.startup_command（V9 迁移）。
+    #[serde(default)]
+    pub startup_command: Option<String>,
 }
 
 /// 会话字节编码。线格式 "utf-8"/"gbk"（显式逐变体 rename——serde kebab-case 对
@@ -560,6 +565,10 @@ pub struct HostDraft {
     /// 守卫见 core-session upsert_host（存在/非自引用/非本机/不成环/不超深）。
     #[serde(default)]
     pub jump_host_id: Option<HostId>,
+    /// tmux 联动：启动命令（连接后自动执行一次）。None=清除既有设置；
+    /// 空串归一为 None（vault 写入侧同一口径）。
+    #[serde(default)]
+    pub startup_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -681,6 +690,36 @@ pub enum KeyKind {
     Rsa,
 }
 
+/// tmux 联动：远端 tmux 单会话快照（`tmux ls -F` 探针产物）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxSession {
+    pub name: String,
+    pub windows: u32,
+    pub attached: u32,
+}
+
+/// tmux 联动：远端 tmux 可用性与会话清单（SessionInfo.tmux 下发）。
+/// available=false 含「无 tmux 二进制」与「从未探测」两种，UI 同样降级为
+/// 普通重连呈现，不区分。探测仅在按需时点发起（建连/恢复/面板打开）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxStatus {
+    pub available: bool,
+    pub version: Option<String>,
+    pub sessions: Vec<TmuxSession>,
+}
+
+/// tmux 联动：恢复现场计划（GUI tmux_restore 返回）。target=None 且
+/// sessions>1 表示需用户挑选（UI 断线横幅内联列表，不弹窗）；history 是
+/// capture-pane 捕获的目标窗格近史（带 ANSI 属性）——由前端先写入本地
+/// scrollback 再触发 tmux_attach（二段式：单命令无法保证「先重置本地屏、
+/// 后挂 tmux 重绘」的顺序）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxRestorePlan {
+    pub sessions: Vec<TmuxSession>,
+    pub target: Option<TmuxSession>,
+    pub history: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub id: SessionId,
@@ -704,6 +743,14 @@ pub struct SessionInfo {
     /// 只经开关命令的返回值/toast 呈现）。serde default 防旧载荷。
     #[serde(default)]
     pub logging: bool,
+    /// tmux 联动：远端 tmux 状态（仅 SSH 会话下发；None=非 SSH/未探测/旧后端）。
+    #[serde(default)]
+    pub tmux: Option<TmuxStatus>,
+    /// tmux 联动二（Agent 分窗）：会话 PTY 已 attach 的 tmux 会话名
+    ///（恢复现场/手动 attach 后非空）。前端据此提示「Agent 在独立 tmux 窗口工作」。
+    /// None=未 attach/非 SSH/旧后端。serde default 防旧载荷。
+    #[serde(default)]
+    pub tmux_attached: Option<String>,
 }
 
 /// R41（§6.6/S09）连接详情：**连接当时**的完整身份快照 + 会话运行时态。

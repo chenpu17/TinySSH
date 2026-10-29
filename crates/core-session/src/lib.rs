@@ -543,6 +543,9 @@ impl SessionManager {
                 );
                 handle.spawn_integration_watcher(self.center.clone());
             }
+            // tmux 联动：启动命令排在集成批次之后（PTY 行规程先进先出，
+            // 片段清屏后于提示符处执行）；与集成开关无关，未开集成也注入。
+            handle.inject_startup_command().await;
         } else {
             // local：注入在 PTY 启动时同步完成（rcfile/ZDOTDIR/-C/脚本），此处等的是
             // shell 启动耗时——建连返回即可键入的既有不变量（旧 10s 窗，全量回归下
@@ -711,6 +714,7 @@ impl SessionManager {
             shell_integration: draft.shell_integration.or(Some(true)),
             charset: draft.charset,
             jump_host_id: draft.jump_host_id.clone(),
+            startup_command: draft.startup_command.clone(),
         };
         self.center.quick_hosts.lock().unwrap().insert(
             host.id.clone(),
@@ -1323,6 +1327,7 @@ impl SessionManager {
                         charset: Charset::Utf8,
                         shell_integration: None,
                         jump_host_id: None,
+                        startup_command: None,
                     });
                     return self.ensure_local_host();
                 }
@@ -1340,6 +1345,7 @@ impl SessionManager {
             charset: Charset::Utf8,
             shell_integration: None,
             jump_host_id: None,
+            startup_command: None,
         };
         self.center.vault.upsert_host(&draft)?;
         Ok(Host {
@@ -1355,6 +1361,7 @@ impl SessionManager {
             shell_integration: None,
             charset: Charset::Utf8,
             jump_host_id: None,
+            startup_command: None,
         })
     }
 
@@ -2406,6 +2413,16 @@ impl SessionApi for SessionManager {
                 integration: *h.integration.lock().unwrap(),
                 ever_agent_owned: h.ever_agent_owned.load(std::sync::atomic::Ordering::SeqCst),
                 logging: h.log_path.lock().unwrap().is_some(),
+                tmux: if h.kind == "ssh" {
+                    Some(h.tmux.lock().unwrap().clone())
+                } else {
+                    None
+                },
+                tmux_attached: if h.kind == "ssh" {
+                    h.tmux_attached.lock().unwrap().clone()
+                } else {
+                    None
+                },
             });
         }
         out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -2716,6 +2733,36 @@ impl SessionApi for SessionManager {
     // ---- 交互式 ----
     async fn read_screen(&self, _ctx: &Actor, sid: SessionId) -> Result<ScreenSnapshot> {
         let h = self.get(&sid)?;
+        // tmux 联动二：会话 attach 在 tmux 里时 PTY 画面是 tmux client 的全屏 UI
+        //（状态栏/窗格框线），对模型是噪音——改走 capture-pane 抓「attach 会话当前
+        // 窗格」的净文本（用户此刻看到的现场，去掉 tmux 铬件）。这是「不可见执行」
+        // 之后读屏可靠性的质变：不依赖窗格是否被渲染进 PTY。失败（通道/超时）退回
+        // PTY 画面，行为不劣于联动前。
+        if h.kind == "ssh" {
+            let attached = h.tmux_attached.lock().unwrap().clone();
+            if let Some(sess) = attached {
+                let version = h.tmux.lock().unwrap().version.clone();
+                let sel = Self::tmux_selector(version.as_deref(), &sess);
+                // 目标尾冒号：capture-pane 是 **pane 类**目标，`=name` 会被当 pane
+                // 名直查报 can't find pane（真机 3.4 实测坑 81）；`=name:` =
+                // 精确会话 + 当前窗格。失败（含通道异常）退回 PTY 画面兜底。
+                let cmd = format!(
+                    "tmux capture-pane -p -t {}:",
+                    crate::handle::sh_single_quote(&sel)
+                );
+                if let Some((text, Some(0))) = Self::tmux_exec(&h, &cmd, 64 * 1024).await {
+                    let s = h.screen.lock().await;
+                    return Ok(ScreenSnapshot {
+                        cols: s.config().cols,
+                        rows: s.config().rows,
+                        text,
+                        cursor_row: 0,
+                        cursor_col: 0,
+                        alt_screen: false,
+                    });
+                }
+            }
+        }
         let s = h.screen.lock().await;
         let (row, col) = s.cursor();
         Ok(ScreenSnapshot {
@@ -2796,6 +2843,7 @@ impl SessionApi for SessionManager {
                             &eval,
                             false,
                             false,
+                            None,
                             CancellationToken::new(),
                         )
                         .await?;
@@ -3371,6 +3419,7 @@ impl SessionApi for SessionManager {
                     &eval,
                     false,
                     false,
+                    None,
                     CancellationToken::new(),
                 )
                 .await?;
@@ -3431,6 +3480,7 @@ impl SessionApi for SessionManager {
                     &eval,
                     false,
                     false,
+                    None,
                     CancellationToken::new(),
                 )
                 .await?;
@@ -4752,6 +4802,245 @@ impl SessionManager {
         Ok(())
     }
 
+    // ---- tmux 联动（GUI 专用，不进 SessionApi/MCP 面——同 reconnect_session 口径）----
+    // 产品立场：tmux 是「远端现场不丢」的兑现路径。探测/补史走 exec_fresh 独立通道
+    // （零屏污染、零审批纠缠）；attach 走 PTY 注入（人类归属，与探针片段同门控）。
+
+    /// 探针命令：版本行 + 会话清单。刻意**零重定向零复合**——Windows 远端 cmd 解析
+    /// `2>/dev/null` 会真的创建 \dev\null 文件、`||` 也不可用；无 tmux 时两条命令
+    /// 各自报错到 stderr，stdout 为空 → available=false，对远端零副作用。
+    /// 坑 80（真机 3.4 实测）：tmux format **不展开** `\t`——`ls -F` 吐的是字面
+    /// 反斜杠 t，按真 tab 分列永得空清单（单测喂真 tab 假绿，坑 74 同类）。
+    /// 分隔符改 `|`（tmux 会话名只禁 `:` 与 `.`，`|` 安全）。
+    const TMUX_PROBE_CMD: &str =
+        "tmux -V; tmux ls -F '#{session_name}|#{session_windows}|#{session_attached}'";
+
+    /// 解析探针输出：首行 `tmux X.Y` → available+version；其余 `名\t窗口\t附着`
+    /// 行 → 会话清单。解析失败=无 tmux（available=false）。
+    fn parse_tmux_probe(out: &str) -> session_api::TmuxStatus {
+        let mut status = session_api::TmuxStatus {
+            available: false,
+            version: None,
+            sessions: Vec::new(),
+        };
+        for line in out.lines() {
+            let line = line.trim_end_matches('\r');
+            if let Some(rest) = line.strip_prefix("tmux ") {
+                if !rest.is_empty() && status.version.is_none() {
+                    status.available = true;
+                    status.version = Some(rest.to_string());
+                }
+                continue;
+            }
+            if !status.available || line.is_empty() {
+                continue;
+            }
+            let mut it = line.splitn(3, '|');
+            let (Some(name), Some(w), Some(a)) = (it.next(), it.next(), it.next()) else {
+                continue;
+            };
+            let (Ok(windows), Ok(attached)) = (w.trim().parse::<u32>(), a.trim().parse::<u32>())
+            else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            status.sessions.push(session_api::TmuxSession {
+                name: name.to_string(),
+                windows,
+                attached,
+            });
+        }
+        status
+    }
+
+    /// exec_fresh 轻包装：独立 SSH 通道执行、不镜像回放、不进审批/记录。
+    /// 返回 None = 通道失败/超时/未完成（调用方按「探测不可用」降级）。
+    pub(crate) async fn tmux_exec(
+        h: &SessionHandle,
+        cmd: &str,
+        cap: usize,
+    ) -> Option<(String, Option<i32>)> {
+        let cancel = session_api::transport::tokio_util_sync::CancellationToken::new();
+        let opts = session_api::ExecOpts {
+            mode: session_api::ExecMode::Fresh,
+            timeout: Some(std::time::Duration::from_secs(8)),
+            output_cap: Some(cap),
+            env: Default::default(),
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        match h.channel.exec_fresh(cmd, &opts, deadline, &cancel).await {
+            Ok(out) if out.completed => Some((
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                out.exit_code,
+            )),
+            _ => None,
+        }
+    }
+
+    /// 会话名选择器：tmux ≥3.1 用 `=name` 精确匹配（防 `work` 前缀误中
+    /// `workshop`）；更老版本没有 `=` 语法，退回普通名字（tmux 自身按前缀
+    /// 匹配——老版本唯一选择，探测报告里版本可见，文档如实标注）。
+    fn tmux_selector(version: Option<&str>, name: &str) -> String {
+        let modern = version.map_or(true, |v| {
+            let mut it = v
+                .split(|c: char| !c.is_ascii_digit())
+                .filter_map(|p| p.parse::<u32>().ok());
+            match (it.next(), it.next()) {
+                (Some(maj), Some(min)) => maj > 3 || (maj == 3 && min >= 1),
+                (Some(maj), None) => maj > 3,
+                _ => true,
+            }
+        });
+        if modern {
+            format!("={name}")
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// capture-pane 抓目标会话当前窗格近史（尾 400 行，带 ANSI 属性）。
+    /// `-e` 老版本可能不支持：失败退一次不带 `-e` 的朴素捕获（丢色不丢史）。
+    async fn tmux_capture_history(
+        h: &SessionHandle,
+        version: Option<&str>,
+        name: &str,
+    ) -> Option<String> {
+        let sel = Self::tmux_selector(version, name);
+        // 尾冒号坑 81（真机 3.4 实测）：capture-pane 是 **pane 类**目标，`=name`
+        // 被当 pane 名直查必报 can't find pane；`=name:` = 精确会话+当前窗格。
+        let with_color = format!("tmux capture-pane -p -e -S -400 -t '{sel}:'");
+        let plain = format!("tmux capture-pane -p -S -400 -t '{sel}:'");
+        for cmd in [&with_color, &plain] {
+            if let Some((out, Some(0))) = Self::tmux_exec(h, cmd, 512 * 1024).await {
+                if !out.trim().is_empty() {
+                    return Some(out);
+                }
+            }
+        }
+        None
+    }
+
+    /// 探测远端 tmux（SSH 会话专用）。失败/超时**保留上次结果**——断线后
+    /// exec_fresh 必失败，而断线横幅要展示的恰是断线前仍在运行的会话清单。
+    pub async fn tmux_probe(&self, sid: &str) -> Result<session_api::TmuxStatus> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux 探测仅支持 SSH 会话".into()));
+        }
+        if let Some((out, _)) = Self::tmux_exec(&h, Self::TMUX_PROBE_CMD, 64 * 1024).await {
+            let status = Self::parse_tmux_probe(&out);
+            *h.tmux.lock().unwrap() = status.clone();
+            return Ok(status);
+        }
+        let last = h.tmux.lock().unwrap().clone();
+        Ok(last)
+    }
+
+    /// 恢复现场：断线会话先走既有手动重连全机器（状态事件照常推进），再探针
+    /// 解析目标并 capture-pane 抓近史。attach 由前端经 tmux_attach 二段式下发
+    /// （先写 history 进本地 scrollback 再挂 tmux 重绘——顺序在前端才成立）。
+    pub async fn tmux_restore(
+        &self,
+        sid: &str,
+        session: Option<String>,
+    ) -> Result<session_api::TmuxRestorePlan> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("恢复现场仅支持 SSH 会话".into()));
+        }
+        {
+            let st = *h.state.lock().await;
+            match st {
+                SessionState::Disconnected => self.reconnect_session(sid).await?,
+                SessionState::Connected | SessionState::Reconfirming => {}
+                _ => return Err(Error::InvalidInput("会话状态不支持恢复现场".into())),
+            }
+        }
+        let status = self.tmux_probe(sid).await?;
+        let target = match session.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(name) => status.sessions.iter().find(|s| s.name == name).cloned(),
+            None if status.sessions.len() == 1 => status.sessions.first().cloned(),
+            None => None,
+        };
+        let mut history = None;
+        if let Some(t) = &target {
+            history = Self::tmux_capture_history(&h, status.version.as_deref(), &t.name).await;
+        }
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "tmux_restore",
+            Some(sid),
+            target.as_ref().map(|t| t.name.as_str()),
+            serde_json::json!({ "sessions": status.sessions.len() }),
+            None,
+        );
+        Ok(session_api::TmuxRestorePlan {
+            sessions: status.sessions,
+            target,
+            history,
+        })
+    }
+
+    /// 注入 attach/switch 到 PTY（人类归属；与探针片段同一写通道，回显进命令块
+    /// 门控）。auto=true（断线自动恢复）时用户 2s 内刚敲过键则静默跳过——与
+    /// fish 补写同纪律，不插队进正在输入的命令行。行首空格：bash/zsh 默认
+    /// HISTCONTROL 忽略空格前缀命令、fish 同理——恢复动作不该进用户 history。
+    pub async fn tmux_attach(&self, sid: &str, session: &str, auto: bool) -> Result<()> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux attach 仅支持 SSH 会话".into()));
+        }
+        let name = session.trim();
+        if name.is_empty()
+            || name.contains('\'')
+            || name.contains('\\')
+            || name.contains('\r')
+            || name.contains('\n')
+        {
+            return Err(Error::InvalidInput("非法的 tmux 会话名".into()));
+        }
+        if let Some(t) = *h.last_human_input.lock().await {
+            if auto && t.elapsed() < std::time::Duration::from_secs(2) {
+                return Ok(()); // 用户正在输入：本次放弃，下次断线重连再试
+            }
+        }
+        {
+            let st = *h.state.lock().await;
+            if matches!(st, SessionState::Disconnected | SessionState::Closed) {
+                return Err(Error::InvalidInput("会话未连接：请先重连再挂 tmux".into()));
+            }
+        }
+        // 已挂 tmux 的 shell 里 attach 会被拒绝（$TMUX 非空），须 switch-client；
+        // 只信我们自己注入过的记录（用户手动 attach 不猜测——误判方向都会报错）。
+        let verb = if h.tmux_attached.lock().unwrap().is_some() {
+            "tmux switch-client"
+        } else {
+            "tmux attach"
+        };
+        let version = h.tmux.lock().unwrap().version.clone();
+        let sel = Self::tmux_selector(version.as_deref(), name);
+        let text = format!(" {verb} -t '{sel}'\r");
+        {
+            let mut s = h.screen.lock().await;
+            s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+        }
+        h.channel
+            .write(&charset::encode(h.host.charset, &text))
+            .await?;
+        *h.tmux_attached.lock().unwrap() = Some(name.to_string());
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "tmux_attach",
+            Some(sid),
+            Some(name),
+            serde_json::json!({ "auto": auto }),
+            None,
+        );
+        Ok(())
+    }
+
     /// C5/C6 传输编排（R34：staging + 唯一发布决策表 + 取消线性化）。
     ///
     /// 流程（上传/下载对称）：canonical 目标规划 → 同目标锁（DF6.4，排队保持
@@ -4850,6 +5139,7 @@ impl SessionManager {
                         &eval,
                         false,
                         false,
+                        None,
                         CancellationToken::new(),
                     )
                     .await?;
@@ -6200,6 +6490,7 @@ impl SessionManager {
                         charset: Charset::Utf8,
                         shell_integration: Some(true), // ssh-config 导入=存量 SSH 主机同口径（DC3.2）
                         jump_host_id: None, // ProxyJump 指令 V1 阻断导入（sshcfg_import fixture 锁）
+                        startup_command: None,
                     },
                 )
                 .await
@@ -6258,6 +6549,55 @@ mod t44_tests {
         let msg = err.to_string();
         assert!(msg.contains("不支持编辑后批准"), "{msg}");
         assert!(msg.contains("端口转发审批"), "报错应指明卡类：{msg}");
+    }
+
+    /// tmux 探针输出解析：版本行 + 制表符分列；stderr 报错行/空行/坏行一律忽略；
+    /// 无版本行 → available=false（无 tmux 二进制）。会话名可含空格（tmux 允许，
+    /// `|` 分列才安全——坑 80：tmux format 不展开 `\t`，真机产物是 `|` 分隔）。
+    #[test]
+    fn parse_tmux_probe_happy_and_garbage() {
+        let out = "tmux 3.2a\nwork|2|1\nmy sess|1|0\n";
+        let st = SessionManager::parse_tmux_probe(out);
+        assert!(st.available);
+        assert_eq!(st.version.as_deref(), Some("3.2a"));
+        assert_eq!(st.sessions.len(), 2);
+        assert_eq!(st.sessions[0].name, "work");
+        assert_eq!((st.sessions[0].windows, st.sessions[0].attached), (2, 1));
+        assert_eq!(st.sessions[1].name, "my sess");
+        // 坑 80 回归钉：字面反斜杠 t 的行（旧版探针真实产物）不得解析出任何会话
+        let stale = SessionManager::parse_tmux_probe("tmux 3.4\nwalkthrough\\t1\\t0\n");
+        assert!(stale.available);
+        assert!(stale.sessions.is_empty());
+        // 无 tmux：命令报错走 stderr，stdout 只有无版本行噪音 → 不可用
+        let none = SessionManager::parse_tmux_probe("no server running on /tmp/tmux-0/default");
+        assert!(!none.available);
+        assert!(none.sessions.is_empty());
+        // 会话清单行先于版本行（不可能但防御）：忽略，不误判可用
+        let odd = SessionManager::parse_tmux_probe("work|1|0\ntmux 3.3\n");
+        assert!(odd.available);
+        assert!(odd.sessions.is_empty());
+        // 坏行（非数字窗口数）跳过不炸
+        let mixed = SessionManager::parse_tmux_probe("tmux next-3.4\nbad|X|Y\nok|3|2\n");
+        assert!(mixed.available);
+        assert_eq!(mixed.sessions.len(), 1);
+        assert_eq!(mixed.sessions[0].name, "ok");
+    }
+
+    /// 会话名选择器：≥3.1 用 `=` 精确匹配；3.0 及更老/版本不可知退普通名
+    /// （不可知按 modern 兜底——新版本占绝大多数，老版本 capture/attach 失败
+    /// 只丢史不误挂；反过来老版本上 `=` 是必失败）。
+    #[test]
+    fn tmux_selector_version_branch() {
+        assert_eq!(SessionManager::tmux_selector(Some("3.2a"), "work"), "=work");
+        assert_eq!(SessionManager::tmux_selector(Some("3.1"), "work"), "=work");
+        assert_eq!(SessionManager::tmux_selector(Some("3.1b"), "work"), "=work");
+        assert_eq!(SessionManager::tmux_selector(Some("3.0a"), "work"), "work");
+        assert_eq!(SessionManager::tmux_selector(Some("2.9"), "work"), "work");
+        assert_eq!(SessionManager::tmux_selector(Some("1.8"), "work"), "work");
+        // 无版本（未探测成功）：按 modern 兜底
+        assert_eq!(SessionManager::tmux_selector(None, "work"), "=work");
+        // 主版本 4+
+        assert_eq!(SessionManager::tmux_selector(Some("4.0"), "w"), "=w");
     }
 }
 
@@ -6411,6 +6751,7 @@ mod c10_tests {
             charset: Charset::Utf8,
             shell_integration: None,
             jump_host_id: None,
+            startup_command: None,
         };
         let screen = term_core::Screen::new(term_core::ScreenConfig {
             cols: 80,

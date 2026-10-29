@@ -27,6 +27,9 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
   // 后端 upsert 同门兜底）。
   const [jumpId, setJumpId] = useState<string>(editHost?.jump_host_id ?? "");
   const [jumpCandidates, setJumpCandidates] = useState<Host[]>([]);
+  // tmux 联动：启动命令（连接成功后自动执行一次，如 tmux new -A -s work——
+  // attach-or-create 惯用法）。通用原语而非 tmux 专属开关；本机条目无此概念。
+  const [startupCmd, setStartupCmd] = useState<string>(editHost?.startup_command ?? "");
   const [password, setPassword] = useState("");
   const [pem, setPem] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -145,6 +148,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
           port: p, username: username.trim(), auth, tags,
           charset,
           jump_host_id: jumpId || null,
+          startup_command: startupCmd.trim() || null,
         },
       });
       if (!editing) { setName(""); setAddress(""); setPort("22"); setPem(""); setPassphrase(""); setIdentity(null); setPickedIdentity(""); setTagsInput(""); setJumpId(""); }
@@ -311,6 +315,17 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
           ))}
         </select>
       </div>
+      {/* tmux 联动：启动命令——高级用户的一句话原语（tmux new -A 一条命令同时
+          覆盖「有就 attach、没有就新建」）；不做 tmux 专属开关，不替用户做决定 */}
+      {editHost?.id !== "local" && (
+        <div className="ah-field" style={{ marginTop: 6 }}>
+          <label>{t("连接后执行的命令（可选，如 tmux new -A -s work）")}</label>
+          <input value={startupCmd} data-testid="startup-cmd-input" spellCheck={false}
+            onChange={(e) => setStartupCmd(e.target.value)}
+            placeholder="tmux new -A -s work"
+            onKeyDown={enterKey(() => submit())} />
+        </div>
+      )}
       {/* R20：标签（逗号分隔）——主机卡徽章显示，搜索与标签 chip 筛选可命中 */}
       <div className="ah-field" style={{ marginTop: 6 }}>
         <label>{t("标签（可选，逗号分隔，如：生产, 成都）")}</label>

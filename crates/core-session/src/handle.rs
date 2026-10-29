@@ -124,6 +124,32 @@ pub fn truncate_utf8(text: &str, cap: usize) -> (String, bool) {
     (text[..end].to_string(), true)
 }
 
+/// POSIX 单引号包裹（tmux 联动二）：tmux new-window 的命令串要穿过远端登录
+/// shell 与 tmux 自己的 `/bin/sh -c` 两层解析——单引号内仅 `'` 需要处理
+///（`'\''` 三段式），`$`/反引号/双引号/换行全部原样保真。
+pub(crate) fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// tmux 专窗执行的分隔协议（收割文本 → (stdout, exit_code)）：
+/// `RC=<i32>\nOUT\n` 之后是原样输出。`split_once` 取首个分隔——rc 行只能是
+/// 数字，首个 `\nOUT\n` 必定是协议头，输出内容里再出现同串也不会误切。
+pub(crate) fn split_tmux_exec_out(text: &str) -> Option<(String, i32)> {
+    let rest = text.strip_prefix("RC=")?;
+    let (rc_line, out) = rest.split_once("\nOUT\n")?;
+    let rc = rc_line.trim().parse::<i32>().ok()?;
+    Some((out.to_string(), rc))
+}
+
+/// 组装 tmux 专窗执行命令（tmux 联动二核心一行）：
+/// `{ <cmd> 2>&1; echo "$?" > <rc>.tmp; } | tee <out>; mv <rc>.tmp <rc>`。
+/// 语义三件事：①`2>&1` 合流（窗口里用户看到全量输出）；②`tee` 落盘副本供
+/// 收割、窗格实时可见（旁观价值所在）；③rc 经 `.tmp` 写入、`mv` 在 tee 退出
+/// **之后**发生——`mv` 的原子出现即「输出已完整」的完成信号，无竞态窗口。
+pub(crate) fn tmux_window_shell(cmd: &str, out: &str, rc: &str) -> String {
+    format!("{{ {cmd} 2>&1; echo \"$?\" > {rc}.tmp; }} | tee {out}; mv {rc}.tmp {rc}")
+}
+
 /// 决策消息（Decision 之外还有作废路径）。
 pub enum DecisionMsg {
     Decide(Decision),
@@ -174,6 +200,14 @@ pub struct SessionHandle {
     /// 找茬轮 F2：在飞探针任务句柄。reinject 前 abort 旧任务——broadcast 跨
     /// 重连存活，旧任务同样收得到新连接的探针输出，不中止则 fish 补写可能双写。
     pub probe_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
+    /// tmux 联动：最近一次探测的远端 tmux 状态（list_sessions 下发源）。
+    /// 探测失败/超时**保留上次结果**——断线后 exec_fresh 必失败，而断线横幅
+    /// 要展示的恰是断线前仍在运行的会话清单。
+    pub tmux: StdMutex<session_api::TmuxStatus>,
+    /// tmux 联动：本会话内由我们注入 attach 的 tmux 会话名（重连清空）。
+    /// 已挂 tmux 的 shell 里再挂第二个会话须用 switch-client（attach 在
+    /// $TMUX 非空时被拒绝）；只跟踪自己的注入，用户手动 attach 不猜测。
+    pub tmux_attached: StdMutex<Option<String>>,
     // ---- 十八轮：会话日志（tap 在 pump；句柄由 set_session_logging 装卸）----
     pub log_file: StdMutex<Option<SessionLogFile>>,
     pub log_path: StdMutex<Option<std::path::PathBuf>>,
@@ -302,6 +336,12 @@ impl SessionHandle {
             pump_gen: AtomicU64::new(0),
             remote_shell_blocked: AtomicBool::new(false),
             probe_task: StdMutex::new(None),
+            tmux: StdMutex::new(session_api::TmuxStatus {
+                available: false,
+                version: None,
+                sessions: Vec::new(),
+            }),
+            tmux_attached: StdMutex::new(None),
             log_file: StdMutex::new(None),
             log_path: StdMutex::new(None),
             center,
@@ -579,6 +619,8 @@ impl SessionHandle {
                 .lines()
                 .chain(crate::SSH_SHELL_PROBE.lines())
                 .chain(crate::ssh_fish_integration_snippet().lines())
+                // tmux 联动：主机启动命令的回显同样落进首命令捕获窗，一并门控
+                .chain(self.host.startup_command.as_deref().unwrap_or("").lines())
                 .map(|l| l.trim().to_string())
                 .filter(|l| !l.is_empty())
                 .collect();
@@ -686,6 +728,155 @@ impl SessionHandle {
         })
     }
 
+    /// tmux 联动二（Agent 分窗）：Shell 模式在已 attach 的会话上的执行基座。
+    /// 命令落进 attach 会话的 `tinyssh-agent` 专用窗口（`-d` 不切换用户视角），
+    /// 输出经 tee 落盘、rc 文件的 mv 出现为完成信号；收割走 `RC=/OUT` 分隔协议。
+    /// 与 run_fresh 的关键差异：**不镜像回放屏幕**——旁观靠 tmux 窗口本身，
+    /// 往用户当前窗口回放反而是污染（设计使然，非遗漏）。
+    async fn run_tmux_window(
+        self: &Arc<Self>,
+        exec_id: &ExecId,
+        cmd: &str,
+        opts: &ExecOpts,
+        deadline: std::time::Instant,
+        cancel: CancellationToken,
+        trace: ApprovalTrace,
+        started: Instant,
+        tmux_session: &str,
+    ) -> Result<ExecResult> {
+        self.running.lock().unwrap().insert(
+            exec_id.clone(),
+            RunningExec {
+                mode: ExecMode::Shell,
+                cancel: cancel.clone(),
+                started,
+            },
+        );
+        let r = self
+            .tmux_window_inner(
+                exec_id,
+                cmd,
+                opts,
+                deadline,
+                cancel.clone(),
+                trace,
+                started,
+                tmux_session,
+            )
+            .await;
+        self.running.lock().unwrap().remove(exec_id);
+        self.live_execs.lock().unwrap().remove(exec_id);
+        r
+    }
+
+    async fn tmux_window_inner(
+        self: &Arc<Self>,
+        exec_id: &ExecId,
+        cmd: &str,
+        opts: &ExecOpts,
+        deadline: std::time::Instant,
+        cancel: CancellationToken,
+        trace: ApprovalTrace,
+        started: Instant,
+        tmux_session: &str,
+    ) -> Result<ExecResult> {
+        const TMUX_AGENT_WINDOW: &str = "tinyssh-agent";
+        let version = self.tmux.lock().unwrap().version.clone();
+        let sel = crate::SessionManager::tmux_selector(version.as_deref(), tmux_session);
+        let uid = uuid::Uuid::new_v4().simple();
+        let out = format!("/tmp/.tinyssh-agent-{uid}.out");
+        let rc = format!("/tmp/.tinyssh-agent-{uid}.rc");
+
+        // 1) 建窗。先 kill 同名陈尸窗（崩溃遗留；exec_slot 串行保证不会误杀
+        // 在跑的窗口），`-d` 保证用户当前窗口不被切换（零打扰的核心）。
+        let shell_cmd = tmux_window_shell(cmd, &out, &rc);
+        let create = format!(
+            "tmux kill-window -t {} 2>/dev/null; tmux new-window -d -t {} -n {TMUX_AGENT_WINDOW} {}",
+            sh_single_quote(&format!("{sel}:{TMUX_AGENT_WINDOW}")),
+            sh_single_quote(&sel),
+            sh_single_quote(&format!("sh -c {}", sh_single_quote(&shell_cmd))),
+        );
+        let created = crate::SessionManager::tmux_exec(self, &create, 4096).await;
+        match &created {
+            Some((_, Some(0))) => {}
+            _ => {
+                // tmux 不可用/attach 会话已亡/服务器重启——如实回到联动前的
+                // 语义（ShellIntegrationUnavailable，工具表指引模型改走 fresh）。
+                return Err(Error::ShellIntegrationUnavailable {
+                    available: session_api::ShellCapability {
+                        integration_present: false,
+                        prompt_ready: false,
+                        host_setting: self.host.shell_integration == Some(true),
+                    },
+                });
+            }
+        }
+
+        // 2) 轮询完成信号（400ms 一拍）：rc 文件出现 = tee 已退、输出完整。
+        // cancel（cancel_exec/接管作废）与超时都清窗终止命令——超时谎报已停
+        // 是 run_shell 明令禁止的（此处窗口真的被 kill，如实）。
+        let poll = format!("test -f {}", sh_single_quote(&rc));
+        loop {
+            if cancel.is_cancelled() || Instant::now() >= deadline {
+                let cleanup = format!(
+                    "tmux kill-window -t {} 2>/dev/null; rm -f {} {} {}",
+                    sh_single_quote(&format!("{sel}:{TMUX_AGENT_WINDOW}")),
+                    sh_single_quote(&out),
+                    sh_single_quote(&rc),
+                    sh_single_quote(&format!("{rc}.tmp")),
+                );
+                let _ = crate::SessionManager::tmux_exec(self, &cleanup, 256).await;
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                return Err(Error::ExecTimeout);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            if let Some((_, Some(0))) = crate::SessionManager::tmux_exec(self, &poll, 64).await {
+                break;
+            }
+        }
+
+        // 3) 收割：`RC=<code>\nOUT\n<原样输出>`。cat 后即删——协议头保证输出
+        // 任意字节（无尾换行/含分隔串）都不粘连。cap 留协议头余量。
+        let reap = format!(
+            "printf 'RC='; cat {}; printf '\\nOUT\\n'; cat {}; rm -f {} {}",
+            sh_single_quote(&rc),
+            sh_single_quote(&out),
+            sh_single_quote(&rc),
+            sh_single_quote(&out),
+        );
+        let cap = opts.output_cap.unwrap_or(DEFAULT_OUTPUT_CAP);
+        let text = match crate::SessionManager::tmux_exec(self, &reap, cap + 64).await {
+            Some((t, _)) => t,
+            None => {
+                return Err(Error::InvalidInput(
+                    "tmux 专窗执行完成但收割失败（通道异常）".into(),
+                ))
+            }
+        };
+        let (stdout, exit_code) = split_tmux_exec_out(&text).ok_or_else(|| {
+            Error::InvalidInput("tmux 专窗执行收割文本不符合协议（远端异常）".into())
+        })?;
+        let conv = |s: String| -> (bool, String, bool) {
+            let (text, truncated) = truncate_utf8(&s, cap);
+            let (has_binary, text) = sanitize_utf8(&text);
+            (has_binary, text, truncated)
+        };
+        let (so_bin, so, so_trunc) = conv(stdout);
+        Ok(ExecResult {
+            exec_id: exec_id.clone(),
+            exit_code: Some(exit_code),
+            stdout: so,
+            // 2>&1 已合流；stderr 通道恒空（模型侧与 Fresh 合流语义一致）
+            stderr: String::new(),
+            has_binary: so_bin,
+            truncated: so_trunc,
+            duration: started.elapsed(),
+            approval: trace,
+        })
+    }
+
     /// C9（R43）：协作 admission 的会话侧包装——**仅** Agent 受此门（人类是主权者，
     /// 不经协作 gate）。停用/停用中/停用失败一律 `CollabDisabled`。
     fn admit_agent_actor(&self, actor: &Actor) -> Result<()> {
@@ -772,6 +963,16 @@ impl SessionHandle {
         if cmd.trim().is_empty() {
             return Err(Error::InvalidInput("empty command".into()));
         }
+        // tmux 联动二（Agent 分窗）：会话 attach 在 tmux 里时外壳已被 tmux client
+        // 取代、OSC 133 不再回流，Shell 模式原本必然 ShellIntegrationUnavailable。
+        // 此时不拒绝，改把命令落进 attach 会话的专用窗口（tinyssh-agent）执行：
+        // 用户切过去可旁观、当前窗口零污染、断线命令不死（tmux 服务端托管）。
+        // 仅 SSH 会话且确已 attach 才分流；未 attach 的世界一行行为不变。
+        let tmux_target = if opts.mode == ExecMode::Shell && self.kind == "ssh" {
+            self.tmux_attached.lock().unwrap().clone()
+        } else {
+            None
+        };
         // 1) 控制权与重确认检查（人类是主权者，永不被拦；限制只作用于 Agent）
         let reconfirm_verify = {
             let owner = *self.owner.lock().await;
@@ -874,6 +1075,9 @@ impl SessionHandle {
                                         &eval,
                                         true,
                                         opts.mode == ExecMode::Fresh,
+                                        tmux_target
+                                            .as_deref()
+                                            .map(|_| "【tmux：命令将进远端专属窗口（tinyssh-agent）执行，不延续当前终端现场】"),
                                         cancel.clone(),
                                     )
                                     .await?;
@@ -907,17 +1111,31 @@ impl SessionHandle {
         let deadline = Instant::now() + timeout_d;
         let result = match opts.mode {
             ExecMode::Shell => {
-                self.run_shell(
-                    actor,
-                    &exec_id,
-                    &effective_cmd,
-                    &opts,
-                    deadline,
-                    cancel.clone(),
-                    trace.clone(),
-                    started,
-                )
-                .await
+                if let Some(sess) = &tmux_target {
+                    self.run_tmux_window(
+                        &exec_id,
+                        &effective_cmd,
+                        &opts,
+                        deadline,
+                        cancel.clone(),
+                        trace.clone(),
+                        started,
+                        sess,
+                    )
+                    .await
+                } else {
+                    self.run_shell(
+                        actor,
+                        &exec_id,
+                        &effective_cmd,
+                        &opts,
+                        deadline,
+                        cancel.clone(),
+                        trace.clone(),
+                        started,
+                    )
+                    .await
+                }
             }
             ExecMode::Fresh => {
                 self.run_fresh(
@@ -975,7 +1193,8 @@ impl SessionHandle {
     /// 创建并等待审批决策（120s 超时 → ApprovalTimeout；接管 → Voided）。
     /// `editable`：该卡是否支持编辑后批准（exec true；转发/传输 false——
     /// 参数无法从编辑文本回解，T44 复核中-2）。`fresh`：Fresh 模式卡标注
-    /// 「不继承当前终端目录/环境」（C3 契约）。
+    /// 「不继承当前终端目录/环境」（C3 契约）。`scene_note`：场景注记追加在
+    /// 卡面摘要尾部（tmux 联动二的专窗执行同属「不延续现场」，如实标注）。
     pub async fn wait_approval(
         &self,
         actor: &Actor,
@@ -985,11 +1204,15 @@ impl SessionHandle {
         eval: &tinyssh_approval::Evaluation,
         editable: bool,
         fresh: bool,
+        scene_note: Option<&str>,
         cancel: CancellationToken,
     ) -> Result<(ApprovalTrace, Option<String>)> {
         let mut summary = target_summary(cmd);
         if fresh {
             summary.push_str("【Fresh：不继承当前终端目录/环境】");
+        }
+        if let Some(note) = scene_note {
+            summary.push_str(note);
         }
         let item = ApprovalItem {
             id: format!("a-{}", uuid::Uuid::new_v4()),
@@ -1637,7 +1860,12 @@ impl SessionHandle {
             return;
         }
         let center = self.center.clone();
-        if self.inject_integration().await {
+        let integrated = self.inject_integration().await;
+        // tmux 联动：启动命令排在集成批次之后（PTY 行规程先进先出，清屏后于
+        // 提示符处执行）；旧 shell 已死，我们对「已挂 tmux」的认知一并作废。
+        self.inject_startup_command().await;
+        *self.tmux_attached.lock().unwrap() = None;
+        if integrated {
             // 窗口 10s：冷容器 + 高负载下首个提示符可能很慢（实测 3s 不够）
             for _ in 0..200 {
                 if self.screen.lock().await.prompt_ready() {
@@ -1652,6 +1880,30 @@ impl SessionHandle {
         self.note_transition("重连成功，进入重确认（仅内置只读白名单可用）")
             .await;
         self.emit_state(SessionState::Reconfirming, None, None, None)
+            .await;
+    }
+
+    /// tmux 联动：主机启动命令下发（建连/重连共用；与 shell 集成开关无关——
+    /// 用户配置的命令就该执行）。写线缓冲在 PTY 行规程，登录完成后 shell 按序
+    /// 读取，无需等提示符；回显可见是设计使然（用户配置的命令就该被看见）。
+    pub async fn inject_startup_command(&self) {
+        let Some(sc) = self
+            .host
+            .startup_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+        else {
+            return;
+        };
+        let text = format!("{sc}\n");
+        {
+            let mut s = self.screen.lock().await;
+            s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+        }
+        let _ = self
+            .channel
+            .write(&crate::charset::encode(self.host.charset, &text))
             .await;
     }
 }
@@ -1706,6 +1958,57 @@ pub fn target_summary(cmd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sh_single_quote_is_layer_opaque() {
+        // tmux 联动二：命令串要穿过远端登录 shell + tmux 自身 /bin/sh -c 两层
+        // 解析——单引号内 $/反引号/双引号不得展开，嵌入单引号走 '\'' 三段式。
+        assert_eq!(sh_single_quote("git status"), "'git status'");
+        assert_eq!(
+            sh_single_quote("echo \"$HOME\" && `id`"),
+            "'echo \"$HOME\" && `id`'"
+        );
+        assert_eq!(sh_single_quote("it's"), "'it'\\''s'");
+        assert_eq!(sh_single_quote("a'b'c"), "'a'\\''b'\\''c'");
+        assert_eq!(sh_single_quote(""), "''");
+    }
+
+    #[test]
+    fn tmux_window_shell_orders_rc_after_tee() {
+        // 完成信号的正确性全押在顺序上：rc 走 .tmp、mv 在 tee 之后——
+        // mv 出现即 tee 已退出、输出文件完整（无竞态窗口）。
+        let s = tmux_window_shell("make -j4", "/tmp/.t.out", "/tmp/.t.rc");
+        assert!(s.starts_with("{ make -j4 2>&1;"));
+        assert!(s.contains("echo \"$?\" > /tmp/.t.rc.tmp;"));
+        assert!(s.contains("| tee /tmp/.t.out;"));
+        assert!(s.ends_with("; mv /tmp/.t.rc.tmp /tmp/.t.rc"));
+        // rc 的 mv 必须在 tee 之后（保序检查：子串位置）
+        assert!(s.find("| tee").unwrap() < s.find("; mv").unwrap());
+    }
+
+    #[test]
+    fn split_tmux_exec_out_survives_hostile_output() {
+        // 协议头之后的输出是任意的：无尾换行、含同形分隔串、多行——都不粘连。
+        assert_eq!(
+            split_tmux_exec_out("RC=0\nOUT\nhello\n"),
+            Some(("hello\n".into(), 0))
+        );
+        assert_eq!(split_tmux_exec_out("RC=127\nOUT\n"), Some(("".into(), 127)));
+        // 输出无尾换行（cat 直接拼上协议，不该截半）
+        assert_eq!(
+            split_tmux_exec_out("RC=2\nOUT\npartial"),
+            Some(("partial".into(), 2))
+        );
+        // 输出里再出现 "\nOUT\n"：首个分隔必是协议头（rc 行只能是数字）
+        assert_eq!(
+            split_tmux_exec_out("RC=1\nOUT\nfake\nOUT\ntail"),
+            Some(("fake\nOUT\ntail".into(), 1))
+        );
+        // 负退出码与垃圾文本
+        assert_eq!(split_tmux_exec_out("RC=-1\nOUT\nx"), Some(("x".into(), -1)));
+        assert_eq!(split_tmux_exec_out("garbage"), None);
+        assert_eq!(split_tmux_exec_out("RC=abc\nOUT\nx"), None);
+    }
 
     #[test]
     fn whitelist_only_single_simple_commands() {

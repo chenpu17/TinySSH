@@ -201,6 +201,7 @@ fn ssh_host() -> Host {
         charset: Charset::Utf8,
         shell_integration: None,
         jump_host_id: None,
+        startup_command: None,
     }
 }
 

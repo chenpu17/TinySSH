@@ -42,6 +42,7 @@ fn host_draft(
         charset: Charset::Utf8,
         shell_integration: None,
         jump_host_id: jump,
+        startup_command: None,
     }
 }
 

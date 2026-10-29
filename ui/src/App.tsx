@@ -27,6 +27,7 @@ import type {
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
   McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
   RestoreEntry, LocalShell, UpdateCheck, UpdaterInfo,
+  TmuxStatus,
 } from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
@@ -120,6 +121,9 @@ function sameJson<T>(prev: T, next: T): T {
 // 五轮架构：主机过滤/排序/相位文案已提升 app-data.ts（hostMatches/byName/phaseText），
 // 宿主与 hostbar.tsx 共用同一口径。
 
+// tmux 联动偏好键（恢复现场轮）：单键 JSON，见组件内 tmuxPrefs 注释。
+const SETTING_TMUX_PREFS = "tmux.v1.prefs";
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -129,6 +133,13 @@ export default function App() {
   // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
   // （P0 终端品质轮：webgl/liga 记住当前渲染器句柄——连字开关要在两者间热切换）
   const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement; feed: OutputFeed | null; webgl: WebglAddon | null; liga: LigaturesAddon | null }>>(new Map());
+  // ---- tmux 联动（恢复现场轮）----
+  // 恢复动作经 ref 供 applyStateEvent 调用（该回调定义在组件顶部、函数体晚于
+  // 恢复函数声明执行——deps 不引用即无 TDZ；同 dispatchRef 惯例）。
+  const restoreTmuxRef = useRef<((s: SessionInfo, name?: string, auto?: boolean) => Promise<void>) | null>(null);
+  const tmuxRestoringRef = useRef<Set<string>>(new Set()); // 在飞恢复去重（事件+轮询双路防重）
+  const tmuxProbedRef = useRef<Set<string>>(new Set());    // 每会话只静默探测一次
+  const tmuxPrefsRef = useRef<{ auto: Set<string>; last: Record<string, string>; declined: Record<string, number> }>({ auto: new Set(), last: {}, declined: {} });
   const [sid, setSid] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const sessionsRef = useRef<SessionInfo[]>([]);
@@ -138,6 +149,7 @@ export default function App() {
   // 事件应用：会话状态即时更新（免 3s 轮询盲窗）+ 重连计数推进；
   // 终态（Reconfirming/Disconnected/Connected/Closed）清除本会话在途计数
   const applyStateEvent = useCallback((ev: SessionStateEvent) => {
+    const prev = sessionsRef.current.find((x) => x.id === ev.session_id);
     setSessions((cur) => applyTabOrder(cur.map((s) => (s.id === ev.session_id ? { ...s, state: ev.state } : s))));
     setAutoReconn((cur) => {
       if (ev.state === "Reconnecting") {
@@ -145,6 +157,18 @@ export default function App() {
       }
       return cur?.sid === ev.session_id ? null : cur;
     });
+    // tmux 联动：勾了「下次断线自动恢复现场」的主机，断线→重连成功即静默恢复
+    //（真实域泵自动重连走这里——tauri 事件即时到达，prev 判定可靠；手动重连的
+    // 确定性路径在 reconnectSession 内，demo 域 300ms 轮询的 prev 竞态由彼兜住）。
+    // 延迟 1.2s 让重注入/启动命令先落定，capture-pane 才抓得到干净的目标窗格。
+    if (ev.state === "Reconfirming" && prev && (prev.state === "Disconnected" || prev.state === "Reconnecting")
+      && prev.kind === "ssh" && tmuxPrefsRef.current.auto.has(prev.host_id)
+      && !tmuxRestoringRef.current.has(ev.session_id)) {
+      window.setTimeout(() => {
+        const s = sessionsRef.current.find((x) => x.id === ev.session_id);
+        if (s) void restoreTmuxRef.current?.(s, undefined, true);
+      }, 1200);
+    }
   }, []);
   // 真实环境：session-state 事件（连接事件同款 transformCallback 通道）
   useEffect(() => {
@@ -2069,6 +2093,36 @@ export default function App() {
   const persistSetting = useCallback((key: string, value: string) => {
     if (inTauri) void invoke("set_setting", { key, value }).catch(() => {});
     else try { localStorage.setItem(key, value); } catch { /* demo 模式尽力而为 */ }
+  }, [inTauri]);
+
+  // ---- tmux 联动偏好（恢复现场轮）：单键 JSON 双域持久化（真实域 vault KV，
+  // demo 域 get/set_setting 同通路）----
+  // auto = 勾了「下次断线自动恢复现场」的主机集；last = 每主机最后 attach 的
+  // tmux 会话名（横幅单键直进）；declined = 点过「不用了」的主机时间戳（30 天
+  // 内不再在断线横幅里教——教一次就够，反复出现是打扰）。
+  const [tmuxPrefs, setTmuxPrefs] = useState<{ auto: Set<string>; last: Record<string, string>; declined: Record<string, number> }>({ auto: new Set(), last: {}, declined: {} });
+  useEffect(() => { tmuxPrefsRef.current = tmuxPrefs; }, [tmuxPrefs]);
+  useEffect(() => {
+    const load = inTauri
+      ? invoke("get_setting", { key: SETTING_TMUX_PREFS })
+      : Promise.resolve((() => { try { return localStorage.getItem(SETTING_TMUX_PREFS); } catch { return null; } })());
+    load.then((v) => {
+      if (!v) return;
+      try {
+        const j = JSON.parse(v) as { auto?: string[]; last?: Record<string, string>; declined?: Record<string, number> };
+        setTmuxPrefs({ auto: new Set(j.auto ?? []), last: j.last ?? {}, declined: j.declined ?? {} });
+      } catch { /* 坏值按空偏好 */ }
+    }).catch(() => {});
+  }, [inTauri]);
+  const updateTmuxPrefs = useCallback((fn: (p: { auto: Set<string>; last: Record<string, string>; declined: Record<string, number> }) => { auto: Set<string>; last: Record<string, string>; declined: Record<string, number> }) => {
+    setTmuxPrefs((cur) => {
+      const next = fn(cur);
+      tmuxPrefsRef.current = next;
+      const blob = JSON.stringify({ auto: [...next.auto], last: next.last, declined: next.declined });
+      if (inTauri) void invoke("set_setting", { key: SETTING_TMUX_PREFS, value: blob }).catch(() => {});
+      else try { localStorage.setItem(SETTING_TMUX_PREFS, blob); } catch { /* demo 尽力而为 */ }
+      return next;
+    });
   }, [inTauri]);
 
   // i18n 轮：切语言（设置面板唯一调用口）——写 t() 模块态 + App state 触发全树
@@ -4591,12 +4645,86 @@ export default function App() {
       } else {
         pushToast("ok", t("已重连 {0}——点击标签进入", s.host_name));
       }
+      // tmux 联动：勾了「下次自动」的主机，手动重连成功即静默恢复现场（确定性
+      // 路径——demo 域 300ms 轮询会让事件钩子的 prev 判定错过窗口；真实域泵自动
+      // 重连由 applyStateEvent 的事件钩子覆盖）。延迟 1.2s 等重注入/启动命令落定。
+      if (s.kind === "ssh" && tmuxPrefsRef.current.auto.has(s.host_id)
+        && !tmuxRestoringRef.current.has(s.id)) {
+        window.setTimeout(() => {
+          const sf = sessionsRef.current.find((x) => x.id === s.id);
+          if (sf) void restoreTmuxRef.current?.(sf, undefined, true);
+        }, 1200);
+      }
     } catch (e) {
       setConnError({ title: t("重连 {0} 失败", s.host_name), detail: friendlyError(e) });
     } finally {
       setReconnecting(null);
     }
   };
+
+  // ---- tmux 联动（恢复现场轮）：对用户的唯一承诺是「远端现场，断线也丢不了」----
+  // 恢复 = 重连全机器 + capture-pane 补史（写入本地 scrollback）+ 注入 attach，
+  // 一个按钮一次点击。auto=true（勾了「下次自动」的断线重连）时静默进行，失败
+  // 不打扰；核心侧注入带 2s 敲键守卫，绝不插队进用户正在输入的命令行。
+  const [tmuxBusy, setTmuxBusy] = useState<string | null>(null);
+  const attachTmux = (s: SessionInfo, name: string, windows: number, history: string | null, auto: boolean) => {
+    const go = () => {
+      invoke("tmux_attach", { sid: s.id, session: name, auto })
+        .then(() => {
+          updateTmuxPrefs((p) => ({ ...p, last: { ...p.last, [s.host_id]: name } }));
+          pushToast("ok", t("已恢复现场（tmux {0} · {1} 个窗口）", name, String(windows)));
+        })
+        .catch((e) => { if (!auto) pushToast("err", friendlyError(e)); });
+    };
+    // 二段式：先补史再 attach——attach 后 tmux 立刻重绘整屏，必须先把近史写进
+    // 本地 scrollback（capture-pane 行以 \n 分隔，xterm 需要 \r\n 防阶梯）。
+    if (history && history.trim()) {
+      const term = termsRef.current.get(s.id)?.term;
+      if (term) {
+        const body = "\r\n" + history.replace(/\r?\n/g, "\r\n");
+        term.write(body.endsWith("\r\n") ? body : body + "\r\n", go);
+        return;
+      }
+    }
+    go();
+  };
+  const restoreTmuxScene = async (s: SessionInfo, name?: string, auto = false) => {
+    if (tmuxRestoringRef.current.has(s.id)) return;
+    tmuxRestoringRef.current.add(s.id);
+    if (!auto) setTmuxBusy(s.id);
+    try {
+      const plan = await invoke("tmux_restore", { sid: s.id, session: name ?? null });
+      if (plan.target) {
+        attachTmux(s, plan.target.name, plan.target.windows, plan.history, auto);
+      } else if (!auto && plan.sessions.length === 0) {
+        // 目标已不在（会话被 kill/过期清单）：静默回退普通终端，如实说一句不弹错
+        pushToast("info", t("远端会话已不在（可能已被关闭）——已回到普通终端"));
+      }
+    } catch (e) {
+      if (!auto) pushToast("err", friendlyError(e));
+    } finally {
+      tmuxRestoringRef.current.delete(s.id);
+      if (!auto) setTmuxBusy(null);
+    }
+  };
+  restoreTmuxRef.current = restoreTmuxScene;
+
+  // tmux 静默探测：SSH 会话首次活着的窗口里打一发（exec_fresh 独立通道零屏污
+  // 染），结果进核心随 list_sessions 下发——断线横幅与 ⌘K 的数据源。失败不打扰，
+  // 横幅降级为普通重连呈现；核心保留上次结果，断线后再探也拿不到新的。
+  useEffect(() => {
+    for (const s of sessions) {
+      if (s.kind !== "ssh" || tmuxProbedRef.current.has(s.id)) continue;
+      if (s.state !== "Connected" && s.state !== "Reconfirming") continue;
+      tmuxProbedRef.current.add(s.id);
+      if (s.tmux) continue; // 核心已带清单（重连保留语义）
+      invoke("tmux_probe", { sid: s.id })
+        .then((st: TmuxStatus) => {
+          setSessions((cur) => applyTabOrder(cur.map((x) => (x.id === s.id ? { ...x, tmux: st } : x))));
+        })
+        .catch(() => { /* 保持无清单态，横幅按无 tmux 呈现 */ });
+    }
+  }, [sessions]);
 
   const takeover = async () => {
     if (!sid) return;
@@ -4941,6 +5069,15 @@ export default function App() {
   // 会话不再由所在面板隐含，故按 sid 回查主机名；会话已不在时回退短 id（如实不虚构）。
   const hostLabel = (sid?: string): string =>
     !sid ? "—" : sessions.find((s) => s.id === sid)?.host_name ?? sid.slice(0, 8);
+  // tmux 联动二（Agent 分窗）：活动会话已 attach tmux 时给 agent 面板一行说明
+  //（命令自动落远端专属窗口 tinyssh-agent——切过去可旁观、当前窗口不受打扰）。
+  // fleet 编排者跨主机不落专窗，不显示。
+  const activeTmuxAttached = sid
+    ? sessions.find((s) => s.id === sid)?.tmux_attached ?? null
+    : null;
+  const tmuxAgentNote = !fleetOpen && activeTmuxAttached
+    ? t("Agent 的命令会自动进远端专属 tmux 窗口（tinyssh-agent）执行——切过去即可旁观，当前窗口不受打扰。")
+    : null;
   // R35 rev 中-1：重试必须在**在场会话**内重跑（核心 retry_transfer 按旧 session_id
   // 取会话；会话不持久化，重启恢复的 Interrupted 其会话必然已不在 → SessionNotFound）。
   // 故仅当原会话仍在时给「重试」钮，否则如实告知（不渲染必死的钮）；pending- 占位卡
@@ -5017,6 +5154,20 @@ export default function App() {
         id: "rename-tab", group: t("当前会话"), title: t("重命名标签…"),
         run: () => setRenaming({ sid: active.id, value: tabNames[active.id] ?? active.host_name }),
       });
+      // tmux 联动：当前主机有 tmux 会话清单时给按需切换入口——会话管理器的最终
+      // 形态不是面板，是命令面板里几行按需出现的条目；无 tmux 时一个字都不多。
+      const atmux = active.kind === "ssh" ? active.tmux : null;
+      if (atmux?.available && atmux.sessions.length > 0
+        && (active.state === "Connected" || active.state === "Reconfirming")) {
+        for (const ms of atmux.sessions) {
+          items.push({
+            id: "tmux-" + ms.name, group: t("当前会话"),
+            title: t("切换到 tmux 会话：{0}（{1} 窗口）", ms.name, String(ms.windows)),
+            keywords: `tmux ${ms.name} attach 恢复 现场`,
+            run: () => { void restoreTmuxScene(active, ms.name); },
+          });
+        }
+      }
       items.push({
         id: "toggle-log", group: t("当前会话"),
         title: active.logging ? t("停止记录会话日志") : t("记录会话日志"),
@@ -5345,6 +5496,7 @@ export default function App() {
             width={agentWidth} fleet={fleetOpen}
             sid={fleetOpen ? "fleet" : sid}
             hostLabel={fleetOpen ? "跨主机编排" : hostLabel(sid ?? undefined)}
+            tmuxNote={tmuxAgentNote}
             pending={pendingApprovals} onDecide={decide}
             owner={owner} onDelegate={delegateEmbedded}
             autonomyOn={autonomy.some((g) => g.agent_id === EMBEDDED_AGENT_ID)}
@@ -5908,22 +6060,101 @@ export default function App() {
               </div>
             )}
           </div>
-          {current?.state === "Disconnected" && (
-            <div className="dead-overlay">
-              <div className="dead-banner">
-                <div><b>⛔ {t("会话已断开")}</b></div>
-                <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
-                  {t("画面是断开前的最后状态；键入已拦截，不会发送。")}
-                </div>
-                <div className="row" style={{ marginTop: 10 }}>
-                  <button disabled={reconnecting !== null} onClick={() => reconnectSession(current)}>
-                    {reconnecting === current.id ? t("重连中…") : t("重连恢复")}
-                  </button>
-                  <span className="dim" style={{ fontSize: 11 }}>{t("重连后进入重确认——旧现场待核实，可继续操作")}</span>
+          {current?.state === "Disconnected" && (() => {
+            // tmux 联动三态（恢复现场轮）：① 有最后 attach 记录或唯一会话 → 单键
+            // 「恢复现场」；② 首次见 tmux（未教过）或多个会话 → 内联挑选列表；
+            // ③ 无 tmux / 全不可知 → 原样「重连恢复」。教学只在最疼的时刻出现
+            // 一次，点「仅重连/不用了」30 天内不再问。
+            const tm = current.kind === "ssh" ? (current.tmux ?? null) : null;
+            const last = tmuxPrefs.last[current.host_id];
+            const declinedAt = tmuxPrefs.declined[current.host_id];
+            // 「不用了」30 天内整体压掉 tmux 横幅（回到普通重连形态）——教学只在
+            // 最疼的时刻出现一次；用户用过后（last 在）则永远不再算「教学」
+            const suppressed = !last && !!declinedAt && Date.now() - declinedAt < 30 * 86400e3;
+            const live = tm?.available && !suppressed ? tm.sessions : [];
+            const teach = live.length > 0 && !last;
+            const pick = (() => {
+              if (last) {
+                if (!live.length || live.some((x) => x.name === last)) return last;
+                if (live.length === 1) return live[0].name;
+                return null;
+              }
+              return live.length === 1 ? live[0].name : null;
+            })();
+            const autoOn = tmuxPrefs.auto.has(current.host_id);
+            const reconnectOnly = () => {
+              if (teach) updateTmuxPrefs((p) => ({ ...p, declined: { ...p.declined, [current.host_id]: Date.now() } }));
+              void reconnectSession(current);
+            };
+            const liveNames = live.map((x) => x.name).join("、");
+            return (
+              <div className="dead-overlay">
+                <div className="dead-banner">
+                  <div><b>⛔ {t("会话已断开")}</b></div>
+                  {pick ? (
+                    <>
+                      <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
+                        {teach
+                          ? t("检测到远端有 tmux 会话在运行（{0}）——里面的程序没停。", liveNames)
+                          : t("远端会话 {0} 仍在运行。", pick)}
+                      </div>
+                      <div className="row" style={{ marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+                        <button data-testid="tmux-restore-btn" disabled={tmuxBusy !== null || reconnecting !== null}
+                          onClick={() => { void restoreTmuxScene(current, pick); }}>
+                          {tmuxBusy === current.id ? t("正在恢复现场…") : t("恢复现场")}
+                        </button>
+                        <button data-testid="tmux-reconn-only-btn" disabled={reconnecting !== null} onClick={reconnectOnly}>
+                          {t("仅重连")}
+                        </button>
+                        <label className="dim" style={{ fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <input type="checkbox" checked={autoOn} data-testid="tmux-auto-chk"
+                            onChange={(e) => updateTmuxPrefs((p) => {
+                              const a = new Set(p.auto);
+                              if (e.target.checked) a.add(current.host_id); else a.delete(current.host_id);
+                              return { ...p, auto: a };
+                            })} />
+                          {t("下次断线自动恢复现场")}
+                        </label>
+                      </div>
+                      <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                        {t("重连后进入重确认——旧现场待核实，可继续操作")}
+                      </div>
+                    </>
+                  ) : live.length > 1 ? (
+                    <>
+                      <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
+                        {t("检测到远端有 tmux 会话在运行（{0}）——里面的程序没停。", liveNames)}
+                      </div>
+                      <div className="row" style={{ marginTop: 10, flexWrap: "wrap" }}>
+                        {live.map((x) => (
+                          <button key={x.name} data-testid={"tmux-pick-" + x.name}
+                            disabled={tmuxBusy !== null || reconnecting !== null}
+                            onClick={() => { void restoreTmuxScene(current, x.name); }}>
+                            {tmuxBusy === current.id ? t("正在恢复现场…") : `${t("恢复现场")}：${x.name}`}
+                          </button>
+                        ))}
+                        <button data-testid="tmux-reconn-only-btn" disabled={reconnecting !== null} onClick={reconnectOnly}>
+                          {t("仅重连")}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
+                        {t("画面是断开前的最后状态；键入已拦截，不会发送。")}
+                      </div>
+                      <div className="row" style={{ marginTop: 10 }}>
+                        <button disabled={reconnecting !== null} onClick={() => reconnectSession(current)}>
+                          {reconnecting === current.id ? t("重连中…") : t("重连恢复")}
+                        </button>
+                        <span className="dim" style={{ fontSize: 11 }}>{t("重连后进入重确认——旧现场待核实，可继续操作")}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
           {dragOver && (
             <div className="drop-overlay">
               <div className="drop-box">

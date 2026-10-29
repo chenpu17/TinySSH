@@ -37,6 +37,7 @@ fn draft() -> HostDraft {
         charset: Charset::Utf8,
         shell_integration: None,
         jump_host_id: None,
+        startup_command: None,
     }
 }
 

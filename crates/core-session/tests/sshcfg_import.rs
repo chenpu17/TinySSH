@@ -171,6 +171,7 @@ async fn c7_classification_skip_and_overwrite() {
             charset: Charset::Utf8,
             shell_integration: None,
             jump_host_id: None,
+            startup_command: None,
         },
     )
     .await

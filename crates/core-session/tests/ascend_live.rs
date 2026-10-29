@@ -159,6 +159,7 @@ async fn live_self_jump_via_ascend() {
                 username: user,
                 auth: AuthDraft::Password { password },
                 jump_host_id: Some(jid.clone()),
+                startup_command: None,
                 ..Default::default()
             },
         )
