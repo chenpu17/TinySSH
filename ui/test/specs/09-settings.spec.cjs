@@ -148,17 +148,17 @@ module.exports = {
     await page.waitForTimeout(500);
     const aboutPane = await paneTextOf(page, "settings-pane-about");
     ck.check("关于分区显示产品说明（TinySSH / 本地优先）", aboutPane.includes("TinySSH") && aboutPane.includes("本地优先"), aboutPane.slice(0, 80));
-    // 版本号轮：0.10.4（演示模式回退 package.json 同源；演示域无编译产物，
+    // 版本号轮：0.10.5（演示模式回退 package.json 同源；演示域无编译产物，
     // 「（… 编译）」段自动略去——真机由 get_build_time 注入）
     const ver = await page.textContent("[data-testid=about-version]");
-    ck.check("关于分区显示版本号 v0.10.4（无编译时间段）",
-      /TinySSH v0\.10\.4/.test(ver ?? "") && !/编译/.test(ver ?? ""), ver ?? "");
+    ck.check("关于分区显示版本号 v0.10.5（无编译时间段）",
+      /TinySSH v0\.10\.5/.test(ver ?? "") && !/编译/.test(ver ?? ""), ver ?? "");
     const author = await page.textContent("[data-testid=about-author]");
     ck.check("关于分区署名作者：陈普", author === "作者：陈普", author ?? "");
     // 版本号轮：标题栏应用名右侧常驻版本标签（同源 package.json 回退）
-    ck.check("标题栏应用名右侧显示版本标签 v0.10.4",
+    ck.check("标题栏应用名右侧显示版本标签 v0.10.5",
       await page.evaluate(() =>
-        /^v0\.10\.4$/.test(document.querySelector(".titlebar .tb-left .ver-tag")?.textContent.trim() ?? "")));
+        /^v0\.10\.5$/.test(document.querySelector(".titlebar .tb-left .ver-tag")?.textContent.trim() ?? "")));
 
     // 发布轮：关于卡常驻「导出诊断包」——demo 镜像返回演示路径说明，toast 带
     // 「打开所在文件夹」动作；demo 域 check_update 恒 hasUpdate=false，更新行不出现

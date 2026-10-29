@@ -110,5 +110,37 @@ module.exports = {
     await page.waitForTimeout(800);
     const c1 = await crumbs(page);
     ck.check("双击目录后面包屑加深（含 archive）", !!c1 && c1.includes("archive"), `实得「${c1}」`);
+
+    // ── Windows 全路径上传回归（2026-10-23 实锤）：拖拽/文件选择器给 C:\ 全反斜杠
+    // 路径，pathBasename 只切 "/" 时整个全路径被当文件名拼进 remote，远端落盘的
+    // 文件名是 Windows 全路径。pick 桩预置 Windows 风格路径，断言远端名只取 basename。
+    await page.evaluate(() => window.__demoInvoke?.("demo_pick_result", {
+      paths: ["C:\\Users\\demo\\Desktop\\report.docx", "/var/tmp/posix.txt"],
+    }));
+    await page.click("[data-testid=sftp-upload-btn]");
+    await page.waitForTimeout(900);
+    // 抽屉条件挂载——Escape 关过就重开（点 sb-transfer 是 toggle，先探再点）
+    const drawerOpen = await page.evaluate(() => !!document.querySelector("[data-testid=queue-drawer]"));
+    if (!drawerOpen) { await page.click("[data-testid=sb-transfer]"); await page.waitForTimeout(400); }
+    const uploadRow = (page, needle) => page.evaluate((n) => {
+      const row = [...document.querySelectorAll(".xfer-row")].find(
+        (r) => r.querySelector(".xfer-dir.up") && r.textContent.includes(n));
+      if (!row) return null;
+      const subs = row.querySelectorAll(".xfer-sub");
+      return { name: row.querySelector(".xfer-name")?.textContent ?? "", line: subs[subs.length - 1]?.textContent ?? "" };
+    }, needle);
+    const upWin = await uploadRow(page, "report.docx");
+    const winRemote = upWin ? upWin.line.split("→").pop().trim() : "";
+    ck.check("Windows 路径上传：卡片名只显示 basename",
+      upWin !== null && upWin.name === "report.docx", JSON.stringify(upWin));
+    ck.check("Windows 路径上传：远端名 = 浏览目录/basename（无反斜杠全路径）",
+      upWin !== null && winRemote.endsWith("/report.docx") && !winRemote.includes("\\"),
+      `remote=「${winRemote}」`);
+    const upPosix = await uploadRow(page, "posix.txt");
+    const posixRemote = upPosix ? upPosix.line.split("→").pop().trim() : "";
+    ck.check("POSIX 路径上传照常（回归不伤旧路）",
+      upPosix !== null && posixRemote.endsWith("/posix.txt") && !posixRemote.includes("\\"),
+      `remote=「${posixRemote}」`);
+    await page.evaluate(() => window.__demoInvoke?.("demo_pick_result", {}));
   },
 };

@@ -93,8 +93,10 @@ export const exitText = (code: string): string =>
 export const fmtBytes = (n: number): string =>
   n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 
-// 路径取文件名（本地与远端同用；末尾斜杠已过滤）
-export const pathBasename = (p: string): string => p.split("/").filter(Boolean).pop() ?? "file";
+// 路径取文件名（本地与远端同用；末尾斜杠已过滤）。分隔符必须 POSIX/Windows 双认——
+// Windows 拖拽与文件选择器给 C:\dir\f.ext 全反斜杠路径，只切 "/" 会把整个全路径
+// 当文件名拼进 remote（2026-10-23 实锤：远端落盘文件名是 Windows 全路径）
+export const pathBasename = (p: string): string => p.split(/[\\/]+/).filter(Boolean).pop() ?? "file";
 
 // 审计动作 → 中文描述（未知动作原样显示）。全仓 29 个动作对齐清点过
 // （五人走查·阿紫：「我 forward_start」裸英文漏出）——新动作必须两边同步补。
