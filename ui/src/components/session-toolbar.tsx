@@ -8,7 +8,7 @@ import { stateLabel } from "../app-data";
 import { t } from "../i18n";
 import type { SplitPanes } from "../app-data";
 import {
-  IconChevronDown, IconFolder, IconInbox, IconSearch, IconSplit,
+  IconChevronDown, IconFolder, IconInbox, IconSearch, IconSplit, IconTerminal,
 } from "../icons";
 
 export interface SessionToolbarProps {
@@ -43,6 +43,12 @@ export interface SessionToolbarProps {
   openBroadcast: () => void;
   /** 本机监控轮：存在非本地会话才提供端口转发入口（纯本机时收起，能力无意义） */
   canForward: boolean;
+  /** tmux 快接（恢复现场轮加映）：菜单开合与锚点；onRefreshTmux 开菜单时重探清单 */
+  tmuxMenu: boolean;
+  setTmuxMenu: Dispatch<SetStateAction<boolean>>;
+  tmuxMenuRef: { current: HTMLDivElement | null };
+  onPickTmux: (name: string) => void;
+  onRefreshTmux: () => void;
 }
 
 export function SessionToolbar({
@@ -52,6 +58,7 @@ export function SessionToolbar({
   exitSplit, openDelegate, takeover, takeoverStop,
   openSessionDetail, toggleSessionLog, requestCloseSession,
   broadcastArmed, openBroadcast, canForward,
+  tmuxMenu, setTmuxMenu, tmuxMenuRef, onPickTmux, onRefreshTmux,
 }: SessionToolbarProps) {
   // 工具菜单开合的收口（原内联 setToolsOpen(false) 同款）
   const closeTools = () => setToolsOpen(false);
@@ -108,6 +115,38 @@ export function SessionToolbar({
           setSplitMenu((v) => !v);
         }}
       ><IconSplit size={15} /></button>
+      {/* tmux 快接钮（恢复现场轮加映）：主动接入的唯一常驻入口——断线横幅只在
+          最疼时刻出现，⌘K 要会背；这里给鼠标流一枚看得见的钮。仅 SSH 且探测到
+          tmux 才渲染（无 tmux 的主机一个像素都不多）；点开重探清单防陈旧。 */}
+      {sid && current.kind === "ssh" && current.tmux?.available && (
+        <div className="st-tools" ref={tmuxMenuRef} data-testid="tmux-quick">
+          <button
+            className={"ghost" + (tmuxMenu ? " ts-open" : "")}
+            aria-haspopup="menu"
+            aria-expanded={tmuxMenu}
+            title={current.tmux_attached
+              ? t("tmux：已接入 {0}——点开可切换到其他会话", current.tmux_attached)
+              : t("接入 tmux 会话：列出远端在跑的 tmux 会话，点选即恢复现场")}
+            onClick={() => {
+              const next = !tmuxMenu;
+              setTmuxMenu(next);
+              if (next) onRefreshTmux();
+            }}
+          ><IconTerminal size={14} />{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}<IconChevronDown size={12} /></button>
+          {tmuxMenu && (
+            <div className="tools-menu" role="menu" data-testid="tmux-quick-menu">
+              {(current.tmux?.sessions ?? []).map((ms) => (
+                <button
+                  key={ms.name}
+                  role="menuitem"
+                  data-testid={"tmux-quick-item-" + ms.name}
+                  onClick={() => onPickTmux(ms.name)}
+                >{t("{0}（{1} 窗口）", ms.name, String(ms.windows))}{current.tmux_attached === ms.name ? ` · ${t("当前")}` : ""}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <button
         className={"ghost st-collab" + (rightPanel === "collab" ? " ts-open" : "")}
         data-testid="tools-collab"

@@ -4987,6 +4987,43 @@ impl SessionManager {
     /// 门控）。auto=true（断线自动恢复）时用户 2s 内刚敲过键则静默跳过——与
     /// fish 补写同纪律，不插队进正在输入的命令行。行首空格：bash/zsh 默认
     /// HISTCONTROL 忽略空格前缀命令、fish 同理——恢复动作不该进用户 history。
+    /// 已 attach 会话的切换：绝不注入（前台 vim/claude 会把文本当输入吃掉——真机
+    /// 实测 claude code 把注入的 switch-client 当成自己的待执行命令；命令提示符
+    /// 注入也被证伪：原子写入前缀不生效、分段写入提示符 ~400ms 内自灭）。改走
+    /// 独立 SSH 通道指挥服务器：`switch-client -c <client> -t <target>`（v12 真机
+    /// 证：cat 占前台时 client 照常切、零字节进 pane）。client 定位=list-clients
+    /// 只看已 attach 会话上的客户端，**唯一才动**——多客户端（可能含他机同会话）
+    /// 绝不代切，如实报错交还用户。
+    async fn tmux_switch_client(h: &SessionHandle, sel: &str) -> Result<()> {
+        let cur = h.tmux_attached.lock().unwrap().clone().unwrap_or_default();
+        let cur_sel = Self::tmux_selector(h.tmux.lock().unwrap().version.as_deref(), &cur);
+        let list_cmd = format!("tmux list-clients -t '{cur_sel}' -F '#{{client_name}}'");
+        let clients: Vec<String> = match Self::tmux_exec(h, &list_cmd, 4096).await {
+            Some((o, Some(0))) => o
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect(),
+            _ => Vec::new(),
+        };
+        if clients.len() != 1 {
+            return Err(Error::InvalidInput(format!(
+                "该 tmux 会话有 {} 个客户端接入（可能含其他终端），切换需在 tmux 内直接进行（C-b s）",
+                clients.len()
+            )));
+        }
+        let sw = format!("tmux switch-client -c '{}' -t '{sel}'", clients[0]);
+        match Self::tmux_exec(h, &sw, 4096).await {
+            Some((_, Some(0))) => Ok(()),
+            Some((err, _)) => Err(Error::InvalidInput(format!(
+                "tmux 切换失败：{}",
+                err.trim().lines().next().unwrap_or("未知错误")
+            ))),
+            None => Err(Error::InvalidInput("切换命令未送达（连接不稳）".into())),
+        }
+    }
+
     pub async fn tmux_attach(&self, sid: &str, session: &str, auto: bool) -> Result<()> {
         let h = self.get(sid)?;
         if h.kind != "ssh" {
@@ -5014,21 +5051,24 @@ impl SessionManager {
         }
         // 已挂 tmux 的 shell 里 attach 会被拒绝（$TMUX 非空），须 switch-client；
         // 只信我们自己注入过的记录（用户手动 attach 不猜测——误判方向都会报错）。
-        let verb = if h.tmux_attached.lock().unwrap().is_some() {
-            "tmux switch-client"
-        } else {
-            "tmux attach"
-        };
+        // 切换走 tmux_switch_client（零注入指挥服务器）；只有首次 attach 走明文
+        // 注入——此时 PTY 在 shell 提示符（断线重连后必在提示符），行首空格不进
+        // history；前台是交互程序的首次 attach 场景立案未修（台账坑 84 段）。
+        let already = h.tmux_attached.lock().unwrap().is_some();
         let version = h.tmux.lock().unwrap().version.clone();
         let sel = Self::tmux_selector(version.as_deref(), name);
-        let text = format!(" {verb} -t '{sel}'\r");
-        {
-            let mut s = h.screen.lock().await;
-            s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+        if already {
+            Self::tmux_switch_client(&h, &sel).await?;
+        } else {
+            let text = format!(" tmux attach -t '{sel}'\r");
+            {
+                let mut s = h.screen.lock().await;
+                s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+            }
+            h.channel
+                .write(&charset::encode(h.host.charset, &text))
+                .await?;
         }
-        h.channel
-            .write(&charset::encode(h.host.charset, &text))
-            .await?;
         *h.tmux_attached.lock().unwrap() = Some(name.to_string());
         let _ = self.center.audit.append(
             &Actor::Human,

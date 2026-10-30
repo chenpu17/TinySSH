@@ -548,6 +548,7 @@ export default function App() {
   // R25 §322 分屏建立：复用已有会话（菜单直选）。「预武装下一次新建」模式已退役
   // （十一轮 §6.3 修订：对象先存在、操作跟上来——新建会话先落标签，右键标签进分屏）
   const [splitMenu, setSplitMenu] = useState(false);
+  const [tmuxMenu, setTmuxMenu] = useState(false);
   // 十一轮：标签右键菜单——按状态显隐的会话操作（分屏/重连/复制连接/详情/关闭）
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; sid: string } | null>(null);
   // 十一轮续：右键通道补全——主机卡（连接/收藏/编辑/删除）与终端区（复制/粘贴/全选）
@@ -2813,17 +2814,19 @@ export default function App() {
     else if (availW > th + 16) setTpFull(false);
   }, [availW, panelNeed, rightPanel, splitPanes]);
   const toolsRef = useRef<HTMLDivElement | null>(null);
+  const tmuxMenuRef = useRef<HTMLDivElement | null>(null);
   const tabsMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!toolsOpen && !tabsMenuOpen) return;
+    if (!toolsOpen && !tabsMenuOpen && !tmuxMenu) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (toolsOpen && !toolsRef.current?.contains(t)) setToolsOpen(false);
       if (tabsMenuOpen && !tabsMenuRef.current?.contains(t)) setTabsMenuOpen(false);
+      if (tmuxMenu && !tmuxMenuRef.current?.contains(t)) setTmuxMenu(false);
     };
     window.addEventListener("mousedown", onDown, true);
     return () => window.removeEventListener("mousedown", onDown, true);
-  }, [toolsOpen, tabsMenuOpen]);
+  }, [toolsOpen, tabsMenuOpen, tmuxMenu]);
   useEffect(() => {
     // resize 连发期间防抖 120ms（与终端 fit 防抖同节奏）：availW/tpFull 判定、
     // 文件菜单定位都不需要逐帧精度，不必按事件频率整树重渲染
@@ -2866,6 +2869,7 @@ export default function App() {
     if (termMenu) { setTermMenu(null); return true; }
     if (recentMenu) { setRecentMenu(null); return true; }
     if (splitMenu) { setSplitMenu(false); return true; }
+    if (tmuxMenu) { setTmuxMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
     if (showSettings) { closeSettings(); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
@@ -3526,7 +3530,7 @@ export default function App() {
   // 新建/快速连接（二轮拨壳成 hk-mask 全屏遮罩）与设置面板（pop-mask）同为遮罩模态，
   // 巡检补进列表：此前不在列——对话框开着 Ctrl+W/⌘1-9/F11 仍在遮罩后执行
   // （关标签/切标签/把窗口切全屏），Ctrl+T 还会把快速连接里已填的表单悄悄换成新建。
-  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || osc52Ask || splitMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
+  const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || osc52Ask || splitMenu || tmuxMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
     || showAddHost || showQuickConnect || showSettings);
   modalRef.current = modal;
 
@@ -4762,7 +4766,11 @@ export default function App() {
       if (s.kind !== "ssh" || tmuxProbedRef.current.has(s.id)) continue;
       if (s.state !== "Connected" && s.state !== "Reconfirming") continue;
       tmuxProbedRef.current.add(s.id);
-      if (s.tmux) continue; // 核心已带清单（重连保留语义）
+      // 坑 83：真实核心对 SSH 会话无条件回 Some(TmuxStatus)（未探测=available:false
+      // 默认值）——判 `s.tmux` 真值会让静默探针在真域一次都不发（demo 未探测是
+      // null，套件全绿纯属镜像语义差异）。必须判 available；每会话只探一次由
+      // 上面的 probedRef 守卫（available=false 探过也不会重发）。
+      if (s.tmux?.available) continue; // 核心已带可用清单（重连保留语义）
       invoke("tmux_probe", { sid: s.id })
         .then((st: TmuxStatus) => {
           setSessions((cur) => applyTabOrder(cur.map((x) => (x.id === s.id ? { ...x, tmux: st } : x))));
@@ -4770,6 +4778,21 @@ export default function App() {
         .catch(() => { /* 保持无清单态，横幅按无 tmux 呈现 */ });
     }
   }, [sessions]);
+
+  // tmux 快接菜单（工具栏钮）：主动接入的唯一常驻入口。开菜单重探一发（静默探
+  // 测每会话只打一发，清单可能陈旧；exec_fresh 独立通道零屏污染）；点选走恢复
+  // 现场同链路（补史→attach/switch-client，prefs.last 同步记录）。
+  const refreshTmuxList = (s: SessionInfo) => {
+    invoke("tmux_probe", { sid: s.id })
+      .then((st: TmuxStatus) => {
+        setSessions((cur) => applyTabOrder(cur.map((x) => (x.id === s.id ? { ...x, tmux: st } : x))));
+      })
+      .catch(() => { /* 探测失败保留旧清单，不打扰 */ });
+  };
+  const pickTmuxSession = (s: SessionInfo, name: string) => {
+    setTmuxMenu(false);
+    void restoreTmuxScene(s, name);
+  };
 
   const takeover = async () => {
     if (!sid) return;
@@ -5929,6 +5952,9 @@ export default function App() {
             requestCloseSession={requestCloseSession}
             broadcastArmed={broadcastTargets.length} openBroadcast={() => setBroadcastOpen(true)}
             canForward={remoteOpen}
+            tmuxMenu={tmuxMenu} setTmuxMenu={setTmuxMenu} tmuxMenuRef={tmuxMenuRef}
+            onPickTmux={(name) => pickTmuxSession(current, name)}
+            onRefreshTmux={() => refreshTmuxList(current)}
           />
         )}
         {hostKeyQueue.length > 0 && (() => {

@@ -30,6 +30,19 @@ const activateTab = async (page, label) => {
 const hint = (page) =>
   page.evaluate(() => document.querySelector('[data-testid="agent-tmux-hint"]')?.textContent ?? null);
 
+// tmux_attached 随 3s 清单轮询下发（demo tmux_attach 只改后端不推事件）——提示行
+// 出现必须轮询等待；固定短等待是在跟轮询相位赌运气（坑 82 同族，坑 55 禁 waitForFunction）
+const waitHint = (page, timeout = 5500) =>
+  page.evaluate(async (tmo) => {
+    const dl = Date.now() + tmo;
+    while (Date.now() < dl) {
+      const v = document.querySelector('[data-testid="agent-tmux-hint"]')?.textContent ?? null;
+      if (v) return v;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return null;
+  }, timeout);
+
 module.exports = {
   title: "tmux Agent 分窗：tmux_attached 下发/agent 面板一行提示/无 attach 不显示/fleet 不显示/语言即时切换",
   async run({ page, ck }) {
@@ -62,13 +75,13 @@ module.exports = {
     // ── B. agent 面板一行小字提示（活动会话已 attach 才显示）──
     await page.click('[data-testid="rail-agent"]');
     await page.waitForTimeout(500);
-    const zh = await hint(page);
+    const zh = await waitHint(page);
     ck.check("agent 面板显示分窗提示（tinyssh-agent）",
       !!zh && zh.includes("tinyssh-agent"), zh ?? "无提示行");
     await activateTab(page, "prod-1");
     ck.check("活动会话未 attach tmux → 提示行消失", (await hint(page)) === null, await hint(page));
     await activateTab(page, "staging-1");
-    const zhBack = await hint(page);
+    const zhBack = await waitHint(page);
     ck.check("切回已 attach 会话 → 提示行复现",
       !!zhBack && zhBack.includes("tinyssh-agent"), zhBack ?? "无提示行");
 

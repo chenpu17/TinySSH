@@ -212,5 +212,36 @@ module.exports = {
       await page.evaluate(() => document.querySelector('[data-testid="startup-cmd-input"]')?.value));
     await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "保存修改").click());
     await page.waitForTimeout(600);
+
+    // ── G. 工具栏 tmux 快接钮（常驻主动入口）：ssh+探测到 tmux 才渲染；点开重探
+    // 清单、点选即恢复现场；attach 后钮面显示 tmux:work、菜单标「当前」；Esc 可关──
+    await activateTab(page, "tmux-host");
+    ck.check("工具栏出现 tmux 快接钮（未 attach 态，label=tmux）",
+      await page.evaluate(() => !!document.querySelector('[data-testid="tmux-quick"]')
+        && (document.querySelector('[data-testid="tmux-quick"] button')?.textContent ?? "").includes("tmux")
+        && !(document.querySelector('[data-testid="tmux-quick"] button')?.textContent ?? "").includes("tmux:")), "");
+    await page.click('[data-testid="tmux-quick"] button');
+    await page.waitForTimeout(500);
+    ck.check("快接菜单列出 work（点开重探清单）",
+      await page.evaluate(() => !!document.querySelector('[data-testid="tmux-quick-item-work"]')), "");
+    await page.click('[data-testid="tmux-quick-item-work"]');
+    ck.check("快接项点击=恢复现场（toast）", await waitToast(page, "已恢复现场（tmux work"), "");
+    // tmux_attached 随会话清单轮询下发（3s 一拍）——evaluate 内轮询等钮面换装（坑 55）
+    const labelOk = await page.evaluate(async () => {
+      const dl = Date.now() + 6000;
+      while (Date.now() < dl) {
+        if ((document.querySelector('[data-testid="tmux-quick"] button')?.textContent ?? "").includes("tmux:work")) return true;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      return (document.querySelector('[data-testid="tmux-quick"] button')?.textContent ?? "").includes("tmux:work");
+    });
+    ck.check("attach 后钮面显示 tmux:work", labelOk, "");
+    await page.click('[data-testid="tmux-quick"] button');
+    await page.waitForTimeout(500);
+    ck.check("菜单里 work 标「当前」",
+      (await page.evaluate(() => document.querySelector('[data-testid="tmux-quick-item-work"]')?.textContent ?? "")).includes("当前"), "");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(400);
+    ck.check("Esc 关快接菜单", await page.evaluate(() => !document.querySelector('[data-testid="tmux-quick-menu"]')), "");
   },
 };
