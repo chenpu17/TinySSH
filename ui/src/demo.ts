@@ -91,6 +91,8 @@ type PendingKey = {
 
 const demoState = {
   owner: "Agent" as "Human" | "Agent",
+  // 便携自更新轮：`?autoupdater` 场景旗标（见下方设置块）
+  autoupdaterFake: false,
   // R42（§6.7/D11）：已登记 Agent（真实核心 vault.list_agents）。mcp_status 由此投影，
   // issue_agent 追加——登记**不**转移任何会话控制权。`?fresh` 置空以复现「新装未启用」态。
   agents: [{ id: "opencode", label: "opencode（演示）" }] as { id: string; label: string }[],
@@ -355,6 +357,13 @@ if (typeof location !== "undefined" && location.search.includes("fresh")) {
 if (typeof location !== "undefined" && location.search.includes("disablefailed")) {
   demoState.collabEnabled = false;
   demoState.collabFailed = true;
+}
+// 便携自更新轮：`?autoupdater` 复现「可自动更新的 Windows 便携构建 + 有新版」——
+// updater_info 回 supported（channel=portable）、check_update 回有新版、
+// updater_install 桩回「已是最新」。真实换身/重启由真机走查覆盖，demo 不造假
+// 文件系统；?autoupdater 下启动 toast 同走「新版本已发布」路径，一并覆盖。
+if (typeof location !== "undefined" && location.search.includes("autoupdater")) {
+  demoState.autoupdaterFake = true;
 }
 
 // C10：live 帧格式 = <u64 LE seq（8 字节头）><原始字节>（与桥层一致，UI 剥头取 seq）
@@ -1317,8 +1326,26 @@ case "read_triggers": {
       return { count: n, path: "（演示模式不落盘；真实应用导出到 records-export\\records-<时间戳>.jsonl）" };
     }
     case "check_update": {
-      // 发布轮 demo 镜像：演示域永远无新版本（不造假升级提示），形状与真机一致
+      // 发布轮 demo 镜像：演示域永远无新版本（不造假升级提示），形状与真机一致。
+      // ?autoupdater 场景例外：与 updater_info 同旗标，检测/安装同一出处（真实
+      // 语义在 Rust 侧同源：check_update 改道时也读同一份清单）。
+      if (demoState.autoupdaterFake) {
+        return { current: "0.10.6", latest: "99.0.0", hasUpdate: true, url: "https://example.com/TinySSH/releases/tag/v99.0.0", error: null };
+      }
       return { current: "0.0.0", latest: null, hasUpdate: false, url: null, error: null };
+    }
+    case "updater_info": {
+      // 便携自更新轮 demo 镜像：默认无此命令（demo 无 updater，App 侧 catch 吞掉
+      // → 按钮不出现，与旧行为一致）；?autoupdater 场景回可自动更新的便携构建。
+      if (!demoState.autoupdaterFake) throw apiError("not_available", "demo 无 updater_info");
+      // platform 与真机同源取 std::env::consts::OS 的值（Windows 上是 "windows"）
+      return { configured: true, supported: true, platform: "windows", channel: "portable" };
+    }
+    case "updater_install": {
+      // ?autoupdater 场景桩：回「已是最新」（false）走「已是最新版本」toast 路径；
+      // 真实换身/重启不进 demo。无旗标时同 updater_info 如实拒绝。
+      if (!demoState.autoupdaterFake) throw apiError("not_available", "demo 无 updater_install");
+      return false;
     }
     case "export_diagnostics": {
       // 发布轮 demo 镜像：demo 无文件系统不落盘，路径如实说明（同 export_records 姿势）

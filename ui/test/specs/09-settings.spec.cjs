@@ -16,7 +16,7 @@ const themeAttr = (page) => page.evaluate(() => document.documentElement.dataset
 
 module.exports = {
   title: "设置对话框与分区",
-  async run({ page, ck }) {
+  async run({ page, ck, BASE }) {
     ck.check("主机栏底部有设置入口", await page.evaluate(() => !!document.querySelector(".hb-settings")));
     await openSettings(page);
 
@@ -174,5 +174,26 @@ module.exports = {
     await page.click("[data-testid=settings-close]");
     await page.waitForTimeout(500);
     ck.check("关闭后设置对话框消失", await page.evaluate(() => !document.querySelector("[data-testid=settings-close]")));
+
+    // 便携自更新轮：?autoupdater 场景——demo 镜像为「可自动更新的 win32 便携构建
+    // + 远端 v99.0.0」。更新行与自动更新钮出现；点按安装桩回「已是最新」，
+    // 走「已是最新版本」toast（真实换身/重启不进 demo，由真机走查覆盖）。
+    await page.goto(`${BASE}/?autoupdater`, { waitUntil: "networkidle" });
+    await page.waitForSelector(".hostbar", { timeout: 10000 });
+    await page.waitForTimeout(600);
+    ck.check("autoupdater 场景启动 toast 提示新版本 v99.0.0",
+      await page.evaluate(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("新版本 v99.0.0 已发布"))));
+    await openSettings(page);
+    await page.click("[data-testid=settings-cat-about]");
+    await page.waitForTimeout(500);
+    ck.check("autoupdater 场景关于卡出现更新行", await page.evaluate(() => !!document.querySelector("[data-testid=about-update]")));
+    const updRow = await page.textContent("[data-testid=about-update]");
+    ck.check("更新行带「打开发布页」与「自动更新」双钮",
+      (updRow ?? "").includes("打开发布页") && (updRow ?? "").includes("自动更新（下载并重启）"), updRow ?? "");
+    await page.click("[data-testid=about-update-auto]");
+    await page.waitForTimeout(400);
+    ck.check("点按自动更新走「已是最新版本」toast",
+      await page.evaluate(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("已是最新版本"))));
+    await page.click("[data-testid=settings-close]");
   },
 };

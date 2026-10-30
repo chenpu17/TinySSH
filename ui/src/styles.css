@@ -630,6 +630,22 @@ textarea {
 body.split-dragging { user-select: none; }
 body.split-drag-lr, body.split-drag-lr * { cursor: col-resize !important; }
 body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
+/* 分屏组命名（本轮）：组名胶囊叠分割条中央（10px 条身内绝对定位向两侧溢出）。
+   事件自持在 JSX：点/双击胶囊=改名，抓条身其余段=拖比例/双击复位。长名截断，
+   全名在 title；tb 分割条同理居中 */
+.pane-div .div-group { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 60vw; z-index: 2; }
+.div-group-name {
+  display: block; padding: 0 9px; border-radius: 999px; line-height: 18px;
+  font-size: 11px; color: var(--text-sub); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; cursor: text;
+  background: var(--panel2); border: 1px solid var(--border);
+}
+.div-group:hover .div-group-name { border-color: var(--border-hover); color: var(--text); }
+.split-group-rename {
+  display: block; width: 220px; max-width: 56vw; padding: 1px 9px; border-radius: 999px;
+  font-size: 11px; line-height: 16px; color: var(--text); outline: none;
+  background: var(--panel3); border: 1px solid var(--accent);
+}
 .term-session.pane-focused::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   box-shadow: inset 0 0 0 1px var(--accent-glow);

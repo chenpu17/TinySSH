@@ -795,10 +795,12 @@ export interface UpdateCheck {
 }
 
 /** 自动更新能力面（updater_info）：configured=构建带真公钥；supported=可自动更新
- * （V1 仅 macOS app.tar.gz 通道——Windows 便携 exe / Linux 无 AppImage 如实不支持，
- * 走 check_update + 发布页）。demo 域恒 null（按钮不出现）。 */
+ * （未配公钥的构建 / Linux 走 check_update + 发布页）。demo 域默认 null（按钮
+ * 不出现）；?autoupdater 测试场景例外（回 supported 的便携镜像）。 */
 export interface UpdaterInfo {
   configured: boolean;
   supported: boolean;
   platform: string;
+  /** 更新通道："plugin"=macOS 插件、"portable"=Windows 便携自替换、""=不可用。 */
+  channel: string;
 }

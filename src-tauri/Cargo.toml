@@ -42,6 +42,10 @@ anyhow = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
 tauri-plugin-updater = "2"
+# 便携版自更新（Windows 通道）：minisign 验签与 tauri-plugin-updater 同一
+# crate 同一格式（公钥/签名的 tauri 包装 = minisign 文本文件内容的 base64）。
+minisign-verify = "0.3"
+base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

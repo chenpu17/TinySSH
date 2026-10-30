@@ -821,8 +821,9 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                         onClick={() => { if (updateInfo.url) invoke("open_url", { url: updateInfo.url }).catch(() => {}); }}>
                         {t("打开发布页")}
                       </button>
-                      {/* updater 轮：只在可自动更新的构建出现（V1 macOS + 真公钥；
-                          Windows 便携/Linux 走发布页——能力面如实，不摆无效按钮 */}
+                      {/* updater 轮：只在可自动更新的构建出现（真公钥构建：mac
+                          插件通道 / Windows 便携自替换通道；Linux 与未配签名的
+                          构建走发布页——能力面如实，不摆无效按钮 */}
                       {updaterCap?.supported && (
                         <button className="ghost" data-testid="about-update-auto" style={{ marginLeft: 8 }}
                           disabled={updaterBusy} onClick={onAutoUpdate}>

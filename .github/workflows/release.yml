@@ -38,8 +38,8 @@ jobs:
       run:
         shell: bash
     # updater 轮：签名三件套经 secrets 注入（未配置 = 空串 = 本次发布无自动更新
-    # 清单，构建照常绿）。TAURI_UPDATER_PUBKEY 编译进 macOS 产物（build.rs），
-    # 其余平台不消费它——updater_info.supported 只在 macOS+真公钥为 true。
+    # 清单，构建照常绿）。TAURI_UPDATER_PUBKEY 经 build.rs 编译进全平台产物：
+    # macOS 插件通道与 Windows 便携自替换通道运行期都用它验签。
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -229,36 +229,58 @@ jobs:
           kill "$pid"
           echo "mac 启动冒烟 PASS（15s 存活，setup 正常，无 panic）"
 
-      - name: 自动更新签名与清单（macOS；未配 secrets 时如实跳过）
+      - name: 自动更新签名与清单片段（Windows 便携；未配 secrets 时如实跳过）
+        if: matrix.id == 'windows'
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "未配置 TAURI_SIGNING_PRIVATE_KEY —— 本次发布无自动更新清单"
+            exit 0
+          fi
+          npm i -g @tauri-apps/cli@2
+          set -e
+          f="dist/TinySSH_${VER}_windows_x64_portable.exe"
+          tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" "$f"
+          # 清单片段：本机产物条目（windows-x86_64），由 release 作业合并成
+          # latest.json。signature = .sig 文件原文（tauri signer 产出的 .sig
+          # 本身就是 minisign 文本的单行 base64，插件与应用内验签都直接消费）。
+          # 全程保持 set -e：片段写盘与 JSON 自检失败即本步骤失败，不留坏清单。
+          sig=$(cat "$f.sig")
+          printf '{"windows-x86_64": { "signature": "%s", "url": "https://github.com/%s/releases/download/%s/%s" }}' \
+            "$sig" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$(basename "$f")" \
+            > dist/updater-frag-windows.json
+          node -e "JSON.parse(require('fs').readFileSync('dist/updater-frag-windows.json','utf8')); console.log('windows 清单片段合法')"
+
+      - name: 自动更新签名与清单片段（macOS；未配 secrets 时如实跳过）
         if: matrix.id == 'macos'
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "未配置 TAURI_SIGNING_PRIVATE_KEY —— 本次发布无 latest.json（应用内不出现「自动更新」入口）"
+            echo "未配置 TAURI_SIGNING_PRIVATE_KEY —— 本次发布无自动更新清单（应用内不出现「自动更新」入口）"
             exit 0
           fi
-          npm i -g @tauri-apps/cli
+          npm i -g @tauri-apps/cli@2
           set -e
           for f in dist/TinySSH_${VER}_macos_*.app.tar.gz; do
             tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" "$f"
           done
-          set +e
-          # latest.json：tauri updater 清单（darwin-aarch64 / darwin-x86_64 双条目）
+          # 清单片段：本机产物条目（darwin-aarch64 / darwin-x86_64），由 release
+          # 作业合并成 latest.json。signature = .sig 文件原文（单行 base64，见
+          # windows 同名步骤注释）。全程 set -e（循环里用 if 而非 && 短路，
+          # 免得首元素时 [ ] 假值被 -e 误杀）。
           {
-            printf '{\n  "version": "%s",\n  "pub_date": "%s",\n  "platforms": {\n' \
-              "$VER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf '{'
             first=1
             for pair in "darwin-aarch64:TinySSH_${VER}_macos_arm64.app.tar.gz" \
                         "darwin-x86_64:TinySSH_${VER}_macos_x86_64.app.tar.gz"; do
               plat="${pair%%:*}"; file="${pair#*:}"
               sig=$(cat "dist/${file}.sig")
-              [ "$first" -eq 0 ] && printf ',\n'
-              printf '    "%s": { "signature": "%s", "url": "https://github.com/%s/releases/download/%s/%s" }' \
+              if [ "$first" -eq 0 ]; then printf ','; fi
+              printf '"%s": { "signature": "%s", "url": "https://github.com/%s/releases/download/%s/%s" }' \
                 "$plat" "$sig" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$file"
               first=0
             done
-            printf '\n  }\n}\n'
-          } > dist/latest.json
-          node -e "JSON.parse(require('fs').readFileSync('dist/latest.json','utf8')); console.log('latest.json 合法')"
+            printf '}'
+          } > dist/updater-frag-darwin.json
+          node -e "JSON.parse(require('fs').readFileSync('dist/updater-frag-darwin.json','utf8')); console.log('darwin 清单片段合法')"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -275,9 +297,36 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { pattern: "dist-*", merge-multiple: true, path: rel }
+      - name: 合并更新清单（updater-frag-* → latest.json；无片段如实跳过）
+        run: |
+          cd rel
+          VER="${GITHUB_REF_NAME#v}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export VER PUB_DATE
+          frags=$(ls updater-frag-*.json 2>/dev/null || true)
+          if [ -z "$frags" ]; then
+            echo "无 updater 清单片段（未配签名 secrets）——本次发布无 latest.json"
+            exit 0
+          fi
+          node -e '
+            const fs = require("fs");
+            const platforms = {};
+            for (const f of process.argv.slice(1)) {
+              Object.assign(platforms, JSON.parse(fs.readFileSync(f, "utf8")));
+            }
+            fs.writeFileSync("latest.json", JSON.stringify(
+              { version: process.env.VER, pub_date: process.env.PUB_DATE, platforms }, null, 2));
+          ' $frags
+          node -e "const m=JSON.parse(require('fs').readFileSync('latest.json','utf8')); if(!m.version||!Object.keys(m.platforms).length){process.exit(1)}; console.log('latest.json 合法（'+Object.keys(m.platforms).length+' 平台）')"
+          # 片段只服务合并，不进 Release 也不进 SHA256SUMS（sha256sum * 会收
+          # 目录内一切文件，残留在场会让用户 sha256sum -c 报孤儿条目）。
+          rm -f updater-frag-*.json
       - name: 校验和与发布说明
         run: |
           cd rel
+          # VER 补齐（曾随 v0.10.6 发出空 VER 的下载表——VER 原先只在 build 作业生效）
+          VER="${GITHUB_REF_NAME#v}"
+          export VER
           ls -l
           sha256sum * > SHA256SUMS.txt
           cat > notes.md <<EOF
@@ -301,7 +350,7 @@ jobs:
           EOF
           # updater 轮：latest.json 在场（配了签名 secrets）→ 自动更新说明；否则如实说明
           if [ -f latest.json ]; then
-            echo "- 自动更新：macOS（.app/.dmg 安装形态）在应用内 设置 → 关于 →「自动更新（下载并重启）」一键升级；Windows 便携版与 Linux 请从本页下载新产物替换。" >> notes.md
+            echo "- 自动更新：macOS（.app/.dmg 安装形态）与 Windows 便携版在应用内 设置 → 关于 →「自动更新（下载并重启）」一键升级；Linux 请从本页下载新产物替换。" >> notes.md
           else
             echo "- 自动更新：本次发布未配置更新签名（TAURI_SIGNING_* / TAURI_UPDATER_PUBKEY secrets 未设置），应用内不出现「自动更新」入口——请从本页手动下载更新。" >> notes.md
           fi

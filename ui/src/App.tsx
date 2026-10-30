@@ -196,6 +196,10 @@ export default function App() {
   const [splitDir, setSplitDir] = useState<SplitDir>("lr");
   const splitDirRef = useRef<SplitDir>("lr");
   const splitFracRef = useRef(0.5);
+  // 分屏组命名（本轮）：组=分屏对本身的命名层。splitGroupName 是用户自定义名
+  //（null=自动命名）；groupRenaming 非 null 表示改名中（值为编辑中的文本）
+  const [splitGroupName, setSplitGroupName] = useState<string | null>(null);
+  const [groupRenaming, setGroupRenaming] = useState<string | null>(null);
   // 把占比写进 #term 的 --split-frac（CSS 几何与分割条定位都吃这个变量）
   const applySplitFrac = useCallback(() => {
     const el = termRef.current;
@@ -569,6 +573,12 @@ export default function App() {
       return next;
     });
     setRenaming(null);
+  };
+  // 分屏组重命名提交（键盘契约与标签重命名同款）：清空提交=退回自动命名
+  const commitGroupRename = (value: string) => {
+    const v = value.trim();
+    setSplitGroupName(v ? v : null);
+    setGroupRenaming(null);
   };
   // —— 十五轮：标签拖拽排序；拖拽组合分屏轮起改 pointer 自定义拖拽 ——
   // 会话期内的显示顺序事实源；list_sessions 整表刷新（连接/断开触发）后仍按此序渲染。
@@ -1984,13 +1994,15 @@ export default function App() {
   // 发布轮：应用内版本检查（启动静默查一次 GitHub Release；有新版才 toast，
   // 关于卡常驻更新行）。任何失败折算 hasUpdate=false，静默不扰。
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
-  // updater 轮：自动更新能力面（demo 域恒 null → 关于卡不出现按钮）与安装 busy
+  // updater 轮：自动更新能力面（demo 域恒 null → 关于卡不出现按钮；?autoupdater
+  // 场景例外）与安装 busy
   const [updaterCap, setUpdaterCap] = useState<UpdaterInfo | null>(null);
   const [updaterBusy, setUpdaterBusy] = useState(false);
   const autoUpdate = useCallback(() => {
     if (updaterBusy) return;
     setUpdaterBusy(true);
-    // 成功路径：安装完成 app.restart()，不返回；Ok(false)=已是最新
+    // mac：安装完成 app.restart()，不返回；win：换身后受控重启，命令返回 Ok(true)；
+    // Ok(false)=已是最新
     invoke("updater_install")
       .then((changed) => {
         setUpdaterBusy(false);
@@ -2022,9 +2034,13 @@ export default function App() {
     );
     getVersion().then(setAppVersion).catch(() => {});
     invoke("get_build_time").then((t) => setBuildTime(t ?? null)).catch(() => {});
-    // updater 轮：能力面（supported 只在 macOS+真公钥构建为 true）
+    return un;
+  }, []);
+  // 发布轮/自更新轮：版本检查与能力面 demo 域也走镜像（桥层分流）——check_update
+  // 默认恒 hasUpdate=false；?autoupdater 场景可达「有新版 + 可自动更新」整条 UI 链
+  // （真实换身/重启只在 Tauri 域存在，demo 桩如实回「已是最新」）。
+  useEffect(() => {
     invoke("updater_info").then(setUpdaterCap).catch(() => {});
-    // 发布轮：启动静默查一次更新；有新版才 toast（demo 域镜像恒 hasUpdate=false）
     invoke("check_update").then((u) => {
       setUpdateInfo(u);
       if (u.hasUpdate && u.latest) {
@@ -2034,7 +2050,7 @@ export default function App() {
         });
       }
     }).catch(() => {});
-    return un;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const fontRef = useRef(FONT_DEFAULT);
   // —— P0 终端品质轮：外观五项 + 连字（vault settings KV，demo 退 localStorage，与字号同工艺）——
@@ -3200,6 +3216,8 @@ export default function App() {
   const detach = useCallback(() => {
     splitRef.current = null;
     setSplitPanes(null);
+    setSplitGroupName(null);
+    setGroupRenaming(null);
     setSid(null);
     sidRef.current = null;
     xtermRef.current = null;
@@ -3243,6 +3261,8 @@ export default function App() {
     if (!splitRef.current) return;
     splitRef.current = null;
     setSplitPanes(null);
+    setSplitGroupName(null); // 组随分屏散伙弃名，重分屏重新自动生成
+    setGroupRenaming(null);
     applyPanes();
     fitTerminal();
     checkSplitWidthRef.current();
@@ -3359,6 +3379,8 @@ export default function App() {
     if (sp?.second === id) {
       splitRef.current = null;
       setSplitPanes(null);
+      setSplitGroupName(null);
+      setGroupRenaming(null);
       // 关的正是焦点所在的副 pane：焦点回落主 pane（否则 sid 指向死会话、全屏黑）
       if (sidRef.current === id) {
         const next = termsRef.current.get(sp.main);
@@ -3375,6 +3397,8 @@ export default function App() {
     } else if (sp?.main === id) {
       splitRef.current = null;
       setSplitPanes(null);
+      setSplitGroupName(null);
+      setGroupRenaming(null);
       const next = termsRef.current.get(sp.second);
       if (next) {
         setSid(sp.second);
@@ -3424,6 +3448,8 @@ export default function App() {
       const survivor = dead.includes(sp.main) ? sp.second : sp.main;
       splitRef.current = null;
       setSplitPanes(null);
+      setSplitGroupName(null);
+      setGroupRenaming(null);
       const next = termsRef.current.get(survivor);
       if (next && (sidRef.current === null || dead.includes(sidRef.current))) {
         setSid(survivor);
@@ -5146,6 +5172,13 @@ export default function App() {
   const tmuxAgentNote = !fleetOpen && activeTmuxAttached
     ? t("Agent 的命令会自动进远端专属 tmux 窗口（tinyssh-agent）执行——切过去即可旁观，当前窗口不受打扰。")
     : null;
+  // 分屏组命名（本轮）：自动名=两成员显示名相连，渲染期从成员实时推导（成员替换/
+  // 交换自动名跟随）；splitGroupName 非空=用户改过名，钉住不跟随。散伙各出口弃名。
+  const memberLabel = (id: string) =>
+    tabNames[id] ?? sessions.find((x) => x.id === id)?.host_name ?? id;
+  const splitGroupLabel = splitPanes
+    ? (splitGroupName ?? `${memberLabel(splitPanes.main)} + ${memberLabel(splitPanes.second)}`)
+    : null;
   // R35 rev 中-1：重试必须在**在场会话**内重跑（核心 retry_transfer 按旧 session_id
   // 取会话；会话不持久化，重启恢复的 Interrupted 其会话必然已不在 → SessionNotFound）。
   // 故仅当原会话仍在时给「重试」钮，否则如实告知（不渲染必死的钮）；pending- 占位卡
@@ -5825,7 +5858,8 @@ export default function App() {
               title={`右侧还有 ${tabScroll.hiddenR} 个会话被收起——点击展开（⌘⇧] 可循环切换）`}
               onClick={() => scrollTabs(1)}>›</button>
           )}
-          {splitPanes && <button className="ghost" onClick={exitSplit}>退出分屏</button>}
+          {splitPanes && <button className="ghost" onClick={exitSplit}
+            title={splitGroupLabel ? t("退出分屏：解散「{0}」（两个会话都保留）", splitGroupLabel) : undefined}>退出分屏</button>}
           {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点） */}
           <button className="ghost" title={t("命令面板（Ctrl+K / ⌘K）")} aria-label={t("命令面板")} data-testid="palette-open"
             onClick={() => setPaletteOpen(true)}><IconSearch size={14} /></button>
@@ -6121,7 +6155,43 @@ export default function App() {
                 onPointerUp={onDivUp}
                 onPointerCancel={onDivUp}
                 onDoubleClick={resetSplitFrac}
-              />
+              >
+                {/* 分屏组命名（本轮）：组名胶囊叠分割条中央——事件自持，抓胶囊=改名
+                    （双击），抓条身=拖比例/双击复位。自动名随成员，自定义名钉住，
+                    散伙即弃 */}
+                <span className="div-group" data-testid="split-group-chip"
+                  title={t("分屏组：{0}（双击重命名）", splitGroupLabel ?? "")}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                >
+                  {groupRenaming !== null ? (
+                    <input
+                      className="split-group-rename"
+                      value={groupRenaming}
+                      autoFocus
+                      onFocus={(e) => e.currentTarget.select()}
+                      aria-label={t("重命名分屏组")}
+                      onChange={(e) => setGroupRenaming(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        // 编辑框内按键不冒泡（全局快捷键层会抢走 Enter/Escape）
+                        e.stopPropagation();
+                        // IME 组合期 Enter 是确认候选词，不提交重命名（§7.3 口径）
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                        if (e.key === "Enter") commitGroupRename(groupRenaming);
+                        else if (e.key === "Escape") setGroupRenaming(null);
+                      }}
+                      onBlur={() => commitGroupRename(groupRenaming)}
+                    />
+                  ) : (
+                    <span className="div-group-name"
+                      onDoubleClick={(e) => { e.stopPropagation(); setGroupRenaming(splitGroupLabel ?? ""); }}
+                    >{splitGroupLabel}</span>
+                  )}
+                </span>
+              </div>
             )}
             {/* 拖标签组合分屏：落点提示。高亮块 inset 吃 #term 的 --split-frac——
                 已分屏时高亮恰为真实窗格几何，未分屏（默认 .5）即为半区 */}
@@ -6290,6 +6360,7 @@ export default function App() {
             splitMenu={splitMenu} setSplitMenu={setSplitMenu} enterSplitWith={enterSplitWith}
             splitDir={splitDir} setSplitDir={(d) => { splitDirRef.current = d; setSplitDir(d); }}
             tabMenu={tabMenu} setTabMenu={setTabMenu} exitSplit={exitSplit}
+            splitGroupLabel={splitGroupLabel} setGroupRenaming={setGroupRenaming}
             stopRetry={stopRetry} reconnectSession={reconnectSession} setRenaming={setRenaming}
             toggleSessionLog={toggleSessionLog} openSessionLogFolder={openSessionLogFolder}
             openSessionDetail={openSessionDetail} requestCloseSession={requestCloseSession}

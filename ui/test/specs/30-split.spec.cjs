@@ -33,13 +33,19 @@ const paneGeom = (page) =>
     return { main: g(".pane-left, .pane-top"), second: g(".pane-right, .pane-bottom"), frac: f ? parseFloat(f) : null };
   });
 
-const divCenter = (page) =>
-  page.evaluate(() => {
+// 分割条上的取点：f=沿长轴的位置分数。组名胶囊叠在条身正中央（双击胶囊=改名），
+// 拖拽/双击复位必须抓条身两侧（f≤0.2 / ≥0.8）避开胶囊——「点胶囊=改名、点条身=
+// 拖比例/复位」是本轮定下的交互契约
+const divPoint = (page, f) =>
+  page.evaluate((frac) => {
     const d = document.querySelector(".pane-div");
     if (!d) return null;
     const r = d.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height };
-  });
+    const long = r.width >= r.height
+      ? { total: r.width, axis: "x" } : { total: r.height, axis: "y" };
+    const off = long.total * frac;
+    return { x: r.x + (long.axis === "x" ? off : r.width / 2), y: r.y + (long.axis === "y" ? off : r.height / 2) };
+  }, f);
 
 // staging-1 标签上的分屏钮文案（第一个标签可能是活动标签「已在主视图」，不可泛选）
 const splitBtnTitleOfStaging = (page) =>
@@ -95,8 +101,8 @@ module.exports = {
       g1.frac !== null && Math.abs(g1.frac - 0.5) < 0.02 && Math.abs((g1.main?.h ?? 0) - (g1.second?.h ?? 0)) <= 2,
       JSON.stringify(g1));
 
-    // ── 拖拽分割条上移 12%：主格变矮、frac 减小 ──
-    const c1 = await divCenter(page);
+    // ── 拖拽分割条上移 12%：主格变矮、frac 减小（抓条身 f=0.2 段，避开中央胶囊）──
+    const c1 = await divPoint(page, 0.2);
     const termH = await page.evaluate(() => document.getElementById("term").getBoundingClientRect().height);
     await page.mouse.move(c1.x, c1.y);
     await page.mouse.down();
@@ -107,8 +113,8 @@ module.exports = {
     ck.check("拖拽后占比减小（0.2≤frac<0.45）", g2.frac >= 0.2 - 1e-6 && g2.frac < 0.45, JSON.stringify(g2));
     ck.check("上格变矮、下格变高", g2.main.h < g1.main.h - 20 && g2.second.h > g1.second.h + 20, JSON.stringify(g2));
 
-    // ── 双击复位对半 ──
-    const c2 = await divCenter(page);
+    // ── 双击复位对半（条身 f=0.8 段——正中央是组名胶囊，双击它=改名）──
+    const c2 = await divPoint(page, 0.8);
     await page.mouse.move(c2.x, c2.y);
     await page.mouse.dblclick(c2.x, c2.y);
     await page.waitForTimeout(300);
@@ -127,8 +133,8 @@ module.exports = {
       divLr: !!document.querySelector(".pane-div.div-lr"),
     }));
     ck.check("旋转后变左右布局（分割条换向）", rot.left && rot.right && !rot.top && !rot.bottom && rot.divLr, JSON.stringify(rot));
-    // 横排下拖拽夹取下限：向左猛拖 80% 宽 → frac 夹在 0.2
-    const c3 = await divCenter(page);
+    // 横排下拖拽夹取下限：向左猛拖 80% 宽 → frac 夹在 0.2（抓条身 f=0.2 段）
+    const c3 = await divPoint(page, 0.2);
     const termW = await page.evaluate(() => document.getElementById("term").getBoundingClientRect().width);
     await page.mouse.move(c3.x, c3.y);
     await page.mouse.down();
@@ -209,6 +215,29 @@ module.exports = {
     const p3 = await paneNames();
     ck.check("落到自己所在格无操作", p3.main === "staging-1" && p3.second === "本机" && p3.focused === "本机", JSON.stringify(p3));
 
+    // ── 分屏组命名（本轮）：组=分屏对命名层——自动名=成员名相连、双击胶囊重命名、
+    //    自定义名钉住（成员替换不跟随）、散伙弃名（重分屏回自动名）──
+    const chipText = () => page.evaluate(() =>
+      document.querySelector('[data-testid="split-group-chip"] .div-group-name')?.textContent ?? null);
+    ck.check("组名胶囊在场且为自动名（成员名相连）", (await chipText()) === "staging-1 + 本机", (await chipText()) ?? "无胶囊");
+    const chipBox = await page.evaluate(() => {
+      const c = document.querySelector('[data-testid="split-group-chip"]');
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.dblclick(chipBox.x, chipBox.y);
+    await page.waitForTimeout(300);
+    ck.check("双击胶囊出改名框", !!(await page.evaluate(() => document.querySelector(".split-group-rename"))), "");
+    await page.keyboard.type("生产组");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+    ck.check("回车提交自定义组名（生产组）", (await chipText()) === "生产组", (await chipText()) ?? "无胶囊");
+    // 双击胶囊改名不触发分割条复位：frac 仍为 0.2（③ 前的夹取值未被双击洗掉）
+    const fracAfterRename = await page.evaluate(() =>
+      parseFloat(document.getElementById("term")?.style.getPropertyValue("--split-frac") ?? "NaN"));
+    ck.check("胶囊双击不触发条身复位（frac 保持 0.2）", Math.abs(fracAfterRename - 0.2) < 0.02, `frac=${fracAfterRename}`);
+
     // ④ 屏外会话（prod-1）拖到主格 = 替换主格，布局方向不动。
     //    落点取 x=0.1：上轮分割条测试把 frac 留在 0.2，主格只占左侧 20% 宽
     await tabDrag("prod-1", 0.1, 0.5, "drop");
@@ -218,6 +247,7 @@ module.exports = {
     ck.check("屏外会话拖到主格=替换主格", p4.main === "prod-1" && p4.second === "本机", JSON.stringify(p4));
     ck.check("替换不动布局方向（仍 div-lr）", dirStillLr, "");
     ck.check("替换后焦点在落点格（prod-1）", p4.focused === "prod-1", JSON.stringify(p4));
+    ck.check("成员替换后自定义名钉住（仍生产组）", (await chipText()) === "生产组", (await chipText()) ?? "无胶囊");
 
     // ⑤ 拖到标签条空白处（非任何标签上）= 退出分屏，两会话保留
     const blank = await page.evaluate(() => {
@@ -239,6 +269,23 @@ module.exports = {
     await page.waitForTimeout(500);
     ck.check("拖到标签条空白=退出分屏且标签保留", (await paneCount(page)) === 0
       && await page.evaluate(() => document.querySelectorAll(".tab").length) >= 2);
+    ck.check("散伙后组名胶囊消失", !(await page.evaluate(() => !!document.querySelector('[data-testid="split-group-chip"]'))), "");
+
+    // ── 重分屏：自定义名不复活，回自动名；右键菜单入口也能改名，Esc 取消 ──
+    await tabDrag("staging-1", 0.9, 0.5, "drop");
+    await page.waitForTimeout(500);
+    ck.check("重分屏回自动名（旧自定义名已弃）", (await chipText()) === "prod-1 + staging-1", (await chipText()) ?? "无胶囊");
+    await rightClickTab(page, "staging-1");
+    ck.check("右键菜单有「重命名分组…」", await page.evaluate(() =>
+      [...document.querySelectorAll(".ctx-menu [role=menuitem]")].some((x) => x.textContent.includes("重命名分组"))), "");
+    await clickItem(page, "重命名分组");
+    await page.waitForTimeout(300);
+    ck.check("菜单入口打开改名框（预填当前组名）",
+      !!(await page.evaluate(() => document.querySelector(".split-group-rename")))
+      && (await page.evaluate(() => (document.querySelector(".split-group-rename") ?? {}).value)) === "prod-1 + staging-1", "");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    ck.check("Esc 取消改名（回自动名显示）", (await chipText()) === "prod-1 + staging-1", (await chipText()) ?? "无胶囊");
 
     // ⑥ 单会话无可组合对象：悬停不出提示、drop 不建屏
     const closeTab = async (namePart) => {

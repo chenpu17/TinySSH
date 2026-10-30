@@ -31,6 +31,9 @@ export interface CtxMenusProps {
   tabMenu: { x: number; y: number; sid: string } | null;
   setTabMenu: (v: { x: number; y: number; sid: string } | null) => void;
   exitSplit: () => void;
+  // 分屏组命名（本轮）：当前组名（自动名或自定义）+ 打开改名框（值=编辑文本）
+  splitGroupLabel: string | null;
+  setGroupRenaming: (v: string | null) => void;
   stopRetry: (s: SessionInfo) => Promise<void>;
   reconnectSession: (s: SessionInfo) => Promise<void>;
   setRenaming: (v: { sid: string; value: string }) => void;
@@ -73,7 +76,7 @@ export interface CtxMenusProps {
 export function CtxMenus({
   sessions, sid, hosts, hostMeta, connectingIds, splitPanes, tabNames, autoReconn,
   splitMenu, setSplitMenu, enterSplitWith, splitDir, setSplitDir,
-  tabMenu, setTabMenu, exitSplit, stopRetry, reconnectSession, setRenaming,
+  tabMenu, setTabMenu, exitSplit, splitGroupLabel, setGroupRenaming, stopRetry, reconnectSession, setRenaming,
   toggleSessionLog, openSessionLogFolder, openSessionDetail, requestCloseSession,
   hostMenu, setHostMenu, recentMenu, setRecentMenu, createSession, toggleFavorite,
   localShells, onLocalShell,
@@ -149,6 +152,11 @@ export function CtxMenus({
                     <button className="ghost sm-item" role="menuitem"
                       onClick={() => { close(); void enterSplitWith(s.id, splitDir === "tb" ? "lr" : "tb"); }}
                     >{t("改为{0}分屏", splitDir === "tb" ? t("左右") : t("上下"))}</button>
+                    {/* 分屏组命名（本轮）：改名框开在分割条胶囊上；清空提交=回自动名 */}
+                    <button className="ghost sm-item" role="menuitem" data-testid="ctx-rename-group"
+                      title={t("自定义分屏组名（清空恢复自动命名：成员名相连）")}
+                      onClick={() => { close(); setGroupRenaming(splitGroupLabel ?? ""); }}
+                    >{t("重命名分组…")}</button>
                   </>
                 ) : s.id !== sid && !!sid ? (
                   <button className="ghost sm-item" role="menuitem"
