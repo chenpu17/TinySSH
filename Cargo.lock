@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "core-session"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5492,7 +5492,7 @@ dependencies = [
 
 [[package]]
 name = "session-api"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6405,7 +6405,7 @@ dependencies = [
 
 [[package]]
 name = "term-core"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "alacritty_terminal",
  "chrono",
@@ -6539,7 +6539,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-app"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6575,7 +6575,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-approval"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "chrono",
  "regex",
@@ -6593,7 +6593,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-audit"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "chrono",
  "hex",
@@ -6611,7 +6611,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-cli"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -6638,7 +6638,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-mcp-server"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "axum",
  "chrono",
@@ -6667,7 +6667,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-records"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "chacha20poly1305",
  "chrono",
@@ -6681,7 +6681,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-shim"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "anyhow",
  "core-session",
@@ -6699,7 +6699,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-testbed"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "futures",
  "libc",
@@ -6715,7 +6715,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-vault"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -7027,7 +7027,7 @@ dependencies = [
 
 [[package]]
 name = "transport-pty"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
@@ -7044,7 +7044,7 @@ dependencies = [
 
 [[package]]
 name = "transport-ssh"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "anyhow",
  "async-trait",

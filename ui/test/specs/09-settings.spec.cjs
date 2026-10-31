@@ -148,17 +148,18 @@ module.exports = {
     await page.waitForTimeout(500);
     const aboutPane = await paneTextOf(page, "settings-pane-about");
     ck.check("关于分区显示产品说明（TinySSH / 本地优先）", aboutPane.includes("TinySSH") && aboutPane.includes("本地优先"), aboutPane.slice(0, 80));
-    // 版本号轮：0.10.6（演示模式回退 package.json 同源；演示域无编译产物，
-    // 「（… 编译）」段自动略去——真机由 get_build_time 注入）
+    // 版本号轮：断言从 package.json 动态取（演示模式回退 package.json 同源；演示域无编译产物，
+    // 「（… 编译）」段自动略去——真机由 get_build_time 注入）——升版不再需要改这里
+    const pkgVer = require("../../package.json").version;
     const ver = await page.textContent("[data-testid=about-version]");
-    ck.check("关于分区显示版本号 v0.10.6（无编译时间段）",
-      /TinySSH v0\.10\.6/.test(ver ?? "") && !/编译/.test(ver ?? ""), ver ?? "");
+    ck.check(`关于分区显示版本号 v${pkgVer}（无编译时间段）`,
+      new RegExp(`TinySSH v${pkgVer.replace(/\./g, "\\.")}`).test(ver ?? "") && !/编译/.test(ver ?? ""), ver ?? "");
     const author = await page.textContent("[data-testid=about-author]");
     ck.check("关于分区署名作者：陈普", author === "作者：陈普", author ?? "");
     // 版本号轮：标题栏应用名右侧常驻版本标签（同源 package.json 回退）
-    ck.check("标题栏应用名右侧显示版本标签 v0.10.6",
-      await page.evaluate(() =>
-        /^v0\.10\.6$/.test(document.querySelector(".titlebar .tb-left .ver-tag")?.textContent.trim() ?? "")));
+    ck.check(`标题栏应用名右侧显示版本标签 v${pkgVer}`,
+      await page.evaluate((v) =>
+        new RegExp(`^v${v.replace(/\./g, "\\.")}$`).test(document.querySelector(".titlebar .tb-left .ver-tag")?.textContent.trim() ?? ""), pkgVer));
 
     // 发布轮：关于卡常驻「导出诊断包」——demo 镜像返回演示路径说明，toast 带
     // 「打开所在文件夹」动作；demo 域 check_update 恒 hasUpdate=false，更新行不出现
@@ -171,13 +172,13 @@ module.exports = {
     ck.check("演示域不出现新版本更新行", await page.evaluate(() => !document.querySelector("[data-testid=about-update]")));
 
     // 本轮：手动检测更新——启动自动检测之外的随时入口。demo 镜像恒已是最新，
-    // 点按出「已是最新（v0.10.6）」toast（带版本号，区别于自动更新的「已是最新版本」）
+    // 点按出「已是最新（v…）」toast（带版本号，区别于自动更新的「已是最新版本」）
     ck.check("关于卡有「检测更新」按钮",
       await page.evaluate(() => !!document.querySelector("[data-testid=about-check-update]")));
     await page.click("[data-testid=about-check-update]");
     await page.waitForTimeout(600);
-    ck.check("手动检测回「已是最新（v0.10.6）」toast",
-      await page.evaluate(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("已是最新（v0.10.6）"))));
+    ck.check(`手动检测回「已是最新（v${pkgVer}）」toast`,
+      await page.evaluate((v) => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes(`已是最新（v${v}）`)), pkgVer));
 
     // 关闭
     await page.click("[data-testid=settings-close]");
