@@ -170,6 +170,15 @@ module.exports = {
       (diagToast ?? "").includes("诊断包已导出") && (diagAct ?? "").includes("打开所在文件夹"), diagToast ?? "");
     ck.check("演示域不出现新版本更新行", await page.evaluate(() => !document.querySelector("[data-testid=about-update]")));
 
+    // 本轮：手动检测更新——启动自动检测之外的随时入口。demo 镜像恒已是最新，
+    // 点按出「已是最新（v0.10.6）」toast（带版本号，区别于自动更新的「已是最新版本」）
+    ck.check("关于卡有「检测更新」按钮",
+      await page.evaluate(() => !!document.querySelector("[data-testid=about-check-update]")));
+    await page.click("[data-testid=about-check-update]");
+    await page.waitForTimeout(600);
+    ck.check("手动检测回「已是最新（v0.10.6）」toast",
+      await page.evaluate(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("已是最新（v0.10.6）"))));
+
     // 关闭
     await page.click("[data-testid=settings-close]");
     await page.waitForTimeout(500);
@@ -194,6 +203,14 @@ module.exports = {
     await page.waitForTimeout(400);
     ck.check("点按自动更新走「已是最新版本」toast",
       await page.evaluate(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("已是最新版本"))));
+    // 本轮：手动检测在 autoupdater 场景补发「新版本 v99.0.0」toast——启动 toast
+    // 可能还在驻留（action 档 8s），断言靠计数增量防残留假绿（坑 77 同族）
+    const toastN = await page.evaluate(() => document.querySelectorAll(".toast").length);
+    await page.click("[data-testid=about-check-update]");
+    await page.waitForTimeout(700);
+    ck.check("手动检测在 autoupdater 场景补发「新版本 v99.0.0」toast",
+      await page.evaluate((n) => document.querySelectorAll(".toast").length > n
+        && [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("新版本 v99.0.0 已发布")), toastN));
     await page.click("[data-testid=settings-close]");
   },
 };

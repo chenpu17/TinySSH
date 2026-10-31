@@ -2013,6 +2013,31 @@ export default function App() {
         pushToast("err", t("自动更新失败：{0}", friendlyError(e)));
       });
   }, [updaterBusy, pushToast]);
+  // 本轮：手动检测更新——启动自动检测（上方 effect）之外随时可查；结果如实三态
+  //（新版本 toast/已是最新带版本号/检测失败原因），结果写回 updateInfo 让更新行即时出现
+  const [checkBusy, setCheckBusy] = useState(false);
+  const checkUpdateNow = useCallback(() => {
+    if (checkBusy) return;
+    setCheckBusy(true);
+    invoke("check_update")
+      .then((u: UpdateCheck) => {
+        // 检测失败不写回：启动检测已建立的更新行不因一次网络抖动被抹掉；
+        // 成功路径（含干净无更新）照常写回，更新行即时出现/消失
+        if (!u.error) setUpdateInfo(u);
+        if (u.hasUpdate && u.latest) {
+          pushToast("info", t("新版本 v{0} 已发布", u.latest), {
+            label: t("打开发布页"), title: u.url ?? "",
+            run: () => { if (u.url) invoke("open_url", { url: u.url }).catch(() => {}); },
+          });
+        } else if (u.error) {
+          pushToast("err", u.error);
+        } else {
+          pushToast("ok", t("已是最新（v{0}）", u.current));
+        }
+      })
+      .catch((e) => pushToast("err", friendlyError(e)))
+      .finally(() => setCheckBusy(false));
+  }, [checkBusy, pushToast]);
   // 发布轮：诊断包导出——固定落 <数据目录>/diagnostics/（无对话框），toast 带「打开所在文件夹」
   const [diagBusy, setDiagBusy] = useState(false);
   const exportDiagnostics = useCallback(() => {
@@ -6523,6 +6548,8 @@ export default function App() {
               updaterCap={updaterCap}
               updaterBusy={updaterBusy}
               onAutoUpdate={autoUpdate}
+              checkBusy={checkBusy}
+              onCheckUpdate={checkUpdateNow}
               autonomy={autonomy}
               onToggleAutonomy={toggleAutonomy}
               appearance={appearance}

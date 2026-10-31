@@ -47,6 +47,9 @@ interface SettingsPanelProps {
   updaterCap: UpdaterInfo | null;
   updaterBusy: boolean;
   onAutoUpdate: () => void;
+  // 本轮：手动检测更新（启动自动检测之外的随时入口；结果 toast 三态如实）
+  checkBusy: boolean;
+  onCheckUpdate: () => void;
   // 外观与字号/缩放
   appearance: Appearance;
   changeAppearance: (a: Appearance) => void;
@@ -158,7 +161,7 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({
   settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime, locale, onChangeLocale,
-  updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate,
+  updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   keymap, keymapRef, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
@@ -832,6 +835,18 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                       )}
                     </div>
                   ) : null}
+                  {/* 本轮：手动检测更新——启动自动检测之外的随时入口；结果三态如实
+                      （新版本 toast/已是最新带版本号/失败原因），结果写回后上方更新
+                      行即时出现 */}
+                  <div style={{ marginTop: 6 }}>
+                    <button className="ghost" data-testid="about-check-update"
+                      disabled={checkBusy} onClick={onCheckUpdate}>
+                      {checkBusy ? t("检测中…") : t("检测更新")}
+                    </button>
+                    <span className="dim" style={{ marginLeft: 8, fontSize: 11 }}>
+                      {t("启动时也会自动检测一次")}
+                    </span>
+                  </div>
                   {/* 发布轮：诊断包导出（报障附件，Rust 侧从源头封死泄露通道） */}
                   <div style={{ marginTop: 6 }}>
                     <button className="ghost" data-testid="diag-export-btn" disabled={diagBusy} onClick={onExportDiagnostics}>

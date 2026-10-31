@@ -7,6 +7,9 @@
 // 后端同构，拒绝走 HostKeyRejected）、未知命令显式报错（不再静默 null）。
 
 import { apiError } from "./adapter/errors";
+// 版本号直连 package.json（与 app-data 的 APP_VERSION 同一来源）而非导入 app-data：
+// app-data→bridge→demo 已成链，再反向导入会闭出 demo→app-data→bridge→demo 模块环
+import { version as pkgVersion } from "../package.json";
 import type { AttachOutput, DebugSubscriptions, ResyncOutput, ScreenCheckpoint, SessionStateEvent } from "./adapter/wire";
 type Handler = (data: Uint8Array) => void;
 
@@ -1330,9 +1333,11 @@ case "read_triggers": {
       // ?autoupdater 场景例外：与 updater_info 同旗标，检测/安装同一出处（真实
       // 语义在 Rust 侧同源：check_update 改道时也读同一份清单）。
       if (demoState.autoupdaterFake) {
-        return { current: "0.10.6", latest: "99.0.0", hasUpdate: true, url: "https://example.com/TinySSH/releases/tag/v99.0.0", error: null };
+        return { current: pkgVersion, latest: "99.0.0", hasUpdate: true, url: "https://example.com/TinySSH/releases/tag/v99.0.0", error: null };
       }
-      return { current: "0.0.0", latest: null, hasUpdate: false, url: null, error: null };
+      // current 吃 package.json 版本（与关于卡同源）——手动检测的
+      // 「已是最新（v…）」toast 要报出与界面一致的版本号，0.0.0 占位是假话
+      return { current: pkgVersion, latest: null, hasUpdate: false, url: null, error: null };
     }
     case "updater_info": {
       // 便携自更新轮 demo 镜像：默认无此命令（demo 无 updater，App 侧 catch 吞掉
