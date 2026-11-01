@@ -61,7 +61,7 @@ export function ConnDetail({ detail, detailErr, closeDetail, detailPanelRef, pus
                 <code data-testid="cd-sid">{detail.id}</code>
                 <button className="ghost" data-testid="cd-copy"
                   onClick={() => {
-                    (inTauri ? clipboard.writeText(detail.id) : navigator.clipboard?.writeText(detail.id))
+                    Promise.resolve(inTauri ? clipboard.writeText(detail.id) : navigator.clipboard?.writeText(detail.id))
                       .then(() => pushToast("ok", t("会话 ID 已复制")))
                       .catch(() => pushToast("err", t("复制失败——请手动选中复制")));
                   }}>{t("复制")}</button>

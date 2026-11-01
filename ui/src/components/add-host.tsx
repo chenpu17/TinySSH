@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, IdentityMeta, SshConfigPreview } from "../adapter/wire";
 import { friendlyError } from "../app-data";
@@ -12,7 +12,7 @@ const enterKey = (fn: () => void) => (e: ReactKeyboardEvent<HTMLInputElement>) =
 
 // prefill（C7/DF7.4）：导入面板「转手工表单」用预览载荷预填——upsert_host，零新命令。
 // 挂在居中对话框里（用户反馈二轮：220px 侧栏塞不下），onCancel 由对话框传「取消」钮。
-export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null; prefill?: SshConfigPreview | null; onCancel?: () => void }) {
+export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null; prefill?: SshConfigPreview | null; onCancel?: () => void; hosts?: Host[] }) {
   const editing = !!editHost;
   const [name, setName] = useState(editHost?.name ?? prefill?.name ?? "");
   const [address, setAddress] = useState(editHost?.address ?? prefill?.address ?? "");
@@ -41,6 +41,11 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
   const [knownIdentities, setKnownIdentities] = useState<IdentityMeta[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 校验失败聚焦出错字段（审查二轮 UX2-6②）：错误条 role=alert 播报，焦点跟过去
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  const addressRef = useRef<HTMLInputElement | null>(null);
+  const portRef = useRef<HTMLInputElement | null>(null);
+  const usernameRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     invoke("list_identities")
@@ -108,16 +113,34 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
     setErr(null);
     if (!name.trim() || !address.trim() || !username.trim()) {
       setErr(t("名称、地址、用户名都不能为空"));
+      (!name.trim() ? nameRef : !address.trim() ? addressRef : usernameRef).current?.focus();
       return;
     }
     // 地址格式校验（P2-3）：IP 或域名，不带协议/端口/路径——之前的乱码地址能一路存到「连接成功」
     if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
       setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10 或 server.example.com），不带端口与协议"));
+      addressRef.current?.focus();
       return;
     }
     const p = parseInt(port, 10);
     if (!Number.isInteger(p) || p <= 0 || p > 65535) {
       setErr(t("端口必须是 1–65535 的数字"));
+      portRef.current?.focus();
+      return;
+    }
+    // 重名/重址防呆（审查二轮 UX2-2）：此前重复提交静默成功，主机栏出现两张
+    // 一模一样的卡无从分辨。名称撞车一律拦；同地址+端口撞车（多账号录重）提示
+    // 直接用既有条目。编辑排除自身。
+    const nameDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.name === name.trim());
+    if (nameDup) {
+      setErr(t("已存在同名主机「{0}」——请换一个名称，或删除旧条目后再建", nameDup.name));
+      nameRef.current?.focus();
+      return;
+    }
+    const addrDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.address === address.trim() && h.port === p);
+    if (addrDup) {
+      setErr(t("同一地址和端口已有主机「{0}」——如需同一台机器请直接使用该条目", addrDup.name));
+      addressRef.current?.focus();
       return;
     }
     setBusy(true);
@@ -175,26 +198,26 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>{t("名称")}</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
+          <input ref={nameRef} value={name} onChange={(e) => setName(e.target.value)} autoFocus
             onKeyDown={enterKey(() => submit())}
             placeholder={t("例：我的服务器")} />
         </div>
         <div className="ah-field" style={{ flex: 2 }}>
           <label>{t("地址（IP 或域名）")}</label>
-          <input value={address} onChange={(e) => setAddress(e.target.value)}
+          <input ref={addressRef} value={address} onChange={(e) => setAddress(e.target.value)}
             onBlur={() => { if (!name.trim() && address.trim()) setName(address.trim()); }}
             placeholder={t("例：192.168.1.10 或 server.example.com")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label>{t("端口")}</label>
-          <input value={port} onChange={(e) => setPort(e.target.value)}
+          <input ref={portRef} value={port} onChange={(e) => setPort(e.target.value)}
             onKeyDown={enterKey(() => submit())} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>{t("用户名")}</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("例：ops 或 root")}
+          <input ref={usernameRef} value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("例：ops 或 root")}
             onKeyDown={enterKey(() => submit())} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
@@ -332,7 +355,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel }: { onSaved:
         <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
           placeholder={t("例：生产, 数据库")} onKeyDown={enterKey(() => submit())} />
       </div>
-      {err && <div className="err" style={{ marginTop: 6 }}>✕ {err}</div>}
+      {err && <div className="err" role="alert" style={{ marginTop: 6 }}>✕ {err}</div>}
       <div className="row" style={{ marginTop: 8 }}>
         {editing ? (
           <button disabled={busy} onClick={() => submit()}>{busy ? t("保存中…") : t("保存修改")}</button>

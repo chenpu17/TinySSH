@@ -857,10 +857,11 @@ async fn queue_busy_backpressure() {
         });
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    // 第 9 条=轮询式探针（CI 三档轮 starvation 根治）：slot 被阻塞器钉死时，探针
-    // 只有两种合法归宿——立即 QueueBusy（队列满）或挂进队列不返回（排队等槽；
-    // 审批门在取槽之后，不可能先到）。5s 未返回=已排队=证明成立；返回
-    // Ok/其他错误=队列未满（满载下 spawn 迟 poll 计数未齐）→ 等 200ms 重探。
+    // 第 9 条=单发探针（CI 三档轮 starvation 根治；审查三轮起改单次 match，
+    // 不再轮询重探）：slot 被阻塞器钉死时，探针只有两种合法归宿——立即
+    // QueueBusy（队列满）或挂进队列不返回（排队等槽；审批门在取槽之后，
+    // 不可能先到）。5s 未返回=已排队=判定成立；返回 Ok/其他错误=队列未满
+    // （满载下 spawn 迟 poll 计数未齐），单次判定如实落败走 assert。
     // 阻塞器 sleep 300（此前 6s 被实测饥饿拖穿→队列排空→级联审批假红），
     // manager 落幕关 PTY 不留残进程。
     let probe_fut = || {
@@ -871,25 +872,15 @@ async fn queue_busy_backpressure() {
                 .await
         })
     };
-    let mut r = Err(Error::InvalidInput("探针未发出".into()));
-    for _ in 0..12 {
-        match tokio::time::timeout(Duration::from_secs(5), probe_fut()).await {
-            Ok(Ok(Err(e @ Error::QueueBusy { .. }))) => {
-                r = Err(e);
-                break;
-            }
-            Ok(Ok(other)) => {
-                r = other;
-                break;
-            }
-            Ok(Err(join)) => panic!("探针任务 join 失败: {join:?}"),
-            Err(_elapsed) => {
-                // 5s 仍挂起=已排队：判定成立
-                r = Err(Error::QueueBusy { position: 9 });
-                break;
-            }
+    let r = match tokio::time::timeout(Duration::from_secs(5), probe_fut()).await {
+        Ok(Ok(Err(e @ Error::QueueBusy { .. }))) => Err(e),
+        Ok(Ok(other)) => other,
+        Ok(Err(join)) => panic!("探针任务 join 失败: {join:?}"),
+        Err(_elapsed) => {
+            // 5s 仍挂起=已排队：判定成立
+            Err(Error::QueueBusy { position: 9 })
         }
-    }
+    };
     assert!(
         matches!(r, Err(Error::QueueBusy { position: _ })),
         "期望 QueueBusy，得到 {r:?}"

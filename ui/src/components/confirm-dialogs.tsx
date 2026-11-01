@@ -83,7 +83,7 @@ export function ConfirmDialogs({
                       : <span className="warn">{t("无持久 Shell——委托后 Agent 只能走 exec 模式（不继承当前目录/环境）")}</span>}</div>
                 <div className="fact"><span className="dim">{t("现有授权范围")}</span>{" "}
                   {collabConfigured
-                    ? <span>{t("已接入 {0}；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）", mcp.agents.map((a) => a.label).join("、"))}</span>
+                    ? <span>{t("已接入 {0}；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）", mcp.agents.map((a) => a.label).join(t("、")))}</span>
                     : <span className="warn">{t("尚未登记任何 Agent")}</span>}</div>
               </div>
               <div className="ts-label" style={{ marginTop: 10 }}>{t("任务目标（可选）")}</div>
@@ -167,7 +167,7 @@ export function ConfirmDialogs({
               <div>
                 {t("活动会话 {0} 个", quitSummary.sessions.length)}
                 {quitSummary.sessions.length > 0 && (
-                  <>（{quitSummary.sessions.map((s) => s.host_name).join("、")}）</>
+                  <>{t("（{0}）", quitSummary.sessions.map((s) => s.host_name).join(t("、")))}</>
                 )}
                 {t("，转发 {0} 条。", quitSummary.forwards)}
               </div>

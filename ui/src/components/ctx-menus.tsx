@@ -1,6 +1,7 @@
 // 右键/弹出菜单群（App.tsx 拆分⑤）：分屏选择、标签右键、主机卡右键、终端区右键、
 // 最近连接行右键五个菜单 + 分屏退化提示。从 App.tsx 原样出仓，本文件只收 props
 // 呈现，零语义变更（定位夹取、遮罩关闭、动作分派全部保持原样）。
+import { useEffect } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { inTauri } from "../adapter/bridge";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
@@ -85,6 +86,28 @@ export function CtxMenus({
   splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen,
 }: CtxMenusProps) {
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
+  // 键盘可达（审查二轮 UX2-4）：菜单此前只能鼠标点——焦点不被捕获、无箭头导航，
+  // 纯键盘用户只能 Esc。菜单开即聚焦首项，↑↓ 在菜单项间循环（Enter 原生激活，
+  // Esc 仍走全局浮层链）；捕获段监听只拦方向键，其余键不动。
+  const menusOpen = !!(splitMenu || tabMenu || hostMenu || recentMenu || termMenu);
+  useEffect(() => {
+    if (!menusOpen) return;
+    const first = document.querySelector<HTMLElement>(".split-menu button:not(:disabled), .ctx-menu button:not(:disabled)");
+    first?.focus({ preventScroll: true });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const el = (e.target as HTMLElement | null)?.closest?.(".split-menu, .ctx-menu") as HTMLElement | null;
+      if (!el) return;
+      const items = [...el.querySelectorAll<HTMLElement>("button:not(:disabled)")];
+      if (items.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const i = items.indexOf(document.activeElement as HTMLElement);
+      items[e.key === "ArrowDown" ? (i + 1) % items.length : (i - 1 + items.length) % items.length].focus({ preventScroll: true });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [menusOpen, splitMenu, tabMenu, hostMenu, recentMenu, termMenu]);
   return (
     <>
       {splitMenu && (() => {
@@ -281,14 +304,14 @@ export function CtxMenus({
                     onClick={() => {
                       close();
                       const sel = en.term.getSelection();
-                      if (sel) (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
+                      if (sel) Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
                     }}
                   >{t("复制")}</button>
                 )}
                 <button className="ghost sm-item" role="menuitem"
                   onClick={() => {
                     close();
-                    (inTauri
+                    Promise.resolve(inTauri
                       ? clipboard.readText().then((txt) => pasteTextIntoRef.current(en.term, termMenu.sid, txt))
                       : navigator.clipboard?.readText().then((txt) => pasteTextIntoRef.current(en.term, termMenu.sid, txt))
                     ).catch(() => {});

@@ -40,9 +40,13 @@ mod ffi {
     }
     /// MIB_IFROW（iphlpapi IF-entry，SDK 稳定布局）：**无 dwSize 头**——首字段
     /// 256 WCHAR 名，第二字段 dwIndex（调用方填接口号，IPv4 接口号 1 基），
-    /// 之后一串 DWORD + 8+4 字节物理地址（尾 4 字节是对齐垫）+ 计数器区 +
-    /// 256 字节描述。曾按错误记忆加了 dwSize 头、漏了 dwIndex——GetIfEntry
-    /// 拿着偏移错位的「index」全查失败，静默全零。
+    /// 之后一串 DWORD + **8 字节**物理地址（SDK ifmib.h `MAXLEN_PHYSADDR == 8`，
+    /// 头文件注释自述「一直定义为 8；对某些介质不够但布局如此」——曾按错误记忆
+    /// 写 12 并脑补「尾 4 字节对齐垫」，admin_status 起全部字段错位 +4：in_octets
+    /// 读到的是 dwInUcastPkts（包数），网速列单位全错且量级差 4 倍+，FFI 无跨检
+    /// 静默走过）+ 计数器区 + 256 字节描述。曾按错误记忆加了 dwSize 头、漏了
+    /// dwIndex——GetIfEntry 拿着偏移错位的「index」全查失败，静默全零。
+    /// 下方 const 块把关键字段偏移钉死在 SDK 布局上，防再走样。
     #[repr(C)]
     pub struct MibIfRow {
         pub name: [u16; 256],
@@ -51,7 +55,7 @@ mod ffi {
         pub mtu: u32,
         pub speed: u32,
         pub phys_addr_len: u32,
-        pub phys_addr: [u8; 12],
+        pub phys_addr: [u8; 8],
         pub admin_status: u32,
         pub oper_status: u32,
         pub last_change: u32,
@@ -70,6 +74,15 @@ mod ffi {
         pub descr_len: u32,
         pub descr: [u8; 256],
     }
+    // 布局契约（SDK ifmib.h 逐字段累加：512 名 + 5×4 索引/类型/MTU/速率/地址长
+    // + 8 地址 + 后续 DWORD 串）——错位即编译期红，不再等真机网速「看起来能用」。
+    const _: () = {
+        assert!(std::mem::offset_of!(MibIfRow, admin_status) == 540);
+        assert!(std::mem::offset_of!(MibIfRow, oper_status) == 544);
+        assert!(std::mem::offset_of!(MibIfRow, in_octets) == 552);
+        assert!(std::mem::offset_of!(MibIfRow, out_octets) == 576);
+        assert!(std::mem::offset_of!(MibIfRow, descr) == 604);
+    };
     #[link(name = "kernel32")]
     extern "system" {
         pub fn GetSystemTimes(
@@ -187,9 +200,9 @@ pub fn snapshot() -> String {
 
 /// 遍历接口表，返回（in_octets 之和, out_octets 之和）。GetNumberOfInterfaces
 /// 的 IPv4 接口号是 **1 基**（1..=n），GetIfEntry 前填 row.index；环回
-///（type 24）不计。**不按 oper_status 过滤**：legacy GetIfEntry 在部分机器
-///（本机 Server 20348 实测）对正常网卡也报 NON_OPERATIONAL(0)——真值在
-/// 计数器里，过滤条件只会把数据全滤没。
+///（type 24）不计。**不按 oper_status 过滤**：legacy GetIfEntry 的 oper_status
+/// 历来不可靠（坑 60），且隧道/拨号 miniport 也承载真实流量——按状态过滤只会
+/// 把数据滤少；真值在计数器里。
 #[cfg(windows)]
 fn if_rows_octets() -> (u64, u64) {
     use ffi::*;

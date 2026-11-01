@@ -203,6 +203,16 @@ const DECISION_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 #[cfg(test)]
 const DECISION_TTL: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// 冲突裁决走向（conflict_resolve 返回值）：终态路径（跳过/上传覆盖阻止/取消/
+/// 作废/Agent 结构化失败）任务内部已收尾；RenameTo/Replace 由调用方继续编排
+/// （Replace=人类下载覆盖获批，stat=批准所见那份——提交窗复检 CAS 比对一致
+/// 才替换发布，变了重新裁决）。
+enum ResolveOutcome {
+    Terminal,
+    RenameTo(String),
+    Replace(TargetStat),
+}
+
 impl SessionManager {
     pub fn open(db_path: &Path) -> Result<Arc<Self>> {
         let vault = Arc::new(tinyssh_vault::Vault::open(db_path)?);
@@ -4811,12 +4821,15 @@ impl SessionManager {
     /// 各自报错到 stderr，stdout 为空 → available=false，对远端零副作用。
     /// 坑 80（真机 3.4 实测）：tmux format **不展开** `\t`——`ls -F` 吐的是字面
     /// 反斜杠 t，按真 tab 分列永得空清单（单测喂真 tab 假绿，坑 74 同类）。
-    /// 分隔符改 `|`（tmux 会话名只禁 `:` 与 `.`，`|` 安全）。
+    /// 分隔符改 `|`。tmux 会话名只禁 `:` 与 `.`——`|` 与「名叫 `tmux 5`」都合法，
+    /// 解析必须容忍（见 parse_tmux_probe：从右侧取数值段，版本行加形状闸）。
     const TMUX_PROBE_CMD: &str =
         "tmux -V; tmux ls -F '#{session_name}|#{session_windows}|#{session_attached}'";
 
-    /// 解析探针输出：首行 `tmux X.Y` → available+version；其余 `名\t窗口\t附着`
-    /// 行 → 会话清单。解析失败=无 tmux（available=false）。
+    /// 解析探针输出：`tmux X.Y` 版本行（**无 `|` 且不以数值段结尾**——会话名叫
+    /// `tmux 5` 产生的 `tmux 5|2|1` 不得当版本）→ available+version；其余行
+    /// `名|窗口|附着` **从右侧解析**（rsplitn）：窗口/附着恒为末两个数值段，
+    /// 会话名含 `|` 也不破。解析失败=无 tmux（available=false）。
     fn parse_tmux_probe(out: &str) -> session_api::TmuxStatus {
         let mut status = session_api::TmuxStatus {
             available: false,
@@ -4825,24 +4838,27 @@ impl SessionManager {
         };
         for line in out.lines() {
             let line = line.trim_end_matches('\r');
-            if let Some(rest) = line.strip_prefix("tmux ") {
-                if !rest.is_empty() && status.version.is_none() {
-                    status.available = true;
-                    status.version = Some(rest.to_string());
+            if status.version.is_none() {
+                if let Some(rest) = line.strip_prefix("tmux ") {
+                    if !rest.is_empty() && !rest.contains('|') {
+                        status.available = true;
+                        status.version = Some(rest.to_string());
+                        continue;
+                    }
                 }
-                continue;
             }
             if !status.available || line.is_empty() {
                 continue;
             }
-            let mut it = line.splitn(3, '|');
-            let (Some(name), Some(w), Some(a)) = (it.next(), it.next(), it.next()) else {
+            let mut it = line.rsplitn(3, '|');
+            let (Some(a), Some(w), Some(name)) = (it.next(), it.next(), it.next()) else {
                 continue;
             };
             let (Ok(windows), Ok(attached)) = (w.trim().parse::<u32>(), a.trim().parse::<u32>())
             else {
                 continue;
             };
+            let name = name.trim();
             if name.is_empty() {
                 continue;
             }
@@ -5411,6 +5427,9 @@ impl SessionManager {
 
             // ---- 预检（数据阶段前；冲突先裁决不白传字节）----
             let mut intent: Option<String> = None; // None=原目标名（新文件）；Some=keep-both 候选名
+                                                   // 人类下载覆盖获批（2026-10-30）：Some(stat)=批准所见那份，提交窗复检
+                                                   // CAS 比对一致才替换发布（变了重新裁决——覆盖授权只针对看到的文件）
+            let mut replace_approved: Option<TargetStat> = None;
             match SessionManager::ns_stat(&h2, is_upload, &plan.target).await {
                 Ok(st) => {
                     let tstat = Some(TargetStat {
@@ -5435,8 +5454,9 @@ impl SessionManager {
                     )
                     .await
                     {
-                        Some(cand) => intent = Some(cand),
-                        None => {
+                        ResolveOutcome::RenameTo(cand) => intent = Some(cand),
+                        ResolveOutcome::Replace(st) => replace_approved = Some(st),
+                        ResolveOutcome::Terminal => {
                             g.done();
                             return;
                         } // 终态已落（跳过/阻止/结构化失败）
@@ -5589,38 +5609,51 @@ impl SessionManager {
                         .into_owned()
                 };
                 // 复检（DF6.3 存在性+size+mtime）：发布路径一律复检；不一致一律按
-                // 新冲突（L3：显式 overwrite 只针对预检所见那份）
+                // 新冲突（L3：显式 overwrite 只针对批准所见那份——覆盖获批时 stat
+                // 一致即 CAS 通过直接替换发布，变了才重新裁决）
                 match SessionManager::ns_stat(&h2, is_upload, &final_path).await {
                     Ok(st) => {
                         let tstat = Some(TargetStat {
                             size: st.size,
                             mtime: st.mtime,
                         });
-                        match SessionManager::conflict_resolve(
-                            &mgr,
-                            &h2,
-                            &tid2,
-                            &cancel2,
-                            human_path,
-                            collision,
-                            is_upload,
-                            &final_path,
-                            tstat,
-                            "stat_changed_since_preflight",
-                            &plan.dir,
-                            &plan.name,
-                            &plan.temp,
-                            "recheck",
-                        )
-                        .await
-                        {
-                            Some(cand) => {
-                                intent = Some(cand);
-                                continue;
-                            }
-                            None => {
-                                g.done();
-                                return;
+                        if replace_approved.as_ref() != tstat.as_ref() {
+                            match SessionManager::conflict_resolve(
+                                &mgr,
+                                &h2,
+                                &tid2,
+                                &cancel2,
+                                human_path,
+                                collision,
+                                is_upload,
+                                &final_path,
+                                tstat,
+                                "stat_changed_since_preflight",
+                                &plan.dir,
+                                &plan.name,
+                                &plan.temp,
+                                "recheck",
+                            )
+                            .await
+                            {
+                                ResolveOutcome::RenameTo(cand) => {
+                                    // 换道 keep-both 即放弃覆盖授权：不清会泄漏到
+                                    // cand 路径（授权只属于被批准的那份目标）
+                                    replace_approved = None;
+                                    intent = Some(cand);
+                                    continue;
+                                }
+                                ResolveOutcome::Replace(st) => {
+                                    // CAS 闭环：批准所见=刚复检的这份，但决策窗内
+                                    // 目标仍可能被外部改动——必须回环重 stat 复验，
+                                    // 一致才落发布，变了重新裁决（与预检路径同编排）
+                                    replace_approved = Some(st);
+                                    continue;
+                                }
+                                ResolveOutcome::Terminal => {
+                                    g.done();
+                                    return;
+                                }
                             }
                         }
                     }
@@ -5717,6 +5750,11 @@ impl SessionManager {
                         let _ = h3.channel.publish_hardlink(&t3, &f3).await;
                     });
                     Ok(PublishOutcome::Ambiguous)
+                } else if !is_upload && replace_approved.is_some() {
+                    // 人类下载覆盖获批（复检 CAS 已过——目标仍是批准所见那份）：
+                    // 本地 rename 原子替换。Rejected（目标被占用等）→ 确未提交，
+                    // 走下方 Rejected 臂重裁决
+                    Ok(session_api::local_publish_replace(&plan.temp, &final_path))
                 } else {
                     SessionManager::ns_publish(&h2, is_upload, &plan.temp, &final_path).await
                 };
@@ -5742,6 +5780,18 @@ impl SessionManager {
                             let _ = h2.center.audit.append(
                                 &ctx2, "transfer_temp_clean_failed", Some(&sid2), None,
                                 serde_json::json!({"transfer": tid2, "temp": plan.temp, "error": e.to_string()}), None);
+                        }
+                        // 覆盖发布留痕（破坏性动作可追责）：记录批准所见 stat——
+                        // 与决策卡展示的那份对账
+                        if let Some(approved) = &replace_approved {
+                            let _ = h2.center.audit.append(
+                                &ctx2,
+                                "transfer_overwrite_published",
+                                Some(&sid2),
+                                Some(&remote2),
+                                serde_json::json!({"transfer": tid2, "target": final_path, "approved_stat": {"size": approved.size, "mtime": approved.mtime}}),
+                                None,
+                            );
                         }
                         // keepboth 发布名与请求目标不同：任务 dest 回写实际发布路径
                         // （账实相符——卡面/对账面不显示旧目标）
@@ -5811,11 +5861,17 @@ impl SessionManager {
                                 )
                                 .await
                                 {
-                                    Some(cand) => {
+                                    ResolveOutcome::RenameTo(cand) => {
+                                        // 同 recheck 臂：keep-both 清覆盖授权
+                                        replace_approved = None;
                                         intent = Some(cand);
                                         continue;
                                     }
-                                    None => {
+                                    ResolveOutcome::Replace(st) => {
+                                        replace_approved = Some(st);
+                                        continue;
+                                    }
+                                    ResolveOutcome::Terminal => {
                                         g.done();
                                         return;
                                     }
@@ -6224,7 +6280,9 @@ impl SessionManager {
     /// C6/R34：冲突共径（预检/复检/发布竞态三入口）。人类 → AwaitingDecision
     /// 决策卡；Agent → collision 处置（skip=Skipped / overwrite=ReplaceUnsupported
     /// 阻止 / fail（None）=ConflictDetected 结构化失败——永不进入待决态）。
-    /// 返回 Some(候选名)=KeepBoth 探位成功继续发布；None=已终态收尾。
+    /// 返回 RenameTo(候选名)=KeepBoth 探位成功继续发布；Replace(stat)=人类下载覆盖
+    /// 获批（stat=批准所见那份，提交窗复检 CAS 比对一致才替换发布）；Terminal=已
+    /// 终态收尾。
     #[allow(clippy::too_many_arguments)]
     async fn conflict_resolve(
         mgr: &Arc<SessionManager>,
@@ -6241,32 +6299,52 @@ impl SessionManager {
         orig_name: &str,
         temp: &str,
         _phase: &str,
-    ) -> Option<String> {
+    ) -> ResolveOutcome {
         if human {
             match mgr
-                .transfer_await_decision(tid, target_path, target_stat, reason, cancel)
+                .transfer_await_decision(tid, target_path, target_stat.clone(), reason, cancel)
                 .await
             {
-                None => None, // 取消/作废：终态已落
+                None => ResolveOutcome::Terminal, // 取消/作废：终态已落
                 Some(CollisionDecision::Skip) => {
                     SessionManager::cleanup_temp(h, is_upload, temp).await;
                     mgr.transfer_finish(tid, TransferStatus::Skipped, 0, None);
-                    None
+                    ResolveOutcome::Terminal
                 }
                 Some(CollisionDecision::Overwrite) => {
-                    // DF6.1 冻结：目标版本约束（CAS）原语不可得 → 覆盖发布一律阻止，
-                    // 原目标零改动；确未提交 → temp 清理
-                    SessionManager::cleanup_temp(h, is_upload, temp).await;
-                    let msg = Error::ReplaceUnsupported {
-                        capability: "target_version_constraint".into(),
+                    if is_upload {
+                        // DF6.1（上传面维持冻结）：远端无原子替换原语（SFTP v3 rename
+                        // 目标存在即败、posix-rename 扩展不在 russh-sftp 面）——覆盖
+                        // 发布阻止，原目标零改动；确未提交 → temp 清理
+                        SessionManager::cleanup_temp(h, is_upload, temp).await;
+                        let msg = Error::ReplaceUnsupported {
+                            capability: "target_version_constraint".into(),
+                        }
+                        .to_string();
+                        mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
+                        ResolveOutcome::Terminal
+                    } else {
+                        // 下载覆盖解冻（2026-10-30 用户拍板）：本地 rename 原子替换。
+                        // 信任模型不降级——覆盖只针对批准所见那份（stat 随决策卡展示），
+                        // 提交窗复检 CAS 比对一致才发、变化则重新裁决（调用方编排）。
+                        match target_stat {
+                            Some(st) => ResolveOutcome::Replace(st),
+                            None => {
+                                // 防御：决策卡只在目标存在时出现，stat 缺失按阻止收尾
+                                SessionManager::cleanup_temp(h, is_upload, temp).await;
+                                let msg = Error::ReplaceUnsupported {
+                                    capability: "target_version_constraint".into(),
+                                }
+                                .to_string();
+                                mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
+                                ResolveOutcome::Terminal
+                            }
+                        }
                     }
-                    .to_string();
-                    mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
-                    None
                 }
                 Some(CollisionDecision::KeepBoth) => {
                     match SessionManager::keep_both_candidate(h, is_upload, dir, orig_name).await {
-                        Ok(c) => Some(c),
+                        Ok(c) => ResolveOutcome::RenameTo(c),
                         Err(e) => {
                             SessionManager::cleanup_temp(h, is_upload, temp).await;
                             mgr.transfer_finish(
@@ -6275,7 +6353,7 @@ impl SessionManager {
                                 0,
                                 Some(e.to_string()),
                             );
-                            None
+                            ResolveOutcome::Terminal
                         }
                     }
                 }
@@ -6285,7 +6363,7 @@ impl SessionManager {
                 Some(CollisionDecision::Skip) => {
                     SessionManager::cleanup_temp(h, is_upload, temp).await;
                     mgr.transfer_finish(tid, TransferStatus::Skipped, 0, None);
-                    None
+                    ResolveOutcome::Terminal
                 }
                 Some(CollisionDecision::Overwrite) => {
                     SessionManager::cleanup_temp(h, is_upload, temp).await;
@@ -6294,7 +6372,7 @@ impl SessionManager {
                     }
                     .to_string();
                     mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
-                    None
+                    ResolveOutcome::Terminal
                 }
                 _ => {
                     // fail（MCP 缺省）：结构化冲突——预检所见那份的 stat 随错误返回
@@ -6305,7 +6383,7 @@ impl SessionManager {
                     }
                     .to_string();
                     mgr.transfer_finish(tid, TransferStatus::Failed, 0, Some(msg));
-                    None
+                    ResolveOutcome::Terminal
                 }
             }
         }
@@ -6621,6 +6699,25 @@ mod t44_tests {
         assert!(mixed.available);
         assert_eq!(mixed.sessions.len(), 1);
         assert_eq!(mixed.sessions[0].name, "ok");
+        // 名叫 `tmux 5` 的合法会话（tmux 只禁 `:` 与 `.`）：行形 `tmux 5|2|1`，
+        // 含 `|` 不得吃成版本行；老解析把它当版本 → 会话凭空消失 + version 被污染
+        let tricky = SessionManager::parse_tmux_probe("tmux 3.4\ntmux 5|2|1\nwork|1|0\n");
+        assert!(tricky.available);
+        assert_eq!(tricky.version.as_deref(), Some("3.4"));
+        assert_eq!(tricky.sessions.len(), 2);
+        assert_eq!(tricky.sessions[0].name, "tmux 5");
+        assert_eq!(
+            (tricky.sessions[0].windows, tricky.sessions[0].attached),
+            (2, 1)
+        );
+        // 会话名含 `|`（同样合法）：从右侧取数值段，名字完整保留
+        let piped = SessionManager::parse_tmux_probe("tmux 3.4\na|b|3|0\n");
+        assert_eq!(piped.sessions.len(), 1);
+        assert_eq!(piped.sessions[0].name, "a|b");
+        assert_eq!(
+            (piped.sessions[0].windows, piped.sessions[0].attached),
+            (3, 0)
+        );
     }
 
     /// 会话名选择器：≥3.1 用 `=` 精确匹配；3.0 及更老/版本不可知退普通名

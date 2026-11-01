@@ -3,6 +3,7 @@
 // 由用户批准/拒绝分岔）→ 摘要（markdown：标题/表格/长代码块/mermaid 图/公式，
 // 覆盖渲染规则）。
 // 明确标注「演练」不虚构真模型；状态机与计时在 agent-view.tsx。
+import { localeNow } from "./i18n";
 
 export interface MockScript {
   /** 审批前开场白（流式 markdown） */
@@ -143,3 +144,38 @@ export const WELCOME_MD = [
   "",
   "随便发一条消息，可以看到完整的交互形态：流式回复 → 工具审批卡（批准 / 拒绝）→ 结果摘要。",
 ].join("\n");
+
+/** Fleet 编排形态的演练欢迎语：不是每会话独立对话，措辞不能与 WELCOME_MD 混用 */
+export const FLEET_WELCOME_MD = [
+  "### Fleet 编排者（演练外壳）",
+  "",
+  "这里是**跨主机编排者**：一个对话调度所有会话的执行 agent，不隶属任何单一会话。",
+  "当前是**演练模式**：回复与工具卡都是脚本数据；配置真模型后，派发/汇总走真实执行。",
+  "",
+  "试试让它描述当前各会话的状态，或派发一条要多个会话配合的任务。",
+].join("\n");
+
+/** EN 演练欢迎语（UX2 走查 ④）：随界面语言在种子点选择；已入场的对话不回溯改写 */
+export const WELCOME_MD_EN = [
+  "### Built-in Agent (rehearsal shell)",
+  "",
+  "This is a per-session Agent conversation. You are in **rehearsal mode**: replies and tool cards are scripted data.",
+  "Configure an API Key under Settings → \"Agent access\" and switch to a real model — the same conversation/approval/record flow then runs for real.",
+  "",
+  "Send any message to see the full interaction shape: streaming reply → tool approval card (approve / reject) → result summary.",
+].join("\n");
+
+export const FLEET_WELCOME_MD_EN = [
+  "### Fleet orchestrator (rehearsal shell)",
+  "",
+  "This is the **cross-host orchestrator**: one conversation dispatches work to the execution agents of all sessions and belongs to no single session.",
+  "You are in **rehearsal mode**: replies and tool cards are scripted data; once a real model is configured, dispatch/summaries run for real.",
+  "",
+  "Try asking it to describe the current state of every session, or dispatch a task that needs several sessions to cooperate.",
+].join("\n");
+
+/** 演练欢迎语按界面语言分流（种子点渲染期调用，符合 i18n 铁律） */
+export function welcomeMd(fleet: boolean): string {
+  const en = localeNow() === "en";
+  return fleet ? (en ? FLEET_WELCOME_MD_EN : FLEET_WELCOME_MD) : en ? WELCOME_MD_EN : WELCOME_MD;
+}

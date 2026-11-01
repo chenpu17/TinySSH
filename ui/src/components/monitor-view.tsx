@@ -9,6 +9,7 @@
 import { IconGauge, IconPause, IconPlay, IconX } from "../icons";
 import { fmtGB, fmtRate, fmtUptime } from "../metrics";
 import { t } from "../i18n";
+import { stateLabel } from "../app-data";
 import { useMonitorSeries, retryMonitor, MON_POLL_SEC, type MonSeries } from "../monitor-store";
 import type { NpuChip } from "../npu";
 
@@ -197,7 +198,7 @@ const MonCard = ({ c, swGeneral, swNpu, onOpenSession }: {
           <span className="mon-lab">{t("磁盘")}</span>
           <Bar pct={v.diskPct} />
           <span className="mon-num">{v.diskPct != null ? `${v.diskPct}%` : "—"}</span>
-          <span className="mon-num dim mon-up">{t("运行 {0}", fmtUptime(v.uptimeSec))}</span>
+          <span className="mon-num dim mon-up">{t("运行 {0}", fmtUptime(v.uptimeSec, t))}</span>
         </div>
         {/* CPU 走势（开关轮补标签+时间轴）：此前光秃一条线没名没轴，用户认不出
             是什么——头部补「CPU 走势」+ 时间窗（右端=现在）；折线随样本数增长，
@@ -226,9 +227,9 @@ const MonCard = ({ c, swGeneral, swNpu, onOpenSession }: {
         <span className="mon-card-name">{label}</span>
         {c.dup > 1 && (
           <span className="mon-dup" data-testid="mon-dup"
-            title={t("{0} 条连接：{1}", c.dup, c.tabNames.join("、"))}>×{c.dup}</span>
+            title={t("{0} 条连接：{1}", c.dup, c.tabNames.join(t("、")))}>×{c.dup}</span>
         )}
-        {!connected && <span className="mon-state">{c.state === "Reconnecting" ? t("重连中…") : c.state}</span>}
+        {!connected && <span className={"mon-state " + stateLabel(c.state).cls}>{stateLabel(c.state).text}</span>}
       </button>
       <div className="mon-card-body">{body}</div>
     </div>

@@ -13,6 +13,7 @@ const paneTextOf = (page, testid) => page.evaluate((t) => {
   return e ? e.innerText.replace(/\n+/g, " | ") : "";
 }, testid);
 const themeAttr = (page) => page.evaluate(() => document.documentElement.dataset.chrome || "");
+const paletteAttr = (page) => page.evaluate(() => document.documentElement.dataset.theme || "");
 
 module.exports = {
   title: "设置对话框与分区",
@@ -48,6 +49,30 @@ module.exports = {
     await page.waitForTimeout(600);
     const light = await themeAttr(page);
     ck.check("点「浅色」后主题标记为 light", light === "light", `${dark} → ${light}`);
+
+    // ── 主题⑥轮：墨水屏族（e-ink：纸墨身份面 + 专项铲阴影/过渡/动画）──
+    ck.check("外观分区有「墨水屏」色板芯片",
+      await page.evaluate(() => !!document.querySelector('[data-testid="chrome-palette-eink"]')));
+    await page.evaluate(() => document.querySelector('[data-testid="chrome-palette-eink"]').click());
+    await page.waitForTimeout(600);
+    const einkTheme = await paletteAttr(page);
+    ck.check("点「墨水屏」后 data-theme=eink", einkTheme === "eink", `${light} → ${einkTheme}`);
+    // 专项块探针：裸 button 命中基础规则（自带 inset 阴影+0.12s 过渡），
+    // eink 下被铲成 none/0s——基础主题下非 none 非零，断言不恒真
+    const probe = await page.evaluate(() => {
+      const b = document.createElement("button");
+      document.body.appendChild(b);
+      const shadow = getComputedStyle(b).boxShadow;
+      const trans = getComputedStyle(b).transitionDuration;
+      b.remove();
+      return { shadow, trans };
+    });
+    ck.check("eink 专项：阴影铲平（裸按钮 box-shadow=none）", probe.shadow === "none", probe.shadow);
+    ck.check("eink 专项：过渡归零（裸按钮 transition-duration=0s）", probe.trans === "0s", probe.trans);
+    // 还原默认色板（东京夜），不把 eink 泄给后续断言
+    await page.evaluate(() => document.querySelector('[data-testid="chrome-palette-tokyo"]').click());
+    await page.waitForTimeout(400);
+    ck.check("还原：data-theme 回 tokyo", (await paletteAttr(page)) === "tokyo");
 
     // 字号
     ck.check("外观分区有字号控件", (await bodyText(page)).includes("字号"));

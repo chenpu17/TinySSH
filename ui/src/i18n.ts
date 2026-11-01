@@ -1,6 +1,8 @@
 // 界面语言（i18n 轮）：字典反转 t() 包裹——**中文原文即键**，EN 表查得到译英文，
 // 查不到原样透传（铺开是渐进的，缺口如实显示中文，不虚构半截翻译）。
-// 默认 zh：全部既有 spec 的中文断言零扰动。
+// 缺省：demo 域 zh（harness 对每个上下文固定 newContext({locale:"zh-CN"})，demo
+// 即便跟 OS 也不打穿断言——固定 zh 是 demo/真实两域行为隔离的确定性约定）；
+// 真实域首次启动（KV 无值）跟随 OS 语言，见 resolveInitialLocale/App.tsx localeP。
 // - 存储与既有设置同通路：vault settings KV（真实域）/ demo 镜像（演示域），
 //   键 ui.v2.locale；localStorage 只作 t() 模块初值的即时读（demo 域持久落点）。
 // - 刷新语义：t() 读模块级 current，locale 是 App 的 state——切换后 App 重渲染，
@@ -10,10 +12,14 @@
 
 export type Locale = "zh" | "en";
 
+export { resolveInitialLocale } from "./locale-resolver.mjs";
+
 export const SETTING_LOCALE = "ui.v2.locale";
 const LS_KEY = "ui.v2.locale";
 
-/** 模块初值：localStorage 即时读（真实域随后会被 KV 装载覆盖；demo 域这就是持久层）。 */
+/** 模块初值：localStorage 即时读（真实域随后会被 KV 装载覆盖或 OS 检测覆写；
+ *  demo 域这就是持久层）。**不在这里跟 OS**——headless 浏览器/CI 的
+ *  navigator.language 是 en-US，跟进会让全套中文断言翻车。 */
 export function readLocale(): Locale {
   try {
     return localStorage.getItem(LS_KEY) === "en" ? "en" : "zh";
@@ -217,9 +223,10 @@ const EN: Record<string, string> = {
   "界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）":
     "Zoom: Ctrl/⌘ + in · − out · 0 reset · Ctrl+wheel (native window)",
   "界面语言": "Interface language",
-  "中文（默认）": "中文 (default)",
+  "中文（简体）": "中文 (Simplified)",
   "English": "English",
   "切换立即生效；界面铺开翻译中，未覆盖文案保持中文。": "Applies immediately; translation coverage is growing — untranslated strings stay Chinese.",
+  "默认跟随系统语言，切换立即生效；未覆盖文案保持中文。": "Follows your system language by default; switches instantly. Untranslated text stays Chinese.",
 
   // —— 设置面板：快捷键 ——
   "应用快捷键": "App shortcuts",
@@ -496,7 +503,18 @@ const EN: Record<string, string> = {
   "重命名分屏组": "Rename split group",
   "改为{0}分屏": "Switch to {0} split",
   "放到{0}侧分屏（替换{0}格）": "Split into the {0} pane (replaces it)",
+  "放到{0}侧分屏": "Split into the {0} pane",
   "与当前会话分屏（放到{0}侧）": "Split with current session (into the {0})",
+  "与 {0} 分屏（{1}）": "Split with {0} ({1})",
+  "把 {0} 放到{1}侧分屏": "Move {0} into the {1} split pane",
+  "已在主视图": "Already the main pane",
+  "{0} 已在主视图": "{0} is already the main pane",
+  "退出分屏": "Exit split",
+  "关闭会话 {0}": "Close session {0}",
+  "，在分屏中": ", in a split view",
+  "，⌘{0}": ", ⌘{0}",
+  "右侧还有 {0} 个会话被收起——点击展开（⌘⇧] 可循环切换）": "{0} more sessions collapsed to the right — click to expand (⌘⇧] cycles)",
+  "跨主机编排": "Cross-host",
   "分屏（选择{0}侧会话）…": "Split (pick the {0} session)…",
   "新建一条同主机连接并放入{0}侧窗格（当前会话留在{1}侧）": "Opens a new connection to the same host in the {0} pane (current session stays {1})",
   "分屏：复制标签页到{0}侧（新会话）": "Split: duplicate tab to the {0} (new session)",
@@ -673,6 +691,7 @@ const EN: Record<string, string> = {
   "接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红":
     "Take over and additionally try to stop the agent's running commands; results are listed one by one — survivors are shown in red",
   "接管并停止任务": "Take over & stop tasks",
+  "接管并停止": "Take over & stop",
   "交还会话：Agent 恢复操作（后续请求重新走审批）。已作废的请求不会自动重发——Agent 会收到作废通知，由它决定是否重新提交":
     "Hand back: the agent resumes (later requests go through approval again). Voided requests are not re-sent — the agent is notified and decides whether to resubmit",
   "首次委托：把会话交给 Agent 执行。需在对话框中查看主机/会话/能力与现有授权范围后明确提交；取消不改动控制权":
@@ -749,7 +768,7 @@ const EN: Record<string, string> = {
   "命令块：最近命令时间线（shell 集成 OSC 133）": "Command blocks: recent-command timeline (shell integration OSC 133)",
   "块": "Blocks",
   "转发": "Forwards",
-  "传输队列（底部抽屉；后台事件只更新计数不自动展开）": "Transfer queue (bottom drawer; background events update the count without auto-expanding)",
+  "传输队列（底部抽屉；冲突待裁决时自动展开并高亮计数）": "Transfer queue (bottom drawer; auto-expands with a highlighted count when a collision needs a decision)",
   "传输": "Transfers",
 
   // —— 委托/停用/关闭/退出/删除确认框 ——
@@ -938,10 +957,10 @@ const EN: Record<string, string> = {
   "清除选择": "Clear selection",
   "单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在下载时选位置（多选下载只选一次目录）；传输进度见底部队列（状态条「传输 N」展开）。": "Click to select (⌘ multi / Shift range), double-click to open or see actions; downloads go to the last download directory (initially \"Downloads\"), enable Save-as to pick a location (multi-select asks once); transfer progress lives in the bottom queue (status bar \"Transfers N\").",
   "传输队列": "Transfer queue",
-  "{0} 个任务": "{0} tasks",
+  "{0} 个任务": "{0} task(s)",
   "收起传输队列": "Collapse transfer queue",
   "收起 ⌄": "Collapse ⌄",
-  "暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。": "No transfers. Drag files from Finder into the window: onto the files panel uploads straight to the browsed directory, onto the terminal asks for the target first.",
+  "暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。": "No transfers. Drag files from your file manager into the window: onto the files panel uploads straight to the browsed directory, onto the terminal asks for the target first.",
   "已省略最早 {0} 条（共 {1} 条，只显示最近 {2} 条）": "Oldest {0} omitted ({1} total; showing the latest {2})",
   "会话：{0}": "Session: {0}",
   "排队中…": "Queued…",
@@ -963,6 +982,7 @@ const EN: Record<string, string> = {
   "覆盖": "Overwrite",
   "两个都要": "Keep both",
   "外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动": "An external process may have changed the target and versions cannot be verified — the overwrite publish will be blocked; the original stays untouched",
+  "用远端这份文件替换本地同名文件——覆盖后本地的旧内容不可恢复；提交前会复核目标未变化，若已变化会重新询问": "Replace the local file with this remote copy — local changes will be lost; the target is re-checked before publishing and you'll be asked again if it changed meanwhile",
   "重新核实": "Re-verify",
   "temp 与恢复资料保留；不自动重发": "temp & recovery data kept; no auto-resend",
   "立即打开：用系统默认程序打开该文件": "Open now: open the file with the system default app",
@@ -1141,7 +1161,7 @@ const EN: Record<string, string> = {
   "资源监控大屏": "Resource monitor",
   "资源监控": "Resource monitor",
   "已连接的服务器数 / SSH 连接数": "Connected servers / SSH connections",
-  "{0} 台服务器": "{0} servers",
+  "{0} 台服务器": "{0} server(s)",
   " · {0} 条连接": " · {0} connections",
   "通用监控：CPU/内存/网络/磁盘。打开后后台持续采样（每 3 秒一拍），关闭大屏不中断": "General: CPU/memory/network/disk. Samples in the background once on (a tick every 3 s); closing the dash does not stop it",
   "通用监控": "General",
@@ -1209,6 +1229,7 @@ const EN: Record<string, string> = {
   "会话已断开——重跑未发送": "Session disconnected — re-run not sent",
   "网络中断（自动重连中）——重跑未发送": "Network down (auto-reconnecting) — re-run not sent",
   "重跑发送失败": "Re-run send failed",
+  "面板关闭时中断，未完成": "Interrupted — the panel closed before it finished",
   "终端未挂载——接入会话后再定位": "Terminal not mounted — connect to a session before locating",
   "任务目标已更新，Agent 读简报可见": "Goal updated; the agent sees it when reading the brief",
   "任务目标已清除，Agent 简报同步移除": "Goal cleared; removed from the agent brief",
@@ -1495,9 +1516,59 @@ const EN: Record<string, string> = {
   "最大化窗口": "Maximize window",
   "关闭窗口": "Close window",
   "provider 类型": "Provider type",
+
+  // —— 找茬二轮（2026-10-30）：EN 覆盖缺口扫尾（scan-t-keys 全量 diff）——
+  "任务目标": "Task goal",
+  "会话保留在标签栏——不再需要时请从标签 × 或 ⌘W 再次关闭": "Session stays in the tab bar — close it again from tab × or ⌘W when no longer needed",
+  "加载中…": "Loading…",
+  "展开主机栏": "Expand host bar",
+  "已接管 {0}——停止结果": "Taken over {0} — stop results",
+  "拖动调整面板宽度": "Drag to resize panel",
+  "拖动调整面板宽度（320–560）": "Drag to resize panel (320–560)",
+  "收起主机栏": "Collapse host bar",
+  "网络中断（自动重连中）": "Network lost (auto-reconnecting)",
+  "连接 {0}": "Connect {0}",
+  "连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。Windows 需 OpenSSH Authentication Agent 服务在运行。": "Signed by the local ssh-agent (requires ssh-add); the private key never leaves the agent. On Windows, the OpenSSH Authentication Agent service must be running.",
+  "连接（新建会话）": "Connect (new session)",
+  "重连恢复": "Reconnect & restore",
+  "。": ".",
+  "活动栏": "Activity bar",
+  // —— fmtUptime（渲染期 t 传入）——
+  "刚刚": "just now",
+  "{0} 天 {1} 小时": "{0} d {1} h",
+  "{0} 小时 {1} 分": "{0} h {1} m",
+  // —— self-meter（标题栏 chip + 关于详版）——
+  "程序自身": "Program itself",
+  "本进程 CPU 占全部逻辑核的百分比（任务管理器同口径）": "This process's CPU as a share of all logical cores (same as Task Manager)",
+  "工作集内存": "Working set memory",
+  "提交内存（Windows=独占提交字节；macOS 无此概念，取物理足迹 phys_footprint）": "Committed memory (Windows = private commit bytes; macOS has no such concept — uses phys_footprint)",
+  "提交": "Commit",
+  "采样于": "Sampled at",
+  "本程序（tinyssh-app）进程自身开销：CPU 占全部逻辑核百分比 · 工作集内存": "This program's (tinyssh-app) own overhead: CPU share of all logical cores · working set memory",
+  // —— 调色板名（外观页色板列表 / palette 预览）——
+  "石墨": "Graphite",
+  "暖烬": "Ember",
+  "深海": "Deep Sea",
+  "午夜": "Midnight",
+  "鎏金": "Gilded",
+  "极光": "Aurora",
+  "青瓷": "Celadon",
+  "绯樱": "Sakura",
+  "曜石": "Obsidian",
+  "霓虹": "Neon",
+  "水墨": "Ink",
+  "墨水屏": "E Ink",
+  "诺德": "Nordic",
+  "复古": "Vintage",
+  "东京夜": "Tokyo Night",
+  "摩卡": "Mocha",
+  // —— 主机重名防呆（UX2-2）——
+  "已存在同名主机「{0}」——请换一个名称，或删除旧条目后再建": "A host named \"{0}\" already exists — pick another name, or delete the old entry first",
+  "同一地址和端口已有主机「{0}」——如需同一台机器请直接使用该条目": "Another host already uses the same address and port ({0}) — use that entry for the same machine",
 };
 
 export const LOCALE_OPTIONS: { id: Locale; label: string }[] = [
-  { id: "zh", label: "中文（默认）" },
+  // 不再标「默认」——缺省=跟随 OS（真实域首启），此处只是两个可选值
+  { id: "zh", label: "中文（简体）" },
   { id: "en", label: "English" },
 ];

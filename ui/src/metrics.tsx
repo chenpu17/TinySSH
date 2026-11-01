@@ -110,14 +110,15 @@ export function fmtRate(bps: number): string {
   return `${Math.round(bps)} B/s`;
 }
 
-export function fmtUptime(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 60) return "刚刚";
+/** 运行时长格式化：单位文案经渲染期传入的 t() 翻译（UX2-2；默认直通保纯函数调用方） */
+export function fmtUptime(sec: number, tr: (s: string, ...a: (string | number)[]) => string = (s) => s): string {
+  if (!Number.isFinite(sec) || sec < 60) return tr("刚刚");
   const d = Math.floor(sec / 86400);
   const h = Math.floor((sec % 86400) / 3600);
   const m = Math.floor((sec % 3600) / 60);
-  if (d > 0) return `${d} 天 ${h} 小时`;
-  if (h > 0) return `${h} 小时 ${m} 分`;
-  return `${m} 分钟`;
+  if (d > 0) return tr("{0} 天 {1} 小时", d, h);
+  if (h > 0) return tr("{0} 小时 {1} 分", h, m);
+  return tr("{0} 分钟", m);
 }
 
 // ---- 组件 ----
@@ -167,6 +168,7 @@ export function MetricsBar({ sid, kind, user, hostName }: {
           setView(diffMetrics(cur, prev, prev ? (now - prevAtRef.current) / 1000 : 0));
           prevRef.current = cur;
           prevAtRef.current = now;
+          fails = 0; // 「连续失败」语义：成功即重置（R3-B-4），间歇抖动不累积死刑
         } catch {
           if (stopped) return;
           prevRef.current = null;                    // 断代：恢复后首样不差分
@@ -183,7 +185,8 @@ export function MetricsBar({ sid, kind, user, hostName }: {
   if (!isSsh || dead) return null;
   const togglePause = () => {
     setPaused((p) => {
-      localStorage.setItem("tinyssh.metricsPaused", p ? "0" : "1");
+      // localStorage 可能被禁（读取路径同款防 SecurityError——写路径漏防会炸暂停钮）
+      try { localStorage.setItem("tinyssh.metricsPaused", p ? "0" : "1"); } catch { /* 无持久化，仅本次生效 */ }
       return !p;
     });
   };
@@ -208,7 +211,7 @@ export function MetricsBar({ sid, kind, user, hostName }: {
       </span>
       <span className="mseg" data-pri="3" title={t("系统运行时长")}>
         <span className="mlabel">{t("运行")}</span>
-        <span className="mval">{v ? fmtUptime(v.uptimeSec) : "—"}</span>
+        <span className="mval">{v ? fmtUptime(v.uptimeSec, t) : "—"}</span>
       </span>
       <span className="mseg" data-pri="1" title={t("根分区用量")}>
         <span className="mlabel">{t("磁盘")}</span>

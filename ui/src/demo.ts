@@ -1204,7 +1204,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         model: args?.model,
         has_key: key ? true : (prev?.has_key === true),
       };
-      localStorage.setItem("ui.v2.agentModel", JSON.stringify(rec));
+      // 写路径包 try（审查二轮 FE2-6）：隐私模式 setItem 即抛——demo 读路径全包
+      // 了，写漏三处；包上=仅本次生效，与 metrics togglePause 同口径
+      try { localStorage.setItem("ui.v2.agentModel", JSON.stringify(rec)); } catch { /* 无持久化，仅本次生效 */ }
       return null;
     }
     case "agent_send":
@@ -1249,7 +1251,7 @@ case "read_triggers": {
           cooldown_secs: Math.min(3600, Math.max(5, Math.round(r.cooldown_secs || 60))),
         };
       });
-      localStorage.setItem("ui.v2.triggers", JSON.stringify(norm));
+      try { localStorage.setItem("ui.v2.triggers", JSON.stringify(norm)); } catch { /* 无持久化，仅本次生效 */ }
       return norm;
     }
     // R9：人类→Agent 委托入口。镜像真实后端语义——trim 后空串归一为 null（清除）、
@@ -2127,11 +2129,18 @@ case "read_triggers": {
         t.status = "Skipped"; t.decision_prompt = null;
         t.error = "已跳过：同名目标未改动"; t.finished_at = now; t.revision += 1;
       } else if (d === "overwrite") {
-        // DF6.1 能力矩阵冻结：覆盖发布需目标版本约束——SFTP v3+OpenSSH 扩展不
-        // 提供，一律阻止（不双改名/bak/回滚；文案与核心 ReplaceUnsupported 一致）
-        t.status = "Failed"; t.decision_prompt = null;
-        t.error = "发布能力不足，已阻止（原目标未改动）: target_version_constraint";
-        t.finished_at = now; t.revision += 1;
+        if (t.kind === "Download") {
+          // 2026-10-30 与核心解冻同构：人类下载覆盖=本地 rename 原子替换（复检
+          // CAS 同口径——demo 不模拟「批准后目标变化」，直接按批准所见发布）；
+          // bytes 对齐注册表总量的既有 demo 口径
+          t.status = "Succeeded"; t.decision_prompt = null;
+          t.bytes_done = t.total ?? 2048; t.finished_at = now; t.revision += 1;
+        } else {
+          // DF6.1 上传面维持冻结：远端无原子替换原语（文案与核心一致）
+          t.status = "Failed"; t.decision_prompt = null;
+          t.error = "发布能力不足，已阻止（原目标未改动）: target_version_constraint";
+          t.finished_at = now; t.revision += 1;
+        }
       } else {
         // keepboth：recheck-demo 首轮 → 复检发现目标已变化（原因可查落字段），
         // 二次裁决后才发布；其余直接以新名发布 name.tinyssh-1.ext
@@ -2304,7 +2313,7 @@ case "read_triggers": {
     }
     case "set_workspace": {
       const ws = { ...(args?.ws as Record<string, unknown>), schema_version: 1 };
-      localStorage.setItem("ui.v2.workspace", JSON.stringify(ws));
+      try { localStorage.setItem("ui.v2.workspace", JSON.stringify(ws)); } catch { /* 无持久化，仅本次生效 */ }
       return ws;
     }
     case "set_host_favorite": {

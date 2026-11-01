@@ -84,5 +84,20 @@ module.exports = {
     ck.check("切回 zh：localStorage 已更新（demo 域持久化落点）",
       (await page2.evaluate(() => localStorage.getItem("ui.v2.locale"))) === "zh");
     await page2.close();
+
+    // ── D. OS 语言默认解算真值表（OS 默认轮）：纯函数独立成 locale-resolver.mjs，
+    //      node spec 直连导入；检测只挂真实域 KV 无值的首次启动（App.tsx localeP），
+    //      demo 域固定 zh 缺省不跟 OS（确定性基座：harness 固定 locale zh-CN，
+    //      固定 zh 是 demo/真实两域行为隔离的既有约定）。──
+    const { resolveInitialLocale: rt } = await import("../../src/locale-resolver.mjs");
+    ck.check("解算：显式 en 最优先（OS=zh 也不翻）", rt("en", ["zh-CN"]) === "en");
+    ck.check("解算：显式 zh 最优先（OS=en 也不翻）", rt("zh", ["en-US"]) === "zh");
+    ck.check("解算：坏存储值当未设，跟随 OS → en", rt("fr", ["en-US"]) === "en");
+    ck.check("解算：zh* → zh", rt(null, ["zh-CN", "en-US"]) === "zh");
+    ck.check("解算：en* → en", rt(null, ["en-US"]) === "en");
+    ck.check("解算：偏好序生效（en 在前 → en）", rt(null, ["en-US", "zh-CN"]) === "en");
+    ck.check("解算：OS 语言均不支持（fr/de）→ en（次优通用语）", rt(null, ["fr-FR", "de-DE"]) === "en");
+    ck.check("解算：完全探测不到 → zh（历史缺省兜底）", rt(null, []) === "zh");
+    ck.check("解算：osLangs 未定义（异常环境）→ zh", rt(null, undefined) === "zh");
   },
 };

@@ -11,7 +11,7 @@ use session_api::{Error, ExecOpts, Result};
 // 探测面返回类型随 detect_local_shells 就近可用（tauri 命令签名直书 transport_pty::LocalShellInfo）
 pub use session_api::LocalShellInfo;
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{broadcast, Mutex};
@@ -30,6 +30,10 @@ pub struct LocalPtyChannel {
     /// 输出）。常驻 Receiver 后 send 永不因零订阅失败；环形缓冲有界。
     keepalive_rx: broadcast::Receiver<Vec<u8>>,
     alive: Arc<AtomicBool>,
+    /// spawn 代际（审查二轮 R2-2）：alive 跨 respawn 代际共享，旧读线程 teardown
+    /// EOF 的临终 store(false) 若晚于 respawn 的 store(true) 到达，会把重连成功的
+    /// 会话误报「本地 shell 已退出」。读线程死亡只在代际未变时写 false。
+    gen: Arc<AtomicU64>,
     size: Mutex<(u16, u16)>,
     /// 集成注入临时目录（respawn 时更换；调用方可取用做延迟清理）。
     tmp: std::sync::Mutex<Option<std::path::PathBuf>>,
@@ -414,6 +418,7 @@ pub async fn spawn_local_pty(
         output_tx,
         keepalive_rx,
         alive: Arc::new(AtomicBool::new(true)),
+        gen: Arc::new(AtomicU64::new(0)),
         size: Mutex::new((cols, rows)),
         tmp: std::sync::Mutex::new(None),
         integration: AtomicBool::new(false),
@@ -516,6 +521,13 @@ impl LocalPtyChannel {
         }
         self.integration
             .store(!matches!(plan, ShellSpawn::Plain { .. }), Ordering::SeqCst);
+        // 代际推进必须先于 alive 再武装（R2-2 补口）：读线程 teardown 的代际闸
+        // 比较当前 gen 与自己的 my_gen——若先武装后推进，旧线程恰在两步之间
+        // 执行闸检查时 gen 未变仍等于其 my_gen，会把刚武装的 alive=true 撤销。
+        // fetch_add 原子领号：load+store 两步在并发 respawn 下会发同号代际，
+        // 旧读线程 gen==my_gen 误判自己为新泵。
+        let gen_r = self.gen.clone();
+        let my_gen = gen_r.fetch_add(1, Ordering::SeqCst) + 1;
         self.alive.store(true, Ordering::SeqCst);
 
         // 读循环：阻塞读 → 同一 broadcast。
@@ -527,6 +539,8 @@ impl LocalPtyChannel {
         // 双份无害，Windows Terminal 同款做法）。
         let tx = self.output_tx.clone();
         let alive_r = self.alive.clone();
+        // gen_r/my_gen 已在 alive 再武装前领取（见上）——推进先于武装，旧泵
+        // teardown 闸在 respawn 全程任何时刻比较都必失配。
         // 读泵必须是普通线程而非 spawn_blocking：阻塞 read 在 unix 上会无限挂
         //（bash 活着、master 无数据），tokio runtime drop 等待已启动的 blocking
         // 任务 → 开了本地会话未显式关闭的测试整个二进制挂死（ubuntu CI 实测
@@ -553,7 +567,11 @@ impl LocalPtyChannel {
                     Err(_) => break,
                 }
             }
-            alive_r.store(false, Ordering::SeqCst);
+            // 代际闸（R2-2）：只死亡自己这一代的 PTY——旧读线程 teardown 晚到时
+            // 不得撤销 respawn 的 alive=true
+            if gen_r.load(Ordering::SeqCst) == my_gen {
+                alive_r.store(false, Ordering::SeqCst);
+            }
         });
         Ok(())
     }

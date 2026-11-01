@@ -27,6 +27,7 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
   }, []);
 
   const submit = () => {
+    if (busy) return; // 在途丢弃重复提交（add-host 同款防御；审查二轮观察项）
     setErr(null);
     if (!address.trim() || !username.trim()) { setErr(t("地址和用户名都不能为空")); return; }
     if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
@@ -57,10 +58,16 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
       // 快速连接是一次性临时目标：不给启动命令字段（持久配置才是它的场景）
       startup_command: null,
     };
-    onConnect(display, {
-      id: null, name: "", address: addr, port: p, username: user,
-      auth, tags: [], charset, shell_integration: null, jump_host_id: null,
-    });
+    setBusy(true); // 双发闸真生效：Enter 提交与按钮点击同帧连发的守卫（此前 busy 恒 false 纯装饰）
+    try {
+      onConnect(display, {
+        id: null, name: "", address: addr, port: p, username: user,
+        auth, tags: [], charset, shell_integration: null, jump_host_id: null,
+      });
+    } catch (e) {
+      setBusy(false);
+      setErr(String((e as { message?: string })?.message ?? e));
+    }
   };
 
   return (
@@ -125,7 +132,7 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
           <option value="gbk">{t("GBK（中文 Windows / 老旧设备）")}</option>
         </select>
       </div>
-      {err && <div className="form-error" style={{ marginTop: 6 }}>{err}</div>}
+      {err && <div className="form-error" role="alert" style={{ marginTop: 6 }}>{err}</div>}
       <div className="row" style={{ marginTop: 8, gap: 8 }}>
         <button disabled={busy} onClick={submit} data-testid="quick-connect-go">{t("连接")}</button>
         <button className="ghost" onClick={onCancel}>{t("取消")}</button>

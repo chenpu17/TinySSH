@@ -382,6 +382,32 @@ async fn wait_status(m: &SessionManager, tid: &str, want: TransferStatus) -> Tra
     panic!("transfer {tid} 未在 6s 内到达 {want:?}");
 }
 
+/// 多卡链专用等待：revision 不能区分新卡与提交瞬间残影（submit 自身 +1 而
+/// 卡面张贴不 bump），以 prompt 载荷（目标 stat）变化为准取新卡。
+async fn wait_card_with_size(m: &SessionManager, tid: &str, want_size: u64) -> TransferTask {
+    for _ in 0..240 {
+        if let Some(t) = m
+            .list_transfers(&Actor::Human)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == tid)
+        {
+            if t.status == TransferStatus::AwaitingDecision
+                && t.decision_prompt
+                    .as_ref()
+                    .and_then(|p| p.target_stat.as_ref())
+                    .and_then(|s| s.size)
+                    == Some(want_size)
+            {
+                return t;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("transfer {tid} 未在 6s 内出现 stat={want_size} 的待决卡");
+}
+
 const T: u64 = 4096;
 
 /// 新文件主链：预检缺席 → temp staging → 长度核对 → Committing → 复检 →
@@ -794,6 +820,337 @@ async fn r34_download_local_fs_namespace() {
         d3.dest.ends_with(".tinyssh-1.bin"),
         "dest 回写实际发布路径: {}",
         d3.dest
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// 下载覆盖解冻（2026-10-30 用户拍板）：人类 Overwrite → 提交窗复检 CAS（批准
+/// 所见 stat 未变）通过 → 本地 rename 原子替换发布成功；temp 随 rename 消失；
+/// 审计留痕 transfer_overwrite_published。上传面维持 r34_overwrite_blocked 冻结。
+#[tokio::test]
+async fn r34_download_overwrite_published() {
+    let m = mgr();
+    let (h, _c) = mk(
+        m.center.clone(),
+        TxPlan::Succeed {
+            total: T,
+            chunk: T,
+            pause_ms: 1,
+        },
+        TxPlan::Succeed {
+            total: T,
+            chunk: T,
+            pause_ms: 1,
+        },
+        LinkPlan::Committed,
+    );
+    register(&m, h);
+    let base = std::env::temp_dir().join(format!("r34-ow-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base).unwrap();
+    let dest = base.join("out.bin");
+    let dest_s = dest.display().to_string();
+    // 首次下载铺底：本地已是远端旧版本（T 字节）
+    let t1 = m
+        .download(
+            &Actor::Human,
+            "s-r34".into(),
+            "/remote/src.bin",
+            &dest,
+            None,
+        )
+        .await
+        .unwrap();
+    let d1 = wait_terminal(&m, &t1.id).await;
+    assert_eq!(d1.status, TransferStatus::Succeeded, "{:?}", d1.error);
+    // 本地被外部改动（14 字节旧内容）→ 二次下载预检冲突，卡面 stat=真实本地
+    std::fs::write(&dest, b"original-bytes").unwrap();
+    let t2 = m
+        .download(
+            &Actor::Human,
+            "s-r34".into(),
+            "/remote/src.bin",
+            &dest,
+            None,
+        )
+        .await
+        .unwrap();
+    let card = wait_status(&m, &t2.id, TransferStatus::AwaitingDecision).await;
+    assert_eq!(
+        card.decision_prompt
+            .as_ref()
+            .unwrap()
+            .target_stat
+            .as_ref()
+            .unwrap()
+            .size,
+        Some(14),
+        "覆盖批准所见=卡面展示的那份（CAS 锚点）"
+    );
+    m.submit_collision_decision(
+        &Actor::Human,
+        t2.id.clone(),
+        CollisionDecision::Overwrite,
+        card.revision,
+    )
+    .await
+    .unwrap();
+    let done = wait_terminal(&m, &t2.id).await;
+    assert_eq!(done.status, TransferStatus::Succeeded, "{:?}", done.error);
+    assert_eq!(
+        std::fs::metadata(&dest).unwrap().len(),
+        T,
+        "本地旧内容已被远端新版本替换"
+    );
+    assert!(
+        !base
+            .join(format!(".tinyssh-part-{}-out.bin", t2.id))
+            .exists(),
+        "temp 随 rename 提交消失（无双重清理残留）"
+    );
+    // 审计留痕：破坏性动作可追责（覆盖发布 + 批准所见 stat）
+    let page = m
+        .center
+        .audit
+        .query(&session_api::AuditFilter {
+            session_id: None,
+            agent_id: None,
+            actor_kind: None,
+            action: Some("transfer_overwrite_published".into()),
+            before_seq: None,
+            after_seq: None,
+            since: None,
+            until: None,
+            offset: 0,
+            limit: 50,
+        })
+        .unwrap();
+    assert!(
+        page.events.iter().any(|e| {
+            let target_ok = e
+                .payload_json
+                .get("target")
+                .and_then(|v| v.as_str())
+                // stage_plan 的 dir 走 canonicalize：Windows 产 \\?\ 前缀且 TEMP 短名
+                // （ADMINI~1）被解析成长名——按分隔符归一后以文件名后缀对账
+                .map(|t| t.replace('\\', "/").ends_with("/out.bin"))
+                .unwrap_or(false);
+            let stat_ok = e
+                .payload_json
+                .get("approved_stat")
+                .and_then(|s| s.get("size"))
+                .and_then(|v| v.as_u64())
+                == Some(14);
+            target_ok && stat_ok
+        }),
+        "覆盖发布审计须含目标与批准所见 stat: {:?}",
+        page.events
+            .iter()
+            .map(|e| &e.payload_json)
+            .collect::<Vec<_>>()
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// 复检 CAS 闭环（R3-A-1 回归）：决策窗批准的 stat 只是锚点，落发布前必须
+/// 回环重 stat 复验。链路：预检冲突(14B)→批准覆盖→复检前文件再变→复检 CAS
+/// 失败出新卡(17B)→再批准覆盖→再复检前文件又变→必须再出卡(19B)而非直落
+/// 发布（未修则此步直接 Succeeded 覆盖掉批准后改动）；skip 收尾零覆盖。
+#[tokio::test]
+async fn r34_overwrite_restat_after_decision() {
+    const CHANGED1: &[u8] = b"changed-one......"; // 17
+    const CHANGED2: &[u8] = b"changed-two........"; // 19
+    let m = mgr();
+    let (h, _c) = mk(
+        m.center.clone(),
+        TxPlan::Succeed {
+            total: T,
+            chunk: T,
+            pause_ms: 1,
+        },
+        TxPlan::Succeed {
+            total: T,
+            chunk: T,
+            pause_ms: 1,
+        },
+        LinkPlan::Committed,
+    );
+    register(&m, h);
+    let base = std::env::temp_dir().join(format!("r34-ow2-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base).unwrap();
+    let dest = base.join("out.bin");
+    std::fs::write(&dest, b"original-bytes").unwrap();
+    let t = m
+        .download(
+            &Actor::Human,
+            "s-r34".into(),
+            "/remote/src.bin",
+            &dest,
+            None,
+        )
+        .await
+        .unwrap();
+    // 卡1：预检冲突（锚点=14B）→ 停泊期外部改动 → 批准覆盖
+    let card1 = wait_status(&m, &t.id, TransferStatus::AwaitingDecision).await;
+    assert_eq!(
+        card1
+            .decision_prompt
+            .as_ref()
+            .unwrap()
+            .target_stat
+            .as_ref()
+            .unwrap()
+            .size,
+        Some(14)
+    );
+    std::fs::write(&dest, CHANGED1).unwrap();
+    m.submit_collision_decision(
+        &Actor::Human,
+        t.id.clone(),
+        CollisionDecision::Overwrite,
+        card1.revision,
+    )
+    .await
+    .unwrap();
+    // 卡2：复检不一致（锚点=17B）→ 停泊期又改 → 再批准覆盖
+    let card2 = wait_card_with_size(&m, &t.id, CHANGED1.len() as u64).await;
+    let p2 = card2.decision_prompt.clone().unwrap();
+    assert_eq!(p2.reason, "stat_changed_since_preflight");
+    assert_eq!(
+        p2.target_stat.as_ref().unwrap().size,
+        Some(CHANGED1.len() as u64)
+    );
+    std::fs::write(&dest, CHANGED2).unwrap();
+    m.submit_collision_decision(
+        &Actor::Human,
+        t.id.clone(),
+        CollisionDecision::Overwrite,
+        card2.revision,
+    )
+    .await
+    .unwrap();
+    // 卡3：批准所见(17B)≠重 stat(19B) 必须再裁决——CAS 闭环不在决策窗后短路
+    let card3 = wait_card_with_size(&m, &t.id, CHANGED2.len() as u64).await;
+    let p3 = card3.decision_prompt.clone().unwrap();
+    assert_eq!(p3.reason, "stat_changed_since_preflight");
+    assert_eq!(
+        p3.target_stat.as_ref().unwrap().size,
+        Some(CHANGED2.len() as u64),
+        "批准后必须重 stat 复验，见新值重新出卡"
+    );
+    m.submit_collision_decision(
+        &Actor::Human,
+        t.id.clone(),
+        CollisionDecision::Skip,
+        card3.revision,
+    )
+    .await
+    .unwrap();
+    let done = wait_terminal(&m, &t.id).await;
+    assert_eq!(done.status, TransferStatus::Skipped);
+    assert_eq!(
+        std::fs::read(&dest).unwrap(),
+        CHANGED2,
+        "skip 零覆盖：决策窗后的外部改动保留"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// R3-A-2 回归：预检批准覆盖后复检改选 keep-both——换道即放弃覆盖授权，
+/// 发布走 no-clobber hardlink 新名；审计不得留 transfer_overwrite_published
+///（授权泄漏会把 keep-both 误记成破坏性覆盖）。
+#[tokio::test]
+async fn r34_overwrite_then_keepboth_no_overwrite_audit() {
+    const CHANGED1: &[u8] = b"changed-one......"; // 17
+    let m = mgr();
+    let (h, _c) = mk(
+        m.center.clone(),
+        TxPlan::Succeed {
+            total: T,
+            chunk: T,
+            pause_ms: 1,
+        },
+        TxPlan::Succeed {
+            total: T,
+            chunk: T,
+            pause_ms: 1,
+        },
+        LinkPlan::Committed,
+    );
+    register(&m, h);
+    let base = std::env::temp_dir().join(format!("r34-ow3-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base).unwrap();
+    let dest = base.join("out.bin");
+    std::fs::write(&dest, b"original-bytes").unwrap();
+    let t = m
+        .download(
+            &Actor::Human,
+            "s-r34".into(),
+            "/remote/src.bin",
+            &dest,
+            None,
+        )
+        .await
+        .unwrap();
+    let card1 = wait_status(&m, &t.id, TransferStatus::AwaitingDecision).await;
+    std::fs::write(&dest, CHANGED1).unwrap();
+    m.submit_collision_decision(
+        &Actor::Human,
+        t.id.clone(),
+        CollisionDecision::Overwrite,
+        card1.revision,
+    )
+    .await
+    .unwrap();
+    let card2 = wait_card_with_size(&m, &t.id, CHANGED1.len() as u64).await;
+    m.submit_collision_decision(
+        &Actor::Human,
+        t.id.clone(),
+        CollisionDecision::KeepBoth,
+        card2.revision,
+    )
+    .await
+    .unwrap();
+    let done = wait_terminal(&m, &t.id).await;
+    assert_eq!(done.status, TransferStatus::Succeeded, "{:?}", done.error);
+    assert_eq!(
+        std::fs::read(&dest).unwrap(),
+        CHANGED1,
+        "keep-both：原目标零改动"
+    );
+    let cand = base.join("out.tinyssh-1.bin");
+    assert_eq!(
+        std::fs::metadata(&cand).unwrap().len(),
+        T,
+        "keep-both 新名落远端版本"
+    );
+    assert!(
+        done.dest.replace('\\', "/").ends_with("/out.tinyssh-1.bin"),
+        "任务 dest 回写实际发布路径（账实相符）：{}",
+        done.dest
+    );
+    let page = m
+        .center
+        .audit
+        .query(&session_api::AuditFilter {
+            session_id: None,
+            agent_id: None,
+            actor_kind: None,
+            action: Some("transfer_overwrite_published".into()),
+            before_seq: None,
+            after_seq: None,
+            since: None,
+            until: None,
+            offset: 0,
+            limit: 50,
+        })
+        .unwrap();
+    assert!(
+        page.events.is_empty(),
+        "keep-both 换道不得留覆盖发布审计（授权只属于被批准的那份）: {:?}",
+        page.events
+            .iter()
+            .map(|e| &e.payload_json)
+            .collect::<Vec<_>>()
     );
     let _ = std::fs::remove_dir_all(&base);
 }

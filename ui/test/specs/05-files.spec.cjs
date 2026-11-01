@@ -142,5 +142,47 @@ module.exports = {
       upPosix !== null && posixRemote.endsWith("/posix.txt") && !posixRemote.includes("\\"),
       `remote=「${posixRemote}」`);
     await page.evaluate(() => window.__demoInvoke?.("demo_pick_result", {}));
+
+    // ── 冲突决策卡必须浮出 + 下载覆盖可用（2026-10-30 用户实测 mac：同文件第二次
+    // 下载静默无响应——决策卡只活在传输抽屉里，抽屉关着=什么都不发生，300s 决策
+    // 窗超时静默取消）。conflict-demo 名单注入预检冲突（demo 与真实核心同序：
+    // 预检在数据阶段之前）。断言：抽屉自动展开 + 决策卡在场 + 计数注意色 +
+    // 覆盖裁决翻完成态（下载覆盖=替换本地文件，2026-10-30 解冻）。
+    await page.keyboard.press("Escape"); // 关抽屉（自动展开只对关着的抽屉触发）
+    await page.waitForTimeout(300);
+    await page.click("[data-testid=sftp-by-path-btn]");
+    await page.waitForTimeout(250);
+    await page.fill(".xfer-input input", "/tmp/conflict-demo.bin");
+    await page.click(".xfer-input button");
+    await page.waitForSelector('[data-testid="queue-drawer"]', { timeout: 5000 });
+    ck.check("冲突待决：传输抽屉自动展开（不再静默无响应）", await page.evaluate(() => !!document.querySelector('[data-testid="queue-drawer"]')));
+    ck.check("冲突待决：决策卡带跳过/覆盖/两个都要三钮", await page.evaluate(() => {
+      const row = [...document.querySelectorAll(".xfer-row")].find((r) => r.textContent.includes("conflict-demo.bin"));
+      return !!row && !!row.querySelector('[data-testid="cf-skip"]') && !!row.querySelector('[data-testid="cf-overwrite"]') && !!row.querySelector('[data-testid="cf-keepboth"]');
+    }));
+    ck.check("冲突待决：状态条传输计数带注意色（attn）", await page.evaluate(() => !!document.querySelector('[data-testid="sb-transfer"].attn')));
+    await page.evaluate(() => document.querySelector('[data-testid="cf-overwrite"]').click());
+    let overwritten = false;
+    for (let i = 0; i < 30 && !overwritten; i++) {
+      await page.waitForTimeout(300);
+      overwritten = await page.evaluate(() => {
+        const row = [...document.querySelectorAll(".xfer-row")].find((r) => r.textContent.includes("conflict-demo.bin"));
+        return !!row && row.getAttribute("data-testid") === "xfer-done";
+      });
+    }
+    ck.check("下载覆盖裁决后翻完成态（替换本地文件发布成功）", overwritten);
+    // 第三次下载同文件：决策卡再次自动浮出——每次冲突都是新裁决，无静默复现路径
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(250);
+    await page.fill(".xfer-input input", "/tmp/conflict-demo.bin");
+    await page.click(".xfer-input button");
+    await page.waitForSelector('[data-testid="queue-drawer"]', { timeout: 5000 });
+    ck.check("再次下载同文件：决策卡再次自动浮出", await page.evaluate(() => {
+      const row = [...document.querySelectorAll(".xfer-row")].find((r) => r.textContent.includes("conflict-demo.bin"));
+      return !!row && !!row.querySelector('[data-testid="cf-overwrite"]');
+    }));
+    // 收尾：跳过裁决清卡（Skipped 终态），不悬挂待决卡
+    await page.evaluate(() => document.querySelector('[data-testid="cf-skip"]').click());
+    await page.waitForTimeout(300);
   },
 };

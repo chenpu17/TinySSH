@@ -34,7 +34,7 @@ export function BriefCard({ brief }: { brief: Brief }) {
         </div>
       )}
       {brief.running.length > 0 && (
-        <div className="brief-fact"><div className="bf-body err">{t("运行中：")}{brief.running.join("、")}</div></div>
+        <div className="brief-fact"><div className="bf-body err">{t("运行中：")}{brief.running.join(t("、"))}</div></div>
       )}
       {cmds.map((f, i) => {
         const { cmd, exit } = parseCmd(f.detail);

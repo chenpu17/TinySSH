@@ -12,7 +12,7 @@ import type { PointerEvent } from "react";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { inTauri, invoke, listen } from "../adapter/bridge";
 import type { ApprovalRow } from "../app-data";
-import { WELCOME_MD, mockScript } from "../agent-mock";
+import { welcomeMd, mockScript } from "../agent-mock";
 import { renderAgentMd } from "../mdview";
 import { renderMermaidIn, rerenderMermaids } from "../mmd";
 import { renderMathIn } from "../math";
@@ -66,6 +66,24 @@ export interface AgentViewProps {
 const STREAM_CHARS = 24;
 const STREAM_MS = 90;
 const RUN_MS = 600;
+
+/** 演练域对话仓（UX2 走查：面板关开不丢对话）：convs 是组件态，面板卸载即清——
+ * 切标签保留、关面板即丢，用户无从预期。真模式历史由后端 agent_history 回放
+ * 不进这里；这里只收演练域写入，重挂载时种子 effect 优先取回。上限 64 会话
+ * （Map 保插入序，超出删最旧），防长开 demo 跨会话缓慢累积。 */
+const MOCK_CONVS = new Map<string, AgentMsg[]>();
+
+// 恢复消毒（R3-B-2）：卸载瞬间 persist 进仓的中间态无人收尾——streaming 光标
+// 永闪、mermaid/公式渲染闸永久关闭、pending 审批按钮 no-op（pendingTool ref 随
+// 卸载重置）。重开面板恢复时统一落终态：工具卡中断收尾、流式气泡截停。
+const sanitizeMockMsgs = (msgs: AgentMsg[], interrupted: string): AgentMsg[] =>
+  msgs.map((m) => {
+    if (m.role === "tool" && (m.status === "pending" || m.status === "running"))
+      return { ...m, status: "err" as const, output: interrupted };
+    if (m.role === "assistant" && m.streaming) return { ...m, streaming: false };
+    return m;
+  });
+
 /** 真模式：会话内嵌 agent 的审批对账身份（与 crates/agent-host AGENT_CLIENT_ID 对应） */
 export const EMBEDDED_AGENT_ID = "tinyssh-embedded";
 
@@ -206,6 +224,8 @@ export function AgentView({
   const seq = useRef({ n: 0 });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingTool = useRef<{ k: string; id: string; script: ReturnType<typeof mockScript> } | null>(null);
+  // 真模式装载过的会话（R3-B-10）：persist 不入演练仓、回演练时清场重播欢迎语
+  const realModeSidsRef = useRef<Set<string>>(new Set());
   const key = sid ?? "";
   const msgs = convs[key] ?? [];
 
@@ -282,6 +302,8 @@ export function AgentView({
     invoke("agent_history", { sid })
       .then((hist) => {
         if (dead) return;
+        MOCK_CONVS.delete(sid); // 真模式历史接管：清演练残留（演练→真模型切换）
+        realModeSidsRef.current.add(sid); // 标记来源：回演练时清场（见 persist 配对 effect）
         let m: AgentMsg[] = [];
         for (const ev of hist ?? []) m = applyAgentEvent(m, ev, seq.current);
         setConvs((cur) => ({ ...cur, [sid]: m }));
@@ -293,11 +315,50 @@ export function AgentView({
     return () => { dead = true; };
   }, [realMode, sid]);
 
-  // 演练模式：首见会话种欢迎消息
+  // 演练模式：首见会话种欢迎消息（fleet 形态用编排者专用欢迎语——它不是每会话
+  // 独立对话；文案按界面语言分流）。关面板重开时优先取演练仓回放（UX2-3）。
+  // 仓内容恢复时消毒：卸载瞬间 persist 的中间态（streaming 光标/running·pending
+  // 工具卡）无人收尾——光标永闪、渲染闸永久关闭、审批按钮 no-op（R3-B-2）。
   useEffect(() => {
     if (realMode || !sid) return;
-    setConvs((cur) => (cur[sid] ? cur : { ...cur, [sid]: [{ id: `w-${sid}`, role: "assistant", md: WELCOME_MD, think: "", streaming: false }] }));
-  }, [sid, realMode]);
+    const welcome = welcomeMd(!!fleet);
+    setConvs((cur) => (cur[sid] ? cur : { ...cur, [sid]: sanitizeMockMsgs(MOCK_CONVS.get(sid) ?? [{ id: `w-${sid}`, role: "assistant", md: welcome, think: "", streaming: false }], t("面板关闭时中断，未完成")) }));
+  }, [sid, realMode, fleet]);
+
+  // 演练域对话写入仓（与种子 effect 配对）；真模式历史走 agent_history 回放，
+  // 装载时把该会话的演练残留清掉（演练→真模型切换不串场）。
+  // 真模式装载过的会话不入仓（R3-B-10）：真历史被 persist 进演练仓后，演练
+  // 回复会续写在真实历史后面——回演练瞬间清掉该会话对话，重播欢迎语干净开始。
+  useEffect(() => {
+    if (realMode) return;
+    for (const [k, v] of Object.entries(convs)) {
+      if (v.length > 0 && !realModeSidsRef.current.has(k)) MOCK_CONVS.set(k, v);
+    }
+    if (MOCK_CONVS.size > 64) {
+      for (const k of [...MOCK_CONVS.keys()].slice(0, MOCK_CONVS.size - 64)) MOCK_CONVS.delete(k);
+    }
+  }, [convs, realMode]);
+
+  // 真模式→演练回切：清掉来自真模式装载的对话（种子 effect 重播欢迎语）
+  useEffect(() => {
+    if (realMode || realModeSidsRef.current.size === 0) return;
+    const sids = [...realModeSidsRef.current];
+    realModeSidsRef.current = new Set();
+    const welcome = welcomeMd(!!fleet);
+    setConvs((cur) => {
+      let changed = false;
+      const next = { ...cur };
+      for (const s of sids) {
+        if (next[s] === undefined) continue;
+        // 清场即补种（R3-B-10 补口）：种子 effect 的 deps 未变不会重跑——当前
+        // 打开的会话会停在零消息空面板。真模式会话不入仓，MOCK_CONVS 必无此
+        // sid，补种即干净欢迎语（与种子 effect 同源同语义）
+        next[s] = sanitizeMockMsgs([{ id: `w-${s}`, role: "assistant", md: welcome, think: "", streaming: false }], t("面板关闭时中断，未完成"));
+        changed = true;
+      }
+      return changed ? next : cur;
+    });
+  }, [realMode, fleet]);
 
   // 卸载清计时器（演练流式/模拟执行的挂起回调不得写卸载后的 state）
   useEffect(() => {
@@ -441,7 +502,9 @@ export function AgentView({
       const text = mmWrap?.dataset.mm
         ? decodeURIComponent(mmWrap.dataset.mm)
         : el.closest(".md-code")?.querySelector("pre")?.textContent ?? "";
-      (inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text)).catch(() => {});
+      // Promise.resolve 包裹（审查二轮 FE2-5）：无 clipboard API 环境下 ?. 短路出
+      // undefined，外层 .catch 即同步 TypeError
+      Promise.resolve(inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text)).catch(() => {});
       pushToast("ok", t("已复制代码"));
     } else if (el.classList.contains("code-expand")) {
       const box = el.closest(".md-code");
@@ -480,7 +543,7 @@ export function AgentView({
       pushToast("info", t("已清空对话显示（模型上下文仍在，重启应用才彻底重置）"));
       return;
     }
-    setConvs((cur) => ({ ...cur, [key]: [{ id: `w-${key}-${Date.now()}`, role: "assistant", md: WELCOME_MD, think: "", streaming: false }] }));
+    setConvs((cur) => ({ ...cur, [key]: [{ id: `w-${key}-${Date.now()}`, role: "assistant", md: welcomeMd(!!fleet), think: "", streaming: false }] }));
   };
 
   return (

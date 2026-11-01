@@ -68,8 +68,8 @@ import "@xterm/xterm/css/xterm.css";
 import {
   altMetaSequence, ApprovalRow, APPEARANCES, APP_VERSION, auditLabel, AUDIT_LABELS,
   byName, hostMatches, phaseText,
-  ChromePalette, ctrlCharOf, epistemicLabel, exitText,
-  FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, hhmm, inputBlockedState,
+  ChromePalette, ctrlCharOf, dateLocale, epistemicLabel, exitText,
+  FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, inputBlockedState,
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
   runBench, SEARCH_OPTS, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
   SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
@@ -81,7 +81,7 @@ import {
   TERM_FONT_DEFAULT, TERM_FONTS, termFontCss, TERM_LETTER_SPACING_DEFAULT, TERM_SCROLLBACK_DEFAULT,
   type Appearance, type SettingsCat, type SplitDir, type SplitPanes, type TermCursorStyle,
 } from "./app-data";
-import { localeNow, setLocale, SETTING_LOCALE, t, type Locale } from "./i18n";
+import { localeNow, resolveInitialLocale, setLocale, SETTING_LOCALE, t, type Locale } from "./i18n";
 import { WinControls } from "./components/window-controls";
 import { QuickConnectForm } from "./components/quick-connect";
 import { AddHostForm } from "./components/add-host";
@@ -440,7 +440,10 @@ export default function App() {
   useEffect(() => {
     osc52WriteRef.current = (sid, text) => {
       const host = sessionsRef.current.find((x) => x.id === sid)?.host_name ?? t("该会话");
-      (inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
+      // Promise.resolve 包裹（审查二轮 FE2-5）：无 clipboard API 环境（LAN http
+      // 等非安全上下文）navigator.clipboard 为 undefined，?. 短路出 undefined 后
+      // 外层 .then/.catch 即同步 TypeError——包一层让链路拿到 rejected promise
+      Promise.resolve(inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
         .then(() => pushToast("info", t("远端已写入剪贴板（OSC 52）· {0}", host)))
         .catch(() => pushToast("err", t("OSC 52 写剪贴板失败 · {0}（权限拒绝或窗口无焦点）", host)));
     };
@@ -1024,12 +1027,14 @@ export default function App() {
     setBlocksBusy(true);
     try {
       const rows = await invoke("read_blocks", { sid: s, limit: 50 });
+      if (sidRef.current !== s) return; // 已切会话：过期块列表不得覆盖新会话（重跑会以新 sid 发旧命令，必守）
       setBlocksList(rows ?? []);
       setBlocksErr(null);
     } catch (e) {
+      if (sidRef.current !== s) return;
       setBlocksErr(String((e as { message?: string })?.message ?? e));
     } finally {
-      setBlocksBusy(false);
+      if (sidRef.current === s) setBlocksBusy(false);
     }
   }, []);
   useEffect(() => {
@@ -1155,9 +1160,13 @@ export default function App() {
     setShowSettings(false);
   }, []);
 
+  // 简报归属标记：brief 本身不带 sid，SFTP 首载链凭它判「brief 是不是当前会话的」——
+  // 切会话后 refreshBrief 在途的窗口里 brief 还是上一个会话的，直接用会拿旧 cwd 起载
+  const briefSidRef = useRef<string | null>(null);
   const refreshBrief = useCallback(async (s: string) => {
     try {
       const b = await invoke("session_brief", { sid: s });      if (sidRef.current !== s) return; // 审核H1：已切走会话的过期简报直接丢弃，防简报/任务目标跨会话串台
+      briefSidRef.current = s; // 归属标记：SFTP 首载链凭它认简报是不是本会话的（brief 无 sid 字段）
       setBrief((prev) => sameJson(prev, b));
     } catch { /* 会话已关 */ }
   }, []);
@@ -1569,7 +1578,7 @@ export default function App() {
     // 没法在本机打开，复制是最诚实有用的动作（本地会话同语义）；协议前缀让路给
     // 上一行的网页链接。toast 告知复制了什么。
     term.registerLinkProvider(pathLinkProvider(term, (text) => {
-      (inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
+      Promise.resolve(inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
         .then(() => pushToast("ok", t("已复制路径 {0}", text)))
         .catch(() => pushToast("err", t("复制路径失败（权限拒绝或窗口无焦点）")));
     }));
@@ -1600,7 +1609,7 @@ export default function App() {
       if (!copyOnSelectRef.current) return;
       const sel = term.getSelection();
       if (!sel) return;
-      (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
+      Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
     });
     // 十六轮：BEL→标签闪烁（恒开，6s 自清）+ 系统通知（开关+窗口失焦门+每会话 10s 节流）。
     // 长命令完成的通用信号：用户切走窗口后远端任务结束/需要关注时主动提示。
@@ -1725,7 +1734,7 @@ export default function App() {
         if (term.hasSelection()) {
           const sel = term.getSelection();
           // Tauri 原生剪贴板（无 WKWebView 授权气泡）；浏览器 demo 走 navigator
-          (inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel))
+          Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel))
             .catch(() => {});
           ev.preventDefault();
           return false;
@@ -1734,7 +1743,7 @@ export default function App() {
       }
       if (key === "v") {
         // R25 §318：粘贴语义收口在 pasteTextInto（终端右键「粘贴」同源）
-        (inTauri
+        Promise.resolve(inTauri
           ? clipboard.readText().then((t) => pasteTextIntoRef.current(term, sessionSid, t))
           : navigator.clipboard?.readText().then((t) => pasteTextIntoRef.current(term, sessionSid, t))
         ).catch(() => {});
@@ -2450,16 +2459,20 @@ export default function App() {
       if (termLigaRef.current) applyLigatures(true);
     };
     if (!inTauri) {
-      const raw = Number(localStorage.getItem(SETTING_FONT) ?? localStorage.getItem(SETTING_FONT_LEGACY));
+      // 隐私模式（禁 Cookie/受限 WebView）下 localStorage 访问即抛 SecurityError——
+      // demo 引导读偏好统一包 try（审查二轮 FE2-3；下方 applyTermQuality 同款既有
+      // 实践），拿不到走各自默认值
+      const safeGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
+      const raw = Number(safeGet(SETTING_FONT) ?? safeGet(SETTING_FONT_LEGACY));
       applyFont(Number.isFinite(raw) && raw > 0 ? raw : null);
-      loadPalette(localStorage.getItem(SETTING_PALETTE));
+      loadPalette(safeGet(SETTING_PALETTE));
       // 键位表（键位配置轮）：demo 走 localStorage，坏串/缺省回落默认表
-      const kmRaw = localStorage.getItem(KEYMAP_SETTING);
+      const kmRaw = safeGet(KEYMAP_SETTING);
       if (kmRaw) applyKeymap(parseKeymap(kmRaw));
       // ⑤ 传输免审 opt-in：demo 与 persistSetting 同走 localStorage
-      setTransferAutonomy(localStorage.getItem("collab.autonomy.transfers") === "1");
+      setTransferAutonomy(safeGet("collab.autonomy.transfers") === "1");
       // ⑦ 记录保留期：demo 同走 localStorage（坏值回落 30 天）
-      const rr = Number(localStorage.getItem("collab.records.retention_days") ?? "30");
+      const rr = Number(safeGet("collab.records.retention_days") ?? "30");
       setRecordsRetention(Number.isFinite(rr) && rr >= 0 ? rr : 30);
       // P0 终端品质：同源 localStorage（persistSetting 的 demo 分支写入）
       applyTermQuality((k) => { try { return localStorage.getItem(k); } catch { return null; } });
@@ -2476,11 +2489,16 @@ export default function App() {
     const paletteP = invoke("get_setting", { key: SETTING_PALETTE }).then(loadPalette).catch(() => {});
     // i18n 轮：语言与字体/色板同通路（vault KV；demo 分支上面那段走 persistSetting 的
     // localStorage 落点，t() 模块初值已从 localStorage 读到）。KV 与初值不一致时以 KV 为准。
+    // KV 无有效值=首次启动：跟随 OS 语言定初始界面语——只落模块态+localStorage 即时
+    // 缓存，不写 KV：用户在设置里显式选择前保持「跟随系统」语义（OS 变则界面跟着变）。
     const localeP = invoke("get_setting", { key: SETTING_LOCALE })
       .then((v) => {
-        if (v === "en" || v === "zh") {
-          if (localeNow() !== v) { setLocale(v); setLocaleState(v); }
+        if (v !== "en" && v !== "zh") {
+          const l = resolveInitialLocale(null, navigator.languages?.length ? navigator.languages : [navigator.language]);
+          if (localeNow() !== l) { setLocale(l); setLocaleState(l); }
+          return;
         }
+        if (localeNow() !== v) { setLocale(v); setLocaleState(v); }
       })
       .catch(() => {});
     const keymapP = invoke("get_setting", { key: KEYMAP_SETTING })
@@ -2903,7 +2921,12 @@ export default function App() {
     if (osc52Ask) { setOsc52Ask(null); return true; }
     // 拖拽上传确认卡同样是模态（全屏遮罩+焦点陷阱）——Esc 链此前漏出（审计 F5）
     if (pendingDrop) { setPendingDrop(null); return true; }
-    if (paletteOpen) { setPaletteOpen(false); return true; } // 十九轮：命令面板在浮层链内
+    // 命令面板是带遮罩模态、可叠开在非模态浮层之上——Esc 先关视觉顶层（R3-B-8）
+    if (paletteOpen) { setPaletteOpen(false); return true; }
+    // 大屏覆盖层/广播输入/传输抽屉：非模态但同属浮层链——纯键盘用户要有 Esc 出口
+    if (monitorOpen) { toggleMonitor(false); return true; }
+    if (broadcastOpen) { setBroadcastOpen(false); return true; }
+    if (queueOpen) { setQueueOpen(false); return true; }
     if (detail || detailErr) { closeDetail(); return true; }
     if (tabMenu) { setTabMenu(null); return true; }
     if (hostMenu) { setHostMenu(null); return true; }
@@ -2915,7 +2938,8 @@ export default function App() {
     if (showSettings) { closeSettings(); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
     if (tabsMenuOpen) { setTabsMenuOpen(false); return true; }
-    if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); return true; }
+    if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); return true; }
+    if (showQuickConnect) { setShowQuickConnect(false); return true; } // UX2 走查：快速连接对话框的键盘出口（FE7 同族漏网）
     if (showImport) { setShowImport(false); return true; }
     if (showAgentHelp) { setShowAgentHelp(false); return true; }
     return false;
@@ -3156,10 +3180,12 @@ export default function App() {
 
   // 确保会话有终端实例并完成输出订阅（attachSession 与进入分屏共用；
   // MCP 建的会话可能从未被人类 attach 过，进分屏前也要先建）
-  const ensureSessionTerm = useCallback(async (sessionSid: string) => {
-    if (!termRef.current || termsRef.current.has(sessionSid)) return;
+  const ensureSessionTerm = useCallback(async (sessionSid: string): Promise<boolean> => {
+    // 返回「本次是否新建了 term」：只有新建才可能发生 fit 缩行 reflow（毁损态），
+    // realign 只对新建执行——纯焦点切换复用既有实例，强制对齐会拽走用户滚动位
+    if (!termRef.current || termsRef.current.has(sessionSid)) return false;
     const made = makeTerm(sessionSid);
-    if (!made) return;
+    if (!made) return false;
     termsRef.current.set(sessionSid, made);
     // 首渲染前把几何对齐到位（term + 核心 PTY 一次到位）：检查点直接按目标尺寸
     // 渲染，attach 后不再发生「已渲染内容」的重排——消灭登录横幅被 SIGWINCH 提示符
@@ -3213,6 +3239,7 @@ export default function App() {
     // 光标视角带偏——后续远端输出全部接在提示语之后渲染。
     setAttachHint(true);
     window.setTimeout(() => setAttachHint(false), 6000);
+    return true;
   }, [makeTerm, fitDimsOf]);
 
   const attachSession = useCallback(async (newSid: string) => {
@@ -3221,7 +3248,7 @@ export default function App() {
     // 第二个自动转后台 toast，更合 §6.3）
     focusGenRef.current++;
     if (!termRef.current) return;
-    await ensureSessionTerm(newSid);
+    const fresh = await ensureSessionTerm(newSid);
     // 分屏时 attach 未上屏的会话 = 替换焦点窗格（§322：标签选择替换焦点窗格，
     // 不动另一侧；焦点在副 pane 时替换副，否则替换主）
     const sp = splitRef.current;
@@ -3233,6 +3260,46 @@ export default function App() {
     }
     focusSession(newSid);
     fitTerminal();
+    // R3-C-1：checkpoint 按核心网格写入（预对齐量的是接入前 #term——欢迎页下无
+    // 会话工具条，比激活态高约 68px≈3-4 行；且写入与 attach 链的 fit 存在竞速），
+    // 后续 fit 缩行时 xterm 固定光标的视口相对位、把顶部内容推进 scrollback——
+    // 光标悬到空区、视口停在空行段（矮窗口接入整屏空白、1366×768 首行卷出的根因）。
+    // fit 收敛后对齐：视口滚到最后一个非空行（scrollToLine 钳到 scrollback 底——
+    // 正常场景=滚底 no-op，毁损场景=对齐回内容尾）；光标悬在内容尾之下的空区时
+    // 写绝对定位序列送回内容尾行尾，与核心 PTY 光标语义重新对齐（回显从提示符
+    // 后继续而非悬空处）。400ms 补拍覆盖 350ms 二次 fit 的缩行。
+    const realignAfterFit = () => {
+      const term = termsRef.current.get(newSid)?.term;
+      if (!term) return;
+      const b = term.buffer.active;
+      if (b.length === 0) return;
+      let tail = b.length - 1;
+      while (tail > 0 && !(b.getLine(tail)?.translateToString(true) ?? "").trim()) tail--;
+      // 最小滚动：内容尾恰好入视口即可（scrollToLine 内部钳 scrollback 底——
+      // 正常场景=滚底 no-op，毁损场景=整段内容回到可视区）
+      term.scrollToLine(Math.max(0, tail - term.rows + 1));
+      if (b.viewportY + b.cursorY > tail) {
+        const curLine = b.getLine(b.viewportY + b.cursorY);
+        if (!curLine || !curLine.translateToString(true).trim()) {
+          // 光标悬在内容尾之下的空区（缩行 reflow 所致）——送回内容尾行尾，
+          // 与核心 PTY 光标语义重新对齐（后续回显从提示符后继续而非悬空处）
+          const line = b.getLine(tail);
+          const col = line ? line.translateToString(true).length : 0;
+          term.write(`\x1b[${tail + 1};${col + 1}H`);
+        }
+      }
+      // 滚动/光标归位后渲染层可能滞留旧 scroll 锚（内容行不重绘、光标按旧位
+      // 画）——整屏标脏强制重绘（幂等，正常场景无副作用）
+      term.refresh(0, term.rows - 1);
+    };
+    // 门控（复审轮 P1）：realign 只对本次新建的 term 执行——fit 缩行 reflow 只
+    // 发生在「检查点按接入前高度预对齐 + attach 后工具条压矮」的新建路径；焦点
+    // 切换/重连复用实例（rows 未变、无 reflow），强制对齐会把用户上翻的阅读位
+    // 拽回内容尾（R3-C-1 修复引入的回归，此处收口）
+    if (fresh) {
+      realignAfterFit();
+      setTimeout(realignAfterFit, 400);
+    }
     // 布局与字体稳定后再校准一次（首次 fit 可能撞上渲染器尺寸未就绪）
     setTimeout(() => void fitTerminal(), 350);
   }, [ensureSessionTerm, focusSession, fitTerminal]);
@@ -3803,6 +3870,26 @@ export default function App() {
     } catch { /* 下轮再试 */ }
   }, [taskToCard]);
 
+  // 冲突决策卡必须浮出（用户实测 mac：同文件第二次下载「没有响应」——真实链路是
+  // 目标已存在 → 传输进 AwaitingDecision 决策卡〔跳过/覆盖〕，而决策卡只活在传输
+  // 抽屉里，抽屉关着就什么提示都没有，300s 决策窗超时静默取消更显「没响应」）。
+  // AwaitingDecision 是拦住传输等人裁决的阻塞问题，不属于 R35 §194「后台事件只
+  // 更新计数不自动展开」的范围——那条管的是进度噪音；每张卡只自动展开一次。
+  const decisionAutoOpenedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    // 「看见即视为已提示」：抽屉开着时到达的卡同样入已见集合——否则用户关闭
+    // 抽屉的第一次动作会被本 effect 立即顶回（多卡时要连关 N 次）
+    if (decisionAutoOpenedRef.current.size > 200) {
+      // 只清已终结卡：在决卡被误清会重新变 fresh 顶回抽屉
+      const alive = new Set(transfers.filter((t) => t.status === "awaiting" && t.prompt).map((t) => t.id));
+      for (const id of decisionAutoOpenedRef.current) if (!alive.has(id)) decisionAutoOpenedRef.current.delete(id);
+    }
+    const fresh = transfers.find((t) => t.status === "awaiting" && t.prompt && !decisionAutoOpenedRef.current.has(t.id));
+    if (!fresh) return;
+    decisionAutoOpenedRef.current.add(fresh.id);
+    if (!queueOpen) setQueueOpen(true);
+  }, [transfers, queueOpen]);
+
   // C6/R34：冲突决定提交（乐观锁 expect_revision=卡片所见 revision）。
   // StaleDecision/InvalidTransferState = 卡片已过期——刷新对账 + reject 留痕
   //（任务已推进时 reject 幂等 no-op，不会误伤在途待决卡）
@@ -3988,7 +4075,13 @@ export default function App() {
       setSftpPathInput(p.trim());
       return true;
     } catch (e) {
-      if (sidRef.current === s && sftpGenRef.current === gen) setSftpErr(friendlyError(e));
+      if (sidRef.current === s && sftpGenRef.current === gen) {
+        setSftpErr(friendlyError(e));
+        // 列表清空（审查二轮 UX2-10②）：错误条与旧目录列表同屏会被误读为当前
+        // 目录内容——导航失败诚实清场；面包屑/路径不动（用户仍在原目录语境）
+        setSftpEntries([]);
+        setSftpSel(new Set()); sftpAnchorRef.current = null; setSftpCursor(-1);
+      }
       return false;
     } finally {
       if (sidRef.current === s && sftpGenRef.current === gen) setSftpLoading(false);
@@ -4015,7 +4108,13 @@ export default function App() {
     } catch (e) {
       // rev-r30 中-1：迟到失败响应不得写入已切换会话的浏览器（与 loadDir 同纪律）；
       // rev-r31 低-6：补代际守卫——重叠导航下晚到的 resolve 错误不得挂到新路径横幅
-      if (sidRef.current === s && sftpGenRef.current === genAtStart) setSftpErr(friendlyError(e));
+      if (sidRef.current === s && sftpGenRef.current === genAtStart) {
+        setSftpErr(friendlyError(e));
+        // 同 loadDir（审查二轮 UX2-10②）：resolve 失败同样清列表，不给「错误条
+        // + 旧目录内容」的误读同屏
+        setSftpEntries([]);
+        setSftpSel(new Set()); sftpAnchorRef.current = null; setSftpCursor(-1);
+      }
       return false;
     }
   }, [loadDir]);
@@ -4092,6 +4191,10 @@ export default function App() {
       sftpAnchorRef.current = null;
       // rev-r31 低-5：无快照的新会话同样清路径——面包屑短暂显示上一会话路径是残留
       setSftpPath(""); setSftpPathInput("");
+      // R3-B-3：新会话不持旧会话的 brief——否则新会话 brief 与旧会话字节级全等
+      // 时 sameJson 返回旧引用、无重渲染，SFTP 首载链的 brief 门永不打开（列表
+      // 静默空白）。置 null 后新 brief 到达必发生 null→对象引用变化，首载必跑。
+      setBrief(null);
     }
     setSftpCursor(-1);
     sftpFirstSidRef.current = saved ? sid : null;
@@ -4108,7 +4211,7 @@ export default function App() {
   // brief 到达（cwd 可用性已知）才起链；每会话一次（有快照恢复的会话不再首载——
   // 恢复的位置优先），后续浏览位置不回跳。
   useEffect(() => {
-    if (!sid || sftpFirstSidRef.current === sid || brief === null) return;
+    if (!sid || sftpFirstSidRef.current === sid || brief === null || briefSidRef.current !== sid) return;
     sftpFirstSidRef.current = sid;
     void (async () => {
       if (brief.cwd) {
@@ -4682,17 +4785,19 @@ export default function App() {
         const entry = termsRef.current.get(sid);
         if (!entry) { skipped.push(host.name); continue; }
         let when = e.saved_at;
-        try { when = new Date(e.saved_at).toLocaleString("zh-CN"); } catch { /* 原样 */ }
+        try { when = new Date(e.saved_at).toLocaleString(dateLocale()); } catch { /* 原样 */ }
         // 先重放再公告：applyCheckpoint 会重置缓冲（尺寸对齐+清屏），先写会被擦掉
         applyCheckpoint(entry.term, e.checkpoint);
         entry.term.write(`\r\n\x1b[2m—— ${t("已恢复上次会话现场（快照 {0}）", when)}——\x1b[0m\r\n`);
+        // R3-C-1 同修：快照网格小于当前视口时 applyCheckpoint 缩行会把内容顶出可视区
+        entry.term.scrollToBottom();
         restored++;
       }
     } finally {
       restoringRef.current = false;
     }
     if (restored > 0) pushToast("ok", t("已恢复 {0} 个会话现场", restored));
-    if (skipped.length > 0) pushToast("err", t("{0} 个现场未恢复（主机已删或连接未就绪）：{1}", skipped.length, skipped.join("、")));
+    if (skipped.length > 0) pushToast("err", t("{0} 个现场未恢复（主机已删或连接未就绪）：{1}", skipped.length, skipped.join(t("、"))));
     if (restored > 0) setRestoreEntries([]);
   };
   const restoringRef = useRef(false);
@@ -5184,6 +5289,8 @@ export default function App() {
     : t("未连接");
   // R35 状态条计数=进行中任务（排队/传输/提交/取消中/待决——§194 后台事件只更新计数）
   const runningTransfers = transfers.filter((t) => t.status === "running" || t.status === "queued" || t.status === "committing" || t.status === "cancelling" || t.status === "awaiting").length;
+  // 冲突待裁决数（计数含 awaiting 但裸数字不引人——warn 色提醒「有卡在等人」）
+  const awaitingTransfers = transfers.filter((t) => t.status === "awaiting").length;
   // §358 队列行须展示「主机/会话」——抽屉是窗口级（list_transfers 全量、跨会话），
   // 会话不再由所在面板隐含，故按 sid 回查主机名；会话已不在时回退短 id（如实不虚构）。
   const hostLabel = (sid?: string): string =>
@@ -5249,7 +5356,7 @@ export default function App() {
       if (rowsH.length > 0) {
         items.push({
           id: "reconnect-last", group: t("连接"), title: t("重连上次会话（{0}）", rowsH.length),
-          hint: rowsH.map((h) => h.name).join("、"), keywords: "重连 上次 会话 reconnect",
+          hint: rowsH.map((h) => h.name).join(t("、")), keywords: "重连 上次 会话 reconnect",
           run: () => { for (const h of rowsH) void createSession(h); },
         });
       }
@@ -5336,7 +5443,7 @@ export default function App() {
       });
       // P2-a 广播输入：专注模式藏了状态栏，⌘K 是唯一全模式可达入口（巡检补入口同款）
       items.push({
-        id: "panel-broadcast", group: "当前会话",
+        id: "panel-broadcast", group: t("当前会话"),
         title: broadcastTargets.length > 0 ? t("广播输入（已勾选 {0} 个会话）", broadcastTargets.length) : t("广播输入…"),
         keywords: "broadcast 多会话 同步键入 同发",
         run: () => setBroadcastOpen(true),
@@ -5355,7 +5462,7 @@ export default function App() {
       }
       if ((collabConfigured || embeddedReady) && owner === "Human") {
         items.push({
-          id: "delegate", group: "当前会话",
+          id: "delegate", group: t("当前会话"),
           title: active.ever_agent_owned ? t("交还 Agent…") : t("交给 Agent…"),
           keywords: "委托 控制权 delegate",
           run: () => openDelegate(),
@@ -5389,19 +5496,19 @@ export default function App() {
     items.push({
       id: "toggle-agent", group: t("应用"),
       title: agentOpen ? t("关闭 Agent 对话") : t("打开 Agent 对话（演练）"),
-      hint: "活动栏", keywords: "agent ai 助手 对话 演练 内置",
+      hint: t("活动栏"), keywords: "agent ai 助手 对话 演练 内置",
       run: () => toggleAgent(!agentOpen),
     });
     items.push({
       id: "toggle-fleet", group: t("应用"),
       title: fleetOpen ? t("关闭跨主机编排") : t("打开跨主机编排（Fleet）"),
-      hint: "活动栏", keywords: "fleet 编排 跨主机 批量 多机 派发",
+      hint: t("活动栏"), keywords: "fleet 编排 跨主机 批量 多机 派发",
       run: () => toggleFleet(!fleetOpen),
     });
     items.push({
       id: "toggle-monitor", group: t("应用"),
       title: monitorOpen ? t("关闭资源监控大屏") : t("打开资源监控大屏（多服务器 + Ascend NPU）"),
-      hint: "活动栏", keywords: "监控 资源 cpu 内存 网络 npu ascend 仪表 监视 面板",
+      hint: t("活动栏"), keywords: "监控 资源 cpu 内存 网络 npu ascend 仪表 监视 面板",
       run: () => toggleMonitor(!monitorOpen),
     });
     items.push({
@@ -5621,7 +5728,7 @@ export default function App() {
           <AgentView
             width={agentWidth} fleet={fleetOpen}
             sid={fleetOpen ? "fleet" : sid}
-            hostLabel={fleetOpen ? "跨主机编排" : hostLabel(sid ?? undefined)}
+            hostLabel={fleetOpen ? t("跨主机编排") : hostLabel(sid ?? undefined)}
             tmuxNote={tmuxAgentNote}
             pending={pendingApprovals} onDecide={decide}
             owner={owner} onDelegate={delegateEmbedded}
@@ -5647,7 +5754,12 @@ export default function App() {
             onToggleNpu={toggleMonNpu}
             onTogglePause={toggleMonitorPause}
             onOpenSession={(target) => { void attachSession(target); toggleMonitor(false); }}
-            onClose={() => toggleMonitor(false)}
+            onClose={() => {
+              toggleMonitor(false);
+              // 关屏焦点回 rail（审查二轮 UX2-6③）：✕ 点击路径焦点落 body，纯键盘用户断链；
+              // Esc 关闭路径走 restoreTermFocus 回终端，不经过这里
+              document.querySelector<HTMLElement>('[data-testid="rail-monitor"]')?.focus();
+            }}
           />
         )}
         {/* 双接管按钮的语义说明不再常显（用户反馈：占一行没用处）——完整语义
@@ -5800,7 +5912,7 @@ export default function App() {
                     document.body.classList.remove("tab-dragging");
                   }}
                   title={`${label} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
-                  aria-label={`${label}，${st.text}${inSplit ? "，在分屏中" : ""}${i < 9 ? `，⌘${i + 1}` : ""}`}
+                  aria-label={`${label}，${st.text}${inSplit ? t("，在分屏中") : ""}${i < 9 ? t("，⌘{0}", i + 1) : ""}`}
                   tabIndex={0}
                   role="tab"
                   aria-selected={sid === s.id}
@@ -5840,6 +5952,7 @@ export default function App() {
                       className="tab-rename"
                       value={renaming.value}
                       autoFocus
+                      onFocus={(e) => e.currentTarget.select()} // 预填全选（审查二轮 UX2-5）：此前直接键入变追加
                       aria-label={t("重命名标签")}
                       onChange={(e) => setRenaming({ sid: s.id, value: e.target.value })}
                       onClick={(e) => e.stopPropagation()}
@@ -5863,15 +5976,19 @@ export default function App() {
                   <button
                     type="button"
                     className="tab-split"
-                    title={splitPanes ? `放到${splitDir === "tb" ? "下" : "右"}侧分屏` : s.id === sid ? "已在主视图" : `与当前会话分屏（放到${splitDir === "tb" ? "下" : "右"}侧）`}
-                    aria-label={splitPanes ? `把 ${s.host_name} 放到${splitDir === "tb" ? "下" : "右"}侧分屏` : s.id === sid ? `${s.host_name} 已在主视图` : `与 ${s.host_name} 分屏（${splitDir === "tb" ? "上下" : "左右"}）`}
+                    title={splitPanes
+                      ? t("放到{0}侧分屏", splitDir === "tb" ? t("下") : t("右"))
+                      : s.id === sid ? t("已在主视图") : t("与当前会话分屏（放到{0}侧）", splitDir === "tb" ? t("下") : t("右"))}
+                    aria-label={splitPanes
+                      ? t("把 {0} 放到{1}侧分屏", s.host_name, splitDir === "tb" ? t("下") : t("右"))
+                      : s.id === sid ? t("{0} 已在主视图", s.host_name) : t("与 {0} 分屏（{1}）", s.host_name, splitDir === "tb" ? t("上下") : t("左右"))}
                     onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id, splitDir); }}
                   ><IconSplit size={12} /></button>
                   <button
                     type="button"
                     className="tab-x"
                     title={t("关闭会话（⌘/Ctrl+W，活动会话先确认影响）")}
-                    aria-label={`关闭会话 ${s.host_name}`}
+                    aria-label={t("关闭会话 {0}", s.host_name)}
                     onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
                   ><IconX size={11} /></button>
                 </div>
@@ -5880,13 +5997,14 @@ export default function App() {
           </div>
           {tabScroll.right && (
             <button className="tab-scroll" aria-label={t("向右滚动标签")}
-              title={`右侧还有 ${tabScroll.hiddenR} 个会话被收起——点击展开（⌘⇧] 可循环切换）`}
+              title={t("右侧还有 {0} 个会话被收起——点击展开（⌘⇧] 可循环切换）", tabScroll.hiddenR)}
               onClick={() => scrollTabs(1)}>›</button>
           )}
           {splitPanes && <button className="ghost" onClick={exitSplit}
-            title={splitGroupLabel ? t("退出分屏：解散「{0}」（两个会话都保留）", splitGroupLabel) : undefined}>退出分屏</button>}
-          {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点） */}
-          <button className="ghost" title={t("命令面板（Ctrl+K / ⌘K）")} aria-label={t("命令面板")} data-testid="palette-open"
+            title={splitGroupLabel ? t("退出分屏：解散「{0}」（两个会话都保留）", splitGroupLabel) : undefined}>{t("退出分屏")}</button>}
+          {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点）。快捷键是 native 域
+              能力（demo 域 actions.ts 有 native 门），浏览器里不广告不存在的键 */}
+          <button className="ghost" title={inTauri ? t("命令面板（Ctrl+K / ⌘K）") : t("命令面板")} aria-label={t("命令面板")} data-testid="palette-open"
             onClick={() => setPaletteOpen(true)}><IconSearch size={14} /></button>
           {/* 专注模式（F11）：常态是 ⤢ 图标；专注下滑出条里另有文字钮，双入口同 applyFocus。
               协作/传输入口在此补位——专注下标题栏与状态条都藏了，而 §3 要求待审批等
@@ -5896,9 +6014,9 @@ export default function App() {
           {focusMode && sid && hasAgents && owner === "Agent" && (
             <>
               <button className="warn" title={t("接管会话：Agent 冻结、待审批请求作废，终端归你。Agent 正在跑的命令不会被中断")}
-                onClick={takeover}>接管</button>
+                onClick={takeover}>{t("接管")}</button>
               <button className="ghost-danger" title={t("接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红")}
-                onClick={takeoverStop}>接管并停止</button>
+                onClick={takeoverStop}>{t("接管并停止")}</button>
             </>
           )}
           {focusMode && collabConfigured && (
@@ -5909,7 +6027,7 @@ export default function App() {
             </button>
           )}
           {focusMode && runningTransfers > 0 && (
-            <button className={"ghost" + (queueOpen ? " ts-open" : "")}
+            <button className={"ghost" + (queueOpen ? " ts-open" : "") + (awaitingTransfers > 0 ? " attn" : "")}
               title={t("传输队列（底部抽屉）")}
               onClick={() => setQueueOpen(!queueOpen)}>{t("传输")} {runningTransfers}</button>
           )}
@@ -5940,7 +6058,7 @@ export default function App() {
                       </button>
                       {s.state === "Disconnected" && (
                         <button className="tm-act" title={t("重连该会话")} disabled={reconnecting !== null}
-                          onClick={() => { reconnectSession(s); }}>{t("重连")}</button>
+                          onClick={() => { setTabsMenuOpen(false); reconnectSession(s); }}>{t("重连")}</button>
                       )}
                     </div>
                   );
@@ -5948,7 +6066,7 @@ export default function App() {
               </div>
             )}
           </div>
-          <button className="ghost" title={t("新建连接（Ctrl+T）")} aria-label={t("新建连接")} onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); }}><IconPlus size={14} /></button>
+          <button className="ghost" title={t("新建连接（Ctrl+T）")} aria-label={t("新建连接")} onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); setPrefillEntry(null); }}><IconPlus size={14} /></button>
           {/* 十七轮：快速连接——不存主机一次性建连 */}
           <button className="ghost" title={t("快速连接（不保存主机，临时连接一次）")} aria-label={t("快速连接")} data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
         </div>
@@ -6097,6 +6215,7 @@ export default function App() {
               <AddHostForm
                 editHost={editingHost}
                 prefill={prefillEntry}
+                hosts={hosts}
                 onCancel={() => { setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); }}
                 onSaved={async (hid, wasEdit, connect = true) => {
                   setShowAddHost(false);
@@ -6252,7 +6371,7 @@ export default function App() {
               if (teach) updateTmuxPrefs((p) => ({ ...p, declined: { ...p.declined, [current.host_id]: Date.now() } }));
               void reconnectSession(current);
             };
-            const liveNames = live.map((x) => x.name).join("、");
+            const liveNames = live.map((x) => x.name).join(t("、"));
             return (
               <div className="dead-overlay">
                 <div className="dead-banner">
@@ -6438,7 +6557,10 @@ export default function App() {
                 <div className="hk-actions">
                   <button className="danger" data-testid="paste-send" onClick={() => {
                     if (pasteConfirm.kind === "rerun") {
-                      void invoke("send_keys", { sid: pasteConfirm.sid, keys: pasteConfirm.text + "\r" }).catch(() => {});
+                      // 失败要出声：确认框期间会话恰好断开时，字节没发出去不能静默
+                      // （与 blocks rerunCommand 直发路径同款 toast）
+                      void invoke("send_keys", { sid: pasteConfirm.sid, keys: pasteConfirm.text + "\r" })
+                        .catch(() => pushToast("err", t("重跑发送失败")));
                     } else {
                       // 确认后的危险粘贴同样只进当前会话（广播抑制，与安全粘贴同口径）
                       bcastSuppressRef.current = true;
@@ -6506,7 +6628,7 @@ export default function App() {
                   />
                 </div>
                 <div className="dim" style={{ marginTop: 6, fontSize: 12 }} data-testid="drop-files-line">
-                  {t("{0} 个文件：", pendingDrop.paths.length)}{pendingDrop.paths.slice(0, 3).map((p) => pathBasename(p)).join("、")}
+                  {t("{0} 个文件：", pendingDrop.paths.length)}{pendingDrop.paths.slice(0, 3).map((p) => pathBasename(p)).join(t("、"))}
                   {pendingDrop.paths.length > 3 ? t(" 等 {0} 个", pendingDrop.paths.length) : ""}
                 </div>
                 {!briefRef.current?.cwd && (
@@ -6735,7 +6857,7 @@ export default function App() {
                   </div>
                   <div className="ah-field" style={{ width: 88 }}>
                     <label>{fwdKind === "Remote" ? t("远端端口") : t("本地端口")}</label>
-                    <input className="mono" value={fwdPort} placeholder={t("端口")}
+                    <input className="mono" value={fwdPort} placeholder="8080"
                       onChange={(e) => { setFwdPort(e.target.value); setFwdFieldErr(null); }} />
                   </div>
                 </div>
@@ -6758,7 +6880,7 @@ export default function App() {
                     </div>
                     <div className="ah-field" style={{ width: 76 }}>
                       <label>{t("端口")}</label>
-                      <input className="mono" value={fwdTPort} placeholder={t("端口")}
+                      <input className="mono" value={fwdTPort} placeholder="22"
                         onChange={(e) => { setFwdTPort(e.target.value); setFwdFieldErr(null); }} />
                     </div>
                   </div>
@@ -6893,7 +7015,7 @@ export default function App() {
             <button className={"sb-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="sb-blocks" title={t("命令块：最近命令时间线（shell 集成 OSC 133）")} aria-pressed={rightPanel === "blocks"}
               onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}>{t("块")} <b>{blocksList.length > 0 ? blocksList.length : ""}</b></button>
             {remoteOpen && <button className="sb-btn" title={t("端口转发")} onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}>{t("转发")} <b>{forwards.length}</b></button>}
-            <button className={"sb-btn" + (queueOpen ? " ts-open" : "")} data-testid="sb-transfer" title={t("传输队列（底部抽屉；后台事件只更新计数不自动展开）")} aria-pressed={queueOpen}
+            <button className={"sb-btn" + (queueOpen ? " ts-open" : "") + (awaitingTransfers > 0 ? " attn" : "")} data-testid="sb-transfer" title={t("传输队列（底部抽屉；冲突待裁决时自动展开并高亮计数）")} aria-pressed={queueOpen}
               onClick={() => setQueueOpen(!queueOpen)}>{t("传输")} <b>{runningTransfers}</b> {queueOpen ? "⌃" : "⌄"}</button>
           </span>
         </footer>

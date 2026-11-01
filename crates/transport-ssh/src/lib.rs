@@ -15,7 +15,7 @@ use session_api::{
     ForwardSpec, PathResolved, PublishOutcome, Result,
 };
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -186,6 +186,10 @@ pub struct SshChannel {
     /// 后 send 永不因零订阅失败；环形缓冲有界，不消费也无内存风险。
     keepalive_rx: broadcast::Receiver<Vec<u8>>,
     alive: Arc<AtomicBool>,
+    /// 连接代际（审查二轮 R2-2）：alive 跨重连代际共享，旧输出泵的临终
+    /// `store(false)`（通道 EOF/Close）若落在新连接 establish 期间，会把
+    /// 建康新连接永久判死 → pump 反复重连自翻搅。泵死亡只在代际未变时写 false。
+    gen: Arc<AtomicU64>,
     size: Mutex<(u16, u16)>,
     seen_fingerprint: Arc<Mutex<Option<String>>>,
     // 端口转发（T42 FR-8）：条目表 + 远程转发回程路由（与 ClientHandler 共享）；
@@ -315,6 +319,7 @@ impl SshChannel {
         let (output_tx, _) = broadcast::channel(4096);
         let keepalive_rx = output_tx.subscribe();
         let alive = Arc::new(AtomicBool::new(true));
+        let gen = Arc::new(AtomicU64::new(0));
         let router = Arc::new(StdMutex::new(HashMap::new()));
 
         let chan = Arc::new(Self {
@@ -324,6 +329,7 @@ impl SshChannel {
             output_tx,
             keepalive_rx,
             alive,
+            gen,
             size: Mutex::new((cols, rows)),
             seen_fingerprint: seen.clone(),
             forwards: StdMutex::new(HashMap::new()),
@@ -344,6 +350,8 @@ impl SshChannel {
     /// （「第i跳(名)」）。全链 Handle 存 hop_handles——Handle 的 Drop 只打日志
     /// 不断连，close/force_close/reconnect 显式拆；建链中途失败在此收口拆链。
     async fn establish(&self) -> Result<()> {
+        // 代际推进不在 establish：首次连接无旧泵；reconnect 的推进已提前到
+        // alive 再武装之前（闸窗口在武装与推进之间，见 reconnect）。
         let mut hops: Vec<Handle<ClientHandler>> = Vec::new();
         let r = self.establish_chain(&mut hops).await;
         if r.is_err() {
@@ -512,6 +520,11 @@ impl SshChannel {
             let (mut read_half, write_half) = channel.split();
             let tx = self.output_tx.clone();
             let alive = self.alive.clone();
+            let gen = self.gen.clone();
+            // fetch_add 领独立号（与 transport-pty 同款）：reconnect 的 handle
+            // 锁 take 后 establish 全程无锁，并发 establish 下 load 会让两个
+            // 泵共享同号；fetch_add 单调递进，任何后到的新泵必使闸比较失配。
+            let my_gen = gen.fetch_add(1, Ordering::SeqCst) + 1;
             tokio::spawn(async move {
                 loop {
                     match read_half.wait().await {
@@ -527,7 +540,11 @@ impl SshChannel {
                         }
                         Some(ChannelMsg::ExitStatus { .. }) => continue,
                         Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                            alive.store(false, Ordering::SeqCst);
+                            // 代际闸（R2-2）：只死亡自己这一代的连接——旧泵在
+                            // disconnect 后才被调度时，不得撤销新连接的 alive=true
+                            if gen.load(Ordering::SeqCst) == my_gen {
+                                alive.store(false, Ordering::SeqCst);
+                            }
                             break;
                         }
                         Some(_) => continue,
@@ -716,6 +733,31 @@ impl SshChannel {
         thost: &str,
         tport: u16,
     ) -> std::result::Result<(), String> {
+        // 同端口查重（审查二轮 R2-4）：回程路由按端口单键索引（SSH 入站事件只带
+        // 端口），两条 Remote 转发监听同端口（127.0.0.1:8080 与 0.0.0.0:8080）时
+        // 后注册者会覆盖前者的回程目标——入站连接接错本地目标且无从察觉。注册前
+        // 拒绝；自身重连恢复（同 id 重注册）不受影响。库内既有同端口配置在重连
+        // 恢复时第二条以本错误转为 Failed 态，可见且不串台。
+        {
+            let m = self.forwards.lock().unwrap();
+            let mut conflict: Option<String> = None;
+            for (oid, e) in m.iter() {
+                if oid == id {
+                    continue; // 自身重连恢复：重注册同端口合法
+                }
+                if let ForwardSpec::Remote { listen_port, .. } = &e.spec {
+                    if *listen_port == port {
+                        conflict = Some(oid.clone());
+                        break;
+                    }
+                }
+            }
+            if let Some(other_id) = conflict {
+                return Err(format!(
+                    "端口 {port} 已被另一条远程转发（{other_id}）占用——回程路由按端口索引，同端口多条远程转发会互相覆盖"
+                ));
+            }
+        }
         let r = self.request_remote(addr, port, thost, tport).await;
         if r.is_ok() && self.forwards.lock().unwrap().get(id).is_none() {
             let guard = self.handle.lock().await;
@@ -846,6 +888,22 @@ impl ChannelHandle for SshChannel {
         if !opts.env.is_empty() {
             full.push_str("env");
             for (k, v) in &opts.env {
+                // 键白名单（审查二轮 R2-1）：键原样拼进远端 shell 命令行——`$(…)`/
+                // 反引号即命令替换（发生在 env 收到参数之前）、`sh` 一类词整体改写
+                // 执行结构。值转义（下两行，审计 S6）挡不住键里的替换。合法环境
+                // 变量名本就只需 [A-Za-z_][A-Za-z0-9_]*，越界一律拒。
+                let key_ok = k
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+                    && k.bytes()
+                        .skip(1)
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'_');
+                if !key_ok {
+                    return Err(Error::InvalidInput(format!(
+                        "env 键不合法（仅允许字母/数字/下划线，首字符非数字）：{k}"
+                    )));
+                }
                 // 值按 sh 单引号转义（与 cmd 同法；审计 S6）：env 是公共 ExecOpts
                 // 字段，值含 `;`/`` ` ``/`$()` 时不转义会逃逸出 sh -c 边界——审批
                 // 卡与审计只记 effective_cmd，逃逸即「审批记 A、执行 B」
@@ -980,6 +1038,10 @@ impl ChannelHandle for SshChannel {
                 .disconnect(Disconnect::ByApplication, "reconnect", "EN")
                 .await;
         }
+        // 代际推进必须先于 alive 再武装（与 transport-pty respawn 同款补口）：
+        // 旧泵 teardown 的代际闸若恰在「武装后、establish 开头推进前」的窗口
+        // 执行，gen 未变仍等于其 my_gen，会把刚武装的 alive=true 撤销。
+        self.gen.fetch_add(1, Ordering::SeqCst);
         self.alive.store(true, Ordering::SeqCst);
         self.establish().await
     }
@@ -1042,14 +1104,18 @@ impl ChannelHandle for SshChannel {
         )
         .await?;
 
-        let mut file = sftp_step(sftp.create(remote), |e| {
-            Error::Io(format!("sftp create {remote}: {e}"))
-        })
-        .await?;
+        // 先开本地源、后 create 远端（审查二轮 R2-5）：create=CREATE|TRUNCATE|WRITE，
+        // 顺序倒置时本地打不开会把远端既有文件清零。当前调用方都走 stage_plan 的
+        // temp+hardlink 编排（失败 cleanup_temp）无实害，但这是契约层隐患——
+        // 可失败的前置校验必须先于截断远端的副作用。
         let mut src = tokio::fs::File::open(local)
             .await
             .map_err(|e| Error::Io(format!("open {}: {e}", local.display())))?;
         let total_len = tokio::fs::metadata(local).await.ok().map(|m| m.len());
+        let mut file = sftp_step(sftp.create(remote), |e| {
+            Error::Io(format!("sftp create {remote}: {e}"))
+        })
+        .await?;
         let mut total = 0u64;
         let mut buf = [0u8; 65536];
         loop {
@@ -1593,13 +1659,20 @@ async fn run_local_forward(
         let fixed2 = fixed.clone();
         let id2 = fwd_id.clone();
         tokio::spawn(async move {
-            // dynamic：先解析到目标（方法选择即时回）；CONNECT 应答延后到通道结果
+            // dynamic：先解析到目标（方法选择即时回）；CONNECT 应答延后到通道结果。
+            // 握手 30s 窗（审查二轮 R2-3）：健康检查/误配探针连上不发字节此前会
+            // 挂死一个永不退出的任务，可被缓慢堆高
             let ((host, port), socks5) = if let Some(t) = fixed2 {
                 (t, false)
             } else {
-                match socks5_parse(&mut tcp).await {
-                    Some(hp) => (hp, true),
-                    None => return, // 握手失败：直接断开（SOCKS 客户端会报错）
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    socks5_parse(&mut tcp),
+                )
+                .await
+                {
+                    Ok(Some(hp)) => (hp, true),
+                    _ => return, // 握手失败/超时：直接断开（SOCKS 客户端会报错）
                 }
             };
             pump_direct(&this2, tcp, (host, port), socks5, &id2).await;
@@ -1637,8 +1710,18 @@ async fn pump_direct(
             );
             return;
         };
-        h.channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0)
-            .await
+        // 通道开启 15s 窗（审查二轮 R2-6）：锁内 await 此前无界——僵死网络下
+        // 由 keepalive 兜底 ~10s，close/stop_forward/exec 全部在该锁上排队。
+        // 显式超时把排队上限钉死，超时按通道错误走下方 Degraded 分支。
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            h.channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => Err(russh::Error::ConnectionTimeout),
+        }
     };
     match chan {
         Ok(chan) => {

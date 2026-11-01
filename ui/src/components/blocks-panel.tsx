@@ -4,6 +4,7 @@
 // 数据经 read_blocks（最近 N 条旧→新），状态与动作全部归宿主，本组件只呈现。
 import type { BlockInfo } from "../adapter/wire";
 import { t } from "../i18n";
+import { dateLocale } from "../app-data";
 import { IconRefresh, IconTerminal } from "../icons";
 
 /** source（BlockSource::describe()）→ 徽标文案与语义色类。 */
@@ -29,7 +30,7 @@ function clockText(ts: string | null): string {
   if (!ts) return "--:--:--";
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? "--:--:--"
-    : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    : d.toLocaleTimeString(dateLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 interface BlocksPanelProps {
@@ -100,7 +101,7 @@ export function BlocksPanel({ sid, blocks, busy, err, failIdx, load, rerun, copy
                   {(b.output ?? "").length > 0 && (
                     <button className="ghost" data-testid="block-copy-output"
                       title={`${t("复制输出")}${b.output_truncated ? t("（超 8KB 已截断，保留尾部）") : ""}：${b.output!.slice(0, 120)}${b.output!.length > 120 ? "…" : ""}`}
-                      onClick={() => copy(b.output!, t("输出"))}>{t("输出")}{b.output_truncated ? "✂" : ""}</button>
+                      onClick={() => copy(b.output!, t("输出"))}>{t("输出")}{b.output_truncated ? " ✂" : ""}</button>
                   )}
                   <button className="ghost" data-testid="block-rerun" title={t("重跑（经粘贴安全链：危险/多行先确认）")}
                     onClick={() => rerun(b.command)}>{t("重跑")}</button>

@@ -9,6 +9,7 @@
 // Windows 走 kernel32，macOS 走 getrusage/proc_pid_rusage（见 src-tauri self_proc）。
 import { useEffect, useState } from "react";
 import { invoke } from "./adapter/bridge";
+import { t } from "./i18n";
 
 export interface SelfView {
   cpuPct: number | null;
@@ -48,16 +49,16 @@ export function SelfMeterDetail() {
     <div className="self-meter" data-testid="self-meter"
       style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
       <div style={{ display: "flex", gap: 14, alignItems: "baseline", flexWrap: "wrap" }}>
-        <span style={{ color: "var(--dim)", fontSize: 12 }}>程序自身</span>
+        <span style={{ color: "var(--dim)", fontSize: 12 }}>{t("程序自身")}</span>
         <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
-          title="本进程 CPU 占全部逻辑核的百分比（任务管理器同口径）">CPU {fmtCpuPct(v.cpuPct)}</span>
+          title={t("本进程 CPU 占全部逻辑核的百分比（任务管理器同口径）")}>CPU {fmtCpuPct(v.cpuPct)}</span>
         <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
-          title="工作集内存">内存 {v.wsMb} MB</span>
+          title={t("工作集内存")}>{t("内存")} {v.wsMb} MB</span>
         <span className="dim" style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
-          title="提交内存（Windows=独占提交字节；macOS 无此概念，取物理足迹 phys_footprint）">提交 {v.commitMb} MB</span>
+          title={t("提交内存（Windows=独占提交字节；macOS 无此概念，取物理足迹 phys_footprint）")}>{t("提交")} {v.commitMb} MB</span>
       </div>
       <div className="dim" style={{ fontSize: 11, marginTop: 2 }} data-testid="self-meter-at">
-        采样于 {new Date(v.at).toTimeString().slice(0, 8)}
+        {t("采样于")} {new Date(v.at).toTimeString().slice(0, 8)}
       </div>
     </div>
   );
@@ -71,8 +72,8 @@ export function SelfMeterTitlebar() {
   if (!v || (v.cpuPct == null && v.wsMb === 0)) return null;
   return (
     <span className="tb-self" data-testid="self-chip" data-tauri-drag-region
-      title="本程序（tinyssh-app）进程自身开销：CPU 占全部逻辑核百分比 · 工作集内存">
-      <span>本机</span>
+      title={t("本程序（tinyssh-app）进程自身开销：CPU 占全部逻辑核百分比 · 工作集内存")}>
+      <span>{t("本机")}</span>
       <span className="tb-self-val">CPU {fmtCpuPct(v.cpuPct)}</span>
       <span className="tb-self-val">{v.wsMb} MB</span>
     </span>

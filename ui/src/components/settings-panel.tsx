@@ -10,6 +10,7 @@ import {
   friendlyError,
   settingsCatIcon, settingsCatLabel,
   TERM_CURSOR_STYLES, TERM_FONTS, TERM_LETTER_SPACINGS, TERM_SCROLLBACKS,
+  dateLocale,
   type Appearance, type SettingsCat, type TermCursorStyle,
 } from "../app-data";
 import {
@@ -281,7 +282,7 @@ export function SettingsPanel({
                   <div className="set-item" style={{ marginTop: 14 }}>
                     <span className="set-item-txt">
                       <b>{t("界面语言")}</b>
-                      <span className="set-item-desc">{t("切换立即生效；界面铺开翻译中，未覆盖文案保持中文。")}</span>
+                      <span className="set-item-desc">{t("默认跟随系统语言，切换立即生效；未覆盖文案保持中文。")}</span>
                     </span>
                     <select className="set-item-ctl" data-testid="locale-select" aria-label={t("界面语言")}
                       value={locale} onChange={(e) => onChangeLocale(e.target.value as Locale)}>
@@ -576,7 +577,7 @@ export function SettingsPanel({
                         </div>
                         {/* §267「授权使用」：绑定在主机表单里显式选择，这里如实列出占用者 */}
                         {boundTo.length > 0 && (
-                          <div className="cred-uses" data-testid="cred-uses">{t("用于：{0}（换绑请到对应主机的编辑表单）", boundTo.join("、"))}</div>
+                          <div className="cred-uses" data-testid="cred-uses">{t("用于：{0}（换绑请到对应主机的编辑表单）", boundTo.join(t("、")))}</div>
                         )}
                       </div>
                       );
@@ -655,9 +656,9 @@ export function SettingsPanel({
                         {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
                         <span className="dim" style={{ fontSize: 10 }}>
                           {a.last_used_at
-                            ? ` · ${t("最近使用 {0}", new Date(a.last_used_at).toLocaleString())}`
+                            ? ` · ${t("最近使用 {0}", new Date(a.last_used_at).toLocaleString(dateLocale()))}`
                             : ` · ${t("从未使用")}`}
-                          {a.expires_at ? ` · ${new Date(a.expires_at) <= new Date() ? t("已过期") : t("过期 {0}", new Date(a.expires_at).toLocaleDateString())}` : ""}
+                          {a.expires_at ? ` · ${new Date(a.expires_at) <= new Date() ? t("已过期") : t("过期 {0}", new Date(a.expires_at).toLocaleDateString(dateLocale()))}` : ""}
                         </span>
                         <span style={{ flex: 1 }} />
                         {/* ② 自主模式开关：开启带 TTL 选择；危险形态命令仍被 deny 硬拦，
@@ -771,7 +772,7 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                 </div>
                 {mcp.agents.length > 0 && (
                   <div className="dim" style={{ fontSize: 11, marginTop: 6 }} data-testid="collab-kept-agents">
-                    {t("已配置的 Agent（Token 保留，重新启用后继续可用）：{0}", mcp.agents.map((a) => a.label).join("、"))}
+                    {t("已配置的 Agent（Token 保留，重新启用后继续可用）：{0}", mcp.agents.map((a) => a.label).join(t("、")))}
                   </div>
                 )}
                 {collab.state === "DisableFailed" ? (

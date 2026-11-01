@@ -1262,6 +1262,17 @@ pub fn local_publish_hardlink(existing: &str, new: &str) -> PublishOutcome {
     }
 }
 
+/// 本地替换发布（2026-10-30 人类下载覆盖获批分支，DF6.1 解冻的下载面）：rename
+/// 原子替换既有目标——POSIX=rename(2)、Windows=MoveFileEx(REPLACE_EXISTING) 语义，
+/// 无「目标已删、新文件未落」的中间窗。调用方须先过复检 CAS（提交窗 stat 与批准
+/// 所见一致才到这里）；目标被外部占用等失败走 Rejected（确未提交，temp 仍在）。
+pub fn local_publish_replace(temp: &str, target: &str) -> PublishOutcome {
+    match std::fs::rename(temp, target) {
+        Ok(()) => PublishOutcome::Committed,
+        Err(e) => PublishOutcome::Rejected(format!("{e}")),
+    }
+}
+
 /// 本地文件删除（temp 清理；不存在=幂等 Ok）。
 pub fn local_remove_file(path: &str) -> Result<()> {
     match std::fs::remove_file(path) {

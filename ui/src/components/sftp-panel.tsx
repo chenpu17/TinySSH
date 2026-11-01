@@ -3,8 +3,8 @@
 // 裁决、菜单开合全部留在宿主，本文件只收 props 呈现，零语义变更。
 import { invoke } from "../adapter/bridge";
 import type { CollisionDecision, DirEntryS, SessionBrief as Brief } from "../adapter/wire";
-import { fmtBytes, type TransferCard } from "../app-data";
-import { t, localeNow } from "../i18n";
+import { fmtBytes, dateLocale, type TransferCard } from "../app-data";
+import { t } from "../i18n";
 import {
   IconChevronLeft, IconChevronRight, IconChevronUp, IconDownload, IconFile,
   IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconUpload,
@@ -12,9 +12,6 @@ import {
 
 // 传输抽屉最多渲染的行数（五轮架构）：超出只显示最近 N 条并如实声明省略数。
 const XFER_ROWS_SHOWN = 120;
-
-// 时间列的展示 locale 跟随界面语言（数字为主，仅月/日形态有差异：5月3日 vs 5/3）
-const dateLocale = () => (localeNow() === "en" ? "en-US" : "zh-CN");
 
 interface FilesPanelProps {
   sid: string | null;
@@ -202,6 +199,11 @@ export function FilesPanel({
                     data-testid="sftp-list" ref={sftpListRef} tabIndex={0}
                     aria-label={t("文件列表（方向键移动，Enter 进入目录，Space 选中）")}
                     onKeyDown={sftpListKey}
+                    onClick={(ev) => {
+                      // 点空白清选中（审查二轮 UX2-10①）：行点击会冒泡上来，
+                      // target 停在容器本体（行间空白/末行以下）才清
+                      if (ev.target === ev.currentTarget) { setSftpSel(new Set()); sftpAnchorRef.current = null; }
+                    }}
                   >
                     {sftpShown.map((e, i) => (
                       <div
@@ -327,7 +329,12 @@ export function TransferQueueDrawer({
                         </div>
                         <div className="row" style={{ gap: 6, marginTop: 4 }}>
                           <button className="ghost" data-testid="cf-skip" onClick={() => { void decideCollision(t2, "skip"); }}>{t("跳过")}</button>
-                          <button className="ghost" data-testid="cf-overwrite" title={t("外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动")} onClick={() => { void decideCollision(t2, "overwrite"); }}>{t("覆盖")}</button>
+                          {/* 覆盖语义按方向分流（2026-10-30）：下载=替换本地文件（复检 CAS
+                              护栏：目标在裁决后已变化会重新询问）；上传=远端无原子替换原语维持阻止 */}
+                          <button className="ghost" data-testid="cf-overwrite" title={t2.kind === "Download"
+                            ? t("用远端这份文件替换本地同名文件——覆盖后本地的旧内容不可恢复；提交前会复核目标未变化，若已变化会重新询问")
+                            : t("外部进程可能改动目标且无法验证版本——覆盖发布将被阻止，原文件零改动")}
+                            onClick={() => { void decideCollision(t2, "overwrite"); }}>{t("覆盖")}</button>
                           <button className="ghost" data-testid="cf-keepboth" onClick={() => { void decideCollision(t2, "keepboth"); }}>{t("两个都要")}</button>
                         </div>
                       </div>

@@ -80,8 +80,9 @@ export function CollabApprovals({
       <div className="empty" data-testid="collab-disabled">
         <IconInbox size={14} />
         <div>
-          {collabStateText}。{collab.state === "Enabled" ? "" : t("新 Agent 请求已被拒绝")}
-          {collab.state === "Disabling" ? t("，正在收敛存量。") : "。"}
+          {collabStateText}{t("。")}{collab.state === "Enabled" ? "" : t("新 Agent 请求已被拒绝")}
+          {/* 句尾句号也走 t()（审查二轮 FE2-7）：EN 模式露全角「。」 */}
+          {collab.state === "Disabling" ? t("，正在收敛存量。") : t("。")}
           <div style={{ marginTop: 6 }}>
             <button className="ghost" data-testid="collab-open-settings"
               onClick={() => openSettingsAt("agent")}>{t("打开设置 → Agent 接入")}</button>
@@ -225,7 +226,8 @@ export function CollabApprovals({
                           )}
                           {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
                           {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>{t("编辑后批准")}</button>}
-                          <button className="danger" onClick={() => void decide(a.id, "deny", null)}>{t("拒绝")}</button>
+                          {/* 拒绝钉右侧：按钮多到换行时不再孤悬左端（破坏性动作与批准族分区） */}
+                          <button className="danger" style={{ marginLeft: "auto" }} onClick={() => void decide(a.id, "deny", null)}>{t("拒绝")}</button>
                         </div>
                         {!eligible && (
                           <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>

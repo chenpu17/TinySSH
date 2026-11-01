@@ -93,7 +93,7 @@ export function ActivityLogPanel({
                           <div className="tl-meta">
                             {stampLocal(ev.ts)}
                             {ev.session_id && <> · {ident ?? <span className="log-sid">{shortSid}</span>}</>}
-                            {ev.session_id && <span className="log-sid" title={ev.session_id}>（{shortSid}）</span>}
+                            {ev.session_id && <span className="log-sid" title={ev.session_id}>{t("（{0}）", shortSid)}</span>}
                           </div>
                           <div className="tl-action">
                             <span className="tl-actor">

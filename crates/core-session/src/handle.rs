@@ -847,17 +847,35 @@ impl SessionHandle {
             sh_single_quote(&out),
         );
         let cap = opts.output_cap.unwrap_or(DEFAULT_OUTPUT_CAP);
+        // 收割失败路径同样要清尾：out/rc 文件对只在成功 reap 的 rm 里删——
+        // 通道死/协议不匹配时残留会一直躺在远端 /tmp（下次执行用新 uid 不覆盖）。
         let text = match crate::SessionManager::tmux_exec(self, &reap, cap + 64).await {
             Some((t, _)) => t,
             None => {
+                let cleanup = format!(
+                    "rm -f {} {} {} 2>/dev/null",
+                    sh_single_quote(&out),
+                    sh_single_quote(&rc),
+                    sh_single_quote(&format!("{rc}.tmp")),
+                );
+                let _ = crate::SessionManager::tmux_exec(self, &cleanup, 64).await;
                 return Err(Error::InvalidInput(
                     "tmux 专窗执行完成但收割失败（通道异常）".into(),
-                ))
+                ));
             }
         };
-        let (stdout, exit_code) = split_tmux_exec_out(&text).ok_or_else(|| {
-            Error::InvalidInput("tmux 专窗执行收割文本不符合协议（远端异常）".into())
-        })?;
+        let Some((stdout, exit_code)) = split_tmux_exec_out(&text) else {
+            let cleanup = format!(
+                "rm -f {} {} {} 2>/dev/null",
+                sh_single_quote(&out),
+                sh_single_quote(&rc),
+                sh_single_quote(&format!("{rc}.tmp")),
+            );
+            let _ = crate::SessionManager::tmux_exec(self, &cleanup, 64).await;
+            return Err(Error::InvalidInput(
+                "tmux 专窗执行收割文本不符合协议（远端异常）".into(),
+            ));
+        };
         let conv = |s: String| -> (bool, String, bool) {
             let (text, truncated) = truncate_utf8(&s, cap);
             let (has_binary, text) = sanitize_utf8(&text);

@@ -6,7 +6,7 @@ import { IconSliders, IconPencil, IconTerminal, IconSearch, IconStar, IconInbox,
 import { useEffect, type RefObject } from "react";
 import { invoke, MkChannel } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
-import { t } from "./i18n";
+import { t, localeNow } from "./i18n";
 import type { ApprovalItem, AuditEvent, Host } from "./adapter/wire";
 // 应用版本（关于卡）：构建期从 package.json 内联（Vite JSON 具名导出 → 纯字符串），
 // 真机由 tauri getVersion() 同源覆盖；此常量仅供演示模式回退，不另立第四份拷贝。
@@ -185,19 +185,17 @@ export const decisionLabel = (ev: AuditEvent): string => {
 //  `timeline` 一并删除——活动记录是完整留痕视图，隐藏与后端分页 total 口径不可调和。
 //  见本目录 README「取向登记」。）
 
-// 审计时间戳 → HH:MM:SS（与现场简报/后端审计口径一致——之前无秒，和简报对不上）
-export const hhmm = (ts: string): string => {
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-};
-
-// R41（§6.6）活动记录时间戳：含**日期**，与 hhmm 的纯时刻分开（详情/记录要能跨天定位）
+// R41（§6.6）活动记录时间戳：含**日期**，与现场简报/后端审计口径一致（详情/记录要能跨天定位）
 export const stampLocal = (ts: string): string => {
   const d = new Date(ts);
   if (isNaN(d.getTime())) return "";
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 };
+
+// 时间展示 locale 跟随界面语言而非系统（审查二轮 FE2-8：en 界面+中文系统时
+// 记录/设置时间形态倒挂）。sftp-panel 的同名本地实现一并收口到这里。
+export const dateLocale = (): string => (localeNow() === "en" ? "en-US" : "zh-CN");
 
 // 本机时区偏移说明（§6.6「时间含日期/时区说明」）——只算一次，随标题展示
 export const TZ_NOTE = (() => {
@@ -212,8 +210,10 @@ export const TZ_NOTE = (() => {
 // `goal_set` 不在 AUDIT_LABELS 里（它的中文名按 payload 细分，见 decisionLabel），
 // 不能走 auditLabel 回落成原始键名——否则下拉显示 `goal_set` 而列表显示「更新任务目标」，
 // 用户对不上自己筛的是哪一项（rev-r41 低-1）。此处给覆盖两种细分的合并名。
+// label 存**原中文键**、消费点渲染期 t()（activity-log-panel）——模块 import 期禁调
+// t()，否则启动语言被冻进下拉、语言切换后翻不回来（i18n 铁律唯一违例已清）。
 export const LOG_ACTION_OPTIONS: { v: string; label: string }[] = [...Object.keys(AUDIT_LABELS), "goal_set"]
-  .map((v) => ({ v, label: v === "goal_set" ? "更新/清除任务目标" : auditLabel(v) }))
+  .map((v) => ({ v, label: v === "goal_set" ? "更新/清除任务目标" : (AUDIT_LABELS[v] ?? v) }))
   .sort((x, y) => x.label.localeCompare(y.label, "zh-CN"));
 
 // 会话状态 → 标签 + 颜色类
@@ -292,7 +292,7 @@ export const friendlyError = (e: unknown): string => {
   if (pe.kind === "identity_in_use") {
     const names = (pe.detail as { host_names?: string[] } | undefined)?.host_names ?? [];
     return names.length
-      ? t("凭据仍被 {0} 台主机使用（{1}）——请先为这些主机改绑凭据或删除主机", names.length, names.join("、"))
+      ? t("凭据仍被 {0} 台主机使用（{1}）——请先为这些主机改绑凭据或删除主机", names.length, names.join(t("、")))
       : t("凭据仍被主机使用——请先解除引用后再删除");
   }
   const raw = errMsg(e);
@@ -547,6 +547,10 @@ export const PALETTES: ChromePalette[] = [
   { id: "gruvbox", label: "复古", dot: ["#282828", "#fabd2f"], lite: ["#ede4c4", "#7d570b"] },
   { id: "tokyo", label: "东京夜", dot: ["#1a1b26", "#7aa2f7"], lite: ["#dfe2e9", "#1b5fc0"] },
   { id: "mocha", label: "摩卡", dot: ["#1e1e2e", "#cba6f7"], lite: ["#e4e8ef", "#7c30d8"] },
+  // 主题⑥轮（墨水屏）：纸墨族——以「纸面墨字」为身份（亮态即本体：纸白×近黑墨字，
+  // 语义色深墨低饱和、边框加浓——e-ink 面板灰阶慢刷残影敏感，专项 CSS 铲阴影/动画，
+  // 见 styles.css eink 专项块；暗态转夜墨纸字）。终端 ANSI 低饱和保色相（墨分五色）
+  { id: "eink", label: "墨水屏", dot: ["#191813", "#d5d1c6"], lite: ["#e7e4dc", "#26231d"] },
 ];
 // 出厂色板族（2026-10-27 用户拍板）：东京夜——深色面靛夜底×晴空蓝、浅色面蓝墨
 // 水面孔；终端 ANSI 16 色按族从 styles.css --ansi-0..15 派生，切族即整体换装

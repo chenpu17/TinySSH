@@ -3,6 +3,7 @@
 import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
 import { IconPlus, IconTerminal, IconUpload } from "../icons";
 import { t } from "../i18n";
+import { dateLocale } from "../app-data";
 
 interface WelcomeProps {
   sid: string | null;
@@ -75,10 +76,10 @@ export function Welcome({
             <div className="welcome-recents" aria-label={t("上次会话")}>
               <div className="wr-title">{t("上次会话")}</div>
               <button className="wr-row" data-testid="reconnect-last"
-                title={t("重连 {0}", rowsH.map((h) => h.name).join("、"))}
+                title={t("重连 {0}", rowsH.map((h) => h.name).join(t("、")))}
                 onClick={() => { for (const h of rowsH) void createSession(h); }}>
                 <span className="wr-name">{t("⟳ 重连上次会话（{0}）", rowsH.length)}</span>
-                <span className="wr-addr">{rowsH.map((h) => h.name).join("、")}</span>
+                <span className="wr-addr">{rowsH.map((h) => h.name).join(t("、"))}</span>
                 <span className="wr-go">{t("连接")}</span>
               </button>
             </div>
@@ -91,9 +92,9 @@ export function Welcome({
             .map((e) => ({ e, h: hosts.find((x) => x.id === e.host_id) }))
             .filter((r) => r.h);
           if (rows.length === 0) return null;
-          const names = rows.map((r) => r.h!.name).join("、");
+          const names = rows.map((r) => r.h!.name).join(t("、"));
           let when = rows[0].e.saved_at;
-          try { when = new Date(rows[0].e.saved_at).toLocaleString("zh-CN"); } catch { /* 原样 */ }
+          try { when = new Date(rows[0].e.saved_at).toLocaleString(dateLocale()); } catch { /* 原样 */ }
           return (
             <div className="welcome-recents" aria-label={t("恢复现场")}>
               <div className="wr-title">{t("上次现场")}</div>

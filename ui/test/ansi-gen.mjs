@@ -105,6 +105,9 @@ const FAMILY = {
   tokyo: { dH: { red: -5, green: 0, yellow: 0, blue: 8, magenta: 10, cyan: -5 }, cM: { red: 1.0, green: 1.0, yellow: 1.05, blue: 1.15, magenta: 1.15, cyan: 1.1 }, cBase: 0.125 },
   // 摩卡：粉彩全线降饱和（Catppuccin 的 pastel 气），品红/青微提保 mauve/sapphire 相
   mocha: { dH: { red: -8, green: 5, yellow: 5, blue: 8, magenta: 5, cyan: -5 }, cM: { red: 0.9, green: 0.9, yellow: 0.95, blue: 1.05, magenta: 1.1, cyan: 1.05 }, cBase: 0.11 },
+  // 墨水屏：墨分五色——全线极低饱和（灰阶 e-ink 面板只余明度层次，彩屏保色相可辨），
+  // 色相零旋转（终端 8 色语义原样直给，不做家族性格改相）
+  eink: { dH: {}, cM: 0.42, cBase: 0.11 },
 };
 const famCfg = (id) => {
   const f = FAMILY[id] ?? {};
@@ -118,9 +121,9 @@ const famCfg = (id) => {
 // ---- 逐态生成 ----
 const css = readFileSync(CSS_PATH, "utf8");
 const { states } = loadThemeCss(css);
-// 主题③轮：9→11 族（+霓虹/水墨）；主题⑤轮：11→15 族（+诺德/复古/东京夜/摩卡），
-// 加 graphite 双态共 30 态
-if (states.length !== 30) { console.error(`态数 ${states.length}/30 不对`); process.exit(2); }
+// 主题③轮：9→11 族（+霓虹/水墨）；主题⑤轮：11→15 族（+诺德/复古/东京夜/摩卡）；
+// 主题⑥轮：15→16 族（+墨水屏），加 graphite 双态共 32 态
+if (states.length !== 32) { console.error(`态数 ${states.length}/32 不对`); process.exit(2); }
 
 const out = new Map(); // stateKey → { lines, checks }
 let fail = 0;

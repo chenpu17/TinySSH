@@ -1154,6 +1154,20 @@ fn updater_endpoint() -> String {
     updater_endpoint_override().unwrap_or_else(|| UPDATER_ENDPOINT.to_string())
 }
 
+/// 重定向策略：常规跳转照跟，但 **scheme 跳变一律停**（https→http 降级、
+/// 反向的 http→https 也停——更新链路没有合法的换 scheme 理由）。停在降级
+/// 跳转时响应是 3xx，后续 `status().is_success()` 检查会如实报错。
+fn no_downgrade_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if let Some(prev) = attempt.previous().last() {
+            if prev.scheme() != attempt.url().scheme() {
+                return attempt.stop();
+            }
+        }
+        attempt.follow()
+    })
+}
+
 /// 更新通道共用 HTTP 客户端：GitHub API 要求 UA；应用内检查静默 5s 全程超时
 /// （启动静默探测的预算；显式点按的安装路径用 install 变体放宽）。
 fn update_http_client(current: &str) -> std::result::Result<reqwest::Client, String> {
@@ -1162,10 +1176,13 @@ fn update_http_client(current: &str) -> std::result::Result<reqwest::Client, Str
 
 /// 安装路径（用户显式点按）变体：清单 30s / 下载在读停滞 30s、全程 10 分钟封顶
 /// ——停滞即 Err 如实报错可重试，绝不无限 pending（大陆访问 GitHub 的最常见
-/// 故障模式是「连上但不吐数据」）。
+/// 故障模式是「连上但不吐数据」）。重定向禁跨 scheme（https→http 降级在
+/// Policy 层拦下）：endpoint_override_allowed 只门初始 URL，重定向后的跳变
+/// 它看不见。
 fn update_http_client_for_install(current: &str) -> std::result::Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(format!("TinySSH/{current}"))
+        .redirect(no_downgrade_redirects())
         .connect_timeout(std::time::Duration::from_secs(10))
         .read_timeout(std::time::Duration::from_secs(30))
         .build()
@@ -1178,6 +1195,8 @@ fn update_http_client_with_timeout(
 ) -> std::result::Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(format!("TinySSH/{current}"))
+        // 与安装路径同策略：端点门只管初始 URL，https→http 降级重定向在此挡
+        .redirect(no_downgrade_redirects())
         .timeout(total)
         .build()
         .map_err(|e| format!("网络客户端初始化失败：{e}"))
@@ -1227,6 +1246,17 @@ fn updater_info() -> UpdaterInfo {
     }
 }
 
+/// 安装在飞闸：防连点的后端兜底（前端 disabled+busy 之外的第二道）——两次并发
+/// 调用会各自下载、各自换身+spawn 新实例，第二个新实例无锁可等，只能白等 15s
+/// 后吃 fatal dialog。命令任何出口经 RAII 抬闸。
+static INSTALL_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+struct InstallGuard;
+impl Drop for InstallGuard {
+    fn drop(&mut self) {
+        INSTALL_IN_FLIGHT.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// 检查并安装更新。Windows：便携自替换（下载→验签→换身→受控重启）；
 /// macOS：插件通道（下载 app.tar.gz → 验签安装 → 重启），下载进度经
 /// `updater-progress` 事件透传（downloaded/total 字节）；已是最新返回 Ok(false)。
@@ -1239,6 +1269,10 @@ async fn updater_install(app: tauri::AppHandle, state: ApiState<'_>) -> CmdResul
             "本构建未配置自动更新签名（占位公钥）——请从发布页手动下载",
         ));
     }
+    if INSTALL_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return Err(WireError::simple("updater_busy", "已有一次更新安装在进行"));
+    }
+    let _install_guard = InstallGuard;
     if cfg!(target_os = "windows") {
         let swapped = portable_update(&app).await?;
         if !swapped {
@@ -1464,6 +1498,17 @@ async fn portable_update(app: &tauri::AppHandle) -> std::result::Result<bool, Wi
     // 3. 下载（流式；读停滞 30s/全程 10 分钟封顶——停滞即报错可重试，绝不
     //    无限 pending；进度事件与 mac 插件通道同事件同形状，100ms 节流）。
     //    前端当前不消费该事件（按钮 busy 文案兜底），保留为将来进度 UI 的挂点。
+    //    载荷直链同吃端点安全门（纵深：清单有 minisign 验签兜底内容，这里挡
+    //    「把用户引去明文端点」的无谓暴露——验签最终会拦，但不该走到那一步）。
+    if !endpoint_override_allowed(&entry.url) {
+        return Err(err(
+            "updater_failed",
+            format!(
+                "更新包地址不合规（仅 https；http 仅限本机回环）：{}",
+                entry.url
+            ),
+        ));
+    }
     let dl = update_http_client_for_install(&current)
         .map_err(|e| err("updater_unavailable", e))?
         .get(&entry.url)
@@ -2083,10 +2128,14 @@ async fn list_recent_hosts(state: ApiState<'_>) -> CmdResult<Vec<RecentHost>> {
 }
 
 /// 打开终端里的链接（T16 OSC8/URL）：仅 http/https，走系统默认浏览器。
-/// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用。
+/// scheme 白名单防「open file://…」或自定义 scheme 被外部处理器利用；
+/// scheme 按 RFC 3986 不分大小写（OSC8 里的 `HTTPS://…` 也放行）。
 #[tauri::command]
 async fn open_url(url: String) -> CmdResult<()> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    let scheme_ok = url
+        .split_once("://")
+        .is_some_and(|(s, _)| matches!(s.to_ascii_lowercase().as_str(), "http" | "https"));
+    if !scheme_ok {
         return Err(WireError::simple("invalid_input", "仅支持 http/https 链接"));
     }
     // Windows 分支（审计 W2）：原实现硬编码 macOS `open`，Windows 上恒失败。

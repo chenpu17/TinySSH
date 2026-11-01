@@ -290,7 +290,10 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 /* 会话工具栏 40：单行不换行（§4.2），ident 溢出省略 */
 .session-toolbar {
-  height: 40px; flex: none; display: flex; align-items: center; gap: 6px;
+  /* min-height + wrap（审查二轮 UX2-9）：Agent 面板开着时终端区可被压到 ~480px，
+     按钮组装不下——末位「工具」钮此前被视口硬裁 11px。装得下时单行 40px 不变，
+     装不下时折第二行而不是裁切 */
+  min-height: 40px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--panel);
   white-space: nowrap;
 }
@@ -342,6 +345,13 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
    近乎不可读（vis-r35 低-2：深 1.83:1 / 浅 3.37:1） */
 button.sb-btn:not(:disabled):hover { background: var(--panel2); color: var(--text); }
 .sb-btn b { color: var(--text); font-weight: 600; }
+/* 传输计数注意态（冲突待裁决）：计数含 awaiting 但裸数字不引人——warn 色提醒
+   「有卡在等人」（用户实测 mac：决策卡只活在抽屉里时二次下载观感=静默无响应）。
+   特异度同 346/461 行既有陷阱：hover 前景与 accent 实底都要显式压过 */
+button.sb-btn.attn:not(:disabled),
+button.sb-btn.attn:not(:disabled):hover,
+button.ghost.attn:not(:disabled):hover { color: var(--warn); background: var(--panel2); }
+.sb-btn.attn b, .ghost.attn { color: var(--warn); }
 
 /* ===== 专注模式（F11 轮）：chrome 全让位 + 系统级全屏（Tauri setFullscreen）。
    显隐全走 CSS——退出后 titlebar/主机栏/工具栏/状态条原样恢复，状态零破坏。
@@ -2144,6 +2154,57 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --ansi-4: #28619e; --ansi-5: #814a8d; --ansi-6: #086b66; --ansi-7: #cdcfd3;
   --ansi-8: #5e636c; --ansi-9: #87343c; --ansi-10: #025d28; --ansi-11: #5b5001;
   --ansi-12: #005096; --ansi-13: #753583; --ansi-14: #025a56; --ansi-15: #fbfcfd;}
+/* 墨水屏 · 亮（本体面）：纸白×墨字——e-ink 灰阶慢刷的基准态：近黑墨字高对比、
+   语义色深墨低饱和（灰阶面板以明度分层、彩屏保色相可辨）、边框比常规族加浓
+   （阴影被专项块铲平，层次全靠实线） */
+:root[data-theme="eink"][data-chrome="light"] {
+  --bg: #e7e4dc; --panel: #eeece5; --panel2: #f6f4ee; --panel3: #d9d6cc;
+  --border: rgba(50, 46, 38, 0.26); --border-hover: rgba(50, 46, 38, 0.44);
+  --text: #1f1d18; --text-sub: #49453c; --dim: #6e6a5e;
+  --accent: #26231d; --accent-hover: #11100b; --accent-text: #26231d;
+  /* 填充档：墨面纸字（按钮底近黑、白纸字反白） */
+  --accent-fill: #2a261f; --accent-fill-hover: #191610;
+  --danger: #7d2a22; --danger-hover: #67221b;
+  --ok: #2e5c38; --warn: #7a5a12; --warn-text: #7a5a12; --warn-hover: #63480d;
+  --on-accent: #f6f4ee; --on-danger: #f6f4ee; --on-warn: #f6f4ee;
+  --blue: #2c4a6e; --focus: #4a4436;
+  --grad-a: #3a352b; --grad-b: #2a261f;
+  --mark-grad: linear-gradient(160deg, #e9e5d9, #f8f6f0);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5b5954; --ansi-1: #775451; --ansi-2: #4b634c; --ansi-3: #655d3f;
+  --ansi-4: #466075; --ansi-5: #685771; --ansi-6: #3b6463; --ansi-7: #cdccc8;
+  --ansi-8: #646157; --ansi-9: #6a4440; --ansi-10: #3a543a; --ansi-11: #574d2a;
+  --ansi-12: #345069; --ansi-13: #5a4663; --ansi-14: #235555; --ansi-15: #fcfcfa;}
+/* 墨水屏 · 暗（夜墨面）：族身份在亮面（纸墨），暗面取「灯下夜读」——暖夜墨底×纸字，
+   accent 即纸色（反白的墨水屏），填充档纸面墨字 */
+:root[data-theme="eink"][data-chrome="dark"] {
+  --bg: #12110d; --panel: #191813; --panel2: #211f18; --panel3: #2c2920;
+  --border: rgba(213, 209, 198, 0.14); --border-hover: rgba(213, 209, 198, 0.28);
+  --text: #d6d0bd; --text-sub: #a8a28c; --dim: #7d7763;
+  --accent: #d5d1c6; --accent-hover: #ece8dd; --accent-text: #d5d1c6;
+  --accent-fill: #cfc8b2; --accent-fill-hover: #ded8c6;
+  --danger: #cf8a78; --danger-hover: #dc9d8d;
+  --ok: #8ba878; --warn: #c2a35c; --warn-text: #c2a35c; --warn-hover: #d2b56f;
+  --on-accent: #1c1a13; --on-danger: #2b110b; --on-warn: #241b07;
+  --blue: #92a9c4; --focus: #d5d1c6;
+  --grad-a: #cfc8b2; --grad-b: #b8b099;
+  --mark-grad: linear-gradient(160deg, #2c2920, #191813);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #23221f; --ansi-1: #a27e7a; --ansi-2: #748d74; --ansi-3: #8f8667;
+  --ansi-4: #6f89a0; --ansi-5: #93809b; --ansi-6: #648e8d; --ansi-7: #8c8a85;
+  --ansi-8: #46443c; --ansi-9: #ba8e8a; --ansi-10: #83a083; --ansi-11: #a39973;
+  --ansi-12: #7d9cb7; --ansi-13: #a791b2; --ansi-14: #70a2a1; --ansi-15: #f4f3f0;}
+/* 墨水屏专项（eink 族）：e-ink 灰阶显影慢、残影敏感——阴影渲染成抖动灰雾、
+   过渡/动画是连续局部刷新（反复闪刷+残影堆积），全部铲平；层次由加浓的
+   --border 实线表达，焦点环走 outline 不受影响。光标闪烁若走 CSS 动画一并归静。 */
+:root[data-theme="eink"] *, :root[data-theme="eink"] *::before, :root[data-theme="eink"] *::after {
+  box-shadow: none !important;
+  text-shadow: none !important;
+  transition: none !important;
+  animation: none !important;
+}
 /* 主题切换脉冲：仅切换瞬间（.theme-switching 挂 320ms，App.tsx）开全量色彩过渡，
    平时零开销；@keyframes 动画期间优先级本就高于 transition，互不干扰 */
 .theme-switching, .theme-switching *, .theme-switching *::before, .theme-switching *::after {
@@ -2328,6 +2389,9 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   transition: background 120ms, border-color 120ms, box-shadow 120ms;
 }
 .mon-sw.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+/* 悬停底色须胜过通用 button:not(:disabled):hover（同 243/341/909 行既有模式）——
+   否则 ON 态药丸悬停落 accent 实底、文字同色不可读（审查二轮 UX2-1） */
+.mon-sw.on:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .mon-sw.on .mon-sw-knob { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
 /* 未开启空态（开关轮）：虚线框舞台 + 两张大开关卡（hover 预演打开态） */
 .mon-offboard {

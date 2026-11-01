@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ActionRecord, ActionRecordKind, RecordsQuery, RecordsRange } from "../adapter/wire";
 import { t } from "../i18n";
+import { dateLocale } from "../app-data";
 
 /** ⑨ 时间范围档位 → since ISO（「今天」按本机零点；all=null 不过滤）。
  * 在拉取时刻换算，筛选态里只存档位，避免久置页面的边界漂移。 */
@@ -131,22 +132,22 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
               className={flashSeq === r.seq ? "rec-dot-flash" : undefined}
               onClick={() => onPick(r.seq)}>
               <title>
-                {`${new Date(r.ts).toLocaleString()}\n${t(KIND_LABEL[r.kind] ?? r.kind)} · ${agent ? t("Agent {0}", r.agent_id ?? "") : t("人类")}\n${r.summary}\n${STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ""}`}
+                {`${new Date(r.ts).toLocaleString(dateLocale())}\n${t(KIND_LABEL[r.kind] ?? r.kind)} · ${agent ? t("Agent {0}", r.agent_id ?? "") : t("人类")}\n${r.summary}\n${STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ""}`}
               </title>
             </circle>
           );
         })}
         <text className="rec-axis-label" x={CHART_PAD_X} y={H - 1} textAnchor="start">
-          {new Date(domain.t0).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+          {new Date(domain.t0).toLocaleTimeString(dateLocale(), { hour: "2-digit", minute: "2-digit" })}
         </text>
         <text className="rec-axis-label" x={CHART_W - CHART_PAD_X} y={H - 1} textAnchor="end">
-          {new Date(domain.t0 + domain.span).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+          {new Date(domain.t0 + domain.span).toLocaleTimeString(dateLocale(), { hour: "2-digit", minute: "2-digit" })}
         </text>
       </svg>
       <div className="dim" style={{ fontSize: 10, marginTop: 3 }} data-testid="records-chart-legend">
         {[...new Set(rows.map((r) => r.status))].map((s) => (
           <span key={s} style={{ marginRight: 10 }}>
-            <span style={{ color: STATUS_COLOR[s] ?? "#8a8f98" }}>●</span> {STATUS_LABEL[s] ?? s}
+            <span style={{ color: STATUS_COLOR[s] ?? "#8a8f98" }}>●</span> {STATUS_LABEL[s] ? t(STATUS_LABEL[s]) : s}
           </span>
         ))}
         <span> {t("实心 = Agent · 空心 = 人类 · 点大小 = 耗时 · 点击刻度定位明细")}</span>
@@ -282,7 +283,7 @@ export function RecordsPane(props: RecordsPaneProps) {
                   data-testid="records-row" style={{ padding: "6px 0", borderBottom: "1px dashed var(--border)" }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
                   <span className="dim mono" style={{ fontSize: 11 }}>
-                    {new Date(r.ts).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    {new Date(r.ts).toLocaleString(dateLocale(), { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>
                   <span className="badge" style={{ fontSize: 10 }}>{t(KIND_LABEL[r.kind] ?? r.kind)}</span>
                   <span className="dim" style={{ fontSize: 11 }}>
@@ -298,7 +299,8 @@ export function RecordsPane(props: RecordsPaneProps) {
                   <span className={"mono" /* 摘要可选中复制，命令/路径常被回看 */} style={{ fontSize: 11, userSelect: "text", wordBreak: "break-all", flex: "1 1 auto" }}>
                     {r.summary}
                   </span>
-                  <span className={statusCls(r.status)} style={{ fontSize: 11 }}>{STATUS_LABEL[r.status] ?? r.status}</span>
+                  {/* 徽标走 t()（UX2-8④）：EN 模式露中文徽标 */}
+                  <span className={statusCls(r.status)} style={{ fontSize: 11 }}>{STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}</span>
                   {r.duration_ms != null && <span className="dim" style={{ fontSize: 10 }}>{fmtDur(r.duration_ms)}</span>}
                   {r.exit_code != null && r.exit_code !== 0 && <span className="err" style={{ fontSize: 10 }}>exit {r.exit_code}</span>}
                   {r.output_excerpt && (
