@@ -156,6 +156,51 @@ pub trait ChannelHandle: Send + Sync {
         let _ = path;
         Err(crate::Error::InvalidInput("该通路不支持文件删除".into()))
     }
+
+    /// tmux 面板（一标签多 tmux 会话）：同连接上开**附加交互 PTY 通道**并执行
+    /// cmd（request_pty + request_exec——与主 shell 的 request_shell 区分，命令
+    /// 即通道引导期启动项，前台尚无交互程序，天然无注入难题）。通道生命周期
+    /// 独立于主 shell：连接断开即死（core 按面板愿望清单重建），不参与主通道
+    /// 的代际/重连。默认不支持（本地 PTY 无远端 tmux 面板能力；本地 tmux 属
+    /// 未来扩展）。与 exec_fresh 同款锁纪律：实现里 handle 锁只罩 channel_open。
+    async fn open_interactive_channel(
+        &self,
+        _cmd: &str,
+        _cols: u16,
+        _rows: u16,
+    ) -> Result<Box<dyn InteractiveChannel>> {
+        Err(crate::Error::InvalidInput(
+            "该通路不支持面板通道（仅 SSH 会话）".into(),
+        ))
+    }
+}
+
+/// tmux 面板的单条附加交互 PTY 通道（`open_interactive_channel` 的产物）。
+/// 输出走可丢 broadcast + 引导期积压（subscribe_output 首订补放订阅前的字节
+/// ——attach 首屏绘制不得落入「先产后订」窗口）。
+#[async_trait]
+pub trait InteractiveChannel: Send + Sync {
+    /// 向通道写按键（已按会话字符集编码的原始字节）。
+    async fn write(&self, data: &[u8]) -> Result<()>;
+
+    /// window_change（tmux client 按 PTY 尺寸重绘）。
+    async fn resize(&self, cols: u16, rows: u16) -> Result<()>;
+
+    /// 订阅原始输出字节。实现须保证：订阅时刻之前产生的字节一并补放。
+    fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>>;
+
+    /// 通道是否存活（远端进程退出/连接断开 = false）。
+    async fn is_alive(&self) -> bool;
+
+    /// 远端进程是否**自行结束**（收到 exit-status/exit-signal：用户在格子里
+    /// `C-b d`/`exit`、会话被 kill 等）。连接断开导致的死亡 = false。core 据此
+    /// 区分「用户结束 → 摘除格子」与「掉线 → 保留格子待重连重建」。
+    fn exited(&self) -> bool;
+
+    /// 关闭通道（发 CHANNEL_CLOSE：远端 PTY 消亡 → tmux client 随之退出即
+    /// detach 语义；tmux 会话与其中的进程不受影响——「只拆客户端，不动会话」
+    /// 是面板关闭的安全边界）。
+    async fn close(&self) -> Result<()>;
 }
 
 /// tokio_util 的 CancellationToken 的最小本地别名层：避免 session-api 直接依赖

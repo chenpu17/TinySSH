@@ -751,6 +751,21 @@ pub struct SessionInfo {
     /// None=未 attach/非 SSH/旧后端。serde default 防旧载荷。
     #[serde(default)]
     pub tmux_attached: Option<String>,
+    /// tmux 面板（一标签多 tmux 会话）：会话内附加交互 PTY 通道快照。
+    /// 顺序=前端自上而下堆叠序（core 按面板愿望清单产出）。serde default 防旧载荷。
+    #[serde(default)]
+    pub panes: Vec<PaneInfo>,
+}
+
+/// tmux 面板：单条附加通道的快照（pane_id 在会话内单调，重建不回绕——前端以
+/// sid:pane_id 寻址 xterm 实例，id 变化即「旧格已死、新格重建」的对账信号）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaneInfo {
+    pub pane_id: u32,
+    pub tmux_session: String,
+    /// false=掉线死亡、等待重连重建（前端保留旧画面加遮罩）。serde default 防旧载荷。
+    #[serde(default)]
+    pub alive: bool,
 }
 
 /// R41（§6.6/S09）连接详情：**连接当时**的完整身份快照 + 会话运行时态。

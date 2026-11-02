@@ -18,6 +18,7 @@ import {
 } from "./zoom";
 import { applyCheckpoint, createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
+import { paneGrid } from "./terminal/pane-grid.mjs";
 import type {
   Host, HostDraft, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
@@ -124,6 +125,16 @@ function sameJson<T>(prev: T, next: T): T {
 // tmux 联动偏好键（恢复现场轮）：单键 JSON，见组件内 tmuxPrefs 注释。
 const SETTING_TMUX_PREFS = "tmux.v1.prefs";
 
+/** tmux 面板格子实例（会话内附加交互通道的前端视图）。 */
+type PaneTermEntry = {
+  sid: string; paneId: number; name: string;
+  term: Terminal; cell: HTMLDivElement; body: HTMLDivElement;
+  webgl: WebglAddon | null; bornAt: number; alive: boolean;
+};
+
+/** 面板格数上限（真实核心 handle.rs PANE_MAX / demo DEMO_PANE_MAX 同值）。 */
+const PANE_MAX = 5;
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -133,6 +144,12 @@ export default function App() {
   // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
   // （P0 终端品质轮：webgl/liga 记住当前渲染器句柄——连字开关要在两者间热切换）
   const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement; feed: OutputFeed | null; webgl: WebglAddon | null; liga: LigaturesAddon | null }>>(new Map());
+  // tmux 面板（一标签多 tmux 会话）：格子 xterm 实例表，键 = `${sid}:${paneId}`。
+  // 与 termsRef 同纪律：命令式 DOM 挂进 #term，React 不渲染这些层；随会话快照对账
+  // 增删（bornAt 与 panesSnapAtRef 同为 performance.now()：快照请求晚于格子出生，
+  // 缺席才算真缺席——乐观开格后才返回的在途旧快照不误杀，乱序到达同样成立）
+  const paneTermsRef = useRef<Map<string, PaneTermEntry>>(new Map());
+  const panesSnapAtRef = useRef(0);
   // ---- tmux 联动（恢复现场轮）----
   // 恢复动作经 ref 供 applyStateEvent 调用（该回调定义在组件顶部、函数体晚于
   // 恢复函数声明执行——deps 不引用即无 TDZ；同 dispatchRef 惯例）。
@@ -395,7 +412,7 @@ export default function App() {
   // 写入前的询问卡（同刻新请求覆盖旧待决——last-wins，预览只展最新一条）
   const [osc52Ask, setOsc52Ask] = useState<{ sid: string; text: string } | null>(null);
   const osc52AskRef = useRef<HTMLDivElement | null>(null);
-  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun" } | null>(null);
+  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun"; paneKey?: string } | null>(null);
   // P0 终端品质轮：粘贴危险形态的**廉价预筛**——命中词根才过 Rust 扫描（判定唯一在
   // Rust：approval::scan_dangerous 的同一张内置 deny 表 + tree-sitter 逐段 + wrapper
   // 前缀；这里只决定「要不要问」，不做第二份规则）。漏筛=少一次提示，误筛=多一次 IPC。
@@ -497,13 +514,15 @@ export default function App() {
   // DECSET 2004 自适配（不补换行不代执行）；远端未开启时多行内容 = 换行立即执行——预览确认后才发。
   // P0 轮：命中内置危险形态（Rust 判定）同样先确认再发——即便远端开着 bracketed paste，
   // 贴进来的 `sudo rm -rf /` 也值得多看一眼（信任模型：人类自己也不盲贴）。
-  const pasteTextInto = (term: Terminal, sessionSid: string, text: string) => {
+  const pasteTextInto = (term: Terminal, sessionSid: string, text: string, paneKey?: string) => {
     if (!text) return;
     // rev-r26 低-5：断线/重连期粘贴与键入同口径拦截（确认框照弹会误导——
-    // 确认后字节仍被 onData 拦下）；⚠ 与 onData 告示同文
+    // 确认后字节仍被 onData 拦下）；⚠ 与 onData 告示同文。tmux 面板格子另看
+    // 格子自身存活（掉线死亡的格子 onData 同样拦下）
     const pst = sessionsRef.current.find((x) => x.id === sessionSid)?.state;
-    if (pst && inputBlockedState(pst)) {
-      const why = pst === "Disconnected" ? t("会话已断开") : t("网络中断（自动重连中）");
+    const paneDead = !!paneKey && paneTermsRef.current.get(paneKey)?.alive === false;
+    if ((pst && inputBlockedState(pst)) || paneDead) {
+      const why = paneDead ? t("窗格已断开") : pst === "Disconnected" ? t("会话已断开") : t("网络中断（自动重连中）");
       term.write(`\r\n\x1b[33m⚠ ${t("{0}——粘贴未发送。", why)}\x1b[0m\r\n`);
       return;
     }
@@ -511,13 +530,15 @@ export default function App() {
     const deliver = (risk: PasteHit[]) => {
       if (multi || risk.length) {
         const h = sessionsRef.current.find((x) => x.id === sessionSid);
+        const paneName = paneKey ? paneTermsRef.current.get(paneKey)?.name : undefined;
         setPasteConfirm({
           sid: sessionSid,
-          hostName: h?.host_name ?? sessionSid.slice(0, 8),
+          hostName: paneName ? `${h?.host_name ?? sessionSid.slice(0, 8)} · tmux:${paneName}` : (h?.host_name ?? sessionSid.slice(0, 8)),
           text,
           risk,
           multi,
           kind: "paste",
+          paneKey,
         });
       } else {
         bcastSuppressRef.current = true;
@@ -560,7 +581,7 @@ export default function App() {
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; sid: string } | null>(null);
   // 十一轮续：右键通道补全——主机卡（连接/收藏/编辑/删除）与终端区（复制/粘贴/全选）
   const [hostMenu, setHostMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
-  const [termMenu, setTermMenu] = useState<{ x: number; y: number; sid: string; hasSel: boolean } | null>(null);
+  const [termMenu, setTermMenu] = useState<{ x: number; y: number; sid: string; hasSel: boolean; paneKey?: string } | null>(null);
   // 本轮：最近连接行右键菜单（连接/编辑主机/从最近连接隐藏/删除主机）
   const [recentMenu, setRecentMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
   // 十四轮：标签重命名——sid → 自定名（覆盖 host_name 展示；复制标签页后同名「本机×2」
@@ -905,6 +926,7 @@ export default function App() {
     try {
       // UX 八轮：先取数后 setState——结构无变化时复用旧引用（sameShape），
       // 3s 轮询数据没变则整树与下游 effect 全部静默，不再每轮空转
+      const snapAt = performance.now();
       const nextSessions = applyTabOrder((await invoke("list_sessions")) as SessionInfo[]);
       const nextHosts = (await invoke("list_hosts")) as Host[];
       // R20：收藏/最近元数据（失败不阻断列表——空 meta 即全部视为未收藏）
@@ -924,6 +946,7 @@ export default function App() {
         if (!nextAutonomy.some((g) => g.agent_id === a)) autonomyKilledRef.current.delete(a);
       }
       autonomyKnownRef.current = new Set(nextAutonomy.map((g) => g.agent_id));
+      panesSnapAtRef.current = snapAt;
       setSessions((prev) => sameShape(prev, nextSessions));
       setHosts((prev) => sameShape(prev, nextHosts));
       if (nextMeta) setHostMeta((prev) => sameShape(prev, nextMeta));
@@ -937,6 +960,8 @@ export default function App() {
       setHostsLoaded(true);
     }
   }, [pushToast]);
+  const refreshListsRef = useRef(refreshLists);
+  refreshListsRef.current = refreshLists;
 
   // R41（§6.6「保留主机/会话身份」）：累积 sid→主机名。会话关闭后从 sessions 消失，
   // 但它的记录还要能标出「当时是哪台主机」——故只增不删，查不到时如实显示短 id。
@@ -1801,6 +1826,213 @@ export default function App() {
     return { term, el, search: searchAddon, tag, feed: null as OutputFeed | null, webgl, liga };
   }, []);
 
+  // ---- tmux 面板（一标签多 tmux 会话）：格子 xterm 工厂 / 订阅 / 销毁 / 布局 ----
+  // 主终端工厂的精简同构：字体/主题/光标/滚屏同走 refs；WebGL 优先、上下文丢失回落
+  // DOM；不挂搜索/路径链接/OSC 钩子（格子定位是「同时看」，深度操作切主视图）。
+  // 输入直写格子通道（tmux_pane_input），绝不经主会话 send_keys。
+  const closeTmuxPaneRef = useRef<(sid: string, paneId: number) => Promise<void>>(async () => {});
+  const paneClosedRef = useRef<Map<string, number>>(new Map());
+  const makePaneTerm = useCallback((sid: string, paneId: number, name: string): PaneTermEntry | null => {
+    const mount = termRef.current;
+    if (!mount) return null;
+    const cell = document.createElement("div");
+    cell.className = "tmux-cell";
+    cell.dataset.sid = sid;
+    cell.dataset.paneId = String(paneId);
+    cell.dataset.tmux = name;
+    cell.setAttribute("data-testid", "tmux-cell");
+    cell.style.display = "none";
+    const head = document.createElement("div");
+    head.className = "tmux-cell-head";
+    const label = document.createElement("span");
+    label.className = "tmux-cell-name mono";
+    label.setAttribute("data-testid", "tmux-cell-name");
+    label.textContent = name;
+    const stateTag = document.createElement("span");
+    stateTag.className = "tmux-cell-state";
+    stateTag.textContent = t("已断开 · 重连后自动恢复");
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "ghost icon-btn tmux-cell-close";
+    closeBtn.setAttribute("data-testid", "tmux-cell-close");
+    closeBtn.title = t("关闭窗格（只断开此视图，tmux 会话继续运行）");
+    closeBtn.setAttribute("aria-label", closeBtn.title);
+    closeBtn.textContent = "×";
+    head.append(label, stateTag, closeBtn);
+    const body = document.createElement("div");
+    body.className = "tmux-cell-body";
+    cell.append(head, body);
+    mount.appendChild(cell);
+    const term = new Terminal({
+      fontSize: fontRef.current, cursorBlink: termCursorBlinkRef.current,
+      cursorStyle: termCursorStyleRef.current, scrollback: termScrollbackRef.current,
+      letterSpacing: termLetterSpacingRef.current, allowProposedApi: true,
+      fontFamily: termFontFamilyRef.current, lineHeight: 1.15,
+      smoothScrollDuration: isMacPlatform() ? 0 : 100,
+      fastScrollModifier: "alt", fastScrollSensitivity: 5,
+      rescaleOverlappingGlyphs: true, customGlyphs: false,
+      theme: { ...derivedThemeRef.current.theme },
+    });
+    term.open(body);
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = "11";
+    let webgl: WebglAddon | null = null;
+    try {
+      const w = new WebglAddon();
+      w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
+      term.loadAddon(w);
+      webgl = w;
+    } catch { webgl = null; /* DOM 渲染器兜底 */ }
+    body.style.background = derivedThemeRef.current.bg;
+    term.loadAddon(new WebLinksAddon((_ev, url) => {
+      if (inTauri) void invoke("open_url", { url }).catch(() => {});
+      else window.open(url, "_blank");
+    }));
+    term.onSelectionChange(() => {
+      if (!copyOnSelectRef.current) return;
+      const sel = term.getSelection();
+      if (!sel) return;
+      Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
+    });
+    const key = `${sid}:${paneId}`;
+    const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, webgl, bornAt: performance.now(), alive: true };
+    // ⌘ 组合（mac）：复制/粘贴/全选作用于本格，其余 ⌘ 不进格子通道（主终端同口径）
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== "keydown" || !ev.metaKey) return true;
+      const k = ev.key.toLowerCase();
+      if (k === "c") {
+        if (!term.hasSelection()) return true;
+        const sel = term.getSelection();
+        Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
+      } else if (k === "v") {
+        Promise.resolve(inTauri ? clipboard.readText() : navigator.clipboard?.readText())
+          .then((txt) => { if (txt) pasteTextIntoRef.current(term, sid, txt, key); })
+          .catch(() => {});
+      } else if (k === "a") {
+        term.selectAll();
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
+      return false;
+    });
+    let deadWarned = false;
+    term.onData((d) => {
+      if (!entry.alive) {
+        if (!deadWarned) {
+          deadWarned = true;
+          term.write(`\r\n\x1b[33m⚠ ${t("窗格已断开——键入未发送。")}\x1b[0m\r\n`);
+        }
+        return;
+      }
+      deadWarned = false;
+      invoke("tmux_pane_input", { sid, paneId, keys: d }).catch((e) => {
+        term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
+      });
+    });
+    closeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void closeTmuxPaneRef.current(sid, paneId);
+    });
+    // 点格子标题栏即聚焦本格（按钮除外）；焦点高亮跟随 xterm 输入框焦点
+    head.addEventListener("mousedown", (ev) => {
+      if (ev.target === closeBtn) return;
+      ev.preventDefault();
+      term.focus();
+    });
+    cell.addEventListener("focusin", () => cell.classList.add("focused"));
+    cell.addEventListener("focusout", () => cell.classList.remove("focused"));
+    if (import.meta.env.DEV) {
+      const w = window as unknown as { __t_pane_terms?: Map<string, Terminal> };
+      w.__t_pane_terms ??= new Map();
+      w.__t_pane_terms.set(key, term);
+    }
+    return entry;
+  }, []);
+
+  const disposePane = useCallback((key: string) => {
+    const e = paneTermsRef.current.get(key);
+    if (!e) return;
+    paneTermsRef.current.delete(key);
+    try { e.webgl?.dispose(); } catch { /* 已释放 */ }
+    try { e.term.dispose(); } catch { /* 已释放 */ }
+    e.cell.remove();
+    if (import.meta.env.DEV) {
+      (window as unknown as { __t_pane_terms?: Map<string, Terminal> }).__t_pane_terms?.delete(key);
+    }
+  }, []);
+
+  // 建格并订阅格子输出（单订阅者：订阅即接走核心侧积压——attach 首屏重绘随之到达）。
+  // 通道回调先核对实例仍在册：格子已销毁后迟到的帧不得写进已 dispose 的终端。
+  const ensurePaneTerm = useCallback(async (sid: string, paneId: number, name: string) => {
+    const key = `${sid}:${paneId}`;
+    if (paneTermsRef.current.has(key)) return;
+    const made = makePaneTerm(sid, paneId, name);
+    if (!made) return;
+    paneTermsRef.current.set(key, made);
+    const channel = MkChannel();
+    channel.onmessage = (msg) => {
+      if (paneTermsRef.current.get(key) !== made) return;
+      // 流终结（核心已摘除此格：用户 exit / C-b d / 重建换装 / 会话关闭）：即刻对账
+      // 而非干等 3s 快照；pane_id 永不复用，同键 5s 内不因在途旧快照重建
+      if (msg === "eof") {
+        paneClosedRef.current.set(key, Date.now());
+        void refreshListsRef.current();
+        return;
+      }
+      const bytes = msg instanceof Uint8Array ? msg : msg instanceof ArrayBuffer ? new Uint8Array(msg) : null;
+      if (bytes) made.term.write(bytes);
+    };
+    try {
+      await invoke("tmux_pane_subscribe", { sid, paneId, onEvent: channel });
+    } catch {
+      disposePane(key); // 格子已不在核心侧（快照滞后）：收掉，下一轮对账以真相为准
+    }
+  }, [makePaneTerm, disposePane]);
+
+  // 布局：活动会话（非分屏）有格子 → 主视图 + 格子按 paneGrid 平铺（索引 0=主视图）；
+  // 否则清掉全部内联几何（单 pane 的 inset:0 与分屏的类几何原样生效）。格子顺序=
+  // 快照顺序（核心愿望清单序，重建原位换装不挪位）；乐观开格（快照未含）按出生序垫后。
+  const layoutTmuxPanes = useCallback(() => {
+    const mount = termRef.current;
+    const active = sidRef.current;
+    const cells: PaneTermEntry[] = [];
+    if (active && !splitRef.current) {
+      const seen = new Set<string>();
+      for (const p of sessionsRef.current.find((x) => x.id === active)?.panes ?? []) {
+        const k = `${active}:${p.pane_id}`;
+        const e = paneTermsRef.current.get(k);
+        if (e) { cells.push(e); seen.add(k); }
+      }
+      const extra = [...paneTermsRef.current.entries()]
+        .filter(([k, e]) => e.sid === active && !seen.has(k))
+        .map(([, e]) => e)
+        .sort((a, b) => a.bornAt - b.bornAt);
+      cells.push(...extra);
+    }
+    const place = (el: HTMLElement, g: { left: number; top: number; width: number; height: number } | null) => {
+      if (!g) { el.style.left = ""; el.style.top = ""; el.style.right = ""; el.style.bottom = ""; return; }
+      el.style.left = `${(g.left * 100).toFixed(4)}%`;
+      el.style.top = `${(g.top * 100).toFixed(4)}%`;
+      el.style.right = `${((1 - g.left - g.width) * 100).toFixed(4)}%`;
+      el.style.bottom = `${((1 - g.top - g.height) * 100).toFixed(4)}%`;
+    };
+    const shown = new Set(cells);
+    for (const e of paneTermsRef.current.values()) if (!shown.has(e)) e.cell.style.display = "none";
+    for (const [s, e] of termsRef.current) {
+      if (s !== active || cells.length === 0) place(e.el, null);
+    }
+    mount?.classList.toggle("has-tmux-panes", cells.length > 0);
+    if (cells.length === 0 || !active) return;
+    const slots = paneGrid(cells.length + 1);
+    const main = termsRef.current.get(active);
+    if (main) {
+      place(main.el, slots[0]);
+      // 主视图名牌：格子各有标题栏，主视图同样标出它看的是什么（tmux 会话或主机 shell）
+      const cur = sessionsRef.current.find((x) => x.id === active);
+      main.tag.textContent = cur?.tmux_attached ? `tmux:${cur.tmux_attached}` : (cur?.host_name ?? "");
+    }
+    cells.forEach((e, i) => { e.cell.style.display = "flex"; place(e.cell, slots[i + 1]); });
+  }, []);
+
   // 终端区域（含内容下方空白）点击即聚焦当前会话终端。
   // 搜索框/显示设置必须排除：两个浮层都挂在本容器里，点它们会冒泡到这里把焦点
   // 抢回终端——搜索词落进生产 shell（UX 走查实锤）、设置面板键盘连续操作失效。
@@ -1809,7 +2041,8 @@ export default function App() {
     if (!wrap) return;
     const onFocus = (ev: MouseEvent) => {
       const t = ev.target as HTMLElement | null;
-      if (t?.closest?.(".term-search, .term-settings, .dead-overlay")) return;
+      // tmux 面板格子自管焦点（xterm mousedown 聚焦本格）——不得被抢回主终端
+      if (t?.closest?.(".term-search, .term-settings, .dead-overlay, .tmux-cell")) return;
       xtermRef.current?.focus();
     };
     wrap.addEventListener("click", onFocus);
@@ -1830,6 +2063,13 @@ export default function App() {
         if (modalRef.current) return;
         const ael = document.activeElement;
         if (!(ael && ael.classList.contains("xterm-helper-textarea"))) return;
+        // tmux 面板格子焦点：控制字符/Meta 序列改投该格通道——主会话 send_keys 绝不
+        // 代收（否则 Ctrl+C 打进主视图的前台进程）；格子掉线时吞掉不发
+        const paneCell = (ael as HTMLElement).closest?.(".tmux-cell") as HTMLElement | null;
+        const paneHit = paneCell ? (paneTermsRef.current.get(`${paneCell.dataset.sid}:${paneCell.dataset.paneId}`) ?? null) : null;
+        const toPane = (keys: string) => {
+          if (paneHit?.alive) void invoke("tmux_pane_input", { sid: paneHit.sid, paneId: paneHit.paneId, keys }).catch(() => {});
+        };
         // Option/Alt → Meta 序列（ESC 前缀）：readline 词跳转（⌥←/⌥→/⌥⌫）、
         // tmux M-键绑定。必须在捕获层拦截：⌥字母 在 WKWebView 会进文本输入系统
         // 变特殊字符（⌥b=∫），xterm 的 keydown 收不到。⌘/Ctrl+⌥ 归各自分支。
@@ -1838,6 +2078,7 @@ export default function App() {
           if (!seq) return;
           ev.preventDefault();
           ev.stopPropagation();
+          if (paneHit) { toPane(seq); return; }
           const s0 = sidRef.current;
           if (!s0 || (() => { const st = sessionsRef.current.find((x) => x.id === s0)?.state; return !st || inputBlockedState(st); })()) return;
           void invoke("send_keys", { sid: s0, keys: seq }).catch(() => {});
@@ -1859,6 +2100,21 @@ export default function App() {
             ev.stopPropagation();
             return;
           }
+        }
+        if (paneHit) {
+          let pk: string | null = null;
+          if (ev.key.length === 1) pk = ev.key;
+          else if (ev.code?.startsWith("Key")) pk = ev.code.slice(3).toLowerCase();
+          else if (ev.code === "BracketLeft") pk = "[";
+          else if (ev.code === "BracketRight") pk = "]";
+          else if (ev.code === "Backslash") pk = "\\";
+          else if (ev.code === "Space") pk = " ";
+          const pcc = pk ? ctrlCharOf(pk) : null;
+          if (pcc === null) return;
+          ev.preventDefault();
+          ev.stopImmediatePropagation();
+          toPane(pcc);
+          return;
         }
         const s = sidRef.current;
         if (!s) return;
@@ -1897,16 +2153,21 @@ export default function App() {
     // 终端聚焦状态上报 native 层：native Ctrl 键接管只在 xterm 聚焦时生效，
     // 搜索框等输入控件不受影响。
     useEffect(() => {
-      const report = (focused: boolean) => {
-        void invoke("note_terminal", { sid: sidRef.current, focused }).catch(() => {});
+      // tmux 面板：焦点在格子 xterm 时连同 pane_id 上报——native Ctrl 接管（mac IME
+      // 绕行）据此改投格子通道，不把 Ctrl+C 打进主视图
+      const report = (focused: boolean, el?: Element | null) => {
+        const cell = (el as HTMLElement | null | undefined)?.closest?.(".tmux-cell") as HTMLElement | null | undefined;
+        const sid = cell ? (cell.dataset.sid ?? null) : sidRef.current;
+        const paneId = cell ? Number(cell.dataset.paneId) : null;
+        void invoke("note_terminal", { sid, focused, paneId }).catch(() => {});
       };
       const onFocusIn = (e: FocusEvent) => {
         const t = e.target as HTMLElement | null;
-        if (t?.classList?.contains("xterm-helper-textarea")) report(true);
+        if (t?.classList?.contains("xterm-helper-textarea")) report(true, t);
       };
       const onFocusOut = (e: FocusEvent) => {
         const t = e.target as HTMLElement | null;
-        if (t?.classList?.contains("xterm-helper-textarea")) report(false);
+        if (t?.classList?.contains("xterm-helper-textarea")) report(false, t);
       };
       // §7.4：WebView 整窗失焦/回焦对称同步——焦点不出 document 时 focusout 不触发，
       // native 层会以失焦状态继续拦截 ⌃字母；⌘Tab 切回时 focusin 同样不触发，
@@ -1915,8 +2176,8 @@ export default function App() {
         const t = document.activeElement;
         return !!(t instanceof HTMLElement && t.classList.contains("xterm-helper-textarea"));
       };
-      const onWinBlur = () => report(false);
-      const onWinFocus = () => { if (xtermFocused()) report(true); };
+      const onWinBlur = () => report(false, document.activeElement);
+      const onWinFocus = () => { if (xtermFocused()) report(true, document.activeElement); };
       window.addEventListener("blur", onWinBlur);
       window.addEventListener("focus", onWinFocus);
       document.addEventListener("focusin", onFocusIn);
@@ -1972,11 +2233,28 @@ export default function App() {
       invoke("resize", { sid: target, cols: dims.cols, rows: dims.rows }).catch(() => {});
     }
   }, [fitDimsOf]);
+  // tmux 面板格子：按格子正文盒子量（标题栏不占行），尺寸变化经 window_change 下发
+  // （tmux client 按新尺寸重绘）。隐藏格子不量；渲染器未就绪重试同 fitOne。
+  const fitPane = useCallback((e: PaneTermEntry) => {
+    if (e.cell.style.display === "none" || e.body.clientWidth < 40 || e.body.clientHeight < 30) return;
+    const dims = fitDimsOf(e.term, e.body);
+    if (!dims) {
+      const r = e.term as unknown as { __fitRetries?: number };
+      r.__fitRetries = (r.__fitRetries ?? 0) + 1;
+      if (r.__fitRetries <= 5) setTimeout(() => fitPane(e), 120);
+      return;
+    }
+    if (e.term.cols !== dims.cols || e.term.rows !== dims.rows) {
+      e.term.resize(dims.cols, dims.rows);
+      if (e.alive) invoke("tmux_pane_resize", { sid: e.sid, paneId: e.paneId, cols: dims.cols, rows: dims.rows }).catch(() => {});
+    }
+  }, [fitDimsOf]);
   const fitTerminal = useCallback(() => {
     const sp = splitRef.current;
     const targets = sp ? [sp.main, sp.second] : sidRef.current ? [sidRef.current] : [];
     for (const t of targets) void fitOne(t);
-  }, [fitOne]);
+    for (const e of paneTermsRef.current.values()) fitPane(e);
+  }, [fitOne, fitPane]);
   useEffect(() => {
     const el = termRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -1990,6 +2268,48 @@ export default function App() {
   }, [fitTerminal]);
   // 分屏建立/退出/换副窗格时也重估宽度退化态
   useEffect(() => { checkSplitWidthRef.current(); }, [splitPanes]);
+
+  // tmux 面板对账：会话快照（3s 轮询 + 开关格后的即时刷新 + 格子流终结即刷）是格子的
+  // 唯一事实源。快照有、本地无 → 建格订阅；本地有、快照无 → 收格（快照请求早于格子
+  // 出生则缺席不作数——乐观开格；刚关的格子 5s 内不因旧快照重建）；alive 变化 → 遮罩
+  // 开合。同名新 pane_id = 重连原位换装。
+  useEffect(() => {
+    const want = new Map<string, { sid: string; paneId: number; name: string; alive: boolean }>();
+    for (const s of sessions) {
+      // 连接一掉（300ms 状态事件即到）立即蒙灰：格子通道随连接同死，不等 3s 清单
+      // 轮询带回 alive=false（Degraded/重连中的格子此前会亮着收不到字）
+      const connOk = s.state === "Connected" || s.state === "Reconfirming";
+      for (const p of s.panes ?? []) want.set(`${s.id}:${p.pane_id}`, { sid: s.id, paneId: p.pane_id, name: p.tmux_session, alive: p.alive && connOk });
+    }
+    const now = Date.now();
+    for (const [k, at] of paneClosedRef.current) if (now - at > 5000) paneClosedRef.current.delete(k);
+    let changed = false;
+    for (const [k, e] of [...paneTermsRef.current.entries()]) {
+      const w = want.get(k);
+      if (!w) {
+        if (panesSnapAtRef.current <= e.bornAt && sessions.some((x) => x.id === e.sid)) continue;
+        disposePane(k);
+        changed = true;
+        continue;
+      }
+      if (e.alive !== w.alive) {
+        e.alive = w.alive;
+        e.cell.classList.toggle("dead", !w.alive);
+        changed = true;
+      }
+    }
+    for (const [k, w] of want) {
+      if (paneTermsRef.current.has(k) || paneClosedRef.current.has(k)) continue;
+      changed = true;
+      void ensurePaneTerm(w.sid, w.paneId, w.name).then(() => {
+        const e = paneTermsRef.current.get(k);
+        if (e && !w.alive) { e.alive = false; e.cell.classList.add("dead"); }
+        layoutTmuxPanes();
+        fitTerminal();
+      });
+    }
+    if (changed) { layoutTmuxPanes(); fitTerminal(); }
+  }, [sessions, ensurePaneTerm, disposePane, layoutTmuxPanes, fitTerminal]);
 
   // —— 显示设置（路线图⑥）：字号/主题，vault 持久化（跨进程记忆）——
   // 状态供 UI 渲染；ref 供 makeTerm 闭包与快捷键读取（避开 stale closure）
@@ -2204,6 +2524,7 @@ export default function App() {
     persistSetting(SETTING_FONT, String(next));
     // 已有会话即时改 options；隐藏会话的 PTY 宽高在重新激活时校准（attachSession 内 fitTerminal）
     for (const [, e] of termsRef.current) e.term.options.fontSize = next;
+    for (const e of paneTermsRef.current.values()) e.term.options.fontSize = next;
     void fitTerminal();
     // 渲染器 cell 尺寸在下一帧才反映新字号：立即 fit 拿到旧尺寸会算出相同列数、
     // PTY 不跟随（走查实证 stty 恒 80 列）。延迟校准与 attachSession 的二次校准同理。
@@ -2215,6 +2536,13 @@ export default function App() {
     // 检查点重放的光标形状/闪烁同步取这里（避免 attach 把偏好冲回默认）
     setCursorDefault(termCursorStyleRef.current, termCursorBlinkRef.current);
     for (const [, e] of termsRef.current) {
+      e.term.options.fontFamily = termFontFamilyRef.current;
+      e.term.options.cursorStyle = termCursorStyleRef.current;
+      e.term.options.cursorBlink = termCursorBlinkRef.current;
+      e.term.options.scrollback = termScrollbackRef.current;
+      e.term.options.letterSpacing = termLetterSpacingRef.current;
+    }
+    for (const e of paneTermsRef.current.values()) {
       e.term.options.fontFamily = termFontFamilyRef.current;
       e.term.options.cursorStyle = termCursorStyleRef.current;
       e.term.options.cursorBlink = termCursorBlinkRef.current;
@@ -2339,6 +2667,10 @@ export default function App() {
     for (const [, e] of termsRef.current) {
       e.term.options.theme = { ...theme };
       e.el.style.background = bg;
+    }
+    for (const e of paneTermsRef.current.values()) {
+      e.term.options.theme = { ...theme };
+      e.body.style.background = bg;
     }
   }, [deriveTerminalTheme]);
 
@@ -3075,7 +3407,9 @@ export default function App() {
         e.el.classList.add("active");
       }
     }
-  }, []);
+    // tmux 面板格子：显示与几何随同一时机重算（切会话/进出分屏/快照变化）
+    layoutTmuxPanes();
+  }, [layoutTmuxPanes]);
 
   // 分屏名牌跟随主机名：会话列表变化（新建/改名）后重刷，防新建会话名牌暂显 sid
   const applyPanesRef = useRef<() => void>(() => {});
@@ -4950,6 +5284,46 @@ export default function App() {
     void restoreTmuxScene(s, name);
   };
 
+  // ---- tmux 面板（一标签多 tmux 会话）：开格 / 关格 ----
+  // 开格：同连接附加交互通道跑 `tmux -u attach`（核心侧防呆：同会话两路视图、同名格、
+  // 上限、存在性核验）。返回即乐观建格（不等 3s 快照），布局 + fit 后聚焦新格。
+  const openTmuxPane = async (s: SessionInfo, name: string) => {
+    setTmuxMenu(false);
+    if (splitRef.current) { pushToast("info", t("分屏模式下不可并入面板——请先退出分屏")); return; }
+    try {
+      const main = termsRef.current.get(s.id)?.term;
+      const cols = main ? Math.max(20, Math.floor(main.cols / 2)) : 80;
+      const rows = main ? Math.max(6, main.rows) : 24;
+      const p = await invoke("tmux_pane_open", { sid: s.id, session: name, cols, rows });
+      await ensurePaneTerm(s.id, p.pane_id, p.tmux_session);
+      layoutTmuxPanes();
+      fitTerminal();
+      setTimeout(() => fitTerminal(), 150);
+      paneTermsRef.current.get(`${s.id}:${p.pane_id}`)?.term.focus();
+      pushToast("ok", t("已并入面板：{0}", name));
+      void refreshLists();
+    } catch (e) {
+      pushToast("err", errMsg(e));
+    }
+  };
+  // 关格：只拆客户端通道（detach），tmux 会话与其中进程继续运行。核心侧已不存在
+  // （掉线摘除/重建换装）同样收格；关闭时刻记入 paneClosedRef——在途的旧快照
+  // 仍列着它时，对账 5s 内不重建（防关了又闪回）。
+  const closeTmuxPane = async (sid: string, paneId: number) => {
+    const key = `${sid}:${paneId}`;
+    const e = paneTermsRef.current.get(key);
+    paneClosedRef.current.set(key, Date.now());
+    try { await invoke("tmux_pane_close", { sid, paneId }); } catch { /* 已不在核心侧：照常收格 */ }
+    disposePane(key);
+    layoutTmuxPanes();
+    fitTerminal();
+    setTimeout(() => fitTerminal(), 150);
+    if (e) pushToast("ok", t("已关闭窗格：{0}（tmux 会话仍在运行）", e.name));
+    if (sid === sidRef.current) xtermRef.current?.focus();
+    void refreshLists();
+  };
+  closeTmuxPaneRef.current = closeTmuxPane;
+
   const takeover = async () => {
     if (!sid) return;
     try {
@@ -6131,6 +6505,10 @@ export default function App() {
             canForward={remoteOpen}
             tmuxMenu={tmuxMenu} setTmuxMenu={setTmuxMenu} tmuxMenuRef={tmuxMenuRef}
             onPickTmux={(name) => pickTmuxSession(current, name)}
+            onAddTmuxPane={(name) => void openTmuxPane(current, name)}
+            paneNames={(current.panes ?? []).map((p) => p.tmux_session)}
+            paneCapReached={(current.panes ?? []).length >= PANE_MAX}
+            splitActive={!!splitPanes}
             onRefreshTmux={() => refreshTmuxList(current)}
           />
         )}
@@ -6271,6 +6649,14 @@ export default function App() {
             // 未命中具体窗格回退焦点窗格。无终端实例（欢迎页）交给系统默认行为
             if (termsRef.current.size === 0) return;
             e.preventDefault();
+            // tmux 面板格子：右键作用于命中的格子（复制/粘贴/全选/关闭窗格）
+            const cellEl = (e.target as HTMLElement).closest?.(".tmux-cell") as HTMLElement | null;
+            if (cellEl) {
+              const pk = `${cellEl.dataset.sid}:${cellEl.dataset.paneId}`;
+              const pe = paneTermsRef.current.get(pk);
+              if (pe) setTermMenu({ x: e.clientX, y: e.clientY, sid: pe.sid, hasSel: pe.term.hasSelection(), paneKey: pk });
+              return;
+            }
             let target: string | null = null;
             for (const [s, en] of termsRef.current) {
               const r = en.el.getBoundingClientRect();
@@ -6516,6 +6902,7 @@ export default function App() {
             setRecentHidden={setRecentHidden} setConfirm={setConfirm}
             termMenu={termMenu} setTermMenu={setTermMenu}
             termsRef={termsRef} pasteTextIntoRef={pasteTextIntoRef}
+            paneTermsRef={paneTermsRef} closeTmuxPane={(sid, paneId) => closeTmuxPaneRef.current(sid, paneId)}
             setSearchOpen={setSearchOpen} searchInputRef={searchInputRef} sidRef={sidRef}
             attachSession={attachSession}
             splitDegraded={splitDegraded} splitHintOpen={splitHintOpen}
@@ -6562,9 +6949,15 @@ export default function App() {
                       void invoke("send_keys", { sid: pasteConfirm.sid, keys: pasteConfirm.text + "\r" })
                         .catch(() => pushToast("err", t("重跑发送失败")));
                     } else {
-                      // 确认后的危险粘贴同样只进当前会话（广播抑制，与安全粘贴同口径）
+                      // 确认后的危险粘贴同样只进当前会话（广播抑制，与安全粘贴同口径）；
+                      // tmux 面板格子的粘贴落回发起的那一格（不是主视图）
                       bcastSuppressRef.current = true;
-                      try { termsRef.current.get(pasteConfirm.sid)?.term.paste(pasteConfirm.text); }
+                      try {
+                        const target = pasteConfirm.paneKey
+                          ? paneTermsRef.current.get(pasteConfirm.paneKey)?.term
+                          : termsRef.current.get(pasteConfirm.sid)?.term;
+                        target?.paste(pasteConfirm.text);
+                      }
                       finally { queueMicrotask(() => { bcastSuppressRef.current = false; }); }
                     }
                     setPasteConfirm(null);

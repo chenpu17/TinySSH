@@ -59,10 +59,13 @@ export interface CtxMenusProps {
   setRecentHidden: (id: string, hidden: boolean) => void;
   setConfirm: (c: ConfirmState | null) => void;
   // —— 终端区右键 ——
-  termMenu: { x: number; y: number; sid: string; hasSel: boolean } | null;
-  setTermMenu: (v: { x: number; y: number; sid: string; hasSel: boolean } | null) => void;
+  termMenu: { x: number; y: number; sid: string; hasSel: boolean; paneKey?: string } | null;
+  setTermMenu: (v: { x: number; y: number; sid: string; hasSel: boolean; paneKey?: string } | null) => void;
   termsRef: { current: Map<string, { term: Terminal }> };
-  pasteTextIntoRef: { current: (term: Terminal, sessionSid: string, t: string) => void };
+  /** tmux 面板格子实例（右键命中格子时作用对象） */
+  paneTermsRef: { current: Map<string, { term: Terminal; sid: string; paneId: number }> };
+  closeTmuxPane: (sid: string, paneId: number) => Promise<void>;
+  pasteTextIntoRef: { current: (term: Terminal, sessionSid: string, t: string, paneKey?: string) => void };
   setSearchOpen: (v: boolean) => void;
   searchInputRef: { current: HTMLInputElement | null };
   sidRef: { current: string | null };
@@ -82,7 +85,7 @@ export function CtxMenus({
   hostMenu, setHostMenu, recentMenu, setRecentMenu, createSession, toggleFavorite,
   localShells, onLocalShell,
   setEditingHost, setPrefillEntry, setShowImport, setShowAddHost, setRecentHidden, setConfirm,
-  termMenu, setTermMenu, termsRef, pasteTextIntoRef, setSearchOpen, searchInputRef, sidRef, attachSession,
+  termMenu, setTermMenu, termsRef, paneTermsRef, closeTmuxPane, pasteTextIntoRef, setSearchOpen, searchInputRef, sidRef, attachSession,
   splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen,
 }: CtxMenusProps) {
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
@@ -289,7 +292,49 @@ export function CtxMenus({
       })()}
       {/* 十一轮续：终端区右键——复制（仅选区在场）/粘贴/全选，作用于命中的窗格；
           粘贴语义收口在 pasteTextInto（⌘V 同源：bracketed paste + 多行确认契约） */}
-      {termMenu && (() => {
+      {termMenu && termMenu.paneKey && (() => {
+        // tmux 面板格子右键：复制/粘贴/全选作用于本格，「关闭窗格」只断开视图
+        const pe = paneTermsRef.current.get(termMenu.paneKey);
+        const mx = Math.min(termMenu.x, window.innerWidth - 200);
+        const my = Math.min(termMenu.y, window.innerHeight - 200);
+        const close = () => setTermMenu(null);
+        return (
+          <>
+            <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+            {pe && (
+              <div className="ctx-menu" role="menu" aria-label={t("窗格操作")} data-testid="tmux-cell-menu" style={{ left: mx, top: my }}>
+                {termMenu.hasSel && (
+                  <button className="ghost sm-item" role="menuitem"
+                    onClick={() => {
+                      close();
+                      const sel = pe.term.getSelection();
+                      if (sel) Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
+                    }}
+                  >{t("复制")}</button>
+                )}
+                <button className="ghost sm-item" role="menuitem"
+                  onClick={() => {
+                    close();
+                    const key = termMenu.paneKey;
+                    Promise.resolve(inTauri ? clipboard.readText() : navigator.clipboard?.readText())
+                      .then((txt) => { if (txt) pasteTextIntoRef.current(pe.term, pe.sid, txt, key); })
+                      .catch(() => {});
+                  }}
+                >{t("粘贴")}</button>
+                <button className="ghost sm-item" role="menuitem"
+                  onClick={() => { close(); pe.term.selectAll(); }}
+                >{t("全选")}</button>
+                <div className="ctx-menu-sep" role="separator" />
+                <button className="ghost sm-item tm-danger" role="menuitem" data-testid="tmux-cell-menu-close"
+                  title={t("关闭窗格（只断开此视图，tmux 会话继续运行）")}
+                  onClick={() => { close(); void closeTmuxPane(pe.sid, pe.paneId); }}
+                >{t("关闭窗格")}</button>
+              </div>
+            )}
+          </>
+        );
+      })()}
+      {termMenu && !termMenu.paneKey && (() => {
         const en = termsRef.current.get(termMenu.sid);
         const mx = Math.min(termMenu.x, window.innerWidth - 200);
         const my = Math.min(termMenu.y, window.innerHeight - 236);

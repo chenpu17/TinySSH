@@ -49,6 +49,14 @@ export interface SessionToolbarProps {
   tmuxMenuRef: { current: HTMLDivElement | null };
   onPickTmux: (name: string) => void;
   onRefreshTmux: () => void;
+  /** tmux 面板（一标签多 tmux 会话）：「＋面板」把该会话并入本标签的格子网格 */
+  onAddTmuxPane: (name: string) => void;
+  /** 已在面板格子里的会话名（菜单标「面板中」，主视图切换与再并入均禁用） */
+  paneNames: string[];
+  /** 格数到顶（PANE_MAX）：「＋面板」禁用 */
+  paneCapReached: boolean;
+  /** 分屏中：「＋面板」禁用（面板与分屏互斥，先退出分屏） */
+  splitActive: boolean;
 }
 
 export function SessionToolbar({
@@ -59,6 +67,7 @@ export function SessionToolbar({
   openSessionDetail, toggleSessionLog, requestCloseSession,
   broadcastArmed, openBroadcast, canForward,
   tmuxMenu, setTmuxMenu, tmuxMenuRef, onPickTmux, onRefreshTmux,
+  onAddTmuxPane, paneNames, paneCapReached, splitActive,
 }: SessionToolbarProps) {
   // 工具菜单开合的收口（原内联 setToolsOpen(false) 同款）
   const closeTools = () => setToolsOpen(false);
@@ -134,15 +143,37 @@ export function SessionToolbar({
             }}
           ><IconTerminal size={14} />{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}<IconChevronDown size={12} /></button>
           {tmuxMenu && (
-            <div className="tools-menu" role="menu" data-testid="tmux-quick-menu">
-              {(current.tmux?.sessions ?? []).map((ms) => (
-                <button
-                  key={ms.name}
-                  role="menuitem"
-                  data-testid={"tmux-quick-item-" + ms.name}
-                  onClick={() => onPickTmux(ms.name)}
-                >{t("{0}（{1} 窗口）", ms.name, String(ms.windows))}{current.tmux_attached === ms.name ? ` · ${t("当前")}` : ""}</button>
-              ))}
+            <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu">
+              {(current.tmux?.sessions ?? []).map((ms) => {
+                const isMain = current.tmux_attached === ms.name;
+                const inPane = paneNames.includes(ms.name);
+                // 「＋面板」：同一会话不做两路视图（主视图在看/已在格子里），分屏与
+                // 面板互斥，格数到顶禁用——禁用原因写进 title，不让人猜
+                const addWhy = isMain ? t("该会话正显示在主视图")
+                  : inPane ? t("该会话已在面板中")
+                  : splitActive ? t("分屏模式下不可并入面板——请先退出分屏")
+                  : paneCapReached ? t("面板最多 {0} 个窗格", "5")
+                  : null;
+                return (
+                  <div className="tmux-quick-row" key={ms.name}>
+                    <button
+                      role="menuitem"
+                      data-testid={"tmux-quick-item-" + ms.name}
+                      disabled={inPane}
+                      title={inPane ? t("该会话已在面板中——关闭其窗格后才能切到主视图") : undefined}
+                      onClick={() => onPickTmux(ms.name)}
+                    >{t("{0}（{1} 窗口）", ms.name, String(ms.windows))}{isMain ? ` · ${t("当前")}` : inPane ? ` · ${t("面板中")}` : ""}</button>
+                    <button
+                      role="menuitem"
+                      className="tmux-pane-add"
+                      data-testid={"tmux-pane-add-" + ms.name}
+                      disabled={!!addWhy}
+                      title={addWhy ?? t("并入面板：在本标签里与主视图并排显示该会话（独立通道，主视图不受影响）")}
+                      onClick={() => onAddTmuxPane(ms.name)}
+                    >{t("＋面板")}</button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

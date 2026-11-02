@@ -6,9 +6,9 @@ use crate::ApprovalCenter;
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, TransportSignal};
 use session_api::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write as IoWrite;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use term_core::Screen;
@@ -163,6 +163,78 @@ pub struct RunningExec {
     pub started: Instant,
 }
 
+// ---- tmux 面板（一标签多 tmux 会话）：同连接附加交互 PTY 通道 ----
+
+/// 面板输出积压上限：订阅（FE 格子 xterm 挂上来）前的解码后字节暂存；
+/// 超限丢最旧——积压只覆盖「开格 → 订阅」的毫秒级窗口与短暂后台期。
+pub const PANE_MUX_BACKLOG_CAP: usize = 256 * 1024;
+
+/// 每会话面板格数上限（主视图 + 5 格 = 3×2 网格；再多每格字符数不够用）。
+pub const PANE_MAX: usize = 5;
+
+/// 开格失败分类（重建据此决定条目去留）：Transient=瞬时（掉线途中/通道失败，
+/// 保留待下次触发）；Gone=远端会话确认不存在（摘除）；Fatal=请求本身不成立
+/// （非法名/撞主视图/超上限/重复，摘除或直接报给用户）。
+pub enum PaneOpenError {
+    Transient(Error),
+    Gone(Error),
+    Fatal(Error),
+}
+
+impl PaneOpenError {
+    pub fn into_error(self) -> Error {
+        match self {
+            PaneOpenError::Transient(e) | PaneOpenError::Gone(e) | PaneOpenError::Fatal(e) => e,
+        }
+    }
+}
+
+/// 面板通道分发器：**单订阅者**模型。订阅前字节积压；首个订阅者（FE 格子）
+/// 订阅时接走全部积压转直播；订阅者消失（格子换装/关闭）回落积压。
+#[derive(Default)]
+pub struct PaneMux {
+    pub backlog: VecDeque<Vec<u8>>,
+    pub backlog_bytes: usize,
+    pub sub: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+}
+
+/// 一条面板通道（core 侧）：transport 交互通道 + 解码后输出分发。
+/// 无屏幕/无重放环/无检查点——面板是纯流视图，历史深度靠格子 xterm 自身
+/// scrollback；检查点与透视镜立案未做（面板定位是「瞄一眼」的用法）。
+pub struct TmuxPane {
+    pub id: u32,
+    pub tmux_session: String,
+    pub ch: Box<dyn session_api::transport::InteractiveChannel>,
+    pub mux: StdMutex<PaneMux>,
+    /// 掉线死亡（非用户结束）：条目保留在表里，快照报 alive=false——前端格子
+    /// 保留旧画面加遮罩，重建成功后以新 pane_id 原位换装（布局不塌缩）。
+    pub dead: AtomicBool,
+    /// 最近一次 PTY 尺寸（重建沿用，免得新 client 先按默认尺寸画一帧）。
+    pub size: StdMutex<(u16, u16)>,
+}
+
+impl TmuxPane {
+    /// 解码后输出推送（面板泵唯一写入口）：直播优先；订阅者消失回落积压；
+    /// 积压超限淘汰最旧。
+    pub fn push_decoded(&self, data: &[u8]) {
+        let mut mux = self.mux.lock().unwrap();
+        if let Some(tx) = &mux.sub {
+            if tx.send(data.to_vec()).is_ok() {
+                return;
+            }
+            mux.sub = None; // 订阅者已消失 → 回落积压
+        }
+        mux.backlog.push_back(data.to_vec());
+        mux.backlog_bytes += data.len();
+        while mux.backlog_bytes > PANE_MUX_BACKLOG_CAP {
+            match mux.backlog.pop_front() {
+                Some(front) => mux.backlog_bytes = mux.backlog_bytes.saturating_sub(front.len()),
+                None => break,
+            }
+        }
+    }
+}
+
 pub struct SessionHandle {
     pub id: SessionId,
     pub host: Host,
@@ -208,6 +280,19 @@ pub struct SessionHandle {
     /// 已挂 tmux 的 shell 里再挂第二个会话须用 switch-client（attach 在
     /// $TMUX 非空时被拒绝）；只跟踪自己的注入，用户手动 attach 不猜测。
     pub tmux_attached: StdMutex<Option<String>>,
+    // ---- tmux 面板（一标签多 tmux 会话）：同连接附加交互 PTY 通道 ----
+    /// 面板通道表（pane_id → 通道）。掉线死亡的条目保留（dead=true）直至重建
+    /// 换装；用户结束（远端 exit）与显式关闭才移除。
+    pub panes: StdMutex<HashMap<u32, Arc<TmuxPane>>>,
+    /// 面板愿望清单（tmux 会话名，顺序=前端格子顺序）：开格增、关格/用户结束
+    /// 删、重连重建的唯一事实源；远端会话**确认**消失时由重建摘除。
+    pub pane_wishlist: StdMutex<Vec<String>>,
+    /// pane_id 发号器（会话内单调递增，重建不回绕——前端以 sid:pane_id 寻址，
+    /// id 变化即「旧格已死、新格重建」的对账信号）。
+    pub pane_seq: AtomicU32,
+    /// 重建串行锁：掉线时 N 个面板泵 + 重注入会并发触发重建，串行化后每轮在锁内
+    /// 重读「哪些名字缺活通道」——同名不会被两个重建任务各开一条。
+    pub pane_rebuild_lock: AsyncMutex<()>,
     // ---- 十八轮：会话日志（tap 在 pump；句柄由 set_session_logging 装卸）----
     pub log_file: StdMutex<Option<SessionLogFile>>,
     pub log_path: StdMutex<Option<std::path::PathBuf>>,
@@ -342,6 +427,10 @@ impl SessionHandle {
                 sessions: Vec::new(),
             }),
             tmux_attached: StdMutex::new(None),
+            panes: StdMutex::new(HashMap::new()),
+            pane_wishlist: StdMutex::new(Vec::new()),
+            pane_seq: AtomicU32::new(0),
+            pane_rebuild_lock: AsyncMutex::new(()),
             log_file: StdMutex::new(None),
             log_path: StdMutex::new(None),
             center,
@@ -1665,6 +1754,8 @@ impl SessionHandle {
             match self.channel.reconnect().await {
                 Ok(()) => {
                     // 重连成功 ≠ 现场延续：cwd/env 事实降级；新 shell 需重新注入集成
+                    // （tmux 面板重建挂在 reinject_integration 尾：此刻状态仍是
+                    // Reconnecting，状态门会拒）
                     self.reset_scene_after_reconnect().await;
                     return;
                 }
@@ -1710,6 +1801,202 @@ impl SessionHandle {
         // 输出不随窗作废）
         s.force_close_open(chrono::Utc::now());
         s.invalidate_cwd();
+    }
+
+    // ---- tmux 面板：开格 / 重建 ----
+
+    /// 远端 tmux 会话存在性（has-session；独立通道 8s 窗）。三态：
+    /// Some(true)=存在；Some(false)=**确认**不存在（命令跑完且非零退出）；
+    /// None=无法判定（通道失败/超时——掉线途中常见，绝不能当「不存在」摘清单）。
+    async fn tmux_session_exists(&self, sel: &str) -> Option<bool> {
+        let has = format!("tmux has-session -t '{sel}'");
+        let cancel = session_api::transport::tokio_util_sync::CancellationToken::new();
+        let opts = session_api::ExecOpts {
+            mode: session_api::ExecMode::Fresh,
+            timeout: Some(std::time::Duration::from_secs(8)),
+            output_cap: Some(4096),
+            env: Default::default(),
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        match self
+            .channel
+            .exec_fresh(&has, &opts, deadline, &cancel)
+            .await
+        {
+            Ok(out) if out.completed => Some(out.exit_code == Some(0)),
+            _ => None,
+        }
+    }
+
+    /// 打开一条面板通道（GUI tmux_pane_open 与重连重建共用）。防呆与核验在此：
+    /// 会话名形状闸、状态门、与主视图同会话拒绝、同名去重与格数上限（仅新开）、
+    /// 远端 has-session 核验（防探测数据过期后开空格）。命令即通道引导期启动项
+    /// （request_pty + request_exec）——前台尚无交互程序，坑 84 的注入难题天然
+    /// 不沾；`-u` 强制 UTF-8：exec 通道是非交互 shell，LANG 可能缺失，tmux 会把
+    /// 宽字符画成 `_`（claude code 满屏 Unicode）。rebuild=true 时原位换装：
+    /// 不查重、不入清单、替换同名死条目。
+    pub(crate) async fn pane_open_inner(
+        self: &Arc<Self>,
+        name: &str,
+        cols: u16,
+        rows: u16,
+        rebuild: bool,
+    ) -> std::result::Result<u32, PaneOpenError> {
+        if name.is_empty()
+            || name.contains('\'')
+            || name.contains('\\')
+            || name.contains('\r')
+            || name.contains('\n')
+        {
+            return Err(PaneOpenError::Fatal(Error::InvalidInput(
+                "非法的 tmux 会话名".into(),
+            )));
+        }
+        {
+            let st = *self.state.lock().await;
+            let ok = if rebuild {
+                !matches!(st, SessionState::Disconnected | SessionState::Closed)
+            } else {
+                matches!(st, SessionState::Connected | SessionState::Reconfirming)
+            };
+            if !ok {
+                return Err(PaneOpenError::Transient(Error::InvalidInput(
+                    "会话未连接，无法打开面板窗格".into(),
+                )));
+            }
+        }
+        if self.tmux_attached.lock().unwrap().as_deref() == Some(name) {
+            return Err(PaneOpenError::Fatal(Error::InvalidInput(format!(
+                "会话 {name} 已在主视图（tmux attach）——同一会话不做两路视图"
+            ))));
+        }
+        if !rebuild {
+            let dup = self.pane_wishlist.lock().unwrap().iter().any(|n| n == name);
+            if dup {
+                return Err(PaneOpenError::Fatal(Error::InvalidInput(format!(
+                    "面板已包含会话 {name}"
+                ))));
+            }
+            if self.pane_wishlist.lock().unwrap().len() >= PANE_MAX {
+                return Err(PaneOpenError::Fatal(Error::InvalidInput(format!(
+                    "面板最多 {PANE_MAX} 个窗格"
+                ))));
+            }
+        }
+        let ver = self.tmux.lock().unwrap().version.clone();
+        let sel = crate::SessionManager::tmux_selector(ver.as_deref(), name);
+        match self.tmux_session_exists(&sel).await {
+            Some(true) => {}
+            Some(false) => {
+                return Err(PaneOpenError::Gone(Error::InvalidInput(format!(
+                    "tmux 会话不存在：{name}"
+                ))))
+            }
+            None => {
+                return Err(PaneOpenError::Transient(Error::InvalidInput(
+                    "无法确认 tmux 会话（连接不稳）".into(),
+                )))
+            }
+        }
+        let cmd = format!("tmux -u attach -t '{sel}'");
+        let (cols, rows) = (cols.max(2), rows.max(2));
+        let ich = self
+            .channel
+            .open_interactive_channel(&cmd, cols, rows)
+            .await
+            .map_err(PaneOpenError::Transient)?;
+        let pane_id = self.pane_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let rx = ich.subscribe_output();
+        let pane = Arc::new(TmuxPane {
+            id: pane_id,
+            tmux_session: name.to_string(),
+            ch: ich,
+            mux: StdMutex::new(PaneMux::default()),
+            dead: AtomicBool::new(false),
+            size: StdMutex::new((cols, rows)),
+        });
+        {
+            let mut panes = self.panes.lock().unwrap();
+            if rebuild {
+                // 原位换装：同名死条目让位（前端按新 pane_id 换 xterm，旧格 dispose）
+                panes.retain(|_, p| p.tmux_session != name);
+            }
+            panes.insert(pane_id, pane.clone());
+        }
+        if !rebuild {
+            self.pane_wishlist.lock().unwrap().push(name.to_string());
+        }
+        crate::spawn_pane_pump(self.clone(), pane, rx);
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "tmux_pane_open",
+            Some(&self.id),
+            Some(&cmd),
+            serde_json::json!({"tmux_session": name, "pane_id": pane_id, "rebuild": rebuild}),
+            None,
+        );
+        Ok(pane_id)
+    }
+
+    /// tmux 面板重建：按愿望清单为「缺活通道」的名字原位重开。触发点=重注入
+    /// 尾（自动/手动重连两路都经过）与单格掉线（连接仍健康）。串行锁内重读
+    /// 现状，并发触发不双开。确认会话消失（Gone）或与主视图撞会话（Fatal）→
+    /// 摘清单与死条目；瞬时失败（Transient）保留，等下一次触发。
+    pub fn spawn_pane_rebuild(self: &Arc<Self>) {
+        if self.kind != "ssh" {
+            return;
+        }
+        let this = self.clone();
+        tokio::spawn(async move {
+            let _serial = this.pane_rebuild_lock.lock().await;
+            let names = this.pane_wishlist.lock().unwrap().clone();
+            for name in names {
+                // 关格/清场可能在锁等待期间发生：每项重查仍在清单里
+                if !this
+                    .pane_wishlist
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|n| n == &name)
+                {
+                    continue;
+                }
+                let (has_alive, size) = {
+                    let panes = this.panes.lock().unwrap();
+                    let alive = panes
+                        .values()
+                        .any(|p| p.tmux_session == name && !p.dead.load(Ordering::SeqCst));
+                    let size = panes
+                        .values()
+                        .find(|p| p.tmux_session == name)
+                        .map(|p| *p.size.lock().unwrap())
+                        .unwrap_or((120, 32));
+                    (alive, size)
+                };
+                if has_alive {
+                    continue;
+                }
+                match this.pane_open_inner(&name, size.0, size.1, true).await {
+                    Ok(_) => {}
+                    Err(PaneOpenError::Transient(e)) => {
+                        tracing::warn!(session = %this.id, tmux = %name, "pane rebuild deferred: {e}");
+                    }
+                    Err(PaneOpenError::Gone(e)) | Err(PaneOpenError::Fatal(e)) => {
+                        tracing::info!(session = %this.id, tmux = %name, "pane dropped: {e}");
+                        this.pane_drop_name(&name);
+                    }
+                }
+            }
+        });
+    }
+
+    /// 摘除某 tmux 会话名的面板（清单 + 表内同名条目；不关通道——调用方按需）。
+    pub(crate) fn pane_drop_name(&self, name: &str) {
+        self.pane_wishlist.lock().unwrap().retain(|n| n != name);
+        self.panes
+            .lock()
+            .unwrap()
+            .retain(|_, p| p.tmux_session != name);
     }
 
     /// C3（R24）三注入点收敛：按 host_setting 注入集成片段。返回是否注入
@@ -1899,6 +2186,8 @@ impl SessionHandle {
             .await;
         self.emit_state(SessionState::Reconfirming, None, None, None)
             .await;
+        // tmux 面板重建：自动/手动重连两路都经此处，且状态已过 Reconnecting
+        self.spawn_pane_rebuild();
     }
 
     /// tmux 联动：主机启动命令下发（建连/重连共用；与 shell 集成开关无关——

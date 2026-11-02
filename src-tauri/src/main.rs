@@ -316,10 +316,13 @@ fn transfer_status_str(s: TransferStatus) -> &'static str {
 }
 
 /// 终端聚焦状态（native Ctrl 键接管依据：只有 xterm textarea 聚焦时才劫持）。
+/// pane_id：焦点在 tmux 面板格子里时非空——控制字符改投该格通道，不进主会话。
 #[derive(Default)]
 struct TerminalInput {
     sid: std::sync::Mutex<Option<String>>,
     focused: std::sync::Mutex<bool>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pane_id: std::sync::Mutex<Option<u32>>,
 }
 
 #[tauri::command]
@@ -327,9 +330,11 @@ fn note_terminal(
     state: State<'_, Arc<TerminalInput>>,
     sid: Option<String>,
     focused: bool,
+    pane_id: Option<u32>,
 ) -> CmdResult<()> {
     *state.sid.lock().unwrap() = sid;
     *state.focused.lock().unwrap() = focused;
+    *state.pane_id.lock().unwrap() = pane_id;
     Ok(())
 }
 
@@ -631,6 +636,96 @@ async fn tmux_attach(
         .tmux_attach(&sid, &session, auto.unwrap_or(false))
         .await
         .map_err(WireError::from)
+}
+
+/// tmux 面板（一标签多 tmux 会话）：同连接开附加交互 PTY 通道跑 `tmux attach`。
+/// 防呆（同会话两路视图/同名格去重/存在性核验）在 core；返回 pane_id 供前端
+/// 立即挂格子（乐观渲染，不等 3s 快照）。
+#[tauri::command]
+async fn tmux_pane_open(
+    state: ApiState<'_>,
+    sid: String,
+    session: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> CmdResult<session_api::PaneInfo> {
+    state
+        .api
+        .tmux_pane_open(&sid, &session, cols.unwrap_or(120), rows.unwrap_or(32))
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 面板：关闭格子——只拆客户端通道（detach），远端 tmux 会话与其中
+/// 进程不受影响。
+#[tauri::command]
+async fn tmux_pane_close(state: ApiState<'_>, sid: String, pane_id: u32) -> CmdResult<()> {
+    state
+        .api
+        .tmux_pane_close(&sid, pane_id)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 面板：格子 PTY 尺寸（window_change）。
+#[tauri::command]
+async fn tmux_pane_resize(
+    state: ApiState<'_>,
+    sid: String,
+    pane_id: u32,
+    cols: u16,
+    rows: u16,
+) -> CmdResult<()> {
+    state
+        .api
+        .tmux_pane_resize(&sid, pane_id, cols, rows)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 面板：格子按键（人类键盘直写该通道）。
+#[tauri::command]
+async fn tmux_pane_input(
+    state: ApiState<'_>,
+    sid: String,
+    pane_id: u32,
+    keys: String,
+) -> CmdResult<()> {
+    state
+        .api
+        .tmux_pane_input(&sid, pane_id, &keys)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 面板：格子输出订阅（原始字节直通 IPC Channel；单订阅者——订阅即接走
+/// core 侧积压）。核心侧流终结时补发一条 JSON `"eof"` 后退出；FE 通道先消失则
+/// 直接退出。
+#[tauri::command]
+async fn tmux_pane_subscribe(
+    state: ApiState<'_>,
+    sid: String,
+    pane_id: u32,
+    on_event: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> CmdResult<()> {
+    let mut rx = state
+        .api
+        .tmux_pane_subscribe(&sid, pane_id)
+        .map_err(WireError::from)?;
+    tokio::spawn(async move {
+        while let Some(chunk) = rx.recv().await {
+            if on_event
+                .send(tauri::ipc::InvokeResponseBody::Raw(chunk))
+                .is_err()
+            {
+                return;
+            }
+        }
+        // 流终结 = 核心已摘除此格（用户结束/重建换装/会话关闭；pane_id 不复用）：
+        // 通知前端即刻对账，不干等 3s 快照轮询
+        let _ = on_event.send(tauri::ipc::InvokeResponseBody::Json("\"eof\"".into()));
+    });
+    Ok(())
 }
 
 /// R26（§6.4「可停止重试」）：停止自动重连（≤250ms 内落 Disconnected）。
@@ -2995,14 +3090,23 @@ fn install_native_ctrl_intercept(core: Arc<SessionManager>, input: Arc<TerminalI
                 return None; // 终端未聚焦（命令框等输入控件保留自身编辑语义）
             }
             let sid = input.sid.lock().unwrap().clone()?;
+            let pane = *input.pane_id.lock().unwrap();
             let keycode = ev.keyCode() as u64;
-            ctrl_char_of_keycode(keycode).map(|cc| (sid, cc))
+            ctrl_char_of_keycode(keycode).map(|cc| (sid, pane, cc))
         }));
         match handled {
-            Ok(Some((sid, cc))) => {
+            Ok(Some((sid, pane, cc))) => {
                 let core = core.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = core.send_keys(&Actor::Human, sid, cc).await;
+                    // tmux 面板格子焦点：控制字符进该格通道（主会话 send_keys 绝不代收）
+                    match pane {
+                        Some(pid) => {
+                            let _ = core.tmux_pane_input(&sid, pid, cc).await;
+                        }
+                        None => {
+                            let _ = core.send_keys(&Actor::Human, sid, cc).await;
+                        }
+                    }
                 });
                 std::ptr::null_mut() // 吞掉事件：IME 与 WebKit 都不再看到
             }
@@ -3729,7 +3833,8 @@ fn main() {
             ssh_config_preview, ssh_config_import,
             list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection, set_session_logging, session_log_path,
             close_session, reconnect_session, stop_auto_reconnect, tmux_probe, tmux_restore,
-            tmux_attach, session_state_feed, resize, subscribe_output,
+            tmux_attach, tmux_pane_open, tmux_pane_close, tmux_pane_resize, tmux_pane_input,
+            tmux_pane_subscribe, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,
             upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat,

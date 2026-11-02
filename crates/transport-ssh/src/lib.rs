@@ -14,7 +14,7 @@ use session_api::{
     AuthType, DirEntryS, EntryKind, EntryStat, Error, ExecOpts, ForwardId, ForwardInfo,
     ForwardSpec, PathResolved, PublishOutcome, Result,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -840,6 +840,104 @@ impl SshChannel {
     }
 }
 
+/// tmux 面板通道引导期积压上限：subscribe 前的字节暂存（attach 首屏绘制约几 KB，
+/// 256KB 绰绰有余；超限丢最旧——积压只服务「开→订」的毫秒级窗口）。
+const PANE_BOOTLOG_CAP: usize = 256 * 1024;
+
+/// tmux 面板的附加交互 PTY 通道（SshChannel::open_interactive_channel 产物）。
+/// 自持读泵；不参与主通道的代际/重连——连接断开即死（alive=false），由 core
+/// 按面板愿望清单重建新通道。bootlog 用 Arc 共享：读泵与返回给 core 的句柄
+/// 必须看到同一份积压（先产后订窗口的补放依据）。
+struct SshPaneChannel {
+    write_half: Mutex<Option<ChannelWriteHalf<russh::client::Msg>>>,
+    tx: broadcast::Sender<Vec<u8>>,
+    /// 保活订阅者（主通道同款）：零接收者 send 即 Err，读泵会误判「无人听」退出。
+    #[allow(dead_code)]
+    keepalive_rx: broadcast::Receiver<Vec<u8>>,
+    /// 引导期积压（Some=尚无订阅者）：subscribe_output 首订时补放。积压推入、
+    /// 广播与补放**同锁线性化**——否则落在「已订阅未取积压」空隙的块会收两次。
+    bootlog: Arc<StdMutex<Option<PaneBootlog>>>,
+    alive: Arc<AtomicBool>,
+    /// 远端进程自行结束（收到 exit-status/exit-signal）；连接断开不置位。
+    exited: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct PaneBootlog {
+    q: VecDeque<Vec<u8>>,
+    bytes: usize,
+}
+
+/// 读泵单块推送：积压（尚无订阅者时）+ 广播，同一把锁内完成。
+fn pane_push(
+    bootlog: &StdMutex<Option<PaneBootlog>>,
+    tx: &broadcast::Sender<Vec<u8>>,
+    data: Vec<u8>,
+) {
+    let mut guard = bootlog.lock().unwrap();
+    if let Some(boot) = guard.as_mut() {
+        boot.bytes += data.len();
+        boot.q.push_back(data.clone());
+        while boot.bytes > PANE_BOOTLOG_CAP {
+            match boot.q.pop_front() {
+                Some(front) => boot.bytes = boot.bytes.saturating_sub(front.len()),
+                None => break,
+            }
+        }
+    }
+    let _ = tx.send(data);
+}
+
+#[async_trait]
+impl session_api::transport::InteractiveChannel for SshPaneChannel {
+    async fn write(&self, data: &[u8]) -> Result<()> {
+        let guard = self.write_half.lock().await;
+        let w = guard.as_ref().ok_or(Error::SessionClosed)?;
+        w.data_bytes(data.to_vec())
+            .await
+            .map_err(|e| Error::Io(format!("pane write: {e}")))
+    }
+
+    async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        let guard = self.write_half.lock().await;
+        if let Some(w) = guard.as_ref() {
+            w.window_change(cols as u32, rows as u32, 0, 0)
+                .await
+                .map_err(|e| Error::Io(format!("pane resize: {e}")))?;
+        }
+        Ok(())
+    }
+
+    fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> {
+        let mut guard = self.bootlog.lock().unwrap();
+        let rx = self.tx.subscribe();
+        if let Some(boot) = guard.take() {
+            for chunk in boot.q {
+                let _ = self.tx.send(chunk);
+            }
+        }
+        rx
+    }
+
+    async fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
+    }
+
+    fn exited(&self) -> bool {
+        self.exited.load(Ordering::SeqCst)
+    }
+
+    async fn close(&self) -> Result<()> {
+        // 真关闭：发 CHANNEL_CLOSE（仅置旗标不够——远端 PTY 与 tmux client 会
+        // 一直活到整条连接断开）。写半随后置 None，后续 write 快速失败。
+        if let Some(w) = self.write_half.lock().await.take() {
+            let _ = w.close().await;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl ChannelHandle for SshChannel {
     async fn write(&self, data: &[u8]) -> Result<()> {
@@ -984,6 +1082,93 @@ impl ChannelHandle for SshChannel {
             truncated,
             completed,
         })
+    }
+
+    async fn open_interactive_channel(
+        &self,
+        cmd: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<Box<dyn session_api::transport::InteractiveChannel>> {
+        // 锁收窄（exec_fresh 同款纪律）：handle 锁只罩 channel_open。
+        let mut channel = {
+            let handle_guard = self.handle.lock().await;
+            let handle = handle_guard.as_ref().ok_or(Error::SessionClosed)?;
+            handle
+                .channel_open_session()
+                .await
+                .map_err(|e| Error::ConnectFailed(format!("pane channel: {e}")))?
+        };
+        let cols = cols.max(2);
+        let rows = rows.max(2);
+        channel
+            .request_pty(true, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("pane pty: {e}")))?;
+        // 命令即通道引导期启动项（establish 的 request_shell 换成 request_exec）：
+        // 远端在此 PTY 里直接跑 `tmux attach`，前台尚无交互程序，无注入难题。
+        channel
+            .exec(true, cmd.as_bytes())
+            .await
+            .map_err(|e| Error::ConnectFailed(format!("pane exec: {e}")))?;
+        // 等待 exec 请求成功回包（establish 同款）
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Success) => break,
+                Some(ChannelMsg::Failure) => {
+                    return Err(Error::ConnectFailed(format!(
+                        "pane exec rejected: {}",
+                        cmd.split_whitespace().next().unwrap_or("cmd")
+                    )))
+                }
+                Some(_) => continue,
+                None => return Err(Error::ConnectFailed("pane channel closed early".into())),
+            }
+        }
+
+        let (mut read_half, write_half) = channel.split();
+        let (tx, keepalive_rx) = broadcast::channel(1024);
+        let alive = Arc::new(AtomicBool::new(true));
+        let exited = Arc::new(AtomicBool::new(false));
+        let bootlog = Arc::new(StdMutex::new(Some(PaneBootlog::default())));
+        // 读泵：与主 shell 泵同构（Data/ExtendedData → 广播；EOF/Close → alive=false）。
+        // 差异：无代际闸——面板通道不重连，死即死，core 按愿望清单重建新通道；
+        // exit-status/exit-signal 记 exited（用户结束 ≠ 掉线，core 分流处置）。
+        {
+            let tx = tx.clone();
+            let bootlog = bootlog.clone();
+            let alive = alive.clone();
+            let exited = exited.clone();
+            tokio::spawn(async move {
+                loop {
+                    match read_half.wait().await {
+                        Some(ChannelMsg::Data { ref data }) => {
+                            pane_push(&bootlog, &tx, data.to_vec());
+                        }
+                        Some(ChannelMsg::ExtendedData { ref data, .. }) => {
+                            pane_push(&bootlog, &tx, data.to_vec());
+                        }
+                        Some(ChannelMsg::ExitStatus { .. })
+                        | Some(ChannelMsg::ExitSignal { .. }) => {
+                            exited.store(true, Ordering::SeqCst);
+                        }
+                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                            alive.store(false, Ordering::SeqCst);
+                            break;
+                        }
+                        Some(_) => continue,
+                    }
+                }
+            });
+        }
+        Ok(Box::new(SshPaneChannel {
+            write_half: Mutex::new(Some(write_half)),
+            tx,
+            keepalive_rx,
+            bootlog,
+            alive,
+            exited,
+        }))
     }
 
     async fn signal(&self, sig: TransportSignal) -> Result<()> {

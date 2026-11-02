@@ -142,6 +142,16 @@ export interface SessionInfo {
   tmux?: TmuxStatus | null;
   /** tmux 联动二：PTY 已 attach 的 tmux 会话名（恢复现场/手动 attach 后非空；缺省=未 attach/旧后端）。 */
   tmux_attached?: string | null;
+  /** tmux 面板（一标签多 tmux 会话）：会话内附加交互通道格子，顺序=格子顺序（缺省=无/旧后端）。 */
+  panes?: PaneInfo[];
+}
+
+/** tmux 面板：单个格子快照。pane_id 会话内单调（重建换新号——id 变即换装信号）；
+ * alive=false=掉线死亡待重连重建（格子保留旧画面加遮罩）。 */
+export interface PaneInfo {
+  pane_id: number;
+  tmux_session: string;
+  alive: boolean;
 }
 
 // ---- tmux 联动：远端 tmux 状态与恢复现场计划（GUI 专用三命令） ----

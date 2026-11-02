@@ -670,6 +670,47 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .term-session.pane-top .pane-tag, .term-session.pane-bottom .pane-tag { display: block; }
 .term-session.pane-focused .pane-tag { color: var(--accent); }
 
+/* tmux 面板（一标签多 tmux 会话）：主视图 + 格子按 paneGrid 平铺（几何由 JS 写内联
+   left/top/right/bottom 百分比）。格子 = 标题栏（会话名 + 关闭钮）+ 正文（xterm 挂载
+   点，padding 与主视图同口径以便 fitDimsOf 扣除）。分隔靠 1px 边框（墨水屏主题铲阴影，
+   边框是唯一层次手段）；焦点格加 accent 细边；掉线格正文蒙灰 + 标题栏状态字常显。 */
+/* 主视图在网格里同样带 22px 标题栏（格子同款），名牌不再浮压首行文字；
+   padding-top 让出标题栏高度——fitDimsOf 读计算 padding，PTY 行数自动扣除 */
+#term.has-tmux-panes .term-session.active { padding-top: 28px; }
+#term.has-tmux-panes .term-session.active .pane-tag {
+  display: flex; align-items: center; top: 0; left: 0; right: 0; height: 22px;
+  padding: 0 8px; border-radius: 0; font-size: 11px; color: var(--text-sub);
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.tmux-cell {
+  position: absolute; display: none; flex-direction: column; min-width: 0; min-height: 0;
+  border-left: 1px solid var(--border); border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.tmux-cell.focused { outline: 1px solid var(--accent-glow); outline-offset: -1px; }
+.tmux-cell-head {
+  flex: none; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 4px 0 8px;
+  font-size: 11px; color: var(--text-sub); background: var(--panel); cursor: default;
+  border-bottom: 1px solid var(--border); user-select: none;
+}
+.tmux-cell.focused .tmux-cell-head { color: var(--accent); }
+.tmux-cell-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tmux-cell-state { display: none; flex: none; color: var(--warn, #d29922); }
+.tmux-cell.dead .tmux-cell-state { display: inline; }
+.tmux-cell-close {
+  flex: none; width: 20px; height: 18px; padding: 0; justify-content: center;
+  font-size: 14px; line-height: 1; color: var(--dim);
+}
+.tmux-cell-close:not(:disabled):hover { color: var(--danger, #e5534b); background: var(--panel2); }
+.tmux-cell-body { position: relative; flex: 1; min-height: 0; padding: 4px 6px; overflow: hidden; }
+.tmux-cell.dead .tmux-cell-body { opacity: 0.45; filter: grayscale(0.6); }
+/* 快接钮菜单行：主项（切主视图）+ 「＋面板」动作并排；禁用项保留可读灰阶 */
+.tools-menu.tmux-quick-menu { min-width: 236px; }
+.tools-menu .tmux-quick-row { display: flex; align-items: center; gap: 2px; }
+.tools-menu .tmux-quick-row > button:first-child { flex: 1; }
+.tools-menu .tmux-pane-add { flex: none; font-size: 11px; padding: 4px 8px; color: var(--accent); }
+.tools-menu button:disabled { color: var(--dim); cursor: not-allowed; }
+
 /* 拖标签组合分屏的落点提示（scrim + 高亮区）。高亮 inset 与 .pane-* 同公式吃
    #term 的 --split-frac——已分屏时高亮就是真实窗格几何，未分屏（默认 .5）为半区；
    z 与 .drop-overlay 同层惯例，pointer-events:none 让 dragover 穿到 #term */
@@ -1340,6 +1381,10 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 .ah-field label { font-size: 10px; color: var(--text-sub); letter-spacing: 0.3px; }
 .ah-field input, .ah-field select { width: 100%; }
 .dead-overlay { position: absolute; inset: 0; z-index: 20; background: var(--dead-scrim); display: flex; align-items: flex-start; justify-content: center; pointer-events: none; }
+/* tmux 面板在挂时断线横幅缩半宽居右：主视图格被盖一半即可读，面板格仍可见可点。
+   .dead-overlay 是 #term 的后继兄弟（同在 .term-wrap 内），故用 ~ 而非后代选择器 */
+#term.has-tmux-panes ~ .dead-overlay { justify-content: flex-end; padding-right: 24px; }
+#term.has-tmux-panes ~ .dead-overlay .dead-banner { max-width: 380px; }
 .dead-banner { margin-top: 48px; max-width: 430px; background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; line-height: 1.7; box-shadow: 0 4px 10px var(--shadow-soft), 0 24px 64px var(--shadow-dialog); pointer-events: auto; }
 
 /* R25 §322 分屏菜单：复用已有会话 / 在右侧新建会话（§185 同源的浮层工艺）。

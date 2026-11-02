@@ -28,7 +28,7 @@ export function MkChannel(): WireChannel {
 // ---------------------------------------------------------------------------
 
 interface CmdArgs {
-  note_terminal: { sid: string | null; focused: boolean };
+  note_terminal: { sid: string | null; focused: boolean; paneId?: number | null };
   list_hosts: undefined;
   upsert_host: { host: wire.HostDraft };
   delete_host: { id: string };
@@ -52,6 +52,12 @@ interface CmdArgs {
   tmux_probe: { sid: string };
   tmux_restore: { sid: string; session?: string | null };
   tmux_attach: { sid: string; session: string; auto?: boolean };
+  // tmux 面板（一标签多 tmux 会话）：同连接附加交互通道格子
+  tmux_pane_open: { sid: string; session: string; cols?: number; rows?: number };
+  tmux_pane_close: { sid: string; paneId: number };
+  tmux_pane_resize: { sid: string; paneId: number; cols: number; rows: number };
+  tmux_pane_input: { sid: string; paneId: number; keys: string };
+  tmux_pane_subscribe: { sid: string; paneId: number; onEvent: WireChannel };
   session_state_feed: undefined;
   resize: { sid: string; cols: number; rows: number };
   subscribe_output: { sid: string; onEvent: WireChannel };
@@ -187,6 +193,11 @@ interface CmdRet {
   tmux_probe: wire.TmuxStatus;
   tmux_restore: wire.TmuxRestorePlan;
   tmux_attach: void;
+  tmux_pane_open: wire.PaneInfo;
+  tmux_pane_close: void;
+  tmux_pane_resize: void;
+  tmux_pane_input: void;
+  tmux_pane_subscribe: void;
   session_state_feed: wire.SessionStateEvent[];
   resize: void;
   subscribe_output: wire.AttachOutput;

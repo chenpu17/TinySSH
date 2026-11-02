@@ -36,6 +36,53 @@ type DemoTmux = {
   sessions: { name: string; windows: number; attached: number }[];
 };
 
+/** tmux 面板格子镜像：out=格子输出缓冲（订阅即整段补放——真实核心是积压接走，
+ * demo 无持久 client 进程，整段补放等价于 attach 首屏重绘）。 */
+type DemoPane = {
+  pane_id: number; tmux_session: string; alive: boolean;
+  out: string; handlers: PaneHandler[];
+  cols: number; rows: number; line: string;
+};
+/** 格子订阅回调：字节帧，或流终结信号 "eof"（真实 tmux_pane_subscribe 同契约）。 */
+type PaneHandler = (data: Uint8Array | "eof") => void;
+
+/** 演示面板上限（真实核心 handle.rs PANE_MAX 同值）。 */
+const DEMO_PANE_MAX = 5;
+
+function panePush(p: DemoPane, text: string) {
+  p.out += text;
+  if (p.out.length > 64 * 1024) p.out = p.out.slice(-32 * 1024);
+  const raw = encoder.encode(text);
+  for (const h of p.handlers) h(raw);
+}
+
+/** 格子在核心侧被摘除（关格/远端结束/重建换装/会话关闭）：订阅方收流终结信号。 */
+function paneEnd(p: DemoPane) {
+  for (const h of p.handlers) h("eof");
+  p.handlers = [];
+}
+
+/** 格子首屏（attach 重绘的演示替身）：标题行 + 假提示符。 */
+function paneBanner(name: string, rebuilt: boolean): string {
+  const tag = rebuilt ? "重连后原位重建" : "独立通道";
+  return `\x1b[2J\x1b[H\x1b[1;36m[演示] tmux -u attach -t '=${name}'\x1b[0m（面板窗格 · ${tag}）\r\n${name}@demo:~$ `;
+}
+
+/** 重连成功后的面板重建镜像（真实核心 reinject 尾 spawn_pane_rebuild）：死格按
+ * 原顺序原位换新 pane_id；远端会话已不在探测清单 → 摘除（真实侧 Gone 臂）。 */
+function demoRebuildPanes(s: DemoSession) {
+  const names = new Set((s.tmux?.sessions ?? []).map((x) => x.name));
+  const next: DemoPane[] = [];
+  for (const p of s.panes ?? []) {
+    if (p.alive) { next.push(p); continue; }
+    paneEnd(p);
+    if (!names.has(p.tmux_session)) continue;
+    s.pane_seq = (s.pane_seq ?? 0) + 1;
+    next.push({ pane_id: s.pane_seq, tmux_session: p.tmux_session, alive: true, out: paneBanner(p.tmux_session, true), handlers: [], cols: p.cols, rows: p.rows, line: "" });
+  }
+  s.panes = next;
+}
+
 type DemoSession = {
   id: string; host_id: string; host_name: string; kind: string;
   state: string; control_owner: "Human" | "Agent";
@@ -54,6 +101,10 @@ type DemoSession = {
   tmux?: DemoTmux | null;
   /** 本会话内由我们注入 attach 的 tmux 会话名（再挂自动改 switch-client）。 */
   tmux_attached?: string | null;
+  /** tmux 面板（一标签多 tmux 会话）：附加交互通道格子镜像（真实核心 SessionHandle.panes
+   * + pane_wishlist 同语义：掉线保留 alive=false，重连按清单原位换新 pane_id）。 */
+  panes?: DemoPane[];
+  pane_seq?: number;
   // 控制权/目标变迁（与真实 SessionHandle.transitions 对齐：简报「控制权」fact 取最近 3 条按序展示）。
   // ts 统一 ISO-UTC——简报侧转本地渲染（与真实 brief.rs 修复后口径一致，防时区伪影）
   transitions: { ts: string; what: string }[];
@@ -637,6 +688,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         tmux: s.kind === "ssh" ? (s.tmux ?? null) : null,
         // tmux 联动二：已 attach 的 tmux 会话名（恢复现场后非空；Agent 分窗提示行据它显示）
         tmux_attached: s.kind === "ssh" ? (s.tmux_attached ?? null) : null,
+        // tmux 面板：格子快照（顺序=格子顺序；alive=false=掉线待重建）
+        panes: s.kind === "ssh"
+          ? (s.panes ?? []).map((p) => ({ pane_id: p.pane_id, tmux_session: p.tmux_session, alive: p.alive }))
+          : [],
       }));
     case "upsert_host": {
       const h = (args?.host ?? {}) as { id: string | null; name: string; address: string; port?: number; username: string; auth?: unknown; charset?: "utf-8" | "gbk"; tags?: string[]; jump_host_id?: string | null; startup_command?: string | null };
@@ -901,6 +956,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         const si = demoState.sessions.findIndex((x) => x.id === sid);
         if (si >= 0) demoState.sessions.splice(si, 1);
         s.subs.clear(); // 会话关闭自动清理全部订阅（C10 主路径兜底）
+        for (const p of s.panes ?? []) paneEnd(p);
       }
       // 镜像真实 close_session：作废该会话待审批并逐条留痕（reason=session_closed）
       for (const a of demoState.approvals) {
@@ -925,6 +981,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       s.state = "Reconfirming";
       demoEmitState(sid, "Reconfirming", null, null, null);
       pushTo(sid, "\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
+      demoRebuildPanes(s);
       audit("human", "session_reconnect", null, null, sid ?? null);
       return null;
     }
@@ -943,6 +1000,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       dropChains.set(sid, chain);
       s.state = "Degraded";
       demoEmitState(sid, "Degraded", null, null, null);
+      // tmux 面板：连接断开 → 全部格子掉线死亡（保留条目，alive=false）
+      for (const p of s.panes ?? []) p.alive = false;
       s.transitions.push({ ts: new Date().toISOString(), what: "连接退化，尝试重连" });
       let a = 0;
       const step = () => {
@@ -966,6 +1025,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
             demoEmitState(sid, "Reconfirming", null, null, null);
             s.transitions.push({ ts: new Date().toISOString(), what: "重连成功，进入重确认（仅内置只读白名单可用）" });
             pushTo(sid, "\r\n[演示] 自动重连成功，进入重确认\r\n");
+            demoRebuildPanes(s);
             dropChains.delete(sid);
           }, 350));
           return;
@@ -1012,6 +1072,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         s.state = "Reconfirming";
         demoEmitState(sid, "Reconfirming", null, null, null);
         pushTo(sid, "\r\n[演示] 重连成功，进入重确认（仅内置只读白名单可用）\r\n");
+        demoRebuildPanes(s);
         audit("human", "session_reconnect", null, null, sid ?? null);
       } else if (s.state !== "Connected" && s.state !== "Reconfirming") {
         throw apiError("invalid_input", "会话状态不支持恢复现场（演示）");
@@ -1036,11 +1097,112 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (s.state === "Disconnected" || s.state === "Closed") {
         throw apiError("invalid_input", "会话未连接：请先重连再挂 tmux（演示）");
       }
+      // tmux 面板反向防呆（真实核心同语义）：已在格子里的会话不再挂进主视图
+      if ((s.panes ?? []).some((p) => p.tmux_session === name)) {
+        throw apiError("invalid_input", `会话 ${name} 已在面板窗格中——同一会话不做两路视图（演示）`);
+      }
       // 已挂 tmux 的会话再挂自动改 switch-client（真实核心 $TMUX 守卫同语义）
       const verb = s.tmux_attached ? "tmux switch-client" : "tmux attach";
       pushTo(sid, `\r\n[演示] ${verb} -t '=${name}'\r\n`);
       s.tmux_attached = name;
       audit("human", "tmux_attach", name, null, sid ?? null, { auto });
+      return null;
+    }
+    // ---- tmux 面板（一标签多 tmux 会话）：真实侧同连接开附加交互 PTY 通道跑
+    // `tmux -u attach`；demo 以格子输出缓冲 + 回显演示，防呆口径与核心逐条对齐 ----
+    case "tmux_pane_open": {
+      const sid = args?.sid as string;
+      const name = ((args?.session as string) ?? "").trim();
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 面板仅支持 SSH 会话（演示）");
+      if (!name || /['\\\r\n]/.test(name)) throw apiError("invalid_input", "非法的 tmux 会话名（演示）");
+      if (s.state !== "Connected" && s.state !== "Reconfirming") {
+        throw apiError("invalid_input", "会话未连接，无法打开面板窗格（演示）");
+      }
+      if (s.tmux_attached === name) {
+        throw apiError("invalid_input", `会话 ${name} 已在主视图（tmux attach）——同一会话不做两路视图（演示）`);
+      }
+      const panes = (s.panes ??= []);
+      if (panes.some((p) => p.tmux_session === name)) throw apiError("invalid_input", `面板已包含会话 ${name}（演示）`);
+      if (panes.length >= DEMO_PANE_MAX) throw apiError("invalid_input", `面板最多 ${DEMO_PANE_MAX} 个窗格（演示）`);
+      if (!(s.tmux?.sessions ?? []).some((x) => x.name === name)) {
+        throw apiError("invalid_input", `tmux 会话不存在：${name}（演示）`);
+      }
+      s.pane_seq = (s.pane_seq ?? 0) + 1;
+      const cols = Number(args?.cols ?? 120), rows = Number(args?.rows ?? 32);
+      panes.push({ pane_id: s.pane_seq, tmux_session: name, alive: true, out: paneBanner(name, false), handlers: [], cols, rows, line: "" });
+      audit("human", "tmux_pane_open", `tmux -u attach -t '=${name}'`, null, sid ?? null, { tmux_session: name, pane_id: s.pane_seq, rebuild: false });
+      return { pane_id: s.pane_seq, tmux_session: name, alive: true };
+    }
+    case "tmux_pane_subscribe": {
+      const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
+      const p = s?.panes?.find((x) => x.pane_id === Number(args?.paneId));
+      if (!p) throw apiError("invalid_input", "面板窗格不存在（演示）");
+      const channel = args?.onEvent as { onmessage?: PaneHandler };
+      // 单订阅者（真实 PaneMux 同模型）：新订阅替换旧订阅，补放当前缓冲
+      p.handlers = channel?.onmessage ? [(m) => channel.onmessage!(m)] : [];
+      if (p.out) for (const h of p.handlers) h(encoder.encode(p.out));
+      return null;
+    }
+    case "tmux_pane_input": {
+      const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
+      const p = s?.panes?.find((x) => x.pane_id === Number(args?.paneId));
+      if (!p) throw apiError("invalid_input", "面板窗格不存在（演示）");
+      if (!p.alive) throw apiError("invalid_input", "面板窗格已断开（演示）");
+      const keys = String(args?.keys ?? "");
+      for (const ch of keys) {
+        if (ch === "\r") {
+          const cmd = p.line.trim();
+          p.line = "";
+          panePush(p, `\r\n${cmd ? `[演示] ${p.tmux_session}: ${cmd}\r\n` : ""}${p.tmux_session}@demo:~$ `);
+        } else if (ch === "\x7f") {
+          if (p.line) { p.line = p.line.slice(0, -1); panePush(p, "\b \b"); }
+        } else if (ch === "\x03") {
+          // Ctrl+C：shell 回显 ^C 并起新提示符（spec 63 据此断言控制字符改投格子）
+          p.line = "";
+          panePush(p, `^C\r\n${p.tmux_session}@demo:~$ `);
+        } else if (ch >= " ") {
+          p.line += ch;
+          panePush(p, ch);
+        }
+      }
+      return null;
+    }
+    case "tmux_pane_resize": {
+      const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
+      const p = s?.panes?.find((x) => x.pane_id === Number(args?.paneId));
+      if (!p) throw apiError("invalid_input", "面板窗格不存在（演示）");
+      p.cols = Math.max(2, Number(args?.cols)); p.rows = Math.max(2, Number(args?.rows));
+      return null;
+    }
+    case "tmux_pane_close": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      const idx = s?.panes?.findIndex((x) => x.pane_id === Number(args?.paneId)) ?? -1;
+      if (!s || idx < 0) throw apiError("invalid_input", "面板窗格不存在（演示）");
+      const [p] = s.panes!.splice(idx, 1);
+      paneEnd(p);
+      audit("human", "tmux_pane_close", p.tmux_session, null, sid ?? null, { pane_id: p.pane_id });
+      return null;
+    }
+    // 演示专用：设置远端 tmux 会话清单（spec 造多会话场景；真实侧由探针产出）
+    case "demo_tmux_fixture": {
+      const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      const names = (args?.sessions as string[] | undefined) ?? [];
+      s.tmux = { available: true, version: "3.4", sessions: names.map((n) => ({ name: n, windows: 1, attached: 0 })) };
+      return s.tmux;
+    }
+    // 演示专用：格子在远端自行结束（用户 C-b d / exit——真实核心 exited 臂：摘格摘清单）
+    case "demo_pane_exit": {
+      const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
+      const idx = s?.panes?.findIndex((x) => x.pane_id === Number(args?.paneId)) ?? -1;
+      if (!s || idx < 0) throw apiError("invalid_input", "面板窗格不存在（演示）");
+      const [p] = s.panes!.splice(idx, 1);
+      panePush(p, "\r\n[detached (from session " + p.tmux_session + ")]\r\n");
+      paneEnd(p);
+      audit("human", "tmux_pane_ended", p.tmux_session, null, s.id, { pane_id: p.pane_id });
       return null;
     }
     // R26：状态事件轮询面（demo 无事件通道——C1 connection_status 同款兜底）。
