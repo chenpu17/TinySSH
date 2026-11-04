@@ -52,7 +52,13 @@ interface CmdArgs {
   tmux_probe: { sid: string };
   tmux_restore: { sid: string; session?: string | null };
   tmux_attach: { sid: string; session: string; auto?: boolean };
+  // tmux 新建会话：远端 new-session -d（名字白名单/同名预检在 core），接入走既有链路
+  tmux_session_create: { sid: string; name: string };
   // tmux 面板（一标签多 tmux 会话）：同连接附加交互通道格子
+  tmux_wall_snapshot: { sid: string; targets: wire.TmuxWallTarget[] };
+  tmux_wall_input: { sid: string; target: wire.TmuxWallTarget; lit: string; keys: string[] };
+  tmux_wall_fit: { sid: string; fits: wire.TmuxWallFit[] };
+  tmux_wall_fit_restore: { sid: string; items: wire.TmuxWallRestoreItem[] };
   tmux_pane_open: { sid: string; session: string; cols?: number; rows?: number };
   tmux_pane_close: { sid: string; paneId: number };
   tmux_pane_resize: { sid: string; paneId: number; cols: number; rows: number };
@@ -193,6 +199,11 @@ interface CmdRet {
   tmux_probe: wire.TmuxStatus;
   tmux_restore: wire.TmuxRestorePlan;
   tmux_attach: void;
+  tmux_session_create: void;
+  tmux_wall_snapshot: wire.TmuxWallCell[];
+  tmux_wall_input: wire.TmuxWallCell;
+  tmux_wall_fit: wire.TmuxWallFitResult[];
+  tmux_wall_fit_restore: void;
   tmux_pane_open: wire.PaneInfo;
   tmux_pane_close: void;
   tmux_pane_resize: void;

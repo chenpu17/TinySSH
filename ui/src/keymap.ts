@@ -27,7 +27,7 @@ export type Binding = {
 
 export const KEYMAP_SETTING = "ui.keymap.v1";
 
-export const DEFAULT_KEYMAP: Record<KeyActionId, Binding> = {
+const BASE_KEYMAP: Record<KeyActionId, Binding> = {
   "tab-new": { key: "t", primary: true, shift: false, alt: false },
   "tab-close": { key: "w", primary: true, shift: false, alt: false },
   // 本地终端一等公民轮：Shift 区分「新建连接表单」（Ctrl+T）与「直接开本地终端」
@@ -37,6 +37,30 @@ export const DEFAULT_KEYMAP: Record<KeyActionId, Binding> = {
   hostbar: { key: "b", primary: true, shift: false, alt: false },
   search: { key: "f", primary: true, shift: false, alt: false },
 };
+
+// tmux 前缀优先（2026-11-02 拍板：Ctrl+B 是 tmux 的关键按键，有冲突让其他动作改）。
+// Win/Linux 的主修饰键就是 Ctrl：Ctrl+B 一旦在表内，控制字符直发层按表豁免，主视图与
+// tmux 格子永远收不到 \x02。故 Win/Linux 主机栏默认改 Ctrl+Shift+B（Windows Terminal
+// 惯例：应用动作走 Ctrl+Shift、Ctrl+字母 留给 shell），并把 Ctrl+B 列为终端保留键——
+// 持久化旧表里的 Ctrl+B 载入即回落默认、录键器拒收。mac 主修饰键是 ⌘，⌘B 不动。
+export function defaultKeymap(mac: boolean): Record<KeyActionId, Binding> {
+  if (mac) return { ...BASE_KEYMAP };
+  return { ...BASE_KEYMAP, hostbar: { key: "b", primary: true, shift: true, alt: false } };
+}
+
+/** 终端保留键：该组合不得进键位表（Win/Linux 的 Ctrl+B = tmux 默认前缀）。 */
+export function terminalReserved(b: Binding, mac: boolean): boolean {
+  return !mac && b.primary && !b.shift && !b.alt && b.key === "b";
+}
+
+/**
+ * 控制字符直发层的豁免判定：组合被键位表占用 → 不编码 C0 直发终端、交给动作层。
+ * 终端保留键无条件不豁免（表里混进旧值也不吞 tmux 前缀）。
+ */
+export function exemptFromTerminal(map: Record<KeyActionId, Binding>, b: Binding, mac: boolean): boolean {
+  if (terminalReserved(b, mac)) return false;
+  return Object.values(map).some((x) => sameBinding(x, b));
+}
 
 export const KEYMAP_ACTIONS: { id: KeyActionId; label: string; desc: string }[] = [
   { id: "tab-new", label: "新建连接", desc: "打开主机栏添加表单" },
@@ -71,24 +95,55 @@ export function sameBinding(a: Binding, b: Binding): boolean {
   return a.key === b.key && a.primary === b.primary && a.shift === b.shift && a.alt === b.alt;
 }
 
-/** 解析持久化串（覆盖默认表）：逐条校验，非法/无主修饰键/带 Alt/与他条冲突的条目回落默认。 */
-export function parseKeymap(raw: string | null | undefined): Record<KeyActionId, Binding> {
-  const map: Record<KeyActionId, Binding> = { ...DEFAULT_KEYMAP };
-  if (!raw) return map;
+/** 存量自定义因让位默认值被改回默认：哪个动作、原设什么、让给了谁（载入时一次性告知用）。 */
+export type KeymapLost = { id: KeyActionId; was: Binding; by: KeyActionId };
+
+/**
+ * 解析持久化串（覆盖默认表）。两遍、按终态判冲突（与表序无关）：
+ * ① 收存量里的合法自定义——非法/无主修饰键/带 Alt/终端保留键、或与表序在前的自定义撞键 → 丢；
+ * ② 缺项与被丢项补默认；默认值与留下的自定义撞键时默认优先，该自定义回落它自己的默认
+ *    （迭代到稳定：默认表自身无冲突，每轮至少少一个自定义，必收敛）。
+ * 旧实现逐条与「尚未覆盖的默认值」比较：合法对调两个键、或主机栏已改别的键而另一动作
+ * 用了主机栏的默认键，重载即被误丢。录键器整表落盘，旧版 Win/Linux 存量表里的 hostbar
+ * 是 Ctrl+B——走保留键分支回落 Ctrl+Shift+B，即为迁移。
+ */
+export function parseKeymapReport(raw: string | null | undefined, mac: boolean): { map: Record<KeyActionId, Binding>; lost: KeymapLost[] } {
+  const defaults = defaultKeymap(mac);
+  if (!raw) return { map: defaults, lost: [] };
+  let obj: Record<string, Partial<Binding> | undefined>;
   try {
-    const obj = JSON.parse(raw) as Record<string, Partial<Binding> | undefined>;
-    for (const { id } of KEYMAP_ACTIONS) {
-      const v = obj[id];
-      if (!v || typeof v.key !== "string" || !KEY_RE.test(v.key)) continue;
-      const b: Binding = { key: v.key, primary: v.primary === true, shift: v.shift === true, alt: v.alt === true };
-      if (!b.primary || b.alt) continue;
-      if (Object.values(map).some((x) => sameBinding(x, b))) continue;
-      map[id] = b;
-    }
+    obj = JSON.parse(raw) as Record<string, Partial<Binding> | undefined>;
   } catch {
-    /* 坏串回落全默认 */
+    return { map: defaults, lost: [] }; // 坏串回落全默认
   }
-  return map;
+  if (!obj || typeof obj !== "object") return { map: defaults, lost: [] };
+  const custom = new Map<KeyActionId, Binding>();
+  for (const { id } of KEYMAP_ACTIONS) {
+    const v = obj[id];
+    if (!v || typeof v.key !== "string" || !KEY_RE.test(v.key)) continue;
+    const b: Binding = { key: v.key, primary: v.primary === true, shift: v.shift === true, alt: v.alt === true };
+    if (!b.primary || b.alt || terminalReserved(b, mac)) continue;
+    if ([...custom.values()].some((x) => sameBinding(x, b))) continue;
+    custom.set(id, b);
+  }
+  const lost: KeymapLost[] = [];
+  for (let moved = true; moved;) {
+    moved = false;
+    for (const [id, b] of custom) {
+      const by = KEYMAP_ACTIONS.find(({ id: o }) => o !== id && !custom.has(o) && sameBinding(defaults[o], b))?.id;
+      if (!by) continue;
+      custom.delete(id);
+      if (!sameBinding(b, defaults[id])) lost.push({ id, was: b, by });
+      moved = true;
+    }
+  }
+  const map = { ...defaults };
+  for (const [id, b] of custom) map[id] = b;
+  return { map, lost };
+}
+
+export function parseKeymap(raw: string | null | undefined, mac: boolean): Record<KeyActionId, Binding> {
+  return parseKeymapReport(raw, mac).map;
 }
 
 /** 该组合是否已被其它动作占用；返回占用者 id（无则 null）。 */

@@ -1,7 +1,7 @@
 // 05 远程文件：面包屑、列表、进入目录、选中条、下载菜单、传输队列（§6.6 / S09）。
 
 const openFiles = async (page) => {
-  await page.click('.session-toolbar button[title^="文件"]');
+  await page.click('[data-testid="rb-files"]');
   await page.waitForTimeout(900);
 };
 

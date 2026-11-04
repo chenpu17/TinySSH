@@ -194,6 +194,19 @@ fn record_outcome<T>(r: &Result<T>) -> (&'static str, Option<String>) {
     }
 }
 
+/// tmux_exec_raw 的三臂结果（找茬四轮 A2）：「命令已派发但收尾丢失」与
+/// 「根本没送达」必须分家——send-keys 类有副作用的命令在前者上重发即双发
+/// （传输管线 OutcomeUnknown 同款纪律）。
+pub(crate) enum TmuxExecOut {
+    /// 完整走完（收尾标记在）：输出可用。
+    Done(Vec<u8>, Option<i32>),
+    /// exec 已写入远端但没等到收尾（deadline/cancel/通道中断）：**结果未知**，
+    /// 命令可能已生效。输出不可用。
+    Dispatched,
+    /// 通道未建立/exec 写入失败：命令**未送达**。
+    NotDispatched,
+}
+
 /// 决策窗超时（决策窗原子化轮）：AwaitingDecision 最长钉住时长，超时按取消
 /// 语义收尾（journal 终态行即留痕，与 cancel 不发审计同约定）。在场人类裁决
 /// 以秒计，5 分钟足够宽裕；无界待决会永久占用同目标锁与 staging temp。
@@ -202,6 +215,12 @@ fn record_outcome<T>(r: &Result<T>) -> (&'static str, Option<String>) {
 const DECISION_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 #[cfg(test)]
 const DECISION_TTL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 单格关闭预算（找茬四轮 A4）：close 先置 alive=false 再等写锁，写者最迟在
+/// 当前 20s 写停滞块超时后让锁。并发收格 + 每格预算把「5 格全卡关会话 ~100s」
+/// 钳到 ~3s；超时弃尾安全——漏发的 CHANNEL_CLOSE 由随后的整条连接关闭兜底
+/// （远端 PTY/tmux client 随连接回收），泵即刻判死、在途写块间见旗标即停。
+const PANE_CLOSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// 冲突裁决走向（conflict_resolve 返回值）：终态路径（跳过/上传覆盖阻止/取消/
 /// 作废/Agent 结构化失败）任务内部已收尾；RenameTo/Replace 由调用方继续编排
@@ -2080,13 +2099,8 @@ fn spawn_pane_pump(
                     // 用户在格子里结束（C-b d / exit / 会话被 kill）：摘除本格；
                     // 同名无他格时清单一并摘（前端随 3s 快照对账收格）
                     h.panes.lock().unwrap().remove(&pane.id);
-                    let name = pane.tmux_session.clone();
-                    let still = h
-                        .panes
-                        .lock()
-                        .unwrap()
-                        .values()
-                        .any(|p| p.tmux_session == name);
+                    let name = pane.name();
+                    let still = h.panes.lock().unwrap().values().any(|p| p.is_named(&name));
                     if !still {
                         h.pane_wishlist.lock().unwrap().retain(|n| n != &name);
                     }
@@ -2095,7 +2109,10 @@ fn spawn_pane_pump(
                         "tmux_pane_ended",
                         Some(&h.id),
                         Some(name.as_str()),
-                        serde_json::json!({ "pane_id": pane.id }),
+                        serde_json::json!({
+                            "pane_id": pane.id,
+                            "uptime_ms": pane.born.elapsed().as_millis() as u64,
+                        }),
                         None,
                     );
                 } else {
@@ -2529,13 +2546,14 @@ impl SessionApi for SessionManager {
                         .unwrap()
                         .iter()
                         .filter_map(|n| {
-                            panes.values().find(|p| p.tmux_session == *n).map(|p| {
-                                session_api::PaneInfo {
+                            panes
+                                .values()
+                                .find(|p| p.is_named(n))
+                                .map(|p| session_api::PaneInfo {
                                     pane_id: p.id,
-                                    tmux_session: p.tmux_session.clone(),
+                                    tmux_session: p.name(),
                                     alive: !p.dead.load(std::sync::atomic::Ordering::SeqCst),
-                                }
-                            })
+                                })
                         })
                         .collect()
                 } else {
@@ -2750,8 +2768,19 @@ impl SessionApi for SessionManager {
             let panes: Vec<Arc<crate::handle::TmuxPane>> =
                 h.panes.lock().unwrap().drain().map(|(_, v)| v).collect();
             h.pane_wishlist.lock().unwrap().clear();
-            for p in panes {
-                let _ = p.ch.close().await;
+            // 并发收格 + 每格预算（找茬四轮 A4）：串行 close 在写停滞时逐格吃
+            // PANE_WRITE_STALL（20s/格），5 格全卡 = 关会话 ~100s（Tauri 命令直
+            // await 无超时）。并发后最坏 = 单格预算。
+            let joins: Vec<_> = panes
+                .into_iter()
+                .map(|p| {
+                    tokio::spawn(async move {
+                        let _ = tokio::time::timeout(PANE_CLOSE_BUDGET, p.ch.close()).await;
+                    })
+                })
+                .collect();
+            for j in joins {
+                let _ = j.await;
             }
         }
         // F2：探针任务持有会话 Arc，close 后仍可空转到判型窗口结束——收掉。
@@ -4941,13 +4970,17 @@ impl SessionManager {
     /// 反斜杠 t，按真 tab 分列永得空清单（单测喂真 tab 假绿，坑 74 同类）。
     /// 分隔符改 `|`。tmux 会话名只禁 `:` 与 `.`——`|` 与「名叫 `tmux 5`」都合法，
     /// 解析必须容忍（见 parse_tmux_probe：从右侧取数值段，版本行加形状闸）。
+    /// 尾段是 `#{session_id}`（`$N`，改名不换）：改名跟随对账按它认会话（见
+    /// tmux_reconcile_names）。极老 tmux 无此变量 → 空段 → id 留空，退化按名认。
     const TMUX_PROBE_CMD: &str =
-        "tmux -V; tmux ls -F '#{session_name}|#{session_windows}|#{session_attached}'";
+        "tmux -V; tmux ls -F '#{session_name}|#{session_windows}|#{session_attached}|#{session_id}|#{pid}'";
 
     /// 解析探针输出：`tmux X.Y` 版本行（**无 `|` 且不以数值段结尾**——会话名叫
-    /// `tmux 5` 产生的 `tmux 5|2|1` 不得当版本）→ available+version；其余行
-    /// `名|窗口|附着` **从右侧解析**（rsplitn）：窗口/附着恒为末两个数值段，
-    /// 会话名含 `|` 也不破。解析失败=无 tmux（available=false）。
+    /// `tmux 5` 产生的 `tmux 5|2|1|$4` 不得当版本）→ available+version；其余行
+    /// `名|窗口|附着|id` **从右侧解析**（rsplitn）：id/窗口/附着恒为末三段且
+    /// 窗口/附着为数值、id 合法形状是 `$数值`，会话名含 `|` 也不破。id 形状不
+    /// 合（极老 tmux 的空段）留空串——对账退化按名认。解析失败=无 tmux
+    ///（available=false）。
     fn parse_tmux_probe(out: &str) -> session_api::TmuxStatus {
         let mut status = session_api::TmuxStatus {
             available: false,
@@ -4968,22 +5001,34 @@ impl SessionManager {
             if !status.available || line.is_empty() {
                 continue;
             }
-            let mut it = line.rsplitn(3, '|');
-            let (Some(a), Some(w), Some(name)) = (it.next(), it.next(), it.next()) else {
+            let mut it = line.rsplitn(5, '|');
+            let (Some(pid), Some(id), Some(a), Some(w), Some(name)) =
+                (it.next(), it.next(), it.next(), it.next(), it.next())
+            else {
                 continue;
             };
             let (Ok(windows), Ok(attached)) = (w.trim().parse::<u32>(), a.trim().parse::<u32>())
             else {
                 continue;
             };
+            let server_pid = pid.trim().parse::<u32>().unwrap_or(0);
             let name = name.trim();
             if name.is_empty() {
                 continue;
             }
+            // id 形状闸：只认 `$数值`（tmux 1.6+ 都有 #{session_id}；空/怪形状=拿不到）
+            let id = id.trim();
+            let id = id
+                .strip_prefix('$')
+                .filter(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+                .map(|rest| format!("${rest}"))
+                .unwrap_or_default();
             status.sessions.push(session_api::TmuxSession {
                 name: name.to_string(),
                 windows,
                 attached,
+                id,
+                server_pid,
             });
         }
         status
@@ -4996,21 +5041,58 @@ impl SessionManager {
         cmd: &str,
         cap: usize,
     ) -> Option<(String, Option<i32>)> {
+        match Self::tmux_exec_raw(h, cmd, cap).await {
+            TmuxExecOut::Done(raw, rc) => Some((String::from_utf8_lossy(&raw).into_owned(), rc)),
+            _ => None,
+        }
+    }
+
+    /// 字节域变体：帧协议按远端 wc -c 的**原始字节数**切片，解析必须同在字节域
+    /// （String 的 from_utf8_lossy 会把一个坏字节膨胀成 3 字节 U+FFFD，切片错位
+    /// ——内容含非法 UTF-8 时帧界即错）。行标记是 ASCII，逐格内容再 lossy。
+    /// cancel 接线（找茬四轮 A1）：token 此前建而不用，exec_fresh 的开通道/exec
+    /// 写入两个 select 臂是死闸——死网络上前置段无界悬挂还钉住 handle 锁。把
+    /// token 绑到同一 8s 预算上：到点即 cancel，前置段以 Cancelled 快速失败
+    /// （读环 deadline 臂不变，谁先到谁生效）。
+    pub(crate) async fn tmux_exec_raw(h: &SessionHandle, cmd: &str, cap: usize) -> TmuxExecOut {
+        const TMUX_EXEC_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
         let cancel = session_api::transport::tokio_util_sync::CancellationToken::new();
+        let waker = tokio::spawn({
+            let cancel = cancel.clone();
+            async move {
+                tokio::time::sleep(TMUX_EXEC_BUDGET).await;
+                cancel.cancel();
+            }
+        });
         let opts = session_api::ExecOpts {
             mode: session_api::ExecMode::Fresh,
-            timeout: Some(std::time::Duration::from_secs(8)),
+            timeout: Some(TMUX_EXEC_BUDGET),
             output_cap: Some(cap),
             env: Default::default(),
         };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-        match h.channel.exec_fresh(cmd, &opts, deadline, &cancel).await {
-            Ok(out) if out.completed => Some((
-                String::from_utf8_lossy(&out.stdout).into_owned(),
-                out.exit_code,
-            )),
-            _ => None,
+        let deadline = std::time::Instant::now() + TMUX_EXEC_BUDGET;
+        let out = h.channel.exec_fresh(cmd, &opts, deadline, &cancel).await;
+        waker.abort();
+        match out {
+            Ok(out) if out.completed => TmuxExecOut::Done(out.stdout, out.exit_code),
+            Ok(_) => TmuxExecOut::Dispatched,
+            Err(_) => TmuxExecOut::NotDispatched,
         }
+    }
+
+    /// shell 单引号转义（POSIX 通用）：所有进远端 shell 的名字/选择器/键名/文本
+    /// **一律经此**——名字是显示数据（远端改名跟随、清单回包都可控），绝不裸拼
+    /// 进命令。与 handle.rs 的 sh_single_quote 同法，散置内联闭包统一到这里。
+    pub(crate) fn tmux_sq(s: &str) -> String {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+
+    /// 复合命令统一经 `sh -c` 送达：exec 通道空 env 时命令**直落用户 login
+    /// shell**（fish/csh 解析不了 POSIX 复合串——for/$()/case 全线炸，整特性
+    /// 静默失效）；sh 在探针可达的域必然存在，单命令形态 fish 也能执行。整串
+    /// 转义后作单命令，嵌套引号由 tmux_sq 处理。
+    pub(crate) fn tmux_sh(cmd: &str) -> String {
+        format!("sh -c {}", Self::tmux_sq(cmd))
     }
 
     /// 会话名选择器：tmux ≥3.1 用 `=name` 精确匹配（防 `work` 前缀误中
@@ -5044,8 +5126,14 @@ impl SessionManager {
         let sel = Self::tmux_selector(version, name);
         // 尾冒号坑 81（真机 3.4 实测）：capture-pane 是 **pane 类**目标，`=name`
         // 被当 pane 名直查必报 can't find pane；`=name:` = 精确会话+当前窗格。
-        let with_color = format!("tmux capture-pane -p -e -S -400 -t '{sel}:'");
-        let plain = format!("tmux capture-pane -p -S -400 -t '{sel}:'");
+        let with_color = format!(
+            "tmux capture-pane -p -e -S -400 -t {}",
+            Self::tmux_sq(&format!("{sel}:"))
+        );
+        let plain = format!(
+            "tmux capture-pane -p -S -400 -t {}",
+            Self::tmux_sq(&format!("{sel}:"))
+        );
         for cmd in [&with_color, &plain] {
             if let Some((out, Some(0))) = Self::tmux_exec(h, cmd, 512 * 1024).await {
                 if !out.trim().is_empty() {
@@ -5056,20 +5144,729 @@ impl SessionManager {
         None
     }
 
+    /// 大屏目标选择器：id 在手用 id（改名不跟丢，`$数值` 形状闸同探针）；缺了
+    /// 退化按名（tmux ≥3.1 精确 `=名`）。坑 81：capture/send-keys 都是 pane 类
+    /// 目标，调用方必须在选择器后统一跟尾冒号。
+    fn tmux_wall_selector(t: &session_api::TmuxWallTarget, version: Option<&str>) -> String {
+        if t.id.starts_with('$') && t.id.len() > 1 && t.id[1..].bytes().all(|b| b.is_ascii_digit())
+        {
+            t.id.clone()
+        } else {
+            Self::tmux_selector(version, &t.name)
+        }
+    }
+
+    /// send-keys 键名白名单：tmux 键名字符集（字母开头，字母/数字/短横线，≤12；
+    /// 单个字母数字也放行；`M-` + 单个可打印字符放行——readline 词操作 M-b/M-f/
+    /// yank-last-arg M-. 等）。键名按白名单过、字面文本走 -l 单引号转义，注入面归零。
+    fn tmux_wall_key_ok(k: &str) -> bool {
+        let b = k.as_bytes();
+        (b.len() == 1 && b[0].is_ascii_alphanumeric())
+            || (b.len() >= 2
+                && b.len() <= 12
+                && b[0].is_ascii_alphabetic()
+                && b[1..]
+                    .iter()
+                    .all(|&c| c.is_ascii_alphanumeric() || c == b'-'))
+            || (b.len() == 3 && b[0] == b'M' && b[1] == b'-' && b[2].is_ascii_graphic())
+    }
+
+    /// 会话大屏抓取命令：**一次 exec 抓全部目标**（快照轮询的远端成本=每周期
+    /// 一条命令）。帧协议防碰撞（坑 80/81 同族教训：pane 内容是任意字节，绝不
+    /// 能靠「内容里不会有标记行」赌帧界——用户屏幕上完全可能打出分隔串）：
+    ///
+    ///   @@WALL|<目标下标>|<字节数>|<pane 高度>\n <恰好 n 字节快照> … @@WALL|END\n
+    ///
+    /// 快照先落 shell 变量再对**同一份**变量计字节数（wc -c 恒字节数，与
+    /// locale 无关；哨兵 x 保尾换行，`${out%x}` 只摘哨兵——内容自身以 x 结尾
+    /// 时摘掉的也是哨兵那一个，内容的 x 原样保留）。解析按数取字节，绝不在
+    /// 内容里找标记——内容长什么样都破不了帧（碰撞由单测钉死）。`-e`（带色）
+    /// 不支持时 case 空串回落朴素捕获（POSIX case，无 `||` 无重定向）。
+    /// pane 高度（`#{pane_height}`）用 display-message 顺带取——前端「当前屏
+    /// 完整可见」高度约束的度量源（快照恒多抓 40 行历史，没有它就不知道哪段
+    /// 是当前屏）；display-message 失败/非数字落 0=前端退化按宽缩放，绝不拖累
+    /// 本格快照。Windows cmd 跑不了这串（$()/case），但大屏入口只在探测到
+    /// tmux 的主机出现=天然 POSIX 域；探针那种「全平台零复合」约束（见
+    /// TMUX_PROBE_CMD 注释）在此不适用。
+    fn tmux_wall_cmd(targets: &[session_api::TmuxWallTarget], version: Option<&str>) -> String {
+        let mut sels: Vec<String> = Vec::new();
+        for t in targets {
+            sels.push(Self::tmux_sq(&Self::tmux_wall_selector(t, version)));
+        }
+        // 整条复合串经 sh -c 送达（fish/csh 的 login shell 解析不了 POSIX 复合
+        // 语法——Wall 入口对探测到 tmux 的主机开放，不能假设 POSIX shell）
+        Self::tmux_sh(&format!(
+            "i=0; for t in {}; do out=$(tmux capture-pane -p -e -t \"$t:\" -S -40; printf x); \
+             out=${{out%x}}; case \"$out\" in \"\") out=$(tmux capture-pane -p -t \"$t:\" -S -40; \
+             printf x); out=${{out%x}};; esac; n=$(printf %s \"$out\" | wc -c); \
+             h=$(tmux display-message -p -t \"$t:\" '#{{pane_height}}' 2>/dev/null); \
+             case \"$h\" in \"\"|*[!0-9]*) h=0;; esac; \
+             printf '@@WALL|%s|%s|%s\\n' \"$i\" \"$n\" \"$h\"; printf %s \"$out\"; i=$((i+1)); done; \
+             printf '@@WALL|END\\n'",
+            sels.join(" ")
+        ))
+    }
+
+    /// 解析大屏帧载荷（协议见 tmux_wall_cmd）。返回与 targets 对齐的格子数组；
+    /// 缺 END=载荷被截断（通道中断/超限）——**整包作废**（宁可整帧不留，不可
+    /// 半真半假），调用方保留上一帧。字节数越过载荷末尾同样整包作废。
+    fn parse_tmux_wall(
+        out: &[u8],
+        want: usize,
+    ) -> std::result::Result<Vec<session_api::TmuxWallCell>, String> {
+        let mut cells: Vec<session_api::TmuxWallCell> = (0..want)
+            .map(|_| session_api::TmuxWallCell {
+                ok: false,
+                text: String::new(),
+                rows: 0,
+            })
+            .collect();
+        let b = out;
+        let mut pos = 0usize;
+        let mut end = false;
+        while pos < b.len() {
+            let Some(nl) = b[pos..].iter().position(|&c| c == b'\n') else {
+                break;
+            };
+            // 帧标记行是 ASCII；非 ASCII（坏字节所在行）落到 None → 游散行跳过
+            let line = std::str::from_utf8(&b[pos..pos + nl])
+                .ok()
+                .map(|s| s.trim_end_matches('\r'))
+                .unwrap_or("");
+            if line == "@@WALL|END" {
+                end = true;
+                break;
+            }
+            if let Some(rest) = line.strip_prefix("@@WALL|") {
+                // 第三段=pane 高度（前端「当前屏完整」高度约束的度量源）；缺席/
+                // 非数字落 0=前端退化按宽缩放（老帧兼容天然成立，无需版本协商）
+                let mut it = rest.splitn(3, '|');
+                let (Some(idx), Some(nstr), Some(rstr)) = (it.next(), it.next(), it.next()) else {
+                    pos += nl + 1;
+                    continue;
+                };
+                let (Ok(i), Ok(n)) = (idx.trim().parse::<usize>(), nstr.trim().parse::<usize>())
+                else {
+                    pos += nl + 1;
+                    continue;
+                };
+                let rows = rstr.trim().parse::<u32>().unwrap_or(0);
+                let start = pos + nl + 1;
+                let Some(stop) = start.checked_add(n).filter(|v| *v <= b.len()) else {
+                    break;
+                };
+                if let Some(c) = cells.get_mut(i) {
+                    *c = session_api::TmuxWallCell {
+                        ok: n > 0,
+                        text: String::from_utf8_lossy(&b[start..stop]).into_owned(),
+                        rows,
+                    };
+                }
+                pos = stop;
+            } else {
+                pos += nl + 1; // 游散行：帧界靠字节数不靠行扫描，跳过即可
+            }
+        }
+        if !end {
+            return Err("大屏载荷不完整（通道中断或超限）".into());
+        }
+        Ok(cells)
+    }
+
     /// 探测远端 tmux（SSH 会话专用）。失败/超时**保留上次结果**——断线后
+
     /// exec_fresh 必失败，而断线横幅要展示的恰是断线前仍在运行的会话清单。
     pub async fn tmux_probe(&self, sid: &str) -> Result<session_api::TmuxStatus> {
         let h = self.get(sid)?;
         if h.kind != "ssh" {
             return Err(Error::InvalidInput("tmux 探测仅支持 SSH 会话".into()));
         }
+        // 探针发出时刻：校正按「快照请求时刻」判 attach 是否已稳定（见 tmux_reconcile_attached）
+        let probe_start = std::time::Instant::now();
         if let Some((out, _)) = Self::tmux_exec(&h, Self::TMUX_PROBE_CMD, 64 * 1024).await {
             let status = Self::parse_tmux_probe(&out);
             *h.tmux.lock().unwrap() = status.clone();
+            // 先按 id 对账改名（名牌/格子标题/清单跟着远端实况走），再校 attach 残留
+            //（同一次快照里既有新名也有客户端数，顺序不能反——按名找旧记录会先误判）
+            Self::tmux_reconcile_names(&h, &status);
+            Self::tmux_reconcile_attached(&h, &status, probe_start);
             return Ok(status);
         }
         let last = h.tmux.lock().unwrap().clone();
         Ok(last)
+    }
+    /// 会话大屏（监控墙）：全部 tmux 会话的只读快照墙。与面板格子的本质区别：
+    /// 格子=每格一条活 PTY 通道（attach 客户端，可交互）；大屏=每周期**一次**
+    /// exec 抓全部当前屏（capture-pane，零客户端零 PTY）——16 格毫无压力，
+    /// 这正是「监控墙看、工作台用」的分工（用户原话：像监控多个摄像头）。
+    /// Err 时前端保留上一帧继续呈现（照片墙容忍单拍失败，不闪空白）。
+    pub async fn tmux_wall_snapshot(
+        &self,
+        sid: &str,
+        mut targets: Vec<session_api::TmuxWallTarget>,
+    ) -> Result<Vec<session_api::TmuxWallCell>> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux 大屏仅支持 SSH 会话".into()));
+        }
+        targets.retain(|t| !t.id.trim().is_empty() || !t.name.trim().is_empty());
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 上限防御：载荷有 4MB 帽，目标超限截断（GUI 清单来自探针到不了 32；
+        // 直调 API 打歪了也只截断不炸）
+        targets.truncate(32);
+        let version = h.tmux.lock().unwrap().version.clone();
+        let cmd = Self::tmux_wall_cmd(&targets, version.as_deref());
+        match Self::tmux_exec_raw(&h, &cmd, 4 * 1024 * 1024).await {
+            TmuxExecOut::Done(out, _) => {
+                Self::parse_tmux_wall(&out, targets.len()).map_err(Error::InvalidInput)
+            }
+            _ => Err(Error::InvalidInput("capture 通道未完成".into())),
+        }
+    }
+
+    /// 大屏单格输入命令构造：tmux send-keys（服务端 API，**零客户端**——小格
+    /// 不挂 attach 客户端就不拽会话窗口尺寸，坑 84 教训的正解：无扰操作走服务
+    /// 端 API 不走键入）+ 同一 exec 立即补拍单格（发送+取证一趟往返，反馈
+    /// ~200ms，不等节拍）。lit=字面文本（`-l` + `--` 终结选项，负号开头的
+    /// 文本也不被 getopt 吃成旗标）；keys=tmux 键名（Enter/BSpace/C-c…，入此
+    /// 前已过 tmux_wall_key_ok 白名单）。捕获段与 tmux_wall_cmd 的循环体同款
+    /// （含 pane 高度段），帧协议同款（下标恒 0，复用 parse_tmux_wall 取 0 号格）。
+    fn tmux_wall_input_cmd(
+        target: &session_api::TmuxWallTarget,
+        lit: &str,
+        keys: &[String],
+        version: Option<&str>,
+    ) -> String {
+        let mut s = format!(
+            "t={}; ",
+            Self::tmux_sq(&Self::tmux_wall_selector(target, version))
+        );
+        if !lit.is_empty() {
+            s += &format!("tmux send-keys -t \"$t:\" -l -- {}; ", Self::tmux_sq(lit));
+        }
+        for k in keys {
+            s += &format!("tmux send-keys -t \"$t:\" {}; ", Self::tmux_sq(k));
+        }
+        s += "out=$(tmux capture-pane -p -e -t \"$t:\" -S -40; printf x); out=${out%x}; \
+              case \"$out\" in \"\") out=$(tmux capture-pane -p -t \"$t:\" -S -40; \
+              printf x); out=${out%x};; esac; n=$(printf %s \"$out\" | wc -c); \
+              h=$(tmux display-message -p -t \"$t:\" '#{pane_height}' 2>/dev/null); \
+              case \"$h\" in \"\"|*[!0-9]*) h=0;; esac; \
+              printf '@@WALL|%s|%s|%s\\n' 0 \"$n\" \"$h\"; printf %s \"$out\"; \
+              printf '@@WALL|END\\n'";
+        Self::tmux_sh(&s)
+    }
+
+    /// 大屏 pane 贴格子命令构造：`resize-window -x -y` 把 pane 调成格子字符预算
+    /// （TUI 收 SIGWINCH 重绘满格——contain 适配对宽高比失衡的格子只能 letterbox，
+    /// htop 缩块沉底，用户复验判「没全屏」；让 pane 长成格子形状是唯一真解）。
+    /// **守卫**：`list-panes` 单窗格（多窗格 workspace 是用户的活布局，绝不
+    /// reshape）。零客户端守卫**真机证伪后拆除**：主视图 attach+大屏同看是主
+    /// 场景（真机 list-clients 恒有自家客户端），而 resize-window 有客户端在场
+    /// 照样成功——代价（attach 端画面随墙缩放）由「关墙恢复」支付：resize 前
+    /// 记录原窗口尺寸+window-size 选项，emit `@@FIT|<下标>|<ow>|<oh>|<ws>` 行
+    /// （下标对齐请求 targets；ws 空段=原本未设；ow/oh 非数字=极老 tmux 不回执
+    /// 该目标）。**resize-window 会把 window-size 钉成 manual 粘住**（真机实证：
+    /// 选项恒 manual、attach 客户端此后不再跟随），不还原=用户布局永久变形，
+    /// 故恢复是本机制的一半而非可选项。目标/列/行按 `set --` 三元组传参（名字
+    /// 任意字符不破循环形状，sq 转义同抓取命令）；列/行钳位成纯数字（注入面归
+    /// 零）。老 tmux 无 resize-window 时命令失败被 2>/dev/null 吞——前端 contain
+    /// 兜底照常呈现。
+    fn tmux_wall_fit_cmd(fits: &[session_api::TmuxWallFit], version: Option<&str>) -> String {
+        let mut setargs = String::new();
+        for f in fits {
+            let t = session_api::TmuxWallTarget {
+                id: f.id.clone(),
+                name: f.name.clone(),
+            };
+            let sel = Self::tmux_sq(&Self::tmux_wall_selector(&t, version));
+            let c = f.cols.clamp(12, 400);
+            let r = f.rows.clamp(5, 200);
+            setargs += &format!(" {} {} {}", sel, c, r);
+        }
+        Self::tmux_sh(&format!(
+            "i=0; set --{}; while [ \"$#\" -ge 3 ]; do t=$1; c=$2; r=$3; shift 3; \
+             np=$(tmux list-panes -t \"$t:\" 2>/dev/null | wc -l); \
+             if [ \"$np\" -eq 1 ]; then \
+             ow=$(tmux display-message -p -t \"$t:\" '#{{window_width}}' 2>/dev/null); \
+             oh=$(tmux display-message -p -t \"$t:\" '#{{window_height}}' 2>/dev/null); \
+             case \"$ow\" in \"\"|*[!0-9]*) ow=0;; esac; \
+             case \"$oh\" in \"\"|*[!0-9]*) oh=0;; esac; \
+             ws=$(tmux show-options -t \"$t:\" window-size 2>/dev/null | cut -d' ' -f2); \
+             tmux resize-window -t \"$t:\" -x \"$c\" -y \"$r\" 2>/dev/null; \
+             printf '@@FIT|%s|%s|%s|%s\\n' \"$i\" \"$ow\" \"$oh\" \"$ws\"; fi; \
+             i=$((i+1)); done; printf '@@FIT|END\\n'",
+            setargs
+        ))
+    }
+
+    /// 解析贴格子回执（协议见 tmux_wall_fit_cmd）：`@@FIT|<下标>|<原宽>|<原高>|
+    /// <原 window-size>`，缺 END=载荷截断整包作废（同快照契约）。下标对齐请求
+    /// targets 取名（名字不进帧=| 碰撞免疫）；尺寸取不到（0）=原始态未知、恢复
+    /// 无法进行，不回执该目标；ws 空段=原本未设（恢复时 unset 回去）。
+    fn parse_tmux_wall_fit(
+        out: &[u8],
+        fits: &[session_api::TmuxWallFit],
+    ) -> std::result::Result<Vec<session_api::TmuxWallFitResult>, String> {
+        let mut outv: Vec<Option<session_api::TmuxWallFitResult>> =
+            (0..fits.len()).map(|_| None).collect();
+        let mut end = false;
+        let mut pos = 0usize;
+        while pos < out.len() {
+            let Some(nl) = out[pos..].iter().position(|&c| c == b'\n') else {
+                break;
+            };
+            let line = std::str::from_utf8(&out[pos..pos + nl])
+                .ok()
+                .map(|s| s.trim_end_matches('\r'))
+                .unwrap_or("");
+            if line == "@@FIT|END" {
+                end = true;
+                break;
+            }
+            if let Some(rest) = line.strip_prefix("@@FIT|") {
+                let mut it = rest.splitn(4, '|');
+                let (Some(idx), Some(ow), Some(oh)) = (it.next(), it.next(), it.next()) else {
+                    pos += nl + 1;
+                    continue;
+                };
+                let ws = it.next().unwrap_or("");
+                let (Ok(i), Ok(w), Ok(hh)) = (
+                    idx.trim().parse::<usize>(),
+                    ow.trim().parse::<u32>(),
+                    oh.trim().parse::<u32>(),
+                ) else {
+                    pos += nl + 1;
+                    continue;
+                };
+                // 尺寸取不到（0）=原始态未知，恢复无法进行——不回执该目标（不恢复）
+                if w > 0 && hh > 0 {
+                    if let (Some(slot), Some(f)) = (outv.get_mut(i), fits.get(i)) {
+                        *slot = Some(session_api::TmuxWallFitResult {
+                            id: f.id.clone(),
+                            name: f.name.clone(),
+                            orig_w: w,
+                            orig_h: hh,
+                            orig_ws: ws.trim_end_matches('\r').to_string(),
+                        });
+                    }
+                }
+            }
+            pos += nl + 1;
+        }
+        if !end {
+            return Err("贴格子载荷不完整（通道中断或超限）".into());
+        }
+        Ok(outv.into_iter().flatten().collect())
+    }
+
+    /// 大屏 pane 贴格子：把 pane 调成格子字符预算并回执原样（见
+    /// tmux_wall_fit_cmd）。失败（老 tmux/守卫拦截/通道抖动）由前端 contain 兜底
+    /// 吸收，绝不拖累快照链路；300ms 节拍的 pane_height 就是「贴上了没」的反馈环。
+    pub async fn tmux_wall_fit(
+        &self,
+        sid: &str,
+        mut fits: Vec<session_api::TmuxWallFit>,
+    ) -> Result<Vec<session_api::TmuxWallFitResult>> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux 大屏仅支持 SSH 会话".into()));
+        }
+        fits.retain(|f| !f.id.trim().is_empty() || !f.name.trim().is_empty());
+        if fits.is_empty() {
+            return Ok(Vec::new());
+        }
+        fits.truncate(32);
+        let version = h.tmux.lock().unwrap().version.clone();
+        let cmd = Self::tmux_wall_fit_cmd(&fits, version.as_deref());
+        match Self::tmux_exec_raw(&h, &cmd, 64 * 1024).await {
+            TmuxExecOut::Done(out, _) => {
+                Self::parse_tmux_wall_fit(&out, &fits).map_err(Error::InvalidInput)
+            }
+            // 歧义态（找茬四轮 A2 同族）：resize 可能已生效而回执丢失——原样
+            // 没记录下来=该格关墙无法恢复，window-size 的 manual 粘住无人解开。
+            // 文案点破「可能已生效 + 该格不恢复」，绝不谎报纯失败。
+            TmuxExecOut::Dispatched => Err(Error::InvalidInput(
+                "resize 已发出但回执丢失：贴格可能已生效，此格关墙将无法恢复原尺寸/选项".into(),
+            )),
+            _ => Err(Error::InvalidInput("resize 通道未完成".into())),
+        }
+    }
+
+    /// 关大屏恢复命令构造：resize 回原尺寸 + window-size 选项原样交还（UNSET=
+    /// unset 回去；KEEP=只恢复尺寸不动选项）。ws 白名单外的值（前端透传脏数据）
+    /// 在 case 里没有臂=什么都不做，sq 转义兜底保证它只是死字符串。
+    fn tmux_wall_restore_cmd(
+        items: &[session_api::TmuxWallRestoreItem],
+        version: Option<&str>,
+    ) -> String {
+        let mut setargs = String::new();
+        for it in items {
+            // id 优先寻址（fit 回执带回）：墙开着期间会话改名后按旧名恢复会
+            // 静默落空（2>/dev/null 吞掉=布局不还原）；老 tmux 无 id 按名退化
+            let t = session_api::TmuxWallTarget {
+                id: it.id.clone(),
+                name: it.name.clone(),
+            };
+            let sel = Self::tmux_sq(&Self::tmux_wall_selector(&t, version));
+            let c = it.cols.clamp(12, 400);
+            let r = it.rows.clamp(5, 200);
+            let ws = match it.ws.as_str() {
+                "" => "UNSET",
+                v @ ("manual" | "latest" | "largest" | "smallest") => v,
+                _ => "KEEP",
+            };
+            setargs += &format!(" {} {} {} {}", sel, c, r, Self::tmux_sq(ws));
+        }
+        Self::tmux_sh(&format!(
+            "set --{}; while [ \"$#\" -ge 4 ]; do t=$1; ow=$2; oh=$3; ws=$4; shift 4; \
+             tmux resize-window -t \"$t:\" -x \"$ow\" -y \"$oh\" 2>/dev/null; \
+             case \"$ws\" in UNSET) tmux set-window-option -u -t \"$t:\" window-size 2>/dev/null;; \
+             manual|latest|largest|smallest) tmux set-window-option -t \"$t:\" window-size \"$ws\" 2>/dev/null;; esac; done",
+            setargs
+        ))
+    }
+
+    /// 关大屏恢复：把贴格子借走的窗口几何与 window-size 选项原样交还（见
+    /// tmux_wall_fit_cmd 恢复段）。前端在墙卸载时发起；项为空=无事发生。
+    pub async fn tmux_wall_fit_restore(
+        &self,
+        sid: &str,
+        mut items: Vec<session_api::TmuxWallRestoreItem>,
+    ) -> Result<()> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux 大屏仅支持 SSH 会话".into()));
+        }
+        items.retain(|it| !it.id.trim().is_empty() || !it.name.trim().is_empty());
+        if items.is_empty() {
+            return Ok(());
+        }
+        items.truncate(32);
+        let version = h.tmux.lock().unwrap().version.clone();
+        let cmd = Self::tmux_wall_restore_cmd(&items, version.as_deref());
+        match Self::tmux_exec_raw(&h, &cmd, 16 * 1024).await {
+            TmuxExecOut::Done(_, _) => Ok(()),
+            _ => Err(Error::InvalidInput("恢复通道未完成".into())),
+        }
+    }
+
+    /// 大屏单格输入：字面文本/键名送达指定会话并立即补拍（见 tmux_wall_input_cmd）。
+    /// 校验：SSH 会话、目标非空、键名白名单、键数/字面长度帽、字面控制字符闸
+    /// （只放行 \n\r\t——send-keys -l 会原样送达，终端里即换行/回车/制表）。
+    pub async fn tmux_wall_input(
+        &self,
+        sid: &str,
+        target: session_api::TmuxWallTarget,
+        lit: String,
+        keys: Vec<String>,
+    ) -> Result<session_api::TmuxWallCell> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux 大屏输入仅支持 SSH 会话".into()));
+        }
+        if target.id.trim().is_empty() && target.name.trim().is_empty() {
+            return Err(Error::InvalidInput(
+                "大屏输入缺少目标（id/name 至少其一）".into(),
+            ));
+        }
+        if keys.len() > 16 {
+            return Err(Error::InvalidInput("单次输入键数超限（≤16）".into()));
+        }
+        for k in &keys {
+            if !Self::tmux_wall_key_ok(k) {
+                return Err(Error::InvalidInput(format!("非法键名：{k}")));
+            }
+        }
+        if lit.chars().count() > 8192 {
+            return Err(Error::InvalidInput("字面输入超限（≤8192 字符）".into()));
+        }
+        if lit
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+        {
+            return Err(Error::InvalidInput("字面输入含非法控制字符".into()));
+        }
+        let version = h.tmux.lock().unwrap().version.clone();
+        let cmd = Self::tmux_wall_input_cmd(&target, &lit, &keys, version.as_deref());
+        match Self::tmux_exec_raw(&h, &cmd, 4 * 1024 * 1024).await {
+            TmuxExecOut::Done(out, _) => {
+                let mut cells = Self::parse_tmux_wall(&out, 1).map_err(Error::InvalidInput)?;
+                Ok(cells.swap_remove(0))
+            }
+            // 歧义态（找茬四轮 A2）：send-keys 与补拍是同一条远端命令，链路在
+            // send-keys 之后断开时键入**可能已生效**——按失败报会让用户重发双发。
+            // 文案点破「结果未知 + 勿重发」，出路是画面下一拍（2s 快照自带自证）。
+            TmuxExecOut::Dispatched => Err(Error::InvalidInput(
+                "键入已发出但通道中断：结果未知，请以画面下一拍为准，勿立即重发".into(),
+            )),
+            TmuxExecOut::NotDispatched => Err(Error::InvalidInput(
+                "键入送达失败：通道不稳，画面保持上一拍".into(),
+            )),
+        }
+    }
+
+    /// tmux 会话名合法性：tmux 自身禁 `:` 和 `.`（target 语法保留字），这里收得
+    /// 更紧——字母/数字/下划线开头，后接字母/数字/下划线/短横线，1–64 字节。
+    /// 白名单免去一切引号/注入顾虑（创建命令照旧单引号包裹，双保险）。
+    fn tmux_session_name_ok(name: &str) -> bool {
+        let b = name.as_bytes();
+        if b.is_empty() || b.len() > 64 {
+            return false;
+        }
+        let ok0 = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        let ok1 = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'-';
+        ok0(b[0]) && b[1..].iter().all(|&c| ok1(c))
+    }
+
+    /// 同名预检：tmux ≥3.1 用 `=name` 精确选择器（防 work 前缀误中 workshop），
+    /// 老版本退回普通名（tmux 自身前缀匹配——保守误报「已存在」好过静默撞车）。
+    /// 结果走 `@@HAS` 输出标记（compound 的 rc 被 echo 抹平，不能靠 exit_code）。
+    fn tmux_session_has_cmd(version: Option<&str>, name: &str) -> String {
+        let sel = Self::tmux_selector(version, name);
+        Self::tmux_sh(&format!(
+            "tmux has-session -t {} 2>/dev/null && printf '@@HAS\\n'; echo",
+            Self::tmux_sq(&sel)
+        ))
+    }
+
+    /// 创建命令：分离创建（`-d`，不抢任何屏幕）；rc 走 `@@RC|N` 标记回传
+    /// （exec 复合命令的 exit_code 不可靠，标记紧贴 $? 才是真值）。
+    fn tmux_session_create_cmd(name: &str) -> String {
+        Self::tmux_sh(&format!(
+            "tmux new-session -d -s {}; printf '@@RC|%s\\n' $?; echo",
+            Self::tmux_sq(name)
+        ))
+    }
+
+    /// 新建 tmux 会话：远端 `tmux new-session -d -s <名>`。同名预检先行（tmux 对
+    /// 重复名的报错走 stderr，exec 通道只回 stdout——预检把最常见的「已存在」翻
+    /// 成可读错误；预检与创建之间的竞态由 new-session 自身 rc 兜底）。创建本身
+    /// 只落一个后台会话，接入走前端既有链路（探针刷新清单 → attach/switch）。
+    pub async fn tmux_session_create(&self, sid: &str, name: &str) -> Result<()> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux 仅支持 SSH 会话".into()));
+        }
+        {
+            // 状态门与 tmux_attach/tmux_restore 同族对齐（demo 镜像此前比核心
+            // 严——断连时 demo 报「会话未连接」、核心报「创建通道未完成」，错误面
+            // 劈叉；统一收在核心）
+            let st = *h.state.lock().await;
+            if matches!(st, SessionState::Disconnected | SessionState::Closed) {
+                return Err(Error::InvalidInput(
+                    "会话未连接：请先重连再建 tmux 会话".into(),
+                ));
+            }
+        }
+        let name = name.trim();
+        if !Self::tmux_session_name_ok(name) {
+            return Err(Error::InvalidInput(
+                "非法的 tmux 会话名：1–64 字符，字母/数字/下划线开头，之后可用短横线".into(),
+            ));
+        }
+        let version = h.tmux.lock().unwrap().version.clone();
+        if let Some((out, _)) = Self::tmux_exec(
+            &h,
+            &Self::tmux_session_has_cmd(version.as_deref(), name),
+            4 * 1024,
+        )
+        .await
+        {
+            if out.contains("@@HAS") {
+                return Err(Error::InvalidInput(format!("tmux 会话 {name} 已存在")));
+            }
+        }
+        match Self::tmux_exec(&h, &Self::tmux_session_create_cmd(name), 4 * 1024).await {
+            Some((out, _)) => {
+                let rc = out
+                    .lines()
+                    .find_map(|l| l.strip_prefix("@@RC|"))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                if rc == "0" {
+                    // 审计与 tmux_attach 同级对齐（创建是一次远端变更动作；demo
+                    // 镜像早就有此事件——审计对账口径一致）
+                    let _ = self.center.audit.append(
+                        &Actor::Human,
+                        "tmux_session_create",
+                        Some(sid),
+                        Some(name),
+                        serde_json::json!({}),
+                        None,
+                    );
+                    Ok(())
+                } else {
+                    Err(Error::InvalidInput(if rc.is_empty() {
+                        "创建未确认（远端未回传结果）".into()
+                    } else {
+                        format!("创建失败（tmux rc={rc}）——可能同名会话刚出现，或远端 tmux 拒绝")
+                    }))
+                }
+            }
+            None => Err(Error::InvalidInput("创建通道未完成".into())),
+        }
+    }
+
+    /// 改名跟随对账（探针后调用）：tmux 侧改了会话名（C-b $ / 别处 rename-session）
+    /// 后，格子是 attach 在同一会话上的 client 照常工作，但按名记的标题/清单/主视
+    /// 图名牌会与实况脱节——去重、两路视图防呆、重建全按名认，脱节即防呆失效。
+    /// 面板按**不可变 session_id**（`$N`，改名不换）认会话：探针快照里有 id 的会话，
+    /// 同 id 不同名即改名——格子显示名、愿望清单、主视图名牌一并原位刷新（保序）。
+    /// id 缺失（极老 tmux）退化按名认，行为同旧版。
+    fn tmux_reconcile_names(h: &SessionHandle, status: &session_api::TmuxStatus) {
+        if !status.available {
+            return;
+        }
+        let by_id: std::collections::HashMap<&str, &session_api::TmuxSession> = status
+            .sessions
+            .iter()
+            .filter(|s| !s.id.is_empty())
+            .map(|s| (s.id.as_str(), s))
+            .collect();
+        // 锁序同 list_sessions/pane_open_inner：panes → wishlist → tmux_attached_server_pid(_id) → tmux_attached
+        let panes = h.panes.lock().unwrap();
+        let mut wish = h.pane_wishlist.lock().unwrap();
+        let mut att_pid = h.tmux_attached_server_pid.lock().unwrap();
+        let mut att_id = h.tmux_attached_id.lock().unwrap();
+        let mut att = h.tmux_attached.lock().unwrap();
+        // 纪元闸：id 只在 tmux 服务器一生内唯一，服务器重启后从 $0 重排——快照的
+        // server_pid 与记录落账时不同即跨纪元，同 id 是别的会话，一切按 id 的跟随
+        // 都不可信（名字不动；摘除/重建按名另有人管）。任一侧 pid 未知（0）不拦。
+        let epoch_ok = |born: u32, now: u32| born == 0 || now == 0 || born == now;
+        // 第一遍：格子名原位刷新并**收集改名对**。清单不能在循环里逐条改——连环改名
+        // （b→c 且 a→b 同轮）会让后处理的格子按「旧名」find 命中先处理格子刚写入的
+        // 条目，清单错绑（关格误删别人的项 → 死后不重建、格子静默丢失）。
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for p in panes.values() {
+            if p.tmux_sid.is_empty() {
+                continue; // 老记录拿不到 id：保持按名（下次重建换装补上 id）
+            }
+            let Some(fresh) = by_id.get(p.tmux_sid.as_str()) else {
+                continue; // 不在快照里：可能刚掉线，名字不动（重建/摘除另有人管）
+            };
+            if !epoch_ok(p.born_server_pid, fresh.server_pid) {
+                continue;
+            }
+            let old = p.name();
+            if old != fresh.name {
+                p.set_name(fresh.name.clone());
+                if att.as_deref() == Some(old.as_str())
+                    && att_id.as_deref().is_some_and(|i| i == &p.tmux_sid)
+                {
+                    // 主视图正看着这个会话：名牌换新名（id 对上才动，防误伤同名）
+                    *att = Some(fresh.name.clone());
+                }
+            }
+            renames.push((old, fresh.name.clone()));
+        }
+        // 第二遍：清单一次性替换，**每个清单条目至多消费一个未消费的改名对**——
+        // 顺序无关（a→b、b→c 时先改完的条目不再被下一个改名对吞掉）
+        if !renames.is_empty() {
+            let mut consumed = vec![false; renames.len()];
+            for w in wish.iter_mut() {
+                if let Some((i, (_, to))) = renames
+                    .iter()
+                    .enumerate()
+                    .find(|(i, (from, _))| !consumed[*i] && w.as_str() == from.as_str())
+                {
+                    consumed[i] = true;
+                    *w = to.clone();
+                }
+            }
+        }
+        // 主视图独占（不在任何格子里）的 attach 记录同样按 id 跟随改名——格子循环
+        // 只覆盖「格子也在看」的会话，纯主视图场景此前改名后 tmux_attached 停旧名，
+        // 名牌/快接钮面/切换逻辑全部跟着错。跨纪元不跟（同 id 已是别的会话）。
+        if let (Some(cur), Some(id)) = (att.clone(), att_id.clone()) {
+            if !id.is_empty() {
+                if let Some(fresh) = by_id.get(id.as_str()) {
+                    if fresh.name != cur && epoch_ok(*att_pid, fresh.server_pid) {
+                        *att = Some(fresh.name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// 主视图在 tmux 里手动 detach / 切走后，「我们注入过 attach」的记录会残留
+    /// （此前只在重连时清）：残留会让「＋面板」被误拦「已在主视图」，快接切换也会
+    /// 走 switch-client 去找已不存在的客户端。探针显示该会话已不存在即判残留清掉；
+    /// 有任何客户端（可能是他机）时保守不动。
+    /// 快照只能证伪「探针发出前已稳定」的 attach：注入晚于探针发出（快照必然看不到
+    /// 它的客户端）或发出前 5s 内刚注入（client 可能还没连上）都不校正——按**探针
+    /// 发出时刻**比，不按返回时刻算年龄：exec 慢回（高负载 sshd 数秒）时年龄已过期，
+    /// 快照却仍是注入前的旧景，会把合法 attach 清掉（审查轮二 P2）。
+    /// 零客户端臂另要双拍确认（找茬四轮 A5）：「会话不存在/跨纪元」是确定残留，
+    /// 立即清；「会话在但 attached==0」是歧义——注入行悬在输入缓冲时 client 注册
+    /// 可以晚于 fresh 窗任意久，单拍误清后「已在主视图」防呆失效、可二次明文注入。
+    /// 第一拍只武装，第二拍仍零才清；中间见到客户端即解除。
+    fn tmux_reconcile_attached(
+        h: &SessionHandle,
+        status: &session_api::TmuxStatus,
+        probe_start: std::time::Instant,
+    ) {
+        if !status.available {
+            return;
+        }
+        let fresh = h
+            .tmux_attached_at
+            .lock()
+            .unwrap()
+            .is_some_and(|t| t + std::time::Duration::from_secs(5) > probe_start);
+        if fresh {
+            return;
+        }
+        // att_pid → att_id 先于 att（与 tmux_reconcile_names 同序）。校正判「已不存在/
+        // 零客户端」：id 在手按 id 认（改名不当残留清——旧版按名找，改名即误清、主视图
+        // 前缀武装随之停用）；id 缺失退化按名。跨纪元（server_pid 对不上，tmux 服务器
+        // 重启=所有 client 已死）记录必失效，直接清。
+        let att_pid = *h.tmux_attached_server_pid.lock().unwrap();
+        let att_id = h.tmux_attached_id.lock().unwrap().clone();
+        let stale: Option<bool> = h.tmux_attached.lock().unwrap().as_deref().and_then(|cur| {
+            let found = att_id
+                .as_deref()
+                .filter(|i| !i.is_empty())
+                .and_then(|i| status.sessions.iter().find(|s| s.id == i))
+                .or_else(|| status.sessions.iter().find(|s| s.name == cur));
+            match found {
+                // 会话没了：确定残留。
+                None => Some(true),
+                Some(s) if att_pid != 0 && s.server_pid != 0 && att_pid != s.server_pid => {
+                    // 跨纪元：确定残留。
+                    Some(true)
+                }
+                Some(s) if s.attached == 0 => Some(false),
+                Some(_) => None,
+            }
+        });
+        match stale {
+            // 确定残留（会话没了/跨纪元）：立即清 + 解除双拍臂。
+            Some(true) => {
+                *h.tmux_attached_server_pid.lock().unwrap() = 0;
+                *h.tmux_attached_id.lock().unwrap() = None;
+                *h.tmux_attached.lock().unwrap() = None;
+                *h.tmux_attached_zero_arm.lock().unwrap() = false;
+            }
+            // 零客户端（歧义）：双拍确认——上一拍已武装才清，本拍只武装。
+            Some(false) => {
+                let mut arm = h.tmux_attached_zero_arm.lock().unwrap();
+                if *arm {
+                    *arm = false;
+                    *h.tmux_attached_server_pid.lock().unwrap() = 0;
+                    *h.tmux_attached_id.lock().unwrap() = None;
+                    *h.tmux_attached.lock().unwrap() = None;
+                } else {
+                    *arm = true;
+                }
+            }
+            // 会话在且有客户端：解除武装，保守不动。
+            None => {
+                *h.tmux_attached_zero_arm.lock().unwrap() = false;
+            }
+        }
     }
 
     /// 恢复现场：断线会话先走既有手动重连全机器（状态事件照常推进），再探针
@@ -5128,10 +5925,14 @@ impl SessionManager {
     /// 证：cat 占前台时 client 照常切、零字节进 pane）。client 定位=list-clients
     /// 只看已 attach 会话上的客户端，**唯一才动**——多客户端（可能含他机同会话）
     /// 绝不代切，如实报错交还用户。
-    async fn tmux_switch_client(h: &SessionHandle, sel: &str) -> Result<()> {
-        let cur = h.tmux_attached.lock().unwrap().clone().unwrap_or_default();
-        let cur_sel = Self::tmux_selector(h.tmux.lock().unwrap().version.as_deref(), &cur);
-        let list_cmd = format!("tmux list-clients -t '{cur_sel}' -F '#{{client_name}}'");
+    async fn tmux_switch_client(h: &SessionHandle, cur: &str, sel: &str) -> Result<()> {
+        let cur_sel = Self::tmux_selector(h.tmux.lock().unwrap().version.as_deref(), cur);
+        // cur 来自 tmux_attached（改名跟随会把**远端可控**的新名写进来）、client
+        // 名来自 tmux 回包——两侧都是显示数据，进命令一律单引号转义（审查轮 P0）
+        let list_cmd = format!(
+            "tmux list-clients -t {} -F '#{{client_name}}'",
+            Self::tmux_sq(&cur_sel)
+        );
         let clients: Vec<String> = match Self::tmux_exec(h, &list_cmd, 4096).await {
             Some((o, Some(0))) => o
                 .lines()
@@ -5139,7 +5940,14 @@ impl SessionManager {
                 .filter(|l| !l.is_empty())
                 .map(String::from)
                 .collect(),
-            _ => Vec::new(),
+            // 通道失败≠「0 个客户端」——如实让用户稍后再试（此前吞成空清单，
+            // 错误文案误报「有 0 个客户端接入」）
+            None => {
+                return Err(Error::InvalidInput(
+                    "连接不稳，无法确认该会话的客户端（稍后再试）".into(),
+                ));
+            }
+            Some((_, _)) => Vec::new(), // 非零退出=目标不在/无客户端：按 0 客户端走
         };
         if clients.len() != 1 {
             return Err(Error::InvalidInput(format!(
@@ -5147,7 +5955,11 @@ impl SessionManager {
                 clients.len()
             )));
         }
-        let sw = format!("tmux switch-client -c '{}' -t '{sel}'", clients[0]);
+        let sw = format!(
+            "tmux switch-client -c {} -t {}",
+            Self::tmux_sq(&clients[0]),
+            Self::tmux_sq(sel)
+        );
         match Self::tmux_exec(h, &sw, 4096).await {
             Some((_, Some(0))) => Ok(()),
             Some((err, _)) => Err(Error::InvalidInput(format!(
@@ -5164,12 +5976,9 @@ impl SessionManager {
             return Err(Error::InvalidInput("tmux attach 仅支持 SSH 会话".into()));
         }
         let name = session.trim();
-        if name.is_empty()
-            || name.contains('\'')
-            || name.contains('\\')
-            || name.contains('\r')
-            || name.contains('\n')
-        {
+        // 闸只拒控制字符（sq 全覆盖后引号/反斜杠是合法 tmux 名——远端改名跟随
+        // 会把这类名字带回来，闸比命令构造严只会让合法名字功能残废）
+        if name.is_empty() || name.chars().any(|c| c.is_control()) {
             return Err(Error::InvalidInput("非法的 tmux 会话名".into()));
         }
         if let Some(t) = *h.last_human_input.lock().await {
@@ -5184,33 +5993,105 @@ impl SessionManager {
             }
         }
         // tmux 面板反向防呆：已在面板格里的会话不再挂进主视图（同一会话不做
-        // 两路视图——tmux 多客户端共享当前窗口，两格同步翻页让人看不懂）
-        if h.pane_wishlist.lock().unwrap().iter().any(|n| n == name) {
-            return Err(Error::InvalidInput(format!(
-                "会话 {name} 已在面板窗格中——同一会话不做两路视图"
-            )));
+        // 两路视图——tmux 多客户端共享当前窗口，两格同步翻页让人看不懂）。
+        // 核验与预占 tmux_attached 在同一临界区（锁序 wishlist → tmux_attached_id →
+        // tmux_attached，与 pane_open_inner 登记段 panes → wishlist → 同序一致）：
+        // 并发开格与主视图 attach 谁先进临界区谁赢、另一方必见对方——此前核验在
+        // await 之前、置位在写入之后，两道防呆可被同时穿过（审查轮二 P2）。写入
+        // 失败回滚预占。
+        // 先把 id 落账（改名跟随/防呆按 id 认）：探针缓存里有就用，缺了现解一次
+        //（探测数据过期/从未探测）；拿不到留 None——退化按名对账，attach 照常。
+        let version = h.tmux.lock().unwrap().version.clone();
+        let sel = Self::tmux_selector(version.as_deref(), name);
+        // id + 来源纪元（server_pid）一并落账：id 只在服务器一生内唯一，重启后重排——
+        // 之后一切按 id 的对账/校正先比 pid，跨纪元不可信
+        let mut att_pid = 0u32;
+        let mut att_id = h
+            .tmux
+            .lock()
+            .unwrap()
+            .sessions
+            .iter()
+            .find(|s| s.name == name)
+            .and_then(|s| {
+                att_pid = s.server_pid;
+                (!s.id.is_empty()).then(|| s.id.clone())
+            });
+        if att_id.is_none() {
+            if let Some(Some((id, _, pid))) = h.tmux_session_resolve(&sel).await {
+                att_pid = pid;
+                att_id = (!id.is_empty()).then_some(id);
+            }
         }
+        let (prev, prev_id, prev_at, prev_pid) = {
+            // 锁序 panes → wishlist → …（同 list_sessions）；名字差可穿过（改名到下一次
+            // 探针之间），id 交叉查兜住同会话两路视图
+            let sid_hit = att_id.as_deref().filter(|i| !i.is_empty()).and_then(|i| {
+                h.panes
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .find(|p| p.tmux_sid == *i && !p.dead.load(std::sync::atomic::Ordering::SeqCst))
+                    .map(|p| p.name())
+            });
+            if let Some(pname) = sid_hit {
+                return Err(Error::InvalidInput(format!(
+                    "会话 {pname} 已在面板窗格中——同一会话不做两路视图"
+                )));
+            }
+            let wish = h.pane_wishlist.lock().unwrap();
+            if wish.iter().any(|n| n == name) {
+                return Err(Error::InvalidInput(format!(
+                    "会话 {name} 已在面板窗格中——同一会话不做两路视图"
+                )));
+            }
+            let prev_pid =
+                std::mem::replace(&mut *h.tmux_attached_server_pid.lock().unwrap(), att_pid);
+            let prev_id =
+                std::mem::replace(&mut *h.tmux_attached_id.lock().unwrap(), att_id.clone());
+            let prev = h.tmux_attached.lock().unwrap().replace(name.to_string());
+            let prev_at = h
+                .tmux_attached_at
+                .lock()
+                .unwrap()
+                .replace(std::time::Instant::now());
+            (prev, prev_id, prev_at, prev_pid)
+        };
         // 已挂 tmux 的 shell 里 attach 会被拒绝（$TMUX 非空），须 switch-client；
         // 只信我们自己注入过的记录（用户手动 attach 不猜测——误判方向都会报错）。
         // 切换走 tmux_switch_client（零注入指挥服务器）；只有首次 attach 走明文
         // 注入——此时 PTY 在 shell 提示符（断线重连后必在提示符），行首空格不进
         // history；前台是交互程序的首次 attach 场景立案未修（台账坑 84 段）。
-        let already = h.tmux_attached.lock().unwrap().is_some();
-        let version = h.tmux.lock().unwrap().version.clone();
-        let sel = Self::tmux_selector(version.as_deref(), name);
-        if already {
-            Self::tmux_switch_client(&h, &sel).await?;
-        } else {
-            let text = format!(" tmux attach -t '{sel}'\r");
-            {
-                let mut s = h.screen.lock().await;
-                s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+        // 目标选择器 id 在手用 id（改名与 attach 竞态也不切错对象）。
+        let sel_t: &str = att_id.as_deref().filter(|i| !i.is_empty()).unwrap_or(&sel);
+        let sent: Result<()> = match prev.as_deref() {
+            Some(cur) => Self::tmux_switch_client(&h, cur, sel_t).await,
+            None => {
+                let text = format!(" tmux attach -t {}\r", Self::tmux_sq(sel_t));
+                {
+                    let mut s = h.screen.lock().await;
+                    s.register_outgoing(text.as_bytes(), term_core::BlockSource::Human);
+                }
+                h.channel
+                    .write(&charset::encode(h.host.charset, &text))
+                    .await
+                    .map(|_| ())
             }
-            h.channel
-                .write(&charset::encode(h.host.charset, &text))
-                .await?;
+        };
+        if let Err(e) = sent {
+            // 回滚与预占同形状的临界区（pid → id → att → at），身份守卫含 id/pid 双比对：
+            // 并发第二次 attach 已换记录时不动它的（否则回滚会用 A 的旧值覆盖 B 的成功预占）
+            let mut att_pid_g = h.tmux_attached_server_pid.lock().unwrap();
+            let mut att_id_g = h.tmux_attached_id.lock().unwrap();
+            let mut att_g = h.tmux_attached.lock().unwrap();
+            if att_g.as_deref() == Some(name) && *att_id_g == att_id && *att_pid_g == att_pid {
+                *att_pid_g = prev_pid;
+                *att_id_g = prev_id;
+                *att_g = prev;
+                *h.tmux_attached_at.lock().unwrap() = prev_at;
+            }
+            return Err(e);
         }
-        *h.tmux_attached.lock().unwrap() = Some(name.to_string());
         let _ = self.center.audit.append(
             &Actor::Human,
             "tmux_attach",
@@ -5219,6 +6100,9 @@ impl SessionManager {
             serde_json::json!({ "auto": auto }),
             None,
         );
+        // 注入/切换成功即解除零客户端双拍臂（找茬四轮 A5）：fresh 窗会挡住紧随的
+        // 校正，但臂若残留，窗后的第一拍零 sighting 会直接清——必须两拍从头起算。
+        *h.tmux_attached_zero_arm.lock().unwrap() = false;
         Ok(())
     }
 
@@ -5245,9 +6129,17 @@ impl SessionManager {
             .pane_open_inner(name, cols, rows, false)
             .await
             .map_err(|e| e.into_error())?;
+        // 回报登记后的**当下**名（解析期间被改名时与清单/格子标题一致）
+        let canonical = h
+            .panes
+            .lock()
+            .unwrap()
+            .get(&pane_id)
+            .map(|p| p.name())
+            .unwrap_or_else(|| name.to_string());
         Ok(session_api::PaneInfo {
             pane_id,
-            tmux_session: name.to_string(),
+            tmux_session: canonical,
             alive: true,
         })
     }
@@ -5262,16 +6154,16 @@ impl SessionManager {
             .unwrap()
             .remove(&pane_id)
             .ok_or_else(|| Error::InvalidInput("面板窗格不存在".into()))?;
-        h.pane_wishlist
-            .lock()
-            .unwrap()
-            .retain(|n| n != &pane.tmux_session);
-        let _ = pane.ch.close().await;
+        let pname = pane.name();
+        h.pane_wishlist.lock().unwrap().retain(|n| n != &pname);
+        // 同款预算（找茬四轮 A4）：写停滞时 close 至多等一个 20s 写块让锁——
+        // 用户「关格」不该为此干等；超时弃尾由 alive=false 即刻判死兜底。
+        let _ = tokio::time::timeout(PANE_CLOSE_BUDGET, pane.ch.close()).await;
         let _ = self.center.audit.append(
             &Actor::Human,
             "tmux_pane_close",
             Some(sid),
-            Some(pane.tmux_session.as_str()),
+            Some(pname.as_str()),
             serde_json::json!({ "pane_id": pane_id }),
             None,
         );
@@ -6914,14 +7806,20 @@ mod t44_tests {
     /// `|` 分列才安全——坑 80：tmux format 不展开 `\t`，真机产物是 `|` 分隔）。
     #[test]
     fn parse_tmux_probe_happy_and_garbage() {
-        let out = "tmux 3.2a\nwork|2|1\nmy sess|1|0\n";
+        let out = "tmux 3.2a\nwork|2|1|$1|4242\nmy sess|1|0|$2|4242\n";
         let st = SessionManager::parse_tmux_probe(out);
         assert!(st.available);
         assert_eq!(st.version.as_deref(), Some("3.2a"));
         assert_eq!(st.sessions.len(), 2);
         assert_eq!(st.sessions[0].name, "work");
+        assert_eq!(st.sessions[0].id, "$1");
         assert_eq!((st.sessions[0].windows, st.sessions[0].attached), (2, 1));
         assert_eq!(st.sessions[1].name, "my sess");
+        assert_eq!(st.sessions[1].id, "$2");
+        assert_eq!(
+            st.sessions[0].server_pid, 4242,
+            "尾段 server_pid（纪元闸用）"
+        );
         // 坑 80 回归钉：字面反斜杠 t 的行（旧版探针真实产物）不得解析出任何会话
         let stale = SessionManager::parse_tmux_probe("tmux 3.4\nwalkthrough\\t1\\t0\n");
         assert!(stale.available);
@@ -6931,33 +7829,526 @@ mod t44_tests {
         assert!(!none.available);
         assert!(none.sessions.is_empty());
         // 会话清单行先于版本行（不可能但防御）：忽略，不误判可用
-        let odd = SessionManager::parse_tmux_probe("work|1|0\ntmux 3.3\n");
+        let odd = SessionManager::parse_tmux_probe("work|1|0|$1|9\ntmux 3.3\n");
         assert!(odd.available);
         assert!(odd.sessions.is_empty());
         // 坏行（非数字窗口数）跳过不炸
-        let mixed = SessionManager::parse_tmux_probe("tmux next-3.4\nbad|X|Y\nok|3|2\n");
+        let mixed = SessionManager::parse_tmux_probe("tmux next-3.4\nbad|X|Y|$1|9\nok|3|2|$2|9\n");
         assert!(mixed.available);
         assert_eq!(mixed.sessions.len(), 1);
         assert_eq!(mixed.sessions[0].name, "ok");
         // 名叫 `tmux 5` 的合法会话（tmux 只禁 `:` 与 `.`）：行形 `tmux 5|2|1`，
         // 含 `|` 不得吃成版本行；老解析把它当版本 → 会话凭空消失 + version 被污染
-        let tricky = SessionManager::parse_tmux_probe("tmux 3.4\ntmux 5|2|1\nwork|1|0\n");
+        let tricky = SessionManager::parse_tmux_probe("tmux 3.4\ntmux 5|2|1|$4|9\nwork|1|0|$5|9\n");
         assert!(tricky.available);
         assert_eq!(tricky.version.as_deref(), Some("3.4"));
         assert_eq!(tricky.sessions.len(), 2);
         assert_eq!(tricky.sessions[0].name, "tmux 5");
+        assert_eq!(tricky.sessions[0].id, "$4");
         assert_eq!(
             (tricky.sessions[0].windows, tricky.sessions[0].attached),
             (2, 1)
         );
-        // 会话名含 `|`（同样合法）：从右侧取数值段，名字完整保留
-        let piped = SessionManager::parse_tmux_probe("tmux 3.4\na|b|3|0\n");
+        // 会话名含 `|`（同样合法）：从右侧取 id/数值段，名字完整保留
+        let piped = SessionManager::parse_tmux_probe("tmux 3.4\na|b|3|0|$7|9\n");
         assert_eq!(piped.sessions.len(), 1);
         assert_eq!(piped.sessions[0].name, "a|b");
+        assert_eq!(piped.sessions[0].id, "$7");
         assert_eq!(
             (piped.sessions[0].windows, piped.sessions[0].attached),
             (3, 0)
         );
+        // id 形状闸：非 `$数值`（极老 tmux 的空段/怪输出）→ id 留空，会话照常收录
+        let legacy = SessionManager::parse_tmux_probe("tmux 2.6\nold|1|0||\nodd|2|0|x9|\n");
+        assert_eq!(legacy.sessions.len(), 2);
+        assert!(legacy.sessions[0].id.is_empty());
+        assert!(legacy.sessions[1].id.is_empty());
+        assert_eq!(
+            legacy.sessions[0].server_pid, 0,
+            "pid 空段=未知（0），纪元闸不拦"
+        );
+    }
+
+    /// 会话大屏帧协议：快乐路径/碰撞帧/空捕获/截断/越界/命令构造。碰撞是本协议
+    /// 的存在理由（坑 80/81 同族）：pane 内容里出现标记行必须被当**字节**消费，
+    /// 绝不能被当帧界——帧界只由字节数决定，内容长什么样都破不了帧。
+    #[test]
+    fn tmux_wall_parse_frames() {
+        let mk = |i: usize, n: usize, body: &str| format!("@@WALL|{i}|{n}|24\n{body}");
+        // 快乐路径：三目标；目标 0 内容含伪标记行、伪 END、伪帧头——字节计数帧
+        // 下它们只是内容
+        let evil = "@@WALL|1|99\n@@WALL|END\n@@WALL|0|1\n";
+        let payload = format!(
+            "{}{}{}@@WALL|END\n",
+            mk(0, evil.len(), evil),
+            mk(1, 3, "ok\n"),
+            mk(2, 1, "\n"), // 空屏捕获=单换行
+        );
+        let cells = SessionManager::parse_tmux_wall(payload.as_bytes(), 3).unwrap();
+        assert_eq!(cells.len(), 3);
+        assert!(cells[0].ok);
+        assert_eq!(cells[0].text, evil, "伪标记行按字节消费，帧界不受扰");
+        assert_eq!(cells[0].rows, 24, "pane 高度随帧头透传");
+        assert!(cells[1].ok && cells[1].text == "ok\n");
+        assert!(cells[2].ok && cells[2].text == "\n", "空屏非失败");
+        // 高度非数字：格子照收，rows=0（前端退化按宽缩放）；帧头缺第三段=坏帧
+        // 跳过 → 后续字节流错位 → 整包作废（本协议前后端同进程同版本，第三段
+        // 恒在——缺席只可能是异常载荷，宁缺勿错）
+        let legacy = "@@WALL|0|3|hi\nabc@@WALL|END\n";
+        let cells = SessionManager::parse_tmux_wall(legacy.as_bytes(), 1).unwrap();
+        assert!(cells[0].ok && cells[0].text == "abc" && cells[0].rows == 0);
+        let short = "@@WALL|0|3\nabc@@WALL|END\n";
+        assert!(
+            SessionManager::parse_tmux_wall(short.as_bytes(), 1).is_err(),
+            "缺高度段的帧头按坏帧跳过，整包作废"
+        );
+        // 捕获失败（n=0，tmux 报错走 stderr）→ ok=false，前端呈现离线遮罩
+        let failed = format!("{}@@WALL|END\n", mk(0, 0, ""));
+        let cells = SessionManager::parse_tmux_wall(failed.as_bytes(), 1).unwrap();
+        assert!(!cells[0].ok && cells[0].text.is_empty());
+        // 越界下标（陈旧载荷）忽略不炸
+        let odd = format!("{}@@WALL|7|2|0\nhi@@WALL|END\n", mk(0, 2, "hi"));
+        let cells = SessionManager::parse_tmux_wall(odd.as_bytes(), 1).unwrap();
+        assert!(cells[0].ok);
+        // 无 END（通道中断/截断）→ 整包作废；字节数越过载荷末尾同样整包作废
+        let truncated = mk(0, 4, "abcd");
+        assert!(SessionManager::parse_tmux_wall(truncated.as_bytes(), 1).is_err());
+        let overrun = format!("{}@@WALL|END\n", mk(0, 999, "abc"));
+        assert!(SessionManager::parse_tmux_wall(overrun.as_bytes(), 1).is_err());
+        // exec 通道可能的 \r\n：标记行容忍尾 \r，内容按字节原样
+        let crlf = "@@WALL|0|2|24\r\nhi\r\n@@WALL|END\r\n";
+        let cells = SessionManager::parse_tmux_wall(crlf.as_bytes(), 1).unwrap();
+        assert!(cells[0].ok);
+        // 非法 UTF-8（老 tmux 非 UTF-8 locale / 程序吐二进制）：字节域切片必须
+        // 不错位——坏字节膨胀成 U+FFFD 只发生在格内文本，帧界不受扰（此前 String
+        // 域按膨胀后的字节数切，错位吞帧）
+        let mut raw: Vec<u8> = b"@@WALL|0|4|24\na\xffb\xc3".to_vec();
+        raw.extend_from_slice(b"\n@@WALL|END\n");
+        let cells = SessionManager::parse_tmux_wall(&raw, 1).unwrap();
+        assert!(cells[0].ok, "坏字节帧照样成帧");
+        assert_eq!(cells[0].text, "a\u{FFFD}b\u{FFFD}", "4 原始字节逐段 lossy");
+    }
+
+    /// 大屏命令构造：id 在手用 id 选择器（改名不跟丢）；缺 id 退化按名（≥3.1
+    /// 精确 `=`）；名字含单引号按 shell 单引号转义；老版本退普通名；哨兵/回落
+    /// /帧标记逐段在位。
+    #[test]
+    fn tmux_wall_cmd_selectors() {
+        let mk = |id: &str, name: &str| session_api::TmuxWallTarget {
+            id: id.into(),
+            name: name.into(),
+        };
+        let cmd = SessionManager::tmux_wall_cmd(
+            &[mk("$1", "work"), mk("", "it's"), mk("", "logs")],
+            Some("3.4"),
+        );
+        // 复合串整体经 sh -c 送达（fish/csh login shell 解析不了 POSIX 复合语法）；
+        // 内层嵌套引号由 sq 的 '\'' 转义承载——剥壳还原后必须与原复合串逐字一致
+        assert!(cmd.starts_with("sh -c '"), "{cmd}");
+        let inner = unwrap_sh_c(&cmd);
+        assert!(
+            inner.contains("for t in '$1' '=it'\\''s' '=logs'"),
+            "{inner}"
+        );
+        assert!(
+            inner.contains("capture-pane -p -e -t \"$t:\" -S -40"),
+            "-e 带色优先"
+        );
+        assert!(
+            inner.contains("case \"$out\" in \"\")"),
+            "-e 不支持时朴素回落"
+        );
+        assert!(
+            inner.contains("printf '@@WALL|%s|%s|%s\\n'"),
+            "帧头（含 pane 高度段）"
+        );
+        assert!(
+            inner.contains("display-message -p -t \"$t:\" '#{pane_height}'"),
+            "pane 高度随拍取（当前屏行数=前端高度约束的度量源）"
+        );
+        assert!(
+            inner.contains("case \"$h\" in \"\"|*[!0-9]*) h=0;; esac"),
+            "高度取不到落 0（前端退化按宽缩放），不拖累本格快照"
+        );
+        assert!(inner.contains("printf '@@WALL|END\\n'"), "帧尾");
+        assert!(inner.contains("${out%x}"), "哨兵只摘 x");
+        // 老版本（<3.1）：无 id 目标退普通名（不带 =）
+        let old = SessionManager::tmux_wall_cmd(&[mk("", "logs")], Some("3.0"));
+        assert!(unwrap_sh_c(&old).contains("for t in 'logs'"), "{old}");
+        // 空目标构造不炸（tmux_wall_snapshot 先 retain+判空拦在前）
+        let none = SessionManager::tmux_wall_cmd(&[], None);
+        assert!(
+            unwrap_sh_c(&none).starts_with("i=0; for t in ; do"),
+            "{none}"
+        );
+    }
+
+    /// 大屏输入命令构造：send-keys（-l + `--` 终结选项）与补拍段按序拼链；选择
+    /// 器/转义/帧协议与抓取命令同口径；键名白名单逐例。
+    #[test]
+    fn tmux_wall_input_cmd_shape() {
+        let mk = |id: &str, name: &str| session_api::TmuxWallTarget {
+            id: id.into(),
+            name: name.into(),
+        };
+        // 字面 + 特殊键链发：-l -- 段在前、键名段在后，补拍收尾（整串经 sh -c，
+        // 剥壳还原后断言内层形状）
+        let cmd = SessionManager::tmux_wall_input_cmd(
+            &mk("$1", "work"),
+            "echo hi",
+            &["Enter".to_string()],
+            Some("3.4"),
+        );
+        let inner = unwrap_sh_c(&cmd);
+        assert!(inner.starts_with("t='$1'; "), "{inner}");
+        assert!(
+            inner.contains("tmux send-keys -t \"$t:\" -l -- 'echo hi'; "),
+            "{inner}"
+        );
+        assert!(
+            inner.contains("tmux send-keys -t \"$t:\" 'Enter'; "),
+            "{inner}"
+        );
+        assert!(
+            inner.contains("capture-pane -p -e -t \"$t:\" -S -40")
+                && inner.contains("printf '@@WALL|%s|%s|%s\\n' 0")
+                && inner.contains("display-message -p -t \"$t:\" '#{pane_height}'")
+                && inner.contains("printf '@@WALL|END\\n'"),
+            "补拍走同款帧协议（含 pane 高度段） {inner}"
+        );
+        // 无字面只有键名；单引号转义；键名同样引号包裹（白名单已保证形状，引号是纵深）
+        let only = SessionManager::tmux_wall_input_cmd(&mk("", "it's"), "", &["C-c".into()], None);
+        let only_in = unwrap_sh_c(&only);
+        assert!(only_in.starts_with("t='=it'\\''s'; "), "{only_in}");
+        assert!(!only_in.contains("-l --"), "{only_in}");
+        assert!(
+            only_in.contains("tmux send-keys -t \"$t:\" 'C-c'; "),
+            "{only_in}"
+        );
+        // M- + 可打印标点放行（readline M-. yank-last-arg）；键名照旧转义
+        assert!(SessionManager::tmux_wall_key_ok("M-."));
+        assert!(SessionManager::tmux_wall_key_ok("M-b") && SessionManager::tmux_wall_key_ok("M-f"));
+        assert!(!SessionManager::tmux_wall_key_ok("C-."));
+        // 老版本（<3.1）：退普通名
+        let old = SessionManager::tmux_wall_input_cmd(&mk("", "logs"), "x", &[], Some("3.0"));
+        assert!(unwrap_sh_c(&old).starts_with("t='logs'; "), "{old}");
+        // 空字面空键 = 纯补拍（防御：前端不会这么调，构造不炸）
+        let bare = SessionManager::tmux_wall_input_cmd(&mk("", "w"), "", &[], None);
+        assert!(!bare.contains("send-keys"), "{bare}");
+        // 键名白名单：tmux 键名字符集放行，形状外的全拒
+        for ok in [
+            "Enter",
+            "BSpace",
+            "C-c",
+            "C-Shift-Tab",
+            "F5",
+            "Up",
+            "a",
+            "5",
+        ] {
+            assert!(SessionManager::tmux_wall_key_ok(ok), "{ok} 应放行");
+        }
+        for bad in [
+            "",
+            "-bad",
+            "bad key",
+            "echo;rm",
+            "键",
+            "9lives",
+            " thirteen-chars",
+        ] {
+            assert!(!SessionManager::tmux_wall_key_ok(bad), "{bad} 应拒绝");
+        }
+    }
+
+    /// 大屏 pane 贴格子命令构造：守卫（单窗格；零客户端守卫真机证伪后拆除）+
+    /// **先取原样（宽/高/window-size 选项）再 resize**（顺序反了会把 resize 自己
+    /// 钉上的 manual 当原值）；三元组 set -- 传参；列/行钳位成纯数字（注入面归零）。
+    #[test]
+    fn tmux_wall_fit_cmd_shape() {
+        let mk = |id: &str, name: &str, c: u32, r: u32| session_api::TmuxWallFit {
+            id: id.into(),
+            name: name.into(),
+            cols: c,
+            rows: r,
+        };
+        let cmd = SessionManager::tmux_wall_fit_cmd(
+            &[mk("$1", "work", 92, 26), mk("", "it's", 3000, 0)],
+            Some("3.4"),
+        );
+        assert!(cmd.starts_with("sh -c '"), "{cmd}");
+        let inner = unwrap_sh_c(&cmd);
+        assert!(
+            inner.starts_with("i=0; set -- '$1' 92 26 '=it'\\''s' 400 5;"),
+            "三元组按序传参 + 钳位成纯数字（3000/0 → 400/5） {inner}"
+        );
+        assert!(!inner.contains("3000") && !inner.contains(" 0;"), "{inner}");
+        assert!(
+            !inner.contains("list-clients"),
+            "零客户端守卫已拆除（主视图 attach+大屏同看是主场景，真机证伪） {inner}"
+        );
+        assert!(
+            inner.contains("list-panes -t \"$t:\" 2>/dev/null | wc -l"),
+            "单窗格守卫（多窗格 workspace 是用户的活布局） {inner}"
+        );
+        // 原样记录必须先于 resize（resize-window 会把 window-size 钉成 manual，
+        // 事后取到的 manual 是新值不是原值——真机踩过的顺序坑）
+        let ws_pos = inner
+            .find("show-options -t \"$t:\" window-size")
+            .expect("ws 记录段在位");
+        let resize_pos = inner
+            .find("resize-window -t \"$t:\" -x \"$c\" -y \"$r\"")
+            .expect("resize 在位");
+        assert!(ws_pos < resize_pos, "ws 记录先于 resize {inner}");
+        assert!(
+            inner.contains("display-message -p -t \"$t:\" '#{window_width}'")
+                && inner.contains("display-message -p -t \"$t:\" '#{window_height}'"),
+            "原窗口尺寸随拍 {inner}"
+        );
+        assert!(
+            inner.contains("printf '@@FIT|%s|%s|%s|%s\\n' \"$i\" \"$ow\" \"$oh\" \"$ws\"")
+                && inner.contains("printf '@@FIT|END\\n'"),
+            "回执帧（下标对齐 targets，名字不进帧=| 碰撞免疫） {inner}"
+        );
+        // 空清单构造不炸（入口先 retain+判空拦在前）
+        let none = SessionManager::tmux_wall_fit_cmd(&[], None);
+        assert!(
+            unwrap_sh_c(&none).starts_with("i=0; set --; while"),
+            "{none}"
+        );
+    }
+
+    /// 大屏 pane 贴格子真 sh 往返：恶意名（含分号/引号的命令形状）经 sq → set --
+    /// 三元组切分 → t=$1 变量间接 → 守卫 → resize-window 实参，全程当字符串活着；
+    /// 多窗格守卫拦截不落 resize 也不落回执帧。假 tmux 以 shell 函数注入（Windows
+    /// 无 exec 位，PATH 垫片不可靠；函数注入测的是同一条内层脚本）。
+    #[test]
+    fn tmux_wall_fit_roundtrip_in_real_sh() {
+        let mk = |id: &str, name: &str, c: u32, r: u32| session_api::TmuxWallFit {
+            id: id.into(),
+            name: name.into(),
+            cols: c,
+            rows: r,
+        };
+        let cmd = SessionManager::tmux_wall_fit_cmd(
+            // id 留空——恶意名必须走「按名选择器」路径（id 在手时名字不进命令）
+            &[mk("", "x'; touch /tmp/pwned; '", 3000, 0)],
+            Some("3.4"),
+        );
+        let inner = unwrap_sh_c(&cmd);
+        // stub：display-message 按 format 参吐宽/高；show-options 吐「window-size
+        // manual」形态；list-panes 出 M 行（守卫读数是 `| wc -l`，stub 吐数字本身
+        // 就是一行）；resize-window 及其余回显实参
+        let run = |panes: usize| {
+            let pl = (0..panes).map(|_| "echo p").collect::<Vec<_>>().join("; ");
+            let pl = if pl.is_empty() { ":".into() } else { pl };
+            let harness = format!(
+                "tmux() {{ case \"$1\" in \
+                 display-message) case \"$*\" in *window_width*) echo 189;; *window_height*) echo 42;; esac;; \
+                 show-options) echo 'window-size manual';; \
+                 list-panes) {};; \
+                 *) echo \"RESIZE:$*\";; esac; }}; {}",
+                pl, inner
+            );
+            let o = std::process::Command::new("sh")
+                .args(["-c", &harness])
+                .output()
+                .expect("sh 可用（CI/本机均有 POSIX sh）");
+            assert!(
+                o.status.success(),
+                "sh 退出 {:?} stderr={:?}",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        };
+        // 钳位 3000/0 → 400/5；名字活着到 resize 实参；回执帧=下标+原样（ws 取于
+        // resize 前=stub 的 manual 原值）
+        let out = run(1);
+        assert!(
+            out.contains("RESIZE:resize-window -t =x'; touch /tmp/pwned; ': -x 400 -y 5"),
+            "{out}"
+        );
+        assert!(out.contains("@@FIT|0|189|42|manual"), "{out}");
+        assert!(out.contains("@@FIT|END"), "{out}");
+        // 多窗格：守卫拦截，不落 resize 也不落回执帧（该目标不恢复=未被碰）
+        let blocked = run(3);
+        assert!(!blocked.contains("RESIZE"), "单窗格守卫失守 {blocked}");
+        assert!(!blocked.contains("@@FIT|0|"), "{blocked}");
+        // 解析：帧 → 回执（名字按 targets 下标对齐）
+        let fits = [mk("$1", "bench", 400, 5)];
+        let parsed = SessionManager::parse_tmux_wall_fit(
+            format!("@@FIT|0|189|42|manual\n@@FIT|END\n").as_bytes(),
+            &fits,
+        )
+        .expect("解析");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].id, "$1");
+        assert_eq!(parsed[0].name, "bench");
+        assert_eq!(parsed[0].orig_w, 189);
+        assert_eq!(parsed[0].orig_h, 42);
+        assert_eq!(parsed[0].orig_ws, "manual");
+        // ws 空段（unset）与载荷截断整包作废
+        let unset = SessionManager::parse_tmux_wall_fit(b"@@FIT|0|189|42|\n@@FIT|END\n", &fits)
+            .expect("解析");
+        assert_eq!(unset[0].orig_ws, "");
+        assert!(SessionManager::parse_tmux_wall_fit(b"@@FIT|0|189|42|manual\n", &fits).is_err());
+    }
+
+    /// 关大屏恢复命令构造：id 优先寻址（改名跟随——墙开着改名后按旧名恢复会
+    /// 静默落空）+ resize 回原尺寸 + window-size 原样交还（UNSET=unset、白名单
+    /// 四值=原样、其余=KEEP 只恢复尺寸不动选项）；ws 经 sq 死字符串化。
+    #[test]
+    fn tmux_wall_restore_cmd_shape() {
+        let mk =
+            |id: &str, name: &str, c: u32, r: u32, ws: &str| session_api::TmuxWallRestoreItem {
+                id: id.into(),
+                name: name.into(),
+                cols: c,
+                rows: r,
+                ws: ws.into(),
+            };
+        let cmd = SessionManager::tmux_wall_restore_cmd(
+            &[
+                mk("$5", "work", 189, 42, "manual"),
+                mk("", "work2", 80, 24, ""),
+                mk("", "work3", 100, 30, "totally-bogus"),
+            ],
+            Some("3.4"),
+        );
+        let inner = unwrap_sh_c(&cmd);
+        assert!(
+            inner.contains("set -- '$5' 189 42 'manual' '=work2' 80 24 'UNSET'"),
+            "id 优先寻址 + ws 空串映射 UNSET {inner}"
+        );
+        assert!(
+            !inner.contains("totally-bogus") && inner.contains("'KEEP'"),
+            "脏 ws 在 core 侧就映射 KEEP（比 shell case 更早消毒，sq 兜底） {inner}"
+        );
+        assert!(
+            inner.contains("tmux resize-window -t \"$t:\" -x \"$ow\" -y \"$oh\" 2>/dev/null"),
+            "{inner}"
+        );
+        assert!(
+            inner.contains("UNSET) tmux set-window-option -u -t \"$t:\" window-size 2>/dev/null;;"),
+            "{inner}"
+        );
+        assert!(
+            inner.contains("manual|latest|largest|smallest) tmux set-window-option -t \"$t:\" window-size \"$ws\" 2>/dev/null;;"),
+            "{inner}"
+        );
+        // 真 sh 往返：manual 走 setopt、UNSET 走 unset、KEEP 两不沾
+        let harness = format!("tmux() {{ echo \"TMX:$*\"; }}; {}", unwrap_sh_c(&cmd));
+        let o = std::process::Command::new("sh")
+            .args(["-c", &harness])
+            .output()
+            .expect("sh 可用");
+        assert!(
+            o.status.success(),
+            "{:?}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let so = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            so.contains("set-window-option -t $5: window-size manual"),
+            "{so}"
+        );
+        assert!(
+            so.contains("set-window-option -u -t =work2: window-size"),
+            "{so}"
+        );
+        assert_eq!(
+            so.matches("set-window-option").count(),
+            2,
+            "KEEP 目标不动选项 {so}"
+        );
+        assert!(so.matches("resize-window").count() == 3, "{so}");
+    }
+
+    /// 新建 tmux 会话：名字白名单 + 预检/创建命令形状（标记协议、`=` 选择器、
+    /// 分离创建、单引号纵深）
+    #[test]
+    fn tmux_session_create_cmd_shape() {
+        // 名字白名单逐例（数字开头也合法——tmux 自身不禁）
+        for ok in ["work", "dev-1", "_x", "a", "W9_", "9lives"] {
+            assert!(SessionManager::tmux_session_name_ok(ok), "{ok} 应放行");
+        }
+        let long64 = "a".repeat(64);
+        let long65 = "a".repeat(65);
+        for bad in [
+            "",
+            "-x",
+            "a b",
+            "a:b",
+            "a.b",
+            "a'b",
+            "中文",
+            long65.as_str(),
+        ] {
+            assert!(!SessionManager::tmux_session_name_ok(bad), "{bad} 应拒绝");
+        }
+        assert!(
+            SessionManager::tmux_session_name_ok(&long64),
+            "64 字节恰好在限"
+        );
+        // 预检：modern 用 = 选择器、stderr 静默、@@HAS 标记收尾带换行（复合命令
+        // 统一经 sh -c——剥壳还原后与原 POSIX 串逐字一致）
+        let has = SessionManager::tmux_session_has_cmd(Some("3.4"), "work");
+        assert!(has.starts_with("sh -c '"), "{has}");
+        assert_eq!(
+            unwrap_sh_c(&has),
+            "tmux has-session -t '=work' 2>/dev/null && printf '@@HAS\\n'; echo"
+        );
+        // 老版本：退普通名（仍单引号包裹）
+        let has_old = SessionManager::tmux_session_has_cmd(Some("3.0"), "work");
+        assert!(
+            unwrap_sh_c(&has_old).contains("tmux has-session -t 'work'"),
+            "{has_old}"
+        );
+        // 创建：分离 -d、名字单引号、rc 标记紧贴 $?
+        let mk = SessionManager::tmux_session_create_cmd("dev-1");
+        assert_eq!(
+            unwrap_sh_c(&mk),
+            "tmux new-session -d -s 'dev-1'; printf '@@RC|%s\\n' $?; echo"
+        );
+    }
+
+    /// sh -c 外壳剥除 + '\'' 反转义（测试 helper）：嵌套转义正确性的判定基准。
+    fn unwrap_sh_c(cmd: &str) -> String {
+        let body = cmd.strip_prefix("sh -c '").expect("sh -c 前缀");
+        let body = body.strip_suffix('\'').expect("尾单引号");
+        body.replace("'\\''", "'")
+    }
+
+    /// 注入回归（审查轮 P0）：名字/客户端名是**显示数据**（远端改名跟随、tmux
+    /// 回包都可控），sq 转义后经真实 sh 解析必须逐字节还原原文——恶意形
+    /// `x'; touch /tmp/pwned; '` 只能当字符串活着，绝不落成第二条命令。
+    #[test]
+    fn tmux_sq_roundtrip_in_real_sh() {
+        let cases = [
+            "work",
+            "it's",
+            "x'; touch /tmp/pwned; '",
+            "a b\"c$d`id`\\e",
+            "'$(reboot)'",
+            "=logs:",
+        ];
+        for name in cases {
+            // sh -c 'printf %s <sq(name)>'：外层 tmux_sh 嵌 tmux_sq，双层转义
+            let wrapped =
+                SessionManager::tmux_sh(&format!("printf %s {}", SessionManager::tmux_sq(name)));
+            let out = std::process::Command::new("sh")
+                .args(["-c", &wrapped])
+                .output()
+                .expect("sh 可用（CI/本机均有 POSIX sh）");
+            assert!(
+                out.status.success(),
+                "{name}: sh 退出 {:?} stderr={:?}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&out.stdout), name, "{name} 往返");
+        }
     }
 
     /// 会话名选择器：≥3.1 用 `=` 精确匹配；3.0 及更老/版本不可知退普通名

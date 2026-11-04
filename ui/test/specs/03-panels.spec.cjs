@@ -21,7 +21,7 @@ module.exports = {
 
     ck.eq("初始无任务面板", await panelCount(page), 0);
 
-    await page.click('.session-toolbar button[title^="文件"]');
+    await page.click("[data-testid=rb-files]");
     await page.waitForTimeout(800);
     ck.eq("文件视图标题", await tpTitle(page), "文件");
 
@@ -56,7 +56,7 @@ module.exports = {
     ck.eq("切到活动记录", await tpTitle(page), "活动记录");
     ck.eq("面板仍只有一个", await panelCount(page), 1);
 
-    await page.click("[data-testid=tools-collab]");
+    await page.click("[data-testid=rb-collab]");
     await page.waitForTimeout(700);
     ck.eq("切到协作", await tpTitle(page), "协作");
     ck.eq("面板仍只有一个", await panelCount(page), 1);
@@ -66,7 +66,7 @@ module.exports = {
     ck.eq("关闭后无任务面板", await panelCount(page), 0);
 
     // 再次打开同一入口，确认关闭钮可反复用
-    await page.click('.session-toolbar button[title^="文件"]');
+    await page.click("[data-testid=rb-files]");
     await page.waitForTimeout(700);
     ck.eq("可再次打开文件视图", await tpTitle(page), "文件");
     await page.click("[data-testid=tp-close]");

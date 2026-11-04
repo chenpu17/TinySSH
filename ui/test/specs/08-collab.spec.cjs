@@ -25,7 +25,7 @@ module.exports = {
     await (await card.$('button[title^="连接"]')).click();
     await page.waitForTimeout(1300);
 
-    await page.click("[data-testid=tools-collab]");
+    await page.click("[data-testid=rb-collab]");
     await page.waitForTimeout(800);
     ck.eq("协作面板标题", await page.evaluate(() => (document.querySelector("[data-testid=tp-title]") || {}).textContent), "协作");
 
@@ -56,8 +56,8 @@ module.exports = {
     });
     ck.check("入口徽标随之更新（恰好剩 1 待审批）", badge.includes("1 待审批") && !badge.includes("2 待审批"), badge);
 
-    // 首次委托对话框
-    const del = await page.$("[data-testid=delegate-open]");
+    // 首次委托对话框（工具栏委托钮已下线——协作面板「委托」小节是入口）
+    const del = await page.$("[data-testid=delegate-open-panel]");
     ck.check("有「交给 Agent…」入口", !!del);
     if (del) {
       await del.click();

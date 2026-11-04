@@ -8,7 +8,7 @@ import { resolveAction, isMacPlatform, isWindowsPlatform } from "./actions";
 import type { AppAction } from "./actions";
 import {
   KEYMAP_ACTIONS, KEYMAP_SETTING,
-  bindingOf, parseKeymap, conflictOf, formatBinding, sameBinding,
+  bindingOf, parseKeymap, parseKeymapReport, conflictOf, formatBinding, terminalReserved, exemptFromTerminal, defaultKeymap,
   type Binding, type KeyActionId,
 } from "./keymap";
 import { CommandPalette, type PaletteItem } from "./palette";
@@ -18,7 +18,11 @@ import {
 } from "./zoom";
 import { applyCheckpoint, createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
-import { paneGrid } from "./terminal/pane-grid.mjs";
+import {
+  MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
+  type PaneNode, type PaneTile, type PaneDivider, type DropZone,
+} from "./terminal/pane-grid.mjs";
+import { imePunctToAscii } from "./terminal/ime-punct.mjs";
 import type {
   Host, HostDraft, HostMeta, RecentHost, SshConfigPreview, SshImportOutcome, SessionInfo, ApprovalItem, AuthDraft,
   PendingHostKey, PendingAuthPrompt, SessionBrief as Brief, AuditEvent,
@@ -29,7 +33,11 @@ import type {
   McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
   RestoreEntry, LocalShell, UpdateCheck, UpdaterInfo,
   TmuxStatus,
-} from "./adapter/wire";
+  TmuxWallCell,
+  TmuxWallFit,
+  TmuxWallFitResult,
+  TmuxWallRestoreItem,
+  TmuxWallTarget,} from "./adapter/wire";
 import { recordsRangeSince } from "./components/records-pane";
 import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
 import { isMonitorPaused, setMonitorPaused as setStoreMonitorPaused, setMonEnabled, syncMonitorTargets } from "./monitor-store";
@@ -98,6 +106,7 @@ import { ConnDetail } from "./components/conn-detail";
 import { Hostbar } from "./components/hostbar";
 import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
+import { TmuxWall } from "./components/tmux-wall";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 import { SelfMeterTitlebar } from "./self-meter";
 
@@ -129,11 +138,113 @@ const SETTING_TMUX_PREFS = "tmux.v1.prefs";
 type PaneTermEntry = {
   sid: string; paneId: number; name: string;
   term: Terminal; cell: HTMLDivElement; body: HTMLDivElement;
-  webgl: WebglAddon | null; bornAt: number; alive: boolean;
+  zoomBtn: HTMLButtonElement;
+  webgl: WebglAddon | null; liga: LigaturesAddon | null; bornAt: number; alive: boolean; deadWarned: boolean;
 };
+
+// 窗格最大化/还原钮图标（imperative DOM 用；lucide maximize-2/minimize-2 同形——
+// 与 React 侧 icons.tsx 的 IconMaximize/IconMinimize 保持一体）
+const PANE_ZOOM_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+const PANE_ZOOM_ON_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+
+/** 布局树叶子键原位改名（tmux 侧改名跟随）：树结构与占比不动，只换键——
+ * 重命名不掉位置；from 不在树里是 no-op（该标签没拖过=自动平铺，无从改名）。 */
+function renameTileKey(node: PaneNode | null | undefined, from: string, to: string): void {
+  if (!node) return;
+  if (node.kids) {
+    for (const k of node.kids) renameTileKey(k, from, to);
+    return;
+  }
+  if (node.key === from) node.key = to;
+}
 
 /** 面板格数上限（真实核心 handle.rs PANE_MAX / demo DEMO_PANE_MAX 同值）。 */
 const PANE_MAX = 5;
+
+/** 格子挂 WebGL 的上下文预算：浏览器每页活动 WebGL 上下文约 16 个，超出即强制
+ * 丢弃最老的（往往是主终端，静默回落 DOM 渲染）——超额的格子直接走 DOM 渲染器。 */
+const PANE_WEBGL_BUDGET = 12;
+
+/** 拖拽布局：单格最小像素（宽够 20 列、高够标题栏+数行；分隔条两侧各守此下限）。 */
+const PANE_MIN_W = 180;
+const PANE_MIN_H = 100;
+
+/** 死格键入一次性告示（格子 onData 与窗口捕获层的 Ctrl/Alt 改投共用）。 */
+function warnDeadPane(e: PaneTermEntry) {
+  if (e.deadWarned) return;
+  e.deadWarned = true;
+  e.term.write(`\r\n\x1b[33m⚠ ${t("窗格已断开——键入未发送。")}\x1b[0m\r\n`);
+}
+
+/** tmux 前缀后一键的武装位（key = 主视图 sid 或格子 `sid:paneId`）。前缀之后的一键是
+ * tmux 命令键不是文本，但中文输入法「中文标点」模式会把它提交成中文标点：Shift+4 → ￥、
+ * " → “、: → ：、[ → 【……tmux 收到的是未绑定的键、静默丢弃——Ctrl+B $（改会话名）/
+ * ,（改窗口名）/ "（上下分）/ :（命令行）/ [（复制模式）全都出不来（% 不变形，分屏照常）。
+ * 窗口捕获层把 C-b 直发给 tmux 目标时武装，该目标下一份 onData 一次性消费并还原。 */
+let tmuxPrefixArm: { key: string; at: number } | null = null;
+
+/** 捕获层每次直发控制字符/Meta 序列后调用：C-b 发往 tmux 目标即武装，其余一律解除。 */
+function armTmuxPrefix(key: string | null) {
+  tmuxPrefixArm = key ? { key, at: performance.now() } : null;
+}
+
+/** 终端 onData 出口：本目标已武装则一次性消费——输入法标点还原成物理键位的 ASCII
+ *（terminal/ime-punct.mjs），其余原样；前缀后 5s 未按键不再追认。dollar=消费的
+ * 是前缀后的「$」（C-b $ 改会话名）：调用方据此补探针，让格子标题/主视图名牌在
+ * 改名提交后秒级跟上（tmux 改名对前端没有事件，探针按不可变 session_id 对账）。 */
+function takeTmuxPrefixKey(key: string, d: string): { keys: string; dollar: boolean } {
+  const arm = tmuxPrefixArm;
+  if (!arm) return { keys: d, dollar: false };
+  // 一次性消费不看目标：前缀+命令键实践中紧邻，武装后改在别处打字=已离开，
+  // 保留武装会让「回原目标打的第一键」被迟到还原
+  tmuxPrefixArm = null;
+  if (arm.key !== key || performance.now() - arm.at > 5000) return { keys: d, dollar: false };
+  const keys = imePunctToAscii(d) ?? d;
+  return { keys, dollar: keys === "$" };
+}
+
+/** C-b $ 之后的补探针时刻表：前缀 $ 只证明「改名框要弹」，提交（回车）时刻无从
+ * 得知——按 2.5/7/20s 三连补，改名提交后最近一发命中即刷新，全程至多 3 次轻量
+ * exec；同一目标重复按 $ 重排时刻表。 */
+const tmuxProbeFollowTimers = new Map<string, number[]>();
+function scheduleTmuxProbeFollow(sid: string) {
+  const prev = tmuxProbeFollowTimers.get(sid);
+  if (prev) for (const id of prev) clearTimeout(id);
+  tmuxProbeFollowTimers.set(
+    sid,
+    [2500, 7000, 20000].map((ms, i) =>
+      window.setTimeout(() => {
+        tmuxProbeFollowHook?.(sid);
+        if (i === 2) tmuxProbeFollowTimers.delete(sid); // 末发后清表（关会话后不再空开枪）
+      }, ms),
+    ),
+  );
+}
+/** 组件侧挂钩（invoke tmux_probe + 刷新会话清单）；onData 闭包不追 stale 引用。 */
+let tmuxProbeFollowHook: ((sid: string) => void) | null = null;
+
+/** 格子缓冲尾部的 tmux 收尾提示（`[detached (from session x)]`、`[exited]`、
+ * `can't find session` 等），供「窗格已结束」toast 交代原因；没有就返回 null。 */
+function lastTmuxNotice(term: Terminal): string | null {
+  const b = term.buffer.active;
+  // 按逻辑行读：窄格子里 tmux 收尾行会软折行（isWrapped=本行是上一行的续行），
+  // 只读物理末行会把「[detached (from session x)]」截成半句
+  for (let end = b.length - 1, seen = 0; end >= 0 && seen < 12;) {
+    let start = end;
+    while (start > 0 && b.getLine(start)?.isWrapped) start--;
+    let line = "";
+    for (let i = start; i <= end; i++) line += b.getLine(i)?.translateToString(true) ?? "";
+    end = start - 1;
+    line = line.trim();
+    if (!line) continue;
+    seen++;
+    if (/^\[(detached|exited|server exited|lost tty|terminated)/.test(line)
+      || /can't find session|no server running|no sessions|session not found/i.test(line)) {
+      return line.length > 120 ? line.slice(0, 120) + "…" : line;
+    }
+  }
+  return null;
+}
 
 export default function App() {
 
@@ -410,7 +521,7 @@ export default function App() {
   const [osc52Policy, setOsc52Policy] = useState<"allow" | "ask" | "deny">("ask");
   const osc52PolicyRef = useRef<"allow" | "ask" | "deny">("ask");
   // 写入前的询问卡（同刻新请求覆盖旧待决——last-wins，预览只展最新一条）
-  const [osc52Ask, setOsc52Ask] = useState<{ sid: string; text: string } | null>(null);
+  const [osc52Ask, setOsc52Ask] = useState<{ sid: string; text: string; source?: string } | null>(null);
   const osc52AskRef = useRef<HTMLDivElement | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun"; paneKey?: string } | null>(null);
   // P0 终端品质轮：粘贴危险形态的**廉价预筛**——命中词根才过 Rust 扫描（判定唯一在
@@ -454,6 +565,25 @@ export default function App() {
   // P2-c：OSC 52 实际写入同样经 ref（makeTerm([]) 闭包只认 ref）。写成功给 toast——
   // 剪贴板被远端改写这件事必须让用户知道；失败如实报（WebView 权限/窗口无焦点都可能）。
   const osc52WriteRef = useRef<(sid: string, text: string) => void>(() => {});
+  // P2-c：OSC 52 载荷消费（主终端与 tmux 面板格子同一策略）。载荷 `选择区;base64`：
+  // `?` = 查询（读）一律拒绝（远端不得读本机剪贴板）；空载荷吞掉（不做「清空剪贴板」
+  // 语义——同样是破坏面）；其余 base64 → UTF-8 解码后按策略 allow=直写、ask=询问卡、
+  // deny=静默吞（与主流终端一致）。handler 须同步返回已消费，写入异步走 osc52WriteRef。
+  // source = tmux 面板格子的会话名（询问卡标出是哪个格子要写——同标签多格时分得清）。
+  const osc52ConsumeRef = useRef((sessionSid: string, data: string, source?: string): boolean => {
+    try {
+      let b64 = data.slice(data.indexOf(";") + 1).replace(/\s+/g, "");
+      if (!b64 || b64 === "?") return true;
+      // 稳定轮：载荷上限 256KB——恶意远端推数 MB 序列曾全量解码并驻留 state
+      //（ask 卡预览截 400 字符，但解码串与「允许」时的写入全文无界）
+      if (b64.length > 256 * 1024) return true;
+      b64 = b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b64.length % 4)) % 4);
+      const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+      if (osc52PolicyRef.current === "allow") osc52WriteRef.current(sessionSid, text);
+      else if (osc52PolicyRef.current === "ask") setOsc52Ask({ sid: sessionSid, text, source });
+    } catch { /* 非法 base64：吞 */ }
+    return true;
+  });
   useEffect(() => {
     osc52WriteRef.current = (sid, text) => {
       const host = sessionsRef.current.find((x) => x.id === sid)?.host_name ?? t("该会话");
@@ -577,6 +707,12 @@ export default function App() {
   // （十一轮 §6.3 修订：对象先存在、操作跟上来——新建会话先落标签，右键标签进分屏）
   const [splitMenu, setSplitMenu] = useState(false);
   const [tmuxMenu, setTmuxMenu] = useState(false);
+  // tmux 会话大屏（监控墙）：绑定打开它的标签——换标签即关（快照拍的是那台
+  // 主机，跨标签续放会拍错机器）。「进格子」复用 openTmuxPane 后收屏。
+  const [tmuxWallSid, setTmuxWallSid] = useState<string | null>(null);
+  const wallSession = sessions.find((x) => x.id === tmuxWallSid) ?? null;
+  useEffect(() => { setTmuxWallSid(null); }, [sid]);
+
   // 十一轮：标签右键菜单——按状态显隐的会话操作（分屏/重连/复制连接/详情/关闭）
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; sid: string } | null>(null);
   // 十一轮续：右键通道补全——主机卡（连接/收藏/编辑/删除）与终端区（复制/粘贴/全选）
@@ -953,7 +1089,10 @@ export default function App() {
       if (nextRecents) setRecents((prev) => sameShape(prev, nextRecents));
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
       setApprovals((prev) => sameShape(prev, nextApprovals));
-      setAutonomy(nextAutonomy);
+      // 同款 bailout（找茬四轮 B4）：此前唯一漏网——autonomy_list 每 3s 反序列化
+      // 新数组，引用恒变 → App 全树每 3s 必 diff（上方注释自述的「数据没变整树
+      // 静默」被架空，墙开着时空闲态也持续烧 CPU）
+      setAutonomy((prev) => sameShape(prev, nextAutonomy));
     } catch {
       // 审核低-5：首载失败也必须撤骨架给出空态出口（否则永久骨架 + 未处理 rejection）；
       // 3s 轮询自愈，错误不逐条打扰（连接类失败另有常驻横幅）
@@ -1275,13 +1414,41 @@ export default function App() {
   // 豁免：55 个 spec 的初始态是「2 个演示会话+欢迎页」，自动开会全炸；真实链路
   // 由真机验证钉住）。仅一次；先内联读默认 shell（与上方 state 装载无序，读毕再连）。
   // SSH 恢复仍「点了才连」：恢复入口在欢迎页空态与 ⌘K 面板。
+  // 只属于冷启动：F5/Ctrl+R 重载 WebView 时核心进程与会话都还在，前端却从头挂载——
+  // 此前每重载一次就多开一个本机标签。以核心会话表为准（决策时现取，不吃 state
+  // 装载时序）：已有任何未关闭会话即是重载续用，不开、回到重载前的标签；取不到按冷启动处理。
+  // 重载前的活动标签记在 sessionStorage（随 WebView 会话存活、应用重启即清——冷启动
+  // 不会误吃上次运行的值）。首拍 sid=null 是挂载初值不是用户离开标签，跳过不抹；
+  // 欢迎页上重载则如实留在欢迎页。
+  const [reloadSid] = useState<string | null>(() => {
+    try { return sessionStorage.getItem("ui.activeSid"); } catch { return null; }
+  });
+  const sidPersistArmedRef = useRef(false);
+  useEffect(() => {
+    if (!sidPersistArmedRef.current) {
+      sidPersistArmedRef.current = true;
+      if (!sid) return;
+    }
+    try {
+      if (sid) sessionStorage.setItem("ui.activeSid", sid);
+      else sessionStorage.removeItem("ui.activeSid");
+    } catch { /* 隐私模式忽略 */ }
+  }, [sid]);
   const autoLocalRef = useRef(false);
   useEffect(() => {
     if (!inTauri || !hostsLoaded || autoLocalRef.current) return;
     autoLocalRef.current = true;
-    const lh = hosts.find((h) => h.id === "local");
-    if (!lh) return;
     void (async () => {
+      try {
+        const live = ((await invoke("list_sessions")) as SessionInfo[]).filter((s) => s.state !== "Closed");
+        if (live.length > 0) {
+          // 仍在册才回；装载期间用户已点了别的标签就不抢
+          if (reloadSid && !sidRef.current && live.some((s) => s.id === reloadSid)) void attachSession(reloadSid);
+          return;
+        }
+      } catch { /* 取不到按冷启动处理 */ }
+      const lh = hosts.find((h) => h.id === "local");
+      if (!lh) return;
       try {
         const chosen = (await invoke("get_setting", { key: SETTING_LOCAL_SHELL })) ?? "";
         if (chosen) setLocalShellId(chosen);
@@ -1296,8 +1463,8 @@ export default function App() {
       } catch { /* 读失败走默认解析 */ }
       void createSession(lh, false, undefined, undefined, false);
     })();
-    // createSession 声明在后（TDZ：deps 数组渲染期求值不可引用）；effect 体运行时
-    // 已初始化，闭包捕获安全。autoLocalRef 保证仅首装执行一次。
+    // createSession / attachSession 声明在后（TDZ：deps 数组渲染期求值不可引用）；effect
+    // 体运行时已初始化，闭包捕获安全。autoLocalRef 保证仅首装执行一次。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostsLoaded, hosts]);
 
@@ -1331,10 +1498,34 @@ export default function App() {
     return () => clearInterval(t);
   }, [refreshLists, refreshBrief]);
 
-  // 审批事件推送（仅 Tauri 环境；纯浏览器 demo 模式无事件通道）
+  // 审批事件推送（仅 Tauri 环境；纯浏览器 demo 模式无事件通道）。新审批到达的
+  // 主动通知（找茬四轮 D1）：此前只刷列表——Agent 卡在等审批时用户可能长时间
+  // 无感（标题栏 pill/rail 徽标在全屏终端打字时太小）。与 trigger-event 同待遇：
+  // toast（带「去审批」动作）+ 标签铃；ApprovalEvent 线格式 = {"New"|"Updated": item}。
   useEffect(() => {
     if (!inTauri) return;
-    return tauriListen(listen("approval-event", () => refreshLists()));
+    return tauriListen(
+      listen<{ New?: { session_id: string; command: string }; Updated?: unknown }>(
+        "approval-event",
+        (e) => {
+          void refreshLists();
+          const item = e.payload?.New;
+          if (!item) return; // Updated=批准/拒绝收尾，不打扰
+          pushToast("info", t("新的待审批：{0}", (item.command || "").slice(0, 60)), {
+            label: t("去审批"),
+            title: t("打开协作面板处理审批"),
+            run: () => setRightPanel("collab"),
+          });
+          setBellSids((cur) => {
+            if (cur.has(item.session_id)) return cur;
+            const n = new Set(cur);
+            n.add(item.session_id);
+            return n;
+          });
+        },
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshLists]);
 
   // P2-b 输出触发器命中：toast + 标签铃（send 动作的审批卡走 approval-event 既有链）。
@@ -1512,6 +1703,51 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // tmux 面板拖拽布局（2026-11-02）：按标签记的用户布局树——未拖过无条目（沿用自动平铺，
+  // 与 paneGrid 同几何）；拖过之后新开的格子从最大格分一半、关掉的格子空间还给邻居。
+  // 前端内存态：重连不丢（同 sid），格子全关/关标签即弃（格子本身也不跨重启）。
+  const paneLayoutRef = useRef<Map<string, PaneNode>>(new Map());
+  // C-b $ 补探针挂钩：探针回包后刷新会话清单（格子标题/主视图名牌随对账换新名）
+  useEffect(() => {
+    tmuxProbeFollowHook = (sid) => {
+      void invoke("tmux_probe", { sid }).catch(() => { /* 探测失败保留旧清单 */ });
+      void refreshListsRef.current();
+    };
+    return () => { tmuxProbeFollowHook = null; };
+  }, []);
+  // 最近一次排版结果（拖拽命中与像素换算用）：哪个标签、哪棵树、各格几何与分隔条
+  const paneLayoutLastRef = useRef<{ sid: string; root: PaneNode; tiles: PaneTile[]; dividers: PaneDivider[] } | null>(null);
+  const paneDivsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  // 窗格最大化（保留格子外框）：{ sid, name } 单值——一次只放大一格；换标签不套用
+  // （别的标签照常网格），切回自动恢复；格被关/掉线重建后不在清单即自然还原
+  const paneZoomRef = useRef<{ sid: string; name: string } | null>(null);
+  // 建格监听里触发的重排走 ref（layoutTmuxPanes 定义在建格之后）
+  const paneRelayoutRef = useRef<() => void>(() => {});
+  // 拖拽控制器走 ref：命令式 DOM 的监听在建格时挂一次，实现随渲染更新（读的全是 ref）。
+  // 收尾一律带 pointerId：第二根指针（触摸/笔）的抬起不得结束第一根的拖动
+  const tileDragApiRef = useRef<{
+    down: (ev: PointerEvent, key: string, owner: string, src: HTMLElement, handle: HTMLElement) => void;
+    move: (ev: PointerEvent) => void;
+    finish: (apply: boolean, pointerId?: number) => void;
+    /** 排版后核对：被拖的格子/名牌已不在（远端结束、换装、关标签）→ 取消拖动，不留残态 */
+    sweep: () => void;
+  }>({ down: () => {}, move: () => {}, finish: () => {}, sweep: () => {} });
+  const paneDivApiRef = useRef<{
+    down: (ev: PointerEvent, el: HTMLDivElement) => void;
+    move: (ev: PointerEvent) => void;
+    end: (pointerId?: number) => void;
+    equalize: (el: HTMLDivElement) => void;
+  }>({ down: () => {}, move: () => {}, end: () => {}, equalize: () => {} });
+  /** 标题栏挂拖动：按住拖到别的格子——中央互换、四边对半分开（主视图名牌与格子标题栏同用）。
+   * key 传 getter 时按下瞬间现取（格子名随 tmux 侧改名刷新，闭包不得钉死旧名）。 */
+  const bindTileDrag = (handle: HTMLElement, key: string | (() => string), owner: string, src: HTMLElement) => {
+    handle.addEventListener("pointerdown", (ev) => tileDragApiRef.current.down(ev, typeof key === "function" ? key() : key, owner, src, handle));
+    handle.addEventListener("pointermove", (ev) => tileDragApiRef.current.move(ev));
+    handle.addEventListener("pointerup", (ev) => tileDragApiRef.current.finish(true, ev.pointerId));
+    handle.addEventListener("pointercancel", (ev) => tileDragApiRef.current.finish(false, ev.pointerId));
+    handle.addEventListener("lostpointercapture", (ev) => tileDragApiRef.current.finish(false, ev.pointerId));
+  };
+
   // 终端实例工厂：每个会话一个独立 xterm。
   const makeTerm = useCallback((sessionSid: string) => {
     const mount = termRef.current;
@@ -1520,10 +1756,12 @@ export default function App() {
     el.className = "term-session";
     el.dataset.sid = sessionSid;
     mount.appendChild(el);
-    // 分屏（T19）会话名牌：平时隐藏，进入分屏后由 applyPanes 填主机名并显示
+    // 分屏（T19）会话名牌：平时隐藏，进入分屏后由 applyPanes 填主机名并显示；
+    // tmux 面板网格里它是主视图的标题栏，可抓着拖动换位
     const tag = document.createElement("div");
     tag.className = "pane-tag";
     el.appendChild(tag);
+    bindTileDrag(tag, MAIN_KEY, sessionSid, el);
     // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
     // WebLinksAddon（registerLinkProvider）与 linkHandler（OSC 8 激活）均为 proposed API
     const term = new Terminal({
@@ -1668,24 +1906,7 @@ export default function App() {
     };
     term.onBell(() => flashAndNotify(t("终端响铃（BEL）：远端可能有命令完成或需要关注"), t(" — 终端响铃")));
     term.parser.registerOscHandler(9, (data) => { flashAndNotify(data.slice(0, 200) || t("远端通知")); return true; });
-    // P2-c：OSC 52 策略。载荷格式 `选择区;base64`：`?` = 查询（读）一律拒绝（远端
-    // 不得读本机剪贴板）；空载荷吞掉（不做「清空剪贴板」语义——同样是破坏面）；
-    // 其余 base64 → UTF-8 解码后按策略 allow=直写、ask=询问卡、deny=静默吞（与主流
-    // 终端一致）。handler 必须同步返回已消费；实际写入异步走（裁决后经 osc52WriteRef）。
-    term.parser.registerOscHandler(52, (data) => {
-      try {
-        let b64 = data.slice(data.indexOf(";") + 1).replace(/\s+/g, "");
-        if (!b64 || b64 === "?") return true;
-        // 稳定轮：载荷上限 256KB——恶意远端推数 MB 序列曾全量解码并驻留 state
-        //（ask 卡预览截 400 字符，但解码串与「允许」时的写入全文无界）
-        if (b64.length > 256 * 1024) return true;
-        b64 = b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b64.length % 4)) % 4);
-        const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
-        if (osc52PolicyRef.current === "allow") osc52WriteRef.current(sessionSid, text);
-        else if (osc52PolicyRef.current === "ask") setOsc52Ask({ sid: sessionSid, text });
-      } catch { /* 非法 base64：吞 */ }
-      return true;
-    });
+    term.parser.registerOscHandler(52, (data) => osc52ConsumeRef.current(sessionSid, data));
     // P1-b 增量：OSC 133 shell 集成标记直达刷新。核心输出通道广播的是喂屏原始
     // 字节，133 原样到达 FE xterm（xterm 默认忽略）——在此注册 parser handler，
     // 块开/合（A/B/C/D）瞬间即可刷新块面板，未开面板时零取数。150ms 尾沿去抖
@@ -1817,18 +2038,23 @@ export default function App() {
         return;
       }
       deadWarned = false;
-      invoke("send_keys", { sid: sessionSid, keys: d }).catch((e) => {
+      // 主视图 attach 了 tmux 时 C-b 同样武装（见 tmuxPrefixArm）：前缀后一键的输入法标点还原；
+      // 消费的是 C-b $ → 改名框要弹，排补探针让名牌在改名提交后跟上
+      const { keys, dollar } = takeTmuxPrefixKey(sessionSid, d);
+      if (dollar) scheduleTmuxProbeFollow(sessionSid);
+      invoke("send_keys", { sid: sessionSid, keys }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
       // 广播扇出（P2-a）：主发之后复制到勾选会话（目标逐会话过离线闸，见 broadcastSendRef）
-      if (!bcastSuppressRef.current) broadcastSendRef.current(sessionSid, d);
+      if (!bcastSuppressRef.current) broadcastSendRef.current(sessionSid, keys);
     });
     return { term, el, search: searchAddon, tag, feed: null as OutputFeed | null, webgl, liga };
   }, []);
 
   // ---- tmux 面板（一标签多 tmux 会话）：格子 xterm 工厂 / 订阅 / 销毁 / 布局 ----
-  // 主终端工厂的精简同构：字体/主题/光标/滚屏同走 refs；WebGL 优先、上下文丢失回落
-  // DOM；不挂搜索/路径链接/OSC 钩子（格子定位是「同时看」，深度操作切主视图）。
+  // 主终端工厂的精简同构：字体/主题/光标/滚屏同走 refs；WebGL 按预算挂、上下文丢失
+  // 回落 DOM；不挂搜索/路径链接，OSC 只挂 52（剪贴板写入策略与主终端同一套——tmux
+  // 复制模式与 claude code 的复制都走它）。格子定位是「同时看」，深度操作切主视图。
   // 输入直写格子通道（tmux_pane_input），绝不经主会话 send_keys。
   const closeTmuxPaneRef = useRef<(sid: string, paneId: number) => Promise<void>>(async () => {});
   const paneClosedRef = useRef<Map<string, number>>(new Map());
@@ -1851,13 +2077,27 @@ export default function App() {
     const stateTag = document.createElement("span");
     stateTag.className = "tmux-cell-state";
     stateTag.textContent = t("已断开 · 重连后自动恢复");
+    // 最大化/还原（用户拍板：在 × 左边；放大保留外框——标题栏常显，还原钮就在框上）
+    const zoomBtn = document.createElement("button");
+    zoomBtn.className = "ghost icon-btn tmux-cell-zoom";
+    zoomBtn.setAttribute("data-testid", "tmux-cell-zoom");
+    zoomBtn.title = t("最大化窗格（保留标题栏）");
+    zoomBtn.setAttribute("aria-label", zoomBtn.title);
+    zoomBtn.innerHTML = PANE_ZOOM_OFF_SVG;
+    zoomBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const cur = paneZoomRef.current;
+      const same = cur && cur.sid === sid && cur.name === entry.name;
+      paneZoomRef.current = same ? null : { sid, name: entry.name };
+      paneRelayoutRef.current();
+    });
     const closeBtn = document.createElement("button");
     closeBtn.className = "ghost icon-btn tmux-cell-close";
     closeBtn.setAttribute("data-testid", "tmux-cell-close");
     closeBtn.title = t("关闭窗格（只断开此视图，tmux 会话继续运行）");
     closeBtn.setAttribute("aria-label", closeBtn.title);
     closeBtn.textContent = "×";
-    head.append(label, stateTag, closeBtn);
+    head.append(label, stateTag, zoomBtn, closeBtn);
     const body = document.createElement("div");
     body.className = "tmux-cell-body";
     cell.append(head, body);
@@ -1876,12 +2116,30 @@ export default function App() {
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     let webgl: WebglAddon | null = null;
-    try {
-      const w = new WebglAddon();
-      w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
-      term.loadAddon(w);
-      webgl = w;
-    } catch { webgl = null; /* DOM 渲染器兜底 */ }
+    let liga: LigaturesAddon | null = null;
+    const glInUse = [...termsRef.current.values()].filter((x) => x.webgl).length
+      + [...paneTermsRef.current.values()].filter((x) => x.webgl).length;
+    // 渲染器与主终端同构（找茬四轮 C3）：连字开=DOM+LigaturesAddon（joiner 仅
+    // DOM 实现）、关=WebGL 优先按预算——此前格子恒挂 WebGL，用户开连字后主视图
+    // 走 DOM、格子仍 WebGL，同一屏两种字形引擎（连字只对主视图生效）。
+    if (termLigaRef.current) {
+      try {
+        liga = new LigaturesAddon();
+        term.loadAddon(liga);
+      } catch { liga = null; }
+    } else if (glInUse < PANE_WEBGL_BUDGET) {
+      try {
+        const w = new WebglAddon();
+        w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
+        term.loadAddon(w);
+        webgl = w;
+      } catch { webgl = null; /* DOM 渲染器兜底 */ }
+    }
+    // 名字现取（改名跟随会把条目名换掉，闭包钉建格时参数=询问卡源标签停在旧名）
+    term.parser.registerOscHandler(52, (data) => {
+      const curName = paneTermsRef.current.get(`${sid}:${paneId}`)?.name ?? name;
+      return osc52ConsumeRef.current(sid, data, curName);
+    });
     body.style.background = derivedThemeRef.current.bg;
     term.loadAddon(new WebLinksAddon((_ev, url) => {
       if (inTauri) void invoke("open_url", { url }).catch(() => {});
@@ -1894,7 +2152,7 @@ export default function App() {
       Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
     });
     const key = `${sid}:${paneId}`;
-    const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, webgl, bornAt: performance.now(), alive: true };
+    const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, zoomBtn, webgl, liga, bornAt: performance.now(), alive: true, deadWarned: false };
     // ⌘ 组合（mac）：复制/粘贴/全选作用于本格，其余 ⌘ 不进格子通道（主终端同口径）
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown" || !ev.metaKey) return true;
@@ -1914,17 +2172,16 @@ export default function App() {
       ev.stopPropagation();
       return false;
     });
-    let deadWarned = false;
     term.onData((d) => {
       if (!entry.alive) {
-        if (!deadWarned) {
-          deadWarned = true;
-          term.write(`\r\n\x1b[33m⚠ ${t("窗格已断开——键入未发送。")}\x1b[0m\r\n`);
-        }
+        warnDeadPane(entry);
         return;
       }
-      deadWarned = false;
-      invoke("tmux_pane_input", { sid, paneId, keys: d }).catch((e) => {
+      entry.deadWarned = false;
+      // 消费的是 C-b $ → 格子里改名框要弹：排补探针（标题随对账跟上）
+      const { keys, dollar } = takeTmuxPrefixKey(key, d);
+      if (dollar) scheduleTmuxProbeFollow(sid);
+      invoke("tmux_pane_input", { sid, paneId, keys }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
     });
@@ -1932,32 +2189,40 @@ export default function App() {
       ev.stopPropagation();
       void closeTmuxPaneRef.current(sid, paneId);
     });
-    // 点格子标题栏即聚焦本格（按钮除外）；焦点高亮跟随 xterm 输入框焦点
+    // 点格子标题栏即聚焦本格（按钮除外）；焦点格指示走 CSS :focus-within（主视图同判据）
     head.addEventListener("mousedown", (ev) => {
-      if (ev.target === closeBtn) return;
+      if (ev.target === closeBtn || ev.target === zoomBtn) return;
       ev.preventDefault();
       term.focus();
     });
-    cell.addEventListener("focusin", () => cell.classList.add("focused"));
-    cell.addEventListener("focusout", () => cell.classList.remove("focused"));
-    if (import.meta.env.DEV) {
-      const w = window as unknown as { __t_pane_terms?: Map<string, Terminal> };
-      w.__t_pane_terms ??= new Map();
-      w.__t_pane_terms.set(key, term);
-    }
+    head.title = t("拖动标题栏可移动位置：落在格子中央互换，落在边缘对半分开");
+    bindTileDrag(head, () => entry.name, sid, cell);
+    // 调试/取证钩子（曾仅 DEV 注册——真机 release 排障读不到表，改为无条件注册；
+    // 两行 Map 开销，disposePane 同步删除）
+    const w = window as unknown as { __t_pane_terms?: Map<string, Terminal> };
+    w.__t_pane_terms ??= new Map();
+    w.__t_pane_terms.set(key, term);
     return entry;
   }, []);
 
+  // 被摘的格子握着焦点时记一笔：同名格随后在本标签重建（掉线重连原位换装）→ 排版后焦点
+  // 交给新格，而不是留在兜底的主终端（用户以为还在原格里，接着打的字会进主视图）
+  const paneFocusHandoffRef = useRef<{ sid: string; name: string; at: number } | null>(null);
   const disposePane = useCallback((key: string) => {
     const e = paneTermsRef.current.get(key);
     if (!e) return;
+    const hadFocus = e.cell.contains(document.activeElement);
     paneTermsRef.current.delete(key);
     try { e.webgl?.dispose(); } catch { /* 已释放 */ }
     try { e.term.dispose(); } catch { /* 已释放 */ }
     e.cell.remove();
-    if (import.meta.env.DEV) {
-      (window as unknown as { __t_pane_terms?: Map<string, Terminal> }).__t_pane_terms?.delete(key);
+    // 被摘的格子握着焦点：元素移除不触发 focusout，焦点会悬空在 body（mac 原生 Ctrl
+    // 拦截还会按残留的 pane_id 改投死格）——交还活动会话的主终端
+    if (hadFocus && sidRef.current) {
+      paneFocusHandoffRef.current = { sid: e.sid, name: e.name, at: Date.now() };
+      termsRef.current.get(sidRef.current)?.term.focus();
     }
+    (window as unknown as { __t_pane_terms?: Map<string, Terminal> }).__t_pane_terms?.delete(key);
   }, []);
 
   // 建格并订阅格子输出（单订阅者：订阅即接走核心侧积压——attach 首屏重绘随之到达）。
@@ -1988,9 +2253,79 @@ export default function App() {
     }
   }, [makePaneTerm, disposePane]);
 
-  // 布局：活动会话（非分屏）有格子 → 主视图 + 格子按 paneGrid 平铺（索引 0=主视图）；
-  // 否则清掉全部内联几何（单 pane 的 inset:0 与分屏的类几何原样生效）。格子顺序=
-  // 快照顺序（核心愿望清单序，重建原位换装不挪位）；乐观开格（快照未含）按出生序垫后。
+  // 分隔条（拖拽布局）：每条 = 布局树里某容器相邻两子节点的边界，命令式元素按「容器路径/
+  // 下标」复用——拖动中树形不变、元素不重建，指针捕获不丢。静态分隔线仍由格子 1px 边框
+  // 承担，条只是 8px 命中区，悬停/拖动时亮 accent。
+  const syncPaneDividers = useCallback((dividers: PaneDivider[]) => {
+    const mount = termRef.current;
+    const live = paneDivsRef.current;
+    const seen = new Set<string>();
+    const pct = (x: number) => `${(x * 100).toFixed(4)}%`;
+    for (const d of dividers) {
+      const id = `${d.path.join(".")}/${d.index}`;
+      seen.add(id);
+      let el = live.get(id);
+      if (!el) {
+        const div = document.createElement("div");
+        div.className = "tmux-div";
+        div.setAttribute("data-testid", "tmux-div");
+        div.setAttribute("role", "separator");
+        div.addEventListener("pointerdown", (ev) => paneDivApiRef.current.down(ev, div));
+        div.addEventListener("pointermove", (ev) => paneDivApiRef.current.move(ev));
+        div.addEventListener("pointerup", (ev) => paneDivApiRef.current.end(ev.pointerId));
+        div.addEventListener("pointercancel", (ev) => paneDivApiRef.current.end(ev.pointerId));
+        div.addEventListener("lostpointercapture", (ev) => paneDivApiRef.current.end(ev.pointerId));
+        div.addEventListener("dblclick", () => paneDivApiRef.current.equalize(div));
+        mount?.appendChild(div);
+        live.set(id, div);
+        el = div;
+      }
+      el.dataset.path = d.path.join(".");
+      el.dataset.index = String(d.index);
+      el.dataset.dir = d.dir;
+      el.classList.toggle("div-v", d.dir === "row");
+      el.classList.toggle("div-h", d.dir === "col");
+      el.setAttribute("aria-orientation", d.dir === "row" ? "vertical" : "horizontal");
+      el.title = t("拖拽调整大小；双击均分");
+      if (d.dir === "row") {
+        el.style.left = `calc(${pct(d.x)} - 4px)`; el.style.top = pct(d.y);
+        el.style.width = "8px"; el.style.height = pct(d.len);
+      } else {
+        el.style.top = `calc(${pct(d.y)} - 4px)`; el.style.left = pct(d.x);
+        el.style.height = "8px"; el.style.width = pct(d.len);
+      }
+    }
+    // 拖动中的条被删（远端结束/换装改了树形）：元素被移除时 lostpointercapture 派发到
+    // document、元素自己的监听收不到——此处先收尾，不留 resize 光标与陈旧拖动态
+    for (const [id, el] of live) {
+      if (seen.has(id)) continue;
+      if (el.classList.contains("dragging")) paneDivApiRef.current.end();
+      el.remove();
+      live.delete(id);
+    }
+  }, []);
+
+  // 布局：活动会话（非分屏）有格子 → 主视图 + 格子按布局树平铺；否则清掉全部内联几何
+  // （单 pane 的 inset:0 与分屏的类几何原样生效）。用户没拖过=自动平铺（defaultLayout，
+  // 最大化钮换装：zoom 态钮=还原图标+文案，常态钮=最大化图标+文案。建格时默认
+  // 常态；掉线换装重建的格子（新 DOM 默认态）与跨标签切换的对齐都在排版后由此统一刷
+  const syncAllZoomBtns = () => {
+    const z = paneZoomRef.current;
+    for (const e of paneTermsRef.current.values()) {
+      const on = z != null && z.sid === e.sid && z.name === e.name;
+      const title = on ? t("还原窗格（回到网格）") : t("最大化窗格（保留标题栏）");
+      // 等值跳过（找茬四轮 B6）：innerHTML setter 无条件「删子树+重解析」、
+      // textContent 同值也重建文本节点——拖分隔条的 pointermove 热路径每帧
+      // layoutTmuxPanes 时，5 格满配=每帧 5 次 SVG 重解析纯 churn
+      if (e.zoomBtn.title !== title) e.zoomBtn.title = title;
+      if (e.zoomBtn.getAttribute("aria-label") !== title) e.zoomBtn.setAttribute("aria-label", title);
+      const svg = on ? PANE_ZOOM_ON_SVG : PANE_ZOOM_OFF_SVG;
+      if (e.zoomBtn.innerHTML !== svg) e.zoomBtn.innerHTML = svg;
+    }
+  };
+
+  // 与 paneGrid 同几何：主视图在首、格子按快照顺序——核心愿望清单序，重建原位换装不挪位；
+  // 乐观开格（快照未含）按出生序垫后）；拖过=该标签的布局树，先与在场格子对账。
   const layoutTmuxPanes = useCallback(() => {
     const mount = termRef.current;
     const active = sidRef.current;
@@ -2015,23 +2350,91 @@ export default function App() {
       el.style.right = `${((1 - g.left - g.width) * 100).toFixed(4)}%`;
       el.style.bottom = `${((1 - g.top - g.height) * 100).toFixed(4)}%`;
     };
-    const shown = new Set(cells);
+    // 布局按 tmux 会话名认格：重建换装瞬间同名旧格可能尚未收掉——只排第一个（快照在册者在前）
+    const byKey = new Map<string, PaneTermEntry>();
+    for (const e of cells) if (!byKey.has(e.name)) byKey.set(e.name, e);
+    const shown = new Set(byKey.values());
     for (const e of paneTermsRef.current.values()) if (!shown.has(e)) e.cell.style.display = "none";
     for (const [s, e] of termsRef.current) {
-      if (s !== active || cells.length === 0) place(e.el, null);
+      if (s !== active || byKey.size === 0) place(e.el, null);
     }
-    mount?.classList.toggle("has-tmux-panes", cells.length > 0);
-    if (cells.length === 0 || !active) return;
-    const slots = paneGrid(cells.length + 1);
+    for (const s of [...paneLayoutRef.current.keys()]) {
+      if (!sessionsRef.current.some((x) => x.id === s)) paneLayoutRef.current.delete(s);
+    }
+    mount?.classList.toggle("has-tmux-panes", byKey.size > 0);
+    if (!mount || !active || byKey.size === 0) {
+      // 格子全关 = 布局作废（下次开面板从自动平铺起）；分屏只是暂时藏起格子，布局留着
+      if (active && !splitRef.current) paneLayoutRef.current.delete(active);
+      // 最大化残记就地清掉（无格可放大）；主视图 display 交还类规则（zoom 曾置 none）
+      if (active && paneZoomRef.current?.sid === active) paneZoomRef.current = null;
+      const m0 = active ? termsRef.current.get(active) : null;
+      if (m0) m0.el.style.display = "";
+      paneLayoutLastRef.current = null;
+      syncPaneDividers([]);
+      tileDragApiRef.current.sweep();
+      syncAllZoomBtns();
+      return;
+    }
+    const keys = [MAIN_KEY, ...byKey.keys()];
+    let root = paneLayoutRef.current.get(active) ?? null;
+    if (root) {
+      const box = mount.getBoundingClientRect();
+      root = syncLayout(root, keys, box.height > 0 ? box.width / box.height : 16 / 9);
+      if (root) paneLayoutRef.current.set(active, root);
+    }
+    root ??= defaultLayout(keys);
+    if (!root) return;
+    const { tiles, dividers } = layoutRects(root);
+    paneLayoutLastRef.current = { sid: active, root, tiles, dividers };
     const main = termsRef.current.get(active);
     if (main) {
-      place(main.el, slots[0]);
       // 主视图名牌：格子各有标题栏，主视图同样标出它看的是什么（tmux 会话或主机 shell）
       const cur = sessionsRef.current.find((x) => x.id === active);
-      main.tag.textContent = cur?.tmux_attached ? `tmux:${cur.tmux_attached}` : (cur?.host_name ?? "");
+      const tagText = cur?.tmux_attached ? `tmux:${cur.tmux_attached}` : (cur?.host_name ?? "");
+      if (main.tag.textContent !== tagText) main.tag.textContent = tagText;
+      const tagTitle = t("拖动标题栏可移动位置：落在格子中央互换，落在边缘对半分开");
+      if (main.tag.title !== tagTitle) main.tag.title = tagTitle;
     }
-    cells.forEach((e, i) => { e.cell.style.display = "flex"; place(e.cell, slots[i + 1]); });
-  }, []);
+    // 最大化分支（用户拍板：放大保留外框）：整幅只呈放大的那一格——主视图与兄弟
+    // 格暂隐、分隔条撤收、布局树冻结（还原时重算）。zoom 残记（格被关/掉线重建后
+    // 不在清单）就地清掉自然还原。还原钮就在格子外框标题栏上（zoomBtn）。
+    const zoom = paneZoomRef.current;
+    const zoomEntry = zoom && zoom.sid === active ? (byKey.get(zoom.name) ?? null) : null;
+    if (zoom && zoom.sid === active && !byKey.has(zoom.name)) paneZoomRef.current = null;
+    if (zoomEntry) {
+      if (main) { place(main.el, null); main.el.style.display = "none"; }
+      for (const e of paneTermsRef.current.values()) if (e !== zoomEntry) e.cell.style.display = "none";
+      zoomEntry.cell.style.display = "flex";
+      place(zoomEntry.cell, { left: 0, top: 0, width: 1, height: 1 });
+      syncPaneDividers([]);
+      tileDragApiRef.current.sweep();
+      paneLayoutLastRef.current = null;
+      syncAllZoomBtns();
+      return;
+    }
+    if (main) main.el.style.display = "";
+    for (const tl of tiles) {
+      if (tl.key === MAIN_KEY) { if (main) place(main.el, tl); continue; }
+      const e = byKey.get(tl.key);
+      if (e) { e.cell.style.display = "flex"; place(e.cell, tl); }
+    }
+    syncPaneDividers(dividers);
+    tileDragApiRef.current.sweep();
+    syncAllZoomBtns();
+    // 焦点交接：握焦点的格子被摘后同名格在本标签重建（掉线原位换装）→ 焦点给新格。
+    // 只在焦点仍停在兜底的主终端时交接（用户已点去别处就不抢）；5s 内有效
+    const ho = paneFocusHandoffRef.current;
+    if (ho && (Date.now() - ho.at > 5000 || ho.sid !== active)) paneFocusHandoffRef.current = null;
+    else if (ho) {
+      const succ = byKey.get(ho.name);
+      if (succ) {
+        paneFocusHandoffRef.current = null;
+        if (!document.activeElement || document.activeElement === document.body || main?.el.contains(document.activeElement)) succ.term.focus();
+      }
+    }
+  }, [syncPaneDividers]);
+  // 最大化钮的 click 监听在建格时挂一次，重排实现随渲染更新（ref 间接层）
+  paneRelayoutRef.current = layoutTmuxPanes;
 
   // 终端区域（含内容下方空白）点击即聚焦当前会话终端。
   // 搜索框/显示设置必须排除：两个浮层都挂在本容器里，点它们会冒泡到这里把焦点
@@ -2041,8 +2444,9 @@ export default function App() {
     if (!wrap) return;
     const onFocus = (ev: MouseEvent) => {
       const t = ev.target as HTMLElement | null;
-      // tmux 面板格子自管焦点（xterm mousedown 聚焦本格）——不得被抢回主终端
-      if (t?.closest?.(".term-search, .term-settings, .dead-overlay, .tmux-cell")) return;
+      // tmux 面板格子自管焦点（xterm mousedown 聚焦本格）——不得被抢回主终端；面板分隔条
+      // 同理（拖完/双击均分后的 click 冒泡到这里会把焦点从格子抢到主终端，接着打的字进错地方）
+      if (t?.closest?.(".term-search, .term-settings, .dead-overlay, .tmux-cell, .tmux-div")) return;
       xtermRef.current?.focus();
     };
     wrap.addEventListener("click", onFocus);
@@ -2069,6 +2473,7 @@ export default function App() {
         const paneHit = paneCell ? (paneTermsRef.current.get(`${paneCell.dataset.sid}:${paneCell.dataset.paneId}`) ?? null) : null;
         const toPane = (keys: string) => {
           if (paneHit?.alive) void invoke("tmux_pane_input", { sid: paneHit.sid, paneId: paneHit.paneId, keys }).catch(() => {});
+          else if (paneHit) warnDeadPane(paneHit);
         };
         // Option/Alt → Meta 序列（ESC 前缀）：readline 词跳转（⌥←/⌥→/⌥⌫）、
         // tmux M-键绑定。必须在捕获层拦截：⌥字母 在 WKWebView 会进文本输入系统
@@ -2078,6 +2483,7 @@ export default function App() {
           if (!seq) return;
           ev.preventDefault();
           ev.stopPropagation();
+          armTmuxPrefix(null); // Meta 序列本身就是前缀后的命令键（如 C-b M-1 排版）
           if (paneHit) { toPane(seq); return; }
           const s0 = sidRef.current;
           if (!s0 || (() => { const st = sessionsRef.current.find((x) => x.id === s0)?.state; return !st || inputBlockedState(st); })()) return;
@@ -2093,9 +2499,12 @@ export default function App() {
         // 母仍进 shell。ev.key 为主、ev.code 兜底（注入器/RDP 的 keydown 可能缺
         // scan code——直键三键轮实证过 code 空串打穿纯 code 匹配）。demo 不豁免：
         // Ctrl+D 保留 shell EOF，Ctrl+T/W 是浏览器保留键本就到不了这里。
-        if (inTauri) {
+        // 终端保留键（Win/Linux Ctrl+B = tmux 前缀）永不豁免，直达主视图/格子。
+        // DEV 下 spec 可置 window.__t_keymapExempt=true 走同一豁免分支（release 剔除）——
+        // 否则这条 Tauri-only 路径在 demo 里永远测不到（UI 套件全绿≠真机可键入）。
+        if (inTauri || (import.meta.env.DEV && (window as unknown as { __t_keymapExempt?: boolean }).__t_keymapExempt === true)) {
           const evb = bindingOf(ev, isMacPlatform());
-          if (evb && Object.values(keymapRef.current).some((b) => sameBinding(b, evb))) {
+          if (evb && exemptFromTerminal(keymapRef.current, evb, isMacPlatform())) {
             ev.preventDefault();
             ev.stopPropagation();
             return;
@@ -2114,6 +2523,8 @@ export default function App() {
           ev.preventDefault();
           ev.stopImmediatePropagation();
           toPane(pcc);
+          // 格子恒是 tmux 客户端：C-b 即前缀，武装下一键的输入法标点还原
+          armTmuxPrefix(pcc === "\x02" && paneHit.alive ? `${paneHit.sid}:${paneHit.paneId}` : null);
           return;
         }
         const s = sidRef.current;
@@ -2145,6 +2556,9 @@ export default function App() {
         ev.stopImmediatePropagation();
         void invoke("send_keys", { sid: s, keys: cc }).catch(() => {});
         broadcastSendRef.current(s, cc);
+        // 主视图只在确知 attach 了 tmux 时武装（手动敲的 tmux 无从得知，宁缺不错：
+        // 非 tmux 下 C-b 是 readline 光标左移，紧随其后打的中文标点是真文本）
+        armTmuxPrefix(cc === "\x02" && sessionsRef.current.find((x) => x.id === s)?.tmux_attached ? s : null);
       };
       window.addEventListener("keydown", onKey, { capture: true });
       return () => window.removeEventListener("keydown", onKey, { capture: true });
@@ -2269,10 +2683,218 @@ export default function App() {
   // 分屏建立/退出/换副窗格时也重估宽度退化态
   useEffect(() => { checkSplitWidthRef.current(); }, [splitPanes]);
 
+  // ---- 拖拽布局：分隔条调大小 / 标题栏换位（控制器经 ref 给命令式元素调用）----
+  // 分隔条：按下记下容器像素盒与两侧最小占比（嵌套格按当前占比反推最小像素，见
+  // minExtent），拖动即改两侧权重并重排，每 150ms 校准一次 PTY 几何、松手再校准终态
+  // （分屏分割条同节奏）。
+  const paneDivDragRef = useRef<{
+    sid: string; path: number[]; index: number; dir: "row" | "col"; pointerId: number;
+    origin: number; size: number; minA: number; minB: number; lastFit: number; el: HTMLDivElement;
+    /** 按下点相对边界的偏移（像素）：按相对位移拖，单击 1px 抖动不让边界跳到指针处 */
+    grab: number;
+    /** 按下时的树形签名：拖动中开/关格改了树形 → path/index 可能指向别的边界，即刻收尾 */
+    shape: string;
+  } | null>(null);
+  const layoutShape = (l: { tiles: PaneTile[]; dividers: PaneDivider[] }) =>
+    `${l.tiles.map((x) => x.key).join("|")}#${l.dividers.map((d) => `${d.path.join(".")}/${d.index}`).join(",")}`;
+  const endPaneDivDrag = () => {
+    const dg = paneDivDragRef.current;
+    if (!dg) return;
+    paneDivDragRef.current = null;
+    dg.el.classList.remove("dragging");
+    try { if (dg.el.hasPointerCapture(dg.pointerId)) dg.el.releasePointerCapture(dg.pointerId); } catch { /* 已释放 */ }
+    document.body.classList.remove("tile-resizing", "tile-resize-x", "tile-resize-y");
+    fitTerminal();
+  };
+  paneDivApiRef.current = {
+    down: (ev, el) => {
+      if (ev.button !== 0 || paneDivDragRef.current) return;
+      const last = paneLayoutLastRef.current;
+      const mount = termRef.current;
+      if (!last || !mount || last.sid !== sidRef.current) return;
+      const path = el.dataset.path ? el.dataset.path.split(".").map(Number) : [];
+      const index = Number(el.dataset.index);
+      const d = last.dividers.find((x) => x.index === index && x.path.join(".") === path.join("."));
+      const node = nodeAt(last.root, path);
+      if (!d || !node?.kids) return;
+      ev.preventDefault();
+      const r = mount.getBoundingClientRect();
+      const horiz = d.dir === "row";
+      const size = horiz ? d.box.width * r.width : d.box.height * r.height;
+      if (size <= 0) return;
+      const axis = horiz ? "x" : "y";
+      const origin = horiz ? r.left + d.box.left * r.width : r.top + d.box.top * r.height;
+      const tw = node.kids.reduce((s, k) => s + k.w, 0) || 1;
+      const cur = node.kids.slice(0, index + 1).reduce((s, k) => s + k.w, 0) / tw;
+      el.setPointerCapture(ev.pointerId);
+      paneDivDragRef.current = {
+        sid: last.sid, path, index, dir: d.dir, pointerId: ev.pointerId,
+        origin, size,
+        minA: minExtent(node.kids[index], axis, PANE_MIN_W, PANE_MIN_H) / size,
+        minB: minExtent(node.kids[index + 1], axis, PANE_MIN_W, PANE_MIN_H) / size,
+        lastFit: 0, el,
+        grab: (horiz ? ev.clientX : ev.clientY) - (origin + cur * size),
+        shape: layoutShape(last),
+      };
+      el.classList.add("dragging");
+      document.body.classList.add("tile-resizing", horiz ? "tile-resize-x" : "tile-resize-y");
+    },
+    move: (ev) => {
+      const dg = paneDivDragRef.current;
+      if (!dg || ev.pointerId !== dg.pointerId) return;
+      // 抬起漏收（捕获已丢）/条已被删：不再按陈旧 origin/size 改布局
+      if (!dg.el.isConnected || (ev.buttons & 1) === 0) { endPaneDivDrag(); return; }
+      const base = paneLayoutLastRef.current;
+      if (!base || base.sid !== dg.sid || sidRef.current !== dg.sid || layoutShape(base) !== dg.shape) { endPaneDivDrag(); return; }
+      const pt = (dg.dir === "row" ? ev.clientX : ev.clientY) - dg.grab;
+      const next = resizeAt(base.root, dg.path, dg.index, (pt - dg.origin) / dg.size, dg.minA, dg.minB);
+      if (next !== base.root) {
+        paneLayoutRef.current.set(dg.sid, next);
+        layoutTmuxPanes();
+      }
+      const now = performance.now();
+      if (now - dg.lastFit > 150) { dg.lastFit = now; fitTerminal(); }
+    },
+    end: (pointerId) => {
+      const dg = paneDivDragRef.current;
+      if (!dg || (pointerId !== undefined && pointerId !== dg.pointerId)) return;
+      endPaneDivDrag();
+    },
+    equalize: (el) => {
+      const last = paneLayoutLastRef.current;
+      if (!last || last.sid !== sidRef.current) return;
+      const next = equalizeAt(last.root, el.dataset.path ? el.dataset.path.split(".").map(Number) : []);
+      if (JSON.stringify(next) === JSON.stringify(last.root)) return; // 已均分：不把自动平铺翻成自定义
+      paneLayoutRef.current.set(last.sid, next);
+      layoutTmuxPanes();
+      fitTerminal();
+    },
+  };
+
+  // 标题栏拖动：5px 阈值区分点击与拖动；过阈值后被拖格半透明、落点提示框预演「落下后
+  // 被拖格的真实位置」（所见即所得）；松手应用，Esc/指针丢失取消。只在面板网格里生效。
+  const tileDragRef = useRef<{
+    sid: string; key: string; src: HTMLElement; handle: HTMLElement; pointerId: number;
+    x0: number; y0: number; active: boolean; target: { key: string; zone: DropZone } | null; hint: HTMLDivElement | null;
+  } | null>(null);
+  const tileDragEsc = useRef((ev: KeyboardEvent) => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    tileDragApiRef.current.finish(false);
+  }).current;
+  // 窗口级兜底：把手元素被移除（格子远端结束/关标签）后捕获已丢，抬起落不到把手上——
+  // 窗口捕获阶段按 pointerId 收尾（把手自己的监听若也收到，finish 已是空操作）
+  const tileDragWinUp = useRef((ev: PointerEvent) => {
+    tileDragApiRef.current.finish(ev.type === "pointerup", ev.pointerId);
+  }).current;
+  tileDragApiRef.current = {
+    down: (ev, key, owner, src, handle) => {
+      if (ev.button !== 0 || tileDragRef.current) return;
+      if ((ev.target as Element | null)?.closest?.("button")) return;
+      const last = paneLayoutLastRef.current;
+      if (!last || owner !== sidRef.current || last.sid !== owner || !last.tiles.some((x) => x.key === key)) return;
+      handle.setPointerCapture(ev.pointerId);
+      tileDragRef.current = {
+        sid: owner, key, src, handle, pointerId: ev.pointerId,
+        x0: ev.clientX, y0: ev.clientY, active: false, target: null, hint: null,
+      };
+      window.addEventListener("pointerup", tileDragWinUp, true);
+      window.addEventListener("pointercancel", tileDragWinUp, true);
+    },
+    move: (ev) => {
+      const dg = tileDragRef.current;
+      if (!dg || ev.pointerId !== dg.pointerId) return;
+      // 被拖的格子/名牌已不在，或抬起漏收：取消，不留半透明/提示框/grabbing 光标
+      if (!dg.src.isConnected || !dg.handle.isConnected || (ev.buttons & 1) === 0) { tileDragApiRef.current.finish(false); return; }
+      if (!dg.active) {
+        if (Math.abs(ev.clientX - dg.x0) + Math.abs(ev.clientY - dg.y0) < 5) return;
+        dg.active = true;
+        document.body.classList.add("tile-dragging");
+        dg.src.classList.add("tile-drag-src");
+        const hint = document.createElement("div");
+        hint.className = "tile-drop-hint";
+        hint.setAttribute("data-testid", "tile-drop-hint");
+        hint.style.display = "none";
+        const zone = document.createElement("div");
+        zone.className = "tdh-zone";
+        const label = document.createElement("span");
+        label.className = "tdh-label";
+        zone.append(label);
+        hint.append(zone);
+        termRef.current?.appendChild(hint);
+        dg.hint = hint;
+        window.addEventListener("keydown", tileDragEsc, true);
+      }
+      const last = paneLayoutLastRef.current;
+      const mount = termRef.current;
+      if (!last || !mount || last.sid !== dg.sid || sidRef.current !== dg.sid) { tileDragApiRef.current.finish(false); return; }
+      const r = mount.getBoundingClientRect();
+      const fx = (ev.clientX - r.left) / r.width;
+      const fy = (ev.clientY - r.top) / r.height;
+      const hit = last.tiles.find((x) => fx >= x.left && fx < x.left + x.width && fy >= x.top && fy < x.top + x.height);
+      dg.target = hit && hit.key !== dg.key
+        ? { key: hit.key, zone: dropZone((fx - hit.left) / hit.width, (fy - hit.top) / hit.height) }
+        : null;
+      const hint = dg.hint;
+      if (!hint) return;
+      const after = dg.target
+        ? layoutRects(moveTile(last.root, dg.key, dg.target.key, dg.target.zone)).tiles.find((x) => x.key === dg.key)
+        : null;
+      if (!dg.target || !after) { hint.style.display = "none"; delete hint.dataset.zone; return; }
+      hint.dataset.zone = dg.target.zone;
+      hint.style.left = `${(after.left * 100).toFixed(4)}%`;
+      hint.style.top = `${(after.top * 100).toFixed(4)}%`;
+      hint.style.width = `${(after.width * 100).toFixed(4)}%`;
+      hint.style.height = `${(after.height * 100).toFixed(4)}%`;
+      const label = hint.querySelector(".tdh-label");
+      if (label) label.textContent = dg.target.zone === "center" ? t("交换位置") : "";
+      hint.style.display = "block";
+    },
+    finish: (apply, pointerId) => {
+      const dg = tileDragRef.current;
+      if (!dg || (pointerId !== undefined && pointerId !== dg.pointerId)) return;
+      tileDragRef.current = null;
+      window.removeEventListener("keydown", tileDragEsc, true);
+      window.removeEventListener("pointerup", tileDragWinUp, true);
+      window.removeEventListener("pointercancel", tileDragWinUp, true);
+      try { if (dg.handle.hasPointerCapture(dg.pointerId)) dg.handle.releasePointerCapture(dg.pointerId); } catch { /* 已释放 */ }
+      dg.hint?.remove();
+      dg.src.classList.remove("tile-drag-src");
+      document.body.classList.remove("tile-dragging");
+      if (!apply || !dg.active || !dg.target) return;
+      const last = paneLayoutLastRef.current;
+      if (!last || last.sid !== dg.sid) return;
+      const next = moveTile(last.root, dg.key, dg.target.key, dg.target.zone);
+      if (next === last.root) return;
+      paneLayoutRef.current.set(dg.sid, next);
+      layoutTmuxPanes();
+      fitTerminal();
+      setTimeout(() => fitTerminal(), 150);
+    },
+    sweep: () => {
+      const dg = tileDragRef.current;
+      if (!dg) return;
+      const last = paneLayoutLastRef.current;
+      if (!dg.src.isConnected || !dg.handle.isConnected || !last || last.sid !== dg.sid || !last.tiles.some((x) => x.key === dg.key)) {
+        tileDragApiRef.current.finish(false);
+      }
+    },
+  };
+  // 右键「重置面板布局」：弃掉该标签的布局树，回到自动平铺（分屏期间格子都藏着，不出此项）
+  const paneLayoutCustom = (s: string) => !splitRef.current && paneLayoutRef.current.has(s);
+  const resetPaneLayout = (s: string) => {
+    if (!paneLayoutRef.current.delete(s)) return;
+    layoutTmuxPanes();
+    fitTerminal();
+    setTimeout(() => fitTerminal(), 150);
+  };
+
   // tmux 面板对账：会话快照（3s 轮询 + 开关格后的即时刷新 + 格子流终结即刷）是格子的
   // 唯一事实源。快照有、本地无 → 建格订阅；本地有、快照无 → 收格（快照请求早于格子
   // 出生则缺席不作数——乐观开格；刚关的格子 5s 内不因旧快照重建）；alive 变化 → 遮罩
   // 开合。同名新 pane_id = 重连原位换装。
+  const mainTagSigRef = useRef<string | null>(null);
   useEffect(() => {
     const want = new Map<string, { sid: string; paneId: number; name: string; alive: boolean }>();
     for (const s of sessions) {
@@ -2283,17 +2905,59 @@ export default function App() {
     }
     const now = Date.now();
     for (const [k, at] of paneClosedRef.current) if (now - at > 5000) paneClosedRef.current.delete(k);
+    // 主视图名牌即时换装：layout 只在格子开合/改名/拖拽时跑，attach/改名跟随不经过它——
+    // 按签名比对直接重写名牌文本（attach 记录或主机名变了才写，3s 轮询空转零动作）
+    const curActive = sessions.find((x) => x.id === sidRef.current);
+    const tagSig = curActive ? `${curActive.tmux_attached ?? ""}|${curActive.host_name}` : null;
+    if (tagSig !== mainTagSigRef.current) {
+      mainTagSigRef.current = tagSig;
+      const main = sidRef.current ? termsRef.current.get(sidRef.current) : null;
+      if (main && curActive) {
+        main.tag.textContent = curActive.tmux_attached ? `tmux:${curActive.tmux_attached}` : curActive.host_name;
+      }
+    }
     let changed = false;
     for (const [k, e] of [...paneTermsRef.current.entries()]) {
       const w = want.get(k);
       if (!w) {
         if (panesSnapAtRef.current <= e.bornAt && sessions.some((x) => x.id === e.sid)) continue;
+        // 远端结束（格内 exit / C-b d / 会话被 kill / 重连后已不存在）：格子消失要给个
+        // 交代。会话仍在且快照里没有同名新格（排除重建换装与关标签）才提示，附 tmux 的
+        // 收尾提示行；用户点 × 关格不走这里（closeTmuxPane 已先行收格并自带提示）
+        const sess = sessions.find((x) => x.id === e.sid);
+        if (sess && !(sess.panes ?? []).some((p) => p.tmux_session === e.name)) {
+          const notice = lastTmuxNotice(e.term);
+          pushToast("info", notice
+            ? t("窗格已结束：{0} — {1}", e.name, notice)
+            : t("窗格已结束：{0}（远端会话已退出、分离或不存在）", e.name));
+        }
         disposePane(k);
         changed = true;
         continue;
       }
+      if (e.name !== w.name) {
+        // 改名跟随：核心按不可变 tmux session_id 对账后快照带回新名——格子标题/
+        // 数据集/拖拽键全换，布局树叶子原位换键（重命名不掉位置）；主视图名牌随
+        // 下方 layoutTmuxPanes 重写。键是名字（重建换装靠同名活口），id 在核心侧认。
+        const old = e.name;
+        e.name = w.name;
+        e.cell.dataset.tmux = w.name;
+        const lbl = e.cell.querySelector<HTMLElement>(".tmux-cell-name");
+        if (lbl) lbl.textContent = w.name;
+        const tree = paneLayoutRef.current.get(e.sid);
+        if (tree && treeHasKey(tree, w.name)) {
+          // 树里已有新名的 stale 叶（同快照「B 格结束 + A 改名成 B」常落一起）：
+          // 先摘掉再换键——重复键 syncLayout 永不去重（两键都在 want），随开格繁殖
+          const pruned = removeTile(tree, w.name);
+          if (pruned) paneLayoutRef.current.set(e.sid, pruned);
+          else paneLayoutRef.current.delete(e.sid); // 摘空=树作废回自动平铺（语义正确）
+        }
+        renameTileKey(paneLayoutRef.current.get(e.sid), old, w.name);
+        changed = true;
+      }
       if (e.alive !== w.alive) {
         e.alive = w.alive;
+        if (w.alive) e.deadWarned = false;
         e.cell.classList.toggle("dead", !w.alive);
         changed = true;
       }
@@ -2309,7 +2973,23 @@ export default function App() {
       });
     }
     if (changed) { layoutTmuxPanes(); fitTerminal(); }
-  }, [sessions, ensurePaneTerm, disposePane, layoutTmuxPanes, fitTerminal]);
+  }, [sessions, ensurePaneTerm, disposePane, layoutTmuxPanes, fitTerminal, pushToast]);
+
+  // 运行时切语言：格子标题栏是命令式 DOM（React 不重渲染），已建格子的文案在此重写
+  useEffect(() => {
+    for (const e of paneTermsRef.current.values()) {
+      const st = e.cell.querySelector(".tmux-cell-state");
+      if (st) st.textContent = t("已断开 · 重连后自动恢复");
+      const cb = e.cell.querySelector<HTMLButtonElement>(".tmux-cell-close");
+      if (cb) {
+        cb.title = t("关闭窗格（只断开此视图，tmux 会话继续运行）");
+        cb.setAttribute("aria-label", cb.title);
+      }
+      const hd = e.cell.querySelector<HTMLElement>(".tmux-cell-head");
+      if (hd) hd.title = t("拖动标题栏可移动位置：落在格子中央互换，落在边缘对半分开");
+    }
+    layoutTmuxPanes(); // 分隔条与主视图名牌的提示文案随排版重写
+  }, [locale, layoutTmuxPanes]);
 
   // —— 显示设置（路线图⑥）：字号/主题，vault 持久化（跨进程记忆）——
   // 状态供 UI 渲染；ref 供 makeTerm 闭包与快捷键读取（避开 stale closure）
@@ -2439,7 +3119,7 @@ export default function App() {
   const paletteRef = useRef(PALETTE_DEFAULT);
   // 键位表（键位配置轮）：可重绑动作的当前表，缺省=默认表。ref 供 window 捕获层的
   // 两个监听器（注册于挂载期、闭包不换）与控制字符直发层读取；state 供设置面板回显
-  const [keymap, setKeymap] = useState<Record<KeyActionId, Binding>>(() => parseKeymap(null));
+  const [keymap, setKeymap] = useState<Record<KeyActionId, Binding>>(() => parseKeymap(null, isMacPlatform()));
   const keymapRef = useRef(keymap);
   const applyKeymap = useCallback((km: Record<KeyActionId, Binding>) => {
     keymapRef.current = km;
@@ -2590,9 +3270,14 @@ export default function App() {
   }, [applyTermPrefs, refitAfterMetrics, persistSetting]);
   // 连字开关（P0 轮）：真开/真关渲染器——开 = 释放 WebGL 换 DOM 渲染器（character
   // joiner 仅 DOM 实现）再载 LigaturesAddon；关 = 卸 addon、重挂 WebGL（失败回落 DOM）。
-  // 逐实例热切换，不重建缓冲（滚动历史与在跑程序原地保留）；新建实例由 makeTerm 继承。
+  // 逐实例热切换，不重建缓冲（滚动历史与在跑程序原地保留）；新建实例由 makeTerm 继承
+  // （格子终端同构，找茬四轮 C3——热切换遍历双表，格子与主视图一起换装）。
   const applyLigatures = useCallback((on: boolean) => {
-    for (const [key, e] of termsRef.current) {
+    const entries: Array<[string, { term: Terminal; webgl: WebglAddon | null; liga: LigaturesAddon | null }]> = [
+      ...[...termsRef.current.entries()],
+      ...[...paneTermsRef.current.entries()].map(([k, v]): [string, PaneTermEntry] => [`pane:${k}`, v]),
+    ];
+    for (const [key, e] of entries) {
       if (on) {
         if (e.webgl) { try { e.webgl.dispose(); } catch { /* 已释放 */ } e.webgl = null; }
         if (!e.liga) {
@@ -2730,6 +3415,21 @@ export default function App() {
     return () => { un(); unreg(); };
   }, [inTauri, pushToast]);
 
+  // 键位表载入（两域共用）：存量自定义若让位给默认值（例：主机栏迁到 Ctrl+Shift+B 而该键
+  // 已被别的动作占用）——一次性告知并回写解析结果，下次启动不再重复提示。
+  const loadKeymap = useCallback((raw: string) => {
+    const mac = isMacPlatform();
+    const { map, lost } = parseKeymapReport(raw, mac);
+    applyKeymap(map);
+    if (lost.length === 0) return;
+    persistSetting(KEYMAP_SETTING, JSON.stringify(map));
+    const label = (id: KeyActionId) => t(KEYMAP_ACTIONS.find((a) => a.id === id)?.label ?? id);
+    for (const l of lost) {
+      pushToast("info", t("快捷键冲突：「{0}」原设 {1}，让给了「{2}」，已恢复为 {3}", label(l.id), formatBinding(l.was, mac), label(l.by), formatBinding(map[l.id], mac)),
+        { label: t("去设置"), title: t("打开 设置 → 快捷键"), run: () => openSettingsAt("keys") });
+    }
+  }, [applyKeymap, persistSetting, pushToast, openSettingsAt]);
+
   // 启动载入偏好（Tauri=vault，浏览器=localStorage）；早于载入创建的实例一并补齐。
   // 二十二轮主题统一：只载字号/色板/外观三样，尾部统一派生终端一次——ui.theme /
   // ui.theme.follow 老 KV 不再读（历史值残留无害），终端配色由色板×深浅唯一决定。
@@ -2800,7 +3500,7 @@ export default function App() {
       loadPalette(safeGet(SETTING_PALETTE));
       // 键位表（键位配置轮）：demo 走 localStorage，坏串/缺省回落默认表
       const kmRaw = safeGet(KEYMAP_SETTING);
-      if (kmRaw) applyKeymap(parseKeymap(kmRaw));
+      if (kmRaw) loadKeymap(kmRaw);
       // ⑤ 传输免审 opt-in：demo 与 persistSetting 同走 localStorage
       setTransferAutonomy(safeGet("collab.autonomy.transfers") === "1");
       // ⑦ 记录保留期：demo 同走 localStorage（坏值回落 30 天）
@@ -2834,7 +3534,7 @@ export default function App() {
       })
       .catch(() => {});
     const keymapP = invoke("get_setting", { key: KEYMAP_SETTING })
-      .then((v) => { if (typeof v === "string" && v) applyKeymap(parseKeymap(v)); })
+      .then((v) => { if (typeof v === "string" && v) loadKeymap(v); })
       .catch(() => {});
     const wsP = invoke("get_workspace").then(applyChromeBlob).catch(() => {});
     // P0 终端品质：六键一次并发回读（任一路失败回落该键默认，不拖累其余）；
@@ -2866,7 +3566,7 @@ export default function App() {
     // 字号/色板/外观三路都落定后派生一次（applyAppearance/loadPalette 内部亦有派生，
     // 这里兜底「全部缺省」的首次启动路径）
     void Promise.all([fontP, paletteP, wsP]).then(() => applyDerivedTerminal());
-  }, [inTauri, changeFontSize, applyAppearance, applyPalette, applyDerivedTerminal, applyKeymap, applyTermPrefs, applyLigatures]);
+  }, [inTauri, changeFontSize, applyAppearance, applyPalette, applyDerivedTerminal, loadKeymap, applyTermPrefs, applyLigatures]);
 
   // ---- C8 工作区偏好（R15）：blob（ui.v2.workspace）为主机栏开合/宽度的事实源 ----
   // 整取整存（DF8.1）：写前读最新 blob 再覆盖 hostbar 域，不整读缓存陈值；
@@ -2997,8 +3697,15 @@ export default function App() {
       .catch(() => { if (!dead) setRestoreEntries([]); });
     return () => { dead = true; };
   }, []);
-  const toggleHostbar = useCallback((open: boolean) => {
+  const toggleHostbar = useCallback((open: boolean, focusSearch?: boolean) => {
     setHostbarOpen(open);
+    // 键盘开栏即落焦点到搜索框（找茬四轮 D2）：此前只翻状态——有会话时 Tab 全被
+    // xterm 吃掉（\t 直发 shell），纯键盘用户够不到主机列表（palette 能补「键盘连
+    // 主机」、补不了「到达列表 UI」）。鼠标/rail 开栏不传本参不抢焦点（§6.3 焦点
+    // 纪律）；焦点归还走 Esc/再按热键的既有链。
+    if (open && focusSearch) {
+      window.setTimeout(() => hostSearchRef.current?.focus(), 0);
+    }
     // 活动栏轮：左栏视图互斥——展开主机栏即收起 Agent/编排/监控（双写各自持久键）
     if (open) {
       setAgentOpen(false);
@@ -3292,7 +3999,10 @@ export default function App() {
       case "zoom-in": zoomIn(); return true;
       case "zoom-out": zoomOut(); return true;
       case "zoom-reset": zoomReset(); return true;
-      case "hostbar": toggleHostbar(!hostbarOpenRef.current); return true;
+      case "hostbar":
+        // 键盘路径（Ctrl+Shift+B）：开栏即落焦点搜索框（D2）
+        toggleHostbar(!hostbarOpenRef.current, !hostbarOpenRef.current);
+        return true;
       case "palette":
         // ⌘K 命令面板（十九轮）：模态层不叠开（同 settings 门）；resolveAction
         // 已按模态门吞键，此处门是菜单加速器等不经解析器的入口的对齐
@@ -3378,6 +4088,14 @@ export default function App() {
         keymap: keymapRef.current,
       });
       if (!a) return;
+      // 大屏键入焦点（.tw-input，监控墙隐藏输入框）：键入不触发应用动作——
+      // Ctrl+W 在 shell 里是 werase 不是关标签、Ctrl+F 是向历史搜索不是开查找
+      // （与终端 textarea 的 W4 豁免同口径，监控墙轮）。仅 Esc 例外放行：
+      // 浮层链优先（有浮层关浮层，无浮层 dispatch false 原样透传给键入通道）。
+      // tmux 新建会话作曲行（.tmux-create-input）是整段全拦（含 Esc）：Esc 在
+      // 这里是「取消作曲」，走 keymap 浮层链会连菜单一起关掉
+      if (document.activeElement?.classList.contains("tmux-create-input")) return;
+      if (a.id !== "esc" && document.activeElement?.classList.contains("tw-input")) return;
       if (dispatchRef.current(a)) {
         ev.preventDefault();
         ev.stopPropagation();
@@ -3601,7 +4319,12 @@ export default function App() {
     // fit 收敛后对齐：视口滚到最后一个非空行（scrollToLine 钳到 scrollback 底——
     // 正常场景=滚底 no-op，毁损场景=对齐回内容尾）；光标悬在内容尾之下的空区时
     // 写绝对定位序列送回内容尾行尾，与核心 PTY 光标语义重新对齐（回显从提示符
-    // 后继续而非悬空处）。400ms 补拍覆盖 350ms 二次 fit 的缩行。
+    // 后继续而非悬空处）。400/700ms 补拍覆盖 350ms 二次 fit 的缩行与迟到的回放帧。
+    // 行号口径（找茬四轮 C1，P1）：光标位置按**缓冲绝对行**（baseY+cursorY）度量
+    // ——viewportY 随滚动位浮动，旧代码混算会在 scrollToLine 平滑滚动半途测错、
+    // CUP 又写死「tail+1」当视口行（tail 是绝对行号），两拍全部空放：1366×768
+    // 下检查点（32 行）按接入前高度预对齐、attach 后工具条压矮缩行 reflow 把
+    // 光标钉在垫行，回显脱离提示符两行。CUP 是视口相对行，写时按 ydisp 现算。
     const realignAfterFit = () => {
       const term = termsRef.current.get(newSid)?.term;
       if (!term) return;
@@ -3612,14 +4335,16 @@ export default function App() {
       // 最小滚动：内容尾恰好入视口即可（scrollToLine 内部钳 scrollback 底——
       // 正常场景=滚底 no-op，毁损场景=整段内容回到可视区）
       term.scrollToLine(Math.max(0, tail - term.rows + 1));
-      if (b.viewportY + b.cursorY > tail) {
-        const curLine = b.getLine(b.viewportY + b.cursorY);
+      const cursorAbs = b.baseY + b.cursorY;
+      if (cursorAbs > tail) {
+        const curLine = b.getLine(cursorAbs);
         if (!curLine || !curLine.translateToString(true).trim()) {
           // 光标悬在内容尾之下的空区（缩行 reflow 所致）——送回内容尾行尾，
           // 与核心 PTY 光标语义重新对齐（后续回显从提示符后继续而非悬空处）
           const line = b.getLine(tail);
           const col = line ? line.translateToString(true).length : 0;
-          term.write(`\x1b[${tail + 1};${col + 1}H`);
+          const row = Math.max(1, tail - b.viewportY + 1);
+          term.write(`\x1b[${row};${col + 1}H`);
         }
       }
       // 滚动/光标归位后渲染层可能滞留旧 scroll 锚（内容行不重绘、光标按旧位
@@ -3633,6 +4358,7 @@ export default function App() {
     if (fresh) {
       realignAfterFit();
       setTimeout(realignAfterFit, 400);
+      setTimeout(realignAfterFit, 700);
     }
     // 布局与字体稳定后再校准一次（首次 fit 可能撞上渲染器尺寸未就绪）
     setTimeout(() => void fitTerminal(), 350);
@@ -4000,9 +4726,13 @@ export default function App() {
       if (!evb) return; // lone modifier：等组合齐
       if (!evb.primary) { pushToast("err", t("快捷键需带 Ctrl（mac 为 ⌘）")); return; }
       if (evb.alt) { pushToast("err", t("Alt 组合暂不支持（终端里 Alt+字母 是 Meta 序列）")); return; }
+      if (terminalReserved(evb, isMacPlatform())) {
+        pushToast("err", t("{0} 留给终端（tmux 前缀键），请换一个组合", formatBinding(evb, false)));
+        return;
+      }
       const clash = conflictOf(keymapRef.current, keyCapture, evb);
       if (clash) {
-        pushToast("err", t("与「{0}」冲突，先给后者换键", KEYMAP_ACTIONS.find((a) => a.id === clash)?.label ?? clash));
+        pushToast("err", t("与「{0}」冲突，先给后者换键", t(KEYMAP_ACTIONS.find((a) => a.id === clash)?.label ?? clash)));
         return;
       }
       const next = { ...keymapRef.current, [keyCapture]: evb };
@@ -4014,6 +4744,19 @@ export default function App() {
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [keyCapture, applyKeymap, pushToast]);
+  // 设置页单条「重置」：默认键已被别的动作改占 → 拒绝并说明（同录键器冲突口径）——
+  // 不落出两条同键的表（动作分发只认先命中者，另一条静默失效，重载后还会被丢回默认）
+  const resetKeyBinding = useCallback((id: KeyActionId) => {
+    const def = defaultKeymap(isMacPlatform())[id];
+    const clash = conflictOf(keymapRef.current, id, def);
+    if (clash) {
+      pushToast("err", t("与「{0}」冲突，先给后者换键", t(KEYMAP_ACTIONS.find((a) => a.id === clash)?.label ?? clash)));
+      return;
+    }
+    const next = { ...keymapRef.current, [id]: def };
+    applyKeymap(next);
+    persistSetting(KEYMAP_SETTING, JSON.stringify(next));
+  }, [applyKeymap, persistSetting, pushToast]);
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
   // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
   useEffect(() => {
@@ -5283,6 +6026,45 @@ export default function App() {
     setTmuxMenu(false);
     void restoreTmuxScene(s, name);
   };
+  // 面板中的会话一键切主视图（找茬四轮 D6）：收齐同名窗格再走既有接入链——此前
+  // 菜单行 disabled+「先关窗格」，切回主视图要两跳。格是纯视图（detach 零损失可
+  // 随时重开），收格后终态单视图，落在面板双向防呆（不许两路并存）允许侧。
+  const promotePaneToMain = async (s: SessionInfo, name: string) => {
+    setTmuxMenu(false);
+    for (const [, e] of [...paneTermsRef.current]) {
+      if (e.sid === s.id && e.name === name) await closeTmuxPaneRef.current(e.sid, e.paneId);
+    }
+    void restoreTmuxScene(s, name);
+  };
+
+  // ---- 新建 tmux 会话（快接菜单作曲行）：远端 new-session -d，建好即接入 ----
+  // 名字白名单/同名预检在 core；这里管 UX：成功=关作曲行+刷清单+走 pickTmuxSession
+  // 既有链路接入（attach/switch 二段式同源）；失败=错误就地 role=alert，作曲行
+  // 保持打开可改可重提。
+  const [tmuxCreateOpen, setTmuxCreateOpen] = useState(false);
+  const [tmuxCreateName, setTmuxCreateName] = useState("");
+  const [tmuxCreateErr, setTmuxCreateErr] = useState<string | null>(null);
+  const [tmuxCreateBusy, setTmuxCreateBusy] = useState(false);
+  const submitTmuxCreate = async (s: SessionInfo) => {
+    const name = tmuxCreateName.trim();
+    if (!name || tmuxCreateBusy) return;
+    setTmuxCreateBusy(true); setTmuxCreateErr(null);
+    try {
+      await invoke("tmux_session_create", { sid: s.id, name });
+      setTmuxCreateOpen(false); setTmuxCreateName("");
+      refreshTmuxList(s);
+      pickTmuxSession(s, name);
+      pushToast("ok", t("已创建并接入 tmux 会话「{0}」", name));
+    } catch (e) {
+      setTmuxCreateErr(friendlyError(e));
+    } finally {
+      setTmuxCreateBusy(false);
+    }
+  };
+  // 菜单关（点选/开面板/点外）即弃作曲行残态——下次打开是干净的
+  useEffect(() => {
+    if (!tmuxMenu) { setTmuxCreateOpen(false); setTmuxCreateName(""); setTmuxCreateErr(null); }
+  }, [tmuxMenu]);
 
   // ---- tmux 面板（一标签多 tmux 会话）：开格 / 关格 ----
   // 开格：同连接附加交互通道跑 `tmux -u attach`（核心侧防呆：同会话两路视图、同名格、
@@ -5306,23 +6088,73 @@ export default function App() {
       pushToast("err", errMsg(e));
     }
   };
-  // 关格：只拆客户端通道（detach），tmux 会话与其中进程继续运行。核心侧已不存在
-  // （掉线摘除/重建换装）同样收格；关闭时刻记入 paneClosedRef——在途的旧快照
+  // 关格：只拆客户端通道（detach），tmux 会话与其中进程继续运行。先收格再通知核心——
+  // 后端关通道可能卡在写锁上（远端停读时的写入），界面不该陪着等；核心侧已不存在
+  // （掉线摘除/重建换装）同样照常收格。关闭时刻记入 paneClosedRef——在途的旧快照
   // 仍列着它时，对账 5s 内不重建（防关了又闪回）。
   const closeTmuxPane = async (sid: string, paneId: number) => {
     const key = `${sid}:${paneId}`;
     const e = paneTermsRef.current.get(key);
     paneClosedRef.current.set(key, Date.now());
-    try { await invoke("tmux_pane_close", { sid, paneId }); } catch { /* 已不在核心侧：照常收格 */ }
     disposePane(key);
     layoutTmuxPanes();
     fitTerminal();
     setTimeout(() => fitTerminal(), 150);
     if (e) pushToast("ok", t("已关闭窗格：{0}（tmux 会话仍在运行）", e.name));
     if (sid === sidRef.current) xtermRef.current?.focus();
+    try { await invoke("tmux_pane_close", { sid, paneId }); } catch { /* 已不在核心侧：照常收格 */ }
     void refreshLists();
   };
   closeTmuxPaneRef.current = closeTmuxPane;
+
+  // 墙 props 稳定化（找茬四轮 B3 的 memo 前提）：内联闭包每渲染换引用 = TmuxWall
+  // 的 memo 形同虚设，App 每 3s 的整树 diff 直接砸进墙的逐字符 ANSI 重算。deps 钉
+  // wallSession（sameShape 复用旧引用——数据没变时回调引用稳定）；openTmuxPane 走
+  // ref 斩断依赖链。
+  const openTmuxPaneRef = useRef(openTmuxPane);
+  openTmuxPaneRef.current = openTmuxPane;
+  const wallFetchCells = useCallback(async (): Promise<Array<[string, TmuxWallCell]>> => {
+    if (!wallSession) return [];
+    // targets 在**请求发出时**定格并配好格键——回包与键成对，await 窗口
+    // 内 3s 会话轮询改清单（杀/建/改名）也不会单拍错位
+    const src = wallSession.tmux?.sessions ?? [];
+    const cells = await invoke("tmux_wall_snapshot", {
+      sid: wallSession.id,
+      targets: src.map((x) => ({ id: x.id ?? "", name: x.name })),
+    });
+    return cells.map((c, i) => [src[i] ? (src[i].id || src[i].name) : "", c]);
+  }, [wallSession]);
+  const wallSendInput = useCallback(
+    async (target: TmuxWallTarget, lit: string, keys: string[]): Promise<TmuxWallCell> =>
+      invoke("tmux_wall_input", { sid: wallSession?.id ?? "", target, lit, keys }),
+    [wallSession],
+  );
+  // pane 贴格子：resize 成格子字符预算（守卫在核心；attach 客户端在场照样贴），
+  // 返回每格原样回执供关墙恢复留存。失败静默——300ms 节拍的 pane_height 就是
+  // 反馈环，contain 缩放兜底照常呈现。
+  const wallFitPanes = useCallback(
+    async (fits: TmuxWallFit[]): Promise<TmuxWallFitResult[]> => {
+      if (!wallSession || !fits.length) return [];
+      return await invoke("tmux_wall_fit", { sid: wallSession.id, fits });
+    },
+    [wallSession],
+  );
+  // 关墙恢复：sid 由墙组件 prop 钉死后随调用带回（组件卸载 cleanup 拿到的是
+  // 最后提交渲染闭包的 prop，不受「关墙置空 wallSession」竞态影响），回调本身
+  // 零依赖不换引用，也不会把 A 墙的迟到恢复串到 B 的连接上。
+  const wallRestorePanes = useCallback(async (sid: string, items: TmuxWallRestoreItem[]) => {
+    if (!sid || !items.length) return;
+    await invoke("tmux_wall_fit_restore", { sid, items });
+  }, []);
+  const wallPromote = useCallback(
+    (name: string) => {
+      setTmuxWallSid(null);
+      const s = wallSession;
+      if (s) void openTmuxPaneRef.current(s, name);
+    },
+    [wallSession],
+  );
+  const wallClose = useCallback(() => setTmuxWallSid(null), []);
 
   const takeover = async () => {
     if (!sid) return;
@@ -5767,6 +6599,9 @@ export default function App() {
       if (atmux?.available && atmux.sessions.length > 0
         && (active.state === "Connected" || active.state === "Reconfirming")) {
         for (const ms of atmux.sessions) {
+          // 已在面板格子里的会话不能切进主视图（同一会话不做两路视图）：不列出，
+          // 免得点了只换来一条防呆报错（快接钮菜单是禁用并写明原因）
+          if ((active.panes ?? []).some((p) => p.tmux_session === ms.name)) continue;
           items.push({
             id: "tmux-" + ms.name, group: t("当前会话"),
             title: t("切换到 tmux 会话：{0}（{1} 窗口）", ms.name, String(ms.windows)),
@@ -5791,7 +6626,7 @@ export default function App() {
       // 只剩键盘路径或完全无入口（接管并停止、文件/转发面板）。⌘K 面板是唯一
       // 全模式可达层——专注下照样可用，入口在此补齐。
       items.push({
-        id: "term-search", group: t("当前会话"), title: t("搜索终端内容"), hint: "⌘F",
+        id: "term-search", group: t("当前会话"), title: t("搜索终端内容"), hint: formatBinding(keymap.search, isMacPlatform()),
         keywords: "查找 search",
         run: () => { dispatchRef.current({ id: "search" }); },
       });
@@ -5864,7 +6699,7 @@ export default function App() {
     }
     items.push({
       id: "toggle-hostbar", group: t("应用"),
-      title: hostbarOpen ? t("隐藏主机栏") : t("显示主机栏"), hint: "⌘B",
+      title: hostbarOpen ? t("隐藏主机栏") : t("显示主机栏"), hint: formatBinding(keymap.hostbar, isMacPlatform()),
       run: () => toggleHostbar(!hostbarOpen),
     });
     items.push({
@@ -5982,7 +6817,7 @@ export default function App() {
           {/* 自身开销读数（监控条「本机」段迁此）：标题栏常显不依赖会话；纯读数留在拖拽链上 */}
           <SelfMeterTitlebar />
           {hostbarOpen && (
-            <button className="ghost icon-btn" title={t("收起主机栏（⌘B）")} aria-label={t("收起主机栏")}
+            <button className="ghost icon-btn" title={t("收起主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-label={t("收起主机栏")}
               onClick={() => toggleHostbar(false)}>
               <IconChevronLeft size={15} />
             </button>
@@ -6039,7 +6874,7 @@ export default function App() {
             「找不到设置」的时刻；它不开任何侧栏，直开设置面板 */}
         <nav className="actrail" data-testid="actrail" aria-label={t("侧栏视图")}>
           <button className={"rail-btn" + (hostbarOpen ? " ts-open" : "")} data-testid="rail-hosts"
-            title={t("连接（⌘B）")} aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
+            title={t("连接（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
             <IconServer size={17} />
           </button>
           <button className={"rail-btn" + (agentOpen ? " ts-open" : "")} data-testid="rail-agent"
@@ -6089,7 +6924,7 @@ export default function App() {
           />
         )}
         {!hostbarOpen && !agentOpen && !fleetOpen && !monitorOpen && (
-          <button className="ghost icon-btn hb-expand" title={t("展开主机栏（⌘B）")} aria-label={t("展开主机栏")}
+          <button className="ghost icon-btn hb-expand" title={t("展开主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-label={t("展开主机栏")}
             onClick={() => toggleHostbar(true)}>
             <IconChevronRight size={15} />
           </button>
@@ -6134,6 +6969,22 @@ export default function App() {
               // Esc 关闭路径走 restoreTermFocus 回终端，不经过这里
               document.querySelector<HTMLElement>('[data-testid="rail-monitor"]')?.focus();
             }}
+          />
+        )}
+        {wallSession && wallSession.kind === "ssh" && wallSession.tmux?.available && (
+          /* tmux 会话大屏（监控墙）：整幅主区覆盖层（MonitorView 同款位）。快照
+             拍的是打开它的那台主机；「进格子」复用 openTmuxPane（面板链路：
+             attach/改名跟随/愿望清单全复用）后收屏让位给工作台 */
+          <TmuxWall
+            hostName={wallSession.host_name}
+            sid={wallSession.id}
+            sessions={wallSession.tmux?.sessions ?? []}
+            fetchCells={wallFetchCells}
+            sendInput={wallSendInput}
+            fitPanes={wallFitPanes}
+            restorePanes={wallRestorePanes}
+            onPromote={wallPromote}
+            onClose={wallClose}
           />
         )}
         {/* 双接管按钮的语义说明不再常显（用户反馈：占一行没用处）——完整语义
@@ -6378,7 +7229,7 @@ export default function App() {
             title={splitGroupLabel ? t("退出分屏：解散「{0}」（两个会话都保留）", splitGroupLabel) : undefined}>{t("退出分屏")}</button>}
           {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点）。快捷键是 native 域
               能力（demo 域 actions.ts 有 native 门），浏览器里不广告不存在的键 */}
-          <button className="ghost" title={inTauri ? t("命令面板（Ctrl+K / ⌘K）") : t("命令面板")} aria-label={t("命令面板")} data-testid="palette-open"
+          <button className="ghost icon-btn" title={inTauri ? t("命令面板（{0}）", formatBinding(keymap.palette, isMacPlatform())) : t("命令面板")} aria-label={t("命令面板")} data-testid="palette-open"
             onClick={() => setPaletteOpen(true)}><IconSearch size={14} /></button>
           {/* 专注模式（F11）：常态是 ⤢ 图标；专注下滑出条里另有文字钮，双入口同 applyFocus。
               协作/传输入口在此补位——专注下标题栏与状态条都藏了，而 §3 要求待审批等
@@ -6416,7 +7267,7 @@ export default function App() {
           </button>
           <div className="st-tools" ref={tabsMenuRef}>
             <button className="ghost tab-all" title={t("所有标签")} aria-haspopup="menu" aria-expanded={tabsMenuOpen}
-              onClick={() => setTabsMenuOpen(!tabsMenuOpen)}>{t("标签列表")}</button>
+              onClick={() => setTabsMenuOpen(!tabsMenuOpen)}>{t("标签列表")}<IconChevronDown size={12} /></button>
             {tabsMenuOpen && (
               <div className="tools-menu tm-right" role="menu">
                 {sessions.length === 0 && <div className="dim" style={{ padding: "6px 10px" }}>{t("暂无会话")}</div>}
@@ -6440,9 +7291,11 @@ export default function App() {
               </div>
             )}
           </div>
-          <button className="ghost" title={t("新建连接（Ctrl+T）")} aria-label={t("新建连接")} onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); setPrefillEntry(null); }}><IconPlus size={14} /></button>
+          {/* 键位随键位表渲染（审查轮二同类修复漏网：此前写死 Ctrl+T，mac 上也显示 Ctrl）；
+              tab-new 是 native 门动作，浏览器 demo 不广告不存在的键（同命令面板钮） */}
+          <button className="ghost icon-btn" title={inTauri ? t("新建连接（{0}）", formatBinding(keymap["tab-new"], isMacPlatform())) : t("新建连接")} aria-label={t("新建连接")} onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); setPrefillEntry(null); }}><IconPlus size={14} /></button>
           {/* 十七轮：快速连接——不存主机一次性建连 */}
-          <button className="ghost" title={t("快速连接（不保存主机，临时连接一次）")} aria-label={t("快速连接")} data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
+          <button className="ghost icon-btn" title={t("快速连接（不保存主机，临时连接一次）")} aria-label={t("快速连接")} data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -6491,13 +7344,14 @@ export default function App() {
         {current && (
           <SessionToolbar
             current={current} sid={sid} oscTitles={oscTitles}
-            hasAgents={hasAgents} owner={owner} collabConfigured={collabConfigured}
+            hasAgents={hasAgents} owner={owner}
             embeddedReady={embeddedReady}
             searchOpen={searchOpen} splitMenu={splitMenu} splitPanes={splitPanes}
-            rightPanel={rightPanel} toolsOpen={toolsOpen} toolsRef={toolsRef}
+            keyHint={(id) => formatBinding(keymap[id], isMacPlatform())}
+            toolsOpen={toolsOpen} toolsRef={toolsRef}
             dispatchRef={dispatchRef} setSplitMenu={setSplitMenu}
-            setRightPanel={setRightPanel} setToolsOpen={setToolsOpen}
-            exitSplit={exitSplit} openDelegate={openDelegate}
+            setToolsOpen={setToolsOpen} setRightPanel={setRightPanel}
+            exitSplit={exitSplit}
             takeover={takeover} takeoverStop={takeoverStop}
             openSessionDetail={openSessionDetail} toggleSessionLog={toggleSessionLog}
             requestCloseSession={requestCloseSession}
@@ -6505,7 +7359,16 @@ export default function App() {
             canForward={remoteOpen}
             tmuxMenu={tmuxMenu} setTmuxMenu={setTmuxMenu} tmuxMenuRef={tmuxMenuRef}
             onPickTmux={(name) => pickTmuxSession(current, name)}
+            onPromotePaneToMain={(name) => void promotePaneToMain(current, name)}
             onAddTmuxPane={(name) => void openTmuxPane(current, name)}
+            onOpenWall={() => { setTmuxMenu(false); setTmuxWallSid(current.id); }}
+            tmuxCreateOpen={tmuxCreateOpen} tmuxCreateName={tmuxCreateName}
+            tmuxCreateErr={tmuxCreateErr} tmuxCreateBusy={tmuxCreateBusy}
+            onTmuxCreateOpen={() => { setTmuxCreateOpen(true); setTmuxCreateErr(null); }}
+            onTmuxCreateCancel={() => { setTmuxCreateOpen(false); setTmuxCreateName(""); setTmuxCreateErr(null); }}
+            onTmuxCreateName={setTmuxCreateName}
+            onTmuxCreateSubmit={() => void submitTmuxCreate(current)}
+
             paneNames={(current.panes ?? []).map((p) => p.tmux_session)}
             paneCapReached={(current.panes ?? []).length >= PANE_MAX}
             splitActive={!!splitPanes}
@@ -6903,6 +7766,7 @@ export default function App() {
             termMenu={termMenu} setTermMenu={setTermMenu}
             termsRef={termsRef} pasteTextIntoRef={pasteTextIntoRef}
             paneTermsRef={paneTermsRef} closeTmuxPane={(sid, paneId) => closeTmuxPaneRef.current(sid, paneId)}
+            paneLayoutCustom={paneLayoutCustom} resetPaneLayout={resetPaneLayout}
             setSearchOpen={setSearchOpen} searchInputRef={searchInputRef} sidRef={sidRef}
             attachSession={attachSession}
             splitDegraded={splitDegraded} splitHintOpen={splitHintOpen}
@@ -6976,7 +7840,7 @@ export default function App() {
             <div className="confirm-mask" onClick={() => setOsc52Ask(null)}>
               <div className="confirm-dialog paste-dialog" ref={osc52AskRef} role="dialog" aria-modal="true" aria-labelledby="dlg-osc52-title" onClick={(e) => e.stopPropagation()}>
                 <div className="hk-title" id="dlg-osc52-title" data-testid="osc52-dialog">
-                  {t("远端请求写入剪贴板 ·")} {sessions.find((s) => s.id === osc52Ask.sid)?.host_name ?? t("该会话")}
+                  {t("远端请求写入剪贴板 ·")} {sessions.find((s) => s.id === osc52Ask.sid)?.host_name ?? t("该会话")}{osc52Ask.source ? ` · tmux:${osc52Ask.source}` : ""}
                 </div>
                 <div>{t("远端程序通过 OSC 52 转义序列请求改写你本机的剪贴板——允许后现有内容会被覆盖，拒绝则不写入任何字节。「始终允许」本次照写且此后不再询问（设置→终端 可改回）。读取类请求（查询）一律拒绝，不经此卡。")}</div>
                 <pre className="paste-preview mono" data-testid="osc52-preview">{osc52Ask.text.length > 400
@@ -7075,7 +7939,7 @@ export default function App() {
               changeFontSize={changeFontSize}
               zoomLevel={zoomLevel}
               keymap={keymap}
-              keymapRef={keymapRef}
+              resetKeyBinding={resetKeyBinding}
               keyCapture={keyCapture}
               setKeyCapture={setKeyCapture}
               applyKeymap={applyKeymap}

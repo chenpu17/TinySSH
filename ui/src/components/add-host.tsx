@@ -108,12 +108,16 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
   };
 
   // connect=false 走「仅保存」：批量录入场景不被逐台自动连接绑架（五人走查·林姐/小王）
-  const submit = async (connect = true) => {
+  const submit = async (connect = true, nameFromAddr?: string) => {
     if (busy) return; // 回车提交绕过按钮 disabled——在途时丢弃重复提交
     setErr(null);
-    if (!name.trim() || !address.trim() || !username.trim()) {
+    // 地址框回车（找茬四轮 D4）：名称空则先以地址补名（与 onBlur 同款联动，避免
+    // 「名称不能为空」拦在最高频动线上）——「填完地址回车」是表单主动线，此前
+    // 唯独地址框 Enter 不提交、其余输入框都能
+    const nameVal = (nameFromAddr ?? name).trim();
+    if (!nameVal || !address.trim() || !username.trim()) {
       setErr(t("名称、地址、用户名都不能为空"));
-      (!name.trim() ? nameRef : !address.trim() ? addressRef : usernameRef).current?.focus();
+      (!nameVal ? nameRef : !address.trim() ? addressRef : usernameRef).current?.focus();
       return;
     }
     // 地址格式校验（P2-3）：IP 或域名，不带协议/端口/路径——之前的乱码地址能一路存到「连接成功」
@@ -131,7 +135,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
     // 重名/重址防呆（审查二轮 UX2-2）：此前重复提交静默成功，主机栏出现两张
     // 一模一样的卡无从分辨。名称撞车一律拦；同地址+端口撞车（多账号录重）提示
     // 直接用既有条目。编辑排除自身。
-    const nameDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.name === name.trim());
+    const nameDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.name === nameVal);
     if (nameDup) {
       setErr(t("已存在同名主机「{0}」——请换一个名称，或删除旧条目后再建", nameDup.name));
       nameRef.current?.focus();
@@ -167,7 +171,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
       const tags = [...new Set(tagsInput.split(/[,，]/).map((x) => x.trim()).filter(Boolean))];
       const hid = await invoke("upsert_host", {
         host: {
-          id: editHost?.id ?? null, name: name.trim(), address: address.trim(),
+          id: editHost?.id ?? null, name: nameVal, address: address.trim(),
           port: p, username: username.trim(), auth, tags,
           charset,
           jump_host_id: jumpId || null,
@@ -206,6 +210,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
           <label>{t("地址（IP 或域名）")}</label>
           <input ref={addressRef} value={address} onChange={(e) => setAddress(e.target.value)}
             onBlur={() => { if (!name.trim() && address.trim()) setName(address.trim()); }}
+            onKeyDown={enterKey(() => submit(true, address))}
             placeholder={t("例：192.168.1.10 或 server.example.com")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>

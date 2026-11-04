@@ -37,7 +37,7 @@ Positioning snapshot at v0.10.8 (October 2026) — categories, not product revie
 - **Terminal quality** — Unicode 11 width table (CJK/emoji don't misalign), optional ligatures, sixel & iTerm2 inline images, OSC 52 clipboard with an ask/allow/deny policy, OSC 9 notifications, clickable file paths, broadcast input across sessions (iTerm-style), regex output triggers with notification or approval-gated key sequences.
 - **Command blocks** — shells with OSC 133/7 integration turn every command into a block with exit code, duration, and captured output (rendered, ANSI-stripped, tail-capped). Remote sessions probe the login shell with a polyglot printf and install per-family hooks — bash/zsh (POSIX sh) and fish (event hooks) get integration; incompatible shells honestly stay Unavailable. Blocks can be copied, re-run (same confirmation chain as paste), located in the scrollback, and the agent reads them through the same API.
 - **Session restore** — on clean exit every session gets an encrypted snapshot (scrollback tail + viewport + cursor + modes); next start can rebuild and replay the screen. Reconnects go through the full connection flow — TOFU and 2FA gates included, nothing auto-dials.
-- **tmux, first-class** — the session toolbar's tmux button lists the sessions running on the remote. Pick one to attach the main view (after a disconnect the banner offers one-click *restore scene*: reconnect + recent scrollback + re-attach). Hit **+ Panel** to open more tmux sessions side by side in the same tab — each in its own channel over the same SSH connection (one login, one 2FA), tiled up to six cells; ideal for running several Claude Code instances, each isolated in its own tmux session. Panes dim on disconnect and re-attach in place after reconnect; closing a pane only detaches — the tmux session keeps running. Agent shell commands on an attached session run in a dedicated `tinyssh-agent` tmux window.
+- **tmux, first-class** — the session toolbar's tmux button lists the sessions running on the remote. Pick one to attach the main view (after a disconnect the banner offers one-click *restore scene*: reconnect + recent scrollback + re-attach). Hit **+ Panel** to open more tmux sessions side by side in the same tab — each in its own channel over the same SSH connection (one login, one 2FA), tiled up to six cells; ideal for running several Claude Code instances, each isolated in its own tmux session. Drag a title bar to rearrange (drop in the middle of a pane to swap, near an edge to split it) and drag the dividers to resize; Ctrl+B reaches tmux in every pane. Panes dim on disconnect and re-attach in place after reconnect; closing a pane only detaches — the tmux session keeps running. Agent shell commands on an attached session run in a dedicated `tinyssh-agent` tmux window.
 - **Embedded agent (per session)** — chat with markdown, Mermaid, KaTeX; reasoning blocks collapse; tool calls appear as inline approval cards. Eight SSH tools (`exec`, `read_blocks`, `read_screen`, `wait_output`, `upload`, `download`, `transfer_status`, `send_keys`) plus an optional `load_skill` executed through the same session actor as everything else. Prompts and skills are customizable assets: append org-specific conventions per agent kind (session helper / Fleet orchestrator) in Settings → Agent — additions never replace the built-in safety rules — and maintain a named playbook library the agent loads with `load_skill`.
 - **Fleet orchestration** — a third view dispatches self-contained tasks to per-session agents in parallel and collects results; the dispatcher never touches machines itself, and each target keeps its own approvals and dangerous-command gates.
 - **Monitoring** — a per-session resource bar plus a full-screen multi-server dashboard (CPU/mem gauges, disk/net history; Ascend NPU per-chip health/power/temp/utilization/HBM). Sampling is opt-in, per-category, and survives closing the dashboard. The local machine is monitored through native APIs (kernel32/iphlpapi on Windows, /proc on unix) on the same parse path as remote hosts.
@@ -82,7 +82,7 @@ Prerequisites: Rust ≥ 1.86, Node ≥ 20.
 # Frontend demo mode — runs in a plain browser, no Rust needed
 cd ui && npm ci && npm run dev      # http://localhost:5183
 
-# UI test suite (55 specs / 967 checks; needs a Chrome/Edge binary)
+# UI test suite (57 specs / 1125 checks; needs a Chrome/Edge binary)
 TINYSSH_UI_CHROME="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" npm test
 
 # Desktop app (Tauri v2; dev shell expects the ui dev server above)
@@ -123,7 +123,7 @@ Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-u
 
 ## Status
 
-v0.10.8. All suites green on the primary platform: Rust workspace tests, 55 UI specs / 967 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.10.8. All suites green on the primary platform: Rust workspace tests, 57 UI specs / 1125 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
 ## Sister project
 

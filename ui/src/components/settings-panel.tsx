@@ -14,7 +14,7 @@ import {
   type Appearance, type SettingsCat, type TermCursorStyle,
 } from "../app-data";
 import {
-  DEFAULT_KEYMAP, KEYMAP_ACTIONS, KEYMAP_SETTING, formatBinding, parseKeymap, sameBinding,
+  defaultKeymap, KEYMAP_ACTIONS, KEYMAP_SETTING, formatBinding, parseKeymap, sameBinding,
   type Binding, type KeyActionId,
 } from "../keymap";
 import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
@@ -61,7 +61,8 @@ interface SettingsPanelProps {
   zoomLevel: number;
   // 快捷键
   keymap: Record<KeyActionId, Binding>;
-  keymapRef: { current: Record<KeyActionId, Binding> };
+  /** 单条重置（宿主校验默认键是否已被别的动作占用，冲突则拒绝并提示） */
+  resetKeyBinding: (id: KeyActionId) => void;
   keyCapture: KeyActionId | null;
   setKeyCapture: (v: KeyActionId | null) => void;
   applyKeymap: (km: Record<KeyActionId, Binding>) => void;
@@ -164,7 +165,7 @@ export function SettingsPanel({
   settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime, locale, onChangeLocale,
   updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
-  keymap, keymapRef, keyCapture, setKeyCapture, applyKeymap, persistSetting,
+  keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
   localShells, localShellId, onChangeLocalShell,
@@ -322,7 +323,7 @@ export function SettingsPanel({
                     冲突拒绝、单条重置；表持久化 ui.keymap.v1（demo=localStorage） */}
                 <div className="set-card">
                   <h4>{t("应用快捷键")}</h4>
-                  <div className="set-desc">{t("点「修改」后按下新组合（Ctrl/⌘ + 字母，可加 Shift），Esc 取消。被占用的字母不再发往终端——同名 shell 控制键让位（如 Ctrl+D=分屏后，EOF 请用 exit）。Ctrl+1-9 切换标签 · Ctrl+Tab 循环 · Ctrl/⌘ ±/0 缩放 · Esc 关浮层为固定键位。")}</div>
+                  <div className="set-desc">{t("点「修改」后按下新组合（Ctrl/⌘ + 字母，可加 Shift），Esc 取消。被占用的字母不再发往终端——同名 shell 控制键让位（如 Ctrl+D=分屏后，EOF 请用 exit）；Ctrl+B 始终留给终端（tmux 前缀键），不可占用。Ctrl+1-9 切换标签 · Ctrl+Tab 循环 · Ctrl/⌘ ±/0 缩放 · Esc 关浮层为固定键位。")}</div>
                   <div className="km-rows" role="group" aria-label={t("快捷键绑定")}>
                     {KEYMAP_ACTIONS.map(({ id, label, desc }) => {
                       const capturing = keyCapture === id;
@@ -341,12 +342,8 @@ export function SettingsPanel({
                             <>
                               <button className="ghost" data-testid={`keymap-edit-${id}`} onClick={() => setKeyCapture(id)}>{t("修改")}</button>
                               <button className="ghost" data-testid={`keymap-reset-${id}`}
-                                disabled={sameBinding(keymap[id], DEFAULT_KEYMAP[id])}
-                                onClick={() => {
-                                  const next = { ...keymapRef.current, [id]: DEFAULT_KEYMAP[id] };
-                                  applyKeymap(next);
-                                  persistSetting(KEYMAP_SETTING, JSON.stringify(next));
-                                }}>{t("重置")}</button>
+                                disabled={sameBinding(keymap[id], defaultKeymap(isMacPlatform())[id])}
+                                onClick={() => resetKeyBinding(id)}>{t("重置")}</button>
                             </>
                           )}
                         </div>
@@ -355,10 +352,10 @@ export function SettingsPanel({
                   </div>
                   <div className="row" style={{ marginTop: 12 }}>
                     <button className="ghost" data-testid="keymap-reset-all"
-                      disabled={KEYMAP_ACTIONS.every(({ id }) => sameBinding(keymap[id], DEFAULT_KEYMAP[id]))}
+                      disabled={KEYMAP_ACTIONS.every(({ id }) => sameBinding(keymap[id], defaultKeymap(isMacPlatform())[id]))}
                       onClick={() => {
-                        applyKeymap(parseKeymap(null));
-                        persistSetting(KEYMAP_SETTING, JSON.stringify(parseKeymap(null)));
+                        applyKeymap(parseKeymap(null, isMacPlatform()));
+                        persistSetting(KEYMAP_SETTING, JSON.stringify(parseKeymap(null, isMacPlatform())));
                       }}>{t("全部恢复默认")}</button>
                   </div>
                 </div>
@@ -757,7 +754,7 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                   </div>
                 )}
                 <div className="side-quiet" style={{ marginTop: 8 }}>
-                  {t("登记 Agent **不会**转移任何会话的控制权。要把某个会话交给 Agent，在会话工具栏或协作面板点「交给 Agent…」并明确确认。")}
+                  {t("登记 Agent **不会**转移任何会话的控制权。要把某个会话交给 Agent，在协作面板（右缘 rail）点「交给 Agent…」并明确确认。")}
                 </div>
                 {/* C9：停用先预览影响→确认后核心原子封 admission；此入口只对 Enabled 开放 */}
                 <button className="ghost" style={{ marginTop: 8, color: "var(--danger)" }}

@@ -696,6 +696,15 @@ pub struct TmuxSession {
     pub name: String,
     pub windows: u32,
     pub attached: u32,
+    /// 不可变会话标识（tmux `#{session_id}`，形如 `$3`）——**改名不换 id**，面板
+    /// 按 id 认会话、名字随探针刷新（C-b $ 改名后格子标题/主视图名牌/快接菜单
+    /// 才跟得上）。极老 tmux 给不出该字段时为空串：只退化回按名认，其余不受影响。
+    #[serde(default)]
+    pub id: String,
+    /// tmux **服务器** pid（`#{server_pid}`，0=拿不到）：id 只在服务器一生内唯一，
+    /// 服务器重启后从 $0 重排——对账/重建消费 id 前先比 pid，跨纪元的 id 不可信。
+    #[serde(default)]
+    pub server_pid: u32,
 }
 
 /// tmux 联动：远端 tmux 可用性与会话清单（SessionInfo.tmux 下发）。
@@ -720,6 +729,78 @@ pub struct TmuxRestorePlan {
     pub history: Option<String>,
 }
 
+/// tmux 会话大屏（监控墙）：前端下发的抓取目标。id 在手用 id 选择器（`$N`，
+/// 改名不跟丢），否则退化按名（`tmux_selector`：tmux ≥3.1 精确 `=名`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxWallTarget {
+    /// 不可变会话标识（`$N`）；空串=拿不到（极老 tmux），按名退化。
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+}
+
+/// tmux 会话大屏：单会话 capture-pane 当前屏快照，顺序与请求 targets 对齐。
+/// ok=false=该目标抓取失败（会话大概率已消失）——前端呈现离线遮罩，其余格
+/// 照常呈现（照片墙容忍个别拍坏）。text 行以 `\n` 分隔、可含 ANSI 属性。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxWallCell {
+    pub ok: bool,
+    #[serde(default)]
+    pub text: String,
+    /// 远端 pane 可见高度（`#{pane_height}`，当前屏行数）：前端「当前屏完整
+    /// 可见」高度约束的度量源（快照恒多抓 40 行历史，没有它就不知道哪段是
+    /// 当前屏）。0=拿不到（极老 tmux display-message 失败）——前端退化为纯
+    /// 按宽缩放。
+    #[serde(default)]
+    pub rows: u32,
+}
+
+/// tmux 会话大屏：单格「pane 贴格子」适配请求。contain 缩放对宽高比失衡的格子
+/// 只能 letterbox（宽屏 htop 缩成小块沉底，用户复验判「布局有问题没全屏」），
+/// 物理无解——唯一真解是让 pane 长成格子的形状：零客户端会话发 `resize-window
+/// -x -y`，TUI 收 SIGWINCH 自己重绘满格。cols/rows 由前端按格子像素预算换算，
+/// 核心侧钳位成纯数字（命令注入面归零）。守卫（零 attach 客户端 + 单窗格）
+/// 在命令构造里，见 core `tmux_wall_fit_cmd`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxWallFit {
+    /// 不可变会话标识（`$N`）；空串=拿不到（极老 tmux），按名退化。
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+/// 单格贴格子的原样回执：resize 前的窗口尺寸与 window-size 选项值——前端留存，
+/// 关大屏时原样交还 `tmux_wall_fit_restore`（resize-window 会把 window-size 钉成
+/// manual 粘住，不还原 = 用户此后 attach/拖窗都不再跟随，布局永久变形）。
+/// orig_w/orig_h=0 时（display-message 失败，极老 tmux）核心不回执该目标=不恢复。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxWallFitResult {
+    /// 不可变会话标识（`$N`）；空串=按名退化。恢复寻址 id 优先——墙开着期间
+    /// 会话改名后按旧名恢复会静默落空（2>/dev/null 吞掉），布局不还原。
+    pub id: String,
+    pub name: String,
+    pub orig_w: u32,
+    pub orig_h: u32,
+    /// 原 window-size 选项值（manual/latest/largest/smallest）；空串=原本未设
+    /// （继承全局——恢复时 unset 回去）。
+    pub orig_ws: String,
+}
+
+/// 关大屏恢复项：前端把留存的原样回执原样交回。id 优先寻址（fit 回执带回），
+/// 老 tmux 无 id 时按名退化。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmuxWallRestoreItem {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub cols: u32,
+    pub rows: u32,
+    /// "UNSET"=原本未设（恢复 unset）；manual/latest/largest/smallest=原值；
+    /// 其他值（理论上到不了，前端透传脏数据时）=只恢复尺寸不动选项。
+    pub ws: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub id: SessionId,

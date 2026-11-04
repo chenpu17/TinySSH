@@ -5,6 +5,7 @@ import { invoke } from "../adapter/bridge";
 import type { CollisionDecision, DirEntryS, SessionBrief as Brief } from "../adapter/wire";
 import { fmtBytes, dateLocale, type TransferCard } from "../app-data";
 import { t } from "../i18n";
+import { clampIntoView } from "./ctx-menus";
 import {
   IconChevronLeft, IconChevronRight, IconChevronUp, IconDownload, IconFile,
   IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconUpload,
@@ -400,7 +401,10 @@ export function SftpFileMenu({
   if (!sftpMenu) return null;
   return (
         <div
-          className="sftp-menu" ref={sftpMenuRef} role="menu" data-testid="sftp-menu"
+          className="sftp-menu" role="menu" data-testid="sftp-menu"
+          // 按钮美化轮：标题行随文件名最宽 ~240px，文件面板又贴窗口右缘——估算夹取（160）
+          // 兜不住，挂载即测量回夹（与右键菜单同一函数）
+          ref={(el) => { sftpMenuRef.current = el; clampIntoView(el); }}
           aria-label={t("{0} 可用动作", sftpMenu.name)}
           style={{ left: Math.max(6, Math.min(sftpMenu.x, winW - 160)), top: Math.min(sftpMenu.y, window.innerHeight - 84) }}
         >

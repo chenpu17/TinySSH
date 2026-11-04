@@ -843,6 +843,26 @@ impl SshChannel {
 /// tmux 面板通道引导期积压上限：subscribe 前的字节暂存（attach 首屏绘制约几 KB，
 /// 256KB 绰绰有余；超限丢最旧——积压只服务「开→订」的毫秒级窗口）。
 const PANE_BOOTLOG_CAP: usize = 256 * 1024;
+/// 面板通道收到 EOF 后等 Close / 迟到退出码的上限。
+const PANE_EOF_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+/// 面板写入分块与单块时限：远端停读（窗口耗尽）时 russh 的窗口等待只由
+/// WINDOW_ADJUST 唤醒，连接恰在此时断开会永久挂住，并连带 close() 在写锁上排队。
+/// 时限按「单块写完」计（不是严格的无进展计时：远端读得极慢、32KB 一块超过 20s
+/// 也算超时——tmux 读 stdin 很快，实际只在窗口归零时触发）。超时/出错时已发出的
+/// 块不撤回（部分写入），错误如实上报。
+const PANE_WRITE_CHUNK: usize = 32 * 1024;
+const PANE_WRITE_STALL: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// 面板通道打开失败的文案：sshd 单连接会话通道数有上限（MaxSessions，默认 10），
+/// 主终端 + 5 格 + 文件面板 + 监控采样可能顶到——讲清原因而不是只给错误码。
+fn pane_open_failure(e: &russh::Error) -> String {
+    match e {
+        russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::AdministrativelyProhibited) => {
+            "服务器拒绝新开会话通道（可能已达 sshd 单连接会话上限 MaxSessions，默认 10）".into()
+        }
+        e => format!("pane channel: {e}"),
+    }
+}
 
 /// tmux 面板的附加交互 PTY 通道（SshChannel::open_interactive_channel 产物）。
 /// 自持读泵；不参与主通道的代际/重连——连接断开即死（alive=false），由 core
@@ -893,9 +913,18 @@ impl session_api::transport::InteractiveChannel for SshPaneChannel {
     async fn write(&self, data: &[u8]) -> Result<()> {
         let guard = self.write_half.lock().await;
         let w = guard.as_ref().ok_or(Error::SessionClosed)?;
-        w.data_bytes(data.to_vec())
-            .await
-            .map_err(|e| Error::Io(format!("pane write: {e}")))
+        for chunk in data.chunks(PANE_WRITE_CHUNK) {
+            // close() 先置 alive=false 再取写锁：块间见到即停——关格最多等一块的时限，
+            // 不必等整段大粘贴写完（并发写者仍由写锁整段串行、不交错）
+            if !self.alive.load(Ordering::SeqCst) {
+                return Err(Error::SessionClosed);
+            }
+            match tokio::time::timeout(PANE_WRITE_STALL, w.data_bytes(chunk.to_vec())).await {
+                Ok(r) => r.map_err(|e| Error::Io(format!("pane write: {e}")))?,
+                Err(_) => return Err(Error::Io("面板写入超时（远端长时间未读取输入）".into())),
+            }
+        }
+        Ok(())
     }
 
     async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
@@ -929,11 +958,12 @@ impl session_api::transport::InteractiveChannel for SshPaneChannel {
 
     async fn close(&self) -> Result<()> {
         // 真关闭：发 CHANNEL_CLOSE（仅置旗标不够——远端 PTY 与 tmux client 会
-        // 一直活到整条连接断开）。写半随后置 None，后续 write 快速失败。
+        // 一直活到整条连接断开）。先置 alive=false：在途的分块写入块间即停、泵即刻
+        // 判死，不必在写锁上排完整段写入；写半随后置 None，后续 write 快速失败。
+        self.alive.store(false, Ordering::SeqCst);
         if let Some(w) = self.write_half.lock().await.take() {
             let _ = w.close().await;
         }
-        self.alive.store(false, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -1097,51 +1127,96 @@ impl ChannelHandle for SshChannel {
             handle
                 .channel_open_session()
                 .await
-                .map_err(|e| Error::ConnectFailed(format!("pane channel: {e}")))?
+                .map_err(|e| Error::ConnectFailed(pane_open_failure(&e)))?
         };
         let cols = cols.max(2);
         let rows = rows.max(2);
-        channel
-            .request_pty(true, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("pane pty: {e}")))?;
-        // 命令即通道引导期启动项（establish 的 request_shell 换成 request_exec）：
-        // 远端在此 PTY 里直接跑 `tmux attach`，前台尚无交互程序，无注入难题。
-        channel
-            .exec(true, cmd.as_bytes())
-            .await
-            .map_err(|e| Error::ConnectFailed(format!("pane exec: {e}")))?;
-        // 等待 exec 请求成功回包（establish 同款）
-        loop {
-            match channel.wait().await {
-                Some(ChannelMsg::Success) => break,
-                Some(ChannelMsg::Failure) => {
-                    return Err(Error::ConnectFailed(format!(
-                        "pane exec rejected: {}",
-                        cmd.split_whitespace().next().unwrap_or("cmd")
-                    )))
-                }
-                Some(_) => continue,
-                None => return Err(Error::ConnectFailed("pane channel closed early".into())),
-            }
-        }
-
-        let (mut read_half, write_half) = channel.split();
         let (tx, keepalive_rx) = broadcast::channel(1024);
         let alive = Arc::new(AtomicBool::new(true));
         let exited = Arc::new(AtomicBool::new(false));
         let bootlog = Arc::new(StdMutex::new(Some(PaneBootlog::default())));
-        // 读泵：与主 shell 泵同构（Data/ExtendedData → 广播；EOF/Close → alive=false）。
+        // 命令即通道引导期启动项（establish 的 request_shell 换成 request_exec）：
+        // 远端在此 PTY 里直接跑 `tmux attach`，前台尚无交互程序，无注入难题。
+        // pty-req 与 exec 各要一份回包，按请求顺序到达——只等第一份会把 exec 的
+        // Failure 漏给读泵吞掉，留下不出字也不判死的空格。回包前先到的输出进积压。
+        let setup: Result<()> = async {
+            channel
+                .request_pty(true, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
+                .await
+                .map_err(|e| Error::ConnectFailed(format!("pane pty: {e}")))?;
+            channel
+                .exec(true, cmd.as_bytes())
+                .await
+                .map_err(|e| Error::ConnectFailed(format!("pane exec: {e}")))?;
+            let mut acked = 0;
+            while acked < 2 {
+                match channel.wait().await {
+                    Some(ChannelMsg::Success) => acked += 1,
+                    Some(ChannelMsg::Failure) => {
+                        return Err(Error::ConnectFailed(if acked == 0 {
+                            "远端拒绝为面板通道分配 PTY".into()
+                        } else {
+                            format!(
+                                "远端拒绝执行：{}",
+                                cmd.split_whitespace().next().unwrap_or("cmd")
+                            )
+                        }))
+                    }
+                    Some(ChannelMsg::Data { ref data })
+                    | Some(ChannelMsg::ExtendedData { ref data, .. }) => {
+                        pane_push(&bootlog, &tx, data.to_vec());
+                    }
+                    Some(ChannelMsg::ExitStatus { .. }) | Some(ChannelMsg::ExitSignal { .. }) => {
+                        exited.store(true, Ordering::SeqCst);
+                    }
+                    Some(_) => continue,
+                    None => return Err(Error::ConnectFailed("pane channel closed early".into())),
+                }
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(e) = setup {
+            // 已开的通道必须关掉：russh 的 Channel 丢弃不发 CHANNEL_CLOSE，远端会话
+            // 通道（连同已分配的 PTY）会一直挂到整条连接断开
+            let _ = channel.close().await;
+            return Err(e);
+        }
+
+        let (mut read_half, write_half) = channel.split();
+        // 读泵：与主 shell 泵同构（Data/ExtendedData → 广播；Close/断开 → alive=false）。
         // 差异：无代际闸——面板通道不重连，死即死，core 按愿望清单重建新通道；
         // exit-status/exit-signal 记 exited（用户结束 ≠ 掉线，core 分流处置）。
+        // EOF 不即刻判死：RFC 4254 不规定 EOF 与 exit-status 的先后，再收一拍
+        // （≤2s，等 Close 或迟到的退出码），免得把用户 exit / C-b d 误判成掉线。
+        // 宽限到点无 Close 不与真 Close 同臂判死（找茬四轮 A3）：重负载/慢链路下
+        // Close 迟到 >2s 时，用户刚 exit 的格子会被误判掉线、自动重建复活出双
+        // client——超时先续期一拍再判；两拍仍无 Close 才按掉线收（死网络自限 4s）。
         {
             let tx = tx.clone();
             let bootlog = bootlog.clone();
             let alive = alive.clone();
             let exited = exited.clone();
             tokio::spawn(async move {
+                let mut eof_deadline: Option<tokio::time::Instant> = None;
+                let mut eof_extends: u8 = 0;
                 loop {
-                    match read_half.wait().await {
+                    let msg = match eof_deadline {
+                        None => read_half.wait().await,
+                        Some(dl) => match tokio::time::timeout_at(dl, read_half.wait()).await {
+                            Ok(m) => m,
+                            Err(_) => {
+                                if eof_extends < 1 {
+                                    eof_extends += 1;
+                                    eof_deadline =
+                                        Some(tokio::time::Instant::now() + PANE_EOF_GRACE);
+                                    continue;
+                                }
+                                None
+                            }
+                        },
+                    };
+                    match msg {
                         Some(ChannelMsg::Data { ref data }) => {
                             pane_push(&bootlog, &tx, data.to_vec());
                         }
@@ -1152,7 +1227,13 @@ impl ChannelHandle for SshChannel {
                         | Some(ChannelMsg::ExitSignal { .. }) => {
                             exited.store(true, Ordering::SeqCst);
                         }
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                        Some(ChannelMsg::Eof) => {
+                            eof_extends = 0;
+                            eof_deadline.get_or_insert_with(|| {
+                                tokio::time::Instant::now() + PANE_EOF_GRACE
+                            });
+                        }
+                        Some(ChannelMsg::Close) | None => {
                             alive.store(false, Ordering::SeqCst);
                             break;
                         }

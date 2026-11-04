@@ -28,7 +28,7 @@ module.exports = {
   title: "任务目标保存/清除与跨会话隔离",
   async run({ page, ck }) {
     await connect(page, "本机");
-    await page.click("[data-testid=tools-collab]");
+    await page.click("[data-testid=rb-collab]");
     await page.waitForTimeout(900);
 
     ck.check("协作面板有「任务目标」小节", (await panelText(page)).includes("任务目标"), (await panelText(page)).slice(0, 120));

@@ -16,3 +16,8 @@ __pycache__/
 # R45 前端回归入口的每轮结果（生成物，跑 `npm test --prefix ui` 会覆盖）
 ui/test/result.json
 .ux-shots/
+
+# 大屏/找茬轮截图证据（目检用，不入库——PNG 剥离纪律）
+ui/test/.shots/
+# ZCode 会话本地目录
+.zcode/

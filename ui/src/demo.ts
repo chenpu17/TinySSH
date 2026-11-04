@@ -33,7 +33,15 @@ type DemoHost = {
 /** tmux 联动：远端 tmux 状态（真实 session_api::TmuxStatus 同形状）。 */
 type DemoTmux = {
   available: boolean; version: string | null;
-  sessions: { name: string; windows: number; attached: number }[];
+  // id=不可变会话标识（$N，改名不换）——改名跟随对账按它认，demo 单对象原子改
+  sessions: { name: string; windows: number; attached: number; id: string;
+    /** 大屏输入演示态（tmux_wall_input）：wallIn=输入行（回显中），wallOut=已提交屏行 */
+    wallIn?: string; wallOut?: string;
+    /** pane 贴格子演示态（tmux_wall_fit）：fit 后的 pane 可见行数（列数不进
+     *  快照形状——capture 行按内容裁尾，列只影响 applyFit 的宽向度量） */
+    wallRows?: number;
+    /** 首次 fit 前的原样（关墙恢复交还用；restore 后清空=下次 fit 重新留存） */
+    wallOrig?: { cols: number; rows: number } }[];
 };
 
 /** tmux 面板格子镜像：out=格子输出缓冲（订阅即整段补放——真实核心是积压接走，
@@ -41,7 +49,9 @@ type DemoTmux = {
 type DemoPane = {
   pane_id: number; tmux_session: string; alive: boolean;
   out: string; handlers: PaneHandler[];
-  cols: number; rows: number; line: string;
+  cols: number; rows: number; line: string; sawPrefix?: boolean;
+  /** C-b $ 后的 (rename-session) 提示符态：后续键入进名字行，回车提交改名 */
+  renaming?: boolean;
 };
 /** 格子订阅回调：字节帧，或流终结信号 "eof"（真实 tmux_pane_subscribe 同契约）。 */
 type PaneHandler = (data: Uint8Array | "eof") => void;
@@ -68,8 +78,37 @@ function paneBanner(name: string, rebuilt: boolean): string {
   return `\x1b[2J\x1b[H\x1b[1;36m[演示] tmux -u attach -t '=${name}'\x1b[0m（面板窗格 · ${tag}）\r\n${name}@demo:~$ `;
 }
 
+/** 大屏快照文本合成（fixture）：**复刻真实抓取形状**（2026-11-04 适配轮教训
+ * ——真实 capture-pane 恒带 `-S -40`，产物=40 行历史 + 当前屏 ≈64 行；此前的
+ * 3-4 行小快照让裁切/适配类 bug 在 demo 天然不可见，spec 全绿是假绿）。形状：
+ * 40 行 history + 当前屏 24 行（tmux 默认 80×24，wallOut 提交行滚进屏区尾部、
+ * 输入行恒末行）。快照与输入补拍共用一份——输入返回的「新帧」就是下一次节拍
+ * 快照会拍到的内容。 */
+const DEMO_WALL_ROWS = 24;
+function demoWallSnap(ent: { name: string; wallIn?: string; wallOut?: string; wallRows?: number }): string {
+  const hist: string[] = [];
+  for (let i = 1; i <= 40; i++) hist.push(`history line ${i}`);
+  const screen: string[] = [
+    `ops@demo:~$ tail -f job.log`,
+    `11:02:14 INFO heartbeat ok`,
+    `[演示] ${ent.name} 当前屏快照`,
+  ];
+  for (const l of (ent.wallOut ?? "").split("\n")) if (l) screen.push(l);
+  if (ent.wallIn) screen.push(`[输入中] ${ent.wallIn}`);
+  // 屏区恒 rows 行（tmux pane 高度恒定：提交行把更早屏行滚出去，空屏也是真
+  // 行；wall_fit 贴格子后 pane 高度=格子预算，wallRows 镜像之）+ 历史 40 行
+  // 恒在，与真实 capture -S -40 全量产物同形状；rows 字段交给前端做「当前屏
+  // 完整」约束。
+  const rows = ent.wallRows ?? DEMO_WALL_ROWS;
+  while (screen.length < rows) screen.unshift(" ");
+  return [...hist, ...screen.slice(-rows)].join("\n");
+}
+
 /** 重连成功后的面板重建镜像（真实核心 reinject 尾 spawn_pane_rebuild）：死格按
- * 原顺序原位换新 pane_id；远端会话已不在探测清单 → 摘除（真实侧 Gone 臂）。 */
+ * 原顺序原位换新 pane_id；远端会话已不在探测清单 → 摘除（真实侧 Gone 臂）。
+ * 镜像口径：demo 的 fixture 清单就是「远端真相」，等价于真实侧的实时 has-session——
+ * 模拟主机重启要先用 demo_tmux_fixture 清掉会话；真实侧「无法判定→保留+退避重试」
+ * 的 Transient 臂 demo 不模拟（该臂由核心 pane_tests 覆盖）。 */
 function demoRebuildPanes(s: DemoSession) {
   const names = new Set((s.tmux?.sessions ?? []).map((x) => x.name));
   const next: DemoPane[] = [];
@@ -283,7 +322,7 @@ const demoState = {
       seq: 0, ring: [], subs: new Set<string>(),
       forwards: [],
       // tmux 联动 fixture：demo 主机出厂带 tmux 3.2a（真实侧建连后静默探测）
-      tmux: { available: true, version: "3.2a", sessions: [{ name: "work", windows: 2, attached: 1 }] },
+      tmux: { available: true, version: "3.2a", sessions: [{ name: "work", windows: 2, attached: 1, id: "$1" }] },
     },
     {
       id: "s-demo-0002", host_id: "h-staging1", host_name: "staging-1", kind: "ssh",
@@ -298,7 +337,7 @@ const demoState = {
       forwards: [],
       // tmux 联动 fixture：断线会话带两个会话——断线横幅内联挑选列表的走查面
       //（真实侧语义：探测失败保留上次结果，此处预置即「断线前仍在运行」的清单）
-      tmux: { available: true, version: "3.2a", sessions: [{ name: "work", windows: 2, attached: 0 }, { name: "logs", windows: 1, attached: 0 }] },
+      tmux: { available: true, version: "3.2a", sessions: [{ name: "work", windows: 2, attached: 0, id: "$1" }, { name: "logs", windows: 1, attached: 0, id: "$2" }] },
     },
   ] as DemoSession[],
   approvals: [
@@ -942,7 +981,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sc = h.startup_command?.trim();
       if (sc) sess.out += `\r\n[演示] ${sc}\r\n`;
       if (h.address !== "local") {
-        sess.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+        sess.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }] };
       }
       return sid;
     }
@@ -1055,8 +1094,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 探测仅支持 SSH 会话（演示）");
-      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }] };
       return s.tmux;
+
     }
     case "tmux_restore": {
       const sid = args?.sid as string;
@@ -1077,7 +1117,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       } else if (s.state !== "Connected" && s.state !== "Reconfirming") {
         throw apiError("invalid_input", "会话状态不支持恢复现场（演示）");
       }
-      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }] };
       const sessions = s.tmux.sessions;
       const target = want ? (sessions.find((x) => x.name === want) ?? null) : sessions.length === 1 ? sessions[0] : null;
       const history = target
@@ -1093,7 +1133,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       if (s.kind !== "ssh") throw apiError("invalid_input", "tmux attach 仅支持 SSH 会话（演示）");
-      if (!name || name.includes("'")) throw apiError("invalid_input", "非法的 tmux 会话名（演示）");
+      // 闸同核心放宽到控制字符（sq 全覆盖后引号/反斜杠是合法 tmux 名）
+      if (!name || /[\x00-\x1f\x7f]/.test(name)) throw apiError("invalid_input", "非法的 tmux 会话名（演示）");
       if (s.state === "Disconnected" || s.state === "Closed") {
         throw apiError("invalid_input", "会话未连接：请先重连再挂 tmux（演示）");
       }
@@ -1108,6 +1149,29 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       audit("human", "tmux_attach", name, null, sid ?? null, { auto });
       return null;
     }
+    // ---- tmux 新建会话：远端 new-session -d 的演示——名字白名单/同名预检口径与
+    // 真实核心逐条对齐；创建只落清单条目（attached:0），接入由前端随后 tmux_attach ----
+    case "tmux_session_create": {
+      const sid = args?.sid as string;
+      const name = (args?.name as string ?? "").trim();
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 仅支持 SSH 会话（演示）");
+      if (s.state === "Disconnected" || s.state === "Closed") {
+        throw apiError("invalid_input", "会话未连接：请先重连再建 tmux 会话（演示）");
+      }
+      if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/.test(name)) {
+        throw apiError("invalid_input", "非法的 tmux 会话名：1–64 字符，字母/数字/下划线开头，之后可用短横线（演示）");
+      }
+      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [] };
+      if (s.tmux.sessions.some((x) => x.name === name)) {
+        throw apiError("invalid_input", `tmux 会话 ${name} 已存在（演示）`);
+      }
+      s.tmux.sessions.push({ name, windows: 1, attached: 0, id: "$" + String(s.tmux.sessions.length + 1) });
+      pushTo(sid, `\r\n[演示] tmux new-session -d -s '${name}'\r\n`);
+      audit("human", "tmux_session_create", name, null, sid ?? null, {});
+      return null;
+    }
     // ---- tmux 面板（一标签多 tmux 会话）：真实侧同连接开附加交互 PTY 通道跑
     // `tmux -u attach`；demo 以格子输出缓冲 + 回显演示，防呆口径与核心逐条对齐 ----
     case "tmux_pane_open": {
@@ -1116,7 +1180,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 面板仅支持 SSH 会话（演示）");
-      if (!name || /['\\\r\n]/.test(name)) throw apiError("invalid_input", "非法的 tmux 会话名（演示）");
+      if (!name || /[\x00-\x1f\x7f]/.test(name)) throw apiError("invalid_input", "非法的 tmux 会话名（演示）");
       if (s.state !== "Connected" && s.state !== "Reconfirming") {
         throw apiError("invalid_input", "会话未连接，无法打开面板窗格（演示）");
       }
@@ -1145,6 +1209,112 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (p.out) for (const h of p.handlers) h(encoder.encode(p.out));
       return null;
     }
+    // ---- tmux 会话大屏（监控墙）：真实侧一次 exec 抓全部会话 capture-pane 当前
+    // 屏（帧协议/防碰撞在核心，demo 单对象直出）；demo 以 fixture 文本演示快照
+    // 渲染。__wall_fetches 计数供 spec 断言轮询生命周期（关屏即停，不再空开枪）。
+    case "tmux_wall_snapshot": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 大屏仅支持 SSH 会话（演示）");
+      const wc = globalThis as { __wall_fetches?: number };
+      wc.__wall_fetches = (wc.__wall_fetches ?? 0) + 1;
+      const targets = (args?.targets ?? []) as { id?: string; name?: string }[];
+      return targets.map((tg) => {
+        const ent = (s.tmux?.sessions ?? []).find((x) => (tg.id ? x.id === tg.id : false) || x.name === tg.name);
+        // ghost 夹具（spec 专用）：名单在、快照拍不到 = 离线遮罩路径的 demo 呈现
+        if (!ent || ent.name === "ghost") return { ok: false, text: "", rows: 0 };
+        return { ok: true, text: demoWallSnap(ent), rows: ent.wallRows ?? DEMO_WALL_ROWS };
+      });
+    }
+    // ---- 大屏 pane 贴格子（tmux_wall_fit）：真实侧对单窗格会话发 resize-window
+    // 并回执原样（attach 客户端在场照样贴；关墙恢复交还）。demo 记 __wall_fits
+    // 供 spec 断言请求形状，把 wallRows 落进夹具=下一拍快照的 rows 字段
+    // （pane_height 反馈环的镜像），并按「首次留存」记 wallOrig 原样回执。
+    case "tmux_wall_fit": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 大屏仅支持 SSH 会话（演示）");
+      const wc = globalThis as { __wall_fits?: { name: string; cols: number; rows: number }[] };
+      const fits = (args?.fits ?? []) as { id?: string; name?: string; cols?: number; rows?: number }[];
+      wc.__wall_fits = (wc.__wall_fits ?? []).concat(
+        fits.map((f) => ({ name: String(f.name ?? ""), cols: Number(f.cols ?? 0), rows: Number(f.rows ?? 0) })),
+      );
+      const results: { id: string; name: string; orig_w: number; orig_h: number; orig_ws: string }[] = [];
+      for (const f of fits) {
+        const ent = (s.tmux?.sessions ?? []).find((x) => (f.id ? x.id === f.id : false) || x.name === f.name);
+        if (!ent || ent.name === "ghost" || Number(f.rows) <= 0) continue;
+        // 回执 orig=「本次 resize 前现值」（真核心同口径——上次贴格后的中间态；
+        // 前端关墙恢复的留存走「首次留存」语义）。orig_ws 恒 ""=demo 无
+        // window-size 概念，UNSET/manual 臂由核心真 sh 测试覆盖（spec 域不镜像）
+        const prevCols = 80;
+        const prevRows = ent.wallRows ?? DEMO_WALL_ROWS;
+        if (!ent.wallOrig) ent.wallOrig = { cols: prevCols, rows: prevRows };
+        ent.wallRows = Number(f.rows);
+        results.push({ id: ent.id, name: ent.name, orig_w: prevCols, orig_h: prevRows, orig_ws: "" });
+      }
+      return results;
+    }
+    // ---- 关墙恢复（tmux_wall_fit_restore）：原样交还——夹具 rows 回原值、
+    // wallOrig 清空（下次 fit 重新留存）。记 __wall_restores 供 spec 断言。
+    case "tmux_wall_fit_restore": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 大屏仅支持 SSH 会话（演示）");
+      const wc = globalThis as { __wall_restores?: { id: string; name: string; cols: number; rows: number; ws: string }[] };
+      const items = (args?.items ?? []) as { id?: string; name?: string; cols?: number; rows?: number; ws?: string }[];
+      wc.__wall_restores = (wc.__wall_restores ?? []).concat(
+        items.map((it) => ({ id: String(it.id ?? ""), name: String(it.name ?? ""), cols: Number(it.cols ?? 0), rows: Number(it.rows ?? 0), ws: String(it.ws ?? "") })),
+      );
+      for (const it of items) {
+        const ent = (s.tmux?.sessions ?? []).find((x) => (it.id ? x.id === it.id : false) || x.name === it.name);
+        if (!ent || ent.name === "ghost") continue;
+        if (Number(it.rows) > 0) ent.wallRows = Number(it.rows);
+        ent.wallOrig = undefined;
+      }
+      return null;
+    }
+    // ---- 大屏键入（监控墙互动）：真实侧 tmux send-keys（服务端 API，零客户端）
+    // + 立即补拍单格一趟往返；demo 以 fixture 输入行/屏行镜像（字面回显、Enter
+    // 提交、C-c 清行、BSpace 退格——shell 同款最小语义）。__wall_inputs 计数供
+    // spec 断言键入管线确实走了这条通道（而非节拍快照的巧合回显）。
+    case "tmux_wall_input": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 大屏输入仅支持 SSH 会话（演示）");
+      const wc = globalThis as { __wall_inputs?: number };
+      wc.__wall_inputs = (wc.__wall_inputs ?? 0) + 1;
+      const tg = (args?.target ?? {}) as { id?: string; name?: string };
+      const ent = (s.tmux?.sessions ?? []).find((x) => (tg.id ? x.id === tg.id : false) || x.name === tg.name);
+      if (!ent || ent.name === "ghost") return { ok: false, text: "", rows: 0 };
+      const lit = String(args?.lit ?? "");
+      const keys = (args?.keys ?? []) as string[];
+      // 键名白名单与核心 tmux_wall_key_ok 同口径（M- + 单可打印放行）——此前镜像
+      // 无校验，spec 测不出前后端口径劈叉（审查轮 P2）
+      const keyOk = (k: string) =>
+        (k.length === 1 && /[a-z0-9]/i.test(k))
+        || (k.length >= 2 && k.length <= 12 && /[a-z]/i.test(k[0]) && /^[a-z0-9-]+$/i.test(k.slice(1)))
+        || (k.length === 3 && k[0] === "M" && k[1] === "-" && /[\x21-\x7e]/.test(k[2]));
+      for (const k of keys) {
+        if (!keyOk(k)) throw apiError("invalid_input", `非法键名：${k}（演示）`);
+      }
+      ent.wallIn = (ent.wallIn ?? "") + lit;
+      for (const k of keys) {
+        if (k === "Enter") {
+          ent.wallOut = (ent.wallOut ?? "") + `${ent.wallIn}\n`;
+          ent.wallIn = "";
+        } else if (k === "BSpace") {
+          ent.wallIn = ent.wallIn.slice(0, -1);
+        } else if (k === "C-c") {
+          ent.wallOut = (ent.wallOut ?? "") + (ent.wallIn ? `${ent.wallIn}^C\n` : "^C\n");
+          ent.wallIn = "";
+        }
+      }
+      return { ok: true, text: demoWallSnap(ent), rows: ent.wallRows ?? DEMO_WALL_ROWS };
+    }
     case "tmux_pane_input": {
       const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
       const p = s?.panes?.find((x) => x.pane_id === Number(args?.paneId));
@@ -1152,6 +1322,67 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (!p.alive) throw apiError("invalid_input", "面板窗格已断开（演示）");
       const keys = String(args?.keys ?? "");
       for (const ch of keys) {
+        if (p.renaming) {
+          // (rename-session) 提示符（C-b $ 进入，**预填旧名**）：回车提交改名——格子名/
+          // fixture 清单/主视图名牌原子跟上（真实侧探针按不可变 session_id 对账，demo
+          // 单对象直改，spec 63 据此断言标题跟随）；Esc/C-c 取消；重名拒绝（真 tmux 同款
+          // duplicate session，名字不变）；退格编辑；其余可见字符进名字行
+          if (ch === "\r") {
+            const next = p.line.trim();
+            p.line = "";
+            p.renaming = false;
+            const old = p.tmux_session;
+            if (next && next !== old && (s?.tmux?.sessions ?? []).some((x) => x.name === next)) {
+              panePush(p, `\r\nduplicate session: ${next}\r\n${p.tmux_session}@demo:~$ `);
+              continue;
+            }
+            if (next && next !== old) {
+              p.tmux_session = next;
+              const ent = (s?.tmux?.sessions ?? []).find((x) => x.name === old);
+              if (ent) ent.name = next;
+              if (s?.tmux_attached === old) s.tmux_attached = next;
+              audit("human", "tmux_rename_session", old, null, s?.id ?? null, { to: next });
+            }
+            panePush(p, `\r\n${p.tmux_session}@demo:~$ `);
+          } else if (ch === "\x1b") {
+            // Esc：真 tmux 同款——弃输入关提示符（demo 无状态行，直接回 shell 提示符）
+            p.renaming = false;
+            p.line = "";
+            panePush(p, `\r\n${p.tmux_session}@demo:~$ `);
+          } else if (ch === "\x03") {
+            p.renaming = false;
+            p.line = "";
+            panePush(p, `^C\r\n${p.tmux_session}@demo:~$ `);
+          } else if (ch === "\x7f") {
+            if (p.line) { p.line = p.line.slice(0, -1); panePush(p, "\b \b"); }
+          } else if (ch >= " ") {
+            p.line += ch;
+            panePush(p, ch);
+          }
+          continue;
+        }
+        if (p.sawPrefix) {
+          // tmux 前缀（C-b）后的一键是 tmux 命令、不进 shell：d=脱离（demo_pane_exit 同款
+          // 收尾，spec 63 据此断言 Ctrl+B 直达格子）；$=改会话名（真 tmux 在状态行弹
+          // 「(rename-session) 名」输入框，demo 进 renaming 态等待提交——spec 63 据此
+          // 断言输入法中文标点「￥」在前缀后被还原成 $、且改名提交后面板跟随）；其余
+          // 命令 demo 不模拟
+          p.sawPrefix = false;
+          if (ch === "$") {
+            // 真 tmux 同款：提示符**预填旧名**、光标在尾（直接打字=追加，须退格清行）
+            p.line = p.tmux_session;
+            p.renaming = true;
+            panePush(p, `\r\n(rename-session) ${p.tmux_session}`);
+            continue;
+          }
+          if (ch !== "d") continue;
+          const idx = s?.panes?.findIndex((x) => x.pane_id === p.pane_id) ?? -1;
+          if (idx >= 0) s?.panes?.splice(idx, 1);
+          panePush(p, "\r\n[detached (from session " + p.tmux_session + ")]\r\n");
+          paneEnd(p);
+          audit("human", "tmux_pane_ended", p.tmux_session, null, s?.id ?? null, { pane_id: p.pane_id });
+          break;
+        }
         if (ch === "\r") {
           const cmd = p.line.trim();
           p.line = "";
@@ -1162,6 +1393,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           // Ctrl+C：shell 回显 ^C 并起新提示符（spec 63 据此断言控制字符改投格子）
           p.line = "";
           panePush(p, `^C\r\n${p.tmux_session}@demo:~$ `);
+        } else if (ch === "\x02") {
+          p.sawPrefix = true; // tmux 默认前缀：客户端吞下、不回显
         } else if (ch >= " ") {
           p.line += ch;
           panePush(p, ch);
@@ -1191,7 +1424,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       const names = (args?.sessions as string[] | undefined) ?? [];
-      s.tmux = { available: true, version: "3.4", sessions: names.map((n) => ({ name: n, windows: 1, attached: 0 })) };
+      s.tmux = { available: true, version: "3.4", sessions: names.map((n, i) => ({ name: n, windows: 1, attached: 0, id: `$${i + 1}` })) };
       return s.tmux;
     }
     // 演示专用：格子在远端自行结束（用户 C-b d / exit——真实核心 exited 臂：摘格摘清单）
@@ -1843,7 +2076,7 @@ case "read_triggers": {
           const scNew = h.startup_command?.trim();
           if (scNew) sessNew.out += `\r\n[演示] ${scNew}\r\n`;
           if (h.address !== "local") {
-            sessNew.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0 }] };
+            sessNew.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }] };
           }
           if (!h.id.startsWith("quick-")) {
             // 十七轮：快速主机不进元数据（真实核心 vault 侧 EXISTS 守卫同语义）

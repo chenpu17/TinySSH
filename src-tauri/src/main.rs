@@ -607,6 +607,84 @@ async fn tmux_probe(state: ApiState<'_>, sid: String) -> CmdResult<session_api::
     state.api.tmux_probe(&sid).await.map_err(WireError::from)
 }
 
+/// tmux 会话大屏（监控墙）：一次 exec 抓全部目标会话当前屏（capture-pane 快照，
+/// 只读零客户端零 PTY）。帧协议/上限/降级在 core；Err 时前端保留上一帧继续
+/// 呈现，不闪空白。
+#[tauri::command]
+async fn tmux_wall_snapshot(
+    state: ApiState<'_>,
+    sid: String,
+    targets: Vec<session_api::TmuxWallTarget>,
+) -> CmdResult<Vec<session_api::TmuxWallCell>> {
+    state
+        .api
+        .tmux_wall_snapshot(&sid, targets)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 会话大屏输入：把键入送达指定会话（tmux send-keys 服务端 API，零客户端
+/// ——小格不挂 attach 客户端就不拽会话窗口尺寸），同一命令立即补拍单格返回
+/// （发送+取证一趟往返，不等 2s 节拍）。键名白名单/字面闸在 core。
+#[tauri::command]
+async fn tmux_wall_input(
+    state: ApiState<'_>,
+    sid: String,
+    target: session_api::TmuxWallTarget,
+    lit: String,
+    keys: Vec<String>,
+) -> CmdResult<session_api::TmuxWallCell> {
+    state
+        .api
+        .tmux_wall_input(&sid, target, lit, keys)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 会话大屏 pane 贴格子：把 pane 调成格子字符预算（resize-window，守卫在
+/// core——单窗格；attach 客户端在场照样贴，主视图 attach+大屏同看是主场景）。
+/// 回执每格的原窗口尺寸+window-size 选项值——前端留存，关大屏时原样交还
+/// tmux_wall_fit_restore（resize-window 会把 window-size 钉成 manual，不还原 =
+/// 用户布局永久变形）。300ms 节拍的 pane_height 是「贴上了没」的反馈环。
+#[tauri::command]
+async fn tmux_wall_fit(
+    state: ApiState<'_>,
+    sid: String,
+    fits: Vec<session_api::TmuxWallFit>,
+) -> CmdResult<Vec<session_api::TmuxWallFitResult>> {
+    state
+        .api
+        .tmux_wall_fit(&sid, fits)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 会话大屏关墙恢复：把贴格子借走的窗口几何与 window-size 选项原样交还
+/// （core 侧白名单/死字符串消毒）。前端在墙卸载时发起；项为空=无事发生。
+#[tauri::command]
+async fn tmux_wall_fit_restore(
+    state: ApiState<'_>,
+    sid: String,
+    items: Vec<session_api::TmuxWallRestoreItem>,
+) -> CmdResult<()> {
+    state
+        .api
+        .tmux_wall_fit_restore(&sid, items)
+        .await
+        .map_err(WireError::from)
+}
+
+/// tmux 新建会话：远端 `tmux new-session -d -s <名>`（名字白名单/同名预检在
+/// core）。创建本身只落后台会话，接入由前端走既有链路（探针刷新 → attach）。
+#[tauri::command]
+async fn tmux_session_create(state: ApiState<'_>, sid: String, name: String) -> CmdResult<()> {
+    state
+        .api
+        .tmux_session_create(&sid, &name)
+        .await
+        .map_err(WireError::from)
+}
+
 /// tmux 联动：恢复现场——先走既有手动重连全机器（会话已连时跳过），再探针
 /// 解析目标并 capture-pane 抓近史。attach 由前端经 tmux_attach 二段式下发。
 #[tauri::command]
@@ -3832,7 +3910,7 @@ fn main() {
             list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
             list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection, set_session_logging, session_log_path,
-            close_session, reconnect_session, stop_auto_reconnect, tmux_probe, tmux_restore,
+            close_session, reconnect_session, stop_auto_reconnect, tmux_probe, tmux_wall_snapshot, tmux_wall_input, tmux_wall_fit, tmux_wall_fit_restore, tmux_session_create, tmux_restore,
             tmux_attach, tmux_pane_open, tmux_pane_close, tmux_pane_resize, tmux_pane_input,
             tmux_pane_subscribe, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,

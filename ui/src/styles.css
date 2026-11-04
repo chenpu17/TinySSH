@@ -98,6 +98,10 @@
   --ok-soft: color-mix(in srgb, var(--ok) 8%, transparent);
   --ok-line: color-mix(in srgb, var(--ok) 32%, transparent);
   --danger-faint: color-mix(in srgb, var(--danger) 7%, transparent);
+  /* 静默钮/菜单项的中性交互底（按钮美化轮）：正文色低比例混透明——深色面是提亮
+     一档、浅色面是加深一档，随每个色板×深浅自动成立，无需逐板覆写 */
+  --quiet-hover: color-mix(in srgb, var(--text) 9%, transparent);
+  --quiet-focus: color-mix(in srgb, var(--text) 14%, transparent); /* 键盘焦点浓一档：浅色/墨水屏下 9% 作唯一焦点指示偏淡 */
   --blue: #82a7f0;
   /* focus.ring：键盘焦点环独立 token（与 accent 区分） */
   --focus: #8ab4ff;
@@ -238,7 +242,7 @@ body {
 .collab-badge {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px; font-size: 11px; font-weight: 600; border-radius: 999px;
-  color: var(--warn); background: transparent; border: 1px solid var(--warn); cursor: pointer;
+  color: var(--warn); background: transparent; border: 1px solid var(--warn); cursor: pointer; box-shadow: none;
 }
 /* 悬停特异度须胜过通用 button:not(:disabled):hover（同 vis-r35 低-2 模式），否则落 accent 底。
    UX 八轮：琥珀硬编码改 --warn 派生——11 个色板 --warn 各不相同，硬编码在非石墨主题下徽标与脉冲圈脱色 */
@@ -278,7 +282,7 @@ button.collab-badge:not(:disabled):hover { background: color-mix(in srgb, var(--
 .hb-settings {
   display: flex; width: 100%; gap: 7px; align-items: center;
   background: none; border: none; color: var(--text-sub); cursor: pointer;
-  padding: 6px 8px; border-radius: 6px; font-size: 12px;
+  padding: 6px 8px; border-radius: 6px; font-size: 12px; box-shadow: none;
 }
 button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(--text); }
 /* 拖宽把手：叠在主机栏右缘，命中区 7px；悬停给可见反馈 */
@@ -293,7 +297,7 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
   /* min-height + wrap（审查二轮 UX2-9）：Agent 面板开着时终端区可被压到 ~480px，
      按钮组装不下——末位「工具」钮此前被视口硬裁 11px。装得下时单行 40px 不变，
      装不下时折第二行而不是裁切 */
-  min-height: 40px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  min-height: 40px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
   padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--panel);
   white-space: nowrap;
 }
@@ -338,12 +342,13 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
 .sb-left { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sb-btn {
   background: none; border: none; color: var(--text-sub); cursor: pointer;
-  font-size: 11px; display: inline-flex; gap: 4px; align-items: center;
-  padding: 2px 6px; border-radius: 4px;
+  font-size: 11px; font-weight: 500; display: inline-flex; gap: 4px; align-items: center;
+  padding: 2px 6px; border-radius: 4px; box-shadow: none;
 }
 /* 特异度须胜过通用 button:not(:disabled):hover(--accent-hover)——否则悬停文字落 accent 底
-   近乎不可读（vis-r35 低-2：深 1.83:1 / 浅 3.37:1） */
-button.sb-btn:not(:disabled):hover { background: var(--panel2); color: var(--text); }
+   近乎不可读（vis-r35 低-2：深 1.83:1 / 浅 3.37:1）。按钮美化轮：悬停走中性浅底（与工具栏
+   静默钮同一口径），并补重置主按钮的内高光/投影（此前每个状态钮浮着一圈淡框） */
+button.sb-btn:not(:disabled):hover { background: var(--quiet-hover); color: var(--text); }
 .sb-btn b { color: var(--text); font-weight: 600; }
 /* 传输计数注意态（冲突待裁决）：计数含 awaiting 但裸数字不引人——warn 色提醒
    「有卡在等人」（用户实测 mac：决策卡只活在抽屉里时二次下载观感=静默无响应）。
@@ -401,28 +406,26 @@ button.ghost.attn:not(:disabled):hover { color: var(--warn); background: var(--p
 .dlg-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .dlg-head b { font-size: 14px; }
 
-/* 工具/标签列表 下拉菜单 */
+/* 工具/标签列表 下拉菜单（菜单项样式见下方「菜单项统一」块） */
 .st-tools { position: relative; display: flex; flex: none; }
 .tools-menu {
-  position: absolute; top: calc(100% + 4px); right: 0; z-index: 70; min-width: 172px; max-width: 300px;
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 70; min-width: 180px; max-width: 320px;
   background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
   padding: 4px; box-shadow: 0 2px 6px var(--shadow-soft), 0 12px 32px var(--shadow-pop);
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; gap: 1px;
+  /* 无滚动上限（找茬四轮 C2）：tmux 快接清单/标签列表是无上界列表——条目多时
+     菜单底部直接捅出视口（768 高约 16-17 项触顶，末尾条目不可达）。钳到工具钮
+     上缘之内可滚动；对照组 .ctx-menu 有 JS 测量回夹，这里纯 CSS 即够。 */
+  max-height: calc(100vh - 120px); overflow-y: auto; overscroll-behavior: contain;
 }
 .tools-menu .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tools-menu .tm-row { display: flex; align-items: center; gap: 2px; }
-.tools-menu button {
-  text-align: left; background: none; border: none; color: var(--text);
-  cursor: pointer; border-radius: 6px; font-size: 12px; padding: 7px 10px;
-  display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px; min-width: 0;
-}
-.tools-menu button:not(:disabled):hover { background: var(--panel2); }
+.tools-menu .tm-row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
 .tools-menu .tm-main { flex: 1; }
-.tools-menu .tm-act {
-  flex: none; font-size: 11px; padding: 4px 8px; color: var(--accent);
-}
-.tools-menu .tm-danger { color: var(--danger, #e5534b); }
-.tools-menu .tm-active { background: var(--panel2); }
+/* 标签列表：状态字不折行（窄行曾把「已断开」挤成两行），名称让位省略；当前会话行
+   accent 软底（旧值 panel2 与菜单底同色，等于没标） */
+.tools-menu.tm-right { min-width: 240px; }
+.tools-menu .tm-main > .mono { flex: none; white-space: nowrap; }
+.tools-menu .tm-active { background: var(--accent-soft); }
 
 .panel-title {
   padding: 6px 12px; min-height: 32px; align-items: center;
@@ -455,15 +458,21 @@ button {
   background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
   color: var(--on-accent); border: none; border-radius: 8px;
   padding: 6px 13px; font-weight: 600; cursor: pointer; font-size: 12px;
+  /* 按钮美化轮：表单控件不继承字体（UA 默认 Arial）——此前全应用按钮的中文都落到
+     系统回退微软雅黑（CDP getPlatformFontsForNode 实测），正是 UX 五轮内置 MiSans VF
+     要根治的「土」观感，唯独漏了按钮与输入框；此处与 input/select 一并改继承 */
+  font-family: inherit;
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 1px 2px var(--shadow-soft);
 }
 /* UX 改版：ghost 从「accent 描边+accent 字」改**中性次级**——accent 只留给真正的主操作，
-   一屏内实心彩块收敛到 1-2 个（Linear/Warp 一派的克制用法）；hover 才提亮到正文色 */
-button.ghost { background: transparent; color: var(--text-sub); border: 1px solid var(--border); box-shadow: none; }
+   一屏内实心彩块收敛到 1-2 个（Linear/Warp 一派的克制用法）；hover 才提亮到正文色。
+   按钮美化轮：次级钮字重 600→500——与实心主钮（600）拉开层级，对话框「保存并连接 /
+   仅保存 / 取消」一排不再三颗一样粗 */
+button.ghost { background: transparent; color: var(--text-sub); border: 1px solid var(--border); box-shadow: none; font-weight: 500; }
 /* T40 私钥「从文件导入…」：label 包隐藏 file input，外观与 button.ghost 同族 */
 label.file-btn { display: inline-flex; align-items: center; padding: 6px 13px; border: 1px solid var(--border);
-  border-radius: 8px; background: transparent; color: var(--text-sub); font-size: 12px; font-weight: 600;
+  border-radius: 8px; background: transparent; color: var(--text-sub); font-size: 12px; font-weight: 500;
   cursor: pointer; white-space: nowrap; box-shadow: none; }
 label.file-btn:hover { background-color: var(--panel3); color: var(--text); border-color: var(--border-hover); }
 button.danger { background: var(--danger); color: var(--on-danger); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px var(--shadow-soft); }
@@ -473,18 +482,88 @@ button:not(:disabled):active { transform: translateY(0.5px); }
 button.ghost:not(:disabled):hover { background-color: var(--panel3); color: var(--text); border-color: var(--border-hover); }
 button.danger:not(:disabled):hover { background-color: var(--danger-hover); }
 button.warn:not(:disabled):hover { background-color: var(--warn-hover); }
-/* 危险次级动作（接管并停止任务）：描边而非实心——与主接管拉开层级，按下才加底 */
+/* 危险次级动作（接管并停止任务）：描边而非实心——与主接管拉开层级，按下才加底。
+   描边钮不带主按钮的内高光/投影（按钮美化轮：此前漏重置，描边框里浮一道亮线） */
 button.ghost-danger {
   background: transparent; color: var(--danger);
-  border: 1px solid var(--danger-line);
+  border: 1px solid var(--danger-line); box-shadow: none; font-weight: 500;
 }
 button.ghost-danger:not(:disabled):hover { background-color: var(--danger-soft-hover); border-color: var(--danger); }
 button:disabled { opacity: 0.4; cursor: default; }
 :where(button, .tab):focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* ===== 菜单项统一（按钮美化轮，2026-11-02）=====
+   右键菜单 .ctx-menu / 下拉菜单 .tools-menu（工具、tmux 快接、标签列表）/ 分屏会话表
+   .split-menu / 文件菜单 .sftp-menu 共用一套项样式。此前各族只覆盖了上面主按钮基础
+   规则的一部分：右键项继承 ghost 描边 + 600 粗体灰字（像一摞描边按钮）、下拉项继承
+   内高光阴影（项间一道道亮线）且悬停底 = 菜单底（实测同色，等于没反馈）。统一为：
+   28px 行、无描边无阴影、正文色正文字重（430 同 body——MiSans VF 是真变量字体，
+   450 就已显粗）、悬停与键盘焦点同一中性高亮（菜单内不画
+   2px 焦点环——高亮本身就是焦点指示，原生菜单同款）、危险项红字、禁用灰字不叠
+   透明度（「面板中」等状态仍要读得清）。项级属性只在本块写，各族容器块不再碰项。 */
+:is(.ctx-menu, .split-menu) button.sm-item, .tools-menu button, .sftp-menu button {
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-width: 0;
+  min-height: 28px; padding: 4px 10px; border: none; border-radius: 6px;
+  background: transparent; box-shadow: none; cursor: pointer;
+  color: var(--text); font-size: 13px; font-weight: 430; line-height: 1.4; text-align: left;
+}
+:is(.ctx-menu, .split-menu) button.sm-item:not(:disabled):hover,
+.tools-menu button:not(:disabled):hover, .sftp-menu button:not(:disabled):hover {
+  background: var(--quiet-hover); color: var(--text);
+}
+/* 键盘焦点：同一种中性高亮、浓一档（--quiet-focus）——菜单内它是唯一焦点指示，不画 2px 环 */
+.tools-menu button:focus-visible, .sftp-menu button:focus-visible { background: var(--quiet-focus); color: var(--text); outline: none; }
+/* 右键/分屏菜单开即聚焦首项（审查二轮 UX2-4 键盘可达）——但鼠标打开时不该亮首项：
+   终端右键时焦点从 xterm 文本框转来，会命中 :focus-visible。只在键盘态（ctx-menus.tsx
+   打 data-kbd：键盘打开菜单，或菜单里按过键）才显示焦点高亮，否则首项常亮 + 悬停项 = 双亮 */
+:is(.ctx-menu, .split-menu) button.sm-item:focus-visible { outline: none; }
+:is(.ctx-menu, .split-menu)[data-kbd] button.sm-item:focus { background: var(--quiet-focus); }
+:is(.ctx-menu, .split-menu, .tools-menu, .sftp-menu) button:not(:disabled):active { transform: none; }
+:is(.ctx-menu, .split-menu, .tools-menu, .sftp-menu) button.tm-danger { color: var(--danger); }
+:is(.ctx-menu, .split-menu, .tools-menu, .sftp-menu) button.tm-danger:not(:disabled):hover,
+:is(.ctx-menu, .split-menu)[data-kbd] button.tm-danger:focus,
+:is(.tools-menu, .sftp-menu) button.tm-danger:focus-visible { background: var(--danger-soft); color: var(--danger); }
+:is(.ctx-menu, .split-menu, .tools-menu, .sftp-menu) button:disabled { color: var(--dim); opacity: 1; cursor: not-allowed; }
+:is(.ctx-menu, .tools-menu) .ctx-menu-sep { height: 1px; background: var(--border); margin: 4px 8px; flex: none; }
+/* 行内次级动作（标签列表「重连」、tmux 快接「＋面板」、作曲行「创建」）：紧凑
+   accent 字钮，悬停 accent 软底——创建是行内主操作，被菜单统一块剥成纯灰字
+   弱于同菜单的「＋面板」不合常理（审查轮 P3） */
+.tools-menu button:is(.tm-act, .tmux-pane-add, .tmux-create-ok) {
+  flex: none; min-height: 24px; padding: 2px 8px; font-size: 12px; font-weight: 500; color: var(--accent-text);
+}
+.tools-menu button:is(.tm-act, .tmux-pane-add, .tmux-create-ok):not(:disabled):hover { background: var(--accent-soft); color: var(--accent-text); }
+.tools-menu button:is(.tm-act, .tmux-pane-add, .tmux-create-ok):disabled { color: var(--dim); }
+
+/* ===== 工具栏钮统一（按钮美化轮）=====
+   会话工具栏 / 标签条尾部控件 / 任务面板头：此前每个钮都是描边框 + 600 粗体，高度
+   27/28/30px 三种混排（图标钮、带图标文字钮、纯文字钮各算各的）。统一为 28px 静默钮：
+   静息无描边无底、500 字重；悬停中性浅底；开合/按下态（.ts-open / aria-pressed /
+   aria-expanded）accent 软底 + accent 字 + 细 accent 内描边；纯图标钮 28×28 方钮。
+   接管（warn 实底）/ 接管并停止（危险描边）保持醒目配色，只并入统一高度与 500 字重。
+   结构选择器只认这几处容器的直接子钮——标签药丸里的分屏/关闭钮、菜单里的项都不受波及 */
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button:not(.tab-scroll) {
+  height: 28px; padding: 0 9px; gap: 6px; font-weight: 500; flex: none;
+}
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost {
+  border-color: transparent; background: transparent; color: var(--text-sub);
+}
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.icon-btn { width: 28px; padding: 0; }
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost:not(:disabled):hover {
+  background-color: var(--quiet-hover); border-color: transparent; color: var(--text);
+}
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost:is(.ts-open, [aria-pressed="true"], [aria-expanded="true"]),
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost:is(.ts-open, [aria-pressed="true"], [aria-expanded="true"]):not(:disabled):hover {
+  background-color: var(--accent-soft); color: var(--accent-text); border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+/* 注意态（专注模式标签条「传输 N」有冲突待裁决）压过开合态的 accent 字（同特异度、靠后） */
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.attn,
+:is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.attn:not(:disabled):hover { color: var(--warn); }
 input, select {
   /* UX 改版：输入框用 --bg 井底（比所在面板深一档的「凹陷」隐喻），panel2 留给浮起卡片 */
   background: var(--bg); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 6px 9px; font-size: 12px; width: 100%;
+  font-family: inherit; /* 按钮美化轮：同 button，UA 默认 Arial→中文落雅黑 */
 }
 /* width:100% 只该管文本输入；checkbox/radio 是固定尺寸控件，放行后在 flex 行里
    会把 .bp-name 这类 flex:1 兄弟挤到 0 宽（vis-r42：广播浮层整列主机名消失） */
@@ -609,7 +688,7 @@ textarea {
 .metrics-bar .mpause {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; padding: 0; border: none; border-radius: 5px;
-  background: transparent; color: var(--dim); cursor: pointer;
+  background: transparent; color: var(--dim); cursor: pointer; box-shadow: none;
 }
 .metrics-bar .mpause:hover { background: var(--panel3); color: var(--text); }
 #term { width: 100%; height: 100%; position: relative; }
@@ -656,9 +735,11 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
   font-size: 11px; line-height: 16px; color: var(--text); outline: none;
   background: var(--panel3); border: 1px solid var(--accent);
 }
+/* 焦点窗格框与 tmux 面板焦点格同一语言（2px accent 实线，见下方面板段）：此前是 1px
+   --accent-glow 内描边阴影——半透明几乎看不出，且墨水屏铲阴影后焦点窗格完全无指示 */
 .term-session.pane-focused::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  box-shadow: inset 0 0 0 1px var(--accent-glow);
+  border: 2px solid var(--accent);
 }
 .pane-tag {
   display: none; position: absolute; top: 2px; left: 8px; z-index: 5;
@@ -681,19 +762,34 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
   display: flex; align-items: center; top: 0; left: 0; right: 0; height: 22px;
   padding: 0 8px; border-radius: 0; font-size: 11px; color: var(--text-sub);
   background: var(--panel); border-bottom: 1px solid var(--border);
+  pointer-events: auto; cursor: grab; user-select: none; touch-action: none;
 }
 .tmux-cell {
   position: absolute; display: none; flex-direction: column; min-width: 0; min-height: 0;
   border-left: 1px solid var(--border); border-top: 1px solid var(--border);
   background: var(--bg);
 }
-.tmux-cell.focused { outline: 1px solid var(--accent-glow); outline-offset: -1px; }
 .tmux-cell-head {
   flex: none; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 4px 0 8px;
-  font-size: 11px; color: var(--text-sub); background: var(--panel); cursor: default;
-  border-bottom: 1px solid var(--border); user-select: none;
+  font-size: 11px; color: var(--text-sub); background: var(--panel); cursor: grab;
+  border-bottom: 1px solid var(--border); user-select: none; touch-action: none;
 }
-.tmux-cell.focused .tmux-cell-head { color: var(--accent); }
+/* 焦点格指示——主视图与格子同一套（用户反馈：主视图选中时没有框、格子的框看不出来）：
+   ① 2px accent 实线框画在 ::after 叠层（实线 border，墨水屏铲阴影不受影响；穿透指针；
+      z 7 压过主视图标题栏 .pane-tag 的 z 5——框只占格子边缘 2px，终端正文在 padding 内不被盖）；
+   ② 标题栏 accent 字 + 不透明 accent 浅底（主视图标题栏下面是终端底色，半透明会透出来）。
+   判定走 :focus-within（xterm 输入框在格内即焦点格）——主视图与格子同一判据，免各挂监听 */
+.tmux-cell::after,
+#term.has-tmux-panes .term-session.active::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 7;
+  border: 2px solid transparent;
+}
+.tmux-cell:focus-within::after,
+#term.has-tmux-panes .term-session.active:focus-within::after { border-color: var(--accent); }
+.tmux-cell:focus-within .tmux-cell-head,
+#term.has-tmux-panes .term-session.active:focus-within .pane-tag {
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
 .tmux-cell-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tmux-cell-state { display: none; flex: none; color: var(--warn, #d29922); }
 .tmux-cell.dead .tmux-cell-state { display: inline; }
@@ -702,14 +798,84 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
   font-size: 14px; line-height: 1; color: var(--dim);
 }
 .tmux-cell-close:not(:disabled):hover { color: var(--danger, #e5534b); background: var(--panel2); }
+/* 最大化/还原钮（× 左边）：图标走内联 SVG（currentColor），放大态由排版层换装
+   成还原图标+文案——格子外框（标题栏）放大后保留，还原钮就在框上 */
+.tmux-cell-zoom {
+  flex: none; width: 20px; height: 18px; padding: 0; justify-content: center;
+  display: flex; align-items: center; color: var(--dim);
+}
+.tmux-cell-zoom svg { display: block; }
+.tmux-cell-zoom:not(:disabled):hover { color: var(--accent); background: var(--panel2); }
 .tmux-cell-body { position: relative; flex: 1; min-height: 0; padding: 4px 6px; overflow: hidden; }
 .tmux-cell.dead .tmux-cell-body { opacity: 0.45; filter: grayscale(0.6); }
-/* 快接钮菜单行：主项（切主视图）+ 「＋面板」动作并排；禁用项保留可读灰阶 */
+/* 拖拽布局：标题栏可抓（grab）拖动换位，分隔条 8px 命中区拖动调大小（静态分隔线仍是
+   格子 1px 边框，条只在悬停/拖动时亮 accent）。拖动期间全窗锁光标、禁选中文本；被拖格
+   半透明，落点提示框 = 落下后被拖格的真实位置（无过渡动画——墨水屏主题同样适用） */
+.tmux-div { position: absolute; z-index: 6; touch-action: none; }
+.tmux-div.div-v { cursor: col-resize; }
+.tmux-div.div-h { cursor: row-resize; }
+.tmux-div::after { content: ""; position: absolute; background: transparent; }
+.tmux-div.div-v::after { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
+.tmux-div.div-h::after { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
+.tmux-div:hover::after, .tmux-div.dragging::after { background: var(--accent-glow); }
+body.tile-resizing, body.tile-dragging { user-select: none; }
+body.tile-resize-x, body.tile-resize-x * { cursor: col-resize !important; }
+body.tile-resize-y, body.tile-resize-y * { cursor: row-resize !important; }
+body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
+.tile-drag-src { opacity: 0.5; }
+.tile-drop-hint { position: absolute; z-index: 30; pointer-events: none; }
+.tile-drop-hint .tdh-zone {
+  position: absolute; inset: 4px; border-radius: 2px; /* 对齐格子直角（8px 圆角四角露尾巴） */
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.tile-drop-hint .tdh-label {
+  font-size: 12px; line-height: 20px; padding: 0 10px; border-radius: 999px;
+  color: var(--accent); background: var(--panel); border: 1px solid var(--accent);
+}
+.tile-drop-hint .tdh-label:empty { display: none; }
+/* 快接钮菜单行：主项（切主视图）+ 「＋面板」动作并排（项样式见「菜单项统一」块） */
 .tools-menu.tmux-quick-menu { min-width: 236px; }
 .tools-menu .tmux-quick-row { display: flex; align-items: center; gap: 2px; }
-.tools-menu .tmux-quick-row > button:first-child { flex: 1; }
-.tools-menu .tmux-pane-add { flex: none; font-size: 11px; padding: 4px 8px; color: var(--accent); }
-.tools-menu button:disabled { color: var(--dim); cursor: not-allowed; }
+.tools-menu .tmux-quick-row > button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 长会话名的 nowrap 继承链会让文本 min-content 撑破菜单盒（超 320px 画到
+   「＋面板」钮上）——flex:1 之外补可收缩+省略 */
+
+/* tmux 一级特性显眼（用户原话「重要的功能，不够显眼」）：快接钮 accent 描边
+   + 字色，在一排 ghost 里站出来；开菜单（ts-open）时底色坐实。
+   特异度必须硬赢「工具栏钮统一」块的 (0,3,1)/hover (0,5,1)/ts-open (0,4,1)
+   ——审查轮实测 (0,2,0) 的裸写法被统一块静默全灭，accent 从不渲染。 */
+.session-toolbar .st-tools > button.ghost.tmux-quick-btn {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.session-toolbar .st-tools > button.ghost.tmux-quick-btn:not(:disabled):hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.session-toolbar .st-tools > button.ghost.tmux-quick-btn.ts-open {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+/* 新建 tmux 会话作曲行（菜单内嵌）：输名 + 创建/取消；错误就地 role=alert。
+   输入框走 .tmux-create-input——keymap 分发器按类名全拦应用快捷键（含 Esc）。 */
+.tools-menu .tmux-create-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+.tools-menu .tmux-create-input {
+  flex: 1; min-width: 0; width: auto;
+  font-size: 12px; padding: 3px 8px;
+  min-height: 28px; /* 与同行钮（统一块 28px）齐平——矮 6px 视觉参差 */
+}
+.tools-menu .tmux-create-ok { flex: none; font-size: 12px; padding: 3px 10px; }
+.tools-menu .tmux-create-ok:disabled { opacity: 0.5; cursor: not-allowed; }
+.tools-menu .tmux-create-err {
+  margin-top: 4px; font-size: 12px; line-height: 1.5;
+  color: var(--danger);
+  white-space: normal; /* session-toolbar 的 nowrap 继承链会把长错误文案顶出菜单盒（截图实测） */
+}
 
 /* 拖标签组合分屏的落点提示（scrim + 高亮区）。高亮 inset 与 .pane-* 同公式吃
    #term 的 --split-frac——已分屏时高亮就是真实窗格几何，未分屏（默认 .5）为半区；
@@ -822,7 +988,7 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .tab-split, .tab-x {
   flex: none; width: 18px; height: 18px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: none; border: none; padding: 0;
+  background: none; border: none; padding: 0; box-shadow: none;
   border-radius: 50%; color: var(--dim); cursor: pointer; opacity: 0.75;
 }
 button.tab-split:not(:disabled):hover { background: var(--accent-ring); color: var(--accent); opacity: 1; }
@@ -1295,6 +1461,23 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 /* R31 §350：导航行 / 面包屑 / 筛选排序工具行 / 选择条 / 键盘光标与选中 */
 .sftp-nav { gap: 4px; }
 .sftp-nav button { flex: none; padding: 4px 7px; }
+/* 文件面板导航行（按钮美化轮）：与会话工具栏同一静默钮语言——26px 方钮、静息无框、悬停
+   中性浅底，开合态（按路径下载 / 编辑路径）accent 软底 + 内描边；此前一排 8 个描边方框，
+   隔一个面板头就和新工具栏两套语言 */
+.sftp-nav > button.ghost { width: 26px; height: 26px; padding: 0; border-color: transparent; }
+.sftp-nav > button.ghost:not(:disabled):hover { background-color: var(--quiet-hover); border-color: transparent; color: var(--text); }
+.sftp-nav > button.ghost.ts-open,
+.sftp-nav > button.ghost.ts-open:not(:disabled):hover {
+  background-color: var(--accent-soft); color: var(--accent-text); border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+/* 筛选/排序 chip 保留细框（与筛选框并排成组）；选中态补 accent 字与软底——此前只换框色，
+   字仍是次级灰，当前排序键一眼认不出 */
+.sftp-tools > button.ghost.ts-open,
+.sftp-tools > button.ghost.ts-open:not(:disabled):hover { border-color: var(--accent-line); background-color: var(--accent-soft); color: var(--accent-text); }
+:root[data-theme="eink"] .sftp-nav > button.ghost.ts-open { border-color: var(--accent); }
+/* eink 补偿同待遇：筛选/排序 chip 的 40% 描边在墨水屏上太淡（与隔壁导航行一致换实线 accent） */
+:root[data-theme="eink"] .sftp-tools > button.ghost.ts-open { border-color: var(--accent); }
 .sftp-crumbs {
   margin-top: 6px; display: flex; align-items: center; white-space: nowrap;
   overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
@@ -1307,7 +1490,7 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .sftp-crumb-seg { display: inline-flex; align-items: center; gap: 2px; flex: none; }
 .sftp-crumb {
   background: none; border: none; padding: 1px 2px; color: var(--accent);
-  font-size: 12px; cursor: pointer; border-radius: 4px;
+  font-size: 12px; cursor: pointer; border-radius: 4px; box-shadow: none;
 }
 button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background: none; }
 .sftp-crumb.cur { color: var(--text); font-weight: 600; cursor: default; }
@@ -1331,16 +1514,12 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 .sftp-list.cols-no-time .sftp-time { display: none; }
 .sftp-list.cols-name-only .sftp-time, .sftp-list.cols-name-only .sftp-size { display: none; }
 .sftp-menu {
-  position: fixed; z-index: 200; min-width: 132px; padding: 4px;
+  position: fixed; z-index: 200; min-width: 150px; padding: 4px;
   background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
-  box-shadow: 0 2px 6px var(--shadow-soft), 0 12px 32px var(--shadow-pop); display: flex; flex-direction: column;
+  box-shadow: 0 2px 6px var(--shadow-soft), 0 12px 32px var(--shadow-pop); display: flex; flex-direction: column; gap: 1px;
 }
-.sftp-menu-title { font-size: 11px; color: var(--dim); padding: 4px 8px 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sftp-menu button {
-  display: flex; align-items: center; justify-content: flex-start; gap: 6px; background: none; border: none;
-  color: var(--text); font-size: 12px; padding: 6px 8px; cursor: pointer; text-align: left; border-radius: 6px;
-}
-.sftp-menu button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.sftp-menu-title { font-size: 11px; color: var(--dim); padding: 4px 10px 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 文件菜单项样式并入「菜单项统一」块（按钮美化轮） */
 
 /* T42 端口转发（FR-8）*/
 .fwd-form { gap: 4px; align-items: center; }
@@ -1397,29 +1576,32 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
   border-radius: 12px; padding: 10px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
   display: flex; flex-direction: column; gap: 2px;
 }
-.split-menu .sm-item, .ctx-menu .sm-item { display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; }
 .split-menu .sm-item .sm-name, .ctx-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 分屏⑥轮：方向选择（左右/上下）分段单选——选中态 accent 描边；记住的选择
-   沿用到标签分屏钮/右键项，直到下次改选 */
+   沿用到标签分屏钮/右键项，直到下次改选。按钮美化轮：悬停选择器补 button 前缀——
+   此前 .split-menu .sm-dir:hover 特异度输给通用 button:hover，悬停整块变 accent 实底 */
 .split-dir-row { display: flex; gap: 6px; padding-bottom: 6px; }
 .split-menu .sm-dir {
   flex: 1; padding: 5px 0; border-radius: 6px; border: 1px solid var(--border);
   background: transparent; color: var(--text-sub); font-size: 12px; font-family: inherit;
-  line-height: 1.4; cursor: pointer; text-align: center;
+  line-height: 1.4; cursor: pointer; text-align: center; box-shadow: none; font-weight: 500;
 }
-.split-menu .sm-dir:hover { border-color: var(--border-hover); color: var(--text); }
-.split-menu .sm-dir.on { border-color: var(--accent); color: var(--accent); background: var(--accent-ring); font-weight: 600; }
+.split-menu button.sm-dir:not(:disabled):hover { background: var(--quiet-hover); border-color: var(--border-hover); color: var(--text); }
+.split-menu .sm-dir.on,
+.split-menu button.sm-dir.on:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--accent-ring); font-weight: 600; }
 /* 十一轮 §6.3 修订：右键上下文菜单（标签/主机卡/终端区共用 .ctx-menu）——fixed 跟随
    指针。R41 C-2 同族教训：配对遮罩的浮层必须高于 .pop-mask。开关轮随遮罩家族平移
    （41→56）：44 → 66，高于 split-menu(58)；真实鼠标点菜单项曾被 56 的自家遮罩吃掉
    （22 号 spec 收尾「关闭会话」超时实测——evaluate 里 .click() 不经命中测试才没炸） */
 .ctx-menu {
+  /* 按钮美化轮：宽度随内容（200–340），英文长项与键位提示不再折行；越界由 ctx-menus.tsx
+     挂载即测量回夹（旧版按固定 236 宽估算夹取） */
   position: fixed; z-index: 66;
-  width: 236px; background: var(--panel2); border: 1px solid var(--border);
-  border-radius: 10px; padding: 6px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
+  width: max-content; min-width: 200px; max-width: 340px;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px; box-shadow: 0 2px 6px var(--shadow-soft), 0 16px 40px var(--shadow-pop);
   display: flex; flex-direction: column; gap: 1px;
 }
-.ctx-menu .ctx-menu-sep { height: 1px; background: var(--border); margin: 4px 6px; flex: none; }
 /* §185 退化提示条：一次性可关闭，不占终端行 */
 .split-hint {
   position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 25;
@@ -1536,7 +1718,7 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 .hb-tag {
   font-size: 10px; line-height: 16px; padding: 0 6px; cursor: pointer;
   color: var(--dim); border: 1px solid var(--border); border-radius: 8px;
-  background: transparent;
+  background: transparent; box-shadow: none;
 }
 button.hb-tag:not(:disabled):hover { color: var(--text); border-color: var(--accent-line); background: var(--panel3); }
 /* 选中态悬停保持 accent 语义，不被中性悬停顶掉 */
@@ -1563,7 +1745,7 @@ button.hb-tag.on:not(:disabled):hover { color: var(--accent); border-color: var(
 .wr-row {
   display: flex; align-items: center; justify-content: flex-start; gap: 8px; text-align: left;
   padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--panel2); cursor: pointer; font-size: 12px;
+  background: var(--panel2); cursor: pointer; font-size: 12px; box-shadow: none;
   /* 十五轮补：全局 button 规则给的是 --on-accent（白），浅色主题下 wr-name 白字白底
      隐身（R20 起最近连接的主机名一直没显示）——行按钮的正文回 --text */
   color: var(--text);
@@ -2250,6 +2432,11 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   transition: none !important;
   animation: none !important;
 }
+/* 工具栏静默钮开合态（按钮美化轮）：常规族靠 accent 软底 + 内描边阴影标示，eink 下阴影
+   被上一条铲平、软底在灰阶屏上偏淡——补一道墨色实线描边（层次靠实线，同族惯例） */
+:root[data-theme="eink"] :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost:is(.ts-open, [aria-pressed="true"], [aria-expanded="true"]) {
+  border-color: var(--accent);
+}
 /* 主题切换脉冲：仅切换瞬间（.theme-switching 挂 320ms，App.tsx）开全量色彩过渡，
    平时零开销；@keyframes 动画期间优先级本就高于 transition，互不干扰 */
 .theme-switching, .theme-switching *, .theme-switching *::before, .theme-switching *::after {
@@ -2284,9 +2471,14 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   width: 100%; text-align: left; border: none; border-radius: 8px;
   background: transparent; color: var(--text); padding: 8px 10px; font-size: 13px;
-  cursor: pointer;
+  cursor: pointer; box-shadow: none; font-weight: 430;
 }
-.palette-item.palette-sel { background: var(--accent-soft); }
+/* 按钮美化轮：高亮只跟选中项走（鼠标移入即 setSel，键盘 ↑↓ 同源）——此前通用
+   button:not(:disabled):hover（0,2,1）压过 .palette-sel（0,2,0），鼠标悬停项是 accent
+   实底配正文色（键盘选中却是软底，两套高亮），且键盘移走选中后悬停项仍亮成第二个高亮 */
+button.palette-item:not(:disabled):hover { background: transparent; }
+.palette-item.palette-sel,
+button.palette-item.palette-sel:not(:disabled):hover { background: var(--accent-soft); }
 .palette-item.palette-danger { color: var(--danger, #e5534b); }
 .palette-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-hint { flex: none; font-size: 11px; color: var(--dim); }
@@ -2367,10 +2559,14 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   position: relative; width: 32px; height: 32px; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
   background: none; border: 1px solid transparent; border-radius: 8px;
-  color: var(--text-sub); cursor: pointer; padding: 0;
+  color: var(--text-sub); cursor: pointer; padding: 0; box-shadow: none;
 }
-.rail-btn:hover { background: var(--panel3); color: var(--text); }
-.rail-btn.ts-open { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+/* 按钮美化轮：悬停选择器补 button 前缀 + :not(:disabled)——此前 .rail-btn:hover（0,2,0）
+   输给通用 button:not(:disabled):hover（0,2,1），悬停的活动栏图标整块变 accent 实底
+   （悬停特异度陷阱第 5 例）；点亮态悬停同理须显式保住 */
+button.rail-btn:not(:disabled):hover { background: var(--panel3); color: var(--text); }
+.rail-btn.ts-open,
+button.rail-btn.ts-open:not(:disabled):hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 /* 设置常驻图标钉栏底（VSCode 惯例：视图入口在上、应用级动作在下），与视图
    互斥位隔开——margin-auto 吸收剩余高度，天然形成分组间距 */
 .rail-btn.rail-tail { margin-top: auto; }
@@ -2423,11 +2619,14 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 .mon-sw {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
   height: 24px; padding: 0 10px 0 6px; font-size: 11px; font-weight: 600;
-  color: var(--text-sub); background: transparent;
+  color: var(--text-sub); background: transparent; box-shadow: none;
   border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
   transition: color 120ms, border-color 120ms, background 120ms;
 }
-.mon-sw:hover { border-color: var(--border-hover); color: var(--text); }
+/* 按钮美化轮：OFF 态悬停同样须胜过通用 button:not(:disabled):hover——此前只修了 ON 态
+   （审查二轮 UX2-1），OFF 态 .mon-sw:hover（0,2,0）照旧输掉，悬停整颗药丸变 accent 实底
+   （全局按钮扫描器揪出）；两态都写成 button 前缀 + :not(:disabled)，ON 态再高一档 */
+button.mon-sw:not(:disabled):hover { background: var(--quiet-hover); border-color: var(--border-hover); color: var(--text); }
 .mon-sw .mon-sw-knob {
   width: 12px; height: 12px; border-radius: 50%; flex: none;
   background: var(--panel3); border: 1px solid var(--border);
@@ -2436,7 +2635,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 .mon-sw.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 /* 悬停底色须胜过通用 button:not(:disabled):hover（同 243/341/909 行既有模式）——
    否则 ON 态药丸悬停落 accent 实底、文字同色不可读（审查二轮 UX2-1） */
-.mon-sw.on:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+button.mon-sw.on:not(:disabled):hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .mon-sw.on .mon-sw-knob { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
 /* 未开启空态（开关轮）：虚线框舞台 + 两张大开关卡（hover 预演打开态） */
 .mon-offboard {
@@ -2576,7 +2775,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 .mon-dash .mpause {
   display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; padding: 0; border: none; border-radius: 5px;
-  background: transparent; color: var(--dim); cursor: pointer;
+  background: transparent; color: var(--dim); cursor: pointer; box-shadow: none;
 }
 .mon-dash .mpause:hover { background: var(--panel3); color: var(--text); }
 .ag-head {
@@ -2784,3 +2983,103 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   100% { stroke-width: 0; }
 }
 .rec-row-flash { outline: 2px solid var(--accent); border-radius: 4px; }
+.tw-pre {
+  /* 底部锚定（用户反馈「下面内容被遮挡」）：快照含 -S 40 行历史，顶锚定会让
+     最新屏/提示符落到折叠线以下被裁——钉住底边后裁切只发生在顶部（最旧历史），
+     终端语义与监控语义一致：最新的恒可见。缩放原点同底左（applyFit 按格宽适配，
+     styles 见 tmux-wall.tsx），transform 缩小后裁切更少。溢出交 .tw-shot 裁。 */
+  position: absolute; left: 0; bottom: 0; margin: 0; padding: 6px 8px;
+  overflow: visible; transform-origin: left bottom;
+  font-family: var(--mono); font-size: 11px; line-height: 1.25; white-space: pre;
+  color: var(--text); background: transparent; text-align: left;
+}/* ---- tmux 会话大屏（监控墙）：整幅主区覆盖层（MonitorView 同款位/同层级）。
+   格子=只读快照小窗（静态 xterm，无 WebGL——浏览器 WebGL 上下文配额有限，
+   不与主终端的预算抢份额）；单击放大、双击/Esc 还原、「进格子」去工作台。 */
+.tmux-wall {
+  position: absolute; inset: 0; z-index: 46;
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg); overflow: hidden;
+}
+.tw-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
+  color: var(--text);
+}
+.tw-title { font-weight: 600; font-size: 13px; }
+.tw-sub { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tw-hint { color: var(--dim); font-size: 11px; } /* 不叠 opacity：--dim 再打 75% 在 eink 亮面掉到看不清 */
+.tw-err { color: var(--danger); font-size: 11px; }
+.tw-flex { flex: 1; min-width: 0; }
+.tw-sizes { display: flex; gap: 4px; }
+.tw-gsz { padding: 2px 8px; font-size: 12px; }
+/* 规格钮按下态（aria-pressed/ts-open）：统一块只管工具栏容器，tw-head 里没有
+   任何开合指示=「点了看不出哪个规格在生效」（审查轮 P2） */
+.tw-head button.ghost.ts-open { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.tw-body {
+  flex: 1; display: grid; gap: 8px; padding: 8px; overflow: auto;
+  grid-auto-rows: minmax(150px, 1fr);
+}
+.tw-cell {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  border: 1px solid var(--border); background: var(--panel);
+}
+.tw-cell-head {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-bottom: 1px solid var(--border); min-width: 0;
+}
+.tw-name {
+  font-size: 12px; font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tw-promote { flex: none; padding: 1px 8px; font-size: 11px; }
+/* 键入态「完成」钮（找茬四轮 D5）：键入中的可见退出件——solo 态 body 被格子铺满
+   无空白可点，hint 只教进入不教退出；accent 软底使它在键入态头部（已着色）上仍可辨 */
+.tw-done {
+  flex: none; padding: 1px 8px; font-size: 11px;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 6px;
+}
+.tw-done:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+/* 单击小窗=就地键入（用户拍板的交互模型）：正文光标用 text 提示可编辑；
+   放大只走格子右上放大钮/双击（solo 里光标回默认，双击=还原） */
+.tw-shot { position: relative; flex: 1; min-height: 0; cursor: text; overflow: hidden; background: var(--bg); }
+.tw-cell.tw-solo .tw-shot { cursor: default; }
+.tmux-wall.solo .tw-cell:not(.tw-solo) { display: none; }
+/* 格子放大/还原钮（标题栏内、进格子左边；放大态由 React 换装 IconMinimize） */
+.tw-max {
+  flex: none; width: 20px; height: 18px; padding: 0; justify-content: center;
+  display: flex; align-items: center; color: var(--dim);
+}
+.tw-max:not(:disabled):hover { color: var(--accent); background: var(--panel2); }
+/* 键入焦点格（单击放大即获焦点）：accent 边框常显，与面板格 :focus-within 同一
+   语义——正在打字的格子一眼可辨 */
+.tw-cell.tw-active { border-color: var(--accent); }
+.tw-cell.tw-active .tw-cell-head { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+/* 隐藏键入焦点（1px 透明）：程序化 focus 接收键盘；pointer-events none 让点击
+   穿透到快照（选区/单击语义不受扰动） */
+.tw-input {
+  position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0;
+  border: 0; padding: 0; margin: 0; background: transparent; color: transparent;
+  caret-color: transparent; pointer-events: none;
+}
+.tw-off {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--dim); font-size: 12px; letter-spacing: 0.2em;
+  /* 底 92% 起：底下是快照帧，会话跑深底 TUI 时半透底会把 --dim 灰字对比压穿 */
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+}
+.tw-empty {
+  grid-column: 1 / -1; display: flex; align-items: center; justify-content: center;
+  color: var(--dim); font-size: 13px; padding: 40px;
+}
+.tw-solo-tag {
+  position: absolute; right: 12px; bottom: 10px; pointer-events: none;
+  font-size: 11px; color: var(--dim);
+  background: var(--bg); border: 1px solid var(--border); padding: 2px 8px;
+}
+.tools-menu .tmux-wall-entry {
+  width: 100%; text-align: left; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border); border-radius: 0;
+  padding-bottom: 6px; color: var(--text);
+}

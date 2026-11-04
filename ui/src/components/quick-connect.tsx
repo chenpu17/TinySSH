@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, HostDraft, IdentityMeta } from "../adapter/wire";
 import { t } from "../i18n";
@@ -8,6 +9,13 @@ import { t } from "../i18n";
 // 无名称（默认 user@host[:port]）/无标签/无私钥导入与生成（那会写凭据库）；
 // 认证三选一：密码 / 凭据库已有密钥（只引用不解出新明文）/ SSH Agent。
 // 提交 = begin_connection_draft：主机/凭据/TOFU 信任全在内存，应用退出即失。
+// 地址框回车提交（找茬四轮 D4）：此前只有密码框能 Enter——地址是 autoFocus 首字段
+// 与最高频动线，敲完地址回车表单纹丝不动。IME 组合期 Enter 是确认候选词，不提交
+// （§7.3 与 resolveAction 同口径）。
+const enterKey = (fn: () => void) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
+  if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) fn();
+};
+
 export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Host, draft: HostDraft) => void; onCancel: () => void }) {
   const [address, setAddress] = useState("");
   const [port, setPort] = useState("22");
@@ -79,17 +87,19 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
         <div className="ah-field" style={{ flex: 2 }}>
           <label>{t("地址（IP 或域名）")}</label>
           <input value={address} onChange={(e) => setAddress(e.target.value)} autoFocus
+            onKeyDown={enterKey(submit)}
             placeholder={t("例：192.168.1.10")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label>{t("端口")}</label>
-          <input value={port} onChange={(e) => setPort(e.target.value)} />
+          <input value={port} onChange={(e) => setPort(e.target.value)} onKeyDown={enterKey(submit)} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>{t("用户名")}</label>
           <input value={username} onChange={(e) => setUsername(e.target.value)}
+            onKeyDown={enterKey(submit)}
             placeholder={t("例：ops 或 root")} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
@@ -108,10 +118,7 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
           <label>{t("密码")}</label>
           <input type="password" placeholder={t("密码")} value={password}
             onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              // IME 组合期 Enter 是确认候选词，不提交（§7.3 与 resolveAction 同口径）
-              if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) submit();
-            }} />
+            onKeyDown={enterKey(submit)} />
         </div>
       )}
       {authMode === "key" && (

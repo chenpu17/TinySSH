@@ -15,11 +15,15 @@ module.exports = {
     const tools = await page.$$eval(".session-toolbar button", (bs) =>
       bs.map((b) => (b.getAttribute("title") || b.textContent || "").trim()),
     );
-    ck.check("工具栏含「交给 Agent…」（首次委托入口）", tools.some((t) => t.includes("交给 Agent")));
+    // 协作/文件/委托钮下线（2026-11-03 净化轮）：右缘 rb-rail 与 ⌘K 是常驻入口
+    ck.check("工具栏已下线协作/文件/委托钮（净化轮）", tools.every((t) => !(t.includes("交给 Agent") || t.includes("协作") || t.includes("文件"))));
+    const rail = await page.evaluate(() => ({
+      files: !!document.querySelector('[data-testid="rb-files"]'),
+      collab: !!document.querySelector('[data-testid="rb-collab"]'),
+    }));
+    ck.check("右缘 rail 含文件/协作入口", rail.files && rail.collab, JSON.stringify(rail));
     ck.check("工具栏含搜索", tools.some((t) => t.includes("搜索终端内容")));
     ck.check("工具栏含分屏", tools.some((t) => t.includes("分屏")));
-    ck.check("工具栏含协作入口", tools.some((t) => t.includes("协作")));
-    ck.check("工具栏含文件入口", tools.some((t) => t.includes("文件")));
     ck.check("工具栏含工具菜单", tools.some((t) => t === "工具"));
 
     // 标签栏：新会话出现标签

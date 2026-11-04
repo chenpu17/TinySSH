@@ -47,7 +47,7 @@ const closeTab = async (page, namePart) => {
   }
 };
 const openFiles = async (page) => {
-  await page.click('.session-toolbar button[title^="文件"]');
+  await page.click('[data-testid="rb-files"]');
   await page.waitForTimeout(900);
 };
 const openQueue = async (page) => {

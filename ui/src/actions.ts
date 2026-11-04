@@ -2,7 +2,7 @@
 // window 捕获层与 xterm 自定义键处理器都经 resolveAction 解析、App 的 dispatch 执行，
 // 消除双绑定重复执行。⌘, 归原生菜单加速器（NSMenu 先于 WebView 消费），此处刻意不绑。
 // 传输层不在此列：Ctrl/Alt 控制字符编码、xterm onData 是终端输入路径，非应用动作。
-import { DEFAULT_KEYMAP, bindingOf, type Binding, type KeyActionId } from "./keymap.ts";
+import { defaultKeymap, bindingOf, type Binding, type KeyActionId } from "./keymap.ts";
 
 export type AppAction =
   | { id: "search" }
@@ -93,10 +93,11 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
   // 先于 shift 早退——表允许 Ctrl+Shift+字母 形组合。cmd 门已过滤平台主修饰键：
   // mac 真按 Ctrl 仍是 shell 键（cmd=metaKey 不成立）；demo 侧非平台 Ctrl 同理早退，
   // Ctrl+F 等归浏览器语义。默认表=直键三键轮基线：T 新建 / W 关签 / ⇧T 本地终端 /
-  // D 分屏 / K 面板 / B 主机栏 / F 搜索；被表占用的字母在 App 控制字符直发层同步豁免。
+  // D 分屏 / K 面板 / B 主机栏（Win/Linux 为 Ctrl+Shift+B，Ctrl+B 留给 tmux）/ F 搜索；
+  // 被表占用的字母在 App 控制字符直发层同步豁免。
   const evb = bindingOf(ev, isMacPlatform());
   if (evb) {
-    const km = ctx.keymap ?? DEFAULT_KEYMAP;
+    const km = ctx.keymap ?? defaultKeymap(isMacPlatform());
     const hit = (id: KeyActionId) =>
       km[id].key === evb.key && km[id].shift === evb.shift && km[id].alt === evb.alt;
     if (hit("palette") && ctx.native) return { id: "palette" };

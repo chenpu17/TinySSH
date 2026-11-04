@@ -156,11 +156,16 @@ export interface PaneInfo {
 
 // ---- tmux 联动：远端 tmux 状态与恢复现场计划（GUI 专用三命令） ----
 
-/** 远端单个 tmux 会话快照（`tmux ls -F` 探针产物）。 */
+/** 远端单个 tmux 会话快照（`tmux ls -F` 探针产物）。id=不可变会话标识（`$N`，
+ * 改名不换）——面板按 id 认会话、名字随探针刷新（id 对账在核心侧，前端不消费；
+ * 旧 core 无此字段时为 undefined）。server_pid=id 的来源纪元：tmux 服务器重启后
+ * id 从 $0 重排，跨纪元的 id 不可信（0=拿不到）。 */
 export interface TmuxSession {
   name: string;
   windows: number;
   attached: number;
+  id?: string;
+  server_pid?: number;
 }
 
 /** 远端 tmux 可用性与会话清单。available=false 含「无 tmux」与「从未探测」两种，
@@ -177,6 +182,59 @@ export interface TmuxRestorePlan {
   sessions: TmuxSession[];
   target: TmuxSession | null;
   history: string | null;
+}
+
+
+// ---- tmux 会话大屏（监控墙）：全部会话只读快照墙（GUI 专用命令） ----
+
+/** 大屏抓取目标：id 在手用 id 选择器（`$N`，改名不跟丢），否则退化按名
+ *  （tmux ≥3.1 精确 `=名`）。 */
+export interface TmuxWallTarget {
+  id: string;
+  name: string;
+}
+
+/** 大屏单格快照（capture-pane 当前屏，顺序与请求 targets 一一对应）。
+ *  ok=false=该目标抓取失败（会话大概率已消失）——呈现离线遮罩，其余格照常
+ *  （照片墙容忍个别拍坏）。text 行以 \n 分隔、可含 ANSI 属性。rows=远端 pane
+ *  可见高度（#{pane_height}，当前屏行数；快照恒多抓 40 行历史，没有它就不知
+ *  道末尾几行是当前屏）——「当前屏完整可见」高度约束的度量源，0=退化按宽缩放。 */
+export interface TmuxWallCell {
+  ok: boolean;
+  text: string;
+  rows?: number;
+}
+
+/** 大屏 pane 贴格子请求：格子像素预算换算的字符尺寸。核心侧守卫（单窗格；
+ *  attach 客户端在场照样贴——主视图 attach+大屏同看是主场景）+ 钳位；失败被
+ *  contain 缩放兜底吸收。 */
+export interface TmuxWallFit {
+  id: string;
+  name: string;
+  cols: number;
+  rows: number;
+}
+
+/** 贴格子的原样回执：resize 前的窗口尺寸与 window-size 选项值。前端留存，
+ *  关大屏时原样交还恢复命令（resize-window 把 window-size 钉成 manual 粘住，
+ *  不还原=用户布局永久变形）。 */
+export interface TmuxWallFitResult {
+  id: string;
+  name: string;
+  orig_w: number;
+  orig_h: number;
+  /** 空=原本未设（恢复时 unset 回去）。 */
+  orig_ws: string;
+}
+
+/** 关墙恢复项：留存的原样回执原样交回。id 优先寻址（改名跟随——墙开着改名后
+ *  按旧名恢复会静默落空）。 */
+export interface TmuxWallRestoreItem {
+  id: string;
+  name: string;
+  cols: number;
+  rows: number;
+  ws: string;
 }
 
 /**
