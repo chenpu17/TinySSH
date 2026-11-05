@@ -237,7 +237,14 @@ impl RevLines {
 
     fn new(fh: std::fs::File) -> Self {
         let pos = fh.metadata().map(|m| m.len()).unwrap_or(0);
-        Self { fh, pos, buf: Vec::new(), queue: Vec::new(), carry: Vec::new(), done: pos == 0 }
+        Self {
+            fh,
+            pos,
+            buf: Vec::new(),
+            queue: Vec::new(),
+            carry: Vec::new(),
+            done: pos == 0,
+        }
     }
 }
 
@@ -254,7 +261,9 @@ impl Iterator for RevLines {
                 if self.carry.is_empty() {
                     return None;
                 }
-                let line = String::from_utf8_lossy(&self.carry).trim_end_matches('\r').to_string();
+                let line = String::from_utf8_lossy(&self.carry)
+                    .trim_end_matches('\r')
+                    .to_string();
                 self.carry.clear();
                 return Some(line);
             }
@@ -279,7 +288,9 @@ impl Iterator for RevLines {
             let tail = segs.pop().unwrap_or(&[]);
             // 块内完整行正序入队（pop 时即倒序产出）；跳过块首残段（lines[0]）
             for seg in segs.iter().skip(1) {
-                let line = String::from_utf8_lossy(seg).trim_end_matches('\r').to_string();
+                let line = String::from_utf8_lossy(seg)
+                    .trim_end_matches('\r')
+                    .to_string();
                 self.queue.push(line);
             }
             // 块尾段 + 上一块首残段 = 跨块完整行，队尾（最先产出）。产出口径同
@@ -289,7 +300,9 @@ impl Iterator for RevLines {
             row.extend_from_slice(&self.carry);
             self.carry = segs.first().map(|s| s.to_vec()).unwrap_or_default();
             if !row.is_empty() || had_carry {
-                let line = String::from_utf8_lossy(&row).trim_end_matches('\r').to_string();
+                let line = String::from_utf8_lossy(&row)
+                    .trim_end_matches('\r')
+                    .to_string();
                 self.queue.push(line);
             }
             if start == 0 {
@@ -486,9 +499,18 @@ mod tests {
         let fh = std::fs::File::open(&p).unwrap();
         let rev: Vec<String> = RevLines::new(fh).collect();
         // 期望口径与 std lines() 一致：行尾 \r 被 CRLF 处理剥掉
-        let mut want: Vec<String> = fwd.iter().map(|l| l.trim_end_matches('\r').to_string()).collect();
+        let mut want: Vec<String> = fwd
+            .iter()
+            .map(|l| l.trim_end_matches('\r').to_string())
+            .collect();
         want.reverse();
-        assert_eq!(rev.len(), want.len(), "行数守恒（{} vs {}）", rev.len(), want.len());
+        assert_eq!(
+            rev.len(),
+            want.len(),
+            "行数守恒（{} vs {}）",
+            rev.len(),
+            want.len()
+        );
         for (i, (a, b)) in rev.iter().zip(want.iter()).enumerate() {
             assert_eq!(a, b, "第 {i} 行倒序不匹配");
         }
@@ -514,7 +536,10 @@ mod tests {
         let expect_rev: Vec<String> = (0..40).rev().map(|i| format!("cmd-{i}")).collect();
         assert_eq!(summaries, expect_rev, "query 输出必须新→旧");
         let limited = s
-            .query(&RecordFilter { limit: Some(5), ..Default::default() })
+            .query(&RecordFilter {
+                limit: Some(5),
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(limited.len(), 5);
         assert_eq!(limited[0].summary, "cmd-39", "limit 从最新起截");

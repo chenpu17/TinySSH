@@ -1416,7 +1416,10 @@ impl ChannelHandle for SshChannel {
         // 权限）滞留在 ack 队列，只在 flush/close 浮出。此前 flush().ok() 吞错 +
         // drop 不排 ack，尾部失败的传输按 Ok(total) 发布截断文件。close()=排干
         // ack + 发 CLOSE + 等远端 status（自带 SFTP_STEP_SECS 僵死护栏）。
-        sftp_step(file.close(), |e| Error::Io(format!("sftp close {remote}: {e}"))).await?;
+        sftp_step(file.close(), |e| {
+            Error::Io(format!("sftp close {remote}: {e}"))
+        })
+        .await?;
         let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         Ok(total)
     }
