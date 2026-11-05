@@ -13,6 +13,7 @@ import type { MarkdownIt as MdIt } from "markdown-it";
 import hljs from "highlight.js/lib/common";
 import { mermaidPlaceholder } from "./mmd";
 import { installMath, mathFencePlaceholder } from "./math";
+import { t } from "./i18n";
 
 /** 超过该行数的稳定代码块默认收起（tiny-worker 同款阈值） */
 export const CODE_CLIP_LINES = 26;
@@ -50,10 +51,10 @@ md.renderer.rules.fence = (tokens, idx, _options, _env, _self) => {
     : `<code>${md.utils.escapeHtml(tokens[idx].content)}</code>`;
   return (
     `<div class="md-code${collapsed ? " code-collapsed" : ""}">` +
-    `<div class="code-head"><span class="code-lang">${lang || "文本"}</span>` +
-    `<span class="code-dim">${lines} 行</span>` +
-    (collapsed ? `<button class="code-expand" type="button">展开全部</button>` : "") +
-    `<button class="code-copy" type="button" title="复制代码">复制</button></div>` +
+    `<div class="code-head"><span class="code-lang">${lang || t("文本")}</span>` +
+    `<span class="code-dim">${t("{0} 行", String(lines))}</span>` +
+    (collapsed ? `<button class="code-expand" type="button">${t("展开全部")}</button>` : "") +
+    `<button class="code-copy" type="button" title="${t("复制代码")}">${t("复制")}</button></div>` +
     `<pre>${body}</pre></div>`
   );
 };

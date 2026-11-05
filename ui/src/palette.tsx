@@ -55,6 +55,9 @@ export function CommandPalette({ open, items, onClose }: {
     setTimeout(() => it.run(), 0);
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // IME 双查（§7.3 全仓口径，六轮 BF-4）：组合期方向键是候选词导航不能劫持、
+    // Enter 是确认候选词不能直跑选中项（macOS WebKit 系组合期仍上抛真实 key 名）
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (e.key === "ArrowDown") { e.preventDefault(); setSel((v) => Math.min(v + 1, filtered.length - 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setSel((v) => Math.max(v - 1, 0)); }
     else if (e.key === "Enter") {

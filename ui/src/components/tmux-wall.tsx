@@ -121,7 +121,11 @@ export const ansiToHtml = (text: string): string => {
   const flush = () => {
     if (!span) return;
     const css = sgrCss(s);
-    out += css ? `<span style="${css}">${span}</span>` : span;
+    // 整段攒满一次转义（找茬五轮 B-5）：此前逐字符 escHtml=每字符 3 连 regex，
+    // 200×64 大帧 5ms/格/拍全烧在字符串重组上；&<> 转义逐字符上下文无关（&
+    // 先行、顺序 replace 不重食自身输出），整段等价且 ~6× 快
+    const body = escHtml(span);
+    out += css ? `<span style="${css}">${body}</span>` : body;
     span = "";
   };
   const plain = text.replace(/\r/g, "").replace(CSI_OTHER, (m) => (m.endsWith("m") ? m : ""));
@@ -169,7 +173,7 @@ export const ansiToHtml = (text: string): string => {
       }
     }
     if (ch === "\n") { flush(); out += "\n"; continue; }
-    span += escHtml(ch);
+    span += ch;
   }
   flush();
   return out;
@@ -281,6 +285,8 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
   const pendingFitsRef = useRef<TmuxWallFit[]>([]);
   const fitSigRef = useRef("");
   const sentFitsRef = useRef<Map<string, string>>(new Map());
+  const fitInFlightRef = useRef(false); // 重试节拍防叠发（B-2）
+  const lastFitTryRef = useRef(0);
   // 关墙恢复的留存源：每格「首次贴格子前」的原窗口尺寸+window-size 选项（后续
   // 再 fit 不覆盖——要还原的是用户走进大屏之前的那个布局）
   const origFitsRef = useRef<Map<string, TmuxWallRestoreItem>>(new Map());
@@ -523,16 +529,28 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
       (f) => sentFitsRef.current.get(f.id || f.name) !== `${f.cols}x${f.rows}`,
     );
     if (!toSend.length) return;
+    lastFitTryRef.current = Date.now();
+    fitInFlightRef.current = true;
     void Promise.resolve(fitRef.current(toSend))
       .then((results) => {
-        // 成功才记账（「当前已发尺寸」语义）；失败走 catch 回滚签名重试
-        for (const f of toSend) sentFitsRef.current.set(f.id || f.name, `${f.cols}x${f.rows}`);
+        fitInFlightRef.current = false;
+        // 记账仅限**拿到回执**的目标（找茬五轮 B-2）：核心侧单窗格守卫/0 尺寸
+        // 格 resolve 整批但不回执（results 是压缩数组）——无差别记账把「被拒」
+        // 记成「已发」，之后 pane 由多变单（资格恢复）而格子几何不变时 applyFit
+        // 永不再触发，该格终身 letterbox
+        const got = new Set((results ?? []).map((r) => (r?.id || r?.name) ?? ""));
+        for (const f of toSend) {
+          if (got.has(f.id || f.name)) sentFitsRef.current.set(f.id || f.name, `${f.cols}x${f.rows}`);
+        }
         for (const r of results ?? []) {
           if (!r?.name || r.orig_w <= 0 || r.orig_h <= 0) continue;
           // 首次留存=干预前的原样；后续再 fit 不覆盖（第二回执的 orig 是上一
-          // 次贴格后的中间尺寸，拿去恢复=布局永久变形——迟到兜底也从留存取）
-          if (!origFitsRef.current.has(r.name)) {
-            origFitsRef.current.set(r.name, { id: r.id || "", name: r.name, cols: r.orig_w, rows: r.orig_h, ws: r.orig_ws });
+          // 次贴格后的中间尺寸，拿去恢复=布局永久变形——迟到兜底也从留存取）。
+          // 键与 sentFits 同口径（id 优先，找茬五轮 A-2/B-6）：按名留存会让
+          // 「墙开着改名+布局再变」追加中间尺寸条目，关墙恢复后项胜出=变形
+          const k = r.id || r.name;
+          if (!origFitsRef.current.has(k)) {
+            origFitsRef.current.set(k, { id: r.id || "", name: r.name, cols: r.orig_w, rows: r.orig_h, ws: r.orig_ws });
           }
         }
         // 慢链路竞态：回包时墙已卸载 → cleanup 已带着当时的留存跑了恢复，这些
@@ -540,13 +558,14 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
         // 中间态），sid 钉本实例（restoreRef 现取，空表=no-op）
         if (!mountedRef.current) {
           const late = (results ?? [])
-            .filter((r) => r?.name && origFitsRef.current.has(r.name))
-            .map((r) => origFitsRef.current.get(r.name)!)
+            .filter((r) => r?.name && origFitsRef.current.has(r.id || r.name))
+            .map((r) => origFitsRef.current.get(r.id || r.name)!)
             .filter((it) => it.cols > 0 && it.rows > 0);
           if (late.length) void Promise.resolve(restoreRef.current(sidRef.current, late)).catch(() => {});
         }
       })
       .catch(() => {
+        fitInFlightRef.current = false;
         // 失败不记账不放弃：回滚签名让下一拍 applyFit 自然重试（通道抖动恢复
         // 后自动贴上；持续失败=链路断，墙整体 stale，400ms 防抖挡着不成风暴）
         fitSigRef.current = "";
@@ -610,14 +629,26 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
       }
     }
     // 签名不变不重排——300ms 节拍每拍都跑 applyFit，无脑重排防抖会让计时器
-    // 永远被重置、fit 永不发射
-    const sig = fits.map((f) => `${f.name}:${f.cols}x${f.rows}`).join("|");
+    // 永远被重置、fit 永不发射。签名的格键 id 优先（找茬五轮 B-6）：按名签名
+    // 会让「会话销毁同名重建」逐位相同、新会话永不被贴格。另设未贴格重试臂
+    // （B-2 另一半）：格子被核心守卫拒绝（多窗格/0 尺寸）拿不到回执时 sentFits
+    // 不记账，hasPending 恒真——2s 节拍温和重试直到回执或格子消失，不走 400ms
+    // 防抖（那会被 300ms 节拍的重置饿死）
+    const sig = fits.map((f) => `${f.id || f.name}:${f.cols}x${f.rows}`).join("|");
     if (sig !== fitSigRef.current) {
       fitSigRef.current = sig;
       pendingFitsRef.current = fits;
       scheduleFit();
+    } else if (
+      fits.length &&
+      fits.some((f) => sentFitsRef.current.get(f.id || f.name) !== `${f.cols}x${f.rows}`) &&
+      !fitInFlightRef.current &&
+      Date.now() - lastFitTryRef.current > 2000
+    ) {
+      pendingFitsRef.current = fits;
+      fireFit();
     }
-  }, [scheduleFit]);
+  }, [scheduleFit, fireFit]);
   // 布局期写 transform（paint 前）：useEffect 时机在绘制后，会先闪一帧未缩放
   // 内容再缩——每拍快照都闪。frame 换装/规格/放大切换都可能改变度量，全部重算。
   useLayoutEffect(() => { applyFit(); }, [applyFit, frames, sessions, soloKey, cols, stale]);
@@ -751,8 +782,16 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
                   // 双击=放大/还原（正文里双击选词与放大的手势冲突可接受：
                   // 放大钮是主路径，双击是快捷方式）
                   e.preventDefault();
+                  // 双击选词留下的选区会骗过 refocusSoon 的复制手势豁免（找茬
+                  // 五轮 D-1）：键入态在而焦点落 body，Esc 成死键、打字静默蒸发
+                  // ——双击是明确的键入/放大意图手势，清选区并把输入框拉回焦点
+                  // （input 若尚未挂载，activate 的渲染+autoFocus 接管）
+                  window.getSelection()?.removeAllRanges();
                   setSolo(isSolo ? null : key);
                   activate(key);
+                  window.setTimeout(() => {
+                    if (mountedRef.current) inputRef.current?.focus();
+                  }, 0);
                 }}
               >
                 <pre
@@ -782,7 +821,12 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
                         sendKeyNow(sp);
                         return;
                       }
-                      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                      // AltGr（欧式布局第三层，Windows 上恒报 ctrl+alt 双真）
+                      // 产出 @ \ | ~ 等单字符——按字面发（找茬五轮 B-3）：此前
+                      // 三个特殊键分支全不接、字面分支要求无修饰键，字符静默
+                      // 蒸发（xterm 主视图对同形态显式放行，两处行为劈叉）
+                      const altGr = (e.ctrlKey && e.altKey) || e.nativeEvent.getModifierState("AltGraph");
+                      if (e.key.length === 1 && !e.metaKey && (!e.ctrlKey || altGr) && (!e.altKey || altGr)) {
                         e.preventDefault();
                         queueLit(e.key);
                       }

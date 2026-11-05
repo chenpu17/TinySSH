@@ -7,6 +7,7 @@
 // KV 是异步读取，会闪一帧 100%（App 侧经 useLayoutEffect 注册兑现）；浏览器 demo
 // 不注册（浏览器自带缩放，拦截只会破坏原生体验）。
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "./i18n";
 
 const ZOOM_KEY = "ui.zoom";
 export const ZOOM_MIN = 0.5;
@@ -40,13 +41,13 @@ async function apply(next: number, announce: boolean) {
     // 持久化尽力而为：隐私模式/配额失败不回滚（webview 已在新档位，回滚才是幻影）
     try { localStorage.setItem(ZOOM_KEY, String(level)); } catch { /* demo 尽力而为 */ }
     for (const l of listeners) l(level);
-    if (announce) notify("ok", `缩放 ${Math.round(level * 100)}%`);
+    if (announce) notify("ok", t("缩放 {0}%", String(Math.round(level * 100))));
   } catch (e) {
     // 回滚内存档位：invoke 失败 webview 根本没动，不回滚下次步进从错值起跳（连跳两档）；
     // 同步弹回订阅方——设置下拉是受控 select，不弹回会停在用户所选档直到下次重渲染
     level = prev;
     for (const l of listeners) l(level);
-    notify("err", `缩放失败：${String(e).slice(0, 80)}`);
+    notify("err", t("缩放失败：{0}", String(e).slice(0, 80)));
   }
 }
 

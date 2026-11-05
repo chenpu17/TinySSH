@@ -747,8 +747,19 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
   background: var(--glass); padding: 1px 6px; border-radius: 4px;
   pointer-events: none;
 }
+/* 分屏窗格名牌升格 22px 标题栏（找茬五轮 C-1）：此前的玻璃章片浮压终端首行
+   （提示符前几字符被盖，非 hover 常驻遮挡）——tmux 网格轮已给主视图修过同款
+   （padding-top 让 fitDimsOf 自动扣行），普通分屏没跟上，同一缺陷两种待遇。
+   pointer-events 维持 none：分屏换位走标签拖拽手势，标题栏不新增交互面 */
+.term-session.pane-left, .term-session.pane-right,
+.term-session.pane-top, .term-session.pane-bottom { padding-top: 28px; }
 .term-session.pane-left .pane-tag, .term-session.pane-right .pane-tag,
-.term-session.pane-top .pane-tag, .term-session.pane-bottom .pane-tag { display: block; }
+.term-session.pane-top .pane-tag, .term-session.pane-bottom .pane-tag {
+  display: flex; align-items: center; top: 0; left: 0; right: 0; height: 22px;
+  padding: 0 8px; border-radius: 0; font-size: 11px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .term-session.pane-focused .pane-tag { color: var(--accent); }
 
 /* tmux 面板（一标签多 tmux 会话）：主视图 + 格子按 paneGrid 平铺（几何由 JS 写内联
@@ -983,15 +994,14 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 }
 .tab-bell { animation: bell-pulse 1.4s ease-in-out 3; }
 @media (prefers-reduced-motion: reduce) { .tab-bell { animation: none; } }
-/* R27（§7.4）：关闭/分屏改真按钮——键盘可达+focus-visible；圆形药丸内嵌钮，
-   默认收 75% 存在感，悬停满色 */
-.tab-split, .tab-x {
+/* R27（§7.4）：关闭改真按钮——键盘可达+focus-visible；圆形药丸内嵌钮，
+   默认收 75% 存在感，悬停满色（七轮：分屏钮已删，选择器只留 .tab-x） */
+.tab-x {
   flex: none; width: 18px; height: 18px;
   display: inline-flex; align-items: center; justify-content: center;
   background: none; border: none; padding: 0; box-shadow: none;
   border-radius: 50%; color: var(--dim); cursor: pointer; opacity: 0.75;
 }
-button.tab-split:not(:disabled):hover { background: var(--accent-ring); color: var(--accent); opacity: 1; }
 /* UX 三轮：关闭钮悬停用淡红底替代实红块——危险语义保留，视觉不再刺耳 */
 button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(--danger); opacity: 1; }
 /* 欢迎页（T32 重设计）：居中卡片式空状态，品牌标记 + 分组引导 + 快捷动作 */
@@ -1070,10 +1080,10 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 /* R27：应用外观三态段钮激活态（同 ts-opt 家族） */
 .ts-appearance .ts-active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 /* §7.2 图标点击区≥28×28：::after 透明扩展命中盒——无布局位移、无视觉变化，
-   focus/hover 呈现仍在原盒（纯图标钮：tab 关闭/分屏、主机卡删除、搜索导航） */
-.tab-split, .tab-x, .host-del,
+   focus/hover 呈现仍在原盒（纯图标钮：tab 关闭、主机卡删除、搜索导航） */
+.tab-x, .host-del,
 .term-search .ghost { position: relative; }
-.tab-split::after, .tab-x::after, .host-del::after,
+.tab-x::after, .host-del::after,
 .term-search .ghost::after { content: ""; position: absolute; inset: -5px; }
 .ts-open { border-color: var(--accent); }
 /* R21 凭据基础管理行：设置面板凭据库列表（全部走既有 token）。
@@ -1578,7 +1588,7 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 }
 .split-menu .sm-item .sm-name, .ctx-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 分屏⑥轮：方向选择（左右/上下）分段单选——选中态 accent 描边；记住的选择
-   沿用到标签分屏钮/右键项，直到下次改选。按钮美化轮：悬停选择器补 button 前缀——
+   沿用到工具栏分屏钮/右键菜单，直到下次改选。按钮美化轮：悬停选择器补 button 前缀——
    此前 .split-menu .sm-dir:hover 特异度输给通用 button:hover，悬停整块变 accent 实底 */
 .split-dir-row { display: flex; gap: 6px; padding-bottom: 6px; }
 .split-menu .sm-dir {
@@ -1704,6 +1714,11 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 .host-card:hover .host-card-side,
 .host-card:focus-within .host-card-side,
 .host-card-side:has(.host-connect-btn:disabled) { opacity: 1; pointer-events: auto; }
+/* 相位文本（连接中…/等待指纹确认/认证中…）钉单行省略：CJK 长相位不得撑宽按钮
+   把 side 覆盖面顶到整卡（六轮 C6-2；三钮已在途隐藏让位，此处兜底极窄卡） */
+.host-connect-btn {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .host-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .host-name { font-size: 14px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-addr { font-size: 11px; color: var(--text-sub); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2637,9 +2652,11 @@ button.mon-sw:not(:disabled):hover { background: var(--quiet-hover); border-colo
    否则 ON 态药丸悬停落 accent 实底、文字同色不可读（审查二轮 UX2-1） */
 button.mon-sw.on:not(:disabled):hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .mon-sw.on .mon-sw-knob { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
-/* 未开启空态（开关轮）：虚线框舞台 + 两张大开关卡（hover 预演打开态） */
+/* 未开启空态（开关轮）：虚线框舞台 + 两张大开关卡（hover 预演打开态）。
+   七轮 C7-5：原 flex:1 把虚线框拉到满屏高、内容全挤在顶部，观感像没画完——
+   改为按内容高度收起（宽屏下大片留白交给背景，不交给虚线框） */
 .mon-offboard {
-  flex: 1; overflow-y: auto; margin: 18px 16px; padding: 30px 32px;
+  flex: none; overflow-y: auto; margin: 18px 16px; padding: 30px 32px;
   display: flex; flex-direction: column; gap: 12px; align-items: flex-start;
   border: 1px dashed var(--border); border-radius: 14px;
   background: color-mix(in srgb, var(--panel) 40%, transparent);
@@ -3005,9 +3022,11 @@ button.mon-sw.on:not(:disabled):hover { color: var(--accent); border-color: var(
   padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
   color: var(--text);
 }
-.tw-title { font-weight: 600; font-size: 13px; }
-.tw-sub { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
-.tw-hint { color: var(--dim); font-size: 11px; } /* 不叠 opacity：--dim 再打 75% 在 eink 亮面掉到看不清 */
+/* 标题/计数禁折（找茬五轮 C-3）：窄窗 flex 压缩时 CJK 任意断字，「tmux 会话大
+   屏」断成两行、「· 4」单独占行——标题计数 nowrap 保完整，提示语吃收缩加省略号 */
+.tw-title { font-weight: 600; font-size: 13px; white-space: nowrap; }
+.tw-sub { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tw-hint { color: var(--dim); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 不叠 opacity：--dim 再打 75% 在 eink 亮面掉到看不清 */
 .tw-err { color: var(--danger); font-size: 11px; }
 .tw-flex { flex: 1; min-width: 0; }
 .tw-sizes { display: flex; gap: 4px; }

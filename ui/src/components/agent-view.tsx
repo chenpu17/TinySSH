@@ -563,9 +563,9 @@ export function AgentView({
             className={"ag-own" + (owner === "Agent" ? " on" : "")}
             data-testid="agent-own"
             title={owner === "Agent"
-              ? t("会话控制权已交托给 Agent（工具栏「接管」随时收回）")
-              : t("会话控制权在你手里——发送任务时会先请求交托")}
-          >{owner === "Agent" ? t("已受托") : t("未交托")}</span>
+              ? t("会话控制权已交给 Agent（工具栏「接管」随时收回）")
+              : t("会话控制权在你手里——发送任务时会先请求交给 Agent")}
+          >{owner === "Agent" ? t("已交给") : t("未交给")}</span>
         )}
         {realMode && sid && !fleet && (
           <button
@@ -642,7 +642,7 @@ export function AgentView({
               <span className="ag-delegate-text">
                 {t("会话控制权在你手里——交给 Agent 后它才能在这台终端上干活（工具栏「接管」随时收回）。")}
               </span>
-              <button className="primary" data-testid="agent-delegate-confirm" onClick={confirmDelegate}>{t("委托并发送")}</button>
+              <button className="primary" data-testid="agent-delegate-confirm" onClick={confirmDelegate}>{t("交给并发送")}</button>
               <button className="ghost" onClick={() => setAskDelegate(false)}>{t("取消")}</button>
             </div>
           )}
@@ -663,7 +663,9 @@ export function AgentView({
                 : t("给 Agent 下达任务…（Enter 发送，Shift+Enter 换行）")}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                // IME 双查（§7.3 全仓口径；六轮 BF-3 此前唯独此处缺 229 补查——
+                // WKWebView compositionend 后补发 Enter 的 keyCode 仍是 229）
+                if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)) {
                   e.preventDefault();
                   send();
                 }

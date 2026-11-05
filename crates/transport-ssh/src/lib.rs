@@ -961,8 +961,20 @@ impl session_api::transport::InteractiveChannel for SshPaneChannel {
         // 一直活到整条连接断开）。先置 alive=false：在途的分块写入块间即停、泵即刻
         // 判死，不必在写锁上排完整段写入；写半随后置 None，后续 write 快速失败。
         self.alive.store(false, Ordering::SeqCst);
-        if let Some(w) = self.write_half.lock().await.take() {
-            let _ = w.close().await;
+        // 先 as_ref 发 Close、发送成功才 take（六轮 AR-2）：russh 的 close 是对
+        // 有界出向 mpsc 的 send，取消落在挂起的 send 里时消息不进队——若此刻已把
+        // 写半 take 走，弃尾补发臂的 take 拿到 None，CHANNEL_CLOSE 永远发不出，
+        // 远端 PTY/tmux client 挂到整条连接关闭。as_ref 不 take：取消时槽位仍在，
+        // 补发臂可重试；发送成功后才收走写半让后续 write 快速失败。
+        let sent = {
+            let guard = self.write_half.lock().await;
+            match guard.as_ref() {
+                Some(w) => w.close().await.is_ok(),
+                None => true,
+            }
+        };
+        if sent {
+            self.write_half.lock().await.take();
         }
         Ok(())
     }
@@ -1399,8 +1411,12 @@ impl ChannelHandle for SshChannel {
             total += n as u64;
             progress(total, total_len);
         }
-        file.flush().await.ok();
-        drop(file);
+        // 收尾必须等远端确认全部在途 WRITE 与 CLOSE（六轮 AF-1）：russh-sftp 的
+        // File::poll_write 管线化——write_all 即返 Ok，远端写失败（ENOSPC/配额/
+        // 权限）滞留在 ack 队列，只在 flush/close 浮出。此前 flush().ok() 吞错 +
+        // drop 不排 ack，尾部失败的传输按 Ok(total) 发布截断文件。close()=排干
+        // ack + 发 CLOSE + 等远端 status（自带 SFTP_STEP_SECS 僵死护栏）。
+        sftp_step(file.close(), |e| Error::Io(format!("sftp close {remote}: {e}"))).await?;
         let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
         Ok(total)
     }

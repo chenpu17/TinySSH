@@ -323,7 +323,9 @@ export function SettingsPanel({
                     冲突拒绝、单条重置；表持久化 ui.keymap.v1（demo=localStorage） */}
                 <div className="set-card">
                   <h4>{t("应用快捷键")}</h4>
-                  <div className="set-desc">{t("点「修改」后按下新组合（Ctrl/⌘ + 字母，可加 Shift），Esc 取消。被占用的字母不再发往终端——同名 shell 控制键让位（如 Ctrl+D=分屏后，EOF 请用 exit）；Ctrl+B 始终留给终端（tmux 前缀键），不可占用。Ctrl+1-9 切换标签 · Ctrl+Tab 循环 · Ctrl/⌘ ±/0 缩放 · Esc 关浮层为固定键位。")}</div>
+                  <div className="set-desc">{t(inTauri
+                    ? "点「修改」后按下新组合（Ctrl/⌘ + 字母，可加 Shift），Esc 取消。被占用的字母不再发往终端——同名 shell 控制键让位（如 Ctrl+D=分屏后，EOF 请用 exit）；Ctrl+B 始终留给终端（tmux 前缀键），不可占用。固定键位：Ctrl+1-9 切换标签 · Ctrl+Tab 循环 · Ctrl/⌘ ±/0 缩放 · Esc 关浮层 · F11 专注模式。"
+                    : "点「修改」后按下新组合（Ctrl/⌘ + 字母，可加 Shift），Esc 取消。被占用的字母不再发往终端——同名 shell 控制键让位（如 Ctrl+D=分屏后，EOF 请用 exit）；Ctrl+B 始终留给终端（tmux 前缀键），不可占用。固定键位：Esc 关浮层；Ctrl+1-9 切换标签 · Ctrl+Tab 循环 · Ctrl/⌘ ±/0 缩放 · F11 专注模式在桌面版生效（浏览器演示里归浏览器语义）。")}</div>
                   <div className="km-rows" role="group" aria-label={t("快捷键绑定")}>
                     {KEYMAP_ACTIONS.map(({ id, label, desc }) => {
                       const capturing = keyCapture === id;
@@ -747,7 +749,7 @@ Authorization: Bearer <TOKEN>`}
                     </pre>
                     <div>{t("或者更省事：把上面「接入文档」链接直接发给 Agent，它会按文档自助完成接入。只支持 stdio 的客户端用自带 shim（应用同目录）：")}</div>
                     <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
-{`command: ${mcp.shim_path || "(同应用目录 tinyssh-mcp)"}
+{`command: ${mcp.shim_path || t("(同应用目录 tinyssh-mcp)")}
 env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:8722/mcp"}`}
                     </pre>
                     <div>{t("接入后，Agent 的操作请求会出现在协作面板的审批队列逐段裁决。")}</div>

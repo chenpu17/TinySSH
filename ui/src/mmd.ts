@@ -9,6 +9,8 @@
 type MermaidApi = (typeof import("mermaid"))["default"];
 type Purify = (typeof import("dompurify"))["default"];
 
+import { t } from "./i18n";
+
 let seq = 0;
 
 /** 复杂度闸（稳定轮余量项）：超限图不进渲染、诚实保持代码原文。mermaid 的
@@ -33,8 +35,8 @@ function wrapInner(content: string): string {
   const lines = content.split("\n").length;
   return (
     `<div class="code-head"><span class="code-lang">mermaid</span>` +
-    `<span class="code-dim">${lines} 行</span>` +
-    `<button class="code-copy" type="button" title="复制图表源码">复制</button></div>` +
+    `<span class="code-dim">${t("{0} 行", String(lines))}</span>` +
+    `<button class="code-copy" type="button" title="${t("复制图表源码")}">${t("复制")}</button></div>` +
     `<pre class="mm-fallback"><code>${escHtml(content)}</code></pre>`
   );
 }

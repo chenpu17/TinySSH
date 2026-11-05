@@ -282,7 +282,7 @@ export function TransferQueueDrawer({
             </div>
             <div className="queue-body">
               {transfers.length === 0 && (
-                <div className="side-quiet">{t("暂无传输任务。把文件从访达拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。")}</div>
+                <div className="side-quiet">{t("暂无传输任务。把文件从系统文件管理器拖进窗口：拖到文件面板直接上传到正在浏览的目录，拖到终端先确认目标。")}</div>
               )}
               {/* 五轮架构（虚拟化等效）：历史行无上限会随使用无限增长，每个传输事件
                   （120ms 合帧）都全量 diff。封到最近 120 条——完整事实仍在（总数如实
@@ -350,20 +350,20 @@ export function TransferQueueDrawer({
                   {/* S08 该状态允许的操作：进行中=取消；失败/取消/跳过/中断=重试（新任务
                       重新校验）；unknown 只有重新核实 + 查看目标（§374 界面须提供
                       「重新核实」「查看目标/记录」，通用重试绝不作为默认动作）；
-                      完成=打开+定位（下载：系统默认程序开文件本身 / 访达显示本地
-                      目标；上传=文件面板开目标目录） */}
+                      完成=打开+定位（下载：系统默认程序开文件本身 / 系统文件管理器显示
+                      本地目标；上传=文件面板开目标目录） */}
                   <div className="row" style={{ gap: 2, flex: "none" }}>
                     {t2.kind === "Download" && t2.status === "done" && !t2.local.startsWith("pending") && (
                       <>
                         <button className="ghost" data-testid="xfer-open" title={t("立即打开：用系统默认程序打开该文件")} onClick={() => void openTransfer(t2)}>{t("打开")}</button>
-                        <button className="ghost" data-testid="xfer-locate" title={t("在文件管理器中显示本地目标（资源管理器选中该文件）")} onClick={() => void locateTransfer(t2)}>{t("定位")}</button>
+                        <button className="ghost" data-testid="xfer-locate" title={t("在系统文件管理器中显示本地目标（选中该文件）")} onClick={() => void locateTransfer(t2)}>{t("定位")}</button>
                       </>
                     )}
                     {t2.kind === "Upload" && t2.status === "done" && t2.sid && t2.sid === sidRef.current && (
                       <button className="ghost" data-testid="xfer-locate" title={t("在文件面板打开目标目录")} onClick={() => void locateTransfer(t2)}>{t("定位")}</button>
                     )}
                     {t2.status === "unknown" && (
-                      <button className="ghost" data-testid="xfer-view-target" title={t("查看目标：核对目标当前状态（下载在访达显示本地目标 / 上传打开文件面板目标目录）——仅目标存在不能证明本任务成功，结果仍待核实")} onClick={() => void locateTransfer(t2)}>{t("查看目标")}</button>
+                      <button className="ghost" data-testid="xfer-view-target" title={t("查看目标：核对目标当前状态（下载在系统文件管理器中显示本地目标 / 上传打开文件面板目标目录）——仅目标存在不能证明本任务成功，结果仍待核实")} onClick={() => void locateTransfer(t2)}>{t("查看目标")}</button>
                     )}
                     {(t2.status === "failed" || t2.status === "cancelled" || t2.status === "skipped" || t2.status === "interrupted") && (
                       canRetry(t2)

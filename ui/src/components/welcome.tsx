@@ -3,6 +3,7 @@
 import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
 import { IconPlus, IconTerminal, IconUpload } from "../icons";
 import { t } from "../i18n";
+import { isMacPlatform } from "../actions";
 import { dateLocale } from "../app-data";
 
 interface WelcomeProps {
@@ -43,7 +44,12 @@ export function Welcome({
         <div className="welcome-title">TinySSH<span className="welcome-sub">{t("人机协同 SSH 工作台")}</span></div>
         <div className="welcome-steps">
           <div><span className="ws-k">{t("连接")}</span>{t("主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接")}</div>
-          <div><span className="ws-k">{t("操作")}</span>{t("点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴")}</div>
+          {/* 七轮 B7-4：原句把 Ctrl+C 与 ⌘C/⌘V 混在一行——Windows/Linux 上没有 ⌘，
+              而终端里 Ctrl+C 是 SIGINT（真按了会打断远端进程）。复制粘贴的键盘实现
+              只认 metaKey，非 mac 走 Ctrl+V 原生粘贴 + 右键菜单复制 */}
+          <div><span className="ws-k">{t("操作")}</span>{isMacPlatform()
+            ? t("点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴")
+            : t("点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、Ctrl+V 粘贴、右键复制")}</div>
           <div><span className="ws-k">{t("多会话")}</span>{t("一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留")}</div>
           <div><span className="ws-k">{t("传输")}</span>{t("拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标")}</div>
           <div><span className="ws-k">{t("专注")}</span>{t("F11 进入全屏专注：界面全让位给终端，标签条常驻顶部（Ctrl+K 面板可切自动隐藏），再按 F11 退出")}</div>

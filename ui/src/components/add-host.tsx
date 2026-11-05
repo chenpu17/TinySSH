@@ -6,12 +6,23 @@ import { t } from "../i18n";
 
 // IME 组合期守卫（§7.3 与 resolveAction 同口径：isComposing 与 keyCode 229 双查）——
 // 中文输入法敲 Enter 是「确认候选词」，不是提交表单。表单全部回车提交经此封装。
+// preventDefault（六轮 D6-1）：提交成功关浮层后 useDialogFocus 回焦 opener，本
+// keydown 的默认动作（合成激活 click，detail=0）会落在刚回焦的 opener 上——
+// 「保存成功」随即被顶回成「重开对话框」。提交统一走 fn，默认激活一律取消。
 const enterKey = (fn: () => void) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
-  if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) fn();
+  if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) {
+    e.preventDefault();
+    fn();
+  }
 };
 
 // prefill（C7/DF7.4）：导入面板「转手工表单」用预览载荷预填——upsert_host，零新命令。
 // 挂在居中对话框里（用户反馈二轮：220px 侧栏塞不下），onCancel 由对话框传「取消」钮。
+
+// 凭据草稿脏旗标（六轮 D6-4）：私钥/口令/密码是用户粘贴的高价值输入——Esc/✕
+// 静默丢弃损失不成比例。表单内 effect 维护，App 层的关闭链（Esc/✕/取消）读它
+// 做「第一次只提示、第二次才真关」的双击确认；关闭时由 App 复位。
+export const addHostCredDirty = { value: false };
 export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { onSaved: (hostId: string, wasEdit: boolean, connect: boolean) => void; editHost?: Host | null; prefill?: SshConfigPreview | null; onCancel?: () => void; hosts?: Host[] }) {
   const editing = !!editHost;
   const [name, setName] = useState(editHost?.name ?? prefill?.name ?? "");
@@ -46,6 +57,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
   const addressRef = useRef<HTMLInputElement | null>(null);
   const portRef = useRef<HTMLInputElement | null>(null);
   const usernameRef = useRef<HTMLInputElement | null>(null);
+  const passwordRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     invoke("list_identities")
@@ -55,6 +67,15 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
       .then((xs) => setJumpCandidates(xs))
       .catch(() => { /* 跳板选择器降级为空：仍可直连 */ });
   }, []);
+
+  // 凭据草稿脏旗标上报（六轮 D6-4，见 addHostCredDirty 注）：随编辑即时翻转，
+  // App 层关闭链据此做双击确认。不看 authMode——切走认证方式时 pem 草稿仍在
+  // state（切回来还在），关闭仍会一起丢，dirty 必须保持。identity 已落库
+  // （create_identity）不损失，不算 dirty。
+  useEffect(() => {
+    addHostCredDirty.value = password !== "" || pem.trim() !== "" || passphrase !== "";
+    return () => { addHostCredDirty.value = false; };
+  }, [authMode, password, pem, passphrase, identity]);
 
   // 跳板候选：排除自身/本机/成环（沿 jump_host_id 向上走，绕回自身即排除；
   // seen 集合同时防他人成环导致死循环）。后端 upsert 会再验一遍。
@@ -111,10 +132,12 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
   const submit = async (connect = true, nameFromAddr?: string) => {
     if (busy) return; // 回车提交绕过按钮 disabled——在途时丢弃重复提交
     setErr(null);
-    // 地址框回车（找茬四轮 D4）：名称空则先以地址补名（与 onBlur 同款联动，避免
+    // 地址框回车（找茬四轮 D4）：名称空则以地址补名（与 onBlur 同款联动，避免
     // 「名称不能为空」拦在最高频动线上）——「填完地址回车」是表单主动线，此前
-    // 唯独地址框 Enter 不提交、其余输入框都能
-    const nameVal = (nameFromAddr ?? name).trim();
+    // 唯独地址框 Enter 不提交、其余输入框都能。补名只在**名称空**时生效（找茬
+    // 五轮 B-1）：`??` 会把非空空串当 nullish、已填的名称被地址静默覆盖（编辑
+    // 流回地址框改错字后回车=主机改名成地址）
+    const nameVal = (name.trim() ? name : nameFromAddr ?? name).trim();
     if (!nameVal || !address.trim() || !username.trim()) {
       setErr(t("名称、地址、用户名都不能为空"));
       (!nameVal ? nameRef : !address.trim() ? addressRef : usernameRef).current?.focus();
@@ -156,7 +179,9 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
         // 主密钥不匹配/换密码场景的唯一入口，用户走查实锤需求）
         auth = password ? { Password: { password } } : "Keep";
       } else if (authMode === "password") {
-        if (!password) { setErr(t("请输入密码")); setBusy(false); return; }
+        // 缺密码也聚焦密码框（找茬五轮 D-3）：同表单其余缺项分支都送焦点，唯独
+        // 这支错误文案指着密码、焦点留原地——「报错即聚焦」契约一手有一手没有
+        if (!password) { setErr(t("请输入密码")); passwordRef.current?.focus(); setBusy(false); return; }
         auth = { Password: { password } };
       } else if (authMode === "agent") {
         auth = "Agent";
@@ -263,7 +288,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
       ) : authMode === "password" ? (
         <div className="ah-field" style={{ marginTop: 6 }}>
           <label>{t("密码")}</label>
-          <input type="password" placeholder={t("密码")} value={password} onChange={(e) => setPassword(e.target.value)}
+          <input ref={passwordRef} type="password" placeholder={t("密码")} value={password} onChange={(e) => setPassword(e.target.value)}
             onKeyDown={enterKey(() => submit())} />
         </div>
       ) : authMode === "agent" ? (

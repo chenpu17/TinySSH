@@ -128,6 +128,11 @@ impl RecordStore {
     }
 
     /// 查询：从新到旧扫描，命中即收集，够 limit 即停。
+    ///
+    /// 六轮 AF-3：扫描此前整文件物化进内存（`lines().collect()`）——重度自动化
+    /// 日单文件可达数十 MB（每行 hex 后 ~2× 明文），且 MCP 路径按 agent_id 强制
+    /// 过滤时稀疏命中=每次查询全量物化+全量解密。改倒序块读：峰值压到单块，
+    /// 命中聚在文件尾部的常态 1-3 块即停。
     pub fn query(&self, f: &RecordFilter) -> std::io::Result<Vec<RecordEvent>> {
         let limit = f.limit.unwrap_or(200).min(1000) as usize;
         let mut out = Vec::new();
@@ -137,8 +142,7 @@ impl RecordStore {
             let Ok(fh) = std::fs::File::open(path) else {
                 continue;
             };
-            let lines: Vec<String> = std::io::BufReader::new(fh).lines().flatten().collect();
-            for line in lines.into_iter().rev() {
+            for line in RevLines::new(fh) {
                 let Some(ev) = self.decode_line(&line) else {
                     continue;
                 };
@@ -213,6 +217,85 @@ impl RecordStore {
         let ct = hex_decode(line.trim())?;
         let pt = (self.crypto.open)(&ct).ok()?;
         serde_json::from_slice(&pt).ok()
+    }
+}
+
+/// 倒序行迭代器（六轮 AF-3）：按块从文件尾读、块内拆行倒序产出。查询语义
+/// 「新→旧、命中即停」下命中聚在文件尾部，块读把内存峰值从全文件压到单块；
+/// 跨块半行由 `carry` 拼接（本块首残段属于更靠前的行，留给下一块接尾）。
+struct RevLines {
+    fh: std::fs::File,
+    pos: u64,
+    buf: Vec<u8>,
+    queue: Vec<String>,
+    carry: Vec<u8>,
+    done: bool,
+}
+
+impl RevLines {
+    const CHUNK: u64 = 256 * 1024;
+
+    fn new(fh: std::fs::File) -> Self {
+        let pos = fh.metadata().map(|m| m.len()).unwrap_or(0);
+        Self { fh, pos, buf: Vec::new(), queue: Vec::new(), carry: Vec::new(), done: pos == 0 }
+    }
+}
+
+impl Iterator for RevLines {
+    type Item = String;
+
+    fn next(&mut self) -> Option<String> {
+        loop {
+            if let Some(l) = self.queue.pop() {
+                return Some(l);
+            }
+            if self.done {
+                // 文件头残段（首行无前置换行）最后产出
+                if self.carry.is_empty() {
+                    return None;
+                }
+                let line = String::from_utf8_lossy(&self.carry).trim_end_matches('\r').to_string();
+                self.carry.clear();
+                return Some(line);
+            }
+            let start = self.pos.saturating_sub(Self::CHUNK);
+            let len = (self.pos - start) as usize;
+            self.buf.resize(len, 0);
+            {
+                use std::io::{Read, Seek, SeekFrom};
+                let ok = self
+                    .fh
+                    .seek(SeekFrom::Start(start))
+                    .and_then(|_| self.fh.read_exact(&mut self.buf))
+                    .is_ok();
+                if !ok {
+                    self.done = true;
+                    continue;
+                }
+            }
+            self.pos = start;
+            self.queue.clear();
+            let mut segs: Vec<&[u8]> = self.buf.split(|&b| b == b'\n').collect();
+            let tail = segs.pop().unwrap_or(&[]);
+            // 块内完整行正序入队（pop 时即倒序产出）；跳过块首残段（lines[0]）
+            for seg in segs.iter().skip(1) {
+                let line = String::from_utf8_lossy(seg).trim_end_matches('\r').to_string();
+                self.queue.push(line);
+            }
+            // 块尾段 + 上一块首残段 = 跨块完整行，队尾（最先产出）。产出口径同
+            // std lines()：文件尾 \n 之后的空段不是行（有跨块 carry 时必是行）
+            let had_carry = !self.carry.is_empty();
+            let mut row = tail.to_vec();
+            row.extend_from_slice(&self.carry);
+            self.carry = segs.first().map(|s| s.to_vec()).unwrap_or_default();
+            if !row.is_empty() || had_carry {
+                let line = String::from_utf8_lossy(&row).trim_end_matches('\r').to_string();
+                self.queue.push(line);
+            }
+            if start == 0 {
+                self.done = true;
+            }
+        }
     }
 }
 
@@ -372,6 +455,69 @@ mod tests {
         }
         let s2 = RecordStore::open(&dir, 30, chacha_crypto(&[9u8; 32])).unwrap();
         assert!(s2.query(&RecordFilter::default()).unwrap().is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// 六轮 AF-3：RevLines 倒序行序与正序恰好相反——含跨块拼接（行数越过
+    /// CHUNK 边界）、空行、CRLF、无尾换行四类边界。
+    #[test]
+    fn rev_lines_reverses_file_order() {
+        let dir = std::env::temp_dir().join(format!("revl-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // >CHUNK 行：跨块拼接是本算法唯一容易错的点
+        let n = (RevLines::CHUNK as usize / 8) + 500;
+        let mut fwd: Vec<String> = Vec::new();
+        let mut text = String::new();
+        for i in 0..n {
+            let line = if i % 97 == 0 {
+                format!("row-{i}\r") // CRLF 边界
+            } else if i % 89 == 0 {
+                String::new() // 空行
+            } else {
+                format!("row-{i}")
+            };
+            fwd.push(line.clone());
+            text.push_str(&line);
+            text.push('\n');
+        }
+        text.pop(); // 末行无尾换行（另一边界）
+        let p = dir.join("sample.jsonl");
+        std::fs::write(&p, &text).unwrap();
+        let fh = std::fs::File::open(&p).unwrap();
+        let rev: Vec<String> = RevLines::new(fh).collect();
+        // 期望口径与 std lines() 一致：行尾 \r 被 CRLF 处理剥掉
+        let mut want: Vec<String> = fwd.iter().map(|l| l.trim_end_matches('\r').to_string()).collect();
+        want.reverse();
+        assert_eq!(rev.len(), want.len(), "行数守恒（{} vs {}）", rev.len(), want.len());
+        for (i, (a, b)) in rev.iter().zip(want.iter()).enumerate() {
+            assert_eq!(a, b, "第 {i} 行倒序不匹配");
+        }
+        // 小文件（单块内）同样成立
+        let p2 = dir.join("small.jsonl");
+        std::fs::write(&p2, "a\nbb\nccc\n").unwrap();
+        let rev2: Vec<String> = RevLines::new(std::fs::File::open(&p2).unwrap()).collect();
+        assert_eq!(rev2, vec!["ccc", "bb", "a"]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// 六轮 AF-3：query 在块读路径下语义不变——倒序（新→旧）输出、limit 提前停。
+    #[test]
+    fn query_block_read_order_and_limit() {
+        let dir = std::env::temp_dir().join(format!("recq-{}", uuid::Uuid::new_v4()));
+        let s = store(&dir);
+        for i in 0..40 {
+            s.append(ev(RecordKind::Exec, &format!("cmd-{i}"))).unwrap();
+        }
+        let all = s.query(&RecordFilter::default()).unwrap();
+        assert_eq!(all.len(), 40);
+        let summaries: Vec<String> = all.iter().map(|e| e.summary.clone()).collect();
+        let expect_rev: Vec<String> = (0..40).rev().map(|i| format!("cmd-{i}")).collect();
+        assert_eq!(summaries, expect_rev, "query 输出必须新→旧");
+        let limited = s
+            .query(&RecordFilter { limit: Some(5), ..Default::default() })
+            .unwrap();
+        assert_eq!(limited.len(), 5);
+        assert_eq!(limited[0].summary, "cmd-39", "limit 从最新起截");
         std::fs::remove_dir_all(dir).ok();
     }
 

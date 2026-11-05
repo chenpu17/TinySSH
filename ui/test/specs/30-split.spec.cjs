@@ -47,12 +47,17 @@ const divPoint = (page, f) =>
     return { x: r.x + (long.axis === "x" ? off : r.width / 2), y: r.y + (long.axis === "y" ? off : r.height / 2) };
   }, f);
 
-// staging-1 标签上的分屏钮文案（第一个标签可能是活动标签「已在主视图」，不可泛选）
-const splitBtnTitleOfStaging = (page) =>
-  page.evaluate(() => {
-    const tab = [...document.querySelectorAll(".tab")].find((x) => x.textContent.includes("staging-1"));
-    return tab?.querySelector(".tab-split")?.getAttribute("title") || "";
-  });
+// 方向记忆的观测点（七轮：标签上的分屏小钮已按用户意见删除，改从右键菜单文案读）——
+// 分屏中菜单项「改为左右分屏」= 当前是上下；未分屏时「…（放到右侧）」= 记忆是左右。
+// 读完点遮罩关菜单，免得挡住后续拖拽落点。
+const tabMenuTexts = async (page, namePart) => {
+  await rightClickTab(page, namePart);
+  const texts = await page.evaluate(() =>
+    [...document.querySelectorAll(".ctx-menu [role=menuitem]")].map((x) => x.textContent || ""));
+  await page.evaluate(() => document.querySelectorAll(".pop-mask").forEach((m) => m.click()));
+  await page.waitForTimeout(200);
+  return texts;
+};
 
 module.exports = {
   title: "分屏方向选择、分割条拖拽与旋转",
@@ -94,8 +99,9 @@ module.exports = {
     ck.check("上主/下副两格齐全", !!g1.main && !!g1.second, JSON.stringify(g1));
     const divTb = await page.evaluate(() => !!document.querySelector('.pane-div[data-testid="pane-div"].div-tb'));
     ck.check("分割条出现且为竖向拖拽（div-tb）", divTb, "");
-    const tabBtnTitle = await splitBtnTitleOfStaging(page);
-    ck.check("标签分屏钮沿用记住的下侧", tabBtnTitle.includes("下"), tabBtnTitle);
+    const tbMenu = await tabMenuTexts(page, "staging-1");
+    ck.check("方向记忆=上下（分屏中菜单项「改为左右分屏」）",
+      tbMenu.some((x) => x.includes("改为左右分屏")), tbMenu.join(" | "));
     // 竖排两格各占一半（frac 必须真被写进 #term，缺失=null 直接红）
     ck.check("初始对半（frac 写入且两格等高）",
       g1.frac !== null && Math.abs(g1.frac - 0.5) < 0.02 && Math.abs((g1.main?.h ?? 0) - (g1.second?.h ?? 0)) <= 2,
@@ -151,9 +157,11 @@ module.exports = {
     ck.check("退出后窗格清空", (await paneCount(page)) === 0, `panes=${await paneCount(page)}`);
     const divGone = await page.evaluate(() => !document.querySelector(".pane-div"));
     ck.check("退出后分割条消失", divGone, "");
-    // 方向记忆=上次使用的方向：旋转到左右已把它改写为 lr（与下次点击行为自洽）
-    const tabBtn2 = await splitBtnTitleOfStaging(page);
-    ck.check("旋转改写方向记忆（回到右侧）", tabBtn2.includes("右"), tabBtn2);
+    // 方向记忆=上次使用的方向：旋转到左右已把它改写为 lr（与下次点击行为自洽）——
+    // 退出后右键非活动标签，菜单项应写「放到右侧」
+    const lrMenu = await tabMenuTexts(page, "staging-1");
+    ck.check("旋转改写方向记忆（回到右侧）",
+      lrMenu.some((x) => x.includes("放到右侧")), lrMenu.join(" | "));
 
     // ── 拖拽组合分屏（拖标签到终端区，Windows Terminal 语义）──
     // 拖拽组合分屏轮起标签拖拽是 pointer 自定义拖拽（HTML5 DnD 在 WebView2 被 wry
@@ -179,9 +187,11 @@ module.exports = {
       await page.waitForTimeout(500);
     };
 
-    // 两格归属按名牌（host_name）；hint 读落点提示层
+    // 两格归属按名牌（host_name + 非连接态后缀）；hint 读落点提示层
     const paneNames = () => page.evaluate(() => {
-      const name = (sel) => document.querySelector(sel)?.querySelector(".pane-tag")?.textContent ?? null;
+      // 名牌=主机名 + 非连接态后缀「 · 已断开」（找茬五轮 C-4：黑腔格的状态指示）
+      // ——身份比对剥后缀，后缀本身单独断言
+      const name = (sel) => document.querySelector(sel)?.querySelector(".pane-tag")?.textContent?.replace(/ · (已断开|重连中…)$/, "") ?? null;
       return {
         main: name(".pane-left, .pane-top"),
         second: name(".pane-right, .pane-bottom"),
@@ -189,6 +199,9 @@ module.exports = {
         hint: document.querySelector('[data-testid="drag-split-hint"] .dsh-zone')?.className ?? null,
       };
     });
+    // C-4 契约：断开会话的副格名牌带状态后缀（黑腔不再无解释）
+    const secondRaw = () => page.evaluate(() =>
+      document.querySelector(".pane-right, .pane-bottom")?.querySelector(".pane-tag")?.textContent ?? null);
 
     // ① 未分屏：拖 staging-1 悬停右半 → 出 zone-r 提示；松手 = 进右副格、焦点跟落点
     await tabDrag("staging-1", 0.9, 0.5, "over");
@@ -200,6 +213,7 @@ module.exports = {
     const p1 = await paneNames();
     ck.check("右半=副格（本机主 / staging-1 副）", p1.main === "本机" && p1.second === "staging-1", JSON.stringify(p1));
     ck.check("落点格拿焦点（staging-1）", p1.focused === "staging-1", JSON.stringify(p1));
+    ck.check("断开会话副格名牌带「· 已断开」后缀（找茬五轮 C-4）", await secondRaw() === "staging-1 · 已断开", await secondRaw() ?? "无名牌");
     ck.check("drop 后提示已清", !await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]')));
 
     // ② 已分屏：拖主格标签落到另一格 = 交换两格，焦点跟到落点格

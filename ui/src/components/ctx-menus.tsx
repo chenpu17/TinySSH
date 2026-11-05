@@ -157,7 +157,7 @@ export function CtxMenus({
             <div className="pop-mask" onClick={() => setSplitMenu(false)} />
             <div className="split-menu" role="menu" aria-label={t("分屏")}>
               {/* 分屏⑥轮：方向可选（Windows Terminal/iTerm2 习惯）——记住上次选择，
-                  标签分屏钮/右键项沿用；已分屏时选向即旋转布局 */}
+                  工具栏分屏钮/右键项沿用；已分屏时选向即旋转布局 */}
               <div className="split-dir-row" role="radiogroup" aria-label={t("分屏方向")}>
                 <button type="button" className={"sm-dir" + (splitDir === "lr" ? " on" : "")} role="radio"
                   aria-checked={splitDir === "lr"} data-testid="split-dir-lr"
@@ -176,8 +176,15 @@ export function CtxMenus({
               )}
               {[...sessions].filter((s) => s.id !== sid).map((s) => {
                 const st = stateLabel(s.state);
+                // 七轮 A7-4：断开的会话不排除（还要能回看它的尾部 scrollback），
+                // 但菜单项如实预告「放进后要点该格才出现重连入口」——确认员实测
+                // 聚焦该格会立刻出「重连恢复/恢复现场」，此前没有任何提示。
+                // 只认真正死掉的态：Degraded/Reconnecting 是连接在但降级，说「已断开」
+                // 会误导（交付前审查）
+                const dead = s.state === "Disconnected" || s.state === "Closed";
                 return (
                   <button key={s.id} className="sm-item" role="menuitem"
+                    title={dead ? t("该会话已断开——放入分屏后点一下这个格子即可重连（可先回看断开前的画面）") : undefined}
                     onClick={() => { setSplitMenu(false); void enterSplitWith(s.id, splitDir); }}>
                     <span className="sm-name">{s.host_name}</span>
                     <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>

@@ -30,7 +30,8 @@
 
 - 墙开着：目标会话 pane 被贴成格子形状（attach 端画面同步变形，墙盖住的主视图看不见；**外部终端若也 attach 同会话会跟着缩**——恢复机制兜底，已在交付说明披露）。
 - 关墙：全部还原（尺寸+window-size 选项）；demo/spec 以 `__wall_restores` 断言。
-- 崩溃/强杀残留：window-size 钉在 manual——下次开墙关墙一轮即还原（重开时 fit 再交还）；真实影响面小。
+- ~~崩溃/强杀残留：window-size 钉在 manual——下次开墙关墙一轮即还原（重开时 fit 再交还）~~
+  **此承诺已被找茬五轮 A-3 证伪并修复**：重开 fit 把残留的 manual+变形尺寸当「原样」抓回，关墙 restore 白名单臂原样交还 manual=残留永久化，「一轮即还原」不存在。修复（2026-11-05）：restore 侧对回执 `manual` **一律解钉成 UNSET**——本机制/崩溃残留钉上的 manual 无从与用户原意区分，unset 让窗口重新按在场客户端重算（tmux `options_push_changes` 收尾必走 `recalculate_sizes`），才是可自愈终态；下一次开墙关墙一轮即真实还原。副作用：用户本就手动钉 manual 的窗口关墙后转为自动跟随（丢钉不丢布局，可接受）。
 
 ## 七、改型后验证
 

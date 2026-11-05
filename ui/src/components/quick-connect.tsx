@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, HostDraft, IdentityMeta } from "../adapter/wire";
@@ -11,9 +11,13 @@ import { t } from "../i18n";
 // 提交 = begin_connection_draft：主机/凭据/TOFU 信任全在内存，应用退出即失。
 // 地址框回车提交（找茬四轮 D4）：此前只有密码框能 Enter——地址是 autoFocus 首字段
 // 与最高频动线，敲完地址回车表单纹丝不动。IME 组合期 Enter 是确认候选词，不提交
-// （§7.3 与 resolveAction 同口径）。
+// （§7.3 与 resolveAction 同口径）。preventDefault 防回焦 opener 被默认激活
+// click 顶回（add-host enterKey 同款，六轮 D6-1）。
 const enterKey = (fn: () => void) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
-  if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) fn();
+  if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) {
+    e.preventDefault();
+    fn();
+  }
 };
 
 export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Host, draft: HostDraft) => void; onCancel: () => void }) {
@@ -27,6 +31,11 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
   const [knownIdentities, setKnownIdentities] = useState<IdentityMeta[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const addressRef = useRef<HTMLInputElement>(null);
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const portRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const identityRef = useRef<HTMLSelectElement>(null);
 
   useEffect(() => {
     invoke("list_identities")
@@ -37,21 +46,28 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
   const submit = () => {
     if (busy) return; // 在途丢弃重复提交（add-host 同款防御；审查二轮观察项）
     setErr(null);
-    if (!address.trim() || !username.trim()) { setErr(t("地址和用户名都不能为空")); return; }
+    // 报错即聚焦（六轮 BF-6，add-host 同款契约）：校验失败焦点回位到首个非法
+    // 字段——键盘用户（地址框 autoFocus+回车主动线）错误后不断链
+    if (!address.trim() || !username.trim()) {
+      setErr(t("地址和用户名都不能为空"));
+      (!address.trim() ? addressRef : usernameRef).current?.focus();
+      return;
+    }
     if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
       setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10），不带端口与协议"));
+      addressRef.current?.focus();
       return;
     }
     const p = parseInt(port, 10);
-    if (!Number.isInteger(p) || p <= 0 || p > 65535) { setErr(t("端口必须是 1–65535 的数字")); return; }
+    if (!Number.isInteger(p) || p <= 0 || p > 65535) { setErr(t("端口必须是 1–65535 的数字")); portRef.current?.focus(); return; }
     let auth: AuthDraft;
     if (authMode === "password") {
-      if (!password) { setErr(t("请输入密码")); return; }
+      if (!password) { setErr(t("请输入密码")); passwordRef.current?.focus(); return; }
       auth = { Password: { password } };
     } else if (authMode === "agent") {
       auth = "Agent";
     } else {
-      if (!pickedIdentity) { setErr(t("请选择凭据库中的已有密钥（或改用密码 / SSH Agent）")); return; }
+      if (!pickedIdentity) { setErr(t("请选择凭据库中的已有密钥（或改用密码 / SSH Agent）")); identityRef.current?.focus(); return; }
       auth = { Key: { identity_id: pickedIdentity } };
     }
     const addr = address.trim();
@@ -86,20 +102,20 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 2 }}>
           <label>{t("地址（IP 或域名）")}</label>
-          <input value={address} onChange={(e) => setAddress(e.target.value)} autoFocus
+          <input value={address} onChange={(e) => setAddress(e.target.value)} autoFocus ref={addressRef}
             onKeyDown={enterKey(submit)}
             placeholder={t("例：192.168.1.10")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label>{t("端口")}</label>
-          <input value={port} onChange={(e) => setPort(e.target.value)} onKeyDown={enterKey(submit)} />
+          <input value={port} onChange={(e) => setPort(e.target.value)} onKeyDown={enterKey(submit)} ref={portRef} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label>{t("用户名")}</label>
           <input value={username} onChange={(e) => setUsername(e.target.value)}
-            onKeyDown={enterKey(submit)}
+            onKeyDown={enterKey(submit)} ref={usernameRef}
             placeholder={t("例：ops 或 root")} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
@@ -118,13 +134,13 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
           <label>{t("密码")}</label>
           <input type="password" placeholder={t("密码")} value={password}
             onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={enterKey(submit)} />
+            onKeyDown={enterKey(submit)} ref={passwordRef} />
         </div>
       )}
       {authMode === "key" && (
         <div className="ah-field" style={{ marginTop: 6 }}>
           <label>{t("已有密钥（凭据库）")}</label>
-          <select value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)}>
+          <select value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)} ref={identityRef}>
             <option value="">{t("选择凭据库中的密钥…")}</option>
             {knownIdentities.map((k) => (
               <option key={k.id} value={k.id}>{k.label || k.id}</option>

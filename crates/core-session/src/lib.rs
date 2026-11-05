@@ -5498,6 +5498,17 @@ impl SessionManager {
     /// 关大屏恢复命令构造：resize 回原尺寸 + window-size 选项原样交还（UNSET=
     /// unset 回去；KEEP=只恢复尺寸不动选项）。ws 白名单外的值（前端透传脏数据）
     /// 在 case 里没有臂=什么都不做，sq 转义兜底保证它只是死字符串。
+    ///
+    /// **manual 一律解钉成 UNSET**（找茬五轮 A-3）：resize-window 把 window-size
+    /// 钉成 manual 粘住，回执里的 manual 无从区分「用户本就手动钉了」与「本机制
+    /// /崩溃残留钉上的」——原样交还 manual 等于把贴格变形（或崩溃残留）永久化，
+    /// attach 客户端永不再跟随；unset 让窗口重新按在场客户端重算（tmux 的
+    /// options_push_changes 收尾必走 recalculate_sizes），才是可自愈终态。
+    ///
+    /// **恢复尺寸不套贴格预算钳**（找茬五轮 A-1）：orig 是 fit 回执带回的真实
+    /// 原窗口尺寸，4K/带鱼屏小字体轻松超 400 列——按 fit 预算钳会把「恢复原样」
+    /// 变成「恢复成 400 列」。钳位域改用 tmux 自身接受域 1..=10000（其
+    /// WINDOW_MAXIMUM），防注入只需纯数字，range 只防荒诞值。
     fn tmux_wall_restore_cmd(
         items: &[session_api::TmuxWallRestoreItem],
         version: Option<&str>,
@@ -5511,11 +5522,11 @@ impl SessionManager {
                 name: it.name.clone(),
             };
             let sel = Self::tmux_sq(&Self::tmux_wall_selector(&t, version));
-            let c = it.cols.clamp(12, 400);
-            let r = it.rows.clamp(5, 200);
+            let c = it.cols.clamp(1, 10000);
+            let r = it.rows.clamp(1, 10000);
             let ws = match it.ws.as_str() {
-                "" => "UNSET",
-                v @ ("manual" | "latest" | "largest" | "smallest") => v,
+                "" | "manual" => "UNSET",
+                v @ ("latest" | "largest" | "smallest") => v,
                 _ => "KEEP",
             };
             setargs += &format!(" {} {} {} {}", sel, c, r, Self::tmux_sq(ws));
@@ -6157,8 +6168,24 @@ impl SessionManager {
         let pname = pane.name();
         h.pane_wishlist.lock().unwrap().retain(|n| n != &pname);
         // 同款预算（找茬四轮 A4）：写停滞时 close 至多等一个 20s 写块让锁——
-        // 用户「关格」不该为此干等；超时弃尾由 alive=false 即刻判死兜底。
-        let _ = tokio::time::timeout(PANE_CLOSE_BUDGET, pane.ch.close()).await;
+        // 用户「关格」不该为此干等。超时弃尾≠放弃（找茬五轮 A-4）：取消点落在
+        // 写锁/出向队列挂起中时 CHANNEL_CLOSE 可能还没发出，而 russh 丢弃
+        // Channel 不补发（协议上远端收不到 CLOSE 就不拆会话通道）——alive=false
+        // 只死本地泵，「整条连接关闭兜底」只对 close_session 成立，单格关闭路径
+        // 没有。转后台补发：写锁让出来总会轮到这发；连接先死则 close 自然终结。
+        // 重复 CLOSE 对已关通道无害（对端忽略）。
+        if tokio::time::timeout(PANE_CLOSE_BUDGET, pane.ch.close())
+            .await
+            .is_err()
+        {
+            tokio::spawn(async move {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(20), // 与传输泵写停滞预算同界
+                    pane.ch.close(),
+                )
+                .await;
+            });
+        }
         let _ = self.center.audit.append(
             &Actor::Human,
             "tmux_pane_close",
@@ -8210,7 +8237,10 @@ mod t44_tests {
             };
         let cmd = SessionManager::tmux_wall_restore_cmd(
             &[
-                mk("$5", "work", 189, 42, "manual"),
+                // 480×120=4K 域原尺寸（找茬五轮 A-1：不套贴格预算钳 400/200）；
+                // manual 一律解钉 UNSET（A-3：本机制/崩溃残留钉的 manual 无从
+                // 区分用户原意，原样交还=变形永久化，unset 走 recalculate_sizes 自愈）
+                mk("$5", "work", 480, 120, "manual"),
                 mk("", "work2", 80, 24, ""),
                 mk("", "work3", 100, 30, "totally-bogus"),
             ],
@@ -8218,8 +8248,8 @@ mod t44_tests {
         );
         let inner = unwrap_sh_c(&cmd);
         assert!(
-            inner.contains("set -- '$5' 189 42 'manual' '=work2' 80 24 'UNSET'"),
-            "id 优先寻址 + ws 空串映射 UNSET {inner}"
+            inner.contains("set -- '$5' 480 120 'UNSET' '=work2' 80 24 'UNSET'"),
+            "id 优先寻址 + manual 解钉 UNSET + 空串 UNSET + 越界不钳 {inner}"
         );
         assert!(
             !inner.contains("totally-bogus") && inner.contains("'KEEP'"),
@@ -8237,7 +8267,7 @@ mod t44_tests {
             inner.contains("manual|latest|largest|smallest) tmux set-window-option -t \"$t:\" window-size \"$ws\" 2>/dev/null;;"),
             "{inner}"
         );
-        // 真 sh 往返：manual 走 setopt、UNSET 走 unset、KEEP 两不沾
+        // 真 sh 往返：manual/空串都走 unset（A-3）、KEEP 两不沾
         let harness = format!("tmux() {{ echo \"TMX:$*\"; }}; {}", unwrap_sh_c(&cmd));
         let o = std::process::Command::new("sh")
             .args(["-c", &harness])
@@ -8250,12 +8280,20 @@ mod t44_tests {
         );
         let so = String::from_utf8_lossy(&o.stdout);
         assert!(
-            so.contains("set-window-option -t $5: window-size manual"),
-            "{so}"
+            so.contains("resize-window -t $5: -x 480 -y 120"),
+            "原尺寸原样发出（无 400/200 钳，A-1）{so}"
+        );
+        assert!(
+            so.contains("set-window-option -u -t $5: window-size"),
+            "manual 解钉成 unset（A-3）{so}"
         );
         assert!(
             so.contains("set-window-option -u -t =work2: window-size"),
             "{so}"
+        );
+        assert!(
+            !so.contains("window-size manual"),
+            "回执 manual 不再原样交还（A-3）{so}"
         );
         assert_eq!(
             so.matches("set-window-option").count(),

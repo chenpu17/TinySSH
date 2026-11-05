@@ -208,7 +208,7 @@ export function RecordsPane(props: RecordsPaneProps) {
       <div className="set-card">
         <h4>{t("动作时间线")}</h4>
         <div className="set-desc">
-          {t("Agent 与人类的命令 / 传输 / 转发动作都会记录在案（落盘即密文，输出摘录写入时已启发式擦除密钥）；Agent 只能经 MCP 查自己的记录，这里是人类的全量视角。与「协作面板 → 活动记录」的哈希链审计互补：审计面向追责，时间线面向回看。")}
+          {t("Agent 与人类的命令 / 传输 / 转发动作都会记录在案（落盘即密文，输出摘录写入时已启发式擦除密钥）；Agent 只能经 MCP 查自己的记录，这里是人类的全量视角。与右缘图标栏「活动记录」的哈希链审计互补：审计面向追责，时间线面向回看。")}
         </div>
         <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
           <select

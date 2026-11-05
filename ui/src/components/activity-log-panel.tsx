@@ -24,11 +24,14 @@ interface ActivityLogPanelProps {
   sessionIdent: Map<string, string>;
   // 动作：more=false 首页刷新，true 游标续页
   loadLog: (more: boolean) => Promise<void>;
+  // 七轮 A7-1：反向指路——本面板是审计事件流，带泳道图的「动作时间线」在设置里，
+  // 两个近义视图此前互不可达（用户找不到时间线，也不知道两者分工）
+  openTimeline: () => void;
 }
 
 export function ActivityLogPanel({
   logScope, setLogScope, logActor, setLogActor, logAction, setLogAction,
-  sid, logEvents, logTotal, logBusy, logErr, sessionIdent, loadLog,
+  sid, logEvents, logTotal, logBusy, logErr, sessionIdent, loadLog, openTimeline,
 }: ActivityLogPanelProps) {
   return (
             <>
@@ -44,6 +47,9 @@ export function ActivityLogPanel({
                       onClick={() => setLogScope("all")}>{t("全部会话")}</button>
                   </div>
                   <span style={{ flex: 1 }} />
+                  <button className="ghost" data-testid="log-open-timeline"
+                    title={t("打开设置 → 记录审计：带泳道图与耗时点的动作时间线（本面板是审计事件流，两者数据同源、视角不同）")}
+                    onClick={openTimeline}>{t("时间线")}</button>
                   <button className="ghost icon-btn" title={t("刷新")} aria-label={t("刷新活动记录")}
                     data-testid="log-refresh" disabled={logBusy}
                     onClick={() => void loadLog(false)}><IconRefresh size={14} /></button>

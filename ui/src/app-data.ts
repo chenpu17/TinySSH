@@ -252,12 +252,38 @@ export function tauriListen(p: Promise<() => void>): () => void {
 
 // §7.4：弹窗 focus trap——打开时焦点入框、Tab/Shift+Tab 循环不出框、关闭时焦点
 // 还原到触发控件（VoiceOver/纯键盘用户的回位锚点）。只用于带遮罩的模态弹窗。
+// 关闭还原的锚点取自**焦点轨迹**（找茬五轮 D-4）：React 的 autoFocus 在 effect
+// 之前把焦点搬进框内——打开的 effect setup 里再快照 activeElement 已是框内自己
+// 的输入框，关闭时它已卸载、恢复被静默跳过、焦点落 body（提交路径焦点全灭的
+// 根因）。document 级捕获监听滚动记录焦点持有者（模块级一次，覆盖所有弹层实例
+// ——捕获相位先于任何 autoFocus），打开时取轨迹上最后一个框外持有者。
+const focusTrail: HTMLElement[] = [];
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "focusin",
+    () => {
+      const el = document.activeElement;
+      if (el instanceof HTMLElement && focusTrail[focusTrail.length - 1] !== el) {
+        focusTrail.push(el);
+        if (focusTrail.length > 32) focusTrail.shift();
+      }
+    },
+    true,
+  );
+}
+const lastOutsideFocus = (box: HTMLElement): HTMLElement | null => {
+  for (let i = focusTrail.length - 1; i >= 0; i--) {
+    const el = focusTrail[i];
+    if (el.isConnected && !box.contains(el)) return el;
+  }
+  return null;
+};
 export function useDialogFocus(active: boolean, boxRef: RefObject<HTMLElement | null>) {
   useEffect(() => {
     if (!active) return;
     const box = boxRef.current;
     if (!box) return;
-    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const prev = lastOutsideFocus(box);
     const focusables = () =>
       Array.from(
         box.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"),
@@ -413,8 +439,8 @@ export const SPLIT_DEGRADE_BELOW_H = SPLIT_PANE_MIN_H * 2;
 export const SPLIT_RECOVER_AT_H = SPLIT_PANE_MIN_H * 2 + 6;
 
 // 分屏方向：lr=左右（主格在左）/ tb=上下（主格在上）。方向是「记住的上次选择」
-// （Windows Terminal 惯例）：分屏菜单的方向选择写回，各入口（标签分屏钮/右键/
-// 复制标签页）不带显式方向时沿用
+// （Windows Terminal 惯例）：分屏菜单的方向选择写回，各入口（工具栏分屏钮/右键
+// 菜单/⌘K 分屏项）不带显式方向时沿用
 export type SplitDir = "lr" | "tb";
 export type SplitPanes = { main: string; second: string; dir: SplitDir };
 /** 拖拽分割条的占比夹取界：主格 20%~80%，任何一侧都不小于可读下限 */

@@ -57,15 +57,34 @@ function runsSgr(runs: CellRun[]): string {
  *  先把 xterm 尺寸对齐检查点网格（rev-r11 发现 3）：网格按核心 cols 串行化，
  *  尺寸失配时流式写会按错误列宽换行错位；恢复后由 fit/尺寸对账机制回用户视口。 */
 export function applyCheckpoint(term: Terminal, ck: ScreenCheckpoint): void {
-  if (term.cols !== ck.cols || term.rows !== ck.rows) {
-    term.resize(ck.cols, ck.rows);
+  // 主缓冲裁尾（六轮 C6-1）：网格尾部空行是「核心屏比内容高」的垫行，照单全收
+  // 会把光标钉在垫行——attach 链的 fit 缩行 reflow 把顶部内容推进 scrollback，
+  // 而 checkpoint 自带的 CUP 是活动屏相对寻址，数据行沉入 scrollback 后物理够
+  // 不到（ybase=9、光标 abs12、回显与提示符脱钩、敲一键整块卷出视口的毁损态）。
+  // 裁到「最后非空行与光标行的较大者」：内容/光标语义原样保留，垫行不落
+  // buffer——写入行数 ≤ 任何后续视口行数后，fit 的缩/扩只是空行增删，零毁损
+  // （xterm 缩行语义实测探针 ui/test/probe-c61-xterm.cjs 实验 C）。备用屏
+  // （vim 等全屏 app）不裁：全屏语义逐行定位写依赖完整网格。
+  const rawLines = ck.buffers[0].lines;
+  let lines = rawLines;
+  let rows = ck.rows;
+  if (ck.active_buffer !== 1) {
+    let last = rawLines.length - 1;
+    const cy = clamp(ck.cursor.y, 0, Math.max(0, last));
+    while (last > cy && !(rawLines[last]?.some((c) => c.text) ?? false)) last--;
+    lines = rawLines.slice(0, last + 1);
+    rows = Math.min(ck.rows, lines.length);
+  }
+  if (term.cols !== ck.cols || term.rows !== rows) {
+    term.resize(ck.cols, rows);
   }
   const out: string[] = [];
   out.push("\x1b[!p"); // DECSTR 软复位（滚动区/原点/插入等回默认）
   out.push("\x1b[2J\x1b[3J"); // 清可视屏 + scrollback
   out.push("\x1b[?7l\x1b[?6l\x1b[H"); // 恢复期间关自动换行/原点，光标归位
-  // 主缓冲（buffers[0]）：全网格行流式写——写满一屏后早期行自然滚入 scrollback
-  out.push(ck.buffers[0].lines.map(runsSgr).join("\r\n"));
+  // 主缓冲（buffers[0]）：裁尾后的行流式写——行数 ≤ 屏行数时不触发 scrollback，
+  // 写完光标自然贴在最后一行（CUP 再定位=同位幂等）
+  out.push(lines.map(runsSgr).join("\r\n"));
   if (ck.active_buffer === 1) {
     out.push("\x1b[?1049h"); // 进备用屏（新清空），主缓冲原地保留
     const alt = ck.buffers[1].lines;

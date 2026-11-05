@@ -224,7 +224,10 @@ export function Hostbar({
                     )}
                   </div>
                   <div className="host-card-side">
-                    {!isLocal && (
+                    {/* 连接在途（含等待指纹确认）时隐藏 ☆✎🗑 三钮让位：相位文本把
+                        连接钮撑宽，side 覆盖宽度可达 ~200px/卡宽 207px，三钮在场会把
+                        主机名整片盖住（六轮 C6-2）；在途动线是「确认指纹/取消」 */}
+                    {!isLocal && !connectingIds.has(h.id) && (
                       <div className="host-ops">
                         <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
                           title={fav ? t("取消收藏（移出「收藏」分组）") : t("收藏（置顶「收藏」分组）")}

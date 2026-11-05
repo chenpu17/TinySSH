@@ -42,7 +42,7 @@ import { recordsRangeSince } from "./components/records-pane";
 import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
 import { isMonitorPaused, setMonitorPaused as setStoreMonitorPaused, setMonEnabled, syncMonitorTargets } from "./monitor-store";
 import {
-  IconSliders, IconPlus, IconX, IconSplit, IconStop, IconPencil, IconTrash, IconStar,
+  IconSliders, IconPlus, IconX, IconStop, IconPencil, IconTrash, IconStar,
   IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
   IconArrowDown, IconUpload, IconDownload, IconInbox, IconSearch, IconLoader,
   IconFolder, IconRefresh, IconMaximize, IconMinimize,
@@ -93,7 +93,7 @@ import {
 import { localeNow, resolveInitialLocale, setLocale, SETTING_LOCALE, t, type Locale } from "./i18n";
 import { WinControls } from "./components/window-controls";
 import { QuickConnectForm } from "./components/quick-connect";
-import { AddHostForm } from "./components/add-host";
+import { AddHostForm, addHostCredDirty } from "./components/add-host";
 import { SshConfigImportPanel } from "./components/ssh-import";
 import { SettingsPanel } from "./components/settings-panel";
 import { ConfirmDialogs } from "./components/confirm-dialogs";
@@ -1024,7 +1024,9 @@ export default function App() {
     setFocusMode(on);
     try { localStorage.setItem("ui.focus", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
     if (!inTauri) {
-      if (announce) pushToast("info", on ? t("已进入专注模式（浏览器演示不切系统全屏）") : t("已退出专注模式"));
+      // 七轮 B7-5：demo 域 F11 归浏览器（native 门控），退出靠顶部「退出专注」钮——
+      // 原提示只说不切全屏、不说怎么退，补一句出口（native 分支文案不变）
+      if (announce) pushToast("info", on ? t("已进入专注模式（浏览器演示不切系统全屏）· 点顶部「退出专注」返回") : t("已退出专注模式"));
       return;
     }
     getCurrentWindow().setFullscreen(on)
@@ -1061,17 +1063,22 @@ export default function App() {
   const refreshLists = useCallback(async () => {
     try {
       // UX 八轮：先取数后 setState——结构无变化时复用旧引用（sameShape），
-      // 3s 轮询数据没变则整树与下游 effect 全部静默，不再每轮空转
+      // 3s 轮询数据没变则整树与下游 effect 全部静默，不再每轮空转。
+      // 七轮：六个查询原本串行 await（每 3s 六趟往返），彼此无依赖——并成一批，
+      // 空闲空转从「六趟之和」压到「最慢一趟」；任一失败仍整体抛出（行为不变）
       const snapAt = performance.now();
-      const nextSessions = applyTabOrder((await invoke("list_sessions")) as SessionInfo[]);
-      const nextHosts = (await invoke("list_hosts")) as Host[];
-      // R20：收藏/最近元数据（失败不阻断列表——空 meta 即全部视为未收藏）
-      const nextMeta = await invoke("list_host_metadata").then((v) => v as HostMeta[]).catch(() => null);
-      const nextRecents = await invoke("list_recent_hosts").then((v) => v as RecentHost[]).catch(() => null);
-      const nextApprovals = ((await invoke("list_approvals", { pendingOnly: false })) as ApprovalItem[])
-        .map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) }));
-      // ② 自主模式横幅数据（跟随 3s 轮询；到期由核心惰性清除，前端只显示剩余）
-      const nextAutonomy = (await invoke("autonomy_list")) as AutonomyGrant[];
+      const [sessionsRaw, nextHosts, nextMeta, nextRecents, approvalsRaw, nextAutonomy] = await Promise.all([
+        invoke("list_sessions") as Promise<SessionInfo[]>,
+        invoke("list_hosts") as Promise<Host[]>,
+        // R20：收藏/最近元数据（失败不阻断列表——空 meta 即全部视为未收藏）
+        invoke("list_host_metadata").then((v) => v as HostMeta[]).catch(() => null),
+        invoke("list_recent_hosts").then((v) => v as RecentHost[]).catch(() => null),
+        invoke("list_approvals", { pendingOnly: false }) as Promise<ApprovalItem[]>,
+        // ② 自主模式横幅数据（跟随 3s 轮询；到期由核心惰性清除，前端只显示剩余）
+        invoke("autonomy_list") as Promise<AutonomyGrant[]>,
+      ]);
+      const nextSessions = applyTabOrder(sessionsRaw);
+      const nextApprovals = approvalsRaw.map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) }));
       // ⑧ 到期差分：消失且非人工收回 → 即时提示（横幅本身随 setAutonomy 3s 内消隐）
       for (const a of autonomyKnownRef.current) {
         if (!nextAutonomy.some((g) => g.agent_id === a) && !autonomyKilledRef.current.has(a)) {
@@ -1317,12 +1324,42 @@ export default function App() {
     setDetail(null); setDetailErr(null); setDetailSid(null);
   }, []);
 
-  // R41（§231/§269）：关闭设置即销毁前端敏感草稿——凭据库里没有半成品
+  // R41（§231/§269）：关闭设置即销毁前端敏感草稿——凭据库里没有半成品。
+  // 凭据守卫（六轮 D6-4 同族）：Esc/✕ 对未提交的私钥草稿做双击确认——第一次
+  // 只提示，第二次才真清（设置凭据分区拦截卡的轻量版；纯浏览不拦）。
+  const settingsCredGuardRef = useRef(false);
   const closeSettings = useCallback(() => {
+    if ((credPem.trim() !== "" || credPass.trim() !== "") && !settingsCredGuardRef.current) {
+      settingsCredGuardRef.current = true;
+      pushToast("info", t("凭据表单里有未提交的私钥内容——再按一次 Esc 或 ✕ 确认丢弃"));
+      return;
+    }
+    settingsCredGuardRef.current = false;
     setCredPem(""); setCredPass(""); setCredLabel("");
     setCredNewErr(null); setCredNewOk(null); setCredNewOpen(false); setCredDraftTo(null);
     setShowSettings(false);
-  }, []);
+  }, [credPem, credPass, pushToast]);
+
+  // 新建/编辑主机的关闭守卫（六轮 D6-4）：凭据草稿（密码/私钥/口令）非空时
+  // 双击确认，纯连接信息直接关。Esc 链与 ✕/取消钮三口共用。
+  const addHostGuardRef = useRef(false);
+  const closeAddHost = useCallback(() => {
+    if (addHostCredDirty.value && !addHostGuardRef.current) {
+      addHostGuardRef.current = true;
+      pushToast("info", t("表单里有未提交的凭据（密码/私钥/口令）——再按一次 Esc 或 ✕ 确认丢弃"));
+      return;
+    }
+    addHostGuardRef.current = false;
+    addHostCredDirty.value = false;
+    setShowAddHost(false); setEditingHost(null); setPrefillEntry(null);
+  }, [pushToast]);
+
+  // 七轮（交付前审查）：守卫复位不只挂在 closeAddHost 上——成功保存、切到快速连接、
+   // 导入面板等路径都直接 setShowAddHost(false)。表单一关就复位，避免下一次打开
+   // 继承「已提示过一次」的状态、首按 Esc 静默丢凭据
+  useEffect(() => {
+    if (!showAddHost) addHostGuardRef.current = false;
+  }, [showAddHost]);
 
   // 简报归属标记：brief 本身不带 sid，SFTP 首载链凭它判「brief 是不是当前会话的」——
   // 切会话后 refreshBrief 在途的窗口里 brief 还是上一个会话的，直接用会拿旧 cwd 起载
@@ -3977,7 +4014,7 @@ export default function App() {
     if (showSettings) { closeSettings(); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
     if (tabsMenuOpen) { setTabsMenuOpen(false); return true; }
-    if (showAddHost || editingHost) { setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); return true; }
+    if (showAddHost || editingHost) { closeAddHost(); return true; }
     if (showQuickConnect) { setShowQuickConnect(false); return true; } // UX2 走查：快速连接对话框的键盘出口（FE7 同族漏网）
     if (showImport) { setShowImport(false); return true; }
     if (showAgentHelp) { setShowAgentHelp(false); return true; }
@@ -4118,7 +4155,13 @@ export default function App() {
       if (sp && !degraded) {
         if (s === sp.main || s === sp.second) {
           e.el.classList.add(s === sp.main ? clsMain : clsSecond);
-          e.tag.textContent = sessionsRef.current.find((x) => x.id === s)?.host_name ?? s.slice(0, 12);
+          // 名牌带非连接态后缀（找茬五轮 C-4，镜像 tmux-cell-state 语义）：分屏
+          // 副格装着断开会话时正文是黑腔，此前名牌只有裸主机名——「黑屏像坏了」
+          const ss = sessionsRef.current.find((x) => x.id === s);
+          const stTail = !ss || ss.state === "Connected" ? ""
+            : ss.state === "Disconnected" || ss.state === "Closed" ? ` · ${t("已断开")}`
+            : ` · ${t("重连中…")}`;
+          e.tag.textContent = (ss?.host_name ?? s.slice(0, 12)) + stTail;
           if (s === sidRef.current) e.el.classList.add("pane-focused");
         }
       } else if (s === sidRef.current) {
@@ -4488,7 +4531,15 @@ export default function App() {
     const tr = termRef.current?.getBoundingClientRect();
     const inTerm = !!tr && x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom;
     const hit = inStrip ? tabAtPoint(x, y) : null;
-    if (hit && hit.sid !== from) {
+    const sp = splitRef.current;
+    const isSplitMember = !!sp && (sp.main === from || sp.second === from);
+    if (inStrip && isSplitMember) {
+      // 分屏成员拖回标签条=退出分屏（找茬五轮 D-2 拍板）：标签排满/窄窗时条上
+      // 不存在空白落点，旧裁决落到「命中标签=重排」分支——静默改成重排+分屏
+      // 保留+零反馈，教程语义「拖回标签条退分屏」被 reinterpret 成另一动作。
+      // 成员落条上优先裁决退分屏（成员在条内重排本就语义模糊：先退再拖即可）
+      exitSplit();
+    } else if (hit && hit.sid !== from) {
       reorderTabs(from, hit.sid, hit.before);
     } else if (inTerm && sessionsRef.current.length >= 2 && tr) {
       const sp = splitRef.current;
@@ -4560,8 +4611,18 @@ export default function App() {
         void invoke("note_terminal", { sid: sp.second, focused: true }).catch(() => {});
       }
     } else if (sidRef.current === id) {
-      // 关的是焦点会话：自动落到下一个还开着的会话（标签页应用惯例），没有才回欢迎页
-      const next = sessionsRef.current.find((s) => s.id !== id && termsRef.current.has(s.id));
+      // 关的是焦点会话：激活右侧邻居、没有再找左侧（浏览器标签页惯例；六轮 D6-2
+      // 此前恒落数组首个有 term 的=关中/右标签都跳最左）。termsRef 门控保留
+      // （从未接入的标签没有实例，不算「还开着的会话」）。
+      const order = sessionsRef.current;
+      const idx = order.findIndex((s) => s.id === id);
+      let next: (typeof order)[number] | undefined;
+      for (let i = idx + 1; i < order.length && !next; i++) {
+        if (order[i].id !== id && termsRef.current.has(order[i].id)) next = order[i];
+      }
+      for (let i = Math.min(idx, order.length) - 1; i >= 0 && !next; i--) {
+        if (order[i].id !== id && termsRef.current.has(order[i].id)) next = order[i];
+      }
       if (next) {
         setSid(next.id);
         sidRef.current = next.id;
@@ -5805,18 +5866,28 @@ export default function App() {
         });
       } else {
         // Failed：失败走 conn-error 常驻横幅（可行动文案），标签不建（attempt 未过门）
-        setLastFailed(host.id);
+        // 七轮 A7-2：用户自己拒绝指纹（host_key_rejected）不是「地址/凭据有问题」——
+        // 不标 lastFailed（卡上那句「检查地址与凭据后重试」会把人往死胡同引），
+        // 文案改说「再连一次会重新询问」，重连即恢复
+        const rejected = final.error?.kind === "host_key_rejected";
+        if (!rejected) setLastFailed(host.id);
         const reason = final.error ? friendlyError({ kind: final.error.kind, message: final.error.message }) : t("未知原因");
         setConnError({
           title: t("连接 {0}（{1}@{2}:{3}）失败", host.name, host.username, host.address, host.port),
-          detail: reason + t("——也可在主机卡上看到失败提示，修正后重试"),
+          detail: rejected
+            ? reason + t("——这是你主动拒绝的结果；再次连接会重新出示指纹")
+            : reason + t("——也可在主机卡上看到失败提示，修正后重试"),
         });
       }
     } catch (e) {
-      setLastFailed(host.id);
+      // 同上：拒绝指纹走抛错路径时同样不污染「上次连接失败」标记
+      const rejected = parseWireError(e).kind === "host_key_rejected";
+      if (!rejected) setLastFailed(host.id);
       setConnError({
         title: t("连接 {0}（{1}@{2}:{3}）失败", host.name, host.username, host.address, host.port),
-        detail: friendlyError(e) + t("——也可在主机卡上看到失败提示，修正后重试"),
+        detail: rejected
+          ? friendlyError(e) + t("——这是你主动拒绝的结果；再次连接会重新出示指纹")
+          : friendlyError(e) + t("——也可在主机卡上看到失败提示，修正后重试"),
       });
     } finally {
       if (attemptId) {
@@ -5955,6 +6026,10 @@ export default function App() {
         .then(() => {
           updateTmuxPrefs((p) => ({ ...p, last: { ...p.last, [s.host_id]: name } }));
           pushToast("ok", t("已恢复现场（tmux {0} · {1} 个窗口）", name, String(windows)));
+          // 七轮 A7-3：快接钮文案读 sessions[].tmux_attached，核心侧已置位但事件
+          // 通道不带该字段——不主动对账就要等下一拍 3s 轮询，toast 与钮文案脱节
+          // 最多 3s（实测 2.47s）。这里立刻拉一次列表（失败无害，轮询兜底）
+          void refreshListsRef.current();
         })
         .catch((e) => { if (!auto) pushToast("err", friendlyError(e)); });
     };
@@ -6031,9 +6106,15 @@ export default function App() {
   // 随时重开），收格后终态单视图，落在面板双向防呆（不许两路并存）允许侧。
   const promotePaneToMain = async (s: SessionInfo, name: string) => {
     setTmuxMenu(false);
+    // 并行收格（找茬五轮 B-7）：串行 await 把 N 格 RTT 累加进关键路径，通道堵时
+    // 点了菜单长时间无动作——与 closeTmuxPane 注释「界面不该陪着等」自相矛盾。
+    // detach 先于接入的次序由 Promise.all 全 settle 后再接入保住；核心侧
+    // tmux_pane_close 本轮起自带 3s 预算+后台补发（A-4），挂起面已收窄
+    const closes: Promise<void>[] = [];
     for (const [, e] of [...paneTermsRef.current]) {
-      if (e.sid === s.id && e.name === name) await closeTmuxPaneRef.current(e.sid, e.paneId);
+      if (e.sid === s.id && e.name === name) closes.push(closeTmuxPaneRef.current(e.sid, e.paneId));
     }
+    await Promise.all(closes);
     void restoreTmuxScene(s, name);
   };
 
@@ -6593,6 +6674,29 @@ export default function App() {
         id: "rename-tab", group: t("当前会话"), title: t("重命名标签…"),
         run: () => setRenaming({ sid: active.id, value: tabNames[active.id] ?? active.host_name }),
       });
+      // 分屏入口（六轮 C6-3）：分屏已有工具栏/右键菜单/Ctrl+D 三条活入口，但 ⌘K
+      // 自认「唯一全模式可达层」而分屏缺席=可发现性死角（搜「分屏/split」零结果，
+      // 同量级的复制/重命名/关闭都在列）。
+      // 七轮（交付前审查）：不再镜像已删的标签 hover 钮，而是镜像真实可执行的动作——
+      // 已分屏且当前会话是成员时给「退出分屏」（此前列「放到右侧分屏」但
+      // enterSplitWith 首行自指卫兵直接 return，面板关掉、界面零变化=静默 no-op，
+      // 正是删标签钮的理由）；只有一个会话时也无可分对象，不列。
+      if (splitPanes && (splitPanes.main === active.id || splitPanes.second === active.id)) {
+        items.push({
+          id: "split-exit", group: t("当前会话"), title: t("退出分屏（两个会话都保留）"),
+          keywords: "分屏 split 退出 unsplit 左右 上下 并排",
+          run: () => { void exitSplit(); },
+        });
+      } else if (sessions.length > 1) {
+        items.push({
+          id: "split-active", group: t("当前会话"),
+          title: splitPanes
+            ? t("放到{0}侧分屏（替换{0}格）", splitDir === "tb" ? t("下") : t("右"))
+            : t("与当前会话分屏（放到{0}侧）", splitDir === "tb" ? t("下") : t("右")),
+          keywords: "分屏 split 左右 上下 并排",
+          run: () => { void enterSplitWith(active.id, splitDir); },
+        });
+      }
       // tmux 联动：当前主机有 tmux 会话清单时给按需切换入口——会话管理器的最终
       // 形态不是面板，是命令面板里几行按需出现的条目；无 tmux 时一个字都不多。
       const atmux = active.kind === "ssh" ? active.tmux : null;
@@ -6811,7 +6915,7 @@ export default function App() {
           {/* 版本号轮：常驻版本标签（0.10.0 起挪到应用名右边，紧贴名称更直观；
               关于卡另有编译时间，悬停提示指引） */}
           <span className="ver-tag" data-tauri-drag-region
-            title={`TinySSH v${appVersion ?? APP_VERSION}——编译时间见 设置 → 关于`}>
+            title={t("TinySSH v{0}——编译时间见 设置 → 关于", appVersion ?? APP_VERSION)}>
             v{appVersion ?? APP_VERSION}
           </span>
           {/* 自身开销读数（监控条「本机」段迁此）：标题栏常显不依赖会话；纯读数留在拖拽链上 */}
@@ -6874,20 +6978,20 @@ export default function App() {
             「找不到设置」的时刻；它不开任何侧栏，直开设置面板 */}
         <nav className="actrail" data-testid="actrail" aria-label={t("侧栏视图")}>
           <button className={"rail-btn" + (hostbarOpen ? " ts-open" : "")} data-testid="rail-hosts"
-            title={t("连接（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
+            title={t("主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-label={t("主机栏")} aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
             <IconServer size={17} />
           </button>
           <button className={"rail-btn" + (agentOpen ? " ts-open" : "")} data-testid="rail-agent"
-            title={t("Agent 对话（演练）")} aria-pressed={agentOpen} onClick={() => toggleAgent(!agentOpen)}>
+            title={t("Agent 对话（演练）")} aria-label={t("Agent 对话")} aria-pressed={agentOpen} onClick={() => toggleAgent(!agentOpen)}>
             <IconBot size={17} />
           </button>
           <button className={"rail-btn" + (fleetOpen ? " ts-open" : "")} data-testid="rail-fleet"
-            title={t("跨主机编排（Fleet）：派发任务给各会话的执行 agent 并汇总")} aria-pressed={fleetOpen}
+            title={t("跨主机编排（Fleet）：派发任务给各会话的执行 agent 并汇总")} aria-label={t("跨主机编排")} aria-pressed={fleetOpen}
             onClick={() => toggleFleet(!fleetOpen)}>
             <IconShuffle size={17} />
           </button>
           <button className={"rail-btn" + (monitorOpen ? " ts-open" : "")} data-testid="rail-monitor"
-            title={t("资源监控大屏：多服务器 CPU/内存/网络 与 Ascend NPU{0}", monGeneral || monNpu ? t("（后台采集中）") : "")} aria-pressed={monitorOpen}
+            title={t("资源监控大屏：多服务器 CPU/内存/网络 与 Ascend NPU{0}", monGeneral || monNpu ? t("（后台采集中）") : "")} aria-label={t("资源监控大屏")} aria-pressed={monitorOpen}
             onClick={() => toggleMonitor(!monitorOpen)}>
             <IconGauge size={17} />
             {/* 后台采集呼吸点（开关轮）：大屏关着也在采时给个环境提示 */}
@@ -7066,7 +7170,7 @@ export default function App() {
                     + (tabDropHint?.sid === s.id ? (tabDropHint.before ? " tab-drop-before" : " tab-drop-after") : "")}
                   onPointerDown={(e) => {
                     // pointer 自定义拖拽（原因见 tabDragRef 注释）：仅左键且不在子控件
-                    // （✕/分屏钮/重命名输入框）上才起拖；不 preventDefault——保住 click、
+                    // （✕/重命名输入框）上才起拖；不 preventDefault——保住 click、
                     // 双击重命名、中键关闭
                     if (e.button !== 0) return;
                     if (e.target instanceof Element && e.target.closest("button, input")) return;
@@ -7093,8 +7197,12 @@ export default function App() {
                     if (inStrip) {
                       const hit = tabAtPoint(e.clientX, e.clientY);
                       setTermDropHint((cur) => (cur ? null : cur));
+                      // 分屏成员拖回标签条=退出分屏（五轮 D-2 拍板）：不渲染插入位
+                      // 药丸——悬停提示必须与落点裁决一致，否则提示恒为谎言（六轮 BR-6）
+                      const spDrag = splitRef.current;
+                      const dragIsMember = !!spDrag && (spDrag.main === drag.sid || spDrag.second === drag.sid);
                       setTabDropHint((cur) => {
-                        const next = hit && hit.sid !== drag.sid ? hit : null;
+                        const next = hit && hit.sid !== drag.sid && !dragIsMember ? hit : null;
                         return next && cur?.sid === next.sid && cur?.before === next.before ? cur : next;
                       });
                     } else {
@@ -7142,7 +7250,7 @@ export default function App() {
                   role="tab"
                   aria-selected={sid === s.id}
                   onKeyDown={(e) => {
-                    // R20-H1 同款守卫（R27 tab-x/tab-split 键盘化后必须）：子按钮上的
+                    // R20-H1 同款守卫（R27 tab-x 键盘化后必须）：子按钮上的
                     // Enter/Space 冒泡到标签处理器会 preventDefault 吞掉按钮默认点击、
                     // 误触 attachSession——只有标签本体直接按键才激活
                     if (e.target !== e.currentTarget) return;
@@ -7188,27 +7296,28 @@ export default function App() {
                         e.stopPropagation();
                         // IME 组合期 Enter 是确认候选词，不提交重命名（§7.3 口径）
                         if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                        if (e.key === "Enter") commitTabRename(s.id, renaming.value);
-                        else if (e.key === "Escape") setRenaming(null);
+                        if (e.key === "Enter") {
+                          // 提交后焦点回标签本体（找茬五轮 D-4）：改名框卸载即焦点
+                          // 落 body——原地 Tab 重丢地址。微任务回焦在 React 卸载
+                          // 输入框之前跑，会触发一次 blur 重提交（同值幂等无害）；
+                          // Escape 分支不回焦——回焦引发的 blur 会把本应丢弃的编辑
+                          // 提交掉（取消语义优先）
+                          const tab = (e.currentTarget as HTMLElement).closest<HTMLElement>(".tab");
+                          queueMicrotask(() => tab?.focus());
+                          commitTabRename(s.id, renaming.value);
+                        } else if (e.key === "Escape") setRenaming(null);
                       }}
                       onBlur={() => commitTabRename(s.id, renaming.value)}
                     />
                   ) : (
                     <span className="tab-label">{label}</span>
                   )}
-                  {/* R27（§7.4）：关闭/分屏改真按钮——键盘 Tab 可达、focus-visible 可见、
-                      可访问名称不依赖 hover；命中区 ≥28 由 CSS ::after 透明扩展 */}
-                  <button
-                    type="button"
-                    className="tab-split"
-                    title={splitPanes
-                      ? t("放到{0}侧分屏", splitDir === "tb" ? t("下") : t("右"))
-                      : s.id === sid ? t("已在主视图") : t("与当前会话分屏（放到{0}侧）", splitDir === "tb" ? t("下") : t("右"))}
-                    aria-label={splitPanes
-                      ? t("把 {0} 放到{1}侧分屏", s.host_name, splitDir === "tb" ? t("下") : t("右"))
-                      : s.id === sid ? t("{0} 已在主视图", s.host_name) : t("与 {0} 分屏（{1}）", s.host_name, splitDir === "tb" ? t("上下") : t("左右"))}
-                    onClick={(e) => { e.stopPropagation(); void enterSplitWith(s.id, splitDir); }}
-                  ><IconSplit size={12} /></button>
+                  {/* R27（§7.4）：关闭改真按钮——键盘 Tab 可达、focus-visible 可见、
+                      可访问名称不依赖 hover；命中区 ≥28 由 CSS ::after 透明扩展。
+                      七轮（用户拍板）：标签上的分屏小钮已删——12px 图标语义不明（用户原话
+                      「不太容易让人理解」），且活动标签上点它还是静默 no-op（enterSplitWith
+                      首行自指卫兵直接 return）。分屏入口保留三个更明确的：右键标签菜单、
+                      工具栏分屏钮（Ctrl+D）、⌘K palette「分屏」，外加拖标签进终端区 */}
                   <button
                     type="button"
                     className="tab-x"
@@ -7451,14 +7560,19 @@ export default function App() {
               <div className="dlg-head">
                 <b>{editingHost ? t("编辑主机") : t("新建连接")}</b>
                 <button className="ghost icon-btn" aria-label={t("关闭")}
-                  onClick={() => { setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); }}><IconX size={14} /></button>
+                  onClick={closeAddHost}><IconX size={14} /></button>
               </div>
               <AddHostForm
                 editHost={editingHost}
                 prefill={prefillEntry}
                 hosts={hosts}
-                onCancel={() => { setShowAddHost(false); setEditingHost(null); setPrefillEntry(null); }}
+                onCancel={closeAddHost}
                 onSaved={async (hid, wasEdit, connect = true) => {
+                  // 七轮（交付前审查）：成功保存是「正常关闭」而非「丢弃草稿」——必须
+                  // 一并复位守卫与脏旗标，否则下次打开表单会继承 true，第一次 Esc
+                  // 直接静默关窗丢凭据（正是六轮 D6-4 要防的损失）
+                  addHostGuardRef.current = false;
+                  addHostCredDirty.value = false;
                   setShowAddHost(false);
                   setEditingHost(null);
                   setPrefillEntry(null);
@@ -7552,7 +7666,7 @@ export default function App() {
                 {/* 分屏组命名（本轮）：组名胶囊叠分割条中央——事件自持，抓胶囊=改名
                     （双击），抓条身=拖比例/双击复位。自动名随成员，自定义名钉住，
                     散伙即弃 */}
-                <span className="div-group" data-testid="split-group-chip"
+                <span className="div-group" data-testid="split-group-chip" tabIndex={-1}
                   title={t("分屏组：{0}（双击重命名）", splitGroupLabel ?? "")}
                   onPointerDown={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => e.stopPropagation()}
@@ -7573,8 +7687,17 @@ export default function App() {
                         e.stopPropagation();
                         // IME 组合期 Enter 是确认候选词，不提交重命名（§7.3 口径）
                         if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                        if (e.key === "Enter") commitGroupRename(groupRenaming);
-                        else if (e.key === "Escape") setGroupRenaming(null);
+                        if (e.key === "Enter") {
+                          // 焦点回胶囊（找茬五轮 D-4，同标签改名）：只挂提交路径——
+                          // 取消路径回焦引发 blur 会把本应丢弃的编辑提交掉（六轮 BR-5：
+                          // 胶囊此前无 tabIndex 回焦是 no-op，补 tabIndex=-1 后 Escape
+                          // 分支若也回焦正是潜伏雷，同标签路径口径只挂 Enter）
+                          const chip = (e.currentTarget as HTMLElement).closest<HTMLElement>(".div-group");
+                          queueMicrotask(() => chip?.focus());
+                          commitGroupRename(groupRenaming);
+                        } else if (e.key === "Escape") {
+                          setGroupRenaming(null);
+                        }
                       }}
                       onBlur={() => commitGroupRename(groupRenaming)}
                     />
@@ -7698,7 +7821,13 @@ export default function App() {
             </div>
           )}
           {attachHint && sid && (
-            <div className="attach-hint">{t("会话已接入——点击终端区直接打字")}</div>
+            <div className="attach-hint">
+              {current && current.state !== "Connected" && current.state !== "Reconfirming"
+                // 断开会话不谎报「已接入」（找茬五轮 C-4：断线后点进副格，提示
+                // 胶囊仍说「已接入直接打字」，与红色断线横幅自相矛盾）
+                ? t("会话未连接——用横幅上的「重连恢复」接入")
+                : t("会话已接入——点击终端区直接打字")}
+            </div>
           )}
           {searchOpen && sid && (
             <div className="term-search">
@@ -8208,6 +8337,7 @@ export default function App() {
               sid={sid} logEvents={logEvents} logTotal={logTotal}
               logBusy={logBusy} logErr={logErr}
               sessionIdent={sessionIdent} loadLog={loadLog}
+              openTimeline={() => openSettingsAt("records")}
             />
           )}
           {rightPanel === "collab" && (
@@ -8227,24 +8357,24 @@ export default function App() {
             只加入口不减：状态栏/工具栏既有开关原样保留（依赖它们的 spec 与肌肉记忆不动） */}
         <div className="rb-rail" data-testid="rb-rail" aria-label={t("任务面板视图")}>
           <button className={"rail-btn" + (rightPanel === "files" ? " ts-open" : "")} data-testid="rb-files"
-            title={t("文件")} aria-pressed={rightPanel === "files"}
+            title={t("文件")} aria-label={t("文件面板")} aria-pressed={rightPanel === "files"}
             onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}><IconFolder size={17} /></button>
           <button className={"rail-btn" + (rightPanel === "collab" ? " ts-open" : "")} data-testid="rb-collab"
-            title={t("协作")} aria-pressed={rightPanel === "collab"}
+            title={t("协作")} aria-label={t("协作面板")} aria-pressed={rightPanel === "collab"}
             onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
             <IconUsers size={17} />
             {pendingCount > 0 && <span className="rail-badge">{pendingCount > 9 ? "9+" : pendingCount}</span>}
           </button>
           {remoteOpen && (
             <button className={"rail-btn" + (rightPanel === "forwards" ? " ts-open" : "")} data-testid="rb-forwards"
-              title={t("端口转发")} aria-pressed={rightPanel === "forwards"}
+              title={t("端口转发")} aria-label={t("端口转发面板")} aria-pressed={rightPanel === "forwards"}
               onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}><IconShuffle size={17} /></button>
           )}
           <button className={"rail-btn" + (rightPanel === "log" ? " ts-open" : "")} data-testid="rb-log"
-            title={t("活动记录")} aria-pressed={rightPanel === "log"}
+            title={t("活动记录")} aria-label={t("活动记录面板")} aria-pressed={rightPanel === "log"}
             onClick={() => setRightPanel(rightPanel === "log" ? null : "log")}><IconRows size={17} /></button>
           <button className={"rail-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="rb-blocks"
-            title={t("命令块")} aria-pressed={rightPanel === "blocks"}
+            title={t("命令块")} aria-label={t("命令块面板")} aria-pressed={rightPanel === "blocks"}
             onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}><IconBlocks size={17} /></button>
         </div>
         </div>{/* /content */}

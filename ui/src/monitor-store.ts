@@ -61,6 +61,13 @@ interface Entry {
 
 const entries = new Map<string, Entry>();
 
+// 条目缺席时的订阅暂挂（六轮 BF-2）：卡片 effect（React 子先于父）跑在大屏
+// syncMonitorTargets 之前时 entries 还没有该键——返回纯 no-op 会让条目建成后的
+// rebuild 通知全部落空，订阅身份恒定（useCallback([key])）永不重挂，prod 域
+// （事件驱动+sameShape bailout 空闲零重渲）卡片真停在「等待首样…」。暂挂到
+// pendingSubs，条目创建时接线并立即补一次通知。
+const pendingSubs = new Map<string, Set<() => void>>();
+
 const lsBool = (k: string): boolean => {
   try { return localStorage.getItem(k) === "1"; } catch { return false; }
 };
@@ -127,6 +134,12 @@ export function syncMonitorTargets(targets: { key: string; sid: string }[]): voi
         subs: new Set(), stopped: false, inFlight: false, prevRaw: null, prevAt: 0,
       };
       entries.set(t.key, ne);
+      const waiting = pendingSubs.get(t.key);
+      if (waiting) {
+        pendingSubs.delete(t.key);
+        for (const cb of waiting) ne.subs.add(cb);
+        for (const cb of [...ne.subs]) cb(); // snap 从 null→freshSnap，立即补通知
+      }
       void poll(ne);
     } else {
       rebind(e, t.sid);
@@ -148,19 +161,20 @@ function rebuild(e: Entry, patch: Partial<MonSeries>): void {
   for (const cb of e.subs) cb();
 }
 
-/** 一拍探测（fetch+parse+rebuild）。unsupported 提前返回=确定性不可采，本拍
- *  到此为止（链条的调度在 poll 尾部，不受影响）。 */
+/** 一拍探测（fetch+parse+rebuild）。unsupported 后 general 段不再打远端（六轮
+ *  BF-1：此前只 return 本拍、poll 尾部照续，对已判非 Linux 的主机每 3s 发一枚
+ *  exec 永不停）；链条本身持续自续，「重试」清 unsupported 后下一拍自恢复。 */
 async function tick(e: Entry): Promise<void> {
   if (!paused) {
     // ---- 基础指标（read_host_metrics，/proc 差分）----
-    if (enabled.general) {
+    if (enabled.general && !e.snap.unsupported) {
       try {
         const text = await invoke("read_host_metrics", { sid: e.sid });
         if (e.stopped) return;
         const cur = parseMetricsSample(text);
         if (!cur) {
           rebuild(e, { unsupported: true });
-          return; // 非 Linux 远端：确定性不可采样，停轮（卡片保留「不支持」态）
+          return; // 非 Linux 远端：后续拍不再发 read_host_metrics（卡片保留「不支持」态，重试可清）
         }
         const now = Date.now();
         const view = diffMetrics(cur, e.prevRaw, e.prevRaw ? (now - e.prevAt) / 1000 : 0);
@@ -224,8 +238,8 @@ function teardown(e: Entry): void {
 }
 
 /** 大屏卡片「重试」：清失败计数与断代基线，下一拍立即恢复采样。unsupported
- *  拍会停在 tick 内（无后续），这里负责把链条重新起步（inFlight/timer 双闸
- *  防双链——探测在途时点了重试也只会清状态，链由本拍尾部自续）。 */
+ *  只是让后续拍跳过 general 段（链条自续不停），这里清标志下一拍自恢复；
+ *  inFlight/timer 双闸防双链——探测在途时点了重试也只会清状态，链由本拍尾部自续。 */
 export function retryMonitor(key: string): void {
   const e = entries.get(key);
   if (!e) return;
@@ -240,8 +254,15 @@ export function useMonitorSeries(key: string): MonSeries | null {
   // 化：内联闭包每次渲染换身份会让 uSES 每次提交重订阅 → 再触发渲染 = 无限
   // 循环炸整树（首跑 spec 55 实测过的坑）。
   const subscribe = useCallback((cb: () => void) => {
-    const e = key ? entries.get(key) : undefined;
-    if (!e) return () => {};
+    if (!key) return () => {};
+    const e = entries.get(key);
+    if (!e) {
+      // 条目还没建（卡片先挂载）：暂挂订阅，条目创建时接线（syncMonitorTargets）
+      let set = pendingSubs.get(key);
+      if (!set) { set = new Set(); pendingSubs.set(key, set); }
+      set.add(cb);
+      return () => { set!.delete(cb); if (!set!.size) pendingSubs.delete(key); };
+    }
     e.subs.add(cb);
     return () => { e.subs.delete(cb); };
   }, [key]);
