@@ -311,6 +311,7 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
   background: var(--panel2); box-shadow: inset 0 0 0 1px var(--border);
 }
 .session-toolbar .st-state.ok { background: var(--ok-soft); color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok-line); }
+.session-toolbar .st-state.warn { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-line); }
 .session-toolbar .st-state.err { background: var(--danger-soft); color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger-ring); }
 .content { flex: 1; display: flex; min-height: 0; position: relative; }
 .term-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -857,20 +858,26 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
    + 字色，在一排 ghost 里站出来；开菜单（ts-open）时底色坐实。
    特异度必须硬赢「工具栏钮统一」块的 (0,3,1)/hover (0,5,1)/ts-open (0,4,1)
    ——审查轮实测 (0,2,0) 的裸写法被统一块静默全灭，accent 从不渲染。 */
-.session-toolbar .st-tools > button.ghost.tmux-quick-btn {
+:is(.session-toolbar, .tabbar-row) .st-tools > button.ghost.tmux-quick-btn {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
 }
-.session-toolbar .st-tools > button.ghost.tmux-quick-btn:not(:disabled):hover {
+:is(.session-toolbar, .tabbar-row) .st-tools > button.ghost.tmux-quick-btn:not(:disabled):hover {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
 }
-.session-toolbar .st-tools > button.ghost.tmux-quick-btn.ts-open {
+:is(.session-toolbar, .tabbar-row) .st-tools > button.ghost.tmux-quick-btn.ts-open {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
 }
+/* 专注模式：快接钮留在标签条，长会话名省略不撑破行；标签列表/新建连接等
+   管理类入口让位（用户反馈这些在专注态无用）。 */
+.tabbar-row .st-tools > button.ghost.tmux-quick-btn {
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+}
+.focus-mode .tabbar-admin { display: none; }
 
 /* 新建 tmux 会话作曲行（菜单内嵌）：输名 + 创建/取消；错误就地 role=alert。
    输入框走 .tmux-create-input——keymap 分发器按类名全拦应用快捷键（含 Esc）。 */
@@ -974,6 +981,7 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
 .tab-dot.ok { background: var(--ok); box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 50%, transparent); }
+.tab-dot.warn { background: var(--warn); box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 50%, transparent); }
 .tab-dot.err { background: var(--danger); box-shadow: 0 0 5px color-mix(in srgb, var(--danger) 55%, transparent); }
 /* label 撑满药丸余宽：分屏/关闭钮靠右收边（Windows Terminal 布局）——短标签
    （「本机」）药丸中部不再被常显按钮占住，抓中间即可拖拽、点中间也不再误触分屏 */

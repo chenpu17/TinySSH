@@ -108,7 +108,8 @@ impl OkReconnectChannel {
 #[async_trait::async_trait]
 impl ChannelHandle for OkReconnectChannel {
     async fn write(&self, _data: &[u8]) -> Result<()> {
-        Err(Error::SessionClosed)
+        // 重连成功后是活通道；人类键入/集成注入都走写路径，需允许成功。
+        Ok(())
     }
     async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
         Ok(())
@@ -339,6 +340,42 @@ async fn manual_reconnect_success_enters_reconfirming_with_event() {
         "手动重连成功事件序列不符：{seq:?}"
     );
     assert_eq!(*h.state.lock().await, SessionState::Reconfirming);
+}
+
+/// KI-002：重连后人类在终端里敲命令并回车（`send_keys` 路径，非命令框 exec）
+/// 即退出 Reconfirming，且必须发 Connected 事件——旧修复只覆盖 exec 白名单，
+/// 普通终端输入会永远停在琥珀色「待核实」。
+#[tokio::test(flavor = "multi_thread")]
+async fn human_terminal_enter_finishes_reconfirming_with_event() {
+    let m = mgr();
+    let h = hand_install(&m, "ssh", OkReconnectChannel::new());
+    *h.state.lock().await = SessionState::Reconfirming;
+    let mut rx = m.center.state_tx.subscribe();
+    // 普通字符/方向键只说明连接活着，不算命令提交
+    m.send_keys(&Actor::Human, h.id.clone(), "ls")
+        .await
+        .unwrap();
+    m.send_keys(&Actor::Human, h.id.clone(), "\x1b[D")
+        .await
+        .unwrap();
+    assert_eq!(
+        *h.state.lock().await,
+        SessionState::Reconfirming,
+        "未回车前不得提前退出重确认"
+    );
+    // 回车提交 → 新连接已被人工使用，转 Connected + 事件
+    m.send_keys(&Actor::Human, h.id.clone(), "\r")
+        .await
+        .unwrap();
+    assert_eq!(*h.state.lock().await, SessionState::Connected);
+    let evs = drain_events(&mut rx, 1).await;
+    assert_eq!(evs[0].state, SessionState::Connected);
+    assert_eq!(evs[0].session_id, h.id);
+    // 再按一次回车：已 Connected，complete_reconfirm 幂等，不得重复发事件
+    m.send_keys(&Actor::Human, h.id.clone(), "\r")
+        .await
+        .unwrap();
+    assert!(rx.try_recv().is_err(), "重复回车不得重复广播 Connected");
 }
 
 /// local 重连：不注入不等标记，直接 Reconfirming + 事件；integration 保持 Disabled

@@ -44,6 +44,87 @@ pub const BUILTIN_DENY_PATTERNS: &[(&str, &str)] = &[
 /// 无法用正则覆盖）仍由 tree-sitter 逐段求值 + 审批人看全文兜底。
 const WRAPPER_PREFIX: &str = r"(?:(?:\s*(?:sudo|doas|nohup|nice|time|env|command|exec)\b|\s*[A-Za-z_]\w*=\S*|\s*-{1,2}[A-Za-z][\w-]*(?:\s+\S+)?)\s*)*";
 
+/// Windows / PowerShell / cmd 内置危险形态（不可删除）。
+///
+/// 这张表与上面的 POSIX 表互补：Windows 是产品第一平台，而本地会话的 shell
+/// 可能是 PowerShell、cmd、Git Bash 或 WSL。这里不依赖 shell 探测结果——按
+/// “命令位置”匹配：行首、`; & | {` 之后，或 `powershell/pwsh/cmd -Command|/c`
+/// 包装之后。这样既覆盖直接键入，也覆盖 Agent 常见的
+/// `powershell -Command "Remove-Item ..."` 包装，同时不误伤
+/// `Write-Host "Remove-Item ..."` 这类仅出现在字符串里的文本。
+///
+/// 注意：deny-list 只能守住高信号、不可逆的破坏形态，不能替代审批；自主模式
+/// 仍应按 allowlist 方向演进（见 `ApprovalEngine` 注释）。
+pub const BUILTIN_WINDOWS_DENY_PATTERNS: &[(&str, &str)] = &[
+    (
+        r#"remove-item\b[^\n;|&]*(?:-recurse|-force)"#,
+        "PowerShell 递归/强制删除",
+    ),
+    (
+        r#"(?:rm|ri)\b[^\n;|&]*(?:-recurse|-force)"#,
+        "PowerShell 递归/强制删除",
+    ),
+    (
+        r#"(?:del|erase|rd|rmdir)(?:\.exe)?\b[^\n;|&]*(?:-recurse|-force|\s/[sqf]\b)"#,
+        "Windows 递归/强制删除",
+    ),
+    (r#"format(?:\.com)?\s+[a-z]:"#, "格式化磁盘"),
+    (r#"diskpart(?:\.exe)?\b"#, "磁盘分区工具"),
+    (
+        r#"bcdedit(?:\.exe)?\b[^\n]*(?:/delete|/set|/create|/import|/export|/copy)"#,
+        "修改引导配置",
+    ),
+    (
+        r#"(?:vssadmin|wbadmin)(?:\.exe)?\b[^\n]*delete\b"#,
+        "删除卷影副本/备份",
+    ),
+    (
+        r#"cipher(?:\.exe)?\b[^\n]*\s/w(?:\s*:|\b)"#,
+        "擦除磁盘空闲空间",
+    ),
+    (r#"reg(?:\.exe)?\s+delete\b"#, "删除注册表项"),
+    (r#"wevtutil(?:\.exe)?\s+(?:cl|clear-log)\b"#, "清空事件日志"),
+    (r#"auditpol(?:\.exe)?\s+/clear\b"#, "清空审计策略"),
+    (
+        r#"fsutil(?:\.exe)?\s+(?:deletejournal|setzerodata|usn\s+deletejournal)\b"#,
+        "删除文件系统日志/零写数据",
+    ),
+    (
+        r#"(?:clear-disk|initialize-disk|format-volume|remove-partition|remove-disk|new-partition|set-disk|resize-partition)\b"#,
+        "磁盘管理操作",
+    ),
+    (r#"(?:stop-computer|restart-computer)\b"#, "关机/重启"),
+    (r#"shutdown(?:\.exe)?\s+(?:/[srphf]\b|/sg\b)"#, "关机/重启"),
+    (
+        r#"(?:add-mppreference|set-mppreference)\b[^\n]*(?:disable|exclusion)"#,
+        "关闭/绕过杀毒防护",
+    ),
+    (
+        r#"(?:powershell|pwsh)(?:\.exe)?[^\n]*(?:-encodedcommand|-enc)\b"#,
+        "PowerShell 编码命令（内容不可静态检查）",
+    ),
+    (
+        r#"(?:wmic\s+shadowcopy\s+delete|diskshadow(?:\.exe)?\b)"#,
+        "删除卷影副本/备份",
+    ),
+    (
+        r#"set-executionpolicy\b[^\n]*(?:bypass|unrestricted)"#,
+        "降低 PowerShell 执行策略",
+    ),
+    (
+        r#"(?:iwr|invoke-webrequest|downloadstring|downloadfile)[^\n|]*\|\s*(?:iex|invoke-expression)\b"#,
+        "下载并执行脚本",
+    ),
+    (
+        r#"(?:invoke-expression|\biex)\b[^\n]*(?:downloadstring|downloadfile|invoke-webrequest|iwr|https?://)"#,
+        "动态执行下载内容",
+    ),
+];
+
+/// Windows 命令位置前缀：行首/复合命令分隔符后，或 PowerShell/cmd 包装后。
+/// 组合时必须整体包一层 `(?:...)`，否则顶层 `|` 会把后续危险词排除在分支外。
+const WINDOWS_CMD_PREFIX: &str = r#"(?:^|[;&|{]|&\s*\{)\s*(?:&\s*\{?\s*)?(?:["']?(?:(?:[A-Za-z]:|\\\\|\.{1,2})?[^\s"';&|]*?[\\/]))?(?:(?:(?:powershell|pwsh)(?:\.exe)?(?:\s+-[A-Za-z]+\b(?:\s+(?:"[^"]*"|'[^']*'|[A-Za-z0-9_.\\/-]+))?)*?\s+(?:-command|-c)\s+|cmd(?:\.exe)?\s+(?:/[a-z]\s+)*/c\s+)\s*["']?\s*(?:&\s*\{?\s*)?)*"#;
+
 /// 逐段求值结论。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SegmentVerdict {
@@ -195,6 +276,15 @@ impl ApprovalEngine {
                 };
                 (Regex::new(&full).expect("builtin deny regex"), *reason)
             })
+            .chain(BUILTIN_WINDOWS_DENY_PATTERNS.iter().map(|(p, reason)| {
+                // Windows 表统一加“命令位置”前缀；`(?i)` 让 cmdlet/参数
+                // 大小写不敏感（PowerShell 本身不区分大小写）。
+                let full = format!("(?i)(?:{WINDOWS_CMD_PREFIX})(?:{p})");
+                (
+                    Regex::new(&full).expect("windows builtin deny regex"),
+                    *reason,
+                )
+            }))
             .collect();
         Ok(Self {
             parser: Arc::new(CommandParser::new()?),
@@ -235,6 +325,44 @@ impl ApprovalEngine {
                         return Some(rule.reason.clone());
                     }
                 }
+            }
+        }
+        None
+    }
+
+    /// 多行/多键序的危险形态检查：先整串，再逐行、再按 shell 段。
+    ///
+    /// `send_keys` 的输入不是单条命令（可能含 Enter/CR），若只查整串，
+    /// `Get-ChildItem\nRemove-Item -Recurse -Force C:\Windows` 的第二行会漏过
+    /// 锚定模式。`exec` 侧仍走 `evaluate` 的逐段求值；本方法只用于键序与
+    /// 其他非命令文本的兜底。
+    pub fn deny_reason_any(&self, agent_id: &str, text: &str) -> Option<String> {
+        if let Some(reason) = self.deny_reason(agent_id, text) {
+            return Some(reason);
+        }
+        let trimmed = text.trim();
+        for part in text.split(['\n', '\r']) {
+            let part = part.trim();
+            if part.is_empty() || part == trimmed {
+                continue;
+            }
+            if let Some(reason) = self.deny_reason(agent_id, part) {
+                return Some(reason);
+            }
+        }
+        let (segments, unpredictable) = self.segments_of(text);
+        // 命令替换/进程替换/解析失败：内容无法按静态规则判定。键序不是命令框，
+        // 没有审批人看全文的兜底，必须 fail-closed（否则 `echo $(reboot)` 穿过）。
+        if unpredictable {
+            return Some("命令包含无法静态判定的替换或复合结构".to_string());
+        }
+        for seg in segments {
+            let seg = seg.trim();
+            if seg.is_empty() || seg == trimmed {
+                continue;
+            }
+            if let Some(reason) = self.deny_reason(agent_id, seg) {
+                return Some(reason);
             }
         }
         None
@@ -340,7 +468,7 @@ impl ApprovalEngine {
 
     /// 编辑后的命令是否可批准：不得命中危险模式（deny 不可被 ApproveEdited 绕过）。
     pub fn is_editable_decision(&self, agent_id: &str, edited: &str) -> bool {
-        self.deny_reason(agent_id, edited).is_none()
+        self.deny_reason_any(agent_id, edited).is_none()
     }
 
     /// 人类粘贴前的危险形态扫描（P0 终端品质轮）：只用**内置** deny 表——tree-sitter
@@ -544,6 +672,112 @@ mod tests {
                 "cmd={cmd}"
             );
         }
+    }
+
+    /// Windows 是产品第一平台：PowerShell/cmd 的不可逆破坏形态必须与 POSIX
+    /// 表同口径硬拦；覆盖直接键入、分隔符后和 powershell/cmd 包装。
+    #[test]
+    fn builtin_windows_dangerous_patterns() {
+        let e = engine();
+        for cmd in [
+            r"Remove-Item -Recurse -Force C:\Windows",
+            r"Remove-Item C:\Windows -Recurse -Force",
+            r"rm -Recurse -Force C:\Windows",
+            r"del /s /q C:\*",
+            r"rd /s /q C:\Windows",
+            r"rd -Recurse -Force C:\Windows",
+            r"format C:",
+            r"diskpart",
+            r"bcdedit /delete {current}",
+            r"vssadmin delete shadows /all /quiet",
+            r"wbadmin delete backup",
+            r"cipher /w:C",
+            r"reg delete HKLM\Software\Foo /f",
+            r"wevtutil cl System",
+            r"wevtutil clear-log System",
+            r"auditpol /clear",
+            r"fsutil usn deletejournal /d C:",
+            r"Clear-Disk -Number 0 -RemoveData",
+            r"Initialize-Disk -Number 1",
+            r"Format-Volume -DriveLetter C",
+            r"Remove-Partition -DriveLetter C",
+            r"Stop-Computer -Force",
+            r"Restart-Computer",
+            r"shutdown /s /t 0",
+            r"SHUTDOWN /F /S /T 0",
+            r"Remove-Disk -Number 1",
+            r"powershell -EncodedCommand ZgBvAG8A",
+            r"Set-MpPreference -DisableRealtimeMonitoring $true",
+            r"Set-ExecutionPolicy Bypass -Scope Process",
+            r#"powershell -NoProfile -Command "Remove-Item -Recurse -Force C:\Windows""#,
+            r#"powershell -ExecutionPolicy Bypass -Command "Remove-Item -Recurse -Force C:\Windows""#,
+            r#"pwsh -c "Clear-Disk -Number 0 -RemoveData""#,
+            r"cmd /c del /s /q C:\*",
+            r#"cmd /d /s /c "del /s /q C:\*""#,
+            r#"powershell -Command "cmd /c del /s /q C:\*""#,
+            r"C:\Windows\System32\format.com C:",
+            r".\format.com C:",
+            r"Microsoft.PowerShell.Management\Clear-Disk -Number 0",
+        ] {
+            assert_eq!(
+                e.evaluate("agent-a", cmd).verdict,
+                SegmentVerdict::Dangerous,
+                "cmd={cmd}"
+            );
+        }
+    }
+
+    /// Windows 安全命令不得误伤：只出现在字符串里、或没有破坏性参数的删除，
+    /// 不应被硬拦（仍会按默认策略进入审批）。
+    #[test]
+    fn builtin_windows_safe_commands_not_flagged() {
+        let e = engine();
+        for cmd in [
+            r"Get-ChildItem C:\Windows",
+            r"Remove-Item .\build\*",
+            r"del .\build\foo.txt",
+            r"format --help",
+            r"Write-Host 'diskpart is dangerous'",
+            r"Write-Host 'Remove-Item -Recurse -Force C:\Windows'",
+            r"echo cmd /c del /s /q C:\*",
+            r"Get-Content C:\Windows\System32\drivers\etc\hosts",
+            r#"powershell -Command "Get-ChildItem C:\Windows""#,
+        ] {
+            assert_ne!(
+                e.evaluate("agent-a", cmd).verdict,
+                SegmentVerdict::Dangerous,
+                "cmd={cmd}"
+            );
+        }
+    }
+
+    /// send_keys 可能一次送入多行（含 Enter/CR）：第二行及以后也必须过 deny。
+    #[test]
+    fn multiline_keys_are_checked_per_line() {
+        let e = engine();
+        assert!(e
+            .deny_reason_any(
+                "agent-a",
+                "Get-ChildItem\r\nRemove-Item -Recurse -Force C:\\Windows",
+            )
+            .is_some());
+        assert!(e.deny_reason_any("agent-a", "Get-ChildItem\nls").is_none());
+        // 命令替换无法静态判定：键序路径没有审批人看全文，必须 fail-closed
+        assert!(e.deny_reason_any("agent-a", "echo $(reboot)").is_some());
+        assert!(e.deny_reason_any("agent-a", "echo `reboot`").is_some());
+        assert!(!e.is_editable_decision("agent-a", "echo hi\nreboot"));
+    }
+
+    /// 人类粘贴扫描与 Agent 审批同一张 Windows 表：多行粘贴命中第二行。
+    #[test]
+    fn scan_dangerous_windows_paste() {
+        let e = engine();
+        let hits = e.scan_dangerous("Get-ChildItem\nRemove-Item -Recurse -Force C:\\Windows");
+        assert!(
+            hits.iter()
+                .any(|(seg, r)| seg.contains("Remove-Item") && r == "PowerShell 递归/强制删除"),
+            "{hits:?}"
+        );
     }
 
     /// P0 终端品质轮：人类粘贴危险形态扫描——多行逐段命中、wrapper 前缀穿透、

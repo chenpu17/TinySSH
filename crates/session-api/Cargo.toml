@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+# 契约代码生成 PoC：默认关闭，只有显式 `--features ts` 才编译 ts-rs。
+# 生成物见 ui/src/adapter/generated/，当前不参与运行时构建。
+ts = ["dep:ts-rs"]
+
 [dependencies]
 tokio = { workspace = true }
 async-trait = { workspace = true }
@@ -14,3 +19,4 @@ thiserror = { workspace = true }
 chrono = { workspace = true }
 tinyssh-records = { workspace = true }
 regex = { workspace = true }
+ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }

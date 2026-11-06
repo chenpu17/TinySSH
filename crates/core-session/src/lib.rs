@@ -8,9 +8,16 @@ mod fault;
 mod handle;
 mod local_metrics;
 pub mod restore;
+mod shell_probe;
+mod ssh_config;
+mod transfer_registry;
 pub mod triggers;
 
 pub use handle::{is_whitelisted, DecisionMsg, SessionHandle, SessionLogFile};
+pub use shell_probe::{
+    classify_shell_probe, ssh_fish_integration_snippet, ssh_integration_snippet,
+    windows_probe_error, RemoteShellFamily, SSH_SHELL_PROBE,
+};
 
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::ChannelHandle;
@@ -2130,121 +2137,6 @@ fn spawn_pane_pump(
     });
 }
 
-/// SSH 远端 shell 集成注入片段（bash/zsh 自动探测；OSC 133 + OSC 7）。
-pub fn ssh_integration_snippet() -> String {
-    let bash = r#"if [ -n "$BASH_VERSION" ]; then
-  __t_prompt(){ __rc=$?; printf '\033]7;file://%s%s\007' "$HOSTNAME" "$PWD"; printf '\033]133;D;%s\007' "$__rc"; printf '\033]133;A\007'; }
-  __t_preexec(){ printf '\033]133;C\007'; }
-  PROMPT_COMMAND="__t_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
-  PS1="\[\033]133;B\007\]$PS1"
-  PS0="\[\033]133;C\007\]$PS0"
-fi"#;
-    let zsh = r#"if [ -n "$ZSH_VERSION" ]; then
-  __t_precmd(){ __rc=$?; printf '\033]7;file://%s%s\007' "$HOST" "$PWD"; printf '\033]133;D;%s\007' "$__rc"; printf '\033]133;A\007'; printf '\033]133;B\007'; }
-  __t_preexec(){ printf '\033]133;C\007'; }
-  precmd_functions=(__t_precmd $precmd_functions)
-  preexec_functions=(__t_preexec $preexec_functions)
-fi"#;
-    // 末尾清屏：抹掉上面几行在远端 PTY 的回显（否则用户首连看到满屏集成代码）；
-    // printf 是 shell 内建，不依赖外部 clear 二进制。
-    format!("{bash}\n{zsh}\nprintf '\\033[2J\\033[H'\n")
-}
-
-/// V2（snippets 盘点轮立案）shell 家族探针：polyglot printf——sh/zsh/fish 都能
-/// 解析同一行（未定义变量在双引号内展开为空；fish 的 `$FISH_VERSION` 恒在）。
-/// 随注入文本首发、先于钩子安装执行（不产生命令块），输出与片段回显一起被
-/// 尾清屏抹掉。tcsh 对未定义变量报错 → 输出无有效标记 → 如实回落 sh-only。
-/// 标记输出必须自带换行：交互 shell 的下一个输出（下一条命令的回显/解析报错）
-/// 会直接粘在 printf 输出之后，无换行则字段白名单判型必然失败（审查轮 P0）。
-pub const SSH_SHELL_PROBE: &str =
-    r#"printf '__T=%s|%s|%s\n' "$BASH_VERSION" "$ZSH_VERSION" "$FISH_VERSION""#;
-
-/// fish 登录 shell 集成片段（探针判型 Fish 后补写）。事件钩子制（fish_prompt /
-/// fish_preexec / fish_postexec），不覆盖用户自定义 prompt 函数；字段对应 sh 版：
-/// preexec→C、postexec→D、prompt→OSC7+A+B。尾清屏抹补写回显，末行
-/// `commandline -f repaint` 在清屏后重画提示符并即刻触发 fish_prompt（首个标记）。
-pub fn ssh_fish_integration_snippet() -> String {
-    r#"function __t_fish_preexec --on-event fish_preexec
-  printf '\033]133;C\007'
-end
-function __t_fish_postexec --on-event fish_postexec
-  printf '\033]133;D;%s\007' $status
-end
-function __t_fish_prompt --on-event fish_prompt
-  printf '\033]7;file://%s%s\007' $hostname $PWD
-  printf '\033]133;A\007'
-  printf '\033]133;B\007'
-end
-printf '\033[2J\033[H'
-commandline -f repaint"#
-        .to_string()
-}
-
-/// 找茬轮 F1：非 POSIX 远端（Windows OpenSSH 默认 shell=cmd/PowerShell）没有
-/// printf——注入批次（探针行+片段+尾清屏）在其上只会逐行报错且**尾清屏自身
-/// 也报错不执行**，呕吐物永留终端、每次重连再吐一遍。探针输出里出现「报错
-/// 引用 printf」的签名即判定阻断。签名取高精度锚：cmd 中文（'printf' 不是…）、
-/// cmd 英文（is not recognized as an internal…）、PowerShell 全 locale（异常
-/// 类型名 CommandNotFoundException 不本地化）。其余 cmd 语种如实维持旧行为
-/// （立案：TCP 层 banner 嗅探可做到零呕吐，russh 0.63 未暴露 remote_sshid）。
-pub fn windows_probe_error(buf: &str) -> bool {
-    if !buf.contains("printf") {
-        return false;
-    }
-    buf.contains("不是内部或外部命令")
-        || buf.contains("is not recognized as an internal")
-        || buf.contains("CommandNotFoundException")
-}
-
-/// 远端登录 shell 家族（探针判型结果）。`Sh` = sh 族或未知（sh 片段的 if 块
-/// 自守兜底；tcsh 等不兼容 shell 维持 V1 行为：报错被尾清屏抹掉、如实 Unavailable）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RemoteShellFamily {
-    Sh,
-    Bash,
-    Zsh,
-    Fish,
-}
-
-/// 探针输出判型：找 `__T=` 标记取三个 `|` 分隔字段。注入行的**回显**含 `%s`/
-/// 引号等，过不了字段字符白名单（版本号形态 `[0-9A-Za-z-.+_()]`），不会误判；
-/// 多次出现（回显+真输出）取首个有效者。
-pub fn classify_shell_probe(out: &str) -> RemoteShellFamily {
-    let ok = |s: &str| {
-        !s.contains('%')
-            && s.bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"-.+_()".contains(&c))
-    };
-    let mut from = 0;
-    while let Some(p) = out[from..].find("__T=") {
-        let start = from + p + 4;
-        let rest = &out[start..];
-        // 80 字节窗口须落在 char 边界（输入来自 from_utf8_lossy，多字节 banner
-        // 常见；截半切片会 panic 在探针任务里，静默丢判型——审查轮 P1）
-        let mut end = rest.find(['\r', '\n']).unwrap_or(rest.len()).min(80);
-        while end > 0 && !rest.is_char_boundary(end) {
-            end -= 1;
-        }
-        let mut it = rest[..end].splitn(3, '|');
-        let b = it.next().unwrap_or("");
-        let z = it.next().unwrap_or("");
-        let f = it.next().unwrap_or("");
-        if ok(b) && ok(z) && ok(f) {
-            return if !b.is_empty() {
-                RemoteShellFamily::Bash
-            } else if !z.is_empty() {
-                RemoteShellFamily::Zsh
-            } else if !f.is_empty() {
-                RemoteShellFamily::Fish
-            } else {
-                RemoteShellFamily::Sh
-            };
-        }
-        from = start;
-    }
-    RemoteShellFamily::Sh
-}
-
 // ---------------------------------------------------------------------------
 // C9（R43）：协作启用生命周期的 admission 门与状态机
 // ---------------------------------------------------------------------------
@@ -2952,9 +2844,16 @@ impl SessionApi for SessionManager {
                     let mut s = h.screen.lock().await;
                     s.register_outgoing(keys.as_bytes(), term_core::BlockSource::Human);
                 }
-                h.channel
+                let r = h
+                    .channel
                     .write(&charset::encode(h.host.charset, keys))
-                    .await
+                    .await;
+                // 重连后人类在终端里回车提交命令：写成功即证明新连接可用，
+                // 退出 Reconfirming（KI-002；此前只覆盖 exec/命令框路径）。
+                if r.is_ok() && SessionHandle::is_command_submit(keys) {
+                    h.complete_reconfirm().await;
+                }
+                r
             }
             Actor::Agent { client_id } => {
                 // C9（R43）：协作 admission——停用期间拒绝 Agent 键入（副作用前）。
@@ -2968,8 +2867,9 @@ impl SessionApi for SessionManager {
                 }
                 // 危险模式门与 exec 同口径（审计 S2）：会话级授权只免**审批**不免
                 // **检查**——首次键序良性不能推及后续任意键序（sudo/su 提示符处
-                // 键入、直接键入 `rm -rf …` 都会绕过 exec 侧 deny 引擎）
-                if let Some(reason) = self.center.engine.deny_reason(client_id, keys) {
+                // 键入、直接键入 `rm -rf …` 都会绕过 exec 侧 deny 引擎）。
+                // 键序可一次含多行/CR，必须逐行逐段检查，不能只看整串。
+                if let Some(reason) = self.center.engine.deny_reason_any(client_id, keys) {
                     let _ = self.center.audit.append(
                         ctx,
                         "send_keys_denied",
@@ -4293,474 +4193,6 @@ impl SessionApi for SessionManager {
 }
 
 impl SessionManager {
-    // ---- C5（R32）注册表辅助：节流合并 + journal 落库 ----
-
-    /// 注册新任务（Queued）并立即对外发一帧（revision 从 1 起）。
-    fn transfer_register(&self, task: TransferTask, cancel: CancellationToken) {
-        let tid = task.id.clone();
-        let now = std::time::Instant::now();
-        let _ = self.transfer_tx.send(task.clone());
-        self.transfers.lock().unwrap().insert(
-            tid,
-            TransferRegEntry {
-                task,
-                cancel,
-                last_emit: now,
-                last_journal: now,
-                decision_tx: None,
-                verified: false,
-            },
-        );
-    }
-
-    /// C6/R34 DF6.4：同目标锁（canonical path 键；持有至任务终态——本客户端
-    /// 内同目标任务串行；外部写入由预检/复检/发布原语防线兜底）。
-    ///
-    /// 十轮回收：条目原从不删除（泄漏点——每去重目标永久占一条）。顺手摘除
-    /// 无外部持有者的死条目（`strong_count==1` = 仅 map 持有）：克隆只发生在
-    /// 本临界区内，计数在持锁期间不会变化，无竞态窗口；仍在飞/等待的任务持
-    /// 有克隆（计数 ≥2）不受影响。残留窗口 = 上一任务作用域未退出期间，由
-    /// 下一次任意传输的回收补摘。
-    fn target_lock(&self, key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.target_locks.lock().unwrap();
-        locks.retain(|_, v| Arc::strong_count(v) > 1);
-        locks
-            .entry(key.to_string())
-            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    }
-
-    /// 连接尝试登记上限（十轮）：attempts 原只插不删（AttemptEntry 含 watch
-    /// 通道 + tokio Mutex，泄漏点）。超限按「终态优先、同组创建时间最旧先
-    /// 淘汰」收缩；活动条目也被波及时说明并发尝试本身异常，宁误删不泄漏。
-    /// 淘汰后 connection_status/cancel 对旧 attempt 返回 not-found（可接受）。
-    fn gc_attempts(map: &mut HashMap<AttemptId, std::sync::Arc<AttemptEntry>>, cap: usize) {
-        if map.len() <= cap {
-            return;
-        }
-        let mut ordered: Vec<(chrono::DateTime<chrono::Utc>, bool, AttemptId)> = map
-            .iter()
-            .map(|(id, e)| {
-                (
-                    e.info.created_at,
-                    e.term.load(AtomicOrdering::Acquire),
-                    id.clone(),
-                )
-            })
-            .collect();
-        ordered.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        let excess = map.len() - cap;
-        for (_, _, id) in ordered.into_iter().take(excess) {
-            map.remove(&id);
-        }
-    }
-
-    /// 稳定轮（余量项）：终态传输条目最旧先淘汰，保 `TRANSFER_TERMINAL_KEEP` 条。
-    /// 调用点 = list_transfers（FE 轮询/MCP 对账的唯一权威查询面），随查询顺带收。
-    fn gc_transfers_terminal(map: &mut HashMap<TransferId, TransferRegEntry>, keep: usize) {
-        let mut terminal: Vec<(i64, TransferId)> = map
-            .iter()
-            .filter(|(_, e)| {
-                matches!(
-                    e.task.status,
-                    TransferStatus::Succeeded
-                        | TransferStatus::Failed
-                        | TransferStatus::Cancelled
-                        | TransferStatus::Skipped
-                        | TransferStatus::Interrupted
-                )
-            })
-            .map(|(id, e)| (e.task.created_at, id.clone()))
-            .collect();
-        if terminal.len() <= keep {
-            return;
-        }
-        terminal.sort_by(|a, b| a.0.cmp(&b.0));
-        let excess = terminal.len() - keep;
-        for (_, id) in terminal.into_iter().take(excess) {
-            map.remove(&id);
-        }
-    }
-
-    /// 变更任务并按节奏对外发帧/落 journal：状态变化即时发；进度合并 ≥200ms
-    ///（§560 ~5 次/秒/任务）；journal 状态变化必写、纯进度 ≥1s 一写。
-    /// R34：journal 行随写 verified 证据位（提交窗口同步）。
-    fn transfer_apply(&self, tid: &TransferId, mutate: impl FnOnce(&mut TransferTask)) {
-        self.transfer_apply_entry(tid, |t, _| mutate(t));
-    }
-
-    /// 条目级变体（决策窗原子化轮）：闭包可同时改任务快照与条目附件
-    /// decision_tx——AwaitingDecision 的状态翻转与决策通道安装必须同锁原子，
-    /// 否则两段加锁之间的竞窗里人类提交（take 到 None → InvalidTransferState）
-    /// 与作废（take 到 None 后照旧收卡，真等待端 select 挂死在无人关闭的 rx）
-    /// 都会走错。emit/journal 节流语义与 transfer_apply 完全一致。
-    fn transfer_apply_entry(
-        &self,
-        tid: &TransferId,
-        mutate: impl FnOnce(
-            &mut TransferTask,
-            &mut Option<tokio::sync::oneshot::Sender<CollisionDecision>>,
-        ),
-    ) {
-        let now = std::time::Instant::now();
-        let (emit_task, journal_task) = {
-            let mut reg = self.transfers.lock().unwrap();
-            let Some(e) = reg.get_mut(tid) else { return };
-            let before = e.task.status;
-            mutate(&mut e.task, &mut e.decision_tx);
-            e.task.revision += 1;
-            let changed = e.task.status != before;
-            let mut emit = None;
-            let mut journal = None;
-            if changed || now.duration_since(e.last_emit).as_millis() >= 200 {
-                e.last_emit = now;
-                emit = Some(e.task.clone());
-            }
-            if changed || now.duration_since(e.last_journal).as_millis() >= 1000 {
-                e.last_journal = now;
-                // journal 编码：OutcomeUnknown 行保持 Committing（活动集成员——
-                // 重启恢复分类与「未决任务保留 journal」依据；注册表面呈现真实状态）
-                let mut snap = e.task.clone();
-                let mut verified = e.verified;
-                if snap.status == TransferStatus::OutcomeUnknown {
-                    snap.status = TransferStatus::Committing;
-                    verified = false;
-                }
-                journal = Some((snap, verified));
-            }
-            (emit, journal)
-        };
-        if let Some(t) = emit_task {
-            let _ = self.transfer_tx.send(t);
-        }
-        if let Some((t, verified)) = journal_task {
-            let _ = self
-                .center
-                .vault
-                .transfer_journal_update(&t, Some(verified));
-        }
-    }
-
-    /// 终态收尾：即时发帧 + journal 必写（审计由调用方按既有键追加）。
-    /// rev-r32 中-1：仅 Succeeded 覆写字节数——取消/失败保留在途进度（「恢复不抹账、
-    /// 运行时同样不抹账」；终态字节 = MCP 对账权威面数据，0 会冒充「没传过」）。
-    /// R34：离开 AwaitingDecision 即清提示载荷（wire：仅待决态非空）与决策通道。
-    fn transfer_finish(
-        &self,
-        tid: &TransferId,
-        status: TransferStatus,
-        bytes: u64,
-        error: Option<String>,
-    ) {
-        let now = now_unix();
-        {
-            let mut reg = self.transfers.lock().unwrap();
-            if let Some(e) = reg.get_mut(tid) {
-                e.decision_tx = None;
-            }
-        }
-        self.transfer_apply(tid, |t| {
-            t.status = status;
-            t.decision_prompt = None;
-            if status == TransferStatus::Succeeded {
-                t.bytes_done = bytes;
-            }
-            t.error = error;
-            if t.finished_at.is_none() {
-                t.finished_at = Some(now);
-            }
-        });
-        // ③ 传输结局记录（发起时已记 actor，这里补终态；agent_id=None 可辨）
-        let task = self
-            .transfers
-            .lock()
-            .unwrap()
-            .get(tid)
-            .map(|e| e.task.clone());
-        if let Some(t) = task {
-            let (status_s, exit) = match status {
-                TransferStatus::Succeeded => ("ok", Some(0)),
-                TransferStatus::Failed => ("error", None),
-                TransferStatus::Cancelled => ("cancelled", None),
-                _ => return,
-            };
-            let duration_ms: Option<u64> = t
-                .finished_at
-                .map(|f| (f.saturating_sub(t.created_at)).saturating_mul(1000))
-                .map(|d| u64::try_from(d).unwrap_or(0));
-            let _ = self.center.records.append(tinyssh_records::RecordEvent {
-                seq: 0,
-                ts: chrono::Utc::now(),
-                kind: tinyssh_records::RecordKind::Transfer,
-                session_id: Some(t.session_id.clone()),
-                agent_id: None,
-                summary: format!(
-                    "{} {} → {}",
-                    match t.kind {
-                        TransferKind::Upload => "upload",
-                        TransferKind::Download => "download",
-                    },
-                    t.source,
-                    t.dest
-                ),
-                status: status_s.into(),
-                exit_code: exit,
-                duration_ms,
-                output_excerpt: None,
-                meta: serde_json::json!({
-                    "transfer": t.id, "bytes": bytes, "error": t.error,
-                    "initiated_at": t.created_at,
-                }),
-            });
-        }
-    }
-
-    /// C6/R34 DF5.2：发布原语成功 → verified 证据即时落 journal（先于收尾帧与
-    /// temp 清理——「提交时退出重启」窗口内崩溃，重启恢复据此判 Succeeded{verified}）。
-    fn transfer_mark_verified(&self, tid: &TransferId) {
-        let t = {
-            let mut reg = self.transfers.lock().unwrap();
-            let Some(e) = reg.get_mut(tid) else { return };
-            e.verified = true;
-            e.last_journal = std::time::Instant::now(); // 状态未变也强制落账
-            e.task.clone()
-        };
-        let _ = self.center.vault.transfer_journal_update(&t, Some(true));
-    }
-
-    /// C6/R34：进入 AwaitingDecision 并等待人类裁决（数据阶段前预检冲突——
-    /// 不白传字节）。返回 Some(决定)=继续发布编排；None=取消/作废/超时收尾已落终态。
-    async fn transfer_await_decision(
-        &self,
-        tid: &TransferId,
-        target_path: &str,
-        target_stat: Option<TargetStat>,
-        reason: &str,
-        cancel: &CancellationToken,
-    ) -> Option<CollisionDecision> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        // 决策窗原子化轮：状态翻转与通道安装同锁——此前 transfer_apply 后二次
-        // 加锁装 decision_tx，中间窗任务已可见 AwaitingDecision 而通道未装。
-        self.transfer_apply_entry(tid, |t, slot| {
-            t.status = TransferStatus::AwaitingDecision;
-            t.decision_prompt = Some(DecisionPrompt {
-                target_path: target_path.to_string(),
-                target_stat: target_stat.clone(),
-                reason: reason.to_string(),
-            });
-            *slot = Some(tx);
-        });
-        // 决策窗超时轮：无人裁决不能无限钉住传输——同目标锁与 staging temp 全被
-        // 持有，同会话后续传输全部排队。超时=取消语义收尾（决策卡随事件帧翻
-        // 终态；journal 终态行即留痕，与 cancel 不发审计同约定）。
-        // select 用 &mut rx 借用——超时臂抢锁 take 失败=提交/作废竞窗先行拿走
-        // 通道，此时 rx 还要继续等真结局（提交者会 send、作废者会 drop）。
-        let sleep = tokio::time::sleep(DECISION_TTL);
-        tokio::pin!(sleep);
-        let mut rx = rx;
-        let mut race_lost = false;
-        let decision = loop {
-            tokio::select! {
-                r = &mut rx => break match r {
-                    Ok(d) => Some(d),
-                    // 通道被取走即关闭=提交决定/取消/作废。关闭而非投递（含取消竞窗
-                    // 抢先关闭）→ 确未提交，统一 Cancelled 收尾（取消=「已取消」、
-                    // 作废/超时=各自文案，留痕区分）
-                    Err(_) => {
-                        let msg = if cancel.is_cancelled() {
-                            "已取消（冲突待决中）".to_string()
-                        } else {
-                            "决策卡已作废（过期决定显式收卡）".to_string()
-                        };
-                        self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some(msg));
-                        None
-                    }
-                },
-                _ = cancel.cancelled() => {
-                    // 取消竞窗：通道取走防悬挂写；确未提交 → Cancelled
-                    if let Some(e) = self.transfers.lock().unwrap().get_mut(tid) {
-                        e.decision_tx = None;
-                    }
-                    self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some("已取消（冲突待决中）".into()));
-                    break None;
-                }
-                _ = &mut sleep => {
-                    // 抢锁 take 通道：take 到=确无人提交，超时收尾；没抢到=提交/
-                    // 作废竞窗先行——出 select 后落回 rx 等真结局（rx 不能在本臂
-                    // await：&mut rx 借用仍被 select 持有）
-                    let took = self
-                        .transfers
-                        .lock()
-                        .unwrap()
-                        .get_mut(tid)
-                        .map(|e| e.decision_tx.take().is_some())
-                        .unwrap_or(false);
-                    if took {
-                        self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some("决策超时（无人裁决，传输已收卡）".into()));
-                        break None;
-                    }
-                    race_lost = true;
-                }
-            }
-            if race_lost {
-                break match rx.await {
-                    Ok(d) => Some(d),
-                    Err(_) => {
-                        let msg = if cancel.is_cancelled() {
-                            "已取消（冲突待决中）".to_string()
-                        } else {
-                            "决策卡已作废（过期决定显式收卡）".to_string()
-                        };
-                        self.transfer_finish(tid, TransferStatus::Cancelled, 0, Some(msg));
-                        None
-                    }
-                };
-            }
-        };
-        decision
-    }
-
-    // ---- C10 输出订阅恢复（R11；桥层专用，不在 SessionApi trait 面）----
-
-    /// 订阅会话输出：注册订阅身份 + 原子捕获检查点与水位（DF10.2）。
-    /// 返回 (AttachOutput, broadcast receiver, 取消信号 receiver)；receiver 由桥层
-    /// 转发为带 seq 帧头的 Raw 通道帧，取消信号触发桥 task 退出（显式退订即终结转发）。
-    /// 注册起 broadcast 缓存 live——检查点应用前的早到帧由前端暂存。
-    pub async fn subscribe_output_channel(
-        &self,
-        sid: SessionId,
-    ) -> Result<(
-        AttachOutput,
-        broadcast::Receiver<OutputEvent>,
-        tokio::sync::watch::Receiver<bool>,
-    )> {
-        let h = self.get(&sid)?;
-        let rx = h.output_tx.subscribe();
-        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        let (subscription_id, checkpoint, start_seq) = {
-            // 锁序：screen → replay（与 pump 一致，防死锁）
-            let s = h.screen.lock().await;
-            let checkpoint = s.checkpoint();
-            let start_seq = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
-            h.last_ckpt_seq
-                .store(start_seq, std::sync::atomic::Ordering::Release);
-            let sub = format!("sub-{}", uuid::Uuid::new_v4());
-            h.subs.lock().unwrap().insert(sub.clone(), cancel_tx);
-            (sub, checkpoint, start_seq)
-        };
-        Ok((
-            AttachOutput {
-                subscription_id,
-                checkpoint,
-                start_seq,
-            },
-            rx,
-            cancel_rx,
-        ))
-    }
-
-    /// 显式退订（主清理路径，DF10.5）：幂等；重复或旧身份为 no-op。
-    /// 会话不存在同样 Ok——UI 收尾顺序可能晚于会话关闭（close_session 已自动清理）。
-    pub async fn unsubscribe_output(&self, sid: SessionId, subscription_id: &str) -> Result<()> {
-        if let Some(h) = self.sessions.lock().unwrap().get(&sid).cloned() {
-            let removed = h.subs.lock().unwrap().remove(subscription_id);
-            if let Some(cancel_tx) = removed {
-                let _ = cancel_tx.send(true); // 桥 task 退出（转发终结）
-            } else {
-                tracing::debug!(session = %sid, sub = %subscription_id, "unsubscribe: no such subscription (no-op)");
-            }
-        }
-        Ok(())
-    }
-
-    /// resync（DF10.3）：绑定订阅身份；from_seq=None 请求检查点。
-    /// Some(f)：优先 (f, cur] 连续原始字节重放（水位包含末事件）；
-    /// 不可重放（淘汰/alt_screen 活跃/检查点更近）退检查点。
-    /// 过期/未知 subscription_id 拒绝且不改任何状态。
-    pub async fn resync_output(
-        &self,
-        sid: SessionId,
-        subscription_id: &str,
-        from_seq: Option<u64>,
-    ) -> Result<ResyncOutput> {
-        let h = self.get(&sid)?;
-        if !h.subs.lock().unwrap().contains_key(subscription_id) {
-            return Err(Error::InvalidInput(format!(
-                "subscription 已过期或不存在：{subscription_id}"
-            )));
-        }
-        // 锁序：screen → replay
-        let s = h.screen.lock().await;
-        let checkpoint_mode = match from_seq {
-            None => true,
-            Some(f) => {
-                let cur = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
-                // seq 恰等于水位：已追平，空重放（不重放断言）
-                if f >= cur {
-                    return Ok(ResyncOutput::Replayed {
-                        subscription_id: subscription_id.to_string(),
-                        events: Vec::new(),
-                        end_seq: cur,
-                    });
-                }
-                let replayable = h.replay.lock().unwrap().covers_from(f);
-                let ckpt_nearer = h.last_ckpt_seq.load(std::sync::atomic::Ordering::Acquire) > f;
-                !replayable || s.alt_screen() || ckpt_nearer
-            }
-        };
-        if checkpoint_mode {
-            let checkpoint = s.checkpoint();
-            let end_seq = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
-            h.last_ckpt_seq
-                .store(end_seq, std::sync::atomic::Ordering::Release);
-            return Ok(ResyncOutput::Checkpointed {
-                subscription_id: subscription_id.to_string(),
-                checkpoint,
-                end_seq,
-            });
-        }
-        let f = from_seq.expect("checked above");
-        let cur = h.output_seq.load(std::sync::atomic::Ordering::Acquire);
-        let ring = h.replay.lock().unwrap();
-        let events: Vec<SeqFrame> = ring
-            .q
-            .iter()
-            .filter(|(seq, _)| *seq > f && *seq <= cur)
-            .map(|(seq, data)| SeqFrame {
-                seq: *seq,
-                data: data.clone(),
-            })
-            .collect();
-        // 环内连续到 cur（covers_from 已验首帧；seq 逐帧连续推进，末帧即 cur）
-        let end_seq = events.last().map(|e| e.seq).unwrap_or(cur);
-        Ok(ResyncOutput::Replayed {
-            subscription_id: subscription_id.to_string(),
-            events,
-            end_seq,
-        })
-    }
-
-    /// P6 测量口径（DF10.5）：活跃订阅计数。
-    pub fn debug_subscriptions(&self) -> DebugSubscriptions {
-        let sessions = self.sessions.lock().unwrap();
-        let mut per_session = Vec::with_capacity(sessions.len());
-        let mut active_count = 0usize;
-        for (sid, h) in sessions.iter() {
-            let ids: Vec<String> = h.subs.lock().unwrap().keys().cloned().collect();
-            active_count += ids.len();
-            per_session.push(SessionSubs {
-                session_id: sid.clone(),
-                subscription_ids: ids,
-            });
-        }
-        DebugSubscriptions {
-            active_count,
-            per_session,
-        }
-    }
-}
-
-impl SessionManager {
     fn get(&self, sid: &str) -> Result<Arc<SessionHandle>> {
         self.sessions
             .lock()
@@ -5605,6 +5037,10 @@ impl SessionManager {
         match Self::tmux_exec_raw(&h, &cmd, 4 * 1024 * 1024).await {
             TmuxExecOut::Done(out, _) => {
                 let mut cells = Self::parse_tmux_wall(&out, 1).map_err(Error::InvalidInput)?;
+                // 墙视图里人类回车提交命令，同样证明新连接可用（与主终端同口径）。
+                if SessionHandle::is_command_submit(&lit) || SessionHandle::is_tmux_submit(&keys) {
+                    h.complete_reconfirm().await;
+                }
                 Ok(cells.swap_remove(0))
             }
             // 歧义态（找茬四轮 A2）：send-keys 与补拍是同一条远端命令，链路在
@@ -5623,13 +5059,18 @@ impl SessionManager {
     /// 更紧——字母/数字/下划线开头，后接字母/数字/下划线/短横线，1–64 字节。
     /// 白名单免去一切引号/注入顾虑（创建命令照旧单引号包裹，双保险）。
     fn tmux_session_name_ok(name: &str) -> bool {
-        let b = name.as_bytes();
-        if b.is_empty() || b.len() > 64 {
+        // tmux 自身允许 UTF-8 名称（拒绝 `:`/`.`/空名/超长），限制在应用侧：
+        // 首字符字母/数字/中文/下划线，其余可含连字符；空格仍不收（target 语法
+        // 与命令拼接都更易出错）。长度按 UTF-8 字节算，对齐 tmux 的 64 字节上限。
+        if name.is_empty() || name.len() > 64 {
             return false;
         }
-        let ok0 = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-        let ok1 = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'-';
-        ok0(b[0]) && b[1..].iter().all(|&c| ok1(c))
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_alphanumeric() || first == '_')
+            && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '-')
     }
 
     /// 同名预检：tmux ≥3.1 用 `=name` 精确选择器（防 work 前缀误中 workshop），
@@ -5675,7 +5116,8 @@ impl SessionManager {
         let name = name.trim();
         if !Self::tmux_session_name_ok(name) {
             return Err(Error::InvalidInput(
-                "非法的 tmux 会话名：1–64 字符，字母/数字/下划线开头，之后可用短横线".into(),
+                "非法的 tmux 会话名：1–64 字节，首字符为字母/数字/中文/下划线，其余可含连字符"
+                    .into(),
             ));
         }
         let version = h.tmux.lock().unwrap().version.clone();
@@ -6227,7 +5669,12 @@ impl SessionManager {
             .get(&pane_id)
             .cloned()
             .ok_or_else(|| Error::InvalidInput("面板窗格不存在".into()))?;
-        pane.ch.write(&charset::encode(h.host.charset, keys)).await
+        let r = pane.ch.write(&charset::encode(h.host.charset, keys)).await;
+        // 面板格子里回车提交命令，同样说明新连接可用（与主终端同口径）。
+        if r.is_ok() && SessionHandle::is_command_submit(keys) {
+            h.complete_reconfirm().await;
+        }
+        r
     }
 
     /// 面板输出订阅：订阅即接走积压（PaneMux 单订阅者模型）。格子 xterm 换装
@@ -7549,258 +6996,6 @@ impl SessionManager {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ~/.ssh/config 导入（路线图⑨）：CLI 与 GUI 共用的组合逻辑。
-// 解析在 vault::sshcfg（纯函数）；这里做路径解析、与现有主机对账、
-// 身份落库（IdentityFile → Key）或 ssh-agent 引用（无 IdentityFile → Agent）。
-// ---------------------------------------------------------------------------
-
-impl SessionManager {
-    fn ssh_config_path(explicit: Option<&Path>) -> PathBuf {
-        match explicit {
-            Some(p) => p.to_path_buf(),
-            // Windows 原生环境无 HOME → 回退 USERPROFILE（审计 W1 同族；OpenSSH for
-            // Windows 的配置就在 %USERPROFILE%\.ssh\config）
-            None => std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|h| PathBuf::from(h).join(".ssh/config"))
-                .unwrap_or_else(|| PathBuf::from(".ssh/config")),
-        }
-    }
-
-    fn load_entries(
-        explicit: Option<&Path>,
-    ) -> Result<(PathBuf, Vec<tinyssh_vault::sshcfg::SshConfigEntry>)> {
-        let path = Self::ssh_config_path(explicit);
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| Error::InvalidInput(format!("读取 {} 失败: {e}", path.display())))?;
-        let mut entries = tinyssh_vault::sshcfg::parse_ssh_config(&content);
-        // 同名 Host 块会被 ssh 合并；去重避免重复导入
-        entries.dedup_by(|a, b| a.name == b.name);
-        Ok((path, entries))
-    }
-
-    fn default_username(entry: &tinyssh_vault::sshcfg::SshConfigEntry) -> String {
-        entry
-            .username
-            .clone()
-            .or_else(|| std::env::var("USER").ok())
-            .unwrap_or_else(|| "root".into())
-    }
-
-    /// C7/DF7.1+DF7.5：无阻断指令且已指定用户才可直接导入
-    fn directly_importable(entry: &tinyssh_vault::sshcfg::SshConfigEntry) -> bool {
-        entry.unsupported.iter().all(|u| !u.blocking) && entry.username.is_some()
-    }
-
-    /// 预览（C7）：解析 + DF7.1 分级 + 与现有主机对账（同名或同 address+port+user
-    /// 视为已导入）。无 User 条目不静默 root——user_specified=false、
-    /// directly_importable=false（DF7.5），username 仅作兜底猜测值。
-    pub async fn ssh_config_preview(&self, path: Option<&Path>) -> Result<Vec<SshConfigPreview>> {
-        let (cfg_path, entries) = Self::load_entries(path)?;
-        let existing = self.list_hosts(&Actor::Human).await?;
-        Ok(entries
-            .into_iter()
-            .map(|e| {
-                let username = Self::default_username(&e);
-                let port = e.port.unwrap_or(22);
-                let unsupported = e
-                    .unsupported
-                    .iter()
-                    .map(|u| SshUnsupportedDirective {
-                        directive: u.directive.clone(),
-                        level: if u.blocking {
-                            SshUnsupportedLevel::Blocking
-                        } else {
-                            SshUnsupportedLevel::Warning
-                        },
-                        line: u.line,
-                    })
-                    .collect();
-                SshConfigPreview {
-                    already_imported: existing.iter().any(|h| {
-                        h.name == e.name
-                            || (h.address == e.address && h.port == port && h.username == username)
-                    }),
-                    has_identity: e.identity_path.is_some(),
-                    directly_importable: Self::directly_importable(&e),
-                    user_specified: e.username.is_some(),
-                    source_file: cfg_path.display().to_string(),
-                    source_line: e.source_line,
-                    unsupported,
-                    name: e.name,
-                    address: e.address,
-                    port,
-                    username,
-                }
-            })
-            .collect())
-    }
-
-    /// 勾选导入（C7）：阻断条目拒绝（skipped=Blocked）；重复（同名 OR
-    /// address+port+user）默认跳过（skipped=Duplicate），overwrite=true 时以既有
-    /// 主机 id 覆盖写入（DF7.3）。逐条出结果，单条失败不阻塞其余。
-    pub async fn ssh_config_import(
-        &self,
-        ctx: &Actor,
-        path: Option<&Path>,
-        names: &[String],
-        overwrite: bool,
-    ) -> Vec<SshImportOutcome> {
-        let load = Self::load_entries(path);
-        let (entries, existing) = match load {
-            Ok((_, e)) => match self.list_hosts(ctx).await {
-                Ok(h) => (e, h),
-                Err(err) => {
-                    return names
-                        .iter()
-                        .map(|n| SshImportOutcome {
-                            name: n.clone(),
-                            host_id: None,
-                            error: Some(err.to_string()),
-                            skipped_reason: None,
-                        })
-                        .collect();
-                }
-            },
-            Err(e) => {
-                return names
-                    .iter()
-                    .map(|n| SshImportOutcome {
-                        name: n.clone(),
-                        host_id: None,
-                        error: Some(e.to_string()),
-                        skipped_reason: None,
-                    })
-                    .collect();
-            }
-        };
-        let mut out = Vec::new();
-        // rev-r22 M3：批内可见性——成功导入的主机立即并入查重集，同批后续
-        // 同三元组条目按 Duplicate 跳过（不双落库），与重新预览的对账一致
-        let mut known: Vec<(String, String, String, u16, String)> = existing
-            .iter()
-            .map(|h| {
-                (
-                    h.id.clone(),
-                    h.name.clone(),
-                    h.address.clone(),
-                    h.port,
-                    h.username.clone(),
-                )
-            })
-            .collect();
-        for name in names {
-            let skipped = |reason: SshSkipReason| SshImportOutcome {
-                name: name.clone(),
-                host_id: None,
-                error: None,
-                skipped_reason: Some(reason),
-            };
-            let Some(entry) = entries.iter().find(|e| &e.name == name) else {
-                out.push(SshImportOutcome {
-                    name: name.clone(),
-                    host_id: None,
-                    error: Some("配置中找不到该条目".into()),
-                    skipped_reason: None,
-                });
-                continue;
-            };
-            if !Self::directly_importable(entry) {
-                out.push(skipped(SshSkipReason::Blocked));
-                continue;
-            }
-            let port = entry.port.unwrap_or(22);
-            let username = Self::default_username(entry);
-            let dup = known.iter().find(|(_, n, a, p, u)| {
-                n == &entry.name || (a == &entry.address && *p == port && u == &username)
-            });
-            // DF7.3：重复默认跳过；overwrite=true 以既有 id 覆盖写入
-            let host_id = if overwrite {
-                dup.map(|h| h.0.clone())
-            } else {
-                if dup.is_some() {
-                    out.push(skipped(SshSkipReason::Duplicate));
-                    continue;
-                }
-                None
-            };
-            let r = async {
-                let auth = match &entry.identity_path {
-                    Some(p) => {
-                        let pem = tokio::fs::read_to_string(p).await.map_err(|e| {
-                            Error::InvalidInput(format!("读取私钥 {} 失败: {e}", p.display()))
-                        })?;
-                        let meta = self
-                            .create_identity(
-                                ctx,
-                                IdentityReq::Import {
-                                    label: name.clone(),
-                                    pem,
-                                    passphrase: None,
-                                },
-                            )
-                            .await
-                            .map_err(|e| match e {
-                                // 加密私钥无口令解不开：明说，不静默降级
-                                Error::InvalidInput(m) if m.contains("passphrase") => {
-                                    Error::InvalidInput("私钥有口令，请先在应用内手工导入".into())
-                                }
-                                other => other,
-                            })?;
-                        AuthDraft::Key {
-                            identity_id: meta.id,
-                        }
-                    }
-                    None => AuthDraft::Agent,
-                };
-                self.upsert_host(
-                    ctx,
-                    HostDraft {
-                        id: host_id,
-                        name: name.clone(),
-                        address: entry.address.clone(),
-                        port: Some(port),
-                        username: username.clone(),
-                        auth,
-                        tags: vec!["ssh-config".into()],
-                        charset: Charset::Utf8,
-                        shell_integration: Some(true), // ssh-config 导入=存量 SSH 主机同口径（DC3.2）
-                        jump_host_id: None, // ProxyJump 指令 V1 阻断导入（sshcfg_import fixture 锁）
-                        startup_command: None,
-                    },
-                )
-                .await
-            }
-            .await;
-            match r {
-                Ok(hid) => {
-                    known.push((
-                        hid.clone(),
-                        name.clone(),
-                        entry.address.clone(),
-                        port,
-                        username.clone(),
-                    ));
-                    out.push(SshImportOutcome {
-                        name: name.clone(),
-                        host_id: Some(hid),
-                        error: None,
-                        skipped_reason: None,
-                    });
-                }
-                Err(e) => out.push(SshImportOutcome {
-                    name: name.clone(),
-                    host_id: None,
-                    error: Some(e.to_string()),
-                    skipped_reason: None,
-                }),
-            }
-        }
-        out
-    }
-}
-
 #[cfg(test)]
 mod t44_tests {
     use super::*;
@@ -8149,6 +7344,7 @@ mod t44_tests {
     /// 三元组切分 → t=$1 变量间接 → 守卫 → resize-window 实参，全程当字符串活着；
     /// 多窗格守卫拦截不落 resize 也不落回执帧。假 tmux 以 shell 函数注入（Windows
     /// 无 exec 位，PATH 垫片不可靠；函数注入测的是同一条内层脚本）。
+    #[cfg(unix)]
     #[test]
     fn tmux_wall_fit_roundtrip_in_real_sh() {
         let mk = |id: &str, name: &str, c: u32, r: u32| session_api::TmuxWallFit {
@@ -8225,6 +7421,7 @@ mod t44_tests {
     /// 关大屏恢复命令构造：id 优先寻址（改名跟随——墙开着改名后按旧名恢复会
     /// 静默落空）+ resize 回原尺寸 + window-size 原样交还（UNSET=unset、白名单
     /// 四值=原样、其余=KEEP 只恢复尺寸不动选项）；ws 经 sq 死字符串化。
+    #[cfg(unix)]
     #[test]
     fn tmux_wall_restore_cmd_shape() {
         let mk =
@@ -8308,21 +7505,14 @@ mod t44_tests {
     #[test]
     fn tmux_session_create_cmd_shape() {
         // 名字白名单逐例（数字开头也合法——tmux 自身不禁）
-        for ok in ["work", "dev-1", "_x", "a", "W9_", "9lives"] {
+        for ok in [
+            "work", "dev-1", "_x", "a", "W9_", "9lives", "工作", "项目-1", "中文_2",
+        ] {
             assert!(SessionManager::tmux_session_name_ok(ok), "{ok} 应放行");
         }
         let long64 = "a".repeat(64);
         let long65 = "a".repeat(65);
-        for bad in [
-            "",
-            "-x",
-            "a b",
-            "a:b",
-            "a.b",
-            "a'b",
-            "中文",
-            long65.as_str(),
-        ] {
+        for bad in ["", "-x", "a b", "a:b", "a.b", "a'b", long65.as_str()] {
             assert!(!SessionManager::tmux_session_name_ok(bad), "{bad} 应拒绝");
         }
         assert!(
@@ -8349,6 +7539,17 @@ mod t44_tests {
             unwrap_sh_c(&mk),
             "tmux new-session -d -s 'dev-1'; printf '@@RC|%s\\n' $?; echo"
         );
+        // 中文名：单引号转义按字节透传，不能被截断/改写（KI-003 真机路径）
+        let mk_cn = SessionManager::tmux_session_create_cmd("工作");
+        assert_eq!(
+            unwrap_sh_c(&mk_cn),
+            "tmux new-session -d -s '工作'; printf '@@RC|%s\\n' $?; echo"
+        );
+        let has_cn = SessionManager::tmux_session_has_cmd(Some("3.4"), "项目-1");
+        assert_eq!(
+            unwrap_sh_c(&has_cn),
+            "tmux has-session -t '=项目-1' 2>/dev/null && printf '@@HAS\\n'; echo"
+        );
     }
 
     /// sh -c 外壳剥除 + '\'' 反转义（测试 helper）：嵌套转义正确性的判定基准。
@@ -8361,6 +7562,7 @@ mod t44_tests {
     /// 注入回归（审查轮 P0）：名字/客户端名是**显示数据**（远端改名跟随、tmux
     /// 回包都可控），sq 转义后经真实 sh 解析必须逐字节还原原文——恶意形
     /// `x'; touch /tmp/pwned; '` 只能当字符串活着，绝不落成第二条命令。
+    #[cfg(unix)]
     #[test]
     fn tmux_sq_roundtrip_in_real_sh() {
         let cases = [
@@ -8370,6 +7572,8 @@ mod t44_tests {
             "a b\"c$d`id`\\e",
             "'$(reboot)'",
             "=logs:",
+            "工作",
+            "项目-1",
         ];
         for name in cases {
             // sh -c 'printf %s <sq(name)>'：外层 tmux_sh 嵌 tmux_sq，双层转义

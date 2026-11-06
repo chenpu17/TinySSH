@@ -607,6 +607,14 @@ function demoEmitState(sid: string, state: string,
     attempt, max_attempts: max, detail,
   });
 }
+/** 镜像核心 complete_reconfirm：人类已在新连接上提交命令，退出重确认并发事件。 */
+function demoCompleteReconfirm(sid: string) {
+  const s = demoState.sessions.find((x) => x.id === sid);
+  if (!s || s.state !== "Reconfirming") return;
+  s.state = "Connected";
+  s.transitions.push({ ts: new Date().toISOString(), what: "重确认完成：核实事实恢复 Confirmed" });
+  demoEmitState(sid, "Connected", null, null, null);
+}
 let demoSubCounter = 0;
 let eventSeq = 42;
 function audit(
@@ -1164,8 +1172,15 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (s.state === "Disconnected" || s.state === "Closed") {
         throw apiError("invalid_input", "会话未连接：请先重连再建 tmux 会话（演示）");
       }
-      if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/.test(name)) {
-        throw apiError("invalid_input", "非法的 tmux 会话名：1–64 字符，字母/数字/下划线开头，之后可用短横线（演示）");
+      // 与核心 tmux_session_name_ok 同口径：Unicode 字母/数字/中文，首字符不能是
+      // 连字符，最长 64 字节（中文约 21 字）；空格/冒号/点仍拒绝。
+      const nameChars = [...name];
+      const nameOk = nameChars.length > 0
+        && new TextEncoder().encode(name).length <= 64
+        && /^[\p{L}\p{N}_]$/u.test(nameChars[0] ?? "")
+        && nameChars.slice(1).every((c) => /^[\p{L}\p{N}_-]$/u.test(c));
+      if (!nameOk) {
+        throw apiError("invalid_input", "非法的 tmux 会话名：1–64 字节，首字符为字母/数字/中文/下划线，其余可含连字符（演示）");
       }
       if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [] };
       if (s.tmux.sessions.some((x) => x.name === name)) {
@@ -1302,6 +1317,9 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       if (!ent || ent.name === "ghost") return { ok: false, text: "", rows: 0 };
       const lit = String(args?.lit ?? "");
       const keys = (args?.keys ?? []) as string[];
+      const submit = lit.includes("\r")
+        || lit.includes("\n")
+        || keys.some((k) => k === "Enter" || k === "C-m" || k === "C-j" || k === "KPEnter");
       // 键名白名单与核心 tmux_wall_key_ok 同口径（M- + 单可打印放行）——此前镜像
       // 无校验，spec 测不出前后端口径劈叉（审查轮 P2）
       const keyOk = (k: string) =>
@@ -1313,7 +1331,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       }
       ent.wallIn = (ent.wallIn ?? "") + lit;
       for (const k of keys) {
-        if (k === "Enter") {
+        if (k === "Enter" || k === "C-m" || k === "C-j" || k === "KPEnter") {
           ent.wallOut = (ent.wallOut ?? "") + `${ent.wallIn}\n`;
           ent.wallIn = "";
         } else if (k === "BSpace") {
@@ -1323,6 +1341,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           ent.wallIn = "";
         }
       }
+      // 墙视图里人类回车提交命令，同样证明新连接可用（KI-002）。
+      if (submit) demoCompleteReconfirm(sid);
       return { ok: true, text: demoWallSnap(ent), rows: ent.wallRows ?? DEMO_WALL_ROWS };
     }
     case "tmux_pane_input": {
@@ -1410,6 +1430,8 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
           panePush(p, ch);
         }
       }
+      // 面板格子里回车提交命令，同样证明新连接可用（KI-002）。
+      if (keys.includes("\r") || keys.includes("\n")) demoCompleteReconfirm(s?.id ?? "");
       return null;
     }
     case "tmux_pane_resize": {
@@ -1893,6 +1915,8 @@ case "read_triggers": {
       }
       pushTo(sid, "\r\n" + command + "\r\n（演示输出）total 48K\r\n");
       audit("human", "exec", command, null, sid ?? null);
+      // 人类命令框成功执行同样算新连接已核实（KI-002）。
+      demoCompleteReconfirm(sid);
       return { stdout: "", exit_code: 0 };
     }
     case "read_host_metrics": {
@@ -1976,9 +2000,14 @@ case "read_triggers": {
         commit_mb: 236 + Math.round(10 * Math.sin(t / 61000)),
       };
     }
-    case "send_keys":
-      pushTo(args?.sid as string, (args?.keys as string) ?? "");
+    case "send_keys": {
+      const sid = args?.sid as string;
+      const keys = (args?.keys as string) ?? "";
+      pushTo(sid, keys);
+      // 终端里回车提交命令 = 人类已在新连接上操作（KI-002）。
+      if (keys.includes("\r") || keys.includes("\n")) demoCompleteReconfirm(sid);
       return null;
+    }
     // ---- 十八轮：会话日志（demo 内存态，无真实文件；真实核心落 data/logs 并经 pump tap 写入）----
     case "set_session_logging": {
       const sid = args?.sid as string;

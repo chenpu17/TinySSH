@@ -18,6 +18,8 @@ import {
 } from "./zoom";
 import { applyCheckpoint, createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
+import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
+import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import {
   MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
   type PaneNode, type PaneTile, type PaneDivider, type DropZone,
@@ -107,6 +109,7 @@ import { ConnDetail } from "./components/conn-detail";
 import { Hostbar } from "./components/hostbar";
 import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
+import { TmuxQuick } from "./components/tmux-quick";
 import { TmuxWall } from "./components/tmux-wall";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 import { SelfMeterTitlebar } from "./self-meter";
@@ -1050,7 +1053,7 @@ export default function App() {
     if (!inTauri) {
       // 七轮 B7-5：demo 域 F11 归浏览器（native 门控），退出靠顶部「退出专注」钮——
       // 原提示只说不切全屏、不说怎么退，补一句出口（native 分支文案不变）
-      if (announce) pushToast("info", on ? t("已进入专注模式（浏览器演示不切系统全屏）· 点顶部「退出专注」返回") : t("已退出专注模式"));
+      if (announce) pushToast("info", on ? t("已进入专注模式（浏览器演示不切系统全屏）· 点右上角专注图标返回") : t("已退出专注模式"));
       return;
     }
     getCurrentWindow().setFullscreen(on)
@@ -1866,6 +1869,8 @@ export default function App() {
       },
     });
     term.open(el);
+    // 精确触摸板 1:1 直跟，经典滚轮保留 100ms 补间（见 terminal/scroll.ts）。
+    installAdaptiveSmoothScroll(term, el, isMacPlatform() ? 0 : 100);
     // 扩展字符宽度（P0 终端品质轮）：CJK/emoji 宽度按 Unicode 11 表判定——xterm 内置
     // 表基于 Unicode 6，中文/emoji 混排会串格（宽字符占 1 列、ZWJ 序列拆散）。新版表
     // 严格更好，不设开关，恒开。
@@ -2090,6 +2095,11 @@ export default function App() {
     // onData 直接归属本会话：终端实例与会话一一对应，无 stale closure。
     let deadWarned = false;
     term.onData((d) => {
+      // 触摸板/鼠标悬停防护：远端开启 any-motion（1003）后，无按键移动会被
+      // xterm 编码成 SGR 报告；应用退出而模式未复位时，这些报告会原样进 PTY
+      // 并被 shell 回显成满屏 `35;x;yM`。只丢弃无按键移动，点击/拖动/滚轮保留。
+      const data = stripMotionOnlyMouseReports(d);
+      if (!data) return;
       // 死会话/断线输入拦截（P2-7 + R26 §6.4）：PTY 已死（含自动重连中——通道
       // 不存在），键入只会静默进黑洞或排队给未来连接——明说，不假装
       const st = sessionsRef.current.find((x) => x.id === sessionSid)?.state;
@@ -2104,7 +2114,7 @@ export default function App() {
       deadWarned = false;
       // 主视图 attach 了 tmux 时 C-b 同样武装（见 tmuxPrefixArm）：前缀后一键的输入法标点还原；
       // 消费的是 C-b $ → 改名框要弹，排补探针让名牌在改名提交后跟上
-      const { keys, dollar } = takeTmuxPrefixKey(sessionSid, d);
+      const { keys, dollar } = takeTmuxPrefixKey(sessionSid, data);
       if (dollar) scheduleTmuxProbeFollow(sessionSid);
       invoke("send_keys", { sid: sessionSid, keys }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
@@ -2177,6 +2187,7 @@ export default function App() {
       theme: { ...derivedThemeRef.current.theme },
     });
     term.open(body);
+    installAdaptiveSmoothScroll(term, body, isMacPlatform() ? 0 : 100);
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     let webgl: WebglAddon | null = null;
@@ -2237,13 +2248,16 @@ export default function App() {
       return false;
     });
     term.onData((d) => {
+      // 同主终端：丢弃触摸板/悬停产生的无按键移动报告，避免灌进 tmux 面板。
+      const data = stripMotionOnlyMouseReports(d);
+      if (!data) return;
       if (!entry.alive) {
         warnDeadPane(entry);
         return;
       }
       entry.deadWarned = false;
       // 消费的是 C-b $ → 格子里改名框要弹：排补探针（标题随对账跟上）
-      const { keys, dollar } = takeTmuxPrefixKey(key, d);
+      const { keys, dollar } = takeTmuxPrefixKey(key, data);
       if (dollar) scheduleTmuxProbeFollow(sid);
       invoke("tmux_pane_input", { sid, paneId, keys }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
@@ -7558,16 +7572,38 @@ export default function App() {
               title={t("传输队列（底部抽屉）")}
               onClick={() => setQueueOpen(!queueOpen)}>{t("传输")} {runningTransfers}</button>
           )}
-          {focusMode && <button className="ghost" onClick={() => applyFocus(false)}>{t("退出专注")}</button>}
+          {/* 专注模式保留 tmux 快接（用户反馈：管理入口不能因隐藏工具栏而消失）；
+              退出专注已有右侧图标钮 + F11，不再重复放文字钮。 */}
+          {focusMode && current && (
+            <TmuxQuick
+              current={current} sid={sid}
+              tmuxMenu={tmuxMenu} setTmuxMenu={setTmuxMenu} tmuxMenuRef={tmuxMenuRef}
+              onRefreshTmux={() => refreshTmuxList(current)}
+              onPickTmux={(name) => pickTmuxSession(current, name)}
+              onPromotePaneToMain={(name) => void promotePaneToMain(current, name)}
+              onAddTmuxPane={(name) => void openTmuxPane(current, name)}
+              onOpenWall={() => { setTmuxMenu(false); setTmuxWallSid(current.id); }}
+              tmuxCreateOpen={tmuxCreateOpen} tmuxCreateName={tmuxCreateName}
+              tmuxCreateErr={tmuxCreateErr} tmuxCreateBusy={tmuxCreateBusy}
+              tmuxCreateTarget={tmuxCreateTarget} onTmuxCreateTarget={setTmuxCreateTarget}
+              onTmuxCreateOpen={() => { setTmuxCreateOpen(true); setTmuxCreateTarget("main"); setTmuxCreateErr(null); }}
+              onTmuxCreateCancel={() => { setTmuxCreateOpen(false); setTmuxCreateName(""); setTmuxCreateErr(null); }}
+              onTmuxCreateName={setTmuxCreateName}
+              onTmuxCreateSubmit={() => void submitTmuxCreate(current)}
+              paneNames={(current.panes ?? []).map((p) => p.tmux_session)}
+              paneCapReached={(current.panes ?? []).length >= PANE_MAX}
+              splitActive={!!splitPanes}
+            />
+          )}
           <button className={"ghost icon-btn" + (focusMode ? " ts-open" : "")} data-testid="focus-toggle"
             title={focusMode ? t("退出专注模式（F11）")
               : zenStripAuto ? t("专注模式（F11）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条藏为顶缘浮标")
               : t("专注模式（F11）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条保持常驻")}
             aria-pressed={focusMode} aria-label={focusMode ? t("退出专注模式") : t("进入专注模式")}
-            onClick={() => applyFocus(!focusMode)}>
+            onClick={() => { setTmuxMenu(false); setTabsMenuOpen(false); applyFocus(!focusMode); }}>
             {focusMode ? <IconMinimize size={14} /> : <IconMaximize size={14} />}
           </button>
-          <div className="st-tools" ref={tabsMenuRef}>
+          <div className="st-tools tabbar-admin" ref={tabsMenuRef}>
             <button className="ghost tab-all" title={t("所有标签")} aria-haspopup="menu" aria-expanded={tabsMenuOpen}
               onClick={() => setTabsMenuOpen(!tabsMenuOpen)}>{t("标签列表")}<IconChevronDown size={12} /></button>
             {tabsMenuOpen && (
@@ -7595,9 +7631,9 @@ export default function App() {
           </div>
           {/* 键位随键位表渲染（审查轮二同类修复漏网：此前写死 Ctrl+T，mac 上也显示 Ctrl）；
               tab-new 是 native 门动作，浏览器 demo 不广告不存在的键（同命令面板钮） */}
-          <button className="ghost icon-btn" title={inTauri ? t("新建连接（{0}）", formatBinding(keymap["tab-new"], isMacPlatform())) : t("新建连接")} aria-label={t("新建连接")} onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); setPrefillEntry(null); }}><IconPlus size={14} /></button>
+          <button className="ghost icon-btn tabbar-admin" title={inTauri ? t("新建连接（{0}）", formatBinding(keymap["tab-new"], isMacPlatform())) : t("新建连接")} aria-label={t("新建连接")} onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); setPrefillEntry(null); }}><IconPlus size={14} /></button>
           {/* 十七轮：快速连接——不存主机一次性建连 */}
-          <button className="ghost icon-btn" title={t("快速连接（不保存主机，临时连接一次）")} aria-label={t("快速连接")} data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
+          <button className="ghost icon-btn tabbar-admin" title={t("快速连接（不保存主机，临时连接一次）")} aria-label={t("快速连接")} data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -7675,6 +7711,7 @@ export default function App() {
             paneNames={(current.panes ?? []).map((p) => p.tmux_session)}
             paneCapReached={(current.panes ?? []).length >= PANE_MAX}
             splitActive={!!splitPanes}
+            renderTmuxQuick={!focusMode}
             onRefreshTmux={() => refreshTmuxList(current)}
           />
         )}

@@ -2,6 +2,8 @@
 
 > 版本：v0.5 · 日期：2026-10-06 · 上游文档：[PRD](../prd.md) · [UX-R1](../ux/ssh-client-ux-refactor.md)
 > 本文回答：系统的边界是什么、由哪些部分组成、各部分如何协作、关键技术如何选。模块内部设计见 [L1](l1-component-design.md)。
+>
+> **实现状态（2026-11-06，v0.11.2）**：本文是设计基线，不是当前实现清单。C1–C14 与 ADR-10–14 已完成落地；平台验证以 Windows 为主，具体以 [README](../../README.zh-CN.md) 与 [UX-R1 执行账本](../ux/ux-r1-execution-status.md) 为准。
 
 ---
 

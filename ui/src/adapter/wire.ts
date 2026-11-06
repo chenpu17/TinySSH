@@ -12,9 +12,11 @@ export type ExecId = string;
 export type ApprovalId = string;
 export type AgentClientId = string;
 
-export type AuthType = "Key" | "Password" | "KeyboardInteractive" | "Agent";
-/** 线格式显式 rename："utf-8" / "gbk"（session-api Charset） */
-export type Charset = "utf-8" | "gbk";
+// 以下五个类型由 ts-rs 从 crates/session-api 生成（PoC）：
+// Host / HostDraft / AuthDraft / AuthType / Charset。
+// 生成命令：cargo run -p session-api --features ts --example export-wire
+import type { AuthType, AuthDraft, Charset, Host, HostDraft } from "./generated/wire.generated";
+export type { AuthType, AuthDraft, Charset, Host, HostDraft };
 export type ControlOwner = "Human" | "Agent";
 /** C3（R24）：shell 集成态——Ready≠集成就绪，独立于 SessionState。 */
 export type IntegrationState = "Disabled" | "Pending" | "Ready" | "Unavailable";
@@ -29,47 +31,6 @@ export type KeyKind = "Ed25519" | "Rsa";
 
 // StopOutcome：externally tagged（App.stopOutcomeText 按此判读）
 export type StopOutcome = { Exited: number } | "Escalated" | "Unresponsive";
-
-export interface Host {
-  id: HostId;
-  name: string;
-  address: string;
-  port: number;
-  username: string;
-  auth_type: AuthType;
-  identity_id: IdentityId | null;
-  tags: string[];
-  /** 已信任指纹（TOFU）；null = 信任未建立 */
-  fingerprint: string | null;
-  charset: Charset;
-  /** ProxyJump：跳板主机引用（指向既有主机条目）；null = 直连。 */
-  jump_host_id: string | null;
-  /** tmux 联动：连接成功后自动执行一次的启动命令（如 `tmux new -A -s work`）；null = 未设置。 */
-  startup_command: string | null;
-}
-
-export type AuthDraft =
-  | "Keep"
-  | "Agent"
-  | { Key: { identity_id: IdentityId } }
-  | { Password: { password: string } };
-
-export interface HostDraft {
-  id: HostId | null;
-  name: string;
-  address: string;
-  port: number | null;
-  username: string;
-  auth: AuthDraft;
-  tags: string[];
-  charset: Charset;
-  /** C3：null/缺省=新建默认（快速连接由核心兜底 Some(true)）；显式开关走 boolean。 */
-  shell_integration?: boolean | null;
-  /** ProxyJump：跳板主机 id；null/缺省=直连（编辑提交 null = 清除跳板设置）。 */
-  jump_host_id?: string | null;
-  /** tmux 联动：启动命令（连接后自动执行一次）；null/缺省=清除既有设置；空串归一 null。 */
-  startup_command?: string | null;
-}
 
 export type IdentityReq =
   | { Generate: { label: string; kind: KeyKind } }

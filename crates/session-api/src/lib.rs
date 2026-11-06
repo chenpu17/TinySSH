@@ -6,6 +6,10 @@
 
 pub mod transport;
 
+/// 契约代码生成 PoC（仅 `--features ts` 编译；默认构建不依赖 ts-rs）。
+#[cfg(feature = "ts")]
+pub mod ts_export;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -478,6 +482,7 @@ pub struct Policy {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Host {
     pub id: HostId,
     pub name: String,
@@ -513,6 +518,7 @@ pub struct Host {
 /// `Utf8` 数字边界分词有歧义风险；vault hosts.charset 列与 UI select 同口径）；
 /// 缺省 Utf8。UI（App.tsx）/demo shim/CLI 均按此三态字符串收发，改动即 wire 契约变更。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Charset {
     #[default]
     #[serde(rename = "utf-8")]
@@ -538,6 +544,7 @@ impl Charset {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum AuthType {
     Key,
     Password,
@@ -548,6 +555,7 @@ pub enum AuthType {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HostDraft {
     pub id: Option<HostId>,
     pub name: String,
@@ -560,18 +568,22 @@ pub struct HostDraft {
     pub charset: Charset,
     /// C3：None=编辑保原值/新建 false；Some(v)=显式设置（DC3.2，serde default 防旧客户端缺字段）。
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     pub shell_integration: Option<bool>,
     /// ProxyJump：跳板主机引用。None=不设跳板（覆盖清空既有设置）；写入侧
     /// 守卫见 core-session upsert_host（存在/非自引用/非本机/不成环/不超深）。
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     pub jump_host_id: Option<HostId>,
     /// tmux 联动：启动命令（连接后自动执行一次）。None=清除既有设置；
     /// 空串归一为 None（vault 写入侧同一口径）。
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     pub startup_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum AuthDraft {
     /// 编辑主机时保持现有凭据（UI 不持明文，不能回传重发）；新建主机回落为无凭据占位
     /// （仅本机 PTY 的 local 主机使用，SSH 建连前必须改绑凭据）。

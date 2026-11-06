@@ -6,14 +6,14 @@
 
 TinySSH：人机协同终端（Tauri v2 桌面应用）——SSH 客户端 + 一等公民本地终端 + 内置 AI Agent（内核为姊妹项目 [TinyAgent](https://github.com/chenpu17/TinyAgent)，git 依赖）。Windows 是第一平台。工作语言：中文（提交信息、文档、注释均中文）。
 
-结构：`src-tauri/`（tauri 壳与命令层）· `crates/core-session`（SessionManager：会话/审批/记录/监控/探针）· `crates/session-api`（SessionApi 契约 + wire 类型）· `crates/transport-ssh|transport-pty` · `crates/term-core`（终端语义）· `crates/approval`（危险形态规则与审批链）· `crates/audit|records|vault` · `crates/mcp-server|shim` · `crates/agent-host`（内嵌 agent 八工具）· `crates/cli`（`tinyssh serve`/`agent`）· `ui/`（React + xterm.js，含 demo 域镜像后端行为）。
+结构：`src-tauri/`（tauri 壳与命令层；`src/commands/*` 按域拆分，`updater`/`diagnostics`/`metrics` 独立）· `crates/core-session`（SessionManager：会话/审批/记录/监控/探针；`transfer_registry`/`ssh_config`/`shell_probe` 已独立成模块）· `crates/session-api`（SessionApi 契约 + wire 类型）· `crates/transport-ssh|transport-pty` · `crates/term-core`（终端语义）· `crates/approval`（危险形态规则与审批链）· `crates/audit|records|vault` · `crates/mcp-server|shim` · `crates/agent-host`（内嵌 agent 八工具）· `crates/cli`（`tinyssh serve`/`agent`）· `ui/`（React + xterm.js，含 demo 域镜像后端行为）。
 
 ## 常用命令
 
 ```bash
 # 前端 demo（纯浏览器，无需 Rust）
 cd ui && npm ci && npm run dev        # http://localhost:5183
-npm test                              # UI 套件 47 spec / 769 断言（headless）
+npm test                              # UI 套件 62 spec / 1193 断言（headless）
 npm run build                         # tsc + vite build
 
 # 桌面 / Rust
@@ -35,9 +35,12 @@ UI 测试环境：`TINYSSH_UI_CHROME` 指向 Edge/Chrome（如 `C:/Program Files
 - **机密纪律**：测试凭据只经 `TINYSSH_LIVE_*` 环境变量传入，绝不写进仓库任何文件（含文档、fixture、探针脚本）。
 - **审批链契约**（L1 为准）：Agent 与人类同一条危险形态引擎（粘贴保护 = Agent 审批同一张表）；传输必审；自主模式内存态、重启失效；终端回放/记录归因不撒谎（键序直写 PTY 不记命令块）。
 - **终端真源**：终端状态以 term-core 为唯一真源，前端不自行推导。
-- **demo 域保真**：`ui/src/demo.ts` 是后端行为的镜像（含 `new_session` 幂等合并等语义）；改后端行为必须同步 demo，否则 47 个 spec 全在错误世界上跑。
+- **demo 域保真**：`ui/src/demo.ts` 是后端行为的镜像（含 `new_session` 幂等合并等语义）；改后端行为必须同步 demo，否则 62 个 spec 全在错误世界上跑。
+- **模块边界**：`src-tauri/src/main.rs` 只留装配、启动与窗口事件；新 Tauri command 按域放进 `src-tauri/src/commands/`，并在 `commands/mod.rs` 声明/重导出。`core-session/lib.rs` 新增纯逻辑优先落独立子模块。
+- 用户反馈与待排期问题记录在 [docs/known-issues.md](docs/known-issues.md)；修完补「验证方式」再关闭。
 - **本机条目**：`local` 主机不可编辑/删除（`LocalHostImmutable`），唯一生成/复活途径是 `ensure_local_host`。
-- 改 UI 后先 `npm run build` 再打 release；版本号三源同升（根/tauri.conf/ui package.json，build.rs 注入编译时间）。
+- 改 UI 后先 `npm run build` 再打 release；版本号三源同升（根/tauri.conf/ui package.json，build.rs 注入编译时间），`cargo test -p session-api --tests` 的 `version_consistency` 会拦漏改。
+- 新增/改名 Tauri command 必须同步 `ui/src/adapter/bridge.ts` 的 `CmdArgs`/`CmdRet`；`cargo test -p session-api --tests` 的 `command_parity` 会拦单边改动。真正的单一真源仍待 ts-rs/specta 代码生成，方案见 [contract-codegen](docs/architecture/contract-codegen.md)。
 - 提交信息风格：一句话中文摘要（可带冒号分类前缀），密度向既有 git log 看齐。
 
 ## TinyAgent 依赖

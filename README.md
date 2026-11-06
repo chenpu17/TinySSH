@@ -25,7 +25,7 @@ Positioning snapshot at v0.11.2 (November 2026) — categories, not product revi
 | License | Apache-2.0, open source | usually proprietary | usually proprietary |
 | Scope | SSH + local terminal + files + monitoring in one app | SSH-centric | local-first shell |
 | An agent that really operates your servers | yes — behind approvals, audit, explicit control hand-off | no | common, rarely with per-action approvals and audit |
-| Extensibility | built-in MCP server (23 tools) — plug in any agent | plugin systems | limited |
+| Extensibility | built-in MCP server (24 tools) — plug in any agent | plugin systems | limited |
 | Delivery | single portable binary, credentials in an encrypted vault | installer | varies |
 
 ## Highlights
@@ -42,9 +42,9 @@ Positioning snapshot at v0.11.2 (November 2026) — categories, not product revi
 - **Fleet orchestration** — a third view dispatches self-contained tasks to per-session agents in parallel and collects results; the dispatcher never touches machines itself, and each target keeps its own approvals and dangerous-command gates.
 - **Monitoring** — a per-session resource bar plus a full-screen multi-server dashboard (CPU/mem gauges, disk/net history; Ascend NPU per-chip health/power/temp/utilization/HBM). Sampling is opt-in, per-category, and survives closing the dashboard. The local machine is monitored through native APIs (kernel32/iphlpapi on Windows, /proc on unix) on the same parse path as remote hosts.
 - **SFTP + transfer queue** — upload/download drawer with cancel, retry, re-verify for unknown outcomes, reveal-in-explorer and open-with-default-app on completion.
-- **Built-in MCP server** — enable it and any MCP-capable agent gets 23 tools (sessions, exec, transfers, forwards, records), subscribable live resources, and guided prompts on `127.0.0.1` (default 8722). Token onboarding via `tinyssh agent create`, HTTP or stdio shim.
-- **Single portable exe** on Windows — statically linked CRT, SQLite at rest in an encrypted vault (hosts, credentials, API keys, settings).
-- **In-app updates** — a silent GitHub-release check at startup with a toast + Settings → About row when a new version ships. macOS (`.app`/`.dmg`) additionally gets one-click auto-update (signed manifest, download → verify → install → relaunch); the Windows portable exe and Linux tar.gz honestly stay check-and-download (the updater plugin only covers installed app formats there, and there is no AppImage artifact). Release signing is opt-in: maintainers set `TAURI_UPDATER_PUBKEY` / `TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]` secrets and the release workflow attaches `latest.json`; without them builds stay green and the auto-update button simply doesn't appear.
+- **Built-in MCP server** — enable it and any MCP-capable agent gets 24 tools (sessions, exec, transfers, forwards, records), subscribable live resources, and guided prompts on `127.0.0.1` (default 8722). Token onboarding via `tinyssh agent create`, HTTP or stdio shim.
+- **Single portable exe** on Windows — statically linked CRT, local SQLite metadata with credentials, API keys, records and restore snapshots encrypted in the vault (hostnames/audit rows use OS file permissions as their boundary; see the threat model).
+- **In-app updates** — a silent GitHub-release check at startup with a toast + Settings → About row when a new version ships. macOS (`.app`/`.dmg`) and the Windows portable exe get one-click auto-update (signed manifest, download → verify → install/self-replace → relaunch); the Linux tar.gz honestly stays check-and-download (the updater plugin only covers installed app formats there, and there is no AppImage artifact). Release signing is opt-in: maintainers set `TAURI_UPDATER_PUBKEY` / `TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]` secrets and the release workflow attaches `latest.json`; without them builds stay green and the auto-update button simply doesn't appear.
 
 ## Screenshots
 
@@ -96,13 +96,13 @@ First launch may also raise a **Keychain** prompt — the credential vault keeps
 
 ## Getting started
 
-Prerequisites: Rust ≥ 1.86, Node ≥ 20.
+Prerequisites: Rust ≥ 1.86, Node ≥ 22 (CI uses Node 24).
 
 ```bash
 # Frontend demo mode — runs in a plain browser, no Rust needed
 cd ui && npm ci && npm run dev      # http://localhost:5183
 
-# UI test suite (58 specs / 1164 checks; needs a Chrome/Edge binary)
+# UI test suite (62 specs / 1193 checks; needs a Chrome/Edge binary)
 TINYSSH_UI_CHROME="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" npm test
 
 # Desktop app (Tauri v2; dev shell expects the ui dev server above)
@@ -130,7 +130,7 @@ Windows notes: high-parallel `cargo test --workspace` can exhaust the page file 
 | `crates/approval` | Dangerous-pattern rules and the approval chain |
 | `crates/audit` / `crates/records` | SQLite audit; structured execution records (XChaCha20-P1305, redaction) |
 | `crates/vault` | Encrypted store: hosts, credentials, keys, KV |
-| `crates/mcp-server` / `crates/shim` | rmcp endpoint (23 tools, resources, prompts); stdio→HTTP shim |
+| `crates/mcp-server` / `crates/shim` | rmcp endpoint (24 tools, resources, prompts); stdio→HTTP shim |
 | `crates/agent-host` | Embedded agent: TinyAgent kernel + the 8 session tools (+ optional `load_skill`); prompt/skill assets in `assets/` |
 | `crates/cli` (`tinyssh`) | Headless `serve` + `agent` onboarding |
 | `crates/testbed` | e2e harness against a docker sshd |
@@ -143,7 +143,7 @@ Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-u
 
 ## Status
 
-v0.11.2. All suites green on the primary platform: Rust workspace tests, 58 UI specs / 1164 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.11.2. All suites green on the primary platform: Rust workspace tests, 62 UI specs / 1193 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
 ## Sister project
 

@@ -95,6 +95,13 @@ impl SessionLogFile {
     }
 }
 
+/// 重确认退出条件：人类执行任意成功命令即证明现场活着（`ls`/`cd` 等普通操作
+/// 不应让标签永远停在「待核实」）；Agent 仍只认只读白名单，避免借重确认窗口
+/// 执行副作用命令。
+pub(crate) fn reconfirm_done(actor: &Actor, cmd: &str) -> bool {
+    actor.is_human() || is_whitelisted(cmd)
+}
+
 pub fn is_whitelisted(cmd: &str) -> bool {
     let t = cmd.trim();
     // 仅限单条简单命令：复合（; && || | &）、替换（$(` )、重定向（><）、换行
@@ -102,7 +109,13 @@ pub fn is_whitelisted(cmd: &str) -> bool {
     // \r 同样是命令分隔（PTY 行规程把每个 CR 当 Enter；`pwd\rrm -rf /` 会拆成
     // 两条先后执行、第二条完全不经审批——审计 S2/R3）；\0 顺手封死。
     const UNSAFE_CHARS: &[char] = &[';', '&', '|', '`', '\n', '\r', '\0', '>', '<'];
-    if t.contains(UNSAFE_CHARS) || t.contains("$(") {
+    // 控制字符（DEL/BS/ESC 等）能让终端行编辑把「白名单前缀」改写成任意命令：
+    // `pwd\x7f\x7f\x7fRemove-Item ...` 在 PTY/PSReadLine 里最终不是 pwd。
+    if t.is_empty()
+        || t.chars().any(char::is_control)
+        || t.contains(UNSAFE_CHARS)
+        || t.contains("$(")
+    {
         return false;
     }
     RECONFIRM_WHITELIST
@@ -1305,18 +1318,10 @@ impl SessionHandle {
             }
         };
 
-        // 6) 重确认推进：白名单核实完成 → 退出 Reconfirming（核心自动判定）
-        if let Ok(r) = &result {
-            let state = *self.state.lock().await;
-            if state == SessionState::Reconfirming && is_whitelisted(&effective_cmd) {
-                let hits = self.verification_hits.fetch_add(1, Ordering::SeqCst) + 1;
-                if hits >= 1 {
-                    *self.state.lock().await = SessionState::Connected;
-                    self.note_transition("重确认完成：核实事实恢复 Confirmed")
-                        .await;
-                }
-            }
-            let _ = r;
+        // 6) 重确认推进：人类任意成功命令 / Agent 只读白名单 → 退出 Reconfirming。
+        // 必须 emit State：否则 UI 只能等 3s 轮询，标签红点会滞后甚至看起来不消失。
+        if result.is_ok() && reconfirm_done(actor, &effective_cmd) {
+            self.complete_reconfirm().await;
         }
 
         // 7) 审计
@@ -1834,6 +1839,36 @@ impl SessionHandle {
             max_attempts,
             detail,
         });
+    }
+
+    /// 终端里的「提交命令」键：Enter（CR/LF）或粘贴文本中的换行。
+    /// 方向键、鼠标报告、单个可打印字符都只说明连接活着，不算命令已提交。
+    pub(crate) fn is_command_submit(keys: &str) -> bool {
+        keys.contains(['\r', '\n'])
+    }
+
+    /// tmux 墙视图把 Enter 作为键名传给 `send-keys`，不经过原始字节路径。
+    /// C-j 在 readline 里同样是 accept-line，一并算提交。
+    pub(crate) fn is_tmux_submit(keys: &[String]) -> bool {
+        keys.iter()
+            .any(|k| matches!(k.as_str(), "Enter" | "C-m" | "C-j" | "KPEnter"))
+    }
+
+    /// 退出 Reconfirming 的唯一收口：人类已在新连接上提交命令（exec 成功或终端
+    /// 回车）即证明现场可用。状态、计数、留痕、事件一起推进；重复调用幂等。
+    pub(crate) async fn complete_reconfirm(&self) {
+        {
+            let mut st = self.state.lock().await;
+            if *st != SessionState::Reconfirming {
+                return;
+            }
+            *st = SessionState::Connected;
+        }
+        self.verification_hits.fetch_add(1, Ordering::SeqCst);
+        self.note_transition("重确认完成：核实事实恢复 Confirmed")
+            .await;
+        self.emit_state(SessionState::Connected, None, None, None)
+            .await;
     }
 
     /// 重连成功后的现场重置：残留 open block 强制收尾（旧 shell 已死，永不闭合——
@@ -2544,6 +2579,36 @@ mod tests {
         assert!(!is_whitelisted("which `touch /tmp/x`"));
         assert!(!is_whitelisted("pwd > /tmp/overwrite"));
         assert!(!is_whitelisted("pwd & rm -rf /tmp/x"));
+        // DEL/BS 能让行编辑把白名单前缀改写成任意命令（审计安全轮）
+        assert!(!is_whitelisted(
+            "pwd\x7f\x7f\x7f\x7fRemove-Item -Recurse -Force C:\\Windows"
+        ));
+        assert!(!is_whitelisted("ps\taux"));
+    }
+
+    #[test]
+    fn command_submit_only_on_enter_or_newline() {
+        assert!(SessionHandle::is_command_submit("\r"));
+        assert!(SessionHandle::is_command_submit("ls\n"));
+        assert!(!SessionHandle::is_command_submit("ls"));
+        assert!(!SessionHandle::is_command_submit("\x1b[<35;10;20M"));
+        assert!(SessionHandle::is_tmux_submit(&["Enter".into()]));
+        assert!(SessionHandle::is_tmux_submit(&["C-m".into()]));
+        assert!(SessionHandle::is_tmux_submit(&["C-j".into()]));
+        assert!(!SessionHandle::is_tmux_submit(&["C-c".into()]));
+    }
+
+    #[test]
+    fn human_any_command_finishes_reconfirm_but_agent_stays_whitelisted() {
+        let human = Actor::Human;
+        let agent = Actor::Agent {
+            client_id: "agent-a".into(),
+        };
+        assert!(reconfirm_done(&human, "ls -la"));
+        assert!(reconfirm_done(&human, "cd /tmp"));
+        assert!(reconfirm_done(&agent, "pwd"));
+        assert!(!reconfirm_done(&agent, "ls"));
+        assert!(!reconfirm_done(&agent, "rm -rf /tmp/x"));
     }
 
     #[test]

@@ -78,7 +78,7 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
       address: addr, port: p, username: user,
       auth_type: authMode === "password" ? "Password" : authMode === "agent" ? "Agent" : "Key",
       identity_id: authMode === "key" ? pickedIdentity : null,
-      tags: [], fingerprint: null, charset, jump_host_id: null,
+      tags: [], fingerprint: null, charset, shell_integration: null, jump_host_id: null,
       // 快速连接是一次性临时目标：不给启动命令字段（持久配置才是它的场景）
       startup_command: null,
     };

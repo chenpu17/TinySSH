@@ -222,8 +222,8 @@ export const stateLabel = (s: string): { text: string; cls: string } => {
     case "Connected": return { text: t("已连接"), cls: "ok" };
     case "Degraded": return { text: t("连接中断"), cls: "err" };
     case "Reconnecting": return { text: t("重连中…"), cls: "err" };
-    // §6.4：重确认期人类可继续操作（受限的是 Agent 变更）——标签不再写「受限」误导人
-    case "Reconfirming": return { text: t("重确认"), cls: "err" };
+    // §6.4：重确认期连接已恢复、旧现场待核实——用琥珀色区分「掉线/重连失败」的红点。
+    case "Reconfirming": return { text: t("已重连 · 待核实"), cls: "warn" };
     default: return { text: t("已断开"), cls: "dim" };
   }
 };

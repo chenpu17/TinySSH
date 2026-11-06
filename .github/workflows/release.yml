@@ -21,8 +21,32 @@ permissions:
 # 排队卡在等不到 runner 的旧 run 后面（实测翻车）。
 
 jobs:
+  # tag 不触发 ci.yml（CI 只监听 main/PR），所以发布必须自带测试门：
+  # 编译绿 ≠ 可发布，尤其 core/审批/传输这类跨 crate 改动。这里跑与
+  # tier1 同构的 fmt + 单元测试 + 前端构建；完整 UI specs 仍由 PR 档覆盖。
+  verify:
+    name: verify · fmt + unit tests + ui build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
+      - run: cargo fmt --all --check
+      - run: cargo test --workspace --exclude tinyssh-app --lib --bins -- --test-threads=1
+        timeout-minutes: 40
+      - run: cargo test -p session-api --tests -- --test-threads=1
+      - run: cargo test -p session-api --features ts --test wire_codegen -- --test-threads=1
+      - run: npm ci && npm run build
+        working-directory: ui
+
   build:
     name: ${{ matrix.label }}
+    needs: verify
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -50,7 +74,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm, cache-dependency-path: ui/package-lock.json }
+        with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Linux webkit2gtk 依赖（tauri v2 = 4.1）
@@ -105,6 +129,48 @@ jobs:
           mkdir -p dist
           cp target/release/tinyssh-app.exe "dist/TinySSH_${VER}_windows_x64_portable.exe"
           cp target/release/tinyssh.exe "dist/tinyssh-cli_${VER}_windows_x64.exe"
+
+      # Windows 是主平台：mac 早有启动冒烟，Windows 一直没有。历史上有过
+      # “编译绿、产物启动即崩”（v0.10.1/0.10.2），静态哨兵抓不到运行期 panic。
+      - name: 启动冒烟（windows · 便携 exe 真启动）
+        if: matrix.id == 'windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path "dist" -Filter "TinySSH_${env:VER}_windows_x64_portable.exe" |
+            Select-Object -First 1
+          if (-not $exe) { Write-Host "::error::找不到便携 exe"; exit 1 }
+          $db = Join-Path $env:RUNNER_TEMP "tinyssh-smoke.db"
+          $out = Join-Path $env:RUNNER_TEMP "tinyssh-smoke.out.log"
+          $err = Join-Path $env:RUNNER_TEMP "tinyssh-smoke.err.log"
+          Remove-Item $db,$out,$err -ErrorAction SilentlyContinue
+          $env:TINYSSH_DB = $db
+          $env:TINYSSH_MASTER_KEY = ("ab" * 32)
+          $p = Start-Process -FilePath $exe.FullName -PassThru `
+            -RedirectStandardOutput $out -RedirectStandardError $err
+          Start-Sleep -Seconds 15
+          $alive = -not $p.HasExited
+          $logText = ""
+          foreach ($f in @($out, $err)) {
+            if (Test-Path $f) { $logText += (Get-Content $f -Raw) + "`n" }
+          }
+          if (-not $alive) {
+            Write-Host "::error::Windows 启动冒烟失败：进程提前退出（应存活 ≥15s）"
+            Write-Host $logText
+            exit 1
+          }
+          if ($logText -match "panicked") {
+            Write-Host "::error::Windows 启动冒烟失败：日志出现 panic"
+            Write-Host $logText
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            exit 1
+          }
+          if (-not (Test-Path $db)) {
+            Write-Host "::error::Windows 启动冒烟失败：未创建 smoke.db（未走到 vault 打开）"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Write-Host "Windows 启动冒烟 PASS（15s 存活，vault 已打开）"
 
       - name: 打包（linux · deb + tar.gz）
         if: matrix.id == 'linux'

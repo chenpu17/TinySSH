@@ -2,6 +2,8 @@
 
 > 版本：v0.7 · 日期：2026-10-06 · 上游：[PRD](../prd.md) · [L0 总体设计](l0-system-design.md) · [UX-R1](../ux/ssh-client-ux-refactor.md)
 > 本文回答：每个模块的职责、对外接口、关键流程时序、数据模型与安全机制。接口签名是**设计约定**，实现期允许在不改变语义的前提下微调；标注 `v1` 的接口为 V0 末冻结范围，其余为草稿、随阶段经 ADR 增量冻结。
+>
+> **实现状态（2026-11-06，v0.11.2）**：C1–C14 与 ADR-10–14 已落地；本文 §9 的 testcontainers/tauri-driver/criterion 是早期目标工具链，当前实际为 docker sshd + Playwright 自定义 harness + Rust 内置测试。实际接口与行为以 `crates/*`、[README](../../README.zh-CN.md) 和验收账本为准。
 
 ---
 
@@ -37,8 +39,19 @@ TinySSH/
 │   ├── mcp-server/       # MCP 工具实现（HTTP 端点）
 │   └── shim/             # tinyssh-mcp stdio 转发二进制（直连 HTTP 端点）
 ├── src-tauri/            # 应用壳：装配各 crate、Tauri commands、Channel 桥
+│   └── src/
+│       ├── main.rs       # 装配/启动/窗口事件/少量壳层命令
+│       ├── commands/     # 按域拆分的 Tauri command（hosts/sessions/tmux/...）
+│       ├── agent_bridge.rs # 内嵌 Agent ↔ SessionManager 桥
+│       ├── wire.rs       # CmdResult/WireError/ApiState 等命令层公共类型
+│       ├── smoke_scripts.rs # 启动 smoke 脚本
+│       ├── updater.rs    # 更新检查、验签、便携自替换
+│       ├── diagnostics.rs# 诊断包导出
+│       └── metrics.rs    # 主机/NPU/自身开销采样
 └── ui/                   # React + TypeScript + xterm.js
 ```
+
+`core-session` 内部同样按域拆出 `transfer_registry`（传输注册表/输出订阅恢复）、`ssh_config`（~/.ssh/config 导入）、`shell_probe`（远端 shell 判型与集成片段）；`lib.rs` 保留 `SessionManager` 定义与跨域编排。
 
 **依赖规则**（违反即架构腐化，评审必查）：
 

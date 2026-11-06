@@ -71,6 +71,10 @@ run "cargo fmt --all --check" cargo fmt --all --check
 # clippy 报告不设门：43 条历史余量已登记（九轮台账），新代码以 review 把关
 run "cargo clippy（报告）" cargo clippy --workspace -j 4 --quiet
 run "cargo 单元测试（lib+bins）" cargo test --workspace -j 4 --lib --bins
+# filesystem 集成哨兵（命令面/版本号）不在 --lib --bins；单跑很快。
+run "命令面/版本号哨兵" cargo test -p session-api -j 4 --tests
+# ts-rs PoC：Rust 类型改了但生成物没重跑时拦住（只在显式 feature 下编译 ts-rs）。
+run "契约生成物新鲜度" cargo test -p session-api --features ts --test wire_codegen
 (cd ui && run "tsc 类型检查" npx tsc --noEmit)
 
 if [ "$TIER" = "1" ]; then

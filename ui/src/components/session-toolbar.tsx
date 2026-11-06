@@ -9,9 +9,8 @@ import type { SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
 import { t } from "../i18n";
 import type { SplitPanes } from "../app-data";
-import {
-  IconChevronDown, IconPlus, IconSearch, IconSplit, IconTerminal,
-} from "../icons";
+import { IconChevronDown, IconSearch, IconSplit } from "../icons";
+import { TmuxQuick } from "./tmux-quick";
 
 export interface SessionToolbarProps {
   current: SessionInfo;
@@ -79,6 +78,8 @@ export interface SessionToolbarProps {
   paneCapReached: boolean;
   /** 分屏中：「＋面板」禁用（面板与分屏互斥，先退出分屏） */
   splitActive: boolean;
+  /** 专注模式里工具栏整条隐藏，快接钮移到标签条渲染——此时这里不再重复挂载 */
+  renderTmuxQuick?: boolean;
 }
 
 export function SessionToolbar({
@@ -93,15 +94,10 @@ export function SessionToolbar({
   tmuxCreateOpen, tmuxCreateName, tmuxCreateErr, tmuxCreateBusy,
   tmuxCreateTarget, onTmuxCreateTarget,
   onTmuxCreateOpen, onTmuxCreateCancel, onTmuxCreateName, onTmuxCreateSubmit,
-  paneNames, paneCapReached, splitActive,
+  paneNames, paneCapReached, splitActive, renderTmuxQuick = true,
 }: SessionToolbarProps) {
   // 工具菜单开合的收口（原内联 setToolsOpen(false) 同款）
   const closeTools = () => setToolsOpen(false);
-  // 作曲行「开进面板」的禁用原因：与「＋面板」同一套口径（分屏互斥/格数到顶），
-  // 写进 title 不让人猜；禁用只是前端预判，真值仍由核心防呆兜底
-  const createPanelWhy = splitActive ? t("分屏模式下不可并入面板——请先退出分屏")
-    : paneCapReached ? t("面板最多 {0} 个窗格", "5")
-    : null;
   return (
     <div className="session-toolbar">
       <div className="st-ident">
@@ -148,148 +144,22 @@ export function SessionToolbar({
       {/* tmux 快接钮（恢复现场轮加映）：主动接入的唯一常驻入口——断线横幅只在
           最疼时刻出现，⌘K 要会背；这里给鼠标流一枚看得见的钮。仅 SSH 且探测到
           tmux 才渲染（无 tmux 的主机一个像素都不多）；点开重探清单防陈旧。
-          tmux 是一级特性（用户原话「重要的功能，不够显眼」）：accent 描边让它在
-          一排 ghost 里站出来，接入后标签变 tmux:名，状态一眼可读。 */}
-      {sid && current.kind === "ssh" && current.tmux?.available && (
-        <div className="st-tools" ref={tmuxMenuRef} data-testid="tmux-quick">
-          <button
-            className={"ghost tmux-quick-btn" + (tmuxMenu ? " ts-open" : "")}
-            aria-haspopup="menu"
-            aria-expanded={tmuxMenu}
-            title={current.tmux_attached
-              ? t("tmux：已接入 {0}——点开可切换到其他会话", current.tmux_attached)
-              : t("接入 tmux 会话：列出远端在跑的 tmux 会话，点选即恢复现场")}
-            onClick={() => {
-              const next = !tmuxMenu;
-              setTmuxMenu(next);
-              if (next) onRefreshTmux();
-            }}
-          ><IconTerminal size={14} />{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}<IconChevronDown size={12} /></button>
-          {tmuxMenu && (
-            <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu">
-              {/* 会话大屏（监控墙）：全部会话快照网格（单击放大可直接键入）。挂在
-                  清单上方——它是「看全部」的一级动作，与逐个接入的清单项并存 */}
-              {(current.tmux?.sessions ?? []).length > 0 && (
-                <button
-                  role="menuitem"
-                  className="tmux-wall-entry"
-                  data-testid="tmux-wall-open"
-                  title={t("会话大屏：全部 tmux 会话的快照墙——单击小窗直接键入（服务端 send-keys）；深度操作「进格子」")}
-                  onClick={() => onOpenWall()}
-                >{t("会话大屏…")}</button>
-              )}
-
-              {/* 新建 tmux 会话：远端 new-session -d，不必先去终端手敲。作曲行
-                  内嵌菜单（Enter 提交 / Esc 取消），错误就地 role=alert 展示；
-                  成功后 App 侧刷新清单并按目标接入主视图或直接开进面板。 */}
-              {tmuxCreateOpen ? (
-                <>
-                  <div className="tmux-create-row" data-testid="tmux-create-row">
-                    <input
-                      className="tmux-create-input"
-                      data-testid="tmux-create-input"
-                      autoFocus
-                      value={tmuxCreateName}
-                      maxLength={64}
-                      placeholder={t("会话名（字母/数字/下划线开头）")}
-                      aria-label={t("新建 tmux 会话")}
-                      aria-invalid={!!tmuxCreateErr}
-                      onKeyDown={(e) => {
-                        // IME 组合期 Enter 是确认候选词，不提交（标签重命名/⌘K 同口径）
-                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                        if (e.key === "Enter") { e.preventDefault(); onTmuxCreateSubmit(); }
-                        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onTmuxCreateCancel(); }
-                      }}
-                      onChange={(e) => onTmuxCreateName(e.target.value)}
-                    />
-                    <button
-                      className="tmux-create-ok"
-                      data-testid="tmux-create-ok"
-                      disabled={tmuxCreateBusy || !tmuxCreateName.trim()}
-                      title={tmuxCreateTarget === "panel" ? t("创建并开进面板") : t("创建并接入")}
-                      onClick={onTmuxCreateSubmit}
-                    >{t("创建")}</button>
-                    <button
-                      className="ghost"
-                      data-testid="tmux-create-cancel"
-                      title={t("取消")}
-                      onClick={onTmuxCreateCancel}
-                    >{t("取消")}</button>
-                  </div>
-                  {/* 目标单选（建好落在哪）：默认主视图=旧行为。鼠标点选不夺输入框
-                      焦点（mousedown 拦默认），选完仍可直接 Enter 提交 */}
-                  <div
-                    className="tmux-create-target"
-                    role="radiogroup"
-                    aria-label={t("创建后显示在")}
-                    data-testid="tmux-create-target"
-                  >
-                    <button
-                      role="radio"
-                      aria-checked={tmuxCreateTarget === "main"}
-                      data-testid="tmux-create-target-main"
-                      className={tmuxCreateTarget === "main" ? "on" : undefined}
-                      title={t("创建后接入主视图（当前行为）")}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => onTmuxCreateTarget("main")}
-                    >{t("接入主视图")}</button>
-                    <button
-                      role="radio"
-                      aria-checked={tmuxCreateTarget === "panel"}
-                      data-testid="tmux-create-target-panel"
-                      className={tmuxCreateTarget === "panel" ? "on" : undefined}
-                      disabled={!!createPanelWhy}
-                      title={createPanelWhy ?? t("创建后直接开进本标签的面板窗格（不占用主视图）")}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => onTmuxCreateTarget("panel")}
-                    >{t("开进面板")}</button>
-                  </div>
-                  {tmuxCreateErr && (
-                    <div className="tmux-create-err" role="alert" data-testid="tmux-create-err">{tmuxCreateErr}</div>
-                  )}
-                </>
-              ) : (
-                <button
-                  role="menuitem"
-                  className="tmux-wall-entry"
-                  data-testid="tmux-create-open"
-                  title={t("新建 tmux 会话：在远端直接 tmux new-session（分离创建，不抢任何屏幕），建好可接入主视图或直接开进面板")}
-                  onClick={onTmuxCreateOpen}
-                ><IconPlus size={14} />{t("新建 tmux 会话…")}</button>
-              )}
-
-              {(current.tmux?.sessions ?? []).map((ms) => {
-                const isMain = current.tmux_attached === ms.name;
-                const inPane = paneNames.includes(ms.name);
-                // 「＋面板」：同一会话不做两路视图（主视图在看/已在格子里），分屏与
-                // 面板互斥，格数到顶禁用——禁用原因写进 title，不让人猜
-                const addWhy = isMain ? t("该会话正显示在主视图")
-                  : inPane ? t("该会话已在面板中")
-                  : splitActive ? t("分屏模式下不可并入面板——请先退出分屏")
-                  : paneCapReached ? t("面板最多 {0} 个窗格", "5")
-                  : null;
-                return (
-                  <div className="tmux-quick-row" key={ms.name}>
-                    <button
-                      role="menuitem"
-                      data-testid={"tmux-quick-item-" + ms.name}
-                      title={inPane ? t("从面板收格并切到主视图（只断开面板视图，tmux 会话继续运行）") : undefined}
-                      onClick={() => (inPane ? onPromotePaneToMain(ms.name) : onPickTmux(ms.name))}
-                    >{t("{0}（{1} 窗口）", ms.name, String(ms.windows))}{isMain ? ` · ${t("当前")}` : inPane ? ` · ${t("面板中")}` : ""}</button>
-                    <button
-                      role="menuitem"
-                      className="tmux-pane-add"
-                      data-testid={"tmux-pane-add-" + ms.name}
-                      disabled={!!addWhy}
-                      title={addWhy ?? t("并入面板：在本标签里与主视图并排显示该会话（独立通道，主视图不受影响）")}
-                      onClick={() => onAddTmuxPane(ms.name)}
-                    >{t("＋面板")}</button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+          专注模式下会话工具栏整条隐藏，快接钮移到标签条由 App 直接挂载，
+          这里用 renderTmuxQuick=false 避免同一状态渲染两份菜单。 */}
+      {renderTmuxQuick && (
+        <TmuxQuick
+          current={current} sid={sid}
+          tmuxMenu={tmuxMenu} setTmuxMenu={setTmuxMenu} tmuxMenuRef={tmuxMenuRef}
+          onRefreshTmux={onRefreshTmux} onPickTmux={onPickTmux}
+          onPromotePaneToMain={onPromotePaneToMain} onAddTmuxPane={onAddTmuxPane}
+          onOpenWall={onOpenWall}
+          tmuxCreateOpen={tmuxCreateOpen} tmuxCreateName={tmuxCreateName}
+          tmuxCreateErr={tmuxCreateErr} tmuxCreateBusy={tmuxCreateBusy}
+          tmuxCreateTarget={tmuxCreateTarget} onTmuxCreateTarget={onTmuxCreateTarget}
+          onTmuxCreateOpen={onTmuxCreateOpen} onTmuxCreateCancel={onTmuxCreateCancel}
+          onTmuxCreateName={onTmuxCreateName} onTmuxCreateSubmit={onTmuxCreateSubmit}
+          paneNames={paneNames} paneCapReached={paneCapReached} splitActive={splitActive}
+        />
       )}
       {/* 协作/文件按钮下线（用户反馈：入口重复——右缘 rb-rail 的 rb-collab/rb-files
           是常驻入口、⌘K 也有委托项；工具栏只留 tmux/搜索/分屏/工具）。 */}
