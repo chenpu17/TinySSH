@@ -33,7 +33,9 @@ jobs:
           - { label: "linux · deb + tar.gz", os: ubuntu-24.04, id: linux }
           # mac 单跑双架构：arm64 原生 + x86_64 交叉编译（macOS 原生支持）。
           # 曾用 macos-13 独立跑 Intel——共享池紧俏排队 75min+ 不出队，弃。
-          - { label: "macos · app + dmg（arm64 + x64）", os: macos-14, id: macos }
+          # v0.11.1：macos-14 退役（brownout 窗口直接拒出队：annotation
+          # 「configuration 'macos-14-arm64-us-default' is not supported」）→ 升 macos-15。
+          - { label: "macos · app + dmg（arm64 + x64）", os: macos-15, id: macos }
     defaults:
       run:
         shell: bash
