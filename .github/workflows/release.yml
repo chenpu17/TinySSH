@@ -363,7 +363,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { pattern: "dist-*", merge-multiple: true, path: rel }
       - name: 合并更新清单（updater-frag-* → latest.json；无片段如实跳过）
         run: |
