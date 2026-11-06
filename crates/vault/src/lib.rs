@@ -2039,7 +2039,10 @@ mod tests {
         )
         .unwrap();
         let read_old = v.workspace().unwrap();
-        assert_eq!(read_old.sessions.as_ref().unwrap().last, vec!["h-a".to_string()]);
+        assert_eq!(
+            read_old.sessions.as_ref().unwrap().last,
+            vec!["h-a".to_string()]
+        );
         assert!(read_old.sessions.as_ref().unwrap().panes.is_empty());
 
         // 新 shape（前端写侧：容器无 key）整存整取，读回与写入全等
@@ -2052,7 +2055,14 @@ mod tests {
         assert_eq!(ws, ws_in);
         let combo = ws.sessions.as_ref().unwrap().panes[0].clone();
         assert_eq!(combo.sessions, vec!["work".to_string(), "logs".to_string()]);
-        assert_eq!(combo.layout.as_ref().unwrap().kids.as_ref().unwrap()[1].kids.as_ref().unwrap()[0].key, "work");
+        assert_eq!(
+            combo.layout.as_ref().unwrap().kids.as_ref().unwrap()[1]
+                .kids
+                .as_ref()
+                .unwrap()[0]
+                .key,
+            "work"
+        );
     }
 
     #[test]

@@ -2981,11 +2981,25 @@ mod wire_format_tests {
         let dirty = r#"{"schema_version":1,"chrome":"dark","hostbar":null,"terminal":null,"transfers":null,"sessions":{"last":["h-a"],"panes":[{"host_id":"h-a","sessions":["work"],"attached":null,"layout":{"dir":"row","w":1,"kids":[{"key":":main","w":null},{"key":"work","w":1}]}}]}}"#;
         let ws4: Workspace = serde_json::from_str(dirty).unwrap();
         assert_eq!(
-            ws4.sessions.as_ref().unwrap().panes[0].layout.as_ref().unwrap().kids.as_ref().unwrap()[0].w,
+            ws4.sessions.as_ref().unwrap().panes[0]
+                .layout
+                .as_ref()
+                .unwrap()
+                .kids
+                .as_ref()
+                .unwrap()[0]
+                .w,
             0.0
         );
         assert_eq!(
-            ws4.sessions.as_ref().unwrap().panes[0].layout.as_ref().unwrap().kids.as_ref().unwrap()[1].w,
+            ws4.sessions.as_ref().unwrap().panes[0]
+                .layout
+                .as_ref()
+                .unwrap()
+                .kids
+                .as_ref()
+                .unwrap()[1]
+                .w,
             1.0
         );
     }
