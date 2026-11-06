@@ -215,7 +215,7 @@ const dropHint = (page) =>
   });
 
 module.exports = {
-  title: "tmux 面板：网格几何/开格/分流/Ctrl 改投/防呆/右键关格/掉线换装/后台换装 fit/横幅/远端结束/OSC52/上限/分屏互斥/拖拽布局/Ctrl+B 前缀/焦点格指示/前缀后输入法标点还原/改名跟随",
+  title: "tmux 面板：网格几何/开格/分流/Ctrl 改投/防呆/右键关格/掉线换装/后台换装 fit/横幅/远端结束/OSC52/上限/分屏互斥/拖拽布局/Ctrl+B 前缀/焦点格指示/前缀后输入法标点还原/改名跟随/新建会话目标（主视图·面板）",
   async run({ page, ck }) {
     await page.waitForTimeout(1200);
 
@@ -989,6 +989,88 @@ module.exports = {
         .some((b) => (b.textContent ?? "").includes("fresh9")), null, 4000), "");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
+
+    // ── P. 新建会话的目标（建好落在哪）：默认主视图；「开进面板」把新会话直接开成
+    //    本标签的格子。旧链路建好即 attach 主视图，而「＋面板」对主视图中的会话是
+    //    禁用的（同一会话不做两路视图）——新会话再也进不了面板，这是真断路 ──
+    // 现场清理：收到 ≤2 格（本段要再开 3 格并断言到顶：2+3=5）
+    const trimPanes = async (keepMax) => {
+      for (let i = 0; i < 8; i++) {
+        const n = await page.evaluate(() => document.querySelectorAll(".tmux-cell").length);
+        if (n <= keepMax) return n;
+        const id = await page.evaluate(() => document.querySelector(".tmux-cell")?.dataset.paneId ?? null);
+        if (!id) return n;
+        await page.evaluate(({ sid, id }) => window.__demoInvoke("demo_pane_exit", { sid, paneId: Number(id) }), { sid: SID, id });
+        await page.waitForTimeout(400);
+      }
+      return page.evaluate(() => document.querySelectorAll(".tmux-cell").length);
+    };
+    const cellsBeforeP = await trimPanes(2);
+    await openQuickMenu(page);
+    await page.click('[data-testid="tmux-create-open"]');
+    // 胶囊按 current.panes 判格数（DOM 格子随 eof 立收，React 侧清单等 3s 轮询）
+    await poll(page, () => !document.querySelector('[data-testid="tmux-create-target-panel"]')?.disabled, null, 8000);
+    const tgt0 = await page.evaluate(() => ({
+      hasRow: !!document.querySelector('[data-testid="tmux-create-target"]'),
+      main: document.querySelector('[data-testid="tmux-create-target-main"]')?.getAttribute("aria-checked"),
+      panel: document.querySelector('[data-testid="tmux-create-target-panel"]')?.getAttribute("aria-checked"),
+    }));
+    ck.check("作曲行有目标单选，默认「接入主视图」（旧行为不变）",
+      tgt0.hasRow && tgt0.main === "true" && tgt0.panel === "false", JSON.stringify({ cellsBeforeP, ...tgt0 }));
+    await page.click('[data-testid="tmux-create-target-panel"]');
+    ck.check("选「开进面板」后输入框仍聚焦（Enter 可直接提交）", await poll(page, () =>
+      document.querySelector('[data-testid="tmux-create-target-panel"]')?.getAttribute("aria-checked") === "true"
+      && document.activeElement?.classList.contains("tmux-create-input") === true, null, 2000), "");
+    await page.type('[data-testid="tmux-create-input"]', "fresh10", { delay: 6 });
+    // IME 组合期 Enter 是确认候选词：守卫在，作曲行不该被提前提交
+    await page.evaluate(() => {
+      const i = document.querySelector('[data-testid="tmux-create-input"]');
+      i?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(300);
+    ck.check("IME 组合期 Enter 不提交（作曲行仍在、未建会话）",
+      await page.evaluate(() => !!document.querySelector('[data-testid="tmux-create-row"]')), "");
+    await page.keyboard.press("Enter");
+    ck.check("面板目标创建：toast「已并入面板」", await waitToast(page, "已并入面板"), "");
+    ck.check("面板目标创建：fresh10 直接落成本标签格子",
+      await poll(page, () => !!document.querySelector('.tmux-cell[data-tmux="fresh10"]'), null, 5000), "");
+    ck.check("面板目标创建：主视图不接入（快接钮仍 tmux:fresh9，未被 fresh10 抢走）",
+      await page.evaluate(() => (document.querySelector('[data-testid="tmux-quick"] button')?.textContent ?? "").includes("tmux:fresh9")), "");
+    await openQuickMenu(page);
+    ck.check("清单里 fresh10 标「面板中」", await poll(page, () =>
+      (document.querySelector('[data-testid="tmux-quick-item-fresh10"]')?.textContent ?? "").includes("面板中"), null, 4000), "");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    // 连建两格到顶：每次开菜单 → 开作曲行 → 选「开进面板」→ 输名 → Enter
+    const createIntoPanel = async (name) => {
+      await openQuickMenu(page);
+      await page.click('[data-testid="tmux-create-open"]');
+      await page.click('[data-testid="tmux-create-target-panel"]');
+      await page.type('[data-testid="tmux-create-input"]', name, { delay: 6 });
+      await page.keyboard.press("Enter");
+      return poll(page, (n) => !!document.querySelector(`.tmux-cell[data-tmux="${n}"]`), name, 6000);
+    };
+    const p11 = await createIntoPanel("fresh11");
+    const p12 = await createIntoPanel("fresh12");
+    const cellsAtCap = await page.evaluate(() => document.querySelectorAll(".tmux-cell").length);
+    ck.check("连建两格到顶（5 格）", p11 && p12 && cellsAtCap === 5, JSON.stringify({ p11, p12, cellsAtCap }));
+    await openQuickMenu(page);
+    await page.click('[data-testid="tmux-create-open"]');
+    const capOk = await poll(page, () => {
+      const b = document.querySelector('[data-testid="tmux-create-target-panel"]');
+      return !!b?.disabled && (b.getAttribute("title") ?? "").includes("面板最多");
+    }, null, 8000);
+    const cap = await page.evaluate(() => {
+      const b = document.querySelector('[data-testid="tmux-create-target-panel"]');
+      return { dis: !!b?.disabled, title: b?.getAttribute("title") ?? "" };
+    });
+    ck.check("面板满：「开进面板」禁用，原因写在 title（与「＋面板」同口径）",
+      capOk && cap.dis && cap.title.includes("面板最多"), JSON.stringify(cap));
+    await page.click('[data-testid="tmux-create-cancel"]');
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    // 复原现场（后续段要开 work 格）：收到 ≤3
+    await trimPanes(3);
 
     // ── J1.5 面板中一键切主视图（找茬四轮 D6）：主项可点 = 收格 → 切主视图 ──
     // 此前 inPane 主项 disabled+「先关窗格」，切回主视图要两跳；格是纯视图（detach

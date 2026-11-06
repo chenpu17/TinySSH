@@ -882,6 +882,19 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
 }
 .tools-menu .tmux-create-ok { flex: none; font-size: 12px; padding: 3px 10px; }
 .tools-menu .tmux-create-ok:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 目标单选（建好落在哪：接入主视图 / 开进面板）：两枚等宽胶囊。菜单 min-width
+   236px 里与输入框分两行——挤进同一行会把输入框压到看不见（名字最多 64 字符）。
+   选中态沿用工具栏 .ts-open 的 accent 语汇；禁用（分屏/格满）走全局灰字 */
+.tools-menu .tmux-create-target { display: flex; gap: 4px; margin-top: 4px; }
+.tools-menu .tmux-create-target button {
+  flex: 1; justify-content: center; min-height: 26px; padding: 2px 8px;
+  font-size: 12px; border: 1px solid var(--border); border-radius: 7px;
+  color: var(--dim); background: transparent;
+}
+.tools-menu .tmux-create-target button.on {
+  color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft);
+}
+.tools-menu .tmux-create-target button:disabled { border-color: var(--border); background: transparent; }
 .tools-menu .tmux-create-err {
   margin-top: 4px; font-size: 12px; line-height: 1.5;
   color: var(--danger);

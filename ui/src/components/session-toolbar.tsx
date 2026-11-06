@@ -63,6 +63,11 @@ export interface SessionToolbarProps {
   tmuxCreateName: string;
   tmuxCreateErr: string | null;
   tmuxCreateBusy: boolean;
+  /** 建好落在哪：主视图 attach（默认，旧行为）或直接开进面板窗格。面板目标是
+   * 补断路——建好即接入主视图后，「＋面板」对主视图中的会话是禁用的（同一会话
+   * 不做两路视图），此前无法把新会话直接放进面板 */
+  tmuxCreateTarget: "main" | "panel";
+  onTmuxCreateTarget: (v: "main" | "panel") => void;
   onTmuxCreateOpen: () => void;
   onTmuxCreateCancel: () => void;
   onTmuxCreateName: (v: string) => void;
@@ -86,11 +91,17 @@ export function SessionToolbar({
   tmuxMenu, setTmuxMenu, tmuxMenuRef, onPickTmux, onRefreshTmux,
   onAddTmuxPane, onOpenWall, onPromotePaneToMain,
   tmuxCreateOpen, tmuxCreateName, tmuxCreateErr, tmuxCreateBusy,
+  tmuxCreateTarget, onTmuxCreateTarget,
   onTmuxCreateOpen, onTmuxCreateCancel, onTmuxCreateName, onTmuxCreateSubmit,
   paneNames, paneCapReached, splitActive,
 }: SessionToolbarProps) {
   // 工具菜单开合的收口（原内联 setToolsOpen(false) 同款）
   const closeTools = () => setToolsOpen(false);
+  // 作曲行「开进面板」的禁用原因：与「＋面板」同一套口径（分屏互斥/格数到顶），
+  // 写进 title 不让人猜；禁用只是前端预判，真值仍由核心防呆兜底
+  const createPanelWhy = splitActive ? t("分屏模式下不可并入面板——请先退出分屏")
+    : paneCapReached ? t("面板最多 {0} 个窗格", "5")
+    : null;
   return (
     <div className="session-toolbar">
       <div className="st-ident">
@@ -170,7 +181,7 @@ export function SessionToolbar({
 
               {/* 新建 tmux 会话：远端 new-session -d，不必先去终端手敲。作曲行
                   内嵌菜单（Enter 提交 / Esc 取消），错误就地 role=alert 展示；
-                  成功后 App 侧刷新清单并直接接入（创建即进现场）。 */}
+                  成功后 App 侧刷新清单并按目标接入主视图或直接开进面板。 */}
               {tmuxCreateOpen ? (
                 <>
                   <div className="tmux-create-row" data-testid="tmux-create-row">
@@ -184,6 +195,8 @@ export function SessionToolbar({
                       aria-label={t("新建 tmux 会话")}
                       aria-invalid={!!tmuxCreateErr}
                       onKeyDown={(e) => {
+                        // IME 组合期 Enter 是确认候选词，不提交（标签重命名/⌘K 同口径）
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                         if (e.key === "Enter") { e.preventDefault(); onTmuxCreateSubmit(); }
                         else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onTmuxCreateCancel(); }
                       }}
@@ -193,7 +206,7 @@ export function SessionToolbar({
                       className="tmux-create-ok"
                       data-testid="tmux-create-ok"
                       disabled={tmuxCreateBusy || !tmuxCreateName.trim()}
-                      title={t("创建并接入")}
+                      title={tmuxCreateTarget === "panel" ? t("创建并开进面板") : t("创建并接入")}
                       onClick={onTmuxCreateSubmit}
                     >{t("创建")}</button>
                     <button
@@ -202,6 +215,34 @@ export function SessionToolbar({
                       title={t("取消")}
                       onClick={onTmuxCreateCancel}
                     >{t("取消")}</button>
+                  </div>
+                  {/* 目标单选（建好落在哪）：默认主视图=旧行为。鼠标点选不夺输入框
+                      焦点（mousedown 拦默认），选完仍可直接 Enter 提交 */}
+                  <div
+                    className="tmux-create-target"
+                    role="radiogroup"
+                    aria-label={t("创建后显示在")}
+                    data-testid="tmux-create-target"
+                  >
+                    <button
+                      role="radio"
+                      aria-checked={tmuxCreateTarget === "main"}
+                      data-testid="tmux-create-target-main"
+                      className={tmuxCreateTarget === "main" ? "on" : undefined}
+                      title={t("创建后接入主视图（当前行为）")}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => onTmuxCreateTarget("main")}
+                    >{t("接入主视图")}</button>
+                    <button
+                      role="radio"
+                      aria-checked={tmuxCreateTarget === "panel"}
+                      data-testid="tmux-create-target-panel"
+                      className={tmuxCreateTarget === "panel" ? "on" : undefined}
+                      disabled={!!createPanelWhy}
+                      title={createPanelWhy ?? t("创建后直接开进本标签的面板窗格（不占用主视图）")}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => onTmuxCreateTarget("panel")}
+                    >{t("开进面板")}</button>
                   </div>
                   {tmuxCreateErr && (
                     <div className="tmux-create-err" role="alert" data-testid="tmux-create-err">{tmuxCreateErr}</div>
@@ -212,7 +253,7 @@ export function SessionToolbar({
                   role="menuitem"
                   className="tmux-wall-entry"
                   data-testid="tmux-create-open"
-                  title={t("新建 tmux 会话：在远端直接 tmux new-session（分离创建，不抢任何屏幕），建好即接入")}
+                  title={t("新建 tmux 会话：在远端直接 tmux new-session（分离创建，不抢任何屏幕），建好可接入主视图或直接开进面板")}
                   onClick={onTmuxCreateOpen}
                 ><IconPlus size={14} />{t("新建 tmux 会话…")}</button>
               )}

@@ -6184,33 +6184,54 @@ export default function App() {
     void restoreTmuxScene(s, name);
   };
 
-  // ---- 新建 tmux 会话（快接菜单作曲行）：远端 new-session -d，建好即接入 ----
-  // 名字白名单/同名预检在 core；这里管 UX：成功=关作曲行+刷清单+走 pickTmuxSession
-  // 既有链路接入（attach/switch 二段式同源）；失败=错误就地 role=alert，作曲行
-  // 保持打开可改可重提。
+  // ---- 新建 tmux 会话（快接菜单作曲行）：远端 new-session -d，建好按目标落位 ----
+  // 名字白名单/同名预检在 core；这里管 UX：成功=关作曲行+刷清单+走目标链路
+  // （main=pickTmuxSession 既有 attach/switch 二段式；panel=openTmuxPaneCore 直接
+  // 开格——建好即 attach 主视图的话「＋面板」对主视图会话是禁用的，新会话再也
+  // 进不了面板）；失败=错误就地 role=alert，作曲行保持打开可改可重提。
   const [tmuxCreateOpen, setTmuxCreateOpen] = useState(false);
   const [tmuxCreateName, setTmuxCreateName] = useState("");
   const [tmuxCreateErr, setTmuxCreateErr] = useState<string | null>(null);
   const [tmuxCreateBusy, setTmuxCreateBusy] = useState(false);
+  const [tmuxCreateTarget, setTmuxCreateTarget] = useState<"main" | "panel">("main");
   const submitTmuxCreate = async (s: SessionInfo) => {
     const name = tmuxCreateName.trim();
     if (!name || tmuxCreateBusy) return;
+    // 面板目标先过防呆再建：建出孤儿会话（面板又进不去）比报错更糟。核心侧
+    // 仍会兜底，这里只为「不建了就失败」把原因说在作曲行里
+    if (tmuxCreateTarget === "panel") {
+      if (splitRef.current) { setTmuxCreateErr(t("分屏模式下不可并入面板——请先退出分屏")); return; }
+      if ((s.panes ?? []).length >= PANE_MAX) {
+        setTmuxCreateErr(t("面板已满（最多 {0} 个窗格）——请先关掉一个窗格，或改为接入主视图", "5"));
+        return;
+      }
+    }
     setTmuxCreateBusy(true); setTmuxCreateErr(null);
     try {
       await invoke("tmux_session_create", { sid: s.id, name });
       setTmuxCreateOpen(false); setTmuxCreateName("");
       refreshTmuxList(s);
-      pickTmuxSession(s, name);
-      pushToast("ok", t("已创建并接入 tmux 会话「{0}」", name));
+      if (tmuxCreateTarget === "panel") {
+        setTmuxMenu(false);
+        // 复用开格链（自带「已并入面板」toast / 聚焦新格 / 清单刷新 / 错误 toast）；
+        // 建都建成了，开格失败不再弹第二条——清单里能看见它，重开菜单点「＋面板」即可
+        void openTmuxPaneCore(s, name, false);
+      } else {
+        pickTmuxSession(s, name);
+        pushToast("ok", t("已创建并接入 tmux 会话「{0}」", name));
+      }
     } catch (e) {
       setTmuxCreateErr(friendlyError(e));
     } finally {
       setTmuxCreateBusy(false);
     }
   };
-  // 菜单关（点选/开面板/点外）即弃作曲行残态——下次打开是干净的
+  // 菜单关（点选/开面板/点外）即弃作曲行残态——下次打开是干净的（目标回默认）
   useEffect(() => {
-    if (!tmuxMenu) { setTmuxCreateOpen(false); setTmuxCreateName(""); setTmuxCreateErr(null); }
+    if (!tmuxMenu) {
+      setTmuxCreateOpen(false); setTmuxCreateName(""); setTmuxCreateErr(null);
+      setTmuxCreateTarget("main");
+    }
   }, [tmuxMenu]);
 
   // ---- tmux 面板（一标签多 tmux 会话）：开格 / 关格 ----
@@ -7645,7 +7666,8 @@ export default function App() {
             onOpenWall={() => { setTmuxMenu(false); setTmuxWallSid(current.id); }}
             tmuxCreateOpen={tmuxCreateOpen} tmuxCreateName={tmuxCreateName}
             tmuxCreateErr={tmuxCreateErr} tmuxCreateBusy={tmuxCreateBusy}
-            onTmuxCreateOpen={() => { setTmuxCreateOpen(true); setTmuxCreateErr(null); }}
+            tmuxCreateTarget={tmuxCreateTarget} onTmuxCreateTarget={setTmuxCreateTarget}
+            onTmuxCreateOpen={() => { setTmuxCreateOpen(true); setTmuxCreateTarget("main"); setTmuxCreateErr(null); }}
             onTmuxCreateCancel={() => { setTmuxCreateOpen(false); setTmuxCreateName(""); setTmuxCreateErr(null); }}
             onTmuxCreateName={setTmuxCreateName}
             onTmuxCreateSubmit={() => void submitTmuxCreate(current)}
