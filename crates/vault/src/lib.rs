@@ -2025,6 +2025,36 @@ mod tests {
         assert!(open_seal(&m, &bad).is_err());
     }
 
+    /// 工作空间轮：sessions.panes 组合经真实 SQLite KV（settings 表整存整取）往返
+    /// 不变形——布局树容器节点无 key 的前端写侧形状原样过库；升级前的真·旧行
+    /// （不经新结构体、无 panes 字段）也照常读回落空 vec。set_workspace/workspace
+    /// 是前端工作空间保存的唯一落盘链，原子覆盖依赖逐字段无损。
+    #[test]
+    fn workspace_panes_roundtrip_through_sqlite() {
+        let (_dir, v) = vault();
+        // 旧 shape 原样直写（set_setting 绕过新结构体——模拟升级前库里躺着的旧行）
+        v.set_setting(
+            "ui.v2.workspace",
+            r#"{"schema_version":1,"chrome":"dark","hostbar":null,"terminal":null,"transfers":null,"sessions":{"last":["h-a"]}}"#,
+        )
+        .unwrap();
+        let read_old = v.workspace().unwrap();
+        assert_eq!(read_old.sessions.as_ref().unwrap().last, vec!["h-a".to_string()]);
+        assert!(read_old.sessions.as_ref().unwrap().panes.is_empty());
+
+        // 新 shape（前端写侧：容器无 key）整存整取，读回与写入全等
+        let ws_in: Workspace = serde_json::from_str(
+            r#"{"schema_version":1,"chrome":"dark","hostbar":null,"terminal":null,"transfers":null,"sessions":{"last":["h-a"],"panes":[{"host_id":"h-a","sessions":["work","logs"],"attached":null,"layout":{"dir":"row","w":1,"kids":[{"key":":main","w":3},{"dir":"col","w":1,"kids":[{"key":"work","w":1},{"key":"logs","w":1}]}]}}]}}"#,
+        )
+        .unwrap();
+        v.set_workspace(&ws_in).unwrap();
+        let ws = v.workspace().unwrap();
+        assert_eq!(ws, ws_in);
+        let combo = ws.sessions.as_ref().unwrap().panes[0].clone();
+        assert_eq!(combo.sessions, vec!["work".to_string(), "logs".to_string()]);
+        assert_eq!(combo.layout.as_ref().unwrap().kids.as_ref().unwrap()[1].kids.as_ref().unwrap()[0].key, "work");
+    }
+
     #[test]
     fn agent_token_lifecycle() {
         let (_dir, v) = vault();

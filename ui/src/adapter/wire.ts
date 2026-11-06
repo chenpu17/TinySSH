@@ -775,6 +775,30 @@ export interface TerminalPrefs {
 export interface SessionPrefs {
   /** 上次运行仍打开会话的主机 ID（去重、按标签序）；空数组 = 上次全部关闭 */
   last: string[];
+  /** tmux 工作空间组合（工作空间轮）：每主机的面板记忆；空数组 = 上次没用 tmux 面板 */
+  panes?: HostPaneCombo[];
+}
+
+/** 一台主机在上次运行里的 tmux 面板组合（格子会话名有序 + 布局树 + 主视图 attach）。 */
+export interface HostPaneCombo {
+  host_id: string;
+  /** tmux 会话名，顺序 = 格子顺序（愿望清单序）；恢复时按此序逐格开 */
+  sessions: string[];
+  /** 主视图 attach 的 tmux 会话名；null = 主视图没 attach */
+  attached?: string | null;
+  /** 用户拖拽布局树（pane-grid PaneNode 的 JSON 形）；null = 没拖过，恢复落自动平铺 */
+  layout?: PaneLayoutNode | null;
+}
+
+/** 布局树节点（pane-grid PaneNode 的持久化形）：叶 = {key,w}，容器 = {dir,w,kids}
+ * （容器无键——TS 容器变体 key 为 undefined、JSON 化缺席，Rust 侧 serde default 兜底，
+ * Rust 读回时容器带空串 key，消费方按 kids 有无判别、不看 key）。
+ * 消费方（App 恢复）自行做形状校验，非法即弃用落自动平铺。 */
+export interface PaneLayoutNode {
+  key?: string;
+  w: number;
+  dir?: string | null;
+  kids?: PaneLayoutNode[] | null;
 }
 
 /** 传输偏好（R33 §355）：下载默认目录记忆（首次=系统 Downloads；另存为后更新） */

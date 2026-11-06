@@ -1812,11 +1812,59 @@ pub struct TerminalPrefs {
 }
 
 /// 会话域（十五轮）：欢迎页「重连上次会话」的记忆
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionPrefs {
     /// 上次运行仍打开会话的主机 ID（去重、按标签序）；空 = 上次全部关闭
     #[serde(default)]
     pub last: Vec<String>,
+    /// tmux 工作空间组合（工作空间轮）：每主机的面板记忆（格子会话名有序 + 布局树 +
+    /// 主视图 attach）；空 = 上次没用 tmux 面板。前端持续落盘（非受控退出也保得住）
+    #[serde(default)]
+    pub panes: Vec<HostPaneCombo>,
+}
+
+/// 一台主机在上次运行里的 tmux 面板组合。恢复 = 建连后按 `sessions` 逐名开格
+/// （`tmux_pane_open` 现场解析服务器会话，名字没了只跳过），再一次性套回 `layout`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostPaneCombo {
+    pub host_id: String,
+    /// tmux 会话名，顺序 = 格子顺序（愿望清单序）；恢复时按此序逐格开
+    pub sessions: Vec<String>,
+    /// 主视图 attach 的 tmux 会话名（None = 主视图没 attach）；与格子重名时以格子为准
+    #[serde(default)]
+    pub attached: Option<String>,
+    /// 用户拖拽布局树（pane-grid PaneNode 的 JSON 形，键 = `:main`/tmux 会话名）；
+    /// None = 没拖过，恢复落自动平铺
+    #[serde(default)]
+    pub layout: Option<PaneLayoutNode>,
+}
+
+/// 布局树节点（前端 pane-grid PaneNode 的持久化形）：叶 = {key,w}，容器 = {dir,w,kids}
+/// （容器无键——前端 TS 容器变体 key 为 undefined，JSON 化即缺席，故 key 带 default；
+/// kids 保持 Option<Vec<_>> 而非裸 Vec——前端 sanitizer 按 kids 是否为 null 判别
+/// 叶/容器，序列化形状不能漂移）。前端恢复前自行做形状校验，非法即弃用落自动平铺
+/// ——Rust 侧语义等价存取（读回形状可与写入不同：容器补 key:""、叶子补
+/// dir/kids:null），不做形状校验。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PaneLayoutNode {
+    #[serde(default)]
+    pub key: String,
+    /// 宽度权重。容忍 null/缺席读成 0（前端 sanitizer 对非正数按 1 处理）：
+    /// serde_json 把 NaN/Inf 序列化成 null，f64 直收会整块解析失败 →
+    /// vault workspace() unwrap_or_default 全量回落默认，所有偏好被静默清空——
+    /// 脏一棵树不能报废整个 blob
+    #[serde(default, deserialize_with = "de_lenient_f64")]
+    pub w: f64,
+    #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default)]
+    pub kids: Option<Vec<PaneLayoutNode>>,
+}
+
+/// f64 宽容读入：null/缺席按 0 读入（见 PaneLayoutNode.w 的注释；当前仅布局权重
+/// 一个浮点字段用）。
+fn de_lenient_f64<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.unwrap_or(0.0))
 }
 
 fn default_chrome() -> String {
@@ -2888,5 +2936,57 @@ mod wire_format_tests {
         assert_eq!(legacy.integration, IntegrationState::Disabled);
         // R41：审计过滤新增 actor_kind（人类/Agent 两类过滤；缺省不过滤）
         assert!(AuditFilter::default().actor_kind.is_none());
+    }
+
+    /// 工作空间轮：sessions.panes 新旧格式双向兼容——旧 blob（无 panes 字段）照常
+    /// 读入（serde default 空 vec）；新 blob 的布局树容器节点无 key（前端 TS 容器
+    /// 变体 JSON 化即缺席）也照常读入，读回补空串。破坏任一方向 = 老用户升级即丢组合。
+    #[test]
+    fn workspace_sessions_panes_compat() {
+        // 旧格式（十五轮 shape）：sessions 只有 last
+        let old = r#"{"schema_version":1,"chrome":"dark","hostbar":null,"terminal":null,"transfers":null,"sessions":{"last":["h-a","h-b"]}}"#;
+        let ws: Workspace = serde_json::from_str(old).unwrap();
+        let sp = ws.sessions.as_ref().unwrap();
+        assert_eq!(sp.last, vec!["h-a".to_string(), "h-b".to_string()]);
+        assert!(sp.panes.is_empty());
+
+        // 新格式：布局树容器无 key（写侧形状），叶子带 key；attached 缺省 None
+        let new = r#"{"schema_version":1,"chrome":"dark","hostbar":null,"terminal":null,"transfers":null,"sessions":{"last":["h-a"],"panes":[{"host_id":"h-a","sessions":["work","logs"],"attached":null,"layout":{"dir":"row","w":1,"kids":[{"key":":main","w":3},{"dir":"col","w":1,"kids":[{"key":"work","w":1},{"key":"logs","w":1}]}]}}]}}"#;
+        let ws2: Workspace = serde_json::from_str(new).unwrap();
+        let sp2 = ws2.sessions.as_ref().unwrap();
+        let combo = &sp2.panes[0];
+        assert_eq!(combo.sessions, vec!["work".to_string(), "logs".to_string()]);
+        assert_eq!(combo.attached, None);
+        let layout = combo.layout.as_ref().unwrap();
+        assert_eq!(layout.key, ""); // 容器节点：key 缺席 → serde default 空串
+        assert_eq!(layout.dir.as_deref(), Some("row"));
+        assert_eq!(layout.kids.as_ref().unwrap().len(), 2);
+        assert_eq!(layout.kids.as_ref().unwrap()[0].key, ":main");
+
+        // 新格式往返：序列化再读回不变形（vault 整存整取的原子覆盖依赖这一点）
+        let txt = serde_json::to_string(&ws2).unwrap();
+        let ws3: Workspace = serde_json::from_str(&txt).unwrap();
+        assert_eq!(ws2, ws3);
+
+        // 跨边界契约：叶子序列化必须带 "dir":null/"kids":null（不能缺席或 []）——
+        // 前端 sanitizeLayoutTree 按 kids 是否为 null 判别叶/容器，形状漂移 = 恢复
+        // 恒落自动平铺
+        let v = serde_json::to_value(&ws2).unwrap();
+        let leaf = &v["sessions"]["panes"][0]["layout"]["kids"][0];
+        assert_eq!(leaf["key"].as_str(), Some(":main"));
+        assert!(leaf["dir"].is_null() && leaf["kids"].is_null());
+
+        // 脏值容错：w:null（serde_json 对 NaN/Inf 序列化的产物）不得报废整块读入
+        // ——读成 0（前端对非正数按 1 处理），而不是整条 Workspace 解析失败回落默认
+        let dirty = r#"{"schema_version":1,"chrome":"dark","hostbar":null,"terminal":null,"transfers":null,"sessions":{"last":["h-a"],"panes":[{"host_id":"h-a","sessions":["work"],"attached":null,"layout":{"dir":"row","w":1,"kids":[{"key":":main","w":null},{"key":"work","w":1}]}}]}}"#;
+        let ws4: Workspace = serde_json::from_str(dirty).unwrap();
+        assert_eq!(
+            ws4.sessions.as_ref().unwrap().panes[0].layout.as_ref().unwrap().kids.as_ref().unwrap()[0].w,
+            0.0
+        );
+        assert_eq!(
+            ws4.sessions.as_ref().unwrap().panes[0].layout.as_ref().unwrap().kids.as_ref().unwrap()[1].w,
+            1.0
+        );
     }
 }

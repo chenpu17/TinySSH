@@ -13,7 +13,7 @@ English docs: [README.md](README.md)。
 
 ## 与现有工具的取舍
 
-定位快照（v0.11.0，2026-10），按品类概括而非逐产品评测。
+定位快照（v0.11.1，2026-11），按品类概括而非逐产品评测。
 
 | | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
 |---|---|---|---|
@@ -33,16 +33,32 @@ English docs: [README.md](README.md)。
 | macOS 11+ / 10.15+ | `TinySSH_<版本>_macos_<架构>.app.zip` 或 `.dmg`（Apple Silicon 与 Intel 双架构） |
 | Linux amd64 | `TinySSH_<版本>_linux_amd64.deb`（自动拉依赖，推荐）或 `.tar.gz`（需自备 libwebkit2gtk-4.1） |
 
-每个 Release 同时附带 `tinyssh` CLI 伴侣工具与 `SHA256SUMS.txt` 校验和。未签名构建首开提示：Windows SmartScreen →「更多信息 → 仍要运行」；macOS 右键 App →「打开」（或 `xattr -cr /Applications/TinySSH.app`）。
+每个 Release 同时附带 `tinyssh` CLI 伴侣工具与 `SHA256SUMS.txt` 校验和。产物**没有代码签名**——首次启动需要一次性放行，详见下文[「首次启动：未签名构建」](#首次启动未签名构建)。
 
 Windows 是主要验证平台——全套测试与逐轮真机验证都在它上面跑；macOS（Apple Silicon）自 v0.10.3 起在物理设备上完成启动与端到端使用验证（含本机监控/自身开销读数），Intel 构建与 Linux 仍只经 CI 构建与单元测试；遇到问题请带着平台信息提 issue。
+
+### 首次启动：未签名构建
+
+产物背后没有 Apple 开发者证书，macOS Gatekeeper 会在首次启动时拦截（提示「无法验证开发者」/「已损坏」）。应用本身没问题，只是需要一次放行：
+
+**macOS**——先安装：打开 `.dmg`（或解压 `.app.zip`），把 `TinySSH.app` 拖进 `/Applications`（不要直接在 DMG/下载目录里双击运行）。然后任选其一：
+
+1. **右键 → 打开**：在「应用程序」里**右键** `TinySSH.app`（不要双击）→ 选「打开」→ 弹窗里再点「打开」。放行一次后，以后双击即可正常启动。
+2. **系统设置 → 隐私与安全性**：如果 macOS 已经拦截过，翻到页面底部的「TinySSH 已被阻止」提示，点「仍要打开」并输密码/Touch ID 确认。
+3. **终端**：`xattr -cr /Applications/TinySSH.app` 直接清除隔离标记（效果等同前两种，可脚本化）。
+
+首次启动可能再弹一次**钥匙串**访问确认——凭据保管库的主密钥存放在 macOS 钥匙串，选「允许」即可。
+
+**Windows**——SmartScreen 弹「Windows 已保护你的电脑」：点「更多信息 → 仍要运行」。
+
+**Linux**——没有隔离机制：`.deb` 正常安装，`.tar.gz` 解压即用。
 
 ## 开发
 
 ```bash
 # 前端（demo 模式，纯浏览器可跑）
 cd ui && npm ci && npm run dev           # http://localhost:5183
-npm test                                 # UI 套件（57 spec / 1127 断言，headless）
+npm test                                 # UI 套件（58 spec / 1155 断言，headless）
 npm run build                            # tsc + vite build
 
 # 桌面应用（tauri dev；Rust 工作区，需 Rust ≥ 1.86）
@@ -76,7 +92,7 @@ Windows 注意：
 - 可点击路径：终端里的文件路径（POSIX 绝对 / Windows 盘符 / ./ ../ 相对 / 裸多段如 src/main.rs，含 `:line` 与 `:line:col` 后缀）自动识别为链接，点击复制原文并 toast 告知——远端路径没法在本机打开，复制是最诚实的动作；http(s) 与 `xxx://` 协议让路给网页链接，URL/转义串/域名词内部不误判，CJK 宽字符行内列号对齐。
 - 图片协议：内置 `@xterm/addon-image`，终端直接渲染 sixel 与 iTerm2（OSC 1337）内嵌图片（ssh 里 cat 图片、带图工具输出直接可见）；支持 `width`/`height` 按单元格/像素/百分比声明尺寸，存储超限自动淘汰最旧图，恒开无需配置。
 - 会话现场恢复（P3）：受控退出时自动给每个会话拍屏幕快照（C10 检查点：滚回尾 300 行 + 可视区 + 光标 + 终端模式），与凭据同库加密存储；下次启动欢迎页「⏮ 恢复上次现场」一键重建会话并重放画面（公告行标注快照时刻）——恢复走完整建连流程（TOFU/双因素原样把关，不自动拨号）；主机已删的条目如实跳过。强杀/断电来不及快照，如实只覆盖受控退出。
-- tmux 一等公民：会话工具栏的 tmux 钮列出远端在跑的 tmux 会话——点选即挂进主视图（断线后横幅一键「恢复现场」：重连 + 补近史 + 重新 attach）；点「＋面板」把更多 tmux 会话并排放进同一个标签，各走同一条 SSH 连接上的独立通道（一次登录、一次双因素），最多平铺 6 格——适合同时开多个 Claude Code、每个隔离在自己的 tmux 会话里。布局可拖：拖标题栏换位置（落在格子中央互换、落在边缘对半分开），拖分隔条调大小。掉线时格子蒙灰、重连后原位恢复；关闭格子只断开视图，tmux 会话继续运行。Agent 在已挂 tmux 的会话里执行的命令落进专属 `tinyssh-agent` 窗口。
+- tmux 一等公民：会话工具栏的 tmux 钮列出远端在跑的 tmux 会话——点选即挂进主视图（断线后横幅一键「恢复现场」：重连 + 补近史 + 重新 attach）；点「＋面板」把更多 tmux 会话并排放进同一个标签，各走同一条 SSH 连接上的独立通道（一次登录、一次双因素），最多平铺 6 格——适合同时开多个 Claude Code、每个隔离在自己的 tmux 会话里。布局可拖：拖标题栏换位置（落在格子中央互换、落在边缘对半分开），拖分隔条调大小。掉线时格子蒙灰、重连后原位恢复；关闭格子只断开视图，tmux 会话继续运行。快接菜单「会话大屏…」把这台主机上全部 tmux 会话铺成一整屏实时快照墙（2×2/3×3/4×4 网格，300ms 一拍；单击格子直接键入该会话、双击放大、「进格子」转成真面板窗格，关墙原样恢复格子尺寸）。**工作空间记忆**：连了哪些主机、每个标签并排开了哪些 tmux 会话（次序、拖拽布局、主视图 attach）自动落盘、崩溃也不丢；应用重启后欢迎页「⟳ 重连上次会话」一键全量恢复——连不上的主机与停在指纹/双因素确认的如实跳过并汇总提示，服务器上已不存在的 tmux 会话自动剔除、不拖累其余恢复。Agent 在已挂 tmux 的会话里执行的命令落进专属 `tinyssh-agent` 窗口。
 - 专注模式：F11 进出——标题栏/主机栏/工具栏/状态条全让位并系统全屏；标签条默认常驻（Ctrl+K 面板可切「自动隐藏」：藏为顶部 6px 抓手 + 顶缘浮标，扫上缘唤出）；状态记忆跨启动恢复。
 - 活动栏与内置 Agent 视图（接真模型）：左缘图标栏切换「连接 / Agent / 编排」三个侧栏视图（互斥，全关 = 纯终端），栏底另设常驻设置图标（不随侧栏互斥隐藏，直开设置面板）；Agent 对话按会话隔离（跟随激活标签页），markdown 流式渲染（原始 HTML 一律转义、链接防钓鱼、代码块高亮 + 复制 + 长折叠；mermaid 图与 KaTeX 公式占位 + 懒加载渲染，独立 chunk 不进主包，加载/语法失败诚实保持源码原文）、推理模型思考块可折叠、工具审批卡（批准/拒绝内联在对话里，决策走既有审批链）。设置 → Agent 配置「模型服务」（OpenAI 兼容覆盖 GLM/DeepSeek/Qwen/Kimi 或 Anthropic）后自动从演练外壳切真模型：内核是 TinyAgent（[TinyAgent](https://github.com/chenpu17/TinyAgent)，git 依赖钉 rev），工具为 exec / read_blocks / read_screen / wait_output + upload / download / transfer_status + send_keys 八件（文件传输缺省冲突即失败并结构化报目标 stat，确认后 skip/overwrite 重试；send_keys 驱动交互式程序，会话级授权一次审批；**传输必审**、危险键序与危险命令同一引擎）；提示词与技能可按组织约定定制（设置 → Agent「提示词与技能」：附加提示词给会话助手与 Fleet 编排者各一段——只追加、不替代内置安全铁律，保存后下一条消息即生效；技能库按名维护操作手册，agent 用 load_skill 工具现场加载，改技能无需重开会话），经 SessionManager 同一 agent actor 执行——审批、审计、夺权语义全自动继承，内嵌 agent 无任何绕过路径；api_key 加密入库（vault 密封 KV，永不回显/明文落盘）。控制权显式交托：会话在人类手里时发送任务先弹「委托并发送」确认（工具栏「接管」随时收回，无需配置 MCP 协作）；模型服务配置即解锁委托/接管入口。Agent 视图头部「自主」开关（两击确认）：免逐条审批的自主运行——危险名单仍硬拦、传输仍逐条、全量记录（审计可辨自主动作）、急停条随时撤回。**跨主机编排（Fleet）**：第三视图的编排者不直接操作任何机器——用 fleet_sessions/dispatch_task/wait_task 把自包含任务并行派发给各会话的执行 agent 并汇总结果，目标会话的审批/危险扫描/控制权独立生效、拒绝如实上报（组合派发不覆盖逐机约束）。会话串行对话、可停止、跨会话独立上下文；切换模型服务后对话记忆重置（如实提示）。右缘图标栏常驻任务面板五视图入口（状态栏/工具栏既有入口保留）。
 - 资源监控大屏（活动栏第四视图，整幅覆盖层）：多服务器资源卡——每台**服务器**一张卡（同机多连接去重合一，×N 徽标）CPU/内存环形仪表 + 磁盘/网络折线 + 近 30 分钟历史（内联 SVG，随主题），支持 Ascend 服务器 NPU 监控（npu-smi 每芯片健康/功耗/温度/利用率/HBM；无 npu-smi 自动隐藏 NPU 区，「有工具但表头未识别」显式呈现便于真机校准）。**采集开关 opt-in**：通用监控与 NPU 监控两枚独立开关，默认全关零后台开销；打开后后台持续采样（每 3 秒，关大屏不中断），重开大屏历史直接在，开关态持久化。数据通路沿底部监控条先例：人类专属直连 Fresh 通道采样、不经审批/审计/终端回放；连续采样失败卡片置灰可重试，点击卡片头切换会话。底部监控条（活动会话资源条）继续独立工作，两者暂停互不影响。
@@ -97,6 +113,10 @@ Windows 注意：
 | ![监控](docs/img/readme-monitor.png) | ![命令块](docs/img/readme-blocks.png) |
 | **远程文件多选批量下载** | **记录审计：泳道时间线，每笔动作可回溯** |
 | ![文件](docs/img/readme-files.png) | ![记录](docs/img/readme-records.png) |
+| **tmux 面板：一个标签并排多个 tmux 会话** | **tmux 会话大屏：主机全部 tmux 会话的实时快照墙** |
+| ![tmux 面板](docs/img/readme-tmux.png) | ![tmux 会话大屏](docs/img/readme-wall.png) |
+| **工作空间记忆：欢迎页记住上次组合** | **一键恢复：窗格、布局与接入原样回来** |
+| ![工作空间](docs/img/readme-workspace.png) | ![一键恢复](docs/img/readme-restore.png) |
 
 ## 文档
 
@@ -120,7 +140,7 @@ Windows 注意：
 
 ## 状态
 
-v0.11.0。主平台（Windows）全绿：Rust 工作区测试 + 57 spec / 1127 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+v0.11.1。主平台（Windows）全绿：Rust 工作区测试 + 58 spec / 1155 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
 
 ## 技术栈（概览）
 

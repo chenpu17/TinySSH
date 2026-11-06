@@ -947,11 +947,23 @@ module.exports = {
       !!document.querySelector('[data-testid="tmux-create-row"]')
       && document.activeElement?.classList.contains("tmux-create-input") === true, null, 3000), "");
     const tryCreate = async (name) => {
+      // 提交前记旧错误文本（全套重载下固定 500ms 会把「错误还没落定」误判成无错）。
+      // 约束：相邻两次 tryCreate 的错误文本必须不同——同文时第二轮会等满 6s 返回
+      // 空串（假红，不是假绿）；当前两个调用点「非法」/「已存在」不同文
+      const prev = await page.evaluate(() => document.querySelector('[data-testid="tmux-create-err"]')?.textContent ?? "");
       await page.evaluate(() => { const i = document.querySelector('[data-testid="tmux-create-input"]'); if (i) i.value = ""; });
       if (name) await page.type('[data-testid="tmux-create-input"]', name, { delay: 6 });
       await page.click('[data-testid="tmux-create-ok"]');
-      await page.waitForTimeout(500);
-      return page.evaluate(() => document.querySelector('[data-testid="tmux-create-err"]')?.textContent ?? "");
+      for (let i = 0; i < 24; i++) {
+        await page.waitForTimeout(250);
+        const st = await page.evaluate(() => ({
+          err: document.querySelector('[data-testid="tmux-create-err"]')?.textContent ?? "",
+          open: !!document.querySelector('[data-testid="tmux-create-row"]'),
+        }));
+        if (!st.open) return ""; // 作曲行关闭 = 创建成功（本用例不应发生）
+        if (st.err && st.err !== prev) return st.err; // 新错误落定
+      }
+      return "";
     };
     ck.check("非法名（a:b）就地报错", (await tryCreate("a:b")).includes("非法"), "");
     ck.check("同名预检（work 已存在）就地报错", (await tryCreate("work")).includes("已存在"), "");

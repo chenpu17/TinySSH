@@ -976,12 +976,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         audit("human", "shell_integration_inject", "OSC133+OSC7", null, sid);
       }
       // tmux 联动镜像：启动命令回显（真实核心于提示符处执行、回显可见是设计使然）；
-      // SSH 会话预置 tmux 探针 fixture（demo 主机出厂带 tmux 3.2a + work 会话）
+      // SSH 会话预置 tmux 探针 fixture（demo 主机出厂带 tmux 3.2a，work+logs 双会话
+      // ——工作空间轮与 boot staging 预置同形：恢复开格多格不至于错判 Gone）
       const sess = demoState.sessions.find((x) => x.id === sid)!;
       const sc = h.startup_command?.trim();
       if (sc) sess.out += `\r\n[演示] ${sc}\r\n`;
       if (h.address !== "local") {
-        sess.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }] };
+        sess.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }, { name: "logs", windows: 1, attached: 0, id: "$2" }] };
       }
       return sid;
     }
@@ -1094,7 +1095,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const s = demoState.sessions.find((x) => x.id === sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 探测仅支持 SSH 会话（演示）");
-      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }] };
+      // 懒建 fixture（工作空间轮）：与 tmux_pane_open 同形（work+logs）——首连静默
+      // 探针先于恢复开格跑，单 work 清单会把恢复的第二格错判成 Gone。
+      // 预置会话自带 tmux 字段，此路径只踩恢复/新建会话（spec 61 断言不受影响）。
+      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }, { name: "logs", windows: 1, attached: 0, id: "$2" }] };
       return s.tmux;
 
     }
@@ -1190,7 +1194,13 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const panes = (s.panes ??= []);
       if (panes.some((p) => p.tmux_session === name)) throw apiError("invalid_input", `面板已包含会话 ${name}（演示）`);
       if (panes.length >= DEMO_PANE_MAX) throw apiError("invalid_input", `面板最多 ${DEMO_PANE_MAX} 个窗格（演示）`);
-      if (!(s.tmux?.sessions ?? []).some((x) => x.name === name)) {
+      // 懒建 fixture（工作空间轮）：真实侧开格按名现场解析服务器 tmux 会话，不依赖
+      // 探针清单；demo 对齐——恢复建连的新会话没有 tmux 字段时补默认清单（work+logs），
+      // 名字不在其中仍按不存在拒绝（Gone 演练）。预置会话自带 fixture 不受影响；
+      // tmux_restore 的懒建保持单 work 不动（恢复链按名直指目标会话，不依赖该清单
+      // ——既有行为不动）。
+      if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }, { name: "logs", windows: 1, attached: 0, id: "$2" }] };
+      if (!(s.tmux.sessions ?? []).some((x) => x.name === name)) {
         throw apiError("invalid_input", `tmux 会话不存在：${name}（演示）`);
       }
       s.pane_seq = (s.pane_seq ?? 0) + 1;
@@ -2076,7 +2086,8 @@ case "read_triggers": {
           const scNew = h.startup_command?.trim();
           if (scNew) sessNew.out += `\r\n[演示] ${scNew}\r\n`;
           if (h.address !== "local") {
-            sessNew.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }] };
+            // 工作空间轮：出厂 fixture 与 create_session 分支同形（work+logs 双会话）
+            sessNew.tmux = { available: true, version: "3.2a", sessions: [{ name: "work", windows: 1, attached: 0, id: "$1" }, { name: "logs", windows: 1, attached: 0, id: "$2" }] };
           }
           if (!h.id.startsWith("quick-")) {
             // 十七轮：快速主机不进元数据（真实核心 vault 侧 EXISTS 守卫同语义）

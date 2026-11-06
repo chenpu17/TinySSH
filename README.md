@@ -18,7 +18,7 @@ If you operate a few to a dozen servers — developing, deploying, troubleshooti
 
 ## How it compares
 
-Positioning snapshot at v0.11.0 (October 2026) — categories, not product reviews.
+Positioning snapshot at v0.11.1 (November 2026) — categories, not product reviews.
 
 | | TinySSH | Classic SSH clients (XShell, Termius…) | AI terminals (Warp…) |
 |---|---|---|---|
@@ -37,7 +37,7 @@ Positioning snapshot at v0.11.0 (October 2026) — categories, not product revie
 - **Terminal quality** — Unicode 11 width table (CJK/emoji don't misalign), optional ligatures, sixel & iTerm2 inline images, OSC 52 clipboard with an ask/allow/deny policy, OSC 9 notifications, clickable file paths, broadcast input across sessions (iTerm-style), regex output triggers with notification or approval-gated key sequences.
 - **Command blocks** — shells with OSC 133/7 integration turn every command into a block with exit code, duration, and captured output (rendered, ANSI-stripped, tail-capped). Remote sessions probe the login shell with a polyglot printf and install per-family hooks — bash/zsh (POSIX sh) and fish (event hooks) get integration; incompatible shells honestly stay Unavailable. Blocks can be copied, re-run (same confirmation chain as paste), located in the scrollback, and the agent reads them through the same API.
 - **Session restore** — on clean exit every session gets an encrypted snapshot (scrollback tail + viewport + cursor + modes); next start can rebuild and replay the screen. Reconnects go through the full connection flow — TOFU and 2FA gates included, nothing auto-dials.
-- **tmux, first-class** — the session toolbar's tmux button lists the sessions running on the remote. Pick one to attach the main view (after a disconnect the banner offers one-click *restore scene*: reconnect + recent scrollback + re-attach). Hit **+ Panel** to open more tmux sessions side by side in the same tab — each in its own channel over the same SSH connection (one login, one 2FA), tiled up to six cells; ideal for running several Claude Code instances, each isolated in its own tmux session. Drag a title bar to rearrange (drop in the middle of a pane to swap, near an edge to split it) and drag the dividers to resize; Ctrl+B reaches tmux in every pane. Panes dim on disconnect and re-attach in place after reconnect; closing a pane only detaches — the tmux session keeps running. Agent shell commands on an attached session run in a dedicated `tinyssh-agent` tmux window.
+- **tmux, first-class** — the session toolbar's tmux button lists the sessions running on the remote. Pick one to attach the main view (after a disconnect the banner offers one-click *restore scene*: reconnect + recent scrollback + re-attach). Hit **+ Panel** to open more tmux sessions side by side in the same tab — each in its own channel over the same SSH connection (one login, one 2FA), tiled up to six cells; ideal for running several Claude Code instances, each isolated in its own tmux session. Drag a title bar to rearrange (drop in the middle of a pane to swap, near an edge to split it) and drag the dividers to resize; Ctrl+B reaches tmux in every pane. Panes dim on disconnect and re-attach in place after reconnect; closing a pane only detaches — the tmux session keeps running. The quick menu's **session wall** spreads every tmux session on the host across a full-screen grid of live snapshots (2×2/3×3/4×4; click a cell to type into that session, double-click to zoom, or promote a cell to a real panel pane — closing the wall restores the panes' original sizes). And the app remembers your last **workspace**: which hosts were connected, which tmux sessions each tab had side by side (order, dragged layout, the attached session) — persisted automatically and crash-safe. After a restart, the welcome screen's ⟳ button reconnects every host and puts the whole combination back in one click: hosts that can't connect or that stop at a fingerprint/2FA prompt are skipped with a summary, and tmux sessions that no longer exist on the server are dropped instead of failing the whole restore. Agent shell commands on an attached session run in a dedicated `tinyssh-agent` tmux window.
 - **Embedded agent (per session)** — chat with markdown, Mermaid, KaTeX; reasoning blocks collapse; tool calls appear as inline approval cards. Eight SSH tools (`exec`, `read_blocks`, `read_screen`, `wait_output`, `upload`, `download`, `transfer_status`, `send_keys`) plus an optional `load_skill` executed through the same session actor as everything else. Prompts and skills are customizable assets: append org-specific conventions per agent kind (session helper / Fleet orchestrator) in Settings → Agent — additions never replace the built-in safety rules — and maintain a named playbook library the agent loads with `load_skill`.
 - **Fleet orchestration** — a third view dispatches self-contained tasks to per-session agents in parallel and collects results; the dispatcher never touches machines itself, and each target keeps its own approvals and dangerous-command gates.
 - **Monitoring** — a per-session resource bar plus a full-screen multi-server dashboard (CPU/mem gauges, disk/net history; Ascend NPU per-chip health/power/temp/utilization/HBM). Sampling is opt-in, per-category, and survives closing the dashboard. The local machine is monitored through native APIs (kernel32/iphlpapi on Windows, /proc on unix) on the same parse path as remote hosts.
@@ -59,6 +59,10 @@ All shots are the built-in browser demo mode — fake sessions, clearly labeled,
 | ![Monitoring](docs/img/readme-monitor.png) | ![Blocks](docs/img/readme-blocks.png) |
 | **Remote files with multi-select batch download** | **Records audit — swimlane timeline, every action accounted** |
 | ![Files](docs/img/readme-files.png) | ![Records](docs/img/readme-records.png) |
+| **tmux panel — several tmux sessions side by side in one tab** | **tmux session wall — live snapshots of every session on the host** |
+| ![tmux panel](docs/img/readme-tmux.png) | ![tmux wall](docs/img/readme-wall.png) |
+| **Workspace memory — the welcome screen remembers your last combination** | **One-click restore — panes, layout and attach back in place** |
+| ![Workspace](docs/img/readme-workspace.png) | ![Restored workspace](docs/img/readme-restore.png) |
 
 ## Download
 
@@ -70,9 +74,25 @@ Prebuilt binaries (built by [release workflow](.github/workflows/release.yml), u
 | macOS 11+ / 10.15+ | `TinySSH_<ver>_macos_<arch>.app.zip` or `.dmg` (Apple Silicon & Intel) |
 | Linux amd64 | `TinySSH_<ver>_linux_amd64.deb` (auto-dependencies) or `.tar.gz` (bring your own libwebkit2gtk-4.1) |
 
-Each release also ships the `tinyssh` CLI companion and a `SHA256SUMS.txt`. First launch caveats for unsigned builds: Windows SmartScreen → "More info → Run anyway"; macOS right-click → Open (or `xattr -cr /Applications/TinySSH.app`).
+Each release also ships the `tinyssh` CLI companion and a `SHA256SUMS.txt`. The artifacts are **not code-signed** — see [First launch: unsigned builds](#first-launch-unsigned-builds) below.
 
 Windows is the primary validation platform — the full test suites and real-machine verification rounds run there. macOS (Apple Silicon) has been validated end-to-end on physical hardware since v0.10.3 (launch, day-to-day use, local monitoring and self-overhead readings); the Intel macOS and Linux artifacts are built and unit-tested by CI but have not been validated on physical devices. If something breaks, please open an issue with your platform details.
+
+### First launch: unsigned builds
+
+No Apple Developer certificate is behind these builds, so macOS Gatekeeper blocks the first launch with "TinySSH cannot be verified" / "is damaged". The app itself is fine — it needs a one-time approval:
+
+**macOS** — install first: open the `.dmg` (or unzip the `.app.zip`) and drag `TinySSH.app` into `/Applications`. Then any one of:
+
+1. **Right-click → Open** — right-click `TinySSH.app` in `/Applications`, choose **Open**, then confirm **Open** in the dialog. From the second launch on, double-click works.
+2. **System Settings → Privacy & Security** — if macOS already blocked it, scroll to the "TinySSH was blocked" notice near the bottom, click **Open Anyway** and authenticate with your password / Touch ID.
+3. **Terminal** — `xattr -cr /Applications/TinySSH.app` clears the quarantine flag outright (same effect, scriptable).
+
+First launch may also raise a **Keychain** prompt — the credential vault keeps its master key in the macOS Keychain; choose Allow (or "Always Allow").
+
+**Windows** — SmartScreen shows "Windows protected your PC": click **More info → Run anyway**.
+
+**Linux** — no quarantine concept; the `.deb` installs normally and the `.tar.gz` just unpacks.
 
 ## Getting started
 
@@ -82,7 +102,7 @@ Prerequisites: Rust ≥ 1.86, Node ≥ 20.
 # Frontend demo mode — runs in a plain browser, no Rust needed
 cd ui && npm ci && npm run dev      # http://localhost:5183
 
-# UI test suite (57 specs / 1127 checks; needs a Chrome/Edge binary)
+# UI test suite (58 specs / 1155 checks; needs a Chrome/Edge binary)
 TINYSSH_UI_CHROME="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" npm test
 
 # Desktop app (Tauri v2; dev shell expects the ui dev server above)
@@ -123,7 +143,7 @@ Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-u
 
 ## Status
 
-v0.11.0. All suites green on the primary platform: Rust workspace tests, 57 UI specs / 1127 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.11.1. All suites green on the primary platform: Rust workspace tests, 58 UI specs / 1155 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
 ## Sister project
 

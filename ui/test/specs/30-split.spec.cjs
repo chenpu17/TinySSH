@@ -213,7 +213,14 @@ module.exports = {
     const p1 = await paneNames();
     ck.check("右半=副格（本机主 / staging-1 副）", p1.main === "本机" && p1.second === "staging-1", JSON.stringify(p1));
     ck.check("落点格拿焦点（staging-1）", p1.focused === "staging-1", JSON.stringify(p1));
-    ck.check("断开会话副格名牌带「· 已断开」后缀（找茬五轮 C-4）", await secondRaw() === "staging-1 · 已断开", await secondRaw() ?? "无名牌");
+    // C-4 后缀靠 React 渲染流进新挂的副格名牌——全套负载下固定 500ms 单发读会抖
+    // （后缀迟到 = 假红，2026-11-06 全套实测）；轮询 5s 等它落定，恒缺仍红（契约不弱化）
+    let suffixSeen = false;
+    for (let i = 0; i < 32 && !suffixSeen; i++) {
+      suffixSeen = (await secondRaw()) === "staging-1 · 已断开";
+      if (!suffixSeen) await page.waitForTimeout(150);
+    }
+    ck.check("断开会话副格名牌带「· 已断开」后缀（找茬五轮 C-4）", suffixSeen, await secondRaw() ?? "无名牌");
     ck.check("drop 后提示已清", !await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]')));
 
     // ② 已分屏：拖主格标签落到另一格 = 交换两格，焦点跟到落点格

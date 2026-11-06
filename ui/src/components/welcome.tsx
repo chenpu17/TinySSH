@@ -17,6 +17,11 @@ interface WelcomeProps {
   /** P3：上次受控退出的现场快照（加密 vault KV；恢复走宿主 onRestoreScene） */
   restoreEntries: RestoreEntry[];
   onRestoreScene: (entries: RestoreEntry[]) => void;
+  /** 工作空间轮：「重连上次会话」升级为全量恢复（主机 + tmux 窗格/布局/attach），
+   * 实现在宿主——组件只管把按钮交给它 */
+  onReconnectLast: () => void;
+  /** 上次运行确实用过 tmux 面板（决定 title 是否承诺窗格/布局恢复——没用过不夸口） */
+  hasWorkspacePanes: boolean;
   focusMode: boolean;
   hostbarOpen: boolean;
   createSession: (h: Host) => void;
@@ -32,7 +37,7 @@ interface WelcomeProps {
 
 export function Welcome({
   sid, sessions, hosts, lastSessionHosts, recents, recentsHidden,
-  restoreEntries, onRestoreScene,
+  restoreEntries, onRestoreScene, onReconnectLast, hasWorkspacePanes,
   focusMode, hostbarOpen, createSession, applyFocus, toggleHostbar,
   setShowAddHost, setShowImport, setShowQuickConnect, setEditingHost,
   setPrefillEntry, setRecentMenu,
@@ -73,8 +78,10 @@ export function Welcome({
             }}><IconTerminal size={13} /> {t("打开本地终端")}</button>
           )}
         </div>
-        {/* 十五轮：重连上次会话——上次退出/刷新时仍打开的主机（去重有序），
-            一键全部重连（点了才连，不自动拨号）。主机已删的行整体过滤 */}
+        {/* 十五轮：重连上次会话——上次退出/刷新时仍打开的主机（去重有序）。
+            工作空间轮升级为全量恢复：连主机 + 重开 tmux 窗格 + 还原布局 + 主视图
+            attach（宿主 restoreLastWorkspace）。仍点了才连，不自动拨号。
+            主机已删的行整体过滤；上次没用过面板时 title 不承诺窗格/布局 */}
         {sessions.length === 0 && lastSessionHosts.length > 0 && (() => {
           const rowsH = lastSessionHosts.flatMap((hid) => hosts.find((h) => h.id === hid) ?? []);
           if (rowsH.length === 0) return null;
@@ -82,11 +89,11 @@ export function Welcome({
             <div className="welcome-recents" aria-label={t("上次会话")}>
               <div className="wr-title">{t("上次会话")}</div>
               <button className="wr-row" data-testid="reconnect-last"
-                title={t("重连 {0}", rowsH.map((h) => h.name).join(t("、")))}
-                onClick={() => { for (const h of rowsH) void createSession(h); }}>
+                title={`${t("重连 {0}", rowsH.map((h) => h.name).join(t("、")))}${hasWorkspacePanes ? `；${t("同时恢复上次的 tmux 窗格、布局与主视图接入（服务器上已不存在的会话会跳过）")}` : ""}`}
+                onClick={() => onReconnectLast()}>
                 <span className="wr-name">{t("⟳ 重连上次会话（{0}）", rowsH.length)}</span>
                 <span className="wr-addr">{rowsH.map((h) => h.name).join(t("、"))}</span>
-                <span className="wr-go">{t("连接")}</span>
+                <span className="wr-go">{t("恢复")}</span>
               </button>
             </div>
           );

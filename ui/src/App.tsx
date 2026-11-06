@@ -32,6 +32,7 @@ import type {
   TransferTask, CollisionDecision, SessionDetail, ShellCapability, CollabStatus, DisableImpact,
   McpStatus, AutonomyGrant, ActionRecord, RecordsQuery, RecordsRange, PasteHit, BlockInfo, TriggerRule,
   RestoreEntry, LocalShell, UpdateCheck, UpdaterInfo,
+  HostPaneCombo, PaneLayoutNode,
   TmuxStatus,
   TmuxWallCell,
   TmuxWallFit,
@@ -160,6 +161,29 @@ function renameTileKey(node: PaneNode | null | undefined, from: string, to: stri
 
 /** 面板格数上限（真实核心 handle.rs PANE_MAX / demo DEMO_PANE_MAX 同值）。 */
 const PANE_MAX = 5;
+
+/** 布局树形状校验（工作空间轮）：持久化读回/写入前双向把关——叶键非空串、w 为正
+ * 有限数、容器必须 dir ∈ {row,col} 且至少两个孩子（容器无键，运行树如此）；非法
+ * 整树弃用（恢复落自动平铺，几何仍正确）。就地返回 PaneNode 形（w 缺失按 1），
+ * 不让脏数据进 paneLayoutRef。 */
+function sanitizeLayoutTree(n: unknown): PaneNode | null {
+  if (!n || typeof n !== "object") return null;
+  const x = n as { key?: unknown; w?: unknown; dir?: unknown; kids?: unknown };
+  const w = typeof x.w === "number" && Number.isFinite(x.w) && x.w > 0 ? x.w : 1;
+  if (x.kids === undefined || x.kids === null) {
+    if (typeof x.key !== "string" || !x.key) return null;
+    if (x.dir !== undefined && x.dir !== null) return null;
+    return { key: x.key, w };
+  }
+  if (!Array.isArray(x.kids) || x.kids.length < 2 || (x.dir !== "row" && x.dir !== "col")) return null;
+  const kids: PaneNode[] = [];
+  for (const k of x.kids) {
+    const ok = sanitizeLayoutTree(k);
+    if (!ok) return null;
+    kids.push(ok);
+  }
+  return { dir: x.dir, w, kids };
+}
 
 /** 格子挂 WebGL 的上下文预算：浏览器每页活动 WebGL 上下文约 16 个，超出即强制
  * 丢弃最老的（往往是主终端，静默回落 DOM 渲染）——超额的格子直接走 DOM 渲染器。 */
@@ -1760,6 +1784,9 @@ export default function App() {
   const paneZoomRef = useRef<{ sid: string; name: string } | null>(null);
   // 建格监听里触发的重排走 ref（layoutTmuxPanes 定义在建格之后）
   const paneRelayoutRef = useRef<() => void>(() => {});
+  // 工作空间落盘补写走 ref（writeWorkspaceSessions 定义在组件更后；排版/拖拽路径经此
+  // 触发 1.5s 防抖写——布局树是 ref 态，不触发 sessions state，轮询回流盖不住拖拽）
+  const wsSaveKickRef = useRef<() => void>(() => {});
   // 拖拽控制器走 ref：命令式 DOM 的监听在建格时挂一次，实现随渲染更新（读的全是 ref）。
   // 收尾一律带 pointerId：第二根指针（触摸/笔）的抬起不得结束第一根的拖动
   const tileDragApiRef = useRef<{
@@ -2236,9 +2263,10 @@ export default function App() {
     bindTileDrag(head, () => entry.name, sid, cell);
     // 调试/取证钩子（曾仅 DEV 注册——真机 release 排障读不到表，改为无条件注册；
     // 两行 Map 开销，disposePane 同步删除）
-    const w = window as unknown as { __t_pane_terms?: Map<string, Terminal> };
+    const w = window as unknown as { __t_pane_terms?: Map<string, Terminal>; __t_pane_layout?: Map<string, PaneNode> };
     w.__t_pane_terms ??= new Map();
     w.__t_pane_terms.set(key, term);
+    w.__t_pane_layout = paneLayoutRef.current; // 工作空间轮：布局树取证（同一 Map 引用）
     return entry;
   }, []);
 
@@ -2417,7 +2445,10 @@ export default function App() {
     if (root) {
       const box = mount.getBoundingClientRect();
       root = syncLayout(root, keys, box.height > 0 ? box.width / box.height : 16 / 9);
-      if (root) paneLayoutRef.current.set(active, root);
+      if (root) {
+        paneLayoutRef.current.set(active, root);
+        wsSaveKickRef.current(); // 拖拽/均分/分隔条都汇经此处（防抖在实现侧）
+      }
     }
     root ??= defaultLayout(keys);
     if (!root) return;
@@ -3701,27 +3732,62 @@ export default function App() {
     writeTerminalPrefs({ osc52: v });
   }, [writeTerminalPrefs]);
 
-  // —— 十五轮：重连上次会话 ——
-  // blob sessions.last 记「当前打开会话的主机清单」（去重有序）。只有本运行用户
-  // 主动建连成功（createSession Ready → armed）才允许写：启动装载/demo 预置会话
-  // 不武装也不写（否则下次启动瞬间就用预置清单覆盖上次运行的记忆）。武装后随
-  // 会话集合变化跟随写（含全关=空集）。
+  // —— 十五轮：重连上次会话；工作空间轮：升级为全量组合记忆 ——
+  // blob sessions 记「上次运行的画面」：last = 打开会话的主机清单（去重按标签序），
+  // panes = 每台主机的 tmux 面板组合（格子会话名有序 + 布局树 + 主视图 attach）。
+  // 只有本运行用户主动建连成功（createSession Ready → armed）才允许写：启动装载/
+  // demo 预置会话不武装也不写（否则下次启动瞬间就用预置清单覆盖上次运行的记忆）。
+  // 武装后随会话集合变化跟随写（含全关=空集）；拖布局/attach 这类不触发 sessions
+  // 状态的变更由 scheduleWsSave 显式补写（1.5s 防抖）。运行期持续落盘 = 强杀/崩溃
+  // 也保得住（对比 restore.v1 只在受控退出拍）。
   const [lastSessionHosts, setLastSessionHosts] = useState<string[]>([]);
+  const [lastWorkspaceCombos, setLastWorkspaceCombos] = useState<HostPaneCombo[]>([]);
   const lastTrackArmedRef = useRef(false);
-  useEffect(() => {
+  const wsSaveTimerRef = useRef<number | null>(null);
+  const writeWorkspaceSessions = useCallback(() => {
     if (!lastTrackArmedRef.current) return;
-    const ids = [...new Set(sessions.map((s) => s.host_id))];
+    const ids: string[] = [];
+    const combos: HostPaneCombo[] = [];
+    for (const s of sessionsRef.current) {
+      if (!ids.includes(s.host_id)) ids.push(s.host_id);
+      // 面板组合只收 SSH 且真在用面板的会话：格子按快照序（=愿望清单序）取会话名
+      if (s.kind !== "ssh") continue;
+      const names: string[] = [];
+      for (const p of s.panes ?? []) if (!names.includes(p.tmux_session)) names.push(p.tmux_session);
+      // attach 与格子重名不成立（核心防呆保证），这里兜底过滤——两路视图撞车不变式
+      const attached = s.tmux_attached && !names.includes(s.tmux_attached) ? s.tmux_attached : null;
+      if (names.length === 0 && !attached) continue;
+      combos.push({
+        host_id: s.host_id,
+        sessions: names.slice(0, PANE_MAX),
+        attached,
+        layout: sanitizeLayoutTree(paneLayoutRef.current.get(s.id) ?? null),
+      });
+    }
     wsWriteChain.current = wsWriteChain.current
       .then(() => invoke("get_workspace"))
-      .then((ws) => invoke("set_workspace", { ws: { ...ws, sessions: { last: ids } } }))
+      .then((ws) => invoke("set_workspace", { ws: { ...ws, sessions: { last: ids, panes: combos } } }))
       .catch(() => {});
-  }, [sessions]);
-  // 欢迎页可见时读清单（回欢迎页也重读——与 armed 写入一致；主机已删的行由渲染侧过滤）
+  }, []);
+  const scheduleWsSave = useCallback(() => {
+    if (wsSaveTimerRef.current !== null) window.clearTimeout(wsSaveTimerRef.current);
+    wsSaveTimerRef.current = window.setTimeout(() => { wsSaveTimerRef.current = null; writeWorkspaceSessions(); }, 1500);
+  }, [writeWorkspaceSessions]);
+  wsSaveKickRef.current = scheduleWsSave; // 排版/拖拽路径的 ref 间接层（wsSaveKickRef 声明在前）
+  useEffect(() => { writeWorkspaceSessions(); }, [sessions, writeWorkspaceSessions]);
+  // 欢迎页可见时读清单（回欢迎页也重读——与 armed 写入一致；主机已删的行由渲染侧过滤；
+  // 组合一并读出，供「重连上次会话」全量恢复。按钮以 lastSessionHosts 非空才渲染，
+  // 无需单独的就绪标记）
   useEffect(() => {
     if (sessions.length > 0) return;
     let dead = false;
     invoke("get_workspace")
-      .then((ws) => { if (!dead) setLastSessionHosts(((ws?.sessions as { last?: string[] } | null)?.last ?? []) as string[]); })
+      .then((ws) => {
+        if (dead) return;
+        const sp = (ws?.sessions ?? null) as { last?: string[]; panes?: HostPaneCombo[] } | null;
+        setLastSessionHosts(sp?.last ?? []);
+        setLastWorkspaceCombos(Array.isArray(sp?.panes) ? sp!.panes! : []);
+      })
       .catch(() => {});
     return () => { dead = true; };
   }, [sessions.length]);
@@ -6148,11 +6214,17 @@ export default function App() {
   }, [tmuxMenu]);
 
   // ---- tmux 面板（一标签多 tmux 会话）：开格 / 关格 ----
-  // 开格：同连接附加交互通道跑 `tmux -u attach`（核心侧防呆：同会话两路视图、同名格、
-  // 上限、存在性核验）。返回即乐观建格（不等 3s 快照），布局 + fit 后聚焦新格。
-  const openTmuxPane = async (s: SessionInfo, name: string) => {
-    setTmuxMenu(false);
-    if (splitRef.current) { pushToast("info", t("分屏模式下不可并入面板——请先退出分屏")); return; }
+  // 开格核心：同连接附加交互通道跑 `tmux -u attach`（核心侧防呆：同会话两路视图、
+  // 同名格、上限、存在性核验）。返回即乐观建格（不等 3s 快照），布局 + fit 后聚焦新格。
+  // quiet=true（工作空间恢复）：不打扰——不弹 per-格 toast、不抢焦点；Gone（tmux
+  // 会话已不在服务器）单独归类给调用方做汇总。核心把 Gone 落成 invalid_input +
+  // 「tmux 会话不存在」文案（handle.rs pane_open_inner；demo 镜像同文案），消息
+  // 判别是既有错误契约下最窄的可靠归位。
+  const openTmuxPaneCore = async (s: SessionInfo, name: string, quiet = false): Promise<{ ok: boolean; gone: boolean }> => {
+    if (splitRef.current) {
+      if (!quiet) pushToast("info", t("分屏模式下不可并入面板——请先退出分屏"));
+      return { ok: false, gone: false };
+    }
     try {
       const main = termsRef.current.get(s.id)?.term;
       const cols = main ? Math.max(20, Math.floor(main.cols / 2)) : 80;
@@ -6162,11 +6234,108 @@ export default function App() {
       layoutTmuxPanes();
       fitTerminal();
       setTimeout(() => fitTerminal(), 150);
-      paneTermsRef.current.get(`${s.id}:${p.pane_id}`)?.term.focus();
-      pushToast("ok", t("已并入面板：{0}", name));
+      if (!quiet) paneTermsRef.current.get(`${s.id}:${p.pane_id}`)?.term.focus(); // quiet 不抢焦点：活动标签会把用户正敲的键导进新格（恢复等待期用户已在主视图干活）
+      if (!quiet) pushToast("ok", t("已并入面板：{0}", name));
       void refreshLists();
+      return { ok: true, gone: false };
     } catch (e) {
-      pushToast("err", errMsg(e));
+      if (!quiet) { pushToast("err", errMsg(e)); return { ok: false, gone: false }; }
+      const pe = parseWireError(e);
+      return { ok: false, gone: pe.kind === "invalid_input" && pe.message.includes("不存在") };
+    }
+  };
+  const openTmuxPane = (s: SessionInfo, name: string) => {
+    setTmuxMenu(false);
+    void openTmuxPaneCore(s, name, false);
+  };
+
+  // ---- 工作空间轮：重启级组合恢复 ——「重连上次会话」升级为全量恢复 ----
+  // 逐台并行建连（restoreScenes 同款 tick 等待），连上即开格不等其他主机（一台
+  // 关机的老机器不能拖累健康主机的格子干等 20s）；门（指纹/双因素）挂在本主机上
+  // 时暂停计时——门按用户节奏走，20s 是给「连不上」的不是给「人在核对指纹」的。
+  // Connected 后按保存序逐格开（openTmuxPaneCore quiet）→ 该主机格子全部就绪后
+  // 一次性播种布局树（时序关键：边开边播种会被 syncLayout 反复摘未开键、空间还
+  // 给兄弟，最终权重退化）→ 主视图 attach 静默恢复（restoreTmuxScene auto，复用
+  // 2s 敲键守卫链）。任何一台/一格失败只跳过并汇总，不中断其他主机。
+  const wsRestoreRef = useRef(false);
+  const layoutLeafKeys = (n: PaneNode | null, acc: string[] = []): string[] => {
+    if (!n) return acc;
+    if (n.kids) { for (const k of n.kids) layoutLeafKeys(k, acc); return acc; }
+    acc.push(n.key);
+    return acc;
+  };
+  const restoreLastWorkspace = async () => {
+    if (wsRestoreRef.current || restoringRef.current) return;
+    wsRestoreRef.current = true;
+    restoringRef.current = true; // 与「恢复上次现场」互斥（两条批量建连路径不得交叉）
+    let hostsOk = 0, panesOk = 0;
+    const hostsSkipped: string[] = [];
+    const goneNames: string[] = [];
+    const failedNames: string[] = [];
+    try {
+      const rows = lastSessionHosts
+        .map((hid) => hosts.find((h) => h.id === hid))
+        .filter((h): h is Host => !!h);
+      if (rows.length === 0) return;
+      const seeds = rows.map(async (host) => {
+        const before = new Set(sessionsRef.current.map((x) => x.id));
+        void createSession(host);
+        const t0 = Date.now();
+        let sf: SessionInfo | null = null;
+        for (;;) {
+          const fresh = sessionsRef.current.find((x) => !before.has(x.id) && x.host_id === host.id);
+          if (fresh && fresh.state === "Connected") { sf = fresh; break; }
+          if (fresh && fresh.state === "Closed") break;
+          // 门按 host_id 归属（ProxyJump 跳板门是跳板 host_id，属罕见的漏计场景：
+          // 跳板门挂起时照常计时，到点按未就绪跳过）；建连失败不建标签（attempt
+          // 未过门），只能等满计时按「未就绪」跳过
+          const gated = hostKeyQueueRef.current.some((g) => g.host_id === host.id)
+            || authPromptQueueRef.current.some((g) => g.host_id === host.id);
+          if (!gated && Date.now() - t0 > 20000) break;
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        if (!sf) { hostsSkipped.push(host.name); return; }
+        hostsOk++;
+        const combo = lastWorkspaceCombos.find((c) => c.host_id === host.id);
+        if (!combo) return;
+        // 顺序 await 开格（PANE_MAX 上限内）；后台标签的格子几何在切回该标签时
+        // 由 layoutTmuxPanes 按播种树套用
+        const opened: string[] = [];
+        for (const name of combo.sessions.slice(0, PANE_MAX)) {
+          const r = await openTmuxPaneCore(sf, name, true);
+          if (r.ok) opened.push(name);
+          else if (r.gone && !goneNames.includes(name)) goneNames.push(name);
+          else if (!failedNames.includes(name)) failedNames.push(name);
+        }
+        panesOk += opened.length;
+        // 播种布局：实开格子是保存树叶子（除主视图）的子集即套用——syncLayout 会
+        // 摘掉没开成的键、权重在兄弟间重摊（全等才套用的旧条件会让一格 Gone 连坐
+        // 整棵树落自动平铺，其余格子的自定义布局白白丢弃）
+        const layout = sanitizeLayoutTree(combo.layout ?? null);
+        const want = layout ? layoutLeafKeys(layout).filter((k) => k !== MAIN_KEY) : [];
+        if (layout && want.length > 0 && opened.length > 0 && opened.every((k) => want.includes(k))) {
+          paneLayoutRef.current.set(sf.id, layout);
+          if (sidRef.current === sf.id) layoutTmuxPanes();
+        }
+        if (combo.attached && !sf.tmux_attached) {
+          const sfn = sessionsRef.current.find((x) => x.id === sf.id);
+          if (sfn) void restoreTmuxScene(sfn, combo.attached, true);
+        }
+      });
+      await Promise.all(seeds);
+    } finally {
+      wsRestoreRef.current = false;
+      restoringRef.current = false;
+    }
+    if (panesOk > 0) pushToast("ok", t("已恢复上次工作空间：{0} 个主机 · {1} 个 tmux 窗格", String(hostsOk), String(panesOk)));
+    if (hostsSkipped.length > 0) {
+      pushToast("err", t("{0} 个主机未恢复（20 秒内未连上，或停在指纹/双因素确认）：{1}", String(hostsSkipped.length), hostsSkipped.join(t("、"))));
+    }
+    if (goneNames.length > 0) {
+      pushToast("err", t("{0} 个 tmux 会话已不在服务器，已跳过：{1}", String(goneNames.length), goneNames.join(t("、"))));
+    }
+    if (failedNames.length > 0) {
+      pushToast("err", t("{0} 个 tmux 窗格未能并入面板：{1}", String(failedNames.length), failedNames.join(t("、"))));
     }
   };
   // 关格：只拆客户端通道（detach），tmux 会话与其中进程继续运行。先收格再通知核心——
@@ -6641,10 +6810,13 @@ export default function App() {
     if (!remoteOpen && lastSessionHosts.length > 0) {
       const rowsH = lastSessionHosts.flatMap((hid) => hosts.find((h) => h.id === hid) ?? []);
       if (rowsH.length > 0) {
+        const namesH = rowsH.map((h) => h.name).join(t("、"));
         items.push({
           id: "reconnect-last", group: t("连接"), title: t("重连上次会话（{0}）", rowsH.length),
-          hint: rowsH.map((h) => h.name).join(t("、")), keywords: "重连 上次 会话 reconnect",
-          run: () => { for (const h of rowsH) void createSession(h); },
+          // 上次没用过 tmux 面板时不承诺窗格/布局恢复（如实）
+          hint: lastWorkspaceCombos.length > 0 ? `${namesH} · ${t("含上次的 tmux 窗格与布局")}` : namesH,
+          keywords: "重连 上次 会话 恢复 工作空间 reconnect workspace",
+          run: () => { void restoreLastWorkspace(); },
         });
       }
     }
@@ -7613,6 +7785,8 @@ export default function App() {
               sid={sid} sessions={sessions} hosts={hosts}
               lastSessionHosts={lastSessionHosts} recents={recents} recentsHidden={recentsHidden}
               restoreEntries={restoreEntries} onRestoreScene={(e) => void restoreScenes(e)}
+              onReconnectLast={() => void restoreLastWorkspace()}
+              hasWorkspacePanes={lastWorkspaceCombos.length > 0}
               focusMode={focusMode} hostbarOpen={hostbarOpen}
               createSession={createSession} applyFocus={applyFocus} toggleHostbar={toggleHostbar}
               setShowAddHost={setShowAddHost} setShowImport={setShowImport}
