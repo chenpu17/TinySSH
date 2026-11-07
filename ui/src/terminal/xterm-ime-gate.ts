@@ -13,15 +13,50 @@
 // 项目当前锁在 5.5.0，6.0.0 尚未包含该修复；这里在 core 原型上包一层，语义与上游
 // 一致。升级到包含 #6200 的 xterm 后可删除本模块及 App 里的 patch 调用。
 //
+// 上游 #6200 只覆盖「修饰键先到、input 早于字符 keydown」这一种顺序。部分第三方
+// 输入法（以及 WKWebView 的其它版本）会把字符 keydown（keyCode=229）排在 input
+// 之前：此时去重门被字符 keydown 武装。若 IME 已在 keydown 前把提交文本写进
+// textarea，CompositionHelper 的延迟 diff 会是空操作，insertText 就是唯一送达
+// 机会（这里临时放行）；若 textarea 在 keydown 后才变化，交给 CompositionHelper
+// 发送，这里不插手，避免重复上屏。普通字符 keydown 之后的 input 仍走原去重逻辑。
+//
+// 搜狗等 macOS 第三方输入法还有一条不同的路径：keydown.key 是半角标点/数字，
+// 真正的全角字符在 keypress.charCode 里。xterm 5.5.0 默认在 keydown 就按
+// keydown.key 发数据，会先把半角送进 PTY（或把全角吞掉）。这里按上游 #6294
+// 的方向，在 macOS 上把 ASCII 标点/数字延迟到 keypress，由 charCode 发送；
+// 不 preventDefault（默认动作要留给 IME），只 stopPropagation 挡宿主快捷键。
+//
 // 回归：ui/test/specs/71-ime-punct-gate.spec.cjs（伪 core 语义 + 真实 xterm 事件序列）。
 
 /** 只描述本补丁触达的 xterm core 内部面（私有 API，版本锁定 5.5.0）。 */
 type KeyDownGateCore = {
   _keyDownSeen: boolean;
   _keyDown(ev: KeyboardEvent): boolean | undefined;
+  _keyUp?(ev: KeyboardEvent): void;
+  _inputEvent?(ev: InputEvent): boolean;
+  _keyDownHandled?: boolean;
+  browser?: { isMac?: boolean };
+  optionsService?: { rawOptions?: { screenReaderMode?: boolean } };
+  _customKeyEventHandler?: (ev: KeyboardEvent) => boolean;
+  _compositionHelper?: {
+    isComposing?: boolean;
+    _isSendingComposition?: boolean;
+    _textarea?: HTMLTextAreaElement;
+  };
+  [LAST_KEYDOWN]?: LastKeyDown | null;
+};
+
+type LastKeyDown = {
+  /** 单独按下的修饰键（Shift/Ctrl/Alt/Meta）：不产生文本。 */
+  modifier: boolean;
+  /** 组合键（keyCode 229 / Process / isComposing）：文本由 IME 提交。 */
+  composition: boolean;
+  /** keydown 当时 textarea 里的文本：判断 IME 是否已先写入、CompositionHelper 是否会补发。 */
+  value: string;
 };
 
 const PATCHED = Symbol.for("tinyssh.xterm-ime-gate");
+const LAST_KEYDOWN = Symbol.for("tinyssh.xterm-ime-last-keydown");
 
 /** 与上游 #6200 同表：Shift/Ctrl/Alt + 左右 Meta/OS。 */
 export function isModifierOnlyKeydown(ev: KeyboardEvent): boolean {
@@ -33,6 +68,23 @@ export function isModifierOnlyKeydown(ev: KeyboardEvent): boolean {
     ev.keyCode === 93 || // Meta (Menu)
     ev.keyCode === 224 || // Meta (Firefox)
     ev.key === "Meta";
+}
+
+/** 组合键 keydown：文本由输入法提交，keydown 本身不产生可打印字符。 */
+export function isCompositionKeydown(ev: KeyboardEvent): boolean {
+  return ev.keyCode === 229 || ev.key === "Process" || ev.isComposing === true;
+}
+
+/** macOS 第三方输入法（搜狗等）的 ASCII 标点/数字：keydown.key 是半角，真正的
+ * 全角字符在 keypress.charCode 里。返回 true 时调用方应把这一键交给 keypress，
+ * 不要按 keydown.key 先发半角。 */
+export function isMacImePunctuationKey(ev: KeyboardEvent): boolean {
+  if (ev.ctrlKey || ev.altKey || ev.metaKey || ev.isComposing || ev.keyCode === 229) return false;
+  if (!ev.key || ev.key.length !== 1) return false;
+  const c = ev.key.charCodeAt(0);
+  return (c >= 33 && c <= 64) || // ! through @（含数字）
+    (c >= 91 && c <= 96) || // [ through `
+    (c >= 123 && c <= 126); // { through ~
 }
 
 /**
@@ -47,7 +99,42 @@ export function patchXtermImeGate(term: unknown): void {
   if (!proto || typeof proto._keyDown !== "function" || proto[PATCHED]) return;
   const orig = proto._keyDown;
   const patched = function (this: KeyDownGateCore, ev: KeyboardEvent) {
-    if (!isModifierOnlyKeydown(ev)) return orig.call(this, ev);
+    // macOS 搜狗等第三方 IME：keydown.key 是半角标点/数字，真正的全角字符在
+    // keypress.charCode 里。先把这一键交给 keypress，避免半角先上屏或首击被吞
+    // （与上游 #6294 同向；仅 macOS、非组合态、非 screen reader）。
+    if (
+      this.browser?.isMac &&
+      !this.optionsService?.rawOptions?.screenReaderMode &&
+      isMacImePunctuationKey(ev)
+    ) {
+      // 尊重自定义 key handler：它若拒绝，交回原路径（原路径会再调一次并返回 false）。
+      if (this._customKeyEventHandler && this._customKeyEventHandler(ev) === false) {
+        return orig.call(this, ev);
+      }
+      const comp = this._compositionHelper;
+      if (comp && (comp.isComposing || comp._isSendingComposition)) {
+        return orig.call(this, ev);
+      }
+      // 保持原 _keyDown 的门状态：keydown 已见（input 去重），但这里不发数据；
+      // keypress 的 charCode 才是 IME 文本。stopPropagation 只挡宿主快捷键冒泡，
+      // 不 preventDefault——默认动作必须保留给 keypress/IME。
+      this._keyDownSeen = true;
+      this._keyDownHandled = false;
+      this[LAST_KEYDOWN] = {
+        modifier: false,
+        composition: false,
+        value: comp?._textarea?.value ?? "",
+      };
+      ev.stopPropagation();
+      return true;
+    }
+    const modifier = isModifierOnlyKeydown(ev);
+    this[LAST_KEYDOWN] = {
+      modifier,
+      composition: isCompositionKeydown(ev),
+      value: this._compositionHelper?._textarea?.value ?? "",
+    };
+    if (!modifier) return orig.call(this, ev);
     // 上游语义：修饰键 keydown 不改变去重门——进入前已武装（组合态）则保持武装。
     const seen = this._keyDownSeen;
     try {
@@ -58,6 +145,43 @@ export function patchXtermImeGate(term: unknown): void {
   };
   try {
     proto._keyDown = patched;
+    // keyup 后上一次 keydown 不再代表当前按键：避免后续 input 误用旧状态。
+    if (typeof proto._keyUp === "function") {
+      const origKeyUp = proto._keyUp;
+      proto._keyUp = function (this: KeyDownGateCore, ev: KeyboardEvent) {
+        this[LAST_KEYDOWN] = null;
+        return origKeyUp.call(this, ev);
+      };
+    }
+    // 字符 keydown(229/Process) 先于 IME input 的顺序：若 IME 在 keydown 前已把
+    // 提交文本写进 textarea，CompositionHelper 的延迟 diff 会是空操作，这一份
+    // insertText 就是唯一送达机会——临时放行。若 textarea 在 keydown 后才变化，
+    // 交给 CompositionHelper 的 diff 发送，这里不插手，避免重复上屏。
+    // 普通字符 keydown 之后的 input 仍走原门去重。
+    if (typeof proto._inputEvent === "function") {
+      const origInputEvent = proto._inputEvent;
+      proto._inputEvent = function (this: KeyDownGateCore, ev: InputEvent) {
+        const last = this[LAST_KEYDOWN];
+        const comp = this._compositionHelper;
+        if (
+          this._keyDownSeen &&
+          ev.inputType === "insertText" &&
+          !!ev.data &&
+          last?.composition &&
+          last.value.endsWith(ev.data) &&
+          !(comp && (comp.isComposing || comp._isSendingComposition))
+        ) {
+          const seen = this._keyDownSeen;
+          this._keyDownSeen = false;
+          try {
+            return origInputEvent.call(this, ev);
+          } finally {
+            this._keyDownSeen = seen;
+          }
+        }
+        return origInputEvent.call(this, ev);
+      };
+    }
     Object.defineProperty(proto, PATCHED, { value: true, enumerable: false });
   } catch {
     // 未来 xterm 把方法/原型改成只读或结构不匹配：静默放弃补丁，终端照常工作
