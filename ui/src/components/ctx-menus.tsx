@@ -10,6 +10,7 @@ import { stateLabel } from "../app-data";
 import { t } from "../i18n";
 import type { ConfirmState } from "./confirm-dialogs";
 import type { SplitDir, SplitPanes } from "../app-data";
+import { resetMouseReporting } from "../terminal/mouse-mode-guard";
 import { IconX } from "../icons";
 
 // 按钮美化轮：右键菜单宽度随内容（200–340px，styles.css .ctx-menu），挂载即测量——越出视口
@@ -369,6 +370,10 @@ export function CtxMenus({
                   onClick={() => { close(); pe.term.selectAll(); }}
                 >{t("全选")}</button>
                 <div className="ctx-menu-sep" role="separator" />
+                <button className="sm-item" role="menuitem" data-testid="pane-mouse-reset"
+                  title={t("清掉远端 TUI 遗留的鼠标上报：滚轮恢复滚动，提示符不再出现 35;...M 乱码")}
+                  onClick={() => { close(); resetMouseReporting(pe.term); }}
+                >{t("重置鼠标上报")}</button>
                 {paneLayoutCustom(pe.sid) && (
                   <button className="sm-item" role="menuitem" data-testid="pane-layout-reset"
                     title={t("回到自动平铺（拖动调整过的位置与大小作废）")}
@@ -429,6 +434,10 @@ export function CtxMenus({
                 <button className="sm-item" role="menuitem"
                   onClick={() => { close(); en.term.clear(); }}
                 >{t("清屏")}</button>
+                <button className="sm-item" role="menuitem" data-testid="term-mouse-reset"
+                  title={t("清掉远端 TUI 遗留的鼠标上报：滚轮恢复滚动，提示符不再出现 35;...M 乱码")}
+                  onClick={() => { close(); resetMouseReporting(en.term); }}
+                >{t("重置鼠标上报")}</button>
                 {sidRef.current === termMenu.sid && paneLayoutCustom(termMenu.sid) && (
                   <button className="sm-item" role="menuitem" data-testid="pane-layout-reset"
                     title={t("回到自动平铺（拖动调整过的位置与大小作废）")}

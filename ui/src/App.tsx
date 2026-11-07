@@ -18,8 +18,11 @@ import {
 } from "./zoom";
 import { applyCheckpoint, createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
+import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
+import { installMouseModeGuard } from "./terminal/mouse-mode-guard";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
+import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
   MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
   type PaneNode, type PaneTile, type PaneDivider, type DropZone,
@@ -192,6 +195,13 @@ function sanitizeLayoutTree(n: unknown): PaneNode | null {
  * 丢弃最老的（往往是主终端，静默回落 DOM 渲染）——超额的格子直接走 DOM 渲染器。 */
 const PANE_WEBGL_BUDGET = 12;
 
+/** 终端正文最小对比度（WCAG AA 4.5:1）。xterm 会按**每个单元格实际前景/背景**
+ * 动态修正前景亮度（DOM 与 WebGL 两个渲染器都实现了该能力），不改变缓冲区文本、
+ * 也不依赖远端配置。主题轮审计：tmux 默认 `status-style bg=green,fg=black` 在浅色
+ * 色板下仅约 1.05:1、深色色板 3.95–4.50:1；htop/dialog 一类「彩色底 + 黑字」同病。
+ * 调色板本身已按「ANSI 彩字对终端底 ≥4.5」生成，因此普通输出不受影响。 */
+const TERM_MIN_CONTRAST = 4.5;
+
 /** 拖拽布局：单格最小像素（宽够 20 列、高够标题栏+数行；分隔条两侧各守此下限）。 */
 const PANE_MIN_W = 180;
 const PANE_MIN_H = 100;
@@ -287,6 +297,10 @@ export default function App() {
   // 增删（bornAt 与 panesSnapAtRef 同为 performance.now()：快照请求晚于格子出生，
   // 缺席才算真缺席——乐观开格后才返回的在途旧快照不误杀，乱序到达同样成立）
   const paneTermsRef = useRef<Map<string, PaneTermEntry>>(new Map());
+  // 每个标签最后一次落焦的子窗口（键 = "main" 或 `${sid}:${paneId}`）：切走再切回时
+  // 恢复用户当时选中的 tmux 格子，而不是永远落回主视图（用户反馈：上次选定的
+  // 子窗口会丢失）。focusin 事件维护，切标签的 focusSession 消费。
+  const paneLastFocusRef = useRef<Map<string, string>>(new Map());
   const panesSnapAtRef = useRef(0);
   // ---- tmux 联动（恢复现场轮）----
   // 恢复动作经 ref 供 applyStateEvent 调用（该回调定义在组件顶部、函数体晚于
@@ -1011,6 +1025,9 @@ export default function App() {
   });
   const [toolsOpen, setToolsOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
+  // 专注模式小工具栏（用户反馈：连接现有主机与文件是最常用两件事）：
+  // 会话工具栏与 .tabbar-admin 在专注态整体隐藏，这里用标签条右侧的紧凑入口补位。
+  const [focusHostMenu, setFocusHostMenu] = useState(false);
   const [winW, setWinW] = useState(() => window.innerWidth);
   // 专注模式（F11）：标题栏/主机栏/会话工具栏/状态条全让位 + 系统级全屏，标签条
   // 变 overlay（藏态留 6px 抓手，hover/钉住态滑出）。初值读 localStorage 同步恢复
@@ -1050,8 +1067,18 @@ export default function App() {
   // 典型失败面：dev 前端配旧二进制（无新 capability）。进入提示只给本运行第一次，
   // F11 连切不反复轰炸。demo（浏览器）不劫持 F11，面板/按钮只切 chrome 不动全屏。
   const focusHintShownRef = useRef(false);
+  // 退出专注时紧凑菜单按钮会随 focusMode 卸载，焦点会落到 body；ref 间接引用
+  // 下方的 focusTermFor，退出后把焦点还给该标签上次落焦的终端/格子。
+  const focusTermForRef = useRef<(sid: string) => void>(() => {});
   const applyFocus = useCallback((on: boolean, announce = true) => {
     setFocusMode(on);
+    if (!on) {
+      setFocusHostMenu(false); // 退出专注：紧凑连接菜单没有宿主了
+      requestAnimationFrame(() => {
+        const sid = sidRef.current;
+        if (sid) focusTermForRef.current(sid);
+      });
+    }
     try { localStorage.setItem("ui.focus", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
     if (!inTauri) {
       // 七轮 B7-5：demo 域 F11 归浏览器（native 门控），退出靠顶部「退出专注」钮——
@@ -1868,6 +1895,9 @@ export default function App() {
       // 皆中招、HEAD 基线同样复现=环境级回归而非应用代码）。改走字体字形
       // （内置字体都带全量框线/块元素/powerline），格格有墨，横线略带字模侧距。
       customGlyphs: false,
+      // tmux/彩色底 TUI 的对比度兜底（见 TERM_MIN_CONTRAST）：主题派生只保证
+      // 「ANSI 彩字 × 终端底」，管不到程序自带的「彩底 × 黑字」。
+      minimumContrastRatio: TERM_MIN_CONTRAST,
       theme: { ...derivedThemeRef.current.theme },
       // OSC 8 超链接激活（T16）：WebLinksAddon 只管裸 URL 正则检测，
       // OSC 8 由核心 linkHandler 路由（不设则核心弹 confirm 对话框）
@@ -1878,6 +1908,10 @@ export default function App() {
         },
       },
     });
+    // macOS 中文输入法全角标点首击丢失（xterm 5.5.0 去重门缺陷，见 terminal/xterm-ime-gate.ts）
+    patchXtermImeGate(term);
+    // 远端 TUI 退出后残留鼠标上报：离开备用屏/回到提示符时自动关协议（KI-001 补强）
+    installMouseModeGuard(term);
     term.open(el);
     // 精确触摸板 1:1 直跟，经典滚轮保留 100ms 补间（见 terminal/scroll.ts）。
     installAdaptiveSmoothScroll(term, el, isMacPlatform() ? 0 : 100);
@@ -2194,8 +2228,14 @@ export default function App() {
       smoothScrollDuration: isMacPlatform() ? 0 : 100,
       fastScrollModifier: "alt", fastScrollSensitivity: 5,
       rescaleOverlappingGlyphs: true, customGlyphs: false,
+      // 格子恒显示 tmux（默认样式就是彩底黑字），对比度兜底无条件开
+      minimumContrastRatio: TERM_MIN_CONTRAST,
       theme: { ...derivedThemeRef.current.theme },
     });
+    // tmux 格子与主终端同一输入法路径（原型已装则幂等跳过）
+    patchXtermImeGate(term);
+    // tmux 格子同样防残留上报（tmux 自身退出/崩溃时 1003 可能留着）
+    installMouseModeGuard(term);
     term.open(body);
     installAdaptiveSmoothScroll(term, body, isMacPlatform() ? 0 : 100);
     term.loadAddon(new Unicode11Addon());
@@ -2302,6 +2342,7 @@ export default function App() {
     if (!e) return;
     const hadFocus = e.cell.contains(document.activeElement);
     paneTermsRef.current.delete(key);
+    if (paneLastFocusRef.current.get(e.sid) === key) paneLastFocusRef.current.set(e.sid, "main");
     try { e.webgl?.dispose(); } catch { /* 已释放 */ }
     try { e.term.dispose(); } catch { /* 已释放 */ }
     e.cell.remove();
@@ -2656,45 +2697,54 @@ export default function App() {
       return () => window.removeEventListener("keydown", onKey, { capture: true });
     }, []);
 
-    // 终端聚焦状态上报 native 层：native Ctrl 键接管只在 xterm 聚焦时生效，
-    // 搜索框等输入控件不受影响。
-    useEffect(() => {
-      // tmux 面板：焦点在格子 xterm 时连同 pane_id 上报——native Ctrl 接管（mac IME
-      // 绕行）据此改投格子通道，不把 Ctrl+C 打进主视图
-      const report = (focused: boolean, el?: Element | null) => {
-        const cell = (el as HTMLElement | null | undefined)?.closest?.(".tmux-cell") as HTMLElement | null | undefined;
-        const sid = cell ? (cell.dataset.sid ?? null) : sidRef.current;
-        const paneId = cell ? Number(cell.dataset.paneId) : null;
-        void invoke("note_terminal", { sid, focused, paneId }).catch(() => {});
-      };
-      const onFocusIn = (e: FocusEvent) => {
-        const t = e.target as HTMLElement | null;
-        if (t?.classList?.contains("xterm-helper-textarea")) report(true, t);
-      };
-      const onFocusOut = (e: FocusEvent) => {
-        const t = e.target as HTMLElement | null;
-        if (t?.classList?.contains("xterm-helper-textarea")) report(false, t);
-      };
-      // §7.4：WebView 整窗失焦/回焦对称同步——焦点不出 document 时 focusout 不触发，
-      // native 层会以失焦状态继续拦截 ⌃字母；⌘Tab 切回时 focusin 同样不触发，
-      // 需按当前 DOM 焦点补报（rev-r13 低-4）
-      const xtermFocused = () => {
-        const t = document.activeElement;
-        return !!(t instanceof HTMLElement && t.classList.contains("xterm-helper-textarea"));
-      };
-      const onWinBlur = () => report(false, document.activeElement);
-      const onWinFocus = () => { if (xtermFocused()) report(true, document.activeElement); };
-      window.addEventListener("blur", onWinBlur);
-      window.addEventListener("focus", onWinFocus);
-      document.addEventListener("focusin", onFocusIn);
-      document.addEventListener("focusout", onFocusOut);
-      return () => {
-        window.removeEventListener("blur", onWinBlur);
-        window.removeEventListener("focus", onWinFocus);
-        document.removeEventListener("focusin", onFocusIn);
-        document.removeEventListener("focusout", onFocusOut);
-      };
-    }, []);
+  // 终端聚焦状态上报 native 层：native Ctrl 键接管只在 xterm 聚焦时生效，
+  // 搜索框等输入控件不受影响。tmux 面板焦点在格子 xterm 时连同 pane_id 上报——
+  // native Ctrl 接管（mac IME 绕行）据此改投格子通道，不把 Ctrl+C 打进主视图。
+  // 关闭模态后的补报也走这里（按实际 DOM 焦点推导），避免漏 pane_id。
+  const noteTerminalFocus = useCallback((focused: boolean, el?: Element | null) => {
+    const { sid, paneId } = terminalFocusTarget(el ?? document.activeElement, sidRef.current);
+    void invoke("note_terminal", { sid, focused, paneId }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    const report = noteTerminalFocus;
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.classList?.contains("xterm-helper-textarea")) return;
+      // 记住焦点所在的子窗口：主视图 = "main"，tmux 格子 = `${sid}:${paneId}`。
+      // 切标签时 focusSession 按此恢复，用户不会每次都被送回主视图。
+      const cell = t.closest(".tmux-cell") as HTMLElement | null;
+      if (cell?.dataset.sid && cell.dataset.paneId) {
+        paneLastFocusRef.current.set(cell.dataset.sid, `${cell.dataset.sid}:${cell.dataset.paneId}`);
+      } else {
+        const sess = t.closest(".term-session") as HTMLElement | null;
+        if (sess?.dataset.sid) paneLastFocusRef.current.set(sess.dataset.sid, "main");
+      }
+      report(true, t);
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.classList?.contains("xterm-helper-textarea")) report(false, t);
+    };
+    // §7.4：WebView 整窗失焦/回焦对称同步——焦点不出 document 时 focusout 不触发，
+    // native 层会以失焦状态继续拦截 ⌃字母；⌘Tab 切回时 focusin 同样不触发，
+    // 需按当前 DOM 焦点补报（rev-r13 低-4）
+    const xtermFocused = () => {
+      const t = document.activeElement;
+      return !!(t instanceof HTMLElement && t.classList.contains("xterm-helper-textarea"));
+    };
+    const onWinBlur = () => report(false, document.activeElement);
+    const onWinFocus = () => { if (xtermFocused()) report(true, document.activeElement); };
+    window.addEventListener("blur", onWinBlur);
+    window.addEventListener("focus", onWinFocus);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      window.removeEventListener("blur", onWinBlur);
+      window.removeEventListener("focus", onWinFocus);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, [noteTerminalFocus]);
 
   // 终端尺寸自适应 + PTY 对齐（backend resize）。按「可见 pane」逐个校准：
   // 单 pane = 活动会话全幅；分屏 = 左右各按自身元素盒子（半幅）计算——
@@ -4048,17 +4098,19 @@ export default function App() {
   const toolsRef = useRef<HTMLDivElement | null>(null);
   const tmuxMenuRef = useRef<HTMLDivElement | null>(null);
   const tabsMenuRef = useRef<HTMLDivElement | null>(null);
+  const focusHostMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!toolsOpen && !tabsMenuOpen && !tmuxMenu) return;
+    if (!toolsOpen && !tabsMenuOpen && !tmuxMenu && !focusHostMenu) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (toolsOpen && !toolsRef.current?.contains(t)) setToolsOpen(false);
       if (tabsMenuOpen && !tabsMenuRef.current?.contains(t)) setTabsMenuOpen(false);
       if (tmuxMenu && !tmuxMenuRef.current?.contains(t)) setTmuxMenu(false);
+      if (focusHostMenu && !focusHostMenuRef.current?.contains(t)) setFocusHostMenu(false);
     };
     window.addEventListener("mousedown", onDown, true);
     return () => window.removeEventListener("mousedown", onDown, true);
-  }, [toolsOpen, tabsMenuOpen, tmuxMenu]);
+  }, [toolsOpen, tabsMenuOpen, tmuxMenu, focusHostMenu]);
   useEffect(() => {
     // resize 连发期间防抖 120ms（与终端 fit 防抖同节奏）：availW/tpFull 判定、
     // 文件菜单定位都不需要逐帧精度，不必按事件频率整树重渲染
@@ -4073,12 +4125,41 @@ export default function App() {
   // 非模态次序，固定序与 R12 行为一致——rev-r13 低-3 如实登记）。指纹 Esc=取消
   // 连接、双因素 Esc=取消认证，与各自「取消」按钮同语义。ref 持有（闭包引用
   // 后文定义的处理器，无求值顺序问题）。
+  // 聚焦某会话“上次落焦的子窗口”，返回实际聚焦的格子（主视图为 null）。
+  // 单窗格优先恢复记忆格；zoom 态只认被放大的格（其余格子 display:none）；
+  // 分屏、格已关、格已死、格不可见都回落主视图。focusSession 与关浮层共用，
+  // 避免 restoreTermFocus 永远聚焦主终端把 paneLastFocusRef 覆盖成 main。
+  const focusTermFor = useCallback((target: string): PaneTermEntry | null => {
+    const entry = termsRef.current.get(target);
+    if (!entry) return null;
+    let restored: PaneTermEntry | null = null;
+    if (!splitRef.current) {
+      const zoom = paneZoomRef.current;
+      if (zoom?.sid === target) {
+        restored = [...paneTermsRef.current.values()].find(
+          (e) => e.sid === target && e.name === zoom.name && e.alive && e.cell.style.display !== "none",
+        ) ?? null;
+      }
+      if (!restored) {
+        const remembered = paneLastFocusRef.current.get(target);
+        if (remembered && remembered !== "main") {
+          const pane = paneTermsRef.current.get(remembered);
+          if (pane && pane.alive && pane.cell.style.display !== "none") restored = pane;
+        }
+      }
+    }
+    if (restored) restored.term.focus();
+    else entry.term.focus();
+    return restored;
+  }, []);
+  focusTermForRef.current = focusTermFor;
+
   // §7.4：关闭工具后恢复到其触发前的有效焦点——工具均从终端场景触发，恢复即
-  // 聚焦活动终端（focusin 链会自动恢复 native Ctrl 上报）。
+  // 聚焦活动终端/该标签上次落焦的格子（focusin 链会自动恢复 native Ctrl 上报）。
   const restoreTermFocus = () => {
     const sid = sidRef.current;
     if (!sid) return;
-    termsRef.current.get(sid)?.term.focus();
+    focusTermFor(sid);
   };
   const closeTopOverlayRef = useRef<() => boolean>(() => false);
   closeTopOverlayRef.current = (): boolean => {
@@ -4111,6 +4192,7 @@ export default function App() {
     if (showSettings) { closeSettings(); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
     if (tabsMenuOpen) { setTabsMenuOpen(false); return true; }
+    if (focusHostMenu) { setFocusHostMenu(false); return true; }
     if (showAddHost || editingHost) { closeAddHost(); return true; }
     if (showQuickConnect) { setShowQuickConnect(false); return true; } // UX2 走查：快速连接对话框的键盘出口（FE7 同族漏网）
     if (showImport) { setShowImport(false); return true; }
@@ -4353,9 +4435,10 @@ export default function App() {
       refreshBrief(target);
       applyPanes();
     }
-    entry.term.focus();
-    void invoke("note_terminal", { sid: target, focused: true }).catch(() => {});
-  }, [applyPanes, refreshBrief]);
+    // 恢复该标签上次落焦的子窗口（用户反馈：切走再切回总是回第一个/主视图）。
+    const restored = focusTermFor(target);
+    void invoke("note_terminal", { sid: target, focused: true, paneId: restored?.paneId ?? null }).catch(() => {});
+  }, [applyPanes, refreshBrief, focusTermFor]);
 
   // 点到哪个 pane 就聚焦哪个会话（事件委托挂在 #term 上，覆盖单 pane 与分屏）
   useEffect(() => {
@@ -4364,7 +4447,11 @@ export default function App() {
     const onDown = (ev: MouseEvent) => {
       const pane = (ev.target as HTMLElement).closest?.(".term-session") as HTMLElement | null;
       const target = pane?.dataset.sid;
-      if (target) focusSession(target);
+      if (target) {
+        // 点主视图本身 = 明确选择主视图，别让上一次格子记忆把焦点抢回去
+        paneLastFocusRef.current.set(target, "main");
+        focusSession(target);
+      }
     };
     mount.addEventListener("mousedown", onDown);
     return () => mount.removeEventListener("mousedown", onDown);
@@ -4674,6 +4761,7 @@ export default function App() {
       entry.term.dispose();
       entry.el.remove();
       termsRef.current.delete(id);
+      paneLastFocusRef.current.delete(id);
     }
     const sp = splitRef.current;
     if (sp?.second === id) {
@@ -4750,6 +4838,7 @@ export default function App() {
       entry.el.remove();
       termsRef.current.delete(id);
       subscribedRef.current.delete(id);
+      paneLastFocusRef.current.delete(id);
       dead.push(id);
     }
     if (!dead.length) return;
@@ -4916,18 +5005,20 @@ export default function App() {
     persistSetting(KEYMAP_SETTING, JSON.stringify(next));
   }, [applyKeymap, persistSetting, pushToast]);
   // §7.4：原生 Ctrl 拦截只在终端拥有焦点且无模态层时转发——模态打开即使终端仍持
-  // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报
+  // DOM 焦点（弹层未 autofocus）也先停；关闭后按实际 DOM 焦点恢复上报。
+  // 必须走 noteTerminalFocus 推导 pane_id：否则从 tmux 格子打开的确认/粘贴/OSC52
+  // 卡关闭后 pane_id 被清空，macOS 原生 Ctrl+C 会改投主视图而不是当前格子。
   useEffect(() => {
     if (!inTauri) return;
     if (modal) {
-      void invoke("note_terminal", { sid: sidRef.current, focused: false }).catch(() => {});
+      noteTerminalFocus(false);
       return;
     }
     const t = document.activeElement;
     if (t instanceof HTMLElement && t.classList.contains("xterm-helper-textarea")) {
-      void invoke("note_terminal", { sid: sidRef.current, focused: true }).catch(() => {});
+      noteTerminalFocus(true, t);
     }
-  }, [modal, inTauri]);
+  }, [modal, inTauri, noteTerminalFocus]);
   const requestCloseSession = useCallback((s: SessionInfo) => {
     if (s.state === "Disconnected") { void disconnectSid(s.id); return; }
     setConfirm({ kind: "closeSession", sid: s.id, hostName: s.host_name });
@@ -5007,7 +5098,7 @@ export default function App() {
   // 会话属已知意图，此后完成的连接仍不得从当前会话抢焦点，代际已含开浮层那跳）。
   // 门卡（TOFU/2FA）不入列——它们属于连接自身流程，置位会误伤前台「信任后落终端」
   const overlayOpen = searchOpen || showSettings || showAddHost || showImport
-    || toolsOpen || tabsMenuOpen || rightPanel !== null || !!confirm || !!pendingDrop;
+    || toolsOpen || tabsMenuOpen || focusHostMenu || rightPanel !== null || !!confirm || !!pendingDrop;
   const overlayPrevRef = useRef(overlayOpen);
   useEffect(() => {
     if (overlayOpen && !overlayPrevRef.current) focusGenRef.current++;
@@ -6403,7 +6494,8 @@ export default function App() {
     fitTerminal();
     setTimeout(() => fitTerminal(), 150);
     if (e) pushToast("ok", t("已关闭窗格：{0}（tmux 会话仍在运行）", e.name));
-    if (sid === sidRef.current) xtermRef.current?.focus();
+    // 只回到“记忆中的子窗口”：关的是未聚焦格时别把焦点从另一个格子抢回主视图
+    if (sid === sidRef.current) focusTermFor(sid);
     try { await invoke("tmux_pane_close", { sid, paneId }); } catch { /* 已不在核心侧：照常收格 */ }
     void refreshLists();
   };
@@ -7077,7 +7169,7 @@ export default function App() {
   // 只剩 6px 抓手，「新建连接」钮无从发现——没有标签时条就留在眼前。
   // 标签右键菜单/分屏菜单也钉（巡检补）：.ctx-menu 44、.split-menu 43 都低于
   // 滑出条的 45——钉住回流 static 后整条落到 z41 遮罩之下，菜单不被压住。
-  const zenPin = sessions.length === 0 || searchOpen || !!renaming || tabsMenuOpen || !!tabMenu || !!splitMenu || !!connError
+  const zenPin = sessions.length === 0 || searchOpen || !!renaming || tabsMenuOpen || focusHostMenu || !!tabMenu || !!splitMenu || !!connError
     || pendingCount > 0 || bellSids.size > 0
     || (current != null && (
       current.state === "Degraded" || current.state === "Reconnecting"
@@ -7564,6 +7656,51 @@ export default function App() {
               能力（demo 域 actions.ts 有 native 门），浏览器里不广告不存在的键 */}
           <button className="ghost icon-btn" title={inTauri ? t("命令面板（{0}）", formatBinding(keymap.palette, isMacPlatform())) : t("命令面板")} aria-label={t("命令面板")} data-testid="palette-open"
             onClick={() => setPaletteOpen(true)}><IconSearch size={14} /></button>
+          {/* 专注模式小工具栏（用户反馈：连接现有配置主机与文件是最常用的两件事）。
+              会话工具栏整条隐藏后，这两个入口在标签条补位；仍不进 .tabbar-admin，
+              保持专注态的克制。连接菜单用 .tools-menu，随 zenPin 钉住标签条。 */}
+          {focusMode && (
+            <>
+              <button className={"ghost icon-btn" + (rightPanel === "files" ? " ts-open" : "")}
+                data-testid="focus-files"
+                disabled={!sid}
+                title={!sid ? t("先连接会话再打开文件面板") : rightPanel === "files" ? t("关闭文件面板") : t("打开文件面板")}
+                aria-label={t("文件面板")} aria-pressed={rightPanel === "files"}
+                onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}><IconFolder size={14} /></button>
+              <div className="st-tools" ref={focusHostMenuRef}>
+                <button className="ghost" data-testid="focus-connect"
+                  aria-haspopup="menu" aria-expanded={focusHostMenu}
+                  title={t("从已保存主机新建连接")}
+                  onClick={() => setFocusHostMenu(!focusHostMenu)}>
+                  {t("连接")}<IconChevronDown size={12} />
+                </button>
+                {focusHostMenu && (
+                  <div className="tools-menu tm-right" role="menu" data-testid="focus-connect-menu">
+                    {hosts.length === 0 && (
+                      <div className="dim" style={{ padding: "6px 10px" }}>{t("暂无已保存主机——退出专注模式后在主机栏添加")}</div>
+                    )}
+                    {[...hosts].sort(byName).map((h) => {
+                      const mine = sessions.filter((s) => s.host_id === h.id);
+                      return (
+                        <button role="menuitem" key={h.id} data-testid={"focus-host-" + h.id}
+                          className="focus-host-item"
+                          title={h.id === "local" ? t("本地终端") : `${h.username}@${h.address}:${h.port}`}
+                          disabled={connectingIds.has(h.id)}
+                          onClick={() => {
+                            setFocusHostMenu(false);
+                            void createSession(h).catch((e) => pushToast("err", errMsg(e)));
+                          }}>
+                          <span className="tab-label">{h.name}</span>
+                          <span className="mono focus-host-addr">{h.id === "local" ? t("本地") : `${h.username}@${h.address}`}</span>
+                          {mine.length > 0 && <span className="auth-tag" title={t("已有 {0} 个会话", mine.length)}>● {mine.length}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           {/* 专注模式（F11）：常态是 ⤢ 图标；专注下滑出条里另有文字钮，双入口同 applyFocus。
               协作/传输入口在此补位——专注下标题栏与状态条都藏了，而 §3 要求待审批等
               提醒必须可达（pendingCount>0 已让 zenPin 钉住标签条，入口就在眼前） */}

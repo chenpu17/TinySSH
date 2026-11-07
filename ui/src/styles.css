@@ -427,6 +427,13 @@ button.ghost.attn:not(:disabled):hover { color: var(--warn); background: var(--p
 .tools-menu.tm-right { min-width: 240px; }
 .tools-menu .tm-main > .mono { flex: none; white-space: nowrap; }
 .tools-menu .tm-active { background: var(--accent-soft); }
+/* 专注模式紧凑连接菜单：主机名让位省略、地址右对齐常显、会话数徽标收尾 */
+.tools-menu .focus-host-item { min-width: 0; }
+.tools-menu .focus-host-item .focus-host-addr {
+  margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 130px;
+}
+.tools-menu .focus-host-item .auth-tag { flex: none; }
 
 .panel-title {
   padding: 6px 12px; min-height: 32px; align-items: center;
@@ -800,7 +807,10 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 #term.has-tmux-panes .term-session.active:focus-within::after { border-color: var(--accent); }
 .tmux-cell:focus-within .tmux-cell-head,
 #term.has-tmux-panes .term-session.active:focus-within .pane-tag {
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  /* 焦点标题用 --accent-text（菜单 accent 软底同款正文档）而非 --accent：14% accent
+     混 panel 的底会把 graphite/light 压到 4.39:1；12% + accent-text 全 32 态 ≥4.5
+     （按 ui/test/theme-vars.mjs 的继承链独立复算，见 74-terminal-contrast） */
+  color: var(--accent-text); background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
 .tmux-cell-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tmux-cell-state { display: none; flex: none; color: var(--warn, #d29922); }
@@ -819,7 +829,9 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .tmux-cell-zoom svg { display: block; }
 .tmux-cell-zoom:not(:disabled):hover { color: var(--accent); background: var(--panel2); }
 .tmux-cell-body { position: relative; flex: 1; min-height: 0; padding: 4px 6px; overflow: hidden; }
-.tmux-cell.dead .tmux-cell-body { opacity: 0.45; filter: grayscale(0.6); }
+/* 死格只去色、不再整体降透明度：0.45 透明度把浅色主题的正文压到 1.8–2.9:1，
+   而「已断开」状态字已在标题栏常显——保留最后一段输出可读比重度蒙灰更有用 */
+.tmux-cell.dead .tmux-cell-body { filter: grayscale(0.85); }
 /* 拖拽布局：标题栏可抓（grab）拖动换位，分隔条 8px 命中区拖动调大小（静态分隔线仍是
    格子 1px 边框，条只在悬停/拖动时亮 accent）。拖动期间全窗锁光标、禁选中文本；被拖格
    半透明，落点提示框 = 落下后被拖格的真实位置（无过渡动画——墨水屏主题同样适用） */

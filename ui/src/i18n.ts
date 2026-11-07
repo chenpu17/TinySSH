@@ -186,6 +186,11 @@ const EN: Record<string, string> = {
 
   // —— keymap 动作（设置 → 快捷键 键位卡） ——
   "新建连接": "New connection",
+  "从已保存主机新建连接": "New connection from a saved host",
+  "暂无已保存主机——退出专注模式后在主机栏添加": "No saved hosts yet — exit focus mode and add one in the hosts panel",
+  "先连接会话再打开文件面板": "Connect a session before opening the files panel",
+  "已有 {0} 个会话": "{0} session(s) already open",
+  "本地终端": "Local terminal",
   "打开主机栏添加表单": "Open the hosts panel add form",
   "关闭当前标签": "Close current tab",
   "活动会话先确认影响": "Confirm impact first for live sessions",
@@ -550,6 +555,9 @@ const EN: Record<string, string> = {
   "全选": "Select all",
   "查找…": "Find…",
   "清屏": "Clear screen",
+  "重置鼠标上报": "Reset mouse reporting",
+  "清掉远端 TUI 遗留的鼠标上报：滚轮恢复滚动，提示符不再出现 35;...M 乱码":
+    "Clear mouse reporting left behind by a remote TUI: the wheel scrolls again and prompts no longer show 35;...M garbage",
   "最近连接操作：{0}": "Recent connection actions: {0}",
   "从最近连接隐藏": "Hide from recent connections",
   "窗口高度不足——分屏临时退化为单窗格，另一个会话仍在标签中；拉高窗口自动恢复。":
