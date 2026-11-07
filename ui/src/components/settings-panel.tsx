@@ -1016,7 +1016,12 @@ function AgentModelCard() {
       .then(() => {
         setHasKey(hasKey || apiKey.trim().length > 0);
         setApiKey("");
-        setMsg({ kind: "ok", text: t("已保存（api_key 加密入库，不回显）") });
+        setMsg({
+          kind: "ok",
+          text: inTauri
+            ? t("已保存（api_key 加密入库，不回显）")
+            : t("已保存（演示域仅记录配置事实，不保存密钥，也不会切换真实模型）"),
+        });
         window.dispatchEvent(new Event("agent-model-saved"));
       })
       .catch((e) => setMsg({ kind: "err", text: String(e) }))
@@ -1027,7 +1032,9 @@ function AgentModelCard() {
     <div className="set-card" data-testid="agent-model-card">
       <h4 style={{ margin: "0 0 6px" }}>{t("模型服务（内置 Agent 对话）")}</h4>
       <div className="dim" style={{ fontSize: 11, lineHeight: 1.7 }}>
-        {t("配置后左侧 Agent 视图从演练外壳切换为真实模型。agent 的 exec 等操作仍走本应用既有审批链（危险命令需人工批准）。")}
+        {inTauri
+          ? t("配置后左侧 Agent 视图从演练外壳切换为真实模型。agent 的 exec 等操作仍走本应用既有审批链（危险命令需人工批准）。")
+          : t("演示域不会保存密钥，也不会切换真实模型；此卡仅用于预览表单。")}
       </div>
       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         <select data-testid="agent-model-provider" style={{ fontSize: 12 }} value={provider}
@@ -1066,39 +1073,44 @@ function PromptSkillsCard() {
   const [fleetExtra, setFleetExtra] = useState("");
   const [skills, setSkills] = useState<{ name: string; body: string }[]>([]);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const loadedRef = useRef(false);
+  // 按 key 记录「读取成功」：某个 key 读取失败时不能在卸载兜底里用初始 ""
+  // 覆盖已存内容（此前 Promise.all(...catch) 无论成败都置 loaded，失败即清空）。
+  const loadedRef = useRef({ extra: false, fleet: false });
   const draftRef = useRef({ extra: "", fleetExtra: "" });
   draftRef.current = { extra, fleetExtra };
 
   useEffect(() => {
     // 不分 demo/Tauri：demo 镜像（settings Map）也走同一条 invoke 读路径（AgentModelCard 同工艺）
-    const gets = [
-      invoke("get_setting", { key: "agent.prompt_extra" }).then((v) => setExtra(v ?? "")),
-      invoke("get_setting", { key: "agent.fleet_prompt_extra" }).then((v) => setFleetExtra(v ?? "")),
-      invoke("get_setting", { key: "agent.skills" }).then((v) => {
-        try {
-          const m = v ? JSON.parse(v) : {};
-          setSkills(Object.entries(m).map(([name, body]) => ({ name, body: String(body) })));
-        } catch { /* 损坏视为空库（真侧同样容忍，不阻塞对话） */ }
-      }),
-    ];
-    // 三读全部落定才置位 loadedRef——任一未归位就卸载的话，兜底写会用初始 "" 清掉真值
-    void Promise.all(gets.map((p) => p.catch(() => {}))).finally(() => { loadedRef.current = true; });
+    invoke("get_setting", { key: "agent.prompt_extra" })
+      .then((v) => { setExtra(v ?? ""); loadedRef.current.extra = true; })
+      .catch(() => {});
+    invoke("get_setting", { key: "agent.fleet_prompt_extra" })
+      .then((v) => { setFleetExtra(v ?? ""); loadedRef.current.fleet = true; })
+      .catch(() => {});
+    invoke("get_setting", { key: "agent.skills" }).then((v) => {
+      try {
+        const m = v ? JSON.parse(v) : {};
+        setSkills(Object.entries(m).map(([name, body]) => ({ name, body: String(body) })));
+      } catch { /* 损坏视为空库（真侧同样容忍，不阻塞对话） */ }
+    }).catch(() => {});
   }, []);
 
-  // 卸载兜底：直接关面板/切分类未触发 blur 的最后一次编辑也不丢（载入完成前不写，防清空竞态）
+  // 卸载兜底：直接关面板/切分类未触发 blur 的最后一次编辑也不丢。
+  // 只写「读取成功」的 key——读取失败的初始空串不得覆盖已存值。
   useEffect(() => () => {
-    if (!loadedRef.current) return;
     const d = draftRef.current;
-    void invoke("set_setting", { key: "agent.prompt_extra", value: d.extra }).catch(() => {});
-    void invoke("set_setting", { key: "agent.fleet_prompt_extra", value: d.fleetExtra }).catch(() => {});
+    if (loadedRef.current.extra) {
+      void invoke("set_setting", { key: "agent.prompt_extra", value: d.extra }).catch(() => {});
+    }
+    if (loadedRef.current.fleet) {
+      void invoke("set_setting", { key: "agent.fleet_prompt_extra", value: d.fleetExtra }).catch(() => {});
+    }
   }, []);
 
-  const saveKV = (key: string, value: string) => {
-    void invoke("set_setting", { key, value }).catch(() => {});
-  };
+  const saveKV = (key: string, value: string) =>
+    invoke("set_setting", { key, value });
 
-  const saveSkills = (list: { name: string; body: string }[]) => {
+  const saveSkills = async (list: { name: string; body: string }[]) => {
     setMsg(null);
     if (list.length > 32) {
       setMsg({ kind: "err", text: t("技能最多 32 条") });
@@ -1113,8 +1125,13 @@ function PromptSkillsCard() {
       setMsg({ kind: "err", text: t("技能名称重复") });
       return false;
     }
-    saveKV("agent.skills", JSON.stringify(Object.fromEntries(list.map((s, i) => [names[i], s.body]))));
-    return true;
+    try {
+      await saveKV("agent.skills", JSON.stringify(Object.fromEntries(list.map((s, i) => [names[i], s.body]))));
+      return true;
+    } catch (e) {
+      setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) });
+      return false;
+    }
   };
 
   return (
@@ -1130,9 +1147,9 @@ function PromptSkillsCard() {
           placeholder={t("例如：生产库只读优先，改动先报备；机器统一 Ubuntu，用 apt 而非 yum。")}
           aria-label={t("会话助手附加提示词")} value={extra}
           onChange={(e) => setExtra(e.target.value)}
-          onBlur={() => saveKV("agent.prompt_extra", extra)} />
+          onBlur={() => { void saveKV("agent.prompt_extra", extra).catch((e) => setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) })); }} />
         <button className="ghost" style={{ marginTop: 2 }} data-testid="agent-prompt-extra-clear"
-          onClick={() => { setExtra(""); saveKV("agent.prompt_extra", ""); }}>{t("清空")}</button>
+          onClick={() => { setExtra(""); void saveKV("agent.prompt_extra", "").catch((e) => setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) })); }}>{t("清空")}</button>
       </div>
       <div style={{ marginTop: 6 }}>
         <div style={{ fontSize: 12, marginBottom: 3 }}>{t("Fleet 编排者附加提示词")}</div>
@@ -1141,9 +1158,9 @@ function PromptSkillsCard() {
           placeholder={t("例如：汇总一律用表格；失败项单独列出并给复跑建议。")}
           aria-label={t("Fleet 编排者附加提示词")} value={fleetExtra}
           onChange={(e) => setFleetExtra(e.target.value)}
-          onBlur={() => saveKV("agent.fleet_prompt_extra", fleetExtra)} />
+          onBlur={() => { void saveKV("agent.fleet_prompt_extra", fleetExtra).catch((e) => setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) })); }} />
         <button className="ghost" style={{ marginTop: 2 }} data-testid="agent-fleet-prompt-extra-clear"
-          onClick={() => { setFleetExtra(""); saveKV("agent.fleet_prompt_extra", ""); }}>{t("清空")}</button>
+          onClick={() => { setFleetExtra(""); void saveKV("agent.fleet_prompt_extra", "").catch((e) => setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) })); }}>{t("清空")}</button>
       </div>
       <div style={{ marginTop: 10 }}>
         <div style={{ fontSize: 12, marginBottom: 3 }}>{t("技能库（{0}/32）", skills.length)}</div>
@@ -1172,7 +1189,11 @@ function PromptSkillsCard() {
           <button className="ghost" data-testid="skill-add"
             onClick={() => setSkills([...skills, { name: "", body: "" }])}>{t("添加技能")}</button>
           <button className="ghost" data-testid="skill-save"
-            onClick={() => { if (saveSkills(skills)) setMsg({ kind: "ok", text: t("已保存（{0} 条）", skills.length) }); }}>
+            onClick={() => {
+              void saveSkills(skills).then((ok) => {
+                if (ok) setMsg({ kind: "ok", text: t("已保存（{0} 条）", skills.length) });
+              });
+            }}>
             {t("保存技能库")}</button>
         </div>
       </div>

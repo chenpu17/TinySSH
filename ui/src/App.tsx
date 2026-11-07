@@ -887,7 +887,9 @@ export default function App() {
   // 简报 ref：拖拽上传回调里读当前 cwd（不进依赖数组，避免监听器随简报反复重订阅）
   const briefRef = useRef<Brief | null>(null);
   useEffect(() => { briefRef.current = brief; }, [brief]);
-  const [owner, setOwner] = useState<"Human" | "Agent">("Agent");
+  // 控制权默认 Human（安全侧）：sessions 尚未加载/切到新会话时，不能沿用
+  // 上一个会话的 Agent 状态去跳过「交给 Agent」确认条。
+  const [owner, setOwner] = useState<"Human" | "Agent">("Human");
   const [mcp, setMcp] = useState<McpStatus>({ endpoint: "", agents: [] });
   // C9（R43）：协作启用生命周期（人类专属）。state=Enabled 才开放 Agent admission；
   // 新装默认 Disabled（无自动 MCP 监听），旧版升级保留 Enabled。generation 供停用封口对账。
@@ -1128,39 +1130,47 @@ export default function App() {
       // 七轮：六个查询原本串行 await（每 3s 六趟往返），彼此无依赖——并成一批，
       // 空闲空转从「六趟之和」压到「最慢一趟」；任一失败仍整体抛出（行为不变）
       const snapAt = performance.now();
+      // 每个查询独立降级：审批/自主模式不能因为 list_sessions/list_hosts 的
+      // 一次瞬时失败而整批不刷新——否则审批超时/已决后内联卡会长期停留。
       const [sessionsRaw, nextHosts, nextMeta, nextRecents, approvalsRaw, nextAutonomy] = await Promise.all([
-        invoke("list_sessions") as Promise<SessionInfo[]>,
-        invoke("list_hosts") as Promise<Host[]>,
+        (invoke("list_sessions") as Promise<SessionInfo[]>).catch(() => null),
+        (invoke("list_hosts") as Promise<Host[]>).catch(() => null),
         // R20：收藏/最近元数据（失败不阻断列表——空 meta 即全部视为未收藏）
         invoke("list_host_metadata").then((v) => v as HostMeta[]).catch(() => null),
         invoke("list_recent_hosts").then((v) => v as RecentHost[]).catch(() => null),
-        invoke("list_approvals", { pendingOnly: false }) as Promise<ApprovalItem[]>,
+        (invoke("list_approvals", { pendingOnly: false }) as Promise<ApprovalItem[]>).catch(() => null),
         // ② 自主模式横幅数据（跟随 3s 轮询；到期由核心惰性清除，前端只显示剩余）
-        invoke("autonomy_list") as Promise<AutonomyGrant[]>,
+        (invoke("autonomy_list") as Promise<AutonomyGrant[]>).catch(() => null),
       ]);
-      const nextSessions = applyTabOrder(sessionsRaw);
-      const nextApprovals = approvalsRaw.map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) }));
-      // ⑧ 到期差分：消失且非人工收回 → 即时提示（横幅本身随 setAutonomy 3s 内消隐）
-      for (const a of autonomyKnownRef.current) {
-        if (!nextAutonomy.some((g) => g.agent_id === a) && !autonomyKilledRef.current.has(a)) {
-          pushToast("info", t("{0} 的自主模式已到期，恢复逐条审批", a));
-        }
+      if (sessionsRaw) {
+        const nextSessions = applyTabOrder(sessionsRaw);
+        panesSnapAtRef.current = snapAt;
+        setSessions((prev) => sameShape(prev, nextSessions));
       }
-      for (const a of [...autonomyKilledRef.current]) {
-        if (!nextAutonomy.some((g) => g.agent_id === a)) autonomyKilledRef.current.delete(a);
-      }
-      autonomyKnownRef.current = new Set(nextAutonomy.map((g) => g.agent_id));
-      panesSnapAtRef.current = snapAt;
-      setSessions((prev) => sameShape(prev, nextSessions));
-      setHosts((prev) => sameShape(prev, nextHosts));
+      if (nextHosts) setHosts((prev) => sameShape(prev, nextHosts));
       if (nextMeta) setHostMeta((prev) => sameShape(prev, nextMeta));
       if (nextRecents) setRecents((prev) => sameShape(prev, nextRecents));
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
-      setApprovals((prev) => sameShape(prev, nextApprovals));
-      // 同款 bailout（找茬四轮 B4）：此前唯一漏网——autonomy_list 每 3s 反序列化
-      // 新数组，引用恒变 → App 全树每 3s 必 diff（上方注释自述的「数据没变整树
-      // 静默」被架空，墙开着时空闲态也持续烧 CPU）
-      setAutonomy((prev) => sameShape(prev, nextAutonomy));
+      if (approvalsRaw) {
+        const nextApprovals = approvalsRaw.map((a): ApprovalRow => ({ ...a, status: normApprovalStatus(a.status) }));
+        setApprovals((prev) => sameShape(prev, nextApprovals));
+      }
+      if (nextAutonomy) {
+        // ⑧ 到期差分：消失且非人工收回 → 即时提示（横幅本身随 setAutonomy 3s 内消隐）
+        for (const a of autonomyKnownRef.current) {
+          if (!nextAutonomy.some((g) => g.agent_id === a) && !autonomyKilledRef.current.has(a)) {
+            pushToast("info", t("{0} 的自主模式已到期，恢复逐条审批", a));
+          }
+        }
+        for (const a of [...autonomyKilledRef.current]) {
+          if (!nextAutonomy.some((g) => g.agent_id === a)) autonomyKilledRef.current.delete(a);
+        }
+        autonomyKnownRef.current = new Set(nextAutonomy.map((g) => g.agent_id));
+        // 同款 bailout（找茬四轮 B4）：此前唯一漏网——autonomy_list 每 3s 反序列化
+        // 新数组，引用恒变 → App 全树每 3s 必 diff（上方注释自述的「数据没变整树
+        // 静默」被架空，墙开着时空闲态也持续烧 CPU）
+        setAutonomy((prev) => sameShape(prev, nextAutonomy));
+      }
     } catch {
       // 审核低-5：首载失败也必须撤骨架给出空态出口（否则永久骨架 + 未处理 rejection）；
       // 3s 轮询自愈，错误不逐条打扰（连接类失败另有常驻横幅）
@@ -1610,12 +1620,19 @@ export default function App() {
   useEffect(() => {
     if (!inTauri) return;
     return tauriListen(
-      listen<{ New?: { session_id: string; command: string }; Updated?: unknown }>(
+      listen<{
+        New?: { session_id: string; command: string };
+        Updated?: { status?: string; command?: string };
+      }>(
         "approval-event",
         (e) => {
           void refreshLists();
+          const updated = e.payload?.Updated;
+          if (updated && ["Timeout", "timeout"].includes(String(updated.status ?? ""))) {
+            pushToast("info", t("审批已超时，命令未执行"));
+          }
           const item = e.payload?.New;
-          if (!item) return; // Updated=批准/拒绝收尾，不打扰
+          if (!item) return; // Updated=批准/拒绝/超时收尾；超时已单独提示
           pushToast("info", t("新的待审批：{0}", (item.command || "").slice(0, 60)), {
             label: t("去审批"),
             title: t("打开协作面板处理审批"),
@@ -6713,6 +6730,7 @@ export default function App() {
   const toggleEmbeddedAutonomy = async (enable: boolean) => {
     try {
       await invoke("set_autonomy", { agentId: EMBEDDED_AGENT_ID, enable, ttlMinutes: null });
+      if (!enable) autonomyKilledRef.current.add(EMBEDDED_AGENT_ID);
       await refreshLists();
       enable
         ? pushToast("ok", t("已开启自主模式：命令免逐条审批（危险名单仍拦截、传输仍逐条、全量记录，急停条可撤回）"))
@@ -6863,6 +6881,9 @@ export default function App() {
       await invoke("set_autonomy", { agentId, enable: false });
       pushToast("ok", t("已收回 {0} 的自主模式", agentId));
     } catch (err) {
+      // 关闭失败：授权仍在，不能把「人工收回」记账留下（否则真正到期时
+      // 差分提示会被误抑制）。
+      autonomyKilledRef.current.delete(agentId);
       pushToast("err", errMsg(err));
     }
     await refreshLists();
@@ -6874,6 +6895,7 @@ export default function App() {
       await invoke("set_autonomy", { agentId, enable, ttlMinutes });
       pushToast("ok", enable ? t("已开启 {0} 自主模式", agentId) : t("已关闭 {0} 自主模式", agentId));
     } catch (err) {
+      if (!enable) autonomyKilledRef.current.delete(agentId);
       pushToast("err", errMsg(err));
       return;
     }
@@ -6955,7 +6977,7 @@ export default function App() {
   // 控制权徽标
   useEffect(() => {
     const s = sessions.find((x) => x.id === sid);
-    if (s) setOwner(s.control_owner);
+    setOwner(s ? s.control_owner : "Human");
   }, [sessions, sid]);
 
   // 内嵌 Agent 就绪（已配模型服务）：委托/接管入口的第二把钥匙——此前这些入口

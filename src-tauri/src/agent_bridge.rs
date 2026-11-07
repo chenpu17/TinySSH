@@ -140,7 +140,20 @@ impl tinyssh_agent_host::SshOps for AgentSshOps {
                 timeout: timeout_secs.map(std::time::Duration::from_secs),
             };
             match api.wait_output(&embedded_agent(), sid, opts).await {
-                Ok(r) => serde_json::to_string(&r).map_err(|e| e.to_string()),
+                Ok(mut r) => {
+                    // 模型上下文保护：wait_output 可能返回从 watermark 起的全部
+                    // 文本（长构建日志可达数 MB）。保留尾部并标记截断。
+                    const WAIT_TAIL: usize = 64 * 1024;
+                    if r.text.len() > WAIT_TAIL {
+                        let mut cut = r.text.len() - WAIT_TAIL;
+                        while !r.text.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                        r.text = format!("…（前段略）{}", &r.text[cut..]);
+                        r.truncated_to_cap = true;
+                    }
+                    serde_json::to_string(&r).map_err(|e| e.to_string())
+                }
                 Err(e) => Err(format!("{e}")),
             }
         })

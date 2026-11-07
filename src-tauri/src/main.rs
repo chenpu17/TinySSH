@@ -171,6 +171,9 @@ fn main() {
         }),
         Some(Arc::new(AgentPromptAssets { api: api.clone() })),
     );
+    // 会话状态桥的 Closed 分支要用：外部 MCP/CLI 关闭会话时撤内置 Agent 槽位
+    // （Tauri close_session 自己也会显式 close；重复调用幂等）。
+    let agent_host_for_state = agent_host.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -571,6 +574,11 @@ fn main() {
                 let mut stream = tokio_stream::wrappers::BroadcastStream::new(state_rx);
                 while let Some(ev) = stream.next().await {
                     if let Ok(ev) = ev {
+                        // 会话已关闭（无论关闭入口是 GUI、MCP 还是 CLI）：撤内置
+                        // Agent 槽位/转写并取消在途运行，避免后台继续烧 token。
+                        if ev.state == SessionState::Closed {
+                            agent_host_for_state.close(&ev.session_id);
+                        }
                         let _ = handle_state.emit("session-state", serde_json::to_value(ev).unwrap_or_default());
                     }
                 }

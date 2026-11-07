@@ -428,8 +428,8 @@ impl SessionManager {
     ) -> Result<SessionId> {
         // C9（R43）：协作 admission——停用期间拒绝 Agent 建会话（覆盖「无 session 的
         // create_session」这一无既有会话可依附的入口）。人类不受影响。
-        if matches!(ctx, Actor::Agent { .. }) {
-            self.center.admit_agent()?;
+        if let Actor::Agent { client_id } = ctx {
+            self.center.admit_agent(client_id)?;
         }
         let (host, kind) = if req.host_id == "local" {
             (self.ensure_local_host()?, "local".to_string())
@@ -1460,7 +1460,7 @@ impl SessionManager {
             Ok(Ok(DecisionMsg::Decide(Decision::Approve))) => {
                 // C9（R43）：批准后、执行前复核 admission——停用期间已批准未执行的
                 // 建会话请求作废（不因旧审批决定继续执行）。
-                if let Err(e) = self.center.admit_agent() {
+                if let Err(e) = self.center.admit_agent(client) {
                     if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
                         it.status = ApprovalStatus::Voided;
                     }
@@ -1490,6 +1490,11 @@ impl SessionManager {
                 if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
                     it.status = ApprovalStatus::Denied;
                 }
+                let snap = self.center.items.lock().unwrap().get(&item.id).cloned();
+                if let Some(it) = snap {
+                    let _ = self.center.vault.save_approval(&it);
+                    let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+                }
                 Err(Error::ApprovalDenied {
                     reason: DeniedReason::Denied,
                 })
@@ -1497,9 +1502,19 @@ impl SessionManager {
             Ok(Ok(DecisionMsg::Voided)) | Ok(Err(_)) => Err(Error::ApprovalDenied {
                 reason: DeniedReason::Denied,
             }),
-            Err(_) => Err(Error::ApprovalDenied {
-                reason: DeniedReason::ApprovalTimeout,
-            }),
+            Err(_) => {
+                if let Some(it) = self.center.items.lock().unwrap().get_mut(&item.id) {
+                    it.status = ApprovalStatus::Timeout;
+                }
+                let snap = self.center.items.lock().unwrap().get(&item.id).cloned();
+                if let Some(it) = snap {
+                    let _ = self.center.vault.save_approval(&it);
+                    let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+                }
+                Err(Error::ApprovalDenied {
+                    reason: DeniedReason::ApprovalTimeout,
+                })
+            }
         }
     }
 }
@@ -2146,11 +2161,21 @@ fn spawn_pane_pump(
 /// 免审 ≠ 免记：审计（transfer_autonomous）与动作记录照常落。
 pub const SETTING_AUTONOMY_TRANSFERS: &str = "collab.autonomy.transfers";
 
+/// 内置 Agent 的 actor id（与 crates/agent-host 的 `AGENT_CLIENT_ID` 同值）。
+/// 内置 Agent 走同一套 core-session 审批/审计/控制权链，但**不受 MCP 协作
+/// admission 门约束**：它由本进程内的模型服务配置直接驱动，不是外部 MCP
+/// 端点；新装默认关闭协作时仍应可用（否则配置了模型却连 exec 都报
+/// CollabDisabled）。外部 Agent 的 admission 语义不变。
+pub const EMBEDDED_AGENT_CLIENT_ID: &str = "tinyssh-embedded";
+
 impl ApprovalCenter {
-    /// C9：Agent admission——**仅** `Enabled` 开放；其余三态（含 `Disabling`/`DisableFailed`）
-    /// 一律拒绝新的 Agent 请求。人类请求不经此门。这是「封 admission」的单点判定。
-    pub fn admit_agent(&self) -> Result<()> {
-        if self.collab.lock().unwrap().state == CollabState::Enabled {
+    /// C9：Agent admission——外部 MCP Agent **仅** `Enabled` 开放；其余三态
+    /// （含 `Disabling`/`DisableFailed`）一律拒绝新的 Agent 请求。人类请求与
+    /// 内置 Agent 不经此门。这是「封 admission」的单点判定。
+    pub fn admit_agent(&self, client_id: &str) -> Result<()> {
+        if client_id == EMBEDDED_AGENT_CLIENT_ID
+            || self.collab.lock().unwrap().state == CollabState::Enabled
+        {
             Ok(())
         } else {
             Err(Error::CollabDisabled)
@@ -2272,6 +2297,71 @@ impl SessionManager {
             if *h.owner.lock().await == ControlOwner::Agent {
                 n += 1;
             }
+        }
+        n
+    }
+
+    /// 内置 Agent「停止」的核心侧动作：取消该会话里在途的 exec/传输，并作废
+    /// 该 Agent 的待审批卡（唤醒 120s 审批等待）。仅用于进程内嵌 Agent 的
+    /// 停止按钮——外部 MCP Agent 的取消仍走各自的 cancel_exec/cancel_transfer。
+    /// 返回实际取消/作废的动作数（0 = 当前只有模型流在途，靠 AgentHost 的
+    /// cancel 标志收口）。
+    pub async fn cancel_agent_work(&self, ctx: &Actor, sid: &str, client_id: &str) -> usize {
+        let Some(h) = self.sessions.lock().unwrap().get(sid).cloned() else {
+            return 0;
+        };
+        let mut n = 0usize;
+        // exec：live_execs 里每个运行都有取消令牌；工具线程的 exec 会被唤醒并
+        // 以 Cancelled 收尾，Agent 随之在工具边界停止。
+        let execs: Vec<session_api::transport::tokio_util_sync::CancellationToken> =
+            h.live_execs.lock().unwrap().values().cloned().collect();
+        for c in execs {
+            c.cancel();
+            n += 1;
+        }
+        // 传输：同上，取消令牌让 staging temp/发布窗按既有取消语义收尾。
+        let xfers: Vec<session_api::transport::tokio_util_sync::CancellationToken> =
+            h.transfers.lock().unwrap().values().cloned().collect();
+        for c in xfers {
+            c.cancel();
+            n += 1;
+        }
+        // 审批卡：只作废本会话 + 本 Agent 的 pending；唤醒 wait_approval 的
+        // Voided 臂，避免停止按钮后还空等 120s。
+        let ids: Vec<ApprovalId> = {
+            let items = self.center.items.lock().unwrap();
+            items
+                .iter()
+                .filter(|(_, it)| {
+                    it.session_id == sid
+                        && it.agent_id == client_id
+                        && it.status == ApprovalStatus::Pending
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in ids {
+            let snap = self.center.items.lock().unwrap().get(&id).cloned();
+            if let Some(mut it) = snap {
+                it.status = ApprovalStatus::Voided;
+                let _ = self.center.vault.save_approval(&it);
+                if let Some(slot) = self.center.items.lock().unwrap().get_mut(&id) {
+                    slot.status = ApprovalStatus::Voided;
+                }
+                let _ = self.center.audit.append(
+                    ctx,
+                    "approval_voided",
+                    Some(sid),
+                    Some(&it.command),
+                    serde_json::json!({"reason": "agent_cancelled", "agent": it.agent_id}),
+                    Some(&id),
+                );
+                let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+            }
+            if let Some(tx) = self.center.decisions.lock().unwrap().remove(&id) {
+                let _ = tx.send(DecisionMsg::Voided);
+            }
+            n += 1;
         }
         n
     }
@@ -2678,6 +2768,10 @@ impl SessionApi for SessionManager {
         // F2：探针任务持有会话 Arc，close 后仍可空转到判型窗口结束——收掉。
         h.abort_probe_task();
         h.channel.close().await?;
+        // 关闭成功才广播：外部 MCP/CLI 关闭会话时，GUI 侧内置 Agent 宿主据此
+        // 撤槽/取消在途运行。关闭失败（上面的 ? 提前返回）不清 Agent 上下文，
+        // 与 Tauri close_session 的「失败保留标签」口径一致。
+        h.emit_state(SessionState::Closed, None, None, None).await;
         self.sessions.lock().unwrap().remove(&sid);
         // P2-b：触发器引擎清该会话的滚动行缓冲与冷却记录（防缓慢泄漏）
         self.center.triggers.lock().unwrap().drop_session(&sid);
@@ -2751,8 +2845,9 @@ impl SessionApi for SessionManager {
         let h = self.get(&sid)?;
         // Agent 策略刷新（vault → 引擎）
         if let Actor::Agent { client_id } = ctx {
-            // C9（R43）：协作 admission——停用期间拒绝 Agent 执行（副作用前）。
-            self.center.admit_agent()?;
+            // C9（R43）：协作 admission——停用期间拒绝外部 Agent 执行（副作用前）；
+            // 内置 Agent 由本进程模型配置驱动，不受 MCP 协作门约束。
+            self.center.admit_agent(client_id)?;
             let policy = self.center.vault.load_policy(client_id);
             self.center.engine.set_policy(client_id, policy);
         }
@@ -2856,8 +2951,9 @@ impl SessionApi for SessionManager {
                 r
             }
             Actor::Agent { client_id } => {
-                // C9（R43）：协作 admission——停用期间拒绝 Agent 键入（副作用前）。
-                self.center.admit_agent()?;
+                // C9（R43）：协作 admission——停用期间拒绝外部 Agent 键入（副作用前）；
+                // 内置 Agent 不受 MCP 协作门约束。
+                self.center.admit_agent(client_id)?;
                 if *h.owner.lock().await == ControlOwner::Human {
                     return Err(Error::ControlTakenByHuman);
                 }
@@ -3451,8 +3547,9 @@ impl SessionApi for SessionManager {
         // 人类直建时为 None
         let mut approval_id: Option<String> = None;
         if let Actor::Agent { client_id } = ctx {
-            // C9（R43）：协作 admission——停用期间拒绝 Agent 新开隧道（副作用前）。
-            self.center.admit_agent()?;
+            // C9（R43）：协作 admission——停用期间拒绝外部 Agent 新开隧道（副作用前）；
+            // 内置 Agent 不受 MCP 协作门约束。
+            self.center.admit_agent(client_id)?;
             // 接管期间 Agent 不得新开隧道（复核低-6，与 exec 的 ControlTakenByHuman 同语义）
             if *h.owner.lock().await == ControlOwner::Human {
                 return Err(Error::ControlTakenByHuman);
@@ -3507,8 +3604,9 @@ impl SessionApi for SessionManager {
         let h = self.get(&sid)?;
         let mut approval_id: Option<String> = None;
         if let Actor::Agent { client_id } = ctx {
-            // C9（R43）：协作 admission——停用期间拒绝 Agent 转发调用（含停止）。
-            self.center.admit_agent()?;
+            // C9（R43）：协作 admission——停用期间拒绝外部 Agent 转发调用（含停止）；
+            // 内置 Agent 不受 MCP 协作门约束。
+            self.center.admit_agent(client_id)?;
             // 接管期间 Agent 不得停隧道（复核低-6；停隧道可能断生产链路，人类主权）
             if *h.owner.lock().await == ControlOwner::Human {
                 return Err(Error::ControlTakenByHuman);
@@ -5811,8 +5909,8 @@ impl SessionManager {
     ) -> Result<TransferHandle> {
         let h = self.get(&sid)?;
         // C9（R43）：协作 admission——停用期间拒绝 Agent 传输（排队动作在开始前即被拒）。
-        if matches!(ctx, Actor::Agent { .. }) {
-            self.center.admit_agent()?;
+        if let Actor::Agent { client_id } = ctx {
+            self.center.admit_agent(client_id)?;
         }
         if !ctx.is_human() && *h.owner.lock().await == ControlOwner::Human {
             return Err(Error::ControlTakenByHuman);

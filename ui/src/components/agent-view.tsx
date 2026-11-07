@@ -16,7 +16,7 @@ import { welcomeMd, mockScript } from "../agent-mock";
 import { renderAgentMd } from "../mdview";
 import { renderMermaidIn, rerenderMermaids } from "../mmd";
 import { renderMathIn } from "../math";
-import { t } from "../i18n";
+import { localeNow, t } from "../i18n";
 import { IconBot, IconLoader, IconPlus, IconX } from "../icons";
 
 type ToolStatus = "pending" | "running" | "ok" | "err" | "denied";
@@ -73,6 +73,10 @@ const RUN_MS = 600;
  * （Map 保插入序，超出删最旧），防长开 demo 跨会话缓慢累积。 */
 const MOCK_CONVS = new Map<string, AgentMsg[]>();
 
+// 演练消息 id 用模块级单调计数：组件重挂载后 ref 归零会让新消息与恢复的旧
+// 消息撞 key（React 复用/串改旧气泡）。
+let mockMsgSeq = 0;
+
 // 恢复消毒（R3-B-2）：卸载瞬间 persist 进仓的中间态无人收尾——streaming 光标
 // 永闪、mermaid/公式渲染闸永久关闭、pending 审批按钮 no-op（pendingTool ref 随
 // 卸载重置）。重开面板恢复时统一落终态：工具卡中断收尾、流式气泡截停。
@@ -95,6 +99,33 @@ function closeStreaming(msgs: AgentMsg[]): AgentMsg[] {
     return copy;
   }
   return msgs;
+}
+
+/** 运行异常结束：把仍在转圈的工具卡收尾，避免 done/failed 后永久“运行中”。 */
+function settleRunningTools(msgs: AgentMsg[], output: string): AgentMsg[] {
+  let changed = false;
+  const next = msgs.map((m) => {
+    if (m.role === "tool" && m.status === "running") {
+      changed = true;
+      return { ...m, status: "err" as const, output };
+    }
+    return m;
+  });
+  return changed ? next : msgs;
+}
+
+/** 只有模型正常收口才静默；其余 stop_reason 必须给用户一个明确交代。 */
+function stopReasonNotice(reason: string): string | null {
+  if (reason === "end_turn" || reason === "stop" || reason === "stop_sequence") return null;
+  if (reason === "cancelled") return t("已停止当前运行。");
+  if (reason === "timeout") return t("运行超过时限，任务可能未完成。");
+  if (reason === "stream_idle") return t("模型长时间没有输出，连接已中断（可能是推理等待过久或网络半开）。");
+  if (reason === "stream_truncated") return t("流式响应被截断，回答可能不完整。");
+  if (reason === "max_tokens") return t("输出达到模型上限，回答可能被截断。");
+  if (reason === "max_turns_reached") return t("达到工具轮次上限，任务可能未完成。");
+  if (reason === "budget_exceeded") return t("达到本次运行的 token 预算上限，任务可能未完成。");
+  if (reason === "stuck_loop") return t("检测到重复操作，已自动停止。");
+  return t("运行结束（{0}）。", reason);
 }
 
 function summarizeTool(name: string, input: Record<string, unknown> | undefined): string {
@@ -149,21 +180,34 @@ function applyAgentEvent(msgs: AgentMsg[], ev: AgentWireEvent, seq: { n: number 
       }];
     }
     case "tool_result": {
-      const d = (data ?? {}) as { name?: string; is_error?: boolean; content?: string };
-      const idx = [...msgs].reverse().findIndex((m) => m.role === "tool" && m.tool === (d.name ?? "?") && m.status === "running");
+      const d = (data ?? {}) as { name?: string; is_error?: boolean; content?: string; display?: string };
+      // 工具按模型给出的顺序串行执行（TinyAgent CallbackTool=Sequential），
+      // 同名调用必须 FIFO 配对；从后往前找会把第一条结果写到第二张卡。
+      const idx = msgs.findIndex((m) => m.role === "tool" && m.tool === (d.name ?? "?") && m.status === "running");
       if (idx < 0) return msgs;
-      const real = msgs.length - 1 - idx;
       const copy = [...msgs];
-      const m = copy[real] as Extract<AgentMsg, { role: "tool" }>;
-      copy[real] = { ...m, status: d.is_error ? "err" : "ok", output: String(d.content ?? "") };
+      const m = copy[idx] as Extract<AgentMsg, { role: "tool" }>;
+      copy[idx] = { ...m, status: d.is_error ? "err" : "ok", output: String(d.display ?? d.content ?? "") };
       return copy;
     }
     case "notice":
       return [...closeStreaming(msgs), { id: uid(), role: "assistant", md: `> ⚠ ${String(data ?? "")}`, think: "", streaming: false }];
-    case "done":
-      return closeStreaming(msgs);
-    case "failed":
-      return [...closeStreaming(msgs), { id: uid(), role: "assistant", md: `**${t("运行失败")}**：${String((data as { message?: string })?.message ?? t("未知错误"))}`, think: "", streaming: false }];
+    case "done": {
+      const reason = String((data as { stop_reason?: string })?.stop_reason ?? "");
+      const closed = settleRunningTools(closeStreaming(msgs), t("运行已结束，工具未返回结果"));
+      // 旧转写/异常 wire 没有 reason 时按正常收口，避免历史回放冒出一条空提示。
+      const notice = reason ? stopReasonNotice(reason) : null;
+      return notice
+        ? [...closed, { id: uid(), role: "assistant", md: `> ⚠ ${notice}`, think: "", streaming: false }]
+        : closed;
+    }
+    case "failed": {
+      const message = String((data as { message?: string })?.message ?? t("未知错误"));
+      return [
+        ...settleRunningTools(closeStreaming(msgs), message),
+        { id: uid(), role: "assistant", md: `**${t("运行失败")}**：${message}`, think: "", streaming: false },
+      ];
+    }
     default:
       return msgs;
   }
@@ -172,9 +216,9 @@ function applyAgentEvent(msgs: AgentMsg[], ev: AgentWireEvent, seq: { n: number 
 /** assistant 消息独立 memo：props 全是基本量——历史消息在流式期间不再逐 delta
     重跑 renderAgentMd + hljs 全量高亮（每 delta × 全部历史消息曾是 O(总字节×事件数)
     的主线程热点；只有流式中那条会重渲染）。 */
-const AssistantMsg = memo(function AssistantMsg({ md, think, streaming }: { md: string; think: string; streaming: boolean }) {
+const AssistantMsg = memo(function AssistantMsg({ md, think, streaming, lang }: { md: string; think: string; streaming: boolean; lang: string }) {
   return (
-    <div className="msg-row assistant">
+    <div className="msg-row assistant" data-lang={lang}>
       <div style={{ maxWidth: "100%", minWidth: 0 }}>
         {think && (
           <details className="ag-think">
@@ -196,10 +240,16 @@ export function AgentView({
 }: AgentViewProps) {
   const [convs, setConvs] = useState<Record<string, AgentMsg[]>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [draft, setDraft] = useState("");
+  const [stopping, setStopping] = useState<Record<string, boolean>>({});
+  const [sending, setSending] = useState<Record<string, boolean>>({});
+  // 草稿按会话隔离：共享一份时，在 A 会话输入一半切到 B，按 Enter 会把 A 的
+  // 命令发到 B（SSH 场景下的真实错主机风险）。
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   // 夺权显式化：真模式下人类持有控制权时发送 → 先请求交托（确认条），不悄悄改控制权
   const [askDelegate, setAskDelegate] = useState(false);
   const [askText, setAskText] = useState("");
+  const askSidRef = useRef<string | null>(null);
+  const [delegateBusy, setDelegateBusy] = useState(false);
   // 自主模式两击确认（开启才需要；关闭单击即回）。arm 4s 无第二击自动回退
   const [autonomyArm, setAutonomyArm] = useState(false);
   const autonomyArmTimer = useRef(0);
@@ -217,16 +267,22 @@ export function AgentView({
   };
   // 真模式前提：inTauri 且已配置模型服务（null = 未配置/浏览器 demo）
   const [modelCfg, setModelCfg] = useState<{ provider?: string; model?: string } | null>(null);
-  const realMode = inTauri && modelCfg !== null;
+  // 三态：Tauri 下先等 agent_model_get 落定，避免已配置模型时首帧闪一下
+  // 「演练」外壳/脚本欢迎语；浏览器 demo 直接视为已落定（永远演练）。
+  const [modelLoaded, setModelLoaded] = useState(!inTauri);
+  const realMode = inTauri && modelLoaded && modelCfg !== null;
+  const modelPending = inTauri && !modelLoaded;
   const alive = useRef(true);
   const timers = useRef<number[]>([]);
-  const idSeq = useRef(0);
   const seq = useRef({ n: 0 });
+  const nearBottomRef = useRef(true);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingTool = useRef<{ k: string; id: string; script: ReturnType<typeof mockScript> } | null>(null);
   // 真模式装载过的会话（R3-B-10）：persist 不入演练仓、回演练时清场重播欢迎语
   const realModeSidsRef = useRef<Set<string>>(new Set());
   const key = sid ?? "";
+  const draft = drafts[key] ?? "";
+  const setDraft = (v: string) => setDrafts((cur) => ({ ...cur, [key]: v }));
   const msgs = convs[key] ?? [];
 
   const later = (fn: () => void, ms: number) => {
@@ -236,7 +292,7 @@ export function AgentView({
   const patch = (k: string, fn: (cur: AgentMsg[]) => AgentMsg[]) => {
     setConvs((cur) => ({ ...cur, [k]: fn(cur[k] ?? []) }));
   };
-  const newId = () => `m${++idSeq.current}`;
+  const newId = () => `m${++mockMsgSeq}`;
 
   // 模型服务配置（真模式开关）：挂载拉取 + 设置卡保存后刷新
   useEffect(() => {
@@ -244,8 +300,16 @@ export function AgentView({
     let dead = false;
     const load = () => {
       invoke("agent_model_get", {})
-        .then((v) => { if (!dead) setModelCfg(v ?? null); })
-        .catch(() => { if (!dead) setModelCfg(null); });
+        .then((v) => {
+          if (dead) return;
+          setModelCfg(v ?? null);
+          setModelLoaded(true);
+        })
+        .catch(() => {
+          if (dead) return;
+          setModelCfg(null);
+          setModelLoaded(true);
+        });
     };
     load();
     window.addEventListener("agent-model-saved", load);
@@ -257,6 +321,10 @@ export function AgentView({
   // 整树渲染打满（transfer 事件本就有 120ms 合帧，此处同口径）；done/failed
   // 终态即时落（先冲积压保顺序，busy 翻转不滞后）。
   const frameRef = useRef<{ evs: AgentWire[]; timer: number } | null>(null);
+  // 历史回放期间的实时事件缓冲：history 响应会整体替换 conv，若期间直接
+  // apply live 事件，快照之后的事件会被覆盖（丢消息/丢 done 导致 busy 永久
+  // 为真）。缓冲到 history 落地后按序重放，保证「快照 + 增量」不重不漏。
+  const historyPendingRef = useRef<Record<string, AgentWire[] | undefined>>({});
   useEffect(() => {
     if (!inTauri || !realMode) return;
     let un: (() => void) | null = null;
@@ -276,10 +344,16 @@ export function AgentView({
     listen("agent-event", (ev) => {
       const wire = (ev as unknown as { payload: AgentWire }).payload;
       if (!wire?.sid || !wire?.event) return;
+      const pending = historyPendingRef.current[wire.sid];
+      if (pending) {
+        pending.push(wire);
+        return;
+      }
       if (wire.event.kind === "done" || wire.event.kind === "failed") {
         flush();
         setConvs((cur) => ({ ...cur, [wire.sid]: applyAgentEvent(cur[wire.sid] ?? [], wire.event, seq.current) }));
         setBusy((b) => ({ ...b, [wire.sid]: false }));
+        setStopping((b) => ({ ...b, [wire.sid]: false }));
         return;
       }
       const buf = frameRef.current ?? { evs: [], timer: 0 };
@@ -299,20 +373,48 @@ export function AgentView({
   useEffect(() => {
     if (!inTauri || !realMode || !sid) return;
     let dead = false;
+    historyPendingRef.current[sid] = [];
     invoke("agent_history", { sid })
       .then((hist) => {
-        if (dead) return;
+        if (dead) {
+          delete historyPendingRef.current[sid];
+          return;
+        }
+        const buffered = historyPendingRef.current[sid] ?? [];
+        delete historyPendingRef.current[sid];
         MOCK_CONVS.delete(sid); // 真模式历史接管：清演练残留（演练→真模型切换）
         realModeSidsRef.current.add(sid); // 标记来源：回演练时清场（见 persist 配对 effect）
         let m: AgentMsg[] = [];
-        for (const ev of hist ?? []) m = applyAgentEvent(m, ev, seq.current);
+        for (const ev of (hist ?? []) as AgentWireEvent[]) m = applyAgentEvent(m, ev, seq.current);
+        // 快照之后到达的实时事件按序补放，不能被整体替换吞掉。
+        for (const wire of buffered) m = applyAgentEvent(m, wire.event, seq.current);
         setConvs((cur) => ({ ...cur, [sid]: m }));
-        // 转写末尾不是 done/failed → 运行大概率还在途（重挂载期间的后台运行）
-        const lastKind = hist && hist.length > 0 ? hist[hist.length - 1].kind : "";
-        setBusy((b) => ({ ...b, [sid]: lastKind !== "" && lastKind !== "done" && lastKind !== "failed" }));
+        const histEvents = (hist ?? []) as AgentWireEvent[];
+        const lastKind = buffered.length
+          ? buffered[buffered.length - 1].event.kind
+          : (histEvents.length ? histEvents[histEvents.length - 1].kind : "");
+        const running = lastKind !== "" && lastKind !== "done" && lastKind !== "failed";
+        setBusy((b) => ({ ...b, [sid]: running }));
+        if (!running) setStopping((b) => ({ ...b, [sid]: false }));
       })
-      .catch(() => {});
-    return () => { dead = true; };
+      .catch(() => {
+        // 历史拉取失败：至少把缓冲的实时事件落到当前会话，不让 UI 空白。
+        const buffered = historyPendingRef.current[sid] ?? [];
+        delete historyPendingRef.current[sid];
+        if (!dead && buffered.length) {
+          setConvs((cur) => {
+            let next = cur;
+            for (const wire of buffered) {
+              next = { ...next, [sid]: applyAgentEvent(next[sid] ?? [], wire.event, seq.current) };
+            }
+            return next;
+          });
+        }
+      });
+    return () => {
+      dead = true;
+      delete historyPendingRef.current[sid];
+    };
   }, [realMode, sid]);
 
   // 演练模式：首见会话种欢迎消息（fleet 形态用编排者专用欢迎语——它不是每会话
@@ -320,10 +422,10 @@ export function AgentView({
   // 仓内容恢复时消毒：卸载瞬间 persist 的中间态（streaming 光标/running·pending
   // 工具卡）无人收尾——光标永闪、渲染闸永久关闭、审批按钮 no-op（R3-B-2）。
   useEffect(() => {
-    if (realMode || !sid) return;
+    if (realMode || modelPending || !sid) return;
     const welcome = welcomeMd(!!fleet);
     setConvs((cur) => (cur[sid] ? cur : { ...cur, [sid]: sanitizeMockMsgs(MOCK_CONVS.get(sid) ?? [{ id: `w-${sid}`, role: "assistant", md: welcome, think: "", streaming: false }], t("面板关闭时中断，未完成")) }));
-  }, [sid, realMode, fleet]);
+  }, [sid, realMode, fleet, modelPending]);
 
   // 演练域对话写入仓（与种子 effect 配对）；真模式历史走 agent_history 回放，
   // 装载时把该会话的演练残留清掉（演练→真模型切换不串场）。
@@ -332,7 +434,12 @@ export function AgentView({
   useEffect(() => {
     if (realMode) return;
     for (const [k, v] of Object.entries(convs)) {
-      if (v.length > 0 && !realModeSidsRef.current.has(k)) MOCK_CONVS.set(k, v);
+      if (v.length > 0 && !realModeSidsRef.current.has(k)) {
+        // 先删后插刷新 Map 插入序：原实现只 set，已存在的键不更新顺序，
+        // 超 64 会话时被淘汰的会是「最早创建」而非「最久未用」的会话。
+        MOCK_CONVS.delete(k);
+        MOCK_CONVS.set(k, v);
+      }
     }
     if (MOCK_CONVS.size > 64) {
       for (const k of [...MOCK_CONVS.keys()].slice(0, MOCK_CONVS.size - 64)) MOCK_CONVS.delete(k);
@@ -370,13 +477,25 @@ export function AgentView({
   useEffect(() => {
     setAskDelegate(false);
     setAskText("");
+    askSidRef.current = null;
   }, [sid]);
 
-  // 新消息/流式增长 → 贴底
+  // 新消息/流式增长 → 仅当用户原本就在底部附近才贴底；向上翻阅历史时不再
+  // 被每个 delta 拽回底部（审批卡在视口下方时也会因 msgs 不变而不触发，见
+  // inlineApproval 的独立提示）。
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [msgs]);
+
+  // 真模式切换时清掉演练计时器/待审批 ref：否则脚本流式回调会在真实对话里
+  // 追加一张假工具卡（甚至可点“批准执行”）。
+  useEffect(() => {
+    if (!realMode) return;
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    pendingTool.current = null;
+  }, [realMode]);
 
   // mermaid/公式占位渲染：流式中保持源码原文（尾块每帧重建不值得反复渲染），
   // turn 末稳定后 rAF 一拍（等 innerHTML 落地）再批量渲染；data-done 占位防
@@ -426,11 +545,20 @@ export function AgentView({
 
   const send = () => {
     const text = draft.trim();
-    if (!text || !sid) return;
+    if (!text || !sid || modelPending) return;
+    // 上一轮还在跑：不抢占/不丢草稿。发送按钮同样禁用（Rust 侧也会拒绝）。
+    if (realMode && (!!busy[key] || !!sending[key])) return;
+    // 演练域只维护一张待审批卡（pendingTool 单槽）：连续发送会让前一张卡
+    // 永远停在待审批，批准时还会用错脚本。
+    if (!realMode && pendingTool.current) {
+      pushToast("info", t("先处理当前工具卡，再发送下一条"));
+      return;
+    }
     // 夺权显式化：真模式下会话还在人类手里 → 先请求交托（确认条），草稿保留。
     // 编排形态跳过——它不直接操作机器，目标会话的审批/控制权在目标侧独立生效。
     if (realMode && !fleet && owner !== "Agent") {
       setAskText(text);
+      askSidRef.current = sid;
       setAskDelegate(true);
       return;
     }
@@ -439,20 +567,27 @@ export function AgentView({
 
   const doSend = (text: string) => {
     if (!sid) return;
-    setDraft("");
+    const k = key;
     if (realMode) {
       // 用户气泡由 Rust 侧同步 emit 的 User 事件写入（单一写入方）——这里再乐观
-      // 追加会与事件流各出一条（真机实测同文气泡×2）。send 本地失败时 catch 里
-      // 补「发送失败」块，不丢反馈。
-      setBusy((b) => ({ ...b, [key]: true }));
-      invoke("agent_send", { sid, text }).catch((e) => {
-        patch(key, (cur) => [...closeStreaming(cur), { id: newId(), role: "assistant", md: `**${t("发送失败")}**：${String(e)}`, think: "", streaming: false }]);
-        setBusy((b) => ({ ...b, [key]: false }));
-      });
+      // 追加会与事件流各出一条（真机实测同文气泡×2）。只有 invoke 受理后才
+      // 清草稿/置 busy：busy 拒绝或配置错误时保留原文，且不会把正在跑的停止钮
+      // 误关掉。
+      setSending((b) => ({ ...b, [k]: true }));
+      invoke("agent_send", { sid, text })
+        .then(() => {
+          setDrafts((cur) => (cur[k] === text ? { ...cur, [k]: "" } : cur));
+          setBusy((b) => ({ ...b, [k]: true }));
+          setStopping((b) => ({ ...b, [k]: false }));
+        })
+        .catch((e) => {
+          patch(k, (cur) => [...closeStreaming(cur), { id: newId(), role: "assistant", md: `**${t("发送失败")}**：${String(e)}`, think: "", streaming: false }]);
+        })
+        .finally(() => setSending((b) => ({ ...b, [k]: false })));
       return;
     }
     // 演练路径（脚本分岔见 agent-mock）
-    const k = key;
+    setDrafts((cur) => ({ ...cur, [k]: "" }));
     patch(k, (cur) => [...cur, { id: newId(), role: "user", text }]);
     const script = mockScript(text);
     streamMd(k, script.intro, () => {
@@ -463,16 +598,35 @@ export function AgentView({
   };
 
   const confirmDelegate = async () => {
+    if (delegateBusy) return;
+    const askSid = askSidRef.current;
+    if (!askSid) return;
+    setDelegateBusy(true);
     const ok = await onDelegate();
-    if (!ok) return; // 委托失败：保留确认条与待发文本，用户可重试或取消
+    setDelegateBusy(false);
+    // 等待期间切了会话/点了取消：不得把旧会话的草稿发出去。
+    if (!ok || askSidRef.current !== askSid) return;
+    const text = askText;
     setAskDelegate(false);
-    doSend(askText);
     setAskText("");
+    askSidRef.current = null;
+    doSend(text);
   };
 
   const stop = () => {
-    if (!sid) return;
-    invoke("agent_cancel", { sid }).catch(() => {});
+    if (!sid || stopping[key]) return;
+    setStopping((b) => ({ ...b, [key]: true }));
+    invoke("agent_cancel", { sid })
+      .then((ok) => {
+        if (!ok) {
+          setStopping((b) => ({ ...b, [key]: false }));
+          pushToast("info", t("当前没有在途运行"));
+        }
+      })
+      .catch((e) => {
+        setStopping((b) => ({ ...b, [key]: false }));
+        pushToast("err", t("停止失败：{0}", String(e)));
+      });
   };
 
   const approve = () => {
@@ -503,9 +657,11 @@ export function AgentView({
         ? decodeURIComponent(mmWrap.dataset.mm)
         : el.closest(".md-code")?.querySelector("pre")?.textContent ?? "";
       // Promise.resolve 包裹（审查二轮 FE2-5）：无 clipboard API 环境下 ?. 短路出
-      // undefined，外层 .catch 即同步 TypeError
-      Promise.resolve(inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text)).catch(() => {});
-      pushToast("ok", t("已复制代码"));
+      // undefined，外层 .catch 即同步 TypeError。成功/失败都如实提示——此前
+      // 吞错后仍报「已复制」，用户粘贴时才发现剪贴板没变。
+      Promise.resolve(inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
+        .then(() => pushToast("ok", t("已复制代码")))
+        .catch(() => pushToast("err", t("复制失败：剪贴板不可用")));
     } else if (el.classList.contains("code-expand")) {
       const box = el.closest(".md-code");
       if (box) {
@@ -521,6 +677,9 @@ export function AgentView({
   const inlineApproval = realMode && sid
     ? pending.find((p) => p.agent_id === EMBEDDED_AGENT_ID && p.session_id === sid)
     : undefined;
+  // 工具串行执行：审批只属于第一张 running 卡；此前每张同名 running 卡都渲染
+  // 批准/拒绝，点错卡会把审批显示挂到错误的调用上。
+  const firstRunningToolId = msgs.find((m) => m.role === "tool" && m.status === "running")?.id;
 
   const toolChip = (m: Extract<AgentMsg, { role: "tool" }>) => {
     switch (m.status) {
@@ -555,6 +714,8 @@ export function AgentView({
         {sid && <span className="ag-host" title={t("当前会话（对话按会话隔离）")}>{hostLabel}</span>}
         {realMode ? (
           <span className="ag-host" title={t("模型服务：{0}", modelCfg?.provider ?? "")}>{modelCfg?.model}</span>
+        ) : modelPending ? (
+          <span className="ag-host" title={t("正在读取模型服务配置…")}>{t("读取中…")}</span>
         ) : (
           <span className="ag-mock" title={t("当前为演练外壳：回复与工具卡是脚本数据，配置模型服务后自动切换为真实模型")}>{t("演练")}</span>
         )}
@@ -571,6 +732,7 @@ export function AgentView({
           <button
             className={"ag-autonomy" + (autonomyOn ? " on" : "") + (autonomyArm ? " arm" : "")}
             data-testid="agent-autonomy"
+            aria-pressed={autonomyOn}
             title={autonomyOn
               ? t("自主模式开启中：命令免逐条审批（危险名单仍硬拦、传输仍逐条、全量记录，上方急停条可随时撤回）。点击关闭")
               : autonomyArm
@@ -594,7 +756,15 @@ export function AgentView({
       </div>
       {sid ? (
         <>
-          <div className="ag-scroll" ref={scrollRef} onClick={onScrollClick}>
+          <div
+            className="ag-scroll"
+            ref={scrollRef}
+            onClick={onScrollClick}
+            onScroll={() => {
+              const el = scrollRef.current;
+              if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+            }}
+          >
             {msgs.length === 0 && realMode && (
               <div className="ag-empty">
                 {fleet
@@ -607,11 +777,11 @@ export function AgentView({
                 return <div className="msg-row user" key={m.id}><div className="bubble-user">{m.text}</div></div>;
               }
               if (m.role === "assistant") {
-                return <AssistantMsg key={m.id} md={m.md} think={m.think} streaming={m.streaming} />;
+                return <AssistantMsg key={m.id} md={m.md} think={m.think} streaming={m.streaming} lang={localeNow()} />;
               }
-              const showApprove = m.status === "running" && !!inlineApproval
+              const showApprove = m.status === "running" && m.id === firstRunningToolId && !!inlineApproval
                 && ["exec", "send_keys", "upload", "download"].includes(m.tool);
-              const showLocalButtons = m.status === "pending";
+              const showLocalButtons = !realMode && m.status === "pending";
               return (
                 <div className={"tool-card tc-" + (m.status === "err" ? "err" : m.status)} key={m.id} data-testid="agent-tool">
                   <div className="tc-head">
@@ -628,7 +798,10 @@ export function AgentView({
                   )}
                   {showApprove && inlineApproval && (
                     <div className="tc-actions">
-                      <div className="dim" style={{ fontSize: 11, flex: 1, alignSelf: "center", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} title={inlineApproval.command}>{inlineApproval.command}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="dim mono" style={{ fontSize: 11, maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{inlineApproval.command}</div>
+                        <div className="dim" style={{ fontSize: 10 }}>{t("120 秒内未处理将自动拒绝，命令不会执行")}</div>
+                      </div>
                       <button className="primary" data-testid="agent-approve-real" onClick={() => onDecide(inlineApproval.id, "approve", null)}>{t("批准")}</button>
                       <button className="ghost" data-testid="agent-deny-real" onClick={() => onDecide(inlineApproval.id, "deny", null)}>{t("拒绝")}</button>
                     </div>
@@ -642,8 +815,15 @@ export function AgentView({
               <span className="ag-delegate-text">
                 {t("会话控制权在你手里——交给 Agent 后它才能在这台终端上干活（工具栏「接管」随时收回）。")}
               </span>
-              <button className="primary" data-testid="agent-delegate-confirm" onClick={confirmDelegate}>{t("交给并发送")}</button>
-              <button className="ghost" onClick={() => setAskDelegate(false)}>{t("取消")}</button>
+              <button className="primary" data-testid="agent-delegate-confirm" disabled={delegateBusy} onClick={confirmDelegate}>
+                {delegateBusy ? t("交托中…") : t("交给并发送")}
+              </button>
+              <button className="ghost" onClick={() => { askSidRef.current = null; setAskDelegate(false); }}>{t("取消")}</button>
+            </div>
+          )}
+          {fleet && pending.length > 0 && (
+            <div className="ag-tmux" data-testid="fleet-pending-hint" title={t("目标会话的审批在各自会话里独立生效")}>
+              {t("有 {0} 个待审批动作——切到对应会话批准/拒绝，或打开协作面板统一处理", pending.length)}
             </div>
           )}
           {!fleet && tmuxNote && (
@@ -658,6 +838,7 @@ export function AgentView({
               data-testid="agent-input"
               value={draft}
               rows={2}
+              aria-label={fleet ? t("编排任务输入") : t("Agent 任务输入")}
               placeholder={fleet
                 ? t("下达跨主机任务…（Enter 发送，Shift+Enter 换行）")
                 : t("给 Agent 下达任务…（Enter 发送，Shift+Enter 换行）")}
@@ -667,14 +848,17 @@ export function AgentView({
                 // WKWebView compositionend 后补发 Enter 的 keyCode 仍是 229）
                 if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)) {
                   e.preventDefault();
-                  send();
+                  if (!busyNow && !sending[key]) send();
                 }
               }}
             />
             {busyNow && (
-              <button className="ghost" data-testid="agent-stop" title={t("请求停止当前运行")} onClick={stop}>{t("停止")}</button>
+              <button className="ghost" data-testid="agent-stop" disabled={!!stopping[key]}
+                title={t("请求停止当前运行（审批/长命令会在当前工具返回后生效）")} onClick={stop}>
+                {stopping[key] ? t("停止中…") : t("停止")}
+              </button>
             )}
-            <button className="primary" data-testid="agent-send" disabled={!draft.trim()} onClick={send}>{t("发送")}</button>
+            <button className="primary" data-testid="agent-send" disabled={!draft.trim() || busyNow || !!sending[key] || modelPending} onClick={send}>{t("发送")}</button>
           </div>
         </>
       ) : (

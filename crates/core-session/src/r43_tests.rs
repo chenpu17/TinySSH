@@ -109,6 +109,21 @@ fn mgr_enabled() -> Arc<SessionManager> {
     m
 }
 
+/// 新装默认关闭协作：外部 MCP Agent 被拒，内置 Agent 仍放行——内置 Agent
+/// 由本进程模型配置驱动，不应因未启用 MCP 端点而整条工具链失效。
+#[test]
+fn embedded_agent_bypasses_disabled_collab_admission() {
+    let m = mgr();
+    assert!(
+        m.center.admit_agent("ext-agent").is_err(),
+        "外部 Agent 在停用态必须被拒"
+    );
+    assert!(
+        m.center.admit_agent(EMBEDDED_AGENT_CLIENT_ID).is_ok(),
+        "内置 Agent 不受 MCP 协作 admission 门约束"
+    );
+}
+
 fn host() -> Host {
     Host {
         id: "h-1".into(),
@@ -223,6 +238,33 @@ async fn spawn_pending(
     (j, card)
 }
 
+/// 内置 Agent 的「停止」核心侧：作废本 Agent 待审批卡并唤醒等待方，不能让它
+/// 继续空等 120s 审批超时。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_agent_work_voids_pending_approval() {
+    let m = mgr_enabled();
+    let h = mk_handle("s-cancel", ControlOwner::Agent, m.center.clone());
+    register(&m, h.clone());
+    let (j, card) = spawn_pending(&m, "s-cancel", "rm -rf /tmp/old-build").await;
+
+    let n = m
+        .cancel_agent_work(&Actor::Human, "s-cancel", "opencode")
+        .await;
+    assert!(n >= 1, "应至少作废一张待审批卡");
+    assert!(
+        matches!(j.await.unwrap(), Err(Error::VoidedByHandback { .. })),
+        "停止应唤醒审批等待方"
+    );
+    let old = m
+        .list_approvals(&Actor::Human, ApprovalFilter::default())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|it| it.id == card.id)
+        .unwrap();
+    assert_eq!(old.status, ApprovalStatus::Voided);
+}
+
 /// D03：新装未启用协作——无应用拥有的 MCP 端点；admission 关闭，Agent 请求被拒。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn r43_fresh_install_no_endpoint_and_gate_closed() {
@@ -294,7 +336,10 @@ async fn r43_disable_seals_admission_voids_and_converts() {
     );
 
     // 封口后：admission 关闭（含无 session 的 create_session）
-    assert!(m.center.admit_agent().is_err(), "停用后 admission 关闭");
+    assert!(
+        m.center.admit_agent("ext-agent").is_err(),
+        "停用后 admission 关闭"
+    );
     assert!(matches!(
         m.create_session(
             &agent(),
@@ -389,7 +434,7 @@ async fn r43_disable_failed_keeps_gate_closed_and_can_retry() {
         CollabState::DisableFailed
     );
     assert!(
-        m.center.admit_agent().is_err(),
+        m.center.admit_agent("ext-agent").is_err(),
         "停用失败保持封闭，不得回退为可用"
     );
 
@@ -400,7 +445,7 @@ async fn r43_disable_failed_keeps_gate_closed_and_can_retry() {
         m.collab_status(&Actor::Human).await.unwrap().state,
         CollabState::Disabled
     );
-    assert!(m.center.admit_agent().is_err());
+    assert!(m.center.admit_agent("ext-agent").is_err());
 }
 
 /// §9：重新启用须**显式**且核心确认旧停用已收敛；先前作废请求不复活；
@@ -428,7 +473,10 @@ async fn r43_enable_requires_convergence_and_does_not_revive_voided() {
     m.collab_enable(&Actor::Human).await.unwrap();
     let st = m.collab_status(&Actor::Human).await.unwrap();
     assert_eq!(st.state, CollabState::Enabled);
-    assert!(m.center.admit_agent().is_ok(), "重新启用后 admission 开放");
+    assert!(
+        m.center.admit_agent("ext-agent").is_ok(),
+        "重新启用后 admission 开放"
+    );
     assert!(m
         .create_session(
             &agent(),
@@ -604,7 +652,10 @@ async fn r43_enable_rejected_until_disable_converged() {
         m.collab_status(&Actor::Human).await.unwrap().state,
         CollabState::DisableFailed
     );
-    assert!(m.center.admit_agent().is_err(), "重开被拒后仍保持封闭");
+    assert!(
+        m.center.admit_agent("ext-agent").is_err(),
+        "重开被拒后仍保持封闭"
+    );
 
     // 重试收敛 → Disabled → 方可启用
     m.collab_disable(&Actor::Human).await.unwrap();
@@ -618,5 +669,5 @@ async fn r43_enable_rejected_until_disable_converged() {
         m.collab_status(&Actor::Human).await.unwrap().state,
         CollabState::Enabled
     );
-    assert!(m.center.admit_agent().is_ok());
+    assert!(m.center.admit_agent("ext-agent").is_ok());
 }

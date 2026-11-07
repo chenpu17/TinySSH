@@ -1046,10 +1046,11 @@ impl SessionHandle {
     /// C9（R43）：协作 admission 的会话侧包装——**仅** Agent 受此门（人类是主权者，
     /// 不经协作 gate）。停用/停用中/停用失败一律 `CollabDisabled`。
     fn admit_agent_actor(&self, actor: &Actor) -> Result<()> {
-        if actor.is_human() {
-            Ok(())
-        } else {
-            self.center.admit_agent()
+        match actor {
+            Actor::Human => Ok(()),
+            // 内置 Agent 由本进程模型配置驱动，不受 MCP 协作 admission 门约束；
+            // 外部 Agent 仍按协作状态放行/拒绝。
+            Actor::Agent { client_id } => self.center.admit_agent(client_id),
         }
     }
 
@@ -1438,6 +1439,15 @@ impl SessionHandle {
             _ = tokio::time::sleep(DEFAULT_APPROVAL_TIMEOUT) => {
                 self.mark_status(&item.id, ApprovalStatus::Timeout);
                 self.forget_decision(&item.id);
+                // 超时也必须持久化 + 推 Updated：此前只改内存表，FE 依赖 3s 轮询
+                // 才看到卡片消失，重启后甚至可能回读成 Pending；审批卡没有任何
+                // 「已超时」的即时反馈，用户以为按钮只是消失了。
+                let timed_out = self.center.items.lock().unwrap().get(&item.id).cloned();
+                if let Some(mut it) = timed_out {
+                    it.status = ApprovalStatus::Timeout;
+                    let _ = self.center.vault.save_approval(&it);
+                    let _ = self.center.approvals_tx.send(ApprovalEvent::Updated(it));
+                }
                 return Err(Error::ApprovalDenied { reason: DeniedReason::ApprovalTimeout });
             }
             _ = cancel.cancelled() => {
@@ -1481,7 +1491,7 @@ impl SessionHandle {
             DecisionMsg::Decide(Decision::Approve)
                 | DecisionMsg::Decide(Decision::ApproveEdited(_))
         ) {
-            if let Err(e) = self.center.admit_agent() {
+            if let Err(e) = self.admit_agent_actor(actor) {
                 self.mark_status(&item.id, ApprovalStatus::Voided);
                 self.forget_decision(&item.id);
                 let snap = self.center.items.lock().unwrap().get(&item.id).cloned();

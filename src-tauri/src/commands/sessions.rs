@@ -114,13 +114,17 @@ pub(crate) async fn cancel_connection(
 
 #[tauri::command]
 pub(crate) async fn close_session(state: ApiState<'_>, sid: String) -> CmdResult<()> {
-    // 会话关闭同步撤内嵌 agent 的槽位与转写（运行中的先发取消，自然收尾）
-    state.agent_host.close(&sid);
+    // 先关核心会话，成功后再撤内嵌 agent 的槽位与转写。顺序不能反：核心
+    // close 可能失败（写停滞/通道异常），失败时 FE 保留标签，Agent 上下文
+    // 也必须保留；此前先撤槽会让「关闭失败」变成静默丢失对话记忆。
+    // core-session 的 Closed 状态事件也会触发同一 close（幂等）。
     state
         .api
-        .close_session(&human(), sid)
+        .close_session(&human(), sid.clone())
         .await
-        .map_err(WireError::from)
+        .map_err(WireError::from)?;
+    state.agent_host.close(&sid);
+    Ok(())
 }
 
 /// 断线会话一键重连（T13）：仅 Disconnected 会话；成功后进入重确认。

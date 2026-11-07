@@ -26,13 +26,25 @@ use tiny_agent::{Block, CallbackTool, Tool, ToolDef, ToolOutput};
 pub const AGENT_CLIENT_ID: &str = "tinyssh-embedded";
 
 /// 模型服务配置（FE 设置卡录入；api_key 只在内存，落盘走 vault 密封）。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ModelConfig {
     /// "openai"（OpenAI 兼容：GLM/DeepSeek/Qwen/Kimi…）| "anthropic"。
     pub provider: String,
     pub base_url: Option<String>,
     pub model: String,
     pub api_key: String,
+}
+
+/// 手写 Debug：api_key 永远不进入日志/诊断包（derive 会把明文打出来）。
+impl std::fmt::Debug for ModelConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelConfig")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("api_key", &"***")
+            .finish()
+    }
 }
 
 /// FE 可见事件（serde 序列化后走 tauri emit 与转写缓存两条路）。
@@ -54,6 +66,10 @@ pub enum HostEvent {
         name: String,
         is_error: bool,
         content: String,
+        /// 给人看的展示文本（exec/read_screen 从 JSON 提取 stdout/stderr/屏幕文本）；
+        /// None = 前端直接用 content。模型看到的内容仍是 content 的完整版。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<String>,
     },
     /// 非致命告警（tiny-a Warning）。
     Notice(String),
@@ -141,18 +157,36 @@ pub struct TransferPoll {
 const TAIL_CAP: usize = 4000;
 /// 每会话转写缓存条目上限（FE 重建对话用；更早的靠模型自己的历史延续）。
 const TRANSCRIPT_CAP: usize = 400;
+/// 单次模型请求的 SSE 空闲上限（秒）。TinyAgent 缺省 30s 对普通聊天模型够用，
+/// 但推理模型（DeepSeek-R1/o-series/GLM 思考档）在首 token 前可能静默数分钟；
+/// 30s 会把它误判成半开连接（stop_reason=stream_idle），用户看到「回答突然结束」。
+/// 300s 覆盖长思考（R1 类模型偶发数分钟首 token），同时仍能回收真正卡死的连接。
+const AGENT_STREAM_IDLE_SECS: u64 = 300;
+/// 单次 Agent 运行的墙钟上限（秒）。TinyAgent 缺省 600s，长任务/多轮工具回路
+/// 容易被无声截断；交互式 Agent 由用户「停止」兜底，放宽到 30 分钟。
+const AGENT_RUN_TIMEOUT_SECS: u64 = 1800;
 /// 传输轮询节奏（500ms×120 = 60s 上限；测试缩为 5ms 让超时路径秒级跑完）。
 const TRANSFER_POLL_MS: u64 = if cfg!(test) { 5 } else { 500 };
 const TRANSFER_POLL_CAP: u32 = 120;
 
 /// collision 参数解析：缺省 fail（None）；仅接受 skip|overwrite，其余即工具错误。
 fn parse_collision(input: &serde_json::Value) -> Result<Option<String>, String> {
+    if let Some(v) = input.get("collision") {
+        if !v.is_string() {
+            return Err("collision 必须是字符串（skip）".into());
+        }
+    }
     match input.get("collision").and_then(|v| v.as_str()) {
         None | Some("") => Ok(None),
         Some("skip") => Ok(Some("skip".into())),
-        Some("overwrite") => Ok(Some("overwrite".into())),
+        // core-session 的 Agent 传输路径对 overwrite 一律 ReplaceUnsupported
+        //（远端无原子替换原语/本地覆盖只对人类决策开放）。在工具层就明确拒绝，
+        // 不浪费一次审批再失败。
+        Some("overwrite") => Err(
+            "Agent 传输不支持覆盖（core 对 Agent 一律拒绝 overwrite）——请用 collision=\"skip\" 或换一个目标路径".into(),
+        ),
         Some(other) => Err(format!(
-            "collision 仅支持 skip|overwrite（缺省 fail），得到 {other:?}"
+            "collision 仅支持 skip（缺省 fail），得到 {other:?}"
         )),
     }
 }
@@ -238,6 +272,7 @@ fn transfer_flow(
     remote: &str,
     is_upload: bool,
     collision: Option<&str>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<ToolOutput, anyhow::Error> {
     if collision.is_none() {
         let target = if is_upload { remote } else { local };
@@ -255,18 +290,27 @@ fn transfer_flow(
                         "target": target,
                         "size": st.size,
                         "mtime": st.mtime,
-                        "hint": "目标已存在；与用户确认后用 collision=\"skip\"（同名跳过）或 \"overwrite\"（覆盖，仍需审批）重试",
+                        "hint": "目标已存在；与用户确认后用 collision=\"skip\"（同名跳过）重试，或换一个目标路径（Agent 路径不支持覆盖）",
                     })
                     .to_string(),
                 ));
             }
         }
     }
+    let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
+    if cancelled() {
+        return Ok(ToolOutput::error("已停止（传输未发起）"));
+    }
     let tid = ops
         .transfer_start(sid, local, remote, is_upload, collision)
         .map_err(|e| anyhow::anyhow!(e))?;
     for _ in 0..TRANSFER_POLL_CAP {
         std::thread::sleep(std::time::Duration::from_millis(TRANSFER_POLL_MS));
+        if cancelled() {
+            return Ok(ToolOutput::error(
+                json!({"transfer_id": tid, "status": "cancelled_by_user", "note": "用户已停止；传输可能仍在后台继续，可用 transfer_status 对账"}).to_string(),
+            ));
+        }
         let p = ops.transfer_status(&tid).map_err(|e| anyhow::anyhow!(e))?;
         match p.status.as_str() {
             "succeeded" | "skipped" => {
@@ -286,6 +330,61 @@ fn transfer_flow(
         })
         .to_string(),
     ))
+}
+
+/// 工具入口的取消检查。工具本身是同步阻塞的（审批/长命令），无法在中途打断；
+/// 至少保证用户点停止后不再发起新工具，并把已返回的结果标成取消而不是继续喂给模型。
+fn tool_cancelled(ctx: &tiny_agent::ToolCtx) -> bool {
+    ctx.cancel
+        .as_ref()
+        .is_some_and(|c| c.load(Ordering::Relaxed))
+}
+
+/// 工具结果的「给人看」文本：SSH 桥返回的是 JSON，直接塞进 UI 会显示
+/// `{"exec_id":...}` 转义串。只做展示层提取，不改变模型看到的 content。
+fn display_tool_result(name: &str, content: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(content).ok()?;
+    match name {
+        "exec" => {
+            let code = v.get("exit_code").and_then(|x| x.as_i64());
+            let stdout = v.get("stdout").and_then(|x| x.as_str()).unwrap_or("");
+            let stderr = v.get("stderr").and_then(|x| x.as_str()).unwrap_or("");
+            let mut out = String::new();
+            if let Some(c) = code {
+                out.push_str(&format!("exit {c}\n"));
+            }
+            out.push_str(stdout);
+            if !stderr.is_empty() {
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str("[stderr]\n");
+                out.push_str(stderr);
+            }
+            Some(tail(&out))
+        }
+        "read_screen" => v.get("text").and_then(|x| x.as_str()).map(|s| tail(s)),
+        "read_blocks" => {
+            let arr = v.as_array()?;
+            let mut out = String::new();
+            for b in arr {
+                let cmd = b.get("command").and_then(|x| x.as_str()).unwrap_or("");
+                let code = b.get("exit_code").and_then(|x| x.as_i64());
+                out.push_str(&format!(
+                    "$ {cmd}{}\n",
+                    code.map(|c| format!("  [exit {c}]")).unwrap_or_default()
+                ));
+                if let Some(o) = b.get("output").and_then(|x| x.as_str()) {
+                    out.push_str(o);
+                    if !o.ends_with('\n') {
+                        out.push('\n');
+                    }
+                }
+            }
+            Some(tail(&out))
+        }
+        _ => None,
+    }
 }
 
 fn tail(s: &str) -> String {
@@ -400,7 +499,10 @@ fn build_tools(
                 "required": ["command"]
             }),
         },
-        move |input, _ctx| {
+        move |input, ctx| {
+            if tool_cancelled(ctx) {
+                return Ok(ToolOutput::error("已停止（命令未执行）"));
+            }
             let cmd = input.get("command").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 command"))?;
             let mode = input.get("mode").and_then(|v| v.as_str());
             if let Some(m) = mode {
@@ -408,9 +510,30 @@ fn build_tools(
                     return Err(anyhow::anyhow!("mode 仅支持 shell|fresh，得到 {m:?}"));
                 }
             }
-            let t = input.get("timeout_secs").and_then(|v| v.as_u64());
-            let cap = input.get("output_cap_bytes").and_then(|v| v.as_u64());
-            o2.exec(&s2, cmd, t, cap, mode).map(ToolOutput::text).map_err(|e| anyhow::anyhow!(e))
+            // 模型可能传 0/极大值：0 在 core 里是「立即超时」，极大值会让
+            // Instant + Duration 溢出或把工具永久挂起。在工具边界钳到可用域。
+            let t = input
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .map(|v| v.clamp(1, 1800));
+            let cap = input
+                .get("output_cap_bytes")
+                .and_then(|v| v.as_u64())
+                .map(|v| v.clamp(1, 128 * 1024));
+            let out = o2
+                .exec(&s2, cmd, t, cap, mode)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            // 非零退出是失败，不是「完成」：模型和 UI 都按 is_error 处理
+            //（此前一律 ToolOutput::text，前端显示绿色完成）。
+            let failed = serde_json::from_str::<serde_json::Value>(&out)
+                .ok()
+                .and_then(|v| v.get("exit_code").and_then(|x| x.as_i64()))
+                .is_some_and(|code| code != 0);
+            Ok(if failed {
+                ToolOutput::error(out)
+            } else {
+                ToolOutput::text(out)
+            })
         },
     );
     let o3 = ops.clone();
@@ -423,7 +546,10 @@ fn build_tools(
                     .into(),
             schema: json!({"type": "object", "properties": {}}),
         },
-        move |_input, _ctx| {
+        move |_input, ctx| {
+            if tool_cancelled(ctx) {
+                return Ok(ToolOutput::error("已停止"));
+            }
             o3.read_screen(&s3)
                 .map(ToolOutput::text)
                 .map_err(|e| anyhow::anyhow!(e))
@@ -442,8 +568,15 @@ fn build_tools(
                 }
             }),
         },
-        move |input, _ctx| {
-            let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(20).min(200) as u32;
+        move |input, ctx| {
+            if tool_cancelled(ctx) {
+                return Ok(ToolOutput::error("已停止"));
+            }
+            let limit = input
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20)
+                .clamp(1, 200) as u32;
             o4.read_blocks(&s4, limit).map(ToolOutput::text).map_err(|e| anyhow::anyhow!(e))
         },
     );
@@ -462,10 +595,19 @@ fn build_tools(
                 }
             }),
         },
-        move |input, _ctx| {
-            let q = input.get("quiet_ms").and_then(|v| v.as_u64());
+        move |input, ctx| {
+            if tool_cancelled(ctx) {
+                return Ok(ToolOutput::error("已停止"));
+            }
+            let q = input
+                .get("quiet_ms")
+                .and_then(|v| v.as_u64())
+                .map(|v| v.clamp(1, 60_000));
             let r = input.get("regex").and_then(|v| v.as_str()).map(String::from);
-            let t = input.get("timeout_secs").and_then(|v| v.as_u64());
+            let t = input
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .map(|v| v.clamp(1, 600));
             o5.wait_output(&s5, q, r, t).map(ToolOutput::text).map_err(|e| anyhow::anyhow!(e))
         },
     );
@@ -474,22 +616,22 @@ fn build_tools(
     let upload = CallbackTool::new(
         ToolDef {
             name: "upload".into(),
-            description: "上传本地文件到远程主机。local=用户本机绝对路径，remote=主机上的绝对路径。缺省冲突即失败：目标已存在返回 conflict_detected（含目标大小/时间）；与用户确认后用 collision=\"skip\"（同名跳过）或 \"overwrite\"（覆盖）重试。传输需人工审批，等待期间此调用阻塞；被拒绝时如实报告。".into(),
+            description: "上传本地文件到远程主机。local=用户本机绝对路径，remote=主机上的绝对路径。缺省冲突即失败：目标已存在返回 conflict_detected（含目标大小/时间）；与用户确认后用 collision=\"skip\"（同名跳过）或换目标路径（Agent 路径不支持覆盖）。传输需人工审批，等待期间此调用阻塞；被拒绝时如实报告。".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
                     "local": { "type": "string", "description": "本机文件绝对路径" },
                     "remote": { "type": "string", "description": "主机目标绝对路径" },
-                    "collision": { "type": "string", "enum": ["skip", "overwrite"], "description": "目标已存在时的处置（缺省 fail）" }
+                    "collision": { "type": "string", "enum": ["skip"], "description": "目标已存在时的处置（缺省 fail；Agent 不支持 overwrite）" }
                 },
                 "required": ["local", "remote"]
             }),
         },
-        move |input, _ctx| {
+        move |input, ctx| {
             let local = input.get("local").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 local"))?;
             let remote = input.get("remote").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 remote"))?;
             let c = parse_collision(input).map_err(|e| anyhow::anyhow!(e))?;
-            transfer_flow(&o6, &s6, local, remote, true, c.as_deref())
+            transfer_flow(&o6, &s6, local, remote, true, c.as_deref(), ctx.cancel.as_deref())
         },
     );
     let o7 = ops.clone();
@@ -497,22 +639,22 @@ fn build_tools(
     let download = CallbackTool::new(
         ToolDef {
             name: "download".into(),
-            description: "从远程主机下载文件到本机。remote=主机上的绝对路径，local=用户本机绝对路径。缺省冲突即失败：本地目标已存在返回 conflict_detected（目录目标放行=下载进目录）；与用户确认后用 collision=\"skip\"/\"overwrite\" 重试。传输需人工审批，等待期间此调用阻塞；被拒绝时如实报告。".into(),
+            description: "从远程主机下载文件到本机。remote=主机上的绝对路径，local=用户本机绝对路径。缺省冲突即失败：本地目标已存在返回 conflict_detected（目录目标放行=下载进目录）；与用户确认后用 collision=\"skip\" 或换目标路径（Agent 路径不支持覆盖）。传输需人工审批，等待期间此调用阻塞；被拒绝时如实报告。".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
                     "remote": { "type": "string", "description": "主机源文件绝对路径" },
                     "local": { "type": "string", "description": "本机目标绝对路径" },
-                    "collision": { "type": "string", "enum": ["skip", "overwrite"], "description": "目标已存在时的处置（缺省 fail）" }
+                    "collision": { "type": "string", "enum": ["skip"], "description": "目标已存在时的处置（缺省 fail；Agent 不支持 overwrite）" }
                 },
                 "required": ["remote", "local"]
             }),
         },
-        move |input, _ctx| {
+        move |input, ctx| {
             let remote = input.get("remote").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 remote"))?;
             let local = input.get("local").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 local"))?;
             let c = parse_collision(input).map_err(|e| anyhow::anyhow!(e))?;
-            transfer_flow(&o7, &s7, local, remote, false, c.as_deref())
+            transfer_flow(&o7, &s7, local, remote, false, c.as_deref(), ctx.cancel.as_deref())
         },
     );
     let o8 = ops.clone();
@@ -551,7 +693,10 @@ fn build_tools(
                 "required": ["keys"]
             }),
         },
-        move |input, _ctx| {
+        move |input, ctx| {
+            if tool_cancelled(ctx) {
+                return Ok(ToolOutput::error("已停止（按键未发送）"));
+            }
             let k = input
                 .get("keys")
                 .and_then(|v| v.as_str())
@@ -578,7 +723,10 @@ fn build_tools(
                     }
                 }),
             },
-            move |input, _ctx| {
+            move |input, ctx| {
+                if tool_cancelled(ctx) {
+                    return Ok(ToolOutput::error("已停止"));
+                }
                 let skills = src.skills();
                 match input.get("name").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                     None => Ok(ToolOutput::text(skills_list_text(&skills))),
@@ -622,7 +770,7 @@ pub const FLEET_KEY: &str = "fleet";
 /// dispatch_task 的背后：Real=用编排者自己的模型配置把任务文本作为用户消息
 /// 发给目标会话的执行 agent（agent-host::send，事件仍以目标 sid 桥给 FE，
 /// 目标对话在 Agent 视图可见）；Test=弹出预置 mock provider（离线全链测试）。
-pub type DispatchFn = Arc<dyn Fn(&str, &str) -> Result<(), String> + Send + Sync>;
+pub type DispatchFn = Arc<dyn Fn(&str, &str) -> Result<u64, String> + Send + Sync>;
 
 /// wait_task 轮询节奏（与传输轮询同款测试/生产分叉）。
 const WAIT_POLL_MS: u64 = if cfg!(test) { 5 } else { 500 };
@@ -633,6 +781,7 @@ fn build_fleet_tools(
     self_key: String,
     dispatch: DispatchFn,
 ) -> Vec<Box<dyn Tool>> {
+    let o_dispatch = ops.clone();
     let o1 = ops;
     let sessions = CallbackTool::new(
         ToolDef {
@@ -673,75 +822,181 @@ fn build_fleet_tools(
             if sid == k2 {
                 return Err(anyhow::anyhow!("不能派发给编排者自己"));
             }
+            let task = task.trim();
+            if task.is_empty() {
+                return Err(anyhow::anyhow!("task 不能为空"));
+            }
+            // 目标存在性/控制权预检：避免对幻觉 sid 或人类持有的会话启动一整轮
+            // 模型请求（token 白烧，最终工具全报 ControlTakenByHuman）。
+            let list = o_dispatch
+                .list_sessions()
+                .map_err(|e| anyhow::anyhow!("读取会话清单失败：{e}"))?;
+            let arr: serde_json::Value = serde_json::from_str(&list)
+                .map_err(|e| anyhow::anyhow!("会话清单格式异常：{e}"))?;
+            let target = arr
+                .as_array()
+                .and_then(|a| {
+                    a.iter().find(|s| {
+                        s.get("session_id").and_then(|v| v.as_str()) == Some(sid)
+                    })
+                })
+                .ok_or_else(|| anyhow::anyhow!("目标会话不存在：{sid}（先用 fleet_sessions 确认）"))?;
+            if let Some(owner) = target.get("control_owner").and_then(|v| v.as_str()) {
+                if owner == "Human" {
+                    return Err(anyhow::anyhow!(
+                        "目标会话 {sid} 由人类持有控制权——请先在目标会话把控制权交给 Agent"
+                    ));
+                }
+            }
+            if let Some(state) = target.get("state").and_then(|v| v.as_str()) {
+                if matches!(
+                    state,
+                    "Disconnected" | "Closed" | "Reconfirming" | "Reconnecting"
+                ) {
+                    return Err(anyhow::anyhow!(
+                        "目标会话 {sid} 当前状态为 {state}，不能派发（先重连/完成重确认）"
+                    ));
+                }
+            }
             d2(sid, task)
-                .map(|_| ToolOutput::text(json!({ "dispatched": true, "session_id": sid }).to_string()))
+                .map(|run_id| {
+                    ToolOutput::text(
+                        json!({ "dispatched": true, "session_id": sid, "run_id": run_id })
+                            .to_string(),
+                    )
+                })
                 .map_err(|e| anyhow::anyhow!(e))
         },
     );
+    let k3 = self_key.clone();
     let wait_tool = CallbackTool::new(
         ToolDef {
             name: "wait_task".into(),
-            description: "等待目标会话当前任务结束并取回结果（state=done|failed|running + 它最后的文本回复）。并行派发后逐个调用；超时返回 running 可再次调用继续等。".into(),
+            description: "等待目标会话当前任务结束并取回结果（state=done|failed|running|cancelled + stop_reason + 它最后的文本回复）。并行派发后逐个调用；超时返回 running 可再次调用继续等。可传 dispatch_task 返回的 run_id 防止把上一轮结果当本轮。".into(),
             schema: json!({
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string", "description": "目标会话 id" },
+                    "run_id": { "type": "integer", "description": "dispatch_task 返回的运行代际（可选；传了就只认这一轮）" },
                     "timeout_secs": { "type": "integer", "description": "最多等多少秒（缺省 300，上限 900）" }
                 },
                 "required": ["session_id"]
             }),
         },
-        move |input, _ctx| {
+        move |input, ctx| {
             let sid = input
                 .get("session_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("缺少 session_id"))?;
-            let cap = input
+            if sid == k3 {
+                return Err(anyhow::anyhow!(
+                    "不能 wait_task 编排者自己（会等待自身运行到超时）"
+                ));
+            }
+            let want_run = input.get("run_id").and_then(|v| v.as_u64());
+            let mut cap = input
                 .get("timeout_secs")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(300)
                 .min(900);
+            if let Some(d) = ctx.deadline {
+                let left = d
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_secs();
+                cap = cap.min(left.max(1));
+            }
             let h = host
                 .upgrade()
                 .ok_or_else(|| anyhow::anyhow!("宿主已释放"))?;
+            if let Some(rid) = want_run {
+                if let Some(cur) = h.run_id(sid) {
+                    if cur != rid {
+                        return Err(anyhow::anyhow!(
+                            "目标会话已开始新一轮运行（期望 run_id={rid}，当前={cur}）——请重新 dispatch_task 或省略 run_id"
+                        ));
+                    }
+                }
+            }
             let polls = (cap * 1000 / WAIT_POLL_MS).max(1);
+            let mut cancelled = false;
             for _ in 0..polls {
                 if !h.busy(sid) {
+                    break;
+                }
+                if ctx
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(Ordering::Relaxed))
+                {
+                    cancelled = true;
+                    break;
+                }
+                if ctx
+                    .deadline
+                    .is_some_and(|d| std::time::Instant::now() >= d)
+                {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(WAIT_POLL_MS));
             }
             let running = h.busy(sid);
-            let state = if running {
-                "running"
-            } else {
-                match h.history(sid).iter().rev().find_map(|e| match e {
-                    HostEvent::Done { .. } => Some("done"),
-                    HostEvent::Failed { .. } => Some("failed"),
-                    _ => None,
-                }) {
-                    Some(s) => s,
-                    None => "unknown",
+            if cancelled {
+                return Ok(ToolOutput::text(
+                    json!({
+                        "session_id": sid,
+                        "state": "cancelled",
+                        "note": "用户已停止编排运行；目标任务可能仍在执行，可稍后再查",
+                    })
+                    .to_string(),
+                ));
+            }
+            let mut payload = json!({ "session_id": sid });
+            if running {
+                payload["state"] = json!("running");
+                payload["note"] = json!("仍在运行；稍后再次 wait_task 继续等");
+                if let Some(rid) = want_run {
+                    payload["run_id"] = json!(rid);
+                }
+                return Ok(ToolOutput::text(payload.to_string()));
+            }
+            let outcome = h.last_outcome(sid);
+            if let Some(rid) = want_run {
+                match &outcome {
+                    Some((got, ..)) if *got == rid => {}
+                    Some((got, ..)) => {
+                        return Err(anyhow::anyhow!(
+                            "目标会话已开始新一轮运行（期望 run_id={rid}，当前={got}）——请重新 dispatch_task 或省略 run_id"
+                        ));
+                    }
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "目标会话没有可对账的运行结果（run_id={rid}）"
+                        ));
+                    }
+                }
+            }
+            let (rid, stop_reason, final_text, error) = match outcome {
+                Some(o) => o,
+                None => {
+                    payload["state"] = json!("unknown");
+                    payload["note"] = json!("目标会话没有运行记录");
+                    return Ok(ToolOutput::text(payload.to_string()));
                 }
             };
-            let mut payload = json!({ "session_id": sid, "state": state });
-            if state == "failed" {
-                if let Some(HostEvent::Failed { message }) = h
-                    .history(sid)
-                    .iter()
-                    .rev()
-                    .find(|e| matches!(e, HostEvent::Failed { .. }))
-                {
-                    payload["error"] = json!(message);
-                }
+            // 只有模型正常收口（end_turn/stop）才算 done；timeout/stream_idle/
+            // max_tokens/max_turns_reached/budget_exceeded/stuck_loop/cancelled
+            // 都必须如实报 failed，不能把半截结果当成功。
+            let ok = matches!(stop_reason.as_str(), "end_turn" | "stop" | "stop_sequence");
+            payload["state"] = json!(if ok { "done" } else { "failed" });
+            payload["run_id"] = json!(rid);
+            payload["stop_reason"] = json!(stop_reason);
+            if !final_text.trim().is_empty() {
+                payload["result"] = json!(tail(&final_text));
             }
-            if !running {
-                if let Some(t) = h.last_final_text(sid) {
-                    payload["result"] = json!(tail(&t));
-                }
-            }
-            if running {
-                payload["note"] = json!("仍在运行；稍后再次 wait_task 继续等");
+            if let Some(err) = error {
+                payload["error"] = json!(err);
+            } else if !ok {
+                payload["error"] = json!(format!("运行未正常结束（stop_reason={stop_reason}）"));
             }
             Ok(ToolOutput::text(payload.to_string()))
         },
@@ -755,6 +1010,16 @@ fn build_fleet_tools(
 
 // ── 宿主 ──
 
+/// 一次运行的可查询结果（Fleet wait_task 用）。不存完整消息历史，只保留
+/// 终态原因与最后一段文本——避免把模型内部思考/半截工具调用当成结论。
+#[derive(Clone)]
+struct RunOutcomeLite {
+    run_id: u64,
+    stop_reason: String,
+    final_text: String,
+    error: Option<String>,
+}
+
 #[derive(Default)]
 struct SlotState {
     busy: bool,
@@ -763,6 +1028,12 @@ struct SlotState {
     /// send 时签名不符即重建 agent（换模型/换 key 生效；对话记忆随之重置，
     /// FE 转写仍在、如实呈现）。
     cfg_sig: Option<u64>,
+    /// 运行代际：每次受理 send 自增；dispatch_task 返回、wait_task 可按 id 对账，
+    /// 防止把上一轮结果当本轮结果。
+    run_seq: u64,
+    /// 最近一次**已结束**运行的结果。busy 期间不更新；新 send 受理时清空，
+    /// 保证 wait_task 不会读到上一轮答案。
+    last_outcome: Option<RunOutcomeLite>,
 }
 
 fn sig_of(cfg: &ModelConfig) -> u64 {
@@ -793,6 +1064,27 @@ fn next_test_sig() -> u64 {
 struct SessionSlot {
     agent: Mutex<Option<tiny_agent::Agent>>,
     state: Mutex<SlotState>,
+    /// close 后置位：旧运行线程即使还持有这个 Arc，也不得再把事件写进
+    /// 转写/FE（close 后同 sid 可能已建新槽位，否则两个对话会串线）。
+    closed: AtomicBool,
+}
+
+/// 运行线程的收尾守卫：即使 emit(Failed)/sink 回调 panic，busy 位也会复位、
+/// 最近结果也会落槽——否则该会话永久提示「上一条还在运行」，只能重启应用。
+struct SlotRunGuard {
+    slot: Arc<SessionSlot>,
+    outcome: Option<RunOutcomeLite>,
+}
+
+impl Drop for SlotRunGuard {
+    fn drop(&mut self) {
+        let mut st = self.slot.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(o) = self.outcome.take() {
+            st.last_outcome = Some(o);
+        }
+        st.busy = false;
+        st.cancel = None;
+    }
 }
 
 /// 事件回调：`(sid, event)`。Send+Sync——src-tauri 侧闭包里只借 AppHandle。
@@ -859,6 +1151,7 @@ impl AgentHost {
                 Arc::new(SessionSlot {
                     agent: Mutex::new(None),
                     state: Mutex::new(SlotState::default()),
+                    closed: AtomicBool::new(false),
                 })
             })
             .clone()
@@ -873,29 +1166,61 @@ impl AgentHost {
         }
     }
 
-    /// 目标会话最后一条**封口**的 assistant 文本（编排者 wait_task 取结果用）：
-    /// 转写重放——Text/Thinking 增量聚入当前缓冲，任何其他事件封口；只认已封口
-    /// 的缓冲（流式中未完的 tail 不算，避免把半截话当结论）。
+    /// 最近一次已结束运行的结果（run_id/stop_reason/final_text/error）。
+    /// `None` = 没有运行过或新运行已受理（旧结果已作废）。
+    pub fn last_outcome(&self, sid: &str) -> Option<(u64, String, String, Option<String>)> {
+        match self.sessions.lock().unwrap().get(sid) {
+            Some(s) => s.state.lock().unwrap().last_outcome.as_ref().map(|o| {
+                (
+                    o.run_id,
+                    o.stop_reason.clone(),
+                    o.final_text.clone(),
+                    o.error.clone(),
+                )
+            }),
+            None => None,
+        }
+    }
+
+    /// 当前/最近一次运行的代际号（dispatch_task 返回给编排者做对账）。
+    pub fn run_id(&self, sid: &str) -> Option<u64> {
+        match self.sessions.lock().unwrap().get(sid) {
+            Some(s) => Some(s.state.lock().unwrap().run_seq),
+            None => None,
+        }
+    }
+
+    /// 目标会话最后一条**封口**的 assistant 文本（旧版 wait_task 取结果用；
+    /// 现在 wait_task 优先读 last_outcome）。转写重放——只聚合 Text 增量，
+    /// Thinking 不是结论；任何其他事件封口，流式中未完的 tail 不算。
     pub fn last_final_text(&self, sid: &str) -> Option<String> {
         let list = self.transcripts.lock().unwrap().get(sid)?.clone();
         let mut cur = String::new();
         let mut in_text = false;
         let mut last: Option<String> = None;
+        let seal = |cur: &mut String, in_text: &mut bool, last: &mut Option<String>| {
+            if *in_text {
+                if !cur.trim().is_empty() {
+                    *last = Some(std::mem::take(cur));
+                } else {
+                    cur.clear();
+                }
+                *in_text = false;
+            }
+        };
         for ev in list {
             match ev {
-                HostEvent::Text(t) | HostEvent::Thinking(t) => {
+                // 只聚合最终回答文本；思考内容不是结论，不能回灌给编排者。
+                HostEvent::Text(t) => {
                     cur.push_str(&t);
                     in_text = true;
                 }
-                _ => {
-                    if in_text {
-                        if !cur.trim().is_empty() {
-                            last = Some(cur);
-                        }
-                        cur = String::new();
-                        in_text = false;
-                    }
+                HostEvent::Thinking(_) => seal(&mut cur, &mut in_text, &mut last),
+                HostEvent::User(_) => {
+                    seal(&mut cur, &mut in_text, &mut last);
+                    cur.clear();
                 }
+                _ => seal(&mut cur, &mut in_text, &mut last),
             }
         }
         last
@@ -909,13 +1234,18 @@ impl AgentHost {
         text: &str,
         cfg: &ModelConfig,
         sink: EventSink,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         self.send_inner(sid, text, SendCfg::Real(cfg), sink, None)
     }
 
     /// 编排者会话：跨会话派发工具面 + FLEET_SYS_PROMPT。dispatch 闭包用编排者
     /// 自己的模型配置把任务发给目标会话（目标对话与审批都在目标侧原样呈现）。
-    pub fn send_fleet(&self, text: &str, cfg: &ModelConfig, sink: EventSink) -> Result<(), String> {
+    pub fn send_fleet(
+        &self,
+        text: &str,
+        cfg: &ModelConfig,
+        sink: EventSink,
+    ) -> Result<u64, String> {
         let weak = self.self_weak.lock().unwrap().clone();
         let weak2 = weak.clone();
         let cfg2 = cfg.clone();
@@ -949,7 +1279,7 @@ impl AgentHost {
         text: &str,
         provider: Box<dyn tiny_agent::Provider>,
         sink: EventSink,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         self.send_inner(sid, text, SendCfg::Test(provider), sink, None)
     }
 
@@ -962,7 +1292,7 @@ impl AgentHost {
         provider: Box<dyn tiny_agent::Provider>,
         targets: Arc<Mutex<std::collections::VecDeque<Box<dyn tiny_agent::Provider>>>>,
         sink: EventSink,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         let weak = self.self_weak.lock().unwrap().clone();
         let weak2 = weak.clone();
         let sink2 = sink.clone();
@@ -998,8 +1328,11 @@ impl AgentHost {
         cfg: SendCfg<'_>,
         sink: EventSink,
         fleet: Option<FleetAssemble>,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         let slot = self.slot(sid);
+        if slot.closed.load(Ordering::SeqCst) {
+            return Err("会话已关闭".into());
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         // 系统提示词先于 sig 组装：附加段改动折进重建指纹（改设置→下一条消息即重建生效）。
         let sys = compose_sys_prompt(fleet.is_some(), self.assets.as_ref().map(|a| a.as_ref()));
@@ -1013,6 +1346,7 @@ impl AgentHost {
             SendCfg::Real(c) => Some(sig_of(c) ^ hash_str(&sys)),
         };
         let needs_rebuild;
+        let run_id;
         {
             let mut st = slot.state.lock().unwrap();
             if st.busy {
@@ -1022,6 +1356,9 @@ impl AgentHost {
             st.busy = true;
             st.cancel = Some(cancel.clone());
             st.cfg_sig = sig_opt;
+            st.run_seq = st.run_seq.saturating_add(1);
+            st.last_outcome = None; // 新一轮开始：上一轮结果不可再被 wait_task 取回
+            run_id = st.run_seq;
         }
 
         let transcripts = self.transcripts.clone();
@@ -1049,13 +1386,23 @@ impl AgentHost {
                         "system_prompt": sys,
                         "tools": [],
                         "inject_environment": false,
+                        // 交互式 Agent 的时限：推理模型首 token 可能静默数分钟，
+                        // 30s 空闲会把长思考误判成断流；运行上限也从 600s 放宽，
+                        // 长任务由用户「停止」兜底（取消语义见 cancel()）。
+                        "limits": {
+                            "stream_idle_secs": AGENT_STREAM_IDLE_SECS,
+                            "timeout_secs": AGENT_RUN_TIMEOUT_SECS,
+                        },
                     });
                     if let Some(b) = &c.base_url {
                         cfg_json["base_url"] = json!(b);
                     }
                     let ta_cfg: tiny_agent::Config = serde_json::from_value(cfg_json)
                         .map_err(|e| format!("模型服务配置无效：{e}"))?;
-                    let client = tiny_agent::provider::new_client(120);
+                    // 0 = 不设 client 级总超时：每次 chat 请求都由 TinyAgent 按
+                    // 运行剩余预算设置 per-request timeout（含无预算时的 10min
+                    // backstop），这里再叠一个 120s 总超时只会让长回答被截断。
+                    let client = tiny_agent::provider::new_client(0);
                     let provider = tiny_agent::provider::build(&ta_cfg, &c.api_key, client.clone());
                     (ta_cfg, provider)
                 }
@@ -1073,7 +1420,7 @@ impl AgentHost {
                     (ta_cfg, p)
                 }
             };
-            let client = tiny_agent::provider::new_client(120);
+            let client = tiny_agent::provider::new_client(0);
             // 无 task 工具（tools: []）→ 自定义 provider 场景，api_key 传空串即可
             tiny_agent::build_agent_with_provider(&ta_cfg, provider, Vec::new(), &client, tools, "")
                 .map_err(|e| format!("agent 构建失败：{e}"))
@@ -1111,25 +1458,33 @@ impl AgentHost {
 
         std::thread::spawn(move || {
             let emit = |ev: HostEvent| {
-                sink(&sid_owned, &ev);
-                let mut t = transcripts.lock().unwrap();
-                // close 已撤键则不再回插：会话关闭后运行线程的残余事件曾把
-                // 已清空的转写键复活（串扰新会话）。FE 侧 sink 照发（自行忽略）。
-                if !t.contains_key(&sid_owned) {
+                // close 已撤键/槽位已关闭则连 sink 都不发：会话关闭后运行线程的
+                // 残余事件不应继续写 FE（此前先 sink 后检查，已关会话的对话还会
+                // 增长；close 后同 sid 新建槽位时旧线程还会串写新对话）。
+                if slot2.closed.load(Ordering::SeqCst) {
                     return;
                 }
-                let list = t.get_mut(&sid_owned).expect("key checked above");
-                list.push(ev);
-                if list.len() > TRANSCRIPT_CAP {
-                    let over = list.len() - TRANSCRIPT_CAP;
-                    list.drain(..over);
+                {
+                    let t = transcripts.lock().unwrap();
+                    if !t.contains_key(&sid_owned) {
+                        return;
+                    }
+                }
+                sink(&sid_owned, &ev);
+                let mut t = transcripts.lock().unwrap();
+                if let Some(list) = t.get_mut(&sid_owned) {
+                    list.push(ev);
+                    if list.len() > TRANSCRIPT_CAP {
+                        let over = list.len() - TRANSCRIPT_CAP;
+                        list.drain(..over);
+                    }
                 }
             };
             // catch_unwind 包住运行体：tiny-a 内部 panic 默认只杀线程不杀进程，
             // 但 busy 位焊死会让该会话永远「上一条还在运行」只能重启应用——
             // panic 也走正常收尾（Failed 事件 + busy 复位）
-            let outcome =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), String> {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                || -> Result<tiny_agent::RunOutcome, String> {
                     let mut cell = slot2.agent.lock().unwrap();
                     let Some(agent) = cell.as_mut() else {
                         return Err("会话 agent 已不存在".into());
@@ -1160,6 +1515,7 @@ impl AgentHost {
                                 is_error,
                                 content,
                             } => Some(HostEvent::ToolResult {
+                                display: display_tool_result(&name, &content),
                                 name,
                                 is_error,
                                 content: tail(&content),
@@ -1230,27 +1586,53 @@ impl AgentHost {
                         emit(HostEvent::Thinking(b));
                     }
                     match r {
-                        Ok(_) => Ok(()),
+                        Ok(out) => Ok(out),
                         Err(e) => Err(tail(&e.to_string())),
                     }
-                }))
-                .unwrap_or_else(|p| {
-                    Err(format!(
-                        "agent 运行线程 panic：{}",
-                        p.downcast_ref::<&str>()
-                            .map(|s| s.to_string())
-                            .or_else(|| p.downcast_ref::<String>().cloned())
-                            .unwrap_or_else(|| "unknown panic".into())
-                    ))
-                });
-            if let Err(msg) = outcome {
+                },
+            ))
+            .unwrap_or_else(|p| {
+                Err(format!(
+                    "agent 运行线程 panic：{}",
+                    p.downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| p.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown panic".into())
+                ))
+            });
+            // 运行结果落槽：Fleet wait_task 只认这次运行的 stop_reason/final_text，
+            // 不再靠扫描整条转写猜「最后一段文本」（会把上一轮答案或思考内容当结论）。
+            let (lite, failure) = match outcome {
+                Ok(out) => (
+                    Some(RunOutcomeLite {
+                        run_id,
+                        stop_reason: out.stop_reason.clone(),
+                        final_text: out.final_text,
+                        error: None,
+                    }),
+                    None,
+                ),
+                Err(msg) => (
+                    Some(RunOutcomeLite {
+                        run_id,
+                        stop_reason: "error".into(),
+                        final_text: String::new(),
+                        error: Some(msg.clone()),
+                    }),
+                    Some(msg),
+                ),
+            };
+            let _guard = SlotRunGuard {
+                slot: slot2.clone(),
+                outcome: lite,
+            };
+            if let Some(msg) = failure {
+                // 即使这里 panic（sink/tauri emit 异常），_guard 的 Drop 仍会
+                // 落 last_outcome 并复位 busy。
                 emit(HostEvent::Failed { message: msg });
             }
-            let mut st = slot2.state.lock().unwrap();
-            st.busy = false;
-            st.cancel = None;
         });
-        Ok(())
+        Ok(run_id)
     }
 
     /// 请求取消当前运行（工具/轮次间隙生效——tiny-a 的取消语义）。
@@ -1273,7 +1655,16 @@ impl AgentHost {
     /// 会话关闭：撤槽位 + 清转写（运行中的线程持 Arc 自然收尾；取消先发）。
     pub fn close(&self, sid: &str) {
         self.cancel(sid);
-        self.sessions.lock().unwrap().remove(sid);
+        // 先置 closed 再撤槽/转写：旧运行线程的 emit 一旦看到 closed 就停，
+        // 不会在撤键与回插之间把残余事件写进新对话。get+remove 在同一把锁内
+        // 完成，避免 close 与 send 竞态时误删刚建的新槽。
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            if let Some(slot) = sessions.get(sid) {
+                slot.closed.store(true, Ordering::SeqCst);
+            }
+            sessions.remove(sid);
+        }
         self.transcripts.lock().unwrap().remove(sid);
     }
 
@@ -1609,16 +2000,9 @@ mod tests {
                 mtime: Some(1),
                 is_dir: false,
             })))),
-            start_results: Mutex::new(std::collections::VecDeque::from(vec![
-                Ok("t-9".into()),
-                Err("审批被拒绝（transfer）：人类拒绝".into()),
-            ])),
-            polls: Mutex::new(std::collections::VecDeque::from(vec![TransferPoll {
-                status: "succeeded".into(),
-                error: None,
-                bytes_done: 3,
-                total: Some(3),
-            }])),
+            start_results: Mutex::new(std::collections::VecDeque::from(vec![Err(
+                "审批被拒绝（transfer）：人类拒绝".into(),
+            )])),
             ..Default::default()
         });
         let host = AgentHost::new(ops.clone());
@@ -1675,9 +2059,9 @@ mod tests {
         );
         // JSON 转义后反斜杠成对出现，断言只锚文件名
         assert!(results[0].1.contains("a.txt"), "{}", results[0].1);
-        // ② overwrite：预检放行 → start → 终态 succeeded
-        assert!(!results[1].0);
-        assert!(results[1].1.contains("t-9") && results[1].1.contains("succeeded"));
+        // ② overwrite：Agent 路径明确不支持——工具层直接报错，不建任务/不弹审批
+        assert!(results[1].0, "overwrite 应为参数错误");
+        assert!(results[1].1.contains("不支持覆盖"), "{}", results[1].1);
         // ③ 审批拒绝透传为 is_error（模型据此如实报告，不换花样重试）
         assert!(results[2].0 && results[2].1.contains("审批被拒绝"));
         // ④ 非法 collision 即参数错误
@@ -1689,12 +2073,12 @@ mod tests {
             .find(|c| c.starts_with("start:"))
             .expect("应有 start 调用");
         assert!(
-            first_start.contains("Some(\"overwrite\")"),
-            "首个 start 必须是 overwrite（缺省冲突路径不得建任务）：{calls:?}"
+            !first_start.contains("Some(\"overwrite\")"),
+            "Agent 路径不得把 overwrite 发进 core：{calls:?}"
         );
         assert!(
-            calls.iter().any(|c| c == "status:t-9"),
-            "应轮询终态：{calls:?}"
+            !calls.iter().any(|c| c == "status:t-9"),
+            "overwrite 被拒后不得建传输任务：{calls:?}"
         );
     }
 
@@ -1812,6 +2196,36 @@ mod tests {
             *ops.keys_sent.lock().unwrap(),
             vec!["j".to_string(), "\r".to_string(), "\x03".to_string()]
         );
+    }
+
+    #[test]
+    fn tool_result_display_extracts_exec_and_blocks() {
+        let exec = json!({
+            "exec_id": "e1",
+            "exit_code": 2,
+            "stdout": "out\n",
+            "stderr": "err\n",
+            "truncated": false,
+            "duration_ms": 5
+        })
+        .to_string();
+        let d = display_tool_result("exec", &exec).expect("exec display");
+        assert!(d.contains("exit 2"));
+        assert!(d.contains("out"));
+        assert!(d.contains("[stderr]"));
+        assert!(d.contains("err"));
+
+        let blocks = json!([
+            {"command": "echo hi", "exit_code": 0, "output": "hi\n"},
+            {"command": "false", "exit_code": 1, "output": ""}
+        ])
+        .to_string();
+        let d = display_tool_result("read_blocks", &blocks).expect("blocks display");
+        assert!(d.contains("$ echo hi"));
+        assert!(d.contains("[exit 1]"));
+
+        // 非 JSON（工具错误文本）不做展示层改写
+        assert!(display_tool_result("exec", "not json").is_none());
     }
 
     #[test]
@@ -1937,9 +2351,83 @@ mod tests {
         assert!(fleet_hist
             .iter()
             .any(|e| matches!(e, HostEvent::User(t) if t == "盘点两台机器")));
-        // last_final_text：目标总结可提取（wait_task 的数据源）
+        // last_final_text：目标总结可提取（旧版 wait_task 数据源；新版走 last_outcome）
         assert_eq!(host.last_final_text("t1").as_deref(), Some("磁盘 40% 已用"));
         assert_eq!(host.last_final_text("t2").as_deref(), Some("内存 2G/8G"));
+    }
+
+    #[test]
+    fn wait_task_reports_abnormal_stop_and_rejects_self_or_stale_run() {
+        let ops = Arc::new(FakeOps::default());
+        let host = AgentHost::new_arc(ops);
+        // 目标会话：半截文本 + stream_idle（推理模型长静默/半开连接的典型终态）
+        let (target, _ts) = MockProvider::new(vec![mock::MockTurn::Ok(
+            tiny_agent::provider::ChatResponse {
+                blocks: vec![tiny_agent::provider::Block::Text("半截回答".into())],
+                stop_reason: "stream_idle".into(),
+                usage: None,
+            },
+        )]);
+        let run_id = host
+            .send_with_mock("s-bad", "做个任务", Box::new(target), Arc::new(|_, _| {}))
+            .expect("send target");
+        assert!(host.wait_idle("s-bad"));
+        let (got, reason, text, err) = host.last_outcome("s-bad").expect("outcome");
+        assert_eq!(got, run_id);
+        assert_eq!(reason, "stream_idle");
+        assert_eq!(text, "半截回答");
+        assert!(err.is_none());
+
+        // 编排者：等目标（异常态）→ 等自己（应拒）→ 用错 run_id（应拒）→ 汇总
+        let (fleet, _fs) = MockProvider::new(vec![
+            mock::resp_tool("w1", "wait_task", json!({"session_id": "s-bad"}), None),
+            mock::resp_tool("w2", "wait_task", json!({"session_id": "fleet"}), None),
+            mock::resp_tool(
+                "w3",
+                "wait_task",
+                json!({"session_id": "s-bad", "run_id": run_id + 99}),
+                None,
+            ),
+            mock::resp_text("汇总", None),
+        ]);
+        let (ev, sink) = collect();
+        host.send_fleet_with_mock(
+            "汇总任务",
+            Box::new(fleet),
+            Arc::new(Mutex::new(Default::default())),
+            sink,
+        )
+        .expect("send fleet");
+        assert!(host.wait_idle(FLEET_KEY));
+        let evs = ev.lock().unwrap();
+        let results: Vec<(bool, String)> = evs
+            .iter()
+            .filter_map(|e| match e {
+                HostEvent::ToolResult {
+                    is_error, content, ..
+                } => Some((*is_error, content.clone())),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            results.iter().any(|(is_err, c)| !*is_err
+                && c.contains("\"state\":\"failed\"")
+                && c.contains("\"stop_reason\":\"stream_idle\"")
+                && c.contains("半截回答")),
+            "异常终态必须报 failed + stop_reason：{results:?}"
+        );
+        assert!(
+            results
+                .iter()
+                .any(|(is_err, c)| *is_err && c.contains("不能 wait_task 编排者自己")),
+            "wait_task 自己应被拒：{results:?}"
+        );
+        assert!(
+            results
+                .iter()
+                .any(|(is_err, c)| *is_err && c.contains("已开始新一轮运行")),
+            "run_id 不匹配应被拒：{results:?}"
+        );
     }
 
     // ── 提示词/技能资产化 ──

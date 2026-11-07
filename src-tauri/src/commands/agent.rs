@@ -112,11 +112,12 @@ pub(crate) async fn agent_send(
     // 必须路由到 send_fleet（编排三工具 fleet_sessions/dispatch_task/wait_task +
     // FLEET_SYS_PROMPT）——走通用 send 会装配出绑在 "fleet" 这个不存在会话上的
     // 普通工具面（exec 等全部报「会话不存在」）。演练壳测不到这条，spec 53 只盖 FE。
-    if sid == tinyssh_agent_host::FLEET_KEY {
+    let _run_id = if sid == tinyssh_agent_host::FLEET_KEY {
         state.agent_host.send_fleet(&text, &cfg, sink)
     } else {
         state.agent_host.send(&sid, &text, &cfg, sink)
-    }
+    }?;
+    Ok(())
 }
 
 /// 请求取消当前运行（工具/轮次间隙生效）。返回是否确有运行在途。
@@ -125,7 +126,14 @@ pub(crate) async fn agent_cancel(
     state: ApiState<'_>,
     sid: String,
 ) -> std::result::Result<bool, String> {
-    Ok(state.agent_host.cancel(&sid))
+    let model_cancel = state.agent_host.cancel(&sid);
+    // 同时取消核心侧在途 exec/传输并作废本 Agent 的待审批卡：只置模型取消位
+    // 时，审批等待/长命令/传输会继续跑，停止按钮看起来「没反应」。
+    let core_cancel = state
+        .api
+        .cancel_agent_work(&human(), &sid, tinyssh_agent_host::AGENT_CLIENT_ID)
+        .await;
+    Ok(model_cancel || core_cancel > 0)
 }
 
 /// 会话对话转写（FE 重挂载重建；最旧在前）。
