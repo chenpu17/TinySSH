@@ -223,13 +223,14 @@ module.exports = {
     // （分类切换只换内容不换盒子——用户反馈跳变）
     await page.click('[data-testid="settings-cat-terminal"]');
     await page.waitForTimeout(400);
-    ck.check("终端分类两卡（行为 5 行 + 外观 6 行）",
+    ck.check("终端分类两卡（行为 6 行 + 外观 6 行）",
       (await page.evaluate(() => {
         const cards = [...document.querySelectorAll(".settings-pane .set-card")];
         if (cards.length !== 2) return false;
         const rows = (c) => c.querySelectorAll(".set-item").length;
-        // P2-c 轮：行为卡 3→4（OSC 52 策略）；本地终端一等公民轮 4→5（本地 Shell 下拉）
-        return rows(cards[0]) === 5 && rows(cards[1]) === 6;
+        // P2-c 轮：行为卡 3→4（OSC 52 策略）；本地终端一等公民轮 4→5（本地 Shell 下拉）；
+        // 本轮 5→6（启动自动打开本地终端开关）
+        return rows(cards[0]) === 6 && rows(cards[1]) === 6;
       })), await page.evaluate(() =>
         [...document.querySelectorAll(".settings-pane .set-card")].map((c) => c.querySelectorAll(".set-item").length).join(",")));
     const boxT = await dlgBox();

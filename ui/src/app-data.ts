@@ -466,6 +466,9 @@ export const SETTING_PALETTE = "ui.palette";
 // 本地终端一等公民轮：本机默认 shell（值为 list_local_shells 的 id；空串=系统默认
 // $SHELL/PowerShell 回退）。真实域 vault settings KV，demo 域同镜像。
 export const SETTING_LOCAL_SHELL = "ui.v2.terminal.local_shell";
+// 启动自动开本地终端（KV；默认开——本地终端一等公民轮的既定产品行为；
+// "0"=关：冷启动不再起任何本地 shell，需要时从本机卡/快捷键手动打开）
+export const SETTING_AUTO_LOCAL = "ui.v2.terminal.auto_local";
 
 // ---------------------------------------------------------------------------
 // 终端品质（P0 轮）：字体族/连字/光标/滚屏/字距偏好（vault settings KV，

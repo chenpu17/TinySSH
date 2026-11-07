@@ -4,7 +4,9 @@
 //! - 上传/下载：本地拷贝。
 
 use async_trait::async_trait;
-use portable_pty::{Child, CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
+use portable_pty::{
+    Child, ChildKiller, CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem,
+};
 use session_api::transport::tokio_util_sync::CancellationToken;
 use session_api::transport::{ChannelHandle, FreshOutcome, TransportSignal};
 use session_api::{Error, ExecOpts, Result};
@@ -20,10 +22,216 @@ use tokio::sync::{broadcast, Mutex};
 /// std Mutex——两处都是短暂持锁、无 await 跨越。
 type PtyWriter = Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>>;
 
+/// Windows 进程树收尾（手写 FFI，沿 core-session local_metrics 零新依赖先例）。
+///
+/// portable-pty 的 `kill()` 只对 CreateProcess 直接创建的进程调 `TerminateProcess`。
+/// Windows 选 Git Bash 时那只是 `Git\bin\bash.exe` 启动器：真正交互的
+/// `Git\usr\bin\bash.exe` 与提示符里按仓库状态起的 git 都是它的后代，不在
+/// `kill()` 的射程内。两道保险：
+/// 1. 会话关闭/重连/Drop：杀外层后按父链多轮快照，把整棵后代树 TerminateProcess
+///    （含父进程在 CreateProcess 中途被杀、以 suspended 状态留下的子进程）；
+/// 2. 壳进程统一登记进一个 KILL_ON_JOB_CLOSE 的 Job：app 被强杀/崩溃时进程句柄
+///    由 OS 关闭，Job 内所有 shell/git 连带退出，不留 20 天不死的悬挂进程。
+#[cfg(windows)]
+mod win_tree {
+    #![allow(non_snake_case, non_upper_case_globals)]
+    use std::ffi::c_void;
+    use std::sync::OnceLock;
+
+    type Handle = *mut c_void;
+    const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
+    const PROCESS_TERMINATE: u32 = 0x0001;
+    const PROCESS_SET_QUOTA: u32 = 0x0100;
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    const JobObjectExtendedLimitInformation: i32 = 9;
+
+    #[repr(C)]
+    struct ProcessEntry32W {
+        dwSize: u32,
+        cntUsage: u32,
+        th32ProcessID: u32,
+        th32DefaultHeapID: usize,
+        th32ModuleID: u32,
+        cntThreads: u32,
+        th32ParentProcessID: u32,
+        pcPriClassBase: i32,
+        dwFlags: u32,
+        szExeFile: [u16; 260],
+    }
+
+    #[repr(C)]
+    struct JobBasicLimitInformation {
+        PerProcessUserTimeLimit: i64,
+        PerJobUserTimeLimit: i64,
+        LimitFlags: u32,
+        MinimumWorkingSetSize: usize,
+        MaximumWorkingSetSize: usize,
+        ActiveProcessLimit: u32,
+        Affinity: usize,
+        PriorityClass: u32,
+        SchedulingClass: u32,
+    }
+
+    #[repr(C)]
+    struct IoCounters {
+        ReadOperationCount: u64,
+        WriteOperationCount: u64,
+        OtherOperationCount: u64,
+        ReadTransferCount: u64,
+        WriteTransferCount: u64,
+        OtherTransferCount: u64,
+    }
+
+    #[repr(C)]
+    struct JobExtendedLimitInformation {
+        BasicLimitInformation: JobBasicLimitInformation,
+        IoInfo: IoCounters,
+        ProcessMemoryLimit: usize,
+        JobMemoryLimit: usize,
+        PeakProcessMemoryUsed: usize,
+        PeakJobMemoryUsed: usize,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> Handle;
+        fn Process32FirstW(snapshot: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn Process32NextW(snapshot: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn OpenProcess(access: u32, inherit: i32, process_id: u32) -> Handle;
+        fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+        fn CreateJobObjectW(attributes: *const c_void, name: *const u16) -> Handle;
+        fn SetInformationJobObject(job: Handle, class: i32, info: *const c_void, len: u32) -> i32;
+        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+    }
+
+    fn invalid(handle: Handle) -> bool {
+        handle.is_null() || handle as isize == -1
+    }
+
+    /// 壳进程专用 Job（懒建、进程生命周期常驻）。只登记 PTY 子进程，不登记 app
+    /// 自身——自动更新会 spawn 新 exe 后退出，若 app 也在 Job 里，新实例会被
+    /// KILL_ON_JOB_CLOSE 连带杀掉。Handle 存 usize 以满足 OnceLock 的 Send+Sync。
+    static SHELL_JOB: OnceLock<usize> = OnceLock::new();
+
+    fn shell_job() -> Option<Handle> {
+        let raw = *SHELL_JOB.get_or_init(|| unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if invalid(job) {
+                return 0;
+            }
+            let mut info: JobExtendedLimitInformation = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let ok = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const c_void,
+                std::mem::size_of::<JobExtendedLimitInformation>() as u32,
+            );
+            if ok == 0 {
+                CloseHandle(job);
+                return 0;
+            }
+            job as usize
+        });
+        if raw == 0 {
+            None
+        } else {
+            Some(raw as Handle)
+        }
+    }
+
+    fn assign(job: Handle, pid: u32) {
+        unsafe {
+            let h = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            if !invalid(h) {
+                AssignProcessToJobObject(job, h);
+                CloseHandle(h);
+            }
+        }
+    }
+
+    /// 把刚 spawn 的 shell 及其已存在的后代登记进 Job。登记后新建的后代由
+    /// Windows 自动继承；已存在的内层 bash/git 由两轮快照补登记（第一轮登记
+    /// 后，内层新起的 git 在第二轮可见；再之后创建的由已登记父进程继承）。
+    /// 失败（旧系统嵌套 Job 限制等）静默降级——正常关闭仍走 kill_descendants。
+    pub fn register_shell(pid: u32) {
+        let Some(job) = shell_job() else { return };
+        assign(job, pid);
+        for _ in 0..2 {
+            for child in snapshot_descendants(pid) {
+                assign(job, child);
+            }
+        }
+    }
+
+    /// 杀掉 `root` 的全部后代（不含 root 自己；root 由 portable-pty 的 child.kill
+    /// 收口）。**先杀 root 再扫后代**：root 死了就不会再创建新进程；分多轮快照
+    /// 是因为 Windows 上父进程在 `CreateProcess` 中途被杀时，新子进程可能以
+    /// suspended 状态留下（实测 ThreadWaitReason=Suspended、CPU 0 永不退出，
+    /// 正是历史里那批悬挂 git 的形状）——下一轮仍能按 ParentProcessId 找到它。
+    pub fn kill_descendants(root: u32) {
+        for _ in 0..4 {
+            let victims = snapshot_descendants(root);
+            if victims.is_empty() {
+                break;
+            }
+            unsafe {
+                for pid in victims {
+                    let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
+                    if !invalid(h) {
+                        TerminateProcess(h, 1);
+                        CloseHandle(h);
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+    }
+
+    fn snapshot_descendants(root: u32) -> Vec<u32> {
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if invalid(snap) {
+                return Vec::new();
+            }
+            let mut entry: ProcessEntry32W = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<ProcessEntry32W>() as u32;
+            let mut pairs: Vec<(u32, u32)> = Vec::new();
+            if Process32FirstW(snap, &mut entry) != 0 {
+                loop {
+                    pairs.push((entry.th32ProcessID, entry.th32ParentProcessID));
+                    if Process32NextW(snap, &mut entry) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snap);
+
+            // 父链 BFS；去重防环（快照是一致视图，正常无环）
+            let mut stack = vec![root];
+            let mut victims: Vec<u32> = Vec::new();
+            while let Some(parent) = stack.pop() {
+                for (pid, ppid) in &pairs {
+                    if *ppid == parent && *pid != root && !victims.contains(pid) {
+                        victims.push(*pid);
+                        stack.push(*pid);
+                    }
+                }
+            }
+            victims
+        }
+    }
+}
+
 pub struct LocalPtyChannel {
     writer: Mutex<Option<PtyWriter>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
+    /// 直接子进程的独立杀手（portable-pty 句柄克隆）：Drop 里拿不到 async 锁时
+    /// 仍能终止外层 shell。内层 `usr\bin\bash.exe` 与提示符 git 子进程由
+    /// win_tree 的后代树扫描 + 壳进程 Job 收口（见模块注释）。
+    killer: std::sync::Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>,
     output_tx: broadcast::Sender<Vec<u8>>,
     /// 保活订阅者：broadcast 零接收者时 send 即 Err，读循环会误判「无人听」而
     /// 永久退出（core 订阅晚于 spawn 的窗口内首包即触发——表现为本地终端无
@@ -415,6 +623,7 @@ pub async fn spawn_local_pty(
         writer: Mutex::new(None),
         master: Mutex::new(None),
         child: Mutex::new(None),
+        killer: std::sync::Mutex::new(None),
         output_tx,
         keepalive_rx,
         alive: Arc::new(AtomicBool::new(true)),
@@ -430,13 +639,38 @@ pub async fn spawn_local_pty(
 }
 
 impl LocalPtyChannel {
+    /// 收掉当前代 shell 的**整棵进程树**。
+    /// portable-pty 的 kill 只对 CreateProcess 直接创建的进程调 TerminateProcess：
+    /// Windows 上选 Git Bash 时那是 `Git\bin\bash.exe` 启动器，它再起的
+    /// `Git\usr\bin\bash.exe`（真正交互 shell）和提示符里的 git 子进程都不在
+    /// kill 射程内。先杀外层，再按父链把后代树一起收（win_tree）；关 ConPTY
+    /// 是第三道保险（向仍连接的客户端发 CTRL_CLOSE_EVENT）。旧系统上 Close 可能
+    /// 等客户端断开，放到独立线程，别把 tokio worker 卡住。
+    async fn teardown_current(&self) {
+        if let Some(mut k) = self.killer.lock().unwrap().take() {
+            let _ = k.kill();
+        }
+        if let Some(mut old) = self.child.lock().await.take() {
+            #[cfg(windows)]
+            let pid = old.process_id();
+            let _ = old.kill();
+            #[cfg(windows)]
+            if let Some(pid) = pid {
+                win_tree::kill_descendants(pid);
+            }
+        }
+        if let Some(master) = self.master.lock().await.take() {
+            std::thread::spawn(move || drop(master));
+        }
+        // 通道侧写端释放；读线程自己那份 Arc 随 EOF 退出后释放。
+        let _ = self.writer.lock().await.take();
+    }
+
     /// 启动（或重连时重启）持久 shell：新 PTY + 新 shell 进程 + 新读循环。
     /// 输出并入同一 broadcast——重连后泵与 UI 的既有订阅无需更换。
     /// 断线后旧 shell 已随 PTY 关闭退出，writer/master/child 全部换新。
     async fn respawn(&self) -> Result<()> {
-        if let Some(mut old) = self.child.lock().await.take() {
-            let _ = old.kill();
-        }
+        self.teardown_current().await;
         let pty_system = NativePtySystem::default();
         // shell 解析：用户 override → $SHELL → Windows 实验性分支回退 powershell
         //（unix 路径原样保留）。override 随通路存续，重连 respawn 复用同一选择。
@@ -501,6 +735,13 @@ impl LocalPtyChannel {
             .slave
             .spawn_command(cmd)
             .map_err(|e| Error::Io(format!("spawn shell: {e}")))?;
+        let killer = child.clone_killer();
+        // app 被强杀时的兜底：壳进程进 KILL_ON_JOB_CLOSE Job（内层 bash 已存在
+        // 则补登记，未存在则随外层继承）。正常关闭仍走下面的 kill_descendants。
+        #[cfg(windows)]
+        if let Some(pid) = child.process_id() {
+            win_tree::register_shell(pid);
+        }
         let reader = pair
             .master
             .try_clone_reader()
@@ -514,6 +755,7 @@ impl LocalPtyChannel {
         *self.writer.lock().await = Some(writer.clone());
         *self.master.lock().await = Some(pair.master);
         *self.child.lock().await = Some(child);
+        *self.killer.lock().unwrap() = Some(killer);
         // 换新注入目录前清掉旧目录（审计 R7：respawn 曾直接弃置旧目录，
         // 每次本地重连泄漏一个含用户 .bashrc 全文的临时目录）
         if let Some(old) = self.tmp.lock().unwrap().replace(tmp) {
@@ -604,6 +846,25 @@ impl LocalPtyChannel {
 
 impl Drop for LocalPtyChannel {
     fn drop(&mut self) {
+        // 兜底收口：调用方不一定走过 close()（建连中途失败、会话被弃置）。
+        // 外层 shell 先杀，再按父链收后代树（内层 bash / 提示符 git）；master
+        // 随字段释放关闭 ConPTY，是第三道保险。
+        if let Ok(mut k) = self.killer.lock() {
+            if let Some(mut k) = k.take() {
+                let _ = k.kill();
+            }
+        }
+        if let Ok(mut child) = self.child.try_lock() {
+            if let Some(mut child) = child.take() {
+                #[cfg(windows)]
+                let pid = child.process_id();
+                let _ = child.kill();
+                #[cfg(windows)]
+                if let Some(pid) = pid {
+                    win_tree::kill_descendants(pid);
+                }
+            }
+        }
         // 会话销毁收尾：注入临时目录（bashrc 分片含用户 shell 配置全文）不残留。
         // spawn_local_pty 返回的 cleanup 句柄仅是延迟清理的备用口，这里是兜底。
         if let Some(tmp) = self.tmp.lock().unwrap().take() {
@@ -790,11 +1051,7 @@ impl ChannelHandle for LocalPtyChannel {
     }
 
     async fn force_close(&self) -> Result<()> {
-        self.alive.store(false, Ordering::SeqCst);
-        if let Some(mut child) = self.child.lock().await.take() {
-            let _ = child.kill();
-        }
-        Ok(())
+        self.close().await
     }
 
     fn subscribe_output(&self) -> broadcast::Receiver<Vec<u8>> {
@@ -825,9 +1082,7 @@ impl ChannelHandle for LocalPtyChannel {
     }
 
     async fn close(&self) -> Result<()> {
-        if let Some(mut child) = self.child.lock().await.take() {
-            let _ = child.kill();
-        }
+        self.teardown_current().await;
         self.alive.store(false, Ordering::SeqCst);
         Ok(())
     }

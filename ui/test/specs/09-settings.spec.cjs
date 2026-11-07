@@ -116,6 +116,20 @@ module.exports = {
     });
     await page.waitForTimeout(200);
 
+    // 本地终端补充：启动自动打开开关（默认开；关闭写 KV）
+    const autoLocal = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="auto-local-toggle"]');
+      return el ? { checked: el.checked } : null;
+    });
+    ck.check("启动自动开本地终端开关在场且默认开", !!autoLocal && autoLocal.checked, JSON.stringify(autoLocal));
+    await page.evaluate(() => document.querySelector('[data-testid="auto-local-toggle"]')?.click());
+    await page.waitForTimeout(300);
+    ck.check("关闭启动自动开本地终端写 KV",
+      await page.evaluate(() => localStorage.getItem("ui.v2.terminal.auto_local") === "0"), "");
+    // 复位默认（本 spec 域隔离，habit 上收干净）
+    await page.evaluate(() => document.querySelector('[data-testid="auto-local-toggle"]')?.click());
+    await page.waitForTimeout(200);
+
     // 切到凭据分区
     await page.click("[data-testid=settings-cat-credentials]");
     await page.waitForTimeout(600);

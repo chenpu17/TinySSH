@@ -81,6 +81,9 @@ interface SettingsPanelProps {
   localShells: LocalShell[];
   localShellId: string;
   onChangeLocalShell: (id: string) => void;
+  // 本地终端补充：启动自动打开（默认开；关掉后冷启动零本地 shell）
+  autoLocal: boolean;
+  onChangeAutoLocal: (on: boolean) => void;
   // P0 终端品质轮：外观五项 + 连字（状态与即时应用在宿主，本面板只呈现）
   termFont: string;
   onChangeTermFont: (id: string) => void;
@@ -168,7 +171,7 @@ export function SettingsPanel({
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
-  localShells, localShellId, onChangeLocalShell,
+  localShells, localShellId, onChangeLocalShell, autoLocal, onChangeAutoLocal,
   termFont, onChangeTermFont, termLigatures, onChangeTermLigatures,
   termCursorStyle, onChangeTermCursorStyle, termCursorBlink, onChangeTermCursorBlink,
   termScrollback, onChangeTermScrollback, termLetterSpacing, onChangeTermLetterSpacing,
@@ -403,6 +406,14 @@ export function SettingsPanel({
                   </div>
                   {/* 本地终端一等公民轮：本机默认 shell——启动自动开的本地终端与本机卡
                       「连接」用此 shell；本机右键可临时用指定 shell 新开（不改默认） */}
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="auto-local-toggle" checked={autoLocal}
+                      onChange={(e) => onChangeAutoLocal(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>{t("启动时自动打开本地终端")}</b>
+                      <span className="set-item-desc">{t("冷启动后自动开一个本机终端（真实模式）；关闭后启动不再起本地 shell，需要时从「本机」卡、⌘K 或快捷键手动打开。")}</span>
+                    </span>
+                  </label>
                   <div className="set-item">
                     <span className="set-item-txt">
                       <b>{t("本地 Shell")}</b>

@@ -263,6 +263,9 @@ const EN: Record<string, string> = {
   "本地 Shell": "Local shell",
   "本地终端（含启动时自动打开的那个）使用的 shell。标注「无命令块」的 shell（cmd、WSL）无 shell 集成——命令块、现场延续与 Shell 模式执行不可用，如实降级为纯终端。":
     "The shell local terminals use (including the one auto-opened at startup). Shells marked \"no command blocks\" (cmd, WSL) lack shell integration — command blocks, session continuity and shell-mode exec are unavailable, honestly downgraded to a plain terminal.",
+  "启动时自动打开本地终端": "Open a local terminal at startup",
+  "冷启动后自动开一个本机终端（真实模式）；关闭后启动不再起本地 shell，需要时从「本机」卡、⌘K 或快捷键手动打开。":
+    "Automatically open a local terminal on cold start (native mode). When off, startup starts no local shell; open one anytime from the Local card, ⌘K, or the shortcut.",
   "系统默认（$SHELL / PowerShell）": "System default ($SHELL / PowerShell)",
   "（无命令块）": " (no command blocks)",
 

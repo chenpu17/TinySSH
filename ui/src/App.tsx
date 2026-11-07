@@ -83,7 +83,7 @@ import {
   ChromePalette, ctrlCharOf, dateLocale, epistemicLabel, exitText,
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, inputBlockedState,
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
-  runBench, SEARCH_OPTS, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
+  runBench, SEARCH_OPTS, SETTING_AUTO_LOCAL, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
   SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
   SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK,
   stateLabel, stampLocal, stopOutcomeText,
@@ -814,6 +814,9 @@ export default function App() {
   // 「用 … 新开」数据源）与默认选择 id（KV，空串=系统默认 $SHELL/PowerShell 回退）
   const [localShells, setLocalShells] = useState<LocalShell[]>([]);
   const [localShellId, setLocalShellId] = useState("");
+  // 启动自动开本地终端（KV；默认开）：state 只服务设置面板回显；真正建连前
+  // 在 auto-open effect 里直读 KV（与 shell 选择同口径，避开装载竞速）。
+  const [autoLocal, setAutoLocal] = useState(true);
   // i18n 轮：界面语言（App state——变化触发全树重渲染，渲染期 t() 重读模块态；
   // 初值取 t() 模块初值（localStorage），真实域 KV 装载后以此为准覆盖。
   // changeLocale 在 persistSetting 声明之后——deps 数组渲染期求值，先声明会 TDZ）
@@ -1469,6 +1472,7 @@ export default function App() {
     // 本地终端一等公民轮：探测清单 + 已选默认 shell（失败静默——下拉空、建连走默认解析）
     invoke("list_local_shells").then((v) => setLocalShells(v)).catch(() => {});
     invoke("get_setting", { key: SETTING_LOCAL_SHELL }).then((v) => setLocalShellId(v ?? "")).catch(() => {});
+    invoke("get_setting", { key: SETTING_AUTO_LOCAL }).then((v) => setAutoLocal(v !== "0")).catch(() => {});
     invoke("bench_mode").then((b) => {
       if (b) runBench();
     });
@@ -1511,6 +1515,12 @@ export default function App() {
           return;
         }
       } catch { /* 取不到按冷启动处理 */ }
+      // 设置里关掉「启动时自动打开本地终端」就不再起本地 shell；直读 KV 而非
+      // 吃 state——本 effect 与设置装载无序，shell 选择本来也直读 KV。
+      try {
+        const auto = (await invoke("get_setting", { key: SETTING_AUTO_LOCAL })) ?? "1";
+        if (auto === "0") return;
+      } catch { /* 读失败按默认开 */ }
       const lh = hosts.find((h) => h.id === "local");
       if (!lh) return;
       try {
@@ -3727,6 +3737,13 @@ export default function App() {
     pasteGuardRef.current = pg;
     writeTerminalPrefs({ paste_guard: pg });
   }, [writeTerminalPrefs]);
+  // 本地终端一等公民轮补充：启动自动开本机终端可关（默认开）。关掉后冷启动
+  // 不再起本地 shell——不用的本机终端（Windows Git Bash 为启动器+真 shell 两进程，
+  // 提示符还会按仓库状态起 git）不必常驻；需要时从本机卡/快捷键手动开。
+  const changeAutoLocal = useCallback((on: boolean) => {
+    setAutoLocal(on);
+    persistSetting(SETTING_AUTO_LOCAL, on ? "1" : "0");
+  }, [persistSetting]);
   // 十五轮：选中即复制开关（默认关）
   const changeCopyOnSelect = useCallback((on: boolean) => {
     setCopyOnSelect(on);
@@ -8316,6 +8333,8 @@ export default function App() {
               changeOsc52Policy={changeOsc52Policy}
               localShells={localShells}
               localShellId={localShellId}
+              autoLocal={autoLocal}
+              onChangeAutoLocal={changeAutoLocal}
               locale={locale} onChangeLocale={changeLocale}
               onChangeLocalShell={(id) => { setLocalShellId(id); persistSetting(SETTING_LOCAL_SHELL, id); }}
               termFont={termFont}
