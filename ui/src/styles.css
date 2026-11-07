@@ -747,7 +747,7 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
    --accent-glow 内描边阴影——半透明几乎看不出，且墨水屏铲阴影后焦点窗格完全无指示 */
 .term-session.pane-focused::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  border: 2px solid var(--accent);
+  border: 2px solid var(--accent); border-radius: 7px;
 }
 .pane-tag {
   display: none; position: absolute; top: 2px; left: 8px; z-index: 5;
@@ -770,7 +770,25 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
    （padding-top 让 fitDimsOf 自动扣行），普通分屏没跟上，同一缺陷两种待遇。
    pointer-events 维持 none：分屏换位走标签拖拽手势，标题栏不新增交互面 */
 .term-session.pane-left, .term-session.pane-right,
-.term-session.pane-top, .term-session.pane-bottom { padding-top: 28px; }
+.term-session.pane-top, .term-session.pane-bottom {
+  padding-top: 28px;
+  /* 子窗口卡片化：3px 透明边框露出 #term 底色，形成两格之间约 6px 的呼吸缝；
+     圆角与 #term 外框同语言。border-box 下外框几何不变（分屏比例/拖拽/回归
+     测试口径不受影响），内容盒由边框自动内缩，fitDimsOf 的 clientWidth 已排除
+     边框——PTY 列行仍与可视区严格一致。 */
+  border: 3px solid transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  background-clip: padding-box;
+}
+/* 卡片描边：终端底色与 #term 底色同值时，单靠透明边框的“空隙”看不见——
+   在内容盒边缘补 1px --border 实线（真 border，墨水屏铲阴影不受影响），
+   与 3px 透明边框一起形成「缝 + 卡片边」。焦点环 2px accent 叠在其上。 */
+.term-session.pane-left::before, .term-session.pane-right::before,
+.term-session.pane-top::before, .term-session.pane-bottom::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
+  border: 1px solid var(--border); border-radius: 7px;
+}
 .term-session.pane-left .pane-tag, .term-session.pane-right .pane-tag,
 .term-session.pane-top .pane-tag, .term-session.pane-bottom .pane-tag {
   display: flex; align-items: center; gap: 6px; top: 0; left: 0; right: 0; height: 22px;
@@ -786,7 +804,19 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
    边框是唯一层次手段）；焦点格加 accent 细边；掉线格正文蒙灰 + 标题栏状态字常显。 */
 /* 主视图在网格里同样带 22px 标题栏（格子同款），名牌不再浮压首行文字；
    padding-top 让出标题栏高度——fitDimsOf 读计算 padding，PTY 行数自动扣除 */
-#term.has-tmux-panes .term-session.active { padding-top: 28px; }
+#term.has-tmux-panes .term-session.active {
+  padding-top: 28px;
+  /* 主视图在面板网格里同样是一张卡片：与格子同一套 3px 透明边框 + 圆角，
+     与相邻格子之间留出呼吸缝；外框几何仍由布局树写 left/top/right/bottom。 */
+  border: 3px solid transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  background-clip: padding-box;
+}
+#term.has-tmux-panes .term-session.active::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
+  border: 1px solid var(--border); border-radius: 7px;
+}
 #term.has-tmux-panes .term-session.active .pane-tag {
   display: flex; align-items: center; gap: 6px; top: 0; left: 0; right: 0; height: 22px;
   padding: 0 8px; border-radius: 0; font-size: 11px; color: var(--text-sub);
@@ -803,13 +833,22 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 }
 .tmux-cell {
   position: absolute; display: none; flex-direction: column; min-width: 0; min-height: 0;
-  border-left: 1px solid var(--border); border-top: 1px solid var(--border);
-  background: var(--bg);
+  /* 卡片化（与分屏子窗口同语言）：3px 透明边框 = 格子间约 6px 空隙，圆角
+     10px；外框几何由布局树写死，border-box 下不改变 tile 占比/拖拽命中。
+     背景只画到 padding-box，边框区透出 #term 底色形成真正的缝。 */
+  border: 3px solid transparent; border-radius: 10px;
+  background: var(--bg); background-clip: padding-box;
+}
+/* 与分屏窗格同款卡片描边（见上）；放在 ::before，焦点环 ::after 仍压在最上 */
+.tmux-cell::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
+  border: 1px solid var(--border); border-radius: 7px;
 }
 .tmux-cell-head {
   flex: none; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 4px 0 8px;
   font-size: 11px; color: var(--text-sub); background: var(--panel); cursor: grab;
-  border-bottom: 1px solid var(--border); user-select: none; touch-action: none;
+  border-bottom: 1px solid var(--border); border-radius: 7px 7px 0 0;
+  user-select: none; touch-action: none;
 }
 /* 焦点格指示——主视图与格子同一套（用户反馈：主视图选中时没有框、格子的框看不出来）：
    ① 2px accent 实线框画在 ::after 叠层（实线 border，墨水屏铲阴影不受影响；穿透指针；
@@ -819,7 +858,7 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .tmux-cell::after,
 #term.has-tmux-panes .term-session.active::after {
   content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 7;
-  border: 2px solid transparent;
+  border: 2px solid transparent; border-radius: 7px;
 }
 .tmux-cell:focus-within::after,
 #term.has-tmux-panes .term-session.active:focus-within::after { border-color: var(--accent); }
@@ -846,7 +885,10 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 }
 .tmux-cell-zoom svg { display: block; }
 .tmux-cell-zoom:not(:disabled):hover { color: var(--accent); background: var(--panel2); }
-.tmux-cell-body { position: relative; flex: 1; min-height: 0; padding: 4px 6px; overflow: hidden; }
+.tmux-cell-body {
+  position: relative; flex: 1; min-height: 0; padding: 4px 6px; overflow: hidden;
+  border-radius: 0 0 7px 7px;
+}
 /* 死格只去色、不再整体降透明度：0.45 透明度把浅色主题的正文压到 1.8–2.9:1，
    而「已断开」状态字已在标题栏常显——保留最后一段输出可读比重度蒙灰更有用 */
 .tmux-cell.dead .tmux-cell-body { filter: grayscale(0.85); }
@@ -856,7 +898,9 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .tmux-div { position: absolute; z-index: 6; touch-action: none; }
 .tmux-div.div-v { cursor: col-resize; }
 .tmux-div.div-h { cursor: row-resize; }
-.tmux-div::after { content: ""; position: absolute; background: transparent; }
+/* 静态分隔线：卡片之间是 6px 透明缝，若底色相同会看不出分界；1px --border
+   常显（悬停/拖动再亮 accent），与卡片描边一起把缝读成「两格之间」 */
+.tmux-div::after { content: ""; position: absolute; background: var(--border); }
 .tmux-div.div-v::after { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
 .tmux-div.div-h::after { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
 .tmux-div:hover::after, .tmux-div.dragging::after { background: var(--accent-glow); }
@@ -1721,6 +1765,12 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
    十轮：84px 安全区收进 .native-mac（Overlay 为 mac 专属；Windows/Linux 走原生标题栏，
    预留位是死缩进） */
 .native-chrome.native-mac .titlebar { padding-left: 84px; }
+/* macOS 字体平滑（用户反馈「文字有点模糊」）：body 上的 -webkit-font-smoothing:
+   antialiased 会强制灰度抗锯齿，在 macOS 上把 14px/430 的正文压细、边缘发虚；
+   系统默认（auto / subpixel-antialiased）更实。该属性只影响 macOS，Windows/
+   Linux 保持原样；终端 WebGL 画布不受影响，DOM 渲染器（连字开启时）随 body
+   一起回到系统平滑。 */
+.native-chrome.native-mac body { -webkit-font-smoothing: auto; }
 /* ---- Windows 自绘窗口控件（双标题栏重设计）：decorations:false 后标题行右端 ─ □ ✕，
    右缘贴边（去 10px 内边距）、整行高 44px 命中域；关闭钮悬停 Windows 标准红 ---- */
 .native-chrome.native-win .titlebar { padding-right: 0; }
@@ -3091,7 +3141,9 @@ button.mon-sw.on:not(:disabled):hover { color: var(--accent); border-color: var(
 }
 .tw-cell {
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
-  border: 1px solid var(--border); background: var(--panel);
+  /* 与工作台子窗口同一套卡片语言：圆角 + 裁剪（大屏网格本身已有 8px gap） */
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  background: var(--panel);
 }
 .tw-cell-head {
   flex: none; display: flex; align-items: center; gap: 6px;

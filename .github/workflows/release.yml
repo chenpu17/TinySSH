@@ -211,6 +211,33 @@ jobs:
       - name: 打包（macos · 双架构 .app + dmg）
         if: startsWith(matrix.id, 'macos')
         run: |
+          set -euo pipefail
+          # 打包失败时把具体命令与 stderr 以 ::error:: 注解公开（匿名可读）；
+          # 上一轮 v0.11.5 只看到笼统的 exit code 1，无法定位 codesign/hdiutil。
+          run() {
+            local rc=0
+            "$@" 2>>pkg.err || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::mac 打包失败：$*（rc=$rc）"
+              tail -10 pkg.err | sed 's/^/::error::REL /' || true
+              exit "$rc"
+            fi
+          }
+          # codesign/hdiutil 在共享 runner 上偶发瞬时失败（钥匙串/卷挂载竞争）；
+          # 重试一次，仍失败才把 stderr 注解出来。cp/mkdir 等确定性命令不重试。
+          run_retry() {
+            local rc=0 n=0
+            until "$@" 2>>pkg.err; do
+              rc=$?
+              n=$((n+1))
+              if [ "$n" -ge 2 ]; then
+                echo "::error::mac 打包失败：$*（rc=$rc，已重试 $n 次）"
+                tail -10 pkg.err | sed 's/^/::error::REL /' || true
+                exit "$rc"
+              fi
+              sleep 2
+            done
+          }
           mkdir -p dist
           # Info.plist 用 echo 行拼（函数体内 heredoc 终止符必须顶格，缩进会炸）
           write_plist() {
@@ -237,24 +264,30 @@ jobs:
           bundle_arch() {
             local staging="dist/staging-$1"
             local app="$staging/TinySSH.app"
-            mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-            cp "$2/tinyssh-app" "$app/Contents/MacOS/TinySSH"
-            cp src-tauri/icons/icon.icns "$app/Contents/Resources/TinySSH.icns"
-            write_plist "$app/Contents/Info.plist"
+            : > pkg.err
+            run mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+            run cp "$2/tinyssh-app" "$app/Contents/MacOS/TinySSH"
+            run cp src-tauri/icons/icon.icns "$app/Contents/Resources/TinySSH.icns"
+            run write_plist "$app/Contents/Info.plist"
             # ad-hoc 签名兜底：Apple Silicon 拒绝执行完全未签名的二进制；
-            # Gatekeeper（下载隔离）仍需用户右键「打开」/xattr，Release notes 有说明
-            codesign --force -s - "$app"
-            ditto -c -k --keepParent "$app" "dist/TinySSH_${VER}_macos_$1.app.zip"
+            # Gatekeeper（下载隔离）仍需用户右键「打开」/xattr，Release notes 有说明。
+            # xattr 清理：cargo 缓存/runner 偶尔给二进制带上扩展属性，codesign 会以
+            # 「resource fork, Finder information, or similar detritus not allowed」
+            # 失败（v0.11.5 mac 打包失败的头号嫌疑）；清理后再签。
+            xattr -cr "$app" || true
+            run_retry codesign --force -s - "$app"
+            run_retry codesign --verify --verbose=2 "$app"
+            run ditto -c -k --keepParent "$app" "dist/TinySSH_${VER}_macos_$1.app.zip"
             # updater 轮：自动更新通道用 .app.tar.gz（tauri updater 的 mac 更新格式）
-            tar -czf "dist/TinySSH_${VER}_macos_$1.app.tar.gz" -C "$staging" TinySSH.app
-            ln -s /Applications "$staging/Applications"
-            hdiutil create -volname TinySSH -srcfolder "$staging" -ov -format UDZO \
+            run tar -czf "dist/TinySSH_${VER}_macos_$1.app.tar.gz" -C "$staging" TinySSH.app
+            run ln -s /Applications "$staging/Applications"
+            run_retry hdiutil create -volname TinySSH -srcfolder "$staging" -ov -format UDZO \
               "dist/TinySSH_${VER}_macos_$1.dmg"
             rm -rf "$staging"
             local tgz
             tgz="$(mktemp -d)"
-            cp "$2/tinyssh" "$tgz/tinyssh"
-            tar -czf "dist/tinyssh-cli_${VER}_macos_$1.tar.gz" -C "$tgz" tinyssh
+            run cp "$2/tinyssh" "$tgz/tinyssh"
+            run tar -czf "dist/tinyssh-cli_${VER}_macos_$1.tar.gz" -C "$tgz" tinyssh
           }
           bundle_arch arm64 target/release
           bundle_arch x86_64 target/x86_64-apple-darwin/release

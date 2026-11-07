@@ -22,7 +22,7 @@ UI 统一为「视图」语义：
 - core `tmux_detach`：`list-clients` 定位客户端；唯一客户端用 `detach-client -s <client>` 精确分离（用户改过前缀也成立）；多客户端回退向主 PTY 发前缀 `d`（tmux 默认 C-b），只拆本视图、不碰别处终端；成功后清 `tmux_attached` 记录并审计。
 - Tauri command `tmux_detach`；UI bridge 与 demo 域同步镜像。
 - 主视图 × 只在 `.pane-tag.tmux-attached` 下显示；分离成功后刷新清单，名牌回主机名、× 收起。
-- 回归：`75-main-view-controls`（20 断言）、core `tmux_detach_clears_attach_and_targets_client`、`63-tmux-panel` / `73-focus-pane-memory` / `30-split` 定向回归。
+- 回归：`75-main-view-controls`（20 断言，卡片化轮增至 22）、core `tmux_detach_clears_attach_and_targets_client`、`63-tmux-panel` / `73-focus-pane-memory` / `30-split` 定向回归。
 
 ## 边界
 

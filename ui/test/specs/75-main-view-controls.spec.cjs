@@ -52,6 +52,16 @@ const state = (page) => page.evaluate(() => {
   const tr = term?.getBoundingClientRect();
   const zoom = document.querySelector('[data-testid="main-zoom"]');
   const detach = document.querySelector('[data-testid="main-detach"]');
+  const cardOf = (el) => {
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return {
+      border: cs.borderTopWidth, radius: cs.borderRadius, overflow: cs.overflow,
+      clip: cs.backgroundClip, color: cs.borderTopColor,
+    };
+  };
+  const head = cell?.querySelector(".tmux-cell-head");
+  const body = cell?.querySelector(".tmux-cell-body");
   return {
     mainDisplay: main ? getComputedStyle(main).display : null,
     cellDisplay: cell ? cell.style.display : null,
@@ -63,6 +73,10 @@ const state = (page) => page.evaluate(() => {
     tagAttached: main?.querySelector(".pane-tag")?.classList.contains("tmux-attached") ?? false,
     tabs: document.querySelectorAll(".tab").length,
     dialog: document.querySelector(".confirm-dialog")?.textContent ?? null,
+    mainCard: cardOf(main),
+    cellCard: cardOf(cell),
+    cellHeadRadius: head ? getComputedStyle(head).borderRadius : null,
+    cellBodyRadius: body ? getComputedStyle(body).borderRadius : null,
   };
 });
 
@@ -79,6 +93,16 @@ module.exports = {
     ck.check("主视图有放大钮", s.zoomTitle === "最大化主视图（保留标题栏）", JSON.stringify(s));
     ck.check("未挂 tmux 的主视图没有 ×（没有可单独关闭的视图）", !s.detachVisible && !s.tagAttached, JSON.stringify(s));
     ck.check("网格态主视图不是全幅、work 格子可见", !s.mainFull && s.cellDisplay === "flex", JSON.stringify(s));
+    ck.check("主视图卡片化：3px 透明边框 + 10px 圆角",
+      !!s.mainCard && s.mainCard.border === "3px" && s.mainCard.radius === "10px"
+        && s.mainCard.overflow === "hidden" && s.mainCard.clip === "padding-box"
+        && /rgba?\(0, 0, 0, 0\)|transparent/.test(s.mainCard.color),
+      JSON.stringify(s.mainCard));
+    ck.check("tmux 格子卡片化：3px 透明边框 + 10px 圆角，标题/正文内圆角 7px",
+      !!s.cellCard && s.cellCard.border === "3px" && s.cellCard.radius === "10px"
+        && s.cellCard.clip === "padding-box" && /rgba?\(0, 0, 0, 0\)|transparent/.test(s.cellCard.color)
+        && s.cellHeadRadius === "7px 7px 0px 0px" && s.cellBodyRadius === "0px 0px 7px 7px",
+      JSON.stringify({ cell: s.cellCard, head: s.cellHeadRadius, body: s.cellBodyRadius }));
 
     // 放大主视图：格子暂隐、主视图占满、钮换装还原
     await page.click('[data-testid="main-zoom"]');

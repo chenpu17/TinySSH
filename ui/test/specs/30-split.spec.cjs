@@ -97,6 +97,20 @@ module.exports = {
     ck.check("上下分屏建立双窗格", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
     const g1 = await paneGeom(page);
     ck.check("上主/下副两格齐全", !!g1.main && !!g1.second, JSON.stringify(g1));
+    // 子窗口卡片化：3px 透明边框 = 两格间约 6px 呼吸缝（#term 底色透出），
+    // 10px 圆角与终端外框同语言；外框几何仍由 --split-frac 决定（上面 g1 已验）。
+    const cardStyle = await page.evaluate(() => {
+      const el = document.querySelector(".pane-left, .pane-top");
+      const cs = getComputedStyle(el);
+      return {
+        border: cs.borderTopWidth, radius: cs.borderRadius, overflow: cs.overflow,
+        clip: cs.backgroundClip, color: cs.borderTopColor,
+      };
+    });
+    ck.check("分屏子窗口卡片化：3px 透明边框 + 10px 圆角 + 底色透出成缝",
+      cardStyle.border === "3px" && cardStyle.radius === "10px" && cardStyle.overflow === "hidden"
+        && cardStyle.clip === "padding-box" && /rgba?\(0, 0, 0, 0\)|transparent/.test(cardStyle.color),
+      JSON.stringify(cardStyle));
     const divTb = await page.evaluate(() => !!document.querySelector('.pane-div[data-testid="pane-div"].div-tb'));
     ck.check("分割条出现且为竖向拖拽（div-tb）", divTb, "");
     const tbMenu = await tabMenuTexts(page, "staging-1");

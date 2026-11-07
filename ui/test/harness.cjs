@@ -54,7 +54,12 @@ async function freshContext(opts = {}) {
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
   page.on("console", (m) => {
-    if (m.type() === "error") pageErrors.push(`console.error: ${m.text()}`);
+    if (m.type() === "error") {
+      // 空 text 的 console.error 也要能定位来源（WebGL/字体/浏览器内部告警）
+      const loc = m.location();
+      const at = loc?.url ? ` @ ${loc.url}:${loc.lineNumber}` : "";
+      pageErrors.push(`console.error: ${m.text()}${at}`);
+    }
   });
   return { browser, context, page, pageErrors, browserSource: source };
 }

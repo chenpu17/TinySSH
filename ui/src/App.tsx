@@ -1791,19 +1791,53 @@ export default function App() {
     if (typeof document === "undefined" || !document.fonts) return;
     void document.fonts.load('14px "Maple Mono CN Term"', "你好abc┌─0");
     void document.fonts.load('bold 14px "Maple Mono CN Term"', "你好abc┌─0");
+    // JetBrains 是设置里可选的第二内置字体：同样预取，避免切字体后首个图集
+    // 用回退字形烘焙（切字体的 option 变更会重建图集，但预取让首帧就正确）
+    void document.fonts.load('14px "JetBrains Mono Term"', "abc┌─0");
     let cancelled = false;
+    let refreshTimer = 0;
+    const refreshTerm = (term: Terminal) => {
+      try {
+        // 强制一次 fontFamily option change：xterm 的 setter 对同值直接 return，
+        // 直接回写同一字体栈**不会**触发 handleFontChange（旧实现因此没真正
+        // 重建图集）。先追加一个同族 fallback 再还原，两次 setter 都实际变化，
+        // 渲染器清空图集并重测 cell；warmup 时刻字体未就绪的框线/CJK 随之重烘焙。
+        const fam = term.options.fontFamily;
+        term.options.fontFamily = `${fam}, monospace`;
+        term.options.fontFamily = fam;
+        term.refresh(0, Math.max(0, term.rows - 1));
+      } catch { /* 终端已释放 */ }
+    };
+    const refreshAll = () => {
+      for (const [, e] of termsRef.current) refreshTerm(e.term);
+      // 主视图之外，tmux 格子同样用 canvas/WebGL 图集：此前只刷新主终端，
+      // 字体晚就绪时格子的框线/CJK 会停在回退字形（macOS 上观感发虚的主因之一）。
+      for (const e of paneTermsRef.current.values()) refreshTerm(e.term);
+    };
+    // fonts.ready 只覆盖启动时刻；终端字体栈里的 CJK 兜底（MiSans VF 按
+    // unicode-range 分片）会在输出新字时才按需加载——loadingdone 300ms 合帧
+    // 重刷一次，避免「首见字形以回退字体入图集」的永久发虚；也避免 MiSans
+    // 多分片连续加载时逐片全量重绘。
+    const onFontsDone = () => {
+      if (refreshTimer) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = 0;
+        if (!cancelled) refreshAll();
+      }, 300);
+    };
+    if (typeof document.fonts.addEventListener === "function") {
+      document.fonts.addEventListener("loadingdone", onFontsDone);
+    }
     void document.fonts.ready.then(() => {
-      if (cancelled) return;
-      for (const [, e] of termsRef.current) {
-        try {
-          // 回写字体栈触发 handleFontChange：warmup 时刻字体未就绪的图集
-          // （含几何绘制的框线/块元素）随之整体重建，再强制全量重绘。
-          e.term.options.fontFamily = termFontFamilyRef.current;
-          e.term.refresh(0, Math.max(0, e.term.rows - 1));
-        } catch { /* 终端已释放 */ }
-      }
+      if (!cancelled) refreshAll();
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      if (typeof document.fonts.removeEventListener === "function") {
+        document.fonts.removeEventListener("loadingdone", onFontsDone);
+      }
+    };
     // termsRef 是稳定 Map：只挂一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1983,6 +2017,8 @@ export default function App() {
     }
     // 会话层底色跟随当前派生主题：padding 留白框与画布同色，不渗 chrome 面板色
     el.style.background = derivedThemeRef.current.bg;
+    // 分屏/面板卡片化：透明边框区不画终端底色，透出 #term 底色形成格子间隙
+    el.style.backgroundClip = "padding-box";
     // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
     const searchAddon = new SearchAddon();
     searchAddon.onDidChangeResults((r) => {
@@ -3576,6 +3612,7 @@ export default function App() {
     for (const [, e] of termsRef.current) {
       e.term.options.theme = { ...theme };
       e.el.style.background = bg;
+      e.el.style.backgroundClip = "padding-box";
     }
     for (const e of paneTermsRef.current.values()) {
       e.term.options.theme = { ...theme };
