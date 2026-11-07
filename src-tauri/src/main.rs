@@ -666,7 +666,7 @@ fn main() {
             ssh_config_preview, ssh_config_import,
             list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection, set_session_logging, session_log_path,
             close_session, reconnect_session, stop_auto_reconnect, tmux_probe, tmux_wall_snapshot, tmux_wall_input, tmux_wall_fit, tmux_wall_fit_restore, tmux_session_create, tmux_restore,
-            tmux_attach, tmux_pane_open, tmux_pane_close, tmux_pane_resize, tmux_pane_input,
+            tmux_attach, tmux_detach, tmux_pane_open, tmux_pane_close, tmux_pane_resize, tmux_pane_input,
             tmux_pane_subscribe, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
             open_url,

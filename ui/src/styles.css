@@ -755,6 +755,16 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
   background: var(--glass); padding: 1px 6px; border-radius: 4px;
   pointer-events: none;
 }
+.pane-tag-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 主视图标题栏右上角：放大/还原常显；× 只在挂着 tmux 时出现（统一视图语义：
+   × 只关闭当前视图 = 分离 tmux 回 shell，不关闭标签）。默认隐藏，仅 tmux 面板
+   网格（has-tmux-panes）显示；分屏仍只有名牌，不新增交互面。 */
+.pane-tag .pane-tag-btn {
+  display: none; flex: none; width: 20px; height: 18px; padding: 0;
+  justify-content: center; align-items: center;
+  font-size: 14px; line-height: 1; color: var(--dim);
+}
+.pane-tag .pane-tag-btn svg { display: block; }
 /* 分屏窗格名牌升格 22px 标题栏（找茬五轮 C-1）：此前的玻璃章片浮压终端首行
    （提示符前几字符被盖，非 hover 常驻遮挡）——tmux 网格轮已给主视图修过同款
    （padding-top 让 fitDimsOf 自动扣行），普通分屏没跟上，同一缺陷两种待遇。
@@ -763,7 +773,7 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .term-session.pane-top, .term-session.pane-bottom { padding-top: 28px; }
 .term-session.pane-left .pane-tag, .term-session.pane-right .pane-tag,
 .term-session.pane-top .pane-tag, .term-session.pane-bottom .pane-tag {
-  display: flex; align-items: center; top: 0; left: 0; right: 0; height: 22px;
+  display: flex; align-items: center; gap: 6px; top: 0; left: 0; right: 0; height: 22px;
   padding: 0 8px; border-radius: 0; font-size: 11px;
   background: var(--panel); border-bottom: 1px solid var(--border);
   user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -778,10 +788,18 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
    padding-top 让出标题栏高度——fitDimsOf 读计算 padding，PTY 行数自动扣除 */
 #term.has-tmux-panes .term-session.active { padding-top: 28px; }
 #term.has-tmux-panes .term-session.active .pane-tag {
-  display: flex; align-items: center; top: 0; left: 0; right: 0; height: 22px;
+  display: flex; align-items: center; gap: 6px; top: 0; left: 0; right: 0; height: 22px;
   padding: 0 8px; border-radius: 0; font-size: 11px; color: var(--text-sub);
   background: var(--panel); border-bottom: 1px solid var(--border);
   pointer-events: auto; cursor: grab; user-select: none; touch-action: none;
+}
+#term.has-tmux-panes .term-session.active .pane-tag .main-zoom-btn { display: flex; }
+#term.has-tmux-panes .term-session.active .pane-tag.tmux-attached .main-detach-btn { display: flex; }
+#term.has-tmux-panes .term-session.active .pane-tag .main-zoom-btn:not(:disabled):hover {
+  color: var(--accent); background: var(--panel2);
+}
+#term.has-tmux-panes .term-session.active .pane-tag .main-detach-btn:not(:disabled):hover {
+  color: var(--danger, #e5534b); background: var(--panel2);
 }
 .tmux-cell {
   position: absolute; display: none; flex-direction: column; min-width: 0; min-height: 0;

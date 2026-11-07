@@ -291,7 +291,11 @@ export default function App() {
   const subscribedRef = useRef<Set<string>>(new Set()); // 每会话只订阅一次，防重复输出
   // 每会话一个独立 xterm 实例：切换会话 = 显示/隐藏，滚动历史与 vim 全屏状态原地保留
   // （P0 终端品质轮：webgl/liga 记住当前渲染器句柄——连字开关要在两者间热切换）
-  const termsRef = useRef<Map<string, { term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement; feed: OutputFeed | null; webgl: WebglAddon | null; liga: LigaturesAddon | null }>>(new Map());
+  const termsRef = useRef<Map<string, {
+    term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement;
+    tagLabel: HTMLSpanElement; zoomBtn: HTMLButtonElement; detachBtn: HTMLButtonElement;
+    feed: OutputFeed | null; webgl: WebglAddon | null; liga: LigaturesAddon | null;
+  }>>(new Map());
   // tmux 面板（一标签多 tmux 会话）：格子 xterm 实例表，键 = `${sid}:${paneId}`。
   // 与 termsRef 同纪律：命令式 DOM 挂进 #term，React 不渲染这些层；随会话快照对账
   // 增删（bornAt 与 panesSnapAtRef 同为 performance.now()：快照请求晚于格子出生，
@@ -1820,7 +1824,8 @@ export default function App() {
   const paneLayoutLastRef = useRef<{ sid: string; root: PaneNode; tiles: PaneTile[]; dividers: PaneDivider[] } | null>(null);
   const paneDivsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   // 窗格最大化（保留格子外框）：{ sid, name } 单值——一次只放大一格；换标签不套用
-  // （别的标签照常网格），切回自动恢复；格被关/掉线重建后不在清单即自然还原
+  // （别的标签照常网格），切回自动恢复；格被关/掉线重建后不在清单即自然还原。
+  // name=MAIN_KEY 表示主视图；tmux 会话名不允许 ":"，不会与 MAIN_KEY 冲突。
   const paneZoomRef = useRef<{ sid: string; name: string } | null>(null);
   // 建格监听里触发的重排走 ref（layoutTmuxPanes 定义在建格之后）
   const paneRelayoutRef = useRef<() => void>(() => {});
@@ -1861,9 +1866,48 @@ export default function App() {
     el.dataset.sid = sessionSid;
     mount.appendChild(el);
     // 分屏（T19）会话名牌：平时隐藏，进入分屏后由 applyPanes 填主机名并显示；
-    // tmux 面板网格里它是主视图的标题栏，可抓着拖动换位
+    // tmux 面板网格里它是主视图的标题栏，可抓着拖动换位。统一视图语义：所有
+    // 窗格的 × 都只关闭当前视图——主视图的 × 只在挂着 tmux 时出现，点它 = 分离
+    // tmux 回 shell（标签、tmux 会话、面板格子都不受影响）；不挂 tmux 的主视图
+    // 没有可单独关闭的视图，故不显示 ×（关闭整个标签仍走标签上的 ×）。
     const tag = document.createElement("div");
     tag.className = "pane-tag";
+    const tagLabel = document.createElement("span");
+    tagLabel.className = "pane-tag-label";
+    const zoomBtn = document.createElement("button");
+    zoomBtn.className = "ghost icon-btn pane-tag-btn main-zoom-btn";
+    zoomBtn.setAttribute("data-testid", "main-zoom");
+    zoomBtn.title = t("最大化主视图（保留标题栏）");
+    zoomBtn.setAttribute("aria-label", zoomBtn.title);
+    zoomBtn.innerHTML = PANE_ZOOM_OFF_SVG;
+    zoomBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const cur = paneZoomRef.current;
+      const same = cur && cur.sid === sessionSid && cur.name === MAIN_KEY;
+      paneZoomRef.current = same ? null : { sid: sessionSid, name: MAIN_KEY };
+      paneRelayoutRef.current();
+    });
+    const detachBtn = document.createElement("button");
+    detachBtn.className = "ghost icon-btn pane-tag-btn main-detach-btn";
+    detachBtn.setAttribute("data-testid", "main-detach");
+    detachBtn.title = t("关闭此 tmux 视图（回到 shell，tmux 会话继续运行）");
+    detachBtn.setAttribute("aria-label", detachBtn.title);
+    detachBtn.textContent = "×";
+    detachBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const name = sessionsRef.current.find((x) => x.id === sessionSid)?.tmux_attached;
+      if (!name) return; // 已分离（按钮应已收起）：幂等
+      void (async () => {
+        try {
+          await invoke("tmux_detach", { sid: sessionSid });
+          pushToast("ok", t("已从 tmux 分离：{0}（tmux 会话仍在远端运行）", name));
+          void refreshListsRef.current();
+        } catch (e) {
+          pushToast("err", t("分离 tmux 失败：{0}", errMsg(e)));
+        }
+      })();
+    });
+    tag.append(tagLabel, zoomBtn, detachBtn);
     el.appendChild(tag);
     bindTileDrag(tag, MAIN_KEY, sessionSid, el);
     // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
@@ -2166,7 +2210,10 @@ export default function App() {
       // 广播扇出（P2-a）：主发之后复制到勾选会话（目标逐会话过离线闸，见 broadcastSendRef）
       if (!bcastSuppressRef.current) broadcastSendRef.current(sessionSid, keys);
     });
-    return { term, el, search: searchAddon, tag, feed: null as OutputFeed | null, webgl, liga };
+    return {
+      term, el, search: searchAddon, tag, tagLabel, zoomBtn, detachBtn,
+      feed: null as OutputFeed | null, webgl, liga,
+    };
   }, []);
 
   // ---- tmux 面板（一标签多 tmux 会话）：格子 xterm 工厂 / 订阅 / 销毁 / 布局 ----
@@ -2441,6 +2488,16 @@ export default function App() {
   // 常态；掉线换装重建的格子（新 DOM 默认态）与跨标签切换的对齐都在排版后由此统一刷
   const syncAllZoomBtns = () => {
     const z = paneZoomRef.current;
+    const active = sidRef.current;
+    const main = active ? termsRef.current.get(active) : null;
+    if (main) {
+      const on = z != null && z.sid === active && z.name === MAIN_KEY;
+      const title = on ? t("还原主视图（回到网格）") : t("最大化主视图（保留标题栏）");
+      if (main.zoomBtn.title !== title) main.zoomBtn.title = title;
+      if (main.zoomBtn.getAttribute("aria-label") !== title) main.zoomBtn.setAttribute("aria-label", title);
+      const svg = on ? PANE_ZOOM_ON_SVG : PANE_ZOOM_OFF_SVG;
+      if (main.zoomBtn.innerHTML !== svg) main.zoomBtn.innerHTML = svg;
+    }
     for (const e of paneTermsRef.current.values()) {
       const on = z != null && z.sid === e.sid && z.name === e.name;
       const title = on ? t("还原窗格（回到网格）") : t("最大化窗格（保留标题栏）");
@@ -2521,19 +2578,36 @@ export default function App() {
     paneLayoutLastRef.current = { sid: active, root, tiles, dividers };
     const main = termsRef.current.get(active);
     if (main) {
-      // 主视图名牌：格子各有标题栏，主视图同样标出它看的是什么（tmux 会话或主机 shell）
+      // 主视图名牌：格子各有标题栏，主视图同样标出它看的是什么（tmux 会话或主机 shell）。
+      // tmux-attached 只控制 × 的出现——不挂 tmux 时没有可单独关闭的视图。
       const cur = sessionsRef.current.find((x) => x.id === active);
       const tagText = cur?.tmux_attached ? `tmux:${cur.tmux_attached}` : (cur?.host_name ?? "");
-      if (main.tag.textContent !== tagText) main.tag.textContent = tagText;
+      if (main.tagLabel.textContent !== tagText) main.tagLabel.textContent = tagText;
+      main.tag.classList.toggle("tmux-attached", !!cur?.tmux_attached);
       const tagTitle = t("拖动标题栏可移动位置：落在格子中央互换，落在边缘对半分开");
       if (main.tag.title !== tagTitle) main.tag.title = tagTitle;
     }
     // 最大化分支（用户拍板：放大保留外框）：整幅只呈放大的那一格——主视图与兄弟
     // 格暂隐、分隔条撤收、布局树冻结（还原时重算）。zoom 残记（格被关/掉线重建后
-    // 不在清单）就地清掉自然还原。还原钮就在格子外框标题栏上（zoomBtn）。
+    // 不在清单）就地清掉自然还原。还原钮就在格子/主视图标题栏上。
     const zoom = paneZoomRef.current;
-    const zoomEntry = zoom && zoom.sid === active ? (byKey.get(zoom.name) ?? null) : null;
-    if (zoom && zoom.sid === active && !byKey.has(zoom.name)) paneZoomRef.current = null;
+    const zoomMain = !!zoom && zoom.sid === active && zoom.name === MAIN_KEY;
+    const zoomEntry = zoom && zoom.sid === active && zoom.name !== MAIN_KEY
+      ? (byKey.get(zoom.name) ?? null)
+      : null;
+    if (zoom && zoom.sid === active && !zoomMain && !byKey.has(zoom.name)) paneZoomRef.current = null;
+    if (zoomMain) {
+      if (main) {
+        main.el.style.display = "";
+        place(main.el, { left: 0, top: 0, width: 1, height: 1 });
+      }
+      for (const e of paneTermsRef.current.values()) e.cell.style.display = "none";
+      syncPaneDividers([]);
+      tileDragApiRef.current.sweep();
+      paneLayoutLastRef.current = null;
+      syncAllZoomBtns();
+      return;
+    }
     if (zoomEntry) {
       if (main) { place(main.el, null); main.el.style.display = "none"; }
       for (const e of paneTermsRef.current.values()) if (e !== zoomEntry) e.cell.style.display = "none";
@@ -3055,7 +3129,8 @@ export default function App() {
       mainTagSigRef.current = tagSig;
       const main = sidRef.current ? termsRef.current.get(sidRef.current) : null;
       if (main && curActive) {
-        main.tag.textContent = curActive.tmux_attached ? `tmux:${curActive.tmux_attached}` : curActive.host_name;
+        main.tagLabel.textContent = curActive.tmux_attached ? `tmux:${curActive.tmux_attached}` : curActive.host_name;
+        main.tag.classList.toggle("tmux-attached", !!curActive.tmux_attached);
       }
     }
     let changed = false;
@@ -3119,6 +3194,13 @@ export default function App() {
 
   // 运行时切语言：格子标题栏是命令式 DOM（React 不重渲染），已建格子的文案在此重写
   useEffect(() => {
+    for (const e of termsRef.current.values()) {
+      const title = t("关闭此 tmux 视图（回到 shell，tmux 会话继续运行）");
+      if (e.detachBtn.title !== title) {
+        e.detachBtn.title = title;
+        e.detachBtn.setAttribute("aria-label", title);
+      }
+    }
     for (const e of paneTermsRef.current.values()) {
       const st = e.cell.querySelector(".tmux-cell-state");
       if (st) st.textContent = t("已断开 · 重连后自动恢复");
@@ -4135,6 +4217,10 @@ export default function App() {
     let restored: PaneTermEntry | null = null;
     if (!splitRef.current) {
       const zoom = paneZoomRef.current;
+      if (zoom?.sid === target && zoom.name === MAIN_KEY) {
+        entry.term.focus();
+        return null;
+      }
       if (zoom?.sid === target) {
         restored = [...paneTermsRef.current.values()].find(
           (e) => e.sid === target && e.name === zoom.name && e.alive && e.cell.style.display !== "none",
@@ -4340,7 +4426,7 @@ export default function App() {
           const stTail = !ss || ss.state === "Connected" ? ""
             : ss.state === "Disconnected" || ss.state === "Closed" ? ` · ${t("已断开")}`
             : ` · ${t("重连中…")}`;
-          e.tag.textContent = (ss?.host_name ?? s.slice(0, 12)) + stTail;
+          e.tagLabel.textContent = (ss?.host_name ?? s.slice(0, 12)) + stTail;
           if (s === sidRef.current) e.el.classList.add("pane-focused");
         }
       } else if (s === sidRef.current) {
@@ -4762,6 +4848,7 @@ export default function App() {
       entry.el.remove();
       termsRef.current.delete(id);
       paneLastFocusRef.current.delete(id);
+      if (paneZoomRef.current?.sid === id) paneZoomRef.current = null;
     }
     const sp = splitRef.current;
     if (sp?.second === id) {
@@ -4839,6 +4926,7 @@ export default function App() {
       termsRef.current.delete(id);
       subscribedRef.current.delete(id);
       paneLastFocusRef.current.delete(id);
+      if (paneZoomRef.current?.sid === id) paneZoomRef.current = null;
       dead.push(id);
     }
     if (!dead.length) return;
@@ -4875,7 +4963,7 @@ export default function App() {
 
   // 危险动作确认（P1-5/P1-4）：断开活会话、删除主机都先过弹层；死会话直接关（无需确认）
   const [confirm, setConfirm] = useState<
-    { kind: "closeSession"; sid: string; hostName: string } | { kind: "deleteHost"; id: string; name: string } | { kind: "deleteIdentity"; id: string; label: string } | null
+    { kind: "closeSession"; sid: string; hostName: string; paneCount: number } | { kind: "deleteHost"; id: string; name: string } | { kind: "deleteIdentity"; id: string; label: string } | null
   >(null);
   // R23（§6.4 关闭活动会话）：确认框展示可查证影响（转发数可查；任务/传输未知如实标注）
   const [confirmImpact, setConfirmImpact] = useState<{ forwards: number } | null>(null);
@@ -5021,7 +5109,7 @@ export default function App() {
   }, [modal, inTauri, noteTerminalFocus]);
   const requestCloseSession = useCallback((s: SessionInfo) => {
     if (s.state === "Disconnected") { void disconnectSid(s.id); return; }
-    setConfirm({ kind: "closeSession", sid: s.id, hostName: s.host_name });
+    setConfirm({ kind: "closeSession", sid: s.id, hostName: s.host_name, paneCount: s.panes?.length ?? 0 });
   }, [disconnectSid]);
   const deleteHost = async (id: string) => {
     try {

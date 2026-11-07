@@ -191,7 +191,7 @@ module.exports = {
     const paneNames = () => page.evaluate(() => {
       // 名牌=主机名 + 非连接态后缀「 · 已断开」（找茬五轮 C-4：黑腔格的状态指示）
       // ——身份比对剥后缀，后缀本身单独断言
-      const name = (sel) => document.querySelector(sel)?.querySelector(".pane-tag")?.textContent?.replace(/ · (已断开|重连中…)$/, "") ?? null;
+      const name = (sel) => document.querySelector(sel)?.querySelector(".pane-tag-label")?.textContent?.replace(/ · (已断开|重连中…)$/, "") ?? null;
       return {
         main: name(".pane-left, .pane-top"),
         second: name(".pane-right, .pane-bottom"),
@@ -201,7 +201,7 @@ module.exports = {
     });
     // C-4 契约：断开会话的副格名牌带状态后缀（黑腔不再无解释）
     const secondRaw = () => page.evaluate(() =>
-      document.querySelector(".pane-right, .pane-bottom")?.querySelector(".pane-tag")?.textContent ?? null);
+      document.querySelector(".pane-right, .pane-bottom")?.querySelector(".pane-tag-label")?.textContent ?? null);
 
     // ① 未分屏：拖 staging-1 悬停右半 → 出 zone-r 提示；松手 = 进右副格、焦点跟落点
     await tabDrag("staging-1", 0.9, 0.5, "over");

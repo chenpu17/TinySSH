@@ -8,7 +8,7 @@ import type { DisableImpact, Host, SessionInfo, ShellCapability } from "../adapt
 
 // 危险动作确认 union（即 App.tsx 中 confirm state 的内联类型注解，宿主保留原注解）
 export type ConfirmState =
-  | { kind: "closeSession"; sid: string; hostName: string }
+  | { kind: "closeSession"; sid: string; hostName: string; paneCount: number }
   | { kind: "deleteHost"; id: string; name: string }
   | { kind: "deleteIdentity"; id: string; label: string };
 
@@ -152,6 +152,11 @@ export function ConfirmDialogs({
               <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
                 · {t("将受影响的转发：")}{confirmImpact ? (confirmImpact.forwards > 0 ? t("{0} 条（随会话关闭）", confirmImpact.forwards) : t("无")) : t("状态未知（查询失败）")}
                 <br />· {t("正在运行的任务/传输：状态未知——如有重要作业请先确认")}
+                {confirm.paneCount > 0 && (
+                  <>
+                    <br />· {t("面板中的 {0} 个 tmux 格子会一并关闭视图；tmux 会话仍在远端运行。", String(confirm.paneCount))}
+                  </>
+                )}
               </div>
               <div className="hk-actions">
                 <button className="danger" onClick={confirmAction}>{t("关闭会话")}</button>

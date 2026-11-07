@@ -114,6 +114,10 @@ struct PaneConn {
     ids: StdMutex<Vec<String>>,
     /// tmux 服务器 pid（纪元）：改它=模拟服务器重启，id 从头重排
     server_pid: AtomicU32,
+    /// list-clients 应答（tmux_detach 客户端定位）：空=无客户端
+    clients: StdMutex<Vec<String>>,
+    /// 收到的 exec 命令（断言 detach-client 精确寻址）
+    exec_cmds: StdMutex<Vec<String>>,
 }
 
 impl PaneConn {
@@ -129,6 +133,8 @@ impl PaneConn {
             panes: StdMutex::new(Vec::new()),
             ids: StdMutex::new(Vec::new()),
             server_pid: AtomicU32::new(4242),
+            clients: StdMutex::new(Vec::new()),
+            exec_cmds: StdMutex::new(Vec::new()),
         })
     }
     fn pane(&self, i: usize) -> Arc<PaneState> {
@@ -154,6 +160,7 @@ impl ChannelHandle for PaneConn {
         _deadline: std::time::Instant,
         _cancel: &session_api::transport::tokio_util_sync::CancellationToken,
     ) -> Result<FreshOutcome> {
+        self.exec_cmds.lock().unwrap().push(cmd.to_string());
         let delay = self.delay_ms.load(Ordering::SeqCst);
         if delay > 0 {
             tokio::time::sleep(Duration::from_millis(delay)).await;
@@ -203,6 +210,10 @@ impl ChannelHandle for PaneConn {
                 }
                 (None, None) => 1,
             }
+        } else if cmd.starts_with("tmux list-clients -t '") {
+            let clients = self.clients.lock().unwrap();
+            stdout = clients.join("\n").into_bytes();
+            0
         } else {
             0
         };
@@ -1237,4 +1248,38 @@ async fn pane_quote_name_allowed() {
         opened.contains("attach -t ") && opened.starts_with("tmux -u attach -t '"),
         "引号名经 sq 包裹进开格命令: {opened}"
     );
+}
+
+/// 统一视图语义：主视图 × = 只分离 tmux 客户端回 shell。标签、面板格子与远端
+/// tmux 会话都不动；唯一客户端按 client 名精确 detach（不误伤别处终端）。
+#[tokio::test]
+async fn tmux_detach_clears_attach_and_targets_client() {
+    let m = mgr();
+    let conn = PaneConn::new(&["work"]);
+    let h = install(&m, "ssh", conn.clone());
+    // 未挂 tmux：幂等 no-op
+    m.tmux_detach(&h.id).await.unwrap();
+    assert!(h.tmux_attached.lock().unwrap().is_none());
+
+    // 主视图挂着 work（id/pid 与真实 tmux_attach 同口径落账）
+    *h.tmux_attached.lock().unwrap() = Some("work".into());
+    *h.tmux_attached_id.lock().unwrap() = Some("$1".into());
+    *h.tmux_attached_server_pid.lock().unwrap() = 4242;
+    *conn.clients.lock().unwrap() = vec!["/dev/pts/7".into()];
+    m.tmux_detach(&h.id).await.unwrap();
+    assert!(h.tmux_attached.lock().unwrap().is_none());
+    assert!(h.tmux_attached_id.lock().unwrap().is_none());
+    assert_eq!(*h.tmux_attached_server_pid.lock().unwrap(), 0);
+    let cmds = conn.exec_cmds.lock().unwrap().clone();
+    assert!(
+        cmds.iter()
+            .any(|c| c == "tmux list-clients -t '=work' -F '#{client_name}'"),
+        "{cmds:?}"
+    );
+    assert!(
+        cmds.iter()
+            .any(|c| c == "tmux detach-client -s '/dev/pts/7'"),
+        "{cmds:?}"
+    );
+    assert!(audit_has(&m, "tmux_detach"));
 }

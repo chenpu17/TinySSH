@@ -52,6 +52,8 @@ interface CmdArgs {
   tmux_probe: { sid: string };
   tmux_restore: { sid: string; session?: string | null };
   tmux_attach: { sid: string; session: string; auto?: boolean };
+  // 统一视图语义：主视图 × = 只分离 tmux 客户端回 shell（tmux 会话/面板不受影响）
+  tmux_detach: { sid: string };
   // tmux 新建会话：远端 new-session -d（名字白名单/同名预检在 core），接入走既有链路
   tmux_session_create: { sid: string; name: string };
   // tmux 面板（一标签多 tmux 会话）：同连接附加交互通道格子
@@ -199,6 +201,7 @@ interface CmdRet {
   tmux_probe: wire.TmuxStatus;
   tmux_restore: wire.TmuxRestorePlan;
   tmux_attach: void;
+  tmux_detach: void;
   tmux_session_create: void;
   tmux_wall_snapshot: wire.TmuxWallCell[];
   tmux_wall_input: wire.TmuxWallCell;

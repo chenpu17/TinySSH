@@ -1161,6 +1161,19 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       audit("human", "tmux_attach", name, null, sid ?? null, { auto });
       return null;
     }
+    // 主视图 × = 只分离当前 tmux 视图（统一视图语义）：回 shell，tmux 会话继续跑
+    case "tmux_detach": {
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (s.kind !== "ssh") throw apiError("invalid_input", "tmux detach 仅支持 SSH 会话（演示）");
+      const cur = s.tmux_attached;
+      if (!cur) return null; // 已分离：幂等
+      pushTo(sid, `\r\n[detached (from session ${cur})]\r\n`);
+      s.tmux_attached = null;
+      audit("human", "tmux_detach", cur, null, sid ?? null, {});
+      return null;
+    }
     // ---- tmux 新建会话：远端 new-session -d 的演示——名字白名单/同名预检口径与
     // 真实核心逐条对齐；创建只落清单条目（attached:0），接入由前端随后 tmux_attach ----
     case "tmux_session_create": {

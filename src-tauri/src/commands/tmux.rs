@@ -125,6 +125,13 @@ pub(crate) async fn tmux_attach(
         .map_err(WireError::from)
 }
 
+/// 主视图从 tmux 分离（统一视图语义：× 只关闭当前视图）：回到 shell，tmux
+/// 会话与面板格子继续运行。
+#[tauri::command]
+pub(crate) async fn tmux_detach(state: ApiState<'_>, sid: String) -> CmdResult<()> {
+    state.api.tmux_detach(&sid).await.map_err(WireError::from)
+}
+
 /// tmux 面板（一标签多 tmux 会话）：同连接开附加交互 PTY 通道跑 `tmux attach`。
 /// 防呆（同会话两路视图/同名格去重/存在性核验）在 core；返回 pane_id 供前端
 /// 立即挂格子（乐观渲染，不等 3s 快照）。

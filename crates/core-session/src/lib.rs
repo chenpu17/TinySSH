@@ -5559,6 +5559,84 @@ impl SessionManager {
         Ok(())
     }
 
+    /// 主视图从 tmux 分离（统一视图语义：× 只关闭当前视图，不关闭标签）。
+    /// 只拆主 PTY 上的 tmux 客户端回到 shell；tmux 会话与面板格子都不受影响。
+    /// 客户端定位=list-clients：唯一客户端按 client 名精确 detach（用户改过前缀
+    /// 也成立）；多客户端（可能含用户在别处开的终端）退回向主 PTY 发前缀 d
+    /// （tmux 默认 C-b，与主视图输入法前缀同口径）——只拆本视图、不碰别人的客户端。
+    pub async fn tmux_detach(&self, sid: &str) -> Result<()> {
+        let h = self.get(sid)?;
+        if h.kind != "ssh" {
+            return Err(Error::InvalidInput("tmux detach 仅支持 SSH 会话".into()));
+        }
+        let cur = h.tmux_attached.lock().unwrap().clone();
+        let Some(cur) = cur else { return Ok(()) }; // 已分离：幂等
+        {
+            let st = *h.state.lock().await;
+            if matches!(st, SessionState::Disconnected | SessionState::Closed) {
+                return Err(Error::InvalidInput("会话未连接：无法分离 tmux".into()));
+            }
+        }
+        let version = h.tmux.lock().unwrap().version.clone();
+        let sel = Self::tmux_selector(version.as_deref(), &cur);
+        let list_cmd = format!(
+            "tmux list-clients -t {} -F '#{{client_name}}'",
+            Self::tmux_sq(&sel)
+        );
+        let clients: Vec<String> = match Self::tmux_exec(&h, &list_cmd, 4096).await {
+            Some((o, Some(0))) => o
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect(),
+            None => {
+                return Err(Error::InvalidInput(
+                    "连接不稳，无法确认该会话的客户端（稍后再试）".into(),
+                ));
+            }
+            Some((_, _)) => Vec::new(), // 会话不在/无客户端：状态清理即可
+        };
+        match clients.as_slice() {
+            [] => {}
+            [client] => {
+                let cmd = format!("tmux detach-client -s {}", Self::tmux_sq(client));
+                match Self::tmux_exec(&h, &cmd, 4096).await {
+                    Some((_, Some(0))) => {}
+                    Some((err, _)) => {
+                        return Err(Error::InvalidInput(format!(
+                            "tmux 分离失败：{}",
+                            err.trim().lines().next().unwrap_or("未知错误")
+                        )));
+                    }
+                    None => {
+                        return Err(Error::InvalidInput("分离命令未送达（连接不稳）".into()));
+                    }
+                }
+            }
+            _ => {
+                h.channel
+                    .write(b"\x02d")
+                    .await
+                    .map_err(|e| Error::Io(e.to_string()))?;
+            }
+        }
+        // 成功即清记录（不等下一拍探针）：名牌立即回主机名、× 收起、快接菜单解除「当前」
+        *h.tmux_attached_server_pid.lock().unwrap() = 0;
+        *h.tmux_attached_id.lock().unwrap() = None;
+        *h.tmux_attached.lock().unwrap() = None;
+        *h.tmux_attached_zero_arm.lock().unwrap() = false;
+        let _ = self.center.audit.append(
+            &Actor::Human,
+            "tmux_detach",
+            Some(sid),
+            Some(cur.as_str()),
+            serde_json::json!({}),
+            None,
+        );
+        Ok(())
+    }
+
     // ---- tmux 面板（一标签多 tmux 会话）：同连接附加交互 PTY 通道 ----
     // 与 tmux_attach 的明文注入互补：面板格是独立通道各跑各的 `tmux attach`，
     // 主 PTY 零字节扰动（坑 84 的教训在此处的形态=根本不碰主通道）。
