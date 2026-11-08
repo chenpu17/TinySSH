@@ -18,6 +18,7 @@ import { renderMermaidIn, rerenderMermaids } from "../mmd";
 import { renderMathIn } from "../math";
 import { localeNow, t } from "../i18n";
 import { IconBot, IconLoader, IconPlus, IconX } from "../icons";
+import { approvalRisk } from "./collab-panel";
 
 type ToolStatus = "pending" | "running" | "ok" | "err" | "denied";
 
@@ -54,6 +55,8 @@ export interface AgentViewProps {
   /** 内嵌 agent 自主模式（人类授权，deny 名单仍硬拦/传输仍逐条/全量记录可急停） */
   autonomyOn: boolean;
   onToggleAutonomy: (enable: boolean) => void;
+  /** 编排视图的「有 N 个待审批」提示：点开协作面板（此前面板不可点，文案指向落空） */
+  onOpenApprovals?: () => void;
   gripDrag: { current: boolean };
   gripDown: (e: PointerEvent<HTMLDivElement>) => void;
   gripMove: (e: PointerEvent<HTMLDivElement>) => void;
@@ -235,12 +238,15 @@ const AssistantMsg = memo(function AssistantMsg({ md, think, streaming, lang }: 
 
 export function AgentView({
   width, sid, fleet, hostLabel, tmuxNote, pending, onDecide, owner, onDelegate,
-  autonomyOn, onToggleAutonomy,
+  autonomyOn, onToggleAutonomy, onOpenApprovals,
   gripDrag, gripDown, gripMove, gripUp, onClose, pushToast,
 }: AgentViewProps) {
   const [convs, setConvs] = useState<Record<string, AgentMsg[]>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [stopping, setStopping] = useState<Record<string, boolean>>({});
+  // 内联审批的高危二次确认（与协作面板同一根减速带）：首次点击只表态，
+  // 第二次才真的批准——对话流里最容易手滑点掉的一道闸。
+  const [inlineRiskConfirm, setInlineRiskConfirm] = useState<string | null>(null);
   const [sending, setSending] = useState<Record<string, boolean>>({});
   // 草稿按会话隔离：共享一份时，在 A 会话输入一半切到 B，按 Enter 会把 A 的
   // 命令发到 B（SSH 场景下的真实错主机风险）。
@@ -796,16 +802,31 @@ export function AgentView({
                       <button className="ghost" data-testid="agent-deny" onClick={deny}>{t("拒绝")}</button>
                     </div>
                   )}
-                  {showApprove && inlineApproval && (
-                    <div className="tc-actions">
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="dim mono" style={{ fontSize: 11, maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{inlineApproval.command}</div>
-                        <div className="dim" style={{ fontSize: 10 }}>{t("120 秒内未处理将自动拒绝，命令不会执行")}</div>
+                  {showApprove && inlineApproval && (() => {
+                    const risk = approvalRisk(inlineApproval);
+                    const gated = !!risk && inlineRiskConfirm !== inlineApproval.id;
+                    return (
+                      <div className="tc-actions">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="dim mono" style={{ fontSize: 11, maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{inlineApproval.command}</div>
+                          {inlineApproval.purpose && (
+                            <div className="dim" style={{ fontSize: 10 }} title={t("委托目标（会话当前目的）")}>{t("目的：")}{inlineApproval.purpose}</div>
+                          )}
+                          {risk && (
+                            <div style={{ fontSize: 10, color: "var(--warn)" }}>⚠ {t("{0}——批准前请确认命令的全部效果。", risk)}</div>
+                          )}
+                          <div className="dim" style={{ fontSize: 10 }}>{t("120 秒内未处理将自动拒绝，命令不会执行")}</div>
+                        </div>
+                        <button className={gated ? "warn" : "primary"} data-testid="agent-approve-real"
+                          onClick={() => {
+                            if (gated) { setInlineRiskConfirm(inlineApproval.id); return; }
+                            setInlineRiskConfirm(null);
+                            onDecide(inlineApproval.id, "approve", null);
+                          }}>{gated ? t("确认高危并批准") : t("批准")}</button>
+                        <button className="ghost" data-testid="agent-deny-real" onClick={() => { setInlineRiskConfirm(null); onDecide(inlineApproval.id, "deny", null); }}>{t("拒绝")}</button>
                       </div>
-                      <button className="primary" data-testid="agent-approve-real" onClick={() => onDecide(inlineApproval.id, "approve", null)}>{t("批准")}</button>
-                      <button className="ghost" data-testid="agent-deny-real" onClick={() => onDecide(inlineApproval.id, "deny", null)}>{t("拒绝")}</button>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -822,9 +843,17 @@ export function AgentView({
             </div>
           )}
           {fleet && pending.length > 0 && (
-            <div className="ag-tmux" data-testid="fleet-pending-hint" title={t("目标会话的审批在各自会话里独立生效")}>
-              {t("有 {0} 个待审批动作——切到对应会话批准/拒绝，或打开协作面板统一处理", pending.length)}
-            </div>
+            onOpenApprovals ? (
+              <button type="button" className="ag-tmux ag-link" data-testid="fleet-pending-hint"
+                title={t("目标会话的审批在各自会话里独立生效；点此打开协作面板统一处理")}
+                onClick={onOpenApprovals}>
+                {t("有 {0} 个待审批动作——切到对应会话批准/拒绝，或打开协作面板统一处理", pending.length)}
+              </button>
+            ) : (
+              <div className="ag-tmux" data-testid="fleet-pending-hint" title={t("目标会话的审批在各自会话里独立生效")}>
+                {t("有 {0} 个待审批动作——切到对应会话批准/拒绝，或打开协作面板统一处理", pending.length)}
+              </div>
+            )
           )}
           {!fleet && tmuxNote && (
             /* tmux 联动二（Agent 分窗）：一行小字说明——命令自动落远端专属

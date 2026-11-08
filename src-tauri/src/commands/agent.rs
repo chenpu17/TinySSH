@@ -136,6 +136,17 @@ pub(crate) async fn agent_cancel(
     Ok(model_cancel || core_cancel > 0)
 }
 
+/// 接管（仅冻结）时停掉模型生成：工具调用已被冻结，继续流式生成既浪费 token
+/// 又让面板看起来「Agent 还在干活」。只置模型取消位，不碰核心侧在途 exec/传输
+/// ——停止在跑的命令是「接管并停止」的语义。
+#[tauri::command]
+pub(crate) async fn agent_cancel_model(
+    state: ApiState<'_>,
+    sid: String,
+) -> std::result::Result<bool, String> {
+    Ok(state.agent_host.cancel(&sid))
+}
+
 /// 会话对话转写（FE 重挂载重建；最旧在前）。
 #[tauri::command]
 pub(crate) async fn agent_history(

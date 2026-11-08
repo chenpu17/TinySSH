@@ -163,7 +163,16 @@ pub(crate) fn install_native_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         .item(&PredefinedMenuItem::cut(app, Some("剪切"))?)
         .item(&PredefinedMenuItem::copy(app, Some("拷贝"))?)
         .item(&PredefinedMenuItem::paste(app, Some("粘贴"))?)
-        .item(&PredefinedMenuItem::select_all(app, Some("全选"))?)
+        // ⌘A 不能走 PredefinedMenuItem::select_all：NSMenu 会在 WebView 之前消费
+        // 快捷键，预定义 selectAll 只会全选 xterm 的隐藏 textarea，终端缓冲没有选区。
+        // 改发前端事件，按当前焦点分派「终端全选 / 输入框全选」。
+        .item(&MenuItem::with_id(
+            app,
+            "select-all",
+            "全选",
+            true,
+            Some("CmdOrCtrl+A"),
+        )?)
         .build()?;
     let view_sub = SubmenuBuilder::new(app, "显示")
         .item(&PredefinedMenuItem::fullscreen(app, Some("全屏"))?)

@@ -19,7 +19,9 @@
 // （历史：xterm 方案曾引入就绪门/Dimensions-getter 抛错/写处理器坏死/自愈
 // 重建风暴四连坑，最终被本方案整体替换；教训见台账排障段。）
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { t } from "../i18n";
+import { inTauri } from "../adapter/bridge";
 import type { TmuxSession, TmuxWallCell, TmuxWallFit, TmuxWallFitResult, TmuxWallRestoreItem, TmuxWallTarget } from "../adapter/wire";
 import { IconMaximize, IconMinimize, IconX } from "../icons";
 
@@ -202,6 +204,10 @@ export interface TmuxWallProps {
   /** 关墙恢复：把贴格子借走的窗口几何与 window-size 选项原样交还（fire-and-
    *  forget，invoke 不依赖组件存活）。 */
   restorePanes: (sid: string, items: TmuxWallRestoreItem[]) => Promise<void>;
+  /** 粘贴介入：宿主先做危险形态/多行确认，再回调 accept 把文本送进墙；未提供
+   *  时按原样直发。墙走字面通道（服务端 send-keys -l），没有 bracketed paste
+   *  ——多行粘贴的每个换行都会被远端立即执行，必须和主终端同一张审批表。 */
+  requestPaste?: (text: string, accept: (text: string) => void) => void;
   onClose: () => void;
 }
 
@@ -241,7 +247,7 @@ const specialKeyOf = (ev: KeyboardEvent): string | null => {
   return TMUX_KEYS[ev.key] ?? null;
 };
 
-export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchCells, sendInput, onPromote, fitPanes, restorePanes, onClose }: TmuxWallProps) {
+export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchCells, sendInput, onPromote, fitPanes, restorePanes, requestPaste, onClose }: TmuxWallProps) {
   const [frames, setFrames] = useState<Map<string, TmuxWallCell>>(new Map());
   const [solo, setSolo] = useState<string | null>(null);
   const [colsOverride, setColsOverride] = useState<number | null>(null);
@@ -314,9 +320,7 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
   // 的 send-keys 到达次序无保证——「ls」与「Enter」倒序=命令看似没跑（用户报的
   // 「有时候输入有问题」），链上逐发即保序；队头失败走 errFlash 不堵死链。
   const sendChainRef = useRef<Promise<void>>(Promise.resolve());
-  const sendNow = useCallback((lit: string, keys: string[]) => {
-    const key = activeRef.current;
-    if (!key) return;
+  const sendTo = useCallback((key: string, lit: string, keys: string[]) => {
     const s = sessionsRef.current.find((x) => keyOf(x) === key);
     if (!s) return;
     // 目标在入队时刻钉死：链内闭包绝不读 activeRef——队列执行时键入焦点可能已
@@ -351,6 +355,11 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
       }
     });
   }, []);
+  const sendNow = useCallback((lit: string, keys: string[]) => {
+    const key = activeRef.current;
+    if (!key) return;
+    sendTo(key, lit, keys);
+  }, [sendTo]);
   const flushLit = useCallback(() => {
     window.clearTimeout(flushTimerRef.current);
     flushTimerRef.current = 0;
@@ -363,6 +372,38 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
     window.clearTimeout(flushTimerRef.current);
     flushTimerRef.current = window.setTimeout(() => flushLit(), 150);
   }, [flushLit]);
+  // 粘贴收口：宿主提供 requestPaste 时先走危险形态/多行确认（与主终端同一张
+  // 内置规则表），确认后才把文本送进字面通道；未提供时直发。墙没有 bracketed
+  // paste——换行会被远端立即执行，多行必须由宿主拦下确认。
+  // 确认框会夺走焦点（墙的 focusin 边界随即退出键入态），所以目标格在发起粘贴
+  // 时钉死；确认回调不再读 activeRef，发送完再把该格拉回键入态。
+  const acceptPaste = useCallback((key: string, text: string) => {
+    if (!text) return;
+    sendTo(key, text, []);
+    if (mountedRef.current && activeRef.current !== key && sessionsRef.current.some((x) => keyOf(x) === key)) {
+      setActive(key); // input 重挂 autoFocus 接管焦点
+    }
+  }, [sendTo]);
+  const pasteText = useCallback((text: string) => {
+    const key = activeRef.current;
+    if (!text || !key) return;
+    // 已敲未发的字面先冲刷：粘贴必须排在它后面（同一串行链保序）
+    const pending = litRef.current;
+    litRef.current = "";
+    window.clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = 0;
+    if (pending) sendTo(key, pending, []);
+    const accept = (accepted: string) => acceptPaste(key, accepted);
+    if (requestPaste) requestPaste(text, accept);
+    else accept(text);
+  }, [requestPaste, acceptPaste, sendTo]);
+  // Win/Linux 的 Ctrl+V（含 Ctrl+Shift+V）与 Shift+Insert：不给浏览器默认粘贴
+  // 走 onPaste（specialKeyOf 会把 Ctrl+V 编成 C-v 直发），统一读剪贴板再收口。
+  const pasteFromClipboard = useCallback(() => {
+    void Promise.resolve(inTauri ? clipboard.readText() : navigator.clipboard?.readText())
+      .then((txt) => { if (txt) pasteText(txt); })
+      .catch(() => {});
+  }, [pasteText]);
   // 特殊键即发（字面捎带同枪， shell 场景等价「打完词按回车」一条命令送达）
   const sendKeyNow = useCallback((key: string) => {
     window.clearTimeout(flushTimerRef.current);
@@ -444,6 +485,17 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
         if (dead) return;
         failStreakRef.current = 0;
         if (stale) setStale(false);
+        // 选中保护：整拍换帧会替换文本节点，用户正在划选复制的选区当场消失。
+        // 选区非空且落在墙内时本拍不换帧（画面暂停 300ms 级），清选区后自动追上。
+        {
+          const sel = window.getSelection();
+          const w = wallRef.current;
+          if (sel && !sel.isCollapsed && sel.rangeCount > 0 && w) {
+            const node = sel.getRangeAt(0).commonAncestorContainer;
+            const el = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
+            if (el && w.contains(el)) return;
+          }
+        }
         setFrames((prev) => {
           const next = new Map<string, TmuxWallCell>();
           for (const [key, c] of pairs ?? []) {
@@ -697,9 +749,9 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
                 className={"ghost tw-gsz" + (cols === n ? " ts-open" : "")}
                 data-testid={"tmux-wall-size-" + n}
                 aria-pressed={cols === n}
-                title={t("{0}×{1} 网格", String(n), String(n))}
+                title={t("按 {0} 列铺开（格子随会话数自动换行）", String(n))}
                 onClick={() => setColsOverride(n)}
-              >{n}×{n}</button>
+              >{n} 列</button>
             ))}
           </span>
         )}
@@ -736,7 +788,17 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
               className={"tw-cell" + (isSolo ? " tw-solo" : "") + (isActive ? " tw-active" : "")}
               data-testid={"tmux-wall-cell-" + s.name}
             >
-              <div className="tw-cell-head" onClick={() => { if (!isActive) activate(key); }}>
+              <div className="tw-cell-head" tabIndex={0} role="group"
+                aria-label={t("{0}：进入键入（也可点正文）", s.name)}
+                onClick={() => { if (!isActive) activate(key); }}
+                onKeyDown={(e) => {
+                  // 头部是键入入口（此前只有鼠标可点）；子按钮自行处理键盘，不代劳
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (!isActive) activate(key);
+                  }
+                }}>
                 <span className="tw-name" title={s.name}>{s.name}</span>
                 <span className="tw-flex" />
                 {/* 键入态的可见退出件（找茬四轮 D5）：solo 态 body 被格子铺满、
@@ -814,6 +876,17 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
                       // 提交键（isComposing 已 false）——放行会给远端多发一枚
                       // Enter（主视图捕获层同款解码，见 App 键盘捕获段）
                       if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                      // 粘贴键先于 specialKeyOf：Ctrl+V 会被编成 C-v 直发 tmux，
+                      // Shift+Insert 会被编成 Insert；两处都改为读剪贴板走收口。
+                      if (
+                        (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "v") ||
+                        (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert")
+                      ) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        pasteFromClipboard();
+                        return;
+                      }
                       const sp = specialKeyOf(e.nativeEvent);
                       if (sp !== null) {
                         e.preventDefault();
@@ -835,7 +908,7 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
                     onPaste={(e) => {
                       e.preventDefault();
                       const txt = e.clipboardData.getData("text");
-                      if (txt) { litRef.current += txt; flushLit(); }
+                      pasteText(txt);
                     }}
                     onBlur={() => refocusSoon()}
                   />

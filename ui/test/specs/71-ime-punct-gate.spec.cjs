@@ -219,6 +219,34 @@ module.exports = {
       // 在 Windows 浏览器里强制走 macOS 分支，验证「只发 keypress 的全角，不发半角」。
       const savedBrowser = term._core.browser;
       term._core.browser = { ...savedBrowser, isMac: true, isWindows: false };
+      // 部分 WKWebView/IME 组合下 keypress 根本不派发（或 charCode=0 被提前
+      // preventDefault）：延迟分支必须让 input 的提交文本补位，首击不得丢。
+      const noKeypressColon = await run(() => {
+        keydown("Shift", "ShiftLeft", 16, true);
+        keydown(";", "Semicolon", 186, true);
+        beforeinput("：");
+        input("：");
+        keyup(";", "Semicolon", 186);
+        keyup("Shift", "ShiftLeft", 16);
+      });
+      const noKeypressBang = await run(() => {
+        keydown("Shift", "ShiftLeft", 16, true);
+        keydown("?", "Slash", 191, true);
+        beforeinput("？");
+        input("？");
+        keyup("?", "Slash", 191);
+        keyup("Shift", "ShiftLeft", 16);
+      });
+      // 反向顺序：input 已兜底送达，keypress 迟到——不得再发一遍
+      const lateKeypress = await run(() => {
+        keydown("Shift", "ShiftLeft", 16, true);
+        keydown(";", "Semicolon", 186, true);
+        beforeinput("：");
+        input("：");
+        keypress("：", 65306, true);
+        keyup(";", "Semicolon", 186);
+        keyup("Shift", "ShiftLeft", 16);
+      });
       const sogouColon = await run(() => {
         keydown("Shift", "ShiftLeft", 16, true);
         keydown(";", "Semicolon", 186, true);
@@ -248,13 +276,16 @@ module.exports = {
         keyup("Shift", "ShiftLeft", 16);
       });
       term._core.browser = savedBrowser;
-      return { apple, valueBefore, valueAfter, plain, shiftedAscii, sogouColon, sogouBang, macAsciiBang };
+      return { apple, valueBefore, valueAfter, plain, shiftedAscii, noKeypressColon, noKeypressBang, lateKeypress, sogouColon, sogouBang, macAsciiBang };
     }, sids[0]);
     ck.eq("「：」按一次只送达一次", JSON.stringify(r.apple), JSON.stringify(["："]));
     ck.eq("「？」（textarea 先写入）按一次只送达一次", JSON.stringify(r.valueBefore), JSON.stringify(["？"]));
     ck.eq("「？」（textarea 后写入）只送达一次", JSON.stringify(r.valueAfter), JSON.stringify(["？"]));
     ck.eq("普通字符未被 insertText 重复上屏", JSON.stringify(r.plain), JSON.stringify(["a"]));
     ck.eq("Shift+ASCII 符号未被 insertText 重复上屏", JSON.stringify(r.shiftedAscii), JSON.stringify(["!"]));
+    ck.eq("keypress 未派发时 input 兜底：「：」按一次只送达一次", JSON.stringify(r.noKeypressColon), JSON.stringify(["："]));
+    ck.eq("keypress 未派发时 input 兜底：「？」按一次只送达一次", JSON.stringify(r.noKeypressBang), JSON.stringify(["？"]));
+    ck.eq("input 兜底后迟到的 keypress 不再重复上屏", JSON.stringify(r.lateKeypress), JSON.stringify(["："]));
     ck.eq("搜狗「：」只走 keypress 全角，不发半角 ;", JSON.stringify(r.sogouColon), JSON.stringify(["："]));
     ck.eq("搜狗「！」只走 keypress 全角，不发半角 !", JSON.stringify(r.sogouBang), JSON.stringify(["！"]));
     ck.eq("macOS 英文 Shift+1 走 keypress 仍只发一次 ASCII !", JSON.stringify(r.macAsciiBang), JSON.stringify(["!"]));

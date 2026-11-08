@@ -760,14 +760,18 @@ module.exports = {
       && await page.evaluate((n) => !!document.activeElement?.closest(`.tmux-cell[data-tmux="${n}"]`), c7), c7);
 
     // M8 格子里 Ctrl+B d（真实键盘）：tmux 前缀直达格子 → 脱离摘格；自定义布局里它的空间还给邻居。
-    // 开 DEV 豁免钩子走 Tauri-only 分支：表内的 Ctrl+Shift+B（主机栏）被豁免、不进格子（随后的
-    // d 只是普通字符，格子不脱离）；保留键 Ctrl+B 照样直达（demo 默认不豁免时 Ctrl+Shift+B
-    // 会编成 \x02 被当作前缀——此处格子若脱离即说明豁免没生效）
-    await page.evaluate(() => { window.__t_keymapExempt = true; });
-    await page.keyboard.press("Control+Shift+B");
-    await page.keyboard.press("d");
-    await page.waitForTimeout(900);
-    ck.check("豁免层：格子里 Ctrl+Shift+B 不进 tmux（随后的 d 不触发脱离）", !!(await cellOf(page, c7)), c7);
+    // 键位豁免是 Win/Linux 专有路径：那里主机栏默认占 Ctrl+Shift+B，开 DEV 豁免钩子后该
+    // 组合被表豁免、不进格子（随后的 d 只是普通字符）。mac 的主修饰键是 ⌘，默认表没有
+    // Ctrl 组合，Ctrl+Shift+B 本就该编成 \x02 直达 tmux——按 Win 语义断言会把平台差异
+    // 误报成回归，故 mac 不跑这条探针；保留键 Ctrl+B 两条平台都照测。
+    const mac = await page.evaluate(() => /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent));
+    if (!mac) {
+      await page.evaluate(() => { window.__t_keymapExempt = true; });
+      await page.keyboard.press("Control+Shift+B");
+      await page.keyboard.press("d");
+      await page.waitForTimeout(900);
+      ck.check("豁免层：格子里 Ctrl+Shift+B 不进 tmux（随后的 d 不触发脱离）", !!(await cellOf(page, c7)), c7);
+    }
     await page.keyboard.press("Control+b");
     await page.keyboard.press("d");
     ck.check("格子里 Ctrl+B d = tmux 脱离：格子摘除 + toast 附 detached 收尾行",
@@ -957,6 +961,12 @@ module.exports = {
       const prev = await page.evaluate(() => document.querySelector('[data-testid="tmux-create-err"]')?.textContent ?? "");
       await page.evaluate(() => { const i = document.querySelector('[data-testid="tmux-create-input"]'); if (i) i.value = ""; });
       if (name) await page.type('[data-testid="tmux-create-input"]', name, { delay: 6 });
+      // 等「创建」可用：上一次提交的 busy 态要等 invoke 落定、React 重渲染后才解除；
+      // 全套高负载下在 busy 期间点击会被 disabled 静默吞掉，错误文本永不更新（假红）
+      await poll(page, () => {
+        const b = document.querySelector('[data-testid="tmux-create-ok"]');
+        return !!b && !b.disabled;
+      }, null, 3000);
       await page.click('[data-testid="tmux-create-ok"]');
       for (let i = 0; i < 24; i++) {
         await page.waitForTimeout(250);

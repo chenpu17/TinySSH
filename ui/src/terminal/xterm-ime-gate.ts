@@ -26,6 +26,12 @@
 // 的方向，在 macOS 上把 ASCII 标点/数字延迟到 keypress，由 charCode 发送；
 // 不 preventDefault（默认动作要留给 IME），只 stopPropagation 挡宿主快捷键。
 //
+// 延迟分支还留了一条 input 兜底：WKWebView 与某些 IME 组合下 keypress 可能
+// 不派发（或 charCode=0），首击仍会丢——keypress 没送过时，放行浏览器默认写入
+// 产生的 insertText（其 data 是全角/半角真值），保证「按一次出一个」。反过来，
+// input 先送达后 keypress 才到的顺序也要防重：已由 input 送达的键记 delivered，
+// 迟到 keypress 直接吞掉（否则同一键会发两次）。
+//
 // 回归：ui/test/specs/71-ime-punct-gate.spec.cjs（伪 core 语义 + 真实 xterm 事件序列）。
 
 /** 只描述本补丁触达的 xterm core 内部面（私有 API，版本锁定 5.5.0）。 */
@@ -33,8 +39,10 @@ type KeyDownGateCore = {
   _keyDownSeen: boolean;
   _keyDown(ev: KeyboardEvent): boolean | undefined;
   _keyUp?(ev: KeyboardEvent): void;
+  _keyPress?(ev: KeyboardEvent): boolean;
   _inputEvent?(ev: InputEvent): boolean;
   _keyDownHandled?: boolean;
+  _keyPressHandled?: boolean;
   browser?: { isMac?: boolean };
   optionsService?: { rawOptions?: { screenReaderMode?: boolean } };
   _customKeyEventHandler?: (ev: KeyboardEvent) => boolean;
@@ -53,6 +61,10 @@ type LastKeyDown = {
   composition: boolean;
   /** keydown 当时 textarea 里的文本：判断 IME 是否已先写入、CompositionHelper 是否会补发。 */
   value: string;
+  /** 本键由 macOS ASCII 标点延迟分支接管：真正送达在 keypress（或 input 兜底）。 */
+  punct?: string;
+  /** 延迟分支已由 input 兜底送达；迟到的 keypress 必须吞掉，避免同键发两次。 */
+  delivered?: boolean;
 };
 
 const PATCHED = Symbol.for("tinyssh.xterm-ime-gate");
@@ -124,6 +136,7 @@ export function patchXtermImeGate(term: unknown): void {
         modifier: false,
         composition: false,
         value: comp?._textarea?.value ?? "",
+        punct: ev.key,
       };
       ev.stopPropagation();
       return true;
@@ -157,19 +170,40 @@ export function patchXtermImeGate(term: unknown): void {
     // 提交文本写进 textarea，CompositionHelper 的延迟 diff 会是空操作，这一份
     // insertText 就是唯一送达机会——临时放行。若 textarea 在 keydown 后才变化，
     // 交给 CompositionHelper 的 diff 发送，这里不插手，避免重复上屏。
+    // 另一条兜底：macOS ASCII 标点延迟分支本应等 keypress.charCode 送达，但
+    // WKWebView + 部分 IME 组合下 keypress 可能根本不派发（或 charCode=0 被
+    // keypress 提前 preventDefault 掉），此时浏览器默认动作已把字符写进 textarea，
+    // input 就是唯一送达机会。keypress 已经送过（_keyPressHandled）时不重复放行。
     // 普通字符 keydown 之后的 input 仍走原门去重。
     if (typeof proto._inputEvent === "function") {
       const origInputEvent = proto._inputEvent;
       proto._inputEvent = function (this: KeyDownGateCore, ev: InputEvent) {
         const last = this[LAST_KEYDOWN];
         const comp = this._compositionHelper;
+        const composing = !!(comp && (comp.isComposing || comp._isSendingComposition));
+        const insert = ev.inputType === "insertText" && !!ev.data;
+        if (this._keyDownSeen && insert && last?.punct && !composing && !this._keyPressHandled) {
+          const textarea = comp?._textarea;
+          last.punct = undefined;
+          last.delivered = true;
+          const seen = this._keyDownSeen;
+          this._keyDownSeen = false;
+          try {
+            const r = origInputEvent.call(this, ev);
+            // 迟到送达的字符已由 xterm 直接触发数据事件；清掉浏览器写入 textarea
+            // 的残留，避免下一次组合的坐标（compositionPosition.start）被带偏。
+            if (textarea) textarea.value = "";
+            return r;
+          } finally {
+            this._keyDownSeen = seen;
+          }
+        }
         if (
           this._keyDownSeen &&
-          ev.inputType === "insertText" &&
-          !!ev.data &&
+          insert &&
           last?.composition &&
-          last.value.endsWith(ev.data) &&
-          !(comp && (comp.isComposing || comp._isSendingComposition))
+          last.value.endsWith(ev.data!) &&
+          !composing
         ) {
           const seen = this._keyDownSeen;
           this._keyDownSeen = false;
@@ -180,6 +214,21 @@ export function patchXtermImeGate(term: unknown): void {
           }
         }
         return origInputEvent.call(this, ev);
+      };
+    }
+    // 迟到 keypress：input 已把这一键送达（last.delivered），之后才到的 keypress
+    // 不能再由 xterm 按 charCode 发一遍。吞掉它并 preventDefault，避免字符再被
+    // 浏览器默认动作插进 textarea 留下残值。
+    if (typeof proto._keyPress === "function") {
+      const origKeyPress = proto._keyPress;
+      proto._keyPress = function (this: KeyDownGateCore, ev: KeyboardEvent) {
+        const last = this[LAST_KEYDOWN];
+        if (last?.delivered) {
+          last.delivered = false;
+          ev.preventDefault();
+          return false;
+        }
+        return origKeyPress.call(this, ev);
       };
     }
     Object.defineProperty(proto, PATCHED, { value: true, enumerable: false });

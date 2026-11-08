@@ -1,7 +1,7 @@
 // 协作面板内容（App.tsx 拆分⑤）：右侧任务面板的「审批」与「委托/任务目标/现场简报」
 // 两块。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
 // 面板壳（tp-head/files/forwards/活动记录）仍留在宿主——四个面板的开关状态机在彼处。
-import type { RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import type { CollabStatus, SessionInfo, SessionBrief as Brief } from "../adapter/wire";
 import { approvalResolvedLabel, stateLabel, type ApprovalRow, type SettingsCat } from "../app-data";
 import { t } from "../i18n";
@@ -15,7 +15,7 @@ import { BriefCard } from "./brief-card";
 const DANGER_SHAPE_RE =
   /\brm\s+(?:-[a-zA-Z]+\s+)*-[a-z]*r[a-z]*f|\bmkfs\b|\bdd\b[^\n]*\bof=\/dev\/|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bwipefs\b|\bchmod\s+(?:-[a-zA-Z]+\s+)*777\s+\//;
 
-function approvalRisk(a: ApprovalRow): string | null {
+export function approvalRisk(a: ApprovalRow): string | null {
   if (DANGER_SHAPE_RE.test(a.command)) return t("命令包含高危形态（删除/格式化/关机类）");
   return null;
 }
@@ -74,6 +74,14 @@ export function CollabApprovals({
   persistId, setPersistId, persistPattern, setPersistPattern,
   decide, rememberThenDecide, openSettingsAt,
 }: CollabApprovalsProps) {
+  // 审批倒计时（核心默认 120s 等待超时，超时按拒绝结算）。面板自己按秒刷新，
+  // 不惊动宿主——此前卡片只有 createdAt，用户不知道还剩多久，切走再回来常已过期。
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (pendingCount === 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [pendingCount]);
   return (
     !collabEnabled ? (
       // C9（R43）：协作停用/停用中/停用失败时不出现空审批区——改为停用态指引。
@@ -120,9 +128,15 @@ export function CollabApprovals({
               {g.items.map((a) => {
                 const risk = approvalRisk(a);
                 const uncertainty = approvalUncertainty(a);
-                // 高危卡批准类按钮共享一次确认：首次点击只置 confirmId，卡上任意
-                // 批准类按钮的第二次点击才执行（人已对这张卡表过态）
-                const gated = risk !== null && confirmId !== a.id;
+                // 高危卡批准类按钮共享一次确认：confirmId 编码「{审批 id}:{动作}」，
+                // 只有**同一按钮**的第二次点击才执行该动作——此前卡片级 id 让
+                // 「记住并批准」的首次点击替「批准」做了确认，再点批准也放行，
+                // 标签与实际执行的动作错位。
+                const armed = (kind: "approve" | "remember" | "persist" | "edit") => confirmId === `${a.id}:${kind}`;
+                const gate = (kind: "approve" | "remember" | "persist" | "edit") => risk !== null && !armed(kind);
+                // 剩余秒数：created_at 由核心给出（RFC3339）；解析失败就不倒计时，不编造
+                const born = Date.parse(a.created_at);
+                const left = Number.isFinite(born) ? Math.max(0, 120 - Math.floor((now - born) / 1000)) : null;
                 const eligible = rememberEligible(a);
                 return (
                   <div className="card" key={a.id}>
@@ -150,7 +164,14 @@ export function CollabApprovals({
                         · {s.segment} — {s.verdict}
                       </div>
                     ))}
-                    {risk && confirmId !== a.id && (
+                    {left !== null && (
+                      <div className="dim" style={{ fontSize: 11, marginTop: 4 }} data-testid="ap-countdown">
+                        ⏳ {left > 0
+                          ? t("剩余 {0}s 后自动拒绝——请在超时前处理", left)
+                          : t("已超时，等待核心按拒绝结算…")}
+                      </div>
+                    )}
+                    {risk && !confirmId?.startsWith(`${a.id}:`) && (
                       <div className="dim" style={{ fontSize: 11, marginTop: 6, color: "var(--warn)" }}>
                         ⚠ {t("{0}——批准前请确认命令的全部效果。", risk)}
                       </div>
@@ -182,10 +203,10 @@ export function CollabApprovals({
                           <button
                             disabled={!persistPattern.trim()}
                             onClick={() => {
-                              if (gated) { setConfirmId(a.id); return; }
+                              if (gate("persist")) { setConfirmId(`${a.id}:persist`); return; }
                               void rememberThenDecide(a.id, { pattern: persistPattern.trim() });
                             }}
-                          >{gated ? t("再次点击确认") : t("保存规则并批准")}</button>
+                          >{gate("persist") ? t("保存规则并批准（需再次点击确认）") : armed("persist") ? t("再次点击保存规则并批准") : t("保存规则并批准")}</button>
                           <button className="ghost" onClick={() => setPersistId(null)}>{t("取消")}</button>
                         </div>
                         <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
@@ -196,23 +217,23 @@ export function CollabApprovals({
                       <>
                         <div className="row" style={{ marginTop: 8 }}>
                           <button
-                            className={confirmId === a.id ? "warn" : undefined}
+                            className={armed("approve") ? "warn" : undefined}
                             title={risk ? t("高危形态请求：需二次确认") : undefined}
                             onClick={() => {
-                              if (gated) { setConfirmId(a.id); return; }
+                              if (gate("approve")) { setConfirmId(`${a.id}:approve`); return; }
                               void decide(a.id, "approve", null);
                             }}
-                          >{confirmId === a.id ? t("再次点击确认批准") : t("批准")}</button>
+                          >{armed("approve") ? t("再次点击确认批准") : t("批准")}</button>
                           {/* 「批准并记住」（审批减摩擦①）：TTL 精确记忆，到期自动失效；
-                              高危卡同样吃二次确认闸门 */}
+                              高危卡同样吃二次确认闸门（按动作各自确认，不互借） */}
                           {eligible && (
                             <button className="ghost"
                               title={t("同命令 30 分钟内免审（逐段精确匹配，过期自动失效）")}
                               onClick={() => {
-                                if (gated) { setConfirmId(a.id); return; }
+                                if (gate("remember")) { setConfirmId(`${a.id}:remember`); return; }
                                 void rememberThenDecide(a.id, { ttlMinutes: 30 });
                               }}
-                            >{t("记住并批准")}</button>
+                            >{armed("remember") ? t("再次点击确认记住并批准") : t("记住并批准")}</button>
                           )}
                           {/* 持久放行只对单段可解析命令开放：复合命令的前缀通配难一眼核对 */}
                           {eligible && a.segment_report.length <= 1 && (
@@ -224,8 +245,14 @@ export function CollabApprovals({
                               }}
                             >{t("持久放行…")}</button>
                           )}
-                          {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮 */}
-                          {a.editable && <button className="ghost" onClick={() => { setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command); }}>{t("编辑后批准")}</button>}
+                          {/* 可编辑性由后端声明（editable 字段）：转发/传输卡无法从编辑文本回解参数，不出编辑钮。
+                              高危卡进入编辑也要先二次确认——「编辑后批准」仍是批准。 */}
+                          {a.editable && (
+                            <button className="ghost" onClick={() => {
+                              if (gate("edit")) { setConfirmId(`${a.id}:edit`); return; }
+                              setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command);
+                            }}>{armed("edit") ? t("再次点击进入编辑") : t("编辑后批准")}</button>
+                          )}
                           {/* 拒绝钉右侧：按钮多到换行时不再孤悬左端（破坏性动作与批准族分区） */}
                           <button className="danger" style={{ marginLeft: "auto" }} onClick={() => void decide(a.id, "deny", null)}>{t("拒绝")}</button>
                         </div>

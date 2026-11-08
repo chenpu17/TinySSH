@@ -108,14 +108,15 @@ module.exports = {
     const stored2 = await page.evaluate(() => localStorage.getItem("ui.keymap.v1") ?? "");
     ck.check("重置后 KV search 归默认 f", (() => { try { return JSON.parse(stored2).search.key === "f"; } catch { return false; } })(), stored2);
 
-    // 单条重置撞键（审查轮二）：主机栏改 H、搜索改成主机栏的默认键 → 点主机栏「重置」
+    // 单条重置撞键（审查轮二）：主机栏改 E、搜索改成主机栏的默认键 → 点主机栏「重置」
     // 必须拒绝并说明（此前直接落出两条同键的表，分发只认先命中者、另一条静默失效）
+    // 自定义键用 E 不用 H：macOS 的 ⌘H 是系统「隐藏」菜单加速器，录制器已拒收
     const HB_COMBO = mac
       ? { key: "b", code: "KeyB", ctrlKey: false, shiftKey: false, altKey: false, metaKey: true }
       : { key: "B", code: "KeyB", ctrlKey: true, shiftKey: true, altKey: false };
     await page.click('[data-testid="keymap-edit-hostbar"]');
     await page.waitForTimeout(200);
-    await pressCombo(page, { key: "h", code: "KeyH", ctrlKey: false, shiftKey: false, altKey: false, ...MOD });
+    await pressCombo(page, { key: "e", code: "KeyE", ctrlKey: false, shiftKey: false, altKey: false, ...MOD });
     await page.waitForTimeout(300);
     await page.click('[data-testid="keymap-edit-search"]');
     await page.waitForTimeout(200);
@@ -126,7 +127,7 @@ module.exports = {
     await page.waitForTimeout(300);
     ck.check("重置撞键被拒（toast 指明占用者）", await page.evaluate(() =>
       [...document.querySelectorAll(".toast.err")].some((t) => t.textContent.includes("冲突") && t.textContent.includes("搜索终端内容"))));
-    ck.check(`拒绝后主机栏保持 ${fmt("h")}、表内无同键`, (await keyTextOf(page, "hostbar")) === fmt("h")
+    ck.check(`拒绝后主机栏保持 ${fmt("e")}、表内无同键`, (await keyTextOf(page, "hostbar")) === fmt("e")
       && (await keyTextOf(page, "search")) === HB, `${await keyTextOf(page, "hostbar")} / ${await keyTextOf(page, "search")}`);
 
     if (!mac) {

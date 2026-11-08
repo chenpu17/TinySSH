@@ -2311,6 +2311,21 @@ impl SessionManager {
             return 0;
         };
         let mut n = 0usize;
+        // 终端命令：取消令牌只唤醒本地等待，远端 shell 里的进程仍在跑——用户点了
+        // 「停止」却看到命令继续输出。先按接管同口径 SIGINT→SIGQUIT（Shell），
+        // Fresh 通道交给下面的令牌取消即可。
+        let shells: Vec<(ExecId, handle::RunningExec)> = h
+            .running
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, r)| r.mode == ExecMode::Shell)
+            .map(|(id, r)| (id.clone(), r.clone()))
+            .collect();
+        for (id, r) in &shells {
+            let _ = h.stop_one(id, r).await;
+            n += 1;
+        }
         // exec：live_execs 里每个运行都有取消令牌；工具线程的 exec 会被唤醒并
         // 以 Cancelled 收尾，Agent 随之在工具边界停止。
         let execs: Vec<session_api::transport::tokio_util_sync::CancellationToken> =
@@ -3008,6 +3023,14 @@ impl SessionApi for SessionManager {
                         "send_keys 审批",
                     )?;
                     let _ = trace;
+                    // 审批期间可能接管/重连：批准只对批准时的现场有效，现场已变则
+                    // 作废，且不把会话级授权落表（否则后续按键会绕过新现场核实）。
+                    if *h.owner.lock().await == ControlOwner::Human {
+                        return Err(Error::ControlTakenByHuman);
+                    }
+                    if *h.state.lock().await == SessionState::Reconfirming {
+                        return Err(Error::ReconfirmingPending);
+                    }
                     h.send_keys_auth.lock().unwrap().insert(client_id.clone());
                     // 授权后本次按键照常执行（逐次写入留痕）
                 }
@@ -5991,6 +6014,16 @@ impl SessionManager {
             }
         }
         let _ = edited.take();
+        // 审批期间可能接管/重连：批准的是批准时的现场，现场已变则作废，
+        // 不因旧批准继续向远端写数据（与入口门同口径）。
+        if !ctx.is_human() {
+            if *h.owner.lock().await == ControlOwner::Human {
+                return Err(Error::ControlTakenByHuman);
+            }
+            if *h.state.lock().await == SessionState::Reconfirming {
+                return Err(Error::ReconfirmingPending);
+            }
+        }
 
         let tid = format!("t-{}", uuid::Uuid::new_v4());
         let handle = TransferHandle {

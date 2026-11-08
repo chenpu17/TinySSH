@@ -4,6 +4,7 @@
 // 例外：P2-b 输出触发器卡的草稿态是**面板本地**（TriggersCard 内聚，关面板即弃），
 // 与签发表单同工艺——设置类表单不该污染全局状态。
 import { useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   APP_VERSION,
   APPEARANCES, FONT_DEFAULT, FONT_MAX, FONT_MIN, PALETTES, SETTINGS_CATS,
@@ -137,6 +138,8 @@ interface SettingsPanelProps {
   enableCollab: () => void;
   /** rev-r47：GUI 内签发 Token（返回值仅此一次展示）；expiresDays=null 永不过期 */
   issueAgent: (id: string, label: string, expiresDays: number | null) => Promise<string>;
+  /** 未确认保存的一次性 Token 是否仍开着：宿主据此在关闭设置前拦一次（同凭据草稿守卫） */
+  onIssuedTokenPending: (pending: boolean) => void;
   /** rev-r47：吊销 Agent（token 立即失效；已建会话控制权不受影响） */
   revokeAgent: (id: string) => Promise<void>;
   // ④ 记录审计：数据在宿主拉取（打开分区/筛选变化/刷新），本面板只呈现
@@ -180,7 +183,7 @@ export function SettingsPanel({
   credLabel, setCredLabel, credPem, setCredPem, credPass, setCredPass,
   credBusy, credErr, setCredErr, credDraftTo, setCredDraftTo, discardCredDraft, submitNewIdentity, setConfirm,
   collab, mcp, collabEnabled, collabStateText, collabBusy, showAgentHelp, setShowAgentHelp,
-  openDisableDialog, retryDisableConvergence, enableCollab, issueAgent, revokeAgent,
+  openDisableDialog, retryDisableConvergence, enableCollab, issueAgent, onIssuedTokenPending, revokeAgent,
   autonomy, onToggleAutonomy,
   recordsRows, recordsFilter, recordsBusy, recordsExportBusy, onRecordsFilter, onRecordsRefresh, onRecordsExport,
   recordsHasMore, recordsMoreBusy, onRecordsMore, recordsSessionNames, recordsRetention, onChangeRecordsRetention,
@@ -193,9 +196,24 @@ export function SettingsPanel({
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentErr, setAgentErr] = useState<string | null>(null);
   const [issuedToken, setIssuedToken] = useState<{ id: string; token: string } | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [tokenCopyErr, setTokenCopyErr] = useState<string | null>(null);
+  // 一次性 Token 是面板本地态：宿主不知道它的存在，关闭路径就无从拦截。
+  // 显式上报「未确认保存」，让 closeSettings 在 Esc/✕/遮罩三条路上都能守一次。
+  useEffect(() => {
+    onIssuedTokenPending(!!issuedToken);
+  }, [issuedToken, onIssuedTokenPending]);
+  useEffect(() => { setTokenCopied(false); setTokenCopyErr(null); }, [issuedToken]);
   const [revokeArm, setRevokeArm] = useState<string | null>(null);
   // ② 自主模式：开启确认臂 + 每 Agent TTL 选择（面板本地临时态，与吊销臂同工艺）
   const [autonomyArm, setAutonomyArm] = useState<string | null>(null);
+  // 确认臂 5 秒自动收回（与终端菜单的二次确认同工艺）：臂一直挂着，用户去倒杯水
+  // 回来点一下「确认开启？」就进了自主模式——危险窗口不该无限期敞开。
+  useEffect(() => {
+    if (!autonomyArm) return;
+    const timer = setTimeout(() => setAutonomyArm(null), 5000);
+    return () => clearTimeout(timer);
+  }, [autonomyArm]);
   const [autonomyTtl, setAutonomyTtl] = useState<Record<string, string>>({});
   const submitIssueAgent = async () => {
     if (agentBusy) return;
@@ -216,7 +234,37 @@ export function SettingsPanel({
   };
   const doRevoke = async (id: string) => {
     setRevokeArm(null);
-    try { await revokeAgent(id); } catch { /* 明细刷新后如实反映 */ }
+    // 吊销失败必须可见：此前空 catch 吞掉错误，Agent 行原样还在，用户以为已吊销
+    try { await revokeAgent(id); } catch (e) { setAgentErr(friendlyError(e)); }
+  };
+  // 一次性 Token 复制：clipboard 可能不存在（非安全上下文/WebView 限制），
+  // 可选链后的 .then 会直接抛 TypeError——此前 catch 空转，按钮毫无反应。
+  const copyToken = async (text: string) => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
+      await navigator.clipboard.writeText(text);
+      setTokenCopied(true);
+      setTokenCopyErr(null);
+    } catch {
+      setTokenCopied(false);
+      setTokenCopyErr(t("复制失败——请手动选中上方 Token 复制"));
+    }
+  };
+  // 设置分类 tablist 键盘导航（WAI-ARIA tabs）：↑↓/←→ 循环、Home/End 首尾
+  const onNavKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
+    const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
+    if (!forward && !backward && e.key !== "Home" && e.key !== "End") return;
+    e.preventDefault();
+    const idx = SETTINGS_CATS.findIndex(([id]) => id === settingsCat);
+    const next = e.key === "Home" ? 0
+      : e.key === "End" ? SETTINGS_CATS.length - 1
+      : (idx + (forward ? 1 : -1) + SETTINGS_CATS.length) % SETTINGS_CATS.length;
+    const nextId = SETTINGS_CATS[next][0];
+    switchSettingsCat(nextId);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-testid="settings-cat-${nextId}"]`)?.focus();
+    });
   };
   return (
             <>
@@ -233,11 +281,12 @@ export function SettingsPanel({
                 </div>
                 {/* §231：单个对话框，左分类 + 右内容；外观/终端偏好即时预览，凭据显式提交 */}
                 <div className="settings-body">
-                  <nav className="settings-nav" role="tablist" aria-label={t("设置分类")}>
+                  <nav className="settings-nav" role="tablist" aria-label={t("设置分类")} onKeyDown={onNavKey}>
                     {SETTINGS_CATS.map(([id, label, desc]) => {
                       const Ic = settingsCatIcon[id];
                       return (
                         <button key={id} role="tab" data-testid={`settings-cat-${id}`}
+                          data-autofocus={settingsCat === id ? true : undefined}
                           aria-selected={settingsCat === id} className={settingsCat === id ? "on" : ""}
                           onClick={() => switchSettingsCat(id)}>
                           <span className="set-ic"><Ic size={15} /></span>
@@ -493,9 +542,12 @@ export function SettingsPanel({
                 </div>
                 </>)}
 
-                {settingsCat === "triggers" && (
+                {/* 草稿跨分类存活（审查轮 P2）：触发器卡是面板本地草稿态，切分类
+                    若卸载组件，未保存的编辑静默蒸发。常挂 + 隐藏：组件不卸载，
+                    切回来草稿还在；关设置仍按草稿语义丢弃。 */}
+                <div style={{ display: settingsCat === "triggers" ? undefined : "none" }}>
                   <TriggersCard load={loadTriggers} save={saveTriggers} />
-                )}
+                </div>
 
                 {settingsCat === "credentials" && (<>
                 {/* R41（§231/§238/§267）设置 → 凭据：创建/删除/授权使用**显式提交**
@@ -600,11 +652,16 @@ export function SettingsPanel({
                 </div>
                 </>)}
 
+                {/* 模型/技能卡同款跨分类存活：切走只隐藏不卸载，未保存的表单
+                    （模型服务、技能库草稿）在切回来时仍在。 */}
+                <div style={{ display: settingsCat === "agent" ? undefined : "none" }}>
+                  {/* 接真模型轮：内置 Agent 对话的模型服务（本卡草稿态面板本地） */}
+                  <AgentModelCard />
+                  {/* 提示词/技能资产化轮：附加提示词 + 技能库（改动即存 KV，面板本地） */}
+                  <PromptSkillsCard />
+                </div>
+
                 {settingsCat === "agent" && (<>
-                {/* 接真模型轮：内置 Agent 对话的模型服务（本卡草稿态面板本地） */}
-                <AgentModelCard />
-                {/* 提示词/技能资产化轮：附加提示词 + 技能库（改动即存 KV，面板本地） */}
-                <PromptSkillsCard />
                 {/* R42（§5 迁移表/§6.7）：Agent 接入、端点、Token 从协作面板移入
                     「设置 → Agent 接入」——新装未启用协作时主界面不再出现 MCP 配置。
                     C9（R43）：本面板是协作**启用生命周期**的人类专属入口（启用/停用）。 */}
@@ -654,8 +711,12 @@ export function SettingsPanel({
                   <div className="card" style={{ marginTop: 8, padding: 10, border: "1px solid var(--accent-glow)", borderRadius: 8 }} data-testid="agent-token-once">
                     <div style={{ fontSize: 12 }}><b>{t("Token 已签发（{0}）——仅此一次展示", issuedToken.id)}</b></div>
                     <pre className="mono" style={{ fontSize: 11, userSelect: "all", whiteSpace: "pre-wrap", margin: "6px 0" }}>{issuedToken.token}</pre>
-                    <div className="dim" style={{ fontSize: 11 }}>{t("现在复制并填入 Agent 配置；关闭后无法再次查看（可吊销后重签）。")}</div>
-                    <button className="ghost" style={{ marginTop: 6 }} data-testid="agent-token-close" onClick={() => setIssuedToken(null)}>{t("我已保存，关闭")}</button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="ghost" data-testid="agent-token-copy" onClick={() => void copyToken(issuedToken.token)}>{tokenCopied ? t("已复制") : t("复制 Token")}</button>
+                      <button className="ghost" data-testid="agent-token-close" onClick={() => setIssuedToken(null)}>{t("我已保存，关闭")}</button>
+                    </div>
+                    <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>{t("现在复制并填入 Agent 配置；关闭后无法再次查看（可吊销后重签）。")}</div>
+                    {tokenCopyErr && <div className="err" role="alert" style={{ fontSize: 11, marginTop: 4 }}>{tokenCopyErr}</div>}
                   </div>
                 )}
                 {mcp.agents_detail && mcp.agents_detail.length > 0 ? (
@@ -893,12 +954,30 @@ function TriggersCard({ load, save }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  // 读取失败 ≠ 没有规则：保存是整表替换，把失败画成空列表会让用户一点保存
+  // 就把已存规则清空。失败态禁用保存，只给「重试」。
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let dead = false;
-    load().then((rs) => { if (!dead) setRules(rs); }).catch(() => { if (!dead) setRules([]); });
+    setRules(null);
+    setLoadErr(null);
+    load()
+      .then((rs) => { if (!dead) setRules(rs); })
+      .catch((e) => { if (!dead) { setLoadErr(friendlyError(e)); setRules([]); } });
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reloadKey]);
+  if (loadErr) {
+    return (
+      <div className="set-card">
+        <h4>{t("输出触发器")}</h4>
+        <div className="err" data-testid="triggers-load-err">✕ {loadErr}</div>
+        <div className="set-desc">{t("读取失败时禁止保存——整表保存会用空列表覆盖已存规则。")}</div>
+        <button className="ghost" onClick={() => setReloadKey((k) => k + 1)}>{t("重试")}</button>
+      </div>
+    );
+  }
   if (rules === null) {
     return (
       <div className="set-card">
@@ -927,7 +1006,7 @@ function TriggersCard({ load, save }: {
     <div className="set-card">
       <h4>{t("输出触发器")}</h4>
       <div className="set-desc">
-        {t("终端输出按<b>完整行</b>匹配正则（匹配前剥离颜色码；跨行不命中——如实边界）。命中「通知」= toast + 标签铃；命中「发送键序」= 建审批卡等你裁决，批准才会发送，绝不静默自动执行。键序支持转义：\\r 回车、\\n 换行、\\t 制表、\\\\ 反斜杠。同规则同会话受冷却节流（5–3600 秒）；最多 32 条。")}
+        {t("终端输出按完整行匹配正则（匹配前剥离颜色码；跨行不命中——如实边界）。命中「通知」= toast + 标签铃；命中「发送键序」= 建审批卡等你裁决，批准才会发送，绝不静默自动执行。键序支持转义：\\r 回车、\\n 换行、\\t 制表、\\\\ 反斜杠。同规则同会话受冷却节流（5–3600 秒）；最多 32 条。")}
       </div>
       {rules.length === 0 && (
         <div className="empty" data-testid="triggers-empty">{t("还没有规则——用「新增规则」建第一条。")}</div>

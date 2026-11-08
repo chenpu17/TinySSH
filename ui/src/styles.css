@@ -328,6 +328,8 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
 }
 .tp-grip:hover, .tp-grip:active { background: var(--accent-fill); opacity: 0.45; }
 .task-panel.tp-full { position: absolute; inset: 0; width: auto; border-left: none; z-index: 55; }
+/* 拖拽上传悬在文件面板上：面板本体的落点高亮（覆盖层只铺终端区，此前面板无反馈） */
+.task-panel.drop-target { outline: 2px dashed var(--accent); outline-offset: -3px; }
 .tp-head {
   min-height: 40px; flex: none; display: flex; align-items: center; gap: 8px;
   padding: 0 10px; border-bottom: 1px solid var(--border); font-size: 12px;
@@ -632,6 +634,12 @@ input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus),
   background: transparent; border-color: var(--accent); color: var(--accent);
 }
 .toast.info { border-left: 3px solid var(--accent); }
+.toast .toast-x {
+  pointer-events: auto;
+  margin-left: 8px; padding: 0 3px; font-size: 13px; line-height: 1;
+  background: transparent; border: 0; color: var(--dim); cursor: pointer;
+}
+.toast .toast-x:hover { color: var(--text); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } } /* spinner 停转只留图形 */
@@ -1089,6 +1097,12 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 }
 .tab-bell { animation: bell-pulse 1.4s ease-in-out 3; }
 @media (prefers-reduced-motion: reduce) { .tab-bell { animation: none; } }
+/* 面板格 BEL/OSC 9：同一套 6s 自清节奏，只闪格标题条（正文块不动，避免干扰阅读）；
+   减弱动效时退化为静态光环，6s 后由脚本摘掉 .bell */
+.tmux-cell.bell .tmux-cell-head { animation: bell-pulse 1.4s ease-in-out 3; }
+@media (prefers-reduced-motion: reduce) {
+  .tmux-cell.bell .tmux-cell-head { animation: none; box-shadow: inset 0 0 0 2px var(--accent-soft); }
+}
 /* R27（§7.4）：关闭改真按钮——键盘可达+focus-visible；圆形药丸内嵌钮，
    默认收 75% 存在感，悬停满色（七轮：分屏钮已删，选择器只留 .tab-x） */
 .tab-x {
@@ -1765,6 +1779,12 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
    十轮：84px 安全区收进 .native-mac（Overlay 为 mac 专属；Windows/Linux 走原生标题栏，
    预留位是死缩进） */
 .native-chrome.native-mac .titlebar { padding-left: 84px; }
+/* 专注模式但窗口未真正全屏（启动恢复被系统拒绝的瞬间、用户从绿灯/Ctrl⌘F/Esc
+   离开全屏的过渡期）：标题区被 .focus-mode 藏掉，Overlay 红绿灯仍悬浮在窗口
+   左上，标签条若从 10px 起排会被三个圆钮压住。过渡期给标签行同样的 84px 安全区；
+   正常路径下 App 的 isFullscreen 跟踪会立即把专注模式收回常规 chrome（红绿灯
+   落回标题栏安全区），所以这里只是兜底，不停留。 */
+.native-chrome.native-mac .focus-mode.focus-windowed .tabbar-row { padding-left: 84px; }
 /* macOS 字体平滑（用户反馈「文字有点模糊」）：body 上的 -webkit-font-smoothing:
    antialiased 会强制灰度抗锯齿，在 macOS 上把 14px/430 的正文压细、边缘发虚；
    系统默认（auto / subpixel-antialiased）更实。该属性只影响 macOS，Windows/
@@ -2947,6 +2967,9 @@ button.mon-sw.on:not(:disabled):hover { color: var(--accent); border-color: var(
   background: color-mix(in srgb, var(--accent) 6%, transparent);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 编排视图待审批提示可点开协作面板：按钮化后保持原卡片观感 */
+button.ag-tmux.ag-link { display: block; width: calc(100% - 24px); text-align: left; cursor: pointer; }
+button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); }
 .ag-scroll { flex: 1; overflow-y: auto; padding: 10px 12px; min-height: 0; }
 .ag-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; }
 .msg-row { display: flex; margin: 8px 0; }
@@ -3148,6 +3171,10 @@ button.mon-sw.on:not(:disabled):hover { color: var(--accent); border-color: var(
 .tw-cell-head {
   flex: none; display: flex; align-items: center; gap: 6px;
   padding: 3px 8px; border-bottom: 1px solid var(--border); min-width: 0;
+}
+/* 头部是键盘可达的键入入口（Tab 聚焦、Enter 进入），焦点必须可见 */
+.tw-cell-head:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
 }
 .tw-name {
   font-size: 12px; font-weight: 600; min-width: 0;

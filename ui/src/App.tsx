@@ -20,7 +20,7 @@ import { applyCheckpoint, createOutputFeed, setCursorDefault } from "./terminal/
 import type { OutputFeed } from "./terminal/checkpoint";
 import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
-import { installMouseModeGuard } from "./terminal/mouse-mode-guard";
+import { installMouseModeGuard, resetMouseReporting } from "./terminal/mouse-mode-guard";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
@@ -65,6 +65,13 @@ if (inTauri) {
   if (isMacPlatform()) document.documentElement.classList.add("native-mac");
   if (isWindowsPlatform()) document.documentElement.classList.add("native-win");
 }
+// 专注模式固定键的展示文案：macOS 的 F11 默认被系统「显示桌面」占用，需按 Fn+F11；
+// Windows/Linux 直接 F11。凡面向用户的提示都走这里，别再写死「F11」。
+const FOCUS_KEY_LABEL = isMacPlatform() ? "Fn+F11" : "F11";
+
+// 终端 URL 裸单击的提示节流（5s 一次）：链接已下划线可辨，但远端可伪造输出诱导
+// 点击，故未按修饰键只提示不打开；节流避免连点时刷屏。
+let linkHintAt = 0;
 import { getVersion } from "@tauri-apps/api/app";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
@@ -89,7 +96,7 @@ import {
   runBench, SEARCH_OPTS, SETTING_AUTO_LOCAL, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
   SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
   SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK,
-  stateLabel, stampLocal, stopOutcomeText,
+  stateLabel, stampLocal, stopOutcomeText, isImeComposing,
   SPLIT_DEGRADE_BELOW, SPLIT_DEGRADE_BELOW_H, SPLIT_FRAC_MAX, SPLIT_FRAC_MIN,
   SPLIT_RECOVER_AT, SPLIT_RECOVER_AT_H, tauriListen, THEMES, ThemePreset,
   TransferCard, themeById, TZ_NOTE, useDialogFocus,
@@ -145,7 +152,7 @@ const SETTING_TMUX_PREFS = "tmux.v1.prefs";
 type PaneTermEntry = {
   sid: string; paneId: number; name: string;
   term: Terminal; cell: HTMLDivElement; body: HTMLDivElement;
-  zoomBtn: HTMLButtonElement;
+  zoomBtn: HTMLButtonElement; search: SearchAddon;
   webgl: WebglAddon | null; liga: LigaturesAddon | null; bornAt: number; alive: boolean; deadWarned: boolean;
 };
 
@@ -411,8 +418,6 @@ export default function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [measureTabbar]);
-  // 会话增减不改 tabbar 盒子（RO 不触发）——单独补测一次，不再为此拆掉重建 observer
-  useEffect(() => { measureTabbar(); }, [measureTabbar, sessions.length]);
   useEffect(() => {
     // 激活标签滚入视野（键盘循环切换时不再落到视野外）。两个补滚成因：
     // ① 滚动钮显隐（tabScroll 状态）翻转会改行内布局并回钳 scrollLeft，首滚可能
@@ -448,6 +453,9 @@ export default function App() {
   // R33 §246：按路径下载入口移入文件面板（默认收起）
   const [byPathOpen, setByPathOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // 拖放落点预览：文件面板与终端区的目标目录不同（面板=正在浏览的目录），覆盖层
+  // 文案必须跟着指针说真话；面板本身也给一圈虚线高亮。
+  const [dragZone, setDragZone] = useState<"term" | "panel">("term");
   const [downloadPath, setDownloadPath] = useState("");
   // 远程文件浏览器（T41 FR-7；C4 R30 路径/元数据；R31 §348/§350 导航/选择/持久化）：
   // 浏览状态按 session ID 保存（切走快照、切回恢复——路径/选择/历史）；筛选/隐藏/排序为
@@ -537,10 +545,19 @@ export default function App() {
     action?: { label: string; title: string; run: () => void }) => {
     const id = ++toastSeq.current;
     setToasts((cur) => [...cur.slice(-3), { id, kind, text, action }]);
-    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), action ? 8000 : 2600);
+    // 错误常常是长句（后端原文/shell 失败原因），2.6s 读不完且无法复制；给 6s
+    // 并允许点 × 手动关闭（栈本身仍 pointer-events:none，不挡背后操作）。
+    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), action ? 8000 : kind === "err" ? 6000 : 2600);
   }, []);
   // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
   const [searchOpen, setSearchOpen] = useState(false);
+  // 搜索所属会话：切标签/关标签时据此清旧高亮，关闭搜索时焦点也回到“发起搜索”的
+  // 标签（tmux 格子记忆/放大态由 focusTermFor 恢复，不再固定主终端）。
+  const searchSidRef = useRef<string | null>(null);
+  // 查找目标：tmux 面板格聚焦时搜该格，而不是永远搜背后的主视图。键 =
+  // "main" 或 `${sid}:${paneId}`；searchAddonRef 指向当前真正被搜的实例。
+  const searchTargetKeyRef = useRef<string | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
   // 首次接入提示（悬浮条，不占终端行——写进流会带偏 shell 光标视角）
   const [attachHint, setAttachHint] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -568,7 +585,7 @@ export default function App() {
   // 写入前的询问卡（同刻新请求覆盖旧待决——last-wins，预览只展最新一条）
   const [osc52Ask, setOsc52Ask] = useState<{ sid: string; text: string; source?: string } | null>(null);
   const osc52AskRef = useRef<HTMLDivElement | null>(null);
-  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun"; paneKey?: string } | null>(null);
+  const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun" | "wall"; paneKey?: string } | null>(null);
   // P0 终端品质轮：粘贴危险形态的**廉价预筛**——命中词根才过 Rust 扫描（判定唯一在
   // Rust：approval::scan_dangerous 的同一张内置 deny 表 + tree-sitter 逐段 + wrapper
   // 前缀；这里只决定「要不要问」，不做第二份规则）。漏筛=少一次提示，误筛=多一次 IPC。
@@ -768,6 +785,10 @@ export default function App() {
   // 十四轮：标签重命名——sid → 自定名（覆盖 host_name 展示；复制标签页后同名「本机×2」
   // 无法区分）。会话生命周期内有效（会话本就不跨重启存活），不入 vault。
   const [tabNames, setTabNames] = useState<Record<string, string>>({});
+  // 会话增减不改 tabbar 盒子（RO 不触发）——单独补测一次，不再为此拆掉重建 observer。
+  // 重命名（tabNames）同样只改标签宽高、不动容器盒子，必须并进依赖：否则「还有 N 个」
+  // 箭头与边缘遮罩要等滚动或改窗宽才追上。
+  useEffect(() => { measureTabbar(); }, [measureTabbar, sessions.length, tabNames]);
   const [renaming, setRenaming] = useState<{ sid: string; value: string } | null>(null);
   // 提交重命名：空串/纯空白 = 清除自定名回退 host_name（双击重命名与右键菜单共用）
   const commitTabRename = (sid: string, value: string) => {
@@ -854,6 +875,12 @@ export default function App() {
       try { localStorage.setItem("ui.recentsHidden", JSON.stringify(next)); } catch { /* 隐私模式忽略 */ }
       return next;
     });
+    // 隐藏行立即消失且只能靠再连一次恢复——给一次可撤销的提示，误点有退路
+    if (hidden) {
+      pushToast("info", t("已从最近连接隐藏——重新连接该主机会自动恢复显示"), {
+        label: t("撤销"), title: t("把它恢复到最近连接列表"), run: () => setRecentHidden(hostId, false),
+      });
+    }
   };
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
@@ -956,6 +983,10 @@ export default function App() {
   const [showAddHost, setShowAddHost] = useState(false);
   // 十七轮「快速连接」：不存主机一次性建连（内存态，重启即失）
   const [showQuickConnect, setShowQuickConnect] = useState(false);
+  // 快速连接在途：取消/✕/Esc 必须真的中止 attempt（此前只关弹窗，慢主机数秒后
+  // 仍会冒出「已连接」标签）。attempt 的临时主机 id 固定为 quick-pending。
+  const quickConnectingRef = useRef(false);
+  const noteQuickConnecting = useCallback((b: boolean) => { quickConnectingRef.current = b; }, []);
   // 十九轮：命令面板（⌘K / Ctrl+K / 工具栏按钮）
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -1054,10 +1085,28 @@ export default function App() {
   }, []);
   const zenStripAutoRef = useRef(zenStripAuto);
   zenStripAutoRef.current = zenStripAuto;
+  // 原生全屏态（专注模式的真实前提）：focusMode 会隐藏 44px 标题区，而 macOS
+  // titleBarStyle=Overlay 的红绿灯是系统悬浮钮，不由 HTML 隐藏——专注态若没真正
+  // 全屏（启动恢复被系统拒绝、用户从绿灯/Ctrl⌘F/Esc 退出全屏），三个圆钮会压在
+  // 标签条/终端首行上。跟踪 isFullscreen：非全屏的专注态收回 chrome；过渡期由
+  // focus-windowed 类给标签条留出 84px 红绿灯安全区（见 styles.css）。
+  const [nativeFullscreen, setNativeFullscreen] = useState(false);
+  const nativeFullscreenRef = useRef(false);
+  const focusModeRef = useRef(focusMode);
+  focusModeRef.current = focusMode;
+  const focusFsIntentRef = useRef<{ at: number; want: boolean } | null>(null);
+  const syncNativeFullscreen = useCallback((fs: boolean) => {
+    if (nativeFullscreenRef.current === fs) return;
+    nativeFullscreenRef.current = fs;
+    setNativeFullscreen(fs);
+  }, []);
   // R13 统一分发：keymap 解析（actions.ts）与执行分离；ref 持有最新执行器，
   // 捕获层 effect 与 xterm 键处理器都经它走同一条路。modal/主机栏开合同步 ref。
   const dispatchRef = useRef<(a: AppAction) => boolean>(() => false);
   const modalRef = useRef(false);
+  // 排除「视图型覆盖层」（监控大屏 / tmux 墙）后的对话框模态：这两者是可被设置
+  // 面板盖住的视图（55-58 家族刻意排在设置之下），不能挡住 rail 设置钮
+  const dialogModalRef = useRef(false);
   const hostbarOpenRef = useRef(hostbarOpen);
   hostbarOpenRef.current = hostbarOpen;
   const hostbarWidthRef = useRef(hostbarWidth);
@@ -1076,7 +1125,11 @@ export default function App() {
   // 退出专注时紧凑菜单按钮会随 focusMode 卸载，焦点会落到 body；ref 间接引用
   // 下方的 focusTermFor，退出后把焦点还给该标签上次落焦的终端/格子。
   const focusTermForRef = useRef<(sid: string) => void>(() => {});
-  const applyFocus = useCallback((on: boolean, announce = true) => {
+  const applyFocus = useCallback((on: boolean, announce = true, opts?: { syncWindow?: boolean }) => {
+    // syncWindow=false：系统侧已经/正在离开全屏（绿灯、Esc、启动恢复失败），只收
+    // chrome，不再反向调用 setFullscreen——否则会把用户刚退出的窗口又推进全屏。
+    const syncWindow = opts?.syncWindow !== false;
+    if (syncWindow) focusFsIntentRef.current = { at: performance.now(), want: on };
     setFocusMode(on);
     if (!on) {
       setFocusHostMenu(false); // 退出专注：紧凑连接菜单没有宿主了
@@ -1092,13 +1145,20 @@ export default function App() {
       if (announce) pushToast("info", on ? t("已进入专注模式（浏览器演示不切系统全屏）· 点右上角专注图标返回") : t("已退出专注模式"));
       return;
     }
+    if (!syncWindow) return;
     getCurrentWindow().setFullscreen(on)
       .then(() => {
+        // macOS 原生全屏是动画过渡：延迟探测校准真实态（onResized 的判定同基准）
+        setTimeout(() => {
+          void getCurrentWindow().isFullscreen()
+            .then((fs) => syncNativeFullscreen(fs))
+            .catch(() => {});
+        }, 600);
         if (announce && on && !focusHintShownRef.current) {
           focusHintShownRef.current = true;
           pushToast("info", zenStripAutoRef.current
-            ? t("专注模式：F11 退出 · 鼠标移到顶部唤出标签")
-            : t("专注模式：F11 退出 · 标签条常驻（Ctrl+K 可切自动隐藏）"));
+            ? t("专注模式：{0} 退出 · 鼠标移到顶部唤出标签", FOCUS_KEY_LABEL)
+            : t("专注模式：{0} 退出 · 标签条常驻（{1} 可切自动隐藏）", FOCUS_KEY_LABEL, formatBinding(keymapRef.current.palette, isMacPlatform())));
         }
       })
       .catch((e) => {
@@ -1106,19 +1166,78 @@ export default function App() {
         try { localStorage.setItem("ui.focus", on ? "0" : "1"); } catch { /* 忽略 */ }
         pushToast("err", t("专注模式切换失败：{0}", errMsg(e).slice(0, 80)));
       });
-  }, [pushToast]);
+  }, [pushToast, syncNativeFullscreen]);
+
+  // 原生全屏跟踪：专注模式的前提是全屏，但用户可用绿灯/Ctrl⌘F/Esc 在系统层退出。
+  // 非全屏的专注态立即收回 chrome（红绿灯会压在标签条/终端上），而不是留下一个
+  // 「专注模式但非全屏」的半态。刚发起切换的 2s 是系统动画/启动补投窗口，不据此
+  // 回滚；Windows/Linux 无红绿灯，但同一语义（专注=全屏）一并成立。
+  useEffect(() => {
+    if (!inTauri) return;
+    const win = getCurrentWindow();
+    let alive = true;
+    let un: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const probe = () => {
+      void win.isFullscreen().then((fs) => {
+        if (!alive) return;
+        syncNativeFullscreen(fs);
+        if (fs || !focusModeRef.current) return;
+        const intent = focusFsIntentRef.current;
+        if (intent && performance.now() - intent.at < 2000) return;
+        applyFocus(false, false, { syncWindow: false });
+      }).catch(() => {});
+    };
+    // 拖窗/缩放期间 onResized 逐 tick 触发——300ms 防抖，语义同 WinControls。
+    const probeSoon = () => { if (timer) clearTimeout(timer); timer = setTimeout(probe, 300); };
+    probe();
+    win.onResized(() => probeSoon())
+      .then((f) => { un = () => { try { void f(); } catch { /* 已卸载 */ } }; })
+      .catch(() => {});
+    return () => { alive = false; un?.(); if (timer) clearTimeout(timer); };
+  }, [applyFocus, syncNativeFullscreen]);
 
   // 启动恢复：chrome 态已由 useState 初值同步恢复；系统全屏在首帧后补投（invoke
   // 异步，可能闪一帧任务栏——与缩放首帧权衡同理）。恢复给一次性轻提示，用户重开
-  // 窗口时不必回想「怎么退出去」。
+  // 窗口时不必回想「怎么退出去」。补投失败或系统拒绝全屏时必须回滚 chrome——否则
+  // 会停在「专注模式但非全屏」，红绿灯直接压在标签条上（用户截图实测）。
   useEffect(() => {
     if (!inTauri) return;
+    const win = getCurrentWindow();
     let on = false;
     try { on = localStorage.getItem("ui.focus") === "1"; } catch { /* 忽略 */ }
-    if (!on) return;
-    getCurrentWindow().setFullscreen(true)
-      .then(() => pushToast("info", t("已恢复专注模式 · F11 退出")))
-      .catch(() => {});
+    if (!on) {
+      void win.isFullscreen().then(syncNativeFullscreen).catch(() => {});
+      return;
+    }
+    focusFsIntentRef.current = { at: performance.now(), want: true };
+    const rollback = () => {
+      setFocusMode(false);
+      try { localStorage.setItem("ui.focus", "0"); } catch { /* 忽略 */ }
+    };
+    win.setFullscreen(true)
+      .then(() => {
+        // 系统可能忽略/延迟全屏请求：动画结束后复核，没进全屏就回滚 chrome。
+        // 成功提示也放到复核之后，避免先报「已恢复」再报「已退出」自相矛盾。
+        setTimeout(() => {
+          void win.isFullscreen().then((fs) => {
+            syncNativeFullscreen(fs);
+            if (fs) {
+              pushToast("info", t("已恢复专注模式 · {0} 退出", FOCUS_KEY_LABEL));
+              return;
+            }
+            rollback();
+            pushToast("info", t("未能恢复全屏，已退出专注模式"));
+          }).catch(() => {
+            // 探测失败（IPC 瞬断）不等于全屏失败：保持现状，按成功提示
+            pushToast("info", t("已恢复专注模式 · F11 退出"));
+          });
+        }, 700);
+      })
+      .catch(() => {
+        rollback();
+        pushToast("err", t("未能恢复专注模式（系统全屏不可用）"));
+      });
     // 仅首帧：focusMode 后续变化都走 applyFocus，此处不依赖它
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1399,13 +1518,28 @@ export default function App() {
   // 凭据守卫（六轮 D6-4 同族）：Esc/✕ 对未提交的私钥草稿做双击确认——第一次
   // 只提示，第二次才真清（设置凭据分区拦截卡的轻量版；纯浏览不拦）。
   const settingsCredGuardRef = useRef(false);
+  // 一次性 Agent Token 与凭据草稿同族：Token 只在面板本地展示一次，关掉设置就再也
+  // 拿不到（只能吊销重签）。面板上报「仍开着」，关闭路径先拦一次再放行。
+  const settingsTokenPendingRef = useRef(false);
+  const settingsTokenGuardRef = useRef(false);
+  const noteIssuedTokenPending = useCallback((pending: boolean) => {
+    settingsTokenPendingRef.current = pending;
+  }, []);
   const closeSettings = useCallback(() => {
+    if (settingsTokenPendingRef.current && !settingsTokenGuardRef.current) {
+      settingsTokenGuardRef.current = true;
+      escKeepFocusRef.current = true; // Esc 只提示不关：焦点留在对话框
+      pushToast("info", t("Agent Token 仍只展示这一次——关闭设置后就无法再查看（可吊销重签）。再按一次 Esc 或 ✕ 确认放弃"));
+      return;
+    }
     if ((credPem.trim() !== "" || credPass.trim() !== "") && !settingsCredGuardRef.current) {
       settingsCredGuardRef.current = true;
+      escKeepFocusRef.current = true;
       pushToast("info", t("凭据表单里有未提交的私钥内容——再按一次 Esc 或 ✕ 确认丢弃"));
       return;
     }
     settingsCredGuardRef.current = false;
+    settingsTokenGuardRef.current = false;
     setCredPem(""); setCredPass(""); setCredLabel("");
     setCredNewErr(null); setCredNewOk(null); setCredNewOpen(false); setCredDraftTo(null);
     setShowSettings(false);
@@ -1417,6 +1551,7 @@ export default function App() {
   const closeAddHost = useCallback(() => {
     if (addHostCredDirty.value && !addHostGuardRef.current) {
       addHostGuardRef.current = true;
+      escKeepFocusRef.current = true;
       pushToast("info", t("表单里有未提交的凭据（密码/私钥/口令）——再按一次 Esc 或 ✕ 确认丢弃"));
       return;
     }
@@ -1880,6 +2015,9 @@ export default function App() {
   const paneZoomRef = useRef<{ sid: string; name: string } | null>(null);
   // 建格监听里触发的重排走 ref（layoutTmuxPanes 定义在建格之后）
   const paneRelayoutRef = useRef<() => void>(() => {});
+  // 最大化/还原只改 CSS 盒尺寸，xterm 不会自己跟——布局后必须显式 fit（主视图
+  // resize PTY；格子 tmux_pane_resize），否则放大后留白、远端 TUI 仍按旧尺寸绘制。
+  const paneFitRef = useRef<() => void>(() => {});
   // 工作空间落盘补写走 ref（writeWorkspaceSessions 定义在组件更后；排版/拖拽路径经此
   // 触发 1.5s 防抖写——布局树是 ref 态，不触发 sessions state，轮询回流盖不住拖拽）
   const wsSaveKickRef = useRef<() => void>(() => {});
@@ -1937,6 +2075,10 @@ export default function App() {
       const same = cur && cur.sid === sessionSid && cur.name === MAIN_KEY;
       paneZoomRef.current = same ? null : { sid: sessionSid, name: MAIN_KEY };
       paneRelayoutRef.current();
+      paneFitRef.current();
+      // 缩放会隐藏/显示格子并卸掉原落焦元素：布局后把焦点还给当前可见终端
+      // （放大时即主视图，还原时按 paneLastFocus 记忆回落），键盘输入不丢一帧。
+      focusTermForRef.current(sessionSid);
     });
     const detachBtn = document.createElement("button");
     detachBtn.className = "ghost icon-btn pane-tag-btn main-detach-btn";
@@ -1953,6 +2095,8 @@ export default function App() {
           await invoke("tmux_detach", { sid: sessionSid });
           pushToast("ok", t("已从 tmux 分离：{0}（tmux 会话仍在远端运行）", name));
           void refreshListsRef.current();
+          // 按钮随 tmux 视图卸载，焦点会掉到 body：明确还给主视图终端。
+          requestAnimationFrame(() => focusTermForRef.current(sessionSid));
         } catch (e) {
           pushToast("err", t("分离 tmux 失败：{0}", errMsg(e)));
         }
@@ -2008,6 +2152,17 @@ export default function App() {
     // 远端 TUI 退出后残留鼠标上报：离开备用屏/回到提示符时自动关协议（KI-001 补强）
     installMouseModeGuard(term);
     term.open(el);
+    // 原生菜单/系统粘贴落到 xterm textarea 时，xterm 自带的 DOM paste 监听会直接
+    // triggerDataEvent → onData，绕过 pasteTextInto 的危险扫描、多行确认与广播抑制
+    // （macOS NSMenu 的 ⌘V 在 WebView keydown 之前就被消费，自定义键处理器收不到）。
+    // 在终端容器捕获阶段统一收口：preventDefault + 停传后走人类粘贴同一入口。
+    el.addEventListener("paste", (ev) => {
+      const e = ev as ClipboardEvent;
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (text) pasteTextIntoRef.current(term, sessionSid, text);
+    }, true);
     // 精确触摸板 1:1 直跟，经典滚轮保留 100ms 补间（见 terminal/scroll.ts）。
     installAdaptiveSmoothScroll(term, el, isMacPlatform() ? 0 : 100);
     // 扩展字符宽度（P0 终端品质轮）：CJK/emoji 宽度按 Unicode 11 表判定——xterm 内置
@@ -2039,11 +2194,25 @@ export default function App() {
     // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
     const searchAddon = new SearchAddon();
     searchAddon.onDidChangeResults((r) => {
-      setSearchResults({ resultCount: r.resultCount, resultIndex: r.resultIndex });
+      // 只更新「当前正在搜的那个终端」的计数：面板格与主视图各有一个实例，
+      // 不设门会让背后实例的回调把面板查找的 1/N 覆盖掉
+      if (searchAddonRef.current === searchAddon) {
+        setSearchResults({ resultCount: r.resultCount, resultIndex: r.resultIndex });
+      }
     });
     term.loadAddon(searchAddon);
-    // 链接识别（T16）：OSC8 超链接 + URL 自动检测；点击经 open_url 打开（仅 http/https）
-    term.loadAddon(new WebLinksAddon((_ev, url) => {
+    // 链接识别（T16）：OSC8 超链接 + URL 自动检测；**带修饰键**的单击经 open_url
+    // 打开（仅 http/https）。终端输出是远端可控内容，裸单击即拉起浏览器给了钓鱼面
+    // （主流终端同为 Ctrl/Cmd+单击）；未按修饰键时给一次提示，不静默。
+    term.loadAddon(new WebLinksAddon((ev, url) => {
+      if (!(ev.metaKey || ev.ctrlKey)) {
+        const now = Date.now();
+        if (now - linkHintAt > 5000) {
+          linkHintAt = now;
+          pushToast("info", t("链接未打开：按住 {0} 再单击（终端输出可被远端伪造，避免误点）", isMacPlatform() ? "⌘" : "Ctrl"));
+        }
+        return;
+      }
       if (inTauri) void invoke("open_url", { url }).catch(() => {});
       else window.open(url, "_blank");
     }));
@@ -2237,9 +2406,12 @@ export default function App() {
     let deadWarned = false;
     term.onData((d) => {
       // 触摸板/鼠标悬停防护：远端开启 any-motion（1003）后，无按键移动会被
-      // xterm 编码成 SGR 报告；应用退出而模式未复位时，这些报告会原样进 PTY
+      // xterm 编码成 SGR/X10 报告；应用退出而模式未复位时，这些报告会原样进 PTY
       // 并被 shell 回显成满屏 `35;x;yM`。只丢弃无按键移动，点击/拖动/滚轮保留。
+      // 普通屏里出现移动报告几乎必然是残留协议（真正需要 hover 的 TUI 都在备用屏）：
+      // 顺手关掉协议，后续滚轮/点击不再继续灌报文（无 shell 集成的场景也能自愈）。
       const data = stripMotionOnlyMouseReports(d);
+      if (data !== d && term.buffer.active.type === "normal") resetMouseReporting(term);
       if (!data) return;
       // 死会话/断线输入拦截（P2-7 + R26 §6.4）：PTY 已死（含自动重连中——通道
       // 不存在），键入只会静默进黑洞或排队给未来连接——明说，不假装
@@ -2308,6 +2480,9 @@ export default function App() {
       const same = cur && cur.sid === sid && cur.name === entry.name;
       paneZoomRef.current = same ? null : { sid, name: entry.name };
       paneRelayoutRef.current();
+      paneFitRef.current();
+      // 同主视图缩放：还原后焦点回到该格（仍可见），放大时落在被放大的格上。
+      focusTermForRef.current(sid);
     });
     const closeBtn = document.createElement("button");
     closeBtn.className = "ghost icon-btn tmux-cell-close";
@@ -2337,9 +2512,25 @@ export default function App() {
     // tmux 格子同样防残留上报（tmux 自身退出/崩溃时 1003 可能留着）
     installMouseModeGuard(term);
     term.open(body);
+    // 与主终端同一收口：系统粘贴不得绕过 pasteTextInto（危险/多行确认、面板格子存活门）。
+    body.addEventListener("paste", (ev) => {
+      const e = ev as ClipboardEvent;
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (text) pasteTextIntoRef.current(term, sid, text, key);
+    }, true);
     installAdaptiveSmoothScroll(term, body, isMacPlatform() ? 0 : 100);
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
+    // 面板格也有查找（与主终端同款实例）：⌘F 聚焦哪格就搜哪格，不再只搜背后主视图
+    const searchAddon = new SearchAddon();
+    searchAddon.onDidChangeResults((r) => {
+      if (searchAddonRef.current === searchAddon) {
+        setSearchResults({ resultCount: r.resultCount, resultIndex: r.resultIndex });
+      }
+    });
+    term.loadAddon(searchAddon);
     let webgl: WebglAddon | null = null;
     let liga: LigaturesAddon | null = null;
     const glInUse = [...termsRef.current.values()].filter((x) => x.webgl).length
@@ -2377,7 +2568,32 @@ export default function App() {
       Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
     });
     const key = `${sid}:${paneId}`;
-    const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, zoomBtn, webgl, liga, bornAt: performance.now(), alive: true, deadWarned: false };
+    // 面板格同样接 BEL / OSC 9（与主终端同一套开关与失焦门）：此前只有主视图会
+    // 闪标签/发通知，面板里跑的长命令结束完全无声。格子标题亮 6s 作为就地信号。
+    let paneBellLit = false;
+    const paneBell = (body: string) => {
+      if (!paneBellLit) {
+        paneBellLit = true;
+        cell.classList.add("bell");
+        setTimeout(() => { paneBellLit = false; cell.classList.remove("bell"); }, 6000);
+      }
+      if (!bellNotifyRef.current || !inTauri) return;
+      if (document.hasFocus()) return;
+      const now = Date.now();
+      if (now - (lastBellNotifRef.current.get(key) ?? 0) < 10_000) return;
+      lastBellNotifRef.current.set(key, now);
+      void (async () => {
+        const host = sessionsRef.current.find((x) => x.id === sid)?.host_name ?? t("该会话");
+        try {
+          let granted = await isPermissionGranted();
+          if (!granted) granted = (await requestPermission()) === "granted";
+          if (granted) sendNotification({ title: `🔔 ${host} · ${name}`, body });
+        } catch { /* 通知失败静默——格子标题闪烁仍在 */ }
+      })();
+    };
+    term.onBell(() => paneBell(t("终端响铃（BEL）：远端可能有命令完成或需要关注")));
+    term.parser.registerOscHandler(9, (data) => { paneBell(data.slice(0, 200) || t("远端通知")); return true; });
+    const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, zoomBtn, search: searchAddon, webgl, liga, bornAt: performance.now(), alive: true, deadWarned: false };
     // ⌘ 组合（mac）：复制/粘贴/全选作用于本格，其余 ⌘ 不进格子通道（主终端同口径）
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown" || !ev.metaKey) return true;
@@ -2399,7 +2615,9 @@ export default function App() {
     });
     term.onData((d) => {
       // 同主终端：丢弃触摸板/悬停产生的无按键移动报告，避免灌进 tmux 面板。
+      // 普通屏里的移动报告按残留协议处理（关掉后续报文），备用屏的 TUI 不受影响。
       const data = stripMotionOnlyMouseReports(d);
+      if (data !== d && term.buffer.active.type === "normal") resetMouseReporting(term);
       if (!data) return;
       if (!entry.alive) {
         warnDeadPane(entry);
@@ -2751,7 +2969,55 @@ export default function App() {
           broadcastSendRef.current(s0, seq);
           return;
         }
-        if (!ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        if (ev.metaKey || ev.altKey) return;
+        if (!ev.ctrlKey && !(ev.key === "Insert" && ev.shiftKey)) return;
+        // Windows/Linux 键盘剪贴板：终端聚焦时 Ctrl+C/V 会先被本层编码成 \x03/\x16，
+        // 键盘复制粘贴实际不可用。按 Windows Terminal 惯例接管：Ctrl+C 有选区复制、
+        // 无选区仍是 SIGINT；Ctrl+V / Ctrl+Shift+V / Shift+Insert 走人类粘贴同一入口。
+        if (!isMacPlatform() && !ev.metaKey && !ev.altKey) {
+          const key = ev.key.toLowerCase();
+          const focusedTerm = paneHit?.term ?? termsRef.current.get(sidRef.current ?? "")?.term;
+          const paneKey = paneHit ? `${paneHit.sid}:${paneHit.paneId}` : undefined;
+          const copy = () => {
+            const sel = focusedTerm?.getSelection() ?? "";
+            if (sel) {
+              Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
+              return true;
+            }
+            return false;
+          };
+          const paste = () => {
+            const sid = paneHit?.sid ?? sidRef.current;
+            if (!focusedTerm || !sid) return;
+            Promise.resolve(inTauri ? clipboard.readText() : navigator.clipboard?.readText())
+              .then((txt) => { if (txt) pasteTextIntoRef.current(focusedTerm, sid, txt, paneKey); })
+              .catch(() => {});
+          };
+          const shiftInsert = ev.key === "Insert" && ev.shiftKey;
+          if (shiftInsert || (ev.ctrlKey && key === "v")) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            paste();
+            return;
+          }
+          const explicitCopy = ev.ctrlKey && ev.shiftKey && key === "c";
+          if (explicitCopy || (ev.ctrlKey && !ev.shiftKey && key === "c")) {
+            if (copy() || explicitCopy) {
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              return;
+            }
+            // Ctrl+C 无选区：继续走下面的 C0 编码（SIGINT）
+          }
+        }
+        // Ctrl+1…9 是固定切标签键（actions.ts tab-switch）。数字不在可重绑键位表里，
+        // 直发层不能把 Ctrl+2…8 编成 NUL/ESC/FS…/DEL 抢先吞掉；stopPropagation
+        // （不 immediate）挡住 xterm 目标，同节点后注册的 action 层仍能切标签。
+        if (!isMacPlatform() && !ev.shiftKey && !ev.altKey && /^[1-9]$/.test(ev.key)) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
         // 键位表豁免（键位配置轮）：组合被 ui.keymap.v1 占用即豁免——不再编码 C0
         // 直发 PTY，动作层（同节点后注册的监听器，stopPropagation 挡不住=正是目的）
         // 接手。bindingOf 以平台主修饰键判定：mac 真按 Ctrl 不豁免（⌘ 系才归应用），
@@ -2938,6 +3204,8 @@ export default function App() {
     for (const t of targets) void fitOne(t);
     for (const e of paneTermsRef.current.values()) fitPane(e);
   }, [fitOne, fitPane]);
+  // 缩放/最大化等命令式入口经 ref 取最新 fit（必须在 fitTerminal 声明之后赋值）
+  paneFitRef.current = fitTerminal;
   useEffect(() => {
     const el = termRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -3272,6 +3540,13 @@ export default function App() {
   // 状态供 UI 渲染；ref 供 makeTerm 闭包与快捷键读取（避开 stale closure）
   const [fontSize, setFontSize] = useState(FONT_DEFAULT);
   const [showSettings, setShowSettings] = useState(false);
+  // 面板卸载即 Token 随本地态消失：守卫复位，下次打开不继承「已提示过一次」。
+  useEffect(() => {
+    if (!showSettings) {
+      settingsTokenPendingRef.current = false;
+      settingsTokenGuardRef.current = false;
+    }
+  }, [showSettings]);
   // T34：原生菜单「设置…⌘,」→ 打开显示设置面板；应用版本号（关于面板同源）
   const [appVersion, setAppVersion] = useState<string | null>(null);
   // 版本号轮：编译时间（build.rs 注入的编译期常量；演示域 demo 镜像回 null，
@@ -3343,9 +3618,19 @@ export default function App() {
     const un = tauriListen(
       listen("menu-settings", () => { dispatchRef.current({ id: "settings" }); }),
     );
+    // 原生「全选」⌘A：菜单已在 WebView 之前消费，按当前焦点分派。
+    // 终端/格子 → xterm 缓冲全选；表单 → 输入框全选；其余交回 WebView。
+    const unSelectAll = tauriListen(listen("menu-select-all", () => {
+      const el = document.activeElement as HTMLElement | null;
+      for (const e of [...termsRef.current.values(), ...paneTermsRef.current.values()]) {
+        if (e.term.element?.contains(el)) { e.term.selectAll(); return; }
+      }
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) { el.select(); return; }
+      document.execCommand("selectAll");
+    }));
     getVersion().then(setAppVersion).catch(() => {});
     invoke("get_build_time").then((t) => setBuildTime(t ?? null)).catch(() => {});
-    return un;
+    return () => { un(); unSelectAll(); };
   }, []);
   // 发布轮/自更新轮：版本检查与能力面 demo 域也走镜像（桥层分流）——check_update
   // 默认恒 hasUpdate=false；?autoupdater 场景可达「有新版 + 可自动更新」整条 UI 链
@@ -3411,8 +3696,10 @@ export default function App() {
 
   const applyChrome = useCallback((resolved: "dark" | "light") => {
     // CSS 变量层挂 documentElement（深浅遮罩/玻璃/阴影一起换）；Tauri 下原生窗口
-    // 外观同步（Overlay 红绿灯深浅渲染）
+    // 外观同步（Overlay 红绿灯深浅渲染）。镜像进 localStorage 供 index.html 首帧
+    // 脚本在 CSS 生效前应用，杜绝浅色用户每次启动先闪一屏深色。
     document.documentElement.dataset.chrome = resolved;
+    try { localStorage.setItem("ui.chrome", resolved); } catch { /* 隐私模式忽略 */ }
     if (inTauri) {
       void getCurrentWindow().setTheme(resolved === "dark" ? "dark" : "light").catch(() => {});
     }
@@ -3420,6 +3707,7 @@ export default function App() {
 
   const applyPalette = useCallback((id: string) => {
     document.documentElement.dataset.theme = id;
+    try { localStorage.setItem("ui.palette", id); } catch { /* 隐私模式忽略 */ }
   }, []);
 
   // 主题切换脉冲（tiny-worker 同工艺）：仅切换瞬间挂 .theme-switching 开全量色彩
@@ -3430,10 +3718,19 @@ export default function App() {
     window.setTimeout(() => el.classList.remove("theme-switching"), 320);
   }, []);
 
+  // 写失败必须出声：外观/键位/偏好都在这条通路，静默吞掉会让用户以为已保存，
+  // 重启后才发现回到旧值。滑块逐帧写，提示按 5s 窗口去重。
+  const settingWriteErrRef = useRef(false);
+  const noteSettingWriteErr = useCallback((why: string) => {
+    if (settingWriteErrRef.current) return;
+    settingWriteErrRef.current = true;
+    pushToast("err", t("设置未能保存：{0}", why));
+    window.setTimeout(() => { settingWriteErrRef.current = false; }, 5000);
+  }, [pushToast]);
   const persistSetting = useCallback((key: string, value: string) => {
-    if (inTauri) void invoke("set_setting", { key, value }).catch(() => {});
-    else try { localStorage.setItem(key, value); } catch { /* demo 模式尽力而为 */ }
-  }, [inTauri]);
+    if (inTauri) void invoke("set_setting", { key, value }).catch((e) => noteSettingWriteErr(errMsg(e)));
+    else try { localStorage.setItem(key, value); } catch { noteSettingWriteErr(t("浏览器存储不可用")); }
+  }, [inTauri, noteSettingWriteErr]);
 
   // ---- tmux 联动偏好（恢复现场轮）：单键 JSON 双域持久化（真实域 vault KV，
   // demo 域 get/set_setting 同通路）----
@@ -3655,8 +3952,8 @@ export default function App() {
     wsWriteChain.current = wsWriteChain.current
       .then(() => invoke("get_workspace"))
       .then((ws) => invoke("set_workspace", { ws: { ...ws, chrome: a } }))
-      .catch(() => {});
-  }, [applyAppearance, pulseChrome]);
+      .catch((e) => noteSettingWriteErr(errMsg(e)));
+  }, [applyAppearance, pulseChrome, noteSettingWriteErr]);
 
   // 主题色板切换：即时预览 + KV 落库（demo=localStorage）；只改应用 chrome，不触碰终端
   const changePalette = useCallback((id: string) => {
@@ -3916,8 +4213,8 @@ export default function App() {
         osc52: ws.terminal?.osc52 === "allow" || ws.terminal?.osc52 === "deny" ? ws.terminal.osc52 : "ask",
         ...patch,
       } } }))
-      .catch(() => {});
-  }, []);
+      .catch((e) => noteSettingWriteErr(errMsg(e)));
+  }, [noteSettingWriteErr]);
   const changePasteGuard = useCallback((pg: boolean) => {
     setPasteGuard(pg);
     pasteGuardRef.current = pg;
@@ -3960,12 +4257,18 @@ export default function App() {
   const [lastSessionHosts, setLastSessionHosts] = useState<string[]>([]);
   const [lastWorkspaceCombos, setLastWorkspaceCombos] = useState<HostPaneCombo[]>([]);
   const lastTrackArmedRef = useRef(false);
+  // 本次运行是否出现过 SSH 会话：自动本机（默认启动行为）不能触发「上次会话」
+  // 清单写空——否则默认配置下 prod 清单会被覆盖成 []，退出对话框承诺的一键恢复失效。
+  const sshEverRef = useRef(false);
   const wsSaveTimerRef = useRef<number | null>(null);
   const writeWorkspaceSessions = useCallback(() => {
     if (!lastTrackArmedRef.current) return;
     const ids: string[] = [];
     const combos: HostPaneCombo[] = [];
     for (const s of sessionsRef.current) {
+      // 本机也记（用户显式开的本地标签同样是「上次会话」）；但本次运行只有
+      // 自动打开的本机、从没连过 SSH 时不写——那会把恢复清单挤成 ["local"]。
+      if (s.kind === "ssh") sshEverRef.current = true;
       if (!ids.includes(s.host_id)) ids.push(s.host_id);
       // 面板组合只收 SSH 且真在用面板的会话：格子按快照序（=愿望清单序）取会话名
       if (s.kind !== "ssh") continue;
@@ -3981,6 +4284,8 @@ export default function App() {
         layout: sanitizeLayoutTree(paneLayoutRef.current.get(s.id) ?? null),
       });
     }
+    // 本次运行从没连过 SSH（只有自动本机）：保留上次清单，不写空覆盖
+    if (ids.length === 0 && !sshEverRef.current) return;
     wsWriteChain.current = wsWriteChain.current
       .then(() => invoke("get_workspace"))
       .then((ws) => invoke("set_workspace", { ws: { ...ws, sessions: { last: ids, panes: combos } } }))
@@ -4301,6 +4606,7 @@ export default function App() {
     if (!sid) return;
     focusTermFor(sid);
   };
+  const escKeepFocusRef = useRef(false);
   const closeTopOverlayRef = useRef<() => boolean>(() => false);
   closeTopOverlayRef.current = (): boolean => {
     if (quitSummary) { void cancelQuit(); return true; }
@@ -4309,7 +4615,9 @@ export default function App() {
     if (ap) { void answerAuthPrompt(ap.id, ""); return true; }
     const hk = hostKeyQueue[0];
     if (hk) { void decideHostKey(hk, false); return true; }
-    if (confirm) { setConfirm(null); return true; }
+    // 在途确认（关闭中/删除中）不得用 Esc 假装取消：操作仍在核心继续，遮罩消失
+    // 只会让人以为已取消——与「取消」钮一致保持禁用。
+    if (confirm) { if (!confirmBusyRef.current) setConfirm(null); return true; }
     if (pasteConfirm) { setPasteConfirm(null); return true; }
     // P2-c：OSC 52 询问卡同属模态链——Esc 即拒绝（关卡不写剪贴板）
     if (osc52Ask) { setOsc52Ask(null); return true; }
@@ -4317,7 +4625,10 @@ export default function App() {
     if (pendingDrop) { setPendingDrop(null); return true; }
     // 命令面板是带遮罩模态、可叠开在非模态浮层之上——Esc 先关视觉顶层（R3-B-8）
     if (paletteOpen) { setPaletteOpen(false); return true; }
+    // 设置遮罩层级高于搜索/大屏：可视顶层优先，不能让 Esc 先关被压在下面的搜索
+    if (showSettings) { closeSettings(); return true; }
     // 大屏覆盖层/广播输入/传输抽屉：非模态但同属浮层链——纯键盘用户要有 Esc 出口
+    if (tmuxWallSid) { setTmuxWallSid(null); return true; }
     if (monitorOpen) { toggleMonitor(false); return true; }
     if (broadcastOpen) { setBroadcastOpen(false); return true; }
     if (queueOpen) { setQueueOpen(false); return true; }
@@ -4329,12 +4640,11 @@ export default function App() {
     if (splitMenu) { setSplitMenu(false); return true; }
     if (tmuxMenu) { setTmuxMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
-    if (showSettings) { closeSettings(); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
     if (tabsMenuOpen) { setTabsMenuOpen(false); return true; }
     if (focusHostMenu) { setFocusHostMenu(false); return true; }
     if (showAddHost || editingHost) { closeAddHost(); return true; }
-    if (showQuickConnect) { setShowQuickConnect(false); return true; } // UX2 走查：快速连接对话框的键盘出口（FE7 同族漏网）
+    if (showQuickConnect) { closeQuickConnect(); return true; } // UX2 走查：快速连接对话框的键盘出口（FE7 同族漏网）
     if (showImport) { setShowImport(false); return true; }
     if (showAgentHelp) { setShowAgentHelp(false); return true; }
     return false;
@@ -4343,14 +4653,18 @@ export default function App() {
   dispatchRef.current = (a: AppAction): boolean => {
     switch (a.id) {
       case "esc": {
+        // 守卫型关闭（凭据草稿/一次性 Token）首次 Esc 只提示不关：此时不能把焦点
+        // 还给终端，否则「对话框还在、输入框却失焦」，后续键入直接进远端 shell。
+        escKeepFocusRef.current = false;
         const handled = closeTopOverlayRef.current();
-        if (handled) restoreTermFocus();
+        const keep = escKeepFocusRef.current;
+        escKeepFocusRef.current = false;
+        if (handled && !keep) restoreTermFocus();
         return handled;
       }
       case "search":
         if (!sidRef.current) return false; // 无活动会话不劫持（保持既有语义）
-        setSearchOpen(true);
-        setTimeout(() => searchInputRef.current?.focus(), 0);
+        openSearch();
         return true;
       case "zoom-in": zoomIn(); return true;
       case "zoom-out": zoomOut(); return true;
@@ -4367,8 +4681,9 @@ export default function App() {
         return true;
       case "settings":
         // 菜单加速器不经 resolveAction 的模态门（NSMenu 在 WebView 之前消费），
-        // 这里补同一条 §7.3 规则：模态层打开时不叠开面板
-        if (modalRef.current) return false;
+        // 这里补同一条 §7.3 规则：对话框打开时不叠开面板。监控大屏/tmux 墙是
+        // 视图型覆盖层，设置面板本就在它们之上（rail 设置钮可点开），不算阻挡。
+        if (dialogModalRef.current) return false;
         setShowSettings(true);
         return true;
       case "tab-switch": {
@@ -4452,6 +4767,10 @@ export default function App() {
       // 这里是「取消作曲」，走 keymap 浮层链会连菜单一起关掉
       if (document.activeElement?.classList.contains("tmux-create-input")) return;
       if (a.id !== "esc" && document.activeElement?.classList.contains("tw-input")) return;
+      // 墙键入态（.tw-input 聚焦）的 Esc 归会话：窗口捕获先于墙自己的 document
+      // 监听，若在这里走浮层链会把墙关掉（Esc 送 vim 的语义当场丢失）。
+      // 非键入态照旧交浮层链，由墙的 document 监听逐级退出。
+      if (a.id === "esc" && document.activeElement?.classList.contains("tw-input")) return;
       if (dispatchRef.current(a)) {
         ev.preventDefault();
         ev.stopPropagation();
@@ -4887,6 +5206,7 @@ export default function App() {
   // 关闭会话（标签 ×/⌘W/工具菜单共用，§6.4 统一「关闭会话」语义）：核心确认关闭
   // 后才 dispose；失败保留标签、画面与重试入口（§337）
   const disconnectSid = useCallback(async (id: string) => {
+    let refocus = false;
     try {
       await invoke("close_session", { sid: id });
     } catch (e) {
@@ -4919,6 +5239,7 @@ export default function App() {
           xtermRef.current = next.term;
           refreshBrief(sp.main);
           void invoke("note_terminal", { sid: sp.main, focused: true }).catch(() => {});
+          refocus = true;
         } else {
           detach();
         }
@@ -4935,6 +5256,7 @@ export default function App() {
         xtermRef.current = next.term;
         refreshBrief(sp.second);
         void invoke("note_terminal", { sid: sp.second, focused: true }).catch(() => {});
+        refocus = true;
       }
     } else if (sidRef.current === id) {
       // 关的是焦点会话：激活右侧邻居、没有再找左侧（浏览器标签页惯例；六轮 D6-2
@@ -4961,8 +5283,12 @@ export default function App() {
     }
     applyPanes();
     fitTerminal();
+    // 关掉活动标签后浏览器的焦点随被删元素落到 body——不还焦点的话下一次键盘
+    // 输入进不了任何终端（用户必须先用鼠标点一下）。布局落定后再聚焦新活动会话，
+    // 并按该标签的记忆恢复主视图/格子。
+    if (refocus && sidRef.current) requestAnimationFrame(() => focusTermFor(sidRef.current!));
     refreshLists();
-  }, [detach, applyPanes, fitTerminal, refreshLists, refreshBrief]);
+  }, [detach, applyPanes, fitTerminal, refreshLists, refreshBrief, focusTermFor]);
 
   // 稳定轮：termsRef 对账——会话从后端消失（Agent 经 MCP close_session 等 UI 外
   // 关闭路径）时标签随 3s 轮询消失，但 xterm/WebGL 上下文/订阅/DOM 无人释放
@@ -5007,13 +5333,15 @@ export default function App() {
         xtermRef.current = termsRef.current.get(next.id)!.term;
         refreshBrief(next.id);
         void invoke("note_terminal", { sid: next.id, focused: true }).catch(() => {});
+        // 外部关闭（MCP/Agent close_session）同样会带走焦点：布局落定后还给新活动会话
+        requestAnimationFrame(() => focusTermFor(next.id));
       } else {
         detach();
       }
     }
     applyPanes();
     fitTerminal();
-  }, [sessions, sessionIdent, detach, applyPanes, fitTerminal, refreshBrief]);
+  }, [sessions, sessionIdent, detach, applyPanes, fitTerminal, refreshBrief, focusTermFor]);
 
   // 危险动作确认（P1-5/P1-4）：断开活会话、删除主机都先过弹层；死会话直接关（无需确认）
   const [confirm, setConfirm] = useState<
@@ -5082,11 +5410,18 @@ export default function App() {
     );
     return () => { alive = false; un(); };
   }, [inTauri]);
+  const [quitBusy, setQuitBusy] = useState(false);
+  const quitBusyRef = useRef(false);
   const confirmQuit = async () => {
-    if (!quitSummary) return;
+    if (!quitSummary || quitBusyRef.current) return;
+    quitBusyRef.current = true;
+    setQuitBusy(true);
     // 会话收口已下沉 quit_app（shutdown_all：close_session 同口径 + 卡住强制
     // 摘表的超时预算）——FE 逐个 close 曾可能被悬挂会话卡死在退出前一步。
     try { await invoke("quit_app"); } catch { /* demo 无此命令 */ }
+    // 成功路径应用随即退出；失败/演示域到此复位，允许重试。
+    quitBusyRef.current = false;
+    setQuitBusy(false);
   };
   const cancelQuit = async () => {
     setQuitSummary(null);
@@ -5097,9 +5432,15 @@ export default function App() {
   // 新建/快速连接（二轮拨壳成 hk-mask 全屏遮罩）与设置面板（pop-mask）同为遮罩模态，
   // 巡检补进列表：此前不在列——对话框开着 Ctrl+W/⌘1-9/F11 仍在遮罩后执行
   // （关标签/切标签/把窗口切全屏），Ctrl+T 还会把快速连接里已填的表单悄悄换成新建。
+  const dialogModal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || osc52Ask || splitMenu || tmuxMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
+    || detail || detailErr || showAddHost || showQuickConnect || showSettings);
   const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || osc52Ask || splitMenu || tmuxMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
-    || showAddHost || showQuickConnect || showSettings);
+    || detail || detailErr || showAddHost || showQuickConnect || showSettings
+    // 大屏覆盖层与 tmux 墙是整幅视觉顶层：不收进模态门的话，Ctrl/⌘F 会在遮罩
+    // 后面打开看不见的搜索框并抢焦，Ctrl/⌘W 还会在墙后面弹「关闭会话」确认。
+    || monitorOpen || !!tmuxWallSid);
   modalRef.current = modal;
+  dialogModalRef.current = dialogModal;
 
   // 键位录入（键位配置轮）：等待「按下新组合」期间吞掉一切键盘事件——Esc 取消、
   // lone modifier 等组合、其余组合校验后落表。capture 监听注册在两个既有监听之后，
@@ -5173,21 +5514,32 @@ export default function App() {
       setConnError({ title: t("删除主机失败"), detail: friendlyError(e) });
     }
   };
+  // 危险确认的在途守卫：慢后端/真实 SSH 下双击会重复 invoke，第二次在第一次成功
+  // 后失败并弹「删除失败」，用户明明成功却以为出错。busy 期间二次点击直接丢弃。
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const confirmBusyRef = useRef(false);
   const confirmAction = async () => {
-    if (!confirm) return;
-    if (confirm.kind === "closeSession") await disconnectSid(confirm.sid);
-    else if (confirm.kind === "deleteHost") await deleteHost(confirm.id);
-    else {
-      // R21 凭据删除：核心引用检查兜底（IdentityInUse 列占用主机），前端不自行判定
-      try {
-        await invoke("delete_identity", { id: confirm.id });
-        setCredErr(null);
-      } catch (e) {
-        setCredErr(friendlyError(e));
+    if (!confirm || confirmBusyRef.current) return;
+    confirmBusyRef.current = true;
+    setConfirmBusy(true);
+    try {
+      if (confirm.kind === "closeSession") await disconnectSid(confirm.sid);
+      else if (confirm.kind === "deleteHost") await deleteHost(confirm.id);
+      else {
+        // R21 凭据删除：核心引用检查兜底（IdentityInUse 列占用主机），前端不自行判定
+        try {
+          await invoke("delete_identity", { id: confirm.id });
+          setCredErr(null);
+        } catch (e) {
+          setCredErr(friendlyError(e));
+        }
+        await refreshIdentities();
       }
-      await refreshIdentities();
+      setConfirm(null);
+    } finally {
+      confirmBusyRef.current = false;
+      setConfirmBusy(false);
     }
-    setConfirm(null);
   };
 
   // R21 设置 → 凭据基础管理：列表加载（面板打开时）与删除后刷新共用
@@ -5201,17 +5553,67 @@ export default function App() {
   useEffect(() => {
     if (showSettings) { setCredErr(null); void refreshIdentities(); } // rev-r21 L1：开沿清残留错误
   }, [showSettings, refreshIdentities]);
+  // Agent 接入状态在设置页开着时要跟着外部变化走：CLI 新签发的 Agent（帮助文案
+  // 推荐 `tinyssh agent create`）此前要重启或手动关/开协作才出现在列表里，
+  // 「已配置 1」与「暂无 Agent 接入」同屏打架、委托被误判未接入。
+  useEffect(() => {
+    if (!showSettings) return;
+    let dead = false;
+    const pull = () => {
+      invoke("mcp_status")
+        .then((v) => { if (!dead) setMcp(v); })
+        .catch(() => { /* 面板继续用上一次投影 */ });
+    };
+    pull();
+    const iv = window.setInterval(pull, 5000);
+    return () => { dead = true; window.clearInterval(iv); };
+  }, [showSettings]);
 
   // ⌘1–9 / ⌘W / ⌘⇧[] / Esc 已并入上方统一 action 分发（R13）
 
-  // 关闭搜索：清高亮、焦点回终端
-  const closeSearch = useCallback(() => {
-    setSearchOpen(false);
-    const addon = termsRef.current.get(sidRef.current ?? "")?.search;
-    addon?.clearDecorations();
-    xtermRef.current?.focus();
+  // 打开搜索：目标跟随当前焦点——tmux 面板格聚焦则搜该格，否则主视图。
+  // 右键菜单知道命中的 paneKey，直接传更可靠（焦点此时在菜单上）。
+  const openSearch = useCallback((paneKey?: string) => {
+    const owner = sidRef.current;
+    if (!owner) return;
+    const target = terminalFocusTarget(document.activeElement, owner);
+    const key = paneKey
+      ?? (target.paneId != null ? `${target.sid}:${target.paneId}` : "main");
+    const addon = key === "main"
+      ? termsRef.current.get(owner)?.search ?? null
+      : paneTermsRef.current.get(key)?.search ?? null;
+    searchSidRef.current = owner;
+    // 目标格已关/未挂 addon：回落主视图，不要让查找框对着空气
+    searchTargetKeyRef.current = addon ? key : "main";
+    searchAddonRef.current = addon ?? termsRef.current.get(owner)?.search ?? null;
+    setSearchOpen(true);
+    setTimeout(() => searchInputRef.current?.focus(), 0);
   }, []);
 
+  // 关闭搜索：清“发起搜索”那个会话的高亮，焦点还给该标签上次落焦的终端/格子
+  // （tmux 格子聚焦或最大化时不再被拉回隐藏的主视图）。
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    // 关闭即清查询与计数：否则重开时输入框与「1/N」还停在上一轮的值，但高亮
+    // 已被 clearDecorations 清掉，界面自相矛盾。
+    setSearchQuery("");
+    setSearchResults(null);
+    // 清「实际被搜的那个终端」的高亮（主视图或面板格）
+    searchAddonRef.current?.clearDecorations();
+    searchAddonRef.current = null;
+    searchTargetKeyRef.current = null;
+    searchSidRef.current = null;
+    const sid = sidRef.current;
+    if (sid) focusTermForRef.current(sid);
+    else xtermRef.current?.focus();
+  }, []);
+
+  // 切标签/关标签：搜索属于发起它的会话，不能让查询与高亮跟着跑到下一个会话
+  // （否则搜索框留在屏幕上但已失焦，下一次键入直接进新 shell）。
+  useEffect(() => {
+    if (!searchOpen) return;
+    if (searchSidRef.current && searchSidRef.current !== sid) closeSearch();
+  }, [sid, searchOpen, closeSearch]);
   // 旧 Esc 浮层链已并入统一 action 分发（closeTopOverlayRef，R13）。
   // 输入控件语义：无浮层时 Esc 原样透传（搜索框自带关闭不变）；
   // 有浮层时浮层优先消费（§7.3）——与旧「INPUT/TEXTAREA 一律不劫持」相比，
@@ -5835,12 +6237,19 @@ export default function App() {
   const sftpMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!sftpMenu) return;
+    // 记住打开前的焦点（列表行/文件格）：菜单卸载后还给原处。此前 Esc 关闭焦点
+    // 落到 body，方向键/Enter 全断，用户要重新 Tab 一整圈回列表。
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     sftpMenuRef.current?.querySelector("button")?.focus();
     const onDown = (e: MouseEvent) => { if (!sftpMenuRef.current?.contains(e.target as Node)) setSftpMenu(null); };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSftpMenu(null); };
     window.addEventListener("mousedown", onDown, true);
     window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("mousedown", onDown, true); window.removeEventListener("keydown", onKey); };
+    return () => {
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+      if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+    };
   }, [sftpMenu]);
 
   // ---- 端口转发（T42 FR-8）----
@@ -5995,7 +6404,12 @@ export default function App() {
   const beginDropUploads = useCallback((paths: string[], pos?: { x: number; y: number }) => {
     if (!paths.length) return;
     const s = sidRef.current;
-    if (!s) { void startUploads(paths, undefined); return; } // 无会话保留既有失败卡语义
+    if (!s) {
+      // 失败卡躺在默认关闭的传输抽屉里，落地瞬间没有可见反馈——用户会以为已上传
+      pushToast("err", t("没有活动会话——先连接主机，再拖文件上传"));
+      void startUploads(paths, undefined);
+      return;
+    }
     const rp = rightPanelRef.current;
     let zone: "panel" | "term" = "term";
     if (pos && rp === "files") {
@@ -6010,7 +6424,7 @@ export default function App() {
     setPendingDropDir(prefill);
     setPendingDropErr(null);
     setPendingDrop({ paths, sid: s });
-  }, [startUploads]);
+  }, [startUploads, pushToast]);
 
   // 拖拽事件（Tauri drag-drop，浏览器演示模式无此通道）：enter/over 显示覆盖层，drop 分区
   useEffect(() => {
@@ -6020,8 +6434,19 @@ export default function App() {
     getCurrentWindow()
       .onDragDropEvent((ev: { payload: DragDropEvent }) => {
         const p = ev.payload;
-        if (p.type === "enter" || p.type === "over") setDragOver(true);
-        else if (p.type === "leave") setDragOver(false);
+        const zoneAt = (pos?: { x: number; y: number }): "term" | "panel" => {
+          if (!pos || rightPanelRef.current !== "files") return "term";
+          const r = taskPanelRef.current?.getBoundingClientRect();
+          return r && pos.x >= r.left && pos.x <= r.right && pos.y >= r.top && pos.y <= r.bottom
+            ? "panel" : "term";
+        };
+        if (p.type === "enter" || p.type === "over") {
+          setDragOver(true);
+          if ("position" in p && p.position) {
+            const dpr = window.devicePixelRatio || 1;
+            setDragZone(zoneAt({ x: p.position.x / dpr, y: p.position.y / dpr }));
+          }
+        } else if (p.type === "leave") setDragOver(false);
         else if (p.type === "drop") {
           setDragOver(false);
           // position 是物理像素（相对 webview 左上），CSS 矩形是逻辑像素——除以 dpr 再比
@@ -6185,6 +6610,8 @@ export default function App() {
           // 后台完成：只更新标签态，不切视图不抢焦点（点击标签进入）
           pushToast("ok", t("已连接 {0}——点击标签进入", host.name));
         }
+        // 返回值供快速连接表单决定是否关闭对话框（失败时保留已填内容重试）
+        return true;
       } else if (final.phase === "Cancelled") {
         pushToast("info", t("已取消连接 {0}", host.name));
       } else if (final.phase === "CancelCloseFailed") {
@@ -6192,7 +6619,7 @@ export default function App() {
         await refreshLists();
         setConnError({
           title: t("取消 {0} 时会话已建立且关闭失败", host.name),
-          detail: t("会话保留在标签栏——不再需要时请从标签 × 或 ⌘W 关闭"),
+          detail: t("会话保留在标签栏——不再需要时请从标签 × 或 {0} 关闭", formatBinding(keymap["tab-close"], isMacPlatform())),
         });
       } else {
         // Failed：失败走 conn-error 常驻横幅（可行动文案），标签不建（attempt 未过门）
@@ -6232,6 +6659,7 @@ export default function App() {
         });
       }
     }
+    return false;
   };
 
   // —— P3 会话现场恢复：欢迎页一键入口。逐条目走既有建连全流程（TOFU/双因素
@@ -6243,10 +6671,13 @@ export default function App() {
     restoringRef.current = true;
     let restored = 0;
     const skipped: string[] = [];
+    // 部分成功不能把失败条目一起清掉：此前 restored>0 就 setRestoreEntries([])，
+    // 一台连不上，另一台的现场入口也消失，失败条目本会话内再也无法重试。
+    const failedEntries: RestoreEntry[] = [];
     try {
       for (const e of entries) {
         const host = hosts.find((x) => x.id === e.host_id);
-        if (!host) { skipped.push(e.host_id); continue; }
+        if (!host) { skipped.push(e.host_id); failedEntries.push(e); continue; }
         const before = new Set(sessionsRef.current.map((x) => x.id));
         void createSession(host);
         const sid = await new Promise<string | null>((resolve) => {
@@ -6259,9 +6690,9 @@ export default function App() {
           };
           tick();
         });
-        if (!sid) { skipped.push(host.name); continue; }
+        if (!sid) { skipped.push(host.name); failedEntries.push(e); continue; }
         const entry = termsRef.current.get(sid);
-        if (!entry) { skipped.push(host.name); continue; }
+        if (!entry) { skipped.push(host.name); failedEntries.push(e); continue; }
         let when = e.saved_at;
         try { when = new Date(e.saved_at).toLocaleString(dateLocale()); } catch { /* 原样 */ }
         // 先重放再公告：applyCheckpoint 会重置缓冲（尺寸对齐+清屏），先写会被擦掉
@@ -6275,8 +6706,9 @@ export default function App() {
       restoringRef.current = false;
     }
     if (restored > 0) pushToast("ok", t("已恢复 {0} 个会话现场", restored));
-    if (skipped.length > 0) pushToast("err", t("{0} 个现场未恢复（主机已删或连接未就绪）：{1}", skipped.length, skipped.join(t("、"))));
-    if (restored > 0) setRestoreEntries([]);
+    if (skipped.length > 0) pushToast("err", t("{0} 个现场未恢复（主机已删或连接未就绪）：{1}——未恢复的条目仍保留在上次现场入口，可重试", skipped.length, skipped.join(t("、"))));
+    // 只清成功消费的条目；失败的留着才能重试（全成功时 natural 清空）
+    setRestoreEntries(failedEntries);
   };
   const restoringRef = useRef(false);
 
@@ -6296,7 +6728,7 @@ export default function App() {
         await refreshLists();
         setConnError({
           title: t("取消时会话已建立且关闭失败"),
-          detail: t("会话保留在标签栏——不再需要时请从标签 × 或 ⌘W 再次关闭"),
+          detail: t("会话保留在标签栏——不再需要时请从标签 × 或 {0} 再次关闭", formatBinding(keymap["tab-close"], isMacPlatform())),
         });
       }
       // cancelled / not_found：终态事件（或 demo 轮询）负责结算卡片与门
@@ -6305,8 +6737,21 @@ export default function App() {
     }
   };
 
+  // 快速连接关闭口（✕/取消/Esc 共用）：在途时先真取消 attempt，避免弹窗关了、
+  // 数秒后仍建出标签并提示「已连接」。取消结果由核心终态与既有 toast 如实呈现。
+  const closeQuickConnect = () => {
+    if (quickConnectingRef.current) {
+      quickConnectingRef.current = false;
+      void cancelConnect("quick-pending");
+    }
+    setShowQuickConnect(false);
+  };
+
   // 断线会话一键重连：核心重建传输 + 重启泵 + 重注入；UI 订阅不变，输出自动恢复
   const [reconnecting, setReconnecting] = useState<string | null>(null);
+  // 重连在途去重：右键菜单/标签列表/横幅可能在同一拍各发一次，核心对第二次返回
+  // 「重连已在进行中」——UI 把它当失败弹红条，用户看到的是一次成功 + 一次假失败。
+  const reconnectInFlightRef = useRef<Set<string>>(new Set());
   // R26（§6.4「可停止重试」）：核心旗标 ≤250ms 生效落 Disconnected；失败如实提示
   const stopRetry = async (s: SessionInfo) => {
     try {
@@ -6315,6 +6760,9 @@ export default function App() {
     } catch (e) { pushToast("err", friendlyError(e)); }
   };
   const reconnectSession = async (s: SessionInfo) => {
+    // 双击/多入口同拍重入：第二发被核心以「重连已在进行中」拒绝，别把它当失败弹红
+    if (reconnectInFlightRef.current.has(s.id)) return;
+    reconnectInFlightRef.current.add(s.id);
     const gen0 = focusGenRef.current; // §6.3：重连完成不抢走用户期间转移的焦点
     setReconnecting(s.id);
     try {
@@ -6341,6 +6789,7 @@ export default function App() {
     } catch (e) {
       setConnError({ title: t("重连 {0} 失败", s.host_name), detail: friendlyError(e) });
     } finally {
+      reconnectInFlightRef.current.delete(s.id);
       setReconnecting(null);
     }
   };
@@ -6630,6 +7079,8 @@ export default function App() {
   const closeTmuxPane = async (sid: string, paneId: number) => {
     const key = `${sid}:${paneId}`;
     const e = paneTermsRef.current.get(key);
+    // 正在搜这个格：先收查找框，别把 addon 指到已 dispose 的终端
+    if (searchTargetKeyRef.current === key) closeSearch();
     paneClosedRef.current.set(key, Date.now());
     disposePane(key);
     layoutTmuxPanes();
@@ -6665,6 +7116,41 @@ export default function App() {
       invoke("tmux_wall_input", { sid: wallSession?.id ?? "", target, lit, keys }),
     [wallSession],
   );
+  // 墙视图粘贴收口（与主终端同一张危险形态表）：墙走服务端 send-keys -l 字面
+  // 通道，没有 bracketed paste——多行粘贴的每个换行都会被远端立即执行，因此
+  // 换行一律先确认。确认后回调 accept 把文本送回墙的字面批量。
+  const wallPasteAcceptRef = useRef<((text: string) => void) | null>(null);
+  const requestWallPaste = useCallback((text: string, accept: (text: string) => void) => {
+    if (!text) return;
+    const deliver = (risk: PasteHit[]) => {
+      const multi = /[\n\r]/.test(text);
+      if (multi || risk.length) {
+        wallPasteAcceptRef.current = accept;
+        setPasteConfirm({
+          sid: wallSession?.id ?? "",
+          hostName: `${wallSession?.host_name ?? t("该会话")} · ${t("tmux 墙")}`,
+          text,
+          risk,
+          multi,
+          kind: "wall",
+        });
+      } else {
+        accept(text);
+      }
+    };
+    if (pasteGuardRef.current && PASTE_DANGER_PREFILTER.test(text)) {
+      invoke("scan_paste_danger", { text })
+        .then((hits) => deliver(hits ?? []))
+        .catch(() => deliver([])); // 扫描失败不阻断人类操作：退回多行确认口径
+    } else {
+      deliver([]);
+    }
+  }, [wallSession]);
+  // 确认框任何关闭路径（发送/取消/Esc/点遮罩）都丢弃待决 accept，防迟到确认
+  // 把旧文本送进已变的墙。
+  useEffect(() => {
+    if (!pasteConfirm) wallPasteAcceptRef.current = null;
+  }, [pasteConfirm]);
   // pane 贴格子：resize 成格子字符预算（守卫在核心；attach 客户端在场照样贴），
   // 返回每格原样回执供关墙恢复留存。失败静默——300ms 节拍的 pane_height 就是
   // 反馈环，contain 缩放兜底照常呈现。
@@ -6696,6 +7182,9 @@ export default function App() {
     if (!sid) return;
     try {
       await invoke("set_control", { sid, owner: "Human", stopRunning: false });
+      // 冻结后模型若还在流式生成，面板看起来「Agent 还在干活」也白烧 token：
+      // 只停模型生成（工具已被冻结）；在跑的命令仍按「接管」承诺不中断。
+      if (embeddedReady) void invoke("agent_cancel_model", { sid }).catch(() => {});
       await refreshLists();
       pushToast("info", t("已接管——Agent 冻结，终端归你"));
     } catch (e) { pushToast("err", friendlyError(e)); } // 审核低-7：会话刚死等失败不再静默
@@ -6842,13 +7331,22 @@ export default function App() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [persistId, setPersistId] = useState<string | null>(null);
   const [persistPattern, setPersistPattern] = useState("");
+  const approvalErrText = (err: unknown): string => {
+    const msg = errMsg(err);
+    // 双击批准/超时竞态：核心的错误原文是 "no pending approval with this id"，
+    // 对用户没有意义——明确告知该审批已处理，并让列表刷新收卡。
+    return /no pending approval|pending approval with this id/i.test(msg)
+      ? t("该审批已处理或已超时——列表即将刷新")
+      : msg;
+  };
   const decide = async (id: string, decision: "approve" | "deny" | "edit", edited: string | null) => {
     // 并发作废（接管/关会话）会拒绝决定（审计 F3）：无 catch 时 unhandled
     // rejection + 编辑态卡死到下次轮询。失败如实上报、编辑态保留（卡片随轮询刷新）
     try {
       await invoke("decide_approval", { id, decision, edited });
     } catch (err) {
-      pushToast("err", errMsg(err));
+      pushToast("err", approvalErrText(err));
+      void refreshLists();
       return;
     }
     setEditingId(null);
@@ -7005,7 +7503,24 @@ export default function App() {
     : t("协作已停用");
   const hasAgents = collabEnabled && mcp.agents.length > 0;
   const current = sessions.find((x) => x.id === sid);
-  const ownerCls = owner === "Human" ? "human" : hasAgents ? "agent" : "dim";
+  // 后台会话断线必须出声：盯着 A 标签时 B 掉线此前无任何提示（重连横幅只属于
+  // 当前会话），切过去才发现命令没跑。只在进入 Disconnected 的那一拍提示一次；
+  // Degraded/Reconnecting 是自动重连的中间态，不打扰。
+  const prevSessionStatesRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    const prev = prevSessionStatesRef.current;
+    const next = new Map<string, string>();
+    const lost: string[] = [];
+    for (const s of sessions) {
+      next.set(s.id, s.state);
+      const was = prev.get(s.id);
+      if (was && was !== "Disconnected" && s.state === "Disconnected" && s.kind === "ssh" && s.id !== sidRef.current) {
+        lost.push(s.host_name);
+      }
+    }
+    prevSessionStatesRef.current = next;
+    if (lost.length) pushToast("err", t("后台会话已断开：{0}", lost.join(t("、"))));
+  }, [sessions, pushToast]);
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
   const pendingCount = pendingApprovals.length;
   // 已处理的审批不再整卡展示，折叠为最近几条一行记录
@@ -7014,6 +7529,13 @@ export default function App() {
   // 「有实际待审批或 Agent 控制活动」必须显示提醒（不因面板开关/入口偏好而隐藏）。
   // C9（R43）：停用后不再显示协作入口——重新启用走「设置 → Agent 接入」。
   const collabConfigured = collabEnabled && mcp.agents.length > 0;
+  // 协作面可用性：内置 Agent（模型已接入）同样能走委托/审批，不能因为没登记
+  // MCP Agent 就把整个协作面当成「未接入」藏起来——否则内置 Agent 的第一公里
+  // 断裂（委托入口/审批区都不出现）。
+  const agentSurfaceReady = collabConfigured || embeddedReady;
+  // 控制权徽标：Agent 面可用才算「Agent 可接管」，否则按手动控制显示（不能让内置
+  // Agent 就绪时仍显示「手动控制」）。
+  const ownerCls = owner === "Human" ? "human" : agentSurfaceReady ? "agent" : "dim";
   const collabActive = collabEnabled && (pendingCount > 0 || sessions.some((s) => s.control_owner === "Agent"));
   // §3.2：跨会话审批按「主机 + 会话」明确分组——绝不只展示「当前主机」而误批其他会话。
   const approvalGroups = useMemo(() => {
@@ -7290,7 +7812,7 @@ export default function App() {
     items.push({
       id: "toggle-focus", group: t("应用"),
       title: focusMode ? t("退出专注模式") : t("进入专注模式（界面全让位给终端）"),
-      hint: "F11", keywords: "全屏 zen focus 专注 沉浸 极简",
+      hint: FOCUS_KEY_LABEL, keywords: "全屏 zen focus 专注 沉浸 极简",
       run: () => applyFocus(!focusMode),
     });
     items.push({
@@ -7370,7 +7892,8 @@ export default function App() {
   }, [monitorCards, monGeneral, monNpu]);
 
   return (
-    <div className={"app-shell" + (focusMode ? " focus-mode" : "") + (focusMode && zenStripAuto ? " zen-auto" : "")}>
+    <div className={"app-shell" + (focusMode ? " focus-mode" : "") + (focusMode && zenStripAuto ? " zen-auto" : "")
+      + (focusMode && inTauri && isMacPlatform() && !nativeFullscreen ? " focus-windowed" : "")}>
       {/* 标题区 44（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
       <header className="titlebar" data-tauri-drag-region>
         <div className="tb-left">
@@ -7389,7 +7912,7 @@ export default function App() {
               <IconChevronLeft size={15} />
             </button>
           )}
-          {(collabConfigured || collabActive) && (
+          {(agentSurfaceReady || collabActive) && (
             <button className={"collab-badge" + (rightPanel === "collab" ? " ts-open" : "") + (collabActive ? " hot" : "")}
               data-testid="collab-entry"
               title={collabActive
@@ -7405,7 +7928,7 @@ export default function App() {
           {sid && (
             <span className={"ctl-badge " + ownerCls}
               title={t("「Agent 控制中」= Agent 可发起命令、经你审批执行；「我控制中」= 终端归你，Agent 冻结")}
-            ><span className="ctl-dot" />{owner === "Human" ? t("我控制中") : hasAgents ? t("Agent 控制中") : t("手动控制")}</span>
+            ><span className="ctl-dot" />{owner === "Human" ? t("我控制中") : agentSurfaceReady ? t("Agent 控制中") : t("手动控制")}</span>
           )}
         </div>
         {inTauri && isWindowsPlatform() && <WinControls />}
@@ -7510,6 +8033,7 @@ export default function App() {
             owner={owner} onDelegate={delegateEmbedded}
             autonomyOn={autonomy.some((g) => g.agent_id === EMBEDDED_AGENT_ID)}
             onToggleAutonomy={toggleEmbeddedAutonomy}
+            onOpenApprovals={() => setRightPanel("collab")}
             gripDrag={agGripDrag} gripDown={agGripDown} gripMove={agGripMove} gripUp={agGripUp}
             onClose={() => (fleetOpen ? toggleFleet(false) : toggleAgent(false))} pushToast={pushToast}
           />
@@ -7550,6 +8074,7 @@ export default function App() {
             sendInput={wallSendInput}
             fitPanes={wallFitPanes}
             restorePanes={wallRestorePanes}
+            requestPaste={requestWallPaste}
             onPromote={wallPromote}
             onClose={wallClose}
           />
@@ -7614,7 +8139,7 @@ export default function App() {
         <div className={"tabbar-row" + (focusMode && zenStripAuto && zenPin ? " zen-pin" : "")}>
           {tabScroll.left && (
             <button className="tab-scroll" aria-label={t("向左滚动标签")}
-              title={t("左侧还有 {0} 个会话被收起——点击展开（⌘⇧[ 可循环切换）", tabScroll.hiddenL)}
+              title={t("左侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenL, isMacPlatform() ? "⌘⇧[" : "Ctrl+Shift+[")}
               onClick={() => scrollTabs(-1)}>‹</button>
           )}
           <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar} role="tablist" aria-label={t("会话标签")}>
@@ -7707,8 +8232,8 @@ export default function App() {
                     setTermDropHint(null);
                     document.body.classList.remove("tab-dragging");
                   }}
-                  title={`${label} · ${st.text}${i < 9 ? ` · ⌘${i + 1}` : ""}`}
-                  aria-label={`${label}，${st.text}${inSplit ? t("，在分屏中") : ""}${i < 9 ? t("，⌘{0}", i + 1) : ""}`}
+                  title={`${label} · ${st.text}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
+                  aria-label={`${label}，${st.text}${inSplit ? t("，在分屏中") : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
                   tabIndex={0}
                   role="tab"
                   aria-selected={sid === s.id}
@@ -7784,7 +8309,7 @@ export default function App() {
                   <button
                     type="button"
                     className="tab-x"
-                    title={t("关闭会话（⌘/Ctrl+W，活动会话先确认影响）")}
+                    title={t("关闭会话（{0}，活动会话先确认影响）", formatBinding(keymap["tab-close"], isMacPlatform()))}
                     aria-label={t("关闭会话 {0}", s.host_name)}
                     onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
                   ><IconX size={11} /></button>
@@ -7794,7 +8319,7 @@ export default function App() {
           </div>
           {tabScroll.right && (
             <button className="tab-scroll" aria-label={t("向右滚动标签")}
-              title={t("右侧还有 {0} 个会话被收起——点击展开（⌘⇧] 可循环切换）", tabScroll.hiddenR)}
+              title={t("右侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenR, isMacPlatform() ? "⌘⇧]" : "Ctrl+Shift+]")}
               onClick={() => scrollTabs(1)}>›</button>
           )}
           {splitPanes && <button className="ghost" onClick={exitSplit}
@@ -7853,7 +8378,7 @@ export default function App() {
               提醒必须可达（pendingCount>0 已让 zenPin 钉住标签条，入口就在眼前） */}
           {/* 接管双钮同样只在工具栏的话，专注+Agent 控制时想停下危险命令就得先退
               专注（巡检补）——zenPin 已保证此态标签条钉在眼前，入口放这里正好 */}
-          {focusMode && sid && hasAgents && owner === "Agent" && (
+          {focusMode && sid && (hasAgents || embeddedReady) && owner === "Agent" && (
             <>
               <button className="warn" title={t("接管会话：Agent 冻结、待审批请求作废，终端归你。Agent 正在跑的命令不会被中断")}
                 onClick={takeover}>{t("接管")}</button>
@@ -7861,7 +8386,7 @@ export default function App() {
                 onClick={takeoverStop}>{t("接管并停止")}</button>
             </>
           )}
-          {focusMode && collabConfigured && (
+          {focusMode && agentSurfaceReady && (
             <button className={"ghost" + (rightPanel === "collab" ? " ts-open" : "")}
               title={t("协作：审批、任务目标与现场简报")}
               onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
@@ -7897,9 +8422,9 @@ export default function App() {
             />
           )}
           <button className={"ghost icon-btn" + (focusMode ? " ts-open" : "")} data-testid="focus-toggle"
-            title={focusMode ? t("退出专注模式（F11）")
-              : zenStripAuto ? t("专注模式（F11）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条藏为顶缘浮标")
-              : t("专注模式（F11）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条保持常驻")}
+            title={focusMode ? t("退出专注模式（{0}）", FOCUS_KEY_LABEL)
+              : zenStripAuto ? t("专注模式（{0}）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条藏为顶缘浮标", FOCUS_KEY_LABEL)
+              : t("专注模式（{0}）：隐藏标题栏/主机栏/工具栏并系统全屏，标签条保持常驻", FOCUS_KEY_LABEL)}
             aria-pressed={focusMode} aria-label={focusMode ? t("退出专注模式") : t("进入专注模式")}
             onClick={() => { setTmuxMenu(false); setTabsMenuOpen(false); applyFocus(!focusMode); }}>
             {focusMode ? <IconMinimize size={14} /> : <IconMaximize size={14} />}
@@ -7917,7 +8442,7 @@ export default function App() {
                       <button className="tm-main" role="menuitem"
                         onClick={() => { setTabsMenuOpen(false); void attachSession(s.id); }}>
                         <span className={"tab-dot " + st.cls} />
-                        <span className="tab-label">{s.host_name}</span>
+                        <span className="tab-label">{tabNames[s.id] ?? s.host_name}</span>
                         <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
                       </button>
                       {s.state === "Disconnected" && (
@@ -7967,7 +8492,7 @@ export default function App() {
         <ConfirmDialogs
           delegateDlg={delegateDlg} current={current} closeDelegate={closeDelegate}
           delegateDlgRef={delegateDlgRef} currentHost={currentHost} delegateCap={delegateCap}
-          collabConfigured={collabConfigured} mcp={mcp}
+          collabConfigured={agentSurfaceReady} mcp={mcp}
           delegateGoal={delegateGoal} setDelegateGoal={setDelegateGoal}
           delegateErr={delegateErr} openSettingsAt={openSettingsAt}
           delegateBusy={delegateBusy} submitDelegate={submitDelegate}
@@ -7975,6 +8500,7 @@ export default function App() {
           collabBusy={collabBusy} confirmDisable={confirmDisable}
           confirm={confirm} setConfirm={setConfirm}
           closeConfirmRef={closeConfirmRef} confirmImpact={confirmImpact} confirmAction={confirmAction}
+          confirmBusy={confirmBusy} quitBusy={quitBusy}
           quitSummary={quitSummary} setQuitSummary={setQuitSummary}
           quitConfirmRef={quitConfirmRef} confirmQuit={confirmQuit} cancelQuit={cancelQuit}
           delHostRef={delHostRef} delIdentRef={delIdentRef}
@@ -8124,14 +8650,17 @@ export default function App() {
             <div className="hk-dialog add-host-dlg" ref={quickDlgRef}>
               <div className="dlg-head">
                 <b>{t("快速连接")}</b>
-                <button className="ghost icon-btn" aria-label={t("关闭")} onClick={() => setShowQuickConnect(false)}><IconX size={14} /></button>
+                <button className="ghost icon-btn" aria-label={t("关闭")} onClick={closeQuickConnect}><IconX size={14} /></button>
               </div>
               <QuickConnectForm
-                onConnect={(display, draft) => {
-                  setShowQuickConnect(false);
-                  void createSession(display, false, draft);
+                remoteError={connError ? `${connError.title}——${connError.detail}` : null}
+                onBusyChange={noteQuickConnecting}
+                onConnect={async (display, draft) => {
+                  const ok = await createSession(display, false, draft);
+                  if (ok) setShowQuickConnect(false);
+                  return ok;
                 }}
-                onCancel={() => setShowQuickConnect(false)}
+                onCancel={closeQuickConnect}
               />
             </div>
           </div>
@@ -8346,11 +8875,15 @@ export default function App() {
               </div>
             );
           })()}
-          {dragOver && (
+          {dragOver && sid && (
             <div className="drop-overlay">
               <div className="drop-box">
                 <div className="drop-icon"><IconDownload size={34} /></div>
-                <div>{t("松开上传到")} {brief?.cwd ?? t("远程主机")}</div>
+                {/* 落点跟着指针：悬在文件面板上时目标是面板正在浏览的目录，不是 cwd */}
+                <div>{t("松开上传到")} {dragZone === "panel"
+                  ? (sftpPath || t("正在浏览的目录"))
+                  : (brief?.cwd ?? t("远程主机"))}</div>
+                <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>{t("拖到文件面板则直接传到正在浏览的目录")}</div>
               </div>
             </div>
           )}
@@ -8373,13 +8906,16 @@ export default function App() {
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
-                  const addon = termsRef.current.get(sidRef.current ?? "")?.search;
+                  const addon = searchAddonRef.current;
                   if (!addon) return;
                   if (e.target.value) void addon.findNext(e.target.value, SEARCH_OPTS);
                   else addon.clearDecorations();
                 }}
                 onKeyDown={(e) => {
                   e.stopPropagation();
+                  // IME 候选词确认的 Enter 不是「下一个」（WKWebView 组合期仍上抛
+                  // 真实 key 名）——与上传框/路径框同口径。
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   if (e.key === "Escape") {
                     e.preventDefault();
                     closeSearch();
@@ -8387,7 +8923,7 @@ export default function App() {
                   }
                   if (e.key !== "Enter" || !searchQuery) return;
                   e.preventDefault();
-                  const addon = termsRef.current.get(sidRef.current ?? "")?.search;
+                  const addon = searchAddonRef.current;
                   if (!addon) return;
                   if (e.shiftKey) addon.findPrevious(searchQuery, SEARCH_OPTS);
                   else addon.findNext(searchQuery, SEARCH_OPTS);
@@ -8400,8 +8936,8 @@ export default function App() {
                     ? t("无结果")
                     : ""}
               </span>
-              <button className="ghost" title={t("上一个（⇧⏎）")} aria-label={t("上一个搜索结果")} onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findPrevious(searchQuery, SEARCH_OPTS)}><IconChevronUp size={13} /></button>
-              <button className="ghost" title={t("下一个（⏎）")} aria-label={t("下一个搜索结果")} onClick={() => searchQuery && termsRef.current.get(sidRef.current ?? "")?.search.findNext(searchQuery, SEARCH_OPTS)}><IconChevronDown size={13} /></button>
+              <button className="ghost" title={t("上一个（⇧⏎）")} aria-label={t("上一个搜索结果")} onClick={() => searchQuery && searchAddonRef.current?.findPrevious(searchQuery, SEARCH_OPTS)}><IconChevronUp size={13} /></button>
+              <button className="ghost" title={t("下一个（⏎）")} aria-label={t("下一个搜索结果")} onClick={() => searchQuery && searchAddonRef.current?.findNext(searchQuery, SEARCH_OPTS)}><IconChevronDown size={13} /></button>
               <button className="ghost" title={t("关闭（Esc）")} aria-label={t("关闭搜索")} onClick={closeSearch}><IconX size={12} /></button>
             </div>
           )}
@@ -8430,7 +8966,7 @@ export default function App() {
             termsRef={termsRef} pasteTextIntoRef={pasteTextIntoRef}
             paneTermsRef={paneTermsRef} closeTmuxPane={(sid, paneId) => closeTmuxPaneRef.current(sid, paneId)}
             paneLayoutCustom={paneLayoutCustom} resetPaneLayout={resetPaneLayout}
-            setSearchOpen={setSearchOpen} searchInputRef={searchInputRef} sidRef={sidRef}
+            onOpenSearch={openSearch} sidRef={sidRef}
             attachSession={attachSession}
             splitDegraded={splitDegraded} splitHintOpen={splitHintOpen}
             splitHintDismissedRef={splitHintDismissedRef} setSplitHintOpen={setSplitHintOpen}
@@ -8454,9 +8990,11 @@ export default function App() {
                     ? t("重跑命令命中危险形态（与 Agent 审批同一张内置规则表）——确认后重新执行，取消则不发送任何字节。")
                     : t("粘贴内容命中危险形态（与 Agent 审批同一张内置规则表）——确认后才会发送，取消则不发送任何字节。")}</div>
                 ) : (
-                  <div>{pasteConfirm.kind === "rerun"
-                    ? t("命令含多行——重跑会按行依次执行。请确认；取消则不发送任何字节。")
-                    : t("目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。")}</div>
+                  <div>{pasteConfirm.kind === "wall"
+                    ? t("tmux 墙按字面逐字送达（无 bracketed paste）——换行会被远端立即执行。请确认内容；取消则不发送任何字节。")
+                    : pasteConfirm.kind === "rerun"
+                      ? t("命令含多行——重跑会按行依次执行。请确认；取消则不发送任何字节。")
+                      : t("目标终端未开启 bracketed paste——换行会被远端立即执行。请确认内容；取消则不发送任何字节。")}</div>
                 )}
                 {pasteConfirm.risk.length > 0 && (
                   <ul className="paste-risk" data-testid="paste-risk-list">
@@ -8470,6 +9008,15 @@ export default function App() {
                   : pasteConfirm.text}</pre>
                 <div className="hk-actions">
                   <button className="danger" data-testid="paste-send" onClick={() => {
+                    if (pasteConfirm.kind === "wall") {
+                      // 墙粘贴：确认后交给墙自己钉死的目标格送字面（墙在此期间
+                      // 退出过键入态，accept 内会拉回），不碰主终端/广播。
+                      const accept = wallPasteAcceptRef.current;
+                      wallPasteAcceptRef.current = null;
+                      accept?.(pasteConfirm.text);
+                      setPasteConfirm(null);
+                      return;
+                    }
                     if (pasteConfirm.kind === "rerun") {
                       // 失败要出声：确认框期间会话恰好断开时，字节没发出去不能静默
                       // （与 blocks rerunCommand 直发路径同款 toast）
@@ -8544,7 +9091,7 @@ export default function App() {
                     placeholder={pendingDropDir ? "" : t("远端目录（绝对路径，必填）")}
                     value={pendingDropDir}
                     onChange={(e) => setPendingDropDir(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && pendingDropDir.trim()) confirmDropUpload(); }}
+                    onKeyDown={(e) => { if (isImeComposing(e)) return; if (e.key === "Enter" && pendingDropDir.trim()) confirmDropUpload(); }}
                   />
                 </div>
                 <div className="dim" style={{ marginTop: 6, fontSize: 12 }} data-testid="drop-files-line">
@@ -8667,6 +9214,7 @@ export default function App() {
               retryDisableConvergence={retryDisableConvergence}
               enableCollab={enableCollab}
               issueAgent={issueAgent}
+              onIssuedTokenPending={noteIssuedTokenPending}
               revokeAgent={revokeAgent}
               recordsRows={recordsRows} recordsFilter={recordsFilter}
               recordsBusy={recordsBusy} recordsExportBusy={recordsExportBusy}
@@ -8699,7 +9247,7 @@ export default function App() {
 
         {/* 右侧任务面板（§4.3/§6.6）：一次只呈现文件 / 转发 / 协作 / 活动记录之一；窄窗改中央完整视图 */}
         {rightPanel && (
-          <aside className={"task-panel" + (tpFull ? " tp-full" : "")} aria-label={t("任务面板")} ref={taskPanelRef}
+          <aside className={"task-panel" + (tpFull ? " tp-full" : "") + (dragOver && dragZone === "panel" ? " drop-target" : "")} aria-label={t("任务面板")} ref={taskPanelRef}
             style={tpFull ? undefined : { width: taskPanelW }}>
             {!tpFull && (
               <div className="tp-grip" role="separator" aria-orientation="vertical"
@@ -8720,8 +9268,8 @@ export default function App() {
           {rightPanel === "collab" && (
             /* 审批区（拆分⑤出仓 components/collab-panel.tsx，零语义变更） */
             <CollabApprovals
-              collabEnabled={collabEnabled} collab={collab} collabStateText={collabStateText}
-              collabConfigured={collabConfigured} collabActive={collabActive}
+              collabEnabled={collabEnabled || embeddedReady} collab={collab} collabStateText={collabStateText}
+              collabConfigured={agentSurfaceReady} collabActive={collabActive}
               pendingCount={pendingCount} approvalGroups={approvalGroups}
               pendingApprovals={pendingApprovals} resolvedApprovals={resolvedApprovals}
               confirmId={confirmId} setConfirmId={setConfirmId}
@@ -8735,6 +9283,7 @@ export default function App() {
           {rightPanel === "files" && (
             <FilesPanel
               sid={sid} brief={brief}
+              connected={!current || current.state === "Connected" || current.state === "Reconfirming"}
               sftpWrapRef={sftpWrapRef} sftpCrumbsRef={sftpCrumbsRef}
               sftpListRef={sftpListRef} sftpAnchorRef={sftpAnchorRef}
               sftpPath={sftpPath} sftpPathInput={sftpPathInput}
@@ -8880,7 +9429,7 @@ export default function App() {
             /* 委托/任务目标/现场简报（拆分⑤出仓 components/collab-panel.tsx，零语义变更） */
             <CollabDelegate
               sid={sid} current={current} owner={owner}
-              collabEnabled={collabEnabled} collabConfigured={collabConfigured}
+              collabEnabled={collabEnabled} collabConfigured={agentSurfaceReady}
               openDelegate={openDelegate} takeover={takeover} openSettingsAt={openSettingsAt}
               goalRef={goalRef} goalDraft={goalDraft} setGoalDraft={setGoalDraft}
               goalDirty={goalDirty} brief={brief} saveGoal={saveGoal}
@@ -8949,15 +9498,17 @@ export default function App() {
           （栈 pointer-events:none，动作钮自身收回事件）。
           live 级别逐条给：err 用 assertive 立即播报，其余 polite（审核吹毛求疵-4） */}
       <div className="toast-stack">
-        {toasts.map((t) => {
-          const act = t.action;
+        {toasts.map((tt) => {
+          const act = tt.action;
           return (
-            <div className={"toast " + t.kind} key={t.id} aria-live={t.kind === "err" ? "assertive" : "polite"}>
-              {t.text}
+            <div className={"toast " + tt.kind} key={tt.id} aria-live={tt.kind === "err" ? "assertive" : "polite"}>
+              {tt.text}
               {act && (
                 <button className="toast-act" data-testid="toast-action" title={act.title}
-                  onClick={() => { act.run(); setToasts((cur) => cur.filter((x) => x.id !== t.id)); }}>{act.label}</button>
+                  onClick={() => { act.run(); setToasts((cur) => cur.filter((x) => x.id !== tt.id)); }}>{act.label}</button>
               )}
+              <button className="toast-x" title={t("关闭通知")} aria-label={t("关闭通知")}
+                onClick={() => setToasts((cur) => cur.filter((x) => x.id !== tt.id))}>×</button>
             </div>
           );
         })}

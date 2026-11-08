@@ -142,6 +142,7 @@ interface CmdArgs {
   agent_model_set: { provider: string; baseUrl: string | null; model: string; apiKey: string | null };
   agent_send: { sid: string; text: string };
   agent_cancel: { sid: string };
+  agent_cancel_model: { sid: string };
   agent_history: { sid: string };
   save_triggers: { rules: wire.TriggerRule[] };
   list_approvals: { pendingOnly: boolean };
@@ -280,6 +281,7 @@ interface CmdRet {
   agent_model_set: void;
   agent_send: void;
   agent_cancel: boolean;
+  agent_cancel_model: boolean;
   agent_history: { kind: string; data?: unknown }[];
   save_triggers: wire.TriggerRule[];
   list_approvals: wire.ApprovalItem[];

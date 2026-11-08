@@ -216,6 +216,40 @@ export const LOG_ACTION_OPTIONS: { v: string; label: string }[] = [...Object.key
   .map((v) => ({ v, label: v === "goal_set" ? "更新/清除任务目标" : (AUDIT_LABELS[v] ?? v) }))
   .sort((x, y) => x.label.localeCompare(y.label, "zh-CN"));
 
+// IME 组合期守卫（§7.3 与 resolveAction 同口径：isComposing 与 keyCode 229 双查）：
+// 中文输入法敲 Enter 是「确认候选词」，不是提交/导航。Enter 承载语义的输入框
+// 一律先过这里（add-host/quick-connect 的 enterKey 是带 preventDefault 的封装）。
+export function isImeComposing(e: { nativeEvent: { isComposing?: boolean }; keyCode?: number }): boolean {
+  return e.nativeEvent.isComposing === true || e.keyCode === 229;
+}
+
+// 主机地址与端口（表单校验共用）：地址允许域名/IPv4/IPv6（IPv6 可带方括号与
+// %scope），不带协议与端口；端口必须整串数字——parseInt("22abc") 的宽松解析会把
+// 错输入悄悄连到 22。
+export function hostAddressOk(raw: string): boolean {
+  const s = raw.trim();
+  if (!s) return false;
+  if (s.includes(":")) {
+    const body = s.startsWith("[") && s.endsWith("]") ? s.slice(1, -1) : s;
+    return body.includes(":") && !body.includes(":::") && /^[0-9a-fA-F:.%_-]+$/.test(body);
+  }
+  return /^[a-zA-Z0-9._-]{1,253}$/.test(s);
+}
+
+/** 连接地址归一：ssh2 收裸地址，IPv6 的方括号在入库/建连前去掉。 */
+export function normalizeHostAddress(raw: string): string {
+  const s = raw.trim();
+  return s.startsWith("[") && s.endsWith("]") ? s.slice(1, -1) : s;
+}
+
+/** 端口严格解析：整串 1–5 位数字且 1–65535，否则 null。 */
+export function parsePort(raw: string): number | null {
+  const s = raw.trim();
+  if (!/^\d{1,5}$/.test(s)) return null;
+  const p = Number(s);
+  return p >= 1 && p <= 65535 ? p : null;
+}
+
 // 会话状态 → 标签 + 颜色类
 export const stateLabel = (s: string): { text: string; cls: string } => {
   switch (s) {
@@ -278,6 +312,8 @@ const lastOutsideFocus = (box: HTMLElement): HTMLElement | null => {
   }
   return null;
 };
+// 打开中的模态栈（后进 = 最上层）：document 级 Tab/焦点守卫据此只让最上层生效。
+const dialogStack: HTMLElement[] = [];
 export function useDialogFocus(active: boolean, boxRef: RefObject<HTMLElement | null>) {
   useEffect(() => {
     if (!active) return;
@@ -293,19 +329,39 @@ export function useDialogFocus(active: boolean, boxRef: RefObject<HTMLElement | 
       // 优先（取消钮打标），不给破坏动作预武装；无标记回落首位
       (box.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0])?.focus();
     }
+    // 焦点陷阱挂在 document 捕获相位：此前挂在 box 上的 keydown 只在「焦点本来
+    // 就在框内」时生效——设置面板里点说明文字/删掉一行按钮后焦点落 body，Tab
+    // 直接跑到遮罩后的主界面。多弹层（设置上再弹确认）用栈判定最上层，避免
+    // 底层把焦点抢回去。
+    dialogStack.push(box);
+    const isTop = () => dialogStack[dialogStack.length - 1] === box;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
+      if (e.key !== "Tab" || !isTop()) return;
       const list = focusables();
       if (list.length === 0) return;
       const first = list[0];
       const last = list[list.length - 1];
       const inside = document.activeElement instanceof Node && box.contains(document.activeElement);
-      if (e.shiftKey && (!inside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+      // 焦点已逃逸（元素被删/点了非聚焦区）：任何方向的 Tab 都先拉回框内
+      if (!inside) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
-    box.addEventListener("keydown", onKey);
+    const onFocusIn = () => {
+      if (!isTop()) return;
+      const el = document.activeElement;
+      // 焦点被鼠标点到遮罩外/body：拉回框内（不劫持框内正常移动）
+      if (!(el instanceof Node) || !box.contains(el)) {
+        (box.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0])?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("focusin", onFocusIn, true);
     return () => {
-      box.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("focusin", onFocusIn, true);
+      const i = dialogStack.lastIndexOf(box);
+      if (i >= 0) dialogStack.splice(i, 1);
       if (prev?.isConnected) prev.focus();
     };
   }, [active, boxRef]);

@@ -1,9 +1,10 @@
 // SFTP 面板（App.tsx 拆分③）：远端文件浏览卡、传输队列抽屉、文件动作菜单三块，
 // 从 App.tsx 原样出仓——浏览状态（路径/历史/选择/排序/筛选）、传输任务与冲突
 // 裁决、菜单开合全部留在宿主，本文件只收 props 呈现，零语义变更。
+import { useEffect, useState } from "react";
 import { invoke } from "../adapter/bridge";
 import type { CollisionDecision, DirEntryS, SessionBrief as Brief } from "../adapter/wire";
-import { fmtBytes, dateLocale, type TransferCard } from "../app-data";
+import { fmtBytes, dateLocale, isImeComposing, type TransferCard } from "../app-data";
 import { t } from "../i18n";
 import { clampIntoView } from "./ctx-menus";
 import {
@@ -17,6 +18,8 @@ const XFER_ROWS_SHOWN = 120;
 interface FilesPanelProps {
   sid: string | null;
   brief: Brief | null;
+  /** 当前会话是否可操作；false=已断开——列表是断线前快照，要明说而不是让用户点空 */
+  connected?: boolean;
   sftpWrapRef: { current: HTMLDivElement | null };
   sftpCrumbsRef: { current: HTMLDivElement | null };
   sftpListRef: { current: HTMLDivElement | null };
@@ -63,7 +66,7 @@ interface FilesPanelProps {
 }
 
 export function FilesPanel({
-  sid, brief, sftpWrapRef, sftpCrumbsRef, sftpListRef, sftpAnchorRef,
+  sid, brief, connected = true, sftpWrapRef, sftpCrumbsRef, sftpListRef, sftpAnchorRef,
   sftpPath, sftpPathInput, sftpEntries, sftpLoading, sftpErr, sftpSel,
   sftpHist, sftpFwd, sftpCursor, sftpEditPath, sftpFilter, sftpShowHidden,
   sftpSaveAs, sftpSort, sftpShown, sftpListW, byPathOpen, downloadPath,
@@ -75,6 +78,11 @@ export function FilesPanel({
   return (
           <div className="section" ref={sftpWrapRef}>
             <h4>{t("远程文件")}</h4>
+            {sid && !connected && (
+              <div className="notice-bar err" role="status" data-testid="sftp-disconnected">
+                {t("会话已断开——下面是断开前加载的目录快照；重连后再刷新或操作。")}
+              </div>
+            )}
             {!sid ? (
               <div className="side-quiet">{t("连接会话后可浏览远端目录；文件拖进窗口即上传到正在浏览的目录。")}</div>
             ) : (
@@ -122,6 +130,7 @@ export function FilesPanel({
                       value={sftpPathInput}
                       onChange={(e) => setSftpPathInput(e.target.value)}
                       onKeyDown={(e) => {
+                        if (isImeComposing(e)) return;
                         if (e.key === "Enter") void navigateTo(sftpPathInput).then((ok) => { if (ok) setSftpEditPath(false); });
                         else if (e.key === "Escape") { setSftpEditPath(false); setSftpPathInput(sftpPath); }
                       }}
@@ -172,7 +181,7 @@ export function FilesPanel({
                       placeholder={t("下载远端文件（绝对路径，回车或点「下载」）")}
                       value={downloadPath}
                       onChange={(e) => setDownloadPath(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && void startDownload()}
+                      onKeyDown={(e) => { if (isImeComposing(e)) return; if (e.key === "Enter") void startDownload(); }}
                     />
                     <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>{t("下载")}</button>
                   </div>
@@ -183,7 +192,8 @@ export function FilesPanel({
                     {[0, 1, 2].map((i) => <div className="skeleton sftp-sk" key={i} style={{ width: `${90 - i * 18}%`, height: 18 }} />)}
                   </div>
                 )}
-                {!sftpLoading && sftpEntries && sftpEntries.length === 0 && (
+                {/* 列目录失败时 sftpEntries 可能是空数组——别把错误同时说成「空目录」 */}
+                {!sftpLoading && !sftpErr && sftpEntries && sftpEntries.length === 0 && (
                   <div className="side-quiet">{t("空目录。")}</div>
                 )}
                 {!sftpLoading && sftpEntries && sftpEntries.length > 0 && sftpShown.length === 0 && (
@@ -272,6 +282,14 @@ export function TransferQueueDrawer({
   transfers, queueOpen, setQueueOpen, sidRef, hostLabel, canRetry,
   decideCollision, verifyOutcome, locateTransfer, retryTransfer, openTransfer,
 }: TransferQueueDrawerProps) {
+  // 取消是逐行一颗 1 字符宽的 ✕，误点即中断且不可撤销——首点武装、4s 内再点才
+  // 真正取消（与审批/删除同一条「二次确认」语义，但不额外弹窗打断长传输）。
+  const [cancelArm, setCancelArm] = useState<string | null>(null);
+  useEffect(() => {
+    if (!cancelArm) return;
+    const timer = setTimeout(() => setCancelArm(null), 4000);
+    return () => clearTimeout(timer);
+  }, [cancelArm]);
   return (
           <div className="queue-drawer" data-testid="queue-drawer" role="region" aria-label={t("传输队列")}>
             <div className="queue-head">
@@ -371,7 +389,14 @@ export function TransferQueueDrawer({
                         : <span className="xfer-note" data-testid="xfer-retry-unavailable" title={t("重试须在原会话内重跑（重新校验连接/源/冲突）；原会话已不在——请重连该主机后在文件面板重新发起")}>{t("会话已不在")}</span>
                     )}
                     {t2.status === "running" || t2.status === "queued" || t2.status === "cancelling" || t2.status === "committing" || t2.status === "awaiting" ? (
-                      <button className="ghost" title={t("取消传输")} onClick={() => { invoke("cancel_transfer", { id: t2.id }).catch(() => {}); }}>✕</button>
+                      <button className={"ghost" + (cancelArm === t2.id ? " warn" : "")}
+                        data-testid="xfer-cancel"
+                        title={cancelArm === t2.id ? t("再点一次确认取消（已传部分会保留，需从头重传）") : t("取消传输（点击后需再确认一次）")}
+                        onClick={() => {
+                          if (cancelArm !== t2.id) { setCancelArm(t2.id); return; }
+                          setCancelArm(null);
+                          invoke("cancel_transfer", { id: t2.id }).catch(() => {});
+                        }}>{cancelArm === t2.id ? t("确认取消") : "✕"}</button>
                     ) : (
                       <span className={t2.status === "done" ? "ok" : t2.status === "cancelled" || t2.status === "skipped" ? "dim" : "err"} style={{ flex: "none", width: 18, textAlign: "center" }}>
                         {t2.status === "done" ? "✓" : t2.status === "cancelled" || t2.status === "skipped" ? "⊘" : "✕"}

@@ -1651,6 +1651,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "agent_send":
     case "agent_cancel":
+    case "agent_cancel_model":
     case "agent_history":
       throw apiError("invalid_input", "内置 Agent 的真实运行需要桌面应用（浏览器演示域只有演练外壳）");
 case "read_triggers": {

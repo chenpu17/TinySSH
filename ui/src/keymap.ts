@@ -30,7 +30,8 @@ export const KEYMAP_SETTING = "ui.keymap.v1";
 const BASE_KEYMAP: Record<KeyActionId, Binding> = {
   "tab-new": { key: "t", primary: true, shift: false, alt: false },
   "tab-close": { key: "w", primary: true, shift: false, alt: false },
-  // 本地终端一等公民轮：Shift 区分「新建连接表单」（Ctrl+T）与「直接开本地终端」
+  // 本地终端一等公民轮：独立键区分「新建连接表单」与「直接开本地终端」
+  // （mac：⌘T / ⌘⇧T；Win/Linux：Ctrl+Shift+T / Ctrl+Shift+L）
   "term-local": { key: "t", primary: true, shift: true, alt: false },
   "split-toggle": { key: "d", primary: true, shift: false, alt: false },
   palette: { key: "k", primary: true, shift: false, alt: false },
@@ -39,18 +40,40 @@ const BASE_KEYMAP: Record<KeyActionId, Binding> = {
 };
 
 // tmux 前缀优先（2026-11-02 拍板：Ctrl+B 是 tmux 的关键按键，有冲突让其他动作改）。
-// Win/Linux 的主修饰键就是 Ctrl：Ctrl+B 一旦在表内，控制字符直发层按表豁免，主视图与
-// tmux 格子永远收不到 \x02。故 Win/Linux 主机栏默认改 Ctrl+Shift+B（Windows Terminal
-// 惯例：应用动作走 Ctrl+Shift、Ctrl+字母 留给 shell），并把 Ctrl+B 列为终端保留键——
-// 持久化旧表里的 Ctrl+B 载入即回落默认、录键器拒收。mac 主修饰键是 ⌘，⌘B 不动。
+// Win/Linux 的主修饰键就是 Ctrl：终端聚焦时 Ctrl+字母 是 readline 编辑键（Ctrl+D
+// EOF、Ctrl+W werase、Ctrl+K kill-line、Ctrl+T transpose、Ctrl+F forward-char），
+// 不能让应用动作抢走——Windows Terminal 惯例是应用动作走 Ctrl+Shift、Ctrl+字母
+// 留给 shell。故非 mac 默认表统一 Ctrl+Shift+字母（本地终端用 L，同 New tab=T /
+// Local=L 的记忆点），Ctrl+B 仍列为终端保留键。mac 主修饰键是 ⌘，⌘X 不占 shell。
+const WIN_KEYMAP: Record<KeyActionId, Binding> = {
+  "tab-new": { key: "t", primary: true, shift: true, alt: false },
+  "tab-close": { key: "w", primary: true, shift: true, alt: false },
+  "term-local": { key: "l", primary: true, shift: true, alt: false },
+  "split-toggle": { key: "d", primary: true, shift: true, alt: false },
+  palette: { key: "k", primary: true, shift: true, alt: false },
+  hostbar: { key: "b", primary: true, shift: true, alt: false },
+  search: { key: "f", primary: true, shift: true, alt: false },
+};
+
 export function defaultKeymap(mac: boolean): Record<KeyActionId, Binding> {
   if (mac) return { ...BASE_KEYMAP };
-  return { ...BASE_KEYMAP, hostbar: { key: "b", primary: true, shift: true, alt: false } };
+  return { ...WIN_KEYMAP };
 }
 
 /** 终端保留键：该组合不得进键位表（Win/Linux 的 Ctrl+B = tmux 默认前缀）。 */
 export function terminalReserved(b: Binding, mac: boolean): boolean {
   return !mac && b.primary && !b.shift && !b.alt && b.key === "b";
+}
+
+/**
+ * macOS 应用菜单快捷键：⌘Q/⌘H/⌘M 先被 NSMenu 消费，WebView 根本收不到——
+ * 绑了也永远不触发（⌘Q 还会在录制时直接退出应用）。录制与存量解析都拒收。
+ * ⌘W 不在此列：tab-close 的默认键，应用菜单无同名项时照常送达。
+ */
+const MAC_SYSTEM_KEYS = new Set(["q", "h", "m"]);
+
+export function systemReserved(b: Binding, mac: boolean): boolean {
+  return mac && b.primary && !b.shift && !b.alt && MAC_SYSTEM_KEYS.has(b.key);
 }
 
 /**
@@ -88,7 +111,9 @@ export function bindingOf(
   let key: string | null = ev.key.length === 1 ? ev.key.toLowerCase() : null;
   if (!key && ev.code?.startsWith("Key")) key = ev.code.slice(3).toLowerCase();
   if (!key || !KEY_RE.test(key)) return null;
-  return { key, primary: mac ? ev.metaKey : ev.ctrlKey, shift: ev.shiftKey, alt: ev.altKey };
+  const b: Binding = { key, primary: mac ? ev.metaKey : ev.ctrlKey, shift: ev.shiftKey, alt: ev.altKey };
+  // 平台系统菜单键不构成可绑定组合（⌘Q 在录制器里按下会直接退出应用）
+  return systemReserved(b, mac) ? null : b;
 }
 
 export function sameBinding(a: Binding, b: Binding): boolean {
@@ -122,7 +147,11 @@ export function parseKeymapReport(raw: string | null | undefined, mac: boolean):
     const v = obj[id];
     if (!v || typeof v.key !== "string" || !KEY_RE.test(v.key)) continue;
     const b: Binding = { key: v.key, primary: v.primary === true, shift: v.shift === true, alt: v.alt === true };
-    if (!b.primary || b.alt || terminalReserved(b, mac)) continue;
+    if (!b.primary || b.alt || terminalReserved(b, mac) || systemReserved(b, mac)) continue;
+    // 迁移：Win/Linux 旧默认是 Ctrl+字母（抢 shell 编辑键），落盘条目若与旧默认
+    // 完全一致即视为「从未自定义」，改用新默认 Ctrl+Shift+字母（用户显式改过的
+    // 组合不在此列，原样保留）。
+    if (!mac && sameBinding(b, BASE_KEYMAP[id])) continue;
     if ([...custom.values()].some((x) => sameBinding(x, b))) continue;
     custom.set(id, b);
   }

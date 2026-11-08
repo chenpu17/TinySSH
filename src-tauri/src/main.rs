@@ -482,6 +482,9 @@ fn main() {
                 if event.id() == "settings" {
                     let _ = app.emit("menu-settings", ());
                     eprintln!("[app] menu: settings requested");
+                } else if event.id() == "select-all" {
+                    // 原生菜单已消费 ⌘A；由前端按焦点决定全选终端缓冲还是输入框。
+                    let _ = app.emit("menu-select-all", ());
                 }
             });
             if let Some(w) = app.get_webview_window("main") {
@@ -687,7 +690,7 @@ fn main() {
             read_screen, pty_size, send_keys, exec_human, read_host_metrics, read_npu_metrics, read_self_metrics, set_control, delegate_session, session_brief, set_session_goal, read_blocks, read_triggers, save_triggers, read_restore,
             get_build_time,
             check_update, export_diagnostics, updater_info, updater_install,
-            agent_model_get, agent_model_set, agent_send, agent_cancel, agent_history,
+            agent_model_get, agent_model_set, agent_send, agent_cancel, agent_cancel_model, agent_history,
             shell_capability,
             list_local_shells,
             list_approvals, decide_approval, remember_approval, audit_query, issue_agent, revoke_agent, mcp_status, set_autonomy, autonomy_list, query_records, export_records,

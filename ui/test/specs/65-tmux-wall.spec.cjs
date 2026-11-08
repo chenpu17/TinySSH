@@ -180,6 +180,27 @@ module.exports = {
     ck.check("Enter 提交：输入行清空（[输入中] 消失、屏行 echo hi 保留）",
       await pollAsync(async () =>
         !(await wallTextHas(page, "logs", "[输入中]")) && await wallTextHas(page, "logs", "echo hi"), 2500, page), "");
+    // ── E2. 粘贴审批链：墙走 send-keys -l 字面通道（无 bracketed paste），多行
+    // 粘贴的换行会被远端立即执行——必须先弹确认卡，取消/确认各走一条路。
+    const inPaste = await page.evaluate(() => window.__wall_inputs ?? 0);
+    const firePaste = (text) => page.evaluate((txt) => {
+      const el = document.querySelector('[data-testid="tmux-wall-input-logs"]');
+      const dt = new DataTransfer();
+      dt.setData("text/plain", txt);
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, text);
+    await firePaste("echo one\necho two");
+    await page.waitForTimeout(250);
+    const pasteDlg = await page.evaluate(() => !!document.querySelector('[data-testid="paste-dialog-title"]'));
+    ck.check("墙多行粘贴先弹确认卡（未发送任何字节）",
+      pasteDlg && (await page.evaluate(() => window.__wall_inputs ?? 0)) === inPaste,
+      `dlg=${pasteDlg}`);
+    await page.click('[data-testid="paste-send"]');
+    await page.waitForTimeout(500);
+    ck.check("确认后粘贴整段送达（一次 send，回显进格子）",
+      (await page.evaluate(() => window.__wall_inputs ?? 0)) === inPaste + 1
+      && await pollAsync(() => wallTextHas(page, "logs", "echo one"), 2500, page),
+      `${inPaste}→${await page.evaluate(() => window.__wall_inputs ?? 0)}`);
     await page.keyboard.type("tail -f x");
     await page.keyboard.press("Control+c");
     await page.waitForTimeout(400);
@@ -194,7 +215,7 @@ module.exports = {
     }));
     ck.check("键入焦点下 Esc 先发给会话（屏不关、也没放大）",
       escKeep.open && !escKeep.solo
-      && (await page.evaluate(() => window.__wall_inputs ?? 0)) === in0 + 4, // echo hi 批量+Enter+tail^C+Esc
+      && (await page.evaluate(() => window.__wall_inputs ?? 0)) === in0 + 5, // echo hi 批量+Enter+粘贴+tail^C+Esc
       JSON.stringify(escKeep));
     // 放大钮：保留外框的 solo（框=标题栏 + 还原钮换装）
     await page.click('[data-testid="tmux-wall-max-logs"]');

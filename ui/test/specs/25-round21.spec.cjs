@@ -187,7 +187,9 @@ module.exports = {
     // P2-b 输出触发器轮 7→8（输出触发器——输出正则 → 通知 / 键序）
     ck.check("导航八类各带一句定位", navDescs.length === 8 && navDescs.every((d) => d.length > 0), JSON.stringify(navDescs));
     // 二十二轮：外观两卡（应用外观/字号与缩放——终端配色卡随主题统一退役）
-    const cardCounts = await page.evaluate(() => document.querySelectorAll(".settings-pane .set-card").length);
+    // 常挂隐藏的触发器/Agent/技能卡（切分类不丢草稿）也在 DOM 里，只数可见卡。
+    const cardCounts = await page.evaluate(() =>
+      [...document.querySelectorAll(".settings-pane .set-card")].filter((e) => e.getClientRects().length > 0).length);
     ck.check("外观分类两卡片分区", cardCounts === 2, `实得 ${cardCounts}`);
     const dlgBox = () => page.evaluate(() => {
       const d = document.querySelector(".term-settings.settings-wide");
@@ -225,7 +227,7 @@ module.exports = {
     await page.waitForTimeout(400);
     ck.check("终端分类两卡（行为 6 行 + 外观 6 行）",
       (await page.evaluate(() => {
-        const cards = [...document.querySelectorAll(".settings-pane .set-card")];
+        const cards = [...document.querySelectorAll(".settings-pane .set-card")].filter((e) => e.getClientRects().length > 0);
         if (cards.length !== 2) return false;
         const rows = (c) => c.querySelectorAll(".set-item").length;
         // P2-c 轮：行为卡 3→4（OSC 52 策略）；本地终端一等公民轮 4→5（本地 Shell 下拉）；

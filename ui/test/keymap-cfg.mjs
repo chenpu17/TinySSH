@@ -3,7 +3,7 @@
 // 直接 import src/keymap.ts（node --experimental-strip-types，零复制）。
 // 用法：node --experimental-strip-types test/keymap-cfg.mjs （退出码非 0 = 有失败）
 import {
-  defaultKeymap, KEYMAP_ACTIONS, parseKeymap, parseKeymapReport, conflictOf, formatBinding, bindingOf, terminalReserved, exemptFromTerminal,
+  defaultKeymap, KEYMAP_ACTIONS, parseKeymap, parseKeymapReport, conflictOf, formatBinding, bindingOf, terminalReserved, systemReserved, exemptFromTerminal,
 } from "../src/keymap.ts";
 
 const WIN = defaultKeymap(false);
@@ -39,8 +39,8 @@ expect("持久化层冲突按表序保留、后到者回落", [clash.search.key,
 // ---- conflictOf ----
 const m1 = parseKeymap(null, false);
 expect("无冲突→null", conflictOf(m1, "search", { key: "j", primary: true, shift: false, alt: false }), null);
-expect("撞 palette→palette", conflictOf(m1, "search", { key: "k", primary: true, shift: false, alt: false }), "palette");
-expect("自己撞自己不算冲突", conflictOf(m1, "palette", { key: "k", primary: true, shift: false, alt: false }), null);
+expect("撞 palette→palette", conflictOf(m1, "search", { key: "k", primary: true, shift: true, alt: false }), "palette");
+expect("自己撞自己不算冲突", conflictOf(m1, "palette", { key: "k", primary: true, shift: true, alt: false }), null);
 
 // ---- formatBinding ----
 expect("Windows 形", formatBinding({ key: "t", primary: true, shift: false, alt: false }, false), "Ctrl+T");
@@ -61,6 +61,16 @@ expect("命名键且无 code→null（安全拒收）", bindingOf({ key: "Proces
 expect("mac 平台主修饰键=metaKey", bindingOf({ key: "t", code: "KeyT", ctrlKey: false, metaKey: true, shiftKey: false, altKey: false }, true), { key: "t", primary: true, shift: false, alt: false });
 expect("mac 真 Ctrl 非主修饰", bindingOf({ key: "t", code: "KeyT", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false }, true), { key: "t", primary: false, shift: false, alt: false });
 
+// ---- macOS 应用菜单键（⌘Q/⌘H/⌘M 先被 NSMenu 消费，绑了也不触发）----
+const META = (key, shift = false) => ({ key, code: `Key${key.toUpperCase()}`, ctrlKey: false, metaKey: true, shiftKey: shift, altKey: false });
+expect("mac ⌘Q→null（系统退出菜单先行）", bindingOf(META("q"), true), null);
+expect("mac ⌘H/⌘M→null", [bindingOf(META("h"), true), bindingOf(META("m"), true)], [null, null]);
+expect("mac ⌘⇧Q 可录（与系统退出不同组合）", bindingOf(META("q", true), true), { key: "q", primary: true, shift: true, alt: false });
+expect("Win/Linux Ctrl+Q 不受限", bindingOf({ key: "q", code: "KeyQ", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false }, false), { key: "q", primary: true, shift: false, alt: false });
+expect("systemReserved 判定", [systemReserved({ key: "q", primary: true, shift: false, alt: false }, true), systemReserved({ key: "q", primary: true, shift: true, alt: false }, true), systemReserved({ key: "q", primary: true, shift: false, alt: false }, false)], [true, false, false]);
+expect("存量 mac ⌘Q 绑定解析回落默认", parseKeymap(JSON.stringify({ search: { key: "q", primary: true, shift: false, alt: false } }), true).search.key, "f");
+expect("存量为 Win Ctrl+Q 时原样保留", parseKeymap(JSON.stringify({ search: { key: "q", primary: true, shift: false, alt: false } }), false).search.key, "q");
+
 // ---- tmux 前缀优先（Win/Linux 的 Ctrl+B 留给终端）----
 const CTRL_B = { key: "b", primary: true, shift: false, alt: false };
 const CTRL_SHIFT_B = { ...CTRL_B, shift: true };
@@ -78,7 +88,8 @@ expect("mac 存量 ⌘B 原样保留", formatBinding(parseKeymap(JSON.stringify(
 expect("直发层：Ctrl+B 不豁免（直达主视图/格子）", exemptFromTerminal(WIN, CTRL_B, false), false);
 expect("直发层：表里混进旧 Ctrl+B 也不豁免", exemptFromTerminal({ ...WIN, hostbar: CTRL_B }, CTRL_B, false), false);
 expect("直发层：Ctrl+Shift+B 豁免（归主机栏）", exemptFromTerminal(WIN, CTRL_SHIFT_B, false), true);
-expect("直发层：Ctrl+K 豁免（命令面板）", exemptFromTerminal(WIN, { key: "k", primary: true, shift: false, alt: false }, false), true);
+expect("直发层：Ctrl+Shift+K 豁免（命令面板）", exemptFromTerminal(WIN, { key: "k", primary: true, shift: true, alt: false }, false), true);
+expect("直发层：Ctrl+K 不再豁免（Win/Linux 留给 readline 的 kill-line）", exemptFromTerminal(WIN, { key: "k", primary: true, shift: false, alt: false }, false), false);
 expect("直发层：未绑定的 Ctrl+E 不豁免", exemptFromTerminal(WIN, { key: "e", primary: true, shift: false, alt: false }, false), false);
 
 // ---- 两遍解析：冲突按终态判定（审查轮二 P2：旧实现与「尚未覆盖的默认值」逐条比较）----
@@ -94,10 +105,10 @@ expect("合法对调命令面板↔搜索：重载两条都保留", [fmtW(D1.map
 const A1 = parseKeymapReport(JSON.stringify({ ...WIN, hostbar: CTRL_B, search: CTRL_SHIFT_B }), false);
 expect("存量 hostbar=Ctrl+B 迁到 Ctrl+Shift+B、该键被搜索占用：默认优先，搜索回默认并上报",
   [fmtW(A1.map.hostbar), fmtW(A1.map.search), A1.lost.map((l) => `${l.id}:${fmtW(l.was)}→${l.by}`)],
-  ["Ctrl+Shift+B", "Ctrl+F", ["search:Ctrl+Shift+B→hostbar"]]);
-const E1 = parseKeymapReport(JSON.stringify({ ...WIN, hostbar: CTRL_B, search: CTRL_SHIFT_B, palette: K("f") }), false);
-expect("连锁让位：搜索回 Ctrl+F 又撞命令面板的自定义 Ctrl+F → 命令面板也回默认，两条都上报",
-  [fmtW(E1.map.search), fmtW(E1.map.palette), E1.lost.map((l) => l.id).sort()], ["Ctrl+F", "Ctrl+K", ["palette", "search"]]);
+  ["Ctrl+Shift+B", "Ctrl+Shift+F", ["search:Ctrl+Shift+B→hostbar"]]);
+const E1 = parseKeymapReport(JSON.stringify({ ...WIN, hostbar: CTRL_B, search: CTRL_SHIFT_B, palette: K("f", true) }), false);
+expect("连锁让位：搜索回 Ctrl+Shift+F 又撞命令面板的自定义 Ctrl+Shift+F → 命令面板也回默认，两条都上报",
+  [fmtW(E1.map.search), fmtW(E1.map.palette), E1.lost.map((l) => l.id).sort()], ["Ctrl+Shift+F", "Ctrl+Shift+K", ["palette", "search"]]);
 expect("迁移本身（hostbar Ctrl+B→Ctrl+Shift+B）不算自定义丢失", parseKeymapReport(JSON.stringify({ ...WIN, hostbar: CTRL_B }), false).lost, []);
 expect("parseKeymap 与 parseKeymapReport.map 同一结果", parseKeymap(JSON.stringify({ ...WIN, hostbar: CTRL_B, search: CTRL_SHIFT_B }), false), A1.map);
 // 性质：任意存量表（含非法/保留/重复/缺项）解析后终态无冲突、不含保留键
@@ -115,7 +126,7 @@ expect("parseKeymap 与 parseKeymapReport.map 同一结果", parseKeymap(JSON.st
     for (const isMac of [false, true]) {
       const { map } = parseKeymapReport(JSON.stringify(obj), isMac);
       const clash = KEYMAP_ACTIONS.some(({ id }) => conflictOf(map, id, map[id]));
-      const reserved = KEYMAP_ACTIONS.some(({ id }) => terminalReserved(map[id], isMac));
+      const reserved = KEYMAP_ACTIONS.some(({ id }) => terminalReserved(map[id], isMac) || systemReserved(map[id], isMac));
       if (clash || reserved) bad++;
     }
   }
@@ -125,7 +136,7 @@ expect("parseKeymap 与 parseKeymapReport.map 同一结果", parseKeymap(JSON.st
 // ---- 表完整性哨兵 ----
 for (const [name, m, isMac] of [["Win/Linux", WIN, false], ["mac", MAC, true]]) {
   expect(`${name} 七动作默认绑定互不冲突`, KEYMAP_ACTIONS.filter(({ id }) => conflictOf(m, id, m[id])).map((x) => x.id), []);
-  expect(`${name} 默认表不含终端保留键`, KEYMAP_ACTIONS.filter(({ id }) => terminalReserved(m[id], isMac)).map((x) => x.id), []);
+  expect(`${name} 默认表不含终端保留键/系统菜单键`, KEYMAP_ACTIONS.filter(({ id }) => terminalReserved(m[id], isMac) || systemReserved(m[id], isMac)).map((x) => x.id), []);
 }
 
 console.log(fail === 0 ? "\n✓ keymap 模块全部通过" : `\n✗ ${fail} 项失败`);

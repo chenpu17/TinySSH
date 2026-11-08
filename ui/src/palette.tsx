@@ -69,6 +69,25 @@ export function CommandPalette({ open, items, onClose }: {
       onClose();
     }
   };
+  // 焦点陷阱（审计 P2）：面板是 z-index 90 的视觉模态，但此前只有搜索框绑了
+  // ↑↓/Enter/Esc——Tab 一次就把焦点送给背后的主机栏/标签，方向键与 Esc 全部失效。
+  // 在面板根接住 Tab 循环；Esc 兜底（输入框未持焦时也能关）。
+  const trapKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.defaultPrevented) return;
+    if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+    if (e.key !== "Tab") return;
+    const root = e.currentTarget;
+    const focusables = Array.from(root.querySelectorAll<HTMLElement>(
+      'input, button:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    )).filter((el) => el.offsetParent !== null);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const cur = document.activeElement as HTMLElement | null;
+    if (!cur || !root.contains(cur)) { e.preventDefault(); first.focus(); return; }
+    if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
+  };
 
   // 分组按首次出现排序；空结果给可行动文案
   const groups: { name: string; rows: { it: PaletteItem; i: number }[] }[] = [];
@@ -81,7 +100,7 @@ export function CommandPalette({ open, items, onClose }: {
   return (
     <div className="palette-overlay" data-testid="palette-overlay"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="palette" role="dialog" aria-label={t("命令面板")}>
+      <div className="palette" role="dialog" aria-modal="true" aria-label={t("命令面板")} onKeyDown={trapKey}>
         <input
           ref={inputRef}
           className="palette-input"

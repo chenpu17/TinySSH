@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, IdentityMeta, SshConfigPreview } from "../adapter/wire";
-import { friendlyError } from "../app-data";
+import { friendlyError, hostAddressOk, normalizeHostAddress, parsePort } from "../app-data";
 import { t } from "../i18n";
 
 // IME 组合期守卫（§7.3 与 resolveAction 同口径：isComposing 与 keyCode 229 双查）——
@@ -143,14 +143,14 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
       (!nameVal ? nameRef : !address.trim() ? addressRef : usernameRef).current?.focus();
       return;
     }
-    // 地址格式校验（P2-3）：IP 或域名，不带协议/端口/路径——之前的乱码地址能一路存到「连接成功」
-    if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
-      setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10 或 server.example.com），不带端口与协议"));
+    // 地址格式校验（P2-3）：IP（v4/v6）或域名，不带协议/端口/路径——之前的乱码地址能一路存到「连接成功」
+    if (!hostAddressOk(address)) {
+      setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10、server.example.com 或 ::1），不带端口与协议"));
       addressRef.current?.focus();
       return;
     }
-    const p = parseInt(port, 10);
-    if (!Number.isInteger(p) || p <= 0 || p > 65535) {
+    const p = parsePort(port);
+    if (p === null) {
       setErr(t("端口必须是 1–65535 的数字"));
       portRef.current?.focus();
       return;
@@ -164,7 +164,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
       nameRef.current?.focus();
       return;
     }
-    const addrDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.address === address.trim() && h.port === p);
+    const addrDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.address === normalizeHostAddress(address) && h.port === p);
     if (addrDup) {
       setErr(t("同一地址和端口已有主机「{0}」——如需同一台机器请直接使用该条目", addrDup.name));
       addressRef.current?.focus();
@@ -196,7 +196,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts }: { o
       const tags = [...new Set(tagsInput.split(/[,，]/).map((x) => x.trim()).filter(Boolean))];
       const hid = await invoke("upsert_host", {
         host: {
-          id: editHost?.id ?? null, name: nameVal, address: address.trim(),
+          id: editHost?.id ?? null, name: nameVal, address: normalizeHostAddress(address),
           port: p, username: username.trim(), auth, tags,
           charset,
           jump_host_id: jumpId || null,

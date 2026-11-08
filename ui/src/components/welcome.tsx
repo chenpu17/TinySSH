@@ -1,5 +1,6 @@
 // 欢迎页（App.tsx 拆分⑤）：无活跃会话时的引导区——步骤说明、主行动钮、
 // 重连上次会话、最近连接。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
+import { useRef, useState } from "react";
 import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
 import { IconPlus, IconTerminal, IconUpload } from "../icons";
 import { t } from "../i18n";
@@ -16,15 +17,15 @@ interface WelcomeProps {
   recentsHidden: string[];
   /** P3：上次受控退出的现场快照（加密 vault KV；恢复走宿主 onRestoreScene） */
   restoreEntries: RestoreEntry[];
-  onRestoreScene: (entries: RestoreEntry[]) => void;
+  onRestoreScene: (entries: RestoreEntry[]) => unknown;
   /** 工作空间轮：「重连上次会话」升级为全量恢复（主机 + tmux 窗格/布局/attach），
    * 实现在宿主——组件只管把按钮交给它 */
-  onReconnectLast: () => void;
+  onReconnectLast: () => unknown;
   /** 上次运行确实用过 tmux 面板（决定 title 是否承诺窗格/布局恢复——没用过不夸口） */
   hasWorkspacePanes: boolean;
   focusMode: boolean;
   hostbarOpen: boolean;
-  createSession: (h: Host) => void;
+  createSession: (h: Host) => unknown;
   applyFocus: (on: boolean) => void;
   toggleHostbar: (open: boolean) => void;
   setShowAddHost: (v: boolean) => void;
@@ -42,6 +43,21 @@ export function Welcome({
   setShowAddHost, setShowImport, setShowQuickConnect, setEditingHost,
   setPrefillEntry, setRecentMenu,
 }: WelcomeProps) {
+  // 在途闸：恢复/重连是长连接流程（逐主机最长 20s），此前按钮无 busy 态，连点
+  // 被守卫静默吞掉、本地终端双击还会真的开出两个标签。Promise 落定再放行。
+  const [busy, setBusy] = useState<"local" | "last" | "scene" | "recent" | null>(null);
+  const busyRef = useRef(false);
+  const run = (key: "local" | "last" | "scene" | "recent", fn: () => unknown) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(key);
+    void Promise.resolve().then(fn).catch(() => {
+      // 失败提示由宿主统一 toast；这里只负责解锁，避免 unhandled rejection
+    }).finally(() => {
+      busyRef.current = false;
+      setBusy(null);
+    });
+  };
   return (
     <div className="welcome">
       <div className="welcome-box">
@@ -57,7 +73,7 @@ export function Welcome({
             : t("点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、Ctrl+V 粘贴、右键复制")}</div>
           <div><span className="ws-k">{t("多会话")}</span>{t("一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留")}</div>
           <div><span className="ws-k">{t("传输")}</span>{t("拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标")}</div>
-          <div><span className="ws-k">{t("专注")}</span>{t("F11 进入全屏专注：界面全让位给终端，标签条常驻顶部（Ctrl+K 面板可切自动隐藏），再按 F11 退出")}</div>
+          <div><span className="ws-k">{t("专注")}</span>{t("F11 进入全屏专注：界面全让位给终端，标签条常驻顶部（{0} 面板可切自动隐藏），再按 F11 退出", isMacPlatform() ? "⌘K" : "Ctrl+Shift+K")}</div>
         </div>
         <div className="welcome-actions">
           <button onClick={() => { setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> {t("添加主机")}</button>
@@ -72,10 +88,10 @@ export function Welcome({
             setShowImport(true); setShowAddHost(false);
           }}><IconUpload size={13} /> {t("从 ~/.ssh/config 导入")}</button>
           {hosts.some((h) => h.id === "local") && (
-            <button className="ghost" onClick={() => {
+            <button className="ghost" disabled={busy !== null} onClick={() => run("local", () => {
               const lh = hosts.find((h) => h.id === "local");
-              if (lh) void createSession(lh);
-            }}><IconTerminal size={13} /> {t("打开本地终端")}</button>
+              if (lh) return createSession(lh);
+            })}><IconTerminal size={13} /> {busy === "local" ? t("正在打开…") : t("打开本地终端")}</button>
           )}
         </div>
         {/* 十五轮：重连上次会话——上次退出/刷新时仍打开的主机（去重有序）。
@@ -88,12 +104,12 @@ export function Welcome({
           return (
             <div className="welcome-recents" aria-label={t("上次会话")}>
               <div className="wr-title">{t("上次会话")}</div>
-              <button className="wr-row" data-testid="reconnect-last"
+              <button className="wr-row" data-testid="reconnect-last" disabled={busy !== null}
                 title={`${t("重连 {0}", rowsH.map((h) => h.name).join(t("、")))}${hasWorkspacePanes ? `；${t("同时恢复上次的 tmux 窗格、布局与主视图接入（服务器上已不存在的会话会跳过）")}` : ""}`}
-                onClick={() => onReconnectLast()}>
-                <span className="wr-name">{t("⟳ 重连上次会话（{0}）", rowsH.length)}</span>
+                onClick={() => run("last", onReconnectLast)}>
+                <span className="wr-name">{busy === "last" ? t("⟳ 正在恢复上次会话…") : t("⟳ 重连上次会话（{0}）", rowsH.length)}</span>
                 <span className="wr-addr">{rowsH.map((h) => h.name).join(t("、"))}</span>
-                <span className="wr-go">{t("恢复")}</span>
+                <span className="wr-go">{busy === "last" ? t("恢复中") : t("恢复")}</span>
               </button>
             </div>
           );
@@ -111,12 +127,12 @@ export function Welcome({
           return (
             <div className="welcome-recents" aria-label={t("恢复现场")}>
               <div className="wr-title">{t("上次现场")}</div>
-              <button className="wr-row" data-testid="restore-scene"
+              <button className="wr-row" data-testid="restore-scene" disabled={busy !== null}
                 title={`${t("快照 {0}", when)}；${restoreEntries.length > rows.length ? t("另有 {0} 个主机已删的条目将跳过。", restoreEntries.length - rows.length) : ""}${t("恢复后终端回到快照画面（滚回保留尾部 300 行）")}`}
-                onClick={() => onRestoreScene(restoreEntries)}>
-                <span className="wr-name">{t("⏮ 恢复上次现场（{0}）", rows.length)}</span>
+                onClick={() => run("scene", () => onRestoreScene(restoreEntries))}>
+                <span className="wr-name">{busy === "scene" ? t("⏮ 正在恢复现场…") : t("⏮ 恢复上次现场（{0}）", rows.length)}</span>
                 <span className="wr-addr">{names} · {t("快照 {0}", when)}</span>
-                <span className="wr-go">{t("恢复")}</span>
+                <span className="wr-go">{busy === "scene" ? t("恢复中") : t("恢复")}</span>
               </button>
             </div>
           );
@@ -133,9 +149,9 @@ export function Welcome({
             const rh = hosts.find((x) => x.id === r.host_id);
             if (!rh) return null;
             return (
-              <button key={r.host_id} className="wr-row"
+              <button key={r.host_id} className="wr-row" disabled={busy !== null}
                 title={t("连接 {0}（{1}）；右键更多操作", r.host_name, `${rh.username}@${rh.address}`)}
-                onClick={() => void createSession(rh)}
+                onClick={() => run("recent", () => createSession(rh))}
                 onContextMenu={(e) => { e.preventDefault(); setRecentMenu({ x: e.clientX, y: e.clientY, hostId: r.host_id }); }}>
                 <span className="wr-name">{r.host_name}</span>
                 <span className="wr-addr mono">{rh.username}@{rh.address}</span>

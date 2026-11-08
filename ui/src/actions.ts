@@ -82,6 +82,9 @@ export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | nu
   if (!cmd || ev.altKey) return null;
   // 模态层打开：任何 ⌘/Ctrl 组合都不执行（§7.3 模态层不串输入）
   if (ctx.modal) return null;
+  // 设置：macOS 的 ⌘, 归原生菜单加速器（NSMenu 先于 WebView 消费），这里只补
+  // Windows/Linux——没有菜单栏，不绑就完全没有键盘入口。
+  if (ctx.native && !isMacPlatform() && ev.key === ",") return { id: "settings" };
   // Ctrl+Tab / Ctrl+Shift+Tab（十四轮）：Win/Linux 标签应用的通用循环惯例，
   // 与 ⌘⇧[/] 同一 action。须带修饰键判定（裸 Tab 归焦点导航），mac 的 ⌘Tab
   // 是系统 App 切换器收不到，不影响；浏览器 demo 保持 native 门不劫持。

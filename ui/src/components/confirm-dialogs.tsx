@@ -39,10 +39,13 @@ interface ConfirmDialogsProps {
   closeConfirmRef: { current: HTMLDivElement | null };
   confirmImpact: { forwards: number } | null;
   confirmAction: () => Promise<void>;
+  /** 危险确认在途：按钮禁用并显示进行中文案，防双击重复执行/假失败 */
+  confirmBusy: boolean;
   quitSummary: { sessions: SessionInfo[]; forwards: number } | null;
   setQuitSummary: (v: { sessions: SessionInfo[]; forwards: number } | null) => void;
   quitConfirmRef: { current: HTMLDivElement | null };
   confirmQuit: () => Promise<void>;
+  quitBusy: boolean;
   cancelQuit: () => void | Promise<void>;
   delHostRef: { current: HTMLDivElement | null };
   delIdentRef: { current: HTMLDivElement | null };
@@ -52,8 +55,8 @@ export function ConfirmDialogs({
   delegateDlg, current, closeDelegate, delegateDlgRef, currentHost, delegateCap,
   collabConfigured, mcp, delegateGoal, setDelegateGoal, delegateErr, openSettingsAt,
   delegateBusy, submitDelegate, disableImpact, setDisableImpact, collabBusy, confirmDisable,
-  confirm, setConfirm, closeConfirmRef, confirmImpact, confirmAction,
-  quitSummary, setQuitSummary, quitConfirmRef, confirmQuit, cancelQuit, delHostRef, delIdentRef,
+  confirm, setConfirm, closeConfirmRef, confirmImpact, confirmAction, confirmBusy,
+  quitSummary, setQuitSummary, quitConfirmRef, confirmQuit, quitBusy, cancelQuit, delHostRef, delIdentRef,
 }: ConfirmDialogsProps) {
   return (
     <>
@@ -83,7 +86,9 @@ export function ConfirmDialogs({
                       : <span className="warn">{t("无持久 Shell——委托后 Agent 只能走 exec 模式（不继承当前目录/环境）")}</span>}</div>
                 <div className="fact"><span className="dim">{t("现有授权范围")}</span>{" "}
                   {collabConfigured
-                    ? <span>{t("已接入 {0}；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）", mcp.agents.map((a) => a.label).join(t("、")))}</span>
+                    ? <span>{mcp.agents.length > 0
+                      ? t("已接入 {0}；所有操作逐条审批（控制权是角色，不承诺某一 Agent 独占）", mcp.agents.map((a) => a.label).join(t("、")))
+                      : t("内置 Agent 已就绪；它的每个操作仍逐条经你审批。")}</span>
                     : <span className="warn">{t("尚未登记任何 Agent")}</span>}</div>
               </div>
               <div className="ts-label" style={{ marginTop: 10 }}>{t("任务目标（可选）")}</div>
@@ -143,7 +148,7 @@ export function ConfirmDialogs({
           </div>
         )}
         {confirm?.kind === "closeSession" && (
-          <div className="confirm-mask" onClick={() => setConfirm(null)}>
+          <div className="confirm-mask" onClick={() => { if (!confirmBusy) setConfirm(null); }}>
             <div className="confirm-dialog" ref={closeConfirmRef} role="dialog" aria-modal="true" aria-labelledby="dlg-close-title" onClick={(e) => e.stopPropagation()}>
               {/* R23 §6.4/§342：入口统一命名「关闭会话」；影响行只说可查证的
                   （转发数），任务/传输状态未知时明确未知，不声称空闲 */}
@@ -159,8 +164,8 @@ export function ConfirmDialogs({
                 )}
               </div>
               <div className="hk-actions">
-                <button className="danger" onClick={confirmAction}>{t("关闭会话")}</button>
-                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>{t("取消")}</button>
+                <button className="danger" disabled={confirmBusy} onClick={confirmAction}>{confirmBusy ? t("关闭中…") : t("关闭会话")}</button>
+                <button className="ghost" data-autofocus disabled={confirmBusy} onClick={() => setConfirm(null)}>{t("取消")}</button>
               </div>
             </div>
           </div>
@@ -181,32 +186,32 @@ export function ConfirmDialogs({
                 {t("会话不跨启动保留——下次启动可在欢迎页「重连上次会话」一键恢复届时仍打开的主机。")}
               </div>
               <div className="hk-actions">
-                <button className="danger" onClick={() => void confirmQuit()}>{t("结束会话并退出")}</button>
-                <button className="ghost" data-autofocus onClick={() => void cancelQuit()}>{t("取消")}</button>
+                <button className="danger" disabled={quitBusy} onClick={() => void confirmQuit()}>{quitBusy ? t("正在退出…") : t("结束会话并退出")}</button>
+                <button className="ghost" data-autofocus disabled={quitBusy} onClick={() => void cancelQuit()}>{t("取消")}</button>
               </div>
             </div>
           </div>
         )}
         {confirm?.kind === "deleteHost" && (
-          <div className="confirm-mask" onClick={() => setConfirm(null)}>
+          <div className="confirm-mask" onClick={() => { if (!confirmBusy) setConfirm(null); }}>
             <div className="confirm-dialog" ref={delHostRef} role="dialog" aria-modal="true" aria-labelledby="dlg-delhost-title" onClick={(e) => e.stopPropagation()}>
               <div className="hk-title" id="dlg-delhost-title">{t("删除主机 {0}？", confirm.name)}</div>
-              <div>{t("凭据与指纹记录一并移除，之后无法再从它新建连接；已建立的会话不受影响。")}</div>
+              <div>{t("主机将从列表移除；已保存的凭据不会被删除（到「凭据」分类单独管理），已建立的会话不受影响。")}</div>
               <div className="hk-actions">
-                <button className="danger" onClick={confirmAction}>{t("删除")}</button>
-                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>{t("取消")}</button>
+                <button className="danger" disabled={confirmBusy} onClick={confirmAction}>{confirmBusy ? t("删除中…") : t("删除")}</button>
+                <button className="ghost" data-autofocus disabled={confirmBusy} onClick={() => setConfirm(null)}>{t("取消")}</button>
               </div>
             </div>
           </div>
         )}
         {confirm?.kind === "deleteIdentity" && (
-          <div className="confirm-mask" onClick={() => setConfirm(null)}>
+          <div className="confirm-mask" onClick={() => { if (!confirmBusy) setConfirm(null); }}>
             <div className="confirm-dialog" ref={delIdentRef} role="dialog" aria-modal="true" aria-labelledby="dlg-delident-title" onClick={(e) => e.stopPropagation()}>
               <div className="hk-title" id="dlg-delident-title">{t("删除凭据 {0}？", confirm.label)}</div>
               <div>{t("仍被主机引用的凭据会被拒绝并列出主机；已保存的凭据独立存在，删除前请确认没有主机依赖它。")}</div>
               <div className="hk-actions">
-                <button className="danger" onClick={confirmAction}>{t("删除凭据")}</button>
-                <button className="ghost" data-autofocus onClick={() => setConfirm(null)}>{t("取消")}</button>
+                <button className="danger" disabled={confirmBusy} onClick={confirmAction}>{confirmBusy ? t("删除中…") : t("删除凭据")}</button>
+                <button className="ghost" data-autofocus disabled={confirmBusy} onClick={() => setConfirm(null)}>{t("取消")}</button>
               </div>
             </div>
           </div>

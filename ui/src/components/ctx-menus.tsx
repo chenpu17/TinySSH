@@ -81,8 +81,8 @@ export interface CtxMenusProps {
   paneLayoutCustom: (sid: string) => boolean;
   resetPaneLayout: (sid: string) => void;
   pasteTextIntoRef: { current: (term: Terminal, sessionSid: string, t: string, paneKey?: string) => void };
-  setSearchOpen: (v: boolean) => void;
-  searchInputRef: { current: HTMLInputElement | null };
+  /** 打开查找：paneKey 命中格子时搜该格，缺省按当前焦点判定 */
+  onOpenSearch: (paneKey?: string) => void;
   sidRef: { current: string | null };
   attachSession: (sid: string) => Promise<void>;
   // —— 分屏退化提示 ——
@@ -101,7 +101,7 @@ export function CtxMenus({
   localShells, onLocalShell,
   setEditingHost, setPrefillEntry, setShowImport, setShowAddHost, setRecentHidden, setConfirm,
   termMenu, setTermMenu, termsRef, paneTermsRef, closeTmuxPane, paneLayoutCustom, resetPaneLayout,
-  pasteTextIntoRef, setSearchOpen, searchInputRef, sidRef, attachSession,
+  pasteTextIntoRef, onOpenSearch, sidRef, attachSession,
   splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen,
 }: CtxMenusProps) {
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
@@ -183,12 +183,19 @@ export function CtxMenus({
                 // 只认真正死掉的态：Degraded/Reconnecting 是连接在但降级，说「已断开」
                 // 会误导（交付前审查）
                 const dead = s.state === "Disconnected" || s.state === "Closed";
+                // 已在该侧窗格的会话：点它 enterSplitWith 会同向同格静默返回——
+                // 如实标出「已在窗格」，避免用户以为点击没反应；换向用上方方向钮。
+                const inSecond = splitPanes?.second === s.id;
                 return (
                   <button key={s.id} className="sm-item" role="menuitem"
-                    title={dead ? t("该会话已断开——放入分屏后点一下这个格子即可重连（可先回看断开前的画面）") : undefined}
-                    onClick={() => { setSplitMenu(false); void enterSplitWith(s.id, splitDir); }}>
-                    <span className="sm-name">{s.host_name}</span>
-                    <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
+                    title={inSecond
+                      ? t("该会话已在{0}窗格——换方向用上方的左右/上下按钮", side)
+                      : dead ? t("该会话已断开——放入分屏后点一下这个格子即可重连（可先回看断开前的画面）") : undefined}
+                    onClick={() => { setSplitMenu(false); if (!inSecond) void enterSplitWith(s.id, splitDir); }}>
+                    <span className="sm-name">{tabNames[s.id] ?? s.host_name}</span>
+                    {inSecond
+                      ? <span className="mono ok" style={{ fontSize: 10, marginLeft: "auto" }}>{t("已在窗格")}</span>
+                      : <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>}
                   </button>
                 );
               })}
@@ -424,9 +431,9 @@ export function CtxMenus({
                 <button className="sm-item" role="menuitem"
                   onClick={() => {
                     close();
-                    // 十四轮：查找作用于右键命中的窗格——非活动会话先切过去再开搜索框
+                    // 十五轮：查找作用于右键命中的窗格——非活动会话先切过去再开搜索框
                     // （分屏副格命中时同样成立）；切失败也开（断开现场仍可搜冻结缓冲）
-                    const open = () => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 0); };
+                    const open = () => onOpenSearch(termMenu.paneKey);
                     if (sidRef.current === termMenu.sid) open();
                     else void attachSession(termMenu.sid).then(open).catch(() => open());
                   }}

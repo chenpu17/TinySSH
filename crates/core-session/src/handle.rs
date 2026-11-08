@@ -669,6 +669,30 @@ impl SessionHandle {
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
 
+        // 人类输入优先（agent 路径）：块空闲只保证上一条命令已收口；人类可能正在
+        // 敲半行命令（还没回车，块尚未开启），此刻写入 Agent 命令会把两段拼成一条。
+        // 等最近一次人类输入静默 HUMAN_INPUT_PRIORITY_WINDOW 再登记写入（可取消）。
+        if !actor.is_human() {
+            loop {
+                let wait = {
+                    let last = *self.last_human_input.lock().await;
+                    match last {
+                        Some(t) => HUMAN_INPUT_PRIORITY_WINDOW
+                            .checked_sub(t.elapsed())
+                            .unwrap_or_default(),
+                        None => Duration::ZERO,
+                    }
+                };
+                if wait.is_zero() {
+                    break;
+                }
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                tokio::time::sleep(wait).await;
+            }
+        }
+
         // 登记：键入归因 + 捕获 + 受管 exec_id。
         // 登记用原 UTF-8（屏态吃的是泵侧解码后的回显），写线上的才是编码字节（GBK）。
         let mut text = cmd.trim_end().to_string();
@@ -1266,6 +1290,19 @@ impl SessionHandle {
                 brief: self.gen_brief().await,
             });
         }
+        // 审批期间人类可能接管、会话可能重连进入 Reconfirming：批准的是批准时的
+        // 现场，现场已变则非人类动作一律作废（与入口门同口径，不白名单豁免——
+        // 重连后的新现场尚未核实）。
+        if !actor.is_human() {
+            let owner = *self.owner.lock().await;
+            let state = *self.state.lock().await;
+            if owner == ControlOwner::Human {
+                return Err(Error::ControlTakenByHuman);
+            }
+            if state == SessionState::Reconfirming {
+                return Err(Error::ReconfirmingPending);
+            }
+        }
         // C9（R43）：执行开始前复核协作 admission——停用期间（含排队/审批期间被停用）
         // 的 Agent 动作在此作废，不因排队或旧批准继续执行（§9 line 562-568）。
         self.admit_agent_actor(actor)?;
@@ -1580,7 +1617,9 @@ impl SessionHandle {
     }
 
     /// 尽力停止：SIGINT→SIGQUIT 升级（Shell）；通道取消（Fresh）。逐条真实结果。
-    async fn stop_one(&self, exec_id: &ExecId, running: &RunningExec) -> (ExecId, StopOutcome) {
+    /// pub(crate)：Agent「停止」按钮（SessionManager::cancel_agent_work）复用，
+    /// 否则 Shell 命令只取消本地等待、远端进程照跑。
+    pub(crate) async fn stop_one(&self, exec_id: &ExecId, running: &RunningExec) -> (ExecId, StopOutcome) {
         match running.mode {
             ExecMode::Shell => {
                 let _ = self.channel.signal(TransportSignal::Interrupt).await;

@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, HostDraft, IdentityMeta } from "../adapter/wire";
 import { t } from "../i18n";
+import { hostAddressOk, normalizeHostAddress, parsePort } from "../app-data";
 
 // 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）；Agent 只存引用
 // 十七轮「快速连接」：不存主机一次性建连。表单是 AddHostForm 的削剪——
@@ -13,14 +14,21 @@ import { t } from "../i18n";
 // 与最高频动线，敲完地址回车表单纹丝不动。IME 组合期 Enter 是确认候选词，不提交
 // （§7.3 与 resolveAction 同口径）。preventDefault 防回焦 opener 被默认激活
 // click 顶回（add-host enterKey 同款，六轮 D6-1）。
-const enterKey = (fn: () => void) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
+const enterKey = (fn: () => void | Promise<void>) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
   if (e.key === "Enter" && !(e.nativeEvent.isComposing || e.keyCode === 229)) {
     e.preventDefault();
-    fn();
+    void fn();
   }
 };
 
-export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Host, draft: HostDraft) => void; onCancel: () => void }) {
+export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteError }: {
+  onConnect: (host: Host, draft: HostDraft) => boolean | void | Promise<boolean | void>;
+  onCancel: () => void;
+  /** 在途状态上报：宿主据此让 ✕/Esc/取消真正中止 attempt（而非只关弹窗） */
+  onBusyChange?: (busy: boolean) => void;
+  /** 宿主连接失败横幅的明细：模态遮罩会压住横幅，表单内原样复述一次 */
+  remoteError?: string | null;
+}) {
   const [address, setAddress] = useState("");
   const [port, setPort] = useState("22");
   const [username, setUsername] = useState("");
@@ -30,6 +38,7 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
   const [charset, setCharset] = useState<"utf-8" | "gbk">("utf-8");
   const [knownIdentities, setKnownIdentities] = useState<IdentityMeta[]>([]);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const usernameRef = useRef<HTMLInputElement>(null);
@@ -42,10 +51,12 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
       .then((xs) => setKnownIdentities(xs.filter((x) => x.kind !== "Password")))
       .catch(() => { /* 选择器降级为空，仍可密码/Agent */ });
   }, []);
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 
-  const submit = () => {
+  const submit = async () => {
     if (busy) return; // 在途丢弃重复提交（add-host 同款防御；审查二轮观察项）
     setErr(null);
+    setFailed(false);
     // 报错即聚焦（六轮 BF-6，add-host 同款契约）：校验失败焦点回位到首个非法
     // 字段——键盘用户（地址框 autoFocus+回车主动线）错误后不断链
     if (!address.trim() || !username.trim()) {
@@ -53,13 +64,13 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
       (!address.trim() ? addressRef : usernameRef).current?.focus();
       return;
     }
-    if (!/^[a-zA-Z0-9._-]{1,253}$/.test(address.trim())) {
-      setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10），不带端口与协议"));
+    if (!hostAddressOk(address)) {
+      setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10、server.example.com 或 ::1），不带端口与协议"));
       addressRef.current?.focus();
       return;
     }
-    const p = parseInt(port, 10);
-    if (!Number.isInteger(p) || p <= 0 || p > 65535) { setErr(t("端口必须是 1–65535 的数字")); portRef.current?.focus(); return; }
+    const p = parsePort(port);
+    if (p === null) { setErr(t("端口必须是 1–65535 的数字")); portRef.current?.focus(); return; }
     let auth: AuthDraft;
     if (authMode === "password") {
       if (!password) { setErr(t("请输入密码")); passwordRef.current?.focus(); return; }
@@ -84,10 +95,19 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
     };
     setBusy(true); // 双发闸真生效：Enter 提交与按钮点击同帧连发的守卫（此前 busy 恒 false 纯装饰）
     try {
-      onConnect(display, {
+      // 宿主在连接成功（Ready）后才关闭对话框；失败返回 false，表单保留全部
+      // 已填内容与密码，改一处即可重试——此前提交即关窗，失败后输入全丢。
+      const ok = await onConnect(display, {
         id: null, name: "", address: addr, port: p, username: user,
         auth, tags: [], charset, shell_integration: null, jump_host_id: null,
       });
+      if (ok === false) {
+        setBusy(false);
+        setFailed(true);
+        // 真正原因在宿主 connError 横幅里；模态遮罩会把它压暗，表单内复述
+        // （用渲染期的最新 prop，不用 click 闭包里的旧值）
+        setErr(null);
+      }
     } catch (e) {
       setBusy(false);
       setErr(String((e as { message?: string })?.message ?? e));
@@ -155,10 +175,15 @@ export function QuickConnectForm({ onConnect, onCancel }: { onConnect: (host: Ho
           <option value="gbk">{t("GBK（中文 Windows / 老旧设备）")}</option>
         </select>
       </div>
-      {err && <div className="form-error" role="alert" style={{ marginTop: 6 }}>{err}</div>}
+      {(() => {
+        const shown = err ?? (failed ? (remoteError || t("连接失败——请检查地址、凭据与网络后重试（已填内容保留）")) : null);
+        return shown ? <div className="err" role="alert" style={{ marginTop: 6 }}>✕ {shown}</div> : null;
+      })()}
       <div className="row" style={{ marginTop: 8, gap: 8 }}>
-        <button disabled={busy} onClick={submit} data-testid="quick-connect-go">{t("连接")}</button>
-        <button className="ghost" onClick={onCancel}>{t("取消")}</button>
+        <button disabled={busy} onClick={() => void submit()} data-testid="quick-connect-go">{busy ? t("连接中…") : t("连接")}</button>
+        <button className="ghost" onClick={onCancel} data-testid="quick-connect-cancel">
+          {busy ? t("取消连接") : t("取消")}
+        </button>
       </div>
     </div>
   );

@@ -29,6 +29,22 @@ module.exports = {
     ck.check("专注小工具栏：文件入口可见", await visible(page, '[data-testid="focus-files"]'), "");
     ck.check("专注小工具栏：连接现有主机入口可见", await visible(page, '[data-testid="focus-connect"]'), "");
     ck.check("tmux 快接在专注标签条可见", await visible(page, '[data-testid="tmux-quick"] .tmux-quick-btn'), "");
+    // macOS Overlay 红绿灯是系统悬浮钮，专注态藏掉标题区后若窗口没真正全屏，
+    // 三个圆钮会压住标签条。focus-windowed 必须给标签行留出与标题栏同宽的 84px
+    // 安全区（demo 域手动补 native 类模拟；正常路径由 isFullscreen 跟踪收回 chrome）。
+    const safe = await page.evaluate(() => {
+      const html = document.documentElement;
+      const shell = document.querySelector(".app-shell");
+      if (!shell) return "";
+      html.classList.add("native-chrome", "native-mac");
+      shell.classList.add("focus-windowed");
+      const row = document.querySelector(".tabbar-row");
+      const pl = row ? getComputedStyle(row).paddingLeft : "";
+      shell.classList.remove("focus-windowed");
+      html.classList.remove("native-chrome", "native-mac");
+      return pl;
+    });
+    ck.eq("专注但未全屏时标签条留出 macOS 红绿灯安全区", safe, "84px");
     ck.check("标签列表/新建连接等管理入口在专注态隐藏",
       await page.evaluate(() => {
         const els = [...document.querySelectorAll(".tabbar-admin")];
