@@ -1619,7 +1619,11 @@ impl SessionHandle {
     /// 尽力停止：SIGINT→SIGQUIT 升级（Shell）；通道取消（Fresh）。逐条真实结果。
     /// pub(crate)：Agent「停止」按钮（SessionManager::cancel_agent_work）复用，
     /// 否则 Shell 命令只取消本地等待、远端进程照跑。
-    pub(crate) async fn stop_one(&self, exec_id: &ExecId, running: &RunningExec) -> (ExecId, StopOutcome) {
+    pub(crate) async fn stop_one(
+        &self,
+        exec_id: &ExecId,
+        running: &RunningExec,
+    ) -> (ExecId, StopOutcome) {
         match running.mode {
             ExecMode::Shell => {
                 let _ = self.channel.signal(TransportSignal::Interrupt).await;

@@ -175,7 +175,7 @@ fn main() {
     // （Tauri close_session 自己也会显式 close；重复调用幂等）。
     let agent_host_for_state = agent_host.clone();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -485,6 +485,10 @@ fn main() {
                 } else if event.id() == "select-all" {
                     // 原生菜单已消费 ⌘A；由前端按焦点决定全选终端缓冲还是输入框。
                     let _ = app.emit("menu-select-all", ());
+                } else if event.id() == "quit" {
+                    // 菜单项不再是预定义 quit（那会直接 NSApp terminate 绕过确认）：
+                    // 与窗口关闭共用同一道退出确认。
+                    arm_close_guard(app);
                 }
             });
             if let Some(w) = app.get_webview_window("main") {
@@ -704,57 +708,141 @@ fn main() {
             // R23 §6.4 退出契约：主窗口关闭=请求退出，交 FE 汇总确认（活动会话/转发/
             // 未知传输），不引入「窗口已关但后台仍跑」的新模式
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let guard = window.app_handle().state::<Arc<CloseGuard>>();
-                guard.pending.store(true, std::sync::atomic::Ordering::SeqCst);
-                let gen = guard.gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                let _ = window.emit("app-close-requested", ());
                 api.prevent_close();
-                // 兜底看护（稳定轮余量项）：webview 死亡时 FE 永远收不到事件、
-                // quit_app 永远不会被调——窗口就永远关不掉。看护线程每 2s 用
-                // eval 探活：webview 死（eval 报错）即强退；确认对话超 90s 无人
-                // 应答则解除 pending（人在犹豫，不强杀活会话），下次点关闭重新武装。
-                let w = window.app_handle().get_webview_window("main");
-                let g = window.app_handle().state::<Arc<CloseGuard>>().inner().clone();
-                std::thread::spawn(move || {
-                    for _ in 0..45 {
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        if g.gen.load(std::sync::atomic::Ordering::SeqCst) != gen
-                            || !g.pending.load(std::sync::atomic::Ordering::SeqCst)
-                        {
-                            return;
-                        }
-                        let alive = match &w {
-                            Some(wv) => wv.eval("void 0").is_ok(),
-                            None => false,
-                        };
-                        if !alive {
-                            tracing::error!("webview 已死且退出确认无应答——强制退出");
-                            std::process::exit(0);
-                        }
-                    }
-                    g.pending.store(false, std::sync::atomic::Ordering::SeqCst);
-                });
+                arm_close_guard(window.app_handle());
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(|app_handle: &tauri::AppHandle, event| {
+        // KI-011：macOS 菜单 ⌘Q 的预定义 quit 会直接 NSApp terminate（不经本事件），
+        // 已改为普通菜单项 + on_menu_event 武装同一道确认（见 commands/native.rs）。
+        // 这里保留 ExitRequested 兜底：窗口全部销毁（code=None）等系统级退出仍须确认；
+        // 带退出码的一律放行——quit_app 的 app.exit(0)、Windows 便携更新的
+        // app.exit(0)、mac 更新的 restart（RESTART_EXIT_CODE）都是程序化受控退出。
+        // confirmed 是二次保险，防止将来出现不带 code 的受控退出口被误拦。
+        if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+            use tauri::Manager as _;
+            let guard = app_handle.state::<Arc<CloseGuard>>();
+            if code.is_some() || guard.confirmed.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            api.prevent_exit();
+            arm_close_guard(app_handle);
+        }
+    });
 }
 
-/// 窗口关闭确认态（稳定轮·窗口关闭兜底）：pending=已请求关闭等 FE 确认；
-/// gen=关闭请求代际（每次 CloseRequested 递增，看护线程据此识别被顶替的请求）。
+/// 武装退出确认并启动看护线程：主窗口关闭与系统级退出（macOS ⌘Q/菜单）共用，
+/// 避免两处判定与兜底各写一份而漂移。调用方负责先 prevent_close/prevent_exit。
+fn arm_close_guard(app: &tauri::AppHandle) {
+    use tauri::Manager as _;
+    let guard = app.state::<Arc<CloseGuard>>();
+    // 新一次用户退出请求：清掉上一次的受控放行标记，避免「置 confirmed 却没退成」
+    // 的残留让后续 ⌘Q 静默绕过确认。
+    guard
+        .confirmed
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    // pending 存「当前请求代际」，0=空闲：fetch_max 同时完成「顶替旧请求」与
+    // 「代际只增不减」——并发请求不会把更大的代际覆盖回较小值，旧看护线程据
+    // 代际不匹配自然退出，不存在 bool 与 gen 分离时旧线程清新代 pending 的窗口。
+    let gen = guard.gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let _ = guard
+        .pending
+        .fetch_max(gen, std::sync::atomic::Ordering::SeqCst);
+    // 每次请求都亮窗并重新发事件：首次 emit 可能落在 webview 尚未挂 listen 的
+    // 冷启动窗口里（或窗口最小化/隐藏时被节流），若因为「已在等待」而吞掉后续
+    // 请求，确认框会永远不出现，直到看护线程 90s 超时才恢复。
+    if let Some(wv) = app.get_webview_window("main") {
+        let _ = wv.show();
+        // 只 show 不够：⌘M 最小化时 macOS makeKeyAndOrderFront 不会把窗口
+        // 拉出 Dock，set_focus 在 isMiniaturized 时也会被跳过，确认框不可见。
+        let _ = wv.unminimize();
+        let _ = wv.set_focus();
+    }
+    let _ = app.emit("app-close-requested", ());
+    // 兜底看护（稳定轮余量项）：webview 死亡时 FE 永远收不到事件、quit_app 永远
+    // 不会被调——应用就永远退不掉。看护线程每 2s 用 eval 探活：webview 死（eval
+    // 报错）即强退；确认对话超 90s 无人应答则解除 pending（人在犹豫，不强杀活
+    // 会话），下次退出请求重新武装。
+    let g = guard.inner().clone();
+    let w = app.get_webview_window("main");
+    std::thread::spawn(move || {
+        for _ in 0..45 {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if g.pending.load(std::sync::atomic::Ordering::SeqCst) != gen {
+                return;
+            }
+            let alive = match &w {
+                Some(wv) => wv.eval("void 0").is_ok(),
+                None => false,
+            };
+            if !alive {
+                // eval 已越过上面的代际检查才失败时，用户可能刚点了确认（更新器
+                // 重启正在 teardown）：再看一眼 confirmed，并用 CAS 抢占本代。
+                // confirm/cancel 都会把 pending 清零，CAS 失败说明已有受控退出/
+                // 取消在进行——此处强退会抢在 restart 前 exit(0)，mac 更新就只
+                // 退不重启。成功抢占才说明确实是「webview 死且无人应答」。
+                if g.confirmed.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                if g.pending
+                    .compare_exchange(
+                        gen,
+                        0,
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
+                    tracing::error!("webview 已死且退出确认无应答——强制退出");
+                    std::process::exit(0);
+                }
+                return;
+            }
+        }
+        // 只清自己这一代：compare_exchange 失败说明已被新请求顶替/已取消
+        let _ = g.pending.compare_exchange(
+            gen,
+            0,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    });
+}
+
+/// 标记本次退出为受控退出：`quit_app`（FE 确认后）与更新器重启在退出前置位，
+/// ExitRequested 守卫据此放行。程序化退出本就带 code，confirmed 只是二次保险。
+pub(crate) fn confirm_controlled_exit(app: &tauri::AppHandle) {
+    use tauri::Manager as _;
+    let guard = app.state::<Arc<CloseGuard>>();
+    // 先置 confirmed 再清 pending：看护线程在 eval 返回后会先看 confirmed、
+    // 再 CAS pending，两步之间任何交错都能看到「已受控」而不强退；反过来先清
+    // pending 则存在「看护已越过确认检查、尚未退出的窗口」。同时解除看护：
+    // 确认后 teardown 可能让 eval 探活失败，旧逻辑会抢在 restart/cleanup 前
+    // process::exit(0)，mac 更新就只退不重启。
+    guard
+        .confirmed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    guard.pending.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 窗口关闭确认态（稳定轮·窗口关闭兜底）：pending=当前退出请求代际（0=空闲）；
+/// gen=代际发号器（每次退出请求递增，看护线程据此识别被顶替的请求）；
+/// confirmed=受控退出已获 FE 确认（ExitRequested 守卫放行依据，见
+/// `confirm_controlled_exit`）。
 #[derive(Default)]
 struct CloseGuard {
-    pending: std::sync::atomic::AtomicBool,
+    pending: std::sync::atomic::AtomicU64,
     gen: std::sync::atomic::AtomicU64,
+    confirmed: std::sync::atomic::AtomicBool,
 }
 
 /// FE 用户在退出确认对话框点了「取消」：解除关闭看护（webview 存活即继续用）。
 /// webview 死亡时 FE 到不了这里——由看护线程的 eval 探活强制退出兜底。
 #[tauri::command]
 fn cancel_app_close(guard: tauri::State<'_, Arc<CloseGuard>>) {
-    guard
-        .pending
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    guard.pending.store(0, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// R23：FE 汇总确认「结束会话并退出」后的受控退出（不用 destroy 绕过窗口事件）。
@@ -775,6 +863,9 @@ async fn quit_app(app: tauri::AppHandle, state: ApiState<'_>) -> CmdResult<()> {
     if closed > 0 {
         tracing::info!("退出收口：已关闭 {closed} 个会话");
     }
+    // KI-011：先置 confirmed 再 exit——否则 ExitRequested 守卫会把它当成用户发起
+    // 的退出再次拦截，确认对话打完却退不出去。
+    confirm_controlled_exit(&app);
     app.exit(0);
     Ok(())
 }

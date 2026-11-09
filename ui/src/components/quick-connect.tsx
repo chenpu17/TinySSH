@@ -121,26 +121,26 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
       </div>
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 2 }}>
-          <label>{t("地址（IP 或域名）")}</label>
-          <input value={address} onChange={(e) => setAddress(e.target.value)} autoFocus ref={addressRef}
+          <label htmlFor="qc-address">{t("地址（IP 或域名）")}</label>
+          <input id="qc-address" value={address} onChange={(e) => setAddress(e.target.value)} autoFocus ref={addressRef}
             onKeyDown={enterKey(submit)}
             placeholder={t("例：192.168.1.10")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
-          <label>{t("端口")}</label>
-          <input value={port} onChange={(e) => setPort(e.target.value)} onKeyDown={enterKey(submit)} ref={portRef} />
+          <label htmlFor="qc-port">{t("端口")}</label>
+          <input id="qc-port" value={port} onChange={(e) => setPort(e.target.value)} onKeyDown={enterKey(submit)} ref={portRef} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
-          <label>{t("用户名")}</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)}
+          <label htmlFor="qc-username">{t("用户名")}</label>
+          <input id="qc-username" value={username} onChange={(e) => setUsername(e.target.value)}
             onKeyDown={enterKey(submit)} ref={usernameRef}
             placeholder={t("例：ops 或 root")} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
-          <label>{t("认证方式")}</label>
-          <select value={authMode} onChange={(e) => { setErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
+          <label htmlFor="qc-auth-mode">{t("认证方式")}</label>
+          <select id="qc-auth-mode" value={authMode} onChange={(e) => { setErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
             <option value="password">{t("密码登录")}</option>
             <option value="key">{t("已有密钥（凭据库）")}</option>
             <option value="agent">SSH Agent</option>
@@ -151,16 +151,16 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
           表单有整体 label 体系时单独裸输入框读起来突兀，读屏也不可达 */}
       {authMode === "password" && (
         <div className="ah-field" style={{ marginTop: 6 }}>
-          <label>{t("密码")}</label>
-          <input type="password" placeholder={t("密码")} value={password}
+          <label htmlFor="qc-password">{t("密码")}</label>
+          <input id="qc-password" type="password" placeholder={t("密码")} value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={enterKey(submit)} ref={passwordRef} />
         </div>
       )}
       {authMode === "key" && (
         <div className="ah-field" style={{ marginTop: 6 }}>
-          <label>{t("已有密钥（凭据库）")}</label>
-          <select value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)} ref={identityRef}>
+          <label htmlFor="qc-identity">{t("已有密钥（凭据库）")}</label>
+          <select id="qc-identity" value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)} ref={identityRef}>
             <option value="">{t("选择凭据库中的密钥…")}</option>
             {knownIdentities.map((k) => (
               <option key={k.id} value={k.id}>{k.label || k.id}</option>
@@ -169,8 +169,8 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
         </div>
       )}
       <div className="ah-field" style={{ marginTop: 6 }}>
-        <label>{t("远端编码（老设备中文乱码时选 GBK）")}</label>
-        <select value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
+        <label htmlFor="qc-charset">{t("远端编码（老设备中文乱码时选 GBK）")}</label>
+        <select id="qc-charset" value={charset} onChange={(e) => setCharset(e.target.value as "utf-8" | "gbk")}>
           <option value="utf-8">{t("UTF-8（默认）")}</option>
           <option value="gbk">{t("GBK（中文 Windows / 老旧设备）")}</option>
         </select>

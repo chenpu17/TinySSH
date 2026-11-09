@@ -98,8 +98,8 @@ module.exports = {
     menu = await menuText(page);
     ck.check("有选区时出现「复制」项", !!menu && menu.includes("复制"), "");
 
-    // 点外关闭
-    await page.mouse.click(700, 500);
+    // 点外关闭（用左侧空白坐标：菜单在终端右下方向，固定 700,500 会随菜单项增多落进菜单里）
+    await page.mouse.click(20, 200);
     await page.waitForTimeout(300);
     ck.check("点击菜单外关闭", (await menuText(page)) === null, "");
   },

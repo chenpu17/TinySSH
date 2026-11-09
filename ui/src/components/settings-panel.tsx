@@ -28,6 +28,124 @@ import { SelfMeterDetail } from "../self-meter";
 import { t, LOCALE_OPTIONS, type Locale } from "../i18n";
 import { RecordsPane } from "./records-pane";
 
+// ── 设置草稿持久化（仅非机密字段）──────────────────────────────────────────
+// 纪律：API Key、Token、密码、私钥**绝不**写入 localStorage/sessionStorage——机密
+// 字段保持「关闭即丢」，重启后只能重填。这里只存 endpoint、模型名、provider、
+// 凭据名称等非密钥输入；键名统一加前缀，读写失败（隐私模式/配额满）静默降级。
+const DRAFT_KEY_PREFIX = "ui.settingsDraft.";
+
+function readDraft(field: string): string | null {
+  try { return localStorage.getItem(DRAFT_KEY_PREFIX + field); } catch { return null; }
+}
+
+function writeDraft(field: string, value: string): boolean {
+  try {
+    const key = DRAFT_KEY_PREFIX + field;
+    if (value === "") localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+    return true;
+  } catch { return false; } // 草稿持久化是可选项：失败不影响设置本身，由调用方提示
+}
+
+function clearDraft(...fields: string[]) {
+  for (const field of fields) {
+    try { localStorage.removeItem(DRAFT_KEY_PREFIX + field); } catch { /* 同上 */ }
+  }
+}
+
+/** base_url 草稿落 Web Storage 前剥离潜在机密：兼容端点可能把 key 写进 userinfo
+ *  或查询串。命中即返回空串（调用方写空=删除草稿），宁可下次重填也不明文持久化。 */
+function draftUrlForStorage(raw: string): string {
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    if (u.username || u.password) return "";
+    if (/(?:^|&)(?:api[_-]?key|key|token|secret|password|sig|signature)=/i.test(u.search.slice(1))) return "";
+    return raw;
+  } catch {
+    return raw; // 尚未输完整的 URL：无可判定的机密语义
+  }
+}
+
+/** 技能库未保存草稿（名称 + 正文，均非机密）；JSON 损坏时视为没有草稿。 */
+function readSkillsDraft(): { name: string; body: string }[] | null {
+  const raw = readDraft("agentSkills.draft");
+  if (raw === null) return null;
+  try {
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return null;
+    return arr
+      .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
+      .map((s) => ({ name: String(s.name ?? ""), body: String(s.body ?? "") }));
+  } catch { return null; }
+}
+
+// ── 终端字体可用性检测（任务 1）────────────────────────────────────────────
+// 选中字体族在本机不存在时，终端只会静默回退到字体栈后备，用户看不出「字体没装上」。
+// 检测以 canvas measureText 宽度差异为准：同一段样例文本，装了字体与回退 generic
+// 的宽度必然不同（monospace 同宽度的情况再以 serif 兜底复核，避免 Menlo 这类
+// 「与系统 monospace 同度量」的误报）。document.fonts.check 只用于决定是否要显式
+// load 内置 @font-face——系统字体可能 check 为 true 却实际量不出来，不能作准。
+const FONT_PROBE_SENTINEL = "__tinyssh_font_probe_missing__";
+const FONT_PROBE_SAMPLE = "mmmmmmmmmmlliWWW@#0123456789中文测试";
+const FONT_PROBE_TOLERANCE = 0.5;
+
+// 每个字体选项声明的「主字体」候选：任一存在即视为可用（如 Cascadia Mono / Code、
+// SF Mono / Menlo / Monaco）。system = ui-monospace 通用关键字，恒可用，不检测。
+const FONT_PROBE_FAMILIES: Record<string, string[]> = {
+  maple: ["Maple Mono CN Term"],
+  jetbrains: ["JetBrains Mono Term"],
+  "jetbrains-nerd": ["JetBrainsMono Nerd Font", "JetBrainsMono NF"],
+  cascadia: ["Cascadia Mono", "Cascadia Code"],
+  consolas: ["Consolas"],
+  menlo: ["SF Mono", "Menlo", "Monaco"],
+  system: [],
+};
+
+let fontProbeCtx: CanvasRenderingContext2D | null | undefined;
+function getFontProbeCtx(): CanvasRenderingContext2D | null {
+  if (fontProbeCtx !== undefined) return fontProbeCtx;
+  try { fontProbeCtx = document.createElement("canvas").getContext("2d"); }
+  catch { fontProbeCtx = null; }
+  return fontProbeCtx;
+}
+
+function cssFontFamily(name: string): string {
+  return `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function measureFont(ctx: CanvasRenderingContext2D, familySpec: string): number {
+  ctx.font = `72px ${familySpec}`;
+  return ctx.measureText(FONT_PROBE_SAMPLE).width;
+}
+
+/** 单个字体族是否可用：与两种 generic 回退的宽度都无差异 → 视为未安装。 */
+function fontFamilyAvailable(name: string): boolean {
+  const ctx = getFontProbeCtx();
+  if (!ctx) return true; // 量不了就不误报
+  const quoted = cssFontFamily(name);
+  // 哨兵：确认「不存在的字体 → 落到 generic」这条链路在当前环境成立；异常则不误报。
+  const mono = measureFont(ctx, "monospace");
+  if (Math.abs(measureFont(ctx, `${cssFontFamily(FONT_PROBE_SENTINEL)}, monospace`) - mono) > FONT_PROBE_TOLERANCE) {
+    return true;
+  }
+  // monospace 同度量（如 macOS 选 Menlo）时，serif 回退仍会因等宽/比例字形而露差异。
+  for (const generic of ["monospace", "serif"] as const) {
+    const baseline = measureFont(ctx, generic);
+    if (Math.abs(measureFont(ctx, `${quoted}, ${generic}`) - baseline) > FONT_PROBE_TOLERANCE) return true;
+  }
+  return false;
+}
+
+type FontProbeState = { fontId: string; missing: string[] };
+
+/** 检测某字体选项：主字体候选全部缺失时返回候选名（用于就地提示）。 */
+function probeTermFont(fontId: string): FontProbeState {
+  const families = FONT_PROBE_FAMILIES[fontId] ?? [];
+  if (families.length === 0) return { fontId, missing: [] };
+  return { fontId, missing: families.some((f) => fontFamilyAvailable(f)) ? [] : families };
+}
+
 interface SettingsPanelProps {
   // 呈现框架
   settingsCat: SettingsCat;
@@ -192,7 +310,16 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   // rev-r47：签发/吊销表单的**面板本地**临时态——关面板即弃（与宿主「关闭即清草稿」
   // 同语义；token 只在此刻的弹层展示一次，不进任何全局状态）。
-  const [agentForm, setAgentForm] = useState({ id: "", label: "", expires: "" });
+  // 例外（任务 2）：id/名称/有效期都是非机密输入，跨关闭用 localStorage 草稿保留；
+  // Token 本身仍然只在弹层展示一次，绝不落任何 Web Storage。
+  const [agentForm, setAgentForm] = useState(() => {
+    const expires = readDraft("agentIssue.expires");
+    return {
+      id: readDraft("agentIssue.id") ?? "",
+      label: readDraft("agentIssue.label") ?? "",
+      expires: expires === "1" || expires === "7" || expires === "30" ? expires : "",
+    };
+  });
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentErr, setAgentErr] = useState<string | null>(null);
   const [issuedToken, setIssuedToken] = useState<{ id: string; token: string } | null>(null);
@@ -215,6 +342,59 @@ export function SettingsPanel({
     return () => clearTimeout(timer);
   }, [autonomyArm]);
   const [autonomyTtl, setAutonomyTtl] = useState<Record<string, string>>({});
+  // 终端字体可用性（任务 1）：只在终端分类可见时探测；结果按「字体 + 缺失集合」去重，
+  // 防抖 150ms，并在 document.fonts.ready 后复核（内置 @font-face 可能异步加载）。
+  const [fontProbe, setFontProbe] = useState<FontProbeState | null>(null);
+  const [fontProbeNonce, setFontProbeNonce] = useState(0);
+  const fontProbeSigRef = useRef("");
+  useEffect(() => {
+    if (settingsCat !== "terminal") return;
+    let cancelled = false;
+    const families = FONT_PROBE_FAMILIES[termFont] ?? [];
+    const publish = () => {
+      if (cancelled) return;
+      const next = probeTermFont(termFont);
+      const sig = `${next.fontId}:${next.missing.join("|")}`;
+      if (sig === fontProbeSigRef.current) return; // 结果没变不触发渲染
+      fontProbeSigRef.current = sig;
+      setFontProbe(next);
+    };
+    const timer = setTimeout(() => {
+      const fontSet = document.fonts;
+      if (!fontSet) { publish(); return; }
+      // 内置字体：check 为 false 时显式 load；系统字体 load 是即时 no-op。
+      const loads = families
+        .filter((f) => {
+          try { return !fontSet.check(`12px ${cssFontFamily(f)}`); } catch { return false; }
+        })
+        .map((f) => fontSet.load(`12px ${cssFontFamily(f)}`).catch(() => [] as FontFace[]));
+      // 等显式 load 与 document.fonts.ready 都落定再判决：内置字体未加载完就测会误报缺失。
+      void Promise.all([...loads, fontSet.ready]).then(publish).catch(publish);
+    }, 150);
+    // 窗口聚焦回来时重测一次（用户可能刚在系统里装了字体，不必重开设置）。
+    const onFocus = () => { if (!cancelled) publish(); };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [termFont, settingsCat, fontProbeNonce]);
+  // 凭据表单只有「名称」是非机密字段：跨关闭保留草稿；私钥/口令保持「关闭即丢」，
+  // 绝不写入 localStorage/sessionStorage（机密纪律）。表单重新展开且宿主内存态为空时
+  // 回填一次——关闭设置时宿主会清空 credLabel，这里是恢复入口。
+  useEffect(() => {
+    if (!credNewOpen || credLabel !== "") return;
+    const draft = readDraft("credential.label");
+    if (draft) setCredLabel(draft);
+    // 只跟随展开动作回填；credLabel 刻意不入依赖（否则用户手动清空会立刻被回填）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credNewOpen]);
+  // 显式提交成功即清草稿（草稿使命结束；宿主的 credLabel 仍保持当前会话显示）。
+  useEffect(() => {
+    if (credNewOk) clearDraft("credential.label");
+  }, [credNewOk]);
+
   const submitIssueAgent = async () => {
     if (agentBusy) return;
     const id = agentForm.id.trim();
@@ -226,6 +406,7 @@ export function SettingsPanel({
       const token = await issueAgent(id, agentForm.label.trim() || id, days);
       setIssuedToken({ id, token });
       setAgentForm({ id: "", label: "", expires: "" });
+      clearDraft("agentIssue.id", "agentIssue.label", "agentIssue.expires");
     } catch (e) {
       setAgentErr(friendlyError(e));
     } finally {
@@ -493,6 +674,18 @@ export function SettingsPanel({
                       {TERM_FONTS.map((f) => <option key={f.id} value={f.id}>{t(f.label)}</option>)}
                     </select>
                   </div>
+                  {/* 字体缺失就地提示：不阻塞选择、不改已写入的值；只陈述检测事实 */}
+                  {fontProbe && fontProbe.fontId === termFont && fontProbe.missing.length > 0 && (
+                    <div className="set-item-desc" data-testid="term-font-missing" role="status"
+                      style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, color: "var(--warn-text)" }}>
+                      <span>
+                        {t("本机未检测到 {0}，终端将回退到字体栈中的后备等宽字体；安装该字体后点「重新检测」或重开设置即可刷新。",
+                          fontProbe.missing.join(" / "))}
+                      </span>
+                      <button className="ghost" data-testid="term-font-recheck"
+                        onClick={() => setFontProbeNonce((n) => n + 1)}>{t("重新检测")}</button>
+                    </div>
+                  )}
                   <label className="set-item">
                     <input type="checkbox" data-testid="term-liga-toggle" checked={termLigatures} onChange={(e) => onChangeTermLigatures(e.target.checked)} />
                     <span className="set-item-txt">
@@ -566,7 +759,10 @@ export function SettingsPanel({
                   <div className="cred-new" data-testid="cred-new-form">
                     <label className="cred-field">{t("名称")}
                       <input value={credLabel} data-testid="cred-new-label" placeholder={t("例如 prod-key")}
-                        onChange={(e) => setCredLabel(e.target.value)} />
+                        onChange={(e) => {
+                          setCredLabel(e.target.value);
+                          writeDraft("credential.label", e.target.value);
+                        }} />
                     </label>
                     <div className="row" style={{ marginTop: 6, gap: 6 }}>
                       <button className="ghost" disabled={credBusy} data-testid="cred-new-gen-ed"
@@ -605,7 +801,7 @@ export function SettingsPanel({
                   <div className="cred-draft" data-testid="cred-draft">
                     <div>{t("凭据表单里还有未提交的私钥内容——切到「{0}」会丢弃它。", settingsCatLabel(credDraftTo))}</div>
                     <div className="row" style={{ marginTop: 6, gap: 6 }}>
-                      <button data-testid="cred-draft-discard" onClick={discardCredDraft}>{t("丢弃草稿并切换")}</button>
+                      <button data-testid="cred-draft-discard" onClick={() => { clearDraft("credential.label"); discardCredDraft(); }}>{t("丢弃草稿并切换")}</button>
                       <button className="ghost" data-testid="cred-draft-keep" onClick={() => setCredDraftTo(null)}>{t("留下继续编辑")}</button>
                     </div>
                   </div>
@@ -683,19 +879,28 @@ export function SettingsPanel({
                     className="mono" style={{ fontSize: 11, width: 130 }}
                     placeholder={t("id（如 my-codex）")} aria-label={t("Agent id")}
                     value={agentForm.id}
-                    onChange={(e) => setAgentForm({ ...agentForm, id: e.target.value })}
+                    onChange={(e) => {
+                      setAgentForm({ ...agentForm, id: e.target.value });
+                      writeDraft("agentIssue.id", e.target.value);
+                    }}
                   />
                   <input
                     style={{ fontSize: 11, width: 110 }}
                     placeholder={t("名称（可选）")} aria-label={t("Agent 名称")}
                     value={agentForm.label}
-                    onChange={(e) => setAgentForm({ ...agentForm, label: e.target.value })}
+                    onChange={(e) => {
+                      setAgentForm({ ...agentForm, label: e.target.value });
+                      writeDraft("agentIssue.label", e.target.value);
+                    }}
                   />
                   <select
                     style={{ fontSize: 11 }}
                     aria-label={t("Token 有效期")}
                     value={agentForm.expires}
-                    onChange={(e) => setAgentForm({ ...agentForm, expires: e.target.value })}
+                    onChange={(e) => {
+                      setAgentForm({ ...agentForm, expires: e.target.value });
+                      writeDraft("agentIssue.expires", e.target.value);
+                    }}
                   >
                     <option value="">{t("永不过期")}</option>
                     <option value="30">{t("{0} 天有效", 30)}</option>
@@ -1058,13 +1263,19 @@ function TriggersCard({ load, save }: {
 // 面板本地草稿态（与 TriggersCard 同工艺）；api_key 只写入 vault 密封 KV，永不明文
 // 落盘/回显——只回 has_key 事实。保存后广播 agent-model-saved（Agent 视图即时切真模式）。
 function AgentModelCard() {
-  const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState("");
+  // 任务 2：provider/base_url/model 是非机密输入，跨关闭用 localStorage 草稿保留；
+  // api_key 是机密——只写 vault 密封 KV，绝不读草稿、绝不落 Web Storage（关闭即丢）。
+  const [provider, setProvider] = useState<"openai" | "anthropic">(() => {
+    return readDraft("agentModel.provider") === "anthropic" ? "anthropic" : "openai";
+  });
+  const [baseUrl, setBaseUrl] = useState(() => readDraft("agentModel.baseUrl") ?? "");
+  const [model, setModel] = useState(() => readDraft("agentModel.model") ?? "");
   const [apiKey, setApiKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // 后端配置回包到达前用户已改过的字段：回包不得覆盖正在输入的内容。
+  const modelTouchedRef = useRef({ provider: false, baseUrl: false, model: false });
 
   useEffect(() => {
     // 不分 demo/Tauri：demo 镜像（localStorage）也走同一条 invoke 读路径——
@@ -1074,9 +1285,17 @@ function AgentModelCard() {
       .then((v) => {
         if (dead || !v) return;
         const c = v as { provider?: string; base_url?: string; model?: string; has_key?: boolean };
-        if (c.provider === "openai" || c.provider === "anthropic") setProvider(c.provider);
-        setBaseUrl(c.base_url ?? "");
-        setModel(c.model ?? "");
+        // 有未提交草稿的字段以草稿为准（用户上次关设置前的编辑不该被已存配置盖掉）。
+        if ((c.provider === "openai" || c.provider === "anthropic")
+          && !modelTouchedRef.current.provider && readDraft("agentModel.provider") === null) {
+          setProvider(c.provider);
+        }
+        if (!modelTouchedRef.current.baseUrl && readDraft("agentModel.baseUrl") === null) {
+          setBaseUrl(c.base_url ?? "");
+        }
+        if (!modelTouchedRef.current.model && readDraft("agentModel.model") === null) {
+          setModel(c.model ?? "");
+        }
         setHasKey(c.has_key === true);
       })
       .catch(() => {});
@@ -1095,6 +1314,8 @@ function AgentModelCard() {
       .then(() => {
         setHasKey(hasKey || apiKey.trim().length > 0);
         setApiKey("");
+        // 显式保存成功 = 草稿使命结束；下次打开以已存配置为准。
+        clearDraft("agentModel.provider", "agentModel.baseUrl", "agentModel.model");
         setMsg({
           kind: "ok",
           text: inTauri
@@ -1117,16 +1338,29 @@ function AgentModelCard() {
       </div>
       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         <select data-testid="agent-model-provider" style={{ fontSize: 12 }} value={provider}
-          onChange={(e) => setProvider(e.target.value as "openai" | "anthropic")} aria-label={t("provider 类型")}>
+          onChange={(e) => {
+            const v = e.target.value as "openai" | "anthropic";
+            modelTouchedRef.current.provider = true;
+            setProvider(v);
+            writeDraft("agentModel.provider", v);
+          }} aria-label={t("provider 类型")}>
           <option value="openai">{t("OpenAI 兼容（GLM / DeepSeek / Qwen / Kimi…）")}</option>
           <option value="anthropic">Anthropic</option>
         </select>
         <input data-testid="agent-model-url" className="mono" style={{ fontSize: 11, width: 210 }}
           placeholder={t("base_url（可选，缺省官方端点）")} aria-label="base_url"
-          value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+          value={baseUrl} onChange={(e) => {
+            modelTouchedRef.current.baseUrl = true;
+            setBaseUrl(e.target.value);
+            writeDraft("agentModel.baseUrl", draftUrlForStorage(e.target.value));
+          }} />
         <input data-testid="agent-model-name" className="mono" style={{ fontSize: 11, width: 150 }}
           placeholder={t("模型名（如 glm-4.7）")} aria-label={t("模型名（如 glm-4.7）")}
-          value={model} onChange={(e) => setModel(e.target.value)} />
+          value={model} onChange={(e) => {
+            modelTouchedRef.current.model = true;
+            setModel(e.target.value);
+            writeDraft("agentModel.model", e.target.value);
+          }} />
         <input data-testid="agent-model-key" type="password" className="mono" style={{ fontSize: 11, width: 190 }}
           placeholder={hasKey ? t("已配置（重填可更换）") : "api_key"}
           aria-label="api_key"
@@ -1150,8 +1384,20 @@ const AGENT_EXTRA_MAX_CHARS = 2700; // ≈ 8192 字节（CJK 每字 3 字节）�
 function PromptSkillsCard() {
   const [extra, setExtra] = useState("");
   const [fleetExtra, setFleetExtra] = useState("");
-  const [skills, setSkills] = useState<{ name: string; body: string }[]>([]);
+  // 任务 2：技能草稿（名称 + 正文，均非机密）跨关闭保留；上次未保存的编辑优先于
+  // KV 已存内容（附加提示词本身 blur/卸载即存，不存在丢失，故不另存草稿）。
+  const [skills, setSkills] = useState<{ name: string; body: string }[]>(() => readSkillsDraft() ?? []);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // 用户已改过 / 打开时就带着草稿：KV 回包不得覆盖未保存的编辑。
+  const skillsTouchedRef = useRef(false);
+  // 只有「能解析的草稿」才算未保存编辑：损坏的 JSON 若也按草稿对待，KV 已存技能
+  // 整场不加载（表现为空库），用户再点保存就用空表覆盖全部技能。损坏草稿就地清掉。
+  const skillsDraftAtMountRef = useRef<boolean | undefined>(undefined);
+  if (skillsDraftAtMountRef.current === undefined) {
+    const draft = readSkillsDraft();
+    skillsDraftAtMountRef.current = draft !== null;
+    if (draft === null) clearDraft("agentSkills.draft");
+  }
   // 按 key 记录「读取成功」：某个 key 读取失败时不能在卸载兜底里用初始 ""
   // 覆盖已存内容（此前 Promise.all(...catch) 无论成败都置 loaded，失败即清空）。
   const loadedRef = useRef({ extra: false, fleet: false });
@@ -1167,6 +1413,8 @@ function PromptSkillsCard() {
       .then((v) => { setFleetExtra(v ?? ""); loadedRef.current.fleet = true; })
       .catch(() => {});
     invoke("get_setting", { key: "agent.skills" }).then((v) => {
+      // 有未保存草稿时以草稿为准（KV 已存内容不是用户此刻看到并继续编辑的东西）。
+      if (skillsTouchedRef.current || skillsDraftAtMountRef.current) return;
       try {
         const m = v ? JSON.parse(v) : {};
         setSkills(Object.entries(m).map(([name, body]) => ({ name, body: String(body) })));
@@ -1189,6 +1437,15 @@ function PromptSkillsCard() {
   const saveKV = (key: string, value: string) =>
     invoke("set_setting", { key, value });
 
+  // 技能列表的唯一写入口：同步草稿，关设置后再次打开仍能看到未保存的编辑。
+  const applySkills = (next: { name: string; body: string }[]) => {
+    skillsTouchedRef.current = true;
+    setSkills(next);
+    if (!writeDraft("agentSkills.draft", JSON.stringify(next))) {
+      setMsg({ kind: "err", text: t("草稿保存失败（存储空间不足或隐私模式）——关闭设置后未保存的编辑会丢失") });
+    }
+  };
+
   const saveSkills = async (list: { name: string; body: string }[]) => {
     setMsg(null);
     if (list.length > 32) {
@@ -1206,6 +1463,7 @@ function PromptSkillsCard() {
     }
     try {
       await saveKV("agent.skills", JSON.stringify(Object.fromEntries(list.map((s, i) => [names[i], s.body]))));
+      clearDraft("agentSkills.draft"); // 显式保存成功 = 草稿使命结束
       return true;
     } catch (e) {
       setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) });
@@ -1254,19 +1512,19 @@ function PromptSkillsCard() {
               <input data-testid={`skill-name-${i}`} className="mono" style={{ fontSize: 11, width: 180 }}
                 maxLength={50} placeholder={t("技能名（如 nginx 排障）")} aria-label={t("技能 {0} 名称", i + 1)}
                 value={s.name}
-                onChange={(e) => setSkills(skills.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                onChange={(e) => applySkills(skills.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
               <button className="ghost" data-testid={`skill-del-${i}`} aria-label={t("删除技能 {0}", s.name || i + 1)}
-                onClick={() => setSkills(skills.filter((_, j) => j !== i))}><IconTrash size={12} /></button>
+                onClick={() => applySkills(skills.filter((_, j) => j !== i))}><IconTrash size={12} /></button>
             </div>
             <textarea data-testid={`skill-body-${i}`} className="mono" style={{ width: "100%", fontSize: 11, marginTop: 4 }}
               rows={4} maxLength={16000} placeholder={t("操作手册正文：步骤、验收标准、注意事项（agent 加载后照做）。")}
               aria-label={t("技能 {0} 正文", i + 1)} value={s.body}
-              onChange={(e) => setSkills(skills.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))} />
+              onChange={(e) => applySkills(skills.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))} />
           </div>
         ))}
         <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
           <button className="ghost" data-testid="skill-add"
-            onClick={() => setSkills([...skills, { name: "", body: "" }])}>{t("添加技能")}</button>
+            onClick={() => applySkills([...skills, { name: "", body: "" }])}>{t("添加技能")}</button>
           <button className="ghost" data-testid="skill-save"
             onClick={() => {
               void saveSkills(skills).then((ok) => {

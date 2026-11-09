@@ -4,6 +4,7 @@
 // 落点固定在核心 records-export/（不开放任意路径），导出动作留审计。
 
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import type { ActionRecord, ActionRecordKind, RecordsQuery, RecordsRange } from "../adapter/wire";
 import { t } from "../i18n";
 import { dateLocale } from "../app-data";
@@ -37,10 +38,8 @@ const STATUS_LABEL: Record<string, string> = {
   dangerous: "⚠ 危险拦截",
 };
 
-function statusCls(s: string): string {
-  if (s === "ok") return "ok";
-  if (s === "error" || s === "denied" || s === "dangerous") return "err";
-  return "dim";
+function statusColor(s: string): string {
+  return STATUS_COLOR[s] ?? "var(--rec-cancelled)";
 }
 
 function fmtDur(ms: number | null): string {
@@ -53,13 +52,22 @@ function fmtDur(ms: number | null): string {
 // 点击刻度滚动定位到明细行并闪烁。数据模型无任务 id，「任务视角」由
 // 时间邻近 + 会话泳道承担，不造假分组。 ──
 
+// 状态色 → 当前色板的认知令牌（深/浅主题与各主题色板自动随行），
+// 色值与对比度实测见 styles.css「记录时间线可视化」段。
 const STATUS_COLOR: Record<string, string> = {
-  ok: "#3a9e5f",
-  error: "#d64545",
-  denied: "#e08a2e",
-  timeout: "#c9a227",
-  cancelled: "#8a8f98",
-  dangerous: "#a01f1f",
+  ok: "var(--rec-ok)",
+  error: "var(--rec-error)",
+  denied: "var(--rec-denied)",
+  timeout: "var(--rec-timeout)",
+  cancelled: "var(--rec-cancelled)",
+  dangerous: "var(--rec-dangerous)",
+};
+
+// 动作类别 → 徽标配色类（命令/传输/转发），与结果状态色分开两套语义
+const KIND_CLS: Record<ActionRecordKind, string> = {
+  exec: "rec-kind-exec",
+  transfer: "rec-kind-transfer",
+  forward: "rec-kind-forward",
 };
 
 const CHART_W = 640;
@@ -93,6 +101,12 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
   const H = CHART_TOP + lanes.length * LANE_H + 8;
   const laneLabel = (sid: string) =>
     sid === "unknown" ? t("未知会话") : sessionNames.get(sid) ?? sid.slice(0, 8);
+  // 刻度的无障碍名称与 title 同源：时间、类别、执行者、摘要、结果、耗时
+  const describe = (r: ActionRecord) => {
+    const agent = r.agent_id != null;
+    const status = STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status;
+    return `${new Date(r.ts).toLocaleString(dateLocale())} · ${t(KIND_LABEL[r.kind] ?? r.kind)} · ${agent ? t("Agent {0}", r.agent_id ?? "") : t("人类")} · ${r.summary} · ${status}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ""}`;
+  };
 
   const stats = useMemo(() => {
     const c: Record<string, number> = {};
@@ -108,8 +122,9 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
       <div className="dim" style={{ fontSize: 11, marginBottom: 4 }} data-testid="records-chart-caption">
         {statsText}
       </div>
+      {/* role=group（而非 img）：刻度是独立可聚焦按钮，img 会把子树对读屏隐藏 */}
       <svg className="rec-chart" data-testid="records-chart" viewBox={`0 0 ${CHART_W} ${H}`}
-        width="100%" height={H} role="img" aria-label={t("动作时间线泳道图")}>
+        width="100%" height={H} role="group" aria-label={t("动作时间线泳道图")}>
         {lanes.map((sid, i) => (
           <g key={sid}>
             {i > 0 && (
@@ -123,17 +138,23 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
         {rows.map((r) => {
           const cy = CHART_TOP + lanes.indexOf(r.session_id ?? "unknown") * LANE_H + LANE_H / 2;
           const agent = r.agent_id != null;
-          const color = STATUS_COLOR[r.status] ?? "#8a8f98";
+          const color = statusColor(r.status);
           return (
             <circle key={r.seq} data-testid={`records-dot-${r.seq}`} data-seq={r.seq}
               data-status={r.status} data-agent={agent ? "1" : "0"}
-              cx={x(r.ts)} cy={cy} r={rOf(r.duration_ms)}
-              fill={agent ? color : "none"} stroke={color} strokeWidth={1.6}
-              className={flashSeq === r.seq ? "rec-dot-flash" : undefined}
+              cx={x(r.ts)} cy={cy} r={rOf(r.duration_ms)} strokeWidth={1.6}
+              className={["rec-dot", agent ? "rec-dot-filled" : "", flashSeq === r.seq ? "rec-dot-flash" : ""].filter(Boolean).join(" ")}
+              style={{ "--rec-dot": color } as CSSProperties}
+              role="button" tabIndex={0} aria-label={`${describe(r)} · ${t("点击刻度定位明细")}`}
+              onKeyDown={(e) => {
+                // 点/选语义与鼠标点击一致；Space 需 preventDefault 防页面滚动
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onPick(r.seq);
+                }
+              }}
               onClick={() => onPick(r.seq)}>
-              <title>
-                {`${new Date(r.ts).toLocaleString(dateLocale())}\n${t(KIND_LABEL[r.kind] ?? r.kind)} · ${agent ? t("Agent {0}", r.agent_id ?? "") : t("人类")}\n${r.summary}\n${STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ""}`}
-              </title>
+              <title>{describe(r)}</title>
             </circle>
           );
         })}
@@ -147,7 +168,7 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
       <div className="dim" style={{ fontSize: 10, marginTop: 3 }} data-testid="records-chart-legend">
         {[...new Set(rows.map((r) => r.status))].map((s) => (
           <span key={s} style={{ marginRight: 10 }}>
-            <span style={{ color: STATUS_COLOR[s] ?? "#8a8f98" }}>●</span> {STATUS_LABEL[s] ? t(STATUS_LABEL[s]) : s}
+            <span style={{ color: statusColor(s) }}>●</span> {STATUS_LABEL[s] ? t(STATUS_LABEL[s]) : s}
           </span>
         ))}
         <span> {t("实心 = Agent · 空心 = 人类 · 点大小 = 耗时 · 点击刻度定位明细")}</span>
@@ -285,7 +306,7 @@ export function RecordsPane(props: RecordsPaneProps) {
                   <span className="dim mono" style={{ fontSize: 11 }}>
                     {new Date(r.ts).toLocaleString(dateLocale(), { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>
-                  <span className="badge" style={{ fontSize: 10 }}>{t(KIND_LABEL[r.kind] ?? r.kind)}</span>
+                  <span className={`badge ${KIND_CLS[r.kind] ?? ""}`} style={{ fontSize: 10 }}>{t(KIND_LABEL[r.kind] ?? r.kind)}</span>
                   <span className="dim" style={{ fontSize: 11 }}>
                     {r.agent_id ? t("Agent {0}", r.agent_id) : t("人类")}
                   </span>
@@ -300,19 +321,21 @@ export function RecordsPane(props: RecordsPaneProps) {
                     {r.summary}
                   </span>
                   {/* 徽标走 t()（UX2-8④）：EN 模式露中文徽标 */}
-                  <span className={statusCls(r.status)} style={{ fontSize: 11 }}>{STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}</span>
+                  <span style={{ fontSize: 11, color: statusColor(r.status) }}>{STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}</span>
                   {r.duration_ms != null && <span className="dim" style={{ fontSize: 10 }}>{fmtDur(r.duration_ms)}</span>}
                   {r.exit_code != null && r.exit_code !== 0 && <span className="err" style={{ fontSize: 10 }}>exit {r.exit_code}</span>}
                   {r.output_excerpt && (
                     <button className="ghost" style={{ fontSize: 10 }}
                       data-testid={`records-expand-${r.seq}`}
+                      aria-expanded={expanded.has(r.seq)}
+                      aria-controls={`records-out-${r.seq}`}
                       onClick={() => toggle(r.seq)}>
                       {expanded.has(r.seq) ? t("收起输出") : t("看输出")}
                     </button>
                   )}
                 </div>
                 {r.output_excerpt && expanded.has(r.seq) && (
-                  <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "6px 0 0", padding: 8, border: "1px solid var(--border)", borderRadius: 6, maxHeight: 180, overflow: "auto", userSelect: "text" }}>
+                  <pre id={`records-out-${r.seq}`} className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "6px 0 0", padding: 8, border: "1px solid var(--border)", borderRadius: 6, maxHeight: 180, overflow: "auto", userSelect: "text" }}>
                     {r.output_excerpt}
                   </pre>
                 )}

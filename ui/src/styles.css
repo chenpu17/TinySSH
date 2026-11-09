@@ -58,7 +58,11 @@
   --border: rgba(255, 255, 255, 0.08);
   --text: #dbe2ec;
   --text-sub: #94a5b8;
-  --dim: #5e7188;
+  /* 辅助文字档（2026-11 对比度修正）：旧值 #5e7188 实测 --bg 3.86 / --panel 3.69 /
+     --panel2 3.42，10–11px 小号辅助文字低于 AA 4.5:1；提亮到 #7c8fa6 后实测
+     --bg 5.84 / --panel 5.57 / --panel2 5.17 / --panel3 4.66（全部 ≥4.5），
+     仍明显弱于 --text-sub（--panel 7.33）与 --text（14.16），层级感保留。 */
+  --dim: #7c8fa6;
   --accent: #3ec3d3;
   --danger: #e57773;
   --ok: #72c795;
@@ -136,6 +140,8 @@
   --border: rgba(13, 32, 44, 0.10);
   --text: #1f2933;
   --text-sub: #52616f;
+  /* 浅色辅助文字档：现值实测 --bg 4.69 / --panel 5.03 / --panel2 5.31 /
+     --panel3 4.61，已满足 AA 4.5:1 且弱于 --text-sub（--panel 6.03），无需调整。 */
   --dim: #5f6d7a;
   --focus: #255cc4;
   --accent: #0a7280;
@@ -707,7 +713,14 @@ textarea {
   background: transparent; color: var(--dim); cursor: pointer; box-shadow: none;
 }
 .metrics-bar .mpause:hover { background: var(--panel3); color: var(--text); }
-#term { width: 100%; height: 100%; position: relative; }
+#term {
+  width: 100%; height: 100%; position: relative;
+  /* 多视图「页面底」色：与终端底色 --bg 只差一档（混 10% --text，深色主题略提亮、
+     浅色主题略压暗）。分屏窗格与 tmux 格子的 3px 卡缝直接用它上色——卡片本体仍是
+     终端 --bg，于是缝=页面底、卡片=子窗口，两级层次在两种多视图里同一套语言。
+     单视图没有卡缝，不露出这个色，观感不变。 */
+  --view-seam: color-mix(in srgb, var(--bg) 90%, var(--text) 10%);
+}
 /* 终端滚到历史首/尾时截断滚动链：滚轮余量不再冒到外层、也不给 WKWebView
    橡皮筋回弹的机会，与本地终端的边界手感一致 */
 .term-session .xterm .xterm-viewport { overscroll-behavior: none; }
@@ -723,6 +736,10 @@ textarea {
 .term-session.pane-right { display: block; left: calc(var(--split-frac, 0.5) * 100%); }
 .term-session.pane-top { display: block; bottom: calc((1 - var(--split-frac, 0.5)) * 100%); }
 .term-session.pane-bottom { display: block; top: calc(var(--split-frac, 0.5) * 100%); }
+/* 最大化窗格：盖住另一侧偏移，占满 #term；同组另一格 pane-hidden 彻底撤出布局。
+   放在 .pane-* 之后，同特异性靠顺序覆盖 right/bottom/top/left */
+.term-session.pane-max { inset: 0 !important; z-index: 2; }
+.term-session.pane-hidden { display: none !important; }
 /* 分割条：10px 命中区（视线只有 1px，拖拽不跟丢），中线悬停/拖拽时亮 accent-glow；
    拖拽期间全窗锁光标（capture 后指针会跑出条外）并禁选中文本 */
 .pane-div { position: absolute; z-index: 6; touch-action: none; }
@@ -732,6 +749,10 @@ textarea {
 .pane-div.div-lr::after { top: 0; bottom: 0; left: calc(50% - 0.5px); width: 1px; }
 .pane-div.div-tb::after { left: 0; right: 0; top: calc(50% - 0.5px); height: 1px; }
 .pane-div:hover::after, body.split-dragging .pane-div::after { background: var(--accent-glow); }
+/* 键盘可达（Tab 聚焦分割条/组名胶囊）：焦点环只落在那条 1px 中线上，不糊满 10px 命中区 */
+.pane-div:focus-visible { outline: none; }
+.pane-div:focus-visible::after { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.div-group:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 999px; }
 body.split-dragging { user-select: none; }
 body.split-drag-lr, body.split-drag-lr * { cursor: col-resize !important; }
 body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
@@ -773,6 +794,20 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
   font-size: 14px; line-height: 1; color: var(--dim);
 }
 .pane-tag .pane-tag-btn svg { display: block; }
+/* 分屏窗格直接操作（Termius 式）：最大化/还原、交换、退出。名牌本体仍
+   pointer-events:none（不挡终端正文），按钮单独放开命中；只在分屏格出现。
+   悬停用 --panel2——特异度必须压过通用 button:hover 的 accent 实底（64 spec） */
+.pane-tag .pane-tag-btn { pointer-events: auto; }
+.term-session.pane-left .pane-split-btn, .term-session.pane-right .pane-split-btn,
+.term-session.pane-top .pane-split-btn, .term-session.pane-bottom .pane-split-btn {
+  display: flex;
+}
+button.ghost.pane-split-btn:not(:disabled):hover {
+  background-color: var(--panel2); border-color: var(--border-hover); color: var(--text);
+}
+button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
+  background-color: var(--panel2); border-color: var(--danger); color: var(--danger);
+}
 /* 分屏窗格名牌升格 22px 标题栏（找茬五轮 C-1）：此前的玻璃章片浮压终端首行
    （提示符前几字符被盖，非 hover 常驻遮挡）——tmux 网格轮已给主视图修过同款
    （padding-top 让 fitDimsOf 自动扣行），普通分屏没跟上，同一缺陷两种待遇。
@@ -780,18 +815,19 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 .term-session.pane-left, .term-session.pane-right,
 .term-session.pane-top, .term-session.pane-bottom {
   padding-top: 28px;
-  /* 子窗口卡片化：3px 透明边框露出 #term 底色，形成两格之间约 6px 的呼吸缝；
+  /* 子窗口卡片化：3px 卡缝用「页面底」色（--view-seam，见 #term）而非透明——
+     两格之间约 6px 的呼吸缝与卡片本体 --bg 拉开一档色差，子窗口像浮在页面上；
      圆角与 #term 外框同语言。border-box 下外框几何不变（分屏比例/拖拽/回归
      测试口径不受影响），内容盒由边框自动内缩，fitDimsOf 的 clientWidth 已排除
      边框——PTY 列行仍与可视区严格一致。 */
-  border: 3px solid transparent;
+  border: 3px solid var(--view-seam);
   border-radius: 10px;
   overflow: hidden;
   background-clip: padding-box;
 }
-/* 卡片描边：终端底色与 #term 底色同值时，单靠透明边框的“空隙”看不见——
-   在内容盒边缘补 1px --border 实线（真 border，墨水屏铲阴影不受影响），
-   与 3px 透明边框一起形成「缝 + 卡片边」。焦点环 2px accent 叠在其上。 */
+/* 卡片描边：卡缝本身已有 --view-seam 色差，再在内容盒边缘补 1px --border 实线
+   （真 border，墨水屏铲阴影不受影响），与 3px 卡缝一起形成「缝 + 卡片边」。
+   焦点环 2px accent 叠在其上。 */
 .term-session.pane-left::before, .term-session.pane-right::before,
 .term-session.pane-top::before, .term-session.pane-bottom::before {
   content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
@@ -814,9 +850,9 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
    padding-top 让出标题栏高度——fitDimsOf 读计算 padding，PTY 行数自动扣除 */
 #term.has-tmux-panes .term-session.active {
   padding-top: 28px;
-  /* 主视图在面板网格里同样是一张卡片：与格子同一套 3px 透明边框 + 圆角，
-     与相邻格子之间留出呼吸缝；外框几何仍由布局树写 left/top/right/bottom。 */
-  border: 3px solid transparent;
+  /* 主视图在面板网格里同样是一张卡片：与格子同一套 3px --view-seam 卡缝 + 圆角，
+     与相邻格子之间留出带色差的呼吸缝；外框几何仍由布局树写 left/top/right/bottom。 */
+  border: 3px solid var(--view-seam);
   border-radius: 10px;
   overflow: hidden;
   background-clip: padding-box;
@@ -841,10 +877,10 @@ body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 }
 .tmux-cell {
   position: absolute; display: none; flex-direction: column; min-width: 0; min-height: 0;
-  /* 卡片化（与分屏子窗口同语言）：3px 透明边框 = 格子间约 6px 空隙，圆角
-     10px；外框几何由布局树写死，border-box 下不改变 tile 占比/拖拽命中。
-     背景只画到 padding-box，边框区透出 #term 底色形成真正的缝。 */
-  border: 3px solid transparent; border-radius: 10px;
+  /* 卡片化（与分屏子窗口同语言）：3px 卡缝 = 格子间约 6px 的「页面底」色
+     （--view-seam，见 #term），与卡片本体 --bg 拉开一档色差；圆角 10px；
+     外框几何由布局树写死，border-box 下不改变 tile 占比/拖拽命中。 */
+  border: 3px solid var(--view-seam); border-radius: 10px;
   background: var(--bg); background-clip: padding-box;
 }
 /* 与分屏窗格同款卡片描边（见上）；放在 ::before，焦点环 ::after 仍压在最上 */
@@ -995,7 +1031,7 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
    z 与 .drop-overlay 同层惯例，pointer-events:none 让 dragover 穿到 #term */
 .drag-split-hint {
   position: absolute; inset: 0; z-index: 30; pointer-events: none;
-  background: color-mix(in srgb, var(--bg) 40%, transparent);
+  background: color-mix(in srgb, var(--bg) 22%, transparent);
 }
 .dsh-zone {
   position: absolute; border-radius: 8px;
@@ -1007,6 +1043,15 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
 .dsh-zone.zone-r { top: 4px; right: 4px; bottom: 4px; left: calc(var(--split-frac, 0.5) * 100%); }
 .dsh-zone.zone-t { top: 4px; right: 4px; bottom: calc((1 - var(--split-frac, 0.5)) * 100%); left: 4px; }
 .dsh-zone.zone-b { top: calc(var(--split-frac, 0.5) * 100%); right: 4px; bottom: 4px; left: 4px; }
+/* 最大化时可见的是一整格：落点高亮别再按 frac 画半区 */
+.dsh-zone.single { inset: 4px !important; }
+/* 落点文案：告诉用户松手会发生什么（新开/替换/交换），悬停提示不再只是色块 */
+.dsh-label {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: 4px 12px; border-radius: 999px; white-space: nowrap;
+  font-size: 12px; color: var(--text); background: var(--panel2);
+  border: 1px solid var(--accent); box-shadow: 0 4px 16px rgba(0, 0, 0, .28);
+}
 
 /* 标签页（T19）：中栏顶部一条，与会话一一对应
    精致化（§5.3）：浏览器式上圆角改全圆角 pill，去常显描边，active 用轻投影圈 */
@@ -2469,6 +2514,8 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --ok: #22764a; --warn: #8a5600; --warn-text: #8a5600; --warn-hover: #7a4b00;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #0a7bc4; --focus: #14509f;
+  /* Tokyo 浅色 --blue 对 --panel 仅 3.72:1：图形可用，文字档另配 5.49:1 深蓝 */
+  --rec-timeout: #0b5f9e; --rec-transfer-text: #0b5f9e;
   --grad-a: #2470e0; --grad-b: #1c60c8;
   --mark-grad: linear-gradient(160deg, #d8e2f5, #f5f8fd);
 
@@ -3113,8 +3160,36 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 .hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 600; }
 
 /* ── 记录时间线可视化（records-pane 泳道图）── */
+/* 状态色令牌：泳道刻度、图例圆点与明细行状态文字共用同一套色义。
+   ok/error/denied/timeout/cancelled 直接挂当前色板的认知令牌（--ok/--danger/
+   --warn/--blue/--text-sub），随主题、深浅自动走，实测对 --panel ≥4.5:1（文字档）
+   且 ≥3:1（非文字图形）。「危险拦截」无现成认知令牌，用紫红与错误红区分：
+   深色 #d783d8 对 --panel 7.15:1，浅色 #8b2f8f 6.86:1，同样满足文字与图形判据。 */
+:root {
+  --rec-ok: var(--ok);
+  --rec-error: var(--danger);
+  --rec-denied: var(--warn);
+  --rec-timeout: var(--blue);
+  --rec-transfer-text: var(--blue); /* 文字档；Tokyo 浅色另配深蓝以满足 4.5:1 */
+  --rec-cancelled: var(--text-sub);
+  --rec-dangerous: #d783d8;
+}
+:root[data-chrome="light"] {
+  --rec-dangerous: #8b2f8f;
+}
 .rec-chart { width: 100%; display: block; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+/* 刻度颜色走内联 --rec-dot，fill/stroke 由类统一落样式（便于 :focus-visible 覆盖描边） */
 .rec-chart circle { cursor: pointer; }
+.rec-chart .rec-dot { stroke: var(--rec-dot); fill: none; }
+.rec-chart .rec-dot-filled { fill: var(--rec-dot); }
+/* 刻度是交互件（点击定位明细），键盘可达：焦点环用 --focus；
+   SVG 的 outline 在部分 WebView 下不可靠，补描边加粗兜底。 */
+.rec-chart .rec-dot:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  stroke: var(--focus);
+  stroke-width: 3.2;
+}
 .rec-lane-sep { stroke: var(--border); stroke-width: 1; }
 .rec-lane-label { font-size: 10px; fill: var(--dim); }
 .rec-axis-label { font-size: 10px; fill: var(--dim); }
@@ -3124,6 +3199,19 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   100% { stroke-width: 0; }
 }
 .rec-row-flash { outline: 2px solid var(--accent); border-radius: 4px; }
+/* 动作类别徽标（命令/传输/转发）：颜色区分类别，标签文字仍保留；
+   正文色均挂当前色板认知令牌，soft 底上的实测对比度 ≥4.5:1（浅色传输最低 4.70）。 */
+.badge.rec-kind-exec {
+  color: var(--accent-text); border-color: var(--accent-line); background: var(--accent-soft);
+}
+.badge.rec-kind-transfer {
+  color: var(--rec-transfer-text); border-color: color-mix(in srgb, var(--blue) 45%, transparent);
+  background: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+.badge.rec-kind-forward {
+  color: var(--warn-text); border-color: var(--warn-line); background: var(--warn-soft);
+}
+
 .tw-pre {
   /* 底部锚定（用户反馈「下面内容被遮挡」）：快照含 -S 40 行历史，顶锚定会让
      最新屏/提示符落到折叠线以下被裁——钉住底边后裁切只发生在顶部（最旧历史），

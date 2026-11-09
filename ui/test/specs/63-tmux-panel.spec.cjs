@@ -566,11 +566,14 @@ module.exports = {
     // 时刻判定缺席，1.2s 内必须收掉（宽限回归时此处确定性转红：该格出生不足 6s）。
     await page.evaluate((k) => window.__t_pane_terms?.get(k)?.focus(), `${SID}:${bgId}`);
     await page.waitForTimeout(150);
+    // toast 只有 2.6s 生命；满套负载下 evaluate 往返可能更长，事后用 DEV 历史判定
+    await page.evaluate(() => { window.__t_toasts = []; });
     await page.evaluate(({ sid, id }) => window.__demoInvoke("demo_pane_exit", { sid, paneId: Number(id) }), { sid: SID, id: bgId });
     ck.check("远端结束：格子即刻摘除（流终结信号 + 快照请求时刻判定，不挂 6s 宽限）",
       await poll(page, () => !document.querySelector('.tmux-cell[data-tmux="logs"]'), null, 1200), "");
     ck.check("远端结束给交代：toast 附 tmux 收尾提示行",
-      await waitToast(page, "窗格已结束：logs — [detached (from session logs)]", 3000), "");
+      await poll(page, (s) => (window.__t_toasts ?? []).some((t) => t.text.includes(s)),
+        "窗格已结束：logs — [detached (from session logs)]", 3000), "");
     ck.check("被摘格子握着焦点 → 交还主终端（不悬空在 body）",
       await page.evaluate((sid) => {
         const a = document.activeElement;

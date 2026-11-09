@@ -183,5 +183,19 @@ module.exports = {
     await wait(page, 200);
     const menuMode = await page.evaluate((sid) => window.__t_terms.get(sid).modes.mouseTrackingMode, sids[0]);
     ck.eq("点菜单后协议关闭", menuMode, "none");
+
+    // ── 6. 右键「重绘终端画面」手动出口（长用后字形图集错位的兜底）──
+    await page.evaluate(() => {
+      const el = document.querySelector(".term-session.active") ?? document.querySelector(".term-session");
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, clientX: r.left + 240, clientY: r.top + 120,
+      }));
+    });
+    await wait(page, 250);
+    const redrawPresent = await page.evaluate(() => !!document.querySelector('[data-testid="term-redraw"]'));
+    ck.check("终端右键菜单有「重绘终端画面」", redrawPresent);
+    if (redrawPresent) await page.click('[data-testid="term-redraw"]');
+    await wait(page, 150);
   },
 };

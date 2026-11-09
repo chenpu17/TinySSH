@@ -9,6 +9,10 @@
 //! （string alg-name || bytes sig，ed25519 alg 名必须 ssh-ed25519）；
 //! 未加载密钥的签名请求 → agent FAILURE（russh AgentFailure）。
 
+// russh 的命名管道客户端仅在 Windows 提供；非 Windows 上整个测试目标置空，
+// 避免 macOS 本地 `cargo test --workspace` 因 API 不存在而编译失败。
+#![cfg(windows)]
+
 use russh::keys::agent::client::AgentClient;
 use russh::keys::agent::AgentIdentity;
 use russh::keys::PublicKey;

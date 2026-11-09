@@ -97,19 +97,22 @@ module.exports = {
     ck.check("上下分屏建立双窗格", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
     const g1 = await paneGeom(page);
     ck.check("上主/下副两格齐全", !!g1.main && !!g1.second, JSON.stringify(g1));
-    // 子窗口卡片化：3px 透明边框 = 两格间约 6px 呼吸缝（#term 底色透出），
-    // 10px 圆角与终端外框同语言；外框几何仍由 --split-frac 决定（上面 g1 已验）。
+    // 子窗口卡片化：3px 卡缝用「页面底」色（与卡片 --bg 拉开一档色差）= 两格间约
+    // 6px 呼吸缝不再与子窗口同色，10px 圆角与终端外框同语言；外框几何仍由
+    // --split-frac 决定（上面 g1 已验）。
     const cardStyle = await page.evaluate(() => {
       const el = document.querySelector(".pane-left, .pane-top");
       const cs = getComputedStyle(el);
       return {
         border: cs.borderTopWidth, radius: cs.borderRadius, overflow: cs.overflow,
-        clip: cs.backgroundClip, color: cs.borderTopColor,
+        clip: cs.backgroundClip, color: cs.borderTopColor, bg: cs.backgroundColor,
       };
     });
-    ck.check("分屏子窗口卡片化：3px 透明边框 + 10px 圆角 + 底色透出成缝",
+    ck.check("分屏子窗口卡片化：3px 卡缝（页面底色差）+ 10px 圆角 + 卡片本体仍是终端底色",
       cardStyle.border === "3px" && cardStyle.radius === "10px" && cardStyle.overflow === "hidden"
-        && cardStyle.clip === "padding-box" && /rgba?\(0, 0, 0, 0\)|transparent/.test(cardStyle.color),
+        && cardStyle.clip === "padding-box"
+        && !/rgba?\(0, 0, 0, 0\)|transparent/.test(cardStyle.color)
+        && cardStyle.color !== cardStyle.bg,
       JSON.stringify(cardStyle));
     const divTb = await page.evaluate(() => !!document.querySelector('.pane-div[data-testid="pane-div"].div-tb'));
     ck.check("分割条出现且为竖向拖拽（div-tb）", divTb, "");
@@ -221,6 +224,8 @@ module.exports = {
     await tabDrag("staging-1", 0.9, 0.5, "over");
     const h1 = await paneNames();
     ck.check("拖标签悬停终端区出象限提示（zone-r）", (h1.hint ?? "").includes("zone-r"), h1.hint ?? "无提示");
+    ck.check("未分屏落点文案=放到右侧分屏",
+      (await page.evaluate(() => document.querySelector('[data-testid="dsh-label"]')?.textContent ?? "")) === "放到右侧分屏", "");
     await page.mouse.up();
     await page.waitForTimeout(500);
     ck.check("拖右半建屏：双窗格", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
@@ -252,6 +257,17 @@ module.exports = {
 
     // ── 分屏组命名（本轮）：组=分屏对命名层——自动名=成员名相连、双击胶囊重命名、
     //    自定义名钉住（成员替换不跟随）、散伙弃名（重分屏回自动名）──
+    //    每标签独立分屏后每组自带占比：本组由拖拽新建（默认 0.5），先把条身拖到
+    //    0.2 作为「双击胶囊不改比例」的观测值
+    const c4 = await divPoint(page, 0.2);
+    const termW4 = await page.evaluate(() => document.getElementById("term").getBoundingClientRect().width);
+    await page.mouse.move(c4.x, c4.y);
+    await page.mouse.down();
+    await page.mouse.move(c4.x - termW4 * 0.35, c4.y, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    const g5 = await paneGeom(page);
+    ck.check("本组拖到 0.2（每组独立占比）", Math.abs(g5.frac - 0.2) < 0.02, JSON.stringify(g5));
     const chipText = () => page.evaluate(() =>
       document.querySelector('[data-testid="split-group-chip"] .div-group-name')?.textContent ?? null);
     ck.check("组名胶囊在场且为自动名（成员名相连）", (await chipText()) === "staging-1 + 本机", (await chipText()) ?? "无胶囊");
@@ -268,7 +284,7 @@ module.exports = {
     await page.keyboard.press("Enter");
     await page.waitForTimeout(300);
     ck.check("回车提交自定义组名（生产组）", (await chipText()) === "生产组", (await chipText()) ?? "无胶囊");
-    // 双击胶囊改名不触发分割条复位：frac 仍为 0.2（③ 前的夹取值未被双击洗掉）
+    // 双击胶囊改名不触发分割条复位：frac 仍为本组刚拖到的 0.2
     const fracAfterRename = await page.evaluate(() =>
       parseFloat(document.getElementById("term")?.style.getPropertyValue("--split-frac") ?? "NaN"));
     ck.check("胶囊双击不触发条身复位（frac 保持 0.2）", Math.abs(fracAfterRename - 0.2) < 0.02, `frac=${fracAfterRename}`);
@@ -284,25 +300,36 @@ module.exports = {
     ck.check("替换后焦点在落点格（prod-1）", p4.focused === "prod-1", JSON.stringify(p4));
     ck.check("成员替换后自定义名钉住（仍生产组）", (await chipText()) === "生产组", (await chipText()) ?? "无胶囊");
 
-    // ⑤ 拖到标签条空白处（非任何标签上）= 退出分屏，两会话保留
+    // ⑤ 标签条空白落点：非成员 no-op；成员拖回空白=退出它所在的组，两会话保留
     const blank = await page.evaluate(() => {
       const bar = document.querySelector(".tabbar").getBoundingClientRect();
       const tabs = document.querySelectorAll(".tab");
       const last = tabs[tabs.length - 1].getBoundingClientRect();
       return { x: Math.min(last.right + 40, bar.right - 8), y: bar.top + bar.height / 2 };
     });
-    const src5 = await page.evaluate(() => {
-      const tab = [...document.querySelectorAll(".tab")].find((el) => el.textContent.includes("staging-1"));
+    const tabLabelPoint = (namePart) => page.evaluate((t) => {
+      const tab = [...document.querySelectorAll(".tab")].find((el) => el.textContent.includes(t));
       const r = tab.querySelector(".tab-label").getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    });
+    }, namePart);
+    // 此时组成员=prod-1 + 本机（staging-1 已在 ④ 被换出）——非成员拖空白不动任何组
+    const srcNon = await tabLabelPoint("staging-1");
+    await page.mouse.move(srcNon.x, srcNon.y);
+    await page.mouse.down();
+    await page.mouse.move(blank.x, blank.y, { steps: 6 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    ck.check("非成员拖到标签条空白=无操作（活动组保留）", (await paneCount(page)) === 2
+      && !!(await page.evaluate(() => !!document.querySelector('[data-testid="split-group-chip"]'))), "");
+    const src5 = await tabLabelPoint("本机");
     await page.mouse.move(src5.x, src5.y);
     await page.mouse.down();
     await page.mouse.move(blank.x, blank.y, { steps: 6 });
     await page.waitForTimeout(120);
     await page.mouse.up();
     await page.waitForTimeout(500);
-    ck.check("拖到标签条空白=退出分屏且标签保留", (await paneCount(page)) === 0
+    ck.check("成员拖到标签条空白=退出分屏且标签保留", (await paneCount(page)) === 0
       && await page.evaluate(() => document.querySelectorAll(".tab").length) >= 2);
     ck.check("散伙后组名胶囊消失", !(await page.evaluate(() => !!document.querySelector('[data-testid="split-group-chip"]'))), "");
 
@@ -321,6 +348,162 @@ module.exports = {
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
     ck.check("Esc 取消改名（回自动名显示）", (await chipText()) === "prod-1 + staging-1", (await chipText()) ?? "无胶囊");
+
+    // ── 拖拽硬化：标签内小幅滑动不起拖；Esc 取消拖拽不落格；成员拖回自己标签不散组 ──
+    const activeBefore = await page.evaluate(() => document.querySelector(".tab-active .tab-label")?.textContent ?? "");
+    const jitter = await page.evaluate(() => {
+      const tab = [...document.querySelectorAll(".tab")].find((el) => el.classList.contains("tab-active"));
+      const r = tab.querySelector(".tab-label").getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(jitter.x, jitter.y);
+    await page.mouse.down();
+    await page.mouse.move(jitter.x + 20, jitter.y, { steps: 4 });
+    await page.waitForTimeout(120);
+    const jitterHint = await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]'));
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    ck.check("标签内部横向滑动 20px 不起拖（无落点提示、组不变）",
+      !jitterHint && (await paneCount(page)) === 2
+      && (await page.evaluate(() => document.querySelector(".tab-active .tab-label")?.textContent ?? "")) === activeBefore,
+      `hint=${jitterHint} active=${activeBefore}`);
+
+    // Esc 取消：悬停到替换格后按 Esc，再松手不得建屏/换格
+    await tabDrag("本机", 0.9, 0.5, "over");
+    ck.check("非成员落点文案=替换右格",
+      (await page.evaluate(() => document.querySelector('[data-testid="dsh-label"]')?.textContent ?? "")) === "替换右格", "");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(150);
+    const escHint = await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]'));
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    const afterEsc = await paneNames();
+    ck.check("Esc 取消拖拽：提示消失、组保持原状",
+      !escHint && afterEsc.main === "prod-1" && afterEsc.second === "staging-1", JSON.stringify(afterEsc));
+
+    // 成员悬停到另一格 → 交换文案
+    await tabDrag("staging-1", 0.1, 0.5, "over");
+    ck.check("成员落点文案=交换两格",
+      (await page.evaluate(() => document.querySelector('[data-testid="dsh-label"]')?.textContent ?? "")) === "交换两格", "");
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+
+    // 成员拖回自己的标签（先离开标签起拖，再回来松手）= no-op，不解散组
+    const ownTab = await page.evaluate(() => {
+      const tab = [...document.querySelectorAll(".tab")].find((el) => el.textContent.includes("staging-1"));
+      const r = tab.querySelector(".tab-label").getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(ownTab.x, ownTab.y);
+    await page.mouse.down();
+    await page.mouse.move(ownTab.x, ownTab.y + 70, { steps: 4 }); // 进终端区起拖
+    await page.mouse.move(ownTab.x, ownTab.y, { steps: 4 });       // 回到自己的标签
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    ck.check("成员拖回自己标签=no-op（组保留）", (await paneCount(page)) === 2
+      && (await paneNames()).main === "prod-1", JSON.stringify(await paneNames()));
+
+    // ── 窗格直接操作：最大化/还原、交换、退出 ──
+    const clickPaneBtn = async (testid, sel = ".pane-left, .pane-right, .pane-top, .pane-bottom") =>
+      page.evaluate(({ tid, s }) => {
+        const pane = [...document.querySelectorAll(s)].find((el) => getComputedStyle(el).display !== "none");
+        const b = pane?.querySelector(`[data-testid="${tid}"]`);
+        if (!b) throw new Error("pane button not found: " + tid);
+        b.click();
+      }, { tid: testid, s: sel });
+    await clickPaneBtn("pane-max");
+    await page.waitForTimeout(500);
+    const maxState = await page.evaluate(() => {
+      const max = document.querySelector(".pane-max");
+      const hidden = document.querySelector(".pane-hidden");
+      const r = max?.getBoundingClientRect();
+      const tr = document.getElementById("term")?.getBoundingClientRect();
+      return {
+        max: !!max, hidden: !!hidden,
+        full: !!r && !!tr && Math.abs(r.width - tr.width) < 3 && Math.abs(r.height - tr.height) < 3,
+        div: !!document.querySelector(".pane-div"),
+        title: max?.querySelector('[data-testid="pane-max"]')?.getAttribute("title") ?? null,
+      };
+    });
+    ck.check("pane-max 最大化：一格全幅、另一格 pane-hidden、分割条撤收",
+      maxState.max && maxState.hidden && maxState.full && !maxState.div, JSON.stringify(maxState));
+    ck.check("最大化钮换装为还原", maxState.title === "还原双窗格", maxState.title ?? "");
+    await clickPaneBtn("pane-max");
+    await page.waitForTimeout(500);
+    ck.check("再点还原：两格回归、分割条回来", await page.evaluate(() =>
+      !!document.querySelector(".pane-left") && !!document.querySelector(".pane-right")
+      && !document.querySelector(".pane-max") && !!document.querySelector(".pane-div")), "");
+
+    const beforeSwap = await paneNames();
+    await clickPaneBtn("pane-swap");
+    await page.waitForTimeout(500);
+    const afterSwap = await paneNames();
+    ck.check("pane-swap 交换两格", afterSwap.main === beforeSwap.second && afterSwap.second === beforeSwap.main,
+      JSON.stringify({ beforeSwap, afterSwap }));
+
+    // ── 窗格按钮键盘可达：在非活动格上按 Enter 最大化，活动会话必须先切过去 ──
+    // 否则最大化把活动终端藏进 pane-hidden：标签高亮/⌘W/右键都指向隐藏会话
+    const kbTarget = await page.evaluate(() => {
+      const active = document.querySelector(".tab.tab-active")?.dataset.sid;
+      const pane = [...document.querySelectorAll(".pane-left, .pane-right, .pane-top, .pane-bottom")]
+        .find((el) => getComputedStyle(el).display !== "none" && el.dataset.sid !== active);
+      const b = pane?.querySelector('[data-testid="pane-max"]');
+      if (!b) throw new Error("non-active pane-max not found");
+      b.focus();
+      return { sid: pane.dataset.sid, focused: document.activeElement === b };
+    });
+    ck.check("非活动格的最大化钮可键盘聚焦", kbTarget.focused, JSON.stringify(kbTarget));
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(500);
+    const kbState = await page.evaluate(() => ({
+      active: document.querySelector(".tab.tab-active")?.dataset.sid ?? null,
+      maxSid: document.querySelector(".pane-max")?.dataset.sid ?? null,
+      focusedSid: document.querySelector(".pane-focused")?.dataset.sid ?? null,
+    }));
+    ck.check("Enter 最大化：活动会话切到该格、最大化格即焦点格",
+      kbState.maxSid === kbTarget.sid && kbState.active === kbTarget.sid && kbState.focusedSid === kbTarget.sid,
+      JSON.stringify({ kbTarget, kbState }));
+    await page.evaluate(() => document.querySelector(".pane-max [data-testid='pane-max']")?.click());
+    await page.waitForTimeout(500);
+
+    // ── 分割条键盘：方向键 ±2%、Shift ±10%、Home/End 到两端 ──
+    const focusDiv = () => page.evaluate(() => document.querySelector(".pane-div")?.focus());
+    const fracNow = () => page.evaluate(() =>
+      parseFloat(document.getElementById("term")?.style.getPropertyValue("--split-frac") ?? "NaN"));
+    await focusDiv();
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(150);
+    const f1 = await fracNow();
+    ck.check("分割条 ArrowRight +2%", Math.abs(f1 - 0.52) < 0.011, `frac=${f1}`);
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.waitForTimeout(150);
+    const f2 = await fracNow();
+    ck.check("分割条 Shift+ArrowRight +10%", Math.abs(f2 - 0.62) < 0.011, `frac=${f2}`);
+    await page.keyboard.press("Home");
+    await page.waitForTimeout(150);
+    const f3 = await fracNow();
+    await page.keyboard.press("End");
+    await page.waitForTimeout(150);
+    const f4 = await fracNow();
+    ck.check("分割条 Home/End 到两端（0.2/0.8）", Math.abs(f3 - 0.2) < 0.011 && Math.abs(f4 - 0.8) < 0.011,
+      `home=${f3} end=${f4}`);
+
+    // ── 组名胶囊键盘：Enter 进入改名，提交后名字更新 ──
+    await page.evaluate(() => document.querySelector('[data-testid="split-group-chip"]')?.focus());
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(250);
+    ck.check("胶囊 Enter 打开改名框", !!(await page.evaluate(() => document.querySelector(".split-group-rename"))), "");
+    await page.keyboard.type("键盘组");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+    ck.check("胶囊键盘改名提交", (await chipText()) === "键盘组", (await chipText()) ?? "无胶囊");
+
+    // ── pane-exit：退出本组，两个标签都保留 ──
+    await clickPaneBtn("pane-exit");
+    await page.waitForTimeout(500);
+    ck.check("pane-exit 退出分屏且标签保留", (await paneCount(page)) === 0
+      && await page.evaluate(() => document.querySelectorAll(".tab").length) >= 2, "");
 
     // ⑥ 单会话无可组合对象：悬停不出提示、drop 不建屏
     const closeTab = async (namePart) => {

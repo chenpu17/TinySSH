@@ -21,6 +21,7 @@ import type { OutputFeed } from "./terminal/checkpoint";
 import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
 import { installMouseModeGuard, resetMouseReporting } from "./terminal/mouse-mode-guard";
+import { repaintTerm } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
@@ -101,7 +102,7 @@ import {
   SPLIT_RECOVER_AT, SPLIT_RECOVER_AT_H, tauriListen, THEMES, ThemePreset,
   TransferCard, themeById, TZ_NOTE, useDialogFocus,
   TERM_FONT_DEFAULT, TERM_FONTS, termFontCss, TERM_LETTER_SPACING_DEFAULT, TERM_SCROLLBACK_DEFAULT,
-  type Appearance, type SettingsCat, type SplitDir, type SplitPanes, type TermCursorStyle,
+  type Appearance, type SettingsCat, type SplitDir, type SplitGroup, type SplitPanes, type TermCursorStyle,
 } from "./app-data";
 import { localeNow, resolveInitialLocale, setLocale, SETTING_LOCALE, t, type Locale } from "./i18n";
 import { WinControls } from "./components/window-controls";
@@ -160,6 +161,7 @@ type PaneTermEntry = {
 // 与 React 侧 icons.tsx 的 IconMaximize/IconMinimize 保持一体）
 const PANE_ZOOM_OFF_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 const PANE_ZOOM_ON_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+const PANE_SWAP_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13"/><polyline points="14 4 17 7 14 10"/><path d="M20 17H7"/><polyline points="10 14 7 17 10 20"/></svg>';
 
 /** 布局树叶子键原位改名（tmux 侧改名跟随）：树结构与占比不动，只换键——
  * 重命名不掉位置；from 不在树里是 no-op（该标签没拖过=自动平铺，无从改名）。 */
@@ -301,6 +303,7 @@ export default function App() {
   const termsRef = useRef<Map<string, {
     term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement;
     tagLabel: HTMLSpanElement; zoomBtn: HTMLButtonElement; detachBtn: HTMLButtonElement;
+    splitMaxBtn: HTMLButtonElement; splitSwapBtn: HTMLButtonElement; splitExitBtn: HTMLButtonElement;
     feed: OutputFeed | null; webgl: WebglAddon | null; liga: LigaturesAddon | null;
   }>>(new Map());
   // tmux 面板（一标签多 tmux 会话）：格子 xterm 实例表，键 = `${sid}:${paneId}`。
@@ -308,6 +311,10 @@ export default function App() {
   // 增删（bornAt 与 panesSnapAtRef 同为 performance.now()：快照请求晚于格子出生，
   // 缺席才算真缺席——乐观开格后才返回的在途旧快照不误杀，乱序到达同样成立）
   const paneTermsRef = useRef<Map<string, PaneTermEntry>>(new Map());
+  // 全终端重画出口（字形图集自愈）：实现挂在字形自愈 effect 里；原生全屏
+  // 进出（Tauri setFullscreen/绿灯/Esc）不走 DOM fullscreenchange，由窗口
+  // resize 探针在检测到全屏态翻转时调用这里。
+  const repaintAllRef = useRef<() => void>(() => {});
   // 每个标签最后一次落焦的子窗口（键 = "main" 或 `${sid}:${paneId}`）：切走再切回时
   // 恢复用户当时选中的 tmux 格子，而不是永远落回主视图（用户反馈：上次选定的
   // 子窗口会丢失）。focusin 事件维护，切标签的 focusSession 消费。
@@ -366,25 +373,99 @@ export default function App() {
     }, 300);
     return () => clearInterval(t);
   }, [inTauri, applyStateEvent]);
-  // 分屏（T19；分屏⑥轮起方向可选+可拖拽）：main=左主/上主 pane，second=右副/下副
-  // pane，dir=布局方向；null=单 pane。布局（谁在哪格、方向、占比）与焦点（sid）解耦
-  // ——分屏时点另一格只挪焦点，终端内容不跳动。ref 与 state 并行：fitTerminal/看门狗
-  // 等回调内读 ref，避开 stale closure。splitDir 是「记住的上次方向」（app 运行期内），
-  // 各入口不带显式方向时沿用；splitFrac 主格占比，拖拽条/双击复位写它
-  const [splitPanes, setSplitPanes] = useState<SplitPanes | null>(null);
-  const splitRef = useRef<SplitPanes | null>(null);
+  // 分屏（T19；本轮起每标签独立分组）：一个 SplitGroup = 一次两格分屏，组内保存
+  // 方向/占比/组名/最大化态；一个 session 至多属于一个组。A|B、C|D 可共存，切标签
+  // 只切「当前显示哪一组」，不替换任何窗格。state 与 ref 并行（ref 供 fitTerminal/
+  // 指针回调读最新值）；所有写操作只经 commitSplitGroups。
+  const [splitGroups, setSplitGroups] = useState<SplitGroup[]>([]);
+  const splitGroupsRef = useRef<SplitGroup[]>([]);
+  const splitGroupSeqRef = useRef(0);
+  const commitSplitGroups = useCallback((next: SplitGroup[]) => {
+    splitGroupsRef.current = next;
+    setSplitGroups(next);
+  }, []);
+  const groupOf = useCallback((sessionSid: string | null | undefined): SplitGroup | null => {
+    if (!sessionSid) return null;
+    return splitGroupsRef.current.find((g) => g.main === sessionSid || g.second === sessionSid) ?? null;
+  }, []);
+  const groupById = useCallback((gid: string): SplitGroup | null =>
+    splitGroupsRef.current.find((g) => g.id === gid) ?? null, []);
+  const slotOf = (g: SplitGroup, sessionSid: string): "main" | "second" | null =>
+    g.main === sessionSid ? "main" : g.second === sessionSid ? "second" : null;
+  const patchGroup = useCallback((gid: string, patch: Partial<Omit<SplitGroup, "id">>) => {
+    if (!splitGroupsRef.current.some((g) => g.id === gid)) return;
+    commitSplitGroups(splitGroupsRef.current.map((g) => (g.id === gid ? { ...g, ...patch } : g)));
+  }, [commitSplitGroups]);
+  // 建组前先把两个成员从各自旧组移出（跨组移动=旧组解散，其伴侣回单窗格）
+  const createGroup = useCallback((main: string, second: string, dir: SplitDir, frac = 0.5): SplitGroup | null => {
+    if (!main || !second || main === second) return null;
+    const rest = splitGroupsRef.current.filter(
+      (g) => !(g.main === main || g.second === main || g.main === second || g.second === second),
+    );
+    const g: SplitGroup = { id: `sg-${++splitGroupSeqRef.current}`, main, second, dir, frac, name: null, maximized: null };
+    commitSplitGroups([...rest, g]);
+    return g;
+  }, [commitSplitGroups]);
+  const dissolveGroup = useCallback((gid: string) => {
+    if (!splitGroupsRef.current.some((g) => g.id === gid)) return;
+    commitSplitGroups(splitGroupsRef.current.filter((g) => g.id !== gid));
+  }, [commitSplitGroups]);
+  const detachFromAllGroups = useCallback((sessionSid: string): SplitGroup | null => {
+    const g = groupOf(sessionSid);
+    if (!g) return null;
+    commitSplitGroups(splitGroupsRef.current.filter((x) => x.id !== g.id));
+    return g;
+  }, [commitSplitGroups, groupOf]);
+  const pruneGroups = useCallback((dead: Set<string>) => {
+    const next = splitGroupsRef.current.filter((g) => !dead.has(g.main) && !dead.has(g.second));
+    if (next.length !== splitGroupsRef.current.length) commitSplitGroups(next);
+  }, [commitSplitGroups]);
+  // 当前显示的组由活动会话派生；props/JSX 继续使用 SplitPanes 形状（SplitGroup 超集）
+  const splitPanes = useMemo(
+    () => (sid ? splitGroups.find((g) => g.main === sid || g.second === sid) ?? null : null),
+    [splitGroups, sid],
+  );
+  // 切到某组时，方向选择器跟随该组自己的方向（各组独立旋转）；改名编辑态只属于
+  // 发起它的组，切走即取消（否则输入框会冒在新组胶囊上、Enter 写回旧组）
+  useEffect(() => {
+    if (!splitPanes) {
+      if (groupRenamingGidRef.current) finishGroupRename(null);
+      return;
+    }
+    if (splitDirRef.current !== splitPanes.dir) {
+      splitDirRef.current = splitPanes.dir;
+      setSplitDir(splitPanes.dir);
+    }
+    if (groupRenamingGidRef.current && groupRenamingGidRef.current !== splitPanes.id) {
+      // 切组=取消改名：顺带还原被临时撤下的最大化态并重估新组退化
+      finishGroupRename(null);
+    }
+  }, [splitPanes?.id, splitPanes?.dir]);
   const [splitDir, setSplitDir] = useState<SplitDir>("lr");
   const splitDirRef = useRef<SplitDir>("lr");
   const splitFracRef = useRef(0.5);
-  // 分屏组命名（本轮）：组=分屏对本身的命名层。splitGroupName 是用户自定义名
-  //（null=自动命名）；groupRenaming 非 null 表示改名中（值为编辑中的文本）
-  const [splitGroupName, setSplitGroupName] = useState<string | null>(null);
+  const paneDivRef = useRef<HTMLDivElement | null>(null);
+  // 分屏组命名：groupRenaming 是编辑中的文本，gid 记在 ref 里（提交/取消都写回该组）
   const [groupRenaming, setGroupRenaming] = useState<string | null>(null);
-  // 把占比写进 #term 的 --split-frac（CSS 几何与分割条定位都吃这个变量）
-  const applySplitFrac = useCallback(() => {
+  const groupRenamingGidRef = useRef<string | null>(null);
+  // 改名从最大化态开始时临时撤下的槽位，结束后还原
+  const groupRenameRestoreMaxRef = useRef<"main" | "second" | null>(null);
+  // 命令式窗格按钮经 ref 取最新处理函数（makeTerm 早于这些 useCallback 声明）
+  const splitPaneActionRef = useRef<{
+    toggleMax: (sessionSid: string) => void;
+    swap: (sessionSid: string) => void;
+    exit: (sessionSid: string) => void;
+  }>({ toggleMax: () => {}, swap: () => {}, exit: () => {} });
+  // 把占比写进 #term 的 --split-frac（CSS 几何与分割条定位都吃这个变量）。
+  // 参数省略=当前组；null=无组（写回 0.5）；number=拖拽中的即时值（松手才提交到组）
+  const applySplitFrac = useCallback((g?: SplitGroup | null | number) => {
+    const grp = typeof g === "number" ? null : g === undefined ? groupOf(sidRef.current) : g;
+    const frac = typeof g === "number" ? g : grp?.frac ?? 0.5;
+    splitFracRef.current = frac;
     const el = termRef.current;
-    if (el) el.style.setProperty("--split-frac", splitFracRef.current.toFixed(4));
-  }, []);
+    if (el) el.style.setProperty("--split-frac", frac.toFixed(4));
+    paneDivRef.current?.setAttribute("aria-valuenow", String(Math.round(frac * 100)));
+  }, [groupOf]);
   // 标签栏溢出指示（五人走查·林姐：16 会话时 10 个标签静默不可见，无任何溢出
   // affordance——横向滚动条 overlay 不滚动不出现）。测左/右可滚 + 被裁标签数，
   // 两侧出现 ‹ › 滚动钮；激活标签切换（含 ⌘⇧]/[ 循环）自动滚入视野
@@ -544,6 +625,15 @@ export default function App() {
   const pushToast = useCallback((kind: "ok" | "err" | "info", text: string,
     action?: { label: string; title: string; run: () => void }) => {
     const id = ++toastSeq.current;
+    // DEV 探针：toast 只有 2.6s 生命，满套 UI 负载下 evaluate 往返可能比这更久，
+    // 只看 DOM 的断言会漏掉「已经出现过又消失」的 toast。留一份有限历史供 spec
+    // 在事后判定；生产构建不挂。
+    if (import.meta.env.DEV) {
+      const probe = window as unknown as { __t_toasts?: Array<{ kind: string; text: string; at: number }> };
+      probe.__t_toasts ??= [];
+      probe.__t_toasts.push({ kind, text, at: Date.now() });
+      if (probe.__t_toasts.length > 40) probe.__t_toasts.shift();
+    }
     setToasts((cur) => [...cur.slice(-3), { id, kind, text, action }]);
     // 错误常常是长句（后端原文/shell 失败原因），2.6s 读不完且无法复制；给 6s
     // 并允许点 × 手动关闭（栈本身仍 pointer-events:none，不挡背后操作）。
@@ -583,7 +673,11 @@ export default function App() {
   const [osc52Policy, setOsc52Policy] = useState<"allow" | "ask" | "deny">("ask");
   const osc52PolicyRef = useRef<"allow" | "ask" | "deny">("ask");
   // 写入前的询问卡（同刻新请求覆盖旧待决——last-wins，预览只展最新一条）
-  const [osc52Ask, setOsc52Ask] = useState<{ sid: string; text: string; source?: string } | null>(null);
+  const [osc52Queue, setOsc52Queue] = useState<{ sid: string; text: string; source?: string }[]>([]);
+  // 只渲染队首：多个格子/主机同时请求时逐张处理（旧实现单槽，后到直接覆盖前一张，
+  // 前一个远端请求的预览与裁决被静默吞掉）。上限 8 条——不允许远端无限堆卡。
+  const osc52Ask = osc52Queue[0] ?? null;
+  const shiftOsc52Ask = useCallback(() => setOsc52Queue((q) => q.slice(1)), []);
   const osc52AskRef = useRef<HTMLDivElement | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<{ sid: string; hostName: string; text: string; risk: PasteHit[]; multi: boolean; kind: "paste" | "rerun" | "wall"; paneKey?: string } | null>(null);
   // P0 终端品质轮：粘贴危险形态的**廉价预筛**——命中词根才过 Rust 扫描（判定唯一在
@@ -642,7 +736,9 @@ export default function App() {
       b64 = b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b64.length % 4)) % 4);
       const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
       if (osc52PolicyRef.current === "allow") osc52WriteRef.current(sessionSid, text);
-      else if (osc52PolicyRef.current === "ask") setOsc52Ask({ sid: sessionSid, text, source });
+      else if (osc52PolicyRef.current === "ask") {
+        setOsc52Queue((q) => q.length >= 8 ? q : [...q, { sid: sessionSid, text, source }]);
+      }
     } catch { /* 非法 base64：吞 */ }
     return true;
   });
@@ -800,12 +896,45 @@ export default function App() {
     });
     setRenaming(null);
   };
-  // 分屏组重命名提交（键盘契约与标签重命名同款）：清空提交=退回自动命名
-  const commitGroupRename = (value: string) => {
-    const v = value.trim();
-    setSplitGroupName(v ? v : null);
+  // 分屏组重命名提交（键盘契约与标签重命名同款）：清空提交=退回自动命名。
+  // gid 从 ref 取（编辑期间切换/解散组时 ref 会被清空，提交变成 no-op）。
+  // 改名从最大化态发起时，胶囊所在的分割条被撤下——先临时还原两格，结束
+  // （提交或取消）后把最大化态放回去；改名期间 checkSplitWidth 暂停，否则
+  // 窄窗立即退化会把输入框连根卸载（焦点丢失、blur 误提交）。
+  const finishGroupRename = (commit: string | null) => {
+    const gid = groupRenamingGidRef.current;
+    const restoreMax = groupRenameRestoreMaxRef.current;
+    groupRenameRestoreMaxRef.current = null;
+    if (gid && commit !== null) {
+      const v = commit.trim();
+      patchGroup(gid, { name: v ? v : null });
+    }
     setGroupRenaming(null);
+    groupRenamingGidRef.current = null;
+    if (gid && restoreMax) patchGroup(gid, { maximized: restoreMax });
+    // 取消改名同样要重估退化：临时撤下的退化态不能一直留着
+    checkSplitWidthRef.current();
+    applyPanesRef.current();
+    fitTerminal();
   };
+  const beginGroupRename = (gid: string, initial: string) => {
+    const g = groupById(gid);
+    // 只允许改当前可视组：非活动组由右键菜单先 focusSession，聚焦失败时宁可不改名
+    if (!g || (g.main !== sidRef.current && g.second !== sidRef.current)) return;
+    // 最大化/退化态不渲染分割条与胶囊——先把布局还原，否则改名框无处出现且状态残留
+    groupRenameRestoreMaxRef.current = g.maximized;
+    if (g.maximized || splitDegradedRef.current) {
+      if (g.maximized) patchGroup(gid, { maximized: null });
+      splitDegradedRef.current = false;
+      setSplitDegraded(false);
+      applyPanesRef.current();
+      fitTerminal();
+    }
+    groupRenamingGidRef.current = gid;
+    setGroupRenaming(initial);
+  };
+  const commitGroupRename = (value: string) => finishGroupRename(value);
+  const cancelGroupRename = () => finishGroupRename(null);
   // —— 十五轮：标签拖拽排序；拖拽组合分屏轮起改 pointer 自定义拖拽 ——
   // 会话期内的显示顺序事实源；list_sessions 整表刷新（连接/断开触发）后仍按此序渲染。
   // 不入 vault（会话本不跨重启）。⌘1-9 / ⌘⇧[] 读同一数组，快捷键序=所见序。
@@ -814,8 +943,58 @@ export default function App() {
   // 循环根本发不起来——真机拖不动的根因；pointer 事件不进该循环，三端行为一致。
   const tabOrderRef = useRef<string[]>([]);
   const [tabDragSid, setTabDragSid] = useState<string | null>(null);
-  const tabDragRef = useRef<{ sid: string; startX: number; startY: number; active: boolean } | null>(null);
-  const dragClickSupRef = useRef(false); // 拖后随至的 click 不当「激活标签」
+  const tabDragRef = useRef<{
+    sid: string; startX: number; startY: number; pointerId: number;
+    srcEl: HTMLElement; active: boolean;
+  } | null>(null);
+  // 拖后随至的 click 不当「激活标签」：时间戳而非布尔，避免残留吞掉下一次真实点击
+  const dragClickSupUntilRef = useRef(0);
+  const cancelTabDrag = useCallback(() => {
+    const d = tabDragRef.current;
+    if (!d) return;
+    tabDragRef.current = null;
+    try {
+      if (d.srcEl.hasPointerCapture(d.pointerId)) d.srcEl.releasePointerCapture(d.pointerId);
+    } catch { /* 指针已释放 */ }
+    setTabDragSid(null);
+    setTabDropHint(null);
+    setTermDropHint(null);
+    document.body.classList.remove("tab-dragging");
+  }, []);
+  // 元素级 pointerup 的兜底：拖动中源标签被关闭/卸载时事件可能不再投递，
+  // 光标与落点遮罩会残留到下一次 Esc。window 冒泡阶段监听——正常路径元素处理器
+  // 已先清掉 tabDragRef，这里只收拾异常收尾（不执行落点）。
+  useEffect(() => {
+    if (!tabDragSid) return;
+    const onUp = (e: PointerEvent) => {
+      const d = tabDragRef.current;
+      if (d && d.pointerId === e.pointerId) cancelTabDrag();
+    };
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [tabDragSid, cancelTabDrag]);
+  // 源会话被 UI 外路径关闭（Agent/MCP close_session）时立即收尾，不等指针事件
+  useEffect(() => {
+    const d = tabDragRef.current;
+    if (d && !sessions.some((s) => s.id === d.sid)) cancelTabDrag();
+  }, [sessions, cancelTabDrag]);
+  // Esc 取消标签拖拽：capture 阶段拦下，避免同时关掉其它浮层
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !tabDragRef.current?.active) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // 主 Esc 链同挂 window capture：同目标同阶段 stopPropagation 拦不住它
+      e.stopImmediatePropagation();
+      cancelTabDrag();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [cancelTabDrag]);
   const [tabDropHint, setTabDropHint] = useState<{ sid: string; before: boolean } | null>(null);
   // 拖标签组合分屏：悬在 #term 上时的落点提示（l/r/t/b 象限；null=不在终端区）。
   // pointermove 高频触发——同值复用旧引用，避免整树重渲染（tabDropHint 同款守卫）
@@ -1178,9 +1357,14 @@ export default function App() {
     let alive = true;
     let un: (() => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastFs: boolean | null = null;
     const probe = () => {
       void win.isFullscreen().then((fs) => {
         if (!alive) return;
+        // 原生全屏进出（不是 DOM fullscreenchange）是字形图集自愈的可靠时机：
+        // 系统层重排了图层，重画一次代价小、用户预期内。
+        if (lastFs !== null && lastFs !== fs) repaintAllRef.current();
+        lastFs = fs;
         syncNativeFullscreen(fs);
         if (fs || !focusModeRef.current) return;
         const intent = focusFsIntentRef.current;
@@ -1548,7 +1732,16 @@ export default function App() {
   // 新建/编辑主机的关闭守卫（六轮 D6-4）：凭据草稿（密码/私钥/口令）非空时
   // 双击确认，纯连接信息直接关。Esc 链与 ✕/取消钮三口共用。
   const addHostGuardRef = useRef(false);
+  // 表单在途保存：Esc/✕ 与「取消」钮同口径停手（upsert 已发出，关框撤不回，成功
+  // 回调还会建连——否则「取消」实际是「保存并连接」）
+  const addHostSavingRef = useRef(false);
+  const onAddHostSavingChange = useCallback((v: boolean) => { addHostSavingRef.current = v; }, []);
   const closeAddHost = useCallback(() => {
+    if (addHostSavingRef.current) {
+      escKeepFocusRef.current = true;
+      pushToast("info", t("正在保存——完成后会自动关闭；保存失败可再取消"));
+      return;
+    }
     if (addHostCredDirty.value && !addHostGuardRef.current) {
       addHostGuardRef.current = true;
       escKeepFocusRef.current = true;
@@ -1729,7 +1922,7 @@ export default function App() {
       // 终端尺寸对账：docker ps 等按 PTY 宽度排版，PTY 与 xterm 失配时表格折行错乱。
       // xterm（用户所见）为权威单向校正后端——任何一环丢掉的 resize 在 3s 内自动收敛。
       // 分屏（T19）时左右两个 pane 各自对账。
-      const sp = splitRef.current;
+      const sp = groupOf(sidRef.current);
       const visiblePanes: string[] = sp ? [sp.main, sp.second] : sidRef.current ? [sidRef.current] : [];
       for (const p of visiblePanes) {
         const t = termsRef.current.get(p)?.term;
@@ -1994,6 +2187,45 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 字形图集自愈（2026-11-09 实测：v0.11.6 长时间使用后终端文字变成别的字形，
+  // 选择只临时恢复，退出 macOS 全屏才彻底恢复）。xterm 5.5 的 WebGL 字形图集在
+  // 长时间高熵输出（CJK/框线/emoji 混排、多终端共享图集）后存在错位缺陷，上游
+  // 6.0 才修；这里在「窗口重新获得焦点 / 从隐藏变可见 / 原生全屏态翻转」这些用户
+  // 愿意接受一次瞬时重画的时刻统一清图集并全屏重绘（原生全屏由窗口 resize 探针
+  // 读 isFullscreen 判定——Tauri 的全屏不触发 DOM fullscreenchange）。合帧 120ms，
+  // 避免 focus 与 visibilitychange 连续触发重复烘焙；右键「重绘终端画面」是
+  // 随时可用的手动出口。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let timer = 0;
+    const repaintAll = () => {
+      for (const [, e] of termsRef.current) repaintTerm(e.term, e.webgl);
+      for (const e of paneTermsRef.current.values()) repaintTerm(e.term, e.webgl);
+    };
+    repaintAllRef.current = repaintAll;
+    const repair = () => {
+      if (document.visibilityState === "hidden" || timer) return;
+      timer = window.setTimeout(() => {
+        timer = 0;
+        repaintAll();
+      }, 120);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") repair();
+    };
+    window.addEventListener("focus", repair);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("fullscreenchange", repair);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      repaintAllRef.current = () => {};
+      window.removeEventListener("focus", repair);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("fullscreenchange", repair);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // tmux 面板拖拽布局（2026-11-02）：按标签记的用户布局树——未拖过无条目（沿用自动平铺，
   // 与 paneGrid 同几何）；拖过之后新开的格子从最大格分一半、关掉的格子空间还给邻居。
   // 前端内存态：重连不丢（同 sid），格子全关/关标签即弃（格子本身也不跨重启）。
@@ -2103,6 +2335,39 @@ export default function App() {
       })();
     });
     tag.append(tagLabel, zoomBtn, detachBtn);
+    // 分屏窗格的直接控制（Termius 式可见入口）：最大化/还原、交换、退出分屏。
+    // 只在 .term-session.pane-* 下由 CSS 显示；动作经 ref 取最新处理函数。
+    const splitMaxBtn = document.createElement("button");
+    splitMaxBtn.className = "ghost icon-btn pane-tag-btn pane-split-btn pane-max-btn";
+    splitMaxBtn.setAttribute("data-testid", "pane-max");
+    splitMaxBtn.title = t("最大化此窗格");
+    splitMaxBtn.setAttribute("aria-label", splitMaxBtn.title);
+    splitMaxBtn.innerHTML = PANE_ZOOM_OFF_SVG;
+    splitMaxBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      splitPaneActionRef.current.toggleMax(sessionSid);
+    });
+    const splitSwapBtn = document.createElement("button");
+    splitSwapBtn.className = "ghost icon-btn pane-tag-btn pane-split-btn pane-swap-btn";
+    splitSwapBtn.setAttribute("data-testid", "pane-swap");
+    splitSwapBtn.title = t("交换两个窗格");
+    splitSwapBtn.setAttribute("aria-label", splitSwapBtn.title);
+    splitSwapBtn.innerHTML = PANE_SWAP_SVG;
+    splitSwapBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      splitPaneActionRef.current.swap(sessionSid);
+    });
+    const splitExitBtn = document.createElement("button");
+    splitExitBtn.className = "ghost icon-btn pane-tag-btn pane-split-btn pane-exit-btn";
+    splitExitBtn.setAttribute("data-testid", "pane-exit");
+    splitExitBtn.title = t("退出分屏（两个会话都保留）");
+    splitExitBtn.setAttribute("aria-label", splitExitBtn.title);
+    splitExitBtn.textContent = "×";
+    splitExitBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      splitPaneActionRef.current.exit(sessionSid);
+    });
+    tag.append(splitMaxBtn, splitSwapBtn, splitExitBtn);
     el.appendChild(tag);
     bindTileDrag(tag, MAIN_KEY, sessionSid, el);
     // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
@@ -2437,6 +2702,7 @@ export default function App() {
     });
     return {
       term, el, search: searchAddon, tag, tagLabel, zoomBtn, detachBtn,
+      splitMaxBtn, splitSwapBtn, splitExitBtn,
       feed: null as OutputFeed | null, webgl, liga,
     };
   }, []);
@@ -2788,7 +3054,7 @@ export default function App() {
     const mount = termRef.current;
     const active = sidRef.current;
     const cells: PaneTermEntry[] = [];
-    if (active && !splitRef.current) {
+    if (active && !groupOf(active)) {
       const seen = new Set<string>();
       for (const p of sessionsRef.current.find((x) => x.id === active)?.panes ?? []) {
         const k = `${active}:${p.pane_id}`;
@@ -2822,7 +3088,7 @@ export default function App() {
     mount?.classList.toggle("has-tmux-panes", byKey.size > 0);
     if (!mount || !active || byKey.size === 0) {
       // 格子全关 = 布局作废（下次开面板从自动平铺起）；分屏只是暂时藏起格子，布局留着
-      if (active && !splitRef.current) paneLayoutRef.current.delete(active);
+      if (active && !groupOf(active)) paneLayoutRef.current.delete(active);
       // 最大化残记就地清掉（无格可放大）；主视图 display 交还类规则（zoom 曾置 none）
       if (active && paneZoomRef.current?.sid === active) paneZoomRef.current = null;
       const m0 = active ? termsRef.current.get(active) : null;
@@ -2910,7 +3176,7 @@ export default function App() {
         if (!document.activeElement || document.activeElement === document.body || main?.el.contains(document.activeElement)) succ.term.focus();
       }
     }
-  }, [syncPaneDividers]);
+  }, [syncPaneDividers, groupOf]);
   // 最大化钮的 click 监听在建格时挂一次，重排实现随渲染更新（ref 间接层）
   paneRelayoutRef.current = layoutTmuxPanes;
 
@@ -3199,11 +3465,11 @@ export default function App() {
     }
   }, [fitDimsOf]);
   const fitTerminal = useCallback(() => {
-    const sp = splitRef.current;
+    const sp = groupOf(sidRef.current);
     const targets = sp ? [sp.main, sp.second] : sidRef.current ? [sidRef.current] : [];
     for (const t of targets) void fitOne(t);
     for (const e of paneTermsRef.current.values()) fitPane(e);
-  }, [fitOne, fitPane]);
+  }, [fitOne, fitPane, groupOf]);
   // 缩放/最大化等命令式入口经 ref 取最新 fit（必须在 fitTerminal 声明之后赋值）
   paneFitRef.current = fitTerminal;
   useEffect(() => {
@@ -3419,7 +3685,7 @@ export default function App() {
     },
   };
   // 右键「重置面板布局」：弃掉该标签的布局树，回到自动平铺（分屏期间格子都藏着，不出此项）
-  const paneLayoutCustom = (s: string) => !splitRef.current && paneLayoutRef.current.has(s);
+  const paneLayoutCustom = (s: string) => !groupOf(s) && paneLayoutRef.current.has(s);
   const resetPaneLayout = (s: string) => {
     if (!paneLayoutRef.current.delete(s)) return;
     layoutTmuxPanes();
@@ -3534,6 +3800,8 @@ export default function App() {
       if (hd) hd.title = t("拖动标题栏可移动位置：落在格子中央互换，落在边缘对半分开");
     }
     layoutTmuxPanes(); // 分隔条与主视图名牌的提示文案随排版重写
+    // 分屏窗格按钮（最大化/交换/退出）的 title/aria 也是命令式 DOM，随语言重写
+    applyPanesRef.current();
   }, [locale, layoutTmuxPanes]);
 
   // —— 显示设置（路线图⑥）：字号/主题，vault 持久化（跨进程记忆）——
@@ -4574,7 +4842,7 @@ export default function App() {
     const entry = termsRef.current.get(target);
     if (!entry) return null;
     let restored: PaneTermEntry | null = null;
-    if (!splitRef.current) {
+    if (!groupOf(target)) {
       const zoom = paneZoomRef.current;
       if (zoom?.sid === target && zoom.name === MAIN_KEY) {
         entry.term.focus();
@@ -4596,7 +4864,7 @@ export default function App() {
     if (restored) restored.term.focus();
     else entry.term.focus();
     return restored;
-  }, []);
+  }, [groupOf]);
   focusTermForRef.current = focusTermFor;
 
   // §7.4：关闭工具后恢复到其触发前的有效焦点——工具均从终端场景触发，恢复即
@@ -4620,7 +4888,7 @@ export default function App() {
     if (confirm) { if (!confirmBusyRef.current) setConfirm(null); return true; }
     if (pasteConfirm) { setPasteConfirm(null); return true; }
     // P2-c：OSC 52 询问卡同属模态链——Esc 即拒绝（关卡不写剪贴板）
-    if (osc52Ask) { setOsc52Ask(null); return true; }
+    if (osc52Ask) { shiftOsc52Ask(); return true; }
     // 拖拽上传确认卡同样是模态（全屏遮罩+焦点陷阱）——Esc 链此前漏出（审计 F5）
     if (pendingDrop) { setPendingDrop(null); return true; }
     // 命令面板是带遮罩模态、可叠开在非模态浮层之上——Esc 先关视觉顶层（R3-B-8）
@@ -4780,19 +5048,41 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, []);
 
-  // 由 splitRef/sidRef 统一同步各终端层的显示类（display 归它管，React 不渲染这些层）：
-  // 单 pane：活动会话 .active；分屏：主格=左半/上半（dir），副格=另一半，焦点 pane 加
-  // 高亮与名牌。§185 退化态：只呈现焦点窗格全幅（另一个仍在标签中），类同单 pane
+  // 分屏窗格按钮的状态（图标/文案）随组与最大化槽位同步；locale 切换也经同一处刷新
+  const syncSplitPaneButtons = useCallback((e: {
+    splitMaxBtn: HTMLButtonElement; splitSwapBtn: HTMLButtonElement; splitExitBtn: HTMLButtonElement;
+  }, sessionSid: string, g: SplitGroup | null) => {
+    const slot = g ? slotOf(g, sessionSid) : null;
+    const maxOn = !!g && g.maximized === slot;
+    e.splitMaxBtn.innerHTML = maxOn ? PANE_ZOOM_ON_SVG : PANE_ZOOM_OFF_SVG;
+    e.splitMaxBtn.title = maxOn ? t("还原双窗格") : t("最大化此窗格");
+    e.splitMaxBtn.setAttribute("aria-label", e.splitMaxBtn.title);
+    e.splitSwapBtn.title = t("交换两个窗格");
+    e.splitSwapBtn.setAttribute("aria-label", e.splitSwapBtn.title);
+    e.splitExitBtn.title = t("退出分屏（两个会话都保留）");
+    e.splitExitBtn.setAttribute("aria-label", e.splitExitBtn.title);
+  }, []);
+
+  // 由 splitGroups/sidRef 统一同步各终端层的显示类（display 归它管，React 不渲染这些层）：
+  // 单 pane：活动会话 .active；分屏：只显示活动会话所在的组，主格=左半/上半（dir），
+  // 副格=另一半，焦点 pane 加高亮与名牌。§185 退化态：只呈现焦点窗格全幅；最大化态：
+  // 同组另一格 pane-hidden（仍留在标签中），分割条由 JSX 撤收。
   const applyPanes = useCallback(() => {
-    const sp = splitRef.current;
-    const degraded = !!sp && splitDegradedRef.current;
+    const sp = groupOf(sidRef.current);
+    const degraded = !!sp && !sp.maximized && splitDegradedRef.current;
     const clsMain = sp?.dir === "tb" ? "pane-top" : "pane-left";
     const clsSecond = sp?.dir === "tb" ? "pane-bottom" : "pane-right";
     for (const [s, e] of termsRef.current) {
-      e.el.classList.remove("active", "pane-left", "pane-right", "pane-top", "pane-bottom", "pane-focused");
+      e.el.classList.remove("active", "pane-left", "pane-right", "pane-top", "pane-bottom",
+        "pane-focused", "pane-hidden", "pane-max");
       if (sp && !degraded) {
-        if (s === sp.main || s === sp.second) {
-          e.el.classList.add(s === sp.main ? clsMain : clsSecond);
+        const slot = slotOf(sp, s);
+        if (slot) {
+          e.el.classList.add(slot === "main" ? clsMain : clsSecond);
+          if (sp.maximized) {
+            if (sp.maximized === slot) e.el.classList.add("pane-max");
+            else e.el.classList.add("pane-hidden");
+          }
           // 名牌带非连接态后缀（找茬五轮 C-4，镜像 tmux-cell-state 语义）：分屏
           // 副格装着断开会话时正文是黑腔，此前名牌只有裸主机名——「黑屏像坏了」
           const ss = sessionsRef.current.find((x) => x.id === s);
@@ -4801,14 +5091,18 @@ export default function App() {
             : ` · ${t("重连中…")}`;
           e.tagLabel.textContent = (ss?.host_name ?? s.slice(0, 12)) + stTail;
           if (s === sidRef.current) e.el.classList.add("pane-focused");
+          syncSplitPaneButtons(e, s, sp);
         }
       } else if (s === sidRef.current) {
         e.el.classList.add("active");
       }
     }
+    // 组切换时把该组自己的占比写回 CSS（无组=0.5）；分割条 aria 同步。
+    // 拖拽中不重置：state feed/切组触发的 applyPanes 会把逐帧 live frac 打回旧值
+    if (!splitDragRef.current) applySplitFrac(sp);
     // tmux 面板格子：显示与几何随同一时机重算（切会话/进出分屏/快照变化）
     layoutTmuxPanes();
-  }, [layoutTmuxPanes]);
+  }, [layoutTmuxPanes, groupOf, applySplitFrac, syncSplitPaneButtons]);
 
   // 分屏名牌跟随主机名：会话列表变化（新建/改名）后重刷，防新建会话名牌暂显 sid
   const applyPanesRef = useRef<() => void>(() => {});
@@ -4816,16 +5110,19 @@ export default function App() {
 
   // §185 宽度退化（分屏⑥轮起按方向取度量）：左右双格各 <360 宽、上下双格各 <190 高
   // 即退化单窗格（恢复带 6px 迟滞防阈值抖动；竖排底限更宽松——行少尚可滚动，
-  // 列太窄必折行）
+  // 列太窄必折行）。最大化态不退化（单格全幅没有宽度问题）
   const checkSplitWidth = useCallback(() => {
     const el = termRef.current;
     if (!el) return;
-    const sp = splitRef.current;
+    // 改名期间布局被临时还原（最大化/退化都撤下）：此处不重估，否则窄窗
+    // 立即退化，分割条与输入框一起消失（blur 还会把半截文本提交掉）
+    if (groupRenamingGidRef.current) return;
+    const sp = groupOf(sidRef.current);
     const tb = sp?.dir === "tb";
     const m = tb ? el.clientHeight : el.clientWidth;
     const below = tb ? SPLIT_DEGRADE_BELOW_H : SPLIT_DEGRADE_BELOW;
     const recover = tb ? SPLIT_RECOVER_AT_H : SPLIT_RECOVER_AT;
-    const next = !!sp && (splitDegradedRef.current ? m < recover : m < below);
+    const next = !!sp && !sp.maximized && (splitDegradedRef.current ? m < recover : m < below);
     if (next !== splitDegradedRef.current) {
       splitDegradedRef.current = next;
       setSplitDegraded(next);
@@ -4833,52 +5130,90 @@ export default function App() {
       applyPanes();
       fitTerminal();
     }
-  }, [applyPanes, fitTerminal]);
+  }, [applyPanes, fitTerminal, groupOf]);
   const checkSplitWidthRef = useRef<() => void>(() => {});
   checkSplitWidthRef.current = checkSplitWidth;
 
   // 分割条拖拽（分屏⑥轮，补齐 Windows Terminal/iTerm2/tmux 的基本习惯）：主格占比
   // 0.2~0.8 夹取（任一侧都不小于可读下限），pointer capture 全程跟手；拖动中每 150ms
-  // 校准一次 PTY 几何，松手再校准终态。双击复位对半。占比存内存（会话本就不跨重启）
-  const splitDragRef = useRef<{ dir: SplitDir; startFrac: number; startPt: number; total: number; lastFit: number } | null>(null);
+  // 校准一次 PTY 几何，松手才把占比提交到当前组。双击复位对半；Esc 取消回原值。
+  const splitDragRef = useRef<{
+    gid: string; dir: SplitDir; startFrac: number; startPt: number;
+    total: number; lastFit: number; pointerId: number;
+  } | null>(null);
   const onDivDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
     const mount = termRef.current;
-    const sp = splitRef.current;
-    if (!mount || !sp) return;
+    const g = groupOf(sidRef.current);
+    if (!mount || !g) return;
     const r = mount.getBoundingClientRect();
     e.currentTarget.setPointerCapture(e.pointerId);
     splitDragRef.current = {
-      dir: sp.dir,
-      startFrac: splitFracRef.current,
-      startPt: sp.dir === "tb" ? e.clientY : e.clientX,
-      total: sp.dir === "tb" ? r.height : r.width,
+      gid: g.id,
+      dir: g.dir,
+      startFrac: g.frac,
+      startPt: g.dir === "tb" ? e.clientY : e.clientX,
+      total: g.dir === "tb" ? r.height : r.width,
       lastFit: 0,
+      pointerId: e.pointerId,
     };
-    document.body.classList.add("split-dragging", sp.dir === "tb" ? "split-drag-tb" : "split-drag-lr");
-  }, []);
+    document.body.classList.add("split-dragging", g.dir === "tb" ? "split-drag-tb" : "split-drag-lr");
+  }, [groupOf]);
   const onDivMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     const dg = splitDragRef.current;
-    if (!dg) return;
+    if (!dg || dg.pointerId !== e.pointerId || !(e.buttons & 1)) return;
     const pt = dg.dir === "tb" ? e.clientY : e.clientX;
     const frac = Math.min(SPLIT_FRAC_MAX, Math.max(SPLIT_FRAC_MIN, dg.startFrac + (pt - dg.startPt) / dg.total));
-    if (frac !== splitFracRef.current) {
-      splitFracRef.current = frac;
-      applySplitFrac();
-    }
+    if (frac !== splitFracRef.current) applySplitFrac(frac);
     const now = performance.now();
     if (now - dg.lastFit > 150) { dg.lastFit = now; fitTerminal(); }
   }, [applySplitFrac, fitTerminal]);
-  const onDivUp = useCallback(() => {
-    if (!splitDragRef.current) return;
+  // 结束拖拽：restore=true（Esc）=回到按下时的占比；否则提交当前值到组
+  const endDivDrag = useCallback((restore = false, pointerId?: number) => {
+    const dg = splitDragRef.current;
+    if (!dg) return;
+    // 第二根手指/另一指针抬起不能结束本次拖拽
+    if (pointerId !== undefined && dg.pointerId !== pointerId) return;
     splitDragRef.current = null;
     document.body.classList.remove("split-dragging", "split-drag-lr", "split-drag-tb");
+    const frac = restore ? dg.startFrac : splitFracRef.current;
+    patchGroup(dg.gid, { frac });
+    // 拖动期间可能已切到别的组：CSS 只回写活动组，别把旧组占比画到新组上
+    applySplitFrac(groupOf(sidRef.current)?.id === dg.gid ? frac : undefined);
     fitTerminal();
-  }, [fitTerminal]);
+  }, [patchGroup, applySplitFrac, fitTerminal, groupOf]);
+  const onDivUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => endDivDrag(false, e.pointerId), [endDivDrag]);
+  const onDivCancel = useCallback((e: ReactPointerEvent<HTMLDivElement>) => endDivDrag(false, e.pointerId), [endDivDrag]);
+  const onDivLostCapture = useCallback((e: ReactPointerEvent<HTMLDivElement>) => endDivDrag(false, e.pointerId), [endDivDrag]);
+  // Esc 取消分割条拖拽：恢复到按下时的占比（捕获阶段拦下，不关别的浮层）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !splitDragRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      endDivDrag(true);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [endDivDrag]);
   const resetSplitFrac = useCallback(() => {
-    splitFracRef.current = 0.5;
-    applySplitFrac();
+    const g = groupOf(sidRef.current);
+    if (!g) return;
+    patchGroup(g.id, { frac: 0.5 });
+    applySplitFrac(0.5);
     fitTerminal();
-  }, [applySplitFrac, fitTerminal]);
+  }, [groupOf, patchGroup, applySplitFrac, fitTerminal]);
+  // 键盘微调：delta=±0.02/±0.10；absolute 用于 Home/End
+  const nudgeSplitFrac = useCallback((delta: number, absolute?: number) => {
+    const g = groupOf(sidRef.current);
+    if (!g) return;
+    const next = Math.min(SPLIT_FRAC_MAX, Math.max(SPLIT_FRAC_MIN, absolute ?? g.frac + delta));
+    if (Math.abs(next - g.frac) < 1e-6) return;
+    patchGroup(g.id, { frac: next });
+    applySplitFrac(next);
+    fitTerminal();
+  }, [groupOf, patchGroup, applySplitFrac, fitTerminal]);
 
   // 聚焦某会话（点标签/点 pane/⌘1-9 共用）：只挪焦点不动布局——分屏时点右 pane
   // 不会把终端内容左右对调。rev-r21 M1：应用内导航推进焦点代际（§6.3——慢建连
@@ -4887,17 +5222,25 @@ export default function App() {
     focusGenRef.current++;
     const entry = termsRef.current.get(target);
     if (!entry) return;
+    // 最大化的是另一格时点它的标签：先还原两格。否则目标格仍是 display:none，
+    // 标签高亮换了、屏幕没换，focus() 落不到可见终端上（键入无落点）。
+    const g = groupOf(target);
+    if (g?.maximized && (g.maximized === "main" ? g.main : g.second) !== target) {
+      patchGroup(g.id, { maximized: null });
+    }
     if (sidRef.current !== target) {
       setSid(target);
       sidRef.current = target;
       xtermRef.current = entry.term;
       refreshBrief(target);
+      // 先按目标组的方向重估退化态（上一组的退化态不能带过来），再同步显示类
+      checkSplitWidthRef.current();
       applyPanes();
     }
     // 恢复该标签上次落焦的子窗口（用户反馈：切走再切回总是回第一个/主视图）。
     const restored = focusTermFor(target);
     void invoke("note_terminal", { sid: target, focused: true, paneId: restored?.paneId ?? null }).catch(() => {});
-  }, [applyPanes, refreshBrief, focusTermFor]);
+  }, [applyPanes, refreshBrief, focusTermFor, groupOf, patchGroup]);
 
   // 点到哪个 pane 就聚焦哪个会话（事件委托挂在 #term 上，覆盖单 pane 与分屏）
   useEffect(() => {
@@ -4987,15 +5330,8 @@ export default function App() {
     focusGenRef.current++;
     if (!termRef.current) return;
     const fresh = await ensureSessionTerm(newSid);
-    // 分屏时 attach 未上屏的会话 = 替换焦点窗格（§322：标签选择替换焦点窗格，
-    // 不动另一侧；焦点在副 pane 时替换副，否则替换主）
-    const sp = splitRef.current;
-    if (sp && newSid !== sp.main && newSid !== sp.second) {
-      splitRef.current = sidRef.current === sp.second
-        ? { ...sp, second: newSid }
-        : { ...sp, main: newSid };
-      setSplitPanes(splitRef.current);
-    }
+    // 每标签独立分屏：点标签只切「当前显示哪一组」，绝不替换任何窗格；
+    // 目标会话属于哪组就显示哪组，不属于任何组就显示单窗格。
     focusSession(newSid);
     fitTerminal();
     // R3-C-1：checkpoint 按核心网格写入（预对齐量的是接入前 #term——欢迎页下无
@@ -5052,39 +5388,56 @@ export default function App() {
 
   // 无激活会话：隐藏所有会话终端（实例保留，点击左侧会话即恢复），显示欢迎页
   const detach = useCallback(() => {
-    splitRef.current = null;
-    setSplitPanes(null);
-    setSplitGroupName(null);
+    commitSplitGroups([]);
     setGroupRenaming(null);
+    groupRenamingGidRef.current = null;
     setSid(null);
     sidRef.current = null;
     xtermRef.current = null;
     setBrief(null);
     void invoke("note_terminal", { sid: null, focused: false }).catch(() => {});
     for (const [, e] of termsRef.current) {
-      e.el.classList.remove("active", "pane-left", "pane-right", "pane-top", "pane-bottom", "pane-focused");
+      e.el.classList.remove("active", "pane-left", "pane-right", "pane-top", "pane-bottom",
+        "pane-focused", "pane-hidden", "pane-max");
     }
-  }, []);
+  }, [commitSplitGroups]);
 
-  // 进入/调整分屏（T19；分屏⑥轮起方向可选+可旋转）：把 target 放到副 pane（主 pane
-  // 与焦点不动）。dir 缺省沿用记住的上次方向（splitDirRef）。已分屏时的语义：
-  // 换向 = 旋转布局（tmux/Windows Terminal 习惯）；屏外 target = 替换副 pane；
-  // 换向 + 屏外 target = 两者同时发生（「放到下侧」的直觉：新会话进下格）。
-  // 占比不重置——退出再进、旋转都沿用上次拖出的比例。
+  // 进入/调整分屏：把 target 放到副 pane（主 pane 与焦点不动）。dir 缺省沿用记住的
+  // 上次方向（splitDirRef）。活动会话已有组时：target 是成员=同向 no-op/异向旋转；
+  // 屏外 target=先溶解它自己的组，再替换副 pane。活动会话无组时新建组。
   const enterSplitWith = useCallback(async (target: string, dir?: SplitDir) => {
     const d = dir ?? splitDirRef.current;
     splitDirRef.current = d;
     setSplitDir(d);
-    const sp = splitRef.current;
-    if (sp) {
-      const second = target === sp.main || target === sp.second ? sp.second : target;
-      if (d === sp.dir && second === sp.second) return; // 同向且副格不变：无操作
-      splitRef.current = { main: sp.main, second, dir: d };
+    const g = groupOf(sidRef.current);
+    const movedFrom = g && target !== g.main && target !== g.second
+      ? detachFromAllGroups(target)
+      : null;
+    if (movedFrom) {
+      const label = sessionsRef.current.find((x) => x.id === target)?.host_name ?? target.slice(0, 8);
+      pushToast("info", t("已从原分屏移出 {0}，原分屏已解散", label));
+    }
+    if (g) {
+      if (target === g.main || target === g.second) {
+        if (d === g.dir) return; // 同向且成员不变：无操作
+        patchGroup(g.id, { dir: d });
+      } else {
+        // 替换「另一格」：活动会话始终留在自己的槽位（焦点在副格时替换主格，
+        // 否则被替换的正是当前会话，组还在但视图退回单窗格、看起来毫无反应）
+        const focusSlot = sidRef.current === g.second ? "second" : "main";
+        const otherSlot = focusSlot === "main" ? "second" : "main";
+        const patch: Partial<Omit<SplitGroup, "id">> =
+          otherSlot === "main" ? { main: target } : { second: target };
+        // 显式方向（菜单里的左右/上下）要写进组；无参调用保持该组既有方向
+        if (dir) patch.dir = d;
+        // 最大化时被替换的可能是隐藏格：还原两格，让替换结果看得见
+        if (g.maximized) patch.maximized = null;
+        patchGroup(g.id, patch);
+      }
     } else {
       if (!sidRef.current || target === sidRef.current) return;
-      splitRef.current = { main: sidRef.current, second: target, dir: d };
+      if (!createGroup(sidRef.current, target, d)) return;
     }
-    setSplitPanes(splitRef.current);
     await ensureSessionTerm(target);
     applySplitFrac();
     applyPanes();
@@ -5093,41 +5446,130 @@ export default function App() {
     setTimeout(() => void fitTerminal(), 150);
     // 工具栏点击会把焦点留在按钮上——把焦点送回终端，打字不中断
     if (sidRef.current) focusSession(sidRef.current);
-  }, [ensureSessionTerm, applySplitFrac, applyPanes, fitTerminal, focusSession]);
+  }, [ensureSessionTerm, applySplitFrac, applyPanes, fitTerminal, focusSession,
+    groupOf, detachFromAllGroups, patchGroup, createGroup]);
 
-  const exitSplit = useCallback(() => {
-    if (!splitRef.current) return;
-    splitRef.current = null;
-    setSplitPanes(null);
-    setSplitGroupName(null); // 组随分屏散伙弃名，重分屏重新自动生成
-    setGroupRenaming(null);
+  // 退出分屏：只解散指定组（缺省=活动组），所有标签保留；活动组解散后幸存会话
+  // 继续以单窗格显示，其它组不受影响。
+  const exitSplit = useCallback((gid?: string) => {
+    const g = gid ? groupById(gid) : groupOf(sidRef.current);
+    if (!g) return;
+    const wasActive = g.main === sidRef.current || g.second === sidRef.current;
+    if (groupRenamingGidRef.current === g.id) {
+      setGroupRenaming(null);
+      groupRenamingGidRef.current = null;
+    }
+    dissolveGroup(g.id);
+    if (!wasActive) return;
+    splitDegradedRef.current = false;
+    setSplitDegraded(false);
     applyPanes();
     fitTerminal();
     checkSplitWidthRef.current();
     setTimeout(() => void fitTerminal(), 150);
     if (sidRef.current) focusSession(sidRef.current);
-  }, [applyPanes, fitTerminal, focusSession]);
+  }, [groupById, groupOf, dissolveGroup, applyPanes, fitTerminal, focusSession]);
+
+  // 旋转指定组（右键菜单按被右键标签的组操作；可能是非活动组）
+  const rotateSplitGroup = useCallback((gid: string, dir: SplitDir) => {
+    const g = groupById(gid);
+    if (!g || g.dir === dir) return;
+    const active = g.main === sidRef.current || g.second === sidRef.current;
+    // 全局方向记忆只代表活动组：旋转后台组不应劫持活动组的「分屏方向」选择器
+    if (active) {
+      splitDirRef.current = dir;
+      setSplitDir(dir);
+    }
+    patchGroup(gid, { dir });
+    if (active) {
+      applySplitFrac();
+      applyPanes();
+      fitTerminal();
+      checkSplitWidthRef.current();
+      setTimeout(() => void fitTerminal(), 150);
+    }
+  }, [groupById, patchGroup, applySplitFrac, applyPanes, fitTerminal]);
+
+  // 窗格按钮：最大化/还原（按槽位）、交换两格、退出本组（命令式 DOM 经 ref 调用）
+  const toggleSplitMax = useCallback((sessionSid: string) => {
+    const g = groupOf(sessionSid);
+    if (!g) return;
+    // 点到非活动格的控制钮（鼠标或键盘 Tab 到达）：先把该格变成活动会话，
+    // 否则最大化把另一格藏起来后，焦点/标签高亮还留在隐藏终端上。
+    if (sidRef.current !== sessionSid) focusSession(sessionSid);
+    const slot = slotOf(g, sessionSid);
+    if (!slot) return;
+    const next = g.maximized === slot ? null : slot;
+    patchGroup(g.id, { maximized: next });
+    // 最大化没有退化问题；还原后由 checkSplitWidth 重新按宽度判定
+    splitDegradedRef.current = false;
+    setSplitDegraded(false);
+    applyPanes();
+    fitTerminal();
+    checkSplitWidthRef.current();
+    requestAnimationFrame(() => focusTermForRef.current(sessionSid));
+    setTimeout(() => { fitTerminal(); focusTermForRef.current(sessionSid); }, 150);
+  }, [groupOf, patchGroup, applyPanes, fitTerminal, focusSession]);
+
+  const swapSplit = useCallback((sessionSid: string) => {
+    const g = groupOf(sessionSid);
+    if (!g) return;
+    // 交换也是一种「指向该格」的操作：非活动格先激活，交换后焦点仍跟着这个会话。
+    if (sidRef.current !== sessionSid) focusSession(sessionSid);
+    // 最大化槽位跟着会话走：只换 main/second 会让被聚焦会话落进 pane-hidden，
+    // 全屏换成另一格、焦点却指向隐藏终端（键入无落点）
+    const maximized = g.maximized === "main" ? "second" : g.maximized === "second" ? "main" : null;
+    patchGroup(g.id, { main: g.second, second: g.main, maximized });
+    applyPanes();
+    fitTerminal();
+    setTimeout(() => {
+      fitTerminal();
+      focusTermForRef.current(sessionSid);
+    }, 150);
+  }, [groupOf, patchGroup, applyPanes, fitTerminal, focusSession]);
+
+  splitPaneActionRef.current = {
+    toggleMax: toggleSplitMax,
+    swap: swapSplit,
+    exit: (sessionSid: string) => {
+      const g = groupOf(sessionSid);
+      if (g) exitSplit(g.id);
+    },
+  };
 
   // 拖拽组合分屏（标签拖到终端区松手）：把 target 放到指定槽位（main=左/上，
   // second=右/下）。与 enterSplitWith 的差别：主格槽允许「被拖者当主格」（原焦点
   // 退副格），且落点格拿焦点——拖放是指向动作，焦点跟手。已分屏时落到另一格=
   // 替换（被拖者本在屏内即交换两格），落到自己格由调用方无操作。dir 仅建屏时生效。
   const placeInSplit = useCallback(async (target: string, slot: "main" | "second", dir?: SplitDir) => {
-    const sp = splitRef.current;
-    if (!sp) {
+    const g = groupOf(sidRef.current);
+    if (!g) {
       const focus = sidRef.current;
       if (!focus || focus === target) return; // 单会话无可组合对象
       const d = dir ?? splitDirRef.current;
       splitDirRef.current = d;
       setSplitDir(d);
-      splitRef.current = slot === "main" ? { main: target, second: focus, dir: d } : { main: focus, second: target, dir: d };
-    } else if (target === sp.main || target === sp.second) {
-      if ((slot === "main") === (target === sp.main)) return; // 落到自己所在格
-      splitRef.current = { ...sp, main: sp.second, second: sp.main }; // 交换两格
+      // 目标来自另一组时其原组同样解散——与「有组」分支同款如实提示
+      const movedFrom = detachFromAllGroups(target);
+      if (movedFrom) {
+        const label = sessionsRef.current.find((x) => x.id === target)?.host_name ?? target.slice(0, 8);
+        pushToast("info", t("已从原分屏移出 {0}，原分屏已解散", label));
+      }
+      const main = slot === "main" ? target : focus;
+      const second = slot === "main" ? focus : target;
+      if (!createGroup(main, second, d)) return;
+    } else if (target === g.main || target === g.second) {
+      if ((slot === "main") === (target === g.main)) return; // 落到自己所在格
+      const maximized = g.maximized === "main" ? "second" : g.maximized === "second" ? "main" : null;
+      patchGroup(g.id, { main: g.second, second: g.main, maximized }); // 交换两格
     } else {
-      splitRef.current = slot === "main" ? { ...sp, main: target } : { ...sp, second: target };
+      const movedFrom = detachFromAllGroups(target);
+      if (movedFrom) {
+        const label = sessionsRef.current.find((x) => x.id === target)?.host_name ?? target.slice(0, 8);
+        pushToast("info", t("已从原分屏移出 {0}，原分屏已解散", label));
+      }
+      patchGroup(g.id, slot === "main" ? { main: target } : { second: target });
     }
-    setSplitPanes(splitRef.current);
     focusGenRef.current++; // 拖放同属用户导航（rev-r21 M1 焦点代际）
     await ensureSessionTerm(target);
     applySplitFrac();
@@ -5136,19 +5578,27 @@ export default function App() {
     checkSplitWidthRef.current();
     setTimeout(() => void fitTerminal(), 150);
     focusSession(target);
-  }, [ensureSessionTerm, applySplitFrac, applyPanes, fitTerminal, focusSession]);
+  }, [ensureSessionTerm, applySplitFrac, applyPanes, fitTerminal, focusSession,
+    groupOf, detachFromAllGroups, patchGroup, createGroup]);
 
   // 拖拽组合分屏：指针命中的分屏格（已分屏时提示与落格都按真实窗格几何，不做死象限）。
-  // 两格矩形贴合处（分割条覆盖的缝）按主格优先；未分屏时调用方不会走到
+  // 两格矩形贴合处（分割条覆盖的缝）按主格优先；最大化时另一格 display:none，矩形
+  // 为 0 不会命中，自然落到可见格。
   const paneAtPoint = (x: number, y: number): "main" | "second" => {
-    const sp = splitRef.current;
+    const sp = groupOf(sidRef.current);
     if (sp && termRef.current) {
+      // 退化态只剩焦点窗格可见，pane-* 类已撤（矩形不可命中）：落格取「另一格」，
+      // 保持当前看的会话不被替换；默认 main 会在焦点为副格时悄悄换掉隐藏主格。
+      if (splitDegradedRef.current) {
+        return sidRef.current === sp.second ? "main" : "second";
+      }
       for (const slot of ["main", "second"] as const) {
         const el = termRef.current.querySelector(sp.dir === "tb"
           ? (slot === "main" ? ".pane-top" : ".pane-bottom")
           : (slot === "main" ? ".pane-left" : ".pane-right"));
         const r = el?.getBoundingClientRect();
-        if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return slot;
+        if (r && r.width > 0 && r.height > 0
+          && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return slot;
       }
     }
     return "main";
@@ -5166,26 +5616,29 @@ export default function App() {
     return null;
   };
 
-  // 拖拽松手裁决：标签条药丸上=重排；终端区=组合分屏（未分屏按主轴象限定槽位与方向，
-  // 已分屏按命中格）；标签条空白处=退出分屏（两会话保留）。都不满足=无操作
+  // 拖拽松手裁决（组感知）：拖到自己标签=无操作；源是组成员且落在标签条=解散
+  // 源所在组（不做重排）；非成员落其它标签=重排；终端区=按活动组几何组合分屏。
   const finishTabDrag = (from: string, x: number, y: number) => {
     const bar = tabbarRef.current?.getBoundingClientRect();
     const inStrip = !!bar && x >= bar.left && x <= bar.right && y >= bar.top && y <= bar.bottom;
     const tr = termRef.current?.getBoundingClientRect();
     const inTerm = !!tr && x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom;
-    const hit = inStrip ? tabAtPoint(x, y) : null;
-    const sp = splitRef.current;
-    const isSplitMember = !!sp && (sp.main === from || sp.second === from);
-    if (inStrip && isSplitMember) {
-      // 分屏成员拖回标签条=退出分屏（找茬五轮 D-2 拍板）：标签排满/窄窗时条上
-      // 不存在空白落点，旧裁决落到「命中标签=重排」分支——静默改成重排+分屏
-      // 保留+零反馈，教程语义「拖回标签条退分屏」被 reinterpret 成另一动作。
-      // 成员落条上优先裁决退分屏（成员在条内重排本就语义模糊：先退再拖即可）
-      exitSplit();
-    } else if (hit && hit.sid !== from) {
-      reorderTabs(from, hit.sid, hit.before);
-    } else if (inTerm && sessionsRef.current.length >= 2 && tr) {
-      const sp = splitRef.current;
+    if (inStrip) {
+      const hit = tabAtPoint(x, y);
+      if (hit?.sid === from) return; // 拖回自己的标签：保留分屏
+      const fromGroup = groupOf(from);
+      if (fromGroup) {
+        // 分屏成员拖回标签条=退出它所在的组（成员在条内重排语义模糊：先退再拖即可）
+        exitSplit(fromGroup.id);
+        return;
+      }
+      if (hit && hit.sid !== from) reorderTabs(from, hit.sid, hit.before);
+      return;
+    }
+    if (inTerm && sessionsRef.current.length >= 2 && tr) {
+      // 拖活动会话本身且无组：没有可组合对象（placeInSplit 的自我保护同款）
+      if (from === sidRef.current && !groupOf(from)) return;
+      const sp = groupOf(sidRef.current);
       let slot: "main" | "second";
       let dir: SplitDir | undefined;
       if (sp) {
@@ -5198,8 +5651,6 @@ export default function App() {
         dir = horiz ? "lr" : "tb";
       }
       void placeInSplit(from, slot, dir);
-    } else if (inStrip && !hit && splitRef.current) {
-      exitSplit();
     }
   };
 
@@ -5224,39 +5675,24 @@ export default function App() {
       paneLastFocusRef.current.delete(id);
       if (paneZoomRef.current?.sid === id) paneZoomRef.current = null;
     }
-    const sp = splitRef.current;
-    if (sp?.second === id) {
-      splitRef.current = null;
-      setSplitPanes(null);
-      setSplitGroupName(null);
-      setGroupRenaming(null);
-      // 关的正是焦点所在的副 pane：焦点回落主 pane（否则 sid 指向死会话、全屏黑）
+    // 只解散被关会话所在的那一组；幸存者回单窗格。其它组完全不受影响。
+    const g = groupOf(id);
+    if (g) {
+      if (groupRenamingGidRef.current === g.id) {
+        setGroupRenaming(null);
+        groupRenamingGidRef.current = null;
+      }
+      dissolveGroup(g.id);
       if (sidRef.current === id) {
-        const next = termsRef.current.get(sp.main);
-        if (next) {
-          setSid(sp.main);
-          sidRef.current = sp.main;
-          xtermRef.current = next.term;
-          refreshBrief(sp.main);
-          void invoke("note_terminal", { sid: sp.main, focused: true }).catch(() => {});
+        const survivor = g.main === id ? g.second : g.main;
+        if (termsRef.current.has(survivor)) {
+          // 走 focusSession 的统一激活语义（重估退化态、applyPanes、恢复子窗口记忆）：
+          // 组已解散，原最大化态随组消失，不会留下指向隐藏格的焦点。
+          focusSession(survivor);
           refocus = true;
         } else {
           detach();
         }
-      }
-    } else if (sp?.main === id) {
-      splitRef.current = null;
-      setSplitPanes(null);
-      setSplitGroupName(null);
-      setGroupRenaming(null);
-      const next = termsRef.current.get(sp.second);
-      if (next) {
-        setSid(sp.second);
-        sidRef.current = sp.second;
-        xtermRef.current = next.term;
-        refreshBrief(sp.second);
-        void invoke("note_terminal", { sid: sp.second, focused: true }).catch(() => {});
-        refocus = true;
       }
     } else if (sidRef.current === id) {
       // 关的是焦点会话：激活右侧邻居、没有再找左侧（浏览器标签页惯例；六轮 D6-2
@@ -5272,11 +5708,10 @@ export default function App() {
         if (order[i].id !== id && termsRef.current.has(order[i].id)) next = order[i];
       }
       if (next) {
-        setSid(next.id);
-        sidRef.current = next.id;
-        xtermRef.current = termsRef.current.get(next.id)!.term;
-        refreshBrief(next.id);
-        void invoke("note_terminal", { sid: next.id, focused: true }).catch(() => {});
+        // 同库激活语义：目标可能属于别的分屏组（多组共存），直接写 sid 会带着
+        // 上一组的退化/最大化显示态过去。
+        focusSession(next.id);
+        refocus = true;
       } else {
         detach();
       }
@@ -5288,7 +5723,8 @@ export default function App() {
     // 并按该标签的记忆恢复主视图/格子。
     if (refocus && sidRef.current) requestAnimationFrame(() => focusTermFor(sidRef.current!));
     refreshLists();
-  }, [detach, applyPanes, fitTerminal, refreshLists, refreshBrief, focusTermFor]);
+  }, [detach, applyPanes, fitTerminal, refreshLists, focusTermFor,
+    groupOf, dissolveGroup, focusSession]);
 
   // 稳定轮：termsRef 对账——会话从后端消失（Agent 经 MCP close_session 等 UI 外
   // 关闭路径）时标签随 3s 轮询消失，但 xterm/WebGL 上下文/订阅/DOM 无人释放
@@ -5310,38 +5746,27 @@ export default function App() {
       dead.push(id);
     }
     if (!dead.length) return;
-    const sp = splitRef.current;
-    if (sp && (dead.includes(sp.main) || dead.includes(sp.second))) {
-      const survivor = dead.includes(sp.main) ? sp.second : sp.main;
-      splitRef.current = null;
-      setSplitPanes(null);
-      setSplitGroupName(null);
+    const deadSet = new Set(dead);
+    // 任何成员死亡 → 该组解散；幸存者（若也还活着）优先接管焦点
+    const affected = splitGroupsRef.current.filter((g) => deadSet.has(g.main) || deadSet.has(g.second));
+    const survivor = affected.flatMap((g) => [g.main, g.second]).find((id) => !deadSet.has(id)) ?? null;
+    if (groupRenamingGidRef.current && affected.some((g) => g.id === groupRenamingGidRef.current)) {
       setGroupRenaming(null);
-      const next = termsRef.current.get(survivor);
-      if (next && (sidRef.current === null || dead.includes(sidRef.current))) {
-        setSid(survivor);
-        sidRef.current = survivor;
-        xtermRef.current = next.term;
-        refreshBrief(survivor);
-        void invoke("note_terminal", { sid: survivor, focused: true }).catch(() => {});
-      }
-    } else if (sidRef.current && dead.includes(sidRef.current)) {
-      const next = sessionsRef.current.find((s) => !dead.includes(s.id) && termsRef.current.has(s.id));
-      if (next) {
-        setSid(next.id);
-        sidRef.current = next.id;
-        xtermRef.current = termsRef.current.get(next.id)!.term;
-        refreshBrief(next.id);
-        void invoke("note_terminal", { sid: next.id, focused: true }).catch(() => {});
-        // 外部关闭（MCP/Agent close_session）同样会带走焦点：布局落定后还给新活动会话
-        requestAnimationFrame(() => focusTermFor(next.id));
-      } else {
-        detach();
-      }
+      groupRenamingGidRef.current = null;
+    }
+    pruneGroups(deadSet);
+    if (sidRef.current && deadSet.has(sidRef.current)) {
+      const nextId = survivor && termsRef.current.has(survivor)
+        ? survivor
+        : sessionsRef.current.find((s) => !deadSet.has(s.id) && termsRef.current.has(s.id))?.id;
+      // 幸存会话可能与其它活着的会话共组（多组共存）：按统一激活语义切换，
+      // 顺带重估退化态并恢复该标签的子窗口焦点记忆。
+      if (nextId && termsRef.current.has(nextId)) focusSession(nextId);
+      else detach();
     }
     applyPanes();
     fitTerminal();
-  }, [sessions, sessionIdent, detach, applyPanes, fitTerminal, refreshBrief, focusTermFor]);
+  }, [sessions, sessionIdent, detach, applyPanes, fitTerminal, focusSession, pruneGroups]);
 
   // 危险动作确认（P1-5/P1-4）：断开活会话、删除主机都先过弹层；死会话直接关（无需确认）
   const [confirm, setConfirm] = useState<
@@ -6913,7 +7338,7 @@ export default function App() {
     // 面板目标先过防呆再建：建出孤儿会话（面板又进不去）比报错更糟。核心侧
     // 仍会兜底，这里只为「不建了就失败」把原因说在作曲行里
     if (tmuxCreateTarget === "panel") {
-      if (splitRef.current) { setTmuxCreateErr(t("分屏模式下不可并入面板——请先退出分屏")); return; }
+      if (groupOf(s.id)) { setTmuxCreateErr(t("分屏模式下不可并入面板——请先退出分屏")); return; }
       if ((s.panes ?? []).length >= PANE_MAX) {
         setTmuxCreateErr(t("面板已满（最多 {0} 个窗格）——请先关掉一个窗格，或改为接入主视图", "5"));
         return;
@@ -6955,7 +7380,7 @@ export default function App() {
   // 「tmux 会话不存在」文案（handle.rs pane_open_inner；demo 镜像同文案），消息
   // 判别是既有错误契约下最窄的可靠归位。
   const openTmuxPaneCore = async (s: SessionInfo, name: string, quiet = false): Promise<{ ok: boolean; gone: boolean }> => {
-    if (splitRef.current) {
+    if (groupOf(s.id)) {
       if (!quiet) pushToast("info", t("分屏模式下不可并入面板——请先退出分屏"));
       return { ok: false, gone: false };
     }
@@ -7573,13 +7998,13 @@ export default function App() {
   const tmuxAgentNote = !fleetOpen && activeTmuxAttached
     ? t("Agent 的命令会自动进远端专属 tmux 窗口（tinyssh-agent）执行——切过去即可旁观，当前窗口不受打扰。")
     : null;
-  // 分屏组命名（本轮）：自动名=两成员显示名相连，渲染期从成员实时推导（成员替换/
-  // 交换自动名跟随）；splitGroupName 非空=用户改过名，钉住不跟随。散伙各出口弃名。
+  // 分屏组命名：自动名=两成员显示名相连，渲染期从成员实时推导（成员替换/
+  // 交换自动名跟随）；组 name 非空=用户改过名，钉住不跟随。散伙即随组丢弃。
   const memberLabel = (id: string) =>
     tabNames[id] ?? sessions.find((x) => x.id === id)?.host_name ?? id;
-  const splitGroupLabel = splitPanes
-    ? (splitGroupName ?? `${memberLabel(splitPanes.main)} + ${memberLabel(splitPanes.second)}`)
-    : null;
+  const splitGroupLabelOf = (g: SplitGroup) =>
+    g.name ?? `${memberLabel(g.main)} + ${memberLabel(g.second)}`;
+  const splitGroupLabel = splitPanes ? splitGroupLabelOf(splitPanes) : null;
   // R35 rev 中-1：重试必须在**在场会话**内重跑（核心 retry_transfer 按旧 session_id
   // 取会话；会话不持久化，重启恢复的 Interrupted 其会话必然已不在 → SessionNotFound）。
   // 故仅当原会话仍在时给「重试」钮，否则如实告知（不渲染必死的钮）；pending- 占位卡
@@ -7675,11 +8100,11 @@ export default function App() {
       } else if (sessions.length > 1) {
         items.push({
           id: "split-active", group: t("当前会话"),
-          title: splitPanes
-            ? t("放到{0}侧分屏（替换{0}格）", splitDir === "tb" ? t("下") : t("右"))
-            : t("与当前会话分屏（放到{0}侧）", splitDir === "tb" ? t("下") : t("右")),
+          // 活动会话无组时选「分屏」必须让用户挑第二个会话——直接 enterSplitWith(active)
+          // 是自指卫兵静默 no-op（旧实现的面板零变化）；打开会话选择菜单
+          title: t("分屏（选择{0}侧会话）…", splitDir === "tb" ? t("下") : t("右")),
           keywords: "分屏 split 左右 上下 并排",
-          run: () => { void enterSplitWith(active.id, splitDir); },
+          run: () => { setSplitMenu(true); },
         });
       }
       // tmux 联动：当前主机有 tmux 会话清单时给按需切换入口——会话管理器的最终
@@ -8145,7 +8570,7 @@ export default function App() {
           <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar} role="tablist" aria-label={t("会话标签")}>
             {sessions.map((s, i) => {
               const st = stateLabel(s.state);
-              const inSplit = splitPanes?.main === s.id || splitPanes?.second === s.id;
+              const inSplit = !!groupOf(s.id);
               // 十四轮：标签自定名（复制标签页后同名标签的区分），无则回退主机名
               const label = tabNames[s.id] ?? s.host_name;
               return (
@@ -8162,16 +8587,27 @@ export default function App() {
                     // 双击重命名、中键关闭
                     if (e.button !== 0) return;
                     if (e.target instanceof Element && e.target.closest("button, input")) return;
-                    dragClickSupRef.current = false;
-                    tabDragRef.current = { sid: s.id, startX: e.clientX, startY: e.clientY, active: false };
+                    dragClickSupUntilRef.current = 0;
+                    tabDragRef.current = {
+                      sid: s.id, startX: e.clientX, startY: e.clientY,
+                      pointerId: e.pointerId, srcEl: e.currentTarget, active: false,
+                    };
                     e.currentTarget.setPointerCapture(e.pointerId);
                   }}
                   onPointerMove={(e) => {
                     const drag = tabDragRef.current;
-                    if (!drag || drag.sid !== s.id || !tabDragRef.current) return;
+                    if (!drag || drag.sid !== s.id || drag.pointerId !== e.pointerId) return;
+                    if (!(e.buttons & 1)) { cancelTabDrag(); return; }
                     if (!drag.active) {
-                      // 5px 阈值区分点击与拖拽（阈值前不动任何提示）
-                      if (Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY) < 5) return;
+                      // 起拖要求「位移够大」且「指针已离开标签本体」：标签内部滑动
+                      // 哪怕 20px 也只是普通点击，杜绝单击标签冒出分屏落点提示
+                      const dx = e.clientX - drag.startX;
+                      const dy = e.clientY - drag.startY;
+                      if (Math.max(Math.abs(dx), Math.abs(dy)) < 6) return;
+                      const r = drag.srcEl.getBoundingClientRect();
+                      const pad = 4;
+                      if (e.clientX >= r.left - pad && e.clientX <= r.right + pad
+                        && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad) return;
                       drag.active = true;
                       setTabDragSid(s.id);
                       document.body.classList.add("tab-dragging");
@@ -8187,8 +8623,8 @@ export default function App() {
                       setTermDropHint((cur) => (cur ? null : cur));
                       // 分屏成员拖回标签条=退出分屏（五轮 D-2 拍板）：不渲染插入位
                       // 药丸——悬停提示必须与落点裁决一致，否则提示恒为谎言（六轮 BR-6）
-                      const spDrag = splitRef.current;
-                      const dragIsMember = !!spDrag && (spDrag.main === drag.sid || spDrag.second === drag.sid);
+                      const spDrag = groupOf(drag.sid);
+                      const dragIsMember = !!spDrag;
                       setTabDropHint((cur) => {
                         const next = hit && hit.sid !== drag.sid && !dragIsMember ? hit : null;
                         return next && cur?.sid === next.sid && cur?.before === next.before ? cur : next;
@@ -8196,13 +8632,26 @@ export default function App() {
                     } else {
                       setTabDropHint((cur) => (cur ? null : cur));
                       if (inTerm && sessionsRef.current.length >= 2 && tr) {
-                        const sp = splitRef.current;
+                        const sp = groupOf(sidRef.current);
                         let zone: "l" | "r" | "t" | "b";
                         if (sp) {
-                          zone = paneAtPoint(e.clientX, e.clientY) === "main"
+                          const hitSlot = paneAtPoint(e.clientX, e.clientY);
+                          // 拖到自己所在格：没有可执行落点，不渲染提示
+                          if (slotOf(sp, drag.sid) === hitSlot) {
+                            setTermDropHint((cur) => (cur ? null : cur));
+                            return;
+                          }
+                          zone = hitSlot === "main"
                             ? (sp.dir === "tb" ? "t" : "l")
                             : (sp.dir === "tb" ? "b" : "r");
                         } else {
+                          // 拖的是活动会话本身且它没有组：没有可组合的对象
+                          // （placeInSplit 会 no-op），不渲染落点提示——提示必须与
+                          // 落点裁决一致
+                          if (drag.sid === sidRef.current) {
+                            setTermDropHint((cur) => (cur ? null : cur));
+                            return;
+                          }
                           const dx = (e.clientX - (tr.left + tr.width / 2)) / tr.width;
                           const dy = (e.clientY - (tr.top + tr.height / 2)) / tr.height;
                           zone = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "l" : "r") : (dy < 0 ? "t" : "b");
@@ -8215,22 +8664,20 @@ export default function App() {
                   }}
                   onPointerUp={(e) => {
                     const drag = tabDragRef.current;
-                    tabDragRef.current = null;
-                    document.body.classList.remove("tab-dragging");
-                    if (!drag || drag.sid !== s.id) return;
-                    if (!drag.active) return; // 未过阈值=纯点击，click 事件照常激活
-                    setTabDragSid(null);
-                    setTabDropHint(null);
-                    setTermDropHint(null);
-                    dragClickSupRef.current = true;
+                    if (!drag || drag.sid !== s.id || drag.pointerId !== e.pointerId) return;
+                    const wasActive = drag.active;
+                    cancelTabDrag();
+                    if (!wasActive) return; // 未起拖=纯点击，click 事件照常激活
+                    dragClickSupUntilRef.current = performance.now() + 300;
                     finishTabDrag(drag.sid, e.clientX, e.clientY);
                   }}
-                  onPointerCancel={() => {
-                    tabDragRef.current = null;
-                    setTabDragSid(null);
-                    setTabDropHint(null);
-                    setTermDropHint(null);
-                    document.body.classList.remove("tab-dragging");
+                  onPointerCancel={(e) => {
+                    const d = tabDragRef.current;
+                    if (d?.sid === s.id && d.pointerId === e.pointerId) cancelTabDrag();
+                  }}
+                  onLostPointerCapture={(e) => {
+                    const d = tabDragRef.current;
+                    if (d?.sid === s.id && d.pointerId === e.pointerId) cancelTabDrag();
                   }}
                   title={`${label} · ${st.text}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
                   aria-label={`${label}，${st.text}${inSplit ? t("，在分屏中") : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
@@ -8245,7 +8692,7 @@ export default function App() {
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id).catch((er) => pushToast("err", errMsg(er))); }
                   }}
                   onClick={() => {
-                    if (dragClickSupRef.current) { dragClickSupRef.current = false; return; }
+                    if (performance.now() < dragClickSupUntilRef.current) { dragClickSupUntilRef.current = 0; return; }
                     void attachSession(s.id).catch((e) => pushToast("err", errMsg(e)));
                   }}
                   onMouseDown={(e) => {
@@ -8322,7 +8769,7 @@ export default function App() {
               title={t("右侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenR, isMacPlatform() ? "⌘⇧]" : "Ctrl+Shift+]")}
               onClick={() => scrollTabs(1)}>›</button>
           )}
-          {splitPanes && <button className="ghost" onClick={exitSplit}
+          {splitPanes && <button className="ghost" onClick={() => exitSplit()}
             title={splitGroupLabel ? t("退出分屏：解散「{0}」（两个会话都保留）", splitGroupLabel) : undefined}>{t("退出分屏")}</button>}
           {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点）。快捷键是 native 域
               能力（demo 域 actions.ts 有 native 门），浏览器里不广告不存在的键 */}
@@ -8624,6 +9071,7 @@ export default function App() {
                 editHost={editingHost}
                 prefill={prefillEntry}
                 hosts={hosts}
+                onSavingChange={onAddHostSavingChange}
                 onCancel={closeAddHost}
                 onSaved={async (hid, wasEdit, connect = true) => {
                   // 七轮（交付前审查）：成功保存是「正常关闭」而非「丢弃草稿」——必须
@@ -8712,27 +9160,69 @@ export default function App() {
           }}>
             {/* 分屏⑥轮：可拖拽分割条（退化态随窗格一起消失）。唯一 React 子节点——
                 .term-session 层由 makeTerm 以 appendChild 挂入，互不干扰 */}
-            {splitPanes && !splitDegraded && (
+            {splitPanes && !splitDegraded && !splitPanes.maximized && (
               <div
+                ref={paneDivRef}
                 className={"pane-div " + (splitPanes.dir === "tb" ? "div-tb" : "div-lr")}
                 data-testid="pane-div"
                 role="separator"
+                tabIndex={0}
                 aria-orientation={splitPanes.dir === "tb" ? "horizontal" : "vertical"}
+                aria-valuemin={Math.round(SPLIT_FRAC_MIN * 100)}
+                aria-valuemax={Math.round(SPLIT_FRAC_MAX * 100)}
+                aria-valuenow={Math.round(splitPanes.frac * 100)}
                 aria-label={t("分屏分割条")}
-                title={t("拖拽调整两格比例（20%~80%）；双击复位对半")}
+                title={`${t("拖拽调整两格比例（20%~80%）；双击复位对半")} · ${t("方向键调整比例（Shift 加速；Home/End 到两端）")}`}
                 onPointerDown={onDivDown}
                 onPointerMove={onDivMove}
                 onPointerUp={onDivUp}
-                onPointerCancel={onDivUp}
+                onPointerCancel={onDivCancel}
+                onLostPointerCapture={onDivLostCapture}
                 onDoubleClick={resetSplitFrac}
+                onKeyDown={(e) => {
+                  // 仅条身自身按键；胶囊/输入框的键盘事件各自处理
+                  if (e.target !== e.currentTarget) return;
+                  const step = e.shiftKey ? 0.1 : 0.02;
+                  if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                    e.preventDefault(); e.stopPropagation(); nudgeSplitFrac(-step);
+                  } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                    e.preventDefault(); e.stopPropagation(); nudgeSplitFrac(step);
+                  } else if (e.key === "Home" || e.key === "End") {
+                    e.preventDefault(); e.stopPropagation();
+                    nudgeSplitFrac(0, e.key === "Home" ? SPLIT_FRAC_MIN : SPLIT_FRAC_MAX);
+                  }
+                }}
               >
                 {/* 分屏组命名（本轮）：组名胶囊叠分割条中央——事件自持，抓胶囊=改名
-                    （双击），抓条身=拖比例/双击复位。自动名随成员，自定义名钉住，
-                    散伙即弃 */}
-                <span className="div-group" data-testid="split-group-chip" tabIndex={-1}
+                    （双击/Enter/F2），抓条身=拖比例/双击复位。自动名随成员，自定义
+                    名钉住，散伙即弃。胶囊可 Tab 聚焦，方向键同样微调比例 */}
+                <span className="div-group" data-testid="split-group-chip" tabIndex={0}
+                  role="button"
                   title={t("分屏组：{0}（双击重命名）", splitGroupLabel ?? "")}
                   onPointerDown={(e) => e.stopPropagation()}
-                  onDoubleClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => { e.stopPropagation(); beginGroupRename(splitPanes.id, splitGroupLabel ?? ""); }}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === "F2") {
+                      e.preventDefault(); e.stopPropagation();
+                      beginGroupRename(splitPanes.id, splitGroupLabel ?? "");
+                      return;
+                    }
+                    if (e.key === "Escape" && groupRenaming !== null) {
+                      e.preventDefault(); e.stopPropagation();
+                      cancelGroupRename();
+                      return;
+                    }
+                    const step = e.shiftKey ? 0.1 : 0.02;
+                    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                      e.preventDefault(); e.stopPropagation(); nudgeSplitFrac(-step);
+                    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                      e.preventDefault(); e.stopPropagation(); nudgeSplitFrac(step);
+                    } else if (e.key === "Home" || e.key === "End") {
+                      e.preventDefault(); e.stopPropagation();
+                      nudgeSplitFrac(0, e.key === "Home" ? SPLIT_FRAC_MIN : SPLIT_FRAC_MAX);
+                    }
+                  }}
                 >
                   {groupRenaming !== null ? (
                     <input
@@ -8759,14 +9249,16 @@ export default function App() {
                           queueMicrotask(() => chip?.focus());
                           commitGroupRename(groupRenaming);
                         } else if (e.key === "Escape") {
-                          setGroupRenaming(null);
+                          // 取消：清 gid 后再还原布局（blur 触发的提交成为 no-op），
+                          // 窄窗重新按宽度退化
+                          cancelGroupRename();
                         }
                       }}
                       onBlur={() => commitGroupRename(groupRenaming)}
                     />
                   ) : (
                     <span className="div-group-name"
-                      onDoubleClick={(e) => { e.stopPropagation(); setGroupRenaming(splitGroupLabel ?? ""); }}
+                      onDoubleClick={(e) => { e.stopPropagation(); beginGroupRename(splitPanes.id, splitGroupLabel ?? ""); }}
                     >{splitGroupLabel}</span>
                   )}
                 </span>
@@ -8774,11 +9266,27 @@ export default function App() {
             )}
             {/* 拖标签组合分屏：落点提示。高亮块 inset 吃 #term 的 --split-frac——
                 已分屏时高亮恰为真实窗格几何，未分屏（默认 .5）即为半区 */}
-            {termDropHint && (
-              <div className="drag-split-hint" data-testid="drag-split-hint">
-                <div className={"dsh-zone zone-" + termDropHint} />
-              </div>
-            )}
+            {termDropHint && (() => {
+              const sp = splitPanes;
+              const dragSid = tabDragSid;
+              const isMember = !!sp && !!dragSid && (sp.main === dragSid || sp.second === dragSid);
+              const side = sp?.dir === "tb"
+                ? (termDropHint === "t" ? "上" : "下")
+                : (termDropHint === "l" ? "左" : "右");
+              const label = !sp
+                ? t(`放到${side}侧分屏`)
+                : isMember
+                  ? t("交换两格")
+                  : sp.maximized
+                    ? t("替换此格")
+                    : t(`替换${side}格`);
+              return (
+                <div className="drag-split-hint" data-testid="drag-split-hint">
+                  <div className={"dsh-zone zone-" + termDropHint + (sp?.maximized ? " single" : "")} />
+                  <div className="dsh-label" data-testid="dsh-label">{label}</div>
+                </div>
+              );
+            })()}
           </div>
           {current?.state === "Disconnected" && (() => {
             // tmux 联动三态（恢复现场轮）：① 有最后 attach 记录或唯一会话 → 单键
@@ -8946,13 +9454,15 @@ export default function App() {
           <CtxMenus
             sessions={sessions} sid={sid} hosts={hosts} hostMeta={hostMeta}
             connectingIds={connectingIds} splitPanes={splitPanes} tabNames={tabNames}
+            groupOf={groupOf} splitGroupLabelOf={splitGroupLabelOf}
+            rotateSplitGroup={rotateSplitGroup} beginGroupRename={beginGroupRename}
+            focusSession={focusSession}
             autoReconn={autoReconn}
             localShells={localShells}
             onLocalShell={(path) => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh, false, undefined, path); }}
             splitMenu={splitMenu} setSplitMenu={setSplitMenu} enterSplitWith={enterSplitWith}
             splitDir={splitDir} setSplitDir={(d) => { splitDirRef.current = d; setSplitDir(d); }}
             tabMenu={tabMenu} setTabMenu={setTabMenu} exitSplit={exitSplit}
-            splitGroupLabel={splitGroupLabel} setGroupRenaming={setGroupRenaming}
             stopRetry={stopRetry} reconnectSession={reconnectSession} setRenaming={setRenaming}
             toggleSessionLog={toggleSessionLog} openSessionLogFolder={openSessionLogFolder}
             openSessionDetail={openSessionDetail} requestCloseSession={requestCloseSession}
@@ -9047,10 +9557,14 @@ export default function App() {
           {osc52Ask && (
             // P2-c：OSC 52 写剪贴板询问卡（与粘贴确认同工艺：confirm-mask 子元素、
             // Esc 链与模态门都在列）。允许=覆盖现有剪贴板并 toast 告知；拒绝=不写任何字节。
-            <div className="confirm-mask" onClick={() => setOsc52Ask(null)}>
+            // 多请求排队逐张裁决，队首标题右侧标出还有几张，避免「拒绝一张就消失」的错觉。
+            <div className="confirm-mask" onClick={() => shiftOsc52Ask()}>
               <div className="confirm-dialog paste-dialog" ref={osc52AskRef} role="dialog" aria-modal="true" aria-labelledby="dlg-osc52-title" onClick={(e) => e.stopPropagation()}>
                 <div className="hk-title" id="dlg-osc52-title" data-testid="osc52-dialog">
                   {t("远端请求写入剪贴板 ·")} {sessions.find((s) => s.id === osc52Ask.sid)?.host_name ?? t("该会话")}{osc52Ask.source ? ` · tmux:${osc52Ask.source}` : ""}
+                  {osc52Queue.length > 1 && (
+                    <span className="dim" style={{ marginLeft: 8 }}>{t("（另有 {0} 个请求排队）", osc52Queue.length - 1)}</span>
+                  )}
                 </div>
                 <div>{t("远端程序通过 OSC 52 转义序列请求改写你本机的剪贴板——允许后现有内容会被覆盖，拒绝则不写入任何字节。「始终允许」本次照写且此后不再询问（设置→终端 可改回）。读取类请求（查询）一律拒绝，不经此卡。")}</div>
                 <pre className="paste-preview mono" data-testid="osc52-preview">{osc52Ask.text.length > 400
@@ -9059,17 +9573,19 @@ export default function App() {
                 <div className="hk-actions">
                   <button className="danger" data-testid="osc52-allow" onClick={() => {
                     osc52WriteRef.current(osc52Ask.sid, osc52Ask.text);
-                    setOsc52Ask(null);
-                    restoreTermFocus();
+                    shiftOsc52Ask();
+                    if (osc52Queue.length === 1) restoreTermFocus();
                   }}>{t("允许写入")}</button>
                   {/* 用户反馈：选区每次都弹卡太严——一键把策略翻 allow（走既有持久化），此后直写 */}
                   <button className="ghost" data-testid="osc52-allow-forever" onClick={() => {
                     osc52WriteRef.current(osc52Ask.sid, osc52Ask.text);
                     changeOsc52Policy("allow");
-                    setOsc52Ask(null);
+                    // 队列里剩下的请求用户没看过预览，不替他们默认放行：清空即可，
+                    // 此后新请求按 allow 直写（旧请求已被策略变更超越，不再补写）
+                    setOsc52Queue([]);
                     restoreTermFocus();
                   }}>{t("始终允许")}</button>
-                  <button className="ghost" data-autofocus data-testid="osc52-deny" onClick={() => { setOsc52Ask(null); restoreTermFocus(); }}>{t("拒绝")}</button>
+                  <button className="ghost" data-autofocus data-testid="osc52-deny" onClick={() => { shiftOsc52Ask(); if (osc52Queue.length === 1) restoreTermFocus(); }}>{t("拒绝")}</button>
                 </div>
               </div>
             </div>

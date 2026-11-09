@@ -57,7 +57,7 @@ const state = (page) => page.evaluate(() => {
     const cs = getComputedStyle(el);
     return {
       border: cs.borderTopWidth, radius: cs.borderRadius, overflow: cs.overflow,
-      clip: cs.backgroundClip, color: cs.borderTopColor,
+      clip: cs.backgroundClip, color: cs.borderTopColor, bg: cs.backgroundColor,
     };
   };
   const head = cell?.querySelector(".tmux-cell-head");
@@ -93,14 +93,17 @@ module.exports = {
     ck.check("主视图有放大钮", s.zoomTitle === "最大化主视图（保留标题栏）", JSON.stringify(s));
     ck.check("未挂 tmux 的主视图没有 ×（没有可单独关闭的视图）", !s.detachVisible && !s.tagAttached, JSON.stringify(s));
     ck.check("网格态主视图不是全幅、work 格子可见", !s.mainFull && s.cellDisplay === "flex", JSON.stringify(s));
-    ck.check("主视图卡片化：3px 透明边框 + 10px 圆角",
+    ck.check("主视图卡片化：3px 卡缝（页面底色差）+ 10px 圆角",
       !!s.mainCard && s.mainCard.border === "3px" && s.mainCard.radius === "10px"
         && s.mainCard.overflow === "hidden" && s.mainCard.clip === "padding-box"
-        && /rgba?\(0, 0, 0, 0\)|transparent/.test(s.mainCard.color),
+        && !/rgba?\(0, 0, 0, 0\)|transparent/.test(s.mainCard.color)
+        && s.mainCard.color !== s.mainCard.bg,
       JSON.stringify(s.mainCard));
-    ck.check("tmux 格子卡片化：3px 透明边框 + 10px 圆角，标题/正文内圆角 7px",
+    ck.check("tmux 格子卡片化：3px 卡缝（页面底色差）+ 10px 圆角，标题/正文内圆角 7px",
       !!s.cellCard && s.cellCard.border === "3px" && s.cellCard.radius === "10px"
-        && s.cellCard.clip === "padding-box" && /rgba?\(0, 0, 0, 0\)|transparent/.test(s.cellCard.color)
+        && s.cellCard.clip === "padding-box"
+        && !/rgba?\(0, 0, 0, 0\)|transparent/.test(s.cellCard.color)
+        && s.cellCard.color !== s.cellCard.bg
         && s.cellHeadRadius === "7px 7px 0px 0px" && s.cellBodyRadius === "0px 0px 7px 7px",
       JSON.stringify({ cell: s.cellCard, head: s.cellHeadRadius, body: s.cellBodyRadius }));
 

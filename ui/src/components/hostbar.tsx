@@ -262,12 +262,21 @@ export function Hostbar({
               );
             };
             const skeletons = !hostsLoaded ? (<><div className="skeleton" /><div className="skeleton" /></>) : null;
-            const emptyAll = hostsLoaded && hosts.length === 0 && (
-              <div className="dim">{t("还没有主机。点上方「＋」填入地址和密码即可连接。")}</div>
+            // 空态判据只数「已保存主机」：「本机」是内置条目、恒在 hosts 里，
+            // 若按 hosts.length 判空，空主机栏会只剩一个「全部主机」节头而无引导
+            const savedHostCount = hosts.filter((h) => h.id !== "local").length;
+            const emptyAll = hostsLoaded && savedHostCount === 0 && (
+              <div className="side-quiet" data-testid="hostbar-empty">
+                <div>{t("还没有主机——点上方「＋」添加一台，或用右上角的「快速连接」临时连一次。")}</div>
+                <button className="ghost" style={{ marginTop: 6 }}
+                  onClick={() => { setShowImport(false); setEditingHost(null); setPrefillEntry(null); setShowAddHost(true); }}>
+                  <IconPlus size={12} /> {t("添加主机")}
+                </button>
+              </div>
             );
-            const noMatch = hostsLoaded && hosts.length > 0 && filteredHosts.length === 0 && (
+            const noMatch = hostsLoaded && savedHostCount > 0 && filteredHosts.length === 0 && (
               <>
-                <div className="dim">{t("无匹配主机——可清除搜索/标签筛选，或直接添加：")}</div>
+                <div className="side-quiet">{t("没有匹配的主机——可清除搜索或标签筛选，或添加新主机：")}</div>
                 <button className="ghost" style={{ marginTop: 6 }}
                   onClick={() => { setShowImport(false); setEditingHost(null); setPrefillEntry(null); setShowAddHost(true); }}>
                   <IconPlus size={12} /> {t("添加主机")}

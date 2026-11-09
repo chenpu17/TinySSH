@@ -154,7 +154,17 @@ pub(crate) fn install_native_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         .item(&PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?)
         .item(&PredefinedMenuItem::show_all(app, Some("全部显示"))?)
         .separator()
-        .item(&PredefinedMenuItem::quit(app, Some("退出 TinySSH"))?)
+        // ⌘Q 不能用 PredefinedMenuItem::quit：macOS 预定义 quit 是 NSApp terminate，
+        // tao 只接 applicationWillTerminate → 直接销毁事件循环，不经 RunEvent::ExitRequested，
+        // 退出确认被整条绕过（KI-011）。改普通菜单项 + 快捷键，由 on_menu_event 统一
+        // 武装确认；Dock「退出」/系统注销仍是 NSApp 直终止（见 known-issues 登记）。
+        .item(&MenuItem::with_id(
+            app,
+            "quit",
+            "退出 TinySSH",
+            true,
+            Some("CmdOrCtrl+Q"),
+        )?)
         .build()?;
     let edit_sub = SubmenuBuilder::new(app, "编辑")
         .item(&PredefinedMenuItem::undo(app, Some("撤销"))?)

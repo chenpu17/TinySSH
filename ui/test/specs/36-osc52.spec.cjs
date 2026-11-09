@@ -52,6 +52,22 @@ module.exports = {
     await page.waitForTimeout(300);
     ck.check("Esc 关卡=拒绝，剪贴板不变", !await dialogOpen() && (await clip()) === "seed");
 
+    // ── 多请求排队：两张卡先后到达不互相覆盖，逐张裁决（旧实现单槽 last-wins）──
+    await inject(btoa("queued-A"));
+    await page.waitForTimeout(300);
+    await inject(btoa("queued-B"));
+    await page.waitForTimeout(300);
+    const queueTxt = await page.evaluate(() => document.querySelector("[data-testid=osc52-dialog]")?.textContent ?? "");
+    ck.check("同时到达的请求排队，标题标出还有 1 个", queueTxt.includes("另有 1 个请求排队"), queueTxt.slice(0, 80));
+    ck.check("队首仍是第一张请求（后到不覆盖）", (await page.textContent("[data-testid=osc52-preview]") ?? "").includes("queued-A"));
+    await page.click("[data-testid=osc52-deny]");
+    await page.waitForTimeout(300);
+    ck.check("拒绝队首后第二张立即接上", await dialogOpen()
+      && (await page.textContent("[data-testid=osc52-preview]") ?? "").includes("queued-B"));
+    await page.click("[data-testid=osc52-deny]");
+    await page.waitForTimeout(300);
+    ck.check("队列清空后关卡，剪贴板始终未被写", !await dialogOpen() && (await clip()) === "seed");
+
     // ── 允许：写入 + toast 告知 ──
     await inject(btoa("rm -rf /"));
     await page.waitForTimeout(400);

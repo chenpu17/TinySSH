@@ -499,6 +499,14 @@ export const SPLIT_RECOVER_AT_H = SPLIT_PANE_MIN_H * 2 + 6;
 // 菜单/⌘K 分屏项）不带显式方向时沿用
 export type SplitDir = "lr" | "tb";
 export type SplitPanes = { main: string; second: string; dir: SplitDir };
+/** 每标签独立分屏组：一个 session 至多属于一个组；dir/frac/name/maximized 随组保存，
+ * 切回该组成员即恢复。成员被关闭/移出时整组解散，幸存者回单窗格。 */
+export type SplitGroup = SplitPanes & {
+  id: string;
+  frac: number;
+  name: string | null;
+  maximized: "main" | "second" | null;
+};
 /** 拖拽分割条的占比夹取界：主格 20%~80%，任何一侧都不小于可读下限 */
 export const SPLIT_FRAC_MIN = 0.2;
 export const SPLIT_FRAC_MAX = 0.8;

@@ -9,8 +9,9 @@ import type { Host, HostMeta, LocalShell, SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
 import { t } from "../i18n";
 import type { ConfirmState } from "./confirm-dialogs";
-import type { SplitDir, SplitPanes } from "../app-data";
+import type { SplitDir, SplitGroup } from "../app-data";
 import { resetMouseReporting } from "../terminal/mouse-mode-guard";
+import { repaintTerm } from "../terminal/repaint";
 import { IconX } from "../icons";
 
 // 按钮美化轮：右键菜单宽度随内容（200–340px，styles.css .ctx-menu），挂载即测量——越出视口
@@ -30,8 +31,14 @@ export interface CtxMenusProps {
   hosts: Host[];
   hostMeta: HostMeta[];
   connectingIds: Set<string>;
-  splitPanes: SplitPanes | null;
+  splitPanes: SplitGroup | null;
   tabNames: Record<string, string>;
+  /** 该会话所在的独立分屏组（无组=null）——右键菜单以被右键标签自己的组为准 */
+  groupOf: (sid: string) => SplitGroup | null;
+  splitGroupLabelOf: (g: SplitGroup) => string;
+  rotateSplitGroup: (gid: string, dir: SplitDir) => void;
+  beginGroupRename: (gid: string, initial: string) => void;
+  focusSession: (sid: string) => void;
   autoReconn: { sid: string; attempt: number; max: number } | null;
   // —— 分屏选择菜单 ——
   splitMenu: boolean;
@@ -43,10 +50,7 @@ export interface CtxMenusProps {
   // —— 标签右键 ——
   tabMenu: { x: number; y: number; sid: string } | null;
   setTabMenu: (v: { x: number; y: number; sid: string } | null) => void;
-  exitSplit: () => void;
-  // 分屏组命名（本轮）：当前组名（自动名或自定义）+ 打开改名框（值=编辑文本）
-  splitGroupLabel: string | null;
-  setGroupRenaming: (v: string | null) => void;
+  exitSplit: (gid?: string) => void;
   stopRetry: (s: SessionInfo) => Promise<void>;
   reconnectSession: (s: SessionInfo) => Promise<void>;
   setRenaming: (v: { sid: string; value: string }) => void;
@@ -73,9 +77,9 @@ export interface CtxMenusProps {
   // —— 终端区右键 ——
   termMenu: { x: number; y: number; sid: string; hasSel: boolean; paneKey?: string } | null;
   setTermMenu: (v: { x: number; y: number; sid: string; hasSel: boolean; paneKey?: string } | null) => void;
-  termsRef: { current: Map<string, { term: Terminal }> };
+  termsRef: { current: Map<string, { term: Terminal; webgl?: { clearTextureAtlas(): void } | null }> };
   /** tmux 面板格子实例（右键命中格子时作用对象） */
-  paneTermsRef: { current: Map<string, { term: Terminal; sid: string; paneId: number }> };
+  paneTermsRef: { current: Map<string, { term: Terminal; sid: string; paneId: number; webgl?: { clearTextureAtlas(): void } | null }> };
   closeTmuxPane: (sid: string, paneId: number) => Promise<void>;
   /** 该标签的面板布局被拖过（有自定义布局树）——右键给「重置面板布局」 */
   paneLayoutCustom: (sid: string) => boolean;
@@ -94,8 +98,9 @@ export interface CtxMenusProps {
 
 export function CtxMenus({
   sessions, sid, hosts, hostMeta, connectingIds, splitPanes, tabNames, autoReconn,
+  groupOf, splitGroupLabelOf, rotateSplitGroup, beginGroupRename, focusSession,
   splitMenu, setSplitMenu, enterSplitWith, splitDir, setSplitDir,
-  tabMenu, setTabMenu, exitSplit, splitGroupLabel, setGroupRenaming, stopRetry, reconnectSession, setRenaming,
+  tabMenu, setTabMenu, exitSplit, stopRetry, reconnectSession, setRenaming,
   toggleSessionLog, openSessionLogFolder, openSessionDetail, requestCloseSession,
   hostMenu, setHostMenu, recentMenu, setRecentMenu, createSession, toggleFavorite,
   localShells, onLocalShell,
@@ -213,9 +218,18 @@ export function CtxMenus({
         const mx = Math.min(tabMenu.x, window.innerWidth - 248);
         const my = Math.min(tabMenu.y, window.innerHeight - 236);
         const close = () => setTabMenu(null);
-        const inSplit = !!s && (splitPanes?.main === s.id || splitPanes?.second === s.id);
+        // 以被右键标签自己的组为准（每标签独立分屏）：非活动组也能就地退出/旋转/改名
+        const g = s ? groupOf(s.id) : null;
+        const inSplit = !!g;
         const menuHost = s ? hosts.find((h) => h.id === s.host_id) : undefined;
         const side = splitDir === "tb" ? t("下") : t("右");
+        // 「替换X格」按实际落点表述：enterSplitWith 替换的是「焦点格的对格」，
+        // 焦点在副格时落点是主格——此前文案恒写右/下，与实际相反。
+        const focusInSecond = splitPanes?.second === sid;
+        const gDir = splitPanes?.dir ?? splitDir;
+        const replacedSide = gDir === "tb"
+          ? (focusInSecond ? t("上") : t("下"))
+          : (focusInSecond ? t("左") : t("右"));
         return (
           <>
             <div className="pop-mask" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
@@ -224,22 +238,29 @@ export function CtxMenus({
                 {inSplit ? (
                   <>
                     <button className="sm-item" role="menuitem"
-                      onClick={() => { close(); void exitSplit(); }}
+                      onClick={() => { close(); exitSplit(g!.id); }}
                     >{t("退出分屏（两个会话都保留）")}</button>
                     {/* 分屏⑥轮：布局旋转（tmux/Windows Terminal 习惯）——两会话不动，只换方向 */}
                     <button className="sm-item" role="menuitem"
-                      onClick={() => { close(); void enterSplitWith(s.id, splitDir === "tb" ? "lr" : "tb"); }}
-                    >{t("改为{0}分屏", splitDir === "tb" ? t("左右") : t("上下"))}</button>
-                    {/* 分屏组命名（本轮）：改名框开在分割条胶囊上；清空提交=回自动名 */}
+                      onClick={() => { close(); rotateSplitGroup(g!.id, g!.dir === "tb" ? "lr" : "tb"); }}
+                    >{t("改为{0}分屏", g!.dir === "tb" ? t("左右") : t("上下"))}</button>
+                    {/* 分屏组命名（本轮）：改名框开在分割条胶囊上；清空提交=回自动名。
+                        非活动组先聚焦它的主格，胶囊才在可视分割条上 */}
                     <button className="sm-item" role="menuitem" data-testid="ctx-rename-group"
                       title={t("自定义分屏组名（清空恢复自动命名：成员名相连）")}
-                      onClick={() => { close(); setGroupRenaming(splitGroupLabel ?? ""); }}
+                      onClick={() => {
+                        close();
+                        const target = g!.id;
+                        const initial = splitGroupLabelOf(g!);
+                        if (sid !== g!.main && sid !== g!.second) focusSession(g!.main);
+                        beginGroupRename(target, initial);
+                      }}
                     >{t("重命名分组…")}</button>
                   </>
                 ) : s.id !== sid && !!sid ? (
                   <button className="sm-item" role="menuitem"
                     onClick={() => { close(); void enterSplitWith(s.id, splitDir); }}
-                  >{splitPanes ? t("放到{0}侧分屏（替换{0}格）", side) : t("与当前会话分屏（放到{0}侧）", side)}</button>
+                  >{splitPanes ? t("放到{0}侧分屏（替换{0}格）", replacedSide) : t("与当前会话分屏（放到{0}侧）", side)}</button>
                 ) : s.id === sid && sessions.some((x) => x.id !== s.id) ? (
                   // 十二轮：活动标签也得分屏（Xshell/Windows Terminal 惯例）——
                   // 第二格是谁交给既有「会话选择」菜单，不在此复制会话列表
@@ -381,6 +402,10 @@ export function CtxMenus({
                   title={t("清掉远端 TUI 遗留的鼠标上报：滚轮恢复滚动，提示符不再出现 35;...M 乱码")}
                   onClick={() => { close(); resetMouseReporting(pe.term); }}
                 >{t("重置鼠标上报")}</button>
+                <button className="sm-item" role="menuitem" data-testid="pane-redraw"
+                  title={t("长时间使用后字形错乱时强制重画：清 WebGL 字形图集并刷新全屏")}
+                  onClick={() => { close(); repaintTerm(pe.term, pe.webgl); }}
+                >{t("重绘终端画面")}</button>
                 {paneLayoutCustom(pe.sid) && (
                   <button className="sm-item" role="menuitem" data-testid="pane-layout-reset"
                     title={t("回到自动平铺（拖动调整过的位置与大小作废）")}
@@ -445,6 +470,10 @@ export function CtxMenus({
                   title={t("清掉远端 TUI 遗留的鼠标上报：滚轮恢复滚动，提示符不再出现 35;...M 乱码")}
                   onClick={() => { close(); resetMouseReporting(en.term); }}
                 >{t("重置鼠标上报")}</button>
+                <button className="sm-item" role="menuitem" data-testid="term-redraw"
+                  title={t("长时间使用后字形错乱时强制重画：清 WebGL 字形图集并刷新全屏")}
+                  onClick={() => { close(); repaintTerm(en.term, en.webgl); }}
+                >{t("重绘终端画面")}</button>
                 {sidRef.current === termMenu.sid && paneLayoutCustom(termMenu.sid) && (
                   <button className="sm-item" role="menuitem" data-testid="pane-layout-reset"
                     title={t("回到自动平铺（拖动调整过的位置与大小作废）")}

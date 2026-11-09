@@ -393,6 +393,8 @@ pub(crate) async fn updater_install(app: tauri::AppHandle, state: ApiState<'_>) 
                 format!("更新已装好，仅自动重启未成功——请手动重新打开 TinySSH（本次运行仍是旧版本）：{e}"),
             ));
         }
+        // KI-011：ExitRequested 守卫放行受控退出——即便将来摘掉退出码也不能被拦。
+        crate::confirm_controlled_exit(&app);
         app.exit(0);
         return Ok(true);
     }
@@ -431,6 +433,9 @@ pub(crate) async fn updater_install(app: tauri::AppHandle, state: ApiState<'_>) 
     )
     .await
     .map_err(|e| WireError::simple("updater_failed", format!("下载/安装失败：{e}")))?;
+    // KI-011：restart 带 RESTART_EXIT_CODE（prevent_exit 对其本就无效），仍显式
+    // 置 confirmed，与 quit_app/便携通道共用同一「受控退出」语义。
+    crate::confirm_controlled_exit(&app);
     app.restart(); // -> ! ：安装成功即重启，不返回
 }
 
