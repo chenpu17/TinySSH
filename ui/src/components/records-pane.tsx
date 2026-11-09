@@ -317,7 +317,7 @@ export function RecordsPane(props: RecordsPaneProps) {
                       · {sessionNames.get(r.session_id) ?? r.session_id.slice(0, 8)}
                     </span>
                   )}
-                  <span className={"mono" /* 摘要可选中复制，命令/路径常被回看 */} style={{ fontSize: 11, userSelect: "text", wordBreak: "break-all", flex: "1 1 auto" }}>
+                  <span className={"mono" /* 摘要可选中复制，命令/路径常被回看 */} style={{ fontSize: 11, userSelect: "text", WebkitUserSelect: "text", wordBreak: "break-all", flex: "1 1 auto" }}>
                     {r.summary}
                   </span>
                   {/* 徽标走 t()（UX2-8④）：EN 模式露中文徽标 */}
@@ -335,7 +335,7 @@ export function RecordsPane(props: RecordsPaneProps) {
                   )}
                 </div>
                 {r.output_excerpt && expanded.has(r.seq) && (
-                  <pre id={`records-out-${r.seq}`} className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "6px 0 0", padding: 8, border: "1px solid var(--border)", borderRadius: 6, maxHeight: 180, overflow: "auto", userSelect: "text" }}>
+                  <pre id={`records-out-${r.seq}`} className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "6px 0 0", padding: 8, border: "1px solid var(--border)", borderRadius: 6, maxHeight: 180, overflow: "auto", userSelect: "text", WebkitUserSelect: "text" }}>
                     {r.output_excerpt}
                   </pre>
                 )}

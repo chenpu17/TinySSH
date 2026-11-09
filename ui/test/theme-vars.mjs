@@ -51,26 +51,36 @@ export function parseColor(s) {
   return null;
 }
 // color-mix(in srgb, var(--x) N%, transparent) → { base, alpha }
-const mixRe = /^color-mix\(in srgb, var\((--[a-z-]+)\) (\d+)%, transparent\)$/;
+const mixRe = /^color-mix\(in srgb, var\((--[a-z0-9-]+)\) (\d+)%, transparent\)$/;
+// 两实色混合（如 --warn-bg = warn 混 panel2）：→ { mixPair: { a, p, b } }
+const mixPairRe = /^color-mix\(in srgb, var\((--[a-z0-9-]+)\) (\d+)%, var\((--[a-z0-9-]+)\)\)$/;
 export function resolveColor(vars, name, depth = 0) {
   if (depth > 4) return null;
   let v = vars[name];
   if (v === undefined) return null;
-  const ref = v.match(/^var\((--[a-z-]+)\)$/);
+  const ref = v.match(/^var\((--[a-z0-9-]+)\)$/);
   if (ref) return resolveColor(vars, ref[1], depth + 1);
   const mix = v.match(mixRe);
   if (mix) return { mixBase: mix[1], alpha: Number(mix[2]) / 100 };
+  const pair = v.match(mixPairRe);
+  if (pair) return { mixPair: { a: pair[1], p: Number(pair[2]) / 100, b: pair[3] } };
   const c = parseColor(v);
   return c ? { c } : null;
 }
 // 实色合成：fg（可带 alpha/color-mix）叠到 bg 实色上
-export function over(vars, fgName, bgColor) {
-  const r = resolveColor(vars, fgName);
+export function over(vars, fgName, bgColor, depth = 0) {
+  const r = resolveColor(vars, fgName, depth);
   if (!r) return null;
   if (r.mixBase) {
-    const base = resolveColor(vars, r.mixBase);
+    const base = resolveColor(vars, r.mixBase, depth + 1);
     if (!base?.c) return null;
     return base.c.map((ch, i) => (i < 3 ? ch * r.alpha + bgColor[i] * (1 - r.alpha) : 1));
+  }
+  if (r.mixPair) {
+    const a = resolveColor(vars, r.mixPair.a, depth + 1);
+    const b = resolveColor(vars, r.mixPair.b, depth + 1);
+    if (!a?.c || !b?.c) return null;
+    return a.c.map((ch, i) => (i < 3 ? ch * r.mixPair.p + b.c[i] * (1 - r.mixPair.p) : 1));
   }
   return r.c.map((ch, i) => (i < 3 ? ch * r.c[3] + bgColor[i] * (1 - r.c[3]) : 1));
 }

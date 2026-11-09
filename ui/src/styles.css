@@ -69,6 +69,14 @@
   --warn: #e0af68;
   /* 警告正文专用档（历史 R40 F3 判据保留）：深色同 --warn（panel 上 9.2:1）。 */
   --warn-text: #e0af68;
+  /* 自主模式横幅底（App 内联 var(--warn-bg)）：panel2 上混 warn 的着色档，不再用
+     深棕 #4a3208 兜底（浅色下是突兀黑块）。8%/14% 由 wcag-themes.mjs 全矩阵反算，
+     warn/warn-text 文字对混合底仍 ≥4.5:1；边框档供需要实线描边的警示面复用。 */
+  --warn-bg: color-mix(in srgb, var(--warn) 8%, var(--panel2));
+  --warn-border: color-mix(in srgb, var(--warn) 55%, transparent);
+  /* 输入控件常态描边（非文本 UI 判据 ≥3:1）：text 56% alpha 叠在 --bg 井底上，
+     对 bg/panel/panel2/panel3 实测最紧 3.01:1；焦点态仍走 accent 环，不参与弱化 */
+  --control-border: color-mix(in srgb, var(--text) 56%, transparent);
   /* panel3 提亮底上的 accent 正文专用档（历史 R41 L2 判据保留）：深色 8.1:1。 */
   --accent-text: #5fcbd8;
   /* 主题④轮拆档：--accent=可读身份色（文本/描边/软底派生源，对 bg/panel ≥4.5）；
@@ -89,6 +97,14 @@
   --on-warn: #251b06;
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
   --accent-ring: color-mix(in srgb, var(--accent) 22%, transparent);
+  /* 终端选区（可达性轮）：xterm 的 selectionForeground 会覆盖单元格前景，故选中文字
+     用「正文色向白/黑再走一步」的实色（深色提亮、浅色压暗），选区底为 accent 混终端底
+     ——深色 30%（失焦 12%）、浅色 22%（失焦 8%）。全 32 态选中文字对选区底 ≥4.5:1
+     （wcag-themes.mjs 门），失焦底明显降级且与激活态可区分。 */
+  --term-sel-ink: #ffffff;
+  --term-sel-fg: color-mix(in srgb, var(--text) 60%, var(--term-sel-ink));
+  --term-sel-bg: color-mix(in srgb, var(--accent) 30%, var(--bg));
+  --term-sel-inactive: color-mix(in srgb, var(--accent) 12%, var(--bg));
   --accent-glow: color-mix(in srgb, var(--accent) 35%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
   --danger-soft: color-mix(in srgb, var(--danger) 12%, transparent);
@@ -155,6 +171,10 @@
   --warn-text: #856209;
   --accent-text: #0a7280;
   --warn-hover: #73550b;
+  /* 浅色横幅底：白 panel2 上混深 warn 才显色；14% 是 warn/warn-text 仍 ≥4.5:1 的上限档 */
+  --warn-bg: color-mix(in srgb, var(--warn) 14%, var(--panel2));
+  /* 浅色 input 井底比 panel 更深，描边须更浓才保 3:1：78% alpha 最紧 3.02:1 */
+  --control-border: color-mix(in srgb, var(--text) 78%, transparent);
   --blue: #2d6cb5;
   --border-hover: rgba(13, 32, 44, 0.20);
   --on-accent: #ffffff;
@@ -162,6 +182,11 @@
   --on-warn: #ffffff;
   /* 浅色专属 alpha 档（与 :root 深色档百分比不同的才覆写，全部 color-mix 派生随板走） */
   --accent-ring: color-mix(in srgb, var(--accent) 20%, transparent);
+  /* 浅色终端选区：正文压暗一档（≥4.5:1），选区底 22%、失焦 8%（见 :root 注释） */
+  --term-sel-ink: #000000;
+  --term-sel-fg: color-mix(in srgb, var(--text) 50%, var(--term-sel-ink));
+  --term-sel-bg: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  --term-sel-inactive: color-mix(in srgb, var(--accent) 8%, var(--bg));
   --accent-glow: color-mix(in srgb, var(--accent) 28%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 40%, transparent);
   --danger-soft: color-mix(in srgb, var(--danger) 10%, transparent);
@@ -234,7 +259,7 @@ body {
   margin-left: 6px; padding-left: 11px;
   border-left: 1px solid var(--border);
   font-size: 11px; font-variant-numeric: tabular-nums; color: var(--dim);
-  white-space: nowrap; user-select: none;
+  white-space: nowrap; -webkit-user-select: none; user-select: none;
 }
 .tb-self .tb-self-val { color: var(--text); opacity: 0.85; }
 .tb-right { display: flex; align-items: center; gap: 6px; }
@@ -397,7 +422,7 @@ button.ghost.attn:not(:disabled):hover { color: var(--warn); background: var(--p
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border); border-top: none;
   font-size: 11px; color: var(--text-sub); white-space: nowrap;
-  user-select: none; cursor: default;
+  -webkit-user-select: none; user-select: none; cursor: default;
 }
 .focus-mode.zen-auto .zen-pill { display: inline-flex; }
 .focus-mode.zen-auto .zen-pill:hover ~ .tabbar-row,
@@ -577,7 +602,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.attn:not(:disabled):hover { color: var(--warn); }
 input, select {
   /* UX 改版：输入框用 --bg 井底（比所在面板深一档的「凹陷」隐喻），panel2 留给浮起卡片 */
-  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  background: var(--bg); border: 1px solid var(--control-border); color: var(--text);
   border-radius: 8px; padding: 6px 9px; font-size: 12px; width: 100%;
   font-family: inherit; /* 按钮美化轮：同 button，UA 默认 Arial→中文落雅黑 */
 }
@@ -591,7 +616,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
-input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus), textarea:hover:not(:disabled):not(:focus) { border-color: var(--border-hover); }
+/* 悬停加深描边（不能落回 --border-hover：常态已按 3:1 加浓，悬停反而变淡会失去反馈） */
+input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus), textarea:hover:not(:disabled):not(:focus) { border-color: color-mix(in srgb, var(--text) 88%, transparent); }
+/* 禁用态：弱化底 + 明确不可用光标；文字走 --text-sub（全主题 ≥4.5:1），不用会掉档的 --dim */
+input:disabled:not([type="checkbox"]):not([type="radio"]), select:disabled, textarea:disabled {
+  background: color-mix(in srgb, var(--text) 4%, var(--bg));
+  color: var(--text-sub); cursor: not-allowed; opacity: 0.85;
+}
 .ico { flex: none; }
 .badge {
   display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
@@ -660,7 +691,7 @@ input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus),
 
 /* 添加主机表单 */
 textarea {
-  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  background: var(--bg); border: 1px solid var(--control-border); color: var(--text);
   border-radius: 8px; padding: 6px 9px; font-size: 12px;
   font-family: var(--mono); resize: vertical;
 }
@@ -670,6 +701,15 @@ textarea {
   font-family: var(--mono); font-size: 11px;
   background: var(--panel); padding: 1px 5px; border-radius: 4px;
 }
+/* IME 组合预览框：xterm 默认黑底白字，浅色主题下像一块贴错的黑方块；改跟随主题面/字，
+   描边用控件档保证预览可辨（内容随组合文本实时变化，底不能与终端底同色而失去边界） */
+.xterm .composition-view {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--control-border); border-radius: 3px;
+}
+/* 自主模式横幅内的说明行（.dim）：warn 着色底吃掉 --dim 的对比余量，统一提为
+   --warn-text（对 --warn-bg 全矩阵 ≥4.5:1）；主文案的内联 color 仍由 App 管 */
+.autonomy-banner .dim { color: var(--warn-text); }
 .term-wrap { flex: 1; min-height: 0; padding: 8px; display: flex; overflow: hidden; position: relative; }
 /* 监控条（命令框退役轮）：命令框腾出的底部常驻条改为 FinalShell 式远端资源
    采样条。样式全走色板 token（9 族主题自适应）；数值 tabular-nums + 迷你条
@@ -683,7 +723,7 @@ textarea {
   background: var(--panel); border-top: 1px solid var(--border);
   font-size: 11px; color: var(--text-sub);
   white-space: nowrap; overflow: hidden;
-  user-select: none;
+  -webkit-user-select: none; user-select: none;
   container-type: inline-size;
 }
 .metrics-bar .mhost { flex: 0 1 auto; min-width: 48px; color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
@@ -753,7 +793,7 @@ textarea {
 .pane-div:focus-visible { outline: none; }
 .pane-div:focus-visible::after { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
 .div-group:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 999px; }
-body.split-dragging { user-select: none; }
+body.split-dragging { -webkit-user-select: none; user-select: none; }
 body.split-drag-lr, body.split-drag-lr * { cursor: col-resize !important; }
 body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 /* 分屏组命名（本轮）：组名胶囊叠分割条中央（10px 条身内绝对定位向两侧溢出）。
@@ -789,6 +829,26 @@ body.split-dragging .pane-div .div-group { opacity: 1; pointer-events: auto; }
   content: ""; position: absolute; inset: 0; pointer-events: none;
   border: 2px solid var(--accent); border-radius: 7px;
 }
+/* 分屏窗格掉线遮罩（本轮 C）：遮罩挂在各自 .term-session 内、按窗格自身状态显示，
+   只压这一格——同组另一格与普通单窗格视图完全不受影响（单窗格仍走 #term 级
+   .dead-overlay）。z 4 低于名牌标题栏 z 5 与描边 z 6：掉线时名牌上的最大化/
+   交换/退出仍可点；底色沿用 --dead-scrim，与全局遮罩同一语言。 */
+.pane-scrim {
+  display: none; position: absolute; inset: 0; z-index: 4;
+  flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 26px 12px 12px; text-align: center;
+  background: var(--dead-scrim);
+  -webkit-user-select: none; user-select: none;
+}
+.term-session.pane-left.pane-dead .pane-scrim,
+.term-session.pane-right.pane-dead .pane-scrim,
+.term-session.pane-top.pane-dead .pane-scrim,
+.term-session.pane-bottom.pane-dead .pane-scrim { display: flex; }
+.pane-scrim-state { font-size: 13px; color: var(--text); }
+.pane-scrim-hint { max-width: 320px; font-size: 11px; line-height: 1.6; color: var(--text-sub); }
+.pane-scrim-actions { display: flex; gap: 8px; margin-top: 2px; }
+.pane-scrim-actions button { padding: 4px 12px; font-size: 12px; }
+.pane-scrim-actions button:disabled { opacity: 0.55; cursor: default; }
 .pane-tag {
   display: none; position: absolute; top: 2px; left: 8px; z-index: 5;
   font-size: 10px; font-family: var(--mono); color: var(--dim);
@@ -849,7 +909,7 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
   display: flex; align-items: center; gap: 6px; top: 0; left: 0; right: 0; height: 22px;
   padding: 0 8px; border-radius: 0; font-size: 11px;
   background: var(--panel); border-bottom: 1px solid var(--border);
-  user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  -webkit-user-select: none; user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .term-session.pane-focused .pane-tag { color: var(--accent); }
 
@@ -876,7 +936,7 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
   display: flex; align-items: center; gap: 6px; top: 0; left: 0; right: 0; height: 22px;
   padding: 0 8px; border-radius: 0; font-size: 11px; color: var(--text-sub);
   background: var(--panel); border-bottom: 1px solid var(--border);
-  pointer-events: auto; cursor: grab; user-select: none; touch-action: none;
+  pointer-events: auto; cursor: grab; -webkit-user-select: none; user-select: none; touch-action: none;
 }
 #term.has-tmux-panes .term-session.active .pane-tag .main-zoom-btn { display: flex; }
 #term.has-tmux-panes .term-session.active .pane-tag.tmux-attached .main-detach-btn { display: flex; }
@@ -903,7 +963,7 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
   flex: none; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 4px 0 8px;
   font-size: 11px; color: var(--text-sub); background: var(--panel); cursor: grab;
   border-bottom: 1px solid var(--border); border-radius: 7px 7px 0 0;
-  user-select: none; touch-action: none;
+  -webkit-user-select: none; user-select: none; touch-action: none;
 }
 /* 焦点格指示——主视图与格子同一套（用户反馈：主视图选中时没有框、格子的框看不出来）：
    ① 2px accent 实线框画在 ::after 叠层（实线 border，墨水屏铲阴影不受影响；穿透指针；
@@ -947,6 +1007,30 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
 /* 死格只去色、不再整体降透明度：0.45 透明度把浅色主题的正文压到 1.8–2.9:1，
    而「已断开」状态字已在标题栏常显——保留最后一段输出可读比重度蒙灰更有用 */
 .tmux-cell.dead .tmux-cell-body { filter: grayscale(0.85); }
+/* 「回到底部」浮钮（本轮 A）：主终端与 tmux 格子共用。默认透明且不接指针，
+   悬停所在会话/格子或按钮键盘聚焦时才显形——不遮正文、不抢终端焦点；
+   JS 只在普通屏且视口下方确有历史时取消 hidden（ALT 屏/远端 copy-mode 不出现） */
+.term-scroll-bottom {
+  position: absolute; right: 16px; bottom: 12px; z-index: 7;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; line-height: 1.6; font-family: inherit;
+  color: var(--text-sub); background: var(--panel2);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px var(--shadow-soft);
+  cursor: pointer; opacity: 0; pointer-events: none;
+  transition: opacity .12s ease, color .12s ease, border-color .12s ease;
+}
+.term-scroll-bottom[hidden] { display: none; }
+.term-session:hover .term-scroll-bottom:not([hidden]),
+.term-session:focus-within .term-scroll-bottom:not([hidden]),
+.tmux-cell-body:hover .term-scroll-bottom:not([hidden]),
+.term-scroll-bottom:focus-visible { opacity: 1; pointer-events: auto; }
+.term-scroll-bottom:hover {
+  color: var(--text); background: var(--panel3); border-color: var(--border-hover);
+}
+.term-scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.term-scroll-bottom.pane { right: 8px; bottom: 8px; padding: 2px 8px; font-size: 10px; }
 /* 拖拽布局：标题栏可抓（grab）拖动换位，分隔条 8px 命中区拖动调大小（静态分隔线仍是
    格子 1px 边框，条只在悬停/拖动时亮 accent）。拖动期间全窗锁光标、禁选中文本；被拖格
    半透明，落点提示框 = 落下后被拖格的真实位置（无过渡动画——墨水屏主题同样适用） */
@@ -959,7 +1043,7 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
 .tmux-div.div-v::after { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
 .tmux-div.div-h::after { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
 .tmux-div:hover::after, .tmux-div.dragging::after { background: var(--accent-glow); }
-body.tile-resizing, body.tile-dragging { user-select: none; }
+body.tile-resizing, body.tile-dragging { -webkit-user-select: none; user-select: none; }
 body.tile-resize-x, body.tile-resize-x * { cursor: col-resize !important; }
 body.tile-resize-y, body.tile-resize-y * { cursor: row-resize !important; }
 body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
@@ -1096,7 +1180,7 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
   display: flex; align-items: center; gap: 7px; flex: none; min-width: 120px;
   max-width: 220px; height: 30px; padding: 0 6px 0 10px; font-size: 12px; font-weight: 500; color: var(--text-sub);
   border: 1px solid transparent; border-radius: 9px;
-  background: color-mix(in srgb, var(--panel) 45%, transparent); cursor: pointer; user-select: none;
+  background: color-mix(in srgb, var(--panel) 45%, transparent); cursor: pointer; -webkit-user-select: none; user-select: none;
   position: relative;
   transition: background 120ms, color 120ms, border-color 120ms, box-shadow 120ms;
 }
@@ -1148,7 +1232,7 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 .tab { cursor: grab; touch-action: none; }
 .tab .tab-rename { cursor: text; }
 .tab.tab-drag-src { opacity: 0.55; }
-body.tab-dragging { user-select: none; }
+body.tab-dragging { -webkit-user-select: none; user-select: none; }
 body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .tab-active.tab-drop-before { box-shadow: inset 2px 0 0 var(--accent), 0 1px 6px var(--shadow-soft); }
 .tab-active.tab-drop-after { box-shadow: inset -2px 0 0 var(--accent), 0 1px 6px var(--shadow-soft); }
@@ -1225,6 +1309,10 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 }
 .term-search input { width: 180px; padding: 4px 8px; }
 .term-search button { padding: 2px 8px; font-size: 12px; line-height: 1.4; }
+/* 查找选项（本轮）：区分大小写/全词/正则——紧凑等宽小钮，开启态 accent 描边 */
+.term-search .search-opt { font-family: var(--mono); font-size: 11px; min-width: 26px; padding: 3px 5px; color: var(--dim); }
+.term-search .search-opt.on { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); }
+.term-search input[aria-invalid="true"] { border-color: var(--danger); }
 /* 显示设置弹出面板（T18）：悬浮于终端右上角；透明遮罩点击面板外即关。
    R41 视觉复验 B5：右栏面板进入**完整视图**态时 `.task-panel.tp-full` 与遮罩/对话框
    的相对次序——模态必须高于常驻面板（原 40/41/42，窄窗实测 11/11 元素不可达后定的序）。
@@ -1577,7 +1665,7 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .hk-fp {
   background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
   padding: 6px 10px; margin: 8px 0 0; font-size: 11px;
-  word-break: break-all; user-select: text;
+  word-break: break-all; -webkit-user-select: text; user-select: text;
 }
 .hk-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 
@@ -1690,7 +1778,7 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 }
 .sftp-selbar button { flex: none; padding: 2px 6px; font-size: 11px; }
 .sftp-list:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 4px; }
-.sftp-row { user-select: none; cursor: default; }
+.sftp-row { -webkit-user-select: none; user-select: none; cursor: default; }
 .sftp-row.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .sftp-row.cursor { outline: 1px solid var(--focus); outline-offset: -1px; }
 .sftp-list.cols-no-time .sftp-time { display: none; }
@@ -1741,6 +1829,17 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 .ah-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ah-field label { font-size: 10px; color: var(--text-sub); letter-spacing: 0.3px; }
 .ah-field input, .ah-field select { width: 100%; }
+/* 密码/口令可见性开关：图标钮叠在输入框右端，不新占表单行宽。
+   宽度交给所在容器（.ah-field 纵向拉伸 / .row 里由 wrapStyle 决定） */
+.secret-input { position: relative; display: block; min-width: 0; }
+.secret-input > input { width: 100%; padding-right: 28px; }
+.secret-toggle {
+  position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+  width: auto; padding: 2px 4px; background: transparent; border: none;
+  box-shadow: none; color: var(--text-sub); line-height: 1;
+}
+.secret-toggle:hover { color: var(--text); background: transparent; }
+
 .dead-overlay { position: absolute; inset: 0; z-index: 20; background: var(--dead-scrim); display: flex; align-items: flex-start; justify-content: center; pointer-events: none; }
 /* tmux 面板在挂时断线横幅缩半宽居右：主视图格被盖一半即可读，面板格仍可见可点。
    .dead-overlay 是 #term 的后继兄弟（同在 .term-wrap 内），故用 ~ 而非后代选择器 */
@@ -1759,6 +1858,13 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
   display: flex; flex-direction: column; gap: 2px;
 }
 .split-menu .sm-item .sm-name, .ctx-menu .sm-item .sm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 右键菜单快捷键提示（本轮）：右对齐、弱化、等宽小字。用 flex + margin-left:auto
+   右推，菜单宽度仍随内容（不写死宽度；越界由 ctx-menus.tsx 的 clampIntoView 回夹） */
+.sm-key {
+  margin-left: auto; flex: none;
+  font-family: var(--mono); font-size: 11px; line-height: 1.4;
+  color: var(--dim); letter-spacing: 0.2px; white-space: nowrap;
+}
 /* 分屏⑥轮：方向选择（左右/上下）分段单选——选中态 accent 描边；记住的选择
    沿用到工具栏分屏钮/右键菜单，直到下次改选。按钮美化轮：悬停选择器补 button 前缀——
    此前 .split-menu .sm-dir:hover 特异度输给通用 button:hover，悬停整块变 accent 实底 */
@@ -1866,7 +1972,7 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 .win-controls button.wc-btn:hover { background: var(--panel3); color: var(--text); }
 .win-controls button.wc-btn.wc-close:hover { background: #e81123; color: #fff; }
 /* 标题区整行即拖拽区：文字不可选中、光标为箭头（标题栏语义）；按钮恢复手型 */
-.titlebar[data-tauri-drag-region] span { cursor: default; user-select: none; }
+.titlebar[data-tauri-drag-region] span { cursor: default; -webkit-user-select: none; user-select: none; }
 .titlebar[data-tauri-drag-region] button { cursor: pointer; }
 /* 顶栏图标钮（导入/添加主机收图标后的方正小钮） */
 .icon-btn { padding: 5px 7px; }
@@ -1898,6 +2004,13 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 .host-card:hover .host-card-side,
 .host-card:focus-within .host-card-side,
 .host-card-side:has(.host-connect-btn:disabled) { opacity: 1; pointer-events: auto; }
+/* 操作组浮现时给名称/地址行让出等宽：绝对定位的操作组此前直接压在文字上
+   （实测长主机名被盖 84px、地址被盖 32px）。只让这两行主信息以省略号收束，
+   tags 与失败提示保持原宽——卡片高度不随 hover 抖动。完整信息仍在卡 title 里。 */
+.host-card:hover .host-line,
+.host-card:focus-within .host-line,
+.host-card:hover .host-addr,
+.host-card:focus-within .host-addr { padding-right: 124px; }
 /* 相位文本（连接中…/等待指纹确认/认证中…）钉单行省略：CJK 长相位不得撑宽按钮
    把 side 覆盖面顶到整卡（六轮 C6-2；三钮已在途隐藏让位，此处兜底极窄卡） */
 .host-connect-btn {
@@ -1906,7 +2019,9 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 .host-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .host-name { font-size: 14px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-addr { font-size: 11px; color: var(--text-sub); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.host-fail { font-size: 11px; margin-top: 2px; }
+.host-fail { font-size: 11px; margin-top: 2px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+/* 失败横幅就地重试：常显、键盘可达；与「连接」同走 activate 路径（在途由 connectingIds 拦） */
+.host-retry-btn { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; font-size: 10px; }
 .auth-tag {
   flex: none; font-size: 10px; color: var(--text-sub); line-height: 15px;
   border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
@@ -1974,7 +2089,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 /* ---- T34 专业外壳收尾与信任可查证 ---- */
 /* 主机编辑表单的信任状态行：确认标记 + 指纹原文（可复制核对） */
 .trust-row { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
-.trust-row .fp { color: var(--dim); word-break: break-all; user-select: text; cursor: text; }
+.trust-row .fp { color: var(--dim); word-break: break-all; -webkit-user-select: text; user-select: text; cursor: text; }
 
 /* 首次接入提示（悬浮条，不占终端行）：此前直接写进终端流会把 shell 的光标视角带偏
 （用户走查实锤：提示语与后续输出全部落到屏中下方）。自动淡出，pointer-events 放行点击。 */
@@ -2036,7 +2151,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
    主题①轮：danger 橙红(25°)→绯红(17°)，与 accent(39°) 拉开 22° 色相距（原 13° 分不开） */:root[data-theme="ember"][data-chrome="dark"] {
   --bg: #121215; --panel: #17171a; --panel2: #1c1c20; --panel3: #232327;
   --border: rgba(255, 255, 255, 0.08); --border-hover: rgba(255, 255, 255, 0.17);
-  --text: #ecedee; --text-sub: #a3a4a8; --dim: #83848b;
+  --text: #ecedee; --text-sub: #a3a4a8; --dim: #898a91;
   --accent: #e07856; --accent-hover: #eda382; --accent-text: #eda382;
   --danger: #ea6a76; --danger-hover: #f28490;
   --ok: #57b08a; --warn: #d3a04c; --warn-text: #d3a04c; --warn-hover: #e0b153;
@@ -2055,12 +2170,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="ember"][data-chrome="light"] {
   --bg: #f3f2f0; --panel: #fbfbfa; --panel2: #ffffff; --panel3: #ececea;
   --border: rgba(72, 48, 32, 0.10); --border-hover: rgba(72, 48, 32, 0.20);
-  --text: #232323; --text-sub: #5f5f5e; --dim: #6f6f6c;
+  --text: #232323; --text-sub: #5f5f5e; --dim: #6a6a67;
   --accent: #ad4726; --accent-hover: #8f3c1e; --accent-text: #8f3c1e;
   /* 主题④轮填充档：赤陶橙提亮到饱和焰橙（正文/描边仍走 #ad4726 可读档） */
   --accent-fill: #c2410c; --accent-fill-hover: #9a3412;
   --danger: #b23a50; --danger-hover: #9c3145;
-  --ok: #4e7a2b; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
+  --ok: #4b7529; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #3b6fb5; --focus: #96401f;
   --grad-a: #c2410c; --grad-b: #9a3412;
@@ -2075,7 +2190,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="ocean"][data-chrome="dark"] {
   --bg: #090c11; --panel: #0d1117; --panel2: #121722; --panel3: #1a2230;
   --border: rgba(160, 190, 255, 0.09); --border-hover: rgba(160, 190, 255, 0.18);
-  --text: #e6edf3; --text-sub: #8b98a9; --dim: #728199;
+  --text: #e6edf3; --text-sub: #8b98a9; --dim: #7c8aa0;
   --accent: #4c8dff; --accent-hover: #7db2ff; --accent-text: #7db2ff;
   --danger: #e5636c; --danger-hover: #ef8089;
   --ok: #3fb68b; --warn: #d9a53f; --warn-text: #d9a53f; --warn-hover: #e5b45c;
@@ -2093,7 +2208,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="ocean"][data-chrome="light"] {
   --bg: #eef2f7; --panel: #f7f9fc; --panel2: #ffffff; --panel3: #e7edf5;
   --border: rgba(28, 52, 82, 0.10); --border-hover: rgba(28, 52, 82, 0.20);
-  --text: #1d2733; --text-sub: #4f5e6e; --dim: #5e6d7d;
+  --text: #1d2733; --text-sub: #4f5e6e; --dim: #5d6c7c;
   --accent: #2464ad; --accent-hover: #1d5493; --accent-text: #1d5493;
   /* 主题④轮填充档：浅色 accent 不再为文本判据压暗——按钮/指示件走鲜湖蓝 */
   --accent-fill: #2563eb; --accent-fill-hover: #1d4ed8;
@@ -2113,7 +2228,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="violet"][data-chrome="dark"] {
   --bg: #0f0d15; --panel: #14111c; --panel2: #1a1626; --panel3: #221c30;
   --border: rgba(190, 170, 255, 0.09); --border-hover: rgba(190, 170, 255, 0.18);
-  --text: #ece9f5; --text-sub: #9a92b5; --dim: #847c9f;
+  --text: #ece9f5; --text-sub: #9a92b5; --dim: #8a82a4;
   --accent: #a78bfa; --accent-hover: #c4b5fd; --accent-text: #c4b5fd;
   --danger: #ef6b73; --danger-hover: #f58a90;
   --ok: #4fd48e; --warn: #e0b153; --warn-text: #e0b153; --warn-hover: #eabf6e;
@@ -2133,7 +2248,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --bg: #f1f0fa; --panel: #f8f7fd; --panel2: #ffffff; --panel3: #e9e7f6;
   --border: rgba(80, 62, 190, 0.10); --border-hover: rgba(80, 62, 190, 0.20);
   --text: #262238; --text-sub: #554f76; --dim: #655e85;
-  --accent: #6553e8; --accent-hover: #5342cc; --accent-text: #5342cc;
+  --accent: #614fe7; --accent-hover: #5342cc; --accent-text: #5342cc;
   --danger: #a83a5e; --danger-hover: #8f2f50;
   --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #73550b;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
@@ -2151,7 +2266,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="noir"][data-chrome="dark"] {
   --bg: #0f0e0c; --panel: #141210; --panel2: #1b1916; --panel3: #221f19;
   --border: rgba(212, 180, 131, 0.09); --border-hover: rgba(212, 180, 131, 0.18);
-  --text: #f0ece3; --text-sub: #a89f8f; --dim: #8d8474;
+  --text: #f0ece3; --text-sub: #a89f8f; --dim: #8f8676;
   --accent: #c8a96e; --accent-hover: #e0c89a; --accent-text: #e0c89a;
   --danger: #e07568; --danger-hover: #eb9184;
   --ok: #6fae87; --warn: #d47818; --warn-text: #d47818; --warn-hover: #e59b3f;
@@ -2170,12 +2285,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="noir"][data-chrome="light"] {
   --bg: #f1ede4; --panel: #faf8f3; --panel2: #ffffff; --panel3: #e9e3d6;
   --border: rgba(122, 96, 50, 0.11); --border-hover: rgba(122, 96, 50, 0.21);
-  --text: #2b2620; --text-sub: #665e4e; --dim: #6f675a;
+  --text: #2b2620; --text-sub: #665e4e; --dim: #6c6457;
   --accent: #7d5a20; --accent-hover: #684a18; --accent-text: #684a18;
   /* 主题④轮填充档：暗铜金提亮到琥珀金（可读档保持深铜） */
   --accent-fill: #b45309; --accent-fill-hover: #92400e;
-  --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #357953; --warn: #a04e02; --warn-text: #a04e02; --warn-hover: #8a4102;
+  --danger: #b23c40; --danger-hover: #a23437;
+  --ok: #31714d; --warn: #a04e02; --warn-text: #a04e02; --warn-hover: #8a4102;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #4a6fa5; --focus: #684a18;
   --grad-a: #b45309; --grad-b: #92400e;
@@ -2213,10 +2328,10 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="aurora"][data-chrome="light"] {
   --bg: #edf4ee; --panel: #f5faf5; --panel2: #ffffff; --panel3: #e1ece3;
   --border: rgba(24, 74, 48, 0.10); --border-hover: rgba(24, 74, 48, 0.20);
-  --text: #1a2921; --text-sub: #4c6154; --dim: #5c7063;
-  --accent: #147a51; --accent-hover: #0e6240; --accent-text: #0e6240;
+  --text: #1a2921; --text-sub: #4c6154; --dim: #5a6d61;
+  --accent: #14774f; --accent-hover: #0e6240; --accent-text: #0e6240;
   --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #4e741a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --ok: #4d731a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #0e6240;
   --grad-a: #147a51; --grad-b: #0e6240;
@@ -2250,10 +2365,10 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="celadon"][data-chrome="light"] {
   --bg: #edf3f1; --panel: #f5faf8; --panel2: #ffffff; --panel3: #e0ebe7;
   --border: rgba(20, 70, 60, 0.10); --border-hover: rgba(20, 70, 60, 0.20);
-  --text: #1e2a27; --text-sub: #4e615c; --dim: #5e716c;
-  --accent: #0e7a66; --accent-hover: #0a604f; --accent-text: #0a604f;
-  --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #4b7a28; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --text: #1e2a27; --text-sub: #4e615c; --dim: #5a6c67;
+  --accent: #0d7562; --accent-hover: #0a604f; --accent-text: #0a604f;
+  --danger: #b73e42; --danger-hover: #a23437;
+  --ok: #477326; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #0a604f;
   --grad-a: #0e7a66; --grad-b: #0a604f;
@@ -2269,7 +2384,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="sakura"][data-chrome="dark"] {
   --bg: #140f13; --panel: #1a1318; --panel2: #201820; --panel3: #291e28;
   --border: rgba(240, 170, 195, 0.09); --border-hover: rgba(240, 170, 195, 0.18);
-  --text: #f1eaef; --text-sub: #b1a0ab; --dim: #907f8a;
+  --text: #f1eaef; --text-sub: #b1a0ab; --dim: #95848f;
   --accent: #f0a8bc; --accent-hover: #f7c4d2; --accent-text: #f7c4d2;
   --danger: #e5764e; --danger-hover: #f18f68;
   --ok: #6cc794; --warn: #d9a53f; --warn-text: #d9a53f; --warn-hover: #e5b45c;
@@ -2287,12 +2402,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="sakura"][data-chrome="light"] {
   --bg: #f7f0f3; --panel: #fcf8fa; --panel2: #ffffff; --panel3: #f0e3e9;
   --border: rgba(96, 44, 66, 0.10); --border-hover: rgba(96, 44, 66, 0.20);
-  --text: #2b2126; --text-sub: #6d5762; --dim: #7c6671;
-  --accent: #b0486c; --accent-hover: #953957; --accent-text: #953957;
+  --text: #2b2126; --text-sub: #6d5762; --dim: #76616c;
+  --accent: #a84567; --accent-hover: #953957; --accent-text: #953957;
   /* 主题④轮填充档：深玫瑰提亮到饱和樱玫（可读档保持） */
   --accent-fill: #cf3065; --accent-fill-hover: #b02957;
-  --danger: #b83e42; --danger-hover: #a23437;
-  --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
+  --danger: #b53d41; --danger-hover: #a23437;
+  --ok: #257449; --warn: #846109; --warn-text: #846109; --warn-hover: #6e520c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #4a5fa5; --focus: #953957;
   --grad-a: #cf3065; --grad-b: #b02957;
@@ -2325,9 +2440,9 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="obsidian"][data-chrome="light"] {
   --bg: #f0f1f3; --panel: #f8f9fa; --panel2: #ffffff; --panel3: #e5e8ec;
   --border: rgba(40, 48, 60, 0.11); --border-hover: rgba(40, 48, 60, 0.21);
-  --text: #22262c; --text-sub: #565e6a; --dim: #666e7a;
+  --text: #22262c; --text-sub: #565e6a; --dim: #616874;
   --accent: #3c4654; --accent-hover: #2b333e; --accent-text: #2b333e;
-  --danger: #b83e42; --danger-hover: #a23437;
+  --danger: #b63d41; --danger-hover: #a23437;
   --ok: #25764a; --warn: #856209; --warn-text: #856209; --warn-hover: #6e520c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #2d6cb5; --focus: #2b333e;
@@ -2367,11 +2482,11 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --bg: #eef0f8; --panel: #f7f8fc; --panel2: #ffffff; --panel3: #e5e8f4;
   --border: rgba(56, 48, 128, 0.10); --border-hover: rgba(56, 48, 128, 0.20);
   --text: #1c2030; --text-sub: #4e5674; --dim: #5e6685;
-  --accent: #0b7291; --accent-hover: #095e78; --accent-text: #095e78;
+  --accent: #0b7190; --accent-hover: #095e78; --accent-text: #095e78;
   /* 主题④轮填充档：按钮回归电光亮青+墨字（电青的浅底白字窗太窄），渐变双极同步提亮 */
   --accent-fill: #0794b4; --accent-fill-hover: #0897b6;
   --danger: #c22a4d; --danger-hover: #a32140;
-  --ok: #0a7647; --warn: #8a6500; --warn-text: #8a6500; --warn-hover: #745400;
+  --ok: #0a7647; --warn: #866200; --warn-text: #866200; --warn-hover: #745400;
   --on-accent: #041c24; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #3050c8; --focus: #095e78;
   --grad-a: #0897b6; --grad-b: #c74fd0;
@@ -2387,10 +2502,10 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="ink"][data-chrome="light"] {
   --bg: #f2efe7; --panel: #f9f7f1; --panel2: #ffffff; --panel3: #eae6da;
   --border: rgba(90, 70, 40, 0.11); --border-hover: rgba(90, 70, 40, 0.21);
-  --text: #26231c; --text-sub: #5c564a; --dim: #6d675a;
+  --text: #26231c; --text-sub: #5c564a; --dim: #6c6659;
   --accent: #b23a2e; --accent-hover: #96301f; --accent-text: #96301f;
   --danger: #a02448; --danger-hover: #871d3b;
-  --ok: #47703a; --warn: #7d600a; --warn-text: #8a6a10; --warn-hover: #755a0c;
+  --ok: #47703a; --warn: #7d600a; --warn-text: #80620f; --warn-hover: #755a0c;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #35608f; --focus: #96301f;
   --grad-a: #b23a2e; --grad-b: #8f2b1c;
@@ -2405,8 +2520,8 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="ink"][data-chrome="dark"] {
   --bg: #161519; --panel: #1b1a1f; --panel2: #212026; --panel3: #282730;
   --border: rgba(220, 200, 170, 0.09); --border-hover: rgba(220, 200, 170, 0.18);
-  --text: #eceae2; --text-sub: #a8a294; --dim: #87816f;
-  --accent: #e06b4e; --accent-hover: #eb8a6e; --accent-text: #eb8a6e;
+  --text: #eceae2; --text-sub: #a8a294; --dim: #958f7e;
+  --accent: #e06d50; --accent-hover: #eb8a6e; --accent-text: #eb8a6e;
   --danger: #e3799a; --danger-hover: #ea84a0;
   --ok: #74b063; --warn: #d2a53c; --warn-text: #d2a53c; --warn-hover: #e0b658;
   --on-accent: #2a1008; --on-danger: #2a1010; --on-warn: #251b06;
@@ -2428,7 +2543,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="nord"][data-chrome="dark"] {
   --bg: #232831; --panel: #2e3440; --panel2: #353c4a; --panel3: #3b4252;
   --border: rgba(216, 222, 233, 0.10); --border-hover: rgba(216, 222, 233, 0.20);
-  --text: #eceff4; --text-sub: #b8c2d3; --dim: #8291a7;
+  --text: #eceff4; --text-sub: #b8c2d3; --dim: #a4afbf;
   --accent: #88c0d0; --accent-hover: #a5d3e0; --accent-text: #a5d3e0;
   --danger: #f2a9af; --danger-hover: #f7bcc1;
   --ok: #a3be8c; --warn: #ebcb8b; --warn-text: #ebcb8b; --warn-hover: #f0d7a2;
@@ -2446,12 +2561,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="nord"][data-chrome="light"] {
   --bg: #e8ecf1; --panel: #f4f6f9; --panel2: #fcfdfe; --panel3: #dde3ea;
   --border: rgba(46, 52, 64, 0.12); --border-hover: rgba(46, 52, 64, 0.22);
-  --text: #2e3440; --text-sub: #4c566a; --dim: #6d7889;
+  --text: #2e3440; --text-sub: #4c566a; --dim: #5c6573;
   --accent: #3f6288; --accent-hover: #35547a; --accent-text: #3a5b80;
   /* 主题④轮填充档：霜蓝填充钮（白字 ≥4.5） */
   --accent-fill: #4c74a0; --accent-fill-hover: #3d6089;
   --danger: #a63d47; --danger-hover: #8f333c;
-  --ok: #4d713e; --warn: #826609; --warn-text: #826609; --warn-hover: #6f5708;
+  --ok: #4b6d3c; --warn: #7b6109; --warn-text: #7b6109; --warn-hover: #6f5708;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #3a6fa8; --focus: #35547a;
   --grad-a: #4c74a0; --grad-b: #3d6089;
@@ -2466,7 +2581,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="gruvbox"][data-chrome="dark"] {
   --bg: #1d2021; --panel: #282828; --panel2: #32302f; --panel3: #3c3836;
   --border: rgba(235, 219, 178, 0.10); --border-hover: rgba(235, 219, 178, 0.20);
-  --text: #ebdbb2; --text-sub: #bdae93; --dim: #928374;
+  --text: #ebdbb2; --text-sub: #bdae93; --dim: #aca195;
   --accent: #fabd2f; --accent-hover: #ffc94d; --accent-text: #ffc94d;
   --danger: #ff8a7b; --danger-hover: #ffa291;
   --ok: #b8bb26; --warn: #fe8019; --warn-text: #fe8019; --warn-hover: #ff9540;
@@ -2485,12 +2600,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="gruvbox"][data-chrome="light"] {
   --bg: #ede4c4; --panel: #f6efd6; --panel2: #fcf8ea; --panel3: #e3d9ba;
   --border: rgba(60, 44, 20, 0.12); --border-hover: rgba(60, 44, 20, 0.22);
-  --text: #3c3836; --text-sub: #665c54; --dim: #7c6f64;
+  --text: #3c3836; --text-sub: #665c54; --dim: #685d54;
   --accent: #7d570b; --accent-hover: #6a4909; --accent-text: #6f4d0a;
   /* 主题④轮填充档：深焙金填充钮（白字 ≥4.5） */
   --accent-fill: #8a670c; --accent-fill-hover: #755a0a;
   --danger: #9d0006; --danger-hover: #870005;
-  --ok: #6d680c; --warn: #a35308; --warn-text: #a35308; --warn-hover: #8f4907;
+  --ok: #65610b; --warn: #934b07; --warn-text: #934b07; --warn-hover: #8f4907;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #076678; --focus: #6b4d09;
   --grad-a: #8a670c; --grad-b: #755a0a;
@@ -2505,7 +2620,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="tokyo"][data-chrome="dark"] {
   --bg: #14151f; --panel: #1a1b26; --panel2: #1f2232; --panel3: #292e42;
   --border: rgba(140, 165, 230, 0.10); --border-hover: rgba(140, 165, 230, 0.20);
-  --text: #c0caf5; --text-sub: #9aa5ce; --dim: #70789b;
+  --text: #c0caf5; --text-sub: #9aa5ce; --dim: #8f95b1;
   --accent: #7aa2f7; --accent-hover: #97b8ff; --accent-text: #97b8ff;
   --danger: #f7768e; --danger-hover: #fb92a5;
   --ok: #9ece6a; --warn: #e0af68; --warn-text: #e0af68; --warn-hover: #eabf7f;
@@ -2524,12 +2639,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="tokyo"][data-chrome="light"] {
   --bg: #dfe2e9; --panel: #e6e9f0; --panel2: #f2f4fa; --panel3: #d2d7e3;
   --border: rgba(40, 60, 110, 0.12); --border-hover: rgba(40, 60, 110, 0.22);
-  --text: #3358ac; --text-sub: #556394; --dim: #66739e;
-  --accent: #1b5fc0; --accent-hover: #14509f; --accent-text: #1654a6;
+  --text: #3358ac; --text-sub: #4e5b89; --dim: #515c80;
+  --accent: #1a5ab7; --accent-hover: #14509f; --accent-text: #1654a6;
   /* 主题④轮填充档：晴空蓝填充钮（白字 ≥4.5） */
   --accent-fill: #2470e0; --accent-fill-hover: #1c60c8;
-  --danger: #b03a46; --danger-hover: #a83a45;
-  --ok: #22764a; --warn: #8a5600; --warn-text: #8a5600; --warn-hover: #7a4b00;
+  --danger: #a43641; --danger-hover: #a83a45;
+  --ok: #1e6a42; --warn: #845200; --warn-text: #845200; --warn-hover: #7a4b00;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #0a7bc4; --focus: #14509f;
   /* Tokyo 浅色 --blue 对 --panel 仅 3.72:1：图形可用，文字档另配 5.49:1 深蓝 */
@@ -2547,7 +2662,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="mocha"][data-chrome="dark"] {
   --bg: #11111b; --panel: #181825; --panel2: #1e1e2e; --panel3: #313244;
   --border: rgba(205, 214, 244, 0.09); --border-hover: rgba(205, 214, 244, 0.18);
-  --text: #cdd6f4; --text-sub: #a6adc8; --dim: #6c7086;
+  --text: #cdd6f4; --text-sub: #a6adc8; --dim: #989bac;
   --accent: #cba6f7; --accent-hover: #d7bfff; --accent-text: #d7bfff;
   --danger: #f38ba8; --danger-hover: #f6a4bb;
   --ok: #a6e3a1; --warn: #fab387; --warn-text: #fab387; --warn-hover: #fcc4a4;
@@ -2566,12 +2681,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="mocha"][data-chrome="light"] {
   --bg: #e4e8ef; --panel: #edeff4; --panel2: #f8f9fc; --panel3: #dfe3eb;
   --border: rgba(76, 79, 105, 0.12); --border-hover: rgba(76, 79, 105, 0.22);
-  --text: #4c4f69; --text-sub: #5c5f77; --dim: #7b7f99;
+  --text: #4c4f69; --text-sub: #5c5f77; --dim: #60637c;
   --accent: #7c30d8; --accent-hover: #6b28bd; --accent-text: #6f2cc4;
   /* 主题④轮填充档：官方 mauve 填充钮（白字 ≥4.5） */
   --accent-fill: #8839ef; --accent-fill-hover: #7a2fd6;
   --danger: #c50e34; --danger-hover: #ab0c2d;
-  --ok: #2d7a25; --warn: #86600a; --warn-text: #86600a; --warn-hover: #745409;
+  --ok: #2a7323; --warn: #835e0a; --warn-text: #835e0a; --warn-hover: #745409;
   --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
   --blue: #1a5fd0; --focus: #6b28bd;
   --grad-a: #8839ef; --grad-b: #7a2fd6;
@@ -2588,12 +2703,12 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="eink"][data-chrome="light"] {
   --bg: #e7e4dc; --panel: #eeece5; --panel2: #f6f4ee; --panel3: #d9d6cc;
   --border: rgba(50, 46, 38, 0.26); --border-hover: rgba(50, 46, 38, 0.44);
-  --text: #1f1d18; --text-sub: #49453c; --dim: #6e6a5e;
+  --text: #1f1d18; --text-sub: #49453c; --dim: #605c52;
   --accent: #26231d; --accent-hover: #11100b; --accent-text: #26231d;
   /* 填充档：墨面纸字（按钮底近黑、白纸字反白） */
   --accent-fill: #2a261f; --accent-fill-hover: #191610;
   --danger: #7d2a22; --danger-hover: #67221b;
-  --ok: #2e5c38; --warn: #7a5a12; --warn-text: #7a5a12; --warn-hover: #63480d;
+  --ok: #2e5c38; --warn: #765711; --warn-text: #765711; --warn-hover: #63480d;
   --on-accent: #f6f4ee; --on-danger: #f6f4ee; --on-warn: #f6f4ee;
   --blue: #2c4a6e; --focus: #4a4436;
   --grad-a: #3a352b; --grad-b: #2a261f;
@@ -2609,7 +2724,7 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 :root[data-theme="eink"][data-chrome="dark"] {
   --bg: #12110d; --panel: #191813; --panel2: #211f18; --panel3: #2c2920;
   --border: rgba(213, 209, 198, 0.14); --border-hover: rgba(213, 209, 198, 0.28);
-  --text: #d6d0bd; --text-sub: #a8a28c; --dim: #7d7763;
+  --text: #d6d0bd; --text-sub: #a8a28c; --dim: #96907b;
   --accent: #d5d1c6; --accent-hover: #ece8dd; --accent-text: #d5d1c6;
   --accent-fill: #cfc8b2; --accent-fill-hover: #ded8c6;
   --danger: #cf8a78; --danger-hover: #dc9d8d;
@@ -3124,7 +3239,7 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 .tc-chip.err { color: var(--danger); border: 1px solid var(--danger); }
 /* 推理模型的思考块（折叠，dim 色——不是回复正文） */
 .ag-think { margin: 2px 0 6px; font-size: 11px; color: var(--text-sub); }
-.ag-think summary { cursor: pointer; user-select: none; }
+.ag-think summary { cursor: pointer; -webkit-user-select: none; user-select: none; }
 .ag-think pre {
   margin: 4px 0 0; padding: 6px 9px; background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap;

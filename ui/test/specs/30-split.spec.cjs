@@ -209,7 +209,7 @@ module.exports = {
     const paneNames = () => page.evaluate(() => {
       // 名牌=主机名 + 非连接态后缀「 · 已断开」（找茬五轮 C-4：黑腔格的状态指示）
       // ——身份比对剥后缀，后缀本身单独断言
-      const name = (sel) => document.querySelector(sel)?.querySelector(".pane-tag-label")?.textContent?.replace(/ · (已断开|重连中…)$/, "") ?? null;
+      const name = (sel) => document.querySelector(sel)?.querySelector(".pane-tag-label")?.textContent?.replace(/ · (已断开|重连中…|连接中断|已重连 · 待核实)$/, "") ?? null;
       return {
         main: name(".pane-left, .pane-top"),
         second: name(".pane-right, .pane-bottom"),
@@ -364,9 +364,13 @@ module.exports = {
       [...document.querySelectorAll(".ctx-menu [role=menuitem]")].some((x) => x.textContent.includes("重命名分组"))), "");
     await clickItem(page, "重命名分组");
     await page.waitForTimeout(300);
-    ck.check("菜单入口打开改名框（预填当前组名）",
-      !!(await page.evaluate(() => document.querySelector(".split-group-rename")))
-      && (await page.evaluate(() => (document.querySelector(".split-group-rename") ?? {}).value)) === "prod-1 + staging-1", "");
+    // 组成员没有独立标签：右键组标签的改名框必须开在组标签行内（source=tab），
+    // 不能还去等分割条胶囊上的 .split-group-rename（那条路径已移除）
+    ck.check("菜单入口在组标签行内打开改名框（预填当前组名）",
+      await page.evaluate(() => {
+        const inp = document.querySelector(".tab .tab-rename");
+        return !!inp && inp.value === "prod-1 + staging-1";
+      }), "");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
     ck.check("Esc 取消改名（回自动名显示）", (await chipText()) === "prod-1 + staging-1", (await chipText()) ?? "无胶囊");
@@ -547,5 +551,134 @@ module.exports = {
       !await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]')) && (await paneCount(page)) === 0);
     await page.mouse.up();
     await page.waitForTimeout(300);
+
+    // ── 分屏掉线遮罩（本轮 C）：按窗格自身状态蒙住本格，另一格不受影响；
+    //    全局 .dead-overlay 只在单窗口径出现；遮罩内「重连／退出分屏」走既有路径 ──
+    // 重新连一台 prod-1（前面已关闭其标签），再与本机组成 A|B
+    const prodCard = await page.$('.host-card:has(.host-name:text-is("prod-1"))');
+    await prodCard.hover();
+    await page.waitForTimeout(250);
+    await (await prodCard.$('button[title^="连接"]')).click();
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => {
+      [...document.querySelectorAll(".tab")].find((t) => t.textContent.includes("本机"))?.click();
+    });
+    await page.waitForTimeout(600);
+    await rightClickTab(page, "prod-1");
+    await clickItem(page, "与当前会话分屏");
+    await page.waitForTimeout(600);
+    const pair = await page.evaluate(() => ({
+      main: document.querySelector(".pane-left, .pane-top")?.dataset.sid ?? null,
+      second: document.querySelector(".pane-right, .pane-bottom")?.dataset.sid ?? null,
+    }));
+    ck.check("C 场景：本机|prod-1 分屏就绪", !!pair.main && !!pair.second && pair.main !== pair.second, JSON.stringify(pair));
+    const deadSid = pair.second;
+    const liveSid = pair.main;
+
+    await page.evaluate((sid) => window.__demoInvoke("demo_drop_session", { sid, recoverOnAttempt: 0 }), deadSid);
+    const paneScrims = () => page.evaluate(() =>
+      [...document.querySelectorAll(".pane-left, .pane-right, .pane-top, .pane-bottom")].map((el) => {
+        const sc = el.querySelector('[data-testid="pane-state-scrim"]');
+        return {
+          sid: el.dataset.sid,
+          dead: el.classList.contains("pane-dead"),
+          state: sc?.dataset.state ?? null,
+          display: sc ? getComputedStyle(sc).display : null,
+          text: el.querySelector(".pane-scrim-state")?.textContent ?? "",
+          focused: el.classList.contains("pane-focused"),
+        };
+      }));
+    let scrims = [];
+    for (let i = 0; i < 40; i++) {
+      scrims = await paneScrims();
+      if (scrims.find((x) => x.sid === deadSid)?.state === "Disconnected") break;
+      await page.waitForTimeout(150);
+    }
+    const deadP = scrims.find((x) => x.sid === deadSid);
+    const liveP = scrims.find((x) => x.sid === liveSid);
+    ck.check("掉线格按自身状态显示遮罩（Disconnected/已断开）",
+      !!deadP && deadP.dead && deadP.state === "Disconnected" && deadP.display === "flex"
+        && deadP.text === "已断开", JSON.stringify(deadP));
+    ck.check("健康格不被遮罩：无 pane-dead、遮罩不显示",
+      !!liveP && !liveP.dead && liveP.state === "Connected" && liveP.display === "none",
+      JSON.stringify(liveP));
+
+    // 焦点切换走真实路径：mousedown 冒泡到 #term 的委托（focusSession），
+    // 只调 textarea.focus() 不会切换 pane-focused
+    const focusPane = (sid) => page.evaluate((id) => {
+      document.querySelector(`.term-session[data-sid="${id}"]`)?.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    }, sid);
+    // 焦点落在死格：分屏中不得再渲染全局遮罩（否则会把两格一起蒙住）
+    await focusPane(deadSid);
+    await page.waitForTimeout(450);
+    const focusedDead = await page.evaluate(() => ({
+      focused: document.querySelector(".pane-focused")?.dataset.sid ?? null,
+      overlay: !!document.querySelector(".dead-overlay"),
+    }));
+    ck.check("焦点死格时分屏内不渲染全局 .dead-overlay",
+      focusedDead.focused === deadSid && !focusedDead.overlay,
+      JSON.stringify({ deadSid, ...focusedDead }));
+    // 再把焦点挪到健康格：死格变非焦点，遮罩仍只压它自己
+    await focusPane(liveSid);
+    await page.waitForTimeout(450);
+    scrims = await paneScrims();
+    const deadP2 = scrims.find((x) => x.sid === deadSid);
+    const liveP2 = scrims.find((x) => x.sid === liveSid);
+    ck.check("非焦点死格遮罩仍只压本格（健康格无遮罩、无全局叠层）",
+      deadP2?.dead && deadP2.display === "flex" && liveP2?.focused && !liveP2.dead
+        && liveP2.display === "none"
+        && !(await page.evaluate(() => !!document.querySelector(".dead-overlay"))),
+      JSON.stringify({ deadP2, liveP2 }));
+
+    const scrimActions = await page.evaluate(() => {
+      const dead = document.querySelector(".pane-dead");
+      const r = dead?.querySelector('[data-testid="pane-scrim-reconnect"]');
+      const x = dead?.querySelector('[data-testid="pane-scrim-exit"]');
+      return { reconnect: !!r && !r.disabled, exit: !!x && !x.disabled, texts: [r?.textContent ?? "", x?.textContent ?? ""] };
+    });
+    ck.check("遮罩内「重连／退出分屏」可用",
+      scrimActions.reconnect && scrimActions.exit
+        && scrimActions.texts[0].includes("重连") && scrimActions.texts[1].includes("退出分屏"),
+      JSON.stringify(scrimActions));
+
+    // 点「重连」= 既有 reconnectSession：Reconnecting → Reconfirming，窗格遮罩撤除
+    await page.evaluate(() => document.querySelector(".pane-dead [data-testid='pane-scrim-reconnect']")?.click());
+    let reState = null;
+    for (let i = 0; i < 40; i++) {
+      reState = (await paneScrims()).find((x) => x.sid === deadSid);
+      if (reState?.state === "Reconfirming") break;
+      await page.waitForTimeout(120);
+    }
+    ck.check("遮罩「重连」走既有重连链并进入待核实（遮罩撤除）",
+      reState?.state === "Reconfirming" && !reState.dead && reState.display === "none",
+      JSON.stringify(reState));
+    let recRaw = null;
+    for (let i = 0; i < 20; i++) {
+      recRaw = await secondRaw();
+      if (recRaw?.includes("已重连 · 待核实")) break;
+      await page.waitForTimeout(100);
+    }
+    ck.check("Reconfirming 名牌用真实状态文案（不再误标「重连中…」）",
+      !!recRaw && recRaw.includes("已重连 · 待核实") && !recRaw.includes("重连中…"), recRaw ?? "无名牌");
+
+    // 再断开一次，用遮罩「退出分屏」收尾：只解散本组，两个标签都保留
+    await page.evaluate((sid) => window.__demoInvoke("demo_drop_session", { sid, recoverOnAttempt: 0 }), deadSid);
+    let deadAgain = null;
+    for (let i = 0; i < 40; i++) {
+      deadAgain = (await paneScrims()).find((x) => x.sid === deadSid);
+      if (deadAgain?.state === "Disconnected") break;
+      await page.waitForTimeout(150);
+    }
+    await page.evaluate(() => document.querySelector(".pane-dead [data-testid='pane-scrim-exit']")?.click());
+    await page.waitForTimeout(600);
+    const exitState = await page.evaluate(() => ({
+      panes: document.querySelectorAll(".pane-left, .pane-right, .pane-top, .pane-bottom").length,
+      tabs: document.querySelectorAll(".tab").length,
+      dead: !!document.querySelector(".pane-dead"),
+    }));
+    ck.check("遮罩「退出分屏」解散本组且两个标签保留",
+      exitState.panes === 0 && exitState.tabs >= 2 && !exitState.dead,
+      JSON.stringify({ deadAgain, ...exitState }));
   },
 };

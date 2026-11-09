@@ -98,6 +98,34 @@ module.exports = {
     menu = await menuText(page);
     ck.check("有选区时出现「复制」项", !!menu && menu.includes("复制"), "");
 
+    // ── 快捷键提示（本轮）：只显示真实绑定，查找项由 keymap 真源派生 ──
+    // 平台判定与 ui/src/actions.ts 的 isMacPlatform 同口径。
+    const mac = await page.evaluate(() => /mac|iphone|ipad|ios/i.test(
+      (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || ""));
+    const hintOf = (part) =>
+      page.evaluate((p) => {
+        const b = [...document.querySelectorAll(".ctx-menu [role=menuitem]")].find((x) => x.textContent.includes(p));
+        return b ? (b.querySelector(".sm-key")?.textContent ?? null) : "__missing__";
+      }, part);
+    const hSearch = await hintOf("查找");
+    const hCopy = await hintOf("复制");
+    const hPaste = await hintOf("粘贴");
+    const hSelectAll = await hintOf("全选");
+    const hClear = await hintOf("清屏");
+    const hMouse = await hintOf("重置鼠标上报");
+    const hRedraw = await hintOf("重绘终端画面");
+    ck.check("查找项提示 = 当前平台 formatBinding", hSearch === (mac ? "⌘F" : "Ctrl+Shift+F"), `mac=${mac} hint=${hSearch}`);
+    ck.check("复制项提示为真实绑定", hCopy === (mac ? "⌘C" : "Ctrl+Shift+C"), `mac=${mac} hint=${hCopy}`);
+    ck.check("粘贴项提示为真实绑定", hPaste === (mac ? "⌘V" : "Ctrl+V"), `mac=${mac} hint=${hPaste}`);
+    ck.check("全选提示仅 mac（Win/Linux 无绑定不显示）", mac ? hSelectAll === "⌘A" : hSelectAll === null, `mac=${mac} hint=${hSelectAll}`);
+    ck.check("清屏无快捷键不显示提示", hClear === null, `hint=${hClear}`);
+    ck.check("重置鼠标上报/重绘无快捷键不显示提示", hMouse === null && hRedraw === null, `mouse=${hMouse} redraw=${hRedraw}`);
+    const searchAria = await page.evaluate(() => {
+      const b = [...document.querySelectorAll(".ctx-menu [role=menuitem]")].find((x) => x.textContent.includes("查找"));
+      return b ? b.getAttribute("aria-keyshortcuts") : null;
+    });
+    ck.check("查找项 aria-keyshortcuts 与平台绑定一致", searchAria === (mac ? "Meta+F" : "Control+Shift+F"), String(searchAria));
+
     // 点外关闭（用左侧空白坐标：菜单在终端右下方向，固定 700,500 会随菜单项增多落进菜单里）
     await page.mouse.click(20, 200);
     await page.waitForTimeout(300);

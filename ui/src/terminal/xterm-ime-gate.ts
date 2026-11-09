@@ -10,8 +10,9 @@
 //
 // 上游修复 xtermjs/xterm.js#6200（2026-10-28 合入 master）：修饰键单独 keydown 既
 // 不武装也不解除 _keyDownSeen，保持进入前的状态（已处于组合态时仍继续去重）。
-// 项目当前锁在 5.5.0，6.0.0 尚未包含该修复；这里在 core 原型上包一层，语义与上游
-// 一致。升级到包含 #6200 的 xterm 后可删除本模块及 App 里的 patch 调用。
+// 本项目已升级 xterm 6.0.0，但 6.0.0 的发布分支仍不含 #6200（_keyDown/_inputEvent
+// 去重逻辑与 5.5.0 相同）；这里在 core 原型上包一层，语义与上游一致。升级到包含
+// #6200 的 xterm 后可删除本模块及 App 里的 patch 调用。
 //
 // 上游 #6200 只覆盖「修饰键先到、input 早于字符 keydown」这一种顺序。部分第三方
 // 输入法（以及 WKWebView 的其它版本）会把字符 keydown（keyCode=229）排在 input
@@ -52,7 +53,7 @@
 //
 // 回归：ui/test/specs/71-ime-punct-gate.spec.cjs（伪 core 语义 + 真实 xterm 事件序列）。
 
-/** 只描述本补丁触达的 xterm core 内部面（私有 API，版本锁定 5.5.0）。 */
+/** 只描述本补丁触达的 xterm core 内部面（私有 API，按 5.5/6.0 锁定）。 */
 type KeyDownGateCore = {
   _keyDownSeen: boolean;
   _keyDown(ev: KeyboardEvent): boolean | undefined;

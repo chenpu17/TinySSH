@@ -15,6 +15,11 @@ import { BriefCard } from "./brief-card";
 const DANGER_SHAPE_RE =
   /\brm\s+(?:-[a-zA-Z]+\s+)*-[a-z]*r[a-z]*f|\bmkfs\b|\bdd\b[^\n]*\bof=\/dev\/|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\bwipefs\b|\bchmod\s+(?:-[a-zA-Z]+\s+)*777\s+\//;
 
+/** 高危卡二次确认臂的有效期：臂不是永久状态——离开视线/切卡后回来，第二次
+ *  点击仍会被当成「第一击」重新确认，否则一个早已放下的踏板会在几十分钟后
+ *  被随手第二击踩响（P1）。5 秒足够读完高危提示并决定，又不给手滑留窗口。 */
+export const RISK_CONFIRM_TTL_MS = 5000;
+
 export function approvalRisk(a: ApprovalRow): string | null {
   if (DANGER_SHAPE_RE.test(a.command)) return t("命令包含高危形态（删除/格式化/关机类）");
   return null;
@@ -82,6 +87,31 @@ export function CollabApprovals({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [pendingCount]);
+  // 高危二次确认的臂带 TTL（arm 到期的唯一收口）：confirmId 由宿主持有，
+  // 这里只负责「到期替宿主撤回」——切卡（confirmId 换成另一个动作）、面板关闭
+  // 卸载、动作被执行（decide 里宿主清空）都会走 effect cleanup，旧计时器不残留；
+  // 重复 arm 时依赖变更同样先清旧 interval/timeout，不存在两条计时并行。
+  const [armLeft, setArmLeft] = useState(0);
+  useEffect(() => {
+    if (!confirmId) { setArmLeft(0); return; }
+    const deadline = Date.now() + RISK_CONFIRM_TTL_MS;
+    setArmLeft(Math.ceil(RISK_CONFIRM_TTL_MS / 1000));
+    const tick = window.setInterval(() => {
+      setArmLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    }, 200);
+    const expire = window.setTimeout(() => {
+      setArmLeft(0);
+      setConfirmId(null); // 到期即撤臂：下一击重新走「第一击」，绝不留永久踏板
+    }, RISK_CONFIRM_TTL_MS);
+    return () => { window.clearInterval(tick); window.clearTimeout(expire); };
+  }, [confirmId, setConfirmId]);
+  // 被 arm 的审批已不在待处理列表（别处已批/拒绝/超时作废）→ 臂立即作废，
+  // 不把第二次点击留给一张不存在的卡。
+  useEffect(() => {
+    if (!confirmId) return;
+    const id = confirmId.split(":")[0];
+    if (!pendingApprovals.some((a) => a.id === id)) setConfirmId(null);
+  }, [confirmId, pendingApprovals, setConfirmId]);
   return (
     !collabEnabled ? (
       // C9（R43）：协作停用/停用中/停用失败时不出现空审批区——改为停用态指引。
@@ -206,7 +236,11 @@ export function CollabApprovals({
                               if (gate("persist")) { setConfirmId(`${a.id}:persist`); return; }
                               void rememberThenDecide(a.id, { pattern: persistPattern.trim() });
                             }}
-                          >{gate("persist") ? t("保存规则并批准（需再次点击确认）") : armed("persist") ? t("再次点击保存规则并批准") : t("保存规则并批准")}</button>
+                          >{gate("persist")
+                            ? t("保存规则并批准（需再次点击确认）")
+                            : armed("persist")
+                              ? t("再次点击保存规则并批准（剩余 {0} 秒）", armLeft)
+                              : t("保存规则并批准")}</button>
                           <button className="ghost" onClick={() => setPersistId(null)}>{t("取消")}</button>
                         </div>
                         <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
@@ -223,7 +257,9 @@ export function CollabApprovals({
                               if (gate("approve")) { setConfirmId(`${a.id}:approve`); return; }
                               void decide(a.id, "approve", null);
                             }}
-                          >{armed("approve") ? t("再次点击确认批准") : t("批准")}</button>
+                          >{armed("approve")
+                            ? t("再次点击确认批准（剩余 {0} 秒）", armLeft)
+                            : t("批准")}</button>
                           {/* 「批准并记住」（审批减摩擦①）：TTL 精确记忆，到期自动失效；
                               高危卡同样吃二次确认闸门（按动作各自确认，不互借） */}
                           {eligible && (
@@ -233,7 +269,9 @@ export function CollabApprovals({
                                 if (gate("remember")) { setConfirmId(`${a.id}:remember`); return; }
                                 void rememberThenDecide(a.id, { ttlMinutes: 30 });
                               }}
-                            >{armed("remember") ? t("再次点击确认记住并批准") : t("记住并批准")}</button>
+                            >{armed("remember")
+                              ? t("再次点击确认记住并批准（剩余 {0} 秒）", armLeft)
+                              : t("记住并批准")}</button>
                           )}
                           {/* 持久放行只对单段可解析命令开放：复合命令的前缀通配难一眼核对 */}
                           {eligible && a.segment_report.length <= 1 && (
@@ -251,7 +289,9 @@ export function CollabApprovals({
                             <button className="ghost" onClick={() => {
                               if (gate("edit")) { setConfirmId(`${a.id}:edit`); return; }
                               setConfirmId(null); setEditingId(a.id); setEditedCmd(a.command);
-                            }}>{armed("edit") ? t("再次点击进入编辑") : t("编辑后批准")}</button>
+                            }}>{armed("edit")
+                              ? t("再次点击进入编辑（剩余 {0} 秒）", armLeft)
+                              : t("编辑后批准")}</button>
                           )}
                           {/* 拒绝钉右侧：按钮多到换行时不再孤悬左端（破坏性动作与批准族分区） */}
                           <button className="danger" style={{ marginLeft: "auto" }} onClick={() => void decide(a.id, "deny", null)}>{t("拒绝")}</button>

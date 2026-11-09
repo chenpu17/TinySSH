@@ -108,5 +108,88 @@ module.exports = {
     const cardAfter = await page.evaluate(() => document.querySelectorAll('[data-testid="agent-tool"]').length);
     ck.check("切回 prod-1：对话现场保留（工具卡还在）", cardAfter === 1 && cardBefore === 1,
       `before=${cardBefore} after=${cardAfter}`);
+
+    // ── 内联审批卡（真模式形态）的呈现 + 高危臂 TTL（P1）──
+    // 真模式在浏览器域不可达（realMode 门 = inTauri）。DEV 探针注入一张与
+    // ApprovalRow 同形的行（id 复用 demo 的 a-demo-1，决定仍走 demo 后端），
+    // 走与真模式完全同一段渲染——只验证呈现与减速带，不改审批语义。
+    await page.evaluate(() => {
+      window.__t_inlineApproval = {
+        id: "a-demo-1",
+        session_id: "s-demo-0001",
+        agent_id: "tinyssh-embedded",
+        command: "rm -rf /tmp/old-build && tar czf /tmp/build.tgz dist/",
+        edited_command: null,
+        target_summary: "删除文件/目录",
+        segment_report: [
+          { segment: "rm -rf /tmp/old-build", verdict: "pending: 未命中任何允许规则" },
+          { segment: "tar czf /tmp/build.tgz dist/", verdict: "pending: 未命中任何允许规则" },
+        ],
+        session_busy: false,
+        editable: true,
+        created_at: new Date().toISOString(),
+        status: "pending",
+        purpose: null,
+      };
+    });
+    // 关开 Agent 视图触发重挂载（探针在渲染期读取）
+    await page.click('button[aria-label="关闭 Agent 视图"]');
+    await page.waitForTimeout(300);
+    await page.click('[data-testid="rail-agent"]');
+    await page.waitForTimeout(500);
+
+    const inCard = (sel) => page.evaluate((s) => {
+      const el = document.querySelector(`[data-dev-inline] ${s}`);
+      return el ? el.textContent ?? "" : "(无)";
+    }, sel);
+    ck.check("内联卡命令在场（12px 正文色，不再 dim 11px）",
+      (await inCard('[data-testid="agent-inline-cmd"]')).includes("rm -rf") &&
+      (await page.evaluate(() => {
+        const el = document.querySelector('[data-dev-inline] [data-testid="agent-inline-cmd"]');
+        return el ? getComputedStyle(el).fontSize : "";
+      })) === "12px");
+    ck.check("内联卡目的缺失显式警示", (await inCard('[data-testid="agent-inline-purpose"]')).includes("未提供目的"));
+    ck.check("内联卡目标摘要小标签在场", (await inCard(".tsum-chip")) === "删除文件/目录");
+    ck.check("内联卡逐段判定摘要可折叠一行",
+      (await inCard("details summary")).includes("2 段判定：2 需确认"));
+    ck.check("内联卡超时提示为实时倒计时（剩余 N 秒）",
+      /剩余 \d+ 秒后自动拒绝/.test(await inCard('[data-testid="agent-inline-countdown"]')));
+    ck.check("内联卡有「在协作面板查看完整裁决」入口",
+      await page.evaluate(() => !!document.querySelector('[data-dev-inline] [data-testid="agent-open-approvals"]')));
+
+    const inlineApprove = () => page.evaluate(() =>
+      document.querySelector('[data-dev-inline] [data-testid="agent-approve-real"]')?.textContent?.trim() ?? "(无)");
+    const pendingBadge = () => page.evaluate(() =>
+      document.querySelector('[data-testid="collab-entry"]')?.textContent?.trim() ?? "");
+    const badgeBefore = await pendingBadge();
+
+    ck.check("内联高危首次点击只 arm（按钮出现剩余秒数）",
+      (await inlineApprove()) === "确认高危并批准");
+    await page.click('[data-dev-inline] [data-testid="agent-approve-real"]');
+    await page.waitForTimeout(250);
+    const inlineArmed = await inlineApprove();
+    ck.check("arm 后按钮带剩余秒数", /再次点击确认批准（剩余 \d+ 秒）/.test(inlineArmed), inlineArmed);
+
+    // 等过 TTL（5s）后单击不得放行：按钮回到首击文案、待审批数不变。
+    await page.waitForTimeout(5500);
+    const inlineAfterTtl = await inlineApprove();
+    ck.check("TTL 到期撤销臂：按钮恢复首击文案", inlineAfterTtl === "确认高危并批准", inlineAfterTtl);
+    ck.check("TTL 到期后单击未放行（待审批数不变）",
+      (await pendingBadge()) === badgeBefore, `${badgeBefore} → ${await pendingBadge()}`);
+
+    // TTL 内第二次点击才批准：demo 后端按决策收卡，待审批数减一。
+    await page.click('[data-dev-inline] [data-testid="agent-approve-real"]');
+    await page.waitForTimeout(200);
+    await page.click('[data-dev-inline] [data-testid="agent-approve-real"]');
+    await page.waitForTimeout(900);
+    ck.check("TTL 内第二次点击放行（待审批数减少）",
+      badgeBefore.includes("2 待审批") && (await pendingBadge()).includes("1 待审批"),
+      `${badgeBefore} → ${await pendingBadge()}`);
+
+    // 完整裁决入口 → 打开协作面板
+    await page.click('[data-dev-inline] [data-testid="agent-open-approvals"]');
+    await page.waitForTimeout(500);
+    ck.check("「在协作面板查看完整裁决」打开协作面板",
+      (await page.evaluate(() => document.querySelector('[data-testid="tp-title"]')?.textContent ?? "")) === "协作");
   },
 };

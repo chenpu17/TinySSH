@@ -3,6 +3,7 @@ import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, IdentityMeta, SshConfigPreview } from "../adapter/wire";
 import { friendlyError, hostAddressOk, normalizeHostAddress, parsePort } from "../app-data";
 import { t } from "../i18n";
+import { SecretInput } from "./secret-input";
 
 // IME 组合期守卫（§7.3 与 resolveAction 同口径：isComposing 与 keyCode 229 双查）——
 // 中文输入法敲 Enter 是「确认候选词」，不是提交表单。表单全部回车提交经此封装。
@@ -59,6 +60,21 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
   useEffect(() => { onSavingChange?.(saving); }, [saving, onSavingChange]);
   useEffect(() => () => { onSavingChange?.(false); }, [onSavingChange]);
   const [err, setErr] = useState<string | null>(null);
+  // 错误与字段的关联（表单错误契约）：错误持续到**相关字段**修改或重新提交——
+  // 只在出错字段被改时清除，避免「随便敲哪个框都闪掉」或「改对了错误还挂着」。
+  // null = 跨字段错误（如 upsert 失败），只有重新提交才清。
+  const [errField, setErrField] = useState<string | null>(null);
+  const setFormErr = (msg: string | null, field: string | null = null) => {
+    setErr(msg);
+    setErrField(msg ? field : null);
+  };
+  const clearErrFor = (field: string) => {
+    if (errField === field) setFormErr(null);
+  };
+  // 出错字段的读屏关联（容器在下方 role=alert，id=ah-error）
+  const errA11y = (field: string) => err && errField === field
+    ? { "aria-invalid": true as const, "aria-describedby": "ah-error" }
+    : {};
   // 校验失败聚焦出错字段（审查二轮 UX2-6②）：错误条 role=alert 播报，焦点跟过去
   const nameRef = useRef<HTMLInputElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -102,8 +118,9 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
 
   // 粘贴/文件读入的私钥 → 凭据库身份；只回元数据，不出私钥明文
   const importPem = async () => {
-    setErr(null);
-    if (!pem.includes("PRIVATE KEY")) { setErr(t("请先粘贴 OpenSSH / PEM 格式的私钥内容，或「从文件导入…」")); return; }
+    setFormErr(null);
+    // 私钥内容/口令相关错误挂在 pem 字段：改私钥或口令即视为已修改相关字段
+    if (!pem.includes("PRIVATE KEY")) { setFormErr(t("请先粘贴 OpenSSH / PEM 格式的私钥内容，或「从文件导入…」"), "pem"); return; }
     setBusy(true);
     try {
       const meta = await invoke("create_identity", {
@@ -112,7 +129,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
       setIdentity(meta);
       setPickedIdentity(""); // 新导入的密钥接管当前表单（覆盖已有密钥选择）
     } catch (e) {
-      setErr(friendlyError(e));
+      setFormErr(friendlyError(e), "pem");
     } finally {
       setBusy(false);
     }
@@ -120,7 +137,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
 
   // FR-2 生成 ed25519：vault 侧生成并加密落库，UI 只拿指纹
   const genKey = async () => {
-    setErr(null);
+    setFormErr(null);
     setBusy(true);
     try {
       const meta = await invoke("create_identity", {
@@ -129,7 +146,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
       setIdentity(meta);
       setPickedIdentity(""); // 新生成的密钥接管当前表单（覆盖已有密钥选择）
     } catch (e) {
-      setErr(friendlyError(e));
+      setFormErr(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -138,7 +155,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
   // connect=false 走「仅保存」：批量录入场景不被逐台自动连接绑架（五人走查·林姐/小王）
   const submit = async (connect = true, nameFromAddr?: string) => {
     if (busy) return; // 回车提交绕过按钮 disabled——在途时丢弃重复提交
-    setErr(null);
+    setFormErr(null);
     // 地址框回车（找茬四轮 D4）：名称空则以地址补名（与 onBlur 同款联动，避免
     // 「名称不能为空」拦在最高频动线上）——「填完地址回车」是表单主动线，此前
     // 唯独地址框 Enter 不提交、其余输入框都能。补名只在**名称空**时生效（找茬
@@ -146,19 +163,20 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
     // 流回地址框改错字后回车=主机改名成地址）
     const nameVal = (name.trim() ? name : nameFromAddr ?? name).trim();
     if (!nameVal || !address.trim() || !username.trim()) {
-      setErr(t("名称、地址、用户名都不能为空"));
+      const field = !nameVal ? "name" : !address.trim() ? "address" : "username";
+      setFormErr(t("名称、地址、用户名都不能为空"), field);
       (!nameVal ? nameRef : !address.trim() ? addressRef : usernameRef).current?.focus();
       return;
     }
     // 地址格式校验（P2-3）：IP（v4/v6）或域名，不带协议/端口/路径——之前的乱码地址能一路存到「连接成功」
     if (!hostAddressOk(address)) {
-      setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10、server.example.com 或 ::1），不带端口与协议"));
+      setFormErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10、server.example.com 或 ::1），不带端口与协议"), "address");
       addressRef.current?.focus();
       return;
     }
     const p = parsePort(port);
     if (p === null) {
-      setErr(t("端口必须是 1–65535 的数字"));
+      setFormErr(t("端口必须是 1–65535 的数字"), "port");
       portRef.current?.focus();
       return;
     }
@@ -167,13 +185,13 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
     // 直接用既有条目。编辑排除自身。
     const nameDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.name === nameVal);
     if (nameDup) {
-      setErr(t("已存在同名主机「{0}」——请换一个名称，或删除旧条目后再建", nameDup.name));
+      setFormErr(t("已存在同名主机「{0}」——请换一个名称，或删除旧条目后再建", nameDup.name), "name");
       nameRef.current?.focus();
       return;
     }
     const addrDup = (hosts ?? []).find((h) => h.id !== editHost?.id && h.address === normalizeHostAddress(address) && h.port === p);
     if (addrDup) {
-      setErr(t("同一地址和端口已有主机「{0}」——如需同一台机器请直接使用该条目", addrDup.name));
+      setFormErr(t("同一地址和端口已有主机「{0}」——如需同一台机器请直接使用该条目", addrDup.name), "address");
       addressRef.current?.focus();
       return;
     }
@@ -189,7 +207,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
       } else if (authMode === "password") {
         // 缺密码也聚焦密码框（找茬五轮 D-3）：同表单其余缺项分支都送焦点，唯独
         // 这支错误文案指着密码、焦点留原地——「报错即聚焦」契约一手有一手没有
-        if (!password) { setErr(t("请输入密码")); passwordRef.current?.focus(); setSaving(false); setBusy(false); return; }
+        if (!password) { setFormErr(t("请输入密码"), "password"); passwordRef.current?.focus(); setSaving(false); setBusy(false); return; }
         auth = { Password: { password } };
       } else if (authMode === "agent") {
         auth = "Agent";
@@ -197,7 +215,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
         // R21：绑定凭据库已有密钥（含取消表单后未绑定的凭据——§267 不默默删除的消费面）
         auth = { Key: { identity_id: pickedIdentity } };
       } else {
-        if (!identity) { setErr(t("请先「导入并确认指纹」「生成新密钥」或选择已有密钥")); setSaving(false); setBusy(false); return; }
+        if (!identity) { setFormErr(t("请先「导入并确认指纹」「生成新密钥」或选择已有密钥"), "pem"); setSaving(false); setBusy(false); return; }
         auth = { Key: { identity_id: identity.id } };
       }
       // 标签（R20）：逗号分隔（中英文逗号皆可）→ 去重去空
@@ -215,7 +233,8 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
       setPassword(""); // 编辑更换密码后同样清空输入，不明文残留
       onSaved(hid, editing, connect);
     } catch (e) {
-      setErr(friendlyError(e));
+      // upsert 失败是跨字段错误（可能是 vault/IO/网络）：保留到重新提交
+      setFormErr(friendlyError(e));
     } finally {
       setSaving(false);
       setBusy(false);
@@ -236,32 +255,35 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label htmlFor="ah-name">{t("名称")}</label>
-          <input id="ah-name" ref={nameRef} value={name} onChange={(e) => setName(e.target.value)} autoFocus
-            onKeyDown={enterKey(() => submit())}
+          <input id="ah-name" ref={nameRef} value={name} onChange={(e) => { setName(e.target.value); clearErrFor("name"); }} autoFocus
+            onKeyDown={enterKey(() => submit())} {...errA11y("name")}
             placeholder={t("例：我的服务器")} />
         </div>
         <div className="ah-field" style={{ flex: 2 }}>
           <label htmlFor="ah-address">{t("地址（IP 或域名）")}</label>
-          <input id="ah-address" ref={addressRef} value={address} onChange={(e) => setAddress(e.target.value)}
-            onBlur={() => { if (!name.trim() && address.trim()) setName(address.trim()); }}
-            onKeyDown={enterKey(() => submit(true, address))}
+          <input id="ah-address" ref={addressRef} value={address}
+            onChange={(e) => { setAddress(e.target.value); clearErrFor("address"); }}
+            onBlur={() => { if (!name.trim() && address.trim()) { setName(address.trim()); clearErrFor("name"); } }}
+            onKeyDown={enterKey(() => submit(true, address))} {...errA11y("address")}
             placeholder={t("例：192.168.1.10 或 server.example.com")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label htmlFor="ah-port">{t("端口")}</label>
-          <input id="ah-port" ref={portRef} value={port} onChange={(e) => setPort(e.target.value)}
-            onKeyDown={enterKey(() => submit())} />
+          <input id="ah-port" ref={portRef} value={port}
+            onChange={(e) => { setPort(e.target.value); clearErrFor("port"); }}
+            onKeyDown={enterKey(() => submit())} {...errA11y("port")} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label htmlFor="ah-username">{t("用户名")}</label>
-          <input id="ah-username" ref={usernameRef} value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("例：ops 或 root")}
-            onKeyDown={enterKey(() => submit())} />
+          <input id="ah-username" ref={usernameRef} value={username}
+            onChange={(e) => { setUsername(e.target.value); clearErrFor("username"); }} placeholder={t("例：ops 或 root")}
+            onKeyDown={enterKey(() => submit())} {...errA11y("username")} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
           <label htmlFor="ah-auth-mode">{t("认证方式")}</label>
-          <select id="ah-auth-mode" value={authMode} disabled={editing} onChange={(e) => { setErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
+          <select id="ah-auth-mode" value={authMode} disabled={editing} onChange={(e) => { setFormErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
             <option value="password">{t("密码登录")}</option>
             <option value="key">{t("私钥登录")}</option>
             <option value="agent">SSH Agent</option>
@@ -276,8 +298,9 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
             <>
               <div className="ah-field" style={{ marginTop: 6 }}>
                 <label htmlFor="ah-password-new">{t("更换密码（留空保持不变）")}</label>
-                <input id="ah-password-new" type="password" placeholder={t("输入新密码即更换（用当前主密钥重新加密）")} value={password}
-                  onChange={(e) => setPassword(e.target.value)} onKeyDown={enterKey(() => submit())} />
+                <SecretInput id="ah-password-new" placeholder={t("输入新密码即更换（用当前主密钥重新加密）")} value={password}
+                  onChange={(e) => { setPassword(e.target.value); clearErrFor("password"); }}
+                  onKeyDown={enterKey(() => submit())} {...errA11y("password")} />
               </div>
               <div className="dim" style={{ marginTop: 4 }}>{t("密码留空保持不变。")}</div>
             </>
@@ -297,8 +320,9 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
       ) : authMode === "password" ? (
         <div className="ah-field" style={{ marginTop: 6 }}>
           <label htmlFor="ah-password">{t("密码")}</label>
-          <input id="ah-password" ref={passwordRef} type="password" placeholder={t("密码")} value={password} onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={enterKey(() => submit())} />
+          <SecretInput id="ah-password" ref={passwordRef} placeholder={t("密码")} value={password}
+            onChange={(e) => { setPassword(e.target.value); clearErrFor("password"); }}
+            onKeyDown={enterKey(() => submit())} {...errA11y("password")} />
         </div>
       ) : authMode === "agent" ? (
         <div className="dim" style={{ marginTop: 6 }}>{t("连接时由本机 ssh-agent 签名（需已 ssh-add），私钥不出 agent。Windows 需 OpenSSH Authentication Agent 服务在运行。")}</div>
@@ -309,7 +333,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
             <div className="ah-field" style={{ marginTop: 6 }}>
               <label htmlFor="ah-identity-pick">{t("已有密钥（凭据库）")}</label>
               <select id="ah-identity-pick" value={pickedIdentity}
-                onChange={(e) => { setErr(null); setPickedIdentity(e.target.value); }}>
+                onChange={(e) => { setFormErr(null); setPickedIdentity(e.target.value); }}>
                 <option value="">{t("新密钥（下方生成 / 导入）")}</option>
                 {knownIdentities.map((k) => (
                   <option key={k.id} value={k.id}>{k.label} · {k.fingerprint.slice(0, 19)}…</option>
@@ -338,18 +362,18 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
                       const f = e.target.files?.[0];
                       if (!f) return;
                       const r = new FileReader();
-                      r.onload = () => setPem(String(r.result ?? ""));
+                      r.onload = () => { setPem(String(r.result ?? "")); clearErrFor("pem"); };
                       r.readAsText(f);
                       e.target.value = ""; // 允许同一文件二次选择仍触发 onChange
                     }} />
                 </label>
                 <button className="ghost" disabled={busy} onClick={genKey}>{t("生成新密钥（ed25519）")}</button>
               </div>
-              <textarea id="ah-pem" aria-label={t("私钥内容")} placeholder={`${t("-----BEGIN OPENSSH PRIVATE KEY-----")}\n${t("粘贴私钥内容，或点「从文件导入…」")}`} value={pem}
-                onChange={(e) => setPem(e.target.value)} rows={4} style={{ marginTop: 6, width: "100%" }} />
+              <textarea id="ah-pem" aria-label={t("私钥内容")} placeholder={`-----BEGIN OPENSSH PRIVATE KEY-----\n${t("粘贴私钥内容，或点「从文件导入…」")}`} value={pem}
+                onChange={(e) => { setPem(e.target.value); clearErrFor("pem"); }} rows={4} style={{ marginTop: 6, width: "100%" }} {...errA11y("pem")} />
               <div className="row" style={{ marginTop: 6, alignItems: "center" }}>
-                <input id="ah-passphrase" aria-label={t("私钥口令（无可留空）")} type="password" placeholder={t("私钥口令（无可留空）")} value={passphrase} style={{ flex: 1 }}
-                  onChange={(e) => setPassphrase(e.target.value)} onKeyDown={enterKey(importPem)} />
+                <SecretInput id="ah-passphrase" aria-label={t("私钥口令（无可留空）")} placeholder={t("私钥口令（无可留空）")} value={passphrase} wrapStyle={{ flex: 1 }}
+                  onChange={(e) => { setPassphrase(e.target.value); clearErrFor("passphrase"); }} onKeyDown={enterKey(importPem)} {...errA11y("passphrase")} />
                 <button disabled={busy} onClick={importPem}>{busy ? t("处理中…") : t("导入并确认指纹")}</button>
               </div>
             </>
@@ -370,7 +394,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
       <div className="ah-field" style={{ marginTop: 6 }}>
         <label htmlFor="ah-jump">{t("跳板机（可选，经其转发连接）")}</label>
         <select id="ah-jump" value={jumpId} data-testid="jump-select"
-          onChange={(e) => { setErr(null); setJumpId(e.target.value); }}>
+          onChange={(e) => { setFormErr(null); setJumpId(e.target.value); }}>
           <option value="">{t("直连（不经跳板）")}</option>
           {jumpOptions.map((h) => (
             <option key={h.id} value={h.id}>{t("{0}（{1}@{2}）", h.name, h.username, h.address)}</option>
@@ -394,7 +418,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
         <input id="ah-tags" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
           placeholder={t("例：生产, 数据库")} onKeyDown={enterKey(() => submit())} />
       </div>
-      {err && <div className="err" role="alert" style={{ marginTop: 6 }}>✕ {err}</div>}
+      {err && <div className="err" id="ah-error" role="alert" style={{ marginTop: 6 }}>✕ {err}</div>}
       <div className="row" style={{ marginTop: 8 }}>
         {editing ? (
           <button disabled={busy} onClick={() => submit()}>{busy ? t("保存中…") : t("保存修改")}</button>

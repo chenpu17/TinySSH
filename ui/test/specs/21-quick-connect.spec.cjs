@@ -59,7 +59,18 @@ module.exports = {
     await clickByText(page, '[data-testid="quick-connect-form"] button', "连接");
     ck.check("空提交报「地址和用户名都不能为空」",
       await page.evaluate(() => document.querySelector('[data-testid="quick-connect-form"]').textContent.includes("地址和用户名都不能为空")), "");
+    // 错误契约：容器 role=alert，出错字段 aria-describedby 关联；改动该字段即清
+    const qcErr = await page.evaluate(() => {
+      const e = document.querySelector("#qc-error");
+      const a = document.querySelector("#qc-address");
+      return { role: e?.getAttribute("role"), desc: a?.getAttribute("aria-describedby"), invalid: a?.getAttribute("aria-invalid") };
+    });
+    ck.check("快速连接错误条 role=alert 且关联地址字段",
+      qcErr.role === "alert" && qcErr.desc === "qc-error" && qcErr.invalid === "true", JSON.stringify(qcErr));
     await formInput(page, 0, "http://bad");
+    await page.waitForTimeout(150);
+    ck.check("修改出错字段后错误提示消失",
+      await page.evaluate(() => !document.querySelector("#qc-error")), "");
     await formInput(page, 1, "22");
     await formInput(page, 2, "ops");
     await clickByText(page, '[data-testid="quick-connect-form"] button', "连接");
@@ -92,6 +103,24 @@ module.exports = {
       setter.call(inputs[3], "pw-demo-1"); // 密码输入（密码模式下第 4 个 input）
       inputs[3].dispatchEvent(new Event("input", { bubbles: true }));
     });
+    // 密码可见性开关：默认隐藏；切换只改 type、不触发提交；按钮键盘可达
+    const qcEye = await page.evaluate(() => {
+      const w = document.querySelector('[data-testid="quick-connect-form"] .secret-input');
+      return { type: w?.querySelector("input")?.type, pressed: w?.querySelector("button")?.getAttribute("aria-pressed"), label: w?.querySelector("button")?.getAttribute("aria-label") };
+    });
+    ck.check("快速连接密码默认隐藏且开关带 aria-label/aria-pressed",
+      qcEye.type === "password" && qcEye.pressed === "false" && !!qcEye.label, JSON.stringify(qcEye));
+    await page.click('[data-testid="quick-connect-form"] .secret-toggle');
+    await page.waitForTimeout(150);
+    const qcEye2 = await page.evaluate(() => {
+      const w = document.querySelector('[data-testid="quick-connect-form"] .secret-input');
+      return {
+        type: w?.querySelector("input")?.type, pressed: w?.querySelector("button")?.getAttribute("aria-pressed"),
+        form: !!document.querySelector('[data-testid="quick-connect-form"]'),
+      };
+    });
+    ck.check("切换后明文显示且不触发提交", qcEye2.type === "text" && qcEye2.pressed === "true" && qcEye2.form, JSON.stringify(qcEye2));
+    await page.click('[data-testid="quick-connect-form"] .secret-toggle');
     const hostCardsBefore = await page.evaluate(() => document.querySelectorAll(".host-card").length);
     await clickByText(page, '[data-testid="quick-connect-form"] button', "连接");
     await page.waitForTimeout(700);

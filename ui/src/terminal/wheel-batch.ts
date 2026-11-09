@@ -16,7 +16,7 @@
 /** 滚轮报文合并窗口：24ms≈40Hz，满帧滚动时最多每 1.5 帧发一次。 */
 const WHEEL_COALESCE_MS = 24;
 
-/** xterm CoreMouseButton.WHEEL / CoreMouseAction.UP|DOWN（版本锁定 5.5.0）。 */
+/** xterm CoreMouseButton.WHEEL / CoreMouseAction.UP|DOWN（5.5 与 6.0 取值一致）。 */
 const MOUSE_BUTTON_WHEEL = 4;
 const MOUSE_ACTION_UP = 0;
 const MOUSE_ACTION_DOWN = 1;

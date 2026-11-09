@@ -234,5 +234,107 @@ module.exports = {
           && (await ligaSids(page)).includes(sids2[0]),
         JSON.stringify(info3));
     }
+
+    // ── A「回到底部」浮钮（主终端）：滚上去出现并报剩余行数、悬停才显形、
+    //    点击回底、ALT 备用屏不出现 ──
+    const sidA = sids2[0];
+    // 鼠标先离开终端、并让终端失焦：浮钮默认应透明（悬停/聚焦才显形）
+    await page.mouse.move(2, 2);
+    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null));
+    await page.waitForTimeout(200);
+    const scrollA = await page.evaluate(async (sid) => {
+      const t = window.__t_terms.get(sid);
+      t.write(Array.from({ length: 200 }, (_, i) => `scroll line ${i}`).join("\r\n") + "\r\n");
+      await new Promise((r) => setTimeout(r, 450));
+      t.scrollToTop();
+      await new Promise((r) => setTimeout(r, 450));
+      const btn = document.querySelector(`.term-session[data-sid="${sid}"] [data-testid="term-scroll-bottom"]`);
+      return {
+        found: !!btn,
+        hidden: btn?.hidden ?? null,
+        text: btn?.textContent ?? "",
+        below: t.buffer.active.baseY - t.buffer.active.viewportY,
+        opacity: btn ? getComputedStyle(btn).opacity : null,
+      };
+    }, sidA);
+    ck.check("主终端「回到底部」浮钮在场且滚上去后取消隐藏",
+      !!scrollA && scrollA.found && scrollA.hidden === false, JSON.stringify(scrollA));
+    ck.check("浮钮文案含剩余行数",
+      !!scrollA && scrollA.text.includes("回到底部") && scrollA.text.includes(`下方 ${scrollA.below} 行`),
+      JSON.stringify(scrollA));
+    ck.check("浮钮默认透明（悬停/聚焦才显形）", scrollA.opacity === "0", String(scrollA.opacity));
+    await page.hover(`.term-session[data-sid="${sidA}"]`);
+    await page.waitForTimeout(250);
+    const hoverOpacity = await page.evaluate((sid) =>
+      getComputedStyle(document.querySelector(
+        `.term-session[data-sid="${sid}"] [data-testid="term-scroll-bottom"]`)).opacity, sidA);
+    ck.check("悬停终端时浮钮显形", hoverOpacity === "1", hoverOpacity);
+
+    // 真鼠标点击浮钮（终端保持焦点）：pointerdown 只拦默认聚焦、不拦 click
+    await page.evaluate((sid) =>
+      document.querySelector(`.term-session[data-sid="${sid}"] .xterm-helper-textarea`)?.focus(), sidA);
+    const btnBox = await page.evaluate((sid) => {
+      const r = document.querySelector(
+        `.term-session[data-sid="${sid}"] [data-testid="term-scroll-bottom"]`)?.getBoundingClientRect();
+      return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    }, sidA);
+    if (btnBox) await page.mouse.click(btnBox.x, btnBox.y);
+    await page.waitForTimeout(450);
+    const afterClick = await page.evaluate((sid) => {
+      const t = window.__t_terms.get(sid);
+      const btn = document.querySelector(`.term-session[data-sid="${sid}"] [data-testid="term-scroll-bottom"]`);
+      const ae = document.activeElement;
+      return {
+        atBottom: t.buffer.active.viewportY === t.buffer.active.baseY,
+        hidden: btn?.hidden ?? null,
+        focusKept: !!ae && ae.classList.contains("xterm-helper-textarea")
+          && !!ae.closest(`.term-session[data-sid="${sid}"]`),
+      };
+    }, sidA);
+    ck.check("点击浮钮回到底部并隐藏，且不抢终端焦点",
+      afterClick.atBottom && afterClick.hidden === true && afterClick.focusKept, JSON.stringify(afterClick));
+
+    const altState = await page.evaluate(async (sid) => {
+      const t = window.__t_terms.get(sid);
+      t.scrollToTop();
+      await new Promise((r) => setTimeout(r, 300));
+      const btn = () => document.querySelector(`.term-session[data-sid="${sid}"] [data-testid="term-scroll-bottom"]`);
+      const beforeHidden = btn()?.hidden ?? null;
+      t.write("\x1b[?1049h");
+      await new Promise((r) => setTimeout(r, 300));
+      const out = { type: t.buffer.active.type, beforeHidden, hidden: btn()?.hidden ?? null };
+      t.write("\x1b[?1049l");
+      await new Promise((r) => setTimeout(r, 250));
+      return out;
+    }, sidA);
+    ck.check("ALT 备用屏不显示回底浮钮（普通屏里本会显示）",
+      altState.type === "alternate" && altState.beforeHidden === false && altState.hidden === true,
+      JSON.stringify(altState));
+
+    // ── D 回滚已满提示：触顶提示一次；继续输出不重复；改回滚行数后允许再提示 ──
+    await page.evaluate(() => { window.__t_toasts = []; });
+    const capToasts = () => page.evaluate(() =>
+      (window.__t_toasts ?? []).filter((x) => x.text.includes("回滚已满")).length);
+    const fillToCap = (lines) => page.evaluate(async ({ sid, n }) => {
+      const t = window.__t_terms.get(sid);
+      t.options.scrollback = 40;
+      t.write(Array.from({ length: n }, (_, i) => `cap line ${i}`).join("\r\n") + "\r\n");
+      await new Promise((r) => setTimeout(r, 800));
+    }, { sid: sidA, n: lines });
+    await fillToCap(120);
+    ck.eq("回滚触顶提示一次", await capToasts(), 1);
+    await fillToCap(60);
+    ck.eq("继续输出不重复提示", await capToasts(), 1);
+    await openTermSettings(page);
+    await page.selectOption('[data-testid="term-scrollback-select"]', "2000");
+    await page.waitForTimeout(300);
+    await closeSettings(page);
+    await page.evaluate(async (sid) => {
+      const t = window.__t_terms.get(sid);
+      t.options.scrollback = 40;
+      t.write("one more line\r\n");
+      await new Promise((r) => setTimeout(r, 800));
+    }, sidA);
+    ck.eq("改回滚行数后再次触顶可再提示（每会话一次已重置）", await capToasts(), 2);
   },
 };

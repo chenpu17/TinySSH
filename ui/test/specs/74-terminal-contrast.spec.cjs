@@ -29,6 +29,57 @@ module.exports = {
       Array.isArray(mainRatios) && mainRatios.length > 0 && mainRatios.every((x) => x.ratio === 4.5),
       JSON.stringify(mainRatios));
 
+    // 选区（可读性轮 B）：xterm 的 selectionForeground 覆盖选中单元格前景，运行时
+    // 主题里三个选区键都须给出；选中文字对激活/失焦底都 ≥4.5，且两底可区分。
+    const sel = await page.evaluate(() => {
+      const t = [...(window.__t_terms?.values() ?? [])][0];
+      if (!t) return null;
+      const th = t.options.theme ?? {};
+      const parse = (s) => {
+        s = String(s ?? "");
+        const m = s.match(/rgba?\(([^)]+)\)/);
+        if (m) {
+          const p = m[1].split(",").map(Number);
+          return [p[0] / 255, p[1] / 255, p[2] / 255];
+        }
+        // Chrome 对 color-mix 的计算值序列化为 color(srgb r g b)（分量 0..1）
+        const cm = s.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+        if (cm) return [Number(cm[1]), Number(cm[2]), Number(cm[3])];
+        const hex = s.match(/#([\da-f]{6})/i);
+        if (hex) return [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16) / 255);
+        return null;
+      };
+      const lum = (c) => {
+        const [r, g, b] = c.map((v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const ratio = (a, b) => {
+        const l1 = lum(a), l2 = lum(b);
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      };
+      const fg = parse(th.selectionForeground);
+      const act = parse(th.selectionBackground);
+      const inact = parse(th.selectionInactiveBackground);
+      const rgb = (c) => c.map((v) => Math.round(v * 255)).join(",");
+      return {
+        defined: !!(th.selectionBackground && th.selectionForeground && th.selectionInactiveBackground),
+        activeRatio: fg && act ? ratio(fg, act) : null,
+        inactiveRatio: fg && inact ? ratio(fg, inact) : null,
+        active: act ? rgb(act) : null,
+        inactive: inact ? rgb(inact) : null,
+      };
+    });
+    ck.check("终端选区三键齐全（底/前景/失焦底）", !!sel && sel.defined, JSON.stringify(sel));
+    ck.check("选中文字对激活选区底 ≥4.5:1",
+      !!sel && sel.activeRatio !== null && sel.activeRatio >= 4.5,
+      JSON.stringify(sel));
+    ck.check("选中文字对失焦选区底 ≥4.5:1",
+      !!sel && sel.inactiveRatio !== null && sel.inactiveRatio >= 4.5,
+      JSON.stringify(sel));
+    ck.check("失焦选区底与激活底可区分",
+      !!sel && !!sel.active && !!sel.inactive && sel.active !== sel.inactive,
+      JSON.stringify(sel));
+
     // 开一个 tmux 格子：格子恒显示 tmux，对比度兜底必须同样生效
     await page.click('[data-testid="tmux-quick"] .tmux-quick-btn');
     await page.waitForTimeout(300);
@@ -42,6 +93,29 @@ module.exports = {
     ck.check("tmux 格子已设 minimumContrastRatio=4.5",
       Array.isArray(paneRatios) && paneRatios.length > 0 && paneRatios.every((x) => x.ratio === 4.5),
       JSON.stringify(paneRatios));
+
+    // tmux 格子同样有「回到底部」浮钮（小号，本地视口真滚上去才出现）
+    const paneScroll = await page.evaluate(async () => {
+      const t = [...(window.__t_pane_terms?.values() ?? [])][0];
+      if (!t) return null;
+      t.write(Array.from({ length: 120 }, (_, i) => `pane line ${i}`).join("\r\n") + "\r\n");
+      await new Promise((r) => setTimeout(r, 450));
+      t.scrollToTop();
+      await new Promise((r) => setTimeout(r, 450));
+      const btn = document.querySelector('[data-testid="pane-scroll-bottom"]');
+      const out = { shown: !!btn && !btn.hidden, text: btn?.textContent ?? "" };
+      btn?.click();
+      await new Promise((r) => setTimeout(r, 450));
+      return {
+        ...out,
+        atBottom: t.buffer.active.viewportY === t.buffer.active.baseY,
+        hidden: btn?.hidden ?? null,
+      };
+    });
+    ck.check("tmux 格子回底浮钮：滚上去出现、点击回底并隐藏",
+      !!paneScroll && paneScroll.shown && paneScroll.text.includes("回到底部")
+        && paneScroll.atBottom && paneScroll.hidden === true,
+      JSON.stringify(paneScroll));
 
     // 焦点格标题：14% accent 底 + --accent 字在 graphite/light 只有 4.39:1；
     // 现改为 12% 底 + --accent-text（32 个色板×深浅组合全部 ≥4.5）

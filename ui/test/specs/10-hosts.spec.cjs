@@ -5,20 +5,131 @@ const hostNames = (page) => page.$$eval(".host-card .host-name", (els) => els.ma
 
 module.exports = {
   title: "主机增删改与 ssh_config 导入",
-  async run({ page, ck }) {
+  async run({ page, ck, BASE }) {
+    // ── 主机列表首载失败：显式错误态 + 重试（不伪装成「还没有主机」）──
+    // ?failhosts 让 list_hosts 首装两次调用失败（StrictMode 双跑），第三次恢复。
+    await page.goto(`${BASE}/?failhosts`, { waitUntil: "networkidle" });
+    await page.waitForSelector(".hostbar", { timeout: 10000 });
+    await page.waitForTimeout(900);
+    const loadErr = await page.evaluate(() => {
+      const e = document.querySelector('[data-testid="hostbar-load-error"]');
+      return {
+        has: !!e, role: e?.getAttribute("role"), text: e?.innerText.replace(/\n+/g, " | ") ?? "",
+        empty: !!document.querySelector('[data-testid="hostbar-empty"]'),
+        cards: document.querySelectorAll(".host-card").length,
+      };
+    });
+    ck.check("首载失败显式错误态（role=alert，文案如实）",
+      loadErr.has && loadErr.role === "alert" && loadErr.text.includes("主机列表读取失败"), JSON.stringify(loadErr));
+    ck.check("首载失败不伪装成空主机栏", !loadErr.empty && loadErr.cards === 0, JSON.stringify(loadErr));
+    await page.evaluate(() => {
+      [...document.querySelectorAll('[data-testid="hostbar-load-error"] button')].find((b) => b.textContent.includes("重试"))?.click();
+    });
+    await page.waitForFunction(() => !!document.querySelector('.host-card .host-name'), undefined, { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(300);
+    ck.check("重试后主机列表恢复", await page.evaluate(() =>
+      !document.querySelector('[data-testid="hostbar-load-error"]') &&
+      [...document.querySelectorAll(".host-card .host-name")].some((x) => x.textContent.trim() === "prod-1")), "");
+    // 回到干净 demo 域（上面 reload 后 demo 内存态已重置）
+    await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+    await page.waitForSelector(".hostbar", { timeout: 10000 });
+    await page.waitForTimeout(700);
+
     // ── 新增 ──
     await page.click('.hostbar button[title="添加主机"]');
     await page.waitForTimeout(500);
+
+    // 表单错误契约：错误持续到相关字段修改或重新提交；容器 role=alert、
+    // 出错字段 aria-describedby 关联（改错字时读屏仍能定位）
+    await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "保存并连接").click());
+    await page.waitForTimeout(200);
+    const formErr = await page.evaluate(() => {
+      const e = document.querySelector("#ah-error");
+      const n = document.querySelector("#ah-name");
+      return {
+        text: e?.innerText ?? "", role: e?.getAttribute("role"),
+        desc: n?.getAttribute("aria-describedby"), invalid: n?.getAttribute("aria-invalid"),
+      };
+    });
+    ck.check("空提交错误条 role=alert 且关联名称字段",
+      formErr.role === "alert" && formErr.desc === "ah-error" && formErr.invalid === "true" && formErr.text.includes("名称、地址、用户名都不能为空"),
+      JSON.stringify(formErr));
     const inputs = await page.$$(".add-host-dlg input");
-    // 表单已移居中弹窗（.add-host-dlg）：0=名称 1=地址 2=端口 3=用户名 4=密码 5=标签
     await inputs[0].fill("r45-new");
+    await page.waitForTimeout(150);
+    ck.check("修改出错字段后错误提示消失", await page.evaluate(() => !document.querySelector("#ah-error")), "");
+    // 表单已移居中弹窗（.add-host-dlg）：0=名称 1=地址 2=端口 3=用户名 4=密码 5=标签
     await inputs[1].fill("r45.example.com");
     await inputs[2].fill("2200");
     await inputs[3].fill("deploy");
     await inputs[4].fill("s3cret");
+
+    // 密码可见性开关：默认隐藏；切换只改 type，不触发提交；再点恢复隐藏
+    const eyeBefore = await page.evaluate(() => {
+      const w = document.querySelector(".add-host-dlg .secret-input");
+      return { type: w?.querySelector("input")?.type, label: w?.querySelector("button")?.getAttribute("aria-label"), pressed: w?.querySelector("button")?.getAttribute("aria-pressed") };
+    });
+    ck.check("密码默认隐藏且开关带 aria-label/aria-pressed",
+      eyeBefore.type === "password" && !!eyeBefore.label && eyeBefore.pressed === "false", JSON.stringify(eyeBefore));
+    await page.click(".add-host-dlg .secret-toggle");
+    await page.waitForTimeout(150);
+    const eyeShown = await page.evaluate(() => {
+      const w = document.querySelector(".add-host-dlg .secret-input");
+      return { type: w?.querySelector("input")?.type, pressed: w?.querySelector("button")?.getAttribute("aria-pressed"), dialog: !!document.querySelector(".add-host-dlg") };
+    });
+    ck.check("切换后明文显示且不触发提交", eyeShown.type === "text" && eyeShown.pressed === "true" && eyeShown.dialog, JSON.stringify(eyeShown));
+    await page.click(".add-host-dlg .secret-toggle");
+    await page.waitForTimeout(150);
+    ck.check("再次点击恢复隐藏", await page.evaluate(() => document.querySelector(".add-host-dlg .secret-input input")?.type === "password"), "");
+
     await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "仅保存").click());
     await page.waitForTimeout(900);
     ck.check("「仅保存」后新主机出现在列表", (await hostNames(page)).includes("r45-new"), (await hostNames(page)).join(" / "));
+
+    // ── 主机卡 hover 操作组：显隐/键盘可达/不遮挡主信息 ──
+    await page.mouse.move(700, 760);
+    await page.waitForTimeout(250);
+    const longCard = await cardByName(page, "prod-2（演示连接失败）");
+    const sideRest = await longCard.evaluate((el) => getComputedStyle(el.querySelector(".host-card-side")).opacity);
+    ck.check("操作组静止隐形", sideRest === "0", `opacity=${sideRest}`);
+    await longCard.hover();
+    await page.waitForTimeout(300);
+    const geom = await longCard.evaluate((el) => {
+      const side = el.querySelector(".host-card-side");
+      const sr = side.getBoundingClientRect();
+      // 可见文字边界 = 元素内容盒右缘（padding-right 是为操作组让出的空白；
+      // 文字被 overflow:hidden 收在内容盒内，Range 量到的是未裁剪的布局宽度）
+      const contentRight = (sel) => {
+        const n = el.querySelector(sel);
+        const r = n.getBoundingClientRect();
+        const pad = parseFloat(getComputedStyle(n).paddingRight) || 0;
+        return r.right - pad;
+      };
+      return {
+        opacity: getComputedStyle(side).opacity,
+        pad: getComputedStyle(el.querySelector(".host-line")).paddingRight,
+        nameRight: contentRight(".host-name"), addrRight: contentRight(".host-addr"),
+        sideLeft: sr.left,
+      };
+    });
+    ck.check("hover 操作组显形", geom.opacity === "1", JSON.stringify(geom));
+    ck.check("hover 时主机名/地址文字让位操作组（不再被盖住）",
+      geom.nameRight <= geom.sideLeft && geom.addrRight <= geom.sideLeft, JSON.stringify(geom));
+    // 键盘：离开悬停后聚焦主机卡，Tab 进入操作组且操作组随之显形
+    await page.mouse.move(700, 760);
+    await page.waitForTimeout(250);
+    const longCard2 = await cardByName(page, "prod-2（演示连接失败）");
+    await longCard2.focus();
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(200);
+    const kb = await page.evaluate(() => {
+      const a = document.activeElement;
+      const side = a?.closest(".host-card")?.querySelector(".host-card-side");
+      return { inSide: !!a?.closest(".host-card-side"), label: a?.getAttribute("title") ?? "", opacity: side ? getComputedStyle(side).opacity : "" };
+    });
+    ck.check("键盘 Tab 可达操作钮且操作组显形",
+      kb.inSide && kb.label.startsWith("收藏") && kb.opacity === "1", JSON.stringify(kb));
+
 
     // ── 收藏 ──
     const c1 = await cardByName(page, "r45-new");
@@ -154,5 +265,69 @@ module.exports = {
     await page.waitForFunction((n) => document.querySelectorAll(".tab").length >= n, tabs0 + 2, { timeout: 8000 });
     const tabs2 = await page.$$eval(".tab", (t) => t.length);
     ck.check("「新开」两次得两只标签（绕过幂等合并）", tabs2 === tabs0 + 2, `前 ${tabs0} 后 ${tabs2}`);
+
+    // ── 双击本机连接钮只建一条会话（同步在途锁）──
+    // 同帧连发两次 click，等价于双击落在 begin_connection 应答前：connectingIds
+    // 尚未更新，旧实现会发两次 begin（本机 new_session 又绕过核心幂等）→ 两个终端。
+    await page.waitForTimeout(500); // 等上一轮 createSession 的 finally 释放锁
+    const tabsBeforeDbl = await page.$$eval(".tab", (t) => t.length);
+    await page.evaluate(() => {
+      const card = [...document.querySelectorAll(".host-card")]
+        .find((c) => c.querySelector(".host-name")?.textContent.trim() === "本机");
+      const btn = card?.querySelector(".host-connect-btn");
+      if (!btn) throw new Error("local connect button not found");
+      btn.click();
+      btn.click();
+    });
+    await page.waitForTimeout(1800);
+    const tabsAfterDbl = await page.$$eval(".tab", (t) => t.length);
+    ck.check("双击本机连接钮只产生 1 个标签", tabsAfterDbl === tabsBeforeDbl + 1, `前 ${tabsBeforeDbl} 后 ${tabsAfterDbl}`);
+
+    // ── 失败横幅就地「重试连接」：同走本卡 activate，改对地址后重试真能连上 ──
+    const clickInCard = (name, sel) => page.evaluate(([n, s]) => {
+      const c = [...document.querySelectorAll(".host-card")]
+        .find((x) => x.querySelector(".host-name")?.textContent.includes(n));
+      c?.querySelector(s)?.click();
+    }, [name, sel]);
+    await clickInCard("prod-2", ".host-connect-btn");
+    await page.waitForTimeout(700);
+    await page.evaluate(() => {
+      [...document.querySelectorAll(".hk-actions button")].find((b) => b.textContent.includes("信任并连接"))?.click();
+    });
+    await page.waitForFunction(() => {
+      const c = [...document.querySelectorAll(".host-card")]
+        .find((x) => x.querySelector(".host-name")?.textContent.includes("prod-2"));
+      return !!c?.querySelector(".host-fail");
+    }, undefined, { timeout: 10000 });
+    const retryBtn = await page.evaluate(() => {
+      const c = [...document.querySelectorAll(".host-card")]
+        .find((x) => x.querySelector(".host-name")?.textContent.includes("prod-2"));
+      const b = c?.querySelector(".host-fail .host-retry-btn");
+      return b ? { label: b.getAttribute("aria-label"), disabled: b.disabled, tabIndex: b.tabIndex } : null;
+    });
+    ck.check("失败横幅有就地「重试连接」（aria-label 指明主机、键盘可达）",
+      !!retryBtn && retryBtn.label.includes("prod-2") && !retryBtn.disabled && retryBtn.tabIndex === 0,
+      JSON.stringify(retryBtn));
+    // 改对地址（10.0.0.12 是 demo 认证失败主机；改成普通地址）后重试 → 成功
+    await clickInCard("prod-2", 'button[title^="编辑主机"]');
+    await page.waitForTimeout(500);
+    await page.fill("#ah-address", "10.0.0.55");
+    await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "保存修改").click());
+    await page.waitForTimeout(900);
+    const tabsBeforeRetry = await page.$$eval(".tab", (t) => t.length);
+    await clickInCard("prod-2", ".host-retry-btn");
+    await page.waitForTimeout(700);
+    await page.evaluate(() => {
+      [...document.querySelectorAll(".hk-actions button")].find((b) => b.textContent.includes("信任并连接"))?.click();
+    });
+    await page.waitForFunction((n) => document.querySelectorAll(".tab").length > n, tabsBeforeRetry, { timeout: 10000 }).catch(() => {});
+    const retried = await page.evaluate(() => {
+      const c = [...document.querySelectorAll(".host-card")]
+        .find((x) => x.querySelector(".host-name")?.textContent.includes("prod-2"));
+      return { addr: c?.querySelector(".host-addr")?.textContent.trim() ?? "", fail: !!c?.querySelector(".host-fail") };
+    });
+    ck.check("重试连接成功（新会话建立、失败横幅消失）",
+      retried.fail === false && (await page.$$eval(".tab", (t) => t.length)) === tabsBeforeRetry + 1,
+      JSON.stringify(retried));
   },
 };

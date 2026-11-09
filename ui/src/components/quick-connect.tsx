@@ -4,6 +4,7 @@ import { invoke } from "../adapter/bridge";
 import type { AuthDraft, Host, HostDraft, IdentityMeta } from "../adapter/wire";
 import { t } from "../i18n";
 import { hostAddressOk, normalizeHostAddress, parsePort } from "../app-data";
+import { SecretInput } from "./secret-input";
 
 // 添加主机表单：密码直存；私钥先建身份再引用（vault 侧统一加密）；Agent 只存引用
 // 十七轮「快速连接」：不存主机一次性建连。表单是 AddHostForm 的削剪——
@@ -40,6 +41,20 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 表单错误契约（同 add-host）：错误持续到相关字段修改或重新提交；编辑任一
+  // 相关字段同时清掉「上次连接失败」复述（原因已随改动可能失效）。
+  const [errField, setErrField] = useState<string | null>(null);
+  const setFormErr = (msg: string | null, field: string | null = null) => {
+    setErr(msg);
+    setErrField(msg ? field : null);
+  };
+  const clearErrFor = (field: string) => {
+    if (failed) setFailed(false);
+    if (errField === field) setFormErr(null);
+  };
+  const errA11y = (field: string) => err && errField === field
+    ? { "aria-invalid": true as const, "aria-describedby": "qc-error" }
+    : {};
   const addressRef = useRef<HTMLInputElement>(null);
   const usernameRef = useRef<HTMLInputElement>(null);
   const portRef = useRef<HTMLInputElement>(null);
@@ -55,30 +70,31 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
 
   const submit = async () => {
     if (busy) return; // 在途丢弃重复提交（add-host 同款防御；审查二轮观察项）
-    setErr(null);
+    setFormErr(null);
     setFailed(false);
     // 报错即聚焦（六轮 BF-6，add-host 同款契约）：校验失败焦点回位到首个非法
     // 字段——键盘用户（地址框 autoFocus+回车主动线）错误后不断链
     if (!address.trim() || !username.trim()) {
-      setErr(t("地址和用户名都不能为空"));
+      const field = !address.trim() ? "address" : "username";
+      setFormErr(t("地址和用户名都不能为空"), field);
       (!address.trim() ? addressRef : usernameRef).current?.focus();
       return;
     }
     if (!hostAddressOk(address)) {
-      setErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10、server.example.com 或 ::1），不带端口与协议"));
+      setFormErr(t("地址格式不对——应为 IP 或域名（如 192.168.1.10、server.example.com 或 ::1），不带端口与协议"), "address");
       addressRef.current?.focus();
       return;
     }
     const p = parsePort(port);
-    if (p === null) { setErr(t("端口必须是 1–65535 的数字")); portRef.current?.focus(); return; }
+    if (p === null) { setFormErr(t("端口必须是 1–65535 的数字"), "port"); portRef.current?.focus(); return; }
     let auth: AuthDraft;
     if (authMode === "password") {
-      if (!password) { setErr(t("请输入密码")); passwordRef.current?.focus(); return; }
+      if (!password) { setFormErr(t("请输入密码"), "password"); passwordRef.current?.focus(); return; }
       auth = { Password: { password } };
     } else if (authMode === "agent") {
       auth = "Agent";
     } else {
-      if (!pickedIdentity) { setErr(t("请选择凭据库中的已有密钥（或改用密码 / SSH Agent）")); identityRef.current?.focus(); return; }
+      if (!pickedIdentity) { setFormErr(t("请选择凭据库中的已有密钥（或改用密码 / SSH Agent）"), "identity"); identityRef.current?.focus(); return; }
       auth = { Key: { identity_id: pickedIdentity } };
     }
     const addr = address.trim();
@@ -106,11 +122,11 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
         setFailed(true);
         // 真正原因在宿主 connError 横幅里；模态遮罩会把它压暗，表单内复述
         // （用渲染期的最新 prop，不用 click 闭包里的旧值）
-        setErr(null);
+        setFormErr(null);
       }
     } catch (e) {
       setBusy(false);
-      setErr(String((e as { message?: string })?.message ?? e));
+      setFormErr(String((e as { message?: string })?.message ?? e));
     }
   };
 
@@ -122,25 +138,28 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 2 }}>
           <label htmlFor="qc-address">{t("地址（IP 或域名）")}</label>
-          <input id="qc-address" value={address} onChange={(e) => setAddress(e.target.value)} autoFocus ref={addressRef}
-            onKeyDown={enterKey(submit)}
+          <input id="qc-address" value={address}
+            onChange={(e) => { setAddress(e.target.value); clearErrFor("address"); }} autoFocus ref={addressRef}
+            onKeyDown={enterKey(submit)} {...errA11y("address")}
             placeholder={t("例：192.168.1.10")} style={{ minWidth: 0 }} />
         </div>
         <div className="ah-field" style={{ width: 76 }}>
           <label htmlFor="qc-port">{t("端口")}</label>
-          <input id="qc-port" value={port} onChange={(e) => setPort(e.target.value)} onKeyDown={enterKey(submit)} ref={portRef} />
+          <input id="qc-port" value={port} onChange={(e) => { setPort(e.target.value); clearErrFor("port"); }}
+            onKeyDown={enterKey(submit)} ref={portRef} {...errA11y("port")} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 6, alignItems: "flex-end" }}>
         <div className="ah-field" style={{ flex: 1 }}>
           <label htmlFor="qc-username">{t("用户名")}</label>
-          <input id="qc-username" value={username} onChange={(e) => setUsername(e.target.value)}
-            onKeyDown={enterKey(submit)} ref={usernameRef}
+          <input id="qc-username" value={username}
+            onChange={(e) => { setUsername(e.target.value); clearErrFor("username"); }}
+            onKeyDown={enterKey(submit)} ref={usernameRef} {...errA11y("username")}
             placeholder={t("例：ops 或 root")} />
         </div>
         <div className="ah-field" style={{ flex: 1 }}>
           <label htmlFor="qc-auth-mode">{t("认证方式")}</label>
-          <select id="qc-auth-mode" value={authMode} onChange={(e) => { setErr(null); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
+          <select id="qc-auth-mode" value={authMode} onChange={(e) => { setFormErr(null); setFailed(false); setAuthMode(e.target.value as "password" | "key" | "agent"); }}>
             <option value="password">{t("密码登录")}</option>
             <option value="key">{t("已有密钥（凭据库）")}</option>
             <option value="agent">SSH Agent</option>
@@ -152,15 +171,15 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
       {authMode === "password" && (
         <div className="ah-field" style={{ marginTop: 6 }}>
           <label htmlFor="qc-password">{t("密码")}</label>
-          <input id="qc-password" type="password" placeholder={t("密码")} value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={enterKey(submit)} ref={passwordRef} />
+          <SecretInput id="qc-password" placeholder={t("密码")} value={password}
+            onChange={(e) => { setPassword(e.target.value); clearErrFor("password"); }}
+            onKeyDown={enterKey(submit)} ref={passwordRef} {...errA11y("password")} />
         </div>
       )}
       {authMode === "key" && (
         <div className="ah-field" style={{ marginTop: 6 }}>
           <label htmlFor="qc-identity">{t("已有密钥（凭据库）")}</label>
-          <select id="qc-identity" value={pickedIdentity} onChange={(e) => setPickedIdentity(e.target.value)} ref={identityRef}>
+          <select id="qc-identity" value={pickedIdentity} onChange={(e) => { setPickedIdentity(e.target.value); clearErrFor("identity"); }} ref={identityRef}>
             <option value="">{t("选择凭据库中的密钥…")}</option>
             {knownIdentities.map((k) => (
               <option key={k.id} value={k.id}>{k.label || k.id}</option>
@@ -177,7 +196,7 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
       </div>
       {(() => {
         const shown = err ?? (failed ? (remoteError || t("连接失败——请检查地址、凭据与网络后重试（已填内容保留）")) : null);
-        return shown ? <div className="err" role="alert" style={{ marginTop: 6 }}>✕ {shown}</div> : null;
+        return shown ? <div className="err" id="qc-error" role="alert" style={{ marginTop: 6 }}>✕ {shown}</div> : null;
       })()}
       <div className="row" style={{ marginTop: 8, gap: 8 }}>
         <button disabled={busy} onClick={() => void submit()} data-testid="quick-connect-go">{busy ? t("连接中…") : t("连接")}</button>

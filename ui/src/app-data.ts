@@ -471,18 +471,120 @@ export const altMetaSequence = (code: string | undefined, shift: boolean): strin
 };
 
 // ⌘F 搜索配置（T16）：decorations 必须开启——onDidChangeResults 的计数仅在
-// decorations 启用时上报（不配则恒 0，UI 会误显「无结果」）
-export const SEARCH_OPTS = {
-  caseSensitive: false,
-  decorations: {
-    matchBackground: "#3d4d63",
-    matchBorder: "#4a5a70",
-    matchOverviewRuler: "#55616e",
-    activeMatchBackground: "#8a6d2f",
-    activeMatchBorder: "#d0b07a",
-    activeMatchColorOverviewRuler: "#d0b07a",
-  },
+// decorations 启用时上报（不配则恒 0，UI 会误显「无结果」）。
+// 主题化（2026-11）：此前六色硬编码深色，浅色主题下匹配底 #3d4d63 上的正文只有
+// 1.28:1。现按当前色板的 --accent/--bg 实时派生：匹配底 = accent 混入 bg，比例经
+// 32 个色板×深浅全矩阵反算（深 28%/37%，浅 6%/10%），并留运行时兜底——若终端
+// 前景（--text）对混合底仍 <4.5:1 就逐步降比例；边框/overview ruler 走 accent 系。
+type Rgb = [number, number, number];
+
+// 无 DOM（node 侧导入/单测）时的兜底：仍取旧深色档，浏览器内不会走到
+const SEARCH_FALLBACK = {
+  matchBackground: "#3d4d63",
+  matchBorder: "#4a5a70",
+  matchOverviewRuler: "#55616e",
+  activeMatchBackground: "#8a6d2f",
+  activeMatchBorder: "#d0b07a",
+  activeMatchColorOverviewRuler: "#d0b07a",
 };
+
+const tokenRgb = (name: string): Rgb | null => {
+  if (typeof document === "undefined" || !document.body) return null;
+  const probe = document.createElement("span");
+  probe.style.color = `var(${name})`;
+  probe.style.display = "none";
+  document.body.appendChild(probe);
+  const raw = getComputedStyle(probe).color;
+  probe.remove();
+  const m = raw.match(/^rgba?\(([^)]+)\)$/);
+  if (!m) return null;
+  const p = m[1].split(",").map((x) => parseFloat(x));
+  return p.length >= 3 ? ([p[0], p[1], p[2]] as Rgb) : null;
+};
+
+// sRGB 直接混合，与 styles.css 的 color-mix(in srgb) 同口径
+const mixRgb = (a: Rgb, b: Rgb, p: number): Rgb =>
+  [a[0] * p + b[0] * (1 - p), a[1] * p + b[1] * (1 - p), a[2] * p + b[2] * (1 - p)];
+
+const cssRgb = (c: Rgb, alpha = 1): string =>
+  alpha < 1
+    ? `rgba(${Math.round(c[0])}, ${Math.round(c[1])}, ${Math.round(c[2])}, ${alpha})`
+    : `rgb(${Math.round(c[0])}, ${Math.round(c[1])}, ${Math.round(c[2])})`;
+
+const relLuminance = (c: Rgb): number => {
+  const [r, g, b] = c.map((v) => {
+    const x = v / 255;
+    return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+const contrastRatio = (a: Rgb, b: Rgb): number => {
+  const l1 = relLuminance(a);
+  const l2 = relLuminance(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+};
+
+let searchCacheKey = "";
+let searchCacheValue = SEARCH_FALLBACK;
+
+const deriveSearchDecorations = () => {
+  const root = document.documentElement;
+  const key = `${root.dataset.theme ?? "graphite"}|${root.dataset.chrome ?? "dark"}`;
+  if (key === searchCacheKey) return searchCacheValue;
+  const text = tokenRgb("--text");
+  const bg = tokenRgb("--bg");
+  const accent = tokenRgb("--accent");
+  if (!text || !bg || !accent) return SEARCH_FALLBACK;
+  const light = root.dataset.chrome === "light";
+  // 匹配底保留可见着色又必须让正文读得清：按全矩阵上限取标称比例，
+  // 运行时再向下夹取（低至 2% 仍不达标就直接用 bg——正文对 bg 本身已 ≥4.5）
+  const safeMix = (nominal: number): Rgb => {
+    let p = nominal;
+    while (p > 0.02 && contrastRatio(text, mixRgb(accent, bg, p)) < 4.5) p -= 0.01;
+    return mixRgb(accent, bg, p);
+  };
+  const value = {
+    matchBackground: cssRgb(safeMix(light ? 0.06 : 0.28)),
+    matchBorder: cssRgb(accent, 0.55),
+    matchOverviewRuler: cssRgb(accent),
+    activeMatchBackground: cssRgb(safeMix(light ? 0.1 : 0.37)),
+    activeMatchBorder: cssRgb(accent),
+    activeMatchColorOverviewRuler: cssRgb(accent),
+  };
+  searchCacheKey = key;
+  searchCacheValue = value;
+  return value;
+};
+
+// 查找条开关（本轮）：区分大小写 / 全词 / 正则。工厂按当前开关现造选项——
+// addon-search 用选项值判「选项是否变了」，变了才重算全部高亮，故每次查找传新对象。
+export type SearchOptionsInput = {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  regex?: boolean;
+};
+
+/**
+ * addon-search 选项工厂。decorations 恒为真且用 getter：每次查找/重排都会重新读，
+ * 主题或深浅切换后下一次查找自动换色，无需重建 find addon（计数也依赖它，关掉恒 0）。
+ */
+export function searchOptions(input?: SearchOptionsInput) {
+  const opts: {
+    caseSensitive: boolean;
+    wholeWord: boolean;
+    regex: boolean;
+    readonly decorations: ReturnType<typeof deriveSearchDecorations>;
+  } = {
+    caseSensitive: input?.caseSensitive === true,
+    wholeWord: input?.wholeWord === true,
+    regex: input?.regex === true,
+    get decorations() {
+      return deriveSearchDecorations();
+    },
+  };
+  return opts;
+}
 
 // §185 分屏窗格宽界：双窗格各不足 360 宽即退化单窗格；恢复带 6px 迟滞防抖。
 // 分屏⑥轮起方向可选（lr=左右 / tb=上下）：竖排按高度退化——12 行/格 ≈190px 的

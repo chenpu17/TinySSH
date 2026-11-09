@@ -24,6 +24,7 @@ import { installMouseModeGuard, resetMouseReporting } from "./terminal/mouse-mod
 import { repaintTerm } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import { installWheelBatch } from "./terminal/wheel-batch";
+import { isScrollbackFull, scrollBelow } from "./terminal/scrollback";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
   MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
@@ -95,7 +96,7 @@ import {
   ChromePalette, ctrlCharOf, dateLocale, epistemicLabel, exitText,
   FONT_DEFAULT, FONT_MAX, FONT_MIN, friendlyError, inputBlockedState,
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
-  runBench, SEARCH_OPTS, SETTING_AUTO_LOCAL, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
+  runBench, searchOptions, SETTING_AUTO_LOCAL, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
   SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
   SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK,
   stateLabel, stampLocal, stopOutcomeText, isImeComposing,
@@ -176,8 +177,17 @@ function deriveTabEntries(sessions: SessionInfo[], groups: SplitGroup[]): TabEnt
   return out;
 }
 
-/** 组标签状态点聚合：成员状态取最差（err > warn > ok > dim）。 */
-const STATE_RANK: Record<string, number> = { err: 3, warn: 2, ok: 1, dim: 0 };
+/** 组标签状态点聚合：显式按会话状态排序——err > 已断开 > warn > ok > dim。
+ *  不能沿用 stateLabel().cls 的档位：Disconnected 也归 dim，和「正常但无色」
+ *  同档，一格断开 + 一格已连接时绿点反胜，组标签会把掉线藏起来。 */
+const SESSION_STATE_RANK: Record<string, number> = {
+  Degraded: 5, Reconnecting: 5,
+  // Closed 与 Disconnected 同属「会话已死」：展示同为「已断开」，聚合不能输给绿点
+  Disconnected: 4, Closed: 4,
+  Reconfirming: 3,
+  Connected: 2,
+};
+const sessionStateRank = (state: string): number => SESSION_STATE_RANK[state] ?? 0;
 
 /** 组标签点击/键盘切换的落点会话：组内上次焦点成员，缺省 main。 */
 function entryFocusSid(e: TabEntry, groupFocus: Map<string, string>): string {
@@ -327,6 +337,10 @@ function lastTmuxNotice(term: Terminal): string | null {
   return null;
 }
 
+// 查找条选项（本轮）：区分大小写 / 全词 / 正则。会话内临时状态，关闭查找即复位。
+type SearchPrefs = { caseSensitive: boolean; wholeWord: boolean; regex: boolean };
+const SEARCH_PREFS_DEFAULT: SearchPrefs = { caseSensitive: false, wholeWord: false, regex: false };
+
 export default function App() {
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -339,6 +353,8 @@ export default function App() {
     term: Terminal; el: HTMLDivElement; search: SearchAddon; tag: HTMLDivElement;
     tagLabel: HTMLSpanElement; zoomBtn: HTMLButtonElement; detachBtn: HTMLButtonElement;
     splitMaxBtn: HTMLButtonElement; splitSwapBtn: HTMLButtonElement; splitExitBtn: HTMLButtonElement;
+    scrim: HTMLDivElement; scrimState: HTMLElement; scrimHint: HTMLElement;
+    scrimReconnect: HTMLButtonElement;
     feed: OutputFeed | null; webgl: WebglAddon | null; liga: LigaturesAddon | null;
   }>>(new Map());
   // tmux 面板（一标签多 tmux 会话）：格子 xterm 实例表，键 = `${sid}:${paneId}`。
@@ -346,6 +362,10 @@ export default function App() {
   // 增删（bornAt 与 panesSnapAtRef 同为 performance.now()：快照请求晚于格子出生，
   // 缺席才算真缺席——乐观开格后才返回的在途旧快照不误杀，乱序到达同样成立）
   const paneTermsRef = useRef<Map<string, PaneTermEntry>>(new Map());
+  // 「回滚已满」每会话只提示一次（P2）：调大/改小回滚行数时清空，允许重新提示。
+  const scrollbackWarnRef = useRef<Set<string>>(new Set());
+  // 分屏窗格遮罩的「重连」动作经 ref 取最新实现（makeTerm 早于 reconnectSession 声明）。
+  const paneReconnectRef = useRef<(s: SessionInfo) => void>(() => {});
   // 全终端重画出口（字形图集自愈）：实现挂在字形自愈 effect 里；原生全屏
   // 进出（Tauri setFullscreen/绿灯/Esc）不走 DOM fullscreenchange，由窗口
   // resize 探针在检测到全屏态翻转时调用这里。
@@ -701,6 +721,10 @@ export default function App() {
   const [attachHint, setAttachHint] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ resultCount: number; resultIndex: number | undefined } | null>(null);
+  // 查找条开关与非法正则态（本轮）：ref 与 state 同步，事件回调读到最新开关
+  const [searchPrefs, setSearchPrefs] = useState<SearchPrefs>(SEARCH_PREFS_DEFAULT);
+  const searchPrefsRef = useRef<SearchPrefs>(SEARCH_PREFS_DEFAULT);
+  const [searchInvalid, setSearchInvalid] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   // R25 §318 粘贴保护：多行内容 + 远端未开 bracketed paste → 预览确认后才发送；
   // 开关持久化在 workspace blob（ui.v2.terminal.paste_guard，默认开）
@@ -1079,7 +1103,7 @@ export default function App() {
     setSessions(applyTabOrder(sessionsRef.current));
   };
   // R25 §185 宽度退化：每窗格至少 360 宽——空间不足时只呈现焦点窗格（另一个仍在
-  // 标签中），加宽自动恢复；退化时显示一次可关闭的布局提示
+  // 当前分屏组中），加宽自动恢复；退化时显示一次可关闭的布局提示
   const [splitDegraded, setSplitDegraded] = useState(false);
   const splitDegradedRef = useRef(false);
   const [splitHintOpen, setSplitHintOpen] = useState(false);
@@ -1089,6 +1113,9 @@ export default function App() {
   const [oscTitles, setOscTitles] = useState<Record<string, string>>({});
   const [hosts, setHosts] = useState<Host[]>([]);
   const [hostsLoaded, setHostsLoaded] = useState(false);
+  // list_hosts 最近一次失败（与 hostsLoaded 分开：失败也撤骨架，但主机栏给的是
+  // 错误态 + 重试，而不是「还没有主机」的空态）
+  const [hostsError, setHostsError] = useState(false);
   // 本地终端一等公民轮：本机 shell 探测清单（设置「本地 Shell」下拉 + 本机右键
   // 「用 … 新开」数据源）与默认选择 id（KV，空串=系统默认 $SHELL/PowerShell 回退）
   const [localShells, setLocalShells] = useState<LocalShell[]>([]);
@@ -1224,9 +1251,17 @@ export default function App() {
   // 十七轮「快速连接」：不存主机一次性建连（内存态，重启即失）
   const [showQuickConnect, setShowQuickConnect] = useState(false);
   // 快速连接在途：取消/✕/Esc 必须真的中止 attempt（此前只关弹窗，慢主机数秒后
-  // 仍会冒出「已连接」标签）。attempt 的临时主机 id 固定为 quick-pending。
+  // 仍会冒出「已连接」标签）。draft 建连的真实 host id 是 quick-demo-NNNN /
+  // quick-<uuid>，不能按 hostId 在 attempts 里查——记下 attempt_id 才能取消。
   const quickConnectingRef = useRef(false);
+  const quickAttemptRef = useRef<string | null>(null);
+  // 「提交后 begin_connection_draft 尚未应答就被关窗」的取消意图：应答回来再补取消
+  const quickCancelRequestedRef = useRef(false);
   const noteQuickConnecting = useCallback((b: boolean) => { quickConnectingRef.current = b; }, []);
+  // 建连同主机在途锁：connectingIds 要等 begin_connection 应答才更新，本机默认
+  // new_session:true 又绕过核心幂等——双击本机卡/连接钮会在应答前发出两次建连。
+  // 入口同步写、finally 清；只挡并发在途，串行两次点击（含用指定 shell 新开）不受影响。
+  const pendingHostsRef = useRef<Set<string>>(new Set());
   // 十九轮：命令面板（⌘K / Ctrl+K / 工具栏按钮）
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -1511,7 +1546,13 @@ export default function App() {
         panesSnapAtRef.current = snapAt;
         setSessions((prev) => sameShape(prev, nextSessions));
       }
-      if (nextHosts) setHosts((prev) => sameShape(prev, nextHosts));
+      if (nextHosts) {
+        setHosts((prev) => sameShape(prev, nextHosts));
+        setHostsError(false);
+      } else {
+        // 单查询降级：失败不阻断其他列表，但主机栏必须如实呈现错误态（可重试）
+        setHostsError(true);
+      }
       if (nextMeta) setHostMeta((prev) => sameShape(prev, nextMeta));
       if (nextRecents) setRecents((prev) => sameShape(prev, nextRecents));
       setHostsLoaded(true); // §5.6：首载完成后 skeleton 才撤
@@ -1709,7 +1750,7 @@ export default function App() {
   const locateBlock = useCallback((targetSid: string, cmd: string) => {
     const addon = termsRef.current.get(targetSid)?.search;
     if (!addon) { pushToast("info", t("终端未挂载——接入会话后再定位")); return; }
-    addon.findPrevious(cmd, SEARCH_OPTS);
+    addon.findPrevious(cmd, searchOptions());
   }, [pushToast]);
 
   // R41（§6.6/S11）设置 → 凭据：新建走**显式提交**（生成 / 粘贴私钥），与连接表单同后端。
@@ -1934,7 +1975,9 @@ export default function App() {
   }, [sid]);
   const autoLocalRef = useRef(false);
   useEffect(() => {
-    if (!inTauri || !hostsLoaded || autoLocalRef.current) return;
+    // 首载失败（hostsError）不武装：等重试成功、hosts 到位后再走自动开本地终端，
+    // 否则 autoLocalRef 提前置位，之后即使列表恢复也不会再自动开
+    if (!inTauri || !hostsLoaded || hostsError || autoLocalRef.current) return;
     autoLocalRef.current = true;
     void (async () => {
       try {
@@ -1970,7 +2013,7 @@ export default function App() {
     // createSession / attachSession 声明在后（TDZ：deps 数组渲染期求值不可引用）；effect
     // 体运行时已初始化，闭包捕获安全。autoLocalRef 保证仅首装执行一次。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostsLoaded, hosts]);
+  }, [hostsLoaded, hosts, hostsError]);
 
   // 列表轮询：会话状态（断线/重连/重确认）与审计时间线自动刷新
   useEffect(() => {
@@ -2251,11 +2294,12 @@ export default function App() {
   // 字形图集自愈（2026-11-09 实测：v0.11.6 长时间使用后终端文字变成别的字形，
   // 选择只临时恢复，退出 macOS 全屏才彻底恢复）。xterm 5.5 的 WebGL 字形图集在
   // 长时间高熵输出（CJK/框线/emoji 混排、多终端共享图集）后存在错位缺陷，上游
-  // 6.0 才修；这里在「窗口重新获得焦点 / 从隐藏变可见 / 原生全屏态翻转」这些用户
-  // 愿意接受一次瞬时重画的时刻统一清图集并全屏重绘（原生全屏由窗口 resize 探针
-  // 读 isFullscreen 判定——Tauri 的全屏不触发 DOM fullscreenchange）。合帧 120ms，
-  // 避免 focus 与 visibilitychange 连续触发重复烘焙；右键「重绘终端画面」是
-  // 随时可用的手动出口。
+  // 6.0 重写图集后修复（已升级 6.0.0 + addon-webgl 0.19）；本兜底继续保留，覆盖
+  // 上下文丢失/旧缓存等残余路径——在「窗口重新获得焦点 / 从隐藏变可见 / 原生全屏态
+  // 翻转」这些用户愿意接受一次瞬时重画的时刻统一清图集并全屏重绘（原生全屏由窗口
+  // resize 探针读 isFullscreen 判定——Tauri 的全屏不触发 DOM fullscreenchange）。
+  // 合帧 120ms，避免 focus 与 visibilitychange 连续触发重复烘焙；右键「重绘终端
+  // 画面」是随时可用的手动出口。
   useEffect(() => {
     if (typeof window === "undefined") return;
     let timer = 0;
@@ -2431,6 +2475,39 @@ export default function App() {
     tag.append(splitMaxBtn, splitSwapBtn, splitExitBtn);
     el.appendChild(tag);
     bindTileDrag(tag, MAIN_KEY, sessionSid, el);
+    // 分屏窗格状态遮罩（每格独立）：只有本格掉线/重连中时蒙住本格，另一格保持可用。
+    // 只在分屏槽位下由 CSS 显示；单窗格断线仍走全局 .dead-overlay（分屏场景不再渲染它）。
+    const scrim = document.createElement("div");
+    scrim.className = "pane-scrim";
+    scrim.setAttribute("data-testid", "pane-state-scrim");
+    scrim.dataset.state = "Connected";
+    const scrimState = document.createElement("b");
+    scrimState.className = "pane-scrim-state";
+    const scrimHint = document.createElement("span");
+    scrimHint.className = "pane-scrim-hint";
+    const scrimActions = document.createElement("div");
+    scrimActions.className = "pane-scrim-actions";
+    const scrimReconnect = document.createElement("button");
+    scrimReconnect.type = "button";
+    scrimReconnect.setAttribute("data-testid", "pane-scrim-reconnect");
+    scrimReconnect.textContent = t("重连");
+    scrimReconnect.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const s = sessionsRef.current.find((x) => x.id === sessionSid);
+      if (s) paneReconnectRef.current(s);
+    });
+    const scrimExit = document.createElement("button");
+    scrimExit.type = "button";
+    scrimExit.className = "ghost";
+    scrimExit.setAttribute("data-testid", "pane-scrim-exit");
+    scrimExit.textContent = t("退出分屏");
+    scrimExit.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      splitPaneActionRef.current.exit(sessionSid);
+    });
+    scrimActions.append(scrimReconnect, scrimExit);
+    scrim.append(scrimState, scrimHint, scrimActions);
+    el.appendChild(scrim);
     // allowProposedApi：SearchAddon（registerDecoration，⌘F 高亮计数）、
     // WebLinksAddon（registerLinkProvider）与 linkHandler（OSC 8 激活）均为 proposed API
     const term = new Terminal({
@@ -2453,7 +2530,8 @@ export default function App() {
       // 起点、松手后再滑 100ms，反而落后手指——本地终端（Terminal/iTerm/VS Code
       // 默认值 0）都是 1:1 直跟，故 mac 关掉平滑。
       smoothScrollDuration: isMacPlatform() ? 0 : 100,
-      fastScrollModifier: "alt", fastScrollSensitivity: 5,
+      // xterm 6 起快滚修饰键固定为 Alt（fastScrollModifier 已移除），只留倍率。
+      fastScrollSensitivity: 5,
       rescaleOverlappingGlyphs: true,
       // 字体轮目检（2026-10-23，Edge/WebView2 155 实测）：customGlyphs 的框线
       // 连排几何绘制在当前运行时缺格（`────` 连串只画部分格，JetBrains/Maple
@@ -2494,6 +2572,42 @@ export default function App() {
     // tmux/全屏 TUI 鼠标上报下的滚轮合帧：同一时间窗的报文合成一次 PTY 写入，
     // 减少远端 copy-mode 重绘（见 terminal/wheel-batch.ts）。
     installWheelBatch(term);
+    // 「回到底部」浮钮（主终端）：普通屏 + 视口离开底部时出现，带剩余行数。
+    // ALT 备用屏（全屏 TUI）没有可回的历史，不显示；tmux 格子另挂一份更小的。
+    const scrollBottom = document.createElement("button");
+    scrollBottom.type = "button";
+    scrollBottom.className = "term-scroll-bottom";
+    scrollBottom.setAttribute("data-testid", "term-scroll-bottom");
+    scrollBottom.hidden = true;
+    // 不抢终端焦点：按下即抹掉默认聚焦行为，click 仍会派发
+    scrollBottom.addEventListener("pointerdown", (ev) => { ev.preventDefault(); ev.stopPropagation(); });
+    scrollBottom.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      term.scrollToBottom();
+    });
+    el.appendChild(scrollBottom);
+    let scrollBottomText = "";
+    const syncScrollBottom = () => {
+      const below = scrollBelow(term);
+      if (below <= 0) { if (!scrollBottom.hidden) scrollBottom.hidden = true; return; }
+      const label = t("↓ 回到底部（下方 {0} 行）", below);
+      if (label !== scrollBottomText) { scrollBottomText = label; scrollBottom.textContent = label; }
+      if (scrollBottom.hidden) scrollBottom.hidden = false;
+    };
+    term.onScroll(syncScrollBottom);
+    // 回滚满提示（P2，仅主终端）：每会话一次；≥500ms 节流，避免逐帧判定。
+    // tmux 格子不提示——远端自己管缓冲，说「本地回滚满」会撒谎。
+    let lastScrollbackCheck = 0;
+    term.onWriteParsed(() => {
+      syncScrollBottom();
+      const now = Date.now();
+      if (now - lastScrollbackCheck < 500) return;
+      lastScrollbackCheck = now;
+      if (scrollbackWarnRef.current.has(sessionSid)) return;
+      if (!isScrollbackFull(term)) return;
+      scrollbackWarnRef.current.add(sessionSid);
+      pushToast("info", t("终端回滚已满（{0} 行历史）：更早输出已丢弃；可在「设置 → 终端 → 回滚行数」调大上限", term.options.scrollback ?? 0));
+    });
     // 扩展字符宽度（P0 终端品质轮）：CJK/emoji 宽度按 Unicode 11 表判定——xterm 内置
     // 表基于 Unicode 6，中文/emoji 混排会串格（宽字符占 1 列、ZWJ 序列拆散）。新版表
     // 严格更好，不设开关，恒开。
@@ -2767,6 +2881,7 @@ export default function App() {
     return {
       term, el, search: searchAddon, tag, tagLabel, zoomBtn, detachBtn,
       splitMaxBtn, splitSwapBtn, splitExitBtn,
+      scrim, scrimState, scrimHint, scrimReconnect,
       feed: null as OutputFeed | null, webgl, liga,
     };
   }, []);
@@ -2831,7 +2946,8 @@ export default function App() {
       letterSpacing: termLetterSpacingRef.current, allowProposedApi: true,
       fontFamily: termFontFamilyRef.current, lineHeight: 1.15,
       smoothScrollDuration: isMacPlatform() ? 0 : 100,
-      fastScrollModifier: "alt", fastScrollSensitivity: 5,
+      // xterm 6 起快滚修饰键固定为 Alt（fastScrollModifier 已移除），只留倍率。
+      fastScrollSensitivity: 5,
       rescaleOverlappingGlyphs: true, customGlyphs: false,
       // 格子恒显示 tmux（默认样式就是彩底黑字），对比度兜底无条件开
       minimumContrastRatio: TERM_MIN_CONTRAST,
@@ -2853,6 +2969,30 @@ export default function App() {
     installAdaptiveSmoothScroll(term, body, isMacPlatform() ? 0 : 100);
     // 面板格子与主终端同一滚轮合帧路径（tmux 鼠标上报时省远端重绘）
     installWheelBatch(term);
+    // 「回到底部」浮钮（tmux 格子，小号）：视口离开底部才出现。远端 copy-mode 由
+    // tmux 接管视口——鼠标上报开着时滚轮直发远端，本地 viewportY 不动，故此处
+    // 自然不出现（只看本地真滚过的场景，不谎报远端缓冲）。
+    const scrollBottom = document.createElement("button");
+    scrollBottom.type = "button";
+    scrollBottom.className = "term-scroll-bottom pane";
+    scrollBottom.setAttribute("data-testid", "pane-scroll-bottom");
+    scrollBottom.hidden = true;
+    scrollBottom.addEventListener("pointerdown", (ev) => { ev.preventDefault(); ev.stopPropagation(); });
+    scrollBottom.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      term.scrollToBottom();
+    });
+    body.appendChild(scrollBottom);
+    let scrollBottomText = "";
+    const syncScrollBottom = () => {
+      const below = scrollBelow(term);
+      if (below <= 0) { if (!scrollBottom.hidden) scrollBottom.hidden = true; return; }
+      const label = t("↓ 回到底部（下方 {0} 行）", below);
+      if (label !== scrollBottomText) { scrollBottomText = label; scrollBottom.textContent = label; }
+      if (scrollBottom.hidden) scrollBottom.hidden = false;
+    };
+    term.onScroll(syncScrollBottom);
+    term.onWriteParsed(syncScrollBottom);
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     // 面板格也有查找（与主终端同款实例）：⌘F 聚焦哪格就搜哪格，不再只搜背后主视图
@@ -3782,7 +3922,10 @@ export default function App() {
       mainTagSigRef.current = tagSig;
       const main = sidRef.current ? termsRef.current.get(sidRef.current) : null;
       if (main && curActive) {
-        main.tagLabel.textContent = curActive.tmux_attached ? `tmux:${curActive.tmux_attached}` : curActive.host_name;
+        // 与 applyPanes 同一口径：非 Connected 态带状态后缀（简化版曾只写裸主机名，
+        // 会把分屏焦点格刚刷上的「已断开/重连中…/已重连 · 待核实」覆盖掉）
+        const stTail = curActive.state === "Connected" ? "" : ` · ${stateLabel(curActive.state).text}`;
+        main.tagLabel.textContent = (curActive.tmux_attached ? `tmux:${curActive.tmux_attached}` : curActive.host_name) + stTail;
         main.tag.classList.toggle("tmux-attached", !!curActive.tmux_attached);
       }
     }
@@ -4166,6 +4309,8 @@ export default function App() {
   const changeTermScrollback = useCallback((n: number) => {
     setTermScrollback(n);
     termScrollbackRef.current = n;
+    // 上限变了：上一轮「已满」的结论作废，允许新上限再次提示
+    scrollbackWarnRef.current.clear();
     applyTermPrefs();
     persistSetting(SETTING_TERM_SCROLLBACK, String(n));
   }, [applyTermPrefs, persistSetting]);
@@ -4250,7 +4395,12 @@ export default function App() {
         foreground: resolveTokenColor("--text"),
         cursor: resolveTokenColor("--accent"),
         cursorAccent: resolveTokenColor("--bg"),
-        selectionBackground: resolveTokenColor("--accent-ring"),
+        // 选区（可读性轮）：文字用加亮/压暗后的正文色、底用 accent 混终端底——
+        // 浅色 22%（失焦 8%）、深色 30%（失焦 12%），32 态选中文字均 ≥4.5:1
+        // （wcag-themes.mjs 门）；失焦底明显降级且与激活态可区分。
+        selectionBackground: resolveTokenColor("--term-sel-bg"),
+        selectionForeground: resolveTokenColor("--term-sel-fg"),
+        selectionInactiveBackground: resolveTokenColor("--term-sel-inactive"),
       },
     };
   }, []);
@@ -5145,11 +5295,37 @@ export default function App() {
     const degraded = !!sp && !sp.maximized && splitDegradedRef.current;
     const clsMain = sp?.dir === "tb" ? "pane-top" : "pane-left";
     const clsSecond = sp?.dir === "tb" ? "pane-bottom" : "pane-right";
+    // 每格遮罩按自身状态刷新：Reconfirming 仍可操作（不断言断开），其余非 Connected
+    // 态蒙住本格；非聚焦格同样有，且只盖本格——不压暗另一格。
+    const syncPaneScrim = (e: {
+      el: HTMLDivElement; scrim: HTMLDivElement; scrimState: HTMLElement;
+      scrimHint: HTMLElement; scrimReconnect: HTMLButtonElement;
+    }, st: string | undefined, inPane: boolean) => {
+      const state = st ?? "Disconnected";
+      // 只有当前分屏槽位里的窗格才带 pane-dead：退出分屏后该会话回到单窗格，
+      // 断线提示交还全局 .dead-overlay，别把陈旧标记留在 DOM 上
+      e.el.classList.toggle("pane-dead", inPane && state !== "Connected" && state !== "Reconfirming");
+      if (e.scrim.dataset.state !== state) e.scrim.dataset.state = state;
+      const label = stateLabel(state).text;
+      if (e.scrimState.textContent !== label) e.scrimState.textContent = label;
+      const hint = state === "Reconnecting"
+        ? t("正在重建连接；键入已拦截")
+        : state === "Degraded"
+          ? t("连接中断，正在自动重连；键入已拦截")
+          : t("此窗格已断开；另一格不受影响");
+      if (e.scrimHint.textContent !== hint) e.scrimHint.textContent = hint;
+      const reconnectingNow = state === "Reconnecting";
+      if (e.scrimReconnect.disabled !== reconnectingNow) e.scrimReconnect.disabled = reconnectingNow;
+      const btnLabel = reconnectingNow ? t("重连中…") : t("重连");
+      if (e.scrimReconnect.textContent !== btnLabel) e.scrimReconnect.textContent = btnLabel;
+    };
     for (const [s, e] of termsRef.current) {
       e.el.classList.remove("active", "pane-left", "pane-right", "pane-top", "pane-bottom",
         "pane-focused", "pane-hidden", "pane-max");
+      const ss = sessionsRef.current.find((x) => x.id === s);
+      const slot = sp && !degraded ? slotOf(sp, s) : null;
+      syncPaneScrim(e, ss?.state, !!slot);
       if (sp && !degraded) {
-        const slot = slotOf(sp, s);
         if (slot) {
           e.el.classList.add(slot === "main" ? clsMain : clsSecond);
           if (sp.maximized) {
@@ -5157,11 +5333,9 @@ export default function App() {
             else e.el.classList.add("pane-hidden");
           }
           // 名牌带非连接态后缀（找茬五轮 C-4，镜像 tmux-cell-state 语义）：分屏
-          // 副格装着断开会话时正文是黑腔，此前名牌只有裸主机名——「黑屏像坏了」
-          const ss = sessionsRef.current.find((x) => x.id === s);
-          const stTail = !ss || ss.state === "Connected" ? ""
-            : ss.state === "Disconnected" || ss.state === "Closed" ? ` · ${t("已断开")}`
-            : ` · ${t("重连中…")}`;
+          // 副格装着断开会话时正文是黑腔，此前名牌只有裸主机名——「黑屏像坏了」。
+          // 文案统一取 stateLabel（Reconfirming=已重连 · 待核实，不再误标「重连中…」）
+          const stTail = !ss || ss.state === "Connected" ? "" : ` · ${stateLabel(ss.state).text}`;
           e.tagLabel.textContent = (ss?.host_name ?? s.slice(0, 12)) + stTail;
           if (s === sidRef.current) e.el.classList.add("pane-focused");
           syncSplitPaneButtons(e, s, sp);
@@ -5746,6 +5920,7 @@ export default function App() {
       entry.el.remove();
       termsRef.current.delete(id);
       paneLastFocusRef.current.delete(id);
+      scrollbackWarnRef.current.delete(id);
       if (paneZoomRef.current?.sid === id) paneZoomRef.current = null;
     }
     // 只解散被关会话所在的那一组；幸存者回单窗格。其它组完全不受影响。
@@ -6071,6 +6246,48 @@ export default function App() {
 
   // ⌘1–9 / ⌘W / ⌘⇧[] / Esc 已并入上方统一 action 分发（R13）
 
+  // 查找执行统一入口（本轮）：非法正则时 addon 内部 new RegExp 会抛 SyntaxError——
+  // 在此包住并转为输入框 aria-invalid +「正则无效」，绝不向 React 事件处理器外抛
+  // （否则一次输入就把页面打崩）。清掉旧高亮与旧计数，避免界面与新查询自相矛盾。
+  const runSearch = useCallback((query: string, dir: "next" | "prev" = "next") => {
+    const addon = searchAddonRef.current;
+    if (!addon) return;
+    if (!query) {
+      addon.clearDecorations();
+      setSearchInvalid(false);
+      return;
+    }
+    try {
+      const opts = searchOptions(searchPrefsRef.current);
+      if (dir === "prev") addon.findPrevious(query, opts);
+      else addon.findNext(query, opts);
+      setSearchInvalid(false);
+    } catch {
+      addon.clearDecorations();
+      setSearchResults(null);
+      setSearchInvalid(true);
+    }
+  }, []);
+
+  // 切开关即重跑当前查询：addon 按 caseSensitive/regex/wholeWord 变化重算高亮与计数
+  const toggleSearchPref = (key: keyof SearchPrefs) => {
+    const next = { ...searchPrefsRef.current, [key]: !searchPrefsRef.current[key] };
+    searchPrefsRef.current = next;
+    setSearchPrefs(next);
+    if (searchQuery) {
+      // addon-search 0.16 的 findNext/findPrevious 先写 lastSearchOptions 再调
+      // shouldUpdateHighlighting，选项变化永远比较不出去，高亮与计数会停在旧选项
+      // （隔离复现：不区分大小写 3 处 → 切区分后仍报 3，实际选区已按新选项走）。
+      // 先清掉缓存的查询词强制下一次查找全量重算；0.14 无此回归。
+      try {
+        searchAddonRef.current?.clearDecorations();
+      } catch {
+        /* addon 已释放 */
+      }
+      runSearch(searchQuery);
+    } else setSearchInvalid(false);
+  };
+
   // 打开搜索：目标跟随当前焦点——tmux 面板格聚焦则搜该格，否则主视图。
   // 右键菜单知道命中的 paneKey，直接传更可靠（焦点此时在菜单上）。
   const openSearch = useCallback((paneKey?: string) => {
@@ -6098,6 +6315,10 @@ export default function App() {
     // 已被 clearDecorations 清掉，界面自相矛盾。
     setSearchQuery("");
     setSearchResults(null);
+    // 查找条开关随关闭复位（会话内临时偏好，不落 vault）
+    searchPrefsRef.current = SEARCH_PREFS_DEFAULT;
+    setSearchPrefs(SEARCH_PREFS_DEFAULT);
+    setSearchInvalid(false);
     // 清「实际被搜的那个终端」的高亮（主视图或面板格）
     searchAddonRef.current?.clearDecorations();
     searchAddonRef.current = null;
@@ -7048,6 +7269,13 @@ export default function App() {
   };
 
   const createSession = async (host: Host, intoSplit = false, draft?: HostDraft, localShellPath?: string, localNew = true) => {
+    // 同主机并发建连闸（主机卡/连接钮共用）：在 begin_connection 应答前
+    // connectingIds 仍是空的，双击会真的发两次 begin；本机 new_session 又绕过
+    // 核心幂等，最终出现两个终端。锁按 hostId 粒度且只在本次调用生命周期内持有，
+    // 不挡用户串行再点一次「用指定 shell 新开」。
+    const lockId = host.id;
+    if (pendingHostsRef.current.has(lockId)) return false;
+    pendingHostsRef.current.add(lockId);
     // 本轮：任何建连路径都恢复「从最近连接隐藏」的主机——重新连了就是「最近」
     setRecentHidden(host.id, false);
     // §6.3：点击时刻的焦点代际——完成时代际未变且窗口前台才落终端焦点
@@ -7070,11 +7298,24 @@ export default function App() {
           opts = { ...(chosen ? { local_shell: chosen } : {}), ...(localNew ? { new_session: true } : {}) };
         }
       }
+      // 新一次 draft 提交：清掉上一次关窗留下的取消意图（否则会误杀本次）
+      if (draft) quickCancelRequestedRef.current = false;
       const a = await (draft
         ? invoke("begin_connection_draft", { draft, opts: {} })
         : invoke("begin_connection", { hostId: host.id, opts })) as AttemptInfo;
       if (draft && a.host_id) host = { ...host, id: a.host_id };
       attemptId = a.attempt_id;
+      if (draft) {
+        // 应答回来立刻记 attempt_id（不等到 settle）：✕/Esc 此刻起能真取消。
+        quickAttemptRef.current = a.attempt_id;
+        // 用户在 begin 应答前就关了弹窗：那时没有 attempt 可取消，补在这里
+        if (quickCancelRequestedRef.current) {
+          quickCancelRequestedRef.current = false;
+          quickAttemptRef.current = null;
+          void cancelAttempt(a.attempt_id);
+          return false;
+        }
+      }
       settleAttempt(a);
       const final = await waitForAttempt(a.attempt_id);
       if (final.phase === "Ready" && final.session_id) {
@@ -7147,6 +7388,8 @@ export default function App() {
           : friendlyError(e) + t("——也可在主机卡上看到失败提示，修正后重试"),
       });
     } finally {
+      pendingHostsRef.current.delete(lockId);
+      if (draft && attemptId && quickAttemptRef.current === attemptId) quickAttemptRef.current = null;
       if (attemptId) {
         attemptWaitersRef.current.delete(attemptId);
         attemptFinalRef.current.delete(attemptId);
@@ -7212,12 +7455,12 @@ export default function App() {
   };
   const restoringRef = useRef(false);
 
-  // §302/§6.2：等待中可取消——终态经核心串行裁决，已取消只在核心确认后呈示
-  const cancelConnect = async (hostId: string) => {
-    const a = hostAttempt(hostId);
-    if (!a) return;
+  // §302/§6.2：等待中可取消——终态经核心串行裁决，已取消只在核心确认后呈示。
+  // 按 attemptId 取消（draft 建连的真实 attempt 无法用 hostId 反查），
+  // 主机卡的 cancelConnect 与快速连接的 closeQuickConnect 共用这一个出口。
+  const cancelAttempt = async (attemptId: string) => {
     try {
-      const r = await invoke("cancel_connection", { attemptId: a.attemptId }) as CancelOutcome;
+      const r = await invoke("cancel_connection", { attemptId }) as CancelOutcome;
       if (r.outcome === "already_ready") {
         // 成功已提交：核心已将刚建立的会话一并关闭（契约序列 1 无 session 遗留）——
         // 对账刷新标签；不存在隐藏连接
@@ -7236,13 +7479,23 @@ export default function App() {
       pushToast("err", friendlyError(e));
     }
   };
+  const cancelConnect = async (hostId: string) => {
+    const a = hostAttempt(hostId);
+    if (!a) return;
+    await cancelAttempt(a.attemptId);
+  };
 
   // 快速连接关闭口（✕/取消/Esc 共用）：在途时先真取消 attempt，避免弹窗关了、
   // 数秒后仍建出标签并提示「已连接」。取消结果由核心终态与既有 toast 如实呈现。
   const closeQuickConnect = () => {
-    if (quickConnectingRef.current) {
-      quickConnectingRef.current = false;
-      void cancelConnect("quick-pending");
+    quickConnectingRef.current = false;
+    const aid = quickAttemptRef.current;
+    if (aid) {
+      quickAttemptRef.current = null;
+      void cancelAttempt(aid);
+    } else {
+      // begin_connection_draft 尚未应答：先记取消意图，应答回来由 createSession 补取消
+      quickCancelRequestedRef.current = true;
     }
     setShowQuickConnect(false);
   };
@@ -7293,6 +7546,9 @@ export default function App() {
       setReconnecting(null);
     }
   };
+
+  // 分屏窗格遮罩的「重连」按钮复用它（同一去重/错误提示路径，不新建重复会话）
+  paneReconnectRef.current = (s) => { void reconnectSession(s); };
 
   // ---- tmux 联动（恢复现场轮）：对用户的唯一承诺是「远端现场，断线也丢不了」----
   // 恢复 = 重连全机器 + capture-pane 补史（写入本地 scrollback）+ 注入 attach，
@@ -8494,7 +8750,7 @@ export default function App() {
              标签筛选、收藏分组卡片、导入面板挂载点、设置钮与宽度抓手 */
           <Hostbar
             hostbarWidth={hostbarWidth} hosts={hosts} hostMeta={hostMeta}
-            sessions={sessions} hostsLoaded={hostsLoaded}
+            sessions={sessions} hostsLoaded={hostsLoaded} hostsError={hostsError}
             filteredHosts={filteredHosts} favHosts={favHosts} otherHosts={otherHosts}
             localHost={localHost} localShells={localShells}
             onLocalShell={(path) => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh, false, undefined, path); }}
@@ -8656,10 +8912,19 @@ export default function App() {
                 ? (groupActive ? sid! : groupFocusRef.current.get(group.id) ?? group.main)
                 : sess!.id;
               const repSession = members.find((m) => m.id === rep) ?? members[0];
-              // 状态点：组取最差成员（err > warn > ok > dim）
-              const st = members
-                .map((m) => stateLabel(m.state))
-                .reduce((a, b) => ((STATE_RANK[b.cls] ?? 0) > (STATE_RANK[a.cls] ?? 0) ? b : a), stateLabel(""));
+              // 状态点：组取最差成员——按会话状态显式排（见 sessionStateRank），
+              // 不按展示色档位：Disconnected 的 dim 会输给 Connected 的 ok。
+              const worst = members.reduce<SessionInfo | null>(
+                (a, b) => (!a || sessionStateRank(b.state) > sessionStateRank(a.state) ? b : a), null);
+              // 已断开会话在组标签上提为 warn 档（dim 会看起来像「空闲」而不是「掉线」）
+              const st = worst && (worst.state === "Disconnected" || worst.state === "Closed")
+                ? { text: t("已断开"), cls: "warn" }
+                : stateLabel(worst?.state ?? "");
+              // 组标签逐成员报状态（「A 已连接 · B 已断开」）——只报最差会让用户
+              // 不知道该处理哪一格
+              const memberStatusText = group
+                ? members.map((m) => `${tabNames[m.id] ?? m.host_name} ${stateLabel(m.state).text}`).join(" · ")
+                : st.text;
               // 十四轮：标签自定名（复制标签页后同名标签的区分），无则回退主机名
               const label = group ? splitGroupLabelOf(group) : tabNames[sess!.id] ?? sess!.host_name;
               const bellLit = members.some((m) => bellSids.has(m.id));
@@ -8770,8 +9035,8 @@ export default function App() {
                     const d = tabDragRef.current;
                     if (d?.key === entryKey && d.pointerId === ev.pointerId) cancelTabDrag();
                   }}
-                  title={`${label} · ${st.text}${group ? ` · ${t("{0} 个窗格", members.length)}` : ""}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
-                  aria-label={`${label}，${st.text}${group ? t("，{0} 个窗格", members.length) : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
+                  title={`${label} · ${memberStatusText}${group ? ` · ${t("{0} 个窗格", members.length)}` : ""}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
+                  aria-label={`${label}，${memberStatusText}${group ? t("，{0} 个窗格", members.length) : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
                   tabIndex={0}
                   role="tab"
                   aria-selected={active}
@@ -8793,7 +9058,8 @@ export default function App() {
                   }}
                   onMouseDown={(ev) => {
                     // 十四轮：中键关闭（浏览器/Windows Terminal 惯例），走与 ✕/右键
-                    // 同一确认契约；preventDefault 压掉中键自动滚动
+                    // 同一确认契约；组标签同 ✕ 语义——只关焦点成员并解散组，
+                    // 另一会话保留为独立标签。preventDefault 压掉中键自动滚动
                     if (ev.button === 1) { ev.preventDefault(); ev.stopPropagation(); requestCloseSession(repSession); }
                   }}
                   onDoubleClick={(ev) => {
@@ -8871,13 +9137,19 @@ export default function App() {
                   {group && <span className="tab-count" aria-hidden="true">{members.length}</span>}
                   {/* R27（§7.4）：关闭改真按钮——键盘 Tab 可达、focus-visible 可见、
                       可访问名称不依赖 hover；命中区 ≥28 由 CSS ::after 透明扩展。
-                      一组一标签：组标签的 ✕ 关闭当前焦点成员（另一会话以独立标签继续），
+                      一组一标签：组标签的 ✕ 关闭当前焦点成员并解散组（另一会话以独立
+                      标签继续）——title/aria 把「显示的是 A+B、关的只是焦点格」说全，
+                      与可见文字不一致的旧「关闭会话」会让人以为整组都没了。
                       会话生命周期与确认契约沿用 requestCloseSession */}
                   <button
                     type="button"
                     className="tab-x"
-                    title={t("关闭会话（{0}，活动会话先确认影响）", formatBinding(keymap["tab-close"], isMacPlatform()))}
-                    aria-label={t("关闭会话 {0}", repSession.host_name)}
+                    title={group
+                      ? t("关闭当前窗格会话「{0}」并退出分屏（另一会话保留为独立标签）", tabNames[rep] ?? repSession.host_name)
+                      : t("关闭会话（{0}，活动会话先确认影响）", formatBinding(keymap["tab-close"], isMacPlatform()))}
+                    aria-label={group
+                      ? t("关闭当前窗格会话「{0}」并退出分屏（另一会话保留为独立标签）", tabNames[rep] ?? repSession.host_name)
+                      : t("关闭会话 {0}", repSession.host_name)}
                     onClick={(ev) => { ev.stopPropagation(); requestCloseSession(repSession); }}
                   ><IconX size={11} /></button>
                 </div>
@@ -9406,7 +9678,7 @@ export default function App() {
               );
             })()}
           </div>
-          {current?.state === "Disconnected" && (() => {
+          {current?.state === "Disconnected" && !splitPanes && (() => {
             // tmux 联动三态（恢复现场轮）：① 有最后 attach 记录或唯一会话 → 单键
             // 「恢复现场」；② 首次见 tmux（未教过）或多个会话 → 内联挑选列表；
             // ③ 无 tmux / 全不可知 → 原样「重连恢复」。教学只在最疼的时刻出现
@@ -9530,12 +9802,11 @@ export default function App() {
                 spellCheck={false}
                 placeholder={t("搜索终端内容…")}
                 value={searchQuery}
+                aria-invalid={searchInvalid || undefined}
+                title={searchInvalid ? t("正则表达式无效，请检查后再输入") : undefined}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
-                  const addon = searchAddonRef.current;
-                  if (!addon) return;
-                  if (e.target.value) void addon.findNext(e.target.value, SEARCH_OPTS);
-                  else addon.clearDecorations();
+                  runSearch(e.target.value);
                 }}
                 onKeyDown={(e) => {
                   e.stopPropagation();
@@ -9549,21 +9820,33 @@ export default function App() {
                   }
                   if (e.key !== "Enter" || !searchQuery) return;
                   e.preventDefault();
-                  const addon = searchAddonRef.current;
-                  if (!addon) return;
-                  if (e.shiftKey) addon.findPrevious(searchQuery, SEARCH_OPTS);
-                  else addon.findNext(searchQuery, SEARCH_OPTS);
+                  runSearch(searchQuery, e.shiftKey ? "prev" : "next");
                 }}
               />
+              {/* 查找选项（本轮）：区分大小写 / 全词 / 正则，切换即重跑当前查询 */}
+              {([
+                { key: "caseSensitive", testid: "search-case", label: "Aa", title: t("区分大小写") },
+                { key: "wholeWord", testid: "search-word", label: "ab", title: t("全词匹配") },
+                { key: "regex", testid: "search-regex", label: ".*", title: t("正则表达式") },
+              ] as const).map((o) => (
+                <button key={o.key} type="button"
+                  className={"ghost search-opt" + (searchPrefs[o.key] ? " on" : "")}
+                  data-testid={o.testid} aria-pressed={searchPrefs[o.key]}
+                  aria-label={o.title} title={o.title}
+                  onClick={() => toggleSearchPref(o.key)}
+                >{o.label}</button>
+              ))}
               <span className="dim mono" style={{ whiteSpace: "nowrap" }}>
-                {searchQuery && searchResults && searchResults.resultCount > 0
-                  ? `${(searchResults.resultIndex ?? 0) + 1}/${searchResults.resultCount}`
-                  : searchQuery
-                    ? t("无结果")
-                    : ""}
+                {searchInvalid
+                  ? t("正则无效")
+                  : searchQuery && searchResults && searchResults.resultCount > 0
+                    ? `${(searchResults.resultIndex ?? 0) + 1}/${searchResults.resultCount}`
+                    : searchQuery
+                      ? t("无结果")
+                      : ""}
               </span>
-              <button className="ghost" title={t("上一个（⇧⏎）")} aria-label={t("上一个搜索结果")} onClick={() => searchQuery && searchAddonRef.current?.findPrevious(searchQuery, SEARCH_OPTS)}><IconChevronUp size={13} /></button>
-              <button className="ghost" title={t("下一个（⏎）")} aria-label={t("下一个搜索结果")} onClick={() => searchQuery && searchAddonRef.current?.findNext(searchQuery, SEARCH_OPTS)}><IconChevronDown size={13} /></button>
+              <button className="ghost" title={t("上一个（⇧⏎）")} aria-label={t("上一个搜索结果")} onClick={() => searchQuery && runSearch(searchQuery, "prev")}><IconChevronUp size={13} /></button>
+              <button className="ghost" title={t("下一个（⏎）")} aria-label={t("下一个搜索结果")} onClick={() => searchQuery && runSearch(searchQuery, "next")}><IconChevronDown size={13} /></button>
               <button className="ghost" title={t("关闭（Esc）")} aria-label={t("关闭搜索")} onClick={closeSearch}><IconX size={12} /></button>
             </div>
           )}
@@ -9574,7 +9857,6 @@ export default function App() {
             connectingIds={connectingIds} splitPanes={splitPanes} tabNames={tabNames}
             groupOf={groupOf} splitGroupLabelOf={splitGroupLabelOf}
             rotateSplitGroup={rotateSplitGroup} beginGroupRename={beginGroupRename}
-            focusSession={focusSession}
             autoReconn={autoReconn}
             localShells={localShells}
             onLocalShell={(path) => { const lh = hosts.find((h) => h.id === "local"); if (lh) void createSession(lh, false, undefined, path); }}
@@ -9595,9 +9877,12 @@ export default function App() {
             paneTermsRef={paneTermsRef} closeTmuxPane={(sid, paneId) => closeTmuxPaneRef.current(sid, paneId)}
             paneLayoutCustom={paneLayoutCustom} resetPaneLayout={resetPaneLayout}
             onOpenSearch={openSearch} sidRef={sidRef}
+            searchHint={formatBinding(keymap.search, isMacPlatform())}
+            searchKeyshortcuts={`${isMacPlatform() ? "Meta" : "Control"}${keymap.search.shift ? "+Shift" : ""}${keymap.search.alt ? "+Alt" : ""}+${keymap.search.key.toUpperCase()}`}
             attachSession={attachSession}
             splitDegraded={splitDegraded} splitHintOpen={splitHintOpen}
             splitHintDismissedRef={splitHintDismissedRef} setSplitHintOpen={setSplitHintOpen}
+            onCollapseHostbar={() => toggleHostbar(false)}
           />
           {pasteConfirm && (
             // rev-r25 H1：对话框必须是 confirm-mask 的子元素（flex 居中+同层叠上下文）——

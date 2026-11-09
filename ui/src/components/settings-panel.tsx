@@ -27,6 +27,7 @@ import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
 import { SelfMeterDetail } from "../self-meter";
 import { t, LOCALE_OPTIONS, type Locale } from "../i18n";
 import { RecordsPane } from "./records-pane";
+import { SecretInput } from "./secret-input";
 
 // ── 设置草稿持久化（仅非机密字段）──────────────────────────────────────────
 // 纪律：API Key、Token、密码、私钥**绝不**写入 localStorage/sessionStorage——机密
@@ -775,7 +776,7 @@ export function SettingsPanel({
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" onChange={(e) => setCredPem(e.target.value)} />
                     </label>
                     <label className="cred-field">{t("私钥口令（没有可留空）")}
-                      <input type="password" value={credPass} data-testid="cred-new-pass" autoComplete="off"
+                      <SecretInput value={credPass} data-testid="cred-new-pass" autoComplete="off"
                         onChange={(e) => setCredPass(e.target.value)} />
                     </label>
                     <div className="row" style={{ marginTop: 6, gap: 6 }}>
@@ -915,7 +916,7 @@ export function SettingsPanel({
                 {issuedToken && (
                   <div className="card" style={{ marginTop: 8, padding: 10, border: "1px solid var(--accent-glow)", borderRadius: 8 }} data-testid="agent-token-once">
                     <div style={{ fontSize: 12 }}><b>{t("Token 已签发（{0}）——仅此一次展示", issuedToken.id)}</b></div>
-                    <pre className="mono" style={{ fontSize: 11, userSelect: "all", whiteSpace: "pre-wrap", margin: "6px 0" }}>{issuedToken.token}</pre>
+                    <pre className="mono" style={{ fontSize: 11, userSelect: "all", WebkitUserSelect: "all", whiteSpace: "pre-wrap", margin: "6px 0" }}>{issuedToken.token}</pre>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="ghost" data-testid="agent-token-copy" onClick={() => void copyToken(issuedToken.token)}>{tokenCopied ? t("已复制") : t("复制 Token")}</button>
                       <button className="ghost" data-testid="agent-token-close" onClick={() => setIssuedToken(null)}>{t("我已保存，关闭")}</button>
@@ -1006,7 +1007,7 @@ export function SettingsPanel({
                 {mcp.endpoint && (
                   <div className="fact" style={{ marginTop: 4 }}>
                     <span className="dim" style={{ fontSize: 11 }}>{t("接入文档")}</span>{" "}
-                    <span className="mono" style={{ fontSize: 11, wordBreak: "break-all", userSelect: "all" }} data-testid="agent-doc-url">
+                    <span className="mono" style={{ fontSize: 11, wordBreak: "break-all", userSelect: "all", WebkitUserSelect: "all" }} data-testid="agent-doc-url">
                       {new URL(mcp.endpoint).origin}/integration.md
                     </span>
                     <span className="dim" style={{ fontSize: 11 }}>{t("（把这个 URL 扔给 Agent，即可自助完成接入）")}</span>
@@ -1020,12 +1021,12 @@ export function SettingsPanel({
                     <div>{t("1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；")}</div>
                     <div>{t("2. 用上方表单签发 Token（仅展示一次；也可 CLI ")}<code>tinyssh agent create &lt;id&gt; &lt;{t("名称")}&gt; --expires-days 30</code>{t("）；")}</div>
                     <div>{t("3. 在 Agent 的 MCP 配置里填入端点与 Token：")}</div>
-                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
+                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all", WebkitUserSelect: "all" }}>
 {`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
 Authorization: Bearer <TOKEN>`}
                     </pre>
                     <div>{t("或者更省事：把上面「接入文档」链接直接发给 Agent，它会按文档自助完成接入。只支持 stdio 的客户端用自带 shim（应用同目录）：")}</div>
-                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all" }}>
+                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all", WebkitUserSelect: "all" }}>
 {`command: ${mcp.shim_path || t("(同应用目录 tinyssh-mcp)")}
 env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:8722/mcp"}`}
                     </pre>
@@ -1361,7 +1362,7 @@ function AgentModelCard() {
             setModel(e.target.value);
             writeDraft("agentModel.model", e.target.value);
           }} />
-        <input data-testid="agent-model-key" type="password" className="mono" style={{ fontSize: 11, width: 190 }}
+        <SecretInput data-testid="agent-model-key" className="mono" style={{ fontSize: 11, width: 190 }}
           placeholder={hasKey ? t("已配置（重填可更换）") : "api_key"}
           aria-label="api_key"
           value={apiKey} onChange={(e) => setApiKey(e.target.value)} />

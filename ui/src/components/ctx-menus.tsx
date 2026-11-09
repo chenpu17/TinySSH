@@ -12,6 +12,7 @@ import type { ConfirmState } from "./confirm-dialogs";
 import type { SplitDir, SplitGroup } from "../app-data";
 import { resetMouseReporting } from "../terminal/mouse-mode-guard";
 import { repaintTerm } from "../terminal/repaint";
+import { isMacPlatform } from "../actions";
 import { IconX } from "../icons";
 
 // 按钮美化轮：右键菜单宽度随内容（200–340px，styles.css .ctx-menu），挂载即测量——越出视口
@@ -37,8 +38,8 @@ export interface CtxMenusProps {
   groupOf: (sid: string) => SplitGroup | null;
   splitGroupLabelOf: (g: SplitGroup) => string;
   rotateSplitGroup: (gid: string, dir: SplitDir) => void;
-  beginGroupRename: (gid: string, initial: string) => void;
-  focusSession: (sid: string) => void;
+  /** source=tab 时改名框渲染在组标签行内（组成员没有独立标签，胶囊外也能改） */
+  beginGroupRename: (gid: string, initial: string, source?: "tab" | "chip") => void;
   autoReconn: { sid: string; attempt: number; max: number } | null;
   // —— 分屏选择菜单 ——
   splitMenu: boolean;
@@ -87,6 +88,10 @@ export interface CtxMenusProps {
   pasteTextIntoRef: { current: (term: Terminal, sessionSid: string, t: string, paneKey?: string) => void };
   /** 打开查找：paneKey 命中格子时搜该格，缺省按当前焦点判定 */
   onOpenSearch: (paneKey?: string) => void;
+  /** 查找项的快捷键提示与 aria-keyshortcuts——由 App 从 keymap 真源派生
+   * （formatBinding），菜单不自行猜测绑定 */
+  searchHint: string;
+  searchKeyshortcuts: string;
   sidRef: { current: string | null };
   attachSession: (sid: string) => Promise<void>;
   // —— 分屏退化提示 ——
@@ -94,11 +99,13 @@ export interface CtxMenusProps {
   splitHintOpen: boolean;
   splitHintDismissedRef: { current: boolean };
   setSplitHintOpen: (v: boolean) => void;
+  /** 退化提示的动作：收起主机栏腾出宽度，分屏自动恢复 */
+  onCollapseHostbar: () => void;
 }
 
 export function CtxMenus({
   sessions, sid, hosts, hostMeta, connectingIds, splitPanes, tabNames, autoReconn,
-  groupOf, splitGroupLabelOf, rotateSplitGroup, beginGroupRename, focusSession,
+  groupOf, splitGroupLabelOf, rotateSplitGroup, beginGroupRename,
   splitMenu, setSplitMenu, enterSplitWith, splitDir, setSplitDir,
   tabMenu, setTabMenu, exitSplit, stopRetry, reconnectSession, setRenaming,
   toggleSessionLog, openSessionLogFolder, openSessionDetail, requestCloseSession,
@@ -107,9 +114,19 @@ export function CtxMenus({
   setEditingHost, setPrefillEntry, setShowImport, setShowAddHost, setRecentHidden, setConfirm,
   termMenu, setTermMenu, termsRef, paneTermsRef, closeTmuxPane, paneLayoutCustom, resetPaneLayout,
   pasteTextIntoRef, onOpenSearch, sidRef, attachSession,
-  splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen,
+  searchHint, searchKeyshortcuts,
+  splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen, onCollapseHostbar,
 }: CtxMenusProps) {
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
+  // 剪贴板/全选的真实键盘绑定（App.tsx 终端键盘层）：
+  // mac：⌘C（有选区才复制）/⌘V/⌘A；Win/Linux：Ctrl+Shift+C 复制、Ctrl+V 粘贴
+  // （Ctrl+C 有选区也可，但无选区是 SIGINT，不作提示）。全选在 Win/Linux 没有绑定
+  // （Ctrl+A 直达 shell readline）——不显示提示，宁缺毋虚构。
+  const mac = isMacPlatform();
+  const copyHint = mac ? "⌘C" : "Ctrl+Shift+C";
+  const copyAria = mac ? "Meta+C" : "Control+Shift+C";
+  const pasteHint = mac ? "⌘V" : "Ctrl+V";
+  const pasteAria = mac ? "Meta+V" : "Control+V";
   // 键盘可达（审查二轮 UX2-4）：菜单此前只能鼠标点——焦点不被捕获、无箭头导航，
   // 纯键盘用户只能 Esc。菜单开即聚焦首项，↑↓ 在菜单项间循环（Enter 原生激活，
   // Esc 仍走全局浮层链）；捕获段监听只拦方向键，其余键不动。
@@ -244,16 +261,15 @@ export function CtxMenus({
                     <button className="sm-item" role="menuitem"
                       onClick={() => { close(); rotateSplitGroup(g!.id, g!.dir === "tb" ? "lr" : "tb"); }}
                     >{t("改为{0}分屏", g!.dir === "tb" ? t("左右") : t("上下"))}</button>
-                    {/* 分屏组命名（本轮）：改名框开在分割条胶囊上；清空提交=回自动名。
-                        非活动组先聚焦它的主格，胶囊才在可视分割条上 */}
+                    {/* 分屏组命名（本轮）：组标签右键——组成员没有独立标签，
+                        改名框必须开在组标签行内（source=tab），否则 setRenaming
+                        找不到成员标签、输入框永远不出现（死菜单）。
+                        非活动组也无需先聚焦：标签内渲染不依赖胶囊可见 */}
                     <button className="sm-item" role="menuitem" data-testid="ctx-rename-group"
                       title={t("自定义分屏组名（清空恢复自动命名：成员名相连）")}
                       onClick={() => {
                         close();
-                        const target = g!.id;
-                        const initial = splitGroupLabelOf(g!);
-                        if (sid !== g!.main && sid !== g!.second) focusSession(g!.main);
-                        beginGroupRename(target, initial);
+                        beginGroupRename(g!.id, splitGroupLabelOf(g!), "tab");
                       }}
                     >{t("重命名分组…")}</button>
                   </>
@@ -290,10 +306,14 @@ export function CtxMenus({
                     onClick={() => { close(); void createSession(menuHost); }}
                   >{t("复制标签页（同主机新会话）")}</button>
                 )}
-                <button className="sm-item" role="menuitem"
-                  title={t("自定义标签显示名（清空恢复主机名）；也可双击标签")}
-                  onClick={() => { close(); setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name }); }}
-                >{t("重命名标签…")}</button>
+                {/* 组标签不渲染成员标签：给成员开改名框会指向不存在的 DOM
+                    （死菜单）——组名统一走上面的「重命名分组…」 */}
+                {!inSplit && (
+                  <button className="sm-item" role="menuitem"
+                    title={t("自定义标签显示名（清空恢复主机名）；也可双击标签")}
+                    onClick={() => { close(); setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name }); }}
+                  >{t("重命名标签…")}</button>
+                )}
                 {/* 十八轮：会话日志——pump tap 落盘，开关态随 SessionInfo 下发不漂移 */}
                 <button className="sm-item" role="menuitem" data-testid="ctx-session-log"
                   title={t("把该会话收到的全部输出记录到本地日志文件（data/logs 目录，追加写入）")}
@@ -309,8 +329,11 @@ export function CtxMenus({
                   onClick={() => { close(); void openSessionDetail(s); }}
                 >{t("连接详情…")}</button>
                 <button className="sm-item tm-danger" role="menuitem"
+                  title={inSplit
+                    ? t("关闭当前窗格会话「{0}」并退出分屏（另一会话保留为独立标签）", s.host_name)
+                    : undefined}
                   onClick={() => { close(); requestCloseSession(s); }}
-                >{t("关闭会话…")}</button>
+                >{inSplit ? t("关闭当前窗格会话…") : t("关闭会话…")}</button>
               </div>
             )}
           </>
@@ -377,15 +400,15 @@ export function CtxMenus({
             {pe && (
               <div className="ctx-menu" ref={clampIntoView} role="menu" aria-label={t("窗格操作")} data-testid="tmux-cell-menu" style={{ left: mx, top: my }}>
                 {termMenu.hasSel && (
-                  <button className="sm-item" role="menuitem"
+                  <button className="sm-item" role="menuitem" aria-keyshortcuts={copyAria}
                     onClick={() => {
                       close();
                       const sel = pe.term.getSelection();
                       if (sel) Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
                     }}
-                  >{t("复制")}</button>
+                  >{t("复制")}<span className="sm-key">{copyHint}</span></button>
                 )}
-                <button className="sm-item" role="menuitem"
+                <button className="sm-item" role="menuitem" aria-keyshortcuts={pasteAria}
                   onClick={() => {
                     close();
                     const key = termMenu.paneKey;
@@ -393,10 +416,10 @@ export function CtxMenus({
                       .then((txt) => { if (txt) pasteTextIntoRef.current(pe.term, pe.sid, txt, key); })
                       .catch(() => {});
                   }}
-                >{t("粘贴")}</button>
-                <button className="sm-item" role="menuitem"
+                >{t("粘贴")}<span className="sm-key">{pasteHint}</span></button>
+                <button className="sm-item" role="menuitem" aria-keyshortcuts={mac ? "Meta+A" : undefined}
                   onClick={() => { close(); pe.term.selectAll(); }}
-                >{t("全选")}</button>
+                >{t("全选")}{mac && <span className="sm-key">⌘A</span>}</button>
                 <div className="ctx-menu-sep" role="separator" />
                 <button className="sm-item" role="menuitem" data-testid="pane-mouse-reset"
                   title={t("清掉远端 TUI 遗留的鼠标上报：滚轮恢复滚动，提示符不再出现 35;...M 乱码")}
@@ -432,15 +455,15 @@ export function CtxMenus({
             {en && (
               <div className="ctx-menu" ref={clampIntoView} role="menu" aria-label={t("终端操作")} style={{ left: mx, top: my }}>
                 {termMenu.hasSel && (
-                  <button className="sm-item" role="menuitem"
+                  <button className="sm-item" role="menuitem" aria-keyshortcuts={copyAria}
                     onClick={() => {
                       close();
                       const sel = en.term.getSelection();
                       if (sel) Promise.resolve(inTauri ? clipboard.writeText(sel) : navigator.clipboard?.writeText(sel)).catch(() => {});
                     }}
-                  >{t("复制")}</button>
+                  >{t("复制")}<span className="sm-key">{copyHint}</span></button>
                 )}
-                <button className="sm-item" role="menuitem"
+                <button className="sm-item" role="menuitem" aria-keyshortcuts={pasteAria}
                   onClick={() => {
                     close();
                     Promise.resolve(inTauri
@@ -448,12 +471,12 @@ export function CtxMenus({
                       : navigator.clipboard?.readText().then((txt) => pasteTextIntoRef.current(en.term, termMenu.sid, txt))
                     ).catch(() => {});
                   }}
-                >{t("粘贴")}</button>
-                <button className="sm-item" role="menuitem"
+                >{t("粘贴")}<span className="sm-key">{pasteHint}</span></button>
+                <button className="sm-item" role="menuitem" aria-keyshortcuts={mac ? "Meta+A" : undefined}
                   onClick={() => { close(); en.term.selectAll(); }}
-                >{t("全选")}</button>
+                >{t("全选")}{mac && <span className="sm-key">⌘A</span>}</button>
                 <div className="ctx-menu-sep" role="separator" />
-                <button className="sm-item" role="menuitem"
+                <button className="sm-item" role="menuitem" aria-keyshortcuts={searchKeyshortcuts}
                   onClick={() => {
                     close();
                     // 十五轮：查找作用于右键命中的窗格——非活动会话先切过去再开搜索框
@@ -462,7 +485,7 @@ export function CtxMenus({
                     if (sidRef.current === termMenu.sid) open();
                     else void attachSession(termMenu.sid).then(open).catch(() => open());
                   }}
-                >{t("查找…")}</button>
+                >{t("查找…")}<span className="sm-key">{searchHint}</span></button>
                 <button className="sm-item" role="menuitem"
                   onClick={() => { close(); en.term.clear(); }}
                 >{t("清屏")}</button>
@@ -516,10 +539,24 @@ export function CtxMenus({
         );
       })()}
       {splitDegraded && splitHintOpen && (
-        <div className="split-hint" role="status">
+        <div className="split-hint" role="status" style={{ flexWrap: "wrap" }}>
           <span>{splitPanes?.dir === "tb"
-            ? t("窗口高度不足——分屏临时退化为单窗格，另一个会话仍在标签中；拉高窗口自动恢复。")
-            : t("窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在标签中；加宽窗口自动恢复。")}</span>
+            ? t("窗口高度不足——分屏临时退化为单窗格，另一个会话仍在当前分屏组中；拉高窗口自动恢复。")
+            : t("窗口宽度不足——分屏临时退化为单窗格，另一个会话仍在当前分屏组中；加宽窗口自动恢复。")}</span>
+          {/* 窄窗下这是常见路径：把「怎么恢复」做成两个可点的动作，
+              而不是让用户自己猜该拉窗还是关主机栏 */}
+          <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexShrink: 0 }}>
+            <button className="ghost" style={{ whiteSpace: "nowrap", fontSize: 11, padding: "2px 6px" }}
+              onClick={onCollapseHostbar}
+            >{t("收起主机栏恢复分屏")}</button>
+            <button className="ghost" style={{ whiteSpace: "nowrap", fontSize: 11, padding: "2px 6px" }}
+              onClick={() => {
+                splitHintDismissedRef.current = true;
+                setSplitHintOpen(false);
+                if (splitPanes) exitSplit(splitPanes.id);
+              }}
+            >{t("退出分屏（拆成两个标签）")}</button>
+          </div>
           <button className="ghost" aria-label={t("关闭提示")} onClick={() => { splitHintDismissedRef.current = true; setSplitHintOpen(false); }}><IconX size={12} /></button>
         </div>
       )}

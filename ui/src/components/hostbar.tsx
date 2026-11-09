@@ -12,7 +12,7 @@ import { t } from "../i18n";
 import type { ConfirmState } from "./confirm-dialogs";
 import { SshConfigImportPanel } from "./ssh-import";
 import {
-  IconChevronUp, IconLoader, IconPencil, IconPlus, IconSearch, IconSliders,
+  IconChevronUp, IconLoader, IconPencil, IconPlus, IconRefresh, IconSearch, IconSliders,
   IconStar, IconTrash, IconUpload,
 } from "../icons";
 
@@ -22,6 +22,8 @@ export interface HostbarProps {
   hostMeta: HostMeta[];
   sessions: SessionInfo[];
   hostsLoaded: boolean;
+  /** list_hosts 本次失败（列表可能是空/旧数据）：显式错误态 + 重试，不伪装成空主机栏 */
+  hostsError: boolean;
   filteredHosts: Host[];
   favHosts: Host[];
   otherHosts: Host[];
@@ -62,7 +64,7 @@ export interface HostbarProps {
 }
 
 export function Hostbar({
-  hostbarWidth, hosts, hostMeta, sessions, hostsLoaded,
+  hostbarWidth, hosts, hostMeta, sessions, hostsLoaded, hostsError,
   filteredHosts, favHosts, otherHosts, allTags, activeTag,
   localHost, localShells, onLocalShell,
   connectingIds, lastFailed, showImport, showAddHost, attempts,
@@ -142,9 +144,19 @@ export function Hostbar({
               onManual={(e) => { setPrefillEntry(e); setEditingHost(null); setShowImport(false); setShowAddHost(true); }}
             />
           )}
+          {/* 首载/轮询失败：明确错误态 + 重试入口（此前 host 为空只剩「还没有主机」，
+              把 IPC 故障伪装成用户没建过主机）。列表若已有缓存数据则保留展示。 */}
+          {hostsError && (
+            <div className="side-quiet host-load-err" role="alert" data-testid="hostbar-load-error">
+              <div>{t("主机列表读取失败——当前列表可能为空或不是最新。")}</div>
+              <button className="ghost" style={{ marginTop: 6 }} onClick={() => refreshLists()}>
+                <IconRefresh size={12} /> {t("重试")}
+              </button>
+            </div>
+          )}
           {/* 新建/编辑主机与快速连接已改居中对话框（用户反馈二轮：220px 侧栏塞不下
               表单）——挂载点移到 App 顶层浮层区，见下方 form-mask 两块 */}
-          {(() => {
+          {(!hostsError || hosts.length > 0) && (() => {
             // R20（§4.2）：卡片渲染收敛为局部函数——收藏分组（收藏/其他主机/全部主机）
             // 复用同一卡片形态；组内名称序已在 filteredHosts 派生时排序
             // 本地终端一等公民轮：isLocal 分支——「本机」是内置条目，徽标显「本地」、
@@ -220,7 +232,18 @@ export function Hostbar({
                       </div>
                     )}
                     {lastFailed === h.id && !connectingIds.has(h.id) && (
-                      <div className="err host-fail">✕ {t("上次连接失败——检查地址与凭据后重试")}</div>
+                      <div className="err host-fail">
+                        <span>✕ {t("上次连接失败——检查地址与凭据后重试")}</span>
+                        {/* 就地重试：复用本卡 activate（有活跃会话则切回，否则新建），
+                            在途由 connectingIds 拦；stopPropagation 防冒泡到主区再触发一次 */}
+                        <button type="button" className="ghost host-retry-btn"
+                          aria-label={t("重试连接主机 {0}", h.name)}
+                          title={t("重试连接 {0}", h.name)}
+                          disabled={connectingIds.has(h.id)}
+                          onClick={(e) => { e.stopPropagation(); activate(); }}>
+                          <IconRefresh size={11} /> {t("重试连接")}
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className="host-card-side">
@@ -265,7 +288,7 @@ export function Hostbar({
             // 空态判据只数「已保存主机」：「本机」是内置条目、恒在 hosts 里，
             // 若按 hosts.length 判空，空主机栏会只剩一个「全部主机」节头而无引导
             const savedHostCount = hosts.filter((h) => h.id !== "local").length;
-            const emptyAll = hostsLoaded && savedHostCount === 0 && (
+            const emptyAll = hostsLoaded && !hostsError && savedHostCount === 0 && (
               <div className="side-quiet" data-testid="hostbar-empty">
                 <div>{t("还没有主机——点上方「＋」添加一台，或用右上角的「快速连接」临时连一次。")}</div>
                 <button className="ghost" style={{ marginTop: 6 }}
@@ -274,7 +297,7 @@ export function Hostbar({
                 </button>
               </div>
             );
-            const noMatch = hostsLoaded && savedHostCount > 0 && filteredHosts.length === 0 && (
+            const noMatch = hostsLoaded && !hostsError && savedHostCount > 0 && filteredHosts.length === 0 && (
               <>
                 <div className="side-quiet">{t("没有匹配的主机——可清除搜索或标签筛选，或添加新主机：")}</div>
                 <button className="ghost" style={{ marginTop: 6 }}

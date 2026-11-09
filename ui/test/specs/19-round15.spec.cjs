@@ -144,6 +144,20 @@ module.exports = {
     const after = await tabLabels(page);
     ck.check("拖拽后标签次序对调", before.length === 2 && after[0] === before[1] && after[1] === before[0],
       `${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+    // WKWebView 只认 -webkit-user-select（无前缀写法在 WebKit 下整条被忽略）：
+    // 缺前缀时标签按住拖动会先划选文字、桌面应用退化成网页。CSS 侧由静态扫描兜底，
+    // 运行时再确认标签确实不可选中、拖拽结束后没有残留选区。
+    const cssText = await page.evaluate(async () => (await import("/src/styles.css?raw")).default);
+    const bareUserSelect = cssText.replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n").filter((l) => l.includes("user-select:") && !l.includes("-webkit-user-select:"));
+    const noSelect = await page.evaluate(() =>
+      [...document.querySelectorAll(".tab")]
+        .every((t) => getComputedStyle(t).webkitUserSelect === "none" && getComputedStyle(t).userSelect === "none"));
+    const leftoverSel = await page.evaluate(() => String(getSelection() ?? ""));
+    ck.check("user-select 声明全部带 -webkit- 前缀（WKWebView 兼容）", bareUserSelect.length === 0,
+      bareUserSelect.join(" | "));
+    ck.check("标签在运行时不可选中，拖拽后无残留选区", noSelect && leftoverSel === "",
+      `noSelect=${noSelect} sel=${JSON.stringify(leftoverSel)}`);
     ws = await blob(page);
     const last1 = ws?.sessions?.last ?? [];
     ck.check("拖拽后 sessions.last 跟随新序", last1.length === 2 && last1[0] === last0[1] && last1[1] === last0[0],

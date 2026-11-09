@@ -264,6 +264,10 @@ const demoState = {
   // C9（R43）：`?disablefailed` 复现「停用未收敛」态（真实核心：端点未在时限内确认
   // 停止 → DisableFailed，admission 仍封闭）。此态下核心拒绝重新启用，须先重试收敛。
   collabFailed: false,
+  // 主机列表首载失败复现：`?failhosts` 让 list_hosts 前 2 次调用失败（StrictMode
+  // 首装 effect 双跑 = 两次），之后恢复——验证主机栏错误态与「重试」路径。
+  // 真实面：IPC/核心瞬时失败；demo 不伪造持久故障。
+  failHostsCalls: 0,
   // R26（§6.4）：每会话最近一条状态事件（session_state_feed 轮询面；真实核心走
   // session-state 事件通道——C1 connection-event/demo 轮询双路的同款镜像）
   stateEvents: new Map<string, SessionStateEvent>(),
@@ -457,6 +461,11 @@ if (typeof location !== "undefined" && location.search.includes("disablefailed")
 // 文件系统；?autoupdater 下启动 toast 同走「新版本已发布」路径，一并覆盖。
 if (typeof location !== "undefined" && location.search.includes("autoupdater")) {
   demoState.autoupdaterFake = true;
+}
+// 主机列表首载失败复现（见 failHostsCalls 注）：StrictMode 首装会连发两次，
+// 两次都失败后主机栏进入错误态；再点「重试」（第 3 次）恢复。
+if (typeof location !== "undefined" && location.search.includes("failhosts")) {
+  demoState.failHostsCalls = 2;
 }
 
 // C10：live 帧格式 = <u64 LE seq（8 字节头）><原始字节>（与桥层一致，UI 剥头取 seq）
@@ -705,6 +714,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     // React 靠引用变化感知更新——shim 返回同一可变数组会让 setSessions 失效
     // （接管后 chip 不翻转的根因）。
     case "list_hosts":
+      if (demoState.failHostsCalls > 0) {
+        demoState.failHostsCalls--;
+        throw apiError("ipc_failed", "读取主机列表失败（演示：首载中的瞬时 IPC 失败）");
+      }
       // identity_id 为 wire Host 契约字段（凭据绑定，R21 凭据库「使用中」标记的消费面）；
       // jump_host_id 为 ProxyJump 契约字段（主机表单跳板下拉 + 卡面「跳板」徽章的消费面）
       return demoState.hosts.map((h) => ({ ...h, identity_id: h.ident_id ?? null, jump_host_id: h.jump_host_id ?? null }));

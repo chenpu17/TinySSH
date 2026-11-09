@@ -236,6 +236,27 @@ const AssistantMsg = memo(function AssistantMsg({ md, think, streaming, lang }: 
   );
 });
 
+/** 内联高危审批二次确认臂的有效期（与协作面板同一根减速带、同一时长口径）：
+ *  臂只活 5 秒——到期自动撤销并恢复按钮文案，单击不会放行；切会话/换卡/卸载
+ *  都清计时器，避免一个早被遗忘的踏板在之后的手滑里被踩响。 */
+export const INLINE_RISK_CONFIRM_TTL_MS = 5000;
+
+/** 逐段判定摘要（一行可折叠）：把核心的 verdict 前缀折算成人类可扫的计数。
+ *  「pending/其它」统一按需确认归并——UI 不自造判定等级，只做汇总呈现。 */
+function segmentSummary(a: ApprovalRow): string {
+  let allow = 0, need = 0, deny = 0;
+  for (const s of a.segment_report) {
+    if (s.verdict.startsWith("allow:")) allow++;
+    else if (s.verdict.startsWith("deny:")) deny++;
+    else need++;
+  }
+  const parts: string[] = [];
+  if (allow) parts.push(t("{0} 允许", allow));
+  if (need) parts.push(t("{0} 需确认", need));
+  if (deny) parts.push(t("{0} 拦截", deny));
+  return t("{0} 段判定：{1}", a.segment_report.length, parts.join(" · "));
+}
+
 export function AgentView({
   width, sid, fleet, hostLabel, tmuxNote, pending, onDecide, owner, onDelegate,
   autonomyOn, onToggleAutonomy, onOpenApprovals,
@@ -245,8 +266,9 @@ export function AgentView({
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [stopping, setStopping] = useState<Record<string, boolean>>({});
   // 内联审批的高危二次确认（与协作面板同一根减速带）：首次点击只表态，
-  // 第二次才真的批准——对话流里最容易手滑点掉的一道闸。
+  // 第二次才真的批准——对话流里最容易手滑点掉的一道闸。臂带 TTL，见下方 effect。
   const [inlineRiskConfirm, setInlineRiskConfirm] = useState<string | null>(null);
+  const [inlineRiskLeft, setInlineRiskLeft] = useState(0);
   const [sending, setSending] = useState<Record<string, boolean>>({});
   // 草稿按会话隔离：共享一份时，在 A 会话输入一半切到 B，按 Enter 会把 A 的
   // 命令发到 B（SSH 场景下的真实错主机风险）。
@@ -683,6 +705,43 @@ export function AgentView({
   const inlineApproval = realMode && sid
     ? pending.find((p) => p.agent_id === EMBEDDED_AGENT_ID && p.session_id === sid)
     : undefined;
+  // DEV 探针（仅浏览器演练域）：真模式内联审批卡无法在 demo 里自然出现（realMode
+  // 门 = inTauri），spec 可注入一张与 ApprovalRow 同形的行来验证呈现与 TTL 臂。
+  // 它只走同一段渲染、不进入 pending 列表；release 构建下此分支恒为 undefined。
+  const devInlineApproval = import.meta.env.DEV
+    ? (window as unknown as { __t_inlineApproval?: ApprovalRow }).__t_inlineApproval
+    : undefined;
+  const previewApproval = inlineApproval ?? (devInlineApproval && devInlineApproval.session_id === sid ? devInlineApproval : undefined);
+  // 内联审批的 120 秒等待超时倒计时（核心口径）：只为呈现，按秒刷新；
+  // 卡消失/切卡即停，不留下常驻 interval。
+  const [inlineNow, setInlineNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!previewApproval) return;
+    setInlineNow(Date.now());
+    const timer = window.setInterval(() => setInlineNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [previewApproval?.id]);
+  // 高危臂 TTL（唯一收口）：依赖是臂本身——重复 arm 换 id 先清旧计时；到期
+  // 自动撤臂并恢复按钮文案；切会话（sid 变化）、换卡（id 不匹配）也走同一撤销。
+  useEffect(() => {
+    if (!inlineRiskConfirm) { setInlineRiskLeft(0); return; }
+    const deadline = Date.now() + INLINE_RISK_CONFIRM_TTL_MS;
+    setInlineRiskLeft(Math.ceil(INLINE_RISK_CONFIRM_TTL_MS / 1000));
+    const tick = window.setInterval(() => {
+      setInlineRiskLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    }, 200);
+    const expire = window.setTimeout(() => {
+      setInlineRiskLeft(0);
+      setInlineRiskConfirm(null); // 到期即撤：之后的第一击只重新 arm，不放行
+    }, INLINE_RISK_CONFIRM_TTL_MS);
+    return () => { window.clearInterval(tick); window.clearTimeout(expire); };
+  }, [inlineRiskConfirm]);
+  // 切会话收起臂（旧会话的第二次点击不得落到新会话的审批上）
+  useEffect(() => { setInlineRiskConfirm(null); setInlineRiskLeft(0); }, [sid]);
+  // 审批行被别处处理/超时消失或换成另一张卡 → 立即撤臂
+  useEffect(() => {
+    if (inlineRiskConfirm && inlineRiskConfirm !== previewApproval?.id) setInlineRiskConfirm(null);
+  }, [inlineRiskConfirm, previewApproval?.id]);
   // 工具串行执行：审批只属于第一张 running 卡；此前每张同名 running 卡都渲染
   // 批准/拒绝，点错卡会把审批显示挂到错误的调用上。
   const firstRunningToolId = msgs.find((m) => m.role === "tool" && m.status === "running")?.id;
@@ -698,6 +757,77 @@ export function AgentView({
       case "err": return <span className="tc-chip err">{t("出错")}</span>;
       case "denied": return <span className="tc-chip dim">{t("已拒绝")}</span>;
     }
+  };
+
+  /** 内联审批的呈现（真模式卡与 DEV 预览共用同一段）：命令可读性提档、
+   *  目的缺失显式警示、逐段判定可折叠、120s 超时实时倒计时、高危臂带剩余秒数。 */
+  const inlineApprovalActions = (a: ApprovalRow) => {
+    const risk = approvalRisk(a);
+    const gated = !!risk && inlineRiskConfirm !== a.id;
+    const born = Date.parse(a.created_at);
+    const left = Number.isFinite(born) ? Math.max(0, 120 - Math.floor((inlineNow - born) / 1000)) : null;
+    return (
+      <>
+        <div className="tc-actions">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {a.target_summary && (
+              <div style={{ marginBottom: 4 }}>
+                <span className="tsum-chip" title={t("命令本身的破坏性提示（核心判定）")}>{a.target_summary}</span>
+              </div>
+            )}
+            <div className="mono" data-testid="agent-inline-cmd"
+              style={{ fontSize: 12, color: "var(--text)", maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+              {a.command}
+            </div>
+            <div data-testid="agent-inline-purpose"
+              style={{ fontSize: 11, marginTop: 3, color: a.purpose ? "var(--text-sub)" : "var(--warn)" }}>
+              {t("目的：")}{a.purpose || t("未提供目的（Agent 未收到委托说明）")}
+            </div>
+            {a.segment_report.length > 0 && (
+              <details data-testid="agent-inline-segs">
+                <summary style={{ fontSize: 11, color: "var(--text-sub)", cursor: "pointer" }}>{segmentSummary(a)}</summary>
+                {a.segment_report.map((s, i) => (
+                  <div key={i} style={{ fontSize: 11, color: "var(--text-sub)" }}>· {s.segment} — {s.verdict}</div>
+                ))}
+              </details>
+            )}
+            {risk && (
+              <div style={{ fontSize: 11, color: "var(--warn)" }}>⚠ {t("{0}——批准前请确认命令的全部效果。", risk)}</div>
+            )}
+            {left !== null ? (
+              <div data-testid="agent-inline-countdown" style={{ fontSize: 11, color: "var(--warn-text)" }}>
+                ⏳ {left > 0
+                  ? t("剩余 {0} 秒后自动拒绝——命令不会执行", left)
+                  : t("已超时，等待核心按拒绝结算…")}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: "var(--warn-text)" }}>{t("120 秒内未处理将自动拒绝，命令不会执行")}</div>
+            )}
+          </div>
+          <button className={gated ? "warn" : "primary"} data-testid="agent-approve-real"
+            onClick={() => {
+              if (gated) { setInlineRiskConfirm(a.id); return; }
+              setInlineRiskConfirm(null);
+              onDecide(a.id, "approve", null);
+            }}>
+            {!risk ? t("批准")
+              : gated ? t("确认高危并批准")
+                : inlineRiskLeft > 0 ? t("再次点击确认批准（剩余 {0} 秒）", inlineRiskLeft)
+                  : t("再次点击确认批准")}
+          </button>
+          <button className="ghost" data-testid="agent-deny-real"
+            onClick={() => { setInlineRiskConfirm(null); onDecide(a.id, "deny", null); }}>{t("拒绝")}</button>
+        </div>
+        {/* 完整裁决（分组/目标/逐段判定与记忆入口）在协作面板；对话流里只留一键去路 */}
+        {onOpenApprovals && (
+          <div style={{ padding: "0 10px 7px" }}>
+            <button className="ghost" data-testid="agent-open-approvals" onClick={onOpenApprovals}>
+              {t("在协作面板查看完整裁决")}
+            </button>
+          </div>
+        )}
+      </>
+    );
   };
 
   const newConversation = () => {
@@ -802,34 +932,22 @@ export function AgentView({
                       <button className="ghost" data-testid="agent-deny" onClick={deny}>{t("拒绝")}</button>
                     </div>
                   )}
-                  {showApprove && inlineApproval && (() => {
-                    const risk = approvalRisk(inlineApproval);
-                    const gated = !!risk && inlineRiskConfirm !== inlineApproval.id;
-                    return (
-                      <div className="tc-actions">
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="dim mono" style={{ fontSize: 11, maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{inlineApproval.command}</div>
-                          {inlineApproval.purpose && (
-                            <div className="dim" style={{ fontSize: 10 }} title={t("委托目标（会话当前目的）")}>{t("目的：")}{inlineApproval.purpose}</div>
-                          )}
-                          {risk && (
-                            <div style={{ fontSize: 10, color: "var(--warn)" }}>⚠ {t("{0}——批准前请确认命令的全部效果。", risk)}</div>
-                          )}
-                          <div className="dim" style={{ fontSize: 10 }}>{t("120 秒内未处理将自动拒绝，命令不会执行")}</div>
-                        </div>
-                        <button className={gated ? "warn" : "primary"} data-testid="agent-approve-real"
-                          onClick={() => {
-                            if (gated) { setInlineRiskConfirm(inlineApproval.id); return; }
-                            setInlineRiskConfirm(null);
-                            onDecide(inlineApproval.id, "approve", null);
-                          }}>{gated ? t("确认高危并批准") : t("批准")}</button>
-                        <button className="ghost" data-testid="agent-deny-real" onClick={() => { setInlineRiskConfirm(null); onDecide(inlineApproval.id, "deny", null); }}>{t("拒绝")}</button>
-                      </div>
-                    );
-                  })()}
+                  {showApprove && inlineApproval && inlineApprovalActions(inlineApproval)}
                 </div>
               );
             })}
+            {/* DEV 预览（仅演练域）：用注入的审批行渲染与真模式同一段内联卡，
+                供 spec 验证呈现/TTL；不参与真实 decide 之外的任何语义。 */}
+            {devInlineApproval && previewApproval === devInlineApproval && (
+              <div className="tool-card tc-running" data-testid="agent-tool" data-dev-inline="1">
+                <div className="tc-head">
+                  <span className="tc-tool mono">exec</span>
+                  <span className="tc-args mono" title={devInlineApproval.command}>{devInlineApproval.command}</span>
+                  <span className="tc-chip warn">{t("待审批")}</span>
+                </div>
+                {inlineApprovalActions(devInlineApproval)}
+              </div>
+            )}
           </div>
           {askDelegate && (
             <div className="ag-delegate" data-testid="agent-delegate-strip">

@@ -136,6 +136,23 @@ module.exports = {
     const credIds = await paneIds(page);
     ck.check("凭据分区有新建凭据入口（cred-new）", credIds.includes("cred-new"));
     ck.check("凭据分区有空态或列表（cred-empty / cred-uses）", credIds.includes("cred-empty") || credIds.includes("cred-uses"));
+    // 私钥口令可见性开关（凭据表单与主机/快速连接同款）：默认隐藏，切换只改 type
+    await page.click("[data-testid=cred-new]");
+    await page.waitForTimeout(400);
+    const credEye = await page.evaluate(() => {
+      const i = document.querySelector('[data-testid="cred-new-pass"]');
+      const b = document.querySelector('[data-testid="cred-new-form"] .secret-toggle');
+      return { type: i?.type, pressed: b?.getAttribute("aria-pressed"), label: b?.getAttribute("aria-label"), hasTypeButton: b?.getAttribute("type") };
+    });
+    ck.check("凭据口令默认隐藏且开关为 type=button（不提交表单）",
+      credEye.type === "password" && credEye.pressed === "false" && !!credEye.label && credEye.hasTypeButton === "button",
+      JSON.stringify(credEye));
+    await page.click('[data-testid="cred-new-form"] .secret-toggle');
+    await page.waitForTimeout(150);
+    ck.check("切换后凭据口令明文显示",
+      await page.evaluate(() => document.querySelector('[data-testid="cred-new-pass"]')?.type === "text"), "");
+    await page.click('[data-testid=cred-new]'); // 收起表单，不留下半成品
+    await page.waitForTimeout(300);
 
     // 切到 Agent 接入分区
     await page.click("[data-testid=settings-cat-agent]");

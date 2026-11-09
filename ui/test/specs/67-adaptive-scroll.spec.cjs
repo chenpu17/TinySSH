@@ -136,12 +136,16 @@ module.exports = {
       term.write("\x1b[?1000h\x1b[?1006h"); // 模拟 tmux set -g mouse on
       await new Promise((resolve) => setTimeout(resolve, 60));
       events.length = 0;
-      // 清掉视口滚轮余量，并按整行 delta 发：30 次滚轮 = 30 条报文，结果确定
-      const rowHeight = term._core.viewport?._currentRowHeight ?? 20;
-      term._core.viewport._wheelPartialScroll = 0;
+      // 清掉视口滚轮余量，并按行模式 delta 发：30 次滚轮 = 30 条报文，结果确定。
+      // xterm 6 会把 |deltaY|<50 的像素滚动当触控板打折 0.3，像素模式无法逐次对齐，
+      // 行模式（DOM_DELTA_LINE）不折算、不折扣，两代语义一致。
+      const core = term._core;
+      const mouse = core.coreMouseService ?? core._mouseService;
+      if (mouse) mouse._wheelPartialScroll = 0;
+      else if (core.viewport) core.viewport._wheelPartialScroll = 0;
       for (let i = 0; i < 30; i++) {
         el.dispatchEvent(new WheelEvent("wheel", {
-          deltaY: -rowHeight, deltaMode: 0, clientX: 500, clientY: 300, bubbles: true, cancelable: true,
+          deltaY: -1, deltaMode: 1, clientX: 500, clientY: 300, bubbles: true, cancelable: true,
         }));
       }
       await new Promise((resolve) => setTimeout(resolve, 80));

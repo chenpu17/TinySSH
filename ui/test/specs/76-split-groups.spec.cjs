@@ -293,10 +293,14 @@ module.exports = {
       && p.find((x) => x.sid === t1)?.slot === "main" && p.find((x) => x.sid === t2)?.slot === "second",
       JSON.stringify(p));
 
-    // 关闭 A|B 的焦点成员 t3（组标签右键走焦点成员）
+    // 关闭 A|B 的焦点成员 t3（组标签右键走焦点成员；文案如实说「关闭当前窗格会话」）
     groupIdxs = (await tabsInfo(page)).map((t, i) => (t.gid ? i : -1)).filter((i) => i >= 0);
     await rightClickTabIdx(page, groupIdxs[0]);
-    await clickItem(page, "关闭会话");
+    const groupMenuText = await page.evaluate(() => document.querySelector(".ctx-menu")?.innerText ?? "");
+    ck.check("组标签右键：关闭文案说当前窗格、只留「重命名分组」不开死菜单",
+      groupMenuText.includes("关闭当前窗格会话") && !groupMenuText.includes("重命名标签")
+      && groupMenuText.includes("重命名分组"), groupMenuText.replace(/\n+/g, " | "));
+    await clickItem(page, "关闭当前窗格会话");
     await page.evaluate(() => {
       const b = [...document.querySelectorAll(".confirm-dialog button")].find((x) => x.textContent.trim() === "关闭会话");
       if (b) b.click();

@@ -53,6 +53,59 @@ module.exports = {
     ck.check("刷新后编排视图保持打开",
       (await openCls("rail-fleet")) && (await vis('[data-testid="agent-view"]')));
 
+    // ── 协作面板：高危审批二次确认臂带 TTL（P1）──
+    // 编排视图的「有 N 个待审批」提示是进协作面板的既有入口（点击即开右侧面板）。
+    await page.click('[data-testid="fleet-pending-hint"]');
+    await page.waitForTimeout(600);
+    ck.check("待审批提示打开协作面板",
+      (await page.evaluate(() => document.querySelector('[data-testid="tp-title"]')?.textContent ?? "")) === "协作");
+
+    // 演示种子的 a-demo-1（rm -rf）是高危卡：目的由会话当前委托目标投影而来。
+    const apPurpose = await page.evaluate(() => {
+      const line = [...document.querySelectorAll('[data-testid="ap-purpose"]')]
+        .find((el) => el.closest(".card")?.querySelector(".cmd")?.textContent?.includes("rm -rf"));
+      return line ? { missing: line.classList.contains("missing"), text: line.textContent ?? "" } : null;
+    });
+    ck.check("高危卡显示会话委托目的（上下文在场）",
+      !!apPurpose && !apPurpose.missing && apPurpose.text.includes("清理掉"), JSON.stringify(apPurpose));
+
+    /** 找高危卡（rm -rf）的批准类按钮并返回其文案；click=true 时顺带点它。 */
+    const riskApprove = (click) => page.evaluate((doClick) => {
+      const cards = [...document.querySelectorAll(".task-panel .card")];
+      const card = cards.find((el) => el.querySelector(".cmd")?.textContent?.includes("rm -rf"));
+      if (!card) return "(无卡)";
+      const btn = [...card.querySelectorAll("button")].find((b) => {
+        const s = b.textContent.trim();
+        return s === "批准" || s.startsWith("再次点击确认批准");
+      });
+      if (!btn) return "(无按钮)";
+      if (doClick) btn.click();
+      return btn.textContent.trim();
+    }, click);
+    const apCardCount = () => page.evaluate(() =>
+      [...document.querySelectorAll(".task-panel .card")].filter((el) => el.querySelector(".cmd")).length);
+
+    const nBefore = await apCardCount();
+    await riskApprove(true);
+    await page.waitForTimeout(250);
+    const armed = await riskApprove(false);
+    ck.check("首次点击批准只 arm（按钮出现剩余秒数）",
+      /再次点击确认批准（剩余 \d+ 秒）/.test(armed), armed);
+
+    // 等过 TTL（5s）后单击不得放行：按钮回到「批准」、审批卡仍在。
+    await page.waitForTimeout(5500);
+    const afterTtl = await riskApprove(false);
+    ck.check("TTL 到期撤销臂：按钮恢复「批准」", afterTtl === "批准", afterTtl);
+    ck.check("TTL 到期后审批卡未被放行", (await apCardCount()) === nBefore, `${nBefore} → ${await apCardCount()}`);
+
+    // TTL 内第二次点击才批准：卡数减一。
+    await riskApprove(true);
+    await page.waitForTimeout(200);
+    await riskApprove(true);
+    await page.waitForTimeout(900);
+    ck.check("TTL 内第二次点击放行（审批卡减少）",
+      (await apCardCount()) === nBefore - 1, `${nBefore} → ${await apCardCount()}`);
+
     // ── 切回主机栏：编排收起（三向互斥的另一半） ──
     await page.click('[data-testid="rail-hosts"]');
     await page.waitForTimeout(400);

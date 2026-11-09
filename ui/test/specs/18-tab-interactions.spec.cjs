@@ -171,6 +171,71 @@ module.exports = {
     await clickItem(page, "查找");
     const searchOpen = await page.evaluate(() => !!document.querySelector(".term-search input"));
     ck.check("「查找…」打开搜索框", searchOpen, "");
+
+    // ── 查找选项（本轮）：区分大小写 / 全词 / 正则 + 非法正则不崩 ──
+    // 写入大小写样本到活动会话的主视图（右键 #term 时查找目标即它）。
+    await page.evaluate(() => {
+      const active = [...window.__t_terms.values()].find((t) => {
+        const el = t.element;
+        return !!el && el.isConnected && el.closest(".term-session.active") && el.getBoundingClientRect().height > 0;
+      });
+      if (!active) throw new Error("no active term");
+      for (let i = 0; i < 30; i++) active.write(`\r\nCASE filler ${i}`);
+      active.write("\r\nFoo foo FOO\r\n");
+    });
+    await page.waitForTimeout(500);
+    const countText = () =>
+      page.evaluate(() => document.querySelector(".term-search .mono")?.textContent ?? "");
+    const pressed = (id) => page.getAttribute(`[data-testid="${id}"]`, "aria-pressed");
+
+    await page.fill(".term-search input", "foo");
+    await page.waitForTimeout(500);
+    const ciCount = await countText();
+    ck.check("默认不区分大小写命中 3 处", /\/3$/.test(ciCount), ciCount);
+    ck.check("三个选项默认未开启",
+      (await pressed("search-case")) === "false"
+      && (await pressed("search-word")) === "false"
+      && (await pressed("search-regex")) === "false", "");
+
+    await page.click('[data-testid="search-case"]');
+    await page.waitForTimeout(500);
+    ck.check("区分大小写 toggle aria-pressed=true", (await pressed("search-case")) === "true", "");
+    const csCount = await countText();
+    ck.check("区分大小写后命中数变化（1 处）", /\/1$/.test(csCount), csCount);
+    await page.click('[data-testid="search-case"]');
+    await page.waitForTimeout(400);
+
+    await page.click('[data-testid="search-word"]');
+    await page.waitForTimeout(300);
+    ck.check("全词匹配 toggle aria-pressed=true", (await pressed("search-word")) === "true", "");
+    await page.click('[data-testid="search-word"]');
+    await page.waitForTimeout(300);
+    ck.check("全词匹配可关回 false", (await pressed("search-word")) === "false", "");
+
+    await page.click('[data-testid="search-regex"]');
+    await page.waitForTimeout(200);
+    ck.check("正则 toggle aria-pressed=true", (await pressed("search-regex")) === "true", "");
+    await page.fill(".term-search input", "a+");
+    await page.waitForTimeout(500);
+    const rxCount = await countText();
+    const rxHits = Number((rxCount.match(/\/(\d+)$/) || [])[1] || 0);
+    ck.check("正则模式 a+ 命中", rxHits > 0, rxCount);
+
+    await page.fill(".term-search input", "[");
+    await page.waitForTimeout(300);
+    const invalidAttr = await page.evaluate(() =>
+      document.querySelector(".term-search input")?.getAttribute("aria-invalid") ?? null);
+    ck.check("非法正则不崩且输入框 aria-invalid", invalidAttr === "true", String(invalidAttr));
+    ck.check("非法正则显示「正则无效」", (await countText()) === "正则无效", await countText());
+
+    await page.fill(".term-search input", "a+");
+    await page.waitForTimeout(500);
+    const recovered = await page.evaluate(() =>
+      document.querySelector(".term-search input")?.getAttribute("aria-invalid") ?? null);
+    ck.check("改为合法正则后自动恢复", recovered !== "true", String(recovered));
+    await page.click('[data-testid="search-regex"]');
+    await page.waitForTimeout(200);
+
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
 
