@@ -13,7 +13,7 @@ English docs: [README.md](README.md)。
 
 ## 与现有工具的取舍
 
-定位快照（v0.12.1，2026-11），按品类概括而非逐产品评测。
+定位快照（v0.12.2，2026-11），按品类概括而非逐产品评测。
 
 | | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
 |---|---|---|---|
@@ -58,7 +58,7 @@ Windows 是主要验证平台——全套测试与逐轮真机验证都在它上
 ```bash
 # 前端（demo 模式，纯浏览器可跑）
 cd ui && npm ci && npm run dev           # http://localhost:5183
-npm test                                 # UI 套件（68 spec / 1445 断言，headless）
+npm test                                 # UI 套件（68 spec / 1459 断言，headless）
 npm run build                            # tsc + vite build
 
 # 桌面应用（tauri dev；Rust 工作区，需 Rust ≥ 1.86、Node ≥ 22）
@@ -140,7 +140,7 @@ Windows 注意：
 
 ## 状态
 
-v0.12.1。主平台（Windows）全绿：Rust 工作区测试 + 68 spec / 1445 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+v0.12.2。主平台（Windows）全绿：Rust 工作区测试 + 68 spec / 1459 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
 
 ## 技术栈（概览）
 
