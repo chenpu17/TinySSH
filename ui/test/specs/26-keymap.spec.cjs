@@ -29,11 +29,14 @@ module.exports = {
     const MOD = mac ? { metaKey: true } : { ctrlKey: true };   // 主修饰键
     const fmt = (k, mods = {}) => mac                 // 期望展示文案
       ? `⌘${mods.shift ? "⇧" : ""}${k.toUpperCase()}` : `Ctrl+${mods.shift ? "Shift+" : ""}${k.toUpperCase()}`;
+    const DEFAULT_SEARCH = fmt("f", { shift: !mac });
+    const DEFAULT_TERM_LOCAL = fmt(mac ? "t" : "l", { shift: true });
+    const DEFAULT_PALETTE = fmt("k", { shift: !mac });
     for (const id of ["tab-new", "tab-close", "term-local", "split-toggle", "palette", "hostbar", "search"]) {
       ck.check(`绑定行在场：${id}`, await page.evaluate((t) => !!document.querySelector(`[data-testid="keymap-row-${t}"]`), id));
     }
-    ck.check(`默认绑定展示（search=${fmt("f")}）`, (await keyTextOf(page, "search")) === fmt("f"), await keyTextOf(page, "search"));
-    ck.check(`默认绑定展示（term-local=${fmt("t", { shift: true })}）`, (await keyTextOf(page, "term-local")) === fmt("t", { shift: true }), await keyTextOf(page, "term-local"));
+    ck.check(`默认绑定展示（search=${DEFAULT_SEARCH}）`, (await keyTextOf(page, "search")) === DEFAULT_SEARCH, await keyTextOf(page, "search"));
+    ck.check(`默认绑定展示（term-local=${DEFAULT_TERM_LOCAL}）`, (await keyTextOf(page, "term-local")) === DEFAULT_TERM_LOCAL, await keyTextOf(page, "term-local"));
     const HB = fmt("b", { shift: !mac });
     ck.check(`默认绑定展示（hostbar=${HB}）`, (await keyTextOf(page, "hostbar")) === HB, await keyTextOf(page, "hostbar"));
     ck.check("重置钮默认禁用（已是默认值）", await page.evaluate(() => document.querySelector('[data-testid="keymap-reset-search"]').disabled), "");
@@ -44,7 +47,7 @@ module.exports = {
     ck.check("录入态提示（按下新组合…）", (await keyTextOf(page, "search")) === "按下新组合…");
     await pressCombo(page, { key: "Escape", code: "Escape", ctrlKey: false, shiftKey: false, altKey: false });
     await page.waitForTimeout(200);
-    ck.check("Esc 取消录入回到原绑定", (await keyTextOf(page, "search")) === fmt("f"), await keyTextOf(page, "search"));
+    ck.check("Esc 取消录入回到原绑定", (await keyTextOf(page, "search")) === DEFAULT_SEARCH, await keyTextOf(page, "search"));
 
     // 录入流：改绑 search → Ctrl+J，持久化落 localStorage
     await page.click('[data-testid="keymap-edit-search"]');
@@ -104,9 +107,14 @@ module.exports = {
     // 单条重置 → 回默认、KV 归默认串
     await page.click('[data-testid="keymap-reset-search"]');
     await page.waitForTimeout(300);
-    ck.check(`重置后回 ${fmt("f")}`, (await keyTextOf(page, "search")) === fmt("f"), await keyTextOf(page, "search"));
+    ck.check(`重置后回 ${DEFAULT_SEARCH}`, (await keyTextOf(page, "search")) === DEFAULT_SEARCH, await keyTextOf(page, "search"));
     const stored2 = await page.evaluate(() => localStorage.getItem("ui.keymap.v1") ?? "");
-    ck.check("重置后 KV search 归默认 f", (() => { try { return JSON.parse(stored2).search.key === "f"; } catch { return false; } })(), stored2);
+    ck.check("重置后 KV search 归默认 f", (() => {
+      try {
+        const b = JSON.parse(stored2).search;
+        return b.key === "f" && b.shift === !mac;
+      } catch { return false; }
+    })(), stored2);
 
     // 单条重置撞键（审查轮二）：主机栏改 E、搜索改成主机栏的默认键 → 点主机栏「重置」
     // 必须拒绝并说明（此前直接落出两条同键的表，分发只认先命中者、另一条静默失效）
@@ -160,20 +168,23 @@ module.exports = {
       await reloadToKeys();
       const lostToast = (await toastTexts()).find((x) => x.includes("快捷键冲突")) ?? "";
       ck.check("载入撞键：toast 交代谁让给了谁、恢复成什么",
-        lostToast.includes("搜索终端内容") && lostToast.includes("主机栏开关") && lostToast.includes("Ctrl+F"), lostToast);
-      ck.check("载入撞键：主机栏 Ctrl+Shift+B、搜索 Ctrl+F",
-        (await keyTextOf(page, "hostbar")) === "Ctrl+Shift+B" && (await keyTextOf(page, "search")) === "Ctrl+F",
+        lostToast.includes("搜索终端内容") && lostToast.includes("主机栏开关") && lostToast.includes("Ctrl+Shift+F"), lostToast);
+      ck.check("载入撞键：主机栏 Ctrl+Shift+B、搜索 Ctrl+Shift+F",
+        (await keyTextOf(page, "hostbar")) === "Ctrl+Shift+B" && (await keyTextOf(page, "search")) === "Ctrl+Shift+F",
         `${await keyTextOf(page, "hostbar")} / ${await keyTextOf(page, "search")}`);
       const rewritten = await page.evaluate(() => localStorage.getItem("ui.keymap.v1") ?? "");
       ck.check("解析结果已回写（search=f、hostbar=Ctrl+Shift+B）", (() => {
-        try { const o = JSON.parse(rewritten); return o.search.key === "f" && o.hostbar.key === "b" && o.hostbar.shift === true; } catch { return false; }
+        try {
+          const o = JSON.parse(rewritten);
+          return o.search.key === "f" && o.search.shift === true && o.hostbar.key === "b" && o.hostbar.shift === true;
+        } catch { return false; }
       })(), rewritten);
       await reloadToKeys();
       ck.check("再次启动不再重复提示", !(await toastTexts()).some((x) => x.includes("快捷键冲突")));
 
       // 控制字符直发层的豁免（Tauri-only 路径；DEV 钩子 __t_keymapExempt 让 demo 走同一分支）。
       // demo 的动作分发只认 ⌘（Ctrl 系归浏览器，resolveAction 的 native 门），所以这里只能
-      // 验「路由」：表内组合（Ctrl+Shift+B / Ctrl+K）不发往终端、交给动作层；保留键 Ctrl+B
+      // 验「路由」：表内组合（Ctrl+Shift+B / Ctrl+Shift+K）不发往终端、交给动作层；保留键 Ctrl+B
       // 直达终端（\x02）。动作是否触发由 shortcuts-keys 单测（native）+ 真机键盘走查守门。
       await page.click('[data-testid="settings-close"]');
       await page.waitForTimeout(300);
@@ -201,9 +212,9 @@ module.exports = {
       await page.waitForTimeout(400);
       ck.check("豁免层：终端聚焦下 Ctrl+Shift+B 不发往终端（归主机栏）", (await outTail()) === out0, JSON.stringify((await outTail()).slice(-12)));
       await focusMain();
-      await page.keyboard.press("Control+k");
+      await page.keyboard.press("Control+Shift+K");
       await page.waitForTimeout(400);
-      ck.check("豁免层：Ctrl+K 不发往终端（归命令面板）", (await outTail()) === out0, JSON.stringify((await outTail()).slice(-12)));
+      ck.check(`豁免层：${DEFAULT_PALETTE} 不发往终端（归命令面板）`, (await outTail()) === out0, JSON.stringify((await outTail()).slice(-12)));
       await focusMain();
       await page.keyboard.press("Control+b");
       await page.waitForTimeout(400);

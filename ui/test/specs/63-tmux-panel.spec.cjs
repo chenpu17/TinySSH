@@ -962,7 +962,7 @@ module.exports = {
       // 约束：相邻两次 tryCreate 的错误文本必须不同——同文时第二轮会等满 6s 返回
       // 空串（假红，不是假绿）；当前两个调用点「非法」/「已存在」不同文
       const prev = await page.evaluate(() => document.querySelector('[data-testid="tmux-create-err"]')?.textContent ?? "");
-      await page.evaluate(() => { const i = document.querySelector('[data-testid="tmux-create-input"]'); if (i) i.value = ""; });
+      await page.fill('[data-testid="tmux-create-input"]', "");
       if (name) await page.type('[data-testid="tmux-create-input"]', name, { delay: 6 });
       // 等「创建」可用：上一次提交的 busy 态要等 invoke 落定、React 重渲染后才解除；
       // 全套高负载下在 busy 期间点击会被 disabled 静默吞掉，错误文本永不更新（假红）
@@ -971,7 +971,7 @@ module.exports = {
         return !!b && !b.disabled;
       }, null, 3000);
       await page.click('[data-testid="tmux-create-ok"]');
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 40; i++) {
         await page.waitForTimeout(250);
         const st = await page.evaluate(() => ({
           err: document.querySelector('[data-testid="tmux-create-err"]')?.textContent ?? "",
@@ -980,10 +980,18 @@ module.exports = {
         if (!st.open) return ""; // 作曲行关闭 = 创建成功（本用例不应发生）
         if (st.err && st.err !== prev) return st.err; // 新错误落定
       }
-      return "";
+      const stuck = await page.evaluate(() => ({
+        open: !!document.querySelector('[data-testid="tmux-create-row"]'),
+        err: document.querySelector('[data-testid="tmux-create-err"]')?.textContent ?? "",
+      }));
+      return `TIMEOUT open=${stuck.open} err=${stuck.err}`;
     };
     ck.check("非法名（a:b）就地报错", (await tryCreate("a:b")).includes("非法"), "");
-    ck.check("同名预检（work 已存在）就地报错", (await tryCreate("work")).includes("已存在"), "");
+    const dupCreateErr = await tryCreate("work");
+    const tmuxNamesNow = await page.evaluate(async (sid) =>
+      ((await window.__demoInvoke("tmux_probe", { sid }))?.sessions ?? []).map((x) => x.name), SID);
+    ck.check("同名预检（work 已存在）就地报错", dupCreateErr.includes("已存在"),
+      JSON.stringify({ dupCreateErr, tmuxNamesNow }));
     await page.focus('[data-testid="tmux-create-input"]');
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);

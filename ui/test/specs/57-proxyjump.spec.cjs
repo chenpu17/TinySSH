@@ -90,9 +90,10 @@ module.exports = {
       hop && hop.title.includes("第1跳") && hop.title.includes("跳板机") && hop.host === "staging-1",
       JSON.stringify(hop));
     await hkDecide(true);
-    // 第一张卡先闭，再等目标卡（防同框竞态）
-    await page.waitForSelector(".hk-dialog", { state: "detached", timeout: 5000 });
-    await page.waitForSelector(".hk-dialog", { timeout: 5000 });
+    // React 可能复用同一 .hk-dialog 节点直接换内容，等主体切到目标机而非等节点 detach
+    await page.waitForFunction(() =>
+      document.querySelector(".hk-dialog b")?.textContent === "jump-target",
+      { timeout: 8000 }).catch(() => {});
     const tgt = await hkCard();
     ck.check("后挂目标指纹卡：无跳板标注、主机名 jump-target",
       tgt && !tgt.title.includes("跳板") && tgt.host === "jump-target",

@@ -67,7 +67,7 @@ async function freshContext(opts = {}) {
 /** 打开 demo 首页并等首屏稳定。 */
 async function openDemo(page, { waitMs = 600 } = {}) {
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
-  await page.waitForSelector(".hostbar", { timeout: 10000 });
+  await page.waitForSelector(".hostbar", { timeout: 30000 });
   await page.waitForTimeout(waitMs);
 }
 

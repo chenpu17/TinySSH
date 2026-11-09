@@ -16,7 +16,7 @@ use std::time::Duration;
 fn pin_posix_shell() {
     std::fs::create_dir_all("/tmp").unwrap();
     let cur = std::env::var("SHELL").unwrap_or_default();
-    if cur.contains("bash") || cur.contains("zsh") || cur.contains("sh") {
+    if is_posix_shell(&cur) {
         return;
     }
     for p in [
@@ -28,6 +28,17 @@ fn pin_posix_shell() {
             return;
         }
     }
+}
+
+/// 按可执行文件名判定，不能做子串匹配：Windows 的 `powershell.exe` 也包含 `sh`。
+fn is_posix_shell(path: &str) -> bool {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let stem = name.strip_suffix(".exe").unwrap_or(&name);
+    matches!(stem, "bash" | "zsh" | "sh" | "dash" | "ksh")
 }
 
 async fn manager() -> Arc<SessionManager> {
