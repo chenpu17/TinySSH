@@ -124,6 +124,12 @@ export function isMacImePunctuationKey(ev: KeyboardEvent): boolean {
     (c >= 123 && c <= 126); // { through ~
 }
 
+/** 鼠标上报报文（SGR `<b;x;yM/m`、URXVT `b;x;yM`、X10 `ESC[M`+3 字节）：
+ * 由 xterm 鼠标服务发出，不是键盘/IME 文本，不计入键入送达。 */
+export function isMouseReport(data: string): boolean {
+  return /^\x1b\[(?:<[\d;]+[Mm]|[\d;]+[Mm]|M)/.test(data);
+}
+
 /**
  * 给 xterm 实例装上去重门修正（幂等，按 core 原型只装一次）。
  * 传入公开 Terminal 实例即可；内部通过 `_core` 找到真正处理 keydown 的 core。
@@ -141,7 +147,10 @@ export function patchXtermImeGate(term: unknown): void {
     if (svc && typeof svc.triggerDataEvent === "function" && !svc[SEQ_PATCHED]) {
       const origTrigger = svc.triggerDataEvent;
       svc.triggerDataEvent = function (this: unknown, data: string, wasUserInput?: boolean) {
-        core[DELIVERY_SEQ] = (core[DELIVERY_SEQ] ?? 0) + 1;
+        // 鼠标上报（SGR/X10/URXVT 滚轮与点击报文）不是键入文本，不计入「本键已
+        // 送达」：滚轮合帧可能在 keydown 与 IME input 之间送达一次，若计数，会把
+        // IME 异步提交的唯一送达机会误判成已发而丢字（见 wheel-batch.ts）。
+        if (!isMouseReport(data)) core[DELIVERY_SEQ] = (core[DELIVERY_SEQ] ?? 0) + 1;
         return origTrigger.call(this, data, wasUserInput);
       };
       svc[SEQ_PATCHED] = true;

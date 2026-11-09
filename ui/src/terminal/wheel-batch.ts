@@ -102,6 +102,13 @@ export function installWheelBatch(term: unknown): () => void {
       core[BUFFER] = (core[BUFFER] ?? "") + data;
       return;
     }
+    // 用户输入（键入/粘贴）必须排在已排队的滚轮之后：否则「滚一下马上打字」时
+    // 按键先到远端——tmux 复制模式里按键先退出、滞后的滚轮报文又把它拉回去。
+    // 非用户输入的数据（终端应答等）不强制冲刷，避免无谓的窗口缩短。
+    if (wasUserInput && timer !== null) {
+      clearTimeout(timer);
+      flush();
+    }
     return origSend.call(this, data, wasUserInput);
   };
 

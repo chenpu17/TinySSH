@@ -104,6 +104,35 @@ module.exports = {
       !punct.letter && !punct.space && !punct.ctrl && !punct.alt && !punct.meta
         && !punct.composing && !punct.kc229, JSON.stringify(punct));
 
+    // 滚轮合帧报文不是键入送达：keydown(229) 与 IME input 之间到达一枚鼠标上报时，
+    // 「本键已送达」计数不得变化，否则异步提交的唯一送达机会会被误判成已发而丢字。
+    const mouseSeq = await page.evaluate(async () => {
+      const mod = await import("/src/terminal/xterm-ime-gate.ts");
+      const sent = [];
+      const proto = {
+        _keyDown() { this._keyDownSeen = true; return true; },
+        _keyUp() { this._keyDownSeen = false; },
+        _inputEvent(ev) {
+          // xterm 原门：keydown 已见则丢弃
+          if (this._keyDownSeen) return false;
+          sent.push(ev.data);
+          return true;
+        },
+      };
+      const core = Object.create(proto);
+      core._keyDownSeen = false;
+      core.coreService = { triggerDataEvent(d) { sent.push(d); } };
+      mod.patchXtermImeGate({ _core: core });
+      core._keyDown({ keyCode: 229, key: "Process" }); // 异步提交：keydown 先到
+      core.coreService.triggerDataEvent("\x1b[<64;10;20M", true); // 滚轮/鼠标报文
+      sent.length = 0; // 只看 IME input 是否送达
+      const delivered = core._inputEvent({ inputType: "insertText", data: "：" });
+      return { delivered, sent };
+    });
+    ck.check("鼠标上报不计入键入送达，IME 兜底仍放行",
+      mouseSeq.delivered === true && JSON.stringify(mouseSeq.sent) === JSON.stringify(["："]),
+      JSON.stringify(mouseSeq));
+
     // 未来 xterm 改掉 _keyDownSeen（改名/非布尔）时必须静默跳过，不能抛错
     const mismatch = await page.evaluate(async () => {
       const mod = await import("/src/terminal/xterm-ime-gate.ts");

@@ -87,6 +87,40 @@ module.exports = {
     ck.eq("卸载后滚轮恢复逐条发出",
       JSON.stringify(batch.afterOff), JSON.stringify(["R1R2R3", "R4", "R5"]));
 
+    // ── 合帧：用户输入必须排在排队滚轮之后（滚完马上打字不得乱序） ──
+    const order = await page.evaluate(async () => {
+      const mod = await import("/src/terminal/wheel-batch.ts");
+      const data = [];
+      const core = {
+        coreService: { triggerDataEvent(d) { data.push(d); } },
+        coreMouseService: {
+          calls: 0,
+          triggerMouseEvent(e) {
+            this.calls++;
+            core.coreService.triggerDataEvent(`W${this.calls}`, true);
+            return true;
+          },
+        },
+      };
+      const off = mod.installWheelBatch({ _core: core });
+      const ev = (button, action) => ({ button, action, col: 0, row: 0 });
+      core.coreMouseService.triggerMouseEvent(ev(4, 0));
+      core.coreMouseService.triggerMouseEvent(ev(4, 0));
+      const queued = data.slice();
+      core.coreService.triggerDataEvent("K", true); // 窗口内用户键入
+      const afterKey = data.slice();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const afterWait = data.slice();
+      off();
+      return { queued, afterKey, afterWait };
+    });
+    ck.eq("滚轮先攒批、不同步发出",
+      JSON.stringify(order.queued), "[]");
+    ck.eq("用户键入先冲刷排队滚轮再透传（保序）",
+      JSON.stringify(order.afterKey), JSON.stringify(["W1W2", "K"]));
+    ck.eq("冲刷后窗口内不再重复发送滚轮",
+      JSON.stringify(order.afterWait), JSON.stringify(["W1W2", "K"]));
+
     // ── 合帧：真实 xterm（开启 SGR 上报）同帧 30 次滚轮 ──
     await connectHost(page, "本机");
     const real = await page.evaluate(async () => {
