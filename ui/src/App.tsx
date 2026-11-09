@@ -23,6 +23,7 @@ import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
 import { installMouseModeGuard, resetMouseReporting } from "./terminal/mouse-mode-guard";
 import { repaintTerm } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
+import { installWheelBatch } from "./terminal/wheel-batch";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
   MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
@@ -2490,6 +2491,9 @@ export default function App() {
     }, true);
     // 精确触摸板 1:1 直跟，经典滚轮保留 100ms 补间（见 terminal/scroll.ts）。
     installAdaptiveSmoothScroll(term, el, isMacPlatform() ? 0 : 100);
+    // tmux/全屏 TUI 鼠标上报下的滚轮合帧：同一时间窗的报文合成一次 PTY 写入，
+    // 减少远端 copy-mode 重绘（见 terminal/wheel-batch.ts）。
+    installWheelBatch(term);
     // 扩展字符宽度（P0 终端品质轮）：CJK/emoji 宽度按 Unicode 11 表判定——xterm 内置
     // 表基于 Unicode 6，中文/emoji 混排会串格（宽字符占 1 列、ZWJ 序列拆散）。新版表
     // 严格更好，不设开关，恒开。
@@ -2847,6 +2851,8 @@ export default function App() {
       if (text) pasteTextIntoRef.current(term, sid, text, key);
     }, true);
     installAdaptiveSmoothScroll(term, body, isMacPlatform() ? 0 : 100);
+    // 面板格子与主终端同一滚轮合帧路径（tmux 鼠标上报时省远端重绘）
+    installWheelBatch(term);
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     // 面板格也有查找（与主终端同款实例）：⌘F 聚焦哪格就搜哪格，不再只搜背后主视图

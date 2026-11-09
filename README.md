@@ -102,7 +102,7 @@ Prerequisites: Rust ≥ 1.86, Node ≥ 22 (CI uses Node 24).
 # Frontend demo mode — runs in a plain browser, no Rust needed
 cd ui && npm ci && npm run dev      # http://localhost:5183
 
-# UI test suite (68 specs / 1352 checks; needs a Chrome/Edge binary)
+# UI test suite (68 specs / 1358 checks; needs a Chrome/Edge binary)
 TINYSSH_UI_CHROME="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" npm test
 
 # Desktop app (Tauri v2; dev shell expects the ui dev server above)
