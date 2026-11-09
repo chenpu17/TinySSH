@@ -32,6 +32,24 @@
 // input 先送达后 keypress 才到的顺序也要防重：已由 input 送达的键记 delivered，
 // 迟到 keypress 直接吞掉（否则同一键会发两次）。
 //
+// 真机上仍有一种「首击丢失」（2026-11-09 复报）：WKWebView 的 IME 提交是异步的，
+// 字符 keydown（229）先到、input 后到。keydown 时 CompositionHelper 排队的 0ms
+// 延迟 diff/flush 会先在「textarea 还没写入」的状态下跑空；随后 input 到达时
+// `_keyDownSeen` 仍为 true，xterm 的 input 门按 composed 去重丢弃。旧兜底要求
+// 「keydown 时 textarea 已含提交文本」（last.value.endsWith(data)）或
+// 「不在 _isSendingComposition 期」，恰好都命中不了这条时序，于是首击消失；
+// 字符 keyup 清门后第二次起才恢复正常。
+//
+// 现在把「最后一次送达机会」统一成一条：只要是 insertText / insertFromComposition、
+// 本次 keydown 以来没有任何数据送达（逐实例 triggerDataEvent 计数未变）、keypress
+// 也没送过、且不处于真实组合态（isComposing），就由这里放行一次 ev.data，并：
+//   1) 撤销 keydown 排队的 composition flush（_isSendingComposition=false）；
+//   2) 把 textarea 还原成 keydown 时的值——229 延迟 diff 的 oldValue 正是它，
+//      还原后 diff 为空，不重复上屏、也不会因长度变短误发 DEL；
+//   3) 记 delivered，迟到 keypress 吞掉。
+// 真实组合（compositionstart/update/end、insertCompositionText）不进这条路径；
+// compositionend 已先送达时计数已变，也不会二次上屏。
+//
 // 回归：ui/test/specs/71-ime-punct-gate.spec.cjs（伪 core 语义 + 真实 xterm 事件序列）。
 
 /** 只描述本补丁触达的 xterm core 内部面（私有 API，版本锁定 5.5.0）。 */
@@ -43,8 +61,10 @@ type KeyDownGateCore = {
   _inputEvent?(ev: InputEvent): boolean;
   _keyDownHandled?: boolean;
   _keyPressHandled?: boolean;
+  _unprocessedDeadKey?: boolean;
   browser?: { isMac?: boolean };
   optionsService?: { rawOptions?: { screenReaderMode?: boolean } };
+  coreService?: { triggerDataEvent?: (data: string, wasUserInput?: boolean) => void };
   _customKeyEventHandler?: (ev: KeyboardEvent) => boolean;
   _compositionHelper?: {
     isComposing?: boolean;
@@ -52,6 +72,9 @@ type KeyDownGateCore = {
     _textarea?: HTMLTextAreaElement;
   };
   [LAST_KEYDOWN]?: LastKeyDown | null;
+  /** 本实例已送达 PTY 的次数（包一层 coreService.triggerDataEvent 计数）。 */
+  [DELIVERY_SEQ]?: number;
+  [SEQ_PATCHED]?: true;
 };
 
 type LastKeyDown = {
@@ -61,14 +84,16 @@ type LastKeyDown = {
   composition: boolean;
   /** keydown 当时 textarea 里的文本：判断 IME 是否已先写入、CompositionHelper 是否会补发。 */
   value: string;
-  /** 本键由 macOS ASCII 标点延迟分支接管：真正送达在 keypress（或 input 兜底）。 */
-  punct?: string;
-  /** 延迟分支已由 input 兜底送达；迟到的 keypress 必须吞掉，避免同键发两次。 */
+  /** keydown 开始时的送达计数：之后若有人送过数据，input 就不得再兜底。 */
+  seq: number;
+  /** 本键已由 input 兜底送达；迟到的 keypress 必须吞掉，避免同键发两次。 */
   delivered?: boolean;
 };
 
 const PATCHED = Symbol.for("tinyssh.xterm-ime-gate");
 const LAST_KEYDOWN = Symbol.for("tinyssh.xterm-ime-last-keydown");
+const DELIVERY_SEQ = Symbol.for("tinyssh.xterm-ime-delivery-seq");
+const SEQ_PATCHED = Symbol.for("tinyssh.xterm-ime-seq-patched");
 
 /** 与上游 #6200 同表：Shift/Ctrl/Alt + 左右 Meta/OS。 */
 export function isModifierOnlyKeydown(ev: KeyboardEvent): boolean {
@@ -107,10 +132,27 @@ export function isMacImePunctuationKey(ev: KeyboardEvent): boolean {
 export function patchXtermImeGate(term: unknown): void {
   const core = (term as { _core?: KeyDownGateCore })._core;
   if (!core || typeof core._keyDown !== "function" || typeof core._keyDownSeen !== "boolean") return;
+  // 送达计数是逐 core 实例的（coreService 每终端一个），必须在原型补丁的幂等
+  // 早退之前装：第二个终端起原型已打补丁，但它的 coreService 还没包。
+  try {
+    const svc = core.coreService as
+      | (NonNullable<KeyDownGateCore["coreService"]> & { [SEQ_PATCHED]?: true })
+      | undefined;
+    if (svc && typeof svc.triggerDataEvent === "function" && !svc[SEQ_PATCHED]) {
+      const origTrigger = svc.triggerDataEvent;
+      svc.triggerDataEvent = function (this: unknown, data: string, wasUserInput?: boolean) {
+        core[DELIVERY_SEQ] = (core[DELIVERY_SEQ] ?? 0) + 1;
+        return origTrigger.call(this, data, wasUserInput);
+      };
+      svc[SEQ_PATCHED] = true;
+      core[DELIVERY_SEQ] ??= 0;
+    }
+  } catch { /* 计数装不上：input 兜底不出手，去重门修正仍生效 */ }
   const proto = Object.getPrototypeOf(core) as (KeyDownGateCore & { [PATCHED]?: true }) | null;
   if (!proto || typeof proto._keyDown !== "function" || proto[PATCHED]) return;
   const orig = proto._keyDown;
   const patched = function (this: KeyDownGateCore, ev: KeyboardEvent) {
+    const seq = this[DELIVERY_SEQ];
     // macOS 搜狗等第三方 IME：keydown.key 是半角标点/数字，真正的全角字符在
     // keypress.charCode 里。先把这一键交给 keypress，避免半角先上屏或首击被吞
     // （与上游 #6294 同向；仅 macOS、非组合态、非 screen reader）。
@@ -136,7 +178,7 @@ export function patchXtermImeGate(term: unknown): void {
         modifier: false,
         composition: false,
         value: comp?._textarea?.value ?? "",
-        punct: ev.key,
+        seq: seq ?? 0,
       };
       ev.stopPropagation();
       return true;
@@ -146,6 +188,7 @@ export function patchXtermImeGate(term: unknown): void {
       modifier,
       composition: isCompositionKeydown(ev),
       value: this._compositionHelper?._textarea?.value ?? "",
+      seq: seq ?? 0,
     };
     if (!modifier) return orig.call(this, ev);
     // 上游语义：修饰键 keydown 不改变去重门——进入前已武装（组合态）则保持武装。
@@ -166,49 +209,58 @@ export function patchXtermImeGate(term: unknown): void {
         return origKeyUp.call(this, ev);
       };
     }
-    // 字符 keydown(229/Process) 先于 IME input 的顺序：若 IME 在 keydown 前已把
-    // 提交文本写进 textarea，CompositionHelper 的延迟 diff 会是空操作，这一份
-    // insertText 就是唯一送达机会——临时放行。若 textarea 在 keydown 后才变化，
-    // 交给 CompositionHelper 的 diff 发送，这里不插手，避免重复上屏。
-    // 另一条兜底：macOS ASCII 标点延迟分支本应等 keypress.charCode 送达，但
-    // WKWebView + 部分 IME 组合下 keypress 可能根本不派发（或 charCode=0 被
-    // keypress 提前 preventDefault 掉），此时浏览器默认动作已把字符写进 textarea，
-    // input 就是唯一送达机会。keypress 已经送过（_keyPressHandled）时不重复放行。
-    // 普通字符 keydown 之后的 input 仍走原门去重。
+    // IME 直接提交（insertText / insertFromComposition）在 xterm 的去重门里会被
+    // `composed && _keyDownSeen` 丢弃。只要满足「本键 keydown 以来无人送达过」
+    // （送达计数未变）、「keypress 没送过」、「不在真实组合态」，这份 input 就是
+    // 唯一送达机会——放行一次。覆盖：
+    //   · 修饰键先武装门、input 早于字符 keydown（上游 #6200 场景的兜底）；
+    //   · 字符 keydown(229) 先到，CompositionHelper 的 0ms diff/flush 先跑空、
+    //     提交文本随后才写进 textarea 并派发 input（WKWebView 异步提交，首击丢失）；
+    //   · 搜狗等把全角放在 keypress、但 keypress 未派发或 charCode=0。
+    // 放行时说清楚三件事：撤销已排队的 composition flush、把 textarea 还原成
+    // keydown 时的值（229 diff 的 oldValue 就是它，diff 归零）、记 delivered 让
+    // 迟到 keypress 被吞。真实组合（isComposing / insertCompositionText）不在此列。
     if (typeof proto._inputEvent === "function") {
       const origInputEvent = proto._inputEvent;
       proto._inputEvent = function (this: KeyDownGateCore, ev: InputEvent) {
         const last = this[LAST_KEYDOWN];
         const comp = this._compositionHelper;
-        const composing = !!(comp && (comp.isComposing || comp._isSendingComposition));
-        const insert = ev.inputType === "insertText" && !!ev.data;
-        if (this._keyDownSeen && insert && last?.punct && !composing && !this._keyPressHandled) {
+        const insert = (ev.inputType === "insertText" || ev.inputType === "insertFromComposition") && !!ev.data;
+        const composing = !!(comp && comp.isComposing);
+        const seq = this[DELIVERY_SEQ];
+        if (
+          this._keyDownSeen &&
+          insert &&
+          last &&
+          !last.delivered &&
+          !composing &&
+          !this._keyPressHandled &&
+          !this.optionsService?.rawOptions?.screenReaderMode &&
+          typeof seq === "number" &&
+          seq === last.seq
+        ) {
           const textarea = comp?._textarea;
-          last.punct = undefined;
+          // 与 keydown 排队的 composition flush 抢跑：由 input 送达后撤销它，
+          // 否则 0ms 后它还会按 textarea 再发一遍。
+          if (comp && comp._isSendingComposition) comp._isSendingComposition = false;
           last.delivered = true;
           const seen = this._keyDownSeen;
           this._keyDownSeen = false;
           try {
-            const r = origInputEvent.call(this, ev);
-            // 迟到送达的字符已由 xterm 直接触发数据事件；清掉浏览器写入 textarea
-            // 的残留，避免下一次组合的坐标（compositionPosition.start）被带偏。
-            if (textarea) textarea.value = "";
+            // 原门只认 insertText；insertFromComposition 由这里直接补一次数据事件，
+            // 语义与其 insertText 分支一致（清 dead key 状态）。
+            let r: boolean;
+            if (ev.inputType === "insertText") {
+              r = origInputEvent.call(this, ev);
+            } else {
+              this._unprocessedDeadKey = false;
+              this.coreService?.triggerDataEvent?.(ev.data!, true);
+              r = true;
+            }
+            // 还原 keydown 时的 textarea：229 延迟 diff 以该值为 oldValue，
+            // 还原后 diff 为空——不重复上屏，也不会因长度变短误发 DEL。
+            if (textarea) textarea.value = last.value;
             return r;
-          } finally {
-            this._keyDownSeen = seen;
-          }
-        }
-        if (
-          this._keyDownSeen &&
-          insert &&
-          last?.composition &&
-          last.value.endsWith(ev.data!) &&
-          !composing
-        ) {
-          const seen = this._keyDownSeen;
-          this._keyDownSeen = false;
-          try {
-            return origInputEvent.call(this, ev);
           } finally {
             this._keyDownSeen = seen;
           }

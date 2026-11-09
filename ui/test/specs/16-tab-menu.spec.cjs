@@ -76,7 +76,9 @@ module.exports = {
     await clickItem(page, "复制标签页到右侧");
     await page.waitForTimeout(1800);
     ck.check("复制到右侧建立双窗格", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
-    ck.check("分屏后标签数 +1", (await tabCount(page)) === 2, `tabs=${await tabCount(page)}`);
+    ck.check("分屏后合并为一个组标签（一组一标签）",
+      (await tabCount(page)) === 1 && (await page.evaluate(() => !!document.querySelector(".tab[data-gid]"))),
+      `tabs=${await tabCount(page)}`);
     // 收拾：退出分屏、关掉复制品，恢复干净状态给后续用例
     await rightClickActiveTab(page);
     await clickItem(page, "退出分屏");

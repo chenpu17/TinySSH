@@ -149,6 +149,40 @@ function sameJson<T>(prev: T, next: T): T {
 // tmux 联动偏好键（恢复现场轮）：单键 JSON，见组件内 tmuxPrefs 注释。
 const SETTING_TMUX_PREFS = "tmux.v1.prefs";
 
+/** 标签条条目（一组一标签，Termius 式）：独立会话=一个标签；分屏组=一个组标签，
+ *  成员不再单独占位。组标签落在该组最早成员在 sessions 中的位置——拖拽重排后
+ *  组内成员被摊平成相邻项（见 reorderTabEntries），位置即为条目序。 */
+type TabEntry =
+  | { key: string; kind: "session"; session: SessionInfo }
+  | { key: string; kind: "group"; group: SplitGroup; members: SessionInfo[] };
+
+function deriveTabEntries(sessions: SessionInfo[], groups: SplitGroup[]): TabEntry[] {
+  const bySid = new Map(sessions.map((s) => [s.id, s] as const));
+  const groupOfSid = new Map<string, SplitGroup>();
+  for (const g of groups) { groupOfSid.set(g.main, g); groupOfSid.set(g.second, g); }
+  const seen = new Set<string>();
+  const out: TabEntry[] = [];
+  for (const s of sessions) {
+    const g = groupOfSid.get(s.id);
+    if (!g) { out.push({ key: `s:${s.id}`, kind: "session", session: s }); continue; }
+    if (seen.has(g.id)) continue;
+    seen.add(g.id);
+    const members = [g.main, g.second]
+      .map((id) => bySid.get(id))
+      .filter((m): m is SessionInfo => !!m);
+    out.push({ key: `g:${g.id}`, kind: "group", group: g, members });
+  }
+  return out;
+}
+
+/** 组标签状态点聚合：成员状态取最差（err > warn > ok > dim）。 */
+const STATE_RANK: Record<string, number> = { err: 3, warn: 2, ok: 1, dim: 0 };
+
+/** 组标签点击/键盘切换的落点会话：组内上次焦点成员，缺省 main。 */
+function entryFocusSid(e: TabEntry, groupFocus: Map<string, string>): string {
+  return e.kind === "session" ? e.session.id : groupFocus.get(e.group.id) ?? e.group.main;
+}
+
 /** tmux 面板格子实例（会话内附加交互通道的前端视图）。 */
 type PaneTermEntry = {
   sid: string; paneId: number; name: string;
@@ -380,6 +414,8 @@ export default function App() {
   const [splitGroups, setSplitGroups] = useState<SplitGroup[]>([]);
   const splitGroupsRef = useRef<SplitGroup[]>([]);
   const splitGroupSeqRef = useRef(0);
+  // 组标签点击时恢复「上次焦点格」——focusSession 是唯一写点；组解散/剪除时随 gid 回收
+  const groupFocusRef = useRef<Map<string, string>>(new Map());
   const commitSplitGroups = useCallback((next: SplitGroup[]) => {
     splitGroupsRef.current = next;
     setSplitGroups(next);
@@ -408,23 +444,31 @@ export default function App() {
   }, [commitSplitGroups]);
   const dissolveGroup = useCallback((gid: string) => {
     if (!splitGroupsRef.current.some((g) => g.id === gid)) return;
+    groupFocusRef.current.delete(gid);
     commitSplitGroups(splitGroupsRef.current.filter((g) => g.id !== gid));
   }, [commitSplitGroups]);
   const detachFromAllGroups = useCallback((sessionSid: string): SplitGroup | null => {
     const g = groupOf(sessionSid);
     if (!g) return null;
+    groupFocusRef.current.delete(g.id);
     commitSplitGroups(splitGroupsRef.current.filter((x) => x.id !== g.id));
     return g;
   }, [commitSplitGroups, groupOf]);
   const pruneGroups = useCallback((dead: Set<string>) => {
     const next = splitGroupsRef.current.filter((g) => !dead.has(g.main) && !dead.has(g.second));
-    if (next.length !== splitGroupsRef.current.length) commitSplitGroups(next);
+    if (next.length !== splitGroupsRef.current.length) {
+      const alive = new Set(next.map((g) => g.id));
+      for (const gid of groupFocusRef.current.keys()) if (!alive.has(gid)) groupFocusRef.current.delete(gid);
+      commitSplitGroups(next);
+    }
   }, [commitSplitGroups]);
   // 当前显示的组由活动会话派生；props/JSX 继续使用 SplitPanes 形状（SplitGroup 超集）
   const splitPanes = useMemo(
     () => (sid ? splitGroups.find((g) => g.main === sid || g.second === sid) ?? null : null),
     [splitGroups, sid],
   );
+  // 标签条条目：独立会话一项、分屏组一项（Termius 式工作区）
+  const tabEntries = useMemo(() => deriveTabEntries(sessions, splitGroups), [sessions, splitGroups]);
   // 切到某组时，方向选择器跟随该组自己的方向（各组独立旋转）；改名编辑态只属于
   // 发起它的组，切走即取消（否则输入框会冒在新组胶囊上、Enter 写回旧组）
   useEffect(() => {
@@ -445,9 +489,13 @@ export default function App() {
   const splitDirRef = useRef<SplitDir>("lr");
   const splitFracRef = useRef(0.5);
   const paneDivRef = useRef<HTMLDivElement | null>(null);
-  // 分屏组命名：groupRenaming 是编辑中的文本，gid 记在 ref 里（提交/取消都写回该组）
+  // 分屏组命名：groupRenaming 是编辑中的文本，gid 记在 ref 里（提交/取消都写回该组）。
+  // 改名入口有两处：分割条胶囊（chip）与组标签双击（tab）——source 决定输入框渲染位置，
+  // 防止两处 autoFocus 抢焦点、blur 误提交。
   const [groupRenaming, setGroupRenaming] = useState<string | null>(null);
   const groupRenamingGidRef = useRef<string | null>(null);
+  const [groupRenamingGid, setGroupRenamingGid] = useState<string | null>(null);
+  const [groupRenameSource, setGroupRenameSource] = useState<"tab" | "chip">("chip");
   // 改名从最大化态开始时临时撤下的槽位，结束后还原
   const groupRenameRestoreMaxRef = useRef<"main" | "second" | null>(null);
   // 命令式窗格按钮经 ref 取最新处理函数（makeTerm 早于这些 useCallback 声明）
@@ -910,6 +958,7 @@ export default function App() {
       patchGroup(gid, { name: v ? v : null });
     }
     setGroupRenaming(null);
+    setGroupRenamingGid(null);
     groupRenamingGidRef.current = null;
     if (gid && restoreMax) patchGroup(gid, { maximized: restoreMax });
     // 取消改名同样要重估退化：临时撤下的退化态不能一直留着
@@ -917,13 +966,14 @@ export default function App() {
     applyPanesRef.current();
     fitTerminal();
   };
-  const beginGroupRename = (gid: string, initial: string) => {
+  const beginGroupRename = (gid: string, initial: string, source: "tab" | "chip" = "chip") => {
     const g = groupById(gid);
-    // 只允许改当前可视组：非活动组由右键菜单先 focusSession，聚焦失败时宁可不改名
-    if (!g || (g.main !== sidRef.current && g.second !== sidRef.current)) return;
-    // 最大化/退化态不渲染分割条与胶囊——先把布局还原，否则改名框无处出现且状态残留
-    groupRenameRestoreMaxRef.current = g.maximized;
-    if (g.maximized || splitDegradedRef.current) {
+    // 胶囊只存在于当前可视组；标签条改名可针对非活动组（输入框在标签内，无需先切组）
+    if (!g || (source === "chip" && g.main !== sidRef.current && g.second !== sidRef.current)) return;
+    // 最大化/退化态不渲染分割条与胶囊——先把布局还原，否则改名框无处出现且状态残留。
+    // 标签条改名（source="tab"）不需要胶囊可见，跳过这次布局重排。
+    groupRenameRestoreMaxRef.current = source === "chip" ? g.maximized : null;
+    if (source === "chip" && (g.maximized || splitDegradedRef.current)) {
       if (g.maximized) patchGroup(gid, { maximized: null });
       splitDegradedRef.current = false;
       setSplitDegraded(false);
@@ -931,6 +981,8 @@ export default function App() {
       fitTerminal();
     }
     groupRenamingGidRef.current = gid;
+    setGroupRenamingGid(gid);
+    setGroupRenameSource(source);
     setGroupRenaming(initial);
   };
   const commitGroupRename = (value: string) => finishGroupRename(value);
@@ -942,9 +994,10 @@ export default function App() {
   // RevokeDragDrop+RegisterDragDrop 换掉了系统 IDropTarget，页内 dragstart 走 OS 拖放
   // 循环根本发不起来——真机拖不动的根因；pointer 事件不进该循环，三端行为一致。
   const tabOrderRef = useRef<string[]>([]);
-  const [tabDragSid, setTabDragSid] = useState<string | null>(null);
+  // 拖拽源按条目 key 记（组标签=g:<gid>，会话标签=s:<sid>）——组标签是整体，不再有成员标签
+  const [tabDragKey, setTabDragKey] = useState<string | null>(null);
   const tabDragRef = useRef<{
-    sid: string; startX: number; startY: number; pointerId: number;
+    key: string; sid: string; startX: number; startY: number; pointerId: number;
     srcEl: HTMLElement; active: boolean;
   } | null>(null);
   // 拖后随至的 click 不当「激活标签」：时间戳而非布尔，避免残留吞掉下一次真实点击
@@ -956,7 +1009,7 @@ export default function App() {
     try {
       if (d.srcEl.hasPointerCapture(d.pointerId)) d.srcEl.releasePointerCapture(d.pointerId);
     } catch { /* 指针已释放 */ }
-    setTabDragSid(null);
+    setTabDragKey(null);
     setTabDropHint(null);
     setTermDropHint(null);
     document.body.classList.remove("tab-dragging");
@@ -965,7 +1018,7 @@ export default function App() {
   // 光标与落点遮罩会残留到下一次 Esc。window 冒泡阶段监听——正常路径元素处理器
   // 已先清掉 tabDragRef，这里只收拾异常收尾（不执行落点）。
   useEffect(() => {
-    if (!tabDragSid) return;
+    if (!tabDragKey) return;
     const onUp = (e: PointerEvent) => {
       const d = tabDragRef.current;
       if (d && d.pointerId === e.pointerId) cancelTabDrag();
@@ -976,7 +1029,7 @@ export default function App() {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [tabDragSid, cancelTabDrag]);
+  }, [tabDragKey, cancelTabDrag]);
   // 源会话被 UI 外路径关闭（Agent/MCP close_session）时立即收尾，不等指针事件
   useEffect(() => {
     const d = tabDragRef.current;
@@ -995,7 +1048,7 @@ export default function App() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [cancelTabDrag]);
-  const [tabDropHint, setTabDropHint] = useState<{ sid: string; before: boolean } | null>(null);
+  const [tabDropHint, setTabDropHint] = useState<{ key: string; before: boolean } | null>(null);
   // 拖标签组合分屏：悬在 #term 上时的落点提示（l/r/t/b 象限；null=不在终端区）。
   // pointermove 高频触发——同值复用旧引用，避免整树重渲染（tabDropHint 同款守卫）
   const [termDropHint, setTermDropHint] = useState<"l" | "r" | "t" | "b" | null>(null);
@@ -1005,15 +1058,22 @@ export default function App() {
     const pos = new Map(rank.map((id, i) => [id, i] as const));
     return [...list].sort((a, b) => (pos.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (pos.get(b.id) ?? Number.MAX_SAFE_INTEGER));
   }
-  const reorderTabs = (fromSid: string, toSid: string, before: boolean) => {
-    const ids = sessionsRef.current.map((s) => s.id);
-    const from = ids.indexOf(fromSid);
-    const to = ids.indexOf(toSid);
+  // 标签条目级重排：组标签整体移动；落下后把每组成员摊平成相邻 id 写回 tabOrderRef，
+  // 下一次 deriveTabEntries 即按新条目序渲染（单标签场景与旧 reorderTabs 等价）。
+  const reorderTabEntries = (fromKey: string, toKey: string, before: boolean) => {
+    const entries = deriveTabEntries(sessionsRef.current, splitGroupsRef.current);
+    const from = entries.findIndex((e) => e.key === fromKey);
+    const to = entries.findIndex((e) => e.key === toKey);
     if (from < 0 || to < 0 || from === to) return;
-    ids.splice(from, 1);
-    let to2 = ids.indexOf(toSid);
+    const [moved] = entries.splice(from, 1);
+    let to2 = entries.findIndex((e) => e.key === toKey);
     if (!before) to2 += 1;
-    ids.splice(to2, 0, fromSid);
+    entries.splice(to2, 0, moved);
+    const ids: string[] = [];
+    for (const e of entries) {
+      if (e.kind === "session") ids.push(e.session.id);
+      else for (const m of e.members) ids.push(m.id);
+    }
     tabOrderRef.current = ids;
     setSessions(applyTabOrder(sessionsRef.current));
   };
@@ -4955,16 +5015,23 @@ export default function App() {
         setShowSettings(true);
         return true;
       case "tab-switch": {
-        const t = sessionsRef.current[a.index];
-        if (t) void attachSession(t.id).catch((e) => pushToast("err", errMsg(e)));
-        return !!t;
+        // 一组一标签：⌘1-9 按可见标签（组=一格）跳转，组标签落到上次焦点成员
+        const entries = deriveTabEntries(sessionsRef.current, splitGroupsRef.current);
+        const e = entries[a.index];
+        if (!e) return false;
+        void attachSession(entryFocusSid(e, groupFocusRef.current)).catch((er) => pushToast("err", errMsg(er)));
+        return true;
       }
       case "tab-cycle": {
-        const ss = sessionsRef.current;
-        if (!ss.length) return false;
-        const i0 = Math.max(0, ss.findIndex((x) => x.id === sidRef.current));
-        const target = ss[(i0 + a.dir + ss.length) % ss.length];
-        if (target) void attachSession(target.id).catch((e) => pushToast("err", errMsg(e)));
+        const entries = deriveTabEntries(sessionsRef.current, splitGroupsRef.current);
+        if (!entries.length) return false;
+        const cur = sidRef.current;
+        let i0 = entries.findIndex((e) => (e.kind === "group"
+          ? e.group.main === cur || e.group.second === cur
+          : e.session.id === cur));
+        if (i0 < 0) i0 = 0;
+        const e = entries[(i0 + a.dir + entries.length) % entries.length];
+        void attachSession(entryFocusSid(e, groupFocusRef.current)).catch((er) => pushToast("err", errMsg(er)));
         return true;
       }
       case "tab-close": {
@@ -5225,6 +5292,7 @@ export default function App() {
     // 最大化的是另一格时点它的标签：先还原两格。否则目标格仍是 display:none，
     // 标签高亮换了、屏幕没换，focus() 落不到可见终端上（键入无落点）。
     const g = groupOf(target);
+    if (g) groupFocusRef.current.set(g.id, target);
     if (g?.maximized && (g.maximized === "main" ? g.main : g.second) !== target) {
       patchGroup(g.id, { maximized: null });
     }
@@ -5390,6 +5458,7 @@ export default function App() {
   const detach = useCallback(() => {
     commitSplitGroups([]);
     setGroupRenaming(null);
+    setGroupRenamingGid(null);
     groupRenamingGidRef.current = null;
     setSid(null);
     sidRef.current = null;
@@ -5457,6 +5526,7 @@ export default function App() {
     const wasActive = g.main === sidRef.current || g.second === sidRef.current;
     if (groupRenamingGidRef.current === g.id) {
       setGroupRenaming(null);
+      setGroupRenamingGid(null);
       groupRenamingGidRef.current = null;
     }
     dissolveGroup(g.id);
@@ -5604,38 +5674,35 @@ export default function App() {
     return "main";
   };
 
-  // 标签拖拽命中：指针下的目标标签（纵向 band 判定在调用方）；横向 ±3px 容差吃药丸缝隙
-  const tabAtPoint = (x: number, y: number): { sid: string; before: boolean } | null => {
+  // 标签拖拽命中：指针下的目标条目（纵向 band 判定在调用方）；横向 ±3px 容差吃药丸缝隙。
+  // 身份用 data-key（组标签=整体），data-sid 只是组标签的焦点成员，不能拿来判定来源。
+  const tabAtPoint = (x: number, y: number): { key: string; before: boolean } | null => {
     for (const el of document.querySelectorAll(".tab")) {
       const r = el.getBoundingClientRect();
       if (y < r.top || y > r.bottom || x < r.left - 3 || x > r.right + 3) continue;
-      const hitSid = (el as HTMLElement).dataset.sid;
-      if (!hitSid) continue;
-      return { sid: hitSid, before: x < r.left + r.width / 2 };
+      const key = (el as HTMLElement).dataset.key;
+      if (!key) continue;
+      return { key, before: x < r.left + r.width / 2 };
     }
     return null;
   };
 
-  // 拖拽松手裁决（组感知）：拖到自己标签=无操作；源是组成员且落在标签条=解散
-  // 源所在组（不做重排）；非成员落其它标签=重排；终端区=按活动组几何组合分屏。
-  const finishTabDrag = (from: string, x: number, y: number) => {
+  // 拖拽松手裁决（一组一标签）：标签条内=按条目重排（组标签整体移动）；终端区=
+  // 仅独立会话可建屏/换格，组标签拖进终端区无操作（成员没有自己的标签可拆）。
+  const finishTabDrag = (drag: { key: string; sid: string }, x: number, y: number) => {
     const bar = tabbarRef.current?.getBoundingClientRect();
     const inStrip = !!bar && x >= bar.left && x <= bar.right && y >= bar.top && y <= bar.bottom;
     const tr = termRef.current?.getBoundingClientRect();
     const inTerm = !!tr && x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom;
     if (inStrip) {
       const hit = tabAtPoint(x, y);
-      if (hit?.sid === from) return; // 拖回自己的标签：保留分屏
-      const fromGroup = groupOf(from);
-      if (fromGroup) {
-        // 分屏成员拖回标签条=退出它所在的组（成员在条内重排语义模糊：先退再拖即可）
-        exitSplit(fromGroup.id);
-        return;
-      }
-      if (hit && hit.sid !== from) reorderTabs(from, hit.sid, hit.before);
+      if (!hit || hit.key === drag.key) return; // 拖回自己的标签：无操作
+      reorderTabEntries(drag.key, hit.key, hit.before);
       return;
     }
+    if (drag.key.startsWith("g:")) return; // 组标签是工作区整体，不能落进终端区
     if (inTerm && sessionsRef.current.length >= 2 && tr) {
+      const from = drag.sid;
       // 拖活动会话本身且无组：没有可组合对象（placeInSplit 的自我保护同款）
       if (from === sidRef.current && !groupOf(from)) return;
       const sp = groupOf(sidRef.current);
@@ -5680,6 +5747,7 @@ export default function App() {
     if (g) {
       if (groupRenamingGidRef.current === g.id) {
         setGroupRenaming(null);
+        setGroupRenamingGid(null);
         groupRenamingGidRef.current = null;
       }
       dissolveGroup(g.id);
@@ -5752,6 +5820,7 @@ export default function App() {
     const survivor = affected.flatMap((g) => [g.main, g.second]).find((id) => !deadSet.has(id)) ?? null;
     if (groupRenamingGidRef.current && affected.some((g) => g.id === groupRenamingGidRef.current)) {
       setGroupRenaming(null);
+      setGroupRenamingGid(null);
       groupRenamingGidRef.current = null;
     }
     pruneGroups(deadSet);
@@ -8568,35 +8637,52 @@ export default function App() {
               onClick={() => scrollTabs(-1)}>‹</button>
           )}
           <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar} role="tablist" aria-label={t("会话标签")}>
-            {sessions.map((s, i) => {
-              const st = stateLabel(s.state);
-              const inSplit = !!groupOf(s.id);
+            {tabEntries.map((e, i) => {
+              // 一组一标签：组标签 = 一个工作区；成员不再单独占位
+              const entryKey = e.key;
+              const group = e.kind === "group" ? e.group : null;
+              const sess = e.kind === "session" ? e.session : null;
+              const members = e.kind === "group" ? e.members : [e.session];
+              const groupActive = !!group && !!sid && members.some((m) => m.id === sid);
+              const active = group ? groupActive : sid === sess?.id;
+              // 组标签的 data-sid/操作对象 = 当前焦点成员（点它就能回到该格）
+              const rep = group
+                ? (groupActive ? sid! : groupFocusRef.current.get(group.id) ?? group.main)
+                : sess!.id;
+              const repSession = members.find((m) => m.id === rep) ?? members[0];
+              // 状态点：组取最差成员（err > warn > ok > dim）
+              const st = members
+                .map((m) => stateLabel(m.state))
+                .reduce((a, b) => ((STATE_RANK[b.cls] ?? 0) > (STATE_RANK[a.cls] ?? 0) ? b : a), stateLabel(""));
               // 十四轮：标签自定名（复制标签页后同名标签的区分），无则回退主机名
-              const label = tabNames[s.id] ?? s.host_name;
+              const label = group ? splitGroupLabelOf(group) : tabNames[sess!.id] ?? sess!.host_name;
+              const bellLit = members.some((m) => bellSids.has(m.id));
               return (
                 <div
-                  key={s.id}
-                  data-sid={s.id}
-                  className={"tab" + (sid === s.id ? " tab-active" : "") + (inSplit ? " tab-pane" : "")
-                    + (bellSids.has(s.id) ? " tab-bell" : "")
-                    + (tabDragSid === s.id ? " tab-drag-src" : "")
-                    + (tabDropHint?.sid === s.id ? (tabDropHint.before ? " tab-drop-before" : " tab-drop-after") : "")}
-                  onPointerDown={(e) => {
+                  key={e.key}
+                  data-key={e.key}
+                  data-sid={rep}
+                  data-gid={group?.id}
+                  className={"tab" + (active ? " tab-active" : "") + (group ? " tab-pane" : "")
+                    + (bellLit ? " tab-bell" : "")
+                    + (tabDragKey === e.key ? " tab-drag-src" : "")
+                    + (tabDropHint?.key === e.key ? (tabDropHint.before ? " tab-drop-before" : " tab-drop-after") : "")}
+                  onPointerDown={(ev) => {
                     // pointer 自定义拖拽（原因见 tabDragRef 注释）：仅左键且不在子控件
                     // （✕/重命名输入框）上才起拖；不 preventDefault——保住 click、
                     // 双击重命名、中键关闭
-                    if (e.button !== 0) return;
-                    if (e.target instanceof Element && e.target.closest("button, input")) return;
+                    if (ev.button !== 0) return;
+                    if (ev.target instanceof Element && ev.target.closest("button, input")) return;
                     dragClickSupUntilRef.current = 0;
                     tabDragRef.current = {
-                      sid: s.id, startX: e.clientX, startY: e.clientY,
-                      pointerId: e.pointerId, srcEl: e.currentTarget, active: false,
+                      key: e.key, sid: rep, startX: ev.clientX, startY: ev.clientY,
+                      pointerId: ev.pointerId, srcEl: ev.currentTarget, active: false,
                     };
-                    e.currentTarget.setPointerCapture(e.pointerId);
+                    ev.currentTarget.setPointerCapture(ev.pointerId);
                   }}
                   onPointerMove={(e) => {
                     const drag = tabDragRef.current;
-                    if (!drag || drag.sid !== s.id || drag.pointerId !== e.pointerId) return;
+                    if (!drag || drag.key !== entryKey || drag.pointerId !== e.pointerId) return;
                     if (!(e.buttons & 1)) { cancelTabDrag(); return; }
                     if (!drag.active) {
                       // 起拖要求「位移够大」且「指针已离开标签本体」：标签内部滑动
@@ -8609,7 +8695,7 @@ export default function App() {
                       if (e.clientX >= r.left - pad && e.clientX <= r.right + pad
                         && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad) return;
                       drag.active = true;
-                      setTabDragSid(s.id);
+                      setTabDragKey(entryKey);
                       document.body.classList.add("tab-dragging");
                     }
                     // 悬停提示：标签条=插入位；终端区=组合分屏落格（已分屏按命中格）；
@@ -8621,17 +8707,15 @@ export default function App() {
                     if (inStrip) {
                       const hit = tabAtPoint(e.clientX, e.clientY);
                       setTermDropHint((cur) => (cur ? null : cur));
-                      // 分屏成员拖回标签条=退出分屏（五轮 D-2 拍板）：不渲染插入位
-                      // 药丸——悬停提示必须与落点裁决一致，否则提示恒为谎言（六轮 BR-6）
-                      const spDrag = groupOf(drag.sid);
-                      const dragIsMember = !!spDrag;
+                      // 组标签也可在条内重排——插入位提示与落点裁决一致
                       setTabDropHint((cur) => {
-                        const next = hit && hit.sid !== drag.sid && !dragIsMember ? hit : null;
-                        return next && cur?.sid === next.sid && cur?.before === next.before ? cur : next;
+                        const next = hit && hit.key !== drag.key ? hit : null;
+                        return next && cur?.key === next.key && cur?.before === next.before ? cur : next;
                       });
                     } else {
                       setTabDropHint((cur) => (cur ? null : cur));
-                      if (inTerm && sessionsRef.current.length >= 2 && tr) {
+                      // 组标签是工作区整体：不进终端区落格，无提示
+                      if (!drag.key.startsWith("g:") && inTerm && sessionsRef.current.length >= 2 && tr) {
                         const sp = groupOf(sidRef.current);
                         let zone: "l" | "r" | "t" | "b";
                         if (sp) {
@@ -8662,103 +8746,133 @@ export default function App() {
                       }
                     }
                   }}
-                  onPointerUp={(e) => {
+                  onPointerUp={(ev) => {
                     const drag = tabDragRef.current;
-                    if (!drag || drag.sid !== s.id || drag.pointerId !== e.pointerId) return;
+                    if (!drag || drag.key !== entryKey || drag.pointerId !== ev.pointerId) return;
                     const wasActive = drag.active;
+                    const snap = { key: drag.key, sid: drag.sid };
                     cancelTabDrag();
                     if (!wasActive) return; // 未起拖=纯点击，click 事件照常激活
                     dragClickSupUntilRef.current = performance.now() + 300;
-                    finishTabDrag(drag.sid, e.clientX, e.clientY);
+                    finishTabDrag(snap, ev.clientX, ev.clientY);
                   }}
-                  onPointerCancel={(e) => {
+                  onPointerCancel={(ev) => {
                     const d = tabDragRef.current;
-                    if (d?.sid === s.id && d.pointerId === e.pointerId) cancelTabDrag();
+                    if (d?.key === entryKey && d.pointerId === ev.pointerId) cancelTabDrag();
                   }}
-                  onLostPointerCapture={(e) => {
+                  onLostPointerCapture={(ev) => {
                     const d = tabDragRef.current;
-                    if (d?.sid === s.id && d.pointerId === e.pointerId) cancelTabDrag();
+                    if (d?.key === entryKey && d.pointerId === ev.pointerId) cancelTabDrag();
                   }}
-                  title={`${label} · ${st.text}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
-                  aria-label={`${label}，${st.text}${inSplit ? t("，在分屏中") : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
+                  title={`${label} · ${st.text}${group ? ` · ${t("{0} 个窗格", members.length)}` : ""}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
+                  aria-label={`${label}，${st.text}${group ? t("，{0} 个窗格", members.length) : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
                   tabIndex={0}
                   role="tab"
-                  aria-selected={sid === s.id}
-                  onKeyDown={(e) => {
+                  aria-selected={active}
+                  onKeyDown={(ev) => {
                     // R20-H1 同款守卫（R27 tab-x 键盘化后必须）：子按钮上的
                     // Enter/Space 冒泡到标签处理器会 preventDefault 吞掉按钮默认点击、
                     // 误触 attachSession——只有标签本体直接按键才激活
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void attachSession(s.id).catch((er) => pushToast("err", errMsg(er))); }
+                    if (ev.target !== ev.currentTarget) return;
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      if (group && active) return; // 已激活组标签：保留当前焦点格
+                      void attachSession(rep).catch((er) => pushToast("err", errMsg(er)));
+                    }
                   }}
                   onClick={() => {
                     if (performance.now() < dragClickSupUntilRef.current) { dragClickSupUntilRef.current = 0; return; }
-                    void attachSession(s.id).catch((e) => pushToast("err", errMsg(e)));
+                    if (group && active) return; // 已激活组标签：保留当前焦点格
+                    void attachSession(rep).catch((er) => pushToast("err", errMsg(er)));
                   }}
-                  onMouseDown={(e) => {
+                  onMouseDown={(ev) => {
                     // 十四轮：中键关闭（浏览器/Windows Terminal 惯例），走与 ✕/右键
                     // 同一确认契约；preventDefault 压掉中键自动滚动
-                    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); requestCloseSession(s); }
+                    if (ev.button === 1) { ev.preventDefault(); ev.stopPropagation(); requestCloseSession(repSession); }
                   }}
-                  onDoubleClick={(e) => {
-                    // 十四轮：双击重命名——只认标签本体/状态点/文字，子按钮双击不误触
-                    const t = e.target as HTMLElement;
-                    if (!(t === e.currentTarget || t.classList.contains("tab-label") || t.classList.contains("tab-dot"))) return;
-                    e.stopPropagation();
-                    setRenaming({ sid: s.id, value: tabNames[s.id] ?? s.host_name });
+                  onDoubleClick={(ev) => {
+                    // 十四轮：双击重命名——只认标签本体/状态点/文字/角标，子按钮双击不误触。
+                    // 组标签双击=改组名（与胶囊同一状态机，输入框渲染在标签条）。
+                    const hit = ev.target as HTMLElement;
+                    if (!(hit === ev.currentTarget || hit.classList.contains("tab-label") || hit.classList.contains("tab-dot") || hit.classList.contains("tab-count"))) return;
+                    ev.stopPropagation();
+                    if (group) beginGroupRename(group.id, splitGroupLabelOf(group), "tab");
+                    else setRenaming({ sid: rep, value: tabNames[rep] ?? repSession.host_name });
                   }}
-                  onContextMenu={(e) => {
+                  onContextMenu={(ev) => {
                     // 十一轮 §6.3 修订：右键标签弹会话操作菜单（按状态显隐）；右键不切换焦点标签
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setTabMenu({ x: e.clientX, y: e.clientY, sid: s.id });
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    setTabMenu({ x: ev.clientX, y: ev.clientY, sid: rep });
                   }}
                 >
                   <span className={"tab-dot " + st.cls} aria-hidden="true" />
-                  {renaming?.sid === s.id ? (
+                  {group && groupRenaming !== null && groupRenamingGid === group.id && groupRenameSource === "tab" ? (
+                    // 组标签行内改名（与分割条胶囊同一状态机；source=tab 时胶囊不渲染输入框）
                     <input
                       className="tab-rename"
-                      value={renaming.value}
+                      value={groupRenaming}
                       autoFocus
-                      onFocus={(e) => e.currentTarget.select()} // 预填全选（审查二轮 UX2-5）：此前直接键入变追加
+                      onFocus={(ev) => ev.currentTarget.select()}
+                      aria-label={t("重命名分屏组")}
+                      onChange={(ev) => setGroupRenaming(ev.target.value)}
+                      onClick={(ev) => ev.stopPropagation()}
+                      onMouseDown={(ev) => ev.stopPropagation()}
+                      onDoubleClick={(ev) => ev.stopPropagation()}
+                      onKeyDown={(ev) => {
+                        ev.stopPropagation();
+                        if (ev.nativeEvent.isComposing || ev.keyCode === 229) return;
+                        if (ev.key === "Enter") {
+                          const tab = (ev.currentTarget as HTMLElement).closest<HTMLElement>(".tab");
+                          queueMicrotask(() => tab?.focus());
+                          commitGroupRename(groupRenaming);
+                        } else if (ev.key === "Escape") cancelGroupRename();
+                      }}
+                      onBlur={() => commitGroupRename(groupRenaming)}
+                    />
+                  ) : !group && renaming?.sid === rep ? (
+                    <input
+                      className="tab-rename"
+                      value={renaming?.value ?? ""}
+                      autoFocus
+                      onFocus={(ev) => ev.currentTarget.select()} // 预填全选（审查二轮 UX2-5）：此前直接键入变追加
                       aria-label={t("重命名标签")}
-                      onChange={(e) => setRenaming({ sid: s.id, value: e.target.value })}
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onDoubleClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => {
+                      onChange={(ev) => setRenaming({ sid: rep, value: ev.target.value })}
+                      onClick={(ev) => ev.stopPropagation()}
+                      onMouseDown={(ev) => ev.stopPropagation()}
+                      onDoubleClick={(ev) => ev.stopPropagation()}
+                      onKeyDown={(ev) => {
                         // 编辑框内按键不冒泡（Enter/Space 会被标签 onKeyDown 抢成激活）
-                        e.stopPropagation();
+                        ev.stopPropagation();
                         // IME 组合期 Enter 是确认候选词，不提交重命名（§7.3 口径）
-                        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                        if (e.key === "Enter") {
+                        if (ev.nativeEvent.isComposing || ev.keyCode === 229) return;
+                        if (ev.key === "Enter") {
                           // 提交后焦点回标签本体（找茬五轮 D-4）：改名框卸载即焦点
                           // 落 body——原地 Tab 重丢地址。微任务回焦在 React 卸载
                           // 输入框之前跑，会触发一次 blur 重提交（同值幂等无害）；
                           // Escape 分支不回焦——回焦引发的 blur 会把本应丢弃的编辑
                           // 提交掉（取消语义优先）
-                          const tab = (e.currentTarget as HTMLElement).closest<HTMLElement>(".tab");
+                          const tab = (ev.currentTarget as HTMLElement).closest<HTMLElement>(".tab");
                           queueMicrotask(() => tab?.focus());
-                          commitTabRename(s.id, renaming.value);
-                        } else if (e.key === "Escape") setRenaming(null);
+                          commitTabRename(rep, renaming?.value ?? "");
+                        } else if (ev.key === "Escape") setRenaming(null);
                       }}
-                      onBlur={() => commitTabRename(s.id, renaming.value)}
+                      onBlur={() => commitTabRename(rep, renaming?.value ?? "")}
                     />
                   ) : (
                     <span className="tab-label">{label}</span>
                   )}
+                  {group && <span className="tab-count" aria-hidden="true">{members.length}</span>}
                   {/* R27（§7.4）：关闭改真按钮——键盘 Tab 可达、focus-visible 可见、
                       可访问名称不依赖 hover；命中区 ≥28 由 CSS ::after 透明扩展。
-                      七轮（用户拍板）：标签上的分屏小钮已删——12px 图标语义不明（用户原话
-                      「不太容易让人理解」），且活动标签上点它还是静默 no-op（enterSplitWith
-                      首行自指卫兵直接 return）。分屏入口保留三个更明确的：右键标签菜单、
-                      工具栏分屏钮（Ctrl+D）、⌘K palette「分屏」，外加拖标签进终端区 */}
+                      一组一标签：组标签的 ✕ 关闭当前焦点成员（另一会话以独立标签继续），
+                      会话生命周期与确认契约沿用 requestCloseSession */}
                   <button
                     type="button"
                     className="tab-x"
                     title={t("关闭会话（{0}，活动会话先确认影响）", formatBinding(keymap["tab-close"], isMacPlatform()))}
-                    aria-label={t("关闭会话 {0}", s.host_name)}
-                    onClick={(e) => { e.stopPropagation(); requestCloseSession(s); }}
+                    aria-label={t("关闭会话 {0}", repSession.host_name)}
+                    onClick={(ev) => { ev.stopPropagation(); requestCloseSession(repSession); }}
                   ><IconX size={11} /></button>
                 </div>
               );
@@ -9195,7 +9309,8 @@ export default function App() {
               >
                 {/* 分屏组命名（本轮）：组名胶囊叠分割条中央——事件自持，抓胶囊=改名
                     （双击/Enter/F2），抓条身=拖比例/双击复位。自动名随成员，自定义
-                    名钉住，散伙即弃。胶囊可 Tab 聚焦，方向键同样微调比例 */}
+                    名钉住，散伙即弃。胶囊可 Tab 聚焦，方向键同样微调比例。
+                    默认隐形（避免常显遮挡正文）：悬停分割条、键盘聚焦或拖拽时显形 */}
                 <span className="div-group" data-testid="split-group-chip" tabIndex={0}
                   role="button"
                   title={t("分屏组：{0}（双击重命名）", splitGroupLabel ?? "")}
@@ -9224,7 +9339,7 @@ export default function App() {
                     }
                   }}
                 >
-                  {groupRenaming !== null ? (
+                  {groupRenaming !== null && groupRenameSource === "chip" ? (
                     <input
                       className="split-group-rename"
                       value={groupRenaming}
@@ -9268,18 +9383,15 @@ export default function App() {
                 已分屏时高亮恰为真实窗格几何，未分屏（默认 .5）即为半区 */}
             {termDropHint && (() => {
               const sp = splitPanes;
-              const dragSid = tabDragSid;
-              const isMember = !!sp && !!dragSid && (sp.main === dragSid || sp.second === dragSid);
+              // 一组一标签：拖拽源恒为独立会话（组成员没有自己的标签），不存在「交换两格」
               const side = sp?.dir === "tb"
                 ? (termDropHint === "t" ? "上" : "下")
                 : (termDropHint === "l" ? "左" : "右");
               const label = !sp
                 ? t(`放到${side}侧分屏`)
-                : isMember
-                  ? t("交换两格")
-                  : sp.maximized
-                    ? t("替换此格")
-                    : t(`替换${side}格`);
+                : sp.maximized
+                  ? t("替换此格")
+                  : t(`替换${side}格`);
               return (
                 <div className="drag-split-hint" data-testid="drag-split-hint">
                   <div className={"dsh-zone zone-" + termDropHint + (sp?.maximized ? " single" : "")} />

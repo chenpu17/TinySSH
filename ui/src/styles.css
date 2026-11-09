@@ -758,8 +758,19 @@ body.split-drag-lr, body.split-drag-lr * { cursor: col-resize !important; }
 body.split-drag-tb, body.split-drag-tb * { cursor: row-resize !important; }
 /* 分屏组命名（本轮）：组名胶囊叠分割条中央（10px 条身内绝对定位向两侧溢出）。
    事件自持在 JSX：点/双击胶囊=改名，抓条身其余段=拖比例/双击复位。长名截断，
-   全名在 title；tb 分割条同理居中 */
-.pane-div .div-group { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 60vw; z-index: 2; }
+   全名在 title；tb 分割条同理居中。
+   默认隐形（反馈：常显胶囊压住终端正文）：仅悬停分割条/胶囊、胶囊键盘聚焦、
+   改名输入中或拖拽比例时显形；隐形时不接指针事件，不挡终端点击。 */
+.pane-div .div-group {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  max-width: 60vw; z-index: 2; opacity: 0; pointer-events: none;
+  transition: opacity .12s ease;
+}
+.pane-div:hover .div-group,
+.pane-div:focus-visible .div-group,
+.pane-div .div-group:focus-visible,
+.pane-div .div-group:focus-within,
+body.split-dragging .pane-div .div-group { opacity: 1; pointer-events: auto; }
 .div-group-name {
   display: block; padding: 0 9px; border-radius: 999px; line-height: 18px;
   font-size: 11px; color: var(--text-sub); white-space: nowrap;
@@ -1113,6 +1124,13 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 /* label 撑满药丸余宽：分屏/关闭钮靠右收边（Windows Terminal 布局）——短标签
    （「本机」）药丸中部不再被常显按钮占住，抓中间即可拖拽、点中间也不再误触分屏 */
 .tab-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 一组一标签：组标签右侧窗格数角标（2 = 两格分屏工作区） */
+.tab-count {
+  flex: none; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 600; line-height: 1; color: var(--dim);
+  background: var(--panel2); font-variant-numeric: tabular-nums;
+}
 /* 十四轮：标签行内重命名框——占住标签文字位，描边用 accent 标示编辑态 */
 .tab-rename {
   width: 96px; min-width: 0; height: 22px; padding: 0 4px; font-size: 12px;

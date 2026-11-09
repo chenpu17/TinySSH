@@ -519,6 +519,8 @@ const EN: Record<string, string> = {
   "自定义分屏组名（清空恢复自动命名：成员名相连）": "Custom split-group name (empty restores the auto name: member names joined)",
   "分屏组：{0}（双击重命名）": "Split group: {0} (double-click to rename)",
   "重命名分屏组": "Rename split group",
+  "{0} 个窗格": "{0} panes",
+  "，{0} 个窗格": ", {0} panes",
   "改为{0}分屏": "Switch to {0} split",
   "放到{0}侧分屏（替换{0}格）": "Split into the {0} pane (replaces it)",
   "与当前会话分屏（放到{0}侧）": "Split with current session (into the {0})",

@@ -1,5 +1,6 @@
-// 76 每标签独立分屏组：A|B 与 C|D 共存、每组独立恢复（方向/占比/组名/最大化）、
-// 跨组移动解散原组、关闭成员只解散所在组、tmux 面板互斥按会话判定。
+// 76 每标签独立分屏组（一组一标签，Termius 式）：A|B 与 C|D 共存但各占一个组标签、
+// 每组独立恢复（方向/占比/组名/最大化）、单标签会话替换组成员时被换出者变独立标签、
+// 关闭成员只解散所在组、tmux 面板互斥按会话判定。
 const rightClickTabIdx = async (page, idx) => {
   await page.evaluate((i) => {
     const tab = document.querySelectorAll(".tab")[i];
@@ -25,6 +26,8 @@ const activate = async (page, idx) => {
 
 const tabsInfo = (page) => page.evaluate(() =>
   [...document.querySelectorAll(".tab")].map((t) => ({
+    key: t.dataset.key,
+    gid: t.dataset.gid ?? null,
     sid: t.dataset.sid,
     text: t.querySelector(".tab-label")?.textContent ?? "",
     pane: t.classList.contains("tab-pane"),
@@ -73,7 +76,7 @@ const dragTab = async (page, idx, fx, fy, mode = "drop") => {
   await page.waitForTimeout(600);
 };
 
-// 抓条身 20% 处（避开中央组名胶囊），拖到目标占比
+// 抓条身 80% 处（避开中央组名胶囊与 20% 附近的 tmux「恢复现场」浮钮），拖到目标占比
 const dragDiv = async (page, targetFrac) => {
   const d = await page.evaluate(() => {
     const el = document.querySelector(".pane-div");
@@ -83,8 +86,8 @@ const dragDiv = async (page, targetFrac) => {
     const frac = parseFloat(document.getElementById("term").style.getPropertyValue("--split-frac") ?? "0.5");
     const lr = r.width < r.height;
     return {
-      x: lr ? r.x + r.width / 2 : r.x + r.width * 0.2,
-      y: lr ? r.y + r.height * 0.2 : r.y + r.height / 2,
+      x: lr ? r.x + r.width / 2 : r.x + r.width * 0.8,
+      y: lr ? r.y + r.height * 0.8 : r.y + r.height / 2,
       frac, total: lr ? term.width : term.height, lr,
     };
   });
@@ -110,19 +113,8 @@ const renameChip = async (page, name) => {
   await page.waitForTimeout(300);
 };
 
-const waitToast = async (page, substr, timeout = 6000) => {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    const hit = await page.evaluate((s) =>
-      [...document.querySelectorAll(".toast")].some((t) => t.textContent?.includes(s)), substr);
-    if (hit) return true;
-    await page.waitForTimeout(120);
-  }
-  return false;
-};
-
 module.exports = {
-  title: "每标签独立分屏：多组共存、组内状态独立、跨组移动与关闭只影响本组",
+  title: "每标签独立分屏：一组一标签、多组共存、组内状态独立与关闭只影响本组",
   async run({ page, ck }) {
     // ── 准备 4 个会话：demo 预置 prod-1/staging-1 + 连接本机 + 复制本机标签 ──
     const card = await page.$('.host-card:has(.host-name:text-is("本机"))');
@@ -139,32 +131,55 @@ module.exports = {
     ck.check("准备 4 个会话标签", tabs.length === 4, JSON.stringify(tabs));
     const [t0, t1, t2, t3] = tabs.map((t) => t.sid);
 
-    // ── 1. A|B 与 C|D 共存：点第三个标签不替换任何窗格 ──
+    // ── 1. A|B 成组即合并为一个组标签：4 标签 → 3 标签，点第三标签不替换窗格 ──
     await activate(page, 0);
     await dragTab(page, 1, 0.9, 0.5);
     let p = await panes(page);
     ck.check("A|B 建立", p.length === 2 && p.find((x) => x.sid === t0)?.slot === "main"
       && p.find((x) => x.sid === t1)?.slot === "second", JSON.stringify(p));
-
-    await activate(page, 2);
-    p = await panes(page);
-    ck.check("点第三个标签只显示它自己（单窗格）", p.length === 0, JSON.stringify(p));
     tabs = await tabsInfo(page);
-    ck.check("A|B 组成员标记仍在（未被替换）",
-      tabs.find((t) => t.sid === t0)?.pane && tabs.find((t) => t.sid === t1)?.pane, JSON.stringify(tabs));
+    ck.check("成组后两组员合并为一个组标签（4→3）",
+      tabs.length === 3 && tabs[0].gid && tabs[0].pane
+        && tabs.filter((t) => t.gid === tabs[0].gid).length === 1, JSON.stringify(tabs));
+    ck.check("组标签带窗格数角标（2）",
+      (await page.evaluate(() => document.querySelector(".tab[data-gid] .tab-count")?.textContent ?? "")) === "2", "");
 
-    await dragTab(page, 3, 0.9, 0.5);
+    // 双击组标签 = 组名行内改名（与分割条胶囊同一状态机，输入框渲染在标签条）
+    const gLabel = await page.evaluate(() => {
+      const r = document.querySelector(".tab[data-gid] .tab-label").getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.dblclick(gLabel.x, gLabel.y);
+    await page.waitForTimeout(250);
+    ck.check("双击组标签打开行内改名（预填组名）",
+      (await page.evaluate(() => document.querySelector(".tab .tab-rename")?.value ?? null)) === "prod-1 + staging-1", "");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    tabs = await tabsInfo(page);
+    ck.check("Esc 取消组标签改名（组名不变）",
+      tabs.length === 3 && tabs[0].gid && tabs[0].text === "prod-1 + staging-1", JSON.stringify(tabs));
+
+    await activate(page, 1);
+    p = await panes(page);
+    ck.check("点单标签只显示它自己（单窗格）", p.length === 0, JSON.stringify(p));
+    tabs = await tabsInfo(page);
+    ck.check("A|B 组标签仍在（未被替换）",
+      tabs.length === 3 && !!tabs.find((t) => t.gid)?.pane, JSON.stringify(tabs));
+
+    await dragTab(page, 2, 0.9, 0.5);
     p = await panes(page);
     ck.check("C|D 建立且与 A|B 共存", p.length === 2 && p.find((x) => x.sid === t2)?.slot === "main"
       && p.find((x) => x.sid === t3)?.slot === "second", JSON.stringify(p));
+    tabs = await tabsInfo(page);
+    ck.check("两组各占一个组标签（2 标签）",
+      tabs.length === 2 && tabs.every((t) => !!t.gid && t.pane), JSON.stringify(tabs));
 
     await activate(page, 0);
     p = await panes(page);
     ck.check("切回 A 恢复 A|B（C|D 不受影响）", p.length === 2 && p.find((x) => x.sid === t0)?.slot === "main"
       && p.find((x) => x.sid === t1)?.slot === "second", JSON.stringify(p));
     tabs = await tabsInfo(page);
-    ck.check("C|D 组成员标记仍在", tabs.find((t) => t.sid === t2)?.pane && tabs.find((t) => t.sid === t3)?.pane,
-      JSON.stringify(tabs));
+    ck.check("C|D 组标签仍在", tabs.length === 2 && tabs[0].active && !tabs[1].active && tabs[1].pane, JSON.stringify(tabs));
 
     // ── 2. 每组独立恢复：占比 / 组名 / 方向 ──
     await dragDiv(page, 0.2);
@@ -176,7 +191,7 @@ module.exports = {
     ck.check("A|B 设为上下 + 0.2 + 生产组",
       v.dir === "tb" && Math.abs(v.frac - 0.2) < 0.02 && v.chip === "生产组", JSON.stringify(v));
 
-    await activate(page, 2);
+    await activate(page, 1);
     v = await view(page);
     ck.check("切到 C|D：方向/占比/组名各自独立（左右、0.5、自动名）",
       v.dir === "lr" && Math.abs(v.frac - 0.5) < 0.02 && v.chip === "本机 + 本机", JSON.stringify(v));
@@ -195,7 +210,7 @@ module.exports = {
     v = await view(page);
     ck.check("A|B 最大化一格", v.max === 1 && v.hidden === 1 && v.dir === null, JSON.stringify(v));
 
-    await activate(page, 2);
+    await activate(page, 1);
     v = await view(page);
     ck.check("切到 C|D：不受 A|B 最大化影响", v.max === 0 && v.hidden === 0 && v.dir === "lr", JSON.stringify(v));
 
@@ -211,6 +226,8 @@ module.exports = {
     await rightClickTabIdx(page, 0);
     await clickItem(page, "退出分屏");
     await page.waitForTimeout(400);
+    tabs = await tabsInfo(page);
+    ck.check("退出分屏后 A|B 组标签拆回两个单标签（3 标签）", tabs.length === 3, JSON.stringify(tabs));
     await activate(page, 0);
     await page.evaluate((sid) =>
       window.__demoInvoke("demo_tmux_fixture", { sid, sessions: ["work"] }), t0);
@@ -226,7 +243,7 @@ module.exports = {
     ck.check("存在其它分屏组时，单窗格标签仍能打开 tmux 面板",
       !!cell && cell.display === "flex" && cell.sid === t0, JSON.stringify(cell));
 
-    // ── 5. 跨组移动：重建 A|B 后把 D（C|D 成员）拖进来 → C|D 解散、C 变单窗格 ──
+    // ── 5. 重建 A|B，再用单标签会话替换副格成员：被换出者变独立标签 ──
     await dragTab(page, 1, 0.9, 0.5);
     p = await panes(page);
     ck.check("重建 A|B（prod-1 + staging-1）", p.length === 2
@@ -239,32 +256,46 @@ module.exports = {
     });
     ck.check("prod-1 进入分屏后其 tmux 面板暂隐", cellHidden === "none", String(cellHidden));
 
-    await dragTab(page, 3, 0.9, 0.5);
-    ck.check("跨组移动 toast 说明原分屏解散", await waitToast(page, "已从原分屏移出"), "");
+    // 先解散 C|D，成员成为可拖动的单标签（一组一标签下成员不能从组标签里拖出）
+    let groupIdxs = (await tabsInfo(page)).map((t, i) => (t.gid ? i : -1)).filter((i) => i >= 0);
+    await rightClickTabIdx(page, groupIdxs[1]);
+    await clickItem(page, "退出分屏");
+    await page.waitForTimeout(400);
+    tabs = await tabsInfo(page);
+    ck.check("解散 C|D 后成员各自独立成标签（3 标签）", tabs.length === 3
+      && tabs.filter((t) => !t.gid).length === 2, JSON.stringify(tabs));
+
+    // 单标签 t3 拖进 A|B 副格 = 替换副格成员 t1
+    const t3Idx = (await tabsInfo(page)).findIndex((t) => t.key === `s:${t3}`);
+    await dragTab(page, t3Idx, 0.9, 0.5);
     p = await panes(page);
-    ck.check("D 进入 A|B 副格，A|B 仍是两格",
+    ck.check("单标签会话替换副格成员，A|B 仍是两格",
       p.length === 2 && p.find((x) => x.sid === t0)?.slot === "main"
       && p.find((x) => x.sid === t3)?.slot === "second", JSON.stringify(p));
     tabs = await tabsInfo(page);
-    ck.check("C 变单窗格（成员标记消失）、D 仍在分屏",
-      !tabs.find((t) => t.sid === t2)?.pane && tabs.find((t) => t.sid === t3)?.pane, JSON.stringify(tabs));
+    ck.check("被换出的 t1 变独立标签、t3 归入组标签（3 标签）",
+      tabs.length === 3 && !!tabs.find((t) => t.key === `s:${t1}` && !t.pane)
+      && !!tabs.find((t) => t.gid && t.pane), JSON.stringify(tabs));
 
-    await activate(page, 2);
+    const t2Idx = (await tabsInfo(page)).findIndex((t) => t.key === `s:${t2}`);
+    await activate(page, t2Idx);
     p = await panes(page);
-    ck.check("切到 C：单窗格", p.length === 0, JSON.stringify(p));
+    ck.check("切到单标签 t2：单窗格", p.length === 0, JSON.stringify(p));
 
     // ── 6. 关闭组成员：只解散它所在的组，其它组不受影响 ──
-    // 先重建第二组 {staging-1, 本机}（A|B 此时 = prod-1 + D，处于非活动态）
-    await activate(page, 1);
-    await dragTab(page, 2, 0.9, 0.5);
+    // 先重建第二组 {staging-1, t2}（A|B 此时 = t0 + t3，处于非活动态）
+    const t1Idx = (await tabsInfo(page)).findIndex((t) => t.key === `s:${t1}`);
+    await activate(page, t1Idx);
+    const t2Idx2 = (await tabsInfo(page)).findIndex((t) => t.key === `s:${t2}`);
+    await dragTab(page, t2Idx2, 0.9, 0.5);
     p = await panes(page);
-    ck.check("第二组 {staging-1, 本机} 建立", p.length === 2
+    ck.check("第二组 {staging-1, t2} 建立", p.length === 2
       && p.find((x) => x.sid === t1)?.slot === "main" && p.find((x) => x.sid === t2)?.slot === "second",
       JSON.stringify(p));
 
-    // 关闭 A|B 的成员 D（非活动标签）
-    const dIdx = (await tabsInfo(page)).findIndex((t) => t.sid === t3);
-    await rightClickTabIdx(page, dIdx);
+    // 关闭 A|B 的焦点成员 t3（组标签右键走焦点成员）
+    groupIdxs = (await tabsInfo(page)).map((t, i) => (t.gid ? i : -1)).filter((i) => i >= 0);
+    await rightClickTabIdx(page, groupIdxs[0]);
     await clickItem(page, "关闭会话");
     await page.evaluate(() => {
       const b = [...document.querySelectorAll(".confirm-dialog button")].find((x) => x.textContent.trim() === "关闭会话");
@@ -273,17 +304,16 @@ module.exports = {
     await page.waitForTimeout(900);
     tabs = await tabsInfo(page);
     p = await panes(page);
-    ck.check("关闭 A|B 成员：该组解散（A 变单窗格）",
-      !tabs.find((t) => t.sid === t0)?.pane && tabs.length === 3, JSON.stringify(tabs));
-    ck.check("其它组 {staging-1, 本机} 完全不受影响、仍是活动视图",
+    ck.check("关闭组标签焦点成员：该组解散、t0 变单标签（2 标签）",
+      tabs.length === 2 && !!tabs.find((t) => t.key === `s:${t0}` && !t.pane), JSON.stringify(tabs));
+    ck.check("其它组 {staging-1, t2} 完全不受影响、仍是活动视图",
       p.length === 2 && p.find((x) => x.sid === t1)?.slot === "main"
       && p.find((x) => x.sid === t2)?.slot === "second", JSON.stringify(p));
 
     // ── 7. 关闭回落：另一个组的隐藏最大化格不得抢成活动会话 ──
-    // 最大化 {staging-1, 本机} 的副格（本机），再切到单窗格 prod-1 后关闭它：
-    // 回落若直接 setSid 本机，屏幕仍是最大化的本机，但活动标签/右键/⌘W 指向
+    // 最大化 {staging-1, t2} 的副格（t2），再切到单窗格 prod-1 后关闭它：
+    // 回落若直接 setSid t2，屏幕仍是最大化的 t2，但活动标签/右键/⌘W 指向
     // 隐藏的 staging-1——统一走 focusSession 必须先还原两格并让焦点=可见格。
-    await activate(page, 2);
     await page.evaluate((sid) => {
       const pane = [...document.querySelectorAll(".pane-left, .pane-right, .pane-top, .pane-bottom")]
         .find((el) => el.dataset.sid === sid);
@@ -291,12 +321,11 @@ module.exports = {
     }, t2);
     await page.waitForTimeout(500);
     const maxBefore = await page.evaluate(() => document.querySelector(".pane-max")?.dataset.sid ?? null);
-    ck.check("关闭回落前：本机副格处于最大化", maxBefore === t2, String(maxBefore));
+    ck.check("关闭回落前：t2 副格处于最大化", maxBefore === t2, String(maxBefore));
 
-    const t0Idx = (await tabsInfo(page)).findIndex((t) => t.sid === t0);
+    const t0Idx = (await tabsInfo(page)).findIndex((t) => t.key === `s:${t0}`);
     await activate(page, t0Idx);
-    const t0Idx2 = (await tabsInfo(page)).findIndex((t) => t.sid === t0);
-    await rightClickTabIdx(page, t0Idx2);
+    await rightClickTabIdx(page, t0Idx);
     await clickItem(page, "关闭会话");
     await page.evaluate(() => {
       const b = [...document.querySelectorAll(".confirm-dialog button")].find((x) => x.textContent.trim() === "关闭会话");

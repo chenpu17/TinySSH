@@ -9,6 +9,11 @@
 //   1) 伪 core：修饰键不武装、不清零，普通字符仍武装；
 //   2) 真实 xterm：Shift + insertText 的「：」「？」各一次送达，且普通字符
 //      keydown 后的同字符 insertText 仍被去重（不重复上屏）。
+//
+// 2026-11-09 复报后补真机时序分支：WKWebView 的 IME 提交是异步的，字符 keydown
+// （229）先到、input 后到；keydown 时排队的 0ms diff 会在 textarea 还没写入时跑空，
+// 随后 input 被去重门丢弃。下面 ``stale229`` / ``stale229Composition`` 用真实等待
+// 复现这条时序，``compositionFlushed`` 验证 compositionend 已先行送达时不重复上屏。
 const liveSids = (page) =>
   page.evaluate(() => {
     const terms = window.__t_terms;
@@ -152,20 +157,28 @@ module.exports = {
           data, inputType: "insertText", composed: true, bubbles: true, cancelable: true,
         }));
       };
-      const input = (data) => {
+      const input = (data, inputType = "insertText") => {
         // 真实 IME 在 input 前已把提交文本写进 textarea
         ta.value += data;
-        ta.dispatchEvent(new InputEvent("input", {
-          data, inputType: "insertText", composed: true, bubbles: true,
-        }));
+        const ev = new InputEvent("input", {
+          data, inputType, composed: true, bubbles: true,
+        });
+        // Chrome 的构造器不接受 insertFromComposition（落成空串），按真实事件补上
+        if (ev.inputType !== inputType) {
+          Object.defineProperty(ev, "inputType", { get: () => inputType });
+        }
+        ta.dispatchEvent(ev);
       };
+      const compStart = () => ta.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      const compUpdate = (data) => ta.dispatchEvent(new CompositionEvent("compositionupdate", { data, bubbles: true }));
+      const compEnd = (data) => ta.dispatchEvent(new CompositionEvent("compositionend", { data, bubbles: true }));
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const run = async (fn) => {
         out.length = 0;
         ta.value = "";
-        fn();
+        await fn();
         // CompositionHelper 的 textarea diff 走 setTimeout(0)：等它跑完再取本案例
-        await wait(40);
+        await wait(60);
         return out.slice();
       };
 
@@ -275,8 +288,38 @@ module.exports = {
         keyup("!", "Digit1", 49);
         keyup("Shift", "ShiftLeft", 16);
       });
+      // 真机时序缺口：字符 keydown(229) 先到，CompositionHelper 的 0ms diff 在
+      // textarea 还没写入时跑空，提交 input 随后到达——input 是唯一送达机会。
+      const stale229 = await run(async () => {
+        keydown("Shift", "ShiftLeft", 16, true);
+        keydown("：", "Semicolon", 229, true);
+        await wait(15);
+        input("：");
+        keyup(";", "Semicolon", 186);
+        keyup("Shift", "ShiftLeft", 16);
+      });
+      // 同一条时序使用 insertFromComposition（部分 WKWebView/IME 的提交类型）
+      const stale229FromComposition = await run(async () => {
+        keydown("Shift", "ShiftLeft", 16, true);
+        keydown("：", "Semicolon", 229, true);
+        await wait(15);
+        input("：", "insertFromComposition");
+        keyup(";", "Semicolon", 186);
+        keyup("Shift", "ShiftLeft", 16);
+      });
+      // 真实组合提交：compositionend 的 0ms flush 已先行送达，随后的 input 不得重复
+      const compositionFlushed = await run(async () => {
+        keydown("中", "KeyZ", 229);
+        compStart();
+        compUpdate("中");
+        ta.value += "中";
+        compEnd("中");
+        await wait(15);
+        input("中");
+        keyup("中", "KeyZ", 229);
+      });
       term._core.browser = savedBrowser;
-      return { apple, valueBefore, valueAfter, plain, shiftedAscii, noKeypressColon, noKeypressBang, lateKeypress, sogouColon, sogouBang, macAsciiBang };
+      return { apple, valueBefore, valueAfter, plain, shiftedAscii, noKeypressColon, noKeypressBang, lateKeypress, sogouColon, sogouBang, macAsciiBang, stale229, stale229FromComposition, compositionFlushed };
     }, sids[0]);
     ck.eq("「：」按一次只送达一次", JSON.stringify(r.apple), JSON.stringify(["："]));
     ck.eq("「？」（textarea 先写入）按一次只送达一次", JSON.stringify(r.valueBefore), JSON.stringify(["？"]));
@@ -289,5 +332,11 @@ module.exports = {
     ck.eq("搜狗「：」只走 keypress 全角，不发半角 ;", JSON.stringify(r.sogouColon), JSON.stringify(["："]));
     ck.eq("搜狗「！」只走 keypress 全角，不发半角 !", JSON.stringify(r.sogouBang), JSON.stringify(["！"]));
     ck.eq("macOS 英文 Shift+1 走 keypress 仍只发一次 ASCII !", JSON.stringify(r.macAsciiBang), JSON.stringify(["!"]));
+    ck.eq("keydown 229 的 0ms diff 先跑空、input 后到：「：」按一次只送达一次",
+      JSON.stringify(r.stale229), JSON.stringify(["："]));
+    ck.eq("insertFromComposition 提交（diff 已跑空）：「：」按一次只送达一次",
+      JSON.stringify(r.stale229FromComposition), JSON.stringify(["："]));
+    ck.eq("compositionend 的 flush 已先送达时，随后 input 不重复上屏",
+      JSON.stringify(r.compositionFlushed), JSON.stringify(["中"]));
   },
 };

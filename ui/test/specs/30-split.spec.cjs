@@ -1,6 +1,7 @@
 // 30 分屏交互（分屏⑥轮）：方向可选（左右/上下，记住上次选择）、分割条拖拽与双击复位、
-// 分屏中旋转布局、退出恢复单窗格。拖拽组合轮：标签拖到终端区四象限建屏/换格/交换、
-// 拖到标签条空白退出分屏。demo 预置 prod-1/staging-1 开箱即用，不依赖真连。
+// 分屏中旋转布局、退出恢复单窗格。拖拽组合轮：标签拖到终端区四象限建屏/换格；一组一标签
+// （Termius 式）下组标签只重排、拖进终端区无操作，散组走右键「退出分屏」。demo 预置
+// prod-1/staging-1 开箱即用，不依赖真连。
 const rightClickTab = async (page, namePart) => {
   await page.evaluate((t) => {
     const tab = [...document.querySelectorAll(".tab")].find((x) => x.textContent.includes(t));
@@ -242,24 +243,22 @@ module.exports = {
     ck.check("断开会话副格名牌带「· 已断开」后缀（找茬五轮 C-4）", suffixSeen, await secondRaw() ?? "无名牌");
     ck.check("drop 后提示已清", !await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]')));
 
-    // ② 已分屏：拖主格标签落到另一格 = 交换两格，焦点跟到落点格
-    await tabDrag("本机", 0.9, 0.5, "drop");
-    await page.waitForTimeout(500);
-    const p2 = await paneNames();
-    ck.check("主格标签拖到另一格=交换两格", p2.main === "staging-1" && p2.second === "本机", JSON.stringify(p2));
-    ck.check("交换后焦点在落点格（本机）", p2.focused === "本机", JSON.stringify(p2));
-
-    // ③ 落到自己所在格 = 无操作
-    await tabDrag("本机", 0.9, 0.5, "drop");
+    // ② 一组一标签：组成员不再有独立标签——拖组标签进终端区无落点、无操作
+    await tabDrag("本机", 0.9, 0.5, "over");
+    ck.check("组标签悬停终端区：无落点提示",
+      !await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]')), "");
+    await page.mouse.up();
     await page.waitForTimeout(400);
-    const p3 = await paneNames();
-    ck.check("落到自己所在格无操作", p3.main === "staging-1" && p3.second === "本机" && p3.focused === "本机", JSON.stringify(p3));
+    const p2 = await paneNames();
+    ck.check("组标签拖进终端区=无操作（两格与焦点不变）",
+      p2.main === "本机" && p2.second === "staging-1" && p2.focused === "staging-1", JSON.stringify(p2));
 
     // ── 分屏组命名（本轮）：组=分屏对命名层——自动名=成员名相连、双击胶囊重命名、
     //    自定义名钉住（成员替换不跟随）、散伙弃名（重分屏回自动名）──
     //    每标签独立分屏后每组自带占比：本组由拖拽新建（默认 0.5），先把条身拖到
-    //    0.2 作为「双击胶囊不改比例」的观测值
-    const c4 = await divPoint(page, 0.2);
+    //    0.2 作为「双击胶囊不改比例」的观测值（抓 f=0.8 段：f=0.2 段会被焦点会话的
+    //    tmux「恢复现场」浮钮覆盖）
+    const c4 = await divPoint(page, 0.8);
     const termW4 = await page.evaluate(() => document.getElementById("term").getBoundingClientRect().width);
     await page.mouse.move(c4.x, c4.y);
     await page.mouse.down();
@@ -268,9 +267,23 @@ module.exports = {
     await page.waitForTimeout(400);
     const g5 = await paneGeom(page);
     ck.check("本组拖到 0.2（每组独立占比）", Math.abs(g5.frac - 0.2) < 0.02, JSON.stringify(g5));
+    // 组名胶囊默认隐形（不遮挡终端正文），悬停分割条才显形
+    await page.mouse.move(120, 500);
+    await page.waitForTimeout(240);
+    const chipOpacity = () => page.evaluate(() => {
+      const c = document.querySelector('[data-testid="split-group-chip"]');
+      return c ? getComputedStyle(c).opacity : null;
+    });
+    const opRest = await chipOpacity();
+    ck.check("组名胶囊默认隐形（不遮挡正文）", opRest === "0", `opacity=${opRest}`);
+    const hoverDiv = await divPoint(page, 0.5);
+    await page.mouse.move(hoverDiv.x, hoverDiv.y);
+    await page.waitForTimeout(240);
+    const opHover = await chipOpacity();
+    ck.check("悬停分割条时组名胶囊显形", opHover === "1", `opacity=${opHover}`);
     const chipText = () => page.evaluate(() =>
       document.querySelector('[data-testid="split-group-chip"] .div-group-name')?.textContent ?? null);
-    ck.check("组名胶囊在场且为自动名（成员名相连）", (await chipText()) === "staging-1 + 本机", (await chipText()) ?? "无胶囊");
+    ck.check("组名胶囊在场且为自动名（成员名相连）", (await chipText()) === "本机 + staging-1", (await chipText()) ?? "无胶囊");
     const chipBox = await page.evaluate(() => {
       const c = document.querySelector('[data-testid="split-group-chip"]');
       if (!c) return null;
@@ -295,12 +308,13 @@ module.exports = {
     await page.waitForTimeout(500);
     const p4 = await paneNames();
     const dirStillLr = await page.evaluate(() => !!document.querySelector(".pane-div.div-lr"));
-    ck.check("屏外会话拖到主格=替换主格", p4.main === "prod-1" && p4.second === "本机", JSON.stringify(p4));
+    ck.check("屏外会话拖到主格=替换主格", p4.main === "prod-1" && p4.second === "staging-1", JSON.stringify(p4));
     ck.check("替换不动布局方向（仍 div-lr）", dirStillLr, "");
     ck.check("替换后焦点在落点格（prod-1）", p4.focused === "prod-1", JSON.stringify(p4));
     ck.check("成员替换后自定义名钉住（仍生产组）", (await chipText()) === "生产组", (await chipText()) ?? "无胶囊");
 
-    // ⑤ 标签条空白落点：非成员 no-op；成员拖回空白=退出它所在的组，两会话保留
+    // ⑤ 标签条空白落点：非成员 no-op；组标签（一组一标签）拖空白也 no-op、组保留。
+    //    退出分屏改走组标签右键「退出分屏」——组成员已没有独立标签可“拖出”
     const blank = await page.evaluate(() => {
       const bar = document.querySelector(".tabbar").getBoundingClientRect();
       const tabs = document.querySelectorAll(".tab");
@@ -312,8 +326,8 @@ module.exports = {
       const r = tab.querySelector(".tab-label").getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     }, namePart);
-    // 此时组成员=prod-1 + 本机（staging-1 已在 ④ 被换出）——非成员拖空白不动任何组
-    const srcNon = await tabLabelPoint("staging-1");
+    // 此时组成员=prod-1 + staging-1（本机已在 ④ 被换出）——非成员拖空白不动任何组
+    const srcNon = await tabLabelPoint("本机");
     await page.mouse.move(srcNon.x, srcNon.y);
     await page.mouse.down();
     await page.mouse.move(blank.x, blank.y, { steps: 6 });
@@ -322,15 +336,23 @@ module.exports = {
     await page.waitForTimeout(500);
     ck.check("非成员拖到标签条空白=无操作（活动组保留）", (await paneCount(page)) === 2
       && !!(await page.evaluate(() => !!document.querySelector('[data-testid="split-group-chip"]'))), "");
-    const src5 = await tabLabelPoint("本机");
+    // 组标签已改名为「生产组」——按组名取它的文字中心（textContent 不含成员名）
+    const src5 = await tabLabelPoint("生产组");
     await page.mouse.move(src5.x, src5.y);
     await page.mouse.down();
     await page.mouse.move(blank.x, blank.y, { steps: 6 });
     await page.waitForTimeout(120);
     await page.mouse.up();
     await page.waitForTimeout(500);
-    ck.check("成员拖到标签条空白=退出分屏且标签保留", (await paneCount(page)) === 0
-      && await page.evaluate(() => document.querySelectorAll(".tab").length) >= 2);
+    ck.check("组标签拖到标签条空白=无操作（组保留、两格不变）", (await paneCount(page)) === 2
+      && !!(await page.evaluate(() => !!document.querySelector('[data-testid="split-group-chip"]'))), "");
+
+    // 显式退出分屏：组解散成两个独立标签
+    await rightClickTab(page, "生产组");
+    await clickItem(page, "退出分屏");
+    await page.waitForTimeout(400);
+    ck.check("退出分屏后两成员各自独立成标签", (await paneCount(page)) === 0
+      && await page.evaluate(() => document.querySelectorAll(".tab").length) >= 2, "");
     ck.check("散伙后组名胶囊消失", !(await page.evaluate(() => !!document.querySelector('[data-testid="split-group-chip"]'))), "");
 
     // ── 重分屏：自定义名不复活，回自动名；右键菜单入口也能改名，Esc 取消 ──
@@ -381,15 +403,17 @@ module.exports = {
     ck.check("Esc 取消拖拽：提示消失、组保持原状",
       !escHint && afterEsc.main === "prod-1" && afterEsc.second === "staging-1", JSON.stringify(afterEsc));
 
-    // 成员悬停到另一格 → 交换文案
+    // 组标签悬停到终端区 → 一组一标签下无可换/可拆语义，不出落点文案与提示
     await tabDrag("staging-1", 0.1, 0.5, "over");
-    ck.check("成员落点文案=交换两格",
-      (await page.evaluate(() => document.querySelector('[data-testid="dsh-label"]')?.textContent ?? "")) === "交换两格", "");
+    ck.check("组标签悬停终端区无落点文案",
+      !(await page.evaluate(() => document.querySelector('[data-testid="dsh-label"]'))), "");
+    ck.check("组标签悬停终端区无象限提示",
+      !(await page.evaluate(() => !!document.querySelector('[data-testid="drag-split-hint"]'))), "");
     await page.keyboard.press("Escape");
     await page.mouse.up();
     await page.waitForTimeout(300);
 
-    // 成员拖回自己的标签（先离开标签起拖，再回来松手）= no-op，不解散组
+    // 组标签拖出再拖回自身标签 = no-op，组保留
     const ownTab = await page.evaluate(() => {
       const tab = [...document.querySelectorAll(".tab")].find((el) => el.textContent.includes("staging-1"));
       const r = tab.querySelector(".tab-label").getBoundingClientRect();
@@ -401,7 +425,7 @@ module.exports = {
     await page.mouse.move(ownTab.x, ownTab.y, { steps: 4 });       // 回到自己的标签
     await page.mouse.up();
     await page.waitForTimeout(500);
-    ck.check("成员拖回自己标签=no-op（组保留）", (await paneCount(page)) === 2
+    ck.check("组标签拖回自身标签=no-op（组保留）", (await paneCount(page)) === 2
       && (await paneNames()).main === "prod-1", JSON.stringify(await paneNames()));
 
     // ── 窗格直接操作：最大化/还原、交换、退出 ──
