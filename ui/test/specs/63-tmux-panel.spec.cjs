@@ -347,9 +347,9 @@ module.exports = {
 
     // ── D2. 焦点格指示（用户反馈：主视图被选中时没有框、格子的框看不出来）：此前主视图在网格里
     //    根本没有焦点指示，格子是 1px --accent-glow（35% 半透明）。现主视图与格子同一套——
-    //    ::after 2px accent 实线框 + 标题栏 accent-text 字（判据 :focus-within）。真鼠标点选切换。
+    //    ::after 1px accent 实线框 + 标题栏 accent-text 字（判据 :focus-within）。真鼠标点选切换。
     //    标题栏用 --accent-text 而非 --accent：14% accent 混 panel 的底会把 graphite/light
-    //    压到 4.39:1；--accent-text + 12% 底 32 态全部 ≥4.5（见 74-terminal-contrast） ──
+    //    压到 4.39:1；--accent-text + 12% 底 34 态全部 ≥4.5（见 74-terminal-contrast） ──
     const ringOf = () => page.evaluate((sid) => {
       const probe = document.createElement("div");
       probe.style.color = "var(--accent)";
@@ -361,25 +361,44 @@ module.exports = {
       const pick = (el, head) => {
         if (!el) return null;
         const a = getComputedStyle(el, "::after");
-        return { ring: a.borderTopStyle === "solid" && a.borderTopWidth === "2px" && a.borderTopColor === accent, head: !!head && getComputedStyle(head).color === accentText };
+        return { ring: a.borderTopStyle === "solid" && a.borderTopWidth === "1px" && a.borderTopColor === accent, head: !!head && getComputedStyle(head).color === accentText };
       };
       const main = document.querySelector(`.term-session[data-sid="${sid}"]`);
       const cell = document.querySelector('.tmux-cell[data-tmux="logs"]');
       return { main: pick(main, main?.querySelector(".pane-tag")), cell: pick(cell, cell?.querySelector(".tmux-cell-head")) };
     }, SID);
     const r1 = await ringOf();
-    ck.check("焦点在格子：格子 2px accent 实线框 + 标题栏 accent-text，主视图无框", r1.cell?.ring && r1.cell?.head && !r1.main?.ring && !r1.main?.head, JSON.stringify(r1));
+    ck.check("焦点在格子：格子 1px accent 实线框 + 标题栏 accent-text，主视图无框", r1.cell?.ring && r1.cell?.head && !r1.main?.ring && !r1.main?.head, JSON.stringify(r1));
     const mp0 = await ptIn(page, `.term-session[data-sid="${SID}"]`, 0.5, 0.6);
     await page.mouse.click(mp0.x, mp0.y);
     await page.waitForTimeout(200);
     const r2 = await ringOf();
-    ck.check("点选主视图：主视图同样 2px accent 框 + 标题栏 accent-text（此前主视图无任何焦点指示），格子框撤",
+    ck.check("点选主视图：主视图同样 1px accent 框 + 标题栏 accent-text（此前主视图无任何焦点指示），格子框撤",
       r2.main?.ring && r2.main?.head && !r2.cell?.ring && !r2.cell?.head, JSON.stringify(r2));
     const cp0 = await ptIn(page, '.tmux-cell[data-tmux="logs"] .tmux-cell-body', 0.5, 0.5);
     await page.mouse.click(cp0.x, cp0.y);
     await page.waitForTimeout(200);
     const r3 = await ringOf();
     ck.check("点回格子：框回到格子、主视图撤", r3.cell?.ring && !r3.main?.ring, JSON.stringify(r3));
+    const shell = await page.evaluate((sid) => {
+      const probe = document.createElement("div");
+      document.body.appendChild(probe);
+      probe.style.background = "var(--bg)";
+      const inner = getComputedStyle(probe).backgroundColor;
+      probe.style.background = "var(--pane-shell)";
+      const outer = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      const main = document.querySelector(`.term-session[data-sid="${sid}"]`);
+      const cell = document.querySelector('.tmux-cell[data-tmux="logs"]');
+      return {
+        inner, outer,
+        main: main ? getComputedStyle(main).backgroundColor : null,
+        cell: cell ? getComputedStyle(cell).backgroundColor : null,
+      };
+    }, SID);
+    ck.check("主视图与 tmux 格子：外壳底色比终端内底微差一档",
+      shell.main === shell.outer && shell.cell === shell.outer && shell.outer !== shell.inner,
+      JSON.stringify(shell));
 
     // ── D3. tmux 前缀后一键的输入法标点还原：中文输入法「中文标点」模式把 Shift+4 提交成「￥」，
     //    tmux 收到未绑定键静默丢弃——Ctrl+B $ 改会话名出不来（% 不变形，分屏照常）。insertText

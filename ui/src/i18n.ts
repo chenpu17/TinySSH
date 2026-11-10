@@ -1827,6 +1827,7 @@ const EN: Record<string, string> = {
   "霓虹": "Neon",
   "水墨": "Ink",
   "墨水屏": "E Ink",
+  "护眼": "Eye Care",
   "诺德": "Nordic",
   "复古": "Vintage",
   "东京夜": "Tokyo Night",

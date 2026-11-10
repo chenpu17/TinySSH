@@ -98,23 +98,52 @@ module.exports = {
     ck.check("上下分屏建立双窗格", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
     const g1 = await paneGeom(page);
     ck.check("上主/下副两格齐全", !!g1.main && !!g1.second, JSON.stringify(g1));
-    // 子窗口卡片化：3px 卡缝用「页面底」色（与卡片 --bg 拉开一档色差）= 两格间约
-    // 6px 呼吸缝不再与子窗口同色，10px 圆角与终端外框同语言；外框几何仍由
+    // 子窗口卡片化：3px 卡缝用「页面底」色，卡片外壳 --pane-shell 与内部 --bg 再分一档；
+    // 两格间约 6px 呼吸缝不再与子窗口同色，10px 圆角与终端外框同语言；外框几何仍由
     // --split-frac 决定（上面 g1 已验）。
     const cardStyle = await page.evaluate(() => {
       const el = document.querySelector(".pane-left, .pane-top");
       const cs = getComputedStyle(el);
+      const probe = document.createElement("div");
+      document.body.appendChild(probe);
+      probe.style.background = "var(--bg)";
+      const inner = getComputedStyle(probe).backgroundColor;
+      probe.style.background = "var(--pane-shell)";
+      const shell = getComputedStyle(probe).backgroundColor;
+      probe.remove();
       return {
         border: cs.borderTopWidth, radius: cs.borderRadius, overflow: cs.overflow,
-        clip: cs.backgroundClip, color: cs.borderTopColor, bg: cs.backgroundColor,
+        clip: cs.backgroundClip, color: cs.borderTopColor, bg: cs.backgroundColor, inner, shell,
       };
     });
-    ck.check("分屏子窗口卡片化：3px 卡缝（页面底色差）+ 10px 圆角 + 卡片本体仍是终端底色",
+    ck.check("分屏子窗口卡片化：3px 卡缝 + 10px 圆角 + 外壳底色与内部终端底色微差",
       cardStyle.border === "3px" && cardStyle.radius === "10px" && cardStyle.overflow === "hidden"
         && cardStyle.clip === "padding-box"
         && !/rgba?\(0, 0, 0, 0\)|transparent/.test(cardStyle.color)
-        && cardStyle.color !== cardStyle.bg,
+        && cardStyle.color !== cardStyle.bg
+        && cardStyle.bg === cardStyle.shell && cardStyle.shell !== cardStyle.inner,
       JSON.stringify(cardStyle));
+    const focusRing = await page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.color = "var(--accent)";
+      document.body.appendChild(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      const ring = (el) => {
+        if (!el) return null;
+        const a = getComputedStyle(el, "::after");
+        return { width: a.borderTopWidth, style: a.borderTopStyle, color: a.borderTopColor };
+      };
+      const selected = document.querySelector(".pane-focused");
+      const other = [...document.querySelectorAll(".pane-left, .pane-right, .pane-top, .pane-bottom")]
+        .find((el) => el !== selected);
+      return { accent, selected: ring(selected), other: ring(other) };
+    });
+    ck.check("分屏焦点框 1px accent，且只落在选中窗格",
+      focusRing.selected?.width === "1px" && focusRing.selected?.style === "solid"
+        && focusRing.selected?.color === focusRing.accent
+        && focusRing.other?.color !== focusRing.accent,
+      JSON.stringify(focusRing));
     const divTb = await page.evaluate(() => !!document.querySelector('.pane-div[data-testid="pane-div"].div-tb'));
     ck.check("分割条出现且为竖向拖拽（div-tb）", divTb, "");
     const tbMenu = await tabMenuTexts(page, "staging-1");

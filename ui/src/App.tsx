@@ -2630,10 +2630,6 @@ export default function App() {
         webgl = w;
       } catch { webgl = null; /* DOM 渲染器兜底 */ }
     }
-    // 会话层底色跟随当前派生主题：padding 留白框与画布同色，不渗 chrome 面板色
-    el.style.background = derivedThemeRef.current.bg;
-    // 分屏/面板卡片化：透明边框区不画终端底色，透出 #term 底色形成格子间隙
-    el.style.backgroundClip = "padding-box";
     // 终端内搜索（⌘F，T16）：每会话独立实例，高亮随会话保留
     const searchAddon = new SearchAddon();
     searchAddon.onDidChangeResults((r) => {
@@ -3028,7 +3024,6 @@ export default function App() {
       const curName = paneTermsRef.current.get(`${sid}:${paneId}`)?.name ?? name;
       return osc52ConsumeRef.current(sid, data, curName);
     });
-    body.style.background = derivedThemeRef.current.bg;
     term.loadAddon(new WebLinksAddon((_ev, url) => {
       if (inTauri) void invoke("open_url", { url }).catch(() => {});
       else window.open(url, "_blank");
@@ -4143,8 +4138,7 @@ export default function App() {
   // 二十二轮主题统一：终端配色恒由「色板×深浅」派生（无独立预设、无联动开关）。
   // derivedThemeRef 缓存最近一次派生结果，makeTerm 建实例时直接取用（早于启动
   // 派生到达时是深色基础派生值，启动尾部统一刷新一次）
-  const derivedThemeRef = useRef<{ bg: string; theme: Record<string, string> }>({
-    bg: THEMES[0].bg,
+  const derivedThemeRef = useRef<{ theme: Record<string, string> }>({
     theme: { ...THEMES[0].theme },
   });
   // R27：应用外观三态（跟随系统/深色/浅色）——深浅仍独立成档（§7.1/§244），
@@ -4387,7 +4381,6 @@ export default function App() {
       if (rootStyle.getPropertyValue(`--ansi-${i}`).trim()) ansi[key] = resolveTokenColor(`--ansi-${i}`);
     });
     return {
-      bg: resolveTokenColor("--bg"),
       theme: {
         ...base.theme,
         ...ansi,
@@ -4396,7 +4389,7 @@ export default function App() {
         cursor: resolveTokenColor("--accent"),
         cursorAccent: resolveTokenColor("--bg"),
         // 选区（可读性轮）：文字用加亮/压暗后的正文色、底用 accent 混终端底——
-        // 浅色 22%（失焦 8%）、深色 30%（失焦 12%），32 态选中文字均 ≥4.5:1
+        // 浅色 22%（失焦 8%）、深色 30%（失焦 12%），34 态选中文字均 ≥4.5:1
         // （wcag-themes.mjs 门）；失焦底明显降级且与激活态可区分。
         selectionBackground: resolveTokenColor("--term-sel-bg"),
         selectionForeground: resolveTokenColor("--term-sel-fg"),
@@ -4405,16 +4398,13 @@ export default function App() {
     };
   }, []);
   const applyDerivedTerminal = useCallback(() => {
-    const { bg, theme } = deriveTerminalTheme(document.documentElement.dataset.chrome === "light" ? "light" : "dark");
-    derivedThemeRef.current = { bg, theme: { ...theme } };
+    const { theme } = deriveTerminalTheme(document.documentElement.dataset.chrome === "light" ? "light" : "dark");
+    derivedThemeRef.current = { theme: { ...theme } };
     for (const [, e] of termsRef.current) {
       e.term.options.theme = { ...theme };
-      e.el.style.background = bg;
-      e.el.style.backgroundClip = "padding-box";
     }
     for (const e of paneTermsRef.current.values()) {
       e.term.options.theme = { ...theme };
-      e.body.style.background = bg;
     }
   }, [deriveTerminalTheme]);
 

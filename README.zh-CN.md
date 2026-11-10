@@ -13,7 +13,7 @@ English docs: [README.md](README.md)。
 
 ## 与现有工具的取舍
 
-定位快照（v0.12.2，2026-11），按品类概括而非逐产品评测。
+定位快照（v0.12.3，2026-11），按品类概括而非逐产品评测。
 
 | | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
 |---|---|---|---|
@@ -58,7 +58,7 @@ Windows 是主要验证平台——全套测试与逐轮真机验证都在它上
 ```bash
 # 前端（demo 模式，纯浏览器可跑）
 cd ui && npm ci && npm run dev           # http://localhost:5183
-npm test                                 # UI 套件（68 spec / 1459 断言，headless）
+npm test                                 # UI 套件（68 spec / 1463 断言，headless）
 npm run build                            # tsc + vite build
 
 # 桌面应用（tauri dev；Rust 工作区，需 Rust ≥ 1.86、Node ≥ 22）
@@ -82,7 +82,7 @@ Windows 注意：
 - 本地终端一等公民：侧栏「本机」是**内置条目**——置顶常驻（不受搜索/标签筛选影响）、不可编辑、不可删除（UI 无入口，后端 `LocalHostImmutable` 同门兜底，Agent/MCP 通路同样被拦）；**启动即自动打开一个本地终端**（真实模式；关掉后从置顶本机卡 / ⌘K「打开本地终端」/ Ctrl+Shift+T 随时再开；设置 → 终端可关闭「启动时自动打开本地终端」），本地与远程会话同权——同一套标签/分屏/命令块/搜索/SFTP（本机文件浏览）能力。默认 shell 在 设置 → 终端「本地 Shell」选择（自动探测 Windows PowerShell/PowerShell 7/Git Bash/cmd/WSL，无 shell 集成的如实标「无命令块」），本机右键可临时用指定 shell 新开。**本机同样可监控**：监控条/监控大屏对本机走核心原生采样（Windows 直读 kernel32/iphlpapi，Linux/BSD 直读 /proc，macOS 走 mach/sysctl 原生计数器），与远端 /proc 脚本同一条解析链；纯本机（无 SSH 会话）时端口转发入口整体收起——能力对本地无意义就不摆。
 
 - 界面语言：首次启动默认跟随系统语言；设置 → 外观「界面语言」中文（简体）/ English 即时切换（不打断终端会话）；覆盖面=外壳 chrome + 各功能面板内文（设置/主机栏/主机与快速连接表单/菜单/对话框/命令面板/记录审计/文件面板与传输队列/端口转发/命令块/协作/监控大屏/Agent 对话）+ toast 与终端内联告示；未覆盖文案保持中文，不留半截假翻译。
-- 主题色板：16 族×深浅双面，终端 ANSI 16 色按族派生（对比度/色相双门校验）；**墨水屏**族面向 e-paper 面板——纸白×近黑墨字、语义色深墨低饱和，专项铲平阴影/过渡/动画（e-ink 慢刷残影敏感：阴影渲染成灰雾、动画是连续闪刷），层次改由加浓实线边框表达。终端正文另走 xterm 逐单元格最小对比度 4.5:1 兜底——tmux 默认彩底黑字状态栏/复制模式高亮与 htop/dialog 在深浅色板下都可读。
+- 主题色板：17 族×深浅双面，终端 ANSI 16 色按族派生（对比度/色相双门校验）；**护眼**族走低蓝光苔纸路线——暖橄榄灰代替纯黑、偏暖灰绿纸白代替纯白、低饱和鼠尾草 accent，不牺牲 WCAG AA；**墨水屏**族面向 e-paper 面板——纸白×近黑墨字、语义色深墨低饱和，专项铲平阴影/过渡/动画（e-ink 慢刷残影敏感：阴影渲染成灰雾、动画是连续闪刷），层次改由加浓实线边框表达。终端正文另走 xterm 逐单元格最小对比度 4.5:1 兜底——tmux 默认彩底黑字状态栏/复制模式高亮与 htop/dialog 在深浅色板下都可读。
 - 终端品质：宽度表按 Unicode 11 判定（CJK/emoji 混排不串格）；设置 → 终端「终端外观」可调字体族（内置 JetBrains Mono 全量字形，亦可选 Nerd Font/Cascadia 等，按系统已装回落）、连字（开启即改用 DOM 渲染器——连字依赖 character joiner，与 GPU 合成互斥）、光标样式/闪烁、滚动历史行数与字距，改动即时生效。粘贴保护除多行确认外，命中危险形态（`rm -rf /`、`mkfs`、`dd` 覆写块设备等——与 Agent 审批同一张内置规则表）同样先确认再发送。macOS 中文输入法全角标点首击不再丢失；TUI 崩溃遗留的鼠标上报会在离开备用屏/回到提示符时自动复位，终端右键另有「重置鼠标上报」手动出口。
 - 本地 shell 集成（命令块/现场延续）：bash / zsh / fish / powershell·pwsh 启动时自动注入 OSC 133/7（无需配置），Shell 模式 exec 与命令块在本机 Windows 会话同样可用；cmd、WSL（`wsl.exe`）、dash/ksh 等无 preexec 钩子的 shell 不注入，Shell 模式执行时**立即如实拒绝**（不静默降级），Fresh 模式不受影响。PowerShell 退出码取 `$?`/`$LASTEXITCODE` 混合映射（成功 0，失败优先原生命令退出码）；本地会话 cwd 按原生盘符路径呈现（`C:/…`）。
 - 命令块面板（FR-10 V2）：shell 集成开启后每条命令自动成块——状态条「块」或 工具 → 命令块 打开，最近 50 块时间线（来源徽标 人类/Agent·客户端/回放、退出码、耗时），每块可复制命令、重跑（危险形态/多行与粘贴同一条确认链，确认后经人类键入归因成块）、按命令文本在终端定位（best-effort）、一键跳到最近失败。块带输出文本（OSC 133 标记跨度精确采集，渲染后已剥 ANSI，超 8KB 保尾截断并如实标记），Agent 侧经现场简报/MCP `read_blocks` 与人类同权读取。Agent 侧照旧经现场简报读取最近块。远端会话在注入文本首行内嵌 polyglot printf 探针判登录 shell 家族，bash/zsh（POSIX sh）与 fish（事件钩子）按型注入；不兼容的 shell 如实保持 Unavailable。
@@ -140,7 +140,7 @@ Windows 注意：
 
 ## 状态
 
-v0.12.2。主平台（Windows）全绿：Rust 工作区测试 + 68 spec / 1459 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+v0.12.3。主平台（Windows）全绿：Rust 工作区测试 + 68 spec / 1463 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
 
 ## 技术栈（概览）
 

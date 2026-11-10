@@ -72,7 +72,7 @@ const cellCols = (cell: TmuxWallCell | undefined): number => {
 const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** xterm 256 色板（0-15 标准 / 16-231 6×6×6 立方 / 232-255 灰阶）。0-15 走应用
- * 的 --ansi-N 主题变量：与 xterm 终端同一套色板（16 族自动成立），且暗底 VGA
+ * 的 --ansi-N 主题变量：与 xterm 终端同一套色板（17 族自动成立），且暗底 VGA
  * 硬编码在浅色面/eink 上白字直接隐形（审查轮 P1）。 */
 const palette256 = (n: number): string => {
   if (n < 16) {

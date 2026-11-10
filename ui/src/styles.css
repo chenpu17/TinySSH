@@ -55,6 +55,9 @@
   --panel: #0f141c;
   --panel2: #151c26;
   --panel3: #1c2532;
+  /* 子窗口卡片外壳：比终端内部的 --bg 略向 panel 靠一档，只露在标题栏、
+     内边距和焦点框周围；内部 xterm 仍是 --bg，形成轻微两层感。 */
+  --pane-shell: color-mix(in srgb, var(--panel) 55%, var(--bg));
   --border: rgba(255, 255, 255, 0.08);
   --text: #dbe2ec;
   --text-sub: #94a5b8;
@@ -99,7 +102,7 @@
   --accent-ring: color-mix(in srgb, var(--accent) 22%, transparent);
   /* 终端选区（可达性轮）：xterm 的 selectionForeground 会覆盖单元格前景，故选中文字
      用「正文色向白/黑再走一步」的实色（深色提亮、浅色压暗），选区底为 accent 混终端底
-     ——深色 30%（失焦 12%）、浅色 22%（失焦 8%）。全 32 态选中文字对选区底 ≥4.5:1
+     ——深色 30%（失焦 12%）、浅色 22%（失焦 8%）。全 34 态选中文字对选区底 ≥4.5:1
      （wcag-themes.mjs 门），失焦底明显降级且与激活态可区分。 */
   --term-sel-ink: #ffffff;
   --term-sel-fg: color-mix(in srgb, var(--text) 60%, var(--term-sel-ink));
@@ -756,8 +759,9 @@ textarea {
 #term {
   width: 100%; height: 100%; position: relative;
   /* 多视图「页面底」色：与终端底色 --bg 只差一档（混 10% --text，深色主题略提亮、
-     浅色主题略压暗）。分屏窗格与 tmux 格子的 3px 卡缝直接用它上色——卡片本体仍是
-     终端 --bg，于是缝=页面底、卡片=子窗口，两级层次在两种多视图里同一套语言。
+     浅色主题略压暗）。分屏窗格与 tmux 格子的 3px 卡缝直接用它上色——卡片外壳用
+     --pane-shell、内部仍是终端 --bg，于是缝=页面底、外壳/内部再分一档，两级层次
+     在两种多视图里同一套语言。
      单视图没有卡缝，不露出这个色，观感不变。 */
   --view-seam: color-mix(in srgb, var(--bg) 90%, var(--text) 10%);
 }
@@ -767,7 +771,7 @@ textarea {
 /* 每会话一个终端层：切换 = 显示/隐藏，滚动历史与全屏程序状态原地保留。
    padding = 终端文本留白（底色由 JS 跟随终端预设，见 makeTerm/changeTheme）；
    几何测量经 fitDimsOf 扣除此 padding，PTY 列行与可视区严格一致 */
-.term-session { position: absolute; inset: 0; display: none; padding: 6px 10px; }
+.term-session { position: absolute; inset: 0; display: none; padding: 6px 10px; background: var(--bg); }
 .term-session.active { display: block; }
 /* 分屏（T19；分屏⑥轮起方向可选+可拖拽）：--split-frac 主格占比（#term 内联变量，
    分割条写入，0.2~0.8）。左右=左主/右副，上下=上主/下副；焦点 pane 细高亮圈，名牌常显。
@@ -823,11 +827,11 @@ body.split-dragging .pane-div .div-group { opacity: 1; pointer-events: auto; }
   font-size: 11px; line-height: 16px; color: var(--text); outline: none;
   background: var(--panel3); border: 1px solid var(--accent);
 }
-/* 焦点窗格框与 tmux 面板焦点格同一语言（2px accent 实线，见下方面板段）：此前是 1px
+/* 焦点窗格框与 tmux 面板焦点格同一语言（1px accent 实线，见下方面板段）：更早是 1px
    --accent-glow 内描边阴影——半透明几乎看不出，且墨水屏铲阴影后焦点窗格完全无指示 */
 .term-session.pane-focused::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  border: 2px solid var(--accent); border-radius: 7px;
+  border: 1px solid var(--accent); border-radius: 7px;
 }
 /* 分屏窗格掉线遮罩（本轮 C）：遮罩挂在各自 .term-session 内、按窗格自身状态显示，
    只压这一格——同组另一格与普通单窗格视图完全不受影响（单窗格仍走 #term 级
@@ -887,18 +891,19 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
 .term-session.pane-top, .term-session.pane-bottom {
   padding-top: 28px;
   /* 子窗口卡片化：3px 卡缝用「页面底」色（--view-seam，见 #term）而非透明——
-     两格之间约 6px 的呼吸缝与卡片本体 --bg 拉开一档色差，子窗口像浮在页面上；
+     两格之间约 6px 的呼吸缝与卡片外壳 --pane-shell 拉开一档色差，子窗口像浮在页面上；
      圆角与 #term 外框同语言。border-box 下外框几何不变（分屏比例/拖拽/回归
      测试口径不受影响），内容盒由边框自动内缩，fitDimsOf 的 clientWidth 已排除
      边框——PTY 列行仍与可视区严格一致。 */
   border: 3px solid var(--view-seam);
   border-radius: 10px;
   overflow: hidden;
+  background: var(--pane-shell);
   background-clip: padding-box;
 }
 /* 卡片描边：卡缝本身已有 --view-seam 色差，再在内容盒边缘补 1px --border 实线
    （真 border，墨水屏铲阴影不受影响），与 3px 卡缝一起形成「缝 + 卡片边」。
-   焦点环 2px accent 叠在其上。 */
+   焦点环 1px accent 叠在其上。 */
 .term-session.pane-left::before, .term-session.pane-right::before,
 .term-session.pane-top::before, .term-session.pane-bottom::before {
   content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
@@ -926,6 +931,7 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
   border: 3px solid var(--view-seam);
   border-radius: 10px;
   overflow: hidden;
+  background: var(--pane-shell);
   background-clip: padding-box;
 }
 #term.has-tmux-panes .term-session.active::before {
@@ -949,10 +955,10 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
 .tmux-cell {
   position: absolute; display: none; flex-direction: column; min-width: 0; min-height: 0;
   /* 卡片化（与分屏子窗口同语言）：3px 卡缝 = 格子间约 6px 的「页面底」色
-     （--view-seam，见 #term），与卡片本体 --bg 拉开一档色差；圆角 10px；
+     （--view-seam，见 #term），卡片外壳 --pane-shell 与内部 --bg 再分一档；圆角 10px；
      外框几何由布局树写死，border-box 下不改变 tile 占比/拖拽命中。 */
   border: 3px solid var(--view-seam); border-radius: 10px;
-  background: var(--bg); background-clip: padding-box;
+  background: var(--pane-shell); background-clip: padding-box;
 }
 /* 与分屏窗格同款卡片描边（见上）；放在 ::before，焦点环 ::after 仍压在最上 */
 .tmux-cell::before {
@@ -966,21 +972,21 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
   -webkit-user-select: none; user-select: none; touch-action: none;
 }
 /* 焦点格指示——主视图与格子同一套（用户反馈：主视图选中时没有框、格子的框看不出来）：
-   ① 2px accent 实线框画在 ::after 叠层（实线 border，墨水屏铲阴影不受影响；穿透指针；
-      z 7 压过主视图标题栏 .pane-tag 的 z 5——框只占格子边缘 2px，终端正文在 padding 内不被盖）；
+   ① 1px accent 实线框画在 ::after 叠层（实线 border，墨水屏铲阴影不受影响；穿透指针；
+      z 7 压过主视图标题栏 .pane-tag 的 z 5——框只占格子边缘 1px，终端正文在 padding 内不被盖）；
    ② 标题栏 accent 字 + 不透明 accent 浅底（主视图标题栏下面是终端底色，半透明会透出来）。
    判定走 :focus-within（xterm 输入框在格内即焦点格）——主视图与格子同一判据，免各挂监听 */
 .tmux-cell::after,
 #term.has-tmux-panes .term-session.active::after {
   content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 7;
-  border: 2px solid transparent; border-radius: 7px;
+  border: 1px solid transparent; border-radius: 7px;
 }
 .tmux-cell:focus-within::after,
 #term.has-tmux-panes .term-session.active:focus-within::after { border-color: var(--accent); }
 .tmux-cell:focus-within .tmux-cell-head,
 #term.has-tmux-panes .term-session.active:focus-within .pane-tag {
   /* 焦点标题用 --accent-text（菜单 accent 软底同款正文档）而非 --accent：14% accent
-     混 panel 的底会把 graphite/light 压到 4.39:1；12% + accent-text 全 32 态 ≥4.5
+     混 panel 的底会把 graphite/light 压到 4.39:1；12% + accent-text 全 34 态 ≥4.5
      （按 ui/test/theme-vars.mjs 的继承链独立复算，见 74-terminal-contrast） */
   color: var(--accent-text); background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
@@ -2697,6 +2703,47 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
   --ansi-4: #28619e; --ansi-5: #814a8d; --ansi-6: #086b66; --ansi-7: #cdcfd3;
   --ansi-8: #5e636c; --ansi-9: #87343c; --ansi-10: #025d28; --ansi-11: #5b5001;
   --ansi-12: #005096; --ansi-13: #753583; --ansi-14: #025a56; --ansi-15: #fbfcfd;}
+/* ---- 主题⑦轮：护眼（低蓝光苔纸族）----
+   目标不是「更暗/更亮」，而是降低长时间盯屏的刺激：暗面用暖橄榄灰代替纯黑，
+   亮面用偏暖灰绿纸白代替纯白；accent 取低饱和苔绿，语义色仍保留红/琥珀/橄榄的
+   可辨差异。对比度仍走 WCAG AA，不靠压暗正文换柔和。 */
+/* 护眼 · 暗：暖橄榄灰底 + 苔绿；文字略降蓝、保留足够明度层次 */
+:root[data-theme="sage"][data-chrome="dark"] {
+  --bg: #151813; --panel: #1b1f19; --panel2: #22271f; --panel3: #2b3127;
+  --border: rgba(205, 214, 190, 0.10); --border-hover: rgba(205, 214, 190, 0.20);
+  --text: #d9ddcf; --text-sub: #aab1a0; --dim: #939a89;
+  --accent: #9fbf8f; --accent-hover: #b4cda5; --accent-text: #b4cda5;
+  --danger: #d98d7c; --danger-hover: #e39f8f;
+  --ok: #b0bd6a; --warn: #c9ac69; --warn-text: #c9ac69; --warn-hover: #d7bb78;
+  --on-accent: #10160e; --on-danger: #2b100c; --on-warn: #241b07;
+  --blue: #8aa9bf; --focus: #9fbf8f;
+  --grad-a: #aac99b; --grad-b: #8eae7d;
+  --mark-grad: linear-gradient(160deg, #2b3527, #171b15);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #282926; --ansi-1: #b27d7a; --ansi-2: #6b9473; --ansi-3: #99895b;
+  --ansi-4: #6290ad; --ansi-5: #a080a6; --ansi-6: #549591; --ansi-7: #8c8f8a;
+  --ansi-8: #484d45; --ansi-9: #cb8d8a; --ansi-10: #78a881; --ansi-11: #ae9c65;
+  --ansi-12: #6da3c6; --ansi-13: #b690bd; --ansi-14: #5daaa6; --ansi-15: #f2f4f1;}
+/* 护眼 · 亮：暖灰绿纸面 + 深苔绿；用灰绿而不是纯白，降低反光与蓝光占比 */
+:root[data-theme="sage"][data-chrome="light"] {
+  --bg: #e8e9df; --panel: #f1f2e9; --panel2: #f8f8f2; --panel3: #dde0d4;
+  --border: rgba(48, 62, 44, 0.13); --border-hover: rgba(48, 62, 44, 0.23);
+  --text: #2a2e27; --text-sub: #4f574b; --dim: #596153;
+  --accent: #3e6144; --accent-hover: #345238; --accent-text: #38583f;
+  --accent-fill: #4f7350; --accent-fill-hover: #3e6144;
+  --danger: #984234; --danger-hover: #83382c;
+  --ok: #5c6616; --warn: #805a08; --warn-text: #805a08; --warn-hover: #6c4b06;
+  --on-accent: #ffffff; --on-danger: #ffffff; --on-warn: #ffffff;
+  --blue: #3d6174; --focus: #3e6144;
+  --grad-a: #4f7350; --grad-b: #3e6144;
+  --mark-grad: linear-gradient(160deg, #dfe6d8, #f7f8f2);
+
+  /* ANSI 16 按族（主题②轮起）：ui/test/ansi-gen.mjs 生成——手改会被覆盖，重跑生成器 */
+  --ansi-0: #5c5c57; --ansi-1: #835250; --ansi-2: #416849; --ansi-3: #6d5e30;
+  --ansi-4: #376480; --ansi-5: #735579; --ansi-6: #266966; --ansi-7: #cfd0cb;
+  --ansi-8: #63645a; --ansi-9: #77403f; --ansi-10: #2b5937; --ansi-11: #5f4e15;
+  --ansi-12: #1d5574; --ansi-13: #66446c; --ansi-14: #025a57; --ansi-15: #fcfcfa;}
 /* 墨水屏 · 亮（本体面）：纸白×墨字——e-ink 灰阶慢刷的基准态：近黑墨字高对比、
    语义色深墨低饱和（灰阶面板以明度分层、彩屏保色相可辨）、边框比常规族加浓
    （阴影被专项块铲平，层次全靠实线） */

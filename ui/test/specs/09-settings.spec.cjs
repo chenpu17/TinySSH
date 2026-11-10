@@ -69,6 +69,12 @@ module.exports = {
     });
     ck.check("eink 专项：阴影铲平（裸按钮 box-shadow=none）", probe.shadow === "none", probe.shadow);
     ck.check("eink 专项：过渡归零（裸按钮 transition-duration=0s）", probe.trans === "0s", probe.trans);
+    // 主题⑦轮：护眼族入口与即时切换（低蓝光苔纸，深/浅两面都由 data-chrome 驱动）
+    ck.check("外观分区有「护眼」色板芯片",
+      await page.evaluate(() => !!document.querySelector('[data-testid="chrome-palette-sage"]')));
+    await page.evaluate(() => document.querySelector('[data-testid="chrome-palette-sage"]').click());
+    await page.waitForTimeout(500);
+    ck.check("点「护眼」后 data-theme=sage", (await paletteAttr(page)) === "sage", await paletteAttr(page));
     // 还原默认色板（东京夜），不把 eink 泄给后续断言
     await page.evaluate(() => document.querySelector('[data-testid="chrome-palette-tokyo"]').click());
     await page.waitForTimeout(400);

@@ -18,7 +18,7 @@ If you operate a few to a dozen servers — developing, deploying, troubleshooti
 
 ## How it compares
 
-Positioning snapshot at v0.12.2 (November 2026) — categories, not product reviews.
+Positioning snapshot at v0.12.3 (November 2026) — categories, not product reviews.
 
 | | TinySSH | Classic SSH clients (XShell, Termius…) | AI terminals (Warp…) |
 |---|---|---|---|
@@ -33,7 +33,7 @@ Positioning snapshot at v0.12.2 (November 2026) — categories, not product revi
 - **ProxyJump (bastion hops)** — pick a jump host in the host form and connect through existing host entries (up to three chained hops). The hop reuses its own credentials, TOFU trust, editing and audit — no inline secrets. Each hop shows its own fingerprint confirmation and 2FA prompt (labeled "hop N · jump host"), failures name the offending hop, referenced jump hosts can't be deleted, and forwarding/SFTP/agent all ride the final connection unchanged. Quick-connect and the `ProxyJump` directive in `~/.ssh/config` imports are honestly not supported yet.
 - **SSH + local terminal, equal citizens** — the built-in "This machine" entry is pinned, un-deletable, auto-opens a terminal at startup (can be turned off in Settings → Terminal); local sessions get the same tabs, splits, command blocks, search, and file browsing as remote ones. Default shell is selectable (PowerShell / PowerShell 7 / Git Bash / cmd / WSL auto-detected; shells without preexec hooks are honestly marked "no command blocks").
 - **Interface language** — defaults to your system language on first launch; Settings → Appearance switches 中文 (Simplified) / English instantly (without interrupting terminal sessions). Coverage spans the app chrome and panel interiors: settings, hosts panel, host/quick-connect forms, menus, dialogs, command palette, records, files panel & transfer queue, port forwards, command blocks, collaboration, monitor dash, agent chat, plus toasts and terminal inline notices. Uncovered strings honestly stay Chinese rather than half-translated.
-- **Themes** — 16 palette families, each with light/dark faces; terminal ANSI derives per family under contrast/hue gates. The **E Ink (墨水屏)** family targets e-paper displays: paper-white with near-black ink, muted semantic colors, and a dedicated rule that flattens shadows, transitions, and animations — the refresh-cost and ghosting killers on e-ink panels. Terminal text also uses xterm's per-cell minimum-contrast guard (4.5:1), so tmux's default color-on-color status lines and htop/dialog stay readable in both light and dark palettes.
+- **Themes** — 17 palette families, each with light/dark faces; terminal ANSI derives per family under contrast/hue gates. The **Eye Care (护眼)** family uses a low-blue, warm sage-paper palette: olive-charcoal instead of pure black, warm grey-green paper instead of pure white, and muted sage accents without sacrificing WCAG AA. The **E Ink (墨水屏)** family targets e-paper displays: paper-white with near-black ink, muted semantic colors, and a dedicated rule that flattens shadows, transitions, and animations — the refresh-cost and ghosting killers on e-ink panels. Terminal text also uses xterm's per-cell minimum-contrast guard (4.5:1), so tmux's default color-on-color status lines and htop/dialog stay readable in both light and dark palettes.
 - **Terminal quality** — Unicode 11 width table (CJK/emoji don't misalign), optional ligatures, sixel & iTerm2 inline images, OSC 52 clipboard with an ask/allow/deny policy, OSC 9 notifications, clickable file paths, broadcast input across sessions (iTerm-style), regex output triggers with notification or approval-gated key sequences. macOS IME full-width punctuation no longer drops the first press; stale mouse reporting left by crashed TUIs is reset when leaving the alternate screen or at the next shell prompt, with a right-click reset.
 - **Command blocks** — shells with OSC 133/7 integration turn every command into a block with exit code, duration, and captured output (rendered, ANSI-stripped, tail-capped). Remote sessions probe the login shell with a polyglot printf and install per-family hooks — bash/zsh (POSIX sh) and fish (event hooks) get integration; incompatible shells honestly stay Unavailable. Blocks can be copied, re-run (same confirmation chain as paste), located in the scrollback, and the agent reads them through the same API.
 - **Session restore** — on clean exit every session gets an encrypted snapshot (scrollback tail + viewport + cursor + modes); next start can rebuild and replay the screen. Reconnects go through the full connection flow — TOFU and 2FA gates included, nothing auto-dials.
@@ -102,7 +102,7 @@ Prerequisites: Rust ≥ 1.86, Node ≥ 22 (CI uses Node 24).
 # Frontend demo mode — runs in a plain browser, no Rust needed
 cd ui && npm ci && npm run dev      # http://localhost:5183
 
-# UI test suite (68 specs / 1459 checks; needs a Chrome/Edge binary)
+# UI test suite (68 specs / 1463 checks; needs a Chrome/Edge binary)
 TINYSSH_UI_CHROME="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" npm test
 
 # Desktop app (Tauri v2; dev shell expects the ui dev server above)
@@ -143,7 +143,7 @@ Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-u
 
 ## Status
 
-v0.12.2. All suites green on the primary platform: Rust workspace tests, 68 UI specs / 1459 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.12.3. All suites green on the primary platform: Rust workspace tests, 68 UI specs / 1463 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
 ## Sister project
 

@@ -108,6 +108,8 @@ const FAMILY = {
   // 墨水屏：墨分五色——全线极低饱和（灰阶 e-ink 面板只余明度层次，彩屏保色相可辨），
   // 色相零旋转（终端 8 色语义原样直给，不做家族性格改相）
   eink: { dH: {}, cM: 0.42, cBase: 0.11 },
+  // 护眼：苔纸低蓝光——低饱和但保留六色相，绿向苔青微收、橙红不回刺眼霓虹
+  sage: { dH: { red: -3, green: 5, yellow: -3, blue: -8, magenta: 6, cyan: -4 }, cM: 0.58, cBase: 0.115 },
 };
 const famCfg = (id) => {
   const f = FAMILY[id] ?? {};
@@ -122,8 +124,8 @@ const famCfg = (id) => {
 const css = readFileSync(CSS_PATH, "utf8");
 const { states } = loadThemeCss(css);
 // 主题③轮：9→11 族（+霓虹/水墨）；主题⑤轮：11→15 族（+诺德/复古/东京夜/摩卡）；
-// 主题⑥轮：15→16 族（+墨水屏），加 graphite 双态共 32 态
-if (states.length !== 32) { console.error(`态数 ${states.length}/32 不对`); process.exit(2); }
+// 主题⑥轮：15→16 族（+墨水屏）；主题⑦轮：16→17 族（+护眼），加 graphite 双态共 34 态
+if (states.length !== 34) { console.error(`态数 ${states.length}/34 不对`); process.exit(2); }
 
 const out = new Map(); // stateKey → { lines, checks }
 let fail = 0;
