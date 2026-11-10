@@ -45,6 +45,12 @@ export const IconX = (p: IconProps) => (
   <Svg {...p}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></Svg>
 );
 
+export const IconMore = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" />
+  </Svg>
+);
+
 export const IconSplit = (p: IconProps) => (
   <Svg {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></Svg>
 );

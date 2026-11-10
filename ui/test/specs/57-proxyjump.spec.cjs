@@ -18,6 +18,22 @@ module.exports = {
         jumpBadge: [...card.querySelectorAll(".auth-tag")].some((x) => x.textContent === "跳板"),
       };
     }, name);
+    // 走查 P1：编辑/删除收进主机卡「更多」菜单（与右键同一份）；测试走右键入口
+    const hostMenuClick = async (name, txt) => {
+      await page.evaluate((n) => {
+        const card = [...document.querySelectorAll(".hostbar .host-card")]
+          .find((x) => x.querySelector(".host-name")?.textContent === n);
+        if (!card) throw new Error("host card not found: " + n);
+        card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 320 }));
+      }, name);
+      await page.waitForSelector(".ctx-menu", { timeout: 3000 });
+      await page.evaluate((s) => {
+        const b = [...document.querySelectorAll(".ctx-menu [role=menuitem]")].find((x) => x.textContent.includes(s));
+        if (!b) throw new Error("menu item not found: " + s);
+        b.click();
+      }, txt);
+      await page.waitForTimeout(400);
+    };
     // 连接一门：hk-dialog 当前展示的标题/主机名/是否有跳板标注
     const hkCard = () => page.evaluate(() => {
       const dlg = document.querySelector(".hk-dialog");
@@ -109,12 +125,8 @@ module.exports = {
     ck.check("jump-target 主机卡显示「跳板」徽章", (await hostCard("jump-target"))?.jumpBadge === true);
 
     // ── 删除保护：staging-1 被 jump-target 引用 → 删除被拒 ──
-    // （主机卡 hover 删除钮 → .confirm-dialog 确认 → conn-error 横幅点名引用）
-    await page.evaluate(() => {
-      const card = [...document.querySelectorAll(".hostbar .host-card")]
-        .find((x) => x.querySelector(".host-name")?.textContent === "staging-1");
-      card.querySelector(".host-del").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+    // （主机卡右键「删除主机…」→ .confirm-dialog 确认 → conn-error 横幅点名引用）
+    await hostMenuClick("staging-1", "删除主机");
     await page.waitForSelector(".confirm-dialog", { timeout: 5000 });
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll(".confirm-dialog button")]
@@ -128,11 +140,7 @@ module.exports = {
     ck.check("staging-1 主机卡仍在（未落删除）", !!(await hostCard("staging-1")));
 
     // ── 编辑回显 + 清除跳板 → 徽章消失、staging-1 可删 ──
-    await page.evaluate(() => {
-      const card = [...document.querySelectorAll(".hostbar .host-card")]
-        .find((x) => x.querySelector(".host-name")?.textContent === "jump-target");
-      card.querySelector('button[title^="编辑主机"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+    await hostMenuClick("jump-target", "编辑主机");
     await page.waitForSelector('[data-testid="add-host-dialog"]', { timeout: 5000 });
     const picked = await page.evaluate(() => {
       const sel = document.querySelector('[data-testid="jump-select"]');
@@ -151,11 +159,7 @@ module.exports = {
     await page.waitForTimeout(600);
     ck.check("清除跳板保存后 jump-target 徽章消失", (await hostCard("jump-target"))?.jumpBadge === false);
     // staging-1 现在无引用者 → 删除走通
-    await page.evaluate(() => {
-      const card = [...document.querySelectorAll(".hostbar .host-card")]
-        .find((x) => x.querySelector(".host-name")?.textContent === "staging-1");
-      card.querySelector(".host-del").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+    await hostMenuClick("staging-1", "删除主机");
     await page.waitForSelector(".confirm-dialog", { timeout: 5000 });
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll(".confirm-dialog button")]

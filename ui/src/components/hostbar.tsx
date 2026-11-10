@@ -5,21 +5,18 @@ import type { PointerEvent } from "react";
 import { errMsg } from "../adapter/errors";
 import type { AppAction } from "../actions";
 import type {
-  AttemptPhase, ErrorPayload, Host, HostDraft, HostMeta, LocalShell, SessionInfo, SshConfigPreview,
+  AttemptPhase, ErrorPayload, Host, HostDraft, LocalShell, SessionInfo, SshConfigPreview,
 } from "../adapter/wire";
 import { byName, hostMatches, phaseText } from "../app-data";
 import { t } from "../i18n";
-import type { ConfirmState } from "./confirm-dialogs";
 import { SshConfigImportPanel } from "./ssh-import";
 import {
-  IconChevronUp, IconLoader, IconPencil, IconPlus, IconRefresh, IconSearch, IconSliders,
-  IconStar, IconTrash, IconUpload,
+  IconChevronUp, IconLoader, IconMore, IconPlus, IconRefresh, IconSearch, IconSliders, IconUpload,
 } from "../icons";
 
 export interface HostbarProps {
   hostbarWidth: number;
   hosts: Host[];
-  hostMeta: HostMeta[];
   sessions: SessionInfo[];
   hostsLoaded: boolean;
   /** list_hosts 本次失败（列表可能是空/旧数据）：显式错误态 + 重试，不伪装成空主机栏 */
@@ -54,27 +51,24 @@ export interface HostbarProps {
   setEditingHost: (h: Host | null) => void;
   setPrefillEntry: (v: SshConfigPreview | null) => void;
   setHostMenu: (m: { x: number; y: number; hostId: string } | null) => void;
-  setConfirm: (c: ConfirmState | null) => void;
   attachSession: (sid: string) => Promise<void>;
   createSession: (h: Host, intoSplit?: boolean, draft?: HostDraft) => void;
-  toggleFavorite: (id: string, fav: boolean) => Promise<void>;
   cancelConnect: (hostId: string) => Promise<void>;
   pushToast: (kind: "ok" | "err" | "info", text: string) => void;
   refreshLists: () => void;
 }
 
 export function Hostbar({
-  hostbarWidth, hosts, hostMeta, sessions, hostsLoaded, hostsError,
+  hostbarWidth, hosts, sessions, hostsLoaded, hostsError,
   filteredHosts, favHosts, otherHosts, allTags, activeTag,
   localHost, localShells, onLocalShell,
   connectingIds, lastFailed, showImport, showAddHost, attempts,
   hostSearchRef, hostDebounceRef, setHostQuery,
   gripDrag, gripDown, gripMove, gripUp, dispatchRef,
   setTagFilter, setShowImport, setShowAddHost, setEditingHost, setPrefillEntry,
-  setHostMenu, setConfirm, attachSession, createSession, toggleFavorite,
+  setHostMenu, attachSession, createSession,
   cancelConnect, pushToast, refreshLists,
 }: HostbarProps) {
-  const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
   const hostAttempt = (hostId: string) => Object.values(attempts).find((a) => a.hostId === hostId) ?? null;
   return (
     <>
@@ -170,7 +164,6 @@ export function Hostbar({
               // 最近会话按时间戳比较：chrono 秒级无小数、纳秒级带小数位，
               // 字符串字典序在「同一秒内混合精度」时会错序（'Z' > '.'）
               const latest = [...live].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
-              const fav = metaById.get(h.id)?.favorite === true;
               const activate = () => {
                 if (connectingIds.has(h.id)) return; // §280：仅本主机连接中忽略，其他主机不受扰
                 if (latest) { void attachSession(latest.id).catch((e) => pushToast("err", errMsg(e))); return; }
@@ -206,16 +199,19 @@ export function Hostbar({
                         : `${t("该主机已有会话——点击切换到最近会话，右侧「连接」可另开新会话")}\n${h.username}@${h.address}:${h.port}\n${t("指纹：")}${h.fingerprint ?? t("首次连接时确认")}\n${t("编码：")}${h.charset === "gbk" ? t("GBK（中文 Windows / 老设备）") : "UTF-8"}`)
                       : undefined}
                     onClick={activate}>
-                    {/* T33：名称为主行（截断禁则）、认证方式降为徽章——修复「密/码」被腰斩。
-                        T38 审核：GBK 徽章置名前——行尾会落入 hover 操作组覆盖区，置尾恰在
-                        准备连接的交互时刻不可见；置左恒可见 */}
+                    {/* T33：名称为主行（截断禁则）；在线数留在名称行，认证/编码/跳板
+                        徽章下移到地址行——hover 操作组只在右侧，名称据此始终可辨
+                        （用户走查 P1：224px 侧栏 hover 时名称曾被徽章+按钮挤成 0px） */}
                     <div className="host-line">
-                      {h.charset === "gbk" && <span className="auth-tag" title={t("远端编码：GBK")}>GBK</span>}
                       {mine.length > 0 && (
                         <span className={"auth-tag live-tag" + (anyOnline ? " on" : "")}
                           title={t("已有 {0} 个会话（存活 {1}）——点击主行切换到最近会话", mine.length, live.length)}>● {mine.length}</span>
                       )}
                       <span className="host-name">{h.name}</span>
+                    </div>
+                    <div className="host-sub">
+                      <span className="host-addr mono">{isLocal ? `${t("本地 shell ·")} ${h.username}` : `${h.username}@${h.address}:${h.port}`}</span>
+                      {h.charset === "gbk" && <span className="auth-tag" title={t("远端编码：GBK")}>GBK</span>}
                       {isLocal
                         ? <span className="auth-tag" title={t("本机 PTY——内置条目，不可编辑或删除")}>{t("本地")}</span>
                         : <span className="auth-tag">{h.auth_type === "Key" ? t("密钥") : h.auth_type === "Agent" ? "Agent" : t("密码")}</span>}
@@ -224,7 +220,6 @@ export function Hostbar({
                           title={t("经跳板转发连接（跳板：{0}）", hosts.find((x) => x.id === h.jump_host_id)?.name ?? h.jump_host_id)}>{t("跳板")}</span>
                       )}
                     </div>
-                    <div className="host-addr mono">{isLocal ? `${t("本地 shell ·")} ${h.username}` : `${h.username}@${h.address}:${h.port}`}</div>
                     {(h.tags ?? []).length > 0 && (
                       <div className="host-tags">
                         {(h.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className="host-tag">{tag}</span>)}
@@ -247,19 +242,19 @@ export function Hostbar({
                     )}
                   </div>
                   <div className="host-card-side">
-                    {/* 连接在途（含等待指纹确认）时隐藏 ☆✎🗑 三钮让位：相位文本把
-                        连接钮撑宽，side 覆盖宽度可达 ~200px/卡宽 207px，三钮在场会把
-                        主机名整片盖住（六轮 C6-2）；在途动线是「确认指纹/取消」 */}
-                    {!isLocal && !connectingIds.has(h.id) && (
-                      <div className="host-ops">
-                        <button className={"ghost fav-btn" + (fav ? " on" : "")} aria-pressed={fav}
-                          title={fav ? t("取消收藏（移出「收藏」分组）") : t("收藏（置顶「收藏」分组）")}
-                          onClick={(e) => { e.stopPropagation(); void toggleFavorite(h.id, !fav); }}><IconStar size={13} /></button>
-                        <button className="ghost" title={t("编辑主机（名称/地址/端口/用户名/编码/标签，凭据保持不变）")}
-                          onClick={() => { setEditingHost(h); setShowImport(false); setPrefillEntry(null); setShowAddHost(true); }}><IconPencil size={13} /></button>
-                        <button className="ghost host-del" title={t("删除主机")}
-                          onClick={() => setConfirm({ kind: "deleteHost", id: h.id, name: h.name })}><IconTrash size={13} /></button>
-                      </div>
+                    {/* 走查 P1：hover 只留「连接」+「更多」两个入口——收藏/编辑/删除
+                        收进更多菜单（与右键同一份菜单），操作组宽度约 80px，不再把
+                        名称挤没。连接在途隐藏更多钮：相位文本会把操作组撑宽 */}
+                    {!connectingIds.has(h.id) && (
+                      <button className="ghost host-more-btn"
+                        aria-haspopup="menu"
+                        aria-label={t("更多操作：{0}", h.name)}
+                        title={t("更多操作：收藏、编辑、删除")}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setHostMenu({ x: r.right - 4, y: r.bottom + 2, hostId: h.id });
+                        }}><IconMore size={13} /></button>
                     )}
                     {/* R23（§302 等待中可取消）：attempt 在途显示核心相位 + 取消入口；
                         取消终态由核心串行裁决后呈示（cancelConnect 不自行改状态） */}

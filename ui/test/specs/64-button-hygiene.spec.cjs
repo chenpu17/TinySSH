@@ -5,7 +5,7 @@
 //   ② 阴影泄漏：静默钮（静息透明底）带着主按钮的内高光/投影 → 一圈淡框/项间亮线
 //   ③ 悬停陷阱：族规则 .x:hover（0,2,0）输给通用 button:not(:disabled):hover（0,2,1），
 //      悬停整块变 accent 实底（活动栏/采集开关/命令面板/分屏方向，历史第 1–7 例同形）
-//   ④ 菜单项统一：右键/下拉菜单项无描边无阴影 28px、危险项红字；工具栏直系钮统一 28px
+//   ④ 菜单项统一：右键/下拉菜单项无描边无阴影 28px、危险项红字；工具栏直系钮统一 26px
 //   ⑤ 焦点门控：鼠标开右键菜单首项持焦点不高亮；键盘态（菜单里按键 / 键盘打开）才高亮
 //   ⑥ 菜单宽度随内容后越界回夹：右下角右键，菜单整体仍在视口内
 const SID = "s-demo-0001";
@@ -90,10 +90,10 @@ module.exports = {
     // ── 主界面（工具栏 / 标签条 / 活动栏 / 状态条 / 主机栏）──
     add(await scanScreen(page, "主界面"));
 
-    // ── ④ 工具栏直系钮统一 28px ──
+    // ── ④ 工具栏直系钮统一 26px（按钮美化轮收紧一档，菜单项仍 28px）──
     const tbH = await page.evaluate(() => [...document.querySelectorAll(".session-toolbar > button, .session-toolbar > .st-tools > button")]
       .map((b) => `${(b.textContent || b.getAttribute("aria-label") || "").trim().slice(0, 8)}:${Math.round(b.getBoundingClientRect().height)}`));
-    ck.check("工具栏直系钮统一 28px 高（此前 27/28/30 混排）", tbH.length >= 5 && tbH.every((x) => x.endsWith(":28")), tbH.join(" "));
+    ck.check("工具栏直系钮统一 26px 高（此前 27/28/30 混排）", tbH.length >= 5 && tbH.every((x) => x.endsWith(":26")), tbH.join(" "));
 
     // ── 工具菜单：项无描边无阴影 28px、危险项红字、悬停有反馈（此前悬停底=菜单底）──
     const tools = await page.evaluate(() => {

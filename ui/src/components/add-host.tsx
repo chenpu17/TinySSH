@@ -246,7 +246,7 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
   return (
     <div className="card add-host">
       {prefill && !editing && (
-        <div className="dim" style={{ fontSize: 11, marginBottom: 6 }}>
+        <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginBottom: 6 }}>
           {t("预填自 ~/.ssh/config:")}{prefill.source_line}
           {prefill.unsupported.some((u) => u.level === "Blocking") && t("（含不兼容指令，请核对后保存）")}
           {!prefill.user_specified && t("（config 未指定用户，请补全）")}

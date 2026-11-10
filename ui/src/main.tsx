@@ -6,6 +6,11 @@ import App from "./App";
 // Latin 仍归 Inter，MiSans 只接 CJK 与 Inter 未覆盖的字形
 import "./assets/fonts/misans/MiSansVF.min.css";
 import "./styles.css";
+import { applyUiFontScale, loadUiFontScale } from "./ui-scale";
+
+// 界面字号（KI-024）：必须在首帧前落到根变量——设置里改过档位时，晚一拍恢复
+// 会先按 100% 画一帧再跳大，闪得明显。
+applyUiFontScale(loadUiFontScale());
 
 // 注意：createRoot 只能调用一次——此前这段代码被复制了两份，两个 React 根
 // 同时挂载两个 <App/>，窗口级 keydown 监听随之翻倍（⌘W 一次关两个会话、

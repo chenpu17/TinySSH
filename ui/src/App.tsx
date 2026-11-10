@@ -24,6 +24,7 @@ import { installMouseModeGuard, resetMouseReporting } from "./terminal/mouse-mod
 import { repaintTerm } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import { installWheelBatch, displayIntervalMs } from "./terminal/wheel-batch";
+import { loadUiFontScale, storeUiFontScale, type UiFontScale } from "./ui-scale";
 import { isScrollbackFull, scrollBelow } from "./terminal/scrollback";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
@@ -4147,6 +4148,9 @@ export default function App() {
   // 读取——运行中改档无需重装补丁；「跟随刷新率」由 displayIntervalMs 实测（30–120Hz）。
   const [termWheelRate, setTermWheelRate] = useState<TermWheelRate>(TERM_WHEEL_RATE_DEFAULT);
   const termWheelRateRef = useRef<TermWheelRate>(TERM_WHEEL_RATE_DEFAULT);
+  // 界面字号（KI-024 口径②）：只作用于 UI 文字（主机卡/菜单/状态栏…），终端字号
+  // 独立。首帧前 main.tsx 已按 localStorage 恢复根变量；这里只做设置回显与改档。
+  const [uiFontScale, setUiFontScaleState] = useState<UiFontScale>(() => loadUiFontScale());
   const wheelIntervalMs = useCallback(
     () => (termWheelRateRef.current === "auto" ? displayIntervalMs() : 1000 / termWheelRateRef.current),
     [],
@@ -4338,6 +4342,12 @@ export default function App() {
     if (r === "auto") displayIntervalMs();
     persistSetting(SETTING_TERM_WHEEL_RATE, String(r));
   }, [persistSetting]);
+  // 界面字号：根变量即时生效（styles.css 的 calc 直接吃新值），localStorage 同步
+  // 落盘供下次启动首帧前恢复。
+  const changeUiFontScale = useCallback((n: UiFontScale) => {
+    setUiFontScaleState(n);
+    storeUiFontScale(n);
+  }, []);
   // 连字开关（P0 轮）：真开/真关渲染器——开 = 释放 WebGL 换 DOM 渲染器（character
   // joiner 仅 DOM 实现）再载 LigaturesAddon；关 = 卸 addon、重挂 WebGL（失败回落 DOM）。
   // 逐实例热切换，不重建缓冲（滚动历史与在跑程序原地保留）；新建实例由 makeTerm 继承
@@ -8709,7 +8719,7 @@ export default function App() {
           <div className="autonomy-banner" data-testid="autonomy-banner" role="alert"
             style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 12px",
               background: "var(--warn-bg, #4a3208)", color: "var(--warn, #ffb454)",
-              borderBottom: "1px solid var(--warn, #ffb454)", fontSize: 12 }}>
+              borderBottom: "1px solid var(--warn, #ffb454)", fontSize: "calc(12px * var(--ui-font-scale))" }}>
             <b>{t("⚡ 自主模式运行中")}</b>
             {autonomy.map((g) => (
               <span key={g.agent_id} className="mono" data-testid={`autonomy-${g.agent_id}`}>
@@ -8719,10 +8729,10 @@ export default function App() {
                   : t(" · 手动关闭前有效")}
               </span>
             ))}
-            <span className="dim" style={{ fontSize: 11 }}>{t("危险命令仍被拦截；传输仍需审批；全部动作有记录。")}</span>
+            <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("危险命令仍被拦截；传输仍需审批；全部动作有记录。")}</span>
             {autonomy.map((g) => (
               <button key={`k-${g.agent_id}`} className="danger" data-testid={`autonomy-kill-${g.agent_id}`}
-                style={{ padding: "1px 10px", fontSize: 11 }}
+                style={{ padding: "1px 10px", fontSize: "calc(11px * var(--ui-font-scale))" }}
                 onClick={() => void killAutonomy(g.agent_id)}>{t("急停 {0}", g.agent_id)}</button>
             ))}
           </div>
@@ -8766,7 +8776,7 @@ export default function App() {
           /* 主机栏（拆分⑤出仓 components/hostbar.tsx，零语义变更）：搜索防抖、
              标签筛选、收藏分组卡片、导入面板挂载点、设置钮与宽度抓手 */
           <Hostbar
-            hostbarWidth={hostbarWidth} hosts={hosts} hostMeta={hostMeta}
+            hostbarWidth={hostbarWidth} hosts={hosts}
             sessions={sessions} hostsLoaded={hostsLoaded} hostsError={hostsError}
             filteredHosts={filteredHosts} favHosts={favHosts} otherHosts={otherHosts}
             localHost={localHost} localShells={localShells}
@@ -8780,9 +8790,9 @@ export default function App() {
             dispatchRef={dispatchRef}
             setTagFilter={setTagFilter} setShowImport={setShowImport}
             setShowAddHost={setShowAddHost} setEditingHost={setEditingHost}
-            setPrefillEntry={setPrefillEntry} setHostMenu={setHostMenu} setConfirm={setConfirm}
+            setPrefillEntry={setPrefillEntry} setHostMenu={setHostMenu}
             attachSession={attachSession} createSession={createSession}
-            toggleFavorite={toggleFavorite} cancelConnect={cancelConnect}
+            cancelConnect={cancelConnect}
             pushToast={pushToast} refreshLists={refreshLists}
           />
         )}
@@ -9293,7 +9303,7 @@ export default function App() {
                         onClick={() => { setTabsMenuOpen(false); void attachSession(s.id); }}>
                         <span className={"tab-dot " + st.cls} />
                         <span className="tab-label">{tabNames[s.id] ?? s.host_name}</span>
-                        <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>
+                        <span className={"mono " + st.cls} style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginLeft: "auto" }}>{st.text}</span>
                       </button>
                       {s.state === "Disconnected" && (
                         <button className="tm-act" title={t("重连该会话")} disabled={reconnecting !== null}
@@ -9441,7 +9451,7 @@ export default function App() {
                 <div>
                   {t("主机")} <b>{ap.host_name}</b> {t("要求完成额外交互认证")}{ap.jump_note ? t("（目标连接须经此跳板转发）") : ""}{t("。请输入服务器要求的验证信息：")}
                 </div>
-                <div className="dim mono" style={{ margin: "6px 0", fontSize: 11 }}>{ap.prompt || ap.name || "verification"}</div>
+                <div className="dim mono" style={{ margin: "6px 0", fontSize: "calc(11px * var(--ui-font-scale))" }}>{ap.prompt || ap.name || "verification"}</div>
                 <input
                   type={ap.echo ? "text" : "password"}
                   value={authAnswer}
@@ -9455,7 +9465,7 @@ export default function App() {
                   <button disabled={!authAnswer.trim()} onClick={() => void answerAuthPrompt(ap.id, authAnswer)}>{t("提交验证")}</button>
                   <button className="ghost" onClick={() => void answerAuthPrompt(ap.id, "")}>{t("取消认证")}</button>
                 </div>
-                <div className="dim" style={{ marginTop: 6, fontSize: 11 }}>{t("取消将终止本次连接认证。密码本身已在连接时自动填入，无需重复输入。")}</div>
+                <div className="dim" style={{ marginTop: 6, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("取消将终止本次连接认证。密码本身已在连接时自动填入，无需重复输入。")}</div>
               </div>
             </div>
           );
@@ -9722,7 +9732,7 @@ export default function App() {
                   <div><b>⛔ {t("会话已断开")}</b></div>
                   {pick ? (
                     <>
-                      <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
+                      <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginTop: 4 }}>
                         {teach
                           ? t("检测到远端有 tmux 会话在运行（{0}）——里面的程序没停。", liveNames)
                           : t("远端会话 {0} 仍在运行。", pick)}
@@ -9735,7 +9745,7 @@ export default function App() {
                         <button data-testid="tmux-reconn-only-btn" disabled={reconnecting !== null} onClick={reconnectOnly}>
                           {t("仅重连")}
                         </button>
-                        <label className="dim" style={{ fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <label className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", display: "inline-flex", alignItems: "center", gap: 4 }}>
                           <input type="checkbox" checked={autoOn} data-testid="tmux-auto-chk"
                             onChange={(e) => updateTmuxPrefs((p) => {
                               const a = new Set(p.auto);
@@ -9745,13 +9755,13 @@ export default function App() {
                           {t("下次断线自动恢复现场")}
                         </label>
                       </div>
-                      <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>
                         {t("重连后进入重确认——旧现场待核实，可继续操作")}
                       </div>
                     </>
                   ) : live.length > 1 ? (
                     <>
-                      <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
+                      <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginTop: 4 }}>
                         {t("检测到远端有 tmux 会话在运行（{0}）——里面的程序没停。", liveNames)}
                       </div>
                       <div className="row" style={{ marginTop: 10, flexWrap: "wrap" }}>
@@ -9769,14 +9779,14 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>
+                      <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginTop: 4 }}>
                         {t("画面是断开前的最后状态；键入已拦截，不会发送。")}
                       </div>
                       <div className="row" style={{ marginTop: 10 }}>
                         <button disabled={reconnecting !== null} onClick={() => reconnectSession(current)}>
                           {reconnecting === current.id ? t("重连中…") : t("重连恢复")}
                         </button>
-                        <span className="dim" style={{ fontSize: 11 }}>{t("重连后进入重确认——旧现场待核实，可继续操作")}</span>
+                        <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("重连后进入重确认——旧现场待核实，可继续操作")}</span>
                       </div>
                     </>
                   )}
@@ -9792,7 +9802,7 @@ export default function App() {
                 <div>{t("松开上传到")} {dragZone === "panel"
                   ? (sftpPath || t("正在浏览的目录"))
                   : (brief?.cwd ?? t("远程主机"))}</div>
-                <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>{t("拖到文件面板则直接传到正在浏览的目录")}</div>
+                <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>{t("拖到文件面板则直接传到正在浏览的目录")}</div>
               </div>
             </div>
           )}
@@ -10024,17 +10034,17 @@ export default function App() {
                     onKeyDown={(e) => { if (isImeComposing(e)) return; if (e.key === "Enter" && pendingDropDir.trim()) confirmDropUpload(); }}
                   />
                 </div>
-                <div className="dim" style={{ marginTop: 6, fontSize: 12 }} data-testid="drop-files-line">
+                <div className="dim" style={{ marginTop: 6, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="drop-files-line">
                   {t("{0} 个文件：", pendingDrop.paths.length)}{pendingDrop.paths.slice(0, 3).map((p) => pathBasename(p)).join(t("、"))}
                   {pendingDrop.paths.length > 3 ? t(" 等 {0} 个", pendingDrop.paths.length) : ""}
                 </div>
                 {!briefRef.current?.cwd && (
-                  <div className="dim" style={{ marginTop: 4, fontSize: 12 }} data-testid="drop-no-cwd-hint">
+                  <div className="dim" style={{ marginTop: 4, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="drop-no-cwd-hint">
                     {t("该会话无可信工作目录（shell 集成未上报 cwd）——请填写远端目录。")}
                   </div>
                 )}
                 {pendingDropErr && (
-                  <div className="err" style={{ marginTop: 4, fontSize: 12 }} data-testid="drop-err">{pendingDropErr}</div>
+                  <div className="err" style={{ marginTop: 4, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="drop-err">{pendingDropErr}</div>
                 )}
                 <div className="hk-actions">
                   <button className="ghost" onClick={() => setPendingDrop(null)}>{t("取消")}</button>
@@ -10078,6 +10088,8 @@ export default function App() {
               fontSize={fontSize}
               changeFontSize={changeFontSize}
               zoomLevel={zoomLevel}
+              uiFontScale={uiFontScale}
+              changeUiFontScale={changeUiFontScale}
               keymap={keymap}
               resetKeyBinding={resetKeyBinding}
               keyCapture={keyCapture}
@@ -10176,7 +10188,7 @@ export default function App() {
             )}
             <div className="tp-head">
               <b data-testid="tp-title">{rightPanel === "files" ? t("文件") : rightPanel === "forwards" ? t("端口转发") : rightPanel === "log" ? t("活动记录") : rightPanel === "blocks" ? t("命令块") : t("协作")}</b>
-              {tpFull && <span className="dim" style={{ fontSize: 11 }}>{t("空间不足——完整视图，终端仍在运行")}</span>}
+              {tpFull && <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("空间不足——完整视图，终端仍在运行")}</span>}
               {rightPanel === "collab" && pendingCount > 0 && <span className="badge agent">{t("{0} 待处理", pendingCount)}</span>}
               <span style={{ flex: 1 }} />
               <button className="ghost icon-btn" title={t("关闭面板（再次点「文件」/「工具」项亦可）")} aria-label={t("关闭任务面板")}

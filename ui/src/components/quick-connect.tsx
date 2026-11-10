@@ -132,7 +132,7 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
 
   return (
     <div className="card add-host" data-testid="quick-connect-form">
-      <div className="dim" style={{ fontSize: 11, marginBottom: 6 }}>
+      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginBottom: 6 }}>
         {t("快速连接：临时打开，不保存到主机列表；应用退出后连接信息即丢弃。")}
       </div>
       <div className="row" style={{ alignItems: "flex-end" }}>

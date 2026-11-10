@@ -19,6 +19,7 @@ import {
   type Binding, type KeyActionId,
 } from "../keymap";
 import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
+import { UI_FONT_SCALES, type UiFontScale } from "../ui-scale";
 import { isMacPlatform } from "../actions";
 import { inTauri, invoke } from "../adapter/bridge";
 import type { ActionRecord, AutonomyGrant, RecordsQuery, TriggerRule } from "../adapter/wire";
@@ -179,6 +180,9 @@ interface SettingsPanelProps {
   fontSize: number;
   changeFontSize: (n: number) => void;
   zoomLevel: number;
+  // 界面字号（KI-024 口径②）：只作用于应用界面文字，终端字号与整窗缩放各自独立
+  uiFontScale: UiFontScale;
+  changeUiFontScale: (n: UiFontScale) => void;
   // 快捷键
   keymap: Record<KeyActionId, Binding>;
   /** 单条重置（宿主校验默认键是否已被别的动作占用，冲突则拒绝并提示） */
@@ -293,6 +297,7 @@ export function SettingsPanel({
   settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime, locale, onChangeLocale,
   updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
+  uiFontScale, changeUiFontScale,
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
@@ -531,12 +536,26 @@ export function SettingsPanel({
                 </div>
                 <div className="set-card">
                   <h4>{t("字号与缩放")}</h4>
-                  <div className="set-desc">{t("字号作用于全部终端；缩放作用于整个界面（webview）。")}</div>
-                  <div className="row">
+                  <div className="set-desc">{t("终端字号只作用于终端；界面字号作用于连接管理、菜单等应用界面；界面缩放缩放整个窗口（含终端）。")}</div>
+                  <div className="ts-label" style={{ marginTop: 8 }}>{t("终端字号")}</div>
+                  <div className="row" style={{ marginTop: 4 }}>
                     <button className="ghost" title={t("减小字号")} aria-label={t("减小字号")} disabled={fontSize <= FONT_MIN} onClick={() => changeFontSize(fontSize - 1)}><IconMinus size={13} /></button>
                     <span className="ts-val mono">{fontSize}</span>
                     <button className="ghost" title={t("增大字号")} aria-label={t("增大字号")} disabled={fontSize >= FONT_MAX} onClick={() => changeFontSize(fontSize + 1)}><IconPlus size={13} /></button>
                     <button className="ghost" disabled={fontSize === FONT_DEFAULT} onClick={() => changeFontSize(FONT_DEFAULT)}>{t("重置")}</button>
+                  </div>
+                  {/* 界面字号（KI-024）：CSS 变量 --ui-font-scale，只放大 UI 文字；
+                      与终端字号、整窗缩放三者互不影响（用户反馈：调字号时左侧连接
+                      管理/菜单不跟随） */}
+                  <div className="ts-label" style={{ marginTop: 12 }}>{t("界面字号")}</div>
+                  <div className="row" style={{ marginTop: 4 }}>
+                    <select data-testid="ui-font-scale-select" aria-label={t("界面字号")}
+                      value={uiFontScale}
+                      onChange={(e) => changeUiFontScale(Number(e.target.value) as UiFontScale)}>
+                      {UI_FONT_SCALES.map((z) => (
+                        <option key={z} value={z}>{z === 1 ? t("标准（100%）") : t("{0}%", String(Math.round(z * 100)))}</option>
+                      ))}
+                    </select>
                   </div>
                   {/* UX 五轮：整页缩放（参考 tiny-worker）——webview 缩放，浏览器 demo
                       不渲染（浏览器自带缩放；zoom.ts 亦不注册键盘/滚轮路径） */}
@@ -552,7 +571,7 @@ export function SettingsPanel({
                     <button className="ghost" disabled={zoomLevel === 1} onClick={() => zoomReset()}>{t("重置")}</button>
                   </div>
                   </>)}
-                  <div className="dim" style={{ marginTop: 8, fontSize: 11 }}>{t("界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）")}</div>
+                  <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）")}</div>
                 </div>
                 </>)}
 
@@ -781,7 +800,7 @@ export function SettingsPanel({
                     {credNewOpen ? t("收起") : t("新建凭据…")}
                   </button>
                 </div>
-                {credErr && <div className="err" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-err">✕ {credErr}</div>}
+                {credErr && <div className="err" style={{ marginTop: 4, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="cred-err">✕ {credErr}</div>}
                 {credNewOpen && (
                   <div className="cred-new" data-testid="cred-new-form">
                     <label className="cred-field">{t("名称")}
@@ -813,12 +832,12 @@ export function SettingsPanel({
                       <button className="ghost" disabled={credBusy} data-testid="cred-new-cancel"
                         onClick={() => { setCredPem(""); setCredPass(""); setCredNewErr(null); setCredNewOpen(false); }}>{t("取消")}</button>
                     </div>
-                    <div className="dim" style={{ marginTop: 4, fontSize: 11 }}>
+                    <div className="dim" style={{ marginTop: 4, fontSize: "calc(11px * var(--ui-font-scale))" }}>
                       {t("只有点「生成」或「导入并保存」才落库；取消或关闭对话框都不会留下半成品。")}
                     </div>
-                    {credNewErr && <div className="err" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-new-err">✕ {credNewErr}</div>}
+                    {credNewErr && <div className="err" style={{ marginTop: 4, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="cred-new-err">✕ {credNewErr}</div>}
                     {credNewOk && (
-                      <div className="ok" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-new-ok">
+                      <div className="ok" style={{ marginTop: 4, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="cred-new-ok">
                         {t("已保存「{0}」·", credNewOk.label)} {t("指纹")} <span className="mono">{credNewOk.fingerprint}</span>
                       </div>
                     )}
@@ -834,7 +853,7 @@ export function SettingsPanel({
                   </div>
                 )}
                 {identities.length === 0 ? (
-                  <div className="dim cred-empty" style={{ marginTop: 4, fontSize: 12 }} data-testid="cred-empty">
+                  <div className="dim cred-empty" style={{ marginTop: 4, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="cred-empty">
                     {t("还没有凭据——用右上角的「新建凭据…」生成或导入私钥，也可以在连接表单里保存。")}
                   </div>
                 ) : (
@@ -867,7 +886,7 @@ export function SettingsPanel({
                       </div>
                       );
                     })}
-                    <div className="dim" style={{ marginTop: 4, fontSize: 11 }}>
+                    <div className="dim" style={{ marginTop: 4, fontSize: "calc(11px * var(--ui-font-scale))" }}>
                       {t("删除前自动检查引用；指纹用于核对库里存的是哪把钥匙，不会出现在日志里。")}
                     </div>
                   </div>
@@ -893,17 +912,17 @@ export function SettingsPanel({
                 {/* §9：仅有登记身份 ≠ Agent 在线——「已配置」与「有活动请求」分别显示 */}
                 <div className="fact" style={{ marginTop: 6 }} data-testid="collab-state-row">
                   <span className={"badge " + (collabEnabled ? "ok" : "err")} data-testid="collab-state">{collabStateText}</span>
-                  <span className="dim" style={{ fontSize: 11 }} data-testid="collab-configured">{t("已配置 {0}", collab.configured_agents)}</span>
-                  <span className="dim" style={{ fontSize: 11 }} data-testid="collab-active">{t("有活动请求 {0}", collab.active_requests)}</span>
+                  <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid="collab-configured">{t("已配置 {0}", collab.configured_agents)}</span>
+                  <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid="collab-active">{t("有活动请求 {0}", collab.active_requests)}</span>
                 </div>
                 {collabEnabled ? (<>
-                <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                <div style={{ fontSize: "calc(12px * var(--ui-font-scale))", lineHeight: 1.8 }}>
                   {t("MCP 端点随本应用自动运行。为 Agent 签发 Token 后，它的操作请求会进入协作面板逐条审批。")}
                 </div>
                 {/* rev-r47：GUI 内签发——id/名称/有效期，token 仅在下方弹层展示一次 */}
                 <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }} data-testid="agent-issue-form">
                   <input
-                    className="mono" style={{ fontSize: 11, width: 130 }}
+                    className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", width: 130 }}
                     placeholder={t("id（如 my-codex）")} aria-label={t("Agent id")}
                     value={agentForm.id}
                     onChange={(e) => {
@@ -912,7 +931,7 @@ export function SettingsPanel({
                     }}
                   />
                   <input
-                    style={{ fontSize: 11, width: 110 }}
+                    style={{ fontSize: "calc(11px * var(--ui-font-scale))", width: 110 }}
                     placeholder={t("名称（可选）")} aria-label={t("Agent 名称")}
                     value={agentForm.label}
                     onChange={(e) => {
@@ -921,7 +940,7 @@ export function SettingsPanel({
                     }}
                   />
                   <select
-                    style={{ fontSize: 11 }}
+                    style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}
                     aria-label={t("Token 有效期")}
                     value={agentForm.expires}
                     onChange={(e) => {
@@ -938,17 +957,17 @@ export function SettingsPanel({
                     {t("签发 Token")}
                   </button>
                 </div>
-                {agentErr && <div className="err" style={{ fontSize: 11, marginTop: 4 }}>{agentErr}</div>}
+                {agentErr && <div className="err" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>{agentErr}</div>}
                 {issuedToken && (
                   <div className="card" style={{ marginTop: 8, padding: 10, border: "1px solid var(--accent-glow)", borderRadius: 8 }} data-testid="agent-token-once">
-                    <div style={{ fontSize: 12 }}><b>{t("Token 已签发（{0}）——仅此一次展示", issuedToken.id)}</b></div>
-                    <pre className="mono" style={{ fontSize: 11, userSelect: "all", WebkitUserSelect: "all", whiteSpace: "pre-wrap", margin: "6px 0" }}>{issuedToken.token}</pre>
+                    <div style={{ fontSize: "calc(12px * var(--ui-font-scale))" }}><b>{t("Token 已签发（{0}）——仅此一次展示", issuedToken.id)}</b></div>
+                    <pre className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", userSelect: "all", WebkitUserSelect: "all", whiteSpace: "pre-wrap", margin: "6px 0" }}>{issuedToken.token}</pre>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="ghost" data-testid="agent-token-copy" onClick={() => void copyToken(issuedToken.token)}>{tokenCopied ? t("已复制") : t("复制 Token")}</button>
                       <button className="ghost" data-testid="agent-token-close" onClick={() => setIssuedToken(null)}>{t("我已保存，关闭")}</button>
                     </div>
-                    <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>{t("现在复制并填入 Agent 配置；关闭后无法再次查看（可吊销后重签）。")}</div>
-                    {tokenCopyErr && <div className="err" role="alert" style={{ fontSize: 11, marginTop: 4 }}>{tokenCopyErr}</div>}
+                    <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>{t("现在复制并填入 Agent 配置；关闭后无法再次查看（可吊销后重签）。")}</div>
+                    {tokenCopyErr && <div className="err" role="alert" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>{tokenCopyErr}</div>}
                   </div>
                 )}
                 {mcp.agents_detail && mcp.agents_detail.length > 0 ? (
@@ -956,8 +975,8 @@ export function SettingsPanel({
                     {mcp.agents_detail.map((a) => (
                       <div className="fact" key={a.id} data-testid="agent-row" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <span className="s">{a.label}</span>
-                        {a.id !== a.label && <span className="dim mono" style={{ fontSize: 10 }}> · id {a.id}</span>}
-                        <span className="dim" style={{ fontSize: 10 }}>
+                        {a.id !== a.label && <span className="dim mono" style={{ fontSize: "calc(10px * var(--ui-font-scale))" }}> · id {a.id}</span>}
+                        <span className="dim" style={{ fontSize: "calc(10px * var(--ui-font-scale))" }}>
                           {a.last_used_at
                             ? ` · ${t("最近使用 {0}", new Date(a.last_used_at).toLocaleString(dateLocale()))}`
                             : ` · ${t("从未使用")}`}
@@ -970,12 +989,12 @@ export function SettingsPanel({
                           const grant = autonomy.find((g) => g.agent_id === a.id);
                           const ttlSel = autonomyTtl[a.id] ?? "30";
                           return grant ? (
-                            <button className="warn" style={{ fontSize: 11 }} data-testid={`autonomy-off-${a.id}`}
+                            <button className="warn" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid={`autonomy-off-${a.id}`}
                               title={t("立即收回该 Agent 的免逐条审批授权")}
                               onClick={() => void onToggleAutonomy(a.id, false, null)}>{t("关闭自主")}</button>
                           ) : (
                             <>
-                              <select style={{ fontSize: 10 }} aria-label={t("自主模式时长")}
+                              <select style={{ fontSize: "calc(10px * var(--ui-font-scale))" }} aria-label={t("自主模式时长")}
                                 value={ttlSel}
                                 onChange={(e) => setAutonomyTtl({ ...autonomyTtl, [a.id]: e.target.value })}>
                                 <option value="30">{t("{0} 分钟", 30)}</option>
@@ -983,13 +1002,13 @@ export function SettingsPanel({
                                 <option value="manual">{t("手动关闭")}</option>
                               </select>
                               {autonomyArm === a.id ? (
-                                <button className="warn" style={{ fontSize: 11 }} data-testid={`autonomy-on-confirm-${a.id}`}
+                                <button className="warn" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid={`autonomy-on-confirm-${a.id}`}
                                   title={t("开启后该 Agent 的命令不再逐条审批（危险命令仍拦截、全量记录）")}
                                   onClick={() => { setAutonomyArm(null); void onToggleAutonomy(a.id, true, ttlSel === "manual" ? null : Number(ttlSel)); }}>
                                   {t("确认开启？")}
                                 </button>
                               ) : (
-                                <button className="ghost" style={{ fontSize: 11 }} data-testid={`autonomy-on-${a.id}`}
+                                <button className="ghost" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid={`autonomy-on-${a.id}`}
                                   title={t("免逐条审批的自主运行（危险命令仍拦截、全量记录、可急停）")}
                                   onClick={() => setAutonomyArm(a.id)}>{t("自主模式")}</button>
                               )}
@@ -997,10 +1016,10 @@ export function SettingsPanel({
                           );
                         })()}
                         {revokeArm === a.id ? (
-                          <button className="ghost" style={{ color: "var(--danger)", fontSize: 11 }} data-testid="agent-revoke-confirm"
+                          <button className="ghost" style={{ color: "var(--danger)", fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid="agent-revoke-confirm"
                             onClick={() => void doRevoke(a.id)}>{t("确认吊销？")}</button>
                         ) : (
-                          <button className="ghost" style={{ fontSize: 11 }} data-testid="agent-revoke"
+                          <button className="ghost" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid="agent-revoke"
                             title={t("吊销后 token 立即失效（Agent 侧报 invalid_actor）")}
                             onClick={() => setRevokeArm(a.id)}>{t("吊销")}</button>
                         )}
@@ -1008,17 +1027,17 @@ export function SettingsPanel({
                     ))}
                   </div>
                 ) : (
-                  <div className="dim" style={{ fontSize: 12, marginTop: 6 }} data-testid="agent-empty">
+                  <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginTop: 6 }} data-testid="agent-empty">
                     {t("暂无 Agent 接入——上方表单签发 Token 即完成登记。")}
                   </div>
                 )}
                 {/* ⑤ 传输免审 opt-in：全局一个开关（对全部 Agent 生效），默认最保守。
                     危险形态命令的 deny 硬拦不受影响；免审期间传输全部留审计+记录。 */}
                 <div className="fact" style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span className="dim" style={{ fontSize: 11 }}>{t("自主模式下的文件传输")}</span>
+                  <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("自主模式下的文件传输")}</span>
                   <button
                     className={"ghost" + (transferAutonomy ? " warn" : "")}
-                    style={{ fontSize: 11 }}
+                    style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}
                     data-testid="autonomy-transfers-toggle"
                     title={t("默认传输逐条审批（最保守）。打开后：自主模式在效期间的传输不再逐条弹卡——审计与记录照常，随时刻关。")}
                     onClick={() => onChangeTransferAutonomy(!transferAutonomy)}
@@ -1027,32 +1046,32 @@ export function SettingsPanel({
                   </button>
                 </div>
                 <div className="fact" style={{ marginTop: 6 }}>
-                  <span className="dim" style={{ fontSize: 11 }}>{t("端点")}</span>{" "}
-                  <span className="mono" style={{ fontSize: 11, wordBreak: "break-all" }} data-testid="agent-endpoint">{mcp.endpoint || t("未启动")}</span>
+                  <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("端点")}</span>{" "}
+                  <span className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", wordBreak: "break-all" }} data-testid="agent-endpoint">{mcp.endpoint || t("未启动")}</span>
                 </div>
                 {mcp.endpoint && (
                   <div className="fact" style={{ marginTop: 4 }}>
-                    <span className="dim" style={{ fontSize: 11 }}>{t("接入文档")}</span>{" "}
-                    <span className="mono" style={{ fontSize: 11, wordBreak: "break-all", userSelect: "all", WebkitUserSelect: "all" }} data-testid="agent-doc-url">
+                    <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("接入文档")}</span>{" "}
+                    <span className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", wordBreak: "break-all", userSelect: "all", WebkitUserSelect: "all" }} data-testid="agent-doc-url">
                       {new URL(mcp.endpoint).origin}/integration.md
                     </span>
-                    <span className="dim" style={{ fontSize: 11 }}>{t("（把这个 URL 扔给 Agent，即可自助完成接入）")}</span>
+                    <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("（把这个 URL 扔给 Agent，即可自助完成接入）")}</span>
                   </div>
                 )}
                 <button className="ghost" style={{ marginTop: 6 }} onClick={() => setShowAgentHelp(!showAgentHelp)}>
                   {showAgentHelp ? t("收起接入说明") : t("接入新 Agent")}
                 </button>
                 {showAgentHelp && (
-                  <div className="dim" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 6 }}>
+                  <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", lineHeight: 1.9, marginTop: 6 }}>
                     <div>{t("1. MCP 端点已随本应用自动运行（地址如上，被占自动递增，无需另起 serve）；")}</div>
                     <div>{t("2. 用上方表单签发 Token（仅展示一次；也可 CLI ")}<code>tinyssh agent create &lt;id&gt; &lt;{t("名称")}&gt; --expires-days 30</code>{t("）；")}</div>
                     <div>{t("3. 在 Agent 的 MCP 配置里填入端点与 Token：")}</div>
-                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all", WebkitUserSelect: "all" }}>
+                    <pre className="mono" style={{ fontSize: "calc(10px * var(--ui-font-scale))", whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all", WebkitUserSelect: "all" }}>
 {`MCP URL: ${mcp.endpoint || "http://127.0.0.1:8722/mcp"}
 Authorization: Bearer <TOKEN>`}
                     </pre>
                     <div>{t("或者更省事：把上面「接入文档」链接直接发给 Agent，它会按文档自助完成接入。只支持 stdio 的客户端用自带 shim（应用同目录）：")}</div>
-                    <pre className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all", WebkitUserSelect: "all" }}>
+                    <pre className="mono" style={{ fontSize: "calc(10px * var(--ui-font-scale))", whiteSpace: "pre-wrap", margin: "4px 0", userSelect: "all", WebkitUserSelect: "all" }}>
 {`command: ${mcp.shim_path || t("(同应用目录 tinyssh-mcp)")}
 env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:8722/mcp"}`}
                     </pre>
@@ -1068,13 +1087,13 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                   onClick={() => void openDisableDialog()}>{t("停用协作…")}</button>
                 </>) : (<>
                 {/* 停用/停用中/停用失败：MCP 端点未运行，不渲染接入配置（§6.7）。 */}
-                <div style={{ fontSize: 12, lineHeight: 1.8 }} data-testid="collab-disabled-note">
+                <div style={{ fontSize: "calc(12px * var(--ui-font-scale))", lineHeight: 1.8 }} data-testid="collab-disabled-note">
                   {collab.state === "Disabling" ? t("协作正在停用——新 Agent 请求已被拒绝，正在收敛存量。")
                     : collab.state === "DisableFailed" ? t("上次停用未完全收敛（协作保持封闭，新 Agent 请求仍被拒绝）——请先「重试停用收敛」，收敛后才可重新启用。")
                     : t("协作已停用——MCP 端点未运行，Agent 请求一律被拒绝。要使用协作请显式启用。")}
                 </div>
                 {mcp.agents.length > 0 && (
-                  <div className="dim" style={{ fontSize: 11, marginTop: 6 }} data-testid="collab-kept-agents">
+                  <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 6 }} data-testid="collab-kept-agents">
                     {t("已配置的 Agent（Token 保留，重新启用后继续可用）：{0}", mcp.agents.map((a) => a.label).join(t("、")))}
                   </div>
                 )}
@@ -1108,7 +1127,7 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                 {settingsCat === "about" && (<>
                 <div className="set-card">
                 <h4 style={{ margin: "0 0 8px" }}>{t("关于")}</h4>
-                <div style={{ fontSize: 12, lineHeight: 1.9 }}>
+                <div style={{ fontSize: "calc(12px * var(--ui-font-scale))", lineHeight: 1.9 }}>
                   {/* 版本号轮：编译时间随版本号同排展示（build.rs 编译期注入；演示域
                       无编译产物自动略去） */}
                   <div data-testid="about-version">
@@ -1147,7 +1166,7 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                       disabled={checkBusy} onClick={onCheckUpdate}>
                       {checkBusy ? t("检测中…") : t("检测更新")}
                     </button>
-                    <span className="dim" style={{ marginLeft: 8, fontSize: 11 }}>
+                    <span className="dim" style={{ marginLeft: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>
                       {t("启动时也会自动检测一次")}
                     </span>
                   </div>
@@ -1156,7 +1175,7 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                     <button className="ghost" data-testid="diag-export-btn" disabled={diagBusy} onClick={onExportDiagnostics}>
                       {diagBusy ? t("导出中…") : t("导出诊断包")}
                     </button>
-                    <span className="dim" style={{ marginLeft: 8, fontSize: 11 }}>
+                    <span className="dim" style={{ marginLeft: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>
                       {t("版本/平台/日志尾/审计条数——不含凭据与主机信息")}
                     </span>
                   </div>
@@ -1280,8 +1299,8 @@ function TriggersCard({ load, save }: {
         <button className="primary" data-testid="trigger-save" disabled={busy} onClick={() => void doSave()}>
           {busy ? t("保存中…") : t("保存")}</button>
       </div>
-      {err && <div className="err" style={{ fontSize: 12, marginTop: 6 }} data-testid="triggers-err" role="alert">✕ {err}</div>}
-      {ok && <div className="dim" style={{ fontSize: 12, marginTop: 6 }} data-testid="triggers-ok" role="status">✓ {ok}</div>}
+      {err && <div className="err" style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginTop: 6 }} data-testid="triggers-err" role="alert">✕ {err}</div>}
+      {ok && <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginTop: 6 }} data-testid="triggers-ok" role="status">✓ {ok}</div>}
     </div>
   );
 }
@@ -1358,13 +1377,13 @@ function AgentModelCard() {
   return (
     <div className="set-card" data-testid="agent-model-card">
       <h4 style={{ margin: "0 0 6px" }}>{t("模型服务（内置 Agent 对话）")}</h4>
-      <div className="dim" style={{ fontSize: 11, lineHeight: 1.7 }}>
+      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", lineHeight: 1.7 }}>
         {inTauri
           ? t("配置后左侧 Agent 视图从演练外壳切换为真实模型。agent 的 exec 等操作仍走本应用既有审批链（危险命令需人工批准）。")
           : t("演示域不会保存密钥，也不会切换真实模型；此卡仅用于预览表单。")}
       </div>
       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-        <select data-testid="agent-model-provider" style={{ fontSize: 12 }} value={provider}
+        <select data-testid="agent-model-provider" style={{ fontSize: "calc(12px * var(--ui-font-scale))" }} value={provider}
           onChange={(e) => {
             const v = e.target.value as "openai" | "anthropic";
             modelTouchedRef.current.provider = true;
@@ -1374,28 +1393,28 @@ function AgentModelCard() {
           <option value="openai">{t("OpenAI 兼容（GLM / DeepSeek / Qwen / Kimi…）")}</option>
           <option value="anthropic">Anthropic</option>
         </select>
-        <input data-testid="agent-model-url" className="mono" style={{ fontSize: 11, width: 210 }}
+        <input data-testid="agent-model-url" className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", width: 210 }}
           placeholder={t("base_url（可选，缺省官方端点）")} aria-label="base_url"
           value={baseUrl} onChange={(e) => {
             modelTouchedRef.current.baseUrl = true;
             setBaseUrl(e.target.value);
             writeDraft("agentModel.baseUrl", draftUrlForStorage(e.target.value));
           }} />
-        <input data-testid="agent-model-name" className="mono" style={{ fontSize: 11, width: 150 }}
+        <input data-testid="agent-model-name" className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", width: 150 }}
           placeholder={t("模型名（如 glm-4.7）")} aria-label={t("模型名（如 glm-4.7）")}
           value={model} onChange={(e) => {
             modelTouchedRef.current.model = true;
             setModel(e.target.value);
             writeDraft("agentModel.model", e.target.value);
           }} />
-        <SecretInput data-testid="agent-model-key" className="mono" style={{ fontSize: 11, width: 190 }}
+        <SecretInput data-testid="agent-model-key" className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", width: 190 }}
           placeholder={hasKey ? t("已配置（重填可更换）") : "api_key"}
           aria-label="api_key"
           value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
         <button className="ghost" data-testid="agent-model-save" disabled={busy || !model.trim()} onClick={save}>{t("保存")}</button>
       </div>
       {msg && (
-        <div className={msg.kind} style={{ fontSize: 11, marginTop: 5 }} data-testid="agent-model-msg" role="status">
+        <div className={msg.kind} style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 5 }} data-testid="agent-model-msg" role="status">
           {msg.kind === "ok" ? "✓ " : "✕ "}{msg.text}
         </div>
       )}
@@ -1501,12 +1520,12 @@ function PromptSkillsCard() {
   return (
     <div className="set-card" data-testid="agent-prompt-skills-card">
       <h4 style={{ margin: "0 0 6px" }}>{t("提示词与技能（内置 Agent）")}</h4>
-      <div className="dim" style={{ fontSize: 11, lineHeight: 1.7 }}>
+      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", lineHeight: 1.7 }}>
         {t("在内置系统提示词之上追加的组织/现场约定——不改内置安全铁律（审批/不虚构等），冲突时以铁律为准。会话助手与 Fleet 编排者各一段，保存后 agent 的下一条消息即生效。技能库供 agent 用 load_skill 工具按名加载。")}
       </div>
       <div style={{ marginTop: 8 }}>
-        <div style={{ fontSize: 12, marginBottom: 3 }}>{t("会话助手附加提示词")}</div>
-        <textarea data-testid="agent-prompt-extra" className="mono" style={{ width: "100%", fontSize: 11 }}
+        <div style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginBottom: 3 }}>{t("会话助手附加提示词")}</div>
+        <textarea data-testid="agent-prompt-extra" className="mono" style={{ width: "100%", fontSize: "calc(11px * var(--ui-font-scale))" }}
           rows={4} maxLength={AGENT_EXTRA_MAX_CHARS}
           placeholder={t("例如：生产库只读优先，改动先报备；机器统一 Ubuntu，用 apt 而非 yum。")}
           aria-label={t("会话助手附加提示词")} value={extra}
@@ -1516,8 +1535,8 @@ function PromptSkillsCard() {
           onClick={() => { setExtra(""); void saveKV("agent.prompt_extra", "").catch((e) => setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) })); }}>{t("清空")}</button>
       </div>
       <div style={{ marginTop: 6 }}>
-        <div style={{ fontSize: 12, marginBottom: 3 }}>{t("Fleet 编排者附加提示词")}</div>
-        <textarea data-testid="agent-fleet-prompt-extra" className="mono" style={{ width: "100%", fontSize: 11 }}
+        <div style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginBottom: 3 }}>{t("Fleet 编排者附加提示词")}</div>
+        <textarea data-testid="agent-fleet-prompt-extra" className="mono" style={{ width: "100%", fontSize: "calc(11px * var(--ui-font-scale))" }}
           rows={3} maxLength={AGENT_EXTRA_MAX_CHARS}
           placeholder={t("例如：汇总一律用表格；失败项单独列出并给复跑建议。")}
           aria-label={t("Fleet 编排者附加提示词")} value={fleetExtra}
@@ -1527,23 +1546,23 @@ function PromptSkillsCard() {
           onClick={() => { setFleetExtra(""); void saveKV("agent.fleet_prompt_extra", "").catch((e) => setMsg({ kind: "err", text: t("保存失败：{0}", String(e)) })); }}>{t("清空")}</button>
       </div>
       <div style={{ marginTop: 10 }}>
-        <div style={{ fontSize: 12, marginBottom: 3 }}>{t("技能库（{0}/32）", skills.length)}</div>
+        <div style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginBottom: 3 }}>{t("技能库（{0}/32）", skills.length)}</div>
         {skills.length === 0 && (
-          <div className="dim" style={{ fontSize: 11 }} data-testid="agent-skills-empty">
+          <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} data-testid="agent-skills-empty">
             {t("暂无技能——添加后 agent 可用 load_skill 工具按名加载（名称 + 操作手册正文）。")}
           </div>
         )}
         {skills.map((s, i) => (
           <div key={i} style={{ marginTop: 6, borderTop: "1px solid var(--border)", paddingTop: 6 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <input data-testid={`skill-name-${i}`} className="mono" style={{ fontSize: 11, width: 180 }}
+              <input data-testid={`skill-name-${i}`} className="mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))", width: 180 }}
                 maxLength={50} placeholder={t("技能名（如 nginx 排障）")} aria-label={t("技能 {0} 名称", i + 1)}
                 value={s.name}
                 onChange={(e) => applySkills(skills.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
               <button className="ghost" data-testid={`skill-del-${i}`} aria-label={t("删除技能 {0}", s.name || i + 1)}
                 onClick={() => applySkills(skills.filter((_, j) => j !== i))}><IconTrash size={12} /></button>
             </div>
-            <textarea data-testid={`skill-body-${i}`} className="mono" style={{ width: "100%", fontSize: 11, marginTop: 4 }}
+            <textarea data-testid={`skill-body-${i}`} className="mono" style={{ width: "100%", fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}
               rows={4} maxLength={16000} placeholder={t("操作手册正文：步骤、验收标准、注意事项（agent 加载后照做）。")}
               aria-label={t("技能 {0} 正文", i + 1)} value={s.body}
               onChange={(e) => applySkills(skills.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))} />
@@ -1562,7 +1581,7 @@ function PromptSkillsCard() {
         </div>
       </div>
       {msg && (
-        <div className={msg.kind} style={{ fontSize: 11, marginTop: 5 }} data-testid="agent-skills-msg" role="status">
+        <div className={msg.kind} style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 5 }} data-testid="agent-skills-msg" role="status">
           {msg.kind === "ok" ? "✓ " : "✕ "}{msg.text}
         </div>
       )}

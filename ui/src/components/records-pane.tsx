@@ -119,7 +119,7 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
 
   return (
     <div style={{ marginTop: 10 }} data-testid="records-chart-wrap">
-      <div className="dim" style={{ fontSize: 11, marginBottom: 4 }} data-testid="records-chart-caption">
+      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginBottom: 4 }} data-testid="records-chart-caption">
         {statsText}
       </div>
       {/* role=group（而非 img）：刻度是独立可聚焦按钮，img 会把子树对读屏隐藏 */}
@@ -165,7 +165,7 @@ function RecordsChart({ rows, sessionNames, onPick, flashSeq }: {
           {new Date(domain.t0 + domain.span).toLocaleTimeString(dateLocale(), { hour: "2-digit", minute: "2-digit" })}
         </text>
       </svg>
-      <div className="dim" style={{ fontSize: 10, marginTop: 3 }} data-testid="records-chart-legend">
+      <div className="dim" style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginTop: 3 }} data-testid="records-chart-legend">
         {[...new Set(rows.map((r) => r.status))].map((s) => (
           <span key={s} style={{ marginRight: 10 }}>
             <span style={{ color: statusColor(s) }}>●</span> {STATUS_LABEL[s] ? t(STATUS_LABEL[s]) : s}
@@ -233,7 +233,7 @@ export function RecordsPane(props: RecordsPaneProps) {
         </div>
         <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
           <select
-            style={{ fontSize: 11 }} aria-label={t("按种类筛选")} data-testid="records-kind-filter"
+            style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} aria-label={t("按种类筛选")} data-testid="records-kind-filter"
             value={filter.kind ?? ""}
             onChange={(e) => onFilter({ ...filter, kind: (e.target.value || null) as RecordsQuery["kind"] })}
           >
@@ -243,7 +243,7 @@ export function RecordsPane(props: RecordsPaneProps) {
             <option value="forward">{t("转发")}</option>
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label={t("按来源筛选")} data-testid="records-agent-filter"
+            style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} aria-label={t("按来源筛选")} data-testid="records-agent-filter"
             value={filter.agentId ?? ""}
             onChange={(e) => onFilter({ ...filter, agentId: e.target.value || null })}
           >
@@ -253,7 +253,7 @@ export function RecordsPane(props: RecordsPaneProps) {
             ))}
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label={t("按时间筛选")} data-testid="records-range-filter"
+            style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} aria-label={t("按时间筛选")} data-testid="records-range-filter"
             value={filter.range}
             onChange={(e) => onFilter({ ...filter, range: e.target.value as RecordsQuery["range"] })}
           >
@@ -264,7 +264,7 @@ export function RecordsPane(props: RecordsPaneProps) {
             <option value="30d">{t("近 30 天")}</option>
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label={t("按会话筛选")} data-testid="records-session-filter"
+            style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} aria-label={t("按会话筛选")} data-testid="records-session-filter"
             value={filter.sessionId ?? ""}
             onChange={(e) => onFilter({ ...filter, sessionId: e.target.value || null })}
           >
@@ -274,7 +274,7 @@ export function RecordsPane(props: RecordsPaneProps) {
             ))}
           </select>
           <select
-            style={{ fontSize: 11 }} aria-label={t("条数上限")} data-testid="records-limit-filter"
+            style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} aria-label={t("条数上限")} data-testid="records-limit-filter"
             value={String(filter.limit)}
             onChange={(e) => onFilter({ ...filter, limit: Number(e.target.value) || 200 })}
           >
@@ -282,17 +282,17 @@ export function RecordsPane(props: RecordsPaneProps) {
             <option value="500">{t("最近 500 条")}</option>
             <option value="1000">{t("最近 1000 条")}</option>
           </select>
-          <button className="ghost" style={{ fontSize: 11 }} disabled={busy} data-testid="records-refresh" onClick={onRefresh}>
+          <button className="ghost" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }} disabled={busy} data-testid="records-refresh" onClick={onRefresh}>
             {t("刷新")}
           </button>
         </div>
         <div style={{ marginTop: 8 }} data-testid="records-timeline">
           {rows === null ? (
-            <div className="dim" style={{ fontSize: 12, padding: "10px 0" }}>
+            <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", padding: "10px 0" }}>
               {busy ? t("加载中…") : t("打开本分区加载记录")}
             </div>
           ) : rows.length === 0 ? (
-            <div className="dim" style={{ fontSize: 12, padding: "10px 0" }} data-testid="records-empty">
+            <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", padding: "10px 0" }} data-testid="records-empty">
               {t("当前筛选下暂无记录——Agent 执行命令 / 传输文件后会出现在这里。")}
             </div>
           ) : (
@@ -302,30 +302,30 @@ export function RecordsPane(props: RecordsPaneProps) {
                 <div key={r.seq} id={`records-row-${r.seq}`}
                   className={flashSeq === r.seq ? "rec-row-flash" : undefined}
                   data-testid="records-row" style={{ padding: "6px 0", borderBottom: "1px dashed var(--border)" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
-                  <span className="dim mono" style={{ fontSize: 11 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: "calc(12px * var(--ui-font-scale))" }}>
+                  <span className="dim mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>
                     {new Date(r.ts).toLocaleString(dateLocale(), { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>
-                  <span className={`badge ${KIND_CLS[r.kind] ?? ""}`} style={{ fontSize: 10 }}>{t(KIND_LABEL[r.kind] ?? r.kind)}</span>
-                  <span className="dim" style={{ fontSize: 11 }}>
+                  <span className={`badge ${KIND_CLS[r.kind] ?? ""}`} style={{ fontSize: "calc(10px * var(--ui-font-scale))" }}>{t(KIND_LABEL[r.kind] ?? r.kind)}</span>
+                  <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>
                     {r.agent_id ? t("Agent {0}", r.agent_id) : t("人类")}
                   </span>
                   {/* ⑨ 主机标注（R41 累积面）：会话已关也能标出「当时在哪台主机」；
                       查不到如实显示短 id */}
                   {r.session_id && (
-                    <span className="dim" style={{ fontSize: 11 }}>
+                    <span className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>
                       · {sessionNames.get(r.session_id) ?? r.session_id.slice(0, 8)}
                     </span>
                   )}
-                  <span className={"mono" /* 摘要可选中复制，命令/路径常被回看 */} style={{ fontSize: 11, userSelect: "text", WebkitUserSelect: "text", wordBreak: "break-all", flex: "1 1 auto" }}>
+                  <span className={"mono" /* 摘要可选中复制，命令/路径常被回看 */} style={{ fontSize: "calc(11px * var(--ui-font-scale))", userSelect: "text", WebkitUserSelect: "text", wordBreak: "break-all", flex: "1 1 auto" }}>
                     {r.summary}
                   </span>
                   {/* 徽标走 t()（UX2-8④）：EN 模式露中文徽标 */}
-                  <span style={{ fontSize: 11, color: statusColor(r.status) }}>{STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}</span>
-                  {r.duration_ms != null && <span className="dim" style={{ fontSize: 10 }}>{fmtDur(r.duration_ms)}</span>}
-                  {r.exit_code != null && r.exit_code !== 0 && <span className="err" style={{ fontSize: 10 }}>exit {r.exit_code}</span>}
+                  <span style={{ fontSize: "calc(11px * var(--ui-font-scale))", color: statusColor(r.status) }}>{STATUS_LABEL[r.status] ? t(STATUS_LABEL[r.status]) : r.status}</span>
+                  {r.duration_ms != null && <span className="dim" style={{ fontSize: "calc(10px * var(--ui-font-scale))" }}>{fmtDur(r.duration_ms)}</span>}
+                  {r.exit_code != null && r.exit_code !== 0 && <span className="err" style={{ fontSize: "calc(10px * var(--ui-font-scale))" }}>exit {r.exit_code}</span>}
                   {r.output_excerpt && (
-                    <button className="ghost" style={{ fontSize: 10 }}
+                    <button className="ghost" style={{ fontSize: "calc(10px * var(--ui-font-scale))" }}
                       data-testid={`records-expand-${r.seq}`}
                       aria-expanded={expanded.has(r.seq)}
                       aria-controls={`records-out-${r.seq}`}
@@ -335,7 +335,7 @@ export function RecordsPane(props: RecordsPaneProps) {
                   )}
                 </div>
                 {r.output_excerpt && expanded.has(r.seq) && (
-                  <pre id={`records-out-${r.seq}`} className="mono" style={{ fontSize: 10, whiteSpace: "pre-wrap", margin: "6px 0 0", padding: 8, border: "1px solid var(--border)", borderRadius: 6, maxHeight: 180, overflow: "auto", userSelect: "text", WebkitUserSelect: "text" }}>
+                  <pre id={`records-out-${r.seq}`} className="mono" style={{ fontSize: "calc(10px * var(--ui-font-scale))", whiteSpace: "pre-wrap", margin: "6px 0 0", padding: 8, border: "1px solid var(--border)", borderRadius: 6, maxHeight: 180, overflow: "auto", userSelect: "text", WebkitUserSelect: "text" }}>
                     {r.output_excerpt}
                   </pre>
                 )}
@@ -357,7 +357,7 @@ export function RecordsPane(props: RecordsPaneProps) {
         <div className="set-desc">
           {t("超过保留期的记录在应用启动时自动清理（落盘即密文，清理即删除）；0 = 永久保留（记录库会随使用无界增长，慎选）。改动在重启后生效。")}
         </div>
-        <select style={{ fontSize: 12, marginTop: 8 }} aria-label={t("记录保留期")} data-testid="records-retention"
+        <select style={{ fontSize: "calc(12px * var(--ui-font-scale))", marginTop: 8 }} aria-label={t("记录保留期")} data-testid="records-retention"
           value={String(retention)}
           onChange={(e) => onChangeRetention(Number(e.target.value))}>
           <option value="30">{t("保留 30 天（默认）")}</option>

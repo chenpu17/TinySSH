@@ -2,6 +2,24 @@
 
 const cardByName = (page, name) => page.$(`.host-card:has(.host-name:text-is("${name}"))`);
 const hostNames = (page) => page.$$eval(".host-card .host-name", (els) => els.map((e) => e.textContent.trim()));
+// 走查 P1：收藏/编辑/删除收进「更多」菜单（与主机卡右键同一份菜单）
+const menuAction = async (page, name, item) => {
+  await page.evaluate((n) => {
+    const cards = [...document.querySelectorAll(".host-card")];
+    const nameOf = (c) => c.querySelector(".host-name")?.textContent.trim() ?? "";
+    // 先精确，后前缀（prod-2 的卡名带「（演示连接失败）」后缀）
+    const card = cards.find((c) => nameOf(c) === n) ?? cards.find((c) => nameOf(c).startsWith(n));
+    if (!card) throw new Error("host card not found: " + n);
+    card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 320 }));
+  }, name);
+  await page.waitForSelector(".ctx-menu", { timeout: 3000 });
+  await page.evaluate((txt) => {
+    const b = [...document.querySelectorAll(".ctx-menu [role=menuitem]")].find((x) => x.textContent.includes(txt));
+    if (!b) throw new Error("menu item not found: " + txt);
+    b.click();
+  }, item);
+  await page.waitForTimeout(700);
+};
 
 module.exports = {
   title: "主机增删改与 ssh_config 导入",
@@ -128,25 +146,32 @@ module.exports = {
       return { inSide: !!a?.closest(".host-card-side"), label: a?.getAttribute("title") ?? "", opacity: side ? getComputedStyle(side).opacity : "" };
     });
     ck.check("键盘 Tab 可达操作钮且操作组显形",
-      kb.inSide && kb.label.startsWith("收藏") && kb.opacity === "1", JSON.stringify(kb));
+      kb.inSide && kb.label.startsWith("更多操作") && kb.opacity === "1", JSON.stringify(kb));
+
+    // 「更多」钮打开与右键同一份菜单（收藏/编辑/删除都在里面）
+    const moreCard = await cardByName(page, "r45-new");
+    await moreCard.hover();
+    await page.waitForTimeout(250);
+    await (await moreCard.$(".host-more-btn")).click();
+    await page.waitForTimeout(300);
+    const moreMenu = await page.evaluate(() => {
+      const m = document.querySelector(".ctx-menu");
+      return m ? m.innerText.replace(/\n+/g, " | ") : "";
+    });
+    ck.check("「更多」钮弹出收藏/编辑/删除菜单",
+      moreMenu.includes("收藏") && moreMenu.includes("编辑主机") && moreMenu.includes("删除主机"), moreMenu || "(无菜单)");
+    await page.evaluate(() => document.querySelector(".pop-mask")?.click());
+    await page.waitForTimeout(250);
 
 
     // ── 收藏 ──
-    const c1 = await cardByName(page, "r45-new");
-    await c1.hover();
-    await page.waitForTimeout(300);
-    await (await c1.$('button[title^="收藏"]')).click();
-    await page.waitForTimeout(600);
+    await menuAction(page, "r45-new", "收藏（置顶分组）");
     ck.check("收藏后出现「收藏」分组", await page.evaluate(() => document.querySelector(".hostbar").innerText.includes("收藏")), "");
     const groupText = await page.evaluate(() => document.querySelector(".hostbar").innerText.replace(/\n+/g, " | ").slice(0, 120));
     ck.check("收藏分组内含 r45-new", groupText.includes("r45-new") || (await hostNames(page))[0] === "r45-new", groupText);
 
     // ── 编辑 ──
-    const c2 = await cardByName(page, "prod-1");
-    await c2.hover();
-    await page.waitForTimeout(300);
-    await (await c2.$('button[title^="编辑主机"]')).click();
-    await page.waitForTimeout(500);
+    await menuAction(page, "prod-1", "编辑主机");
     const vals = await page.$$eval(".add-host-dlg input", (els) => els.map((e) => e.value));
     ck.check("编辑表单预填 prod-1", vals.includes("prod-1"), vals.slice(0, 6).join(" / "));
     ck.check("编辑表单预填地址 10.0.0.11", vals.includes("10.0.0.11"), "");
@@ -158,11 +183,7 @@ module.exports = {
     ck.check("编辑后主机改名生效", (await hostNames(page)).includes("prod-1-renamed"), (await hostNames(page)).join(" / "));
 
     // ── 删除确认：取消 ──
-    const c3 = await cardByName(page, "r45-new");
-    await c3.hover();
-    await page.waitForTimeout(300);
-    await (await c3.$('button[title="删除主机"]')).click();
-    await page.waitForTimeout(500);
+    await menuAction(page, "r45-new", "删除主机");
     const dlg = await page.evaluate(() => {
       const d = document.querySelector(".confirm-dialog");
       return d ? d.innerText.replace(/\n+/g, " | ") : null;
@@ -174,11 +195,7 @@ module.exports = {
     ck.check("取消后主机仍在", (await hostNames(page)).includes("r45-new"));
 
     // ── 删除确认：确认 ──
-    const c4 = await cardByName(page, "r45-new");
-    await c4.hover();
-    await page.waitForTimeout(300);
-    await (await c4.$('button[title="删除主机"]')).click();
-    await page.waitForTimeout(500);
+    await menuAction(page, "r45-new", "删除主机");
     await page.evaluate(() => [...document.querySelectorAll(".confirm-dialog button")].find((b) => b.textContent.trim() === "删除").click());
     await page.waitForTimeout(800);
     ck.check("确认后主机从列表移除", !(await hostNames(page)).includes("r45-new"), (await hostNames(page)).join(" / "));
@@ -309,7 +326,7 @@ module.exports = {
       !!retryBtn && retryBtn.label.includes("prod-2") && !retryBtn.disabled && retryBtn.tabIndex === 0,
       JSON.stringify(retryBtn));
     // 改对地址（10.0.0.12 是 demo 认证失败主机；改成普通地址）后重试 → 成功
-    await clickInCard("prod-2", 'button[title^="编辑主机"]');
+    await menuAction(page, "prod-2", "编辑主机");
     await page.waitForTimeout(500);
     await page.fill("#ah-address", "10.0.0.55");
     await page.evaluate(() => [...document.querySelectorAll(".add-host-dlg button")].find((b) => b.textContent.trim() === "保存修改").click());

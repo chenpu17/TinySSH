@@ -49,15 +49,15 @@ export function SelfMeterDetail() {
     <div className="self-meter" data-testid="self-meter"
       style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
       <div style={{ display: "flex", gap: 14, alignItems: "baseline", flexWrap: "wrap" }}>
-        <span style={{ color: "var(--dim)", fontSize: 12 }}>{t("程序自身")}</span>
-        <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
+        <span style={{ color: "var(--dim)", fontSize: "calc(12px * var(--ui-font-scale))" }}>{t("程序自身")}</span>
+        <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "calc(12px * var(--ui-font-scale))" }}
           title={t("本进程 CPU 占全部逻辑核的百分比（任务管理器同口径）")}>CPU {fmtCpuPct(v.cpuPct)}</span>
-        <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
+        <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "calc(12px * var(--ui-font-scale))" }}
           title={t("工作集内存")}>{t("内存")} {v.wsMb} MB</span>
-        <span className="dim" style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}
+        <span className="dim" style={{ fontVariantNumeric: "tabular-nums", fontSize: "calc(12px * var(--ui-font-scale))" }}
           title={t("提交内存（Windows=独占提交字节；macOS 无此概念，取物理足迹 phys_footprint）")}>{t("提交")} {v.commitMb} MB</span>
       </div>
-      <div className="dim" style={{ fontSize: 11, marginTop: 2 }} data-testid="self-meter-at">
+      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 2 }} data-testid="self-meter-at">
         {t("采样于")} {new Date(v.at).toTimeString().slice(0, 8)}
       </div>
     </div>

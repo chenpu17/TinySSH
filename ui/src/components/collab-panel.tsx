@@ -152,7 +152,7 @@ export function CollabApprovals({
               <div className="ap-group-head">
                 <b>{g.sess ? g.sess.host_name : t("会话已不在列表")}</b>
                 <span className="mono dim" title={g.sid}> · {g.sid.slice(0, 12)}</span>
-                {g.sess && <span className={"mono " + stateLabel(g.sess.state).cls} style={{ fontSize: 10 }}>{stateLabel(g.sess.state).text}</span>}
+                {g.sess && <span className={"mono " + stateLabel(g.sess.state).cls} style={{ fontSize: "calc(10px * var(--ui-font-scale))" }}>{stateLabel(g.sess.state).text}</span>}
                 <span className="badge agent">{t("{0} 待处理", g.items.length)}</span>
               </div>
               {g.items.map((a) => {
@@ -182,7 +182,7 @@ export function CollabApprovals({
                       {a.purpose ? <span>{a.purpose}</span> : <span className="dim">{t("未提供（Agent 未收到委托说明）")}</span>}
                     </div>
                     {/* 目标上下文：多会话并存时 rm -rf 级裁决必须知道落在哪台机器 */}
-                    <div className="dim" style={{ fontSize: 11, marginTop: 5 }} title={a.session_id}>
+                    <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 5 }} title={a.session_id}>
                       {t("目标：")}{g.sess ? <b style={{ color: "var(--text)" }}>{g.sess.host_name}</b> : t("会话已不在列表")}
                       <span className="mono"> · {a.session_id.slice(0, 12)}</span>
                       {g.sess?.state === "Disconnected" && t(" · 会话已断开")}
@@ -190,24 +190,24 @@ export function CollabApprovals({
                     </div>
                     <div className="cmd" style={{ margin: "6px 0" }}>{a.command}</div>
                     {a.segment_report.map((s, i) => (
-                      <div key={i} className="dim" style={{ fontSize: 11 }}>
+                      <div key={i} className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>
                         · {s.segment} — {s.verdict}
                       </div>
                     ))}
                     {left !== null && (
-                      <div className="dim" style={{ fontSize: 11, marginTop: 4 }} data-testid="ap-countdown">
+                      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }} data-testid="ap-countdown">
                         ⏳ {left > 0
                           ? t("剩余 {0}s 后自动拒绝——请在超时前处理", left)
                           : t("已超时，等待核心按拒绝结算…")}
                       </div>
                     )}
                     {risk && !confirmId?.startsWith(`${a.id}:`) && (
-                      <div className="dim" style={{ fontSize: 11, marginTop: 6, color: "var(--warn)" }}>
+                      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 6, color: "var(--warn)" }}>
                         ⚠ {t("{0}——批准前请确认命令的全部效果。", risk)}
                       </div>
                     )}
                     {uncertainty && (
-                      <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                      <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>
                         ⚠ {t("{0}——批准前请确认命令的全部效果。", uncertainty)}
                       </div>
                     )}
@@ -218,7 +218,7 @@ export function CollabApprovals({
                           <button onClick={() => decide(a.id, "edit", editedCmd)} disabled={!editedCmd.trim() || editedCmd === a.command}>{t("保存并批准")}</button>
                           <button className="ghost" onClick={() => setEditingId(null)}>{t("取消")}</button>
                         </div>
-                        <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>{t("改后批准会记录为人工编辑（审计留痕）。")}</div>
+                        <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>{t("改后批准会记录为人工编辑（审计留痕）。")}</div>
                       </div>
                     ) : persistId === a.id ? (
                       // 持久放行编辑器：预填命令前缀（可编辑），写入该 Agent 的 allow 规则
@@ -243,7 +243,7 @@ export function CollabApprovals({
                               : t("保存规则并批准")}</button>
                           <button className="ghost" onClick={() => setPersistId(null)}>{t("取消")}</button>
                         </div>
-                        <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                        <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>
                           {t("前缀匹配（`*` 前为字面前缀），对该 Agent 永久生效，可到设置 → Agent 接入 管理；写入即审计留痕。")}
                         </div>
                       </div>
@@ -297,7 +297,7 @@ export function CollabApprovals({
                           <button className="danger" style={{ marginLeft: "auto" }} onClick={() => void decide(a.id, "deny", null)}>{t("拒绝")}</button>
                         </div>
                         {!eligible && (
-                          <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+                          <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>
                             {t("命令替换/解析失败：内容不可预判，无法记忆放行（每次都会重新送审）。")}
                           </div>
                         )}
@@ -317,7 +317,7 @@ export function CollabApprovals({
               {resolvedApprovals.map((a) => (
                 <div className="tl-row" key={a.id} title={a.edited_command || a.command}>
                   <div className="tl-action">
-                    <span className={(approvalResolvedLabel[a.status] ?? { cls: "err" }).cls} style={{ fontSize: 11 }}>
+                    <span className={(approvalResolvedLabel[a.status] ?? { cls: "err" }).cls} style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>
                       {t((approvalResolvedLabel[a.status] ?? { text: a.status }).text)}
                     </span>{" "}
                     {/* 编辑后批准显示实际放行文，不是原始请求（PV R1） */}

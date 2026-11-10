@@ -60,7 +60,7 @@ export function TmuxQuick({
           setTmuxMenu(next);
           if (next) onRefreshTmux();
         }}
-      ><IconTerminal size={14} />{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}<IconChevronDown size={12} /></button>
+      ><IconTerminal size={13} /><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></button>
       {tmuxMenu && (
         <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu">
           {/* 会话大屏（监控墙）：全部会话快照网格（单击放大可直接键入）。挂在

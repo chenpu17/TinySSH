@@ -71,14 +71,14 @@ export function ConfirmDialogs({
               <div className="hk-title" id="dlg-delegate-title">
                 {current.ever_agent_owned ? t("交还 {0} 给 Agent？", current.host_name) : t("把 {0} 交给 Agent？", current.host_name)}
               </div>
-              <div className="dim" style={{ fontSize: 12 }}>
+              <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))" }}>
                 {t("Agent 持有控制权期间，它的每个操作仍逐条经你审批；你随时可以接管（接管会作废尚未开始的请求）。")}
               </div>
               <div className="dlg-facts">
                 <div className="fact"><span className="dim">{t("主机")}</span> <b>{current.host_name}</b>{" "}
                   <span className="mono dim">{currentHost?.address && currentHost.address !== "local" ? `${currentHost.address}:${currentHost.port}` : t("本机")}</span></div>
                 <div className="fact"><span className="dim">{t("会话")}</span> <span className="mono">{current.id.slice(0, 12)}</span>{" "}
-                  <span className={"mono " + stateLabel(current.state).cls} style={{ fontSize: 11 }}>{stateLabel(current.state).text}</span></div>
+                  <span className={"mono " + stateLabel(current.state).cls} style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{stateLabel(current.state).text}</span></div>
                 <div className="fact"><span className="dim">{t("能力")}</span>{" "}
                   {delegateCap === null ? <span className="dim">{t("查询中…")}</span>
                     : delegateCap.integration_present && delegateCap.prompt_ready
@@ -96,10 +96,10 @@ export function ConfirmDialogs({
                 aria-label={t("任务目标（可选）")}
                 placeholder={t("写给 Agent 的委托留言，例：把日志打包放到 /tmp 后交还给我")}
                 onChange={(e) => setDelegateGoal(e.target.value)} />
-              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>
+              <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 4 }}>
                 {t("留空也可以转交；留空不会清除会话上已有的目标。")}
               </div>
-              {delegateErr && <div className="err" style={{ marginTop: 6, fontSize: 12 }} data-testid="delegate-err">✕ {delegateErr}</div>}
+              {delegateErr && <div className="err" style={{ marginTop: 6, fontSize: "calc(12px * var(--ui-font-scale))" }} data-testid="delegate-err">✕ {delegateErr}</div>}
               {!collabConfigured && (
                 <div className="side-quiet" data-testid="delegate-unconfigured">
                   {t("协作服务未启用——先到「设置 → Agent 接入」登记 Agent。返回后仍需在此单独确认转交。")}
@@ -126,7 +126,7 @@ export function ConfirmDialogs({
             <div className="confirm-dialog" role="dialog" aria-modal="true"
               aria-labelledby="dlg-disable-collab-title" data-testid="collab-disable-dlg" onClick={(e) => e.stopPropagation()}>
               <div className="hk-title" id="dlg-disable-collab-title">{t("停用协作？")}</div>
-              <div className="dim" style={{ fontSize: 12 }}>
+              <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))" }}>
                 {t("确认后立即封闭入口——新 Agent 请求一律被拒绝，不等待你逐个接管；已有请求在执行开始前核对停用代际，作废留痕，不会因旧审批决定继续执行。")}
               </div>
               <div className="dlg-facts">
@@ -154,7 +154,7 @@ export function ConfirmDialogs({
                   （转发数），任务/传输状态未知时明确未知，不声称空闲 */}
               <div className="hk-title" id="dlg-close-title">{t("关闭与 {0} 的会话？", confirm.hostName)}</div>
               <div>{t("终端现场不可恢复——重连会是全新现场（记录保留）。")}</div>
-              <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
+              <div className="dim" style={{ marginTop: 6, fontSize: "calc(12px * var(--ui-font-scale))" }}>
                 · {t("将受影响的转发：")}{confirmImpact ? (confirmImpact.forwards > 0 ? t("{0} 条（随会话关闭）", confirmImpact.forwards) : t("无")) : t("状态未知（查询失败）")}
                 <br />· {t("正在运行的任务/传输：状态未知——如有重要作业请先确认")}
                 {confirm.paneCount > 0 && (
@@ -181,7 +181,7 @@ export function ConfirmDialogs({
                 )}
                 {t("，转发 {0} 条。", quitSummary.forwards)}
               </div>
-              <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>
+              <div className="dim" style={{ marginTop: 6, fontSize: "calc(12px * var(--ui-font-scale))" }}>
                 {t("正在运行的命令与传输会被终止；传输处于提交中/结果待核实时不代表已全部取消。")}
                 {t("会话不跨启动保留——下次启动可在欢迎页「重连上次会话」一键恢复届时仍打开的主机。")}
               </div>

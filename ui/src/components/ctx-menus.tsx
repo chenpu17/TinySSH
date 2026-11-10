@@ -195,7 +195,7 @@ export function CtxMenus({
               </div>
               <div className="ts-label">{t("在{0}显示已有会话", side)}<span className="dim">{t("（复用现有连接，不新建）")}</span></div>
               {[...sessions].filter((s) => s.id !== sid).length === 0 && (
-                <div className="dim" style={{ fontSize: 12, padding: "2px 0 4px" }}>{t("暂无其他会话")}</div>
+                <div className="dim" style={{ fontSize: "calc(12px * var(--ui-font-scale))", padding: "2px 0 4px" }}>{t("暂无其他会话")}</div>
               )}
               {[...sessions].filter((s) => s.id !== sid).map((s) => {
                 const st = stateLabel(s.state);
@@ -216,12 +216,12 @@ export function CtxMenus({
                     onClick={() => { setSplitMenu(false); if (!inSecond) void enterSplitWith(s.id, splitDir); }}>
                     <span className="sm-name">{tabNames[s.id] ?? s.host_name}</span>
                     {inSecond
-                      ? <span className="mono ok" style={{ fontSize: 10, marginLeft: "auto" }}>{t("已在窗格")}</span>
-                      : <span className={"mono " + st.cls} style={{ fontSize: 10, marginLeft: "auto" }}>{st.text}</span>}
+                      ? <span className="mono ok" style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginLeft: "auto" }}>{t("已在窗格")}</span>
+                      : <span className={"mono " + st.cls} style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginLeft: "auto" }}>{st.text}</span>}
                   </button>
                 );
               })}
-              <div className="dim" style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 2px 0" }}>
+              <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", lineHeight: 1.6, padding: "6px 2px 0" }}>
                 {t("新建的会话先落在标签栏——右键标签选「与当前会话分屏」即可。")}
               </div>
             </div>
@@ -546,10 +546,10 @@ export function CtxMenus({
           {/* 窄窗下这是常见路径：把「怎么恢复」做成两个可点的动作，
               而不是让用户自己猜该拉窗还是关主机栏 */}
           <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexShrink: 0 }}>
-            <button className="ghost" style={{ whiteSpace: "nowrap", fontSize: 11, padding: "2px 6px" }}
+            <button className="ghost" style={{ whiteSpace: "nowrap", fontSize: "calc(11px * var(--ui-font-scale))", padding: "2px 6px" }}
               onClick={onCollapseHostbar}
             >{t("收起主机栏恢复分屏")}</button>
-            <button className="ghost" style={{ whiteSpace: "nowrap", fontSize: 11, padding: "2px 6px" }}
+            <button className="ghost" style={{ whiteSpace: "nowrap", fontSize: "calc(11px * var(--ui-font-scale))", padding: "2px 6px" }}
               onClick={() => {
                 splitHintDismissedRef.current = true;
                 setSplitHintOpen(false);

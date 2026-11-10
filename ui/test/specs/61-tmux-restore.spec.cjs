@@ -201,11 +201,19 @@ module.exports = {
     const bufC = await bufText(page, newSid);
     ck.check("建连回显：启动命令于提示符处执行（[演示] tmux new -A -s work）",
       !!bufC && bufC.includes("[演示] tmux new -A -s work"), bufC?.slice(-160) ?? "无缓冲");
-    // 编辑回读：表单预填启动命令（demo upsert 持久化）
+    // 编辑回读：表单预填启动命令（demo upsert 持久化）——走查 P1 后入口在右键菜单
     const card2 = await page.$('.host-card:has(.host-name:text-is("tmux-host"))');
     await card2.hover();
-    await page.waitForTimeout(300);
-    await (await card2.$('button[title^="编辑主机"]')).click();
+    await page.waitForTimeout(250);
+    await page.evaluate(() => {
+      const card = [...document.querySelectorAll(".host-card")]
+        .find((c) => c.querySelector(".host-name")?.textContent.trim() === "tmux-host");
+      card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 90, clientY: 320 }));
+    });
+    await page.waitForSelector(".ctx-menu", { timeout: 3000 });
+    await page.evaluate(() => {
+      [...document.querySelectorAll(".ctx-menu [role=menuitem]")].find((x) => x.textContent.includes("编辑主机")).click();
+    });
     await page.waitForTimeout(500);
     ck.check("编辑表单回读启动命令",
       (await page.evaluate(() => document.querySelector('[data-testid="startup-cmd-input"]')?.value)) === "tmux new -A -s work",

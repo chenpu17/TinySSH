@@ -776,32 +776,32 @@ export function AgentView({
               </div>
             )}
             <div className="mono" data-testid="agent-inline-cmd"
-              style={{ fontSize: 12, color: "var(--text)", maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+              style={{ fontSize: "calc(12px * var(--ui-font-scale))", color: "var(--text)", maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
               {a.command}
             </div>
             <div data-testid="agent-inline-purpose"
-              style={{ fontSize: 11, marginTop: 3, color: a.purpose ? "var(--text-sub)" : "var(--warn)" }}>
+              style={{ fontSize: "calc(11px * var(--ui-font-scale))", marginTop: 3, color: a.purpose ? "var(--text-sub)" : "var(--warn)" }}>
               {t("目的：")}{a.purpose || t("未提供目的（Agent 未收到委托说明）")}
             </div>
             {a.segment_report.length > 0 && (
               <details data-testid="agent-inline-segs">
-                <summary style={{ fontSize: 11, color: "var(--text-sub)", cursor: "pointer" }}>{segmentSummary(a)}</summary>
+                <summary style={{ fontSize: "calc(11px * var(--ui-font-scale))", color: "var(--text-sub)", cursor: "pointer" }}>{segmentSummary(a)}</summary>
                 {a.segment_report.map((s, i) => (
-                  <div key={i} style={{ fontSize: 11, color: "var(--text-sub)" }}>· {s.segment} — {s.verdict}</div>
+                  <div key={i} style={{ fontSize: "calc(11px * var(--ui-font-scale))", color: "var(--text-sub)" }}>· {s.segment} — {s.verdict}</div>
                 ))}
               </details>
             )}
             {risk && (
-              <div style={{ fontSize: 11, color: "var(--warn)" }}>⚠ {t("{0}——批准前请确认命令的全部效果。", risk)}</div>
+              <div style={{ fontSize: "calc(11px * var(--ui-font-scale))", color: "var(--warn)" }}>⚠ {t("{0}——批准前请确认命令的全部效果。", risk)}</div>
             )}
             {left !== null ? (
-              <div data-testid="agent-inline-countdown" style={{ fontSize: 11, color: "var(--warn-text)" }}>
+              <div data-testid="agent-inline-countdown" style={{ fontSize: "calc(11px * var(--ui-font-scale))", color: "var(--warn-text)" }}>
                 ⏳ {left > 0
                   ? t("剩余 {0} 秒后自动拒绝——命令不会执行", left)
                   : t("已超时，等待核心按拒绝结算…")}
               </div>
             ) : (
-              <div style={{ fontSize: 11, color: "var(--warn-text)" }}>{t("120 秒内未处理将自动拒绝，命令不会执行")}</div>
+              <div style={{ fontSize: "calc(11px * var(--ui-font-scale))", color: "var(--warn-text)" }}>{t("120 秒内未处理将自动拒绝，命令不会执行")}</div>
             )}
           </div>
           <button className={gated ? "warn" : "primary"} data-testid="agent-approve-real"
