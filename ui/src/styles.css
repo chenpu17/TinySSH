@@ -1294,7 +1294,10 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
   background: radial-gradient(640px 440px at 50% 34%, var(--accent-soft), transparent 72%);
 }
 .welcome-box {
-  position: relative; max-width: 470px; padding: 30px 34px; margin: auto 24px;
+  /* 宽度随界面字号缩放：125% 字号下 470px 卡里每行少放约一两成的字，步骤与快捷
+     动作撑到 637px 高，960×600 最小窗口首屏看不到主行动钮。按字号同比放大到
+     588px 后正文换行减少、卡高回落到 487px，最小窗口一屏可用（100% 不变） */
+  position: relative; max-width: calc(470px * var(--ui-font-scale)); padding: 30px 34px; margin: auto 24px;
   background: linear-gradient(180deg, var(--panel2), var(--panel));
   border: 1px solid var(--border); border-radius: 16px;
   box-shadow: 0 4px 12px var(--shadow-soft), 0 24px 64px var(--shadow-dialog);
@@ -1324,6 +1327,18 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .welcome-actions button { white-space: nowrap; }
 .welcome-actions button:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .welcome-note { font-size: calc(11px * var(--ui-font-scale)); }
+/* 矮窗口（≤700px 高，覆盖 960×600 最小尺寸，以及 125% 字号下的等效可读行数）：
+   欢迎页纵向节奏收紧——KI-028 只保证卡片可滚到底，这里让最小窗口首屏就能看到
+   主行动钮（添加主机/快速连接）且常规矮窗不用滚。≥700px 高维持原留白 */
+@media (max-height: 700px) {
+  .welcome-box { padding: 20px 28px; }
+  .welcome-mark { width: 48px; height: 48px; border-radius: 14px; margin-bottom: 10px; }
+  .welcome-steps { margin: 12px 0 14px; gap: 6px; line-height: 1.55; }
+  .welcome-actions { margin-bottom: 8px; }
+  /* 矮窗首屏优先保住四个主行动钮：底部状态句与标签条/按钮信息重复，且在 125%
+     字号的最小窗口里只剩半行露在裁切线上（看起来像渲染坏了），矮窗直接收起 */
+  .welcome-note { display: none; }
+}
 /* ⌘F 终端内搜索框（T16）：悬浮于终端右上角，不遮内容主区 */
 .term-search {
   position: absolute; top: 8px; right: 16px; z-index: 10;
@@ -1369,6 +1384,25 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .term-search .ghost { position: relative; }
 .tab-x::after, .host-del::after,
 .term-search .ghost::after { content: ""; position: absolute; inset: -5px; }
+/* 走查（2026-11-10）补漏：同一 28×28 命中盒工艺此前只覆盖了 tab 关闭/主机删除/
+   搜索导航/文件面板钮，实测还有一批短边 13–20px 的常用钮漏在网外——主机卡「更多」
+   23×19、主机「连接」36×20、状态栏任务钮 18 高、资源采样暂停 20×20、toast 关闭
+   15×13、文件面包屑 17 高、行内下载 20 高。仅扩透明命中区，视觉尺寸与布局不变；
+   横向按邻居间距收紧（操作组/状态栏相邻钮只做纵向扩展，避免命中区互相叠压） */
+.host-more-btn, .sb-btn, .metrics-bar .mpause,
+.toast .toast-x, .sftp-crumb, .sftp-row .sftp-dl { position: relative; }
+.host-more-btn::after { content: ""; position: absolute; inset: -6px 0; }
+.sb-btn::after { content: ""; position: absolute; inset: -4px 0; }
+.metrics-bar .mpause::after { content: ""; position: absolute; inset: -4px; }
+.toast .toast-x::after { content: ""; position: absolute; inset: -7px -5px; }
+.sftp-crumb::after { content: ""; position: absolute; inset: -5px 0; }
+.sftp-row .sftp-dl::after { content: ""; position: absolute; inset: -6px 0; }
+/* 主机卡「更多 / 连接」：这两枚只能用**实盒**扩（不能走 ::after）——「连接」上挂着
+   相位文本省略号，自己的 overflow:hidden 会把透明命中盒裁掉（实测 ::after 在
+   ±11px 处全部落空）。故按压钮家族既有的 26px 语言给足内边距：更多 19→25、
+   连接 20→26，视觉盒即命中盒。操作组实测 73px（100%）/ 79px（125%），仍在 hover
+   让位宽度 88px 内
+   （具体 padding 写在下面 .host-more-btn / .host-connect-btn 本体规则里） */
 .ts-open { border-color: var(--accent); }
 /* R21 凭据基础管理行：设置面板凭据库列表（全部走既有 token）。
    vis-r21：280px 面板单行排不下——两行布局，label/指纹各自弹性截断 */
@@ -2101,15 +2135,17 @@ button.wr-row:not(:disabled):hover { border-color: var(--accent-line); backgroun
 /* 主机在线徽章（五人走查·林姐）：●N = 该主机现有会话数；绿色 = 有已连接会话 */
 .live-tag { color: var(--text-sub); }
 .live-tag.on { color: var(--ok); border-color: var(--ok); }
-/* 连接按钮：常态随操作组一起隐没；连接中（disabled）时操作组整体常显 */
+/* 连接按钮：常态随操作组一起隐没；连接中（disabled）时操作组整体常显。
+   内边距按 26px 命中盒给（见 1390 行注释）：相位文本省略号依赖本钮 overflow:hidden，
+   透明 ::after 会被裁掉，只能把实盒做大 */
 .host-connect-btn {
-  padding: 2px 6px; font-size: calc(11px * var(--ui-font-scale)); font-weight: 500;
+  padding: 5px 7px; font-size: calc(11px * var(--ui-font-scale)); font-weight: 500;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--accent-ring); border-radius: 5px;
 }
 .host-connect-btn:not(:disabled):hover { background: var(--accent-fill); color: var(--on-accent); border-color: var(--accent-fill); }
-/* hover 操作钮（编辑/删除）：随操作组一同浮现 */
-.host-more-btn { padding: 2px 4px; }
+/* hover 操作钮（编辑/删除）：随操作组一同浮现；25px 实盒（同 1390 行口径） */
+.host-more-btn { padding: 5px 6px; }
 /* 空态统一（T33）：图标 + 一句话，右栏三处与品牌化欢迎页同一语言 */
 .empty { display: flex; gap: 8px; align-items: flex-start; color: var(--dim); font-size: calc(12px * var(--ui-font-scale)); line-height: 1.7; padding: 8px 2px; }
 .empty .ico { margin-top: 4px; color: var(--accent); opacity: 0.75; }

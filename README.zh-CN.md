@@ -58,7 +58,7 @@ Windows 是主要验证平台——全套测试与逐轮真机验证都在它上
 ```bash
 # 前端（demo 模式，纯浏览器可跑）
 cd ui && npm ci && npm run dev           # http://localhost:5183
-npm test                                 # UI 套件（71 spec / 1488 断言，headless）
+npm test                                 # UI 套件（72 spec / 1500 断言，headless）
 npm run build                            # tsc + vite build
 
 # 桌面应用（tauri dev；Rust 工作区，需 Rust ≥ 1.86、Node ≥ 22）
