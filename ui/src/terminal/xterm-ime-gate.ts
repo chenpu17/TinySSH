@@ -149,8 +149,8 @@ export function patchXtermImeGate(term: unknown): void {
       const origTrigger = svc.triggerDataEvent;
       svc.triggerDataEvent = function (this: unknown, data: string, wasUserInput?: boolean) {
         // 鼠标上报（SGR/X10/URXVT 滚轮与点击报文）不是键入文本，不计入「本键已
-        // 送达」：滚轮合帧可能在 keydown 与 IME input 之间送达一次，若计数，会把
-        // IME 异步提交的唯一送达机会误判成已发而丢字（见 wheel-batch.ts）。
+        // 送达」：滚轮节流可能恰好在 keydown 与 IME input 之间送达一次，若计数，
+        // 会把 IME 异步提交的唯一送达机会误判成已发而丢字（见 wheel-batch.ts）。
         if (!isMouseReport(data)) core[DELIVERY_SEQ] = (core[DELIVERY_SEQ] ?? 0) + 1;
         return origTrigger.call(this, data, wasUserInput);
       };

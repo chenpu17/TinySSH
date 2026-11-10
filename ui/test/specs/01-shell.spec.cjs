@@ -26,10 +26,13 @@ module.exports = {
     const bar = await page.evaluate(() => {
       const t = document.querySelector(".titlebar").getBoundingClientRect().height;
       const s = document.querySelector(".statusbar").getBoundingClientRect().height;
-      return { t: Math.round(t), s: Math.round(s) };
+      const tab = document.querySelector(".tabbar-row").getBoundingClientRect().height;
+      return { t: Math.round(t), s: Math.round(s), tab: Math.round(tab) };
     });
     ck.check("标题区 44px", Math.abs(bar.t - 44) <= 1, `实得 ${bar.t}px`);
-    ck.check("状态条 24px", Math.abs(bar.s - 24) <= 1, `实得 ${bar.s}px`);
+    // 用户反馈合并：资源采样条并入状态条（不再有独立第二行），整体压到 26px
+    ck.check("状态条 26px（资源采样已合并进行）", Math.abs(bar.s - 26) <= 1, `实得 ${bar.s}px`);
+    ck.check("标签条 34px", Math.abs(bar.tab - 34) <= 1, `实得 ${bar.tab}px`);
 
     // ── 主机列表 ──
     const hosts = await page.$$eval(".host-card .host-name", (els) => els.map((e) => e.textContent.trim()));
@@ -48,20 +51,20 @@ module.exports = {
     const restored = await page.$$eval(".host-card", (e) => e.length);
     ck.check("清空搜索后恢复 7 台", restored === 7, `实得 ${restored}`);
 
-    // ── 收起 / 展开（⌘B 钮）──
-    await page.click('button[aria-label="收起主机栏"]');
+    // ── 收起 / 展开（左活动栏 rail-hosts 是唯一入口，⌘B 同）──
+    await page.click('[data-testid="rail-hosts"]');
     await page.waitForTimeout(250);
     let collapsed = await page.evaluate(() => ({
       hostbar: !!document.querySelector(".hostbar"),
       expand: !!document.querySelector(".hb-expand"),
+      railOff: !document.querySelector('[data-testid="rail-hosts"]')?.classList.contains("ts-open"),
     }));
     ck.check("收起后主机栏消失", !collapsed.hostbar);
-    ck.check("收起后出现展开钮 .hb-expand", collapsed.expand);
-    if (collapsed.expand) {
-      await page.click(".hb-expand");
-      await page.waitForTimeout(250);
-      ck.check("展开钮可恢复主机栏", await page.evaluate(() => !!document.querySelector(".hostbar")));
-    }
+    ck.check("折叠态无浮动展开钮（入口只在活动栏）", !collapsed.expand);
+    ck.check("收起态 rail-hosts 熄灭", collapsed.railOff);
+    await page.click('[data-testid="rail-hosts"]');
+    await page.waitForTimeout(250);
+    ck.check("同一 rail-hosts 恢复主机栏", await page.evaluate(() => !!document.querySelector(".hostbar")));
 
     // ── 拖动夹取 200–300 ──
     const grip = await page.$(".hb-grip");

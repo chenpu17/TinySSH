@@ -221,18 +221,18 @@ module.exports = {
     ck.check("色板选择 KV 持久（ui.palette）",
       await page.evaluate(() => localStorage.getItem("ui.palette") === "obsidian"), "");
 
-    // 终端分类：终端行为（3 行）+ 终端外观（P0 品质轮加卡）两卡；面板盒子尺寸恒定
-    // （分类切换只换内容不换盒子——用户反馈跳变）
+    // 终端分类：终端行为（6 行）+ 终端外观（6 行）+ 滚轮与 TUI（1 行）三卡；
+    // 面板盒子尺寸恒定（分类切换只换内容不换盒子——用户反馈跳变）
     await page.click('[data-testid="settings-cat-terminal"]');
     await page.waitForTimeout(400);
-    ck.check("终端分类两卡（行为 6 行 + 外观 6 行）",
+    ck.check("终端分类三卡（行为 6 行 + 外观 6 行 + 滚轮 1 行）",
       (await page.evaluate(() => {
         const cards = [...document.querySelectorAll(".settings-pane .set-card")].filter((e) => e.getClientRects().length > 0);
-        if (cards.length !== 2) return false;
+        if (cards.length !== 3) return false;
         const rows = (c) => c.querySelectorAll(".set-item").length;
         // P2-c 轮：行为卡 3→4（OSC 52 策略）；本地终端一等公民轮 4→5（本地 Shell 下拉）；
-        // 本轮 5→6（启动自动打开本地终端开关）
-        return rows(cards[0]) === 6 && rows(cards[1]) === 6;
+        // 本轮 5→6（启动自动打开本地终端开关）；外观卡 6 行不变；KI-004 新增滚轮频率卡 1 行
+        return rows(cards[0]) === 6 && rows(cards[1]) === 6 && rows(cards[2]) === 1;
       })), await page.evaluate(() =>
         [...document.querySelectorAll(".settings-pane .set-card")].map((c) => c.querySelectorAll(".set-item").length).join(",")));
     const boxT = await dlgBox();

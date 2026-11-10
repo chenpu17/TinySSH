@@ -301,6 +301,15 @@ const EN: Record<string, string> = {
   "字距": "Letter spacing",
   "额外字符间距（px）；0 为字体原生度量。": "Extra spacing between characters (px); 0 = font-native metrics.",
   "0（默认）": "0 (default)",
+  "滚轮与 TUI": "Wheel & TUI",
+  "tmux / 全屏 TUI 开启鼠标上报时，滚轮报文按此频率发给远端：频率越高越跟手，远端复制模式的重绘也越重，链路慢或卡顿时调低。普通终端的回滚滚动不受影响。":
+    "When tmux / a full-screen TUI enables mouse reporting, wheel reports are sent to the remote at this rate: higher is more responsive, but also makes the remote's copy-mode redraw more; lower it on slow links or when it stutters. Normal terminal scrollback is unaffected.",
+  "滚轮上报频率": "Wheel report rate",
+  "默认 60 次/秒，与常见显示刷新同拍；本机或局域网 tmux 可试更高档或「跟随显示刷新率」。":
+    "Default 60/s matches common display refresh; for local or LAN tmux, try a higher rate or \"Follow display refresh rate\".",
+  "{0} 次/秒（默认）": "{0}/s (default)",
+  "{0} 次/秒": "{0}/s",
+  "跟随显示刷新率（30–120Hz）": "Follow display refresh (30–120Hz)",
 
   // —— 设置面板：输出触发器 ——
   "载入中…": "Loading…",

@@ -23,7 +23,7 @@ import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
 import { installMouseModeGuard, resetMouseReporting } from "./terminal/mouse-mode-guard";
 import { repaintTerm } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
-import { installWheelBatch } from "./terminal/wheel-batch";
+import { installWheelBatch, displayIntervalMs } from "./terminal/wheel-batch";
 import { isScrollbackFull, scrollBelow } from "./terminal/scrollback";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
@@ -52,7 +52,7 @@ import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
 import { isMonitorPaused, setMonitorPaused as setStoreMonitorPaused, setMonEnabled, syncMonitorTargets } from "./monitor-store";
 import {
   IconSliders, IconPlus, IconX, IconStop, IconPencil, IconTrash, IconStar,
-  IconChevronUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconTerminal,
+  IconChevronUp, IconChevronDown, IconTerminal,
   IconArrowDown, IconUpload, IconDownload, IconInbox, IconSearch, IconLoader,
   IconFolder, IconRefresh, IconMaximize, IconMinimize,
   IconServer, IconBot, IconUsers, IconShuffle, IconRows, IconBlocks, IconGauge,
@@ -98,13 +98,14 @@ import {
   normApprovalStatus, PALETTES, PALETTE_DEFAULT, pathBasename,
   runBench, searchOptions, SETTING_AUTO_LOCAL, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
   SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
-  SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK,
+  SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK, SETTING_TERM_WHEEL_RATE,
   stateLabel, stampLocal, stopOutcomeText, isImeComposing,
   SPLIT_DEGRADE_BELOW, SPLIT_DEGRADE_BELOW_H, SPLIT_FRAC_MAX, SPLIT_FRAC_MIN,
   SPLIT_RECOVER_AT, SPLIT_RECOVER_AT_H, tauriListen, THEMES, ThemePreset,
   TransferCard, themeById, TZ_NOTE, useDialogFocus,
   TERM_FONT_DEFAULT, TERM_FONTS, termFontCss, TERM_LETTER_SPACING_DEFAULT, TERM_SCROLLBACK_DEFAULT,
-  type Appearance, type SettingsCat, type SplitDir, type SplitGroup, type SplitPanes, type TermCursorStyle,
+  TERM_WHEEL_RATE_DEFAULT, parseTermWheelRate,
+  type Appearance, type SettingsCat, type SplitDir, type SplitGroup, type SplitPanes, type TermCursorStyle, type TermWheelRate,
 } from "./app-data";
 import { localeNow, resolveInitialLocale, setLocale, SETTING_LOCALE, t, type Locale } from "./i18n";
 import { WinControls } from "./components/window-controls";
@@ -1177,7 +1178,12 @@ export default function App() {
   const goalDirty = useRef(false);
   const goalDrafts = useRef<Map<string, string>>(new Map());
   const goalRef = useRef<HTMLTextAreaElement | null>(null);
-  const prevSidRef = useRef<string | null>(null);
+  // 上一次渲染所对应的会话：必须用 state 而非 ref 参与「渲染期同步」比较。
+  // ref 在渲染中写入后，若这次渲染被并发更新打断丢弃，goalDraft 的 setState 也
+  // 一起丢，但 ref 已推进——下一次提交就成了「新 sid + 旧草稿」，H1 泄漏窗重现
+  // （满载全量回归时 15-goal 逐帧采样偶发闪 1 帧）。state 比较在弃渲染后仍成立，
+  // 会重新走一遍暂存/恢复。
+  const [goalSid, setGoalSid] = useState<string | null>(null);
   // 简报 ref：拖拽上传回调里读当前 cwd（不进依赖数组，避免监听器随简报反复重订阅）
   const briefRef = useRef<Brief | null>(null);
   useEffect(() => { briefRef.current = brief; }, [brief]);
@@ -1897,15 +1903,16 @@ export default function App() {
   // 草稿换装必须**渲染期同步**（官方 adjust-state-on-prop-change 模式）：effect 版
   // 先提交「新 sid + 旧草稿」再在 effect 里清——两拍之间必有一帧已画出的泄漏窗
   // 口，16ms 逐帧采样器（15-goal H1 断言）撞上就闪 1 帧；渲染期 setState 让同一
-  // 次提交就带上正确草稿，窗口归零
+  // 次提交就带上正确草稿，窗口归零。比较基准用 goalSid（state），不用 ref：
+  // 并发渲染被丢弃时 state 更新与比较基准同生共死，不会留下「sid 已换、草稿未换」
+  // 的提交。
   {
-    const prevSid = prevSidRef.current;
-    if (prevSid !== sid) {
-      if (prevSid && goalDirty.current) goalDrafts.current.set(prevSid, goalDraft);
+    if (goalSid !== sid) {
+      if (goalSid && goalDirty.current) goalDrafts.current.set(goalSid, goalDraft);
       const stashed = sid ? goalDrafts.current.get(sid) : undefined;
       if (stashed !== undefined) { goalDirty.current = true; setGoalDraft(stashed); }
       else { goalDirty.current = false; setGoalDraft(""); }
-      prevSidRef.current = sid;
+      setGoalSid(sid);
     }
   }
   // 目标输入框随内容自动增高（上限 150px ≈ 7 行半，超出转内部滚动）
@@ -2569,9 +2576,10 @@ export default function App() {
     }, true);
     // 精确触摸板 1:1 直跟，经典滚轮保留 100ms 补间（见 terminal/scroll.ts）。
     installAdaptiveSmoothScroll(term, el, isMacPlatform() ? 0 : 100);
-    // tmux/全屏 TUI 鼠标上报下的滚轮合帧：同一时间窗的报文合成一次 PTY 写入，
-    // 减少远端 copy-mode 重绘（见 terminal/wheel-batch.ts）。
-    installWheelBatch(term);
+    // tmux/全屏 TUI 鼠标上报下的滚轮节流：报文按「设置 → 终端 → 滚轮上报频率」
+    // 匀速下发（默认 60 次/秒，可跟随刷新率），甩动只保留最新方向/位置，避免远端
+    // copy-mode 排队重绘越滚越滞后（见 terminal/wheel-batch.ts）。
+    installWheelBatch(term, { intervalMs: wheelIntervalMs });
     // 「回到底部」浮钮（主终端）：普通屏 + 视口离开底部时出现，带剩余行数。
     // ALT 备用屏（全屏 TUI）没有可回的历史，不显示；tmux 格子另挂一份更小的。
     const scrollBottom = document.createElement("button");
@@ -2963,8 +2971,8 @@ export default function App() {
       if (text) pasteTextIntoRef.current(term, sid, text, key);
     }, true);
     installAdaptiveSmoothScroll(term, body, isMacPlatform() ? 0 : 100);
-    // 面板格子与主终端同一滚轮合帧路径（tmux 鼠标上报时省远端重绘）
-    installWheelBatch(term);
+    // 面板格子与主终端同一滚轮节流路径（同一频率设置，tmux 鼠标上报时避免远端排重绘）
+    installWheelBatch(term, { intervalMs: wheelIntervalMs });
     // 「回到底部」浮钮（tmux 格子，小号）：视口离开底部才出现。远端 copy-mode 由
     // tmux 接管视口——鼠标上报开着时滚轮直发远端，本地 viewportY 不动，故此处
     // 自然不出现（只看本地真滚过的场景，不谎报远端缓冲）。
@@ -4135,6 +4143,14 @@ export default function App() {
   const termScrollbackRef = useRef(TERM_SCROLLBACK_DEFAULT);
   const [termLetterSpacing, setTermLetterSpacing] = useState(TERM_LETTER_SPACING_DEFAULT);
   const termLetterSpacingRef = useRef(TERM_LETTER_SPACING_DEFAULT);
+  // 滚轮上报频率（KI-004）：state 供设置回显；ref 供 wheel-batch 的间隔提供者逐次
+  // 读取——运行中改档无需重装补丁；「跟随刷新率」由 displayIntervalMs 实测（30–120Hz）。
+  const [termWheelRate, setTermWheelRate] = useState<TermWheelRate>(TERM_WHEEL_RATE_DEFAULT);
+  const termWheelRateRef = useRef<TermWheelRate>(TERM_WHEEL_RATE_DEFAULT);
+  const wheelIntervalMs = useCallback(
+    () => (termWheelRateRef.current === "auto" ? displayIntervalMs() : 1000 / termWheelRateRef.current),
+    [],
+  );
   // 二十二轮主题统一：终端配色恒由「色板×深浅」派生（无独立预设、无联动开关）。
   // derivedThemeRef 缓存最近一次派生结果，makeTerm 建实例时直接取用（早于启动
   // 派生到达时是深色基础派生值，启动尾部统一刷新一次）
@@ -4315,6 +4331,13 @@ export default function App() {
     refitAfterMetrics();
     persistSetting(SETTING_TERM_LETTER_SPACING, String(n));
   }, [applyTermPrefs, refitAfterMetrics, persistSetting]);
+  const changeTermWheelRate = useCallback((r: TermWheelRate) => {
+    setTermWheelRate(r);
+    termWheelRateRef.current = r;
+    // 切到「跟随刷新率」立即起一轮实测，不必等用户先滚一下才准。
+    if (r === "auto") displayIntervalMs();
+    persistSetting(SETTING_TERM_WHEEL_RATE, String(r));
+  }, [persistSetting]);
   // 连字开关（P0 轮）：真开/真关渲染器——开 = 释放 WebGL 换 DOM 渲染器（character
   // joiner 仅 DOM 实现）再载 LigaturesAddon；关 = 卸 addon、重挂 WebGL（失败回落 DOM）。
   // 逐实例热切换，不重建缓冲（滚动历史与在跑程序原地保留）；新建实例由 makeTerm 继承
@@ -4530,6 +4553,11 @@ export default function App() {
         termLetterSpacingRef.current = ls;
         setTermLetterSpacing(ls);
       }
+      // 滚轮上报频率：坏值/缺省回 60 次/秒；"auto" 等实测完成后由提供者自动取用
+      const wr = parseTermWheelRate(get(SETTING_TERM_WHEEL_RATE));
+      termWheelRateRef.current = wr;
+      setTermWheelRate(wr);
+      if (wr === "auto") displayIntervalMs();
       const lg = get(SETTING_TERM_LIGATURES);
       if (lg !== null) {
         const on = lg === "1";
@@ -8652,12 +8680,8 @@ export default function App() {
           </span>
           {/* 自身开销读数（监控条「本机」段迁此）：标题栏常显不依赖会话；纯读数留在拖拽链上 */}
           <SelfMeterTitlebar />
-          {hostbarOpen && (
-            <button className="ghost icon-btn" title={t("收起主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-label={t("收起主机栏")}
-              onClick={() => toggleHostbar(false)}>
-              <IconChevronLeft size={15} />
-            </button>
-          )}
+          {/* 主机栏收展只在左活动栏顶部的 rail-hosts 一处（用户反馈：标题栏收起钮 +
+              折叠态浮动展开钮两处重复且占位），标题栏不再放收起钮 */}
           {(agentSurfaceReady || collabActive) && (
             <button className={"collab-badge" + (rightPanel === "collab" ? " ts-open" : "") + (collabActive ? " hot" : "")}
               data-testid="collab-entry"
@@ -8709,8 +8733,11 @@ export default function App() {
             应用级动作在下）——设置钮原住主机栏，侧栏互斥+持久化后会有
             「找不到设置」的时刻；它不开任何侧栏，直开设置面板 */}
         <nav className="actrail" data-testid="actrail" aria-label={t("侧栏视图")}>
+          {/* 主机栏收/展的唯一入口（用户反馈合并两处收展钮）：动态标题说明当前动作，
+              开合态沿用 ts-open 点亮，与其余视图互斥位同一套语义 */}
           <button className={"rail-btn" + (hostbarOpen ? " ts-open" : "")} data-testid="rail-hosts"
-            title={t("主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-label={t("主机栏")} aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
+            title={hostbarOpen ? t("收起主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform())) : t("展开主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))}
+            aria-label={hostbarOpen ? t("收起主机栏") : t("展开主机栏")} aria-pressed={hostbarOpen} onClick={() => toggleHostbar(!hostbarOpen)}>
             <IconServer size={17} />
           </button>
           <button className={"rail-btn" + (agentOpen ? " ts-open" : "")} data-testid="rail-agent"
@@ -8758,12 +8785,6 @@ export default function App() {
             toggleFavorite={toggleFavorite} cancelConnect={cancelConnect}
             pushToast={pushToast} refreshLists={refreshLists}
           />
-        )}
-        {!hostbarOpen && !agentOpen && !fleetOpen && !monitorOpen && (
-          <button className="ghost icon-btn hb-expand" title={t("展开主机栏（{0}）", formatBinding(keymap.hostbar, isMacPlatform()))} aria-label={t("展开主机栏")}
-            onClick={() => toggleHostbar(true)}>
-            <IconChevronRight size={15} />
-          </button>
         )}
         {(agentOpen || fleetOpen) && (
           /* Agent 对话视图：双模式——真模型（inTauri + 已配置模型服务，Rust 侧
@@ -10089,6 +10110,8 @@ export default function App() {
               onChangeTermScrollback={changeTermScrollback}
               termLetterSpacing={termLetterSpacing}
               onChangeTermLetterSpacing={changeTermLetterSpacing}
+              termWheelRate={termWheelRate}
+              onChangeTermWheelRate={changeTermWheelRate}
               identities={identities}
               hosts={hosts}
               referencedIdentityIds={referencedIdentityIds}
@@ -10139,19 +10162,6 @@ export default function App() {
             />
           )}
         </div>
-        {/* 监控条（命令框退役轮）：命令框腾出的底部常驻条改为 FinalShell 式远端
-            资源采样——Fresh 独立通道直读 /proc，不进终端、不进审计。本地会话与
-            采样不可用（非 Linux 远端/连续失败）整条隐藏（MetricsBar 内部判定）。
-            key=sid：切签重置差分基线，避免跨主机算出假速率 */}
-        {sid && current && (
-          <MetricsBar
-            key={sid}
-            sid={sid}
-            kind={current.kind}
-            user={hosts.find((h) => h.id === current.host_id)?.username}
-            hostName={current.host_name}
-          />
-        )}
         </div>{/* /term-col */}
 
         {/* 右侧任务面板（§4.3/§6.6）：一次只呈现文件 / 转发 / 协作 / 活动记录之一；窄窗改中央完整视图 */}
@@ -10386,10 +10396,23 @@ export default function App() {
           />
         )}
 
-        {/* 页脚状态条 24（§4.2）：只放短状态与任务入口 */}
+        {/* 页脚状态条（用户反馈合并两栏）：原 28px 资源监控条 + 24px 状态条上下两行
+            占掉终端高度，现合为一行——左侧 SSH/编码短标与远端资源采样（Fresh 独立
+            通道直读 /proc，不进终端/审计），右侧广播/块/转发/传输入口。监控采样
+            不可用（非 Linux 远端/连续失败）时 MetricsBar 整段自隐藏，状态条照常。
+            key=sid：切签重置差分基线，避免跨主机算出假速率 */}
         <footer className="statusbar">
           <span className="mono sb-left">{sbLeft}</span>
-          <span style={{ flex: 1 }} />
+          {sid && current && <span className="sb-div" aria-hidden="true" />}
+          {sid && current && (
+            <MetricsBar
+              key={sid}
+              sid={sid}
+              kind={current.kind}
+              user={hosts.find((h) => h.id === current.host_id)?.username}
+              hostName={current.host_name}
+            />
+          )}
           <span className="sb-right">
             <button className={"sb-btn" + (broadcastTargets.length > 0 ? " ts-open" : "")} data-testid="sb-broadcast" title={t("广播输入：同一键入同时发到勾选的会话（点开选择目标）")} aria-pressed={broadcastOpen}
               onClick={() => setBroadcastOpen(!broadcastOpen)}>{t("广播")} <b>{broadcastTargets.length > 0 ? broadcastTargets.length : ""}</b></button>

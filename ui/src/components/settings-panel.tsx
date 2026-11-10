@@ -10,9 +10,9 @@ import {
   APPEARANCES, FONT_DEFAULT, FONT_MAX, FONT_MIN, PALETTES, SETTINGS_CATS,
   friendlyError,
   settingsCatIcon, settingsCatLabel,
-  TERM_CURSOR_STYLES, TERM_FONTS, TERM_LETTER_SPACINGS, TERM_SCROLLBACKS,
+  TERM_CURSOR_STYLES, TERM_FONTS, TERM_LETTER_SPACINGS, TERM_SCROLLBACKS, TERM_WHEEL_RATES,
   dateLocale,
-  type Appearance, type SettingsCat, type TermCursorStyle,
+  type Appearance, type SettingsCat, type TermCursorStyle, type TermWheelRate,
 } from "../app-data";
 import {
   defaultKeymap, KEYMAP_ACTIONS, KEYMAP_SETTING, formatBinding, parseKeymap, sameBinding,
@@ -217,6 +217,9 @@ interface SettingsPanelProps {
   onChangeTermScrollback: (n: number) => void;
   termLetterSpacing: number;
   onChangeTermLetterSpacing: (n: number) => void;
+  // 滚轮上报频率（tmux/全屏 TUI 鼠标上报路径；auto=跟随显示刷新率）
+  termWheelRate: TermWheelRate;
+  onChangeTermWheelRate: (r: TermWheelRate) => void;
   // 凭据库（显式提交；草稿状态仍在宿主——切分类守卫与关闭清理都依赖它）
   identities: IdentityMeta[];
   hosts: Host[];
@@ -297,6 +300,7 @@ export function SettingsPanel({
   termFont, onChangeTermFont, termLigatures, onChangeTermLigatures,
   termCursorStyle, onChangeTermCursorStyle, termCursorBlink, onChangeTermCursorBlink,
   termScrollback, onChangeTermScrollback, termLetterSpacing, onChangeTermLetterSpacing,
+  termWheelRate, onChangeTermWheelRate,
   identities, hosts, referencedIdentityIds,
   credNewOpen, setCredNewOpen, credNewErr, setCredNewErr, credNewOk, setCredNewOk,
   credLabel, setCredLabel, credPem, setCredPem, credPass, setCredPass,
@@ -731,6 +735,28 @@ export function SettingsPanel({
                     <select className="set-item-ctl" data-testid="term-spacing-select" aria-label={t("字符间距")}
                       value={String(termLetterSpacing)} onChange={(e) => onChangeTermLetterSpacing(Number(e.target.value))}>
                       {TERM_LETTER_SPACINGS.map((n) => <option key={n} value={String(n)}>{n === 0 ? t("0（默认）") : String(n)}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {/* 滚轮上报频率（KI-004）：只影响 tmux/全屏 TUI 开启鼠标上报时的滚轮——
+                    远端每条报文都要滚 3~5 行并重绘，频率越高越跟手、也越吃远端与链路。 */}
+                <div className="set-card">
+                  <h4>{t("滚轮与 TUI")}</h4>
+                  <div className="set-desc">
+                    {t("tmux / 全屏 TUI 开启鼠标上报时，滚轮报文按此频率发给远端：频率越高越跟手，远端复制模式的重绘也越重，链路慢或卡顿时调低。普通终端的回滚滚动不受影响。")}
+                  </div>
+                  <div className="set-item">
+                    <span className="set-item-txt">
+                      <b>{t("滚轮上报频率")}</b>
+                      <span className="set-item-desc">{t("默认 60 次/秒，与常见显示刷新同拍；本机或局域网 tmux 可试更高档或「跟随显示刷新率」。")}</span>
+                    </span>
+                    <select className="set-item-ctl" data-testid="term-wheel-rate-select" aria-label={t("滚轮上报频率")}
+                      value={String(termWheelRate)}
+                      onChange={(e) => onChangeTermWheelRate(e.target.value === "auto" ? "auto" : Number(e.target.value) as TermWheelRate)}>
+                      {TERM_WHEEL_RATES.map((n) => (
+                        <option key={n} value={String(n)}>{n === 60 ? t("{0} 次/秒（默认）", n) : t("{0} 次/秒", n)}</option>
+                      ))}
+                      <option value="auto">{t("跟随显示刷新率（30–120Hz）")}</option>
                     </select>
                   </div>
                 </div>

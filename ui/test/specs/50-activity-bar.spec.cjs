@@ -53,15 +53,17 @@ module.exports = {
       (await vis('[data-testid="agent-view"]')) &&
       await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "480px"));
 
-    // ── 切回连接视图：主机栏回、Agent 收；再点一次全关（hb-expand 浮标回归）──
+    // ── 切回连接视图：主机栏回、Agent 收；再点一次全关（入口仍在活动栏，
+    //    不再有浮动展开钮）──
     await page.click('[data-testid="rail-hosts"]');
     await page.waitForTimeout(250);
     ck.check("切回连接视图：主机栏开、Agent 收",
       (await vis(".hostbar")) && !(await vis('[data-testid="agent-view"]')));
     await page.click('[data-testid="rail-hosts"]');
     await page.waitForTimeout(250);
-    ck.check("再点全关：两视图都收、hb-expand 浮标在场",
-      !(await vis(".hostbar")) && !(await vis('[data-testid="agent-view"]')) && !!(await page.$(".hb-expand")));
+    ck.check("再点全关：两视图都收、活动栏 rail-hosts 可再展开、无浮动钮",
+      !(await vis(".hostbar")) && !(await vis('[data-testid="agent-view"]')) &&
+      !!(await page.$('[data-testid="rail-hosts"]')) && !(await page.$(".hb-expand")));
 
     // ── 设置常驻图标（不占互斥位）：全关态（此刻设置只剩 ⌘K 可达）直开面板 ──
     ck.check("rail-settings 在场且钉栏底（rail-tail）",

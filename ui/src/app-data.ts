@@ -646,6 +646,9 @@ export const SETTING_TERM_CURSOR_STYLE = "ui.v2.terminal.cursor_style";
 export const SETTING_TERM_CURSOR_BLINK = "ui.v2.terminal.cursor_blink";
 export const SETTING_TERM_SCROLLBACK = "ui.v2.terminal.scrollback";
 export const SETTING_TERM_LETTER_SPACING = "ui.v2.terminal.letter_spacing";
+// tmux/全屏 TUI 鼠标上报滚轮的上报频率（见 terminal/wheel-batch.ts）：30/60/90/120
+// = 每秒最多发送条数；"auto" = 跟随显示刷新率（实测 rAF 帧间隔，夹在 30–120Hz）。
+export const SETTING_TERM_WHEEL_RATE = "ui.v2.terminal.wheel_rate";
 
 /** 字体族选项（id → CSS 字体栈）。首位内置 Maple Mono CN（圆润 + 全量中文等宽，
  *  中文输出不再落到系统宋体）；JetBrains Mono 全量字形次席；其余按平台常见提供，
@@ -708,6 +711,16 @@ export const TERM_SCROLLBACK_DEFAULT = 10000;
 /** 字距（px，浮点可选） */
 export const TERM_LETTER_SPACINGS = [0, 0.5, 1, 1.5, 2];
 export const TERM_LETTER_SPACING_DEFAULT = 0;
+/** 滚轮上报频率档（每秒条数）与自动档。远端 tmux 每收一条滚轮要滚固定 3~5 行并
+ *  重绘，频率越高越跟手、也越吃远端与链路；默认 60 与显示刷新同拍。 */
+export type TermWheelRate = 30 | 60 | 90 | 120 | "auto";
+export const TERM_WHEEL_RATES = [30, 60, 90, 120];
+export const TERM_WHEEL_RATE_DEFAULT: TermWheelRate = 60;
+export function parseTermWheelRate(v: string | null | undefined): TermWheelRate {
+  if (v === "auto") return "auto";
+  const n = Number(v);
+  return (TERM_WHEEL_RATES as number[]).includes(n) ? (n as TermWheelRate) : TERM_WHEEL_RATE_DEFAULT;
+}
 
 export type Appearance = "system" | "dark" | "light";
 export const APPEARANCES: { id: Appearance; label: string }[] = [

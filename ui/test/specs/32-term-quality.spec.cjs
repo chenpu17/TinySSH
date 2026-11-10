@@ -80,7 +80,8 @@ module.exports = {
     // ── 设置面板：新卡与默认回显 ──
     await openTermSettings(page);
     for (const id of ["term-font-select", "term-liga-toggle", "term-cursor-select",
-      "term-cursor-blink-toggle", "term-scrollback-select", "term-spacing-select"]) {
+      "term-cursor-blink-toggle", "term-scrollback-select", "term-spacing-select",
+      "term-wheel-rate-select"]) {
       ck.check(`终端外观控件在场：${id}`, await page.evaluate((t) => !!document.querySelector(`[data-testid="${t}"]`), id));
     }
     const defaults = await page.evaluate(() => ({
@@ -90,10 +91,12 @@ module.exports = {
       blink: document.querySelector('[data-testid="term-cursor-blink-toggle"]').checked,
       scrollback: document.querySelector('[data-testid="term-scrollback-select"]').value,
       spacing: document.querySelector('[data-testid="term-spacing-select"]').value,
+      wheelRate: document.querySelector('[data-testid="term-wheel-rate-select"]').value,
     }));
-    ck.check("默认回显（Maple Mono 中文等宽 / 连字关 / 方块光标 / 闪烁开 / 10000 行 / 字距 0）",
+    ck.check("默认回显（Maple Mono 中文等宽 / 连字关 / 方块光标 / 闪烁开 / 10000 行 / 字距 0 / 滚轮 60）",
       defaults.font === "maple" && !defaults.liga && defaults.cursor === "block"
-        && defaults.blink && defaults.scrollback === "10000" && defaults.spacing === "0",
+        && defaults.blink && defaults.scrollback === "10000" && defaults.spacing === "0"
+        && defaults.wheelRate === "60",
       JSON.stringify(defaults));
 
     // ── 存量实例：先建一台（demo 预置会话不自动武装），验 unicode11 已激活 ──
@@ -128,6 +131,20 @@ module.exports = {
         && (await lsGet(page, "ui.v2.terminal.letter_spacing")) === "1",
       JSON.stringify(await page.evaluate(() => Object.fromEntries(
         Object.keys(localStorage).filter((k) => k.startsWith("ui.v2.terminal.")).map((k) => [k, localStorage.getItem(k)])))));
+
+    // ── 滚轮上报频率（KI-004）：五档 + 跟随刷新率，改档即时落盘 ──
+    await page.selectOption('[data-testid="term-wheel-rate-select"]', "auto");
+    await page.waitForTimeout(200);
+    const wheelSel = await page.evaluate(() => ({
+      value: document.querySelector('[data-testid="term-wheel-rate-select"]').value,
+      stored: localStorage.getItem("ui.v2.terminal.wheel_rate"),
+      options: [...document.querySelector('[data-testid="term-wheel-rate-select"]').options].map((o) => o.value),
+    }));
+    ck.check("滚轮频率五档在场（30/60/90/120/auto）",
+      JSON.stringify(wheelSel.options) === JSON.stringify(["30", "60", "90", "120", "auto"]),
+      JSON.stringify(wheelSel.options));
+    ck.check("滚轮频率切到「跟随刷新率」即时落盘",
+      wheelSel.value === "auto" && wheelSel.stored === "auto", JSON.stringify(wheelSel));
 
     // ── 连字开关：存量实例切换 + 新建实例继承 ──
     await page.click('[data-testid="term-liga-toggle"]');
@@ -213,10 +230,11 @@ module.exports = {
       blink: document.querySelector('[data-testid="term-cursor-blink-toggle"]').checked,
       scrollback: document.querySelector('[data-testid="term-scrollback-select"]').value,
       spacing: document.querySelector('[data-testid="term-spacing-select"]').value,
+      wheelRate: document.querySelector('[data-testid="term-wheel-rate-select"]').value,
     }));
     ck.check("reload 后设置回显完整",
       after.font === "cascadia" && after.liga && after.cursor === "bar" && !after.blink
-        && after.scrollback === "50000" && after.spacing === "1",
+        && after.scrollback === "50000" && after.spacing === "1" && after.wheelRate === "auto",
       JSON.stringify(after));
     await closeSettings(page);
     let sids2 = await liveSids(page);
