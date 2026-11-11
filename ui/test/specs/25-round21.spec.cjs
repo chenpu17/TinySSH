@@ -187,10 +187,11 @@ module.exports = {
     // P2-b 输出触发器轮 7→8（输出触发器——输出正则 → 通知 / 键序）
     ck.check("导航八类各带一句定位", navDescs.length === 8 && navDescs.every((d) => d.length > 0), JSON.stringify(navDescs));
     // 二十二轮：外观两卡（应用外观/字号与缩放——终端配色卡随主题统一退役）
+    // 用户反馈 #21：新增专注模式卡（底部主机资源开关），现为三卡。
     // 常挂隐藏的触发器/Agent/技能卡（切分类不丢草稿）也在 DOM 里，只数可见卡。
     const cardCounts = await page.evaluate(() =>
       [...document.querySelectorAll(".settings-pane .set-card")].filter((e) => e.getClientRects().length > 0).length);
-    ck.check("外观分类两卡片分区", cardCounts === 2, `实得 ${cardCounts}`);
+    ck.check("外观分类三卡片分区（应用外观/字号与缩放/专注模式）", cardCounts === 3, `实得 ${cardCounts}`);
     const dlgBox = () => page.evaluate(() => {
       const d = document.querySelector(".term-settings.settings-wide");
       return d ? { h: d.clientHeight, w: d.clientWidth } : null;

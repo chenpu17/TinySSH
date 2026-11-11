@@ -687,6 +687,38 @@ export const TERM_FONTS: TermFontChoice[] = [
     label: "SF Mono / Menlo（macOS）",
     css: '"SF Mono", Menlo, Monaco, "MiSans VF", "Hiragino Sans GB", "Microsoft YaHei", monospace',
   },
+  // 用户反馈（#16）：预设偏少。以下为常见等宽字体，装没装由设置页的就地探测
+  // 如实提示；每一项都垫内置 JetBrains/Maple 与 CJK 字体，缺装时仍能正常显示。
+  {
+    id: "sarasa",
+    label: "更纱黑体 Sarasa Mono SC（若已安装）",
+    css: '"Sarasa Mono SC", "Sarasa Mono CL", "Sarasa Fixed SC", "Sarasa Term SC", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+  },
+  {
+    id: "noto-cjk",
+    label: "Noto Sans Mono CJK（若已安装）",
+    css: '"Noto Sans Mono CJK SC", "Noto Sans Mono CJK", "Noto Sans Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+  },
+  {
+    id: "fira",
+    label: "Fira Code（若已安装）",
+    css: '"Fira Code", "Fira Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+  },
+  {
+    id: "source-code-pro",
+    label: "Source Code Pro（若已安装）",
+    css: '"Source Code Pro", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+  },
+  {
+    id: "ibm-plex",
+    label: "IBM Plex Mono（若已安装）",
+    css: '"IBM Plex Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+  },
+  {
+    id: "ubuntu",
+    label: "Ubuntu Mono（Linux）",
+    css: '"Ubuntu Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+  },
   {
     id: "system",
     label: "系统等宽（ui-monospace）",

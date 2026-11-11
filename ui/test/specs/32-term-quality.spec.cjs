@@ -106,6 +106,12 @@ module.exports = {
     ck.check("默认档标注跟随 4000 行而非旧 10000 行", await page.locator(
       '[data-testid="term-scrollback-select"] option[value="4000"]').evaluate(
         (option) => option.textContent.includes("默认")));
+    // 用户反馈 #16：字体预设偏少——补齐常见等宽字体（装没装由就地探测如实提示）
+    const fontOptions = await page.locator('[data-testid="term-font-select"] option').evaluateAll(
+      (options) => options.map((option) => option.value));
+    ck.check("字体列表含新增预设（更纱黑体/Noto CJK/Fira/Source Code Pro/IBM Plex/Ubuntu）",
+      ["sarasa", "noto-cjk", "fira", "source-code-pro", "ibm-plex", "ubuntu"]
+        .every((id) => fontOptions.includes(id)), JSON.stringify(fontOptions));
 
     // ── 存量实例：先建一台（demo 预置会话不自动武装），验 unicode11 已激活 ──
     await closeSettings(page);
@@ -118,6 +124,11 @@ module.exports = {
 
     // ── 外观五项即时生效（存量实例） ──
     await openTermSettings(page);
+    await page.selectOption('[data-testid="term-font-select"]', "sarasa");
+    await page.waitForTimeout(300);
+    ck.check("新增字体预设即时生效（更纱黑体栈）",
+      (await termInfo(page, sids0[0])).fontFamily.includes("Sarasa Mono SC"),
+      (await termInfo(page, sids0[0])).fontFamily);
     await page.selectOption('[data-testid="term-font-select"]', "cascadia");
     await page.waitForTimeout(300);
     ck.check("字体族即时生效（含 Cascadia Mono）", (await termInfo(page, sids0[0])).fontFamily.includes("Cascadia Mono"),

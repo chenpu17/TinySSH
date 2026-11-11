@@ -101,6 +101,12 @@ const FONT_PROBE_FAMILIES: Record<string, string[]> = {
   cascadia: ["Cascadia Mono", "Cascadia Code"],
   consolas: ["Consolas"],
   menlo: ["SF Mono", "Menlo", "Monaco"],
+  sarasa: ["Sarasa Mono SC", "Sarasa Mono CL", "Sarasa Fixed SC", "Sarasa Term SC"],
+  "noto-cjk": ["Noto Sans Mono CJK SC", "Noto Sans Mono CJK", "Noto Sans Mono"],
+  fira: ["Fira Code", "Fira Mono"],
+  "source-code-pro": ["Source Code Pro"],
+  "ibm-plex": ["IBM Plex Mono"],
+  ubuntu: ["Ubuntu Mono"],
   system: [],
 };
 
@@ -183,6 +189,9 @@ interface SettingsPanelProps {
   // 界面字号（KI-024 口径②）：只作用于应用界面文字，终端字号与整窗缩放各自独立
   uiFontScale: UiFontScale;
   changeUiFontScale: (n: UiFontScale) => void;
+  // 专注模式底部资源条（用户反馈 #21）：默认开，关掉后专注态仍是纯终端
+  focusMetrics: boolean;
+  onChangeFocusMetrics: (on: boolean) => void;
   // 快捷键
   keymap: Record<KeyActionId, Binding>;
   /** 单条重置（宿主校验默认键是否已被别的动作占用，冲突则拒绝并提示） */
@@ -297,7 +306,7 @@ export function SettingsPanel({
   settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime, locale, onChangeLocale,
   updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
-  uiFontScale, changeUiFontScale,
+  uiFontScale, changeUiFontScale, focusMetrics, onChangeFocusMetrics,
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
@@ -572,6 +581,20 @@ export function SettingsPanel({
                   </div>
                   </>)}
                   <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）")}</div>
+                </div>
+                {/* 专注模式（用户反馈 #21）：默认保留底部资源采样条——专注态隐藏
+                    状态条后，远端 CPU/内存/网络仍要一眼可见；关掉即回到纯终端。 */}
+                <div className="set-card">
+                  <h4>{t("专注模式")}</h4>
+                  <div className="set-desc">{t("专注模式会隐藏标题栏、主机栏、会话工具栏与状态条，把窗口让给终端；标签条形态在专注态右上角切换。")}</div>
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="focus-metrics-toggle" checked={focusMetrics}
+                      onChange={(e) => onChangeFocusMetrics(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>{t("底部显示主机资源")}</b>
+                      <span className="set-item-desc">{t("在专注模式底部保留一条远端资源采样条（CPU/内存/网络/磁盘）；没有活动会话或采样不可用时自动隐藏。")}</span>
+                    </span>
+                  </label>
                 </div>
                 </>)}
 

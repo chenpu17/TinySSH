@@ -44,9 +44,9 @@ module.exports = {
       if (!s) return null;
       return { value: s.value, options: [...s.options].map((o) => o.value) };
     });
-    ck.check("外观分类有界面字号控件（四档 0.9/1/1.1/1.25，默认 1）",
+    ck.check("外观分类有界面字号控件（五档 0.8/0.9/1/1.1/1.25，默认 1）",
       !!ctl && ctl.value === "1"
-        && JSON.stringify(ctl.options) === JSON.stringify(["0.9", "1", "1.1", "1.25"]),
+        && JSON.stringify(ctl.options) === JSON.stringify(["0.8", "0.9", "1", "1.1", "1.25"]),
       JSON.stringify(ctl));
 
     await page.selectOption('[data-testid="ui-font-scale-select"]', "1.25");
@@ -81,6 +81,14 @@ module.exports = {
     await page.waitForTimeout(700);
     ck.eq("reload 后设置回显 125%",
       await page.evaluate(() => document.querySelector('[data-testid="ui-font-scale-select"]')?.value), "1.25");
+
+    // 用户反馈 #17：最小只能 90% → 新增 80% 档（低分屏/小窗口再让出一档）
+    await page.selectOption('[data-testid="ui-font-scale-select"]', "0.8");
+    await page.waitForTimeout(400);
+    const tiny = await readScale();
+    ck.check("切 80%：根变量 0.8、主机名 11.2px、档位落盘",
+      tiny.root === "0.8" && tiny.hostName === "11.2px" && tiny.stored === "0.8",
+      JSON.stringify(tiny));
 
     // 还原 100%，避免留档影响后续手动运行
     await page.selectOption('[data-testid="ui-font-scale-select"]', "1");

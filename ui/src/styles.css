@@ -420,9 +420,17 @@ button.ghost.attn:not(:disabled):hover { color: var(--warn); background: var(--p
    App zenPin）时回流 static——回流是位置跳变不参与过渡，重要信息即时出现正是
    想要的；此时它是常规流内一行，notice 横幅在其下正常排版，绝不被盖。 ===== */
 .focus-mode .titlebar, .focus-mode .hostbar, .focus-mode .hb-grip,
-.focus-mode .session-toolbar, .focus-mode .statusbar,
+.focus-mode .session-toolbar,
 .focus-mode .actrail, .focus-mode .agentbar,
 .focus-mode .rb-rail { display: none; }
+/* 专注态状态条默认让位；设置里开启「底部显示主机资源」且当前会话确有采样条时，
+   只保留 MetricsBar——左右两侧的协议短标与任务入口仍隐藏。用 :has 而不是固定
+   显示整条：采样不可用（MetricsBar 返回 null）时整条一起消失，不留空条。 */
+.focus-mode .statusbar { display: none; }
+.focus-mode.focus-metrics .statusbar:has(.metrics-bar) { display: flex; padding: 0 12px; }
+.focus-mode.focus-metrics .statusbar .sb-left,
+.focus-mode.focus-metrics .statusbar .sb-div,
+.focus-mode.focus-metrics .statusbar .sb-right { display: none; }
 .focus-mode.zen-auto .tabbar-row {
   position: absolute; top: 0; left: 0; right: 0; z-index: 45;
   transform: translateY(calc(-100% + 6px));

@@ -286,6 +286,12 @@ const EN: Record<string, string> = {
   "字体": "Font",
   "默认内置 Maple Mono 圆润中文等宽（中文输出对齐不落宋体）；JetBrains Mono 全量字形（框线/箭头/powerline）；其余选项按系统是否安装回落，中文一律垫 MiSans/雅黑。":
     "Bundled Maple Mono CN is the default (CJK stays monospace, never falls to SimSun); JetBrains Mono ships full glyphs (box-drawing/arrows/powerline); other options fall back by availability, CJK always backed by MiSans/YaHei.",
+  "更纱黑体 Sarasa Mono SC（若已安装）": "Sarasa Mono SC (if installed)",
+  "Noto Sans Mono CJK（若已安装）": "Noto Sans Mono CJK (if installed)",
+  "Fira Code（若已安装）": "Fira Code (if installed)",
+  "Source Code Pro（若已安装）": "Source Code Pro (if installed)",
+  "IBM Plex Mono（若已安装）": "IBM Plex Mono (if installed)",
+  "Ubuntu Mono（Linux）": "Ubuntu Mono (Linux)",
   "连字（ligatures）": "Ligatures",
   "把 =&gt;、!=、&gt;= 等合成连字图形（字体需含连字字形）。开启即改用 DOM 渲染器（关闭 GPU 合成），高吞吐输出时 CPU 占用更高——默认关。":
     "Renders =>, !=, >= etc. as ligature glyphs (font must contain them). Enabling switches to the DOM renderer (GPU compositing off) — higher CPU on heavy output. Off by default.",
@@ -844,6 +850,12 @@ const EN: Record<string, string> = {
   "打开资源监控大屏（多服务器 + Ascend NPU）": "Open resource monitor (multi-server + Ascend NPU)",
   "退出专注模式": "Exit focus mode",
   "进入专注模式（界面全让位给终端）": "Enter focus mode (everything yields to the terminal)",
+  "专注模式": "Focus mode",
+  "专注模式会隐藏标题栏、主机栏、会话工具栏与状态条，把窗口让给终端；标签条形态在专注态右上角切换。":
+    "Focus mode hides the title bar, host panel, session toolbar and status bar, giving the window to the terminal; the tab-bar behavior is toggled at the top right while in focus mode.",
+  "底部显示主机资源": "Show host resources at the bottom",
+  "在专注模式底部保留一条远端资源采样条（CPU/内存/网络/磁盘）；没有活动会话或采样不可用时自动隐藏。":
+    "Keep a remote-resource strip at the bottom in focus mode (CPU/memory/network/disk); it hides automatically when there is no active session or sampling is unavailable.",
   "专注模式标签条：改为常驻": "Focus-mode tab bar: keep always visible",
   "专注模式标签条：改为自动隐藏": "Focus-mode tab bar: switch to auto-hide",
   "当前：自动隐藏（顶缘浮标唤出）": "Now: auto-hide (summon from the top edge)",

@@ -25,6 +25,14 @@ module.exports = {
     await page.waitForTimeout(500);
     ck.check("进入专注模式（app-shell.focus-mode）",
       await page.evaluate(() => document.querySelector(".app-shell")?.classList.contains("focus-mode") === true), "");
+    // 用户反馈 #21：专注态默认保留底部主机资源条（设置里可关）
+    ck.check("专注态底部保留资源采样条（默认开）", await visible(page, '[data-testid="metrics-bar"]'), "");
+    ck.check("专注态状态条只留资源条，协议短标与任务入口让位", await page.evaluate(() => {
+      const left = document.querySelector(".statusbar .sb-left");
+      const right = document.querySelector(".statusbar .sb-right");
+      return !!left && !!right
+        && getComputedStyle(left).display === "none" && getComputedStyle(right).display === "none";
+    }), "");
     ck.check("会话工具栏隐藏", !(await visible(page, ".session-toolbar")), "");
     ck.check("专注小工具栏：文件入口可见", await visible(page, '[data-testid="focus-files"]'), "");
     ck.check("专注小工具栏：连接现有主机入口可见", await visible(page, '[data-testid="focus-connect"]'), "");
@@ -99,5 +107,37 @@ module.exports = {
     await page.waitForTimeout(500);
     ck.check("退出专注后会话工具栏恢复", await visible(page, ".session-toolbar"), "");
     ck.check("退出后 tmux 快接回到工具栏", await visible(page, ".session-toolbar .tmux-quick-btn"), "");
+
+    // 用户反馈 #21：设置 → 外观里的「底部显示主机资源」开关，默认开、关掉后专注态纯终端
+    await page.click(".hb-settings");
+    await page.waitForTimeout(700);
+    await page.click('[data-testid="settings-cat-appearance"]');
+    await page.waitForTimeout(300);
+    const toggle = '[data-testid="focus-metrics-toggle"]';
+    ck.check("外观分类有「底部显示主机资源」开关且默认勾选",
+      await page.isChecked(toggle), "");
+    await page.uncheck(toggle);
+    await page.waitForTimeout(200);
+    ck.eq("关掉开关落盘（ui.focusMetrics=0）",
+      await page.evaluate(() => localStorage.getItem("ui.focusMetrics")), "0");
+    await page.evaluate(() => document.querySelector('[data-testid="settings-close"]')?.click());
+    await page.waitForTimeout(300);
+    await page.click('[data-testid="focus-toggle"]');
+    await page.waitForTimeout(500);
+    ck.check("关掉后专注态状态条整体隐藏（纯终端）", await page.evaluate(() => {
+      const bar = document.querySelector(".statusbar");
+      return !bar || getComputedStyle(bar).display === "none";
+    }), "");
+    await page.click('[data-testid="focus-toggle"]');
+    await page.waitForTimeout(400);
+    // 还原默认开，避免留档影响后续手动运行
+    await page.click(".hb-settings");
+    await page.waitForTimeout(700);
+    await page.click('[data-testid="settings-cat-appearance"]');
+    await page.waitForTimeout(300);
+    await page.check(toggle);
+    await page.waitForTimeout(200);
+    ck.eq("还原默认开（ui.focusMetrics=1）",
+      await page.evaluate(() => localStorage.getItem("ui.focusMetrics")), "1");
   },
 };

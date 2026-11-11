@@ -1367,6 +1367,16 @@ export default function App() {
   }, []);
   const zenStripAutoRef = useRef(zenStripAuto);
   zenStripAutoRef.current = zenStripAuto;
+  // 专注模式底部资源条（用户反馈 #21）：默认保留——专注态把 chrome 全让位后，
+  // 仍需要一眼看到远端 CPU/内存/网络；设置里可关。localStorage 同步读，首帧
+  // 即定（与 ui.focus/ui.zenStrip 同工艺），缺省=开。
+  const [focusMetrics, setFocusMetrics] = useState(() => {
+    try { return localStorage.getItem("ui.focusMetrics") !== "0"; } catch { return true; }
+  });
+  const changeFocusMetrics = useCallback((on: boolean) => {
+    setFocusMetrics(on);
+    try { localStorage.setItem("ui.focusMetrics", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+  }, []);
   // 原生全屏态（专注模式的真实前提）：focusMode 会隐藏 44px 标题区，而 macOS
   // titleBarStyle=Overlay 的红绿灯是系统悬浮钮，不由 HTML 隐藏——专注态若没真正
   // 全屏（启动恢复被系统拒绝、用户从绿灯/Ctrl⌘F/Esc 退出全屏），三个圆钮会压在
@@ -3164,7 +3174,10 @@ export default function App() {
       // 而非干等 3s 快照；pane_id 永不复用，同键 5s 内不因在途旧快照重建
       if (msg === "eof") {
         paneClosedRef.current.set(key, Date.now());
-        void refreshListsRef.current();
+        // 收尾提示（[detached ...]/[exited]）与 EOF 同批到达：xterm 的写入是排队
+        // 异步解析的，若快照先回来把格子摘掉，lastTmuxNotice 会读到空缓冲、toast
+        // 退化成「远端会话已退出/分离」。用空写回调等队列排空后再对账。
+        made.term.write("", () => { void refreshListsRef.current(); });
         return;
       }
       const bytes = msg instanceof Uint8Array ? msg : msg instanceof ArrayBuffer ? new Uint8Array(msg) : null;
@@ -8675,6 +8688,7 @@ export default function App() {
 
   return (
     <div className={"app-shell" + (focusMode ? " focus-mode" : "") + (focusMode && zenStripAuto ? " zen-auto" : "")
+      + (focusMode && focusMetrics ? " focus-metrics" : "")
       + (focusMode && inTauri && isMacPlatform() && !nativeFullscreen ? " focus-windowed" : "")}>
       {/* 标题区 44（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
       <header className="titlebar" data-tauri-drag-region>
@@ -10088,6 +10102,8 @@ export default function App() {
               zoomLevel={zoomLevel}
               uiFontScale={uiFontScale}
               changeUiFontScale={changeUiFontScale}
+              focusMetrics={focusMetrics}
+              onChangeFocusMetrics={changeFocusMetrics}
               keymap={keymap}
               resetKeyBinding={resetKeyBinding}
               keyCapture={keyCapture}

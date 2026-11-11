@@ -590,9 +590,10 @@ module.exports = {
     await page.evaluate(({ sid, id }) => window.__demoInvoke("demo_pane_exit", { sid, paneId: Number(id) }), { sid: SID, id: bgId });
     ck.check("远端结束：格子即刻摘除（流终结信号 + 快照请求时刻判定，不挂 6s 宽限）",
       await poll(page, () => !document.querySelector('.tmux-cell[data-tmux="logs"]'), null, 1200), "");
-    ck.check("远端结束给交代：toast 附 tmux 收尾提示行",
-      await poll(page, (s) => (window.__t_toasts ?? []).some((t) => t.text.includes(s)),
-        "窗格已结束：logs — [detached (from session logs)]", 3000), "");
+    const paneExitToast = await poll(page, (s) => (window.__t_toasts ?? []).some((t) => t.text.includes(s)),
+      "窗格已结束：logs — [detached (from session logs)]", 3000);
+    ck.check("远端结束给交代：toast 附 tmux 收尾提示行", paneExitToast,
+      await page.evaluate(() => JSON.stringify((window.__t_toasts ?? []).map((t) => t.text))));
     ck.check("被摘格子握着焦点 → 交还主终端（不悬空在 body）",
       await page.evaluate((sid) => {
         const a = document.activeElement;

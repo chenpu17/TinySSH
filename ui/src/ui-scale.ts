@@ -9,8 +9,9 @@
 // KV 是异步读取，会先闪一帧 100%。浏览器 demo 与桌面壳同一通路。
 const UI_FONT_SCALE_KEY = "ui.ui_font_scale";
 
-/** 可选档位：与「界面缩放」的档位同刻度，避免两套百分比各说各话。 */
-export const UI_FONT_SCALES = [0.9, 1, 1.1, 1.25] as const;
+/** 可选档位：沿用「界面缩放」的百分比刻度（取常用子集），避免两套百分比各说各话。
+ *  80% 档（用户反馈：最小只能 90%）给低分屏/小窗口多留一档。 */
+export const UI_FONT_SCALES = [0.8, 0.9, 1, 1.1, 1.25] as const;
 export type UiFontScale = (typeof UI_FONT_SCALES)[number];
 export const UI_FONT_SCALE_DEFAULT: UiFontScale = 1;
 
