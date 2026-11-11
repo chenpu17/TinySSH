@@ -469,7 +469,10 @@ jobs:
           set -o pipefail
           # create 容错（tag 重打后旧 run 可能已建同 tag release）：已存在则 edit，
           # 产物一律 --clobber 上传，收敛到最新一次构建。gh 失败再走 curl 直连
-          # REST 兜底（node 造 JSON 保证 notes 转义正确）。
+          # REST 兜底（node 造 JSON 保证 notes 转义正确）。同 tag Release 已存在时
+          # GitHub 返回 422：视为「已创建」，继续走上传收敛；其余状态码（401/403/5xx
+          # 等）仍失败——鉴权/参数错误不得吞成成功。注释不能插在续行 && 之前：
+          # bash 会把注释行当逻辑行结束，下一行以 && 开头直接语法错误（v0.12.8 实测）。
           { gh release create "$GITHUB_REF_NAME" \
               --title "TinySSH ${GITHUB_REF_NAME#v}" \
               --notes-file notes.md \
@@ -487,8 +490,6 @@ jobs:
                     make_latest: 'true',
                   }));
                 " \
-              # 同 tag Release 已存在时 GitHub 返回 422：视为「已创建」，继续走上传收敛；
-              # 其余状态码（401/403/5xx 等）仍失败——鉴权/参数错误不得吞成成功。
               && code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
                 -H "Authorization: Bearer $GITHUB_TOKEN" \
                 -H "Accept: application/vnd.github+json" \
