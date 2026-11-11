@@ -660,7 +660,9 @@ export const TERM_FONTS: TermFontChoice[] = [
   {
     id: "maple",
     label: "Maple Mono 圆润中文等宽（内置）",
-    css: '"Maple Mono CN Term", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    // "Maple Mono CN CJK Bold" 只覆盖 CJK 粗体（用 Regular 字模，见 styles.css 的
+    // #23 注释）；拉丁与框线仍由 Maple Bold 绘制。
+    css: '"Maple Mono CN CJK Bold", "Maple Mono CN Term", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
   },
   {
     id: "jetbrains",

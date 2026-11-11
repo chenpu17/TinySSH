@@ -41,6 +41,16 @@
   src: url("./assets/fonts/maple-mono-cn-Bold.woff2") format("woff2");
   font-weight: 600 800; font-style: normal; font-display: swap;
 }
+/* 用户反馈 #23：Maple Bold 的 CJK 字形 advance 与 Regular 不一致——粗体中文在
+   表格/日志对齐场景会横向串格（探针 A vs B：同一张表，Bold 版框线错位，Regular
+   版对齐）。粗体 CJK 改用 Regular 字模（仍等宽），拉丁/框线保留 Bold；别名家族
+   只声明 600–800 + CJK 区段，正常字重继续落 "Maple Mono CN Term" Regular。 */
+@font-face {
+  font-family: "Maple Mono CN CJK Bold";
+  src: url("./assets/fonts/maple-mono-cn-Regular.woff2") format("woff2");
+  font-weight: 600 800; font-style: normal; font-display: swap;
+  unicode-range: U+2E80-9FFF, U+3000-303F, U+FF00-FFEF;
+}
 :root {
   /* UX 现代化改版（2026-10-10，docs/ux 台账 §4 同日登记）：石墨蓝基座 + 半透明描边 +
      集中一处的高饱和 cyan accent——深浅两套色板全部经 WCAG 脚本复验（文本档 ≥4.5:1，
@@ -54,6 +64,12 @@
   /* 界面字号倍率（KI-024）：设置 → 外观 → 界面字号写根内联变量；此处只是
      scale=1 的兜底值，让所有 calc(Npx * var(--ui-font-scale)) 在未设置时成立 */
   --ui-font-scale: 1;
+  /* 界面密度（#24）：四条 chrome 的固定高度；紧凑档由 :root[data-density] 覆盖。
+     只压条带高度，不改字号/图标/终端字号，也不隐藏入口。 */
+  --chrome-title-h: 44px;
+  --chrome-tabs-h: 34px;
+  --chrome-toolbar-h: 32px;
+  --chrome-status-h: 26px;
   --bg: #0a0e14;
   --panel: #0f141c;
   --panel2: #151c26;
@@ -252,11 +268,26 @@ body {
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-button { display: none; }
 /* T38 审核：层级字号工具类 .label-xs/.label-sm/.label-base/.label-md 全库无引用，删除 */
+/* 界面密度紧凑档（#24）：非全屏矮窗给终端多留纵向空间——标题 44→32、
+   标签 34→28、会话工具栏 32→28、状态条 26→22，合计省 26px。药丸/按钮本身
+   尺寸基本不动（只把标签压到 24px），入口一个不少；专注模式仍是全隐藏档。 */
+:root[data-density="compact"] {
+  --chrome-title-h: 32px;
+  --chrome-tabs-h: 28px;
+  --chrome-toolbar-h: 28px;
+  --chrome-status-h: 22px;
+}
+:root[data-density="compact"] .titlebar,
+:root[data-density="compact"] .session-toolbar,
+:root[data-density="compact"] .statusbar { padding-left: 8px; padding-right: 8px; }
+:root[data-density="compact"] .tabbar-row { padding: 0 8px; }
+:root[data-density="compact"] .tabbar { padding: 0 2px; }
+:root[data-density="compact"] .tab { height: 24px; }
 /* ===== AppShell（R12 §4.1/§4.2）：标题区 44 / 主机栏 224(200–300 可拖可收) /
    标签 34 / 会话工具栏 34 / 页脚状态条 26（资源采样合并进行）；布局优先级：可操作 > 当前任务 > 终端空间 ===== */
 .app-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .titlebar {
-  height: 44px; flex: none; display: flex; align-items: center; gap: 8px;
+  height: var(--chrome-title-h); flex: none; display: flex; align-items: center; gap: 8px;
   padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border);
 }
 .titlebar .app-title { font-weight: 700; font-size: calc(13px * var(--ui-font-scale)); letter-spacing: 0.3px; color: var(--text); }
@@ -342,7 +373,7 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
    （审查二轮 UX2-9）：Agent 面板开着时终端区可被压到 ~480px，按钮组装不下时
    折第二行而不是裁切。 */
 .session-toolbar {
-  min-height: 32px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  min-height: var(--chrome-toolbar-h); flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
   padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--panel);
   white-space: nowrap;
 }
@@ -384,7 +415,7 @@ button.hb-settings:not(:disabled):hover { background: var(--panel2); color: var(
    合并为一行——左侧 SSH/编码短标与远端资源采样共用，右侧任务入口。井色底与标签
    条带同色（内容区上下各一条凹槽）。 */
 .statusbar {
-  height: 26px; flex: none; display: flex; align-items: center; gap: 10px;
+  height: var(--chrome-status-h); flex: none; display: flex; align-items: center; gap: 10px;
   padding: 0 10px; border-top: 1px solid var(--border); background: var(--bg);
   font-size: calc(11px * var(--ui-font-scale)); color: var(--dim); overflow: hidden;
 }
@@ -1051,6 +1082,11 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
   position: relative; flex: 1; min-height: 0; padding: 4px 6px; overflow: hidden;
   border-radius: 0 0 7px 7px;
 }
+/* 用户反馈 #25：tmux 格子恒 attach 到远端 tmux（备用屏），本地 xterm viewport
+   没有可用的 scrollback；macOS 悬停时仍会露出原生 overlay 滚动条，拖了也不滚。
+   隐藏该滚动条，滚轮仍走 tmux 鼠标上报 / 本地程序化滚动，不受影响。 */
+.tmux-cell-body .xterm-viewport { scrollbar-width: none; }
+.tmux-cell-body .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; }
 /* 死格只去色、不再整体降透明度：0.45 透明度把浅色主题的正文压到 1.8–2.9:1，
    而「已断开」状态字已在标题栏常显——保留最后一段输出可读比重度蒙灰更有用 */
 .tmux-cell.dead .tmux-cell-body { filter: grayscale(0.85); }
@@ -1210,7 +1246,7 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
    悬停有 120ms 过渡。溢出时显式 ‹ › 钮仍是被藏标签的唯一提示 */
 .tabbar-row {
   display: flex; align-items: center; gap: 4px; flex: none;
-  padding: 0 10px; height: 34px;
+  padding: 0 10px; height: var(--chrome-tabs-h);
   background: var(--bg);
 }
 /* 非标签行内控件（滚动钮/所有标签/新建连接/退出分屏）保持垂直居中；

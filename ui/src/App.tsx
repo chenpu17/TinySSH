@@ -25,6 +25,7 @@ import { repaintTerm } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import { installWheelBatch, displayIntervalMs } from "./terminal/wheel-batch";
 import { loadUiFontScale, storeUiFontScale, type UiFontScale } from "./ui-scale";
+import { loadUiDensity, storeUiDensity, type UiDensity } from "./ui-density";
 import { isScrollbackFull, scrollBelow } from "./terminal/scrollback";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
@@ -2258,6 +2259,7 @@ export default function App() {
     if (typeof document === "undefined" || !document.fonts) return;
     void document.fonts.load('14px "Maple Mono CN Term"', "你好abc┌─0");
     void document.fonts.load('bold 14px "Maple Mono CN Term"', "你好abc┌─0");
+    void document.fonts.load('bold 14px "Maple Mono CN CJK Bold"', "你好abc┌─0");
     // JetBrains 是设置里可选的第二内置字体：同样预取，避免切字体后首个图集
     // 用回退字形烘焙（切字体的 option 变更会重建图集，但预取让首帧就正确）
     void document.fonts.load('14px "JetBrains Mono Term"', "abc┌─0");
@@ -4164,6 +4166,9 @@ export default function App() {
   // 界面字号（KI-024 口径②）：只作用于 UI 文字（主机卡/菜单/状态栏…），终端字号
   // 独立。首帧前 main.tsx 已按 localStorage 恢复根变量；这里只做设置回显与改档。
   const [uiFontScale, setUiFontScaleState] = useState<UiFontScale>(() => loadUiFontScale());
+  // 界面密度（#24）：紧凑档压矮标题栏/标签栏/会话工具栏/状态条四条 chrome；
+  // 首帧前 main.tsx 已恢复根属性，这里只做设置回显与改档。
+  const [uiDensity, setUiDensityState] = useState<UiDensity>(() => loadUiDensity());
   const wheelIntervalMs = useCallback(
     () => (termWheelRateRef.current === "auto" ? displayIntervalMs() : 1000 / termWheelRateRef.current),
     [],
@@ -4360,6 +4365,12 @@ export default function App() {
   const changeUiFontScale = useCallback((n: UiFontScale) => {
     setUiFontScaleState(n);
     storeUiFontScale(n);
+  }, []);
+  // 界面密度：根属性即时生效（styles.css 的 --chrome-*-h 直接吃新档），localStorage
+  // 同步落盘供下次启动首帧前恢复。
+  const changeUiDensity = useCallback((d: UiDensity) => {
+    setUiDensityState(d);
+    storeUiDensity(d);
   }, []);
   // 连字开关（P0 轮）：真开/真关渲染器——开 = 释放 WebGL 换 DOM 渲染器（character
   // joiner 仅 DOM 实现）再载 LigaturesAddon；关 = 卸 addon、重挂 WebGL（失败回落 DOM）。
@@ -10102,6 +10113,8 @@ export default function App() {
               zoomLevel={zoomLevel}
               uiFontScale={uiFontScale}
               changeUiFontScale={changeUiFontScale}
+              uiDensity={uiDensity}
+              changeUiDensity={changeUiDensity}
               focusMetrics={focusMetrics}
               onChangeFocusMetrics={changeFocusMetrics}
               keymap={keymap}

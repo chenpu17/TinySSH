@@ -1,7 +1,7 @@
 {
   "name": "tinyssh-ui",
   "private": true,
-  "version": "0.12.8",
+  "version": "0.12.9",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -10,6 +10,7 @@
     "dev": "vite --port 5183",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "capture:readme": "node test/capture-readme.cjs",
     "test": "node test/wcag-themes.mjs && node test/run.cjs"
   },
   "dependencies": {

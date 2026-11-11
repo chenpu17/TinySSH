@@ -20,6 +20,7 @@ import {
 } from "../keymap";
 import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { UI_FONT_SCALES, type UiFontScale } from "../ui-scale";
+import { UI_DENSITIES, type UiDensity } from "../ui-density";
 import { isMacPlatform } from "../actions";
 import { inTauri, invoke } from "../adapter/bridge";
 import type { ActionRecord, AutonomyGrant, RecordsQuery, TriggerRule } from "../adapter/wire";
@@ -189,6 +190,9 @@ interface SettingsPanelProps {
   // 界面字号（KI-024 口径②）：只作用于应用界面文字，终端字号与整窗缩放各自独立
   uiFontScale: UiFontScale;
   changeUiFontScale: (n: UiFontScale) => void;
+  // 界面密度（#24）：紧凑档压矮四条 chrome，给终端多留纵向空间
+  uiDensity: UiDensity;
+  changeUiDensity: (d: UiDensity) => void;
   // 专注模式底部资源条（用户反馈 #21）：默认开，关掉后专注态仍是纯终端
   focusMetrics: boolean;
   onChangeFocusMetrics: (on: boolean) => void;
@@ -306,7 +310,7 @@ export function SettingsPanel({
   settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime, locale, onChangeLocale,
   updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
-  uiFontScale, changeUiFontScale, focusMetrics, onChangeFocusMetrics,
+  uiFontScale, changeUiFontScale, uiDensity, changeUiDensity, focusMetrics, onChangeFocusMetrics,
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
@@ -566,6 +570,19 @@ export function SettingsPanel({
                       ))}
                     </select>
                   </div>
+                  {/* 界面密度（#24）：非全屏矮窗里四条 chrome 占纵向空间过多；
+                      紧凑档只压高度，不隐藏入口（专注模式仍是极端档）。 */}
+                  <div className="ts-label" style={{ marginTop: 12 }}>{t("界面密度")}</div>
+                  <div className="row" style={{ marginTop: 4 }}>
+                    <select data-testid="ui-density-select" aria-label={t("界面密度")}
+                      value={uiDensity}
+                      onChange={(e) => changeUiDensity(e.target.value as UiDensity)}>
+                      {UI_DENSITIES.map((d) => (
+                        <option key={d} value={d}>{d === "compact" ? t("紧凑") : t("舒适（默认）")}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("紧凑档压缩标题栏、标签栏、会话工具栏与状态条的高度，不隐藏入口。")}</div>
                   {/* UX 五轮：整页缩放（参考 tiny-worker）——webview 缩放，浏览器 demo
                       不渲染（浏览器自带缩放；zoom.ts 亦不注册键盘/滚轮路径） */}
                   {inTauri && (<>

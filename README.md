@@ -3,11 +3,184 @@
 [![ci](https://github.com/chenpu17/TinySSH/actions/workflows/ci.yml/badge.svg)](https://github.com/chenpu17/TinySSH/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-A human–AI collaborative terminal: an SSH client, a first-class local terminal, and an embedded AI agent in one desktop app. The agent kernel is the sister project [TinyAgent](https://github.com/chenpu17/TinyAgent) — TinySSH is its first full host, wiring it to real sessions behind approvals, audit, and explicit control hand-off.
+**人机协同终端**：SSH 客户端 + 一等公民本地终端 + 内置 AI Agent，一个桌面应用全含。Agent 内核是姊妹项目 [TinyAgent](https://github.com/chenpu17/TinyAgent)——TinySSH 是它的第一个完整宿主，经审批链、审计与显式控制权交托接入真实会话。
 
-中文文档见 [README.zh-CN.md](README.zh-CN.md)。
+**A human–AI collaborative terminal**: an SSH client, a first-class local terminal, and an embedded AI agent in one desktop app. The agent kernel is the sister project [TinyAgent](https://github.com/chenpu17/TinyAgent) — TinySSH is its first full host, wiring it to real sessions behind approvals, audit, and explicit control hand-off.
 
-## Why
+[中文](#中文) · [English](#english)
+
+---
+
+## 中文
+
+> **当前设计方向（2026-10-06）**：优先完善面向开发者的 SSH 客户端体验——终端为主、文件按需打开，MCP 协作后续优化。[UX-R1 重构设计](docs/ux/ssh-client-ux-refactor.md)及[实施与验收计划](docs/ux/ssh-client-ux-refactor-delivery.md)已形成文档基线，执行状态逐轮记录见[执行台账](docs/ux/ux-r1-execution-status.md)。既有工程结果见[历史验收报告](docs/acceptance/v0-mvp-acceptance.md)。
+
+> 面向经常连接几台到十几台服务器、进行开发、部署和排障的开发者：连接省心、终端顺手、文件操作方便，需要时接入 Agent 协作。
+
+### 与现有工具的取舍
+
+定位快照（v0.12.9，2026-11），按品类概括而非逐产品评测。
+
+| | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
+|---|---|---|---|
+| 许可 | Apache-2.0 开源 | 通常商业闭源 | 通常闭源 |
+| 覆盖面 | SSH + 本地终端 + 文件 + 监控，一个应用 | 以 SSH 为中心 | 本地优先 shell |
+| Agent 能真实操作你的服务器 | 有——审批链、审计、显式控制权交托兜底 | 无 | 常见，但少有逐动作审批与审计 |
+| 扩展方式 | 内置 MCP 服务端（24 工具），自带 agent 即插 | 插件体系 | 有限 |
+| 交付形态 | 单文件便携，凭据加密保管库 | 安装包 | 不等 |
+
+### 下载
+
+预编译二进制由 [release 工作流](.github/workflows/release.yml)在打 tag 时自动构建发布（未签名）：
+
+| 平台 | 产物 |
+|---|---|
+| Windows 10/11 x64 | `TinySSH_<版本>_windows_x64_portable.exe`——单文件便携版，仅依赖系统自带 WebView2 |
+| macOS 11+ / 10.15+ | `TinySSH_<版本>_macos_<架构>.app.zip` 或 `.dmg`（Apple Silicon 与 Intel 双架构） |
+| Linux amd64 | `TinySSH_<版本>_linux_amd64.deb`（自动拉依赖，推荐）或 `.tar.gz`（需自备 libwebkit2gtk-4.1） |
+
+每个 Release 同时附带 `tinyssh` CLI 伴侣工具与 `SHA256SUMS.txt` 校验和。产物**没有代码签名**——首次启动需要一次性放行，详见下文[「首次启动：未签名构建」](#首次启动未签名构建)。
+
+Windows 是主要验证平台——全套测试与逐轮真机验证都在它上面跑；macOS（Apple Silicon）自 v0.10.3 起在物理设备上完成启动与端到端使用验证（含本机监控/自身开销读数），Intel 构建与 Linux 仍只经 CI 构建与单元测试；遇到问题请带着平台信息提 issue。
+
+#### 首次启动：未签名构建
+
+产物背后没有 Apple 开发者证书，macOS Gatekeeper 会在首次启动时拦截（提示「无法验证开发者」/「已损坏」）。应用本身没问题，只是需要一次放行：
+
+**macOS**——先安装：打开 `.dmg`（或解压 `.app.zip`），把 `TinySSH.app` 拖进 `/Applications`（不要直接在 DMG/下载目录里双击运行）。然后任选其一：
+
+1. **右键 → 打开**：在「应用程序」里**右键** `TinySSH.app`（不要双击）→ 选「打开」→ 弹窗里再点「打开」。放行一次后，以后双击即可正常启动。
+2. **系统设置 → 隐私与安全性**：如果 macOS 已经拦截过，翻到页面底部的「TinySSH 已被阻止」提示，点「仍要打开」并输密码/Touch ID 确认。
+3. **终端**：`xattr -cr /Applications/TinySSH.app` 直接清除隔离标记（效果等同前两种，可脚本化）。
+
+首次启动可能再弹一次**钥匙串**访问确认——凭据保管库的主密钥存放在 macOS 钥匙串，选「允许」即可。
+
+**Windows**——SmartScreen 弹「Windows 已保护你的电脑」：点「更多信息 → 仍要运行」。
+
+**Linux**——没有隔离机制：`.deb` 正常安装，`.tar.gz` 解压即用。
+
+### 开发
+
+```bash
+# 前端（demo 模式，纯浏览器可跑）
+cd ui && npm ci && npm run dev           # http://localhost:5183
+npm test                                 # UI 套件（77 spec / 1564 断言，headless）
+npm run build                            # tsc + vite build
+
+# 桌面应用（tauri dev；Rust 工作区，需 Rust ≥ 1.86、Node ≥ 22）
+cargo run -p tinyssh-app                 # 或 cargo tauri dev
+cargo test --workspace                   # Rust 全量（-j 4 更稳，见下）
+
+# e2e（需 docker sshd 容器：scripts/dev-sshd.sh）
+TINYSSH_E2E_SSHD=1 cargo test --workspace
+```
+
+Windows 注意：
+
+- 跑 UI 测试需 `TINYSSH_UI_CHROME` 指向 Edge/Chrome（如 `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`）；本机无 docker 时 e2e 用例自动 skip。
+- `cargo test --workspace` 默认并行可能触发编译期页面文件耗尽（os error 1455），用 `cargo test --workspace -j 4`。
+- 快捷键在 Windows/Linux 上以 Ctrl 等价 ⌘（Ctrl+Shift+B 主机栏 / Ctrl+F 搜索 / Ctrl+W 关标签 / Ctrl+1–9 切换）；Ctrl+B 留给终端——tmux 前缀在主视图和面板格子里都直达。
+
+### 功能总览
+
+- 跳板机（ProxyJump）：主机表单选「跳板机（可选）」即经既有主机条目转发连接（至多三跳，链式引用）——跳板的凭据/指纹信任/编辑/审计**复用其主机配置，不做内联凭据**；连接时逐跳出示指纹确认与 2FA 输入（卡面标注「第N跳·跳板机」），失败文案点名是哪一跳；被引用的跳板机不可删除；端口转发/SFTP/Agent 全套能力在链路末端照常可用（快速连接与 `~/.ssh/config` 的 `ProxyJump` 指令导入暂不支持，如实阻断）。
+
+- 本地终端一等公民：侧栏「本机」是**内置条目**——置顶常驻（不受搜索/标签筛选影响）、不可编辑、不可删除（UI 无入口，后端 `LocalHostImmutable` 同门兜底，Agent/MCP 通路同样被拦）；**启动即自动打开一个本地终端**（真实模式；关掉后从置顶本机卡 / ⌘K「打开本地终端」/ Ctrl+Shift+T 随时再开；设置 → 终端可关闭「启动时自动打开本地终端」），本地与远程会话同权——同一套标签/分屏/命令块/搜索/SFTP（本机文件浏览）能力。默认 shell 在 设置 → 终端「本地 Shell」选择（自动探测 Windows PowerShell/PowerShell 7/Git Bash/cmd/WSL，无 shell 集成的如实标「无命令块」），本机右键可临时用指定 shell 新开。**本机同样可监控**：监控条/监控大屏对本机走核心原生采样（Windows 直读 kernel32/iphlpapi，Linux/BSD 直读 /proc，macOS 走 mach/sysctl 原生计数器），与远端 /proc 脚本同一条解析链；纯本机（无 SSH 会话）时端口转发入口整体收起——能力对本地无意义就不摆。
+
+- 界面语言：首次启动默认跟随系统语言；设置 → 外观「界面语言」中文（简体）/ English 即时切换（不打断终端会话）；覆盖面=外壳 chrome + 各功能面板内文（设置/主机栏/主机与快速连接表单/菜单/对话框/命令面板/记录审计/文件面板与传输队列/端口转发/命令块/协作/监控大屏/Agent 对话）+ toast 与终端内联告示；未覆盖文案保持中文，不留半截假翻译。
+- 主题色板：17 族×深浅双面，终端 ANSI 16 色按族派生（对比度/色相双门校验）；**护眼**族走低蓝光苔纸路线——暖橄榄灰代替纯黑、偏暖灰绿纸白代替纯白、低饱和鼠尾草 accent，不牺牲 WCAG AA；**墨水屏**族面向 e-paper 面板——纸白×近黑墨字、语义色深墨低饱和，专项铲平阴影/过渡/动画（e-ink 慢刷残影敏感：阴影渲染成灰雾、动画是连续闪刷），层次改由加浓实线边框表达。终端正文另走 xterm 逐单元格最小对比度 4.5:1 兜底——tmux 默认彩底黑字状态栏/复制模式高亮与 htop/dialog 在深浅色板下都可读。
+- 界面与终端外观：界面字号五档（80%/90%/100%/110%/125%）——只放大应用界面（侧栏/菜单/状态栏/设置等），终端字号独立；界面密度两档（舒适/紧凑，紧凑档把标题栏/标签栏/会话工具栏/状态条合计压矮 26px，入口不隐藏）；终端字体 13 种预设；滚动历史五档（2000–10000 行，默认 4000）；滚轮上报频率四档（30/60/90/120 次/秒）并可跟随刷新率；欢迎页在矮窗下自动切紧凑档，125% 缩放下最小窗口首屏仍露出主行动钮，小钮点击目标统一补齐。
+- 终端品质：宽度表按 Unicode 11 判定（CJK/emoji 混排不串格）；设置 → 终端「终端外观」可调字体族（13 种预设：内置 Maple Mono CN 与 JetBrains Mono 全量字形；Cascadia、Sarasa、Noto CJK、Fira Code、Source Code Pro、IBM Plex、Ubuntu Mono 等按系统已装探测回落）、连字（开启即改用 DOM 渲染器——连字依赖 character joiner，与 GPU 合成互斥）、光标样式/闪烁、滚动历史行数与字距，改动即时生效。粘贴保护除多行确认外，命中危险形态（`rm -rf /`、`mkfs`、`dd` 覆写块设备等——与 Agent 审批同一张内置规则表）同样先确认再发送。macOS 中文输入法全角标点首击不再丢失；TUI 崩溃遗留的鼠标上报会在离开备用屏/回到提示符时自动复位，终端右键另有「重置鼠标上报」手动出口。
+- 本地 shell 集成（命令块/现场延续）：bash / zsh / fish / powershell·pwsh 启动时自动注入 OSC 133/7（无需配置），Shell 模式 exec 与命令块在本机 Windows 会话同样可用；cmd、WSL（`wsl.exe`）、dash/ksh 等无 preexec 钩子的 shell 不注入，Shell 模式执行时**立即如实拒绝**（不静默降级），Fresh 模式不受影响。PowerShell 退出码取 `$?`/`$LASTEXITCODE` 混合映射（成功 0，失败优先原生命令退出码）；本地会话 cwd 按原生盘符路径呈现（`C:/…`）。
+- 命令块面板（FR-10 V2）：shell 集成开启后每条命令自动成块——状态条「块」或 工具 → 命令块 打开，最近 50 块时间线（来源徽标 人类/Agent·客户端/回放、退出码、耗时），每块可复制命令、重跑（危险形态/多行与粘贴同一条确认链，确认后经人类键入归因成块）、按命令文本在终端定位（best-effort）、一键跳到最近失败。块带输出文本（OSC 133 标记跨度精确采集，渲染后已剥 ANSI，超 8KB 保尾截断并如实标记），Agent 侧经现场简报/MCP `read_blocks` 与人类同权读取。远端会话在注入文本首行内嵌 polyglot printf 探针判登录 shell 家族，bash/zsh（POSIX sh）与 fish（事件钩子）按型注入；不兼容的 shell 如实保持 Unavailable。
+- 广播输入（iTerm 同款）：状态条「广播」/ 工具 → 广播输入 / ⌘K「广播输入」勾选目标会话后，在当前会话打字（含 Ctrl 控制键与 ⌥ Meta 序列）同时发往所有勾选会话——每个目标各自走人类键入路径（按各自主机字符集编码、命令块照常成立）。离线/断线目标自动跳过并在其终端里一次性告示；Agent 在控的会话会标出（广播键入按人类输入记块，不自动暂停 Agent）。粘贴与块重跑只进当前会话（各有确认链），永不广播。
+- 输出触发器：设置 → 输出触发器 配正则规则（按完整行匹配、剥离颜色码、跨行不命中；同规则同会话冷却节流 5–3600 秒，上限 32 条）。「通知」动作命中即 toast + 标签铃；「发送键序」动作命中后**建审批卡等人类裁决**（可编辑键序；键序支持 `\r` `\n` `\t` `\0` `\\` 转义，存原文发送前解码），批准才写通道，120 秒无人裁决自动作废——绝不静默自动执行。规则为人类专属（Agent 无读写 API）；命中全程审计（`trigger_fired` / `trigger_send*`），键序直写 PTY 不记命令块（归因不撒谎）。
+- 远端写剪贴板策略（OSC 52）：远端程序可借转义序列改写本机剪贴板（tmux/ssh 远端复制回本地的惯用法），也是剪贴板投毒入口——策略三档「每次询问（默认）/ 允许 / 拒绝」，询问卡展示解码预览与来源会话，写入成功必 toast 告知；读取类请求（查询）一律拒绝；设置 → 终端 可改，随工作区偏好持久化。远端主动通知（OSC 9）走既有响铃通路：标签闪烁恒开，系统通知同「响铃时系统通知」开关与节流。
+- 可点击路径：终端里的文件路径（POSIX 绝对 / Windows 盘符 / ./ ../ 相对 / 裸多段如 src/main.rs，含 `:line` 与 `:line:col` 后缀）自动识别为链接，点击复制原文并 toast 告知——远端路径没法在本机打开，复制是最诚实的动作；http(s) 与 `xxx://` 协议让路给网页链接，URL/转义串/域名词内部不误判，CJK 宽字符行内列号对齐。
+- 图片协议：内置 `@xterm/addon-image`，终端直接渲染 sixel 与 iTerm2（OSC 1337）内嵌图片（ssh 里 cat 图片、带图工具输出直接可见）；支持 `width`/`height` 按单元格/像素/百分比声明尺寸，存储超限自动淘汰最旧图，恒开无需配置。
+- 会话现场恢复（P3）：受控退出时自动给每个会话拍屏幕快照（C10 检查点：滚回尾 300 行 + 可视区 + 光标 + 终端模式），与凭据同库加密存储；下次启动欢迎页「⏮ 恢复上次现场」一键重建会话并重放画面（公告行标注快照时刻）——恢复走完整建连流程（TOFU/双因素原样把关，不自动拨号）；主机已删的条目如实跳过。强杀/断电来不及快照，如实只覆盖受控退出。
+- tmux 一等公民：会话工具栏的 tmux 钮列出远端在跑的 tmux 会话——点选即挂进主视图（断线后横幅一键「恢复现场」：重连 + 补近史 + 重新 attach）；点「＋面板」把更多 tmux 会话并排放进同一个标签，各走同一条 SSH 连接上的独立通道（一次登录、一次双因素），最多平铺 6 格——适合同时开多个 Claude Code、每个隔离在自己的 tmux 会话里。布局可拖：拖标题栏换位置（落在格子中央互换、落在边缘对半分开），拖分隔条调大小。掉线时格子蒙灰、重连后原位恢复；关闭格子只断开视图，tmux 会话继续运行。主视图同样只关「当前视图」：挂着 tmux 时右上角才出现 ×，点它分离回 shell；关闭整个标签仍走标签上的 ×。快接菜单「＋ 新建 tmux 会话…」直接远端建会话，建好可选接入主视图或直接开进面板（不必先接入主视图、再被「同一会话不做两路视图」的防呆挡住）。快接菜单「会话大屏…」把这台主机上全部 tmux 会话铺成一整屏实时快照墙（2×2/3×3/4×4 网格，300ms 一拍；单击格子直接键入该会话、双击放大、「进格子」转成真面板窗格，关墙原样恢复格子尺寸）。**工作空间记忆**：连了哪些主机、每个标签并排开了哪些 tmux 会话（次序、拖拽布局、主视图 attach）自动落盘、崩溃也不丢；应用重启后欢迎页「⟳ 重连上次会话」一键全量恢复——连不上的主机与停在指纹/双因素确认的如实跳过并汇总提示，服务器上已不存在的 tmux 会话自动剔除、不拖累其余恢复。Agent 在已挂 tmux 的会话里执行的命令落进专属 `tinyssh-agent` 窗口。每个标签记住最后落焦的 tmux 格子：切走再切回直接回到该格，不再被送回主视图。
+- 专注模式：F11 进出——标题栏/主机栏/工具栏/状态条全让位并系统全屏；标签条默认常驻（Ctrl+K 面板可切「自动隐藏」：藏为顶部 6px 抓手 + 顶缘浮标，扫上缘唤出）；状态记忆跨启动恢复。专注态默认保留底部主机资源条（设置可关）。标签条右侧常驻「连接」菜单（选已保存主机即新建连接）与文件面板钮——专注态不必退出即可开连/开文件。
+- 活动栏与内置 Agent 视图（接真模型）：左缘图标栏切换「连接 / Agent / 编排」三个侧栏视图（互斥，全关 = 纯终端），栏底另设常驻设置图标（不随侧栏互斥隐藏，直开设置面板）；Agent 对话按会话隔离（跟随激活标签页），markdown 流式渲染（原始 HTML 一律转义、链接防钓鱼、代码块高亮 + 复制 + 长折叠；mermaid 图与 KaTeX 公式占位 + 懒加载渲染，独立 chunk 不进主包，加载/语法失败诚实保持源码原文）、推理模型思考块可折叠、工具审批卡（批准/拒绝内联在对话里，决策走既有审批链）。设置 → Agent 配置「模型服务」（OpenAI 兼容覆盖 GLM/DeepSeek/Qwen/Kimi 或 Anthropic）后自动从演练外壳切真模型：内核是 TinyAgent（[TinyAgent](https://github.com/chenpu17/TinyAgent)，git 依赖钉 rev），工具为 exec / read_blocks / read_screen / wait_output + upload / download / transfer_status + send_keys 八件（文件传输缺省冲突即失败并结构化报目标 stat，确认后 skip/overwrite 重试；send_keys 驱动交互式程序，会话级授权一次审批；**传输必审**、危险键序与危险命令同一引擎）；提示词与技能可按组织约定定制（设置 → Agent「提示词与技能」：附加提示词给会话助手与 Fleet 编排者各一段——只追加、不替代内置安全铁律，保存后下一条消息即生效；技能库按名维护操作手册，agent 用 load_skill 工具现场加载，改技能无需重开会话），经 SessionManager 同一 agent actor 执行——审批、审计、夺权语义全自动继承，内嵌 agent 无任何绕过路径；api_key 加密入库（vault 密封 KV，永不回显/明文落盘）。控制权显式交托：会话在人类手里时发送任务先弹「委托并发送」确认（工具栏「接管」随时收回，无需配置 MCP 协作）；模型服务配置即解锁委托/接管入口。Agent 视图头部「自主」开关（两击确认）：免逐条审批的自主运行——危险名单仍硬拦、传输仍逐条、全量记录（审计可辨自主动作）、急停条随时撤回。**跨主机编排（Fleet）**：第三视图的编排者不直接操作任何机器——用 fleet_sessions/dispatch_task/wait_task 把自包含任务并行派发给各会话的执行 agent 并汇总结果，目标会话的审批/危险扫描/控制权独立生效、拒绝如实上报（组合派发不覆盖逐机约束）。会话串行对话、可停止、跨会话独立上下文；切换模型服务后对话记忆重置（如实提示）。右缘图标栏常驻任务面板五视图入口（状态栏/工具栏既有入口保留）。
+- 资源监控大屏（活动栏第四视图，整幅覆盖层）：多服务器资源卡——每台**服务器**一张卡（同机多连接去重合一，×N 徽标）CPU/内存环形仪表 + 磁盘/网络折线 + 近 30 分钟历史（内联 SVG，随主题），支持 Ascend 服务器 NPU 监控（npu-smi 每芯片健康/功耗/温度/利用率/HBM；无 npu-smi 自动隐藏 NPU 区，「有工具但表头未识别」显式呈现便于真机校准）。**采集开关 opt-in**：通用监控与 NPU 监控两枚独立开关，默认全关零后台开销；打开后后台持续采样（每 3 秒，关大屏不中断），重开大屏历史直接在，开关态持久化。数据通路沿底部监控条先例：人类专属直连 Fresh 通道采样、不经审批/审计/终端回放；连续采样失败卡片置灰可重试，点击卡片头切换会话。底部监控条（活动会话资源条）继续独立工作，两者暂停互不影响。
+- 新建/编辑主机与快速连接为居中大对话框（Ctrl+T / ⌘K）；侧栏不再塞表单。
+- 应用内更新：启动静默比对 GitHub Release（有新版 toast + 设置 → 关于 行）；macOS（.app/.dmg 安装形态）与 Windows 便携单文件均有「自动更新（下载并重启）」一键升级（签名单 manifest：下载 → 验签 → 安装/自替换 → 重启）；Linux tar.gz 如实只「检查 + 发布页下载」（updater 插件只覆盖安装器形态，且无 AppImage 产物）。发布签名是维护者可选动作：配 `TAURI_UPDATER_PUBKEY` / `TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]` secrets 后 release 工作流自动附 `latest.json`；不配则构建照常绿、应用内不出现「自动更新」入口。
+- 传输队列：底部抽屉（状态条「传输」）管理上传/下载任务——进行中可取消，失败/取消/中断可重试（新任务重新校验连接/源/冲突），结果未知可「重新核实」；下载完成卡「定位」（资源管理器中显示文件）与「打开」（系统默认程序打开文件本身，无关联扩展名由系统「打开方式」兜底）。
+
+### 界面速览
+
+以下截图全部来自内置浏览器演示模式——假会话、如实标注，UI 与真实应用一致。深色 · **东京夜**主题（出厂默认）。
+
+| 终端 + 主机栏 + 状态条 | Agent 内联审批卡 |
+|---|---|
+| ![终端](docs/img/readme-terminal.png) | ![Agent](docs/img/readme-agent.png) |
+| **Agent 回复富渲染：mermaid 架构图 + KaTeX 公式** | **Fleet 编排：一段对话跨主机派发，逐条 exec 必审** |
+| ![富渲染](docs/img/readme-md.png) | ![Fleet](docs/img/readme-fleet.png) |
+| **多服务器监控大屏（含本机、Ascend NPU）** | **命令块：人类/Agent 归因、退出码、复制重跑** |
+| ![监控](docs/img/readme-monitor.png) | ![命令块](docs/img/readme-blocks.png) |
+| **远程文件多选批量下载** | **记录审计：泳道时间线，每笔动作可回溯** |
+| ![文件](docs/img/readme-files.png) | ![记录](docs/img/readme-records.png) |
+| **tmux 面板：一个标签并排多个 tmux 会话** | **tmux 会话大屏：主机全部 tmux 会话的实时快照墙** |
+| ![tmux 面板](docs/img/readme-tmux.png) | ![tmux 会话大屏](docs/img/readme-wall.png) |
+| **工作空间记忆：欢迎页记住上次组合** | **一键恢复：窗格、布局与接入原样回来** |
+| ![工作空间](docs/img/readme-workspace.png) | ![一键恢复](docs/img/readme-restore.png) |
+
+### 文档
+
+| 文档 | 内容 | 何时读 |
+|---|---|---|
+| [SSH 客户端体验重构设计（UX-R1）](docs/ux/ssh-client-ux-refactor.md) | 当前定位、功能去向、布局与流程、视觉参考、技术增量、迁移边界 | 本轮重构首先阅读 |
+| [UX-R1 实施任务与验收矩阵](docs/ux/ssh-client-ux-refactor-delivery.md) | G0–G5 拆票、依赖、功能/性能/真人验收、交接证据 | 排期、开发与验收 |
+| [UX-R1 独立审核与开工结论](docs/ux/2026-10-06-ux-r1-independent-review.md) | 三路独立审核、问题关闭记录、G0 开工与出口边界 | 开工交接与评审 |
+| [PRD](docs/prd.md) | 愿景、设计理念（决策过滤器）、需求与验收标准、里程碑 | 任何功能取舍前 |
+| [L0 总体设计](docs/architecture/l0-system-design.md) | 系统上下文、容器视图、技术选型、ADR、Spike 清单 | 动手写代码前 |
+| [L1 模块设计](docs/architecture/l1-component-design.md) | crate 划分、SessionApi 接口、审批/凭据/MCP 设计、数据模型、威胁模型 | 实现各模块前 |
+| [协作产品验证计划](docs/validation-plan.md) | Agent 交接的用户研究、观察指标、决策 gate | 评估协作价值；与客户端验收分开 |
+| [PV 执行工具包](docs/pv/session-kit.md) | 主持手册、任务卡、问卷与阈值预登记模板；配套 [pv_env.sh](scripts/pv_env.sh)（沙箱故障模板）/[dist.sh](scripts/dist.sh)（分发构建）/[pv_analyze.py](scripts/pv_analyze.py)（分析与 gate 计算） | 招募参与者与开测前后 |
+
+### 治理约定
+
+1. **当前产品顺序与 UX 范围以 UX-R1 为准**：文档权威见重构设计 §0.1；旧 PRD 的 Agent 优先和完整客户端后移不再约束本轮。
+2. **核心契约继续有效**：PRD/L0/L1 的终端真源、凭据、审批、接管与重确认语义继续遵守；UX-R1 明确列出的增量须完成契约与兼容验证。
+3. **文档修订**：PRD / L0 / L1 的变更须更新对应文档的「修订记录」；**PRD 变更后，L0/L1 须在合并前同步评审一致性**；新的关键技术决策在 L0 §6 追加 ADR（触发标准：换库、跨 crate 契约变更、安全边界变更）。
+4. **客户端与协作分别验收**：客户端重构按 UX-R1 实施计划验收；协作价值仍按 validation-plan 的真人 PV 验证。任一通过均不代表另一项通过，旧协作 PV 不再阻止本轮客户端体验建设。
+
+### 状态
+
+v0.12.9。主平台（Windows）全绿：Rust 工作区测试 + 77 spec / 1564 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+
+### 技术栈（概览）
+
+Tauri v2 · Rust（tokio / russh ≥0.61 / portable-pty / alacritty_terminal / tree-sitter-bash）· React + xterm.js · SQLite · MCP（rmcp ≥2.0.0，streamable HTTP + stdio shim）· TinyAgent 内核（git 依赖钉 rev）
+
+### Agent 接入（协作）
+
+应用启用协作后在 `127.0.0.1`（默认 8722，被占递增）内嵌 MCP 端点，并提供**内置接入文档**：
+`http://127.0.0.1:<port>/integration.md`（Markdown，含端点/认证/行为约定/实时工具目录；`/` 为人读页面）。
+把该 URL 扔给任何能取网页的 Agent 即可自助对接。能力面：24 个工具（会话/exec/传输/转发/审计/执行记录）、
+资源（`tinyssh://sessions` 等现场状态，可 `resources/subscribe` 收变化推送）与引导提示（`prompts/get`）。
+Agent 侧所有动作（命令/传输/转发，含被拒的）进**结构化执行记录**：加密落盘、输出摘录脱敏、
+保留 30 天（可在 设置 → 记录审计 调整），Agent 可 `query_records` 自查，人类在 设置 → 记录审计 时间线回看——**会话泳道图 + 明细双层**：图上 x=时间、颜色=终态、实心=Agent/空心=人类、点大小=耗时，点击刻度定位明细行；下方列表带种类/来源/会话/时间筛选与加载更早，
+并可一键导出明文 JSONL（落 `records-export/`，导出留审计）。
+接入步骤：设置 → Agent 接入 →
+`tinyssh agent create <id> <名称>` 签发 Token（仅展示一次）→ Agent 侧按文档配置 HTTP 直连
+或 stdio shim（`tinyssh-mcp`）。危险命令与 Agent 传输逐条人工审批
+（审批卡支持「记住并批准」：30 分钟精确免审或写入持久放行规则；也可按 Agent
+开启**自主模式**——免逐条审批运行，危险命令仍硬拦、全部动作进
+执行记录，横幅常显一键急停，重启即失效；传输默认仍逐条审批，
+可在 设置 → Agent 接入 显式改「自主模式下传输免审」，随时刻关）；所有操作进审计。
+无头场景可用 `tinyssh serve` 起同款端点——注意它与 GUI 共享数据库但**不共享内存态**，
+请分时使用（审批队列互不可见）。
+
+### 许可
+
+Apache-2.0（见 [LICENSE](LICENSE)）。
+
+---
+
+## English
+
+### Why
 
 If you operate a few to a dozen servers — developing, deploying, troubleshooting — you want connections that just work, a terminal that feels right, file operations when you need them, and occasionally an agent to hand tasks to. Existing tools give you either a good terminal or a scripted AI loop; TinySSH refuses to choose, and refuses to hand your keys to an unattended loop:
 
@@ -16,9 +189,9 @@ If you operate a few to a dozen servers — developing, deploying, troubleshooti
 - **Autonomy is opt-in and visible.** A per-session autonomy switch skips per-item approvals but keeps hard blocks on dangerous patterns and transfers, banners its state, and has a kill switch. It lives in memory only — a restart revokes it.
 - **Everything is recorded.** Structured execution records (including refusals) are encrypted at rest, kept for 30 days, queryable by you *and* by the agent itself. The human view is a two-layer timeline: a per-session swim-lane chart (x = time, color = outcome, solid = agent / hollow = human, dot size = duration, click a dot to jump to the detail row) above the filterable list.
 
-## How it compares
+### How it compares
 
-Positioning snapshot at v0.12.3 (November 2026) — categories, not product reviews.
+Positioning snapshot at v0.12.9 (November 2026) — categories, not product reviews.
 
 | | TinySSH | Classic SSH clients (XShell, Termius…) | AI terminals (Warp…) |
 |---|---|---|---|
@@ -28,16 +201,17 @@ Positioning snapshot at v0.12.3 (November 2026) — categories, not product revi
 | Extensibility | built-in MCP server (24 tools) — plug in any agent | plugin systems | limited |
 | Delivery | single portable binary, credentials in an encrypted vault | installer | varies |
 
-## Highlights
+### Highlights
 
 - **ProxyJump (bastion hops)** — pick a jump host in the host form and connect through existing host entries (up to three chained hops). The hop reuses its own credentials, TOFU trust, editing and audit — no inline secrets. Each hop shows its own fingerprint confirmation and 2FA prompt (labeled "hop N · jump host"), failures name the offending hop, referenced jump hosts can't be deleted, and forwarding/SFTP/agent all ride the final connection unchanged. Quick-connect and the `ProxyJump` directive in `~/.ssh/config` imports are honestly not supported yet.
 - **SSH + local terminal, equal citizens** — the built-in "This machine" entry is pinned, un-deletable, auto-opens a terminal at startup (can be turned off in Settings → Terminal); local sessions get the same tabs, splits, command blocks, search, and file browsing as remote ones. Default shell is selectable (PowerShell / PowerShell 7 / Git Bash / cmd / WSL auto-detected; shells without preexec hooks are honestly marked "no command blocks").
 - **Interface language** — defaults to your system language on first launch; Settings → Appearance switches 中文 (Simplified) / English instantly (without interrupting terminal sessions). Coverage spans the app chrome and panel interiors: settings, hosts panel, host/quick-connect forms, menus, dialogs, command palette, records, files panel & transfer queue, port forwards, command blocks, collaboration, monitor dash, agent chat, plus toasts and terminal inline notices. Uncovered strings honestly stay Chinese rather than half-translated.
 - **Themes** — 17 palette families, each with light/dark faces; terminal ANSI derives per family under contrast/hue gates. The **Eye Care (护眼)** family uses a low-blue, warm sage-paper palette: olive-charcoal instead of pure black, warm grey-green paper instead of pure white, and muted sage accents without sacrificing WCAG AA. The **E Ink (墨水屏)** family targets e-paper displays: paper-white with near-black ink, muted semantic colors, and a dedicated rule that flattens shadows, transitions, and animations — the refresh-cost and ghosting killers on e-ink panels. Terminal text also uses xterm's per-cell minimum-contrast guard (4.5:1), so tmux's default color-on-color status lines and htop/dialog stay readable in both light and dark palettes.
+- **Readability & density** — five UI font-scale levels (80–125%) that scale app chrome only; terminal font size stays independent. Two UI density levels (comfortable/compact; compact trims 26px from the title bar, tab bar, session toolbar and status bar without hiding any controls), 13 terminal font presets, five scrollback levels (2,000–10,000 lines, default 4,000), four wheel-report rates plus follow-refresh-rate, a compact welcome layout for short windows, and hit targets audited at 125% scaling.
 - **Terminal quality** — Unicode 11 width table (CJK/emoji don't misalign), optional ligatures, sixel & iTerm2 inline images, OSC 52 clipboard with an ask/allow/deny policy, OSC 9 notifications, clickable file paths, broadcast input across sessions (iTerm-style), regex output triggers with notification or approval-gated key sequences. macOS IME full-width punctuation no longer drops the first press; stale mouse reporting left by crashed TUIs is reset when leaving the alternate screen or at the next shell prompt, with a right-click reset.
 - **Command blocks** — shells with OSC 133/7 integration turn every command into a block with exit code, duration, and captured output (rendered, ANSI-stripped, tail-capped). Remote sessions probe the login shell with a polyglot printf and install per-family hooks — bash/zsh (POSIX sh) and fish (event hooks) get integration; incompatible shells honestly stay Unavailable. Blocks can be copied, re-run (same confirmation chain as paste), located in the scrollback, and the agent reads them through the same API.
 - **Session restore** — on clean exit every session gets an encrypted snapshot (scrollback tail + viewport + cursor + modes); next start can rebuild and replay the screen. Reconnects go through the full connection flow — TOFU and 2FA gates included, nothing auto-dials.
-- **tmux, first-class** — the session toolbar's tmux button lists the sessions running on the remote. Pick one to attach the main view (after a disconnect the banner offers one-click *restore scene*: reconnect + recent scrollback + re-attach). Hit **+ Panel** to open more tmux sessions side by side in the same tab — each in its own channel over the same SSH connection (one login, one 2FA), tiled up to six cells; ideal for running several Claude Code instances, each isolated in its own tmux session. Drag a title bar to rearrange (drop in the middle of a pane to swap, near an edge to split it) and drag the dividers to resize; Ctrl+B reaches tmux in every pane. Panes dim on disconnect and re-attach in place after reconnect; closing a pane only detaches — the tmux session keeps running. The main view follows the same view rule: its × appears only while a tmux session is attached, and clicking it detaches that view back to the shell; the tab's × is the only way to close the whole session. **+ New tmux session…** at the top of the quick menu creates a session on the remote and lets you choose where it lands: attach it to the main view, or open it straight in a panel pane (no need to attach first and then hit the "one session, one view" guard). The quick menu's **session wall** spreads every tmux session on the host across a full-screen grid of live snapshots (2×2/3×3/4×4; click a cell to type into that session, double-click to zoom, or promote a cell to a real panel pane — closing the wall restores the panes' original sizes). And the app remembers your last **workspace**: which hosts were connected, which tmux sessions each tab had side by side (order, dragged layout, the attached session) — persisted automatically and crash-safe. After a restart, the welcome screen's ⟳ button reconnects every host and puts the whole combination back in one click: hosts that can't connect or that stop at a fingerprint/2FA prompt are skipped with a summary, and tmux sessions that no longer exist on the server are dropped instead of failing the whole restore. Agent shell commands on an attached session run in a dedicated `tinyssh-agent` tmux window. Each tab remembers the last focused pane: switching away and back returns to that pane. Focus mode (F11) keeps compact tab-bar buttons for connecting a saved host and toggling the files panel.
+- **tmux, first-class** — the session toolbar's tmux button lists the sessions running on the remote. Pick one to attach the main view (after a disconnect the banner offers one-click *restore scene*: reconnect + recent scrollback + re-attach). Hit **+ Panel** to open more tmux sessions side by side in the same tab — each in its own channel over the same SSH connection (one login, one 2FA), tiled up to six cells; ideal for running several Claude Code instances, each isolated in its own tmux session. Drag a title bar to rearrange (drop in the middle of a pane to swap, near an edge to split it) and drag the dividers to resize; Ctrl+B reaches tmux in every pane. Panes dim on disconnect and re-attach in place after reconnect; closing a pane only detaches — the tmux session keeps running. The main view follows the same view rule: its × appears only while a tmux session is attached, and clicking it detaches that view back to the shell; the tab's × is the only way to close the whole session. **+ New tmux session…** at the top of the quick menu creates a session on the remote and lets you choose where it lands: attach it to the main view, or open it straight in a panel pane (no need to attach first and then hit the "one session, one view" guard). The quick menu's **session wall** spreads every tmux session on the host across a full-screen grid of live snapshots (2×2/3×3/4×4; click a cell to type into that session, double-click to zoom, or promote a cell to a real panel pane — closing the wall restores the panes' original sizes). And the app remembers your last **workspace**: which hosts were connected, which tmux sessions each tab had side by side (order, dragged layout, the attached session) — persisted automatically and crash-safe. After a restart, the welcome screen's ⟳ button reconnects every host and puts the whole combination back in one click: hosts that can't connect or that stop at a fingerprint/2FA prompt are skipped with a summary, and tmux sessions that no longer exist on the server are dropped instead of failing the whole restore. Agent shell commands on an attached session run in a dedicated `tinyssh-agent` tmux window. Each tab remembers the last focused pane: switching away and back returns to that pane. Focus mode (F11) keeps compact tab-bar buttons for connecting a saved host and toggling the files panel, and keeps the host resource bar visible by default (can be turned off in Settings).
 - **Embedded agent (per session)** — chat with markdown, Mermaid, KaTeX; reasoning blocks collapse; tool calls appear as inline approval cards. Eight SSH tools (`exec`, `read_blocks`, `read_screen`, `wait_output`, `upload`, `download`, `transfer_status`, `send_keys`) plus an optional `load_skill` executed through the same session actor as everything else. Prompts and skills are customizable assets: append org-specific conventions per agent kind (session helper / Fleet orchestrator) in Settings → Agent — additions never replace the built-in safety rules — and maintain a named playbook library the agent loads with `load_skill`.
 - **Fleet orchestration** — a third view dispatches self-contained tasks to per-session agents in parallel and collects results; the dispatcher never touches machines itself, and each target keeps its own approvals and dangerous-command gates.
 - **Monitoring** — a per-session resource bar plus a full-screen multi-server dashboard (CPU/mem gauges, disk/net history; Ascend NPU per-chip health/power/temp/utilization/HBM). Sampling is opt-in, per-category, and survives closing the dashboard. The local machine is monitored through native APIs (kernel32/iphlpapi on Windows, /proc on unix) on the same parse path as remote hosts.
@@ -46,7 +220,7 @@ Positioning snapshot at v0.12.3 (November 2026) — categories, not product revi
 - **Single portable exe** on Windows — statically linked CRT, local SQLite metadata with credentials, API keys, records and restore snapshots encrypted in the vault (hostnames/audit rows use OS file permissions as their boundary; see the threat model).
 - **In-app updates** — a silent GitHub-release check at startup with a toast + Settings → About row when a new version ships. macOS (`.app`/`.dmg`) and the Windows portable exe get one-click auto-update (signed manifest, download → verify → install/self-replace → relaunch); the Linux tar.gz honestly stays check-and-download (the updater plugin only covers installed app formats there, and there is no AppImage artifact). Release signing is opt-in: maintainers set `TAURI_UPDATER_PUBKEY` / `TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]` secrets and the release workflow attaches `latest.json`; without them builds stay green and the auto-update button simply doesn't appear.
 
-## Screenshots
+### Screenshots
 
 All shots are the built-in browser demo mode — fake sessions, clearly labeled, same UI as the real app. Dark theme on the **Tokyo Night** palette (the factory default).
 
@@ -64,7 +238,7 @@ All shots are the built-in browser demo mode — fake sessions, clearly labeled,
 | **Workspace memory — the welcome screen remembers your last combination** | **One-click restore — panes, layout and attach back in place** |
 | ![Workspace](docs/img/readme-workspace.png) | ![Restored workspace](docs/img/readme-restore.png) |
 
-## Download
+### Download
 
 Prebuilt binaries (built by [release workflow](.github/workflows/release.yml), unsigned):
 
@@ -78,7 +252,7 @@ Each release also ships the `tinyssh` CLI companion and a `SHA256SUMS.txt`. The 
 
 Windows is the primary validation platform — the full test suites and real-machine verification rounds run there. macOS (Apple Silicon) has been validated end-to-end on physical hardware since v0.10.3 (launch, day-to-day use, local monitoring and self-overhead readings); the Intel macOS and Linux artifacts are built and unit-tested by CI but have not been validated on physical devices. If something breaks, please open an issue with your platform details.
 
-### First launch: unsigned builds
+#### First launch: unsigned builds
 
 No Apple Developer certificate is behind these builds, so macOS Gatekeeper blocks the first launch with "TinySSH cannot be verified" / "is damaged". The app itself is fine — it needs a one-time approval:
 
@@ -94,7 +268,7 @@ First launch may also raise a **Keychain** prompt — the credential vault keeps
 
 **Linux** — no quarantine concept; the `.deb` installs normally and the `.tar.gz` just unpacks.
 
-## Getting started
+### Getting started
 
 Prerequisites: Rust ≥ 1.86, Node ≥ 22 (CI uses Node 24).
 
@@ -102,7 +276,7 @@ Prerequisites: Rust ≥ 1.86, Node ≥ 22 (CI uses Node 24).
 # Frontend demo mode — runs in a plain browser, no Rust needed
 cd ui && npm ci && npm run dev      # http://localhost:5183
 
-# UI test suite (68 specs / 1463 checks; needs a Chrome/Edge binary)
+# UI test suite (77 specs / 1564 checks; needs a Chrome/Edge binary)
 TINYSSH_UI_CHROME="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" npm test
 
 # Desktop app (Tauri v2; dev shell expects the ui dev server above)
@@ -118,7 +292,7 @@ TINYSSH_E2E_SSHD=1 cargo test --workspace
 
 Windows notes: high-parallel `cargo test --workspace` can exhaust the page file — use `-j 4`. The first platform is Windows; the ubuntu CI job covers everything except the Tauri shell crate, which is built and tested in the windows CI job.
 
-## Layout
+### Layout
 
 | Crate | What it is |
 |---|---|
@@ -137,22 +311,22 @@ Windows notes: high-parallel `cargo test --workspace` can exhaust the page file 
 
 The frontend lives in `ui/` (React + xterm.js, TypeScript, Playwright specs). A built-in demo domain mirrors the backend so the whole UI is testable in a browser.
 
-## Documentation
+### Documentation
 
 Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-ux-refactor.md), [delivery & acceptance matrix](docs/ux/ssh-client-ux-refactor-delivery.md), [PRD](docs/prd.md), [L0 system design](docs/architecture/l0-system-design.md), [L1 component design](docs/architecture/l1-component-design.md), [execution ledger](docs/ux/ux-r1-execution-status.md) (per-round status), [MCP validation & PV kit](docs/validation-plan.md).
 
-## Status
+### Status
 
-v0.12.3. All suites green on the primary platform: Rust workspace tests, 68 UI specs / 1463 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.12.9. All suites green on the primary platform: Rust workspace tests, 77 UI specs / 1564 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
-## Sister project
+### Sister project
 
 [TinyAgent](https://github.com/chenpu17/TinyAgent) — a minimal single-binary agent kernel (agent loop, tools, providers) that also builds standalone with a CLI/TUI and Python/TypeScript bindings. TinySSH consumes it as a git dependency, pinned by revision.
 
-## Contributing
+### Contributing
 
 PRs are welcome; CI must stay green (fmt, clippy, tests on both runners). Commit messages follow the existing style: a dense one-line Chinese summary. For architecture decisions, read L0/L1 first — cross-crate contract changes need an ADR entry there.
 
-## License
+### License
 
 Apache-2.0. Built on [russh](https://github.com/Eugeny/russh), [portable-pty](https://github.com/wez/portable-pty), [alacritty_terminal](https://github.com/alacritty/alacritty), [xterm.js](https://github.com/xtermjs/xterm.js), [Tauri](https://github.com/tauri-apps/tauri), [rmcp](https://github.com/modelcontextprotocol/rust-sdk), and [TinyAgent](https://github.com/chenpu17/TinyAgent).

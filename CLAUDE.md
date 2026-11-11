@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-面向 coding agent 的项目工作手册。人读介绍见 [README.zh-CN.md](README.zh-CN.md)；动代码前先读 [L0](docs/architecture/l0-system-design.md)/[L1](docs/architecture/l1-component-design.md) 对应章节。
+面向 coding agent 的项目工作手册。人读介绍见 [README.md](README.md)（中文 / English 双语，均直接显示在仓库主页）；动代码前先读 [L0](docs/architecture/l0-system-design.md)/[L1](docs/architecture/l1-component-design.md) 对应章节。
 
 ## 项目是什么
 
@@ -13,7 +13,7 @@ TinySSH：人机协同终端（Tauri v2 桌面应用）——SSH 客户端 + 一
 ```bash
 # 前端 demo（纯浏览器，无需 Rust）
 cd ui && npm ci && npm run dev        # http://localhost:5183
-npm test                              # UI 套件 72 spec / 1500 断言（headless）
+npm test                              # UI 套件 77 spec / 1564 断言（headless）
 npm run build                         # tsc + vite build
 
 # 桌面 / Rust

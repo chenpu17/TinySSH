@@ -226,6 +226,11 @@ const EN: Record<string, string> = {
   "终端字号": "Terminal font size",
   "界面字号": "Interface font size",
   "标准（100%）": "Standard (100%)",
+  "界面密度": "UI density",
+  "舒适（默认）": "Comfortable (default)",
+  "紧凑": "Compact",
+  "紧凑档压缩标题栏、标签栏、会话工具栏与状态条的高度，不隐藏入口。":
+    "Compact reduces the height of the title bar, tab bar, session toolbar and status bar without hiding any controls.",
   "{0}%": "{0}%",
   "减小字号": "Decrease font size",
   "增大字号": "Increase font size",
