@@ -459,6 +459,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
+          # 本作业不 checkout，rel/ 下没有 .git：gh 无法自行推断仓库。
+          # 此前靠 curl 兜底「碰巧」成功（v0.12.6），一旦 Release 已存在，
+          # 兜底 POST 422 就整步失败（v0.12.7 源码包之外无产物）。
+          GH_REPO: ${{ github.repository }}
         run: |
           cd rel
           ls -l
@@ -483,11 +487,14 @@ jobs:
                     make_latest: 'true',
                   }));
                 " \
-              && curl -sf -X POST \
+              # 同 tag Release 已存在时 GitHub 返回 422：视为「已创建」，继续走上传收敛；
+              # 其余状态码（401/403/5xx 等）仍失败——鉴权/参数错误不得吞成成功。
+              && code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
                 -H "Authorization: Bearer $GITHUB_TOKEN" \
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" \
-                --data-binary @body.json; } \
+                --data-binary @body.json) \
+              && { [ "$code" = "201" ] || [ "$code" = "422" ]; }; } \
           } 2>&1 | tee rel.log
           gh release upload "$GITHUB_REF_NAME" --clobber \
             TinySSH_* tinyssh-cli_* SHA256SUMS.txt $( [ -f latest.json ] && echo latest.json ) 2>&1 | tee -a rel.log \
