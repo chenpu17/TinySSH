@@ -10,7 +10,7 @@ import {
   APPEARANCES, FONT_DEFAULT, FONT_MAX, FONT_MIN, PALETTES, SETTINGS_CATS,
   friendlyError,
   settingsCatIcon, settingsCatLabel,
-  TERM_CURSOR_STYLES, TERM_FONTS, TERM_LETTER_SPACINGS, TERM_SCROLLBACKS, TERM_WHEEL_RATES,
+  TERM_CURSOR_STYLES, TERM_FONTS, TERM_LETTER_SPACINGS, TERM_SCROLLBACK_DEFAULT, TERM_SCROLLBACKS, TERM_WHEEL_RATES,
   dateLocale,
   type Appearance, type SettingsCat, type TermCursorStyle, type TermWheelRate,
 } from "../app-data";
@@ -737,12 +737,13 @@ export function SettingsPanel({
                   <div className="set-item">
                     <span className="set-item-txt">
                       <b>{t("滚动历史")}</b>
-                      <span className="set-item-desc">{t("每会话回滚缓冲行数；越大越吃内存（长构建 / 大日志建议 5 万行以上）。")}</span>
+                      <span className="set-item-desc">{t("每会话回滚缓冲行数；越大越吃内存，长构建 / 大日志可调到 1 万行。")}</span>
                     </span>
                     <select className="set-item-ctl" data-testid="term-scrollback-select" aria-label={t("滚动历史行数")}
                       value={String(termScrollback)} onChange={(e) => onChangeTermScrollback(Number(e.target.value))}>
                       {TERM_SCROLLBACKS.map((n) => (
-                        <option key={n} value={String(n)}>{n === 10000 ? t("10,000 行（默认）") : t("{0} 行", n.toLocaleString("en-US"))}</option>
+                        <option key={n} value={String(n)}>{n === TERM_SCROLLBACK_DEFAULT
+                          ? t("{0} 行（默认）", n.toLocaleString("en-US")) : t("{0} 行", n.toLocaleString("en-US"))}</option>
                       ))}
                     </select>
                   </div>

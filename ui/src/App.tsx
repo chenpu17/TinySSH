@@ -105,7 +105,7 @@ import {
   SPLIT_RECOVER_AT, SPLIT_RECOVER_AT_H, tauriListen, THEMES, ThemePreset,
   TransferCard, themeById, TZ_NOTE, useDialogFocus,
   TERM_FONT_DEFAULT, TERM_FONTS, termFontCss, TERM_LETTER_SPACING_DEFAULT, TERM_SCROLLBACK_DEFAULT,
-  TERM_WHEEL_RATE_DEFAULT, parseTermWheelRate,
+  TERM_WHEEL_RATE_DEFAULT, parseTermScrollback, parseTermWheelRate,
   type Appearance, type SettingsCat, type SplitDir, type SplitGroup, type SplitPanes, type TermCursorStyle, type TermWheelRate,
 } from "./app-data";
 import { localeNow, resolveInitialLocale, setLocale, SETTING_LOCALE, t, type Locale } from "./i18n";
@@ -4553,11 +4553,9 @@ export default function App() {
         termCursorBlinkRef.current = on;
         setTermCursorBlink(on);
       }
-      const sb = Number(get(SETTING_TERM_SCROLLBACK));
-      if (Number.isFinite(sb) && sb >= 1000 && sb <= 1_000_000) {
-        termScrollbackRef.current = sb;
-        setTermScrollback(sb);
-      }
+      const sb = parseTermScrollback(get(SETTING_TERM_SCROLLBACK));
+      termScrollbackRef.current = sb;
+      setTermScrollback(sb);
       const ls = Number(get(SETTING_TERM_LETTER_SPACING));
       if (Number.isFinite(ls) && ls >= 0 && ls <= 4) {
         termLetterSpacingRef.current = ls;
@@ -8785,7 +8783,7 @@ export default function App() {
             connectingIds={connectingIds} lastFailed={lastFailed}
             showImport={showImport} showAddHost={showAddHost} attempts={attempts}
             hostSearchRef={hostSearchRef} hostDebounceRef={hostDebounceRef}
-            setHostQuery={setHostQuery}
+            hostQuery={hostQuery} setHostQuery={setHostQuery}
             gripDrag={gripDrag} gripDown={gripDown} gripMove={gripMove} gripUp={gripUp}
             dispatchRef={dispatchRef}
             setTagFilter={setTagFilter} setShowImport={setShowImport}

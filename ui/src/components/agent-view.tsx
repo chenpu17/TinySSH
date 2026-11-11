@@ -1009,7 +1009,18 @@ export function AgentView({
           </div>
         </>
       ) : (
-        <div className="ag-empty">{t("连接主机后开始与 Agent 对话。")}</div>
+        <div className="ag-empty" data-testid="agent-no-session">
+          <div className="ag-empty-card">
+            <div className="ag-empty-mark" aria-hidden="true"><IconBot size={26} /></div>
+            <div className="ag-empty-title">{t("连接主机，开始 Agent 协作")}</div>
+            <div className="ag-empty-desc">{t("连接主机后开始与 Agent 对话。")} {t("先描述要检查或执行的任务，再在当前会话中继续。")}</div>
+            <div className="ag-empty-points" aria-label={t("Agent 协作保障")}>
+              <span>{t("危险操作需审批")}</span>
+              <span>{t("随时接管终端")}</span>
+              <span>{t("操作留痕可回看")}</span>
+            </div>
+          </div>
+        </div>
       )}
       </aside>
       {/* 拖宽把手与 hostbar 同构：aside 的兄弟节点（.workspace 行内、贴面板右缘），

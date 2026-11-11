@@ -419,7 +419,8 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
           placeholder={t("例：生产, 数据库")} onKeyDown={enterKey(() => submit())} />
       </div>
       {err && <div className="err" id="ah-error" role="alert" style={{ marginTop: 6 }}>✕ {err}</div>}
-      <div className="row" style={{ marginTop: 8 }}>
+      <div className="form-actions" data-testid="add-host-actions">
+        <span className="form-note">{t("凭据加密存入本机凭据库，不会明文落盘。")}</span>
         {editing ? (
           <button disabled={busy} onClick={() => submit()}>{busy ? t("保存中…") : t("保存修改")}</button>
         ) : (
@@ -438,7 +439,6 @@ export function AddHostForm({ onSaved, editHost, prefill, onCancel, hosts, onSav
             {saving ? t("正在保存…") : t("取消")}
           </button>
         )}
-        <span className="dim">{t("凭据加密存入本机凭据库，不会明文落盘。")}</span>
       </div>
     </div>
   );

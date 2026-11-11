@@ -705,9 +705,18 @@ export const TERM_CURSOR_STYLES: { id: TermCursorStyle; label: string }[] = [
   { id: "underline", label: "下划线" },
 ];
 
-/** 滚屏行数档（xterm scrollback；越大越吃内存，100 万行仅建议窄用） */
-export const TERM_SCROLLBACKS = [2000, 5000, 10000, 50000, 100000];
-export const TERM_SCROLLBACK_DEFAULT = 10000;
+/** 滚屏行数档（xterm scrollback）：默认 4000 控制多会话内存，长日志可升到 10000。 */
+export const TERM_SCROLLBACKS = [2000, 4000, 6000, 8000, 10000];
+export const TERM_SCROLLBACK_DEFAULT = 4000;
+/** 旧版允许 5000/50000/100000 等持久化值；映射到最近的新档（等距取低档），
+ *  旧版五个档位均不提高内存上限，也避免受控下拉框因无匹配项而空白。 */
+export function parseTermScrollback(v: string | null | undefined): number {
+  if (v == null || v.trim() === "") return TERM_SCROLLBACK_DEFAULT;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return TERM_SCROLLBACK_DEFAULT;
+  return TERM_SCROLLBACKS.reduce((best, cur) =>
+    Math.abs(cur - n) < Math.abs(best - n) ? cur : best);
+}
 /** 字距（px，浮点可选） */
 export const TERM_LETTER_SPACINGS = [0, 0.5, 1, 1.5, 2];
 export const TERM_LETTER_SPACING_DEFAULT = 0;

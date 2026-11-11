@@ -198,7 +198,7 @@ export function QuickConnectForm({ onConnect, onCancel, onBusyChange, remoteErro
         const shown = err ?? (failed ? (remoteError || t("连接失败——请检查地址、凭据与网络后重试（已填内容保留）")) : null);
         return shown ? <div className="err" id="qc-error" role="alert" style={{ marginTop: 6 }}>✕ {shown}</div> : null;
       })()}
-      <div className="row" style={{ marginTop: 8, gap: 8 }}>
+      <div className="form-actions" data-testid="quick-connect-actions">
         <button disabled={busy} onClick={() => void submit()} data-testid="quick-connect-go">{busy ? t("连接中…") : t("连接")}</button>
         <button className="ghost" onClick={onCancel} data-testid="quick-connect-cancel">
           {busy ? t("取消连接") : t("取消")}

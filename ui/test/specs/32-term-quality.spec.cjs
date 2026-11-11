@@ -93,11 +93,19 @@ module.exports = {
       spacing: document.querySelector('[data-testid="term-spacing-select"]').value,
       wheelRate: document.querySelector('[data-testid="term-wheel-rate-select"]').value,
     }));
-    ck.check("默认回显（Maple Mono 中文等宽 / 连字关 / 方块光标 / 闪烁开 / 10000 行 / 字距 0 / 滚轮 60）",
+    ck.check("默认回显（Maple Mono 中文等宽 / 连字关 / 方块光标 / 闪烁开 / 4000 行 / 字距 0 / 滚轮 60）",
       defaults.font === "maple" && !defaults.liga && defaults.cursor === "block"
-        && defaults.blink && defaults.scrollback === "10000" && defaults.spacing === "0"
+        && defaults.blink && defaults.scrollback === "4000" && defaults.spacing === "0"
         && defaults.wheelRate === "60",
       JSON.stringify(defaults));
+    const scrollbackOptions = await page.locator('[data-testid="term-scrollback-select"] option').evaluateAll(
+      (options) => options.map((option) => option.value));
+    ck.check("滚屏行数提供 2000/4000/6000/8000/10000 五档",
+      JSON.stringify(scrollbackOptions) === JSON.stringify(["2000", "4000", "6000", "8000", "10000"]),
+      JSON.stringify(scrollbackOptions));
+    ck.check("默认档标注跟随 4000 行而非旧 10000 行", await page.locator(
+      '[data-testid="term-scrollback-select"] option[value="4000"]').evaluate(
+        (option) => option.textContent.includes("默认")));
 
     // ── 存量实例：先建一台（demo 预置会话不自动武装），验 unicode11 已激活 ──
     await closeSettings(page);
@@ -106,7 +114,7 @@ module.exports = {
     ck.check("建连后有可见终端实例", sids0.length >= 1, `sids=${JSON.stringify(sids0)}`);
     const info0 = await termInfo(page, sids0[0]);
     ck.eq("Unicode 11 宽度表已激活", info0.unicode, "11");
-    ck.eq("滚屏行数默认 10000", info0.scrollback, 10000);
+    ck.eq("滚屏行数默认 4000", info0.scrollback, 4000);
 
     // ── 外观五项即时生效（存量实例） ──
     await openTermSettings(page);
@@ -114,18 +122,18 @@ module.exports = {
     await page.waitForTimeout(300);
     ck.check("字体族即时生效（含 Cascadia Mono）", (await termInfo(page, sids0[0])).fontFamily.includes("Cascadia Mono"),
       (await termInfo(page, sids0[0])).fontFamily);
-    await page.selectOption('[data-testid="term-scrollback-select"]', "50000");
+    await page.selectOption('[data-testid="term-scrollback-select"]', "10000");
     await page.selectOption('[data-testid="term-cursor-select"]', "bar");
     await page.click('[data-testid="term-cursor-blink-toggle"]');
     await page.selectOption('[data-testid="term-spacing-select"]', "1");
     await page.waitForTimeout(400);
     const info1 = await termInfo(page, sids0[0]);
     ck.check("滚屏/光标样式/闪烁/字距即时生效",
-      info1.scrollback === 50000 && info1.cursorStyle === "bar" && info1.cursorBlink === false && info1.letterSpacing === 1,
+      info1.scrollback === 10000 && info1.cursorStyle === "bar" && info1.cursorBlink === false && info1.letterSpacing === 1,
       JSON.stringify({ scrollback: info1.scrollback, cursor: info1.cursorStyle, blink: info1.cursorBlink, spacing: info1.letterSpacing }));
     ck.check("demo 持久化（localStorage 六键落盘）",
       (await lsGet(page, "ui.v2.terminal.font_family")) === "cascadia"
-        && (await lsGet(page, "ui.v2.terminal.scrollback")) === "50000"
+        && (await lsGet(page, "ui.v2.terminal.scrollback")) === "10000"
         && (await lsGet(page, "ui.v2.terminal.cursor_style")) === "bar"
         && (await lsGet(page, "ui.v2.terminal.cursor_blink")) === "0"
         && (await lsGet(page, "ui.v2.terminal.letter_spacing")) === "1",
@@ -163,7 +171,7 @@ module.exports = {
       const info2 = await termInfo(page, newSid);
       ck.check("新实例继承外观与连字（Unicode11/字体/滚屏/连字）",
         info2.unicode === "11" && info2.fontFamily.includes("Cascadia Mono")
-          && info2.scrollback === 50000 && (await ligaSids(page)).includes(newSid),
+          && info2.scrollback === 10000 && (await ligaSids(page)).includes(newSid),
         JSON.stringify({ unicode: info2.unicode, font: info2.fontFamily, sb: info2.scrollback }));
     }
 
@@ -234,7 +242,7 @@ module.exports = {
     }));
     ck.check("reload 后设置回显完整",
       after.font === "cascadia" && after.liga && after.cursor === "bar" && !after.blink
-        && after.scrollback === "50000" && after.spacing === "1" && after.wheelRate === "auto",
+        && after.scrollback === "10000" && after.spacing === "1" && after.wheelRate === "auto",
       JSON.stringify(after));
     await closeSettings(page);
     let sids2 = await liveSids(page);
@@ -248,7 +256,7 @@ module.exports = {
       const info3 = await termInfo(page, sids2[0]);
       ck.check("reload 重建的终端继承全部品质项",
         info3.unicode === "11" && info3.fontFamily.includes("Cascadia Mono")
-          && info3.scrollback === 50000 && info3.letterSpacing === 1 && info3.cursorStyle === "bar"
+          && info3.scrollback === 10000 && info3.letterSpacing === 1 && info3.cursorStyle === "bar"
           && (await ligaSids(page)).includes(sids2[0]),
         JSON.stringify(info3));
     }
@@ -354,5 +362,14 @@ module.exports = {
       await new Promise((r) => setTimeout(r, 800));
     }, sidA);
     ck.eq("改回滚行数后再次触顶可再提示（每会话一次已重置）", await capToasts(), 2);
+
+    // 旧版高档不再出现在选项里，但已保存值不能让受控 select 空白：
+    // 50000 映射到最接近且不超过新上限的 10000。
+    await page.evaluate(() => localStorage.setItem("ui.v2.terminal.scrollback", "50000"));
+    await page.reload();
+    await page.waitForTimeout(1200);
+    await openTermSettings(page);
+    ck.eq("旧版 50000 行配置启动时归一到 10000，设置回显不空白",
+      await page.locator('[data-testid="term-scrollback-select"]').inputValue(), "10000");
   },
 };

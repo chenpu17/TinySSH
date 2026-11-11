@@ -1,7 +1,7 @@
 // 主机栏（App.tsx 拆分⑤）：搜索（非受控+150ms 防抖）、标签筛选、收藏分组主机卡、
 // 导入面板挂载点、设置钮与宽度抓手。从 App.tsx 原样出仓，本文件只收 props 呈现，
 // 零语义变更。过滤/排序/相位文案用 app-data 共享口径（hostMatches/byName/phaseText）。
-import type { PointerEvent } from "react";
+import { useEffect, useState, type PointerEvent } from "react";
 import { errMsg } from "../adapter/errors";
 import type { AppAction } from "../actions";
 import type {
@@ -11,7 +11,7 @@ import { byName, hostMatches, phaseText } from "../app-data";
 import { t } from "../i18n";
 import { SshConfigImportPanel } from "./ssh-import";
 import {
-  IconChevronUp, IconLoader, IconMore, IconPlus, IconRefresh, IconSearch, IconSliders, IconUpload,
+  IconChevronUp, IconLoader, IconMore, IconPlus, IconRefresh, IconSearch, IconSliders, IconUpload, IconX,
 } from "../icons";
 
 export interface HostbarProps {
@@ -39,6 +39,7 @@ export interface HostbarProps {
   // 非受控搜索 + 防抖计时器（归属宿主：卸载清理在彼处）
   hostSearchRef: { current: HTMLInputElement | null };
   hostDebounceRef: { current: number };
+  hostQuery: string;
   setHostQuery: (v: string) => void;
   gripDrag: { current: boolean };
   gripDown: (e: PointerEvent<HTMLDivElement>) => void;
@@ -63,12 +64,33 @@ export function Hostbar({
   filteredHosts, favHosts, otherHosts, allTags, activeTag,
   localHost, localShells, onLocalShell,
   connectingIds, lastFailed, showImport, showAddHost, attempts,
-  hostSearchRef, hostDebounceRef, setHostQuery,
+  hostSearchRef, hostDebounceRef, hostQuery, setHostQuery,
   gripDrag, gripDown, gripMove, gripUp, dispatchRef,
   setTagFilter, setShowImport, setShowAddHost, setEditingHost, setPrefillEntry,
   setHostMenu, attachSession, createSession,
   cancelConnect, pushToast, refreshLists,
 }: HostbarProps) {
+  // 输入框是非受控组件，过滤值则由宿主持有。栏收起再展开时以 hostQuery 回显，
+  // 避免“输入框为空、列表却仍按旧词过滤”；本地值只决定清除钮是否出现。
+  const [searchValue, setSearchValue] = useState(hostQuery);
+  useEffect(() => {
+    // 快速收起/重开时，上一代的防抖可能在新输入框挂载后才提交；
+    // 此时 defaultValue 不会重跑，需同时回显 DOM 与清除钮的本地状态。
+    if (hostSearchRef.current && hostSearchRef.current.value !== hostQuery) {
+      hostSearchRef.current.value = hostQuery;
+    }
+    setSearchValue((current) => current === hostQuery ? current : hostQuery);
+  }, [hostQuery, hostSearchRef]);
+  const clearSearch = () => {
+    if (hostDebounceRef.current) {
+      window.clearTimeout(hostDebounceRef.current);
+      hostDebounceRef.current = 0;
+    }
+    if (hostSearchRef.current) hostSearchRef.current.value = "";
+    setSearchValue("");
+    setHostQuery("");
+    hostSearchRef.current?.focus();
+  };
   const hostAttempt = (hostId: string) => Object.values(attempts).find((a) => a.hostId === hostId) ?? null;
   return (
     <>
@@ -77,11 +99,13 @@ export function Hostbar({
           <div className="hb-search">
             <IconSearch size={13} />
             <input placeholder={t("搜索主机")} aria-label={t("搜索主机（名称 / 地址 / 用户 / 标签）")} spellCheck={false}
-              ref={hostSearchRef}
+              ref={hostSearchRef} defaultValue={hostQuery}
               onInput={(e) => {
                 // 非受控 + 150ms 防抖（五轮架构）：键入路径不再逐键 setState
-                // 触发全树 reconcile；hostQuery 只服务列表过滤，允许滞后
+                // 触发全树 reconcile；hostQuery 只服务列表过滤，允许滞后。
+                // 清除钮的可见性只更新 Hostbar，本地状态不回抬到 App。
                 const v = (e.target as HTMLInputElement).value;
+                setSearchValue(v);
                 if (hostDebounceRef.current) window.clearTimeout(hostDebounceRef.current);
                 hostDebounceRef.current = window.setTimeout(() => {
                   hostDebounceRef.current = 0;
@@ -89,6 +113,13 @@ export function Hostbar({
                 }, 150);
               }}
               onKeyDown={(e) => {
+                if (e.key === "Escape" && hostSearchRef.current?.value) {
+                  // 有搜索词时 Esc 只清空本字段，不继续冒泡去关面板/主机栏。
+                  e.preventDefault();
+                  e.stopPropagation();
+                  clearSearch();
+                  return;
+                }
                 // 回车直达第一个命中主机（巡检补）——此前搜到后还必须挪鼠标点卡片。
                 // 与主机卡 activate() 同动线：有活跃会话切最近一个，否则新建；
                 // 连接中的主机忽略（§280 仅本主机连接中不扰）。
@@ -111,6 +142,12 @@ export function Hostbar({
                 if (latest) { void attachSession(latest.id).catch((er) => pushToast("err", errMsg(er))); }
                 else createSession(h);
               }} />
+            {searchValue && (
+              <button type="button" className="hb-search-clear" data-testid="host-search-clear"
+                aria-label={t("清空搜索")} title={t("清空搜索")} onClick={clearSearch}>
+                <IconX size={11} />
+              </button>
+            )}
           </div>
           <button className="ghost icon-btn" title={showImport ? t("收起导入") : t("导入 ~/.ssh/config")} aria-label={showImport ? t("收起导入") : t("导入 ~/.ssh/config")}
             onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
@@ -295,10 +332,16 @@ export function Hostbar({
             const noMatch = hostsLoaded && !hostsError && savedHostCount > 0 && filteredHosts.length === 0 && (
               <>
                 <div className="side-quiet">{t("没有匹配的主机——可清除搜索或标签筛选，或添加新主机：")}</div>
-                <button className="ghost" style={{ marginTop: 6 }}
-                  onClick={() => { setShowImport(false); setEditingHost(null); setPrefillEntry(null); setShowAddHost(true); }}>
-                  <IconPlus size={12} /> {t("添加主机")}
-                </button>
+                <div className="row" style={{ marginTop: 6 }}>
+                  <button className="ghost" data-testid="host-clear-filters"
+                    onClick={() => { clearSearch(); setTagFilter(null); }}>
+                    <IconX size={12} /> {t("清除筛选")}
+                  </button>
+                  <button className="ghost"
+                    onClick={() => { setShowImport(false); setEditingHost(null); setPrefillEntry(null); setShowAddHost(true); }}>
+                    <IconPlus size={12} /> {t("添加主机")}
+                  </button>
+                </div>
               </>
             );
             const firstSection = (title: string, cards: Host[]) => (
