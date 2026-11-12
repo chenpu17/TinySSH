@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-面向 coding agent 的项目工作手册。人读介绍见 [README.md](README.md)（中文 / English 双语，均直接显示在仓库主页）；动代码前先读 [L0](docs/architecture/l0-system-design.md)/[L1](docs/architecture/l1-component-design.md) 对应章节。
+面向 coding agent 的项目工作手册。人读介绍见 [README.md](README.md)（英文，仓库主页默认）与 [README.zh-CN.md](README.zh-CN.md)（中文），两文件顶部互链切换；动代码前先读 [L0](docs/architecture/l0-system-design.md)/[L1](docs/architecture/l1-component-design.md) 对应章节。
 
 ## 项目是什么
 
