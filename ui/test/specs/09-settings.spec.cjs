@@ -19,6 +19,10 @@ module.exports = {
   title: "设置对话框与分区",
   async run({ page, ck, BASE }) {
     ck.check("主机栏底部有设置入口", await page.evaluate(() => !!document.querySelector(".hb-settings")));
+    await page.waitForTimeout(400);
+    // #27：默认 demo 域无新版本 → 标题栏不出现升级徽标（不造假提醒）
+    ck.check("无新版本时标题栏无升级徽标",
+      await page.evaluate(() => !document.querySelector("[data-testid=update-badge]")));
     await openSettings(page);
 
     const ids = await paneIds(page);
@@ -255,6 +259,13 @@ module.exports = {
     await page.waitForTimeout(600);
     ck.check("autoupdater 场景启动 toast 提示新版本 v99.0.0",
       await page.evaluate(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("新版本 v99.0.0 已发布"))));
+    // #27：标题栏常驻升级徽标——版本号可见、tooltip 指引打开发布页
+    ck.check("autoupdater 场景标题栏出现升级徽标",
+      await page.evaluate(() => !!document.querySelector("[data-testid=update-badge]")));
+    const badgeTxt = await page.textContent("[data-testid=update-badge]");
+    ck.check("升级徽标带新版本号 v99.0.0", (badgeTxt ?? "").includes("v99.0.0"), badgeTxt ?? "");
+    const badgeTitle = await page.evaluate(() => document.querySelector("[data-testid=update-badge]")?.getAttribute("title") ?? "");
+    ck.check("升级徽标 tooltip 指引打开发布页", badgeTitle.includes("打开发布页"), badgeTitle.slice(0, 100));
     await openSettings(page);
     await page.click("[data-testid=settings-cat-about]");
     await page.waitForTimeout(500);

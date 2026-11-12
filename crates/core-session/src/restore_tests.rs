@@ -22,12 +22,23 @@ async fn capture_roundtrip_contains_scene() {
         .lock()
         .await
         .feed(b"echo scene-line-42\r\nscene-line-42\r\n");
+    // #26：tmux 现场（主视图 attach + 面板格子）随屏幕快照同拍入库
+    *h.tmux_attached.lock().unwrap() = Some("work".into());
+    h.pane_wishlist
+        .lock()
+        .unwrap()
+        .extend(["logs".to_string(), "db".to_string()]);
     let n = m.capture_restore_snapshots().await;
     assert_eq!(n, 1, "一个会话应出一条快照");
     let entries = m.read_restore_snapshots().await;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].host_id, "h-t");
     assert!(!entries[0].saved_at.is_empty());
+    assert_eq!(entries[0].tmux_session.as_deref(), Some("work"));
+    assert_eq!(
+        entries[0].tmux_panes,
+        vec!["logs".to_string(), "db".to_string()]
+    );
     let text: String = entries[0].checkpoint.buffers[entries[0].checkpoint.active_buffer as usize]
         .lines
         .iter()
@@ -35,6 +46,19 @@ async fn capture_roundtrip_contains_scene() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(text.contains("scene-line-42"), "快照应含现场文本：{text}");
+}
+
+#[test]
+fn old_snapshot_json_defaults_tmux_fields() {
+    // #26 兼容：升级前写入的 restore.v1 没有 tmux 字段，读回必须是空而不是解析失败
+    let e = entry_of("h", false);
+    let mut v = serde_json::to_value(&e).unwrap();
+    let obj = v.as_object_mut().unwrap();
+    obj.remove("tmux_session");
+    obj.remove("tmux_panes");
+    let back: RestoreEntry = serde_json::from_value(v).unwrap();
+    assert_eq!(back.tmux_session, None);
+    assert!(back.tmux_panes.is_empty());
 }
 
 #[test]
@@ -119,6 +143,8 @@ fn entry_of(host: &str, huge: bool) -> RestoreEntry {
     RestoreEntry {
         host_id: host.into(),
         saved_at: "t".into(),
+        tmux_session: None,
+        tmux_panes: Vec::new(),
         checkpoint: session_api::ScreenCheckpoint {
             cols: 80,
             rows: 24,

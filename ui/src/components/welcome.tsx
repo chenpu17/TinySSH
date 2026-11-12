@@ -124,11 +124,13 @@ export function Welcome({
           const names = rows.map((r) => r.h!.name).join(t("、"));
           let when = rows[0].e.saved_at;
           try { when = new Date(rows[0].e.saved_at).toLocaleString(dateLocale()); } catch { /* 原样 */ }
+          // #26：快照里带了 tmux 现场才承诺重新接入（旧快照如实不提）
+          const hasTmux = rows.some((r) => !!r.e.tmux_session || (r.e.tmux_panes?.length ?? 0) > 0);
           return (
             <div className="welcome-recents" aria-label={t("恢复现场")}>
               <div className="wr-title">{t("上次现场")}</div>
               <button className="wr-row" data-testid="restore-scene" disabled={busy !== null}
-                title={`${t("快照 {0}", when)}；${restoreEntries.length > rows.length ? t("另有 {0} 个主机已删的条目将跳过。", restoreEntries.length - rows.length) : ""}${t("恢复后终端回到快照画面（滚回保留尾部 300 行）")}`}
+                title={`${t("快照 {0}", when)}；${restoreEntries.length > rows.length ? t("另有 {0} 个主机已删的条目将跳过。", restoreEntries.length - rows.length) : ""}${t("恢复后终端回到快照画面（滚回保留尾部 300 行）")}${hasTmux ? `；${t("快照时接入的 tmux 会话与面板格子会一并恢复")}` : ""}`}
                 onClick={() => run("scene", () => onRestoreScene(restoreEntries))}>
                 <span className="wr-name">{busy === "scene" ? t("⏮ 正在恢复现场…") : t("⏮ 恢复上次现场（{0}）", rows.length)}</span>
                 <span className="wr-addr">{names} · {t("快照 {0}", when)}</span>

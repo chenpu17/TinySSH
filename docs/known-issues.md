@@ -1,7 +1,7 @@
 # 已知问题 / 待排期
 
 > 记录用户反馈与开发中发现的非阻塞问题。修复后把「状态」改为已修复，并补验证方式。
-> 最后更新：2026-11-11
+> 最后更新：2026-11-12
 
 | ID | 状态 | 现象 | 初步判断 | 下一步 |
 |---|---|---|---|---|
@@ -51,6 +51,8 @@
 | KI-042 | 已修复，待真机验证 | 终端粗体 CJK 字形错乱/串格，Claude Code 输出里的粗体中文在表格与对齐场景看起来像 `!!??` 一类标点，v0.12.6 仍存在（GitHub #23，附 246×326 截图） | 探针 A/B 对照：同一张表用 Maple Bold 画粗体中文时，CJK 字形 advance 与 Regular 不一致，字形溢出到相邻单元格、压住框线；改用 Regular 字模后表格完全对齐。与 KI-014 的 WebGL 图集错位不是同一类（图集错位会整行字形互换，这里只发生在粗体 CJK） | 新增 `@font-face "Maple Mono CN CJK Bold"`（`maple-mono-cn-Regular.woff2`，`font-weight: 600 800`，`unicode-range` 只盖 CJK），终端默认栈把它放在首位——粗体 CJK 用 Regular 字模保证等宽对齐，拉丁/框线仍走 Maple Bold；`App.tsx` 首帧前预载该家族。回归：`32-term-quality` **44/44**，探针表格截图与 B 组（Regular）一致，`npm run build` 通过。验证方式：真机打开同一段 Claude Code 输出/表格，粗体中文不再串格 |
 | KI-043 | 已修复，待真机验证 | 非全屏时标题栏、标签栏、会话工具栏在矮窗里占纵向空间过多，希望可以压缩高度（GitHub #24，附 920×224 截图） | 四条 chrome 固定高 44/34/32/26，合计约 136px；1440×900 下不显眼，920×448 一类矮窗里接近一半视口。专注模式能全隐藏，但用户要的是「仍保留入口、只压矮」 | 设置 → 外观 → 字号与缩放新增「界面密度：舒适 / 紧凑」。紧凑档把四条压到 32/28/28/22（合计省 26px），标签药丸 27→24px，其余按钮/图标尺寸不动、入口一个不少；根属性 `data-density` + CSS 变量 `--chrome-*-h` 即时生效，localStorage `ui.ui_density` 首帧前恢复。回归：新增 `85-ui-density` **10/10**（1280×560 终端可视高 408→434），`npm run build` 通过。验证方式：设置切紧凑档后矮窗终端明显变高，四条 chrome 仍在 |
 | KI-044 | 已修复，待真机验证 | tmux 子窗口右侧出现原生滚动条，拖了也不滚动，纯属干扰（GitHub #25，附 130×974 截图） | tmux 格子恒 attach 到远端 tmux（备用屏），本地 xterm viewport 没有可用 scrollback；macOS 悬停仍会露出 overlay 滚动条。滚轮实际走 tmux 鼠标上报或本地程序化滚动，不依赖该滚动条 | 隐藏 `.tmux-cell-body .xterm-viewport` 的滚动条（`scrollbar-width: none` + WebKit 伪元素 0 宽），主终端 viewport 保持 `auto`。回归：`63-tmux-panel` **134/134**，临时探针确认格子 `scrollbarWidth: none`、主终端仍为 `auto`（探针已删）。验证方式：真机 tmux 子窗口悬停不再出现右侧滚动条，滚轮/复制模式不受影响 |
+| KI-045 | 已修复，待真机验证 | 恢复现场功能基本不可用：恢复出来只是快照画面 + 新 shell，原 tmux 会话没有接回去；一个标签里原来两个 tmux 子窗口，恢复后只剩一个（GitHub #26，附截图） | `RestoreEntry` 只存 `ScreenCheckpoint`，不记 `tmux_attached` / `pane_wishlist`；`restoreScenes` 只重放画面，所以现场是静态的。tmux 大屏（整幅墙视图）本身是临时视图、不入 vault，不在本修复范围；一标签多 tmux 会话的面板格子已恢复 | 快照新增 `tmux_session` / `tmux_panes`（`serde(default)` 兼容旧快照），受控退出采集时与屏幕同拍读取会话内存态；恢复时主视图走既有 `tmux_restore`（重连全机器 + capture-pane 补史 + 注入 attach），面板格子按快照序逐格重开，布局从 `ui.v2.workspace` 的 `sessions.panes` 组合按「attach 名 + 格子名序」精确匹配后套用（缺格回自动平铺）。回归：`core-session` restore 测试 4 项（round-trip 含 tmux 字段、旧 JSON 默认值、尾裁剪、条目守卫）、新增 `86-scene-tmux-restore` **11/11**（主视图按名接入 + 近史补滚回 + 面板格子重开）、`09-settings` **58/58**。验证方式：真机退出前挂 tmux（含两个面板格子），重启后点「恢复上次现场」，应看到快照画面后重新 attach 原会话，面板格子按原顺序回来；已 kill 的 tmux 会话跳过并汇总提示 |
+| KI-046 | 已修复，待真机验证 | 希望升级能定时检查、主动通知用户，并在窗口标题栏有提醒小图标，美观一些（GitHub #27） | 原实现只在启动时 `check_update` 一次，有新版走 toast + 关于卡更新行；没有定时器，标题栏也没有常驻提示 | 启动首查之外每 6 小时静默重查；窗口重新获得焦点且距上次检查 ≥6 小时时补查（覆盖休眠唤醒/长时间后台）。同一版本只主动 toast 一次，标题栏 `.update-badge` 常驻「↑ vX.Y.Z」小徽标（accent 软底细环、悬停箭头轻抬），点按直接打开发布页，无 URL 时退到关于卡。回归：`09-settings` 新增「无新版本不显示徽标」「autoupdater 场景显示 v99.0.0」「tooltip 指引打开发布页」3 断言。验证方式：真机有新版本时标题栏出现小徽标、点击打开发布页；6 小时后或重新聚焦时自动复查且不重复打扰 |
 
 
 未修：Agent 停止的模型侧延迟（TinyAgent 内核限制，等上游）；KI-004 tmux copy-mode 滚动若真机仍卡，需在真机 profile copy-mode 单帧输出体积与 SSH RTT，再评估本地预测/缓存。待用户确认/补充信息：KI-039（#19 首连首行已有输出）、KI-040（#18 macOS 字体观感）——截图已用公开图片代理取到，待用户补充信息/真机对照后再改行为。

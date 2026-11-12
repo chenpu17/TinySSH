@@ -689,6 +689,10 @@ export interface RestoreEntry {
   host_id: string;
   /** 快照时刻 RFC3339（恢复按钮与公告行引用） */
   saved_at: string;
+  /** 快照时主视图 attach 的 tmux 会话名（#26）；旧快照/未接 tmux = null */
+  tmux_session?: string | null;
+  /** 快照时 tmux 面板格子里的会话名，顺序=格子顺序（#26）；旧快照 = 空 */
+  tmux_panes?: string[];
   checkpoint: ScreenCheckpoint;
 }
 

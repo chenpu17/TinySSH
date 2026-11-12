@@ -26,6 +26,14 @@ pub struct RestoreEntry {
     pub host_id: String,
     /// 快照时刻（RFC3339）：恢复按钮 tooltip 与恢复后公告行引用。
     pub saved_at: String,
+    /// 快照时主视图注入 attach 的 tmux 会话名（#26）：恢复时据此重新接入，
+    /// 让现场从「静态画面 + 新 shell」回到活的远端会话。旧快照无此字段。
+    #[serde(default)]
+    pub tmux_session: Option<String>,
+    /// 快照时 tmux 面板格子里的会话名（顺序=格子顺序，#26）：恢复时逐格重开。
+    /// 旧快照无此字段。
+    #[serde(default)]
+    pub tmux_panes: Vec<String>,
     pub checkpoint: ScreenCheckpoint,
 }
 
@@ -70,9 +78,21 @@ impl SessionManager {
             // 屏幕锁（tokio）逐个短临界区采集；断线会话的屏幕内容同样有价值
             //（恢复语义是「回到刚才的画面」，重连成不成由既有建连流程如实呈现）
             let ck = h.screen.lock().await.checkpoint();
+            // tmux 状态只对 SSH 会话有意义（本机 kind=local 即便残留也不带走）；
+            // 两个字段都是会话内内存态，采集时刻与屏幕快照同一拍。
+            let (tmux_session, tmux_panes) = if h.kind == "ssh" {
+                (
+                    h.tmux_attached.lock().unwrap().clone(),
+                    h.pane_wishlist.lock().unwrap().clone(),
+                )
+            } else {
+                (None, Vec::new())
+            };
             entries.push(RestoreEntry {
                 host_id: h.host.id.clone(),
                 saved_at: chrono::Utc::now().to_rfc3339(),
+                tmux_session,
+                tmux_panes,
                 checkpoint: checkpoint_tail(ck, TAIL_LINES),
             });
         }

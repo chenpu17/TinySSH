@@ -4054,6 +4054,30 @@ export default function App() {
   // 发布轮：应用内版本检查（启动静默查一次 GitHub Release；有新版才 toast，
   // 关于卡常驻更新行）。任何失败折算 hasUpdate=false，静默不扰。
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  // #27：定时检查的去重与节流——同一版本只主动提醒一次（标题栏徽标常驻），
+  // 检查在途不叠发；focus 补查以「距上次检查」为准，休眠唤醒不会漏。
+  const updateNotifiedRef = useRef<string | null>(null);
+  const updateCheckBusyRef = useRef(false);
+  const updateCheckAtRef = useRef(0);
+  const runUpdateCheck = useCallback((initial = false) => {
+    if (updateCheckBusyRef.current) return;
+    updateCheckBusyRef.current = true;
+    updateCheckAtRef.current = Date.now();
+    invoke("check_update")
+      .then((u: UpdateCheck) => {
+        // 启动首查照旧写回（含失败态）；后续静默轮不因一次网络抖动抹掉已有更新行
+        if (initial || !u.error) setUpdateInfo(u);
+        if (u.hasUpdate && u.latest && updateNotifiedRef.current !== u.latest) {
+          updateNotifiedRef.current = u.latest;
+          pushToast("info", t("新版本 v{0} 已发布", u.latest), {
+            label: t("打开发布页"), title: u.url ?? "",
+            run: () => { if (u.url) invoke("open_url", { url: u.url }).catch(() => {}); },
+          });
+        }
+      })
+      .catch(() => { /* 静默：网络失败不打扰，下个周期再试 */ })
+      .finally(() => { updateCheckBusyRef.current = false; });
+  }, [pushToast]);
   // updater 轮：自动更新能力面（demo 域恒 null → 关于卡不出现按钮；?autoupdater
   // 场景例外）与安装 busy
   const [updaterCap, setUpdaterCap] = useState<UpdaterInfo | null>(null);
@@ -4084,7 +4108,9 @@ export default function App() {
         // 检测失败不写回：启动检测已建立的更新行不因一次网络抖动被抹掉；
         // 成功路径（含干净无更新）照常写回，更新行即时出现/消失
         if (!u.error) setUpdateInfo(u);
+        updateCheckAtRef.current = Date.now();
         if (u.hasUpdate && u.latest) {
+          updateNotifiedRef.current = u.latest;
           pushToast("info", t("新版本 v{0} 已发布", u.latest), {
             label: t("打开发布页"), title: u.url ?? "",
             run: () => { if (u.url) invoke("open_url", { url: u.url }).catch(() => {}); },
@@ -4136,17 +4162,24 @@ export default function App() {
   // （真实换身/重启只在 Tauri 域存在，demo 桩如实回「已是最新」）。
   useEffect(() => {
     invoke("updater_info").then(setUpdaterCap).catch(() => {});
-    invoke("check_update").then((u) => {
-      setUpdateInfo(u);
-      if (u.hasUpdate && u.latest) {
-        pushToast("info", t("新版本 v{0} 已发布", u.latest), {
-          label: t("打开发布页"), title: u.url ?? "",
-          run: () => { if (u.url) invoke("open_url", { url: u.url }).catch(() => {}); },
-        });
-      }
-    }).catch(() => {});
+    runUpdateCheck(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // #27：升级主动提醒——启动一次之外每 6 小时静默重查；窗口重新获得焦点时若距
+  // 上次检查超过 6 小时也补查（休眠唤醒/长时间后台）。新版本只在首次发现时 toast，
+  // 标题栏小徽标常驻到升级，点按打开发布页。
+  useEffect(() => {
+    const every = 6 * 60 * 60 * 1000;
+    const iv = window.setInterval(() => runUpdateCheck(false), every);
+    const onFocus = () => {
+      if (Date.now() - updateCheckAtRef.current >= every) runUpdateCheck(false);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(iv);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [runUpdateCheck]);
   const fontRef = useRef(FONT_DEFAULT);
   // —— P0 终端品质轮：外观五项 + 连字（vault settings KV，demo 退 localStorage，与字号同工艺）——
   // 状态供设置面板回显；ref 供 makeTerm 闭包与即时应用函数读取（避开 stale closure）
@@ -7467,6 +7500,10 @@ export default function App() {
     restoringRef.current = true;
     let restored = 0;
     const skipped: string[] = [];
+    // #26：tmux 现场恢复的失败归位——会话已被 kill（gone）与暂时没并入（failed）
+    // 分开汇总，批量恢复完一次性如实说清，不逐格弹错。
+    const paneGone: string[] = [];
+    const paneFailed: string[] = [];
     // 部分成功不能把失败条目一起清掉：此前 restored>0 就 setRestoreEntries([])，
     // 一台连不上，另一台的现场入口也消失，失败条目本会话内再也无法重试。
     const failedEntries: RestoreEntry[] = [];
@@ -7496,6 +7533,36 @@ export default function App() {
         entry.term.write(`\r\n\x1b[2m—— ${t("已恢复上次会话现场（快照 {0}）", when)}——\x1b[0m\r\n`);
         // R3-C-1 同修：快照网格小于当前视口时 applyCheckpoint 缩行会把内容顶出可视区
         entry.term.scrollToBottom();
+        // #26：快照只记画面，tmux 是活的远端现场——主视图按名重新接入（既有
+        // tmux_restore 链路：重连全机器 + capture-pane 补史 + 注入 attach），
+        // 面板格子按快照序逐格重开。旧快照没有这些字段，行为与之前一致。
+        const s = sessionsRef.current.find((x) => x.id === sid);
+        if (s && e.tmux_session) {
+          await restoreTmuxRef.current?.(s, e.tmux_session);
+        }
+        if (s && e.tmux_panes && e.tmux_panes.length > 0) {
+          const opened: string[] = [];
+          for (const name of e.tmux_panes.slice(0, PANE_MAX)) {
+            const r = await openTmuxPaneCore(s, name, true);
+            if (r.ok) opened.push(name);
+            else if (r.gone) { if (!paneGone.includes(name)) paneGone.push(name); }
+            else if (!paneFailed.includes(name)) paneFailed.push(name);
+          }
+          // 布局树在 ui.v2.workspace 的 sessions.panes 组合里（核心快照只管终端
+          // 语义）。优先按「attach 名 + 格子名序」精确匹配该会话的组合，回退到
+          // 同主机首条；实开格子必须是布局叶子才套用（缺格时交给自动平铺）。
+          const combo = lastWorkspaceCombos.find((c) => c.host_id === e.host_id
+            && (c.attached ?? null) === (e.tmux_session ?? null)
+            && c.sessions.length === e.tmux_panes!.length
+            && c.sessions.every((n, i) => n === e.tmux_panes![i]))
+            ?? lastWorkspaceCombos.find((c) => c.host_id === e.host_id);
+          const layout = sanitizeLayoutTree(combo?.layout ?? null);
+          const want = layout ? layoutLeafKeys(layout).filter((k) => k !== MAIN_KEY) : [];
+          if (layout && opened.length > 0 && opened.every((k) => want.includes(k))) {
+            paneLayoutRef.current.set(s.id, layout);
+            if (sidRef.current === s.id) layoutTmuxPanes();
+          }
+        }
         restored++;
       }
     } finally {
@@ -7503,6 +7570,8 @@ export default function App() {
     }
     if (restored > 0) pushToast("ok", t("已恢复 {0} 个会话现场", restored));
     if (skipped.length > 0) pushToast("err", t("{0} 个现场未恢复（主机已删或连接未就绪）：{1}——未恢复的条目仍保留在上次现场入口，可重试", skipped.length, skipped.join(t("、"))));
+    if (paneGone.length > 0) pushToast("err", t("{0} 个 tmux 会话已不在服务器，已跳过：{1}", String(paneGone.length), paneGone.join(t("、"))));
+    if (paneFailed.length > 0) pushToast("err", t("{0} 个 tmux 窗格未能并入面板：{1}", String(paneFailed.length), paneFailed.join(t("、"))));
     // 只清成功消费的条目；失败的留着才能重试（全成功时 natural 清空）
     setRestoreEntries(failedEntries);
   };
@@ -7641,8 +7710,10 @@ export default function App() {
       const plan = await invoke("tmux_restore", { sid: s.id, session: name ?? null });
       if (plan.target) {
         attachTmux(s, plan.target.name, plan.target.windows, plan.history, auto);
-      } else if (!auto && plan.sessions.length === 0) {
-        // 目标已不在（会话被 kill/过期清单）：静默回退普通终端，如实说一句不弹错
+      } else if (!auto && (name !== undefined || plan.sessions.length === 0)) {
+        // 目标已不在（会话被 kill/过期清单，或快照里记的 tmux 会话已消失）：
+        // 静默回退普通终端，如实说一句不弹错。未指定名字的自动探测保持安静——
+        // 多会话并存时该走选择器，不能误报「已不在」。
         pushToast("info", t("远端会话已不在（可能已被关闭）——已回到普通终端"));
       }
     } catch (e) {
@@ -8731,6 +8802,23 @@ export default function App() {
         </div>
         <span style={{ flex: 1 }} data-tauri-drag-region />
         <div className="tb-right">
+          {/* #27：升级提醒常驻小徽标——有新版本才出现（启动/6h 定时/聚焦补查），
+              点击直接打开发布页；无 URL 时退到关于卡，不出现死按钮 */}
+          {updateInfo?.hasUpdate && updateInfo.latest && (
+            <button className="update-badge" data-testid="update-badge"
+              title={t("新版本 v{0} 可用——点击打开发布页", updateInfo.latest)}
+              onClick={() => {
+                if (updateInfo.url) invoke("open_url", { url: updateInfo.url }).catch(() => {});
+                else { setSettingsCat("about"); setShowSettings(true); }
+              }}>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="6.4" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M8 11.4V5.4M5.6 7.8 8 5.4l2.4 2.4" stroke="currentColor"
+                  strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>v{updateInfo.latest}</span>
+            </button>
+          )}
           {sid && (
             <span className={"ctl-badge " + ownerCls}
               title={t("「Agent 控制中」= Agent 可发起命令、经你审批执行；「我控制中」= 终端归你，Agent 冻结")}

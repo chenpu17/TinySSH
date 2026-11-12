@@ -319,6 +319,21 @@ body {
 }
 .tb-self .tb-self-val { color: var(--text); opacity: 0.85; }
 .tb-right { display: flex; align-items: center; gap: 6px; }
+/* #27 升级提醒：标题栏常驻小徽标——有新版本才出现，accent 系与协作徽标区分，
+   悬停箭头轻抬一下（reduced-motion 关掉）；点击直接打开发布页 */
+.update-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px 2px 7px;
+  font-size: calc(11px * var(--ui-font-scale)); font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid var(--accent-ring); border-radius: 999px;
+  cursor: pointer; box-shadow: none; flex: none;
+}
+.update-badge svg { flex: none; transition: transform 0.15s ease; }
+button.update-badge:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+button.update-badge:not(:disabled):hover svg { transform: translateY(-1px); }
+@media (prefers-reduced-motion: reduce) { .update-badge svg { transition: none; } }
 /* 版本号轮：常驻版本标签——11px 次要色随主题，不与控制权徽标抢眼；
    0.10.0 起挪到标题栏应用名右边（tb-left 内），紧贴名称比贴右侧窗口钮更直观 */
 .ver-tag {
