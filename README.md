@@ -19,7 +19,7 @@
 
 ### 与现有工具的取舍
 
-定位快照（v0.12.9，2026-11），按品类概括而非逐产品评测。
+定位快照（v0.12.10，2026-11），按品类概括而非逐产品评测。
 
 | | TinySSH | 传统 SSH 客户端（XShell、Termius…） | AI 终端（Warp…） |
 |---|---|---|---|
@@ -147,7 +147,7 @@ Windows 注意：
 
 ### 状态
 
-v0.12.9。主平台（Windows）全绿：Rust 工作区测试 + 77 spec / 1564 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
+v0.12.10。主平台（Windows）全绿：Rust 工作区测试 + 77 spec / 1564 断言 UI 套件 + 逐轮真机验证（见[执行台账](docs/ux/ux-r1-execution-status.md)）。CI 每次 push 双跑（ubuntu：fmt/clippy/核心测试/ui 构建；windows：全工作区测试）。
 
 ### 技术栈（概览）
 
@@ -191,7 +191,7 @@ If you operate a few to a dozen servers — developing, deploying, troubleshooti
 
 ### How it compares
 
-Positioning snapshot at v0.12.9 (November 2026) — categories, not product reviews.
+Positioning snapshot at v0.12.10 (November 2026) — categories, not product reviews.
 
 | | TinySSH | Classic SSH clients (XShell, Termius…) | AI terminals (Warp…) |
 |---|---|---|---|
@@ -317,7 +317,7 @@ Design docs are written in Chinese: [UX-R1 refactor design](docs/ux/ssh-client-u
 
 ### Status
 
-v0.12.9. All suites green on the primary platform: Rust workspace tests, 77 UI specs / 1564 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
+v0.12.10. All suites green on the primary platform: Rust workspace tests, 77 UI specs / 1564 checks, plus real-machine verification rounds recorded in the execution ledger. CI runs on every push (ubuntu: fmt/clippy/core tests/ui build; windows: full workspace).
 
 ### Sister project
 

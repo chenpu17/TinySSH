@@ -51,6 +51,22 @@
   font-weight: 600 800; font-style: normal; font-display: swap;
   unicode-range: U+2E80-9FFF, U+3000-303F, U+FF00-FFEF;
 }
+/* 用户反馈 #20：圈号（①②③…）在 Maple/JetBrains 里缺字形，回落到 MiSans/PingFang
+   的 1em 宽字形；xterm 的 rescaleOverlappingGlyphs 会把宽于 1.5 格的字形横向压扁，
+   终端里就成了窄高椭圆。这里把圈号单独交给系统字体，并用 size-adjust 缩到 80%
+   （< 1.5 格阈值，保持正圆）；unicode-range 限定圈号区段，拉丁/中文/框线不受影响。 */
+@font-face {
+  font-family: "TinySSH Symbol Fallback";
+  src: local("PingFangSC-Regular"), local("PingFang SC Regular"),
+       local("Segoe UI Symbol"), local("Microsoft YaHei"),
+       local("Noto Sans Symbols 2"), local("Noto Sans Symbols"),
+       local("DejaVu Sans"), local("Arial Unicode MS");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+  /* 只盖单格宽（East Asian Ambiguous）的圈号；㉑/㊱ 一类是全角两格，
+     xterm 不会压缩，继续交给原字体栈。 */
+  unicode-range: U+2460-24FF, U+2776-2793;
+  size-adjust: 80%;
+}
 :root {
   /* UX 现代化改版（2026-10-10，docs/ux 台账 §4 同日登记）：石墨蓝基座 + 半透明描边 +
      集中一处的高饱和 cyan accent——深浅两套色板全部经 WCAG 脚本复验（文本档 ≥4.5:1，

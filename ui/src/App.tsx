@@ -2263,6 +2263,9 @@ export default function App() {
     // JetBrains 是设置里可选的第二内置字体：同样预取，避免切字体后首个图集
     // 用回退字形烘焙（切字体的 option 变更会重建图集，但预取让首帧就正确）
     void document.fonts.load('14px "JetBrains Mono Term"', "abc┌─0");
+    // 圈号回退（#20）：PingFang SC/Segoe UI Symbol 的正圆圈号。local() 面不会
+    // 被 canvas 首绘自动拉取，显式预取，靠下面的 loadingdone 重刷把图集换成正圆。
+    void document.fonts.load('14px "TinySSH Symbol Fallback"', "①②③④⑤⑥⑦⑧⑨");
     let cancelled = false;
     let refreshTimer = 0;
     const refreshTerm = (term: Terminal) => {
