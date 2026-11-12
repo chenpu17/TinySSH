@@ -16,7 +16,7 @@ import {
   registerZoomHotkeys, onZoomChange, currentZoom,
   zoomIn, zoomOut, zoomReset,
 } from "./zoom";
-import { applyCheckpoint, createOutputFeed, setCursorDefault } from "./terminal/checkpoint";
+import { applyCheckpoint, createOutputFeed, createOutputThrottle, setCursorDefault, type OutputThrottle } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
@@ -203,6 +203,7 @@ type PaneTermEntry = {
   term: Terminal; cell: HTMLDivElement; body: HTMLDivElement;
   zoomBtn: HTMLButtonElement; search: SearchAddon;
   webgl: WebglAddon | null; liga: LigaturesAddon | null; bornAt: number; alive: boolean; deadWarned: boolean;
+  throttle: OutputThrottle;
 };
 
 // 窗格最大化/还原钮图标（imperative DOM 用；lucide maximize-2/minimize-2 同形——
@@ -248,9 +249,44 @@ function sanitizeLayoutTree(n: unknown): PaneNode | null {
   return { dir: x.dir, w, kids };
 }
 
-/** 格子挂 WebGL 的上下文预算：浏览器每页活动 WebGL 上下文约 16 个，超出即强制
- * 丢弃最老的（往往是主终端，静默回落 DOM 渲染）——超额的格子直接走 DOM 渲染器。 */
-const PANE_WEBGL_BUDGET = 12;
+/** 全局 WebGL 上下文预算（主终端 + tmux 格子共用）：浏览器每页活动 WebGL 上下文
+ * 约 16 个，超出即强制驱逐最老的（静默回落 DOM 渲染）。此前只有格子有预算、主终端
+ * 无条件挂——多标签时主终端随会话线性涨破上限触发驱逐（#22 真机探针：24 会话建
+ * 24 个上下文、存活卡死 16、8 个被踢回落 DOM，滚动变卡的根因之一）。现主终端与
+ * 格子共用此预算（留 2 个余量给链接层/搜索装饰等额外上下文），并在焦点切换时优先
+ * 把 WebGL 让给当前可见的主终端，后台主终端退 DOM（顺带降后台渲染开销）。 */
+const WEBGL_BUDGET = 14;
+
+/** 挂 WebGL 渲染器（无 GPU/初始化失败静默回落 DOM）。上下文被浏览器驱逐时把句柄
+ *  置空，让预算计数如实回落——旧实现 onContextLoss 只 dispose 不置空，被驱逐的
+ *  句柄仍占计数名额，预算会虚高。entry 结构主终端/格子同形（term + webgl）。 */
+function attachWebgl(e: { term: Terminal; webgl: WebglAddon | null }): void {
+  if (e.webgl) return;
+  try {
+    const w = new WebglAddon();
+    w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } if (e.webgl === w) e.webgl = null; });
+    e.term.loadAddon(w);
+    e.webgl = w;
+  } catch { /* DOM 渲染器兜底 */ }
+}
+/** 卸 WebGL 渲染器回 DOM（不重建缓冲，滚动历史/在跑程序原地保留）。
+ *  关键（#22）：xterm 0.19 的 dispose 只把画布移出 DOM、**不 loseContext**，上下文
+ *  滞留到 GC 才释放，期间一直占浏览器 ~16 预算。焦点提升「卸一个挂一个」若不真释放
+ *  就是净增，真实存活数照样涨破上限触发驱逐回落 DOM（探针实证：24 会话存活峰值 18、
+ *  被驱逐 6）。故先抓画布引用、dispose 后显式 loseContext 把名额真正还回去。 */
+function detachWebgl(e: { term: Terminal; webgl: WebglAddon | null }): void {
+  const w = e.webgl;
+  if (!w) return;
+  e.webgl = null; // 先置空：loseContext 触发的 onContextLoss 回调不再动 entry
+  const canvases = e.term.element ? Array.from(e.term.element.querySelectorAll("canvas")) : [];
+  try { w.dispose(); } catch { /* 已释放 */ }
+  for (const c of canvases) {
+    try {
+      const gl = c.getContext("webgl2") || c.getContext("webgl");
+      gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch { /* 非 webgl 画布 / 已释放 */ }
+  }
+}
 
 /** 终端正文最小对比度（WCAG AA 4.5:1）。xterm 会按**每个单元格实际前景/背景**
  * 动态修正前景亮度（DOM 与 WebGL 两个渲染器都实现了该能力），不改变缓冲区文本、
@@ -2406,6 +2442,14 @@ export default function App() {
     handle.addEventListener("lostpointercapture", (ev) => tileDragApiRef.current.finish(false, ev.pointerId));
   };
 
+  // 全局 WebGL 上下文计数（主终端 + 格子）：预算闸门与焦点提升共用同一口径。
+  const glInUse = useCallback(() => {
+    let n = 0;
+    for (const e of termsRef.current.values()) if (e.webgl) n++;
+    for (const e of paneTermsRef.current.values()) if (e.webgl) n++;
+    return n;
+  }, []);
+
   // 终端实例工厂：每个会话一个独立 xterm。
   const makeTerm = useCallback((sessionSid: string) => {
     const mount = termRef.current;
@@ -2646,10 +2690,13 @@ export default function App() {
     if (termLigaRef.current) {
       liga = new LigaturesAddon();
       term.loadAddon(liga);
-    } else {
+    } else if (glInUse() < WEBGL_BUDGET) {
+      // 全局预算闸门（#22）：主终端此前无条件挂 WebGL，多标签涨破浏览器 ~16 上限
+      // 触发驱逐回落 DOM。超预算的新实例先落 DOM，焦点切到它时由提升 effect 收回
+      // 一个后台主终端的名额让给它（见 sid 提升 effect）。
       try {
         const w = new WebglAddon();
-        w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
+        w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } const e = termsRef.current.get(sessionSid); if (e?.webgl === w) e.webgl = null; });
         term.loadAddon(w);
         webgl = w;
       } catch { webgl = null; /* DOM 渲染器兜底 */ }
@@ -2798,7 +2845,7 @@ export default function App() {
     // dev 门控探针钩子（e2e/冒烟专用；release 构建不存在）：
     // 暴露 xterm 实例供注入脚本做全缓冲断言（B11 无丢字/重复）
     if (import.meta.env.DEV) {
-      const w = window as unknown as { __t_terms?: Map<string, Terminal>; __t_liga?: Set<string>; __t_pathmatch?: typeof matchPaths; __t_img?: Map<string, ImageAddon> };
+      const w = window as unknown as { __t_terms?: Map<string, Terminal>; __t_liga?: Set<string>; __t_pathmatch?: typeof matchPaths; __t_img?: Map<string, ImageAddon>; __t_gl?: () => { budget: number; inUse: number } };
       w.__t_terms ??= new Map();
       w.__t_terms.set(sessionSid, term);
       // P0 轮：连字生效集合（character joiner 不进 options，无公开可读面——spec 断言用）
@@ -2809,6 +2856,8 @@ export default function App() {
       // 图片协议（P2）：addon 实例（getImageAtBufferCell 断言渲染发生）
       w.__t_img ??= new Map();
       w.__t_img.set(sessionSid, imgAddon);
+      // WebGL 预算探针面（#22）：预算与在用计数，供探针核对「应用意图 vs 浏览器真实存活」
+      w.__t_gl = () => ({ budget: WEBGL_BUDGET, inUse: glInUse() });
     }
     // 键盘保真：Ctrl+C/D/L、方向键、Esc、Tab、F 键全部原样进 PTY；
     // 只拦 macOS ⌘ 组合（剪贴板/防误触），不干扰任何控制键。
@@ -3025,20 +3074,19 @@ export default function App() {
     term.loadAddon(searchAddon);
     let webgl: WebglAddon | null = null;
     let liga: LigaturesAddon | null = null;
-    const glInUse = [...termsRef.current.values()].filter((x) => x.webgl).length
-      + [...paneTermsRef.current.values()].filter((x) => x.webgl).length;
     // 渲染器与主终端同构（找茬四轮 C3）：连字开=DOM+LigaturesAddon（joiner 仅
-    // DOM 实现）、关=WebGL 优先按预算——此前格子恒挂 WebGL，用户开连字后主视图
+    // DOM 实现）、关=WebGL 优先按全局预算（#22 起主终端与格子共用 WEBGL_BUDGET，
+    // 计数走 glInUse()，不再各自算）——此前格子恒挂 WebGL，用户开连字后主视图
     // 走 DOM、格子仍 WebGL，同一屏两种字形引擎（连字只对主视图生效）。
     if (termLigaRef.current) {
       try {
         liga = new LigaturesAddon();
         term.loadAddon(liga);
       } catch { liga = null; }
-    } else if (glInUse < PANE_WEBGL_BUDGET) {
+    } else if (glInUse() < WEBGL_BUDGET) {
       try {
         const w = new WebglAddon();
-        w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
+        w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } const e = paneTermsRef.current.get(`${sid}:${paneId}`); if (e?.webgl === w) e.webgl = null; });
         term.loadAddon(w);
         webgl = w;
       } catch { webgl = null; /* DOM 渲染器兜底 */ }
@@ -3084,7 +3132,10 @@ export default function App() {
     };
     term.onBell(() => paneBell(t("终端响铃（BEL）：远端可能有命令完成或需要关注")));
     term.parser.registerOscHandler(9, (data) => { paneBell(data.slice(0, 200) || t("远端通知")); return true; });
-    const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, zoomBtn, search: searchAddon, webgl, liga, bornAt: performance.now(), alive: true, deadWarned: false };
+    // 背景合批节流（#22）：格子隐藏（整标签切走 / 被最大化挤出）时输出合批降频，
+    // 不再逐帧解析+渲染抢 CPU；applyPanes 改显示时 resume 冲净，恢复后一字不差。
+    const throttle = createOutputThrottle({ term, isVisible: () => cell.style.display !== "none" });
+    const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, zoomBtn, search: searchAddon, webgl, liga, bornAt: performance.now(), alive: true, deadWarned: false, throttle };
     // ⌘ 组合（mac）：复制/粘贴/全选作用于本格，其余 ⌘ 不进格子通道（主终端同口径）
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown" || !ev.metaKey) return true;
@@ -3153,6 +3204,7 @@ export default function App() {
     paneTermsRef.current.delete(key);
     if (paneLastFocusRef.current.get(e.sid) === key) paneLastFocusRef.current.set(e.sid, "main");
     try { e.webgl?.dispose(); } catch { /* 已释放 */ }
+    e.throttle.dispose();
     try { e.term.dispose(); } catch { /* 已释放 */ }
     e.cell.remove();
     // 被摘的格子握着焦点：元素移除不触发 focusout，焦点会悬空在 body（mac 原生 Ctrl
@@ -3181,12 +3233,13 @@ export default function App() {
         paneClosedRef.current.set(key, Date.now());
         // 收尾提示（[detached ...]/[exited]）与 EOF 同批到达：xterm 的写入是排队
         // 异步解析的，若快照先回来把格子摘掉，lastTmuxNotice 会读到空缓冲、toast
-        // 退化成「远端会话已退出/分离」。用空写回调等队列排空后再对账。
+        // 退化成「远端会话已退出/分离」。先冲净合批积压，再用空写回调等队列排空后对账。
+        made.throttle.flushNow();
         made.term.write("", () => { void refreshListsRef.current(); });
         return;
       }
       const bytes = msg instanceof Uint8Array ? msg : msg instanceof ArrayBuffer ? new Uint8Array(msg) : null;
-      if (bytes) made.term.write(bytes);
+      if (bytes) made.throttle.write(bytes);
     };
     try {
       await invoke("tmux_pane_subscribe", { sid, paneId, onEvent: channel });
@@ -4419,21 +4472,17 @@ export default function App() {
     ];
     for (const [key, e] of entries) {
       if (on) {
-        if (e.webgl) { try { e.webgl.dispose(); } catch { /* 已释放 */ } e.webgl = null; }
+        if (e.webgl) detachWebgl(e); // 走统一释放（含 loseContext，#22），不裸 dispose 泄漏预算
         if (!e.liga) {
           const l = new LigaturesAddon();
           try { e.term.loadAddon(l); e.liga = l; } catch { /* 载入失败：维持无连字 */ }
         }
       } else {
         if (e.liga) { try { e.liga.dispose(); } catch { /* 已释放 */ } e.liga = null; }
-        if (!e.webgl) {
-          try {
-            const w = new WebglAddon();
-            w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } });
-            e.term.loadAddon(w);
-            e.webgl = w;
-          } catch { /* DOM 渲染器兜底 */ }
-        }
+        // 关连字重挂 WebGL 也走全局预算（#22）：此前无条件逐实例挂，多标签下一关
+        // 连字就涨破上限重新触发驱逐。超预算的实例留 DOM，焦点提升 effect 再优先
+        // 保可见主终端。attachWebgl 的 onContextLoss 会把被驱逐句柄置空（计数如实）。
+        if (!e.webgl && glInUse() < WEBGL_BUDGET) attachWebgl(e);
       }
       if (import.meta.env.DEV) {
         const probe = window as unknown as { __t_liga?: Set<string> };
@@ -5377,6 +5426,12 @@ export default function App() {
   // 副格=另一半，焦点 pane 加高亮与名牌。§185 退化态：只呈现焦点窗格全幅；最大化态：
   // 同组另一格 pane-hidden（仍留在标签中），分割条由 JSX 撤收。
   const applyPanes = useCallback(() => {
+    // 背景合批节流（#22）：可见性任何变化（切标签/分屏/缩放）都冲净此刻可见终端的积压
+    // 输出——恢复后画面与逐帧直写逐字节等价；不可见者继续低频合批。resume 按 live 可见
+    // 性只冲可见者，幂等（无积压即 no-op）。主终端读 live sid（已先行更新）即冲；格子读
+    // cell.display——那是本函数布版时才落定的，故排到 microtask 待同步布版完再冲。
+    for (const e of termsRef.current.values()) e.feed?.resume();
+    queueMicrotask(() => { for (const e of paneTermsRef.current.values()) e.throttle.resume(); });
     const sp = groupOf(sidRef.current);
     const degraded = !!sp && !sp.maximized && splitDegradedRef.current;
     const clsMain = sp?.dir === "tb" ? "pane-top" : "pane-left";
@@ -5576,6 +5631,27 @@ export default function App() {
     void invoke("note_terminal", { sid: target, focused: true, paneId: restored?.paneId ?? null }).catch(() => {});
   }, [applyPanes, refreshBrief, focusTermFor, groupOf, patchGroup]);
 
+  // 焦点提升（#22）：激活会话变化时优先保「正在看」的主终端用 WebGL。新建超预算的
+  // 主终端先落 DOM，切到它时若预算已满，从一个后台主终端收回名额让给它——后台退
+  // DOM 无碍（正是要降开销的对象），可见终端始终拿快渲染器，滚动流畅。连字开则跳过
+  // （DOM+连字是用户意图）；分屏组成员（main/second）视为可见，不收回它们的名额。
+  useEffect(() => {
+    if (!sid || termLigaRef.current) return;
+    const entry = termsRef.current.get(sid);
+    if (!entry || entry.webgl) return;
+    if (glInUse() < WEBGL_BUDGET) { attachWebgl(entry); return; }
+    const g = groupOf(sid);
+    const visible = new Set<string>([sid]);
+    if (g) { visible.add(g.main); visible.add(g.second); }
+    for (const [otherSid, other] of termsRef.current) {
+      if (!visible.has(otherSid) && other.webgl) {
+        detachWebgl(other);
+        attachWebgl(entry);
+        break;
+      }
+    }
+  }, [sid, glInUse, groupOf]);
+
   // 点到哪个 pane 就聚焦哪个会话（事件委托挂在 #term 上，覆盖单 pane 与分屏）
   useEffect(() => {
     const mount = termRef.current;
@@ -5631,7 +5707,18 @@ export default function App() {
     // 输出订阅（每会话仅一次，C10）：subscribe 返回 {subscription_id, checkpoint,
     // start_seq}；检查点应用前的早到帧由 feed 暂存，应用后按序消费 seq > start_seq。
     const term = made.term;
-    const feed = createOutputFeed({ term, sid: sessionSid });
+    const feed = createOutputFeed({
+      term,
+      sid: sessionSid,
+      // 背景节流（#22）：仅当前激活会话与其分屏伙伴视为可见，其余标签输出合批降频，
+      // 不再逐帧解析+渲染抢 CPU。读 live sid/分组，切标签由 focusSession 的 resume 冲净。
+      isVisible: () => {
+        const cur = sidRef.current;
+        if (sessionSid === cur) return true;
+        const g = splitGroupsRef.current.find((gr) => gr.main === cur || gr.second === cur);
+        return !!g && (g.main === sessionSid || g.second === sessionSid);
+      },
+    });
     made.feed = feed;
     const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
     channel.onmessage = (msg) => feed.onMessage(msg);

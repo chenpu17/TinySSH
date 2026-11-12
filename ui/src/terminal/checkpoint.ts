@@ -128,17 +128,73 @@ export interface OutputFeed {
   onResyncEvent: (subscriptionId: string) => void;
   /** 显式退订（主清理路径）+ 停机。 */
   dispose: () => void;
+  /** 背景合批节流（#22）：可见性变化时调用——若本订阅此刻可见，立即冲净积压输出，
+   *  保证切回标签画面一字不差；不可见则不动（继续低频合批）。 */
+  resume: () => void;
   readonly subscriptionId: () => string;
   readonly appliedSeq: () => number;
+}
+
+/** 背景合批节流器（#22）：不可见终端不逐帧写屏——逐帧写会让每个后台标签/格子持续
+ *  解析+渲染（DOM 回填/WebGL 绘制），多标签齐刷输出时抢走可见终端的 CPU，滚动变卡。
+ *  改为把输出攒成低频大批次（HOLD_MS 一次，或攒满 HOLD_CAP 立即冲，内存有界）；可见性
+ *  恢复时 resume() 立即冲净，与逐帧直写逐字节等价（不丢、不乱序）。主终端 feed 与 tmux
+ *  格子共用此单一真源。DEV 开关 __t_throttleOff 退回逐帧直写做 A/B 基线。 */
+export interface OutputThrottle {
+  write: (data: string | Uint8Array) => void;
+  /** 可见性变化时调用：此刻可见则立即冲净积压。 */
+  resume: () => void;
+  /** 无条件冲净（收尾/等队列排空用，不看可见性）。 */
+  flushNow: () => void;
+  /** 丢弃积压（检查点取代旧屏时用）。 */
+  clear: () => void;
+  dispose: () => void;
+}
+export function createOutputThrottle(opts: { term: Terminal; isVisible?: () => boolean }): OutputThrottle {
+  const { term } = opts;
+  const isVisible = opts.isVisible ?? (() => true);
+  const HOLD_MS = 500;
+  const HOLD_CAP = 131072; // 字符/字节：超大爆发（构建日志）攒满即冲，避免无界积压
+  let hold: Array<string | Uint8Array> = [];
+  let holdSize = 0;
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+  const flushNow = () => {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+    if (hold.length) { const chunks = hold; hold = []; holdSize = 0; for (const c of chunks) term.write(c); }
+  };
+  const clear = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } hold = []; holdSize = 0; };
+  return {
+    write: (data) => {
+      if (disposed) return;
+      const off = import.meta.env.DEV && (window as unknown as { __t_throttleOff?: boolean }).__t_throttleOff;
+      if (off || isVisible()) {
+        if (hold.length) { hold.push(data); flushNow(); } // 先冲积压保序，再带上本帧
+        else term.write(data);
+      } else {
+        hold.push(data);
+        holdSize += typeof data === "string" ? data.length : data.byteLength;
+        if (holdSize >= HOLD_CAP) { flushNow(); return; }
+        if (!holdTimer) holdTimer = setTimeout(flushNow, HOLD_MS);
+      }
+    },
+    resume: () => { if (!disposed && isVisible()) flushNow(); },
+    flushNow,
+    clear,
+    dispose: () => { disposed = true; clear(); },
+  };
 }
 
 export function createOutputFeed(opts: {
   term: Terminal;
   sid: string;
   pendingCap?: number;
+  /** 可见性谓词（#22 背景节流）：读 live 焦点/分组。缺省恒可见（不节流）。 */
+  isVisible?: () => boolean;
 }): OutputFeed {
   const { term, sid } = opts;
   const cap = opts.pendingCap ?? 4096;
+  const throttle = createOutputThrottle({ term, isVisible: opts.isVisible });
   let subId = "";
   let lastApplied = 0;
   let ready = false;
@@ -148,8 +204,9 @@ export function createOutputFeed(opts: {
   let pending: SeqFrame[] = [];
 
   const apply = (f: SeqFrame) => {
-    term.write(decoder.decode(f.data, { stream: true }));
+    const text = decoder.decode(f.data, { stream: true });
     lastApplied = f.seq;
+    throttle.write(text);
   };
 
   const drain = () => {
@@ -191,6 +248,7 @@ export function createOutputFeed(opts: {
         applyCheckpoint(term, r.checkpoint);
         decoder = new TextDecoder(); // 检查点替换是解码流状态断点
         lastApplied = r.end_seq;
+        throttle.clear(); // 检查点取代旧屏：积压的术前输出作废，不得再冲（会叠在已重建的屏上）
       }
     } catch {
       // 会话已关/订阅过期：收尾路径会清理，此处不再重试
@@ -236,7 +294,11 @@ export function createOutputFeed(opts: {
       if (disposed) return;
       disposed = true;
       pending = [];
+      throttle.dispose();
       if (subId) void invoke("unsubscribe_output", { sid, subscriptionId: subId }).catch(() => {});
+    },
+    resume: () => {
+      if (!disposed) throttle.resume();
     },
     subscriptionId: () => subId,
     appliedSeq: () => lastApplied,
