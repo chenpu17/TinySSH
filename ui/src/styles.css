@@ -86,6 +86,11 @@
   --chrome-tabs-h: 34px;
   --chrome-toolbar-h: 32px;
   --chrome-status-h: 26px;
+  /* 动效词汇（2026-11-12 视觉品质轮）：面板/卡片/消息入场的统一节奏。
+     只动 transform/opacity（合成器层，不触发重排——与 #22 的后台合批降频不冲突）；
+     eink 与系统「减少动态效果」各有全局 !important 门统一铲平，无需逐类补丁。 */
+  --motion-in: 0.16s;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --bg: #0a0e14;
   --panel: #0f141c;
   --panel2: #151c26;
@@ -598,6 +603,24 @@ button, input, select, textarea, .tab {
 :is(.hk-mask, .confirm-mask, .term-settings, .ctx-menu, .tools-menu, .split-menu, .sftp-menu, .palette) {
   animation: surface-enter 0.12s ease-out;
 }
+/* ---- 入场动效（视觉品质轮）：高频时刻统一「淡入 + 微位移落位」，幅度 ≤12px、
+   时长 ≤160ms——仪表工具的克制感，不做营销页式编排。面板在 App.tsx 条件挂载，
+   动画随挂载播一次；拖宽/切面板内容不重挂载、不会重播。终端布局一步到位，
+   动画只移动面板自身，不触发 xterm 连续 resize。动画结束 transform 归 none，
+   不留永久的 fixed 定位包含块。 ---- */
+@keyframes panel-in-l { from { opacity: 0; transform: translateX(-12px); } }
+@keyframes panel-in-r { from { opacity: 0; transform: translateX(12px); } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes palette-in { from { opacity: 0; transform: translateY(-5px); } }
+.hostbar, .agentbar { animation: panel-in-l var(--motion-in) var(--ease-out); }
+.task-panel { animation: panel-in-r var(--motion-in) var(--ease-out); }
+/* 命令面板是键盘旗舰入口：比通用浮层多一档 5px 下落 settle（同特异度靠后覆写） */
+.palette { animation: palette-in 0.14s var(--ease-out); }
+/* 全屏视图（监控大屏/会话墙）复用纯透明度入场，不做位移 */
+.mon-dash, .tmux-wall { animation: surface-enter var(--motion-in) ease-out; }
+/* Agent 消息/工具卡/协作面板审批卡：新条目淡入上升。React 按 key 复用 DOM，
+   流式更新与倒计时重渲染不重播；工具卡状态推进另走 transition（见 .tool-card） */
+.msg-row, .tool-card, .collab-approvals .card { animation: rise-in var(--motion-in) var(--ease-out); }
 button {
   /* 主按钮 135° 品牌渐变（tiny-worker 同工艺）：--grad-a/b 随色板覆写，两端对
      --on-accent 均 ≥4.5:1；ghost/danger/warn 的 background 简写会一并重置渐变 */
@@ -1424,6 +1447,13 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 .welcome-actions button { white-space: nowrap; }
 .welcome-actions button:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .welcome-note { font-size: calc(11px * var(--ui-font-scale)); }
+/* 欢迎页入场编排（视觉品质轮）：mark/标题/步骤/行动钮依次上升入场，总时长 ≤390ms；
+   backwards 保证延迟中的子元素入场前隐藏。只动直系子元素的 transform/opacity，
+   卡片本体与布局不变——79-welcome-layout 的 rect 断言不受影响 */
+.welcome-box > * { animation: rise-in 0.24s var(--ease-out) backwards; }
+.welcome-box > :nth-child(2) { animation-delay: 0.05s; }
+.welcome-box > :nth-child(3) { animation-delay: 0.1s; }
+.welcome-box > :nth-child(n+4) { animation-delay: 0.15s; }
 /* 矮窗口（≤700px 高，覆盖 960×600 最小尺寸，以及 125% 字号下的等效可读行数）：
    欢迎页纵向节奏收紧——KI-028 只保证卡片可滚到底，这里让最小窗口首屏就能看到
    主行动钮（添加主机/快速连接）且常规矮窗不用滚。≥700px 高维持原留白 */
@@ -3292,6 +3322,11 @@ button.mon-sw.on:not(:disabled):hover { color: var(--accent); border-color: var(
 .mon-bar.hot i { background: var(--warn); }
 .mon-spark { flex: none; color: var(--border); }
 .mon-spark polyline { stroke: var(--accent); }
+/* 曲线面积填充（视觉品质轮）：折线下方低比例软底，仪表盘多一档仪器纵深。
+   polygon 与 polyline 共用同一串采样点、底边闭合，零额外采样开销；
+   网络双线的 ↑ 线用 ok 系区分（与 .p2 描边同族） */
+.mon-spark .area { fill: color-mix(in srgb, var(--accent) 12%, transparent); stroke: none; }
+.mon-spark.net .area.a2 { fill: color-mix(in srgb, var(--ok) 10%, transparent); }
 .mon-spark.cpu { display: block; }
 .mon-spark.cpu polyline { stroke: var(--accent); opacity: 0.85; }
 .mon-spark.net .p2 { stroke: var(--ok); }
@@ -3470,6 +3505,9 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 .tool-card {
   margin: 10px 0; border: 1px solid var(--border); border-radius: 9px;
   background: var(--panel2); overflow: hidden;
+  /* 状态推进（视觉品质轮）：pending→running→ok/err/denied 的描边与透明度渐变，
+     不再瞬间跳色；入场动画见 rise-in 统一块 */
+  transition: border-color 0.2s ease, opacity 0.2s ease;
 }
 .tool-card.tc-pending { border-color: var(--warn); }
 .tool-card.tc-running { border-color: var(--accent); }

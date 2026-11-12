@@ -65,6 +65,8 @@ const Ring = ({ pct, lab, sub, testid }: { pct: number | null; lab: string; sub?
 
 // 单线折线：空数据（<2 点）画空框，占位不跳动。fluid=横向铺满卡宽
 //（viewBox 定形 + non-scaling-stroke 保描边粗细不随拉伸变糊）。
+// 视觉品质轮：折线下方加面积填充 polygon——与折线共用同一串点、底边闭合，
+// 填充色走 CSS（.mon-spark .area），随主题 token 派生。
 const Spark = ({ data, cls = "", w = 120, h = 24, fluid = false }: { data: number[]; cls?: string; w?: number; h?: number; fluid?: boolean }) => {
   let pts = "";
   if (data.length >= 2) {
@@ -79,13 +81,15 @@ const Spark = ({ data, cls = "", w = 120, h = 24, fluid = false }: { data: numbe
   return (
     <svg className={"mon-spark " + cls} width={fluid ? "100%" : w} height={h}
       viewBox={`0 0 ${w} ${h}`} preserveAspectRatio={fluid ? "none" : undefined} aria-hidden="true">
+      {pts && <polygon className="area" points={`${pts} ${w - 1},${h - 1} 1,${h - 1}`} />}
       <polyline points={pts} fill="none" strokeWidth="1.5" vectorEffect={fluid ? "non-scaling-stroke" : undefined} />
     </svg>
   );
 };
 
 // 双线折线（网络 ↓/↑）：两条 polyline 同一 viewBox，颜色由 CSS 类区分。
-// fluid=横向铺满（CSS 拉伸 + non-scaling-stroke）。
+// fluid=横向铺满（CSS 拉伸 + non-scaling-stroke）。面积填充同 Spark，
+// ↑ 线的填充走 .area.a2（ok 系，与 .p2 描边同族）。
 const Spark2 = ({ a, b, cls = "", w = 120, h = 24, fluid = false }: { a: number[]; b: number[]; cls?: string; w?: number; h?: number; fluid?: boolean }) => {
   const path = (data: number[]): string => {
     if (data.length < 2) return "";
@@ -97,11 +101,16 @@ const Spark2 = ({ a, b, cls = "", w = 120, h = 24, fluid = false }: { a: number[
         `${((i / (data.length - 1)) * (w - 2) + 1).toFixed(1)},${(h - 2 - ((v - min) / span) * (h - 4)).toFixed(1)}`)
       .join(" ");
   };
+  const pa = path(a);
+  const pb = path(b);
+  const close = `${w - 1},${h - 1} 1,${h - 1}`;
   return (
     <svg className={"mon-spark " + cls} width={fluid ? "100%" : w} height={h}
       viewBox={`0 0 ${w} ${h}`} preserveAspectRatio={fluid ? "none" : undefined} aria-hidden="true">
-      <polyline className="p1" points={path(a)} fill="none" strokeWidth="1.5" vectorEffect={fluid ? "non-scaling-stroke" : undefined} />
-      <polyline className="p2" points={path(b)} fill="none" strokeWidth="1.5" vectorEffect={fluid ? "non-scaling-stroke" : undefined} />
+      {pa && <polygon className="area a1" points={`${pa} ${close}`} />}
+      {pb && <polygon className="area a2" points={`${pb} ${close}`} />}
+      <polyline className="p1" points={pa} fill="none" strokeWidth="1.5" vectorEffect={fluid ? "non-scaling-stroke" : undefined} />
+      <polyline className="p2" points={pb} fill="none" strokeWidth="1.5" vectorEffect={fluid ? "non-scaling-stroke" : undefined} />
     </svg>
   );
 };
