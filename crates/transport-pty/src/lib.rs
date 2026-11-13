@@ -1198,6 +1198,18 @@ impl ChannelHandle for LocalPtyChannel {
         let _ = &self;
         session_api::local_remove_file(path)
     }
+
+    /// #29：本地重命名（no-clobber；语义唯一源 session_api::local_rename_entry）。
+    async fn rename_entry(&self, from: &str, to: &str) -> Result<()> {
+        let _ = &self;
+        session_api::local_rename_entry(from, to)
+    }
+
+    /// #29：本地目录删除（不递归——非空即失败；不存在=幂等 Ok）。
+    async fn remove_dir(&self, path: &str) -> Result<()> {
+        let _ = &self;
+        session_api::local_remove_dir(path)
+    }
 }
 
 async fn copy_file(

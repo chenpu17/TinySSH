@@ -1654,6 +1654,79 @@ impl ChannelHandle for SshChannel {
         }
     }
 
+    /// #29：远端重命名（no-clobber）。SFTP rename 在服务端多为 POSIX 语义会静默
+    /// 覆盖既有目标，故先 lstat 目标——存在即拒绝，只有 NoSuchFile 才动手。
+    /// 判存在与改名之间仍有外部进程竞态窗口（与本地实现同款口径，如实声明）。
+    async fn rename_entry(&self, from: &str, to: &str) -> Result<()> {
+        if from == to {
+            return Err(Error::InvalidInput("新名称与原名称相同".into()));
+        }
+        let (_guard, sftp) = self.sftp_channel().await?;
+        let probe = sftp_step(sftp.symlink_metadata(to), |e| map_sftp_err("lstat", to, e)).await;
+        match probe {
+            Ok(_) => {
+                let _ = sftp_step(sftp.close(), |ce| Error::Io(format!("sftp close: {ce}"))).await;
+                return Err(Error::InvalidInput(format!("目标已存在，未覆盖：{to}")));
+            }
+            Err(Error::SftpPathNotFound { .. }) => {}
+            Err(e) => {
+                let _ = sftp_step(sftp.close(), |ce| Error::Io(format!("sftp close: {ce}"))).await;
+                return Err(e);
+            }
+        }
+        let r = match tokio::time::timeout(
+            std::time::Duration::from_secs(SFTP_STEP_SECS),
+            sftp.rename(from, to),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                return Err(Error::Io(format!(
+                    "sftp rename {from} → {to}: 超时（{SFTP_STEP_SECS}s 无响应）"
+                )))
+            }
+        };
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
+        match r {
+            Ok(()) => Ok(()),
+            Err(e) => Err(map_sftp_err("rename", from, e)),
+        }
+    }
+
+    /// #29：远端目录删除（**不递归**——非空由服务端裁决失败，绝不连带子树；
+    /// 不存在=幂等 Ok，与 remove_file 同口径）。
+    async fn remove_dir(&self, path: &str) -> Result<()> {
+        let (_guard, sftp) = self.sftp_channel().await?;
+        let r = match tokio::time::timeout(
+            std::time::Duration::from_secs(SFTP_STEP_SECS),
+            sftp.remove_dir(path),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                return Err(Error::Io(format!(
+                    "sftp rmdir {path}: 超时（{SFTP_STEP_SECS}s 无响应）"
+                )))
+            }
+        };
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
+        match r {
+            Ok(()) => Ok(()),
+            Err(russh_sftp::client::error::Error::Status(st))
+                if st.status_code == StatusCode::NoSuchFile =>
+            {
+                Ok(())
+            }
+            Err(russh_sftp::client::error::Error::Status(st)) => Err(Error::Io(format!(
+                "sftp rmdir {path}: {} {}",
+                st.status_code, st.error_message
+            ))),
+            Err(e) => Err(map_sftp_err("rmdir", path, e)),
+        }
+    }
+
     // ---- 端口转发（T42 FR-8）----
 
     async fn start_forward(&self, spec: ForwardSpec) -> Result<ForwardId> {

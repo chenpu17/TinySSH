@@ -18,10 +18,10 @@ module.exports = {
       document.documentElement.classList.contains("native-chrome"),
     );
     ck.check("demo 无 native-chrome 类", !hasChromeCls, String(hasChromeCls));
-    // 标题行仍是 44px 拖拽区（两平台共用布局契约，p6 探针同款断言）
+    // 标题行仍是 38px 拖拽区（两平台共用布局契约，p6 探针同款断言）
     const h = await page.evaluate(
       () => document.querySelector(".titlebar")?.getBoundingClientRect().height ?? 0,
     );
-    ck.check("标题行高 44 不变", Math.abs(h - 44) <= 1, String(h));
+    ck.check("标题行高 38 不变", Math.abs(h - 38) <= 1, String(h));
   },
 };

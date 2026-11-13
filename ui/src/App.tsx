@@ -60,7 +60,7 @@ import {
   IconServer, IconBot, IconUsers, IconShuffle, IconRows, IconBlocks, IconGauge,
 } from "./icons";
 
-// macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 44px 标题区上，.titlebar 留安全区。
+// macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 38px 标题区上，.titlebar 留安全区。
 // 只在原生模式加类——浏览器 demo 没有标题栏，留白反而是错的（走查可手动加类模拟）。
 // native-mac 只标 macOS：84px 红绿灯安全区是 mac 专属（titleBarStyle Overlay 为
 // mac-only 字段）。native-win 标 Windows：tauri.windows.conf.json decorations:false 后
@@ -670,7 +670,7 @@ export default function App() {
   // 菜单「下载」都改为弹原生保存对话框；右键「另存为…」无条件直通，不受开关影响
   const [sftpSaveAs, setSftpSaveAs] = useState(false);
   const [sftpSort, setSftpSort] = useState<{ key: "name" | "size" | "mtime"; dir: 1 | -1 }>({ key: "name", dir: 1 });
-  const [sftpMenu, setSftpMenu] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [sftpMenu, setSftpMenu] = useState<{ name: string; x: number; y: number; isDir?: boolean } | null>(null);
   const [sftpListW, setSftpListW] = useState(9999);
   // R33（§354/§356）上传下载入口：拖入终端的确认卡——目标会话在拖放开始时固定（§354
   // 「不随切标签转移」），目录输入预填可信 cwd（brief.cwd → 可见面板浏览目录；都无=
@@ -1414,7 +1414,7 @@ export default function App() {
     setFocusMetrics(on);
     try { localStorage.setItem("ui.focusMetrics", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
   }, []);
-  // 原生全屏态（专注模式的真实前提）：focusMode 会隐藏 44px 标题区，而 macOS
+  // 原生全屏态（专注模式的真实前提）：focusMode 会隐藏 38px 标题区，而 macOS
   // titleBarStyle=Overlay 的红绿灯是系统悬浮钮，不由 HTML 隐藏——专注态若没真正
   // 全屏（启动恢复被系统拒绝、用户从绿灯/Ctrl⌘F/Esc 退出全屏），三个圆钮会压在
   // 标签条/终端首行上。跟踪 isFullscreen：非全屏的专注态收回 chrome；过渡期由
@@ -5392,6 +5392,9 @@ export default function App() {
       // tmux 新建会话作曲行（.tmux-create-input）是整段全拦（含 Esc）：Esc 在
       // 这里是「取消作曲」，走 keymap 浮层链会连菜单一起关掉
       if (document.activeElement?.classList.contains("tmux-create-input")) return;
+      // #29 文件重命名输入（.sftp-rename-input）同款整段全拦（含 Esc）：Esc 在这里
+      // 是「取消重命名」，走 keymap 浮层链会连整个动作菜单一起关掉
+      if (document.activeElement?.classList.contains("sftp-rename-input")) return;
       if (a.id !== "esc" && document.activeElement?.classList.contains("tw-input")) return;
       // 墙键入态（.tw-input 聚焦）的 Esc 归会话：窗口捕获先于墙自己的 document
       // 监听，若在这里走浮层链会把墙关掉（Esc 送 vim 的语义当场丢失）。
@@ -7036,8 +7039,15 @@ export default function App() {
     // Enter/双击激活：目录进入、链接探明（R30 语义）、文件弹可用动作（不直接执行 §350）
     if (e.is_dir) void navigateTo(`${sftpPathRef.current.replace(/\/+$/, "")}/${e.name}`);
     else if (e.kind === "symlink") void openSymlink(e);
-    else if (at) setSftpMenu({ name: e.name, x: at.x, y: at.y });
+    else if (at) setSftpMenu({ name: e.name, x: at.x, y: at.y, isDir: e.is_dir });
   }, [navigateTo, openSymlink]);
+  // #29：右键任意条目开同一动作菜单（含目录——重命名/删除对目录同样可用）。
+  // 双击语义不变（目录进入/链接探明/文件弹菜单），右键只是多一条入口。
+  const sftpContextMenu = useCallback((e: DirEntryS, ev: React.MouseEvent) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setSftpMenu({ name: e.name, x: ev.clientX, y: ev.clientY, isDir: e.is_dir });
+  }, []);
   const sftpDownloadSelected = useCallback(async () => {
     const s = sidRef.current;
     if (!s || !sftpEntries || sftpSel.size === 0) return;
@@ -8862,7 +8872,7 @@ export default function App() {
     <div className={"app-shell" + (focusMode ? " focus-mode" : "") + (focusMode && zenStripAuto ? " zen-auto" : "")
       + (focusMode && focusMetrics ? " focus-metrics" : "")
       + (focusMode && inTauri && isMacPlatform() && !nativeFullscreen ? " focus-windowed" : "")}>
-      {/* 标题区 44（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
+      {/* 标题区 38（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
       <header className="titlebar" data-tauri-drag-region>
         <div className="tb-left">
           <span className="app-title" data-tauri-drag-region>TinySSH</span>
@@ -10436,6 +10446,7 @@ export default function App() {
               pickAndUpload={pickAndUpload} startDownload={startDownload}
               sftpListKey={sftpListKey} sftpRowClick={sftpRowClick} sftpActivate={sftpActivate}
               sftpDownloadSelected={sftpDownloadSelected} downloadRemote={downloadRemote}
+              sftpContextMenu={sftpContextMenu}
             />
           )}
           {rightPanel === "forwards" && (
@@ -10702,6 +10713,7 @@ export default function App() {
         <SftpFileMenu
           sftpMenu={sftpMenu} sftpMenuRef={sftpMenuRef} winW={winW}
           sftpPathRef={sftpPathRef} setSftpMenu={setSftpMenu} downloadRemote={downloadRemote}
+          pushToast={pushToast} sid={sid} loadDir={loadDir}
         />
       )}
     </div>

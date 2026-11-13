@@ -1390,6 +1390,47 @@ pub fn local_remove_file(path: &str) -> Result<()> {
     }
 }
 
+/// #29 本地重命名（no-clobber）：目标已存在即拒绝，绝不静默覆盖——POSIX
+/// rename(2) 对已存在的目标文件是静默替换，故先显式判存在。判存在与改名之间
+/// 的窗口由外部进程竞态决定（与上传发布面同款口径：这里只保证「看见存在就不
+/// 动手」，不承诺原子 no-clobber；服务端有原生原语时走服务端）。
+pub fn local_rename_entry(from: &str, to: &str) -> Result<()> {
+    if from == to {
+        return Err(Error::InvalidInput("新名称与原名称相同".into()));
+    }
+    match std::fs::symlink_metadata(to) {
+        Ok(_) => {
+            return Err(Error::InvalidInput(format!("目标已存在，未覆盖：{to}")));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(Error::from_fs_err(to, &e)),
+    }
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(Error::from_fs_err(from, &e)),
+    }
+}
+
+/// #29 本地目录删除（**不递归**；不存在=幂等 Ok）。先判空给可解释的中文提示
+/// （跨平台稳定，不依赖较新的 ErrorKind::DirectoryNotEmpty）；判空与删除之间的
+/// 竞态由 remove_dir 自身兜底失败——非空目录绝不会被连带子树一起删掉。
+pub fn local_remove_dir(path: &str) -> Result<()> {
+    match std::fs::read_dir(path) {
+        Ok(mut it) => {
+            if it.next().is_some() {
+                return Err(Error::InvalidInput(format!("目录非空，未删除：{path}")));
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::from_fs_err(path, &e)),
+    }
+    match std::fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::from_fs_err(path, &e)),
+    }
+}
+
 /// C5（§547/§560）任务注册表行——查询与事件的统一载荷。
 /// revision 单调递增（事件可合并，UI 按 id+revision 幂等对账；重挂后 list_transfers
 /// 拿到的每行 revision 与事件流连续）。source/dest 与方向绑定：upload 为
@@ -2178,6 +2219,21 @@ pub trait SessionApi: Send + Sync {
     /// 只读、Human 浏览口径（同 sftp_list）。
     async fn sftp_stat(&self, ctx: &Actor, sid: SessionId, path: String) -> Result<EntryStat>;
 
+    /// #29 文件管理：删除条目（人类专属入口，UI 二次确认后调用）。按 lstat 种类
+    /// 分流——目录走不递归 rmdir（非空即失败），文件/符号链接/其他走 remove_file
+    /// （删链接本身，不动目标）。破坏性动作：任何 Actor 都入审计。
+    async fn sftp_delete(&self, ctx: &Actor, sid: SessionId, path: String) -> Result<()>;
+
+    /// #29 文件管理：同目录重命名（人类专属入口）。new_name 是**基名**不含路径
+    /// 分隔符；no-clobber——目标已存在即失败。破坏性动作：入审计。
+    async fn sftp_rename(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        path: String,
+        new_name: String,
+    ) -> Result<()>;
+
     // ---- 端口转发（FR-8，T42）----
     /// 列出会话的转发（任何 Actor 可查——PRD「MCP 可查询状态」口径）。
     async fn list_forwards(&self, ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>>;
@@ -2314,6 +2370,80 @@ pub const DEFAULT_QUIET_MS: u64 = 1000;
 pub const MAX_EXEC_QUEUE: usize = 8;
 /// 人类输入优先窗口：人类 2s 内有输入时，agent send_keys 延迟。
 pub const HUMAN_INPUT_PRIORITY_WINDOW: Duration = Duration::from_secs(2);
+
+/// #29 文件管理：本地删除/重命名的安全语义锁。这两条是「不撒谎、不隐式破坏」的
+/// 底线——重命名绝不静默覆盖既有目标，目录删除绝不连带子树。远端 SFTP 实现同口径
+/// （服务端裁决），这里锁的是本地唯一源（transport-pty 与 core 下载分支共用）。
+#[cfg(test)]
+mod local_fs_ops_tests {
+    use super::*;
+
+    /// 每用例独立临时目录（进程号 + 纳秒），并行测试互不踩；用后清理。
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let d = std::env::temp_dir().join(format!("tinyssh-r29-{tag}-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn rename_never_clobbers_existing_target() {
+        let d = tmp("noclobber");
+        let a = d.join("a.txt");
+        let b = d.join("b.txt");
+        std::fs::write(&a, "AAA").unwrap();
+        std::fs::write(&b, "BBB").unwrap();
+        let r = local_rename_entry(a.to_str().unwrap(), b.to_str().unwrap());
+        assert!(r.is_err(), "目标已存在必须拒绝");
+        // 两侧都零改动——不是「删了源再失败」
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "AAA");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "BBB");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn rename_moves_entry_and_rejects_same_name() {
+        let d = tmp("move");
+        let a = d.join("a.txt");
+        let c = d.join("c.txt");
+        std::fs::write(&a, "AAA").unwrap();
+        assert!(local_rename_entry(a.to_str().unwrap(), a.to_str().unwrap()).is_err());
+        local_rename_entry(a.to_str().unwrap(), c.to_str().unwrap()).unwrap();
+        assert!(!a.exists());
+        assert_eq!(std::fs::read_to_string(&c).unwrap(), "AAA");
+        // 源已不在 → 再改名失败（不幂等成 Ok，如实报不存在）
+        assert!(local_rename_entry(a.to_str().unwrap(), c.to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn remove_dir_refuses_non_empty_and_keeps_subtree() {
+        let d = tmp("nonempty");
+        let sub = d.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("keep.txt"), "K").unwrap();
+        let r = local_remove_dir(sub.to_str().unwrap());
+        assert!(r.is_err(), "非空目录必须拒绝");
+        assert!(sub.join("keep.txt").exists(), "子树绝不被连带删除");
+        // 清空后才可删
+        std::fs::remove_file(sub.join("keep.txt")).unwrap();
+        local_remove_dir(sub.to_str().unwrap()).unwrap();
+        assert!(!sub.exists());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn remove_missing_paths_are_idempotent_ok() {
+        let d = tmp("idempotent");
+        let gone = d.join("gone");
+        assert!(local_remove_dir(gone.to_str().unwrap()).is_ok());
+        assert!(local_remove_file(gone.to_str().unwrap()).is_ok());
+        std::fs::remove_dir_all(&d).ok();
+    }
+}
 
 #[cfg(test)]
 mod wire_format_tests {

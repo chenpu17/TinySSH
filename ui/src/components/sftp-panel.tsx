@@ -2,18 +2,27 @@
 // 从 App.tsx 原样出仓——浏览状态（路径/历史/选择/排序/筛选）、传输任务与冲突
 // 裁决、菜单开合全部留在宿主，本文件只收 props 呈现，零语义变更。
 import { useEffect, useState } from "react";
-import { invoke } from "../adapter/bridge";
+import { invoke, inTauri } from "../adapter/bridge";
+import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import type { CollisionDecision, DirEntryS, SessionBrief as Brief } from "../adapter/wire";
-import { fmtBytes, dateLocale, isImeComposing, type TransferCard } from "../app-data";
+import { fmtBytes, dateLocale, isImeComposing, friendlyError, type TransferCard } from "../app-data";
 import { t } from "../i18n";
 import { clampIntoView } from "./ctx-menus";
 import {
-  IconChevronLeft, IconChevronRight, IconChevronUp, IconDownload, IconFile,
-  IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconUpload,
+  IconChevronLeft, IconChevronRight, IconChevronUp, IconCopy, IconDownload, IconFile,
+  IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconTrash, IconUpload,
 } from "../icons";
 
 // 传输抽屉最多渲染的行数（五轮架构）：超出只显示最近 N 条并如实声明省略数。
 const XFER_ROWS_SHOWN = 120;
+
+// 复制文本到剪贴板（#29 文件管理）：Tauri 走插件，浏览器走 navigator.clipboard；
+// 非安全上下文无 clipboard API 时如实 reject（调用方提示「复制失败」，不谎报已复制）。
+function copyText(text: string): Promise<void> {
+  if (inTauri) return clipboard.writeText(text);
+  if (navigator.clipboard) return navigator.clipboard.writeText(text);
+  return Promise.reject(new Error("clipboard unavailable"));
+}
 
 interface FilesPanelProps {
   sid: string | null;
@@ -63,6 +72,8 @@ interface FilesPanelProps {
   sftpActivate: (e: DirEntryS, at?: { x: number; y: number }) => void;
   sftpDownloadSelected: () => Promise<void>;
   downloadRemote: (rp: string, opts?: { saveAs?: boolean }) => Promise<void>;
+  /** #29：右键任意条目（含目录）开动作菜单——重命名/删除对目录同样可用 */
+  sftpContextMenu: (e: DirEntryS, ev: React.MouseEvent) => void;
 }
 
 export function FilesPanel({
@@ -74,6 +85,7 @@ export function FilesPanel({
   setByPathOpen, setShowHidden, setSftpSaveAs, setSftpSort,
   sftpGoBack, sftpGoFwd, navigateTo, loadDir, pickAndUpload, startDownload,
   sftpListKey, sftpRowClick, sftpActivate, sftpDownloadSelected, downloadRemote,
+  sftpContextMenu,
 }: FilesPanelProps) {
   return (
           <div className="section" ref={sftpWrapRef}>
@@ -222,6 +234,7 @@ export function FilesPanel({
                         className={"sftp-row" + (e.is_dir ? " dir" : "") + (sftpSel.has(e.name) ? " sel" : "") + (i === sftpCursor ? " cursor" : "")}
                         onClick={(ev) => sftpRowClick(e, i, ev)}
                         onDoubleClick={(ev) => sftpActivate(e, { x: ev.clientX, y: ev.clientY })}
+                        onContextMenu={(ev) => sftpContextMenu(e, ev)}
                         title={e.is_dir ? t("双击进入") : e.kind === "symlink" ? t("双击按目标处理") : t("双击查看可用动作")}
                       >
                         <span className="sftp-ico" title={e.kind === "symlink" ? t("符号链接") : undefined}>
@@ -232,7 +245,7 @@ export function FilesPanel({
                           {e.is_dir ? t("目录") : e.kind === "symlink" ? t("链接") : e.size == null ? "—" : fmtBytes(e.size)}
                         </span>
                         <span className="dim mono sftp-time" title={e.mtime == null ? t("修改时间未知") : new Date(e.mtime * 1000).toLocaleString(dateLocale())}>
-                          {e.mtime == null ? "—" : new Date(e.mtime * 1000).toLocaleDateString(dateLocale(), { month: "numeric", day: "numeric" })}
+                          {e.mtime == null ? "—" : new Date(e.mtime * 1000).toLocaleString(dateLocale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}
                         </span>
                         {!e.is_dir && (
                           <button
@@ -410,20 +423,71 @@ export function TransferQueueDrawer({
   );
 }
 
-// R31 §350 文件动作菜单：双击/Enter 文件弹出可用动作（不直接执行）；点外/Esc 关
+// R31 §350 文件动作菜单：双击/Enter 文件弹出可用动作（不直接执行）；点外/Esc 关。
+// #29 文件管理：菜单内联重命名 + 删除二次确认——与传输取消同款「首点武装、4s 内
+// 再点才执行」语义：破坏性动作不一点即发，也不额外弹窗打断。目录右键同菜单
+// （下载/另存为对目录无意义，隐去）。
 interface SftpFileMenuProps {
-  sftpMenu: { name: string; x: number; y: number } | null;
+  sftpMenu: { name: string; x: number; y: number; isDir?: boolean } | null;
   sftpMenuRef: { current: HTMLDivElement | null };
   winW: number;
   sftpPathRef: { current: string };
-  setSftpMenu: (v: { name: string; x: number; y: number } | null) => void;
+  setSftpMenu: (v: { name: string; x: number; y: number; isDir?: boolean } | null) => void;
   downloadRemote: (rp: string, opts?: { saveAs?: boolean }) => Promise<void>;
+  pushToast: (kind: "ok" | "err" | "info", text: string) => void;
+  sid: string | null;
+  loadDir: (p: string) => Promise<boolean>;
 }
 export function SftpFileMenu({
-  sftpMenu, sftpMenuRef, winW, sftpPathRef, setSftpMenu, downloadRemote,
+  sftpMenu, sftpMenuRef, winW, sftpPathRef, setSftpMenu, downloadRemote, pushToast, sid, loadDir,
 }: SftpFileMenuProps) {
+  const [delArm, setDelArm] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!delArm) return;
+    const timer = setTimeout(() => setDelArm(false), 4000);
+    return () => clearTimeout(timer);
+  }, [delArm]);
+  // 菜单实例复用：换目标（或关闭）即复位武装态与输入——绝不把上一个文件的
+  // 「已武装」带到下一个文件上（一点即删）。hooks 须在早退守卫之前声明。
+  const menuName = sftpMenu?.name ?? "";
+  useEffect(() => {
+    setDelArm(false); setRenaming(false); setNewName(""); setBusy(false);
+  }, [menuName]);
+
   // 开合条件留在宿主（{sftpMenu && …}）；此处守卫只为类型收窄进回调
   if (!sftpMenu) return null;
+  const full = `${sftpPathRef.current.replace(/\/+$/, "")}/${sftpMenu.name}`;
+  const doDelete = async () => {
+    if (!sid || busy) return;
+    setBusy(true);
+    try {
+      await invoke("sftp_delete", { sid, path: full });
+      setSftpMenu(null);
+      pushToast("ok", t("已删除 {0}", menuName));
+      void loadDir(sftpPathRef.current);
+    } catch (err) {
+      // 失败不关菜单：如实报因（目录非空/权限不足等），武装态收回让用户重新决定
+      setBusy(false); setDelArm(false);
+      pushToast("err", friendlyError(err));
+    }
+  };
+  const doRename = async () => {
+    const n = newName.trim();
+    if (!sid || busy || !n || n === menuName) { setRenaming(false); return; }
+    setBusy(true);
+    try {
+      await invoke("sftp_rename", { sid, path: full, newName: n });
+      setSftpMenu(null);
+      pushToast("ok", t("已重命名为 {0}", n));
+      void loadDir(sftpPathRef.current);
+    } catch (err) {
+      setBusy(false);
+      pushToast("err", friendlyError(err));
+    }
+  };
   return (
         <div
           className="sftp-menu" role="menu" data-testid="sftp-menu"
@@ -431,15 +495,59 @@ export function SftpFileMenu({
           // 兜不住，挂载即测量回夹（与右键菜单同一函数）
           ref={(el) => { sftpMenuRef.current = el; clampIntoView(el); }}
           aria-label={t("{0} 可用动作", sftpMenu.name)}
-          style={{ left: Math.max(6, Math.min(sftpMenu.x, winW - 160)), top: Math.min(sftpMenu.y, window.innerHeight - 84) }}
+          // #29 菜单项增至 6 条（+重命名输入行），初判预留高度同步放大；真实高度仍由
+          // clampIntoView 挂载即测量回夹
+          style={{ left: Math.max(6, Math.min(sftpMenu.x, winW - 160)), top: Math.min(sftpMenu.y, window.innerHeight - 220) }}
         >
           <div className="sftp-menu-title mono">{sftpMenu.name}</div>
-          <button role="menuitem" data-testid="sftp-menu-download"
-            onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`); }}
-          ><IconDownload size={12} /> {t("下载")}</button>
-          <button role="menuitem" data-testid="sftp-menu-saveas"
-            onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`, { saveAs: true }); }}
-          ><IconInbox size={12} /> {t("另存为…")}</button>
+          {renaming ? (
+            <div className="sftp-rename" data-testid="sftp-rename-box">
+              <input
+                className="mono sftp-rename-input" autoFocus spellCheck={false} data-testid="sftp-rename-input"
+                aria-label={t("新名称")} value={newName} disabled={busy}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (isImeComposing(e)) return;
+                  if (e.key === "Enter") { e.preventDefault(); void doRename(); }
+                  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setRenaming(false); }
+                }}
+              />
+              <div className="row" style={{ gap: 6 }}>
+                <button className="ghost" data-testid="sftp-rename-ok" disabled={busy || !newName.trim()}
+                  onClick={() => void doRename()}>{t("确定")}</button>
+                <button className="ghost" data-testid="sftp-rename-cancel" disabled={busy}
+                  onClick={() => setRenaming(false)}>{t("取消")}</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {!sftpMenu.isDir && (
+                <>
+                  <button role="menuitem" data-testid="sftp-menu-download"
+                    onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`); }}
+                  ><IconDownload size={12} /> {t("下载")}</button>
+                  <button role="menuitem" data-testid="sftp-menu-saveas"
+                    onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`, { saveAs: true }); }}
+                  ><IconInbox size={12} /> {t("另存为…")}</button>
+                </>
+              )}
+              <button role="menuitem" data-testid="sftp-menu-copyname"
+                onClick={() => { const n = sftpMenu.name; setSftpMenu(null); copyText(n).then(() => pushToast("ok", t("已复制"))).catch(() => pushToast("err", t("复制失败"))); }}
+              ><IconCopy size={12} /> {t("复制文件名")}</button>
+              <button role="menuitem" data-testid="sftp-menu-copypath"
+                onClick={() => { const n = sftpMenu.name; const p = `${sftpPathRef.current.replace(/\/+$/, "")}/${n}`; setSftpMenu(null); copyText(p).then(() => pushToast("ok", t("已复制"))).catch(() => pushToast("err", t("复制失败"))); }}
+              ><IconCopy size={12} /> {t("复制路径")}</button>
+              <button role="menuitem" data-testid="sftp-menu-rename" disabled={busy}
+                title={t("重命名（同目录改名；目标已存在会被拒绝，不覆盖）")}
+                onClick={() => { setNewName(sftpMenu.name); setRenaming(true); }}
+              ><IconPencil size={12} /> {t("重命名…")}</button>
+              <button role="menuitem" data-testid="sftp-menu-delete" disabled={busy}
+                className={"tm-danger" + (delArm ? " tm-danger-armed" : "")}
+                title={delArm ? t("再点一次确认删除（不可撤销）") : t("删除（点击后需再确认一次；目录非空不会被删除）")}
+                onClick={() => { if (!delArm) { setDelArm(true); return; } void doDelete(); }}
+              ><IconTrash size={12} /> {delArm ? t("确认删除") : t("删除")}</button>
+            </>
+          )}
         </div>
   );
 }

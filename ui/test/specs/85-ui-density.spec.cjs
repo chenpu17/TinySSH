@@ -1,6 +1,6 @@
 // 85 界面密度（用户反馈 #24）：非全屏矮窗里标题栏/标签栏/会话工具栏/状态条四条
 // chrome 占纵向空间过多。设置 → 外观 → 界面密度新增「舒适 / 紧凑」两档：
-// 紧凑档只压这四条的高度（44/34/32/26 → 32/28/28/22），入口一个不少，
+// 紧凑档只压这四条的高度（38/34/32/26 → 32/28/28/22），入口一个不少，
 // 根属性 data-density + CSS 变量 --chrome-*-h 即时生效，localStorage 首帧前恢复。
 module.exports = {
   title: "界面密度：紧凑档压矮四条 chrome、入口不隐藏、reload 保持、可还原",
@@ -36,8 +36,8 @@ module.exports = {
     await page.waitForTimeout(1600);
 
     const before = await read();
-    ck.check("默认舒适档：标题 44 / 标签 34 / 工具栏 32 / 状态条 26，四条都在",
-      before.title === 44 && before.tabs === 34 && before.toolbar === 32 && before.status === 26
+    ck.check("默认舒适档：标题 38 / 标签 34 / 工具栏 32 / 状态条 26，四条都在",
+      before.title === 38 && before.tabs === 34 && before.toolbar === 32 && before.status === 26
         && before.visible && before.density === null,
       JSON.stringify(before));
 
@@ -75,13 +75,14 @@ module.exports = {
       JSON.stringify(compact));
     ck.check("紧凑档不隐藏任何一条 chrome", compact.visible, JSON.stringify(compact));
 
-    // 矮窗实景：1280×560 下终端可视高度应比舒适档多出约 26px（四条合计压缩量）
+    // 矮窗实景：1280×560 下终端可视高度应比舒适档多出约 20px（四条合计压缩量：
+    // #30 标题栏 44→38 后为 6+6+4+4，原 12+6+4+4=26）
     await page.evaluate(() => document.querySelector('[data-testid="settings-close"]')?.click());
     await page.waitForTimeout(300);
     await page.setViewportSize({ width: 1280, height: 560 });
     const compactTerm = await termHeight();
-    ck.check("紧凑档把省下的 26px 全部让给终端（1280×560 实测）",
-      comfortTerm !== null && compactTerm !== null && compactTerm - comfortTerm >= 24,
+    ck.check("紧凑档把省下的 20px 全部让给终端（1280×560 实测）",
+      comfortTerm !== null && compactTerm !== null && compactTerm - comfortTerm >= 18,
       JSON.stringify({ comfortTerm, compactTerm }));
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(400);
@@ -108,8 +109,8 @@ module.exports = {
     await page.selectOption('[data-testid="ui-density-select"]', "comfortable");
     await page.waitForTimeout(400);
     const restored = await read();
-    ck.check("切回舒适档：四条恢复 44 / 34 / 32 / 26，根属性移除",
-      restored.title === 44 && restored.tabs === 34 && restored.toolbar === 32 && restored.status === 26
+    ck.check("切回舒适档：四条恢复 38 / 34 / 32 / 26，根属性移除",
+      restored.title === 38 && restored.tabs === 34 && restored.toolbar === 32 && restored.status === 26
         && restored.density === null && restored.stored === "comfortable",
       JSON.stringify(restored));
   },

@@ -82,7 +82,9 @@
   --ui-font-scale: 1;
   /* 界面密度（#24）：四条 chrome 的固定高度；紧凑档由 :root[data-density] 覆盖。
      只压条带高度，不改字号/图标/终端字号，也不隐藏入口。 */
-  --chrome-title-h: 44px;
+  /* #30：标题区 44→38，把 6px 还给终端（只压条带高度，字号/图标/命中域不变；
+     Windows 自绘控件 align-self:stretch 随行收缩，macOS Overlay 红绿灯是系统定位不受影响） */
+  --chrome-title-h: 38px;
   --chrome-tabs-h: 34px;
   --chrome-toolbar-h: 32px;
   --chrome-status-h: 26px;
@@ -289,7 +291,7 @@ body {
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-button { display: none; }
 /* T38 审核：层级字号工具类 .label-xs/.label-sm/.label-base/.label-md 全库无引用，删除 */
-/* 界面密度紧凑档（#24）：非全屏矮窗给终端多留纵向空间——标题 44→32、
+/* 界面密度紧凑档（#24）：非全屏矮窗给终端多留纵向空间——标题 38→32、
    标签 34→28、会话工具栏 32→28、状态条 26→22，合计省 26px。药丸/按钮本身
    尺寸基本不动（只把标签压到 24px），入口一个不少；专注模式仍是全隐藏档。 */
 :root[data-density="compact"] {
@@ -304,7 +306,7 @@ body {
 :root[data-density="compact"] .tabbar-row { padding: 0 8px; }
 :root[data-density="compact"] .tabbar { padding: 0 2px; }
 :root[data-density="compact"] .tab { height: 24px; }
-/* ===== AppShell（R12 §4.1/§4.2）：标题区 44 / 主机栏 224(200–300 可拖可收) /
+/* ===== AppShell（R12 §4.1/§4.2）：标题区 38 / 主机栏 224(200–300 可拖可收) /
    标签 34 / 会话工具栏 34 / 页脚状态条 26（资源采样合并进行）；布局优先级：可操作 > 当前任务 > 终端空间 ===== */
 .app-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .titlebar {
@@ -730,6 +732,18 @@ button:disabled { opacity: 0.4; cursor: default; }
 /* 注意态（专注模式标签条「传输 N」有冲突待裁决）压过开合态的 accent 字（同特异度、靠后） */
 :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.attn,
 :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.attn:not(:disabled):hover { color: var(--warn); }
+/* 专注模式标签条控件（#32）：标题栏隐藏后控件 flush 贴窗口顶缘，观感「挤到顶上」——
+   顶部留 3px 呼吸位（border-box，标签条外高仍 34px，01-shell 契约不变）；按钮压矮一档
+   26→24，圆角取**半高** 12px（用户点名「苹果半圆角」：文字钮成胶囊、24×24 图标钮成正圆，
+   不是 8/9px 的圆角矩形）。命中区用 ::after 纵向透明扩展保住 ≥28（同 KI-029 工艺）。
+   只认 ghost 控件：标签药丸/滚动钮/接管钮不受波及；69-focus-tmux 只断言可见性、
+   64-button-hygiene 只查 session-toolbar，均不冲突。 */
+.focus-mode .tabbar-row { padding-top: 3px; }
+.focus-mode .tabbar-row > button.ghost,
+.focus-mode .tabbar-row > .st-tools > button.ghost { height: 24px; border-radius: 12px; position: relative; }
+.focus-mode .tabbar-row > button.ghost.icon-btn { width: 24px; }
+.focus-mode .tabbar-row > button.ghost::after,
+.focus-mode .tabbar-row > .st-tools > button.ghost::after { content: ""; position: absolute; inset: -3px 0; }
 input, select {
   /* UX 改版：输入框用 --bg 井底（比所在面板深一档的「凹陷」隐喻），panel2 留给浮起卡片 */
   background: var(--bg); border: 1px solid var(--control-border); color: var(--text);
@@ -1915,7 +1929,7 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 /* 列宽随界面字号缩放：52px 固定宽在 125% 下装不下「70.0 MB」，数字被折成两行
    （行高 33→50px，列表参差）——宽度与字号同比例放大，并禁换行兜底 */
 .sftp-row .sftp-size { width: calc(52px * var(--ui-font-scale)); text-align: right; }
-.sftp-row .sftp-time { width: calc(34px * var(--ui-font-scale)); text-align: right; }
+.sftp-row .sftp-time { width: calc(84px * var(--ui-font-scale)); text-align: right; overflow: hidden; text-overflow: ellipsis; }
 .sftp-row .sftp-dl { flex: none; padding: 2px 6px; font-size: calc(11px * var(--ui-font-scale)); opacity: 0; transition: opacity 0.12s; }
 .sftp-row:hover .sftp-dl, .sftp-row .sftp-dl:focus-visible { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .sftp-row .sftp-dl { transition: none; } }
@@ -1981,6 +1995,18 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 }
 .sftp-menu-title { font-size: calc(11px * var(--ui-font-scale)); color: var(--dim); padding: 4px 10px 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 文件菜单项样式并入「菜单项统一」块（按钮美化轮） */
+/* #29 删除二次确认的武装态：危险项本就是红字（tm-danger），武装后再加软底 + 细红
+   内描边——「再点一次就真删」要看得出来，但不做成实底大钮打断菜单节奏 */
+.sftp-menu button.tm-danger-armed,
+.sftp-menu button.tm-danger-armed:not(:disabled):hover {
+  background: var(--danger-soft); box-shadow: inset 0 0 0 1px var(--danger);
+}
+/* #29 菜单内联重命名：输入行 + 确定/取消（不另弹窗打断；钮仍走菜单统一项样式，
+   只把这两颗改成等分居中——它们是动作钮不是菜单项） */
+.sftp-rename { display: flex; flex-direction: column; gap: 4px; padding: 4px 6px 6px; }
+.sftp-rename input { height: 28px; box-sizing: border-box; width: 100%; min-width: 0; }
+.sftp-rename .row { gap: 6px; }
+.sftp-rename .row button { flex: 1; justify-content: center; }
 
 /* T42 端口转发（FR-8）*/
 .fwd-form { gap: 4px; align-items: center; }
@@ -2135,7 +2161,7 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
 }
 
 /* ---- T33/R12 标题栏融合与排版精致化 ---- */
-/* macOS Overlay 标题栏：红绿灯悬浮在 44px 标题区左端，预留落位；浏览器 demo 无标题栏不加类。
+/* macOS Overlay 标题栏：红绿灯悬浮在 38px 标题区左端，预留落位；浏览器 demo 无标题栏不加类。
    十轮：84px 安全区收进 .native-mac（Overlay 为 mac 专属；Windows/Linux 走原生标题栏，
    预留位是死缩进） */
 .native-chrome.native-mac .titlebar { padding-left: 84px; }
@@ -2152,7 +2178,7 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
    一起回到系统平滑。 */
 .native-chrome.native-mac body { -webkit-font-smoothing: auto; }
 /* ---- Windows 自绘窗口控件（双标题栏重设计）：decorations:false 后标题行右端 ─ □ ✕，
-   右缘贴边（去 10px 内边距）、整行高 44px 命中域；关闭钮悬停 Windows 标准红 ---- */
+   右缘贴边（去 10px 内边距）、整行高 38px 命中域；关闭钮悬停 Windows 标准红 ---- */
 .native-chrome.native-win .titlebar { padding-right: 0; }
 .win-controls { display: flex; align-self: stretch; flex: none; }
 .win-controls .wc-btn {

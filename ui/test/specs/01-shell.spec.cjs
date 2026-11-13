@@ -29,7 +29,7 @@ module.exports = {
       const tab = document.querySelector(".tabbar-row").getBoundingClientRect().height;
       return { t: Math.round(t), s: Math.round(s), tab: Math.round(tab) };
     });
-    ck.check("标题区 44px", Math.abs(bar.t - 44) <= 1, `实得 ${bar.t}px`);
+    ck.check("标题区 38px", Math.abs(bar.t - 38) <= 1, `实得 ${bar.t}px`);
     // 用户反馈合并：资源采样条并入状态条（不再有独立第二行），整体压到 26px
     ck.check("状态条 26px（资源采样已合并进行）", Math.abs(bar.s - 26) <= 1, `实得 ${bar.s}px`);
     ck.check("标签条 34px", Math.abs(bar.tab - 34) <= 1, `实得 ${bar.tab}px`);

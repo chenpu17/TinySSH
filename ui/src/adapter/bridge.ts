@@ -89,6 +89,8 @@ interface CmdArgs {
   sftp_list: { sid: string; path: string };
   sftp_resolve_path: { sid: string; path?: string | null };
   sftp_stat: { sid: string; path: string };
+  sftp_delete: { sid: string; path: string };
+  sftp_rename: { sid: string; path: string; newName: string };
   list_forwards: { sid: string };
   start_forward: { sid: string; spec: wire.ForwardSpec };
   stop_forward: { sid: string; id: string };
@@ -236,6 +238,8 @@ interface CmdRet {
   sftp_list: wire.DirEntryS[];
   sftp_resolve_path: wire.PathResolved;
   sftp_stat: wire.EntryStat;
+  sftp_delete: void;
+  sftp_rename: void;
   list_forwards: wire.ForwardInfo[];
   start_forward: wire.ForwardId;
   stop_forward: void;

@@ -157,6 +157,21 @@ pub trait ChannelHandle: Send + Sync {
         Err(crate::Error::InvalidInput("该通路不支持文件删除".into()))
     }
 
+    /// #29 文件管理：重命名/移动条目。**no-clobber**——目标已存在即失败，绝不
+    /// 静默覆盖（与 DF6.1 发布面同一口径）；源不存在=SftpPathNotFound。
+    /// 默认不支持（SSH=SFTP rename，本地=std::fs::rename）。
+    async fn rename_entry(&self, from: &str, to: &str) -> Result<()> {
+        let _ = (from, to);
+        Err(crate::Error::InvalidInput("该通路不支持重命名".into()))
+    }
+
+    /// #29 文件管理：删除目录。**不递归**——非空即失败（如实提示，不做「连子树
+    /// 一起删」的隐式破坏）；不存在=Ok 幂等。默认不支持。
+    async fn remove_dir(&self, path: &str) -> Result<()> {
+        let _ = path;
+        Err(crate::Error::InvalidInput("该通路不支持目录删除".into()))
+    }
+
     /// tmux 面板（一标签多 tmux 会话）：同连接上开**附加交互 PTY 通道**并执行
     /// cmd（request_pty + request_exec——与主 shell 的 request_shell 区分，命令
     /// 即通道引导期启动项，前台尚无交互程序，天然无注入难题）。通道生命周期

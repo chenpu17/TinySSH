@@ -4085,7 +4085,7 @@ pub(crate) fn r12_smoke_script(run_id: &str) -> String {
       if (!cards) return title('FAIL-no-cards');
       const tabN = await waitFor(() => document.querySelectorAll('.tabbar .tab').length || null, 100);
       if (!tabN) return title('FAIL-no-tab');
-      // 几何断言（§4.2）：44 / 224 / 40 / 40 / 24。AUTOCONNECT 只建会话不 attach，
+      // 几何断言（§4.2）：38 / 224 / 40 / 40 / 24。AUTOCONNECT 只建会话不 attach，
       // 工具栏随 sid 附着渲染——先点第一个标签 attach 再等工具栏。
       document.querySelector('.tabbar .tab').click();
       const stEl = await waitFor(() => document.querySelector('.session-toolbar'), 100);
@@ -4094,7 +4094,7 @@ pub(crate) fn r12_smoke_script(run_id: &str) -> String {
       const tbr = geo('.tabbar-row'); const st = geo('.session-toolbar');
       mark(RUN + '|r12-geo|tb=' + JSON.stringify(tb) + ',hb=' + JSON.stringify(hb) + ',sb=' + JSON.stringify(sb)
         + ',tbr=' + JSON.stringify(tbr) + ',st=' + JSON.stringify(st));
-      if (!tb || Math.abs(tb.h - 44) > 1) return title('FAIL-titlebar:' + JSON.stringify(tb));
+      if (!tb || Math.abs(tb.h - 38) > 1) return title('FAIL-titlebar:' + JSON.stringify(tb));
       if (!hb || Math.abs(hb.w - 224) > 2) return title('FAIL-hostbar:' + JSON.stringify(hb));
       if (!tbr || Math.abs(tbr.h - 40) > 1) return title('FAIL-tabbar:' + JSON.stringify(tbr));
       if (!st || Math.abs(st.h - 40) > 1) return title('FAIL-toolbar:' + JSON.stringify(st));

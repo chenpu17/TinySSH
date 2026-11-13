@@ -275,6 +275,10 @@ const demoState = {
   settings: new Map<string, string>(),
   // C4（R30）C02 判别钩子：预置 sftp_list 慢响应（path 命中即延迟 ms）
   sftpSlow: null as { path: string; ms: number } | null,
+  // #29 文件管理：删除/重命名的改动叠加层。demo 目录树每次 sftp_list 重建，故改动
+  // 记在这里由 demoSftpTree() 统一套用——与真实后端「改动落盘后重列可见」同语义。
+  sftpDeleted: [] as string[],
+  sftpRenamed: [] as { from: string; to: string }[],
   // C5（R32）演示传输注册表（创建倒序；真实核心同契约）
   transfers: [] as DemoTransfer[],
   // C6/R33（§353-355）原生选择器模拟：demo 域无真实对话框，由探针经 demo_pick_result
@@ -469,6 +473,125 @@ if (typeof location !== "undefined" && location.search.includes("failhosts")) {
 }
 
 // C10：live 帧格式 = <u64 LE seq（8 字节头）><原始字节>（与桥层一致，UI 剥头取 seq）
+// ---- #29 文件管理：demo SFTP 目录树（基树 + 删除/重命名叠加层）----
+// 基树内容原样保留（既有 spec 依赖其精确条目）；叠加层只改「已删除/已改名」的
+// 可见面，与真实后端同语义：删除后重列不见、改名后旧名消失新名出现、目录改名
+// 子树随迁。每次调用重建基树，故叠加层是唯一持久态（不落盘，刷新页面即复位）。
+type DemoEnt = { name: string; is_dir: boolean; kind: "dir" | "file" | "symlink" | "other"; size: number | null; mtime: number | null };
+function demoSftpBaseTree(): Record<string, DemoEnt[]> {
+  const d = (name: string, mtime = 1790870400): DemoEnt => ({ name, is_dir: true, kind: "dir", size: null, mtime });
+  const f = (name: string, size: number, mtime = 1790870400): DemoEnt => ({ name, is_dir: false, kind: "file", size, mtime });
+  const l = (name: string, mtime = 1790870400): DemoEnt => ({ name, is_dir: false, kind: "symlink", size: null, mtime });
+  const nginx: DemoEnt[] = [
+    d("archive"),
+    f("access.log", 73400320, 1790956800),
+    f("error.log", 2097152, 1790956800),
+    // 未知字段呈现面：socket 无大小无时间（§352 显「—」不伪造零值）
+    { name: "php-fpm.sock", is_dir: false, kind: "other", size: null, mtime: null },
+    // 隐藏项（R31 显示隐藏项判别：默认不显示，开启后可见）
+    f(".rotate.state", 128, 1790784000),
+    // 符号链接：latest → archive（目录，点击 stat 探明后进入）
+    l("latest", 1790956800),
+  ];
+  const releases: DemoEnt[] = [
+    d("v2", 1790611200),
+    d("v3", 1790956800),
+    f("CHANGELOG.md", 2048, 1790908800),
+  ];
+  const v3: DemoEnt[] = [
+    f("app.tar.gz", 48250470, 1790956800),
+    f("app.yml", 640, 1790908800),
+  ];
+  return {
+    // /var/log/nginx = demo 简报 cwd（session_brief），浏览器首载即有内容
+    "/var/log/nginx": nginx,
+    "/var/log/nginx/archive": [
+      f("access-202609.log.gz", 8912896, 1790611200),
+    ],
+    // latest → archive（跟随语义：list 符号链接路径 = 列目标）
+    "/var/log/nginx/latest": nginx.filter((e) => e.name !== "latest"),
+    "/root": [
+      d("deploy"),
+      d("logs"),
+      d("releases", 1790956800),
+      d(".ssh", 1790784000),
+      f("nginx.conf", 2048, 1790908800),
+      f("backup-0930.tar.gz", 48250470, 1790870400),
+      f("readme.md", 312, 1790611200),
+      // current → /root/releases/v3（可进入）；gone-link → 悬空（stat canonical=null）
+      l("current", 1790956800),
+      l("gone-link", 1790784000),
+    ],
+    "/root/deploy": [
+      d("scripts"),
+      f("release.sh", 1841, 1790956800),
+      f("app.yml", 640, 1790908800),
+      f(".env", 220, 1790784000),
+    ],
+    "/root/deploy/scripts": [
+      f("migrate.sh", 733, 1790908800),
+    ],
+    "/root/logs": [
+      f("app.log", 15204351, 1790956800),
+      f("error.log", 94208, 1790956800),
+    ],
+    "/root/releases": releases,
+    "/root/releases/v2": [f("app.tar.gz", 42198123, 1790611200)],
+    "/root/releases/v3": v3,
+    // current → v3（跟随语义）
+    "/root/current": v3,
+    // 拒绝路径演示（C4：权限不足可区别错误，非笼统 io）
+    "/var/private": [],
+  };
+}
+/** 基树套用删除/重命名叠加层后的有效目录树（sftp_list/stat/resolve 共用同一真源）。 */
+function demoSftpTree(): Record<string, DemoEnt[]> {
+  const base = demoSftpBaseTree();
+  const baseName = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+  const parentOf = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
+  for (const { from, to } of demoState.sftpRenamed) {
+    const arr = base[parentOf(from)];
+    // 换对象而非改字段：latest/current 与源目录共享条目对象，原地改会串改镜像路径
+    if (arr) base[parentOf(from)] = arr.map((x) => (x.name === baseName(from) ? { ...x, name: baseName(to) } : x));
+    for (const k of Object.keys(base)) {
+      if (k === from || k.startsWith(from + "/")) {
+        base[to + k.slice(from.length)] = base[k];
+        delete base[k];
+      }
+    }
+  }
+  for (const p of demoState.sftpDeleted) {
+    const arr = base[parentOf(p)];
+    if (arr) base[parentOf(p)] = arr.filter((x) => x.name !== baseName(p));
+    for (const k of Object.keys(base)) {
+      if (k === p || k.startsWith(p + "/")) delete base[k];
+    }
+  }
+  return base;
+}
+/** 路径在有效树里是否为已知目录（含祖先目录；符号链接镜像路径按树键计）。 */
+function demoSftpIsDir(p: string): boolean {
+  const tree = demoSftpTree();
+  // 与后端同口径：按 lstat 的 kind 判目录，而非「是否目录键」。latest/current 这类
+  // 指向目录的符号链接在树里有跟随键，拿键当判据会把链接误判成目录——后端
+  // st.kind == EntryKind::Dir 才 rmdir，Symlink 走 remove_file 删链接本身。
+  const ent = tree[parentOfDemo(p)]?.find((x) => x.name === p.slice(p.lastIndexOf("/") + 1));
+  if (ent) return ent.kind === "dir";
+  // 父级无具名条目（如 /root 这类根下目录键）：退回树键/子键判定
+  if (p in tree) return true;
+  return Object.keys(tree).some((k) => k.startsWith(p + "/"));
+}
+/** 路径在有效树里是否为已知条目（目录键或父目录里的具名条目）。 */
+function demoSftpExists(p: string): boolean {
+  const tree = demoSftpTree();
+  if (p in tree) return true;
+  const arr = tree[parentOfDemo(p)];
+  return !!arr && arr.some((x) => x.name === p.slice(p.lastIndexOf("/") + 1));
+}
+function parentOfDemo(p: string): string {
+  return p.slice(0, p.lastIndexOf("/")) || "/";
+}
+
 function frameBytes(seq: number, data: Uint8Array): Uint8Array {
   const out = new Uint8Array(8 + data.length);
   const dv = new DataView(out.buffer);
@@ -2287,71 +2410,8 @@ case "read_triggers": {
       // 供「晚到旧响应不得覆盖新路径」的代际守卫判别（旧码必红）
       const sl = demoState.sftpSlow;
       if (sl && sl.path === p && sl.ms > 0) await new Promise((r) => setTimeout(r, sl.ms));
-      type Ent = { name: string; is_dir: boolean; kind: "dir" | "file" | "symlink" | "other"; size: number | null; mtime: number | null };
-      const d = (name: string, mtime = 1790870400): Ent => ({ name, is_dir: true, kind: "dir", size: null, mtime });
-      const f = (name: string, size: number, mtime = 1790870400): Ent => ({ name, is_dir: false, kind: "file", size, mtime });
-      const l = (name: string, mtime = 1790870400): Ent => ({ name, is_dir: false, kind: "symlink", size: null, mtime });
-      const nginx: Ent[] = [
-        d("archive"),
-        f("access.log", 73400320, 1790956800),
-        f("error.log", 2097152, 1790956800),
-        // 未知字段呈现面：socket 无大小无时间（§352 显「—」不伪造零值）
-        { name: "php-fpm.sock", is_dir: false, kind: "other", size: null, mtime: null },
-        // 隐藏项（R31 显示隐藏项判别：默认不显示，开启后可见）
-        f(".rotate.state", 128, 1790784000),
-        // 符号链接：latest → archive（目录，点击 stat 探明后进入）
-        l("latest", 1790956800),
-      ];
-      const releases: Ent[] = [
-        d("v2", 1790611200),
-        d("v3", 1790956800),
-        f("CHANGELOG.md", 2048, 1790908800),
-      ];
-      const v3: Ent[] = [
-        f("app.tar.gz", 48250470, 1790956800),
-        f("app.yml", 640, 1790908800),
-      ];
-      const tree: Record<string, Ent[]> = {
-        // /var/log/nginx = demo 简报 cwd（session_brief），浏览器首载即有内容
-        "/var/log/nginx": nginx,
-        "/var/log/nginx/archive": [
-          f("access-202609.log.gz", 8912896, 1790611200),
-        ],
-        // latest → archive（跟随语义：list 符号链接路径 = 列目标）
-        "/var/log/nginx/latest": nginx.filter((e) => e.name !== "latest"),
-        "/root": [
-          d("deploy"),
-          d("logs"),
-          d("releases", 1790956800),
-          d(".ssh", 1790784000),
-          f("nginx.conf", 2048, 1790908800),
-          f("backup-0930.tar.gz", 48250470, 1790870400),
-          f("readme.md", 312, 1790611200),
-          // current → /root/releases/v3（可进入）；gone-link → 悬空（stat canonical=null）
-          l("current", 1790956800),
-          l("gone-link", 1790784000),
-        ],
-        "/root/deploy": [
-          d("scripts"),
-          f("release.sh", 1841, 1790956800),
-          f("app.yml", 640, 1790908800),
-          f(".env", 220, 1790784000),
-        ],
-        "/root/deploy/scripts": [
-          f("migrate.sh", 733, 1790908800),
-        ],
-        "/root/logs": [
-          f("app.log", 15204351, 1790956800),
-          f("error.log", 94208, 1790956800),
-        ],
-        "/root/releases": releases,
-        "/root/releases/v2": [f("app.tar.gz", 42198123, 1790611200)],
-        "/root/releases/v3": v3,
-        // current → v3（跟随语义）
-        "/root/current": v3,
-        // 拒绝路径演示（C4：权限不足可区别错误，非笼统 io）
-        "/var/private": [],
-      };
+      // #29：基树 + 删除/重命名叠加层（与 stat/resolve 同一真源，改动后重列可见）
+      const tree = demoSftpTree();
       if (p === "/var/private") throw apiError("sftp_permission_denied", "演示模式：权限不足（/var/private）", { path: p });
       if (!(p in tree)) throw apiError("sftp_path_not_found", `演示模式：目录不存在（${p}）`, { path: p });
       return tree[p].slice().sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
@@ -2371,13 +2431,30 @@ case "read_triggers": {
         else parts.push(seg);
       }
       const norm = "/" + parts.join("/");
-      if (!know.has(norm)) throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+      // #29：删除/改名后的路径以有效树为准（know 集只覆盖未改动的基树面）
+      const gone = demoState.sftpDeleted.some((d) => norm === d || norm.startsWith(d + "/"))
+        || demoState.sftpRenamed.some((r) => norm === r.from || norm.startsWith(r.from + "/"));
+      if (gone || !(know.has(norm) || demoSftpExists(norm))) {
+        throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+      }
       return { canonical: norm };
     }
     // C4（R30）：条目元数据。lstat 语义 kind/symlink_target；is_dir/size/mtime 跟随；
     // 悬空链接 canonical=null（§352 可解释不猜路径）。
     case "sftp_stat": {
       const p = String(args?.path ?? "").replace(/\/+$/, "") || "/";
+      // #29 叠加层先判：已删/改名前的旧名 → not_found（须在 symlinks 基表之前，
+      // 否则删掉的链接仍会被基表答出来）；改名后的新名 → 按有效树呈示。
+      const gone = demoState.sftpDeleted.some((d) => p === d || p.startsWith(d + "/"))
+        || demoState.sftpRenamed.some((r) => p === r.from || p.startsWith(r.from + "/"));
+      if (gone) throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+      if (demoState.sftpRenamed.some((r) => p === r.to || p.startsWith(r.to + "/"))) {
+        const eff = demoSftpTree();
+        if (p in eff) return { canonical: p, kind: "dir", is_dir: true, size: null, mtime: 1790870400, symlink_target: null };
+        const ent = (eff[parentOfDemo(p)] ?? []).find((x) => x.name === p.slice(p.lastIndexOf("/") + 1));
+        if (ent) return { canonical: p, kind: ent.kind, is_dir: ent.is_dir, size: ent.size, mtime: ent.mtime, symlink_target: null };
+        throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+      }
       const symlinks: Record<string, { target: string; is_dir: boolean; canonical: string | null }> = {
         "/var/log/nginx/latest": { target: "archive", is_dir: true, canonical: "/var/log/nginx/archive" },
         "/root/current": { target: "/root/releases/v3", is_dir: true, canonical: "/root/releases/v3" },
@@ -2397,6 +2474,44 @@ case "read_triggers": {
         return { canonical: p, kind: "file", is_dir: false, size: 1024, mtime: 1790956800, symlink_target: null };
       }
       return { canonical: p, kind: "dir", is_dir: true, size: null, mtime: 1790870400, symlink_target: null };
+    }
+    // #29 文件管理：删除/重命名（人类专属入口，UI 二次确认后才到这里）。语义对齐
+    // 后端：目录**不递归**（非空即失败）、符号链接删链接本身、重命名 no-clobber、
+    // 破坏性动作入审计。改动落叠加层，重列目录即可见（与真实落盘同语义）。
+    case "sftp_delete": {
+      const p = String(args?.path ?? "").replace(/\/+$/, "");
+      if (!p || p === "/") throw apiError("invalid_input", `演示模式：路径无效（${p}）`, { path: p });
+      if (p === "/var/private" || p.startsWith("/var/private/")) {
+        throw apiError("sftp_permission_denied", "演示模式：权限不足（/var/private）", { path: p });
+      }
+      if (!demoSftpExists(p)) throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+      const isDir = demoSftpIsDir(p);
+      if (isDir) {
+        const kids = demoSftpTree()[p];
+        if (kids && kids.length > 0) throw apiError("invalid_input", `目录非空，未删除：${p}`, { path: p });
+      }
+      demoState.sftpDeleted.push(p);
+      audit("human", "sftp_delete", null, null, String(args?.sid ?? ""), { path: p, is_dir: isDir, ok: true });
+      return null;
+    }
+    case "sftp_rename": {
+      const p = String(args?.path ?? "").replace(/\/+$/, "");
+      const n = String(args?.newName ?? "").trim();
+      if (!n || n === "." || n === ".." || n.includes("/") || n.includes("\\")) {
+        throw apiError("invalid_input", `新名称无效：${n}`, { path: p });
+      }
+      if (!p || p === "/") throw apiError("invalid_input", `演示模式：路径无效（${p}）`, { path: p });
+      if (p === "/var/private" || p.startsWith("/var/private/")) {
+        throw apiError("sftp_permission_denied", "演示模式：权限不足（/var/private）", { path: p });
+      }
+      if (!demoSftpExists(p)) throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
+      const par = parentOfDemo(p);
+      const to = par === "/" ? "/" + n : par + "/" + n;
+      if (to === p) throw apiError("invalid_input", "新名称与原名称相同", { path: p });
+      if (demoSftpExists(to)) throw apiError("invalid_input", `目标已存在，未覆盖：${to}`, { path: p });
+      demoState.sftpRenamed.push({ from: p, to });
+      audit("human", "sftp_rename", null, null, String(args?.sid ?? ""), { from: p, to, ok: true });
+      return null;
     }
     // C02 判别钩子注册（R30）：{ path, ms } 预置后 sftp_list 命中该路径即延迟
     case "demo_sftp_slow": {

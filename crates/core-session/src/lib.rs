@@ -3552,6 +3552,81 @@ impl SessionApi for SessionManager {
         Ok(st)
     }
 
+    // #29 文件管理：删除条目。人类专属入口（UI 二次确认后才到这里）；按 lstat
+    // 种类分流——目录走**不递归** rmdir（非空即失败），文件/链接/其他走 remove_file
+    // （删链接本身，绝不跟随目标误删目录）。破坏性动作入审计（只读浏览面不入）。
+    async fn sftp_delete(&self, ctx: &Actor, sid: SessionId, path: String) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("sftp_delete 仅人类文件管理入口".into()));
+        }
+        let h = self.get(&sid)?;
+        let st = h.channel.stat_entry(&path).await?;
+        let is_dir = st.kind == Some(session_api::EntryKind::Dir);
+        let r = if is_dir {
+            h.channel.remove_dir(&path).await
+        } else {
+            h.channel.remove_file(&path).await
+        };
+        let _ = self.center.audit.append(
+            ctx,
+            "sftp_delete",
+            Some(&sid),
+            Some(&path),
+            serde_json::json!({ "path": path, "is_dir": is_dir, "ok": r.is_ok() }),
+            None,
+        );
+        r
+    }
+
+    // #29 文件管理：同目录重命名（no-clobber）。new_name 是基名——显式拒绝路径
+    // 分隔符与 . / ..，不借改名做路径穿越；目标路径由服务端父目录拼出，前端不猜。
+    async fn sftp_rename(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        path: String,
+        new_name: String,
+    ) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("sftp_rename 仅人类文件管理入口".into()));
+        }
+        let n = new_name.trim();
+        if n.is_empty() || n == "." || n == ".." || n.contains('/') || n.contains('\\') {
+            return Err(Error::InvalidInput(format!("新名称无效：{new_name}")));
+        }
+        let trimmed = path.trim_end_matches('/');
+        let (dir, old) = match trimmed.rsplit_once('/') {
+            Some((d, o)) if !o.is_empty() => (
+                if d.is_empty() {
+                    "/".to_string()
+                } else {
+                    d.to_string()
+                },
+                o,
+            ),
+            _ => return Err(Error::InvalidInput(format!("路径无效：{path}"))),
+        };
+        if old == n {
+            return Err(Error::InvalidInput("新名称与原名称相同".into()));
+        }
+        let to = if dir == "/" {
+            format!("/{n}")
+        } else {
+            format!("{dir}/{n}")
+        };
+        let h = self.get(&sid)?;
+        let r = h.channel.rename_entry(trimmed, &to).await;
+        let _ = self.center.audit.append(
+            ctx,
+            "sftp_rename",
+            Some(&sid),
+            Some(trimmed),
+            serde_json::json!({ "from": trimmed, "to": to, "ok": r.is_ok() }),
+            None,
+        );
+        r
+    }
+
     // ---- 端口转发（FR-8，T42/T44）：人类直建；Agent 经逐段审批（V1 收口）；
     // 查询任何 Actor 可用（PRD「MCP 可查询状态」）。转发是持续存在的动作，审计留痕。----
     async fn list_forwards(&self, _ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>> {

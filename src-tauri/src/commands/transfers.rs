@@ -247,3 +247,29 @@ pub(crate) async fn sftp_stat(
         .await
         .map_err(WireError::from)
 }
+
+/// #29 文件管理：删除条目（人类专属，UI 二次确认后调用）。目录不递归——非空即
+/// 失败；符号链接删链接本身。破坏性动作由 core 层入审计。
+#[tauri::command]
+pub(crate) async fn sftp_delete(state: ApiState<'_>, sid: String, path: String) -> CmdResult<()> {
+    state
+        .api
+        .sftp_delete(&human(), sid, path)
+        .await
+        .map_err(WireError::from)
+}
+
+/// #29 文件管理：同目录重命名（no-clobber，目标已存在即失败）。new_name 为基名。
+#[tauri::command]
+pub(crate) async fn sftp_rename(
+    state: ApiState<'_>,
+    sid: String,
+    path: String,
+    new_name: String,
+) -> CmdResult<()> {
+    state
+        .api
+        .sftp_rename(&human(), sid, path, new_name)
+        .await
+        .map_err(WireError::from)
+}
