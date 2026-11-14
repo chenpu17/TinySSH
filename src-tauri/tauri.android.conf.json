@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "features": ["mobile"]
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "create": true,
+        "title": "TinySSH",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "theme": null,
+        "backgroundColor": "#0c1017"
+      }
+    ]
+  }
+}

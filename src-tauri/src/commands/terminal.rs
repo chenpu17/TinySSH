@@ -201,7 +201,16 @@ pub(crate) async fn shell_capability(
 
 /// 本机可用 shell 清单（本地终端一等公民轮）。机器信息不走 SessionApi——
 /// 与会话无关、无 actor 语义；transport-pty 只做存在性探测不启动进程。
+/// 移动端没有本地终端（沙箱 shell 无 coreutils，语义不等价）：清单恒空，
+/// 前端据空清单隐藏入口。
 #[tauri::command]
-pub(crate) async fn list_local_shells() -> CmdResult<Vec<transport_pty::LocalShellInfo>> {
-    Ok(transport_pty::detect_local_shells())
+pub(crate) async fn list_local_shells() -> CmdResult<Vec<session_api::LocalShellInfo>> {
+    #[cfg(not(feature = "mobile"))]
+    {
+        Ok(transport_pty::detect_local_shells())
+    }
+    #[cfg(feature = "mobile")]
+    {
+        Ok(Vec::new())
+    }
 }

@@ -182,6 +182,10 @@ Agent --send_keys--> 会话级授权检查 → 通路写入 → 输出照 3.1 �
 ## 7. 部署形态与演进
 
 - **形态**：验证阶段（V0/V1）仅分发 macOS（dmg）；V2 起三平台（Windows NSIS / Linux deb+AppImage）。独立 `tinyssh-mcp` shim 二进制随包分发。
+- **移动端（Android 先行）**：同一内核 + 两条装配（`desktop` / `mobile` feature，
+  互斥且显式）。平台差异经 `platform-api` trait 注入，核心域不含 `cfg(target_os)`
+  选平台；v1 范围 = SSH + tmux，移动端不装配本地终端与应用内更新，Agent/MCP
+  随后续轮次从移动装配中裁剪。详见 L1 §1.1。
 - **预留演进**（不在本期）：
   - **Headless 模式**：Rust Core + MCP Server 以 daemon 跑在服务器上，GUI 作为远端前端——SessionApi trait 边界已为此预留（核心不依赖 Tauri 类型）。
   - **团队/云同步**：SQLite → 服务端 API，Vault 保持端侧加密。

@@ -23,6 +23,10 @@ cargo build -p tinyssh-app --release --features custom-protocol   # 便携 exe�
 
 # e2e（docker sshd）
 TINYSSH_E2E_SSHD=1 cargo test --workspace
+
+# Android（移动端 v1：SSH + tmux）
+cargo tauri android build --target aarch64 --apk --debug --ci -f mobile   # 必须显式 -f mobile
+bash scripts/android.sh devices                                          # SDK 里的 adb（PATH 通常没有）
 ```
 
 UI 测试环境：`TINYSSH_UI_CHROME` 指向 Edge/Chrome（如 `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`）、`TINYSSH_UI_BASE=http://127.0.0.1:5183`，在 `ui/` 下跑 `node test/run.cjs`。**跑全套前先杀 tinyssh-app（逐帧采样怕负载）；cargo 与 Playwright 永不并发。** `ui/` 唯一依赖是 playwright-core。
@@ -36,7 +40,7 @@ UI 测试环境：`TINYSSH_UI_CHROME` 指向 Edge/Chrome（如 `C:/Program Files
 - **审批链契约**（L1 为准）：Agent 与人类同一条危险形态引擎（粘贴保护 = Agent 审批同一张表）；传输必审；自主模式内存态、重启失效；终端回放/记录归因不撒谎（键序直写 PTY 不记命令块）。
 - **终端真源**：终端状态以 term-core 为唯一真源，前端不自行推导。
 - **demo 域保真**：`ui/src/demo.ts` 是后端行为的镜像（含 `new_session` 幂等合并等语义）；改后端行为必须同步 demo，否则 87 个 spec 全在错误世界上跑（实锤：#29 删除曾拿「是否目录键」判目录，把指向目录的符号链接误判成目录，与后端 lstat `kind` 口径分叉）。
-- **模块边界**：`src-tauri/src/main.rs` 只留装配、启动与窗口事件；新 Tauri command 按域放进 `src-tauri/src/commands/`，并在 `commands/mod.rs` 声明/重导出。`core-session/lib.rs` 新增纯逻辑优先落独立子模块。
+- **模块边界**：`src-tauri/src/lib.rs` 只留装配、启动与窗口事件（`main.rs` 是 `run()` 的薄壳，移动端复用 lib）；新 Tauri command 按域放进 `src-tauri/src/commands/`，并在 `commands/mod.rs` 声明/重导出。`core-session/lib.rs` 新增纯逻辑优先落独立子模块。
 - 用户反馈与待排期问题记录在 [docs/known-issues.md](docs/known-issues.md)；修完补「验证方式」再关闭。
 - **本机条目**：`local` 主机不可编辑/删除（`LocalHostImmutable`），唯一生成/复活途径是 `ensure_local_host`。
 - 改 UI 后先 `npm run build` 再打 release；版本号三源同升（根/tauri.conf/ui package.json，build.rs 注入编译时间），`cargo test -p session-api --tests` 的 `version_consistency` 会拦漏改。

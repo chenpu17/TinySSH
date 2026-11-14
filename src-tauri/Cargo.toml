@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+# 移动端要求 lib target（Android 由 JNI 加载 cdylib/staticlib）；桌面 bin 是薄壳。
+name = "tinyssh_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [[bin]]
 name = "tinyssh-app"
 path = "src/main.rs"
@@ -14,6 +19,18 @@ path = "src/main.rs"
 # 缺了它，release 二进制运行期会去连 devUrl（http://localhost:5183）而不是
 # 使用内嵌资源，窗口直接显示「localhost 拒绝连接」。
 custom-protocol = ["tauri/custom-protocol"]
+
+# 移动端装配开关：Android/iOS 构建启用（`-f mobile`，或 tauri.android.conf.json
+# 的 build.features 自动带上）；桌面 = 缺省。
+# 单向开关的原因：Tauri CLI 的 android 子命令没有 --no-default-features，
+# 只能加 feature 不能减，故不能把 desktop 做成默认 feature。
+# mobile = SSH/tmux 核心，平台能力由 tinyssh-platform-android 注入，
+#          无本地终端、无自更新（移动端随商店分发）。
+mobile = [
+    "core-session/mobile",
+    "tinyssh-vault/mobile",
+    "dep:tinyssh-platform-android",
+]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -29,7 +46,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 session-api = { workspace = true }
 core-session = { workspace = true }
-transport-pty = { workspace = true }
+# 平台能力契约（装配层选实现：桌面 = 钥匙串 + portable-pty；移动端见
+# tinyssh-platform-android）
+tinyssh-platform-api = { workspace = true }
+tinyssh-platform-android = { workspace = true, optional = true }
 tinyssh-mcp-server = { workspace = true }
 tinyssh-agent-host = { workspace = true }
 tinyssh-vault = { workspace = true }
@@ -41,10 +61,15 @@ reqwest = { workspace = true }
 anyhow = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
-tauri-plugin-updater = "2"
-# 便携版自更新（Windows 通道）：minisign 验签与 tauri-plugin-updater 同一
-# crate 同一格式（公钥/签名的 tauri 包装 = minisign 文本文件内容的 base64）。
-minisign-verify = "0.3"
+# 桌面专属实现，按目标平台排除（移动端由装配层注入，见 mobile feature）：
+# - transport-pty：本地终端（移动端沙箱 shell 语义不等价）
+# - tauri-plugin-updater / minisign-verify / base64：应用内更新与便携版自更新
+#   （移动端随商店分发；minisign 与 tauri-plugin-updater 同一 crate 同一格式，
+#   公钥/签名的 tauri 包装 = minisign 文本文件内容的 base64）
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+transport-pty = { workspace = true }
+tauri-plugin-updater = { version = "2" }
+minisign-verify = { version = "0.3" }
 base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -54,6 +79,12 @@ block2 = "0.6"
 # 自身开销采样（mac 自进程监控轮）：getrusage / proc_pid_rusage 零新框架，
 # 与 core-session 的 mac 本机指标同一 workspace 版本。
 libc = { workspace = true }
+
+# 移动端数据目录（Context.getFilesDir）：Android 进程没有 HOME，不能回退 CWD。
+# ndk-context 由 Tauri/wry 的 JNI 入口在 run() 前初始化。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
 
 [dependencies.tauri-plugin-clipboard-manager]
 version = "2"

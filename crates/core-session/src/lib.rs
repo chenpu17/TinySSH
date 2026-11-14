@@ -1,6 +1,9 @@
 //! core-session：SessionApi 实现（L1 §2/§3.1）。
 //! 双前端（GUI/MCP）唯一核心；审批在门面之后强制挂接（L0 ADR-5）。
 
+// 平台装配开关（单向）：mobile = 由装配层注入平台能力；桌面 = 缺省。
+// 移动端若漏开该 feature，会因 transport-pty 未编译而显式失败，不会静默降级。
+
 pub mod agent_model;
 mod brief;
 mod charset;
@@ -115,6 +118,8 @@ pub struct QuickHost {
 pub struct SessionManager {
     sessions: StdMutex<HashMap<SessionId, Arc<SessionHandle>>>,
     pub center: Arc<ApprovalCenter>,
+    /// 平台能力（主密钥托管 / 本地终端）：装配层注入，核心域不认具体平台。
+    platform: tinyssh_platform_api::Platform,
     approvals_rx_gen: StdMutex<()>,
     /// C1 活跃 attempt 表（终态后保留供 connection_status 查询；超 [`ATTEMPTS_CAP`]
     /// 按终态优先、最旧先淘汰——十轮防泄漏）。
@@ -240,8 +245,29 @@ enum ResolveOutcome {
 }
 
 impl SessionManager {
+    /// 桌面便捷装配：OS 钥匙串托管 + portable-pty 本地终端。
+    ///
+    /// 移动端不编译（本地终端不存在，密钥托管由平台 crate 注入），走 [`Self::open_with`]。
+    #[cfg(not(feature = "mobile"))]
     pub fn open(db_path: &Path) -> Result<Arc<Self>> {
-        let vault = Arc::new(tinyssh_vault::Vault::open(db_path)?);
+        Self::open_with(
+            db_path,
+            tinyssh_platform_api::Platform::new(
+                tinyssh_vault::desktop_secret_store(),
+                Arc::new(transport_pty::PortablePty),
+            ),
+        )
+    }
+
+    /// 平台能力由装配层注入（移动端 / 测试）。
+    pub fn open_with(
+        db_path: &Path,
+        platform: tinyssh_platform_api::Platform,
+    ) -> Result<Arc<Self>> {
+        let vault = Arc::new(tinyssh_vault::Vault::open_with(
+            db_path,
+            platform.secrets.as_ref(),
+        )?);
         let audit = Arc::new(tinyssh_audit::AuditStore::open(db_path)?);
         let (approvals_tx, _) = broadcast::channel(256);
         let (forwards_tx, _) = broadcast::channel(256);
@@ -309,6 +335,7 @@ impl SessionManager {
         let arc = Arc::new(Self {
             sessions: StdMutex::new(HashMap::new()),
             center,
+            platform,
             approvals_rx_gen: StdMutex::new(()),
             attempts: StdMutex::new(HashMap::new()),
             merge_index: StdMutex::new(HashMap::new()),
@@ -432,6 +459,10 @@ impl SessionManager {
             self.center.admit_agent(client_id)?;
         }
         let (host, kind) = if req.host_id == "local" {
+            // 移动端无本地终端：明确拒绝，不静默降级成远端会话
+            if !self.platform.local_terminal.supported() {
+                return Err(Error::Unsupported("当前平台不提供本地终端".into()));
+            }
             (self.ensure_local_host()?, "local".to_string())
         } else if let Some(qh) = self.center.quick_hosts.lock().unwrap().get(&req.host_id) {
             // 十七轮：内存态快速连接主机（vault 无行，注册表优先可见性一致）
@@ -481,7 +512,11 @@ impl SessionManager {
             // 本地终端一等公民轮：shell override 从 attempt opts 带入（None=默认解析）；
             // override 随通路存续，重连 respawn 复用同一选择
             let shell = attempt.and_then(|a| a.local_shell.clone());
-            let (ch, _cleanup) = transport_pty::spawn_local_pty(cols, rows, shell).await?;
+            let (ch, _cleanup) = self
+                .platform
+                .local_terminal
+                .spawn(cols, rows, shell)
+                .await?;
             ch
         } else {
             // 十七轮：快速连接主机凭据在注册表内存（注册时即席解出），不经 vault
@@ -2386,7 +2421,10 @@ impl SessionManager {
 impl SessionApi for SessionManager {
     // ---- 主机与凭据 ----
     async fn list_hosts(&self, _ctx: &Actor) -> Result<Vec<Host>> {
-        self.ensure_local_host()?;
+        // 移动端无本地终端：不生成「本机」条目（UI 能力表据此隐藏入口）
+        if self.platform.local_terminal.supported() {
+            self.ensure_local_host()?;
+        }
         self.center.vault.list_hosts()
     }
 

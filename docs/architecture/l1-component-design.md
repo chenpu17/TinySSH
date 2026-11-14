@@ -31,7 +31,9 @@ TinySSH/
 │   ├── session-api/      # 核心门面 trait + 领域类型（含审批类型，见 §1.1；无实现、无重依赖）
 │   ├── core-session/     # SessionApi 实现：会话编排、控制权、exec 串行队列、审批/审计挂接
 │   ├── transport-ssh/    # russh 封装：连接/通道/SFTP/跳板
-│   ├── transport-pty/    # portable-pty 封装：本地 shell
+│   ├── transport-pty/    # portable-pty 封装：本地 shell（仅桌面目标编译）
+│   ├── platform-api/     # 平台能力 trait：SecretStore / LocalTerminal + Platform（无平台原生依赖）
+│   ├── platform-android/ # Android 装配点（Keystore 经 JNI 待接；本地终端按产品决定不做）
 │   ├── term-core/        # alacritty_terminal 封装：网格+命令块双真源、快照、fanout、resync
 │   ├── approval/         # 审批引擎：tree-sitter-bash 逐段求值、队列、TTL 窗口
 │   ├── audit/            # 审计事件写入与查询
@@ -59,6 +61,52 @@ TinySSH/
 - `session-api` 仅依赖 tokio 与基础类型库；
 - **审批契约类型（`Policy`/`Decision`/`Actor` 等）定义在 `session-api`**（门面契约的一部分），`approval` crate 只做实现——否则 session-api 反向依赖 approval，违反上一条；
 - `term-core` 不感知审批/审计；`approval` 不感知协议实现。
+
+### 1.1 平台装配（桌面 / 移动端）
+
+「一份内核 + 两条装配」：平台差异只出现在装配层，**核心域不写 `cfg(target_os)` 选平台**。
+
+- `platform-api`（`tinyssh-platform-api`）只定义 trait——`SecretStore`（主密钥托管）
+  与 `LocalTerminal`（本地终端）——以及 `Platform` 组合；不依赖任何平台原生库。
+  未装配时用 `NoSecretStore` / `NoLocalTerminal` **明确失败**（`Error::Unsupported`），
+  绝不静默降级成明文存储。
+- `platform-android`（`tinyssh-platform-android`）是移动端装配点：主密钥托管用
+  keyring 生态的 `android-native-keyring-store`（SharedPreferences 密文 +
+  AndroidKeyStore 密钥，经 ndk-context 取应用上下文，Tauri/wry 在 `run()` 前初始化）；
+  本地终端按产品决定不做——Android 沙箱 shell 与桌面语义不等价。非 Android 宿主
+  （`--features mobile` 的编译检查）仍装配明确失败的桩，不碰 JNI。
+- 开关是 **Cargo feature**，不是 target 判断：`core-session` / `tinyssh-vault` /
+  `src-tauri` 只有**单向的 `mobile`**（缺省 = 桌面）。之所以不做 `desktop`/`mobile`
+  二选一：Tauri CLI 的 android 子命令没有 `--no-default-features`，只能加 feature
+  不能减，默认 `desktop` 会在 Android 上叠出 `desktop+mobile`。移动端漏开 `mobile`
+  时，桌面专属依赖（portable-pty / keyring / updater）在该目标上未编译，构建显式失败。
+  桌面专属依赖本身按 `[target.'cfg(not(any(target_os = "android", target_os = "ios")))']`
+  排除（Cargo 层，不进核心代码）；`cargo check -p tinyssh-app --features mobile`
+  可在任意宿主验证移动端装配，无需 Android 工具链。
+- Android 构建**必须显式 `-f mobile`**：`src-tauri/tauri.android.conf.json` 的
+  `build.features` 实测不会被 `cargo tauri android build` 采纳（真机实锤：不加
+  `-f` 时 cargo 只收到 `tauri/custom-protocol`，vault 走桌面分支、keyring 未编译
+  直接 E0433）。完整命令：`cargo tauri android build --target aarch64 --apk -f mobile`。
+- 移动端入口差异只在装配层：`run()` 里手动建窗只在 `cfg(desktop)` 执行（移动端
+  webview 由宿主 Activity 创建，`tauri.android.conf.json` 覆盖 windows[0]
+  `create:true` 让宿主自动建主窗口）；默认存储库路径在 Android 走 JNI 的
+  `Context.getFilesDir()`（进程没有 HOME、CWD 只读，不能回退 `"."`）。
+- 移动端 UI 装配（v1 只保 SSH + tmux）：`ui/src/main.tsx` 给 `<html>` 挂
+  `data-platform`，样式与功能裁剪都读这个标记。软键盘有两处原生侧前提（都是
+  真机实锤）：`MainActivity` 把 IME inset 转成内容区底部内边距（边到边下键盘
+  默认覆盖 WebView，前端收不到收缩）；`#term` 用 `overflow: clip` 而非 `hidden`
+  （否则聚焦 xterm 隐藏 textarea 时浏览器会把 `#term` 当滚动容器滚走，终端白屏）。
+- Android 返回键走原生 → 前端一问一答：`MainActivity` 的 `OnBackPressedCallback`
+  调 `evaluateJavascript("window.__tinysshBack()")`，前端按「栈顶」关弹层/面板
+  并返回 true；返回 false（或未注册）才 `finish()`。软键盘打开时的返回由 IME
+  自己消费，到不了 Activity——即「先收键盘、再关面板、最后退 App」。
+- 两条装配的内容：桌面 = portable-pty + OS 钥匙串 + 应用内更新；
+  `mobile` = 无本地终端、无自更新（随商店分发）。**命令面不分叉**：不支持的命令
+  照常注册、调用时返回 `unsupported`，`command_parity` 保持单一清单。
+  Agent/MCP 当前仍在移动装配中编译，按后续轮次裁剪（v1 UI 不暴露）。
+- **生成物坑**：`tauri-build` 按当前 feature 重写 `src-tauri/gen/schemas`（移动装配
+  不含 updater 权限）。跑完 mobile check 切回桌面构建时要 `touch src-tauri/build.rs`
+  强制重跑 build script，提交前确认 `gen/` 干净。
 
 ## 2. 核心门面：SessionApi
 

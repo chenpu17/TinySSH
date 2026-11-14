@@ -256,7 +256,13 @@ function sanitizeLayoutTree(n: unknown): PaneNode | null {
  * 格子共用此预算（留 2 个余量给链接层/搜索装饰等额外上下文），并在焦点切换时优先
  * 把 WebGL 让给当前可见的主终端，后台主终端退 DOM（顺带降后台渲染开销）。 */
 const WEBGL_BUDGET = 14;
-
+/** 移动端判定（与 main.tsx 挂的 data-platform 同源）。手机上一程序化聚焦终端，
+ *  软键盘就顶着半屏盖住刚连上的输出——移动端只在用户点终端时由 xterm 自己聚焦
+ *  （.term-wrap 的 click 监听那条路径），连上/切标签不抢焦点。 */
+const isMobilePlatform = (): boolean => {
+  const p = document.documentElement.dataset.platform;
+  return p === "android" || p === "ios";
+};
 /** 挂 WebGL 渲染器（无 GPU/初始化失败静默回落 DOM）。上下文被浏览器驱逐时把句柄
  *  置空，让预算计数如实回落——旧实现 onContextLoss 只 dispose 不置空，被驱逐的
  *  句柄仍占计数名额，预算会虚高。entry 结构主终端/格子同形（term + webgl）。 */
@@ -4962,6 +4968,36 @@ export default function App() {
     try { localStorage.setItem("ui.hostbar", open ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
     persistHostbarPrefs(open, hostbarWidthRef.current);
   }, [persistHostbarPrefs]);
+  // 移动端：会话一连上就收起主机栏——手机上主机栏是全屏覆盖层，不收起会把
+  // 刚连上的终端整个挡住。桌面保持原行为（并排布局里主机栏不挡终端，便于随手切主机）。
+  // 依赖只看 sid：用户带会话主动打开主机栏时不会被立刻弹回去。
+  useEffect(() => {
+    if (sid && document.documentElement.dataset.platform && hostbarOpenRef.current) {
+      toggleHostbar(false);
+    }
+  }, [sid, toggleHostbar]);
+  // Android 返回键：原生侧（MainActivity）调用 window.__tinysshBack()，返回 true 表示
+  // 前端已消费（关弹层/面板），false 交给系统退出应用。方案挨个关「栈顶」弹层，
+  // 与用户视觉层级一致；SPA 没有可回退的历史，不接管时返回键会直接退 App。
+  const backHandlerRef = useRef<() => boolean>(() => false);
+  backHandlerRef.current = () => {
+    if (paletteOpen) { setPaletteOpen(false); return true; }
+    if (pasteConfirm) { setPasteConfirm(null); return true; }
+    if (pendingDrop) { setPendingDrop(null); return true; }
+    if (showSettings) { setShowSettings(false); return true; }
+    if (showAddHost) { setShowAddHost(false); return true; }
+    if (showQuickConnect) { setShowQuickConnect(false); return true; }
+    if (showImport) { setShowImport(false); return true; }
+    if (rightPanel) { setRightPanel(null); return true; }
+    // 主机列表是移动端「首页」：无会话时按返回直接退 App；带会话时收起回终端
+    if (sid && hostbarOpenRef.current) { toggleHostbar(false); return true; }
+    return false;
+  };
+  useEffect(() => {
+    const w = window as unknown as { __tinysshBack?: () => boolean };
+    w.__tinysshBack = () => backHandlerRef.current();
+    return () => { delete w.__tinysshBack; };
+  }, []);
   // Agent 视图开关（活动栏 rail-agent / 命令面板同一入口）：与主机栏/编排/监控互斥。
   // 关闭也落盘——刷新后保持「上次关了」的意图。
   const toggleAgent = useCallback((open: boolean) => {
@@ -5196,7 +5232,7 @@ export default function App() {
     if (!groupOf(target)) {
       const zoom = paneZoomRef.current;
       if (zoom?.sid === target && zoom.name === MAIN_KEY) {
-        entry.term.focus();
+        if (!isMobilePlatform()) entry.term.focus();
         return null;
       }
       if (zoom?.sid === target) {
@@ -5212,8 +5248,12 @@ export default function App() {
         }
       }
     }
-    if (restored) restored.term.focus();
-    else entry.term.focus();
+    // 移动端不程序化抢焦点：连上/切标签时软键盘会立刻顶起、遮住半屏输出；
+    // 用户点终端时 xterm 自己聚焦。落焦记录（paneLastFocus）仍照常维护。
+    if (!isMobilePlatform()) {
+      if (restored) restored.term.focus();
+      else entry.term.focus();
+    }
     return restored;
   }, [groupOf]);
   focusTermForRef.current = focusTermFor;

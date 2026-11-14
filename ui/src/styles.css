@@ -2138,7 +2138,12 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
    精致化后 --dim 收深至 #5d6f82（≈3.4:1 低于 AA），placeholder 改用 --text-sub
    （#9aaab8 在 panel2 上实算 ≈6:1）保住可读性；--dim 只用于真正的辅助装饰信息 */
 input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; }
-#term { border-radius: 10px; box-shadow: 0 0 0 1px var(--border), 0 4px 16px var(--shadow-soft); overflow: hidden; }
+/* overflow: clip（不是 hidden）——移动端软键盘实锤：xterm 的隐藏 textarea 绝对定位
+   在光标处，行数多时落在容器可视区之外；键盘弹起触发焦点校正，浏览器会把最近的
+   overflow:hidden 祖先（#term）当滚动容器滚走（实测 scrollTop 374px），整个
+   .term-session 被推出可视区白屏，直到下一条输出触发重排才回来。终端滚动只应发生
+   在 .xterm-viewport 内；clip 让 #term 彻底不是滚动容器。 */
+#term { border-radius: 10px; box-shadow: 0 0 0 1px var(--border), 0 4px 16px var(--shadow-soft); overflow: clip; }
 /* 加载占位（精致化 §5.6）：主机列表等首载 skeleton，避免无响应感 */
 .skeleton {
   background: linear-gradient(90deg,
@@ -3766,3 +3771,102 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
     scroll-behavior: auto !important;
   }
 }
+
+/* ===== 移动端（Android / iOS webview + 窄视口）=====
+   桌面是「活动栏 + 主机栏 + 主区」三栏并排；手机没有横向空间，改成单列：
+   顶栏 → 主区 → 底部活动栏，侧栏（主机栏 / Agent / 文件面板）一律全屏覆盖。
+   只在 ≤760px 生效，桌面窗口与 UI 套件视口完全不受影响。
+
+   安全区：Android 15 起 app 强制 edge-to-edge，webview 内容会画到系统栏底下；
+   Android WebView 的 env(safe-area-inset-top) 恒为 0（只反映屏幕挖孔），所以
+   顶栏用 24dp 标准状态栏高度兜底，底部导航同样留 20dp 给手势条；刘海/灵动岛
+   由 env() 取更大值。 */
+@media (max-width: 760px) {
+  .app-shell { height: 100dvh; }
+
+  .titlebar {
+    height: auto; min-height: 44px;
+    padding: max(env(safe-area-inset-top, 0px), 26px) 12px 6px;
+  }
+  .ver-tag, .tb-self, .collab-badge, .update-badge { display: none; }
+
+  .workspace { position: relative; flex-direction: column; }
+
+  /* 左活动栏 → 底部导航（拇指区）：主机栏入口在左、设置钉右 */
+  .actrail {
+    order: 2; width: 100%; min-height: 56px; height: auto;
+    padding: 2px 10px max(env(safe-area-inset-bottom, 0px), 20px);
+    flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px;
+    border-right: none; border-top: 1px solid var(--border);
+    position: relative; z-index: 41;
+  }
+  .actrail .rail-btn { width: 44px; height: 44px; border-radius: 12px; }
+  /* 选中态朝内容一侧的 2px 内标识：竖栏是左缘，横栏改成下缘 */
+  .actrail .rail-btn.ts-open { box-shadow: inset 0 -2px 0 var(--accent); }
+  .rail-btn.rail-tail { margin-top: 0; margin-left: auto; }
+
+  .main { order: 1; }
+
+  /* 侧栏面板改全屏覆盖内容区；底部导航 z-index 更高，任何时候都够得着，
+     否则面板一打开就关不掉 */
+  .hostbar, .agentbar {
+    position: absolute; inset: 0; z-index: 40;
+    width: 100% !important; border-right: none;
+  }
+  .hb-grip, .ab-grip { display: none; }
+  .hb-scroll { padding: 2px 10px 12px; }
+
+  /* 文件面板（SFTP）：384px 固定宽在手机上会把终端挤没，改成覆盖式全屏 */
+  .task-panel { position: absolute; inset: 0; z-index: 30; width: auto; border-left: none; }
+  .tp-grip { display: none; }
+
+  /* 右缘任务面板竖栏（文件/协作/转发/记录/命令块）：移动端 v1 只保 SSH + tmux，
+     这条竖栏固定吃掉 40px 终端宽度且入口都在桌面侧；面板本体（.task-panel）
+     已改整屏覆盖，工具栏/状态栏的既有开关仍可打开它 */
+  .rb-rail { display: none; }
+
+  /* 触控目标：标签药丸、滚动钮抬到 34px 以上，关闭钮扩到 24px */
+  .tabbar-row { padding: 0 8px; }
+  .tab { height: 34px; min-width: 132px; }
+  .tab-x { width: 24px; height: 24px; }
+  .tab-scroll { width: 28px; height: 28px; }
+  .session-toolbar { min-height: 40px; }
+
+  /* 欢迎页：单列铺满，按钮不再两列（手机上两列会把中文标签折行） */
+  .welcome { padding: 12px; }
+  .welcome-box { max-width: none; width: 100%; margin: 0; padding: 22px 20px; }
+  .welcome-actions { grid-template-columns: 1fr; }
+  .welcome-actions button:last-child:nth-child(odd) { grid-column: auto; }
+
+  /* 弹层：全宽贴边，高度让出顶栏与安全区 */
+  .add-host-dlg { width: calc(100vw - 20px); max-height: calc(100dvh - 96px); }
+
+  /* 设置面板：左侧类别栏改横向滚动条，内容区整幅占满 */
+  .term-settings.settings-wide {
+    width: calc(100vw - 16px); height: calc(100dvh - 96px);
+    padding: 14px 14px 12px;
+  }
+  .settings-body { flex-direction: column; gap: 10px; }
+  .settings-nav {
+    flex-direction: row; width: auto; overflow-x: auto; overflow-y: hidden;
+    border-right: none; border-bottom: 1px solid var(--border);
+    padding: 0 0 8px;
+  }
+  .settings-nav button { flex: none; }
+  .set-nav-desc { display: none; }
+}
+
+/* 移动端 v1 范围：只保 SSH + tmux。Agent / 跨主机编排 / 资源监控 / 协作入口
+   在移动装配里不出现（桌面不受影响）。 */
+:root[data-platform="android"] .rail-btn[data-testid="rail-agent"],
+:root[data-platform="android"] .rail-btn[data-testid="rail-fleet"],
+:root[data-platform="android"] .rail-btn[data-testid="rail-monitor"],
+:root[data-platform="ios"] .rail-btn[data-testid="rail-agent"],
+:root[data-platform="ios"] .rail-btn[data-testid="rail-fleet"],
+:root[data-platform="ios"] .rail-btn[data-testid="rail-monitor"],
+:root[data-platform="android"] .collab-badge,
+:root[data-platform="ios"] .collab-badge { display: none; }
+/* 控制权徽标（我控制中/Agent 控制中）属于 Agent 协作面：移动端 v1 不暴露 Agent，
+   徽标只剩标题栏噪音，窄屏上还挤占标题空间 */
+:root[data-platform="android"] .ctl-badge,
+:root[data-platform="ios"] .ctl-badge { display: none; }

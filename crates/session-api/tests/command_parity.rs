@@ -9,10 +9,11 @@ use regex::Regex;
 use std::collections::BTreeSet;
 
 fn handler_names() -> BTreeSet<String> {
-    let src = include_str!("../../../src-tauri/src/main.rs");
+    // 命令注册表在 lib.rs（移动端与桌面共用同一份装配；main.rs 只是薄壳）
+    let src = include_str!("../../../src-tauri/src/lib.rs");
     let start = src
         .find("generate_handler![")
-        .expect("src-tauri/src/main.rs 缺少 generate_handler![...]");
+        .expect("src-tauri/src/lib.rs 缺少 generate_handler![...]");
     let rest = &src[start..];
     let end = rest.find(']').expect("generate_handler![...] 未闭合");
     let block = &rest[..end];

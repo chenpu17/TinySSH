@@ -4,6 +4,10 @@
 //! - XChaCha20-Poly1305 加密；Zeroizing 包裹；Debug 不输出明文。
 
 use base64::Engine as _;
+
+// 平台装配开关（单向）：mobile = 由装配层注入平台能力；桌面 = 缺省。
+// 移动端若漏开该 feature，会因 keyring 未编译而显式失败，不会静默降级。
+
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key as ChachaKey, XChaCha20Poly1305, XNonce};
 use rusqlite::{params, Connection};
@@ -14,6 +18,7 @@ use session_api::{
 };
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use tinyssh_platform_api::SecretStore;
 use zeroize::Zeroizing;
 
 pub mod db;
@@ -260,25 +265,45 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 // 主密钥
 // ---------------------------------------------------------------------------
 
-/// 主密钥来源优先级：TINYSSH_MASTER_KEY(hex) > TINYSSH_MASTER_PASSPHRASE(argon2id) > OS 钥匙串。
+/// 主密钥来源优先级：TINYSSH_MASTER_KEY(hex) > TINYSSH_MASTER_PASSPHRASE(argon2id) > SecretStore。
 /// 口令路径按 **v1 静态盐** 派生（兼容既有数据）。经 [`Vault::open`] 打库走
 /// [`master_key_for_db`]（口令路径用库内随机盐）。
+///
+/// 桌面便捷入口：钥匙串实现固定为 [`KeyringStore`]。移动端用 [`master_key_with`]
+/// 注入平台托管（Keystore/Keychain）。
+#[cfg(not(feature = "mobile"))]
 pub fn master_key() -> Result<Zeroizing<[u8; 32]>> {
+    master_key_with(&KeyringStore)
+}
+
+/// 同 [`master_key`]，主密钥托管由调用方注入（移动端 / 测试）。
+pub fn master_key_with(store: &dyn SecretStore) -> Result<Zeroizing<[u8; 32]>> {
     derive_from_sources(
         &std::env::var("TINYSSH_MASTER_KEY").ok(),
         &std::env::var("TINYSSH_MASTER_PASSPHRASE").ok(),
         None,
+        store,
     )
 }
 
 /// 库绑定派生（[`Vault::open`] 专用）：与 [`master_key`] 同序，但口令路径的
 /// argon2 盐从**库内**取（settings `master.salt`）——静态盐让同一口令跨安装
 /// 派生同一密钥，攻击者拿一份库即可离线预计算；每库随机盐迫使逐库计算（十轮）。
+#[cfg(not(feature = "mobile"))]
 pub fn master_key_for_db(conn: &Connection) -> Result<Zeroizing<[u8; 32]>> {
+    master_key_for_db_with(conn, &KeyringStore)
+}
+
+/// 同 [`master_key_for_db`]，主密钥托管由调用方注入。
+pub fn master_key_for_db_with(
+    conn: &Connection,
+    store: &dyn SecretStore,
+) -> Result<Zeroizing<[u8; 32]>> {
     derive_from_sources(
         &std::env::var("TINYSSH_MASTER_KEY").ok(),
         &std::env::var("TINYSSH_MASTER_PASSPHRASE").ok(),
         Some(conn),
+        store,
     )
 }
 
@@ -286,6 +311,7 @@ fn derive_from_sources(
     key_env: &Option<String>,
     pass_env: &Option<String>,
     db: Option<&Connection>,
+    store: &dyn SecretStore,
 ) -> Result<Zeroizing<[u8; 32]>> {
     if let Some(hex_key) = key_env.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         // env 覆盖在所有构建生效（无头验收/CI 依赖此流程，见
@@ -307,7 +333,7 @@ fn derive_from_sources(
             None => Ok(argon2_derive(pass)),
         };
     }
-    keychain_key()
+    store.load_or_create_master_key()
 }
 
 /// v1 静态盐：仅剩两个消费者——`master_key()` 独立派生（open_shared 测试装配）
@@ -370,33 +396,50 @@ fn argon2_derive_with_salt(pass: &str, salt: &[u8]) -> Zeroizing<[u8; 32]> {
     Zeroizing::new(out)
 }
 
-fn keychain_key() -> Result<Zeroizing<[u8; 32]>> {
-    let entry = keyring::Entry::new("TinySSH", "master-key")
-        .map_err(|e| Error::Storage(format!("keyring: {e}")))?;
-    match entry.get_password() {
-        Ok(b64) => {
-            let bytes =
-                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64.trim())
-                    .map_err(|_| Error::Storage("bad keychain key".into()))?;
-            let mut out = [0u8; 32];
-            if bytes.len() != 32 {
-                return Err(Error::Storage("keychain key must be 32 bytes".into()));
+/// 桌面主密钥托管：OS 钥匙串（macOS Keychain / Windows 凭据管理器 /
+/// Linux Secret Service）。
+///
+/// 移动端不编译本实现——`keyring` 没有 iOS/Android 后端，平台实现由装配层
+/// 通过 [`SecretStore`] 注入（Android Keystore / iOS Keychain）。
+#[cfg(not(feature = "mobile"))]
+pub struct KeyringStore;
+
+#[cfg(not(feature = "mobile"))]
+impl SecretStore for KeyringStore {
+    fn load_or_create_master_key(&self) -> Result<Zeroizing<[u8; 32]>> {
+        let entry = keyring::Entry::new("TinySSH", "master-key")
+            .map_err(|e| Error::Storage(format!("keyring: {e}")))?;
+        match entry.get_password() {
+            Ok(b64) => {
+                let bytes =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64.trim())
+                        .map_err(|_| Error::Storage("bad keychain key".into()))?;
+                let mut out = [0u8; 32];
+                if bytes.len() != 32 {
+                    return Err(Error::Storage("keychain key must be 32 bytes".into()));
+                }
+                out.copy_from_slice(&bytes);
+                Ok(Zeroizing::new(out))
             }
-            out.copy_from_slice(&bytes);
-            Ok(Zeroizing::new(out))
+            Err(keyring::Error::NoEntry) => {
+                use rand::RngCore;
+                let mut key = [0u8; 32];
+                rand::rng().fill_bytes(&mut key);
+                let b64 = base64::engine::general_purpose::STANDARD.encode(key);
+                entry
+                    .set_password(&b64)
+                    .map_err(|e| Error::Storage(format!("keyring set: {e}")))?;
+                Ok(Zeroizing::new(key))
+            }
+            Err(e) => Err(Error::Storage(format!("keyring: {e}"))),
         }
-        Err(keyring::Error::NoEntry) => {
-            use rand::RngCore;
-            let mut key = [0u8; 32];
-            rand::rng().fill_bytes(&mut key);
-            let b64 = base64::engine::general_purpose::STANDARD.encode(key);
-            entry
-                .set_password(&b64)
-                .map_err(|e| Error::Storage(format!("keyring set: {e}")))?;
-            Ok(Zeroizing::new(key))
-        }
-        Err(e) => Err(Error::Storage(format!("keyring: {e}"))),
     }
+}
+
+/// 装配层用：桌面默认主密钥托管。
+#[cfg(not(feature = "mobile"))]
+pub fn desktop_secret_store() -> std::sync::Arc<dyn SecretStore> {
+    std::sync::Arc::new(KeyringStore)
 }
 
 // ---------------------------------------------------------------------------
@@ -819,10 +862,18 @@ use std::sync::Mutex;
 impl Vault {
     /// 打开库并**取得单实例写锁**（R44 §10.2）。库被另一实例持有时返回错误，
     /// 不静默降级为只读——调用方（app/CLI）据此提示用户。
+    ///
+    /// 桌面便捷入口（钥匙串托管）；移动端与测试用 [`Vault::open_with`] 注入托管。
+    #[cfg(not(feature = "mobile"))]
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with(path, &KeyringStore)
+    }
+
+    /// 同 [`Vault::open`]，主密钥托管由调用方注入（移动端 / 测试）。
+    pub fn open_with(path: &Path, store: &dyn SecretStore) -> Result<Self> {
         let lock = VaultLock::acquire(path)?;
         let conn = open(path)?;
-        let master = master_key_for_db(&conn)?;
+        let master = master_key_for_db_with(&conn, store)?;
         Ok(Self {
             conn: Mutex::new(conn),
             master,
@@ -3289,7 +3340,14 @@ mod tests {
         let db = dir.path().join("v.db");
         let master = {
             let conn = open(&db).unwrap();
-            derive_from_sources(&None, &Some("pass-2".into()), Some(&conn)).unwrap()
+            derive_from_sources(
+                &None,
+                &Some("pass-2".into()),
+                Some(&conn),
+                // 口令分支不会触达托管；用明确失败的占位实现表明「本测试不碰钥匙串」
+                &tinyssh_platform_api::NoSecretStore,
+            )
+            .unwrap()
         };
         {
             let v = Vault::open_shared(Connection::open(&db).unwrap(), master.clone()).unwrap();
@@ -3312,7 +3370,13 @@ mod tests {
         }
         // 重开（同口令，库内盐在场）→ 凭据可解
         let conn = open(&db).unwrap();
-        let master2 = derive_from_sources(&None, &Some("pass-2".into()), Some(&conn)).unwrap();
+        let master2 = derive_from_sources(
+            &None,
+            &Some("pass-2".into()),
+            Some(&conn),
+            &tinyssh_platform_api::NoSecretStore,
+        )
+        .unwrap();
         assert_eq!(*master, *master2);
         let v = Vault::open_shared(Connection::open(&db).unwrap(), master2).unwrap();
         let hosts = v.list_hosts().unwrap();

@@ -3,8 +3,10 @@
 //! 从 main.rs 抽出（第二波结构拆分）：更新链路是独立的安全敏感面
 //! （验签、防降级重定向、换身重启），与命令接线分开后更容易单独审阅与测试。
 
+#[cfg(not(feature = "mobile"))]
 use crate::commands::refresh_endpoint_file;
 use crate::{ApiState, CmdResult, WireError};
+#[cfg(not(feature = "mobile"))]
 use tauri::Emitter;
 
 // ---- 应用内更新检查（check_update）：GitHub releases/latest 只读探测 ----
@@ -197,6 +199,7 @@ pub(crate) async fn check_update(app: tauri::AppHandle) -> CmdResult<UpdateCheck
 // 占位符——占位符下 check/install 会如实报错，但注册与启动零风险（插件注册期
 // 不校验公钥）。
 
+#[cfg(not(feature = "mobile"))]
 const UPDATER_ENDPOINT: &str =
     "https://github.com/chenpu17/TinySSH/releases/latest/download/latest.json";
 /// 便携自更新清单里本平台的条目键（tauri updater 清单平台命名）。
@@ -239,6 +242,7 @@ fn endpoint_override_allowed(url: &str) -> bool {
     }
 }
 
+#[cfg(not(feature = "mobile"))]
 fn updater_endpoint() -> String {
     updater_endpoint_override().unwrap_or_else(|| UPDATER_ENDPOINT.to_string())
 }
@@ -268,6 +272,7 @@ fn update_http_client(current: &str) -> std::result::Result<reqwest::Client, Str
 /// 故障模式是「连上但不吐数据」）。重定向禁跨 scheme（https→http 降级在
 /// Policy 层拦下）：endpoint_override_allowed 只门初始 URL，重定向后的跳变
 /// 它看不见。
+#[cfg(not(feature = "mobile"))]
 fn update_http_client_for_install(current: &str) -> std::result::Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(format!("TinySSH/{current}"))
@@ -338,8 +343,11 @@ pub(crate) fn updater_info() -> UpdaterInfo {
 /// 安装在飞闸：防连点的后端兜底（前端 disabled+busy 之外的第二道）——两次并发
 /// 调用会各自下载、各自换身+spawn 新实例，第二个新实例无锁可等，只能白等 15s
 /// 后吃 fatal dialog。命令任何出口经 RAII 抬闸。
+#[cfg(not(feature = "mobile"))]
 static INSTALL_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(not(feature = "mobile"))]
 struct InstallGuard;
+#[cfg(not(feature = "mobile"))]
 impl Drop for InstallGuard {
     fn drop(&mut self) {
         INSTALL_IN_FLIGHT.store(false, std::sync::atomic::Ordering::Release);
@@ -350,6 +358,7 @@ impl Drop for InstallGuard {
 /// macOS：插件通道（下载 app.tar.gz → 验签安装 → 重启），下载进度经
 /// `updater-progress` 事件透传（downloaded/total 字节）；已是最新返回 Ok(false)。
 #[tauri::command]
+#[cfg(not(feature = "mobile"))]
 pub(crate) async fn updater_install(app: tauri::AppHandle, state: ApiState<'_>) -> CmdResult<bool> {
     use tauri_plugin_updater::UpdaterExt;
     if !updater_pubkey_configured_guard() {
@@ -439,6 +448,21 @@ pub(crate) async fn updater_install(app: tauri::AppHandle, state: ApiState<'_>) 
     app.restart(); // -> ! ：安装成功即重启，不返回
 }
 
+/// 移动端：应用商店分发，没有应用内自更新通道。命令面保留（前端桥与
+/// generate_handler 不按平台分叉），调用时如实报不支持。
+#[tauri::command]
+#[cfg(feature = "mobile")]
+pub(crate) async fn updater_install(
+    _app: tauri::AppHandle,
+    _state: ApiState<'_>,
+) -> CmdResult<bool> {
+    Err(WireError::simple(
+        "updater_unavailable",
+        "当前平台不支持应用内更新（随应用商店分发）",
+    ))
+}
+
+#[cfg(not(feature = "mobile"))]
 fn updater_pubkey_configured_guard() -> bool {
     updater_pubkey() != UPDATER_PUBKEY_PLACEHOLDER
 }
@@ -447,6 +471,7 @@ fn updater_pubkey_configured_guard() -> bool {
 
 /// 单次更新载荷上限（健全性闸）：便携 exe 实际 20MB 量级，512MB 远超任何合理
 /// 发版——超限按下载失败处理，防清单被改指到超大文件拖死进程/撑爆内存。
+#[cfg(not(feature = "mobile"))]
 const MAX_UPDATE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// latest.json 清单（tauri updater 清单格式，mac/Win 两通道共用；未知字段忽略）。
@@ -458,6 +483,8 @@ struct UpdateManifest {
 
 #[derive(serde::Deserialize)]
 struct UpdateManifestEntry {
+    // 安装通道（桌面）才验签；移动端仅解析清单用于更新检查，字段保持以兼容格式
+    #[cfg_attr(feature = "mobile", allow(dead_code))]
     signature: String,
     url: String,
 }
@@ -473,6 +500,7 @@ impl UpdateManifest {
 /// 注入），签名来自清单 signature 字段（CI 用 `tauri signer sign` 产出的 .sig
 /// 文件本身就是这层 base64：单行无换行，原文直接内嵌清单即可）。allow_legacy
 /// 与插件一致取 true。
+#[cfg(not(feature = "mobile"))]
 fn verify_signature_b64(
     data: &[u8],
     pubkey_b64: &str,
@@ -499,6 +527,7 @@ fn verify_signature_b64(
 /// 覆盖但能改名（Windows 文件语义），这是便携自更新的全部秘密。两次改名背靠背
 /// 同步执行，「原路径缺席窗口」只有一次系统调用。失败路径：第二步失败立即把
 /// .old 改回原名（尽力回滚），旧版本继续可用。
+#[cfg(not(feature = "mobile"))]
 fn swap_staged_executable(
     current: &std::path::Path,
     staged: &std::path::Path,
@@ -543,6 +572,7 @@ pub(crate) fn cleanup_update_leftovers() {
 /// 便携自更新的安装门：清单版本严格新于当前才动手。与 check_update 的
 /// has_update 同一比较器同一方向（曾写反成 Greater——真机走查点按钮即
 /// 「已是最新」，现由纯函数门钉死方向）。
+#[cfg(not(feature = "mobile"))]
 fn should_install_portable(current: &str, manifest_version: &str) -> bool {
     let v = manifest_version.trim();
     let v = v.strip_prefix(['v', 'V']).unwrap_or(v);
@@ -552,6 +582,7 @@ fn should_install_portable(current: &str, manifest_version: &str) -> bool {
 /// 便携自更新主流程（Windows）：清单 → 版本比对 → 下载（进度事件）→ 验签 →
 /// 落位换身。返回 Ok(true)=换身完成待重启，Ok(false)=已是最新。此函数不动
 /// 进程——收口与重启由调用方统一做。
+#[cfg(not(feature = "mobile"))]
 pub(crate) async fn portable_update(
     app: &tauri::AppHandle,
 ) -> std::result::Result<bool, WireError> {
@@ -755,7 +786,7 @@ mod update_check_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "mobile")))]
 mod portable_update_tests {
     use super::{
         endpoint_override_allowed, should_install_portable, swap_staged_executable,

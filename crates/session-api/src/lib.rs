@@ -1698,6 +1698,10 @@ pub enum Error {
     /// 与 `ControlTakenByHuman` 区分：这是**服务级**封禁，非某会话控制权变更。
     #[error("协作服务已停用，拒绝新的 Agent 请求——请在「设置 → Agent 接入」显式重新启用")]
     CollabDisabled,
+    /// 平台能力不支持（移动端无本地终端 / 未装配主密钥托管等）。
+    /// **明确报错而非静默降级**：静默降级会让「功能怎么没了」变成无从归因的玄学。
+    #[error("当前平台不支持该功能：{0}")]
+    Unsupported(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1792,6 +1796,7 @@ impl Error {
                 Some(serde_json::json!({ "field": field, "reason": reason })),
             ),
             E::CollabDisabled => ("collab_disabled", None),
+            E::Unsupported(r) => ("unsupported", Some(serde_json::json!({ "reason": r }))),
         }
     }
 

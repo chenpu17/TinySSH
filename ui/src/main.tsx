@@ -15,6 +15,13 @@ applyUiFontScale(loadUiFontScale());
 // 界面密度（#24）：同样首帧前恢复，避免舒适档画一帧再压矮。
 applyUiDensity(loadUiDensity());
 
+// 平台标记（移动端移植）：Android/iOS webview 上给 <html> 挂 data-platform。
+// 样式与功能裁剪都读这个标记——v1 移动范围只保 SSH + tmux，Agent/跨主机编排/
+// 资源监控/协作入口在移动端不出现；桌面（含浏览器 demo）完全不受影响。
+const ua = navigator.userAgent;
+const platform = /Android/i.test(ua) ? "android" : /iPhone|iPad|iPod/i.test(ua) ? "ios" : "";
+if (platform) document.documentElement.dataset.platform = platform;
+
 // 注意：createRoot 只能调用一次——此前这段代码被复制了两份，两个 React 根
 // 同时挂载两个 <App/>，窗口级 keydown 监听随之翻倍（⌘W 一次关两个会话、
 // ⌘= 一次步进两号）——T19 走查经审计 55ms 双 session_closed 实锤后修复。

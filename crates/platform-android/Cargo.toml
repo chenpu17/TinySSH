@@ -1,0 +1,19 @@
+[package]
+name = "tinyssh-platform-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tinyssh-platform-api = { workspace = true }
+session-api = { workspace = true }
+zeroize = { workspace = true }
+
+# Android Keystore 托管：keyring 生态的官方实现（SharedPreferences + Keystore
+# 加密）。只在 Android 目标编译；宿主上的 mobile 装配检查走桩实现。
+[target.'cfg(target_os = "android")'.dependencies]
+keyring-core = "1"
+android-native-keyring-store = "1"
+rand = { workspace = true }
+

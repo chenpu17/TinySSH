@@ -50,4 +50,4 @@ PoC 顺带发现并修复了一处真实漂移：手写 `wire.ts` 的 `Host` 缺
 
 - `crates/session-api/tests/command_parity.rs`：当前命令名哨兵。
 - `ui/src/adapter/bridge.ts`：手工 `CmdArgs` / `CmdRet`。
-- `src-tauri/src/main.rs` 的 `generate_handler![...]`：唯一命令注册表。
+- `src-tauri/src/lib.rs` 的 `generate_handler![...]`：唯一命令注册表（`main.rs` 只是薄壳）。

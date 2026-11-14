@@ -212,13 +212,23 @@ pub(crate) async fn pick_save_dir(
     app: tauri::AppHandle,
     default_dir: Option<String>,
 ) -> std::result::Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut b = tauri_plugin_dialog::DialogExt::dialog(&app).file();
-        if let Some(d) = default_dir {
-            b = b.set_directory(d);
-        }
-        Ok(b.blocking_pick_folder().map(|p| p.to_string()))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    // 移动端 dialog 插件只有异步回调版选目录，没有 blocking_pick_folder；
+    // v1 移动范围不含「批量下载到指定目录」，明确失败而不是伪装成用户取消。
+    #[cfg(mobile)]
+    {
+        let _ = (app, default_dir);
+        return Err("移动端暂不支持选择目录".into());
+    }
+    #[cfg(desktop)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut b = tauri_plugin_dialog::DialogExt::dialog(&app).file();
+            if let Some(d) = default_dir {
+                b = b.set_directory(d);
+            }
+            Ok(b.blocking_pick_folder().map(|p| p.to_string()))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
 }

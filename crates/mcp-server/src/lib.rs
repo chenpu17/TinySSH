@@ -442,6 +442,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::InvalidTransferState { .. } => "invalid_transfer_state",
         Error::ForwardListenFailed { .. } => "forward_listen_failed",
         Error::CollabDisabled => "collab_disabled",
+        Error::Unsupported(_) => "unsupported",
     }
 }
 

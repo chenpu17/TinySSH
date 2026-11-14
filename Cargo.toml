@@ -6,6 +6,8 @@ members = [
     "crates/core-session",
     "crates/transport-ssh",
     "crates/transport-pty",
+    "crates/platform-api",
+    "crates/platform-android",
     "crates/term-core",
     "crates/approval",
     "crates/audit",
@@ -23,6 +25,8 @@ default-members = [
     "crates/core-session",
     "crates/transport-ssh",
     "crates/transport-pty",
+    "crates/platform-api",
+    "crates/platform-android",
     "crates/term-core",
     "crates/approval",
     "crates/audit",
@@ -45,10 +49,14 @@ authors = ["TinySSH contributors"]
 
 [workspace.dependencies]
 # 内部 crates
+# core-session / tinyssh-vault 带单向平台装配开关 `mobile`（缺省 = 桌面）：
+# 移动端由装配层（src-tauri 的 mobile feature）显式开启。
 session-api = { path = "crates/session-api" }
 core-session = { path = "crates/core-session" }
 transport-ssh = { path = "crates/transport-ssh" }
 transport-pty = { path = "crates/transport-pty" }
+tinyssh-platform-api = { path = "crates/platform-api" }
+tinyssh-platform-android = { path = "crates/platform-android" }
 term-core = { path = "crates/term-core" }
 tinyssh-approval = { path = "crates/approval" }
 tinyssh-audit = { path = "crates/audit" }

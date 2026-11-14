@@ -95,6 +95,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "android-native-keyring-store"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c6349ddff23194f8fdce2ea8849380f5a4868c1648965b70e801e104cba9b3"
+dependencies = [
+ "base64 0.22.1",
+ "jni 0.21.1",
+ "keyring-core",
+ "log",
+ "ndk-context",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1021,6 +1039,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tinyssh-approval",
  "tinyssh-audit",
+ "tinyssh-platform-api",
  "tinyssh-records",
  "tinyssh-testbed",
  "tinyssh-vault",
@@ -6557,8 +6576,10 @@ dependencies = [
  "chrono",
  "core-session",
  "futures-util",
+ "jni 0.21.1",
  "libc",
  "minisign-verify",
+ "ndk-context",
  "objc2",
  "objc2-app-kit",
  "reqwest 0.12.28",
@@ -6573,6 +6594,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tinyssh-agent-host",
  "tinyssh-mcp-server",
+ "tinyssh-platform-android",
+ "tinyssh-platform-api",
  "tinyssh-records",
  "tinyssh-vault",
  "tokio",
@@ -6676,6 +6699,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyssh-platform-android"
+version = "0.12.14"
+dependencies = [
+ "android-native-keyring-store",
+ "keyring-core",
+ "rand 0.9.5",
+ "session-api",
+ "tinyssh-platform-api",
+ "zeroize",
+]
+
+[[package]]
+name = "tinyssh-platform-api"
+version = "0.12.14"
+dependencies = [
+ "async-trait",
+ "session-api",
+ "zeroize",
+]
+
+[[package]]
 name = "tinyssh-records"
 version = "0.12.14"
 dependencies = [
@@ -6744,6 +6788,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
+ "tinyssh-platform-api",
  "tokio",
  "tracing",
  "uuid",
@@ -7047,6 +7092,7 @@ dependencies = [
  "session-api",
  "term-core",
  "thiserror 2.0.21",
+ "tinyssh-platform-api",
  "tokio",
  "tracing",
  "uuid",

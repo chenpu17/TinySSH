@@ -609,6 +609,29 @@ pub fn detect_local_shells() -> Vec<session_api::LocalShellInfo> {
     out
 }
 
+/// 平台能力实现：把本地 PTY 装配进核心域（见 `tinyssh-platform-api`）。
+///
+/// 桌面装配在 `SessionManager::open` 里；移动端不会编译本 crate（portable-pty
+/// 依赖 fork/exec，iOS 直接禁止、Android 的 /system/bin/sh 也没有可用环境）。
+pub struct PortablePty;
+
+#[async_trait]
+impl tinyssh_platform_api::LocalTerminal for PortablePty {
+    fn supported(&self) -> bool {
+        true
+    }
+
+    async fn spawn(
+        &self,
+        cols: u16,
+        rows: u16,
+        shell: Option<String>,
+    ) -> Result<(Arc<dyn ChannelHandle>, Option<std::path::PathBuf>)> {
+        let (channel, cleanup) = spawn_local_pty(cols, rows, shell).await?;
+        Ok((channel as Arc<dyn ChannelHandle>, cleanup))
+    }
+}
+
 /// 启动本地持久 shell PTY。返回通路与需要延迟清理的临时目录。
 /// `shell` 为用户指定的 shell 可执行路径（detect_local_shells 的 path 原样透传）；
 /// None=默认解析（$SHELL → Windows 回退 powershell.exe）。

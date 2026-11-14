@@ -5,12 +5,18 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+# 移动端装配开关：Android/iOS 构建显式启用（桌面 = 缺省，不启用）。
+# 单向开关的原因：Tauri CLI 的 android 子命令没有 --no-default-features，
+# 只能加 feature 不能减，故不能把 desktop 做成默认 feature。
+mobile = []
+
 [dependencies]
 russh = { workspace = true }
 session-api = { workspace = true }
+tinyssh-platform-api = { workspace = true }
 tokio = { workspace = true }
 rusqlite = { workspace = true }
-keyring = { workspace = true }
 chacha20poly1305 = { workspace = true }
 argon2 = { workspace = true }
 zeroize = { workspace = true }
@@ -29,3 +35,8 @@ libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+# 桌面主密钥托管（OS 钥匙串）。keyring 没有 iOS/Android 后端，故按目标平台
+# 排除；移动端由装配层注入 Keystore/Keychain（platform-api::SecretStore）。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+keyring = { workspace = true }

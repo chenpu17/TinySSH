@@ -5,11 +5,17 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+# 移动端装配开关：Android/iOS 构建显式启用（桌面 = 缺省，不启用）。
+# 单向开关的原因：Tauri CLI 的 android 子命令没有 --no-default-features，
+# 只能加 feature 不能减，故不能把 desktop 做成默认 feature。
+mobile = ["tinyssh-vault/mobile"]
+
 [dependencies]
 session-api = { workspace = true }
 term-core = { workspace = true }
 transport-ssh = { workspace = true }
-transport-pty = { workspace = true }
+tinyssh-platform-api = { workspace = true }
 tinyssh-approval = { workspace = true }
 tinyssh-audit = { workspace = true }
 tinyssh-records = { workspace = true }
@@ -30,6 +36,11 @@ encoding_rs = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tinyssh-testbed = { workspace = true }
+
+# 桌面本地终端实现（portable-pty）。移动端不编译：iOS 禁止 fork/exec，
+# Android 的 /system/bin/sh 也没有可用环境；核心域只认 platform-api 的 trait。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+transport-pty = { workspace = true }
 
 # 本机整机指标（mac 本机监控轮）：macOS 无 procfs，走 mach/sysctl 原生计数器
 #（host_statistics / sysctlbyname / statvfs），零子进程。Windows 分支仍用
