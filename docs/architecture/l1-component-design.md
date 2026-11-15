@@ -100,6 +100,34 @@ TinySSH/
   调 `evaluateJavascript("window.__tinysshBack()")`，前端按「栈顶」关弹层/面板
   并返回 true；返回 false（或未注册）才 `finish()`。软键盘打开时的返回由 IME
   自己消费，到不了 Activity——即「先收键盘、再关面板、最后退 App」。
+  前端消费顺序**复用 Esc 的 `closeTopOverlayRef` 栈顶链**（任何新弹层接进 Esc 链
+  就自动获得返回键出口），再补移动端特有的三处：键位录入选键态、整屏任务面板
+  （`rightPanel`）与会话存续时的主机栏收起。
+- 移动端辅助键条（`ui/src/components/mobile-keys.tsx`，仅有会话时渲染）：软键盘
+  没有 Esc/Tab/方向键与独立 Ctrl，键条提供 Esc/Tab/粘滞 Ctrl/C-b/C-c/方向键。
+  Ctrl 是粘滞键——点亮后下一次软键盘字母改写为控制码（仅在焦点位于 `.xterm`
+  隐藏 textarea 时拦截，弹窗输入不受影响）。出口走目标终端实例的 `term.input()`，
+  与真实键盘同一条 `onData`（死会话拦截、tmux 前缀、广播扇出、格子直写通道）。
+  键钮按等分收缩（`flex:1 1 0; min-width:0`）装进一行——44px 定宽在 411dp 上会把
+  末键推出屏外并生出滚动条；触屏下不挂 accent 悬停实底（Chrome 会把最后点过的
+  元素长期当作 `:hover`，看起来像选中态）。
+- 触屏长按 = 右键（`ui/src/touch.ts`，`useLongPress`）：桌面把标签菜单、SFTP 行
+  动作菜单、最近连接菜单挂在 `onContextMenu` 上，安卓 WebView 对普通元素长按不派发
+  contextmenu。长按 480ms、位移 10px 内触发；down 时 `setPointerCapture` 把指针留在
+  本行，触发瞬间再在 window 捕获阶段吞掉一次 click（菜单落地时手指还按着，抬手那一下
+  的 click 会打到 `.pop-mask` 上把菜单立刻关掉——真机实锤）。鼠标事件不受影响。
+- 窄屏布局按 `isMobilePlatform()`（`ui/src/platform.ts`）裁剪：tmux 自动平铺
+  最多 2 列、会话大屏最多 2 列（3 列时每格不足 12 列，而终端有 20 列下限，右侧
+  会被裁掉）；设置里不出现「Agent 接入 / 记录审计」分类；命令面板不列 Agent/
+  编排/监控；自更新检查在移动端直接跳过（装配层没有 updater）。
+- 触屏可达性：主机卡的编辑/删除/收藏组与 SFTP 行下载钮原先只在 `:hover` 出现，
+  窄屏改为常显；确认框/广播浮层/终端搜索条宽度改为视口钳制，360dp 不再出屏。
+  右缘任务面板竖栏（`rb-rail`）在窄屏整条隐藏，故「远程文件」必须在会话工具栏的
+  工具菜单里有入口（`tools-files`，仅 `isMobilePlatform()` 或视口 ≤760px 时渲染；
+  宽屏桌面 rb-files 常驻，不再重复）；`.tools-menu` 是右锚绝对定位，手机上面板在
+  左边时会整块伸出屏幕左侧，`clampIntoView` 因此补了左越界回夹（回夹时清掉
+  `right`，否则两端拉伸把菜单压窄）。
+  仍待排期（终端触摸选区/复制、链接点按）见 [known-issues](../known-issues.md) KI-052。
 - 两条装配的内容：桌面 = portable-pty + OS 钥匙串 + 应用内更新；
   `mobile` = 无本地终端、无自更新（随商店分发）。**命令面不分叉**：不支持的命令
   照常注册、调用时返回 `unsupported`，`command_parity` 保持单一清单。

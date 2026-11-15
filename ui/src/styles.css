@@ -649,7 +649,12 @@ label.file-btn { display: inline-flex; align-items: center; padding: 6px 13px; b
 label.file-btn:hover { background-color: var(--panel3); color: var(--text); border-color: var(--border-hover); }
 button.danger { background: var(--danger); color: var(--on-danger); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px var(--shadow-soft); }
 button.warn { background: var(--warn); color: var(--on-warn); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px var(--shadow-soft); }
-button:not(:disabled):hover { background-color: var(--accent-fill-hover); background-image: none; }
+/* 移动装配里关掉「悬停提亮成 accent 实底」：触屏没有真正的 hover，Chrome 会把最后
+   一次点按的元素长期当作 :hover，点过的键就此常亮 accent，冒充选中/粘滞态（辅助键条
+   的实测症状）。按下反馈交给 :active，其余各变体的中性 hover 规则不受影响。
+   :where() 归零前缀特异性——必须仍是 0,2,1，否则会压过 .ghost/.rail-btn 等族规则
+   （64 号「悬停陷阱」spec 会拦）。 */
+:where(:root:not([data-platform="android"]):not([data-platform="ios"])) button:not(:disabled):hover { background-color: var(--accent-fill-hover); background-image: none; }
 button:not(:disabled):active { transform: translateY(0.5px); }
 button.ghost:not(:disabled):hover { background-color: var(--panel3); color: var(--text); border-color: var(--border-hover); }
 button.danger:not(:disabled):hover { background-color: var(--danger-hover); }
@@ -2042,7 +2047,7 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 
 /* T23：删除/断开确认弹层；表单常驻标签；死会话遮罩（host-ops 已并入上方主机卡块） */
 .confirm-mask { position: fixed; inset: 0; z-index: 90; background: var(--mask-plain); display: flex; align-items: center; justify-content: center; }
-.confirm-dialog { width: 400px; background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; line-height: 1.7; box-shadow: 0 4px 10px var(--shadow-soft), 0 24px 64px var(--shadow-dialog); }
+.confirm-dialog { width: min(400px, calc(100vw - 24px)); background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; line-height: 1.7; box-shadow: 0 4px 10px var(--shadow-soft), 0 24px 64px var(--shadow-dialog); }
 .ah-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ah-field label { font-size: calc(10px * var(--ui-font-scale)); color: var(--text-sub); letter-spacing: 0.3px; }
 .ah-field input, .ah-field select { width: 100%; }
@@ -3099,7 +3104,7 @@ button.palette-item.palette-sel:not(:disabled):hover { background: var(--accent-
 
 /* ---- P2-a：广播输入目标浮层（状态栏 chip / 工具菜单 / ⌘K 打开） ---- */
 .broadcast-pop {
-  position: fixed; right: 12px; bottom: 40px; width: 380px; max-height: 52vh;
+  position: fixed; right: 12px; bottom: 40px; width: min(380px, calc(100vw - 24px)); max-height: 52vh;
   display: flex; flex-direction: column; gap: 8px;
   background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
   padding: 12px; z-index: 60;
@@ -3815,6 +3820,11 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   }
   .hb-grip, .ab-grip { display: none; }
   .hb-scroll { padding: 2px 10px 12px; }
+  /* 触屏没有 hover：主机卡的「更多（编辑/删除/收藏）」与 SFTP 行的下载钮原本只在
+     :hover 才出现，等于手机上没有入口。改为常显，并给主机名/地址行让出按钮宽度。 */
+  .host-card-side { opacity: 1; pointer-events: auto; }
+  .host-card .host-line, .host-card .host-sub { padding-right: 88px; }
+  .sftp-row .sftp-dl { opacity: 1; pointer-events: auto; }
 
   /* 文件面板（SFTP）：384px 固定宽在手机上会把终端挤没，改成覆盖式全屏 */
   .task-panel { position: absolute; inset: 0; z-index: 30; width: auto; border-left: none; }
@@ -3831,6 +3841,14 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   .tab-x { width: 24px; height: 24px; }
   .tab-scroll { width: 28px; height: 28px; }
   .session-toolbar { min-height: 40px; }
+  /* 26px 桌面钮在触屏上低于 44dp 判据又挤在一起（误触接管/断开）；抬到 34px。
+     选择器与工具栏统一钮同权重，靠后面声明覆盖高度，不碰桌面。 */
+  :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button:not(.tab-scroll) {
+    height: 34px; padding: 0 10px;
+  }
+  :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.icon-btn {
+    width: 34px;
+  }
 
   /* 欢迎页：单列铺满，按钮不再两列（手机上两列会把中文标签折行） */
   .welcome { padding: 12px; }
@@ -3840,6 +3858,10 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 
   /* 弹层：全宽贴边，高度让出顶栏与安全区 */
   .add-host-dlg { width: calc(100vw - 20px); max-height: calc(100dvh - 96px); }
+  /* 终端搜索条约 450px（输入框 180 + 选项/计数/上下/关闭），360dp 上左侧输入框
+     跑到屏外。窄屏改成左右贴边、输入框弹性、放不下就换行。 */
+  .term-search { left: 8px; right: 8px; flex-wrap: wrap; }
+  .term-search input { flex: 1 1 140px; width: auto; min-width: 0; }
 
   /* 设置面板：左侧类别栏改横向滚动条，内容区整幅占满 */
   .term-settings.settings-wide {
@@ -3855,6 +3877,39 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   .settings-nav button { flex: none; }
   .set-nav-desc { display: none; }
 }
+
+/* 移动端辅助键条（.mobile-keys，仅手机、有会话时渲染）：常驻在 workspace 之后，
+   即 WebView 内容的最后一行——原生侧把 IME inset 转成内容区底部内边距后，它正好
+   紧贴软键盘上沿。Ctrl 为粘滞键（点亮态），其余按钮即发即走。 */
+.mobile-keys {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 6px calc(5px + max(env(safe-area-inset-bottom, 0px), 10px));
+  background: var(--panel, #121722);
+  border-top: 1px solid var(--border);
+  /* 一行装完：按钮按等分收缩（min-width:0），不允许横向滚动——手机上滚条本身
+     就占掉一行高度，且末键会被推到屏外。 */
+  overflow: hidden;
+}
+.mobile-keys .mk-btn {
+  flex: 1 1 0;
+  min-width: 0; height: 36px; padding: 0 2px;
+  white-space: nowrap; overflow: hidden;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  font: inherit; font-size: calc(13px * var(--ui-font-scale));
+  line-height: 1;
+  touch-action: manipulation;
+}
+.mobile-keys .mk-btn:active { background: var(--panel3); }
+.mobile-keys .mk-btn.ts-open {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.mobile-keys .mk-gap { flex: 0 0 4px; }
 
 /* 移动端 v1 范围：只保 SSH + tmux。Agent / 跨主机编排 / 资源监控 / 协作入口
    在移动装配里不出现（桌面不受影响）。 */

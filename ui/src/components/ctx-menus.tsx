@@ -22,7 +22,16 @@ export function clampIntoView(el: HTMLElement | null) {
   if (!el) return;
   const r = el.getBoundingClientRect();
   const pad = 6;
-  if (r.right > window.innerWidth - pad) el.style.left = `${Math.max(pad, window.innerWidth - pad - r.width)}px`;
+  if (r.right > window.innerWidth - pad) {
+    // 右锚菜单（.tools-menu 的 right:0）回夹时必须清掉 right：left/right 同时给出
+    // 会按两端拉伸宽度，菜单被压窄到文字换行
+    el.style.right = "auto";
+    el.style.left = `${Math.max(pad, window.innerWidth - pad - r.width)}px`;
+  } else if (r.left < pad) {
+    // 左侧越界（手机窄屏：工具钮在左边、菜单却右锚 → 整块伸出屏幕左侧，首字被切）
+    el.style.right = "auto";
+    el.style.left = `${pad}px`;
+  }
   if (r.bottom > window.innerHeight - pad) el.style.top = `${Math.max(pad, window.innerHeight - pad - r.height)}px`;
 }
 

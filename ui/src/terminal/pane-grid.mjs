@@ -29,12 +29,15 @@ export const MAIN_KEY = ":main";
 const leaf = (key, w = 1) => ({ key, w });
 const total = (kids) => kids.reduce((s, k) => s + k.w, 0) || 1;
 
-/** 默认布局：与 paneGrid(keys.length) 逐格同几何（用户没拖过时沿用自动平铺）。 */
-export function defaultLayout(keys) {
+/** 默认布局：与 paneGrid(keys.length) 逐格同几何（用户没拖过时沿用自动平铺）。
+ *  maxCols：自动平铺的列数上限。桌面 3 列是既有观感；手机窄屏传 2——360dp 上
+ *  3 列每格正文不足 12 列，而终端强制 20 列下限（fitDimsOf），右侧内容会被裁掉。 */
+export function defaultLayout(keys, maxCols = 3) {
   const n = keys.length;
   if (n === 0) return null;
   if (n === 1) return leaf(keys[0]);
-  const cols = n <= 2 ? n : n <= 4 ? 2 : 3;
+  const base = n <= 2 ? n : n <= 4 ? 2 : 3;
+  const cols = Math.max(1, Math.min(base, Math.floor(maxCols) || base));
   const rows = [];
   for (let i = 0; i < n; i += cols) rows.push(keys.slice(i, i + cols));
   const rowNode = (ks) => (ks.length === 1 ? leaf(ks[0]) : { dir: "row", w: 1, kids: ks.map((k) => leaf(k)) });

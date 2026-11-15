@@ -28,7 +28,7 @@ export interface PaneDivider {
 export type DropZone = "center" | "left" | "right" | "top" | "bottom";
 
 export const MAIN_KEY: string;
-export function defaultLayout(keys: string[]): PaneNode | null;
+export function defaultLayout(keys: string[], maxCols?: number): PaneNode | null;
 export function layoutRects(root: PaneNode | null): { tiles: PaneTile[]; dividers: PaneDivider[] };
 export function nodeAt(root: PaneNode | null, path: number[]): PaneNode | null;
 export function removeTile(root: PaneNode | null, key: string): PaneNode | null;

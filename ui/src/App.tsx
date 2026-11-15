@@ -27,6 +27,8 @@ import { installWheelBatch, displayIntervalMs } from "./terminal/wheel-batch";
 import { loadUiFontScale, storeUiFontScale, type UiFontScale } from "./ui-scale";
 import { loadUiDensity, storeUiDensity, type UiDensity } from "./ui-density";
 import { isScrollbackFull, scrollBelow } from "./terminal/scrollback";
+import { isMobilePlatform } from "./platform";
+import { useLongPress } from "./touch";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
   MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
@@ -125,6 +127,7 @@ import { ConnDetail } from "./components/conn-detail";
 import { Hostbar } from "./components/hostbar";
 import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
+import { MobileKeyBar } from "./components/mobile-keys";
 import { TmuxQuick } from "./components/tmux-quick";
 import { TmuxWall } from "./components/tmux-wall";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
@@ -256,13 +259,9 @@ function sanitizeLayoutTree(n: unknown): PaneNode | null {
  * 格子共用此预算（留 2 个余量给链接层/搜索装饰等额外上下文），并在焦点切换时优先
  * 把 WebGL 让给当前可见的主终端，后台主终端退 DOM（顺带降后台渲染开销）。 */
 const WEBGL_BUDGET = 14;
-/** 移动端判定（与 main.tsx 挂的 data-platform 同源）。手机上一程序化聚焦终端，
- *  软键盘就顶着半屏盖住刚连上的输出——移动端只在用户点终端时由 xterm 自己聚焦
- *  （.term-wrap 的 click 监听那条路径），连上/切标签不抢焦点。 */
-const isMobilePlatform = (): boolean => {
-  const p = document.documentElement.dataset.platform;
-  return p === "android" || p === "ios";
-};
+/** 移动端判定（见 platform.ts）：手机上一程序化聚焦终端，软键盘就顶着半屏盖住
+ *  刚连上的输出——移动端只在用户点终端时由 xterm 自己聚焦（.term-wrap 的 click
+ *  监听那条路径），连上/切标签不抢焦点。 */
 /** 挂 WebGL 渲染器（无 GPU/初始化失败静默回落 DOM）。上下文被浏览器驱逐时把句柄
  *  置空，让预算计数如实回落——旧实现 onContextLoss 只 dispose 不置空，被驱逐的
  *  句柄仍占计数名额，预算会虚高。entry 结构主终端/格子同形（term + webgl）。 */
@@ -1072,6 +1071,8 @@ export default function App() {
   } | null>(null);
   // 拖后随至的 click 不当「激活标签」：时间戳而非布尔，避免残留吞掉下一次真实点击
   const dragClickSupUntilRef = useRef(0);
+  // 触屏长按标签 → 会话操作菜单（桌面右键的移动端等价物，见 touch.ts）
+  const tabLongPress = useLongPress();
   const cancelTabDrag = useCallback(() => {
     const d = tabDragRef.current;
     if (!d) return;
@@ -1336,18 +1337,22 @@ export default function App() {
   // 320–560（对话面板比主机栏宽），只走 localStorage（主机栏的 blob 域不带它，
   // 避免动 workspace schema；刷新恢复同效）。
   const [agentOpen, setAgentOpen] = useState(() => {
+    // 移动端 v1 不暴露 Agent：桌面留下的持久态不在这里复活
+    if (isMobilePlatform()) return false;
     try { return localStorage.getItem("ui.agentbar") === "1"; } catch { return false; }
   });
   // 编排者视图（Fleet 轮）：活动栏第三入口，跨会话派发任务。与主机栏/Agent 视图
   // 三向互斥（同一左栏），持久键 ui.fleetbar；对话键固定 "fleet"（与 Rust 侧
   // FLEET_KEY 对应），不随激活标签页切换。
   const [fleetOpen, setFleetOpen] = useState(() => {
+    if (isMobilePlatform()) return false;
     try { return localStorage.getItem("ui.fleetbar") === "1"; } catch { return false; }
   });
   // 监控大屏（大屏轮）：活动栏第四入口，多服务器资源监控（CPU/内存/网络 +
   // Ascend NPU）。同左栏互斥族（现四向），持久键 ui.monitorbar。呈现为盖住
   // 主区的整幅大屏（绝对定位覆盖层，终端不卸载），不再有侧栏宽度态。
   const [monitorOpen, setMonitorOpen] = useState(() => {
+    if (isMobilePlatform()) return false;
     try { return localStorage.getItem("ui.monitorbar") === "1"; } catch { return false; }
   });
   // 采样暂停（store 单例持真值，React 只镜像按钮态）：持久键与监控条的区分开，
@@ -1872,6 +1877,10 @@ export default function App() {
     settingsTokenPendingRef.current = pending;
   }, []);
   const closeSettings = useCallback(() => {
+    // 设置里发起的录键/停用确认不随面板关闭而消失：录键监听是全局 capture，
+    // 设置一关就再没有「正在录键」的提示，后续键盘输入会被静默吞掉。先清干净。
+    if (keyCaptureRef.current) setKeyCapture(null);
+    setDisableImpact(null);
     if (settingsTokenPendingRef.current && !settingsTokenGuardRef.current) {
       settingsTokenGuardRef.current = true;
       escKeepFocusRef.current = true; // Esc 只提示不关：焦点留在对话框
@@ -3396,7 +3405,9 @@ export default function App() {
         wsSaveKickRef.current(); // 拖拽/均分/分隔条都汇经此处（防抖在实现侧）
       }
     }
-    root ??= defaultLayout(keys);
+    // 手机窄屏自动平铺最多 2 列：3 列时每格正文不足 12 列，而 fitDimsOf 有 20 列
+    // 下限（tmux 也按 20 列重绘），实际内容会被格子右缘裁掉。桌面 3 列观感不变。
+    root ??= defaultLayout(keys, isMobilePlatform() ? 2 : 3);
     if (!root) return;
     const { tiles, dividers } = layoutRects(root);
     paneLayoutLastRef.current = { sid: active, root, tiles, dividers };
@@ -4119,6 +4130,9 @@ export default function App() {
   const updateCheckBusyRef = useRef(false);
   const updateCheckAtRef = useRef(0);
   const runUpdateCheck = useCallback((initial = false) => {
+    // 移动端随商店分发，装配层没有 updater（命令恒 unsupported）——不发起请求，
+    // 也不留「有新版本」的假徽标/假 toast（桌面行为不变）。
+    if (isMobilePlatform()) return;
     if (updateCheckBusyRef.current) return;
     updateCheckBusyRef.current = true;
     updateCheckAtRef.current = Date.now();
@@ -4977,22 +4991,10 @@ export default function App() {
     }
   }, [sid, toggleHostbar]);
   // Android 返回键：原生侧（MainActivity）调用 window.__tinysshBack()，返回 true 表示
-  // 前端已消费（关弹层/面板），false 交给系统退出应用。方案挨个关「栈顶」弹层，
-  // 与用户视觉层级一致；SPA 没有可回退的历史，不接管时返回键会直接退 App。
+  // 前端已消费（关弹层/面板），false 交给系统退出应用。SPA 没有可回退的历史，
+  // 不接管时返回键会直接退 App。具体消费顺序见 closeTopOverlayRef 之后的赋值——
+  // 与 Esc 共用同一条「栈顶」链，任何新弹层只要接进 Esc 链就自动获得返回键出口。
   const backHandlerRef = useRef<() => boolean>(() => false);
-  backHandlerRef.current = () => {
-    if (paletteOpen) { setPaletteOpen(false); return true; }
-    if (pasteConfirm) { setPasteConfirm(null); return true; }
-    if (pendingDrop) { setPendingDrop(null); return true; }
-    if (showSettings) { setShowSettings(false); return true; }
-    if (showAddHost) { setShowAddHost(false); return true; }
-    if (showQuickConnect) { setShowQuickConnect(false); return true; }
-    if (showImport) { setShowImport(false); return true; }
-    if (rightPanel) { setRightPanel(null); return true; }
-    // 主机列表是移动端「首页」：无会话时按返回直接退 App；带会话时收起回终端
-    if (sid && hostbarOpenRef.current) { toggleHostbar(false); return true; }
-    return false;
-  };
   useEffect(() => {
     const w = window as unknown as { __tinysshBack?: () => boolean };
     w.__tinysshBack = () => backHandlerRef.current();
@@ -5258,6 +5260,26 @@ export default function App() {
   }, [groupOf]);
   focusTermForRef.current = focusTermFor;
 
+  // 移动端辅助键条出口（Esc/Tab/Ctrl/方向键）：投给「该会话当前落焦的终端实例」。
+  // term.input() 会走该实例自己的 onData（死会话拦截、tmux 前缀武装、广播扇出、
+  // tmux 格子直写通道），与用户敲键盘同一条路，不另开旁路，也不在 App 层重算目标。
+  const sendMobileKey = useCallback((data: string) => {
+    const target = sidRef.current;
+    if (!target) return;
+    const remembered = paneLastFocusRef.current.get(target) ?? "main";
+    const pane = remembered === "main" ? undefined : paneTermsRef.current.get(remembered);
+    const entry = pane?.alive ? pane : termsRef.current.get(target);
+    if (!entry) return;
+    // 方向键编码跟随 DECCKM（application cursor keys）：vim/tmux copy-mode 等全屏
+    // 应用开着该模式时要发 SS3（ESC O A），CSI（ESC [ A）会被当普通序列吞掉。
+    let out = data;
+    if (data.length === 3 && data.startsWith("\x1b[") && "ABCD".includes(data[2]) &&
+        entry.term.modes.applicationCursorKeysMode) {
+      out = "\x1bO" + data[2];
+    }
+    entry.term.input(out);
+  }, []);
+
   // §7.4：关闭工具后恢复到其触发前的有效焦点——工具均从终端场景触发，恢复即
   // 聚焦活动终端/该标签上次落焦的格子（focusin 链会自动恢复 native Ctrl 上报）。
   const restoreTermFocus = () => {
@@ -5268,6 +5290,9 @@ export default function App() {
   const escKeepFocusRef = useRef(false);
   const closeTopOverlayRef = useRef<() => boolean>(() => false);
   closeTopOverlayRef.current = (): boolean => {
+    // 文件动作菜单 z-index 高于一切遮罩（z200），先关它、且只关它（保留文件面板）。
+    // 它此前不在这条链里：移动端返回会先关掉整个文件面板，菜单孤零零留在终端上。
+    if (sftpMenu) { setSftpMenu(null); return true; }
     if (quitSummary) { void cancelQuit(); return true; }
     if (delegateDlg) { closeDelegate(); return true; }
     const ap = authPromptQueue[0];
@@ -5284,11 +5309,18 @@ export default function App() {
     if (pendingDrop) { setPendingDrop(null); return true; }
     // 命令面板是带遮罩模态、可叠开在非模态浮层之上——Esc 先关视觉顶层（R3-B-8）
     if (paletteOpen) { setPaletteOpen(false); return true; }
+    // 「停用协作」影响确认是独立 confirm-mask（z90），层级高于设置：先关它，
+    // 否则 Esc/返回会把底下的设置关掉、把这张卡留在屏幕上。
+    if (disableImpact) { setDisableImpact(null); return true; }
     // 设置遮罩层级高于搜索/大屏：可视顶层优先，不能让 Esc 先关被压在下面的搜索
     if (showSettings) { closeSettings(); return true; }
     // 大屏覆盖层/广播输入/传输抽屉：非模态但同属浮层链——纯键盘用户要有 Esc 出口
     if (tmuxWallSid) { setTmuxWallSid(null); return true; }
     if (monitorOpen) { toggleMonitor(false); return true; }
+    // Agent/编排是全屏侧栏（手机上是整屏覆盖）：移动端命令面板仍能打开它们，
+    // 但链里没有分支——返回键会直接退 App。桌面顺带获得 Esc 出口。
+    if (agentOpen) { toggleAgent(false); return true; }
+    if (fleetOpen) { toggleFleet(false); return true; }
     if (broadcastOpen) { setBroadcastOpen(false); return true; }
     if (queueOpen) { setQueueOpen(false); return true; }
     if (detail || detailErr) { closeDetail(); return true; }
@@ -5297,6 +5329,9 @@ export default function App() {
     if (termMenu) { setTermMenu(null); return true; }
     if (recentMenu) { setRecentMenu(null); return true; }
     if (splitMenu) { setSplitMenu(false); return true; }
+    // tmux 新建会话的内嵌表单：先取消表单、保留 tmux 菜单（已输入的会话名不能
+    // 跟着整层一起丢；输入框聚焦时第一次返回还会被 IME 吃掉）
+    if (tmuxCreateOpen) { setTmuxCreateOpen(false); setTmuxCreateName(""); setTmuxCreateErr(null); return true; }
     if (tmuxMenu) { setTmuxMenu(false); return true; }
     if (searchOpen) { closeSearch(); return true; }
     if (toolsOpen) { setToolsOpen(false); return true; }
@@ -5306,6 +5341,25 @@ export default function App() {
     if (showQuickConnect) { closeQuickConnect(); return true; } // UX2 走查：快速连接对话框的键盘出口（FE7 同族漏网）
     if (showImport) { setShowImport(false); return true; }
     if (showAgentHelp) { setShowAgentHelp(false); return true; }
+    return false;
+  };
+  // 移动端返回键（Android 系统返回）：复用上面的「栈顶」链——远程触发的询问卡
+  // （主机指纹确认、OSC 52 剪贴板、粘贴审批、认证提示）都在这条链里，先前只抄了
+  // 弹层子集，指纹卡/textbox 卡打开时按返回会直接退 App。之后补移动端特有：
+  // 键位录入选键态（Esc 由录键器自己吞，系统返回到不了键盘）、内联改名的取消
+  // （桌面由输入框本地处理）、整屏任务面板（rightPanel，窄屏是全屏覆盖层，Esc
+  // 链里没有它）。主机列表是移动端首页：无会话时返回直接退 App；带会话时收起
+  // 回终端。
+  backHandlerRef.current = () => {
+    if (keyCaptureRef.current) { setKeyCapture(null); return true; }
+    // 改名输入框是内联编辑态：桌面 Esc 由输入框本地吞掉（不进浮层链，也不触发
+    // 终端回焦——回焦引起的 blur 会把本应丢弃的编辑提交）；返回键没有输入框
+    // 本地监听，只能在这里取消。取消 = 丢弃，不提交。
+    if (renaming) { setRenaming(null); return true; }
+    if (groupRenamingGidRef.current) { cancelGroupRename(); return true; }
+    if (closeTopOverlayRef.current()) return true;
+    if (rightPanel) { setRightPanel(null); return true; }
+    if (sid && hostbarOpenRef.current) { toggleHostbar(false); return true; }
     return false;
   };
 
@@ -7083,7 +7137,7 @@ export default function App() {
   }, [navigateTo, openSymlink]);
   // #29：右键任意条目开同一动作菜单（含目录——重命名/删除对目录同样可用）。
   // 双击语义不变（目录进入/链接探明/文件弹菜单），右键只是多一条入口。
-  const sftpContextMenu = useCallback((e: DirEntryS, ev: React.MouseEvent) => {
+  const sftpContextMenu = useCallback((e: DirEntryS, ev: React.MouseEvent | React.PointerEvent) => {
     ev.preventDefault();
     ev.stopPropagation();
     setSftpMenu({ name: e.name, x: ev.clientX, y: ev.clientY, isDir: e.is_dir });
@@ -8808,24 +8862,28 @@ export default function App() {
       title: hostbarOpen ? t("隐藏主机栏") : t("显示主机栏"), hint: formatBinding(keymap.hostbar, isMacPlatform()),
       run: () => toggleHostbar(!hostbarOpen),
     });
-    items.push({
-      id: "toggle-agent", group: t("应用"),
-      title: agentOpen ? t("关闭 Agent 对话") : t("打开 Agent 对话（演练）"),
-      hint: t("活动栏"), keywords: "agent ai 助手 对话 演练 内置",
-      run: () => toggleAgent(!agentOpen),
-    });
-    items.push({
-      id: "toggle-fleet", group: t("应用"),
-      title: fleetOpen ? t("关闭跨主机编排") : t("打开跨主机编排（Fleet）"),
-      hint: t("活动栏"), keywords: "fleet 编排 跨主机 批量 多机 派发",
-      run: () => toggleFleet(!fleetOpen),
-    });
-    items.push({
-      id: "toggle-monitor", group: t("应用"),
-      title: monitorOpen ? t("关闭资源监控大屏") : t("打开资源监控大屏（多服务器 + Ascend NPU）"),
-      hint: t("活动栏"), keywords: "监控 资源 cpu 内存 网络 npu ascend 仪表 监视 面板",
-      run: () => toggleMonitor(!monitorOpen),
-    });
+    // 移动端 v1 只保 SSH + tmux：Agent / 编排 / 监控三项不从命令面板露出
+    // （活动栏按钮已由 CSS 隐藏；命令面板是另一条入口，不能只靠样式）。
+    if (!isMobilePlatform()) {
+      items.push({
+        id: "toggle-agent", group: t("应用"),
+        title: agentOpen ? t("关闭 Agent 对话") : t("打开 Agent 对话（演练）"),
+        hint: t("活动栏"), keywords: "agent ai 助手 对话 演练 内置",
+        run: () => toggleAgent(!agentOpen),
+      });
+      items.push({
+        id: "toggle-fleet", group: t("应用"),
+        title: fleetOpen ? t("关闭跨主机编排") : t("打开跨主机编排（Fleet）"),
+        hint: t("活动栏"), keywords: "fleet 编排 跨主机 批量 多机 派发",
+        run: () => toggleFleet(!fleetOpen),
+      });
+      items.push({
+        id: "toggle-monitor", group: t("应用"),
+        title: monitorOpen ? t("关闭资源监控大屏") : t("打开资源监控大屏（多服务器 + Ascend NPU）"),
+        hint: t("活动栏"), keywords: "监控 资源 cpu 内存 网络 npu ascend 仪表 监视 面板",
+        run: () => toggleMonitor(!monitorOpen),
+      });
+    }
     items.push({
       id: "toggle-focus", group: t("应用"),
       title: focusMode ? t("退出专注模式") : t("进入专注模式（界面全让位给终端）"),
@@ -9216,6 +9274,9 @@ export default function App() {
                     // 双击重命名、中键关闭
                     if (ev.button !== 0) return;
                     if (ev.target instanceof Element && ev.target.closest("button, input")) return;
+                    // 长按出菜单与拖拽共用一个 pointerdown：不动 480ms 即弹会话菜单，
+                    // 位移超阈值（长按判定内）或抬起即取消，拖拽逻辑不受影响
+                    tabLongPress.down(ev, () => setTabMenu({ x: ev.clientX, y: ev.clientY, sid: rep }));
                     dragClickSupUntilRef.current = 0;
                     tabDragRef.current = {
                       key: e.key, sid: rep, startX: ev.clientX, startY: ev.clientY,
@@ -9224,6 +9285,7 @@ export default function App() {
                     ev.currentTarget.setPointerCapture(ev.pointerId);
                   }}
                   onPointerMove={(e) => {
+                    tabLongPress.move(e);
                     const drag = tabDragRef.current;
                     if (!drag || drag.key !== entryKey || drag.pointerId !== e.pointerId) return;
                     if (!(e.buttons & 1)) { cancelTabDrag(); return; }
@@ -9290,6 +9352,7 @@ export default function App() {
                     }
                   }}
                   onPointerUp={(ev) => {
+                    tabLongPress.up(ev);
                     const drag = tabDragRef.current;
                     if (!drag || drag.key !== entryKey || drag.pointerId !== ev.pointerId) return;
                     const wasActive = drag.active;
@@ -9300,6 +9363,7 @@ export default function App() {
                     finishTabDrag(snap, ev.clientX, ev.clientY);
                   }}
                   onPointerCancel={(ev) => {
+                    tabLongPress.up(ev);
                     const d = tabDragRef.current;
                     if (d?.key === entryKey && d.pointerId === ev.pointerId) cancelTabDrag();
                   }}
@@ -9324,6 +9388,7 @@ export default function App() {
                     }
                   }}
                   onClick={() => {
+                    if (tabLongPress.consumeClick()) return; // 长按已弹菜单，抬起不算点选
                     if (performance.now() < dragClickSupUntilRef.current) { dragClickSupUntilRef.current = 0; return; }
                     if (group && active) return; // 已激活组标签：保留当前焦点格
                     void attachSession(rep).catch((er) => pushToast("err", errMsg(er)));
@@ -10693,6 +10758,12 @@ export default function App() {
         </footer>
         </main>
       </div>{/* /workspace */}
+
+      {/* 移动端辅助键条（仅手机）：软键盘没有 Esc/Tab/方向键、也没有独立 Ctrl，
+          tmux 前缀与 TUI 导航靠这条常驻键条。放在 workspace 之后 = 紧贴软键盘
+          （原生侧已把 IME inset 转成内容区底部内边距），键盘收起时落在底部导航
+          栏下方，不遮挡任何入口。无会话时不渲染——欢迎页/主机列表保持整屏。 */}
+      {isMobilePlatform() && sid && <MobileKeyBar onKey={sendMobileKey} />}
 
       {/* Toast（§六/P3）：右下角轻通知，普通 2.6s/带动作 8s 自动消失，不挡交互
           （栈 pointer-events:none，动作钮自身收回事件）。

@@ -8,6 +8,7 @@ import type { CollisionDecision, DirEntryS, SessionBrief as Brief } from "../ada
 import { fmtBytes, dateLocale, isImeComposing, friendlyError, type TransferCard } from "../app-data";
 import { t } from "../i18n";
 import { clampIntoView } from "./ctx-menus";
+import { useLongPress } from "../touch";
 import {
   IconChevronLeft, IconChevronRight, IconChevronUp, IconCopy, IconDownload, IconFile,
   IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconTrash, IconUpload,
@@ -73,7 +74,7 @@ interface FilesPanelProps {
   sftpDownloadSelected: () => Promise<void>;
   downloadRemote: (rp: string, opts?: { saveAs?: boolean }) => Promise<void>;
   /** #29：右键任意条目（含目录）开动作菜单——重命名/删除对目录同样可用 */
-  sftpContextMenu: (e: DirEntryS, ev: React.MouseEvent) => void;
+  sftpContextMenu: (e: DirEntryS, ev: React.MouseEvent | React.PointerEvent) => void;
 }
 
 export function FilesPanel({
@@ -87,6 +88,8 @@ export function FilesPanel({
   sftpListKey, sftpRowClick, sftpActivate, sftpDownloadSelected, downloadRemote,
   sftpContextMenu,
 }: FilesPanelProps) {
+  // 触屏长按文件行 → 文件动作菜单（桌面右键的移动端等价物；下载钮等子控件除外）
+  const rowLongPress = useLongPress();
   return (
           <div className="section" ref={sftpWrapRef}>
             <h4>{t("远程文件")}</h4>
@@ -232,8 +235,15 @@ export function FilesPanel({
                       <div
                         key={e.name} data-idx={i} data-name={e.name}
                         className={"sftp-row" + (e.is_dir ? " dir" : "") + (sftpSel.has(e.name) ? " sel" : "") + (i === sftpCursor ? " cursor" : "")}
-                        onClick={(ev) => sftpRowClick(e, i, ev)}
+                        onClick={(ev) => { if (rowLongPress.consumeClick()) return; sftpRowClick(e, i, ev); }}
                         onDoubleClick={(ev) => sftpActivate(e, { x: ev.clientX, y: ev.clientY })}
+                        onPointerDown={(ev) => {
+                          if (ev.target instanceof Element && ev.target.closest("button, input")) return;
+                          rowLongPress.down(ev, () => sftpContextMenu(e, ev));
+                        }}
+                        onPointerMove={(ev) => rowLongPress.move(ev)}
+                        onPointerUp={(ev) => rowLongPress.up(ev)}
+                        onPointerCancel={(ev) => rowLongPress.up(ev)}
                         onContextMenu={(ev) => sftpContextMenu(e, ev)}
                         title={e.is_dir ? t("双击进入") : e.kind === "symlink" ? t("双击按目标处理") : t("双击查看可用动作")}
                       >

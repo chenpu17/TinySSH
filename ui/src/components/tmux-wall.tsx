@@ -22,6 +22,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import { t } from "../i18n";
 import { inTauri } from "../adapter/bridge";
+import { isMobilePlatform } from "../platform";
 import type { TmuxSession, TmuxWallCell, TmuxWallFit, TmuxWallFitResult, TmuxWallRestoreItem, TmuxWallTarget } from "../adapter/wire";
 import { IconMaximize, IconMinimize, IconX } from "../icons";
 
@@ -555,7 +556,9 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
     return () => document.removeEventListener("keydown", onKey, true);
   }, []);
 
-  const autoCols = sessions.length <= 4 ? 2 : sessions.length <= 9 ? 3 : 4;
+  // 手机竖屏封顶 2 列：3/4 列时每格宽不到 130dp，快照缩到肉眼不可读（缩放下限
+  // 0.25 也救不回来），还会逼用户横向找格子。桌面自动列数保持原观感。
+  const autoCols = Math.min(isMobilePlatform() ? 2 : 4, sessions.length <= 4 ? 2 : sessions.length <= 9 ? 3 : 4);
   const cols = colsOverride ?? autoCols;
   // solo 键必须仍在清单里——会话被关掉/改名换 id 后不退回网格会让全格 display:none（白屏）
   const soloKey = solo && sessions.some((s) => keyOf(s) === solo) ? solo : null;
@@ -743,7 +746,7 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
         <span className="tw-flex" />
         {!soloKey && (
           <span className="tw-sizes" role="group" aria-label={t("网格规格")}>
-            {[2, 3, 4].map((n) => (
+            {(isMobilePlatform() ? [2] : [2, 3, 4]).map((n) => (
               <button
                 key={n}
                 className={"ghost tw-gsz" + (cols === n ? " ts-open" : "")}

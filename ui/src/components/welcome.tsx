@@ -6,6 +6,7 @@ import { IconPlus, IconTerminal, IconUpload } from "../icons";
 import { t } from "../i18n";
 import { isMacPlatform } from "../actions";
 import { dateLocale } from "../app-data";
+import { useLongPress } from "../touch";
 
 interface WelcomeProps {
   sid: string | null;
@@ -47,6 +48,8 @@ export function Welcome({
   // 被守卫静默吞掉、本地终端双击还会真的开出两个标签。Promise 落定再放行。
   const [busy, setBusy] = useState<"local" | "last" | "scene" | "recent" | null>(null);
   const busyRef = useRef(false);
+  // 触屏长按最近连接 → 更多操作菜单（桌面右键的移动端等价物）
+  const recentLongPress = useLongPress();
   const run = (key: "local" | "last" | "scene" | "recent", fn: () => unknown) => {
     if (busyRef.current) return;
     busyRef.current = true;
@@ -153,7 +156,11 @@ export function Welcome({
             return (
               <button key={r.host_id} className="wr-row" disabled={busy !== null}
                 title={t("连接 {0}（{1}）；右键更多操作", r.host_name, `${rh.username}@${rh.address}`)}
-                onClick={() => run("recent", () => createSession(rh))}
+                onClick={() => { if (recentLongPress.consumeClick()) return; run("recent", () => createSession(rh)); }}
+                onPointerDown={(e) => recentLongPress.down(e, () => setRecentMenu({ x: e.clientX, y: e.clientY, hostId: r.host_id }))}
+                onPointerMove={(e) => recentLongPress.move(e)}
+                onPointerUp={(e) => recentLongPress.up(e)}
+                onPointerCancel={(e) => recentLongPress.up(e)}
                 onContextMenu={(e) => { e.preventDefault(); setRecentMenu({ x: e.clientX, y: e.clientY, hostId: r.host_id }); }}>
                 <span className="wr-name">{r.host_name}</span>
                 <span className="wr-addr mono">{rh.username}@{rh.address}</span>

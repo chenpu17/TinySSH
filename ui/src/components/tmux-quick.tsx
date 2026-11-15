@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { SessionInfo } from "../adapter/wire";
 import { t } from "../i18n";
 import { IconChevronDown, IconPlus, IconTerminal } from "../icons";
+import { clampIntoView } from "./ctx-menus";
 
 export interface TmuxQuickProps {
   current: SessionInfo;
@@ -62,7 +63,7 @@ export function TmuxQuick({
         }}
       ><IconTerminal size={13} /><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></button>
       {tmuxMenu && (
-        <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu">
+        <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu" ref={clampIntoView}>
           {/* 会话大屏（监控墙）：全部会话快照网格（单击放大可直接键入）。挂在
               清单上方——它是「看全部」的一级动作，与逐个接入的清单项并存 */}
           {(current.tmux?.sessions ?? []).length > 0 && (

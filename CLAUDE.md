@@ -20,6 +20,9 @@ npm run build                         # tsc + vite build
 cargo run -p tinyssh-app                      # dev（需 ui dev server）
 cargo test --workspace -j 4                   # 并行过高会页面文件耗尽 os error 1455
 cargo build -p tinyssh-app --release --features custom-protocol   # 便携 exe（必须带 feature，否则 localhost 拒连）
+# tauri.conf.json 不要再写 build.windows.staticVCRuntime：cargo-tauri 2.10.1 的 schema
+# 直接报 Additional properties 拒掉（android 构建同一条校验）；crt-static 由 .cargo/config.toml
+# 的 rustflags 提供，是全部 cargo 调用的真实链路源
 
 # e2e（docker sshd）
 TINYSSH_E2E_SSHD=1 cargo test --workspace
@@ -32,6 +35,8 @@ bash scripts/android.sh devices                                          # SDK �
 UI 测试环境：`TINYSSH_UI_CHROME` 指向 Edge/Chrome（如 `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`）、`TINYSSH_UI_BASE=http://127.0.0.1:5183`，在 `ui/` 下跑 `node test/run.cjs`。**跑全套前先杀 tinyssh-app（逐帧采样怕负载）；cargo 与 Playwright 永不并发。** `ui/` 唯一依赖是 playwright-core。
 
 真机验证：`TINYSSH_WEBVIEW_ARGS="--remote-debugging-port=<port>"` 起应用，CDP 接入；DEV 构建页面有 `__t_terms` 助手（release 走 `__TAURI_INTERNALS__.invoke`）。
+
+Android 模拟器验证：装 `adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk` 后起 `com.tinyssh.app/.MainActivity`；WebView 调试端口走 `adb shell cat /proc/net/unix | grep webview_devtools_remote_` + `adb forward tcp:9333 localabstract:…`，Playwright `connectOverCDP` 在 Android WebView 上不支持（Browser context management is not supported），用原生 WebSocket 发 CDP `Runtime.evaluate`。触摸长按用 `input motionevent DOWN/UP`（`input swipe` 同点零距离会提前松手，长按根本不触发）。**用完必须 `adb emu kill`**——模拟器空转吃满 CPU（历史 bug）。
 
 ## 硬性约定
 

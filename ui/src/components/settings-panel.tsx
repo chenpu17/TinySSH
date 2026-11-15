@@ -28,6 +28,7 @@ import type { CollabStatus, Host, IdentityMeta, IdentityReq, LocalShell, McpStat
 import { IconMinus, IconPlus, IconTrash, IconX } from "../icons";
 import { SelfMeterDetail } from "../self-meter";
 import { t, LOCALE_OPTIONS, type Locale } from "../i18n";
+import { isMobilePlatform } from "../platform";
 import { RecordsPane } from "./records-pane";
 import { SecretInput } from "./secret-input";
 
@@ -331,6 +332,14 @@ export function SettingsPanel({
   transferAutonomy, onChangeTransferAutonomy,
   loadTriggers, saveTriggers,
 }: SettingsPanelProps) {
+  // 移动端 v1 只保 SSH + tmux：Agent 接入与记录审计（Agent 动作时间线/导出）两个
+  // 分类不出现；导航与 ←/→ 键盘循环都必须用同一份过滤表，否则会跳到隐藏分类。
+  // 桌面留下的 settingsCat=agent/records 会话内状态在手机上回退到「外观」。
+  const mobilePlatform = isMobilePlatform();
+  const cats = mobilePlatform ? SETTINGS_CATS.filter(([id]) => id !== "agent" && id !== "records") : SETTINGS_CATS;
+  useEffect(() => {
+    if (mobilePlatform && (settingsCat === "agent" || settingsCat === "records")) switchSettingsCat("appearance");
+  }, [mobilePlatform, settingsCat, switchSettingsCat]);
   // rev-r47：签发/吊销表单的**面板本地**临时态——关面板即弃（与宿主「关闭即清草稿」
   // 同语义；token 只在此刻的弹层展示一次，不进任何全局状态）。
   // 例外（任务 2）：id/名称/有效期都是非机密输入，跨关闭用 localStorage 草稿保留；
@@ -460,11 +469,11 @@ export function SettingsPanel({
     const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
     if (!forward && !backward && e.key !== "Home" && e.key !== "End") return;
     e.preventDefault();
-    const idx = SETTINGS_CATS.findIndex(([id]) => id === settingsCat);
+    const idx = cats.findIndex(([id]) => id === settingsCat);
     const next = e.key === "Home" ? 0
-      : e.key === "End" ? SETTINGS_CATS.length - 1
-      : (idx + (forward ? 1 : -1) + SETTINGS_CATS.length) % SETTINGS_CATS.length;
-    const nextId = SETTINGS_CATS[next][0];
+      : e.key === "End" ? cats.length - 1
+      : (idx + (forward ? 1 : -1) + cats.length) % cats.length;
+    const nextId = cats[next][0];
     switchSettingsCat(nextId);
     requestAnimationFrame(() => {
       document.querySelector<HTMLElement>(`[data-testid="settings-cat-${nextId}"]`)?.focus();
@@ -486,7 +495,7 @@ export function SettingsPanel({
                 {/* §231：单个对话框，左分类 + 右内容；外观/终端偏好即时预览，凭据显式提交 */}
                 <div className="settings-body">
                   <nav className="settings-nav" role="tablist" aria-label={t("设置分类")} onKeyDown={onNavKey}>
-                    {SETTINGS_CATS.map(([id, label, desc]) => {
+                    {cats.map(([id, label, desc]) => {
                       const Ic = settingsCatIcon[id];
                       return (
                         <button key={id} role="tab" data-testid={`settings-cat-${id}`}

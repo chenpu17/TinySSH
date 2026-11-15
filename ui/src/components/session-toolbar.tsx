@@ -8,9 +8,11 @@ import type { KeyActionId } from "../keymap";
 import type { SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
 import { t } from "../i18n";
+import { isMobilePlatform } from "../platform";
 import type { SplitPanes } from "../app-data";
 import { IconChevronDown, IconSearch, IconSplit } from "../icons";
 import { TmuxQuick } from "./tmux-quick";
+import { clampIntoView } from "./ctx-menus";
 
 export interface SessionToolbarProps {
   current: SessionInfo;
@@ -98,6 +100,10 @@ export function SessionToolbar({
 }: SessionToolbarProps) {
   // 工具菜单开合的收口（原内联 setToolsOpen(false) 同款）
   const closeTools = () => setToolsOpen(false);
+  // 「远程文件」是窄屏补位：<760px 右缘竖栏（rb-rail）整条隐藏，文件面板必须另有
+  // 入口；宽屏桌面 rb-files 常驻，菜单里再放一项就回到用户反馈过的「入口重复」。
+  // 按宽度判（而不是平台）：窄窗口桌面同样要靠它，且与 rail 的媒体查询同断点。
+  const showFilesEntry = isMobilePlatform() || window.matchMedia("(max-width: 760px)").matches;
   return (
     <div className="session-toolbar">
       <div className="st-ident">
@@ -167,10 +173,15 @@ export function SessionToolbar({
         <button className="ghost" aria-haspopup="menu" aria-expanded={toolsOpen}
           onClick={() => setToolsOpen(!toolsOpen)}>{t("工具")}<IconChevronDown size={12} /></button>
         {toolsOpen && (
-          <div className="tools-menu" role="menu">
-            {/* 「连接工具」菜单只放连接详情、端口转发、广播、日志开关、命令块、
-                活动记录、关闭会话；协作/文件走右缘 rb-rail（工具栏按钮已下线） */}
+          <div className="tools-menu" role="menu" ref={clampIntoView}>
+            {/* 「连接工具」菜单只放连接详情、远程文件、端口转发、广播、日志开关、
+                命令块、活动记录、关闭会话；协作走右缘 rb-rail（桌面）——文件只在
+                窄屏出现（<760px 右缘竖栏整条隐藏，否则手机上没有入口；宽屏桌面
+                rb-files 常驻，再放一项就是用户反馈过的重复入口） */}
             <button role="menuitem" data-testid="tools-conn-detail" onClick={() => { closeTools(); void openSessionDetail(current); }}>{t("连接详情…")}</button>
+            {showFilesEntry && (
+              <button role="menuitem" data-testid="tools-files" onClick={() => { setRightPanel("files"); closeTools(); }}>{t("远程文件")}</button>
+            )}
             {canForward && <button role="menuitem" onClick={() => { setRightPanel("forwards"); closeTools(); }}>{t("端口转发")}</button>}
             {/* P2-a 广播输入：浮层锚在状态栏右下（勾选目标、显示各会话状态） */}
             <button role="menuitem" data-testid="tools-broadcast" onClick={() => { closeTools(); openBroadcast(); }}>{t("广播输入…")}{broadcastArmed > 0 ? `（${broadcastArmed}）` : ""}</button>
