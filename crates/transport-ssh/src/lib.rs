@@ -52,6 +52,10 @@ pub enum SshError {
 struct ClientHandler {
     host_key_check: Option<HostKeyCheck>,
     seen_fingerprint: Arc<Mutex<Option<String>>>,
+    /// 指纹门正挂起等人类确认（TOFU 首连/变更告警/跳板确认）：CONNECT_PHASE_TIMEOUT
+    /// 管的是「TCP/banner 无响应」，不能把人类读指纹的时间算进去（KI-064）。
+    /// 连接侧据此滚动续窗；门自身仍受审批 DEFAULT_APPROVAL_TIMEOUT 限时。
+    gate_pending: Arc<AtomicBool>,
     /// 远程转发回程路由（T42）：服务器监听端口 → 本地目标。与 SshChannel.forwards 同源注册。
     router: Arc<StdMutex<HashMap<u32, (String, u16)>>>,
 }
@@ -64,6 +68,20 @@ impl ClientHandler {
                 .to_string(),
             russh::keys::PublicKeyOrCertificate::Certificate(_) => "certificate".to_string(),
         }
+    }
+
+    /// 调人类指纹门，并在等待期间置 `gate_pending`：连接侧据此把「等人读指纹」
+    /// 从 CONNECT_PHASE_TIMEOUT 的 TCP/banner 窗里摘出来（KI-064）。无论门的
+    /// 结果（同意/拒绝/错误）都复位，避免一次门失败拖长后续连接的超时。
+    async fn ask_human(
+        &self,
+        check: &HostKeyCheck,
+        fp: &str,
+    ) -> std::result::Result<bool, SshError> {
+        self.gate_pending.store(true, Ordering::SeqCst);
+        let r = check(fp).await;
+        self.gate_pending.store(false, Ordering::SeqCst);
+        Ok(r?)
     }
 }
 
@@ -80,7 +98,7 @@ impl client::Handler for ClientHandler {
             None => {
                 // 首连：交回调确认（TOFU 首连确认 / 变更告警在 core 层按 vault 记录分流）
                 if let Some(check) = &self.host_key_check {
-                    let ok = check(&fp).await?;
+                    let ok = self.ask_human(check, &fp).await?;
                     if ok {
                         *seen = Some(fp);
                     }
@@ -95,7 +113,7 @@ impl client::Handler for ClientHandler {
                 // 进程内已见过不同指纹：无回调一律拒绝（测试）；有回调走变更告警流程
                 match &self.host_key_check {
                     Some(check) => {
-                        let ok = check(&fp).await?;
+                        let ok = self.ask_human(check, &fp).await?;
                         if ok {
                             *seen = Some(fp);
                         }
@@ -257,6 +275,35 @@ fn kind_of(ft: russh_sftp::protocol::FileType) -> EntryKind {
 /// （2FA 交互等待人的应答，不能限时）。
 const CONNECT_PHASE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// 握手窗到点时若指纹门正挂着等人类（`gate_pending`），滚动续窗（KI-064：
+/// 10s 窗本意只管 TCP/banner，此前却把用户读指纹的时间一起算——首连/指纹变更
+/// 确认超过 10s 就报「host unreachable」，误导且不公平）。门自身受审批
+/// DEFAULT_APPROVAL_TIMEOUT（120s）限时，续窗因此有界；无门挂起时行为与原
+/// 10s 窗完全一致。
+async fn connect_bounded<T, E>(
+    fut: impl std::future::Future<Output = std::result::Result<T, E>>,
+    gate_pending: &Arc<AtomicBool>,
+) -> std::result::Result<std::result::Result<T, E>, ()> {
+    let mut fut = Box::pin(fut);
+    let mut deadline = tokio::time::Instant::now() + CONNECT_PHASE_TIMEOUT;
+    loop {
+        tokio::select! {
+            // 边界确定性：同一轮里连接 future 与截止计时同时就绪时，必须让已完成的
+            // 连接先赢（旧 timeout 实现即如此）。不用 biased 时 select! 随机选支，
+            // 恰在 10s 边界的成功握手可能被误判超时并连 Handle 一起丢弃。
+            biased;
+            r = &mut fut => return Ok(r),
+            _ = tokio::time::sleep_until(deadline) => {
+                if gate_pending.load(Ordering::SeqCst) {
+                    deadline = tokio::time::Instant::now() + CONNECT_PHASE_TIMEOUT;
+                } else {
+                    return Err(());
+                }
+            }
+        }
+    }
+}
+
 /// SFTP 单步网络等待的有界窗。服务器僵死（TCP 活着但对端不再应答）时 SFTP
 /// 操作曾可无限悬挂：resolve/stat 的 `sftp_channel` guard 跨网络 await 持锁，
 /// close/重连的 handle 锁随后被 indefinite 阻塞，传输抽屉的轮询任务也堆积。
@@ -373,16 +420,19 @@ impl SshChannel {
             let handler = ClientHandler {
                 host_key_check: hop.host_key_check.clone(),
                 seen_fingerprint: Arc::new(Mutex::new(None)),
+                gate_pending: Arc::new(AtomicBool::new(false)),
                 router: Arc::new(StdMutex::new(HashMap::new())),
             };
             let (next_addr, next_port) = match self.target.hops.get(i + 1) {
                 Some(n) => (n.address.as_str(), n.port),
                 None => (self.target.address.as_str(), self.target.port),
             };
+            // handler 被 connect 消费，指纹门标志先克隆出来供超时判定共用。
+            let hop_gate = handler.gate_pending.clone();
             let mut handle = match prev_stream.take() {
-                None => tokio::time::timeout(
-                    CONNECT_PHASE_TIMEOUT,
+                None => connect_bounded(
                     russh::client::connect(ssh_config(), (hop.address.as_str(), hop.port), handler),
+                    &hop_gate,
                 )
                 .await
                 .map_err(|_| {
@@ -395,9 +445,9 @@ impl SshChannel {
                     SshError::Api(e) => e,
                     other => Error::ConnectFailed(format!("{other}")),
                 })?,
-                Some(stream) => tokio::time::timeout(
-                    CONNECT_PHASE_TIMEOUT,
+                Some(stream) => connect_bounded(
                     russh::client::connect_stream(ssh_config(), stream, handler),
+                    &hop_gate,
                 )
                 .await
                 .map_err(|_| {
@@ -440,17 +490,19 @@ impl SshChannel {
         let handler = ClientHandler {
             host_key_check: self.target.host_key_check.clone(),
             seen_fingerprint: self.seen_fingerprint.clone(),
+            gate_pending: Arc::new(AtomicBool::new(false)),
             router: self.router.clone(),
         };
+        let target_gate = handler.gate_pending.clone();
         let mut handle = match prev_stream.take() {
             None => {
-                tokio::time::timeout(
-                    CONNECT_PHASE_TIMEOUT,
+                connect_bounded(
                     russh::client::connect(
                         ssh_config(),
                         (self.target.address.as_str(), self.target.port),
                         handler,
                     ),
+                    &target_gate,
                 )
                 .await
                 .map_err(|_| {
@@ -462,9 +514,9 @@ impl SshChannel {
                     other => Error::ConnectFailed(format!("{other}")),
                 })?
             }
-            Some(stream) => tokio::time::timeout(
-                CONNECT_PHASE_TIMEOUT,
+            Some(stream) => connect_bounded(
                 russh::client::connect_stream(ssh_config(), stream, handler),
+                &target_gate,
             )
             .await
             .map_err(|_| {
