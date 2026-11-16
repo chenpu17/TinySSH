@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt" }
@@ -72,7 +72,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
@@ -425,7 +425,7 @@ jobs:
     # release 冷编（opt-level 3 + R8）比 debug 慢；首跑按 60-90min 估，留足余量。
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
 
       # 只编 arm64：真机全是 arm64；x86_64 只用于本地模拟器，不进 GitHub Release。
