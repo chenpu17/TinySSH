@@ -623,8 +623,8 @@ const EN: Record<string, string> = {
   "重置鼠标上报": "Reset mouse reporting",
   "重绘终端画面": "Repaint terminal",
   "重绘画面": "Repaint view",
-  "长时间使用后字形错乱时强制重画：清 WebGL 字形图集并刷新全屏":
-    "Force a full repaint when glyphs look garbled after long use: clears the WebGL glyph atlas and refreshes the viewport",
+  "长时间使用后字形错乱时强制重画：刷新全部终端画面（不清共享字形图集）":
+    "Force a full repaint when glyphs look garbled after long use: refreshes all terminals without clearing the shared glyph atlas",
   "清掉远端 TUI 遗留的鼠标上报：滚轮恢复滚动，提示符不再出现 35;...M 乱码":
     "Clear mouse reporting left behind by a remote TUI: the wheel scrolls again and prompts no longer show 35;...M garbage",
   "最近连接操作：{0}": "Recent connection actions: {0}",
@@ -1518,6 +1518,8 @@ const EN: Record<string, string> = {
   "展开主机栏（{0}）": "Expand host bar ({0})",
   "主机栏（{0}）": "Host bar ({0})",
   "——这是你主动拒绝的结果；再次连接会重新出示指纹": " — you declined it yourself; the next connection will show the fingerprint again",
+  "——等待指纹确认超时；再次连接会重新出示指纹": " — the fingerprint confirmation timed out; the next connection will show the fingerprint again",
+  "连接 {0} 失败": "Failed to connect to {0}",
   "文件面板": "Files panel",
   "协作面板": "Collab panel",
   "端口转发面板": "Port forwarding panel",

@@ -21,7 +21,7 @@ import type { OutputFeed } from "./terminal/checkpoint";
 import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
 import { installMouseModeGuard, resetMouseReporting } from "./terminal/mouse-mode-guard";
-import { repaintTerm } from "./terminal/repaint";
+import { repaintAll } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import { installWheelBatch, displayIntervalMs } from "./terminal/wheel-batch";
 import { loadUiFontScale, storeUiFontScale, type UiFontScale } from "./ui-scale";
@@ -150,6 +150,12 @@ function sameShape<T>(prev: T[], next: T[]): T[] {
 function sameJson<T>(prev: T, next: T): T {
   return prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
 }
+
+// 指纹门等待超时同样以 host_key_rejected 结算（核心侧消息「确认超时」），但那不是
+// 用户的拒绝决定——横幅不能扣「是你主动拒绝」的帽子。文案按消息区分（本仓后端
+// 文案即中文契约，错误 kind 不细分超时/拒绝，避免为一句文案加 wire 变体）。
+const hostKeyGateTimedOut = (message: string | undefined): boolean =>
+  !!message && message.includes("确认超时");
 
 // 审批高危命令形态（rm -rf/格式化/关机类……后端内置 deny 只拦最狠子集）：
 // 模块级编译一次——原先在组件体内，每次渲染重建 RegExp
@@ -2448,19 +2454,21 @@ export default function App() {
   // resize 探针读 isFullscreen 判定——Tauri 的全屏不触发 DOM fullscreenchange）。
   // 合帧 120ms，避免 focus 与 visibilitychange 连续触发重复烘焙；右键「重绘终端
   // 画面」是随时可用的手动出口。
+  // 注意（GitHub #39）：必须整组交给 repaintAll，且它**不调 clearTextureAtlas**——
+  // 0.19.0 的图集按配置共享，任一终端清一次都会打坏兄弟终端的模型（上游 #6014，
+  // 修复未进 stable），正是「字形互相顶替、一重排就自愈」的来源。
   useEffect(() => {
     if (typeof window === "undefined") return;
     let timer = 0;
-    const repaintAll = () => {
-      for (const [, e] of termsRef.current) repaintTerm(e.term, e.webgl);
-      for (const e of paneTermsRef.current.values()) repaintTerm(e.term, e.webgl);
+    const repaintAllTerms = () => {
+      repaintAll([...termsRef.current.values(), ...paneTermsRef.current.values()]);
     };
-    repaintAllRef.current = repaintAll;
+    repaintAllRef.current = repaintAllTerms;
     const repair = () => {
       if (document.visibilityState === "hidden" || timer) return;
       timer = window.setTimeout(() => {
         timer = 0;
-        repaintAll();
+        repaintAllTerms();
       }, 120);
     };
     const onVisible = () => {
@@ -5527,11 +5535,10 @@ export default function App() {
     const target = touchBarTerm(touchBar);
     const bar = touchBar; // 已排除 link 分支：这里是选区态，paneKey 随浮条带走
     // 第二页「更多」：终端维护四件套（桌面只在右键菜单里，触屏没有右键）。
-    // WebGL 句柄按 sid/paneKey 现取——实例可能已随会话销毁，取不到就只清屏/跳过重绘。
+    // 第二页「更多」：终端维护四件套（桌面只在右键菜单里，触屏没有右键）。
+    // 重绘走全局入口：repaintAll 只做整组 refresh，不碰共享图集（上游 #6014 /
+    // GitHub #39——0.19.0 上 clearTextureAtlas 会波及兄弟终端）。
     if (touchMore) {
-      const webgl = bar.paneKey
-        ? paneTermsRef.current.get(bar.paneKey)?.webgl ?? null
-        : termsRef.current.get(bar.sid)?.webgl ?? null;
       const items: TouchBarItem[] = [
         { label: t("清屏"), testid: "touch-clear", onClick: () => {
           setTouchBar(null);
@@ -5543,7 +5550,7 @@ export default function App() {
         } },
         { label: t("重绘画面"), testid: "touch-redraw", onClick: () => {
           setTouchBar(null);
-          if (target) repaintTerm(target.term, webgl);
+          repaintAllRef.current();
         } },
       ];
       if (paneLayoutCustom(bar.sid)) {
@@ -7967,25 +7974,37 @@ export default function App() {
         // 不标 lastFailed（卡上那句「检查地址与凭据后重试」会把人往死胡同引），
         // 文案改说「再连一次会重新询问」，重连即恢复
         const rejected = final.error?.kind === "host_key_rejected";
+        const gateTimedOut = rejected && hostKeyGateTimedOut(final.error?.message);
         if (!rejected) setLastFailed(host.id);
         const reason = final.error ? friendlyError({ kind: final.error.kind, message: final.error.message }) : t("未知原因");
         setConnError({
           title: t("连接 {0}（{1}@{2}:{3}）失败", host.name, host.username, host.address, host.port),
           detail: rejected
-            ? reason + t("——这是你主动拒绝的结果；再次连接会重新出示指纹")
+            ? reason + (gateTimedOut
+              ? t("——等待指纹确认超时；再次连接会重新出示指纹")
+              : t("——这是你主动拒绝的结果；再次连接会重新出示指纹"))
             : reason + t("——也可在主机卡上看到失败提示，修正后重试"),
         });
+        // 移动端主机栏独占主区域，tab 条里的失败横幅在栏内看不到（KI-074）：补 toast 兜底
+        if (isMobilePlatform()) pushToast("err", t("连接 {0} 失败", host.name) + "：" + reason);
       }
     } catch (e) {
       // 同上：拒绝指纹走抛错路径时同样不污染「上次连接失败」标记
-      const rejected = parseWireError(e).kind === "host_key_rejected";
+      const pe = parseWireError(e);
+      const rejected = pe.kind === "host_key_rejected";
+      const gateTimedOut = rejected && hostKeyGateTimedOut(pe.message);
       if (!rejected) setLastFailed(host.id);
+      const reason = friendlyError(e);
       setConnError({
         title: t("连接 {0}（{1}@{2}:{3}）失败", host.name, host.username, host.address, host.port),
         detail: rejected
-          ? friendlyError(e) + t("——这是你主动拒绝的结果；再次连接会重新出示指纹")
-          : friendlyError(e) + t("——也可在主机卡上看到失败提示，修正后重试"),
+          ? reason + (gateTimedOut
+            ? t("——等待指纹确认超时；再次连接会重新出示指纹")
+            : t("——这是你主动拒绝的结果；再次连接会重新出示指纹"))
+          : reason + t("——也可在主机卡上看到失败提示，修正后重试"),
       });
+      // 同上：移动端主机栏内看不到横幅（KI-074）
+      if (isMobilePlatform()) pushToast("err", t("连接 {0} 失败", host.name) + "：" + reason);
     } finally {
       pendingHostsRef.current.delete(lockId);
       if (draft && attemptId && quickAttemptRef.current === attemptId) quickAttemptRef.current = null;

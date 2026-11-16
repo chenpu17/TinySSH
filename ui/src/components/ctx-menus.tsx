@@ -11,7 +11,7 @@ import { t } from "../i18n";
 import type { ConfirmState } from "./confirm-dialogs";
 import type { SplitDir, SplitGroup } from "../app-data";
 import { resetMouseReporting } from "../terminal/mouse-mode-guard";
-import { repaintTerm } from "../terminal/repaint";
+import { repaintAll } from "../terminal/repaint";
 import { isMacPlatform } from "../actions";
 import { IconX } from "../icons";
 
@@ -126,6 +126,9 @@ export function CtxMenus({
   searchHint, searchKeyshortcuts,
   splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen, onCollapseHostbar,
 }: CtxMenusProps) {
+  // 重绘是整组动作，且不碰共享图集（上游 #6014 / GitHub #39）：0.19.0 的
+  // clearTextureAtlas 会波及同配置的兄弟终端，repaintAll 只做全量 refresh。
+  const repaintEverything = () => repaintAll([...termsRef.current.values(), ...paneTermsRef.current.values()]);
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
   // 剪贴板/全选的真实键盘绑定（App.tsx 终端键盘层）：
   // mac：⌘C（有选区才复制）/⌘V/⌘A；Win/Linux：Ctrl+Shift+C 复制、Ctrl+V 粘贴
@@ -435,8 +438,8 @@ export function CtxMenus({
                   onClick={() => { close(); resetMouseReporting(pe.term); }}
                 >{t("重置鼠标上报")}</button>
                 <button className="sm-item" role="menuitem" data-testid="pane-redraw"
-                  title={t("长时间使用后字形错乱时强制重画：清 WebGL 字形图集并刷新全屏")}
-                  onClick={() => { close(); repaintTerm(pe.term, pe.webgl); }}
+                  title={t("长时间使用后字形错乱时强制重画：刷新全部终端画面（不清共享字形图集）")}
+                  onClick={() => { close(); repaintEverything(); }}
                 >{t("重绘终端画面")}</button>
                 {paneLayoutCustom(pe.sid) && (
                   <button className="sm-item" role="menuitem" data-testid="pane-layout-reset"
@@ -503,8 +506,8 @@ export function CtxMenus({
                   onClick={() => { close(); resetMouseReporting(en.term); }}
                 >{t("重置鼠标上报")}</button>
                 <button className="sm-item" role="menuitem" data-testid="term-redraw"
-                  title={t("长时间使用后字形错乱时强制重画：清 WebGL 字形图集并刷新全屏")}
-                  onClick={() => { close(); repaintTerm(en.term, en.webgl); }}
+                  title={t("长时间使用后字形错乱时强制重画：刷新全部终端画面（不清共享字形图集）")}
+                  onClick={() => { close(); repaintEverything(); }}
                 >{t("重绘终端画面")}</button>
                 {sidRef.current === termMenu.sid && paneLayoutCustom(termMenu.sid) && (
                   <button className="sm-item" role="menuitem" data-testid="pane-layout-reset"

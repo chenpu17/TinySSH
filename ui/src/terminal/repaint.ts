@@ -1,27 +1,29 @@
 import type { Terminal } from "@xterm/xterm";
 
-/** WebGL addon 的最小结构——只用到清图集；不直接依赖 addon 类型便于测试替身。 */
-type AtlasLike = { clearTextureAtlas(): void } | null | undefined;
+/** 参与重绘的终端条目：主终端与 tmux 格子同形。 */
+export type RepaintEntry = { term: Terminal };
 
 /**
- * 强制重画终端可见区。
+ * 全量重绘一组终端（只 refresh，**不调 clearTextureAtlas**）。
  *
- * 长时间高吞吐/高熵输出（CJK、框线、emoji 混排）后，xterm 5.5 的 WebGL 字形图集
- * 可能错位：文本被替换成别的字形，选择/滚动只重画局部行，退出全屏才恢复。
- * 6.0 + addon-webgl 0.19 重写了图集（TextureAtlas/CharAtlasCache），理论上已修复
- * 该缺陷；保留本兜底用于旧缓存、上下文丢失或未来回归——清图集会让全部可见字形
- * 重新烘焙，再全屏 refresh 立即上屏；DOM 渲染器没有图集，refresh 即可。任一步失败
- * （终端/渲染器已释放）都静默——重绘是兜底动作，不该反过来报错。
+ * GitHub #39 / KI-014 复发：xterm 6.0.0 + addon-webgl 0.19.0（当前 stable）的字形图集
+ * 按 font/theme/DPR 配置在终端间共享（CharAtlasCache），但 `clearTextureAtlas()` 只
+ * 重建调用者自己的模型——兄弟终端要到下一次重排才恢复，表现就是整屏字形互相顶替、
+ * 任何一次 resize 后自愈（上游 #6014；修复 #6055 只在 6.1 / addon 0.20 beta，stable
+ * 未发布）。上游给 0.19.0 的用户态缓解原文就是**停掉自己发起的 clearTextureAtlas()**：
+ * 共享图集从任一终端清一次都会波及所有同配置终端。
+ *
+ * 所以这里只做全量 refresh：选中文本、滚动、重排都会触发重烘焙/重绘，实测用户侧
+ * 「切一次专注模式」就能自愈；配置变化本来就会按 key 取新图集，显式清图集在 0.19.0
+ * 上得不偿失。待 addon-webgl 升到 0.20（xterm 6.1）后再评估是否恢复清图集。
+ * refresh 失败（终端已释放）静默——重绘是兜底动作，不该反过来报错。
  */
-export function repaintTerm(term: Terminal, webgl: AtlasLike): void {
-  try {
-    webgl?.clearTextureAtlas();
-  } catch {
-    /* 渲染器已释放 */
-  }
-  try {
-    term.refresh(0, Math.max(0, term.rows - 1));
-  } catch {
-    /* 终端已释放 */
+export function repaintAll(entries: Iterable<RepaintEntry>): void {
+  for (const e of entries) {
+    try {
+      e.term.refresh(0, Math.max(0, e.term.rows - 1));
+    } catch {
+      /* 终端已释放 */
+    }
   }
 }
