@@ -243,7 +243,7 @@ jobs:
             src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
             | grep -q "versionName='${VER}'" || { echo "::error::APK versionName != ${VER}"; exit 1; }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-debug-apk
           path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
