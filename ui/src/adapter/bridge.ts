@@ -73,6 +73,12 @@ interface CmdArgs {
   resync_output: { sid: string; subscriptionId: string; fromSeq: number | null };
   debug_subscriptions: undefined;
   open_url: { url: string };
+  set_system_bars_light: { light: boolean };
+  // 移动端外接键盘探测（USB/蓝牙/OTG）：无参，true=硬件键盘在线（辅助键条隐藏、
+  // 连上后允许自动聚焦终端）；桌面装配不会调用。
+  has_hardware_keyboard: undefined;
+  // Android 保活补口（KI-059）：回前台让 Rust 立即重算一次前台服务状态，无参无返回。
+  keepalive_sync: undefined;
   upload_file: { sid: string; local: string; remote: string };
   download_file: { sid: string; remote: string; local?: string | null };
   pick_upload_files: undefined;
@@ -222,6 +228,9 @@ interface CmdRet {
   resync_output: wire.ResyncOutput;
   debug_subscriptions: wire.DebugSubscriptions;
   open_url: void;
+  set_system_bars_light: void;
+  has_hardware_keyboard: boolean;
+  keepalive_sync: void;
   upload_file: wire.TransferHandle;
   download_file: wire.TransferHandle;
   pick_upload_files: string[];

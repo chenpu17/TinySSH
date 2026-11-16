@@ -92,9 +92,10 @@ TinySSH/
   `create:true` 让宿主自动建主窗口）；默认存储库路径在 Android 走 JNI 的
   `Context.getFilesDir()`（进程没有 HOME、CWD 只读，不能回退 `"."`）。
 - 移动端 UI 装配（v1 只保 SSH + tmux）：`ui/src/main.tsx` 给 `<html>` 挂
-  `data-platform`，样式与功能裁剪都读这个标记。软键盘有两处原生侧前提（都是
-  真机实锤）：`MainActivity` 把 IME inset 转成内容区底部内边距（边到边下键盘
-  默认覆盖 WebView，前端收不到收缩）；`#term` 用 `overflow: clip` 而非 `hidden`
+  `data-platform`，样式与功能裁剪都读这个标记。软键盘与系统栏有两处原生侧前提（都是
+  真机实锤）：`MainActivity` 把 `max(IME, systemBars)` 底部 inset 转成内容区底部
+  内边距（边到边下键盘默认覆盖 WebView；键盘收起时补三键导航/手势条，否则底部辅助
+  键条被压住，KI-058）；`#term` 用 `overflow: clip` 而非 `hidden`
   （否则聚焦 xterm 隐藏 textarea 时浏览器会把 `#term` 当滚动容器滚走，终端白屏）。
 - Android 返回键走原生 → 前端一问一答：`MainActivity` 的 `OnBackPressedCallback`
   调 `evaluateJavascript("window.__tinysshBack()")`，前端按「栈顶」关弹层/面板
@@ -103,6 +104,15 @@ TinySSH/
   前端消费顺序**复用 Esc 的 `closeTopOverlayRef` 栈顶链**（任何新弹层接进 Esc 链
   就自动获得返回键出口），再补移动端特有的三处：键位录入选键态、整屏任务面板
   （`rightPanel`）与会话存续时的主机栏收起。
+- Android 系统栏图标跟随应用主题（KI-060）：`getCurrentWindow().setTheme()` 在
+  Android 是 no-op，边到边下状态栏/导航栏图标只按系统深浅选色，应用内浅色 + 系统
+  深色会出现白图标压浅底。由前端 `applyChrome` 上报解析后的深浅（仅
+  `inTauri && isMobilePlatform()`），Rust `set_system_bars_light` 经 JNI 调
+  `MainActivity.setSystemBarsLight`：Application context 的 ClassLoader 载类
+  （native 线程 FindClass 不可靠）→ 静态方法 → `WeakReference` 取 Activity 后
+  `view.post` 回主线程设 `isAppearanceLightStatusBars/NavigationBars`；R8 规则
+  keep 该静态方法（类名/方法名只以字符串出现在 Rust 侧）。根元素按
+  `data-chrome` 声明 `color-scheme`，滚动条与原生控件同步。
 - 移动端辅助键条（`ui/src/components/mobile-keys.tsx`，仅有会话时渲染）：软键盘
   没有 Esc/Tab/方向键与独立 Ctrl，键条提供 Esc/Tab/粘滞 Ctrl/C-b/C-c/方向键。
   Ctrl 是粘滞键——点亮后下一次软键盘字母改写为控制码（仅在焦点位于 `.xterm`
@@ -116,18 +126,65 @@ TinySSH/
   contextmenu。长按 480ms、位移 10px 内触发；down 时 `setPointerCapture` 把指针留在
   本行，触发瞬间再在 window 捕获阶段吞掉一次 click（菜单落地时手指还按着，抬手那一下
   的 click 会打到 `.pop-mask` 上把菜单立刻关掉——真机实锤）。鼠标事件不受影响。
+- 触屏选区与链接浮条（KI-052，`terminal/touch-select.ts` + `components/touch-bar.tsx`）：
+  xterm 只提供鼠标划选（`.xterm` 还是 `user-select:none`），触摸拿不到选区；软键盘
+  也没有 ⌘/Ctrl，URL 点按只会得到「按住再单击」提示。几何与缓冲语义单独落模块：
+  屏幕坐标 → `buffer.active.viewportY + 屏内行` 的缓冲区格子（`term.select()` 收的是
+  缓冲区行，滚动后不等于视口行）；按 xterm 默认词边界扩到整词，按在空白/分隔符上
+  退化为整行；拖动时按「锚点→焦点」算连选长度（跨行按 `term.cols` 累加）。App 侧
+  指针状态机在长按 480ms 后落地浮条（`.pop-mask` + 一条 40dp 按钮），拖动从词首
+  继续扩选；`touchmove` 仅在已触发时 `preventDefault`，普通单指滚动原样放行。
+  动作：复制（写剪贴板、保留选区）、粘贴（走既有 `pasteTextInto`：危险形态扫描/
+  多行确认/断线拦截一条不少）、全选（选区覆盖整屏、**浮条留在原位**——关掉就没有
+  复制入口了）、更多、取消；取消/Esc/Android 返回/切会话都清选区。
+  「更多」是浮条第二页（同一实例原地换组按钮，换页后按新尺寸重新回夹视口）：清屏/
+  重置鼠标上报/重绘画面，以及「拖过面板布局」时才出现的重置面板布局——这四项桌面
+  只在终端右键菜单里，触屏没有右键，此前长期无处可达；返回键在第二页只回第一页。
+  链接点按同样弹浮条（打开 / 复制链接），OSC8 与 WebLinksAddon 自动识别两条路径
+  统一——远端输出可伪造链接，先确认再跳。`open_url` 的 Android 分支走 JNI
+  `Intent.ACTION_VIEW`，外面再包 `Intent.createChooser`（KI-063：隐式 VIEW 谁都能
+  接走，交给用户选应用；标题传 null 由系统按语言渲染），`FLAG_ACTIVITY_NEW_TASK`
+  挂在最外层 chooser（application context 起 Activity 的硬要求）；startActivity
+  失败时清挂起 Java 异常再回错。前端所有打开外部链接的入口收敛到 `openExternal`
+  （失败弹「打开链接失败」，不再 `.catch(() => {})`），设置「关于」卡经
+  `onOpenUrl` prop 传入。
+- Android 保活（KI-059，`src-tauri/src/keepalive.rs`，仅 Android 装配）：有活动
+  会话/传输时挂常驻前台通知，归零即撤。真源在 Rust——订阅 `conn_tx`/`state_tx`/
+  `transfer_tx` 三路广播，250ms 防抖后重新取 `list_sessions`/`list_transfers`
+  快照（事件只做唤醒，快照才对账；查询失败保留上次状态，一次抖动不该撤服务），
+  计数经 JNI 调 `KeepaliveBridge.setActive(Context,active,sessions,transfers)` →
+  `KeepaliveService`（前台类型 connectedDevice、channel `tinyssh_keepalive`）。
+  Android 12+ 后台启动可能被拒，回前台由 `keepalive_sync` 强制重算补口（force
+  绕过去重，失败不写本地缓存）。`POST_NOTIFICATIONS` 在首次建会话时前台申请。
+- 外接键盘（`ui/src/platform.ts` 的 `useHardwareKeyboard`）：`MainActivity`
+  静态 `hasHardwareKeyboard()` 枚举 InputManager（跳过虚拟键盘，带键盘源位且
+  keyboardType≠NONE，Activity 不在时 Configuration 兜底）并监听输入设备热插拔，
+  把 `<html data-hwkb>` 与 `tinyssh-hwkb` 事件推给前端；Rust `has_hardware_keyboard`
+  供启动探测。有物理键盘时不渲染辅助键条（`isMobilePlatform() && !hwkb`）——
+  真键盘已有 Esc/Tab/方向键，键条只会白占一行终端高度。
+- 横屏/平板与安全区（`ui/src/styles.css`）：宽度越过 760 后站点落回桌面三栏，
+  `(orientation: landscape) and (min-width: 761px) and (max-height: 560px)` 只做
+  保守让位——标题栏/状态条压到 36–38px 可触高度、左右图标栏收窄到 38px、主机栏
+  封顶 232px、纯读数（版本标签/`.tb-self`）隐藏，有状态的功能入口不隐藏。顶部
+  padding 取 `max(env(safe-area-inset-top), 26px)`——Android WebView 的
+  `safe-area-inset-top` 只反映挖孔，常为 0，需要 26px 兜底；底部由原生注入的
+  `max(IME, systemBars)` inset 兜住（KI-058）。
 - 窄屏布局按 `isMobilePlatform()`（`ui/src/platform.ts`）裁剪：tmux 自动平铺
   最多 2 列、会话大屏最多 2 列（3 列时每格不足 12 列，而终端有 20 列下限，右侧
   会被裁掉）；设置里不出现「Agent 接入 / 记录审计」分类；命令面板不列 Agent/
   编排/监控；自更新检查在移动端直接跳过（装配层没有 updater）。
 - 触屏可达性：主机卡的编辑/删除/收藏组与 SFTP 行下载钮原先只在 `:hover` 出现，
-  窄屏改为常显；确认框/广播浮层/终端搜索条宽度改为视口钳制，360dp 不再出屏。
+  窄屏改为常显；**触屏可用性不跟宽度断点走**——手机横屏 800–915 CSS px 时移动布局块
+  （≤760）整体失效，但触屏照样没有 hover，故这类「悬停才显形」的入口（主机卡操作组、
+  SFTP 下载钮、终端「回到底部」浮钮）另按 `:root[data-platform]` 兜底，任意宽度常显，
+  判据与 `isMobilePlatform()` 同源。SFTP 行菜单补「进入目录 / 打开链接」（手机没有
+  双击，长按出的菜单是唯一入口）；活动记录面板的「时间线」在移动端不渲染（它指向
+  设置里已裁剪的分类）。确认框/广播浮层/终端搜索条宽度改为视口钳制，360dp 不再出屏。
   右缘任务面板竖栏（`rb-rail`）在窄屏整条隐藏，故「远程文件」必须在会话工具栏的
   工具菜单里有入口（`tools-files`，仅 `isMobilePlatform()` 或视口 ≤760px 时渲染；
   宽屏桌面 rb-files 常驻，不再重复）；`.tools-menu` 是右锚绝对定位，手机上面板在
   左边时会整块伸出屏幕左侧，`clampIntoView` 因此补了左越界回夹（回夹时清掉
   `right`，否则两端拉伸把菜单压窄）。
-  仍待排期（终端触摸选区/复制、链接点按）见 [known-issues](../known-issues.md) KI-052。
 - 两条装配的内容：桌面 = portable-pty + OS 钥匙串 + 应用内更新；
   `mobile` = 无本地终端、无自更新（随商店分发）。**命令面不分叉**：不支持的命令
   照常注册、调用时返回 `unsupported`，`command_parity` 保持单一清单。

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 保活前台通知的小图标（KI-059）：必须单色剪影（状态栏按 alpha 蒙版染色），
+     24dp 视口，外形=终端窗口 + 提示符。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,3h16a2,2 0,0 1,2 2v14a2,2 0,0 1,-2 2h-16a2,2 0,0 1,-2 -2v-14a2,2 0,0 1,2 -2zM4,5v14h16v-14z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M7,9 L11,12 L7,15" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M13,16 L17,16" />
+</vector>

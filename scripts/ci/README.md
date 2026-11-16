@@ -15,6 +15,9 @@
 - **UI specs 前冻结代码**：HMR 时序抖动会产生假红；套件红先单跑该 spec 复核（15-goal H1 是已知满载假红）。
 - **core-session 单独成档**（tier2/3）：core_local 13 测试全并行且 PTY 重，混入全仓并行档被挤占时 spawn 时序崩、agent 动作级联进 120s 审批门（实测 1082s 假红、安静时 6.7s 绿）——单独跑 + `--test-threads=4`；残余噪声由两跑仲裁兜底（单跑/复跑绿=假红放行，两跑红=真红拦截）。
 - 无 docker 时 e2e 用例自动 skip（env 门早退，core_local 余 2 例需 sshd 容器）。
+- **Android 16 KB 门默认不跑**：设 `TINYSSH_ANDROID_APK=1`（扫默认产物：`target/aarch64-linux-android/debug/libtinyssh_app_lib.so` + `src-tauri/gen/android/app/build/outputs/apk/**/*.apk`）或 `TINYSSH_ANDROID_APK=<apk/目录路径>` 时，[run.sh](run.sh) 额外调用 [check-android-16kb.sh](check-android-16kb.sh)（ELF `PT_LOAD` Align=0x4000 + APK 内 .so STORED/16384 偏移，KI-057 的固化验收）。
+- **Android CI job 首次运行未实证**：`ci.yml` 的 android 档（PR/手动）与 `gradle-wrapper.properties` 的腾讯镜像均在真实 GitHub runner 上首跑时需核对；未配置 release 签名，只产 debug APK。
+- **Android release APK**（tag 发布、签名 Secrets、首跑演练与真机冒烟）见 [docs/release-android.md](../../docs/release-android.md)。
 
 ## Provider 映射
 

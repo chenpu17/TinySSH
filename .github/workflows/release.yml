@@ -1,10 +1,11 @@
-# Release 工作流：推 v* tag 触发四平台矩阵构建，产物挂上 GitHub Release。
+# Release 工作流：推 v* tag 触发桌面三平台矩阵 + Android arm64 APK，产物挂上 GitHub Release。
 # 构建路线与 scripts/dist-portable.sh / dist.sh 的本机约定完全同构：
 # 「raw cargo + custom-protocol」，不依赖 tauri CLI（无版本漂移、无外部下载）。
 # - windows：单文件便携 exe（CRT 静态，见 .cargo/config.toml）+ tinyssh CLI exe
 # - linux：dpkg-deb 手工 .deb（/usr/bin + .desktop + 图标，runner 原生工具）+ 二进制 tar.gz
 # - macos（arm64/x64 双跑）：手工 .app bundle（ad-hoc 签名——arm64 拒绝执行未签名
 #   二进制）+ hdiutil dmg + CLI tar.gz
+# - android：aarch64 release APK，签名材料经 Secrets 注入（契约见 docs/release-android.md）
 # workflow_dispatch 手动演练：只产 artifacts，不发 Release（发布只认 tag）。
 # 未签名分发的用户侧提示写在 Release notes：mac 右键「打开」/ xattr，Win SmartScreen。
 name: release
@@ -389,10 +390,258 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Android release APK：与 ci.yml 的 android 档同构（JDK17 / aarch64 / SDK+NDK /
+  # cargo-tauri 缓存 / 16 KB 门），额外做版本号、签名与 applicationId 断言。
+  # tag 发布时产物进同一个 Release；workflow_dispatch 只演练构建（release 作业因
+  # 非 tag 跳过）。签名材料只经 Secrets 注入，步骤结束 always() 清理。
+  #
+  # 签名 Secrets 未配置时整档跳过（secrets_probe 先探，见下）：PC 发布是主链路，
+  # 不能被可选的 Android 签名卡死——否则一个没配 keystore 的仓库连打 tag 都发不出
+  # 桌面产物（此前 release.needs 硬绑定 android，android 失败即整条发布被跳过）。
+  secrets_probe:
+    name: probe · Android 签名 Secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      android: ${{ steps.chk.outputs.ok }}
+    steps:
+      - id: chk
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "Android 签名 Secrets 已配置，构建 release APK"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "未配置 ANDROID_KEYSTORE_BASE64 —— 跳过 Android APK，仅发布桌面三平台"
+          fi
+
+  android:
+    name: android · aarch64 APK（release 签名）
+    needs: [verify, secrets_probe]
+    if: needs.secrets_probe.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    # release 冷编（opt-level 3 + R8）比 debug 慢；首跑按 60-90min 估，留足余量。
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+
+      # 只编 arm64：真机全是 arm64；x86_64 只用于本地模拟器，不进 GitHub Release。
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-linux-android }
+
+      # release 产物大（debug 单 ABI .so 已 96MB），tag 发布不频繁：
+      # 只缓存 registry，不缓存 target，避免和 ci.yml 的 android 缓存一起挤爆 10GB 上限。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-targets: false
+          key: android-release
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+
+      # 与 ci.yml 的 android 作业同构；NDK 取 ndk/ 下最高版本（cargo-mobile2 的
+      # ensure_ndk 无视 NDK_HOME，16 KB 门才是唯一判据）。
+      - name: Android SDK / NDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SM" ] || SM="$(command -v sdkmanager)"
+          yes | "$SM" --licenses > /dev/null 2>&1 || true
+          "$SM" --install "platforms;android-36" "build-tools;36.1.0" > /dev/null
+          if [ -z "$(ls -A "$SDK/ndk" 2>/dev/null)" ]; then
+            "$SM" --install "ndk;27.0.12077973" > /dev/null
+          fi
+          NDK=$(ls -d "$SDK"/ndk/* | sort -V | tail -1)
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "NDKs:"; ls "$SDK/ndk"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # 仓库里的 wrapper 指向腾讯镜像（本机友好，GitHub runner 未实证）。
+      # CI 单次改成官方分发；本机文件不动。
+      - name: Gradle 分发源改用官方（仅 CI）
+        run: |
+          sed -i 's#mirrors\.cloud\.tencent\.com/gradle/#services.gradle.org/distributions/#' \
+            src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+          grep distributionUrl src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+
+      # Gradle 的 rust 回调调用的是 `cargo tauri android android-studio-script`，
+      # 必须有 cargo-tauri 可执行文件（npm 的 @tauri-apps/cli 只有 tauri）。
+      - uses: actions/cache@v4
+        id: cargo-tauri
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: cargo-tauri-2.10.1-${{ runner.os }}
+      - if: steps.cargo-tauri.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version 2.10.1 --locked
+
+      - run: npm ci
+        working-directory: ui
+
+      # APK 的 versionName/versionCode 来自 tauri CLI 依据 tauri.conf.json 生成的
+      # tauri.properties，不是 tag。tag 与 conf 不一致必须在这里挡下。
+      - name: 版本号（tag 必须与 tauri.conf 一致）
+        run: |
+          CONF_VER=$(sed -n 's/^  "version": "\(.*\)",/\1/p' src-tauri/tauri.conf.json | head -1)
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+            if [ "$VER" != "$CONF_VER" ]; then
+              echo "::error::tag v$VER 与 tauri.conf 版本 $CONF_VER 不一致（三源同升后再打 tag）"
+              exit 1
+            fi
+          else
+            VER="$CONF_VER"
+          fi
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          echo "构建版本：$VER"
+
+      # 证书只落 $RUNNER_TEMP 与 gitignored 的 key.properties；always() 步骤删除。
+      # 不 echo 任何 secret；不要开 set -x。构建前先用 keytool 校验口令/别名，
+      # 避免坏 Secrets 在 60-90min 的冷编之后才暴露。
+      - name: 准备签名（Secrets → keystore + key.properties）
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for pair in "ANDROID_KEYSTORE_BASE64:KS_B64" \
+                      "ANDROID_KEYSTORE_PASSWORD:KS_PASS" \
+                      "ANDROID_KEY_ALIAS:KS_ALIAS" \
+                      "ANDROID_KEY_PASSWORD:KEY_PASS"; do
+            name="${pair%%:*}"; var="${pair#*:}"
+            if [ -z "${!var:-}" ]; then
+              echo "::error::未配置 Secrets.$name；release APK 必须签名（unsigned 装不上）"
+              exit 1
+            fi
+          done
+          KS="$RUNNER_TEMP/tinyssh-release.jks"
+          printf '%s' "$KS_B64" | tr -d '\r\n' | base64 -d > "$KS"
+          chmod 600 "$KS"
+          [ -s "$KS" ] || { echo "::error::keystore 解码为空"; exit 1; }
+          # 提前校验：store 口令 / 别名 / key 口令错误都在这里失败，不烧完整构建时间。
+          keytool -list -keystore "$KS" -storepass:env KS_PASS -alias "$KS_ALIAS" > /dev/null \
+            || { echo "::error::keystore 口令或别名错误（检查 ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS）"; exit 1; }
+          keytool -certreq -alias "$KS_ALIAS" -keystore "$KS" \
+              -storepass:env KS_PASS -keypass:env KEY_PASS > /dev/null \
+            || { echo "::error::密钥口令错误（检查 ANDROID_KEY_PASSWORD）"; exit 1; }
+          # 注意：Properties 里反斜杠是转义符；Linux runner 路径无此问题，
+          # 本机 Windows 写 key.properties 时用正斜杠或双反斜杠。
+          # 用 printf 而非缩进 heredoc：避免行首空格进入 properties。
+          {
+            printf 'storeFile=%s\n' "$KS"
+            printf 'storePassword=%s\n' "$KS_PASS"
+            printf 'keyAlias=%s\n' "$KS_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASS"
+          } > src-tauri/gen/android/key.properties
+          chmod 600 src-tauri/gen/android/key.properties
+
+      # release 是默认构建类型；CLI 没有 --release 参数，`--debug` 才是 debug。
+      # -f mobile 必须显式（tauri.android.conf.json 的 build.features 不被采纳）。
+      # 签名材料同时以环境变量注入（Gradle 侧优先于 key.properties）：口令含反斜杠 /
+      # 非 ASCII 字符时不会被 .properties 的转义与 ISO-8859-1 解码改写。
+      - name: 构建 release APK（aarch64）
+        env:
+          TINYSSH_ANDROID_KEYSTORE: ${{ runner.temp }}/tinyssh-release.jks
+          TINYSSH_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TINYSSH_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TINYSSH_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: cargo tauri android build --target aarch64 --apk --ci -f mobile
+
+      - name: 定位 APK + 签名/版本断言
+        env:
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          OUT=src-tauri/gen/android/app/build/outputs/apk
+          # 用 -print -quit 而非 `| head -1`：pipefail 下 find/sed 被 head 提前关管道
+          # 会拿到 SIGPIPE（141）而整步失败。
+          APK=$(find "$OUT" -path '*release*' -name 'app-universal-release.apk' -print -quit)
+          if [ -z "$APK" ]; then
+            APK=$(find "$OUT" -path '*release*' -name '*.apk' -print -quit)
+          fi
+          [ -n "$APK" ] || { echo "::error::未找到 release APK"; exit 1; }
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          ls -lh "$APK"
+
+          BT=$(ls -d "${ANDROID_HOME}/build-tools/"* | sort -V | tail -1)
+          # 未签名 / 坏签名直接失败（unsigned APK 无法安装，绝不能进 Release）
+          if ! "$BT/apksigner" verify --print-certs "$APK" 2>&1 | tee "$RUNNER_TEMP/certs.txt"; then
+            echo "::error::APK 未签名或签名无效（本地无 key.properties 时 Gradle 产 unsigned 包）"
+            exit 1
+          fi
+          if grep -q 'CN=Android Debug' "$RUNNER_TEMP/certs.txt"; then
+            echo "::error::APK 由 Android Debug 证书签名，禁止发布"
+            exit 1
+          fi
+          CERT_SHA=$(sed -n 's/.*SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt" | sed -n '1p')
+          [ -n "$CERT_SHA" ] || { echo "::error::未从 apksigner 输出解析到证书 SHA-256"; exit 1; }
+          {
+            echo "### Android APK"
+            echo "- 证书 SHA-256: \`$CERT_SHA\`"
+            echo "- 文件: \`$(basename "$APK")\` ($(du -h "$APK" | cut -f1))"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # 指纹比较容忍大小写与冒号分隔（apksigner 输出无冒号，用户可能贴带冒号的）。
+          CERT_NORM=$(echo "$CERT_SHA" | tr -d ':' | tr 'A-F' 'a-f')
+          PIN_NORM=$(echo "${ANDROID_CERT_SHA256:-}" | tr -d ':' | tr 'A-F' 'a-f')
+          if [ -n "$PIN_NORM" ] && [ "$CERT_NORM" != "$PIN_NORM" ]; then
+            echo "::error::证书指纹与仓库变量 ANDROID_CERT_SHA256 不一致（换过签名密钥？）"
+            exit 1
+          fi
+
+          BADGING=$("$BT/aapt2" dump badging "$APK")
+          FIRST=$(printf '%s\n' "$BADGING" | sed -n '1p')
+          echo "$FIRST"
+          # here-string 而非管道：grep -q 命中即退出，pipefail 下会把上游打成 SIGPIPE。
+          grep -q "package: name='com.tinyssh.app'" <<<"$BADGING" \
+            || { echo "::error::applicationId 不是 com.tinyssh.app"; exit 1; }
+          grep -q "versionName='${VER}'" <<<"$BADGING" \
+            || { echo "::error::APK versionName != ${VER}"; exit 1; }
+          VC=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$FIRST")
+          echo "versionCode=$VC（升级判定用它；必须严格大于上一版）"
+          if [[ "$VER" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            EXPECTED=$((10#${BASH_REMATCH[1]} * 1000000 + 10#${BASH_REMATCH[2]} * 1000 + 10#${BASH_REMATCH[3]}))
+            [ "$VC" = "$EXPECTED" ] || echo "::warning::versionCode=$VC，按 semver 推算为 $EXPECTED（若 tauri 规则变了需复核单调性）"
+          fi
+
+      - name: 16 KB 页对齐门（release ELF + APK）
+        run: |
+          bash scripts/ci/check-android-16kb.sh \
+            target/aarch64-linux-android/release/libtinyssh_app_lib.so \
+            "$APK"
+
+      - name: 产物命名（随 dist-* 进同一个 Release）
+        run: |
+          mkdir -p dist
+          cp "$APK" "dist/TinySSH_${VER}_android_arm64.apk"
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-android
+          path: dist/*
+          if-no-files-found: error
+
+      - name: 清理签名材料
+        if: always()
+        run: |
+          rm -f src-tauri/gen/android/key.properties \
+                "$RUNNER_TEMP/tinyssh-release.jks" "$RUNNER_TEMP/certs.txt"
+
   release:
     name: GitHub Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, android]
+    # always()：android 被 secrets_probe 跳过（或失败）时也不得吞掉桌面发布——
+    # PC 是主链路。真正的底线是 build 三平台成功（失败则不发 Release）。
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -430,6 +679,14 @@ jobs:
           export VER
           ls -l
           sha256sum * > SHA256SUMS.txt
+          # Android 行随 APK 实际在场：未配签名 Secrets 时 android 档整体跳过，
+          # 下载表不能凭空列一个不存在的包（别让用户对着 404 找 APK）。
+          ANDROID_ROW=""
+          ANDROID_NOTE=""
+          if [ -f "TinySSH_${VER}_android_arm64.apk" ]; then
+            ANDROID_ROW="| Android 7.0+ (arm64) | \`TinySSH_${VER}_android_arm64.apk\`（侧载安装，见下方 Android 提示） |"
+            ANDROID_NOTE="- Android（仅 arm64，未上架 Play）：从浏览器下载后，首次需在「设置 → 应用 → 特殊权限 → 安装未知应用」允许所用浏览器/文件管理器；Play Protect 提示「未知开发者」时选「仍要安装」。无自动更新，升级 = 下载新 APK 覆盖安装（签名必须一致，\`versionCode\` 递增）。若装过旧 debug 签名包，必须先卸载——卸载会清掉应用内数据（主机/凭据），请自行评估后再装。"
+          fi
           cat > notes.md <<EOF
           ## 下载 / Downloads
 
@@ -439,12 +696,14 @@ jobs:
           | macOS 11+ (Apple Silicon) | \`TinySSH_${VER}_macos_arm64.app.zip\` / \`.dmg\` |
           | macOS 10.15+ (Intel) | \`TinySSH_${VER}_macos_x86_64.app.zip\` / \`.dmg\` |
           | Linux amd64 | \`TinySSH_${VER}_linux_amd64.deb\`（推荐，自动拉依赖）或 \`.tar.gz\`（需自备 libwebkit2gtk-4.1-0） |
+          ${ANDROID_ROW}
 
           ## 安装提示 / Install notes
 
           - Windows：SmartScreen 提示时点「更多信息 → 仍要运行」（未签名分发）。
           - macOS：未签名/未公证。下载后先用 Finder 把 App 拖入「应用程序」（避免系统隔离转存导致钥匙串反复弹窗），首开右键 →「打开」；仍被拦则终端执行 \`xattr -cr /Applications/TinySSH.app\`。系统弹出钥匙串访问时点「允许」（凭据加密主密钥存于钥匙串）。
           - Linux：deb 自动拉取 WebKitGTK 依赖；tar.gz 路线先 \`sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0\`。
+          ${ANDROID_NOTE}
           - \`tinyssh\` CLI：随附的命令行伴侣（主机 / Agent Token / 审批 / 接管 / 简报 / 审计），与人机协同主程序同走一套核心。
 
           构建于 commit ${GITHUB_SHA}。运行期依赖：Windows 自带 WebView2；Linux WebKitGTK 4.1；macOS 系统 WKWebView。

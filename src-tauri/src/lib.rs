@@ -12,6 +12,7 @@ use tauri::{Emitter, State};
 mod agent_bridge;
 mod commands;
 mod diagnostics;
+mod keepalive;
 mod metrics;
 mod smoke_scripts;
 mod updater;
@@ -646,6 +647,11 @@ pub fn run() {
                     }
                 }
             });
+            // KI-059 v1 保活：有活动会话/传输时挂前台服务（常驻通知），归零即撤。
+            // 真源是 SessionManager 快照；watcher 订阅上面三条事件广播做 250ms 防抖
+            // 重算，启动先算一次。桌面没有后台冻结问题，不装配。
+            #[cfg(target_os = "android")]
+            keepalive::install(api.clone());
             // dev harness：TINYSSH_AUTOCONNECT=host_id[,host_id] 启动即建会话（原生走查用）
             if let Ok(list) = std::env::var("TINYSSH_AUTOCONNECT") {
                 let api2 = api.clone();
@@ -715,7 +721,7 @@ pub fn run() {
             tmux_attach, tmux_detach, tmux_pane_open, tmux_pane_close, tmux_pane_resize, tmux_pane_input,
             tmux_pane_subscribe, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
-            open_url,
+            open_url, set_system_bars_light, has_hardware_keyboard, keepalive_sync,
             upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat, sftp_delete, sftp_rename,
             pick_upload_files, pick_save_file, pick_save_dir,
             list_forwards, start_forward, stop_forward,

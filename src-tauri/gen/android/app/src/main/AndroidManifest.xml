@@ -1,13 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- KI-059 v1 保活：活动会话/传输期间的前台服务 + Android 14 的
+         connectedDevice 类型权限 + 传输/重连期网络状态可读。POST_NOTIFICATIONS
+         由通知插件合并声明，这里不重复加。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- allowBackup=false：主密钥落在 SharedPreferences 而 AndroidKeyStore 别名
+         不参与任何备份/迁移——一旦系统把 SP 恢复到新机，密文在、密钥没了，启动
+         即爆「解密失败」并按泄漏路径 exit。SSH 凭据库里全是秘密，宁可不迁移：
+         跨机转移走应用内显式导出，不靠系统备份。dataExtractionRules 同时关掉
+         Android 12+ 的设备间迁移（allowBackup 只管云备份，D2D 另算）。 -->
     <application
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:theme="@style/Theme.tinyssh_app"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
@@ -24,6 +38,14 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- KI-059 v1 保活：Rust 经 KeepaliveBridge 拉起，活动会话/传输归零即停。
+             stopWithTask=false：用户从最近任务划掉应用时才随进程结束。 -->
+        <service
+            android:name=".KeepaliveService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

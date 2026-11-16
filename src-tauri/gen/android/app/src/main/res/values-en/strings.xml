@@ -1,0 +1,7 @@
+<resources>
+    <string name="keepalive_channel_name">Connection keepalive</string>
+    <string name="keepalive_channel_desc">Keeps connections alive while sessions or file transfers are active</string>
+    <string name="keepalive_text_sessions">%1$d active session(s)</string>
+    <string name="keepalive_text_transfers">%1$d transfer(s) in progress</string>
+    <string name="keepalive_text_both">%1$d active session(s) · %2$d transfer(s) in progress</string>
+</resources>

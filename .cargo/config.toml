@@ -5,6 +5,15 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 
+# Android 16 KB 页对齐（Android 15+ 部分设备、Play 对 targetSdk 35+ 的要求）：
+# NDK r27 的链接器默认仍按 4 KB 出 LOAD 段，装到 16 KB 页设备上 dlopen 失败
+# （应用启动即崩）。链接期显式抬到 16 KB；arm64 与 x86_64（模拟器/平板）都要。
+# 验收：llvm-readelf -l 看 LOAD 的 Align 应为 0x4000。
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
 # git 依赖统一走 git CLI 拉取：尊重用户 git 配置（insteadOf 覆写、代理），
 # 弱网下也比 libgit2 内建传输稳。TinyAgent 内核即经此通路解析。
 [net]

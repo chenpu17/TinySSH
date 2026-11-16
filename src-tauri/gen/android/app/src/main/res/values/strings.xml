@@ -1,4 +1,10 @@
 <resources>
     <string name="app_name">TinySSH</string>
     <string name="main_activity_title">TinySSH</string>
+    <!-- 保活前台通知（KI-059）：标题恒为 TinySSH，正文按活动会话/传输计数组合。 -->
+    <string name="keepalive_channel_name">连接保活</string>
+    <string name="keepalive_channel_desc">有活动会话或文件传输时保持连接不被系统挂起</string>
+    <string name="keepalive_text_sessions">%1$d 个活动会话</string>
+    <string name="keepalive_text_transfers">%1$d 个传输进行中</string>
+    <string name="keepalive_text_both">%1$d 个活动会话 · %2$d 个传输进行中</string>
 </resources>

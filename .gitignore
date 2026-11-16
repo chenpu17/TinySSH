@@ -21,3 +21,8 @@ ui/test/result.json
 ui/test/.shots/
 # ZCode 会话本地目录
 .zcode/
+
+# Android 发布签名材料（本地生成 / CI 运行期注入，绝不入库）
+*.jks
+*.keystore
+key.properties

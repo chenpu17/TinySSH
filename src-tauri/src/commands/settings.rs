@@ -140,12 +140,221 @@ pub(crate) async fn open_url(url: String) -> CmdResult<()> {
             .spawn()
             .map_err(WireError::from)?;
     }
-    #[cfg(all(unix, not(target_os = "macos")))]
+    // Android 没有 xdg-open：经 JNI 拉起系统浏览器的 ACTION_VIEW（移动端链接点按，
+    // KI-052）。必须排在通用 unix 分支之前，否则会落进 xdg-open 恒失败。
+    #[cfg(target_os = "android")]
+    {
+        android_open_url(&url)
+            .map_err(|e| WireError::simple("io", format!("打开链接失败：{e}")))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
     {
         tokio::process::Command::new("xdg-open")
             .arg(&url)
             .spawn()
             .map_err(WireError::from)?;
+    }
+    Ok(())
+}
+
+/// 系统栏图标深浅跟随应用主题（KI-060）：Android 边到边下状态栏/导航栏图标由系统
+/// 按系统深浅决定，应用内切主题不会重建 Activity。前端在 App.applyChrome 里按解析
+/// 后的深浅调用；非 Android 无系统栏概念，no-op。
+#[tauri::command]
+pub(crate) async fn set_system_bars_light(light: bool) -> CmdResult<()> {
+    #[cfg(target_os = "android")]
+    {
+        android_set_system_bars_light(light)
+            .map_err(|e| WireError::simple("io", format!("更新系统栏明暗失败：{e}")))?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = light;
+    Ok(())
+}
+
+/// 物理键盘存在性（移动端交互）：前端据此隐藏辅助键条、收紧软键盘避让等。
+/// Android 经 JNI 问 MainActivity.hasHardwareKeyboard()（InputManager 非虚拟设备
+/// 且带键盘源位、keyboardType 非 NONE；兜底 Configuration.keyboard）。查询失败
+/// 或非 Android 一律 false——前端只是少一个布局优化，不该变成错误弹窗。
+#[tauri::command]
+pub(crate) async fn has_hardware_keyboard() -> CmdResult<bool> {
+    #[cfg(target_os = "android")]
+    {
+        Ok(android_has_hardware_keyboard().unwrap_or(false))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(false)
+    }
+}
+
+/// Android 保活补口（KI-059 v1）：回前台时让 Rust 立即重算并下发一次前台服务
+/// 状态——Android 12+ 可能拒绝过后台启动，这里把服务补起来。判定仍读
+/// SessionManager 快照（不信前端）；无参无返回，前端 fire-and-forget。非 Android
+/// no-op（桌面没有前台服务）。
+#[tauri::command]
+pub(crate) async fn keepalive_sync(state: ApiState<'_>) -> CmdResult<()> {
+    crate::keepalive::sync_now(&state.api).await;
+    Ok(())
+}
+
+/// Android 把物理键盘查询转发给 MainActivity.hasHardwareKeyboard()。ClassLoader
+/// 取法与 setSystemBarsLight 同源（KI-060）：native 线程 FindClass 走 bootstrap
+/// ClassLoader 不可靠，必须经 Application context 的 getClassLoader().loadClass。
+/// Kotlin 侧 Activity 存在时读 InputManager，否则用 Configuration 兜底。
+/// 返回类型 ()Z 对应 JValue::z()（bool）。
+#[cfg(target_os = "android")]
+fn android_has_hardware_keyboard() -> std::result::Result<bool, String> {
+    use jni::objects::{JObject, JValue};
+
+    // SAFETY: 与 open_url 同一前提：Tauri/wry 的 JNI 入口在 run() 前初始化
+    // ndk-context，保存的是进程生命期有效的全局引用。
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+    let loader = env
+        .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+    let class_name = env
+        .new_string("com.tinyssh.app.MainActivity")
+        .map_err(|e| e.to_string())?;
+    let class_obj = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&class_name)],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+    let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
+    env.call_static_method(&class_ref, "hasHardwareKeyboard", "()Z", &[])
+        .map_err(|e| e.to_string())?
+        .z()
+        .map_err(|e| e.to_string())
+}
+
+/// Android 把设置转发给 MainActivity.setSystemBarsLight。native 线程里
+/// FindClass("com/tinyssh/app/MainActivity") 走 bootstrap ClassLoader 不可靠，
+/// 必须经 Application context 的 getClassLoader().loadClass(...)（KI-060）。
+/// 注意 ndk-context 给的是 Application context 不是 Activity——Kotlin 侧经
+/// 静态 WeakReference 取 Activity 并用 view.post 回主线程。
+#[cfg(target_os = "android")]
+fn android_set_system_bars_light(light: bool) -> std::result::Result<(), String> {
+    use jni::objects::{JObject, JValue};
+
+    // SAFETY: 与 open_url 同一前提：Tauri/wry 的 JNI 入口在 run() 前初始化
+    // ndk-context，保存的是进程生命期有效的全局引用。
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+    let loader = env
+        .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+    let class_name = env
+        .new_string("com.tinyssh.app.MainActivity")
+        .map_err(|e| e.to_string())?;
+    let class_obj = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&class_name)],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+    // call_static_method 的 class 参数要 Desc<JClass>，&JObject 不实现；转全局引用后
+    // 可当类引用传入（jni 0.21 对 &GlobalRef 的 Desc<JClass> 实现）。
+    let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
+    env.call_static_method(
+        &class_ref,
+        "setSystemBarsLight",
+        "(Z)V",
+        &[JValue::Bool(light as u8)],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Android 拉起浏览器（Intent.ACTION_VIEW）。KI-063：隐式 ACTION_VIEW 谁都能接走
+/// （任何声明 http/https 的应用），故外层包一层 `Intent.createChooser`——用户明确
+/// 选择用哪个应用打开；仍带浏览器默认项，多一层但不是拦截。application context
+/// 起 Activity 必须给**最外层**（chooser）带 FLAG_ACTIVITY_NEW_TASK（0x10000000）；
+/// Uri.parse 只解析已在上面白名单校验过的 http/https。没有可接收的应用时
+/// startActivity 抛 ActivityNotFoundException（JNI 侧表现为 JavaException）——
+/// 清掉挂起异常后把错误原文带回前端，由调用点弹「打开链接失败」。
+#[cfg(target_os = "android")]
+fn android_open_url(url: &str) -> std::result::Result<(), String> {
+    use jni::objects::{JObject, JValue};
+
+    // SAFETY: Tauri/wry 的 JNI 入口在 run() 前初始化 ndk-context（与 default_db_path
+    // 同一前提），保存的是进程生命期有效的全局引用。
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+    let url_js = env.new_string(url).map_err(|e| e.to_string())?;
+    let uri = env
+        .call_static_method(
+            "android/net/Uri",
+            "parse",
+            "(Ljava/lang/String;)Landroid/net/Uri;",
+            &[JValue::Object(&url_js)],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+    let action = env
+        .new_string("android.intent.action.VIEW")
+        .map_err(|e| e.to_string())?;
+    let intent = env
+        .new_object(
+            "android/content/Intent",
+            "(Ljava/lang/String;Landroid/net/Uri;)V",
+            &[JValue::Object(&action), JValue::Object(&uri)],
+        )
+        .map_err(|e| e.to_string())?;
+    // 选择器标题传 null：由系统按当前语言渲染（Rust 侧没有 i18n 上下文）。
+    let chooser = env
+        .call_static_method(
+            "android/content/Intent",
+            "createChooser",
+            "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
+            &[JValue::Object(&intent), JValue::Object(&JObject::null())],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+    env.call_method(
+        &chooser,
+        "addFlags",
+        "(I)Landroid/content/Intent;",
+        &[JValue::Int(0x1000_0000)],
+    )
+    .map_err(|e| e.to_string())?;
+    if let Err(e) = env.call_method(
+        &context,
+        "startActivity",
+        "(Landroid/content/Intent;)V",
+        &[JValue::Object(&chooser)],
+    ) {
+        // Java 异常不清会留在这条 native 线程上，后续 JNI 调用全部带病返回。
+        if env.exception_check().unwrap_or(false) {
+            env.exception_describe().ok();
+            let _ = env.exception_clear();
+        }
+        return Err(e.to_string());
     }
     Ok(())
 }

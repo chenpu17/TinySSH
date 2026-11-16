@@ -2,8 +2,10 @@
 # - tier1（每次 push/PR，ubuntu）：fmt + clippy + 除桌面壳外全 crate 测试 + ui 前端构建。
 # - windows（每次 push/PR）：全 workspace cargo test + ui build——Windows 是产品第一平台，
 #   与本机验证矩阵同构（tauri 桌面壳在 ubuntu 需 webkit2gtk 系统库，linux 侧按 crate 排除）。
-# - tier2（PR/手动，ubuntu）：UI specs 全量（playwright chromium 供浏览器域，demo 模式跨平台）。
+# - tier2（PR/手动，ubuntu）：UI specs 全量（playwright chromium 供浏览器域，demo 模式跨平台）
+#   + android 缩水档（aarch64 debug APK + 16 KB 页对齐门，首跑约 20-40min；只编不签名）。
 # - tier3（手动，ubuntu）：docker sshd 容器 + e2e 全量。
+# 16 KB 门禁脚本 scripts/ci/check-android-16kb.sh 同时是本地入口（见 scripts/ci/README.md）。
 name: ci
 on:
   push:
@@ -156,6 +158,96 @@ jobs:
           CHROME=$(ls "$HOME/.cache/ms-playwright"/chromium-*/chrome-linux/chrome | head -1)
           TINYSSH_UI_CHROME="$CHROME" npm test
         working-directory: ui
+
+  # Android 缩水档（tier2 档位）：只编 aarch64 debug APK + 16 KB 页对齐门。
+  # 不签名、不产 AAB、不上 Play；push 不跑（冷构建 35-50min，push 档已有 windows 全量）。
+  android:
+    name: android · aarch64 debug APK + 16KB 对齐门
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+
+      # 只需 arm64 目标；x86_64 留给本地模拟器构建
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-linux-android }
+      - uses: Swatinem/rust-cache@v2
+        # 注意：Android debug .so 很大（本机 96 MiB/单 ABI），target 缓存可能
+        # 逼近 10 GB 仓库上限；如超限再收窄为只缓存 ~/.cargo/registry。
+        with:
+          workspaces: ". -> target"
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+
+      # runner 镜像自带 ANDROID_HOME + 若干 NDK；只补缺失组件。
+      # 关键：cargo-mobile2 的 ensure_ndk 会无视 NDK_HOME、取 ndk/ 下版本号最大的
+      # 那个，所以不要依赖「钉死某个 NDK 版本」——让 16KB 门做唯一判据。
+      - name: Android SDK / NDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SM" ] || SM="$(command -v sdkmanager)"
+          yes | "$SM" --licenses > /dev/null 2>&1 || true
+          "$SM" --install "platforms;android-36" "build-tools;36.1.0" > /dev/null
+          if [ -z "$(ls -A "$SDK/ndk" 2>/dev/null)" ]; then
+            "$SM" --install "ndk;27.0.12077973" > /dev/null
+          fi
+          echo "NDKs:"; ls "$SDK/ndk"
+          # 给 16KB 门兜底一个 llvm-readelf（binutils 的 readelf 通常已在 PATH）
+          NDK=$(ls -d "$SDK"/ndk/* | sort -V | tail -1)
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+
+      # 只做 ~/.gradle 缓存；wrapper 发行版仍从 gradle-wrapper.properties 的
+      # 腾讯镜像下载（见 scripts/ci/README.md 的遗留风险登记）。
+      - uses: gradle/actions/setup-gradle@v4
+
+      # 关键：gen/android/buildSrc/.../BuildTask.kt 里 gradle 回调的是
+      # `cargo tauri android android-studio-script`，必须有 cargo-tauri 可执行文件；
+      # npm 的 @tauri-apps/cli 只提供 `tauri`（`npm view ... bin` 只有 tauri），
+      # taiki-e/install-action 也不收录 tauri-cli。故用 cargo install + 二进制缓存。
+      - uses: actions/cache@v4
+        id: cargo-tauri
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: cargo-tauri-2.10.1-${{ runner.os }}
+      - if: steps.cargo-tauri.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version 2.10.1 --locked
+
+      - run: npm ci
+        working-directory: ui
+
+      # --ci 在 Actions 里本就由 CI env 触发（clap env = "CI"），显式写出便于本地复跑。
+      # -f mobile 必须显式：tauri.android.conf.json 的 build.features 不被采纳
+      # （docs/architecture/l1-component-design.md 移动端装配一节）。
+      - name: 构建 debug APK（aarch64）
+        run: cargo tauri android build --target aarch64 --apk --debug --ci -f mobile
+
+      - name: 16 KB 页对齐门（ELF PT_LOAD + APK zip 偏移）
+        run: |
+          bash scripts/ci/check-android-16kb.sh \
+            target/aarch64-linux-android/debug/libtinyssh_app_lib.so \
+            $(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | sort)
+
+      # 版本号断言（防 tauri.properties 兜底值 1/1.0 混入产物）
+      - name: 产物版本号与 tauri.conf 一致
+        run: |
+          VER=$(sed -n 's/^  "version": "\(.*\)",/\1/p' src-tauri/tauri.conf.json | head -1)
+          BT=$(ls -d "${ANDROID_HOME}/build-tools/"* | sort -V | tail -1)
+          "$BT/aapt2" dump badging \
+            src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
+            | grep -q "versionName='${VER}'" || { echo "::error::APK versionName != ${VER}"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          retention-days: 7
 
   tier3:
     name: ubuntu · e2e（docker sshd，手动档 3）

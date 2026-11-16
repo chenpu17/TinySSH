@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ 备份内容规则：全量排除。
+     应用数据里有 vault（主机凭据）与 keyring 密文，而加密它们的 AndroidKeyStore
+     密钥永不备份——任何「只恢复一半」的迁移都只会得到解不开的数据，甚至启动即退。
+     因此云备份与设备间迁移一律不带走应用数据（allowBackup=false 已关云备份，
+     本文件补上 Android 12+ 的 device-transfer 口子）。跨机请用应用内导出。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

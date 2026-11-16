@@ -59,3 +59,5 @@ CARGO_BUILD_JOBS=4 bash scripts/dist-portable.sh   # 低内存机限并行
   达成同「单文件」语义，未排期。
 - 单 exe 不含自动更新器：升级 = 替换 exe 文件（用户数据在 `~/.tinyssh` 不受影响）。
 - 防病毒误报：无签名二进制的固有风险，签名（codesign/ Authenticode）属发布工程，未排期。
+
+> Android APK 的发布/签名契约另见 [release-android.md](release-android.md)。

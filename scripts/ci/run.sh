@@ -77,6 +77,30 @@ run "命令面/版本号哨兵" cargo test -p session-api -j 4 --tests
 run "契约生成物新鲜度" cargo test -p session-api --features ts --test wire_codegen
 (cd ui && run "tsc 类型检查" npx tsc --noEmit)
 
+# ---- Android 16 KB 页对齐门（可选；默认不跑，避免拖慢本地门禁）----
+# TINYSSH_ANDROID_APK=1        → 扫默认产物（aarch64 debug .so + gen/android 下所有 APK）
+# TINYSSH_ANDROID_APK=<路径>   → 指定 APK 文件或目录（目录按 *.apk 展开）
+if [ -n "${TINYSSH_ANDROID_APK:-}" ]; then
+  android_targets=()
+  if [ "$TINYSSH_ANDROID_APK" = "1" ]; then
+    android_targets+=(target/aarch64-linux-android/debug/libtinyssh_app_lib.so)
+    while IFS= read -r apk; do
+      [ -n "$apk" ] && android_targets+=("$apk")
+    done < <(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' 2>/dev/null | sort)
+  elif [ -d "$TINYSSH_ANDROID_APK" ]; then
+    while IFS= read -r apk; do
+      [ -n "$apk" ] && android_targets+=("$apk")
+    done < <(find "$TINYSSH_ANDROID_APK" -name '*.apk' 2>/dev/null | sort)
+  else
+    android_targets+=("$TINYSSH_ANDROID_APK")
+  fi
+  if [ "${#android_targets[@]}" -eq 0 ]; then
+    echo "── [tier$TIER] Android 16 KB 门跳过（TINYSSH_ANDROID_APK 未匹配到产物）"
+  else
+    run "Android 16 KB 页对齐门" bash scripts/ci/check-android-16kb.sh "${android_targets[@]}"
+  fi
+fi
+
 if [ "$TIER" = "1" ]; then
   echo
   if [ "$FAIL" = "0" ]; then echo "tier1 快门：全绿"; else echo "tier1 快门：有红"; fi

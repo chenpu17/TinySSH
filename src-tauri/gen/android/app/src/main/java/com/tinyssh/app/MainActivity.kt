@@ -1,28 +1,136 @@
 package com.tinyssh.app
 
+import android.content.Context
+import android.content.res.Configuration
+import android.hardware.input.InputManager
 import android.os.Bundle
+import android.view.InputDevice
 import android.view.View
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import java.lang.ref.WeakReference
 
 class MainActivity : TauriActivity() {
   private var contentWebView: WebView? = null
 
+  companion object {
+    /** 供 Rust 经 JNI（Application context 的 ClassLoader 载入本类）回调。 */
+    private var current: WeakReference<MainActivity>? = null
+
+    /** Activity 不在时（后台/重建窗口）查询物理键盘的兜底来源：Application context
+     *  是进程生命期对象，不构成 Activity 泄漏。 */
+    private var appContext: Context? = null
+
+    /**
+     * 系统栏图标深浅跟随应用主题（KI-060）：应用浅色而系统深色时，纯白状态栏图标
+     * 压在浅色背景上不可读。WeakReference 防泄漏；view.post 保证在主线程操作
+     * View/WindowInsetsController（JNI 调用可能来自 Rust 后台线程）。
+     */
+    @JvmStatic
+    fun setSystemBarsLight(light: Boolean) {
+      val a = current?.get() ?: return
+      val view = a.window.decorView
+      view.post {
+        val c = WindowCompat.getInsetsController(a.window, view)
+        c.isAppearanceLightStatusBars = light
+        c.isAppearanceLightNavigationBars = light
+      }
+    }
+
+    /**
+     * 是否有物理键盘（移动端交互）：前端据此隐藏辅助键条、收紧软键盘避让等。
+     * 先枚举 InputManager 的输入设备——排除虚拟设备（注入源/框架自造设备也会
+     * 带键盘源位），命中「键盘源位 + keyboardType 非 NONE」才算；Activity 不在
+     * 时退回 Configuration.keyboard，那是系统按当前连接设备解析出的同一事实。
+     * Rust 经 JNI 静态调用本方法，失败只会少一个布局优化。
+     */
+    @JvmStatic
+    fun hasHardwareKeyboard(): Boolean {
+      val a = current?.get()
+      if (a != null) return a.detectHardwareKeyboard()
+      val ctx = appContext ?: return false
+      return ctx.resources.configuration.keyboard != Configuration.KEYBOARD_NOKEYS
+    }
+
+    /** 推给 WebView 的 JS：只拼常量（'1'/'0'、true/false），无外部输入插值，
+     *  不存在注入面；dataset 供 CSS/启动期同步读取，CustomEvent 供运行期订阅。 */
+    private fun hardwareKeyboardJs(present: Boolean): String {
+      val flag = if (present) "1" else "0"
+      val detail = if (present) "true" else "false"
+      return "document.documentElement.dataset.hwkb='$flag';" +
+        "window.dispatchEvent(new CustomEvent('tinyssh-hwkb',{detail:$detail}))"
+    }
+  }
+
+  /** 物理键盘插拔（USB/蓝牙/磁吸键盘）：监听器注册时 handler 传 null 即投递到
+   *  主线程，回调里重算并推 WebView。 */
+  private val inputDeviceListener = object : InputManager.InputDeviceListener {
+    override fun onInputDeviceAdded(deviceId: Int) {
+      refreshHardwareKeyboard()
+    }
+
+    override fun onInputDeviceRemoved(deviceId: Int) {
+      refreshHardwareKeyboard()
+    }
+
+    override fun onInputDeviceChanged(deviceId: Int) {
+      refreshHardwareKeyboard()
+    }
+  }
+
+  /** 遍历非虚拟输入设备找键盘；token 未配 KEYBOARD 源或类型为 NONE 的不算
+   *  （gpio-keys 之类的按键设备常只报源位而不报键盘类型）。兜底 Configuration
+   *  ——系统已把当前连接设备归并成 keyboard 分类。 */
+  private fun detectHardwareKeyboard(): Boolean {
+    val im = getSystemService(InputManager::class.java)
+    if (im != null) {
+      for (id in im.inputDeviceIds) {
+        val d = im.getInputDevice(id) ?: continue
+        if (d.isVirtual) continue
+        if ((d.sources and InputDevice.SOURCE_KEYBOARD) != 0 &&
+          d.keyboardType != InputDevice.KEYBOARD_TYPE_NONE
+        ) {
+          return true
+        }
+      }
+    }
+    return resources.configuration.keyboard != Configuration.KEYBOARD_NOKEYS
+  }
+
+  /** 重算并推给 WebView；WebView 未创建时静默跳过（前端启动时会主动查询命令）。 */
+  private fun refreshHardwareKeyboard() {
+    val present = detectHardwareKeyboard()
+    val wv = contentWebView ?: return
+    val js = hardwareKeyboardJs(present)
+    wv.post { wv.evaluateJavascript(js, null) }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    current = WeakReference(this)
+    appContext = applicationContext
+    // 物理键盘插拔后前端要即时换布局（辅助键条/软键盘避让），事件驱动而不是
+    // 靠前端轮询；注销在 onDestroy。
+    getSystemService(InputManager::class.java)?.registerInputDeviceListener(inputDeviceListener, null)
     // 边到边（Android 15 对 targetSdk 35+ 强制）下软键盘默认是覆盖式：WebView
-    // 高度不变，输入法直接压在终端和状态栏上，前端 ResizeObserver 收不到收缩，
-    // xterm 一直画到键盘底下（提示行被遮住）。这里把 IME inset 转成内容区
-    // 底部内边距，WebView 高度随之缩短，前端布局与终端自动重排。
+    // 高度不变，输入法直接压在终端和状态栏上，xterm 一直画到键盘底下（提示行被
+    // 遮住）。这里把 IME inset 转成内容区底部内边距，WebView 高度随之缩短，
+    // 前端布局与终端自动重排。IME 收缩由原生唯一负责（前端 ResizeObserver 只
+    // 跟随 WebView 尺寸变化，不另行补偿）。
+    // 三键导航/手势条的 systemBars 底部 inset 从未被补偿（KI-058），终端辅助键条
+    // 等贴底控件被压在导航栏下：与 IME 取 max——键盘弹出时 IME 通常更大，键盘
+    // 收起时补导航栏高度（两者重叠，相加会重复留白）。
     // 顶部状态栏仍由边到边交给前端 CSS 处理（这里不重复加内边距）。
     val root = findViewById<View>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-      v.setPadding(0, 0, 0, ime)
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+      v.setPadding(0, 0, 0, maxOf(ime, bars))
       insets
     }
     // 返回键：TauriActivity 关掉了 Wry 的默认返回导航，系统默认会直接退 App。
@@ -41,5 +149,22 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     contentWebView = webView
+    // onWebViewCreate 早于页面 JS 就绪，立即推一次可能落在空世界；前端启动时
+    // 会主动调 has_hardware_keyboard（命令路径不会丢），这里再延迟补推一次，
+    // 覆盖冷启动/重建窗口的时序空窗。
+    refreshHardwareKeyboard()
+    webView.postDelayed({ refreshHardwareKeyboard() }, 800)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    // 后台期间显示器/外设可能变化，且这次挂起前可能错过一次推送：回前台重算。
+    refreshHardwareKeyboard()
+  }
+
+  override fun onDestroy() {
+    getSystemService(InputManager::class.java)?.unregisterInputDeviceListener(inputDeviceListener)
+    if (current?.get() === this) current = null
+    super.onDestroy()
   }
 }
