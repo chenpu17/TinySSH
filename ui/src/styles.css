@@ -189,6 +189,12 @@
   --ansi-8: #3c4148; --ansi-9: #e57670; --ansi-10: #56a85b; --ansi-11: #b29503;
   --ansi-12: #3e9de5; --ansi-13: #bc80d6; --ansi-14: #0ca8a8; --ansi-15: #f2f3f6;}
 
+/* 根元素 color-scheme（KI-060）：滚动条、表单原生控件与系统栏图标的默认明暗语义
+   跟随应用深浅（应用浅色而系统深色时不再出现纯白图标/深色滚动条）。首帧
+   data-chrome 由 theme-boot.js 在 CSS 生效前写好，这里只声明语义，不另加 JS。 */
+:root[data-chrome="dark"] { color-scheme: dark; }
+:root[data-chrome="light"] { color-scheme: light; }
+
 /* ---- 浅色 chrome（R27：应用外观三态 system/dark/light，与终端配色解耦）----
    色板要点：accent/danger/ok/warn 全部深化到浅底 4.5:1 上下；彩色按钮文字换白；
    遮罩/玻璃/阴影换浅色系；hover 一律**加深**（浅色白字按钮 hover 提亮会跌破 4.5:1）；
@@ -305,7 +311,7 @@ body {
 :root[data-density="compact"] .statusbar { padding-left: 8px; padding-right: 8px; }
 :root[data-density="compact"] .tabbar-row { padding: 0 8px; }
 :root[data-density="compact"] .tabbar { padding: 0 2px; }
-:root[data-density="compact"] .tab { height: 24px; }
+:root[data-density="compact"] .tab { height: 22px; }
 /* ===== AppShell（R12 §4.1/§4.2）：标题区 38 / 主机栏 224(200–300 可拖可收) /
    标签 34 / 会话工具栏 34 / 页脚状态条 26（资源采样合并进行）；布局优先级：可操作 > 当前任务 > 终端空间 ===== */
 .app-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -880,6 +886,15 @@ textarea {
 @container (max-width: 880px) { .metrics-bar .mseg[data-pri="3"] { display: none; } }
 @container (max-width: 780px) { .metrics-bar .mseg[data-pri="2"] { display: none; } }
 @container (max-width: 680px) { .metrics-bar .mseg[data-pri="1"] { display: none; } }
+/* #37 专注态时钟：accent 描边 + 大圆角药丸（与 tmux 快接钮同形态），数值
+   tabular-nums 防分钟跳变时整条抖动 */
+.metrics-bar .mclock {
+  flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 9px;
+  border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
 .metrics-bar .mlabel { color: var(--dim); letter-spacing: 0.02em; }
 .metrics-bar .mval { color: var(--text-sub); }
 .metrics-bar .mnum { font-variant-numeric: tabular-nums; }
@@ -1341,8 +1356,10 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
 button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(--text); }
 .tab {
   display: flex; align-items: center; gap: 7px; flex: none; min-width: 120px;
-  max-width: 220px; height: 27px; padding: 0 6px 0 10px; font-size: calc(12px * var(--ui-font-scale)); font-weight: 500; color: var(--text-sub);
-  border: 1px solid transparent; border-radius: 9px;
+  /* #38：药丸压到 24px（原 27）并加大圆角 12px——与专注态 tmux 快接钮同一形态，
+     行高 34 内上下各留 5px，中文标签不再贴边显得被裁 */
+  max-width: 220px; height: 24px; padding: 0 7px 0 10px; font-size: calc(12px * var(--ui-font-scale)); font-weight: 500; color: var(--text-sub);
+  border: 1px solid transparent; border-radius: 12px;
   background: color-mix(in srgb, var(--panel) 45%, transparent); cursor: pointer; -webkit-user-select: none; user-select: none;
   position: relative;
   transition: background 120ms, color 120ms, border-color 120ms, box-shadow 120ms;
@@ -3777,6 +3794,22 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   }
 }
 
+/* 触屏可用性不跟宽度断点走：手机横屏常见 800–915 CSS px，超过 760 后移动布局块
+   整体失效，但触屏依旧没有 hover——主机卡操作组（收藏/编辑/删除）、SFTP 行下载钮、
+   「回到底部」浮钮原本只靠 :hover 显形，横屏后入口凭空消失。这里按平台标记（与
+   isMobilePlatform 同源）兜底，任意宽度生效；桌面（含窄窗口）仍是悬停显形。
+   （不用 @media (hover:none)：平台标记与行为裁剪、其余移动样式同一判据，也可测。） */
+:root[data-platform="android"] .host-card-side,
+:root[data-platform="ios"] .host-card-side { opacity: 1; pointer-events: auto; }
+:root[data-platform="android"] .host-card .host-line,
+:root[data-platform="ios"] .host-card .host-line,
+:root[data-platform="android"] .host-card .host-sub,
+:root[data-platform="ios"] .host-card .host-sub { padding-right: 88px; }
+:root[data-platform="android"] .sftp-row .sftp-dl,
+:root[data-platform="ios"] .sftp-row .sftp-dl { opacity: 1; pointer-events: auto; }
+:root[data-platform="android"] .term-scroll-bottom:not([hidden]),
+:root[data-platform="ios"] .term-scroll-bottom:not([hidden]) { opacity: 1; pointer-events: auto; }
+
 /* ===== 移动端（Android / iOS webview + 窄视口）=====
    桌面是「活动栏 + 主机栏 + 主区」三栏并排；手机没有横向空间，改成单列：
    顶栏 → 主区 → 底部活动栏，侧栏（主机栏 / Agent / 文件面板）一律全屏覆盖。
@@ -3785,7 +3818,7 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
    安全区：Android 15 起 app 强制 edge-to-edge，webview 内容会画到系统栏底下；
    Android WebView 的 env(safe-area-inset-top) 恒为 0（只反映屏幕挖孔），所以
    顶栏用 24dp 标准状态栏高度兜底，底部导航同样留 20dp 给手势条；刘海/灵动岛
-   由 env() 取更大值。 */
+   由 env() 取更大值。平台级的顶栏/左右安全区在文件末尾（横屏越过 760 后仍生效）。 */
 @media (max-width: 760px) {
   .app-shell { height: 100dvh; }
 
@@ -3911,6 +3944,27 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 }
 .mobile-keys .mk-gap { flex: 0 0 4px; }
 
+/* 触屏浮条（终端选区/链接点按，KI-052）：与 .ctx-menu 同层的 fixed 小横条，
+   挂在全屏 .pop-mask（z56）之上。40dp 高按钮满足触控判据；不换行、按内容宽，
+   App 给锚点坐标、clampIntoView 兜底回夹视口。 */
+.touch-bar {
+  position: fixed; z-index: 66;
+  display: flex; align-items: center; gap: 2px;
+  /* 「更多」页 6 颗按钮在 360dp 竖屏放不下一行：换行居中，高度由 clampIntoView
+     实测后回夹，不会被视口裁掉 */
+  flex-wrap: wrap; justify-content: center;
+  padding: 4px; max-width: calc(100vw - 12px);
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 2px 6px var(--shadow-soft), 0 12px 32px var(--shadow-pop);
+}
+.touch-bar-btn {
+  height: 40px; padding: 0 12px; white-space: nowrap;
+  border: none; border-radius: 8px;
+  background: transparent; color: var(--text);
+  font: inherit; font-size: calc(13px * var(--ui-font-scale));
+}
+.touch-bar-btn:active { background: var(--panel3); }
+
 /* 移动端 v1 范围：只保 SSH + tmux。Agent / 跨主机编排 / 资源监控 / 协作入口
    在移动装配里不出现（桌面不受影响）。 */
 :root[data-platform="android"] .rail-btn[data-testid="rail-agent"],
@@ -3925,3 +3979,77 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
    徽标只剩标题栏噪音，窄屏上还挤占标题空间 */
 :root[data-platform="android"] .ctl-badge,
 :root[data-platform="ios"] .ctl-badge { display: none; }
+
+/* ===== 移动端安全区与触控尺寸（判据与 KI-055 同一把尺：平台标记，不跟宽度断点走）=====
+   Android 15 起 app 强制 edge-to-edge，webview 内容画到系统栏/挖孔底下；Android
+   WebView 的 env(safe-area-inset-top) 恒为 0（只反映屏幕挖孔），所以顶栏用 26px
+   标准状态栏高度兜底。此前这组安全区规则只写在 @media (max-width: 760px) 里，
+   手机横屏常见 800–915 CSS px 越过断点后整体失效（状态栏压住标题栏）；现按平台
+   标记提到任意宽度。左右安全区（横屏刘海/圆角屏）由根布局消费；桌面（无
+   data-platform）完全不受影响。 */
+:root[data-platform="android"] .app-shell,
+:root[data-platform="ios"] .app-shell {
+  padding-left: max(env(safe-area-inset-left, 0px), 0px);
+  padding-right: max(env(safe-area-inset-right, 0px), 0px);
+}
+:root[data-platform="android"] .titlebar,
+:root[data-platform="ios"] .titlebar {
+  height: auto; min-height: 44px;
+  /* 长手写：媒体块里的 padding 简写仍管左右内边距，这里只覆盖上下 */
+  padding-top: max(env(safe-area-inset-top, 0px), 26px);
+  padding-bottom: 6px;
+}
+
+/* 触控命中高度（任意宽度，平板/横屏手机同样受益）：桌面 26–30px 钮低于 36dp
+   判据，图标又常相邻（误触接管/断开）。只用 min-* 抬命中盒，不覆盖既有视觉尺寸
+   与 hover 规则；.ghost.icon-btn 的 min-width 同步抬到 36 保持方形命中区。 */
+:root[data-platform="android"] .rail-btn,
+:root[data-platform="ios"] .rail-btn {
+  min-width: 36px; min-height: 36px;
+}
+:root[data-platform="android"] :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button:not(.tab-scroll),
+:root[data-platform="ios"] :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button:not(.tab-scroll) {
+  min-height: 36px;
+}
+:root[data-platform="android"] :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.icon-btn,
+:root[data-platform="ios"] :is(.session-toolbar, .session-toolbar > .st-tools, .tabbar-row, .tabbar-row > .st-tools, .tp-head) > button.ghost.icon-btn {
+  min-width: 36px;
+}
+
+/* 手机横屏（800–915 CSS px 常见，高度 320–480）：宽度越过 760 后站点落回桌面
+   三栏，纵向又极紧。这里只做保守让位——顶栏/状态条压到最低可触高度、图标栏
+   收窄、纯读数隐藏；hostbar/右栏这类有状态的功能不隐藏（入口仍在，用既有收展钮）。
+   min-width: 761px 与移动布局块互补互斥：更窄的横屏设备仍走底部导航单列，
+   不能被这里的三栏收窄规则误伤。 */
+@media (orientation: landscape) and (min-width: 761px) and (max-height: 560px) {
+  :root[data-platform="android"] .titlebar,
+  :root[data-platform="ios"] .titlebar {
+    min-height: 38px;
+    /* 顶部仍保留 26px 状态栏兜底——横屏系统状态栏照旧压在标题栏上，只压
+       min-height/下内边距，不把内容塞到时钟下面 */
+    padding-top: max(env(safe-area-inset-top, 0px), 26px);
+    padding-bottom: 0;
+  }
+  /* 纯读数/版本标签让位终端（更新徽标、控制权徽标等功能入口不在此列） */
+  :root[data-platform="android"] .tb-self,
+  :root[data-platform="ios"] .tb-self,
+  :root[data-platform="android"] .ver-tag,
+  :root[data-platform="ios"] .ver-tag { display: none; }
+
+  /* 左右图标栏收窄（36px 命中盒由上面的 min-* 保证，不缩回 30px） */
+  :root[data-platform="android"] .actrail,
+  :root[data-platform="ios"] .actrail { width: 38px; padding: 6px 0; gap: 2px; }
+  :root[data-platform="android"] .rb-rail,
+  :root[data-platform="ios"] .rb-rail { width: 38px; padding: 6px 0; gap: 2px; }
+
+  /* 主机栏可拖 200–300：横屏封顶 232，把横向空间还给终端（inline width 会被
+     max-width 夹住；仍可拖窄，不隐藏功能） */
+  :root[data-platform="android"] .hostbar,
+  :root[data-platform="ios"] .hostbar { max-width: 232px; }
+
+  /* 底部状态条抬到可触高度：固定 26px 会把 36px 命中盒裁掉，故条高跟内容走 */
+  :root[data-platform="android"] .statusbar,
+  :root[data-platform="ios"] .statusbar { height: auto; min-height: 36px; padding: 0 8px; }
+  :root[data-platform="android"] .sb-btn,
+  :root[data-platform="ios"] .sb-btn { min-height: 36px; padding: 0 8px; }
+}

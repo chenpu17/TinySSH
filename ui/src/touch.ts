@@ -15,8 +15,9 @@ import { isMobilePlatform } from "./platform";
 const LONG_PRESS_MS = 480;
 const MOVE_CANCEL_PX = 10;
 
-/** 长按触发后吞掉紧跟着的那一次 click（window 捕获阶段，压过 React 根上的委托）。 */
-function swallowNextClick() {
+/** 长按触发后吞掉紧跟着的那一次 click（window 捕获阶段，压过 React 根上的委托）。
+ *  终端的选区/链接浮条同样在手指还按着（或抬指当下）落地，也要走这一下。 */
+export function swallowClickOnce() {
   const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
   window.addEventListener("click", swallow, true);
   window.setTimeout(() => window.removeEventListener("click", swallow, true), 600);
@@ -61,7 +62,7 @@ export function useLongPress(): LongPress {
         // 菜单落地时手指还按着，抬手那一下的 click 会打到新出现的 .pop-mask 上把
         // 菜单立刻关掉（真机实测：capture 到本元素也拦不住 click 的命中测试）。
         // 触发后 600ms 内捕获阶段吞掉一次 click，这一下就不再冒泡给 React。
-        swallowNextClick();
+        swallowClickOnce();
         onFire();
       }, LONG_PRESS_MS);
     },

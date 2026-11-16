@@ -8,7 +8,6 @@ import type { KeyActionId } from "../keymap";
 import type { SessionInfo } from "../adapter/wire";
 import { stateLabel } from "../app-data";
 import { t } from "../i18n";
-import { isMobilePlatform } from "../platform";
 import type { SplitPanes } from "../app-data";
 import { IconChevronDown, IconSearch, IconSplit } from "../icons";
 import { TmuxQuick } from "./tmux-quick";
@@ -101,9 +100,10 @@ export function SessionToolbar({
   // 工具菜单开合的收口（原内联 setToolsOpen(false) 同款）
   const closeTools = () => setToolsOpen(false);
   // 「远程文件」是窄屏补位：<760px 右缘竖栏（rb-rail）整条隐藏，文件面板必须另有
-  // 入口；宽屏桌面 rb-files 常驻，菜单里再放一项就回到用户反馈过的「入口重复」。
-  // 按宽度判（而不是平台）：窄窗口桌面同样要靠它，且与 rail 的媒体查询同断点。
-  const showFilesEntry = isMobilePlatform() || window.matchMedia("(max-width: 760px)").matches;
+  // 入口；宽屏（桌面、平板与手机横屏）rb-files 常驻，菜单里再放一项就回到用户反馈
+  // 过的「入口重复」。只按宽度判、与 rail 的媒体查询同断点——此前还叠了
+  // isMobilePlatform()，移动端宽屏/平板因此同时出现两个入口。
+  const showFilesEntry = window.matchMedia("(max-width: 760px)").matches;
   return (
     <div className="session-toolbar">
       <div className="st-ident">

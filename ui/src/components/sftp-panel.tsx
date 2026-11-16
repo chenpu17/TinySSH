@@ -438,18 +438,21 @@ export function TransferQueueDrawer({
 // 再点才执行」语义：破坏性动作不一点即发，也不额外弹窗打断。目录右键同菜单
 // （下载/另存为对目录无意义，隐去）。
 interface SftpFileMenuProps {
-  sftpMenu: { name: string; x: number; y: number; isDir?: boolean } | null;
+  sftpMenu: { name: string; x: number; y: number; isDir?: boolean; kind?: string | null } | null;
   sftpMenuRef: { current: HTMLDivElement | null };
   winW: number;
   sftpPathRef: { current: string };
-  setSftpMenu: (v: { name: string; x: number; y: number; isDir?: boolean } | null) => void;
+  setSftpMenu: (v: { name: string; x: number; y: number; isDir?: boolean; kind?: string | null } | null) => void;
+  /** 进目录/探明链接（宿主 sftpActivate：与双击/Enter 同一语义）——触屏没有双击，
+   *  菜单必须自带这一项，否则目录行在手机上只能选中、打不开 */
+  onOpen: (name: string) => void;
   downloadRemote: (rp: string, opts?: { saveAs?: boolean }) => Promise<void>;
   pushToast: (kind: "ok" | "err" | "info", text: string) => void;
   sid: string | null;
   loadDir: (p: string) => Promise<boolean>;
 }
 export function SftpFileMenu({
-  sftpMenu, sftpMenuRef, winW, sftpPathRef, setSftpMenu, downloadRemote, pushToast, sid, loadDir,
+  sftpMenu, sftpMenuRef, winW, sftpPathRef, setSftpMenu, onOpen, downloadRemote, pushToast, sid, loadDir,
 }: SftpFileMenuProps) {
   const [delArm, setDelArm] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -531,6 +534,13 @@ export function SftpFileMenu({
             </div>
           ) : (
             <>
+              {(sftpMenu.isDir || sftpMenu.kind === "symlink") && (
+                // 触屏入口：手机没有双击，长按出菜单后必须有一项能「进去/探明」；
+                // 桌面右键同样受益（与双击同源同义，删了双击语义也还在这）
+                <button role="menuitem" data-testid="sftp-menu-open"
+                  onClick={() => { const n = sftpMenu.name; setSftpMenu(null); onOpen(n); }}
+                ><IconFolder size={12} /> {sftpMenu.isDir ? t("进入目录") : t("打开链接")}</button>
+              )}
               {!sftpMenu.isDir && (
                 <>
                   <button role="menuitem" data-testid="sftp-menu-download"

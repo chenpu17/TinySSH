@@ -51,7 +51,20 @@
 // 真实组合（compositionstart/update/end、insertCompositionText）不进这条路径；
 // compositionend 已先送达时计数已变，也不会二次上屏。
 //
-// 回归：ui/test/specs/71-ime-punct-gate.spec.cjs（伪 core 语义 + 真实 xterm 事件序列）。
+// 2026-11-16 复报（#36，ToDesk 远程桌面 + Android 端输入法）：WKWebView 收到系统级
+// unicode 注入（CGEventKeyboardSetUnicodeString，一次事件携带整串「你好世界」）时，
+// 真实事件序列是：
+//   keydown   key="你好世界" keyCode=65 charCode=0      → xterm 的 keyCode 表查不到，不发
+//   keypress  key="你好世界" keyCode=20320 charCode=20320 → xterm 只发 String.fromCharCode
+//                                                          = 首字「你」
+//   textInput data="你好世界"（旧事件，xterm 不监听）
+//   beforeinput/input data="你好世界" composed=true      → 被 _keyDownSeen 去重门丢弃
+//   keyup
+// 于是「一次提交多个字，PTY 只收到第一个字」。修法与 #6294 同向：keydown.key 是多字
+// 文本（注入提交）时由这里接管——不按 keyCode 发数据，keypress 的首字也吞掉（它只是
+// 整串的第一个 UTF-16 码元），整串交给随后的 input 兜底（ev.data 是全量真值）。
+// 回归：ui/test/specs/71-ime-punct-gate.spec.cjs（伪 core 语义 + 真实 xterm 事件序列，
+// 含 ``injectedMultiChar`` 这条 WKWebView 真实时序）。
 
 /** 只描述本补丁触达的 xterm core 内部面（私有 API，按 5.5/6.0 锁定）。 */
 type KeyDownGateCore = {
@@ -89,6 +102,9 @@ type LastKeyDown = {
   seq: number;
   /** 本键已由 input 兜底送达；迟到的 keypress 必须吞掉，避免同键发两次。 */
   delivered?: boolean;
+  /** keydown.key 是多字文本（系统级 unicode 注入的提交串，如「你好世界」）：
+   * 文本由随后的 input 整串送达，keypress 只够第一个码元，必须吞掉。 */
+  multiChar?: string;
 };
 
 const PATCHED = Symbol.for("tinyssh.xterm-ime-gate");
@@ -123,6 +139,20 @@ export function isMacImePunctuationKey(ev: KeyboardEvent): boolean {
   return (c >= 33 && c <= 64) || // ! through @（含数字）
     (c >= 91 && c <= 96) || // [ through `
     (c >= 123 && c <= 126); // { through ~
+}
+
+/** 有键名但无文本语义的按键：keydown.key 长度 > 1 属正常（不注入文本）。 */
+const NON_TEXT_KEY_NAME =
+  /^(?:Unidentified|Dead|Process|Enter|Tab|Escape|Esc|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(?:Left|Right|Up|Down)|F\d{1,2}|CapsLock|NumLock|ScrollLock|Pause|ContextMenu|PrintScreen|AltGraph|Fn|FnLock|Hyper|Super|Meta|OS|Symbol|SymbolLock|Shift|Control|Alt|Convert|NonConvert|KanaMode|KanjiMode|Eisu|HanjaMode|Spacebar|Left|Right|Up|Down|Print|Select|Help|Execute|Scroll|Media[A-Za-z]+|Browser[A-Za-z]+|Launch[A-Za-z]+|Volume(?:Up|Down|Mute)|Audio[A-Za-z]+)$/;
+
+/** keydown.key 是一次提交的多字文本（CGEvent 系统级 unicode 注入、部分远程桌面/
+ * 剪贴板注入的形态）：keyCode 只是注入方的虚拟键，keypress 只携带第一个码元，
+ * 整串由随后的 input 送达。命中时调用方接管这一键，别再按 keyCode 查表。 */
+export function isMultiCharTextKeydown(ev: KeyboardEvent): boolean {
+  if (ev.ctrlKey || ev.altKey || ev.metaKey) return false;
+  if (ev.isComposing || ev.keyCode === 229 || ev.key === "Process") return false;
+  if (!ev.key || ev.key.length < 2) return false;
+  return !NON_TEXT_KEY_NAME.test(ev.key);
 }
 
 /** 鼠标上报报文（SGR `<b;x;yM/m`、URXVT `b;x;yM`、X10 `ESC[M`+3 字节）：
@@ -163,6 +193,31 @@ export function patchXtermImeGate(term: unknown): void {
   const orig = proto._keyDown;
   const patched = function (this: KeyDownGateCore, ev: KeyboardEvent) {
     const seq = this[DELIVERY_SEQ];
+    // 多字注入提交（WKWebView + CGEventKeyboardSetUnicodeString，见文件头 #36）：
+    // keydown.key 就是整串文本，keyCode 只是注入方的虚拟键（xterm 据此查表会误发
+    // CR/ESC 或什么都不发），keypress 又只够第一个码元。这里接管：不按 keyCode
+    // 发数据，松开 preventDefault 让浏览器把整串写进 textarea 并派发 input，
+    // 由下方 _inputEvent 兜底整串送达；keypress 的首码元在 _keyPress 里吞掉。
+    // 仅在送达计数已装好（typeof seq === "number"）时接管：否则 input 兜底会因
+    // `seq === last.seq` 恒假而拒绝放行，接管等于把这一键彻底丢掉，不如退回原路径。
+    if (typeof seq === "number" && isMultiCharTextKeydown(ev)) {
+      if (this._customKeyEventHandler && this._customKeyEventHandler(ev) === false) {
+        return orig.call(this, ev);
+      }
+      const comp = this._compositionHelper;
+      if (comp && (comp.isComposing || comp._isSendingComposition)) return orig.call(this, ev);
+      this._keyDownSeen = true;
+      this._keyDownHandled = false;
+      this[LAST_KEYDOWN] = {
+        modifier: false,
+        composition: false,
+        value: comp?._textarea?.value ?? "",
+        seq: seq ?? 0,
+        multiChar: ev.key,
+      };
+      ev.stopPropagation();
+      return true;
+    }
     // macOS 搜狗等第三方 IME：keydown.key 是半角标点/数字，真正的全角字符在
     // keypress.charCode 里。先把这一键交给 keypress，避免半角先上屏或首击被吞
     // （与上游 #6294 同向；仅 macOS、非组合态、非 screen reader）。
@@ -289,6 +344,19 @@ export function patchXtermImeGate(term: unknown): void {
           last.delivered = false;
           ev.preventDefault();
           return false;
+        }
+        // 多字注入提交：keypress 的 charCode 只是整串第一个码元（「你好世界」→
+        // 「你」），放行就是 #36 的「只进第一个字」。整串由 _inputEvent 兜底送达。
+        const text = last?.multiChar;
+        if (text) {
+          const ch = ev.charCode ? String.fromCharCode(ev.charCode) : "";
+          // 首码元匹配是常态；charCode 与注入串不同源时退回 key 真值比较。
+          if ((ch && text.startsWith(ch)) || ev.key === text) {
+            // 只拦下 xterm 自己按 charCode 发首字；不 preventDefault——WKWebView 的
+            // 默认动作（把整串写进 textarea 并派发 input）必须保留，那是唯一送达机会。
+            this._keyPressHandled = false;
+            return false;
+          }
         }
         return origKeyPress.call(this, ev);
       };

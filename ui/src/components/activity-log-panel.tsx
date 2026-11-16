@@ -3,6 +3,7 @@
 // 本组件只收 props 呈现，零语义变更。
 import { decisionLabel, LOG_ACTION_OPTIONS, stampLocal, TZ_NOTE } from "../app-data";
 import { t } from "../i18n";
+import { isMobilePlatform } from "../platform";
 import type { AuditEvent } from "../adapter/wire";
 import { IconClock, IconRefresh, IconTerminal } from "../icons";
 
@@ -47,9 +48,13 @@ export function ActivityLogPanel({
                       onClick={() => setLogScope("all")}>{t("全部会话")}</button>
                   </div>
                   <span style={{ flex: 1 }} />
-                  <button className="ghost" data-testid="log-open-timeline"
-                    title={t("打开设置 → 记录审计：带泳道图与耗时点的动作时间线（本面板是审计事件流，两者数据同源、视角不同）")}
-                    onClick={openTimeline}>{t("时间线")}</button>
+                  {/* 时间线落在设置页，而设置分类在移动端裁剪过（没有「记录审计」）：
+                      按钮点开就是空页面，手机上干脆不出现 */}
+                  {!isMobilePlatform() && (
+                    <button className="ghost" data-testid="log-open-timeline"
+                      title={t("打开设置 → 记录审计：带泳道图与耗时点的动作时间线（本面板是审计事件流，两者数据同源、视角不同）")}
+                      onClick={openTimeline}>{t("时间线")}</button>
+                  )}
                   <button className="ghost icon-btn" title={t("刷新")} aria-label={t("刷新活动记录")}
                     data-testid="log-refresh" disabled={logBusy}
                     onClick={() => void loadLog(false)}><IconRefresh size={14} /></button>

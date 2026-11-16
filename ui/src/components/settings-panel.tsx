@@ -180,6 +180,8 @@ interface SettingsPanelProps {
   // 本轮：手动检测更新（启动自动检测之外的随时入口；结果 toast 三态如实）
   checkBusy: boolean;
   onCheckUpdate: () => void;
+  // KI-063：打开外部链接的唯一入口（宿主统一弹失败 toast，不再静默 catch）
+  onOpenUrl: (url: string) => void;
   // 外观与字号/缩放
   appearance: Appearance;
   changeAppearance: (a: Appearance) => void;
@@ -309,7 +311,7 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({
   settingsCat, switchSettingsCat, closeSettings, settingsPanelRef, appVersion, buildTime, locale, onChangeLocale,
-  updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate,
+  updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate, onOpenUrl,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   uiFontScale, changeUiFontScale, uiDensity, changeUiDensity, focusMetrics, onChangeFocusMetrics,
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
@@ -1194,7 +1196,7 @@ env: TINYSSH_TOKEN=<TOKEN>  TINYSSH_MCP_URL=${mcp.endpoint || "http://127.0.0.1:
                       {t("新版本 {0} 已发布", `v${updateInfo.latest}`)}
                       <button className="ghost" data-testid="about-update-open" style={{ marginLeft: 8 }}
                         title={updateInfo.url ?? ""}
-                        onClick={() => { if (updateInfo.url) invoke("open_url", { url: updateInfo.url }).catch(() => {}); }}>
+                        onClick={() => { if (updateInfo.url) onOpenUrl(updateInfo.url); }}>
                         {t("打开发布页")}
                       </button>
                       {/* updater 轮：只在可自动更新的构建出现（真公钥构建：mac

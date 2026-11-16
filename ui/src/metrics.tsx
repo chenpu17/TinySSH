@@ -132,11 +132,42 @@ const PctBar = ({ pct }: { pct: number | null }) => (
   </span>
 );
 
-export function MetricsBar({ sid, kind, user, hostName }: {
+// #37 专注态时钟：专注模式容易忘记时间——监控条右端挂一枚 HH:MM 药丸（与 tmux
+// 快接钮同一大圆角形态）。只在 focusMode 下渲染；先排到下一个整分再每分钟一跳，
+// 钟面与系统分钟严格对齐（固定 15s 轮询会在整分后滞后 0–14s，整点时更明显）。
+function ClockPill() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    let toMinute: ReturnType<typeof setTimeout> | null = null;
+    let perMinute: ReturnType<typeof setInterval> | null = null;
+    const arm = () => {
+      const d = new Date();
+      // 对齐到下个整分（+20ms 余量吃掉定时器早醒误差）
+      toMinute = setTimeout(() => {
+        setNow(new Date());
+        perMinute = setInterval(() => setNow(new Date()), 60000);
+      }, 60000 - (d.getSeconds() * 1000 + d.getMilliseconds()) + 20);
+    };
+    arm();
+    return () => {
+      if (toMinute) clearTimeout(toMinute);
+      if (perMinute) clearInterval(perMinute);
+    };
+  }, []);
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return (
+    <span className="mclock" data-testid="metrics-clock" title={t("当前时间")}
+      aria-label={t("当前时间 {0}", `${hh}:${mm}`)}>{hh}:{mm}</span>
+  );
+}
+
+export function MetricsBar({ sid, kind, user, hostName, focusMode }: {
   sid: string;
   kind: string;
   user?: string;
   hostName?: string;
+  focusMode?: boolean;
 }) {
   const isSsh = kind === "ssh" || kind === "local"; // 本机监控轮：local 走核心原生快照，与远端同权
   const [view, setView] = useState<MetricsView | null>(null);
@@ -219,6 +250,7 @@ export function MetricsBar({ sid, kind, user, hostName }: {
         <span className="mval mnum">{v?.diskPct != null ? `${v.diskPct}%` : "—"}</span>
       </span>
       <span className="mspacer" />
+      {focusMode && <ClockPill />}
       <button className="mpause" data-testid="metrics-pause" onClick={togglePause}
         aria-pressed={paused}
         title={paused ? t("恢复资源采样（当前已暂停）") : t("暂停资源采样（停止向远端发探测命令）")}>

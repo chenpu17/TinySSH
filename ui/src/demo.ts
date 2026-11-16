@@ -2841,8 +2841,18 @@ case "read_triggers": {
       return null;
     case "note_terminal":
     case "open_url":
+    // 演示域无原生系统栏（KI-060）：no-op，真实面=MainActivity.setSystemBarsLight
+    case "set_system_bars_light":
     case "bench_start":
     case "bench_report":
+      return null;
+    // 外接键盘探测（移动端装配）：演示域没有原生输入设备表——恒 false，
+    // 真实面=Android InputManager 设备表（不能并入上面的 null 组，返回类型不同）
+    case "has_hardware_keyboard":
+      return false;
+    // Android 保活补口（KI-059）：演示域没有前台服务——no-op，真实面=Rust 重算
+    // 后经 KeepaliveBridge 补起被系统拒绝的后台启动（返回 void，独立 case）。
+    case "keepalive_sync":
       return null;
     // 版本号轮：演示域无编译产物，回 null（关于卡略去「编译于」段）
     case "get_build_time":

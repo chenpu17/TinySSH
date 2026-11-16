@@ -95,6 +95,19 @@ module.exports = {
     await rightClick(page, "archive");
     ck.check("目录菜单隐藏下载/另存为", await page.evaluate(() =>
       !document.querySelector("[data-testid=sftp-menu-download]") && !document.querySelector("[data-testid=sftp-menu-saveas]")));
+    // ── 触屏入口：目录行菜单里的「进入目录」（手机没有双击，长按出菜单后只有
+    //   这一项能把用户带进去；此前菜单只有复制/改名/删除，目录在触屏端打不开）──
+    ck.check("目录菜单含「进入目录」", await page.evaluate(() =>
+      (document.querySelector("[data-testid=sftp-menu-open]")?.textContent ?? "").includes("进入目录")));
+    await page.click("[data-testid=sftp-menu-open]");
+    await page.waitForTimeout(800);
+    const inArchive = await names(page);
+    ck.check("「进入目录」落到 archive 内容", inArchive.includes("access-202609.log.gz"), inArchive.join(" / "));
+    // 面包屑按钮的 title 是「进入 <路径>」文案，按可见文本点上一级
+    await page.click('.sftp-crumb:text-is("nginx")');
+    await page.waitForTimeout(800);
+    ck.check("面包屑回到 nginx（回到原目录继续后面的用例）", (await names(page)).includes("archive"));
+    await rightClick(page, "archive");
     await page.click("[data-testid=sftp-menu-delete]");
     await page.waitForTimeout(250);
     await page.click("[data-testid=sftp-menu-delete]");
@@ -118,6 +131,8 @@ module.exports = {
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
     await rightClick(page, "latest");
+    ck.check("符号链接菜单的触屏入口写作「打开链接」（探明目标，不是进入目录）", await page.evaluate(() =>
+      (document.querySelector("[data-testid=sftp-menu-open]")?.textContent ?? "").includes("打开链接")));
     await page.click("[data-testid=sftp-menu-delete]");
     await page.waitForTimeout(250);
     await page.click("[data-testid=sftp-menu-delete]");

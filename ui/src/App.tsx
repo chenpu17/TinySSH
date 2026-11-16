@@ -27,8 +27,9 @@ import { installWheelBatch, displayIntervalMs } from "./terminal/wheel-batch";
 import { loadUiFontScale, storeUiFontScale, type UiFontScale } from "./ui-scale";
 import { loadUiDensity, storeUiDensity, type UiDensity } from "./ui-density";
 import { isScrollbackFull, scrollBelow } from "./terminal/scrollback";
-import { isMobilePlatform } from "./platform";
-import { useLongPress } from "./touch";
+import { isMobilePlatform, markHardwareKeyboard, useHardwareKeyboard } from "./platform";
+import { useLongPress, swallowClickOnce } from "./touch";
+import { cellAtPoint, wordAt, applyRangeSelection, type CellPos } from "./terminal/touch-select";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
   MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
@@ -128,6 +129,7 @@ import { Hostbar } from "./components/hostbar";
 import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
 import { MobileKeyBar } from "./components/mobile-keys";
+import { TouchBar, type TouchBarItem } from "./components/touch-bar";
 import { TmuxQuick } from "./components/tmux-quick";
 import { TmuxWall } from "./components/tmux-wall";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
@@ -385,7 +387,18 @@ function lastTmuxNotice(term: Terminal): string | null {
 type SearchPrefs = { caseSensitive: boolean; wholeWord: boolean; regex: boolean };
 const SEARCH_PREFS_DEFAULT: SearchPrefs = { caseSensitive: false, wholeWord: false, regex: false };
 
+/** 触屏浮条（KI-052）：终端选区动作（复制/粘贴/全选）或链接点按动作。
+ *  只存 sid/paneKey 与锚点坐标——终端实例在动作时再从 termsRef 取，避免持有
+ *  已销毁实例（会话被关、窗格被收）。 */
+type TouchBarState =
+  | { kind: "sel"; sid: string; paneKey?: string; x: number; y: number }
+  | { kind: "link"; x: number; y: number; url: string };
+
 export default function App() {
+
+  // 外接键盘（移动端）：原生把探测结果挂 <html data-hwkb>，这里响应式读入——
+  // 有硬件键盘时辅助键条不渲染、连上/切标签也不再跳过终端聚焦（软键盘场景反之）。
+  const hwkb = useHardwareKeyboard();
 
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -408,6 +421,9 @@ export default function App() {
   const paneTermsRef = useRef<Map<string, PaneTermEntry>>(new Map());
   // 「回滚已满」每会话只提示一次（P2）：调大/改小回滚行数时清空，允许重新提示。
   const scrollbackWarnRef = useRef<Set<string>>(new Set());
+  // Android 保活（KI-059）：通知权限每进程只在前台申请一次（首次建连那一帧）——
+  // Android 13+ 后台发起的权限请求可能根本不弹。
+  const keepalivePermAskedRef = useRef(false);
   // 分屏窗格遮罩的「重连」动作经 ref 取最新实现（makeTerm 早于 reconnectSession 声明）。
   const paneReconnectRef = useRef<(s: SessionInfo) => void>(() => {});
   // 全终端重画出口（字形图集自愈）：实现挂在字形自愈 effect 里；原生全屏
@@ -675,7 +691,7 @@ export default function App() {
   // 菜单「下载」都改为弹原生保存对话框；右键「另存为…」无条件直通，不受开关影响
   const [sftpSaveAs, setSftpSaveAs] = useState(false);
   const [sftpSort, setSftpSort] = useState<{ key: "name" | "size" | "mtime"; dir: 1 | -1 }>({ key: "name", dir: 1 });
-  const [sftpMenu, setSftpMenu] = useState<{ name: string; x: number; y: number; isDir?: boolean } | null>(null);
+  const [sftpMenu, setSftpMenu] = useState<{ name: string; x: number; y: number; isDir?: boolean; kind?: string | null } | null>(null);
   const [sftpListW, setSftpListW] = useState(9999);
   // R33（§354/§356）上传下载入口：拖入终端的确认卡——目标会话在拖放开始时固定（§354
   // 「不随切标签转移」），目录输入预填可信 cwd（brief.cwd → 可见面板浏览目录；都无=
@@ -752,6 +768,13 @@ export default function App() {
     // 并允许点 × 手动关闭（栈本身仍 pointer-events:none，不挡背后操作）。
     setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), action ? 8000 : kind === "err" ? 6000 : 2600);
   }, []);
+  // 打开外部链接的唯一入口（KI-063）：失败不再静默吞掉——没有浏览器、被系统拒绝
+  // 或链接非法时弹「打开链接失败」，与终端浮条的文案同一句。Android 侧后端已把
+  // 隐式 ACTION_VIEW 包成选择器（用户决定用哪个应用打开）。
+  const openExternal = useCallback((url: string) => {
+    if (inTauri) void invoke("open_url", { url }).catch(() => pushToast("err", t("打开链接失败")));
+    else window.open(url, "_blank");
+  }, [pushToast]);
   // ⌘F 终端内搜索（T16）：SearchAddon 每会话一个实例，随会话保持高亮
   const [searchOpen, setSearchOpen] = useState(false);
   // 搜索所属会话：切标签/关标签时据此清旧高亮，关闭搜索时焦点也回到“发起搜索”的
@@ -993,6 +1016,12 @@ export default function App() {
   // 十一轮续：右键通道补全——主机卡（连接/收藏/编辑/删除）与终端区（复制/粘贴/全选）
   const [hostMenu, setHostMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
   const [termMenu, setTermMenu] = useState<{ x: number; y: number; sid: string; hasSel: boolean; paneKey?: string } | null>(null);
+  // 触屏浮条（KI-052）：终端文字选不中、复制/粘贴无可点入口、链接要修饰键——手机
+  // 上三件事合并为「长按选词 → 浮条动作」与「点链接 → 浮条动作」。见 terminal/touch-select.ts。
+  const [touchBar, setTouchBar] = useState<TouchBarState | null>(null);
+  // 浮条第二页「更多」：清屏/重置鼠标上报/重绘/重置面板布局——这四项桌面只在终端
+  // 右键菜单里，手机没有右键，长期无处可达。页间切换不重定位（浮条原地换组按钮）。
+  const [touchMore, setTouchMore] = useState(false);
   // 本轮：最近连接行右键菜单（连接/编辑主机/从最近连接隐藏/删除主机）
   const [recentMenu, setRecentMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
   // 十四轮：标签重命名——sid → 自定名（覆盖 host_name 展示；复制标签页后同名「本机×2」
@@ -1073,6 +1102,14 @@ export default function App() {
   const dragClickSupUntilRef = useRef(0);
   // 触屏长按标签 → 会话操作菜单（桌面右键的移动端等价物，见 touch.ts）
   const tabLongPress = useLongPress();
+  // 触屏长按终端 → 选词 + 浮条（KI-052）。xterm 只有鼠标划选，触屏拿不到选区；
+  // 计时器触发后同一指针的移动变成「扩选」，抬手保留选区与浮条。
+  const touchPressRef = useRef<{
+    pointerId: number; timer: number; fired: boolean;
+    anchor: CellPos; x: number; y: number;
+    sid: string; paneKey?: string;
+    term: Terminal; screen: HTMLElement;
+  } | null>(null);
   const cancelTabDrag = useCallback(() => {
     const d = tabDragRef.current;
     if (!d) return;
@@ -2019,6 +2056,43 @@ export default function App() {
     });
   }, [refreshLists]);
 
+  // 外接键盘探测（移动端装配）：原生读输入设备表，返回 true=硬件键盘在线。
+  // 启动与窗口回焦各查一次（蓝牙/OTG 可能在运行中插拔，回焦是便宜的复查点），
+  // 结果写 <html data-hwkb> 供 useHardwareKeyboard / CSS 消费；失败静默——按
+  // 软键盘路径走（辅助键条常驻、不自动聚焦终端）。桌面装配不调用。
+  useEffect(() => {
+    if (!inTauri || !isMobilePlatform()) return;
+    const probe = () => {
+      void invoke("has_hardware_keyboard")
+        .then((present) => markHardwareKeyboard(!!present))
+        .catch(() => { /* 旧核心/探测失败：保持既有标记 */ });
+    };
+    probe();
+    window.addEventListener("focus", probe);
+    return () => window.removeEventListener("focus", probe);
+  }, []);
+
+  // Android 保活补口（KI-059 v1）：回前台/从隐藏变可见时让 Rust 立即重算一次——
+  // Android 12+ 可能拒绝过后台启动前台服务，此时服务并未起来而 Rust 侧计数早已
+  // 下发；这个补口把服务补起。同步等 Rust 快照，不读前端 session 状态。失败静默
+  // （保活是尽力而为），桌面装配不调用。
+  useEffect(() => {
+    if (!inTauri || !isMobilePlatform()) return;
+    const sync = () => {
+      if (document.visibilityState === "hidden") return;
+      void invoke("keepalive_sync").catch(() => { /* 旧核心/失败静默 */ });
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   // 本地终端一等公民轮：启动即有一个可敲命令的本地终端（真实模式专属——demo 域
   // 豁免：55 个 spec 的初始态是「2 个演示会话+欢迎页」，自动开会全炸；真实链路
   // 由真机验证钉住）。仅一次；先内联读默认 shell（与上方 state 装载无序，读毕再连）。
@@ -2627,9 +2701,15 @@ export default function App() {
       // OSC 8 超链接激活（T16）：WebLinksAddon 只管裸 URL 正则检测，
       // OSC 8 由核心 linkHandler 路由（不设则核心弹 confirm 对话框）
       linkHandler: {
-        activate: (_ev, uri) => {
-          if (inTauri) void invoke("open_url", { url: uri }).catch(() => {});
-          else window.open(uri, "_blank");
+        activate: (ev, uri) => {
+          // 手机没有 ⌘/Ctrl：点按弹「打开链接/复制链接」浮条（与裸 URL 同一路径），
+          // 不直接拉起浏览器——终端输出可被远端伪造，多一道确认
+          if (isMobilePlatform()) {
+            swallowClickOnce();
+            setTouchBar({ kind: "link", x: ev.clientX, y: ev.clientY, url: uri });
+            return;
+          }
+          openExternal(uri);
         },
       },
     });
@@ -2730,6 +2810,13 @@ export default function App() {
     // 打开（仅 http/https）。终端输出是远端可控内容，裸单击即拉起浏览器给了钓鱼面
     // （主流终端同为 Ctrl/Cmd+单击）；未按修饰键时给一次提示，不静默。
     term.loadAddon(new WebLinksAddon((ev, url) => {
+      // 手机：点按弹浮条（打开 / 复制链接）。软键盘没有修饰键，裸点直接开又给了
+      // 远端伪造链接的可乘之机——先确认再跳（KI-052）
+      if (isMobilePlatform()) {
+        swallowClickOnce();
+        setTouchBar({ kind: "link", x: ev.clientX, y: ev.clientY, url });
+        return;
+      }
       if (!(ev.metaKey || ev.ctrlKey)) {
         const now = Date.now();
         if (now - linkHintAt > 5000) {
@@ -2738,8 +2825,7 @@ export default function App() {
         }
         return;
       }
-      if (inTauri) void invoke("open_url", { url }).catch(() => {});
-      else window.open(url, "_blank");
+      openExternal(url);
     }));
     // 可点击路径（P2）：文件路径 + :line:col 识别为链接，点击复制原文——远端路径
     // 没法在本机打开，复制是最诚实有用的动作（本地会话同语义）；协议前缀让路给
@@ -3111,9 +3197,14 @@ export default function App() {
       const curName = paneTermsRef.current.get(`${sid}:${paneId}`)?.name ?? name;
       return osc52ConsumeRef.current(sid, data, curName);
     });
-    term.loadAddon(new WebLinksAddon((_ev, url) => {
-      if (inTauri) void invoke("open_url", { url }).catch(() => {});
-      else window.open(url, "_blank");
+    term.loadAddon(new WebLinksAddon((ev, url) => {
+      // 格子与主终端同一移动端语义：点按弹浮条；桌面保持原有「裸点即开」
+      if (isMobilePlatform()) {
+        swallowClickOnce();
+        setTouchBar({ kind: "link", x: ev.clientX, y: ev.clientY, url });
+        return;
+      }
+      openExternal(url);
     }));
     term.onSelectionChange(() => {
       if (!copyOnSelectRef.current) return;
@@ -4144,7 +4235,7 @@ export default function App() {
           updateNotifiedRef.current = u.latest;
           pushToast("info", t("新版本 v{0} 已发布", u.latest), {
             label: t("打开发布页"), title: u.url ?? "",
-            run: () => { if (u.url) invoke("open_url", { url: u.url }).catch(() => {}); },
+            run: () => { if (u.url) openExternal(u.url); },
           });
         }
       })
@@ -4186,7 +4277,7 @@ export default function App() {
           updateNotifiedRef.current = u.latest;
           pushToast("info", t("新版本 v{0} 已发布", u.latest), {
             label: t("打开发布页"), title: u.url ?? "",
-            run: () => { if (u.url) invoke("open_url", { url: u.url }).catch(() => {}); },
+            run: () => { if (u.url) openExternal(u.url); },
           });
         } else if (u.error) {
           pushToast("err", u.error);
@@ -4320,6 +4411,11 @@ export default function App() {
     try { localStorage.setItem("ui.chrome", resolved); } catch { /* 隐私模式忽略 */ }
     if (inTauri) {
       void getCurrentWindow().setTheme(resolved === "dark" ? "dark" : "light").catch(() => {});
+    }
+    // 移动端系统栏图标跟随应用主题（KI-060）：边到边下图标明暗由原生控制，
+    // 系统深浅与应用深浅不一致时纯白图标会压在浅色界面上（1.22:1 不可读）。
+    if (inTauri && isMobilePlatform()) {
+      void invoke("set_system_bars_light", { light: resolved === "light" }).catch(() => {});
     }
   }, [inTauri]);
 
@@ -5234,7 +5330,7 @@ export default function App() {
     if (!groupOf(target)) {
       const zoom = paneZoomRef.current;
       if (zoom?.sid === target && zoom.name === MAIN_KEY) {
-        if (!isMobilePlatform()) entry.term.focus();
+        if (!isMobilePlatform() || hwkb) entry.term.focus();
         return null;
       }
       if (zoom?.sid === target) {
@@ -5252,12 +5348,13 @@ export default function App() {
     }
     // 移动端不程序化抢焦点：连上/切标签时软键盘会立刻顶起、遮住半屏输出；
     // 用户点终端时 xterm 自己聚焦。落焦记录（paneLastFocus）仍照常维护。
-    if (!isMobilePlatform()) {
+    // 外接键盘在线（hwkb）时没有软键盘弹出问题，恢复桌面行为——登录后直接可打字。
+    if (!isMobilePlatform() || hwkb) {
       if (restored) restored.term.focus();
       else entry.term.focus();
     }
     return restored;
-  }, [groupOf]);
+  }, [groupOf, hwkb]);
   focusTermForRef.current = focusTermFor;
 
   // 移动端辅助键条出口（Esc/Tab/Ctrl/方向键）：投给「该会话当前落焦的终端实例」。
@@ -5279,6 +5376,217 @@ export default function App() {
     }
     entry.term.input(out);
   }, []);
+
+  // ── 触屏终端交互（KI-052）：长按选词 / 拖动扩选 / 点链接浮条 ──
+  // 命中解析与右键菜单同一口径：先看 tmux 格子（data-sid/paneId），再按各会话容器
+  // 矩形命中（分屏各自独立），最后回退焦点窗格。坐标映射见 terminal/touch-select.ts。
+  const resolveTermTouchTarget = useCallback((clientX: number, clientY: number, targetEl: EventTarget | null) => {
+    const cellEl = (targetEl as HTMLElement | null)?.closest?.(".tmux-cell") as HTMLElement | null;
+    if (cellEl) {
+      const pk = `${cellEl.dataset.sid}:${cellEl.dataset.paneId}`;
+      const pe = paneTermsRef.current.get(pk);
+      const screen = cellEl.querySelector<HTMLElement>(".xterm-screen");
+      if (pe && screen) return { term: pe.term, screen, sid: pe.sid, paneKey: pk };
+    }
+    for (const [s, en] of termsRef.current) {
+      const r = en.el.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+        const screen = en.el.querySelector<HTMLElement>(".xterm-screen");
+        return screen ? { term: en.term, screen, sid: s } : null;
+      }
+    }
+    const focused = [...termsRef.current.entries()].find(([, en]) =>
+      en.el.classList.contains("active") || en.el.classList.contains("pane-focused"));
+    const s = focused?.[0] ?? sidRef.current;
+    const en = s ? termsRef.current.get(s) : undefined;
+    const screen = en?.el.querySelector<HTMLElement>(".xterm-screen");
+    return en && screen ? { term: en.term, screen, sid: s! } : null;
+  }, []);
+
+  const cancelTermTouchPress = () => {
+    const p = touchPressRef.current;
+    if (!p) return;
+    if (p.timer) window.clearTimeout(p.timer);
+    touchPressRef.current = null;
+  };
+
+  // 选区浮动条弹出的那一刻手指往往还按着（或刚抬起）：随后的合成 click 会打到
+  // 刚出现的遮罩上把浮条立刻关掉——与右键菜单同一口实锤，吞一次 click。
+  const showTermSelectionBar = (p: NonNullable<typeof touchPressRef.current>) => {
+    const span = wordAt(p.term, p.anchor.row, p.anchor.col);
+    if (span) {
+      p.term.select(span.col, span.row, span.len);
+      // 拖动扩选从词首起算（iOS 同直觉）；按在空白处退化为整行时同理
+      p.anchor = { col: span.col, row: span.row };
+    }
+    swallowClickOnce();
+    setTouchBar({ kind: "sel", sid: p.sid, paneKey: p.paneKey, x: p.x, y: p.y });
+  };
+
+  const onTermPointerDown = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    if (ev.pointerType !== "touch" || !isMobilePlatform()) return;
+    if ((ev.target as HTMLElement).closest?.("button, input, textarea")) return;
+    const hit = resolveTermTouchTarget(ev.clientX, ev.clientY, ev.target);
+    if (!hit) return;
+    const cell = cellAtPoint(hit.term, hit.screen, ev.clientX, ev.clientY);
+    if (!cell) return;
+    cancelTermTouchPress();
+    const p = {
+      pointerId: ev.pointerId, timer: 0, fired: false,
+      anchor: cell, x: ev.clientX, y: ev.clientY,
+      sid: hit.sid, paneKey: hit.paneKey, term: hit.term, screen: hit.screen,
+    };
+    touchPressRef.current = p;
+    p.timer = window.setTimeout(() => {
+      p.timer = 0;
+      p.fired = true;
+      if (touchPressRef.current === p) showTermSelectionBar(p);
+    }, 480);
+  };
+
+  const onTermPointerMove = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    const p = touchPressRef.current;
+    if (!p || ev.pointerType !== "touch" || ev.pointerId !== p.pointerId) return;
+    if (!p.fired) {
+      const dx = ev.clientX - p.x;
+      const dy = ev.clientY - p.y;
+      // 超过 10px 视为滚动/拖拽手势，不抢成选区
+      if (dx * dx + dy * dy > 100) cancelTermTouchPress();
+      return;
+    }
+    const cell = cellAtPoint(p.term, p.screen, ev.clientX, ev.clientY);
+    if (cell) applyRangeSelection(p.term, p.anchor, cell);
+  };
+
+  const onTermPointerUp = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    const p = touchPressRef.current;
+    if (!p || ev.pointerId !== p.pointerId) return;
+    if (p.timer) window.clearTimeout(p.timer);
+    // 已触发的选区保留（浮条仍在）；未触发就只是普通点按/滚动，状态清掉
+    if (!p.fired) touchPressRef.current = null;
+  };
+
+  // 选中后拖动扩选：浏览器默认把单指移动当滚动，会把拖动变成滚屏。仅当长按已
+  // 触发时在捕获/原生层拦掉 touchmove 的默认行为（React 的 pointermove 无法
+  // 取消浏览器滚动）。滚动/点按未触发时完全放行。
+  useEffect(() => {
+    const el = termRef.current;
+    if (!el) return;
+    const onTouchMove = (ev: TouchEvent) => {
+      if (touchPressRef.current?.fired) ev.preventDefault();
+    };
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => el.removeEventListener("touchmove", onTouchMove);
+  }, []);
+
+  // 切标签/会话即收起浮条：选区属于原终端实例，跨会话留一条浮条会作用于错对象
+  useEffect(() => { setTouchBar(null); }, [sid]);
+  // 浮条收起后长按态一并复位：fired 还留着的话，后续单指滚动会被 touchmove 的
+  // preventDefault 一直挡掉（终端滑不动，且没有任何可见提示）。
+  useEffect(() => { if (!touchBar) { touchPressRef.current = null; setTouchMore(false); } }, [touchBar]);
+
+  const touchBarTerm = (b: TouchBarState | null): { term: Terminal; sid: string; paneKey?: string } | null => {
+    if (!b || b.kind !== "sel") return null;
+    if (b.paneKey) {
+      const pe = paneTermsRef.current.get(b.paneKey);
+      return pe ? { term: pe.term, sid: pe.sid, paneKey: b.paneKey } : null;
+    }
+    const en = termsRef.current.get(b.sid);
+    return en ? { term: en.term, sid: b.sid } : null;
+  };
+
+  const closeTouchBar = (clearSelection = true) => {
+    if (clearSelection) {
+      const target = touchBarTerm(touchBar);
+      if (target) {
+        try { target.term.clearSelection(); } catch { /* 实例已销毁：无需清理 */ }
+      }
+    }
+    setTouchBar(null);
+  };
+
+  const touchBarItems = (): TouchBarItem[] => {
+    if (!touchBar) return [];
+    if (touchBar.kind === "link") {
+      return [
+        { label: t("打开链接"), testid: "touch-link-open", onClick: () => {
+          const url = touchBar.url;
+          setTouchBar(null);
+          openExternal(url);
+        } },
+        { label: t("复制链接"), testid: "touch-link-copy", onClick: () => {
+          const url = touchBar.url;
+          setTouchBar(null);
+          Promise.resolve(inTauri ? clipboard.writeText(url) : navigator.clipboard?.writeText(url))
+            .then(() => pushToast("ok", t("已复制链接")))
+            .catch(() => pushToast("err", t("复制失败（权限拒绝或窗口无焦点）")));
+        } },
+        { label: t("取消"), testid: "touch-link-cancel", onClick: () => setTouchBar(null) },
+      ];
+    }
+    const target = touchBarTerm(touchBar);
+    const bar = touchBar; // 已排除 link 分支：这里是选区态，paneKey 随浮条带走
+    // 第二页「更多」：终端维护四件套（桌面只在右键菜单里，触屏没有右键）。
+    // WebGL 句柄按 sid/paneKey 现取——实例可能已随会话销毁，取不到就只清屏/跳过重绘。
+    if (touchMore) {
+      const webgl = bar.paneKey
+        ? paneTermsRef.current.get(bar.paneKey)?.webgl ?? null
+        : termsRef.current.get(bar.sid)?.webgl ?? null;
+      const items: TouchBarItem[] = [
+        { label: t("清屏"), testid: "touch-clear", onClick: () => {
+          setTouchBar(null);
+          try { target?.term.clear(); } catch { /* 实例已销毁：无屏可清 */ }
+        } },
+        { label: t("重置鼠标上报"), testid: "touch-mouse-reset", onClick: () => {
+          setTouchBar(null);
+          if (target) resetMouseReporting(target.term);
+        } },
+        { label: t("重绘画面"), testid: "touch-redraw", onClick: () => {
+          setTouchBar(null);
+          if (target) repaintTerm(target.term, webgl);
+        } },
+      ];
+      if (paneLayoutCustom(bar.sid)) {
+        items.push({ label: t("重置面板布局"), testid: "touch-pane-reset", onClick: () => {
+          setTouchBar(null);
+          resetPaneLayout(bar.sid);
+        } });
+      }
+      items.push(
+        { label: t("返回"), testid: "touch-back", onClick: () => setTouchMore(false) },
+        { label: t("取消"), testid: "touch-cancel", onClick: () => closeTouchBar() },
+      );
+      return items;
+    }
+    const copy = () => {
+      const text = target?.term.getSelection() ?? "";
+      if (!text) { closeTouchBar(); return; }
+      // 复制后保留选区（与桌面高亮一致），只收浮条
+      setTouchBar(null);
+      Promise.resolve(inTauri ? clipboard.writeText(text) : navigator.clipboard?.writeText(text))
+        .then(() => pushToast("ok", t("已复制 {0} 个字符", String(text.length))))
+        .catch(() => pushToast("err", t("复制失败（权限拒绝或窗口无焦点）")));
+    };
+    const paste = () => {
+      if (!target) { setTouchBar(null); return; }
+      setTouchBar(null);
+      // 与 ⌘V/右键粘贴同一条链：危险形态扫描、多行确认、断线拦截都在 pasteTextInto
+      Promise.resolve(inTauri ? clipboard.readText() : (navigator.clipboard?.readText() ?? Promise.reject(new Error("clipboard unavailable"))))
+        .then((text) => { if (text) pasteTextIntoRef.current(target.term, target.sid, text, bar.paneKey); })
+        .catch(() => pushToast("err", t("粘贴失败（剪贴板不可读）")));
+    };
+    return [
+      { label: t("复制"), testid: "touch-copy", onClick: copy },
+      { label: t("粘贴"), testid: "touch-paste", onClick: paste },
+      { label: t("全选"), testid: "touch-select-all", onClick: () => {
+        // 全选后浮条留在原位：整屏选区如果没有「复制」入口就是死路一条
+        // （再长按会把选区重置成单个词）。与「复制」保留选区同一取向。
+        target?.term.selectAll();
+      } },
+      { label: t("更多"), testid: "touch-more", onClick: () => setTouchMore(true) },
+      { label: t("取消"), testid: "touch-cancel", onClick: () => closeTouchBar() },
+    ];
+  };
 
   // §7.4：关闭工具后恢复到其触发前的有效焦点——工具均从终端场景触发，恢复即
   // 聚焦活动终端/该标签上次落焦的格子（focusin 链会自动恢复 native Ctrl 上报）。
@@ -5312,6 +5620,9 @@ export default function App() {
     // 「停用协作」影响确认是独立 confirm-mask（z90），层级高于设置：先关它，
     // 否则 Esc/返回会把底下的设置关掉、把这张卡留在屏幕上。
     if (disableImpact) { setDisableImpact(null); return true; }
+    // 触屏选区/链接浮条（z66）压在设置遮罩（z56/57）之上：先关浮条并清选区；
+    // 「更多」页里返回只回第一页（与页内「返回」同义），不一步收掉整个浮条
+    if (touchBar) { if (touchMore) setTouchMore(false); else closeTouchBar(); return true; }
     // 设置遮罩层级高于搜索/大屏：可视顶层优先，不能让 Esc 先关被压在下面的搜索
     if (showSettings) { closeSettings(); return true; }
     // 大屏覆盖层/广播输入/传输抽屉：非模态但同属浮层链——纯键盘用户要有 Esc 出口
@@ -7133,14 +7444,14 @@ export default function App() {
     // Enter/双击激活：目录进入、链接探明（R30 语义）、文件弹可用动作（不直接执行 §350）
     if (e.is_dir) void navigateTo(`${sftpPathRef.current.replace(/\/+$/, "")}/${e.name}`);
     else if (e.kind === "symlink") void openSymlink(e);
-    else if (at) setSftpMenu({ name: e.name, x: at.x, y: at.y, isDir: e.is_dir });
+    else if (at) setSftpMenu({ name: e.name, x: at.x, y: at.y, isDir: e.is_dir, kind: e.kind });
   }, [navigateTo, openSymlink]);
   // #29：右键任意条目开同一动作菜单（含目录——重命名/删除对目录同样可用）。
   // 双击语义不变（目录进入/链接探明/文件弹菜单），右键只是多一条入口。
   const sftpContextMenu = useCallback((e: DirEntryS, ev: React.MouseEvent | React.PointerEvent) => {
     ev.preventDefault();
     ev.stopPropagation();
-    setSftpMenu({ name: e.name, x: ev.clientX, y: ev.clientY, isDir: e.is_dir });
+    setSftpMenu({ name: e.name, x: ev.clientX, y: ev.clientY, isDir: e.is_dir, kind: e.kind });
   }, []);
   const sftpDownloadSelected = useCallback(async () => {
     const s = sidRef.current;
@@ -7546,6 +7857,17 @@ export default function App() {
   };
 
   const createSession = async (host: Host, intoSplit = false, draft?: HostDraft, localShellPath?: string, localNew = true) => {
+    // KI-059：保活前台服务的常驻通知需要 POST_NOTIFICATIONS（Android 13+）。
+    // 在用户点连接（前台）这一帧申请，每进程一次；拒绝/失败不阻塞建连——
+    // 通知被拒时服务仍可运行，只是通知不可见。
+    if (inTauri && isMobilePlatform() && !keepalivePermAskedRef.current) {
+      keepalivePermAskedRef.current = true;
+      void (async () => {
+        try {
+          if (!(await isPermissionGranted())) await requestPermission();
+        } catch { /* 权限插件不可用/被拒：保活降级为无通知，不打扰用户 */ }
+      })();
+    }
     // 同主机并发建连闸（主机卡/连接钮共用）：在 begin_connection 应答前
     // connectingIds 仍是空的，双击会真的发两次 begin；本机 new_session 又绕过
     // 核心幂等，最终出现两个终端。锁按 hostId 粒度且只在本次调用生命周期内持有，
@@ -9003,7 +9325,7 @@ export default function App() {
             <button className="update-badge" data-testid="update-badge"
               title={t("新版本 v{0} 可用——点击打开发布页", updateInfo.latest)}
               onClick={() => {
-                if (updateInfo.url) invoke("open_url", { url: updateInfo.url }).catch(() => {});
+                if (updateInfo.url) openExternal(updateInfo.url);
                 else { setSettingsCat("about"); setShowSettings(true); }
               }}>
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -9861,11 +10183,18 @@ export default function App() {
             />
           )}
           <div id="term" ref={termRef}
+            onPointerDown={onTermPointerDown}
+            onPointerMove={onTermPointerMove}
+            onPointerUp={onTermPointerUp}
+            onPointerCancel={onTermPointerUp}
             onContextMenu={(e) => {
             // 十一轮续：终端区右键——复制/粘贴/全选作用于右键命中的窗格（分屏时各格独立）；
             // 未命中具体窗格回退焦点窗格。无终端实例（欢迎页）交给系统默认行为
             if (termsRef.current.size === 0) return;
             e.preventDefault();
+            // 触屏长按已转成语义选区（选词+浮条）：同一次长按在安卓上还会补发
+            // contextmenu，别让右键菜单再叠一层
+            if (touchPressRef.current?.fired) return;
             // tmux 面板格子：右键作用于命中的格子（复制/粘贴/全选/关闭窗格）
             const cellEl = (e.target as HTMLElement).closest?.(".tmux-cell") as HTMLElement | null;
             if (cellEl) {
@@ -10395,6 +10724,7 @@ export default function App() {
               onAutoUpdate={autoUpdate}
               checkBusy={checkBusy}
               onCheckUpdate={checkUpdateNow}
+              onOpenUrl={openExternal}
               autonomy={autonomy}
               onToggleAutonomy={toggleAutonomy}
               appearance={appearance}
@@ -10744,6 +11074,7 @@ export default function App() {
               kind={current.kind}
               user={hosts.find((h) => h.id === current.host_id)?.username}
               hostName={current.host_name}
+              focusMode={focusMode}
             />
           )}
           <span className="sb-right">
@@ -10759,11 +11090,22 @@ export default function App() {
         </main>
       </div>{/* /workspace */}
 
-      {/* 移动端辅助键条（仅手机）：软键盘没有 Esc/Tab/方向键、也没有独立 Ctrl，
-          tmux 前缀与 TUI 导航靠这条常驻键条。放在 workspace 之后 = 紧贴软键盘
-          （原生侧已把 IME inset 转成内容区底部内边距），键盘收起时落在底部导航
-          栏下方，不遮挡任何入口。无会话时不渲染——欢迎页/主机列表保持整屏。 */}
-      {isMobilePlatform() && sid && <MobileKeyBar onKey={sendMobileKey} />}
+      {/* 移动端辅助键条：软键盘没有 Esc/Tab/方向键、也没有独立 Ctrl，
+          tmux 前缀与 TUI 导航靠这条常驻键条；外接键盘在线时它让位（用户有真键）。
+          放在 workspace 之后 = 紧贴软键盘（原生侧已把 IME inset 转成内容区底部
+          内边距），键盘收起时落在底部导航栏下方，不遮挡任何入口。无会话时不渲染
+          ——欢迎页/主机列表保持整屏。 */}
+      {isMobilePlatform() && !hwkb && sid && <MobileKeyBar onKey={sendMobileKey} />}
+
+      {/* 触屏浮条（KI-052）：长按选词 → 复制/粘贴/全选；点链接 → 打开/复制。
+          与右键菜单同一套遮罩与栈顶链（Esc/Android 返回先关它并清选区）。 */}
+      {touchBar && (
+        <TouchBar
+          x={touchBar.x} y={touchBar.y}
+          items={touchBarItems()}
+          onClose={() => closeTouchBar()}
+        />
+      )}
 
       {/* Toast（§六/P3）：右下角轻通知，普通 2.6s/带动作 8s 自动消失，不挡交互
           （栈 pointer-events:none，动作钮自身收回事件）。
@@ -10824,6 +11166,11 @@ export default function App() {
         <SftpFileMenu
           sftpMenu={sftpMenu} sftpMenuRef={sftpMenuRef} winW={winW}
           sftpPathRef={sftpPathRef} setSftpMenu={setSftpMenu} downloadRemote={downloadRemote}
+          onOpen={(name) => {
+            // 与双击/Enter 同源：目录进入、符号链接探明（文件不会显示这一项）
+            const e = sftpEntries?.find((x) => x.name === name);
+            if (e) sftpActivate(e);
+          }}
           pushToast={pushToast} sid={sid} loadDir={loadDir}
         />
       )}

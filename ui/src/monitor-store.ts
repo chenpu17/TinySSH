@@ -57,6 +57,9 @@ interface Entry {
   stopped: boolean;
   prevRaw: MetricsRaw | null;
   prevAt: number;
+  /** 连续「解析不出 cpu 行」的次数（#34）：一次空响应/半截输出不判死刑，
+   *  连中 3 拍才落 unsupported（期间下一拍照常重试）。成功即清零。 */
+  nullStreak: number;
 }
 
 const entries = new Map<string, Entry>();
@@ -108,6 +111,7 @@ export function setMonEnabled(part: Partial<MonEnabled>): void {
     const patch: Partial<MonSeries> = {};
     if (was.general && !next.general) {
       e.prevRaw = null;
+      e.nullStreak = 0; // 关掉基础监控 = 采样重新开始，残留的连续空响应不得跨开关累计
       patch.view = null;
       patch.cpuHist = []; patch.memHist = []; patch.rxHist = []; patch.txHist = [];
       patch.fails = 0; patch.degraded = false;
@@ -132,6 +136,7 @@ export function syncMonitorTargets(targets: { key: string; sid: string }[]): voi
       const ne: Entry = {
         key: t.key, sid: t.sid, snap: freshSnap(t.key, t.sid),
         subs: new Set(), stopped: false, inFlight: false, prevRaw: null, prevAt: 0,
+        nullStreak: 0,
       };
       entries.set(t.key, ne);
       const waiting = pendingSubs.get(t.key);
@@ -173,9 +178,14 @@ async function tick(e: Entry): Promise<void> {
         if (e.stopped) return;
         const cur = parseMetricsSample(text);
         if (!cur) {
-          rebuild(e, { unsupported: true });
-          return; // 非 Linux 远端：后续拍不再发 read_host_metrics（卡片保留「不支持」态，重试可清）
+          // #34：Linux 主机被偶发空响应打成「非 Linux 远端」——用户报「有时候识别
+          // 错误」。按连续命中计数，3 拍才落 unsupported；期间不写 prevRaw，下一拍
+          // 照常重试（对真非 Linux 远端只多两次 exec，代价可忽略）。
+          e.nullStreak += 1;
+          if (e.nullStreak >= 3) rebuild(e, { unsupported: true });
+          return;
         }
+        e.nullStreak = 0;
         const now = Date.now();
         const view = diffMetrics(cur, e.prevRaw, e.prevRaw ? (now - e.prevAt) / 1000 : 0);
         e.prevRaw = cur;
@@ -224,10 +234,13 @@ async function poll(e: Entry): Promise<void> {
   if (!e.stopped) e.timer = setTimeout(() => void poll(e), POLL_MS);
 }
 
-/** 已有条目换代言会话：只换探测通道，历史/失败计数/停轮态全部保留。 */
+/** 已有条目换代言会话：只换探测通道，历史/失败计数/停轮态全部保留。
+ *  #34 的连续空响应计数不在此列——它属于上一段采样（换会话/合流后是新的
+ *  远端输出序列），带过去会让三次空响应跨会话凑数，一次抖动就误判非 Linux。 */
 function rebind(e: Entry, sid: string): void {
   if (e.sid === sid) return;
   e.sid = sid;
+  e.nullStreak = 0;
   rebuild(e, { sid });
 }
 
@@ -244,6 +257,7 @@ export function retryMonitor(key: string): void {
   const e = entries.get(key);
   if (!e) return;
   e.prevRaw = null;
+  e.nullStreak = 0;
   rebuild(e, { fails: 0, unsupported: false, npu: freshNpu() });
   if (!e.timer && !e.inFlight) void poll(e);
 }

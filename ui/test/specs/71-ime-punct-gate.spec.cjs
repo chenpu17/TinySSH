@@ -14,6 +14,11 @@
 // （229）先到、input 后到；keydown 时排队的 0ms diff 会在 textarea 还没写入时跑空，
 // 随后 input 被去重门丢弃。下面 ``stale229`` / ``stale229Composition`` 用真实等待
 // 复现这条时序，``compositionFlushed`` 验证 compositionend 已先行送达时不重复上屏。
+//
+// 2026-11-16 增补 #36（ToDesk 远程桌面 + Android 输入法）：WKWebView 收到系统级
+// unicode 注入时 keydown.key 已是整串「你好世界」、keypress.charCode 只是首字 20320，
+// 修复前 PTY 只收到首字。``injectedMultiChar`` / ``injectedMultiCharNoKeypress`` /
+// ``injectedAscii`` 用真实 xterm 事件序列锁住「整串送达、不停在首字」。
 const liveSids = (page) =>
   page.evaluate(() => {
     const terms = window.__t_terms;
@@ -103,6 +108,33 @@ module.exports = {
     ck.check("macOS 第三方 IME 标点判定：字母/空格/修饰组合/229 不命中",
       !punct.letter && !punct.space && !punct.ctrl && !punct.alt && !punct.meta
         && !punct.composing && !punct.kc229, JSON.stringify(punct));
+
+    // 多字注入提交判定（#36）：只有「无修饰、非组合态、key 是真文本」的多字 keydown
+    // 才接管；Enter/方向键/Dead 之类的多字键名与组合键 229 都不许误判。
+    const multiChar = await page.evaluate(async () => {
+      const mod = await import("/src/terminal/xterm-ime-gate.ts");
+      const ev = (key, keyCode, extra = {}) => ({
+        key, keyCode, ctrlKey: false, altKey: false, metaKey: false, isComposing: false, ...extra,
+      });
+      return {
+        chinese: mod.isMultiCharTextKeydown(ev("你好世界", 65)),
+        ascii: mod.isMultiCharTextKeydown(ev("echo hi", 69)),
+        single: mod.isMultiCharTextKeydown(ev("a", 65)),
+        enter: mod.isMultiCharTextKeydown(ev("Enter", 13)),
+        arrow: mod.isMultiCharTextKeydown(ev("ArrowLeft", 37)),
+        dead: mod.isMultiCharTextKeydown(ev("Dead", 192)),
+        process: mod.isMultiCharTextKeydown(ev("Process", 229)),
+        kc229: mod.isMultiCharTextKeydown(ev("你好世界", 229)),
+        ctrl: mod.isMultiCharTextKeydown(ev("你好世界", 65, { ctrlKey: true })),
+        composing: mod.isMultiCharTextKeydown(ev("你好世界", 65, { isComposing: true })),
+      };
+    });
+    ck.check("多字注入判定：中文/ASCII 整串命中",
+      multiChar.chinese && multiChar.ascii, JSON.stringify(multiChar));
+    ck.check("多字注入判定：单字符/Enter/方向键/Dead/229/修饰组合不命中",
+      !multiChar.single && !multiChar.enter && !multiChar.arrow && !multiChar.dead
+        && !multiChar.process && !multiChar.kc229 && !multiChar.ctrl && !multiChar.composing,
+      JSON.stringify(multiChar));
 
     // 滚轮合帧报文不是键入送达：keydown(229) 与 IME input 之间到达一枚鼠标上报时，
     // 「本键已送达」计数不得变化，否则异步提交的唯一送达机会会被误判成已发而丢字。
@@ -347,8 +379,32 @@ module.exports = {
         input("中");
         keyup("中", "KeyZ", 229);
       });
+      // WKWebView + 系统级 unicode 注入（ToDesk 一类远程输入，#36）：一次注入携带整串
+      // 「你好世界」，keydown.key 就是整串、keypress.charCode 只是第一个码元 20320。
+      // 修复前 PTY 只收到 keypress 的首字「你」；修复后 keypress 被吞、整串由 input 送达。
+      const injectedMultiChar = await run(() => {
+        keydown("你好世界", "KeyA", 65);
+        keypress("你", 20320);
+        beforeinput("你好世界");
+        input("你好世界");
+        keyup("你好世界", "KeyA", 65);
+      });
+      // 同一注入形态但 keypress 未派发：input 仍是唯一送达机会，整串不得丢
+      const injectedMultiCharNoKeypress = await run(() => {
+        keydown("你好世界", "KeyA", 65);
+        beforeinput("你好世界");
+        input("你好世界");
+        keyup("你好世界", "KeyA", 65);
+      });
+      // 注入的 ASCII 整串（剪贴板式注入）同样整串送达，而不是只发首字
+      const injectedAscii = await run(() => {
+        keydown("echo hi", "KeyE", 69);
+        keypress("e", 101);
+        input("echo hi");
+        keyup("echo hi", "KeyE", 69);
+      });
       term._core.browser = savedBrowser;
-      return { apple, valueBefore, valueAfter, plain, shiftedAscii, noKeypressColon, noKeypressBang, lateKeypress, sogouColon, sogouBang, macAsciiBang, stale229, stale229FromComposition, compositionFlushed };
+      return { apple, valueBefore, valueAfter, plain, shiftedAscii, noKeypressColon, noKeypressBang, lateKeypress, sogouColon, sogouBang, macAsciiBang, stale229, stale229FromComposition, compositionFlushed, injectedMultiChar, injectedMultiCharNoKeypress, injectedAscii };
     }, sids[0]);
     ck.eq("「：」按一次只送达一次", JSON.stringify(r.apple), JSON.stringify(["："]));
     ck.eq("「？」（textarea 先写入）按一次只送达一次", JSON.stringify(r.valueBefore), JSON.stringify(["？"]));
@@ -367,5 +423,11 @@ module.exports = {
       JSON.stringify(r.stale229FromComposition), JSON.stringify(["："]));
     ck.eq("compositionend 的 flush 已先送达时，随后 input 不重复上屏",
       JSON.stringify(r.compositionFlushed), JSON.stringify(["中"]));
+    ck.eq("多字注入（keydown.key=整串）：整串送达，不停在 keypress 首字",
+      JSON.stringify(r.injectedMultiChar), JSON.stringify(["你好世界"]));
+    ck.eq("多字注入且 keypress 未派发：input 兜底整串送达",
+      JSON.stringify(r.injectedMultiCharNoKeypress), JSON.stringify(["你好世界"]));
+    ck.eq("多字 ASCII 注入：整串送达一次",
+      JSON.stringify(r.injectedAscii), JSON.stringify(["echo hi"]));
   },
 };

@@ -20,6 +20,13 @@ module.exports = {
       tab?.click();
     });
     await page.waitForTimeout(700);
+    // 用户反馈 #38：标签药丸压到 24px、圆角 12px（与专注态 tmux 快接钮同形态）
+    ck.check("标签药丸 24px 高 / 12px 圆角（#38）", await page.evaluate(() => {
+      const t = document.querySelector(".tab");
+      if (!t) return false;
+      const cs = getComputedStyle(t);
+      return Math.round(t.getBoundingClientRect().height) === 24 && cs.borderRadius === "12px";
+    }), "");
     // 进入专注（demo 只切 chrome，不切系统全屏）
     await page.click('[data-testid="focus-toggle"]');
     await page.waitForTimeout(500);
@@ -27,7 +34,11 @@ module.exports = {
       await page.evaluate(() => document.querySelector(".app-shell")?.classList.contains("focus-mode") === true), "");
     // 用户反馈 #21：专注态默认保留底部主机资源条（设置里可关）
     ck.check("专注态底部保留资源采样条（默认开）", await visible(page, '[data-testid="metrics-bar"]'), "");
-    ck.check("专注态状态条只留资源条，协议短标与任务入口让位", await page.evaluate(() => {
+    // 用户反馈 #37：专注态监控条右端显示 HH:MM 药丸时钟（易忘时间）
+    ck.check("专注态资源条显示 HH:MM 时钟（#37）", await page.evaluate(() => {
+      const c = document.querySelector('[data-testid="metrics-clock"]');
+      return !!c && /^\d{2}:\d{2}$/.test((c.textContent ?? "").trim());
+    }), "");    ck.check("专注态状态条只留资源条，协议短标与任务入口让位", await page.evaluate(() => {
       const left = document.querySelector(".statusbar .sb-left");
       const right = document.querySelector(".statusbar .sb-right");
       return !!left && !!right
@@ -106,6 +117,8 @@ module.exports = {
     await page.click('[data-testid="focus-toggle"]');
     await page.waitForTimeout(500);
     ck.check("退出专注后会话工具栏恢复", await visible(page, ".session-toolbar"), "");
+    ck.check("非专注态不渲染时钟药丸（#37）", await page.evaluate(() =>
+      !document.querySelector('[data-testid="metrics-clock"]')), "");
     ck.check("退出后 tmux 快接回到工具栏", await visible(page, ".session-toolbar .tmux-quick-btn"), "");
 
     // 用户反馈 #21：设置 → 外观里的「底部显示主机资源」开关，默认开、关掉后专注态纯终端
