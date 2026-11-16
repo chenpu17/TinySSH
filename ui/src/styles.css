@@ -4053,3 +4053,56 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   :root[data-platform="android"] .sb-btn,
   :root[data-platform="ios"] .sb-btn { min-height: 36px; padding: 0 8px; }
 }
+
+/* 移动端软键盘挤压（横屏必现）：Android 把 IME inset 折成 WebView 底部内边距后，
+   横屏只剩 ~160 CSS px——标题栏 + 标签行 + 工具栏 + 状态条加起来超过可用高度，
+   flex 会把终端压成 0 行，键入等于对空气打字（0.12.16 模拟器实测，用户截图同态）。
+   矮视口下标题栏与页脚状态条让位给终端；26px 状态栏兜底挪到 shell 上，藏掉标题栏
+   后内容仍不会钻到时钟底下。341–560px 的正常横屏保留完整 chrome（上一条媒体块）。 */
+@media (max-height: 340px) {
+  :root[data-platform="android"] .titlebar,
+  :root[data-platform="ios"] .titlebar { display: none; }
+  :root[data-platform="android"] .app-shell,
+  :root[data-platform="ios"] .app-shell { padding-top: max(env(safe-area-inset-top, 0px), 26px); }
+  :root[data-platform="android"] .statusbar,
+  :root[data-platform="ios"] .statusbar { display: none; }
+  /* 会话工具栏也让位：Gboard 横屏全高时可用只剩 ~150px，光藏标题栏/状态条后
+     终端容器仍只有 ~53px——低于 fitOne 的 60px 门槛（藏起来的会话保护门），
+     终端不重算尺寸，光标行留在裁剪区外，等于「看得见字、看不见自己在哪」。
+     藏掉 37px 工具栏后容器 ≈116px，6 行（fit 下限）装得下，输入行回到可视区。
+     标签条保留：换标签/退出专注/关会话仍够得着。 */
+  :root[data-platform="android"] .session-toolbar,
+  :root[data-platform="ios"] .session-toolbar { display: none; }
+  /* 辅助键条（Ctrl/Esc/方向键）同样让位：真机无硬键盘时它常驻 57px，
+     加上工具栏会把终端压回 ~33px。软键盘在屏时优先保终端；收起键盘后键条回来。 */
+  :root[data-platform="android"] .mobile-keys,
+  :root[data-platform="ios"] .mobile-keys { display: none; }
+}
+
+/* 移动端长按：WebView 自带的选词菜单（Copy/Share/Select all/Read aloud）会压在我们
+   的选区浮条上同屏出现两份（模拟器实测：长按终端同时弹系统菜单和 CreateBar）。
+   终端选词由 480ms 长按门自己画浮条，DOM 层禁掉系统选词；输入框与可选中文本
+   （凭据指纹等自带 user-select: text 的节点）不受影响。 */
+:root[data-platform="android"] .app-shell,
+:root[data-platform="ios"] .app-shell {
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
+:root[data-platform="android"] :is(input, textarea, [contenteditable="true"]),
+:root[data-platform="ios"] :is(input, textarea, [contenteditable="true"]) {
+  -webkit-user-select: text; user-select: text;
+}
+
+/* 接入提示浮条在手机上会被 tmux 状态条顶穿（模拟器实测 bottom:16px 正好压住
+   最后一行状态条，两个圆角条叠在一起）。抬到状态条之上：一行 17px + 浮条半高。 */
+:root[data-platform="android"] .attach-hint,
+:root[data-platform="ios"] .attach-hint { bottom: 44px; }
+
+/* 专注模式把标题栏藏掉后，26px 状态栏兜底失去宿主：标签条直接钻到时钟/电芯底下
+   （0.12.16 模拟器实测，与用户截图同态）。兜底改挂 shell，仅专注态生效——常态
+   标题栏已自带同款内边距，叠加会双倍留白。 */
+:root[data-platform="android"] .app-shell.focus-mode,
+:root[data-platform="ios"] .app-shell.focus-mode {
+  padding-top: max(env(safe-area-inset-top, 0px), 26px);
+}
+

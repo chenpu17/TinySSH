@@ -1528,6 +1528,15 @@ export default function App() {
       if (announce) pushToast("info", on ? t("已进入专注模式（浏览器演示不切系统全屏）· 点右上角专注图标返回") : t("已退出专注模式"));
       return;
     }
+    if (isMobilePlatform()) {
+      // Android/iOS 没有窗口全屏：Tauri window 插件在移动端不初始化，
+      // getCurrentWindow() 直接抛「Plugin window not initialized」——0.12.16
+      // 模拟器实测点专注钮每点必报「专注模式切换失败」。移动端专注 = 只收 chrome
+      // （标题栏/主机栏/工具栏/底部导航让位），退出仍是同一颗标签条专注图标。
+      if (!syncWindow) return;
+      if (announce) pushToast("info", on ? t("已进入专注模式") : t("已退出专注模式"));
+      return;
+    }
     if (!syncWindow) return;
     getCurrentWindow().setFullscreen(on)
       .then(() => {
@@ -1556,7 +1565,7 @@ export default function App() {
   // 「专注模式但非全屏」的半态。刚发起切换的 2s 是系统动画/启动补投窗口，不据此
   // 回滚；Windows/Linux 无红绿灯，但同一语义（专注=全屏）一并成立。
   useEffect(() => {
-    if (!inTauri) return;
+    if (!inTauri || isMobilePlatform()) return; // 移动端没有窗口全屏（见 applyFocus）
     const win = getCurrentWindow();
     let alive = true;
     let un: (() => void) | undefined;
@@ -1590,7 +1599,7 @@ export default function App() {
   // 窗口时不必回想「怎么退出去」。补投失败或系统拒绝全屏时必须回滚 chrome——否则
   // 会停在「专注模式但非全屏」，红绿灯直接压在标签条上（用户截图实测）。
   useEffect(() => {
-    if (!inTauri) return;
+    if (!inTauri || isMobilePlatform()) return; // 移动端专注态只收 chrome，不补投全屏
     const win = getCurrentWindow();
     let on = false;
     try { on = localStorage.getItem("ui.focus") === "1"; } catch { /* 忽略 */ }
@@ -3822,7 +3831,10 @@ export default function App() {
     const padY = (parseFloat(ps.paddingTop) || 0) + (parseFloat(ps.paddingBottom) || 0);
     return {
       cols: Math.max(20, Math.min(400, Math.floor((el.clientWidth - padX) / cw))),
-      rows: Math.max(6, Math.min(200, Math.floor((el.clientHeight - padY) / ch))),
+      // rows 下限 3：手机横屏 + 软键盘全高时容器只有 ~74px（≈3.5 行），旧下限 6
+      // 会算出 126px 的终端——比容器高，光标行被裁到视口外（0.12.16 模拟器实测
+      // 「看得见字、看不见自己在哪」）。3 行是 PTY 仍可用的下限，桌面不受影响。
+      rows: Math.max(3, Math.min(200, Math.floor((el.clientHeight - padY) / ch))),
     };
   }, []);
   const fitOne = useCallback(async (target: string) => {

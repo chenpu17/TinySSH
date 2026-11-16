@@ -953,6 +953,7 @@ const EN: Record<string, string> = {
   "已复制路径 {0}": "Copied path {0}",
   "复制路径失败（权限拒绝或窗口无焦点）": "Failed to copy path (permission denied or window unfocused)",
   "已进入专注模式（浏览器演示不切系统全屏）· 点右上角专注图标返回": "Focus mode on (browser demo doesn't switch system fullscreen) · click the focus icon at the top right to return",
+  "已进入专注模式": "Focus mode on",
   "已退出专注模式": "Focus mode off",
   "专注模式：F11 退出 · 鼠标移到顶部唤出标签": "Focus mode: F11 to exit · move the mouse to the top for tabs",
   "专注模式：F11 退出 · 标签条常驻（Ctrl+K 可切自动隐藏）": "Focus mode: F11 to exit · tab bar always visible (Ctrl+K toggles auto-hide)",
