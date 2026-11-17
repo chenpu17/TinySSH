@@ -284,3 +284,44 @@ async fn tofu_trust_stays_in_memory() {
     let r3 = g3.await.unwrap();
     assert!(matches!(r3, Err(Error::HostKeyRejected(_))), "得 {r3:?}");
 }
+
+/// KI-071：无头进程（CLI `serve/agent`）里没有人能裁决指纹卡。门必须立刻以
+/// HostKeyRejected 失败并带上指纹，而不是挂 pending 等满审批超时（120s）；
+/// 反过来，默认「有人在看」的 GUI 路径由上一个用例覆盖（正常挂卡等决策）。
+#[tokio::test(flavor = "multi_thread")]
+async fn headless_gate_fails_fast_without_pending_card() {
+    let m = mgr();
+    let mut d = draft();
+    d.auth = AuthDraft::Agent;
+    let host = m.register_quick_host(d).unwrap();
+    m.set_human_observer(false);
+
+    let started = std::time::Instant::now();
+    let r = host_key_gate(
+        &m.center,
+        &Actor::Human,
+        &host,
+        "SHA256:headless-fp",
+        None,
+        None,
+    )
+    .await;
+    let err = r.expect_err("无人在场必须失败");
+    assert!(matches!(err, Error::HostKeyRejected(_)), "得 {err:?}");
+    let msg = format!("{err}");
+    assert!(msg.contains("SHA256:headless-fp"), "错误里要带指纹：{msg}");
+    assert!(msg.contains("无头模式"), "错误要说明原因：{msg}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "必须立刻失败，实际 {:?}",
+        started.elapsed()
+    );
+    assert!(
+        m.center.hk_pending.lock().unwrap().is_empty(),
+        "无人在场不挂 pending 卡"
+    );
+    assert!(
+        m.center.hk_decisions.lock().unwrap().is_empty(),
+        "决策通道也不留（防泄漏）"
+    );
+}

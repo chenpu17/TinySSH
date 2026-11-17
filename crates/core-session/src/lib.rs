@@ -96,6 +96,10 @@ pub struct ApprovalCenter {
     /// 十七轮「快速连接」：内存态临时主机注册表（`quick-` 前缀 id）。主机与凭据
     /// 不落 vault（应用退出即失），主机列表/最近连接天然不含（vault 无行）。
     pub quick_hosts: StdMutex<HashMap<HostId, QuickHost>>,
+    /// 进程内是否有能裁决「主机指纹确认」的人类（KI-071）。GUI 与既有嵌入方
+    /// 默认 true（门挂 pending 等人读指纹）；无头入口（`tinyssh serve/agent`）
+    /// 在 open 后显式置 false——否则没人消费 pending，只能等满审批超时才报错。
+    pub human_observer: AtomicBool,
     pub vault: Arc<tinyssh_vault::Vault>,
     pub audit: Arc<tinyssh_audit::AuditStore>,
     /// ③ 执行记录（结构化、加密落盘、带输出摘录）：时间线回放/自查/后续评测。
@@ -299,6 +303,7 @@ impl SessionManager {
             trigger_tx,
             triggers: StdMutex::new(triggers::TriggerEngine::new()),
             quick_hosts: StdMutex::new(HashMap::new()),
+            human_observer: AtomicBool::new(true),
             records: {
                 // ③ 记录目录 = 数据目录/records。保留期可设（vault 设置
                 // collab.records.retention_days，0=永久），缺省 30 天；超期文件在
@@ -1368,6 +1373,15 @@ impl SessionManager {
         *self.mcp_endpoint.lock().unwrap() = url.into();
     }
 
+    /// 无头入口登记（KI-071）：进程内没有能裁决主机指纹确认的人类时置 false。
+    /// GUI 与测试保持默认 true（TOFU 门正常挂 pending 等人类读指纹）；CLI 的
+    /// `serve/agent` 在 open 后显式关闭，指纹门改为立刻失败而不是空等审批超时。
+    pub fn set_human_observer(&self, present: bool) {
+        self.center
+            .human_observer
+            .store(present, AtomicOrdering::SeqCst);
+    }
+
     /// 创建本地会话用的隐式主机记录。
     fn ensure_local_host(&self) -> Result<Host> {
         // Windows GUI 启动没有 USER（那是 MSYS 约定），系统变量是 USERNAME
@@ -1784,6 +1798,34 @@ async fn host_key_gate(
     };
     if stored.as_deref() == Some(fp) {
         return Ok(true);
+    }
+    // KI-071：无头进程（`tinyssh serve/agent`）没有任何消费者裁决指纹卡——
+    // 挂 pending 只能等满 DEFAULT_APPROVAL_TIMEOUT 再报「确认超时」，把一次
+    // 明确的「未信任」拖成 120s 卡顿。这里立刻失败并带上指纹，让用户在 GUI
+    // 里核对信任（GUI 默认有人在看，行为不变）。
+    if !center.human_observer.load(AtomicOrdering::SeqCst) {
+        let issue_desc = if stored.is_some() {
+            "已变更且无人可确认"
+        } else {
+            "尚未信任且无人可确认"
+        };
+        let _ = center.audit.append(
+            ctx,
+            "host_key_confirmation_unavailable",
+            None,
+            Some(&host.name),
+            serde_json::json!({
+                "issue": if stored.is_some() { "changed" } else { "first_seen" },
+                "fingerprint": fp,
+                "mode": "headless",
+            }),
+            None,
+        );
+        return Err(Error::HostKeyRejected(format!(
+            "主机「{}」({}) 的主机指纹{issue_desc}（当前进程为无头模式）；\
+             请先在 GUI 中连接并确认该主机，指纹：{fp}",
+            host.name, host.address
+        )));
     }
     let issue = if stored.is_some() {
         HostKeyIssue::Changed

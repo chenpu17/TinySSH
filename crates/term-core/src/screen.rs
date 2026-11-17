@@ -360,6 +360,12 @@ impl Screen {
                     let done_exec = self.capture.as_ref().map(|c| c.exec_id.clone());
                     if cap_active {
                         cap_active = false;
+                        // 本 feed 的局部尾窗标志同步置位：D 与随后的 B（下一提示符）
+                        // 常被合进同一个 PTY 读 chunk（zsh precmd 背靠背 printf），
+                        // 只改 self 而不同步局部变量，同 chunk 里的 B 就看不到尾窗、
+                        // 不收口也不发 capture_tx——exec 只能等 500ms 静默兜底
+                        // （KI-051 的 511ms 慢路径根因）。
+                        cap_tail = true;
                         if let Some(cap) = self.capture.as_mut() {
                             cap.active = false;
                             // D 不终结捕获：Windows 重绘流序下文本可能尚未到达，转 tail 续采
@@ -1071,6 +1077,27 @@ mod tests {
         assert!(s.capture_tail_busy(), "D 后 tail 应开启");
         s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ ");
         let out = s.take_capture("e1").expect("capture should complete");
+        assert_eq!(strip_ansi(&out).trim(), "hi");
+    }
+
+    /// 同一 PTY 读 chunk 里 D 与随后的 B 相邻（zsh precmd 背靠背 printf，负载高时
+    /// 更容易被合进一次读）必须就地收口：旧实现只改 `self.capture.tail_active`、
+    /// 不同步本 feed 的局部 `cap_tail`，同 chunk 的 B 看不到尾窗 → 不收口也不发
+    /// capture_tx，exec 只能等输出泵 500ms 静默兜底（KI-051 的 511ms 慢路径）。
+    #[test]
+    fn capture_closes_on_same_chunk_prompt_start() {
+        let mut s = screen();
+        s.arm_capture("e1");
+        s.open_managed_block(
+            "echo hi",
+            BlockSource::Agent {
+                client_id: "cc".into(),
+            },
+            "e1",
+        );
+        s.feed(b"\x1b]133;C\x07hi\r\n\x1b]133;D;0\x07\x1b]133;A\x07\x1b]133;B\x07$ ");
+        assert!(!s.capture_tail_busy(), "同 chunk 的 B 必须就地收口尾窗");
+        let out = s.take_capture("e1").expect("capture 应已收口");
         assert_eq!(strip_ansi(&out).trim(), "hi");
     }
 

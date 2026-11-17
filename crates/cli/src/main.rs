@@ -287,6 +287,11 @@ async fn main() -> Result<()> {
     }
 
     let m = SessionManager::open(&db)?;
+    // KI-071：CLI 是无头进程——主机指纹确认卡没有任何消费者（`approval` 子命令
+    // 只管危险命令，且同库同进程独占），不登记「有人在看」的话 TOFU 门会空等
+    // 审批超时（120s）才报「确认超时」。登记为无观察者：门立刻失败并提示先去
+    // GUI 信任该主机。GUI（src-tauri）不调用本方法，保持默认 true。
+    m.set_human_observer(false);
 
     match cli.cmd {
         Cmd::Serve { port } => serve(m, port).await,

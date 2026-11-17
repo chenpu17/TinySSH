@@ -205,8 +205,12 @@ async fn spike3_protocol_compliance() {
         samples.push(t0.elapsed());
     }
     samples.sort();
-    let p95 = samples[49];
-    println!("exec P95 = {p95:?}（门限 <300ms）");
+    // 最近秩 P95：n=50 → ceil(0.95×50)=48 位（1 基），即 0 基下标 47。
+    // 旧代码取 samples[49]（排序后最大值，实为 P100）——单次抖动即判失败，
+    // 与「P95 门」的名字不符；长尾改由下面的 max 打印看，不再吞掉。
+    let p95 = samples[47];
+    let max = samples[49];
+    println!("exec P95 = {p95:?}（max {max:?}，门限 <300ms）");
     // 性能门只在真实硬件上执法：GitHub 共享 runner（CI=true）实测超 300ms 属
     // 环境噪音不是回归——保留测量与打印，跳过硬断言（真机验收在 spike3 侧跑）。
     if std::env::var("CI").ok().as_deref() != Some("true") {
