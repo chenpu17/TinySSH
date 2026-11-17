@@ -16,7 +16,7 @@ import {
   registerZoomHotkeys, onZoomChange, currentZoom,
   zoomIn, zoomOut, zoomReset,
 } from "./zoom";
-import { applyCheckpoint, createOutputFeed, createOutputThrottle, setCursorDefault, type OutputThrottle } from "./terminal/checkpoint";
+import { applyCheckpoint, createOutputFeed, createOutputThrottle, isReplaying, resizeTerm, setCursorDefault, type OutputThrottle } from "./terminal/checkpoint";
 import type { OutputFeed } from "./terminal/checkpoint";
 import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
@@ -3837,7 +3837,7 @@ export default function App() {
       rows: Math.max(3, Math.min(200, Math.floor((el.clientHeight - padY) / ch))),
     };
   }, []);
-  const fitOne = useCallback(async (target: string) => {
+  const fitOne = useCallback(async (target: string, retry = 0) => {
     const entry = termsRef.current.get(target);
     if (!entry) return;
     const { term, el } = entry;
@@ -3853,7 +3853,14 @@ export default function App() {
       return;
     }
     if (term.cols !== dims.cols || term.rows !== dims.rows) {
-      term.resize(dims.cols, dims.rows);
+      // 检查点重放解析在途（#33/#19）：此刻改尺寸会让排队中的重放 payload 按新网格
+      // 解析——长行截断、CUP 落错行，恢复屏与核心网格分叉。PTY 侧 resize 一并延后
+      // （核心网格与前端必须同步走），解析完成后由 onCheckpointSettled 触发的 fit
+      // 补做；这里的定时重试只作兜底（20 次封顶，term 已销毁时自然退出）。
+      if (!resizeTerm(term, dims.cols, dims.rows)) {
+        if (retry < 20) setTimeout(() => void fitOne(target, retry + 1), 60);
+        return;
+      }
       invoke("resize", { sid: target, cols: dims.cols, rows: dims.rows }).catch(() => {});
     }
   }, [fitDimsOf]);
@@ -6145,6 +6152,9 @@ export default function App() {
         const g = splitGroupsRef.current.find((gr) => gr.main === cur || gr.second === cur);
         return !!g && (g.main === sessionSid || g.second === sessionSid);
       },
+      // 重放解析完成后补做 fit（#33/#19）：attach 链里被重放门延后的尺寸校准
+      // 在此立即落地，不再等下一个 ResizeObserver 兜底
+      onCheckpointSettled: () => fitTerminal(),
     });
     made.feed = feed;
     const channel = MkChannel() as { onmessage?: (msg: unknown) => void };
@@ -6169,7 +6179,7 @@ export default function App() {
     setAttachHint(true);
     window.setTimeout(() => setAttachHint(false), 6000);
     return true;
-  }, [makeTerm, fitDimsOf]);
+  }, [makeTerm, fitDimsOf, fitTerminal]);
 
   const attachSession = useCallback(async (newSid: string) => {
     // rev-r21 M1：attach 亦属用户导航（标签点击/完成落定共用入口）——推进焦点代际。
@@ -6195,9 +6205,15 @@ export default function App() {
     // CUP 又写死「tail+1」当视口行（tail 是绝对行号），两拍全部空放：1366×768
     // 下检查点（32 行）按接入前高度预对齐、attach 后工具条压矮缩行 reflow 把
     // 光标钉在垫行，回显脱离提示符两行。CUP 是视口相对行，写时按 ydisp 现算。
-    const realignAfterFit = () => {
+    const realignAfterFit = (retry = 0) => {
       const term = termsRef.current.get(newSid)?.term;
       if (!term) return;
+      // 重放解析在途（#33/#19）：缓冲还是重放前/半解析状态，此刻测出的内容尾与光标
+      // 绝对行都是旧几何——等解析完成再来（重放必然结束，重试自终止）
+      if (isReplaying(term)) {
+        if (retry < 20) setTimeout(() => realignAfterFit(retry + 1), 60);
+        return;
+      }
       const b = term.buffer.active;
       if (b.length === 0) return;
       let tail = b.length - 1;
@@ -6227,8 +6243,8 @@ export default function App() {
     // 拽回内容尾（R3-C-1 修复引入的回归，此处收口）
     if (fresh) {
       realignAfterFit();
-      setTimeout(realignAfterFit, 400);
-      setTimeout(realignAfterFit, 700);
+      setTimeout(() => realignAfterFit(), 400);
+      setTimeout(() => realignAfterFit(), 700);
     }
     // 布局与字体稳定后再校准一次（首次 fit 可能撞上渲染器尺寸未就绪）
     setTimeout(() => void fitTerminal(), 350);

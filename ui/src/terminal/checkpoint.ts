@@ -17,6 +17,24 @@ export function setCursorDefault(style: "block" | "underline" | "bar", blink: bo
   cursorDefault = { style, blink };
 }
 
+/** 检查点重放门（#33/#19 的伴生加固）：term.write 是**异步队列**，resize 却同步改模型——
+ *  payload 排队后、解析前插进一次 fit 的 resize，整段快照就按新网格解析：重放期关闭
+ *  自动换行（\x1b[?7l）让长行被直接截断，收尾 CUP 按新行数落位，恢复出的屏与核心网格
+ *  分叉。resizeTerm 是 UI 侧改尺寸的唯一入口：重放解析在途返回 false，调用方延后重试
+ *  （PTY 侧 resize 一并延后，避免核心网格与前端分叉）；applyCheckpoint 在写队列回调
+ *  （= 解析完成）里放开。计数而非布尔：恢复链路可能连续排队两个检查点（attach 后紧跟
+ *  resync），第一个回调不能提前开闸。 */
+const replayPending = new WeakMap<Terminal, number>();
+export function isReplaying(term: Terminal): boolean {
+  return (replayPending.get(term) ?? 0) > 0;
+}
+/** 终端尺寸变更的唯一入口：重放解析在途 → 返回 false（本次未生效，调用方重试）。 */
+export function resizeTerm(term: Terminal, cols: number, rows: number): boolean {
+  if (isReplaying(term)) return false;
+  if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);
+  return true;
+}
+
 /** CellRun 序列 → SGR 文本（每 run 前重置再上属性）。 */
 function runsSgr(runs: CellRun[]): string {
   let out = "";
@@ -56,7 +74,7 @@ function runsSgr(runs: CellRun[]): string {
  *  备用缓冲逐行定位写；随后恢复模式/光标。
  *  先把 xterm 尺寸对齐检查点网格（rev-r11 发现 3）：网格按核心 cols 串行化，
  *  尺寸失配时流式写会按错误列宽换行错位；恢复后由 fit/尺寸对账机制回用户视口。 */
-export function applyCheckpoint(term: Terminal, ck: ScreenCheckpoint): void {
+export function applyCheckpoint(term: Terminal, ck: ScreenCheckpoint, onSettled?: () => void): void {
   // 主缓冲裁尾（六轮 C6-1）：网格尾部空行是「核心屏比内容高」的垫行，照单全收
   // 会把光标钉在垫行——attach 链的 fit 缩行 reflow 把顶部内容推进 scrollback，
   // 而 checkpoint 自带的 CUP 是活动屏相对寻址，数据行沉入 scrollback 后物理够
@@ -66,11 +84,18 @@ export function applyCheckpoint(term: Terminal, ck: ScreenCheckpoint): void {
   // （xterm 缩行语义实测探针 ui/test/probe-c61-xterm.cjs 实验 C）。备用屏
   // （vim 等全屏 app）不裁：全屏语义逐行定位写依赖完整网格。
   const rawLines = ck.buffers[0].lines;
+  // 光标行换算（#33/#19 根部）：契约里 lines 是「历史 + 可视」全网格（session-api
+  // BufferCheckpoint 注释），cursor.y 却是**可视区坐标**（CursorState 注释）。重放
+  // 把历史行也写进缓冲，光标必须按「历史行数 + 可视行」再扣掉写出屏外的溢出，否则
+  // 会落到内容上方 history 行——紧随其后的远端 SIGWINCH 提示符重绘（\r + 提示符）
+  // 恰好盖掉那一行（窄屏横幅折行 → 有历史 → 必现；宽屏一次装下 → 无历史 → 正常，
+  // 这正是「偶发」的来源）。
+  const history = Math.max(0, rawLines.length - ck.rows);
   let lines = rawLines;
   let rows = ck.rows;
   if (ck.active_buffer !== 1) {
     let last = rawLines.length - 1;
-    const cy = clamp(ck.cursor.y, 0, Math.max(0, last));
+    const cy = clamp(history + ck.cursor.y, 0, Math.max(0, last));
     while (last > cy && !(rawLines[last]?.some((c) => c.text) ?? false)) last--;
     lines = rawLines.slice(0, last + 1);
     rows = Math.min(ck.rows, lines.length);
@@ -98,15 +123,26 @@ export function applyCheckpoint(term: Terminal, ck: ScreenCheckpoint): void {
   out.push(ck.modes.bracketed_paste ? "\x1b[?2004h" : "\x1b[?2004l");
   out.push(ck.modes.origin_mode ? "\x1b[?6h" : "\x1b[?6l");
   const x = clamp(ck.cursor.x, 0, Math.max(0, ck.cols - 1));
-  const y = clamp(ck.cursor.y, 0, Math.max(0, ck.rows - 1));
+  // 光标落在「写出行流」里的实际行：历史行数 + 可视行，减去写完溢出的屏外行数
+  // （写入行数 = rows 时溢出为 0；备用屏两值皆为 0，与旧口径一致）
+  const yView = history + ck.cursor.y - Math.max(0, lines.length - rows);
+  const y = clamp(yView, 0, Math.max(0, rows - 1));
   out.push(`\x1b[${y + 1};${x + 1}H`);
   out.push(ck.cursor.visible ? "\x1b[?25h" : "\x1b[?25l");
   // 光标形状/闪烁（P0 终端品质轮）：取应用侧偏好（见 setCursorDefault 注释）。
   // DECSCUSR：1/3/5 = 闪烁方块/下划线/竖线，2/4/6 = 稳定变体。
   const shape = cursorDefault.style === "underline" ? 3 : cursorDefault.style === "bar" ? 5 : 1;
   out.push(`\x1b[${shape + (cursorDefault.blink ? 0 : 1)} q`);
-  term.write(out.join(""));
-  term.scrollToBottom();
+  // 重放门（见 replayPending 注释）：写入排队起到解析完成，一律禁止外部改尺寸；
+  // 滚底也在解析完成后做（此前是排队后立刻滚，滚的是旧内容）
+  replayPending.set(term, (replayPending.get(term) ?? 0) + 1);
+  term.write(out.join(""), () => {
+    const n = (replayPending.get(term) ?? 1) - 1;
+    if (n > 0) replayPending.set(term, n);
+    else replayPending.delete(term);
+    term.scrollToBottom();
+    onSettled?.();
+  });
 }
 
 /** 通道帧 → (seq, payload)：8 字节 LE seq 帧头。
@@ -191,6 +227,8 @@ export function createOutputFeed(opts: {
   pendingCap?: number;
   /** 可见性谓词（#22 背景节流）：读 live 焦点/分组。缺省恒可见（不节流）。 */
   isVisible?: () => boolean;
+  /** 检查点重放解析完成回调（重放门放开之后）：延后的 fit 借此立刻补做。 */
+  onCheckpointSettled?: () => void;
 }): OutputFeed {
   const { term, sid } = opts;
   const cap = opts.pendingCap ?? 4096;
@@ -245,7 +283,7 @@ export function createOutputFeed(opts: {
           apply(ev);
         }
       } else {
-        applyCheckpoint(term, r.checkpoint);
+        applyCheckpoint(term, r.checkpoint, opts.onCheckpointSettled);
         decoder = new TextDecoder(); // 检查点替换是解码流状态断点
         lastApplied = r.end_seq;
         throttle.clear(); // 检查点取代旧屏：积压的术前输出作废，不得再冲（会叠在已重建的屏上）
@@ -280,7 +318,7 @@ export function createOutputFeed(opts: {
     begin: (attach) => {
       if (disposed) return;
       subId = attach.subscription_id;
-      applyCheckpoint(term, attach.checkpoint);
+      applyCheckpoint(term, attach.checkpoint, opts.onCheckpointSettled);
       decoder = new TextDecoder();
       lastApplied = attach.start_seq;
       ready = true;
