@@ -60,7 +60,10 @@ module.exports = {
     const focused = await chromeState(page);
     ck.eq("专注态：标题栏让位", focused.titleDisplay, "none");
     ck.eq("专注态：状态栏兜底挂到 shell", focused.shellPaddingTop, "26px");
-    await page.click('[data-testid="focus-toggle"]');
+    // 移动端专注态标签条默认收起（#45/KI-075），专注图标随之不在屏上——出口走助力球面板。
+    ck.eq("专注态：标签条让位给助力球", await page.locator(".tabbar-row").evaluate((el) => getComputedStyle(el).display), "none");
+    await page.click('[data-testid="assist-ball"]');
+    await page.click('[data-testid="assist-menu"] [role="menuitem"]:has-text("退出专注模式")');
     await page.waitForTimeout(300);
     const unfocused = await chromeState(page);
     ck.eq("退出专注：shell 兜底撤销（标题栏自带内边距）", unfocused.shellPaddingTop, "0px");

@@ -2850,6 +2850,10 @@ case "read_triggers": {
     // 真实面=Android InputManager 设备表（不能并入上面的 null 组，返回类型不同）
     case "has_hardware_keyboard":
       return false;
+    // 自动横屏（GitHub #45）：演示域没有原生 Activity/传感器——no-op（返回 void）；
+    // 真实面=Android 壳用物理朝向显式请求固定横/竖方向，绕开系统旋转锁。
+    case "set_auto_orientation":
+      return null;
     // Android 保活补口（KI-059）：演示域没有前台服务——no-op，真实面=Rust 重算
     // 后经 KeepaliveBridge 补起被系统拒绝的后台启动（返回 void，独立 case）。
     case "keepalive_sync":

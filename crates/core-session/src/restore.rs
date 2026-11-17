@@ -71,7 +71,14 @@ impl SessionManager {
     pub async fn capture_restore_snapshots(&self) -> usize {
         let handles: Vec<std::sync::Arc<crate::handle::SessionHandle>> = {
             let sessions = self.sessions.lock().unwrap();
-            sessions.values().cloned().collect()
+            let mut hs: Vec<_> = sessions.values().cloned().collect();
+            // #43：sessions 是 HashMap，values() 的顺序每个进程随机——条目序就是
+            // FE 恢复时的建标签序，曾因此「恢复后标签位置和之前不同」，且守卫
+            // 超限丢头（最旧）也是丢随机的。按真实创建时刻排定（同刻并列用 sid
+            // 兜底，SessionId 非时间序、只保证确定）。注意：手工拖拽出的标签序
+            // 不在这里持久化（恢复按创建序），见 KI-083。
+            hs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+            hs
         };
         let mut entries: Vec<RestoreEntry> = Vec::with_capacity(handles.len());
         for h in handles {

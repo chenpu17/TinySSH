@@ -216,7 +216,16 @@ if (WRITE) {
     const sel = theme === "graphite"
       ? (chrome === "dark" ? ":root {" : ':root[data-chrome="light"] {')
       : `:root[data-theme="${theme}"][data-chrome="${chrome}"] {`;
-    const start = cssText.indexOf(sel);
+    // 同名选择器可能先命中只有 color-scheme 的语义块（KI-060 起）：以「块体内有
+    // --bg:」认定为色板块，否则 ANSI 变量会被写进语义块、且底色取错。
+    let start = -1;
+    for (let from = 0; ; ) {
+      const i = cssText.indexOf(sel, from);
+      if (i < 0) break;
+      const j = cssText.indexOf("}", i);
+      if (/--bg\s*:/.test(cssText.slice(i, j))) { start = i; break; }
+      from = j + 1;
+    }
     if (start < 0) { console.error(`✗ 找不到块：${sel}`); process.exit(1); }
     const end = cssText.indexOf("}", start);
     let body = cssText.slice(start, end);

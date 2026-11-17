@@ -17,6 +17,13 @@ import {
 // 传输抽屉最多渲染的行数（五轮架构）：超出只显示最近 N 条并如实声明省略数。
 const XFER_ROWS_SHOWN = 120;
 
+/** #44：在途传输的百分比——总量未知（null/0）时返回 null（如实不给假进度）。
+ *  完成态不靠它（bytes 与 total 相等不代表提交完成，见 committing 文案）。 */
+function xferPct(c: TransferCard): number | null {
+  if (c.total == null || c.total <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round(((c.bytes ?? 0) / c.total) * 100)));
+}
+
 // 复制文本到剪贴板（#29 文件管理）：Tauri 走插件，浏览器走 navigator.clipboard；
 // 非安全上下文无 clipboard API 时如实 reject（调用方提示「复制失败」，不谎报已复制）。
 function copyText(text: string): Promise<void> {
@@ -361,6 +368,20 @@ export function TransferQueueDrawer({
                     <div className="mono xfer-sub" title={t2.kind === "Upload" ? `${t2.local} → ${t2.remote}` : `${t2.remote} → ${t2.local}`}>
                       {t2.kind === "Upload" ? `${t2.local} → ${t2.remote}` : `${t2.remote} → ${t2.local}`}
                     </div>
+                    {/* #44：在途进度条——此前只有字节文本，第一次下载/上传时用户
+                        难以看出「在走」。总量未知不画（不给假比例）；排队 0%、
+                        提交中按字节 100%（提交是否完成另有文案，不混为一谈）。 */}
+                    {(t2.status === "queued" || t2.status === "running" || t2.status === "committing")
+                      && (() => {
+                        const pct = xferPct(t2);
+                        return pct == null ? null : (
+                          <div className="xfer-bar" data-testid="xfer-progress" role="progressbar"
+                            aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}
+                            title={t("进度 {0}%", pct)}>
+                            <span style={{ width: `${pct}%` }} />
+                          </div>
+                        );
+                      })()}
                     {t2.status === "awaiting" && t2.prompt && (
                       <div className="xfer-conflict">
                         <div className="mono xfer-sub">

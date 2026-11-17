@@ -48,6 +48,34 @@ async fn capture_roundtrip_contains_scene() {
     assert!(text.contains("scene-line-42"), "快照应含现场文本：{text}");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn capture_orders_entries_by_creation_time() {
+    // #43：sessions 是 HashMap，采集曾按随机迭代序出条目——恢复时标签顺序
+    // 每个进程都可能不同（守卫超限丢的「最旧」也是随机的）。条目必须按会话
+    // 创建时刻排定；这里用 tmux_session 给三条同主机条目打标以便断言顺序。
+    let (m, h) = harness().await;
+    *h.tmux_attached.lock().unwrap() = Some("base".into());
+    let base = h.created_at;
+    let early =
+        super::triggers_tests::add_handle(&m, "s-early", base - chrono::Duration::seconds(30));
+    *early.tmux_attached.lock().unwrap() = Some("early".into());
+    let late =
+        super::triggers_tests::add_handle(&m, "s-late", base + chrono::Duration::seconds(30));
+    *late.tmux_attached.lock().unwrap() = Some("late".into());
+
+    assert_eq!(m.capture_restore_snapshots().await, 3);
+    let entries = m.read_restore_snapshots().await;
+    let order: Vec<_> = entries
+        .iter()
+        .map(|e| e.tmux_session.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        order,
+        vec!["early", "base", "late"],
+        "按创建时刻排定（#43）"
+    );
+}
+
 #[test]
 fn old_snapshot_json_defaults_tmux_fields() {
     // #26 兼容：升级前写入的 restore.v1 没有 tmux 字段，读回必须是空而不是解析失败

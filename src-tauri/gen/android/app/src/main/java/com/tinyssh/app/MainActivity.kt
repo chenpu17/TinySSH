@@ -1,10 +1,13 @@
 package com.tinyssh.app
 
 import android.content.Context
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.hardware.SensorManager
 import android.hardware.input.InputManager
 import android.os.Bundle
 import android.view.InputDevice
+import android.view.OrientationEventListener
 import android.view.View
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
@@ -56,6 +59,19 @@ class MainActivity : TauriActivity() {
       return ctx.resources.configuration.keyboard != Configuration.KEYBOARD_NOKEYS
     }
 
+    /**
+     * 自动横屏（GitHub #45）：系统「旋转锁定」打开时，应用请求 `sensor` 方向会被
+     * 锁住——只有显式固定方向请求（PORTRAIT/LANDSCAPE）能绕开。这里用物理朝向
+     * 事件驱动固定方向请求，因此锁着旋转也能按握持方向转屏。开关状态由前端
+     * localStorage 持久化，启动时经命令重放；Activity 重建后前端同样会再调一次，
+     * 原生侧不需要落盘。
+     */
+    @JvmStatic
+    fun setAutoOrientation(enabled: Boolean) {
+      val a = current?.get() ?: return
+      a.window.decorView.post { a.applyAutoOrientation(enabled) }
+    }
+
     /** 推给 WebView 的 JS：只拼常量（'1'/'0'、true/false），无外部输入插值，
      *  不存在注入面；dataset 供 CSS/启动期同步读取，CustomEvent 供运行期订阅。 */
     private fun hardwareKeyboardJs(present: Boolean): String {
@@ -68,8 +84,7 @@ class MainActivity : TauriActivity() {
 
   /** 物理键盘插拔（USB/蓝牙/磁吸键盘）：监听器注册时 handler 传 null 即投递到
    *  主线程，回调里重算并推 WebView。 */
-  private val inputDeviceListener = object : InputManager.InputDeviceListener {
-    override fun onInputDeviceAdded(deviceId: Int) {
+  private val inputDeviceListener = object : InputManager.InputDeviceListener {    override fun onInputDeviceAdded(deviceId: Int) {
       refreshHardwareKeyboard()
     }
 
@@ -109,6 +124,88 @@ class MainActivity : TauriActivity() {
     wv.post { wv.evaluateJavascript(js, null) }
   }
 
+  // 自动横屏状态：监听器只在开着时启用（后台 onPause 停掉，省电/不打扰其他应用）；
+  // appliedOrientation 记住自己最后一次设置的固定方向，避免同一个方向重复请求
+  // 造成无谓的配置变更。
+  private var autoOrientation = false
+  private var orientationListener: OrientationEventListener? = null
+  private var appliedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+  // 最后一次读到的物理朝向（度）。监听器停用期间不更新；重新开启时先按它应用
+  // 一档——部分设备/模拟器注册传感器后不会立刻补一个当前值，要等物理转动才
+  // 回调，用户「关掉再打开」会看起来没反应。真实设备几十毫秒内会有新事件纠正
+  // 停用期间的转动，代价可忽略。
+  private var lastOrientation = OrientationEventListener.ORIENTATION_UNKNOWN
+
+  // 软键盘可见性推给前端（dataset.ime='1'/'0'）：助力球等按钮 pointerdown
+  // preventDefault 保住 xterm 焦点，但「键盘已被返回键收起、xterm 仍是焦点
+  // 元素」时，Chrome 会在下一次触摸上把键盘重新弹起（真机实测）；前端据此
+  // 在这种状态下放行默认行为（焦点转给按钮）。唯一真源是下面的 IME inset。
+  private var imeVisible = false
+
+  /** 物理朝向 → 固定屏幕方向。对角死区（距四个正方向超过 35°）返回 null，
+   *  调用方保持当前方向。 */
+  private fun targetFor(orientation: Int): Int? = when (orientation) {
+    in 0..35, in 325..359 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    in 55..125 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+    in 145..215 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+    in 235..305 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+    else -> null
+  }
+
+  private fun applyOrientation(orientation: Int) {
+    if (!autoOrientation) return
+    val target = targetFor(orientation) ?: return
+    if (target == appliedOrientation) return
+    appliedOrientation = target
+    requestedOrientation = target
+  }
+
+  /** 推当前 IME 状态给 WebView（无条件，供页面就绪后补推）。 */
+  private fun pushImeVisible() {
+    val wv = contentWebView ?: return
+    val js = "document.documentElement.dataset.ime='${if (imeVisible) 1 else 0}'"
+    wv.post { wv.evaluateJavascript(js, null) }
+  }
+
+  private fun setImeVisible(visible: Boolean) {
+    if (visible == imeVisible) return
+    imeVisible = visible
+    pushImeVisible()
+  }
+
+  /**
+   * 开关自动横屏。关掉时把 requestedOrientation 还原成 UNSPECIFIED，交还系统
+   * （含旋转锁原语义）；开着时注册物理朝向监听——设备平放/方向不明时上报
+   * ORIENTATION_UNKNOWN，保持上一档，不做判断。
+   *
+   * 判定带 ±10° 死区（只在距四个正方向 35° 内换档）：45°/135° 对角线附近手抖
+   * 会让横竖反复切换，死区把边界推成 55°/125° 这类宽区间。90°/270° 的正反
+   * 横屏、0°/180° 的正反竖屏都跟随物理朝向，不要求用户固定某一侧。
+   */
+  private fun applyAutoOrientation(enabled: Boolean) {
+    autoOrientation = enabled
+    if (!enabled) {
+      orientationListener?.disable()
+      if (appliedOrientation != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+        appliedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+      }
+      return
+    }
+    val listener = orientationListener ?: object : OrientationEventListener(
+      this, SensorManager.SENSOR_DELAY_UI
+    ) {
+      override fun onOrientationChanged(orientation: Int) {
+        if (orientation == OrientationEventListener.ORIENTATION_UNKNOWN) return
+        lastOrientation = orientation
+        applyOrientation(orientation)
+      }
+    }.also { orientationListener = it }
+    listener.enable()
+    // 先按上一次已知朝向应用一档（见 lastOrientation 注释）。
+    applyOrientation(lastOrientation)
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
@@ -131,6 +228,7 @@ class MainActivity : TauriActivity() {
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
       v.setPadding(0, 0, 0, maxOf(ime, bars))
+      setImeVisible(ime > 0)
       insets
     }
     // 返回键：TauriActivity 关掉了 Wry 的默认返回导航，系统默认会直接退 App。
@@ -154,12 +252,21 @@ class MainActivity : TauriActivity() {
     // 覆盖冷启动/重建窗口的时序空窗。
     refreshHardwareKeyboard()
     webView.postDelayed({ refreshHardwareKeyboard() }, 800)
+    // IME 状态同理：页面就绪后补推一次，冷启动时 insets 可能早于文档创建。
+    webView.postDelayed({ pushImeVisible() }, 800)
   }
 
   override fun onResume() {
     super.onResume()
     // 后台期间显示器/外设可能变化，且这次挂起前可能错过一次推送：回前台重算。
     refreshHardwareKeyboard()
+    // 朝向监听在 onPause 停掉（不占后台传感器），回前台按开关恢复。
+    if (autoOrientation) orientationListener?.enable()
+  }
+
+  override fun onPause() {
+    orientationListener?.disable()
+    super.onPause()
   }
 
   override fun onDestroy() {

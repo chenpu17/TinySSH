@@ -199,6 +199,9 @@ interface SettingsPanelProps {
   // 专注模式底部资源条（用户反馈 #21）：默认开，关掉后专注态仍是纯终端
   focusMetrics: boolean;
   onChangeFocusMetrics: (on: boolean) => void;
+  // 自动横屏（GitHub #45，仅移动端卡片）：系统旋转锁打开时也按物理朝向转屏
+  autoRotate: boolean;
+  onChangeAutoRotate: (on: boolean) => void;
   // 快捷键
   keymap: Record<KeyActionId, Binding>;
   /** 单条重置（宿主校验默认键是否已被别的动作占用，冲突则拒绝并提示） */
@@ -314,6 +317,7 @@ export function SettingsPanel({
   updateInfo, diagBusy, onExportDiagnostics, updaterCap, updaterBusy, onAutoUpdate, checkBusy, onCheckUpdate, onOpenUrl,
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   uiFontScale, changeUiFontScale, uiDensity, changeUiDensity, focusMetrics, onChangeFocusMetrics,
+  autoRotate, onChangeAutoRotate,
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
@@ -624,6 +628,23 @@ export function SettingsPanel({
                     </span>
                   </label>
                 </div>
+                {/* 自动横屏（GitHub #45）：手机上常开「旋转锁定」，终端却经常想横过来
+                    看多列输出。开关只在移动平台出现，缺省开；原生按物理朝向显式请求
+                    方向，关掉即交还系统（含旋转锁原语义）。 */}
+                {mobilePlatform && (
+                <div className="set-card">
+                  <h4>{t("移动端屏幕")}</h4>
+                  <div className="set-desc">{t("手机上系统常开着「旋转锁定」；打开后本应用按握持方向转屏，不受系统锁影响。")}</div>
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="mobile-auto-rotate" checked={autoRotate}
+                      onChange={(e) => onChangeAutoRotate(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>{t("自动横屏（忽略系统旋转锁）")}</b>
+                      <span className="set-item-desc">{t("根据重力方向在横屏/竖屏间切换，转过对角线才翻（带死区防抖动）；关闭后恢复跟随系统设置。")}</span>
+                    </span>
+                  </label>
+                </div>
+                )}
                 </>)}
 
                 {settingsCat === "keys" && (<>

@@ -172,6 +172,22 @@ pub(crate) async fn set_system_bars_light(light: bool) -> CmdResult<()> {
     Ok(())
 }
 
+/// 移动端自动横屏（GitHub #45）：系统旋转锁打开时应用仍按物理朝向转屏。Android
+/// 把开关转发 MainActivity.setAutoOrientation（原生侧用 OrientationEventListener
+/// 读物理朝向，再显式请求固定横/竖方向——锁定时只有固定方向请求能绕开）；
+/// 非 Android no-op。开关状态由前端持久化并在启动时重放，原生侧不落盘。
+#[tauri::command]
+pub(crate) async fn set_auto_orientation(enabled: bool) -> CmdResult<()> {
+    #[cfg(target_os = "android")]
+    {
+        android_set_auto_orientation(enabled)
+            .map_err(|e| WireError::simple("io", format!("更新自动横屏失败：{e}")))?;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = enabled;
+    Ok(())
+}
+
 /// 物理键盘存在性（移动端交互）：前端据此隐藏辅助键条、收紧软键盘避让等。
 /// Android 经 JNI 问 MainActivity.hasHardwareKeyboard()（InputManager 非虚拟设备
 /// 且带键盘源位、keyboardType 非 NONE；兜底 Configuration.keyboard）。查询失败
@@ -214,29 +230,87 @@ fn android_has_hardware_keyboard() -> std::result::Result<bool, String> {
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let context = unsafe { JObject::from_raw(ctx.context().cast()) };
 
-    let loader = env
-        .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-    let class_name = env
-        .new_string("com.tinyssh.app.MainActivity")
-        .map_err(|e| e.to_string())?;
-    let class_obj = env
-        .call_method(
-            &loader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[JValue::Object(&class_name)],
+    // JNI 错误路径卫生（KI-072）：任一调用抛 Java 异常（loadClass 的
+    // ClassNotFound 等）都要清掉挂起异常，否则这条 native 线程后续调用全部带病。
+    let result = (|| -> std::result::Result<bool, String> {
+        let loader = env
+            .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let class_name = env
+            .new_string("com.tinyssh.app.MainActivity")
+            .map_err(|e| e.to_string())?;
+        let class_obj = env
+            .call_method(
+                &loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&class_name)],
+            )
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
+        env.call_static_method(&class_ref, "hasHardwareKeyboard", "()Z", &[])
+            .map_err(|e| e.to_string())?
+            .z()
+            .map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        crate::android_jni::clear_pending_exception(&mut env);
+    }
+    result
+}
+
+/// Android 把自动横屏开关转发给 MainActivity.setAutoOrientation(Z)。ClassLoader
+/// 取法与 setSystemBarsLight 同源（KI-060）；Kotlin 侧经静态 WeakReference 取
+/// Activity 并用 view.post 回主线程（传感器注册/方向请求都必须在主线程）。
+#[cfg(target_os = "android")]
+fn android_set_auto_orientation(enabled: bool) -> std::result::Result<(), String> {
+    use jni::objects::{JObject, JValue};
+
+    // SAFETY: 与 open_url 同一前提：Tauri/wry 的 JNI 入口在 run() 前初始化
+    // ndk-context，保存的是进程生命期有效的全局引用。
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+    // JNI 错误路径卫生（KI-072）：同 setSystemBarsLight，失败先清挂起异常。
+    let result = (|| -> std::result::Result<(), String> {
+        let loader = env
+            .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let class_name = env
+            .new_string("com.tinyssh.app.MainActivity")
+            .map_err(|e| e.to_string())?;
+        let class_obj = env
+            .call_method(
+                &loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&class_name)],
+            )
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
+        env.call_static_method(
+            &class_ref,
+            "setAutoOrientation",
+            "(Z)V",
+            &[JValue::Bool(enabled as u8)],
         )
-        .map_err(|e| e.to_string())?
-        .l()
         .map_err(|e| e.to_string())?;
-    let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
-    env.call_static_method(&class_ref, "hasHardwareKeyboard", "()Z", &[])
-        .map_err(|e| e.to_string())?
-        .z()
-        .map_err(|e| e.to_string())
+        Ok(())
+    })();
+    if result.is_err() {
+        crate::android_jni::clear_pending_exception(&mut env);
+    }
+    result
 }
 
 /// Android 把设置转发给 MainActivity.setSystemBarsLight。native 线程里
@@ -255,35 +329,42 @@ fn android_set_system_bars_light(light: bool) -> std::result::Result<(), String>
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let context = unsafe { JObject::from_raw(ctx.context().cast()) };
 
-    let loader = env
-        .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-    let class_name = env
-        .new_string("com.tinyssh.app.MainActivity")
-        .map_err(|e| e.to_string())?;
-    let class_obj = env
-        .call_method(
-            &loader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[JValue::Object(&class_name)],
+    // JNI 错误路径卫生（KI-072）：同 hasHardwareKeyboard，失败先清挂起异常。
+    let result = (|| -> std::result::Result<(), String> {
+        let loader = env
+            .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let class_name = env
+            .new_string("com.tinyssh.app.MainActivity")
+            .map_err(|e| e.to_string())?;
+        let class_obj = env
+            .call_method(
+                &loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&class_name)],
+            )
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        // call_static_method 的 class 参数要 Desc<JClass>，&JObject 不实现；转全局引用后
+        // 可当类引用传入（jni 0.21 对 &GlobalRef 的 Desc<JClass> 实现）。
+        let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
+        env.call_static_method(
+            &class_ref,
+            "setSystemBarsLight",
+            "(Z)V",
+            &[JValue::Bool(light as u8)],
         )
-        .map_err(|e| e.to_string())?
-        .l()
         .map_err(|e| e.to_string())?;
-    // call_static_method 的 class 参数要 Desc<JClass>，&JObject 不实现；转全局引用后
-    // 可当类引用传入（jni 0.21 对 &GlobalRef 的 Desc<JClass> 实现）。
-    let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
-    env.call_static_method(
-        &class_ref,
-        "setSystemBarsLight",
-        "(Z)V",
-        &[JValue::Bool(light as u8)],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+        Ok(())
+    })();
+    if result.is_err() {
+        crate::android_jni::clear_pending_exception(&mut env);
+    }
+    result
 }
 
 /// Android 拉起浏览器（Intent.ACTION_VIEW）。KI-063：隐式 ACTION_VIEW 谁都能接走
@@ -304,57 +385,65 @@ fn android_open_url(url: &str) -> std::result::Result<(), String> {
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let context = unsafe { JObject::from_raw(ctx.context().cast()) };
 
-    let url_js = env.new_string(url).map_err(|e| e.to_string())?;
-    let uri = env
-        .call_static_method(
-            "android/net/Uri",
-            "parse",
-            "(Ljava/lang/String;)Landroid/net/Uri;",
-            &[JValue::Object(&url_js)],
+    // JNI 错误路径卫生（KI-072）：Uri.parse/Intent 构造等同样可能抛 Java 异常，
+    // 整段包起来统一清理（startActivity 的异常在外层再 describe 一次原文）。
+    let result = (|| -> std::result::Result<(), String> {
+        let url_js = env.new_string(url).map_err(|e| e.to_string())?;
+        let uri = env
+            .call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValue::Object(&url_js)],
+            )
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let action = env
+            .new_string("android.intent.action.VIEW")
+            .map_err(|e| e.to_string())?;
+        let intent = env
+            .new_object(
+                "android/content/Intent",
+                "(Ljava/lang/String;Landroid/net/Uri;)V",
+                &[JValue::Object(&action), JValue::Object(&uri)],
+            )
+            .map_err(|e| e.to_string())?;
+        // 选择器标题传 null：由系统按当前语言渲染（Rust 侧没有 i18n 上下文）。
+        let chooser = env
+            .call_static_method(
+                "android/content/Intent",
+                "createChooser",
+                "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
+                &[JValue::Object(&intent), JValue::Object(&JObject::null())],
+            )
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        env.call_method(
+            &chooser,
+            "addFlags",
+            "(I)Landroid/content/Intent;",
+            &[JValue::Int(0x1000_0000)],
         )
-        .map_err(|e| e.to_string())?
-        .l()
         .map_err(|e| e.to_string())?;
-    let action = env
-        .new_string("android.intent.action.VIEW")
-        .map_err(|e| e.to_string())?;
-    let intent = env
-        .new_object(
-            "android/content/Intent",
-            "(Ljava/lang/String;Landroid/net/Uri;)V",
-            &[JValue::Object(&action), JValue::Object(&uri)],
-        )
-        .map_err(|e| e.to_string())?;
-    // 选择器标题传 null：由系统按当前语言渲染（Rust 侧没有 i18n 上下文）。
-    let chooser = env
-        .call_static_method(
-            "android/content/Intent",
-            "createChooser",
-            "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
-            &[JValue::Object(&intent), JValue::Object(&JObject::null())],
-        )
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-    env.call_method(
-        &chooser,
-        "addFlags",
-        "(I)Landroid/content/Intent;",
-        &[JValue::Int(0x1000_0000)],
-    )
-    .map_err(|e| e.to_string())?;
-    if let Err(e) = env.call_method(
-        &context,
-        "startActivity",
-        "(Landroid/content/Intent;)V",
-        &[JValue::Object(&chooser)],
-    ) {
-        // Java 异常不清会留在这条 native 线程上，后续 JNI 调用全部带病返回。
-        if env.exception_check().unwrap_or(false) {
-            env.exception_describe().ok();
-            let _ = env.exception_clear();
+        if let Err(e) = env.call_method(
+            &context,
+            "startActivity",
+            "(Landroid/content/Intent;)V",
+            &[JValue::Object(&chooser)],
+        ) {
+            // Java 异常不清会留在这条 native 线程上，后续 JNI 调用全部带病返回。
+            if env.exception_check().unwrap_or(false) {
+                env.exception_describe().ok();
+                let _ = env.exception_clear();
+            }
+            return Err(e.to_string());
         }
-        return Err(e.to_string());
+        Ok(())
+    })();
+    if result.is_err() {
+        crate::android_jni::clear_pending_exception(&mut env);
     }
-    Ok(())
+    result
 }

@@ -666,69 +666,69 @@ export const TERM_FONTS: TermFontChoice[] = [
     label: "Maple Mono 圆润中文等宽（内置）",
     // "Maple Mono CN CJK Bold" 只覆盖 CJK 粗体（用 Regular 字模，见 styles.css 的
     // #23 注释）；拉丁与框线仍由 Maple Bold 绘制。
-    css: SYMBOLS + '"Maple Mono CN CJK Bold", "Maple Mono CN Term", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"Maple Mono CN CJK Bold", "Maple Mono CN Term", "JetBrains Mono Term", "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "jetbrains",
     label: "JetBrains Mono（内置）",
-    css: SYMBOLS + '"JetBrains Mono Term", "SF Mono", "Cascadia Mono", Menlo, Consolas, "MiSans VF", "Microsoft YaHei", "Courier New", monospace',
+    css: SYMBOLS + '"JetBrains Mono Term", "SF Mono", "Cascadia Mono", Menlo, Consolas, "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", "Courier New", monospace',
   },
   {
     id: "jetbrains-nerd",
     label: "JetBrains Mono Nerd Font（若已安装）",
-    css: SYMBOLS + '"JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrains Mono Term", "Cascadia Mono", Consolas, "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"JetBrainsMono Nerd Font", "JetBrainsMono NF", "JetBrains Mono Term", "Cascadia Mono", Consolas, "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "cascadia",
     label: "Cascadia Mono / Code（Windows）",
-    css: SYMBOLS + '"Cascadia Mono", "Cascadia Code", Consolas, "MiSans VF", "Microsoft YaHei", "Courier New", monospace',
+    css: SYMBOLS + '"Cascadia Mono", "Cascadia Code", Consolas, "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", "Courier New", monospace',
   },
   {
     id: "consolas",
     label: "Consolas（Windows）",
-    css: SYMBOLS + 'Consolas, "MiSans VF", "Microsoft YaHei", "Courier New", monospace',
+    css: SYMBOLS + 'Consolas, "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", "Courier New", monospace',
   },
   {
     id: "menlo",
     label: "SF Mono / Menlo（macOS）",
-    css: SYMBOLS + '"SF Mono", Menlo, Monaco, "MiSans VF", "Hiragino Sans GB", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"SF Mono", Menlo, Monaco, "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Hiragino Sans GB", "Microsoft YaHei", monospace',
   },
   // 用户反馈（#16）：预设偏少。以下为常见等宽字体，装没装由设置页的就地探测
   // 如实提示；每一项都垫内置 JetBrains/Maple 与 CJK 字体，缺装时仍能正常显示。
   {
     id: "sarasa",
     label: "更纱黑体 Sarasa Mono SC（若已安装）",
-    css: SYMBOLS + '"Sarasa Mono SC", "Sarasa Mono CL", "Sarasa Fixed SC", "Sarasa Term SC", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"Sarasa Mono SC", "Sarasa Mono CL", "Sarasa Fixed SC", "Sarasa Term SC", "JetBrains Mono Term", "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "noto-cjk",
     label: "Noto Sans Mono CJK（若已安装）",
-    css: SYMBOLS + '"Noto Sans Mono CJK SC", "Noto Sans Mono CJK", "Noto Sans Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"Noto Sans Mono CJK SC", "Noto Sans Mono CJK", "Noto Sans Mono", "JetBrains Mono Term", "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "fira",
     label: "Fira Code（若已安装）",
-    css: SYMBOLS + '"Fira Code", "Fira Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"Fira Code", "Fira Mono", "JetBrains Mono Term", "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "source-code-pro",
     label: "Source Code Pro（若已安装）",
-    css: SYMBOLS + '"Source Code Pro", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"Source Code Pro", "JetBrains Mono Term", "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "ibm-plex",
     label: "IBM Plex Mono（若已安装）",
-    css: SYMBOLS + '"IBM Plex Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"IBM Plex Mono", "JetBrains Mono Term", "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "ubuntu",
     label: "Ubuntu Mono（Linux）",
-    css: SYMBOLS + '"Ubuntu Mono", "JetBrains Mono Term", "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + '"Ubuntu Mono", "JetBrains Mono Term", "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
   {
     id: "system",
     label: "系统等宽（ui-monospace）",
-    css: SYMBOLS + 'ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "MiSans VF", "Microsoft YaHei", monospace',
+    css: SYMBOLS + 'ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "MiSans VF", "TinySSH CJK Fallback Mac", "TinySSH CJK Fallback Win", "Microsoft YaHei", monospace',
   },
 ];
 export const TERM_FONT_DEFAULT = TERM_FONTS[0].id;

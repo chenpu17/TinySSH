@@ -77,6 +77,9 @@ interface CmdArgs {
   // 移动端外接键盘探测（USB/蓝牙/OTG）：无参，true=硬件键盘在线（辅助键条隐藏、
   // 连上后允许自动聚焦终端）；桌面装配不会调用。
   has_hardware_keyboard: undefined;
+  // 移动端自动横屏（GitHub #45）：系统旋转锁打开时也按物理朝向转屏；开关由前端
+  // 持久化，启动/切换时调用。桌面装配该命令 no-op。
+  set_auto_orientation: { enabled: boolean };
   // Android 保活补口（KI-059）：回前台让 Rust 立即重算一次前台服务状态，无参无返回。
   keepalive_sync: undefined;
   upload_file: { sid: string; local: string; remote: string };
@@ -230,6 +233,7 @@ interface CmdRet {
   open_url: void;
   set_system_bars_light: void;
   has_hardware_keyboard: boolean;
+  set_auto_orientation: void;
   keepalive_sync: void;
   upload_file: wire.TransferHandle;
   download_file: wire.TransferHandle;

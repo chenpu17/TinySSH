@@ -67,6 +67,37 @@
   unicode-range: U+2460-24FF, U+2776-2793;
   size-adjust: 80%;
 }
+/* 用户反馈 #41（「昇腾」的昇字比周围小一号，macOS 反馈）：两个原因叠加。
+   ① 内置 Maple/JetBrains/MiSans 三个终端字体都按 GB2312 裁字形，GBK 独有的常用字
+     （昇、喆、堃…）不在其中，整条栈里没有一族能画它；
+   ② mac 应用跑在 WKWebView（WebKit）：栈首 @font-face「TinySSH Symbol Fallback」
+     的 unicode-range 只含圈号、却带 size-adjust:80%，WebKit 会把这份 80% 缩放套到
+     「全栈都匹配不到」的汉字上——探针实测旧栈 昇 39.5 / 腾 51.2 = 0.77、堃/者 0.76，
+     正是截图里的「小一号」（Chromium 按 unicode-range 正确跳过该面，所以桌面 demo
+     与 Chrome 不复现，这也是 spec 95 在 Chrome 里修不修都过、必须在 WebKit 里验的
+     原因）。
+   修复：给终端两条只接 CJK 的回退面——Mac 苹方/冬青原尺（实测 96–98%），Windows
+   雅黑 size-adjust:126%（GBK 独有字在雅黑上同样偏小，一并补足）。插在 MiSans 之后、
+   系统字体之前，这些字就命中专用面，不再落到符号面的 80% 缩放上（WebKit 复测
+   昇/腾 0.96、堃/者 0.95）。Mac 面排前：装了 Office 雅黑的 mac 也优先拿原生苹方
+   （用户认可「系统等宽」的观感），Win 面在 mac 上因 local() 找不到雅黑自动让位。
+   两个家族分开声明并依次入栈——WebKit/Chromium 才按「前一族无此字形」逐族回退；
+   同族多 @font-face 会被后声明者覆盖。unicode-range 只接 CJK，拉丁/框线仍由前面的
+   等宽字体绘制。 */
+@font-face {
+  font-family: "TinySSH CJK Fallback Win";
+  src: local("Microsoft YaHei"), local("MicrosoftYaHei"), local("Microsoft YaHei UI");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+  size-adjust: 126%;
+  unicode-range: U+2E80-9FFF, U+3000-303F, U+F900-FAFF, U+FF00-FFEF;
+}
+@font-face {
+  font-family: "TinySSH CJK Fallback Mac";
+  src: local("PingFangSC-Regular"), local("PingFang SC Regular"),
+       local("HiraginoSansGB-W3"), local("Hiragino Sans GB W3");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+  unicode-range: U+2E80-9FFF, U+3000-303F, U+F900-FAFF, U+FF00-FFEF;
+}
 :root {
   /* UX 现代化改版（2026-10-10，docs/ux 台账 §4 同日登记）：石墨蓝基座 + 半透明描边 +
      集中一处的高饱和 cyan accent——深浅两套色板全部经 WCAG 脚本复验（文本档 ≥4.5:1，
@@ -375,7 +406,7 @@ button.collab-badge:not(:disabled):hover { background: color-mix(in srgb, var(--
   50% { box-shadow: 0 0 0 4px transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .collab-badge.hot { animation: none; } }
-.workspace { flex: 1; display: flex; min-height: 0; }
+.workspace { flex: 1; display: flex; min-height: 0; position: relative; }
 .hostbar {
   flex: none; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-right: 1px solid var(--border);
@@ -1917,6 +1948,12 @@ button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(-
 /* 传输/转发行次级文字（状态行、源→目标行）是信息性正文，用次级文字色保 AA——
    vis-r35：dim 深档于 .card(--panel2) 实算 3.01:1 低于 AA（同 R34 .xfer-note/.xfer-conflict 处置） */
 .xfer-sub { font-size: calc(11px * var(--ui-font-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-sub); }
+/* #44 在途进度条：字节文本之外的形状信号，细条不占行高；轨道用边框色、
+   进度用强调色（高对比主题下同样可辨）。只对总量已知的在途任务渲染。 */
+.xfer-bar { margin-top: 4px; height: 4px; border-radius: 2px; background: var(--border);
+  overflow: hidden; max-width: 100%; }
+.xfer-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px;
+  transition: width 120ms linear; }
 /* R34 冲突决策卡：左竖线分节 + 按钮行 */
 .xfer-conflict { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--warn); min-width: 0; }
 /* 冲突询问是待决信息（路径/大小/原因），用次级文字色保 AA——dim 深档不够对比 */
@@ -3809,6 +3846,12 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 :root[data-platform="ios"] .sftp-row .sftp-dl { opacity: 1; pointer-events: auto; }
 :root[data-platform="android"] .term-scroll-bottom:not([hidden]),
 :root[data-platform="ios"] .term-scroll-bottom:not([hidden]) { opacity: 1; pointer-events: auto; }
+/* 移动端右缘常驻助力球与胶囊同为右下角浮件，但锚点不同（球锚 workspace、胶囊
+   锚终端容器）：竖屏页脚更高时球会压在胶囊右端（411×914 实测重叠 27×23px，
+   胶囊文字被切）。移动端把主终端胶囊左移 44px 让出球的列，二者都可点；分屏
+   格子的小胶囊维持原锚点。 */
+:root[data-platform="android"] .term-scroll-bottom:not(.pane),
+:root[data-platform="ios"] .term-scroll-bottom:not(.pane) { right: 60px; }
 
 /* ===== 移动端（Android / iOS webview + 窄视口）=====
    桌面是「活动栏 + 主机栏 + 主区」三栏并排；手机没有横向空间，改成单列：
@@ -3944,6 +3987,109 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 }
 .mobile-keys .mk-gap { flex: 0 0 4px; }
 
+/* 移动端助力球（GitHub #40 / #45）：右缘悬浮球 + 展开动作面板。锚在 .workspace
+   右下角（workspace 已有 position:relative），随内容区在软键盘让位后一起收缩，
+   不会飘到键盘底下；bottom 抬高靠近右下角常驻的「回到底部」胶囊，移动端胶囊
+   左移让出球的列（见 :root[data-platform] .term-scroll-bottom 规则），面板向上
+   展开、超高时内部滚动。 */
+.assist-ball-wrap {
+  position: absolute; right: 10px; bottom: 96px; z-index: 67;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+}
+.assist-scrim { position: fixed; inset: 0; z-index: 65; background: transparent; }
+.assist-ball {
+  width: 40px; height: 40px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel2) 84%, transparent);
+  box-shadow: 0 2px 10px var(--shadow-soft);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  color: var(--text-sub);
+  font-size: calc(16px * var(--ui-font-scale)); line-height: 1;
+  opacity: .82;
+  cursor: pointer;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+.assist-ball.ts-open { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.assist-ball:active { background: var(--panel3); }
+.assist-menu {
+  display: flex; flex-direction: column; gap: 4px; padding: 5px;
+  max-height: min(56vh, 340px); overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  box-shadow: 0 8px 24px var(--shadow-soft);
+}
+.assist-menu .assist-item {
+  height: 38px; padding: 0 14px;
+  white-space: nowrap; text-align: left;
+  border: none; border-radius: 8px;
+  background: transparent; color: var(--text);
+  font: inherit; font-size: calc(13px * var(--ui-font-scale));
+  touch-action: manipulation;
+}
+.assist-menu .assist-item:active,
+.assist-menu .assist-item.ts-open { background: var(--panel3); }
+
+/* 移动端专注态收 chrome（GitHub #45）：标签条与工具栏默认不渲染，由助力球
+   面板「标签与工具栏」唤出（.m-chrome-open）。只作用于移动平台——桌面专注
+   模式维持原样（标签条本就不在专注态里）。zen-auto 的 -100% 位移在唤出时
+   一并抵消，否则被动过的标签条会从屏上滑走。 */
+:root[data-platform="android"] .focus-mode:not(.m-chrome-open) .tabbar-row,
+:root[data-platform="ios"] .focus-mode:not(.m-chrome-open) .tabbar-row {
+  display: none;
+}
+:root[data-platform="android"] .focus-mode.m-chrome-open .session-toolbar,
+:root[data-platform="ios"] .focus-mode.m-chrome-open .session-toolbar {
+  display: flex;
+}
+:root[data-platform="android"] .focus-mode.zen-auto.m-chrome-open .tabbar-row,
+:root[data-platform="ios"] .focus-mode.zen-auto.m-chrome-open .tabbar-row {
+  transform: none;
+}
+
+/* 移动端紧凑标签切换（GitHub #45）：标签按钮行白占一整行，收成一颗「当前会话 +
+  数量」下拉。标签流（.tabbar）与滚动钮在移动平台隐藏；尾部新建/快速连接/专注钮
+  保留。「标签列表」入口与切换器重复，桌面版 .st-tools.tabbar-admin 一并让位——
+  与切换器共用 tabsMenuOpen，菜单在移动端由 .m-tabs-menu 就地渲染。 */
+:root[data-platform="android"] .tabbar-row > .tabbar,
+:root[data-platform="ios"] .tabbar-row > .tabbar,
+:root[data-platform="android"] .tabbar-row > .tab-scroll,
+:root[data-platform="ios"] .tabbar-row > .tab-scroll,
+:root[data-platform="android"] .tabbar-row > .st-tools.tabbar-admin,
+:root[data-platform="ios"] .tabbar-row > .st-tools.tabbar-admin {
+  display: none;
+}
+.m-tabswitch {
+  position: relative; display: flex; align-items: center;
+  flex: 1 1 auto; min-width: 0;
+}
+.m-tabswitch-btn {
+  display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0;
+  height: 32px; padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  font: inherit; font-size: calc(12px * var(--ui-font-scale));
+  -webkit-user-select: none; user-select: none;
+  touch-action: manipulation;
+}
+.m-tabswitch-btn.ts-open {
+  border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-text);
+}
+.m-tabswitch-btn .tab-label { flex: 1 1 auto; min-width: 0; text-align: left; }
+.m-tabswitch-btn > svg { flex: none; color: var(--text-sub); }
+.m-tabswitch-rename {
+  flex: 1 1 auto; width: auto; min-width: 0; height: 32px;
+}
+/* 菜单相对切换器展开（.tools-menu 默认 right:0 会跑去右端），高度留给滚动 */
+.m-tabs-menu { left: 0; right: auto; min-width: min(260px, 84vw); max-height: 60vh; }
+.tools-menu .tm-close { display: inline-flex; align-items: center; justify-content: center; padding: 0 6px; }
+
 /* 触屏浮条（终端选区/链接点按，KI-052）：与 .ctx-menu 同层的 fixed 小横条，
    挂在全屏 .pop-mask（z56）之上。40dp 高按钮满足触控判据；不换行、按内容宽，
    App 给锚点坐标、clampIntoView 兜底回夹视口。 */
@@ -3992,12 +4138,20 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   padding-left: max(env(safe-area-inset-left, 0px), 0px);
   padding-right: max(env(safe-area-inset-right, 0px), 0px);
 }
+/* 移动端标题栏只兜系统状态栏（GitHub #45「标题窗口太占空间」）：窄屏里版本/自监控/
+   协作/更新徽标已隐藏，这一行原本只剩品牌名。品牌让位，行高压到 26px 状态栏兜底
+   + 34px 下限（横屏再走下面 761px 档的 38px）；安全区更大的设备仍按 env() 撑开。
+   桌面窗口（无 data-platform）零影响。 */
 :root[data-platform="android"] .titlebar,
 :root[data-platform="ios"] .titlebar {
-  height: auto; min-height: 44px;
+  height: auto; min-height: 34px;
   /* 长手写：媒体块里的 padding 简写仍管左右内边距，这里只覆盖上下 */
   padding-top: max(env(safe-area-inset-top, 0px), 26px);
-  padding-bottom: 6px;
+  padding-bottom: 0;
+}
+:root[data-platform="android"] .titlebar .app-title,
+:root[data-platform="ios"] .titlebar .app-title {
+  display: none;
 }
 
 /* 触控命中高度（任意宽度，平板/横屏手机同样受益）：桌面 26–30px 钮低于 36dp

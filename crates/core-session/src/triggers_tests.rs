@@ -242,6 +242,30 @@ pub(crate) async fn harness() -> (
     (m, h, writes)
 }
 
+/// 恢复序测试用：按指定 sid / 创建时刻造一个 SSH 会话并挂进 manager。
+/// 创建时刻构造后回填（SessionHandle 的 created_at 是构造期一次写入的 pub 字段）。
+pub(crate) fn add_handle(
+    m: &Arc<SessionManager>,
+    sid: &str,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> Arc<SessionHandle> {
+    let mut h = SessionHandle::new(
+        sid.into(),
+        ssh_host(),
+        "ssh".into(),
+        Arc::new(RecChannel {
+            writes: Arc::default(),
+        }),
+        screen(),
+        m.center.clone(),
+        ControlOwner::Human,
+    );
+    // SessionHandle::new 已返回 Arc；此时唯一持有者，get_mut 必成功。
+    Arc::get_mut(&mut h).unwrap().created_at = created_at;
+    m.sessions.lock().unwrap().insert(h.id.clone(), h.clone());
+    h
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn notify_fires_event_and_send_needs_approval() {
     let (m, h, writes) = harness().await;

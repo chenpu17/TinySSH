@@ -129,6 +129,7 @@ import { Hostbar } from "./components/hostbar";
 import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
 import { MobileKeyBar } from "./components/mobile-keys";
+import { AssistBall } from "./components/assist-ball";
 import { TouchBar, type TouchBarItem } from "./components/touch-bar";
 import { TmuxQuick } from "./components/tmux-quick";
 import { TmuxWall } from "./components/tmux-wall";
@@ -432,6 +433,8 @@ export default function App() {
   const keepalivePermAskedRef = useRef(false);
   // 分屏窗格遮罩的「重连」动作经 ref 取最新实现（makeTerm 早于 reconnectSession 声明）。
   const paneReconnectRef = useRef<(s: SessionInfo) => void>(() => {});
+  // 后台掉线 toast 的动作：切到该会话（attachSession 晚于 applyStateEvent 声明）。
+  const attachSessionRef = useRef<(id: string) => Promise<void>>(async () => {});
   // 全终端重画出口（字形图集自愈）：实现挂在字形自愈 effect 里；原生全屏
   // 进出（Tauri setFullscreen/绿灯/Esc）不走 DOM fullscreenchange，由窗口
   // resize 探针在检测到全屏态翻转时调用这里。
@@ -476,6 +479,18 @@ export default function App() {
         const s = sessionsRef.current.find((x) => x.id === ev.session_id);
         if (s) void restoreTmuxRef.current?.(s, undefined, true);
       }, 1200);
+    }
+    // #46：后台标签掉线不能只有角落里的小圆点——用户盯着当前终端时，不会发现
+    // 另一个会话已经死了（反馈里到画面错乱才意识到连接故障）。当前视口内的会话
+    // 由 .dead-overlay 就地提示（不重复弹）；这里只报「看不见的那个」。只报最终
+    // Disconnected（自动重连期间不打扰），Closed 是用户主动关闭、不报。
+    if (ev.state === "Disconnected" && prev && prev.state !== "Disconnected"
+      && ev.session_id !== sidRef.current) {
+      pushToast("err", t("会话已断开：{0}", prev.host_name), {
+        label: t("切换"),
+        title: t("切换到该会话（就地查看断线提示与重连）"),
+        run: () => { void attachSessionRef.current(ev.session_id).catch(() => {}); },
+      });
     }
   }, []);
   // 真实环境：session-state 事件（连接事件同款 transformCallback 通道）
@@ -773,6 +788,8 @@ export default function App() {
     // 错误常常是长句（后端原文/shell 失败原因），2.6s 读不完且无法复制；给 6s
     // 并允许点 × 手动关闭（栈本身仍 pointer-events:none，不挡背后操作）。
     setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), action ? 8000 : kind === "err" ? 6000 : 2600);
+    // 返回 id 供调用方在「被后续 toast 取代」时自行撤下（传输开始提示 → 完成提示）。
+    return id;
   }, []);
   // 打开外部链接的唯一入口（KI-063）：失败不再静默吞掉——没有浏览器、被系统拒绝
   // 或链接非法时弹「打开链接失败」，与终端浮条的文案同一句。Android 侧后端已把
@@ -1025,6 +1042,10 @@ export default function App() {
   // 触屏浮条（KI-052）：终端文字选不中、复制/粘贴无可点入口、链接要修饰键——手机
   // 上三件事合并为「长按选词 → 浮条动作」与「点链接 → 浮条动作」。见 terminal/touch-select.ts。
   const [touchBar, setTouchBar] = useState<TouchBarState | null>(null);
+  // 移动端助力球（GitHub #40/#45）：手机没有鼠标滚轮，专注态标签条又吃空间——
+  // 右缘悬浮球提供翻页/回到底部，并可在专注态唤出/收起标签与工具栏。
+  const [assistOpen, setAssistOpen] = useState(false);
+  const [mobileChrome, setMobileChrome] = useState(false);
   // 浮条第二页「更多」：清屏/重置鼠标上报/重绘/重置面板布局——这四项桌面只在终端
   // 右键菜单里，手机没有右键，长期无处可达。页间切换不重定位（浮条原地换组按钮）。
   const [touchMore, setTouchMore] = useState(false);
@@ -1468,6 +1489,21 @@ export default function App() {
     setFocusMetrics(on);
     try { localStorage.setItem("ui.focusMetrics", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
   }, []);
+  // 移动端自动横屏（GitHub #45）：系统旋转锁打开时也按物理朝向转屏。缺省=开
+  // （用户明确要「哪怕没开旋转也能转」），设置里可关；原生侧不落盘，启动时由
+  // 下面的 effect 重放。非移动平台不调用（桌面窗口没这个语义）。
+  const [autoRotate, setAutoRotate] = useState(() => {
+    try { return localStorage.getItem("ui.autoRotate") !== "0"; } catch { return true; }
+  });
+  const changeAutoRotate = useCallback((on: boolean) => {
+    setAutoRotate(on);
+    try { localStorage.setItem("ui.autoRotate", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+  }, []);
+  useEffect(() => {
+    if (!inTauri || !isMobilePlatform()) return;
+    // 失败静默：原生壳没跟上（旧 APK）时只是没有自动横屏，不该弹错误。
+    void invoke("set_auto_orientation", { enabled: autoRotate }).catch(() => {});
+  }, [autoRotate]);
   // 原生全屏态（专注模式的真实前提）：focusMode 会隐藏 38px 标题区，而 macOS
   // titleBarStyle=Overlay 的红绿灯是系统悬浮钮，不由 HTML 隐藏——专注态若没真正
   // 全屏（启动恢复被系统拒绝、用户从绿灯/Ctrl⌘F/Esc 退出全屏），三个圆钮会压在
@@ -1514,6 +1550,9 @@ export default function App() {
     const syncWindow = opts?.syncWindow !== false;
     if (syncWindow) focusFsIntentRef.current = { at: performance.now(), want: on };
     setFocusMode(on);
+    // 移动端专注态默认收标签条/工具栏（#45）；进出专注都从「收起」重新开始，
+    // 不把上一次「唤出」的状态带进新一段专注。
+    setMobileChrome(false);
     if (!on) {
       setFocusHostMenu(false); // 退出专注：紧凑连接菜单没有宿主了
       requestAnimationFrame(() => {
@@ -5319,13 +5358,16 @@ export default function App() {
   const toolsRef = useRef<HTMLDivElement | null>(null);
   const tmuxMenuRef = useRef<HTMLDivElement | null>(null);
   const tabsMenuRef = useRef<HTMLDivElement | null>(null);
+  // 移动端紧凑标签切换器（GitHub #45）：与桌面「标签列表」共用 tabsMenuOpen，
+  // 但菜单宿主不同，外部点击判定要把两处都算进去。
+  const mobileTabsRef = useRef<HTMLDivElement | null>(null);
   const focusHostMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!toolsOpen && !tabsMenuOpen && !tmuxMenu && !focusHostMenu) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (toolsOpen && !toolsRef.current?.contains(t)) setToolsOpen(false);
-      if (tabsMenuOpen && !tabsMenuRef.current?.contains(t)) setTabsMenuOpen(false);
+      if (tabsMenuOpen && !tabsMenuRef.current?.contains(t) && !mobileTabsRef.current?.contains(t)) setTabsMenuOpen(false);
       if (tmuxMenu && !tmuxMenuRef.current?.contains(t)) setTmuxMenu(false);
       if (focusHostMenu && !focusHostMenuRef.current?.contains(t)) setFocusHostMenu(false);
     };
@@ -5402,6 +5444,18 @@ export default function App() {
       out = "\x1bO" + data[2];
     }
     entry.term.input(out);
+  }, []);
+
+  // 助力球动作目标（GitHub #40）：与辅助键条同一口径——该会话当前落焦的终端实例
+  // （tmux 格子优先，回退主视图）。滚动只走 xterm 本地 scrollback，不进 PTY：
+  // 备用屏（vim/tmux 全屏）没有本地历史，翻页自然是 no-op，不谎发按键。
+  const assistTerm = useCallback(() => {
+    const target = sidRef.current;
+    if (!target) return null;
+    const remembered = paneLastFocusRef.current.get(target) ?? "main";
+    const pane = remembered === "main" ? undefined : paneTermsRef.current.get(remembered);
+    const entry = pane?.alive ? pane : termsRef.current.get(target);
+    return entry?.term ?? null;
   }, []);
 
   // ── 触屏终端交互（KI-052）：长按选词 / 拖动扩选 / 点链接浮条 ──
@@ -6249,6 +6303,7 @@ export default function App() {
     // 布局与字体稳定后再校准一次（首次 fit 可能撞上渲染器尺寸未就绪）
     setTimeout(() => void fitTerminal(), 350);
   }, [ensureSessionTerm, focusSession, fitTerminal]);
+  attachSessionRef.current = attachSession;
 
   // 无激活会话：隐藏所有会话终端（实例保留，点击左侧会话即恢复），显示欢迎页
   const detach = useCallback(() => {
@@ -7177,6 +7232,45 @@ export default function App() {
   // pending 卡 id 序号（R31）：同毫秒批量发起多张卡时防 id 碰撞
   // R33 §354：sid 可显式指定——确认卡路径下目标会话在拖放开始时固定，不取聚焦 sid
   const pendingSeqRef = useRef(0);
+  // #44：首次传输不能只有传输抽屉里的字节数在动——用户不知道「已经开始了」。
+  // 300ms 内合批（批量上传/下载逐文件调用，逐个弹会刷屏）→ 一次提示带「查看进度」
+  // 动作直开传输抽屉，不必先去状态栏找计数。R35 的「不自动展开抽屉」仍成立：
+  // 这只是可点忽略的 toast，不抢视图。
+  const startNoticeRef = useRef<{ kind: "Upload" | "Download" | ""; names: string[]; timer: number | null; toastId: number | null }>({
+    kind: "", names: [], timer: null, toastId: null,
+  });
+  // 已发开始提示的传输 id（真 handle）。传输一落终态就按 id 撤下开始提示——同一笔
+  // 不必留两条 toast（完成提示带的动作更该被点到）；同时取消未到点的合批定时器，
+  // 免得「传输比 300ms 还快完成」时开始提示在完成之后才冒出来。
+  const startNoticeIdsRef = useRef<Set<string>>(new Set());
+  const clearStartNotice = useCallback(() => {
+    const b = startNoticeRef.current;
+    if (b.timer !== null) { window.clearTimeout(b.timer); b.timer = null; }
+    b.kind = ""; b.names = [];
+    if (b.toastId === null) return;
+    const id = b.toastId;
+    b.toastId = null;
+    setToasts((cur) => cur.filter((t) => t.id !== id));
+  }, []);
+  const noticeTransferStart = useCallback((kind: "Upload" | "Download", name: string, id?: string) => {
+    const b = startNoticeRef.current;
+    if (id) startNoticeIdsRef.current.add(id);
+    if (b.timer !== null) window.clearTimeout(b.timer);
+    if (b.kind !== kind) { b.kind = kind; b.names = []; }
+    b.names.push(name);
+    b.timer = window.setTimeout(() => {
+      const n = b.names.length;
+      const text = b.kind === "Upload"
+        ? (n === 1 ? t("开始上传：{0}", b.names[0]) : t("开始上传 {0} 个文件", n))
+        : (n === 1 ? t("开始下载：{0}", b.names[0]) : t("开始下载 {0} 个文件", n));
+      b.toastId = pushToast("info", text, {
+        label: t("查看进度"),
+        title: t("打开传输队列查看进度"),
+        run: () => setQueueOpen(true),
+      });
+      b.kind = ""; b.names = []; b.timer = null;
+    }, 300);
+  }, [pushToast]);
   const startUploads = useCallback(async (paths: string[], destDir?: string, sid?: string) => {
     const s = sid ?? sidRef.current;
     const cwd = destDir ?? (s ? briefRef.current?.cwd : undefined);
@@ -7196,11 +7290,12 @@ export default function App() {
       try {
         const h = await invoke("upload_file", { sid: s, local: p, remote });
         setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
+        noticeTransferStart("Upload", name, h.id);
       } catch (e) {
         setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(e) } : c)));
       }
     }
-  }, [upsertTransfer]);
+  }, [upsertTransfer, noticeTransferStart]);
 
   // R33 §356：下载目录落库（blob transfers 域，串行化链防交错丢更新；同值不重写）
   const persistDownloadDir = useCallback((dir: string) => {
@@ -7248,10 +7343,11 @@ export default function App() {
     try {
       const h = await invoke("download_file", { sid: s, remote: rp, local });
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, id: h.id, remote: h.remote, local: h.local } : c)));
+      noticeTransferStart("Download", name, h.id);
     } catch (e) {
       setTransfers((cur) => cur.map((c) => (c.id === tempId ? { ...c, status: "failed", error: friendlyError(e) } : c)));
     }
-  }, [upsertTransfer, persistDownloadDir, pushToast, sftpSaveAs]);
+  }, [upsertTransfer, persistDownloadDir, pushToast, sftpSaveAs, noticeTransferStart]);
 
   const startDownload = async () => {
     const rp = downloadPath.trim();
@@ -7726,6 +7822,11 @@ export default function App() {
   useEffect(() => {
     for (const tv of transfers) {
       const prev = prevTransferStatus.current.get(tv.id);
+      // 终态先撤开始提示（#44）：完成/失败 toast 取代「开始上传/下载」，两条不叠。
+      // 只认登记过的 id——旧卡早已终态，不能让新发起的那笔被误撤。
+      if ((tv.status === "done" || tv.status === "failed" || tv.status === "cancelled"
+        || tv.status === "skipped" || tv.status === "interrupted")
+        && startNoticeIdsRef.current.delete(tv.id)) clearStartNotice();
       if (prev === "running" && tv.status === "done") {
         pushToast("ok", t("传输完成：{0}", tv.name),
           tv.kind === "Download" && !tv.local.startsWith("pending") && tv.local !== "…"
@@ -7735,7 +7836,7 @@ export default function App() {
       if (prev === "running" && tv.status === "failed") pushToast("err", t("传输失败：{0}——{1}", tv.name, tv.error ?? t("未知错误")));
       prevTransferStatus.current.set(tv.id, tv.status);
     }
-  }, [transfers, pushToast, locateTransfer]);
+  }, [transfers, pushToast, locateTransfer, clearStartNotice]);
 
   // R33 §354 拖放落点分区：文件面板落点=直接上传到正在浏览的目录（不确认）；
   // 其余落点（终端等）=目标确认卡。物理像素→逻辑像素后与面板实测矩形求交，
@@ -9335,8 +9436,38 @@ export default function App() {
     syncMonitorTargets(monitorCards.map((c) => ({ key: c.key, sid: c.sid })));
   }, [monitorCards, monGeneral, monNpu]);
 
+  // 会话清单行：桌面「标签列表」与移动端紧凑切换器共用（GitHub #45 把标签按钮行
+  // 收成一颗下拉）。切换走 attachSession；关闭走 requestCloseSession，与标签 ✕
+  // 同一确认契约（活动会话先确认影响）。
+  const sessionMenuRows = () => (
+    <>
+      {sessions.length === 0 && <div className="dim" style={{ padding: "6px 10px" }}>{t("暂无会话")}</div>}
+      {sessions.map((s) => {
+        const st = stateLabel(s.state);
+        return (
+          <div className={"tm-row" + (sid === s.id ? " tm-active" : "")} key={s.id} data-sid={s.id}>
+            <button className="tm-main" role="menuitem"
+              onClick={() => { setTabsMenuOpen(false); void attachSession(s.id); }}>
+              <span className={"tab-dot " + st.cls} />
+              <span className="tab-label">{tabNames[s.id] ?? s.host_name}</span>
+              <span className={"mono " + st.cls} style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginLeft: "auto" }}>{st.text}</span>
+            </button>
+            {s.state === "Disconnected" && (
+              <button className="tm-act" title={t("重连该会话")} disabled={reconnecting !== null}
+                onClick={() => { setTabsMenuOpen(false); reconnectSession(s); }}>{t("重连")}</button>
+            )}
+            <button className="tm-act tm-close" data-testid={"m-tab-close-" + s.id}
+              title={t("关闭会话 {0}", s.host_name)} aria-label={t("关闭会话 {0}", s.host_name)}
+              onClick={() => { setTabsMenuOpen(false); requestCloseSession(s); }}><IconX size={11} /></button>
+          </div>
+        );
+      })}
+    </>
+  );
+
   return (
     <div className={"app-shell" + (focusMode ? " focus-mode" : "") + (focusMode && zenStripAuto ? " zen-auto" : "")
+      + (focusMode && mobileChrome ? " m-chrome-open" : "")
       + (focusMode && focusMetrics ? " focus-metrics" : "")
       + (focusMode && inTauri && isMacPlatform() && !nativeFullscreen ? " focus-windowed" : "")}>
       {/* 标题区 38（§4.2）：整行拖拽区；红绿灯安全区由 .native-chrome 留白；可交互控件不在拖拽链上 */}
@@ -9592,6 +9723,63 @@ export default function App() {
           </div>
         )}
         <div className={"tabbar-row" + (focusMode && zenStripAuto && zenPin ? " zen-pin" : "")}>
+          {/* 移动端紧凑标签切换（GitHub #45）：桌面式标签按钮行在手机上白占一整行，
+              收成一颗「当前会话 + 数量」下拉；长按/右键出会话菜单（重命名/分屏/关闭），
+              重命名输入框就地渲染在这颗钮的位置（原行内输入框随标签条一起隐藏）。 */}
+          {isMobilePlatform() && (
+            <div className="m-tabswitch" ref={mobileTabsRef} data-testid="m-tabswitch-wrap">
+              {renaming ? (
+                <input className="tab-rename m-tabswitch-rename" value={renaming.value} autoFocus
+                  onFocus={(ev) => ev.currentTarget.select()}
+                  aria-label={t("重命名标签")}
+                  onChange={(ev) => setRenaming({ sid: renaming.sid, value: ev.target.value })}
+                  onClick={(ev) => ev.stopPropagation()}
+                  onKeyDown={(ev) => {
+                    ev.stopPropagation();
+                    if (ev.nativeEvent.isComposing || ev.keyCode === 229) return;
+                    if (ev.key === "Enter") commitTabRename(renaming.sid, renaming.value);
+                    else if (ev.key === "Escape") setRenaming(null);
+                  }}
+                  onBlur={() => commitTabRename(renaming.sid, renaming.value)}
+                />
+              ) : (() => {
+                const st = stateLabel(current?.state ?? "");
+                return (
+                  <button type="button" className={"m-tabswitch-btn" + (tabsMenuOpen ? " ts-open" : "")}
+                    data-testid="m-tabswitch"
+                    aria-haspopup="menu" aria-expanded={tabsMenuOpen}
+                    aria-label={t("会话切换：{0}", sid ? (tabNames[sid] ?? current?.host_name ?? "") : t("暂无会话"))}
+                    title={t("切换会话（长按打开会话菜单：重命名/分屏/关闭）")}
+                    onClick={() => {
+                      if (tabLongPress.consumeClick()) return; // 长按已弹会话菜单
+                      setTabsMenuOpen(!tabsMenuOpen);
+                    }}
+                    onContextMenu={(ev) => {
+                      ev.preventDefault();
+                      if (sid) setTabMenu({ x: ev.clientX, y: ev.clientY, sid });
+                    }}
+                    onPointerDown={(ev) => {
+                      // 触屏没有右键：长按（480ms，与标签条同一门）出会话菜单。
+                      if (ev.button !== 0 || !sid) return;
+                      tabLongPress.down(ev, () => setTabMenu({ x: ev.clientX, y: ev.clientY, sid }));
+                    }}
+                    onPointerUp={(ev) => tabLongPress.up(ev)}
+                    onPointerCancel={(ev) => tabLongPress.up(ev)}
+                  >
+                    <span className={"tab-dot " + (sid ? st.cls : "dim")} aria-hidden="true" />
+                    <span className="tab-label">{sid ? (tabNames[sid] ?? current?.host_name ?? "") : t("暂无会话")}</span>
+                    {sessions.length > 1 && <span className="tab-count">{sessions.length}</span>}
+                    <IconChevronDown size={12} />
+                  </button>
+                );
+              })()}
+              {tabsMenuOpen && (
+                <div className="tools-menu m-tabs-menu" role="menu" data-testid="m-tabs-menu">
+                  {sessionMenuRows()}
+                </div>
+              )}
+            </div>
+          )}
           {tabScroll.left && (
             <button className="tab-scroll" aria-label={t("向左滚动标签")}
               title={t("左侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenL, isMacPlatform() ? "⌘⇧[" : "Ctrl+Shift+[")}
@@ -9979,24 +10167,7 @@ export default function App() {
               onClick={() => setTabsMenuOpen(!tabsMenuOpen)}>{t("标签列表")}<IconChevronDown size={12} /></button>
             {tabsMenuOpen && (
               <div className="tools-menu tm-right" role="menu">
-                {sessions.length === 0 && <div className="dim" style={{ padding: "6px 10px" }}>{t("暂无会话")}</div>}
-                {sessions.map((s) => {
-                  const st = stateLabel(s.state);
-                  return (
-                    <div className={"tm-row" + (sid === s.id ? " tm-active" : "")} key={s.id}>
-                      <button className="tm-main" role="menuitem"
-                        onClick={() => { setTabsMenuOpen(false); void attachSession(s.id); }}>
-                        <span className={"tab-dot " + st.cls} />
-                        <span className="tab-label">{tabNames[s.id] ?? s.host_name}</span>
-                        <span className={"mono " + st.cls} style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginLeft: "auto" }}>{st.text}</span>
-                      </button>
-                      {s.state === "Disconnected" && (
-                        <button className="tm-act" title={t("重连该会话")} disabled={reconnecting !== null}
-                          onClick={() => { setTabsMenuOpen(false); reconnectSession(s); }}>{t("重连")}</button>
-                      )}
-                    </div>
-                  );
-                })}
+                {sessionMenuRows()}
               </div>
             )}
           </div>
@@ -10787,6 +10958,8 @@ export default function App() {
               changeUiDensity={changeUiDensity}
               focusMetrics={focusMetrics}
               onChangeFocusMetrics={changeFocusMetrics}
+              autoRotate={autoRotate}
+              onChangeAutoRotate={changeAutoRotate}
               keymap={keymap}
               resetKeyBinding={resetKeyBinding}
               keyCapture={keyCapture}
@@ -11135,6 +11308,21 @@ export default function App() {
           </span>
         </footer>
         </main>
+        {/* 移动端助力球（GitHub #40/#45）：右缘悬浮，翻页/回到底部不进 PTY，
+            专注态还能唤出标签与工具栏（标签条在移动端专注态默认收起）。 */}
+        {isMobilePlatform() && sid && (
+          <AssistBall
+            open={assistOpen}
+            onOpenChange={setAssistOpen}
+            onPageUp={() => assistTerm()?.scrollPages(-1)}
+            onPageDown={() => assistTerm()?.scrollPages(1)}
+            onBottom={() => assistTerm()?.scrollToBottom()}
+            focusMode={focusMode}
+            chromeOpen={mobileChrome}
+            onToggleChrome={() => setMobileChrome((v) => !v)}
+            onExitFocus={() => applyFocus(false)}
+          />
+        )}
       </div>{/* /workspace */}
 
       {/* 移动端辅助键条：软键盘没有 Esc/Tab/方向键、也没有独立 Ctrl，

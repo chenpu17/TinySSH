@@ -21,10 +21,19 @@ export function loadThemeCss(cssText) {
   }
 
   const themeRe = /^:root\[data-theme="([a-z]+)"]\[data-chrome="(dark|light)"]$/;
-  const rootBlock = blocks.find((b) => b.sel === ":root");
-  const lightBlock = blocks.find((b) => b.sel === ':root[data-chrome="light"]');
+  // 同名选择器可能有多个块：KI-060 起 :root[data-chrome=…] 先出现一对只声明
+  // color-scheme、没有任何色板 token 的语义块。必须按「块内确有 --bg」取色板块——
+  // 否则浅色态静默继承 :root 的深色派生 token（--term-sel-* / --control-border
+  // 全带着深色值，对比度门整体掉绿，PR 的 UI 档被堵死；2026-11-17 定位）。
+  const isPalette = (b) => b.vars["--bg"] !== undefined;
+  const rootBlock = blocks.find((b) => b.sel === ":root" && isPalette(b));
+  const lightBlock = blocks.find((b) => b.sel === ':root[data-chrome="light"]' && isPalette(b));
   const themeBlocks = blocks.filter((b) => themeRe.test(b.sel));
   if (!rootBlock || !lightBlock) throw new Error("解析失败：root 或 light 基准块缺失");
+  // 哨兵：浅色基准块必须真的换掉了 --bg，否则说明又选中了语义块（防同类回归）。
+  if (lightBlock.vars["--bg"] === rootBlock.vars["--bg"]) {
+    throw new Error("解析失败：浅色基准块未生效（--bg 与 :root 相同）");
+  }
   // graphite 双态走 :root / [data-chrome=light]；其余每板深浅两态显式双条件
   const states = [{ theme: "graphite", chrome: "dark", vars: { ...rootBlock.vars } },
                   { theme: "graphite", chrome: "light", vars: { ...rootBlock.vars, ...lightBlock.vars } }];

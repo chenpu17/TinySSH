@@ -140,5 +140,31 @@ module.exports = {
     const afterLink = await names(page);
     ck.check("符号链接本身被删除", !afterLink.includes("latest"), afterLink.join(" / "));
     ck.check("删链接不伤目标目录 archive", afterLink.includes("archive"), afterLink.join(" / "));
+
+    // ── #44 传输启动可感知：第一次下载/上传不能只有抽屉里的字节数在动 ──
+    // 启动提示 300ms 合批后弹出（批量传输不刷屏），带「查看进度」动作直开抽屉；
+    // 抽屉不自动展开（R35 进度噪音不抢视图），由用户点动作打开。
+    await rightClick(page, "access.log");
+    await page.click("[data-testid=sftp-menu-download]");
+    await page.waitForTimeout(700);
+    const startToast = await page.evaluate(() => {
+      const el = [...document.querySelectorAll(".toast")].find((e) => e.textContent.includes("开始下载"));
+      return el
+        ? { text: el.textContent, action: el.querySelector("[data-testid=toast-action]")?.textContent ?? null }
+        : null;
+    });
+    ck.check("下载启动弹提示且含文件名", !!startToast && startToast.text.includes("access.log"), JSON.stringify(startToast));
+    ck.check("启动提示带「查看进度」动作", !!startToast && (startToast.action ?? "").includes("查看进度"), JSON.stringify(startToast));
+    ck.check("启动提示不自动展开传输抽屉（不抢视图）", !(await page.$('[data-testid="queue-drawer"]')));
+    await page.click("[data-testid=toast-action]");
+    await page.waitForTimeout(300);
+    ck.check("点「查看进度」打开传输抽屉", !!(await page.$('[data-testid="queue-drawer"]')));
+    const bar = await page.evaluate(() => {
+      const row = document.querySelector('[data-testid="xfer-running"]') ?? document.querySelector('[data-testid="xfer-queued"]');
+      const el = row?.querySelector('[data-testid="xfer-progress"]');
+      if (!el) return null;
+      return { now: el.getAttribute("aria-valuenow"), w: el.querySelector("span")?.style.width ?? "" };
+    });
+    ck.check("在途任务显示进度条（百分比可读）", !!bar && bar.now != null && bar.w.endsWith("%"), JSON.stringify(bar));
   },
 };

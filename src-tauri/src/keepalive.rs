@@ -189,38 +189,46 @@ fn android_set_keepalive(
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let context = unsafe { JObject::from_raw(ctx.context().cast()) };
 
-    let loader = env
-        .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-    let class_name = env
-        .new_string("com.tinyssh.app.KeepaliveBridge")
-        .map_err(|e| e.to_string())?;
-    let class_obj = env
-        .call_method(
-            &loader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[JValue::Object(&class_name)],
+    // JNI 错误路径卫生（KI-072）：保活失败只记日志重试，但挂起异常不清会污染
+    // 这条 native 线程的后续 JNI 调用（错误信息也会一直停在第一个异常）。
+    let result = (|| -> std::result::Result<(), String> {
+        let loader = env
+            .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let class_name = env
+            .new_string("com.tinyssh.app.KeepaliveBridge")
+            .map_err(|e| e.to_string())?;
+        let class_obj = env
+            .call_method(
+                &loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&class_name)],
+            )
+            .map_err(|e| e.to_string())?
+            .l()
+            .map_err(|e| e.to_string())?;
+        let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
+        env.call_static_method(
+            &class_ref,
+            "setActive",
+            "(Landroid/content/Context;ZII)V",
+            &[
+                JValue::Object(&context),
+                JValue::Bool(active as u8),
+                JValue::Int(sessions.min(i32::MAX as usize) as i32),
+                JValue::Int(transfers.min(i32::MAX as usize) as i32),
+            ],
         )
-        .map_err(|e| e.to_string())?
-        .l()
         .map_err(|e| e.to_string())?;
-    let class_ref = env.new_global_ref(&class_obj).map_err(|e| e.to_string())?;
-    env.call_static_method(
-        &class_ref,
-        "setActive",
-        "(Landroid/content/Context;ZII)V",
-        &[
-            JValue::Object(&context),
-            JValue::Bool(active as u8),
-            JValue::Int(sessions.min(i32::MAX as usize) as i32),
-            JValue::Int(transfers.min(i32::MAX as usize) as i32),
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+        Ok(())
+    })();
+    if result.is_err() {
+        crate::android_jni::clear_pending_exception(&mut env);
+    }
+    result
 }
 
 /// 回前台补口（KI-059）：Android 12+ 后台启动前台服务可能被拒，日志里只剩一条

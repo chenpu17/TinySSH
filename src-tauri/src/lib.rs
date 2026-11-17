@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tauri::{Emitter, State};
 
 mod agent_bridge;
+#[cfg(target_os = "android")]
+mod android_jni;
 mod commands;
 mod diagnostics;
 mod keepalive;
@@ -721,7 +723,7 @@ pub fn run() {
             tmux_attach, tmux_detach, tmux_pane_open, tmux_pane_close, tmux_pane_resize, tmux_pane_input,
             tmux_pane_subscribe, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions,
-            open_url, set_system_bars_light, has_hardware_keyboard, keepalive_sync,
+            open_url, set_system_bars_light, has_hardware_keyboard, set_auto_orientation, keepalive_sync,
             upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat, sftp_delete, sftp_rename,
             pick_upload_files, pick_save_file, pick_save_dir,
             list_forwards, start_forward, stop_forward,
@@ -951,19 +953,27 @@ fn android_files_dir() -> Option<std::path::PathBuf> {
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
         let mut env = vm.attach_current_thread().ok()?;
         let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
-        let file = env
-            .call_method(context, "getFilesDir", "()Ljava/io/File;", &[])
-            .ok()?
-            .l()
-            .ok()?;
-        let path = env
-            .call_method(&file, "getAbsolutePath", "()Ljava/lang/String;", &[])
-            .ok()?
-            .l()
-            .ok()?;
-        let path: jni::objects::JString = path.into();
-        let path = env.get_string(&path).ok()?.to_string_lossy().into_owned();
-        Some(std::path::PathBuf::from(path))
+        // JNI 错误路径卫生（KI-072）：getFilesDir 等抛异常时清掉挂起异常，
+        // 否则这条启动线程后续 JNI 调用全部带病返回。
+        let result = (|| -> Option<std::path::PathBuf> {
+            let file = env
+                .call_method(context, "getFilesDir", "()Ljava/io/File;", &[])
+                .ok()?
+                .l()
+                .ok()?;
+            let path = env
+                .call_method(&file, "getAbsolutePath", "()Ljava/lang/String;", &[])
+                .ok()?
+                .l()
+                .ok()?;
+            let path: jni::objects::JString = path.into();
+            let path = env.get_string(&path).ok()?.to_string_lossy().into_owned();
+            Some(std::path::PathBuf::from(path))
+        })();
+        if result.is_none() {
+            crate::android_jni::clear_pending_exception(&mut env);
+        }
+        result
     }
     #[cfg(not(target_os = "android"))]
     {
