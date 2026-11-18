@@ -329,8 +329,8 @@ body {
 ::-webkit-scrollbar-button { display: none; }
 /* T38 审核：层级字号工具类 .label-xs/.label-sm/.label-base/.label-md 全库无引用，删除 */
 /* 界面密度紧凑档（#24）：非全屏矮窗给终端多留纵向空间——标题 38→32、
-   标签 34→28、会话工具栏 32→28、状态条 26→22，合计省 26px。药丸/按钮本身
-   尺寸基本不动（只把标签压到 24px），入口一个不少；专注模式仍是全隐藏档。 */
+   标签 34→28、会话工具栏 32→28、状态条 26→22。药丸同步压到 20px，
+   关闭钮与重命名框一并缩小，入口一个不少；专注模式仍是全隐藏档。 */
 :root[data-density="compact"] {
   --chrome-title-h: 32px;
   --chrome-tabs-h: 28px;
@@ -342,7 +342,9 @@ body {
 :root[data-density="compact"] .statusbar { padding-left: 8px; padding-right: 8px; }
 :root[data-density="compact"] .tabbar-row { padding: 0 8px; }
 :root[data-density="compact"] .tabbar { padding: 0 2px; }
-:root[data-density="compact"] .tab { height: 22px; }
+:root[data-density="compact"] .tab { height: 20px; border-radius: 10px; }
+:root[data-density="compact"] .tab-x { width: 16px; height: 16px; }
+:root[data-density="compact"] .tab-rename { height: 18px; }
 /* ===== AppShell（R12 §4.1/§4.2）：标题区 38 / 主机栏 224(200–300 可拖可收) /
    标签 34 / 会话工具栏 34 / 页脚状态条 26（资源采样合并进行）；布局优先级：可操作 > 当前任务 > 终端空间 ===== */
 .app-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -949,12 +951,11 @@ textarea {
 .metrics-bar .mpause:hover { background: var(--panel3); color: var(--text); }
 #term {
   width: 100%; height: 100%; position: relative;
-  /* 多视图「页面底」色：与终端底色 --bg 只差一档（混 10% --text，深色主题略提亮、
-     浅色主题略压暗）。分屏窗格与 tmux 格子的 3px 卡缝直接用它上色——卡片外壳用
-     --pane-shell、内部仍是终端 --bg，于是缝=页面底、外壳/内部再分一档，两级层次
-     在两种多视图里同一套语言。
+  /* 多视图卡缝与终端正文同底（#48）：旧值混入 10% --text，3px 外框在双子视图
+     尤其醒目，叠上内描边/分隔线像一圈粗灰框。现在缝融入背景，只留 1px --border
+     辨认外框、焦点格仍用 accent；卡片外壳 --pane-shell 与内部 --bg 的微差保留。
      单视图没有卡缝，不露出这个色，观感不变。 */
-  --view-seam: color-mix(in srgb, var(--bg) 90%, var(--text) 10%);
+  --view-seam: var(--bg);
 }
 /* 终端滚到历史首/尾时截断滚动链：滚轮余量不再冒到外层、也不给 WKWebView
    橡皮筋回弹的机会，与本地终端的边界手感一致 */
@@ -1387,10 +1388,10 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
 button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(--text); }
 .tab {
   display: flex; align-items: center; gap: 7px; flex: none; min-width: 120px;
-  /* #38：药丸压到 24px（原 27）并加大圆角 12px——与专注态 tmux 快接钮同一形态，
-     行高 34 内上下各留 5px，中文标签不再贴边显得被裁 */
-  max-width: 220px; height: 24px; padding: 0 7px 0 10px; font-size: calc(12px * var(--ui-font-scale)); font-weight: 500; color: var(--text-sub);
-  border: 1px solid transparent; border-radius: 12px;
+  /* #38 大圆角药丸；用户最新反馈继续 24→22px（紧凑档 20px），
+     行高 34 内上下各留 6px，描边/焦点环仍有完整呼吸空间。 */
+  max-width: 220px; height: 22px; padding: 0 7px 0 10px; font-size: calc(12px * var(--ui-font-scale)); font-weight: 500; color: var(--text-sub);
+  border: 1px solid transparent; border-radius: 11px;
   background: color-mix(in srgb, var(--panel) 45%, transparent); cursor: pointer; -webkit-user-select: none; user-select: none;
   position: relative;
   transition: background 120ms, color 120ms, border-color 120ms, box-shadow 120ms;
@@ -1428,7 +1429,7 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 }
 /* 十四轮：标签行内重命名框——占住标签文字位，描边用 accent 标示编辑态 */
 .tab-rename {
-  width: 96px; min-width: 0; height: 22px; padding: 0 4px; font-size: calc(12px * var(--ui-font-scale));
+  width: 96px; min-width: 0; height: 20px; padding: 0 4px; font-size: calc(12px * var(--ui-font-scale));
   color: var(--text); background: color-mix(in srgb, var(--panel2) 70%, transparent);
   border: 1px solid var(--accent); border-radius: 7px; outline: none;
 }

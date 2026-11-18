@@ -218,6 +218,10 @@ module.exports = {
     // ── E. 种「上次工作空间」→ reload（不武装）→ 清预置 → 欢迎页一键全量恢复 ──
     // 种子只用预置主机（demo 主机不跨 reload）：prod-1=双格+自定义布局；staging-1
     // =ghost（服务器上不存在）+ 主视图 attach work
+    // 关闭 ws-host 的 sessions effect 会排 1.5s 延迟保存（panes=[]）。先让这笔
+    // 保存落地再注入种子，否则 reload 前的旧写入会把种子覆盖成空组合——
+    // 单跑偶尔赶在写入前通过，相邻套件/满载时稳定暴露，恢复功能本身无异常。
+    await page.waitForTimeout(2000);
     await page.evaluate((seed) => localStorage.setItem("ui.v2.workspace", JSON.stringify(seed)), {
       schema_version: 1, chrome: "dark", hostbar: null, terminal: null, transfers: null,
       sessions: {
@@ -243,8 +247,17 @@ module.exports = {
     await closeViaMenu(page, "staging-1");
     ck.check("欢迎页一键恢复钮就位（读回种子组合）",
       await poll(page, () => !!document.querySelector('[data-testid="reconnect-last"]'), null, 6000), "");
-    ck.check("按钮 title 提示 tmux 窗格与布局恢复",
-      (await page.evaluate(() => document.querySelector('[data-testid="reconnect-last"]')?.getAttribute("title") ?? "")).includes("tmux 窗格"), "");
+    // lastSessionHosts 先渲染按钮、组合提示随后异步读回；等提示本身到位，
+    // 不把「按钮已出现」误当作「get_workspace 已结算」（历史满载时序抖动）。
+    const titleHasPanes = await poll(page,
+      () => document.querySelector('[data-testid="reconnect-last"]')?.getAttribute("title")?.includes("tmux 窗格") ?? false,
+      null, 6000);
+    ck.check("按钮 title 提示 tmux 窗格与布局恢复", titleHasPanes, titleHasPanes ? "" : JSON.stringify(await page.evaluate(async () => ({
+      title: document.querySelector('[data-testid="reconnect-last"]')?.getAttribute("title") ?? null,
+      raw: localStorage.getItem("ui.v2.workspace"),
+      read: await window.__demoInvoke("get_workspace", {}),
+      pageErrors: window.__demoErrors ?? null,
+    }))));
     await page.evaluate(() => document.querySelector('[data-testid="reconnect-last"]')?.click());
     // staging-1 首连必过 TOFU 指纹门（demo 只预置信任 prod-1）——恢复动线里
     // 用户点「信任并连接」继续，等待循环随后捕到 Connected

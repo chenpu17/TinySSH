@@ -4,23 +4,28 @@ import type { Terminal } from "@xterm/xterm";
 export type RepaintEntry = { term: Terminal };
 
 /**
- * 全量重绘一组终端（只 refresh，**不调 clearTextureAtlas**）。
+ * 全量重绘一组终端：先清**每个终端自己的绘制模型**，再 refresh；不清共享字形图集。
  *
- * GitHub #39 / KI-014 复发：xterm 6.0.0 + addon-webgl 0.19.0（当前 stable）的字形图集
- * 按 font/theme/DPR 配置在终端间共享（CharAtlasCache），但 `clearTextureAtlas()` 只
- * 重建调用者自己的模型——兄弟终端要到下一次重排才恢复，表现就是整屏字形互相顶替、
- * 任何一次 resize 后自愈（上游 #6014；修复 #6055 只在 6.1 / addon 0.20 beta，stable
- * 未发布）。上游给 0.19.0 的用户态缓解原文就是**停掉自己发起的 clearTextureAtlas()**：
- * 共享图集从任一终端清一次都会波及所有同配置终端。
+ * GitHub #39 / #47（KI-014）：xterm 6.0.0 + addon-webgl 0.19.0 的图集按
+ * font/theme/DPR 跨终端共享。图集被清空或重排后，其他终端的 RenderModel 仍保存旧
+ * 纹理坐标，于是中文位置画出拉丁/符号、任何一次重排又可能自愈。公开 `refresh()`
+ * 只请求重画指定行，**不会清 RenderModel**，所以旧版 repaintAll 实测修不住：
+ * 清一次共享图集后，兄弟终端在重绘前后逐像素完全相同地错着。
  *
- * 所以这里只做全量 refresh：选中文本、滚动、重排都会触发重烘焙/重绘，实测用户侧
- * 「切一次专注模式」就能自愈；配置变化本来就会按 key 取新图集，显式清图集在 0.19.0
- * 上得不偿失。待 addon-webgl 升到 0.20（xterm 6.1）后再评估是否恢复清图集。
- * refresh 失败（终端已释放）静默——重绘是兜底动作，不该反过来报错。
+ * `_renderService.clear()` 会走各渲染器自己的 `clear()`；WebGL 路径据此执行
+ * `_clearModel(true)`，下一次 refresh 从缓冲区重新取字形与纹理坐标。对全部终端
+ * 都执行，等价于把上游 #6055 的「共享图集失效要广播给所有拥有者」落在应用侧，
+ * 无需依赖 6.1 / addon 0.20 beta，也不碰 stable 上仍有缺陷的 clearTextureAtlas()。
+ * xterm 没有公开清绘制模型的 API；这里与项目既有 fit/探针一样走 `_core` 内部口，
+ * 缺失时仍退化为公开 refresh。终端已释放等异常静默——重绘兜底不应反过来报错。
  */
 export function repaintAll(entries: Iterable<RepaintEntry>): void {
   for (const e of entries) {
     try {
+      const core = (e.term as unknown as {
+        _core?: { _renderService?: { clear?: () => void } };
+      })._core;
+      core?._renderService?.clear?.();
       e.term.refresh(0, Math.max(0, e.term.rows - 1));
     } catch {
       /* 终端已释放 */

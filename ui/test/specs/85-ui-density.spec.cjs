@@ -24,6 +24,9 @@ module.exports = {
         visible,
         density: document.documentElement.dataset.density ?? null,
         stored: localStorage.getItem("ui.ui_density"),
+        pill: h(".tab"),
+        pillRadius: getComputedStyle(document.querySelector(".tab")).borderTopLeftRadius,
+        close: h(".tab-x"),
       };
     });
 
@@ -74,11 +77,31 @@ module.exports = {
         && compact.density === "compact" && compact.stored === "compact",
       JSON.stringify(compact));
     ck.check("紧凑档不隐藏任何一条 chrome", compact.visible, JSON.stringify(compact));
-
-    // 矮窗实景：1280×560 下终端可视高度应比舒适档多出约 20px（四条合计压缩量：
-    // #30 标题栏 44→38 后为 6+6+4+4，原 12+6+4+4=26）
+    ck.check("标签药丸随密度压到 20px，关闭钮不溢出",
+      compact.pill === 20 && compact.pillRadius === "10px" && compact.close === 16,
+      JSON.stringify(compact));
     await page.evaluate(() => document.querySelector('[data-testid="settings-close"]')?.click());
     await page.waitForTimeout(300);
+    await page.locator(".tab").first().click({ button: "right" });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      [...document.querySelectorAll(".sm-item, [role=menuitem]")]
+        .find((x) => x.textContent?.includes("重命名标签"))?.click();
+    });
+    await page.waitForTimeout(200);
+    const renameBounds = await page.evaluate(() => {
+      const t = document.querySelector(".tab-rename")?.closest(".tab");
+      const input = t?.querySelector(".tab-rename");
+      if (!t || !input) return null;
+      const r = t.getBoundingClientRect();
+      const ir = input.getBoundingClientRect();
+      return { pillHeight: r.height, inputHeight: ir.height,
+        contained: r.height === 20 && ir.height === 18 && ir.top >= r.top && ir.bottom <= r.bottom };
+    });
+    ck.check("紧凑档行内重命名框完整收在药丸内", renameBounds?.contained === true, JSON.stringify(renameBounds));
+    await page.keyboard.press("Escape");
+    // 矮窗实景：1280×560 下终端可视高度应比舒适档多出约 20px（四条合计压缩量：
+    // #30 标题栏 44→38 后为 6+6+4+4，原 12+6+4+4=26）
     await page.setViewportSize({ width: 1280, height: 560 });
     const compactTerm = await termHeight();
     ck.check("紧凑档把省下的 20px 全部让给终端（1280×560 实测）",

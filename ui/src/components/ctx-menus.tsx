@@ -126,8 +126,8 @@ export function CtxMenus({
   searchHint, searchKeyshortcuts,
   splitDegraded, splitHintOpen, splitHintDismissedRef, setSplitHintOpen, onCollapseHostbar,
 }: CtxMenusProps) {
-  // 重绘是整组动作，且不碰共享图集（上游 #6014 / GitHub #39）：0.19.0 的
-  // clearTextureAtlas 会波及同配置的兄弟终端，repaintAll 只做全量 refresh。
+  // 重绘是整组动作，且不碰共享图集（上游 #6014 / GitHub #39/#47）：0.19.0 的
+  // clearTextureAtlas 会波及同配置的兄弟终端，repaintAll 清各终端模型后全量 refresh。
   const repaintEverything = () => repaintAll([...termsRef.current.values(), ...paneTermsRef.current.values()]);
   const metaById = new Map(hostMeta.map((m) => [m.host_id, m]));
   // 剪贴板/全选的真实键盘绑定（App.tsx 终端键盘层）：

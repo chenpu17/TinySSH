@@ -2433,7 +2433,7 @@ export default function App() {
   // 字体轮：终端字体面预取 + 就绪后全量重绘。canvas/WebGL 字形图集按绘制时刻
   // 已加载的字体取字形——默认字体（Maple 1.7MB）晚于首帧就绪时，先画的 CJK/
   // 框线会以回退链/空白入册；预取把加载提前到建连之前，fonts.ready 后再对全部
-  // 存活终端强制 refresh 一次（陈旧图集单元随之重烘焙）。
+  // 存活终端清绘制模型并 refresh，陈旧纹理坐标与回退字形一并淘汰（#47）。
   useEffect(() => {
     if (typeof document === "undefined" || !document.fonts) return;
     void document.fonts.load('14px "Maple Mono CN Term"', "你好abc┌─0");
@@ -2450,20 +2450,20 @@ export default function App() {
     const refreshTerm = (term: Terminal) => {
       try {
         // 强制一次 fontFamily option change：xterm 的 setter 对同值直接 return，
-        // 直接回写同一字体栈**不会**触发 handleFontChange（旧实现因此没真正
-        // 重建图集）。先追加一个同族 fallback 再还原，两次 setter 都实际变化，
-        // 渲染器清空图集并重测 cell；warmup 时刻字体未就绪的框线/CJK 随之重烘焙。
+        // 直接回写同一字体栈**不会**触发 handleFontChange。先追加一个同族 fallback
+        // 再还原，两次 setter 都实际变化，渲染器重测 cell 并换到已就绪字体的图集。
+        // 这里只换装，不逐个 refresh：共享图集场景必须等全部终端换完后整组清模型，
+        // 否则先刷的终端仍可能留着兄弟终端换装前的纹理坐标（#47）。
         const fam = term.options.fontFamily;
         term.options.fontFamily = `${fam}, monospace`;
         term.options.fontFamily = fam;
-        term.refresh(0, Math.max(0, term.rows - 1));
       } catch { /* 终端已释放 */ }
     };
     const refreshAll = () => {
-      for (const [, e] of termsRef.current) refreshTerm(e.term);
-      // 主视图之外，tmux 格子同样用 canvas/WebGL 图集：此前只刷新主终端，
-      // 字体晚就绪时格子的框线/CJK 会停在回退字形（macOS 上观感发虚的主因之一）。
-      for (const e of paneTermsRef.current.values()) refreshTerm(e.term);
+      // 主视图与 tmux 格子同一批：先全部完成字体面切换，再统一清绘制模型 + refresh。
+      const entries = [...termsRef.current.values(), ...paneTermsRef.current.values()];
+      for (const e of entries) refreshTerm(e.term);
+      repaintAll(entries);
     };
     // fonts.ready 只覆盖启动时刻；终端字体栈里的 CJK 兜底（MiSans VF 按
     // unicode-range 分片）会在输出新字时才按需加载——loadingdone 300ms 合帧
@@ -2498,7 +2498,7 @@ export default function App() {
   // 长时间高熵输出（CJK/框线/emoji 混排、多终端共享图集）后存在错位缺陷，上游
   // 6.0 重写图集后修复（已升级 6.0.0 + addon-webgl 0.19）；本兜底继续保留，覆盖
   // 上下文丢失/旧缓存等残余路径——在「窗口重新获得焦点 / 从隐藏变可见 / 原生全屏态
-  // 翻转」这些用户愿意接受一次瞬时重画的时刻统一清图集并全屏重绘（原生全屏由窗口
+  // 翻转」这些用户愿意接受一次瞬时重画的时刻统一清各终端绘制模型并重绘（原生全屏由窗口
   // resize 探针读 isFullscreen 判定——Tauri 的全屏不触发 DOM fullscreenchange）。
   // 合帧 120ms，避免 focus 与 visibilitychange 连续触发重复烘焙；右键「重绘终端
   // 画面」是随时可用的手动出口。
@@ -5609,8 +5609,8 @@ export default function App() {
     const bar = touchBar; // 已排除 link 分支：这里是选区态，paneKey 随浮条带走
     // 第二页「更多」：终端维护四件套（桌面只在右键菜单里，触屏没有右键）。
     // 第二页「更多」：终端维护四件套（桌面只在右键菜单里，触屏没有右键）。
-    // 重绘走全局入口：repaintAll 只做整组 refresh，不碰共享图集（上游 #6014 /
-    // GitHub #39——0.19.0 上 clearTextureAtlas 会波及兄弟终端）。
+    // 重绘走全局入口：整组清绘制模型 + refresh，不碰共享图集（上游 #6014 /
+    // GitHub #39/#47——0.19.0 上 clearTextureAtlas 会波及兄弟终端）。
     if (touchMore) {
       const items: TouchBarItem[] = [
         { label: t("清屏"), testid: "touch-clear", onClick: () => {

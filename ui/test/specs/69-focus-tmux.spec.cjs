@@ -20,13 +20,25 @@ module.exports = {
       tab?.click();
     });
     await page.waitForTimeout(700);
-    // 用户反馈 #38：标签药丸压到 24px、圆角 12px（与专注态 tmux 快接钮同形态）
-    ck.check("标签药丸 24px 高 / 12px 圆角（#38）", await page.evaluate(() => {
+    // #38 大圆角药丸；最新用户反馈继续压高，保完整描边/文字与内部按钮空间
+    ck.check("标签药丸 22px 高 / 11px 圆角（#38 续调）", await page.evaluate(() => {
       const t = document.querySelector(".tab");
       if (!t) return false;
       const cs = getComputedStyle(t);
-      return Math.round(t.getBoundingClientRect().height) === 24 && cs.borderRadius === "12px";
+      return Math.round(t.getBoundingClientRect().height) === 22 && cs.borderRadius === "11px";
     }), "");
+    const pillBounds = await page.evaluate(() => {
+      const t = document.querySelector(".tab");
+      const label = t?.querySelector(".tab-label");
+      const close = t?.querySelector(".tab-x");
+      if (!t || !label || !close) return null;
+      const r = t.getBoundingClientRect();
+      const lr = label.getBoundingClientRect();
+      const cr = close.getBoundingClientRect();
+      return { height: r.height, labelHeight: lr.height, closeHeight: cr.height,
+        contained: lr.top >= r.top && lr.bottom <= r.bottom && cr.top >= r.top && cr.bottom <= r.bottom };
+    });
+    ck.check("标签文字与关闭钮完整落在药丸内", pillBounds?.contained === true, JSON.stringify(pillBounds));
     // 进入专注（demo 只切 chrome，不切系统全屏）
     await page.click('[data-testid="focus-toggle"]');
     await page.waitForTimeout(500);
