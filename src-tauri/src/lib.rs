@@ -451,6 +451,9 @@ pub fn run() {
             // BROWSER_ARGUMENTS 环境变量（实测被忽略），CDP 自动化验收（远程调试口）
             // 只能走这里。未设 TINYSSH_WEBVIEW_ARGS 时复刻 wry 默认参数，行为零变化。
             // 移动端不建窗：webview 由 Android/iOS 宿主创建，这里再建会冲突。
+            // macOS 长按字母变体面板会截断 Vim 连续移动；注册进程内缺省值必须早于
+            // 下面的 WebView 创建，非 macOS 为 no-op（GitHub #53）。
+            install_native_press_and_hold_defaults();
             #[cfg(desktop)]
             {
                 let wcfg = app

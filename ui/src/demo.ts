@@ -268,6 +268,9 @@ const demoState = {
   // 首装 effect 双跑 = 两次），之后恢复——验证主机栏错误态与「重试」路径。
   // 真实面：IPC/核心瞬时失败；demo 不伪造持久故障。
   failHostsCalls: 0,
+  // 输出订阅瞬时失败复现：demo_fail_subscribe 预置次数；验证前端撤销半建终端、
+  // 释放 WebGL 并允许重试。真实面对应 subscribe_output 的 IPC/核心失败。
+  failSubscribeCalls: 0,
   // R26（§6.4）：每会话最近一条状态事件（session_state_feed 轮询面；真实核心走
   // session-state 事件通道——C1 connection-event/demo 轮询双路的同款镜像）
   stateEvents: new Map<string, SessionStateEvent>(),
@@ -317,10 +320,12 @@ const demoState = {
     { host_id: "h-prod1", kind: "ssh", created_at: "2026-09-27T13:50:00Z" },
     { host_id: "h-staging1", kind: "ssh", created_at: "2026-09-27T13:40:00Z" },
   ] as { host_id: string; kind: string; created_at: string }[],
+  // 预置标签的创建序保持 prod → staging；历史表 prod 的 13:50 是之后一次连接，
+  // 因而「最近连接」仍 prod 优先（spec 28），与当前仍开着的会话不是同一条连接记录。
   sessions: [
     {
       id: "s-demo-0001", host_id: "h-prod1", host_name: "prod-1", kind: "ssh",
-      state: "Connected", control_owner: "Agent", created_at: "2026-09-27T13:50:00Z",
+      state: "Connected", control_owner: "Agent", created_at: "2026-09-27T13:30:00Z",
       host_snapshot: { name: "prod-1", address: "10.0.0.11", port: 22, username: "ops", auth_type: "Password", fingerprint: "SHA256:hVvBTD1MEAi8sdrrIXVLdpXH9SL8MKdHmZ6geX2U4YI", charset: "utf-8" },
       goal: "把 /tmp/old-build 清理掉并重新打包 dist 到 /tmp/build.tgz",
       ever_agent_owned: true,
@@ -855,7 +860,11 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
         { id: "wsl", name: "WSL", path: "C:\\Windows\\System32\\wsl.exe", integrable: false },
       ];
     case "list_sessions":
-      return demoState.sessions.map((s) => ({
+      // #51/#43：与真实核心同一基础序（创建时刻 + id 兜底）。恢复的新 sid 在真实侧
+      // 是随机 UUID，按 id 排会把已按创建序采集的快照再次打乱；手拖序仍由 FE 覆盖。
+      return [...demoState.sessions]
+        .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+        .map((s) => ({
         id: s.id, host_id: s.host_id, host_name: s.host_name, kind: s.kind,
         state: s.state, control_owner: s.control_owner, created_at: s.created_at,
         // C3（R24）：会话集成态——demo 按 host shell_integration 投影（真实侧 OSC 检测）：
@@ -1600,6 +1609,11 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       audit("human", "tmux_pane_close", p.tmux_session, null, sid ?? null, { pane_id: p.pane_id });
       return null;
     }
+    // 演示专用：让后续指定次数 subscribe_output 瞬时失败（默认 1 次）
+    case "demo_fail_subscribe": {
+      demoState.failSubscribeCalls = Math.max(1, Number(args?.times ?? 1));
+      return null;
+    }
     // 演示专用：设置远端 tmux 会话清单（spec 造多会话场景；真实侧由探针产出）
     case "demo_tmux_fixture": {
       const s = demoState.sessions.find((x) => x.id === (args?.sid as string));
@@ -1654,6 +1668,10 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const channel = args?.onEvent as { onmessage?: Handler };
       const s = demoState.sessions.find((x) => x.id === sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
+      if (demoState.failSubscribeCalls > 0) {
+        demoState.failSubscribeCalls--;
+        throw apiError("ipc_failed", "输出订阅瞬时失败（演示注入）");
+      }
       demoSubCounter += 1;
       const sub = `sub-demo-${demoSubCounter}`;
       if (channel?.onmessage) {

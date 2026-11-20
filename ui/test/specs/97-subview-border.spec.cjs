@@ -1,6 +1,6 @@
-// 97 子视图外框（GitHub #48）：双子视图时 3px --view-seam 混入 10% 正文色，
-// 在非焦点格外形成粗灰框；用户要求沿用单子视图的协调观感，只让外框略微可辨。
-// 卡缝改为与终端 --bg 同色，1px --border 内描边与 accent 焦点环继续保留。
+// 97 子视图外框（GitHub #48）：第一轮只把 3px --view-seam 改成背景色，
+// 用户 v0.12.19 截图确认仍有双框：#term 自带 1px 总描边/投影与子视图细描边叠加。
+// 多视图去掉 #term 总框，只保留每格 1px --border 与 accent 焦点环；普通单终端总框不变。
 const SID = "s-demo-0001";
 
 const openQuick = async (page) => {
@@ -42,11 +42,15 @@ const stylesOf = (page) => page.evaluate(() => {
       focusColor: after.borderTopColor,
     };
   });
-  return { bg, seam, border, accent, cells: cells.length, cards };
+  return {
+    bg, seam, border, accent, cells: cells.length, cards,
+    multi: mount.classList.contains("has-tmux-panes"),
+    shellShadow: getComputedStyle(mount).boxShadow,
+  };
 });
 
 module.exports = {
-  title: "子视图外框：单双格同语言，卡缝融背景且焦点环保留",
+  title: "子视图外框：多视图去总框，只留子视图细描边与焦点环",
   async run({ page, ck }) {
     await page.waitForTimeout(900);
     await page.evaluate((sid) => window.__demoInvoke("demo_tmux_fixture", {
@@ -57,12 +61,19 @@ module.exports = {
       tab?.click();
     });
     await page.waitForTimeout(600);
+    const plain = await stylesOf(page);
+    ck.check("普通单终端仍保留整体细框，修复不影响单视图",
+      !plain.multi && plain.shellShadow !== "none",
+      JSON.stringify({ multi: plain.multi, shellShadow: plain.shellShadow }));
     await openQuick(page);
     await page.click('[data-testid="tmux-pane-add-work"]');
     await page.waitForTimeout(1200);
 
     const one = await stylesOf(page);
     ck.check("一个子视图：格子与主视图均在场", one.cells === 1 && one.cards.length === 2, JSON.stringify(one.cards));
+    ck.check("一个子视图：整体总框与投影移除，不再叠双框",
+      one.multi && one.shellShadow === "none",
+      JSON.stringify({ multi: one.multi, shellShadow: one.shellShadow }));
     ck.check("卡缝色与终端背景完全一致（不再混 10% 正文色）", one.seam === one.bg, `${one.seam} / ${one.bg}`);
     ck.check("一个子视图：3px 卡缝融入背景，不成粗灰框",
       one.cards.every((c) => c.outerColor === one.bg), JSON.stringify(one.cards));
@@ -77,6 +88,9 @@ module.exports = {
     await page.waitForTimeout(1200);
     const two = await stylesOf(page);
     ck.check("两个子视图：两格与主视图均在场", two.cells === 2 && two.cards.length === 3, JSON.stringify(two.cards));
+    ck.check("两个子视图：整体总框仍移除，只保留各子视图外框",
+      two.multi && two.shellShadow === "none",
+      JSON.stringify({ multi: two.multi, shellShadow: two.shellShadow }));
     ck.check("两个子视图：所有非焦点/焦点格卡缝都与背景同底",
       two.seam === two.bg && two.cards.every((c) => c.outerColor === two.bg), JSON.stringify(two.cards));
     ck.check("两个子视图：细描边不随格数加粗或换色",

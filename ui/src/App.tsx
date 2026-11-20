@@ -617,10 +617,11 @@ export default function App() {
     paneDivRef.current?.setAttribute("aria-valuenow", String(Math.round(frac * 100)));
   }, [groupOf]);
   // 标签栏溢出指示（五人走查·林姐：16 会话时 10 个标签静默不可见，无任何溢出
-  // affordance——横向滚动条 overlay 不滚动不出现）。测左/右可滚 + 被裁标签数，
-  // 两侧出现 ‹ › 滚动钮；激活标签切换（含 ⌘⇧]/[ 循环）自动滚入视野
+  // affordance——横向滚动条 overlay 不滚动不出现）。测左/右可滚 + 被裁标签数；
+  // 溢出期间双钮固定占位、到头禁用，方向渐隐提示仍有隐藏标签；激活标签切换
+  // （含 ⌘⇧]/[ 循环）自动滚入视野
   const tabbarRef = useRef<HTMLDivElement | null>(null);
-  const [tabScroll, setTabScroll] = useState<{ left: boolean; right: boolean; hiddenL: number; hiddenR: number }>({ left: false, right: false, hiddenL: 0, hiddenR: 0 });
+  const [tabScroll, setTabScroll] = useState<{ overflow: boolean; left: boolean; right: boolean; hiddenL: number; hiddenR: number }>({ overflow: false, left: false, right: false, hiddenL: 0, hiddenR: 0 });
   const measureTabbar = useCallback(() => {
     const el = tabbarRef.current;
     if (!el) return;
@@ -631,6 +632,7 @@ export default function App() {
     const bar = el.getBoundingClientRect();
     const cutR = (t: Element) => t.getBoundingClientRect().left > bar.right + 1;
     const cutL = (t: Element) => t.getBoundingClientRect().right < bar.left - 1;
+    const overflow = el.scrollWidth - el.clientWidth > 1;
     const left = el.scrollLeft > 1;
     const right = el.scrollWidth - el.clientWidth - el.scrollLeft > 1;
     const tabs = Array.from(el.querySelectorAll(".tab"));
@@ -639,7 +641,8 @@ export default function App() {
     // 值不变则返回 prev 引用——平滑滚动期间每帧都触发 onScroll，不 bailout
     // 会让整个 App 树（单文件 2800+ 行）按帧重渲染
     setTabScroll((prev) =>
-      prev.left === left && prev.right === right && prev.hiddenL === hiddenL && prev.hiddenR === hiddenR ? prev : { left, right, hiddenL, hiddenR });
+      prev.overflow === overflow && prev.left === left && prev.right === right && prev.hiddenL === hiddenL && prev.hiddenR === hiddenR
+        ? prev : { overflow, left, right, hiddenL, hiddenR });
   }, []);
   useEffect(() => {
     measureTabbar();
@@ -3365,7 +3368,7 @@ export default function App() {
     const hadFocus = e.cell.contains(document.activeElement);
     paneTermsRef.current.delete(key);
     if (paneLastFocusRef.current.get(e.sid) === key) paneLastFocusRef.current.set(e.sid, "main");
-    try { e.webgl?.dispose(); } catch { /* 已释放 */ }
+    detachWebgl(e);
     e.throttle.dispose();
     try { e.term.dispose(); } catch { /* 已释放 */ }
     e.cell.remove();
@@ -6222,6 +6225,7 @@ export default function App() {
       // 重试在 has() 处早退，会话标签永远静默（黑屏无输出、无自愈入口）
       termsRef.current.delete(sessionSid);
       made.feed = null;
+      detachWebgl(made);
       try { made.term.dispose(); } catch { /* 已销毁则忽略 */ }
       made.el.remove();
       throw err;
@@ -6587,6 +6591,7 @@ export default function App() {
     if (entry) {
       // 显式退订（C10 主清理路径；close_session 兜底自动清理）
       entry.feed?.dispose();
+      detachWebgl(entry);
       entry.term.dispose();
       entry.el.remove();
       termsRef.current.delete(id);
@@ -6657,6 +6662,7 @@ export default function App() {
     for (const [id, entry] of [...termsRef.current]) {
       if (alive.has(id) || !sessionIdent.has(id)) continue;
       entry.feed?.dispose();
+      detachWebgl(entry);
       entry.term.dispose();
       entry.el.remove();
       termsRef.current.delete(id);
@@ -9780,12 +9786,17 @@ export default function App() {
               )}
             </div>
           )}
-          {tabScroll.left && (
+          {tabScroll.overflow && (
             <button className="tab-scroll" aria-label={t("向左滚动标签")}
-              title={t("左侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenL, isMacPlatform() ? "⌘⇧[" : "Ctrl+Shift+[")}
+              disabled={!tabScroll.left}
+              title={tabScroll.left
+                ? t("左侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenL, isMacPlatform() ? "⌘⇧[" : "Ctrl+Shift+[")
+                : t("已到标签栏最左端")}
               onClick={() => scrollTabs(-1)}>‹</button>
           )}
-          <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar} role="tablist" aria-label={t("会话标签")}>
+          <div className="tabbar" ref={tabbarRef} onScroll={measureTabbar}
+            data-overflow={tabScroll.overflow} data-can-left={tabScroll.left} data-can-right={tabScroll.right}
+            role="tablist" aria-label={t("会话标签")}>
             {tabEntries.map((e, i) => {
               // 一组一标签：组标签 = 一个工作区；成员不再单独占位
               const entryKey = e.key;
@@ -10050,9 +10061,12 @@ export default function App() {
               );
             })}
           </div>
-          {tabScroll.right && (
+          {tabScroll.overflow && (
             <button className="tab-scroll" aria-label={t("向右滚动标签")}
-              title={t("右侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenR, isMacPlatform() ? "⌘⇧]" : "Ctrl+Shift+]")}
+              disabled={!tabScroll.right}
+              title={tabScroll.right
+                ? t("右侧还有 {0} 个会话被收起——点击展开（{1} 可循环切换）", tabScroll.hiddenR, isMacPlatform() ? "⌘⇧]" : "Ctrl+Shift+]")
+                : t("已到标签栏最右端")}
               onClick={() => scrollTabs(1)}>›</button>
           )}
           {splitPanes && <button className="ghost" onClick={() => exitSplit()}
@@ -10073,11 +10087,12 @@ export default function App() {
                 aria-label={t("文件面板")} aria-pressed={rightPanel === "files"}
                 onClick={() => setRightPanel(rightPanel === "files" ? null : "files")}><IconFolder size={14} /></button>
               <div className="st-tools" ref={focusHostMenuRef}>
-                <button className="ghost" data-testid="focus-connect"
+                <button className="ghost icon-btn" data-testid="focus-connect"
                   aria-haspopup="menu" aria-expanded={focusHostMenu}
                   title={t("从已保存主机新建连接")}
+                  aria-label={t("从已保存主机新建连接")}
                   onClick={() => setFocusHostMenu(!focusHostMenu)}>
-                  {t("连接")}<IconChevronDown size={12} />
+                  <IconServer size={14} />
                 </button>
                 {focusHostMenu && (
                   <div className="tools-menu tm-right" role="menu" data-testid="focus-connect-menu">
@@ -10107,7 +10122,7 @@ export default function App() {
             </>
           )}
           {/* 专注模式（F11）：常态是 ⤢ 图标；专注下滑出条里另有文字钮，双入口同 applyFocus。
-              协作/传输入口在此补位——专注下标题栏与状态条都藏了，而 §3 要求待审批等
+              待审批/传输入口在此补位——专注下标题栏与状态条都藏了，而 §3 要求待审批等
               提醒必须可达（pendingCount>0 已让 zenPin 钉住标签条，入口就在眼前） */}
           {/* 接管双钮同样只在工具栏的话，专注+Agent 控制时想停下危险命令就得先退
               专注（巡检补）——zenPin 已保证此态标签条钉在眼前，入口放这里正好 */}
@@ -10119,11 +10134,15 @@ export default function App() {
                 onClick={takeoverStop}>{t("接管并停止")}</button>
             </>
           )}
-          {focusMode && agentSurfaceReady && (
-            <button className={"ghost" + (rightPanel === "collab" ? " ts-open" : "")}
-              title={t("协作：审批、任务目标与现场简报")}
+          {/* #50：专注态不再常驻「协作」文字钮；有待审批时仍保留紧凑警示入口，
+              避免隐藏标题栏后危险请求无处可裁决。 */}
+          {focusMode && agentSurfaceReady && pendingCount > 0 && (
+            <button className={"ghost icon-btn attn" + (rightPanel === "collab" ? " ts-open" : "")}
+              data-testid="focus-collab-alert"
+              title={t("有 {0} 个待审批请求——打开协作面板", pendingCount)}
+              aria-label={t("有 {0} 个待审批请求——打开协作面板", pendingCount)}
               onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
-              {t("协作")}{pendingCount > 0 ? t(" · {0}", pendingCount) : ""}
+              <IconUsers size={14} />
             </button>
           )}
           {focusMode && runningTransfers > 0 && (
@@ -10152,6 +10171,7 @@ export default function App() {
               paneNames={(current.panes ?? []).map((p) => p.tmux_session)}
               paneCapReached={(current.panes ?? []).length >= PANE_MAX}
               splitActive={!!splitPanes}
+              compact
             />
           )}
           <button className={"ghost icon-btn" + (focusMode ? " ts-open" : "")} data-testid="focus-toggle"

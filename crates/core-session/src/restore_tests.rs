@@ -2,7 +2,7 @@
 // 损坏 KV 如实给空表、条目守卫。harness 复用 triggers_tests（RecChannel + 真
 // SessionManager，sid "s-trg" / host "h-t"）。
 
-use session_api::CellRun;
+use session_api::{Actor, CellRun, SessionApi};
 
 use super::restore::{checkpoint_tail, guard_entries, RestoreEntry, RESTORE_KV_KEY};
 use super::SessionManager;
@@ -74,6 +74,21 @@ async fn capture_orders_entries_by_creation_time() {
         vec!["early", "base", "late"],
         "按创建时刻排定（#43）"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_orders_sessions_by_creation_time_not_random_id() {
+    // #51/#43 闭环：恢复建连后的 sid 是随机 UUID；若列表继续按 id 排序，快照采集
+    // 即使已按创建时刻排好，最终标签仍会被随机重排。故意让 early 的 id 字典序最晚、
+    // late 的 id 字典序最早，旧实现必返回 late/base/early，不能靠随机碰巧通过。
+    let (m, h) = harness().await;
+    let base = h.created_at;
+    super::triggers_tests::add_handle(&m, "s-z-early", base - chrono::Duration::seconds(30));
+    super::triggers_tests::add_handle(&m, "s-a-late", base + chrono::Duration::seconds(30));
+
+    let sessions = m.list_sessions(&Actor::Human).await.unwrap();
+    let order: Vec<_> = sessions.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(order, vec!["s-z-early", "s-trg", "s-a-late"]);
 }
 
 #[test]

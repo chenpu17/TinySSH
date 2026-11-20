@@ -31,6 +31,8 @@ export interface TmuxQuickProps {
   paneNames: string[];
   paneCapReached: boolean;
   splitActive: boolean;
+  /** 专注模式标签条只显示图标；常规会话工具栏仍显示 tmux 名称与折叠箭头。 */
+  compact?: boolean;
 }
 
 export function TmuxQuick({
@@ -39,7 +41,7 @@ export function TmuxQuick({
   tmuxCreateOpen, tmuxCreateName, tmuxCreateErr, tmuxCreateBusy,
   tmuxCreateTarget, onTmuxCreateTarget,
   onTmuxCreateOpen, onTmuxCreateCancel, onTmuxCreateName, onTmuxCreateSubmit,
-  paneNames, paneCapReached, splitActive,
+  paneNames, paneCapReached, splitActive, compact = false,
 }: TmuxQuickProps) {
   if (!sid || current.kind !== "ssh" || !current.tmux?.available) return null;
   // 作曲行「开进面板」的禁用原因：与「＋面板」同一套口径（分屏互斥/格数到顶），
@@ -50,9 +52,12 @@ export function TmuxQuick({
   return (
     <div className="st-tools" ref={tmuxMenuRef} data-testid="tmux-quick">
       <button
-        className={"ghost tmux-quick-btn" + (tmuxMenu ? " ts-open" : "")}
+        className={"ghost tmux-quick-btn" + (compact ? " icon-btn" : "") + (tmuxMenu ? " ts-open" : "")}
         aria-haspopup="menu"
         aria-expanded={tmuxMenu}
+        aria-label={current.tmux_attached
+          ? t("tmux：已接入 {0}——点开可切换到其他会话", current.tmux_attached)
+          : t("接入 tmux 会话：列出远端在跑的 tmux 会话，点选即恢复现场")}
         title={current.tmux_attached
           ? t("tmux：已接入 {0}——点开可切换到其他会话", current.tmux_attached)
           : t("接入 tmux 会话：列出远端在跑的 tmux 会话，点选即恢复现场")}
@@ -61,7 +66,7 @@ export function TmuxQuick({
           setTmuxMenu(next);
           if (next) onRefreshTmux();
         }}
-      ><IconTerminal size={13} /><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></button>
+      ><IconTerminal size={compact ? 14 : 13} />{!compact && <><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></>}</button>
       {tmuxMenu && (
         <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu" ref={clampIntoView}>
           {/* 会话大屏（监控墙）：全部会话快照网格（单击放大可直接键入）。挂在

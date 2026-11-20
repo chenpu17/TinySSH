@@ -21,6 +21,7 @@ const closeViaMenu = async (page, namePart) => {
 };
 
 const SCENE_TEXT = "deploy done @ 21:00";
+const PROD_SCENE_TEXT = "prod scene @ 20:59";
 const ckOf = (lineText) => ({
   cols: 80, rows: 24,
   buffers: [
@@ -34,7 +35,7 @@ const ckOf = (lineText) => ({
 });
 
 module.exports = {
-  title: "会话现场恢复：欢迎页一键入口 → 建连 → 检查点重放 + 公告行",
+  title: "会话现场恢复：双快照按创建序建签、检查点重放与公告行（#51/#43）",
   async run({ page, ck }) {
     // 清场：关掉 demo 预置会话 → 欢迎页可见
     await closeViaMenu(page, "prod-1");
@@ -42,10 +43,12 @@ module.exports = {
     const welcome = await page.evaluate(() => !!document.querySelector(".welcome"));
     ck.check("关闭预置后回欢迎页", welcome);
 
-    // 种入快照：local（可恢复）+ h-gone（主机已删，应被跳过）
+    // 种入两条可恢复快照（顺序 prod → 本机）+ h-gone（主机已删，应被跳过）。
+    // #51/#43：最终标签必须仍是快照创建序，不能被恢复后随机 sid 的列表序重排。
     await page.evaluate((seed) => {
       localStorage.setItem("ui.v2.restore", JSON.stringify(seed));
     }, [
+      { host_id: "h-prod1", saved_at: "2026-10-20T12:59:00Z", checkpoint: ckOf(PROD_SCENE_TEXT) },
       { host_id: "local", saved_at: "2026-10-20T13:00:00Z", checkpoint: ckOf(SCENE_TEXT) },
       { host_id: "h-gone", saved_at: "2026-10-20T13:00:00Z", checkpoint: ckOf("ghost") },
     ]);
@@ -58,7 +61,7 @@ module.exports = {
     await page.waitForTimeout(400);
     ck.check("欢迎页有「恢复上次现场」行", await page.evaluate(() => !!document.querySelector('[data-testid="restore-scene"]')));
     const rowTxt = await page.evaluate(() => document.querySelector('[data-testid="restore-scene"]')?.textContent ?? "");
-    ck.check("行内计数只数主机在场的条目（1）", rowTxt.includes("恢复上次现场（1）"), rowTxt.slice(0, 80));
+    ck.check("行内计数只数主机在场的条目（2）", rowTxt.includes("恢复上次现场（2）"), rowTxt.slice(0, 80));
     const title = await page.evaluate(() => document.querySelector('[data-testid="restore-scene"]')?.title ?? "");
     ck.check("悬停披露快照时刻与将跳过条目", title.includes("快照") && title.includes("跳过"), title.slice(0, 100));
 
@@ -87,10 +90,27 @@ module.exports = {
     ck.check("新会话已建立且终端在场", buf !== null && buf.length > 0);
     ck.check("快照文本已重放进终端", (buf ?? "").includes(SCENE_TEXT), (buf ?? "").slice(-200));
     ck.check("公告行标注恢复与快照时刻", (buf ?? "").includes("已恢复上次会话现场") && (buf ?? "").includes("2026/10/20"), (buf ?? "").slice(-200));
-    ck.check("主机已删的条目被跳过（无 ghost 文本、会话数 1）", (buf ?? "").includes("ghost") === false
-      && await page.evaluate(() => document.querySelectorAll(".tab").length) === 1);
+    ck.check("主机已删的条目被跳过（无 ghost 文本、会话数 2）", (buf ?? "").includes("ghost") === false
+      && await page.evaluate(() => document.querySelectorAll(".tab").length) === 2);
+    const restored = await page.evaluate(async () => {
+      const labels = [...document.querySelectorAll(".tab .tab-label")].map((el) => (el.textContent ?? "").trim());
+      const sessions = await window.__demoInvoke("list_sessions");
+      const prod = sessions.find((s) => s.host_id === "h-prod1");
+      const term = prod ? window.__t_terms.get(prod.id) : null;
+      const lines = [];
+      if (term) {
+        const b = term.buffer.active;
+        for (let y = 0; y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? "");
+      }
+      return { labels, prodText: lines.join("\n") };
+    });
+    ck.check("两条快照恢复后的最终标签仍是 prod → 本机（#51/#43）",
+      JSON.stringify(restored.labels) === JSON.stringify(["prod-1", "本机"]), restored.labels.join(" / "));
+    ck.check("第一条 prod 快照也已重放，未因串行恢复漏项",
+      restored.prodText.includes(PROD_SCENE_TEXT), restored.prodText.slice(-200));
 
     // 恢复后数据源清空（现场已被消费）→ 回欢迎页不再出现恢复行
+    await closeViaMenu(page, "prod-1");
     await closeViaMenu(page, "本机");
     await page.waitForTimeout(600);
     const again = await page.evaluate(() => {

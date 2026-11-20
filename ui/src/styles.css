@@ -785,7 +785,8 @@ button:disabled { opacity: 0.4; cursor: default; }
 .focus-mode .tabbar-row { padding-top: 3px; }
 .focus-mode .tabbar-row > button.ghost,
 .focus-mode .tabbar-row > .st-tools > button.ghost { height: 24px; border-radius: 12px; position: relative; }
-.focus-mode .tabbar-row > button.ghost.icon-btn { width: 24px; }
+.focus-mode .tabbar-row > button.ghost.icon-btn,
+.focus-mode .tabbar-row > .st-tools > button.ghost.icon-btn { width: 24px; }
 .focus-mode .tabbar-row > button.ghost::after,
 .focus-mode .tabbar-row > .st-tools > button.ghost::after { content: ""; position: absolute; inset: -3px 0; }
 input, select {
@@ -1300,6 +1301,11 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
 .tabbar-row .st-tools > button.ghost.tmux-quick-btn {
   max-width: 220px; overflow: hidden; text-overflow: ellipsis;
 }
+/* #50：专注态快接收成 24px 图标钮；覆盖上方常规快接的水平 padding，
+   避免 14px 图标挤在固定宽度里。常规工具栏仍保留文字与折叠箭头。 */
+.focus-mode .tabbar-row .st-tools > button.ghost.tmux-quick-btn.icon-btn {
+  width: 24px; padding: 0; gap: 0;
+}
 .focus-mode .tabbar-admin { display: none; }
 
 /* 新建 tmux 会话作曲行（菜单内嵌）：输名 + 创建/取消；错误就地 role=alert。
@@ -1363,7 +1369,7 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
 /* 标签栏（药丸重设计，对标 Termius）：行容器钉住滚动钮与尾部控件；.tabbar 只做
    横向滚动。标签改浮岛药丸——放弃旧「激活标签与工具栏底缘相接」的连接隐喻，
    换辨识度：药丸在井色条带上一眼可数，激活态 accent 软底 + 描边 + 微浮阴影，
-   悬停有 120ms 过渡。溢出时显式 ‹ › 钮仍是被藏标签的唯一提示 */
+   悬停有 120ms 过渡。溢出时用固定 ‹ › 钮与方向渐隐共同提示隐藏标签 */
 .tabbar-row {
   display: flex; align-items: center; gap: 4px; flex: none;
   padding: 0 10px; height: var(--chrome-tabs-h);
@@ -1378,6 +1384,22 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
   overflow-x: auto; overflow-y: hidden;
   padding: 3px 2px; /* 药丸悬停底/焦点环的呼吸空间，滚动裁剪不出界 */
 }
+/* #54：溢出期间两枚滚动钮始终占位，到头只禁用、不卸载，避免平滑滚动途中
+   标签流突然变宽而回弹。边缘渐隐只指向仍有隐藏内容的方向；scroll-padding 让
+   活动标签滚入视野时停在渐隐区内侧。无溢出时仍是原始实边，不常驻装饰。 */
+.tabbar[data-overflow="true"] { scroll-padding-inline: 24px; }
+.tabbar[data-can-left="true"] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px);
+  mask-image: linear-gradient(to right, transparent 0, #000 20px);
+}
+.tabbar[data-can-right="true"] {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 20px);
+  mask-image: linear-gradient(to left, transparent 0, #000 20px);
+}
+.tabbar[data-can-left="true"][data-can-right="true"] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+}
 .tab-scroll {
   flex: none; width: 20px; height: 20px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1385,6 +1407,7 @@ body.tile-dragging, body.tile-dragging * { cursor: grabbing !important; }
   background: transparent; border: 1px solid var(--border); border-radius: 6px;
   cursor: pointer;
 }
+.tab-scroll:disabled { opacity: .32; border-color: transparent; }
 button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(--text); }
 .tab {
   display: flex; align-items: center; gap: 7px; flex: none; min-width: 120px;
@@ -2204,6 +2227,10 @@ input::placeholder, textarea::placeholder { color: var(--text-sub); opacity: 1; 
    .term-session 被推出可视区白屏，直到下一条输出触发重排才回来。终端滚动只应发生
    在 .xterm-viewport 内；clip 让 #term 彻底不是滚动容器。 */
 #term { border-radius: 10px; box-shadow: 0 0 0 1px var(--border), 0 4px 16px var(--shadow-soft); overflow: clip; }
+/* #48 第二轮：多视图只保留各子视图自己的细框。#term 原有的 1px 总描边与投影
+   会和子视图描边叠成两层框；卡缝同色并不能去掉这一层。普通单终端仍保留总框，
+   tmux 多视图时移除总框，圆角与 overflow:clip 继续只负责边角裁切。 */
+#term.has-tmux-panes { box-shadow: none; }
 /* 加载占位（精致化 §5.6）：主机列表等首载 skeleton，避免无响应感 */
 .skeleton {
   background: linear-gradient(90deg,

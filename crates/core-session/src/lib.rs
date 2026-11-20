@@ -2638,7 +2638,10 @@ impl SessionApi for SessionManager {
                 },
             });
         }
-        out.sort_by(|a, b| a.id.cmp(&b.id));
+        // #51/#43：基础标签序=真实创建序。恢复建连会生成随机 UUID；若这里按 id
+        // 排序，快照采集即使已按 created_at 排好，刷新列表后仍会再次随机重排。
+        // 同刻用 id 只求确定；前端手拖后的 tabOrderRef 仍覆盖这份基础序。
+        out.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
         Ok(out)
     }
 

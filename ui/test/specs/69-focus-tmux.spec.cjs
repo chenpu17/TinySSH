@@ -1,5 +1,6 @@
 // 69 专注模式可用性：会话工具栏隐藏后，tmux 快接（管理）入口必须仍在标签条；
 // 标签列表/新建连接/退出专注文字钮在专注态让位，退出用右上角专注图标/F11。
+// #50：连接与 tmux 收成 24px 图标；协作不再常驻，待审批时保留紧凑警示入口。
 
 const visible = (page, sel) =>
   page.evaluate((s) => {
@@ -60,6 +61,51 @@ module.exports = {
     ck.check("专注小工具栏：文件入口可见", await visible(page, '[data-testid="focus-files"]'), "");
     ck.check("专注小工具栏：连接现有主机入口可见", await visible(page, '[data-testid="focus-connect"]'), "");
     ck.check("tmux 快接在专注标签条可见", await visible(page, '[data-testid="tmux-quick"] .tmux-quick-btn'), "");
+    const compact = await page.evaluate(() => {
+      const connect = document.querySelector('[data-testid="focus-connect"]');
+      const tmux = document.querySelector('[data-testid="tmux-quick"] .tmux-quick-btn');
+      const box = (el) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return {
+          icon: el.classList.contains("icon-btn") && !!el.querySelector("svg"),
+          text: (el.textContent ?? "").trim(), width: r.width, height: r.height,
+          padding: getComputedStyle(el).padding,
+        };
+      };
+      return {
+        connect: box(connect), tmux: box(tmux), tmuxLabel: !!tmux?.querySelector(".tmux-quick-label"),
+        collabText: [...document.querySelectorAll(".tabbar-row button")].some((b) => (b.textContent ?? "").trim().startsWith("协作")),
+      };
+    });
+    ck.check("#50 连接入口是 24×24 纯图标钮",
+      compact.connect?.icon === true && compact.connect.text === ""
+      && Math.round(compact.connect.width) === 24 && Math.round(compact.connect.height) === 24,
+      JSON.stringify(compact.connect));
+    ck.check("#50 tmux 入口是 24×24 纯图标钮且无文字/箭头",
+      compact.tmux?.icon === true && compact.tmux.text === "" && !compact.tmuxLabel
+      && Math.round(compact.tmux.width) === 24 && Math.round(compact.tmux.height) === 24
+      && compact.tmux.padding === "0px", JSON.stringify(compact.tmux));
+    ck.check("#50 专注态不再显示「协作」文字按钮", !compact.collabText, JSON.stringify(compact));
+    ck.check("有待审批时保留紧凑警示入口", await visible(page, '[data-testid="focus-collab-alert"]'), "");
+    await page.click('[data-testid="focus-collab-alert"]');
+    await page.waitForTimeout(300);
+    ck.check("紧凑审批入口可打开协作面板", await page.evaluate(() =>
+      document.querySelector('[data-testid="tp-title"]')?.textContent === "协作"), "");
+    await page.click('[data-testid="tp-close"]');
+    await page.waitForTimeout(200);
+    const cleared = await page.evaluate(async () => {
+      const items = await window.__demoInvoke("list_approvals", { pendingOnly: true });
+      for (const item of items) await window.__demoInvoke("decide_approval", { id: item.id, decision: "deny" });
+      return items.length;
+    });
+    const alertGone = await page.waitForFunction(() => !document.querySelector('[data-testid="focus-collab-alert"]'), undefined, { timeout: 5000 })
+      .then(() => true).catch(() => false);
+    ck.check("无待审批时协作入口完全退出标签条", cleared > 0 && alertGone && !(await visible(page, '[data-testid="focus-collab-alert"]')), `清理 ${cleared} 条`);
+    await page.evaluate(() => window.__demoInvoke("demo_inject_approval", { sid: "s-demo-0001", command: "systemctl restart nginx" }));
+    const alertBack = await page.waitForSelector('[data-testid="focus-collab-alert"]', { timeout: 5000 })
+      .then(() => true).catch(() => false);
+    ck.check("出现新待审批时紧凑警示入口恢复", alertBack, "");
     // macOS Overlay 红绿灯是系统悬浮钮，专注态藏掉标题区后若窗口没真正全屏，
     // 三个圆钮会压住标签条。focus-windowed 必须给标签行留出与标题栏同宽的 84px
     // 安全区（demo 域手动补 native 类模拟；正常路径由 isFullscreen 跟踪收回 chrome）。

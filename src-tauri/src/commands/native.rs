@@ -49,6 +49,27 @@ pub(crate) fn ctrl_char_of_keycode(code: u64) -> Option<&'static str> {
     })
 }
 
+/// WKWebView 在 macOS 默认把长按字母交给系统“变体字符”面板，Vim 等全屏程序因此
+/// 收不到后续重复键。registration domain 只在当前进程提供缺省值：不写 plist、不改
+/// 全局 defaults，也不覆盖用户显式保存的应用设置。必须在 WebView 创建前注册。
+#[cfg(target_os = "macos")]
+pub(crate) fn install_native_press_and_hold_defaults() {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSUserDefaults};
+
+    let disabled = NSNumber::numberWithBool(false);
+    // SAFETY：任何 'static Objective-C 对象都可重解释为 AnyObject，所有权不变。
+    let disabled: Retained<AnyObject> = unsafe { Retained::cast_unchecked(disabled) };
+    let defaults =
+        NSDictionary::from_slices(&[ns_string!("ApplePressAndHoldEnabled")], &[&*disabled]);
+    // SAFETY：字典键为 NSString、值为 NSNumber，符合 registerDefaults 的属性列表契约。
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn install_native_press_and_hold_defaults() {}
+
 /// native 层 Ctrl+字符 接管（仅 macOS）：中文输入法在 WKWebView 里会把 Ctrl+字母
 /// 送进拼音组合（keydown 到达 DOM 时 ctrl 标志已被剥掉、keyCode=229），任何 JS 层
 /// 修复都无法区分「Ctrl+C」和「拼音里的 c」。NSEvent local monitor 在 IME 之前
@@ -239,4 +260,25 @@ pub(crate) fn show_fatal_dialog(msg: &str) {
             .status();
     }
     eprintln!("{msg}");
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod press_and_hold_tests {
+    use super::install_native_press_and_hold_defaults;
+    use objc2_foundation::{ns_string, NSNumber, NSRegistrationDomain, NSUserDefaults};
+
+    #[test]
+    fn press_and_hold_false_lives_in_nonpersistent_registration_domain() {
+        install_native_press_and_hold_defaults();
+        let defaults = NSUserDefaults::standardUserDefaults();
+        // SAFETY：Foundation 导出的不可变域名字符串，进程生命周期内有效。
+        let registration_domain = unsafe { NSRegistrationDomain };
+        let registered = defaults.volatileDomainForName(registration_domain);
+        let value = registered
+            .objectForKey(ns_string!("ApplePressAndHoldEnabled"))
+            .expect("长按设置必须进入 registration domain")
+            .downcast::<NSNumber>()
+            .expect("长按设置必须是 NSNumber");
+        assert!(!value.boolValue());
+    }
 }
