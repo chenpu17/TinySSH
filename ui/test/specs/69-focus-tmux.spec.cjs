@@ -1,6 +1,7 @@
 // 69 专注模式可用性：会话工具栏隐藏后，tmux 快接（管理）入口必须仍在标签条；
 // 标签列表/新建连接/退出专注文字钮在专注态让位，退出用右上角专注图标/F11。
 // #50：连接与 tmux 收成 24px 图标；协作不再常驻，待审批时保留紧凑警示入口。
+// #57：专注态图标钮统一为带可见细描边的正圆，激活态用 accent 单圈强调。
 
 const visible = (page, sel) =>
   page.evaluate((s) => {
@@ -87,6 +88,31 @@ module.exports = {
       && Math.round(compact.tmux.width) === 24 && Math.round(compact.tmux.height) === 24
       && compact.tmux.padding === "0px", JSON.stringify(compact.tmux));
     ck.check("#50 专注态不再显示「协作」文字按钮", !compact.collabText, JSON.stringify(compact));
+    const uniform = await page.evaluate(() => {
+      const els = [
+        document.querySelector('[data-testid="palette-open"]'),
+        document.querySelector('[data-testid="focus-files"]'),
+        document.querySelector('[data-testid="focus-connect"]'),
+        document.querySelector('[data-testid="tmux-quick"] .tmux-quick-btn'),
+        document.querySelector('[data-testid="focus-toggle"]'),
+      ];
+      return els.map((el) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return {
+          id: el.dataset.testid || "tmux", width: r.width, height: r.height,
+          radius: s.borderTopLeftRadius, border: s.borderTopWidth, color: s.borderTopColor,
+          shadow: s.boxShadow,
+        };
+      });
+    });
+    ck.check("#57 五枚专注图标钮统一 24×24 正圆并显示 1px 细描边",
+      uniform.every((b) => b && Math.round(b.width) === 24 && Math.round(b.height) === 24
+        && b.radius === "12px" && b.border === "1px"
+        && b.color !== "transparent" && b.color !== "rgba(0, 0, 0, 0)"), JSON.stringify(uniform));
+    ck.check("#57 激活态只留 accent 单圈，不叠中性外框与内阴影",
+      uniform.at(-1)?.shadow === "none", JSON.stringify(uniform.at(-1)));
     ck.check("有待审批时保留紧凑警示入口", await visible(page, '[data-testid="focus-collab-alert"]'), "");
     await page.click('[data-testid="focus-collab-alert"]');
     await page.waitForTimeout(300);

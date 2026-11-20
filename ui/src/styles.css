@@ -786,7 +786,15 @@ button:disabled { opacity: 0.4; cursor: default; }
 .focus-mode .tabbar-row > button.ghost,
 .focus-mode .tabbar-row > .st-tools > button.ghost { height: 24px; border-radius: 12px; position: relative; }
 .focus-mode .tabbar-row > button.ghost.icon-btn,
-.focus-mode .tabbar-row > .st-tools > button.ghost.icon-btn { width: 24px; }
+.focus-mode .tabbar-row > .st-tools > button.ghost.icon-btn {
+  width: 24px; border-color: var(--border);
+}
+/* #57：专注态所有图标钮都呈现同一套正圆细框，不再只有 tmux/激活钮显形。
+   激活态保留 accent 软底，用 1px accent 实边替代通用内描边，避免双圈。 */
+.focus-mode .tabbar-row > button.ghost.icon-btn:is(.ts-open, [aria-pressed="true"], [aria-expanded="true"]),
+.focus-mode .tabbar-row > .st-tools > button.ghost.icon-btn:is(.ts-open, [aria-pressed="true"], [aria-expanded="true"]) {
+  border-color: var(--accent-line); box-shadow: none;
+}
 .focus-mode .tabbar-row > button.ghost::after,
 .focus-mode .tabbar-row > .st-tools > button.ghost::after { content: ""; position: absolute; inset: -3px 0; }
 input, select {
@@ -1241,9 +1249,9 @@ button.ghost.pane-split-btn.pane-exit-btn:not(:disabled):hover {
 .tmux-div { position: absolute; z-index: 6; touch-action: none; }
 .tmux-div.div-v { cursor: col-resize; }
 .tmux-div.div-h { cursor: row-resize; }
-/* 静态分隔线：卡片之间是 6px 透明缝，若底色相同会看不出分界；1px --border
-   常显（悬停/拖动再亮 accent），与卡片描边一起把缝读成「两格之间」 */
-.tmux-div::after { content: ""; position: absolute; background: var(--border); }
+/* #56：子视图已有独立细描边，不再额外常显一条分隔线。保留 8px 隐形命中区，
+   只在悬停/拖动时亮 accent，调整布局的能力与可发现性不变。 */
+.tmux-div::after { content: ""; position: absolute; background: transparent; }
 .tmux-div.div-v::after { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
 .tmux-div.div-h::after { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
 .tmux-div:hover::after, .tmux-div.dragging::after { background: var(--accent-glow); }

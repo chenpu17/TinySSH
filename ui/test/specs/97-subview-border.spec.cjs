@@ -1,6 +1,7 @@
 // 97 子视图外框（GitHub #48）：第一轮只把 3px --view-seam 改成背景色，
 // 用户 v0.12.19 截图确认仍有双框：#term 自带 1px 总描边/投影与子视图细描边叠加。
 // 多视图去掉 #term 总框，只保留每格 1px --border 与 accent 焦点环；普通单终端总框不变。
+// #56：卡片间不再常显额外分隔线，仅保留隐形拖拽热区与悬停/拖动反馈。
 const SID = "s-demo-0001";
 
 const openQuick = async (page) => {
@@ -98,6 +99,25 @@ module.exports = {
     ck.check("两个子视图：仍只有唯一焦点格显示 accent 环",
       two.cards.filter((c) => c.focus).length === 1
       && two.cards.find((c) => c.focus)?.focusColor === two.accent, JSON.stringify(two.cards));
+    const dividers = await page.evaluate(() => [...document.querySelectorAll(".tmux-div")].map((el) => {
+      const r = el.getBoundingClientRect();
+      const after = getComputedStyle(el, "::after");
+      return { width: r.width, height: r.height, color: after.backgroundColor };
+    }));
+    ck.check("#56 默认不画额外分隔线，8px 拖拽热区仍保留",
+      dividers.length > 0 && dividers.every((d) =>
+        (d.color === "transparent" || d.color === "rgba(0, 0, 0, 0)")
+        && (d.width >= 8 || d.height >= 8)), JSON.stringify(dividers));
+    const draggingColor = await page.evaluate(() => {
+      const el = document.querySelector(".tmux-div");
+      if (!el) return "";
+      el.classList.add("dragging");
+      const color = getComputedStyle(el, "::after").backgroundColor;
+      el.classList.remove("dragging");
+      return color;
+    });
+    ck.check("#56 拖动分隔条时仍显示 accent 反馈",
+      draggingColor !== "" && draggingColor !== "transparent" && draggingColor !== "rgba(0, 0, 0, 0)", draggingColor);
     ck.check("单双格几何语言一致（3px 卡缝 + 同圆角 + 1px 内描边）",
       [...one.cards, ...two.cards].every((c) => c.outerWidth === "3px" && c.radius === "10px" && c.innerWidth === "1px"),
       JSON.stringify({ one: one.cards, two: two.cards }));
