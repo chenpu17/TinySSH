@@ -1,8 +1,10 @@
-// 96 终端共享字形图集错字自愈（GitHub #47 / KI-014 再复发）：
-// 两个同 font/theme/DPR 的 WebGL 终端共享 TextureAtlas。清 A 的图集再用另一套
-// 字形填回，B 的缓冲区文字没变，但旧 RenderModel 的纹理坐标会画成别的字——
-// 与用户截图里中文位置叠出拉丁/符号同型。公开 refresh() 只请求重画，旧模型不动。
-// 本 spec 先证明探针能制造错字，再要求 repaintAll 清全部终端模型并逐像素复原。
+// 96 终端共享字形图集错字自愈（GitHub #47 / KI-014 再复发；KI-093 随 xterm 6.1
+// 升级复核）：两个同 font/theme/DPR 的 WebGL 终端共享 TextureAtlas。清 A 的
+// 图集再用另一套字形填回，B 的缓冲区文字没变，但旧 RenderModel 的纹理坐标会
+// 画成别的字——与用户截图里中文位置叠出拉丁/符号同型。addon-webgl 0.20 起
+// （上游 #5883/#6042）页布局变化会广播逐 renderer 版本并全量重建，探针在 B 上
+// 不再制造错字（自愈）；旧版仍会错字。本 spec 两种结果都接受，验收落在
+// repaintAll 清全部终端模型、不调 clearTextureAtlas、缓冲区原文不变与逐像素复原。
 const SID = "s-demo-0001";
 const TEXT = "昇腾负载仍较高 ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789";
 
@@ -70,9 +72,13 @@ module.exports = {
       await new Promise((r) => setTimeout(r, 650));
     });
     const corrupt = await page.screenshot({ clip });
-    ck.check("共享图集探针确实制造出错字（基准画面已改变）", !before.equals(corrupt),
-      `正常 ${before.length} bytes / 错字 ${corrupt.length} bytes`);
-    ck.check("错字只是渲染层：终端缓冲区原文未变", await page.evaluate((text) => {
+    // addon-webgl 0.20 起，共享图集页布局变化会触发逐 renderer 全量重建：探针
+    // 画面可能与基准完全一致（新版自愈）；旧版仍会错字。两种结果都合法，记录
+    // 形态供最终断言区分路径，真正的验收在后续四条断言。
+    const healed = before.equals(corrupt);
+    ck.check(`探针后画面${healed ? "已被新版渲染器自愈（与基准一致）" : "仍出现错字（旧版渲染器路径）"}——两态兼容`, true,
+      `正常 ${before.length} bytes / 探针 ${corrupt.length} bytes / 自愈 ${healed}`);
+    ck.check("渲染层探针不碰缓冲区：终端原文未变", await page.evaluate((text) => {
       const { b } = window.__atlas96;
       return [0, 1, 2].every((i) => b.buffer.active.getLine(i)?.translateToString(true).includes(text));
     }, TEXT), TEXT);
@@ -94,7 +100,8 @@ module.exports = {
     ck.check("自愈不再调用有共享缺陷的 clearTextureAtlas", repair.atlasClears === 0, JSON.stringify(repair));
 
     const repaired = await page.screenshot({ clip });
-    ck.check("修复后与正常基准逐像素一致", before.equals(repaired),
-      `正常 ${before.length} bytes / 修复 ${repaired.length} bytes / 错字 ${corrupt.length} bytes`);
+    ck.check("修复后与正常基准逐像素一致（旧版错字路径还须真的重画）",
+      before.equals(repaired) && (healed || !corrupt.equals(repaired)),
+      `正常 ${before.length} / 修复 ${repaired.length} / 探针 ${corrupt.length} bytes；探针${healed ? "已自愈" : "制造过错字后被修复"}`);
   },
 };

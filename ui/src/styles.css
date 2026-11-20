@@ -29,8 +29,8 @@
    终端默认字体：圆润字形 + 全量 CJK 等宽（中文文件名/报错不再落到系统宋体）。
    官方发行版子集（8611 字：GB2312 全表 + ASCII/标点/制表符/块元素/箭头/
    powerline），两字重共 ~3.5MB。家族名 "Maple Mono CN Term" 只进终端栈，
-   与 "JetBrains Mono Term" 同工艺；框线/块元素随 customGlyphs=false 一并走
-   字体字形（makeTerm 注释：WebView2 155 连排几何绘制缺格，环境级回归）。 */
+   与 "JetBrains Mono Term" 同工艺；框线/块元素走字体字形（xterm 6.1 已移除
+   customGlyphs 选项，避免 WebView2 155 连排几何绘制缺格）。 */
 @font-face {
   font-family: "Maple Mono CN Term";
   src: url("./assets/fonts/maple-mono-cn-Regular.woff2") format("woff2");

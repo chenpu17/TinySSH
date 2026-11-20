@@ -18,6 +18,9 @@
 import type { Terminal } from "@xterm/xterm";
 
 type MouseCore = {
+  mouseStateService?: {
+    activeProtocol: string;
+  };
   coreMouseService?: {
     activeProtocol: string;
   };
@@ -26,7 +29,10 @@ type MouseCore = {
 /** 关闭当前终端的鼠标上报协议；返回是否真的从“开着”切到“关闭”。 */
 export function resetMouseReporting(term: Terminal): boolean {
   const core = (term as unknown as { _core?: MouseCore })._core;
-  const ms = core?.coreMouseService;
+  // xterm 6.1 moved the protocol state to the public-on-core mouseStateService.
+  // Keep the former field as a compatibility fallback for older xterm builds and
+  // integrations that still expose coreMouseService.
+  const ms = core?.mouseStateService ?? core?.coreMouseService;
   if (!ms || ms.activeProtocol === "NONE") return false;
   // 与 xterm DECRST 1003/1002/1000/9 同效：setter 会触发 onProtocolChange，
   // 解绑 wheel/mousemove 监听并清掉 .enable-mouse-events，滚轮随即回到

@@ -14,8 +14,9 @@ export type RepaintEntry = { term: Terminal };
  *
  * `_renderService.clear()` 会走各渲染器自己的 `clear()`；WebGL 路径据此执行
  * `_clearModel(true)`，下一次 refresh 从缓冲区重新取字形与纹理坐标。对全部终端
- * 都执行，等价于把上游 #6055 的「共享图集失效要广播给所有拥有者」落在应用侧，
- * 无需依赖 6.1 / addon 0.20 beta，也不碰 stable 上仍有缺陷的 clearTextureAtlas()。
+ * 都执行，覆盖字体、主题与 DPR 变化产生的应用层缓存失效。依赖升级到 xterm
+ * 6.1 beta / addon-webgl 0.20 beta 后，上游还会用每个 renderer 的 page-layout 版本
+ * 处理共享图集页合并与合并期间的重建，应用层不再承担这条渲染器内部广播职责。
  * xterm 没有公开清绘制模型的 API；这里与项目既有 fit/探针一样走 `_core` 内部口，
  * 缺失时仍退化为公开 refresh。终端已释放等异常静默——重绘兜底不应反过来报错。
  */

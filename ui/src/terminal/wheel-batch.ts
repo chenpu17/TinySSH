@@ -85,11 +85,17 @@ const MOUSE_ACTION_DOWN = 1;
 
 type CoreMouseEventLike = { button: number; action: number };
 
+type MouseTriggerService = {
+  triggerMouseEvent?: (e: CoreMouseEventLike) => boolean;
+  _triggerMouseEvent?: (e: CoreMouseEventLike) => boolean;
+  [PATCHED]?: true;
+};
+
 type WheelBatchCore = {
-  coreMouseService?: {
-    triggerMouseEvent?: (e: CoreMouseEventLike) => boolean;
-    [PATCHED]?: true;
-  };
+  /** xterm 5.x/6.0 common mouse service. */
+  coreMouseService?: MouseTriggerService;
+  /** xterm 6.1 browser mouse service. */
+  _mouseService?: MouseTriggerService;
   coreService?: {
     triggerDataEvent?: (data: string, wasUserInput?: boolean) => void;
   };
@@ -116,19 +122,32 @@ export interface WheelBatchOptions {
  */
 export function installWheelBatch(term: unknown, opts: WheelBatchOptions = {}): () => void {
   const core = (term as { _core?: WheelBatchCore })._core;
-  const ms = core?.coreMouseService;
+  // xterm 6.1 moved the event encoder to the browser-side MouseService and
+  // kept it private as _triggerMouseEvent. Older releases exposed the same
+  // method as coreMouseService.triggerMouseEvent. Patch whichever service is
+  // present so the batching hook follows the actual event path.
+  const modernMouse = core?._mouseService;
+  const legacyMouse = core?.coreMouseService;
+  const ms = modernMouse && typeof modernMouse._triggerMouseEvent === "function"
+    ? modernMouse
+    : legacyMouse && typeof legacyMouse.triggerMouseEvent === "function"
+      ? legacyMouse
+      : undefined;
+  const triggerKey: "_triggerMouseEvent" | "triggerMouseEvent" | undefined =
+    ms === modernMouse ? "_triggerMouseEvent" : ms === legacyMouse ? "triggerMouseEvent" : undefined;
   const cs = core?.coreService;
   if (
     !core ||
     !ms ||
-    typeof ms.triggerMouseEvent !== "function" ||
+    !triggerKey ||
     !cs ||
     typeof cs.triggerDataEvent !== "function" ||
     ms[PATCHED]
   ) {
     return () => {};
   }
-  const origTrigger = ms.triggerMouseEvent;
+  const origTrigger = ms[triggerKey];
+  if (typeof origTrigger !== "function") return () => {};
   const origSend = cs.triggerDataEvent;
   // 每次调度都重新取间隔：设置里改档（含「跟随刷新率」实测值变化）无需重装。
   const resolveInterval = () => {
@@ -196,7 +215,7 @@ export function installWheelBatch(term: unknown, opts: WheelBatchOptions = {}): 
     if (timer === null) timer = setTimeout(pump, 0);
   };
 
-  ms.triggerMouseEvent = function (this: unknown, e: CoreMouseEventLike) {
+  ms[triggerKey] = function (this: unknown, e: CoreMouseEventLike) {
     if (e.button === MOUSE_BUTTON_WHEEL && (e.action === MOUSE_ACTION_UP || e.action === MOUSE_ACTION_DOWN)) {
       enqueue(e);
       // 调用方不关心滚轮的返回值（xterm 的 wheel 监听只做 cancel），先算已受理。
@@ -223,7 +242,7 @@ export function installWheelBatch(term: unknown, opts: WheelBatchOptions = {}): 
   return () => {
     clearTimer();
     pending = [];
-    ms.triggerMouseEvent = origTrigger;
+    ms[triggerKey] = origTrigger;
     cs.triggerDataEvent = origSend;
     delete ms[PATCHED];
   };

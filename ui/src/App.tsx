@@ -277,7 +277,7 @@ const WEBGL_BUDGET = 14;
 function attachWebgl(e: { term: Terminal; webgl: WebglAddon | null }): void {
   if (e.webgl) return;
   try {
-    const w = new WebglAddon();
+    const w = new WebglAddon({ customGlyphs: false });
     w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } if (e.webgl === w) e.webgl = null; });
     e.term.loadAddon(w);
     e.webgl = w;
@@ -2499,15 +2499,15 @@ export default function App() {
   // 字形图集自愈（2026-11-09 实测：v0.11.6 长时间使用后终端文字变成别的字形，
   // 选择只临时恢复，退出 macOS 全屏才彻底恢复）。xterm 5.5 的 WebGL 字形图集在
   // 长时间高熵输出（CJK/框线/emoji 混排、多终端共享图集）后存在错位缺陷，上游
-  // 6.0 重写图集后修复（已升级 6.0.0 + addon-webgl 0.19）；本兜底继续保留，覆盖
+  // xterm 6.1 的共享图集页布局修复已纳入；本兜底继续保留，覆盖
   // 上下文丢失/旧缓存等残余路径——在「窗口重新获得焦点 / 从隐藏变可见 / 原生全屏态
   // 翻转」这些用户愿意接受一次瞬时重画的时刻统一清各终端绘制模型并重绘（原生全屏由窗口
   // resize 探针读 isFullscreen 判定——Tauri 的全屏不触发 DOM fullscreenchange）。
   // 合帧 120ms，避免 focus 与 visibilitychange 连续触发重复烘焙；右键「重绘终端
   // 画面」是随时可用的手动出口。
-  // 注意（GitHub #39）：必须整组交给 repaintAll，且它**不调 clearTextureAtlas**——
-  // 0.19.0 的图集按配置共享，任一终端清一次都会打坏兄弟终端的模型（上游 #6014，
-  // 修复未进 stable），正是「字形互相顶替、一重排就自愈」的来源。
+  // 注意（GitHub #39/#52）：必须整组交给 repaintAll，且它**不调 clearTextureAtlas**。
+  // 图集按配置共享，手动清空一端仍会让兄弟端的旧模型失效。上游 0.20 beta 已经
+  // 对页布局版本做逐 renderer 广播，应用层重绘继续只清绘制模型。
   useEffect(() => {
     if (typeof window === "undefined") return;
     let timer = 0;
@@ -2748,11 +2748,9 @@ export default function App() {
       // xterm 6 起快滚修饰键固定为 Alt（fastScrollModifier 已移除），只留倍率。
       fastScrollSensitivity: 5,
       rescaleOverlappingGlyphs: true,
-      // 字体轮目检（2026-10-23，Edge/WebView2 155 实测）：customGlyphs 的框线
-      // 连排几何绘制在当前运行时缺格（`────` 连串只画部分格，JetBrains/Maple
-      // 皆中招、HEAD 基线同样复现=环境级回归而非应用代码）。改走字体字形
-      // （内置字体都带全量框线/块元素/powerline），格格有墨，横线略带字模侧距。
-      customGlyphs: false,
+      // 字体轮目检（2026-10-23，Edge/WebView2 155 实测）：xterm 6.1 从 Terminal
+      // 选项移除了 customGlyphs，WebGL addon 仍默认开启程序化字形，因此在 addon
+      // 选项中显式关闭。框线/块元素继续走内置字体字形，避免运行时几何绘制缺格。
       // tmux/彩色底 TUI 的对比度兜底（见 TERM_MIN_CONTRAST）：主题派生只保证
       // 「ANSI 彩字 × 终端底」，管不到程序自带的「彩底 × 黑字」。
       minimumContrastRatio: TERM_MIN_CONTRAST,
@@ -2849,7 +2847,7 @@ export default function App() {
       // 触发驱逐回落 DOM。超预算的新实例先落 DOM，焦点切到它时由提升 effect 收回
       // 一个后台主终端的名额让给它（见 sid 提升 effect）。
       try {
-        const w = new WebglAddon();
+        const w = new WebglAddon({ customGlyphs: false });
         w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } const e = termsRef.current.get(sessionSid); if (e?.webgl === w) e.webgl = null; });
         term.loadAddon(w);
         webgl = w;
@@ -3177,7 +3175,7 @@ export default function App() {
       smoothScrollDuration: isMacPlatform() ? 0 : 100,
       // xterm 6 起快滚修饰键固定为 Alt（fastScrollModifier 已移除），只留倍率。
       fastScrollSensitivity: 5,
-      rescaleOverlappingGlyphs: true, customGlyphs: false,
+      rescaleOverlappingGlyphs: true,
       // 格子恒显示 tmux（默认样式就是彩底黑字），对比度兜底无条件开
       minimumContrastRatio: TERM_MIN_CONTRAST,
       theme: { ...derivedThemeRef.current.theme },
@@ -3245,7 +3243,7 @@ export default function App() {
       } catch { liga = null; }
     } else if (glInUse() < WEBGL_BUDGET) {
       try {
-        const w = new WebglAddon();
+        const w = new WebglAddon({ customGlyphs: false });
         w.onContextLoss(() => { try { w.dispose(); } catch { /* 已释放 */ } const e = paneTermsRef.current.get(`${sid}:${paneId}`); if (e?.webgl === w) e.webgl = null; });
         term.loadAddon(w);
         webgl = w;
@@ -5613,7 +5611,7 @@ export default function App() {
     // 第二页「更多」：终端维护四件套（桌面只在右键菜单里，触屏没有右键）。
     // 第二页「更多」：终端维护四件套（桌面只在右键菜单里，触屏没有右键）。
     // 重绘走全局入口：整组清绘制模型 + refresh，不碰共享图集（上游 #6014 /
-    // GitHub #39/#47——0.19.0 上 clearTextureAtlas 会波及兄弟终端）。
+    // GitHub #39/#47/#52——clearTextureAtlas 会波及共享图集的兄弟终端。
     if (touchMore) {
       const items: TouchBarItem[] = [
         { label: t("清屏"), testid: "touch-clear", onClick: () => {

@@ -88,6 +88,34 @@ module.exports = {
     ck.eq("卸载后滚轮恢复逐条发出",
       JSON.stringify(batch.afterOff), JSON.stringify(["R1R2R3", "R4", "R5"]));
 
+    // ── 节流：xterm 6.1 的浏览器 MouseService 私有触发器 ──
+    const modern = await page.evaluate(async () => {
+      const mod = await import("/src/terminal/wheel-batch.ts");
+      const data = [];
+      const core = {
+        coreService: { triggerDataEvent(d) { data.push(d); } },
+        _mouseService: {
+          calls: 0,
+          _triggerMouseEvent(e) {
+            this.calls++;
+            core.coreService.triggerDataEvent(`M${this.calls}`, true);
+            return true;
+          },
+        },
+      };
+      const original = core._mouseService._triggerMouseEvent;
+      const off = mod.installWheelBatch({ _core: core }, { intervalMs: 0 });
+      core._mouseService._triggerMouseEvent({ button: 4, action: 0, col: 0, row: 0 });
+      const queued = data.slice();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const sent = data.slice();
+      off();
+      return { queued, sent, restored: core._mouseService._triggerMouseEvent === original };
+    });
+    ck.eq("xterm 6.1 MouseService 滚轮先排队", JSON.stringify(modern.queued), "[]");
+    ck.eq("xterm 6.1 MouseService 滚轮可正常发出", JSON.stringify(modern.sent), JSON.stringify(["M1"]));
+    ck.eq("xterm 6.1 MouseService 卸载后恢复原方法", modern.restored, true);
+
     // ── 节流：用户输入必须排在排队滚轮之后（滚完马上打字不得乱序） ──
     const order = await page.evaluate(async () => {
       const mod = await import("/src/terminal/wheel-batch.ts");
@@ -212,7 +240,7 @@ module.exports = {
       // xterm 6 会把 |deltaY|<50 的像素滚动当触控板打折 0.3，像素模式无法逐次对齐，
       // 行模式（DOM_DELTA_LINE）不折算、不折扣，两代语义一致。
       const core = term._core;
-      const mouse = core.coreMouseService ?? core._mouseService;
+      const mouse = core._mouseService ?? core.coreMouseService;
       if (mouse) mouse._wheelPartialScroll = 0;
       else if (core.viewport) core.viewport._wheelPartialScroll = 0;
       const fire = () =>
@@ -236,12 +264,19 @@ module.exports = {
       }
       term.write("\x1b[?1000l\x1b[?1006l");
       sub.dispose();
-      return { sync, early, burst, slow };
+      return {
+        sync,
+        early,
+        burst,
+        slow,
+        modernPatched: !!core._mouseService?.[Symbol.for("tinyssh.xterm-wheel-batch")],
+      };
     });
     ck.eq("真实 xterm：同一任务内连发滚轮不得同步写出", real.sync, 0);
     ck.eq("真实 xterm：节流泵已开始排空（60ms 内至少 1 条）", real.early >= 1, true);
     ck.eq("真实 xterm：甩动超出队列上限，只发最新 8 条", real.burst, 8);
     ck.eq("真实 xterm：慢速滚动仍逐条立即发出（1:1）",
       JSON.stringify(real.slow), JSON.stringify([1, 2, 3]));
+    ck.eq("真实 xterm：新版 MouseService 已安装节流补丁", real.modernPatched, true);
   },
 };

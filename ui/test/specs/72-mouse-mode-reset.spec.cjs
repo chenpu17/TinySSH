@@ -35,15 +35,26 @@ module.exports = {
     // ── 1. 纯函数：只关协议，已关时不重复动作 ──
     const unit = await page.evaluate(async () => {
       const mod = await import("/src/terminal/mouse-mode-guard.ts");
-      const core = { coreMouseService: { activeProtocol: "ANY" } };
-      const term = { _core: core };
-      const first = mod.resetMouseReporting(term);
-      const proto1 = core.coreMouseService.activeProtocol;
-      const second = mod.resetMouseReporting(term);
-      return { first, proto1, second, proto2: core.coreMouseService.activeProtocol };
+      const modernCore = { mouseStateService: { activeProtocol: "ANY" } };
+      const modernTerm = { _core: modernCore };
+      const first = mod.resetMouseReporting(modernTerm);
+      const proto1 = modernCore.mouseStateService.activeProtocol;
+      const second = mod.resetMouseReporting(modernTerm);
+      const legacyCore = { coreMouseService: { activeProtocol: "ANY" } };
+      const legacyTerm = { _core: legacyCore };
+      const legacy = mod.resetMouseReporting(legacyTerm);
+      return {
+        first,
+        proto1,
+        second,
+        proto2: modernCore.mouseStateService.activeProtocol,
+        legacy,
+        legacyProto: legacyCore.coreMouseService.activeProtocol,
+      };
     });
-    ck.check("ANY 协议可被本地重置", unit.first && unit.proto1 === "NONE");
+    ck.check("xterm 6.1 mouseStateService 可重置 ANY 协议", unit.first && unit.proto1 === "NONE");
     ck.check("已关闭时不重复动作", !unit.second && unit.proto2 === "NONE");
+    ck.check("旧版 coreMouseService 兼容重置", unit.legacy && unit.legacyProto === "NONE");
 
     // ── 2. 真实终端：1049l 自动复位 ──
     await connectHost(page, "本机");
