@@ -5,7 +5,8 @@
 // ESC[<35;..M / 0;..M / 32;..m / 65;..M 送进 PTY，回显成满屏 35;22;4M 乱码，
 // 滚轮也不再滚 scrollback。
 // 修复：离开备用屏（47/1047/1049l）或收到 shell 集成 OSC 133;A/D 时本地关协议；
-// 另提供右键「重置鼠标上报」手动出口。
+// 另提供右键「重置鼠标上报」手动出口；会话断连死亡与重连成功时也本地清一次
+//（#58/KI-098：tmux 里的 TUI 被杀不走 DECRST，恢复连接后点击回显 SGR 报文）。
 const liveSids = (page) =>
   page.evaluate(() => {
     const terms = window.__t_terms;
@@ -208,5 +209,40 @@ module.exports = {
     ck.check("终端右键菜单有「重绘终端画面」", redrawPresent);
     if (redrawPresent) await page.click('[data-testid="term-redraw"]');
     await wait(page, 150);
+
+    // ── 7. 断连/重连自动复位（#58/KI-098）──
+    // tmux attach（mouse on）里跑 codex/Claude Code 时断连：TUI 被杀不走 DECRST，
+    // 恢复连接后 1000/1006 仍挂着，触摸板点击被编码成 SGR 报文回显成乱码。
+    // 会话死亡（Disconnected）与重连成功（Reconfirming）两个时机都本地清协议；
+    // 重连后 tmux 重新 attach 会自行重发开启，不影响存活会话的鼠标。
+    const recover = await page.evaluate(async (sid) => {
+      const term = window.__t_terms.get(sid);
+      term.write("\x1b[?1000h\x1b[?1006h");
+      await new Promise((r) => setTimeout(r, 120));
+      const on = term.modes.mouseTrackingMode;
+      window.__demoInvoke("demo_drop_session", { sid, recoverOnAttempt: 1 });
+      const t0 = performance.now();
+      while (performance.now() - t0 < 4000 && term.modes.mouseTrackingMode !== "none") {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      return { on, after: term.modes.mouseTrackingMode };
+    }, sids[0]);
+    ck.check("自动重连成功（Reconfirming）清掉残留上报协议",
+      recover.on !== "none" && recover.after === "none", JSON.stringify(recover));
+
+    const dead = await page.evaluate(async (sid) => {
+      const term = window.__t_terms.get(sid);
+      term.write("\x1b[?1000h\x1b[?1006h");
+      await new Promise((r) => setTimeout(r, 120));
+      const on = term.modes.mouseTrackingMode;
+      window.__demoInvoke("demo_drop_session", { sid, recoverOnAttempt: 0 });
+      const t0 = performance.now();
+      while (performance.now() - t0 < 6000 && term.modes.mouseTrackingMode !== "none") {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      return { on, after: term.modes.mouseTrackingMode };
+    }, sids[0]);
+    ck.check("重连耗尽落 Disconnected 同样清掉上报协议",
+      dead.on !== "none" && dead.after === "none", JSON.stringify(dead));
   },
 };

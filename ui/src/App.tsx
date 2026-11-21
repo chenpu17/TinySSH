@@ -468,6 +468,17 @@ export default function App() {
       }
       return cur?.sid === ev.session_id ? null : cur;
     });
+    // #58/KI-098：断连杀掉的 tmux/Claude Code 不走 DECRST 退出路径（OSC 133 兜底
+    // 又依赖远端 shell 集成），恢复连接后 1000/1006 上报协议仍挂着——触摸板点击/
+    // 滚动被编码成 SGR 报文回显成乱码。会话死亡与重连成功两个时机本地清协议
+    //（只改 xterm 状态，不写 PTY 字节）；重连后 tmux 重新 attach 会自行重发开启。
+    // 不碰「没死过」的会话（Degraded 同连接恢复），避免误关存活 TUI 的鼠标。
+    const diedBefore = !!prev && (prev.state === "Disconnected" || prev.state === "Reconnecting");
+    if (ev.state === "Disconnected"
+      || ((ev.state === "Reconfirming" || ev.state === "Connected") && diedBefore)) {
+      const deadTerm = termsRef.current.get(ev.session_id)?.term;
+      if (deadTerm) resetMouseReporting(deadTerm);
+    }
     // tmux 联动：勾了「下次断线自动恢复现场」的主机，断线→重连成功即静默恢复
     //（真实域泵自动重连走这里——tauri 事件即时到达，prev 判定可靠；手动重连的
     // 确定性路径在 reconnectSession 内，demo 域 300ms 轮询的 prev 竞态由彼兜住）。

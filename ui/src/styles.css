@@ -976,7 +976,7 @@ textarea {
 .term-session.active { display: block; }
 /* 分屏（T19；分屏⑥轮起方向可选+可拖拽）：--split-frac 主格占比（#term 内联变量，
    分割条写入，0.2~0.8）。左右=左主/右副，上下=上主/下副；焦点 pane 细高亮圈，名牌常显。
-   分隔线由 .pane-div 分割条承担（悬停/拖拽亮起），窗格本体不再画边 */
+   窗格本体走卡片化描边（见下方 .pane-left 段）；分割条只留热区与悬停/拖拽反馈（#59） */
 .term-session.pane-left { display: block; right: calc((1 - var(--split-frac, 0.5)) * 100%); }
 .term-session.pane-right { display: block; left: calc(var(--split-frac, 0.5) * 100%); }
 .term-session.pane-top { display: block; bottom: calc((1 - var(--split-frac, 0.5)) * 100%); }
@@ -990,7 +990,10 @@ textarea {
 .pane-div { position: absolute; z-index: 6; touch-action: none; }
 .pane-div.div-lr { top: 0; bottom: 0; left: calc(var(--split-frac, 0.5) * 100% - 5px); width: 10px; cursor: col-resize; }
 .pane-div.div-tb { left: 0; right: 0; top: calc(var(--split-frac, 0.5) * 100% - 5px); height: 10px; cursor: row-resize; }
-.pane-div::after { content: ""; position: absolute; background: var(--border); }
+/* #59：分屏窗格卡片化后已自带 3px 卡缝 + 1px 细描边（找茬五轮 C-1），条中线不再
+   常显，避免两格之间叠出多余隔离线（与 #56 的 .tmux-div 同一语言）；热区与
+   悬停/拖拽/键盘焦点反馈保留。 */
+.pane-div::after { content: ""; position: absolute; background: transparent; }
 .pane-div.div-lr::after { top: 0; bottom: 0; left: calc(50% - 0.5px); width: 1px; }
 .pane-div.div-tb::after { left: 0; right: 0; top: calc(50% - 0.5px); height: 1px; }
 .pane-div:hover::after, body.split-dragging .pane-div::after { background: var(--accent-glow); }

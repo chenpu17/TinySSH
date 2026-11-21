@@ -123,6 +123,24 @@ module.exports = {
         && cardStyle.color !== cardStyle.bg
         && cardStyle.bg === cardStyle.shell && cardStyle.shell !== cardStyle.inner,
       JSON.stringify(cardStyle));
+    // #59：窗格卡片自带 3px 卡缝 + 1px 描边，分割条中线不再常显（与 #56 的
+    // .tmux-div 同一语言）；10px 拖拽热区与拖拽 accent 反馈保留。
+    const paneDiv = await page.evaluate(() => {
+      const el = document.querySelector(".pane-div");
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const idle = getComputedStyle(el, "::after").backgroundColor;
+      document.body.classList.add("split-dragging");
+      const dragging = getComputedStyle(el, "::after").backgroundColor;
+      document.body.classList.remove("split-dragging");
+      return { w: r.width, h: r.height, idle, dragging };
+    });
+    ck.check("#59 分割条默认不画隔离线，10px 热区保留",
+      !!paneDiv && (paneDiv.idle === "transparent" || paneDiv.idle === "rgba(0, 0, 0, 0)")
+        && (paneDiv.w >= 10 || paneDiv.h >= 10), JSON.stringify(paneDiv));
+    ck.check("#59 拖动分割条时仍显示 accent 反馈",
+      !!paneDiv && paneDiv.dragging !== "transparent"
+        && paneDiv.dragging !== "rgba(0, 0, 0, 0)", JSON.stringify(paneDiv));
     const focusRing = await page.evaluate(() => {
       const probe = document.createElement("div");
       probe.style.color = "var(--accent)";
