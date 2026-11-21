@@ -727,5 +727,52 @@ module.exports = {
     ck.check("遮罩「退出分屏」解散本组且两个标签保留",
       exitState.panes === 0 && exitState.tabs >= 2 && !exitState.dead,
       JSON.stringify({ deadAgain, ...exitState }));
+
+    // ── #60：分屏 + 任务面板（文件等）不再无条件整屏。旧 R12 决策是分屏一律
+    //    tp-full（避免三窄列），宽窗口下用户看到的是「文件浏览占满、SSH 视图
+    //    全没了」。现按每格最小可读宽（300px）判定：并排放得下就并排，窄窗口
+    //    才退中央完整视图（R12 本意）。 ──
+    await page.evaluate(() => {
+      [...document.querySelectorAll(".tab")].find((t) => t.textContent.includes("本机"))?.click();
+    });
+    await page.waitForTimeout(400);
+    await rightClickTab(page, "prod-1");
+    await clickItem(page, "与当前会话分屏");
+    await page.waitForTimeout(500);
+    ck.check("#60 前置：分屏就绪", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
+    await page.click('[data-testid="rb-files"]');
+    await page.waitForTimeout(500);
+    const tpGeom = () => page.evaluate(() => {
+      const tp = document.querySelector(".task-panel");
+      const panes = [...document.querySelectorAll(".pane-left, .pane-right, .pane-top, .pane-bottom")]
+        .filter((e) => getComputedStyle(e).display !== "none")
+        .map((e) => Math.round(e.getBoundingClientRect().width));
+      return {
+        full: tp ? tp.classList.contains("tp-full") : null,
+        tpW: tp ? Math.round(tp.getBoundingClientRect().width) : null,
+        panes,
+      };
+    });
+    const wide = await tpGeom();
+    ck.check("#60 宽窗口：分屏+文件面板并排（不整屏、两格仍在）",
+      wide.full === false && wide.panes.length === 2 && wide.panes.every((w) => w >= 300)
+        && (wide.tpW ?? 0) < 560, JSON.stringify(wide));
+    // 窄窗口：两格+面板真放不下 → 退中央完整视图（R12 防三窄列的本意保留）
+    await page.setViewportSize({ width: 900, height: 720 });
+    await page.waitForTimeout(500);
+    const narrow = await tpGeom();
+    ck.check("#60 窄窗口：退中央完整视图（防三窄列）",
+      narrow.full === true && narrow.panes.length === 0, JSON.stringify(narrow));
+    // 拉宽自动回并排；关面板恢复原分屏（分屏不拆）
+    await page.setViewportSize({ width: 1440, height: 720 });
+    await page.waitForTimeout(500);
+    const wide2 = await tpGeom();
+    ck.check("#60 拉宽自动回并排", wide2.full === false && wide2.panes.length === 2, JSON.stringify(wide2));
+    await page.click('[data-testid="tp-close"]');
+    await page.waitForTimeout(400);
+    ck.check("#60 关面板：分屏恢复原状（分屏不拆）", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
+    await rightClickTab(page, "prod-1");
+    await clickItem(page, "退出分屏");
+    await page.waitForTimeout(400);
   },
 };

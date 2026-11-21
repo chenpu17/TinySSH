@@ -5371,10 +5371,12 @@ export default function App() {
   const [tpFull, setTpFull] = useState(false);
   useEffect(() => {
     if (rightPanel === null) { setTpFull(false); return; }
-    // §186/§187（R12 登记归本轮）：双分屏时面板一律走中央完整视图——
-    // 避免终端×2 + 面板形成三个窄工作区；关闭面板即恢复原分屏（分屏不拆）
-    if (splitPanes) { setTpFull(true); return; }
-    const th = 560 + panelNeed;
+    // §186/§187（R12）：面板并排的底线是终端区保住最小可读宽度，不足才退
+    // 中央完整视图（关闭面板即恢复原分屏，分屏不拆）。分屏同理（GitHub #60
+    // 修正）：不再无条件整屏——并排后**每个分格**≥300px 就并排（600=2×300，
+    // 44 是右侧活动栏），只有窄窗口两格 + 面板真放不下才整屏；±16 防抖与
+    // 单窗格分支同节奏，避免 resize 临界抖动。
+    const th = (splitPanes ? 644 : 560) + panelNeed;
     if (availW < th - 16) setTpFull(true);
     else if (availW > th + 16) setTpFull(false);
   }, [availW, panelNeed, rightPanel, splitPanes]);
