@@ -84,7 +84,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # 传输层（版本门限：russh >= 0.61，见 L0 §4）
-russh = "0.63"
+russh = "0.65"
 russh-sftp = "3"
 portable-pty = "0.9"
 
