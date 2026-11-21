@@ -4026,11 +4026,12 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 }
 .mobile-keys .mk-gap { flex: 0 0 4px; }
 
-/* 移动端助力球（GitHub #40 / #45）：右缘悬浮球 + 展开动作面板。锚在 .workspace
+/* 助力球（GitHub #40 / #45）：右缘悬浮球 + 展开动作面板。锚在 .workspace
    右下角（workspace 已有 position:relative），随内容区在软键盘让位后一起收缩，
    不会飘到键盘底下；bottom 抬高靠近右下角常驻的「回到底部」胶囊，移动端胶囊
    左移让出球的列（见 :root[data-platform] .term-scroll-bottom 规则），面板向上
-   展开、超高时内部滚动。 */
+   展开、超高时内部滚动。移动平台常显；桌面端经设置「在桌面端显示助力球」开启
+   （手机远程桌面触控场景，默认关）。 */
 .assist-ball-wrap {
   position: absolute; right: 10px; bottom: 96px; z-index: 67;
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
@@ -4072,6 +4073,15 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 }
 .assist-menu .assist-item:active,
 .assist-menu .assist-item.ts-open { background: var(--panel3); }
+/* 常用键排（Esc/Tab/^C/↑/↓）：一行五个等宽小键，触控场景没有键盘时的刚需。
+   键不收面板（历史上下翻常连点），与滚动项的「执行即收」不同。 */
+.assist-menu .assist-keys {
+  display: flex; gap: 4px; margin-top: 2px; width: 100%;
+}
+.assist-menu .assist-keys .assist-key {
+  flex: 1 1 0; min-width: 38px; height: 34px; padding: 0 4px;
+  text-align: center; white-space: nowrap;
+}
 
 /* 移动端专注态收 chrome（GitHub #45）：标签条与工具栏默认不渲染，由助力球
    面板「标签与工具栏」唤出（.m-chrome-open）。只作用于移动平台——桌面专注

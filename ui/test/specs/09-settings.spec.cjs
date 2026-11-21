@@ -32,6 +32,12 @@ module.exports = {
     ck.check("默认打开外观分区（settings-pane-appearance）", ids.includes("settings-pane-appearance"));
     // 移动端专属卡片（自动横屏 #45）桌面不渲染
     ck.check("桌面设置不含移动端自动横屏开关", !ids.includes("mobile-auto-rotate"));
+    // 助力球桌面开关（手机远程桌面触控场景）在桌面外观分区、默认关
+    const assistChk = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="desktop-assist-ball"]');
+      return el ? el.checked : null;
+    });
+    ck.check("桌面设置含助力球开关且默认关", assistChk === false, JSON.stringify(assistChk));
 
     const t0 = await bodyText(page);
     ck.check("外观分区有三档应用外观", t0.includes("跟随系统") && t0.includes("深色") && t0.includes("浅色"));

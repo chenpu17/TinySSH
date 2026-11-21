@@ -970,15 +970,23 @@ const EN: Record<string, string> = {
   "未能恢复专注模式（系统全屏不可用）": "Could not restore focus mode (system fullscreen unavailable)",
   "未能恢复全屏，已退出专注模式": "Could not restore fullscreen; focus mode was turned off",
 
-  // —— 移动端助力球（GitHub #40/#45） ——
+  // —— 移动端助力球（GitHub #40/#45；桌面端经设置开启供远程桌面触控） ——
   "快捷操作": "Quick actions",
   "快捷操作（助力球）": "Quick actions (assist ball)",
-  "快捷操作：翻页 / 回到底部 / 标签与工具栏": "Quick actions: page up/down, back to bottom, tabs & toolbar",
+  "快捷操作：翻页 / 常用键 / 标签与工具栏": "Quick actions: page up/down, quick keys, tabs & toolbar",
   "↑ 上翻一页": "↑ Page up",
   "↓ 下翻一页": "↓ Page down",
   "⤓ 回到底部": "⤓ Back to bottom",
+  "常用键": "Quick keys",
+  "中断（Ctrl+C）": "Interrupt (Ctrl+C)",
   "标签与工具栏": "Tabs & toolbar",
   "收起标签与工具栏": "Hide tabs & toolbar",
+  "助力球": "Assist ball",
+  "手机远程桌面（ToDesk 等）触控控制本机时，右缘悬浮球提供翻页、回到底部与常用键；平时用鼠标键盘即可，可保持关闭。":
+    "When controlling this machine by touch from a phone remote desktop (ToDesk etc.), a floating ball on the right edge offers paging, back-to-bottom and quick keys; keep it off otherwise.",
+  "在桌面端显示助力球": "Show assist ball on desktop",
+  "供手机远程桌面控制本机时使用；开启后右下角常显，与移动端同一面板，关闭即彻底隐藏。":
+    "For phone remote-desktop sessions controlling this machine; once enabled the ball stays at the bottom-right corner with the same panel as mobile — off hides it completely.",
   // —— 移动端紧凑标签切换（GitHub #45） ——
   "会话切换：{0}": "Switch session: {0}",
   "切换会话（长按打开会话菜单：重命名/分屏/关闭）": "Switch session (long-press for rename/split/close)",

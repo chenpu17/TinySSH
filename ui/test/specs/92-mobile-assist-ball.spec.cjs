@@ -1,8 +1,11 @@
-// 92 移动端助力球（GitHub #40 / #45）：远程桌面场景没有鼠标滚轮，标签条与工具栏
+// 92 助力球（GitHub #40 / #45）：远程桌面场景没有鼠标滚轮，标签条与工具栏
 // 在手机上又吃空间。右缘悬浮球（⇅）展开动作面板：上翻 / 下翻 / 回到底部（xterm
-// 本地 scrollback，不进 PTY），专注态还能唤出/收起标签与工具栏、退出专注。
-// 同时钉住 #45 的「专注态标签条碍事」：移动端专注态标签条与工具栏默认不渲染，
-// 只有助力球面板的「标签与工具栏」能把它们叫回来——桌面专注模式不受影响。
+// 本地 scrollback，不进 PTY）+ 常用键排（Esc/Tab/^C/↑/↓ 走真实键序），
+// 专注态还能唤出/收起标签与工具栏、退出专注。桌面端默认不渲染——手机远程桌面
+// （ToDesk 等）触控控制电脑时经设置「在桌面端显示助力球」开启（远控注入的是
+// 鼠标事件，无法可靠自动识别）。同时钉住 #45 的「专注态标签条碍事」：移动端
+// 专注态标签条与工具栏默认不渲染，只有助力球面板的「标签与工具栏」能叫回来
+// ——桌面专注模式不受影响。
 const connectLocal = async (page) => {
   const card = await page.$('.host-card:has(.host-name:text-is("本机"))');
   await card.hover();
@@ -58,6 +61,19 @@ const touchTapMenu = async (page, text) =>
     }
   }, text);
 
+/** 常用键按整文案精确匹配（「↑」不能匹配到「↑ 上翻一页」）。 */
+const touchTapKey = async (page, label) =>
+  page.evaluate((label) => {
+    const el = [...document.querySelectorAll('[data-testid="assist-menu"] .assist-key')]
+      .find((b) => b.textContent.trim() === label);
+    if (!el) throw new Error(`touchTapKey: 找不到「${label}」`);
+    for (const type of ["pointerdown", "pointerup", "click"]) {
+      el.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 1, isPrimary: true,
+      }));
+    }
+  }, label);
+
 const chrome = (page) => page.evaluate(() => {
   const cs = (sel) => {
     const el = document.querySelector(sel);
@@ -71,8 +87,13 @@ const chrome = (page) => page.evaluate(() => {
 });
 
 module.exports = {
-  title: "移动端助力球：翻页/回到底部 + 专注态唤出标签与工具栏",
+  title: "助力球：翻页/回到底部/常用键 + 专注态唤出标签与工具栏 + 桌面开关",
   async run({ page, ck }) {
+    // 桌面端开关持久化在 localStorage：先清一次再重载，保证「桌面默认不渲染」
+    // 断言不受上轮残留影响。
+    await page.evaluate(() => localStorage.removeItem("ui.assistBall"));
+    await page.reload();
+    await page.waitForTimeout(900);
     await page.evaluate(() => { document.documentElement.dataset.platform = "android"; });
     await connectLocal(page);
     await page.setViewportSize({ width: 914, height: 411 });
@@ -112,6 +133,43 @@ module.exports = {
     await page.waitForTimeout(250);
     const touchBack = await termInfo(page);
     ck.eq("触摸回到底部：视口回到最新行", touchBack.viewportY, touchBack.baseY);
+
+    // ── 常用键排（触控无键盘场景）：Esc/Tab/^C/↑/↓ 走真实键序（sendMobileKey，
+    //    与键盘同一条路），点键后面板不收（历史上下翻常要连点） ──
+    await openBall(page);
+    ck.eq("面板含常用键排（五键）",
+      await page.locator('[data-testid="assist-menu"] .assist-key').count(), 5);
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      window.__keySpy = [];
+      t.onData((d) => window.__keySpy.push(d));
+    });
+    await touchTapKey(page, "Esc");
+    await touchTapKey(page, "Tab");
+    await touchTapKey(page, "^C");
+    await touchTapKey(page, "↑");
+    await touchTapKey(page, "↓");
+    await page.waitForTimeout(150);
+    const keyData = await page.evaluate(() => window.__keySpy.slice());
+    ck.eq("常用键发出真实键序（Esc/Tab/^C/↑/↓）",
+      JSON.stringify(keyData.slice(0, 5)),
+      JSON.stringify(["\x1b", "\t", "\x03", "\x1b[A", "\x1b[B"]));
+    ck.eq("点常用键后面板不收（可连点）",
+      await page.locator('[data-testid="assist-menu"]').count(), 1);
+    // DECCKM：vim/tmux 等全屏应用开应用光标键模式后，方向键必须改发 SS3（ESC O A）
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      t.write("\x1b[?1h");
+    });
+    await touchTapKey(page, "↑");
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      t.write("\x1b[?1l");
+    });
+    const ss3 = await page.evaluate(() => window.__keySpy.slice());
+    ck.eq("DECCKM 下方向键改发 SS3", ss3[ss3.length - 1], "\x1bOA");
+    await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
+    await page.waitForTimeout(200);
 
     // ── 键盘已被返回键收起（data-ime='0'）但终端仍持焦点：触摸按钮不能
     //    preventDefault，否则 Chrome 会把键盘重新弹起（真机实测）。data-ime
@@ -252,5 +310,33 @@ module.exports = {
     const desktop = await chrome(page);
     ck.check("桌面专注态标签条仍在（不受移动端规则影响）", desktop.tabbarDisplay !== "none", desktop.tabbarDisplay);
     await page.click('[data-testid="focus-toggle"]');
+
+    // ── 桌面端开关（手机远程桌面触控场景）：设置开启后常显、持久化、可关。
+    //    会话视图里主机栏收起，用活动栏常驻的 rail-settings 开设置 ──
+    await page.click('[data-testid="rail-settings"]');
+    await page.waitForTimeout(700);
+    const toggleOn = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="desktop-assist-ball"]');
+      if (!el) return { missing: true };
+      el.click();
+      return { missing: false, on: el.checked };
+    });
+    ck.check("设置含「在桌面端显示助力球」开关且可开", !toggleOn.missing && toggleOn.on, JSON.stringify(toggleOn));
+    await page.click('[data-testid="settings-close"]');
+    await page.waitForTimeout(300);
+    ck.eq("开启后桌面渲染助力球", await page.locator('[data-testid="assist-ball"]').count(), 1);
+    ck.eq("开关持久化到 localStorage", await page.evaluate(() => localStorage.getItem("ui.assistBall")), "1");
+    await openBall(page);
+    ck.check("桌面面板同样有翻页与常用键排",
+      await page.locator('[data-testid="assist-menu"] [role="menuitem"]:has-text("上翻一页")').count() === 1
+        && await page.locator('[data-testid="assist-menu"] .assist-key').count() === 5, "");
+    await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
+    await page.click('[data-testid="rail-settings"]');
+    await page.waitForTimeout(700);
+    await page.evaluate(() => document.querySelector('[data-testid="desktop-assist-ball"]')?.click());
+    await page.click('[data-testid="settings-close"]');
+    await page.waitForTimeout(300);
+    ck.eq("关掉后彻底隐藏", await page.locator('[data-testid="assist-ball"]').count(), 0);
+    ck.eq("关闭也持久化", await page.evaluate(() => localStorage.getItem("ui.assistBall")), "0");
   },
 };

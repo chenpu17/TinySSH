@@ -202,6 +202,10 @@ interface SettingsPanelProps {
   // 自动横屏（GitHub #45，仅移动端卡片）：系统旋转锁打开时也按物理朝向转屏
   autoRotate: boolean;
   onChangeAutoRotate: (on: boolean) => void;
+  // 桌面端助力球（仅桌面卡片，默认关）：手机远程桌面触控控制本机时开启，
+  // 右缘常显与移动端同一面板；移动端始终显示，不受此开关影响
+  desktopAssist: boolean;
+  onChangeDesktopAssist: (on: boolean) => void;
   // 快捷键
   keymap: Record<KeyActionId, Binding>;
   /** 单条重置（宿主校验默认键是否已被别的动作占用，冲突则拒绝并提示） */
@@ -318,6 +322,7 @@ export function SettingsPanel({
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   uiFontScale, changeUiFontScale, uiDensity, changeUiDensity, focusMetrics, onChangeFocusMetrics,
   autoRotate, onChangeAutoRotate,
+  desktopAssist, onChangeDesktopAssist,
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
@@ -628,6 +633,23 @@ export function SettingsPanel({
                     </span>
                   </label>
                 </div>
+                {/* 桌面端助力球（#40 延伸）：手机远程桌面（ToDesk 等）触控控制本机
+                    时需要翻页/常用键的悬浮球；远控注入鼠标事件无法自动识别，走
+                    确定性开关，默认关。移动端始终显示，卡片不在此端出现。 */}
+                {!mobilePlatform && (
+                <div className="set-card">
+                  <h4>{t("助力球")}</h4>
+                  <div className="set-desc">{t("手机远程桌面（ToDesk 等）触控控制本机时，右缘悬浮球提供翻页、回到底部与常用键；平时用鼠标键盘即可，可保持关闭。")}</div>
+                  <label className="set-item">
+                    <input type="checkbox" data-testid="desktop-assist-ball" checked={desktopAssist}
+                      onChange={(e) => onChangeDesktopAssist(e.target.checked)} />
+                    <span className="set-item-txt">
+                      <b>{t("在桌面端显示助力球")}</b>
+                      <span className="set-item-desc">{t("供手机远程桌面控制本机时使用；开启后右下角常显，与移动端同一面板，关闭即彻底隐藏。")}</span>
+                    </span>
+                  </label>
+                </div>
+                )}
                 {/* 自动横屏（GitHub #45）：手机上常开「旋转锁定」，终端却经常想横过来
                     看多列输出。开关只在移动平台出现，缺省开；原生按物理朝向显式请求
                     方向，关掉即交还系统（含旋转锁原语义）。 */}

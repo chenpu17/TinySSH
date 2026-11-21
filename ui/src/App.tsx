@@ -1518,6 +1518,17 @@ export default function App() {
     // 失败静默：原生壳没跟上（旧 APK）时只是没有自动横屏，不该弹错误。
     void invoke("set_auto_orientation", { enabled: autoRotate }).catch(() => {});
   }, [autoRotate]);
+  // 桌面端助力球（#40 延伸）：手机经 ToDesk 等远程桌面触控控制本机时需要同一颗
+  // 球，但远控注入的是鼠标事件——touch 探测、pointer:coarse 都不可靠，走确定性
+  // 开关（设置 → 外观「在桌面端显示助力球」），持久化 ui.assistBall，默认关。
+  // 移动端不受此开关影响（始终常显）；面板内容两端一致（「标签与工具栏」除外）。
+  const [desktopAssist, setDesktopAssist] = useState(() => {
+    try { return localStorage.getItem("ui.assistBall") === "1"; } catch { return false; }
+  });
+  const changeDesktopAssist = useCallback((on: boolean) => {
+    setDesktopAssist(on);
+    try { localStorage.setItem("ui.assistBall", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+  }, []);
   // 原生全屏态（专注模式的真实前提）：focusMode 会隐藏 38px 标题区，而 macOS
   // titleBarStyle=Overlay 的红绿灯是系统悬浮钮，不由 HTML 隐藏——专注态若没真正
   // 全屏（启动恢复被系统拒绝、用户从绿灯/Ctrl⌘F/Esc 退出全屏），三个圆钮会压在
@@ -10989,6 +11000,8 @@ export default function App() {
               onChangeFocusMetrics={changeFocusMetrics}
               autoRotate={autoRotate}
               onChangeAutoRotate={changeAutoRotate}
+              desktopAssist={desktopAssist}
+              onChangeDesktopAssist={changeDesktopAssist}
               keymap={keymap}
               resetKeyBinding={resetKeyBinding}
               keyCapture={keyCapture}
@@ -11337,16 +11350,20 @@ export default function App() {
           </span>
         </footer>
         </main>
-        {/* 移动端助力球（GitHub #40/#45）：右缘悬浮，翻页/回到底部不进 PTY，
-            专注态还能唤出标签与工具栏（标签条在移动端专注态默认收起）。 */}
-        {isMobilePlatform() && sid && (
+        {/* 助力球（GitHub #40/#45）：右缘悬浮，翻页/回到底部/常用键；专注态还能
+            唤出标签与工具栏（标签条在移动端专注态默认收起）。移动平台常显；
+            桌面端默认不渲染——手机远程桌面（ToDesk 等）触控本机时由设置
+            「在桌面端显示助力球」开启（远控注入鼠标事件，无法可靠自动识别）。 */}
+        {(isMobilePlatform() || desktopAssist) && sid && (
           <AssistBall
             open={assistOpen}
             onOpenChange={setAssistOpen}
             onPageUp={() => assistTerm()?.scrollPages(-1)}
             onPageDown={() => assistTerm()?.scrollPages(1)}
             onBottom={() => assistTerm()?.scrollToBottom()}
+            onKey={sendMobileKey}
             focusMode={focusMode}
+            chromeToggle={isMobilePlatform()}
             chromeOpen={mobileChrome}
             onToggleChrome={() => setMobileChrome((v) => !v)}
             onExitFocus={() => applyFocus(false)}
