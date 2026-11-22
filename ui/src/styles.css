@@ -4074,9 +4074,16 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
    键帽（mono 字、上浅下深微渐变、底部「键程」内影，按下沉 1px）；^C 暖色危险提示。
    组间用发丝分隔线。全部 token 驱动，34 态主题自适应；eink 铲平阴影/动画后靠实线
    描边表达层次，reduced-motion 全局门关闭入场与按压过渡。 */
+/* 菜单绝对定位在球上方（审核轮几何修复）：不参与 wrap 盒——wrap 恒等于球盒，
+   拖动/钳制/翻边几何在开关两态统一（旧流内布局在拖后落位开面板时会把球推离
+   落点 ~340px、右半落位开面板球瞬移 +196px，视觉验证实锤）。宽度接
+   --ui-font-scale（仓库 max-width 联动先例 styles.css:1522）：1.25 界面字号档
+   下四字键帽（Home/PgUp…）才塞得进键帽盒。摆位上下翻与 max-height 钳制由
+   组件按实测空间驱动（.assist-menu-below / 内联 max-height）。 */
 .assist-menu {
+  position: absolute; right: 0; bottom: calc(100% + 8px); left: auto;
   display: flex; flex-direction: column; gap: 6px; padding: 6px;
-  width: 236px; max-width: calc(100vw - 20px);
+  width: calc(236px * var(--ui-font-scale)); max-width: calc(100vw - 20px);
   max-height: min(56vh, 360px); overflow-y: auto;
   border-radius: 14px;
   border: 1px solid var(--border);
@@ -4086,6 +4093,12 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
     0 12px 32px var(--shadow-soft),
     inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
 }
+/* 球上方放不下（贴顶落位/横屏矮视口）：组件翻到球下方展开 */
+.assist-ball-wrap .assist-menu.assist-menu-below {
+  bottom: auto; top: calc(100% + 8px);
+}
+/* 球拖到左半屏：菜单从球左缘向右展开（右锚会把菜单推出视口左缘） */
+.assist-ball-wrap.assist-left .assist-menu { right: auto; left: 0; }
 .assist-menu .assist-section { display: flex; flex-direction: column; gap: 2px; }
 .assist-menu .assist-item {
   display: flex; align-items: center; gap: 10px;
@@ -4132,7 +4145,7 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 .assist-menu .assist-keys .assist-key {
-  flex: 1 1 0; min-width: 38px; height: 36px; padding: 0 4px;
+  flex: 1 1 0; min-width: calc(38px * var(--ui-font-scale)); height: 36px; padding: 0 4px;
   display: inline-flex; align-items: center; justify-content: center;
   text-align: center; white-space: nowrap;
   border-radius: 8px;
@@ -4174,7 +4187,7 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .assist-menu .assist-fontbtn {
-  flex: 0 0 auto; min-width: 46px; height: 30px; padding: 0 10px;
+  flex: 0 0 auto; min-width: calc(46px * var(--ui-font-scale)); height: 30px; padding: 0 10px;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 8px;
   border: 1px solid var(--border);

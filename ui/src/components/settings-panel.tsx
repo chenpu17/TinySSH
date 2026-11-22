@@ -22,6 +22,7 @@ import { ZOOM_LEVELS, setZoomScale, zoomReset } from "../zoom";
 import { UI_FONT_SCALES, type UiFontScale } from "../ui-scale";
 import { UI_DENSITIES, type UiDensity } from "../ui-density";
 import { isMacPlatform } from "../actions";
+import type { AssistBallSize } from "./assist-ball";
 import { inTauri, invoke } from "../adapter/bridge";
 import type { ActionRecord, AutonomyGrant, RecordsQuery, TriggerRule } from "../adapter/wire";
 import type { CollabStatus, Host, IdentityMeta, IdentityReq, LocalShell, McpStatus, UpdateCheck, UpdaterInfo } from "../adapter/wire";
@@ -207,8 +208,8 @@ interface SettingsPanelProps {
   desktopAssist: boolean;
   onChangeDesktopAssist: (on: boolean) => void;
   // 球大小三档（两平台同卡）：--assist-ball-size 落地，设备级偏好
-  assistBallSize: "s" | "m" | "l";
-  onChangeAssistBallSize: (s: "s" | "m" | "l") => void;
+  assistBallSize: AssistBallSize;
+  onChangeAssistBallSize: (s: AssistBallSize) => void;
   // 快捷键
   keymap: Record<KeyActionId, Binding>;
   /** 单条重置（宿主校验默认键是否已被别的动作占用，冲突则拒绝并提示） */
@@ -642,14 +643,16 @@ export function SettingsPanel({
                     两平台都可调（拖动换位在球上直接做，无设置项）。 */}
                 <div className="set-card">
                   <h4>{t("助力球")}</h4>
-                  <div className="set-desc">{t("手机远程桌面（ToDesk 等）触控控制本机时，右缘悬浮球提供翻页、回到底部与常用键；平时用鼠标键盘即可，可保持关闭。")}</div>
+                  {/* 审核轮 review-contract 低-5：卡片现两平台渲染，描述要覆盖
+                      两端（不再只说桌面远控场景）、列出新增的粘贴/字号项 */}
+                  <div className="set-desc">{t("翻页、回到底部、粘贴剪贴板、常用键与终端字号调节的悬浮球；手机端常显，桌面端默认关。按住球拖动可换位。")}</div>
                   {!mobilePlatform && (
                   <label className="set-item">
                     <input type="checkbox" data-testid="desktop-assist-ball" checked={desktopAssist}
                       onChange={(e) => onChangeDesktopAssist(e.target.checked)} />
                     <span className="set-item-txt">
                       <b>{t("在桌面端显示助力球")}</b>
-                      <span className="set-item-desc">{t("供手机远程桌面控制本机时使用；开启后右下角常显，与移动端同一面板，关闭即彻底隐藏。")}</span>
+                      <span className="set-item-desc">{t("供手机远程桌面控制本机时使用；开启后常显，与移动端同一面板，关闭即彻底隐藏。")}</span>
                     </span>
                   </label>
                   )}
@@ -657,7 +660,7 @@ export function SettingsPanel({
                   <div className="row" style={{ marginTop: 4 }}>
                     <select value={assistBallSize} data-testid="assist-ball-size"
                       aria-label={t("助力球大小")}
-                      onChange={(e) => onChangeAssistBallSize(e.target.value as "s" | "m" | "l")}>
+                      onChange={(e) => onChangeAssistBallSize(e.target.value as AssistBallSize)}>
                       <option value="s">{t("小（32px）")}</option>
                       <option value="m">{t("中（40px，默认）")}</option>
                       <option value="l">{t("大（52px）")}</option>

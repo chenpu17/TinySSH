@@ -5566,19 +5566,30 @@ export default function App() {
   }, [assistTerm]);
 
   // 助力球「粘贴剪贴板」：与 ⌘V / 右键粘贴同一收口 pasteTextInto（危险扫描/
-  // 多行确认审批链不旁路），目标同 assistScroll——当前落焦终端实例。
-  // 权限被拒（WebView 未授权/窗口无焦点）toast 一眼可见，不静默吞。
+  // 多行确认审批链不旁路）。目标解析与 assistTerm 同口径（tmux 格子优先），
+  // 且必须把 paneKey 一并传下去——确认框投递按 paneKey 找格子终端，漏传会把
+  // 确认后的字节错投主终端（审核轮 review-pointer 高危：格子级粘贴路径全都
+  // 带 paneKey，3251/3369/3762/5777）。权限被拒/无 API toast 一眼可见。
   const assistPaste = useCallback(() => {
     const target = sidRef.current;
-    const term = assistTerm();
-    if (!target || !term) return;
-    Promise.resolve(inTauri ? clipboard.readText() : navigator.clipboard?.readText())
+    if (!target) return;
+    const remembered = paneLastFocusRef.current.get(target) ?? "main";
+    const pane = remembered === "main" ? undefined : paneTermsRef.current.get(remembered);
+    const entry = pane?.alive ? pane : termsRef.current.get(target);
+    if (!entry) return;
+    const paneKey = pane?.alive ? remembered : undefined;
+    const read = inTauri ? clipboard.readText() : navigator.clipboard?.readText();
+    if (!read) {
+      pushToast("err", t("读取剪贴板失败（权限拒绝或窗口无焦点）"));
+      return;
+    }
+    Promise.resolve(read)
       .then((text) => {
         if (!text) { pushToast("info", t("剪贴板为空")); return; }
-        pasteTextIntoRef.current(term, target, text);
+        pasteTextIntoRef.current(entry.term, target, text, paneKey);
       })
       .catch(() => pushToast("err", t("读取剪贴板失败（权限拒绝或窗口无焦点）")));
-  }, [assistTerm, inTauri, pushToast]);
+  }, [inTauri, pushToast]);
 
   // ── 触屏终端交互（KI-052）：长按选词 / 拖动扩选 / 点链接浮条 ──
   // 命中解析与右键菜单同一口径：先看 tmux 格子（data-sid/paneId），再按各会话容器
@@ -11506,6 +11517,7 @@ export default function App() {
             pos={assistBallPos}
             onMoveEnd={changeAssistBallPos}
             fontSize={fontSize}
+            ballPx={ASSIST_BALL_SIZES[assistBallSize]}
             onFontDelta={(d) => changeFontSize(fontRef.current + d)}
             onPaste={assistPaste}
           />

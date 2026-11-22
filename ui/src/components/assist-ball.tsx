@@ -31,7 +31,7 @@
 // 越界钳到父容器内，球落左半时面板改左对齐（assist-left），贴边吸附由钳制即得。
 // 球尺寸三档走 --assist-ball-size（ui-scale.ts 同款 documentElement 变量），
 // 设置 → 助力球卡选择，持久化 localStorage（设备级偏好，与 ui.assistBall 同域）。
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { t } from "../i18n";
 import { IconChevronUp, IconChevronDown, IconArrowDown, IconRows, IconMinimize, IconCopy } from "../icons";
@@ -83,6 +83,15 @@ function applyWrapPos(wrap: HTMLDivElement, x: number, y: number): void {
   wrap.style.top = `${y}px`;
   wrap.style.right = "auto";
   wrap.style.bottom = "auto";
+}
+
+/** 清掉落位内联样式，回 CSS 默认锚（right/bottom）；左对齐类一并撤。 */
+function clearWrapPos(wrap: HTMLDivElement): void {
+  wrap.style.left = "";
+  wrap.style.top = "";
+  wrap.style.right = "";
+  wrap.style.bottom = "";
+  wrap.classList.remove("assist-left");
 }
 
 /** 触摸可用的「按下即保持焦点、抬起即执行」按钮。
@@ -137,6 +146,18 @@ function AssistButton({
       }}
       onPointerMove={(ev: ReactPointerEvent) => {
         if (!onDragMove || !down.current || !dragFrom.current) return;
+        // 鼠标/笔 capture 失败（或没捕获成）又移出球外松手时会丢 pointerup：
+        // 按钮早已松开却仍收到 move（无按键悬停），不清场就会从陈旧 dragFrom
+        // 重算位移、无按压幽灵拖动（审核轮 review-pointer 护栏）。touch 有
+        // 隐式捕获不受影响。
+        if (ev.pointerType !== "touch" && ev.buttons === 0) {
+          const wasDragging = dragging.current;
+          down.current = false;
+          dragFrom.current = null;
+          dragging.current = false;
+          if (wasDragging) onDragEnd?.(false);
+          return;
+        }
         const total = { dx: ev.clientX - dragFrom.current.x, dy: ev.clientY - dragFrom.current.y };
         if (!dragging.current) {
           if (Math.hypot(total.dx, total.dy) < DRAG_THRESHOLD) return;
@@ -195,6 +216,7 @@ export function AssistBall({
   pos,
   onMoveEnd,
   fontSize,
+  ballPx,
   onFontDelta,
   onPaste,
 }: {
@@ -218,11 +240,15 @@ export function AssistBall({
   onMoveEnd: (pos: { x: number; y: number }) => void;
   /** 当前会话终端字号（设置里已有全局档，这里做 ±1 微调，同一条通道）。 */
   fontSize: number;
+  /** 当前球径（px，随设置档位变化）：进钳制/摆位 effect 依赖——换档后球变大
+   *  可能贴边越界，须重钳（审核轮 review-contract 低-2）。 */
+  ballPx: number;
   onFontDelta: (d: number) => void;
   /** 粘贴本机剪贴板进当前落焦终端（App 的 assistPaste：pasteTextInto 收口）。 */
   onPaste: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const dragPos = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -254,24 +280,56 @@ export function AssistBall({
     closeSoon();
   };
 
-  // 持久化球位回放 + 越界纠正（视口比上次小时旧位置可能出界）：钳后若与存储
-  // 值不同即回写（经 onMoveEnd 落 state + localStorage，值相等则 React 空转）。
+  // 持久化球位回放 + 越界纠正（审核轮修复版）：首渲染即按 pos 内联锚定（不闪），
+  // 挂载后钳制越界；ResizeObserver 盯 workspace 容器——旋转/缩窗后重钳（横屏存
+  // 的位转竖屏球会停在视口外点不到，review-pointer 中危）；ballPx 进依赖，换
+  // 球径档同样重钳。钳后若与存储值不同即回写（值相等短路，无回写循环）。
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     if (!pos) {
-      wrap.style.left = "";
-      wrap.style.top = "";
-      wrap.style.right = "";
-      wrap.style.bottom = "";
-      wrap.classList.remove("assist-left");
+      clearWrapPos(wrap);
       return;
     }
-    const c = assistClamp(wrap, pos.x, pos.y);
-    applyWrapPos(wrap, c.x, c.y);
-    assistUpdateSide(wrap, c.x);
-    if (c.x !== pos.x || c.y !== pos.y) onMoveEnd(c);
-  }, [pos, onMoveEnd]);
+    const clampAndApply = () => {
+      const c = assistClamp(wrap, pos.x, pos.y);
+      applyWrapPos(wrap, c.x, c.y);
+      assistUpdateSide(wrap, c.x);
+      if (c.x !== pos.x || c.y !== pos.y) onMoveEnd(c);
+    };
+    clampAndApply();
+    const parent = wrap.offsetParent;
+    const ro = parent ? new ResizeObserver(clampAndApply) : null;
+    if (ro && parent) ro.observe(parent);
+    return () => { ro?.disconnect(); };
+  }, [pos, onMoveEnd, ballPx]);
+
+  // 面板摆位（审核轮几何修复，实锤于视觉验证）：菜单绝对定位在球上方
+  // （bottom: calc(100% + 8px)，不参与 wrap 盒——wrap 恒等于球盒，拖动/钳制/
+  // 翻边几何在开关两态统一，落位后开面板不再推球）。球上方放不下完整菜单时
+  // 下翻；两侧都放不下时挑空间大的一侧并钳 max-height（修复默认位横屏手机
+  // 面板顶部被裁 20px）。窗口 resize 时重摆。
+  const [menuPlacement, setMenuPlacement] = useState<{ below: boolean; maxH: number | null }>({ below: false, maxH: null });
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const wrap = wrapRef.current;
+      const menu = menuRef.current;
+      if (!wrap || !menu) return;
+      const want = menu.scrollHeight; // 内容自然高（scrollHeight 不受 max-height 钳制）
+      const br = wrap.getBoundingClientRect();
+      const availAbove = br.top - 16;  // 视口上缘 8px 边距 + 8px 球板间隙
+      const availBelow = window.innerHeight - br.bottom - 16;
+      if (want <= availAbove) { setMenuPlacement({ below: false, maxH: null }); return; }
+      if (want <= availBelow) { setMenuPlacement({ below: true, maxH: null }); return; }
+      setMenuPlacement(availAbove >= availBelow
+        ? { below: false, maxH: Math.max(120, availAbove) }
+        : { below: true, maxH: Math.max(120, availBelow) });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [open, pos, ballPx, fontSize]);
 
   // 拖动起步：把当前几何折算成 left/top 坐标（默认锚是 right/bottom，没有现成
   // 坐标）；此后 move 直接改内联样式，不逐帧 setState。
@@ -296,10 +354,15 @@ export function AssistBall({
     dragPos.current = null;
     if (dragged && p) {
       onMoveEnd(p);
-    } else if (p && pos) {
-      // 拖动被系统打断（pointercancel）：恢复原锚定位
+      return;
+    }
+    if (p) {
+      // 拖动被系统打断（pointercancel）/幽灵复位：还原锚定——有存储位回它；
+      // 从未落过位（pos=null）清内联样式回 CSS 默认锚（审核轮 review-pointer 低-4）
       const wrap = wrapRef.current;
-      if (wrap) applyWrapPos(wrap, pos.x, pos.y);
+      if (!wrap) return;
+      if (pos) applyWrapPos(wrap, pos.x, pos.y);
+      else clearWrapPos(wrap);
     }
   }, [onMoveEnd, pos]);
 
@@ -312,9 +375,23 @@ export function AssistBall({
           onPointerDown={() => closeSoon()}
         />
       )}
-      <div className="assist-ball-wrap" data-testid="assist-ball-wrap" ref={wrapRef}>
+      <div
+        className="assist-ball-wrap"
+        data-testid="assist-ball-wrap"
+        ref={wrapRef}
+        // 持久化球位首渲染即锚定（审核轮 review-contract 低-1：挂载后 effect 才
+        // 落位会闪一帧默认锚；变量走 main.tsx 首帧前恢复，位置走这里）
+        style={pos ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" } : undefined}
+      >
         {open && (
-          <div className="assist-menu" role="menu" aria-label={t("快捷操作")} data-testid="assist-menu">
+          <div
+            className={"assist-menu" + (menuPlacement.below ? " assist-menu-below" : "")}
+            role="menu"
+            aria-label={t("快捷操作")}
+            data-testid="assist-menu"
+            ref={menuRef}
+            style={menuPlacement.maxH != null ? { maxHeight: menuPlacement.maxH } : undefined}
+          >
             {/* 滚动组：图标芯片 + 文案。正常屏走本地 scrollback，备用屏合成
                 触摸板滚轮（见 App assistScroll）——两条路都与用户手势同通道。
                 粘贴剪贴板与 ⌘V/右键同一收口（pasteTextInto 危险扫描），执行即收
@@ -366,7 +443,7 @@ export function AssistBall({
                 onActivate={() => onKey("\x1b[5~")}>PgUp</AssistButton>
               <AssistButton className="assist-item assist-key" title={t("下翻页键（PageDown）")}
                 onActivate={() => onKey("\x1b[6~")}>PgDn</AssistButton>
-              <AssistButton className="assist-item assist-key" title={t("tmux 前缀（Ctrl+B）")}
+              <AssistButton className="assist-item assist-key" title={t("tmux 前缀（Ctrl-b）")}
                 onActivate={() => onKey("\x02")}>^B</AssistButton>
             </div>
             {/* 终端字号行：小屏（手机本体/远控）看 80 列吃力，±1 微调走设置同一条

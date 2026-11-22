@@ -986,7 +986,7 @@ const EN: Record<string, string> = {
   "行尾（End）": "Line end (End)",
   "上翻页键（PageUp）": "PageUp key",
   "下翻页键（PageDown）": "PageDown key",
-  "tmux 前缀（Ctrl+B）": "tmux prefix (Ctrl+B)",
+  "tmux 前缀（Ctrl-b）": "tmux prefix (Ctrl-b)",
   "减小终端字号": "Smaller terminal font",
   "增大终端字号": "Larger terminal font",
   "标签与工具栏": "Tabs & toolbar",
@@ -998,11 +998,11 @@ const EN: Record<string, string> = {
   "大（52px）": "Large (52px)",
   "按住球拖到任意位置，松手贴边落位；面板字号跟随界面缩放。":
     "Hold and drag the ball anywhere; it snaps into place on release. Panel text follows UI scale.",
-  "手机远程桌面（ToDesk 等）触控控制本机时，右缘悬浮球提供翻页、回到底部与常用键；平时用鼠标键盘即可，可保持关闭。":
-    "When controlling this machine by touch from a phone remote desktop (ToDesk etc.), a floating ball on the right edge offers paging, back-to-bottom and quick keys; keep it off otherwise.",
+  "翻页、回到底部、粘贴剪贴板、常用键与终端字号调节的悬浮球；手机端常显，桌面端默认关。按住球拖动可换位。":
+    "Floating ball with paging, back-to-bottom, clipboard paste, quick keys and terminal font size; always shown on mobile, off by default on desktop. Hold and drag the ball to move it.",
   "在桌面端显示助力球": "Show assist ball on desktop",
-  "供手机远程桌面控制本机时使用；开启后右下角常显，与移动端同一面板，关闭即彻底隐藏。":
-    "For phone remote-desktop sessions controlling this machine; once enabled the ball stays at the bottom-right corner with the same panel as mobile — off hides it completely.",
+  "供手机远程桌面控制本机时使用；开启后常显，与移动端同一面板，关闭即彻底隐藏。":
+    "For phone remote-desktop sessions controlling this machine; once enabled the ball stays visible with the same panel as mobile — off hides it completely.",
   // —— 移动端紧凑标签切换（GitHub #45） ——
   "会话切换：{0}": "Switch session: {0}",
   "切换会话（长按打开会话菜单：重命名/分屏/关闭）": "Switch session (long-press for rename/split/close)",

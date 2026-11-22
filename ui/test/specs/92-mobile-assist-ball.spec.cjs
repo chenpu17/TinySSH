@@ -12,6 +12,7 @@
 // 标签条碍事」：移动端专注态标签条与工具栏默认不渲染，只有助力球面板的「标签与
 // 工具栏」能叫回来——桌面专注模式不受影响。
 const connectLocal = async (page) => {
+  await page.waitForSelector('.host-card:has(.host-name:text-is("本机"))');
   const card = await page.$('.host-card:has(.host-name:text-is("本机"))');
   await card.hover();
   await page.waitForTimeout(200);
@@ -429,6 +430,9 @@ module.exports = {
       fire("pointermove", cx - 200, cy + 6);
       fire("pointermove", cx - 450, cy + 12);
       fire("pointerup", cx - 450, cy + 12);
+      // 尾随 click（review-spec 缺口 a）：Chrome Android 触摸拖完会补 click——
+      // 必须被去重窗吃掉，否则拖一下球面板开了又关
+      fire("click", cx - 450, cy + 12);
       return {
         left: wrap.style.left, top: wrap.style.top,
         menuOpen: !!document.querySelector('[data-testid="assist-menu"]'),
@@ -436,11 +440,24 @@ module.exports = {
         stored: localStorage.getItem("ui.assistBallPos"),
       };
     });
-    ck.check("拖球落位（内联坐标 + 持久化 + 拖动态不开面板 + 左对齐）",
+    ck.check("拖球落位（内联坐标 + 持久化 + 拖动态不开面板含尾随 click + 左对齐）",
       !!dragInfo && dragInfo.left !== "" && dragInfo.top !== "" && !dragInfo.menuOpen
         && dragInfo.leftAligned && !!dragInfo.stored, JSON.stringify(dragInfo));
     await openBall(page);
     ck.eq("拖完点按仍开面板", await page.locator('[data-testid="assist-menu"]').count(), 1);
+    // 落位后开面板几何归一（审核轮高危实锤修复钉住）：菜单绝对定位后 wrap 恒
+    // 等于球盒——开面板球必须原地不动；菜单（含内部滚动钳制）必须完整在视口内。
+    const ballBefore = await page.locator('[data-testid="assist-ball"]').boundingBox();
+    const menuBox = await page.locator('[data-testid="assist-menu"]').boundingBox();
+    const ballAfterOpen = await page.locator('[data-testid="assist-ball"]').boundingBox();
+    const vp = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+    ck.check("落位后开面板球不跳（top 锚不再向下生长推球）",
+      Math.abs(ballAfterOpen.x - ballBefore.x) <= 1 && Math.abs(ballAfterOpen.y - ballBefore.y) <= 1,
+      JSON.stringify({ closed: ballBefore, open: ballAfterOpen }));
+    ck.check("面板完整在视口内（摆位钳制 + 上/下翻）",
+      !!menuBox && menuBox.y >= -1 && menuBox.y + menuBox.height <= vp.h + 1
+        && menuBox.x >= -1 && menuBox.x + menuBox.width <= vp.w + 1,
+      JSON.stringify({ menu: menuBox, vp }));
     await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
     await page.waitForTimeout(200);
 
@@ -497,6 +514,76 @@ module.exports = {
     ck.check("球大小档位生效（52px）", bigBall && Math.round(bigBall.width) === 52, JSON.stringify(bigBall));
     ck.eq("球大小持久化", await page.evaluate(() => localStorage.getItem("ui.assistBallSize")), "l");
 
+    // ── 缩窗重钳（审核轮 review-pointer 中危）：球 l 档（52px）先二次拖到右下
+    //    角附近，缩窗到 500 宽——ResizeObserver 重钳进界并回写持久化；还原视口。 ──
+    await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const b = ball.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const fire = (type, x, y) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 8, isPrimary: true,
+        clientX: x, clientY: y,
+      }));
+      fire("pointerdown", cx, cy);
+      fire("pointermove", cx + 650, cy + 80);
+      fire("pointerup", cx + 650, cy + 80);
+    });
+    await page.waitForTimeout(200);
+    const beforeShrink = await page.evaluate(() => JSON.parse(localStorage.getItem("ui.assistBallPos") ?? "null"));
+    await page.setViewportSize({ width: 500, height: 411 });
+    await page.waitForTimeout(500);
+    const afterShrink = await page.evaluate(() => JSON.parse(localStorage.getItem("ui.assistBallPos") ?? "null"));
+    ck.check("缩窗后球位重钳进界并回写",
+      beforeShrink && afterShrink && afterShrink.x >= 6 && afterShrink.x <= 500 - 52 - 6
+        && afterShrink.y >= 6 && afterShrink.y <= 411 - 52 - 6,
+      JSON.stringify({ before: beforeShrink, after: afterShrink }));
+    await page.setViewportSize({ width: 914, height: 411 });
+    await page.waitForTimeout(300);
+
+    // ── pointercancel 还原（审核轮 review-pointer 低-4）：清掉落位重载回默认
+    //    锚，拖动半途被系统打断（pointercancel）——内联样式必须清空回 CSS 锚、
+    //    assist-left 撤下、不落存储。 ──
+    //    reload 同时清 ui.v2.workspace 与 ui.hostbar：此前连接时移动端自动收栏已把
+    //    hostbar.open=false 写进工作区 blob（事实源，优先于 localStorage），不清的话
+    //    reload 后主页主机栏是关的，主机卡压根不在 DOM，connectLocal 必超时。
+    await page.evaluate(() => {
+      localStorage.removeItem("ui.assistBallPos");
+      localStorage.removeItem("ui.v2.workspace");
+      localStorage.removeItem("ui.hostbar");
+    });
+    await page.reload();
+    await page.waitForTimeout(900);
+    await page.evaluate(() => { document.documentElement.dataset.platform = "android"; });
+    await connectLocal(page);
+    await page.waitForTimeout(400);
+    const cancelProbe = await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      if (!ball || !wrap) return null;
+      const b = ball.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const fire = (type, x, y) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 9, isPrimary: true,
+        clientX: x, clientY: y,
+      }));
+      fire("pointerdown", cx, cy);
+      fire("pointermove", cx - 120, cy + 30);
+      fire("pointercancel", cx - 120, cy + 30);
+      return {
+        left: wrap.style.left, top: wrap.style.top,
+        leftAligned: wrap.classList.contains("assist-left"),
+        stored: localStorage.getItem("ui.assistBallPos"),
+      };
+    });
+    ck.check("pointercancel 未落位球还原默认锚（清内联、撤左对齐、不落存储）",
+      !!cancelProbe && cancelProbe.left === "" && cancelProbe.top === ""
+        && !cancelProbe.leftAligned && cancelProbe.stored === null, JSON.stringify(cancelProbe));
+
+    // 尾段回到桌面形态再关开关：审核轮后「在桌面端显示助力球」仅桌面渲染
+    //（移动端常显无需开关），android 标记下点不到。isMobilePlatform 每次渲染
+    // 现读 dataset，删标记后开设置面板即按桌面渲染。
+    await page.evaluate(() => { delete document.documentElement.dataset.platform; });
+    await page.waitForTimeout(300);
     await page.click('[data-testid="rail-settings"]');
     await page.waitForTimeout(700);
     await page.evaluate(() => document.querySelector('[data-testid="desktop-assist-ball"]')?.click());
