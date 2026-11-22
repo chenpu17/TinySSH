@@ -342,7 +342,9 @@ interface CollabDelegateProps {
   openDelegate: () => void;
   takeover: () => Promise<void>;
   openSettingsAt: (cat: SettingsCat) => void;
-  goalRef: RefObject<HTMLTextAreaElement>;
+  // React 19 类型：useRef<T | null>(null) 返回 RefObject<T | null>，与旧 RefObject<T>
+  // 不再互通（App.tsx 的 goalRef 即此形态），声明跟随真实创建侧。
+  goalRef: RefObject<HTMLTextAreaElement | null>;
   goalDraft: string;
   setGoalDraft: (v: string) => void;
   goalDirty: { current: boolean };
