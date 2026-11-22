@@ -1,9 +1,12 @@
-// 92 助力球（GitHub #40 / #45，KI-102）：远程桌面场景没有鼠标滚轮，标签条与工具栏
+// 92 助力球（GitHub #40 / #45，KI-102 + 功能轮）：远程桌面场景没有鼠标滚轮，标签条与工具栏
 // 在手机上又吃空间。右缘悬浮球（⇅）展开动作面板：上翻 / 下翻 / 回到底部 + 常用键排
 // （Esc/Tab/^C/↑/↓ 走真实键序），专注态还能唤出/收起标签与工具栏、退出专注。
 // 滚动分两条真实通道（KI-102）：正常屏走 xterm 本地 scrollback（不进 PTY）；备用屏
 // （tmux/vim 全屏）本地没有历史，旧版翻页是 no-op——改为合成触摸板滚轮事件，tmux
 // mouse on 时 xterm 编码成 SGR 报文（64=上/65=下）发给 tmux 滚它自己的历史。
+// 功能轮加：粘贴剪贴板项（⌘V 同收口）、扩展键帽 Home/End/PgUp/PgDn/^B、终端字号
+// A−/A+（changeFontSize 同通道）、球拖动换位（≥6px 区分拖/点、越界钳制、左半屏
+// 面板左对齐、位置持久化）、球径三档 --assist-ball-size（设置 → 助力球大小）。
 // 桌面端默认不渲染——手机远程桌面（ToDesk 等）触控控制电脑时经设置「在桌面端显示
 // 助力球」开启（远控注入的是鼠标事件，无法可靠自动识别）。同时钉住 #45 的「专注态
 // 标签条碍事」：移动端专注态标签条与工具栏默认不渲染，只有助力球面板的「标签与
@@ -93,8 +96,12 @@ module.exports = {
   title: "助力球：翻页/回到底部/常用键 + 专注态唤出标签与工具栏 + 桌面开关",
   async run({ page, ck }) {
     // 桌面端开关持久化在 localStorage：先清一次再重载，保证「桌面默认不渲染」
-    // 断言不受上轮残留影响。
-    await page.evaluate(() => localStorage.removeItem("ui.assistBall"));
+    // 断言不受上轮残留影响（球位/球径同为持久键，一并清）。
+    await page.evaluate(() => {
+      localStorage.removeItem("ui.assistBall");
+      localStorage.removeItem("ui.assistBallSize");
+      localStorage.removeItem("ui.assistBallPos");
+    });
     await page.reload();
     await page.waitForTimeout(900);
     await page.evaluate(() => { document.documentElement.dataset.platform = "android"; });
@@ -140,8 +147,8 @@ module.exports = {
     // ── 常用键排（触控无键盘场景）：Esc/Tab/^C/↑/↓ 走真实键序（sendMobileKey，
     //    与键盘同一条路），点键后面板不收（历史上下翻常要连点） ──
     await openBall(page);
-    ck.eq("面板含常用键排（五键）",
-      await page.locator('[data-testid="assist-menu"] .assist-key').count(), 5);
+    ck.eq("面板含常用键排（两行十键）",
+      await page.locator('[data-testid="assist-menu"] .assist-key').count(), 10);
     await page.evaluate(() => {
       const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
       window.__keySpy = [];
@@ -171,6 +178,29 @@ module.exports = {
     });
     const ss3 = await page.evaluate(() => window.__keySpy.slice());
     ck.eq("DECCKM 下方向键改发 SS3", ss3[ss3.length - 1], "\x1bOA");
+    // 扩展键帽（功能轮）：Home/End/PgUp/PgDn/^B 真实键序；Home/End 与方向键同规
+    await page.evaluate(() => { window.__keySpy = []; });
+    await touchTapKey(page, "Home");
+    await touchTapKey(page, "End");
+    await touchTapKey(page, "PgUp");
+    await touchTapKey(page, "PgDn");
+    await touchTapKey(page, "^B");
+    await page.waitForTimeout(150);
+    const extData = await page.evaluate(() => window.__keySpy.slice());
+    ck.eq("扩展键帽发出真实键序（Home/End/PgUp/PgDn/^B）",
+      JSON.stringify(extData.slice(0, 5)),
+      JSON.stringify(["\x1b[H", "\x1b[F", "\x1b[5~", "\x1b[6~", "\x02"]));
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      t.write("\x1b[?1h");
+    });
+    await touchTapKey(page, "Home");
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      t.write("\x1b[?1l");
+    });
+    const ss3Home = await page.evaluate(() => window.__keySpy.slice());
+    ck.eq("DECCKM 下 Home 也改发 SS3", ss3Home[ss3Home.length - 1], "\x1bOH");
     await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
     await page.waitForTimeout(200);
 
@@ -332,7 +362,7 @@ module.exports = {
     await openBall(page);
     ck.check("桌面面板同样有翻页与常用键排",
       await page.locator('[data-testid="assist-menu"] [role="menuitem"]:has-text("上翻一页")').count() === 1
-        && await page.locator('[data-testid="assist-menu"] .assist-key').count() === 5, "");
+        && await page.locator('[data-testid="assist-menu"] .assist-key').count() === 10, "");
 
     // ── 备用屏（tmux/vim 全屏）翻页（KI-102）：本地没有 scrollback，旧版点
     //    「上翻」是 no-op（用户在 tmux 里毫无反应）。改为合成触摸板滚轮事件派发到
@@ -381,6 +411,91 @@ module.exports = {
       t.write("\x1b[?1000l\x1b[?1006l\x1b[?1049l");
     });
     await page.waitForTimeout(200);
+
+    // ── 球拖动换位（功能轮）：位移 ≥6px 进拖动态——激活被抑制（不开面板）、
+    //    内联 left/top 落位、localStorage 持久化、拖进左半 → assist-left 面板
+    //    左对齐；拖完点按仍能开面板（去重窗只吃尾随 click，不吃下一次点按）。 ──
+    const dragInfo = await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      if (!ball || !wrap) return null;
+      const b = ball.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const fire = (type, x, y) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 7, isPrimary: true,
+        clientX: x, clientY: y,
+      }));
+      fire("pointerdown", cx, cy);
+      fire("pointermove", cx - 200, cy + 6);
+      fire("pointermove", cx - 450, cy + 12);
+      fire("pointerup", cx - 450, cy + 12);
+      return {
+        left: wrap.style.left, top: wrap.style.top,
+        menuOpen: !!document.querySelector('[data-testid="assist-menu"]'),
+        leftAligned: wrap.classList.contains("assist-left"),
+        stored: localStorage.getItem("ui.assistBallPos"),
+      };
+    });
+    ck.check("拖球落位（内联坐标 + 持久化 + 拖动态不开面板 + 左对齐）",
+      !!dragInfo && dragInfo.left !== "" && dragInfo.top !== "" && !dragInfo.menuOpen
+        && dragInfo.leftAligned && !!dragInfo.stored, JSON.stringify(dragInfo));
+    await openBall(page);
+    ck.eq("拖完点按仍开面板", await page.locator('[data-testid="assist-menu"]').count(), 1);
+    await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
+    await page.waitForTimeout(200);
+
+    // ── 终端字号 A−/A+（功能轮）：走设置同一条 changeFontSize（全实例生效），
+    //    调字号要看着终端试——面板不收。 ──
+    const fontBefore = await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      return t.options.fontSize;
+    });
+    await openBall(page);
+    await page.click('[data-testid="assist-menu"] .assist-fontbtn[title*="增大"]');
+    await page.waitForTimeout(250);
+    const fontAfter = await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      return { size: t.options.fontSize, menu: !!document.querySelector('[data-testid="assist-menu"]') };
+    });
+    ck.check("A+ 增大终端字号且面板不收",
+      fontAfter.size === fontBefore + 1 && fontAfter.menu, `${fontBefore} → ${fontAfter.size}`);
+    await page.click('[data-testid="assist-menu"] .assist-fontbtn[title*="减小"]');
+    await page.waitForTimeout(250);
+    ck.eq("A− 回到原字号", await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      return t.options.fontSize;
+    }), fontBefore);
+    await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
+    await page.waitForTimeout(200);
+
+    // ── 粘贴剪贴板（功能轮）：授权后写剪贴板 → 面板粘贴 → onData 收到文本
+    //    （pasteTextInto 收口：安全文本直接 term.paste → onData 同通道）。 ──
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.evaluate(() => navigator.clipboard.writeText("assist-paste-ok"));
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      window.__pasteSpy = [];
+      t.onData((d) => window.__pasteSpy.push(d));
+    });
+    await openBall(page);
+    await page.click('[data-testid="assist-menu"] [role="menuitem"]:has-text("粘贴剪贴板")');
+    await page.waitForTimeout(400);
+    const pasteSpy = await page.evaluate(() => (window.__pasteSpy ?? []).join(""));
+    ck.check("粘贴剪贴板落进终端数据通道", pasteSpy.includes("assist-paste-ok"),
+      JSON.stringify(pasteSpy.slice(-80)));
+    ck.eq("粘贴后面板收起（让位给可能的确认框）",
+      await page.locator('[data-testid="assist-menu"]').count(), 0);
+
+    // ── 球径三档（功能轮）：设置选「大」→ --assist-ball-size 落地 → 球径 52
+    //    + localStorage 持久化（下一轮 spec 启动清理兜底）。 ──
+    await page.click('[data-testid="rail-settings"]');
+    await page.waitForTimeout(700);
+    await page.selectOption('[data-testid="assist-ball-size"]', "l");
+    await page.click('[data-testid="settings-close"]');
+    await page.waitForTimeout(300);
+    const bigBall = await page.locator('[data-testid="assist-ball"]').boundingBox();
+    ck.check("球大小档位生效（52px）", bigBall && Math.round(bigBall.width) === 52, JSON.stringify(bigBall));
+    ck.eq("球大小持久化", await page.evaluate(() => localStorage.getItem("ui.assistBallSize")), "l");
 
     await page.click('[data-testid="rail-settings"]');
     await page.waitForTimeout(700);

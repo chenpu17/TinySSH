@@ -129,7 +129,7 @@ import { Hostbar } from "./components/hostbar";
 import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
 import { MobileKeyBar } from "./components/mobile-keys";
-import { AssistBall } from "./components/assist-ball";
+import { AssistBall, ASSIST_BALL_SIZES, type AssistBallSize } from "./components/assist-ball";
 import { TouchBar, type TouchBarItem } from "./components/touch-bar";
 import { TmuxQuick } from "./components/tmux-quick";
 import { TmuxWall } from "./components/tmux-wall";
@@ -1533,6 +1533,36 @@ export default function App() {
   const changeDesktopAssist = useCallback((on: boolean) => {
     setDesktopAssist(on);
     try { localStorage.setItem("ui.assistBall", on ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+  }, []);
+  // 球大小三档（小/中/大 → 32/40/52px）：--assist-ball-size 落 documentElement
+  // （ui-scale.ts 同款变量通道），持久化 localStorage（设备级偏好，与开关同域）。
+  const [assistBallSize, setAssistBallSize] = useState<AssistBallSize>(() => {
+    try {
+      const v = localStorage.getItem("ui.assistBallSize");
+      return v === "s" || v === "l" ? v : "m";
+    } catch { return "m"; }
+  });
+  useEffect(() => {
+    document.documentElement.style.setProperty("--assist-ball-size", `${ASSIST_BALL_SIZES[assistBallSize]}px`);
+  }, [assistBallSize]);
+  const changeAssistBallSize = useCallback((s: AssistBallSize) => {
+    setAssistBallSize(s);
+    try { localStorage.setItem("ui.assistBallSize", s); } catch { /* 隐私模式忽略 */ }
+  }, []);
+  // 球位（拖动 + 边缘吸附后落位）：像素坐标锚 workspace 容器；存储损坏/负值退
+  // 回默认锚（CSS right/bottom），由 AssistBall 挂载后钳制越界。
+  const [assistBallPos, setAssistBallPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem("ui.assistBallPos");
+      if (!raw) return null;
+      const p = JSON.parse(raw) as { x?: unknown; y?: unknown };
+      if (typeof p.x !== "number" || typeof p.y !== "number" || p.x < 0 || p.y < 0) return null;
+      return { x: p.x, y: p.y };
+    } catch { return null; }
+  });
+  const changeAssistBallPos = useCallback((p: { x: number; y: number }) => {
+    setAssistBallPos(p);
+    try { localStorage.setItem("ui.assistBallPos", JSON.stringify(p)); } catch { /* 隐私模式忽略 */ }
   }, []);
   // 原生全屏态（专注模式的真实前提）：focusMode 会隐藏 38px 标题区，而 macOS
   // titleBarStyle=Overlay 的红绿灯是系统悬浮钮，不由 HTML 隐藏——专注态若没真正
@@ -5470,10 +5500,11 @@ export default function App() {
     const pane = remembered === "main" ? undefined : paneTermsRef.current.get(remembered);
     const entry = pane?.alive ? pane : termsRef.current.get(target);
     if (!entry) return;
-    // 方向键编码跟随 DECCKM（application cursor keys）：vim/tmux copy-mode 等全屏
-    // 应用开着该模式时要发 SS3（ESC O A），CSI（ESC [ A）会被当普通序列吞掉。
+    // 方向键与 Home/End 编码跟随 DECCKM（application cursor keys）：vim/tmux
+    // copy-mode 等全屏应用开着该模式时要发 SS3（ESC O A / ESC O H），CSI
+    // （ESC [ A / ESC [ H）会被当普通序列吞掉。助力球键排新增的 Home/End 同规。
     let out = data;
-    if (data.length === 3 && data.startsWith("\x1b[") && "ABCD".includes(data[2]) &&
+    if (data.length === 3 && data.startsWith("\x1b[") && "ABCDHF".includes(data[2]) &&
         entry.term.modes.applicationCursorKeysMode) {
       out = "\x1bO" + data[2];
     }
@@ -5533,6 +5564,21 @@ export default function App() {
     };
     requestAnimationFrame(step);
   }, [assistTerm]);
+
+  // 助力球「粘贴剪贴板」：与 ⌘V / 右键粘贴同一收口 pasteTextInto（危险扫描/
+  // 多行确认审批链不旁路），目标同 assistScroll——当前落焦终端实例。
+  // 权限被拒（WebView 未授权/窗口无焦点）toast 一眼可见，不静默吞。
+  const assistPaste = useCallback(() => {
+    const target = sidRef.current;
+    const term = assistTerm();
+    if (!target || !term) return;
+    Promise.resolve(inTauri ? clipboard.readText() : navigator.clipboard?.readText())
+      .then((text) => {
+        if (!text) { pushToast("info", t("剪贴板为空")); return; }
+        pasteTextIntoRef.current(term, target, text);
+      })
+      .catch(() => pushToast("err", t("读取剪贴板失败（权限拒绝或窗口无焦点）")));
+  }, [assistTerm, inTauri, pushToast]);
 
   // ── 触屏终端交互（KI-052）：长按选词 / 拖动扩选 / 点链接浮条 ──
   // 命中解析与右键菜单同一口径：先看 tmux 格子（data-sid/paneId），再按各会话容器
@@ -11090,6 +11136,8 @@ export default function App() {
               onChangeAutoRotate={changeAutoRotate}
               desktopAssist={desktopAssist}
               onChangeDesktopAssist={changeDesktopAssist}
+              assistBallSize={assistBallSize}
+              onChangeAssistBallSize={changeAssistBallSize}
               keymap={keymap}
               resetKeyBinding={resetKeyBinding}
               keyCapture={keyCapture}
@@ -11455,6 +11503,11 @@ export default function App() {
             chromeOpen={mobileChrome}
             onToggleChrome={() => setMobileChrome((v) => !v)}
             onExitFocus={() => applyFocus(false)}
+            pos={assistBallPos}
+            onMoveEnd={changeAssistBallPos}
+            fontSize={fontSize}
+            onFontDelta={(d) => changeFontSize(fontRef.current + d)}
+            onPaste={assistPaste}
           />
         )}
       </div>{/* /workspace */}

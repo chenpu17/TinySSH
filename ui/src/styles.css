@@ -4043,9 +4043,13 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   position: absolute; right: 10px; bottom: 96px; z-index: 67;
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
 }
+/* 球拖到左半屏时面板翻到左侧（右对齐会把面板推出视口左缘） */
+.assist-ball-wrap.assist-left { align-items: flex-start; }
 .assist-scrim { position: fixed; inset: 0; z-index: 65; background: transparent; }
 .assist-ball {
-  width: 40px; height: 40px; flex: 0 0 auto;
+  /* 尺寸三档（设置 → 助力球大小）：--assist-ball-size 由 App 落
+     documentElement，缺省回 40px（中档）。 */
+  width: var(--assist-ball-size, 40px); height: var(--assist-ball-size, 40px); flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 50%;
   border: 1px solid var(--border);
@@ -4053,15 +4057,17 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   box-shadow: 0 2px 10px var(--shadow-soft);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   color: var(--text-sub);
-  font-size: calc(16px * var(--ui-font-scale)); line-height: 1;
+  font-size: calc(var(--assist-ball-size, 40px) * 0.4); line-height: 1;
   opacity: .82;
-  cursor: pointer;
+  cursor: grab;
   -webkit-user-select: none; user-select: none;
   -webkit-touch-callout: none;
-  touch-action: manipulation;
+  /* 拖动球位需要 pointermove 流：manipulation 允许的原位滚动会把 move 吞成
+     页面滚动，必须 none（点按不受影响，激活走 pointerup）。 */
+  touch-action: none;
 }
 .assist-ball.ts-open { opacity: 1; color: var(--accent); border-color: var(--accent); }
-.assist-ball:active { background: var(--panel3); }
+.assist-ball:active { background: var(--panel3); cursor: grabbing; }
 /* 动作面板（视觉重设计）：一块「仪表控制台」——实色 panel2  surface、14px 圆角、
     crisp 1px 描边 + 双层阴影（贴地接触影 + 环境软影）+ 顶部一道内侧高光做机加工边。
    滚动项 = 图标芯片 + 文案（芯片 panel3 底、悬停/按下点亮 accent）；常用键 = 物理
@@ -4116,11 +4122,12 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: color-mix(in srgb, var(--accent) 16%, var(--panel3));
 }
-/* 常用键排（Esc/Tab/^C/↑/↓）：一行五个等宽键帽，触控场景没有键盘时的刚需。
+/* 常用键排（Esc/Tab/^C/↑/↓ + Home/End/PgUp/PgDn/^B）：两行各五等宽键帽
+   （flex-wrap 自动换行），触控场景没有键盘时的刚需。
    键不收面板（历史上下翻常连点），与滚动项的「执行即收」不同。键帽文案必须
    精确（spec 按 textContent 全等匹配），装饰一律走 CSS 不掺文本。 */
 .assist-menu .assist-keys {
-  display: flex; gap: 5px; width: 100%;
+  display: flex; flex-wrap: wrap; gap: 5px; width: 100%;
   margin-top: 2px; padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
@@ -4152,6 +4159,38 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
   box-shadow:
     inset 0 -2px 0 color-mix(in srgb, var(--danger) 38%, transparent),
     0 1px 2px var(--shadow-soft);
+}
+/* 终端字号行：标签吃满剩余宽度，A−/A+ 两枚固定宽键帽（同键帽视觉语言）。
+   调字号要看着终端试，不收面板。 */
+.assist-menu .assist-fontrow {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  margin-top: 2px; padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+.assist-menu .assist-font-label {
+  flex: 1 1 auto; min-width: 0;
+  font-size: calc(11px * var(--ui-font-scale));
+  color: var(--text-sub);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.assist-menu .assist-fontbtn {
+  flex: 0 0 auto; min-width: 46px; height: 30px; padding: 0 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--panel3), var(--panel2));
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: calc(12.5px * var(--ui-font-scale));
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, var(--border) 75%, transparent),
+    0 1px 2px var(--shadow-soft);
+  transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.12s ease;
+}
+.assist-menu .assist-fontbtn:active {
+  transform: translateY(1px);
+  background: var(--panel3);
+  box-shadow: inset 0 1px 2px var(--shadow-soft);
 }
 /* 专注组（标签与工具栏 / 退出专注）：发丝分隔线 + 与滚动项同款芯片行 */
 .assist-menu .assist-focus {

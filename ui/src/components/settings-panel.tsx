@@ -206,6 +206,9 @@ interface SettingsPanelProps {
   // 右缘常显与移动端同一面板；移动端始终显示，不受此开关影响
   desktopAssist: boolean;
   onChangeDesktopAssist: (on: boolean) => void;
+  // 球大小三档（两平台同卡）：--assist-ball-size 落地，设备级偏好
+  assistBallSize: "s" | "m" | "l";
+  onChangeAssistBallSize: (s: "s" | "m" | "l") => void;
   // 快捷键
   keymap: Record<KeyActionId, Binding>;
   /** 单条重置（宿主校验默认键是否已被别的动作占用，冲突则拒绝并提示） */
@@ -322,7 +325,7 @@ export function SettingsPanel({
   appearance, changeAppearance, palette, changePalette, fontSize, changeFontSize, zoomLevel,
   uiFontScale, changeUiFontScale, uiDensity, changeUiDensity, focusMetrics, onChangeFocusMetrics,
   autoRotate, onChangeAutoRotate,
-  desktopAssist, onChangeDesktopAssist,
+  desktopAssist, onChangeDesktopAssist, assistBallSize, onChangeAssistBallSize,
   keymap, resetKeyBinding, keyCapture, setKeyCapture, applyKeymap, persistSetting,
   pasteGuard, changePasteGuard, copyOnSelect, changeCopyOnSelect, bellNotify, changeBellNotify,
   osc52Policy, changeOsc52Policy,
@@ -633,13 +636,14 @@ export function SettingsPanel({
                     </span>
                   </label>
                 </div>
-                {/* 桌面端助力球（#40 延伸）：手机远程桌面（ToDesk 等）触控控制本机
-                    时需要翻页/常用键的悬浮球；远控注入鼠标事件无法自动识别，走
-                    确定性开关，默认关。移动端始终显示，卡片不在此端出现。 */}
-                {!mobilePlatform && (
+                {/* 助力球（#40 延伸 + 尺寸/拖动轮）：手机远程桌面（ToDesk 等）
+                    触控控制本机时需要翻页/常用键的悬浮球；远控注入鼠标事件无法
+                    自动识别，桌面走确定性开关，默认关；移动端始终显示。球大小
+                    两平台都可调（拖动换位在球上直接做，无设置项）。 */}
                 <div className="set-card">
                   <h4>{t("助力球")}</h4>
                   <div className="set-desc">{t("手机远程桌面（ToDesk 等）触控控制本机时，右缘悬浮球提供翻页、回到底部与常用键；平时用鼠标键盘即可，可保持关闭。")}</div>
+                  {!mobilePlatform && (
                   <label className="set-item">
                     <input type="checkbox" data-testid="desktop-assist-ball" checked={desktopAssist}
                       onChange={(e) => onChangeDesktopAssist(e.target.checked)} />
@@ -648,8 +652,19 @@ export function SettingsPanel({
                       <span className="set-item-desc">{t("供手机远程桌面控制本机时使用；开启后右下角常显，与移动端同一面板，关闭即彻底隐藏。")}</span>
                     </span>
                   </label>
+                  )}
+                  <div className="ts-label" style={{ marginTop: 10 }}>{t("助力球大小")}</div>
+                  <div className="row" style={{ marginTop: 4 }}>
+                    <select value={assistBallSize} data-testid="assist-ball-size"
+                      aria-label={t("助力球大小")}
+                      onChange={(e) => onChangeAssistBallSize(e.target.value as "s" | "m" | "l")}>
+                      <option value="s">{t("小（32px）")}</option>
+                      <option value="m">{t("中（40px，默认）")}</option>
+                      <option value="l">{t("大（52px）")}</option>
+                    </select>
+                  </div>
+                  <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("按住球拖到任意位置，松手贴边落位；面板字号跟随界面缩放。")}</div>
                 </div>
-                )}
                 {/* 自动横屏（GitHub #45）：手机上常开「旋转锁定」，终端却经常想横过来
                     看多列输出。开关只在移动平台出现，缺省开；原生按物理朝向显式请求
                     方向，关掉即交还系统（含旋转锁原语义）。 */}
