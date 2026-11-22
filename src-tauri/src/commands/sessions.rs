@@ -152,7 +152,11 @@ pub(crate) async fn stop_auto_reconnect(state: ApiState<'_>, sid: String) -> Cmd
 /// 键控，恢复现场重建新 sid 后丢失；落句柄后随退出快照（RestoreEntry.tab_name）
 /// 带走、恢复后回填。空串/纯空白=清除（展示退回 host_name）。同步即可（短临界区锁）。
 #[tauri::command]
-pub(crate) fn set_tab_name(state: ApiState<'_>, sid: String, name: Option<String>) -> CmdResult<()> {
+pub(crate) fn set_tab_name(
+    state: ApiState<'_>,
+    sid: String,
+    name: Option<String>,
+) -> CmdResult<()> {
     state.api.set_tab_name(&sid, name);
     Ok(())
 }

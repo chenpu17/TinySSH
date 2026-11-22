@@ -150,7 +150,11 @@ async fn set_tab_name_flows_into_capture() {
     // 超长名按字符截断（审核轮 review-rust）：名字不许把整条现场顶过 256KB 条目
     // 上限被 guard_entries 整条滤掉——45 万字节的纯中文名若无截断必让条目消失
     m.set_tab_name("s-trg", Some("名".repeat(150_000)));
-    assert_eq!(m.capture_restore_snapshots().await, 1, "超长名不得挤掉整条现场");
+    assert_eq!(
+        m.capture_restore_snapshots().await,
+        1,
+        "超长名不得挤掉整条现场"
+    );
     let back = m.read_restore_snapshots().await.remove(0).tab_name.unwrap();
     assert_eq!(back.chars().count(), 120, "截断到 120 字符");
 }
