@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "core-session"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5511,7 +5511,7 @@ dependencies = [
 
 [[package]]
 name = "session-api"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6425,7 +6425,7 @@ dependencies = [
 
 [[package]]
 name = "term-core"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "alacritty_terminal",
  "chrono",
@@ -6568,7 +6568,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-app"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6609,7 +6609,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-approval"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "chrono",
  "regex",
@@ -6627,7 +6627,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-audit"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "chrono",
  "hex",
@@ -6645,7 +6645,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-cli"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "anyhow",
  "axum",
@@ -6672,7 +6672,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-mcp-server"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "axum",
  "chrono",
@@ -6701,7 +6701,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-platform-android"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "android-native-keyring-store",
  "keyring-core",
@@ -6713,7 +6713,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-platform-api"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "async-trait",
  "session-api",
@@ -6722,7 +6722,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-records"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "chacha20poly1305",
  "chrono",
@@ -6736,7 +6736,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-shim"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "anyhow",
  "core-session",
@@ -6754,7 +6754,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-testbed"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "futures",
  "libc",
@@ -6770,7 +6770,7 @@ dependencies = [
 
 [[package]]
 name = "tinyssh-vault"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -7083,7 +7083,7 @@ dependencies = [
 
 [[package]]
 name = "transport-pty"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
@@ -7101,7 +7101,7 @@ dependencies = [
 
 [[package]]
 name = "transport-ssh"
-version = "0.12.25"
+version = "0.12.26"
 dependencies = [
  "anyhow",
  "async-trait",

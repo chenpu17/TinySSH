@@ -5472,8 +5472,7 @@ export default function App() {
   }, []);
 
   // 助力球动作目标（GitHub #40）：与辅助键条同一口径——该会话当前落焦的终端实例
-  // （tmux 格子优先，回退主视图）。滚动只走 xterm 本地 scrollback，不进 PTY：
-  // 备用屏（vim/tmux 全屏）没有本地历史，翻页自然是 no-op，不谎发按键。
+  // （tmux 格子优先，回退主视图）。
   const assistTerm = useCallback(() => {
     const target = sidRef.current;
     if (!target) return null;
@@ -5482,6 +5481,49 @@ export default function App() {
     const entry = pane?.alive ? pane : termsRef.current.get(target);
     return entry?.term ?? null;
   }, []);
+
+  // 助力球滚动（KI-102）：分两种屏走两条真实通道，都不另开旁路——
+  //  · 正常屏：xterm 本地 scrollback（scrollPages/scrollToBottom），不进 PTY；
+  //  · 备用屏（tmux/vim 全屏）：本地没有历史，旧版翻页是 no-op（用户在 tmux 里
+  //    点「上翻」毫无反应）。改为**合成触摸板滚轮事件**派发到终端根元素——命中的
+  //    是 xterm 处理真实触摸板滚轮的同一个监听器，行为与用户手势完全一致：tmux
+  //    `mouse on` 时 xterm 把滚轮编码成 SGR 报文（ESC[<64/65;…M）发给 tmux，由
+  //    tmux 滚它自己的历史；没开鼠标上报的全屏应用，真实触摸板滚轮本就无处可滚
+  //    （alternateScroll 默认关），合成事件同样静默——不谎发按键、不另造滚动。
+  //    一屏像素=rows×cellH，按帧分散成小 delta 流（实测同步派发会被 xterm 合帧、
+  //    报文偏少），报文量等同触摸板「一屏轻拂」。回到底部=向下强拂三屏（尽力回到
+  //    实时边缘，与用力下拂触摸板同义）。
+  const assistScroll = useCallback((action: "up" | "down" | "bottom") => {
+    const term = assistTerm();
+    if (!term) return;
+    if (term.buffer.active.type === "normal") {
+      if (action === "up") term.scrollPages(-1);
+      else if (action === "down") term.scrollPages(1);
+      else term.scrollToBottom();
+      return;
+    }
+    const el = term.element;
+    if (!el) return;
+    const screen = el.querySelector(".xterm-screen");
+    const cellH = screen && term.rows > 0 ? screen.getBoundingClientRect().height / term.rows : 20;
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dir = action === "up" ? -1 : 1;
+    const frames = Math.max(1, Math.round(term.rows * (action === "bottom" ? 3 : 1)));
+    let i = 0;
+    const step = () => {
+      // 会话中途关闭/卸载即停，别往死终端派发
+      if (i >= frames || !el.isConnected) return;
+      el.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true, cancelable: true, deltaMode: 0, deltaY: dir * cellH,
+        clientX: cx, clientY: cy,
+      }));
+      i += 1;
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, [assistTerm]);
 
   // ── 触屏终端交互（KI-052）：长按选词 / 拖动扩选 / 点链接浮条 ──
   // 命中解析与右键菜单同一口径：先看 tmux 格子（data-sid/paneId），再按各会话容器
@@ -11360,9 +11402,9 @@ export default function App() {
           <AssistBall
             open={assistOpen}
             onOpenChange={setAssistOpen}
-            onPageUp={() => assistTerm()?.scrollPages(-1)}
-            onPageDown={() => assistTerm()?.scrollPages(1)}
-            onBottom={() => assistTerm()?.scrollToBottom()}
+            onPageUp={() => assistScroll("up")}
+            onPageDown={() => assistScroll("down")}
+            onBottom={() => assistScroll("bottom")}
             onKey={sendMobileKey}
             focusMode={focusMode}
             chromeToggle={isMobilePlatform()}

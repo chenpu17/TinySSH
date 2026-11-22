@@ -1,11 +1,13 @@
-// 92 助力球（GitHub #40 / #45）：远程桌面场景没有鼠标滚轮，标签条与工具栏
-// 在手机上又吃空间。右缘悬浮球（⇅）展开动作面板：上翻 / 下翻 / 回到底部（xterm
-// 本地 scrollback，不进 PTY）+ 常用键排（Esc/Tab/^C/↑/↓ 走真实键序），
-// 专注态还能唤出/收起标签与工具栏、退出专注。桌面端默认不渲染——手机远程桌面
-// （ToDesk 等）触控控制电脑时经设置「在桌面端显示助力球」开启（远控注入的是
-// 鼠标事件，无法可靠自动识别）。同时钉住 #45 的「专注态标签条碍事」：移动端
-// 专注态标签条与工具栏默认不渲染，只有助力球面板的「标签与工具栏」能叫回来
-// ——桌面专注模式不受影响。
+// 92 助力球（GitHub #40 / #45，KI-102）：远程桌面场景没有鼠标滚轮，标签条与工具栏
+// 在手机上又吃空间。右缘悬浮球（⇅）展开动作面板：上翻 / 下翻 / 回到底部 + 常用键排
+// （Esc/Tab/^C/↑/↓ 走真实键序），专注态还能唤出/收起标签与工具栏、退出专注。
+// 滚动分两条真实通道（KI-102）：正常屏走 xterm 本地 scrollback（不进 PTY）；备用屏
+// （tmux/vim 全屏）本地没有历史，旧版翻页是 no-op——改为合成触摸板滚轮事件，tmux
+// mouse on 时 xterm 编码成 SGR 报文（64=上/65=下）发给 tmux 滚它自己的历史。
+// 桌面端默认不渲染——手机远程桌面（ToDesk 等）触控控制电脑时经设置「在桌面端显示
+// 助力球」开启（远控注入的是鼠标事件，无法可靠自动识别）。同时钉住 #45 的「专注态
+// 标签条碍事」：移动端专注态标签条与工具栏默认不渲染，只有助力球面板的「标签与
+// 工具栏」能叫回来——桌面专注模式不受影响。
 const connectLocal = async (page) => {
   const card = await page.$('.host-card:has(.host-name:text-is("本机"))');
   await card.hover();
@@ -61,7 +63,8 @@ const touchTapMenu = async (page, text) =>
     }
   }, text);
 
-/** 常用键按整文案精确匹配（「↑」不能匹配到「↑ 上翻一页」）。 */
+/** 常用键按整文案精确匹配（键帽只有「↑」「↓」等纯文本，图标走 CSS 不掺文本，
+ *  全等匹配不会误中滚动项的「上翻一页」等文案）。 */
 const touchTapKey = async (page, label) =>
   page.evaluate((label) => {
     const el = [...document.querySelectorAll('[data-testid="assist-menu"] .assist-key')]
@@ -330,7 +333,55 @@ module.exports = {
     ck.check("桌面面板同样有翻页与常用键排",
       await page.locator('[data-testid="assist-menu"] [role="menuitem"]:has-text("上翻一页")').count() === 1
         && await page.locator('[data-testid="assist-menu"] .assist-key').count() === 5, "");
-    await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
+
+    // ── 备用屏（tmux/vim 全屏）翻页（KI-102）：本地没有 scrollback，旧版点
+    //    「上翻」是 no-op（用户在 tmux 里毫无反应）。改为合成触摸板滚轮事件派发到
+    //    终端根元素——tmux mouse on 时 xterm 把滚轮编码成 SGR 报文（ESC[<64=上 /
+    //    65=下;col;rowM）发给 tmux 滚它自己的历史，与用户触摸板完全同一条路。这里
+    //    开备用屏 + 鼠标上报协议模拟 tmux，点翻页后 onData 必须收到对应方向的报文。
+    //    用独立 __wheelSpy（前面 __keySpy 的监听器仍在，另挂一个推不同数组互不干扰）。
+    //    面板此刻已展开（上面 openBall），首个动作直接点、不再 openBall（否则toggle收起）。 ──
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      window.__wheelSpy = [];
+      t.onData((d) => window.__wheelSpy.push(d));
+      t.write("\x1b[?1049h");            // 进备用屏
+      t.write("\x1b[?1000h\x1b[?1006h"); // tmux mouse on 的上报协议
+    });
+    await page.waitForTimeout(250);
+    ck.eq("已进备用屏（前置）", await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      return t.buffer.active.type;
+    }), "alternate");
+
+    await page.click('[data-testid="assist-menu"] [role="menuitem"]:has-text("上翻一页")');
+    await page.waitForTimeout(1200); // 等 rAF 逐帧派发完（rows 帧 ≈ 一屏轻拂）
+    const upReports = await page.evaluate(() => window.__wheelSpy.filter((d) => d.includes("[<64;")).length);
+    ck.check("备用屏上翻：合成滚轮发 SGR 上报（64=上，tmux 滚自身历史）", upReports > 0, `${upReports} 条`);
+
+    await page.evaluate(() => { window.__wheelSpy = []; });
+    await openBall(page);
+    await page.click('[data-testid="assist-menu"] [role="menuitem"]:has-text("下翻一页")');
+    await page.waitForTimeout(1200);
+    const downReports = await page.evaluate(() => window.__wheelSpy.filter((d) => d.includes("[<65;")).length);
+    ck.check("备用屏下翻：合成滚轮发 SGR 上报（65=下）", downReports > 0, `${downReports} 条`);
+
+    // 回到底部 = 向下强拂三屏（3×rows 帧），报文应多于单页下翻
+    await page.evaluate(() => { window.__wheelSpy = []; });
+    await openBall(page);
+    await page.click('[data-testid="assist-menu"] [role="menuitem"]:has-text("回到底部")');
+    await page.waitForTimeout(1800);
+    const bottomReports = await page.evaluate(() => window.__wheelSpy.filter((d) => d.includes("[<65;")).length);
+    ck.check("备用屏回到底部：向下强拂三屏（报文多于单页）", bottomReports > downReports,
+      `${bottomReports} > ${downReports}`);
+
+    // 退出备用屏与鼠标上报，恢复现场。面板已随「回到底部」动作收起，无需再点遮罩。
+    await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      t.write("\x1b[?1000l\x1b[?1006l\x1b[?1049l");
+    });
+    await page.waitForTimeout(200);
+
     await page.click('[data-testid="rail-settings"]');
     await page.waitForTimeout(700);
     await page.evaluate(() => document.querySelector('[data-testid="desktop-assist-ball"]')?.click());

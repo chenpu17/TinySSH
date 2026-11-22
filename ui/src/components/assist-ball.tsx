@@ -1,6 +1,7 @@
 // 助力球（GitHub #40 / #45）：触控场景（手机本体 / 手机远程桌面控制电脑）没有
 // 鼠标滚轮，标签条与工具栏又吃空间。右缘悬浮球点开一个动作面板：
-//   上翻 / 下翻 / 回到底部（xterm 本地 scrollback，不进 PTY）
+//   上翻 / 下翻 / 回到底部（正常屏走 xterm 本地 scrollback；备用屏 tmux/vim
+//   全屏合成触摸板滚轮事件，与用户触摸板同一通道，见 App 的 assistScroll）
 //   + 常用键排（Esc / Tab / ^C / ↑ / ↓，经 App 的 sendMobileKey 走真实键序路径，
 //     方向键跟随 DECCKM；点键后面板不收——历史上下翻常要连点）
 //   + 专注态唤出/收起标签与工具栏（#45「专注模式下标签按钮栏碍事」，移动端专属）。
@@ -24,6 +25,7 @@
 import { useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { t } from "../i18n";
+import { IconChevronUp, IconChevronDown, IconArrowDown, IconRows, IconMinimize } from "../icons";
 
 /** 软键盘已收起（Android 推的 `data-ime="0"`）但 xterm 仍持焦点（用户按了
  *  返回键收键盘）：此时 pointerdown preventDefault 会让 Chrome 在下一次触摸
@@ -161,38 +163,58 @@ export function AssistBall({
       <div className="assist-ball-wrap" data-testid="assist-ball-wrap">
         {open && (
           <div className="assist-menu" role="menu" aria-label={t("快捷操作")} data-testid="assist-menu">
-            <AssistButton role="menuitem" className="assist-item"
-              onActivate={run(onPageUp)}>{t("↑ 上翻一页")}</AssistButton>
-            <AssistButton role="menuitem" className="assist-item"
-              onActivate={run(onPageDown)}>{t("↓ 下翻一页")}</AssistButton>
-            <AssistButton role="menuitem" className="assist-item"
-              onActivate={run(onBottom)}>{t("⤓ 回到底部")}</AssistButton>
+            {/* 滚动组：图标芯片 + 文案。正常屏走本地 scrollback，备用屏合成
+                触摸板滚轮（见 App assistScroll）——两条路都与用户手势同通道。 */}
+            <div className="assist-section">
+              <AssistButton role="menuitem" className="assist-item assist-scroll"
+                onActivate={run(onPageUp)}>
+                <span className="assist-ico"><IconChevronUp /></span>
+                <span className="assist-label">{t("上翻一页")}</span>
+              </AssistButton>
+              <AssistButton role="menuitem" className="assist-item assist-scroll"
+                onActivate={run(onPageDown)}>
+                <span className="assist-ico"><IconChevronDown /></span>
+                <span className="assist-label">{t("下翻一页")}</span>
+              </AssistButton>
+              <AssistButton role="menuitem" className="assist-item assist-scroll"
+                onActivate={run(onBottom)}>
+                <span className="assist-ico"><IconArrowDown /></span>
+                <span className="assist-label">{t("回到底部")}</span>
+              </AssistButton>
+            </div>
             {/* 常用键排：触控场景没有键盘时的刚需（中断命令/补全/翻历史）。走
                 sendMobileKey 的真实键序路径（死会话拦截、tmux 前缀武装、广播扇出、
-                DECCKM 方向键）；点键后面板不收——历史上下翻常要连点。 */}
+                DECCKM 方向键）；点键后面板不收——历史上下翻常要连点。键帽文案
+                必须精确（spec 按 textContent 全等匹配），图标一律走 CSS 不掺文本。 */}
             <div className="assist-keys" role="group" aria-label={t("常用键")}>
               <AssistButton className="assist-item assist-key" title="Esc"
                 onActivate={() => onKey("\x1b")}>Esc</AssistButton>
               <AssistButton className="assist-item assist-key" title="Tab"
                 onActivate={() => onKey("\t")}>Tab</AssistButton>
-              <AssistButton className="assist-item assist-key" title={t("中断（Ctrl+C）")}
+              <AssistButton className="assist-item assist-key assist-key-danger" title={t("中断（Ctrl+C）")}
                 onActivate={() => onKey("\x03")}>^C</AssistButton>
               <AssistButton className="assist-item assist-key" title="↑"
                 onActivate={() => onKey("\x1b[A")}>↑</AssistButton>
               <AssistButton className="assist-item assist-key" title="↓"
                 onActivate={() => onKey("\x1b[B")}>↓</AssistButton>
             </div>
-            {focusMode && chromeToggle && (
-              <AssistButton role="menuitem"
-                className={"assist-item" + (chromeOpen ? " ts-open" : "")}
-                pressed={chromeOpen}
-                onActivate={() => { onToggleChrome(); closeSoon(); }}>
-                {chromeOpen ? t("收起标签与工具栏") : t("标签与工具栏")}
-              </AssistButton>
-            )}
             {focusMode && (
-              <AssistButton role="menuitem" className="assist-item"
-                onActivate={run(onExitFocus)}>{t("退出专注模式")}</AssistButton>
+              <div className="assist-section assist-focus">
+                {chromeToggle && (
+                  <AssistButton role="menuitem"
+                    className={"assist-item assist-scroll" + (chromeOpen ? " ts-open" : "")}
+                    pressed={chromeOpen}
+                    onActivate={() => { onToggleChrome(); closeSoon(); }}>
+                    <span className="assist-ico"><IconRows /></span>
+                    <span className="assist-label">{chromeOpen ? t("收起标签与工具栏") : t("标签与工具栏")}</span>
+                  </AssistButton>
+                )}
+                <AssistButton role="menuitem" className="assist-item assist-scroll"
+                  onActivate={run(onExitFocus)}>
+                  <span className="assist-ico"><IconMinimize /></span>
+                  <span className="assist-label">{t("退出专注模式")}</span>
+                </AssistButton>
+              </div>
             )}
           </div>
         )}

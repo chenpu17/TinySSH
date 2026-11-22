@@ -641,7 +641,7 @@ button, input, select, textarea, .tab {
 /* 浮层统一只做 120ms 透明度入场：不改 transform，居中设置/连接详情等
    已有位移链不受影响；墨水屏与 reduced-motion 由各自全局门统一关闭。 */
 @keyframes surface-enter { from { opacity: 0; } }
-:is(.hk-mask, .confirm-mask, .term-settings, .ctx-menu, .tools-menu, .split-menu, .sftp-menu, .palette) {
+:is(.hk-mask, .confirm-mask, .term-settings, .ctx-menu, .tools-menu, .split-menu, .sftp-menu, .palette, .assist-menu) {
   animation: surface-enter 0.12s ease-out;
 }
 /* ---- 入场动效（视觉品质轮）：高频时刻统一「淡入 + 微位移落位」，幅度 ≤12px、
@@ -4055,32 +4055,101 @@ button.ag-tmux.ag-link:hover { border-color: var(--accent); color: var(--text); 
 }
 .assist-ball.ts-open { opacity: 1; color: var(--accent); border-color: var(--accent); }
 .assist-ball:active { background: var(--panel3); }
+/* 动作面板（视觉重设计）：一块「仪表控制台」——实色 panel2  surface、14px 圆角、
+    crisp 1px 描边 + 双层阴影（贴地接触影 + 环境软影）+ 顶部一道内侧高光做机加工边。
+   滚动项 = 图标芯片 + 文案（芯片 panel3 底、悬停/按下点亮 accent）；常用键 = 物理
+   键帽（mono 字、上浅下深微渐变、底部「键程」内影，按下沉 1px）；^C 暖色危险提示。
+   组间用发丝分隔线。全部 token 驱动，34 态主题自适应；eink 铲平阴影/动画后靠实线
+   描边表达层次，reduced-motion 全局门关闭入场与按压过渡。 */
 .assist-menu {
-  display: flex; flex-direction: column; gap: 4px; padding: 5px;
-  max-height: min(56vh, 340px); overflow-y: auto;
-  border-radius: 12px;
+  display: flex; flex-direction: column; gap: 6px; padding: 6px;
+  width: 236px; max-width: calc(100vw - 20px);
+  max-height: min(56vh, 360px); overflow-y: auto;
+  border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--panel2);
-  box-shadow: 0 8px 24px var(--shadow-soft);
+  box-shadow:
+    0 1px 2px var(--shadow-soft),
+    0 12px 32px var(--shadow-soft),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
 }
+.assist-menu .assist-section { display: flex; flex-direction: column; gap: 2px; }
 .assist-menu .assist-item {
-  height: 38px; padding: 0 14px;
+  display: flex; align-items: center; gap: 10px;
+  height: 40px; padding: 0 10px;
   white-space: nowrap; text-align: left;
-  border: none; border-radius: 8px;
+  border: none; border-radius: 9px;
   background: transparent; color: var(--text);
   font: inherit; font-size: calc(13px * var(--ui-font-scale));
   touch-action: manipulation;
+  transition: background 0.12s ease, color 0.12s ease;
 }
-.assist-menu .assist-item:active,
-.assist-menu .assist-item.ts-open { background: var(--panel3); }
-/* 常用键排（Esc/Tab/^C/↑/↓）：一行五个等宽小键，触控场景没有键盘时的刚需。
-   键不收面板（历史上下翻常连点），与滚动项的「执行即收」不同。 */
+.assist-menu .assist-item:active { background: var(--panel3); }
+/* 滚动/专注项：前导图标芯片 + 文案。芯片是独立的圆角小方块，给面板结构感与
+   可扫读性（旧版纯文本行糊成一片）；悬停/按下/开合态把芯片点亮成 accent。 */
+.assist-menu .assist-scroll .assist-ico {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 7px;
+  background: var(--panel3);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--text-sub);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.assist-menu .assist-scroll .assist-label { flex: 1 1 auto; min-width: 0; }
+.assist-menu .assist-scroll:hover .assist-ico,
+.assist-menu .assist-scroll:active .assist-ico {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel3));
+}
+.assist-menu .assist-scroll.ts-open { background: var(--panel3); }
+.assist-menu .assist-scroll.ts-open .assist-ico {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel3));
+}
+/* 常用键排（Esc/Tab/^C/↑/↓）：一行五个等宽键帽，触控场景没有键盘时的刚需。
+   键不收面板（历史上下翻常连点），与滚动项的「执行即收」不同。键帽文案必须
+   精确（spec 按 textContent 全等匹配），装饰一律走 CSS 不掺文本。 */
 .assist-menu .assist-keys {
-  display: flex; gap: 4px; margin-top: 2px; width: 100%;
+  display: flex; gap: 5px; width: 100%;
+  margin-top: 2px; padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 .assist-menu .assist-keys .assist-key {
-  flex: 1 1 0; min-width: 38px; height: 34px; padding: 0 4px;
+  flex: 1 1 0; min-width: 38px; height: 36px; padding: 0 4px;
+  display: inline-flex; align-items: center; justify-content: center;
   text-align: center; white-space: nowrap;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--panel3), var(--panel2));
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: calc(12.5px * var(--ui-font-scale));
+  /* 底部「键程」内影 + 贴地影：读起来是一枚可以按下去的物理键 */
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, var(--border) 75%, transparent),
+    0 1px 2px var(--shadow-soft);
+  transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.12s ease;
+}
+.assist-menu .assist-keys .assist-key:active {
+  transform: translateY(1px);
+  background: var(--panel3);
+  box-shadow: inset 0 1px 2px var(--shadow-soft);
+}
+/* ^C 中断键：暖色危险提示（描边/键程/文字都染 danger，但克制——不喧宾夺主） */
+.assist-menu .assist-keys .assist-key-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, var(--danger) 38%, transparent),
+    0 1px 2px var(--shadow-soft);
+}
+/* 专注组（标签与工具栏 / 退出专注）：发丝分隔线 + 与滚动项同款芯片行 */
+.assist-menu .assist-focus {
+  margin-top: 2px; padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 
 /* 移动端专注态收 chrome（GitHub #45）：标签条与工具栏默认不渲染，由助力球
