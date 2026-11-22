@@ -693,6 +693,8 @@ export interface RestoreEntry {
   tmux_session?: string | null;
   /** 快照时 tmux 面板格子里的会话名，顺序=格子顺序（#26）；旧快照 = 空 */
   tmux_panes?: string[];
+  /** 快照时用户给标签起的自定名（KI-103）；恢复后回填，名字不再因重建新 sid 丢失。旧快照/未改名 = null */
+  tab_name?: string | null;
   checkpoint: ScreenCheckpoint;
 }
 

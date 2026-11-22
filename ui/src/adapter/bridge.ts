@@ -117,6 +117,8 @@ interface CmdArgs {
   send_keys: { sid: string; keys: string };
   set_session_logging: { sid: string; enabled: boolean };
   session_log_path: { sid: string };
+  // KI-103：标签自定名同步到会话句柄（改名即调，随退出快照带走、恢复回填）；null/空串=清除
+  set_tab_name: { sid: string; name: string | null };
   exec_human: { sid: string; command: string };
   // 监控条（命令框退役轮）：只读采样，核心侧固定脚本、UI 不可注入命令
   read_host_metrics: { sid: string };
@@ -269,6 +271,7 @@ interface CmdRet {
   send_keys: void;
   set_session_logging: string | null;
   session_log_path: string | null;
+  set_tab_name: void;
   exec_human: wire.ExecResult;
   read_host_metrics: string;
   read_npu_metrics: string;

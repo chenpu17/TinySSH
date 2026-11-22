@@ -1517,6 +1517,8 @@ const EN: Record<string, string> = {
   "已连接 {0}——点击标签进入": "Connected {0} — click the tab to enter",
   "已取消连接 {0}": "Cancelled connecting {0}",
   "已恢复 {0} 个会话现场": "Restored {0} session scenes",
+  "正在恢复上次现场": "Restoring last scene",
+  "正在处理 {0}/{1}，恢复完成后才能继续操作": "Processing {0}/{1}; interaction is blocked until restore finishes",
   "{0} 个现场未恢复（主机已删或连接未就绪）：{1}": "{0} scenes not restored (host deleted or connection not ready): {1}",
   "取消时连接已完成——该会话已随之关闭": "The connect finished during cancel — the session was closed with it",
   "已停止 {0} 的自动重连": "Stopped auto-reconnect for {0}",

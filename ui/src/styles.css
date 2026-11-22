@@ -641,7 +641,7 @@ button, input, select, textarea, .tab {
 /* 浮层统一只做 120ms 透明度入场：不改 transform，居中设置/连接详情等
    已有位移链不受影响；墨水屏与 reduced-motion 由各自全局门统一关闭。 */
 @keyframes surface-enter { from { opacity: 0; } }
-:is(.hk-mask, .confirm-mask, .term-settings, .ctx-menu, .tools-menu, .split-menu, .sftp-menu, .palette, .assist-menu) {
+:is(.hk-mask, .confirm-mask, .restore-mask, .term-settings, .ctx-menu, .tools-menu, .split-menu, .sftp-menu, .palette, .assist-menu) {
   animation: surface-enter 0.12s ease-out;
 }
 /* ---- 入场动效（视觉品质轮）：高频时刻统一「淡入 + 微位移落位」，幅度 ≤12px、
@@ -2137,6 +2137,13 @@ button.sftp-crumb:not(:disabled):hover { text-decoration: underline; background:
 /* T23：删除/断开确认弹层；表单常驻标签；死会话遮罩（host-ops 已并入上方主机卡块） */
 .confirm-mask { position: fixed; inset: 0; z-index: 90; background: var(--mask-plain); display: flex; align-items: center; justify-content: center; }
 .confirm-dialog { width: min(400px, calc(100vw - 24px)); background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; line-height: 1.7; box-shadow: 0 4px 10px var(--shadow-soft), 0 24px 64px var(--shadow-dialog); }
+/* P3/KI-103 配套：恢复现场进行中的全屏阻断层（confirm-mask 同族，z 高一档挡住确认框）。
+   遮罩本身吃掉全部点击；reduced-motion 全局门停转 spinner 只留图形。 */
+.restore-mask { position: fixed; inset: 0; z-index: 95; background: var(--mask-plain); display: flex; align-items: center; justify-content: center; }
+.restore-dialog { display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 14px; padding: 20px 28px; box-shadow: 0 4px 10px var(--shadow-soft), 0 24px 64px var(--shadow-dialog); }
+.restore-title { font-size: calc(13px * var(--ui-font-scale)); color: var(--text); }
+.restore-sub { font-size: calc(11px * var(--ui-font-scale)); color: var(--text-sub); }
+.restore-spin { width: 20px; height: 20px; border: 2.5px solid var(--border); border-top-color: var(--accent); border-radius: 50%; }
 .ah-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ah-field label { font-size: calc(10px * var(--ui-font-scale)); color: var(--text-sub); letter-spacing: 0.3px; }
 .ah-field input, .ah-field select { width: 100%; }

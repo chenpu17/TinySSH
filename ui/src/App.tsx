@@ -1066,7 +1066,9 @@ export default function App() {
   // 本轮：最近连接行右键菜单（连接/编辑主机/从最近连接隐藏/删除主机）
   const [recentMenu, setRecentMenu] = useState<{ x: number; y: number; hostId: string } | null>(null);
   // 十四轮：标签重命名——sid → 自定名（覆盖 host_name 展示；复制标签页后同名「本机×2」
-  // 无法区分）。会话生命周期内有效（会话本就不跨重启存活），不入 vault。
+  // 无法区分）。前端仍是按 sid 键控的内存态，但 KI-103 起改名经 set_tab_name 同步到后端
+  // 会话句柄，随退出快照（RestoreEntry.tab_name）带走、恢复现场后回填——名字不再因重建
+  // 新 sid 而丢失（不入 vault 独立键，与快照条目同生同灭）。
   const [tabNames, setTabNames] = useState<Record<string, string>>({});
   // 会话增减不改 tabbar 盒子（RO 不触发）——单独补测一次，不再为此拆掉重建 observer。
   // 重命名（tabNames）同样只改标签宽高、不动容器盒子，必须并进依赖：否则「还有 N 个」
@@ -1081,6 +1083,9 @@ export default function App() {
       if (v) next[sid] = v; else delete next[sid];
       return next;
     });
+    // KI-103：同步到后端会话句柄——退出快照据此带走自定名，恢复现场后回填，
+    // 名字不再因重建新 sid 而丢失。fire-and-forget：会话刚关的竞态后端静默 no-op。
+    void invoke("set_tab_name", { sid, name: v ? v : null }).catch(() => {});
     setRenaming(null);
   };
   // 分屏组重命名提交（键盘契约与标签重命名同款）：清空提交=退回自动命名。
@@ -5139,6 +5144,10 @@ export default function App() {
   }, [sessions.length]);
   // —— P3 会话现场恢复：欢迎页「恢复上次现场」数据源（退出快照，vault KV 加密）——
   const [restoreEntries, setRestoreEntries] = useState<RestoreEntry[]>([]);
+  // 恢复进行中的全屏阻断层（用户要求）：恢复是串行建连+重放，中途点击（关标签/
+  // 切会话/再点恢复）既没意义也可能搅乱格子重开——罩住吃掉点击，附进度文案。
+  // ref 只防重入不重渲染，这里要渲染遮罩所以另立 state；finally 一并清。
+  const [restoring, setRestoring] = useState<{ done: number; total: number } | null>(null);
   useEffect(() => {
     let dead = false;
     invoke("read_restore", {})
@@ -6848,13 +6857,17 @@ export default function App() {
   // 新建/快速连接（二轮拨壳成 hk-mask 全屏遮罩）与设置面板（pop-mask）同为遮罩模态，
   // 巡检补进列表：此前不在列——对话框开着 Ctrl+W/⌘1-9/F11 仍在遮罩后执行
   // （关标签/切标签/把窗口切全屏），Ctrl+T 还会把快速连接里已填的表单悄悄换成新建。
+  // 现场恢复中（restoring）同样收进（审核轮：恢复遮罩只挡指针，⌘K/⌘T 曾在遮罩
+  // 后照常派发——同主机新会话会被恢复探测误认成恢复目标，checkpoint 落错对象）。
   const dialogModal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || osc52Ask || splitMenu || tmuxMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
-    || detail || detailErr || showAddHost || showQuickConnect || showSettings);
+    || detail || detailErr || showAddHost || showQuickConnect || showSettings
+    || !!restoring);
   const modal = !!(paletteOpen || authPromptQueue.length > 0 || hostKeyQueue.length > 0 || confirm || quitSummary || pasteConfirm || osc52Ask || splitMenu || tmuxMenu || tabMenu || hostMenu || termMenu || recentMenu || pendingDrop || keyCapture
     || detail || detailErr || showAddHost || showQuickConnect || showSettings
     // 大屏覆盖层与 tmux 墙是整幅视觉顶层：不收进模态门的话，Ctrl/⌘F 会在遮罩
     // 后面打开看不见的搜索框并抢焦，Ctrl/⌘W 还会在墙后面弹「关闭会话」确认。
-    || monitorOpen || !!tmuxWallSid);
+    || monitorOpen || !!tmuxWallSid
+    || !!restoring);
   modalRef.current = modal;
   dialogModalRef.current = dialogModal;
 
@@ -8229,6 +8242,7 @@ export default function App() {
   const restoreScenes = async (entries: RestoreEntry[]) => {
     if (restoringRef.current) return;
     restoringRef.current = true;
+    setRestoring({ done: 0, total: entries.length });
     let restored = 0;
     const skipped: string[] = [];
     // #26：tmux 现场恢复的失败归位——会话已被 kill（gone）与暂时没并入（failed）
@@ -8239,7 +8253,11 @@ export default function App() {
     // 一台连不上，另一台的现场入口也消失，失败条目本会话内再也无法重试。
     const failedEntries: RestoreEntry[] = [];
     try {
-      for (const e of entries) {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        // 遮罩进度「正在处理 {i+1}/{total}」（审核轮：done=i 曾让单条场景恒显
+        // 「已处理 0/1」看着像卡死——改为当前正在处理的条目序号，跳过路径同在计数内）
+        setRestoring({ done: i + 1, total: entries.length });
         const host = hosts.find((x) => x.id === e.host_id);
         if (!host) { skipped.push(e.host_id); failedEntries.push(e); continue; }
         const before = new Set(sessionsRef.current.map((x) => x.id));
@@ -8257,6 +8275,13 @@ export default function App() {
         if (!sid) { skipped.push(host.name); failedEntries.push(e); continue; }
         const entry = termsRef.current.get(sid);
         if (!entry) { skipped.push(host.name); failedEntries.push(e); continue; }
+        // KI-103：回填快照里的标签自定名——恢复重建的是新 sid，名字须重新附着。
+        // 同时再同步一次后端句柄：本次恢复的会话若再次受控退出，快照仍带名（同生同灭）。
+        if (e.tab_name && e.tab_name.trim()) {
+          const nm = e.tab_name.trim();
+          setTabNames((m) => ({ ...m, [sid]: nm }));
+          void invoke("set_tab_name", { sid, name: nm }).catch(() => {});
+        }
         let when = e.saved_at;
         try { when = new Date(e.saved_at).toLocaleString(dateLocale()); } catch { /* 原样 */ }
         // 先重放再公告：applyCheckpoint 会重置缓冲（尺寸对齐+清屏），先写会被擦掉
@@ -8296,8 +8321,13 @@ export default function App() {
         }
         restored++;
       }
+    } catch {
+      // 审核轮：恢复中途异常（重放/tmux 重接/开格任一抛出）不再外抛——外抛会跳过
+      // 下面的汇总 toast 与失败条目收窄（unhandled rejection、遮罩凭空消失无交代）。
+      // 异常条目不计 restored、也不在 skipped 名单里，如实损失；已处理部分照常结算。
     } finally {
       restoringRef.current = false;
+      setRestoring(null);
     }
     if (restored > 0) pushToast("ok", t("已恢复 {0} 个会话现场", restored));
     if (skipped.length > 0) pushToast("err", t("{0} 个现场未恢复（主机已删或连接未就绪）：{1}——未恢复的条目仍保留在上次现场入口，可重试", skipped.length, skipped.join(t("、"))));
@@ -10305,6 +10335,20 @@ export default function App() {
           quitConfirmRef={quitConfirmRef} confirmQuit={confirmQuit} cancelQuit={cancelQuit}
           delHostRef={delHostRef} delIdentRef={delIdentRef}
         />
+        {/* P3/KI-103 配套：恢复现场进行中的全屏阻断层——恢复是串行建连+重放，中途
+            点击（关标签/切会话/再点恢复）既没意义也可能搅乱格子重开，罩住吃掉点击；
+            ⌘ 组合键由模态门收编（modal/dialogModal 含 !!restoring）。z 95：高于
+            confirm-mask(90) 与全部菜单，toast 更高不受影响（恢复完才弹）；故意低于
+            hk-mask(100/110)——恢复途中建连弹 TOFU 指纹/双因素门仍可交互，不会死锁。 */}
+        {restoring && (
+          <div className="restore-mask" data-testid="restore-mask" role="alertdialog" aria-modal="true" aria-label={t("正在恢复上次现场")}>
+            <div className="restore-dialog">
+              <div className="restore-spin spin" aria-hidden="true" />
+              <b className="restore-title">{t("正在恢复上次现场")}</b>
+              <span className="restore-sub">{t("正在处理 {0}/{1}，恢复完成后才能继续操作", restoring.done, restoring.total)}</span>
+            </div>
+          </div>
+        )}
         {/* 会话工具栏 40（拆分⑤出仓 components/session-toolbar.tsx，零语义变更） */}
         {current && (
           <SessionToolbar

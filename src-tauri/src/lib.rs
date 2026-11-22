@@ -721,7 +721,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_hosts, upsert_host, delete_host, create_identity, list_identities, delete_identity,
             ssh_config_preview, ssh_config_import,
-            list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection, set_session_logging, session_log_path,
+            list_sessions, session_detail, create_session, begin_connection, begin_connection_draft, connection_status, cancel_connection, set_session_logging, session_log_path, set_tab_name,
             close_session, reconnect_session, stop_auto_reconnect, tmux_probe, tmux_wall_snapshot, tmux_wall_input, tmux_wall_fit, tmux_wall_fit_restore, tmux_session_create, tmux_restore,
             tmux_attach, tmux_detach, tmux_pane_open, tmux_pane_close, tmux_pane_resize, tmux_pane_input,
             tmux_pane_subscribe, session_state_feed, resize, subscribe_output,

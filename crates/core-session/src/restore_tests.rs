@@ -62,6 +62,11 @@ async fn capture_orders_entries_by_creation_time() {
     let late =
         super::triggers_tests::add_handle(&m, "s-late", base + chrono::Duration::seconds(30));
     *late.tmux_attached.lock().unwrap() = Some("late".into());
+    // KI-103 审核轮补：多会话各异名——capture 逐句柄取名不得张冠李戴，
+    // tab_name 序列必须与 tmux_session 序列（同一条目序）一一对应。
+    m.set_tab_name("s-early", Some("早".into()));
+    m.set_tab_name("s-trg", Some("中".into()));
+    m.set_tab_name("s-late", Some("晚".into()));
 
     assert_eq!(m.capture_restore_snapshots().await, 3);
     let entries = m.read_restore_snapshots().await;
@@ -74,6 +79,11 @@ async fn capture_orders_entries_by_creation_time() {
         vec!["early", "base", "late"],
         "按创建时刻排定（#43）"
     );
+    let names: Vec<_> = entries
+        .iter()
+        .map(|e| e.tab_name.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(names, vec!["早", "中", "晚"], "名字随各自条目走，不错位");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -99,9 +109,50 @@ fn old_snapshot_json_defaults_tmux_fields() {
     let obj = v.as_object_mut().unwrap();
     obj.remove("tmux_session");
     obj.remove("tmux_panes");
+    // KI-103 兼容：旧快照同样没有 tab_name 字段，读回须为 None 而非解析失败
+    obj.remove("tab_name");
     let back: RestoreEntry = serde_json::from_value(v).unwrap();
     assert_eq!(back.tmux_session, None);
     assert!(back.tmux_panes.is_empty());
+    assert_eq!(back.tab_name, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn set_tab_name_flows_into_capture() {
+    // KI-103：标签自定名原是前端纯内存态（按 sid），恢复重建新 sid 后丢失。
+    // 改名经 set_tab_name 落句柄 → 退出快照随条目带走 → 读回仍在。
+    let (m, h) = harness().await;
+    h.screen.lock().await.feed(b"scene\r\n");
+    // 未改名：快照不带名（展示退回 host_name）
+    assert_eq!(m.capture_restore_snapshots().await, 1);
+    assert_eq!(m.read_restore_snapshots().await[0].tab_name, None);
+    // 改名后采集：名字随快照带走；前后空白被 trim（FE 回填端二次 trim 会掩盖
+    // vault 脏数据，这里直接钉「入库即归一」）
+    m.set_tab_name("s-trg", Some("  生产数据库  ".into()));
+    assert_eq!(m.capture_restore_snapshots().await, 1);
+    assert_eq!(
+        m.read_restore_snapshots().await[0].tab_name.as_deref(),
+        Some("生产数据库")
+    );
+    // 显式 None = 清除（FE 清名生产路径传的就是 null 不是空白串）：实现若误写成
+    // if let Some(n)（None 不覆盖旧值），生产清名会静默失效，这里必红
+    m.set_tab_name("s-trg", None);
+    assert_eq!(m.capture_restore_snapshots().await, 1);
+    assert_eq!(m.read_restore_snapshots().await[0].tab_name, None);
+    // 空串/纯空白 = 清除（归一 None）
+    m.set_tab_name("s-trg", Some("   ".into()));
+    assert_eq!(m.capture_restore_snapshots().await, 1);
+    assert_eq!(m.read_restore_snapshots().await[0].tab_name, None);
+    // 会话已不在（竞态）：静默 no-op，不 panic、不误写他会话
+    m.set_tab_name("s-gone", Some("幽灵".into()));
+    assert_eq!(m.capture_restore_snapshots().await, 1);
+    assert_eq!(m.read_restore_snapshots().await[0].tab_name, None);
+    // 超长名按字符截断（审核轮 review-rust）：名字不许把整条现场顶过 256KB 条目
+    // 上限被 guard_entries 整条滤掉——45 万字节的纯中文名若无截断必让条目消失
+    m.set_tab_name("s-trg", Some("名".repeat(150_000)));
+    assert_eq!(m.capture_restore_snapshots().await, 1, "超长名不得挤掉整条现场");
+    let back = m.read_restore_snapshots().await.remove(0).tab_name.unwrap();
+    assert_eq!(back.chars().count(), 120, "截断到 120 字符");
 }
 
 #[test]
@@ -188,6 +239,7 @@ fn entry_of(host: &str, huge: bool) -> RestoreEntry {
         saved_at: "t".into(),
         tmux_session: None,
         tmux_panes: Vec::new(),
+        tab_name: None,
         checkpoint: session_api::ScreenCheckpoint {
             cols: 80,
             rows: 24,

@@ -34,6 +34,11 @@ pub struct RestoreEntry {
     /// 旧快照无此字段。
     #[serde(default)]
     pub tmux_panes: Vec<String>,
+    /// 快照时用户给标签起的自定名（KI-103）：标签重命名原是前端纯内存态（按 sid），
+    /// 恢复重建的是新 sid，名字无处附着而丢失。改名经 set_tab_name 同步到会话句柄，
+    /// 采集时随条目带走，恢复后 FE 回填——名字与快照条目同生同灭。旧快照无此字段。
+    #[serde(default)]
+    pub tab_name: Option<String>,
     pub checkpoint: ScreenCheckpoint,
 }
 
@@ -100,6 +105,8 @@ impl SessionManager {
                 saved_at: chrono::Utc::now().to_rfc3339(),
                 tmux_session,
                 tmux_panes,
+                // KI-103：标签自定名（前端改名经 set_tab_name 同步到句柄）随快照带走
+                tab_name: h.tab_name.lock().unwrap().clone(),
                 checkpoint: checkpoint_tail(ck, TAIL_LINES),
             });
         }
@@ -118,5 +125,27 @@ impl SessionManager {
             _ => return Vec::new(),
         };
         serde_json::from_str(&raw).unwrap_or_default()
+    }
+
+    /// KI-103：前端标签自定名同步到会话句柄（改名即调，恢复回填后再调一次以保证
+    /// 二次退出快照仍带名）。空串/纯空白归一 None（清除语义，展示退回 host_name）。
+    /// 纯内存态落句柄、随退出快照带走，不入 vault 独立键。会话已不在（竞态）静默
+    /// no-op——改名不该因会话刚关而报错。同步即可（只动两把短临界区锁）。
+    pub fn set_tab_name(&self, sid: &str, name: Option<String>) {
+        let name = name.and_then(|n| {
+            let t = n.trim().to_string();
+            if t.is_empty() {
+                None
+            } else {
+                // 审核轮（review-rust）：改名框无 maxlength，超长名会把整条快照顶过
+                // 256KB 条目上限、被 guard_entries 整条滤掉——丢的不止名字而是整个
+                // 现场（checkpoint+tmux）。按字符截断（中文按字数不按字节）。
+                Some(t.chars().take(120).collect())
+            }
+        });
+        let sessions = self.sessions.lock().unwrap();
+        if let Some(h) = sessions.get(sid) {
+            *h.tab_name.lock().unwrap() = name;
+        }
     }
 }

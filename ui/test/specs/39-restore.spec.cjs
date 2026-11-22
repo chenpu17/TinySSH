@@ -45,11 +45,12 @@ module.exports = {
 
     // 种入两条可恢复快照（顺序 prod → 本机）+ h-gone（主机已删，应被跳过）。
     // #51/#43：最终标签必须仍是快照创建序，不能被恢复后随机 sid 的列表序重排。
+    // KI-103：本机条目带自定名 tab_name——恢复重建新 sid 后须回填，名字不丢。
     await page.evaluate((seed) => {
       localStorage.setItem("ui.v2.restore", JSON.stringify(seed));
     }, [
       { host_id: "h-prod1", saved_at: "2026-10-20T12:59:00Z", checkpoint: ckOf(PROD_SCENE_TEXT) },
-      { host_id: "local", saved_at: "2026-10-20T13:00:00Z", checkpoint: ckOf(SCENE_TEXT) },
+      { host_id: "local", saved_at: "2026-10-20T13:00:00Z", tab_name: "我的本机", checkpoint: ckOf(SCENE_TEXT) },
       { host_id: "h-gone", saved_at: "2026-10-20T13:00:00Z", checkpoint: ckOf("ghost") },
     ]);
 
@@ -67,6 +68,22 @@ module.exports = {
 
     // 点恢复 → 建连（本机即时 Ready）→ term 挂载 → 公告行 + 检查点重放
     await page.evaluate(() => document.querySelector('[data-testid="restore-scene"]').click());
+    // 阻断层（KI-103 配套）：点击后立即出现、报进度、恢复完自动撤下。
+    // 「期间点击被罩吃掉」直断机制：视口中心点必须命中遮罩（elementFromPoint）——
+    // 比派发真实点击断「无副作用」稳（后者遮罩提前撤下会误报），与恢复时长无关。
+    await page.waitForSelector('[data-testid="restore-mask"]', { timeout: 3000 });
+    const mask = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="restore-mask"]');
+      if (!el) return { present: false, text: "", hit: false };
+      const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)?.closest?.('[data-testid="restore-mask"]') != null;
+      return { present: true, text: el.textContent ?? "", hit };
+    });
+    ck.check("恢复中遮罩在场并报进度",
+      mask.present && mask.text.includes("正在恢复上次现场") && mask.text.includes("正在处理") && mask.text.includes("恢复完成后才能继续操作"),
+      mask.present ? mask.text.slice(0, 80) : "遮罩未出现");
+    ck.check("遮罩期间视口中心点命中遮罩（指针被罩吃掉）", mask.hit, JSON.stringify(mask).slice(0, 80));
+    await page.waitForSelector('[data-testid="restore-mask"]', { state: "hidden", timeout: 15000 });
+    ck.check("恢复完成后遮罩撤下，可继续操作", await page.evaluate(() => !document.querySelector('[data-testid="restore-mask"]')));
     await page.waitForTimeout(2500);
     const buf = await page.evaluate(() => {
       const live = (t) => { const el = t.element; return !!el && el.isConnected && el.getBoundingClientRect().height > 0; };
@@ -89,7 +106,13 @@ module.exports = {
     });
     ck.check("新会话已建立且终端在场", buf !== null && buf.length > 0);
     ck.check("快照文本已重放进终端", (buf ?? "").includes(SCENE_TEXT), (buf ?? "").slice(-200));
-    ck.check("公告行标注恢复与快照时刻", (buf ?? "").includes("已恢复上次会话现场") && (buf ?? "").includes("2026/10/20"), (buf ?? "").slice(-200));
+    // 公告行时刻断言：期望串在页面侧按同款调用现算（审核轮：种子是 UTC 时刻，
+    // 写死 "2026/10/20" 在 UTC+11 及以东机器会翻到次日必红——现算对时区/格式双免疫。
+    // dateLocale() 在本 harness（固定 zh-CN context）下恒 "zh-CN"）。
+    const when = await page.evaluate(() => new Date("2026-10-20T13:00:00Z").toLocaleString("zh-CN"));
+    ck.check("公告行标注恢复与快照时刻",
+      (buf ?? "").includes("已恢复上次会话现场") && (buf ?? "").includes(when),
+      (buf ?? "").slice(-200) + " / 期望时刻=" + when);
     ck.check("主机已删的条目被跳过（无 ghost 文本、会话数 2）", (buf ?? "").includes("ghost") === false
       && await page.evaluate(() => document.querySelectorAll(".tab").length) === 2);
     const restored = await page.evaluate(async () => {
@@ -104,8 +127,8 @@ module.exports = {
       }
       return { labels, prodText: lines.join("\n") };
     });
-    ck.check("两条快照恢复后的最终标签仍是 prod → 本机（#51/#43）",
-      JSON.stringify(restored.labels) === JSON.stringify(["prod-1", "本机"]), restored.labels.join(" / "));
+    ck.check("两条快照恢复后的最终标签仍是 prod → 本机（#51/#43；本机带自定名 KI-103 回填、prod 未改名退 host_name）",
+      JSON.stringify(restored.labels) === JSON.stringify(["prod-1", "我的本机"]), restored.labels.join(" / "));
     ck.check("第一条 prod 快照也已重放，未因串行恢复漏项",
       restored.prodText.includes(PROD_SCENE_TEXT), restored.prodText.slice(-200));
 

@@ -285,6 +285,10 @@ pub struct SessionHandle {
     /// 此前 `list_sessions` 填的是查询时刻（每次轮询都变）——详情里的「创建时间」
     /// 因此是假值；R41 改为构造期快照。
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// KI-103：用户给标签起的自定名（前端 tabNames 经 set_tab_name 同步而来）。
+    /// 本是前端纯内存态、按 sid 键控，恢复重建新 sid 后丢失；落到句柄后随退出快照
+    /// （RestoreEntry.tab_name）带走，恢复回填。None=未改名（展示退回 host_name）。
+    pub tab_name: StdMutex<Option<String>>,
     pub channel: Arc<dyn ChannelHandle>,
     pub screen: AsyncMutex<Screen>,
     pub output_tx: broadcast::Sender<OutputEvent>,
@@ -447,6 +451,7 @@ impl SessionHandle {
             host,
             kind,
             created_at: chrono::Utc::now(),
+            tab_name: StdMutex::new(None),
             channel,
             screen: AsyncMutex::new(screen),
             output_tx,

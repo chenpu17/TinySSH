@@ -130,6 +130,9 @@ type DemoSession = {
   // 连接详情（真实侧即 SessionHandle 持有的构造期 Host 副本，非按 host_id 回查现配置）。
   host_snapshot: DemoHostSnap;
   goal: string | null;   // R9 任务目标/交接留言（随会话存亡，与真实 SessionHandle.goal 对齐）
+  /** KI-103：标签自定名（前端 tabNames 经 set_tab_name 同步而来；真实 SessionHandle.tab_name
+   * 同语义——随退出快照带走、恢复回填。null/缺省=未改名，展示退回 host_name）。 */
+  tab_name?: string | null;
   // R42（§6.7）：是否曾被 Agent 持有控制权（人类建会话恒 false；委托/交还后 true，
   // 接管不抹掉历史）——UI 据此区分「交给 Agent」与「交还 Agent」入口措辞。
   ever_agent_owned: boolean;
@@ -1864,6 +1867,19 @@ case "read_triggers": {
         what: s.goal ? "人类更新任务目标（Agent 读简报可见）" : "人类清除任务目标",
       });
       audit("human", "goal_set", s.goal, null, sid, { cleared: s.goal === null });
+      return null;
+    }
+    case "set_tab_name": {
+      // KI-103：标签自定名同步到会话（真实 SessionManager.set_tab_name 同语义）。
+      // 空串/纯空白归一 null（清除，展示退回 host_name）；会话已不在（竞态）静默
+      // no-op——与真实侧一致，改名不该因会话刚关而报错。采集侧 demo 无对应入口
+      //（quit_app no-op），不造假；read_restore 透传种子快照里的 tab_name。
+      const sid = args?.sid as string;
+      const s = demoState.sessions.find((x) => x.id === sid);
+      if (!s) return null;
+      const raw = args?.name as string | null | undefined;
+      const trimmed = raw == null ? null : raw.trim();
+      s.tab_name = trimmed ? trimmed : null;
       return null;
     }
     case "list_approvals": {
