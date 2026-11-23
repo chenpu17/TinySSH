@@ -57,11 +57,18 @@ const WRAPPER_PREFIX: &str = r"(?:(?:\s*(?:sudo|doas|nohup|nice|time|env|command
 /// 仍应按 allowlist 方向演进（见 `ApprovalEngine` 注释）。
 pub const BUILTIN_WINDOWS_DENY_PATTERNS: &[(&str, &str)] = &[
     (
-        r#"remove-item\b[^\n;|&]*(?:-recurse|-force)"#,
+        // PowerShell 参数允许唯一前缀缩写——审核轮 review-transport P2：
+        // `Remove-Item -r C:\…` 与 `-r -f` 的 evaluate 是 NeedsApproval、
+        // scan_dangerous 为空，同效果的递归/强制删除绕过了内置 Dangerous。
+        // 合法缩写是参数全称的任意非空前缀：-Recurse → -r/-re/-rec/…/-recurse
+        // 全覆盖（每个都唯一解析到 Recurse），-Force 同理 -f/-fo/…/-force。
+        // 嵌套 `(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?` 即逐字符可选展开；
+        // `-rf` 粘连不展开（不是合法缩写），但 `-r -f` 两参数并列已覆盖。
+        r#"remove-item\b[^\n;|&]*(?:-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?:\s|$)|-f(?:o(?:r(?:c(?:e)?)?)?)?(?:\s|$))"#,
         "PowerShell 递归/强制删除",
     ),
     (
-        r#"(?:rm|ri)\b[^\n;|&]*(?:-recurse|-force)"#,
+        r#"(?:rm|ri)\b[^\n;|&]*(?:-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?:\s|$)|-f(?:o(?:r(?:c(?:e)?)?)?)?(?:\s|$))"#,
         "PowerShell 递归/强制删除",
     ),
     (
@@ -682,7 +689,13 @@ mod tests {
         for cmd in [
             r"Remove-Item -Recurse -Force C:\Windows",
             r"Remove-Item C:\Windows -Recurse -Force",
+            r"Remove-Item -r C:\Windows",
+            r"Remove-Item -r -f C:\Windows",
+            r"Remove-Item -re -fo C:\Windows",
+            r"Remove-Item -recurse -force C:\Windows",
             r"rm -Recurse -Force C:\Windows",
+            r"rm -r -f C:\Windows",
+            r"ri -r -f C:\Windows",
             r"del /s /q C:\*",
             r"rd /s /q C:\Windows",
             r"rd -Recurse -Force C:\Windows",

@@ -845,12 +845,27 @@ async fn mid_connect_cancel_end_to_end_chain() {
         fin.session_id.is_none() && fin.error.is_none(),
         "Cancelled 无会话无错误载荷"
     );
-    let mut phases = vec![];
-    while let Ok(ev) = rx.try_recv() {
-        if ev.attempt_id == info.attempt_id {
-            phases.push(ev.phase);
+    // 状态落账先于 broadcast 发送；等待 Cancelled 事件实际入队，不能把 try_recv
+    // 的瞬时空队列误判成缺事件（工作区高负载时曾偶发）。
+    let phases = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut seen = vec![];
+        loop {
+            match rx.recv().await {
+                Ok(ev) if ev.attempt_id == info.attempt_id => {
+                    let terminal = ev.phase == AttemptPhase::Cancelled;
+                    seen.push(ev.phase);
+                    if terminal {
+                        break seen;
+                    }
+                }
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(e) => panic!("连接事件通道提前关闭：{e}"),
+            }
         }
-    }
+    })
+    .await
+    .expect("Cancelled 状态可见后事件应及时发布");
     // 事件契约（R19）：起步相位随 begin 应答携带、事件只载转换/终态——取消链
     // 事件序恰为 [Cancelled]，不得出现 Ready
     assert!(

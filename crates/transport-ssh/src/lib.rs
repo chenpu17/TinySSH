@@ -882,9 +882,18 @@ impl SshChannel {
     async fn write_bytes(&self, data: &[u8]) -> Result<()> {
         let guard = self.shell.lock().await;
         let w = guard.as_ref().ok_or(Error::SessionClosed)?;
-        w.data_bytes(data.to_vec())
-            .await
-            .map_err(|e| Error::Io(format!("ssh write: {e}")))
+        // 主 shell 写入与面板通道同款停滞护栏（审核轮 review-transport P1）：
+        // russh 的 data_bytes 在窗口耗尽时只等 WINDOW_ADJUST——远端停读 stdin
+        // /连接僵死时会无超时挂住，粘贴大输入尤甚（用户看到「发了没反应」）。
+        // 分块 + 每块 20s 上限，与 PANE_WRITE_* 同口径；关会话/断连由外层
+        // cancel 走另一条路，不必在块间查 alive（主 shell 无独立 alive 标志）。
+        for chunk in data.chunks(PANE_WRITE_CHUNK) {
+            match tokio::time::timeout(PANE_WRITE_STALL, w.data_bytes(chunk.to_vec())).await {
+                Ok(r) => r.map_err(|e| Error::Io(format!("ssh write: {e}")))?,
+                Err(_) => return Err(Error::Io("shell 写入停滞超时（远端未读取输入）".into())),
+            }
+        }
+        Ok(())
     }
 
     pub async fn fingerprint(&self) -> Option<String> {
@@ -1167,7 +1176,11 @@ impl ChannelHandle for SshChannel {
                 _ = cancel.cancelled() => break,
             }
         }
-        let _ = channel.close().await;
+        // 收尾 close 必须有界（审核轮 review-transport P1）：russh ChannelWriteHalf::close
+        // 走有界 mpsc——连接僵死且队列满时这个 await 永不返回，外层刚等到的
+        // cancel/deadline 会在收尾这里重新悬挂。包 5s：到点不返回就放弃收尾，
+        // 通道随 Drop 由 russh 侧尽力清。
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), channel.close()).await;
 
         Ok(FreshOutcome {
             exit_code,

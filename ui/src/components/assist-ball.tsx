@@ -125,6 +125,12 @@ function AssistButton({
 }) {
   const down = useRef(false);
   const touchAt = useRef(0);
+  // 拖完尾随 click 的独立去重窗（审核轮修复）：touch 的 700ms 窗是给「按下
+  // 即激活」的手势补发 click 用的；拖完各 pointerType 都会由浏览器补一个
+  // click（CDP 原生 mouse/pen 实锤同补），若复用 700ms 会把拖完快速再点
+  // 的真实第二次点按也吞掉。拖完窗收窄到 150ms：同步补发 click 必落窗内，
+  // 人手连点（拖到下次 down 通常 >200ms）不被误吞。
+  const dragEndAt = useRef(0);
   const dragFrom = useRef<{ x: number; y: number } | null>(null);
   const dragging = useRef(false);
   return (
@@ -143,6 +149,9 @@ function AssistButton({
         dragging.current = false;
         // 鼠标/触控笔按下会紧跟自己的 click：清掉触摸去重窗口，别把鼠标点也吞了
         if (ev.pointerType !== "touch") touchAt.current = 0;
+        // 新一段手势开始：拖完尾随窗也一并清（上一段的窗残留会吞掉这次的
+        // 激活 click——比如拖完 100ms 内紧接按下再抬起，down 不该继承窗）。
+        dragEndAt.current = 0;
       }}
       onPointerMove={(ev: ReactPointerEvent) => {
         if (!onDragMove || !down.current || !dragFrom.current) return;
@@ -172,8 +181,11 @@ function AssistButton({
           dragging.current = false;
           down.current = false;
           dragFrom.current = null;
-          // 拖完抑制随后的 click（触摸补发 / 鼠标抬起 click 同吃）：去重窗口
-          touchAt.current = Date.now();
+          // 拖完抑制随后的 click：三种 pointerType 的浏览器都会在 up 后同步
+          // 派发 click（touch 同任务补发，mouse/pen 也是——CDP 原生输入实锤），
+          // 统一走 dragEndAt 的 150ms 尾随窗吃掉它；不挪用 touchAt——那个 700ms
+          // 窗是给「按下即激活」的 touch 手势准备的，套到拖上会连坐吞连点。
+          dragEndAt.current = Date.now();
           onDragEnd?.(true);
           return;
         }
@@ -193,6 +205,7 @@ function AssistButton({
       }}
       onClick={() => {
         if (Date.now() - touchAt.current < 700) return;
+        if (Date.now() - dragEndAt.current < 150) return;
         onActivate();
       }}
     >
@@ -250,6 +263,12 @@ export function AssistBall({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const dragPos = useRef<{ x: number; y: number } | null>(null);
+  // 拖动起始基准（审核轮修复）：total 位移必须恒定加在它上面——若每帧把基准
+  // 改写成上一个落点，匀速拖动会二次方跑偏（S+ΣTᵢ）。null = 非拖动态。
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+  // 拖动中 ResizeObserver 想重钳但不能动内联样式（会闪回存储位）：记下待
+  // 落点，dragend 由 onBallDragEnd 补钳——比拖中触发即改更稳定（review-geo 中）。
+  const pendingClamp = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -292,6 +311,10 @@ export function AssistBall({
       return;
     }
     const clampAndApply = () => {
+      // 拖动中跳过：wrap 内联样式此刻由 dragStart+total 实时驱动，回写存储
+      // 位会让球瞬移回旧位一帧再被下一个 move 拉回（旋转/缩窗恰好落在拖中），
+      // 且 onMoveEnd 会把还没松手的中间值写进 localStorage。记 pending 待落。
+      if (dragStart.current) { pendingClamp.current = true; return; }
       const c = assistClamp(wrap, pos.x, pos.y);
       applyWrapPos(wrap, c.x, c.y);
       assistUpdateSide(wrap, c.x);
@@ -322,28 +345,36 @@ export function AssistBall({
       const availBelow = window.innerHeight - br.bottom - 16;
       if (want <= availAbove) { setMenuPlacement({ below: false, maxH: null }); return; }
       if (want <= availBelow) { setMenuPlacement({ below: true, maxH: null }); return; }
+      // 下限只取非负（审核轮修复：旧 Math.max(120,…) 下限在极矮视口——
+      // 如 120px 高窗口球贴上缘——反而把菜单推出该侧边界被 overflow 裁掉；
+      // 两侧同负时上面 availAbove>=availBelow 的选择已保证挑了较好的一侧）。
       setMenuPlacement(availAbove >= availBelow
-        ? { below: false, maxH: Math.max(120, availAbove) }
-        : { below: true, maxH: Math.max(120, availBelow) });
+        ? { below: false, maxH: Math.max(0, availAbove) }
+        : { below: true, maxH: Math.max(0, availBelow) });
     };
     place();
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
-  }, [open, pos, ballPx, fontSize]);
+    // focusMode 进依赖：F11 是全局键、面板开着也能进/退专注——assist-focus
+    // 组（~100px）随之挂载/卸载，scrollHeight 变了不重摆会按旧 maxH 裁顶。
+  }, [open, pos, ballPx, fontSize, focusMode]);
 
   // 拖动起步：把当前几何折算成 left/top 坐标（默认锚是 right/bottom，没有现成
   // 坐标）；此后 move 直接改内联样式，不逐帧 setState。
   const onBallDragMove = useCallback((total: { dx: number; dy: number }) => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    if (!dragPos.current) {
+    if (!dragStart.current) {
       const parent = wrap.offsetParent as HTMLElement | null;
       if (!parent) return;
       const pr = parent.getBoundingClientRect();
       const wr = wrap.getBoundingClientRect();
-      dragPos.current = { x: wr.left - pr.left, y: wr.top - pr.top };
+      dragStart.current = { x: wr.left - pr.left, y: wr.top - pr.top };
     }
-    const c = assistClamp(wrap, dragPos.current.x + total.dx, dragPos.current.y + total.dy);
+    // 累计位移必须恒定加在起始基准上——不能拿上一帧落点当新基准（审核轮
+    // review-geo 高危：慢拖匀速时每帧重复累加整段 total，位置二次方跑偏；
+    // 大位移直接钳边吸附掩盖了它，spec 靠小步慢拖才抓得到）。
+    const c = assistClamp(wrap, dragStart.current.x + total.dx, dragStart.current.y + total.dy);
     dragPos.current = c;
     applyWrapPos(wrap, c.x, c.y);
     assistUpdateSide(wrap, c.x);
@@ -351,11 +382,20 @@ export function AssistBall({
 
   const onBallDragEnd = useCallback((dragged: boolean) => {
     const p = dragPos.current;
+    const start = dragStart.current;
     dragPos.current = null;
+    dragStart.current = null;
     if (dragged && p) {
-      onMoveEnd(p);
+      // 拖中若因旋转/缩窗欠过一次重钳（pendingClamp），落点先按新边界补钳
+      // 再回写——否则拖后 pos 仍带着旧坐标系的越界值进 localStorage。
+      const wrap = wrapRef.current;
+      const final = (pendingClamp.current && wrap) ? assistClamp(wrap, p.x, p.y) : p;
+      pendingClamp.current = false;
+      if (wrap) { applyWrapPos(wrap, final.x, final.y); assistUpdateSide(wrap, final.x); }
+      onMoveEnd(final);
       return;
     }
+    pendingClamp.current = false;
     if (p) {
       // 拖动被系统打断（pointercancel）/幽灵复位：还原锚定——有存储位回它；
       // 从未落过位（pos=null）清内联样式回 CSS 默认锚（审核轮 review-pointer 低-4）

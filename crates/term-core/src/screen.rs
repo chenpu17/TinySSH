@@ -6,7 +6,7 @@ use crate::block::BlockPhase;
 use crate::block::{BlockIndex, BlockSource};
 use crate::osc::{OscEvent, OscScanner};
 use crate::render::{cursor_pos, render_screen_only, render_text, GridSize};
-use crate::strip_ansi;
+use crate::AnsiTextDecoder;
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::Line;
@@ -71,6 +71,7 @@ struct CaptureState {
 #[derive(Debug, Default)]
 struct BlockTap {
     buf: String,
+    decoder: AnsiTextDecoder,
     /// D 已过：进入尾窗（B 到达即收口回填到块）。
     tail_active: bool,
     /// 缓冲超上限丢过头部（截断如实标注，不静默伪装完整）。
@@ -81,14 +82,16 @@ struct BlockTap {
 const BLOCK_OUTPUT_CAP: usize = 8 * 1024;
 
 impl BlockTap {
-    /// 追加一段渲染后文本，超限即保尾裁剪到上限（字符边界对齐，不在多字节
-    /// 中间下刀）。逐次裁保证 buf 在任意无锁观察点 ≤ 上限（read_blocks 与 feed
-    /// 共享屏锁，投影看到的输出不会超出 JSON 契约）。
-    fn absorb(&mut self, text: &str) {
+    /// 追加一段原始输出；跨 feed UTF-8 字符由独立解码状态续接。
+    /// 缓冲超上限即保尾裁剪（字符边界对齐，不在多字节中间下刀）。逐次裁
+    /// 保证 buf 在任意无锁观察点 ≤ 上限（read_blocks 与 feed 共享屏锁，
+    /// 投影看到的输出不会超出 JSON 契约）。
+    fn absorb(&mut self, data: &[u8]) {
+        let text = self.decoder.strip(data);
         if text.is_empty() {
             return;
         }
-        self.buf.push_str(text);
+        self.buf.push_str(&text);
         if self.buf.len() > BLOCK_OUTPUT_CAP {
             let mut cut = self.buf.len() - BLOCK_OUTPUT_CAP;
             while !self.buf.is_char_boundary(cut) {
@@ -228,6 +231,8 @@ pub struct Screen {
     scanner: OscScanner,
     pub blocks: BlockIndex,
     lossless: VecDeque<LosslessChunk>,
+    /// 无损文本流独立保存 UTF-8 尾片；不能与块采集窗共享 carry。
+    lossless_decoder: AnsiTextDecoder,
     lossless_bytes: usize,
     /// 环淘汰累计数（头 pop 计数）：wait_output 水位用「淘汰基数 + 长度」作绝对
     /// 序号——deque 下标随头部淘汰整体前滑，相对下标水位会把未消费的输出静默
@@ -269,6 +274,7 @@ impl Screen {
             scanner: OscScanner::new(),
             blocks: BlockIndex::new(),
             lossless: VecDeque::new(),
+            lossless_decoder: AnsiTextDecoder::default(),
             lossless_bytes: 0,
             lossless_evicted: 0,
             lossless_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -322,9 +328,7 @@ impl Screen {
                 OscEvent::Cwd { path } => {
                     // cwd 报告可出现在块输出中途：标记前正文归采集窗
                     if let Some(t) = &mut self.block_tap {
-                        t.absorb(&strip_ansi(
-                            &data[last_off..ev_start.max(last_off).min(data.len())],
-                        ));
+                        t.absorb(&data[last_off..ev_start.max(last_off).min(data.len())]);
                     }
                     self.cwd = Some(path);
                     self.cwd_ts = Some(now);
@@ -349,9 +353,7 @@ impl Screen {
                     self.saw_prompt = true;
                     // A 在 D 之后 B 之前（尾窗内）：标记前正文归上一块的尾窗
                     if let Some(t) = &mut self.block_tap {
-                        t.absorb(&strip_ansi(
-                            &data[last_off..ev_start.max(last_off).min(data.len())],
-                        ));
+                        t.absorb(&data[last_off..ev_start.max(last_off).min(data.len())]);
                     }
                     self.blocks.on_osc(&ev, now, current_line);
                 }
@@ -376,9 +378,7 @@ impl Screen {
                     }
                     // C→D 主窗收口：标记前正文进缓冲；转尾窗（D→B 续采）
                     if let Some(t) = &mut self.block_tap {
-                        t.absorb(&strip_ansi(
-                            &data[last_off..ev_start.max(last_off).min(data.len())],
-                        ));
+                        t.absorb(&data[last_off..ev_start.max(last_off).min(data.len())]);
                         t.tail_active = true;
                     }
                     self.blocks.on_osc(&ev, now, current_line);
@@ -409,9 +409,7 @@ impl Screen {
                     let close_tap = matches!(&self.block_tap, Some(t) if t.tail_active);
                     if close_tap {
                         if let Some(t) = &mut self.block_tap {
-                            t.absorb(&strip_ansi(
-                                &data[last_off..ev_start.max(last_off).min(data.len())],
-                            ));
+                            t.absorb(&data[last_off..ev_start.max(last_off).min(data.len())]);
                         }
                         self.blocks.on_osc(&ev, now, current_line);
                         self.attach_block_output();
@@ -419,9 +417,7 @@ impl Screen {
                     } else {
                         // C→D 途中的 B（流序异常）：不收口，正文照采
                         if let Some(t) = &mut self.block_tap {
-                            t.absorb(&strip_ansi(
-                                &data[last_off..ev_start.max(last_off).min(data.len())],
-                            ));
+                            t.absorb(&data[last_off..ev_start.max(last_off).min(data.len())]);
                         }
                         self.blocks.on_osc(&ev, now, current_line);
                     }
@@ -447,7 +443,7 @@ impl Screen {
         // 块输出采集尾部：本 feed 剩余未接标记的字节属于当前窗
         if let Some(t) = &mut self.block_tap {
             if last_off < data.len() {
-                t.absorb(&strip_ansi(&data[last_off..]));
+                t.absorb(&data[last_off..]);
             }
         }
         if cap_active || cap_tail {
@@ -469,7 +465,7 @@ impl Screen {
         }
 
         // 无损缓冲（渲染后文本）
-        let text = strip_ansi(data);
+        let text = self.lossless_decoder.strip(data);
         if !text.is_empty() {
             self.push_lossless(LosslessChunk { ts: now, text });
             self.last_output_ts = Some(now);
@@ -994,6 +990,7 @@ fn row_runs(row: &[alacritty_terminal::term::cell::Cell], cols: usize) -> Vec<Ce
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::strip_ansi;
 
     fn screen() -> Screen {
         Screen::new(ScreenConfig {
@@ -1336,6 +1333,36 @@ mod tests {
         want.extend(lfs(75));
         assert_eq!(tr(&mut t, &[b"ok\x1b[9", b"9;1H"]), want);
         assert!(t.carry.is_empty());
+    }
+
+    #[test]
+    fn lossless_text_carries_utf8_across_feeds() {
+        for split in 0..="中文✓".len() {
+            let mut s = screen();
+            let raw = "中文✓".as_bytes();
+            s.feed(&raw[..split]);
+            s.feed(&raw[split..]);
+            assert_eq!(s.text_since_abs(0), "中文✓", "split={split}");
+        }
+    }
+
+    #[test]
+    fn block_output_carries_utf8_across_feeds() {
+        let raw = "中文输出\r\n".as_bytes();
+        for split in 0..=raw.len() {
+            let mut s = screen();
+            s.feed(b"\x1b]133;A\x07\x1b]133;B\x07$ ");
+            s.register_outgoing("echo 中文\r".as_bytes(), BlockSource::Human);
+            s.feed("echo 中文\r\n\x1b]133;C\x07".as_bytes());
+            s.feed(&raw[..split]);
+            s.feed(&raw[split..]);
+            s.feed(b"\x1b]133;D;0\x07");
+            assert_eq!(
+                s.blocks.last_blocks(1)[0].output,
+                "中文输出",
+                "split={split}"
+            );
+        }
     }
 
     #[test]

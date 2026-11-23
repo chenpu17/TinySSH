@@ -91,6 +91,10 @@ export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }):
   let wheelLatest: WheelEvent | null = null;
   const wheel = (e: WheelEvent) => {
     if (!e.ctrlKey) return;
+    // macOS 按下 Ctrl 键本身会合成一个 ctrlKey=true、deltaY=0 的 wheel 事件
+    // （触控板捏合预备通知）。deltaY=0 不是真实滚动，跳过——否则按下 Ctrl
+    // 就缩一档，连按几次到最小。
+    if (e.deltaY === 0) return;
     e.preventDefault();
     e.stopPropagation();
     // 滚轮是连续手势，不打 toast；事件频率可超屏幕刷新率——rAF 合帧每帧至多一档

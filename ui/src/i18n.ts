@@ -1479,6 +1479,7 @@ const EN: Record<string, string> = {
   "会话已断开——重跑未发送": "Session disconnected — re-run not sent",
   "网络中断（自动重连中）——重跑未发送": "Network down (auto-reconnecting) — re-run not sent",
   "重跑发送失败": "Re-run send failed",
+  "粘贴目标已断开，未发送": "Paste target disconnected — not sent",
   "面板关闭时中断，未完成": "Interrupted — the panel closed before it finished",
   "终端未挂载——接入会话后再定位": "Terminal not mounted — connect to a session before locating",
   "任务目标已更新，Agent 读简报可见": "Goal updated; the agent sees it when reading the brief",

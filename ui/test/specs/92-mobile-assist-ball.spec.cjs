@@ -443,14 +443,91 @@ module.exports = {
     ck.check("拖球落位（内联坐标 + 持久化 + 拖动态不开面板含尾随 click + 左对齐）",
       !!dragInfo && dragInfo.left !== "" && dragInfo.top !== "" && !dragInfo.menuOpen
         && dragInfo.leftAligned && !!dragInfo.stored, JSON.stringify(dragInfo));
-    await openBall(page);
-    ck.eq("拖完点按仍开面板", await page.locator('[data-testid="assist-menu"]').count(), 1);
-    // 落位后开面板几何归一（审核轮高危实锤修复钉住）：菜单绝对定位后 wrap 恒
-    // 等于球盒——开面板球必须原地不动；菜单（含内部滚动钳制）必须完整在视口内。
+
+    // 审核轮 review-geo 高危钉住：拖动位移必须恒定加在起始基准上——若实现
+    // 把「上一帧落点」当新基准、又拿整段累计 total 去加，小步匀速拖会二次
+    // 方跑偏（6 次 move 各 5px 期望 +30 实际 +105）。大位移钳边会掩盖这个
+    // bug，必须小步多才抓得到。用 wrap.offsetLeft/Top 读 DOM 真值对比期望。
+    const dragSmall = await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      if (!ball || !wrap) return null;
+      const b = ball.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const fire = (type, x, y) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 10, isPrimary: true,
+        clientX: x, clientY: y,
+      }));
+      const startL = wrap.offsetLeft, startT = wrap.offsetTop;
+      fire("pointerdown", cx, cy);
+      // 6 次小步各 +5/+0（累计 30px），匀速模拟精拖——bug 会跑出 +105
+      for (let i = 1; i <= 6; i++) fire("pointermove", cx + i * 5, cy);
+      fire("pointerup", cx + 30, cy);
+      return {
+        startL, startT,
+        endL: wrap.offsetLeft, endT: wrap.offsetTop,
+        stored: JSON.parse(localStorage.getItem("ui.assistBallPos") ?? "null"),
+      };
+    });
+    ck.check("小步慢拖落点=起点+累计位移（无二次方跑偏）",
+      !!dragSmall && Math.abs(dragSmall.endL - (dragSmall.startL + 30)) <= 2
+        && Math.abs(dragSmall.endT - dragSmall.startT) <= 2
+        && dragSmall.stored && Math.abs(dragSmall.stored.x - dragSmall.endL) <= 1,
+      JSON.stringify(dragSmall));
+
+    // 鼠标/触控笔拖完的尾随 click 也必须被去重窗吃掉（审核轮真回归钉住）：
+    // 若 dragEnd 只对 touch 置窗，mouse/pen 的 up→click 同步序列会漏过去把
+    // 面板误开。用合成 pointerType=mouse/pen 走完 down→move→up→click 序列，
+    // 断言菜单没开（合成事件 Chrome 不会自动补 click，手动补一发模拟浏览器）。
+    const mouseDrag = await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      if (!ball || !wrap) return null;
+      const b = ball.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const fire = (type, x, y, pt) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: pt, pointerId: 1, isPrimary: true,
+        clientX: x, clientY: y, buttons: type === "pointerup" ? 0 : 1,
+      }));
+      // 鼠标拖 50px
+      fire("pointerdown", cx, cy, "mouse");
+      fire("pointermove", cx - 50, cy, "mouse");
+      fire("pointermove", cx - 100, cy, "mouse");
+      fire("pointerup", cx - 100, cy, "mouse");
+      // 浏览器在 up 后同步派发 click（鼠标/pen 同规）——手动补一发模拟它
+      fire("click", cx - 100, cy, "mouse");
+      const afterMouse = !!document.querySelector('[data-testid="assist-menu"]');
+      // pen 同路径
+      const b2 = ball.getBoundingClientRect();
+      const c2x = b2.left + b2.width / 2, c2y = b2.top + b2.height / 2;
+      fire("pointerdown", c2x, c2y, "pen");
+      fire("pointermove", c2x + 30, c2y, "pen");
+      fire("pointerup", c2x + 30, c2y, "pen");
+      fire("click", c2x + 30, c2y, "pen");
+      const afterPen = !!document.querySelector('[data-testid="assist-menu"]');
+      return { afterMouse, afterPen };
+    });
+    ck.check("鼠标拖完尾随 click 被吃（面板不误开）",
+      !!mouseDrag && !mouseDrag.afterMouse, JSON.stringify(mouseDrag));
+    ck.check("触控笔拖完尾随 click 被吃（面板不误开）",
+      !!mouseDrag && !mouseDrag.afterPen, JSON.stringify(mouseDrag));
+
+    // 反向边界（review-spec 缺口钉住）：去重窗只该吃「同一次手势的尾随
+    // click」，不能把拖完的下一次真实点按也吞掉。等过 150ms 窗再普通 tap
+    // ——面板必须仍能开。这条与「不误开」是同一护栏的两面，缺一则窗要么
+    // 形同虚设要么误伤交互。
+    await page.waitForTimeout(200);
+    await page.click('[data-testid="assist-ball"]');
+    await page.waitForTimeout(150);
+    ck.eq("拖完 150ms 后普通点按仍开面板（去重窗不吞真实点按）",
+      await page.locator('[data-testid="assist-menu"]').count(), 1);
+    await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
+    await page.waitForTimeout(200);
     const ballBefore = await page.locator('[data-testid="assist-ball"]').boundingBox();
+    const vp = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+    await openBall(page);
     const menuBox = await page.locator('[data-testid="assist-menu"]').boundingBox();
     const ballAfterOpen = await page.locator('[data-testid="assist-ball"]').boundingBox();
-    const vp = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
     ck.check("落位后开面板球不跳（top 锚不再向下生长推球）",
       Math.abs(ballAfterOpen.x - ballBefore.x) <= 1 && Math.abs(ballAfterOpen.y - ballBefore.y) <= 1,
       JSON.stringify({ closed: ballBefore, open: ballAfterOpen }));
@@ -534,9 +611,60 @@ module.exports = {
     await page.waitForTimeout(500);
     const afterShrink = await page.evaluate(() => JSON.parse(localStorage.getItem("ui.assistBallPos") ?? "null"));
     ck.check("缩窗后球位重钳进界并回写",
-      beforeShrink && afterShrink && afterShrink.x >= 6 && afterShrink.x <= 500 - 52 - 6
-        && afterShrink.y >= 6 && afterShrink.y <= 411 - 52 - 6,
+      beforeShrink && beforeShrink.x > 500 - 52 - 6   // 前置：缩窗前确实越界（否则断言空转）
+        && afterShrink && afterShrink.x >= 6 && afterShrink.x <= 500 - 52 - 6
+        && afterShrink.y >= 6,
       JSON.stringify({ before: beforeShrink, after: afterShrink }));
+    await page.setViewportSize({ width: 914, height: 411 });
+    await page.waitForTimeout(300);
+
+    // 审核轮 review-geo 中危钉住：拖动中（未松手）缩窗/旋转触发 RO 时，不能
+    // 把 wrap 内联样式闪回存储位——拖中坐标由 dragStart+total 实时驱动，回写
+    // 旧位会让球瞬移一帧。断言拖中缩窗后 DOM left 仍贴着拖动轨迹（不是存储位）。
+    const dragResize = await page.evaluate(async () => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      if (!ball || !wrap) return null;
+      const b = ball.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const fire = (type, x, y) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 11, isPrimary: true,
+        clientX: x, clientY: y,
+      }));
+      const stored = JSON.parse(localStorage.getItem("ui.assistBallPos") ?? "null");
+      fire("pointerdown", cx, cy);
+      fire("pointermove", cx - 60, cy);          // 进拖动态
+      fire("pointermove", cx - 120, cy);         // 拖到一半（未松手）
+      const midL = wrap.offsetLeft;
+      return { storedX: stored?.x ?? null, midL, dragActive: true };
+    });
+    // 拖中（Playwright 侧事件未松）缩窗口——RO 会触发；若实现回写存储位，
+    // wrap.offsetLeft 会瞬回 storedX 而非拖中位
+    await page.setViewportSize({ width: 700, height: 411 });
+    await page.waitForTimeout(400);
+    const duringResize = await page.evaluate(() => {
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      return wrap ? { left: wrap.offsetLeft, inlineLeft: wrap.style.left } : null;
+    });
+    ck.check("拖动中缩窗：球不回跳存储位（RO 让位拖动）",
+      !!duringResize && !!dragResize
+        && Math.abs(duringResize.left - dragResize.midL) <= 200  // 仍贴拖动轨迹而非存储旧位
+        && duringResize.inlineLeft !== "",
+      JSON.stringify({ mid: dragResize?.midL, storedX: dragResize?.storedX, during: duringResize }));
+    // 松手收尾（pointerup 在缩后的新位置落下——pendingClamp 应补钳进新边界）
+    await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const b = ball.getBoundingClientRect();
+      ball.dispatchEvent(new PointerEvent("pointerup", {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 11, isPrimary: true,
+        clientX: b.left + 20, clientY: b.top + 20,
+      }));
+    });
+    await page.waitForTimeout(300);
+    const afterDragResize = await page.evaluate(() => JSON.parse(localStorage.getItem("ui.assistBallPos") ?? "null"));
+    ck.check("拖中缩窗后松手：落点已按新边界补钳",
+      !!afterDragResize && afterDragResize.x <= 700 - 52 - 6 + 1,
+      JSON.stringify(afterDragResize));
     await page.setViewportSize({ width: 914, height: 411 });
     await page.waitForTimeout(300);
 
@@ -578,6 +706,65 @@ module.exports = {
     ck.check("pointercancel 未落位球还原默认锚（清内联、撤左对齐、不落存储）",
       !!cancelProbe && cancelProbe.left === "" && cancelProbe.top === ""
         && !cancelProbe.leftAligned && cancelProbe.stored === null, JSON.stringify(cancelProbe));
+
+    // 同一打断在「已有存储位」下的另一支（review-spec 覆盖缺口：旧断言只跑
+    // pos=null）。先拖一次落位存进 localStorage，再拖到一半 pointercancel——
+    // 必须还原到「某个存储位」（applyWrapPos），不是清回 CSS 默认锚（left 非空、
+    // top 非空即排除 clearWrapPos）。实现上 pos 经 useCallback 闭包读取，连拖
+    // 两段时第二段的 cancel 拿到的可能是上一渲染的旧 pos——「还原到存储位
+    // 之一」是该窗口内的正确语义，不苛求等于最新 localStorage 值。
+    const seeded = await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      if (!ball || !wrap) return null;
+      const b = ball.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const fire = (type, x, y, id) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: id, isPrimary: true,
+        clientX: x, clientY: y,
+      }));
+      // 第一段：拖到 +50/+40 落位（持久化）
+      fire("pointerdown", cx, cy, 12);
+      fire("pointermove", cx + 50, cy + 40, 12);
+      fire("pointerup", cx + 50, cy + 40, 12);
+      const stored = JSON.parse(localStorage.getItem("ui.assistBallPos") ?? "null");
+      if (!stored) return { fail: "no stored pos" };
+      return { stored };
+    });
+    ck.check("第一段拖球已落位持久化（pointercancel pos≠null 前置）",
+      !!seeded && !!seeded.stored, JSON.stringify(seeded));
+    // 分两拍：第一段落位后必须等一次渲染，onMoveEnd 的 setState 才会把新 pos
+    // 喂进 AssistBall——同一 evaluate 里连发第二段，cancel 拿到的 pos prop 还是
+    // null（旧闭包），走的是 clearWrapPos 分支而不是我们要钉的还原分支。
+    await page.waitForTimeout(150);
+    const seeded2 = await page.evaluate(() => {
+      const ball = document.querySelector('[data-testid="assist-ball"]');
+      const wrap = document.querySelector('[data-testid="assist-ball-wrap"]');
+      if (!ball || !wrap) return null;
+      const b2 = ball.getBoundingClientRect();
+      const c2x = b2.left + b2.width / 2, c2y = b2.top + b2.height / 2;
+      const fire = (type, x, y, id) => ball.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: id, isPrimary: true,
+        clientX: x, clientY: y,
+      }));
+      // 第二段：从落点向上拖 -60/-60（避开右边界钳制原地不动的巧合），半途 cancel
+      fire("pointerdown", c2x, c2y, 13);
+      fire("pointermove", c2x - 60, c2y - 60, 13);
+      const midL = wrap.offsetLeft, midT = wrap.offsetTop;
+      fire("pointercancel", c2x - 60, c2y - 60, 13);
+      return {
+        midL, midT,
+        afterL: wrap.offsetLeft, afterT: wrap.offsetTop,
+        leftStyle: wrap.style.left, topStyle: wrap.style.top,
+      };
+    });
+    ck.check("pointercancel 有存储位：还原到存储位不是回默认锚",
+      !!seeded2 && !!seeded?.stored
+        && seeded2.leftStyle !== "" && seeded2.topStyle !== ""     // 未清回 CSS 锚
+        && Math.abs(seeded2.midL - seeded.stored.x) > 5            // 拖中确实离开过
+        && Math.abs(seeded2.afterL - seeded.stored.x) <= 2        // 还原落点=存储位
+        && Math.abs(seeded2.afterT - seeded.stored.y) <= 2,
+      JSON.stringify({ stored: seeded?.stored, second: seeded2 }));
 
     // 尾段回到桌面形态再关开关：审核轮后「在桌面端显示助力球」仅桌面渲染
     //（移动端常显无需开关），android 标记下点不到。isMobilePlatform 每次渲染

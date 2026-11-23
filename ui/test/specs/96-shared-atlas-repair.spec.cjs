@@ -49,8 +49,14 @@ module.exports = {
     }, TEXT);
     ck.check("主终端与 tmux 格子均已建立", !setup.missing, JSON.stringify(setup));
     if (setup.missing) return;
-    if (!setup.shared || !setup.canProbe) {
-      ck.check("当前环境没有可探测的共享 WebGL 图集——跳过像素探针", true, JSON.stringify(setup));
+    // 探针可行性是测试基建前提（无 GPU 时 _renderService._renderer 链是空的，
+    // canProbe=false——此时 shared 必 false 但非功能回归）。先把「没探针跳过」
+    // 与「有探针但共享失效」分开：canProbe 可用时才断言 shared，避免无 GPU
+    // 环境被误判成功能坏（旧 ck.check(...,true) 把两条混在一起、WebGL 坏也
+    // 静默绿的缺陷反过来——现在「共享失效」是硬失败，「无探针」是显式跳过）。
+    if (!setup.canProbe) {
+      ck.check("当前环境没有可探测的 WebGL 探针（无 GPU/renderer 结构改名）——跳过像素验证",
+        true, JSON.stringify({ canProbe: setup.canProbe }));
       return;
     }
     ck.check("探针前提：两个终端确实共享同一字形图集", setup.shared, JSON.stringify(setup));

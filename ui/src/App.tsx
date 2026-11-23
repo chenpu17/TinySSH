@@ -8132,7 +8132,14 @@ export default function App() {
     }
   };
 
-  const createSession = async (host: Host, intoSplit = false, draft?: HostDraft, localShellPath?: string, localNew = true) => {
+  const createSession = async (
+    host: Host,
+    intoSplit = false,
+    draft?: HostDraft,
+    localShellPath?: string,
+    localNew = true,
+    observer?: { onAttempt?: (attemptId: string) => void; onDone?: (sid: string | null) => void },
+  ) => {
     // KI-059：保活前台服务的常驻通知需要 POST_NOTIFICATIONS（Android 13+）。
     // 在用户点连接（前台）这一帧申请，每进程一次；拒绝/失败不阻塞建连——
     // 通知被拒时服务仍可运行，只是通知不可见。
@@ -8149,7 +8156,10 @@ export default function App() {
     // 核心幂等，最终出现两个终端。锁按 hostId 粒度且只在本次调用生命周期内持有，
     // 不挡用户串行再点一次「用指定 shell 新开」。
     const lockId = host.id;
-    if (pendingHostsRef.current.has(lockId)) return false;
+    if (pendingHostsRef.current.has(lockId)) {
+      observer?.onDone?.(null);
+      return false;
+    }
     pendingHostsRef.current.add(lockId);
     // 本轮：任何建连路径都恢复「从最近连接隐藏」的主机——重新连了就是「最近」
     setRecentHidden(host.id, false);
@@ -8180,6 +8190,7 @@ export default function App() {
         : invoke("begin_connection", { hostId: host.id, opts })) as AttemptInfo;
       if (draft && a.host_id) host = { ...host, id: a.host_id };
       attemptId = a.attempt_id;
+      observer?.onAttempt?.(a.attempt_id);
       if (draft) {
         // 应答回来立刻记 attempt_id（不等到 settle）：✕/Esc 此刻起能真取消。
         quickAttemptRef.current = a.attempt_id;
@@ -8192,7 +8203,12 @@ export default function App() {
         }
       }
       settleAttempt(a);
-      const final = await waitForAttempt(a.attempt_id);
+      // 同步 demo/本机可能已把终态放进缓冲：先取缓冲，再登记 waiter，
+      // 杜绝「settle 已消费 waiter、waitForAttempt 后注册」的白等窗口。
+      const bufferedFinal = attemptFinalRef.current.get(a.attempt_id);
+      const final = bufferedFinal
+        ? (attemptFinalRef.current.delete(a.attempt_id), bufferedFinal)
+        : await waitForAttempt(a.attempt_id);
       if (final.phase === "Ready" && final.session_id) {
         setLastFailed(null);
         // 十五轮：「重连上次会话」记忆的武装点——只有用户主动建连成功才置位；
@@ -8204,6 +8220,7 @@ export default function App() {
           // 挂起状态，非已退役的预武装模式）：这条连接就是副格，建好即进分屏
           await enterSplitWith(final.session_id);
           await attachSession(final.session_id);
+          observer?.onDone?.(final.session_id);
           pushToast("ok", t("已连接 {0}（{1}侧分屏）", host.name, splitDirRef.current === "tb" ? t("下") : t("右")));
           return;
         }
@@ -8227,6 +8244,7 @@ export default function App() {
           pushToast("ok", t("已连接 {0}——点击标签进入", host.name));
         }
         // 返回值供快速连接表单决定是否关闭对话框（失败时保留已填内容重试）
+        observer?.onDone?.(final.session_id);
         return true;
       } else if (final.phase === "Cancelled") {
         pushToast("info", t("已取消连接 {0}", host.name));
@@ -8275,6 +8293,7 @@ export default function App() {
       // 同上：移动端主机栏内看不到横幅（KI-074）
       if (isMobilePlatform()) pushToast("err", t("连接 {0} 失败", host.name) + "：" + reason);
     } finally {
+      observer?.onDone?.(null);
       pendingHostsRef.current.delete(lockId);
       if (draft && attemptId && quickAttemptRef.current === attemptId) quickAttemptRef.current = null;
       if (attemptId) {
@@ -8292,13 +8311,29 @@ export default function App() {
     return false;
   };
 
+  const waitMountedTerminal = async (sid: string) => {
+    const t0 = Date.now();
+    for (;;) {
+      const entry = termsRef.current.get(sid);
+      if (entry) return entry;
+      if (Date.now() - t0 > 5000) return null;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  const closeSessionForFailedRestore = async (sid: string) => {
+    try { await invoke("close_session", { sid }); } catch { /* 已取消/关闭 */ }
+    await refreshLists();
+  };
+
   // —— P3 会话现场恢复：欢迎页一键入口。逐条目走既有建连全流程（TOFU/双因素
   // 原样把关，点了才连），新会话 term 挂载后先写恢复公告行、再 applyCheckpoint
-  // 重放快照（历史进滚回、可视区/光标/模式复位）。主机已删或 20s 内未见新会话
-  // 如实跳过并 toast；恢复完成后清空数据源（现场已被消费，陈旧快照不复活）。
+  // 重放快照（历史进滚回、可视区/光标/模式复位）。每条恢复直接持有 attempt ID：
+  // 普通连接 20s 无进展即取消；门等待不计时；取消恢复会结算在途 attempt，不留下
+  // 迟到会话。部分成功的失败条目保留，陈旧快照不被误消费。
   const restoreScenes = async (entries: RestoreEntry[]) => {
     if (restoringRef.current) return;
     restoringRef.current = true;
+    restoreCancelRef.current = false;
     setRestoring({ done: 0, total: entries.length });
     let restored = 0;
     const skipped: string[] = [];
@@ -8309,29 +8344,90 @@ export default function App() {
     // 部分成功不能把失败条目一起清掉：此前 restored>0 就 setRestoreEntries([])，
     // 一台连不上，另一台的现场入口也消失，失败条目本会话内再也无法重试。
     const failedEntries: RestoreEntry[] = [];
+    let currentEntry = 0;
     try {
       for (let i = 0; i < entries.length; i++) {
+        currentEntry = i;
         const e = entries[i];
+        // 异常收尾也不能丢当前/后续条目；成功消费后前移游标。
+        failedEntries.push(e);
+        if (restoreCancelRef.current) {
+          failedEntries.push(...entries.slice(i + 1));
+          break;
+        }
         // 遮罩进度「正在处理 {i+1}/{total}」（审核轮：done=i 曾让单条场景恒显
         // 「已处理 0/1」看着像卡死——改为当前正在处理的条目序号，跳过路径同在计数内）
         setRestoring({ done: i + 1, total: entries.length });
         const host = hosts.find((x) => x.id === e.host_id);
-        if (!host) { skipped.push(e.host_id); failedEntries.push(e); continue; }
-        const before = new Set(sessionsRef.current.map((x) => x.id));
-        void createSession(host);
-        const sid = await new Promise<string | null>((resolve) => {
-          const t0 = Date.now();
-          const tick = () => {
-            const fresh = sessionsRef.current.find((x) => !before.has(x.id) && x.host_id === e.host_id);
-            if (fresh && termsRef.current.has(fresh.id)) return resolve(fresh.id);
-            if (Date.now() - t0 > 20000) return resolve(null);
-            setTimeout(tick, 250);
-          };
-          tick();
+        if (!host) {
+          // 主机已删不是可重试失败：入口只展示主机在场的条目，若保留会变成
+          // 永远点不到的残项。明确消费，避免依赖循环末尾的 pop 碰巧清掉。
+          failedEntries.pop();
+          skipped.push(e.host_id);
+          continue;
+        }
+        let attemptId: string | null = null;
+        let connectionSettled = false;
+        let resolveConnection: (sid: string | null) => void = () => {};
+        const connected = new Promise<string | null>((resolve) => { resolveConnection = resolve; });
+        const settleConnection = (sid: string | null) => {
+          if (connectionSettled) return;
+          connectionSettled = true;
+          resolveConnection(sid);
+        };
+        void createSession(host, false, undefined, undefined, true, {
+          onAttempt: (id) => {
+            attemptId = id;
+            restoreAttemptRef.current = id;
+            // begin_connection 应答前点了取消：拿到真实 ID 后立即补取消。
+            if (restoreCancelRef.current) void invoke("cancel_connection", { attemptId: id }).catch(() => {});
+          },
+          onDone: settleConnection,
         });
-        if (!sid) { skipped.push(host.name); failedEntries.push(e); continue; }
-        const entry = termsRef.current.get(sid);
-        if (!entry) { skipped.push(host.name); failedEntries.push(e); continue; }
+        const t0 = Date.now();
+        let gateMs = 0;
+        let gateSince: number | null = null;
+        let timedOut = false;
+        let cancelRequested = false;
+        for (;;) {
+          const gated = hostKeyQueueRef.current.some((g) => g.attempt_id === attemptId)
+            || authPromptQueueRef.current.some((g) => g.attempt_id === attemptId);
+          const now = Date.now();
+          if (gated) {
+            if (gateSince === null) gateSince = now;
+          } else if (gateSince !== null) {
+            gateMs += now - gateSince;
+            gateSince = null;
+          }
+          if (restoreCancelRef.current && !cancelRequested) {
+            cancelRequested = true;
+            if (attemptId) await invoke("cancel_connection", { attemptId }).catch(() => {});
+          }
+          if (!cancelRequested && !gated && now - t0 - gateMs > 20000) {
+            timedOut = true;
+            cancelRequested = true;
+            if (attemptId) await invoke("cancel_connection", { attemptId }).catch(() => {});
+          }
+          if (connectionSettled) break;
+          await Promise.race([connected, new Promise((r) => setTimeout(r, 100))]);
+        }
+        restoreAttemptRef.current = null;
+        const sid = await connected;
+        if (!sid || timedOut || restoreCancelRef.current) {
+          // 超时/取消时核心已经（或将）结算取消；若恰逢已 Ready，cancel_connection
+          // 的 already_ready 契约负责关闭，绝不重放一个已不属于恢复流程的迟到会话。
+          if (sid) await closeSessionForFailedRestore(sid);
+          if (timedOut) skipped.push(host.name);
+          continue;
+        }
+        const entry = await waitMountedTerminal(sid);
+        if (!entry || restoreCancelRef.current) {
+          // 挂载失败，或 Ready→挂载窗口内点了取消：都必须回收这条恢复连接，
+          // 避免留下没有快照、没有提示的裸会话。
+          await closeSessionForFailedRestore(sid);
+          if (!restoreCancelRef.current) skipped.push(host.name);
+          continue;
+        }
         // KI-103：回填快照里的标签自定名——恢复重建的是新 sid，名字须重新附着。
         // 同时再同步一次后端句柄：本次恢复的会话若再次受控退出，快照仍带名（同生同灭）。
         if (e.tab_name && e.tab_name.trim()) {
@@ -8349,7 +8445,18 @@ export default function App() {
         // #26：快照只记画面，tmux 是活的远端现场——主视图按名重新接入（既有
         // tmux_restore 链路：重连全机器 + capture-pane 补史 + 注入 attach），
         // 面板格子按快照序逐格重开。旧快照没有这些字段，行为与之前一致。
-        const s = sessionsRef.current.find((x) => x.id === sid);
+        // createSession 的 onDone 可早于 React 的 sessions effect（attach 里首个
+        // await 会让 effect 抢跑，但这不是契约）。直接查权威会话表；查不到时等一帧
+        // 让已提交的列表刷新落到 ref，不能因陈旧闭包跳过快照里的 tmux 恢复。
+        let s = sessionsRef.current.find((x) => x.id === sid);
+        if (!s) {
+          const listed = (await invoke("list_sessions")) as SessionInfo[];
+          s = listed.find((x) => x.id === sid);
+          if (!s) {
+            await new Promise((r) => setTimeout(r, 0));
+            s = sessionsRef.current.find((x) => x.id === sid);
+          }
+        }
         if (s && e.tmux_session) {
           await restoreTmuxRef.current?.(s, e.tmux_session);
         }
@@ -8377,15 +8484,19 @@ export default function App() {
           }
         }
         restored++;
+        failedEntries.pop(); // 成功条目已消费；失败/取消仍由预压项保留。
       }
     } catch {
       // 审核轮：恢复中途异常（重放/tmux 重接/开格任一抛出）不再外抛——外抛会跳过
       // 下面的汇总 toast 与失败条目收窄（unhandled rejection、遮罩凭空消失无交代）。
-      // 异常条目不计 restored、也不在 skipped 名单里，如实损失；已处理部分照常结算。
+      // 异常条目不计 restored；当前及后续快照全部留在入口里供重试，不能凭空消费。
+      failedEntries.push(...entries.slice(currentEntry + 1));
     } finally {
       restoringRef.current = false;
+      restoreAttemptRef.current = null;
       setRestoring(null);
     }
+    if (restoreCancelRef.current) pushToast("info", t("已取消恢复，未处理的现场仍保留，可稍后重试"));
     if (restored > 0) pushToast("ok", t("已恢复 {0} 个会话现场", restored));
     if (skipped.length > 0) pushToast("err", t("{0} 个现场未恢复（主机已删或连接未就绪）：{1}——未恢复的条目仍保留在上次现场入口，可重试", skipped.length, skipped.join(t("、"))));
     if (paneGone.length > 0) pushToast("err", t("{0} 个 tmux 会话已不在服务器，已跳过：{1}", String(paneGone.length), paneGone.join(t("、"))));
@@ -8394,6 +8505,14 @@ export default function App() {
     setRestoreEntries(failedEntries);
   };
   const restoringRef = useRef(false);
+  const restoreCancelRef = useRef(false);
+  const restoreAttemptRef = useRef<string | null>(null);
+
+  const cancelRestore = () => {
+    restoreCancelRef.current = true;
+    const id = restoreAttemptRef.current;
+    if (id) void invoke("cancel_connection", { attemptId: id }).catch(() => {});
+  };
 
   // §302/§6.2：等待中可取消——终态经核心串行裁决，已取消只在核心确认后呈示。
   // 按 attemptId 取消（draft 建连的真实 attempt 无法用 hostId 反查），
@@ -10403,6 +10522,7 @@ export default function App() {
               <div className="restore-spin spin" aria-hidden="true" />
               <b className="restore-title">{t("正在恢复上次现场")}</b>
               <span className="restore-sub">{t("正在处理 {0}/{1}，恢复完成后才能继续操作", restoring.done, restoring.total)}</span>
+              <button className="btn" data-testid="restore-cancel" onClick={cancelRestore}>{t("取消恢复")}</button>
             </div>
           </div>
         )}
@@ -10479,6 +10599,7 @@ export default function App() {
                     </div>
                   </>
                 )}
+                {restoring && <div className="hk-actions"><button className="ghost" data-testid="restore-gate-cancel" onClick={cancelRestore}>{t("取消整个恢复")}</button></div>}
               </div>
             </div>
           );
@@ -10507,6 +10628,7 @@ export default function App() {
                   <button className="ghost" onClick={() => void answerAuthPrompt(ap.id, "")}>{t("取消认证")}</button>
                 </div>
                 <div className="dim" style={{ marginTop: 6, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("取消将终止本次连接认证。密码本身已在连接时自动填入，无需重复输入。")}</div>
+                {restoring && <div className="hk-actions"><button className="ghost" data-testid="restore-gate-cancel" onClick={cancelRestore}>{t("取消整个恢复")}</button></div>}
               </div>
             </div>
           );
@@ -11012,7 +11134,11 @@ export default function App() {
                         const target = pasteConfirm.paneKey
                           ? paneTermsRef.current.get(pasteConfirm.paneKey)?.term
                           : termsRef.current.get(pasteConfirm.sid)?.term;
-                        target?.paste(pasteConfirm.text);
+                        // 目标格/主 term 在确认框弹出期间已死（tmux kill 对账、会话
+                        // 关闭）——可选链会静默吞掉确认后的字节，用户以为已发送。
+                        // 出声告知（与 rerun 分支的 .catch toast 同款口径）。
+                        if (target) target.paste(pasteConfirm.text);
+                        else pushToast("err", t("粘贴目标已断开，未发送"));
                       }
                       finally { queueMicrotask(() => { bcastSuppressRef.current = false; }); }
                     }

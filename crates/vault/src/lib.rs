@@ -1602,6 +1602,16 @@ impl Vault {
                 let fp = key
                     .public_key()
                     .fingerprint(russh::keys::ssh_key::HashAlg::Sha256);
+                // 审核轮 review-vault P1：原实现把「加密 PEM 原文」入库
+                // （pem.clone()），建连时 transport-ssh 用 decode_secret_key(
+                // secret, None) 无口令解码 → 带 passphrase 的私钥导入后必
+                // AuthFailed。这里剥掉 passphrase 重编码为 OpenSSH 明文格式
+                // 再入库——vault 自己的 seal(master) 已是保护层，PEM 内的
+                // passphrase 是冗余。
+                let pem_plain = key
+                    .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+                    .map_err(|_| Error::InvalidInput("re-encode key".into()))?
+                    .to_string();
                 (
                     label.clone(),
                     if key.algorithm() == russh::keys::ssh_key::Algorithm::Ed25519 {
@@ -1611,7 +1621,7 @@ impl Vault {
                     } else {
                         IdentityKind::Ecdsa
                     },
-                    pem.clone(),
+                    pem_plain,
                     format!("{fp}"),
                     KeyKind::Ed25519,
                 )
@@ -2287,6 +2297,42 @@ mod tests {
         assert!(meta.fingerprint.starts_with("SHA256:"));
         let pem = v.identity_pem(&meta.id).unwrap();
         assert!(pem.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"));
+    }
+
+    #[test]
+    fn identity_import_with_passphrase_decrypts_for_reuse() {
+        // 审核轮 review-vault P1 钉住：导入带 passphrase 的私钥后，读回的
+        // secret 必须能被无口令 decode_secret_key 解出——否则建连时 transport-ssh
+        // 用 decode_secret_key(secret, None) 必 AuthFailed。修法是导入时剥
+        // passphrase 重编码为 OpenSSH 明文再 seal 入库（vault seal 已是保护层）。
+        use russh::keys::ssh_key::LineEnding;
+        // 复用生产路径的 rand_core-0.10 OS 熵源适配器，覆盖随机生成与加密两条 API。
+        let mut csprng = OsRandom10;
+        let plain =
+            russh::keys::PrivateKey::random(&mut csprng, russh::keys::Algorithm::Ed25519).unwrap();
+        let encrypted_pem = plain
+            .encrypt(&mut csprng, b"test-passphrase")
+            .unwrap()
+            .to_openssh(LineEnding::LF)
+            .unwrap()
+            .to_string();
+
+        let (_dir, v) = vault();
+        let meta = v
+            .create_identity(&IdentityReq::Import {
+                label: "imported".into(),
+                pem: encrypted_pem,
+                passphrase: Some("test-passphrase".into()),
+            })
+            .unwrap();
+        let stored_pem = v.identity_pem(&meta.id).unwrap();
+        // 无口令解码必须成功——这是建连路径用的姿势
+        let decoded = russh::keys::decode_secret_key(&stored_pem, None)
+            .expect("stored pem must decode without passphrase");
+        assert_eq!(
+            decoded.fingerprint(russh::keys::HashAlg::Sha256),
+            plain.public_key().fingerprint(russh::keys::HashAlg::Sha256)
+        );
     }
 
     #[test]

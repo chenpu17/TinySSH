@@ -815,16 +815,28 @@ impl LocalPtyChannel {
         std::thread::spawn(move || {
             let mut reader = reader;
             let mut buf = [0u8; 8192];
+            // 跨 read 分片兜底（审核轮 review-transport P2）：`\x1b[6n`（DSR）若被拆
+            // 成 `ESC[6` + `n` 两片，单缓冲 windows(4) 永远匹配不到，conhost 等不到
+            // CPR 会卡住首屏。保留上片尾最多 3 字节与本片拼接后再扫，覆盖切点。
+            let mut carry = [0u8; 3];
+            let mut carry_len = 0usize;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if buf[..n].windows(4).any(|w| w == b"\x1b[6n") {
+                        // 把 carry 尾与本片头拼起来扫跨片的 DSR
+                        let mut scan = Vec::with_capacity(carry_len + n);
+                        scan.extend_from_slice(&carry[..carry_len]);
+                        scan.extend_from_slice(&buf[..n]);
+                        if scan.windows(4).any(|w| w == b"\x1b[6n") {
                             if let Ok(mut w) = writer.lock() {
                                 let _ = w.write_all(b"\x1b[1;1R");
                                 let _ = w.flush();
                             }
                         }
+                        // 续尾巴：本片末 3 字节留给下一片拼接
+                        carry_len = n.min(3);
+                        carry[..carry_len].copy_from_slice(&buf[n - carry_len..n]);
                         if tx.send(buf[..n].to_vec()).is_err() {
                             break;
                         }

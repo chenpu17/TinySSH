@@ -16,6 +16,34 @@ pub use osc::{OscEvent, OscScanner};
 pub use screen::{Screen, ScreenConfig};
 pub use wait::{ScreenWaitErr, ScreenWaitOk};
 
+/// 跨 feed 的 ANSI/UTF-8 增量解码器。传输分片可能落在多字节字符中间，
+/// 不能逐片 `from_utf8_lossy`；仅保留末尾至多 3 字节的合法 UTF-8 前缀，
+/// 下一片到达后再交给同一 ANSI 剥离逻辑。
+#[derive(Debug, Default)]
+pub struct AnsiTextDecoder {
+    carry: Vec<u8>,
+}
+
+impl AnsiTextDecoder {
+    pub fn strip(&mut self, input: &[u8]) -> String {
+        let mut data = std::mem::take(&mut self.carry);
+        data.extend_from_slice(input);
+        let mut split = data.len();
+        // 只需检查末尾 4 字节：error_len=None 表示语法合法但未完整，
+        // 非法字节（error_len=Some）仍按原规则立即输出 U+FFFD。
+        for start in data.len().saturating_sub(3)..data.len() {
+            if matches!(data[start], 0xc2..=0xf4)
+                && matches!(std::str::from_utf8(&data[start..]), Err(e) if e.error_len().is_none())
+            {
+                split = start;
+                break;
+            }
+        }
+        self.carry.extend_from_slice(&data[split..]);
+        strip_ansi(&data[..split])
+    }
+}
+
 /// 剥离 ANSI 转义序列（渲染后文本域，wait_output 匹配与 ExecResult 输出用）。
 pub fn strip_ansi(input: &[u8]) -> String {
     let mut out = String::with_capacity(input.len());
@@ -94,7 +122,7 @@ pub fn strip_ansi(input: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_ansi;
+    use super::{strip_ansi, AnsiTextDecoder};
 
     #[test]
     fn strips_basic_sequences() {
@@ -118,6 +146,24 @@ mod tests {
             out.chars().filter(|&c| c != '\u{fffd}').collect::<String>(),
             "abc"
         );
+    }
+
+    #[test]
+    fn streaming_decoder_carries_utf8_across_every_split() {
+        let raw = "中文✓abc".as_bytes();
+        for split in 0..=raw.len() {
+            let mut decoder = AnsiTextDecoder::default();
+            let out = decoder.strip(&raw[..split]) + &decoder.strip(&raw[split..]);
+            assert_eq!(out, "中文✓abc", "split={split}");
+        }
+    }
+
+    /// 不完整前缀可等待；确定的非法字节仍立即替换，不被 carry 吞掉。
+    #[test]
+    fn streaming_decoder_rejects_invalid_bytes_without_delay() {
+        let mut decoder = AnsiTextDecoder::default();
+        assert_eq!(decoder.strip(&[0xff, b'a', 0xe4, 0xb8]), "\u{fffd}a");
+        assert_eq!(decoder.strip(&[0xad, b'b']), "中b");
     }
 
     /// 大输入必须线性：旧实现对每字节校验整个剩余切片（O(n²)），1MB 要跑
