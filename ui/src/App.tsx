@@ -56,11 +56,10 @@ import { recordsRangeSince } from "./components/records-pane";
 import { MonitorView, type MonitorCardHost } from "./components/monitor-view";
 import { isMonitorPaused, setMonitorPaused as setStoreMonitorPaused, setMonEnabled, syncMonitorTargets } from "./monitor-store";
 import {
-  IconSliders, IconPlus, IconX, IconStop, IconPencil, IconTrash, IconStar,
-  IconChevronUp, IconChevronDown, IconTerminal,
-  IconArrowDown, IconUpload, IconDownload, IconInbox, IconSearch, IconLoader,
-  IconFolder, IconRefresh, IconMaximize, IconMinimize,
-  IconServer, IconBot, IconUsers, IconShuffle, IconRows, IconBlocks, IconGauge,
+  IconSliders, IconPlus, IconX, IconChevronUp, IconChevronDown,
+  IconDownload, IconFolder, IconMaximize, IconMinimize,
+  IconServer, IconBot, IconUsers, IconBlocks, IconGauge,
+  IconCommand, IconLink, IconNetwork, IconRoute, IconHistory,
 } from "./icons";
 
 // macOS 标题栏融合（T33/R12）：Overlay 红绿灯悬浮在 38px 标题区上，.titlebar 留安全区。
@@ -9842,7 +9841,7 @@ export default function App() {
           <button className={"rail-btn" + (fleetOpen ? " ts-open" : "")} data-testid="rail-fleet"
             title={t("跨主机编排（Fleet）：派发任务给各会话的执行 agent 并汇总")} aria-label={t("跨主机编排")} aria-pressed={fleetOpen}
             onClick={() => toggleFleet(!fleetOpen)}>
-            <IconShuffle size={17} />
+            <IconNetwork size={17} />
           </button>
           <button className={"rail-btn" + (monitorOpen ? " ts-open" : "")} data-testid="rail-monitor"
             title={t("资源监控大屏：多服务器 CPU/内存/网络 与 Ascend NPU{0}", monGeneral || monNpu ? t("（后台采集中）") : "")} aria-label={t("资源监控大屏")} aria-pressed={monitorOpen}
@@ -10344,7 +10343,7 @@ export default function App() {
           {/* 十九轮：命令面板入口（⌘K / Ctrl+K 的可发现锚点）。快捷键是 native 域
               能力（demo 域 actions.ts 有 native 门），浏览器里不广告不存在的键 */}
           <button className="ghost icon-btn" title={inTauri ? t("命令面板（{0}）", formatBinding(keymap.palette, isMacPlatform())) : t("命令面板")} aria-label={t("命令面板")} data-testid="palette-open"
-            onClick={() => setPaletteOpen(true)}><IconSearch size={14} /></button>
+            onClick={() => setPaletteOpen(true)}><IconCommand size={14} /></button>
           {/* 专注模式小工具栏（用户反馈：连接现有配置主机与文件是最常用的两件事）。
               会话工具栏整条隐藏后，这两个入口在标签条补位；仍不进 .tabbar-admin，
               保持专注态的克制。连接菜单用 .tools-menu，随 zenPin 钉住标签条。 */}
@@ -10465,7 +10464,7 @@ export default function App() {
               tab-new 是 native 门动作，浏览器 demo 不广告不存在的键（同命令面板钮） */}
           <button className="ghost icon-btn tabbar-admin" title={inTauri ? t("新建连接（{0}）", formatBinding(keymap["tab-new"], isMacPlatform())) : t("新建连接")} aria-label={t("新建连接")} onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setShowQuickConnect(false); setPrefillEntry(null); }}><IconPlus size={14} /></button>
           {/* 十七轮：快速连接——不存主机一次性建连 */}
-          <button className="ghost icon-btn tabbar-admin" title={t("快速连接（不保存主机，临时连接一次）")} aria-label={t("快速连接")} data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={14} /></button>
+          <button className="ghost icon-btn tabbar-admin" title={t("快速连接（不保存主机，临时连接一次）")} aria-label={t("快速连接")} data-testid="quick-connect-open" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconLink size={14} /></button>
         </div>
         {connError && (
           <div className="conn-error">
@@ -11570,11 +11569,11 @@ export default function App() {
           {remoteOpen && (
             <button className={"rail-btn" + (rightPanel === "forwards" ? " ts-open" : "")} data-testid="rb-forwards"
               title={t("端口转发")} aria-label={t("端口转发面板")} aria-pressed={rightPanel === "forwards"}
-              onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}><IconShuffle size={17} /></button>
+              onClick={() => setRightPanel(rightPanel === "forwards" ? null : "forwards")}><IconRoute size={17} /></button>
           )}
           <button className={"rail-btn" + (rightPanel === "log" ? " ts-open" : "")} data-testid="rb-log"
             title={t("活动记录")} aria-label={t("活动记录面板")} aria-pressed={rightPanel === "log"}
-            onClick={() => setRightPanel(rightPanel === "log" ? null : "log")}><IconRows size={17} /></button>
+            onClick={() => setRightPanel(rightPanel === "log" ? null : "log")}><IconHistory size={17} /></button>
           <button className={"rail-btn" + (rightPanel === "blocks" ? " ts-open" : "")} data-testid="rb-blocks"
             title={t("命令块")} aria-label={t("命令块面板")} aria-pressed={rightPanel === "blocks"}
             onClick={() => setRightPanel(rightPanel === "blocks" ? null : "blocks")}><IconBlocks size={17} /></button>

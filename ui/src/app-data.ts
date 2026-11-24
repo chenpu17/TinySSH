@@ -2,7 +2,7 @@
 // 终端键入辅助、搜索/分屏/字号/色板常量与主题预设、tauri 订阅兜底与弹窗焦点
 // 陷阱 hook。纯函数/常量为主（唯一带 React 的是 useDialogFocus）；不含组件。
 // 新增标签必须与后端审计动作同步（见 AUDIT_LABELS 注）。
-import { IconSliders, IconPencil, IconTerminal, IconSearch, IconStar, IconInbox, IconClock, IconRefresh } from "./icons"; // settingsCatIcon 图标映射用（值引用，无 JSX）
+import { IconPalette, IconKeyboard, IconTerminal, IconZap, IconKeyRound, IconPlug, IconHistory, IconInfo } from "./icons"; // settingsCatIcon 图标映射用（值引用，无 JSX）
 import { useEffect, type RefObject } from "react";
 import { invoke, MkChannel } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
@@ -68,9 +68,9 @@ export const SETTINGS_CATS: [SettingsCat, string, string][] = [
 ];
 export const settingsCatLabel = (c: SettingsCat): string => t(SETTINGS_CATS.find(([id]) => id === c)?.[1] ?? c);
 export const settingsCatDesc = (c: SettingsCat): string => SETTINGS_CATS.find(([id]) => id === c)?.[2] ?? "";
-export const settingsCatIcon: Record<SettingsCat, typeof IconSliders> = {
-  appearance: IconSliders, keys: IconPencil, terminal: IconTerminal, triggers: IconSearch,
-  credentials: IconStar, agent: IconInbox, records: IconRefresh, about: IconClock,
+export const settingsCatIcon: Record<SettingsCat, typeof IconPalette> = {
+  appearance: IconPalette, keys: IconKeyboard, terminal: IconTerminal, triggers: IconZap,
+  credentials: IconKeyRound, agent: IconPlug, records: IconHistory, about: IconInfo,
 };
 // 最近处理（已决审批）六态标签：编辑后批准/超时/作废此前都被误显示成「✕ 拒绝」。
 export const approvalResolvedLabel: Record<string, { text: string; cls: string }> = {

@@ -11,7 +11,7 @@ import { byName, hostMatches, phaseText } from "../app-data";
 import { t } from "../i18n";
 import { SshConfigImportPanel } from "./ssh-import";
 import {
-  IconChevronUp, IconLoader, IconMore, IconPlus, IconRefresh, IconSearch, IconSliders, IconUpload, IconX,
+  IconChevronUp, IconLoader, IconMore, IconPlus, IconRotateCcw, IconSearch, IconSliders, IconImport, IconX,
 } from "../icons";
 
 export interface HostbarProps {
@@ -151,7 +151,7 @@ export function Hostbar({
           </div>
           <button className="ghost icon-btn" title={showImport ? t("收起导入") : t("导入 ~/.ssh/config")} aria-label={showImport ? t("收起导入") : t("导入 ~/.ssh/config")}
             onClick={() => { setShowImport(!showImport); setShowAddHost(false); }}>
-            {showImport ? <IconChevronUp size={14} /> : <IconUpload size={14} />}
+            {showImport ? <IconChevronUp size={14} /> : <IconImport size={14} />}
           </button>
           <button className="ghost icon-btn" title={showAddHost ? t("收起表单") : t("添加主机")} aria-label={showAddHost ? t("收起表单") : t("添加主机")}
             onClick={() => { setShowAddHost(!showAddHost); setShowImport(false); setEditingHost(null); setPrefillEntry(null); }}>
@@ -181,7 +181,7 @@ export function Hostbar({
             <div className="side-quiet host-load-err" role="alert" data-testid="hostbar-load-error">
               <div>{t("主机列表读取失败——当前列表可能为空或不是最新。")}</div>
               <button className="ghost" style={{ marginTop: 6 }} onClick={() => refreshLists()}>
-                <IconRefresh size={12} /> {t("重试")}
+                <IconRotateCcw size={12} /> {t("重试")}
               </button>
             </div>
           )}
@@ -273,7 +273,7 @@ export function Hostbar({
                           title={t("重试连接 {0}", h.name)}
                           disabled={connectingIds.has(h.id)}
                           onClick={(e) => { e.stopPropagation(); activate(); }}>
-                          <IconRefresh size={11} /> {t("重试连接")}
+                          <IconRotateCcw size={11} /> {t("重试连接")}
                         </button>
                       </div>
                     )}

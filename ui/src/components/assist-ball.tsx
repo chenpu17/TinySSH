@@ -34,7 +34,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { t } from "../i18n";
-import { IconChevronUp, IconChevronDown, IconArrowDown, IconRows, IconMinimize, IconCopy } from "../icons";
+import { IconChevronsUp, IconChevronsDown, IconArrowDownToLine, IconPanelTop, IconMinimize, IconClipboard } from "../icons";
 
 /** 球径三档（px）：设置「助力球大小」选择，--assist-ball-size 落地。 */
 export const ASSIST_BALL_SIZES = { s: 32, m: 40, l: 52 } as const;
@@ -439,22 +439,22 @@ export function AssistBall({
             <div className="assist-section">
               <AssistButton role="menuitem" className="assist-item assist-scroll"
                 onActivate={run(onPageUp)}>
-                <span className="assist-ico"><IconChevronUp /></span>
+                <span className="assist-ico"><IconChevronsUp /></span>
                 <span className="assist-label">{t("上翻一页")}</span>
               </AssistButton>
               <AssistButton role="menuitem" className="assist-item assist-scroll"
                 onActivate={run(onPageDown)}>
-                <span className="assist-ico"><IconChevronDown /></span>
+                <span className="assist-ico"><IconChevronsDown /></span>
                 <span className="assist-label">{t("下翻一页")}</span>
               </AssistButton>
               <AssistButton role="menuitem" className="assist-item assist-scroll"
                 onActivate={run(onBottom)}>
-                <span className="assist-ico"><IconArrowDown /></span>
+                <span className="assist-ico"><IconArrowDownToLine /></span>
                 <span className="assist-label">{t("回到底部")}</span>
               </AssistButton>
               <AssistButton role="menuitem" className="assist-item assist-scroll"
                 onActivate={run(onPaste)}>
-                <span className="assist-ico"><IconCopy /></span>
+                <span className="assist-ico"><IconClipboard /></span>
                 <span className="assist-label">{t("粘贴剪贴板")}</span>
               </AssistButton>
             </div>
@@ -503,7 +503,7 @@ export function AssistBall({
                     className={"assist-item assist-scroll" + (chromeOpen ? " ts-open" : "")}
                     pressed={chromeOpen}
                     onActivate={() => { onToggleChrome(); closeSoon(); }}>
-                    <span className="assist-ico"><IconRows /></span>
+                    <span className="assist-ico"><IconPanelTop /></span>
                     <span className="assist-label">{chromeOpen ? t("收起标签与工具栏") : t("标签与工具栏")}</span>
                   </AssistButton>
                 )}

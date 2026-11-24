@@ -5,7 +5,7 @@ import { decisionLabel, LOG_ACTION_OPTIONS, stampLocal, TZ_NOTE } from "../app-d
 import { t } from "../i18n";
 import { isMobilePlatform } from "../platform";
 import type { AuditEvent } from "../adapter/wire";
-import { IconClock, IconRefresh, IconTerminal } from "../icons";
+import { IconHistory, IconRefresh, IconTerminal } from "../icons";
 
 interface ActivityLogPanelProps {
   // 范围与筛选（状态归宿主）
@@ -89,7 +89,7 @@ export function ActivityLogPanel({
                   <div className="empty" data-testid="log-empty-nosession"><IconTerminal size={14} />{t("未接入会话——切到「全部会话」可查看历史记录。")}</div>
                 ) : logEvents.length === 0 ? (
                   <div className="empty" data-testid="log-empty">
-                    <IconClock size={14} />{logBusy ? t("载入中…") : t("暂无记录。所有连接与命令都会留痕在这里。")}
+                    <IconHistory size={14} />{logBusy ? t("载入中…") : t("暂无记录。所有连接与命令都会留痕在这里。")}
                   </div>
                 ) : (
                   <>

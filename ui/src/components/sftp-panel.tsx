@@ -10,8 +10,8 @@ import { t } from "../i18n";
 import { clampIntoView } from "./ctx-menus";
 import { useLongPress } from "../touch";
 import {
-  IconChevronLeft, IconChevronRight, IconChevronUp, IconCopy, IconDownload, IconFile,
-  IconFolder, IconInbox, IconPencil, IconRefresh, IconTerminal, IconTrash, IconUpload,
+  IconChevronLeft, IconChevronRight, IconFolderUp, IconCopy, IconDownload, IconFile,
+  IconFolder, IconSave, IconPencil, IconRefresh, IconLocateFixed, IconTrash, IconUpload,
 } from "../icons";
 
 // 传输抽屉最多渲染的行数（五轮架构）：超出只显示最近 N 条并如实声明省略数。
@@ -121,14 +121,14 @@ export function FilesPanel({
                       p.pop();
                       void navigateTo(p.length ? p.join("/") || "/" : "/");
                     }}
-                  ><IconChevronUp size={13} /></button>
+                  ><IconFolderUp size={13} /></button>
                   <button className="ghost" title={t("刷新当前目录")} aria-label={t("刷新")}
                     disabled={!sftpPath || sftpLoading} onClick={() => void loadDir(sftpPath)}
                   ><IconRefresh size={13} /></button>
                   <button className="ghost" title={t("定位到终端目录（显式定位；不执行 cd，不自动跟随 shell）")} aria-label={t("定位到终端目录")}
                     disabled={!brief?.cwd || sftpPath === brief.cwd}
                     onClick={() => brief?.cwd && void navigateTo(brief.cwd)}
-                  ><IconTerminal size={13} /></button>
+                  ><IconLocateFixed size={13} /></button>
                   <button className="ghost" title={t("上传本地文件到当前目录（原生文件选择器，可多选）")} aria-label={t("上传")}
                     data-testid="sftp-upload-btn"
                     disabled={!sftpPath || sftpLoading}
@@ -569,7 +569,7 @@ export function SftpFileMenu({
                   ><IconDownload size={12} /> {t("下载")}</button>
                   <button role="menuitem" data-testid="sftp-menu-saveas"
                     onClick={() => { const n = sftpMenu.name; setSftpMenu(null); void downloadRemote(`${sftpPathRef.current.replace(/\/+$/, "")}/${n}`, { saveAs: true }); }}
-                  ><IconInbox size={12} /> {t("另存为…")}</button>
+                  ><IconSave size={12} /> {t("另存为…")}</button>
                 </>
               )}
               <button role="menuitem" data-testid="sftp-menu-copyname"

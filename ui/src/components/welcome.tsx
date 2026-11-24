@@ -2,7 +2,7 @@
 // 重连上次会话、最近连接。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
 import { useRef, useState } from "react";
 import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
-import { IconPlus, IconTerminal, IconUpload } from "../icons";
+import { IconPlus, IconTerminal, IconImport, IconLink } from "../icons";
 import { t } from "../i18n";
 import { isMacPlatform } from "../actions";
 import { dateLocale } from "../app-data";
@@ -80,7 +80,7 @@ export function Welcome({
         </div>
         <div className="welcome-actions">
           <button onClick={() => { setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> {t("添加主机")}</button>
-          <button className="ghost" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconTerminal size={13} /> {t("快速连接")}</button>
+          <button className="ghost" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconLink size={13} /> {t("快速连接")}</button>
           <button className="ghost" data-testid="welcome-import-btn" onClick={() => {
             // 复用取舍：导入 UI 本就完整住在主机栏（hostbar.tsx 挂 SshConfigImportPanel，
             // 预览→分级勾选→导入→行内结果一条龙），欢迎页不重刻极简确认对话框——
@@ -89,7 +89,7 @@ export function Welcome({
             if (focusMode) applyFocus(false);
             if (!hostbarOpen) toggleHostbar(true);
             setShowImport(true); setShowAddHost(false);
-          }}><IconUpload size={13} /> {t("从 ~/.ssh/config 导入")}</button>
+          }}><IconImport size={13} /> {t("从 ~/.ssh/config 导入")}</button>
           {hosts.some((h) => h.id === "local") && (
             <button className="ghost" disabled={busy !== null} onClick={() => run("local", () => {
               const lh = hosts.find((h) => h.id === "local");

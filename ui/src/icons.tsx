@@ -243,3 +243,151 @@ export const IconEyeOff = (p: IconProps) => (
     <line x1="2" x2="22" y1="2" y2="22" />
   </Svg>
 );
+
+// —— 语义图标批次：同形异义专项治理 ——
+// 方向箭头、关闭、复制等通用语义词仍复用；领域入口和具体动作必须有稳定、
+// 互不混淆的识别点。全部沿用上方 Svg 的 24×24 / 2px / 圆角描边规格。
+
+// 设置分类：外观 / 快捷键 / 输出触发器 / 凭据 / Agent 接入 / 记录审计 / 关于
+export const IconPalette = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+    <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+    <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+    <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+    <path d="M12 2a10 10 0 0 0 0 20c.93 0 1.68-.75 1.68-1.68 0-.44-.16-.84-.44-1.14-.27-.3-.43-.7-.43-1.13a1.68 1.68 0 0 1 1.68-1.68h1.98A5.53 5.53 0 0 0 22 10.84 9.94 9.94 0 0 0 12 2Z" />
+  </Svg>
+);
+
+export const IconKeyboard = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2" y="5" width="20" height="14" rx="2" />
+    <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M7 16h10" />
+  </Svg>
+);
+
+export const IconZap = (p: IconProps) => (
+  <Svg {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></Svg>
+);
+
+export const IconKeyRound = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M21.5 2 19 4.5" /><path d="m15.5 7.5 3 3L22 7l-3-3" />
+    <path d="m15 9-5.5 5.5" /><circle cx="7" cy="17" r="5" />
+  </Svg>
+);
+
+export const IconPlug = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" />
+    <path d="M18 8v5a6 6 0 0 1-6 6 6 6 0 0 1-6-6V8Z" />
+  </Svg>
+);
+
+export const IconHistory = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" />
+    <path d="M12 7v5l3 2" />
+  </Svg>
+);
+
+export const IconInfo = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" />
+  </Svg>
+);
+
+// 命令面板 / 快速连接 / tmux：不再与搜索、终端、分屏混用
+export const IconCommand = (p: IconProps) => (
+  <Svg {...p}><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3" /></Svg>
+);
+
+export const IconLink = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </Svg>
+);
+
+export const IconLayoutGrid = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+  </Svg>
+);
+
+// 多主机编排 / 端口转发：节点分发与端点路径各司其职，不再共用 shuffle
+export const IconNetwork = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="9" y="2" width="6" height="6" rx="1" />
+    <rect x="2" y="16" width="6" height="6" rx="1" /><rect x="16" y="16" width="6" height="6" rx="1" />
+    <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8" />
+  </Svg>
+);
+
+export const IconRoute = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="19" r="3" /><circle cx="18" cy="5" r="3" />
+    <path d="M9 19h5.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H15" />
+  </Svg>
+);
+
+// 文件与配置：导入 / 重试 / 定位终端目录 / 上级目录 / 另存为
+export const IconImport = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4" />
+    <path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M2 15h10" /><path d="m9 12 3 3-3 3" />
+  </Svg>
+);
+
+export const IconRotateCcw = (p: IconProps) => (
+  <Svg {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></Svg>
+);
+
+export const IconLocateFixed = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2 12h3M19 12h3M12 2v3M12 19v3" />
+    <circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="1" />
+  </Svg>
+);
+
+export const IconFolderUp = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    <path d="M12 10v6" /><path d="m9 13 3-3 3 3" />
+  </Svg>
+);
+
+export const IconSave = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+    <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7" />
+  </Svg>
+);
+
+// 触屏助力球：粘贴 / 顶栏 / 翻页 / 回到底部
+export const IconClipboard = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="8" y="2" width="8" height="4" rx="1" />
+    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+  </Svg>
+);
+
+export const IconPanelTop = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M3 9h18M7 6h.01M11 6h.01" />
+  </Svg>
+);
+
+export const IconChevronsUp = (p: IconProps) => (
+  <Svg {...p}><path d="m17 11-5-5-5 5M17 18l-5-5-5 5" /></Svg>
+);
+
+export const IconChevronsDown = (p: IconProps) => (
+  <Svg {...p}><path d="m7 13 5 5 5-5M7 6l5 5 5-5" /></Svg>
+);
+
+export const IconArrowDownToLine = (p: IconProps) => (
+  <Svg {...p}><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></Svg>
+);

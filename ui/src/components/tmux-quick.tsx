@@ -4,7 +4,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { SessionInfo } from "../adapter/wire";
 import { t } from "../i18n";
-import { IconChevronDown, IconPlus, IconTerminal } from "../icons";
+import { IconChevronDown, IconPlus, IconLayoutGrid } from "../icons";
 import { clampIntoView } from "./ctx-menus";
 
 export interface TmuxQuickProps {
@@ -66,7 +66,7 @@ export function TmuxQuick({
           setTmuxMenu(next);
           if (next) onRefreshTmux();
         }}
-      ><IconTerminal size={compact ? 14 : 13} />{!compact && <><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></>}</button>
+      ><IconLayoutGrid size={compact ? 14 : 13} />{!compact && <><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></>}</button>
       {tmuxMenu && (
         <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu" ref={clampIntoView}>
           {/* 会话大屏（监控墙）：全部会话快照网格（单击放大可直接键入）。挂在
