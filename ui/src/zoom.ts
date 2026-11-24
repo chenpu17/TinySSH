@@ -1,5 +1,6 @@
 // 桌面壳整页缩放（UX 五轮，参考 tiny-worker zoom.ts）：Ctrl/⌘±/0 键盘走 R13 统一
-// keymap（actions.ts），这里只负责档位状态、webview 落地与 Ctrl+滚轮。0.1 步进、
+// keymap（actions.ts），这里只负责档位状态、webview 落地与修饰键+滚轮（macOS 用 ⌘，
+// Windows/Linux 用 Ctrl）。0.1 步进、
 // 0.5–2.0 钳位、0.05 粒度取整（浮点累加 0.1 防漂；设置下拉的 125% 档不被舍走）。
 // 前端自管的原因：WebView2 原生键盘缩放加速键实测不触发，mac 官方 polyfill 的内部
 // 状态与宿主不同步且做不了持久化——统一走 set_webview_zoom（capability 已开）。
@@ -8,6 +9,7 @@
 // 不注册（浏览器自带缩放，拦截只会破坏原生体验）。
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
+import { isMacPlatform } from "./actions";
 
 const ZOOM_KEY = "ui.zoom";
 export const ZOOM_MIN = 0.5;
@@ -66,13 +68,20 @@ export function onZoomChange(cb: ZoomListener): () => void {
 
 /** 注册滚轮缩放并恢复上次档位（键盘路径归 R13 keymap，此处不挂 keydown 防双绑定）。
  *  滚轮用捕获阶段：终端视口的 wheel 已被 xterm 消费，冒泡层拦截不及；stopPropagation
- *  让 ctrl+滚轮只归缩放，不滚动回滚历史。
+ *  让修饰键+滚轮只归缩放，不滚动回滚历史。
+ *  平台修饰键：macOS 用 ⌘（Control 是终端控制键，且 WebKit 的 Control 手势会伪装成
+ *  ctrlKey wheel），Windows/Linux 用 Ctrl。
  *  返回注销函数——React StrictMode dev 下 effect mount→cleanup→remount，无清理会
- *  双注册（Ctrl+滚轮一档跳 0.2）。 */
+ *  双注册（一次手势跳两档）。 */
 export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }): () => void {
   tauri = opts.isTauri;
   notify = opts.notify;
   if (!tauri) return () => {};
+  // macOS WebKit 会把 Control 相关触控板手势报告成带 ctrlKey 的 wheel，
+  // 其中部分事件带有非零 deltaY。Control 在 macOS 仍属于终端控制修饰键，
+  // 滚轮缩放只认 Command（键盘路径仍保留 Ctrl/⌘ 双认，见 actions.ts），
+  // 避免按下 Control 时误缩小。
+  const mac = isMacPlatform();
   // 恢复上次缩放：合法且非 100% 才回放；非法值静默忽略；**invoke 成功才落内存档位**——
   // 失败（旧二进制无 capability、webview 初始化期）档位留在 100%，设置绝不显示
   // 到不了的幻影档；localStorage 保留（瞬时失败下次启动重试，成功即静默无感）。
@@ -90,10 +99,9 @@ export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }):
   let wheelRaf = 0;
   let wheelLatest: WheelEvent | null = null;
   const wheel = (e: WheelEvent) => {
-    if (!e.ctrlKey) return;
-    // macOS 按下 Ctrl 键本身会合成一个 ctrlKey=true、deltaY=0 的 wheel 事件
-    // （触控板捏合预备通知）。deltaY=0 不是真实滚动，跳过——否则按下 Ctrl
-    // 就缩一档，连按几次到最小。
+    if (mac ? !e.metaKey : !e.ctrlKey) return;
+    // 零位移 wheel 不是真实滚动（WebKit 在按下修饰键/捏合预备时会合成），忽略；
+    // macOS 的 Control 手势已在上面的修饰键门整体挡掉，这里主要保护 Windows/Linux。
     if (e.deltaY === 0) return;
     e.preventDefault();
     e.stopPropagation();

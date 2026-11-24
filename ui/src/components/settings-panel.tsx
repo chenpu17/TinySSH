@@ -621,7 +621,7 @@ export function SettingsPanel({
                     <button className="ghost" disabled={zoomLevel === 1} onClick={() => zoomReset()}>{t("重置")}</button>
                   </div>
                   </>)}
-                  <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）")}</div>
+                  <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · 按平台使用 Ctrl/⌘+滚轮（原生窗口生效）")}</div>
                 </div>
                 {/* 专注模式（用户反馈 #21）：默认保留底部资源采样条——专注态隐藏
                     状态条后，远端 CPU/内存/网络仍要一眼可见；关掉即回到纯终端。 */}

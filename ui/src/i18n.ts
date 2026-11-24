@@ -238,8 +238,8 @@ const EN: Record<string, string> = {
   "界面缩放": "UI zoom",
   "缩放 {0}%": "Zoom {0}%",
   "缩放失败：{0}": "Zoom failed: {0}",
-  "界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）":
-    "Zoom: Ctrl/⌘ + in · − out · 0 reset · Ctrl+wheel (native window)",
+  "界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · 按平台使用 Ctrl/⌘+滚轮（原生窗口生效）":
+    "Zoom: Ctrl/⌘ + in · − out · 0 reset · use Ctrl/⌘+wheel by platform (native window)",
   "界面语言": "Interface language",
   "中文（简体）": "中文 (Simplified)",
   "English": "English",
