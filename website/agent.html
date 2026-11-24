@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TinySSH — 人机协同终端 · Human–AI Collaborative Terminal</title>
+<meta name="description" content="TinySSH：SSH 客户端 + 一等公民本地终端 + 内置 AI Agent。人机同一条审批链，一切皆有记录。Windows / macOS / Linux / Android，Apache-2.0 开源。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2305080d'/%3E%3Crect x='1' y='1' width='62' height='62' rx='11' fill='none' stroke='%23223345' stroke-width='2'/%3E%3Cpath d='M14 20 L26 32 L14 44' fill='none' stroke='%236ff2a5' stroke-width='5' stroke-linecap='square'/%3E%3Crect x='32' y='40' width='18' height='5' fill='%23ffb454'/%3E%3C/svg%3E">
+<style>
+/* ============ PHOSPHOR · 磷光终端 ============ */
+:root{
+  --ink:#05080d;
+  --ink-2:#080d15;
+  --panel:#0a111b;
+  --panel-2:#0d1520;
+  --line:#1a2534;
+  --line-soft:#131c29;
+  --text:#c7d4e2;
+  --dim:#67798d;
+  --faint:#3d4c5e;
+  --green:#6ff2a5;
+  --green-dim:#2c5c44;
+  --amber:#ffb454;
+  --red:#ff7a72;
+  --mono:"Cascadia Code","JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  --wrap:1240px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;overflow-x:clip}
+body{
+  background:var(--ink);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.8;
+  overflow-x:clip;
+  -webkit-font-smoothing:antialiased;
+}
+/*  CRT 底纹：极轻扫描线 + 暗角  */
+body::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(120% 90% at 50% 0%,rgba(111,242,165,.035),transparent 55%),
+    repeating-linear-gradient(0deg,rgba(255,255,255,.014) 0 1px,transparent 1px 3px);
+}
+::selection{background:var(--green);color:var(--ink)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#1c2938;border:2px solid var(--ink)}
+::-webkit-scrollbar-track{background:var(--ink)}
+a{color:inherit;text-decoration:none}
+.mono{font-family:var(--mono)}
+/* 网格子项默认 min-width:auto，会被 nowrap 内容撑宽整列、超出视口后被 clip 裁掉 */
+.hero-grid>*,.gate-grid>*,.audit-grid>*{min-width:0}
+.wrap{max-width:var(--wrap);margin:0 auto;padding:0 44px;position:relative;z-index:1}
+
+/* ---------- 顶栏 ---------- */
+header{
+  position:fixed;top:0;left:0;right:0;z-index:50;
+  background:rgba(5,8,13,.82);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line-soft);
+}
+.hd{display:flex;align-items:center;gap:28px;height:64px;max-width:var(--wrap);margin:0 auto;padding:0 44px}
+.brand{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-weight:700;font-size:18px;letter-spacing:-.02em}
+.brand svg{flex:none}
+.brand .cur{color:var(--amber);animation:blink 1.2s steps(1) infinite}
+nav{display:flex;gap:26px;margin-left:auto}
+nav a{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--dim);transition:color .2s}
+nav a:hover{color:var(--green)}
+nav a i{font-style:normal;color:var(--faint);margin-right:6px}
+.hd-ver{font-family:var(--mono);font-size:11px;color:var(--green);border:1px solid var(--green-dim);padding:3px 10px;letter-spacing:.06em}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- Hero ---------- */
+.hero{position:relative;padding:172px 0 96px;overflow:hidden}
+.hero::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:radial-gradient(rgba(103,121,141,.16) 1px,transparent 1px);
+  background-size:26px 26px;
+  mask-image:linear-gradient(180deg,rgba(0,0,0,.9),rgba(0,0,0,.25) 70%,transparent);
+  -webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,.9),rgba(0,0,0,.25) 70%,transparent);
+}
+.crop{position:absolute;width:18px;height:18px;pointer-events:none;opacity:.55}
+.crop::before,.crop::after{content:"";position:absolute;background:var(--faint)}
+.crop::before{width:100%;height:1px}
+.crop::after{width:1px;height:100%}
+.crop.tl{top:96px;left:20px}.crop.tr{top:96px;right:20px;transform:scaleX(-1)}
+.crop.bl{bottom:24px;left:20px;transform:scaleY(-1)}.crop.br{bottom:24px;right:20px;transform:scale(-1)}
+.hero-grid{display:grid;grid-template-columns:1.04fr .96fr;gap:72px;align-items:center;position:relative}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.34em;color:var(--green);margin-bottom:26px;display:flex;align-items:center;gap:14px}
+.eyebrow::before{content:"";width:34px;height:1px;background:var(--green-dim)}
+.wordmark{
+  font-family:var(--mono);font-weight:700;
+  font-size:clamp(64px,7.6vw,118px);
+  line-height:1.02;letter-spacing:-.045em;color:#e8f1fa;
+  display:flex;align-items:baseline;white-space:nowrap;
+}
+.wordmark .block{
+  display:inline-block;width:.52em;height:.78em;background:var(--amber);
+  margin-left:.08em;transform:translateY(.1em);
+  animation:blink 1.2s steps(1) infinite;
+}
+.hero-sub{font-family:var(--mono);font-size:11px;letter-spacing:.22em;color:var(--faint);margin:18px 0 34px;display:flex;gap:22px;flex-wrap:wrap}
+.tagline{font-size:clamp(24px,2.6vw,34px);font-weight:600;line-height:1.55;color:#dfe9f3;letter-spacing:.01em}
+.tagline em{font-style:normal;color:var(--green)}
+.lede{color:var(--dim);margin:22px 0 40px;max-width:44ch;font-size:15px}
+.cta{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.btn{
+  font-family:var(--mono);font-size:13px;letter-spacing:.06em;
+  padding:14px 26px;border:1px solid var(--line);color:var(--text);
+  display:inline-flex;align-items:center;gap:10px;cursor:pointer;
+  transition:transform .18s,box-shadow .18s,border-color .18s,background .18s;
+  background:transparent;
+}
+.btn:hover{transform:translate(-2px,-2px);border-color:var(--green)}
+.btn-p{background:var(--green);color:#04140b;border-color:var(--green);font-weight:700}
+.btn-p:hover{box-shadow:5px 5px 0 rgba(111,242,165,.22)}
+.btn-s:hover{box-shadow:5px 5px 0 rgba(111,242,165,.08);color:var(--green)}
+.btn .arr{font-family:var(--mono)}
+.plats{display:flex;gap:10px;margin-top:44px;flex-wrap:wrap}
+.plat{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--dim);border:1px solid var(--line-soft);padding:6px 12px;background:rgba(10,17,27,.5)}
+.plat b{color:var(--text);font-weight:400}
+
+/*  终端窗口  */
+.term-stage{position:relative}
+.term-ghost{position:absolute;inset:0;transform:translate(18px,18px);border:1px solid var(--line-soft);background:rgba(8,13,21,.5);pointer-events:none}
+.term{
+  position:relative;background:var(--panel);border:1px solid var(--line);
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.75),0 0 0 1px rgba(111,242,165,.03);
+}
+.term-bar{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line-soft);background:var(--ink-2)}
+.term-bar i{width:9px;height:9px;background:#22303f;display:block}
+.term-bar i:nth-child(1){background:#3a2b2b}
+.term-bar i:nth-child(2){background:#3a3423}
+.term-bar i:nth-child(3){background:#22392c}
+.term-tab{margin-left:12px;font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.05em}
+.term-live{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--green);letter-spacing:.2em;display:flex;align-items:center;gap:7px}
+.term-live::before{content:"";width:6px;height:6px;background:var(--green);animation:blink 1.6s steps(1) infinite}
+.term-body{
+  padding:22px 22px 26px;font-family:var(--mono);font-size:12.5px;line-height:1.95;
+  min-height:392px;white-space:pre-wrap;word-break:break-all;
+}
+.term-body .ln{display:block;min-height:1.95em}
+.t-p{color:var(--green)}
+.t-dim{color:var(--dim)}
+.t-faint{color:var(--faint)}
+.t-cmd{color:#dbe7f2}
+.t-amber{color:var(--amber)}
+.t-red{color:var(--red)}
+.t-agent{color:#8fd8ff}
+.t-caret{display:inline-block;width:8px;height:15px;background:var(--green);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+.term-foot{border-top:1px solid var(--line-soft);padding:10px 16px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.14em}
+.term-foot b{color:var(--dim);font-weight:400}
+.hero-coord{position:absolute;right:0;bottom:-40px;font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.2em}
+
+/* ---------- 跑马灯 ---------- */
+.ticker{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);overflow:hidden;background:var(--ink-2)}
+.ticker-in{display:flex;gap:56px;padding:15px 0;white-space:nowrap;width:max-content;animation:tick 46s linear infinite}
+.ticker span{font-family:var(--mono);font-size:11px;letter-spacing:.26em;color:var(--dim)}
+.ticker span b{color:var(--green);font-weight:400;margin-right:12px}
+@keyframes tick{to{transform:translateX(-50%)}}
+
+/* ---------- 章节通用 ---------- */
+section{position:relative;padding:110px 0;scroll-margin-top:84px}
+.sec-head{display:flex;align-items:baseline;gap:26px;margin-bottom:64px;flex-wrap:wrap}
+.sec-idx{font-family:var(--mono);font-size:13px;color:var(--amber);letter-spacing:.2em}
+.sec-title{font-size:clamp(28px,3vw,40px);font-weight:600;color:#e6eef7;letter-spacing:.01em}
+.sec-en{margin-left:auto;font-family:var(--mono);font-size:11px;letter-spacing:.3em;color:var(--faint)}
+.sec-rule{height:1px;background:var(--line-soft);margin-top:-40px;margin-bottom:64px}
+
+/*  入场  */
+.rv{opacity:0;transform:translateY(22px)}
+.rv.in{opacity:1;transform:none;transition:opacity .8s cubic-bezier(.2,.7,.2,1),transform .8s cubic-bezier(.2,.7,.2,1);transition-delay:var(--d,0s)}
+
+/* ---------- 01 审批链 ---------- */
+.gate-grid{display:grid;grid-template-columns:.92fr 1.08fr;gap:72px;align-items:start}
+.tenet{display:flex;gap:18px;padding:22px 0;border-top:1px solid var(--line-soft)}
+.tenet:first-of-type{border-top:none;padding-top:0}
+.tenet-n{font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:6px;flex:none}
+.tenet h3{font-size:17px;font-weight:600;color:#dfe9f3;margin-bottom:6px}
+.tenet p{font-size:14px;color:var(--dim)}
+.tenet p code{font-family:var(--mono);font-size:12px;color:var(--amber);background:rgba(255,180,84,.07);padding:1px 6px}
+.console{background:var(--panel);border:1px solid var(--line);position:sticky;top:96px}
+.console-bar{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--line-soft);font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.14em;background:var(--ink-2)}
+.console-bar b{color:var(--amber);font-weight:400}
+.console-body{padding:20px 18px 22px;font-family:var(--mono);font-size:12.5px;line-height:2}
+.console-log{min-height:120px;max-height:120px;overflow:hidden;color:var(--dim);font-size:11.5px;line-height:1.9;border-bottom:1px dashed var(--line);padding-bottom:14px;margin-bottom:16px}
+.console-log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gate-cmd{color:#dbe7f2;margin-bottom:4px;overflow-wrap:anywhere}
+.gate-cmd .agent-tag{color:#8fd8ff}
+.gate-card{border:1px solid rgba(255,180,84,.35);background:rgba(255,180,84,.045);padding:16px 16px 14px;margin-top:12px}
+.gate-title{color:var(--amber);font-size:12px;letter-spacing:.1em;display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.gate-title::before{content:"";width:8px;height:8px;background:var(--amber);animation:blink 1.1s steps(1) infinite}
+.gate-meta{color:var(--dim);font-size:11px;line-height:2}
+.gate-meta b{color:var(--text);font-weight:400}
+.gate-actions{display:flex;gap:12px;margin-top:16px}
+.g-btn{flex:1;font-family:var(--mono);font-size:12px;padding:11px 0;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--dim);letter-spacing:.08em;transition:all .18s}
+.g-btn.ok{border-color:var(--green-dim);color:var(--green)}
+.g-btn.ok:hover{background:var(--green);color:#04140b}
+.g-btn.no:hover{border-color:var(--red);color:var(--red);background:rgba(255,122,114,.06)}
+.gate-note{margin-top:14px;font-size:10.5px;color:var(--faint);letter-spacing:.06em}
+.gate-result{margin-top:14px;font-size:12px;min-height:24px}
+.gate-result.ok{color:var(--green)}
+.gate-result.no{color:var(--red)}
+
+/* ---------- 02 能力清单 ---------- */
+.ledger{border-top:1px solid var(--line)}
+.lrow{
+  display:grid;grid-template-columns:86px 1fr auto;gap:28px;align-items:baseline;
+  padding:26px 18px;border-bottom:1px solid var(--line-soft);
+  transition:background .25s,padding-left .25s;position:relative;
+}
+.lrow::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--green);transform:scaleY(0);transition:transform .25s}
+.lrow:hover{background:rgba(111,242,165,.028);padding-left:28px}
+.lrow:hover::before{transform:scaleY(1)}
+.lrow-n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+.lrow:hover .lrow-n{color:var(--green)}
+.lrow h3{font-size:18px;font-weight:600;color:#e0eaf4;display:inline}
+.lrow .lrow-en{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:14px;letter-spacing:.08em}
+.lrow p{font-size:14px;color:var(--dim);margin-top:6px;max-width:76ch}
+.lrow p code{font-family:var(--mono);font-size:12px;color:var(--green);background:rgba(111,242,165,.06);padding:0 5px}
+.lrow-tag{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);padding:4px 12px;white-space:nowrap;letter-spacing:.08em}
+.lrow:hover .lrow-tag{border-color:var(--green-dim);color:var(--green)}
+.lrow-arr{font-family:var(--mono);color:var(--faint);margin-left:18px;transition:color .2s,transform .2s;display:inline-block}
+.lrow:hover .lrow-arr{color:var(--green);transform:translateX(4px)}
+
+/* ---------- 03 记录泳道 ---------- */
+.audit-grid{display:grid;grid-template-columns:1fr 1.25fr;gap:72px;align-items:center}
+.audit-copy p{color:var(--dim);font-size:15px;margin-bottom:18px}
+.audit-copy strong{color:var(--text);font-weight:600}
+.audit-copy .mono{color:var(--green);font-size:13px}
+.lanes{border:1px solid var(--line);background:var(--panel)}
+.lanes-head{display:flex;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--line-soft);font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--faint)}
+.lane{display:grid;grid-template-columns:96px minmax(0,1fr);border-bottom:1px solid var(--line-soft)}
+.lane:last-child{border-bottom:none}
+.lane-label{padding:18px 0 18px 18px;font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.1em}
+.lane-track{padding:14px 18px 14px 0;display:flex;flex-direction:column;gap:9px}
+.ev{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:11px}
+.ev time{color:var(--faint);flex:none;width:56px}
+.ev .bar{height:20px;flex:none;display:flex;align-items:center;padding:0 9px;font-size:10px;letter-spacing:.05em;color:#04140b;background:var(--green);white-space:nowrap}
+.ev.dim .bar{background:#22303f;color:var(--dim)}
+.ev.amber .bar{background:var(--amber);color:#241503}
+.ev.red .bar{background:transparent;border:1px solid rgba(255,122,114,.5);color:var(--red)}
+.ev .cap{color:var(--dim);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lanes-foot{padding:12px 18px;border-top:1px solid var(--line-soft);font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.12em;display:flex;justify-content:space-between}
+.lanes-foot b{color:var(--green);font-weight:400}
+
+/* ---------- 04 下载 ---------- */
+.dl-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
+.dl{border:1px solid var(--line);background:var(--panel);padding:28px 26px;position:relative;transition:border-color .25s,transform .25s}
+.dl:hover{border-color:var(--green-dim);transform:translateY(-3px)}
+.dl-os{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px}
+.dl-os h3{font-size:19px;font-weight:600;color:#e4edf6}
+.dl-os span{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--faint)}
+.dl-file{font-family:var(--mono);font-size:12px;color:var(--green);background:rgba(111,242,165,.05);border:1px solid var(--line-soft);padding:10px 12px;word-break:break-all;line-height:1.7;margin-bottom:14px}
+.dl.amber .dl-file{color:var(--amber);background:rgba(255,180,84,.05)}
+.dl p{font-size:13px;color:var(--dim);min-height:44px}
+.dl-go{margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--text);letter-spacing:.08em;display:inline-flex;gap:10px;align-items:center}
+.dl-go i{font-style:normal;transition:transform .2s}
+.dl:hover .dl-go{color:var(--green)}
+.dl:hover .dl-go i{transform:translateX(5px)}
+.dl-note{margin-top:36px;border:1px dashed var(--line);padding:18px 22px;font-size:13px;color:var(--dim);display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+.dl-note .mono{color:var(--amber);font-size:12px;flex:none}
+.dl-note code{font-family:var(--mono);font-size:12px;color:var(--text)}
+
+/* ---------- 页脚 ---------- */
+footer{border-top:1px solid var(--line-soft);padding:80px 0 0;position:relative;overflow:hidden;background:var(--ink-2)}
+.ft-links{display:flex;gap:34px;flex-wrap:wrap;margin-bottom:56px}
+.ft-links a{font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.1em;border-bottom:1px solid transparent;padding-bottom:4px;transition:color .2s,border-color .2s}
+.ft-links a:hover{color:var(--green);border-color:var(--green-dim)}
+.ft-meta{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.12em;padding-bottom:44px}
+.ghost{
+  font-family:var(--mono);font-weight:700;text-align:center;
+  font-size:clamp(64px,14.5vw,220px);line-height:1;letter-spacing:-.05em;
+  color:transparent;-webkit-text-stroke:1px #16202e;
+  user-select:none;pointer-events:none;transform:translateY(6%);
+  white-space:nowrap;
+}
+/* 光标用色块而不是 "_" 字符：下划线字形贴在基线下方，会被页脚的出血裁切整块吃掉 */
+.ghost b{display:inline-block;width:.5em;height:.11em;margin-left:.05em;
+  background:var(--amber);opacity:.8;-webkit-text-stroke:0}
+
+/* ---------- 响应式 ---------- */
+@media (max-width:1060px){
+  .hero-grid,.gate-grid,.audit-grid{grid-template-columns:1fr;gap:56px}
+  .console{position:static}
+  .hero{padding-top:140px}
+  .term-body{min-height:340px}
+  nav a:not(:last-child){display:none}
+}
+@media (max-width:640px){
+  .wrap,.hd{padding:0 22px}
+  .hd{gap:16px}
+  .hero{padding:120px 0 72px}
+  section{padding:76px 0}
+  .wordmark{font-size:15.5vw}
+  .lrow{grid-template-columns:1fr;gap:8px;padding:22px 8px}
+  .lrow-tag{justify-self:start}
+  .lrow-arr{display:none}
+  .dl-grid{grid-template-columns:1fr}
+  .sec-en{display:none}
+  .crop{display:none}
+  .gate-actions{flex-direction:column}
+  /* 窄屏泳道：标签列收窄、事件行允许换行，别把整节顶出视口 */
+  .lane{grid-template-columns:78px minmax(0,1fr)}
+  .lane-label{padding-left:12px;font-size:10px}
+  .ev{flex-wrap:wrap;row-gap:5px}
+  .lanes-head,.lanes-foot{letter-spacing:.1em;padding-left:12px;padding-right:12px}
+  .lane-track{padding-right:12px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .rv{opacity:1;transform:none}
+  .ticker-in{animation:none}
+}
+</style>
+<noscript><style>.rv{opacity:1;transform:none}</style></noscript>
+</head>
+<body>
+
+<header>
+  <div class="hd">
+    <a class="brand" href="#top" aria-label="TinySSH">
+      <svg width="26" height="26" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <rect x="1.5" y="1.5" width="61" height="61" rx="10" stroke="#223345" stroke-width="3"/>
+        <path d="M14 20 L26 32 L14 44" stroke="#6ff2a5" stroke-width="5" stroke-linecap="square"/>
+        <rect x="32" y="40" width="18" height="5" fill="#ffb454"/>
+      </svg>
+      TinySSH<span class="cur">_</span>
+    </a>
+    <nav>
+      <a href="#gate"><i>01</i>审批链</a>
+      <a href="#ledger"><i>02</i>能力</a>
+      <a href="#audit"><i>03</i>记录</a>
+      <a href="#download"><i>04</i>下载</a>
+    </nav>
+    <span class="hd-ver">v0.12.32</span>
+  </div>
+</header>
+
+<!-- ================= HERO ================= -->
+<div class="hero" id="top">
+  <i class="crop tl"></i><i class="crop tr"></i><i class="crop bl"></i><i class="crop br"></i>
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="eyebrow rv">HUMAN–AI COLLABORATIVE TERMINAL</div>
+        <h1 class="wordmark rv" style="--d:.08s">TinySSH<span class="block" aria-hidden="true"></span></h1>
+        <div class="hero-sub rv" style="--d:.14s"><span>APACHE-2.0</span><span>LOCAL-FIRST</span><span>SINCE 2026</span></div>
+        <p class="tagline rv" style="--d:.2s">把任务交给 Agent，<br>不必把<em>钥匙</em>也交出去。</p>
+        <p class="lede rv" style="--d:.26s">SSH 客户端、一等公民本地终端、内置 AI Agent——同一个应用。Agent 与人类走同一条危险形态审批链，每一次执行与拒绝都有加密记录。为同时打理几台到十几台服务器的开发者而做。</p>
+        <div class="cta rv" style="--d:.32s">
+          <a class="btn btn-p" href="https://github.com/chenpu17/TinySSH/releases/latest">下载 v0.12.32 <span class="arr">↗</span></a>
+          <a class="btn btn-s" href="https://github.com/chenpu17/TinySSH">GitHub 源码 <span class="arr">↗</span></a>
+        </div>
+        <div class="plats rv" style="--d:.38s">
+          <span class="plat"><b>Windows</b> 便携 exe</span>
+          <span class="plat"><b>macOS</b> dmg</span>
+          <span class="plat"><b>Linux</b> deb / tar.gz</span>
+          <span class="plat"><b>Android</b> 签名 APK</span>
+        </div>
+      </div>
+      <div class="term-stage rv" style="--d:.24s">
+        <div class="term-ghost" aria-hidden="true"></div>
+        <div class="term" role="img" aria-label="TinySSH 终端演示：连接服务器，Agent 执行经审批的命令，危险命令被拦截">
+          <div class="term-bar"><i></i><i></i><i></i><span class="term-tab">ops@prod-01 — zsh · 80×24</span><span class="term-live">REC</span></div>
+          <div class="term-body" id="termBody"></div>
+          <div class="term-foot"><span><b>Tokyo Night</b> · xterm.js</span><span>UTF-8 · OSC 133</span></div>
+        </div>
+        <div class="hero-coord">51.5072° N / 0.1276° W · TTY-01</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= TICKER ================= -->
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-in" id="ticker">
+    <span><b>§</b>APPROVAL-GATED</span><span><b>§</b>ENCRYPTED AUDIT · 30D</span><span><b>§</b>MCP SERVER ×24</span><span><b>§</b>TMUX PANES ×6</span><span><b>§</b>OSC 133 BLOCKS</span><span><b>§</b>SFTP QUEUE</span><span><b>§</b>17 PALETTES</span><span><b>§</b>LOCAL-FIRST VAULT</span><span><b>§</b>AGENT BY TINYAGENT</span><span><b>§</b>SSH + TMUX ON ANDROID</span>
+  </div>
+</div>
+
+<!-- ================= 01 审批链 ================= -->
+<section id="gate">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="sec-idx">01 /</span><h2 class="sec-title">人机同一条审批链</h2><span class="sec-en">ONE GATE FOR EVERYONE</span></div>
+    <div class="gate-grid">
+      <div class="rv">
+        <div class="tenet"><span class="tenet-n">01.1</span><div><h3>同一张危险形态表</h3><p>Agent 执行命令，走的是和人类粘贴 <code>rm -rf /</code> 完全相同的规则引擎——没有特权通道，没有例外名单。</p></div></div>
+        <div class="tenet"><span class="tenet-n">01.2</span><div><h3>传输必审，逐条确认</h3><p>上传下载永远逐条审批。自主模式可按会话开启，跳过逐条命令审批，但危险形态与传输仍然硬拦截；仅内存态，重启即失效。</p></div></div>
+        <div class="tenet"><span class="tenet-n">01.3</span><div><h3>显式的控制权交接</h3><p>Agent 只在你委派后才驱动会话，随时一键接管。拒绝也会被记录——审计不撒谎，键序直写不记成命令块。</p></div></div>
+        <p style="margin-top:26px;font-size:13px;color:var(--faint)">▸ 右侧是可交互演示：试着批准或拒绝这条命令。</p>
+      </div>
+      <div class="console rv" style="--d:.12s">
+        <div class="console-bar"><span>APPROVAL GATE</span><b>awaiting human</b></div>
+        <div class="console-body">
+          <div class="console-log" id="gateLog">
+            <div>14:02:11 agent 接受委派 · session prod-01</div>
+            <div>14:02:19 exec "df -h" → 批准 · 记录 #4819</div>
+            <div>14:02:26 exec "du -sh /var/log/*" → 批准 · 记录 #4820</div>
+          </div>
+          <div class="gate-cmd"><span class="agent-tag">agent ▸</span> exec <span id="gateCmd">"sudo rm -rf /var/lib/mysql"</span></div>
+          <div class="gate-card">
+            <div class="gate-title">DANGEROUS PATTERN · 等待人工审批</div>
+            <div class="gate-meta" id="gateMeta">
+              命中规则 <b>rm -rf</b> × <b>提权 sudo</b> × <b>数据目录</b><br>
+              目标主机 <b>prod-01</b> · 影响 <b>不可撤销</b>
+            </div>
+            <div class="gate-actions">
+              <button class="g-btn ok" id="gateOk">批准一次</button>
+              <button class="g-btn no" id="gateNo">拒绝</button>
+            </div>
+            <div class="gate-result" id="gateResult" role="status"></div>
+            <div class="gate-note">无论批准或拒绝，本条都会写入加密执行记录。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 02 能力清单 ================= -->
+<section id="ledger" style="padding-top:40px">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="sec-idx">02 /</span><h2 class="sec-title">能力清单</h2><span class="sec-en">CAPABILITY LEDGER</span></div>
+    <div class="ledger">
+      <div class="lrow rv"><span class="lrow-n">02.01</span><div><h3>SSH + 本地终端，平起平坐</h3><span class="lrow-en">EQUAL CITIZENS</span><p>置顶的「本机」条目开机自动打开；本地会话享有和远程一样的标签、分屏、命令块、搜索与文件浏览。</p></div><span class="lrow-tag">LOCAL + SSH<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.02</span><div><h3>tmux 一等公民</h3><span class="lrow-en">TMUX NATIVE</span><p>一条连接最多 <code>6</code> 个并排面板，一次登录一次 2FA；全屏会话墙、拖拽排布、崩溃安全工作区记忆，一键恢复。</p></div><span class="lrow-tag">PANES ×6<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.03</span><div><h3>内置 AI Agent</h3><span class="lrow-en">BY TINYAGENT</span><p>按会话聊天，markdown / Mermaid / KaTeX 与内联审批卡片；<code>8</code> 个 SSH 工具；机群编排把任务并行派给各会话 Agent，每个目标各自保留审批。</p></div><span class="lrow-tag">TOOLS ×8<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.04</span><div><h3>命令块与广播输入</h3><span class="lrow-en">OSC 133</span><p>每条命令成为带退出码、耗时与输出的块，可复制重跑；广播输入打一次发多机——粘贴与重跑永不广播。</p></div><span class="lrow-tag">BLOCKS<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.05</span><div><h3>监控与输出触发器</h3><span class="lrow-en">OBSERVE</span><p>按会话资源条 + 全屏多机仪表盘（CPU / 内存 / 磁盘 / 网络、昇腾 NPU）；正则触发通知或经审批的按键序列，绝不静默自动执行。</p></div><span class="lrow-tag">NPU READY<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.06</span><div><h3>SFTP 与传输队列</h3><span class="lrow-en">TRANSFERS</span><p>取消、重试、对未知结果重新校验、完成后在资源管理器中显示；每一次传输都经过人工审批。</p></div><span class="lrow-tag">SFTP<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.07</span><div><h3>内置 MCP server</h3><span class="lrow-en">EXTENSIBLE</span><p><code>24</code> 个工具、可订阅资源与提示词，跑在 <code>127.0.0.1</code>——任何支持 MCP 的 Agent 即插即用，自助文档随包附带。</p></div><span class="lrow-tag">MCP ×24<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.08</span><div><h3>终端品质与主题</h3><span class="lrow-en">CRAFT</span><p><code>17</code> 套配色族（含护眼与墨水屏）、Unicode 11 宽度、六色/sixel 与 iTerm2 内联图片、逐格 4.5:1 对比度守护、macOS 输入法修复。</p></div><span class="lrow-tag">PALETTES ×17<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.09</span><div><h3>Android：口袋里的 SSH + tmux</h3><span class="lrow-en">MOBILE V1</span><p>触屏助力球、横屏与外接键盘优先、活动会话前台保活；启动失败有原生恢复页，可显式重置本地数据。</p></div><span class="lrow-tag">APK · ARM64<span class="lrow-arr">→</span></span></div>
+      <div class="lrow rv"><span class="lrow-n">02.10</span><div><h3>便携、私密、自更新</h3><span class="lrow-en">LOCAL-FIRST</span><p>Windows 单 exe；凭据、密钥、记录与快照加密进保险库，永不出机；macOS / Windows 一键签名自动更新，Android 覆盖安装即升级。</p></div><span class="lrow-tag">VAULT<span class="lrow-arr">→</span></span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 03 记录 ================= -->
+<section id="audit" style="padding-top:40px">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="sec-idx">03 /</span><h2 class="sec-title">一切皆有记录</h2><span class="sec-en">NOTHING GOES UNRECORDED</span></div>
+    <div class="audit-grid">
+      <div class="audit-copy rv">
+        <p><strong>加密的执行记录，保留 30 天。</strong>每一次执行、每一次拒绝、每一次审批，落在双层泳道时间线上——你的操作与 Agent 的操作分列，永远不混淆。</p>
+        <p><strong>你和 Agent 都可查询。</strong>记录不是黑盒：Agent 能回溯自己做过什么，你能审计它为什么做。终端回放与记录归因不撒谎——键序直写 PTY 不记成命令块。</p>
+        <p class="mono">audit --session prod-01 --lane agent --days 30</p>
+      </div>
+      <div class="lanes rv" style="--d:.12s" role="img" aria-label="双层泳道时间线示意：人类与 Agent 的操作记录，含被拒绝的命令">
+        <div class="lanes-head"><span>EXECUTION RECORDS</span><span>RETENTION 30D</span></div>
+        <div class="lane"><span class="lane-label">你 / HUMAN</span>
+          <div class="lane-track">
+            <div class="ev"><time>14:01:58</time><span class="bar" style="width:34%">ssh prod-01</span><span class="cap">TOFU 已验证</span></div>
+            <div class="ev dim"><time>14:02:11</time><span class="bar" style="width:26%">委派 Agent</span><span class="cap">显式交接</span></div>
+            <div class="ev amber"><time>14:03:02</time><span class="bar" style="width:30%">审批 ×1</span><span class="cap">人工决定</span></div>
+          </div>
+        </div>
+        <div class="lane"><span class="lane-label">AGENT</span>
+          <div class="lane-track">
+            <div class="ev"><time>14:02:19</time><span class="bar" style="width:42%">df -h → 0</span><span class="cap">#4819</span></div>
+            <div class="ev"><time>14:02:26</time><span class="bar" style="width:52%">du -sh /var/log/* → 0</span><span class="cap">#4820</span></div>
+            <div class="ev red"><time>14:03:02</time><span class="bar" style="width:46%">rm -rf → 拒绝</span><span class="cap">#4821 · 同样入册</span></div>
+          </div>
+        </div>
+        <div class="lanes-foot"><span><b>AES</b> · 本地加密保险库</span><span>#4818 — #4821</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 04 下载 ================= -->
+<section id="download" style="padding-top:40px">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="sec-idx">04 /</span><h2 class="sec-title">下载与开始</h2><span class="sec-en">GET THE BINARY</span></div>
+    <div class="dl-grid">
+      <a class="dl rv" href="https://github.com/chenpu17/TinySSH/releases/latest">
+        <div class="dl-os"><h3>Windows 10 / 11</h3><span>PRIMARY · X64</span></div>
+        <div class="dl-file">TinySSH_&lt;ver&gt;_windows_x64_portable.exe</div>
+        <p>单文件便携，仅依赖系统自带 WebView2。首次启动 SmartScreen 选「更多信息 → 仍要运行」。</p>
+        <span class="dl-go">Releases 下载 <i>↗</i></span>
+      </a>
+      <a class="dl rv" style="--d:.06s" href="https://github.com/chenpu17/TinySSH/releases/latest">
+        <div class="dl-os"><h3>macOS</h3><span>ARM64 + X64</span></div>
+        <div class="dl-file">TinySSH_&lt;ver&gt;_macos_&lt;arch&gt;.dmg</div>
+        <p>Apple Silicon 与 Intel。未签名构建：拖入 /Applications 后右键 → 打开 → 打开。支持签名自动更新。</p>
+        <span class="dl-go">Releases 下载 <i>↗</i></span>
+      </a>
+      <a class="dl rv" style="--d:.12s" href="https://github.com/chenpu17/TinySSH/releases/latest">
+        <div class="dl-os"><h3>Linux</h3><span>AMD64</span></div>
+        <div class="dl-file">TinySSH_&lt;ver&gt;_linux_amd64.deb / .tar.gz</div>
+        <p>deb 自动装依赖；tar.gz 需 libwebkit2gtk-4.1。每个 release 附 tinyssh CLI 与 SHA256SUMS.txt。</p>
+        <span class="dl-go">Releases 下载 <i>↗</i></span>
+      </a>
+      <a class="dl amber rv" style="--d:.18s" href="https://github.com/chenpu17/TinySSH/releases/latest">
+        <div class="dl-os"><h3>Android 7.0+</h3><span>ARM64 · SIGNED</span></div>
+        <div class="dl-file">TinySSH_&lt;ver&gt;_android_arm64.apk</div>
+        <p>release 签名，侧载安装，移动端 v1 覆盖 SSH + tmux。无应用内自动更新——下载新 APK 覆盖安装即升级。</p>
+        <span class="dl-go">Releases 下载 <i>↗</i></span>
+      </a>
+    </div>
+    <div class="dl-note rv">
+      <span class="mono">$ git clone</span>
+      <span>从源码构建：<code>cargo run -p tinyssh-app</code>（Rust ≥ 1.86 · Node ≥ 22）；纯浏览器 demo：<code>cd ui &amp;&amp; npm ci &amp;&amp; npm run dev</code>，打开 <code>localhost:5183</code>。</span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FOOTER ================= -->
+<footer>
+  <div class="wrap">
+    <div class="ft-links">
+      <a href="https://github.com/chenpu17/TinySSH">GITHUB ↗</a>
+      <a href="https://github.com/chenpu17/TinySSH/releases/latest">RELEASES ↗</a>
+      <a href="https://github.com/chenpu17/TinyAgent">AGENT KERNEL · TINYAGENT ↗</a>
+      <a href="./index.html">纯 SSH 版 · TERMINAL EDITION ↗</a>
+      <a href="https://github.com/chenpu17/TinySSH/blob/main/docs/architecture/l0-system-design.md">设计文档 L0 / L1 ↗</a>
+      <a href="https://github.com/chenpu17/TinySSH/blob/main/LICENSE">APACHE-2.0 ↗</a>
+    </div>
+    <div class="ft-meta">
+      <span>© 2026 TINYSSH · 本地优先，凭据不出机</span>
+      <span>SSH · TMUX · AGENT · AUDIT — 人机协同终端</span>
+    </div>
+  </div>
+  <div class="ghost" aria-hidden="true">TinySSH<b></b></div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- 入场 ---------- */
+  var rvEls = document.querySelectorAll(".rv");
+  if (reduced || !("IntersectionObserver" in window)) {
+    rvEls.forEach(function(el){ el.classList.add("in"); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, { threshold: .12 });
+    rvEls.forEach(function(el){ io.observe(el); });
+  }
+
+  /* ---------- 跑马灯无缝复制 ---------- */
+  var ticker = document.getElementById("ticker");
+  ticker.innerHTML += ticker.innerHTML;
+
+  /* ---------- Hero 终端打字 ---------- */
+  var SCRIPT = [
+    { t: "cmd",  p: "$ ",            s: "ssh ops@prod-01" },
+    { t: "ok",   s: "✓ host key verified · ED25519 · TOFU 已信任" },
+    { t: "cmd",  p: "ops@prod-01:~$ ", s: "df -h /" },
+    { t: "dim",  s: "/dev/vda1        80G   61G   19G  77% /" },
+    { t: "agent",s: "agent ▸ 已接受委派 · 分析磁盘占用" },
+    { t: "agent",s: "agent ▸ exec \"du -sh /var/log/* | sort -h | tail -3\"" },
+    { t: "ok",   s: "✓ 人工批准 · 执行记录 #4820" },
+    { t: "dim",  s: "1.2G  /var/log/nginx   860M  /var/log/journal" },
+    { t: "agent",s: "agent ▸ exec \"sudo rm -rf /var/lib/mysql\"" },
+    { t: "warn", s: "× 危险形态命中：rm -rf × sudo × 数据目录" },
+    { t: "warn", s: "⏸ 已暂停，等待人工审批 —— 与粘贴保护同一张表" },
+    { t: "ok",   s: "✓ 你点了「拒绝」· 拒绝同样入册 #4821" },
+    { t: "faint",s: "—— 演示循环 · demo session，非真实主机 ——" }
+  ];
+  var body = document.getElementById("termBody");
+  var CLS = { cmd:"t-cmd", ok:"t-p", dim:"t-dim", faint:"t-faint", agent:"t-agent", warn:"t-amber" };
+  var caret = document.createElement("span");
+  caret.className = "t-caret";
+
+  function addLine(cls, html){
+    var ln = document.createElement("span");
+    ln.className = "ln " + cls;
+    ln.innerHTML = html;
+    body.appendChild(ln);
+    while (body.children.length > 13) body.removeChild(body.firstChild);
+    return ln;
+  }
+  function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+
+  function playScript(){
+    body.innerHTML = "";
+    var i = 0;
+    function next(){
+      if (i >= SCRIPT.length) { setTimeout(playScript, 6500); return; }
+      var step = SCRIPT[i++];
+      if (step.t === "cmd") {
+        var ln = addLine("t-cmd", '<span class="t-p">' + esc(step.p) + "</span>");
+        ln.appendChild(caret);
+        var typed = document.createTextNode("");
+        ln.insertBefore(typed, caret);
+        var j = 0;
+        (function typeChar(){
+          if (j < step.s.length) {
+            typed.textContent += step.s[j++];
+            setTimeout(typeChar, 26 + Math.random() * 46);
+          } else {
+            setTimeout(next, 420);
+          }
+        })();
+      } else {
+        var cls = CLS[step.t] || "t-dim";
+        var l2 = addLine(cls, esc(step.s));
+        l2.appendChild(caret);
+        setTimeout(next, step.t === "warn" ? 1500 : 640);
+      }
+    }
+    next();
+  }
+  if (reduced) {
+    SCRIPT.forEach(function(step){
+      addLine(CLS[step.t] || "t-cmd", esc((step.p || "") + step.s));
+    });
+  } else {
+    setTimeout(playScript, 700);
+  }
+
+  /* ---------- 审批门交互 ---------- */
+  var SAMPLES = [
+    { cmd: '"sudo rm -rf /var/lib/mysql"', meta: '命中规则 <b>rm -rf</b> × <b>提权 sudo</b> × <b>数据目录</b><br>目标主机 <b>prod-01</b> · 影响 <b>不可撤销</b>' },
+    { cmd: '"curl -fsSL https://get.example.io | sudo bash"', meta: '命中规则 <b>管道执行远程脚本</b> × <b>提权 sudo</b><br>目标主机 <b>prod-01</b> · 影响 <b>任意代码执行</b>' },
+    { cmd: '"dd if=/dev/zero of=/dev/vda bs=1M"', meta: '命中规则 <b>覆写块设备</b><br>目标主机 <b>prod-01</b> · 影响 <b>整盘数据销毁</b>' }
+  ];
+  var si = 0, busy = false, recNo = 4821;
+  var gCmd = document.getElementById("gateCmd"),
+      gMeta = document.getElementById("gateMeta"),
+      gRes = document.getElementById("gateResult"),
+      gLog = document.getElementById("gateLog"),
+      gOk = document.getElementById("gateOk"),
+      gNo = document.getElementById("gateNo");
+
+  function gateDecide(approved){
+    if (busy) return;
+    busy = true;
+    gOk.disabled = gNo.disabled = true;
+    var now = new Date();
+    var ts = ("0"+now.getHours()).slice(-2) + ":" + ("0"+now.getMinutes()).slice(-2) + ":" + ("0"+now.getSeconds()).slice(-2);
+    if (approved) {
+      gRes.className = "gate-result ok";
+      gRes.textContent = "✓ 已批准一次 · 执行与结果写入记录 #" + recNo;
+    } else {
+      gRes.className = "gate-result no";
+      gRes.textContent = "× 已拒绝 · 拒绝同样写入记录 #" + recNo;
+    }
+    var line = document.createElement("div");
+    line.textContent = ts + " " + (approved ? "人工批准一次" : "人工拒绝") + " · 记录 #" + recNo + " · 已加密入册";
+    gLog.appendChild(line);
+    while (gLog.children.length > 4) gLog.removeChild(gLog.firstChild);
+    recNo++;
+    setTimeout(function(){
+      si = (si + 1) % SAMPLES.length;
+      gCmd.textContent = SAMPLES[si].cmd;
+      gMeta.innerHTML = SAMPLES[si].meta;
+      gRes.textContent = "";
+      gRes.className = "gate-result";
+      gOk.disabled = gNo.disabled = false;
+      busy = false;
+    }, 2400);
+  }
+  gOk.addEventListener("click", function(){ gateDecide(true); });
+  gNo.addEventListener("click", function(){ gateDecide(false); });
+})();
+</script>
+</body>
+</html>

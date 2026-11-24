@@ -1,0 +1,36 @@
+# 品牌主页发布：website/ 原样发布到 GitHub Pages，无构建步骤
+# 纯 SSH 版是主页（index.html），人机协同版在 /agent.html
+# 前置：仓库 Settings → Pages → Source 选 GitHub Actions（已由维护者开启）
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+
+# 同一时刻只允许一次发布，进行中的发布不取消
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+      - id: deployment
+        uses: actions/deploy-pages@v4

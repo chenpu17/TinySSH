@@ -4,9 +4,9 @@
 [![release](https://img.shields.io/github/v/release/chenpu17/TinySSH)](https://github.com/chenpu17/TinySSH/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**A human–AI collaborative terminal.** An SSH client, a first-class local terminal, and an embedded AI agent in one desktop app — Windows, macOS, Linux. The agent kernel is the sister project [TinyAgent](https://github.com/chenpu17/TinyAgent); TinySSH wires it to real sessions behind approvals, audit, and explicit control hand-off.
+**A human–AI collaborative terminal.** An SSH client, a first-class local terminal, and an embedded AI agent in one app — Windows, macOS, Linux, and Android (SSH + tmux). The agent kernel is the sister project [TinyAgent](https://github.com/chenpu17/TinyAgent); TinySSH wires it to real sessions behind approvals, audit, and explicit control hand-off.
 
-**English** · [中文](README.zh-CN.md)
+**English** · [中文](README.zh-CN.md) · [Website](https://chenpu17.github.io/TinySSH/)
 
 Built for developers who juggle a few to a dozen servers: connections that just work, a terminal that feels right, files when you need them, and an agent you can hand tasks to — without handing over your keys.
 
@@ -34,8 +34,9 @@ Prebuilt binaries on the [Releases page](https://github.com/chenpu17/TinySSH/rel
 | Windows 10/11 x64 | `TinySSH_<ver>_windows_x64_portable.exe` — single file, needs only the built-in WebView2 |
 | macOS (Apple Silicon & Intel) | `TinySSH_<ver>_macos_<arch>.dmg` or `.app.zip` |
 | Linux amd64 | `TinySSH_<ver>_linux_amd64.deb` (auto-deps) or `.tar.gz` (needs libwebkit2gtk-4.1) |
+| Android 7.0+ (arm64) | `TinySSH_<ver>_android_arm64.apk` — **release-signed**, sideload; mobile v1 covers SSH + tmux |
 
-Each release also ships the `tinyssh` CLI and `SHA256SUMS.txt`. Windows is the primary validated platform; macOS Apple Silicon is validated on hardware; Intel macOS and Linux are CI-built and unit-tested.
+Each release also ships the `tinyssh` CLI and `SHA256SUMS.txt`. Windows is the primary validated platform; macOS Apple Silicon is validated on hardware; Intel macOS and Linux are CI-built and unit-tested. The Android APK is emulator-tested and signed with the release keystore (no Play listing, no in-app auto-update — install the new APK over the old one to upgrade; keep the same signing identity).
 
 ### First launch (unsigned builds)
 
@@ -61,6 +62,7 @@ No code-signing certificate is behind these builds, so the OS warns on first lau
 - **Session restore** — encrypted snapshots on clean exit, replayed on next start through the full TOFU/2FA flow.
 - **Built-in MCP server** — 24 tools, subscribable resources, and prompts on `127.0.0.1`; any MCP-capable agent plugs in (self-serve docs at `/integration.md`).
 - **Bilingual UI** — English / 中文 (Simplified), switchable instantly without interrupting sessions.
+- **Android, SSH + tmux in your pocket** — touch assist key ball (arrows/Home/End/PgUp/PgDn/^B, font zoom, drag to dock), landscape / tablet / external-keyboard first, foreground keep-alive while sessions or transfers run, and a native startup recovery page with an explicit local-data reset.
 - **Portable, private, self-updating** — single exe on Windows; credentials, keys, records, and snapshots encrypted in the vault; one-click signed auto-update on macOS/Windows (signing is opt-in for maintainers).
 
 ## Screenshots

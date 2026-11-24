@@ -4,9 +4,9 @@
 [![release](https://img.shields.io/github/v/release/chenpu17/TinySSH)](https://github.com/chenpu17/TinySSH/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**人机协同终端。** SSH 客户端 + 一等公民本地终端 + 内置 AI Agent，一个桌面应用搞定——Windows、macOS、Linux。Agent 内核是姊妹项目 [TinyAgent](https://github.com/chenpu17/TinyAgent)；TinySSH 把它接到真实会话上，全程有审批、审计与显式的控制权交接。
+**人机协同终端。** SSH 客户端 + 一等公民本地终端 + 内置 AI Agent，一个应用搞定——Windows、macOS、Linux，以及 Android（SSH + tmux）。Agent 内核是姊妹项目 [TinyAgent](https://github.com/chenpu17/TinyAgent)；TinySSH 把它接到真实会话上，全程有审批、审计与显式的控制权交接。
 
-[English](README.md) · **中文**
+[English](README.md) · **中文** · [品牌主页](https://chenpu17.github.io/TinySSH/)
 
 为同时打理几台到十几台服务器的开发者而做：连接开箱即用、终端手感对路、需要时能传文件、可以把任务交给 Agent——但不必把钥匙也交出去。
 
@@ -34,8 +34,9 @@
 | Windows 10/11 x64 | `TinySSH_<ver>_windows_x64_portable.exe`——单文件，仅依赖系统自带 WebView2 |
 | macOS（Apple Silicon 与 Intel） | `TinySSH_<ver>_macos_<arch>.dmg` 或 `.app.zip` |
 | Linux amd64 | `TinySSH_<ver>_linux_amd64.deb`（自动装依赖）或 `.tar.gz`（需 libwebkit2gtk-4.1） |
+| Android 7.0+（arm64） | `TinySSH_<ver>_android_arm64.apk`——**release 签名**，侧载安装；移动端 v1 覆盖 SSH + tmux |
 
-每个 release 还附带 `tinyssh` CLI 与 `SHA256SUMS.txt`。Windows 是第一验证平台；macOS Apple Silicon 已真机验证；Intel macOS 与 Linux 为 CI 构建并跑单元测试。
+每个 release 还附带 `tinyssh` CLI 与 `SHA256SUMS.txt`。Windows 是第一验证平台；macOS Apple Silicon 已真机验证；Intel macOS 与 Linux 为 CI 构建并跑单元测试。Android APK 经模拟器实测、用 release keystore 签名（不上架 Play、无应用内自动更新——下载新 APK 覆盖安装即升级，需保持同一签名身份）。
 
 ### 首次启动（未签名构建）
 
@@ -61,6 +62,7 @@
 - **会话恢复**——正常退出时加密快照，下次启动经完整 TOFU/2FA 流程回放。
 - **内置 MCP server**——24 个工具、可订阅资源与提示词，跑在 `127.0.0.1`；任何支持 MCP 的 Agent 即插即用（自助文档在 `/integration.md`）。
 - **双语界面**——English / 中文（简体），即时切换不打断会话。
+- **Android，口袋里的 SSH + tmux**——触屏助力球（方向键/Home/End/PgUp/PgDn/^B、字号缩放、拖动换位），横屏/平板/外接键盘优先，有活动会话或传输时前台保活；启动失败有原生恢复页，可显式重置本地数据。
 - **便携、私密、自更新**——Windows 单 exe；凭据、密钥、记录与快照加密进保险库；macOS/Windows 一键签名自动更新（签名对维护者可选）。
 
 ## 截图
