@@ -542,8 +542,11 @@ module.exports = {
         const ov = document.querySelector(".dead-overlay");
         const banner = ov?.querySelector(".dead-banner");
         if (!ov || !banner) return false;
+        // Chromium 159 起 flex 容器的 justify-content: flex-end 计算值序列化为
+        // flow-end（CSSOM 序列化变化，布局不变）：两种拼写等价，断言都接受。
+        const flexEnd = (v) => v === "flex-end" || v === "flow-end";
         const cs = getComputedStyle(ov);
-        return cs.justifyContent === "flex-end" && cs.paddingRight === "24px" && getComputedStyle(banner).maxWidth === "380px";
+        return flexEnd(cs.justifyContent) && cs.paddingRight === "24px" && getComputedStyle(banner).maxWidth === "380px";
       }, null, 6000), "");
     await page.evaluate((sid) => window.__demoInvoke("reconnect_session", { sid }), SID);
     ck.check("重连：原位换装（pane_id 更新、格子仍标 logs、不再蒙灰）",

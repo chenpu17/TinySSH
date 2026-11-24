@@ -8,6 +8,9 @@ module.exports = {
       borderWidth: getComputedStyle(el).borderTopWidth,
       borderStyle: getComputedStyle(el).borderTopStyle,
     }));
+    // Chromium 159 起 flex 容器的 justify-content: flex-end 计算值序列化为
+    // flow-end（CSSOM 序列化变化，布局不变）：两种拼写等价，断言都接受。
+    const flexEnd = (v) => v === "flex-end" || v === "flow-end";
     const rightEdge = async (footer, lastButton) => {
       const [footerBox, buttonBox] = await Promise.all([footer.boundingBox(), lastButton.boundingBox()]);
       return !!footerBox && !!buttonBox && Math.abs((footerBox.x + footerBox.width) - (buttonBox.x + buttonBox.width)) <= 1;
@@ -19,7 +22,7 @@ module.exports = {
     await addDialog.waitFor({ state: "visible" });
     const addStyle = await actionStyle(addFooter);
     ck.check("新建连接操作区右对齐并与字段区分层",
-      addStyle.justify === "flex-end" && addStyle.borderWidth === "1px" && addStyle.borderStyle === "solid",
+      flexEnd(addStyle.justify) && addStyle.borderWidth === "1px" && addStyle.borderStyle === "solid",
       JSON.stringify(addStyle));
     ck.check("新建连接保留主按钮、仅保存、取消的既有顺序",
       JSON.stringify(await addFooter.locator("button").allTextContents()) === JSON.stringify(["保存并连接", "仅保存", "取消"]));
@@ -43,7 +46,7 @@ module.exports = {
     await quickDialog.waitFor({ state: "visible" });
     const quickStyle = await actionStyle(quickFooter);
     ck.check("快速连接与新建连接共用右对齐操作区",
-      quickStyle.justify === "flex-end" && quickStyle.borderWidth === "1px" && quickStyle.borderStyle === "solid",
+      flexEnd(quickStyle.justify) && quickStyle.borderWidth === "1px" && quickStyle.borderStyle === "solid",
       JSON.stringify(quickStyle));
     ck.check("快速连接保留连接、取消的既有顺序与入口",
       JSON.stringify(await quickFooter.locator("button").allTextContents()) === JSON.stringify(["连接", "取消"]) &&

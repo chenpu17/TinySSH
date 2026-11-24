@@ -12,6 +12,7 @@
 
 - **cargo 必须 `-j 4`**：默认并行会页面文件耗尽（os error 1455 假性编译错）。
 - **UI specs 需 `TINYSSH_UI_CHROME`** 指向 Edge/Chrome；脚本会自动探测本机 Edge。
+- **CI 的浏览器版本钉在 vendored `playwright-core`**（install 时读其 version）：不钉会随 `npx` 拿到最新 Chrome，计算样式断言的序列化随版本漂移（Chrome 159 把 flex 容器的 `justify-content: flex-end` 序列化成 `flow-end`，布局不变）；spec 里已按同义拼写放宽，升级 `playwright-core` 后仍需复核。
 - **UI specs 前冻结代码**：HMR 时序抖动会产生假红；套件红先单跑该 spec 复核（15-goal H1 是已知满载假红）。
 - **core-session 单独成档**（tier2/3）：core_local 13 测试全并行且 PTY 重，混入全仓并行档被挤占时 spawn 时序崩、agent 动作级联进 120s 审批门（实测 1082s 假红、安静时 6.7s 绿）——单独跑 + `--test-threads=4`；残余噪声由两跑仲裁兜底（单跑/复跑绿=假红放行，两跑红=真红拦截）。
 - 无 docker 时 e2e 用例自动 skip（env 门早退，core_local 余 2 例需 sshd 容器）。

@@ -149,14 +149,17 @@ jobs:
       - run: npm ci
         working-directory: ui
       - run: cargo test --workspace --exclude tinyssh-app
-      # playwright-core 不带 install CLI，临时拉完整版 playwright 装 chromium，
-      # TINYSSH_UI_CHROME 指向其可执行（脚本约定：环境变量指浏览器）
-      - run: npx -y playwright install chromium
+      # playwright-core 不带 install CLI，临时拉完整版 playwright 装 chromium。
+      # 版本必须与 ui 里 vendored 的 playwright-core 对齐（driver 与浏览器同发布
+      # 分支），不钉会随 npx 拿到最新 Chrome：浏览器行为漂移会让断言假红（2026-11-24
+      # Chrome 159 把 flex 容器的 justify-content: flex-end 序列化成 flow-end）。
+      # 浏览器可执行路径由 test/browser.cjs 从 ms-playwright 缓存自动发现。
+      - run: npx -y "playwright@$(node -p 'require("playwright-core/package.json").version')" install chromium
+        working-directory: ui
       - run: |
           npm run dev -- --port 5183 &
           sleep 6
-          CHROME=$(ls "$HOME/.cache/ms-playwright"/chromium-*/chrome-linux/chrome | head -1)
-          TINYSSH_UI_CHROME="$CHROME" npm test
+          npm test
         working-directory: ui
 
   # Android 缩水档（tier2 档位）：只编 aarch64 debug APK + 16 KB 页对齐门。
