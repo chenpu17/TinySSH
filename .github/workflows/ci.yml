@@ -234,6 +234,20 @@ jobs:
             target/aarch64-linux-android/debug/libtinyssh_app_lib.so \
             $(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | sort)
 
+      # error 级 lint 即红（MissingTranslation/TV 声明这类此前全静默）；复用上一步
+      # 的 gradle 缓存与已编译产物，额外开销主要是 lint 分析本身。RustPlugin 按架构
+      # 建了 flavor，单 APK 构建走 universal，故任务名带 flavor 前缀。
+      - name: Android lint
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :app:lintUniversalDebug --console=plain
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-lint-report
+          path: src-tauri/gen/android/app/build/reports/lint-results-universalDebug.*
+          retention-days: 7
+
       # 版本号断言（防 tauri.properties 兜底值 1/1.0 混入产物）
       - name: 产物版本号与 tauri.conf 一致
         run: |

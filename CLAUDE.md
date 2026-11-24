@@ -30,6 +30,7 @@ TINYSSH_E2E_SSHD=1 cargo test --workspace
 # Android（移动端 v1：SSH + tmux）
 cargo tauri android build --target aarch64 --apk --debug --ci -f mobile   # 必须显式 -f mobile
 bash scripts/android.sh devices                                          # SDK 里的 adb（PATH 通常没有）
+(cd src-tauri/gen/android && ./gradlew :app:lintUniversalDebug)          # CI 同款 lint 门（需 ANDROID_HOME）
 ```
 
 UI 测试环境：`TINYSSH_UI_CHROME` 指向 Edge/Chrome（如 `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`）、`TINYSSH_UI_BASE=http://127.0.0.1:5183`，在 `ui/` 下跑 `node test/run.cjs`。**跑全套前先杀 tinyssh-app（逐帧采样怕负载）；cargo 与 Playwright 永不并发。** `ui/` 唯一依赖是 playwright-core。

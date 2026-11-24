@@ -7,4 +7,18 @@
     <string name="keepalive_text_sessions">%1$d 个活动会话</string>
     <string name="keepalive_text_transfers">%1$d 个传输进行中</string>
     <string name="keepalive_text_both">%1$d 个活动会话 · %2$d 个传输进行中</string>
+    <!-- 启动失败恢复页（KI-110）：Rust 内核启动失败会直接退出进程，下次启动
+         由 RecoveryActivity 呈现原因与恢复入口。 -->
+    <string name="recovery_title">TinySSH 启动失败</string>
+    <string name="recovery_message">上次启动在打开本地存储时中断。可以先重试；若反复失败，可清除本地数据后重新开始。</string>
+    <string name="recovery_retry">重试</string>
+    <string name="recovery_reset">重置本地数据</string>
+    <string name="recovery_quit">退出</string>
+    <string name="recovery_reset_confirm_title">重置本地数据？</string>
+    <string name="recovery_reset_confirm_message">将删除本机的会话记录、已知主机、设置与 SSH 凭据，无法撤销。远端服务器上的数据不受影响。</string>
+    <string name="recovery_reset_confirm_ok">删除并重启</string>
+    <string name="recovery_cancel">取消</string>
+    <string name="recovery_reset_failed">重置未完成：%1$s</string>
+    <string name="recovery_delete_failed">无法删除 %1$s</string>
+    <string name="recovery_start_failed">无法启动主界面：%1$s</string>
 </resources>

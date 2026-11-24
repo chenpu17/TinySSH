@@ -6,6 +6,8 @@ import android.content.res.Configuration
 import android.hardware.SensorManager
 import android.hardware.input.InputManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.InputDevice
 import android.view.OrientationEventListener
 import android.view.View
@@ -16,11 +18,15 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : TauriActivity() {
   private var contentWebView: WebView? = null
 
   companion object {
+    /** 返回键等 WebView 应答的上限：正常几毫秒，超时按渲染进程无应答处理。 */
+    private const val BACK_FALLBACK_MS = 400L
+
     /** 供 Rust 经 JNI（Application context 的 ClassLoader 载入本类）回调。 */
     private var current: WeakReference<MainActivity>? = null
 
@@ -142,6 +148,13 @@ class MainActivity : TauriActivity() {
   // 在这种状态下放行默认行为（焦点转给按钮）。唯一真源是下面的 IME inset。
   private var imeVisible = false
 
+  // 返回键一次性闸门：evaluateJavascript 的异步结果到达前（或 WebView 卡死不回
+  // 回调时）挡掉连按，避免一按再按连开两轮「退 App」判定。超时回退走
+  // moveTaskToBack 而不是 finish——会话可能还在跑，返回键不该直接杀应用。
+  private val backGate = AtomicBoolean(false)
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var backTimeout: Runnable? = null
+
   /** 物理朝向 → 固定屏幕方向。对角死区（距四个正方向超过 35°）返回 null，
    *  调用方保持当前方向。 */
   private fun targetFor(orientation: Int): Int? = when (orientation) {
@@ -238,7 +251,18 @@ class MainActivity : TauriActivity() {
       override fun handleOnBackPressed() {
         val wv = contentWebView
         if (wv == null) { finish(); return }
+        // 回调未到前连按无效；等待期间 WebView 渲染进程卡死时回调永远不会来，
+        // 400ms 后回退到「退到后台」（不 finish，避免误杀有活动会话的 App）。
+        if (!backGate.compareAndSet(false, true)) return
+        val timeout = Runnable {
+          if (backGate.compareAndSet(true, false)) moveTaskToBack(true)
+        }
+        backTimeout = timeout
+        mainHandler.postDelayed(timeout, BACK_FALLBACK_MS)
         wv.evaluateJavascript("(window.__tinysshBack && window.__tinysshBack()) === true") { result ->
+          // 超时先到：这一轮已按「WebView 无应答」处理，迟到结果不再触发 finish。
+          if (!backGate.compareAndSet(true, false)) return@evaluateJavascript
+          mainHandler.removeCallbacks(timeout)
           if (result != "true") finish()
         }
       }
@@ -270,6 +294,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onDestroy() {
+    backTimeout?.let { mainHandler.removeCallbacks(it) }
     getSystemService(InputManager::class.java)?.unregisterInputDeviceListener(inputDeviceListener)
     if (current?.get() === this) current = null
     super.onDestroy()

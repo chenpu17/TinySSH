@@ -91,6 +91,14 @@ TinySSH/
   webview 由宿主 Activity 创建，`tauri.android.conf.json` 覆盖 windows[0]
   `create:true` 让宿主自动建主窗口）；默认存储库路径在 Android 走 JNI 的
   `Context.getFilesDir()`（进程没有 HOME、CWD 只读，不能回退 `"."`）。
+- Android 启动失败恢复（KI-110）：内核在 `MainActivity.onCreate` 的 `super` 里
+  启动，失败（vault 独占锁/库损坏/解密失败）直接 `exit(101)`，原生对话框来不及
+  显示。因此 Manifest 的 launcher 是轻量 `RecoveryActivity`（不继承
+  `TauriActivity`、不碰内核）：它读库旁的 `filesDir/.tinyssh/startup-fatal.txt`
+  （Rust 失败时写、成功打开后删），无标记立刻转 `MainActivity`，有标记则显示
+  失败原因与「重试 / 重置本地数据 / 退出」。重置必须同清 `.tinyssh`、
+  SharedPreferences `keyring-default` 与 AndroidKeyStore 同名别名——密文与密钥
+  分居两处，缺一都会留下解不开的数据。
 - 移动端 UI 装配（v1 只保 SSH + tmux）：`ui/src/main.tsx` 给 `<html>` 挂
   `data-platform`，样式与功能裁剪都读这个标记。软键盘与系统栏有两处原生侧前提（都是
   真机实锤）：`MainActivity` 把 `max(IME, systemBars)` 底部 inset 转成内容区底部
@@ -103,7 +111,9 @@ TinySSH/
   自己消费，到不了 Activity——即「先收键盘、再关面板、最后退 App」。
   前端消费顺序**复用 Esc 的 `closeTopOverlayRef` 栈顶链**（任何新弹层接进 Esc 链
   就自动获得返回键出口），再补移动端特有的三处：键位录入选键态、整屏任务面板
-  （`rightPanel`）与会话存续时的主机栏收起。
+  （`rightPanel`）与会话存续时的主机栏收起。回调是异步的：`AtomicBoolean` 一次
+  只放行一轮（连按不重复判定），400ms 内没等到应答就 `moveTaskToBack(true)`
+  （**不 finish**，避免误退有活动会话的 App），迟到回调按超时丢弃（KI-061）。
 - Android 系统栏图标跟随应用主题（KI-060）：`getCurrentWindow().setTheme()` 在
   Android 是 no-op，边到边下状态栏/导航栏图标只按系统深浅选色，应用内浅色 + 系统
   深色会出现白图标压浅底。由前端 `applyChrome` 上报解析后的深浅（仅

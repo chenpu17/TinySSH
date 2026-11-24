@@ -119,6 +119,10 @@ pub fn run() {
     let api = loop {
         match SessionManager::open_with(&db, app_platform()) {
             Ok(a) => {
+                // Android 恢复页（RecoveryActivity）以启动失败标记为唯一判据：成功
+                // 打开存储库即作废旧标记，下一次启动直接进主界面。
+                #[cfg(target_os = "android")]
+                let _ = std::fs::remove_file(db.with_file_name(STARTUP_FATAL_MARKER));
                 // 成为唯一实例后才清扫上一轮更新的 .old/.new（仍有进程以其为
                 // 映像时删除会失败，尽力而为静默留给下次启动）。
                 #[cfg(windows)]
@@ -134,6 +138,11 @@ pub fn run() {
                     "TinySSH 存储库打开失败，无法启动：\n{e}\n\n常见原因：\n· 另一个 TinySSH 实例正在运行（同时只能运行一个）\n· 数据库文件损坏或被占用\n\n路径：{}",
                     db.display()
                 );
+                // Android：没有控制台，进程又马上 exit——把原因落到库旁的文件，
+                // 下次启动由 RecoveryActivity 呈现（重试/重置本地数据），否则
+                // 用户只会看到「点开闪一下就没了」。
+                #[cfg(target_os = "android")]
+                let _ = std::fs::write(db.with_file_name(STARTUP_FATAL_MARKER), &msg);
                 show_fatal_dialog(&msg);
                 std::process::exit(101);
             }
@@ -930,6 +939,11 @@ pub(crate) fn dirs_or_home() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
+
+/// Android 启动失败标记文件名：与 RecoveryActivity.kt 的 FATAL_MARKER 必须一致，
+/// 写在存储库所在目录（filesDir/.tinyssh/）。
+#[cfg(target_os = "android")]
+const STARTUP_FATAL_MARKER: &str = "startup-fatal.txt";
 
 /// 默认存储库路径：桌面 = 家目录；移动端 = 应用私有 files 目录。
 ///
