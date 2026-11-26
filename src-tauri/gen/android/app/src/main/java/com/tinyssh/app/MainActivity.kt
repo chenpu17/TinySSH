@@ -3,6 +3,8 @@ package com.tinyssh.app
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.hardware.SensorManager
 import android.hardware.input.InputManager
 import android.os.Bundle
@@ -27,6 +29,15 @@ class MainActivity : TauriActivity() {
     /** 返回键等 WebView 应答的上限：正常几毫秒，超时按渲染进程无应答处理。 */
     private const val BACK_FALLBACK_MS = 400L
 
+    /** 页面取色函数的合法返回值（evaluateJavascript 回给的是 JSON 字面量，带引号）。 */
+    private val EDGE_BG = Regex("\"(#[0-9a-fA-F]{6})\"")
+
+    /** 冷启动种子的 SharedPreferences 文件与键（见 [restoreChromeSeed]）。恢复页
+     *  「重置本地数据」会连带清掉这个文件。 */
+    const val SEED_STORE = "chrome-seed"
+    private const val SEED_EDGE_BG = "edge_bg"
+    private const val SEED_BARS_LIGHT = "bars_light"
+
     /** 供 Rust 经 JNI（Application context 的 ClassLoader 载入本类）回调。 */
     private var current: WeakReference<MainActivity>? = null
 
@@ -38,15 +49,19 @@ class MainActivity : TauriActivity() {
      * 系统栏图标深浅跟随应用主题（KI-060）：应用浅色而系统深色时，纯白状态栏图标
      * 压在浅色背景上不可读。WeakReference 防泄漏；view.post 保证在主线程操作
      * View/WindowInsetsController（JNI 调用可能来自 Rust 后台线程）。
+     * 同时把窗口底色重新对齐页面底色（[syncEdgeBackground]）：图标深浅与窗口底色
+     * 都由页面驱动，前端在两者可能变化的时机调本命令，命令线不变。
      */
     @JvmStatic
     fun setSystemBarsLight(light: Boolean) {
       val a = current?.get() ?: return
-      val view = a.window.decorView
-      view.post {
-        val c = WindowCompat.getInsetsController(a.window, view)
-        c.isAppearanceLightStatusBars = light
-        c.isAppearanceLightNavigationBars = light
+      a.window.decorView.post {
+        a.applyBarsLight(light)
+        if (a.barsLight != light) {
+          a.barsLight = light
+          a.saveChromeSeed()
+        }
+        a.syncEdgeBackground()
       }
     }
 
@@ -187,6 +202,66 @@ class MainActivity : TauriActivity() {
   }
 
   /**
+   * 导航栏下方那条跟着页面底色走。边到边下内容根把 systemBars/IME 的底部 inset 转成
+   * 内边距（见 onCreate），露出来的是窗口底色——主题是 Material DayNight，跟的是系统
+   * 深浅：系统浅色 + 应用深色时，应用最底下压着一条纯白条（手势导航）或灰条（三键）。
+   * 页面在 window.__tinysshEdgeBg 里给出底缘实际颜色，这里取来涂窗口底色。页面没
+   * 就绪、取色失败或返回不合规时保持上一次的值不动。表达式只含常量，无注入面。
+   * 生效的值连同图标深浅一并落盘，供下次冷启动还原（[restoreChromeSeed]）。
+   */
+  private var edgeBg: Int? = null
+
+  /** 系统栏图标是否深色（页面浅色时为 true）；null = 页面还没给过。 */
+  private var barsLight: Boolean? = null
+
+  private fun applyBarsLight(light: Boolean) {
+    val c = WindowCompat.getInsetsController(window, window.decorView)
+    c.isAppearanceLightStatusBars = light
+    c.isAppearanceLightNavigationBars = light
+  }
+
+  /**
+   * 冷启动种子。页面要到 React 首次提交后才第一次调 setSystemBarsLight；在那之前
+   * 窗口底色与系统栏图标深浅都是主题按**系统**深浅给的——系统浅色 + 应用深色时，
+   * 页面首帧已经是深色，底下却压着一条白条、状态栏是深色图标压在深色页面上，直到
+   * 页面首次同步才纠正。这里在窗口第一帧之前还原上次页面给的值；页面就绪后照常
+   * 重取覆盖，所以种子过期也无害。首次启动没有种子，沿用主题。
+   */
+  private fun restoreChromeSeed() {
+    val p = getSharedPreferences(SEED_STORE, Context.MODE_PRIVATE)
+    if (p.contains(SEED_EDGE_BG)) {
+      val c = p.getInt(SEED_EDGE_BG, 0)
+      edgeBg = c
+      window.setBackgroundDrawable(ColorDrawable(c))
+    }
+    val light = if (p.contains(SEED_BARS_LIGHT)) p.getBoolean(SEED_BARS_LIGHT, false) else null
+    barsLight = light
+    if (light != null) applyBarsLight(light)
+  }
+
+  private fun saveChromeSeed() {
+    val e = getSharedPreferences(SEED_STORE, Context.MODE_PRIVATE).edit()
+    edgeBg?.let { e.putInt(SEED_EDGE_BG, it) }
+    barsLight?.let { e.putBoolean(SEED_BARS_LIGHT, it) }
+    e.apply()
+  }
+
+  private fun syncEdgeBackground() {
+    val wv = contentWebView ?: return
+    wv.evaluateJavascript(
+      "(function(){try{return (window.__tinysshEdgeBg&&window.__tinysshEdgeBg())||''}catch(e){return ''}})()"
+    ) { result ->
+      val hex = EDGE_BG.find(result ?: return@evaluateJavascript)?.groupValues?.get(1)
+        ?: return@evaluateJavascript
+      val color = Color.parseColor(hex)
+      if (color == edgeBg) return@evaluateJavascript
+      edgeBg = color
+      window.setBackgroundDrawable(ColorDrawable(color))
+      saveChromeSeed()
+    }
+  }
+
+  /**
    * 开关自动横屏。关掉时把 requestedOrientation 还原成 UNSPECIFIED，交还系统
    * （含旋转锁原语义）；开着时注册物理朝向监听——设备平放/方向不明时上报
    * ORIENTATION_UNKNOWN，保持上一档，不做判断。
@@ -221,6 +296,9 @@ class MainActivity : TauriActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
+    // 紧跟着还原冷启动种子：enableEdgeToEdge 刚按系统深浅设过图标外观，这里用上次
+    // 页面给的值盖掉，第一个窗口帧起就和应用外观一致（见 restoreChromeSeed）。
+    restoreChromeSeed()
     super.onCreate(savedInstanceState)
     current = WeakReference(this)
     appContext = applicationContext

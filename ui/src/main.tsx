@@ -8,6 +8,7 @@ import "./assets/fonts/misans/MiSansVF.min.css";
 import "./styles.css";
 import { applyUiFontScale, loadUiFontScale } from "./ui-scale";
 import { applyUiDensity, loadUiDensity } from "./ui-density";
+import { installTermTouchTapCompat } from "./touch";
 import { ASSIST_BALL_SIZES } from "./components/assist-ball";
 
 // 界面字号（KI-024）：必须在首帧前落到根变量——设置里改过档位时，晚一拍恢复
@@ -29,6 +30,10 @@ try {
 const ua = navigator.userAgent;
 const platform = /Android/i.test(ua) ? "android" : /iPhone|iPad|iPod/i.test(ua) ? "ios" : "";
 if (platform) document.documentElement.dataset.platform = platform;
+
+// 终端屏内的触摸点按放行兼容鼠标事件（KI-132）：全局一次，覆盖之后创建的所有终端
+// （主终端、分屏、tmux 格子）。桌面无触摸设备时监听器永不触发。
+installTermTouchTapCompat();
 
 // 注意：createRoot 只能调用一次——此前这段代码被复制了两份，两个 React 根
 // 同时挂载两个 <App/>，窗口级 keydown 监听随之翻倍（⌘W 一次关两个会话、

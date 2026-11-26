@@ -128,6 +128,24 @@ module.exports = {
       && (await wallCellCount(page)) === 3, "");
     ck.check("快照文本进格子 DOM（work 格含演示快照行）",
       await pollAsync(() => wallTextHas(page, "work", "work 当前屏快照"), 3000, page), "");
+    const wallVisual = await page.evaluate(() => {
+      const inactive = document.querySelector('[data-testid="tmux-wall-size-3"]');
+      const active = document.querySelector('[data-testid="tmux-wall-size-2"]');
+      const promote = document.querySelector('[data-testid="tmux-wall-promote-work"]');
+      const max = document.querySelector('[data-testid="tmux-wall-max-work"]');
+      return inactive && active && promote && max ? {
+        inactiveBorder: getComputedStyle(inactive).borderTopColor,
+        activeBorder: getComputedStyle(active).borderTopColor,
+        promoteBorder: getComputedStyle(promote).borderTopColor,
+        maxBorder: getComputedStyle(max).borderTopColor,
+      } : null;
+    });
+    ck.check("大屏非当前规格与格内辅助动作无静态描边，当前规格仍清晰",
+      wallVisual?.inactiveBorder === "rgba(0, 0, 0, 0)"
+      && wallVisual.promoteBorder === "rgba(0, 0, 0, 0)"
+      && wallVisual.maxBorder === "rgba(0, 0, 0, 0)"
+      && wallVisual.activeBorder !== "rgba(0, 0, 0, 0)" && wallVisual.activeBorder !== "",
+      JSON.stringify(wallVisual));
 
     // ── C. 轮询节拍：300ms 一拍（v2 轮 2s→300ms——回归网必须能红：1s 窗 ≥2 拍
     // 在 2s 旧节拍下最多 1 拍必失败；≥2 而非 ≥3 留在飞守卫/慢链路余量，坑 66 族）──
@@ -168,6 +186,18 @@ module.exports = {
     }));
     ck.check("单击小窗：就地键入（不放大！tw-active + 隐藏输入框在位 + 放大钮在格上）",
       !act1.solo && act1.active && act1.input && act1.maxBtn, JSON.stringify(act1));
+    const activeVisual = await page.evaluate(() => {
+      const cell = document.querySelector('[data-testid="tmux-wall-cell-logs"].tw-active');
+      const done = cell?.querySelector('.tw-done');
+      return cell && done ? {
+        border: getComputedStyle(cell).borderTopColor,
+        doneColor: getComputedStyle(done).color,
+        doneBorder: getComputedStyle(done).borderTopColor,
+      } : null;
+    });
+    ck.check("当前键入格保留 accent 边界，「完成」主状态未被辅助动作降噪吞掉",
+      !!activeVisual && activeVisual.border === activeVisual.doneColor
+      && activeVisual.doneBorder !== "rgba(0, 0, 0, 0)", JSON.stringify(activeVisual));
     await page.keyboard.type("echo hi");
     await page.waitForTimeout(400); // 150ms 批量冲刷 + 补拍回包
     ck.check("字面键入回显进格子（输入行 [输入中] echo hi）",
@@ -340,6 +370,26 @@ module.exports = {
     ck.check("十会话自适应 4 列（repeat(4)，格数=10）",
       (await gridCols(page)).includes("repeat(4")
       && await poll(page, () => document.querySelectorAll(".tw-cell").length === 10, null, 3000), await gridCols(page));
+
+    // ── K. 空态：大屏打开时清单清空，保留明确下一步与自动恢复说明 ──
+    await fixture(page, []);
+    ck.check("空清单显示带图标与下一步的空态",
+      await poll(page, () => {
+        const el = document.querySelector('[data-testid="tmux-wall-empty"]');
+        return !!el && !!el.querySelector('.icon-tmux') && !!el.querySelector('.tw-empty-title')
+          && (el.querySelector('.tw-empty-sub')?.textContent ?? "").includes("自动显示快照");
+      }, null, 7000), "");
+    const emptyVisual = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="tmux-wall-empty"]');
+      return el ? {
+        direction: getComputedStyle(el).flexDirection,
+        align: getComputedStyle(el).alignItems,
+        title: el.querySelector('.tw-empty-title')?.textContent ?? "",
+      } : null;
+    });
+    ck.check("空态标题与说明集中排列，不新增卡片舞台",
+      emptyVisual?.direction === "column" && emptyVisual.align === "center"
+      && emptyVisual.title === "远端暂无 tmux 会话", JSON.stringify(emptyVisual));
     await closeWall(page);
 
     // ── 收尾：清空面板与清单，不污染后续 spec ──

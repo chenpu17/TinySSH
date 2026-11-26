@@ -143,6 +143,27 @@ module.exports = {
       && await vis(page, '[data-testid="mon-sw-general-big"]')
       && await vis(page, '[data-testid="mon-sw-npu-big"]')
       && !(await page.$('[data-testid="mon-card"]')));
+    const offboard = await page.evaluate(() => {
+      const board = document.querySelector('[data-testid="mon-empty"]');
+      const title = board?.querySelector('.mon-off-title');
+      const card = board?.querySelector('[data-testid="mon-sw-general-big"]');
+      if (!board || !title || !card) return null;
+      const bs = getComputedStyle(board);
+      const br = board.getBoundingClientRect();
+      const cr = card.getBoundingClientRect();
+      return {
+        border: bs.borderTopColor,
+        background: bs.backgroundColor,
+        align: bs.alignItems,
+        titleAlign: getComputedStyle(title).textAlign,
+        cardBorder: getComputedStyle(card).borderTopStyle,
+        contained: cr.left >= br.left && cr.right <= br.right,
+      };
+    });
+    ck.check("空态收敛为无外层描边的居中引导区，开关卡实线与边界保留",
+      offboard && offboard.border === "rgba(0, 0, 0, 0)" && offboard.background === "rgba(0, 0, 0, 0)"
+      && offboard.align === "center" && offboard.titleAlign === "center"
+      && offboard.cardBorder === "solid" && offboard.contained, JSON.stringify(offboard));
     ck.check("采集全关时 rail 无呼吸点", !(await page.$('[data-testid="rail-monitor-live"]')));
     const cnt0 = await countText(page);
     ck.check("空态也显示服务器计数：2 台服务器 · 3 条连接", cnt0.includes("2 台服务器") && cnt0.includes("3 条连接"), cnt0);

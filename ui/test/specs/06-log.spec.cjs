@@ -51,6 +51,53 @@ module.exports = {
     ck.check("切换到全部会话后按钮态翻转", afterAll.all === "true", JSON.stringify(afterAll));
     const nAll = await rowCount(page);
     ck.check("全部会话行数严格多于当前会话（范围真的生效）", nAll > nCur, `全部 ${nAll} vs 当前 ${nCur}`);
+    const approvalVisual = await page.evaluate(() => {
+      const row = document.querySelector('[data-testid="log-row"][data-action="approval_requested"]');
+      const decision = row?.querySelector('.tl-decision');
+      return row && decision ? {
+        tone: row.classList.contains('log-tone-warn'),
+        text: decision.textContent,
+        weight: getComputedStyle(decision).fontWeight,
+        color: getComputedStyle(decision).color,
+        dot: getComputedStyle(row, '::after').backgroundColor,
+      } : null;
+    });
+    ck.check("审批请求记录有独立注意层级且不改写事件文案",
+      approvalVisual?.tone && approvalVisual.text === "请求审批"
+      && parseFloat(approvalVisual.weight) >= 600 && approvalVisual.color === approvalVisual.dot,
+      JSON.stringify(approvalVisual));
+
+    // 真实后端动作但不带 _failed 后缀的两类传输异常，也必须进入失败层级。
+    const transferVisual = await page.evaluate(() => ["transfer_interrupted", "transfer_publish_blocked"].map((action) => {
+      const row = document.querySelector(`[data-testid="log-row"][data-action="${action}"]`);
+      const decision = row?.querySelector(".tl-decision");
+      return row && decision ? {
+        action,
+        tone: row.classList.contains("log-tone-err"),
+        weight: getComputedStyle(decision).fontWeight,
+        color: getComputedStyle(decision).color,
+        dot: getComputedStyle(row, "::after").backgroundColor,
+      } : { action, missing: true };
+    }));
+    ck.check("传输中断与发布被阻均有失败层级（不是普通灰字）",
+      transferVisual.every((v) => v.tone && parseFloat(v.weight) >= 600 && v.color === v.dot),
+      JSON.stringify(transferVisual));
+    const historyIdentity = await page.evaluate(() => {
+      const unknown = document.querySelector('[data-testid="log-row"][data-action="transfer_interrupted"] .tl-meta');
+      const known = document.querySelector('[data-testid="log-row"][data-action="takeover"] .tl-meta');
+      return {
+        unknownText: unknown?.textContent ?? "",
+        unknownSidSpans: unknown?.querySelectorAll(".log-sid").length ?? 0,
+        knownText: known?.textContent ?? "",
+        knownSidSpans: known?.querySelectorAll(".log-sid").length ?? 0,
+      };
+    });
+    ck.check("无身份缓存的历史会话短 id 只显示一次",
+      historyIdentity.unknownSidSpans === 1 && /· s-demo-h$/.test(historyIdentity.unknownText)
+      && !historyIdentity.unknownText.includes("（"), JSON.stringify(historyIdentity));
+    ck.check("已有身份缓存时仍保留主机名与短 id",
+      historyIdentity.knownSidSpans === 1 && historyIdentity.knownText.includes("prod-1")
+      && historyIdentity.knownText.includes("（s-demo-0001）"), JSON.stringify(historyIdentity));
 
     // ── 主体筛选：必须真的只剩 Agent 行 ──
     const actorOpts = await page.$$eval("[data-testid=log-actor] option", (os) => os.map((o) => o.textContent.trim()));

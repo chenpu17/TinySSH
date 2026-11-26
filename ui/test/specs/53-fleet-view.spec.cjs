@@ -24,6 +24,10 @@ module.exports = {
     }
     ck.check("编排视图开：rail-fleet 点亮 + 视图可见",
       (await openCls("rail-fleet")) && (await vis('[data-testid="agent-view"]')));
+    ck.check("Fleet 与 Agent 共用 300–440 终端优先窄栏", await page.evaluate(() => {
+      const width = Number.parseInt(document.querySelector('[data-testid="agent-view"]')?.style.width ?? "", 10);
+      return width >= 300 && width <= 440;
+    }), await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width ?? "(无)"));
     ck.check("三向互斥：主机栏收起（rail-hosts 熄灭）", !(await openCls("rail-hosts")));
     ck.check("编排标识：标题=跨主机编排 + 编排徽标在场",
       (await page.evaluate(() => document.querySelector(".ag-host")?.textContent ?? "")).includes("跨主机编排") &&
@@ -40,6 +44,19 @@ module.exports = {
       () => document.querySelector('[data-testid="agent-tool"]')?.textContent?.includes("待审批") ?? false,
       null, { timeout: 8000 });
     ck.check("派发指令进对话 + 工具卡待审批", true);
+    const pendingVisual = await page.evaluate(() => {
+      const card = document.querySelector('[data-testid="agent-tool"].tc-pending');
+      const chip = card?.querySelector('.tc-chip.warn');
+      return card && chip ? {
+        border: getComputedStyle(card).borderTopColor,
+        chipBorder: getComputedStyle(chip).borderTopColor,
+        chipBg: getComputedStyle(chip).backgroundColor,
+      } : null;
+    });
+    ck.check("待审批工具卡与状态 chip 共用柔和警告层级",
+      !!pendingVisual && pendingVisual.border === pendingVisual.chipBorder
+      && pendingVisual.chipBg !== "rgba(0, 0, 0, 0)" && pendingVisual.chipBg !== "transparent",
+      JSON.stringify(pendingVisual));
     await page.click('[data-testid="agent-approve"]');
     await page.waitForFunction(
       () => document.querySelector('[data-testid="agent-tool"]')?.textContent?.includes("完成") ?? false,
@@ -55,6 +72,15 @@ module.exports = {
 
     // ── 协作面板：高危审批二次确认臂带 TTL（P1）──
     // 编排视图的「有 N 个待审批」提示是进协作面板的既有入口（点击即开右侧面板）。
+    const fleetHintVisual = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="fleet-pending-hint"]');
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { whiteSpace: cs.whiteSpace, overflowWrap: cs.overflowWrap, text: el.textContent };
+    });
+    ck.check("Fleet 待审批入口允许完整换行，不在窄栏省略关键去向",
+      fleetHintVisual?.whiteSpace === "normal" && fleetHintVisual.overflowWrap === "anywhere"
+      && fleetHintVisual.text.includes("协作面板"), JSON.stringify(fleetHintVisual));
     await page.click('[data-testid="fleet-pending-hint"]');
     await page.waitForTimeout(600);
     ck.check("待审批提示打开协作面板",
@@ -68,6 +94,28 @@ module.exports = {
     });
     ck.check("高危卡显示会话委托目的（上下文在场）",
       !!apPurpose && !apPurpose.missing && apPurpose.text.includes("清理掉"), JSON.stringify(apPurpose));
+
+    const approvalVisual = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('.task-panel .ap-card')]
+        .find((el) => el.querySelector('.cmd')?.textContent?.includes('rm -rf'));
+      const ghost = card?.querySelector('.ap-actions button.ghost');
+      const head = document.querySelector('.ap-group-head');
+      return card && ghost && head ? {
+        risk: card.classList.contains('ap-risk'),
+        left: getComputedStyle(card).borderLeftColor,
+        warning: getComputedStyle(card.querySelector('.tsum-chip')).color,
+        gap: getComputedStyle(card).marginBottom,
+        ghostBorder: getComputedStyle(ghost).borderTopColor,
+        headLeft: getComputedStyle(head).borderLeftWidth,
+        headBottom: getComputedStyle(head).borderBottomWidth,
+      } : null;
+    });
+    ck.check("高危审批卡有警告左边轨，分组头收敛为单分隔线",
+      approvalVisual?.risk && approvalVisual.left === approvalVisual.warning
+      && approvalVisual.gap === "0px" && approvalVisual.headLeft === "0px"
+      && approvalVisual.headBottom === "1px", JSON.stringify(approvalVisual));
+    ck.check("审批辅助动作去静态描边，批准与拒绝主操作不变",
+      approvalVisual?.ghostBorder === "rgba(0, 0, 0, 0)", JSON.stringify(approvalVisual));
 
     /** 找高危卡（rm -rf）的批准类按钮并返回其文案；click=true 时顺带点它。 */
     const riskApprove = (click) => page.evaluate((doClick) => {

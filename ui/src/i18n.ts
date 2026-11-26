@@ -238,8 +238,10 @@ const EN: Record<string, string> = {
   "界面缩放": "UI zoom",
   "缩放 {0}%": "Zoom {0}%",
   "缩放失败：{0}": "Zoom failed: {0}",
-  "界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · 按平台使用 Ctrl/⌘+滚轮（原生窗口生效）":
-    "Zoom: Ctrl/⌘ + in · − out · 0 reset · use Ctrl/⌘+wheel by platform (native window)",
+  "界面缩放：⌘ + 放大 · − 缩小 · 0 复位 · 滚轮缩放已停用（原生窗口生效）":
+    "Zoom: ⌘ + in · − out · 0 reset · wheel zoom disabled (native window)",
+  "界面缩放：Ctrl + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）":
+    "Zoom: Ctrl + in · − out · 0 reset · Ctrl+wheel (native window)",
   "界面语言": "Interface language",
   "中文（简体）": "中文 (Simplified)",
   "English": "English",
@@ -977,7 +979,6 @@ const EN: Record<string, string> = {
   "上翻一页": "Page up",
   "下翻一页": "Page down",
   "回到底部": "Back to bottom",
-  "粘贴剪贴板": "Paste from clipboard",
   "剪贴板为空": "Clipboard is empty",
   "读取剪贴板失败（权限拒绝或窗口无焦点）": "Failed to read the clipboard (permission denied or window unfocused)",
   "常用键": "Quick keys",
@@ -1001,8 +1002,8 @@ const EN: Record<string, string> = {
   "翻页、回到底部、粘贴剪贴板、常用键与终端字号调节的悬浮球；手机端常显，桌面端默认关。按住球拖动可换位。":
     "Floating ball with paging, back-to-bottom, clipboard paste, quick keys and terminal font size; always shown on mobile, off by default on desktop. Hold and drag the ball to move it.",
   "在桌面端显示助力球": "Show assist ball on desktop",
-  "供手机远程桌面控制本机时使用；开启后常显，与移动端同一面板，关闭即彻底隐藏。":
-    "For phone remote-desktop sessions controlling this machine; once enabled the ball stays visible with the same panel as mobile — off hides it completely.",
+  "供手机远程桌面控制本机时使用；开启后进入本地终端或 SSH 会话，显示在终端右缘。关闭即彻底隐藏。":
+    "For phone remote-desktop sessions controlling this machine. Once enabled, open a local terminal or SSH session to find the ball at the right edge of the terminal. Off hides it completely.",
   // —— 移动端紧凑标签切换（GitHub #45） ——
   "会话切换：{0}": "Switch session: {0}",
   "切换会话（长按打开会话菜单：重命名/分屏/关闭）": "Switch session (long-press for rename/split/close)",
@@ -1470,8 +1471,8 @@ const EN: Record<string, string> = {
   "危险操作需审批": "Approval for dangerous operations",
   "随时接管终端": "Take over the terminal anytime",
   "操作留痕可回看": "Reviewable activity history",
-  "拖动调整 Agent 视图宽度（320–560 px）": "Drag to resize the agent view (320–560 px)",
-  "拖动调整宽度（320–560 px）": "Drag to resize (320–560 px)",
+  "拖动调整 Agent 视图宽度（{0}–{1} px）": "Drag to resize the agent view ({0}–{1} px)",
+  "拖动调整宽度（{0}–{1} px）": "Drag to resize ({0}–{1} px)",
   "远端已写入剪贴板（OSC 52）· {0}": "Remote wrote to the clipboard (OSC 52) · {0}",
   "OSC 52 写剪贴板失败 · {0}（权限拒绝或窗口无焦点）": "OSC 52 clipboard write failed · {0} (permission denied or window unfocused)",
   "专注模式切换失败：{0}": "Focus mode toggle failed: {0}",
@@ -1669,6 +1670,7 @@ const EN: Record<string, string> = {
   "退出放大": "Exit enlarge",
   "关闭会话大屏": "Close session wall",
   "远端暂无 tmux 会话": "No tmux sessions on the remote",
+  "回到当前终端创建或接入 tmux 会话后，这里会自动显示快照，无需手动刷新。": "Create or attach to a tmux session in the current terminal; snapshots will appear here automatically, with no manual refresh needed.",
   "进格子": "To panel",
   "进格子：并入本标签的面板（attach 活通道，可交互）": "To panel: attach as an interactive panel cell in this tab",
   "单击键入 · 双击放大；选中文本可复制": "Click to type · double-click to enlarge; select text to copy",
@@ -1691,6 +1693,8 @@ const EN: Record<string, string> = {
   "新建 tmux 会话": "New tmux session",
   "新建 tmux 会话：在远端直接 tmux new-session（分离创建，不抢任何屏幕），建好可接入主视图或直接开进面板": "New tmux session: runs tmux new-session on the remote directly (detached, steals no screen); when created, attach it to the main view or open it straight in the panel",
   "会话名（字母/数字/中文/下划线开头）": "Session name (starts with a letter/digit/Chinese character/underscore)",
+  "实际会话名：{0}（. 和 : 按 tmux 兼容规则转为 _）": "Actual session name: {0} (. and : become _ for tmux compatibility)",
+  "tmux 名称兼容：「{0}」已转为「{1}」": "tmux name compatibility: \"{0}\" became \"{1}\"",
   "创建": "Create",
   "创建并接入": "Create and attach",
   "创建并开进面板": "Create and open in panel",

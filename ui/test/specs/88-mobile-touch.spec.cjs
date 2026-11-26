@@ -1,6 +1,8 @@
 // 88 移动端终端触屏交互（KI-052）：长按选词 → 浮条（复制/粘贴/全选/取消）、保留
 // 手指拖动扩选、返回键收起并清选区、粘贴仍走统一粘贴链（多行必确认）、点按链接
 // 弹浮条（打开/复制链接）而非「按住 ⌘ 再单击」的桌面提示。
+// KI-134：安卓长按补发的 contextmenu 在长按期间被拦下（不聚焦终端、不叠右键菜单、
+// 不关刚弹出的浮条）。
 //
 // 桌面 Chrome 上复现：data-platform=android 让 isMobilePlatform() 判定为移动端，
 // pointer 事件用合成 PointerEvent(pointerType:"touch")；链接点按走 xterm 自己的
@@ -151,6 +153,35 @@ module.exports = {
       JSON.stringify(linkIds));
     ck.check("移动端点链接不再弹「按住 ⌘」提示", await page.evaluate(() =>
       ![...document.querySelectorAll(".toast")].some((e) => e.textContent.includes("再单击"))), "");
+
+    // ── KI-133：取消链接浮条后不点别处、直接再点同一个链接 ──
+    //    xterm 的 Linkifier 只在指针移进「新格子」时重新识别；触屏每次点按补发的
+    //    mousemove 都落在所点格子上，它认为「没动」→ 点了没反应。手指落下时清掉它的
+    //    上一格记忆。一次触屏点按 = 合成触摸 pointerdown/up（真浏览器里还有 touchstart/
+    //    touchend，与这里无关）+ 浏览器随后补发的真实鼠标事件
+    const tapLink = async (id) => {
+      await touch(page, "pointerdown", link.x, link.y, id);
+      await touch(page, "pointerup", link.x, link.y, id);
+      await page.mouse.move(link.x, link.y);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(250);
+    };
+    // 浮条落地时吞 600ms 窗内的 click（同上），等窗口过去再真点
+    await page.waitForTimeout(700);
+    await page.click('[data-testid="touch-link-cancel"]');
+    await page.waitForTimeout(200);
+    ck.check("「取消」收起链接浮条", (await barIds(page)) === null, JSON.stringify(await barIds(page)));
+    await tapLink(90);
+    const again = await barIds(page);
+    ck.check("取消后不点别处、直接再点同一个链接：浮条重新弹出",
+      !!again && again.includes("touch-link-open"), JSON.stringify(again));
+    await page.waitForTimeout(700);
+    await tapLink(91);
+    const third = await barIds(page);
+    ck.check("浮条开着时再点终端（落在遮罩上）：浮条收起", third === null, JSON.stringify(third));
+    await tapLink(92);
+    ck.check("收起后第三次点同一个链接：浮条仍能弹出（留给下一步「复制链接」）", !!(await barIds(page)), "");
     await page.waitForTimeout(700);
     await page.click('[data-testid="touch-link-copy"]');
     await page.waitForTimeout(250);
@@ -186,5 +217,95 @@ module.exports = {
       const line = window.__t.buffer.active.getLine(0)?.translateToString(true) ?? "";
       return !line.includes("hello") && !document.querySelector("[data-testid=touch-bar]");
     }));
+
+    // ── KI-134：安卓长按到点后浏览器补发 contextmenu，落点看谁先到，三处都得拦 ──
+    //    ① 抢在 480ms 定时器前落在 xterm 上：xterm 借机聚焦隐藏输入框（真机：软键盘
+    //       弹出→视口变矮→resize 清掉选区），右键菜单还会叠在随后的选区浮条上；
+    //    ② 定时器先到、落在 xterm 上：聚焦同上；
+    //    ③ 定时器先到、落在刚弹出的浮条遮罩上：遮罩自己的 contextmenu 把浮条当场关掉。
+    //    手指抬起/取消后放行（遮罩上的右键照旧关浮条）；鼠标右键没有触摸 pointerdown，照常弹菜单。
+    //    合成 PointerEvent(pointerType:"touch") 不带浏览器补发，这里按时序手动派发。
+    await page.evaluate(() => {
+      window.__t.write("\x1b[2J\x1b[3J\x1b[H");
+      window.__t.write("hello world\r\n");
+      window.__ctxSeen = 0;
+      // 探针挂在 .xterm 上（与 xterm 自己的 contextmenu 监听同节点同阶段）：
+      // 事件在 window 捕获阶段被拦下时这里收不到
+      window.__t.element.addEventListener("contextmenu", () => { window.__ctxSeen++; });
+      document.activeElement?.blur?.();
+    });
+    await page.waitForTimeout(250);
+    const ctx = (target) => page.evaluate((sel) => {
+      const el = sel ? document.querySelector(sel) : window.__t.element.querySelector(".xterm-screen");
+      if (!el) return "missing";
+      const pass = el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+      return pass ? "passed" : "prevented";
+    }, target);
+    const seen = () => page.evaluate(() => { const n = window.__ctxSeen; window.__ctxSeen = 0; return n; });
+    const focused = () => page.evaluate(() => document.activeElement?.classList?.contains("xterm-helper-textarea") === true);
+    const menuOpen = () => page.evaluate(() => !!document.querySelector("[data-testid=term-redraw]"));
+
+    const q = pt(1, 0); // "hello" 的 e
+    await touch(page, "pointerdown", q.x, q.y, 82);
+    await page.waitForTimeout(300);
+    const early = await ctx("");
+    await page.waitForTimeout(400);
+    const seen1 = await seen();
+    ck.check("① 补发抢在定时器前：被拦，xterm 的监听收不到、终端不被聚焦",
+      early === "prevented" && seen1 === 0 && !(await focused()), JSON.stringify([early, seen1]));
+    ck.check("① 右键菜单没有叠上来，480ms 后照常出选区与浮条",
+      !(await menuOpen()) && (await selection(page)) === "hello" && !!(await barIds(page)), "");
+    await touch(page, "pointerup", q.x, q.y, 82);
+
+    await touch(page, "pointerdown", q.x, q.y, 83);
+    await page.waitForTimeout(640);
+    const lateXterm = await ctx("");
+    const seen2 = await seen();
+    ck.check("② 补发晚于定时器、落在 xterm 上：被拦，选区与浮条保留",
+      lateXterm === "prevented" && seen2 === 0 && (await selection(page)) === "hello" && !!(await barIds(page)),
+      JSON.stringify([lateXterm, seen2]));
+    const lateMask = await ctx("[data-testid=touch-bar-mask]");
+    ck.check("③ 补发落在刚弹出的浮条遮罩上：被拦，浮条不被当场关掉",
+      lateMask === "prevented" && (await selection(page)) === "hello" && !!(await barIds(page)), lateMask);
+    // 放行与否看效果：遮罩与 #term 自己的 contextmenu 处理器都会 preventDefault，
+    // dispatchEvent 的返回值在这里分不出「守卫拦下」和「处理器消化」
+    await touch(page, "pointerup", q.x, q.y, 83);
+    await ctx("[data-testid=touch-bar-mask]");
+    ck.check("手指抬起后放行：遮罩上的 contextmenu 照旧关浮条并清选区",
+      (await barIds(page)) === null && (await selection(page)) === "", JSON.stringify([await barIds(page), await selection(page)]));
+
+    // 聚焦态（真机上软键盘在场）：浏览器原生长按处理在派发 contextmenu 之前就把焦点从
+    // 终端输入框上拿走（合成事件带不出这一步，这里手动失焦模拟），守卫吞掉事件后要把
+    // 焦点还回去——不还的话软键盘收起→视口变矮→resize，刚选的词又被清掉
+    await page.evaluate(() => window.__t.focus());
+    await page.waitForTimeout(120);
+    ck.check("起点：终端输入框聚焦", await focused(), "");
+    await touch(page, "pointerdown", q.x, q.y, 85);
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.activeElement?.blur?.());
+    ck.check("模拟原生长按处理：焦点已被拿走", !(await focused()), "");
+    await ctx("");
+    await page.waitForTimeout(80);
+    const seenF = await seen();
+    ck.check("聚焦态长按：补发被拦，焦点还给终端输入框", seenF === 0 && (await focused()), JSON.stringify([seenF]));
+    await page.waitForTimeout(320);
+    ck.check("聚焦态长按：选区与浮条在、右键菜单没有叠上来",
+      (await selection(page)) === "hello" && !!(await barIds(page)) && !(await menuOpen()), "");
+    await touch(page, "pointerup", q.x, q.y, 85);
+    await page.evaluate(() => window.__tinysshBack());
+    await page.waitForTimeout(200);
+
+    await touch(page, "pointerdown", q.x, q.y, 84);
+    await touch(page, "pointercancel", q.x, q.y, 84);
+    await ctx("");
+    const seen3 = await seen();
+    ck.check("触摸被取消后放行（此后到达的不是这次长按的补发）：xterm 与 #term 都照常收到",
+      seen3 === 1 && (await menuOpen()), JSON.stringify([seen3]));
+    await page.evaluate(() => window.__tinysshBack());
+
+    await page.mouse.click(q.x, q.y, { button: "right" });
+    await page.waitForTimeout(200);
+    ck.check("鼠标右键（无触摸长按）照常弹终端右键菜单", await menuOpen(), "");
+    await page.evaluate(() => window.__tinysshBack());
   },
 };

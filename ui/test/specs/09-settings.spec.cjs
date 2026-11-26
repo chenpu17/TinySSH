@@ -6,7 +6,7 @@ const openSettings = async (page) => {
 };
 
 const paneIds = (page) => page.evaluate(() => [...document.querySelectorAll("[data-testid]")].map((e) => e.getAttribute("data-testid")));
-const bodyText = (page) => page.evaluate(() => document.querySelector(".content").innerText.replace(/\n+/g, " | "));
+const bodyText = (page) => page.evaluate(() => document.querySelector(".settings-pane")?.innerText.replace(/\n+/g, " | ") ?? "");
 /** 指定分区面板的可见文字（用于断言分区**内容**，而非「有字」）。 */
 const paneTextOf = (page, testid) => page.evaluate((t) => {
   const e = document.querySelector(`[data-testid=${t}]`);
@@ -38,6 +38,11 @@ module.exports = {
       return el ? el.checked : null;
     });
     ck.check("桌面设置含助力球开关且默认关", assistChk === false, JSON.stringify(assistChk));
+    // 开关只在有活动会话时生效；设置页必须说明前提与位置，不把「开启后常显」
+    // 误解成欢迎页/设置页立即出现。完整开启→连接→可见链路由桌面视觉探针验收。
+    const assistHint = await page.locator('[data-testid="desktop-assist-ball-hint"]').innerText();
+    ck.check("助力球开关明确说明进入本地终端或 SSH 后显示在终端右缘",
+      assistHint.includes("进入本地终端或 SSH 会话") && assistHint.includes("终端右缘"), assistHint);
 
     const t0 = await bodyText(page);
     ck.check("外观分区有三档应用外观", t0.includes("跟随系统") && t0.includes("深色") && t0.includes("浅色"));

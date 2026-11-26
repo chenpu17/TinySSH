@@ -45,6 +45,19 @@ export function cellAtPoint(
   return { col, row: term.buffer.active.viewportY + vrow };
 }
 
+/** 让 xterm 的 Linkifier 忘掉「指针上一格」（KI-133）。Linkifier 只在指针移进**新
+ *  格子**时重新识别链接（`Linkifier._handleMouseMove`）；触屏没有真实的悬停指针，
+ *  浏览器给每次点按补发的 mousemove 都落在所点的格子上——取消链接浮条后不点别处、
+ *  直接再点同一个链接，它认为「没动」而不重新识别，点了没反应。手指落下时清掉这份
+ *  记忆，补发的 mousemove 就总被当成一次新的移入。走 `_core` 私有路径（与
+ *  cellDimsOf 同例），上游内部布局变了就静默退化成原行为。 */
+export function forgetLinkHoverCell(term: Terminal): void {
+  const linkifier = (term as unknown as {
+    _core?: { _linkifier?: { value?: { _lastBufferCell?: unknown } | null } | null };
+  })._core?._linkifier?.value;
+  if (linkifier) linkifier._lastBufferCell = undefined;
+}
+
 // xterm 默认 wordSeparator = " ()[]{}',\"`"：空白与这些字符都算词边界；双击
 // 选词的语义保持一致，长按才有「这个词」的直觉。
 const SEPARATORS = new Set(" ()[]{}',\"`".split(""));

@@ -286,7 +286,7 @@ export function FilesPanel({
                       onClick={() => { setSftpSel(new Set()); sftpAnchorRef.current = null; }}>✕</button>
                   </div>
                 )}
-                <div className="side-quiet">{t("单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在下载时选位置（多选下载只选一次目录）；传输进度见底部队列（状态条「传输 N」展开）。")}</div>
+                <div className="side-quiet sftp-help">{t("单击选中（⌘ 多选 / Shift 范围），双击进入目录或查看文件动作；下载存上次下载目录（首次为「下载」文件夹），开「另存为」可在下载时选位置（多选下载只选一次目录）；传输进度见底部队列（状态条「传输 N」展开）。")}</div>
               </>
             )}
           </div>

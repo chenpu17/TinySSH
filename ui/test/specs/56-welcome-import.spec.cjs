@@ -68,6 +68,48 @@ module.exports = {
     ck.check("已在主机列表条目带 already_imported 反馈（prod-1）",
       !!p && p.text.includes("已在主机列表"));
 
+    // ── 视觉走查（窄主机栏）：阻断条目的「转手工表单」落在说明下方，不再把名称与原因挤进窄列；
+    //    详情行按段成组，分隔点不独占一行 ──
+    const geo = await page.evaluate(() => {
+      const lineH = (el) => parseFloat(getComputedStyle(el).lineHeight) || 18;
+      const out = [];
+      for (const row of document.querySelectorAll(".hostbar .add-host .sshcfg-row")) {
+        const name = row.querySelector(".sshcfg-name");
+        const meta = row.querySelector(".sshcfg-meta");
+        const btn = row.querySelector(".sshcfg-manual");
+        const col = name.parentElement;
+        // 详情行按文本片段聚成视觉行（top 容差 3px），记每行总宽
+        const frags = [];
+        const walker = document.createTreeWalker(meta, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (!n.textContent.trim()) continue;
+          const rg = document.createRange(); rg.selectNodeContents(n);
+          for (const rc of rg.getClientRects()) frags.push({ top: rc.top, w: rc.width });
+        }
+        const lines = [];
+        for (const f of frags.sort((a, b) => a.top - b.top)) {
+          const last = lines[lines.length - 1];
+          if (last && Math.abs(last.top - f.top) <= 3) last.w += f.w; else lines.push({ top: f.top, w: f.w });
+        }
+        out.push({
+          name: name.firstChild.textContent, colW: col.getBoundingClientRect().width,
+          nameLines: Math.round(name.getBoundingClientRect().height / lineH(name)),
+          minLine: Math.min(...lines.map((l) => l.w)), charW: parseFloat(getComputedStyle(meta).fontSize) * 0.6,
+          // 按钮在内容流里位于最后一条说明之下（堆叠），而不是与说明同级的右侧
+          stacked: !btn || btn.getBoundingClientRect().top >= col.getBoundingClientRect().bottom - btn.getBoundingClientRect().height - 1,
+        });
+      }
+      return out;
+    });
+    const colOf = (n) => geo.find((g) => g.name === n)?.colW ?? 0;
+    ck.check("阻断条目的内容列与可导入条目同宽（按钮不再挤占名称与原因）",
+      geo.length === 5 && colOf("bastion-jump") >= colOf("web-1") - 1 && colOf("nouser") >= colOf("web-1") - 1,
+      JSON.stringify(geo.map((g) => [g.name, Math.round(g.colW)])));
+    ck.check("阻断条目的主机名不被拆行", (["bastion-jump", "nouser"].every((n) => geo.find((g) => g.name === n)?.nameLines === 1)));
+    ck.check("「转手工表单」落在说明下方", geo.every((g) => g.stacked));
+    ck.check("详情行没有只容分隔点的窄行（分隔点不独占一行）",
+      geo.every((g) => g.minLine >= g.charW * 1.5), JSON.stringify(geo.map((g) => [g.name, Math.round(g.minLine), Math.round(g.charW * 1.5)])));
+
     // ── 导入选中：行内结果反馈 + 主机列表出现新主机 ──
     await panelBtn("导入选中");
     await page.waitForFunction(

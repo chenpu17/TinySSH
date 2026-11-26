@@ -316,6 +316,14 @@ export const IconLayoutGrid = (p: IconProps) => (
   </Svg>
 );
 
+// tmux 专用：外框是终端窗格，中央 T 提供领域识别；通用布局网格另作他用，不混形。
+export const IconTmux = (p: IconProps) => (
+  <Svg {...p} className={"icon-tmux" + (p.className ? " " + p.className : "")}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M7.5 8h9M12 8v8" />
+  </Svg>
+);
+
 // 多主机编排 / 端口转发：节点分发与端点路径各司其职，不再共用 shuffle
 export const IconNetwork = (p: IconProps) => (
   <Svg {...p}>
@@ -362,6 +370,15 @@ export const IconSave = (p: IconProps) => (
   <Svg {...p}>
     <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
     <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7" />
+  </Svg>
+);
+
+// 助力球专属标识：终端外框 + 命令提示符 + 快捷星芒，不复用翻页图标。
+export const IconAssist = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="4" />
+    <path d="m7 9 3 3-3 3M13 15h4" />
+    <path d="m18.5 1 .7 1.8L21 3.5l-1.8.7-.7 1.8-.7-1.8L16 3.5l1.8-.7Z" fill="currentColor" stroke="none" />
   </Svg>
 );
 

@@ -160,6 +160,9 @@ pub(crate) async fn open_url(url: String) -> CmdResult<()> {
 /// 系统栏图标深浅跟随应用主题（KI-060）：Android 边到边下状态栏/导航栏图标由系统
 /// 按系统深浅决定，应用内切主题不会重建 Activity。前端在 App.applyChrome 里按解析
 /// 后的深浅调用；非 Android 无系统栏概念，no-op。
+/// 同一命令也是「窗口底色对齐页面底色」的触发点：原生侧向页面的 window.__tinysshEdgeBg
+/// 取色并涂窗口底色（MainActivity.syncEdgeBackground，导航栏下方那条不再跟系统深浅
+/// 走）。页面底色变而深浅不变时（换色板、切视图）前端也会调它，图标深浅幂等。
 #[tauri::command]
 pub(crate) async fn set_system_bars_light(light: bool) -> CmdResult<()> {
     #[cfg(target_os = "android")]

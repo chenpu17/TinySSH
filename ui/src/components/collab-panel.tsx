@@ -169,7 +169,7 @@ export function CollabApprovals({
                 const left = Number.isFinite(born) ? Math.max(0, 120 - Math.floor((now - born) / 1000)) : null;
                 const eligible = rememberEligible(a);
                 return (
-                  <div className="card" key={a.id}>
+                  <div className={"card ap-card" + (risk ? " ap-risk" : "")} key={a.id}>
                     <div className="row">
                       <span className="badge">{t("Agent：{0}", a.agent_id)}</span>
                       {/* 破坏性提示由核心算出（target_summary），UI 不自猜 */}
@@ -249,7 +249,7 @@ export function CollabApprovals({
                       </div>
                     ) : (
                       <>
-                        <div className="row" style={{ marginTop: 8 }}>
+                        <div className="row ap-actions" style={{ marginTop: 8 }}>
                           <button
                             className={armed("approve") ? "warn" : undefined}
                             title={risk ? t("高危形态请求：需二次确认") : undefined}

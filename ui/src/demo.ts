@@ -7,6 +7,7 @@
 // 后端同构，拒绝走 HostKeyRejected）、未知命令显式报错（不再静默 null）。
 
 import { apiError } from "./adapter/errors";
+import { normalizeTmuxSessionName } from "./tmux-session-name";
 // 版本号直连 package.json（与 app-data 的 APP_VERSION 同一来源）而非导入 app-data：
 // app-data→bridge→demo 已成链，再反向导入会闭出 demo→app-data→bridge→demo 模块环
 import { version as pkgVersion } from "../package.json";
@@ -398,6 +399,9 @@ const demoState = {
     },
   ] as DemoApproval[],
   events: [
+    // 重启后身份缓存尚未恢复的历史传输：活动记录应只显示一次短 id，两种异常终态入危险层级。
+    { seq: 44, ts: "2026-09-27T14:02:26Z", actor_kind: "human", agent_id: null, action: "transfer_publish_blocked", command: null, session_id: "s-demo-history" },
+    { seq: 43, ts: "2026-09-27T14:02:19Z", actor_kind: "human", agent_id: null, action: "transfer_interrupted", command: null, session_id: "s-demo-history" },
     { seq: 42, ts: "2026-09-27T14:02:11Z", actor_kind: "human", agent_id: null, action: "takeover", command: null, session_id: "s-demo-0001" },
     { seq: 41, ts: "2026-09-27T14:01:58Z", actor_kind: "agent", agent_id: "opencode", action: "approval_requested", command: "rm -rf /tmp/old-build", session_id: "s-demo-0001" },
     { seq: 40, ts: "2026-09-27T14:01:30Z", actor_kind: "agent", agent_id: "opencode", action: "exec", command: "df -h", session_id: "s-demo-0001" },
@@ -756,7 +760,7 @@ function demoCompleteReconfirm(sid: string) {
   demoEmitState(sid, "Connected", null, null, null);
 }
 let demoSubCounter = 0;
-let eventSeq = 42;
+let eventSeq = 44;
 function audit(
   actor: "human" | "agent", action: string, command: string | null,
   agent_id: string | null = null, session_id: string | null = null,
@@ -1326,22 +1330,22 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     // 真实核心逐条对齐；创建只落清单条目（attached:0），接入由前端随后 tmux_attach ----
     case "tmux_session_create": {
       const sid = args?.sid as string;
-      const name = (args?.name as string ?? "").trim();
+      const name = normalizeTmuxSessionName(args?.name as string ?? "");
       const s = demoState.sessions.find((x) => x.id === sid);
       if (!s) throw apiError("session_not_found", "会话不存在（演示）");
       if (s.kind !== "ssh") throw apiError("invalid_input", "tmux 仅支持 SSH 会话（演示）");
       if (s.state === "Disconnected" || s.state === "Closed") {
         throw apiError("invalid_input", "会话未连接：请先重连再建 tmux 会话（演示）");
       }
-      // 与核心 tmux_session_name_ok 同口径：Unicode 字母/数字/中文，首字符不能是
-      // 连字符，最长 64 字节（中文约 21 字）；空格/冒号/点仍拒绝。
+      // 与核心同口径：先按 tmux 传统规则把点号/冒号转为下划线，再走原白名单；
+      // 首字符不能是连字符，最长 64 字节（中文约 21 字），空格等仍拒绝。
       const nameChars = [...name];
       const nameOk = nameChars.length > 0
         && new TextEncoder().encode(name).length <= 64
         && /^[\p{L}\p{N}_]$/u.test(nameChars[0] ?? "")
         && nameChars.slice(1).every((c) => /^[\p{L}\p{N}_-]$/u.test(c));
       if (!nameOk) {
-        throw apiError("invalid_input", "非法的 tmux 会话名：1–64 字节，首字符为字母/数字/中文/下划线，其余可含连字符（演示）");
+        throw apiError("invalid_input", "非法的 tmux 会话名：1–64 字节，首字符为字母/数字/中文/下划线，其余可含连字符；点号和冒号会转为下划线（演示）");
       }
       if (!s.tmux) s.tmux = { available: true, version: "3.2a", sessions: [] };
       if (s.tmux.sessions.some((x) => x.name === name)) {

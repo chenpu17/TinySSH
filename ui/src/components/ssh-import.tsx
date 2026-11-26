@@ -97,25 +97,34 @@ export function SshConfigImportPanel({ onDone, onClose, onManual }: {
                     }}
                   />
                   <span style={{ flex: 1, minWidth: 0 }}>
-                    <div>
+                    <div className="sshcfg-name">
                       {e.name}
                       {e.already_imported && !imported && <span className="dim"> · {t("已在主机列表（勾选即覆盖）")}</span>}
                       {imported && <span className="ok"> ✓ {t("已导入")}</span>}
                     </div>
-                    <div className="dim mono" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>
-                      ~/.ssh/config:{e.source_line} · {e.user_specified ? `${e.username}@${e.address}:${e.port}` : `@${e.address}:${e.port}`} · {e.has_identity ? t("密钥") : "Agent"}
+                    {/* 详情按段成组（.sshcfg-meta）：来源行与认证方式一行、连接端点自成一行——
+                        窄主机栏里固定两行，分隔点跟随下一段折行，不悬空、不独占一行 */}
+                    <div className="dim mono sshcfg-meta" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>
+                      <span>~/.ssh/config:{e.source_line}</span>
+                      {" "}
+                      <span>· {e.has_identity ? t("密钥") : "Agent"}</span>
+                      <span className="sshcfg-endpoint">
+                        {e.user_specified ? `${e.username}@${e.address}:${e.port}` : `@${e.address}:${e.port}`}
+                      </span>
                     </div>
                     {!imported && unsupportedNote(e)}
                     {skip === "Duplicate" && <div className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("↷ 跳过：重复（同名或同地址+端口+用户）。收起面板重新打开后勾选可覆盖")}</div>}
                     {skip === "Blocked" && <div className="err" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("↷ 跳过：含阻断指令")}</div>}
                     {outcome && outcome.error && <div className="err" style={{ fontSize: "calc(11px * var(--ui-font-scale))" }}>✕ {outcome.error}</div>}
+                    {/* 「转手工表单」落在说明下方而不是行内右侧：与说明同级时会把名称、来源和
+                        阻断原因一起挤进窄主机栏里约 70px 的一列（视觉走查实测） */}
+                    {blocked && !imported && (
+                      <button className="ghost sshcfg-manual"
+                        onClick={(ev) => { ev.preventDefault(); onManual(e); }}>
+                        {t("转手工表单")}
+                      </button>
+                    )}
                   </span>
-                  {blocked && !imported && (
-                    <button className="ghost" style={{ width: "auto", fontSize: "calc(11px * var(--ui-font-scale))", flexShrink: 0 }}
-                      onClick={(ev) => { ev.preventDefault(); onManual(e); }}>
-                      {t("转手工表单")}
-                    </button>
-                  )}
                 </div>
               </label>
             );

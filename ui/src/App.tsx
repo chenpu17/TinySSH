@@ -25,11 +25,13 @@ import { repaintAll } from "./terminal/repaint";
 import { installAdaptiveSmoothScroll } from "./terminal/scroll";
 import { installWheelBatch, displayIntervalMs } from "./terminal/wheel-batch";
 import { loadUiFontScale, storeUiFontScale, type UiFontScale } from "./ui-scale";
+import { readActiveSid, persistActiveSid } from "./active-sid";
 import { loadUiDensity, storeUiDensity, type UiDensity } from "./ui-density";
 import { isScrollbackFull, scrollBelow } from "./terminal/scrollback";
 import { isMobilePlatform, markHardwareKeyboard, useHardwareKeyboard } from "./platform";
+import { pageEdgeBg } from "./edge-bg";
 import { useLongPress, swallowClickOnce } from "./touch";
-import { cellAtPoint, wordAt, applyRangeSelection, type CellPos } from "./terminal/touch-select";
+import { cellAtPoint, wordAt, applyRangeSelection, forgetLinkHoverCell, type CellPos } from "./terminal/touch-select";
 import { patchXtermImeGate } from "./terminal/xterm-ime-gate";
 import {
   MAIN_KEY, defaultLayout, layoutRects, syncLayout, moveTile, resizeAt, equalizeAt, nodeAt, minExtent, dropZone, removeTile, treeHasKey,
@@ -125,12 +127,16 @@ import { CtxMenus } from "./components/ctx-menus";
 import { CollabApprovals, CollabDelegate } from "./components/collab-panel";
 import { ConnDetail } from "./components/conn-detail";
 import { Hostbar } from "./components/hostbar";
-import { AgentView, EMBEDDED_AGENT_ID } from "./components/agent-view";
+import {
+  AgentView, EMBEDDED_AGENT_ID,
+  AGENT_WIDTH_MIN, AGENT_WIDTH_DEFAULT, AGENT_WIDTH_MAX,
+} from "./components/agent-view";
 import { SessionToolbar } from "./components/session-toolbar";
 import { MobileKeyBar } from "./components/mobile-keys";
 import { AssistBall, ASSIST_BALL_SIZES, type AssistBallSize } from "./components/assist-ball";
 import { TouchBar, type TouchBarItem } from "./components/touch-bar";
 import { TmuxQuick } from "./components/tmux-quick";
+import { normalizeTmuxSessionName } from "./tmux-session-name";
 import { TmuxWall } from "./components/tmux-wall";
 import { FilesPanel, SftpFileMenu, TransferQueueDrawer } from "./components/sftp-panel";
 import { SelfMeterTitlebar } from "./self-meter";
@@ -1149,8 +1155,11 @@ export default function App() {
   const tabLongPress = useLongPress();
   // 触屏长按终端 → 选词 + 浮条（KI-052）。xterm 只有鼠标划选，触屏拿不到选区；
   // 计时器触发后同一指针的移动变成「扩选」，抬手保留选区与浮条。
+  // down：手指是否仍按着——已触发的长按在浮条关闭前一直留着，靠它区分「还在按」与
+  // 「浮条开着」（KI-134 的 contextmenu 守卫只管前者）。
   const touchPressRef = useRef<{
-    pointerId: number; timer: number; fired: boolean;
+    pointerId: number; timer: number; fired: boolean; down: boolean;
+    activeEl: HTMLElement | null;
     anchor: CellPos; x: number; y: number;
     sid: string; paneKey?: string;
     term: Terminal; screen: HTMLElement;
@@ -1415,9 +1424,9 @@ export default function App() {
     } catch { return 224; }
   });
   // 活动栏轮：左侧栏第二个视图「Agent 对话」。与主机栏互斥（开一个关另一个，双写
-  // localStorage），默认关（首次须从活动栏显式打开——演练外壳，别抢首屏）。宽度
-  // 320–560（对话面板比主机栏宽），只走 localStorage（主机栏的 blob 域不带它，
-  // 避免动 workspace schema；刷新恢复同效）。
+  // localStorage），默认关（首次须从活动栏显式打开——演练外壳，别抢首屏）。终端优先：
+  // Agent 与 Fleet 共用 300–440 窄栏、默认 340；只走 localStorage（主机栏的 blob 域
+  // 不带它，避免动 workspace schema；刷新恢复同效），旧持久值按新边界钳制。
   const [agentOpen, setAgentOpen] = useState(() => {
     // 移动端 v1 不暴露 Agent：桌面留下的持久态不在这里复活
     if (isMobilePlatform()) return false;
@@ -1452,8 +1461,10 @@ export default function App() {
   const [agentWidth, setAgentWidth] = useState(() => {
     try {
       const v = Number.parseInt(localStorage.getItem("ui.agentbar_w") ?? "", 10);
-      return Number.isFinite(v) ? Math.min(560, Math.max(320, v)) : 420;
-    } catch { return 420; }
+      return Number.isFinite(v)
+        ? Math.min(AGENT_WIDTH_MAX, Math.max(AGENT_WIDTH_MIN, v))
+        : AGENT_WIDTH_DEFAULT;
+    } catch { return AGENT_WIDTH_DEFAULT; }
   });
   const [hostQuery, setHostQuery] = useState("");
   // 五轮架构（逐键全树重渲染根治）：主机搜索改非受控 + 150ms 防抖——此前每键
@@ -2213,22 +2224,21 @@ export default function App() {
   // 只属于冷启动：F5/Ctrl+R 重载 WebView 时核心进程与会话都还在，前端却从头挂载——
   // 此前每重载一次就多开一个本机标签。以核心会话表为准（决策时现取，不吃 state
   // 装载时序）：已有任何未关闭会话即是重载续用，不开、回到重载前的标签；取不到按冷启动处理。
-  // 重载前的活动标签记在 sessionStorage（随 WebView 会话存活、应用重启即清——冷启动
-  // 不会误吃上次运行的值）。首拍 sid=null 是挂载初值不是用户离开标签，跳过不抹；
-  // 欢迎页上重载则如实留在欢迎页。
-  const [reloadSid] = useState<string | null>(() => {
-    try { return sessionStorage.getItem("ui.activeSid"); } catch { return null; }
-  });
-  const sidPersistArmedRef = useRef(false);
+  // 重载前的活动标签记在 localStorage（active-sid.ts）：冷启动不会误吃上次运行的值——
+  // 是否回看的是「它是否仍在册」，会话不跨进程重启，陈旧值永远对不上。此前记在
+  // sessionStorage，而 Android 的活动重建会换一个全新 WebView，它随旧 WebView 一起
+  // 没了（KI-135）。首拍 sid=null 是挂载初值不是用户离开标签：这个页面还没有过活动标签就
+  // 不动存储——不能用「只跳过第一次」的布尔闸门，StrictMode dev 下 effect 会重放一遍，第二遍
+  // 就把值抹了（spec 106 实锤）；有过活动标签之后再变回 null 才是「回到欢迎页」，如实抹掉。
+  const [reloadSid] = useState<string | null>(() => readActiveSid());
+  const hadSidRef = useRef(false);
   useEffect(() => {
-    if (!sidPersistArmedRef.current) {
-      sidPersistArmedRef.current = true;
-      if (!sid) return;
+    if (sid) {
+      hadSidRef.current = true;
+      persistActiveSid(sid);
+    } else if (hadSidRef.current) {
+      persistActiveSid(null);
     }
-    try {
-      if (sid) sessionStorage.setItem("ui.activeSid", sid);
-      else sessionStorage.removeItem("ui.activeSid");
-    } catch { /* 隐私模式忽略 */ }
   }, [sid]);
   const autoLocalRef = useRef(false);
   useEffect(() => {
@@ -4555,6 +4565,39 @@ export default function App() {
     window.setTimeout(() => el.classList.remove("theme-switching"), 320);
   }, []);
 
+  // 移动端：导航栏下方那条窗口底色跟页面底色走（来龙去脉见 edge-bg.ts）。原生在
+  // set_system_bars_light 里向 window.__tinysshEdgeBg 取色——命令线不变、图标深浅
+  // 幂等；页面负责在底色可能变化的时机重取：每次提交后、视口变化后，取到新值才通知
+  // 原生。主题切换有 320ms 色彩过渡（.theme-switching），过渡中取到的是中间值，脉冲
+  // 期间沿路跟几拍，最后一拍落在过渡结束后，取到终值。
+  const edgeBgRef = useRef("");
+  useEffect(() => {
+    // 取色函数在浏览器 demo 里也挂上（只读、无副作用），spec 据此验证取色结果
+    const w = window as unknown as { __tinysshEdgeBg?: () => string };
+    w.__tinysshEdgeBg = pageEdgeBg;
+    if (!inTauri || !isMobilePlatform()) return () => { delete w.__tinysshEdgeBg; };
+    let timers: number[] = [];
+    const sample = () => {
+      const c = pageEdgeBg();
+      if (c === edgeBgRef.current) return;
+      edgeBgRef.current = c;
+      void invoke("set_system_bars_light", { light: document.documentElement.dataset.chrome === "light" }).catch(() => {});
+    };
+    const schedule = () => {
+      sample();
+      if (!document.documentElement.classList.contains("theme-switching")) return;
+      for (const t of timers) window.clearTimeout(t);
+      timers = [90, 180, 270, 360, 480].map((ms) => window.setTimeout(sample, ms));
+    };
+    schedule();
+    window.addEventListener("resize", schedule);
+    return () => {
+      window.removeEventListener("resize", schedule);
+      for (const t of timers) window.clearTimeout(t);
+      delete w.__tinysshEdgeBg;
+    };
+  });
+
   // 写失败必须出声：外观/键位/偏好都在这条通路，静默吞掉会让用户以为已保存，
   // 重启后才发现回到旧值。滑块逐帧写，提示按 5s 窗口去重。
   const settingWriteErrRef = useRef(false);
@@ -5308,7 +5351,7 @@ export default function App() {
     try { localStorage.setItem("ui.hostbar_w", String(w)); } catch { /* 隐私模式忽略 */ }
     persistHostbarPrefs(hostbarOpenRef.current, w);
   };
-  // Agent 视图宽度抓手（活动栏轮）：同 hostbar 抓手的 rAF 合帧模式，宽度档 320–560。
+  // Agent 视图宽度抓手（活动栏轮）：同 hostbar 抓手的 rAF 合帧模式，宽度档 300–440。
   // x 起算点含活动栏 44px——抓手事件坐标直接对「抓手左缘 = 期望宽」自洽（与 hostbar
   // 不同：那边无活动栏时抓手 x 即宽）。此处 agentbar 在活动栏右侧，宽 = x - 44。
   const agGripDrag = useRef(false);
@@ -5323,7 +5366,7 @@ export default function App() {
     const x = e.clientX;
     agGripRaf.current = requestAnimationFrame(() => {
       agGripRaf.current = 0;
-      const w = Math.min(560, Math.max(320, Math.round(x) - 44));
+      const w = Math.min(AGENT_WIDTH_MAX, Math.max(AGENT_WIDTH_MIN, Math.round(x) - 44));
       setAgentWidth((cur) => (cur === w ? cur : w));
     });
   };
@@ -5332,7 +5375,7 @@ export default function App() {
     agGripDrag.current = false;
     if (agGripRaf.current) { cancelAnimationFrame(agGripRaf.current); agGripRaf.current = 0; }
     e.currentTarget.releasePointerCapture(e.pointerId);
-    const w = Math.min(560, Math.max(320, Math.round(e.clientX) - 44));
+    const w = Math.min(AGENT_WIDTH_MAX, Math.max(AGENT_WIDTH_MIN, Math.round(e.clientX) - 44));
     setAgentWidth(w);
     try { localStorage.setItem("ui.agentbar_w", String(w)); } catch { /* 隐私模式忽略 */ }
   };
@@ -5641,11 +5684,17 @@ export default function App() {
     if ((ev.target as HTMLElement).closest?.("button, input, textarea")) return;
     const hit = resolveTermTouchTarget(ev.clientX, ev.clientY, ev.target);
     if (!hit) return;
+    // 这次点按随后补发的 mousemove 要被 xterm 当成一次新的移入（KI-133）
+    forgetLinkHoverCell(hit.term);
     const cell = cellAtPoint(hit.term, hit.screen, ev.clientX, ev.clientY);
     if (!cell) return;
     cancelTermTouchPress();
     const p = {
-      pointerId: ev.pointerId, timer: 0, fired: false,
+      pointerId: ev.pointerId, timer: 0, fired: false, down: true,
+      // 按下时聚焦着的终端输入框（哪个窗格不论）：浏览器原生长按处理会把焦点拿走，
+      // 吞掉 contextmenu 后由守卫还回去
+      activeEl: document.activeElement instanceof HTMLElement
+        && document.activeElement.classList.contains("xterm-helper-textarea") ? document.activeElement : null,
       anchor: cell, x: ev.clientX, y: ev.clientY,
       sid: hit.sid, paneKey: hit.paneKey, term: hit.term, screen: hit.screen,
     };
@@ -5675,6 +5724,8 @@ export default function App() {
     const p = touchPressRef.current;
     if (!p || ev.pointerId !== p.pointerId) return;
     if (p.timer) window.clearTimeout(p.timer);
+    // 手指已抬起：此后到达的 contextmenu 不再是这次长按的补发，放行
+    p.down = false;
     // 已触发的选区保留（浮条仍在）；未触发就只是普通点按/滚动，状态清掉
     if (!p.fired) touchPressRef.current = null;
   };
@@ -5690,6 +5741,29 @@ export default function App() {
     };
     el.addEventListener("touchmove", onTouchMove, { passive: false });
     return () => el.removeEventListener("touchmove", onTouchMove);
+  }, []);
+
+  // 触屏长按期间吞掉系统补发的 contextmenu（KI-134）：安卓长按到点后浏览器会补发
+  // contextmenu，落点看谁先到——xterm 自己的监听借机把隐藏输入框挪到指下并聚焦（软
+  // 键盘弹出、视口变矮、resize，xterm 在 resize 时清掉刚选好的词，浮条还在、「复制」
+  // 拿到空串）；长按定时器与系统补发只差约 20ms，主线程一忙顺序反过来，右键菜单盖在
+  // 选区浮条上；补发更晚时指下已是浮条的全屏遮罩，遮罩自己的 contextmenu 把刚弹出的
+  // 浮条当场关掉。故挂在 window 捕获阶段（遮罩不在 #term 里），落点不论，只要终端上
+  // 有手指按着就吞；抬起后放行（遮罩上的右键照旧关浮条）。鼠标右键没有触摸的
+  // pointerdown，不受影响。
+  // 吞掉之后还要还焦点：浏览器原生长按处理在派发 contextmenu 之前就把焦点从终端隐藏
+  // 输入框上拿走了（焦点随它试图落的原生选区走），此前全靠 xterm 自己的监听顺手聚焦
+  // 回来；事件被吞后没人还，软键盘收起→视口变矮→resize，刚选的词又被清掉。
+  useEffect(() => {
+    const onTouchContextMenu = (ev: MouseEvent) => {
+      const p = touchPressRef.current;
+      if (!p || !p.down) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (p.activeEl?.isConnected) p.activeEl.focus({ preventScroll: true });
+    };
+    window.addEventListener("contextmenu", onTouchContextMenu, true);
+    return () => window.removeEventListener("contextmenu", onTouchContextMenu, true);
   }, []);
 
   // 切标签/会话即收起浮条：选区属于原终端实例，跨会话留一条浮条会作用于错对象
@@ -5835,6 +5909,10 @@ export default function App() {
     // 触屏选区/链接浮条（z66）压在设置遮罩（z56/57）之上：先关浮条并清选区；
     // 「更多」页里返回只回第一页（与页内「返回」同义），不一步收掉整个浮条
     if (touchBar) { if (touchMore) setTouchMore(false); else closeTouchBar(); return true; }
+    // 助力球菜单遮罩（z65）压在设置之上：先收菜单。它此前不在这条链里——Android
+    // 返回键会一路落到链尾，带着活动会话直接退 App；桌面 Esc 由菜单自己的捕获
+    // 监听吃掉，到不了这里。
+    if (assistOpen) { setAssistOpen(false); return true; }
     // 设置遮罩层级高于搜索/大屏：可视顶层优先，不能让 Esc 先关被压在下面的搜索
     if (showSettings) { closeSettings(); return true; }
     // 大屏覆盖层/广播输入/传输抽屉：非模态但同属浮层链——纯键盘用户要有 Esc 出口
@@ -6054,6 +6132,9 @@ export default function App() {
     queueMicrotask(() => { for (const e of paneTermsRef.current.values()) e.throttle.resume(); });
     const sp = groupOf(sidRef.current);
     const degraded = !!sp && !sp.maximized && splitDegradedRef.current;
+    // 普通分屏与 tmux 网格一样，只保留各子视图自己的细框；窄窗退化成普通
+    // 单终端时没有子视图描边，必须恢复 #term 总框，不能把唯一边界也撤掉。
+    termRef.current?.classList.toggle("has-split-panes", !!sp && !degraded);
     const clsMain = sp?.dir === "tb" ? "pane-top" : "pane-left";
     const clsSecond = sp?.dir === "tb" ? "pane-bottom" : "pane-right";
     // 每格遮罩按自身状态刷新：Reconfirming 仍可操作（不断言断开），其余非 Connected
@@ -7867,6 +7948,11 @@ export default function App() {
     const t = a.trim().toLowerCase();
     return t === "localhost" || t === "::1" || t === "0:0:0:0:0:0:0:1" || /^127(\.\d{1,3}){3}$/.test(t);
   };
+  // 字段级错误的无障碍关联（与添加主机表单的 errA11y 同契约）：错误按监听/目标两组定位，
+  // 组内字段一起挂 aria-invalid（描边转危险色的钩子）并指向各自的错误行
+  const fwdErrA11y = (group: "listen" | "target") => fwdFieldErr?.[group]
+    ? { "aria-invalid": true as const, "aria-describedby": `fwd-err-${group}` }
+    : {};
   const addForward = async () => {
     const s = sidRef.current;
     if (!s) return;
@@ -8724,7 +8810,8 @@ export default function App() {
   const [tmuxCreateBusy, setTmuxCreateBusy] = useState(false);
   const [tmuxCreateTarget, setTmuxCreateTarget] = useState<"main" | "panel">("main");
   const submitTmuxCreate = async (s: SessionInfo) => {
-    const name = tmuxCreateName.trim();
+    const requestedName = tmuxCreateName.trim();
+    const name = normalizeTmuxSessionName(requestedName);
     if (!name || tmuxCreateBusy) return;
     // 面板目标先过防呆再建：建出孤儿会话（面板又进不去）比报错更糟。核心侧
     // 仍会兜底，这里只为「不建了就失败」把原因说在作曲行里
@@ -8740,6 +8827,9 @@ export default function App() {
       await invoke("tmux_session_create", { sid: s.id, name });
       setTmuxCreateOpen(false); setTmuxCreateName("");
       refreshTmuxList(s);
+      if (requestedName !== name) {
+        pushToast("info", t("tmux 名称兼容：「{0}」已转为「{1}」", requestedName, name));
+      }
       if (tmuxCreateTarget === "panel") {
         setTmuxMenu(false);
         // 复用开格链（自带「已并入面板」toast / 聚焦新格 / 清单刷新 / 错误 toast）；
@@ -10391,29 +10481,10 @@ export default function App() {
             </>
           )}
           {/* 专注模式（F11）：常态是 ⤢ 图标；专注下滑出条里另有文字钮，双入口同 applyFocus。
-              待审批/传输入口在此补位——专注下标题栏与状态条都藏了，而 §3 要求待审批等
-              提醒必须可达（pendingCount>0 已让 zenPin 钉住标签条，入口就在眼前） */}
-          {/* 接管双钮同样只在工具栏的话，专注+Agent 控制时想停下危险命令就得先退
-              专注（巡检补）——zenPin 已保证此态标签条钉在眼前，入口放这里正好 */}
-          {focusMode && sid && (hasAgents || embeddedReady) && owner === "Agent" && (
-            <>
-              <button className="warn" title={t("接管会话：Agent 冻结、待审批请求作废，终端归你。Agent 正在跑的命令不会被中断")}
-                onClick={takeover}>{t("接管")}</button>
-              <button className="ghost-danger" title={t("接管并额外尝试停止 Agent 正在运行的命令；停止结果逐条显示，未停下的会标红")}
-                onClick={takeoverStop}>{t("接管并停止")}</button>
-            </>
-          )}
-          {/* #50：专注态不再常驻「协作」文字钮；有待审批时仍保留紧凑警示入口，
-              避免隐藏标题栏后危险请求无处可裁决。 */}
-          {focusMode && agentSurfaceReady && pendingCount > 0 && (
-            <button className={"ghost icon-btn attn" + (rightPanel === "collab" ? " ts-open" : "")}
-              data-testid="focus-collab-alert"
-              title={t("有 {0} 个待审批请求——打开协作面板", pendingCount)}
-              aria-label={t("有 {0} 个待审批请求——打开协作面板", pendingCount)}
-              onClick={() => setRightPanel(rightPanel === "collab" ? null : "collab")}>
-              <IconUsers size={14} />
-            </button>
-          )}
+              传输入口在此补位——专注下标题栏与状态条都藏了。 */}
+          {/* 终端优先：专注态不渲染接管/停止/协作按钮，待审批时也不加警示图标。
+              新审批仍有原生 toast 的「去审批」动作；退出专注后的协作入口不变，
+              命令面板保留 takeover/takeoverStop，后端控制与审批语义不变。 */}
           {focusMode && runningTransfers > 0 && (
             <button className={"ghost" + (queueOpen ? " ts-open" : "") + (awaitingTransfers > 0 ? " attn" : "")}
               title={t("传输队列（底部抽屉）")}
@@ -10911,7 +10982,7 @@ export default function App() {
                           onClick={() => { void restoreTmuxScene(current, pick); }}>
                           {tmuxBusy === current.id ? t("正在恢复现场…") : t("恢复现场")}
                         </button>
-                        <button data-testid="tmux-reconn-only-btn" disabled={reconnecting !== null} onClick={reconnectOnly}>
+                        <button className="ghost" data-testid="tmux-reconn-only-btn" disabled={reconnecting !== null} onClick={reconnectOnly}>
                           {t("仅重连")}
                         </button>
                         <label className="dim" style={{ fontSize: "calc(11px * var(--ui-font-scale))", display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -10941,7 +11012,7 @@ export default function App() {
                             {tmuxBusy === current.id ? t("正在恢复现场…") : `${t("恢复现场")}：${x.name}`}
                           </button>
                         ))}
-                        <button data-testid="tmux-reconn-only-btn" disabled={reconnecting !== null} onClick={reconnectOnly}>
+                        <button className="ghost" data-testid="tmux-reconn-only-btn" disabled={reconnecting !== null} onClick={reconnectOnly}>
                           {t("仅重连")}
                         </button>
                       </div>
@@ -11427,7 +11498,8 @@ export default function App() {
             ) : (
               <>
                 {/* 表单（§6.6）：类型解释为人类语义、-L/-R/-D 作辅助；监听地址是显式
-                    字段（默认 127.0.0.1）；目标标注从哪一端解析；字段级错误就地高亮。 */}
+                    字段（默认 127.0.0.1）；目标标注从哪一端解析；字段级错误就地高亮
+                    （出错的监听/目标组描边转危险色，见 styles.css 的 aria-invalid 规则）。 */}
                 <div className="row fwd-form">
                   <select value={fwdKind} onChange={(e) => { setFwdKind(e.target.value as "Local" | "Remote" | "Dynamic"); setFwdFieldErr(null); setFwdExposeAck(false); }} title={t("转发类型")}>
                     <option value="Local">{t("本地端口访问远端服务（-L）")}</option>
@@ -11439,16 +11511,16 @@ export default function App() {
                 <div className="row fwd-form" style={{ marginTop: 4, alignItems: "flex-end" }}>
                   <div className="ah-field" style={{ flex: 1 }}>
                     <label>{t("监听地址")}{fwdKind === "Remote" ? t("（在远端服务器）") : t("（在本机）")}</label>
-                    <input className="mono" value={fwdLAddr} placeholder="127.0.0.1"
+                    <input className="mono" value={fwdLAddr} placeholder="127.0.0.1" {...fwdErrA11y("listen")}
                       onChange={(e) => { setFwdLAddr(e.target.value); setFwdExposeAck(false); setFwdFieldErr(null); }} />
                   </div>
                   <div className="ah-field" style={{ width: 88 }}>
                     <label>{fwdKind === "Remote" ? t("远端端口") : t("本地端口")}</label>
-                    <input className="mono" value={fwdPort} placeholder="8080"
+                    <input className="mono" value={fwdPort} placeholder="8080" {...fwdErrA11y("listen")}
                       onChange={(e) => { setFwdPort(e.target.value); setFwdFieldErr(null); }} />
                   </div>
                 </div>
-                {fwdFieldErr?.listen && <div className="fwd-err" data-testid="fwd-err-listen">⚠ {fwdFieldErr.listen}</div>}
+                {fwdFieldErr?.listen && <div className="fwd-err" id="fwd-err-listen" data-testid="fwd-err-listen">⚠ {fwdFieldErr.listen}</div>}
                 {/* 非回环监听：显示暴露范围 + 必须主动勾选（§6.6） */}
                 {!isLoopbackAddr(fwdLAddr) && (
                   <label className="fwd-expose" data-testid="fwd-expose">
@@ -11462,17 +11534,17 @@ export default function App() {
                   <div className="row fwd-form" style={{ marginTop: 4, alignItems: "flex-end" }}>
                     <div className="ah-field" style={{ flex: 1 }}>
                       <label>{fwdKind === "Remote" ? t("目标（本机侧解析）") : t("目标（远端侧解析）")}</label>
-                      <input className="mono" value={fwdHost} placeholder={fwdKind === "Remote" ? t("回到本机·主机") : t("目标主机")}
+                      <input className="mono" value={fwdHost} placeholder={fwdKind === "Remote" ? t("回到本机·主机") : t("目标主机")} {...fwdErrA11y("target")}
                         onChange={(e) => { setFwdHost(e.target.value); setFwdFieldErr(null); }} />
                     </div>
                     <div className="ah-field" style={{ width: 76 }}>
                       <label>{t("端口")}</label>
-                      <input className="mono" value={fwdTPort} placeholder="22"
+                      <input className="mono" value={fwdTPort} placeholder="22" {...fwdErrA11y("target")}
                         onChange={(e) => { setFwdTPort(e.target.value); setFwdFieldErr(null); }} />
                     </div>
                   </div>
                 )}
-                {fwdFieldErr?.target && <div className="fwd-err" data-testid="fwd-err-target">⚠ {fwdFieldErr.target}</div>}
+                {fwdFieldErr?.target && <div className="fwd-err" id="fwd-err-target" data-testid="fwd-err-target">⚠ {fwdFieldErr.target}</div>}
                 <div className="row" style={{ marginTop: 6 }}>
                   <button disabled={fwdBusy} onClick={() => void addForward()}>{t("启动转发")}</button>
                   <span className="side-quiet" style={{ flex: 1 }}>

@@ -1,6 +1,7 @@
 // 桌面壳整页缩放（UX 五轮，参考 tiny-worker zoom.ts）：Ctrl/⌘±/0 键盘走 R13 统一
-// keymap（actions.ts），这里只负责档位状态、webview 落地与修饰键+滚轮（macOS 用 ⌘，
-// Windows/Linux 用 Ctrl）。0.1 步进、
+// keymap（actions.ts），这里只负责档位状态、webview 落地与 Windows/Linux 修饰键+滚轮。
+// macOS 不注册滚轮缩放：避免修饰键/触控板被 WKWebView 报告成 metaKey + wheel
+// 时误缩整页，与此前 Control 误缩小同款；显式 Cmd±/0 与设置下拉保留。
 // 0.5–2.0 钳位、0.05 粒度取整（浮点累加 0.1 防漂；设置下拉的 125% 档不被舍走）。
 // 前端自管的原因：WebView2 原生键盘缩放加速键实测不触发，mac 官方 polyfill 的内部
 // 状态与宿主不同步且做不了持久化——统一走 set_webview_zoom（capability 已开）。
@@ -34,12 +35,12 @@ export function clampZoom(n: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(n * 20) / 20));
 }
 
-async function apply(next: number, announce: boolean) {
+async function apply(next: number, announce: boolean, invokeZoom: typeof invoke = invoke) {
   const prev = level;
   // 同步落内存档位：连续滚轮事件从最新档起算（放 await 之后会让快速连滚吃旧值）
   level = clampZoom(next);
   try {
-    if (tauri) await invoke("plugin:webview|set_webview_zoom", { value: level });
+    if (tauri) await invokeZoom("plugin:webview|set_webview_zoom", { value: level });
     // 持久化尽力而为：隐私模式/配额失败不回滚（webview 已在新档位，回滚才是幻影）
     try { localStorage.setItem(ZOOM_KEY, String(level)); } catch { /* demo 尽力而为 */ }
     for (const l of listeners) l(level);
@@ -67,20 +68,20 @@ export function onZoomChange(cb: ZoomListener): () => void {
 }
 
 /** 注册滚轮缩放并恢复上次档位（键盘路径归 R13 keymap，此处不挂 keydown 防双绑定）。
+ *  Windows/Linux 用 Ctrl。macOS 不挂滚轮监听：修饰键/触控板的合成 wheel 可能带
+ *  metaKey，按下 Cmd 也可能让整页突然缩小；Cmd±/0 不受影响。
  *  滚轮用捕获阶段：终端视口的 wheel 已被 xterm 消费，冒泡层拦截不及；stopPropagation
  *  让修饰键+滚轮只归缩放，不滚动回滚历史。
- *  平台修饰键：macOS 用 ⌘（Control 是终端控制键，且 WebKit 的 Control 手势会伪装成
- *  ctrlKey wheel），Windows/Linux 用 Ctrl。
  *  返回注销函数——React StrictMode dev 下 effect mount→cleanup→remount，无清理会
  *  双注册（一次手势跳两档）。 */
-export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }): () => void {
+export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify; invoke?: typeof invoke }): () => void {
   tauri = opts.isTauri;
   notify = opts.notify;
+  const invokeZoom = opts.invoke ?? invoke;
   if (!tauri) return () => {};
-  // macOS WebKit 会把 Control 相关触控板手势报告成带 ctrlKey 的 wheel，
-  // 其中部分事件带有非零 deltaY。Control 在 macOS 仍属于终端控制修饰键，
-  // 滚轮缩放只认 Command（键盘路径仍保留 Ctrl/⌘ 双认，见 actions.ts），
-  // 避免按下 Control 时误缩小。
+  // macOS 的 Control 手势曾误触整页缩小，停用 Ctrl 后又出现 Command 同类反馈。
+  // 不在 JS 里猜测 WKWebView 的合成 wheel 是否真实滚动：整个 macOS 滚轮入口停用，
+  // 显式键盘缩放仍由 actions.ts 处理；恢复上次档位与设置下拉继续生效。
   const mac = isMacPlatform();
   // 恢复上次缩放：合法且非 100% 才回放；非法值静默忽略；**invoke 成功才落内存档位**——
   // 失败（旧二进制无 capability、webview 初始化期）档位留在 100%，设置绝不显示
@@ -89,19 +90,19 @@ export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }):
   let saved = Number.NaN;
   try { saved = Number(localStorage.getItem(ZOOM_KEY)); } catch { /* 禁用态：留默认 */ }
   if (Number.isFinite(saved) && saved > 0 && clampZoom(saved) === saved && saved !== 1) {
-    void invoke("plugin:webview|set_webview_zoom", { value: clampZoom(saved) })
+    void invokeZoom("plugin:webview|set_webview_zoom", { value: clampZoom(saved) })
       .then(() => {
         level = clampZoom(saved);
         for (const l of listeners) l(level);
       })
       .catch(() => {});
   }
+  if (mac) return () => {};
   let wheelRaf = 0;
   let wheelLatest: WheelEvent | null = null;
   const wheel = (e: WheelEvent) => {
-    if (mac ? !e.metaKey : !e.ctrlKey) return;
-    // 零位移 wheel 不是真实滚动（WebKit 在按下修饰键/捏合预备时会合成），忽略；
-    // macOS 的 Control 手势已在上面的修饰键门整体挡掉，这里主要保护 Windows/Linux。
+    if (!e.ctrlKey) return;
+    // 零位移 wheel 不是真实滚动（按下修饰键/捏合预备时会合成），忽略。
     if (e.deltaY === 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -116,7 +117,7 @@ export function registerZoomHotkeys(opts: { isTauri: boolean; notify: Notify }):
       if (!ev) return;
       const next = clampZoom(level + (ev.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
       if (next === level) return;
-      void apply(next, false);
+      void apply(next, false, invokeZoom);
     });
   };
   window.addEventListener("wheel", wheel, { passive: false, capture: true });

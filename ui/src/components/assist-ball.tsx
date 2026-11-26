@@ -1,12 +1,18 @@
 // 助力球（GitHub #40 / #45）：触控场景（手机本体 / 手机远程桌面控制电脑）没有
 // 鼠标滚轮，标签条与工具栏又吃空间。右缘悬浮球点开一个动作面板：
-//   上翻 / 下翻 / 回到底部 / 粘贴剪贴板（正常屏走 xterm 本地 scrollback；备用屏
+//   上翻 / 下翻 / 回到底部 / 粘贴（正常屏走 xterm 本地 scrollback；备用屏
 //   tmux/vim 全屏合成触摸板滚轮事件，与用户触摸板同一通道，见 App 的 assistScroll；
 //   粘贴与 ⌘V/右键同一收口 pasteTextInto，危险扫描/多行确认不旁路）
 //   + 常用键排（Esc/Tab/^C/↑/↓ 与 Home/End/PgUp/PgDn/^B，经 App 的 sendMobileKey
 //     走真实键序路径，方向键与 Home/End 跟随 DECCKM；点键后面板不收——连点刚需）
-//   + 终端字号行（A− / A+，走设置同一条 changeFontSize 通道：全实例应用 + PTY 校准）
+//     右缘挂一枚竖向终端字号摇杆（上 A+ / 中间读数 / 下 A−，走设置同一条
+//     changeFontSize 通道：全实例应用 + PTY 校准；同样不收面板）
 //   + 专注态唤出/收起标签与工具栏（#45「专注模式下标签按钮栏碍事」，移动端专属）。
+// 版式（样式见 styles.css 的 .assist-menu 一节）：命令格图标在上、文案在下，
+// 竖屏一行四格（专注态第二行两枚宽格），横屏压成单行；连点区（键排 + 摇杆）在
+// 命令格之下，宽横屏与命令格并成两行。面板在常规手机横竖屏完整铺开、不出滚动条
+// （用户走查：移动端在弹出面板里上下滚动很难操作）；放不下时按实测余量逐级收紧
+// （.ts-tight → .ts-mini 图标版），三档都放不下才留应急滚动。
 // 移动平台常显；桌面端默认不渲染——手机远程桌面（ToDesk 等）注入的是鼠标事件，
 // 无法可靠自动识别，改由设置「在桌面端显示助力球」确定性开启（持久化）。
 //
@@ -34,7 +40,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { t } from "../i18n";
-import { IconChevronsUp, IconChevronsDown, IconArrowDownToLine, IconPanelTop, IconMinimize, IconClipboard } from "../icons";
+import { IconAssist, IconChevronsUp, IconChevronsDown, IconArrowDownToLine, IconPanelTop, IconMinimize, IconClipboard } from "../icons";
 
 /** 球径三档（px）：设置「助力球大小」选择，--assist-ball-size 落地。 */
 export const ASSIST_BALL_SIZES = { s: 32, m: 40, l: 52 } as const;
@@ -99,17 +105,23 @@ function clearWrapPos(wrap: HTMLDivElement): void {
  *  - pointerup（仅 touch，且按下也落在本钮）：触摸的激活入口。Chrome Android
  *    在 pointerdown 被 preventDefault 后**仍会**补一个 click（事件序列实测：
  *    pointerdown → pointerup → click），所以 click 侧必须去重，否则一次点按
- *    会把面板开了又关。
- *  - onClick：鼠标/键盘路径，以及没抑制住 click 的 WebView；刚由 pointerup
- *    激活过的 700ms 内忽略。
+ *    会把面板开了又关。去重按手势（gestureSpent，见下）：出过手的那段点按，
+ *    尾随 click 不分早晚一律吃掉。
+ *  - onClick：鼠标/键盘路径，以及没抑制住 click 的 WebView。键盘/辅助技术触发
+ *    的 click 不带 pointerType，没有前置手势，不经手势闸，只受时间窗约束。
  *  - onDragMove/onDragEnd（可选，球位拖动用）：按下后累计位移 ≥DRAG_THRESHOLD
  *    进入拖动态——setPointerCapture 保住移出球体的 move 流、抑制激活（抬起不开
- *    面板），end 交外部落位；拖完的尾随 click（触摸补发 / 鼠标抬起）同样落在
- *    700ms 去重窗里被吃掉。
+ *    面板），end 交外部落位；拖完的尾随 click（触摸补发 / 鼠标抬起）同样被
+ *    gestureSpent 吃掉。
  */
-function AssistButton({
-  onActivate, className, children, role, pressed, onDragMove, onDragEnd, ...rest
-}: {
+// 当前这段点按手势是否已经出过手（触摸抬起即激活，或拖完落位）。浏览器在 pointerup
+// 之后补发的 click 属于同一次点按——不管隔多久到都不该再执行一遍。光靠时间窗不够：
+// 动作若触发长任务（Android WebView 实测：终端字号换一档，xterm 重建字形缓存把主
+// 线程占住 600ms+），补发的 click 会被排到窗口过期之后才派发，一次点按就执行两遍
+// （A+ 点一下跳两档）。pointerdown 置新，下一次真实点按重新放开；放模块级是因为
+// 补发的 click 按坐标命中，布局在长任务里变了就可能落到别的助力按钮上。
+let gestureSpent = false;
+type AssistButtonProps = {
   onActivate: () => void;
   className?: string;
   children: ReactNode;
@@ -122,7 +134,11 @@ function AssistButton({
   "aria-label"?: string;
   "aria-haspopup"?: "menu";
   "aria-expanded"?: boolean;
-}) {
+};
+
+function AssistButton({
+  onActivate, className, children, role, pressed, onDragMove, onDragEnd, ...rest
+}: AssistButtonProps) {
   const down = useRef(false);
   const touchAt = useRef(0);
   // 拖完尾随 click 的独立去重窗（审核轮修复）：touch 的 700ms 窗是给「按下
@@ -147,6 +163,8 @@ function AssistButton({
         down.current = true;
         dragFrom.current = { x: ev.clientX, y: ev.clientY };
         dragging.current = false;
+        // 新的一段点按手势：重新放开手势闸
+        gestureSpent = false;
         // 鼠标/触控笔按下会紧跟自己的 click：清掉触摸去重窗口，别把鼠标点也吞了
         if (ev.pointerType !== "touch") touchAt.current = 0;
         // 新一段手势开始：拖完尾随窗也一并清（上一段的窗残留会吞掉这次的
@@ -186,6 +204,7 @@ function AssistButton({
           // 统一走 dragEndAt 的 150ms 尾随窗吃掉它；不挪用 touchAt——那个 700ms
           // 窗是给「按下即激活」的 touch 手势准备的，套到拖上会连坐吞连点。
           dragEndAt.current = Date.now();
+          gestureSpent = true;
           onDragEnd?.(true);
           return;
         }
@@ -193,6 +212,7 @@ function AssistButton({
         if (ev.pointerType !== "touch" || !down.current) return;
         down.current = false;
         touchAt.current = Date.now();
+        gestureSpent = true;
         onActivate();
       }}
       onPointerCancel={() => {
@@ -203,7 +223,12 @@ function AssistButton({
           onDragEnd?.(false); // 拖动被系统打断：外层恢复原锚定位，不算落位
         }
       }}
-      onClick={() => {
+      onClick={(ev) => {
+        // 手势闸：本段点按已经出过手，尾随 click 不分早晚一律吃掉。键盘/辅助技术触发
+        // 的 click 不带 pointerType、detail 为 0，不来自点按手势，放行到下面的时间窗。
+        // 别拿 detail 单独区分：Chrome Android 触摸补发的 click detail 也是 0，
+        // 真机上只有 pointerType 分得开两者（WebView 实测）。
+        if (gestureSpent && ((ev.nativeEvent as MouseEvent & { pointerType?: string }).pointerType || ev.detail)) return;
         if (Date.now() - touchAt.current < 700) return;
         if (Date.now() - dragEndAt.current < 150) return;
         onActivate();
@@ -211,6 +236,77 @@ function AssistButton({
     >
       {children}
     </button>
+  );
+}
+
+/** 命令格文案限字号（逐行，place 的第一步）：每次摆位前先把文案还原到期望字号，用实际
+ *  字体量出每句文案的自然宽。整行文案都能在 ≥ 下限字号下排成单行时，给这一行统一一个
+ *  「刚好放得下」的字号——行内不分大小，也省下一行高度；否则保持期望字号、按词折行，
+ *  只对「最宽的词放不下」的格子再收一档，单词不从中间拆开。
+ *  下限：纯中文行 68%（没有词间断点，折行会撑高格子，宁小勿折；再垫 9px 绝对值，
+ *  界面字号调小时不缩成蚂蚁字）；含英文的行 80%（小字英文可读性掉得快），同样垫 9px。
+ *  直接写内联 fontSize、不走 state——同 place 的纪律：绘制前同步量完，不开第二帧。
+ *  必须在摘掉档位类之后调（见 place）：图标版的命令格没有左右内衬，带着上一轮的
+ *  档位量，文案会按宽出 8px 的格子定字号——软键盘收起那一帧正好走「图标版 → 常规」。 */
+function fitTileLabels(menu: HTMLElement) {
+  const cv = document.createElement("canvas").getContext("2d");
+  if (!cv) return;
+  type Tile = { el: HTMLElement; em: number; word: number; inner: number; expected: number; latin: boolean };
+  const els = [...menu.querySelectorAll<HTMLElement>(".assist-cmd")];
+  for (const el of els) el.style.fontSize = "";   // 先全部还原再统一量，排版只强制一次
+  const rows = new Map<number, Tile[]>();
+  for (const el of els) {
+    const label = el.querySelector<HTMLElement>(".assist-label");
+    if (!label) continue;
+    const cs = getComputedStyle(label);
+    const box = getComputedStyle(el);
+    const text = label.textContent ?? "";
+    const expected = parseFloat(cs.fontSize);
+    if (!(expected > 0)) continue;
+    cv.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    // 以期望字号为 1em 的自然宽；留 2%——canvas 量宽与实际排版有零点几像素出入
+    const em = (str: string) => (cv.measureText(str).width / expected) * 1.02;
+    const { top, width } = el.getBoundingClientRect();   // 同一 flex 行的格子顶边相同
+    const tile: Tile = {
+      el, expected, em: em(text),
+      word: Math.max(0, ...text.split(" ").map(em)),
+      // 文案可用宽 = 格子 border-box 宽 − 左右内衬与描边（clientWidth 取整，这里要小数宽）
+      inner: width - [box.paddingLeft, box.paddingRight, box.borderLeftWidth, box.borderRightWidth]
+        .reduce((sum, v) => sum + parseFloat(v), 0),
+      latin: /[A-Za-z]/.test(text),
+    };
+    const key = Math.round(top);
+    rows.set(key, [...(rows.get(key) ?? []), tile]);
+  }
+  for (const row of rows.values()) {
+    const head = row[0];
+    const scale = head.expected / 12.5;                       // 界面字号倍率
+    const fit = Math.min(...row.map((t) => t.inner / t.em));   // 整行排成单行的最大字号
+    const floor = row.some((t) => t.latin) ? Math.max(9, 10 * scale) : Math.max(9, 8.5 * scale);
+    if (fit >= Math.min(head.expected, floor)) {
+      for (const t of row) t.el.style.fontSize = `${Math.min(head.expected, fit)}px`;
+      continue;
+    }
+    for (const t of row) {
+      const wordFit = t.inner / t.word;
+      if (t.latin && wordFit < t.expected && wordFit >= Math.max(9, 9.5 * scale)) {
+        t.el.style.fontSize = `${wordFit}px`;
+      }
+    }
+  }
+}
+
+/** 命令格：图标在上、文案在下的按钮，其余 props 透传 AssistButton。文案字号由
+ *  fitTileLabels 逐行实测后写在按钮的内联 style 上。 */
+function AssistTile({ icon, label, className = "", ...rest }:
+  Omit<AssistButtonProps, "className" | "children"> & {
+    icon: ReactNode; label: string; className?: string;
+  }) {
+  return (
+    <AssistButton {...rest} className={"assist-item assist-cmd" + (className ? " " + className : "")}>
+      <span className="assist-ico">{icon}</span>
+      <span className="assist-label">{label}</span>
+    </AssistButton>
   );
 }
 
@@ -327,37 +423,59 @@ export function AssistBall({
     return () => { ro?.disconnect(); };
   }, [pos, onMoveEnd, ballPx]);
 
-  // 面板摆位（审核轮几何修复，实锤于视觉验证）：菜单绝对定位在球上方
-  // （bottom: calc(100% + 8px)，不参与 wrap 盒——wrap 恒等于球盒，拖动/钳制/
-  // 翻边几何在开关两态统一，落位后开面板不再推球）。球上方放不下完整菜单时
-  // 下翻；两侧都放不下时挑空间大的一侧并钳 max-height（修复默认位横屏手机
-  // 面板顶部被裁 20px）。窗口 resize 时重摆。
-  const [menuPlacement, setMenuPlacement] = useState<{ below: boolean; maxH: number | null }>({ below: false, maxH: null });
+  // 面板摆位：默认锚在球上方；自然高放不下时翻下，两侧都不够才保留
+  // 最后的应急滚动。正常手机横竖屏面板是满铺网格（命令格 + 键排 + 摇杆，
+  // 竖屏两段、宽横屏并成两行），常用键与字号都不靠滚动找，不依赖 56vh
+  // 之类固定比例（旧版横屏 319px 内容被压进 200px，常用键全部藏住）。
+  // wrap 仍恒等于球盒，开关面板不改变拖动/钳制几何。
+  const [menuPlacement, setMenuPlacement] = useState<{ left: number; top: number; maxH: number | null }>({ left: 8, top: 8, maxH: null });
   useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
       const wrap = wrapRef.current;
       const menu = menuRef.current;
       if (!wrap || !menu) return;
-      const want = menu.scrollHeight; // 内容自然高（scrollHeight 不受 max-height 钳制）
       const br = wrap.getBoundingClientRect();
       const availAbove = br.top - 16;  // 视口上缘 8px 边距 + 8px 球板间隙
       const availBelow = window.innerHeight - br.bottom - 16;
-      if (want <= availAbove) { setMenuPlacement({ below: false, maxH: null }); return; }
-      if (want <= availBelow) { setMenuPlacement({ below: true, maxH: null }); return; }
-      // 下限只取非负（审核轮修复：旧 Math.max(120,…) 下限在极矮视口——
-      // 如 120px 高窗口球贴上缘——反而把菜单推出该侧边界被 overflow 裁掉；
-      // 两侧同负时上面 availAbove>=availBelow 的选择已保证挑了较好的一侧）。
-      setMenuPlacement(availAbove >= availBelow
-        ? { below: false, maxH: Math.max(0, availAbove) }
-        : { below: true, maxH: Math.max(0, availBelow) });
+      // 三档逐级收：常规版式两侧都放不下 → .ts-tight（目标 40→36、间距收一档）→
+      // 仍放不下 → .ts-mini（命令格只剩图标，宽横屏并成单行）。软键盘挤压、横屏
+      // 分屏半幅、小屏大字号专注态下先保「整板可见、不出滚动条」。先摘掉再量：上一次
+      // 的档位不能当这一次的自然高；直接改 class 不走 state——本 effect 在绘制前同步
+      // 量几遍，不开第二帧（键盘弹出/收起触发的 resize 同理，切档不闪）。
+      const room = Math.max(availAbove, availBelow);
+      menu.classList.remove("ts-tight", "ts-mini");
+      fitTileLabels(menu);   // 摘完档位再定文案字号（可能改变命令格高度），然后量档位
+      if (menu.scrollHeight > room) menu.classList.add("ts-tight");
+      if (menu.scrollHeight > room) menu.classList.add("ts-mini");
+      // 图标版在极窄视口里键帽会等比收到文案放不下：有任何一格横向溢出就放弃这一档，
+      // 退回收紧档的应急滚动——收紧只降尺寸，不会比常规版式更高，所以档位只升不回退
+      // 到这里为止。
+      if (menu.classList.contains("ts-mini") &&
+          [...menu.querySelectorAll<HTMLElement>(".assist-item")].some((el) => el.scrollWidth > el.clientWidth + 1)) {
+        menu.classList.remove("ts-mini");
+      }
+      const want = menu.scrollHeight; // 内容自然高（scrollHeight 不受 max-height 钳制）
+      const below = want > availAbove && (want <= availBelow || availBelow > availAbove);
+      const maxH = want <= (below ? availBelow : availAbove) ? null
+        : Math.max(0, below ? availBelow : availAbove);
+      const height = Math.min(want, maxH ?? Number.POSITIVE_INFINITY);
+      // fixed 坐标统一相对视口：球在左半就从球缘向右、右半就从球缘向左，
+      // 两边都钳进 8px 安全边界；不受 workspace 宽度和左/右 CSS 锚百分比影响。
+      const left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8,
+        wrap.classList.contains("assist-left") ? br.left : br.right - menu.offsetWidth));
+      const top = Math.max(8, Math.min(window.innerHeight - height - 8,
+        below ? br.bottom + 8 : br.top - height - 8));
+      setMenuPlacement({ left, top, maxH });
     };
     place();
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
-    // focusMode 进依赖：F11 是全局键、面板开着也能进/退专注——assist-focus
-    // 组（~100px）随之挂载/卸载，scrollHeight 变了不重摆会按旧 maxH 裁顶。
-  }, [open, pos, ballPx, fontSize, focusMode]);
+    // focusMode 进依赖：F11 是全局键、面板开着也能进/退专注——专注态多出
+    // 两枚界面开关，命令格由一行变两行，scrollHeight 变了不重摆会按旧
+    // maxH 裁顶。chromeOpen 同理：唤出工具栏后文案变「收起标签与工具栏」，
+    // 125% 字号竖屏下折成两行、面板长高一截。
+  }, [open, pos, ballPx, fontSize, focusMode, chromeOpen]);
 
   // 拖动起步：把当前几何折算成 left/top 坐标（默认锚是 right/bottom，没有现成
   // 坐标）；此后 move 直接改内联样式，不逐帧 setState。
@@ -425,95 +543,87 @@ export function AssistBall({
       >
         {open && (
           <div
-            className={"assist-menu" + (menuPlacement.below ? " assist-menu-below" : "")}
+            className="assist-menu"
             role="menu"
             aria-label={t("快捷操作")}
             data-testid="assist-menu"
             ref={menuRef}
-            style={menuPlacement.maxH != null ? { maxHeight: menuPlacement.maxH } : undefined}
+            style={{ left: menuPlacement.left, top: menuPlacement.top,
+              maxHeight: menuPlacement.maxH ?? undefined }}
           >
-            {/* 滚动组：图标芯片 + 文案。正常屏走本地 scrollback，备用屏合成
-                触摸板滚轮（见 App assistScroll）——两条路都与用户手势同通道。
-                粘贴剪贴板与 ⌘V/右键同一收口（pasteTextInto 危险扫描），执行即收
-                （可能弹多行确认框，面板要让位）。 */}
-            <div className="assist-section">
-              <AssistButton role="menuitem" className="assist-item assist-scroll"
-                onActivate={run(onPageUp)}>
-                <span className="assist-ico"><IconChevronsUp /></span>
-                <span className="assist-label">{t("上翻一页")}</span>
-              </AssistButton>
-              <AssistButton role="menuitem" className="assist-item assist-scroll"
-                onActivate={run(onPageDown)}>
-                <span className="assist-ico"><IconChevronsDown /></span>
-                <span className="assist-label">{t("下翻一页")}</span>
-              </AssistButton>
-              <AssistButton role="menuitem" className="assist-item assist-scroll"
-                onActivate={run(onBottom)}>
-                <span className="assist-ico"><IconArrowDownToLine /></span>
-                <span className="assist-label">{t("回到底部")}</span>
-              </AssistButton>
-              <AssistButton role="menuitem" className="assist-item assist-scroll"
-                onActivate={run(onPaste)}>
-                <span className="assist-ico"><IconClipboard /></span>
-                <span className="assist-label">{t("粘贴剪贴板")}</span>
-              </AssistButton>
+            {/* 命令格（点即执行，面板随即收起）：滚动三项 + 粘贴；专注态追加「标签与
+                工具栏」与「退出专注」。图标在上、文案在下——比「图标 + 文案」横排省
+                一半高度：竖屏四格一行（专注态第二行两枚宽格）、横屏单行。滚动：正常屏
+                走本地 scrollback，备用屏合成触摸板滚轮（见 App assistScroll）——两条路
+                都与用户手势同通道。粘贴与 ⌘V/右键同一收口（pasteTextInto 危险扫描），
+                执行即收（可能弹多行确认框，面板要让位）。 */}
+            <div className="assist-actions">
+              <AssistTile role="menuitem" icon={<IconChevronsUp />} label={t("上翻一页")}
+                onActivate={run(onPageUp)} />
+              <AssistTile role="menuitem" icon={<IconChevronsDown />} label={t("下翻一页")}
+                onActivate={run(onPageDown)} />
+              <AssistTile role="menuitem" icon={<IconArrowDownToLine />} label={t("回到底部")}
+                onActivate={run(onBottom)} />
+              <AssistTile role="menuitem" icon={<IconClipboard />} label={t("粘贴")}
+                onActivate={run(onPaste)} />
+              {focusMode && (
+                <>
+                  {/* 两枚界面开关带 .assist-chrome：布局据此给它们更宽的位置（文案六
+                      到八个字；竖屏占第二行半行宽，横屏单行按 1.3 倍权重要列宽） */}
+                  {chromeToggle && (
+                    <AssistTile role="menuitem" className={"assist-chrome" + (chromeOpen ? " ts-open" : "")}
+                      icon={<IconPanelTop />} pressed={chromeOpen}
+                      label={chromeOpen ? t("收起标签与工具栏") : t("标签与工具栏")}
+                      onActivate={() => { onToggleChrome(); closeSoon(); }} />
+                  )}
+                  <AssistTile role="menuitem" className="assist-chrome" icon={<IconMinimize />}
+                    label={t("退出专注模式")} onActivate={run(onExitFocus)} />
+                </>
+              )}
             </div>
-            {/* 常用键排：触控场景没有键盘时的刚需（中断命令/补全/翻历史）。走
-                sendMobileKey 的真实键序路径（死会话拦截、tmux 前缀武装、广播扇出、
-                DECCKM 方向键与 Home/End）；点键后面板不收——历史上下翻常要连点。
-                两行各五键（flex-wrap 自动换行）；^B 发真实 C-b，tmux 前缀武装在
-                onData 同一条路上自然接管。键帽文案必须精确（spec 按 textContent
-                全等匹配），图标一律走 CSS 不掺文本。 */}
-            <div className="assist-keys" role="group" aria-label={t("常用键")}>
-              <AssistButton className="assist-item assist-key" title="Esc"
-                onActivate={() => onKey("\x1b")}>Esc</AssistButton>
-              <AssistButton className="assist-item assist-key" title="Tab"
-                onActivate={() => onKey("\t")}>Tab</AssistButton>
-              <AssistButton className="assist-item assist-key assist-key-danger" title={t("中断（Ctrl+C）")}
-                onActivate={() => onKey("\x03")}>^C</AssistButton>
-              <AssistButton className="assist-item assist-key" title="↑"
-                onActivate={() => onKey("\x1b[A")}>↑</AssistButton>
-              <AssistButton className="assist-item assist-key" title="↓"
-                onActivate={() => onKey("\x1b[B")}>↓</AssistButton>
-              <AssistButton className="assist-item assist-key" title={t("行首（Home）")}
-                onActivate={() => onKey("\x1b[H")}>Home</AssistButton>
-              <AssistButton className="assist-item assist-key" title={t("行尾（End）")}
-                onActivate={() => onKey("\x1b[F")}>End</AssistButton>
-              <AssistButton className="assist-item assist-key" title={t("上翻页键（PageUp）")}
-                onActivate={() => onKey("\x1b[5~")}>PgUp</AssistButton>
-              <AssistButton className="assist-item assist-key" title={t("下翻页键（PageDown）")}
-                onActivate={() => onKey("\x1b[6~")}>PgDn</AssistButton>
-              <AssistButton className="assist-item assist-key" title={t("tmux 前缀（Ctrl-b）")}
-                onActivate={() => onKey("\x02")}>^B</AssistButton>
-            </div>
-            {/* 终端字号行：小屏（手机本体/远控）看 80 列吃力，±1 微调走设置同一条
-                changeFontSize（全实例 options + PTY fit 校准 + 持久化）。不收面板
-                （调字号要看着终端试）。 */}
-            <div className="assist-fontrow" role="group" aria-label={t("终端字号")}>
-              <span className="assist-font-label">{t("终端字号")} {fontSize}</span>
-              <AssistButton className="assist-item assist-fontbtn" title={t("减小终端字号")}
-                onActivate={() => onFontDelta(-1)}>A−</AssistButton>
-              <AssistButton className="assist-item assist-fontbtn" title={t("增大终端字号")}
-                onActivate={() => onFontDelta(1)}>A+</AssistButton>
-            </div>
-            {focusMode && (
-              <div className="assist-section assist-focus">
-                {chromeToggle && (
-                  <AssistButton role="menuitem"
-                    className={"assist-item assist-scroll" + (chromeOpen ? " ts-open" : "")}
-                    pressed={chromeOpen}
-                    onActivate={() => { onToggleChrome(); closeSoon(); }}>
-                    <span className="assist-ico"><IconPanelTop /></span>
-                    <span className="assist-label">{chromeOpen ? t("收起标签与工具栏") : t("标签与工具栏")}</span>
-                  </AssistButton>
-                )}
-                <AssistButton role="menuitem" className="assist-item assist-scroll"
-                  onActivate={run(onExitFocus)}>
-                  <span className="assist-ico"><IconMinimize /></span>
-                  <span className="assist-label">{t("退出专注模式")}</span>
-                </AssistButton>
+            {/* 连点区（点了不收——翻历史、调字号都常要连点）：常用键排 + 字号摇杆。
+                键排是触控场景没有键盘时的刚需（中断命令/补全/翻历史），走 sendMobileKey
+                的真实键序路径（死会话拦截、tmux 前缀武装、广播扇出、DECCKM 方向键与
+                Home/End）。摇杆贴在键排右缘、与键排等高：上 A+ / 中间读数 / 下 A−，
+                不再独占一整行（旧版竖屏五行、横屏三行里，字号行只有两枚小钮，其余是空白）。
+                竖屏两行各五键、宽横屏十键单行（网格列数见 CSS）；键帽文案必须精确
+                （spec 按 textContent 全等匹配），图标一律走 CSS 不掺文本。 */}
+            <div className="assist-deck">
+              <div className="assist-keys" role="group" aria-label={t("常用键")}>
+                <AssistButton className="assist-item assist-key" title="Esc"
+                  onActivate={() => onKey("\x1b")}>Esc</AssistButton>
+                <AssistButton className="assist-item assist-key" title="Tab"
+                  onActivate={() => onKey("\t")}>Tab</AssistButton>
+                <AssistButton className="assist-item assist-key assist-key-danger" title={t("中断（Ctrl+C）")}
+                  onActivate={() => onKey("\x03")}>^C</AssistButton>
+                <AssistButton className="assist-item assist-key" title="↑"
+                  onActivate={() => onKey("\x1b[A")}>↑</AssistButton>
+                <AssistButton className="assist-item assist-key" title="↓"
+                  onActivate={() => onKey("\x1b[B")}>↓</AssistButton>
+                <AssistButton className="assist-item assist-key" title={t("行首（Home）")}
+                  onActivate={() => onKey("\x1b[H")}>Home</AssistButton>
+                <AssistButton className="assist-item assist-key" title={t("行尾（End）")}
+                  onActivate={() => onKey("\x1b[F")}>End</AssistButton>
+                <AssistButton className="assist-item assist-key" title={t("上翻页键（PageUp）")}
+                  onActivate={() => onKey("\x1b[5~")}>PgUp</AssistButton>
+                <AssistButton className="assist-item assist-key" title={t("下翻页键（PageDown）")}
+                  onActivate={() => onKey("\x1b[6~")}>PgDn</AssistButton>
+                <AssistButton className="assist-item assist-key" title={t("tmux 前缀（Ctrl-b）")}
+                  onActivate={() => onKey("\x02")}>^B</AssistButton>
               </div>
-            )}
+              {/* 终端字号摇杆：小屏（手机本体/远控）看 80 列吃力，±1 微调走设置同一条
+                  changeFontSize（全实例应用 + PTY 校准 + 持久化）。不收面板（调字号要
+                  看着终端试）。DOM 顺序自上而下：A+ / 读数 / A−，与竖向摇杆的视觉顺序、
+                  键盘 Tab 顺序一致（窄屏降级横排时 CSS 反向成 A− 14 A+）。读数是装饰
+                  （组标签已含字号），不响应指针——摇杆两半的命中区不被它切开。 */}
+              <div className="assist-fontstep" role="group" aria-label={`${t("终端字号")} ${fontSize}`}>
+                <AssistButton className="assist-item assist-fontbtn" title={t("增大终端字号")}
+                  onActivate={() => onFontDelta(1)}>A+</AssistButton>
+                <span className="assist-fontval" aria-hidden="true">{fontSize}</span>
+                <AssistButton className="assist-item assist-fontbtn" title={t("减小终端字号")}
+                  onActivate={() => onFontDelta(-1)}>A−</AssistButton>
+              </div>
+            </div>
           </div>
         )}
         <AssistButton
@@ -526,7 +636,7 @@ export function AssistBall({
           onDragMove={onBallDragMove}
           onDragEnd={onBallDragEnd}
           onActivate={() => onOpenChange(!open)}
-        >⇅</AssistButton>
+        ><IconAssist size={Math.round(ballPx * 0.58)} /></AssistButton>
       </div>
     </>
   );

@@ -19,12 +19,12 @@ module.exports = {
       (await vis(".hostbar")) &&
       await page.evaluate(() => document.querySelector('[data-testid="rail-hosts"]')?.classList.contains("ts-open")));
 
-    // ── 切到 Agent 视图：互斥（主机栏收起）+ 默认宽 420 + 开合落盘 ──
+    // ── 切到 Agent 视图：互斥（主机栏收起）+ 终端优先默认窄栏 340 + 开合落盘 ──
     await page.click('[data-testid="rail-agent"]');
     await page.waitForTimeout(300);
-    ck.check("Agent 视图开（agent-view 在场、默认 420px）",
+    ck.check("Agent 视图开（agent-view 在场、默认 340px）",
       (await vis('[data-testid="agent-view"]')) &&
-      await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "420px"),
+      await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "340px"),
       await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width ?? "(无)"));
     ck.check("互斥：主机栏收起、rail-agent 点亮",
       !(await vis(".hostbar")) &&
@@ -32,26 +32,35 @@ module.exports = {
     ck.check("开合持久化：ui.agentbar=1 且 ui.hostbar=0",
       await page.evaluate(() => localStorage.getItem("ui.agentbar") === "1" && localStorage.getItem("ui.hostbar") === "0"));
 
-    // ── 拖宽抓手到 x=524（= 44 活动栏 + 480）→ 宽 480 并落盘 ──
+    // ── 拖宽抓手到 x=444（= 44 活动栏 + 400）→ 宽 400 并落盘 ──
     const grip = await page.$('[data-testid="agent-view"] ~ .hb-grip');
     ck.check("Agent 抓手在场（agent-view 兄弟节点）", !!grip);
+    ck.check("抓手辅助文案同步 300–440 新边界", await page.evaluate(() =>
+      document.querySelector('[data-testid="agent-view"] ~ .hb-grip')
+        ?.getAttribute("aria-label")?.includes("300–440") ?? false));
     const gb = await grip.boundingBox();
     await page.mouse.move(gb.x + 3, gb.y + 200);
     await page.mouse.down();
-    await page.mouse.move(524, gb.y + 200, { steps: 6 });
+    await page.mouse.move(444, gb.y + 200, { steps: 6 });
     await page.mouse.up();
     await page.waitForTimeout(200);
-    ck.check("拖宽生效：480px + ui.agentbar_w=480",
-      await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "480px" &&
-        localStorage.getItem("ui.agentbar_w") === "480"),
+    ck.check("拖宽生效：400px + ui.agentbar_w=400",
+      await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "400px" &&
+        localStorage.getItem("ui.agentbar_w") === "400"),
       await page.evaluate(() => localStorage.getItem("ui.agentbar_w") ?? "(未落盘)"));
 
-    // ── 刷新恢复：视图开 + 宽度保持 ──
+    // ── 刷新恢复：视图开 + 宽度保持；旧版超界持久值按新上限钳制 ──
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForTimeout(500);
-    ck.check("刷新后 Agent 视图恢复（宽 480）",
+    ck.check("刷新后 Agent 视图恢复（宽 400）",
       (await vis('[data-testid="agent-view"]')) &&
-      await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "480px"));
+      await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "400px"));
+    await page.evaluate(() => localStorage.setItem("ui.agentbar_w", "560"));
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(500);
+    ck.check("旧持久宽度 560 读取时钳到 440，不覆盖原偏好值",
+      await page.evaluate(() => document.querySelector('[data-testid="agent-view"]')?.style.width === "440px" &&
+        localStorage.getItem("ui.agentbar_w") === "560"));
 
     // ── 切回连接视图：主机栏回、Agent 收；再点一次全关（入口仍在活动栏，
     //    不再有浮动展开钮）──

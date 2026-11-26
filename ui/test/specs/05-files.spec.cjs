@@ -32,6 +32,24 @@ module.exports = {
     ck.check("含目录项 archive", n0.includes("archive"));
     ck.check("含文件项 access.log", n0.includes("access.log"));
 
+    const fileVisual = await page.evaluate(() => {
+      const inactive = document.querySelector('.sftp-tools button[aria-pressed="false"]');
+      const active = document.querySelector('.sftp-tools button[aria-pressed="true"]');
+      const row = document.querySelector('.sftp-row');
+      const meta = row?.querySelector('.sftp-size');
+      return {
+        inactiveBorder: inactive ? getComputedStyle(inactive).borderTopColor : "",
+        activeBorder: active ? getComputedStyle(active).borderTopColor : "",
+        rowPadding: row ? getComputedStyle(row).padding : "",
+        numeric: meta ? getComputedStyle(meta).fontVariantNumeric : "",
+      };
+    });
+    ck.check("文件工具仅当前状态保留描边，未选项无静态方框",
+      fileVisual.inactiveBorder === "rgba(0, 0, 0, 0)"
+      && fileVisual.activeBorder !== "rgba(0, 0, 0, 0)" && fileVisual.activeBorder !== "", JSON.stringify(fileVisual));
+    ck.check("文件行内边距与等宽数字层级保留",
+      fileVisual.rowPadding === "5px 6px" && fileVisual.numeric === "tabular-nums", JSON.stringify(fileVisual));
+
     // 选中一行 → 选中条出现
     await page.click('.sftp-row[data-name="access.log"]');
     await page.waitForTimeout(350);

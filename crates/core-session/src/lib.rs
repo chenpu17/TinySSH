@@ -5334,13 +5334,10 @@ impl SessionManager {
         }
     }
 
-    /// tmux 会话名合法性：tmux 自身禁 `:` 和 `.`（target 语法保留字），这里收得
-    /// 更紧——字母/数字/下划线开头，后接字母/数字/下划线/短横线，1–64 字节。
-    /// 白名单免去一切引号/注入顾虑（创建命令照旧单引号包裹，双保险）。
+    /// 规范化后的 tmux 会话名白名单：字母/数字/下划线开头，后接字母/数字/
+    /// 下划线/短横线，1–64 字节。白名单免去引号/注入顾虑（创建命令照旧单引号
+    /// 包裹，双保险）；空格仍不收。长度按 UTF-8 字节算。
     fn tmux_session_name_ok(name: &str) -> bool {
-        // tmux 自身允许 UTF-8 名称（拒绝 `:`/`.`/空名/超长），限制在应用侧：
-        // 首字符字母/数字/中文/下划线，其余可含连字符；空格仍不收（target 语法
-        // 与命令拼接都更易出错）。长度按 UTF-8 字节算，对齐 tmux 的 64 字节上限。
         if name.is_empty() || name.len() > 64 {
             return false;
         }
@@ -5350,6 +5347,18 @@ impl SessionManager {
         };
         (first.is_alphanumeric() || first == '_')
             && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    }
+
+    /// 输入名先按 tmux 3.2–3.5 的传统规则把 `.`/`:` 清理为 `_`：这些版本并
+    /// 非拒绝点号，而是创建成下划线名；后续版本对此规则又有变化。应用统一采用
+    /// 此兼容口径，前端同步预告实际名称，避免静默改名或远端版本行为漂移。
+    fn tmux_session_name_normalize(name: &str) -> Option<String> {
+        let normalized: String = name
+            .trim()
+            .chars()
+            .map(|c| if c == '.' || c == ':' { '_' } else { c })
+            .collect();
+        Self::tmux_session_name_ok(&normalized).then_some(normalized)
     }
 
     /// 同名预检：tmux ≥3.1 用 `=name` 精确选择器（防 work 前缀误中 workshop），
@@ -5392,17 +5401,16 @@ impl SessionManager {
                 ));
             }
         }
-        let name = name.trim();
-        if !Self::tmux_session_name_ok(name) {
+        let Some(name) = Self::tmux_session_name_normalize(name) else {
             return Err(Error::InvalidInput(
-                "非法的 tmux 会话名：1–64 字节，首字符为字母/数字/中文/下划线，其余可含连字符"
+                "非法的 tmux 会话名：1–64 字节，首字符为字母/数字/中文/下划线，其余可含连字符；点号和冒号会转为下划线"
                     .into(),
             ));
-        }
+        };
         let version = h.tmux.lock().unwrap().version.clone();
         if let Some((out, _)) = Self::tmux_exec(
             &h,
-            &Self::tmux_session_has_cmd(version.as_deref(), name),
+            &Self::tmux_session_has_cmd(version.as_deref(), &name),
             4 * 1024,
         )
         .await
@@ -5411,7 +5419,7 @@ impl SessionManager {
                 return Err(Error::InvalidInput(format!("tmux 会话 {name} 已存在")));
             }
         }
-        match Self::tmux_exec(&h, &Self::tmux_session_create_cmd(name), 4 * 1024).await {
+        match Self::tmux_exec(&h, &Self::tmux_session_create_cmd(&name), 4 * 1024).await {
             Some((out, _)) => {
                 let rc = out
                     .lines()
@@ -5425,7 +5433,7 @@ impl SessionManager {
                         &Actor::Human,
                         "tmux_session_create",
                         Some(sid),
-                        Some(name),
+                        Some(name.as_str()),
                         serde_json::json!({}),
                         None,
                     );
@@ -7879,8 +7887,26 @@ mod t44_tests {
         }
         let long64 = "a".repeat(64);
         let long65 = "a".repeat(65);
-        for bad in ["", "-x", "a b", "a:b", "a.b", "a'b", long65.as_str()] {
+        for bad in ["", "-x", "a b", "a.b", "a'b", long65.as_str()] {
             assert!(!SessionManager::tmux_session_name_ok(bad), "{bad} 应拒绝");
+        }
+        for (input, actual) in [
+            ("NMG-Qwen3.5-2B", "NMG-Qwen3_5-2B"),
+            ("model:Qwen3.5", "model_Qwen3_5"),
+            (".leading", "_leading"),
+        ] {
+            assert_eq!(
+                SessionManager::tmux_session_name_normalize(input).as_deref(),
+                Some(actual),
+                "{input} 应按 tmux 传统兼容规则规范化"
+            );
+        }
+        for bad in ["", "-x", "a b", "a'b", long65.as_str()] {
+            assert_eq!(
+                SessionManager::tmux_session_name_normalize(bad),
+                None,
+                "{bad} 规范化后仍应被白名单拒绝"
+            );
         }
         assert!(
             SessionManager::tmux_session_name_ok(&long64),

@@ -11,8 +11,8 @@ const connectLocal = async (page) => {
 };
 
 module.exports = {
-  title: "触屏/横屏：无 hover 时主机卡操作组、SFTP 下载钮、回到底部浮钮仍可见可点",
-  async run({ page, ck }) {
+  title: "触屏/横屏与标签关闭：无 hover 入口可见，关闭钮直接 hover 反馈完整",
+  async run({ page, browser, ck, BASE }) {
     // 手机横屏形态：宽度保持 1440（移动布局的 ≤760 断点不生效），只挂平台标记。
     // 触屏可用性兜底读 :root[data-platform]（与 isMobilePlatform 同一判据）。
     await page.evaluate(() => { document.documentElement.dataset.platform = "android"; });
@@ -75,5 +75,45 @@ module.exports = {
     ck.eq("SFTP 下载钮无需悬停即显形", dl?.opacity, "1");
     ck.eq("SFTP 下载钮可直接点按", dl?.pe, "auto");
     ck.check("下载钮有真实命中区（宽度 > 0）", (dl?.w ?? 0) > 0, JSON.stringify(dl));
+
+    // ── 非当前标签关闭钮：独立桌面页；Android 平台标记会隐藏桌面标签条 ──
+    const desktop = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await desktop.goto(BASE, { waitUntil: "domcontentloaded" });
+    await desktop.waitForTimeout(1300);
+    const inactiveTab = desktop.locator('.tab:not(.tab-active)').first();
+    await inactiveTab.hover();
+    await desktop.waitForTimeout(180);
+    const inactiveClose = inactiveTab.locator('.tab-x');
+    await inactiveClose.hover();
+    await desktop.waitForTimeout(180);
+    const closeHover = await inactiveClose.evaluate((el) => ({
+      matches: el.matches(':hover'),
+      opacity: getComputedStyle(el).opacity,
+      background: getComputedStyle(el).backgroundColor,
+    }));
+    ck.check("非当前标签关闭钮可被直接悬停", closeHover.matches, JSON.stringify(closeHover));
+    ck.eq("直接悬停关闭钮透明度到 1（不被父级显形规则压回 0.75）", closeHover.opacity, "1");
+    await desktop.close();
+
+    // ── 真触屏媒体环境：不是只挂 data-platform；非当前标签关闭钮无需 hover 即可点 ──
+    const touch = await browser.newPage({ viewport: { width: 1440, height: 900 }, hasTouch: true });
+    await touch.goto(BASE, { waitUntil: "domcontentloaded" });
+    await touch.waitForTimeout(1300);
+    const touchClose = await touch.evaluate(() => {
+      const el = document.querySelector('.tab:not(.tab-active) .tab-x');
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return {
+        hoverNone: matchMedia('(hover: none)').matches,
+        anyCoarse: matchMedia('(any-pointer: coarse)').matches,
+        opacity: cs.opacity,
+        pe: cs.pointerEvents,
+      };
+    });
+    ck.check("触屏探针确实处于无 hover / coarse 环境",
+      touchClose?.hoverNone && touchClose?.anyCoarse, JSON.stringify(touchClose));
+    ck.eq("真触屏下非当前标签关闭钮常显", touchClose?.opacity, "0.75");
+    ck.eq("真触屏下非当前标签关闭钮可直接点按", touchClose?.pe, "auto");
+    await touch.close();
   },
 };

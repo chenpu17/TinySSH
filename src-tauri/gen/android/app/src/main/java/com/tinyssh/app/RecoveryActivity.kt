@@ -168,6 +168,10 @@ class RecoveryActivity : AppCompatActivity() {
     }
     runCatching { deleteSharedPreferences(KEYRING_STORE) }
       .onFailure { Log.w(TAG, "delete shared preferences failed", it) }
+    // 外观冷启动种子（MainActivity.restoreChromeSeed 落盘的窗口底色与图标深浅）不清
+    // 也不会出错，页面就绪后会重取；但它是上一个库留下的界面状态，「重置」不该留它。
+    runCatching { deleteSharedPreferences(MainActivity.SEED_STORE) }
+      .onFailure { Log.w(TAG, "delete shared preferences failed", it) }
     runCatching {
       val keyStore = KeyStore.getInstance("AndroidKeyStore")
       keyStore.load(null)

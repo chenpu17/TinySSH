@@ -4,7 +4,8 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { SessionInfo } from "../adapter/wire";
 import { t } from "../i18n";
-import { IconChevronDown, IconPlus, IconLayoutGrid } from "../icons";
+import { normalizeTmuxSessionName } from "../tmux-session-name";
+import { IconChevronDown, IconPlus, IconTmux } from "../icons";
 import { clampIntoView } from "./ctx-menus";
 
 export interface TmuxQuickProps {
@@ -49,6 +50,8 @@ export function TmuxQuick({
   const createPanelWhy = splitActive ? t("分屏模式下不可并入面板——请先退出分屏")
     : paneCapReached ? t("面板最多 {0} 个窗格", "5")
     : null;
+  const requestedName = tmuxCreateName.trim();
+  const normalizedName = normalizeTmuxSessionName(requestedName);
   return (
     <div className="st-tools" ref={tmuxMenuRef} data-testid="tmux-quick">
       <button
@@ -66,7 +69,7 @@ export function TmuxQuick({
           setTmuxMenu(next);
           if (next) onRefreshTmux();
         }}
-      ><IconLayoutGrid size={compact ? 14 : 13} />{!compact && <><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></>}</button>
+      ><IconTmux size={compact ? 14 : 13} />{!compact && <><span className="tmux-quick-label">{current.tmux_attached ? `tmux:${current.tmux_attached}` : "tmux"}</span><IconChevronDown size={10} /></>}</button>
       {tmuxMenu && (
         <div className="tools-menu tmux-quick-menu" role="menu" data-testid="tmux-quick-menu" ref={clampIntoView}>
           {/* 会话大屏（监控墙）：全部会话快照网格（单击放大可直接键入）。挂在
@@ -118,6 +121,11 @@ export function TmuxQuick({
                   onClick={onTmuxCreateCancel}
                 >{t("取消")}</button>
               </div>
+              {normalizedName !== requestedName && (
+                <div className="tmux-create-normalized" data-testid="tmux-create-normalized">
+                  {t("实际会话名：{0}（. 和 : 按 tmux 兼容规则转为 _）", normalizedName)}
+                </div>
+              )}
               {/* 目标单选（建好落在哪）：默认主视图=旧行为。鼠标点选不夺输入框
                   焦点（mousedown 拦默认），选完仍可直接 Enter 提交 */}
               <div

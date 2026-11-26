@@ -980,6 +980,27 @@ module.exports = {
     ck.check("作曲行出现且输入框聚焦", await poll(page, () =>
       !!document.querySelector('[data-testid="tmux-create-row"]')
       && document.activeElement?.classList.contains("tmux-create-input") === true, null, 3000), "");
+    // 用户实例：tmux 3.2–3.5 会把点号/冒号清理为下划线，并非非法输入。
+    // 表单先明示实际名称，再按该名称创建/接入，绝不能静默改名或继续误拒。
+    await page.fill('[data-testid="tmux-create-input"]', "NMG-Qwen3.5-2B");
+    const normalizedPreview = await page.evaluate(() =>
+      document.querySelector('[data-testid="tmux-create-normalized"]')?.textContent ?? "");
+    ck.check("带点名称在提交前预告 tmux 兼容后的实际名称",
+      normalizedPreview.includes("NMG-Qwen3_5-2B") && normalizedPreview.includes("实际会话名"),
+      normalizedPreview);
+    await page.click('[data-testid="tmux-create-ok"]');
+    ck.check("名称转换 toast 明示原名称与实际名称",
+      await waitToast(page, "「NMG-Qwen3.5-2B」已转为「NMG-Qwen3_5-2B」"), "");
+    ck.check("带点名称创建成功并接入实际名称",
+      await waitToast(page, "已创建并接入 tmux 会话「NMG-Qwen3_5-2B」"), "");
+    ck.check("快接钮显示实际名称而不是仍显示带点原名",
+      await poll(page, () => (document.querySelector('[data-testid="tmux-quick"] button')?.textContent ?? "")
+        .includes("tmux:NMG-Qwen3_5-2B"), null, 6000), "");
+    await openQuickMenu(page);
+    ck.check("清单包含按 tmux 兼容规则创建的会话",
+      await poll(page, () => !!document.querySelector('[data-testid="tmux-quick-item-NMG-Qwen3_5-2B"]'), null, 4000), "");
+    await page.click('[data-testid="tmux-create-open"]');
+    await poll(page, () => !!document.querySelector('[data-testid="tmux-create-row"]'), null, 3000);
     const tryCreate = async (name) => {
       // 提交前记旧错误文本（全套重载下固定 500ms 会把「错误还没落定」误判成无错）。
       // 约束：相邻两次 tryCreate 的错误文本必须不同——同文时第二轮会等满 6s 返回
@@ -1009,7 +1030,7 @@ module.exports = {
       }));
       return `TIMEOUT open=${stuck.open} err=${stuck.err}`;
     };
-    ck.check("非法名（a:b）就地报错", (await tryCreate("a:b")).includes("非法"), "");
+    ck.check("非法名（含空格）就地报错", (await tryCreate("a b")).includes("非法"), "");
     const dupCreateErr = await tryCreate("work");
     const tmuxNamesNow = await page.evaluate(async (sid) =>
       ((await window.__demoInvoke("tmux_probe", { sid }))?.sessions ?? []).map((x) => x.name), SID);

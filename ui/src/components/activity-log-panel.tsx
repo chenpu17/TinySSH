@@ -97,20 +97,26 @@ export function ActivityLogPanel({
                       const ident = ev.session_id ? sessionIdent.get(ev.session_id) : undefined;
                       // 短 id 只用于辨认（完整 id 在 title 里）——太短的 id 直接全显，别截成无信息量的前缀
                       const shortSid = ev.session_id ? (ev.session_id.length <= 12 ? ev.session_id : ev.session_id.slice(0, 8)) : "";
+                      // 只映射后端已经落审计的事件状态，不在前端重新扫描命令危险形态。
+                      const tone = /(?:_failed|_denied|_rejected)$/.test(ev.action)
+                        || ev.action === "transfer_interrupted" || ev.action === "transfer_publish_blocked"
+                        ? "err"
+                        : ev.action === "approval_requested" || ev.action === "transfer_outcome_unknown" ? "warn" : "";
                       return (
-                        <div className={`tl-row log-row actor-${ev.actor_kind}`} key={ev.seq} data-testid="log-row"
+                        <div className={`tl-row log-row actor-${ev.actor_kind}${tone ? ` log-tone-${tone}` : ""}`} key={ev.seq} data-testid="log-row"
                           data-action={ev.action} data-actor={ev.actor_kind}
                           title={`#${ev.seq} ${ev.action}${ev.command ? ` · ${ev.command}` : ""}`}>
                           <div className="tl-meta">
                             {stampLocal(ev.ts)}
-                            {ev.session_id && <> · {ident ?? <span className="log-sid">{shortSid}</span>}</>}
-                            {ev.session_id && <span className="log-sid" title={ev.session_id}>{t("（{0}）", shortSid)}</span>}
+                            {ev.session_id && (ident
+                              ? <> · {ident}<span className="log-sid" title={ev.session_id}>{t("（{0}）", shortSid)}</span></>
+                              : <> · <span className="log-sid" title={ev.session_id}>{shortSid}</span></>)}
                           </div>
                           <div className="tl-action">
                             <span className="tl-actor">
                               {ev.actor_kind === "human" ? t("我") : (ev.agent_id ? t("Agent · {0}", ev.agent_id) : "Agent")}
                             </span>{" "}
-                            {decisionLabel(ev)}
+                            <span className="tl-decision">{decisionLabel(ev)}</span>
                             {ev.command && <>{" "}<span className="tl-cmd-text">{ev.command}</span></>}
                           </div>
                         </div>

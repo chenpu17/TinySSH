@@ -1,5 +1,5 @@
-// 92 助力球（GitHub #40 / #45，KI-102 + 功能轮）：远程桌面场景没有鼠标滚轮，标签条与工具栏
-// 在手机上又吃空间。右缘悬浮球（⇅）展开动作面板：上翻 / 下翻 / 回到底部 + 常用键排
+// 92 助力球（GitHub #40 / #45，KI-102 + 功能轮）：远程桌面场景没有鼠标滚轮，
+// 标签条与工具栏在手机上又吃空间。右缘终端快捷球展开面板：上翻 / 下翻 / 回到底部 + 常用键排
 // （Esc/Tab/^C/↑/↓ 走真实键序），专注态还能唤出/收起标签与工具栏、退出专注。
 // 滚动分两条真实通道（KI-102）：正常屏走 xterm 本地 scrollback（不进 PTY）；备用屏
 // （tmux/vim 全屏）本地没有历史，旧版翻页是 no-op——改为合成触摸板滚轮事件，tmux
@@ -95,7 +95,7 @@ const chrome = (page) => page.evaluate(() => {
 
 module.exports = {
   title: "助力球：翻页/回到底部/常用键 + 专注态唤出标签与工具栏 + 桌面开关",
-  async run({ page, ck }) {
+  async run({ page, browser, ck, BASE }) {
     // 桌面端开关持久化在 localStorage：先清一次再重载，保证「桌面默认不渲染」
     // 断言不受上轮残留影响（球位/球径同为持久键，一并清）。
     await page.evaluate(() => {
@@ -278,6 +278,17 @@ module.exports = {
     ck.eq("点遮罩收起面板", await page.locator('[data-testid="assist-menu"]').count(), 0);
     const afterScrim = await termInfo(page);
     ck.eq("遮罩点击不触发滚动", afterScrim.viewportY, backTail.viewportY);
+
+    // ── Android 返回键收面板：原生 MainActivity 调 window.__tinysshBack()，返回
+    //    true 表示已消费、false 直接退 App。菜单遮罩压在设置之上，返回必须先收
+    //    菜单——此前栈顶链里没有它，真机按返回会带着活动会话直接退 App。 ──
+    await openBall(page);
+    const backOnMenu = await page.evaluate(() => window.__tinysshBack());
+    await page.waitForTimeout(150);
+    ck.check("返回键先收助力球菜单（返回 true，不落到退 App）",
+      backOnMenu === true && (await page.locator('[data-testid="assist-menu"]').count()) === 0,
+      JSON.stringify({ backOnMenu }));
+    ck.eq("菜单已收、无其它浮层：返回不认领", await page.evaluate(() => window.__tinysshBack()), false);
 
     // ── 竖屏（411×914）几何：球锚 workspace、胶囊锚终端容器，页脚更高时球
     //    曾压在胶囊右端（真机 27×23px 重叠、胶囊文字被切）；移动端胶囊左移
@@ -559,11 +570,57 @@ module.exports = {
       const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
       return t.options.fontSize;
     }), fontBefore);
+
+    // ── 触摸点按的尾随 click 迟到（Android WebView 实锤）：换字号让 xterm 重建
+    //    字形缓存，主线程被占 600ms+，浏览器补发的 click 被排到 700ms 去重窗之后
+    //    才派发——只按时间窗去重时一次点按跳两档。去重必须按手势：出过手的这段
+    //    点按，尾随 click 多晚到都吃掉。合成序列照真机形态：pointerType=touch、
+    //    detail=0（真机触摸 click 的 detail 也是 0，分不开键盘 click）。 ──
+    const lateClick = await page.evaluate(async () => {
+      const read = () => [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected).options.fontSize;
+      const el = document.querySelector('[data-testid="assist-menu"] .assist-fontbtn[title*="增大"]');
+      if (!el) return null;
+      const before = read();
+      const fire = (type) => el.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 3, isPrimary: true,
+      }));
+      fire("pointerdown");
+      fire("pointerup");
+      await new Promise((r) => setTimeout(r, 900));
+      if (!el.isConnected) return { before, gone: true };
+      fire("click");
+      return { before, after: read() };
+    });
+    ck.check("触摸点按的尾随 click 迟到 900ms 仍被去重（A+ 只跳一档）",
+      !!lateClick && !lateClick.gone && lateClick.after === lateClick.before + 1, JSON.stringify(lateClick));
+
+    // 手势闸不误伤键盘/辅助技术：闸开着时，不带 pointerType 的 click（键盘回车、
+    // 读屏激活的形态）仍要能激活——只受时间窗约束（上面已等过 700ms）。
+    const kbClick = await page.evaluate(() => {
+      const read = () => [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected).options.fontSize;
+      const el = document.querySelector('[data-testid="assist-menu"] .assist-fontbtn[title*="增大"]');
+      if (!el) return null;
+      const before = read();
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      return { before, after: read() };
+    });
+    ck.check("手势闸开后键盘 click 仍激活（不误伤键盘/辅助技术）",
+      !!kbClick && kbClick.after === kbClick.before + 1, JSON.stringify(kbClick));
+    // 回到原字号（上面两次激活各加一档）
+    for (let i = 0; i < 2; i++) {
+      await page.click('[data-testid="assist-menu"] .assist-fontbtn[title*="减小"]');
+      await page.waitForTimeout(250);
+    }
+    ck.eq("A− 两次回到原字号", await page.evaluate(() => {
+      const t = [...window.__t_terms.values()].find((x) => x.element && x.element.isConnected);
+      return t.options.fontSize;
+    }), fontBefore);
     await page.click('[data-testid="assist-scrim"]', { position: { x: 40, y: 40 } });
     await page.waitForTimeout(200);
 
     // ── 粘贴剪贴板（功能轮）：授权后写剪贴板 → 面板粘贴 → onData 收到文本
-    //    （pasteTextInto 收口：安全文本直接 term.paste → onData 同通道）。 ──
+    //    （pasteTextInto 收口：安全文本直接 term.paste → onData 同通道）。
+    //    命令格文案是「粘贴」（紧凑改版：与英文 Paste 对齐，图标已是剪贴板）。 ──
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.evaluate(() => navigator.clipboard.writeText("assist-paste-ok"));
     await page.evaluate(() => {
@@ -572,7 +629,7 @@ module.exports = {
       t.onData((d) => window.__pasteSpy.push(d));
     });
     await openBall(page);
-    await page.click('[data-testid="assist-menu"] [role="menuitem"]:has-text("粘贴剪贴板")');
+    await page.click('[data-testid="assist-menu"] [role="menuitem"]:has-text("粘贴")');
     await page.waitForTimeout(400);
     const pasteSpy = await page.evaluate(() => (window.__pasteSpy ?? []).join(""));
     ck.check("粘贴剪贴板落进终端数据通道", pasteSpy.includes("assist-paste-ok"),
@@ -778,5 +835,61 @@ module.exports = {
     await page.waitForTimeout(300);
     ck.eq("关掉后彻底隐藏", await page.locator('[data-testid="assist-ball"]').count(), 0);
     ck.eq("关闭也持久化", await page.evaluate(() => localStorage.getItem("ui.assistBall")), "0");
+
+    // ── 视觉轮：手机常见横竖屏必须完整展示所有快捷功能，不依赖内部滚动。
+    //    独立触屏页预置真实平台/主题/字号/密度，避免主用例的拖动状态影响几何。 ──
+    for (const cfg of [
+      { name: "竖屏 100% 舒适", w: 390, h: 844, scale: "1", density: "comfortable", locale: "zh", focus: false },
+      { name: "横屏 125% 舒适", w: 914, h: 411, scale: "1.25", density: "comfortable", locale: "zh", focus: false },
+      { name: "小横屏 125% 紧凑专注", w: 667, h: 375, scale: "1.25", density: "compact", locale: "zh", focus: true },
+      { name: "竖屏英文 125% 专注", w: 390, h: 844, scale: "1.25", density: "comfortable", locale: "en", focus: true },
+      { name: "小竖屏 80% 紧凑", w: 320, h: 640, scale: "0.8", density: "compact", locale: "zh", focus: false },
+      { name: "极窄横屏英文 100%", w: 480, h: 320, scale: "1", density: "comfortable", locale: "en", focus: false },
+    ]) {
+      const p = await browser.newPage({ viewport: { width: cfg.w, height: cfg.h }, hasTouch: true, isMobile: true });
+      await p.addInitScript((c) => {
+        localStorage.setItem("ui.ui_font_scale", c.scale);
+        localStorage.setItem("ui.ui_density", c.density);
+        localStorage.setItem("ui.v2.locale", c.locale);
+        localStorage.removeItem("ui.assistBallPos");
+        localStorage.removeItem("ui.assistBallSize");
+      }, cfg);
+      await p.goto(BASE, { waitUntil: "domcontentloaded" });
+      await p.evaluate(() => { document.documentElement.dataset.platform = "android"; });
+      await p.waitForSelector('.host-card:has(.host-name:text-is("本机"))');
+      const localCard = await p.$('.host-card:has(.host-name:text-is("本机"))');
+      await localCard.hover();
+      await p.waitForTimeout(200);
+      await (await localCard.$('.host-connect-btn')).click();
+      await p.waitForSelector('[data-testid="assist-ball"]', { timeout: 8000 });
+      await p.waitForTimeout(500);
+      if (cfg.focus) {
+        await p.click('[data-testid="focus-toggle"]');
+        await p.waitForSelector('.app-shell.focus-mode');
+      }
+      await p.click('[data-testid="assist-ball"]');
+      await p.waitForSelector('[data-testid="assist-menu"]');
+      await p.waitForTimeout(100);
+      const geo = await p.evaluate(() => {
+        const menu = document.querySelector('[data-testid="assist-menu"]');
+        const r = menu.getBoundingClientRect();
+        const items = [...menu.querySelectorAll('.assist-item')].map((el) => {
+          const b = el.getBoundingClientRect();
+          return { text: el.textContent, top: b.top, bottom: b.bottom, w: b.width, h: b.height,
+            textOverflow: el.scrollWidth > el.clientWidth + 1 };
+        });
+        return { count: items.length, top: r.top, bottom: r.bottom, right: r.right,
+          vw: innerWidth, vh: innerHeight, clientH: menu.clientHeight, scrollH: menu.scrollHeight,
+          items, docOverflow: document.documentElement.scrollWidth > innerWidth,
+          ballSvg: !!document.querySelector('[data-testid="assist-ball"] svg') };
+      });
+      const clipped = geo.items.filter((b) => b.top < geo.top || b.bottom > geo.bottom || b.textOverflow || b.h < 40);
+      ck.check(`${cfg.name}：全部快捷功能完整可见且无需滚动`,
+        geo.count === (cfg.focus ? 18 : 16) && geo.scrollH <= geo.clientH + 1
+          && geo.top >= 0 && geo.bottom <= geo.vh && geo.right <= geo.vw
+          && !geo.docOverflow && geo.ballSvg && clipped.length === 0,
+        JSON.stringify({ ...geo, clipped }));
+      await p.close();
+    }
   },
 };

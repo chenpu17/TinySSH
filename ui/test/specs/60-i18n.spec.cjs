@@ -41,6 +41,9 @@ module.exports = {
       (await page2.evaluate(() => document.querySelector('[data-testid="settings-cat-appearance"]')?.textContent ?? "")).includes("Appearance"));
     ck.check("en 启动：语言下拉值为 en（默认开在外观卡）",
       (await page2.evaluate(() => document.querySelector('[data-testid="locale-select"]')?.value)) === "en");
+    const assistHintEn = await page2.locator('[data-testid="desktop-assist-ball-hint"]').innerText();
+    ck.check("en 助力球设置说明会话前提与右缘位置",
+      assistHintEn.includes("open a local terminal or SSH session") && assistHintEn.includes("right edge of the terminal"), assistHintEn);
     await page2.click('[data-testid="settings-cat-terminal"]');
     await page2.waitForTimeout(500);
     ck.check("en 启动：终端行为卡开关变 Copy on select（表内值已译）",
@@ -66,6 +69,41 @@ module.exports = {
       await page2.evaluate(() => document.querySelector('[data-testid="blocks-empty-nosession"]')?.textContent));
     await page2.click('[data-testid="tp-close"]');
     await page2.waitForTimeout(300);
+
+    // ── B3. en 下 tmux 空态：标题与自动恢复说明必须同语言 ──
+    await page2.evaluate(() => [...document.querySelectorAll('.tab')]
+      .find((el) => el.textContent?.includes('prod-1'))?.click());
+    await page2.waitForTimeout(450);
+    await page2.evaluate(() => window.__demoInvoke('demo_tmux_fixture', { sid: 's-demo-0001', sessions: ['work'] }));
+    await page2.waitForSelector('[data-testid="tmux-quick"]', { timeout: 8000 });
+    await page2.evaluate(() => document.querySelector('[data-testid="tmux-quick"] button')?.click());
+    await page2.waitForSelector('[data-testid="tmux-wall-open"]', { timeout: 8000 });
+    await page2.click('[data-testid="tmux-wall-open"]');
+    await page2.waitForSelector('.tw-cell', { timeout: 8000 });
+    await page2.evaluate(() => window.__demoInvoke('demo_tmux_fixture', { sid: 's-demo-0001', sessions: [] }));
+    await page2.waitForSelector('[data-testid="tmux-wall-empty"]', { timeout: 9000 });
+    const tmuxEmptyEn = await page2.evaluate(() => ({
+      title: document.querySelector('.tw-empty-title')?.textContent ?? '',
+      sub: document.querySelector('.tw-empty-sub')?.textContent ?? '',
+    }));
+    ck.check('en tmux 空态标题英文化', tmuxEmptyEn.title === 'No tmux sessions on the remote', JSON.stringify(tmuxEmptyEn));
+    ck.check('en tmux 空态说明不残留中文',
+      tmuxEmptyEn.sub === 'Create or attach to a tmux session in the current terminal; snapshots will appear here automatically, with no manual refresh needed.',
+      JSON.stringify(tmuxEmptyEn));
+    await page2.click('[data-testid="tmux-wall-close"]');
+    await page2.waitForTimeout(300);
+    // 新建名称的兼容预览也必须完整英文化（实际名称保持用户 ASCII 输入）。
+    await page2.click('[data-testid="tmux-quick"] .tmux-quick-btn');
+    await page2.click('[data-testid="tmux-create-open"]');
+    await page2.fill('[data-testid="tmux-create-input"]', 'NMG-Qwen3.5-2B');
+    const normalizedEn = await page2.evaluate(() =>
+      document.querySelector('[data-testid="tmux-create-normalized"]')?.textContent ?? '');
+    ck.check('en tmux 名称兼容预览不残留中文',
+      normalizedEn === 'Actual session name: NMG-Qwen3_5-2B (. and : become _ for tmux compatibility)',
+      normalizedEn);
+    await page2.keyboard.press('Escape');
+    await page2.click('[data-testid="tmux-quick"] .tmux-quick-btn');
+    await page2.waitForTimeout(200);
 
     // ── C. 面板内切回 zh：即时生效（无 reload——location 未变）──
     await page2.click(".hb-settings");

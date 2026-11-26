@@ -53,7 +53,38 @@ const connectNewLocal = async (page, previous) => {
 
 module.exports = {
   title: "多标签溢出：固定滚动入口、方向渐隐与到头无跳变（#54）",
-  async run({ page, ck }) {
+  async run({ page, browser, ck, BASE }) {
+    const pillHeight = () => page.evaluate(() => ({
+      tab: document.querySelector(".tabbar .tab")?.getBoundingClientRect().height ?? 0,
+      radius: getComputedStyle(document.querySelector(".tabbar .tab")).borderRadius,
+    }));
+    ck.check("舒适密度桌面标签胶囊降为 20px",
+      (await pillHeight()).tab === 20, JSON.stringify(await pillHeight()));
+    await page.click(".hb-settings");
+    await page.selectOption('[data-testid="ui-density-select"]', "compact");
+    await page.click('[data-testid="settings-close"]');
+    await page.waitForTimeout(150);
+    ck.check("紧凑密度桌面标签胶囊降为 18px",
+      (await pillHeight()).tab === 18, JSON.stringify(await pillHeight()));
+
+    const touch = await browser.newPage({
+      viewport: { width: 1440, height: 900 }, hasTouch: true,
+      userAgent: "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+    });
+    await touch.addInitScript(() => { document.documentElement.dataset.density = "compact"; });
+    // 触屏页单独起一个 Android UA 上下文：main.tsx 启动时按 UA 覆写 data-platform，
+    // init script 直接改 dataset 会被覆写；基址沿用 harness，CI 换端口不失效。
+    await touch.goto(`${BASE}/`, { waitUntil: "networkidle" });
+    await touch.evaluate(() => {
+      const card = document.querySelector(".host-card");
+      card?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      card?.querySelector(".host-connect-btn")?.click();
+    });
+    await touch.waitForSelector(".tabbar .tab", { state: "attached", timeout: 6000 });
+    const touchHeight = await touch.locator(".m-tabswitch-btn").evaluate((el) => el.getBoundingClientRect().height);
+    ck.eq("触屏紧凑切换器仍保留 32px 点击区", touchHeight, 32);
+    await touch.close();
+
     const plain = await readState(page);
     ck.check("少量标签无溢出时不显示滚动钮", plain.overflow === "false" && !plain.leftExists && !plain.rightExists, JSON.stringify(plain));
     ck.check("无溢出时标签流不挂边缘遮罩", plain.mask === "none", plain.mask);

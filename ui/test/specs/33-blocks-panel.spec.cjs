@@ -61,6 +61,48 @@ module.exports = {
     ck.check("退出码：失败块红色 exit 1、成功块 ✓ 0", rows[1].exit === "1"
       && rows[0].exit === "0", JSON.stringify(rows.map((r) => r.exit)));
 
+    // ── 视觉第三轮：行内辅助动作去静态描边，但按钮盒与顶部主动作层级不变 ──
+    const quietActs = await page.evaluate(() => {
+      const acts = [...document.querySelectorAll('.blk-acts button.ghost')];
+      const first = acts[0];
+      const primary = document.querySelector('[data-testid="blocks-jump-fail"]');
+      const rect = first?.getBoundingClientRect();
+      return {
+        count: acts.length,
+        quiet: acts.every((b) => getComputedStyle(b).borderTopColor === "rgba(0, 0, 0, 0)"),
+        padding: first ? getComputedStyle(first).padding : "",
+        size: rect ? [Math.round(rect.width), Math.round(rect.height)] : [0, 0],
+        primaryBorder: primary ? getComputedStyle(primary).borderTopColor : "",
+      };
+    });
+    ck.check("行内辅助动作无静态描边，原内边距与命中盒保留",
+      quietActs.count > 0 && quietActs.quiet && quietActs.padding === "2px 8px"
+      && quietActs.size[0] > 0 && quietActs.size[1] >= 20, JSON.stringify(quietActs));
+    ck.check("顶部「跳到最近失败」保留描边层级",
+      quietActs.primaryBorder !== "rgba(0, 0, 0, 0)" && quietActs.primaryBorder !== "", quietActs.primaryBorder);
+    await page.hover('[data-testid="block-row"] [data-testid="block-copy"]');
+    await page.waitForTimeout(180); // 等 120ms 背景过渡结束，避免把起始透明帧误判为最终态
+    const hoverAct = await page.evaluate(() => {
+      const b = document.querySelector('[data-testid="block-row"] [data-testid="block-copy"]');
+      const s = getComputedStyle(b);
+      return { border: s.borderTopColor, background: s.backgroundColor };
+    });
+    ck.check("行内辅助动作悬停有中性底且不恢复方框",
+      hoverAct.border === "rgba(0, 0, 0, 0)" && hoverAct.background !== "rgba(0, 0, 0, 0)"
+      && hoverAct.background !== "transparent" && !hoverAct.background.endsWith("/ 0)"), JSON.stringify(hoverAct));
+    await page.mouse.move(0, 0);
+    await page.evaluate(() => document.querySelector('.blk-acts button')?.focus());
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    const focusAct = await page.evaluate(() => {
+      const b = document.activeElement;
+      const s = b ? getComputedStyle(b) : null;
+      return b && s ? { action: b.dataset.testid, visible: b.matches(":focus-visible"), outline: s.outlineStyle, width: s.outlineWidth } : null;
+    });
+    ck.check("键盘回到行内辅助动作仍有可见焦点环",
+      focusAct?.action === "block-copy" && focusAct.visible && focusAct.outline === "solid"
+      && parseFloat(focusAct.width) >= 2, JSON.stringify(focusAct));
+
     // ── 复制命令（写桩剪贴板）──
     await page.evaluate(() => {
       window.__copied = null;

@@ -23,6 +23,38 @@ export function swallowClickOnce() {
   window.setTimeout(() => window.removeEventListener("click", swallow, true), 600);
 }
 
+/** 终端屏内的触摸点按放行兼容鼠标事件（KI-132），应用装配时安装一次。
+ *
+ *  xterm 6.1 起终端触摸滚动改由内置手势层驱动：它在 document 上以非 passive 监听
+ *  touchstart/touchmove/touchend，并取消默认行为来压掉浏览器原生滚动。点按被一并
+ *  取消——touchstart/touchend 一旦取消，Chromium 就不再合成兼容鼠标事件（mousedown
+ *  /mouseup/click），而 xterm 自己的聚焦、链接点按、单击清选区，以及「点终端区域即
+ *  聚焦当前会话」都挂在这些鼠标事件上：手机上点终端不出软键盘、点链接没有浮条
+ *  （6.0 没有手势层，这些都是好的）。
+ *
+ *  这里在 window 捕获阶段先于手势层拿到事件：触点全部落在终端屏（.xterm-screen）内
+ *  的 touchstart/touchend，把它们的 preventDefault 换成空操作。手势层照常收到事件，
+ *  触摸滚动不受影响（touchmove 不放行，仍由它取消）；只是点按的默认行为放行，浏览器
+ *  照常合成鼠标事件。不能反过来拦掉 touch 事件——6.1 的终端滚动依赖手势层。
+ *  不按平台设门：桌面触屏笔电上点终端同样被手势层取消。 */
+export function installTermTouchTapCompat(): () => void {
+  const inTermScreen = (target: EventTarget | null | undefined) =>
+    target instanceof Element && target.closest(".xterm-screen") !== null;
+  const passTap = (ev: TouchEvent) => {
+    const touches = ev.type === "touchstart" ? ev.touches : ev.changedTouches;
+    for (let i = 0; i < touches.length; i++) {
+      if (!inTermScreen(touches.item(i)?.target)) return;
+    }
+    if (touches.length) ev.preventDefault = () => { /* 点按放行：见上 */ };
+  };
+  window.addEventListener("touchstart", passTap, { capture: true, passive: true });
+  window.addEventListener("touchend", passTap, { capture: true, passive: true });
+  return () => {
+    window.removeEventListener("touchstart", passTap, true);
+    window.removeEventListener("touchend", passTap, true);
+  };
+}
+
 export type LongPress = {
   /** 在 onPointerDown 里调用；非触屏 / 非移动端直接忽略。 */
   down: (ev: ReactPointerEvent, onFire: () => void) => void;

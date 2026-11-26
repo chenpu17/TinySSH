@@ -77,8 +77,8 @@ module.exports = {
         && compact.density === "compact" && compact.stored === "compact",
       JSON.stringify(compact));
     ck.check("紧凑档不隐藏任何一条 chrome", compact.visible, JSON.stringify(compact));
-    ck.check("标签药丸随密度压到 20px，关闭钮不溢出",
-      compact.pill === 20 && compact.pillRadius === "10px" && compact.close === 16,
+    ck.check("标签药丸随密度压到 18px，关闭钮不溢出",
+      compact.pill === 18 && compact.pillRadius === "9px" && compact.close === 16,
       JSON.stringify(compact));
     await page.evaluate(() => document.querySelector('[data-testid="settings-close"]')?.click());
     await page.waitForTimeout(300);
@@ -96,7 +96,7 @@ module.exports = {
       const r = t.getBoundingClientRect();
       const ir = input.getBoundingClientRect();
       return { pillHeight: r.height, inputHeight: ir.height,
-        contained: r.height === 20 && ir.height === 18 && ir.top >= r.top && ir.bottom <= r.bottom };
+        contained: r.height === 18 && ir.height === 16 && ir.top >= r.top && ir.bottom <= r.bottom };
     });
     ck.check("紧凑档行内重命名框完整收在药丸内", renameBounds?.contained === true, JSON.stringify(renameBounds));
     await page.keyboard.press("Escape");

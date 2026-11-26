@@ -621,7 +621,9 @@ export function SettingsPanel({
                     <button className="ghost" disabled={zoomLevel === 1} onClick={() => zoomReset()}>{t("重置")}</button>
                   </div>
                   </>)}
-                  <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t("界面缩放：Ctrl/⌘ + 放大 · − 缩小 · 0 复位 · 按平台使用 Ctrl/⌘+滚轮（原生窗口生效）")}</div>
+                  <div className="dim" style={{ marginTop: 8, fontSize: "calc(11px * var(--ui-font-scale))" }}>{t(isMacPlatform()
+                    ? "界面缩放：⌘ + 放大 · − 缩小 · 0 复位 · 滚轮缩放已停用（原生窗口生效）"
+                    : "界面缩放：Ctrl + 放大 · − 缩小 · 0 复位 · Ctrl+滚轮（原生窗口生效）")}</div>
                 </div>
                 {/* 专注模式（用户反馈 #21）：默认保留底部资源采样条——专注态隐藏
                     状态条后，远端 CPU/内存/网络仍要一眼可见；关掉即回到纯终端。 */}
@@ -652,7 +654,7 @@ export function SettingsPanel({
                       onChange={(e) => onChangeDesktopAssist(e.target.checked)} />
                     <span className="set-item-txt">
                       <b>{t("在桌面端显示助力球")}</b>
-                      <span className="set-item-desc">{t("供手机远程桌面控制本机时使用；开启后常显，与移动端同一面板，关闭即彻底隐藏。")}</span>
+                      <span className="set-item-desc" data-testid="desktop-assist-ball-hint">{t("供手机远程桌面控制本机时使用；开启后进入本地终端或 SSH 会话，显示在终端右缘。关闭即彻底隐藏。")}</span>
                     </span>
                   </label>
                   )}

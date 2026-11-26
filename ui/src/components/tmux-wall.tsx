@@ -24,7 +24,7 @@ import { t } from "../i18n";
 import { inTauri } from "../adapter/bridge";
 import { isMobilePlatform } from "../platform";
 import type { TmuxSession, TmuxWallCell, TmuxWallFit, TmuxWallFitResult, TmuxWallRestoreItem, TmuxWallTarget } from "../adapter/wire";
-import { IconMaximize, IconMinimize, IconX } from "../icons";
+import { IconTmux, IconMaximize, IconMinimize, IconX } from "../icons";
 
 /** 格子键：id 在手按 id（改名不掉帧），退化按名。与面板「按 id 认、按名显示」
  * 同一口径。 */
@@ -777,7 +777,11 @@ export const TmuxWall = memo(function TmuxWall({ hostName, sid, sessions, fetchC
         onClick={(e) => { if (!(e.target as HTMLElement).closest?.(".tw-cell")) deactivate(); }}
       >
         {sessions.length === 0 && (
-          <div className="tw-empty">{t("远端暂无 tmux 会话")}</div>
+          <div className="tw-empty" data-testid="tmux-wall-empty">
+            <IconTmux size={26} />
+            <div className="tw-empty-title">{t("远端暂无 tmux 会话")}</div>
+            <div className="tw-empty-sub">{t("回到当前终端创建或接入 tmux 会话后，这里会自动显示快照，无需手动刷新。")}</div>
+          </div>
         )}
         {sessions.map((s) => {
           const key = keyOf(s);

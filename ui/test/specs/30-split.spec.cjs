@@ -96,6 +96,12 @@ module.exports = {
     await clickItem(page, "与当前会话分屏");
     await page.waitForTimeout(500);
     ck.check("上下分屏建立双窗格", (await paneCount(page)) === 2, `panes=${await paneCount(page)}`);
+    const splitShell = await page.evaluate(() => {
+      const mount = document.getElementById("term");
+      return { marked: mount.classList.contains("has-split-panes"), shadow: getComputedStyle(mount).boxShadow };
+    });
+    ck.check("普通分屏移除 #term 总框，不与子视图描边叠成双层",
+      splitShell.marked && splitShell.shadow === "none", JSON.stringify(splitShell));
     const g1 = await paneGeom(page);
     ck.check("上主/下副两格齐全", !!g1.main && !!g1.second, JSON.stringify(g1));
     // 子窗口卡片化：3px 卡缝用「页面底」色，卡片外壳 --pane-shell 与内部 --bg 再分一档；
@@ -220,6 +226,12 @@ module.exports = {
     await clickItem(page, "退出分屏");
     await page.waitForTimeout(400);
     ck.check("退出后窗格清空", (await paneCount(page)) === 0, `panes=${await paneCount(page)}`);
+    const restoredShell = await page.evaluate(() => {
+      const mount = document.getElementById("term");
+      return { marked: mount.classList.contains("has-split-panes"), shadow: getComputedStyle(mount).boxShadow };
+    });
+    ck.check("退出分屏恢复普通单终端总框",
+      !restoredShell.marked && restoredShell.shadow !== "none", JSON.stringify(restoredShell));
     const divGone = await page.evaluate(() => !document.querySelector(".pane-div"));
     ck.check("退出后分割条消失", divGone, "");
     // 方向记忆=上次使用的方向：旋转到左右已把它改写为 lr（与下次点击行为自洽）——

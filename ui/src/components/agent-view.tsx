@@ -20,6 +20,12 @@ import { localeNow, t } from "../i18n";
 import { IconBot, IconLoader, IconPlus, IconX } from "../icons";
 import { approvalRisk } from "./collab-panel";
 
+// 终端优先：对话与 Fleet 共用窄栏，默认只占必要阅读宽度；用户拖过的宽度仍持久化，
+// 旧版本超出新边界的值在读取时钳制，不悄悄重写用户偏好。
+export const AGENT_WIDTH_MIN = 300;
+export const AGENT_WIDTH_DEFAULT = 340;
+export const AGENT_WIDTH_MAX = 440;
+
 type ToolStatus = "pending" | "running" | "ok" | "err" | "denied";
 
 type AgentMsg =
@@ -1026,7 +1032,8 @@ export function AgentView({
       {/* 拖宽把手与 hostbar 同构：aside 的兄弟节点（.workspace 行内、贴面板右缘），
           命中区 7px；宽度 = clientX − 44（活动栏占位，见 App.tsx agGripUp） */}
       <div className="hb-grip" role="separator" aria-orientation="vertical"
-        aria-label={t("拖动调整 Agent 视图宽度（320–560 px）")} title={t("拖动调整宽度（320–560 px）")}
+        aria-label={t("拖动调整 Agent 视图宽度（{0}–{1} px）", AGENT_WIDTH_MIN, AGENT_WIDTH_MAX)}
+        title={t("拖动调整宽度（{0}–{1} px）", AGENT_WIDTH_MIN, AGENT_WIDTH_MAX)}
         onPointerDown={gripDown} onPointerMove={gripMove} onPointerUp={gripUp}
         onPointerCancel={() => { gripDrag.current = false; }} />
     </>
