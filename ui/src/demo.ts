@@ -628,6 +628,67 @@ function pushTo(sid: string, text: string) {
   for (const h of s.handlers) h(framed);
 }
 
+// 演示 shell 唯一会「执行」的命令：ping——每秒一行，Ctrl+C 或会话关闭即停（600 行封顶）。
+// 用途是给「标签活跃度」（标签状态点光环，见 terminal/activity.ts）一个能持续产出输出的
+// 演示场景：敲 ping 回车再切到别的标签，原标签的状态点就一圈圈扩散。输出一律走 pushTo，
+// 与真实后端的输出帧同一条路（seq 帧 → 前端订阅），不另开旁门。
+const demoPings = new Map<string, { timer: ReturnType<typeof setInterval>; seq: number }>();
+
+// 演示 shell 的输入行：逐字符累到回车为止（回车/退格/Ctrl+C 清行/ESC 序列按 shell 同款最小
+// 语义处理），只用来认命令——不回头解析 s.out（输出缓冲里混着提示符与程序输出）。
+// 会话关闭后残留的一行字符串不清理（可忽略）；演示 sid 不复用，不会串到新会话上。
+const demoLines = new Map<string, string>();
+
+/** 喂一批按键，返回其中被回车提交的行（整行粘贴可一次提交多行）。 */
+function demoFeedLine(sid: string, keys: string): string[] {
+  let line = demoLines.get(sid) ?? "";
+  let esc = false;
+  const done: string[] = [];
+  for (const ch of keys) {
+    if (esc) {
+      if (/[\x40-\x7e]/.test(ch)) esc = false; // CSI / SS3 序列的收尾字节
+    } else if (ch === "\r" || ch === "\n") {
+      done.push(line);
+      line = "";
+    } else if (ch === "\x7f" || ch === "\b") {
+      line = line.slice(0, -1);
+    } else if (ch === "\x03" || ch === "\x15") {
+      line = "";
+    } else if (ch === "\x1b") {
+      esc = true;
+    } else if (ch >= " ") {
+      line += ch;
+    }
+  }
+  demoLines.set(sid, line);
+  return done;
+}
+
+function demoPingStop(sid: string, byUser: boolean) {
+  const p = demoPings.get(sid);
+  if (!p) return;
+  demoPings.delete(sid);
+  clearInterval(p.timer);
+  if (!demoState.sessions.some((x) => x.id === sid)) return; // 会话已关：没有订阅者了
+  pushTo(sid, `${byUser ? "^C" : "\r\n"}--- demo ping statistics ---\r\n`);
+  pushTo(sid, `${p.seq} packets transmitted, ${p.seq} packets received, 0.0% packet loss\r\n`);
+}
+
+function demoPingStart(sid: string, line: string) {
+  const target = line.trim().split(/\s+/)[1] || "demo.local";
+  pushTo(sid, `\r\nPING ${target} (10.0.0.1): 56 data bytes\r\n`);
+  const p = { seq: 0 } as { timer: ReturnType<typeof setInterval>; seq: number };
+  p.timer = setInterval(() => {
+    if (p.seq >= 600 || !demoState.sessions.some((x) => x.id === sid)) {
+      demoPingStop(sid, false); // 会话关闭路径不逐处挂清理：定时器自己收尾
+      return;
+    }
+    p.seq += 1;
+    pushTo(sid, `64 bytes from 10.0.0.1: icmp_seq=${p.seq - 1} ttl=52 time=${(8 + Math.random() * 6).toFixed(1)} ms\r\n`);
+  }, 1000);
+  demoPings.set(sid, p);
+}
+
 // demo 检查点合成：会话输出缓冲 → 单缓冲属性网格（demo 无颜色/备用屏状态）。
 // 光标合成在最后非空行行尾（vis-r11 R2：rows-1 会让光标悬浮空白行、键入落点错位）
 /** R41：建会话时对主机取快照（真实侧 = SessionHandle 构造期持有的 Host 副本）。 */
@@ -2191,9 +2252,18 @@ case "read_triggers": {
     case "send_keys": {
       const sid = args?.sid as string;
       const keys = (args?.keys as string) ?? "";
+      // 演示 shell 唯一会「执行」的命令：ping（见 demoPingStart）。跑表中 Ctrl+C = 停表出统计
+      const lines = demoFeedLine(sid, keys);
+      if (demoPings.has(sid) && keys.includes("\x03")) {
+        demoPingStop(sid, true);
+        return null;
+      }
       pushTo(sid, keys);
       // 终端里回车提交命令 = 人类已在新连接上操作（KI-002）。
       if (keys.includes("\r") || keys.includes("\n")) demoCompleteReconfirm(sid);
+      const s = demoState.sessions.find((x) => x.id === sid);
+      const cmd = [...lines].reverse().find((l) => /^ping(\s|$)/.test(l.trim()));
+      if (s && s.state === "Connected" && cmd !== undefined) demoPingStart(sid, cmd);
       return null;
     }
     // ---- 十八轮：会话日志（demo 内存态，无真实文件；真实核心落 data/logs 并经 pump tap 写入）----

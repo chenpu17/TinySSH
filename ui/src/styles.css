@@ -1477,10 +1477,34 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
   content: ""; position: absolute; left: 9px; right: 9px; bottom: 2px; height: 2px;
   border-radius: 1px; background: color-mix(in srgb, var(--accent) 55%, transparent);
 }
-.tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
-.tab-dot.ok { background: var(--ok); box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 50%, transparent); }
-.tab-dot.warn { background: var(--warn); box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 50%, transparent); }
-.tab-dot.err { background: var(--danger); box-shadow: 0 0 5px color-mix(in srgb, var(--danger) 55%, transparent); }
+.tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; position: relative; color: var(--dim); }
+/* 过渡只挂在已连接点上：闲置态（下方 .tab-idle，仍带 .ok）的实心↔空心靠它渐变；
+   断线/重连的换色不经过渡——过渡取的是变化后那一侧的声明，warn/err 侧没写就是瞬切 */
+.tab-dot.ok {
+  background: var(--ok); color: var(--ok); box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 50%, transparent);
+  transition: background 120ms, box-shadow 120ms;
+}
+.tab-dot.warn { background: var(--warn); color: var(--warn); box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 50%, transparent); }
+.tab-dot.err { background: var(--danger); color: var(--danger); box-shadow: 0 0 5px color-mix(in srgb, var(--danger) 55%, transparent); }
+/* 标签活跃度（terminal/activity.ts）：状态点内套的光环载体——平时透明、不接收指针（点它
+   等于点状态点）。输出到达时节拍定时器用 WAAPI 在它身上放一圈（scale + opacity，纯
+   合成器动画，不触发重绘），颜色取状态点自己的 currentColor。减弱动效时不出光环，
+   改由 data-live 给状态点一档更亮的静态辉光（同 .rail-live 的「退化为常亮点」） */
+.tab-ping {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1px solid currentColor; opacity: 0; pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab[data-live="1"] .tab-dot.ok { box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 80%, transparent); }
+}
+/* 久未输出：实心点变空心环（还在线，但睡着了），非活动标签的文字退一档，悬停回到常规
+   对比。活动标签不判闲置（闲置 = 后台没人看；判定与阈值在 terminal/activity.ts） */
+.tab-idle .tab-dot.ok { background: transparent; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ok) 85%, transparent); }
+.tab-idle:not(.tab-active) .tab-label { color: var(--dim); }
+.tab-idle:not(.tab-active):hover .tab-label { color: var(--text); }
+/* 标签条文字的换色过渡只服务闲置态的进与出（药丸自己的悬停/激活换色在 .tab 上过渡，
+   文字靠继承跟随；这里只挂在标签条的标签上——.tab-label 还被工具菜单、移动端切换器复用） */
+.tab .tab-label { transition: color 120ms; }
 /* label 撑满药丸余宽：分屏/关闭钮靠右收边（Windows Terminal 布局）——短标签
    （「本机」）药丸中部不再被常显按钮占住，抓中间即可拖拽、点中间也不再误触分屏 */
 .tab-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

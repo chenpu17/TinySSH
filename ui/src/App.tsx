@@ -17,6 +17,7 @@ import {
   zoomIn, zoomOut, zoomReset,
 } from "./zoom";
 import { applyCheckpoint, createOutputFeed, createOutputThrottle, isReplaying, resizeTerm, setCursorDefault, type OutputThrottle } from "./terminal/checkpoint";
+import { createTabActivity, TICK_MS } from "./terminal/activity";
 import type { OutputFeed } from "./terminal/checkpoint";
 import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
@@ -210,6 +211,10 @@ const sessionStateRank = (state: string): number => SESSION_STATE_RANK[state] ??
 function entryFocusSid(e: TabEntry, groupFocus: Map<string, string>): string {
   return e.kind === "session" ? e.session.id : groupFocus.get(e.group.id) ?? e.group.main;
 }
+
+/** 标签闲置时长文案（terminal/activity.ts 的久未输出）：不满一小时报分钟，满一小时报时分。 */
+const idleText = (mins: number): string =>
+  mins < 60 ? t("{0} 分钟无输出", mins) : t("{0} 小时 {1} 分钟无输出", Math.floor(mins / 60), mins % 60);
 
 /** tmux 面板格子实例（会话内附加交互通道的前端视图）。 */
 type PaneTermEntry = {
@@ -584,6 +589,9 @@ export default function App() {
   );
   // 标签条条目：独立会话一项、分屏组一项（Termius 式工作区）
   const tabEntries = useMemo(() => deriveTabEntries(sessions, splitGroups), [sessions, splitGroups]);
+  // 标签活跃度的节拍定时器要读最新条目（terminal/activity.ts 的 tick）：渲染期同步，免得为它再开一条依赖链
+  const tabEntriesRef = useRef<TabEntry[]>([]);
+  tabEntriesRef.current = tabEntries;
   // 切到某组时，方向选择器跟随该组自己的方向（各组独立旋转）；改名编辑态只属于
   // 发起它的组，切走即取消（否则输入框会冒在新组胶囊上、Enter 写回旧组）
   useEffect(() => {
@@ -846,6 +854,31 @@ export default function App() {
   const bellNotifyRef = useRef(false);
   const [bellSids, setBellSids] = useState<Set<string>>(new Set());
   const lastBellNotifRef = useRef<Map<string, number>>(new Map());
+  // 标签活跃度（terminal/activity.ts）：输出帧到达 → 状态点光环；久未输出 → 空心点。
+  // 记账走 ref（每个输出字节零渲染），只有闲置表进 React 状态（边沿才变，且最多一分钟
+  // 换一次读数）。节拍定时器只在有会话时跑。
+  const [idleMin, setIdleMin] = useState<Record<string, number>>({});
+  const [activity] = useState(() => createTabActivity({
+    onIdle: (next) => setIdleMin((prev) => sameJson(prev, next)), // 同值留旧引用，不多渲染一次
+  }));
+  // 本地输入的各条路径（主终端 / 格子的 onData、捕获层直发、广播扇出）都在闭包里，
+  // 经 ref 报给 activity.keyed，不动各自的依赖表
+  const activityRef = useRef(activity);
+  const prevSidRef = useRef<string | null>(null);
+  useEffect(() => {
+    // 切到 / 切走都算「看过」：刚离开的那个从离开那一刻重新计时，刚切到的闲置态即刻解除
+    const prev = prevSidRef.current;
+    prevSidRef.current = sid;
+    if (prev && prev !== sid) activity.touch(prev);
+    if (sid) activity.touch(sid);
+  }, [sid, activity]);
+  useEffect(() => {
+    if (!sessions.length) return;
+    const id = window.setInterval(() => activity.tick({
+      now: Date.now(), entries: tabEntriesRef.current, sessions: sessionsRef.current, activeSid: sidRef.current, bar: tabbarRef.current,
+    }), TICK_MS);
+    return () => window.clearInterval(id);
+  }, [sessions.length, activity]);
   // 块失败 toast 的每会话节流（系统通知的节流在 flashAndNotify 内建，两者独立）
   const lastFailToastRef = useRef<Map<string, number>>(new Map());
   // P2-c：OSC 52 写剪贴板策略（allow/ask/deny，默认 ask；workspace blob terminal 域）。
@@ -895,6 +928,7 @@ export default function App() {
           continue;
         }
         bcastWarnedRef.current.delete(bSid);
+        activityRef.current.keyed(bSid); // 落点看得到时（同组分屏）回显同样不算输出
         void invoke("send_keys", { sid: bSid, keys }).catch(() => {});
       }
     };
@@ -1951,6 +1985,7 @@ export default function App() {
           kind: "rerun",
         });
       } else {
+        activityRef.current.keyed(sessionSid); // 人发的命令与键盘输入同口径：随后的回显不算输出
         void invoke("send_keys", { sid: sessionSid, keys: cmd + "\r" })
           .catch(() => pushToast("err", t("重跑发送失败")));
       }
@@ -3164,6 +3199,7 @@ export default function App() {
       // 消费的是 C-b $ → 改名框要弹，排补探针让名牌在改名提交后跟上
       const { keys, dollar } = takeTmuxPrefixKey(sessionSid, data);
       if (dollar) scheduleTmuxProbeFollow(sessionSid);
+      if (keys) activityRef.current.keyed(sessionSid); // 标签活跃度：本地输入的回显不算输出
       invoke("send_keys", { sid: sessionSid, keys }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
@@ -3362,7 +3398,10 @@ export default function App() {
     term.parser.registerOscHandler(9, (data) => { paneBell(data.slice(0, 200) || t("远端通知")); return true; });
     // 背景合批节流（#22）：格子隐藏（整标签切走 / 被最大化挤出）时输出合批降频，
     // 不再逐帧解析+渲染抢 CPU；applyPanes 改显示时 resume 冲净，恢复后一字不差。
-    const throttle = createOutputThrottle({ term, isVisible: () => cell.style.display !== "none" });
+    const throttle = createOutputThrottle({
+      term, isVisible: () => cell.style.display !== "none",
+      onOutput: (visible) => activity.note(sid, visible), // 标签活跃度：格子输出记在所属会话名下
+    });
     const entry: PaneTermEntry = { sid, paneId, name, term, cell, body, zoomBtn, search: searchAddon, webgl, liga, bornAt: performance.now(), alive: true, deadWarned: false, throttle };
     // ⌘ 组合（mac）：复制/粘贴/全选作用于本格，其余 ⌘ 不进格子通道（主终端同口径）
     term.attachCustomKeyEventHandler((ev) => {
@@ -3397,6 +3436,7 @@ export default function App() {
       // 消费的是 C-b $ → 格子里改名框要弹：排补探针（标题随对账跟上）
       const { keys, dollar } = takeTmuxPrefixKey(key, data);
       if (dollar) scheduleTmuxProbeFollow(sid);
+      if (keys) activityRef.current.keyed(sid); // 格子的输出记在所属会话名下，输入同口径
       invoke("tmux_pane_input", { sid, paneId, keys }).catch((e) => {
         term.write(`\r\n\x1b[31m✕ ${errMsg(e)}\x1b[0m\r\n`);
       });
@@ -3727,8 +3767,10 @@ export default function App() {
         const paneCell = (ael as HTMLElement).closest?.(".tmux-cell") as HTMLElement | null;
         const paneHit = paneCell ? (paneTermsRef.current.get(`${paneCell.dataset.sid}:${paneCell.dataset.paneId}`) ?? null) : null;
         const toPane = (keys: string) => {
-          if (paneHit?.alive) void invoke("tmux_pane_input", { sid: paneHit.sid, paneId: paneHit.paneId, keys }).catch(() => {});
-          else if (paneHit) warnDeadPane(paneHit);
+          if (paneHit?.alive) {
+            activityRef.current.keyed(paneHit.sid);
+            void invoke("tmux_pane_input", { sid: paneHit.sid, paneId: paneHit.paneId, keys }).catch(() => {});
+          } else if (paneHit) warnDeadPane(paneHit);
         };
         // Option/Alt → Meta 序列（ESC 前缀）：readline 词跳转（⌥←/⌥→/⌥⌫）、
         // tmux M-键绑定。必须在捕获层拦截：⌥字母 在 WKWebView 会进文本输入系统
@@ -3742,6 +3784,7 @@ export default function App() {
           if (paneHit) { toPane(seq); return; }
           const s0 = sidRef.current;
           if (!s0 || (() => { const st = sessionsRef.current.find((x) => x.id === s0)?.state; return !st || inputBlockedState(st); })()) return;
+          activityRef.current.keyed(s0);
           void invoke("send_keys", { sid: s0, keys: seq }).catch(() => {});
           broadcastSendRef.current(s0, seq);
           return;
@@ -3857,6 +3900,7 @@ export default function App() {
         // （Ctrl+W = werase 还关标签、Ctrl+K = kill-line 还开命令面板）。
         // 死会话分支不在此列：吞的是直发，action 照常解析（Ctrl+W 关死标签是正道）。
         ev.stopImmediatePropagation();
+        activityRef.current.keyed(s);
         void invoke("send_keys", { sid: s, keys: cc }).catch(() => {});
         broadcastSendRef.current(s, cc);
         // 主视图只在确知 attach 了 tmux 时武装（手动敲的 tmux 无从得知，宁缺不错：
@@ -6418,6 +6462,8 @@ export default function App() {
         const g = splitGroupsRef.current.find((gr) => gr.main === cur || gr.second === cur);
         return !!g && (g.main === sessionSid || g.second === sessionSid);
       },
+      // 标签活跃度：输出帧到达即记账（后台合批降频不影响——记账在合批之前）
+      onOutput: (visible) => activity.note(sessionSid, visible),
       // 重放解析完成后补做 fit（#33/#19）：attach 链里被重放门延后的尺寸校准
       // 在此立即落地，不再等下一个 ResizeObserver 兜底
       onCheckpointSettled: () => fitTerminal(),
@@ -10196,6 +10242,11 @@ export default function App() {
               // 十四轮：标签自定名（复制标签页后同名标签的区分），无则回退主机名
               const label = group ? splitGroupLabelOf(group) : tabNames[sess!.id] ?? sess!.host_name;
               const bellLit = members.some((m) => bellSids.has(m.id));
+              // 久未输出（terminal/activity.ts）：全部成员都闲置才算组标签闲置，报最近
+              // 活跃的那一格的时长；有成员断线 / 重连中时 idleMin 里没有它，整组不判
+              const idleMins = members.every((m) => idleMin[m.id] !== undefined)
+                ? Math.min(...members.map((m) => idleMin[m.id]))
+                : null;
               return (
                 <div
                   key={e.key}
@@ -10204,6 +10255,7 @@ export default function App() {
                   data-gid={group?.id}
                   className={"tab" + (active ? " tab-active" : "") + (group ? " tab-pane" : "")
                     + (bellLit ? " tab-bell" : "")
+                    + (idleMins !== null ? " tab-idle" : "")
                     + (tabDragKey === e.key ? " tab-drag-src" : "")
                     + (tabDropHint?.key === e.key ? (tabDropHint.before ? " tab-drop-before" : " tab-drop-after") : "")}
                   onPointerDown={(ev) => {
@@ -10309,8 +10361,9 @@ export default function App() {
                     const d = tabDragRef.current;
                     if (d?.key === entryKey && d.pointerId === ev.pointerId) cancelTabDrag();
                   }}
-                  title={`${label} · ${memberStatusText}${group ? ` · ${t("{0} 个窗格", members.length)}` : ""}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
-                  aria-label={`${label}，${memberStatusText}${group ? t("，{0} 个窗格", members.length) : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
+                  // 闲置时长进提示与可访问名称：「正在输出」不进——它边沿频繁，为一句提示词整树重渲染不值
+                  title={`${label} · ${memberStatusText}${group ? ` · ${t("{0} 个窗格", members.length)}` : ""}${idleMins !== null ? ` · ${idleText(idleMins)}` : ""}${i < 9 ? ` · ${isMacPlatform() ? "⌘" : "Ctrl+"}${i + 1}` : ""}`}
+                  aria-label={`${t("{0}，{1}", label, memberStatusText)}${group ? t("，{0} 个窗格", members.length) : ""}${idleMins !== null ? t("，{0}", idleText(idleMins)) : ""}${i < 9 ? t("，{0}{1}", isMacPlatform() ? "⌘" : "Ctrl+", i + 1) : ""}`}
                   tabIndex={0}
                   role="tab"
                   aria-selected={active}
@@ -10353,7 +10406,9 @@ export default function App() {
                     setTabMenu({ x: ev.clientX, y: ev.clientY, sid: rep });
                   }}
                 >
-                  <span className={"tab-dot " + st.cls} aria-hidden="true" />
+                  {/* 状态点内套一层光环载体（terminal/activity.ts）：平时不可见，输出到达时
+                      由节拍定时器用 WAAPI 在它身上放一圈；不接收指针，点它等于点状态点 */}
+                  <span className={"tab-dot " + st.cls} aria-hidden="true"><span className="tab-ping" /></span>
                   {group && groupRenaming !== null && groupRenamingGid === group.id && groupRenameSource === "tab" ? (
                     // 组标签行内改名（与分割条胶囊同一状态机；source=tab 时胶囊不渲染输入框）
                     <input
@@ -11205,6 +11260,7 @@ export default function App() {
                     if (pasteConfirm.kind === "rerun") {
                       // 失败要出声：确认框期间会话恰好断开时，字节没发出去不能静默
                       // （与 blocks rerunCommand 直发路径同款 toast）
+                      activityRef.current.keyed(pasteConfirm.sid);
                       void invoke("send_keys", { sid: pasteConfirm.sid, keys: pasteConfirm.text + "\r" })
                         .catch(() => pushToast("err", t("重跑发送失败")));
                     } else {

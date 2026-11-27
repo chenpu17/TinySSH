@@ -186,7 +186,14 @@ export interface OutputThrottle {
   clear: () => void;
   dispose: () => void;
 }
-export function createOutputThrottle(opts: { term: Terminal; isVisible?: () => boolean }): OutputThrottle {
+export function createOutputThrottle(opts: {
+  term: Terminal;
+  isVisible?: () => boolean;
+  /** 字节到达回调（标签活跃度，见 terminal/activity.ts）：在合批判断**之前**调——不可见的
+   *  终端攒到 500ms 后才写屏，但输出确已到达，光环不该等它写屏才亮。visible 为此刻这个
+   *  终端是否在屏幕上（活动会话及其分屏伙伴）。 */
+  onOutput?: (visible: boolean) => void;
+}): OutputThrottle {
   const { term } = opts;
   const isVisible = opts.isVisible ?? (() => true);
   const HOLD_MS = 500;
@@ -203,6 +210,7 @@ export function createOutputThrottle(opts: { term: Terminal; isVisible?: () => b
   return {
     write: (data) => {
       if (disposed) return;
+      opts.onOutput?.(isVisible());
       const off = import.meta.env.DEV && (window as unknown as { __t_throttleOff?: boolean }).__t_throttleOff;
       if (off || isVisible()) {
         if (hold.length) { hold.push(data); flushNow(); } // 先冲积压保序，再带上本帧
@@ -227,12 +235,15 @@ export function createOutputFeed(opts: {
   pendingCap?: number;
   /** 可见性谓词（#22 背景节流）：读 live 焦点/分组。缺省恒可见（不节流）。 */
   isVisible?: () => boolean;
+  /** 字节到达回调，透传给节流器（标签活跃度）。只有订阅帧算：检查点重放直接写
+   *  term、不过节流器——重放的是旧屏，不是「正在输出」。 */
+  onOutput?: (visible: boolean) => void;
   /** 检查点重放解析完成回调（重放门放开之后）：延后的 fit 借此立刻补做。 */
   onCheckpointSettled?: () => void;
 }): OutputFeed {
   const { term, sid } = opts;
   const cap = opts.pendingCap ?? 4096;
-  const throttle = createOutputThrottle({ term, isVisible: opts.isVisible });
+  const throttle = createOutputThrottle({ term, isVisible: opts.isVisible, onOutput: opts.onOutput });
   let subId = "";
   let lastApplied = 0;
   let ready = false;

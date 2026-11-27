@@ -561,6 +561,12 @@ const EN: Record<string, string> = {
   "重命名分屏组": "Rename split group",
   "{0} 个窗格": "{0} panes",
   "，{0} 个窗格": ", {0} panes",
+  // 标签久未输出的时长提示（terminal/activity.ts 的闲置态）
+  "{0} 分钟无输出": "{0} min without output",
+  "{0} 小时 {1} 分钟无输出": "{0} h {1} min without output",
+  "，{0}": ", {0}",
+  // 标签可访问名称的首个分隔（「名称，状态」）：此前写死全角逗号，英文下与其后的半角逗号混排
+  "{0}，{1}": "{0}, {1}",
   "改为{0}分屏": "Switch to {0} split",
   "放到{0}侧分屏（替换{0}格）": "Split into the {0} pane (replaces it)",
   "与当前会话分屏（放到{0}侧）": "Split with current session (into the {0})",
