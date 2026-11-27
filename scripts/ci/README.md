@@ -17,12 +17,12 @@
 - **core-session 单独成档**（tier2/3）：core_local 13 测试全并行且 PTY 重，混入全仓并行档被挤占时 spawn 时序崩、agent 动作级联进 120s 审批门（实测 1082s 假红、安静时 6.7s 绿）——单独跑 + `--test-threads=4`；残余噪声由两跑仲裁兜底（单跑/复跑绿=假红放行，两跑红=真红拦截）。
 - 无 docker 时 e2e 用例自动 skip（env 门早退，core_local 余 2 例需 sshd 容器）。
 - **Android 16 KB 门默认不跑**：设 `TINYSSH_ANDROID_APK=1`（扫默认产物：`target/aarch64-linux-android/debug/libtinyssh_app_lib.so` + `src-tauri/gen/android/app/build/outputs/apk/**/*.apk`）或 `TINYSSH_ANDROID_APK=<apk/目录路径>` 时，[run.sh](run.sh) 额外调用 [check-android-16kb.sh](check-android-16kb.sh)（ELF `PT_LOAD` Align=0x4000 + APK 内 .so STORED/16384 偏移，KI-057 的固化验收）。
-- **Android CI job 首次运行未实证**：`ci.yml` 的 android 档（PR/手动）与 `gradle-wrapper.properties` 的腾讯镜像均在真实 GitHub runner 上首跑时需核对；未配置 release 签名，只产 debug APK。该档在 APK 构建与 16 KB 门之后还会跑 `./gradlew :app:lintUniversalDebug`（lint error 级即红，失败时上传 `lint-results-universalDebug.*`）。
+- **Android CI job 已在真实 runner 实证**（2026-11-24 首跑，run 45323336371；KI-109 / KI-115）：`ci.yml` 的 android 档（PR/手动）与 `gradle-wrapper.properties` 的腾讯镜像均跑通，原「首次运行未实证」的登记作废；未配置 release 签名，只产 debug APK。该档在 APK 构建与 16 KB 门之后还会跑 `./gradlew :app:lintUniversalDebug`（lint error 级即红，失败时上传 `lint-results-universalDebug.*`）。
 - **Android release APK**（tag 发布、签名 Secrets、首跑演练与真机冒烟）见 [docs/release-android.md](../../docs/release-android.md)。
 
 ## Provider 映射
 
-- [.github/workflows/ci.yml](../../.github/workflows/ci.yml)：GitHub Actions 翻译（push→tier1；PR/手动→tier2；手动 tier=3→tier3）。**如实登记**：仓库现托管 gitee，Actions 未在真实 runner 实证；镜像到 GitHub 后首跑需核对（playwright chromium 路径、npm ci 与 ui/package-lock 同步）。
+- [.github/workflows/ci.yml](../../.github/workflows/ci.yml)：GitHub Actions 翻译（push→tier1 + windows；PR/手动→加跑 tier2 + android；手动 `tier=3`→再加 tier3）。**实证状态**：tier1 / windows / UI specs / android 四档已在真实 runner 跑绿（run 45917062264）；e2e 档（tier3）此前因触发条件读错上下文恒被跳过（KI-140），修正后待手动 `tier=3` 首跑实证——`dev-sshd.sh` 的镜像回退与 apk 源在海外 runner 上的可达性、e2e 用例在 Linux runner 上的时序都还没验证过。只有 `main` 的 push 与 PR 会自动触发；验证功能分支用 `gh workflow run ci.yml --ref <分支> -f tier=2`（或 `3`）手动触发。
 - Gitee Go 如启用，按 run.sh 同档位翻译即可。
 
 ## blame 归一

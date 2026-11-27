@@ -268,7 +268,10 @@ jobs:
 
   tier3:
     name: ubuntu · e2e（docker sshd，手动档 3）
-    if: github.event.workflow_dispatch.inputs.tier == '3'
+    # 手动输入只在 inputs / github.event.inputs 两个上下文里；事件载荷没有
+    # workflow_dispatch 这一层，原写法 github.event.workflow_dispatch.inputs.tier 恒为 null，
+    # tier=3 也永远 skipped（KI-140）。
+    if: github.event.inputs.tier == '3'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
