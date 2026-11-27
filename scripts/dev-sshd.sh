@@ -2,6 +2,11 @@
 # 启动 E2E 测试用 sshd 容器（127.0.0.1:2222，root/testpass，bash + sftp）。
 # 端口转发 e2e（T42）：AllowTcpForwarding yes（Alpine 默认 no，会拒绝 direct-tcpip
 # 与 tcpip-forward）；2223 映射给远程转发（-R）回程测试用。
+# 自跳 e2e（ProxyJump，KI-142）：跳板与目标都用 127.0.0.1:2222 这一个契约地址，但
+# direct-tcpip 的目标在**容器内**解析——2222 只是宿主侧映射，容器内 sshd 听的是 22，
+# 容器连自己的 127.0.0.1:2222 会被拒，目标指纹门永远不出现。容器里再起一个只听 2222
+# 的 sshd 实例（同配置、同主机密钥），「同一 sshd 既当跳板又当目标」在 docker 下才
+# 成立；22 原样保留（-L/-D 转发 e2e 读的就是容器内 127.0.0.1:22 的 banner）。
 set -euo pipefail
 if docker ps --format '{{.Names}}' | grep -q '^tinyssh-e2e$'; then
   echo "tinyssh-e2e already running"
@@ -18,6 +23,7 @@ echo "root:testpass" | chpasswd
 sed -i "s/^root:\(.*\):\/bin\/sh$/root:\1:\/bin\/bash/" /etc/passwd
 sed -i "s/^AllowTcpForwarding.*/AllowTcpForwarding yes/;s/^#\?GatewayPorts.*/GatewayPorts clientspecified/;s/#PermitRootLogin.*/PermitRootLogin yes/;s/#PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
 mkdir -p /run/sshd
+/usr/sbin/sshd -D -p 2222 &
 /usr/sbin/sshd -D'
 echo "waiting for sshd…"
 # docker 端口代理下 TCP 连通 ≠ sshd 就绪，读到 SSH banner 才算 ready（nc 探测）

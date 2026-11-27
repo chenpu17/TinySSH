@@ -279,4 +279,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/dev-sshd.sh
-      - run: TINYSSH_E2E_SSHD=1 cargo test --workspace --exclude tinyssh-app
+        # --no-fail-fast：cargo 默认在第一个失败的测试二进制处收工，后面的 e2e 二进制
+        # 一个都不跑——手动档一次要几十分钟，首跑只看到 core_jump 红、其余全是盲区
+        # （KI-142）。跑完所有二进制再汇总，一次派发拿到完整的红名单。
+      - run: TINYSSH_E2E_SSHD=1 cargo test --workspace --exclude tinyssh-app --no-fail-fast

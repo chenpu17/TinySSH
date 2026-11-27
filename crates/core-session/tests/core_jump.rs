@@ -61,6 +61,24 @@ async fn wait_host_key(m: &SessionManager, host_id: &str, budget: Duration) -> P
     }
 }
 
+/// 无人值守建连时的指纹门应答：跳板是首连主机，指纹卡先挂起等人裁决——测试里没人
+/// 应答就只能等满审批超时，拿到的是「确认超时」而不是本用例要验的认证失败归因
+/// （KI-142：tier3 首跑实锤）。后台任务按人类身份放行指纹卡（与 MCP e2e 的
+/// auto_accept_host_keys 同构），错误密码才轮得到出场。
+fn auto_accept_host_keys(m: &Arc<SessionManager>) {
+    let m = m.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(items) = m.pending_host_keys(&human()).await {
+                for it in items {
+                    let _ = m.decide_host_key(&human(), &it.id, true).await;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn core_self_jump_gate_order_fingerprints_delete_protection() {
     if !std::env::var("TINYSSH_E2E_SSHD")
@@ -163,6 +181,7 @@ async fn core_jump_auth_failure_names_the_hop() {
         )
         .await
         .unwrap();
+    auto_accept_host_keys(&m);
     let err = m
         .create_session(&human(), CreateSessionReq { host_id: target })
         .await

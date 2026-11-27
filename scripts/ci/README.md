@@ -16,13 +16,14 @@
 - **UI specs 前冻结代码**：HMR 时序抖动会产生假红；套件红先单跑该 spec 复核（15-goal H1 是已知满载假红）。
 - **core-session 单独成档**（tier2/3）：core_local 13 测试全并行且 PTY 重，混入全仓并行档被挤占时 spawn 时序崩、agent 动作级联进 120s 审批门（实测 1082s 假红、安静时 6.7s 绿）——单独跑 + `--test-threads=4`；残余噪声由两跑仲裁兜底（单跑/复跑绿=假红放行，两跑红=真红拦截）。
 - 无 docker 时 e2e 用例自动 skip（env 门早退，core_local 余 2 例需 sshd 容器）。
+- **自跳 e2e 在 docker 下的夹具约定**：跳板与目标都用 `127.0.0.1:2222` 这一个契约地址，而 direct-tcpip 的目标在**容器内**解析——所以容器里起了两个 sshd：22（宿主 2222 映射过来的入口，转发 e2e 读它的 banner）与 2222（给容器内的 direct-tcpip 当目标），同配置、同主机密钥。改 `dev-sshd.sh` 时别把第二个实例删掉，否则自跳用例（`core_jump.rs`）的目标指纹门永远不出现（KI-142 首跑实锤）。
 - **Android 16 KB 门默认不跑**：设 `TINYSSH_ANDROID_APK=1`（扫默认产物：`target/aarch64-linux-android/debug/libtinyssh_app_lib.so` + `src-tauri/gen/android/app/build/outputs/apk/**/*.apk`）或 `TINYSSH_ANDROID_APK=<apk/目录路径>` 时，[run.sh](run.sh) 额外调用 [check-android-16kb.sh](check-android-16kb.sh)（ELF `PT_LOAD` Align=0x4000 + APK 内 .so STORED/16384 偏移，KI-057 的固化验收）。
 - **Android CI job 已在真实 runner 实证**（2026-11-24 首跑，run 45323336371；KI-109 / KI-115）：`ci.yml` 的 android 档（PR/手动）与 `gradle-wrapper.properties` 的腾讯镜像均跑通，原「首次运行未实证」的登记作废；未配置 release 签名，只产 debug APK。该档在 APK 构建与 16 KB 门之后还会跑 `./gradlew :app:lintUniversalDebug`（lint error 级即红，失败时上传 `lint-results-universalDebug.*`）。
 - **Android release APK**（tag 发布、签名 Secrets、首跑演练与真机冒烟）见 [docs/release-android.md](../../docs/release-android.md)。
 
 ## Provider 映射
 
-- [.github/workflows/ci.yml](../../.github/workflows/ci.yml)：GitHub Actions 翻译（push→tier1 + windows；PR/手动→加跑 tier2 + android；手动 `tier=3`→再加 tier3）。**实证状态**：tier1 / windows / UI specs / android 四档已在真实 runner 跑绿（run 45917062264）；e2e 档（tier3）此前因触发条件读错上下文恒被跳过（KI-140），修正后待手动 `tier=3` 首跑实证——`dev-sshd.sh` 的镜像回退与 apk 源在海外 runner 上的可达性、e2e 用例在 Linux runner 上的时序都还没验证过。只有 `main` 的 push 与 PR 会自动触发；验证功能分支用 `gh workflow run ci.yml --ref <分支> -f tier=2`（或 `3`）手动触发。
+- [.github/workflows/ci.yml](../../.github/workflows/ci.yml)：GitHub Actions 翻译（push→tier1 + windows；PR/手动→加跑 tier2 + android；手动 `tier=3`→再加 tier3）。**实证状态**：tier1 / windows / UI specs / android 四档已在真实 runner 跑绿（run 45917062264、45931469527）；e2e 档（tier3）此前因触发条件读错上下文恒被跳过（KI-140），修正后手动 `tier=3` 首跑（run 45931469527）已进入运行——容器起得来、用例没被 env 门跳过，但档本身红在测试夹具（KI-142：自跳夹具在 docker 下不成立、跳板首连的指纹卡无人应答），修复待推送后复跑实证。这一档的 `cargo test` 带 `--no-fail-fast`：默认在第一个红的测试二进制处收工，后面的 e2e 二进制一个不跑，一次几十分钟的派发只看得到一个红点。只有 `main` 的 push 与 PR 会自动触发；验证功能分支用 `gh workflow run ci.yml --ref <分支> -f tier=2`（或 `3`）手动触发；取某个 job 的完整日志在本机要走 `gh api repos/chenpu17/TinySSH/actions/jobs/<job-id>/logs`（`gh run view --job --log` 不出内容）。
 - Gitee Go 如启用，按 run.sh 同档位翻译即可。
 
 ## blame 归一
