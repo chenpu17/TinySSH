@@ -4,7 +4,7 @@ import {
 } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
 import { MetricsBar } from "./metrics";
-import { resolveAction, isMacPlatform, isWindowsPlatform } from "./actions";
+import { resolveAction, isMacPlatform, isWindowsPlatform, FOCUS_KEY_LABEL } from "./actions";
 import type { AppAction } from "./actions";
 import {
   KEYMAP_ACTIONS, KEYMAP_SETTING,
@@ -74,9 +74,6 @@ if (inTauri) {
   if (isMacPlatform()) document.documentElement.classList.add("native-mac");
   if (isWindowsPlatform()) document.documentElement.classList.add("native-win");
 }
-// 专注模式固定键的展示文案：macOS 的 F11 默认被系统「显示桌面」占用，需按 Fn+F11；
-// Windows/Linux 直接 F11。凡面向用户的提示都走这里，别再写死「F11」。
-const FOCUS_KEY_LABEL = isMacPlatform() ? "Fn+F11" : "F11";
 
 // 终端 URL 裸单击的提示节流（5s 一次）：链接已下划线可辨，但远端可伪造输出诱导
 // 点击，故未按修饰键只提示不打开；节流避免连点时刷屏。

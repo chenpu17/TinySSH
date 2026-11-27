@@ -1543,7 +1543,7 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 @media (hover: none) { .tab:not(.tab-active) .tab-x { opacity: 0.75; pointer-events: auto; } }
 /* UX 三轮：关闭钮悬停用淡红底替代实红块——危险语义保留，视觉不再刺耳 */
 .tab button.tab-x:not(:disabled):hover { background: var(--danger-soft); color: var(--danger); opacity: 1; }
-/* 欢迎页（T32 重设计）：居中卡片式空状态，品牌标记 + 分组引导 + 快捷动作 */
+/* 欢迎页（T32 重设计）：居中卡片式空状态，品牌标记 + 快捷动作 + 底部一行启动提示 */
 /* UX 三轮精修：原盒裸浮于满屏虚空（最大设计短板）。加舞台光晕（::before 径向
    accent-soft，深浅色板各有取值）+ 盒体卡片化（panel 渐变底 + 描边 + 浮起阴影），
    内容有了落点。::before 绝对定位脱离 flex 流，不影响居中 */
@@ -1555,8 +1555,11 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .welcome-box {
   /* 宽度随界面字号缩放：125% 字号下 470px 卡里每行少放约一两成的字，步骤与快捷
      动作撑到 637px 高，960×600 最小窗口首屏看不到主行动钮。按字号同比放大到
-     588px 后正文换行减少、卡高回落到 487px，最小窗口一屏可用（100% 不变） */
-  position: relative; max-width: calc(470px * var(--ui-font-scale)); padding: 30px 34px; margin: auto 24px;
+     588px 后正文换行减少、卡高回落到 487px，最小窗口一屏可用（100% 不变）。
+     KI-138：宽度显式钉满（容器宽减两侧 24px 外边距，仍受 max-width 约束）——此前
+     是五行教程的长句把卡片撑到 470，教程删掉后中文内容只撑到 408px，卡片会随
+     语言、会话数忽宽忽窄 */
+  position: relative; width: calc(100% - 48px); max-width: calc(470px * var(--ui-font-scale)); padding: 30px 34px; margin: auto 24px;
   background: linear-gradient(180deg, var(--panel2), var(--panel));
   border: 1px solid var(--border); border-radius: 16px;
   box-shadow: 0 4px 12px var(--shadow-soft), 0 24px 64px var(--shadow-dialog);
@@ -1568,17 +1571,32 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 8px 32px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
-.welcome-title { color: var(--text); font-weight: 700; font-size: calc(22px * var(--ui-font-scale)); letter-spacing: 0.01em; }
+.welcome-title { color: var(--text); font-weight: 700; font-size: calc(22px * var(--ui-font-scale)); letter-spacing: 0.01em; margin-bottom: 16px; }
 .welcome-sub { font-weight: 500; font-size: calc(12px * var(--ui-font-scale)); color: var(--dim); margin-left: 10px; }
-.welcome-steps { margin: 16px 0 18px; display: flex; flex-direction: column; gap: 9px; font-size: calc(12px * var(--ui-font-scale)); line-height: 1.75; }
-.welcome-steps > div { display: flex; gap: 9px; }
-.ws-k {
-  flex: none; min-width: 44px; text-align: center;
-  font-size: calc(10px * var(--ui-font-scale)); letter-spacing: 2px; color: var(--accent);
-  border: 1px solid var(--accent-line); border-radius: 6px;
-  padding: 1px 5px; margin-top: 2px;
-  background: var(--accent-soft);
+/* 启动提示（KI-138，用户反馈「太占空间，没必要整得这么复杂」）：原为五行教程，每行
+   「accent 标签芯片 + 长句」，470px 卡里句句折两行，整块 228px（手机竖屏 246px），
+   比四个主行动钮（68px）高三倍。压成一行键帽提示退到卡片底部，与上方内容用一道
+   细线分开：只留专注模式键 / 复制粘贴键 / 拖文件上传三件界面上看不出来的事。
+   键帽取中性色（accent 只给主操作、选中与焦点）。触屏平台没有这些键，整行收起。
+   三项之间只用间距、不用「·」：Windows/Linux 的复制粘贴键帽是 Ctrl+Shift+C +
+   Ctrl+V（比 mac 的 ⌘C ⌘V 宽约 95px），中文一行刚好放下，英文折到第二行——
+   间距分隔折行后第二行不带悬空的项目符号 */
+.welcome-hints {
+  display: flex; flex-wrap: wrap; align-items: center;
+  column-gap: calc(14px * var(--ui-font-scale)); row-gap: 2px;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+  font-size: calc(11px * var(--ui-font-scale)); line-height: 1.6; color: var(--dim);
 }
+.welcome-hints > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.welcome-hints kbd {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 4px;
+  font-family: var(--mono); font-size: calc(10.5px * var(--ui-font-scale)); line-height: 1;
+  color: var(--text-sub); background: var(--panel2);
+  border: 1px solid var(--border-hover); border-radius: 4px;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+:root[data-platform="android"] .welcome-hints,
+:root[data-platform="ios"] .welcome-hints { display: none; }
 /* 首页四动作 2×2 网格（字体档轮）：单行 flex 时每钮仅 ~94px，中文标签被硬折成
    「添加主/机」「快速连/接」；双列后每钮 ~197px 全部单行。奇数尾钮（无本机主机时
    只剩 3 个）通栏兜底，避免右下留空格 */
@@ -1586,7 +1604,7 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .welcome-actions button { white-space: nowrap; }
 .welcome-actions button:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .welcome-note { font-size: calc(11px * var(--ui-font-scale)); }
-/* 欢迎页入场编排（视觉品质轮）：mark/标题/步骤/行动钮依次上升入场，总时长 ≤390ms；
+/* 欢迎页入场编排（视觉品质轮）：mark/标题/行动钮/提示行依次上升入场，总时长 ≤390ms；
    backwards 保证延迟中的子元素入场前隐藏。只动直系子元素的 transform/opacity，
    卡片本体与布局不变——79-welcome-layout 的 rect 断言不受影响 */
 .welcome-box > * { animation: rise-in 0.24s var(--ease-out) backwards; }
@@ -1599,7 +1617,7 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 @media (max-height: 700px) {
   .welcome-box { padding: 20px 28px; }
   .welcome-mark { width: 48px; height: 48px; border-radius: 14px; margin-bottom: 10px; }
-  .welcome-steps { margin: 12px 0 14px; gap: 6px; line-height: 1.55; }
+  .welcome-title { margin-bottom: 12px; }
   .welcome-actions { margin-bottom: 8px; }
   /* 矮窗首屏优先保住四个主行动钮：底部状态句与标签条/按钮信息重复，且在 125%
      字号的最小窗口里只剩半行露在裁切线上（看起来像渲染坏了），矮窗直接收起 */

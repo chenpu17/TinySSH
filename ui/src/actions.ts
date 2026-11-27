@@ -49,6 +49,16 @@ export function isWindowsPlatform(): boolean {
   return /win/i.test(p);
 }
 
+/** 专注模式固定键的展示文案：macOS 的 F11 默认被系统「显示桌面」占用，需按 Fn+F11；
+ *  Windows/Linux 直接 F11。凡面向用户的提示都走这里，别再写死「F11」。 */
+export const FOCUS_KEY_LABEL = isMacPlatform() ? "Fn+F11" : "F11";
+
+/** 终端复制 / 粘贴键的展示文案（App.tsx 终端键盘层的真实绑定）：mac ⌘C（有选区才
+ *  复制）/ ⌘V；Windows/Linux Ctrl+Shift+C / Ctrl+V——Ctrl+C 有选区时也复制，但无选区
+ *  是 SIGINT，键帽不作提示。右键菜单与欢迎页启动提示共用，别再各写一份。 */
+export const COPY_KEY_LABEL = isMacPlatform() ? "⌘C" : "Ctrl+Shift+C";
+export const PASTE_KEY_LABEL = isMacPlatform() ? "⌘V" : "Ctrl+V";
+
 /** keymap 唯一事实源：返回 null = 不归应用动作（透传给终端/浏览器）。 */
 export function resolveAction(ev: KeyboardEvent, ctx: ActionCtx): AppAction | null {
   // IME 组合期（§7.3 输入约定）：isComposing 与 keyCode 229（合成器改写的 keydown）

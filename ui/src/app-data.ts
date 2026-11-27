@@ -819,7 +819,8 @@ export const PALETTES: ChromePalette[] = [
   { id: "sage", label: "护眼", dot: ["#151813", "#9fbf8f"], lite: ["#e8e9df", "#3e6144"] },
 ];
 // 出厂色板族（2026-10-27 用户拍板）：东京夜——深色面靛夜底×晴空蓝、浅色面蓝墨
-// 水面孔；终端 ANSI 16 色按族从 styles.css --ansi-0..15 派生，切族即整体换装
+// 水面孔；终端 ANSI 16 色按族从 styles.css --ansi-0..15 派生，切族即整体换装。
+// 首帧默认在 public/theme-boot.js 里同名镜像（首帧脚本读不到本模块），改默认两处同改
 export const PALETTE_DEFAULT = "tokyo";
 
 // ANSI 16 色基础预设（主题②轮起降级为**回落档**——按族真值在 styles.css 的

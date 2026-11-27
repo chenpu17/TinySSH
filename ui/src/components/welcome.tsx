@@ -1,10 +1,10 @@
-// 欢迎页（App.tsx 拆分⑤）：无活跃会话时的引导区——步骤说明、主行动钮、
-// 重连上次会话、最近连接。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
+// 欢迎页（App.tsx 拆分⑤）：无活跃会话时的引导区——主行动钮、重连上次会话、最近连接，
+// 底部一行启动提示。从 App.tsx 原样出仓，本文件只收 props 呈现，零语义变更。
 import { useRef, useState } from "react";
 import type { Host, RecentHost, RestoreEntry, SessionInfo } from "../adapter/wire";
 import { IconPlus, IconTerminal, IconImport, IconLink } from "../icons";
 import { t } from "../i18n";
-import { isMacPlatform } from "../actions";
+import { COPY_KEY_LABEL, FOCUS_KEY_LABEL, PASTE_KEY_LABEL, isMacPlatform } from "../actions";
 import { dateLocale } from "../app-data";
 import { useLongPress } from "../touch";
 
@@ -66,18 +66,6 @@ export function Welcome({
       <div className="welcome-box">
         <div className="welcome-mark"><IconTerminal size={26} /></div>
         <div className="welcome-title">TinySSH<span className="welcome-sub">{t("人机协同 SSH 工作台")}</span></div>
-        <div className="welcome-steps">
-          <div><span className="ws-k">{t("连接")}</span>{t("主机栏「＋」填入地址和密码（或粘贴私钥），保存后自动连接")}</div>
-          {/* 七轮 B7-4：原句把 Ctrl+C 与 ⌘C/⌘V 混在一行——Windows/Linux 上没有 ⌘，
-              而终端里 Ctrl+C 是 SIGINT（真按了会打断远端进程）。复制粘贴的键盘实现
-              只认 metaKey，非 mac 走 Ctrl+V 原生粘贴 + 右键菜单复制 */}
-          <div><span className="ws-k">{t("操作")}</span>{isMacPlatform()
-            ? t("点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、⌘C/⌘V 复制粘贴")
-            : t("点击终端区直接打字：Ctrl+C 中断、↑↓ 历史、Tab 补全、Ctrl+V 粘贴、右键复制")}</div>
-          <div><span className="ws-k">{t("多会话")}</span>{t("一屏一签，点标签切换、分屏对照，各自的滚动历史和 vim 界面都会保留")}</div>
-          <div><span className="ws-k">{t("传输")}</span>{t("拖文件进窗口上传：拖到文件面板直接传到正在浏览的目录，拖到终端先确认目标")}</div>
-          <div><span className="ws-k">{t("专注")}</span>{t("F11 进入全屏专注：界面全让位给终端，标签条常驻顶部（{0} 面板可切自动隐藏），再按 F11 退出", isMacPlatform() ? "⌘K" : "Ctrl+Shift+K")}</div>
-        </div>
         <div className="welcome-actions">
           <button onClick={() => { setShowAddHost(true); setShowImport(false); setShowQuickConnect(false); setEditingHost(null); setPrefillEntry(null); }}><IconPlus size={13} /> {t("添加主机")}</button>
           <button className="ghost" onClick={() => { setShowQuickConnect(true); setShowAddHost(false); setShowImport(false); }}><IconLink size={13} /> {t("快速连接")}</button>
@@ -180,6 +168,20 @@ export function Welcome({
           {sessions.length > 0
             ? t("已有 {0} 个会话未接入终端——点击上方标签或「标签列表」继续。", sessions.length)
             : t("暂无会话——从主机栏连接主机开始，或导入 ~/.ssh/config。")}
+        </div>
+        {/* 启动提示（KI-138）：原为五行教程（标签芯片 + 长句），用户反馈「太占空间，
+            没必要整得这么复杂」。压成一行键帽提示，只留三件界面上看不出来的事——
+            专注模式键、复制粘贴键、拖文件上传；怎么连主机由上方按钮自己说明，
+            标签/分屏看界面即懂，完整键位表在设置 → 快捷键。
+            复制粘贴键帽与右键菜单同源（actions.ts 的 COPY/PASTE_KEY_LABEL）：mac ⌘C/⌘V；
+            Windows/Linux 是 Ctrl+Shift+C / Ctrl+V——Ctrl+C 有选区时也复制，但无选区是
+            SIGINT，键帽不提示，细节放悬停 title。触屏平台没有这些键，整行由 CSS 收起 */}
+        <div className="welcome-hints">
+          <span><kbd>{FOCUS_KEY_LABEL}</kbd>{t("专注模式")}</span>
+          <span title={isMacPlatform() ? t("⌘C 有选中内容时才复制") : t("有选中内容时 Ctrl+C 也可复制，无选中时是中断")}>
+            <kbd>{COPY_KEY_LABEL}</kbd><kbd>{PASTE_KEY_LABEL}</kbd>{t("复制粘贴")}
+          </span>
+          <span>{t("拖入文件即上传")}</span>
         </div>
       </div>
     </div>

@@ -12,7 +12,7 @@ import type { ConfirmState } from "./confirm-dialogs";
 import type { SplitDir, SplitGroup } from "../app-data";
 import { resetMouseReporting } from "../terminal/mouse-mode-guard";
 import { repaintAll } from "../terminal/repaint";
-import { isMacPlatform } from "../actions";
+import { COPY_KEY_LABEL, PASTE_KEY_LABEL, isMacPlatform } from "../actions";
 import { IconX } from "../icons";
 
 // 按钮美化轮：右键菜单宽度随内容（200–340px，styles.css .ctx-menu），挂载即测量——越出视口
@@ -134,10 +134,11 @@ export function CtxMenus({
   // mac：⌘C（有选区才复制）/⌘V/⌘A；Win/Linux：Ctrl+Shift+C 复制、Ctrl+V 粘贴
   // （Ctrl+C 有选区也可，但无选区是 SIGINT，不作提示）。全选在 Win/Linux 没有绑定
   // （Ctrl+A 直达 shell readline）——不显示提示，宁缺毋虚构。
+  // 键帽文案取自 actions.ts（欢迎页启动提示共用同一份）。
   const mac = isMacPlatform();
-  const copyHint = mac ? "⌘C" : "Ctrl+Shift+C";
+  const copyHint = COPY_KEY_LABEL;
   const copyAria = mac ? "Meta+C" : "Control+Shift+C";
-  const pasteHint = mac ? "⌘V" : "Ctrl+V";
+  const pasteHint = PASTE_KEY_LABEL;
   const pasteAria = mac ? "Meta+V" : "Control+V";
   // 键盘可达（审查二轮 UX2-4）：菜单此前只能鼠标点——焦点不被捕获、无箭头导航，
   // 纯键盘用户只能 Esc。菜单开即聚焦首项，↑↓ 在菜单项间循环（Enter 原生激活，
