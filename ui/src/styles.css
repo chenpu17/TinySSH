@@ -1967,16 +1967,13 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 }
 
 /* Notice Bar（精致化 §5.2）：状态类信息独占一行，不与导航/面包屑混排。
-   warn=受限/重确认等安全状态；info=语义说明（原 ctl-hint 双接管解释行）；danger=危险 */
+   info=语义说明（原 ctl-hint 双接管解释行）；danger=危险。
+   warn（重确认）已无使用点：KI-137 起重确认不再常驻横幅（一次性 toast + 工具栏
+   状态胶囊），规则随之删除 */
 .notice-bar {
   flex: none; padding: 4px 12px; font-size: calc(12px * var(--ui-font-scale)); line-height: 1.5;
   display: flex; align-items: center; gap: 6px;
   border-bottom: 1px solid;
-}
-.notice-bar.warn {
-  background: var(--warn-soft);
-  border-color: var(--warn-ring);
-  color: var(--warn);
 }
 /* T38 审核：.notice-bar.danger 无使用点（危险态由 conn-error 横幅/hk-danger 承担），删除 */
 .notice-bar.info {

@@ -262,6 +262,14 @@ export const stateLabel = (s: string): { text: string; cls: string } => {
   }
 };
 
+/** §6.4 重确认说明句（进入时的一次性 toast 与工具栏状态胶囊的 title 共用）：
+ *  连接已恢复、人类可继续操作；受限的是 Agent 的普通变更——Agent 掌控的会话
+ *  点名「Agent 已暂停」。 */
+export const reconfirmNote = (agentOwned: boolean): string =>
+  t("已重连；旧现场待核实——你可以继续操作")
+  + (agentOwned ? t("；Agent 已暂停（普通变更仍受限）") : "")
+  + t("。");
+
 // R26（§6.4「不缓冲输入」）：传输已断/重建中的会话一律拦截键入——
 // Disconnected=核心拒绝；Degraded/Reconnecting=通道死亡（写必错），不排队给未来连接
 export const inputBlockedState = (st: string): boolean =>

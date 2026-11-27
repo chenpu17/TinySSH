@@ -6,7 +6,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { AppAction } from "../actions";
 import type { KeyActionId } from "../keymap";
 import type { SessionInfo } from "../adapter/wire";
-import { stateLabel } from "../app-data";
+import { stateLabel, reconfirmNote } from "../app-data";
 import { t } from "../i18n";
 import type { SplitPanes } from "../app-data";
 import { IconChevronDown, IconSearch, IconSplit } from "../icons";
@@ -111,7 +111,8 @@ export function SessionToolbar({
           {current.host_name}
           {oscTitles[sid!] ? ` · 「${oscTitles[sid!]}」` : ""}
         </span>
-        <span className={"mono st-state " + stateLabel(current.state).cls}>{stateLabel(current.state).text}</span>
+        <span className={"mono st-state " + stateLabel(current.state).cls}
+          title={current.state === "Reconfirming" ? reconfirmNote(owner === "Agent") : undefined}>{stateLabel(current.state).text}</span>
       </div>
       <span style={{ flex: 1 }} />
       {sid && (hasAgents || embeddedReady) && owner === "Agent" && (

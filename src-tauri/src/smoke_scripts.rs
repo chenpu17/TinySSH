@@ -1094,7 +1094,8 @@ pub(crate) fn r25_smoke_script(run_id: &str) -> String {
 /// R26（§6.4 断线/重试/重确认/重连）原生冒烟：真 sshd 容器由驱动 docker stop/start
 /// 协同——周期1 停容器 → 自动重连计数横幅（第 N/3 次）→ 3 次耗尽 Disconnected +
 /// dead-overlay + 键入拦截；周期2 再断 →「停止重试」提前落 Disconnected；周期3
-/// 驱动启容器 → 手动重连 → Reconfirming 横幅（已重连；旧现场待核实）+ 人类键入恢复；
+/// 驱动启容器 → 手动重连 → Reconfirming（工具栏状态胶囊「已重连 · 待核实」，KI-137
+/// 起不再常驻横幅）+ 人类键入恢复；
 /// r26-b 集成关主机命令框 → Shell 拒绝 + Fresh 指引两行（R24-L5）；周期4 断开标签
 /// 直接关不询问（§6.4）。事件面 session-state 真实通道驱动横幅。
 /// R27 原生冒烟（外观/终端设置/可访问性；无 sshd 依赖——纯 UI/偏好面）：
@@ -3326,8 +3327,13 @@ pub(crate) fn r26_smoke_script(run_id: &str) -> String {
       const reconnBtn = [...document.querySelectorAll('.dead-overlay button')].find((b) => b.textContent.includes('重连恢复'));
       if (!reconnBtn) return title('FAIL-no-reconn-btn');
       reconnBtn.click();
-      const rc = await waitFor(() => ([...document.querySelectorAll('.notice-bar.warn')].map((x) => x.textContent).join('').includes('已重连；旧现场待核实') ? true : null), 200);
-      if (!rc) return title('FAIL-no-reconfirm-banner');
+      // KI-137：重确认不再常驻整行横幅（改为一次性 toast）——断言面换成工具栏
+      // 状态胶囊「已重连 · 待核实」（琥珀；完整说明在它的 title 里）
+      const rc = await waitFor(() => {
+        const chip = document.querySelector('.session-toolbar .st-state.warn');
+        return chip && chip.textContent.includes('已重连 · 待核实') ? true : null;
+      }, 200);
+      if (!rc) return title('FAIL-no-reconfirm-state');
       await markSync('r26a-reconfirm-ok');
       // 人类可继续操作（合成事件可达命令框；终端 onData 真键入证据由 demo 探针承担）
       const cmdIn1 = document.querySelector('.panel-title input');

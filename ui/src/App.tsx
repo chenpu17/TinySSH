@@ -105,7 +105,7 @@ import {
   runBench, searchOptions, SETTING_AUTO_LOCAL, SETTING_FONT, SETTING_FONT_LEGACY, SETTING_LOCAL_SHELL, SETTING_PALETTE,
   SETTING_TERM_CURSOR_BLINK, SETTING_TERM_CURSOR_STYLE, SETTING_TERM_FONT_FAMILY,
   SETTING_TERM_LETTER_SPACING, SETTING_TERM_LIGATURES, SETTING_TERM_SCROLLBACK, SETTING_TERM_WHEEL_RATE,
-  stateLabel, stampLocal, stopOutcomeText, isImeComposing,
+  stateLabel, reconfirmNote, stampLocal, stopOutcomeText, isImeComposing,
   SPLIT_DEGRADE_BELOW, SPLIT_DEGRADE_BELOW_H, SPLIT_FRAC_MAX, SPLIT_FRAC_MIN,
   SPLIT_RECOVER_AT, SPLIT_RECOVER_AT_H, tauriListen, THEMES, ThemePreset,
   TransferCard, themeById, TZ_NOTE, useDialogFocus,
@@ -792,7 +792,7 @@ export default function App() {
     action?: { label: string; title: string; run: () => void } }[]>([]);
   const toastSeq = useRef(0);
   const pushToast = useCallback((kind: "ok" | "err" | "info", text: string,
-    action?: { label: string; title: string; run: () => void }) => {
+    action?: { label: string; title: string; run: () => void }, ttlMs?: number) => {
     const id = ++toastSeq.current;
     // DEV 探针：toast 只有 2.6s 生命，满套 UI 负载下 evaluate 往返可能比这更久，
     // 只看 DOM 的断言会漏掉「已经出现过又消失」的 toast。留一份有限历史供 spec
@@ -806,7 +806,9 @@ export default function App() {
     setToasts((cur) => [...cur.slice(-3), { id, kind, text, action }]);
     // 错误常常是长句（后端原文/shell 失败原因），2.6s 读不完且无法复制；给 6s
     // 并允许点 × 手动关闭（栈本身仍 pointer-events:none，不挡背后操作）。
-    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), action ? 8000 : kind === "err" ? 6000 : 2600);
+    // ttlMs：调用方按句子长度自定停留（重确认说明这类长句，KI-137）。
+    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)),
+      ttlMs ?? (action ? 8000 : kind === "err" ? 6000 : 2600));
     // 返回 id 供调用方在「被后续 toast 取代」时自行撤下（传输开始提示 → 完成提示）。
     return id;
   }, []);
@@ -9427,6 +9429,21 @@ export default function App() {
     prevSessionStatesRef.current = next;
     if (lost.length) pushToast("err", t("后台会话已断开：{0}", lost.join(t("、"))));
   }, [sessions, pushToast]);
+  // 重确认提示（KI-137，§6.4）：当前会话进入「已重连 · 待核实」的那一拍弹一次
+  // toast 说明语义（人类可继续操作；受限的是 Agent 变更）。此前是常驻整行横幅，
+  // 把标签条和终端整体压矮 27px，直到用户提交第一条命令才让位——用户反馈「重连
+  // 好了也一直在显示，占用显示空间」。状态本身仍全程可见：标签琥珀点 + 工具栏
+  // 状态胶囊（title 带同一句说明）。只认状态迁移的那一拍：页面刚载入时已是
+  // 重确认态的会话不补弹（没有「刚发生」可报）。
+  const prevReconfirmRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    const prev = prevReconfirmRef.current;
+    prevReconfirmRef.current = new Map(sessions.map((s) => [s.id, s.state] as const));
+    const cur = sessions.find((s) => s.id === sidRef.current);
+    if (cur && cur.state === "Reconfirming" && prev.has(cur.id) && prev.get(cur.id) !== "Reconfirming") {
+      pushToast("info", reconfirmNote(cur.control_owner === "Agent"), undefined, 6000);
+    }
+  }, [sessions, pushToast]);
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
   const pendingCount = pendingApprovals.length;
   // 已处理的审批不再整卡展示，折叠为最近几条一行记录
@@ -9748,6 +9765,8 @@ export default function App() {
   // 只剩 6px 抓手，「新建连接」钮无从发现——没有标签时条就留在眼前。
   // 标签右键菜单/分屏菜单也钉（巡检补）：.ctx-menu 44、.split-menu 43 都低于
   // 滑出条的 45——钉住回流 static 后整条落到 z41 遮罩之下，菜单不被压住。
+  // Reconfirming 仍钉（KI-137）：重确认横幅已改成一次性 toast，专注态工具栏
+  // 状态胶囊是藏起的，标签上的琥珀点是这段时间唯一常显的状态。
   const zenPin = sessions.length === 0 || searchOpen || !!renaming || tabsMenuOpen || focusHostMenu || !!tabMenu || !!splitMenu || !!connError
     || pendingCount > 0 || bellSids.size > 0
     || (current != null && (
@@ -10033,13 +10052,8 @@ export default function App() {
         {/* 双接管按钮的语义说明不再常显（用户反馈：占一行没用处）——完整语义
             已在两钮的 title 悬停提示里（接管=冻结/待审批作废/跑着的不中断；
             接管并停止=再尝试停止/结果逐条显示），随用随看不占空间 */}
-        {/* 重确认：§6.4 原文「已重连；旧现场待核实」——人类可继续操作，受限的是
-            Agent 变更（有协作在场时点名「Agent 暂停」）；核实完成自动恢复 */}
-        {current?.state === "Reconfirming" && (
-          <div className="notice-bar warn">
-            ⓘ {t("已重连；旧现场待核实——你可以继续操作")}{owner === "Agent" ? t("；Agent 已暂停（普通变更仍受限）") : ""}{t("。")}
-          </div>
-        )}
+        {/* 重确认（§6.4）不再常驻横幅：进入时弹一次 toast，状态由标签琥珀点与
+            工具栏「已重连 · 待核实」胶囊全程显示（KI-137，见 prevReconfirmRef） */}
         {/* R26（§6.4）：网络断线自动重连——显示实际重试次数 + 可停止；
             Disconnected=顶部短状态条提供重连（dead-overlay 同动作双入口）。
             rev-r26 中-1：手动重连（reconnecting）期核心发同形 Reconnecting 事件，
