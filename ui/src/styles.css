@@ -1505,6 +1505,15 @@ button.tab-scroll:not(:disabled):hover { background: var(--panel2); color: var(-
 /* 标签条文字的换色过渡只服务闲置态的进与出（药丸自己的悬停/激活换色在 .tab 上过渡，
    文字靠继承跟随；这里只挂在标签条的标签上——.tab-label 还被工具菜单、移动端切换器复用） */
 .tab .tab-label { transition: color 120ms; }
+/* KI-144：会话菜单行（桌面「标签列表」与移动端切换器共用）同步标签活跃度。久未输出：
+   空心点、非当前行文字退一档、悬停回常规对比；状态列改报「N 分钟无输出」（闲置只发生在
+   已连接会话上，空心点本身已表达在线）。正在输出：一档更亮的静态辉光——菜单是瞬时界面，
+   光环节拍只服务标签条，不在这里跑动画。 */
+.tm-idle .tab-dot.ok { background: transparent; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ok) 85%, transparent); }
+.tm-idle:not(.tm-active) .tab-label { color: var(--dim); }
+.tm-idle:not(.tm-active):hover .tab-label { color: var(--text); }
+.tm-live .tab-dot.ok { box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 80%, transparent); }
+.tm-row .tab-label { transition: color 120ms; }
 /* label 撑满药丸余宽：分屏/关闭钮靠右收边（Windows Terminal 布局）——短标签
    （「本机」）药丸中部不再被常显按钮占住，抓中间即可拖拽、点中间也不再误触分屏 */
 .tab-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

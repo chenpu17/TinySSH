@@ -858,8 +858,15 @@ export default function App() {
   // 记账走 ref（每个输出字节零渲染），只有闲置表进 React 状态（边沿才变，且最多一分钟
   // 换一次读数）。节拍定时器只在有会话时跑。
   const [idleMin, setIdleMin] = useState<Record<string, number>>({});
+  // 会话菜单行的「正在输出」静态辉光（KI-144）：只在活跃集合边沿进 React 状态；
+  // 标签条仍是命令式属性，不为节拍整树重渲染。
+  const [liveSids, setLiveSids] = useState<Set<string>>(() => new Set());
   const [activity] = useState(() => createTabActivity({
     onIdle: (next) => setIdleMin((prev) => sameJson(prev, next)), // 同值留旧引用，不多渲染一次
+    onLive: (ids) => setLiveSids((prev) => {
+      if (prev.size === ids.length && ids.every((id) => prev.has(id))) return prev;
+      return new Set(ids);
+    }),
   }));
   // 本地输入的各条路径（主终端 / 格子的 onData、捕获层直发、广播扇出）都在闭包里，
   // 经 ref 报给 activity.keyed，不动各自的依赖表
@@ -9871,13 +9878,21 @@ export default function App() {
       {sessions.length === 0 && <div className="dim" style={{ padding: "6px 10px" }}>{t("暂无会话")}</div>}
       {sessions.map((s) => {
         const st = stateLabel(s.state);
+        const label = tabNames[s.id] ?? s.host_name;
+        // KI-144：菜单行同步标签活跃度——久未输出改报「N 分钟无输出」+ 空心点 + 非当前行
+        // 文字退一档；正在输出只做静态辉光（菜单是瞬时界面，光环节拍只服务标签条）。
+        const idle = idleMin[s.id];
+        const live = liveSids.has(s.id);
+        const status = idle !== undefined ? idleText(idle) : st.text;
         return (
-          <div className={"tm-row" + (sid === s.id ? " tm-active" : "")} key={s.id} data-sid={s.id}>
-            <button className="tm-main" role="menuitem"
+          <div className={"tm-row" + (sid === s.id ? " tm-active" : "")
+            + (idle !== undefined ? " tm-idle" : "") + (live ? " tm-live" : "")}
+            key={s.id} data-sid={s.id}>
+            <button className="tm-main" role="menuitem" title={`${label} · ${status}`}
               onClick={() => { setTabsMenuOpen(false); void attachSession(s.id); }}>
               <span className={"tab-dot " + st.cls} />
-              <span className="tab-label">{tabNames[s.id] ?? s.host_name}</span>
-              <span className={"mono " + st.cls} style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginLeft: "auto" }}>{st.text}</span>
+              <span className="tab-label">{label}</span>
+              <span className={"mono " + (idle !== undefined ? "dim" : st.cls)} style={{ fontSize: "calc(10px * var(--ui-font-scale))", marginLeft: "auto" }}>{status}</span>
             </button>
             {s.state === "Disconnected" && (
               <button className="tm-act" title={t("重连该会话")} disabled={reconnecting !== null}

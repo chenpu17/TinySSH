@@ -83,7 +83,12 @@ export interface TabActivity {
   tick: (i: ActivityTickInput) => void;
 }
 
-export function createTabActivity(opts: { onIdle: (next: Record<string, number>) => void }): TabActivity {
+export function createTabActivity(opts: {
+  onIdle: (next: Record<string, number>) => void;
+  /** 会话菜单行的「正在输出」静态辉光（KI-144）：只在活跃集合的边沿（输出起/停）回调，
+   *  不逐拍进 React。标签条仍是命令式属性；这里服务的是没有标签条的移动端切换菜单。 */
+  onLive?: (sids: string[]) => void;
+}): TabActivity {
   const lastOut = new Map<string, number>(); // sid → 最近一次输出的时刻（Date.now 口径）
   const lastKey = new Map<string, number>(); // sid → 最近一次本地输入的时刻（回显窗口的起点）
   const seen = new Map<string, number>();    // sid → 最近一次被看到 / 建连的时刻
@@ -92,6 +97,7 @@ export function createTabActivity(opts: { onIdle: (next: Record<string, number>)
   const beats: Record<string, number> = {};  // 标签 key → 已放的光环圈数（测试读数）
   let idleNow: Record<string, number> = {};  // sid → 闲置分钟数
   let lastIdleCheck = 0;
+  let liveSidsNow = new Set<string>();       // 最近 LIVE_HOLD_MS 内有输出的会话（菜单行静态辉光用）
   let lastInput: ActivityTickInput = { now: 0, entries: [], sessions: [], activeSid: null, bar: null };
 
   const commitIdle = (next: Record<string, number>) => {
@@ -138,6 +144,7 @@ export function createTabActivity(opts: { onIdle: (next: Record<string, number>)
           seen: Object.fromEntries(seen),
           beats: { ...beats },
           live: [...liveKeys],
+          liveSids: [...liveSidsNow],
           idle: { ...idleNow },
         }),
         /** 把某会话的最近活动往回拨 ms 毫秒并立即重算闲置表（验证「久未输出」不必真等）。 */
@@ -195,6 +202,17 @@ export function createTabActivity(opts: { onIdle: (next: Record<string, number>)
         for (const k of live) liveKeys.add(k);
       }
       for (const k of nextBeat.keys()) if (!i.entries.some((e) => e.key === k)) nextBeat.delete(k);
+      // 菜单行的活跃集合按会话算（组标签的 key 集合帮不上逐会话的菜单行）；边沿才回调。
+      if (opts.onLive) {
+        const sids = new Set<string>();
+        for (const s of i.sessions) {
+          if ((lastOut.get(s.id) ?? 0) + LIVE_HOLD_MS > i.now) sids.add(s.id);
+        }
+        if (sids.size !== liveSidsNow.size || [...sids].some((id) => !liveSidsNow.has(id))) {
+          liveSidsNow = sids;
+          opts.onLive([...sids]);
+        }
+      }
       recomputeIdle(i);
     },
   };
