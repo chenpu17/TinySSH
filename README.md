@@ -49,6 +49,7 @@ No code-signing certificate is behind these builds, so the OS warns on first lau
 ## Features
 
 - **SSH + local terminal, equal citizens** — a pinned "This machine" entry auto-opens at startup; local sessions get the same tabs, splits, command blocks, search, and file browsing as remote ones.
+- **Session activity at a glance** — a session that is producing output gets a same-color halo on its tab's status dot; one left in the background for 30 minutes with neither output nor a visit goes hollow and reads "N min without output". Sessions you haven't switched to are counted too, and the session menu rows match the tabs.
 - **tmux, first-class** — attach remote sessions; open up to 6 side-by-side panels over one connection (one login, one 2FA); a live full-screen session wall; drag to arrange; crash-safe workspace memory with one-click restore.
 - **Embedded AI agent** — per-session chat with markdown / Mermaid / KaTeX and inline approval cards; 8 SSH tools (`exec`, `read_screen`, `read_blocks`, `wait_output`, `upload`, `download`, `transfer_status`, `send_keys`); customizable prompts & skills.
 - **Fleet orchestration** — dispatch self-contained tasks to per-session agents in parallel; the dispatcher never touches machines itself, and each target keeps its own approvals.

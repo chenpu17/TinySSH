@@ -419,6 +419,9 @@ async function main() {
   await sleep(800); // demo 通道回放首屏
   await fillTmuxDemo(page3, "s-demo-0001");
   await sleep(900);
+  // 恢复现场会再弹「会话已接入」提示与「已恢复现场」toast（各 6s 自消），等它们走掉再拍
+  await hintGone(page3);
+  await page3.waitForFunction(() => !document.querySelector(".toast"), null, { timeout: 9000 }).catch(() => {});
   await page3.mouse.move(720, 850);
   await shot(page3, "readme-tmux.png", "tmux 面板·一标签多会话");
 
