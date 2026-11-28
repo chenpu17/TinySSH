@@ -736,7 +736,7 @@ pub fn run() {
             tmux_pane_subscribe, session_state_feed, resize, subscribe_output,
             unsubscribe_output, resync_output, debug_subscriptions, output_activity,
             open_url, set_system_bars_light, has_hardware_keyboard, set_auto_orientation, keepalive_sync,
-            upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat, sftp_delete, sftp_rename,
+            upload_file, download_file, cancel_transfer, list_transfers, retry_transfer, reveal_path, open_path, submit_collision_decision, reject_expired_decision, verify_transfer_outcome, sftp_list, sftp_resolve_path, sftp_stat, sftp_delete, sftp_rename, sftp_mkdir,
             pick_upload_files, pick_save_file, pick_save_dir,
             list_forwards, start_forward, stop_forward,
             get_setting, set_setting, get_workspace, set_workspace, set_host_favorite,

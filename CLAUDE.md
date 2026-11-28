@@ -13,7 +13,7 @@ TinySSH：人机协同终端（Tauri v2 桌面应用）——SSH 客户端 + 一
 ```bash
 # 前端 demo（纯浏览器，无需 Rust）
 cd ui && npm ci && npm run dev        # http://localhost:5183
-npm test                              # UI 套件 103 spec / 2443 断言（headless；CI Linux runner 实证同一数字，含 spec 111）
+npm test                              # UI 套件 104 spec / 2545 断言（headless；103 spec / 2443 由 CI Linux runner 实证，含 spec 111；spec 112 的 102 条待 CI tier2 实证）
 npm run build                         # tsc + vite build
 
 # 桌面 / Rust

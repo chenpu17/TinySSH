@@ -1440,6 +1440,25 @@ pub fn local_remove_dir(path: &str) -> Result<()> {
     }
 }
 
+/// #29 本地建目录（**不递归**；no-clobber）。`std::fs::create_dir` 自身就是
+/// 「父目录须存在 + 目标已存在即 EEXIST」的原子 syscall（mkdir(2)），但 EEXIST 分不清
+/// 「已是同名目录」与「被文件/悬空符号链接占着」——先显式 lstat 一遍，给出与重命名
+/// 同款的「未创建」提示；lstat 不跟随链接，悬空链接也算已占。窗口内被外部进程抢建
+/// 时由 create_dir 的 EEXIST 兜底失败，绝不改动既有条目。
+pub fn local_make_dir(path: &str) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            return Err(Error::InvalidInput(format!("目标已存在，未创建：{path}")));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(Error::from_fs_err(path, &e)),
+    }
+    match std::fs::create_dir(path) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(Error::from_fs_err(path, &e)),
+    }
+}
+
 /// C5（§547/§560）任务注册表行——查询与事件的统一载荷。
 /// revision 单调递增（事件可合并，UI 按 id+revision 幂等对账；重挂后 list_transfers
 /// 拿到的每行 revision 与事件流连续）。source/dest 与方向绑定：upload 为
@@ -2248,6 +2267,17 @@ pub trait SessionApi: Send + Sync {
         new_name: String,
     ) -> Result<()>;
 
+    /// #29 文件管理：在 dir 下新建文件夹（人类专属入口）。name 是**基名**不含路径
+    /// 分隔符；不递归（父目录不存在即失败）、no-clobber（同名条目已存在即失败，
+    /// 不静默进入既有目录）。写入动作：入审计。
+    async fn sftp_mkdir(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        dir: String,
+        name: String,
+    ) -> Result<()>;
+
     // ---- 端口转发（FR-8，T42）----
     /// 列出会话的转发（任何 Actor 可查——PRD「MCP 可查询状态」口径）。
     async fn list_forwards(&self, ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>>;
@@ -2385,9 +2415,10 @@ pub const MAX_EXEC_QUEUE: usize = 8;
 /// 人类输入优先窗口：人类 2s 内有输入时，agent send_keys 延迟。
 pub const HUMAN_INPUT_PRIORITY_WINDOW: Duration = Duration::from_secs(2);
 
-/// #29 文件管理：本地删除/重命名的安全语义锁。这两条是「不撒谎、不隐式破坏」的
-/// 底线——重命名绝不静默覆盖既有目标，目录删除绝不连带子树。远端 SFTP 实现同口径
-/// （服务端裁决），这里锁的是本地唯一源（transport-pty 与 core 下载分支共用）。
+/// #29 文件管理：本地删除/重命名/建目录的安全语义锁。这几条是「不撒谎、不隐式破坏」
+/// 的底线——重命名绝不静默覆盖既有目标，目录删除绝不连带子树，建目录绝不覆盖既有
+/// 条目、也绝不连带建出父目录（KI-151）。远端 SFTP 实现同口径（服务端裁决），这里
+/// 锁的是本地唯一源（transport-pty 与 core 下载分支共用）。
 #[cfg(test)]
 mod local_fs_ops_tests {
     use super::*;
@@ -2455,6 +2486,85 @@ mod local_fs_ops_tests {
         let gone = d.join("gone");
         assert!(local_remove_dir(gone.to_str().unwrap()).is_ok());
         assert!(local_remove_file(gone.to_str().unwrap()).is_ok());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn make_dir_creates_single_level_and_never_reuses_existing() {
+        let d = tmp("mkdir");
+        let sub = d.join("sub");
+        local_make_dir(sub.to_str().unwrap()).unwrap();
+        assert!(sub.is_dir());
+        // 已有同名目录 → 拒绝（不静默「成功」进入既有目录），既有内容零改动
+        std::fs::write(sub.join("keep.txt"), "K").unwrap();
+        let again = local_make_dir(sub.to_str().unwrap());
+        assert!(
+            matches!(&again, Err(Error::InvalidInput(s)) if s.contains("目标已存在，未创建")),
+            "{again:?}"
+        );
+        assert_eq!(std::fs::read_to_string(sub.join("keep.txt")).unwrap(), "K");
+        // 被文件占着 → 拒绝，文件不动
+        let f = d.join("occupied.txt");
+        std::fs::write(&f, "F").unwrap();
+        let r = local_make_dir(f.to_str().unwrap());
+        assert!(matches!(&r, Err(Error::InvalidInput(_))), "{r:?}");
+        assert!(f.is_file());
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "F");
+        // 被悬空符号链接占着 → 同样拒绝（lstat 不跟随，不能顺手当成可建）
+        #[cfg(unix)]
+        {
+            let dangling = d.join("dangling");
+            std::os::unix::fs::symlink(d.join("nowhere"), &dangling).unwrap();
+            let r = local_make_dir(dangling.to_str().unwrap());
+            assert!(matches!(&r, Err(Error::InvalidInput(_))), "{r:?}");
+            assert!(std::fs::symlink_metadata(&dangling)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn make_dir_does_not_create_missing_parents() {
+        let d = tmp("mkdir-noparent");
+        let deep = d.join("a").join("b");
+        // 父目录不存在 → 失败，且不会隐式把整条路径造出来
+        assert!(local_make_dir(deep.to_str().unwrap()).is_err());
+        assert!(!d.join("a").exists(), "不递归：缺失的父目录不得被顺手建出");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// 目录取 canonicalize 的结果再建目录：Windows 上它是 `\\?\C:\…` 形态（只认 `\`
+    /// 作分隔符），本用例在 Windows 上走的就是这一形态——断言建出来的恰是「目录/new」，
+    /// 目录内只多这一个条目、目录的上一级没有多出任何条目（分隔符拼错时 NTFS 会把
+    /// 「new/…」整个当成一个名字建到上一级）。
+    #[test]
+    fn make_dir_lands_under_canonical_dir() {
+        let d = tmp("mkdir-canon");
+        let base = d.join("base");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = std::fs::canonicalize(&base).unwrap();
+        let to = dir.join("new");
+        local_make_dir(to.to_str().unwrap()).unwrap();
+        assert!(to.is_dir(), "应恰好建在 dir/new");
+        let names = |p: &std::path::Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(p)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(names(&dir), vec!["new".to_string()], "dir 内只多出 new");
+        assert_eq!(names(&d), vec!["base".to_string()], "上一级不得多出条目");
+        // 同一目标再建一次 → 不覆盖；既有的 new 及其内容零改动
+        std::fs::write(dir.join("new").join("keep.txt"), "K").unwrap();
+        assert!(local_make_dir(to.to_str().unwrap()).is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("new").join("keep.txt")).unwrap(),
+            "K"
+        );
         std::fs::remove_dir_all(&d).ok();
     }
 }

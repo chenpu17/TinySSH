@@ -899,6 +899,112 @@ async fn queue_busy_backpressure() {
     blocker.abort();
 }
 
+/// #29 文件管理：本机会话上走真实通路建目录。目录取 sftp_resolve_path 给出的规范
+/// 路径——Windows 上是 `\\?\C:\…` 形态（只认 `\` 作分隔符），文件面板一打开就停在
+/// 这一层。断言恰好建在「目录/名」：目录内只多这一个条目、它的上一级零残留（分隔符
+/// 拼错时 NTFS 会把「名」连同分隔符当成一个名字建到别处）、列表可见、同名再建被拒。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_sftp_mkdir_lands_in_the_panel_directory() {
+    let m = manager().await;
+    let sid = m
+        .create_session(
+            &human(),
+            CreateSessionReq {
+                host_id: "local".into(),
+            },
+        )
+        .await
+        .unwrap();
+    // 私有的上一级：系统临时目录里别的用例也在建目录，不能拿它当「零残留」的基准
+    let holder = tempfile::tempdir().unwrap();
+    let base = holder.path().join("base");
+    std::fs::create_dir(&base).unwrap();
+    let names = |p: &std::path::Path| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(p)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+
+    // 与文件面板同一链路：目录先经 sftp_resolve_path 规范化
+    let dir = m
+        .sftp_resolve_path(
+            &human(),
+            sid.clone(),
+            Some(base.to_string_lossy().into_owned()),
+        )
+        .await
+        .unwrap()
+        .canonical;
+    m.sftp_mkdir(&human(), sid.clone(), dir.clone(), "  新目录  ".into())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        names(&base),
+        vec!["新目录".to_string()],
+        "恰好建在目录之下，名称去首尾空白"
+    );
+    assert_eq!(
+        names(holder.path()),
+        vec!["base".to_string()],
+        "上一级不得多出条目"
+    );
+
+    let es = m.sftp_list(&human(), sid.clone(), &dir).await.unwrap();
+    let hit = es
+        .iter()
+        .find(|e| e.name == "新目录")
+        .expect("列表里应能看到新目录");
+    assert!(hit.is_dir);
+    assert_eq!(hit.kind, Some(EntryKind::Dir));
+
+    // 审计记下的全路径 = 规范目录 + 平台分隔符 + 名（本机通路的分隔符随平台，
+    // 不随远端 SFTP 的 `/`）
+    let sep = std::path::MAIN_SEPARATOR;
+    let page = m
+        .query_audit(
+            &human(),
+            AuditFilter {
+                action: Some("sftp_mkdir".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let created: Vec<&str> = page
+        .events
+        .iter()
+        .filter(|e| e.payload_json.get("ok") == Some(&serde_json::json!(true)))
+        .map(|e| e.command.as_deref().unwrap())
+        .collect();
+    let want = format!("{dir}{sep}新目录");
+    assert_eq!(
+        created,
+        vec![want.as_str()],
+        "审计路径：目录 + 平台分隔符 + 名"
+    );
+
+    let again = m
+        .sftp_mkdir(&human(), sid.clone(), dir.clone(), "新目录".into())
+        .await;
+    assert!(
+        matches!(&again, Err(Error::InvalidInput(ref s)) if s.contains("目标已存在，未创建")),
+        "{again:?}"
+    );
+
+    // 相对目录在入口拒收，不落到进程当前目录
+    assert!(m
+        .sftp_mkdir(&human(), sid.clone(), ".".into(), "nope-dir".into())
+        .await
+        .is_err());
+    assert!(!std::path::Path::new("nope-dir").exists());
+
+    m.close_session(&human(), sid).await.unwrap();
+}
+
 // ---- 主机指纹门（T17 路线图⑤ TOFU）：需 e2e sshd（TINYSSH_E2E_SSHD=1 + docker tinyssh-e2e）----
 
 async fn wait_pending(m: &SessionManager, host_id: &str) -> PendingHostKey {

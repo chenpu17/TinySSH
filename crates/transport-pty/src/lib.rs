@@ -1245,6 +1245,17 @@ impl ChannelHandle for LocalPtyChannel {
         let _ = &self;
         session_api::local_remove_dir(path)
     }
+
+    /// #29：本地建目录（不递归；no-clobber；语义唯一源 session_api::local_make_dir）。
+    async fn make_dir(&self, path: &str) -> Result<()> {
+        let _ = &self;
+        session_api::local_make_dir(path)
+    }
+
+    /// #29：本机通路按平台分隔符拼子路径（Windows 的规范路径 `\\?\C:\…` 只认 `\`）。
+    fn path_separator(&self) -> char {
+        std::path::MAIN_SEPARATOR
+    }
 }
 
 async fn copy_file(

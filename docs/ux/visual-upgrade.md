@@ -667,7 +667,7 @@ specs `05 06 25 80 87 89` 共 **136/136 断言通过**，覆盖文件操作、�
   - `src-tauri`：command `output_activity`（`commands/terminal.rs`，`lib.rs` 注册）。写成 `async fn`：Tauri v2 里
     非 async 的 command 跑在窗口主线程，而它每 500ms 被调一次；`sessions` 锁在各处都是「克隆句柄即放」的短临界区。
   - `ui/src/adapter`：`wire.ts` 的 `OutputActivity`、`bridge.ts` 的 `CmdArgs` / `CmdRet`（`command_parity` 逐名
-    对齐，现为 129 个命令）；`demoAgeOutput`（浏览器演示态专用探针，原生恒 false）。
+    对齐，现为 130 个命令）；`demoAgeOutput`（浏览器演示态专用探针，原生恒 false）。
   - `ui/src/terminal/activity.ts`：`remote()`、`REMOTE_POLL_MS` / `REMOTE_HOLD_MS` / `REMOTE_SETTLE_MS`、闲置表
     脏位、`liveUntil()`；帧一到就摘掉快照标记。DEV 探针 `stats()` 增 `remote`，另增 `forget(sid)`（模拟 WebView
     重建后的引擎：一帧没见过、也没对过表）。

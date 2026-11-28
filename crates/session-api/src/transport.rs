@@ -172,6 +172,22 @@ pub trait ChannelHandle: Send + Sync {
         Err(crate::Error::InvalidInput("该通路不支持目录删除".into()))
     }
 
+    /// #29 文件管理：建目录。**不递归**——父目录不存在即失败（不借建目录隐式造出
+    /// 整条路径）；**no-clobber**——目标已存在（文件/目录/符号链接皆算）即失败，
+    /// 绝不静默复用。默认不支持。
+    async fn make_dir(&self, path: &str) -> Result<()> {
+        let _ = path;
+        Err(crate::Error::InvalidInput("该通路不支持建目录".into()))
+    }
+
+    /// #29 文件管理：该通路的路径分隔符——核心把「目录 + 基名」拼成子条目全路径时
+    /// 用它。SFTP 等远端通路恒为 POSIX 的 `/`（与会话所在主机的平台无关）；本机
+    /// 通路覆写为平台分隔符——Windows 上会话目录是 canonicalize 给出的 `\\?\C:\…`
+    /// 形态，这种路径只认 `\`。
+    fn path_separator(&self) -> char {
+        '/'
+    }
+
     /// tmux 面板（一标签多 tmux 会话）：同连接上开**附加交互 PTY 通道**并执行
     /// cmd（request_pty + request_exec——与主 shell 的 request_shell 区分，命令
     /// 即通道引导期启动项，前台尚无交互程序，天然无注入难题）。通道生命周期

@@ -1792,6 +1792,49 @@ impl ChannelHandle for SshChannel {
         }
     }
 
+    /// #29：远端建目录（**不递归**——父目录不存在由服务端裁决失败；no-clobber）。
+    /// SFTP mkdir 对已存在目标本就失败，但各服务端回的状态码不一（OpenSSH 回
+    /// FAILURE 而非 SSH_FX_FILE_ALREADY_EXISTS，前端只会看到一条笼统 IO 错误），也
+    /// 分不清「同名目录」「被文件占着」「悬空链接」——故先 lstat 目标，存在即给与
+    /// 重命名同款的「未创建」提示，只有 NoSuchFile 才动手。判存在与建目录之间的
+    /// 竞态由服务端 mkdir 自身兜底（已存在必失败，既有条目不受影响）。
+    async fn make_dir(&self, path: &str) -> Result<()> {
+        let (_guard, sftp) = self.sftp_channel().await?;
+        let probe = sftp_step(sftp.symlink_metadata(path), |e| {
+            map_sftp_err("lstat", path, e)
+        })
+        .await;
+        match probe {
+            Ok(_) => {
+                let _ = sftp_step(sftp.close(), |ce| Error::Io(format!("sftp close: {ce}"))).await;
+                return Err(Error::InvalidInput(format!("目标已存在，未创建：{path}")));
+            }
+            Err(Error::SftpPathNotFound { .. }) => {}
+            Err(e) => {
+                let _ = sftp_step(sftp.close(), |ce| Error::Io(format!("sftp close: {ce}"))).await;
+                return Err(e);
+            }
+        }
+        let r = match tokio::time::timeout(
+            std::time::Duration::from_secs(SFTP_STEP_SECS),
+            sftp.create_dir(path),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                return Err(Error::Io(format!(
+                    "sftp mkdir {path}: 超时（{SFTP_STEP_SECS}s 无响应）"
+                )))
+            }
+        };
+        let _ = sftp_step(sftp.close(), |e| Error::Io(format!("sftp close: {e}"))).await;
+        match r {
+            Ok(()) => Ok(()),
+            Err(e) => Err(map_sftp_err("mkdir", path, e)),
+        }
+    }
+
     // ---- 端口转发（T42 FR-8）----
 
     async fn start_forward(&self, spec: ForwardSpec) -> Result<ForwardId> {

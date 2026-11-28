@@ -1,7 +1,9 @@
 // SFTP 面板（App.tsx 拆分③）：远端文件浏览卡、传输队列抽屉、文件动作菜单三块，
 // 从 App.tsx 原样出仓——浏览状态（路径/历史/选择/排序/筛选）、传输任务与冲突
 // 裁决、菜单开合全部留在宿主，本文件只收 props 呈现，零语义变更。
-import { useEffect, useState } from "react";
+// （#29 新增的两块内联编辑态例外：文件菜单里的重命名、导航行下的新建文件夹输入行
+// ——开合与半截输入是即时 UI 态，随所在组件卸载即丢，不进宿主。）
+import { useEffect, useRef, useState } from "react";
 import { invoke, inTauri } from "../adapter/bridge";
 import * as clipboard from "@tauri-apps/plugin-clipboard-manager";
 import type { CollisionDecision, DirEntryS, SessionBrief as Brief } from "../adapter/wire";
@@ -11,7 +13,7 @@ import { clampIntoView } from "./ctx-menus";
 import { useLongPress } from "../touch";
 import {
   IconChevronLeft, IconChevronRight, IconFolderUp, IconCopy, IconDownload, IconFile,
-  IconFolder, IconSave, IconPencil, IconRefresh, IconLocateFixed, IconTrash, IconUpload,
+  IconFolder, IconFolderPlus, IconSave, IconPencil, IconRefresh, IconLocateFixed, IconTrash, IconUpload,
 } from "../icons";
 
 // 传输抽屉最多渲染的行数（五轮架构）：超出只显示最近 N 条并如实声明省略数。
@@ -41,6 +43,10 @@ interface FilesPanelProps {
   sftpCrumbsRef: { current: HTMLDivElement | null };
   sftpListRef: { current: HTMLDivElement | null };
   sftpAnchorRef: { current: string | null };
+  /** 当前目录的即时值（新建文件夹提交与重列时读，不用渲染时闭包里的旧路径） */
+  sftpPathRef: { current: string };
+  /** 新建文件夹成功/失败的提示（与文件动作菜单同一出口） */
+  pushToast: (kind: "ok" | "err" | "info", text: string) => void;
   sftpPath: string;
   sftpPathInput: string;
   sftpEntries: DirEntryS[] | null;
@@ -85,7 +91,7 @@ interface FilesPanelProps {
 }
 
 export function FilesPanel({
-  sid, brief, connected = true, sftpWrapRef, sftpCrumbsRef, sftpListRef, sftpAnchorRef,
+  sid, brief, connected = true, sftpWrapRef, sftpCrumbsRef, sftpListRef, sftpAnchorRef, sftpPathRef, pushToast,
   sftpPath, sftpPathInput, sftpEntries, sftpLoading, sftpErr, sftpSel,
   sftpHist, sftpFwd, sftpCursor, sftpEditPath, sftpFilter, sftpShowHidden,
   sftpSaveAs, sftpSort, sftpShown, sftpListW, byPathOpen, downloadPath,
@@ -97,6 +103,10 @@ export function FilesPanel({
 }: FilesPanelProps) {
   // 触屏长按文件行 → 文件动作菜单（桌面右键的移动端等价物；下载钮等子控件除外）
   const rowLongPress = useLongPress();
+  // #29 新建文件夹输入行的开合态（面板卸载即复位）；换会话就收起——这一行始终作用
+  // 于「当前会话的当前目录」，不跨会话保留半截输入
+  const [mkdirOpen, setMkdirOpen] = useState(false);
+  useEffect(() => { setMkdirOpen(false); }, [sid]);
   return (
           <div className="section" ref={sftpWrapRef}>
             <h4>{t("远程文件")}</h4>
@@ -129,6 +139,11 @@ export function FilesPanel({
                     disabled={!brief?.cwd || sftpPath === brief.cwd}
                     onClick={() => brief?.cwd && void navigateTo(brief.cwd)}
                   ><IconLocateFixed size={13} /></button>
+                  <button className={"ghost" + (mkdirOpen ? " ts-open" : "")} title={t("新建文件夹（在当前目录；同名条目已存在会被拒绝，不覆盖）")} aria-label={t("新建文件夹")}
+                    data-testid="sftp-mkdir-btn" aria-pressed={mkdirOpen}
+                    disabled={!sftpPath || sftpLoading}
+                    onClick={() => setMkdirOpen((v) => !v)}
+                  ><IconFolderPlus size={13} /></button>
                   <button className="ghost" title={t("上传本地文件到当前目录（原生文件选择器，可多选）")} aria-label={t("上传")}
                     data-testid="sftp-upload-btn"
                     disabled={!sftpPath || sftpLoading}
@@ -207,6 +222,11 @@ export function FilesPanel({
                     />
                     <button disabled={!sid || !downloadPath.trim()} onClick={() => void startDownload()}>{t("下载")}</button>
                   </div>
+                )}
+                {mkdirOpen && sid && (
+                  <SftpMkdirRow sid={sid} sftpPathRef={sftpPathRef} sftpListRef={sftpListRef}
+                    connected={connected} loading={sftpLoading} onClose={() => setMkdirOpen(false)}
+                    loadDir={loadDir} pushToast={pushToast} />
                 )}
                 {sftpErr && <div className="err" style={{ marginTop: 6 }}>✕ {sftpErr}</div>}
                 {sftpLoading && (
@@ -290,6 +310,77 @@ export function FilesPanel({
               </>
             )}
           </div>
+  );
+}
+
+// #29 新建文件夹输入行：导航行按钮开合；回车或「创建」提交，Esc 只收起这一行（输入框
+// 聚焦期间应用键位整体让路，见 App.tsx 捕获层——Esc 不会连面板一起关）。目标目录以
+// **提交时**所在的目录为准（与上传钮同口径）。成功即收起重列；失败不收起——如实报因
+// （同名 / 权限不足 / 父目录不存在），名称留着让用户改。
+interface SftpMkdirRowProps {
+  sid: string;
+  sftpPathRef: { current: string };
+  sftpListRef: { current: HTMLDivElement | null };
+  connected: boolean;
+  loading: boolean;
+  onClose: () => void;
+  loadDir: (p: string) => Promise<boolean>;
+  pushToast: (kind: "ok" | "err" | "info", text: string) => void;
+}
+function SftpMkdirRow({ sid, sftpPathRef, sftpListRef, connected, loading, onClose, loadDir, pushToast }: SftpMkdirRowProps) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  // 请求在途时换会话：提示与重列都不落到另一个会话的浏览器上（与 loadDir 的迟到
+  // 响应纪律同口径）
+  const sidNow = useRef(sid);
+  sidNow.current = sid;
+  const norm = (p: string) => p.replace(/\/+$/, "") || "/";
+  const create = async () => {
+    const n = name.trim();
+    if (!n || busy || loading || !connected) return;
+    const s = sid;
+    const dir = norm(sftpPathRef.current);
+    if (!sftpPathRef.current) return;
+    setBusy(true);
+    try {
+      await invoke("sftp_mkdir", { sid: s, dir, name: n });
+      if (sidNow.current !== s) return;
+      onClose();
+      pushToast("ok", t("已创建文件夹 {0}", n));
+      // 重列的是**此刻**所在的目录：请求在途时用户已导航到别处的话不把人拽回去
+      const cur = sftpPathRef.current;
+      const ok = !!cur && (await loadDir(cur));
+      if (!ok || sidNow.current !== s) return;
+      // 仍在原目录：把新行滚进视野（长列表里一眼看到建在哪）。被名称筛选/隐藏项挡住
+      // 时找不到行，自然跳过——toast 已如实报了创建成功
+      if (norm(cur) !== dir) return;
+      const list = sftpListRef.current;
+      const row = list && Array.from(list.querySelectorAll<HTMLElement>(".sftp-row"))
+        .find((r) => r.getAttribute("data-name") === n);
+      row?.scrollIntoView({ block: "nearest" });
+    } catch (err) {
+      if (sidNow.current !== s) return;
+      setBusy(false);
+      pushToast("err", friendlyError(err));
+    }
+  };
+  return (
+    <div className="row xfer-input sftp-mkdir" data-testid="sftp-mkdir-box">
+      <input
+        className="mono sftp-mkdir-input" autoFocus spellCheck={false} data-testid="sftp-mkdir-input"
+        aria-label={t("新文件夹名称")} placeholder={t("新文件夹名称")}
+        title={t("在当前目录新建文件夹（回车创建，Esc 取消）")}
+        value={name} disabled={busy}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (isImeComposing(e)) return;
+          if (e.key === "Enter") { e.preventDefault(); void create(); }
+          else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); }
+        }}
+      />
+      <button data-testid="sftp-mkdir-ok" disabled={busy || loading || !connected || !name.trim()}
+        onClick={() => void create()}>{t("创建")}</button>
+    </div>
   );
 }
 

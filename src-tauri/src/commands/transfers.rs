@@ -273,3 +273,19 @@ pub(crate) async fn sftp_rename(
         .await
         .map_err(WireError::from)
 }
+
+/// #29 文件管理：在 dir 下新建文件夹（不递归、no-clobber——同名条目已存在即失败）。
+/// name 为基名。写入动作由 core 层入审计。
+#[tauri::command]
+pub(crate) async fn sftp_mkdir(
+    state: ApiState<'_>,
+    sid: String,
+    dir: String,
+    name: String,
+) -> CmdResult<()> {
+    state
+        .api
+        .sftp_mkdir(&human(), sid, dir, name)
+        .await
+        .map_err(WireError::from)
+}

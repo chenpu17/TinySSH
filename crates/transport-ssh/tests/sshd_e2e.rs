@@ -421,6 +421,97 @@ async fn sftp_list_lists_dir_entries_sorted() {
     channel.close().await.unwrap();
 }
 
+/// #29 文件管理：建目录真机契约——建得出且重列可见（目录在前）；**no-clobber**：同名
+/// 目录 / 文件 / 悬空链接皆算占位，一律拒绝并给「未创建」提示，既有条目零改动；
+/// **不递归**：父目录不存在即失败（可区别的不存在），缺失的父目录不被顺手建出。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sftp_make_dir_is_no_clobber_and_single_level() {
+    if !sshd_enabled() {
+        eprintln!("skip: TINYSSH_E2E_SSHD=1 未设置");
+        return;
+    }
+    let _sshd_guard = tinyssh_testbed::sshd_lock();
+    tinyssh_testbed::await_sshd_ready(std::time::Duration::from_secs(30)).await;
+    use session_api::transport::tokio_util_sync::CancellationToken;
+    use session_api::transport::ChannelHandle;
+
+    let channel = transport_ssh::SshChannel::connect(target(), 80, 24)
+        .await
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let opts = session_api::ExecOpts::default();
+    let exec = |cmd: &'static str| {
+        channel.exec_fresh(
+            cmd,
+            &opts,
+            std::time::Instant::now() + Duration::from_secs(15),
+            &cancel,
+        )
+    };
+    // 远端造确定起点：同名目录（内有一文件）、同名文件、同名悬空链接各一
+    exec("rm -rf /tmp/t29_mkdir && mkdir -p /tmp/t29_mkdir/taken && echo K > /tmp/t29_mkdir/taken/keep.txt && echo F > /tmp/t29_mkdir/file && ln -s missing /tmp/t29_mkdir/dangling")
+        .await
+        .unwrap();
+
+    // 建得出 → 重列可见（目录在前、名称序）
+    channel.make_dir("/tmp/t29_mkdir/fresh").await.unwrap();
+    let names: Vec<String> = channel
+        .list_dir("/tmp/t29_mkdir")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["fresh", "taken", "dangling", "file"],
+        "新建目录须在列表里：{names:?}"
+    );
+    let st = channel.stat_entry("/tmp/t29_mkdir/fresh").await.unwrap();
+    assert_eq!(st.kind, Some(session_api::EntryKind::Dir));
+    assert!(st.is_dir);
+
+    // no-clobber：三种占位都拒绝（不是「已存在就当成功」），提示可解释
+    for occupied in [
+        "/tmp/t29_mkdir/taken",
+        "/tmp/t29_mkdir/file",
+        "/tmp/t29_mkdir/dangling",
+    ] {
+        let e = channel.make_dir(occupied).await.unwrap_err();
+        assert!(
+            matches!(&e, session_api::Error::InvalidInput(ref s) if s.contains("目标已存在，未创建")),
+            "{occupied} → {e:?}"
+        );
+    }
+    // 既有条目零改动：文件内容还在、悬空链接仍是链接
+    let keep = channel
+        .stat_entry("/tmp/t29_mkdir/taken/keep.txt")
+        .await
+        .unwrap();
+    assert_eq!(keep.kind, Some(session_api::EntryKind::File));
+    assert_eq!(keep.size, Some(b"K\n".len() as u64));
+    let dang = channel.stat_entry("/tmp/t29_mkdir/dangling").await.unwrap();
+    assert_eq!(dang.kind, Some(session_api::EntryKind::Symlink));
+
+    // 不递归：父目录不存在 → 可区别的不存在；缺失的父目录不被顺手建出
+    let e = channel
+        .make_dir("/tmp/t29_mkdir/nope/child")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(e, session_api::Error::SftpPathNotFound { .. }),
+        "{e:?}"
+    );
+    let miss = channel.stat_entry("/tmp/t29_mkdir/nope").await;
+    assert!(
+        matches!(miss, Err(session_api::Error::SftpPathNotFound { .. })),
+        "父目录不得被连带建出：{miss:?}"
+    );
+
+    exec("rm -rf /tmp/t29_mkdir").await.unwrap();
+    channel.close().await.unwrap();
+}
+
 // T21（路线图⑨）：ssh-agent 认证——起一次性 agent（不碰用户真实 agent），
 // 容器 authorized_keys 临时加公钥，Agent 认证建连后跑命令，最后全部清理。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

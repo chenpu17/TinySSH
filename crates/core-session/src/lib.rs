@@ -3710,6 +3710,57 @@ impl SessionApi for SessionManager {
         r
     }
 
+    // #29 文件管理：在 dir 下新建文件夹（不递归、no-clobber）。name 是基名——与
+    // 重命名同一套校验（显式拒绝空名、. / .. 与路径分隔符，不借建目录做路径穿越）。
+    // 目标路径由当前目录拼出，dir 须为绝对路径（相对路径会落到进程/SFTP 初始目录，
+    // 不是用户看到的那一层）。写入动作入审计。
+    async fn sftp_mkdir(
+        &self,
+        ctx: &Actor,
+        sid: SessionId,
+        dir: String,
+        name: String,
+    ) -> Result<()> {
+        if !ctx.is_human() {
+            return Err(Error::InvalidInput("sftp_mkdir 仅人类文件管理入口".into()));
+        }
+        let n = name.trim();
+        if n.is_empty() || n == "." || n == ".." || n.contains('/') || n.contains('\\') {
+            return Err(Error::InvalidInput(format!("文件夹名称无效：{name}")));
+        }
+        // dir 须为绝对路径：POSIX 以 `/` 开头；本机 Windows 会话的目录是 canonicalize
+        // 给出的 `\\?\C:\…` 形态（盘符 `C:\`、UNC `\\server\share` 同理），同样算绝对。
+        // 只带盘符的 `C:foo` 是「C 盘当前目录」下的相对路径，照拒。
+        let b = dir.as_bytes();
+        let drive_abs = b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && matches!(b[2], b'/' | b'\\');
+        if !(dir.starts_with('/') || dir.starts_with(r"\\") || drive_abs) {
+            return Err(Error::InvalidInput(format!("路径无效：{dir}")));
+        }
+        let h = self.get(&sid)?;
+        // 路径语法属于通路（远端恒 POSIX，本机随平台）：分隔符向通道要，基名是单段
+        // 字面量，直接接在目录后面
+        let sep = h.channel.path_separator();
+        let base = dir.trim_end_matches(['/', sep]);
+        let to = if base.is_empty() {
+            format!("{sep}{n}")
+        } else {
+            format!("{base}{sep}{n}")
+        };
+        let r = h.channel.make_dir(&to).await;
+        let _ = self.center.audit.append(
+            ctx,
+            "sftp_mkdir",
+            Some(&sid),
+            Some(&to),
+            serde_json::json!({ "path": to, "ok": r.is_ok() }),
+            None,
+        );
+        r
+    }
+
     // ---- 端口转发（FR-8，T42/T44）：人类直建；Agent 经逐段审批（V1 收口）；
     // 查询任何 Actor 可用（PRD「MCP 可查询状态」）。转发是持续存在的动作，审计留痕。----
     async fn list_forwards(&self, _ctx: &Actor, sid: SessionId) -> Result<Vec<ForwardInfo>> {
@@ -8027,6 +8078,10 @@ mod restore_tests;
 #[cfg(test)]
 #[path = "r26_tests.rs"]
 mod r26_tests;
+
+#[cfg(test)]
+#[path = "r29_tests.rs"]
+mod r29_tests;
 
 #[cfg(test)]
 #[path = "r30_tests.rs"]

@@ -2079,6 +2079,9 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .drop-icon { display: flex; justify-content: center; color: var(--accent); margin-bottom: 6px; }
 .xfer-input { margin-bottom: 2px; }
 .xfer-input input { flex: 1; min-width: 0; }
+/* #29 新建文件夹输入行：与「按路径下载」行同一套输入行语言；与上一行（工具行或
+   按路径下载行）留一点呼吸，两行同开时不贴在一起 */
+.sftp-mkdir { margin-top: 4px; }
 .xfer-row { margin-top: 6px; flex-wrap: nowrap; }
 .xfer-dir { flex: none; width: 18px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
 .xfer-dir.up { color: var(--ok); }

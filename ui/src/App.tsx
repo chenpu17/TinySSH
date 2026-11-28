@@ -6167,9 +6167,11 @@ export default function App() {
       // tmux 新建会话作曲行（.tmux-create-input）是整段全拦（含 Esc）：Esc 在
       // 这里是「取消作曲」，走 keymap 浮层链会连菜单一起关掉
       if (document.activeElement?.classList.contains("tmux-create-input")) return;
-      // #29 文件重命名输入（.sftp-rename-input）同款整段全拦（含 Esc）：Esc 在这里
-      // 是「取消重命名」，走 keymap 浮层链会连整个动作菜单一起关掉
-      if (document.activeElement?.classList.contains("sftp-rename-input")) return;
+      // #29 文件重命名输入（.sftp-rename-input）与新建文件夹输入（.sftp-mkdir-input）
+      // 同款整段全拦（含 Esc）：Esc 在这里是「取消这一行输入」，走 keymap 浮层链会连
+      // 整个动作菜单一起关掉（或被别的浮层先消费掉）
+      if (document.activeElement?.classList.contains("sftp-rename-input")
+        || document.activeElement?.classList.contains("sftp-mkdir-input")) return;
       if (a.id !== "esc" && document.activeElement?.classList.contains("tw-input")) return;
       // 墙键入态（.tw-input 聚焦）的 Esc 归会话：窗口捕获先于墙自己的 document
       // 监听，若在这里走浮层链会把墙关掉（Esc 送 vim 的语义当场丢失）。
@@ -11588,7 +11590,7 @@ export default function App() {
               sid={sid} brief={brief}
               connected={!current || current.state === "Connected" || current.state === "Reconfirming"}
               sftpWrapRef={sftpWrapRef} sftpCrumbsRef={sftpCrumbsRef}
-              sftpListRef={sftpListRef} sftpAnchorRef={sftpAnchorRef}
+              sftpListRef={sftpListRef} sftpAnchorRef={sftpAnchorRef} sftpPathRef={sftpPathRef} pushToast={pushToast}
               sftpPath={sftpPath} sftpPathInput={sftpPathInput}
               sftpEntries={sftpEntries} sftpLoading={sftpLoading} sftpErr={sftpErr}
               sftpSel={sftpSel} sftpHist={sftpHist} sftpFwd={sftpFwd} sftpCursor={sftpCursor}

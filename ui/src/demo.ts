@@ -285,10 +285,14 @@ const demoState = {
   settings: new Map<string, string>(),
   // C4（R30）C02 判别钩子：预置 sftp_list 慢响应（path 命中即延迟 ms）
   sftpSlow: null as { path: string; ms: number } | null,
-  // #29 文件管理：删除/重命名的改动叠加层。demo 目录树每次 sftp_list 重建，故改动
-  // 记在这里由 demoSftpTree() 统一套用——与真实后端「改动落盘后重列可见」同语义。
+  // #29 文件管理：删除/重命名/新建文件夹的改动叠加层。demo 目录树每次 sftp_list
+  // 重建，故改动记在这里由 demoSftpTree() 统一套用——与真实后端「改动落盘后重列
+  // 可见」同语义。
   sftpDeleted: [] as string[],
   sftpRenamed: [] as { from: string; to: string }[],
+  // 新建的文件夹：创建时的路径 + 当时已有的改名/删除条数。只有其后发生的改名/
+  // 删除才作用到它（目录被改名后原路径重建的，不随那次旧改名迁走）。
+  sftpMkdirs: [] as { path: string; ren: number; del: number }[],
   // C5（R32）演示传输注册表（创建倒序；真实核心同契约）
   transfers: [] as DemoTransfer[],
   // C6/R33（§353-355）原生选择器模拟：demo 域无真实对话框，由探针经 demo_pick_result
@@ -488,7 +492,7 @@ if (typeof location !== "undefined" && location.search.includes("failhosts")) {
 }
 
 // C10：live 帧格式 = <u64 LE seq（8 字节头）><原始字节>（与桥层一致，UI 剥头取 seq）
-// ---- #29 文件管理：demo SFTP 目录树（基树 + 删除/重命名叠加层）----
+// ---- #29 文件管理：demo SFTP 目录树（基树 + 删除/重命名/新建文件夹叠加层）----
 // 基树内容原样保留（既有 spec 依赖其精确条目）；叠加层只改「已删除/已改名」的
 // 可见面，与真实后端同语义：删除后重列不见、改名后旧名消失新名出现、目录改名
 // 子树随迁。每次调用重建基树，故叠加层是唯一持久态（不落盘，刷新页面即复位）。
@@ -559,7 +563,7 @@ function demoSftpBaseTree(): Record<string, DemoEnt[]> {
     "/var/private": [],
   };
 }
-/** 基树套用删除/重命名叠加层后的有效目录树（sftp_list/stat/resolve 共用同一真源）。 */
+/** 基树套用删除/重命名/新建文件夹叠加层后的有效目录树（sftp_list/stat/resolve 共用同一真源）。 */
 function demoSftpTree(): Record<string, DemoEnt[]> {
   const base = demoSftpBaseTree();
   const baseName = (p: string) => p.slice(p.lastIndexOf("/") + 1);
@@ -582,7 +586,31 @@ function demoSftpTree(): Record<string, DemoEnt[]> {
       if (k === p || k.startsWith(p + "/")) delete base[k];
     }
   }
+  // 新建文件夹并入父目录（父键缺失则建键：嵌套新建、根下新建）。符号链接镜像路径
+  // 各算各的键（与删除叠加层同口径）：经 latest/ 新建的不会同时出现在 archive/ 下。
+  for (const cur of demoSftpMkdirPaths()) {
+    const arr = (base[parentOf(cur)] ??= []);
+    const nm = baseName(cur);
+    if (!arr.some((x) => x.name === nm)) {
+      arr.push({ name: nm, is_dir: true, kind: "dir", size: null, mtime: Math.floor(Date.now() / 1000) });
+    }
+    base[cur] ??= [];
+  }
   return base;
+}
+/** 新建文件夹在有效树里的当前路径：只折算其创建**之后**发生的改名（祖先或自身被
+ *  改名则随迁），其后被删除的（自身或祖先）不出现；按深度升序，嵌套新建时父先就位。 */
+function demoSftpMkdirPaths(): string[] {
+  const out: string[] = [];
+  for (const m of demoState.sftpMkdirs) {
+    let cur = m.path;
+    for (const { from, to } of demoState.sftpRenamed.slice(m.ren)) {
+      if (cur === from || cur.startsWith(from + "/")) cur = to + cur.slice(from.length);
+    }
+    if (demoState.sftpDeleted.slice(m.del).some((d) => cur === d || cur.startsWith(d + "/"))) continue;
+    out.push(cur);
+  }
+  return out.sort((a, b) => a.split("/").length - b.split("/").length);
 }
 /** 路径在有效树里是否为已知目录（含祖先目录；符号链接镜像路径按树键计）。 */
 function demoSftpIsDir(p: string): boolean {
@@ -2551,9 +2579,12 @@ case "read_triggers": {
         else parts.push(seg);
       }
       const norm = "/" + parts.join("/");
-      // #29：删除/改名后的路径以有效树为准（know 集只覆盖未改动的基树面）
-      const gone = demoState.sftpDeleted.some((d) => norm === d || norm.startsWith(d + "/"))
-        || demoState.sftpRenamed.some((r) => norm === r.from || norm.startsWith(r.from + "/"));
+      // #29：删除/改名后的路径以有效树为准（know 集只覆盖未改动的基树面）。新建的
+      // 文件夹（及其下路径）只看其创建之后的删除/改名——删掉空目录后原地重建的，
+      // 不能仍被那次旧删除判成「已删」
+      const fresh = demoSftpMkdirPaths().some((c) => norm === c || norm.startsWith(c + "/"));
+      const gone = !fresh && (demoState.sftpDeleted.some((d) => norm === d || norm.startsWith(d + "/"))
+        || demoState.sftpRenamed.some((r) => norm === r.from || norm.startsWith(r.from + "/")));
       if (gone || !(know.has(norm) || demoSftpExists(norm))) {
         throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
       }
@@ -2564,11 +2595,13 @@ case "read_triggers": {
     case "sftp_stat": {
       const p = String(args?.path ?? "").replace(/\/+$/, "") || "/";
       // #29 叠加层先判：已删/改名前的旧名 → not_found（须在 symlinks 基表之前，
-      // 否则删掉的链接仍会被基表答出来）；改名后的新名 → 按有效树呈示。
-      const gone = demoState.sftpDeleted.some((d) => p === d || p.startsWith(d + "/"))
-        || demoState.sftpRenamed.some((r) => p === r.from || p.startsWith(r.from + "/"));
+      // 否则删掉的链接仍会被基表答出来）；改名后的新名 → 按有效树呈示。新建的
+      // 文件夹（及其下路径）只看其创建之后的删除/改名（与 resolve 同口径）
+      const fresh = demoSftpMkdirPaths().some((c) => p === c || p.startsWith(c + "/"));
+      const gone = !fresh && (demoState.sftpDeleted.some((d) => p === d || p.startsWith(d + "/"))
+        || demoState.sftpRenamed.some((r) => p === r.from || p.startsWith(r.from + "/")));
       if (gone) throw apiError("sftp_path_not_found", `演示模式：路径不存在（${p}）`, { path: p });
-      if (demoState.sftpRenamed.some((r) => p === r.to || p.startsWith(r.to + "/"))) {
+      if (fresh || demoState.sftpRenamed.some((r) => p === r.to || p.startsWith(r.to + "/"))) {
         const eff = demoSftpTree();
         if (p in eff) return { canonical: p, kind: "dir", is_dir: true, size: null, mtime: 1790870400, symlink_target: null };
         const ent = (eff[parentOfDemo(p)] ?? []).find((x) => x.name === p.slice(p.lastIndexOf("/") + 1));
@@ -2631,6 +2664,38 @@ case "read_triggers": {
       if (demoSftpExists(to)) throw apiError("invalid_input", `目标已存在，未覆盖：${to}`, { path: p });
       demoState.sftpRenamed.push({ from: p, to });
       audit("human", "sftp_rename", null, null, String(args?.sid ?? ""), { from: p, to, ok: true });
+      return null;
+    }
+    // #29 文件管理：新建文件夹（人类专属入口）。语义对齐后端 sftp_mkdir：name 为
+    // 基名（拒空名/./../路径分隔符）、不递归（父目录不存在即失败）、no-clobber
+    // （同名条目已存在即失败——文件/符号链接也算占位，不静默进入既有目录）、写入
+    // 动作入审计。改动落叠加层，重列目录即可见。
+    case "sftp_mkdir": {
+      const dir = String(args?.dir ?? "");
+      const name = String(args?.name ?? "");
+      const n = name.trim();
+      if (!n || n === "." || n === ".." || n.includes("/") || n.includes("\\")) {
+        throw apiError("invalid_input", `文件夹名称无效：${name}`, { path: dir });
+      }
+      // dir 须为绝对路径，口径同后端：POSIX 以 `/` 开头，或 Windows 形态（canonicalize
+      // 给的 `\\?\C:\…`、盘符 `C:\`、UNC `\\server\share`）。只带盘符的 `C:foo` 是「C 盘
+      // 当前目录」下的相对路径，照拒
+      const driveAbs = /^[A-Za-z]:[\\/]/.test(dir);
+      if (!(dir.startsWith("/") || dir.startsWith("\\\\") || driveAbs)) {
+        throw apiError("invalid_input", `路径无效：${dir}`, { path: dir });
+      }
+      // 根目录 trim 后是空串，拼出来正好是 "/名称"
+      const to = dir.replace(/\/+$/, "") + "/" + n;
+      if (to === "/var/private" || to.startsWith("/var/private/")) {
+        throw apiError("sftp_permission_denied", "演示模式：权限不足（/var/private）", { path: to });
+      }
+      if (demoSftpExists(to)) throw apiError("invalid_input", `目标已存在，未创建：${to}`, { path: to });
+      const parent = parentOfDemo(to);
+      if (parent !== "/" && !(parent in demoSftpTree())) {
+        throw apiError("sftp_path_not_found", `演示模式：路径不存在（${parent}）`, { path: to });
+      }
+      demoState.sftpMkdirs.push({ path: to, ren: demoState.sftpRenamed.length, del: demoState.sftpDeleted.length });
+      audit("human", "sftp_mkdir", null, null, String(args?.sid ?? ""), { path: to, ok: true });
       return null;
     }
     // C02 判别钩子注册（R30）：{ path, ms } 预置后 sftp_list 命中该路径即延迟

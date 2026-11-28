@@ -1129,6 +1129,12 @@ const EN: Record<string, string> = {
   "删除（点击后需再确认一次；目录非空不会被删除）":
     "Delete (requires a second click; non-empty directories are not deleted)",
   "再点一次确认删除（不可撤销）": "Click again to confirm deletion (cannot be undone)",
+  "新建文件夹": "New folder",
+  "新建文件夹（在当前目录；同名条目已存在会被拒绝，不覆盖）":
+    "New folder (in the current directory; an existing entry of the same name is rejected, never overwritten)",
+  "新文件夹名称": "New folder name",
+  "在当前目录新建文件夹（回车创建，Esc 取消）": "New folder in the current directory (Enter to create, Esc to cancel)",
+  "已创建文件夹 {0}": "Created folder {0}",
   "空目录。": "Empty directory.",
   "无匹配项（名称筛选或隐藏项过滤）。": "No matches (name filter or hidden filter).",
   "目录过大，仅显示前 5000 项——用名称筛选或进入子目录。": "Directory too large — showing the first 5000 entries; filter by name or enter subdirectories.",
