@@ -1,7 +1,7 @@
 // 110 会话菜单行的活跃度同步（KI-144）：桌面「标签列表」与移动端切换器共用的
 // sessionMenuRows 此前只显连接状态，标签条上的「正在输出 / 久未输出」在菜单里看不到；
 // 移动端不显示标签条，这个特性在手机上完全缺席。本 spec 断言菜单行与标签同一口径：
-//   ① 久未输出——空心点、非当前行文字退一档、状态列改报「N 分钟无输出」，悬停回常规对比；
+//   ① 久未输出——空心点、非当前行文字与状态列退一档、状态列改报「N 分钟无输出」，悬停回常规对比；
 //   ② 正在输出——静态辉光（8px），不挂光环载体、不跑动画；输出停下即摘；
 //   ③ 活动行 / 已断开行不判闲置；④ 手机竖屏（含 125% 字号）菜单不越视口、无横向溢出。
 // 读数走 DEV 探针 window.__t_activity（age 把最近活动往回拨，不必真等 30 分钟）。
@@ -35,7 +35,9 @@ const rowOf = (page, sid, sel) => page.evaluate(({ sid, sel }) => {
     dotShadow: dot ? cs(dot).boxShadow : null,
     dotAnims: dot && dot.getAnimations ? dot.getAnimations().length : -1,
     labelColor: label ? cs(label).color : null,
+    labelTransition: label ? cs(label).transitionDuration : null,
     status: mono ? mono.textContent.trim() : null,
+    statusColor: mono ? cs(mono).color : null,
     title: row.querySelector(".tm-main")?.getAttribute("title") ?? null,
     ping: !!row.querySelector(".tab-ping"),
   };
@@ -129,6 +131,8 @@ module.exports = {
     ck.eq("实心点变空心（背景透明）", r.dotBg, "rgba(0, 0, 0, 0)");
     ck.check("点内留 1.5px 的环", r.dotShadow.includes("1.5px inset"), r.dotShadow);
     ck.eq("非当前行文字退一档", r.labelColor, dim);
+    ck.eq("状态列文字同步退一档", r.statusColor, dim);
+    ck.check("菜单行文字换色有 120ms 过渡", (r.labelTransition || "").includes("0.12s"), r.labelTransition);
     ck.check("活动行不判闲置", !(await rowOf(page, activeSid, DESK)).idle);
     const dead = await rowOf(page, SID_DEAD, DESK);
     ck.check("已断开行不判闲置且仍报已断开", !dead.idle && dead.status === "已断开", JSON.stringify(dead));
@@ -160,6 +164,7 @@ module.exports = {
     ck.check("菜单行不挂光环载体", !r.ping);
     ck.eq("状态点不跑动画", r.dotAnims, 0);
     ck.eq("状态列回到已连接", r.status, "已连接");
+    ck.eq("闲置解除后状态列回到状态色", r.statusColor, await cssVar(page, DESK, "--ok"));
     ck.check("输出期间不判闲置", !r.idle, JSON.stringify(r));
     // 后台停表（Ctrl+C 直打 demo）：统计行是最后一帧输出，随后辉光自然摘除
     await bgKey(page, SID_AGENT, "\x03");
@@ -192,6 +197,7 @@ module.exports = {
         ck.eq("手机：状态列报无输出时长", mr.status, "31 分钟无输出");
         ck.eq("手机：实心点变空心", mr.dotBg, "rgba(0, 0, 0, 0)");
         ck.eq("手机：非当前行文字退一档", mr.labelColor, mdim);
+        ck.eq("手机：状态列文字退一档", mr.statusColor, mdim);
         let mg = await menuGeom(mp, MOB);
         ck.check("手机竖屏菜单不越视口", mg.r <= mg.vw && mg.b <= mg.vh && mg.l >= 0, JSON.stringify(mg));
         ck.check("手机竖屏菜单无横向溢出", mg.sw <= mg.cw, JSON.stringify(mg));
