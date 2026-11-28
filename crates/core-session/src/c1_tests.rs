@@ -427,11 +427,20 @@ async fn cancel_events_carry_terminal_phase_only() {
         CancelOutcome::Cancelled
     ));
     wait_phase(&m, &info.attempt_id, |p| *p == AttemptPhase::Cancelled, 200).await;
+    // 相位先落、事件后发：受理路径先 settle(Cancelled)，隔着一条审计落库才 emit_conn
+    // ——看到终态相位不等于事件已进广播通道，只排空一次会偶发读到空（满载 runner
+    // 上实锤）。轮询到这条 attempt 的终态事件到达为止，预算与 wait_phase 相同。
     let mut phases = vec![];
-    while let Ok(ev) = rx.try_recv() {
-        if ev.attempt_id == info.attempt_id {
-            phases.push(ev.phase);
+    for _ in 0..200 {
+        while let Ok(ev) = rx.try_recv() {
+            if ev.attempt_id == info.attempt_id {
+                phases.push(ev.phase);
+            }
         }
+        if phases.contains(&AttemptPhase::Cancelled) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(
         phases.contains(&AttemptPhase::Cancelled),
