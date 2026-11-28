@@ -21,16 +21,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # 上传与部署必须分两个 job：deploy-pages 走 Actions API 按 run 取产物，同一个 job 里
+  # 上传完不到半秒就去查，产物还没进索引就报「No artifacts named "github-pages"」
+  # （2026-11-24、2026-11-28 两次 push 触发都栽在这里，KI-150）；隔一个 job 边界才查得到
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: website
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
