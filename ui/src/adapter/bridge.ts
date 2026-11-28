@@ -72,6 +72,7 @@ interface CmdArgs {
   unsubscribe_output: { sid: string; subscriptionId: string };
   resync_output: { sid: string; subscriptionId: string; fromSeq: number | null };
   debug_subscriptions: undefined;
+  output_activity: undefined;
   open_url: { url: string };
   set_system_bars_light: { light: boolean };
   // 移动端外接键盘探测（USB/蓝牙/OTG）：无参，true=硬件键盘在线（辅助键条隐藏、
@@ -232,6 +233,7 @@ interface CmdRet {
   unsubscribe_output: void;
   resync_output: wire.ResyncOutput;
   debug_subscriptions: wire.DebugSubscriptions;
+  output_activity: wire.OutputActivity[];
   open_url: void;
   set_system_bars_light: void;
   has_hardware_keyboard: boolean;
@@ -338,3 +340,8 @@ export const invoke = async <K extends CmdName>(
   if (inTauri) return tauri.invoke(cmd, args) as Promise<CmdRet[K]>;
   return demo.invoke(cmd, args) as Promise<CmdRet[K]>;
 };
+
+/** dev 探针（浏览器演示态专用，原生恒 false）：把 demo 某会话的「最近输出时刻」往回拨。
+ *  只给 spec 模拟「没点开过的会话久未输出」用（KI-148）——真实后端没有这个口。 */
+export const demoAgeOutput = (sid: string, ms: number): boolean =>
+  !inTauri && demo.demoAgeOutput(sid, ms);

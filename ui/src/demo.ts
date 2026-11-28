@@ -157,6 +157,9 @@ type DemoSession = {
   seq: number;
   ring: { seq: number; data: Uint8Array }[];
   subs: Set<string>;
+  /** KI-148：最近一次输出的时刻（Date.now 口径；真实核心 SessionHandle.last_output_ms
+   *  同语义）。初值 = 建连——「建连算一次活动」；pushTo 每出一帧刷新，不看有没有订阅者。 */
+  lastOutAt: number;
   // 端口转发（T42 FR-8）：spec 为外部标签枚举（Local/Remote/Dynamic），wire 同口径；
   // demo 无法真实监听端口——仅做注册表状态演示，state 恒 "Listening"
   forwards: { id: string; spec: Record<string, Record<string, unknown>>; state: string; error: string | null }[];
@@ -336,7 +339,7 @@ const demoState = {
       transitions: [{ ts: "2026-09-27T14:02:11Z", what: "人类接管（交接前未开始的请求全部作废）" }],
       out: "ops@prod-1:~$ df -h\r\nFilesystem  Size  Used Avail Use% Mounted on\r\n/dev/vda1    40G   37G  3.1G  93% /\r\nops@prod-1:~$ ",
       handlers: [] as Handler[],
-      seq: 0, ring: [], subs: new Set<string>(),
+      seq: 0, ring: [], subs: new Set<string>(), lastOutAt: Date.now(),
       forwards: [],
       // tmux 联动 fixture：demo 主机出厂带 tmux 3.2a（真实侧建连后静默探测）
       tmux: { available: true, version: "3.2a", sessions: [{ name: "work", windows: 2, attached: 1, id: "$1" }] },
@@ -350,7 +353,7 @@ const demoState = {
       transitions: [],
       out: "ops@staging-1:~$ ",
       handlers: [] as Handler[],
-      seq: 0, ring: [], subs: new Set<string>(),
+      seq: 0, ring: [], subs: new Set<string>(), lastOutAt: Date.now(),
       forwards: [],
       // tmux 联动 fixture：断线会话带两个会话——断线横幅内联挑选列表的走查面
       //（真实侧语义：探测失败保留上次结果，此处预置即「断线前仍在运行」的清单）
@@ -621,6 +624,9 @@ function pushTo(sid: string, text: string) {
   // 累到任意大。检查点合成只用最后 32 行，256KB 尾部窗口绰绰有余，超限截尾。
   if (s.out.length > 256 * 1024) s.out = s.out.slice(-128 * 1024);
   s.seq += 1;
+  // KI-148：最近输出时刻与帧同点记（真实核心在 feed_output_fn 的线性化点里记），
+  // 没订阅者也一样——output_activity 快照据此给没点开过的会话报活跃度
+  s.lastOutAt = Date.now();
   const raw = encoder.encode(text);
   s.ring.push({ seq: s.seq, data: raw });
   if (s.ring.length > 8192) s.ring.shift();
@@ -1182,7 +1188,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
       // C2（B01/R24）：人类新建会话**默认由 Human 控制**（构造期定 owner）。demo 此前
       // 一律 Agent-owned——那会让「首次委托」在演示域永不出现（R42 对齐真实核心修正）。
-      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: h.address === "local" ? "local" : "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+      demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: h.address === "local" ? "local" : "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), lastOutAt: Date.now(), forwards: [] });
       // 本轮：历史表打点对齐真实核心 record_session（关闭不删，recents 全历史派生）
       demoState.sessionHistory.push({ host_id: h.id, kind: h.address === "local" ? "local" : "ssh", created_at: new Date().toISOString() });
       audit("human", "session_created", null, null, sid);
@@ -1780,6 +1786,12 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       };
       return d;
     }
+    case "output_activity": {
+      // KI-148 镜像：每个在册会话距最近一次输出多久（毫秒；尚无输出则距建连）。
+      // 全部在册会话都报，不按状态、不按有没有订阅者筛——筛选在前端
+      const now = Date.now();
+      return demoState.sessions.map((s) => ({ session_id: s.id, idle_ms: Math.max(0, now - s.lastOutAt) }));
+    }
     case "session_brief": {
       const bs = demoState.sessions.find((x) => x.id === args?.sid);
       const cwd = demoState.briefCwdOverride === undefined ? "/var/log/nginx" : demoState.briefCwdOverride;
@@ -2366,7 +2378,7 @@ case "read_triggers": {
           if (h.address === "10.0.0.12") throw apiError("auth_failed", "AuthFailed（演示：认证失败）");
           // 与 create_session 同构建会话（同步快路径）
           const sid = "s-demo-" + String(demoSeq++).padStart(4, "0");
-          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: h.address === "local" ? "local" : "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), forwards: [] });
+          demoState.sessions.push({ id: sid, host_id: h.id, host_name: h.name, kind: h.address === "local" ? "local" : "ssh", state: "Connected", control_owner: "Human", created_at: new Date().toISOString(), host_snapshot: hostSnapOf(h), goal: null, ever_agent_owned: false, transitions: [], out: `ops@${h.name}:~$ `, handlers: [], seq: 0, ring: [], subs: new Set<string>(), lastOutAt: Date.now(), forwards: [] });
           // tmux 联动镜像（attempt 路径，与 create_session 分支同构）：启动命令回显
           //（真实核心于提示符处执行、回显可见是设计使然）；SSH 会话预置 tmux fixture
           const sessNew = demoState.sessions.find((x) => x.id === sid)!;
@@ -3057,6 +3069,16 @@ case "read_triggers": {
 export async function listen(_event: string, _handler: Handler): Promise<() => void> {
   // 浏览器演示模式不投递 Tauri 事件（审批/指纹队列经 invoke 轮询兜底）
   return () => {};
+}
+
+/** dev 探针（spec 专用，经 window.__demoAgeOutput 调用；真实后端没有这个口）：把某会话
+ *  的「最近输出时刻」往回拨 ms 毫秒——验证没点开过的会话「久未输出」不必真等（KI-148）。
+ *  返回会话在不在。 */
+export function demoAgeOutput(sid: string, ms: number): boolean {
+  const s = demoState.sessions.find((x) => x.id === sid);
+  if (!s) return false;
+  s.lastOutAt -= ms;
+  return true;
 }
 
 export class ChannelShim {

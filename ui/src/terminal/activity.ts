@@ -14,6 +14,13 @@
 // 「有动静」本身就是信息（单字符转圈的进度也算）。
 // 「看过」也算活动：切到某标签即记一笔，活动标签不判闲置。
 //
+// 没点开过的标签走另一条路（KI-148）：输出帧只发给订阅者，而订阅在点开标签时才建（终端
+// 懒挂载），没点开过的已连接会话一帧都收不到——照上面记，它永不出光环，满 30 分钟必被
+// 误报「N 分钟无输出」（Android 活动重建后只回接上次的标签、广播输入里没点开的目标、
+// Agent 建的会话都会碰到）。这类会话由后端快照记账（remote）：核心在产生每一帧的同一点
+// 记着「最近一次输出时刻」，前端低频取「距上次输出多久」。点开之后帧接管，快照不再过问
+// ——回显静默那些细则只在那条路上有。
+//
 // 光环用 WAAPI 一拍一拍地放，而不是挂 class 跑 infinite 动画：
 //  · 动画有限、自然收尾——输出停下时光环不会在半圈上被掐断；
 //  · 每拍只碰状态点里那一个节点，不为节拍整树重渲染（标签结构仍全归 React）。
@@ -29,6 +36,15 @@ export const ECHO_MS = 600;
 export const TICK_MS = 250;
 export const IDLE_AFTER_MS = 30 * 60_000;
 export const IDLE_CHECK_MS = 15_000;
+/** 向后端取「每个会话距最近一次输出多久」的间隔（KI-148）。只在有没订阅的已连接会话时轮询。 */
+export const REMOTE_POLL_MS = 500;
+/** 快照记账的活跃保持比帧记账多留一个轮询周期：刚出的输出最晚要一个周期后才被看到，
+ *  不留的话 1 秒一行的慢周期输出每次都会熄 200ms 左右。留了之后「周期不超过
+ *  LIVE_HOLD_MS 即连续」与帧记账是同一个判据。 */
+const REMOTE_HOLD_MS = LIVE_HOLD_MS + REMOTE_POLL_MS;
+/** 快照与手头记账差这么多以内算同一次输出的重复上报（差的只是往返抖动），什么都不动。
+ *  取小不取大：两次输出隔得比它近时后一次被略过，最近输出时刻最多滞后这么点，无关痛痒。 */
+const REMOTE_SETTLE_MS = 250;
 
 /** 标签条目（App.tsx 的 TabEntry 的结构子集：只读 key 与成员 id）。 */
 export type ActivityTabEntry =
@@ -77,6 +93,9 @@ export interface TabActivity {
   keyed: (sid: string) => void;
   /** 输出帧到达；visible 表示这个终端此刻在屏幕上（见文件头）。 */
   note: (sid: string, visible: boolean) => void;
+  /** 后端快照：这个会话距最近一次活动（输出；尚无输出则建连）多久。只对没有输出订阅的
+   *  会话调用（见文件头「没点开过的标签」）；调用之后这个会话归快照记账，直到帧到达。 */
+  remote: (sid: string, ageMs: number) => void;
   /** 用户看到了这个会话（切到 / 切走标签）：闲置即刻解除。 */
   touch: (sid: string) => void;
   /** 节拍：由 App 的定时器每 TICK_MS 调一次。 */
@@ -95,6 +114,8 @@ export function createTabActivity(opts: {
   const nextBeat = new Map<string, number>(); // 标签 key → 下一拍最早时刻
   const liveKeys = new Set<string>();
   const beats: Record<string, number> = {};  // 标签 key → 已放的光环圈数（测试读数）
+  const remoteFed = new Set<string>();       // 最近一次活动来自后端快照的会话
+  let idleDirty = false;                     // 快照改了记账：下一次节拍不等低频重算
   let idleNow: Record<string, number> = {};  // sid → 闲置分钟数
   let lastIdleCheck = 0;
   let liveSidsNow = new Set<string>();       // 最近 LIVE_HOLD_MS 内有输出的会话（菜单行静态辉光用）
@@ -105,9 +126,14 @@ export function createTabActivity(opts: {
     opts.onIdle(next);
   };
 
+  /** 这个会话的活跃保持到何时（快照记账的多留一个轮询周期，见 REMOTE_HOLD_MS）。 */
+  const liveUntil = (sid: string): number =>
+    (lastOut.get(sid) ?? 0) + (remoteFed.has(sid) ? REMOTE_HOLD_MS : LIVE_HOLD_MS);
+
   // 闲置表低频重算：一分钟才换一次读数（title 里的分钟数），没必要每拍算
   const recomputeIdle = (i: ActivityTickInput, force = false) => {
-    if (!force && i.now - lastIdleCheck < IDLE_CHECK_MS) return;
+    if (!force && !idleDirty && i.now - lastIdleCheck < IDLE_CHECK_MS) return;
+    idleDirty = false;
     lastIdleCheck = i.now;
     const next: Record<string, number> = {};
     const alive = new Set<string>();
@@ -122,6 +148,7 @@ export function createTabActivity(opts: {
     for (const id of lastOut.keys()) if (!alive.has(id)) lastOut.delete(id);
     for (const id of lastKey.keys()) if (!alive.has(id)) lastKey.delete(id);
     for (const id of seen.keys()) if (!alive.has(id)) seen.delete(id);
+    for (const id of remoteFed) if (!alive.has(id)) remoteFed.delete(id);
     if (!sameRecord(idleNow, next)) commitIdle(next);
   };
 
@@ -146,14 +173,23 @@ export function createTabActivity(opts: {
           live: [...liveKeys],
           liveSids: [...liveSidsNow],
           idle: { ...idleNow },
+          remote: [...remoteFed],
         }),
-        /** 把某会话的最近活动往回拨 ms 毫秒并立即重算闲置表（验证「久未输出」不必真等）。 */
+        /** 把某会话的最近活动往回拨 ms 毫秒并立即重算闲置表（验证「久未输出」不必真等）。
+         *  归快照记账的会话（没点开过的）要连后端的记录一起拨，否则下一次轮询就被拉回真值。 */
         age: (sid: string, ms: number) => {
           for (const m of [lastOut, seen]) {
             const t = m.get(sid);
             if (t !== undefined) m.set(sid, t - ms);
           }
           recomputeIdle({ ...lastInput, now: Date.now() }, true);
+        },
+        /** 把这个会话的记账整个忘掉——模拟 WebView 重建后的引擎（Android 活动重建：前端是
+         *  新的，一帧没见过、也没对过表；它静了多久只有核心知道）。下一次快照就是「第一次对表」。 */
+        forget: (sid: string) => {
+          lastOut.delete(sid);
+          seen.delete(sid);
+          remoteFed.delete(sid);
         },
       };
     }
@@ -166,7 +202,26 @@ export function createTabActivity(opts: {
     note: (sid, visible) => {
       if (visible && Date.now() - (lastKey.get(sid) ?? 0) < ECHO_MS) return;
       lastOut.set(sid, Date.now());
+      remoteFed.delete(sid); // 帧到了，这个会话从此归帧记账
       wake(sid);
+    },
+    remote: (sid, ageMs) => {
+      const now = Date.now();
+      const at = now - Math.max(0, ageMs);
+      const cur = lastOut.get(sid);
+      // 同一次输出的重复上报：什么都不动
+      if (cur !== undefined && Math.abs(at - cur) <= REMOTE_SETTLE_MS) return;
+      if (cur === undefined) {
+        // 第一次对表。WebView 可能是刚重建的（Android 活动重建）：「第一次看到」比真实的
+        // 最近活动晚得多，以核心报的为准，闲置时长不从头算
+        const s = seen.get(sid);
+        if (s === undefined || at < s) seen.set(sid, at);
+      }
+      // 第一次对表，或闲置与否可能翻转：闲置表不等下一次低频重算，下一拍就重算
+      // （闲置中的会话出了输出，靠这一下解除——与帧记账同样最多晚一拍）
+      if (cur === undefined || (cur + IDLE_AFTER_MS > now) !== (at + IDLE_AFTER_MS > now)) idleDirty = true;
+      lastOut.set(sid, at);
+      remoteFed.add(sid);
     },
     touch: (sid) => {
       seen.set(sid, Date.now());
@@ -182,7 +237,7 @@ export function createTabActivity(opts: {
       for (const e of i.entries) {
         const ids = e.kind === "group" ? e.members : [e.session];
         let until = 0;
-        for (const m of ids) until = Math.max(until, (lastOut.get(m.id) ?? 0) + LIVE_HOLD_MS);
+        for (const m of ids) until = Math.max(until, liveUntil(m.id));
         if (until <= i.now) continue;
         live.add(e.key);
         // 孤立的一行只出一圈：下一拍最早要等 BEAT_MS，而 LIVE_HOLD_MS < BEAT_MS
@@ -206,7 +261,7 @@ export function createTabActivity(opts: {
       if (opts.onLive) {
         const sids = new Set<string>();
         for (const s of i.sessions) {
-          if ((lastOut.get(s.id) ?? 0) + LIVE_HOLD_MS > i.now) sids.add(s.id);
+          if (liveUntil(s.id) > i.now) sids.add(s.id);
         }
         if (sids.size !== liveSidsNow.size || [...sids].some((id) => !liveSidsNow.has(id))) {
           liveSidsNow = sids;

@@ -389,8 +389,21 @@ pub struct SessionHandle {
     pub replay: StdMutex<ReplayRing>,
     /// 活跃订阅身份 → 取消信号（subscribe 注册 / unsubscribe 移除并触发桥 task 退出）。
     pub subs: StdMutex<HashMap<String, tokio::sync::watch::Sender<bool>>>,
+    /// 最近一次输出的时刻（进程单调时钟，毫秒；KI-148 活跃度快照用）。初值 = 建连——
+    /// 「建连算一次活动」，首屏输出还没到不该先算闲置。与 output_seq 同在 feed_output_fn
+    /// 的线性化点内更新：每产生一个 Raw 帧记一次。输出帧只广播给订阅者，而订阅在
+    /// 点开标签时才建，没点开过的会话前端一帧都收不到，「有没有在输出」只有核心知道。
+    /// 只读不锁。
+    pub last_output_ms: AtomicU64,
 
     pub center: Arc<ApprovalCenter>,
+}
+
+/// 进程单调时钟（毫秒，自进程内第一次调用起算）。只用来算「距上次输出多久」的差值——
+/// 取墙钟会被校时拨动，系统休眠不计入对活跃度无所谓（唤醒后连接多半要重连、输出自会刷新）。
+fn mono_ms() -> u64 {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 /// 重放环容量：8 MiB 或 8192 帧，先到先淘汰（前端 pending 溢出会走 resync）。
@@ -476,6 +489,7 @@ impl SessionHandle {
             last_ckpt_seq: AtomicU64::new(0),
             replay: StdMutex::new(ReplayRing::default()),
             subs: StdMutex::new(HashMap::new()),
+            last_output_ms: AtomicU64::new(mono_ms()),
             integration: StdMutex::new(session_api::IntegrationState::Disabled),
             retry_stop: AtomicBool::new(false),
             pump_gen: AtomicU64::new(0),
@@ -535,12 +549,18 @@ impl SessionHandle {
             + 1;
         self.replay.lock().unwrap().push(seq, data.clone());
         drop(s);
+        self.last_output_ms.store(mono_ms(), Ordering::Release);
         let _ = self.output_tx.send(OutputEvent::Raw {
             sid: self.id.clone(),
             seq,
             data,
         });
         seq
+    }
+
+    /// 距最近一次输出多久（毫秒；尚无输出则距建连）。KI-148 活跃度快照用，只读原子量。
+    pub fn output_idle_ms(&self) -> u64 {
+        mono_ms().saturating_sub(self.last_output_ms.load(Ordering::Acquire))
     }
 
     /// 十八轮：pump 线性化点内的日志落盘（解码后 UTF-8 追加）。稳定轮改攒批+

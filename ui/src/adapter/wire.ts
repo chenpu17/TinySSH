@@ -705,6 +705,12 @@ export interface DebugSubscriptions {
   per_session: { session_id: SessionId; subscription_ids: string[] }[];
 }
 
+/** output_activity 返回的一项（KI-148）：会话距最近一次输出多久（毫秒；尚无输出则距建连）。 */
+export interface OutputActivity {
+  session_id: SessionId;
+  idle_ms: number;
+}
+
 // ---------------------------------------------------------------------------
 // C8 偏好与主机元数据（R15；与 session-api 同名类型逐字段对齐）
 // ---------------------------------------------------------------------------

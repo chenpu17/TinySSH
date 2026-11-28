@@ -1218,6 +1218,15 @@ pub struct DebugSubscriptions {
     pub per_session: Vec<SessionSubs>,
 }
 
+/// output_activity 返回的一项（KI-148）：会话距最近一次输出多久；尚无输出则距建连。
+/// 输出帧只广播给订阅者，而订阅在前端点开标签时才建——没点开过的会话前端一帧都收不到，
+/// 标签活跃度只能由核心报。桥层专用，不在 SessionApi trait 面。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputActivity {
+    pub session_id: SessionId,
+    pub idle_ms: u64,
+}
+
 // ---------------------------------------------------------------------------
 // 传输（upload/download）
 // ---------------------------------------------------------------------------

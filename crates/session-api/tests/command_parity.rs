@@ -1,7 +1,7 @@
 // 命令面契约哨兵：src-tauri 的 generate_handler![...] 与前端 bridge.ts 的
 // CmdArgs/CmdRet 必须逐名对齐。
 //
-// 这不是代码生成，只是一道防漂移门：119 个命令靠手工三处同步（Rust handler、
+// 这不是代码生成，只是一道防漂移门：一百多个命令靠手工三处同步（Rust handler、
 // TS 实参、TS 返回值，另加 demo 实现），最容易漏的是新增命令只改了一边。
 // 真正的单一真源应走 ts-rs/specta 生成；在那之前，这个测试先保证“名字”不漂。
 

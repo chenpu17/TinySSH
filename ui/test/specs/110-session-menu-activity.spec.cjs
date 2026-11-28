@@ -4,7 +4,8 @@
 //   ① 久未输出——空心点、非当前行文字与状态列退一档、状态列改报「N 分钟无输出」，悬停回常规对比；
 //   ② 正在输出——静态辉光（8px），不挂光环载体、不跑动画；输出停下即摘；
 //   ③ 活动行 / 已断开行不判闲置；④ 手机竖屏（含 125% 字号）菜单不越视口、无横向溢出。
-// 读数走 DEV 探针 window.__t_activity（age 把最近活动往回拨，不必真等 30 分钟）。
+// 读数走 DEV 探针 window.__t_activity（age 把最近活动往回拨，不必真等 30 分钟；没点开过的
+// 会话归后端快照记账，要连 window.__demoAgeOutput 一起拨）。
 const SID_AGENT = "s-demo-0001"; // demo 预置 prod-1（Agent 掌控）
 const SID_DEAD = "s-demo-0002";  // demo 预置 staging-1（已断开）
 const MIN = 60_000;
@@ -55,9 +56,13 @@ const cssVar = (page, sel, name) => page.evaluate(({ sel, n }) => {
   return color;
 }, { sel, n: name });
 
+/** 把某会话的最近活动往回拨 ms（探针）。没点开过的会话归后端快照记账（KI-148，见
+ *  spec 111）：只拨前端记账的话，下一次快照就按后端的记录把它拉回真值——所以连后端
+ *  （demo）那份一起拨。点开过的会话只有前端记账，拨后端那份对它没有影响。 */
 const age = (page, sid, ms) => page.evaluate(({ sid, ms }) => {
   const h = window.__t_activity;
   if (typeof h?.age !== "function") return false;
+  window.__demoAgeOutput?.(sid, ms);
   h.age(sid, ms);
   return true;
 }, { sid, ms });
@@ -145,9 +150,9 @@ module.exports = {
     await page.waitForTimeout(200);
     ck.eq("移开后又退一档", (await rowOf(page, SID_AGENT, DESK)).labelColor, dim);
 
-    // ② 正在输出：静态辉光，不跑光环。终端是懒挂载——点过标签才订阅输出，预置的后台
-    //    prod-1 没接入时 send_keys 的回显帧没有订阅者、到不了记账。故先点它的标签接入、
+    // ② 正在输出：静态辉光，不跑光环。这一段走帧记账那条路：先点 prod-1 的标签接入、
     //    跑 ping 起持续输出，再切回本机让它转后台（与 109 同一条真实输出帧通路）。
+    //    没点开过的会话走后端快照记账，同样有静态辉光，见 spec 111。
     await page.keyboard.press("Escape");
     await page.waitForTimeout(150);
     await page.click(`.tab[data-sid="${SID_AGENT}"]`);

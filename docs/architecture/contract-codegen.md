@@ -10,7 +10,7 @@
 2. `ui/src/adapter/bridge.ts` 的 `CmdArgs` / `CmdRet`；
 3. `ui/src/demo.ts` 的 demo 实现。
 
-`sentinel` 只能保证**命令名**不漂移（119 个命令逐名对齐），但参数结构、可选性、返回类型仍可能单边改动。真正消除漂移需要从 Rust 类型生成 TypeScript。
+`sentinel` 只能保证**命令名**不漂移（一百多个命令逐名对齐，2026-11-28 为 129 个），但参数结构、可选性、返回类型仍可能单边改动。真正消除漂移需要从 Rust 类型生成 TypeScript。
 
 ## 候选方案
 

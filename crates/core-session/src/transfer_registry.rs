@@ -479,4 +479,19 @@ impl SessionManager {
             per_session,
         }
     }
+
+    /// KI-148 活跃度快照（桥层专用，不在 SessionApi trait 面）：每个在册会话「距最近一次
+    /// 输出多久」。输出帧只广播给订阅者，订阅又在前端点开标签时才建——没点开过的会话
+    /// 前端一帧都收不到，此前满 30 分钟必被误报「N 分钟无输出」。只读原子量，不持 screen 锁。
+    pub fn output_activity(&self) -> Vec<OutputActivity> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(sid, h)| OutputActivity {
+                session_id: sid.clone(),
+                idle_ms: h.output_idle_ms(),
+            })
+            .collect()
+    }
 }

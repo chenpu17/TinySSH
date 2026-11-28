@@ -8144,6 +8144,11 @@ mod c10_tests {
     }
 
     fn mk_handle(center: Arc<ApprovalCenter>) -> Arc<SessionHandle> {
+        mk_handle_id(center, "s-c10")
+    }
+
+    /// 指定会话 id 的手装句柄（mk_handle 是它固定 "s-c10" 的常用形态）。
+    fn mk_handle_id(center: Arc<ApprovalCenter>, id: &str) -> Arc<SessionHandle> {
         let host = Host {
             id: "local".into(),
             name: "c10".into(),
@@ -8166,7 +8171,7 @@ mod c10_tests {
             lossless_cap: 1 << 20,
         });
         SessionHandle::new(
-            "s-c10".into(),
+            id.into(),
             host,
             "local".into(),
             Arc::new(StubChannel),
@@ -8329,6 +8334,48 @@ mod c10_tests {
             "{joined:?}"
         );
         assert_eq!(m.debug_subscriptions().active_count, 1);
+    }
+
+    /// KI-148：活跃度快照——没订阅的会话前端收不到帧，「距上次输出多久」由核心报。
+    /// 没有输出时从各自的建连算起（「建连算一次活动」）；每出一帧归零重计；不依赖订阅。
+    #[tokio::test]
+    async fn output_activity_counts_from_last_output_or_birth() {
+        let m = mgr();
+        let h = mk_handle(m.center.clone());
+        register(&m, h.clone());
+        let idle_of = |id: &str| {
+            m.output_activity()
+                .into_iter()
+                .find(|a| a.session_id == id)
+                .unwrap_or_else(|| panic!("在册会话 {id} 应出现在快照里"))
+                .idle_ms
+        };
+        // 尚无输出：从建连算起——不是 0，也不是「自古以来」（先让时间走过，读数才分得开）
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let born = idle_of("s-c10");
+        assert!(born >= 30 && born < 5_000, "建连即算一次活动：{born}");
+        h.feed_output(b"one").await;
+        let just = idle_of("s-c10");
+        assert!(just + 30 <= born, "输出应把计时重置：{born} → {just}");
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let later = idle_of("s-c10");
+        assert!(
+            later >= just + 30 && later - just < 5_000,
+            "应随时间增长：{just} → {later}"
+        );
+        // 「从建连算起」数的是各自会话的建连，不是进程启动后的某个共同起点：晚建立的会话
+        // 读数更小，差的正是两者相隔的时间（应用开了半小时再连的会话不该一上来就「闲置」）
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let late = mk_handle_id(m.center.clone(), "s-c10-late");
+        register(&m, late);
+        let gap = idle_of("s-c10") as i64 - idle_of("s-c10-late") as i64;
+        assert!(
+            gap >= 30 && gap < 5_000,
+            "晚建立的会话应从它自己的建连算起：{gap}"
+        );
+        assert_eq!(m.output_activity().len(), 2, "每个在册会话各报一项");
+        // 全程没有订阅者：快照不依赖订阅
+        assert_eq!(m.debug_subscriptions().active_count, 0);
     }
 
     #[tokio::test]

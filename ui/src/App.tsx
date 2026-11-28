@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import {
-  invoke, MkChannel, inTauri, listen,
+  invoke, MkChannel, inTauri, listen, demoAgeOutput,
 } from "./adapter/bridge";
 import { errMsg, parseWireError } from "./adapter/errors";
 import { MetricsBar } from "./metrics";
@@ -17,7 +17,7 @@ import {
   zoomIn, zoomOut, zoomReset,
 } from "./zoom";
 import { applyCheckpoint, createOutputFeed, createOutputThrottle, isReplaying, resizeTerm, setCursorDefault, type OutputThrottle } from "./terminal/checkpoint";
-import { createTabActivity, TICK_MS } from "./terminal/activity";
+import { createTabActivity, REMOTE_POLL_MS, TICK_MS } from "./terminal/activity";
 import type { OutputFeed } from "./terminal/checkpoint";
 import { terminalFocusTarget } from "./terminal/focus-report";
 import { stripMotionOnlyMouseReports } from "./terminal/mouse-guard";
@@ -885,6 +885,36 @@ export default function App() {
       now: Date.now(), entries: tabEntriesRef.current, sessions: sessionsRef.current, activeSid: sidRef.current, bar: tabbarRef.current,
     }), TICK_MS);
     return () => window.clearInterval(id);
+  }, [sessions.length, activity]);
+  // KI-148：输出帧只发给订阅者，而订阅在点开标签时才建（终端懒挂载）——没点开过的已连接
+  // 会话此前一帧都收不到，永不出光环，满 30 分钟必被误报「N 分钟无输出」（Android 活动
+  // 重建后只回接上次的标签、广播输入里没点开的目标、Agent 建的会话都会碰到）。核心记着
+  // 每个会话的最近输出时刻，这里低频取快照、只给没订阅的会话记账；点开过的仍由帧记账
+  // （回显静默只在那条路上有）。定时器与节拍定时器同进退（有会话才跑），每次先看有没有
+  // 要记的会话再决定发不发——不随会话列表的变化重起，轮询的节拍一稳，刚出的输出最晚
+  // 一个周期就被看到（活跃保持多留的那一个周期以此为前提，见 activity.ts）。
+  useEffect(() => {
+    if (!sessions.length) return;
+    const pending = () => sessionsRef.current.some((s) => s.state === "Connected" && !subscribedRef.current.has(s.id));
+    let busy = false;
+    const pull = async () => {
+      if (!pending() || busy) return; // 没有要记的会话，或上一趟还没回：不发
+      busy = true;
+      try {
+        const rows = await invoke("output_activity");
+        for (const r of rows) {
+          // 取回的这一刻仍在列表里、已连接且没订阅的才记：等待期间被点开的由帧接管
+          const s = sessionsRef.current.find((x) => x.id === r.session_id);
+          if (s && s.state === "Connected" && !subscribedRef.current.has(r.session_id)) activity.remote(r.session_id, r.idle_ms);
+        }
+      } catch {
+        // 取不到就等下一拍：活跃度只是装饰，不为它打扰谁
+      } finally {
+        busy = false;
+      }
+    };
+    const timer = window.setInterval(pull, REMOTE_POLL_MS);
+    return () => window.clearInterval(timer);
   }, [sessions.length, activity]);
   // 块失败 toast 的每会话节流（系统通知的节流在 flashAndNotify 内建，两者独立）
   const lastFailToastRef = useRef<Map<string, number>>(new Map());
@@ -8201,7 +8231,12 @@ export default function App() {
     if (inTauri) return;
     (window as unknown as { __demoInvoke?: (cmd: string, args?: unknown) => Promise<unknown> }).__demoInvoke =
       (cmd, args) => (invoke as (c: string, a?: unknown) => Promise<unknown>)(cmd, args ?? {});
-    return () => { delete (window as unknown as { __demoInvoke?: unknown }).__demoInvoke; };
+    // KI-148 同族：没点开过的会话归后端快照记账，spec 回拨它的「最近输出」要连后端记录一起拨
+    (window as unknown as { __demoAgeOutput?: (sid: string, ms: number) => boolean }).__demoAgeOutput = demoAgeOutput;
+    return () => {
+      delete (window as unknown as { __demoInvoke?: unknown }).__demoInvoke;
+      delete (window as unknown as { __demoAgeOutput?: unknown }).__demoAgeOutput;
+    };
   }, [inTauri]);
 
   // §354 切标签使未确认的目标选择失效——不静默改投另一主机；目标会话关闭同理

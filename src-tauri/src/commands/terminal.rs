@@ -111,6 +111,14 @@ pub(crate) fn debug_subscriptions(state: ApiState<'_>) -> DebugSubscriptions {
     state.api.debug_subscriptions()
 }
 
+/// KI-148：每个在册会话「距最近一次输出多久」。输出帧只广播给订阅者、订阅又在前端
+/// 点开标签时才建——没点开过的会话一帧都收不到，标签活跃度由前端低频取这份快照补上。
+/// async：前端有没订阅的已连接会话时每 500ms 取一次，放线程池上跑，不占窗口主线程。
+#[tauri::command]
+pub(crate) async fn output_activity(state: ApiState<'_>) -> CmdResult<Vec<OutputActivity>> {
+    Ok(state.api.output_activity())
+}
+
 #[tauri::command]
 pub(crate) async fn read_screen(state: ApiState<'_>, sid: String) -> CmdResult<ScreenSnapshot> {
     state
