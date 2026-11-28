@@ -992,20 +992,22 @@ async fn journey5_agent_forward_approval_flow() {
         "经审批建立的隧道应通：{banner:?}"
     );
 
-    // ---- 非回环监听地址被拒（审核中-6；人类路径同样走 transport 校验）----
+    // ---- 监听地址核心 guard（R40 §6.6）：非回环（0.0.0.0/::/网卡 IP）改由 FE 把关
+    //      （默认回环 + 暴露范围提示 + 显式确认），核心只拒空串/纯空白。旧 T44「回环
+    //      only」断言已随 R40 放行非回环而失效，此处核核心仍拒无效地址（人类直建路径）----
     let bad = m
         .start_forward(
             &human,
             sid.clone(),
             session_api::ForwardSpec::Local {
-                listen_addr: "0.0.0.0".into(),
+                listen_addr: "   ".into(),
                 listen_port: t44_free_port(),
                 target_host: "127.0.0.1".into(),
                 target_port: 22,
             },
         )
         .await;
-    assert!(bad.is_err(), "0.0.0.0 监听应被拒");
+    assert!(bad.is_err(), "空/纯空白监听地址应被核心拒绝（R40 §6.6）");
 
     // ---- Agent 停转发：同样必审 ----
     let client_s = connect(&url, &token).await;
