@@ -47,41 +47,126 @@ impl UpdateCheck {
     }
 }
 
-/// 版本分段解析：按「.」切成数字段；出现空段/非数字段即 None
-/// （调用方按「无法比较」处理，绝不误报更新；不要求 pre-release 语义，
-/// v0.11.0-beta 之类自然落 None）。
-fn parse_version_parts(s: &str) -> Option<Vec<u64>> {
+/// 解析后的版本：数字段 + 可选预发布标识段（`1.0.0-RC1` → 数字段
+/// [1, 0, 0]、预发布 ["rc1"]）。
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedVersion {
+    parts: Vec<u64>,
+    /// 点分预发布标识，已统一小写（`RC.1` → ["rc", "1"]）；正式版为 None
+    pre: Option<Vec<String>>,
+}
+
+/// 版本分段解析：按「.」切成数字段，其后允许一个「-」起的预发布后缀
+/// （`1.0.0-RC1`、`1.0.0-rc.1`）。数字段出现空段/非数字段即 None；后缀为空、
+/// 含字母数字与「-」「.」以外的字符、或带「+」构建元数据同样 None（调用方按
+/// 「无法比较」处理，绝不误报更新）。
+///
+/// KI-149：此前后缀一律落 None，带预发布后缀的版本既检测不到后续更新，
+/// 作为 GitHub 最新版时也推不出去。
+fn parse_version(s: &str) -> Option<ParsedVersion> {
     let s = s.trim();
     let s = s.strip_prefix(['v', 'V']).unwrap_or(s);
-    if s.is_empty() {
-        return None;
-    }
+    let (core, pre) = match s.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (s, None),
+    };
     let mut parts = Vec::new();
-    for seg in s.split('.') {
-        // 全数字才收（不允许符号/空白/后缀）；段空（"1..2"）同样拒绝
+    for seg in core.split('.') {
+        // 全数字才收（不允许符号/空白）；段空（"1..2"）同样拒绝
         if seg.is_empty() || !seg.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
         // 已验全数字，不会 parse 失败；u64 溢出的天文数字段同样拒绝
         parts.push(seg.parse::<u64>().ok()?);
     }
-    Some(parts)
+    let pre = match pre {
+        Some(p) => {
+            let ids: Vec<String> = p.split('.').map(str::to_ascii_lowercase).collect();
+            if ids.iter().any(|id| {
+                id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            }) {
+                return None;
+            }
+            Some(ids)
+        }
+        None => None,
+    };
+    Some(ParsedVersion { parts, pre })
 }
 
-/// 版本比较纯函数：逐段数字比较，缺段视作 0（1.2 < 1.2.1）；任一侧
-/// 无法解析 → None。Some(Equal) 即同版本。
+/// 版本比较纯函数：逐段数字比较，缺段视作 0（1.2 < 1.2.1）；数字段相同时
+/// 预发布低于正式版（1.0.0-RC1 < 1.0.0）；任一侧无法解析 → None。
+/// Some(Equal) 即同版本。
 fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
-    let (pa, pb) = (parse_version_parts(a)?, parse_version_parts(b)?);
-    let n = pa.len().max(pb.len());
+    let (pa, pb) = (parse_version(a)?, parse_version(b)?);
+    let n = pa.parts.len().max(pb.parts.len());
     for i in 0..n {
-        let x = pa.get(i).copied().unwrap_or(0);
-        let y = pb.get(i).copied().unwrap_or(0);
+        let x = pa.parts.get(i).copied().unwrap_or(0);
+        let y = pb.parts.get(i).copied().unwrap_or(0);
         match x.cmp(&y) {
             std::cmp::Ordering::Equal => continue,
             other => return Some(other),
         }
     }
-    Some(std::cmp::Ordering::Equal)
+    Some(compare_prerelease(pa.pre.as_deref(), pb.pre.as_deref()))
+}
+
+/// 预发布优先级：只有一边是预发布时它更低；两边都是则逐段比，前缀相同
+/// 时段少者低（`rc` < `rc.1`）。
+fn compare_prerelease(a: Option<&[String]>, b: Option<&[String]>) -> std::cmp::Ordering {
+    match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(x), Some(y)) => {
+            for (p, q) in x.iter().zip(y.iter()) {
+                match compare_pre_identifier(p, q) {
+                    std::cmp::Ordering::Equal => continue,
+                    other => return other,
+                }
+            }
+            x.len().cmp(&y.len())
+        }
+    }
+}
+
+/// 单个预发布标识比大小：按「非数字串 / 数字串」交替切段逐段比，非数字串
+/// 按 ASCII、数字串按数值——所以 `rc2` < `rc10`，纯数字标识排在字母标识
+/// 前面（`1` < `rc1`）。标识已转小写且只含 ASCII，按字节切片安全。
+fn compare_pre_identifier(p: &str, q: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (pb, qb) = (p.as_bytes(), q.as_bytes());
+    let run_end = |b: &[u8], mut i: usize, digit: bool| {
+        while i < b.len() && b[i].is_ascii_digit() == digit {
+            i += 1;
+        }
+        i
+    };
+    let (mut i, mut j) = (0, 0);
+    while i < pb.len() && j < qb.len() {
+        let digit = pb[i].is_ascii_digit();
+        if digit != qb[j].is_ascii_digit() {
+            return if digit {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+        let (pi, qi) = (run_end(pb, i, digit), run_end(qb, j, digit));
+        let (ps, qs) = (&p[i..pi], &q[j..qi]);
+        // 数字串按数值：先比位数再比字典序，不经 u64（免溢出）
+        let ord = if digit {
+            ps.len().cmp(&qs.len()).then_with(|| ps.cmp(qs))
+        } else {
+            ps.cmp(qs)
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
+        i = pi;
+        j = qi;
+    }
+    (pb.len() - i).cmp(&(qb.len() - j))
 }
 
 /// 拉取并比较最新版本。永不 panic、永不 Err：失败折算成 has_update=false
@@ -729,7 +814,7 @@ pub(crate) async fn portable_update(
 
 #[cfg(test)]
 mod update_check_tests {
-    use super::{compare_versions, parse_version_parts};
+    use super::{compare_versions, parse_version, ParsedVersion};
     use std::cmp::Ordering::*;
 
     /// 版本比较门禁：相同 / 更新 / 更旧 / 位数不同 / 非法段，v 前缀剥离同测。
@@ -746,18 +831,65 @@ mod update_check_tests {
         assert_eq!(compare_versions("1.2", "1.2.1"), Some(Less));
         assert_eq!(compare_versions("1.2", "1.2.0"), Some(Equal));
         assert_eq!(compare_versions("1.2.0.0", "1.2"), Some(Equal));
-        // 非法段：空串 / 空段 / 非数字 / 带后缀 / 负数形态一律 None（不误报更新）
+        // 非法段：空串 / 空段 / 非数字 / 负数形态一律 None（不误报更新）
         assert_eq!(compare_versions("", "1.0.0"), None);
         assert_eq!(compare_versions("1..2", "1.2.0"), None);
         assert_eq!(compare_versions("1.2.x", "1.2.1"), None);
-        assert_eq!(compare_versions("0.10.0-beta", "0.10.0"), None);
         assert_eq!(compare_versions("1.2", "1.2.-3"), None);
         // 解析口径：v 前缀剥离、空白容忍、全数字段成功
-        assert_eq!(parse_version_parts("v0.10.1").unwrap(), vec![0, 10, 1]);
-        assert_eq!(parse_version_parts("V1.2").unwrap(), vec![1, 2]);
-        assert_eq!(parse_version_parts(" 0.10.0 ").unwrap(), vec![0, 10, 0]);
-        assert_eq!(parse_version_parts("v"), None);
-        assert_eq!(parse_version_parts("1.2.3"), Some(vec![1, 2, 3]));
+        assert_eq!(parse_version("v0.10.1").unwrap().parts, vec![0, 10, 1]);
+        assert_eq!(parse_version("V1.2").unwrap().parts, vec![1, 2]);
+        assert_eq!(parse_version(" 0.10.0 ").unwrap().parts, vec![0, 10, 0]);
+        assert_eq!(parse_version("v"), None);
+        assert_eq!(
+            parse_version("1.2.3"),
+            Some(ParsedVersion {
+                parts: vec![1, 2, 3],
+                pre: None
+            })
+        );
+    }
+
+    /// 预发布语义（KI-149）：数字段照常比；数字段相同时预发布低于正式版；
+    /// 两边都是预发布则逐段比。旧实现在这里恒 None——RC 构建收不到后续
+    /// 更新，RC 作为最新版时也推不出去。
+    #[test]
+    fn version_compare_prerelease() {
+        // 数字段优先：带后缀的新版本对旧版本仍然是「有更新」
+        assert_eq!(compare_versions("0.12.32", "1.0.0-RC1"), Some(Less));
+        assert_eq!(compare_versions("1.0.0-RC1", "0.12.32"), Some(Greater));
+        assert_eq!(compare_versions("1.0.0-RC1", "1.0.1"), Some(Less));
+        assert_eq!(compare_versions("0.10.0-beta", "0.10.0"), Some(Less));
+        // 同号：正式版高于预发布——RC 构建能看到同号正式版
+        assert_eq!(compare_versions("1.0.0-RC1", "1.0.0"), Some(Less));
+        assert_eq!(compare_versions("1.0.0", "1.0.0-RC1"), Some(Greater));
+        // v 前缀与大小写不影响同版判定
+        assert_eq!(compare_versions("1.0.0-RC1", "v1.0.0-RC1"), Some(Equal));
+        assert_eq!(compare_versions("1.0.0-rc1", "1.0.0-RC1"), Some(Equal));
+        // 两边都是预发布：逐段比，数字串按数值（rc2 < rc10）
+        assert_eq!(compare_versions("1.0.0-RC1", "1.0.0-RC2"), Some(Less));
+        assert_eq!(compare_versions("1.0.0-RC2", "1.0.0-RC10"), Some(Less));
+        assert_eq!(compare_versions("1.0.0-RC.1", "1.0.0-RC.2"), Some(Less));
+        assert_eq!(compare_versions("1.0.0-alpha", "1.0.0-beta"), Some(Less));
+        assert_eq!(compare_versions("1.0.0-RC", "1.0.0-RC.1"), Some(Less));
+        assert_eq!(compare_versions("1.0.0-1", "1.0.0-RC1"), Some(Less));
+        // 写坏的后缀仍然 None：空后缀 / 构建元数据 / 空标识 / 空白 / 非法字符
+        assert_eq!(compare_versions("1.0.0-", "1.0.0"), None);
+        assert_eq!(compare_versions("1.0.0-RC1+build.5", "1.0.0"), None);
+        assert_eq!(compare_versions("1.0.0-RC..1", "1.0.0"), None);
+        assert_eq!(compare_versions("1.0.0-RC 1", "1.0.0"), None);
+        assert_eq!(compare_versions("1.0.0-RC_1", "1.0.0"), None);
+        // 任一侧写坏都不给结论（本地一侧坏同样 None）
+        assert_eq!(compare_versions("1.0.0", "1.0.0-"), None);
+        assert_eq!(compare_versions("1.0.0-RC1", "1..0"), None);
+        // 解析口径：后缀整体小写、按「.」切段，正式版 pre 为 None
+        let pre = |s: &str| parse_version(s).unwrap().pre;
+        assert_eq!(pre("v1.0.0-RC1"), Some(vec!["rc1".to_string()]));
+        assert_eq!(
+            pre("1.0.0-RC.1"),
+            Some(vec!["rc".to_string(), "1".to_string()])
+        );
+        assert_eq!(pre("1.0.0"), None);
     }
 
     /// wire 形状门禁：camelCase（has_update→hasUpdate），字段恒全量出现
@@ -818,6 +950,13 @@ mod portable_update_tests {
         assert!(!should_install_portable("0.10.6", "0.10.5"));
         assert!(!should_install_portable("0.10.6", "not-a-version"));
         assert!(!should_install_portable("0.10.6", ""));
+        // 预发布（KI-149）同一方向：同号正式版、更晚的 RC 对 RC 构建可装；
+        // 同一 RC 与更早的 RC 不装
+        assert!(should_install_portable("1.0.0-RC1", "1.0.0"));
+        assert!(should_install_portable("1.0.0-RC1", "v1.0.0-RC2"));
+        assert!(!should_install_portable("1.0.0-RC1", "1.0.0-RC1"));
+        assert!(!should_install_portable("1.0.0-RC2", "1.0.0-RC1"));
+        assert!(!should_install_portable("1.0.0", "1.0.0-RC1"));
     }
 
     /// 测试专用签名契约（真 tauri CLI signer generate/sign 产物，密钥对仅测试
