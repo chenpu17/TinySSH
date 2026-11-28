@@ -22,7 +22,7 @@ jobs:
     name: ubuntu · fmt + clippy + core tests + ui build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt,clippy" }
@@ -98,7 +98,7 @@ jobs:
     name: windows · full workspace tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -140,7 +140,7 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -170,7 +170,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
 
       # 只需 arm64 目标；x86_64 留给本地模拟器构建
@@ -274,7 +274,7 @@ jobs:
     if: github.event.inputs.tier == '3'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
