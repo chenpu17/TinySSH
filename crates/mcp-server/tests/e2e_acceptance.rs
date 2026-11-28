@@ -65,6 +65,10 @@ async fn spawn_stack() -> (Arc<core_session::SessionManager>, String, String) {
     let db = dir.path().join("t.db");
     std::mem::forget(dir);
     let m = core_session::SessionManager::open(&db).unwrap();
+    // C9（R43）：新装默认关闭协作，外部 MCP Agent 的建会话 / exec / 转发在 admission
+    // 门就被拒（CollabDisabled），审批卡根本不会出现。本套件的 Agent 侧旅程模拟
+    // 「已启用协作的既有安装」：走真实 API 显式启用（与 protocol.rs 同款）。
+    m.collab_enable(&Actor::Human).await.unwrap();
     let token = m.center.vault.create_agent("opencode", "OpenCode").unwrap();
 
     // 注册 e2e sshd 主机（docker 契约或本机替代，端点可经环境覆盖）
@@ -396,6 +400,10 @@ async fn journey2_reconnect_reconfirm() {
     )
     .await
     .unwrap();
+    // 人类建的会话默认归人类所有（B01）：不委托的话 Agent 动作在控制权门就被拒
+    //（ControlTakenByHuman），走不到重确认门。本旅程讲的是 Agent 持有的会话断线
+    // 重连——先把会话委托给 Agent。
+    m.delegate_session(&human, sid.clone(), None).await.unwrap();
 
     // 断线：重启 sshd（容器=docker restart，本机=net stop+start；sshd 重启 <2s；
     // 核心 3 次重连机会，间隔 2s）
@@ -753,6 +761,47 @@ async fn journey4_reconnect_with_dirty_typing_state() {
     assert!(connected, "核实后应自动退出 Reconfirming");
 }
 
+/// 等会话的 shell 集成态就绪（Ready = 集成标记已回流）。注入是后台化的——
+/// create_session 把片段写进通道就返回，不等远端 shell 执行；Ready 是「远端已执行到
+/// 钩子安装」的正面证据。越过 Pending 直接终态（Disabled / Unavailable）或超时即 panic。
+async fn wait_integration_ready(m: &Arc<core_session::SessionManager>, human: &Actor, sid: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let sessions = m.list_sessions(human).await.unwrap();
+        if let Some(s) = sessions.iter().find(|s| s.id == sid) {
+            match s.integration {
+                IntegrationState::Ready => return,
+                IntegrationState::Pending => {}
+                other => panic!("集成未就绪即终结（{other:?}）"),
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "15s 内集成标记未回流"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// 轮询读屏，直到屏上不再出现任何一个标记，返回这时的屏文；到期仍有标记则返回最后
+/// 一次读到的屏文（由调用方按原断言报出）。
+async fn wait_screen_without(
+    m: &Arc<core_session::SessionManager>,
+    human: &Actor,
+    sid: &str,
+    markers: &[&str],
+    limit: Duration,
+) -> String {
+    let deadline = tokio::time::Instant::now() + limit;
+    loop {
+        let text = m.read_screen(human, sid.to_string()).await.unwrap().text;
+        if markers.iter().all(|k| !text.contains(k)) || tokio::time::Instant::now() >= deadline {
+            return text;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// 回归（T9 走查发现）：read_screen 语义是"当前屏幕"——
 /// (a) 不得包含 scrollback（清屏前旧内容如 MOTD/集成注入回显不得回魂）；
 /// (b) 集成注入 + 2J 清屏后，用户首屏应只有提示符，没有集成代码。
@@ -776,18 +825,26 @@ async fn create_session_screen_is_clean() {
         )
         .await
         .unwrap();
-    let snap = m.read_screen(&human, sid).await.unwrap();
+    // 注入后台化（DC3.5）：create_session 写完通道即返回，不等远端 shell 执行片段。
+    // 此刻读屏，快的时候读到还没回显的空屏（断言空洞地通过），慢的时候读到注入
+    // 执行中途的回显（CI 实测）。就绪判据（saw_133）在片段装完钩子后的第一个提示符
+    // 就成立，可能早于片段末尾那行清屏——所以先等就绪，再等清屏把回显与 MOTD 抹掉。
+    wait_integration_ready(&m, &human, &sid).await;
+    let text = wait_screen_without(
+        &m,
+        &human,
+        &sid,
+        &["__t_prompt", "PROMPT_COMMAND", "__T=", "Welcome to Alpine"],
+        Duration::from_secs(5),
+    )
+    .await;
     assert!(
-        !snap.text.contains("__t_prompt")
-            && !snap.text.contains("PROMPT_COMMAND")
-            && !snap.text.contains("__T="),
-        "read_screen 泄漏集成注入回显:\n{}",
-        snap.text
+        !text.contains("__t_prompt") && !text.contains("PROMPT_COMMAND") && !text.contains("__T="),
+        "read_screen 泄漏集成注入回显:\n{text}"
     );
     assert!(
-        !snap.text.contains("Welcome to Alpine"),
-        "read_screen 混入 scrollback（MOTD）:\n{}",
-        snap.text
+        !text.contains("Welcome to Alpine"),
+        "read_screen 混入 scrollback（MOTD）:\n{text}"
     );
 }
 

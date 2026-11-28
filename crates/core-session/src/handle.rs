@@ -1296,15 +1296,18 @@ impl SessionHandle {
             });
         }
         // 审批期间人类可能接管、会话可能重连进入 Reconfirming：批准的是批准时的
-        // 现场，现场已变则非人类动作一律作废（与入口门同口径，不白名单豁免——
-        // 重连后的新现场尚未核实）。
+        // 现场，现场已变则非人类动作一律作废（与入口门同口径）。唯一放行的是重确认
+        // 核实本身：入口即在重确认态、命令在白名单内（reconfirm_verify，不进审批）
+        // 的只读命令，正是拿来核实新现场的，执行成功即据此退出重确认（L1 §3.1）。
+        // Connected 下提交、审批期间才进入重确认的动作不在此列——reconfirm_verify
+        // 为假，批准的不是新现场，照旧作废。
         if !actor.is_human() {
             let owner = *self.owner.lock().await;
             let state = *self.state.lock().await;
             if owner == ControlOwner::Human {
                 return Err(Error::ControlTakenByHuman);
             }
-            if state == SessionState::Reconfirming {
+            if state == SessionState::Reconfirming && !reconfirm_verify {
                 return Err(Error::ReconfirmingPending);
             }
         }

@@ -96,19 +96,33 @@ impl ChannelHandle for DeadChannel {
 }
 
 /// 重连即成功通道：订阅面活（sender 常驻 Arc 内，pump 空转不误判断线）。
+/// 写入可观察（KI-145 回归用）：记次数并通知。桩不回显——命令块的回包由测试直接
+/// feed_output（与 pump 同一个线性化点），写入与回包之间不留 sleep 竞态。
 struct OkReconnectChannel {
     tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    writes: std::sync::atomic::AtomicUsize,
+    wrote: tokio::sync::Notify,
 }
 impl OkReconnectChannel {
     fn new() -> Arc<Self> {
         let (tx, _) = tokio::sync::broadcast::channel(16);
-        Arc::new(Self { tx })
+        Arc::new(Self {
+            tx,
+            writes: std::sync::atomic::AtomicUsize::new(0),
+            wrote: tokio::sync::Notify::new(),
+        })
+    }
+    fn writes(&self) -> usize {
+        self.writes.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 #[async_trait::async_trait]
 impl ChannelHandle for OkReconnectChannel {
     async fn write(&self, _data: &[u8]) -> Result<()> {
         // 重连成功后是活通道；人类键入/集成注入都走写路径，需允许成功。
+        self.writes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.wrote.notify_one();
         Ok(())
     }
     async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
@@ -376,6 +390,137 @@ async fn human_terminal_enter_finishes_reconfirming_with_event() {
         .await
         .unwrap();
     assert!(rx.try_recv().is_err(), "重复回车不得重复广播 Connected");
+}
+
+/// Agent 持有的 ssh 会话，重连后新 shell 的首提示符已回流（集成标记就绪）：控制权
+/// 归 Agent，外部 Agent 可过协作 admission 门。重确认态由各用例自己置。
+async fn agent_session_after_reconnect(
+    m: &SessionManager,
+) -> (Arc<SessionHandle>, Arc<OkReconnectChannel>) {
+    *m.center.collab.lock().unwrap() = CollabGate::new(true);
+    let ch = OkReconnectChannel::new();
+    let h = hand_install(m, "ssh", ch.clone());
+    *h.owner.lock().await = ControlOwner::Agent;
+    h.feed_output(b"\x1b]133;A\x07\x1b]133;B\x07").await;
+    (h, ch)
+}
+
+/// KI-145：重确认期 Agent 的白名单核实必须走得通（L1 §3.1「仅开放只读核实命令白名单」
+/// +「完成判定由核心自动执行」）。exec 管线「开始前复核现场」（d8aa73c）把这条路径
+/// 一并拦掉了：入口即在重确认态、命令在白名单内（不进审批）的核实命令，到复核处又
+/// 被会话自己的重确认态拒成 ReconfirmingPending——白名单外被拒、白名单内也被拒，
+/// Agent 侧永远退不出重确认。
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_whitelisted_verify_runs_and_finishes_reconfirming() {
+    let m = mgr();
+    let (h, ch) = agent_session_after_reconnect(&m).await;
+    *h.state.lock().await = SessionState::Reconfirming;
+    let agent = Actor::Agent {
+        client_id: "opencode".into(),
+    };
+    let mut rx = m.center.state_tx.subscribe();
+
+    // 白名单外：入口门即拒，不写线、不进审批
+    let r = m
+        .exec(&agent, h.id.clone(), "touch /tmp/nope", ExecOpts::default())
+        .await;
+    assert!(matches!(r, Err(Error::ReconfirmingPending)), "得到 {r:?}");
+    assert_eq!(ch.writes(), 0, "白名单外命令不得写线");
+
+    // 白名单内：不进审批直接写线；远端回一个成功的命令块（pump 路径 = feed_output）
+    let mut j = {
+        let (m, h) = (m.clone(), h.clone());
+        tokio::spawn(async move {
+            m.exec(&agent, h.id.clone(), "pwd", ExecOpts::default())
+                .await
+        })
+    };
+    // exec 先于写线返回 = 在「开始前复核现场」处被拒（回归形态：白名单内也被拒）
+    tokio::select! {
+        _ = ch.wrote.notified() => {}
+        r = tokio::time::timeout(Duration::from_secs(10), &mut j) => {
+            panic!("核实命令未写线，exec 先返回：{r:?}")
+        }
+    }
+    // 命令块回包 = C → 输出 → D(0) → 下一个提示符（捕获的 D→B 尾窗在 B 处收口才通知）
+    h.feed_output(b"\x1b]133;C\x07/\r\n\x1b]133;D;0\x07\x1b]133;A\x07\x1b]133;B\x07")
+        .await;
+    let r = j.await.unwrap().expect("白名单核实必须能执行（L1 §3.1）");
+    assert_eq!(ch.writes(), 1, "核实命令恰写线一次");
+    assert_eq!(r.exit_code, Some(0));
+    assert_eq!(r.stdout.trim(), "/");
+    assert!(
+        r.approval.approval_id.is_none(),
+        "核实命令不进审批：{:?}",
+        r.approval
+    );
+    // 完成判定由核心自动执行：退出 Reconfirming 并广播 Connected
+    assert_eq!(*h.state.lock().await, SessionState::Connected);
+    let evs = drain_events(&mut rx, 1).await;
+    assert_eq!(evs[0].state, SessionState::Connected);
+    assert_eq!(evs[0].session_id, h.id);
+}
+
+/// 「开始前复核现场」的原意不变：Connected 下提交、等审批期间会话重连进入重确认——
+/// 批准的是批准时的现场，新现场尚未核实，旧动作照样作废。白名单豁免只属于「入口即
+/// 在重确认态的核实命令」，不属于审批期间才撞上重确认的普通命令。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agent_exec_approved_during_reconnect_is_still_voided() {
+    let m = mgr();
+    let (h, ch) = agent_session_after_reconnect(&m).await;
+    let j = {
+        let (m, sid) = (m.clone(), h.id.clone());
+        tokio::spawn(async move {
+            m.exec(
+                &Actor::Agent {
+                    client_id: "opencode".into(),
+                },
+                sid,
+                "systemctl restart nginx",
+                ExecOpts::default(),
+            )
+            .await
+        })
+    };
+    // 动作停在审批门
+    let mut card = None;
+    for _ in 0..300 {
+        card = m
+            .list_approvals(
+                &Actor::Human,
+                ApprovalFilter {
+                    session_id: Some(h.id.clone()),
+                    pending_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .next();
+        if card.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let card = card.expect("审批卡未在 3s 内出现");
+
+    // 审批期间重连进入重确认；人类随后批准的是重连前的现场
+    *h.state.lock().await = SessionState::Reconfirming;
+    m.decide_approval(&Actor::Human, card.id.clone(), Decision::Approve)
+        .await
+        .unwrap();
+    let r = j.await.unwrap();
+    assert!(
+        matches!(r, Err(Error::ReconfirmingPending)),
+        "现场已变，已批准的普通命令不得执行：{r:?}"
+    );
+    assert_eq!(
+        *h.state.lock().await,
+        SessionState::Reconfirming,
+        "被作废的动作不得替会话完成重确认"
+    );
+    assert_eq!(ch.writes(), 0, "被作废的动作不得写线");
 }
 
 /// local 重连：不注入不等标记，直接 Reconfirming + 事件；integration 保持 Disabled
